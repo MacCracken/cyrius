@@ -6,9 +6,429 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.7] — 2026-10-09
 
-B4 tuples and B6 default + named arguments (the user's decisions: roadmap.md § Spec) — *entry written at
-integration* — plus the fixes below, built in four worktree lanes (distlib, achflake, cmpdwarn, install) with one
-review round each, and the backlog moved into `docs/development/issues/`.
+B4 tuples and B6 default + named arguments (the user's decisions: roadmap.md § Spec, 2026-10-08, and the plans'
+forks, 2026-10-09), built in two worktree lanes with one review round each and merged here; the four silent
+miscompiles the user moved in after the merge (three lanes on the merged tree); the found fixes from four earlier
+lanes; and the backlog moved into `docs/development/issues/`.
+
+**Release gate** {GATES}
+
+**Size:** cycc **1,920,400 B** (`.text` **1,719,824**), +114,160 B over 6.7.6's 1,806,240 — B4 (the tuple type,
+literals, the bridge, `a, b = f();`, the refusals), B6 (the parameter-default record and sweep, the fill, named
+arguments, the min..max and forward arity checks) and the integration fixes; dead-code floor unchanged (52 fns /
+10,597 B). `build/cycc-native-aarch64` **1,739,776 B**. `.tcyr` 537 → **543** (243 → **249** in `crossos/`); shell gates
+441 → **448**.
+
+**Bench:** same-box interleaved A/B vs 6.7.6 (15 runs each, medians; other sessions loading the box, so the A/B is
+the figure): **1,198 → 1,215 ms on 6.7.6's source (+1.4 %)**, 1,296 → 1,314 ms on 6.7.7's own (+1.4 %).
+
+### Language — tuples (B4)
+
+The user's decision (2026-10-08, roadmap.md § Spec — B4): **a tuple bridges to the multi-value returns and is
+captured by TYPE.** `(a, b)` builds an anonymous struct of 8-byte slots; `t.0` / `t.1` read and write it (`OP=`
+included); `(i64, f64)` is a type wherever a struct type goes; `var t: (i64, i64) = f();` captures every value of a
+multi-value call, `a, b = f();` re-assigns existing variables, and `var x = f();` keeps its first-value meaning. A
+shape the decision leaves open is refused by name (extensible later), never given a default meaning. **The plan's
+forks (user, 2026-10-09):** an un-annotated literal with a float element is refused; the four lossy `: stack` pair
+stores become the compile error the guide already documented (⚠ below); a closure captures a tuple under the
+struct-capture rule. Built as nine bites (T0–T7, T5b). Each bite's whole-tree differential (1,034–1,051 files;
+default, `CYRIUS_DCE=1`, `--syntax-only`; the aarch64, cx and PE compilers over `tests/tcyr`) is byte-identical
+(stdout, stderr, exit) apart from the lane's own test file: nothing that compiled changes meaning except T5b's
+refusals.
+
+- **`(T1, T2, ..)` is a type** — on a `var` (a local; a global in either zone), a parameter, a struct field and a
+  fn's multi-value return. It is an anonymous struct of 8-byte slots, interned once per element list under its
+  spelling (`(i64, f64)`, the name every diagnostic prints) with fields `0`, `1`, ..; equal element lists are one
+  type (`(i64,i64)` and `(i64, i64)` copy into each other), any other pair is the struct copy's type error. Elements
+  are `i64`, `f64` (a float field: `t.1 + t.1` is a float add) or `bool` (a checked bool field), 2 to 256 of them. A
+  tuple is at least 16 B, so it is always inline: `var t: (i64, i64);` reserves its slots; `t.0 = 5;`, `t.1 += 2;`,
+  `h.p.1` read and write them; a copy (`var u: (i64, i64) = t;`, `u = t;`, `h.p = t;`, `t = h.p;`, parenthesised) is
+  by value. A tuple field is laid out inline (`struct H { a; p: (i64, i64); b; }` is 32 bytes); a positional
+  literal fills its leaves (`H { 1, 2, 3, 4 }`) or takes a whole tuple (`H { 1, t, 4 }`).
+- **`t.N` lexes as a field selector.** A `.` followed by a digit, after a name, `)` or `]`, lexes the digit run as a
+  name: `t.0.1` is two selectors (it was a name and the float `0.1`). Every other `.digit` lexes as before — `0..10`,
+  `a..5`, `1.5`, `t. 0` with a space; the whole tree (1,051 files) and the aarch64 / cx / PE compilers over
+  `crossos/` compile byte-identical. `p.0` on a named struct says "unknown field '0' on struct 'P'" (it was "expected
+  identifier, got number 0"), `mk().0` the same (it was "expected ';', got '.'"); `t.2` past the arity, `t.01`,
+  `t.0x1` and `t.1_0` are unknown fields of `(i64, i64)`.
+- **`(a, b)` is a tuple value** in five positions: a `var` initializer — a local, or a global in either zone (with
+  constant elements a declaration-zone global is BAKED into the image as `var G = P { 3, 4 };` is, so a `kernel;`
+  program reads it before the late replay; with a call element it is set late, as that struct literal is); an
+  assignment to a tuple variable (built in a frame temporary first, so `t = (t.1, t.0);` swaps; a classic-`for` step
+  too); a store into a tuple field (`h.p = (1, 2);`); a tuple argument (`take((1, 2))`, a method's, Win64's 5th /
+  6th and every stack-passed one); and `return (a, b)`, as before. Parentheses around the whole literal are
+  transparent in the first four (`((1, 2))`, the 6.7.6 rule); the return keeps its exact spelling. An annotated
+  literal's elements take the annotation's types with the struct literal's checks (an integer into an `f64` element
+  keeps its bits, warned; a `bool` element takes a bool); an un-annotated one is `(i64, .., i64)` — `var q = (1, 2);`
+  is the spelled `(i64, i64)`. `secret var t = ( .. );` is wiped whole at the exit.
+- **An un-annotated float element is refused — declare the tuple's type** (user, 2026-10-09; ADR-002: an untyped
+  float is an integer): `var p = (1, 2.5);` is "a float element needs the tuple's type declared - …";
+  `var p: (i64, f64) = (1, 2.5);` works.
+- **A tuple parameter** — `fn take(t: (i64, f64), k)` on a fn, a method, an impl's or a trait's method — is a
+  by-value struct parameter: address-passed, copied in the callee's prologue (the callee's writes never reach the
+  caller), its argument checked by type ("cannot pass 'u' to a parameter of a different struct type"). The argument
+  is a tuple local, parameter, global, field, closure capture or literal, bare or parenthesised. Both passes read
+  the type, so a call parsed before the definition is counted and address-passed as one after it. A tail call that
+  hands over a tuple in its own frame (or a literal's temporary) becomes a real call — the `jmp` would free what the
+  callee copies from; one handing over a global's tuple keeps its `jmp`. `#inline` on such a fn is ignored with the
+  struct rule's warning.
+- **A tuple captures a multi-value call by its TYPE** (user, 2026-10-08): `var t: (i64, f64) = f();` (a local; a
+  global after the first statement or in the declaration zone), `t = f();` into an existing tuple (a local, a
+  by-value parameter, a global; a classic-`for` init or step) and `G = f();` at top level. The right-hand side is
+  what the destructure `var a, b = f();` takes — one whole call, `f(..)`, `g<T>(..)` or `x.m(..)` — from a fn
+  declared `: (T1, T2[, T3])` (its arity and each element's class checked: `f64` ← `f64`, `bool` ← a declared `bool`,
+  `i64` ← any integer class) or an unchecked callee: an undeclared `return (a, b)` / `ret2` fn, a `: stack` pair, a
+  `Result` / `Option` / `Tagged` pair, a `: f64` fn (every element `f64`). Every value is read before any is stored:
+  `t = f(t.1, t.0);` reads the old `t`, and `var t: T = f(t.1);` an outer `t`.
+- **`return t;`** returns a tuple — a local, a by-value parameter, a global, `return (t);` — from a fn declared with
+  its values (`: (i64, i64)`, the element classes exact), in the registers `return (t.0, t.1);` uses (in a defer fn,
+  a loop and an `#inline` replay too).
+- **`a, b = f();` / `a, b, c = f();` re-assigns existing variables** — the re-poll gap: `while (st != 0) { st, v =
+  poll(); .. }` no longer binds a fresh pair each pass. Locals, parameters, globals, at top level, `f64` and `bool`
+  targets, a classic-`for` init or step, under the destructure's contract (one whole call, its declared arity, a
+  one-value callee refused with the destructure's own messages). Closes the pair issue's item 4.
+- **A closure captures a tuple as it captures a struct** (user, 2026-10-09): a by-value copy of the whole tuple,
+  taken when the closure is made — later writes are not seen, the closure's own element writes stay in its copy
+  across its calls, and the copy outlives the frame; it passes on to a tuple parameter, nests, and copies out. A
+  `defer` reads a tuple as it is at the exit, and the values a fn returns are taken before its defers write the
+  tuple.
+- **⚠ A `: stack` pair stored into ONE slot is refused at every store** (user, 2026-10-09 — the pair issue's item 3;
+  the guide already said "any context that keeps only one … is a compile error"). A field (`h.n = f();` — any field
+  type: a struct-typed field took the tag as its first word; a slice's `.len`), an element (`a[i] = f();`),
+  `*p = f();` and every compound assignment (`x += f();` on a variable, a field, an element, `*p`, a `u128`) compiled
+  clean and kept the TAG, dropping the payload (the error code, for an `Err`). Each is now "a `: stack` enum returns
+  two values — bind both: `var tag, val = f();`", at the callee — in a for step, at top level, for the explicit
+  generic / method / forward / stdlib-`Result` spellings, and under `--syntax-only` (`cyrius lint`) for a field the
+  file cannot see. A pair as a tuple-literal element (`var t = (f(7), 3);`) is refused the same way. `?` still
+  consumes the pair (`h.n = f()?;` stores the payload and propagates the `Err` with its payload; `(f(x)?, 3)` works);
+  a boxed enum, a nullary variant and a one-value call are untouched. Every `.cyr` / `.tcyr` / `.fcyr` / `.bcyr` in
+  the tree compiles byte-identical. Closes `issues/2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md` (items
+  1–2 settled by the 2026-10-08 decision, item 4 by `a, b = f();`) — archived RESOLVED.
+- **A tuple is not a number** — refused by name, "tuple 't' used as a value - take an element (`t.0`) or copy it
+  whole into a tuple": `t == 5`, `t + 1`, `!t`, `-t`, `if (t)`, `while (t)`, `match t`, `switch (t)`, `for x in t`,
+  `g(t)` into an untyped parameter, `load64(t)`, `callptr(fp, t)`, `var x = t;`, an if-expression branch, a captured
+  tuple used so in a closure body, and a whole tuple FIELD (`h.p == 5`, `g(h.p)` — "tuple field 'p' used as a
+  value"). Under the bare struct rule each would read the first word.
+- **Nothing that is not a tuple goes into one:** `t = 5`, `t = x`, `t = g()` with a one-value `g`, `t = (f())`,
+  `h.p = 5`, `var t: (i64, i64) = 5;` / `= x + 1` / an address, a global initialised from a value — "cannot assign a
+  value that is not a tuple to tuple 't'" (and the field / initialize forms); a tuple declaration is never
+  pointer-mode. A literal into a variable, field or parameter of another type, or under a non-tuple annotation, is
+  refused naming the destination ("a tuple literal cannot initialize 'k' - its declared type is not a tuple").
+- **A literal anywhere else is refused by name:** an operand, an untyped or `callptr` argument, an if-expression
+  branch, a `match` scrutinee, `(1, 2).0`, a struct-literal element — "a tuple `( .. )` is a value only as a `var`
+  initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is
+  expected"; `return ((a, b));` — "a multi-value return is written `return (a, b);` - drop the extra parentheses"; a
+  literal assignment, field store or argument at TOP LEVEL ("… has no frame to be built in" — `var G = ( .. );`
+  declares one); a trailing comma, an empty element, more than 256 elements, an arity that does not match the type;
+  a struct (by its static type — a `Str` / `Result` / `Option` / `Tagged` handle and a `*T` are i64s), tuple, u128,
+  vector or slice element; a tuple in a const context (`const C = (1, 2);`, a const fn's evaluation, `#assert`) —
+  "a tuple in a const context"; an un-annotated literal in a generic fn. `(1, 2);` as a statement keeps "unexpected
+  '('".
+- **The capture, `return t;` and `a, b = f();` refuse by name:** a struct- or vector-returning callee ("cannot
+  capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple"; "cannot re-assign from 'mk' - it returns
+  struct 'P', not multiple values"); a declared arity or element class that disagrees ("- it returns 2 values,
+  (i64, f64)"); 4 or more elements ("a call returns at most 3 values"); a `: f64` callee into a non-`f64` element; an
+  unchecked callee into a `bool` element. A provably one-value callee, `(f())`, `f()?`, `callptr(..)` and any value
+  that is not one whole call are "not a tuple". A multi-value call as a tuple argument — `take(mk(3))`,
+  `take(b.mk(3))`, `take(p + q)` with `mk` / `P_add` declared `: (i64, i64)`, free, generic, method or operator, in a
+  fn, a tail call or at top level — "a multi-value call 'mk' is not a tuple argument - bind it first:
+  `var t: (i64, i64) = mk(..);`, then pass `t`" (it handed over the first value as the tuple's address: SIGSEGV on
+  x86); into a tuple field, `h.p = mk(3);` — "… is not stored into a tuple field - bind it first …". `return t;`
+  from an undeclared, scalar, struct, vector or `async fn`, a closure, or on an arity / class mismatch — "cannot
+  return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values, `: (i64, i64)`"; of 4 or
+  more elements, "a fn returns at most 3 values". `f().0` on a multi-value call — "cannot
+  take a field of the result of 'mk': it returns 2 values - bind them first, `var t: (i64, i64) = mk(..);`, then read
+  `t.0`". `a, b = ..` with a target that is not a plain variable (`h.x, b`, `a[i], b`, `*p, q`, `a, t.0`,
+  `a, b += ..`), more than 3, a name given twice, a const or enum constant, a struct / tuple / vector / u128 / slice /
+  array / `f32` target, a `bool` target from a value not declared `bool` (each was "expected '='"). `(a, b) = f();`
+  and `var (q, r) = f();` keep their errors.
+- **The shapes left open, refused by name:** an element other than `i64` / `f64` / `bool` (the narrow integers,
+  `u64`, `f32`, `u128`, a pointer, a slice, a vector, a struct, a nested tuple, an unknown name); `()`, `(T)`, a
+  trailing comma, an empty element; a tuple as a pointer target (`*( .. )`, a parameter `t: *(i64, i64)` too), a
+  slice or array element, a `Vec<( .. )>` struct field, a `sizeof` / `#assert sizeof` operand, a type argument
+  (`B<( .. )>`, `id<( .. )>(..)`), a union field, a multi-value return element `((..), i64)`, a `#derive`d struct's
+  field ("#derive reads named field types; 't' is a tuple" — the walk stopped there and dropped every later field's
+  derived code); a tuple type in a generic fn or struct, and a tuple binding a type parameter — `first(t)` inferred
+  T = the tuple and minted `first$(i64, i64)`; it is "a tuple cannot bind a type parameter: 'first' is generic -
+  pass an element (`t.0`), or take the tuple in a fn that is not generic", once, wherever the call stands; a const
+  fn's tuple local or parameter ("const fn parameter 't' is a tuple, which a compile-time evaluation does not take -
+  pass its elements as separate parameters" — it was "expected ';', got '.'", and an unused one compiled); an
+  `async fn` tuple parameter ("… which an `async fn` does not capture yet - pass its elements as separate
+  parameters" — the struct rule's message advised `t: *(i64, i64)`, itself refused). Methods: `t.m()`, `t.0(..)`,
+  `h.p.m()`, `impl (i64, i64) {`, `impl Tr for (i64, i64) {` — "a tuple has no methods"; and `x.0(..)` on ANY
+  receiver — "a method name cannot start with a digit" (once `t.N` lexed as a selector, `p.0()` resolved as the
+  method `P_0` and called a user `fn P_0(self)`). `var v: Vec<(i64, i64)> = ..;` compiles as before (a `Vec<T>`
+  annotation's `<T>` is skipped).
+- **Fixed on the way — `return (|a, b| a + b);` and `return (pk<i64, i64>(1, 2));`** were taken for multi-value
+  returns ("expected ','"): PARSE_RETURN's paren-depth comma scan counted a closure's parameter commas and a generic
+  call's type-argument commas. The tuple literal's one detector (`_tup_commas`) steps both and serves every
+  position (the return, the five accepting positions, the stray-literal refusal, the const evaluator); the two
+  return their value.
+- **Tools: `cyrius header` and cyrius-lsp read a parameter list with nested parentheses.** `cyrius header` cut the
+  list at its FIRST `)` and a parameter's type at its first `,`: `fn g(t: (i64, i64), x)` printed
+  `cyr_val g(cyr_val t, cyr_val i64);` (`x` lost, an element type printed as a parameter). The list now ends at the
+  `)` at depth 0 and a parameter at the `,` at depth 0 — a tuple parameter is one `cyr_val` (it travels as an
+  address) — and every byte of a parameter is stepped, so a malformed list cannot stall the walk. The LSP's semantic
+  tokens had the same walk (`i64` / `bool` coloured as parameters all through the file, the parameters after the
+  tuple lost); it counts the `(` nesting inside a parameter's type.
+- **Docs:** the guide's `## Tuples` (after *Multi-Return*): the literal and the type, `t.N`, the type positions, a
+  tuple as an anonymous struct, the element vocabulary, the un-annotated literal, where a literal goes, capture by
+  type, `a, b = f();` with the re-poll loop, `return t;`, closures, *A tuple is not a number*, and a table of the
+  refusals with their messages. *Multi-Return* gains `q, r = divmod(20, 3);` and a cross-reference; *Type names* and
+  *Field types* a tuple row; *Bind the pair as a pair* lists the seven one-slot refusals and the accepted
+  `t, v = f();` / `h.n = f()?;`. Every new example compiles behind guide_examples_compile.sh's prelude and was run
+  for the values its comments state.
+
+Fixed in the review round, before release: the declaration zone's pass 1 sized a global through `_gcall_open`, which
+knows only the generics declared above it, so with `pk` declared below `var G = (pk<i64, i64>(1, 2));` (which
+compiled before tuples) was refused, `var G: (i64, i64) = (pk<..>(1, 2));` stored one word, `(pk<..>(1, 2), 3)` was
+typed with three elements and `var G: (i64, i64) = g2<i64>(5);` was refused. Pass 1 reads `name<..>(` by its tokens
+now; where the two passes can still disagree — a `<` comparison spelled like a type list, `(x < a, b > (c), 5)` —
+the declaration is refused by name ("… as an explicit generic call (`name<A, B>(..)`) - parenthesize the
+comparison"), never stored past its slot.
+
+Tests: `tests/tcyr/crossos/tuple_values.tcyr` (193 assertions — types, copies, fields, parameters, tail calls,
+literals, globals, captures, returns, re-assignment, closures, defers) on x86 (default, `CYRIUS_IR=1`,
+`CYRIUS_IR=3`, `CYRIUS_DCE=1`), aarch64 (qemu), cx and PE (wine), and on ecb / ach / cass / pi at the release gate;
+`tests/gates/frontend/tuple_checked.sh` (lexing, shapes, refusals, compatibility, the `_pwrap_k` callers, kernel
+parity, async, the secret wipe, closures, the zone's generic reading, `--syntax-only`, the two tools, and the
+crossos file on all seven legs; 53 mutations in its ledger, each measured RED, and two defensive edits named with no
+killing row); `stack_enum_lossy_context.sh` axis 15 (21 refusal rows, six `?` rows on four targets; mutations
+M24a–M24i RED); `hidden_temp_census.sh` axis 5 registers `_tup_greg:1`; `cx_crossos_rows_run.sh` R7's floor follows
+the crossos file.
+
+### Language — default and named arguments (B6)
+
+The user's decision (2026-10-08, roadmap.md § Spec — B6): **a default is a compile-time constant on a TRAILING
+parameter** — a literal, a `const`, or a `const fn` call (the 6.7.2 evaluator). **Named arguments** follow the
+positionals, in any order, each parameter at most once, and are evaluated left to right as written. They apply to
+direct calls only: a call through a fn pointer or a closure stays positional, with its exact arity. The arity check
+becomes min..max; overloading by arity stays out. **The plan's forks (user, 2026-10-09): F1** — a default in a
+trait's REQUIRED signature is an error; **F2** — EVERY forward call is arity-checked. After the lanes (user,
+2026-10-09): a default in ANY trait method's list, a default method's included, is an error, as built. Built as
+bites 0–6 (bite 1 in two halves). Nothing that compiled changes meaning except the two approved refusals (⚠ below)
+and one silent miscompile fixed; the whole-corpus differentials of bites 1a, 1b, 3 and 4 and of the review fixes
+(647–855 files over x86 plain / `CYRIUS_IR=3` / `CYRIUS_DCE=1` / PE and the aarch64 / cx / win forks; binary,
+stderr and exit byte-identical) show it.
+
+- **Defaults are recorded and checked at the definition:** `fn f(a, b = 2, c: f64 = 1.5)`. Pass 1 records every
+  definition's defaults and refuses a bad SHAPE there; the end of pass 1 (`_pd_sweep`, after `_cst_sweep`, every
+  fork) evaluates every default ONCE, called or not, through the 6.7.2 evaluator in the top context with the parser
+  cursor on the default's own token — so no caller's local is ever visible, a const or enum declared later is fine,
+  and a `private` const or const fn of the defining file resolves from a call in another file — then refuses a value
+  the parameter's type does not take. Pass 2 steps over a default the same way. A generic instance shares its
+  base's defaults; an `async fn`'s `f$impl` has none (its constructor takes every parameter). One row per defaulted
+  definition, allocated at the first default anywhere: a program with none allocates nothing (no heap region, no
+  layout change), and names are never stored (the definition's tokens hold them).
+- **What a default may be, by the parameter's type:** untyped — an integer, a bool or a string (its literal's
+  address); `i8`..`u64` and an enum type — an integer in range, or a bool; `bool` — a bool; `f64` / `f32` — a float,
+  or 0 / an IEEE bit pattern (into an `f32` it rounds, as every f32 write does since 6.7.6); `cstring` — a string or
+  0; `*T` (and a `Vec` handle) — an integer. `Str` (its literal is a heap wrap per call), a struct, a vector, `u128`,
+  `Result` / `Option` / `Tagged`, a tuple, a type parameter and `self` take none.
+- **A call passes min..max arguments, and a direct call short of max takes the defaults.** min is the first
+  defaulted parameter's index: `fn f(a, b = 2, c = 3)` takes 1 to 3 ("'f' expects 1 to 3 arguments, got 4"); a fn
+  without defaults keeps the v6.5.1 text byte for byte. The missing trailing defaults are pushed after the written
+  arguments, in parameter order, each exactly as its literal would be, so every call convention sees one word per
+  parameter (SysV 6 / Win64 4 / aarch64 8 registers, then the stack; cx). ONE site fills — the marshaller every
+  direct call shares: `f(..)`, `o.m(..)`, `T_m(..)`, a struct-returning call (retptr and register pair), the Win64
+  vector-retptr receives (`var v: f64v2 = f(..)`, `v = f(..)`), a generic instance (from its base's defaults), an
+  `async fn`'s constructor, a `defer` body, a fn defined later. A fill resets the call's result type (`p.m() * 2`
+  with `d: f64 = 1.5` read 0 without it).
+- **Named arguments: `f(1, c: 3)`.** After the positionals, `name: value` in any order, each parameter at most once,
+  evaluated AS WRITTEN and placed in PARAMETER order. A call whose names follow parameter order is marshalled where
+  it stands (a gap's defaults are pushed before the next argument — constants, so written order holds), with no
+  temporaries; an out-of-order call (`g(c: 3, a: 1, b: 2)`) evaluates each argument into a hidden temporary (a frame
+  slot in a fn, a hidden global at top level) and then pushes every parameter in order. A named argument meets its
+  own parameter's gates — the `: cstring` literal error, the bool check, a `: Str` literal's wrap, a >8 B struct's
+  address push, the f32 rounding — and a value-form vector goes to its parameter position's XMM / V register (on
+  Win64 by pointer). Names reach every call the fill reaches, plus `await`, a closure body and a call inside an
+  inlined body. `self` is the dot form's receiver and cannot be named (`T_m(self: &p, k: 1)` is an ordinary call); a
+  generic infers T through a name (`g(n: 2, x: p)` instantiates as `g(p, 2)` does). A named call is never inlined
+  (the `#inline` replay binds by position) and never overload-routed. A label inside a closure body is not a read
+  of a variable (review: the capture pre-scan took `|n| w3(1, c: n)`'s `c` for the enclosing local `c` — refused
+  without `lib/alloc.cyr` — and at top level for the stale local table's `c`, a capture of a dead slot: SIGSEGV).
+- **Const contexts fill and bind names** from the same values: `const N = cf(1);`, `const M = cf(1, c: 9);`,
+  `#assert`, an array size, an enum value, a case label, a local const and a const fn body.
+- **Tail calls:** a `return f(..)` that fills a default or names an argument is an ordinary call, not a `jmp` (as
+  in a fn with a `defer`); a full-arity positional `return f(..)` keeps its `jmp` (objdump rows; a 1,000,000-deep
+  self tail recursion runs on every backend). The tail arm never fills: `_tc_args_divert` sends such a call to the
+  marshaller, counting arguments with a walker that steps over every leading closure head (`|a, b| ..`, and
+  `|a| |b, d| ..` is one argument — review), and a defaulted callee that still reached the arm short of max is a loud
+  internal error, never a `jmp` with a parameter unset.
+- **`#inline`:** a fn with defaults is never inlined ("#inline ignored: fn has parameter defaults"); a named call to
+  an inline-eligible fn takes the normal call path.
+- **Refused by name, once, at its token** (the parse stays in step; the grammar refusals under `--syntax-only` too).
+  At the definition: a non-trailing default ("parameter 'c' of 'f' needs a default: it follows one that has a
+  default (defaults are trailing)"); a default naming a parameter or type parameter of its own fn ("a default must
+  be a compile-time constant: 'a' is a parameter of 'g'"), before the evaluator could read a global of that name; a
+  non-constant default (the evaluator's words); a block or an if-expression ("a parameter default cannot hold a
+  block or an if-expression - declare a const and name it"); a float on an untyped parameter ("… a float default
+  needs it declared ': f64' (or ': f32')"); an integer on `f64` / `f32` ("… an integer default is its bit pattern -
+  write 1.0"); the wrong kind for `bool`, an integer type, `cstring` or `*T`; a narrow integer out of range ("the
+  default 300 does not fit parameter 'x' of 'f' (': u8')"); a default on a type that takes none, or on `self`;
+  defaults in a variadic fn; a default in a trait's methods ("trait 'Sh' method 'sh': a trait's methods take no
+  parameter defaults") or on a method of `impl Trait for T` ("… its parameters take no defaults (the trait's
+  signature is the contract)"); a fn defined twice where any definition declares defaults; a closure parameter ("a
+  closure's parameters take no defaults"); a default that is not one expression; a default defined in terms of
+  itself ("the default of parameter 'b' of 'cf' is defined in terms of itself"). At the call: a count outside
+  min..max; an unknown name ("'f' has no parameter named 'd' - its parameters are: a, b, c"); a parameter named
+  twice; one given by position and by name; a positional argument after a named one ("a positional argument cannot
+  follow a named one (in a call to 'f')"); a required one missing ("missing argument for parameter 'b' of 'g' (it
+  has no default)"); `self:` in the dot form; a callee with no declared parameter list (a variant constructor,
+  `Ok(v: 1)`); a fn with a `_str` / `_int` / `_ptr` overload sibling ("a call with named arguments cannot be
+  overload-routed: …"); a variadic fn; a fn defined twice; a reordered call inside a `#naked` fn (no frame for its
+  temporaries); `fncallN(&f, ..)` / `callptr(&f, ..)` short of a defaulted f's parameters ("a call through a fn
+  pointer passes every argument: 'f' takes 3 (defaults fill only direct calls)") or with a name ("named arguments
+  need a direct call - fncallN / callptr pass arguments by position"); an operator fn that declares a default
+  ("operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands"). A named
+  argument to a builtin keeps its two errors and gains a note ("named arguments go only to a direct call of a
+  declared fn …").
+- **⚠ A default in a trait's REQUIRED signature** (`trait Sh { fn sh(self, n = 1): i64; }`) compiled and was
+  ignored; it is now the trait refusal above (F1, user 2026-10-09).
+- **⚠ Every call to a fn defined later is arity-checked** (F2, user 2026-10-09). `_CHECK_ARITY` skipped any callee
+  whose body was not yet emitted, so a call from a fn body to a fn defined further down — or in a later include, or
+  inside a later top-level block — built with a surplus argument dropped or a missing one bound to whatever its
+  register held: a plain call, a too-few call, `o.m(..)`, `return f(..)`, an operator. Pass 1 has recorded every
+  definition's parameter count (v6.3.5) and definition token (6.6.5) before pass 2 compiles a call, so the check now
+  runs whenever pass 1 recorded the callee; a name no definition registered keeps the skip and ends in the
+  undefined-function diagnostic. The programs that stop compiling are exactly the wrong-arity forward calls: over
+  the 853-file corpus, the 7 forks and the self-compile only the issue's two repros change, and they get the errors
+  the same calls get below their callees. The guide's "Forward calls are exempt from the check" is rewritten.
+  `issues/2026-10-09-forward-call-arity-unchecked.md` — archived RESOLVED.
+- **Overload routing** (`base(x)` → `base_str` / `base_int`): a sibling that declares defaults is a target when the
+  call's count is within its min..max, and the call fills.
+- **Fixed — pass 1 counted a parameter list short at a type token that is not a name** (review).
+  `_prescan_params_scan` took a parameter's type only when it was an identifier, so at `a: u128`, `a: *u128` or
+  `a: *fn` it stopped while pass 2 took any one token. A FORWARD call to `fn g(a: u128, b): f64` lost its `: f64`
+  (it read 0 in f64 arithmetic) and one to `fn mk(a: u128, k): Big` its retptr struct return (SIGSEGV) —
+  pre-existing, since the scan was written; under F2 a right-count forward call to such a fn was refused; and a
+  default after such a parameter was never recorded while pass 2's count let the short call through (an unset
+  register). Pass 1 takes the type token as pass 2 does, and `_pd_pc_check` refuses a defaulted fn whose two passes
+  count its parameters apart, so the fill and the range check never read two maxes.
+- **Tools that read a parameter list take defaults.** `cyrius header` ends the list at its own `)` and each
+  parameter at its own `,` (`( [ {` balanced) and stops a name at `=`: `fn f(a, b = g(1, 2))` printed
+  `cyr_val b = 2` (not C) and lost parameters at the default's `,` / `)`; it is `cyr_val f(cyr_val a, cyr_val b);`
+  (C passes every argument). api-surface skips string and char literals in a list (`s = "a,b#"` counted its `,` and
+  read `#` as a comment) and records `name/MIN-MAX` for a fn whose trailing parameters default — `name/N` otherwise,
+  so this tree's snapshot is byte-identical; a changed range is still a changed signature (a call through a fn
+  pointer passes every argument), and removed_symbol_census.sh reads both shapes. cyrdoc ends a signature at the
+  body's `{`, not one in a string or char default. cyrius-lsp counts the list's `,` / `)` / `:` at its own bracket
+  depth and skips char literals (a default `b = f(x, y)` coloured `y` a parameter and its `)` ended the signature).
+  type-audit's parenthesis match steps over string and char literals (a `)` in `s = ")"` closed the list). cyrfmt
+  and cyrlint needed nothing. `cyrius lint` takes a file that calls a sibling module's fn by name, or whose default
+  names a sibling's const.
+- **Docs:** `docs/guides/cyrius-guide.md` gains *Default and named arguments (6.7.7)* at the end of **Functions**: a
+  worked example, the default rule, the per-type table, the fill, named arguments (written order, parameter order,
+  the gates they meet, where they go and where they are refused), arity, fn pointers, tail calls, `#inline`, const
+  contexts, methods and traits (F1's ⚠), `cyrius lint`, a note for stdlib authors (the helpers the compiler calls
+  with a fixed count take no default — row S-R5 derives them from `src/` and enforces it), and a block of the
+  refusals with their messages. The arity bullet says forward calls are checked; **Traits and impl blocks** and
+  **Function Pointers** each point to the section.
+
+Tests: `tests/tcyr/crossos/default_named_args_values.tcyr` (105 assertions; 103 on cx, which has no 9–16 B
+register-pair struct return) on x86 plain / `CYRIUS_IR=3` / `CYRIUS_DCE=1`, qemu-aarch64, cx and wine, compiled to
+Mach-O x86 / arm64, and on ecb / ach / cass / pi at the release gate; `tests/gates/frontend/default_named_args_checked.sh`
+(122 rows: refusals, objdump, two-file, generics, lint, async, the tools, the S-R5 helper census) with its mutation
+ledger — M1–M23, MT1–MT9 and MU1–MU4 (with MU3b) each RED; M20 is RED only together with M18 and M21 has no killing
+row, by construction (the gate header says why), as the `_pd_pc_check` backstop alone has none; `const_checked.sh`
++2 rows (M2, C3); `method_call_runs_every_callee_gate.sh`'s structural row follows the call into the marshaller;
+`hidden_temp_census.sh` registers the new `_HTEMP` user (`_pd_nreorder:1`).
+
+### Fixed — four silent miscompiles (integration lanes after the merge; user, 2026-10-09)
+
+Found by the B4 / B6 planners and the release plan's sizing; the user moved them into this release rather than wait
+behind the feature releases. Three worktree lanes on the merged tree, one review round each.
+
+- **aarch64: a 9-16 B struct return and a multi-value return carry the second word in both directions**
+  (6f27b485; issue 2026-10-09-aarch64-struct-pair-and-multi-value-registers-disagree, High) — on aarch64 (ELF,
+  Mach-O arm64, the native fork) the struct pair travels in x0:x1 (AAPCS64) and the multi-value second slot is x2, and the
+  frontend lets them meet both ways, so the second word was read from a register its producer never wrote — silently,
+  where x86_64 / PE (rax:rdx for both) were right. A `: P` fn's `return (x, x + 1);`, `ret2(..)` or `return (a, b, c);`
+  received by `var p: P = f();` / `p = f();` gave 55 where 56 is right (pi, ecb, qemu); a `: P` fn's `return p;`
+  destructured by `var a, b = f();` — at fn scope, at top level in the declaration zone and after the first
+  statement — gave 50 (pi, qemu) and 250 (ecb), and `f(); rethi()` 0 where 6. Every 9-16 B struct return now carries
+  its high word in BOTH registers on aarch64: `EFLLOAD_STRUCT_INT_PAIR` writes x2 as well as x1 (both frame arms), and
+  the multi-value arms land through one helper (`_mret_land`: PARSE_RETURN's arity 2 and 3, `ret2`) that emits
+  `ESTRUCT_PAIR_HI_SYNC` (`mov x1, x2`) in a struct fn — so forwarding calls, methods, operators, generics, defer and
+  `#inline` all agree with no consumer-side tracking. Neither convention moved (AAPCS64's x0:x1 holds); the emitter
+  is a no-op on x86 and cx, and the x86 output of the 625-file corpus is byte-identical. The tuple capture and
+  `a, b = f();` keep refusing a struct callee (the B4 decision). New `crossos/struct_pair_multi_value_crossing.tcyr`
+  (25 rows: every producer shape x every consumer; 21 red on the merged compiler under qemu) and gate
+  `codegen/struct_pair_multi_value_crossing.sh` (the issue's table as exit rows on x86_64 + qemu-aarch64, the native
+  fork under qemu, the tcyr on both legs, the two refusals on aarch64); six mutants RED. Self-hosts on pi, ecb, ach
+  and cass (crossos 246/246 each).
+- **A whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 — over the next global**
+  (High; filed 2026-10-09, `issues/2026-10-09-global-odd-size-struct-store-overwrites-next-global.md`; lane oddglobal b9f419e4).
+  Narrow struct fields and narrow globals are packed, so an inline struct global is exactly its size
+  and its neighbour starts right after it. A struct of 8 bytes or fewer is stored into a global from
+  one register through `EVSTORE_W` at the global's width, which stored exactly only 1 / 2 / 4 bytes
+  and took the 8-byte store for every other width: `G = l;` (the filed repro: 0 where 77 is right),
+  `G = mk();`, a method result, a by-value parameter, another global, a wrapped source, a for step,
+  a closure body — in a fn, at top level and on a global declared after the first statement — wrote
+  the value's upper bytes over the next 5 / 3 / 2 / 1 bytes of globals, silently, on every backend.
+  `EVSTORE_W` now stores those widths as 4 + 2 + 1 pieces: x86 `_ESTORE_ODD_RCX` (rax rotated under
+  each piece and back; PE and Mach-O x86 share it), aarch64 `_ESTORE_ODD_X1` (`lsr x16` + `strh` /
+  `strb` at the offset; Mach-O arm64 and the native fork share it), cx `_CX_STORE_ODD`. The
+  declaration replay's `_gv_store` — the filing's probable cause — is not the path (a struct global
+  initialised from an expression is registered at 8 bytes; a literal is laid down field by field);
+  it now sends every width under 8 through the same `EVSTORE_W`, so its "at the slot's width" holds
+  for every width. Structs over 8 bytes were already byte-exact (`_agc_copy_bytes`), so the 9..15-byte
+  tail never had the defect. Rows: `tests/tcyr/crossos/global_struct_store_width.tcyr` (every size
+  1..16 x every store form, 304 rows; 88 red before the fix on x86, aarch64, cx and PE) and
+  `tests/gates/codegen/global_struct_store_width.sh` (the filed repro verbatim + the values file on
+  x86 / CYRIUS_IR=1 / CYRIUS_IR=3 / CYRIUS_DCE=1 / aarch64 (qemu) / cx / PE (wine)); mutation ledger
+  in both headers. ⚠ `build/cycc-native-aarch64` changes with the aarch64 emitter (release gate 1b:
+  regenerate with `cyrius pulsar`).
+- **A closure literal's `|a, b|` comma no longer shifts the arguments after it** — three scanners that number a
+  call's arguments before it is parsed counted the depth-0 comma between a closure's parameters as an argument
+  boundary: `_call_arg_start` (generic type-argument inference) read `gx(|a, b| a + b, p)`'s closure `b` as
+  argument 1 and refused valid source ("generic 'gx' has no i64 (or other scalar) instance") — directly, through a
+  generic forwarding T past a closure, with a named argument after it, and in a `var q = pick(|a, b| .., p)`
+  receive; `_tc_str_literal_arg` (the tail-call divert for a string literal into a `: Str` parameter) let
+  `return sl(|a, b| a + b, "hello");` jump with the raw literal in the Str parameter (0 where 5 is right, every
+  backend); `_CALL_ARGC_PEEK` (the overload-routing arity gate) kept `show(s, |a, b| a * b)` from its `show_str`
+  sibling. All three now step by `_arg_next`, the one argument walker. New `crossos/closure_argument_commas.tcyr`
+  (14 rows; each scanner's revert is caught by its own rows on x86, aarch64, cx and PE);
+  `tail_call_literal_divert_depth.sh`'s source criterion reads the new form. (issue
+  2026-10-09-closure-literal-comma-counted-as-argument)
+- **A by-value argument is the value it has where it is written** — a parameter the callee copies in its prologue
+  (a plain struct over 8 B, a Win64 value-form vector) is passed by address, and that copy ran after every argument
+  of the call was evaluated, so a later argument's write reached the callee: `rd(b, bump(&b))` read `b.a` as 11
+  where 1 is right — for a local (24 / 16 / 12 B), a global and a field (in a fn and at top level), a capture, a
+  pointer-mode local, `&b`, a tuple, a generic instance, a fn defined later, a struct-valued receive, a method's
+  argument and its by-value `self`, named arguments, a tail call, an operator's left operand and an `async fn`'s
+  frame, on x86, aarch64, cx and PE; a value-form vector, loaded into its register after the integer arguments
+  (SysV, aarch64, cx), the same. When a later argument may write memory (`_span_may_write`: a call, a builtin, an
+  operator on a struct value, any token outside the read-only set — a literal, a name, a field, `&`, an index, a
+  non-dispatching operator), the argument is copied where it stands — a frame temporary, at top level a hidden
+  global (`_sarg_snap`); a vector into a frame copy its register is loaded from (`_simd_arg_snap`) — and the
+  callee receives the copy. A call whose later arguments only read is unchanged, byte for byte. In tail position
+  the copy lives in the frame the `jmp` would free, so such a call is an ordinary call (as one given `&local`
+  already is): `return f(G, n - 1, g(acc))` with `f(s: Big, ..)` no longer runs in constant stack, while
+  `return f(G, n - 1, acc + p.c)` keeps its `jmp`. That cost is accepted (user, 2026-10-09): only the copying call
+  loses its `jmp` — every other tail call in the fn keeps its own — and the per-fn "writes no memory" analysis that
+  would win it back is filed for 6.7.13 (issue 2026-10-09-tail-call-by-value-copy-needs-effect-analysis). New gate
+  `by_value_arg_copy.sh` (the copy's cost by fn size — none for eleven read-only shapes, present for six writing
+  ones; the tail form by objdump, the copying call alone losing its `jmp` and the ruling pinned; an `async fn`; the
+  tcyr on x86 / IR=3 / DCE, aarch64, cx and PE; twelve mutants each killed) and
+  `crossos/by_value_arg_evaluation_order.tcyr` (33 rows, 27 of them failing on the merged compiler, 28 on PE; three
+  1,000,000-deep tail rows are controls); `hidden_temp_census.sh` lists `_sarg_snap`'s two scratch words. (issue
+  2026-10-09-struct-arg-sees-later-arg-side-effect)
+- **An explicit generic call's type arguments separate no arguments** — `_arg_next`, the one argument walker, read
+  the comma in `pk<i64, i64>(1, 2)` as an argument boundary; only B4's tuple walker (`_tup_item_end`) stepped over
+  it. Every client is now right: B6's `return w(pk<i64, i64>(1, 2));` into `fn w(a, b = 3)` (an "internal: tail
+  call to 'w' reached the tail arm short of its defaults" error, `_pd_call_fills`); `w(b: pk<i64, i64>(1, 2), a: 1)`
+  ("a positional argument cannot follow a named one", `_pd_nscan`); the overload router, `show(str_from("hi"),
+  pk<i64, i64>(1, 2))` not routed to `show_str` (silent since 6.7.6, `_CALL_ARGC_PEEK`); the tail divert of a string
+  literal into a `: Str` parameter (`_tc_str_literal_arg`); generic inference, positional, named and in a receive
+  (`_call_arg_start`, `_call_arg_for`); and the arity error's count after a label (`_pd_nargs`). The by-value copy
+  above takes none for `rd(mk<i64, i64>(1, 2), n)` (`_later_args_may_write`). `_arg_next` now steps over the whole
+  generic call: one that starts before the comma and opens its `(` past it (`_arg_gen_past`). The tuple walker is
+  folded in, so there is one walker. A comparison `a < b, c > (d)` keeps its comma, as before: the name must be a
+  known generic fn whose list resolves as types. `default_named_args_checked.sh` gains GC1-GC8 (the three repros
+  verbatim, one row per client, two comparison controls) and AC1-AC6: `crossos/closure_argument_commas.tcyr` (14 ->
+  33 rows, 19 new, 12 failing on the merged compiler, 7 controls) on x86 / IR=3 / DCE, aarch64, cx and PE. Mutants
+  MU5 (the pre-fix walker) and MU6 (the type-argument list read by shape alone) are each killed.
 
 ### Fixed — the found issues
 
@@ -54,6 +474,37 @@ review round each, and the backlog moved into `docs/development/issues/`.
   `bash -e`; the two older gates build release-shaped tarballs; `release_verify_private_temp.sh`'s axis-4 detector
   no longer aborts under `bash -eo pipefail`.
 
+### Internal — one argument marshaller, one set of list walkers (identical output)
+
+- **One argument marshaller for every direct call.** PARSE_FNCALL's normal path and the method form `o.m(..)`
+  (`_field_load_on`) each kept their own argument loop; both now call `_owncall_args_at(S, fi, noff, int0, p0, line)`
+  (`p0` = 1 for the dot form, whose `self` is parameter 0), which the struct-valued receives and the four Win64
+  vector-retptr calls already shared through `_owncall_args` (now its `p0 = 0` wrapper). Every argument goes through
+  `_call_arg_one`, which carries every callee-mask gate (the SIMD record, the `: cstring` literal error and `Str`
+  warning, the `: Str` wrap, the struct address push, PCMPE + bool / f32) keyed by parameter index — so a call-site
+  obligation (B6's fills and names) is written once. PARSE_FNCALL's first-argument overload routing moved to
+  `_fnc_route` and its inline veto to `_fnc_no_inline`: PARSE_FNCALL went from 450 lines to 220 and `_field_load_on`
+  from 227 to 180, the headroom the later bites spent under cybs's per-fn reference ceiling. Differential: 647 files
+  byte-identical on x86 (plain, `CYRIUS_IR=3`, `CYRIUS_DCE=1`), PE (`CYRIUS_TARGET_WIN=1` and the `main_win` fork),
+  aarch64 and cx; the 7 forks' compilers build byte-identical with either.
+- **One rule for every walker that steps over a parameter or an argument.** In a parameter's TYPE `<..>` nests
+  (`m: Map<K, V>`; `>>` / `>>>` close two / three); in its DEFAULT only `( [ {` do (`b = A < B` — `<` is an operator
+  there); in an argument list a closure's bars, at an argument's start or after a `name:` label, are stepped over
+  whole. New cursor-free helpers `_tok_item_end`, `_pl_dflt_end`, `_pl_tdepth`, `_pl_next`, `_pl_has_dflt`,
+  `_arg_next`, `_pd_label_at`, `_pd_named_at` (at end of input each returns the EOF token, so a walker that continues
+  from the result always moves). The definition walkers that read a parameter list token by token (`_bx_pname`,
+  `_gs_params`, `_bnd_sites`, `_tr_arity`) skip a default whole; pass 1's `_prescan_skip_fn` skips the list as one
+  balanced `( .. )` before it looks for the body; `_ce_bind_params` steps a parameter with `( [ {` balance, as
+  `_ce_nparams` counts it (a `<`-aware bind refused an uncalled `const fn f(p: Pair<i64, i64>, b)` that compiles —
+  `const_checked.sh` C3); `_ce_top_expr`, the const evaluator's top-context entry, is factored out of `_cst_eval`.
+  B4's tuple-literal detector `_tup_commas` is built on the same `_arg_next` / `_tok_item_end`, plus an explicit
+  generic call's type-argument step — no private paren skip. Differential: 855 files (every `.tcyr`, `programs/*.cyr`,
+  `cbt/cyrius.cyr`, every `.bcyr` / `.fcyr`, every `tests/**/*.cyr` fixture and issue repro) byte-identical on x86
+  (plain, `CYRIUS_IR=3`, `CYRIUS_DCE=1`), PE, Mach-O and the aarch64 / cx / win forks.
+- Smaller extractions, each with identical output: `_expr_struct_sid` (out of `_sarg_byval_small`),
+  `_dt_rhs_check_t` (the destructure's right-hand-side check, now shared with `a, b = f();`), `_tup_greg` (the
+  literal and capture globals' one registration), `_fnc_ptr_sib` (out of `_fnc_route`).
+
 ### Docs — the backlog is `docs/development/issues/`
 
 - The user's directive (2026-10-08): "issues that are backlogged should have issue/ filed, not sit in the roadmap".
@@ -61,6 +512,36 @@ review round each, and the backlog moved into `docs/development/issues/`.
   cause re-derived, proposed fix), plus what the 6.7.7 lanes found out of scope; roadmap.md carries placements and
   links; `issues/README.md` gains the *Open queue* index. CLAUDE.md, the issues README and cycle-discipline carry the
   rule; the old "keep issues/ lean, fold the tail into the roadmap" target is retired.
+
+### Filed, not fixed
+
+Filed by the two lanes; each `**Placement:**` is the roadmap's (placed 2026-10-09). The lanes' other filings ship
+fixed in this release: the forward-call arity check (B6 bite 3, F2) and, as integration bites after the merge (user,
+2026-10-09), the aarch64 struct-pair / multi-value registers, a struct argument seeing a later argument's side
+effect, and a closure literal's comma counted as an argument.
+
+- **A multi-value receive reads a return register the callee never wrote**, in three shapes that compile silently —
+  an undeclared callee bound to more names than it returns, a one-value `return x;` and a struct `return p;` in a
+  `: (i64, i64)` fn (seeded repros read the previous call's 77 / 88 on all four targets) —
+  `issues/2026-10-09-multi-value-receive-reads-stale-return-registers.md`, 6.7.10 (each fix refuses source that
+  compiles today: the shape is decided at that open).
+- **A named-field struct literal in the declaration zone is refused** ("undefined variable 'a'") — the guide's own
+  *Structs* example fails as written, since at least cc5 5.11.69 —
+  `issues/2026-10-09-declaration-zone-named-struct-literal-refused.md`, 6.7.12.
+- **A trait's required signature is never parsed, nor a default method that every impl overrides**, so junk in
+  either compiles — `issues/2026-10-09-trait-signature-parameter-list-unparsed.md`, 6.7.8 (checked `dyn`'s D1); its
+  default half ships here (F1).
+- **A method call's result keeps its last argument's f64 type** — `p.m(1.5) * 2` is 0 (a call that fills a default
+  resets it; one with no fill does not) — `issues/2026-10-09-method-call-result-keeps-last-arg-f64-type.md`, 6.7.10.
+- **An integer constant passed to an `f64` / `f32` parameter keeps its bits with no warning** —
+  `issues/2026-10-09-int-argument-to-f64-param-silent.md`, 6.7.10.
+- **A `: stack` pair in a struct-literal element (`P { f(7), 3 }`) or a plain argument (`g(f(7))`) keeps the tag**
+  (pre-6.7.7; met by the B4 review; user, 2026-10-09: "file for later") — `issues/2026-10-09-stack-pair-struct-literal-element-and-argument-keep-tag.md`, a repair release.
+- **Twenty-four more**, from the lanes' out-of-scope finds — among them three silent miscompiles (a closure in a
+  suspending `async fn` captures a multi-word struct with its words reversed; an `async fn` declared `: (i64, i64)`
+  loses its second value; a destructure of a struct callee over 16 B reads a wrong second value) — and thoth's report
+  that the exec family's children keep the parent's signal mask: each verified on the merged tip and placed in
+  6.7.8 – 6.7.13 (`issues/README.md` § *Open queue*).
 
 ## [6.7.6] — 2026-10-08
 
