@@ -809,6 +809,11 @@ fn _for_step_assign(S, noff): i64 {
         idx = FINDVAR(S, noff);
         if (idx >= 0) { _asg_plain_chk(S, idx, 1, step_ti); _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
     }
+    # 6.7.8: the scalar store ends the step, so its `)` is checked here, as the statement checks its
+    # `;` — `i += 1 2`, `i = i + 1 2`, `i += 1 ; junk` and a whole-struct `a = b 2` (the junk also
+    # defeated the copy: one word stored) built silently. Not after the lvalue refusal above (already
+    # reported) nor after an aggregate helper that returned 1 (it consumed the `)`). CHANGELOG [6.7.8]
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     return 0;
 }
 
@@ -830,7 +835,13 @@ fn _for_step_replay(S): i64 {
         STI(S, d);
         if (mc == 0) { return PARSE_FIELD_STORE(S, noff, 11); }
     }
-    if (_arr_sub_assign(S, noff) == 0) { _for_step_assign(S, noff); }
+    # 6.7.8: `a[i] OP= v` leaves its terminator to the caller (the statement checks `;`): check the
+    # step's `)` — `a[0] += 1 2` built silently. CHANGELOG [6.7.8]
+    if (_arr_sub_assign(S, noff) == 1) {
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        return 0;
+    }
+    _for_step_assign(S, noff);
     return 0;
 }
 

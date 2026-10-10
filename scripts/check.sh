@@ -2342,6 +2342,11 @@ _chk_gate "$ROOT/tests/gates/frontend/slice_read_left_operand.sh"
 # no slice — an untyped / closure parameter in a slot an earlier fn's slice held compiled `y[0]`,
 # `y.len` as a slice (and refused `y += 1`); the slice bit 62 decides. x86 / IR=3 / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/pointer_subscript_checked.sh"
+# 6.7.8 (C2-2b) — every classic-for step ends at its `)`: the scalar and subscript arms never looked,
+# so `i += 1 2`, `a[0] += 1 2`, `i += 1 ; junk` built silently and `a = b 2` stored one word of a
+# struct. Junk refused once on every arm; every arm still runs its step on x86 / IR / DCE /
+# aarch64 / cx / PE; fork parity. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/for_step_terminator_checked.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
