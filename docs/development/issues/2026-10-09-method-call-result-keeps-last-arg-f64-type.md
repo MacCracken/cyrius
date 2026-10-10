@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`. With
 `fn m(self, d: f64): i64` returning 21, `p.m(1.5) * 2` warns "f64 arithmetic with a non-f64 right operand" and
-evaluates to 0. The free-fn spelling `m2(&p, 1.5) * 2` is 42.
+evaluates to 0. The free-fn spelling `m2(&p, 1.5) * 2` is 42. Re-verified 2026-10-10 against 6.7.8 @ 484763ed: the
+repro still exits 1 on x86_64, aarch64 (qemu), cx and PE (wine). ⚠ The Proposed fix's premise is wrong — see
+*An f64-returning method is never typed f64* below (appended by the 6.7.8 dyn lane's D0).
 **Placement:** 6.7.10 — Break 2, repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `method_f64_arg_leak.cyr`).
 **Severity:** Medium — a silent wrong value on an integer method result. The spurious warning is the only sign.
@@ -66,3 +68,42 @@ ones that compute a wrong value today.
 
 Bind the result first (`var t = p.m(1.5); var r = t * 2;`), or call the method by its mangled name (`P_m(&p, 1.5)`),
 which takes PARSE_FNCALL's path.
+
+## An f64-returning method is never typed f64 (appended 2026-10-10, 6.7.8 dyn lane D0)
+
+The Proposed fix above says "the f64-returning method's re-tag must still apply afterwards, as the D1 seam does for a
+free fn". **There is no such re-tag on the method path.** The free call ends with `_call_ret_marks(S, fi)`
+(`src/frontend/parse_expr.cyr:2468`; called at `:2825`): an f64 return (GFRS −9) is brought from xmm0 into rax
+(`EMOVQ_A_X0`) and typed `F64_TYID`, then `_call_ret_ps`. The method arm of `_field_load_on` calls only
+`_call_ret_ps(S, mfi)` (`src/frontend/parse_decl.cyr:1708`, after `ECALLCLEAN` `:1706` and `_sc_post` `:1707`), so a
+method declared `: f64` gives an UNTYPED word — the reverse of the leak this file reports.
+
+`docs/development/issues/repros/2026-10-09-method-call-result-keeps-last-arg-f64-type-f64-return.cyr`:
+
+```cyrius
+struct P { v; }
+impl P { fn area(self): f64 { return 2.5; } }
+fn main(): i64 {
+    var p = P { 1 };
+    var a: f64 = p.area() + 1.0;
+    if (a == 3.5) { return 42; }
+    return 1;
+}
+var rr = main();
+syscall(60, rr);
+```
+
+```
+actual:   warning:<source>:5:32: integer arithmetic with an f64 right operand ; exit 1 (x86_64, aarch64-qemu, cx, PE-wine)
+expected: no warning ; exit 42
+```
+
+So the fix here is the free call's pair, in the free call's order: `SESTYPE(S, 0)` (the half this file reports —
+PARSE_FNCALL's reset, `src/frontend/parse_fn.cyr:6075`) and then `_call_ret_marks(S, mfi)` in place of
+`_call_ret_ps(S, mfi)` (it calls `_call_ret_ps` itself; PARSE_FACTOR calls it right after PARSE_FNCALL returns,
+`parse_expr.cyr:2825`). `SESTYPE(S, 0)` alone would leave the f64 return untyped, and `_call_ret_marks` alone resets
+nothing for a non-f64 return. Checked in a scratch tree on 2026-10-10 (x86, not committed): with those two lines in
+place of `_call_ret_ps(S, mfi);`, this file's repro exits 0 and the f64-return repro exits 42, with no warning. A gate
+row for `p.area() + 1.0` joins the two rows named above.
+Both halves change what a compiling program computes; the placement stays 6.7.10. The 6.7.8 `dyn` call types its own
+result (`_call_ret_marks` on the trait member's prototype), so it does not wait on this fix.
