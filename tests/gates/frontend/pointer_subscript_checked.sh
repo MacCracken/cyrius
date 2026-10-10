@@ -144,6 +144,43 @@
 #   MBARE no name taken as a bare array -> RED R4e-h; array_subscript_forms' five bare rows
 #   The C2-3b compiler (before this bite) -> RED A0 A0s Aa Ab Af Ag Ae AS1 R1a-g R2a-e R3a-e R4a-i R9-R11
 #   W1-W5 (46 rows; Ac / Ad pass: those legs' compilers are built from this tree's src)
+#
+# B / AS2 / R5-R8 / X — `p[i]` ON A `*T` FIELD OR A CALL RETURNING `*T` (C2-4b; the decision's "bases:
+# named variables, fields (`h.p[i]`) and call results (`f()[i]`)"). `h.p[i]`, `a.b.p[i]`, `self.p[i]`,
+# `mk(4).p[i]`, `f()[i]`, `g<T>()[i]`, `o.m()[i]` were `expected ';' / '=', got '['`. The base is
+# evaluated first, then the index; the element is read / stored as a named `*T`'s, typed by the base's
+# DECLARATION (a field's `*T`, a callee's `: *T` — never a scale an argument left behind).
+#   B0  tests/tcyr/crossos/pointer_subscript_bases.tcyr compiles with no warning; --syntax-only silent
+#   B   that file on x86 (plain, CYRIUS_IR=3, CYRIUS_IR=1, CYRIUS_DCE=1), aarch64 (qemu), cx, PE (wine) —
+#       its T1 rows (`return f()[i];` is a call and a load, never a tail call: a `jmp` would return the
+#       pointer) and FWD (`fwd()[3]` before `fn fwd(): *u16`) included
+#   AS2 a field base and a call base in a suspending `async fn` (CYRIUS_ASYNC=1), across two awaits
+#   R5  a field that is no `*T`: read, `=`, `OP=`, the for step, `s.ptr[0]` on a slice, and R5e / R5f
+#       `mk(q).n[0]` whose `*i32` ARGUMENT left its scale behind (6.7.7 still adds by it: reported)
+#   R6  a call that returns no `*T`: a plain fn (read, statement, for step), `load64(..)`, `fncall1`,
+#       `callptr`, a method (read, statement), a generic returning T
+#   R1i-k / R2f-g  a `*Pt` field, return and method (the struct named), a `**i64` field, a `*u128` return
+#   R7  `a[i][j]` (read, and `a[1][2] = 5`, which was "expected '='"), `h.p[1][2]`, `gp()[1][2] = 5`,
+#       `p[0][1] += 1`;  R8  `&a[2]`, `(p + 1)[1]`, `(p)[0]`, `"abc"[1]`, `5[0]` — each one error line
+#   X1  --syntax-only (cyrius lint's pre-pass) on field / call / method bases another file declares:
+#       rc 0, no error;  X2  it still refuses `get()[1][2]` and `&b[1]` (grammar)
+#
+# MUTATION LEDGER (C2-4b, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant>;
+# 2026-10-10):
+#   M7    a base with no `*T` taken as an `*i64` (`_psub_ed`) -> RED R5a-g R6a-i R8b-e (20 rows build)
+#   M8    the `&a[i]` check dropped (`_sub_post`) -> RED R8a X2b (the parenthesis text instead)
+#   M22   `return f()[i];` taken as a tail call (PARSE_RETURN accepts `[` after the `)`) -> RED B0 B0s
+#         Ba-Bg R6a R2g X2a
+#   MW    a field base judged by the scale word (`_sub_word`) -> RED R5e R5f (`mk(q).n[0]` subscripts)
+#   MSC   a method taken for a direct call of its name (`_sub_callee`) -> RED B0 Ba-Bg R1k
+#   MDIR  a direct call's base judged by the scale word (statement position sets none) -> RED B0 B0s
+#         Ba-Bg R7d
+#   MFS   PARSE_FIELD_STORE's `[` arm dropped -> RED B0 B0s Ba-Bg R5b-d
+#   MSTEP the for step's call arm dropped (`_step_call_sub`) -> RED B0 B0s Ba-Bg R6g X1
+#   MSTMT `_stmt_qmark`'s `[` arm dropped -> RED B0 B0s Ba-Bg R6b R6i R1j R7d X1
+#   MFLT  `_field_load_type` records no field end (`_flt_ti`) -> RED B0 B0s Ba-Bg R1i R2f R7c
+#   MSO   the --syntax-only silence dropped -> RED X1 X2a
+#   MR7   `_esub_assign`'s second-`[` refusal dropped -> RED R7b R7d R7e ("expected '='")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -645,6 +682,88 @@ rc=0; timeout 60 "$CC" < "$T/w5.cyr" > "$T/w5.bin" 2> "$T/w5.err" || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/w5.err"; then ok "W5: an i64 element into an f32 element / f32[2], and f32 OP=, warn nothing"
 else bad "W5: rc $rc: $(grep '^warning\|^error' "$T/w5.err" | head -1)"; fi
 
+# ── B / R5-R8 / X: `p[i]` on a `*T` field or a call returning `*T` (C2-4b) ────────────────────
+# B: the value file on every leg, with no warning, silent under --syntax-only.
+PSB=tests/tcyr/crossos/pointer_subscript_bases.tcyr
+[ -f "$PSB" ] || { echo "FAIL: $G: $PSB missing"; exit 1; }
+cp "$PSB" "$T/psb.cyr"
+rc=0; "$CC" < "$T/psb.cyr" > "$T/psb.chk" 2> "$T/psb.chk.err" || rc=$?
+nw=$(grep -c '^warning\|^error' "$T/psb.chk.err" || true)
+if [ "$rc" -eq 0 ] && [ "$nw" -eq 0 ]; then ok "B0: the bases file compiles with no warning ($(grep -c 'assert' "$T/psb.cyr") asserts)"
+else bad "B0: rc $rc, $nw diagnostic line(s): $(grep '^warning\|^error' "$T/psb.chk.err" | head -2 | tr '\n' '|')"; fi
+rc=0; "$CC" --syntax-only < "$T/psb.cyr" > /dev/null 2> "$T/psb.so.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error\|^warning' "$T/psb.so.err"; then ok "B0s: --syntax-only (cyrius lint) reports nothing"
+else bad "B0s: --syntax-only rc $rc: $(grep '^error\|^warning' "$T/psb.so.err" | head -1)"; fi
+legs psb B "field, call, generic-call and method bases: read, =, OP=, the for step, T1, FWD" full
+
+# AS2: a field base and a call base in a suspending `async fn` (CYRIUS_ASYNC=1), across two awaits.
+CC_SV=$CC; CC="$T/acc"
+exits as2 10 "AS2: h.p[i] and bp()[i] in a suspending async fn, across awaits" \
+    'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nstruct H { n; p: *i32; }\nvar B: i32[8];\nfn bp(): *i32 { return &B; }\nfn nopark(): i64 { return 0; }\nasync fn st(): i64 {\n    var h: H;\n    h.p = &B;\n    h.p[1] = 4;\n    var s1 = await nopark();\n    bp()[2] = 6;\n    h.p[1] += bp()[2];\n    var s2 = await nopark();\n    return h.p[1];\n}\nfn main(): i64 {\n    alloc_init();\n    var C = st();\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    syscall(60, r3);\n    return 0;\n}\nvar e = main();\n'
+CC=$CC_SV
+
+# R5 / R6: a field that is no `*T`, a call that returns none — by name, once, the statement parsed on.
+# R5e: a call result's field whose call left a `*i32` ARGUMENT's scale behind (`mk(q).n`): the base
+# is judged by the field's declaration, not by that scale.
+HH='struct Pt { x; y; }\nstruct H { n; p: *i32; q: *Pt; pp: **i64; }\nvar B: i64[8];\n'
+R5="cannot subscript field 'n': it is not a *T field"
+refused r5a "$R5" "R5a: h.n[1] read (an i64 field)" "${HH}fn f(): i64 { var h: H; return h.n[1]; }\nsyscall(60, f());\n"
+refused r5b "$R5" "R5b: h.n[1] = 3" "${HH}fn f(): i64 { var h: H; h.n[1] = 3; return 0; }\nsyscall(60, f());\n"
+refused r5c "$R5" "R5c: h.n[1] += 3" "${HH}fn f(): i64 { var h: H; h.n[1] += 3; return 0; }\nsyscall(60, f());\n"
+refused r5d "$R5" "R5d: the for step h.n[i] = 1" "${HH}fn f(): i64 { var h: H; for (var i = 0; i < 2; h.n[i] = 1) { i = i + 1; } return 0; }\nsyscall(60, f());\n"
+refused r5e "$R5" "R5e: mk(q).n[0] with a \`*i32\` argument (its scale is no base)" "${HH}fn mk(q: *i32): H { var h: H; h.n = 1; h.p = q; return h; }\nfn f(): i64 { var q: *i32 = &B; return mk(q).n[0]; }\nsyscall(60, f());\n"
+refused r5f "$R5" "R5f: mk(q).n[0] = 1 as a statement" "${HH}fn mk(q: *i32): H { var h: H; h.n = 1; h.p = q; return h; }\nfn f(): i64 { var q: *i32 = &B; mk(q).n[0] = 1; return 0; }\nsyscall(60, f());\n"
+refused r5g "cannot subscript field 'ptr': it is not a *T field" "R5g: s.ptr[0] on a slice (its .ptr is a plain word)" 'include "lib/slice.cyr"\nfn f(): i64 { var b: u8[4]; var s: [u8] = 0; slice_set(&s, &b, 4); return s.ptr[0]; }\nsyscall(60, f());\n'
+R6=": it does not return a *T"
+refused r6a "cannot subscript the result of 'f'$R6" "R6a: f()[1] read (an i64 return)" "${HH}fn f(): i64 { return 5; }\nfn g(): i64 { return f()[1]; }\nsyscall(60, g());\n"
+refused r6b "cannot subscript the result of 'f'$R6" "R6b: f()[1] = 2 as a statement" "${HH}fn f(): i64 { return 5; }\nfn g(): i64 { f()[1] = 2; return 0; }\nsyscall(60, g());\n"
+refused r6c "cannot subscript the result of 'load64'$R6" "R6c: load64(&B)[1] (a builtin)" "${HH}fn g(): i64 { return load64(&B)[1]; }\nsyscall(60, g());\n"
+refused r6d "cannot subscript the result of 'fncall1'$R6" "R6d: fncall1(&f, 1)[0] (an indirect call)" "include \"lib/fnptr.cyr\"\n${HH}fn f(x): i64 { return &B; }\nfn g(): i64 { return fncall1(&f, 1)[0]; }\nsyscall(60, g());\n"
+refused r6e "cannot subscript the result of 'callptr'$R6" "R6e: callptr(k, 1)[0]" "${HH}fn g(): i64 { var k = |x| x; return callptr(k, 1)[0]; }\nsyscall(60, g());\n"
+refused r6f "cannot subscript the result of 'm'$R6" "R6f: h.m()[1] read (a method returning i64)" "${HH}impl H { fn m(self): i64 { return 0; } }\nfn g(): i64 { var h: H; return h.m()[1]; }\nsyscall(60, g());\n"
+refused r6i "cannot subscript the result of 'm'$R6" "R6i: h.m()[0] = 1 as a statement" "${HH}impl H { fn m(self): i64 { return 0; } }\nfn g(): i64 { var h: H; h.m()[0] = 1; return 0; }\nsyscall(60, g());\n"
+refused r6g "cannot subscript the result of 'f'$R6" "R6g: the for step f()[i] = 1" "${HH}fn f(): i64 { return 5; }\nfn g(): i64 { for (var i = 0; i < 2; f()[i] = 1) { i = i + 1; } return 0; }\nsyscall(60, g());\n"
+refused r6h "cannot subscript the result of 'gv'$R6" "R6h: gv<i32>()[0] (a generic returning T)" "${HH}fn gv<T>(): T { return 0; }\nfn g(): i64 { return gv<i32>()[0]; }\nsyscall(60, g());\n"
+EL2="a subscript takes an integer, f64, f32 or bool element"
+refused r1i "cannot subscript field 'q': $EL2 - its element is struct 'Pt'" "R1i: h.q[1] on a \`q: *Pt\` field" "${HH}fn f(): i64 { var h: H; return h.q[1]; }\nsyscall(60, f());\n"
+refused r1j "cannot subscript the result of 'gq': $EL2 - its element is struct 'Pt'" "R1j: gq()[1] = 2 on a \`*Pt\` return" "${HH}fn gq(): *Pt { return &B; }\nfn f(): i64 { gq()[1] = 2; return 0; }\nsyscall(60, f());\n"
+refused r1k "cannot subscript the result of 'mq': $EL2 - its element is struct 'Pt'" "R1k: h.mq()[0] on a method returning \`*Pt\`" "${HH}impl H { fn mq(self): *Pt { return &B; } }\nfn f(): i64 { var h: H; return h.mq()[0]; }\nsyscall(60, f());\n"
+refused r2f "cannot subscript field 'pp': $EL2 - its element is a pointer, string, enum or vector" "R2f: h.pp[1] on a \`**i64\` field" "${HH}fn f(): i64 { var h: H; return h.pp[1]; }\nsyscall(60, f());\n"
+refused r2g "cannot subscript the result of 'gu': a u128 element does not fit one register" "R2g: gu()[1] on a \`*u128\` return" "${HH}fn gu(): *u128 { return &B; }\nfn f(): i64 { return gu()[1]; }\nsyscall(60, f());\n"
+
+# R7 / R8: grammar — a second `[..]`, an address, a parenthesised or literal base.
+R7="a subscript's result is an element, not an array - a second [..] is not supported"
+refused r7a "$R7" "R7a: a[1][2] read on an i32[4]" "${HH}fn f(): i64 { var a: i32[4]; return a[1][2]; }\nsyscall(60, f());\n"
+refused r7b "$R7" "R7b: a[1][2] = 5 (was \"expected '='\")" "${HH}fn f(): i64 { var a: i32[4]; a[1][2] = 5; return 0; }\nsyscall(60, f());\n"
+refused r7c "$R7" "R7c: h.p[1][2] read" "${HH}fn f(): i64 { var h: H; h.p = &B; return h.p[1][2]; }\nsyscall(60, f());\n"
+refused r7d "$R7" "R7d: gp()[1][2] = 5 as a statement" "${HH}fn gp(): *i32 { return &B; }\nfn f(): i64 { gp()[1][2] = 5; return 0; }\nsyscall(60, f());\n"
+refused r7e "$R7" "R7e: p[0][1] += 1 on a named \`*i32\`" "${HH}fn f(): i64 { var p: *i32 = &B; p[0][1] += 1; return 0; }\nsyscall(60, f());\n"
+refused r8a "&a[i] is not supported - write &a + i * sizeof(T) (or p + i)" "R8a: &a[2]" "${HH}fn f(): i64 { var a: i32[4]; var q = &a[2]; return q; }\nsyscall(60, f());\n"
+R8="a subscript's base is a name, a *T field or a call returning *T - name the pointer first"
+refused r8b "$R8" "R8b: (p + 1)[1]" "${HH}fn f(): i64 { var p: *i32 = &B; return (p + 1)[1]; }\nsyscall(60, f());\n"
+refused r8c "$R8" "R8c: (p)[0]" "${HH}fn f(): i64 { var p: *i32 = &B; return (p)[0]; }\nsyscall(60, f());\n"
+refused r8d "$R8" "R8d: \"abc\"[1]" "${HH}fn f(): i64 { return \"abc\"[1]; }\nsyscall(60, f());\n"
+refused r8e "$R8" "R8e: 5[0]" "${HH}fn f(): i64 { return 5[0]; }\nsyscall(60, f());\n"
+
+# X1: --syntax-only (cyrius lint's pre-pass) on bases another file declares — an untyped receiver,
+# undefined fns — reads, stores, compounds and steps: rc 0, no error (the "undefined function"
+# warnings are --syntax-only's own, as for `get();`). X2: the grammar refusals still report there.
+printf '%b' 'fn f(h): i64 {\n    var a = h.p[1] + get()[2] + mk(3).p[0] + h.m()[1] + h.q.r[2];\n    h.p[1] = 5;\n    h.p[2] += 1;\n    h.q.r[2] = 1;\n    get()[2] = 7;\n    mk(4).p[1] = 3;\n    h.m()[0] = 1;\n    for (var i = 0; i < 2; get()[i] += 1) { i = i + 1; }\n    for (var i = 0; i < 2; h.p[i] += 1) { i = i + 1; }\n    for (var i = 0; i < 2; h.m()[i] = 1) { i = i + 1; }\n    return a;\n}\n' > "$T/x1.cyr"
+rc=0; "$CC" --syntax-only < "$T/x1.cyr" > /dev/null 2> "$T/x1.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/x1.err"; then ok "X1: --syntax-only on field / call / method bases from another file: rc 0, no error"
+else bad "X1: --syntax-only rc $rc: $(grep '^error' "$T/x1.err" | head -1)"; fi
+so_refused() {   # <name> <fragment> <what> <body>: --syntax-only fails with exactly one error line holding it
+    printf '%b' "$4" > "$T/$1.cyr"
+    rc=0; "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.err" || rc=$?
+    n=$(grep -c '^error' "$T/$1.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$3: rc 0 — want \"$2\""
+    elif [ "$n" -ne 1 ]; then bad "$3: $n error lines, want 1"
+    elif grep '^error' "$T/$1.err" | grep -qF "$2"; then ok "$3"
+    else bad "$3: wrong refusal: $(grep '^error' "$T/$1.err" | head -1)"; fi
+}
+so_refused x2a "$R7" "X2a: --syntax-only still refuses get()[1][2]" 'fn f(): i64 { return get()[1][2]; }\n'
+so_refused x2b "&a[i] is not supported" "X2b: --syntax-only still refuses &b[1]" 'fn f(): i64 { var b: i32[4]; var q = &b[1]; return q; }\n'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X)"

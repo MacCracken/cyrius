@@ -1,0 +1,362 @@
+# pointer_subscript_bases.tcyr — 6.7.8 (C2-4b) — `p[i]` where the pointer is a `*T` FIELD or the
+# RESULT of a call returning `*T`: `h.p[i]` (a local, a global, through a `*H` parameter, a nested
+# `a.b.p[i]`, through a `*H` field, `self.p[i]`, a generic struct's field), `f()[i]`, `g<T>()[i]`,
+# `o.m()[i]` and the compositions `mk(4).p[i]` / `mk().m()[i]` — read, `=`, the compound operators
+# and the classic-for step, at every element kind, on every backend.
+#
+# Before 6.7.8 each of these was `expected ';', got '['` (a read) or `expected '=', got '['` (a
+# store): the only spelling was `load32(h.p + i * 4)` / `store32(f() + i * 4, v)`. The base is
+# evaluated FIRST (the field's value, the call's result), then the index; the element is the one
+# `p[i]` on a named `*T` reaches (tests/tcyr/crossos/pointer_subscript_values.tcyr), typed by the
+# base's DECLARATION — the field's `*T`, the callee's `: *T` (src/frontend/parse_expr.cyr
+# `_sub_post`, `_stmt_call_sub`; parse_decl.cyr `_fld_sub_store`).
+#
+# Every pointer points into BUF, zeroed before each group and followed by a canary; the rows read
+# the stored bytes back with `load8/16/32/64` at their byte offsets, so a wrong base, a wrong scale,
+# a wrong width or a lost sign cannot pass. The refusals (a field that is no `*T`, a call that
+# returns none, `a[i][j]`, `&a[i]`, `(expr)[i]`), --syntax-only on bases from another file, the
+# tail-call row's disassembly and the CYRIUS_IR=1 / IR=3 / DCE runs are
+# tests/gates/frontend/pointer_subscript_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+var BUF: i64[8];
+var BUF_CAN = 0x5A5A5A5A5A5A5A5A;
+
+struct H { n; p: *i32; u: *u8; f: *f64; g: *f32; b: *bool; }
+struct W { k; h: H; }
+struct Q { tag; hp: *H; }
+struct PB<T> { n; p: *T; }
+var GH = H { 0, 0, 0, 0, 0, 0 };
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+fn canary(what): i64 {
+    assert_eq(BUF_CAN, 0x5A5A5A5A5A5A5A5A, what);
+    return 0;
+}
+
+# ---- F1: `h.p[i]` on a local struct's `*T` fields: `=` at the element's width, the read sign- or
+# zero-extended, every compound operator, the neighbours untouched ----
+fn fields_local(): i64 {
+    zero();
+    var h: H;
+    h.p = &BUF;
+    h.u = &BUF;
+    h.p[1] = 0 - 7;
+    assert_eq(h.p[1], 0 - 7, "h.p[1] = -7 on a *i32 field reads -7 (sign-extended)");
+    assert_eq(load32(&BUF + 4), 4294967289, "h.p[1] is bytes 4..7");
+    assert_eq(load32(&BUF), 0, "h.p: element 0 untouched");
+    assert_eq(load32(&BUF + 8), 0, "h.p: element 2 untouched");
+    h.u[9] = 255;
+    assert_eq(h.u[9], 255, "h.u[9] = 255 on a *u8 field reads 255 (zero-extended)");
+    assert_eq(load8(&BUF + 9), 255, "h.u[9] is byte 9");
+    assert_eq(load8(&BUF + 10), 0, "h.u: byte 10 untouched");
+    h.p[2] = 100;
+    h.p[2] += 5;
+    assert_eq(h.p[2], 105, "h.p[2] += 5");
+    h.p[2] -= 10;
+    assert_eq(h.p[2], 95, "h.p[2] -= 10");
+    h.p[2] *= 3;
+    assert_eq(h.p[2], 285, "h.p[2] *= 3");
+    h.p[2] /= 5;
+    assert_eq(h.p[2], 57, "h.p[2] /= 5");
+    h.p[2] %= 10;
+    assert_eq(h.p[2], 7, "h.p[2] %= 10");
+    h.p[2] <<= 4;
+    assert_eq(h.p[2], 112, "h.p[2] <<= 4");
+    h.p[2] >>= 2;
+    assert_eq(h.p[2], 28, "h.p[2] >>= 2");
+    h.p[2] |= 3;
+    assert_eq(h.p[2], 31, "h.p[2] |= 3");
+    h.p[2] &= 12;
+    assert_eq(h.p[2], 12, "h.p[2] &= 12");
+    h.p[2] ^= 5;
+    assert_eq(h.p[2], 9, "h.p[2] ^= 5");
+    h.u[0] = 250;
+    h.u[0] += 10;
+    assert_eq(h.u[0], 4, "h.u[0] += 10 wraps at the byte (250 + 10 = 260 -> 4)");
+    assert_eq(load8(&BUF + 1), 0, "h.u[0] += 10: byte 1 untouched");
+    canary("F1: canary after BUF");
+    return 0;
+}
+
+# ---- F2: a nested inline struct `w.h.p[i]`, through a `*H` parameter `q.p[i]`, through a `*H`
+# field `x.hp.p[i]`, a generic struct's `*T` field `pb.p[i]` ----
+fn through_param(q: *H, i): i64 {
+    q.p[i] = 40 + i;
+    q.p[i] += 1;
+    return q.p[i];
+}
+fn fields_chains(): i64 {
+    zero();
+    var w: W;
+    w.h.p = &BUF;
+    w.h.p[3] = 0 - 30000;
+    w.h.p[3] -= 1;
+    assert_eq(w.h.p[3], 0 - 30001, "w.h.p[3] through a nested inline struct");
+    assert_eq(load32(&BUF + 12), 4294937295, "w.h.p[3] is bytes 12..15");
+    var h: H;
+    h.p = &BUF;
+    assert_eq(through_param(&h, 1), 42, "q.p[i] through a `q: *H` parameter");
+    assert_eq(load32(&BUF + 4), 42, "q.p[1] is bytes 4..7");
+    var x: Q;
+    x.hp = &h;
+    x.hp.p[0] = 9;
+    x.hp.p[0] *= 2;
+    assert_eq(x.hp.p[0], 18, "x.hp.p[0] through a `*H` field");
+    assert_eq(load32(&BUF), 18, "x.hp.p[0] is bytes 0..3");
+    var pb: PB<i16> = PB<i16> { 0, &BUF };
+    pb.p[5] = 0 - 2;
+    assert_eq(pb.p[5], 0 - 2, "pb.p[5] on a PB<i16>'s `p: *T` field reads -2");
+    assert_eq(load16(&BUF + 10), 65534, "pb.p[5] is bytes 10..11");
+    assert_eq(load16(&BUF + 12), 35535, "pb.p: element 6 untouched (w.h.p[3]'s low half, 0x8ACF)");
+    canary("F2: canary after BUF");
+    return 0;
+}
+
+# ---- F3: a global struct's field, and `self.p[i]` in an impl ----
+impl H {
+    fn at(self, i): i64 { return self.p[i]; }
+    fn put(self, i, v): i64 {
+        self.p[i] = v;
+        return 0;
+    }
+    fn ptr(self): *i32 { return self.p; }
+    fn bytes(self): *u8 { return self.u; }
+}
+fn fields_global_self(): i64 {
+    zero();
+    GH.p = &BUF;
+    GH.p[4] = 77;
+    GH.p[4] |= 0x100;
+    assert_eq(GH.p[4], 333, "GH.p[4] on a global struct");
+    assert_eq(load32(&BUF + 16), 333, "GH.p[4] is bytes 16..19");
+    var h: H;
+    h.p = &BUF;
+    h.put(2, 0 - 5);
+    assert_eq(h.at(2), 0 - 5, "self.p[i] = v / self.p[i] in impl methods");
+    assert_eq(load32(&BUF + 8), 4294967291, "self.p[2] is bytes 8..11");
+    canary("F3: canary after BUF");
+    return 0;
+}
+
+# ---- C1: `f()[i]` on a call returning `*T`: read, `=`, `OP=`; the base is called ONCE per access,
+# before the index ----
+var BP_CALLS = 0;
+var ORDER = 0;
+fn bp(): *i32 {
+    BP_CALLS = BP_CALLS + 1;
+    ORDER = ORDER * 10 + 1;
+    return &BUF;
+}
+fn bpk(k): *i16 { return &BUF + k; }
+fn idx(i): i64 {
+    ORDER = ORDER * 10 + 2;
+    return i;
+}
+fn calls_direct(): i64 {
+    zero();
+    bp()[1] = 0 - 9;
+    assert_eq(bp()[1], 0 - 9, "bp()[1] = -9; bp()[1] reads -9");
+    assert_eq(load32(&BUF + 4), 4294967287, "bp()[1] is bytes 4..7");
+    BP_CALLS = 0;
+    bp()[1] += 20;
+    assert_eq(BP_CALLS, 1, "bp()[1] += 20 calls bp once");
+    assert_eq(load32(&BUF + 4), 11, "bp()[1] += 20");
+    bp()[1] <<= 2;
+    assert_eq(bp()[1] + bp()[0], 44, "bp()[1] <<= 2, two call bases as operands");
+    ORDER = 0;
+    var v = bp()[idx(1)];
+    assert_eq(ORDER, 12, "the base is called before the index is evaluated");
+    assert_eq(v, 44, "bp()[idx(1)]");
+    bpk(4)[1] = 0 - 300;
+    assert_eq(bpk(4)[1], 0 - 300, "bpk(4)[1] on a call with an argument (*i16)");
+    assert_eq(load16(&BUF + 6), 65236, "bpk(4)[1] is bytes 6..7");
+    assert_eq(load16(&BUF + 8), 0, "bpk(4): bytes 8..9 untouched");
+    canary("C1: canary after BUF");
+    return 0;
+}
+
+# ---- C2: a generic call `gp<T>()[i]` (the instance's T), a method `h.ptr()[i]`, the compositions
+# `mk(4).p[i]` (a `*T` field of a call result) and `mk(4).ptr()[i]` ----
+fn gp<T>(): *T { return &BUF; }
+fn gput<T>(i, v: T): T {
+    gp<T>()[i] = v;
+    return gp<T>()[i];
+}
+fn mk(n): H {
+    var h: H;
+    h.n = n;
+    h.p = &BUF;
+    h.u = &BUF;
+    return h;
+}
+var HB = H { 0, 0, 0, 0, 0, 0 };
+fn mkp(): *H {
+    HB.p = &BUF;
+    return &HB;
+}
+fn calls_generic_method(): i64 {
+    zero();
+    gp<i32>()[2] = 0 - 4;
+    assert_eq(gp<i32>()[2], 0 - 4, "gp<i32>()[2] = -4 reads -4");
+    assert_eq(load32(&BUF + 8), 4294967292, "gp<i32>()[2] is bytes 8..11");
+    assert_eq(gp<i8>()[8], 0 - 4, "gp<i8>()[8] reads byte 8 sign-extended");
+    assert_eq(gput<i16>(7, 0 - 3), 0 - 3, "gp<T>()[i] = v inside a generic at T = i16");
+    assert_eq(load16(&BUF + 14), 65533, "gp<i16>()[7] is bytes 14..15");
+    var h: H;
+    h.p = &BUF;
+    h.u = &BUF;
+    h.ptr()[0] = 31;
+    h.ptr()[0] -= 1;
+    assert_eq(h.ptr()[0], 30, "h.ptr()[0] on a method returning *i32");
+    assert_eq(h.bytes()[1], 0, "h.bytes()[1]: byte 1 untouched");
+    mk(4).p[3] = 66;
+    assert_eq(mk(4).p[3], 66, "mk(4).p[3] = 66 stores through the result's pointer");
+    assert_eq(load32(&BUF + 12), 66, "mk(4).p[3] is bytes 12..15");
+    mk(4).u[16] = 200;
+    mk(4).u[16] += 100;
+    assert_eq(mk(4).u[16], 44, "mk(4).u[16] += 100 wraps at the byte");
+    assert_eq(mk(4).ptr()[3] + mk(1).n, 67, "mk(4).ptr()[3]: a method on a call result");
+    mkp().p[5] = 12;
+    assert_eq(mkp().p[5], 12, "mkp().p[5] through a `*H`-returning call");
+    canary("C2: canary after BUF");
+    return 0;
+}
+
+# ---- C3: element kinds through fields and calls — f64, f32, bool ----
+fn fpf(): *f64 { return &BUF; }
+fn gpf(): *f32 { return &BUF; }
+fn bpb(): *bool { return &BUF; }
+fn kinds(): i64 {
+    zero();
+    var h: H;
+    h.f = &BUF;
+    h.g = &BUF;
+    h.b = &BUF;
+    h.f[1] = 1.5;
+    var x: f64 = h.f[1] * 2.0 + fpf()[1];
+    assert(x == 4.5, "h.f[1] * 2.0 + fpf()[1] is f64 arithmetic (4.5)");
+    fpf()[2] = 0.5;
+    fpf()[2] += h.f[1];
+    assert_eq(load64(&BUF + 16), 0x4000000000000000, "fpf()[2] += h.f[1]: 2.0");
+    zero();
+    h.g[1] = 1.5;
+    assert_eq(load32(&BUF + 4), 0x3FC00000, "h.g[1] = 1.5 on a *f32 field stores the single 0x3FC00000");
+    assert_eq(load32(&BUF), 0, "h.g[1]: element 0 untouched");
+    var q: f32 = 0.25;
+    gpf()[1] += q;
+    assert_eq(load32(&BUF + 4), 0x3FE00000, "gpf()[1] += q stays single precision (1.75)");
+    var y: f32 = gpf()[1] * q;
+    assert_eq(load32(&y), 0x3EE00000, "gpf()[1] * q is f32 arithmetic (0.4375)");
+    zero();
+    h.b[1] = true;
+    bpb()[2] = 3 > 2;
+    var t: bool = bpb()[1];
+    assert(t, "var t: bool = bpb()[1]");
+    var n = 0;
+    if (h.b[2]) { n = n + 1; }
+    if (h.b[0]) { n = n + 10; }
+    assert_eq(n, 1, "if (h.b[i]) tests the boolean element");
+    assert_eq(load64(&BUF + 8), 1, "h.b[1] = true is the word at bytes 8..15 (a bool is 8 bytes)");
+    canary("C3: canary after BUF");
+    return 0;
+}
+
+# ---- S: the classic-for step on every base form ----
+fn steps(): i64 {
+    zero();
+    var h: H;
+    h.p = &BUF;
+    var i = 0;
+    for (i = 0; i < 3; h.p[i] += 1) { i = i + 1; }
+    assert_eq(load32(&BUF + 4) + load32(&BUF + 8) + load32(&BUF + 12), 3, "for step h.p[i] += 1");
+    for (i = 0; i < 2; bp()[i] = 7) { i = i + 1; }
+    assert_eq(load32(&BUF + 4) * 100 + load32(&BUF + 8), 707, "for step bp()[i] = 7");
+    for (i = 0; i < 2; gp<i32>()[i] -= 2) { i = i + 1; }
+    assert_eq(load32(&BUF + 4) * 100 + load32(&BUF + 8), 505, "for step gp<i32>()[i] -= 2");
+    for (i = 0; i < 2; h.ptr()[i] *= 3) { i = i + 1; }
+    assert_eq(load32(&BUF + 4) * 100 + load32(&BUF + 8), 1515, "for step h.ptr()[i] *= 3");
+    var w: W;
+    w.h.p = &BUF;
+    for (i = 4; i < 6; w.h.p[i] = i) { i = i + 1; }
+    assert_eq(load32(&BUF + 20) * 10 + load32(&BUF + 24), 56, "for step w.h.p[i] = i");
+    canary("S: canary after BUF");
+    return 0;
+}
+
+# ---- K: closures — a captured struct's field, a call base in a closure, a call statement whose
+# argument is a closure with statements of its own ----
+fn ap(c, x): *i32 { return &BUF; }
+fn closures(): i64 {
+    zero();
+    var h: H;
+    h.p = &BUF;
+    h.p[2] = 20;
+    var k = |i| h.p[i] + bp()[i];
+    assert_eq(callptr(k, 2), 40, "|i| h.p[i] + bp()[i] in a closure");
+    ap(|v| { bp()[0] = 1; return v; }, 1)[3] = 50;
+    assert_eq(load32(&BUF + 12), 50, "ap(closure, 1)[3] = 50: the call's own result is the base");
+    assert_eq(load32(&BUF), 0, "the closure argument was not called");
+    canary("K: canary after BUF");
+    return 0;
+}
+
+# ---- T / E: `return f()[i];` is a plain call then a load (never a tail call); a by-value struct
+# argument beside a subscript argument keeps its value ----
+fn t_ret(i): i64 { return bp()[i]; }
+fn t_ret2(k, i): i64 { return bpk(k)[i]; }
+struct S3 { a; b; c; }
+fn rd(s: S3, v): i64 { return s.a * 100 + v; }
+fn tail_and_order(): i64 {
+    zero();
+    store32(&BUF + 8, 0 - 6);
+    assert_eq(t_ret(2), 0 - 6, "return bp()[2];");
+    store16(&BUF + 12, 9);
+    assert_eq(t_ret2(8, 2), 9, "return bpk(8)[2];");
+    var s = S3 { 3, 0, 0 };
+    var h: H;
+    h.p = &BUF;
+    assert_eq(rd(s, h.p[2]), 294, "rd(s, h.p[2]): the struct by value, the field subscript beside it");
+    assert_eq(rd(s, bp()[2]), 294, "rd(s, bp()[2]): a call base beside a by-value struct");
+    return 0;
+}
+
+# ---- FWD: a call base whose fn is defined further down ----
+fn forward(): i64 {
+    zero();
+    fwd()[3] = 0xBEEF;
+    assert_eq(fwd()[3], 0xBEEF, "fwd()[3] before `fn fwd(): *u16` is defined");
+    assert_eq(load16(&BUF + 6), 0xBEEF, "fwd()[3] is bytes 6..7");
+    assert_eq(load16(&BUF + 8), 0, "fwd(): bytes 8..9 untouched");
+    return 0;
+}
+fn fwd(): *u16 { return &BUF; }
+
+alloc_init();
+fields_local();
+fields_chains();
+fields_global_self();
+calls_direct();
+calls_generic_method();
+kinds();
+steps();
+closures();
+tail_and_order();
+forward();
+
+# ---- top level: statements through a global struct's field and a call ----
+zero();
+GH.u = &BUF;
+GH.u[5] = 17;
+bp()[2] = 3;
+bp()[2] += GH.u[5];
+assert_eq(load8(&BUF + 5), 17, "top level: GH.u[5] = 17");
+assert_eq(load32(&BUF + 8), 20, "top level: bp()[2] += GH.u[5]");
+var r = assert_summary();

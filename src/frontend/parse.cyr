@@ -3739,6 +3739,7 @@ fn _must_use_warn(S, noff): i64 {
 # _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
 # BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
 fn _stmt_qmark(S, pair): i64 {
+    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse_expr.cyr)
     if (PEEKT(S) == 124) {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {

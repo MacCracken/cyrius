@@ -1875,7 +1875,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 # `==` / `!=` compares of such getters in svara/samay would become float compares (NaN, ±0).
 # So `p.x + p.y` is a float add and `P_x(&p) + P_y(&p)` an integer one; the guide says so.
 # CHANGELOG [6.6.10]
+var _flt_ti = 0 - 1;   # 6.7.8 (C2-4b): the cursor where the last field load ended (`_sub_word`)
 fn _field_load_type(S, si, fi): i64 {
+    _flt_ti = GTI(S);
     var k = GFFK(S, si, fi);
     if (k == 1) { SESTYPE(S, F64_TYID); }
     if (k == 2) { SESTYPE(S, F32_TYID); }
@@ -1904,6 +1906,22 @@ fn _ifs_bx_el(S, k, ti, nm): i64 {
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into a bool element of ", nm, 0, 0 - 1);
 }
 
+# 6.7.8 (C2-4b) — `h.p[i] = v` / `h.p[i] OP= v` (the statement and the classic-for step): the leaf
+# field (`_rlf_si` / `_rlf_fi`) a `*T`, its VALUE loaded from the field's address (`_fld_addr_ra`),
+# then the element addressed and stored as a named `*T`'s (parse_expr.cyr `_psub_addr`,
+# `_esub_assign`). A field that is no `*T` is refused by name, the statement parsed on.
+fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
+    var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
+    var ed = _psub_ed(S, _fld_ps_get(S, _rlf_si, _rlf_fi), 1, GTI(S) - 1);
+    if (ed != 0) {
+        _fld_addr_ra(S, idx, sid, off, hop);
+        ELOAD64(S);           # the field's value: the pointer
+    }
+    _psub_addr(S, ed);
+    EPUSHR(S);                # the element's address
+    _esub_assign(S, ed, fnm);
+    return _fst_end(S, term);
+}
 # The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
 fn _fst_end(S, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
@@ -1915,6 +1933,7 @@ fn _fst_end(S, term): i64 {
 # leftover token is reported as a syntax error the file does not have. See `_synonly_skip_chain`.
 fn _synonly_fld_tail(S, term): i64 {
     _synonly_skip_chain(S);
+    if (PEEKT(S) == 28) { _psub_addr(S, 0); }   # 6.7.8 (C2-4b): `e.p[i] = v`, the index parsed
     if (_asg_compound_tok(S) == 0) {
         if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5)
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
@@ -2054,6 +2073,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         off = _rlf_off;
     }
     var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
+    if (PEEKT(S) == 28) { return _fld_sub_store(S, idx, sid, off, hop, term); }   # 6.7.8: `h.p[i] = v`
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
     var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)

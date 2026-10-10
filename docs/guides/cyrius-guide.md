@@ -353,8 +353,13 @@ element warns (its integer bits are kept), and a narrow integer element warns wh
 is wider.
 
 The pointer is a name declared `*T`: a `var p: *T` local, a `p: *T` parameter, a `*T` global,
-a closure's capture of one, or a generic instance's `p: *T` at its `T`. A pointer laundered
-through an untyped name (`var q = p;`) is a plain word and takes no subscript.
+a closure's capture of one, or a generic instance's `p: *T` at its `T` — or a field or a call
+DECLARED one (6.7.8): `h.p[i]` for a field `p: *T` (of a local, a global, a `*H`, `a.b.p[i]`,
+`self.p[i]`, a call's struct result `mk(4).p[i]`), and `f()[i]`, `g<i32>()[i]`, `o.m()[i]` for a
+callee declared `: *T`. The base is evaluated first — the field read, the call made once — and
+then the index; `f()[i] = v`, `h.p[i] += 1` and both in a `for` step store through the pointer.
+A pointer laundered through an untyped name (`var q = p;`) is a plain word and takes no
+subscript.
 
 Refused, by name (`cannot subscript 'a': ...`):
 
@@ -369,11 +374,18 @@ Refused, by name (`cannot subscript 'a': ...`):
   as the scalar its name starts with (`i8v16` as `i8`), so `g[i]` compiled there;
 - an **untyped name or a scalar** — it is not a typed array, a `*T` or a slice local;
 - a `u128` element, which does not fit one register (use `load64`/`store64`
-  on its two halves).
+  on its two halves);
+- a **field that is no `*T`** (`cannot subscript field 'n': it is not a *T field`) and a **call
+  whose callee is not declared `: *T`** (`cannot subscript the result of 'f': ...`) — a builtin
+  (`load64(..)`), `callptr` and `fncallN` included; a parenthesised expression or a literal
+  (`(p + 1)[i]`): name the pointer first, `var q: *T = p + 1; q[i]`;
+- `a[i][j]` — a subscript's result is an element, not an array — and `&a[i]`: write
+  `&a + i * sizeof(T)` (or `p + i`).
 
 ⚠ Before 6.7.8 a pointer (`var p: *i64`) and an `f64` / `f32` / `bool` element array were
 refused here; `p[i]` was spelled `load16(p + i * 2)` and an `f32[N]` element
-`load32(&a + i * 4)`.
+`load32(&a + i * 4)`. `h.p[i]` and `f()[i]` were syntax errors (`expected ';', got '['`):
+`load32(h.p + i * 4)`.
 
 A `slice<T>` local keeps its own bounds-checked `s[i]` read (`lib/slice.cyr`); storing into a
 slice element is refused by name.

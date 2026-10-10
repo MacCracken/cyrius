@@ -1309,6 +1309,7 @@ fn PARSE_FACTOR(S): i64 {
     var _rc = 0;
     if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
+    if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
     _rd_exit();
@@ -2357,7 +2358,8 @@ fn _call_field(S): i64 {
 # 6.7.5 (B8): `mk(3).n += 1;` too — refused as `= 1` is, the statement stepped over.
 fn _stmt_call_field(S): i64 {
     if (_call_field(S) == 0) { return 0; }
-    if (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
+    if (PEEKT(S) == 28) { _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `mk(4).p[i] = v;`
+    elif (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -2752,6 +2754,7 @@ fn _arr_sub_assign(S, noff): i64 {
 # the f64 / f32 arms for a float element (`p[0] += 0.25` stays an f32), a bool element refused as
 # `b += 1` is (6.7.3) and then parsed on. A float's value has no integer width to narrow from.
 fn _esub_assign(S, ed, nm): i64 {
+    _sub_more(S);   # 6.7.8 (C2-4b): `a[i][j] = v` refused by name (it was "expected '='")
     var k = _ek_fk(ed);
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
@@ -2780,6 +2783,249 @@ fn _arr_sub_stmt(S, noff): i64 {
     if (_arr_sub_assign(S, noff) == 0) { return 0; }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# ⛔ 6.7.8 (C2-4b) — A SUBSCRIPT ON A `*T` FIELD OR ON A CALL RETURNING `*T` (the user's decision,
+# 2026-10-10: "p[i] reach ... bases: named variables, fields (`h.p[i]`) and call results (`f()[i]`)").
+# `h.p[i]`, `a.b.p[i]`, `self.p[i]`, `mk(4).p[i]`, `f()[i]`, `g<i32>()[i]` and `o.m()[i]` were
+# `expected ';' / '=', got '['`. The base is evaluated FIRST — the field's value, the call's result —
+# then the index (`_psub_addr`: rax = base + index * sizeof(T)), and the element is read and stored
+# as a named `*T`'s is (`_esub_load` / `_esub_assign`). Reads: one hook in the PARSE_FACTOR wrapper
+# (`_sub_post`); stores: PARSE_FIELD_STORE's `[` arm (`_fld_sub_store`), a call statement through
+# `_stmt_qmark` / `_stmt_call_field` (`_stmt_call_sub`), the classic-for step (`_step_call_sub`). The
+# element comes from the base's DECLARATION — a field's `_fld_ps`, a callee's `_fn_rps`, a method's
+# word (`_call_ret_ps`) — never from a pointer scale an argument left behind (`mk(q).n` keeps q's).
+# Every other base is refused by name at the `[`, the brackets consumed: a field that is no `*T`, a
+# call returning none (a builtin, `callptr`, `fncallN`), `a[i][j]`, `&a[i]`, `(expr)[i]`, a literal;
+# a field / call this file cannot resolve is consumed silently under --syntax-only. No program that
+# compiled before reaches these paths: a `[` after a factor was an error. CHANGELOG [6.7.8]
+# The `(` of the call whose `)` is the token before the cursor (0 when there is none).
+fn _sub_open(S): i64 {
+    var k = GTI(S) - 2;
+    var d = 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 11) { d = d + 1; }
+        if (t == 10) { d = d - 1; if (d == 0) { return k; } }
+        k = k - 1;
+    }
+    return 0;
+}
+# The callee token of the call that ends before the cursor when it is a direct `name(..)` /
+# `name<..>(..)` — not a method's `.name(..)`, a builtin or `callptr` — else -1. Read from the tokens:
+# in statement position the call's own parse sets no pointer scale (PARSE_FNCALL), and a statement
+# inside its arguments (a closure body) would have overwritten any record of the callee.
+fn _sub_callee(S): i64 {
+    var c = _sub_open(S) - 1;
+    if (c < 1) { return 0 - 1; }
+    var t = TOKTYP(S, c);
+    if (t == 20 || t == 39 || t == 152) {   # `name<..>(`: back to its `<`
+        var d = 0;
+        while (c > 0) {
+            t = TOKTYP(S, c);
+            if (t == 20) { d = d + 1; }
+            if (t == 39) { d = d + 2; }
+            if (t == 152) { d = d + 3; }
+            if (t == 19) { d = d - 1; if (d <= 0) { break; } }
+            c = c - 1;
+        }
+        c = c - 1;
+        if (c < 1) { return 0 - 1; }
+    }
+    if (TOKTYP(S, c) != 2) { return 0 - 1; }
+    if (TOKTYP(S, c - 1) == 41) { return 0 - 1; }   # a method, `.name(..)`
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0 - 1; }
+    if (_call_close(S, o) + 1 != GTI(S)) { return 0 - 1; }
+    return c;
+}
+# The base before the `[` at the cursor (`ti` the factor's first token; -1 for a statement): 1 a field
+# (`.name`), 2 a call (`..)` whose `(` lies past ti), 0 anything else (`(expr)`, a literal, a name).
+fn _sub_how(S, ti): i64 {
+    var t = TOKTYP(S, GTI(S) - 1);
+    if (t == 2) {
+        if (TOKTYP(S, GTI(S) - 2) == 41) { return 1; }
+        return 0;
+    }
+    if (t != 11) { return 0; }
+    if (_sub_open(S) <= ti) { return 0; }   # `(expr)[i]`: the parenthesis is the factor itself
+    return 2;
+}
+# The base's step word, 0 when it is no `*T`: a field's from its declaration, and only when its load
+# ended at the cursor (`_flt_ti`, parse_decl.cyr — a slice's `.ptr` or an enum constant is read
+# another way); a direct call's from the callee it reaches (`_fn_rps`, the instance's); any other
+# call's from the word its call set (a method's `_call_ret_ps`, a builtin's 0).
+fn _sub_word(S, h): i64 {
+    if (h == 1) {
+        if (_flt_ti != GTI(S)) { return 0; }
+        return _fld_ps_get(S, _rlf_si, _rlf_fi);
+    }
+    if (h != 2) { return 0; }
+    var c = _sub_callee(S);
+    if (c < 0) { return GPSC(S); }
+    var fi = _pair_gen_inst(S, c);
+    if (fi < 0) { return 0; }
+    if (_fn_rps == 0) { return 0; }
+    return L64(_fn_rps + fi * 8);
+}
+# The token naming the base: a call's callee (the name before its `(`; a generic call's name), else
+# the token before the `[`.
+fn _sub_name_tok(S, h): i64 {
+    if (h != 2) { return GTI(S) - 1; }
+    var c = _sub_open(S) - 1;
+    if (TOKTYP(S, c) != 2) { if (_sub_callee(S) >= 0) { c = _sub_callee(S); } }   # `g<T>(..)`
+    return c;
+}
+# The struct a call base's `*T` points at (its callee's `_fn_rpsid`; a method's, the last one called),
+# else 0.
+fn _sub_ret_sid(S): i64 {
+    var fi = _mcall_last;
+    var c = _sub_callee(S);
+    if (c >= 0) { fi = _pair_gen_inst(S, c); }
+    if (fi < 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    return L64(_fn_rpsid + fi * 8);
+}
+# A refusal at the `[`: `hd`, then the name token `nt` quoted (nt >= 0), `a`, `b`, and a second
+# name `n2` quoted (a C string; 0 none) — ERR_IDENT's line.
+fn _psub_err(S, hd, nt, a, b, n2): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(hd);
+    if (nt >= 0) {
+        if (TOKTYP(S, nt) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, nt)); }
+        else { PRSTR(TOKNAME(TOKTYP(S, nt))); }   # a builtin's name
+        PRSTR("'");
+    }
+    PRSTR(a);
+    PRSTR(b);
+    if (n2 != 0) {
+        PRSTR("'");
+        PRSTR(n2);
+        PRSTR("'");
+    }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The descriptor of the base's element (`w` its step word, h / nt as above): an integer, f64, f32 or
+# bool element's; else 0 after the refusal by name — silent under --syntax-only for a field or a
+# call, whose declaration may sit in another file.
+fn _psub_ed(S, w, h, nt): i64 {
+    var ed = 0;
+    if (_ps_step(w) > 0) { ed = (w >> 40) & 0xFF; }
+    var ew = _ek_w(ed);
+    if (ew >= 1) { if (ew <= 8) { return ed; } }
+    if (h == 0) {
+        return _psub_err(S, ": a subscript's base is a name, a *T field or a call returning *T", 0 - 1,
+          " - name the pointer first (var q: *T = ..; q[i])", "", 0);
+    }
+    if (_syntax_only == 1) { return 0; }
+    var hd = ": cannot subscript the result of '";
+    if (h == 1) { hd = ": cannot subscript field '"; }
+    if (_ps_step(w) <= 0) {
+        if (h == 1) { return _psub_err(S, hd, nt, ": it is not a *T field", "", 0); }
+        return _psub_err(S, hd, nt, ": it does not return a *T", "", 0);
+    }
+    if (ew > 8) {
+        return _psub_err(S, hd, nt, ": a u128 element does not fit one register",
+          " - use load64/store64 on its two halves", 0);
+    }
+    var sid = 0;
+    if (h == 1) { sid = _fld_ptr_sid(S, _rlf_si, _rlf_fi); }
+    else { sid = _sub_ret_sid(S); }
+    var el = ": a subscript takes an integer, f64, f32 or bool element";
+    if (sid > 0) {
+        return _psub_err(S, hd, nt, el, " - its element is struct ", S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    }
+    return _psub_err(S, hd, nt, el, " - its element is a pointer, string, enum or vector", 0);
+}
+# rax = the base's value (a `*T`), cursor on `[`: consumes `[ idx ]` and leaves rax = base + idx *
+# sizeof(T), the base pushed while the index is evaluated. `ed` 0 (a refused base): the index is
+# only parsed. Returns ed.
+fn _psub_addr(S, ed): i64 {
+    if (ed != 0) { EPUSHR(S); }
+    STI(S, GTI(S) + 1);   # consume [
+    PCMPE(S);
+    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+    STI(S, GTI(S) + 1);   # consume ]
+    if (ed == 0) { return 0; }
+    EPTR_SCALE(S, _ek_w(ed));
+    EPOPC(S);
+    EADDR(S);
+    return ed;
+}
+# A second `[` after a subscript (`a[i][j]`, `f()[i][j] = v`): refused by name, consumed.
+fn _sub_more(S): i64 {
+    while (PEEKT(S) == 28) {
+        _psub_err(S, ": a subscript's result is an element, not an array", 0 - 1,
+          " - a second [..] is not supported", "", 0);
+        _psub_addr(S, 0);
+    }
+    return 0;
+}
+# The PARSE_FACTOR wrapper's postfix `[` (the factor began at token ti0): a `*T` field's or call's
+# element read; every other factor refused by name — `&a[i]` (an address is no base), `a[i][j]`,
+# `(expr)[i]`, a literal.
+fn _sub_post(S, ti0): i64 {
+    var ed = 0;
+    if (TOKTYP(S, ti0) == 27) {
+        _psub_err(S, ": &a[i] is not supported", 0 - 1, " - write &a + i * sizeof(T) (or p + i)", "", 0);
+    } elif (TOKTYP(S, GTI(S) - 1) == 29) {
+        _sub_more(S);
+    } else {
+        var h = _sub_how(S, ti0);
+        ed = _psub_ed(S, _sub_word(S, h), h, _sub_name_tok(S, h));
+    }
+    if (PEEKT(S) == 28) { _psub_addr(S, ed); }
+    if (ed != 0) { _esub_load(S, ed); }
+    else {
+        EMOVI(S, 0);
+        SPSC(S, 0);
+        SESTYPE(S, 0);
+        SEXW(S, 0);
+        _cfo = 0;
+    }
+    _sub_more(S);
+    return 0;
+}
+# A statement's or a step's `f(..)[i] = v`, `g<T>(..)[i] OP= v`, `o.m(..)[i] = v`, `mk(4).p[i] = v`
+# (rax = the call's result or the field's value, cursor on `[`): the element's `= v` / `OP= v`, the
+# terminator left to the caller.
+fn _stmt_call_sub(S): i64 {
+    var h = _sub_how(S, 0 - 1);
+    var nt = _sub_name_tok(S, h);
+    var ed = _psub_ed(S, _sub_word(S, h), h, nt);
+    _psub_addr(S, ed);
+    EPUSHR(S);            # the element's address
+    _esub_assign(S, ed, TOKVAL(S, nt));
+    return 0;
+}
+# The classic-for step `f(..)[i] OP= v` / `g<T>(..)[i] = v` / `o.m(..)[i] = v` (cursor past the first
+# name `noff`): 1 when it is one — parsed through its `)` — else 0, cursor untouched (a bare call
+# keeps "expected '='").
+fn _step_call_sub(S, noff): i64 {
+    var ti = GTI(S) - 1;
+    var o = _gcall_open(S, ti);
+    var mc = 0;
+    if (o < 0) {
+        if (PEEKT(S) != 41) { return 0; }
+        var d = GTI(S);
+        mc = _stmt_dot_chain_call(S);
+        o = GTI(S);
+        STI(S, d);
+        if (mc == 0) { return 0; }
+    }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 28) { return 0; }
+    if (mc == 1) { _mcall_last = 0 - 1; PARSE_FIELD_LOAD(S, noff); }
+    elif (o == ti + 1) { PARSE_FNCALL(S, noff); }
+    else { _explicit_generic_call(S, noff, FINDFN(S, noff)); }
+    _stmt_call_sub(S);
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     return 1;
 }
 
