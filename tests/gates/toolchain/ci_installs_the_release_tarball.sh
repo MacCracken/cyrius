@@ -48,6 +48,13 @@
 #      versions/<old> (the home ci.sh itself leaves, re-installed at a newer version) and a legacy
 #      REAL directory: $CYRIUS_HOME/lib becomes a link naming versions/<v>/lib, versions/<old>
 #      keeps exactly its entries, every tarball bin resolves through $CYRIUS_HOME/bin.
+#   8  (6.7.9) the package step ships every script cyrius.cyml's [release] lists (read here by a
+#      reader of the gate's own, its count checked against the step's) into the tarball's bin/,
+#      executable and byte-identical to scripts/shims/<s> when that exists, else scripts/<s> —
+#      cyrius-repl.sh, the CLI's repl shim, was never in a tarball — and the INSTALLED `cyrius repl`
+#      (axis 2's sh home) runs it and evaluates `return 6 * 7;` to "= 42". On a fixture checkout: a
+#      name in both places ships the shims/ copy (install.sh's order), a scripts/-only name ships,
+#      and a listed name in neither place fails the step, naming it, with no tarball.
 #
 # MUTATION LEDGER (6.7.7, measured: this gate run from a scratch root carrying a mutated copy)
 #   a. the 6.7.6 ci.sh verbatim                 -> axis 2 RED in both shells (exit 1, "cycc not
@@ -85,6 +92,13 @@
 #      dropped                                     four rows
 #   p. (anti-vacuous probe of axis 6's build) the -> axis 6 RED in both shells: "error: cannot find
 #      gate removing $CYRIUS_HOME/lib before it    cyrius stdlib", the consumer's symptom
+#   q. the 6.7.8 release.yml verbatim (scripts/  -> axis 8 RED in all four rows: cyrius-repl.sh
+#      only, a missing one skipped)                MISSING, the installed `cyrius repl` exit 127,
+#                                                  the scripts/ copy shipped, the step exit 0 with
+#                                                  a tarball; axes 1-7 green
+#   r. the `else` (neither place) branch dropped -> axis 8's missing-script row RED (exit 0, built)
+#   s. scripts/ looked in before scripts/shims/  -> axis 8's both-places row RED (the flat copy)
+#   t. its `exit 1` dropped (named, not failed)  -> axis 8's missing-script row RED (exit 0, built)
 # The tree -> PASS.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -363,5 +377,69 @@ for kind in link dir; do
     done
 done
 
+# ── axis 8: every [release] script ships — scripts/shims/ first, as install.sh — and a listed ──
+# script found nowhere fails the package step (it was skipped silently: no cyrius-repl.sh, ever)
+run_pkg() {   # run_pkg <checkout> — release.yml's package step in it, as axis 1 runs it
+    RC=0
+    ( cd "$1" && env -i PATH="$W/stub:/usr/bin:/bin" HOME="$W/bhome" TMPDIR="$W/btmp" GITHUB_REF_NAME="$V" \
+        bash -e "$W/package.sh" ) > "$W/out" 2>&1 || RC=$?
+}
+# the listed names, read WITHOUT the step's awk (a reader the gate shares with the step reads green)
+SCR=$(awk '/^\[release\]/ { r = 1; next } r && /^\[/ { exit } r && /^scripts[ \t]*=/ { print }' "$ROOT/cyrius.cyml" \
+    | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+NS=0; NSH=0; a8=0; rm -f "$W/out"
+for s in $SCR; do
+    NS=$((NS + 1))
+    if [ -f "$ROOT/scripts/shims/$s" ]; then src="scripts/shims/$s"; NSH=$((NSH + 1)); else src="scripts/$s"; fi
+    { [ -f "$EXP/bin/$s" ] && [ -x "$EXP/bin/$s" ] && cmp -s "$ROOT/$src" "$EXP/bin/$s"; } \
+        || { bad "axis 8: [release] script $s $( [ -e "$EXP/bin/$s" ] && echo "is in the tarball's bin/ but is not an executable copy of $src" || echo "is MISSING from the tarball's bin/ ($src)")"; a8=1; }
+done
+# shellcheck disable=SC2046  # word count of the step reader's list
+[ "$NS" -ge 1 ] && [ "$NS" -eq $(echo $(_rel scripts) | wc -w) ] \
+    || { echo "FAIL: $NAME — axis 8 read $NS [release] script(s), the step's reader $(echo $(_rel scripts) | wc -w); a reader is blind"; exit 1; }
+[ "$a8" -eq 0 ] && echo "  ok axis 8: all $NS [release] scripts are in the tarball's bin/, executable and byte-identical to their source ($NSH from scripts/shims/)"
+# the symptom: `cyrius repl` from the installed CLI (axis 2's sh home) finds its shim and evaluates
+H="$W/h-sh/.cyrius"
+if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] && [ -x "$H/bin/cyrius" ]; then
+    mkdir -p "$W/repl" && ln -sfn "$H/lib" "$W/repl/lib"
+    RC=0
+    ( cd "$W/repl" && printf 'return 6 * 7;\n:q\n' | env -i HOME="$W/h-sh" CYRIUS_HOME="$H" PATH="$H/bin:/usr/bin:/bin" \
+        TMPDIR="$W/h-sh/tmp" "$H/bin/cyrius" repl ) > "$W/out" 2>&1 || RC=$?
+    { [ "$RC" -eq 0 ] && grep -q '= 42$' "$W/out" && grep -q '^> bye$' "$W/out"; } \
+        && echo "  ok axis 8: the installed \`cyrius repl\` runs its shim from \$CYRIUS_HOME/bin and evaluates 6 * 7 = 42" \
+        || bad "axis 8: the installed \`cyrius repl\` exit $RC, no '= 42'"
+else
+    echo "  skip axis 8 (repl): the x86_64-linux CLI cannot run on $(uname -s)-$(uname -m), or axis 2 installed none"
+fi
+# the lookup itself, on a fixture checkout: a name in both places ships the shims/ copy, a flat-only
+# name ships, and a listed name in neither place fails the step by name with no tarball
+CO8="$W/co8"
+cp -R "$CO" "$CO8" && rm -rf "$CO8/dist" "${CO8:?}/$STAGE" || { echo "FAIL: $NAME — cannot copy the axis-8 checkout"; exit 1; }
+printf '#!/bin/sh\necho shims\n' > "$CO8/scripts/shims/zz_both.sh"
+printf '#!/bin/sh\necho flat\n' > "$CO8/scripts/zz_both.sh"
+printf '#!/bin/sh\necho flat-only\n' > "$CO8/scripts/zz_flat.sh"
+sed 's/^scripts = \["/scripts = ["zz_both.sh", "zz_flat.sh", "/' "$CO/cyrius.cyml" > "$CO8/cyrius.cyml"
+grep -q '^scripts = \["zz_both.sh", "zz_flat.sh", "' "$CO8/cyrius.cyml" \
+    || { echo "FAIL: $NAME — cannot list the axis-8 fixture scripts in cyrius.cyml (its [release] scripts line changed shape)"; exit 1; }
+run_pkg "$CO8"
+X8="$W/x8"; mkdir -p "$X8"
+if [ "$RC" -ne 0 ] || ! tar xzf "$CO8/dist/$TB" -C "$X8" 2> /dev/null; then
+    bad "axis 8: the package step over the fixture listing exit $RC, no tarball"
+elif ! cmp -s "$CO8/scripts/shims/zz_both.sh" "$X8/$STAGE/bin/zz_both.sh"; then
+    bad "axis 8: a script in both scripts/shims/ and scripts/ shipped $( [ -e "$X8/$STAGE/bin/zz_both.sh" ] && echo 'the scripts/ copy' || echo 'NOT AT ALL'), not the scripts/shims/ one (install.sh's order)"
+elif ! cmp -s "$CO8/scripts/zz_flat.sh" "$X8/$STAGE/bin/zz_flat.sh"; then
+    bad "axis 8: a script only in scripts/ did not ship"
+else
+    echo "  ok axis 8: a listed script in both places ships the scripts/shims/ copy, one only in scripts/ ships"
+fi
+rm -rf "$CO8/dist" "${CO8:?}/$STAGE"
+sed 's/^scripts = \["/scripts = ["zz_missing.sh", "/' "$CO/cyrius.cyml" > "$CO8/cyrius.cyml"
+run_pkg "$CO8"
+if [ "$RC" -ne 0 ] && grep -q 'zz_missing\.sh' "$W/out" && [ ! -e "$CO8/dist/$TB" ]; then
+    echo "  ok axis 8: a listed script in neither scripts/shims/ nor scripts/ fails the package step by name (exit $RC), no tarball"
+else
+    bad "axis 8: a listed script found nowhere: the step exit $RC, $( grep -q 'zz_missing\.sh' "$W/out" && echo 'named' || echo 'NOT named'), tarball $( [ -e "$CO8/dist/$TB" ] && echo BUILT || echo absent)"
+fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — links its stdlib as \$CYRIUS_HOME/lib for a project with no pin, refuses one that is not release-shaped, and re-points an install.sh or plain-bin home without touching its old slot)"
+echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — links its stdlib as \$CYRIUS_HOME/lib for a project with no pin, refuses one that is not release-shaped, and re-points an install.sh or plain-bin home without touching its old slot; the step ships every [release] script, scripts/shims/ first, and fails on one it cannot find)"

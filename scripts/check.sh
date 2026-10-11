@@ -2168,7 +2168,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/install_paths_ship_init_templates.sh"
 # cyrius-<v>-x86_64-linux/ directory): it untarred that into $CYRIUS_HOME and linked
 # versions/<v>/bin/*, a layout no release has had, so every real install failed "cycc not found"
 # while the gates fed it a fabricated versions/<v>/ tarball. The gate builds its tarball by running
-# release.yml's own package step; a stub curl serves it, throwaway homes, no network.
+# release.yml's own package step; a stub curl serves it, throwaway homes, no network. 6.7.9: that
+# step ships every [release] script, scripts/shims/ first (cyrius-repl.sh never shipped), and fails
+# on one it cannot find.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_installs_the_release_tarball.sh"
 # 6.6.20 (CLN-13) — no stdlib include of cbt/cyrius.cyr brings in only dead code (lib/tagged.cyr
 # did: 18 dead fns on every target). Static census over the include closure, self-tested.
