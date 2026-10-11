@@ -1,0 +1,10 @@
+# Repro: cx never auto-calls `fn main`. On x86 / aarch64 / Mach-O / PE the entry epilogue calls a `fn main` the top
+# level did not call and exits with its return value; on cx main never runs.
+# From the cyrius root:
+#   cat src/main_cx.cyr   | build/cycc > /tmp/cycc_cx && chmod +x /tmp/cycc_cx
+#   cat programs/cxvm.cyr | build/cycc > /tmp/cxvm    && chmod +x /tmp/cxvm
+#   /tmp/cycc_cx < docs/development/issues/repros/2026-10-11-cx-does-not-auto-call-main.cyr > /tmp/m.cyx
+#   /tmp/cxvm < /tmp/m.cyx; echo $?          # 3 (the last global): main never ran
+#   build/cycc < docs/development/issues/repros/2026-10-11-cx-does-not-auto-call-main.cyr > /tmp/m && chmod +x /tmp/m && /tmp/m; echo $?   # x86: 7
+var g = 3;
+fn main(): i64 { return 7; }
