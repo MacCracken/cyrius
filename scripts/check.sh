@@ -2352,6 +2352,10 @@ _chk_gate "$ROOT/tests/gates/frontend/for_step_terminator_checked.sh"
 # field, `*[T]`, declaration-zone global, slice of slices and type argument are refused by name, once
 # (they were generic parse errors). x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/slice_position_refused.sh"
+# 6.7.8 (C2-6c) — an [i8] / [i16] / [i32] slice element reads sign-extended (a stored -3 read 253,
+# `s[0] < 0` was false), as a typed array, a `*T` and a field do; `s[i] OP= v` loads it the same way;
+# the unsigned controls zero-extend. x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_signed_read.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.

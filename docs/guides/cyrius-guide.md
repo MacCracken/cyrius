@@ -388,8 +388,9 @@ refused here; `p[i]` was spelled `load16(p + i * 2)` and an `f32[N]` element
 `load32(&a + i * 4)`. `h.p[i]` and `f()[i]` were syntax errors (`expected ';', got '['`):
 `load32(h.p + i * 4)`.
 
-A `slice<T>` local keeps its own bounds-checked `s[i]`, and since 6.7.8 stores into one too —
-`s[i] = v`, `s[i] OP= v`, the `for` step ([Slices](#slices)).
+A `slice<T>` local keeps its own bounds-checked `s[i]` — a signed element sign-extended, as here
+(6.7.8) — and since 6.7.8 stores into one too — `s[i] = v`, `s[i] OP= v`, the `for` step
+([Slices](#slices)).
 
 ## Functions
 
@@ -1595,17 +1596,27 @@ fn slices_demo(fd): i64 {     # a slice is a fn-local (6.7.8)
 }
 ```
 
+**Reads.** `s[i]` loads the element at `s.ptr + i * sizeof(T)` at T's width, after checking `i`
+against `s.len` (out of range or negative: `slice bounds violation`, exit 134). An `[i8]` / `[i16]` /
+`[i32]` (or `slice<i8>` ..) element is **sign-extended** (6.7.8): a stored `-3` reads `-3` and
+`s[0] < 0` holds, as for the same bytes in an `i8[N]` array, through a `*i8` or in an `i8` field. A
+`u8` / `u16` / `u32` element zero-extends; an `f64` / `f32` / `bool` element is read as an untyped
+word (its bits). ⚠ Before 6.7.8 a signed element was zero-extended — `-3` in an `[i8]` read `253` and
+`s[0] < 0` was false; code that wants the unsigned value writes `s[i] & 0xFF` (`& 0xFFFF`,
+`& 0xFFFFFFFF`) or declares the slice `[u8]`.
+
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
 violation` and exits 134, in every build. The value is checked as a store into an element of `T`:
 an `f64` into an `f32` element rounds, a `bool` element takes only a boolean, an integer constant
 into a float element warns, a wider integer into a narrow element warns "narrowing". `s[i] OP= v`
 (all eleven operators) and a `for` step store the same way; `OP=` combines with the element as
-`s[i]` reads it. Refused by name: a store into a struct or `u128` element (`store*` at
-`slice_ptr(&s) + i * sizeof(T)`), `OP=` on an `f64` / `f32` / `bool` element (the read `s[i]` is an
-untyped word, so write `s[i] = v`), and a slice subscripted inside a closure that captured it (pass
-`slice_ptr(&s)` / `slice_len(&s)`, or declare the slice in the closure). ⚠ Before 6.7.8 a store was
-"cannot subscript 's'"; the spelling was `store8(slice_ptr(&s) + i, v)`, which stays valid.
+`s[i]` reads it (an `[i8]` `-7 /= 2` is `-3`). Refused by name: a store into a struct or `u128`
+element (`store*` at `slice_ptr(&s) + i * sizeof(T)`), `OP=` on an `f64` / `f32` / `bool` element
+(the read `s[i]` is an untyped word, so write `s[i] = v`), and a slice subscripted inside a closure
+that captured it (pass `slice_ptr(&s)` / `slice_len(&s)`, or declare the slice in the closure).
+⚠ Before 6.7.8 a store was "cannot subscript 's'"; the spelling was `store8(slice_ptr(&s) + i, v)`,
+which stays valid.
 
 **Slices are fn-locals (6.7.8).** `[T]` / `slice<T>` declares a `var` in a function (or a closure, or
 a generic instance at its `T`). Every other position is refused by name, once, the whole type

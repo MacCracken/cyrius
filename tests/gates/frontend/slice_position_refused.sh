@@ -32,7 +32,8 @@
 #       R13b `OP=` on an f64 / f32 / bool element (the slice read is an untyped word); R10 a non-bool
 #       into a [bool] element; R7 `s[1][2] = 5` — each exactly one error line
 #   E   `OP=` agrees with `s[i] = s[i] op v` on a negative [i8] / [i16] / [i32] element (`>>=`, `/=`,
-#       `%=`, `>>>=`): the compound loads the element as `s[i]` reads it
+#       `%=`, `>>>=`): the compound loads the element as `s[i]` reads it (sign-extended since C2-6c —
+#       the values are slice_signed_read.sh's)
 #   T   the default-mode trap on every leg (x86 plain / CYRIUS_IR=3, aarch64 qemu, cx, PE wine): a store,
 #       an `OP=` and a for step past the end, a negative index — exit 134, "slice bounds violation"
 #   W   tests/tcyr/crossos/slice_subscript_write.tcyr compiles with no warning; --syntax-only silent;
@@ -49,6 +50,7 @@
 #         Wa-Wg (every store refused as a struct element)
 #   MSL   `_slice_lw` unmasked (the kind bits read as the width) -> RED S1a E W0 W0s Wa-Wg (no getter)
 #   MSE   `_slice_sub_addr` keeps an integer's sign -> RED E (E1: `OP=` sign-extends, the read does not)
+#         — C2-6c made the sign the rule for both; its inverse (the sign dropped) is slice_signed_read.sh's MS2
 #   MIR   the store's frame base unmarked for the IR pass -> RED Wb (CYRIUS_IR=3: a variable index)
 #   MR12  the captured-slice refusal dropped -> RED R12a R12b (the untyped-name text)
 #   MR13b the float / bool `OP=` refusal dropped -> RED R13b1-R13b3 (they compile)

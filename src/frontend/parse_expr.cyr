@@ -3071,10 +3071,11 @@ fn _step_call_sub(S, noff): i64 {
 # returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.
 # If `[` follows the ident AND this is a slice local, lower to `_slice_idx_get_W(&local, i)` —
 # the bounds-checked sized load via the helper that matches the element width. 1 when consumed;
-# 0 (cursor untouched) otherwise.
+# 0 (cursor untouched) otherwise. An [i8] / [i16] / [i32] element is read by `_slice_sub_sread`.
 fn _slice_sub_read(S, li): i64 {
     var sw = _slice_lw(S, li);   # 6.7.8 (C2-2a): behind the slice bit (a stale width is no slice)
     if (sw > 0) { if (PEEKT(S) == 28) {
+            if (_ek_lw(_slice_led(S, li)) < 0) { return _slice_sub_sread(S, li); }   # 6.7.8 (C2-6c)
             STI(S, GTI(S) + 1);  # consume [
             # Push &local as first arg (helper takes slice address)
             # 6.7.8: the frame base is raw bytes on x86 (no IR node of its own), so a CYRIUS_IR=3
@@ -3121,6 +3122,21 @@ fn _slice_sub_read(S, li): i64 {
         } }
     return 0;
 }
+# ⛔ 6.7.8 (C2-6c) — A SIGNED SLICE ELEMENT IS READ SIGN-EXTENDED (the user's decision, 2026-10-10).
+# `s[i]` on an [i8] / [i16] / [i32] (or slice<i8> ..) slice called `_slice_idx_get_1/2/4`, whose
+# load8 / load16 / load32 ZERO-extend: a stored -3 read 253 and `s[0] < 0` was false — unlike the
+# same bytes in an `i8[N]` array, through a `*i8` or in an i8 field, which sign-extend. The element's
+# address now comes from the store's checked call (`_slice_sub_addr`: lib/slice.cyr's
+# `_slice_idx_addr(&s, i, sizeof(T))`, the same "slice bounds violation" / 134 check) and is loaded
+# by `_esub_load` — EFIELD_LOAD_W at the negative width (movsx / ldrsb / shl+asr on cx, recorded for
+# the IR pass) with the read's resets (C2-1b) — so `s[i] OP= v` (which loads by `_esub_assign`) and
+# `s[i]` read one value. Cursor at `[` after the name; always 1. Every other element (unsigned,
+# i64, f64 / f32 / bool, a pointer, u128) keeps its getter, byte for byte. CHANGELOG [6.7.8]
+fn _slice_sub_sread(S, li): i64 {
+    var ed = _slice_sub_addr(S, li, TOKVAL(S, GTI(S) - 1));
+    if (ed != 0) { _esub_load(S, ed); }   # 0: lib/slice.cyr is missing, already reported
+    return 1;
+}
 # ⛔ 6.7.8 (C2-6a) — A SLICE ELEMENT STORE: `s[i] = v`, `s[i] OP= v` and the classic-for step on a
 # slice local (`var s: [T]` / `slice<T>`), which was refused ("cannot subscript 's'"; by name since
 # C2-4a), so the spelling was `store8(slice_ptr(&s) + i, v)`. Cursor at `[` (from `_arr_sub_addr`):
@@ -3130,10 +3146,10 @@ fn _slice_sub_read(S, li): i64 {
 # AND writes"; an unchecked write beside the checked read would be the one unchecked slice
 # operation). Returns the descriptor `_esub_assign` stores by — an f64 into an f32 element rounds,
 # a bool element takes only a boolean, an integer constant into a float warns, a wider integer
-# into a narrow one warns — with an integer's sign dropped, so `OP=` loads the element as `s[i]`
-# reads it (zero-extended). 0 after a refusal by name: a struct / u128 element, and `OP=` on an
-# f64 / f32 / bool element (the slice read is an untyped word, so a float `OP=` would disagree
-# with `s[i] = s[i] op v`). CHANGELOG [6.7.8]
+# into a narrow one warns — sign included, so `OP=` loads an [i8] / [i16] / [i32] element
+# sign-extended, as `s[i]` reads it (C2-6c: `_slice_sub_sread` reads through this call). 0 after a
+# refusal by name: a struct / u128 element, and `OP=` on an f64 / f32 / bool element (the slice
+# read is an untyped word, so a float `OP=` would disagree with `s[i] = s[i] op v`). CHANGELOG [6.7.8]
 fn _slice_sub_addr(S, li, noff): i64 {
     var ed = _slice_led(S, li);
     var w = _ek_w(ed);
@@ -3171,7 +3187,6 @@ fn _slice_sub_addr(S, li, noff): i64 {
                   " - the slice read is an untyped word; write s[i] = v", 0 - 1);
                 return ed;   # the operand still parses as the element's kind: nothing more is reported
             } } }
-    if ((ed & 0x60) == 0x40) { ed = ed - 0x40; }   # unsigned, as `s[i]` reads it
     return ed;
 }
 
