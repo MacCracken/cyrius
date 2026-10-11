@@ -1,0 +1,136 @@
+# ppoll_ioctl_fstatat_every_target.tcyr — 6.7.9: `sys_ppoll` exists on every target, and the
+# agnos peer defines `sys_ioctl` / `sys_fstatat`, so one portable call site compiles everywhere.
+#
+# ⛔ WHY. No peer wrapped ppoll: `sys_ppoll(..)` was `undefined function` on x86_64 and aarch64
+# Linux alike, and yukti spelled the one raw syscall itself, with a LOCAL `SYS_PPOLL = 271` on
+# x86_64 (the aarch64 peer's 1073 alias was the only stdlib name). And the agnos peer lacked
+# `sys_ioctl` / `sys_fstatat`, which linux_common and the PE peer both define, so portable source
+# naming either was `refusing to emit binary with N reachable undefined function(s)` under
+# CYRIUS_TARGET_AGNOS=1 — every call needed an #ifdef. Before the fix this file does not COMPILE
+# for any target (sys_ppoll), nor for agnos (all three).
+#
+# Each peer's answer is different, so only running it on each host proves it:
+#   * Linux x86_64 — ppoll 271 itself;
+#   * aarch64-Linux — the peer's 1073, which ESYSXLAT renumbers to native 73 (the x86-compat
+#     flock row eats a native 73, so a raw 73 would issue flock);
+#   * macOS (arm64 and Intel) — -78 (Darwin ENOSYS): Darwin has no ppoll and neither Mach-O
+#     backend routes the number, so the wrapper's macOS arm never compiles it;
+#   * Windows and agnos — -38 (ENOSYS), fail closed; agnos's sys_ioctl / sys_fstatat too.
+#
+# ⚠ EVERY LINUX ROW PINS SOMETHING ONLY THE RIGHT CALL, WITH ITS ARGUMENTS IN PLACE, PRODUCES:
+# an empty pipe times out after about the timespec's 200 ms (a wrong call returns at once or
+# never); a ready read end is counted with POLLIN in its revents; a closed descriptor's entry is
+# counted with POLLNVAL; an out-of-range tv_nsec is EINVAL (only a timespec reader refuses it);
+# and a signal mask with the wrong sigsetsize is EINVAL while the right one waits (so the 4th
+# and 5th arguments reach the kernel, not just the first three). CHANGELOG [6.7.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var pfd[16];        # two struct pollfd { int fd; short events, revents; }
+var ts[16];         # struct timespec { tv_sec; tv_nsec; }
+var st[256];        # a stat buffer at least STAT_BUFSZ on every peer
+
+fn pp_set(i, fd, events): i64 {
+    store32(&pfd + i * 8, fd);
+    store16(&pfd + i * 8 + 4, events);
+    store16(&pfd + i * 8 + 6, 0);
+    return 0;
+}
+fn pp_revents(i): i64 { return load16(&pfd + i * 8 + 6); }
+fn ts_set(sec, nsec): i64 {
+    store64(&ts, sec);
+    store64(&ts + 8, nsec);
+    return 0;
+}
+fn ms_since(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+#ifdef CYRIUS_TARGET_LINUX
+fn linux_rows(): i64 {
+    var fds[16];
+    assert_eq(sys_pipe(&fds), 0, "a pipe for the ppoll rows");
+    var rd = load32(&fds);
+    var wr = load32(&fds + 4);
+
+    test_group("6.7.9 — sys_ppoll: an empty pipe times out after the timespec");
+    pp_set(0, rd, 1);                                   # POLLIN
+    ts_set(0, 200000000);                               # 200 ms
+    var t0 = clock_now_ns();
+    var w = sys_ppoll(&pfd, 1, &ts, 0, 0);
+    var el = ms_since(t0);
+    assert_eq(w, 0, "nothing to read: 0 (timed out)");
+    assert(el >= 150, "…after about the 200 ms timespec (>= 150 ms), not at once");
+    assert(el < 3000, "…and not much later (< 3 s)");
+    assert_eq(pp_revents(0), 0, "…with revents 0");
+
+    test_group("6.7.9 — sys_ppoll: data makes the read end ready");
+    assert_eq(sys_write(wr, "p", 1), 1, "one byte into the pipe");
+    ts_set(5, 0);
+    t0 = clock_now_ns();
+    assert_eq(sys_ppoll(&pfd, 1, &ts, 0, 0), 1, "one entry ready: 1");
+    assert(ms_since(t0) < 1000, "…at once (< 1 s), not after the 5 s timespec");
+    assert((pp_revents(0) & 1) != 0, "…and its revents carry POLLIN");
+    pp_set(0, rd, 1);
+    assert_eq(sys_ppoll(&pfd, 1, 0, 0, 0), 1, "a NULL timespec with data ready: 1 at once");
+
+    test_group("6.7.9 — sys_ppoll: every entry is judged; a closed fd reports POLLNVAL");
+    var gone[16];
+    assert_eq(sys_pipe(&gone), 0, "a second pipe, to close");
+    var cfd = load32(&gone);
+    sys_close(cfd);
+    sys_close(load32(&gone + 4));
+    pp_set(0, rd, 1);
+    pp_set(1, cfd, 1);
+    ts_set(0, 0);
+    assert_eq(sys_ppoll(&pfd, 2, &ts, 0, 0), 2, "two entries with revents: 2");
+    assert((pp_revents(0) & 1) != 0, "the pipe still reads POLLIN");
+    assert_eq(pp_revents(1), 0x20, "the closed descriptor reads POLLNVAL (0x20)");
+
+    test_group("6.7.9 — sys_ppoll: the timespec and the signal mask reach the kernel");
+    pp_set(0, rd, 1);
+    ts_set(0, 1000000000);                              # tv_nsec out of range
+    assert_eq(sys_ppoll(&pfd, 1, &ts, 0, 0), 0 - 22, "tv_nsec = 1e9: -EINVAL (a timespec was read)");
+    var mask[8];
+    store64(&mask, 0);                                  # the empty set: no signal blocked
+    ts_set(0, 0);
+    assert_eq(sys_ppoll(&pfd, 1, &ts, &mask, 8), 1, "a signal mask with sigsetsize 8: waits (1)");
+    assert_eq(sys_ppoll(&pfd, 1, &ts, &mask, 4), 0 - 22, "sigsetsize 4 with a mask: -EINVAL (args 4 and 5 arrive)");
+
+    sys_close(rd);
+    sys_close(wr);
+
+    test_group("6.7.9 — the same sys_ioctl / sys_fstatat call sites run on Linux");
+    assert_eq(sys_ioctl(0 - 1, 0x5401, &st), 0 - 9, "ioctl on a bad fd: -EBADF (the kernel saw an ioctl)");
+    assert_eq(sys_fstatat(AT_FDCWD, "/", &st, 0), 0, "fstatat(AT_FDCWD, \"/\") succeeds");
+    return 0;
+}
+linux_rows();
+#endif
+
+#ifdef CYRIUS_TARGET_MACOS
+test_group("6.7.9 — macOS: Darwin has no ppoll, so sys_ppoll declines with -78 (Darwin ENOSYS)");
+pp_set(0, 0, 1);
+ts_set(0, 0);
+assert_eq(sys_ppoll(&pfd, 1, &ts, 0, 0), 0 - 78, "sys_ppoll returns -78, never a SIGSYS");
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("6.7.9 — Windows: sys_ppoll declines with -38 (WSAPoll is a different record)");
+pp_set(0, 0, 1);
+ts_set(0, 0);
+assert_eq(sys_ppoll(&pfd, 1, &ts, 0, 0), 0 - 38, "sys_ppoll returns -ENOSYS on PE");
+#endif
+
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("6.7.9 — agnos: sys_ppoll, sys_ioctl and sys_fstatat exist and decline with -38");
+pp_set(0, 0, 1);
+ts_set(0, 0);
+assert_eq(sys_ppoll(&pfd, 1, &ts, 0, 0), 0 - 38, "sys_ppoll returns -ENOSYS on agnos");
+assert_eq(sys_ioctl(0, 0x5401, &st), 0 - 38, "sys_ioctl returns -ENOSYS on agnos");
+assert_eq(sys_fstatat(AT_FDCWD, "/", &st, 0), 0 - 38, "sys_fstatat returns -ENOSYS on agnos");
+#endif
+
+var r = assert_summary();

@@ -873,6 +873,21 @@ fn fd_restore_flags(fd, saved): i64 { return 0 - 38; }
 # already deadline-bounded inside the peer (_agnos_sock_recv_block / _agnos_sock_send_dl take
 # the wait in µs). CHANGELOG [6.6.13]
 fn fd_wait_ready(fd, want_write, timeout_ms): i64 { return 0 - 38; }
+# ── 6.7.9: agnos peers for three linux_common wrappers this peer lacked, so portable source
+# naming them failed to COMPILE here ("reachable undefined function") and yukti `#ifdef`'d
+# every call. ⛔ Same rule as the blocks above — no Linux `SYS_*` constant is minted: Linux 16
+# (ioctl) is agnos `kill` (SYS_KILL above), and 262 (newfstatat) / 271 (ppoll) are no agnos
+# call, so they would fall through the dispatch chain. Each declines with -38/-ENOSYS.
+# CHANGELOG [6.7.9]
+# Wait on an array of pollfd entries. agnos has no poll (fd_wait_ready's reason above).
+fn sys_ppoll(fds, nfds, tsp, sigmask, sigsetsize): i64 { return 0 - 38; }
+# Device control. agnos has no ioctl; its devices are reached through their own calls
+# (blk_open / blk_read, the gpu band).
+fn sys_ioctl(fd, request, argp): i64 { return 0 - 38; }
+# stat relative to a directory fd. agnos has no at-family and no dirfd; its stat family is
+# length-carrying by path (sys_stat / sys_lstat(path, pathlen, buf)), so a real fstatat over
+# them is a later choice — this declines rather than guessing a dirfd's meaning.
+fn sys_fstatat(dirfd, path, buf, flags): i64 { return 0 - 38; }
 
 # at-family constants. The Linux values, defined here so the PORTABLE surface is
 # complete: this peer is STANDALONE (it does not include syscalls_linux_common.cyr,

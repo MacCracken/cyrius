@@ -903,6 +903,13 @@ fn fd_wait_ready(fd, want_write, timeout_ms): i64 {
     return 1;
 }
 
+# ppoll — the linux_common wrapper's PE peer. Declines (-38): WSAPoll's WSAPOLLFD is
+# { SOCKET (8 bytes); SHORT events, revents } with Winsock event bits, not ppoll's 8-byte
+# { int fd; short, short }, it waits on sockets only, and it takes int ms rather than a
+# timespec and a signal mask — so a caller's pollfd array cannot be handed to it unchanged.
+# fd_wait_ready above is the portable one-socket wait. CHANGELOG [6.7.9]
+fn sys_ppoll(fds, nfds, tsp, sigmask, sigsetsize): i64 { return 0 - 38; }
+
 # ── PE peers for the linux_common wrappers a cross-platform consumer names on paths that
 # are dead on Windows (yukti's optical / eject / netlink-monitor / network-probe / mount /
 # TOCTOU-lstat paths since 2.3.12). Without them a PE build that merely REACHES such a
