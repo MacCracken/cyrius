@@ -3199,7 +3199,9 @@ fn _asg_store_slot(S, idx, g): i64 {
     var avsz = L64(_vars_base + idx * 8);
     if (avsz < 8) {
         if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
-        EVSTORE_W(S, idx, avsz);
+        # A zero-size global (an inline `struct E { }`) owns no bytes: nothing is stored. Width 0
+        # took EVSTORE_W's 8-byte fallback over the next global. CHANGELOG [6.7.9]
+        if (avsz > 0) { EVSTORE_W(S, idx, avsz); }
     }
     else { EVSTORE(S, idx); }
     SLVAR(S, idx);
