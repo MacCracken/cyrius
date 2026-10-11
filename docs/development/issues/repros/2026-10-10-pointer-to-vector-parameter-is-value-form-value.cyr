@@ -1,0 +1,11 @@
+# The other half: a vector VALUE into the same `*f64v2` parameter compiles, and the callee crashes.
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(f64_from(5), f64_from(6));
+    var r = rd(b);                       # compiles clean; SIGSEGV (rc 139) — want a type error
+    return 0;
+}
+var rc = main();
+syscall(60, rc);

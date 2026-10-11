@@ -1,0 +1,9 @@
+# `cyrius header` input: every fn's prototype says `cyr_val`, whatever it returns.
+struct Q { a; b; }        # 16 B: returned in rax:rdx
+struct R { a; b; c; }     # 24 B: returned through a hidden pointer (x86_64: integer argument 0; aarch64: x8)
+trait Show { fn show(self): i64; }
+impl Show for Q { fn show(self): i64 { return self.a; } }
+fn mkq(a, b): Q { var q = Q { a, b }; return q; }
+fn mkr(a): R { var r = R { a, a, a }; return r; }
+fn mkd(p: *Q): dyn Show { return p; }
+fn plain(a): i64 { return a; }

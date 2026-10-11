@@ -1,0 +1,17 @@
+# 2026-10-10 — a scalar-annotated local initialised from a call returning a struct over 8 B
+# ignores its annotation: it becomes the struct (`x.b` compiles) and a `u8` holds 333.
+# Expected: refused, or the scalar (first word, narrowed: y = 77). Actual: exit 3
+# (bit 0: `var y: u8` holds a value over 255; bit 1: `x.b` compiles and reads the second word).
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+fn mkp(): P2 { var p: P2; p.a = 333; p.b = 3; return p; }
+fn main(): i64 {
+    var x: i64 = mkp();
+    var y: u8 = mkp();
+    var bad = 0;
+    if (y > 255) { bad = bad + 1; }
+    if (x.b == 3) { bad = bad + 2; }
+    return bad;
+}
+var rc = main();
+syscall(60, rc);

@@ -1,0 +1,13 @@
+# A program's own `struct slice`: a parameter / pointer target uses it; a fn-local annotation does not.
+include "lib/syscalls.cyr"
+struct slice { a; b; c; }
+fn f(s: *slice): i64 { return s.c; }     # the user's 24-byte struct
+fn main(): i64 {
+    var x: slice = 0;                    # the BUILT-IN 16-byte slice local, not the user's struct
+    x.a = 5;                             # refused: "no struct type in scope for 'x'"
+    var B: i64[3];
+    store64(&B + 16, 9);
+    return f(&B) + x.a;                  # want 14 (9 + 5), with `x` the user's struct
+}
+var rc = main();
+syscall(60, rc);

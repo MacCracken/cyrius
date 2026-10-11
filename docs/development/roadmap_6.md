@@ -56,6 +56,11 @@ repair-registry cap says so too).
   number calls a shared per-class stub through a `bl` with no fixup-table entry and no position registry, and
   `ESYSX_STUBS`'s site list is drained before FIXUP — a code-moving pass must find them itself. `wp_compact` returns 0
   for EVERY aarch64 target today (`src/common/ir.cyr`), so arm64 Mach-O and aarch64 ELF never compact.
+- **`kernel;` layouts decline since 6.6.20** (REVBE-01: FIXUP patches data addresses against the PRE-compaction
+  code size while the kernel emitters place `.bss` / `.rodata` after the POST-compaction size, so every string and
+  global address pointed 162 KB high on agnos — [issue](issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md),
+  agnos-filed, with real image-room pressure). The arc's kernel bite repairs the data base after compaction (or
+  freezes it, as `_wx_dbase_frozen` does for EMITELF_USER) so a kernel image shrinks again.
 - **PE and x86 Mach-O decline** (since v6.6.1) because both reach a live import / stub table through a rip-relative
   disp32 the compaction pass does not repair, and both compute file geometry before elimination runs. Declining was the
   right release fix (they emitted binaries that faulted before `main`), but it leaves them on NOP-fill. ELF still

@@ -240,21 +240,15 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.7 — in flight** (0)
 
 
-**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (6)
+**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (0)
 
-- [cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported")](2026-10-08-cx-16b-struct-return-refused.md)
-- [`*p = v` through `p: *f32` / `*i32` is a raw 8-byte word store (documented design gap)](2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md)
-- [A variable or subscript classic-`for` step never checks its `)`](2026-10-08-for-step-variable-subscript-close-paren-unchecked.md)
-- [Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`)](2026-10-08-generic-inference-through-generic-struct-param.md)
-- [A slice type outside a fn-local `var` is a mis-diagnosed parse error: declaration-zone globals, parameters, return types, fields](2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
-- [A trait's required signature is never parsed, and an overridden default method's is not either](2026-10-09-trait-signature-parameter-list-unparsed.md)
 
 **6.7.9 — features: B7 + P5-B** (2)
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
 
-**6.7.10 — Break 2, repair 1** (39)
+**6.7.10 — Break 2, repair 1** (59)
 
 - [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](2026-10-08-api-surface-multiline-string-desync.md)
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
@@ -295,8 +289,28 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`var p: P = f();` with a multi-value `f` compiles and crashes (the first value is taken as a pointer)](2026-10-09-struct-var-from-multi-value-call-crashes.md)
 - [A top-level closure captures a global from the previous fn's dead locals when the names match — SIGSEGV](2026-10-09-toplevel-closure-captures-stale-fn-local.md)
 - [A `Vec<T>` var or parameter annotation never reads its `<T>`, so `Vec<(i64, i64)>` compiles where every other type argument refuses a tuple](2026-10-09-vec-annotation-type-argument-unchecked.md)
+- [`&q` of a `q: *P` PARAMETER is the pointee's address when P is a struct over 8 B — every other pointer gives the slot's](2026-10-10-address-of-pointer-param-over-8b-is-pointee.md)
+- [`gates_never_write_tree.sh` axis 9 takes any line holding ` trap ` and a trailing ` 0` as the EXIT trap — a prose label fails a clean wine gate](2026-10-10-axis9-trap-detector-matches-prose.md)
+- [`.field` on a METHOD's `*T` result (`h.get().b`) is refused, where a free fn's `get2(h).b` reads it](2026-10-10-field-of-method-pointer-result-refused.md)
+- [`var t, v = fncallN(..)` is refused on cx only — `crossos/method_pair_result.tcyr` has never built for cx](2026-10-10-fncall-destructure-refused-on-cx-only.md)
+- [A `for` step assigning an UNDECLARED name compiles and stores nothing (`for (i = 0; i < 5; j = i + 1)` never ends)](2026-10-10-for-step-undeclared-name-compiles-silently.md)
+- [A generic that reads its struct parameter's `T` field as a struct (`b.v.y`, `b: Box<T>`) does not compile, called or not](2026-10-10-generic-base-reads-carrier-field-as-struct.md)
+- [A generic call's `T = f64` result is an untyped word when T is inferred or only the return type — `gid(h) * 2.0` multiplies bits](2026-10-10-generic-call-f64-result-untyped.md)
+- [A generic call's own result as a struct-carrier argument (`gx(mk1(p))`) is not inferred — refused as a "different struct type"](2026-10-10-generic-call-result-as-carrier-argument-refused.md)
+- [A generic METHOD called as `p.m(x)` with a struct for its type parameter runs the i64 base (the dead stub)](2026-10-10-generic-method-call-runs-i64-base.md)
+- [`n + p` with a one-byte `*T` (`*u8` / `*i8`) is no typed pointer, where `p + n` is — `(1 + p8) - q32` builds, `var r: *u8 = 1 + p8;` warns](2026-10-10-int-plus-byte-pointer-drops-step.md)
+- [A `: stack` pair-returning METHOD used above its `impl` is not a pair: `p.div(d)?` SIGSEGVs, `var v = p.div(d);` binds the tag](2026-10-10-pair-method-defined-after-use-not-flagged.md)
+- [A fn parameter's type annotation is read as ONE token: `fn f(a: 5)` / `fn f(a: +)` compile, `fn f(p: **i64)` does not](2026-10-10-param-type-annotation-reads-one-token.md)
+- [A parenthesised struct-returning call as a nested-struct literal element is refused ("unexpected '}'")](2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md)
+- [A pointer passed to a by-value `b: Box<T>` parameter runs the generic's i64 base — `b.n` read at the wrong offset](2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.md)
+- [A pointer's step outlives the operator that consumed it: with `q: *i32`, `(x == q) + 100` adds 400](2026-10-10-pointer-step-leaks-through-operators.md)
+- [A pointer-to-vector PARAMETER (`p: *f64v2`) is taken as a by-value vector: `rd(&b)` is refused, `rd(b)` builds and SIGSEGVs](2026-10-10-pointer-to-vector-parameter-is-value-form.md)
+- [A local's struct receive from a call: `var x = (mk());` infers nothing, `var x: u8 = mk();` infers the struct over its annotation](2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md)
+- [The run-time constant fold folds a literal operator OVER a unary `-` / `~` operand: `-K + 10` is 15, `~5 + 10` is 15](2026-10-10-unary-minus-and-not-folded-over-by-literal-operator.md)
+- [A program's own `struct slice` is used by a parameter / pointer but not by a fn-local `var x: slice`](2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+- [A stray top-level `}` silently ends the translation unit — everything after it is dropped, `OK`](2026-10-11-stray-top-level-brace-silently-ends-the-unit.md)
 
-**6.7.11 — Break 2, repair 2 (the platform release)** (18)
+**6.7.11 — Break 2, repair 2 (the platform release)** (23)
 
 - [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](2026-10-08-aarch64-native-region-literal-translated-silently.md)
 - [arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3)](2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md)
@@ -316,8 +330,13 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [x86-macOS: every `syscall()` site still inlines the whole `EMACHO_SYSXLAT` chain (~1.26 KB, 35 % of the compiler)](2026-10-08-x86-macos-emacho-sysxlat-not-folded.md)
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](2026-10-08-xflock-windows-lockfileex-not-wired.md)
 - [Under wine, the PE compiler returns rc 3 at once with empty output; the full output lands later](2026-10-09-wine-pe-compiler-exits-before-output-lands.md)
+- [`cyrius header` prints `cyr_val f(..)` for a fn returning a struct (9-16 B: rax:rdx; > 16 B: a hidden pointer)](2026-10-10-cyrius-header-ignores-struct-returns.md)
+- [`CYRIUS_POISON=0` (or empty, or any value) turns the poison mode ON — every compiler fork tests only "is it set"](2026-10-10-poison-env-zero-or-empty-turns-mode-on.md)
+- [Eleven scripts build the compiler from `src/` without scrubbing an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` — `install.sh` among them](2026-10-10-self-build-scripts-inherit-poison-and-bounds.md)
+- [`--strict-pin` / CYRIUS_STRICT_PIN does nothing off Linux, and cycc.exe ignores CYRIUS_PIE](2026-10-10-strict-pin-and-pie-inert-off-linux.md)
+- [On Windows, `cyrius build --agnos` and `--target=x86_64-bare-metal-elf` write a plain PE and exit 0](2026-10-10-windows-cli-drops-target-selectors.md)
 
-**6.7.12 — Break 2, repair 3** (24)
+**6.7.12 — Break 2, repair 3** (27)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -343,6 +362,9 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A named-field struct literal in the declaration zone is refused ("undefined variable 'a'") — the guide's own Structs example fails as written](2026-10-09-declaration-zone-named-struct-literal-refused.md)
 - [A non-generic fn's parameter type `Mp<K, V>` with `K` / `V` never declared compiles silently](2026-10-09-undeclared-generic-type-arguments-accepted.md)
 - [A whole-struct store into a ZERO-size struct global writes 8 bytes over its neighbour](2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md)
+- [An error inside a generic fn's body is printed once per instance](2026-10-10-generic-body-errors-reported-per-instance.md)
+- [An unknown name followed by `<..>` is accepted as a type argument (`g<Nonexist<u8>>`, `Box<slice<u8>>`) and runs as the i64 base](2026-10-10-unknown-generic-name-accepted-as-type-argument.md)
+- [A declaration-zone global set from a METHOD returning a 9-16 byte struct compiles and crashes at startup](2026-10-10-zone-global-from-method-struct-call-crashes.md)
 
 **6.7.13 — the full security audit + the refactor / optimization review** (1)
 
@@ -355,6 +377,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
 - [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
 - [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
+
+**Unplaced** (1)
+
+- [agnos — `CYRIUS_DCE=1` cannot shrink a `kernel;` image: compaction miscompiles through 6.6.19 and is declined from 6.6.20 on](2026-10-10-agnos-kernel-dce-compaction-moves-data.md)
 
 ## Recommended security floor
 

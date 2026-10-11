@@ -1,0 +1,7 @@
+# A declaration-zone global initialised from a METHOD returning a 9-16 B struct.
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q = Q { self.a + 1, self.b + 2 }; return q; } }
+var Q0: Q = Q { 4, 5 };
+var G2: Q = Q0.mk();                     # compiles; the binary SIGSEGVs (rc 139); want exit 57
+syscall(60, G2.a * 10 + G2.b);

@@ -1,0 +1,15 @@
+# `.field` on a METHOD's `*T` result; the free fn's `f(..).b` is accepted.
+include "lib/syscalls.cyr"
+struct P { a; b; }
+struct H { p: *P; }
+impl H { fn get(self): *P { return self.p; } }
+fn get2(h: *H): *P { return h.p; }
+fn main(): i64 {
+    var p = P { 3, 4 };
+    var h = H { &p };
+    var x = get2(&h).b;                  # accepted: 4
+    var y = h.get().b;                   # refused: "cannot take a field of the result of 'H_get': it does not return a struct"
+    return x * 10 + y;                   # want 44
+}
+var rc = main();
+syscall(60, rc);

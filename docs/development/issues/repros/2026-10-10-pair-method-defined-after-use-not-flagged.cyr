@@ -1,0 +1,16 @@
+# `p.div(d)?` above the impl that defines the `: stack` pair-returning method.
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn usediv(p: Pt, d): i64 {
+    var q = p.div(d)?;                   # the impl is BELOW: `?` treats the result as a box -> SIGSEGV
+    return Ok(q + 1);
+}
+impl Pt { fn div(self, d): i64 { if (d == 0) { return Err(9); } return Ok(self.x / d); } }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    return t * 100 + v;                  # want 11 (Ok(11)); the impl moved above usediv gives 11
+}
+var rc = main();
+syscall(60, rc);

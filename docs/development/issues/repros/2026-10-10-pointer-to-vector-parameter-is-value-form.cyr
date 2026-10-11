@@ -1,0 +1,14 @@
+# A `*f64v2` PARAMETER is taken as a by-value f64v2 (the `*` is dropped).
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(f64_from(5), f64_from(6));
+    var w0 = load64(&b);                 # lane 0's bits
+    var pl: *f64v2 = &b;
+    if (load64(pl) != w0) { return 3; }  # a `*f64v2` LOCAL is right
+    if (rd(&b) == w0) { return 1; }      # refused: "value-form SIMD arg must be a local IDENT (inline-replay path)"
+    return 2;                            # want exit 1
+}
+var rc = main();
+syscall(60, rc);

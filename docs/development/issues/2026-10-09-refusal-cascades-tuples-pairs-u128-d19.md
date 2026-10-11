@@ -246,3 +246,39 @@ Diagnostic only, with no change to what compiles:
 
 Each needs a gate row asserting the exact error count, for example in `tests/gates/frontend/tuple_checked.sh`,
 `stack_enum_lossy_context.sh` and `default_named_args_checked.sh`.
+
+## Shape 9 (appended 2026-10-10): a refused parameter type drops the fn's defaults — a second error at every call
+
+**Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-6a (reported only, `~/.cache/c6/c2/changelog_handoff.md` §
+C2-6a). **Verified** 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged` 2,053,536 B): all
+three inputs below give the two errors quoted; the installed 6.7.7 compiler gives the same second error after its own
+first one (`expected ')', got identifier 'u8'` for the slice, which 6.7.8 refuses by name). Same class as shapes 1–8 —
+one mistake, more than one error — and in the B6 default-argument code this issue already places in 6.7.10.
+
+A parameter whose TYPE is refused — a slice `[u8]` (6.7.8, C2-6a), an unknown name — and that has a default makes the
+fn lose its defaults: every call that omits an argument then also reports an arity error. With more than one default,
+all of them go (the third input: `b = 3` is fine and is still lost).
+
+```cyr
+fn f(s: [u8] = 0): i64 { return 7; }
+fn main(): i64 { return f(); }
+syscall(60, main());
+```
+```
+error:<source>:2:9: a slice cannot be a parameter (6.7.8: slices are fn-locals) - pass &s and read slice_ptr / slice_len, or the pointer and the length
+error:<source>:3: 'f' expects 1 argument, got 0
+```
+
+`fn f(s: Nonexist = 0): i64 { return 7; }` called `f()`: "unknown type 'Nonexist' for parameter 's'", then "'f'
+expects 1 argument, got 0". `fn f(a, s: Nonexist = 0, b = 3): i64` called `f(1)`: the unknown-type error, then "'f'
+expects 3 arguments, got 1".
+
+**Root cause (9).** The default's kind check `_pd_kind_ok` (`src/frontend/parse_fn.cyr:3127`, merged 6.7.8 tip) asks
+`_pd_pclass` (`:3060`) for the parameter's class: a non-identifier type (`[`) is `0 - 12`, which returns 0 ("no
+default") silently; `_pd_eval` (`:2975`) then records no default, and the call's arity check counts the parameter as
+required. Speculation, not traced: an unresolved name (`_pd_tclass` of an unresolved type) fails the same way, and
+the "all defaults lost" half means the fn's default row is dropped as a whole.
+
+**Fix (9).** Keep the default when only the parameter's type was refused — the type refusal already stopped the build —
+or mark the fn "signature refused" so its calls skip the arity check; one error per input. Row: the three inputs above
+in `default_named_args_checked.sh`, each with exactly one error.

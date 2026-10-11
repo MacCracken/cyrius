@@ -1,0 +1,11 @@
+# 2026-10-10 — a fn definition's parameter annotation accepts ANY single token as the type.
+# Expected: each of the three definitions refused by name (`5`, `+`, `;` and a string are not
+# types; `fn f(a: Nonexist)` IS refused, "unknown type 'Nonexist' for parameter 'a'").
+# Actual: compiles with rc 0 and exits 42 (f(10) = 11, g(20, 10) = 30, h(1) = 1).
+include "lib/syscalls.cyr"
+fn f(a: 5): i64 { return a + 1; }
+fn g(a: +, b: ;): i64 { return a + b; }
+fn h(a: "s"): i64 { return a; }
+fn main(): i64 { return f(10) + g(20, 10) + h(1); }
+var rc = main();
+syscall(60, rc);

@@ -1,0 +1,11 @@
+# An unknown name followed by `<..>` is accepted as a type argument (the plain unknown name is refused).
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }
+fn main(): i64 {
+    var c: Box<Nonexist<u8>>;            # accepted (`Box<Nonexist>` is refused by name)
+    c.n = 3;
+    return g<Nonexist<u8>>(0) + c.n;     # accepted: runs the i64 base, sizeof(T) = 8; `g<Nonexist>(0)` is refused
+}
+var rc = main();
+syscall(60, rc);

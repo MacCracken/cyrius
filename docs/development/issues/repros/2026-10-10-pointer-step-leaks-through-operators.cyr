@@ -1,0 +1,30 @@
+# 2026-10-10 — a pointer's step outlives the operator that consumed the pointer: with `q: *i32`
+# every operator except `+` / `-` (and a call result's non-pointer field) leaves q's step 4 in the
+# pointer-scale word, so the NEXT `+ n` adds 4n. Each row below is an integer `+ 1` (or `+ 100`).
+# Expected: exit 0. Actual: exit 255 — all eight rows add 4 (x86_64, aarch64 (qemu), cx (cxvm),
+# PE (wine); 6.7.4, 6.7.7 and the merged 6.7.8 tip). Control: `(0 - q) + 1` is right.
+include "lib/syscalls.cyr"
+struct H { n; m; }
+var HH = H { 0, 0 };
+fn mk(q: *i32): H { var h: H; h.n = 0; h.m = 0; return h; }
+fn mp(q: *i32): *H { return &HH; }
+fn main(): i64 {
+    var x: i32 = 0;
+    var q: *i32 = &x;
+    var qq: i64 = q;          # the same address, untyped
+    var base = 1;
+    var m = 0;
+    var bad = 0;
+    if ((qq == q) + 100 != 101) { bad = bad | 1; }       # 401
+    if ((base && q) + 1 != 2) { bad = bad | 2; }         # 5
+    if ((1 * q) + 1 != qq + 1) { bad = bad | 4; }        # qq + 4
+    if ((m & q) + 1 != 1) { bad = bad | 8; }             # 4
+    if ((0 ^ q) + 1 != qq + 1) { bad = bad | 16; }       # qq + 4
+    if ((~q) + 1 != (~qq) + 1) { bad = bad | 32; }       # ~qq + 4
+    if (mk(q).n + 1 != 1) { bad = bad | 64; }            # 4: a by-value struct result's field
+    if (mp(q).n + 1 != 1) { bad = bad | 128; }           # 4: a `*H` result's field
+    if ((0 - q) + 1 != (0 - qq) + 1) { bad = bad | 256; }   # control: right
+    return bad;
+}
+var rc = main();
+syscall(60, rc);

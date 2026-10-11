@@ -1,10 +1,9 @@
-# A variable or subscript classic-`for` step never checks its `)` — OPEN
+# A variable or subscript classic-`for` step never checks its `)` — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`:
-`for (i = 0; i < 3; i += 1 2)` builds and runs 3 iterations; so do a global step, `i = i + 1 2`,
-`a[0] += 1 2`, `i += 1 ; junk` and a 24 B struct step `a = b 2` (which also stores one word: `a.y` stays 2).
-The field step `c.n += 1 2` reports "expected ')', got number 2".
-**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+> ✅ **RESOLVED in v6.7.8** (CHANGELOG [6.7.8]). A variable or subscript for-step checks its `)` (`a[i] = 1 2` is "expected ')', got number 2"); C2-2b.
+
+**Status:** ✅ **RESOLVED in v6.7.8** — see the banner above.
+**Placement:** 6.7.8 — shipped.
 **Discovered:** 6.7.5 B8 lane (roadmap commit e95f295d); filed 2026-10-08 from roadmap.md.
 **Severity:** Low
 **Affects:** cycc ≤ 6.7.6 (field and `*p` steps check since 6.7.5)

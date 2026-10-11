@@ -4,8 +4,7 @@
 lane's previous bite (bad7b32e) and on the installed 6.7.7 `cycc`: the same counts (the for-step rows below are
 errors only from 4d9eda56 on). A generic fn with a syntax error in its body, called at three distinct type arguments,
 prints the error three times, at the same file:line:col.
-**Placement:** unpinned — 6.x backlog (the user places). It is a diagnostics-only defect, the kind 6.7.12's
-Diagnostics group holds — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3, the diagnostics lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-2b (the for-step `)` check), outside its scope: a junk
 for-step inside a generic body instantiated twice printed its new "expected ')'" twice — as the existing statement
 `;` check and the 6.7.5 field-step check already did.

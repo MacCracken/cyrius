@@ -1,0 +1,18 @@
+# 2026-10-10 — cycc takes CYRIUS_POISON as ON for ANY set value: `0`, the empty string, `no`.
+# Run from the repo root (exit 7 = the CYRIUS_POISON predefine is set):
+#   for v in 1 0 '' no; do CYRIUS_POISON="$v" sh -c 'cat <this file> | build/cycc > /tmp/pz' \
+#     && chmod +x /tmp/pz && /tmp/pz; echo "CYRIUS_POISON=[$v] -> $?"; done
+#   env -u CYRIUS_POISON sh -c 'cat <this file> | build/cycc > /tmp/pz' && /tmp/pz; echo "unset -> $?"
+# Expected: 1 -> 7; 0 -> 0; '' -> 0 (no rung, as CYRIUS_BOUNDS / CYRIUS_DCE read it); `no` refused by
+#           name (as `CYRIUS_BOUNDS=no` is: "CYRIUS_BOUNDS must be 0 or 1 (or unset)"); unset -> 0.
+# Actual (the merged 6.7.8 tip and 6.7.7 on x86_64; the aarch64 and cx cross compilers give 7 for `0` too):
+#           1 -> 7, 0 -> 7, '' -> 7, no -> 7, unset -> 0.
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    #ifdef CYRIUS_POISON
+    return 7;
+    #endif
+    return 0;
+}
+var rc = main();
+syscall(60, rc);

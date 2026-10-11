@@ -1,0 +1,13 @@
+# 2026-10-10 — `var t, v = fncall1(..)` compiles on x86_64, aarch64 and PE and is refused on cx
+# alone ("multi-value destructure binds 2 names, but 'fncall1' returns 1 value").
+# Expected: one answer on every target (exit 83 where it compiles: t = 41, v = 42).
+# Actual: x86_64 / aarch64 / PE exit 83; the cx compiler refuses the file.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+fn g(d): (i64, i64) { return (d, d + 1); }
+fn main(): i64 {
+    var t, v = fncall1(&g, 41);
+    return t + v;
+}
+var rc = main();
+syscall(60, rc);

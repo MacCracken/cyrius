@@ -131,20 +131,20 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 **Content.**
 - **Checked `dyn`**, bites D0–D6. Absorbs, as prerequisites:
-  - [a trait's required signature is never parsed](issues/2026-10-09-trait-signature-parameter-list-unparsed.md)
+  - [a trait's required signature is never parsed](issues/archived/2026-10-09-trait-signature-parameter-list-unparsed.md)
     (D1; the default half ships in 6.7.7);
-  - [cx refuses a 16-byte struct return](issues/2026-10-08-cx-16b-struct-return-refused.md) (D6). The pair's high
+  - [cx refuses a 16-byte struct return](issues/archived/2026-10-08-cx-16b-struct-return-refused.md) (D6). The pair's high
     word goes in r4, the multi-value register, so 6.7.7's aarch64 fix needs no cx bridge.
 - **C2**, bites 1–7: `*T` subscripts, slice writes, exact element counts, the `CYRIUS_BOUNDS` / `#bounds` plumbing,
   the check, the crossos violation test, then the stdlib run under the mode. Absorbs:
-  - [a for-step never checks its `)`](issues/2026-10-08-for-step-variable-subscript-close-paren-unchecked.md), because
+  - [a for-step never checks its `)`](issues/archived/2026-10-08-for-step-variable-subscript-close-paren-unchecked.md), because
     the new `p[i]` step takes the same arm;
-  - [`*p` through a narrow `*T` is a word store](issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md),
+  - [`*p` through a narrow `*T` is a word store](issues/archived/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md),
     because `p[0] = v` and `*p = v` must not disagree.
 - Placed by the open's answer:
   - [an indirect call's f64 result is untyped](issues/archived/2026-10-08-indirect-call-f64-result-untyped.md): (a) a bite in
     the dyn lane · (b) goes to 6.7.10 · (c) closed at the open;
-  - [generic inference through `Box<T>`](issues/2026-10-08-generic-inference-through-generic-struct-param.md): the
+  - [generic inference through `Box<T>`](issues/archived/2026-10-08-generic-inference-through-generic-struct-param.md): the
     inference is a bite in the dyn lane; the diagnostic only goes to 6.7.12.
 - File at the open: slice parameters and top-level slices are mis-diagnosed parse errors.
 

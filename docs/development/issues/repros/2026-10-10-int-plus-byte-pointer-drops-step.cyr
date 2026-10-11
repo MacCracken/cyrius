@@ -1,0 +1,14 @@
+# `n + p` with a ONE-byte `*T` keeps no step: unlike `p + n` it is no typed pointer.
+include "lib/syscalls.cyr"
+var B: i64[4];
+fn f(): i64 {
+    var p8: *u8 = &B;
+    var q32: *u32 = &B;
+    var q: *u8 = p8 + 1;                 # silent
+    var r: *u8 = 1 + p8;                 # warning: assigning non-pointer to typed pointer
+    var d1 = (p8 + 1) - q32;             # error: pointer difference of pointers with different element sizes
+    var d2 = (1 + p8) - q32;             # silent: a byte difference
+    var d3 = (1 + q32) - p8;             # error (a step-4 `n + p` keeps its step)
+    return d2;
+}
+syscall(60, f());

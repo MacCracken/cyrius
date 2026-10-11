@@ -1,13 +1,9 @@
-# A slice type outside a fn-local `var` is a mis-diagnosed parse error: declaration-zone globals, parameters, return types, fields — OPEN
+# A slice type outside a fn-local `var` is a mis-diagnosed parse error: declaration-zone globals, parameters, return types, fields — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against the merged 6.7.7 tip (`cycc_merged`, 1,916,288 B; tree @
-06bd8981) and 6.7.6's `build/cycc`, with
-[`repros/2026-10-09-slice-type-outside-fn-local-misdiagnosed.cyr`](repros/2026-10-09-slice-type-outside-fn-local-misdiagnosed.cyr).
-Both compilers report the two errors it quotes. With its two `var` lines moved after the first statement, the same
-file compiles and exits 0 on both. Each shape in the table below was compiled with the merged tip.
-**Placement:** 6.7.8 — checked `dyn` + C2 (roadmap.md § *6.7.8*: "File at the open: slice parameters and top-level
-slices are mis-diagnosed parse errors") — placed 2026-10-09 — never 7.x. C2's open decides slice scope, and the fix
-follows that answer.
+> ✅ **RESOLVED in v6.7.8** (CHANGELOG [6.7.8]). Every slice position outside a fn-local var is refused by name, once — parameters, returns, fields, zone globals, type arguments (C2-6a) and, at integration, a trait member's signature; a post-statement top-level slice keeps compiling (user, 2026-10-10).
+
+**Status:** ✅ **RESOLVED in v6.7.8** — see the banner above.
+**Placement:** 6.7.8 — shipped.
 **Discovered:** first noted, unfiled, by the 6.7.8 – 6.7.12 release plan (2026-10-09). Met again out of scope by a
 6.7.7 lane (the declaration-zone global) and filed 2026-10-09.
 **Severity:** Medium for the declaration-zone global: the guide's own `var s: [u8] = 0;` fails as a leading global,
@@ -89,3 +85,37 @@ C2's slice-scope decision (6.7.8's open) picks which of these positions a slice 
    instead of "no struct type in scope".
 
 Gate rows: each shape in the table above, in both zones, with the exact single diagnostic or an exit-0 run.
+
+## Residual (appended 2026-10-10): a trait member's signature still gives the old parse errors
+
+**Verified** 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged` 2,053,536 B), each line a
+one-line program compiled from the tree root. The fn-definition positions are refused by name since C2-6a
+(`fn f(s: [u8])` "a slice cannot be a parameter (6.7.8: slices are fn-locals) - …", `fn f(): [u8]` "a slice cannot be
+a return type …", a field "a slice cannot be a struct or union field …"). A trait member's signature — parsed since
+6.7.8's dyn bite D2, so the two lanes' work meets here — still gives the generic errors:
+
+| Shape (merged 6.7.8 tip) | Result |
+|---|---|
+| `trait T { fn m(self, s: [u8]): i64; }` | `expected identifier, got '['` |
+| `trait T { fn m(self, s: slice<u8>): i64; }` | `unknown type 'slice' for parameter 's'`, then the type-list note |
+| `trait T { fn m(self): [u8]; }` | `expected identifier, got '['` |
+| `trait T { fn m(self): slice<u8>; }` | `unknown type 'slice' as a fn return type` |
+| `trait T { fn m(self, s: [u8]): i64 { return 0; } }` (a default body) | `expected identifier, got '['` |
+
+Each is refused (no binary), so nothing compiles that should not; the message is the one this issue replaces. On 6.7.7
+all five compiled (the signature was never parsed).
+
+**Discovered:** 2026-10-10 verifying the C2 lane's C2-6a report that a trait's required-method signature checks no
+parameter types (`trait T { fn m(self, s: Nonexist): i64; }` compiled, "and so does `s: [u8]` there") — on the merged
+tip the unknown name IS refused by name ("unknown type 'Nonexist' for parameter 's'"), and only the slice spellings
+are left mis-diagnosed.
+
+**Root cause.** The trait-signature reader `_trs_type` (`src/frontend/parse_fn.cyr:6749`) has no slice arm: a `[` meets
+`_trs_err(S, i, 2)` ("expected identifier"), and the word `slice` reaches `_trs_name` as an unknown type.
+
+**Fix.** In `_trs_type`, before the identifier test, refuse `[T]` / `slice<T>` by name with C2-6a's texts
+(`_sl_ann_at` / `_sl_param_refuse` for a parameter, `_ret_ann_alt`'s return text for a return), consuming the whole
+`[..]` / `slice<..>`. Rows: the five shapes above, each with C2-6a's exact single diagnostic. Placement of this
+residual, by the 2026-10-10 filing rule for diagnostics: 6.7.12 — repair 3 (roadmap.md § *The releases after 6.7.7*)
+— placed 2026-10-10 — never 7.x, unless the 6.7.8 integration closes it with this issue (it is the same refusal,
+reached from one more reader); it changes no program that compiles.

@@ -1,0 +1,11 @@
+# A parenthesised free call returning a 9-16 B struct, as a nested-struct positional literal element.
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct H { x; q: Q; z; }
+fn mkq(a, b): Q { var q = Q { a, b }; return q; }
+fn main(): i64 {
+    var h = H { 7, (mkq(4, 9)), 8 };     # refused: "unexpected '}'"; without the parentheses: 64
+    return h.x + h.q.a * 10 + h.q.b + h.z;
+}
+var rc = main();
+syscall(60, rc);

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-10 against 6.7.8 @ 484763ed with the tree's `build/cycc` and its cross
 compilers: the repro exits 7 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine), where 77 is right. The direct call
 `P_pick(p, q)` of the same method is right on every target.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1, the generics / call-path lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x. (High: a silent wrong value)
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane's bite D2 (writing an acceptance row for a generic trait
 member, `p.bnd(p)` with `fn bnd<V: Show>(self, v: V)`, which returned 0).
 **Severity:** Medium — a silent wrong value on valid source, no diagnostic.

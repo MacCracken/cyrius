@@ -1,0 +1,20 @@
+# The run-time constant fold folds a literal operator over a unary `-` / `~` operand.
+include "lib/syscalls.cyr"
+enum E { K = 5; }
+var fails = 0;
+fn chk(got, want): i64 { if (got != want) { fails = fails + 1; } return 0; }
+fn main(): i64 {
+    chk(-K + 10, 5);                     # 15
+    chk(-E.K + 10, 5);                   # 15
+    chk(-K * 2, 0 - 10);                 # 10
+    chk(~5 + 10, 4);                     # 15
+    chk(~5 * 2, 0 - 12);                 # 10
+    chk(~0 + 3, 2);                      # 3
+    chk(~K + 1, 0 - 5);                  # 6
+    chk(-5 + 10, 5);                     # right
+    chk((~5) + 10, 4);                   # right
+    chk((-K) + 10, 5);                   # right
+    return fails;                        # want 0; exits 7
+}
+var rc = main();
+syscall(60, rc);

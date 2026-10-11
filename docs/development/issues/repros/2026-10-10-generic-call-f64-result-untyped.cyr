@@ -1,0 +1,23 @@
+# 2026-10-10 — a generic call whose T is f64 returns an UNTYPED word when T was inferred
+# (`gid(h)`, `gid2(h, 1)`) or when T is only the return type (`gg<f64>(&h)`): the outer `* 2.0`
+# multiplies the f64's bits as an integer (each such line warns "integer arithmetic with an
+# f64 right operand").
+# Expected: exit 0 (each product is 3.0). Actual: exit 7 — x86_64, aarch64 (qemu), cx (cxvm), PE
+# (wine); the installed 6.6.20, 6.7.4 and 6.7.7 compilers too.
+# Controls (rows 8 and 16, right): the explicit `gid<f64>(h)` and `gid2<f64>(h, 1)`.
+include "lib/syscalls.cyr"
+fn gg<T>(q): T { return load64(q); }
+fn gid<T>(x: T): T { return x; }
+fn gid2<T>(x: T, k): T { return x; }
+fn main(): i64 {
+    var h: f64 = 1.5;
+    var bad = 0;
+    if (gg<f64>(&h) * 2.0 != 3.0) { bad = bad | 1; }      # explicit, T only in the return
+    if (gid(h) * 2.0 != 3.0) { bad = bad | 2; }           # inferred
+    if (gid2(h, 1) * 2.0 != 3.0) { bad = bad | 4; }       # inferred, an integer last argument
+    if (gid<f64>(h) * 2.0 != 3.0) { bad = bad | 8; }      # control
+    if (gid2<f64>(h, 1) * 2.0 != 3.0) { bad = bad | 16; } # control
+    return bad;
+}
+var rc = main();
+syscall(60, rc);

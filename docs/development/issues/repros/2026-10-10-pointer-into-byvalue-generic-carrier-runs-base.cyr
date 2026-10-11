@@ -1,0 +1,22 @@
+# 2026-10-10 — a POINTER passed to a by-value `b: Box<T>` parameter binds no T: the call runs the
+# generic's i64 base, which reads the Box<Pt> with Box<i64>'s layout (`b.n` at offset 8 = p.y).
+# Expected: exit 248 (each of the three pointer calls reads b.n = 8, as `gx(b)` does).
+# Actual: exit 128 (each reads 4) — x86_64, aarch64 (qemu), cx (cxvm), PE (wine); 6.7.4 - 6.7.8.
+# Control: `gx(b)` (6.7.8) and `gx<Pt>(&b)` read 8.
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+fn viaparam(bp: *Box<Pt>): i64 { return gx(bp); }
+fn go(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    var b: Box<Pt> = mk1(p);
+    var bp: *Box<Pt> = &b;
+    var r2 = gx(&b);       # a `&` of a Box<Pt> local
+    var r3 = gx(bp);       # a `*Box<Pt>` local
+    var r4 = viaparam(&b); # a `*Box<Pt>` parameter
+    return (r2 + r3 + r4) * 10 + 8;
+}
+var rc = go();
+syscall(60, rc);

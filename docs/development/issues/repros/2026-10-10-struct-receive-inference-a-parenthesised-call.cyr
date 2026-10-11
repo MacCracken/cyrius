@@ -1,0 +1,15 @@
+# 2026-10-10 — an un-annotated `var x = (mk());`, mk returning a 9-16 B struct, infers no struct:
+# x is an i64 holding the first word, so a by-value struct parameter reads it as an address.
+# Expected: exit 34 (as with `var x = mk();`, which infers Q).
+# Actual: SIGSEGV (exit 139) on x86_64 and aarch64 (qemu); cx exits 1, PE exits 5 — no diagnostic.
+# `x.a` on the same x is refused: "no struct type in scope for 'x'". 6.7.4 - 6.7.8.
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mk(): Q { var q: Q; q.a = 3; q.b = 4; return q; }
+fn dq(q: Q): i64 { return q.a * 10 + q.b; }
+fn main(): i64 {
+    var x = (mk());
+    return dq(x);
+}
+var rc = main();
+syscall(60, rc);

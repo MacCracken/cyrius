@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-10 against 6.7.8 (the checked-`dyn` lane at bite D3) with the tree's
 compiler and its aarch64 / cx / PE cross compilers: `error:<source>:8:38: expected ';', got '.'` on every target.
 The installed 6.7.4 and 6.7.7 compilers report the same.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1, the generics / call-path lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane's bite D3 (generic inference through a generic struct
 parameter), probing a generic whose body uses the inferred `T` through the carrier.
 **Severity:** Low — a loud compile error on valid source, with a one-line workaround (below); nothing miscompiles.

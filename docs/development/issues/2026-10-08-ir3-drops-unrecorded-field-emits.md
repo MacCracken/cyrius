@@ -78,3 +78,12 @@ that emit a narrow load), and give `EFLADDR_X1` an IR record (an rcx-defining no
 `E3` / `EB` sequence not preceded by `_IR_REC*`). Default-pipeline output must stay byte-identical (the records only
 add IR nodes). Add both shapes to `tests/tcyr/crossos/struct_value_codegen.tcyr`, which `struct_value_codegen.sh` row
 A3 already runs under `CYRIUS_IR=3`.
+
+## Re-measured 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f) — still open
+
+Shape (1) is unchanged by 6.7.8: repro (1) above gives 167 and 23 on two runs under `CYRIUS_IR=3` (37 by default),
+and the 6.7.8 C2 lane's bite C2-6c met it again in a new value file — a signed narrow field read through a pointer,
+`f.v` with `struct F8 { v: i8; w; }` and `f: *F8`: `return f.v + 100;` after `x.v = -3` gives 252 / 236 under
+`CYRIUS_IR=3` and 97 by default (measured with the merged `build/cycc`). The bite compared against a local struct's
+field instead and did not re-file. Nothing to add to the fix: `EFIELD_LOAD_W`'s negative widths are still
+unrecorded.

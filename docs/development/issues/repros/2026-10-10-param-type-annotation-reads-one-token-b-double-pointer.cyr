@@ -1,0 +1,14 @@
+# 2026-10-10 — a `**T` PARAMETER does not parse, while a `**T` local and a `**T` field do.
+# Expected: compiles, exits 42 (f reads x through p twice).
+# Actual: error:<source>:6:11: expected ')', got identifier 'i64'
+# Control: the same `**i64` as a local (`var ppx: **i64 = &px;`) compiles.
+include "lib/syscalls.cyr"
+fn f(p: **i64): i64 { var q: *i64 = *p; return *q; }
+fn main(): i64 {
+    var x = 42;
+    var px: *i64 = &x;
+    var ppx: **i64 = &px;
+    return f(ppx);
+}
+var rc = main();
+syscall(60, rc);
