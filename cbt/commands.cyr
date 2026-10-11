@@ -1012,10 +1012,12 @@ fn cmd_fuzz(source): i64 {
     _fuzz_walk_dir("tests", &pass_store, &fail_store, &found_store);
     var fuzz_pass = load64(&pass_store);
     var fuzz_fail = load64(&fail_store);
+    # 6.7.9: an EMPTY corpus fails, as bare `cyrius test`'s and `cyrius fuzz <empty dir>` do — a CI
+    # line over harnesses that moved or were renamed passed vacuously. CHANGELOG [6.7.9]
     if (load64(&found_store) == 0) {
-        println("  No fuzz harnesses found (looked in fuzz/ and tests/).");
-        println("  Create `fuzz/*.fcyr` files to test library functions.");
-        return 0;
+        _err("no fuzz harnesses found (looked in fuzz/ and tests/, recursively)");
+        println("  Create `fuzz/*.fcyr` files to test library functions, or pass an explicit path.");
+        return 1;
     }
     sys_write(STDOUT_FD, "\n=== ", 5);
     fmt_int(fuzz_pass);
@@ -1117,6 +1119,14 @@ fn cmd_bench(source): i64 {
         _bench_summary(0, 1);
         return ec;
     }
+    return _bench_all(1);
+}
+
+# The no-argument walk. `empty_fails` is 1 for the verb: an EMPTY corpus fails, as bare `cyrius
+# test`'s and `cyrius bench <empty dir>` do — a CI line over benches that moved or were renamed passed
+# vacuously (6.7.9). `cyrius audit`'s bench stage passes 0: a non-fatal perf measurement, it says
+# `skip:` as its other stages do instead of printing an error under a passing audit. CHANGELOG [6.7.9]
+fn _bench_all(empty_fails): i64 {
     # No-arg mode: discover and run every `*.bcyr` in `benches/`
     # and `tests/bcyr/`. Mirrors `cmd_fuzz` / `cmd_test` shape so
     # downstream projects (takumi, majra, mabda, …) get the
@@ -1143,11 +1153,15 @@ fn cmd_bench(source): i64 {
     _bench_walk_dir("benches", &pass_store, &fail_store, &found_store);
     _bench_walk_dir("tests", &pass_store, &fail_store, &found_store);
     if (load64(&found_store) == 0) {
-        println("  No benchmarks found (looked in benches/, tests/ and tests/bcyr/, recursively).");
+        if (empty_fails == 0) {
+            println("  skip: no benchmarks (benches/ and tests/ hold no .bcyr)");
+            return 0;
+        }
+        _err("no benchmarks found (looked in benches/ and tests/, recursively)");
         println("  Create `benches/*.bcyr` files, or pass an explicit path:");
         println("    cyrius bench path/to/my_bench.bcyr");
         println("    cyrius bench path/to/subfolder");
-        return 0;
+        return 1;
     }
     return _bench_summary(load64(&pass_store), load64(&fail_store));
 }
@@ -2717,7 +2731,7 @@ fn _audit_sweep(): i64 {
     } else { println("  skip: no tests/ directory"); }
 
     _status("── bench ──");
-    cmd_bench(0);   # perf measurement — non-fatal
+    _bench_all(0);   # perf measurement — non-fatal; no benches is a `skip:` here (6.7.9)
     _test_scope = 0;
 
     return rc;
