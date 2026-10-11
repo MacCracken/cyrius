@@ -1720,14 +1720,19 @@ fn GLSLICE(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 62) & 1;
 }
-# 6.7.8 (the checked dyn, D5) — bit 62: the slot is a DECLARED SCALAR whose annotation's name sits in
+# 6.7.8 (the checked dyn, D5) — bit 63: the slot is a DECLARED SCALAR whose annotation's name sits in
 # `_dsc_tn` (parse_types.cyr), the type a dyn formed from it names. The bit is that side table's
 # VALIDITY: every registration writes SLDEP's whole word first, so a slot reused by an undeclared
-# local never reads a stale name. Written last at registration, like bits 58-61.
-fn SLDSC(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 62)); return 0; }
+# local never reads a stale name. Written last at registration, like bits 58-62.
+# ⛔ NOT bit 62 — that is SLSLICE's (above): the dyn lane took it independently, so every declared
+# scalar read as a slice (`n += 1` on a `var n: i32` refused, `y[0]` on a `y: i64` parameter a slice
+# read) and every slice local as a stamped dyn source. Bit 63 has no other reader or writer: every
+# raw access of this word is GLDEP (masked to the low 32 bits), SLDEP, these accessors and the closure
+# snapshot's copies, which test single bits. CHANGELOG [6.7.8]
+fn SLDSC(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 63)); return 0; }
 fn GLDSC(S, li): i64 {
     if (li < 0) { return 0; }
-    return (L64(S + 0x5DBD000 + li * 8) >> 62) & 1;
+    return (L64(S + 0x5DBD000 + li * 8) >> 63) & 1;
 }
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.

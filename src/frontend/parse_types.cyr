@@ -1007,7 +1007,7 @@ var _dsr_tp = 0;    # FORM: the type T's name, its bytes ...
 var _dsr_tn = 0;    # ... and their count
 var _dsr_ii = 0;    # FORM: the impl of the dyn's trait for T
 var _dsr_ds = 0;    # the dyn being formed (its sid), for the refusals' words
-var _dsc_tn = 0;    # per frame slot (16384 words): a declared scalar's annotation name — read only behind bit 62 (SLDSC)
+var _dsc_tn = 0;    # per frame slot (16384 words): a declared scalar's annotation name — read only behind bit 63 (SLDSC)
 var _gv_tn = 0;     # per global: its annotation's name + 1 when a declared scalar, else 0 — written by every declaration
 var _gv_tnc = 0;    # its capacity
 var _dsc_pend = 0;  # a parameter's annotation (name + 1), from its type token until `_param_record` stamps the slot
@@ -1929,7 +1929,7 @@ fn _dsc_name(S, ann): i64 {
     if (k > 4) { return 0; }
     return TOKVAL(S, ann) + 1;
 }
-# Frame slot `li` declared with annotation name `n1` (+ 1; 0 = none): the name, then bit 62 — LAST,
+# Frame slot `li` declared with annotation name `n1` (+ 1; 0 = none): the name, then bit 63 — LAST,
 # as the slot's other marks. A slot past the table is never stamped: refused as untyped, by name.
 fn _dsc_stamp(S, li, n1): i64 {
     if (n1 == 0) { return 0; }

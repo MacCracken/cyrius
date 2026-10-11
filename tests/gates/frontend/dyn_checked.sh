@@ -66,6 +66,12 @@
 #       above and below the forming site); F9 a `#naked`
 #       slot method (an `async` one cannot be written in an impl); F10 a slot method private to another
 #       file (two files); F11 a FORM at top level into an assignment, a field, an argument
+#   AL  (6.7.8 integration, the merge fix) the slot word's two 6.7.8 stamps held apart — C2's slice bit
+#       62 (SLSLICE) and this lane's declared-scalar bit 63 (SLDSC), merged on one bit: a slice local is
+#       no dyn source (AL1; AL2 in the slot a declared scalar of another fn held); a declared scalar is
+#       no slice — `y += 1` / `y[0]` / `y.len` on a declared `y: i64` parameter in a slice's old slot
+#       (AL3-AL5), `n += 1` / `n.len` on a `var n: i32` (AL6, AL7), a captured declared scalar
+#       subscripted in a closure (AL8); a real slice in a dyn unit reads, writes and `OP=`s (AL9)
 #   K   (D5) a declaration-zone dyn in a `kernel;` build is named late, as every non-constant zone
 #       initializer is; the program's own forming runs
 #   PF  (D5) a parenthesised FORM source at every destination (a local, a zone and a post-statement
@@ -157,7 +163,7 @@
 #   M-F9  no visibility check at a forming site                      -> F10 (BUILT)
 #   M-F10 `_gci_inline`'s dyn arm gone (a zone dyn not inline)       -> F11a, F11b, K, PF, A (the backstop
 #         refuses every zone dyn global: "cannot initialize dyn Show 'Z' with a value that is not a dyn")
-#   M-F11 bit 62 ignored (any slot's stale `_dsc_tn` name trusted)   -> F1c (BUILT: an untyped local formed as
+#   M-F11 bit 63 ignored (any slot's stale `_dsc_tn` name trusted)   -> F1c (BUILT: an untyped local formed as
 #         the i64 a scalar local of another fn left in its slot)
 #   M-F12 no `_dsc_inl` (the #inline replay's parameters unstamped)  -> A (§inline: F1 in the replay, the file
 #         does not build)
@@ -234,6 +240,11 @@
 #   MR12 V4's exemption not recorded (`_dyn_xb`)                   -> V4h-V4m, V4q-V4u (BUILT)
 #   (MR6, `_gsc_chain` gone: tests/tcyr/crossos/generic_struct_inference.tcyr G9 — the file does not build,
 #   and the value rows read 4 for 8.)
+# INTEGRATION (2026-10-10, the 6.7.8 merge of the C2 and dyn lanes; the real tree green on every row):
+#   M-AL1 SLDSC / GLDSC on bit 62 — the merge as it stood, aliased with C2's SLSLICE (the merge commit's
+#         own compiler)                                              -> AL1 (refused as "no `impl Num for
+#         cstring`"), AL2 (BUILT), AL3 (refused: "compound assignment to slice 'y'"), AL4 (BUILT), AL5
+#         (BUILT), AL6 (refused as a slice), AL7 (BUILT), AL8 (the captured-slice text); AL9 green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -448,7 +459,7 @@ FN='cannot form dyn Num from '
 UT=' - an untyped name may hold a pointer (ADR-002)'
 refused f01a "${FN}'x'${UT}" "F1a: an untyped local" "${SN}fn f(): i64 { var x = 5; var o: dyn Num = x; return 0; }\nsyscall(60, 0);\n"
 refused f01b "${FN}'x'${UT}" "F1b: an untyped parameter" "${SN}fn f(x): i64 { var o: dyn Num = x; return 0; }\nsyscall(60, 0);\n"
-refused f01c "${FN}'u'${UT}" "F1c: an untyped local in the slot a declared \`n: i64\` of another fn held (bit 62 is the stamp's validity)" "${SN}fn a(): i64 { var n: i64 = 5; return n; }\nfn b(): i64 { var u = 7; var o: dyn Num = u; return 0; }\nsyscall(60, a());\n"
+refused f01c "${FN}'u'${UT}" "F1c: an untyped local in the slot a declared \`n: i64\` of another fn held (bit 63 is the stamp's validity)" "${SN}fn a(): i64 { var n: i64 = 5; return n; }\nfn b(): i64 { var u = 7; var o: dyn Num = u; return 0; }\nsyscall(60, a());\n"
 refused f01d "${FN}'i'${UT}" "F1d: a for-in variable (no declared type)" "${SN}fn f(): i64 { for i in 0..3 { var o: dyn Num = i; } return 0; }\nsyscall(60, 0);\n"
 refused f02a "${FF}'p' - no implicit \`&\`: write \`&p\`" "F2a: a bare inline struct local" "${SN}fn f(): i64 { var p = P { 1, 2 }; var o: dyn Show = p; return 0; }\nsyscall(60, 0);\n"
 refused f02b "${FF}'G0' - no implicit \`&\`: write \`&G0\`" "F2b: a bare inline struct global" "${SN}var G0 = P { 1, 2 };\nfn f(): i64 { var o: dyn Show = G0; return 0; }\nsyscall(60, 0);\n"
@@ -496,6 +507,21 @@ TLM="a dyn formed at top level has no frame to be built in - form it inside a fn
 refused f11a "$TLM" "F11a: a top-level assignment \`o = &P0;\`" "${SN}var P0 = P { 1, 2 };\nvar Z: dyn Show = &P0;\nsyscall(1, 1, \"\", 0);\nZ = &P0;\nsyscall(60, 0);\n"
 refused f11b "$TLM" "F11b: a top-level field store \`h.o = &P0;\`" "${SN}var P0 = P { 1, 2 };\nvar Z: dyn Show = &P0;\nvar ZH: H = H { 1, Z, 2 };\nsyscall(1, 1, \"\", 0);\nZH.o = &P0;\nsyscall(60, 0);\n"
 refused f11c "$TLM" "F11c: a top-level argument \`tk(&P0)\`" "${SN}fn tk(o: dyn Show): i64 { return 0; }\nvar P0 = P { 1, 2 };\nsyscall(1, 1, \"\", 0);\ntk(&P0);\nsyscall(60, 0);\n"
+
+# ── AL: the slot word's two 6.7.8 stamps held apart (the integration's merge fix) ──────────────────
+# C2's slice bit (SLSLICE, depth-word bit 62) and this lane's declared-scalar validity bit (SLDSC) were
+# merged on the SAME bit. Each unit below spells `dyn` (fn c), so every declared scalar is stamped.
+AS='include "lib/slice.cyr"\ntrait Num { fn num(self): i64; }\nimpl Num for i64 { fn num(self): i64 { return self; } }\nfn c(): i64 { var o: dyn Num = 4; return o.num(); }\n'
+SLA='fn a() { var s: [i64] = 0; return 0; }\n'
+refused al1 "${FN}'s'${UT}" "AL1: a slice local as a dyn source is no declared scalar (aliased: \"no impl Num for cstring\", a stale name)" "${AS}fn b(): i64 { var s: [i64] = 0; var o: dyn Num = s; return 0; }\nsyscall(60, b());\n"
+refused al2 "${FN}'s'${UT}" "AL2: ... in the slot a declared \`n: i64\` of another fn held (aliased: BUILT, the slice formed as that i64)" "${AS}fn a(): i64 { var z: i64 = 0; var n: i64 = 5; var o: dyn Num = n; return o.num(); }\nfn b(): i64 { var s: [i64] = 0; var o: dyn Num = s; return o.num(); }\nsyscall(60, a());\n"
+exits al3 7 "AL3: \`y += 1\` on a declared \`y: i64\` parameter in a slice's old slot (aliased: refused as a slice)" "${AS}${SLA}fn b(x, y: i64): i64 { y += 1; return y; }\nsyscall(60, b(1, 6));\n"
+refused al4 "cannot subscript 'y': it is not a typed array" "AL4: \`y[0]\` on that parameter (aliased: a slice read of &y, SIGSEGV)" "${AS}${SLA}fn b(x, y: i64): i64 { return y[0]; }\nsyscall(60, b(1, 6));\n"
+refused al5 "no struct type in scope for 'y'" "AL5: \`y.len\` on that parameter (aliased: read the frame)" "${AS}${SLA}fn b(x, y: i64): i64 { return y.len; }\nsyscall(60, b(1, 6));\n"
+exits al6 6 "AL6: \`n += 1\` on a declared \`var n: i32\` (aliased: its signed-narrow mark read as a slice width)" "${AS}fn b(): i64 { var n: i32 = 0 - 5; n += 1; return n + 10; }\nsyscall(60, b());\n"
+refused al7 "no struct type in scope for 'n'" "AL7: \`n.len\` on a declared \`var n: i32\` (aliased: BUILT)" "${AS}fn b(): i64 { var n: i32 = 0 - 5; return n.len; }\nsyscall(60, b());\n"
+refused al8 "cannot subscript 'n': it is not a typed array" "AL8: a closure subscripting a captured declared \`n: i64\` (aliased: the snapshot's bit read as a captured slice)" "${AS}fn b(): i64 { var n: i64 = 7; var k = || n[0]; return callptr(k); }\nsyscall(60, b());\n"
+exits al9 48 "AL9: a real slice in a dyn unit still reads, writes and \`OP=\`s (anti-vacuous)" "${AS}fn b(): i64 { var w: i64[2]; w[0] = 4; w[1] = 5; var s: [i64] = 0; slice_set(&s, &w, 2); s[1] += 1; return s[0] * 10 + s[1] + s.len; }\nsyscall(60, b());\n"
 
 # ── K: a declaration-zone dyn in a `kernel;` build ─────────────────────────────────────────────────────
 printf '%b' "kernel;\n${SH}struct W { o: dyn Show; }\nvar P0 = P { 1, 2 };\nvar KD: dyn Show = &P0;\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nfn main(): i64 {\n    var o: dyn Show = &P0;\n    return dk(o) + 40;\n}\nsyscall(60, main());\n" > "$T/k01.cyr"
@@ -883,4 +909,4 @@ else echo "  SKIP A dyn_objects PE — wine not installed"; skips=$((skips + 1))
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart (AL), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"
