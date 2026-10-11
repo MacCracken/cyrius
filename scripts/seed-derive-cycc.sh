@@ -31,6 +31,10 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
 
 SEED="bootstrap/asm"
 [ -f "$SEED" ] || { echo "ERROR: $SEED missing" >&2; exit 1; }

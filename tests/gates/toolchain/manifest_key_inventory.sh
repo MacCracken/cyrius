@@ -116,20 +116,20 @@ mkdir -p "$W/rt"
 # version (the toolchain pin), else true
 probe() {
     printf '[%s]\n%s = "x"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-    ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT -u CYRIUS_BOUNDS CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     # 6.6.20: `[package] cyrius` is a path component, so "x" is refused by name — probe a version
     if grep -q 'is not a version' "$W/rt.out"; then
         printf '[%s]\n%s = "0.0.1"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT -u CYRIUS_BOUNDS CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     fi
     # 6.7.6: `[test] timeout` is a whole number of seconds
     if grep -q 'must be a whole number' "$W/rt.out"; then
         printf '[%s]\n%s = 5\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT -u CYRIUS_BOUNDS CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     fi
     if grep -q 'must be true or false' "$W/rt.out"; then
         printf '[%s]\n%s = true\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT -u CYRIUS_BOUNDS CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     fi
 }
 x=$FAIL; nrt=0
@@ -138,7 +138,7 @@ while read -r sec key st syn _env _arg; do
     if [ "$sec" = embed ] || [ "$sec" = test.embed ]; then
         printf 'probe\n' > "$W/rt/probe.txt"
         printf '[%s]\nPROBE = "probe.txt"\n' "$sec" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT -u CYRIUS_BOUNDS CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
         nrt=$((nrt + 1))
         grep -qF "$sec = [\"PROBE=probe.txt\"]  (manifest: [$sec])" "$W/rt.out" && ! grep -qE '^(warn|error):' "$W/rt.out" \
             || fail "axis 6: [$sec] * is listed READ, but --print-config does not show PROBE=probe.txt from [$sec] silently: $(grep -E 'embed|warn:|error:' "$W/rt.out" | head -2)"

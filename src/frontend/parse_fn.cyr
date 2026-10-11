@@ -12651,6 +12651,7 @@ fn _tl_pass1(S, objok): i64 {
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
+    _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
     return 0;
 }
 

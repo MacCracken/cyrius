@@ -2661,6 +2661,32 @@ skipped and an `#else` arm is taken. For an OS, use `#ifdef CYRIUS_TARGET_*`.
 `#ifplat` works in the main source and in included files. (Before v6.6.20 it was not
 evaluated in an included file, where both arms compiled.)
 
+`#bounds` (6.7.8) switches the **bounds-checked mode** on for the whole program — off by default.
+It is honoured only in the entry file's **leading block**: before it may stand blank lines, `#`
+comment lines and `include "…"` lines; a declaration, a statement, a `#define`, an `#if*` or an
+attribute ends the block.
+
+```
+# tool.cyr — checked in every build
+include "lib/io.cyr"
+#bounds
+
+fn main(): i64 { ... }
+```
+
+Anywhere else — after code, inside an `#ifdef` (taken or not), in an included file, in a
+`[build] modules` file — it is refused by name (the line switches the whole program, so a library
+must not be able to), and so is `#bounds <anything>`; a `#bounds` inside a string is data. The
+same switch from outside the source: `CYRIUS_BOUNDS=1` (`0` turns it off, unset or empty is no
+rung, any other value is refused by name), `[build] bounds = true` and `--bounds` on `cyrius
+build` / `run` / `test` / `fuzz`, with one precedence: argument > environment > manifest > the
+`#bounds` line (`CYRIUS_BOUNDS=0` or `[build] bounds = false` turns a `#bounds` program's mode
+off). With the mode on the compiler predefines `CYRIUS_BOUNDS` for `#ifdef` — in every file,
+including one included above the `#bounds` line; a plain `#define CYRIUS_BOUNDS` is an ordinary
+define and switches nothing. The mode is refused for a kernel or EFI image (`kernel;`, a
+bare-metal `--target`, `CYRIUS_TARGET_EFI=1`: a violation would have no stderr and no exit) and
+for a `shared;` / `object;` build.
+
 ## Attributes
 
 Function-level attributes flag intent at declaration; the compiler
@@ -2835,6 +2861,8 @@ entry = "programs/smoke.cyr"
 output = "build/sakshi-smoke"
 defines = ["SAKSHI_SMOKE"]   # one `#define NAME` each; -D NAME / CYRIUS_DEFINES=A,B replace the list
 dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRIUS_DCE=0 turns it off)
+bounds = true                # the bounds-checked mode (6.7.8); --bounds / CYRIUS_BOUNDS=1, also for
+                             # run / test / fuzz (CYRIUS_BOUNDS=0 turns it off); see #bounds, Preprocessor
 ```
 
 They configure every `cyrius build` in the project — a bare one AND `cyrius build <other source>
@@ -2895,6 +2923,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `test_standalone` | read | — | — | — | cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool) |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
+| `[build]` | `bounds` | read | — | `CYRIUS_BOUNDS` | `--bounds` | build / run / test / fuzz: the bounds-checked mode (bool); an entry file's #bounds line is the lowest rung |
 | `[build]` | `strict` | held | — | — | `--strict` | has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it |
 | `[build]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | cyrius build: one #define per name |
 | `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |

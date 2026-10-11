@@ -1265,8 +1265,13 @@ fn _cc_env_is_target(e): i64 {
 #                 did not come FROM the environment, which the child then inherits as it is.
 #   bare metal    CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1, and CYRIUS_KERNEL_BASE from
 #                 `[sections] base` (v6.3.3 #5).
+#   bounds        CYRIUS_BOUNDS=1 / =0 from `--bounds` / `[build] bounds` (6.7.8) — `=0` too, so a
+#                 manifest `false` beats the entry's `#bounds` line; an environment-origin value is
+#                 inherited as it is. Pushed first.
 fn _cc_child_inject(inj): i64 {
     var tgt = 0;
+    var be = _cc_bounds_entry();
+    if (be != 0) { vec_push(inj, be); }
     if (_cfg_dce_inject == 1) { vec_push(inj, "CYRIUS_DCE=1"); }
     if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
     if (_agnos_target == 1) { vec_push(inj, "CYRIUS_TARGET_AGNOS=1"); tgt = 1; }
@@ -1280,6 +1285,14 @@ fn _cc_child_inject(inj): i64 {
         tgt = 1;
     }
     return tgt;
+}
+
+# 6.7.8 (C2-7) — the CYRIUS_BOUNDS entry compile() hands the compiler (`_cfg_bounds_inject`):
+# "CYRIUS_BOUNDS=1", "CYRIUS_BOUNDS=0", or 0 for none. Both spawn arms read it.
+fn _cc_bounds_entry(): i64 {
+    if (_cfg_bounds_inject == 1) { return "CYRIUS_BOUNDS=1"; }
+    if (_cfg_bounds_inject == 2) { return "CYRIUS_BOUNDS=0"; }
+    return 0;
 }
 
 # 6.6.20 — THE compiler child's environment, for every POSIX compile: the injected entries
@@ -1588,6 +1601,16 @@ fn compile(source, output): i64 {
         if (_win_setenv("CYRIUS_DCE", "1") != 0) {
             if (tmp_src != 0) { sys_unlink(tmp_src); }
             _err("could not set CYRIUS_DCE=1 for the compiler ([build] dce / --dce)");
+            return 1;
+        }
+    }
+    # 6.7.8 (C2-7): the bounds-checked mode, as the POSIX arm injects it (`_cc_bounds_entry`).
+    if (_cfg_bounds_inject != 0) {
+        var bv = "1";
+        if (_cfg_bounds_inject == 2) { bv = "0"; }
+        if (_win_setenv("CYRIUS_BOUNDS", bv) != 0) {
+            if (tmp_src != 0) { sys_unlink(tmp_src); }
+            _err("could not set CYRIUS_BOUNDS for the compiler (--bounds / [build] bounds)");
             return 1;
         }
     }

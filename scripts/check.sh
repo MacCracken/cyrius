@@ -426,6 +426,10 @@ done
 # every gate whose fixture declares a `path` beside git/tag into a local-mode run, and
 # CYRIUS_LOCKED / CYRIUS_LIB_OVERLAY likewise. A gate that tests one sets it itself.
 unset CYRIUS_LOCAL CYRIUS_LOCKED CYRIUS_LIB_OVERLAY
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)
@@ -2356,6 +2360,12 @@ _chk_gate "$ROOT/tests/gates/frontend/slice_position_refused.sh"
 # `s[0] < 0` was false), as a typed array, a `*T` and a field do; `s[i] OP= v` loads it the same way;
 # the unsigned controls zero-extend. x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/slice_signed_read.sh"
+# 6.7.8 (C2-7) — the bounds-checked mode's switch: CYRIUS_BOUNDS (1 / 0 / empty = no rung / other
+# refused by name) and a `#bounds` line honoured ONLY in the entry file's leading block — after code,
+# inside a conditional, in an included or a spliced `[build] modules` file it is refused by name; the
+# environment beats the line; the CYRIUS_BOUNDS predefine; kernel / EFI / shared / object refused
+# under the mode; the five self-build scripts unset it. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/bounds_mode_checked.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.

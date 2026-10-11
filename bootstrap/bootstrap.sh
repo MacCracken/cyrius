@@ -7,6 +7,10 @@
 #   cat program.cyr | ./build/cybs > program && chmod +x program
 
 set -e
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$DIR")"
 

@@ -26,6 +26,8 @@
 #           refuses ("no stdlib snapshot"), and with a snapshot the 6.6.11 per-target refusal
 #           applies; the self-check is unreachable on PE. `--allow-undef` on the PE arm is
 #           still pinned by axis 3 (lint's pre-pass).
+#   axis 6  (6.7.8, C2-7) `--bounds` -> the stub sees CYRIUS_BOUNDS=1; `[build] bounds = false` -> 0
+#           (a manifest false must beat the entry's `#bounds`); axis 2 also asserts it unset.
 #   axis 5  (6.6.20, CBTB-08) an environment rung longer than 512 bytes is READ on cyrius.exe: a
 #           719-byte CYRIUS_DEFINES beats `[build] defines = ["A"]` in `--print-config`, as on
 #           POSIX. _cfg_env's PE arm read through a fixed 512-byte buffer, and a longer value was
@@ -82,6 +84,11 @@ fn main(): i64 {
     var n = syscall(0xF015, "CYRIUS_DCE", eb, 512);   # GetEnvironmentVariableA
     if (n == 0) { memcpy(out + o, "unset", 5); o = o + 5; }
     else { memcpy(out + o, eb, n); o = o + n; }
+    memcpy(out + o, "\nbounds=", 8);
+    o = o + 8;
+    n = syscall(0xF015, "CYRIUS_BOUNDS", eb, 512);
+    if (n == 0) { memcpy(out + o, "unset", 5); o = o + 5; }
+    else { memcpy(out + o, eb, n); o = o + n; }
     store8(out + o, 10);
     o = o + 1;
     file_write_all("$LOGC", out, o);
@@ -98,7 +105,7 @@ run() {   # run <extra manifest lines> <verb> [args...]
     m=$1; shift
     printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n%b' "$m" > "$W/p/cyrius.cyml"
     rm -f "$W/stub.log"
-    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" "$@" ) > "$W/out" 2>&1 || true
+    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_BOUNDS CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" "$@" ) > "$W/out" 2>&1 || true
     [ -f "$W/stub.log" ] || { fail "the stub compiler never ran: $(head -3 "$W/out" | tr '\n' ' ')"; return 1; }
     return 0
 }
@@ -106,7 +113,7 @@ has_flag() { head -1 "$W/stub.log" | grep -q -- " $1"; }
 
 if run 'dce = true\n' build --strict; then
     has_flag --strict || fail "axis 1: cyrius build --strict did not put --strict on cycc.exe's command line: $(head -1 "$W/stub.log")"
-    grep -qx 'dce=1' "$W/stub.log" || fail "axis 1: [build] dce = true did not reach cycc.exe as CYRIUS_DCE=1: $(tail -1 "$W/stub.log")"
+    grep -qx 'dce=1' "$W/stub.log" || fail "axis 1: [build] dce = true did not reach cycc.exe as CYRIUS_DCE=1: $(sed -n 2p "$W/stub.log")"
 fi
 [ "$FAIL" = 0 ] && echo "  ok axis 1: [build] dce and --strict reach cycc.exe (CYRIUS_DCE=1 in its environment, --strict on its command line)"
 x=$FAIL
@@ -114,9 +121,21 @@ if run '' build; then
     has_flag --strict && fail "axis 2: --strict reached cycc.exe with no strict configured"
     has_flag --allow-undef && fail "axis 2: --allow-undef reached cycc.exe from a plain build"
     has_flag --syntax-only && fail "axis 2: --syntax-only reached cycc.exe from a plain build"
-    grep -qx 'dce=unset' "$W/stub.log" || fail "axis 2: CYRIUS_DCE reached cycc.exe with no dce configured: $(tail -1 "$W/stub.log")"
+    grep -qx 'dce=unset' "$W/stub.log" || fail "axis 2: CYRIUS_DCE reached cycc.exe with no dce configured: $(sed -n 2p "$W/stub.log")"
+    grep -qx 'bounds=unset' "$W/stub.log" || fail "axis 2: CYRIUS_BOUNDS reached cycc.exe with no bounds configured: $(sed -n 3p "$W/stub.log")"
 fi
-[ "$FAIL" = "$x" ] && echo "  ok axis 2: a plain build hands cycc.exe no --strict, --allow-undef, --syntax-only or CYRIUS_DCE"
+[ "$FAIL" = "$x" ] && echo "  ok axis 2: a plain build hands cycc.exe no --strict, --allow-undef, --syntax-only, CYRIUS_DCE or CYRIUS_BOUNDS"
+# axis 6 (6.7.8, C2-7): the bounds-checked mode crosses the PE arm as the POSIX arm injects it —
+# `--bounds` as CYRIUS_BOUNDS=1, a manifest `false` as CYRIUS_BOUNDS=0 (it must beat the entry's
+# `#bounds` line, cycc's lowest rung).
+x=$FAIL
+if run '' build --bounds; then
+    grep -qx 'bounds=1' "$W/stub.log" || fail "axis 6: cyrius build --bounds did not reach cycc.exe as CYRIUS_BOUNDS=1: $(sed -n 3p "$W/stub.log")"
+fi
+if run 'bounds = false\n' build; then
+    grep -qx 'bounds=0' "$W/stub.log" || fail "axis 6: [build] bounds = false did not reach cycc.exe as CYRIUS_BOUNDS=0: $(sed -n 3p "$W/stub.log")"
+fi
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: --bounds reaches cycc.exe as CYRIUS_BOUNDS=1, [build] bounds = false as CYRIUS_BOUNDS=0"
 x=$FAIL
 if run '' lint src/main.cyr; then
     has_flag --allow-undef || fail "axis 3: lint's pre-pass did not hand cycc.exe --allow-undef: $(head -1 "$W/stub.log")"
@@ -148,4 +167,4 @@ grep -qF '"D059_xxxxxx"]  (environment: CYRIUS_DEFINES)' "$W/pc" \
 [ "$FAIL" = "$x" ] && echo "  ok axis 5: a ${#LONG}-byte CYRIUS_DEFINES beats [build] defines on cyrius.exe (a short one is the control)"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_windows_arm (dce, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm; an environment rung past 512 bytes is read; under wine)"
+echo "PASS: build_config_windows_arm (dce, bounds, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm; an environment rung past 512 bytes is read; under wine)"
