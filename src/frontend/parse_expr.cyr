@@ -1347,7 +1347,11 @@ fn _NEG_F32(S): i64 {
 
 # Unary minus on an integer operand (the pushed 0 below it): `0 - x`. 6.7.6 (D2): on a u128 it is the
 # u128 `0 - x`, all 128 bits (_w128_ilhs). Out of _PARSE_FACTOR_IMPL (cybs's per-fn reference limit).
+# ⛔ `_cfo = 0`: a constant operand (`K`, `E.K`, a `const`) armed the run-time fold, and the next
+# literal operator rewound the code to it, so `-K + 10` folded `5 + 10` (and left the pushed 0 on
+# the stack: `1 + -K * 2` was 10). A unary result is never a foldable constant. CHANGELOG [6.7.9]
 fn _neg_int(S): i64 {
+    _cfo = 0;
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }
     if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
     EMOVCA(S);
@@ -1357,8 +1361,10 @@ fn _neg_int(S): i64 {
     return 0;
 }
 # Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
-# adds 1; see _pexpr_bit_ps). CHANGELOG [6.7.9]
+# adds 1; see _pexpr_bit_ps), and no armed constant fold either (`~5 * 2` folded `5 * 2`; see
+# _neg_int). CHANGELOG [6.7.9]
 fn _bnot_int(S): i64 {
+    _cfo = 0;
     ENOTR(S);
     SPSC(S, 0);
     return 0;
@@ -5174,13 +5180,6 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         return 0;
     }
     if (typ == 8) { return _deref_read(S); }   # *expr
-    if (typ == 37) {
-        # ~ bitwise NOT
-        STI(S, GTI(S) + 1);
-        PARSE_FACTOR(S);
-        ENOTR(S);
-        return 0;
-    }
     if (typ == 135) {
         # v6.3.11 (G): await e — force a Future to its value. Lowers to
         # future_force(e): eval the operand factor (→ rax = the Future object built

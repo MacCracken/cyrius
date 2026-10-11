@@ -2402,6 +2402,10 @@ _chk_gate "$ROOT/tests/gates/frontend/dyn_checked.sh"
 # files — agnos's report). Every placement, the three-file shape, --syntax-only, every runnable
 # fork; the legitimate module-scope braces still compile and run. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/stray_brace_refused.sh"
+# 6.7.9 — unary `-` / `~` on a constant binds tighter than a literal operator after it: the run-time
+# fold folded the operand and dropped the operator (`-K + 10` was 15, `~5 * 2` 10; the rewind leaked
+# unary minus's pushed 0). The filed repro and 77 rows, x86 / IR / DCE / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/unary_constant_fold.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
