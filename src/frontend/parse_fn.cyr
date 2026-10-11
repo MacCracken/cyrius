@@ -2321,22 +2321,27 @@ fn _sptr_param_temp(S, li, sid): i64 {
 # call parsed after it. Writing its record here raised a bit for `f(q: P3)` above `f(q: *P3)` (the
 # signature check lets the pair through: both address-pass the same struct), and a later tail call
 # kept its `jmp` while the `*P3` body held `&s` — a silent wrong value. CHANGELOG [6.6.20]
+# 6.7.9: `rf` is the fn the record is written for, -1 for a redefinition (SFBVCP and `_bvhi_*` write
+# nothing for it); its copies row past ordinal 61 is replaced whole, as the mask is.
 fn _sptr_params_localize(S): i64 {
     var m = 0;
-    if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S); } }
-    if ((GFLG(S, _cur_fn_ix) & 2048) == 0) { SFBVCP(_cur_fn_ix, m); }
+    var rf = _cur_fn_ix;
+    if ((GFLG(S, rf) & 2048) != 0) { rf = 0 - 1; }
+    _bvhi_reset(rf);
+    if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S, rf); } }
+    SFBVCP(rf, m);
     return 0;
 }
 # Each parameter owns exactly ONE named slot (a vector's filler slots are -1), so a parameter's
 # ordinal is the number of named slots below it — counted before `_sptr_param_localize1` renames
-# the slot. Returns the copied ordinals below 62.
-fn _sptr_params_copy(S): i64 {
+# the slot. Returns the copied ordinals below 62; one past 61 goes to `rf`'s copies row.
+fn _sptr_params_copy(S, rf): i64 {
     var m = 0;
     var ord = 0;
     var li = 0;
     while (li < _cur_fn_pslots) {
         if (L64(S + 0x5D9D000 + li * 8) != 0 - 1) {
-            if (_sptr_param_in(S, li) == 1) { if (ord < 62) { m = m | (1 << ord); } }
+            if (_sptr_param_in(S, li) == 1) { m = _bvcp_bit(rf, m, ord); }
             ord = ord + 1;
         }
         li = li + 1;
@@ -11972,30 +11977,46 @@ fn _fn_self_byval(fi): i64 {
 # before the definition knows it, and again, exactly, where the definition emits the copy
 # (`_sptr_params_localize` — a generic's instance, which pass 1 never sees, included; never for a
 # redefined fn, whose calls all reach the LAST definition pass 1 recorded). 0 for a `*T`
-# or untyped parameter, an ordinal past 61, a `#naked` or `async` fn (pass 1: `_prescan_fn_sig`)
-# and a fn neither pass has recorded. ⚠ Pass 1 must never record a copy the definition does not
-# make — a call parsed before the definition would keep a `jmp` that the callee's pointer outlives
-# (checked over the tcyr corpus and programs/, x86 and PE, at 6.6.20).
+# or untyped parameter, a `#naked` or `async` fn (pass 1: `_prescan_fn_sig`) and a fn neither pass
+# has recorded. ⚠ Pass 1 must never record a copy the definition does not make — a call parsed
+# before the definition would keep a `jmp` that the callee's pointer outlives (checked over the
+# tcyr corpus and programs/, x86 and PE, at 6.6.20).
+# ⛔ 6.7.9 — an ordinal past 61 is in the fn's copies row (util.cyr `_bvhi_*`): this answered 0
+# there, so a by-value struct at parameter 62+ was never copied where it stands — `r62(.., b,
+# bump(&b))` read 11 where 1 is right — and its address escaped (`_sarg_escapes`). Issue
+# 2026-10-09-by-value-copy-mask-62-parameter-limit. CHANGELOG [6.7.9]
 fn _pm_copies(fi, argc): i64 {
-    if (argc >= 62) { return 0; }
+    if (argc >= 62) { return _bvhi_get(fi, argc); }
     return (GFBVCP(fi) >> argc) & 1;
+}
+# Parameter `pc` of fn `fi` is copied in: its bit in the mask `m`, or past 61 its byte in the row.
+fn _bvcp_bit(fi, m, pc): i64 {
+    if (pc < 62) { return m | (1 << pc); }
+    _bvhi_set(fi, pc);
+    return m;
+}
+# Pass 1, no copy for fn `fi` (`async`, a possible `#naked`): the mask and the row both cleared.
+fn _bvcp_none(fi): i64 {
+    SFBVCP(fi, 0);
+    return _bvhi_reset(fi);
 }
 # Pass 1's half: parameter `pc`, cursor on its type name, `smask` the struct mask with this
 # parameter's bit already decided, `inst` its struct (the instance for a generic) or <= 0.
 # Mirrors `_local_is_sptr_param`'s test: address-passed, not a `*T`, not a handle (`Str` /
 # `Result` / `Option` / `Tagged` — they never take the bit), and a plain struct or a Win64 vector.
+# Past ordinal 61 the address-passed bit is the kind row's (`_psid_addr`) and the copy goes to the
+# copies row (`_bvcp_bit`) — `_cur_fn_ix` is the fn being scanned (`_prescan_params`).
 fn _bvcp_note(S, m, smask, pc, inst): i64 {
-    if (pc >= 62) { return m; }
-    if (((smask >> pc) & 1) == 0) { return m; }
+    if (_psid_addr(_cur_fn_ix, pc, smask) == 0) { return m; }
     if (TOKTYP(S, GTI(S) - 1) == 8) { return m; }
     var c = _classify_param_type(S, PEEKV(S));
     if (c == 0) {
-        if (inst > 0) { return m | (1 << pc); }
+        if (inst > 0) { return _bvcp_bit(_cur_fn_ix, m, pc); }
         return m;
     }
     if (_TARGET_PE == 0) { return m; }
-    if (c >= 6) { if (c <= 8) { return m | (1 << pc); } }
-    if (c <= 0 - 2048) { return m | (1 << pc); }
+    if (c >= 6) { if (c <= 8) { return _bvcp_bit(_cur_fn_ix, m, pc); } }
+    if (c <= 0 - 2048) { return _bvcp_bit(_cur_fn_ix, m, pc); }
     return m;
 }
 # 1 when a `#naked` may apply to the fn whose `fn` token is `ti`: a token 133 anywhere after the
@@ -12288,8 +12309,7 @@ fn _tup_pscan(S, fi, pc, smask, isptr): i64 {
 # ... and its prologue copy (`_bvcp_note`'s plain-struct answer): every tuple parameter is copied in.
 fn _tup_bvcp(m, pc): i64 {
     if (_tup_pt <= 0) { return m; }
-    if (pc >= 62) { return m; }
-    return m | (1 << pc);
+    return _bvcp_bit(_cur_fn_ix, m, pc);
 }
 fn _psid_addr(fi, pc, mask): i64 {
     if (pc < 62) { return (mask >> pc) & 1; }
@@ -12338,6 +12358,7 @@ fn _psid_scan(S, fi, pc, base, mask, isptr): i64 {
 fn _prescan_params(S, fi): i64 {
     var sv = _cur_fn_ix;
     _cur_fn_ix = fi;
+    _bvhi_reset(fi);   # 6.7.9: the scan's copies past ordinal 61 replace the last record (`_bvcp_bit`)
     _prescan_params_scan(S, fi);
     _cur_fn_ix = sv;
     return 0;
@@ -12515,8 +12536,8 @@ fn _prescan_fn_sig(S): i64 {
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
         else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }   # never leave a stale private bit
         _prescan_params(S, fi);
-        if (_pasync == 1) { SFBVCP(fi, 0); }   # 6.6.20: see `_pm_copies`
-        if (_prescan_maybe_naked(S, start_ti) == 1) { SFBVCP(fi, 0); }
+        if (_pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
+        if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
         _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it

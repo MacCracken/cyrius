@@ -118,6 +118,43 @@ fn rd_kp(q: *RdT3): i64 { rd_keep = q; return 0; }
 fn rd_kp_tail(k): i64 { var s = RdT3 { 3, 4, 5 }; var x = rd_kp(s); return rd_probe(k + x); }
 fn rd_kp(q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
 fn rd_kp_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kp_tail(0); return r * 10 + rd_depth_code(bp); }
+# ... and at parameter 62, past the copies mask (6.7.9, the copies row): each definition's pass-1
+# scan replaces the row, and a redefined definition's pass 2 writes none. Before 6.7.9 every
+# ordinal past 61 read "not copied", so `rd_kp62_tail` diverted (72, the safe direction).
+fn rd_kv62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
+fn rd_kv62_tail(k): i64 {
+    var s = RdT3 { 3, 4, 5 };
+    var x = rd_kv62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, s);
+    return rd_probe(k + x);
+}
+fn rd_kv62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, q: *RdT3): i64 { rd_keep = q; return 0; }
+fn rd_kv62_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kv62_tail(0); return r * 10 + rd_depth_code(bp); }
+fn rd_kp62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, q: *RdT3): i64 { rd_keep = q; return 0; }
+fn rd_kp62_tail(k): i64 {
+    var s = RdT3 { 3, 4, 5 };
+    var x = rd_kp62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, s);
+    return rd_probe(k + x);
+}
+fn rd_kp62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
+fn rd_kp62_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kp62_tail(0); return r * 10 + rd_depth_code(bp); }
 
 assert_eq(rd_forward(), 1, "forward call (compiled before both definitions) reaches the last");
 assert_eq(rd_nontail(), 1, "direct call compiled between the definitions reaches the last (was the first)");
@@ -144,5 +181,7 @@ assert_eq(rd_m_named(), 1, "method: a mangled-name call between the impl blocks 
 assert_eq(rd_lib_entry(), 11, "library helper replaced after the library: its own caller reaches the replacement (was 101)");
 assert_eq(rd_kv_check(), 32, "by-value then `*T`: the call reaches the `*T` body, so the later tail call diverts (was 501: kept, read the freed frame)");
 assert_eq(rd_kp_check(), 71, "`*T` then by-value: the call reaches the copying body, so the later tail call keeps its jmp");
+assert_eq(rd_kv62_check(), 32, "... at parameter 62: by-value then `*T` diverts");
+assert_eq(rd_kp62_check(), 71, "... at parameter 62: `*T` then by-value keeps its jmp (was 72: every ordinal past 61 read not copied)");
 
 var r = assert_summary();

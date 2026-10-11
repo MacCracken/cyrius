@@ -44,7 +44,7 @@
 #      address, multi-value return, methods, a library helper replaced after the library, and a
 #      by-value struct parameter redefined as `*T` and the reverse — the per-fn record of which
 #      parameters a callee copies, which decides whether a later tail call keeps its `jmp`, is the
-#      LAST definition's); under
+#      LAST definition's — and, 6.7.9, the same pair at parameter 62, past the copies mask); under
 #      CYRIUS_DCE=1 a dead fn between the earlier entry and the winner is ELIMINATED and the
 #      redirect still lands (exits 1); the same for `#naked` definitions under CYRIUS_DCE=1 (was
 #      139) and, with live store-heavy fns between them, under CYRIUS_IR=3 (was 60).
@@ -102,6 +102,17 @@
 #        the caller's `&s`; rd_kp_check 72, want 71: an over-divert)
 #   pre-fix tree (src/ of the 6.6.20 slot open, e696746d)            -> 31 red, 1 green (the green
 #        is sig_same_vec_pe, a compile-only anti-vacuous row)
+#   6.7.9 (issue 2026-10-09-by-value-copy-mask-62-parameter-limit — the copies row past ordinal 61;
+#   each mutant a scratch tree whose cycc is rebuilt from it, this gate run there):
+#   m. `_prescan_params` without its `_bvhi_reset` (pass 1 keeps the first definition's row)
+#                                                                    -> 4 red: the .tcyr on every
+#        backend (rd_kv62_check 501, want 32)
+#   n. `_sptr_params_localize` writing the copies row for a redefined fn
+#                                                                    -> 4 red: the .tcyr on every
+#        backend (rd_kv62_check 501; rd_kp62_check 72, want 71)
+#   o. `_pm_copies` answering 0 past ordinal 61 (the pre-fix line), or pass 1 (`_bvcp_note`)
+#        recording nothing there                                     -> 4 red: the .tcyr on every
+#        backend (rd_kp62_check 72: an over-divert)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
