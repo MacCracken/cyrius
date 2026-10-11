@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (38, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (44, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -47,6 +47,16 @@
 #       secret, recursion, #regalloc, top level): native and cxvm each print `<N> passed, 0 failed`,
 #       N derived from the source (37 at D5, 78 at D6, 81 at the review's §pairs: floor 81) — the whole
 #       file, no cx fence.
+#   R10 (6.7.9) `var t, v = fncallN(..)` — x86_64 / aarch64 / PE compiled it and cx alone refused it
+#       ("binds 2 names, but 'fncall1' returns 1 value"): lib/fnptr.cyr's cx arms read
+#       `result = callptr(..); return result;`, a body `_prescan_ret_single` proves one-valued, while
+#       every other target's body is an `asm` block. (a) the filed repro verbatim: native and cxvm
+#       exit 83; (b) fncall0..8 each destructured (every arm), plus `fncall2(&fncall1, ..)` and
+#       `callptr(&fncall8, ..)`, which run lib/fnptr.cyr's BODY and must carry the pair: exit 0 AND
+#       the `cx-rows fncall ok` marker.
+#   R11 (6.7.9) tests/tcyr/crossos/method_pair_result.tcyr (6.6.16, C4) — it destructures
+#       `fncall1(g, d)`, so it had never compiled for cx: native and cxvm each print `<N> passed,
+#       0 failed`, N derived from the source (31, floor 31), the whole file.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -78,6 +88,11 @@
 #      "guest address out of range: 3"), R6 native RED
 #   (Before the cxvm host-memory bug's cxvm bounds checks the c/d cx legs exited 63 / 64 — B03's hand-off numbers;
 #   cxvm now traps the stray access, exit 1, which the row reads as RED just the same.)
+#   6.7.9, R10 / R11 (a scratch copy of the tree; the real tree 44/44):
+#   e. lib/fnptr.cyr's nine cx arms back to `result = callptr(..);` -> R10a, R10b and R11 cxvm RED
+#      ("binds 2 names, but 'fncall1' returns 1 value"; R10b names fncall0), 41 green.
+#   f. fncall8's cx arm alone back -> R10b cxvm RED (names fncall8), 43 green; fncall0's alone ->
+#      R10b cxvm RED (names fncall0), 43 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -374,8 +389,96 @@ echo "R9 — dyn_objects.tcyr (6.7.8, dyn D5 forming / D6 the call), native then
 tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 81
 tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 81
 
-WANT=38
+# rc_both LABEL SRC WANT_RC — native leg, then cx leg; each must exit WANT_RC (no marker: the filed
+# repro prints nothing, and its 83 = 41 + 42 needs both destructured values right).
+rc_both() {
+    lab=$1; src=$2; want=$3
+    if "$CC" < "$src" > "$T/n" 2> "$T/ne"; then
+        chmod +x "$T/n"
+        rc=0; (cd "$T" && timeout 60 ./n > "$T/no" 2>&1) || rc=$?
+        if [ "$rc" = "$want" ]; then ok "$lab native: exit $rc"; else bad "$lab native: exit $rc (want $want)"; fi
+    else
+        bad "$lab native: does not compile: $(grep -m1 '^error' "$T/ne")"
+    fi
+    if "$CX" < "$src" > "$T/c.cyx" 2> "$T/ce"; then
+        rc=0; timeout 60 "$VM" < "$T/c.cyx" > "$T/co" 2>&1 || rc=$?
+        if [ "$rc" = "$want" ]; then ok "$lab cxvm: exit $rc"
+        else bad "$lab cxvm: exit $rc (want $want) $(grep -m1 '^cxvm:' "$T/co")"; fi
+    else
+        bad "$lab cxvm: cycc_cx does not compile it: $(grep -m1 '^error' "$T/ce")"
+    fi
+}
+
+# The filed repro, verbatim (docs/development/issues/repros/2026-10-10-fncall-destructure-refused-on-cx-only.cyr).
+cat > "$T/fc_repro.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+fn g(d): (i64, i64) { return (d, d + 1); }
+fn main(): i64 {
+    var t, v = fncall1(&g, 41);
+    return t + v;
+}
+var rc = main();
+syscall(60, rc);
+EOF
+
+cat > "$T/fc_arms.cyr" <<'EOF'
+# fncall0..8 destructured (a direct call is lowered by the compiler, but the one-value check reads
+# lib/fnptr.cyr's body), and two calls that run that BODY. exit 0 when every row is right, else the
+# OR of the failing rows' bits.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+fn g0(): (i64, i64) { return (7, 8); }
+fn g1(a): (i64, i64) { return (a, a + 1); }
+fn g2(a, b): (i64, i64) { return (a + b, b); }
+fn g3(a, b, c): (i64, i64) { return (a + b + c, c); }
+fn g4(a, b, c, d): (i64, i64) { return (a + b + c + d, d); }
+fn g5(a, b, c, d, e): (i64, i64) { return (a + b + c + d + e, e); }
+fn g6(a, b, c, d, e, f): (i64, i64) { return (a + b + c + d + e + f, f); }
+fn g7(a, b, c, d, e, f, g): (i64, i64) { return (a + b + c + d + e + f + g, g); }
+fn g8(a, b, c, d, e, f, g, h): (i64, i64) { return (a + b + c + d + e + f + g + h, h * 10 + g); }
+fn w8(fp): i64 { return callptr(&fncall8, fp, 1, 2, 3, 4, 5, 6, 7, 8); }
+fn go(): i64 {
+    var bad = 0;
+    var t0, v0 = fncall0(&g0);
+    if (t0 != 7 || v0 != 8) { bad = bad | 1; }
+    var t1, v1 = fncall1(&g1, 41);
+    if (t1 != 41 || v1 != 42) { bad = bad | 2; }
+    var t2, v2 = fncall2(&g2, 1, 2);
+    if (t2 != 3 || v2 != 2) { bad = bad | 4; }
+    var t3, v3 = fncall3(&g3, 1, 2, 3);
+    if (t3 != 6 || v3 != 3) { bad = bad | 8; }
+    var t4, v4 = fncall4(&g4, 1, 2, 3, 4);
+    if (t4 != 10 || v4 != 4) { bad = bad | 16; }
+    var t5, v5 = fncall5(&g5, 1, 2, 3, 4, 5);
+    if (t5 != 15 || v5 != 5) { bad = bad | 32; }
+    var t6, v6 = fncall6(&g6, 1, 2, 3, 4, 5, 6);
+    if (t6 != 21 || v6 != 6) { bad = bad | 64; }
+    var t7, v7 = fncall7(&g7, 1, 2, 3, 4, 5, 6, 7);
+    if (t7 != 28 || v7 != 7) { bad = bad | 128; }
+    var t8, v8 = fncall8(&g8, 1, 2, 3, 4, 5, 6, 7, 8);
+    if (t8 != 36 || v8 != 87) { bad = bad | 256; }
+    var a1, b1 = fncall2(&fncall1, &g1, 41);
+    if (a1 != 41 || b1 != 42) { bad = bad | 512; }
+    var a8, b8 = w8(&g8);
+    if (a8 != 36 || b8 != 87) { bad = bad | 1024; }
+    return bad;
+}
+var _b = go();
+if (_b == 0) { syscall(1, 1, "cx-rows fncall ok\n", 18); }
+syscall(60, _b);
+EOF
+
+echo "R10 — \`var t, v = fncallN(..)\` (6.7.9: cx alone refused it), native then cxvm:"
+rc_both "R10a the filed repro, fncall1 destructured" "$T/fc_repro.cyr" 83
+inline  "R10b fncall0..8 destructured + the body through &fncall1 / &fncall8" "$T/fc_arms.cyr" 0 "cx-rows fncall ok"
+
+echo "R11 — method_pair_result.tcyr (6.6.16 C4; never compiled for cx until 6.7.9), native then cxvm:"
+tcyr_native tests/tcyr/crossos/method_pair_result.tcyr 31
+tcyr_cx     tests/tcyr/crossos/method_pair_result.tcyr 31
+
+WANT=44
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, and dyn_objects (the checked dyn's forming and calls) runs there whole"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, and var t, v = fncallN(..) + method_pair_result build and run on cx as natively"
 exit 0
