@@ -4310,31 +4310,19 @@ fn _w16_global_init(S, vi, st, ann): i64 {
     return 0;
 }
 
-# cx does not bake a scalar constant into its var data (it opts out of the static-init path,
-# below), so a CONSTANT global is stored FIRST, ahead of every deferred initializer — the same
-# "from program start" the image gives every other target. (⚠ This line read "cx has no file
-# image"; a .cyx does carry its var data — written as zeros, copied into the guest by cxvm —
-# and 6.6.16's array lists are baked into it, main_cx.cyr.)
+# cx bakes no scalar into its .cyx var data (cxvm copies it into the guest; only 6.6.16's array
+# lists are written there, main_cx.cyr), so the static-init value every constant global records in
+# gvar_initval (_vgsi_base) is stored HERE, at startup, ahead of every deferred initializer — the
+# "from program start" the file image gives the other five targets. That covers a plain constant
+# global (PARSE_GVAR_REG's static-init path, which cx takes like every target since 6.7.9), a
+# constant redeclaration or shadow, and the enum-named scalars _gvk_pre folds (those keep their
+# replayed store on every target). A forward read agrees with the image targets
 #
-# 6.6.6 bite 19d — EVERY constant global, not only a redeclared one. ⚠ The line that stood
-# here read "Only a redeclaration records a value on cx (see PARSE_GVAR_REG)", which was both
-# the behaviour and the defect: a plain `var a = 5;` recorded nothing, so a forward read of it
-# got 0 on cx and 5 everywhere else.
-#
-# cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its scalar
-# globals are zero in the .cyx var data, so the runtime store in EMIT_GVAR_INITS is what gives
-# them their value. But that replay runs in DECLARATION ORDER, so a forward read saw 0:
-#
-#     var b = a;      # 5 on x86 / aarch64 / Mach-O / PE, 0 on cx
+#     var b = a;      # 5 on every target
 #     var a = 5;
-#     syscall(60, b);
 #
-# On every other target `a` is baked into the file image, so `b`'s initializer reads 5 no
-# matter where `a` is declared. The prestore below existed for the redeclaration and shadow
-# cases only, because those are the ones that RECORDED a value in gvar_initval. Recording the
-# folded constant for cx too — without setting `sit_lit`, so cx keeps its runtime store —
-# makes this loop cover every constant global and puts cx back in agreement with the other
-# five targets. CHANGELOG [6.6.6]
+# and a static-init value is never computed again at run time (`var Q = INT_MIN / -1;` trapped
+# in cxvm's `idiv` while cx alone replayed it). CHANGELOG [6.6.6] [6.7.9]
 #
 # 6.6.16 (C1): a slot a leading-block array list writes is left to the .cyx var data, where the
 # list is baked (main_cx.cyr) — its blob was seeded with this constant (_gai_cx_blobs).
@@ -4798,11 +4786,10 @@ fn PARSE_GVAR_REG(S): i64 {
         # path. Conservative on purpose — no false positives means no
         # silent value drift versus today's behavior.
         #
-        # cx-mode opt-out: the cx bytecode backend has no file-image
-        # var area; its gvars live in cxvm-allocated memory zeroed at
-        # cxvm startup. Skipping the runtime store would leave them
-        # zero. Keep the runtime-store path for cx; static-init is
-        # an x86 / aarch64 / MachO / PE optimization.
+        # cx takes this path too (6.7.9): its scalar globals are zero in the .cyx var data, and
+        # _gv_cx_prestore stores every recorded value at startup, before the replay. cx used to
+        # opt out and ALSO replay the initializer, so a folded value was computed again at run
+        # time there alone: `var Q = INT_MIN / -1;` trapped in cxvm's `idiv`. CHANGELOG [6.7.9]
         # v6.2.11: capture a `= NUM ;` literal for the collision guardrail,
         # INDEPENDENT of the static-init opt below (which skipped shadowing
         # redefinitions until 6.6.6 — and a collision warning must fire EXACTLY on
@@ -4823,7 +4810,7 @@ fn PARSE_GVAR_REG(S): i64 {
         if (_cf_ok == 1) {
             cf_has = 1;
             cf_val = fv;
-            if (_TARGET_CX != 1 && fv != 0) {
+            if (fv != 0) {
                 sit_lit = 1;
                 sit_val = fv;
             }
@@ -4932,12 +4919,8 @@ fn PARSE_GVAR_REG(S): i64 {
     # static-init vars would silently fall out of the last-var chain
     # and the binary would exit with whatever rax held — exit-code
     # corruption the runtime-store path can't reproduce.
-    # 6.6.6: on cx a constant global is ALSO recorded here, so _gv_cx_prestore gives it its
-    # value before the deferred-init replay and a forward read stops seeing 0. `sit_lit` stays
-    # 0, so cx keeps the runtime store as well — it writes the same value. See _gv_cx_prestore.
-    if (_TARGET_CX == 1) { if (cf_has == 1) { if (is_struct == 0) { if (sit_lit == 0) {
-                    S64(_vgsi_base + gvi * 8, cf_val);
-                } } } }
+    # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
+    # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
