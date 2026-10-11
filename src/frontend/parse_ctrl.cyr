@@ -808,7 +808,11 @@ fn _for_step_assign(S, noff): i64 {
     if (idx >= 0) { _asg_plain_chk(S, idx, 0, step_ti); _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
     else {
         idx = FINDVAR(S, noff);
+        # 6.7.9: a name declared nowhere is the statement's "undefined variable" — this stored
+        # nothing, silently, so `j = i + 1` / `yy += 1` as a step never moved the loop. Not under
+        # --syntax-only (a sibling module's global; the statement skips it too). CHANGELOG [6.7.9]
         if (idx >= 0) { _asg_plain_chk(S, idx, 1, step_ti); _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
+        else { if (_syntax_only == 0) { _asg_undef_report(S, noff); } }
     }
     # 6.7.8: the scalar store ends the step, so its `)` is checked here, as the statement checks its
     # `;` — `i += 1 2`, `i = i + 1 2`, `i += 1 ; junk` and a whole-struct `a = b 2` (the junk also

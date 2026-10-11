@@ -3208,6 +3208,21 @@ fn _asg_store_slot(S, idx, g): i64 {
     SLVAR(S, idx);
     return 0;
 }
+# An assignment whose destination is neither a local nor a global: "undefined variable 'x'" at the
+# cursor (the value's end), its excerpt and the block-scope note. ONE report for the statement arm
+# and the classic-for step, which stored nothing and said nothing — `for (i = 0; i < 5; j = i + 1)`
+# with `j` declared nowhere looped forever. The caller keeps its --syntax-only skip. CHANGELOG [6.7.9]
+fn _asg_undef_report(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'\n", 2);
+    _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
+    _gv_note_blockscoped(S, noff);   # 6.6.6: see there
+    _had_error = 1;
+    return 0;
+}
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
 fn _asg_float_fop(cop, lt): i64 {
     if (lt != F64_TYID) { if (lt != F32_TYID) { return 0 - 1; } }
@@ -4853,14 +4868,8 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     STI(S, GTI(S) + 1);
                     return 0;
                 }
-                syscall(SYS_WRITE, 2, "error:", 6);
-                _err_head(S);
-                syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0xEC00000 + noff);
-                syscall(SYS_WRITE, 2, "'\n", 2);
-                _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
-                _gv_note_blockscoped(S, noff);   # 6.6.6: see there
-                _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
+                _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
+                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
