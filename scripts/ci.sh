@@ -2,7 +2,7 @@
 # ci.sh — install Cyrius from latest release for CI pipelines
 # Usage: sh scripts/ci.sh [version]
 # Pulls the x86_64-linux release tarball, verifies it, installs it as ~/.cyrius/versions/<v> and
-# links its bin/ into ~/.cyrius/bin.
+# links its bin/ and lib/ as ~/.cyrius/bin and ~/.cyrius/lib.
 
 set -e
 
@@ -203,21 +203,37 @@ rm -rf "$EX"
 # lib both or neither, and the old slot is never touched. The per-file links are for the plain bin/
 # directory a fresh CI home gets. tests/gates/toolchain/ci_installs_the_release_tarball.sh axis 5.
 # CHANGELOG [6.7.7]
+# ⛔ 6.7.9 — LIB IS LINKED IN EVERY HOME, the plain-bin one included. Only the linked branch
+# re-pointed it, so a fresh CI home got bin/ and no $CYRIUS_HOME/lib at all: a manifest with no
+# `cyrius =` pin resolves its stdlib there (`_dep_find_stdlib_dir` fallback (c), cbt/deps.cyr) and
+# found none ("cannot find cyrius stdlib"), and a cached home kept the stdlib it had while its bins
+# moved on. tests/gates/toolchain/ci_installs_the_release_tarball.sh axes 6 and 7. CHANGELOG [6.7.9]
+# _point_lib — $CYRIUS_HOME/lib -> versions/<v>/lib as install.sh's `_relink_active` points it: a
+# legacy REAL directory is removed (nothing else is), any other name is replaced by `ln -sfn`
+# (never `ln -sf`, which follows a directory link and plants lib/lib inside the old slot).
+_point_lib() {
+    if [ -d "$CYRIUS_HOME/lib" ] && [ ! -L "$CYRIUS_HOME/lib" ]; then
+        rm -rf "$CYRIUS_HOME/lib" || return 1
+    fi
+    ln -sfn "$VD/lib" "$CYRIUS_HOME/lib"
+}
 if [ -L "$CYRIUS_HOME/bin" ]; then
     _old_bin=$(readlink "$CYRIUS_HOME/bin")
     ln -sfn "$VD/bin" "$CYRIUS_HOME/bin" || {
         echo "error: could not point $CYRIUS_HOME/bin at $VD/bin" >&2
         exit 1
     }
-    if [ -d "$CYRIUS_HOME/lib" ] && [ ! -L "$CYRIUS_HOME/lib" ]; then
-        rm -rf "$CYRIUS_HOME/lib"    # a legacy REAL directory, as `_relink_active` handles it
-    fi
-    ln -sfn "$VD/lib" "$CYRIUS_HOME/lib" || {
+    _point_lib || {
         ln -sfn "$_old_bin" "$CYRIUS_HOME/bin" || true
         echo "error: could not point $CYRIUS_HOME/lib at $VD/lib — $CYRIUS_HOME/bin left on $_old_bin" >&2
         exit 1
     }
 else
+    # lib first: if it cannot be pointed, no bin has moved yet
+    _point_lib || {
+        echo "error: could not point $CYRIUS_HOME/lib at $VD/lib — $CYRIUS_HOME/bin left as it was" >&2
+        exit 1
+    }
     for bin in "$VD"/bin/*; do
         [ -f "$bin" ] && ln -sf "$bin" "$CYRIUS_HOME/bin/$(basename "$bin")"
     done
