@@ -594,6 +594,11 @@ enum AgnosRedirOp {
 var SPAWN_LINE_MAX = 127;    # #43 line form (flags == 0) and #37: payload bytes
 const _SPAWN_ARGV_MAX = 1024;   # #43 SPAWN_F_ARGV blob: total bytes, NULs included (min 2)
 var SPAWN_ARGV_MAX = _SPAWN_ARGV_MAX;   # the const sizes every argv blob buffer (6.7.6)
+const _SPAWN_ENV_MAX = 1024;    # #43 env blob (a3 / a4): total bytes, NULs included — the kernel's limit
+var SPAWN_ENV_MAX = _SPAWN_ENV_MAX;     # the const sizes every env blob buffer (6.7.9)
+# ⚠ SPAWN_ARGV_MAX and SPAWN_ENV_MAX tell a caller the kernel's limits; every buffer, cap and check
+# in the peer reads the CONST, so writing either var changes nothing here (before 6.7.9 a raised
+# SPAWN_ARGV_MAX let an argv blob run past its const-sized stack buffer). CHANGELOG [6.7.9]
 var SPAWN_ARGC_MAX = 16;     # entries / tokens, both forms — MORE IS REFUSED (-SPAWN_E_ARGS), never dropped
 
 # ================================================================
@@ -1815,7 +1820,7 @@ fn _agnos_spawn_refuse(): i64 { return syscall(SYS_SPAWN_PATH, 0, 0x40000, 0, 0)
 # oversized len bleeds into the flag bits and silently arms CLEANFD. CHANGELOG [6.6.7]
 fn sys_spawn_argv(blob, len, env, envlen, flags): i64 {
     if (len < 2) { return _agnos_spawn_refuse(); }
-    if (len > SPAWN_ARGV_MAX) { return _agnos_spawn_refuse(); }
+    if (len > _SPAWN_ARGV_MAX) { return _agnos_spawn_refuse(); }
     if (flags != 0) { if (flags != SPAWN_F_CLEANFD) { return _agnos_spawn_refuse(); } }
     return syscall(SYS_SPAWN_PATH, blob, len | SPAWN_F_ARGV | flags, env, envlen);
 }
@@ -1825,7 +1830,7 @@ fn sys_spawn_argv(blob, len, env, envlen, flags): i64 {
 # staged onto the child's init stack); `sys_spawn_path` is exactly this with `env = 0`, so
 # every existing caller is unaffected.
 #
-# Blob format: packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries. This is how an endowed channel
+# Blob format: packed `KEY=VALUE\0…`, ≤ _SPAWN_ENV_MAX (1024) B, ≤16 entries. This is how an endowed channel
 # reaches its child: `sys_chan_endow` returns the fd, the parent packs `AGNOS_CHAN=<fd>`,
 # and the child getenv's it.
 #

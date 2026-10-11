@@ -1,0 +1,75 @@
+# thread_local_alloc_bounded_by_storage.tcyr — 6.7.9: the thread-local slot allocator, and every
+# loop over the slots, is bounded by the storage the slots live in, whatever the public var says.
+#
+# THE DEFECT (issues/2026-10-08-lib-literal-bounds-and-writable-public-bounds.md, item 5). Since
+# 6.7.6 `const _TLOCAL_MAX_SLOTS` (128) sizes every slot store — the macOS / agnos / foreign-mode
+# arrays, the Windows per-thread block, agnos's `thread_create` stack snapshot — while the public
+# `var TLOCAL_MAX_SLOTS`, kept for the API, still bounded `thread_local_alloc` and the serial
+# peer's save / restore loops; and the allocator's own comment said "exhausted; bump
+# TLOCAL_MAX_SLOTS". A program that did so was handed slot 165 of 128 (measured on x86_64
+# Linux, where the %fs block is 512 slots so that store still landed); on macOS / agnos / foreign
+# mode / Windows the store ran off the end of its array, and agnos's `thread_create` copied 200
+# slots into a 128-slot stack buffer.
+#
+# THE CONTRACT ASSERTED. After the var is raised, no slot at or past _TLOCAL_MAX_SLOTS is handed
+# out, the last one handed out is real storage (a store there round-trips), and a thread body that
+# writes it neither crashes the serial snapshot nor leaks back into the caller. On 6.7.8 the
+# first two rows fail on every target (slots up to 199 are handed out).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+
+var _tl_top = 0;
+
+fn _tl_body(arg) {
+    thread_local_set(_tl_top, 991);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    thread_local_init();
+
+    test_group("thread_local_alloc and the slot loops are bounded by the slot storage, not the public var");
+
+    TLOCAL_MAX_SLOTS = 200;        # raised, as the allocator's comment advised until 6.7.9
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
+    TLS_REG_MAX = 1000;            # the arm64-macOS thread registry's public bound, raised the same way
+    #endif
+    #endif
+
+    var over = 0;
+    var last = 0 - 1;
+    var i = 0;
+    while (i < 300) {              # more requests than either bound
+        var s = thread_local_alloc();
+        if (s >= 0) {
+            if (s >= _TLOCAL_MAX_SLOTS) { over = over + 1; }
+            last = s;
+        }
+        i = i + 1;
+    }
+    assert_eq(over, 0, "no slot at or past _TLOCAL_MAX_SLOTS is handed out after TLOCAL_MAX_SLOTS = 200");
+    assert_eq(last, _TLOCAL_MAX_SLOTS - 1, "the last slot handed out is _TLOCAL_MAX_SLOTS - 1");
+    assert_eq(thread_local_alloc(), 0 - 1, "an exhausted allocator stays exhausted");
+
+    thread_local_set(last, 4242);
+    assert_eq(thread_local_get(last), 4242, "the top slot handed out is real storage: a store there round-trips");
+
+    _tl_top = last;
+    var h = thread_create(&_tl_body, 0);
+    assert_neq(h, 0, "thread_create returned a usable handle");
+    thread_join(h);
+    assert_eq(thread_local_get(last), 4242,
+      "a thread body that wrote the top slot does not leak it back to the caller");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

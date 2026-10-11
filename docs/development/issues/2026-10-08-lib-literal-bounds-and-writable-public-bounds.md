@@ -1,9 +1,28 @@
-# Literal bounds left in `lib/`: hand-kept 1024 / 64 / 40 copies, two arrays 8× their stated size, and loops bounded by writable public vars — OPEN
+# Literal bounds left in `lib/`: hand-kept 1024 / 64 / 40 copies, two arrays 8× their stated size, and loops bounded by writable public vars — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: every site below re-read and its line
-re-derived; item 3's sizes measured (a top-level `var a[72]` spans 576 B and `var c[256]` 2,048 B — `&next - &a`
-probe), and item 5 run on x86_64 Linux (`repros/2026-10-08-tlocal-max-slots-writable-bound.cyr`: after
-`TLOCAL_MAX_SLOTS = 200`, `thread_local_alloc` hands out slot 165 while every slot array holds 128).
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 5; CHANGELOG [6.7.9]) All five items, as proposed. (1) `const
+> _SPAWN_ENV_MAX = 1024` + the public `var SPAWN_ENV_MAX` in the agnos peer size and cap all six env blobs (and the env
+> vec's entry cap reads `SPAWN_ARGC_MAX`, not a literal 16); (2) `const _RE_MAX_SPLITS` sizes both split tables and
+> both guards; (3) `var _fl_heads: i64[_FL_NCLASSES]` (72 B, was 576) and `var _dynlib_registry: i64[_DYNLIB_MAX * 2]`
+> (256 B, was 2,048), their loop / cap on the same consts; (4) the epoll and kqueue kill-task ctx words are named from
+> `_PROC_KILL_STATE` (`_AK_*`, `_AKM_*`, sizes included); (5) every loop and allocation over the slot / registry storage
+> reads the const (`thread_local_alloc`, agnos's save / restore, the macOS worker block, the arm64 registry scans), and
+> the allocator's "bump TLOCAL_MAX_SLOTS" comment is gone. Item 5's class had two more members outside the TLS stack —
+> `SPAWN_ARGV_MAX` capped every argv blob over its const-sized stack buffer (and `sys_spawn_argv`'s len check, which
+> guards #43's packed flag bits), and `KEV_SIZE` strode the const-sized kevent batch — both read the const now. Items
+> 1, 2 and 4 are byte-identical on x86, aarch64, both Mach-O targets, PE, agnos and cx (100 builds each). Rows:
+> `crossos/thread_local_alloc_bounded_by_storage.tcyr` (fails on 6.7.8: x86_64 / aarch64 hand out slot 199, PE 3 rows,
+> agnos SIGSEGV under the fake kernel; passes everywhere after) and `memory/lib_buffers_sized_by_const.sh` axes 1–3, 6
+> (a derived rule: a public twin var is read nowhere in lib/) and 7, mutation-proven. The TLS stack's seven twins (190
+> reads; a raised `TLS12_RANDOM_LEN` smashes the PRF seed's stack) are filed whole:
+> `2026-10-11-tls-public-bound-vars-drive-const-storage.md`. Whether the public vars stay writable stays the user's
+> call.
+
+**Status:** ✅ **RESOLVED in v6.7.9** (quick lane, bite 5). Was 🟡 OPEN — re-verified 2026-10-08 against 6.7.6 @
+2fb6ad8b: every site below re-read and its line re-derived; item 3's sizes measured (a top-level `var a[72]` spans
+576 B and `var c[256]` 2,048 B — `&next - &a` probe), and item 5 run on x86_64 Linux
+(`repros/2026-10-08-tlocal-max-slots-writable-bound.cyr`: after `TLOCAL_MAX_SLOTS = 200`, `thread_local_alloc` hands
+out slot 165 while every slot array holds 128).
 **Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 6.7.6 lane H (the literal-bound sweep; CHANGELOG [6.7.6] "lane H's remaining literal bounds"); filed
 2026-10-08 from roadmap.md.
