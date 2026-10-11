@@ -2375,6 +2375,11 @@ _chk_gate "$ROOT/tests/gates/frontend/slice_signed_read.sh"
 # environment beats the line; the CYRIUS_BOUNDS predefine; kernel / EFI / shared / object refused
 # under the mode; the five self-build scripts unset it. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/bounds_mode_checked.sh"
+# 6.7.8 (C2-10) — the corpus runs clean under the bounds-checked mode: every subscript-using .tcyr
+# compiles with CYRIUS_BOUNDS=1 (no constant-index diagnostic) and each that reaches the checker runs
+# in the driver's .tcyr environment to exit 0 with no `bounds:` line; every lib module compiles under
+# the mode exactly as without it; floors on the files selected and reached; a planted trip is caught.
+_chk_gate "$ROOT/tests/gates/memory/bounds_mode_corpus.sh"
 # 6.7.8 — an inherited CYRIUS_POISON never reaches a self-build (the compiler includes
 # lib/alloc.cyr, which reads it; seed-derive went RED under it): seed-derive, release-gate,
 # version-bump and bootstrap unset it; check.sh keeps it for its suite and scrubs only its own
