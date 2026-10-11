@@ -577,11 +577,18 @@ fn _asf_arity(b, paren, n): i64 {
     return 0 - 1;
 }
 
+# One lexical state (`st`, _asf_lexst_at) is carried across the WHOLE file, as the
+# preprocessor's PP_LEXST_AT does: a string literal may span lines, and a line that starts
+# inside one is string text — no declaration test, no `#derive` directive, no brace. The scan
+# used to restart every line in code, so a `{` on a string's inner line raised `depth` for
+# good (every later fn dropped) and an inner line starting `fn ghost(x)` was listed as public
+# surface. CHANGELOG [6.7.9]
 fn _scan_file(filebuf, filelen, module_off, module_len) {
     _asf_file_private = 0;
     _asf_saw_public = 0;
     var pos = 0;
     var depth = 0;
+    var st = 0;          # the lexical state at `pos` — 0 code, 1/2 inside a string (_asf_lexst)
     var d_first = 0;     # the pending `#derive` block's ENTRY directive (1/2/4), 0 = none
     var d_stacked = 0;   # the directives stacked below it
     while (pos < filelen) {
@@ -597,7 +604,14 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
             if (c != 32) { if (c != 9) { if (c != 13) { break; } } }
             p = p + 1;
         }
-        if (depth == 0) {
+        # A column-0 `include "..."` line in code is a directive the preprocessor consumes
+        # WHOLE (ISINCLUDE at the line start, then PP_SKIPLINE): a stray quote after the path
+        # opens no string, and the line holds no brace and no declaration. (Every `#` directive
+        # is already a comment to _asf_lexst_at.)
+        if (st == 0 && eol - line_start >= 8) {
+            if (memeq(filebuf + line_start, "include ", 8) == 1) { pos = eol + 1; continue; }
+        }
+        if (depth == 0 && st == 0) {
             # A `#derive(...)` line (ISDERIVE / ISDERIVE_DE / ISDERIVE_ACC, at the first
             # non-blank, with the v6.6.6 word boundary — see _api_derive_bound). The FIRST one
             # is the entry; the rest are stacked flags (PP_DERIVE_SKIPDIRS / PP_DERIVE_FLAG).
@@ -621,7 +635,8 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 continue;
             }
             if (d_first != 0) {
-                # Blank and `#` lines between the directives and the declaration are skipped.
+                # Blank and `#` lines between the directives and the declaration are skipped —
+                # consumed whole, as PP_DERIVE_SKIPDIRS does, so the state stays 0 (code).
                 if (p == eol) { pos = eol + 1; continue; }
                 if (load8(filebuf + p) == 35) { pos = eol + 1; continue; }
                 var post = _scan_derive_decl(filebuf, filelen, module_off, module_len,
@@ -629,7 +644,8 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 d_first = 0;
                 d_stacked = 0;
                 if (post >= 0) {
-                    # The declaration's own braces were consumed here; resume after its `}`.
+                    # The declaration's own braces were consumed here; resume after its `}`,
+                    # in code (_asf_body_close found that `}` in state 0).
                     pos = post;
                     continue;
                 }
@@ -705,36 +721,25 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
         # this on every hand-rolled `_to_json` shim and read
         # 657 fns instead of 730 (filing
         # 2026-05-09-cyrius-api-surface-putc-brace-desync).
+        # 6.7.9 — walked with the file's carried state, the newline included, so a string
+        # still open at the line's end is still open at the next line's start (an attribute's
+        # `#` is code, a `#` comment and a char literal end at the newline). CHANGELOG [6.7.9]
         var bp = line_start;
-        while (bp < eol) {
+        var bstop = eol + 1;
+        if (bstop > filelen) { bstop = filelen; }
+        while (bp < bstop) {
             var bc = load8(filebuf + bp);
-            if (bc == 35) {                  # '#' comment to EOL — unless it is an attribute
-                var bal = _asf_attr_len(filebuf, bp, eol);
-                if (bal > 0) { bp = bp + bal; } else { bp = eol; }
-            }
-            elif (bc == 34) {                # '"' string literal
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(filebuf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(filebuf + bp) == 34) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            elif (bc == 39) {                # '\'' char literal
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(filebuf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(filebuf + bp) == 39) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            else {
+            if (st == 0) {
                 if (bc == 123) { depth = depth + 1; }
                 if (bc == 125) { depth = depth - 1; if (depth < 0) { depth = 0; } }
-                bp = bp + 1;
+                # In code only `#`, `"` and `'` change the state (_asf_lexst).
+                if (bc == 35 || bc == 34 || bc == 39) { st = _asf_lexst_at(filebuf, bp, filelen, st); }
+            } elif (st == 3 && bp < eol) {
+                bp = eol - 1;    # a `#` comment runs to the newline, and only it ends one
+            } else {
+                st = _asf_lexst_at(filebuf, bp, filelen, st);
             }
+            bp = bp + 1;
         }
         pos = eol + 1;
     }

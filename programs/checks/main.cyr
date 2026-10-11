@@ -1147,6 +1147,7 @@ fn _run_regression_gates(): i64 {
 
     _section("cyrius api-surface");
     _api_surface_gate();
+    _gate("`cyrius api-surface` reads a string that SPANS LINES as string text, as the compiler does: _scan_file restarted every line in code, so a `{` on a string's inner line raised the brace depth for good (every later fn dropped from the snapshot) and an inner line starting `fn ghost(x, y)` was listed as public `m::ghost/2` — silently, with removed_symbol_census.sh keyed on the result. One lexical state (_asf_lexst_at) now runs across the file; a column-0 `include` line is consumed whole, as the preprocessor does. The filed repros verbatim, the compiler's DCE list as the oracle both ways, a literal table per shape, nine mutants RED (6.7.9)", "tests/gates/toolchain/api_surface_multiline_strings.sh");
     println("");
 
     _section("aarch64 codebuf cap");
