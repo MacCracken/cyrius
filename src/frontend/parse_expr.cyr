@@ -2625,11 +2625,19 @@ fn _arr_sub_addr(S, noff): i64 {
         ERR_IDENT(S, "cannot subscript ", noff, ": a u128 element does not fit one register - use load64/store64 on its two halves", 0 - 1);
         aw = 0;
     }
+    var tb = GTI(S);      # 6.7.8 (C2-8): the bounds check — an array's exact N, a `*T`'s none
+    var bn = 0 - 1;
+    var bk = 0;
+    if (aw != 0) {
+        if (pw <= 0) { bn = _bck_alen(S, k, ix, noff); }
+        bk = _bck_open(S, bn);
+    }
     STI(S, GTI(S) + 1);   # consume [
     PCMPE(S);             # rax = the index
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);   # consume ]
     if (aw == 0) { return 0; }
+    if (bk == 1) { _bck_site(S, tb, bn, 0 - 1); }
     EPTR_SCALE(S, aw);    # rax = index * sizeof(T)
     EPUSHR(S);
     # The frame and capture bases are raw bytes on x86 (no IR node of their own); mark them so
@@ -2980,12 +2988,18 @@ fn _psub_ed(S, w, h, nt): i64 {
 # sizeof(T), the base pushed while the index is evaluated. `ed` 0 (a refused base): the index is
 # only parsed. Returns ed.
 fn _psub_addr(S, ed): i64 {
-    if (ed != 0) { EPUSHR(S); }
+    var tb = GTI(S);
+    var bk = 0;
+    if (ed != 0) {
+        EPUSHR(S);
+        bk = _bck_open(S, 0 - 1);   # 6.7.8 (C2-8): a `*T` — a negative index only
+    }
     STI(S, GTI(S) + 1);   # consume [
     PCMPE(S);
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);   # consume ]
     if (ed == 0) { return 0; }
+    if (bk == 1) { _bck_site(S, tb, 0 - 1, 0 - 1); }
     EPTR_SCALE(S, _ek_w(ed));
     EPOPC(S);
     EADDR(S);
@@ -3076,6 +3090,8 @@ fn _slice_sub_read(S, li): i64 {
     var sw = _slice_lw(S, li);   # 6.7.8 (C2-2a): behind the slice bit (a stale width is no slice)
     if (sw > 0) { if (PEEKT(S) == 28) {
             if (_ek_lw(_slice_led(S, li)) < 0) { return _slice_sub_sread(S, li); }   # 6.7.8 (C2-6c)
+            var tb = GTI(S);
+            var bk = _bck_open(S, 0 - 2);   # 6.7.8 (C2-8): the bounds check, against s.len
             STI(S, GTI(S) + 1);  # consume [
             # Push &local as first arg (helper takes slice address)
             # 6.7.8: the frame base is raw bytes on x86 (no IR node of its own), so a CYRIUS_IR=3
@@ -3086,6 +3102,7 @@ fn _slice_sub_read(S, li): i64 {
             EPUSHR(S);
             # Parse index expression — leaves idx in rax
             PCMPE(S);
+            if (bk == 1) { _bck_site(S, tb, 0 - 2, li); }
             EPUSHR(S);
             # Look up and call the width-specific helper.
             # Helpers live in lib/slice.cyr; consumer must
@@ -3165,6 +3182,9 @@ fn _slice_sub_addr(S, li, noff): i64 {
             ed = 0;
         }
     }
+    var tb = GTI(S);
+    var bk = 0;
+    if (ed != 0) { bk = _bck_open(S, 0 - 2); }   # 6.7.8 (C2-8): the bounds check, against s.len
     STI(S, GTI(S) + 1);       # consume [
     if (ed != 0) {
         _IR_REC0(S, IR_RAW_EMIT);   # the frame base is raw bytes on x86 (as the read marks it)
@@ -3173,6 +3193,7 @@ fn _slice_sub_addr(S, li, noff): i64 {
     }
     PCMPE(S);                 # rax = the index
     if (ed != 0) {
+        if (bk == 1) { _bck_site(S, tb, 0 - 2, li); }
         EPUSHR(S);
         EMOVI(S, w);
         EPUSHR(S);
@@ -3188,6 +3209,281 @@ fn _slice_sub_addr(S, li, noff): i64 {
                 return ed;   # the operand still parses as the element's kind: nothing more is reported
             } } }
     return ed;
+}
+
+# ⛔ 6.7.8 (C2-8) — THE BOUNDS CHECK (the user's decision, 2026-10-10: "Checked under the mode: typed
+# arrays a[i] against their exact N; slice reads AND writes; a *T subscript checked for a NEGATIVE
+# index only (slice<T> is the checked spelling — no extent exists for a *T). Raw load*/store*(&a + e)
+# stay unchecked. A constant index provably out of range WARNS in every mode and is an ERROR under the
+# mode. @unsafe { } turns checks off inside it."; a violation "prints `bounds: index N out of [0,
+# LEN) at <file>:<line>` to stderr and exits 134"). Every subscript the language has passes through
+# one of four places — `_arr_sub_addr` (a named array or `*T`), `_psub_addr` (a `*T` field or call),
+# `_slice_sub_read` and `_slice_sub_addr` (a slice) — and each asks `_bck_open` at its `[` and, when
+# told to, emits `_bck_site` once the index is in rax (before it is scaled): a call into the checker
+# the preprocessor injected (lex_pp.cyr `_bnd_finish`), which hands the index back. `<line>` is the
+# line of the `[` token itself, so an `#inline` replay, a `defer` replay, a generic instance and a
+# classic-for step all name the line the subscript is WRITTEN on; `<file>` is the name every cycc
+# diagnostic uses (`<source>` for the entry), interned once per file. `@unsafe` is LEXICAL — a `[`
+# inside an `@unsafe { }` token range — so a checked `#inline` fn replayed inside one keeps its check.
+# A constant index (literals, `+ - *`, parentheses, names that resolve as the factor resolves them to
+# an integer const or an enum constant) is judged here with no code emitted: provably in range, no
+# check; out of range, a warning in every mode — an error under the mode outside `@unsafe`. A `#naked`
+# fn cannot make the call: a checked subscript in one is refused by name. With the mode off nothing
+# is emitted. CHANGELOG [6.7.8]
+var _bck_fi = 0 - 2;    # __cyrius_bounds_chk's fn index (-2: not looked up yet)
+var _bck_fis = 0 - 2;   # __cyrius_bounds_chks's
+var _bck_ur = 0;        # the `@unsafe { }` token ranges: [first, last] pairs, outermost, in order
+var _bck_un = 0 - 1;    # their count (-1: not scanned yet)
+var _bck_fs = 0;        # file-name offset -> string-pool offset pairs (one string per file)
+var _bck_fsn = 0;
+var _bck_line = 0;      # `_bck_file`'s second result: the line within the file
+var _bck_cok = 0;       # `_bck_ceval`'s second result: 1 when the value is an integer constant
+
+# The exact N of the array a named subscript resolved (k / ix as `_arr_sub_addr` resolved them):
+# behind a nonzero descriptor a stack local's named slot holds `0 - 2^48 - N`, a capture's snapshot
+# the same word, a global's (and a static-fallback local's) GVSGN `N << 16` (C2-3b).
+fn _bck_alen(S, k, ix, noff): i64 {
+    if (k == 1) { return 0 - GSLICE_W(S, ix) - 0x1000000000000; }
+    if (k == 2) {
+        var esl = _cl_snap_find(S, noff);
+        if (esl < 0) { return 0; }
+        return 0 - L64(_cl_snap + _cl_snap_n * 24 + esl * 8) - 0x1000000000000;
+    }
+    return (GVSGN(S, ix) >> 16) & 0xFFFFFFFF;
+}
+# Cursor at a subscript's `[` (`n` an array's N, -1 a `*T`, -2 a slice): 1 when a run-time check is
+# to be emitted for it — the mode is on, the index is no provable constant, the `[` is outside every
+# `@unsafe` block. The constant rule runs in every mode.
+fn _bck_open(S, n): i64 {
+    var ti = GTI(S);
+    var c = _bck_cidx(S, ti, n);
+    if (_bnd_mode == 0) { return 0; }
+    if (c != 0) { return 0; }
+    if (_bck_unsafe_at(S, ti) == 1) { return 0; }
+    if (_cur_fn_naked == 1) {   # R14: by name, once (a generic instance re-parses it), no cascade
+        var m14 = "the bounds check is a call, which a #naked fn cannot make - wrap the access in @unsafe { }";
+        if (_tn_once(S, ti) == 1) {
+            _bnd_errm_at(S, ti, m14, 90);
+            _panic = 0;
+        }
+        return 0;
+    }
+    return 1;
+}
+# The check, with rax = the index (the `[` at token tb; `n` as above; `li` the slice local, else -1):
+# `__cyrius_bounds_chk(i, n, file, line)` / `__cyrius_bounds_chks(i, &s, file, line)`, which returns
+# the index — the slice read's call pattern (the pushes balanced by ECALLPOPS / ECALLCLEAN, so Win64's
+# shadow space and the aarch64 / SysV alignment come from them; every emit IR-recorded).
+fn _bck_site(S, tb, n, li): i64 {
+    var fi = _bck_fi;
+    if (li >= 0) { fi = _bck_fis; }
+    if (fi == 0 - 2) {
+        _bck_fi = _FINDFN_CSTR(S, "__cyrius_bounds_chk", 19);
+        _bck_fis = _FINDFN_CSTR(S, "__cyrius_bounds_chks", 20);
+        fi = _bck_fi;
+        if (li >= 0) { fi = _bck_fis; }
+    }
+    if (fi < 0) { ERR_MSG(S, "the bounds-checked mode's checker is missing (an internal error)", 64); }
+    EPUSHR(S);            # the index
+    if (li >= 0) {
+        _IR_REC0(S, IR_RAW_EMIT);   # the frame base is raw bytes on x86 (as the slice read marks it)
+        EFLADDR(S, li);
+    } else { EMOVI(S, n); }
+    EPUSHR(S);
+    ESADDR(S, _bck_file(S, tb));
+    EPUSHR(S);
+    EMOVI(S, _bck_line);
+    EPUSHR(S);
+    ECALLPOPS(S, 4);
+    if (fi >= 0) { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, 4);     # rax = the index again
+    _cfo = 0;             # a constant folder armed by the index must not rewind past the call
+    _flags_reflect_rax = 0;
+    return 0;
+}
+# The string-pool offset of the name of the file holding token tb (its line in `_bck_line`), the
+# name copied into the pool once per file — the lexer is done, and every backend reads the pool at
+# fixup time.
+fn _bck_file(S, tb): i64 {
+    var foff = FM_SITE(S, GTLINE(S, tb));
+    _bck_line = _fm_site_line;
+    if (_bck_fs == 0) { _bck_fs = alloc(2048 * 16); }
+    var i = 0;
+    while (i < _bck_fsn) {
+        if (L64(_bck_fs + i * 16) == foff) { return L64(_bck_fs + i * 16 + 8); }
+        i = i + 1;
+    }
+    var nm = "<source>";
+    if (foff >= 0) { nm = S + 0x721000 + foff; }
+    var n = 0;
+    while (load8(nm + n) != 0) { n = n + 1; }
+    var so = GSPOS(S);
+    if (so + n + 1 > 2097152) {
+        syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
+        syscall(SYS_EXIT, 1);
+    }
+    var k = 0;
+    while (k <= n) { store8(S + 0x21A000 + so + k, load8(nm + k)); k = k + 1; }
+    SSPOS(S, so + n + 1);
+    if (_bck_fsn < 2048) {
+        S64(_bck_fs + _bck_fsn * 16, foff);
+        S64(_bck_fs + _bck_fsn * 16 + 8, so);
+        _bck_fsn = _bck_fsn + 1;
+    }
+    return so;
+}
+# 1 when token ti lies inside an `@unsafe { }` block (its `@unsafe` through its `}`). The ranges are
+# found once, at the first question, by pairing each `@unsafe {` with its `}`.
+fn _bck_unsafe_at(S, ti): i64 {
+    if (_bck_un < 0) { _bck_unsafe_scan(S); }
+    var lo = 0;
+    var hi = _bck_un;
+    while (lo < hi) {
+        var mid = (lo + hi) / 2;
+        if (ti < L64(_bck_ur + mid * 16)) { hi = mid; }
+        elif (ti > L64(_bck_ur + mid * 16 + 8)) { lo = mid + 1; }
+        else { return 1; }
+    }
+    return 0;
+}
+fn _bck_unsafe_scan(S): i64 {
+    var n = GTCNT(S);
+    var c = 0;
+    var i = 0;
+    while (i < n) { if (TOKTYP(S, i) == 123) { c = c + 1; } i = i + 1; }
+    _bck_ur = alloc(c * 16 + 16);
+    _bck_un = 0;
+    i = 0;
+    while (i < n) {
+        if (TOKTYP(S, i) == 123) { if (TOKTYP(S, i + 1) == 13) {
+                var d = 0;
+                var j = i + 1;
+                while (j < n) {
+                    var t = TOKTYP(S, j);
+                    if (t == 13) { d = d + 1; }
+                    if (t == 14) { d = d - 1; if (d == 0) { break; } }
+                    j = j + 1;
+                }
+                S64(_bck_ur + _bck_un * 16, i);
+                S64(_bck_ur + _bck_un * 16 + 8, j);
+                _bck_un = _bck_un + 1;
+                i = j;   # a nested block lies inside this range
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The constant rule at the `[` at token ti (`n` as `_bck_open`'s): 0 the index is no provable
+# constant, 1 a constant provably in range (no check — a slice's length is known at run time only),
+# 2 a constant out of range, reported. Nothing is emitted and the cursor is left where it was.
+fn _bck_cidx(S, ti, n): i64 {
+    if (_bck_cscan(S, ti + 1) == 0) { return 0; }
+    var v = _bck_ceval(S, ti + 1);
+    if (_bck_cok == 0) { return 0; }
+    var o = 0;
+    if (v < 0) { o = 1; }
+    if (n >= 0) { if (v >= n) { o = 1; } }
+    if (o == 0) {
+        if (n == 0 - 2) { return 0; }
+        return 1;
+    }
+    _bck_creport(S, ti, v, n);
+    return 2;
+}
+# 1 when the tokens from j to the subscript's `]` are only integer literals, `+ - *`, parentheses and
+# names `_bck_cname` takes — a shape the const evaluator computes without reporting anything.
+fn _bck_cscan(S, j): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var any = 0;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 29) {
+            if (d == 0) { return any; }
+            return 0;
+        }
+        if (t == 10) { d = d + 1; }
+        elif (t == 11) { d = d - 1; if (d < 0) { return 0; } }
+        elif (t == 1) { any = 1; }
+        elif (t == 2) {
+            if (_bck_cname(S, j) == 0) { return 0; }
+            any = 1;
+        } elif (t != 6 && t != 7 && t != 8) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 when the name at token j resolves — in the factor's own order: a local const, a local, a capture,
+# then a top-level const and an enum constant — to an integer constant.
+fn _bck_cname(S, j): i64 {
+    if (TOKTYP(S, j + 1) == 10) { return 0; }   # a call
+    var noff = TOKVAL(S, j);
+    var lc = _lc_find(S, noff);
+    if (lc >= 0) {
+        if (L64(_lc_tab + lc * 48 + 24) == 0) { return 1; }
+        return 0;
+    }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) { if (_cl_snap_find(S, noff) >= 0) { return 0; } } }
+    var ci = _cst_find(S, noff);
+    if (ci >= 0) {
+        if (_cst_kind_peek(S, ci) == 0) { return 1; }
+        return 0;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi >= 0) { if (GVECP(S, vi) == 1) { return 1; } }
+    return 0;
+}
+# The value of the constant index at token j (`_bck_cscan` passed it), computed by the const
+# evaluator with the cursor and its latches put back; `_bck_cok` 1 when it is an integer and ends at
+# the `]`.
+fn _bck_ceval(S, j): i64 {
+    var sv = GTI(S);
+    var se = _ce_err;
+    var sk = _ce_k;
+    var ss = _ce_steps;
+    STI(S, j);
+    var v = _ce_eval_here(S);
+    _bck_cok = 0;
+    if (_ce_err == 0) { if (_ce_k == 0) { if (PEEKT(S) == 29) { _bck_cok = 1; } } }
+    STI(S, sv);
+    _ce_err = se;
+    _ce_k = sk;
+    _ce_steps = ss;
+    return v;
+}
+# A constant index out of range, at its `[` (token ti): an error under the mode outside `@unsafe`,
+# a warning otherwise; once per token (a generic instance and an `#inline` replay re-parse it);
+# silent under --syntax-only.
+fn _bck_creport(S, ti, v, n): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var er = 0;
+    if (_bnd_mode == 1) { if (_bck_unsafe_at(S, ti) == 0) { er = 1; } }
+    var sv = GTI(S);
+    STI(S, ti);
+    if (er == 1) { syscall(SYS_WRITE, 2, "error:", 6); }
+    else { syscall(SYS_WRITE, 2, "warning:", 8); }
+    _err_head(S);
+    PRSTR(": index ");
+    PRNUM(v);
+    if (n >= 0) {
+        PRSTR(" is out of range [0, ");
+        PRNUM(n);
+        PRSTR(") for '");
+    } else { PRSTR(" is negative for '"); }
+    var nt = ti - 1;
+    if (TOKTYP(S, nt) == 11) { nt = _sub_name_tok(S, 2); }
+    if (TOKTYP(S, nt) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, nt)); }
+    else { PRSTR(TOKNAME(TOKTYP(S, nt))); }
+    PRSTR("'");
+    if (er == 0) { PRSTR(" (an error under the bounds-checked mode)"); }
+    else { PRSTR(" (the bounds-checked mode; inside @unsafe { } it is a warning)"); }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    STI(S, sv);
+    if (er == 1) { _had_error = 1; }
+    return 0;
 }
 
 # The pointer-scale word with its element kind only when the kind is the value's own (the stamp,

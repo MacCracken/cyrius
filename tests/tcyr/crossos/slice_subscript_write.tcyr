@@ -327,7 +327,8 @@ fn child(mode): i64 {
     var s: [u8] = 0;
     slice_set(&s, &b, 4);
     if (streq(mode, "hi") == 1) { s[4] = 1; return 61; }
-    if (streq(mode, "neg") == 1) { s[0 - 1] = 1; return 62; }
+    var neg = 0 - 1;   # a run-time index: a constant `s[0 - 1]` warns at compile time (6.7.8, C2-8)
+    if (streq(mode, "neg") == 1) { s[neg] = 1; return 62; }
     if (streq(mode, "op") == 1) { s[4] += 1; return 63; }
     if (streq(mode, "step") == 1) {
         for (var i = 0; i < 9; s[i] = 7) { i = i + 1; }
@@ -359,7 +360,7 @@ fn spawned(): i64 {
     spawn_run("edge", buf, st);
     assert_eq(load64(st), 65, "an in-range store in the child (s[3] = 5) runs on");
     spawn_trap("hi", "s[4] = 1 on a 4-element slice exits 134", buf, st);
-    spawn_trap("neg", "s[0 - 1] = 1 exits 134", buf, st);
+    spawn_trap("neg", "s[i] = 1 with i = -1 exits 134", buf, st);
     spawn_trap("op", "s[4] += 1 exits 134", buf, st);
     spawn_trap("step", "a for step past the end exits 134", buf, st);
     return 0;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/bounds_mode_checked.sh — 6.7.8 (C2-7)
+# tests/gates/frontend/bounds_mode_checked.sh — 6.7.8 (C2-7, C2-8)
 #
 # THE BOUNDS-CHECKED MODE'S SWITCH (the user's decision, 2026-10-10: "Flags: CYRIUS_BOUNDS=1 (all
 # seven forks, like CYRIUS_POISON); a CYRIUS_BOUNDS predefine for #ifdef; --bounds on build / test /
@@ -10,9 +10,16 @@
 # lines, `#` comments, `include` lines before it). On, it predefines CYRIUS_BOUNDS. A `#bounds`
 # anywhere else is refused by name — the line switches the whole program, so an included library
 # must not be able to. The mode is refused for a kernel / EFI image and a `shared;` / `object;` build.
-# (What the mode CHECKS lands in C2-8; this gate is the switch. cbt's rungs — --bounds, [build]
-# bounds, what compile() hands cycc — are build_config_precedence.sh's; every fork's env read and
-# line are fork_flag_parity.sh's `bounds` rows.)
+# (cbt's rungs — --bounds, [build] bounds, what compile() hands cycc — are build_config_precedence.sh's;
+# every fork's env read and line are fork_flag_parity.sh's `bounds` rows.)
+#
+# WHAT THE MODE CHECKS (C2-8; the user's decision: "a violation prints `bounds: index N out of [0,
+# LEN) at <file>:<line>` to stderr and exits 134 ... typed arrays a[i] against their exact N; slice
+# reads AND writes; a *T subscript checked for a NEGATIVE index only ... A constant index provably
+# out of range WARNS in every mode and is an ERROR under the mode. @unsafe { } turns checks off
+# inside it."). Every subscript asks src/frontend/parse_expr.cyr `_bck_open` at its `[` and calls the
+# checker the preprocessor appends to the finished unit (lex_pp.cyr `_bnd_finish`) once the index is
+# in rax — so every target lowers the violation through its own write / exit paths.
 #
 #   B1  `#bounds` in the leading block — line 1, after comments / blank lines, indented with a
 #       trailing comment — turns the mode on (the predefine's `#ifdef` arm runs: exit 7); the line
@@ -35,7 +42,32 @@
 #       version-bump.sh, bootstrap/bootstrap.sh) unset CYRIUS_BOUNDS before their first build: an
 #       inherited CYRIUS_BOUNDS=1 must not switch the mode on in a self-build
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
-#       CYRIUS_TARGET_EFI=1 -> refused by name; each control (the same build, mode off) compiles
+#       CYRIUS_TARGET_EFI=1 -> refused by name (and nothing more: the refusal is fatal at once, so the
+#       injected checker is never compiled for a target it cannot serve); each control (the same
+#       build, mode off) compiles
+#   V1-V4 the violation — an array (u8[5] at runtime 5: the EXACT N), a `*T` (`[0, ...)`), a slice
+#       (its length) and a file the entry includes (named by its include path) — exit 134 and exactly
+#       the one line, on x86 (plain, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE (wine)
+#   AG  agnos: the checker writes with agnos's #1 and exits with agnos's #0 (run here: the line, then
+#       the program's own exit 5 — a Linux exit 60 would be 134)
+#   W   tests/tcyr/crossos/bounds_mode_in_range.tcyr (nothing trips: every checked shape at 0 and
+#       N-1, @unsafe U1/U2) and bounds_mode_violation.tcyr (20 self-spawned children: every base and
+#       context, each exit 134 + its exact line; on qemu / cx `nospawn`): no warning, --syntax-only
+#       silent; x86 plain / IR=1 / IR=3 / DCE=1 / STACK_ARRAYS=0, aarch64, cx, PE
+#   K   the constant rule: out of range a warning (mode off; under the mode inside @unsafe), an error
+#       under the mode; consts, enum constants, `( )`, `+ - *`, unary minus; a shadowing local, `/`,
+#       `<<` and a slice's index are not the rule's (run-time checked, no diagnostic); once per
+#       token across generic instances; silent under --syntax-only; an in-range constant emits no
+#       call (CYRIUS_DCE_VERBOSE lists the checker dead), a run-time index does
+#   OFF every subscript-using .tcyr (floor 30): mode off holds no checker bytes, unset ==
+#       CYRIUS_BOUNDS=0 byte for byte
+#   N1  a folded global (`var A: u8[5]; var A: u8[6];`) checks against the FIRST declaration's N
+#   R14 a checked subscript in a `#naked` fn under the mode is refused by name (inside @unsafe, or
+#       with the mode off, it compiles)
+#   DCE / SP / PURE / EFF / T2 / AS: no site, CYRIUS_DCE=1 drops the six checker fns; 2,001 sites in
+#       one file (one interned name) and the last one's line; no `#pure` warning; a by-value struct
+#       argument beside a subscripting one keeps its value; `return g(a[i]);` (a tail call) in range
+#       and tripping; a suspending `async fn`'s frame in range and tripping
 #
 # MUTATION LEDGER (scratch trees, each its 2-stage mutant cycc; this gate and the named toolchain
 # gates run from that tree as CYCC=<mutant>; 2026-10-10):
@@ -54,18 +86,53 @@
 #        "test --bounds" (a file and a directory) and "[build] bounds reaches cyrius test"
 #   MF   `_bnd_setup` not called from PREPROCESS                             -> RED every B / E1a / E2 /
 #        M4 row here, and fork_flag_parity.sh "bounds <every fork> env1 / line / line_env0 / env2"
+# C2-8 (2026-10-10; this gate, plus the two crossos files run from the mutant tree):
+#   M9   N taken from the rounded storage (`u8[5]` checked as 8)             -> RED V1 V4 (every leg),
+#        K1a-K1g, N1b, SP, AS2, DCE2, AG, WVa / WVd, and bounds_mode_violation.tcyr 30 of 63 (every
+#        child whose N is not a multiple of 8 / sizeof(T))
+#   M10  the check placed after EPTR_SCALE (the scaled index checked)        -> RED V2 (`index -16`) V4,
+#        WI / WV every leg, EFF, T2a / T2b; bounds_mode_in_range.tcyr exits 134 (i16[4] index 3 as 6)
+#   M11  `_bck_unsafe_at` always 0                                           -> RED WIa-WId (U1 trips at
+#        its `a[six]`), K1c, R14b, bounds_mode_in_range.tcyr exits 134
+#   M12  `_unsafe_depth` instead of the token ranges                         -> RED WVa / WVd: U3
+#        `inline_in_unsafe` (an #inline fn replayed inside @unsafe) no longer trips (3 asserts)
+#   M16  the in-range constant skip removed (only out-of-range skipped)      -> RED K5a, DCE1
+#   M17  a constant out of range not escalated under the mode               -> RED K1b
+#   M18  the site's line taken from an #inline replay's CALL site           -> RED WVa / WVd: U3's line
+#   M19  the checker exits with syscall(60, …) on agnos                     -> RED AG (exit 134)
+#   M30  the checker injected with the mode off                             -> RED OFF (every file),
+#        the M4 EFI control (its write import refused)
+#   M31a the checker exits 1, not 134                                        -> RED V1-V4 every leg,
+#        bounds_mode_violation.tcyr 20 of 63
+#   M31b the site's line off by one                                          -> RED V1-V4 every leg,
+#        bounds_mode_violation.tcyr 21 of 63
+#   MS   the slice read's site removed (the getter's own trap answers)      -> RED V3a-V3d ("slice
+#        bounds violation", not the mode's line)
+#   MN   the #naked refusal dropped                                          -> RED R14
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=bounds_mode_checked
 [ -x "$CC" ] || { echo "FAIL: $G: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T (never ~/.wine), torn down with its server dir on exit — the
+# defer_every_return_path.sh helper. CHANGELOG [6.6.16] [6.6.17]
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 ulimit -c 0 2>/dev/null || true
 cd "$ROOT" || exit 1
 unset CYRIUS_BOUNDS
 fails=0
 rows=0
+skips=0
 ok()  { rows=$((rows + 1)); echo "  ok   $1"; }
 bad() { rows=$((rows + 1)); echo "  FAIL $1"; fails=$((fails + 1)); }
 
@@ -226,6 +293,297 @@ for c in "m4a0.cyr" "m4b.cyr CYRIUS_KERNEL=1" "m4c0.cyr" "m4d0.cyr" "m4b.cyr CYR
     else bad "M4 control $c: rc $RC: $(grep -m1 '^error' "$T/m4ctl.err")"; fi
 done
 
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# C2-8 — WHAT THE MODE CHECKS (src/frontend/parse_expr.cyr `_bck_*`; the checker lex_pp.cyr
+# `_bnd_finish`): a typed array `a[i]` against its exact N, a slice's reads and writes against its
+# length, a `*T` subscript for a negative index only; `bounds: index N out of [0, LEN) at
+# <file>:<line>` on stderr and exit 134; a constant index judged at compile time; `@unsafe` lexical.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+HAVE_WINE=0
+if command -v wine > /dev/null 2>&1; then HAVE_WINE=1
+else echo "  SKIP Vd / We: the PE legs — wine not installed"; skips=$((skips + 1)); fi
+HAVE_QEMU=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then HAVE_QEMU=1
+else echo "  SKIP Vb / Wc: the aarch64 legs — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+wine_run() {   # <dir> <exe> <stdout file> <stderr file> [arg]: run under the private prefix; sets got
+    got=0
+    (cd "$1" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+        WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "./$2" ${5:-} > "$3" 2> "$4") || got=$?
+}
+# The cross compilers, built once from this tree by the compiler under test.
+"$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ] \
+    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ] && chmod +x "$T/cc_cx" "$T/cxvm" \
+    || rm -f "$T/cc_cx" "$T/cxvm"
+if [ "$HAVE_QEMU" -eq 1 ]; then
+    "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ] && chmod +x "$T/cc_a64" || rm -f "$T/cc_a64"
+fi
+# ok_line <row> <exit> <stderr file> <want line>: exit 134 and the stderr's one line is exactly <want>
+# (wine's own `wine: created the configuration directory` notice on a fresh prefix set aside)
+ok_line() {
+    if [ "$2" -eq 134 ] && [ "$(tr -d '\r' < "$3" | grep -v '^wine: ')" = "$4" ]; then ok "$1: exit 134, \"$4\""
+    else bad "$1: exit $2, stderr: $(tr -d '\r' < "$3" | head -2 | tr '\n' '|') (want 134 and \"$4\")"; fi
+}
+
+# ── V: the violation on every leg — x86 (plain, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx
+# (cxvm), PE (wine): an array (its exact N), a `*T` (`[0, ...)`), a slice (its length), a file the
+# entry includes (named by its include path) ─────────────────────────────────────────────────────
+printf '#bounds\nfn f(i): i64 {\n    var a: u8[5];\n    a[i] = 1;\n    return 3;\n}\nsyscall(60, f(5));\n' > "$T/va.cyr"
+printf '#bounds\nvar B: i64[2];\nfn f(i): i64 {\n    var p: *i32 = &B;\n    return p[i];\n}\nsyscall(60, f(0 - 4));\n' > "$T/vp.cyr"
+printf '#bounds\ninclude "lib/slice.cyr"\nfn f(i): i64 {\n    var b: u8[4];\n    var s: [u8] = 0;\n    slice_set(&s, &b, 4);\n    return s[i];\n}\nsyscall(60, f(4));\n' > "$T/vs.cyr"
+printf '# an included file\nvar VI: i16[3];\nfn vinc(i): i64 { VI[i] = 2; return 0; }\n' > "$T/vinc.cyr"
+printf '#bounds\ninclude "vinc.cyr"\nsyscall(60, vinc(3));\n' > "$T/vi.cyr"
+vleg() {   # <row> <name>: $T/<name>.cyr compiled in directory <dir> (its includes resolve there) <want line> <dir>
+    s="$T/$2.cyr"; o="$T/$2"
+    for mode in plain IR3 DCE1; do
+        env_=""; lbl="${1}a: x86"
+        [ "$mode" = IR3 ] && { env_="CYRIUS_IR=3"; lbl="${1}a: x86, CYRIUS_IR=3"; }
+        [ "$mode" = DCE1 ] && { env_="CYRIUS_DCE=1"; lbl="${1}a: x86, CYRIUS_DCE=1"; }
+        rc=0; (cd "$4" && env $env_ "$CC" < "$s" > "$o.$mode" 2> "$o.$mode.cerr") || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$o.$mode.cerr" | head -1)"; continue; fi
+        chmod +x "$o.$mode"; got=0; timeout 10 "$o.$mode" > /dev/null 2> "$o.$mode.err" || got=$?
+        ok_line "$lbl" "$got" "$o.$mode.err" "$3"
+    done
+    if [ "$HAVE_QEMU" -eq 1 ]; then
+        if [ ! -x "$T/cc_a64" ]; then bad "${1}b: src/main_aarch64.cyr did not build"
+        elif (cd "$4" && "$T/cc_a64" < "$s" > "$o.a64" 2> /dev/null) && [ -s "$o.a64" ]; then
+            chmod +x "$o.a64"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$2.a64" > /dev/null 2> "$o.a64.err") || got=$?
+            ok_line "${1}b: aarch64 (qemu)" "$got" "$o.a64.err" "$3"
+        else bad "${1}b: aarch64: did not compile"; fi
+    fi
+    if [ ! -x "$T/cc_cx" ]; then bad "${1}c: src/main_cx.cyr or programs/cxvm.cyr did not build"
+    elif (cd "$4" && "$T/cc_cx" < "$s" > "$o.cyx" 2> /dev/null) && [ -s "$o.cyx" ]; then
+        got=0; timeout 60 "$T/cxvm" < "$o.cyx" > /dev/null 2> "$o.cyx.err" || got=$?
+        ok_line "${1}c: cx (cxvm)" "$got" "$o.cyx.err" "$3"
+    else bad "${1}c: cx: did not compile"; fi
+    if [ "$HAVE_WINE" -eq 1 ]; then
+        if (cd "$4" && CYRIUS_TARGET_WIN=1 "$CC" < "$s" > "$o.exe" 2> /dev/null) && [ -s "$o.exe" ]; then
+            wine_run "$T" "$2.exe" /dev/null "$o.exe.err"
+            ok_line "${1}d: PE (wine)" "$got" "$o.exe.err" "$3"
+        else bad "${1}d: PE: did not compile"; fi
+    fi
+}
+vleg V1 va "bounds: index 5 out of [0, 5) at <source>:4" "$T"
+vleg V2 vp "bounds: index -4 out of [0, ...) at <source>:5" "$T"
+vleg V3 vs "bounds: index 4 out of [0, 4) at <source>:7" "$ROOT"
+vleg V4 vi "bounds: index 3 out of [0, 3) at vinc.cyr:3" "$T"
+
+# ── AG: agnos (an x86 ELF with its own numbers): the checker writes with agnos's write #1 and
+# exits with agnos's exit #0. Run on THIS Linux host, #1 is write (the line appears) and #0 is
+# read (it fails and returns), so the program goes on to its own `syscall(60, 5)` — exit 5; a
+# checker that exited with 60 would exit 134 here. ─────────────────────────────────────────────
+printf '#bounds\nfn f(i): i64 {\n    var a: u8[5];\n    a[i] = 1;\n    return 3;\n}\nvar r = f(5);\nsyscall(60, 5);\n' > "$T/ag.cyr"
+rc=0; CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/ag.cyr" > "$T/ag.bin" 2> "$T/ag.cerr" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "AG: CYRIUS_TARGET_AGNOS=1 did not compile: $(grep '^error' "$T/ag.cerr" | head -1)"
+else
+    chmod +x "$T/ag.bin"; got=0; timeout 10 "$T/ag.bin" > /dev/null 2> "$T/ag.err" || got=$?
+    if [ "$got" -eq 5 ] && [ "$(cat "$T/ag.err")" = "bounds: index 5 out of [0, 5) at <source>:4" ]; then
+        ok "AG: agnos — the line through write #1, the exit through agnos's #0 (not Linux's 60)"
+    else bad "AG: agnos: exit $got (want 5: the checker's exit must be agnos #0), stderr: $(head -1 "$T/ag.err")"; fi
+fi
+
+# ── W: the two value files on every leg ──────────────────────────────────────────────────────────
+WI="$ROOT/tests/tcyr/crossos/bounds_mode_in_range.tcyr"
+WV="$ROOT/tests/tcyr/crossos/bounds_mode_violation.tcyr"
+for f in "$WI" "$WV"; do
+    [ -f "$f" ] || { bad "W: $f missing"; continue; }
+    b=$(basename "$f" .tcyr)
+    rc=0; "$CC" < "$f" > "$T/$b.chk" 2> "$T/$b.chk.err" || rc=$?
+    nw=$(grep -c '^warning\|^error' "$T/$b.chk.err" || true)
+    if [ "$rc" -eq 0 ] && [ "$nw" -eq 0 ]; then ok "W0 $b: compiles with no warning"
+    else bad "W0 $b: rc $rc, $nw diagnostic line(s): $(grep '^warning\|^error' "$T/$b.chk.err" | head -2 | tr '\n' '|')"; fi
+    rc=0; "$CC" --syntax-only < "$f" > /dev/null 2> "$T/$b.so.err" || rc=$?
+    if [ "$rc" -eq 0 ] && ! grep -q '^error\|^warning' "$T/$b.so.err"; then ok "W0s $b: --syntax-only (cyrius lint) reports nothing"
+    else bad "W0s $b: --syntax-only rc $rc: $(grep '^error\|^warning' "$T/$b.so.err" | head -1)"; fi
+done
+WANT_I=$(grep -oE '(assert_eq|assert)\(' "$WI" | wc -l)
+WANT_V=$(grep -c 'trips("' "$WV")
+if [ "$WANT_I" -lt 35 ]; then bad "W: only $WANT_I assertions derived from bounds_mode_in_range.tcyr (floor 35)"; fi
+if [ "$WANT_V" -lt 20 ]; then bad "W: only $WANT_V violation children derived from bounds_mode_violation.tcyr (floor 20)"; fi
+w_ok() {   # <label> <exit> <output file> <spawn: 1 = the violation group ran>
+    if [ "$2" -eq 0 ] && tr -d '\r' < "$3" | grep -q ' passed, 0 failed'; then
+        if [ "$4" -eq 1 ] && ! tr -d '\r' < "$3" | grep -q 'a violation prints its line and exits 134'; then bad "$1: the violation group did not run"
+        else ok "$1: $(tr -d '\r' < "$3" | grep ' passed, 0 failed' | tail -1)"; fi
+    else bad "$1: exit $2 $(tr -d '\r' < "$3" | grep -m3 'FAIL\|bounds:' | tr '\n' '|')"; fi
+}
+wlegs() {   # <file> <tag> <spawn 0|1>
+    for mode in plain IR1 IR3 DCE1 SA0; do
+        case $mode in
+            plain) env_=""; lbl="W$2a: x86" ;;
+            IR1) env_="CYRIUS_IR=1"; lbl="W$2a: x86, CYRIUS_IR=1" ;;
+            IR3) env_="CYRIUS_IR=3"; lbl="W$2a: x86, CYRIUS_IR=3" ;;
+            DCE1) env_="CYRIUS_DCE=1"; lbl="W$2a: x86, CYRIUS_DCE=1" ;;
+            SA0) env_="CYRIUS_STACK_ARRAYS=0"; lbl="W$2a: x86, CYRIUS_STACK_ARRAYS=0 (every local array in static storage)" ;;
+        esac
+        rc=0; env $env_ "$CC" < "$1" > "$T/w$2_$mode" 2> "$T/w$2_$mode.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/w$2_$mode.err" | head -1)"; continue; fi
+        chmod +x "$T/w$2_$mode"; got=0; (cd "$T" && timeout 120 "./w$2_$mode" > "w$2_$mode.out" 2>&1) || got=$?
+        w_ok "$lbl" "$got" "$T/w$2_$mode.out" "$3"
+    done
+    if [ "$HAVE_QEMU" -eq 1 ]; then
+        if [ ! -x "$T/cc_a64" ]; then bad "W$2b: src/main_aarch64.cyr did not build"
+        elif "$T/cc_a64" < "$1" > "$T/w$2.a64" 2> /dev/null && [ -s "$T/w$2.a64" ]; then
+            chmod +x "$T/w$2.a64"; got=0; (cd "$T" && timeout 120 qemu-aarch64 "./w$2.a64" nospawn > "w$2.a64.out" 2>&1) || got=$?
+            w_ok "W$2b: aarch64 (qemu; nospawn — the violation is the V rows')" "$got" "$T/w$2.a64.out" 0
+        else bad "W$2b: aarch64: did not compile"; fi
+    fi
+    if [ ! -x "$T/cc_cx" ]; then bad "W$2c: src/main_cx.cyr or programs/cxvm.cyr did not build"
+    elif "$T/cc_cx" < "$1" > "$T/w$2.cyx" 2> /dev/null && [ -s "$T/w$2.cyx" ]; then
+        got=0; timeout 120 "$T/cxvm" < "$T/w$2.cyx" > "$T/w$2.cyx.out" 2>&1 || got=$?
+        w_ok "W$2c: cx (cxvm; no spawn — the violation is the V rows')" "$got" "$T/w$2.cyx.out" 0
+    else bad "W$2c: cx: did not compile"; fi
+    if [ "$HAVE_WINE" -eq 1 ]; then
+        if CYRIUS_TARGET_WIN=1 "$CC" < "$1" > "$T/w$2.exe" 2> /dev/null && [ -s "$T/w$2.exe" ]; then
+            wine_run "$T" "w$2.exe" "$T/w$2.exe.out" "$T/w$2.exe.serr"
+            cat "$T/w$2.exe.serr" >> "$T/w$2.exe.out"
+            w_ok "W$2d: PE (wine)" "$got" "$T/w$2.exe.out" "$3"
+        else bad "W$2d: PE: did not compile"; fi
+    fi
+}
+wlegs "$WI" I 0
+wlegs "$WV" V 1
+
+# ── K: the constant rule — an index of literals, `+ - *`, parentheses and integer consts / enum
+# constants is judged at compile time: out of range a warning in every mode, an ERROR under the mode
+# outside `@unsafe`; in range no run-time check at all ──────────────────────────────────────────────
+KA='const K = 5;\nenum E { E0, E1, E9 = 9 }\nfn f(): i64 {\n    var a: u8[5];\n'
+KZ='    return 0;\n}\nsyscall(60, f());\n'
+KW="index 5 is out of range [0, 5) for 'a' (an error under the bounds-checked mode)"
+kw() {   # <row> <body> <want warning> [env]: compiles (rc 0) with exactly one warning line holding <want>
+    printf "$KA%b$KZ" "$2" > "$T/k$rows.cyr"
+    rc=0; env ${4:-X=1} "$CC" < "$T/k$rows.cyr" > /dev/null 2> "$T/k$rows.err" || rc=$?
+    nw=$(grep -c '^warning' "$T/k$rows.err" || true)
+    if [ "$rc" -eq 0 ] && [ "$nw" -eq 1 ] && grep '^warning' "$T/k$rows.err" | grep -qF -- "$3"; then ok "$1: $(grep '^warning' "$T/k$rows.err" | cut -c1-120)"
+    else bad "$1: rc $rc, $nw warning(s): $(grep '^warning\|^error' "$T/k$rows.err" | head -2 | tr '\n' '|') (want one: $3)"; fi
+}
+ke() {   # <row> <body> <want error> [env]: refused (rc != 0) with exactly one error line holding <want>
+    printf "$KA%b$KZ" "$2" > "$T/k$rows.cyr"
+    rc=0; env ${4:-X=1} "$CC" < "$T/k$rows.cyr" > /dev/null 2> "$T/k$rows.err" || rc=$?
+    ne=$(grep -c '^error' "$T/k$rows.err" || true)
+    if [ "$rc" -ne 0 ] && [ "$ne" -eq 1 ] && grep '^error' "$T/k$rows.err" | grep -qF -- "$3"; then ok "$1: $(grep '^error' "$T/k$rows.err" | cut -c1-120)"
+    else bad "$1: rc $rc, $ne error(s): $(grep '^warning\|^error' "$T/k$rows.err" | head -2 | tr '\n' '|') (want one: $3)"; fi
+}
+kn() {   # <row> <body> [env]: compiles with no diagnostic at all
+    printf "$KA%b$KZ" "$2" > "$T/k$rows.cyr"
+    rc=0; env ${3:-X=1} "$CC" < "$T/k$rows.cyr" > /dev/null 2> "$T/k$rows.err" || rc=$?
+    if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/k$rows.err"; then ok "$1"
+    else bad "$1: rc $rc: $(grep '^warning\|^error' "$T/k$rows.err" | head -2 | tr '\n' '|')"; fi
+}
+kw "K1a a[K] (const K = 5) on u8[5], mode off: a warning" '    a[K] = 1;\n' "$KW"
+ke "K1b ... under the mode: an error" '    a[K] = 1;\n' "index 5 is out of range [0, 5) for 'a' (the bounds-checked mode" CYRIUS_BOUNDS=1
+kw "K1c ... under the mode inside @unsafe: a warning" '    @unsafe { a[K] = 1; }\n' "$KW" CYRIUS_BOUNDS=1
+kw "K1d a[(K - 1) * 2]: the evaluator's value (8)" '    var x = a[(K - 1) * 2];\n' "index 8 is out of range [0, 5) for 'a'"
+kw "K1e a[E9 - 4] (an enum constant)" '    a[E9 - 4] += 1;\n' "$KW"
+kw "K1f p[0 - 1] on a *u8: negative" '    var p: *u8 = &a;\n    p[0 - 1] = 1;\n' "index -1 is negative for 'p' (an error under the bounds-checked mode)"
+kw "K1g a[-1] (unary minus)" '    var y = a[-1];\n' "index -1 is out of range [0, 5) for 'a'"
+kn "K2a a[4], a[K - 1], a[E9 - 5], p[7]: in range, no diagnostic" '    var p: *u8 = &a;\n    a[4] = 1;\n    a[K - 1] = a[E9 - 5];\n    p[7] = 1;\n'
+kn "K2b a local K shadows the const: a variable, no constant (run-time check)" '    var K = 7;\n    var y = a[K - 7];\n    @unsafe { y = a[K]; }\n' CYRIUS_BOUNDS=1
+kn "K2c a[K / 1], a[K << 0]: not the rule's shapes (run-time checked)" '    var y = a[K / 1] + a[K << 0];\n' CYRIUS_BOUNDS=1
+printf 'include "lib/slice.cyr"\nfn f(): i64 {\n    var s: [u8] = 0;\n    var y = s[3] + s[0];\n    return 0;\n}\nsyscall(60, f());\n' > "$T/k2d.cyr"
+rc=0; CYRIUS_BOUNDS=1 CYRIUS_DCE_VERBOSE=1 "$CC" < "$T/k2d.cyr" > /dev/null 2> "$T/k2d.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/k2d.err" && ! grep -qx '  dead: __cyrius_bounds_chks' "$T/k2d.err"; then ok "K2d a slice's s[3], s[0]: no diagnostic, and still checked at run time (its length is unknown at compile time)"
+else bad "K2d: rc $rc: $(grep '^warning\|^error\|dead: __cyrius_bounds_chks' "$T/k2d.err" | head -2 | tr '\n' '|')"; fi
+printf 'fn g<T>(): i64 {\n    var a: T[2];\n    return a[2];\n}\nvar x = g<i32>() + g<i64>() + g<i16>();\nsyscall(60, 0);\n' > "$T/kg.cyr"
+rc=0; "$CC" < "$T/kg.cyr" > /dev/null 2> "$T/kg.err" || rc=$?
+if [ "$rc" -eq 0 ] && [ "$(grep -c '^warning' "$T/kg.err")" -eq 1 ]; then ok "K3 a generic's T[2] a[2], three instances: ONE warning (once per token)"
+else bad "K3: rc $rc, $(grep -c '^warning' "$T/kg.err") warning(s) (want 1)"; fi
+printf "$KA%b$KZ" '    a[K] = 1;\n' > "$T/ks.cyr"
+rc=0; CYRIUS_BOUNDS=1 "$CC" --syntax-only < "$T/ks.cyr" > /dev/null 2> "$T/ks.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/ks.err"; then ok "K4 --syntax-only (cyrius lint) is silent about the constant rule"
+else bad "K4 --syntax-only: rc $rc: $(head -1 "$T/ks.err")"; fi
+# K5: an in-range constant emits NO check — the checker is unreachable (CYRIUS_DCE_VERBOSE lists it
+# dead); a run-time index in the same program reaches it.
+printf 'fn f(i): i64 {\n    var a: u8[5];\n    var p: *i32 = &a;\n    a[4] = 5;\n    a[0] = a[4] + p[1];\n    return a[0];\n}\nsyscall(60, f(1));\n' > "$T/k5.cyr"
+CYRIUS_BOUNDS=1 CYRIUS_DCE_VERBOSE=1 "$CC" < "$T/k5.cyr" > /dev/null 2> "$T/k5.err" || true
+if grep -qx '  dead: __cyrius_bounds_chk' "$T/k5.err"; then ok "K5a in-range constants under the mode: no call (__cyrius_bounds_chk unreachable)"
+else bad "K5a: __cyrius_bounds_chk is reachable from a program whose every index is an in-range constant"; fi
+sed 's/a\[0\] = a\[4\]/a[i] = a[4]/' "$T/k5.cyr" > "$T/k5b.cyr"
+CYRIUS_BOUNDS=1 CYRIUS_DCE_VERBOSE=1 "$CC" < "$T/k5b.cyr" > /dev/null 2> "$T/k5b.err" || true
+if grep -qx '  dead: __cyrius_bounds_chks' "$T/k5b.err" && ! grep -qx '  dead: __cyrius_bounds_chk' "$T/k5b.err"; then ok "K5b the control: a run-time index a[i] reaches __cyrius_bounds_chk (the slice checker stays unreachable)"
+else bad "K5b: the dead list: $(grep 'dead:' "$T/k5b.err" | tr '\n' '|')"; fi
+
+# ── OFF: with the mode off not a byte of the checker exists — every subscript-using .tcyr compiles
+# with no `bounds: index` bytes in it, and `CYRIUS_BOUNDS=0` / unset are byte-identical ───────────
+noff=0
+for f in $(grep -rlE '[A-Za-z0-9_)]\[[^]]' tests/tcyr --include='*.tcyr' | grep -v 'bounds_mode_' | sort); do
+    noff=$((noff + 1))
+    rc=0; "$CC" < "$f" > "$T/off.a" 2> /dev/null || rc=$?
+    [ "$rc" -eq 0 ] || continue
+    CYRIUS_BOUNDS=0 "$CC" < "$f" > "$T/off.b" 2> /dev/null || true
+    if ! cmp -s "$T/off.a" "$T/off.b"; then bad "OFF: $f: CYRIUS_BOUNDS=0 and unset differ"; continue; fi
+    if grep -q 'bounds: index' "$T/off.a"; then bad "OFF: $f: the checker's text is in a mode-off binary"; fi
+done
+if [ "$noff" -lt 30 ]; then bad "OFF: only $noff subscript-using .tcyr found (floor 30)"
+else ok "OFF: $noff subscript-using .tcyr: mode off holds no checker, unset == CYRIUS_BOUNDS=0"; fi
+
+# ── N: a redeclared global array (one 8-byte storage, folded) is the FIRST declaration's array — its
+# N (C2-3b, K15): under the mode `A[5]` trips against [0, 5) after `var A: u8[6];`; index 4 runs ──
+printf '#bounds\nvar A: u8[5];\nvar A: u8[6];\nfn f(i): i64 {\n    A[i] = 1;\n    return A[4];\n}\nsyscall(60, f(I));\n' > "$T/n1.tpl"
+sed 's/f(I)/f(4)/' "$T/n1.tpl" > "$T/n1.cyr"
+sed 's/f(I)/f(5)/' "$T/n1.tpl" > "$T/n1b.cyr"
+xc "N1a a folded u8[5] / u8[6] global: index 4 in range" 1 n1.cyr
+cc n1b n1b.cyr
+if [ "$RC" != 0 ]; then bad "N1b: did not compile: $(grep -m1 '^error' "$T/n1b.err")"
+else chmod +x "$T/n1b.bin"; got=0; "$T/n1b.bin" > /dev/null 2> "$T/n1b.rerr" || got=$?; ok_line "N1b ... index 5: the first declaration's N" "$got" "$T/n1b.rerr" "bounds: index 5 out of [0, 5) at <source>:5"; fi
+
+# ── R14 / DCE / SP / PURE / EFF / AS / T2 ─────────────────────────────────────────────────────────
+printf '#bounds\nvar G: u8[4];\nvar K = 2;\n#naked\nfn isr(): i64 {\n    G[K] = 1;\n    asm { 0xC3; }\n}\nsyscall(60, 3);\n' > "$T/r14.cyr"
+xe "R14 a checked subscript in a #naked fn under the mode" "the bounds check is a call, which a #naked fn cannot make - wrap the access in @unsafe { }" r14.cyr
+sed 's/    G\[K\] = 1;/    @unsafe { G[K] = 1; }/' "$T/r14.cyr" > "$T/r14b.cyr"
+cc r14b r14b.cyr
+if [ "$RC" = 0 ]; then ok "R14b the same access inside @unsafe compiles"; else bad "R14b: rc $RC: $(grep -m1 '^error' "$T/r14b.err")"; fi
+sed '1d' "$T/r14.cyr" > "$T/r14c.cyr"
+cc r14c r14c.cyr
+if [ "$RC" = 0 ]; then ok "R14c the same #naked fn with the mode off compiles"; else bad "R14c: rc $RC: $(grep -m1 '^error' "$T/r14c.err")"; fi
+
+printf 'fn f(i): i64 {\n    var a: u8[5];\n    a[4] = 5;\n    return a[4];\n}\nsyscall(60, f(1));\n' > "$T/dce.cyr"
+CYRIUS_BOUNDS=1 CYRIUS_DCE=1 CYRIUS_DCE_VERBOSE=1 "$CC" < "$T/dce.cyr" > "$T/dce.bin" 2> "$T/dce.err" || true
+if [ "$(grep -c '^  dead: __cyrius_bounds_' "$T/dce.err")" -eq 6 ]; then ok "DCE1 CYRIUS_DCE=1 with no check site: the six checker fns are eliminated"
+else bad "DCE1: $(grep -c '^  dead: __cyrius_bounds_' "$T/dce.err") checker fns dead (want 6)"; fi
+xc "DCE2 CYRIUS_DCE=1 with a check site: the violation still trips" 134 va.cyr CYRIUS_DCE=1
+
+awk 'BEGIN { print "#bounds"; print "var A: u8[3];"; print "fn f(i): i64 {"; print "    var s = 0;"; for (k = 0; k < 2000; k++) print "    s = s + A[i];"; print "    return s + A[i + 3];"; print "}"; print "syscall(60, f(0));" }' > "$T/sp.cyr"
+cc sp sp.cyr
+if [ "$RC" != 0 ]; then bad "SP: 2,001 check sites did not compile: $(grep -m1 '^error' "$T/sp.err")"
+else
+    chmod +x "$T/sp.bin"; got=0; "$T/sp.bin" > /dev/null 2> "$T/sp.rerr" || got=$?
+    ok_line "SP 2,001 check sites in one file (one interned file name): the last one" "$got" "$T/sp.rerr" "bounds: index 3 out of [0, 3) at <source>:2005"
+fi
+
+printf 'var A: u8[4];\n#pure\nfn pk(i): i64 { return A[i]; }\nfn main(): i64 { return pk(3); }\nsyscall(60, main());\n' > "$T/pure.cyr"
+cc pure0 pure.cyr
+cc pure1 pure.cyr CYRIUS_BOUNDS=1
+if [ "$RC" = 0 ] && ! grep -q '^warning' "$T/pure1.err" && ! grep -q '^warning' "$T/pure0.err"; then ok "PURE a checked subscript in a #pure fn: no effect warning under the mode (the checker call is the compiler's)"
+else bad "PURE: rc $RC: $(grep -m1 '^warning\|^error' "$T/pure1.err")"; fi
+
+# EFF: a by-value struct argument beside a later argument that subscripts: `[ ]` writes nothing (a
+# check reads or exits), so no copy is forced and the callee still reads the struct as written.
+printf 'struct B { a; b; c; }\nvar A: i32[3];\nfn rd(s: B, x): i64 { return s.a * 100 + x; }\nfn f(i): i64 {\n    var s = B { 7, 0, 0 };\n    A[i] = 5;\n    return rd(s, A[i]);\n}\nsyscall(60, f(2) - 700);\n' > "$T/eff.cyr"
+xc "EFF rd(s, A[i]) with s by value, mode off" 5 eff.cyr
+xc "EFF ... under the mode: the same value" 5 eff.cyr CYRIUS_BOUNDS=1
+
+# T2: `return f(a[i]);` — a tail call whose argument calls the checker
+printf 'fn g(x): i64 { return x + 1; }\nfn f(i): i64 {\n    var a: i16[4];\n    a[3] = 40;\n    return g(a[i]);\n}\nsyscall(60, f(3));\n' > "$T/t2.cyr"
+xc "T2a return g(a[i]); (a tail call) in range under the mode" 41 t2.cyr CYRIUS_BOUNDS=1
+sed 's/syscall(60, f(3));/syscall(60, f(4));/' "$T/t2.cyr" > "$T/t2b.cyr"
+cc t2b t2b.cyr CYRIUS_BOUNDS=1
+if [ "$RC" != 0 ]; then bad "T2b: did not compile"
+else chmod +x "$T/t2b.bin"; got=0; "$T/t2b.bin" > /dev/null 2> "$T/t2b.rerr" || got=$?; ok_line "T2b ... out of range: the argument's check trips before the jump" "$got" "$T/t2b.rerr" "bounds: index 4 out of [0, 4) at <source>:5"; fi
+
+# AS: a suspending `async fn` (CYRIUS_ASYNC=1) — a subscript in its heap frame across an await
+AS='#bounds\ninclude "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nfn nopark(): i64 { return 0; }\nasync fn steps(i): i64 {\n    var a: u8[5];\n    a[i] = 7;\n    var s1 = await nopark();\n    return a[i];\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(IDX);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    syscall(60, future_force(C));\n    return 0;\n}\nvar e = main();\n'
+for k in 4 5; do
+    printf "$(printf '%s' "$AS" | sed "s/IDX/$k/")" > "$T/as$k.cyr"
+    rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/as$k.cyr" > "$T/as$k.bin" 2> "$T/as$k.cerr" || rc=$?   # from $ROOT: lib/ resolves
+    if [ "$rc" -ne 0 ]; then bad "AS (index $k): did not compile: $(grep -m1 '^error' "$T/as$k.cerr")"; continue; fi
+    chmod +x "$T/as$k.bin"; got=0; "$T/as$k.bin" > /dev/null 2> "$T/as$k.rerr" || got=$?
+    if [ "$k" = 4 ]; then
+        if [ "$got" -eq 7 ]; then ok "AS1 a subscript in a suspending async fn (CYRIUS_ASYNC=1), index 4 of u8[5], across an await: exit 7"
+        else bad "AS1: exit $got (want 7): $(head -1 "$T/as$k.rerr")"; fi
+    else ok_line "AS2 ... index 5: trips in the async frame" "$got" "$T/as$k.rerr" "bounds: index 5 out of [0, 5) at <source>:11"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G: $fails of $rows row(s) red"; exit 1; fi
-echo "PASS: $G ($rows rows: #bounds honoured only in the entry's leading block and refused by name everywhere else; CYRIUS_BOUNDS 1 / 0 / empty / refused; the environment beats the line; kernel / EFI / shared / object refused under the mode)"
+if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed ($rows rows; exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: $G ($rows rows: #bounds honoured only in the entry's leading block and refused by name everywhere else; CYRIUS_BOUNDS 1 / 0 / empty / refused; the environment beats the line; kernel / EFI / shared / object refused under the mode; the check — exact N, slices, *T negative only, the message and exit 134 on x86 / IR=3 / DCE / aarch64 / cx / PE / agnos; the constant rule; @unsafe; #naked; mode off holds no checker)"
 exit 0

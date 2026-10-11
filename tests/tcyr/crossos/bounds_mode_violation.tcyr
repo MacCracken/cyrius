@@ -1,0 +1,218 @@
+#bounds
+# bounds_mode_violation.tcyr — 6.7.8 (C2-8) — THE BOUNDS-CHECKED MODE'S VIOLATION, on every host:
+# a subscript out of range prints `bounds: index N out of [0, LEN) at <file>:<line>` on stderr and
+# exits 134 (the user's decision, 2026-10-10) — LEN an array's EXACT N, a slice's length, `...` for a
+# `*T` (no extent: only a negative index trips), `<file>` `<source>` for the entry, `<line>` the line
+# the subscript is WRITTEN on (an `#inline` body's own line, a `defer` body's, a closure's).
+#
+# THE MECHANISM (exec_capture_status.tcyr's): the test spawns ITSELF — with no argument it is the
+# PARENT; with one it is a CHILD whose mode is that argument and which commits one violation. The
+# parent checks each child's exit (134) and its whole output, byte for byte. A POSIX child sends its
+# stderr to the pipe (`sys_dup2(1, 2)`: the capture sends stderr to /dev/null); on Windows the pipe
+# carries both. An in-range child (`ok`) must exit 65 — so a check that trips on everything fails.
+#
+# ⚠ THE EXPECTED LINES ARE THIS FILE'S OWN LINE NUMBERS (the `LN_*` constants below): an edit that
+# moves a child's subscript must move its constant. Not under cx (no process spawn) nor qemu-user
+# (it cannot exec a foreign binary — the gate passes `nospawn` there): the gate
+# (tests/gates/frontend/bounds_mode_checked.sh) checks the violation on those legs with its own V
+# rows. The in-range shapes are bounds_mode_in_range.tcyr's.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+#ifndef CYRIUS_TARGET_CX
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/fs.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+#endif
+
+var BUF: i64[8];
+var GA: u8[5];
+var GI: i32[3];
+struct H { n; p: *i32; }
+impl H {
+    fn ptr(self): *i32 { return self.p; }
+}
+fn bp(): *i32 { return &BUF; }
+fn gen_arr<T>(i): i64 {
+    var a: T[3];
+    return a[i];                                   # line 45: LN_GEN
+}
+#inline
+fn at3(i): i64 { return GI[i]; }                   # line 48: LN_INL
+fn three(a, b, c): i64 { return a + b + c; }
+fn with_defer(i): i64 {
+    defer { GA[i] = 1; }                           # line 51: LN_DEF
+    return 0;
+}
+
+# ---- the children: each commits ONE violation (its line in the comment) ----
+fn kid_arrays(mode, five, neg): i64 {
+    var a: u8[5];
+    var b: i32[3];
+    var d: f64[2];
+    if (streq(mode, "arr_hi") == 1) { a[five] = 1; }                       # line 60: LN_ARR_HI
+    if (streq(mode, "arr_neg") == 1) { return b[neg]; }                    # line 61: LN_ARR_NEG
+    if (streq(mode, "arr_global") == 1) { GA[five] += 1; }                 # line 62: LN_ARR_GLOBAL
+    if (streq(mode, "f64_hi") == 1) { var two = five - 3; d[two] = 1.5; }  # line 63: LN_F64
+    if (streq(mode, "arr_capture") == 1) {
+        var c: i32[7];
+        var rd = |k| c[k];                                                 # line 66: LN_CAP
+        return fncall1(rd, five + 2);
+    }
+    if (streq(mode, "arr_generic") == 1) { return gen_arr<i32>(five - 2); }
+    if (streq(mode, "min") == 1) {
+        var m = 0 - 9223372036854775807 - 1;
+        return a[m];                                                       # line 72: LN_MIN
+    }
+    if (streq(mode, "step") == 1) {
+        for (var i = 0; i < 9; a[i] = 7) { i = i + 1; }                    # line 75: LN_STEP
+    }
+    return 0;
+}
+fn kid_pointers(mode, neg): i64 {
+    var p: *i32 = &BUF + 16;
+    var h: H;
+    h.p = &BUF + 16;
+    if (streq(mode, "ptr_named") == 1) { return p[neg]; }                  # line 83: LN_PTR
+    if (streq(mode, "ptr_field") == 1) { h.p[neg - 1] = 3; }               # line 84: LN_PFLD
+    if (streq(mode, "ptr_call") == 1) { return bp()[neg - 2]; }            # line 85: LN_PCALL
+    if (streq(mode, "ptr_method") == 1) { return h.ptr()[neg]; }           # line 86: LN_PMETH
+    return 0;
+}
+fn kid_slices(mode, five): i64 {
+    var b: u8[4];
+    var s: [u8] = 0;
+    slice_set(&s, &b, 4);
+    var c: [i8] = 0;
+    slice_set(&c, &b, 3);
+    var w: i64[2];
+    var d: [i64] = 0;
+    slice_set(&d, &w, 2);
+    if (streq(mode, "slice_rd") == 1) { return s[five - 1]; }              # line 98: LN_SRD
+    if (streq(mode, "slice_srd") == 1) { return c[five - 2]; }             # line 99: LN_SSRD
+    if (streq(mode, "slice_wr") == 1) { d[five - 3] = 1; }                 # line 100: LN_SWR
+    return 0;
+}
+# H15: the failing call from inside an argument list, a closure, a `defer` body and a `switch` arm;
+# and a checked `#inline` fn replayed INSIDE `@unsafe` (the check is lexical: it still trips).
+fn kid_contexts(mode, five): i64 {
+    var a: u8[5];
+    if (streq(mode, "in_args") == 1) { return three(1, a[five], 3); }     # line 107: LN_ARGS
+    if (streq(mode, "in_closure") == 1) {
+        var f = |k| { var q: u8[2]; return q[k]; };                        # line 109: LN_CLO
+        return fncall1(f, five - 3);
+    }
+    if (streq(mode, "in_defer") == 1) { return with_defer(five); }
+    if (streq(mode, "in_switch") == 1) {
+        switch (five) {
+            case 5: a[five + 1] = 2;                                       # line 115: LN_SW
+            default: a[0] = 1;
+        }
+    }
+    if (streq(mode, "inline_in_unsafe") == 1) {
+        var k = 3;
+        var v = 0;
+        @unsafe { v = at3(k); }   # replayed here (not `return at3(k);` — a tail call, never inlined)
+        return v;
+    }
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+fn child(mode): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    sys_dup2(1, 2);   # the capture sends stderr to /dev/null on POSIX: the violation goes to the pipe
+    #endif
+    #endif
+    var five = 5;
+    var neg = 0 - 1;
+    if (streq(mode, "ok") == 1) {
+        var a: u8[5];
+        a[five - 1] = 65;
+        return a[five - 1];
+    }
+    kid_arrays(mode, five, neg);
+    kid_pointers(mode, neg);
+    kid_slices(mode, five);
+    kid_contexts(mode, five);
+    return 11;   # no violation happened
+}
+fn spawn_run(mode, buf, st): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, mode);
+    return exec_capture_status(av, buf, 4096, st);
+}
+# One child: exit 134 and exactly `bounds: index <i> out of [0, <len>) at <source>:<line>\n`.
+fn trips(mode, want, buf, st): i64 {
+    var n = spawn_run(mode, buf, st);
+    var w = strlen(want);
+    assert_eq(load64(st), 134, mode);
+    assert_eq(n, w, want);
+    var same = 0;
+    if (n == w) { same = memeq(buf, want, w); }
+    assert_eq(same, 1, want);
+    return 0;
+}
+fn spawned(): i64 {
+    test_group("bounds: a violation prints its line and exits 134 — every base, every context");
+    var buf = alloc(4096);
+    var st = alloc(16);
+    var n = spawn_run("ok", buf, st);
+    assert_eq(load64(st), 65, "an in-range child (u8[5] index 4) runs on: exit 65");
+    assert_eq(n, 0, "... and writes nothing");
+    trips("arr_hi", "bounds: index 5 out of [0, 5) at <source>:60\n", buf, st);
+    trips("arr_neg", "bounds: index -1 out of [0, 3) at <source>:61\n", buf, st);
+    trips("arr_global", "bounds: index 5 out of [0, 5) at <source>:62\n", buf, st);
+    trips("f64_hi", "bounds: index 2 out of [0, 2) at <source>:63\n", buf, st);
+    trips("arr_capture", "bounds: index 7 out of [0, 7) at <source>:66\n", buf, st);
+    trips("arr_generic", "bounds: index 3 out of [0, 3) at <source>:45\n", buf, st);
+    trips("min", "bounds: index -9223372036854775808 out of [0, 5) at <source>:72\n", buf, st);
+    trips("step", "bounds: index 5 out of [0, 5) at <source>:75\n", buf, st);
+    trips("ptr_named", "bounds: index -1 out of [0, ...) at <source>:83\n", buf, st);
+    trips("ptr_field", "bounds: index -2 out of [0, ...) at <source>:84\n", buf, st);
+    trips("ptr_call", "bounds: index -3 out of [0, ...) at <source>:85\n", buf, st);
+    trips("ptr_method", "bounds: index -1 out of [0, ...) at <source>:86\n", buf, st);
+    trips("slice_rd", "bounds: index 4 out of [0, 4) at <source>:98\n", buf, st);
+    trips("slice_srd", "bounds: index 3 out of [0, 3) at <source>:99\n", buf, st);
+    trips("slice_wr", "bounds: index 2 out of [0, 2) at <source>:100\n", buf, st);
+    trips("in_args", "bounds: index 5 out of [0, 5) at <source>:107\n", buf, st);
+    trips("in_closure", "bounds: index 2 out of [0, 2) at <source>:109\n", buf, st);
+    trips("in_defer", "bounds: index 5 out of [0, 5) at <source>:51\n", buf, st);
+    trips("in_switch", "bounds: index 6 out of [0, 5) at <source>:115\n", buf, st);
+    trips("inline_in_unsafe", "bounds: index 3 out of [0, 3) at <source>:48\n", buf, st);
+    return 0;
+}
+#endif
+
+fn violation_main(): i64 {
+    alloc_init();
+    var on = 0;
+    #ifdef CYRIUS_BOUNDS
+    on = 1;
+    #endif
+    assert_eq(on, 1, "#bounds on line 1 predefines CYRIUS_BOUNDS");
+    var sp = 1;
+    #ifdef CYRIUS_TARGET_CX
+    sp = 0;
+    #endif
+    #ifndef CYRIUS_TARGET_CX
+    args_init();
+    if (argc() > 1) {
+        if (streq(argv(1), "nospawn") == 0) { return child(argv(1)); }
+        sp = 0;
+    }
+    if (sp == 1) { spawned(); }
+    #endif
+    return assert_summary();
+}
+var r = violation_main();
+syscall(60, r);

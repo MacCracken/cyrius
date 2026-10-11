@@ -566,12 +566,17 @@ fi
 # synthesized call (for-in, closures, enum constructors, await, slices, the overflow modes, the
 # aarch64 polyfills, `: Str` literals) would pass fewer words than the helper reads. The names are
 # derived from src (`_FINDFN_CSTR` / `EMIT_OVF_CALL` literals) plus the four the compiler spells
-# byte by byte; each must be defined in lib/, and no definition may hold a depth-1 `=`.
+# byte by byte; each must be defined in lib/, and no definition may hold a depth-1 `=`. 6.7.8 (C2-8):
+# the bounds-checked mode's checker (`__cyrius_*`) is the compiler's own text, appended to the unit
+# by lex_pp.cyr `_bnd_finish` — its string literals, unescaped, are scanned as one more file.
 R5N=$( (grep -rhoE '(_FINDFN_CSTR\(S, |EMIT_OVF_CALL\(S, )"[A-Za-z_0-9]+"' "$ROOT/src" | sed 's/.*"\([^"]*\)"/\1/'; printf 'vec_len\nvec_get\nalloc\nstr_from\n') | sort -u | tr '\n' ' ')
 R5C=$(echo "$R5N" | wc -w | tr -d ' ')
 if [ "$R5C" -lt 20 ]; then bad "S-R5: only $R5C compiler-called helper names derived from src (floor 20)"
 else
     find "$ROOT/lib" -name '*.cyr' | sort > "$T/st/r5.files"
+    sed -n '/^fn _bnd_finish(S)/,/^}/p' "$ROOT/src/frontend/lex_pp.cyr" | grep '_bnd_ln(out, op, "' \
+        | sed 's/.*_bnd_ln(out, op, "//; s/");[^"]*$//' | while IFS= read -r l; do printf '%b\n' "$l"; done > "$T/st/r5_injected.cyr"
+    echo "$T/st/r5_injected.cyr" >> "$T/st/r5.files"
     awk -v NAMES="$R5N" -v Q="'" '
         BEGIN { n = split(NAMES, nm, " "); for (i = 1; i <= n; i++) want[nm[i]] = 1 }
         { line[NR] = $0; file[NR] = FILENAME; fl[NR] = FNR }
@@ -603,9 +608,9 @@ else
         }' $(cat "$T/st/r5.files") > "$T/st/r5.out"
     nodef=""
     for nm in $R5N; do grep -qx "FOUND $nm" "$T/st/r5.out" || nodef="$nodef $nm"; done
-    if [ -n "$nodef" ]; then bad "S-R5: compiler-called helper(s) not found defined in lib/:$nodef"
+    if [ -n "$nodef" ]; then bad "S-R5: compiler-called helper(s) not found defined in lib/ (or in the injected checker):$nodef"
     elif grep -q '^DEFAULT ' "$T/st/r5.out"; then bad "S-R5: a compiler-called helper declares a parameter default: $(grep '^DEFAULT ' "$T/st/r5.out" | sed 's/^DEFAULT //' | tr '\n' '|')"
-    else ok "S-R5: none of the $R5C compiler-called helpers declares a parameter default ($(grep -c '^FOUND ' "$T/st/r5.out") definitions in lib/)"; fi
+    else ok "S-R5: none of the $R5C compiler-called helpers declares a parameter default ($(grep -c '^FOUND ' "$T/st/r5.out") definitions in lib/ and the injected checker)"; fi
 fi
 
 # ── GC: an explicit generic call's type arguments separate no arguments ─────────────────────

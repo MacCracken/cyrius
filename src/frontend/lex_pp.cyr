@@ -5497,6 +5497,75 @@ fn _bnd_inc_line(S, tmp, ip, dip, bl): i64 {
     return PP_SKIPLINE(tmp, ip, bl);
 }
 
+# ⛔ 6.7.8 (C2-8) — THE CHECKER, injected when the mode is on. A checked subscript calls
+# `__cyrius_bounds_chk(i, n, file, line)` (an array's exact N, or -1 for a `*T`: no extent, so only
+# a negative index trips) or `__cyrius_bounds_chks(i, &s, file, line)` (a slice: its length) — plain
+# cyrius appended to the FINISHED unit (after the macro pass and PP_RESOLVE_PKGVER), so every target
+# lowers it through the write / exit paths it already has (x86 and aarch64 ELF, both Mach-O forks
+# through the BSD numbers, PE through WriteFile / ExitProcess, cx through cxvm) and no backend grows
+# an emitter: aarch64 and cx compare signed only, a branch around a trap would need the jump table
+# and `_xdepth` patched by hand, a call needs neither. A violation prints
+# `bounds: index N out of [0, LEN) at <file>:<line>` (`[0, ...)` for a `*T`) on stderr and exits 134,
+# the code the always-on slice check uses. agnos (an x86 ELF with its own numbers: write #1 takes a
+# fourth, non-blocking argument; exit is #0) is read from the flag table: `_TARGET_AGNOS` is not set
+# until after PREPROCESS. The `__cyrius_` names are reserved for the compiler. Not a byte of it
+# exists with the mode off. CHANGELOG [6.7.8]
+# One line of the checker's text (`s`, its newline added) at `op`; the offset after it.
+fn _bnd_ln(out, op, s): i64 {
+    op = op + PP_EMIT_STR(out, op, s);
+    store8(out + op, 10);
+    return op + 1;
+}
+fn _bnd_finish(S): i64 {
+    if (_bnd_mode == 0) { return 0; }
+    var out = S + 0x459D000;
+    var op = GBL(S);
+    if (op + 4096 > 25165824) {
+        PRSTR("error: the bounds-checked mode's checker does not fit the 24MB preprocess buffer\n");
+        syscall(SYS_EXIT, 1);
+    }
+    op = PP_REANCHOR(S, out, op, "<bounds>", 1);
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_chk(i, n, f, l): i64 {");
+    op = _bnd_ln(out, op, "    if (i < 0) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    if (n >= 0) { if (i >= n) { __cyrius_bounds_fail(i, n, f, l); } }");
+    op = _bnd_ln(out, op, "    return i;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_chks(i, s, f, l): i64 {\n    var n = load64(s + 8);");
+    op = _bnd_ln(out, op, "    if (i < 0) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    if (i >= n) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    return i;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_put(b, k, s): i64 {\n    var j = 0;\n    while (load8(s + j) != 0) {");
+    op = _bnd_ln(out, op, "        store8(b + k, load8(s + j));\n        k = k + 1;\n        j = j + 1;\n    }");
+    op = _bnd_ln(out, op, "    return k;\n}");
+    # the digits of a NEGATIVE value (`48 - v % 10`), so i64 MIN prints exactly
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_num(b, k, v): i64 {\n    var d[24];\n    var m = 0;");
+    op = _bnd_ln(out, op, "    if (v < 0) { store8(b + k, 45); k = k + 1; } else { v = 0 - v; }");
+    op = _bnd_ln(out, op, "    if (v == 0) { store8(&d, 48); m = 1; }");
+    op = _bnd_ln(out, op, "    while (v != 0) { store8(&d + m, 48 - v % 10); v = v / 10; m = m + 1; }");
+    op = _bnd_ln(out, op, "    while (m > 0) {\n        m = m - 1;\n        store8(b + k, load8(&d + m));");
+    op = _bnd_ln(out, op, "        k = k + 1;\n    }\n    return k;\n}");
+    var ag = 0;
+    if (PP_FLAG_SLOT(S, PP_HASH_CSTR("CYRIUS_TARGET_AGNOS")) >= 0) { ag = 1; }
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_w(p, n): i64 {");
+    if (ag == 1) { op = _bnd_ln(out, op, "    syscall(1, 2, p, n, 0);"); }
+    else { op = _bnd_ln(out, op, "    syscall(1, 2, p, n);"); }
+    op = _bnd_ln(out, op, "    return 0;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_fail(i, n, f, l): i64 {\n    var b[96];");
+    op = _bnd_ln(out, op, "    var k = __cyrius_bounds_put(&b, 0, \"bounds: index \");");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_num(&b, k, i);");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, k, \" out of [0, \");");
+    op = _bnd_ln(out, op, "    if (n < 0) { k = __cyrius_bounds_put(&b, k, \"...\"); }");
+    op = _bnd_ln(out, op, "    else { k = __cyrius_bounds_num(&b, k, n); }");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, k, \") at \");\n    __cyrius_bounds_w(&b, k);");
+    op = _bnd_ln(out, op, "    var m = 0;\n    while (load8(f + m) != 0) { m = m + 1; }\n    __cyrius_bounds_w(f, m);");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, 0, \":\");\n    k = __cyrius_bounds_num(&b, k, l);");
+    op = _bnd_ln(out, op, "    store8(&b + k, 10);\n    __cyrius_bounds_w(&b, k + 1);");
+    if (ag == 1) { op = _bnd_ln(out, op, "    syscall(0, 134);"); }
+    else { op = _bnd_ln(out, op, "    syscall(60, 134);"); }
+    op = _bnd_ln(out, op, "    return 0;\n}");
+    SBL(S, op);
+    return 0;
+}
+
 # The mode has no meaning where a violation has no stderr and no exit (a kernel or EFI image),
 # and a `shared;` / `object;` build would define the injected checker in every object: refused
 # by name, after pass 1 has read the source's own `kernel;` / `shared;` / `object;`
@@ -5515,7 +5584,10 @@ fn _bnd_target_check(S): i64 {
         PRSTR("the bounds-checked mode is not available for ");
         PRSTR(why);
         syscall(SYS_WRITE, 2, "\n", 1);
-        _had_error = 1;
+        # 6.7.8 (C2-8): fatal at once — pass 2 would compile the injected checker for a target
+        # it cannot serve (an EFI image refuses its write's kernel32 import: a second error that
+        # names the compiler's own text).
+        syscall(SYS_EXIT, 1);
     }
     return 0;
 }
@@ -5538,5 +5610,7 @@ fn PREPROCESS(S): i64 {
     PP_MACRO_PASS(S);
     # 6.7.6: the `#@pkgver` declaration is judged on the FINISHED unit (see PP_RESOLVE_PKGVER).
     SBL(S, PP_RESOLVE_PKGVER(S + 0x459D000, GBL(S)));
+    # 6.7.8 (C2-8): the bounds-checked mode's checker, appended to the finished unit.
+    _bnd_finish(S);
     return 0;
 }

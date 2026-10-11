@@ -339,7 +339,9 @@ var r: f64 = d[1] * 2.0;           # an f64 element is an f64 value: a float mul
 `p + i * sizeof(T)` — the pointer's VALUE is the base — loaded and stored at T's width: the
 same bytes as `load16(&t + i * 2)` / `store16(p + i * 2, v)`, which stay valid (and are what
 `var a: i64[N]` code wrote before 6.6.12: `store64(&a + i * 8, v)`). A store truncates to the
-element as `store8/16/32` do. There is **no bounds check**. Inside a capturing closure an
+element as `store8/16/32` do. There is **no bounds check** — unless the program is built in the
+**bounds-checked mode** (6.7.8, [`#bounds` / `--bounds`](#preprocessor)), where `a[i]` is checked
+against the array's N and `p[i]` for a negative index. Inside a capturing closure an
 array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
 captured pointer's subscript reaches the memory it points at.
 
@@ -2686,6 +2688,32 @@ including one included above the `#bounds` line; a plain `#define CYRIUS_BOUNDS`
 define and switches nothing. The mode is refused for a kernel or EFI image (`kernel;`, a
 bare-metal `--target`, `CYRIUS_TARGET_EFI=1`: a violation would have no stderr and no exit) and
 for a `shared;` / `object;` build.
+
+**What the mode checks** (6.7.8): every subscript — `a[i]` on a typed array against its exact `N`
+(a `u8[5]` is 5 elements, not its 8-byte slot), `s[i]` on a slice (read and write) against its
+length, `p[i]` on a `*T` for a negative index only (a pointer has no extent: `slice<T>` is the
+checked spelling) — on a local, a global, a capture, a field, a call result, in a generic
+instance, a `defer` body and a `for` step. A violation prints one line on stderr and exits **134**
+(the code a slice's own check uses — outside the mode a slice is still checked, with its
+`slice bounds violation` line):
+
+```
+bounds: index 5 out of [0, 5) at <source>:12
+bounds: index -1 out of [0, ...) at src/ring.cyr:40     # a *T: no length to print
+```
+
+— the file as every compiler diagnostic names it (`<source>` for the entry file), the line the
+subscript is written on (an `#inline` fn's body names its own line). Not checked: `load*` /
+`store*` at an explicit address, `*p` and `*(p - 1)`. A **constant** index — integer literals,
+`+ - *`, parentheses, integer consts and enum constants — is judged at compile time in every mode:
+in range, no run-time check is emitted; out of range (`a[K]` with `K = 5` on a `u8[5]`,
+`p[0 - 1]`), a warning — and an **error** under the mode. `@unsafe { }` turns the check off
+inside it (a constant out of range there warns): the block is lexical, so an `#inline` fn
+replayed inside one keeps its check. A `#naked` fn cannot make the checker's call: a checked
+subscript in one is refused by name (wrap it in `@unsafe { }`). A redeclared global array (`var A:
+u8[5]; var A: u8[6];`, one storage) is the FIRST declaration's array — its `N`. Each checked
+access is a call; constant indexes in range cost nothing. `lib/bounds.cyr` and `vec` keep their
+own checks (exit 1).
 
 ## Attributes
 

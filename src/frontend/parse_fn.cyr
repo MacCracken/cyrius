@@ -11532,7 +11532,8 @@ fn _tok_calls(t): i64 {
 # 1 = token type `t` runs nothing: a literal (number / char, string, float, `true` / `false`), `.`,
 # `)` `[` `]`, a comparison, `& | ^ ~ % << >> >>>`, `&& || !`, and a closure's bars and the `,`
 # between its parameters (the only depth-0 `,` an argument holds) — never an operator a struct
-# dispatches (`+ - * /`, `_span_may_write`).
+# dispatches (`+ - * /`, `_span_may_write`). A subscript stays pure under the bounds-checked mode
+# (6.7.8): its check reads the index and exits or returns it — it never writes.
 fn _tok_pure(t): i64 {
     if (t == 1 || t == 30 || t == 61 || t == 169 || t == 170) { return 1; }
     if (t == 41 || t == 11 || t == 28 || t == 29 || t == 31) { return 1; }
