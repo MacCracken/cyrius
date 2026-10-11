@@ -731,8 +731,9 @@ fn _slice_led(S, li): i64 {
 # value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_int_plus_ptr`, `_ptr_diff` (parse_
 # expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
 # which the word preserves (ed is nonzero only when the step is). Nothing reads the kind yet: the
-# emitted bytes are unchanged. ⚠ `n + p` with a step-1 pointer drops its step, kind included, as
-# it always has (6.6.17: only `p + n`'s left operand writes its word back). CHANGELOG [6.7.8]
+# emitted bytes are unchanged. ⚠ `n + p` with a step-1 pointer drops its step, as it always has
+# (6.6.17: a step of 1 writes no word back); its kind reaches a dereference on the separate
+# dereference-only stamp (`_PKD_MARK`, parse_expr.cyr), never this word. CHANGELOG [6.7.8]
 fn _ps_word(ps, ed): i64 {
     if (ps <= 0) { return ps; }
     return ps | (ed << 40);

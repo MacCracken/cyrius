@@ -17,11 +17,15 @@
 #
 # SPAWN — the default-mode trap: the test runs ITSELF as a child that stores out of range, and checks
 # the child's exit 134 and its "slice bounds violation" line (an in-range child, anti-vacuous, exits
-# 65). Not under cx (no process spawn there) nor qemu-user (it cannot exec a foreign binary — the gate
-# passes `nospawn` on that leg): tests/gates/frontend/slice_position_refused.sh checks the trap on both
-# with its own rows, and runs this file on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64
-# (qemu), cx (cxvm) and PE (wine), beside the refusals (a captured slice, a struct / u128 element, a
-# float / bool `OP=`, and every slice position outside a fn-local `var`).
+# 65). Under the bounds-checked mode (CYRIUS_BOUNDS=1, `--bounds`, `[build] bounds = true`) the mode's
+# check runs first, so the child prints `bounds: index N out of [0, 4) at <source>:<line>` instead
+# (`#ifdef CYRIUS_BOUNDS`) — ⚠ those are this file's own line numbers: an edit that moves a child's
+# store must move its number (the gate runs this file under the mode too). Not under cx (no process
+# spawn there) nor qemu-user (it cannot exec a foreign binary — the gate passes `nospawn` on that leg):
+# tests/gates/frontend/slice_position_refused.sh checks the trap on both with its own rows, and runs
+# this file on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE
+# (wine), beside the refusals (a captured slice, a struct / u128 element, a float / bool `OP=`, and
+# every slice position outside a fn-local `var`).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -346,11 +350,30 @@ fn spawn_run(mode, buf, st): i64 {
     vec_push(av, mode);
     return exec_capture_status(av, buf, 4096, st);
 }
+#ifdef CYRIUS_BOUNDS
+# Under the bounds-checked mode the mode's check runs first, so the child prints the mode's line: the
+# store's index and its line in this file. Compiled only under the mode — a mode-off binary holds no
+# `bounds: index` text (bounds_mode_checked.sh, row OFF).
+fn mode_line(mode): i64 {
+    if (streq(mode, "hi") == 1) { return "bounds: index 4 out of [0, 4) at <source>:333\n"; }
+    if (streq(mode, "neg") == 1) { return "bounds: index -1 out of [0, 4) at <source>:335\n"; }
+    if (streq(mode, "op") == 1) { return "bounds: index 4 out of [0, 4) at <source>:336\n"; }
+    return "bounds: index 4 out of [0, 4) at <source>:338\n";
+}
+#endif
+# The child's line: lib/slice.cyr's trap by default, the mode's under the bounds-checked mode.
 fn spawn_trap(mode, what, buf, st): i64 {
     var n = spawn_run(mode, buf, st);
+    var want = "slice bounds violation\n";
+    #ifdef CYRIUS_BOUNDS
+    want = mode_line(mode);
+    #endif
+    var w = strlen(want);
     assert_eq(load64(st), 134, what);
-    assert_eq(n, 23, "... and wrote one line");
-    assert_eq(memeq(buf, "slice bounds violation\n", 23), 1, "... \"slice bounds violation\"");
+    assert_eq(n, w, "... and wrote one line");
+    var same = 0;
+    if (n == w) { same = memeq(buf, want, w); }
+    assert_eq(same, 1, want);
     return 0;
 }
 fn spawned(): i64 {

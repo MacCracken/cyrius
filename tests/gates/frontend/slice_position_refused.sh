@@ -39,7 +39,10 @@
 #   W   tests/tcyr/crossos/slice_subscript_write.tcyr compiles with no warning; --syntax-only silent;
 #       then on x86 (plain, CYRIUS_IR=3, CYRIUS_IR=1, CYRIUS_DCE=1), aarch64 (qemu, `nospawn`: qemu-user
 #       cannot exec the binary for the SPAWN group — the T rows cover the trap there), cx (cxvm; the
-#       file leaves the SPAWN group out) and PE (wine; the SPAWN group runs)
+#       file leaves the SPAWN group out) and PE (wine; the SPAWN group runs); Wh on x86 under the
+#       bounds-checked mode (CYRIUS_BOUNDS=1), where the SPAWN children print the mode's line: the file
+#       passes in both modes (C2 review: under the mode it failed 8 checks — the SPAWN rows expected
+#       only the default-mode line)
 #
 # MUTATION LEDGER (scratch trees, each its 2-stage mutant cycc, this gate run from that tree as
 # CYCC=<mutant>; 2026-10-10):
@@ -56,6 +59,8 @@
 #   MR13b the float / bool `OP=` refusal dropped -> RED R13b1-R13b3 (they compile)
 #   MSK2  `_sl_ann_skip` steps one token of a `[..]` -> RED SR1 SR2 S1a S1c S1d S1e S1p1 S1p3 S1p4 S1p6
 #         S1p7 S2a S2c S3a S3c S4a S6a S6d S6e S6f X1 (the cascades)
+#   (C2 review) the value file before it (its SPAWN rows expected only the default-mode line) -> RED Wh
+#         (8 checks)
 #   the C2-5 compiler (+ the IR=3 slice-read repair; before this bite) -> RED SR S1-S6 X R12 R13 R13b
 #         R10 R7 E T1-T3 (a b e) W0 W0s Wa Wb Wf Wg We; K1-K4 green (nothing that compiled changes); Tc Td
 #         Wc Wd pass (those legs' compilers are built from this tree's src)
@@ -352,6 +357,12 @@ for mode in plain IR3 IR1 DCE1; do
     chmod +x "$T/w_$mode"; got=0; timeout 60 "$T/w_$mode" > "$T/w_$mode.out" 2>&1 || got=$?
     w_ok "$lbl" "$got" "$T/w_$mode.out" 1
 done
+rc=0; CYRIUS_BOUNDS=1 "$CC" < "$T/w.cyr" > "$T/w_bnd" 2> "$T/w_bnd.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "Wh: x86, CYRIUS_BOUNDS=1: rc $rc: $(grep '^error' "$T/w_bnd.err" | head -1)"
+else
+    chmod +x "$T/w_bnd"; got=0; timeout 60 "$T/w_bnd" > "$T/w_bnd.out" 2>&1 || got=$?
+    w_ok "Wh: x86, CYRIUS_BOUNDS=1 (the SPAWN children print the mode's line)" "$got" "$T/w_bnd.out" 1
+fi
 if [ "$HAVE_QEMU" -eq 1 ]; then
     if [ ! -x "$T/cc_a64" ]; then bad "Wc: src/main_aarch64.cyr did not build"
     elif "$T/cc_a64" < "$T/w.cyr" > "$T/w.a64" 2> "$T/w.a64.err" && [ -s "$T/w.a64" ]; then
@@ -374,4 +385,4 @@ fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — every slice position outside a fn-local var refused by name, once (SR S1-S6, X), what compiled still compiles (K); slice element stores: the refusals (R12 R13 R13b R10 R7), OP= as the read loads (E), the default-mode trap on every leg (T), the value file on x86 / IR / DCE / aarch64 / cx / PE (W)"
+echo "PASS: $G — every slice position outside a fn-local var refused by name, once (SR S1-S6, X), what compiled still compiles (K); slice element stores: the refusals (R12 R13 R13b R10 R7), OP= as the read loads (E), the default-mode trap on every leg (T), the value file on x86 / IR / DCE / aarch64 / cx / PE and under the bounds-checked mode (W)"

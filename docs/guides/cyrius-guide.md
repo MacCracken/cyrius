@@ -966,9 +966,11 @@ a global, a closure capture, a generic instance's at its `T`), a field declared 
 address, read and written 8 bytes as before**: an untyped name (`var w = p;` is the spelling for a
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
-bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`). ⚠
-`n + p` with a ONE-byte step carries no step (below), so `*(1 + p)` through a `*u8` is a word —
-write `*(p + 1)` or `p[1]`. `load8` / `store16` / … stay valid for an explicit width. ⚠ Before
+bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
+`*(1 + p)` through a `*u8` / `*i8` is the element as well, though a one-byte `n + p` keeps no step:
+its value is still no typed pointer, so `var q: *u8 = 1 + p;` warns and `(1 + p) - q` is a byte
+difference whatever `q` points at, as before 6.7.8. `load8` / `store16` / … stay valid for an
+explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
 word, `*s` on a `*u8` string read eight characters. `T` must name a type

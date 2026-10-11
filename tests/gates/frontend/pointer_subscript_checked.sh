@@ -204,8 +204,11 @@
 #       `*u8`, an f32 compound with an f64 operand); DW4 `*p * 2.0` through a `*f64` still warns (the
 #       untyped word, the documented rule); DW5 an i64 element into a `*f32` and an f32 OP= warn nothing
 #   DM  `*p, x = f2();` through a `*i32` keeps the deref's own refusal, once
-#   DX  `*(1 + p) = v` through a `*u8` stores a WORD: a 1-byte `n + p` carries no step (6.6.17), so no
-#       element — reported at C2-3a (giving it its step changes `(1 + p8) - q32`), the user's call
+#   DX  `*(1 + p) = v` through a `*u8` stores ONE byte and `*(0 + q)` through a `*i8` reads -1 (the C2
+#       review: a 1-byte `n + p` keeps no step — 6.6.17 — so its kind reaches the dereference on its own
+#       stamp, `_PKD_MARK`; it was a WORD); DXc what compiles is unchanged: `(1 + p8) - q32` is still a
+#       byte difference, `var q: *u8 = 1 + p8;` (and an if-expression of it) still warns, `p8 + 1 - q32`
+#       is still the different-sizes error (giving `1 + p8` its step word would change all three)
 #
 # MUTATION LEDGER (C2-5, scratch trees, each its 2-stage mutant cycc, this gate + the value file as
 # CYCC=<mutant>; 2026-10-10):
@@ -222,6 +225,15 @@
 #   MPK8 / MPK9 / MPK10  `+`'s left operand, `n + p`'s right, an if-expression branch read through
 #         GPSC, not `_pk_word` -> RED Da-Dg (a bitwise operand of `+`, of `n +`, a bitwise branch)
 #   MPK11 `_pk_post` vouches for no bare name -> RED Da-Dg DRa-DRe AS3 DW1-DW3 (51 checks)
+#   (C2 review, the one-byte `n + p`; the counts are the value file's D6b / D6c checks):
+#   MPKD1 `_ptr_add` stamps no dereference-only kind -> RED Da-Dg DX DXr (12 checks)
+#   MPKD2 `_paren_post` drops it at `)` -> RED Da-Dg DX DXr (12 checks)
+#   MPKD3 `_pkd_lhs` not kept across the right operand (`_RHS_T`) -> RED Da-Dg (5 checks: `n + p - a * b`)
+#   MPKD4 `_ptr_sub` keeps the left kind whatever the right is -> RED Da-Dg (2: `(n + p) - p + w`)
+#   MPKD5 the if-expression keeps the first branch's kind -> RED Da-Dg (1: an untyped branch)
+#   MPKD6 `_PKD_IS` ignores the code pointer -> RED Da-Dg (3: `(m & (n + p)) + 0`, a negation)
+#   MPKD7 `_ptr_add` gives `n + p` its step word instead -> RED DXc1 DXc2 DXc3 (what compiles; the value
+#         file passes, DXc4 is the control — an error either way)
 #   MSEXW an f32 element's store keeps the value's width -> RED DW5 ("narrowing assignment")
 #   M27   `_slot_ptr_step` unmasked: EQUIVALENT — its one caller's `p += n` scales through EPTR_SCALE,
 #         which masks too (C2-3a); typed_pointer_step.tcyr and this gate stay green
@@ -859,13 +871,28 @@ else bad "DW5: rc $rc: $(grep '^warning\|^error' "$T/dw5.err" | head -1)"; fi
 # DM: a narrow `*p` in a multi-value assignment keeps the deref's own refusal, once.
 refused dm "\`*p\` is not one" "DM: *p, x = f2(); through a \`*i32\`" 'fn f2(): i64 { return (3, 4); }\nvar B: i64[2];\nfn f(): i64 { var p: *i32 = &B; var x = 0; *p, x = f2(); return x; }\nsyscall(60, f());\n'
 
-# DX: `n + p` with a ONE-byte step carries no step (6.6.17: only `p + n`'s pointer writes its word
-# back), so `*(1 + p)` through a `*u8` is still a WORD — reported (C2-3a): giving `1 + p` its step
-# turns `(1 + p8) - q32` from a byte difference into an error, the user's call. `*(p + 1)` and
-# `*(1 + p)` on a wider step are the element (the value file's D6).
-exits dx 2 "DX: *(1 + p) = v through a \`*u8\` stores a word (the 1-byte \`n + p\` gap, reported)" \
-    'var B: i64[2];\nfn f(): i64 { store64(&B, 0x1111111111111111); var p: *u8 = &B; *(1 + p) = 0; if (load64(&B) == 0x11) { return 2; } return 1; }\nsyscall(60, f());\n'
+# DX: `*(1 + p)` through a ONE-byte `*T` is the element (the C2 review; it was a WORD — `n + p` with
+# a step of 1 keeps no step, 6.6.17, and so kept no kind). The kind rides a stamp only a dereference
+# reads, so what compiles is unchanged (DXc). The value file's D6b / D6c hold every base and form.
+exits dx 3 "DX: *(1 + p) = v through a \`*u8\` stores one byte" \
+    'var B: i64[2];\nfn f(): i64 { store64(&B, 0x1111111111111111); var p: *u8 = &B; *(1 + p) = 0; if (load64(&B) == 0x1111111111110011) { return 3; } if (load64(&B) == 0x11) { return 2; } return 1; }\nsyscall(60, f());\n'
+exits dxr 3 "DXr: *(0 + q) through a \`*i8\` reads -1 (sign-extended)" \
+    'var B: i64[2];\nfn f(): i64 { store64(&B, 0x11111111111111FF); var q: *i8 = &B; if (*(0 + q) == 0 - 1) { return 3; } return 1; }\nsyscall(60, f());\n'
+printf '%b' 'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q32: *u32 = &B; return (1 + p8) - q32; }\nsyscall(60, f());\n' > "$T/dxc1.cyr"
+rc=0; timeout 60 "$CC" < "$T/dxc1.cyr" > "$T/dxc1.bin" 2> "$T/dxc1.err" || rc=$?
+if [ "$rc" -ne 0 ] || grep -q '^warning\|^error' "$T/dxc1.err"; then bad "DXc1: (1 + p8) - q32: rc $rc: $(grep '^warning\|^error' "$T/dxc1.err" | head -1)"
+else
+    chmod +x "$T/dxc1.bin"; got=0; timeout 10 "$T/dxc1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq 1 ]; then ok "DXc1: (1 + p8) - q32 is still a byte difference, with no diagnostic: exit 1"
+    else bad "DXc1: (1 + p8) - q32: exit $got, want 1"; fi
+fi
+warns dxc2 "assigning non-pointer to typed pointer" "DXc2: var q: *u8 = 1 + p8; still warns" \
+    'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q: *u8 = 1 + p8; return *q; }\nsyscall(60, f());\n'
+warns dxc3 "assigning non-pointer to typed pointer" "DXc3: an if-expression of 1 + p8 and p8 into a *u8 still warns" \
+    'var B: i64[2];\nfn f(): i64 { var c = 1; var p8: *u8 = &B; var q: *u8 = if (c > 0) { 1 + p8 } else { p8 }; return *q; }\nsyscall(60, f());\n'
+refused dxc4 "pointer difference of pointers with different element sizes" "DXc4: p8 + 1 - q32 is still the different-sizes error" \
+    'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q32: *u32 = &B; return p8 + 1 - q32; }\nsyscall(60, f());\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), the other operands a word (DX)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too with nothing else changed (DX, DXr, DXc)"
