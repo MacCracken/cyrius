@@ -3699,13 +3699,18 @@ fn _pd_c14_note(S): i64 {
 # (`_call_arg_start`); with one, a positional before the first label, else the value after the
 # label naming parameter k, else -1. So `g(n: 2, x: p)` instantiates `g$Pt` as `g(p, 2)` does.
 fn _call_arg_for(S, fi, open, k): i64 {
-    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, k); }
+    return _call_arg_pk(S, fi, open, k, k);
+}
+# ... where `pk` is the POSITION that passes parameter k: k on a free call, k - 1 on a method call,
+# whose `self` (parameter 0) is the receiver and not in the list (`_mcall_infer`, 6.7.9).
+fn _call_arg_pk(S, fi, open, k, pk): i64 {
+    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, pk); }
     var q = open + 1;
     var pc = 0;
     var n = GTCNT(S);
     while (q < n) {
         if (_pd_label_at(S, q) == 1) { break; }
-        if (pc == k) { return _call_arg_start(S, open, k); }
+        if (pc == pk) { return _call_arg_start(S, open, pk); }
         pc = pc + 1;
         q = _arg_next(S, q);
         if (TOKTYP(S, q) != 31) { return 0 - 1; }
@@ -9774,13 +9779,19 @@ fn _capture_tparams(S): i64 {
 # already canonical); a struct local (GLTYPE = -sid) → +sid; everything else (plain
 # int, literal, complex expr) → i64 (-8). Narrow-scalar args infer as i64 — explicit
 # `foo<i32>(x)` (the wired-up call form) pins those precisely.
+# ⛔ 6.7.9 — an f64 argument binds f64 (-9), as an f64-returning call already did: an f64 local
+# or parameter, an f64 global (`_infer_conc_global`) and a float literal, each as the WHOLE
+# argument (`_gen_arg_whole`; `g(h * 2.0)` stays i64, as `g(p + 1)` does). They inferred i64, so
+# `gid(h)` ran the i64 base and its result was an untyped word — `gid(h) * 2.0` multiplied the
+# double's bits. An f32 is not a type argument (nor a return type): it stays i64. CHANGELOG [6.7.9]
 fn _infer_conc_at_cursor(S): i64 {
+    if (PEEKT(S) == 61) { return _ic_flit(S); }
     if (PEEKT(S) == 2) {
         var _ic_noff = PEEKV(S);
         if (TOKTYP(S, GTI(S) + 1) == 10) {
             var _ic_fi = FINDFN(S, _ic_noff);
             if (_ic_fi >= 0) {
-                var _ic_ret = GFRS(S, _ic_fi);
+                var _ic_ret = _ic_call_rs(S, _ic_fi);   # 6.7.9: + a generic's f64 instance
                 if (_ic_ret != 0) { return _ic_ret; }
             }
         } else {
@@ -9791,6 +9802,7 @@ fn _infer_conc_at_cursor(S): i64 {
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
                 if (_is_ptr_param(S, _ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
+                if (_load_lt(S, _ic_lli) == F64_TYID) { return 0 - 9; }   # 6.7.9
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
@@ -9996,6 +10008,26 @@ fn _param_float(S, li, pc, flt, pack): i64 {
     if (pc == 1) { return pack | (f << 16); }
     return pack;
 }
+# The return of the call `IDENT(` at the cursor to fi: FINDFN's entry's, or for a generic whose
+# call there reaches an f64 instance (`gid(gid(h))`) that instance's f64 — what the call is typed
+# as (`_gcall_ret_f64`). A peek: the inner resolve's own `_gi_sc` is not this inference's.
+fn _ic_call_rs(S, fi): i64 {
+    var r = GFRS(S, fi);
+    if (r != 0 - 8) { return r; }
+    if (_MONOMORPH_OK == 0) { return r; }
+    if (GFTP(S, fi) == 0) { return r; }
+    var sv = _gi_sc;
+    var ifi = _pair_gen_inst(S, GTI(S));
+    _gi_sc = sv;
+    if (ifi >= 0) { if (GFRS(S, ifi) == 0 - 9) { return 0 - 9; } }
+    return r;
+}
+# A float literal at the cursor: f64 when it is the whole argument (a `,` or the `)` follows).
+fn _ic_flit(S): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt == 31 || nt == 11) { return 0 - 9; }
+    return 0 - 8;
+}
 fn _is_ptr_param(S, li): i64 {
     if (li < 0) { return 0; }
     if (li >= _cur_fn_pslots) { return 0; }
@@ -10008,6 +10040,7 @@ fn _is_ptr_param(S, li): i64 {
 fn _infer_conc_global(S, noff): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
+    if (GVTYPE(S, vi) == F64_TYID) { return 0 - 9; }   # 6.7.9: an f64 global binds f64
     if (GVPM(S, vi) == 0) { return 0 - 8; }
     var t = GVTYPE(S, vi);
     if (t > 0) { return t; }
@@ -10139,7 +10172,7 @@ var _gsn = 0;           # the T-typed names of the fn being scanned (params, the
 var _gsn_n = 0;
 var _gs_at = 0;         # _gs_params: the token just past the parameter list
 var _gs_open = 0;       # _gs_params: its `(` (a struct carrier records G's name as an offset from it)
-var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64
+var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64 (6.7.9: or f64 did)
 var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
 var _gm_closed = 0 - 1;
 
@@ -10464,6 +10497,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var c = _infer_conc_at_cursor(S);
     STI(S, sv);
     if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
+    if (c == 0 - 9) { _gi_sc = 1; }   # 6.7.9: an f64 binding calls its instance, as `g<f64>(..)` does
     return c;
 }
 # ⛔ 6.7.8 — T through its STRUCT CARRIER (`_gs_carrier`; T has no direct one). The WHOLE
@@ -10686,6 +10720,41 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }   # 6.7.1 (C3)
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return fi;
+}
+# ⛔ 6.7.9 — A GENERIC METHOD'S f64 TYPE PARAMETER. `p.id(h)` with `fn id<V>(self, w: V): V` and
+# `h: f64` called the i64 base: its result was an untyped word (`p.id(h) * 2.0` an integer
+# multiply) and `p.dbl(h)` added the double's bits — the free spelling `P_id(&p, h)` now calls the
+# f64 instance (`_gen_infer_tp`), and so does this arm, before `self` and the arguments, with the
+# `(` at `open`. Only an f64 binding is taken here: a struct one stays the base's, as before
+# (docs/development/issues/2026-10-10-generic-method-call-runs-i64-base.md). CHANGELOG [6.7.9]
+fn _mcall_gen(S, fi, open): i64 {
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (fi < 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    if (TOKTYP(S, open) != 10) { return fi; }
+    if (_gen_stub(S, fi) != 0) { return fi; }   # (and GFGM is recorded)
+    var c0 = _mcall_infer(S, fi, open, 0);
+    var c1 = 0;
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, fi, open, 1); }
+    if (c0 > 0 || c1 > 0) { return fi; }
+    if (c0 != 0 - 9) { if (c1 != 0 - 9) { return fi; } }
+    var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec >= 0) { return spec; }
+    return fi;
+}
+# `_gen_infer_tp` for a method call: type parameter `which`'s carrying parameter k is passed at
+# position k - 1. A struct carrier or `self` itself carrying it (k < 2) infers i64 here.
+fn _mcall_infer(S, fi, open, which): i64 {
+    var k = (GFGM(S, fi) >> (8 + which * 8)) & 255;
+    if (k < 2) { return 0 - 8; }
+    var a = _call_arg_pk(S, fi, open, k - 1, k - 2);
+    if (a < 0) { return 0 - 8; }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var sv = GTI(S);
+    STI(S, a);
+    var c = _infer_conc_at_cursor(S);
+    STI(S, sv);
+    return c;
 }
 fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
@@ -12588,6 +12657,8 @@ fn _gtype_sid(S, fi, base): i64 {
 # the caller's struct ADDRESS: `q = idp(p)` stored a pointer into `q.x`, `var q: Pt = idp(p)` said
 # "no struct type in scope". `Str` keeps its rax heap-handle return through the same exclusion a
 # written `: Str` gets (the rough scan's pair test). 0 = not an instance's struct-bound `: T`.
+# ⛔ 6.7.9 — and T = f64 is an f64 return (-9), as a written `: f64` is: an instance used to record
+# the base's i64 (-8) and hand the double back in rax, which no call site types. CHANGELOG [6.7.9]
 fn _gtype_tp_ret(S, fi, noff): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     if (_inst_conc0 == 0) { return 0; }
@@ -12596,6 +12667,7 @@ fn _gtype_tp_ret(S, fi, noff): i64 {
     var c = 0;
     if ((tp & 0xFFFFFFFF) == noff + 1) { c = _inst_conc0; }
     if (((tp >> 32) & 0xFFFFFFFF) == noff + 1) { c = _inst_conc1; }
+    if (c == 0 - 9) { return c; }   # 6.7.9: T = f64 — the instance returns an f64 (xmm0 on x86)
     if (c <= 0) { return 0; }
     return c;
 }

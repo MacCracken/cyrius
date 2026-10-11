@@ -68,3 +68,12 @@ targets; a bounded `<V: Show>` member (`v.show()` through the instance); a 24-by
 ## Consumer-side workaround
 
 Call a generic method by its fn name, `P_pick(p, q)` (or `P_Trait_pick(p, q)`), when a type argument is a struct.
+
+## An f64 `V` is taken (appended 2026-10-11, 6.7.9 critical lane bite 9)
+
+[The generic-call issue](2026-10-10-generic-call-f64-result-untyped.md)'s fix gave the method arm its inference hook:
+`_mcall_gen` (parse_fn.cyr), called once in `_field_load_on` right after the callee is resolved (and from
+`_var_rhs_msid` for a `var w = p.m(..);` binding), infers each type parameter from the method's arguments (parameter
+k is position k - 1, `_call_arg_pk`) and calls the instance — but ONLY when one binds `f64` (`p.id(h)` calls
+`P_id$f64`). A struct binding, this issue, still returns the base: extending `_mcall_gen`'s `c0 > 0 || c1 > 0` line to
+instantiate (and the refusal half above) is this issue's fix; the repro above still exits 7.

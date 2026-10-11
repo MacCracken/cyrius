@@ -1,0 +1,130 @@
+# generic_f64_result.tcyr — 6.7.9: a generic call whose T = f64 is inferred, or names T only in its
+# return, is an f64 — its result is typed f64 and its body runs at T = f64.
+#
+# A call's f64 result is typed f64 only by `_call_ret_marks`, from a return recorded -9 (`: f64`).
+# Three things kept a generic's from it: an f64 ARGUMENT inferred i64, so `gid(h)` ran the i64 base
+# (`dbl(h)` added the double's bits) and the call arm typed the result from that base; an instance's
+# `: T` at T = f64 was recorded as the base's i64 (-8), its value handed back in rax; and the explicit
+# arm (`gg<f64>(&h)`) never typed its result at all. So `gid(h) * 2.0` and `gg<f64>(&h) * 2.0`
+# multiplied bit patterns as integers (a kind-2 warning the only sign), while `gid<f64>(h) * 2.0`
+# was right only because the inlined body's `return x` left x's f64 type behind. Now an f64 argument
+# (an f64 local, parameter or global, a float literal, a call returning f64 — a generic one at its
+# f64 instance — each the WHOLE argument) binds T = f64 and calls the f64 instance, exactly as
+# `g<f64>(..)` does; that instance's `: T` is an f64 return; every call spelling types its result
+# from the fn it reaches; and a generic METHOD binds an f64 V the same way (`p.id(h)`). A bound is
+# met at the type bound: `gf_bnd(h)` calls the f64 impl (it called the i64 impl on the bits). The
+# user's decision 1(e). 6.6.20 - 6.7.8 measured, every target. Filed:
+# docs/development/issues/2026-10-10-generic-call-f64-result-untyped.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/generic_f64_result.sh, on the
+# four hardware hosts by the release gate's cross-OS leg. Every f64 expectation is compared as a BIT
+# PATTERN (assert_eq on an f64-typed value), so a float literal on the right is exact; each inferred
+# row has its explicit `<f64>` spelling beside it as the control.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+fn gf_gid<T>(x: T): T { return x; }
+fn gf_gid2<T>(x: T, k): T { return x; }
+fn gf_gg<T>(q): T { return load64(q); }
+fn gf_dbl<T>(x: T): T { return x + x; }
+fn gf_gid3<T>(x: T, a, b): T { return x; }                     # three params: never inlined
+fn gf_dbl3<T>(x: T, a, b): T { var y = x + x; return y; }
+fn gf_g2<T, U>(x: T, y: U): U { return y; }
+fn gf_rr<T>(x: T, n): T { if (n == 0) { return x; } return gf_rr(x, n - 1); }
+fn gf_gpt<T>(x: T, q: *T): *T { return q; }
+fn gf_gk<T>(x: T, a, b): f64 { var r: f64 = 2.5; return r; }   # a concrete f64 return
+fn gf_one5(): f64 { return 1.5; }
+fn gf_sq(x: f64): f64 { return x * x; }
+fn gf_viap(x: f64): f64 { return gf_gid(x) * 2.0; }               # T from an f64 parameter
+fn gf_tail(h: f64): f64 { return gf_gid(h); }                     # a tail-shaped return
+fn gf_tail3(h: f64): f64 { return gf_gid3(h, 1, 2); }
+fn gf_taili(h: f64) { return gf_gid(h); }                         # into an untyped return: the bits
+fn gf_fwd(h: f64): f64 { return gf_later(h) * 2.0; }              # the generic is defined below
+
+trait GfShow { fn show(self): i64; }
+impl GfShow for i64 { fn show(self): i64 { return 3; } }
+impl GfShow for f64 { fn show(self): i64 { return 5; } }
+fn gf_bnd<T: GfShow>(x: T): i64 { return x.show(); }
+
+struct GfP { v; }
+impl GfP {
+    fn id<V>(self, w: V): V { return w; }
+    fn id2<V>(self, w: V, k): V { return w; }
+    fn dbl<V>(self, w: V): V { return w + w; }
+}
+
+var GF_G: f64 = 1.5;
+
+fn main(): i64 {
+    alloc_init();
+    var h: f64 = 1.5;
+
+    test_group("the filed shapes: inferred, and T only in the return");
+    assert_eq(gf_gid(h) * 2.0, 3.0, "gf_gid(h) * 2.0 (inferred)");
+    assert_eq(gf_gid2(h, 1) * 2.0, 3.0, "gf_gid2(h, 1) * 2.0 (inferred, an integer last argument)");
+    assert_eq(gf_gg<f64>(&h) * 2.0, 3.0, "gf_gg<f64>(&h) * 2.0 (explicit, T only in the return)");
+    assert_eq(gf_gid<f64>(h) * 2.0, 3.0, "gf_gid<f64>(h) * 2.0 (the explicit control)");
+    assert_eq(gf_gid2<f64>(h, 1) * 2.0, 3.0, "gf_gid2<f64>(h, 1) * 2.0 (the explicit control)");
+
+    test_group("what binds T = f64: the whole argument");
+    assert_eq(gf_viap(h), 3.0, "an f64 parameter: gf_gid(x) * 2.0");
+    assert_eq(gf_gid(GF_G) * 2.0, 3.0, "an f64 global: gf_gid(GF_G) * 2.0");
+    assert_eq(gf_gid(1.5) * 2.0, 3.0, "a float literal: gf_gid(1.5) * 2.0");
+    assert_eq(gf_gid(gf_one5()) * 2.0, 3.0, "an f64-returning call: gf_gid(gf_one5()) * 2.0");
+    assert_eq(gf_gid(gf_gid(h)) * 2.0, 3.0, "a generic call at its f64 instance: gf_gid(gf_gid(h)) * 2.0");
+    assert_eq(gf_g2(1, h) * 2.0, 3.0, "the second type parameter: gf_g2(1, h) * 2.0 (U = f64)");
+    assert_eq(gf_gid2(k: 1, x: h) * 2.0, 3.0, "a named argument: gf_gid2(k: 1, x: h) * 2.0");
+
+    test_group("the call runs the f64 instance");
+    assert_eq(gf_dbl(h), 3.0, "gf_dbl(h): x + x is an f64 add (inlined)");
+    assert_eq(gf_dbl<f64>(h), 3.0, "gf_dbl<f64>(h) (the control)");
+    assert_eq(gf_dbl3(h, 1, 2), 3.0, "gf_dbl3(h, 1, 2): an f64 add (an ordinary call)");
+    assert_eq(gf_gid3(h, 1, 2) * 2.0, 3.0, "gf_gid3(h, 1, 2) * 2.0 (an ordinary call)");
+    assert_eq(gf_gid3<f64>(h, 1, 2) * 2.0, 3.0, "gf_gid3<f64>(h, 1, 2) * 2.0 (explicit, an ordinary call)");
+    assert_eq(gf_rr(h, 5) * 2.0, 3.0, "gf_rr(h, 5) * 2.0 (the instance calls itself)");
+    assert_eq(gf_fwd(h), 3.0, "gf_later(h) * 2.0, the generic defined below its call");
+
+    test_group("the result in every position");
+    var v = gf_gid(h);
+    assert_eq(v * 2.0, 3.0, "var v = gf_gid(h); v * 2.0 (an f64 binding)");
+    assert_eq(0.5 + gf_gid(h), 2.0, "0.5 + gf_gid(h) (a right operand)");
+    assert_eq(gf_gid(h) / 0.5, 3.0, "gf_gid(h) / 0.5");
+    assert_eq(gf_gid(h) - 0.5, 1.0, "gf_gid(h) - 0.5");
+    assert_eq(0.0 - gf_gid(h), 0.0 - 1.5, "0.0 - gf_gid(h)");
+    var lt = 0;
+    if (gf_gid(h) < 2.0) { lt = 1; }
+    assert_eq(lt, 1, "gf_gid(h) < 2.0 is an f64 compare");
+    assert_eq(gf_sq(gf_gid(h)), 2.25, "an f64 argument: gf_sq(gf_gid(h))");
+    assert_eq(gf_tail(h) * 2.0, 3.0, "return gf_gid(h); from an f64 fn");
+    assert_eq(gf_tail3(h) * 2.0, 3.0, "return gf_gid3(h, 1, 2); from an f64 fn");
+    assert_eq(gf_taili(h), 1.5, "return gf_gid(h); from an untyped fn: the double's bits");
+
+    test_group("not an f64: unchanged");
+    assert_eq(gf_gid(7) * 2, 14, "gf_gid(7) * 2 (T = i64)");
+    assert_eq(gf_gpt(h, &h) + 1, &h + 8, "a *T return steps by T: gf_gpt(h, &h) + 1");
+    assert_eq(gf_gk<i64>(5, 1, 2) * 2.0, 5.0, "a concrete : f64 on an explicit call: gf_gk<i64>(5, 1, 2) * 2.0");
+    assert_eq(gf_gk(5, 1, 2) * 2.0, 5.0, "a concrete : f64 on an inferred call: gf_gk(5, 1, 2) * 2.0");
+
+    test_group("a bound is met at the type the call binds");
+    assert_eq(gf_bnd(h), 5, "gf_bnd(h) calls the f64 impl (was the i64 impl, on the bits)");
+    assert_eq(gf_bnd<f64>(h), 5, "gf_bnd<f64>(h) (the explicit control)");
+    assert_eq(gf_bnd(7), 3, "gf_bnd(7) calls the i64 impl");
+
+    test_group("a generic method binds an f64 V");
+    var p = GfP { 5 };
+    assert_eq(p.id(h) * 2.0, 3.0, "p.id(h) * 2.0");
+    assert_eq(p.id(1.5) * 2.0, 3.0, "p.id(1.5) * 2.0");
+    assert_eq(p.id2(h, 1) * 2.0, 3.0, "p.id2(h, 1) * 2.0");
+    assert_eq(p.dbl(h), 3.0, "p.dbl(h): w + w is an f64 add");
+    var w = p.id(h);
+    assert_eq(w * 2.0, 3.0, "var w = p.id(h); w * 2.0 (an f64 binding)");
+    assert_eq(GfP_id(&p, h) * 2.0, 3.0, "GfP_id(&p, h) * 2.0 (the free spelling)");
+    assert_eq(GfP_id<f64>(&p, h) * 2.0, 3.0, "GfP_id<f64>(&p, h) * 2.0 (the explicit control)");
+    assert_eq(p.id(7) * 2, 14, "p.id(7) * 2 (V = i64)");
+    return assert_summary();
+}
+fn gf_later<T>(x: T): T { return x; }
+var rc = main();
+syscall(60, rc);

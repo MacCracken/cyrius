@@ -173,7 +173,8 @@ matches the **whole** name:
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
 parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
 is a float add; the parameter still arrives in an integer register, as a non-generic `x: f64`
-does) and `var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+does), a `: T` return is an `f64` return, typed `f64` at every call (6.7.9), and `var a: T[N]`
+holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
 6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
 zero-extended; before 6.6.17 an instance INLINED at a call inside a fn — a one-statement
 body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base,
@@ -4934,8 +4935,21 @@ on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
 every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
 `g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
-parameter (a pointer, like a `var q: *Pt` local). Any other argument infers
-`i64`, or the width a scalar-returning call declares.
+parameter (a pointer, like a `var q: *Pt` local). An **f64** argument — an `f64`
+local or parameter, an `f64` global, a float literal, a call returning `f64` (a
+generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
+exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
+is a float multiply and `var v = gid(h);` declares an `f64` (6.7.9; before it the
+call ran the i64 base — `dbl(h)` with `x + x` added the double's bits — and its
+result was an untyped word, so `gid(h) * 2.0` multiplied the bits as integers with
+a warning; so did `gg<f64>(&q) * 2.0`, a `T` named only in the return). The same
+WHOLE-argument rule holds — `g(h * 2.0)` infers `i64` — and an `f32` is not a type
+argument, so `g(f)` with `f: f32` infers `i64`. A generic method binds an `f64`
+type parameter from its arguments the same way (`p.id(h)` calls the `f64`
+instance, as `P_id(&p, h)` does). A bound is then met at `f64`: `gb(h)` with
+`fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
+`gb<f64>(h)` is. Any other argument infers `i64`, or the width a scalar-returning
+call declares.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole

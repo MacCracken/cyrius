@@ -817,12 +817,14 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # be the call (`... );`), as `_var_rhs_call` requires of a free call. Larger results keep their
 # temp-receive path (`_sc_var_receive`). 0 = not such a call.
 # 6.7.9: and a `: f64` method's result (-9) types it f64, as `var x = f();` is (v6.5.21): `var a =
-# p.area();` was an untyped word, so `a + 1.0` added integers. CHANGELOG [6.7.9]
+# p.area();` was an untyped word, so `a + 1.0` added integers — a generic method's at the instance
+# its arguments reach (`_mcall_gen`: `var w = p.id(h);`). CHANGELOG [6.7.9]
 fn _var_rhs_msid(S, ti): i64 {
     if (_tok_method_open(S, ti) == 0) { return 0; }
     if (TOKTYP(S, _call_close(S, ti + 3) + 1) != 5) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
+    mf = _mcall_gen(S, mf, ti + 3);
     var rs = GFRS(S, mf);
     if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
@@ -1767,6 +1769,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
             mfi = REGFN(S, mname);
         }
+        mfi = _mcall_gen(S, mfi, GTI(S));    # 6.7.9: an f64 type parameter's instance
         mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
         # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`

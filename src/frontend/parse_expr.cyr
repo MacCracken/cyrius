@@ -2562,7 +2562,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_ta_do == 0) {
         _ta_explicit = 1;               # set right before the call that reads it (see below)
         PARSE_FNCALL(S, noff);          # all-i64: call the base
-        _call_ret_ps(S, fi);            # 6.6.17: a `*T` return's pointer scale
+        _call_ret_marks(S, fi);         # 6.6.17: a `*T` return's pointer scale (6.7.9: + an f64)
         return 0;
     }
     # non-i64: monomorphize on demand + call the specialized fn.
@@ -2581,7 +2581,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
-    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_ps(S, _spec); }
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
     else { PARSE_FNCALL(S, noff); }
     return 0;
 }
@@ -2611,8 +2611,24 @@ fn _call_scale_fix(S, ti): i64 {
         var fi = _pair_gen_inst(S, ti);
         if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
         _lsc_free(S, ti, o, fi);   # 6.7.6: a struct result, for a left operand
+        _gcall_ret_f64(S, ti, fi);  # 6.7.9: an inferred instance's f64
     }
     SPSC(S, ps);
+    return 0;
+}
+# ⛔ 6.7.9 — AN INFERRED GENERIC CALL'S f64 RESULT WAS AN UNTYPED WORD. The call arm types a result
+# from FINDFN's entry, which for a generic is its i64 BASE (`: T` an i64), while the call reaches
+# the instance its arguments bind: `gid(h)` with `h: f64` calls `gid$f64`, whose `: T` is an f64
+# return (`_gtype_tp_ret`). `gid(h) * 2.0` multiplied the double's bits. The instance `fi` the
+# call at `ti` reached types it here, as `_call_ret_marks` does a `: f64` fn's; the explicit
+# spelling `gid<f64>(h)` types its own (`_explicit_generic_call`). CHANGELOG [6.7.9]
+fn _gcall_ret_f64(S, ti, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    if (GFRS(S, fi) != 0 - 9) { return 0; }
+    if (GFRS(S, FINDFN(S, TOKVAL(S, ti))) == 0 - 9) { return 0; }   # the call arm typed it
+    EMOVQ_A_X0(S);
+    SESTYPE(S, F64_TYID);
     return 0;
 }
 # After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
