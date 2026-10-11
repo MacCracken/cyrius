@@ -218,6 +218,7 @@ fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     }
     if (tsc < 0) {
         if (_tup_is(S, 0 - tsc) == 1) { _tup_err(S, ann_ti, "a tuple type cannot be an array element", 0 - 1, 0); }   # 6.7.7 (R3)
+        _dyn_uninit(S, 0 - tsc, ann_ti, 0 - 1);   # 6.7.8 (U2): a local array of records holding a dyn
         return STRUCTSZ(S, 0 - tsc - 1);
     }
     if (tsc > 0) { return 8; }
@@ -1057,6 +1058,7 @@ fn _fsc_from_call(S, t, ft, fnoff): i64 {
 # took every one), so its value is in rax, and the store below would write one word of the tuple
 # (the struct first-word rule), silently. Refused by name, at the source (`ti`). CHANGELOG [6.7.7]
 fn _tup_fst_chk(S, ft, fnoff, ti): i64 {
+    if (_dyn_is(S, ft) == 1) { return _dyn_err(S, ti, "cannot store a value that is not a dyn into ", ft, fnoff, " (a field)"); }   # 6.7.8
     if (_tup_is(S, ft) == 0) { return 0; }
     _tup_err(S, ti, "cannot store a value that is not a tuple into tuple field ", fnoff, 0);
     return 0;
@@ -1072,6 +1074,10 @@ fn _tup_fst_chk(S, ft, fnoff, ti): i64 {
 # The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
 fn _fsc_src(S, ft, fnoff, term): i64 {
     if (ft <= 0) { return 0; }
+    if (_dyn_is(S, ft) == 1) {   # 6.7.8 (D5): a dyn formed in a temp
+        var dr = _dyn_fsc(S, ft, term);
+        if (dr != 0) { return dr; }
+    }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
@@ -1373,6 +1379,12 @@ fn _tup_meth_chk(S, sid, fnoff): i64 {
 # by-value argument the call checks by type): `h.p == h.q`, `print(h.p)`. Under the struct rule that
 # loaded its first word, silently. Refused by name, at the field. CHANGELOG [6.7.7]
 fn _tup_fld_rchk(S, ft, beg): i64 {
+    if (_dyn_is(S, ft) == 1) {   # 6.7.8 (V3): a whole dyn field is not a value either
+        if (_fpk_want == beg) { return 0; }
+        _dyn_err(S, GTI(S) - 1, "", ft, TOKVAL(S, GTI(S) - 1), " (a field) used as a value - call one of its methods, or copy it whole into a dyn");
+        SESTYPE(S, 0);
+        return 0;
+    }
     if (_tup_is(S, ft) == 0) { return 0; }
     if (_fpk_want == beg) { return 0; }
     _tup_err(S, GTI(S) - 1, "tuple field ", TOKVAL(S, GTI(S) - 1), " used as a value - take an element (`.0`) or copy it whole into a tuple");
@@ -1687,7 +1699,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 
     # Method call: ident.method(args)
     if (PEEKT(S) == 10) {
-        if (_tup_meth_chk(S, sid, fnoff) == 1) { return 0; }   # 6.7.7 (R13): a tuple, or `x.0(..)`
+        if (_meth_pre(S, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.7 (R13) a tuple / `x.0(..)`; 6.7.8 a dyn
         # ⛔ 6.7.1 (C3) — a call on a BOUNDED receiver (recorded in pass 1 by its method-name token,
         # `_bnd_sites`) calls the bound's trait's method for T's impl, by its defined name — so a
         # colliding `m` is the bound's, and a SCALAR T (`impl Show for i64`) has a callee at all.
@@ -2240,7 +2252,11 @@ fn _spi_leaf(S, tidx, si, fi, off): i64 {
 # a type on its first-field chain, or a scalar, is carried down into it.
 fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     var ft = GETFTYPE(S, si, fi);
-    if (_spi_pk == 0) { _spi_pk = _spi_src(S, ft); }
+    var est = 0 - 1;   # the element's first token, when it starts here
+    if (_spi_pk == 0) {
+        est = GTI(S);
+        _spi_pk = _spi_src(S, ft);
+    }
     if (_spi_pk == 4) { return _spi_took(S); }
     if (_spi_pk == 1 || _spi_pk == 3) {
         if (_spi_ps == ft) {
@@ -2252,6 +2268,12 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
             _fsc_type_err(S, _spi_pn, GETFNAME(S, si, fi));
             return _spi_took(S);
         }
+    }
+    # 6.7.8 (V8): a dyn field takes a whole dyn (a copy, above); descending would write its two words
+    # from the literal's values. Refused by name; the walk goes on so the literal stays in sync.
+    if (_dyn_is(S, ft) == 1) {
+        if (_dyn_lit_form(S, est, ft) == 1) { return _spi_took(S); }   # 6.7.8 (D5): F5, the element taken whole
+        _dyn_err(S, GTI(S), "", ft, GETFNAME(S, si, fi), " (a field) is set from a whole dyn - a struct literal cannot write its words");
     }
     _spi_fields(S, tidx, li, ft - 1, off);
     return 0;
@@ -2888,6 +2910,7 @@ fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
 # refusal is the one already reported, at the same token); a tuple-typed one whose literal has the
 # wrong shape is skipped and declared as `var t: T;` is (0, cursor on the `;`).
 fn _tup_var(S, noff, pscale, ann): i64 {
+    if (_dyn_var(S, noff, pscale, ann) == 1) { return 1; }   # 6.7.8: U1/U2; (D5) a dyn formed in place
     if (PEEKT(S) == 4) {
         var lp = _tup_lit_at(S, GTI(S) + 1);
         if (lp >= 0) { if (TOKTYP(S, _pw_end) == 5) { return _tup_var_lit(S, noff, pscale, ann, lp); } }
@@ -5078,6 +5101,7 @@ fn _spc_fields(S, si, base, d): i64 {
         var off = base + FIELDOFF(S, si, fi);
         if (_spi_is_nested(S, ft) == 1) {
             if (GETFCOUNT(S, ft - 1) == 0) { _spc_ok = 0; return 0; }
+            if (_dyn_is(S, ft) == 1) { _spc_ok = 0; return 0; }   # 6.7.8 (V8): never baked; the replay refuses it
             _spc_fields(S, ft - 1, off, d);
         } else { _spc_leaf(S, si, fi, off, d); }
         fi = fi + 1;
@@ -5158,6 +5182,7 @@ fn _gvi_pair_bind(S): i64 {
 # literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
 # (`;` consumed), 0 = not a whole literal (the replay goes on).
 fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
+    if (_gvi_dyn(S, gi, idx, gps, sti) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in place
     if (PEEKT(S) == 2) {   # 6.7.7 (T5): a capture
         if (_gvi_tup_cap(S, gi, idx, gps, sti, noff) == 1) { return 1; }
         return _gvi_tup_odd(S, gi, idx, gps, sti, noff);
@@ -5550,6 +5575,7 @@ fn _gci_inline(S, sid, ann): i64 {
     if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return sid; }   # 6.7.8 (D5): a dyn global is always inline (formed or copied)
     if (_gci_src(S, GTI(S)) != sid) { return 0; }
     return sid;
 }
@@ -5942,6 +5968,9 @@ fn _dt_zone_check(S, n): i64 {
 # retptr) — any of which can carry a second word. CHANGELOG [6.6.17]
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
+    if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
+        return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, L64(_fnt_names + fi * 8), " result - a dyn is one value: bind it to one name");
+    }
     if (rs == MULTIRET_SID) {
         if (GFRN(S, fi) != n) {
             ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
@@ -6956,7 +6985,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
-            _sl_last_marks(S, li, lbool, scalar_type, ann_ti);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59; 6.7.8: + a `*T`'s kind
+            _sl_last_marks(S, li, lbool, scalar_type, ann_ti);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59; 6.7.8: + a `*T`'s kind, a declared scalar's name
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name

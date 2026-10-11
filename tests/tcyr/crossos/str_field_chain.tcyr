@@ -11,7 +11,7 @@
 include "lib/assert.cyr"
 include "lib/str.cyr"
 
-struct Holder { name: Str; n; pad; }   # 24 B: cx has no 16-byte pair return (mkh)
+struct Holder { name: Str; n; pad; }   # 24 B: `mkh` returns through the retptr (cx has the 16 B pair since 6.7.8)
 struct Outer { k; h: Holder; }
 
 var gh: Holder = Holder { 0, 0, 0 };

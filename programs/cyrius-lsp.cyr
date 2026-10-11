@@ -1828,6 +1828,7 @@ fn _lsp_is_keyword(buf, off, len, total): i64 {
     if (len == 3) {
         if (memeq(buf + off, "var", 3) == 1) { return 1; }
         if (memeq(buf + off, "for", 3) == 1) { return 1; }
+        if (memeq(buf + off, "dyn", 3) == 1) { return 1; }   # 6.7.8 (the checked trait object)
     }
     if (len == 4) {
         if (memeq(buf + off, "else", 4) == 1) { return 1; }

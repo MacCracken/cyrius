@@ -1,7 +1,23 @@
-# Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`) — OPEN
+# Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`) — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: the repro below is refused at `gx(b)`; the explicit `gx<Pt>(b)` control compiles and exits 8. `_gs_param` still records only a bare `name: T` / `name: *T` parameter as T's carrier.
-**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+> ✅ **RESOLVED in v6.7.8** (the dyn lane's bite D3; CHANGELOG [6.7.8]). Pass 1 records a STRUCT CARRIER
+> (`_gs_carrier`, src/frontend/parse_fn.cyr): a parameter typed `G<.., T, ..>` or `*G<.., T, ..>`, T a whole type
+> argument of the generic struct G, carries T through G's slot (GFGM bits 24-63, one 20-bit field per type
+> parameter). A call infers T from it when no `x: T` parameter carries T: the whole argument's instance — recorded
+> per instance by `_instantiate_generic_struct` (`_sinst`) — binds T to its type argument in T's slot, so the repro
+> calls `gx$Pt` and exits 8, as `gx<Pt>(b)` does; `Box<i32>` instantiates `gx$i32`. The pair scans' token reader
+> (`_tok_gen_ret_sid`, src/frontend/parse.cyr) follows the same carrier, from the argument's declared annotation.
+> The issue's `*Box<T>` half was NOT refused, as the summary implied: `gx(&b)` / `gx(bp)` compiled and read `b.n`
+> at the base's offset (4 for 8, every target); the user's fork F1 (answered (a), 2026-10-10) made it infer too —
+> from what the argument points at (`&b`, a `*Box<Pt>` name or call, a `Box<Pt>` value whose address is passed).
+> Unchanged: a pointer passed to a by-value `b: Box<T>` binds nothing (the base runs, as it compiled before); an
+> `x: T` parameter binds T first; `Box<Pair<T>>` (T nested) and a generic call's own result (`gx(mk1(p))`) keep the
+> refusal. Rows: `tests/tcyr/crossos/generic_struct_inference.tcyr` SC (G1-G8, mutations MG1-MG7 in its header) and
+> `tests/gates/frontend/struct_arg_type_refused.sh` R18b (flipped to an acceptance), R18c-R18f (R18f the repro
+> verbatim); the guide's sentence (§ *Generics*, and the struct-argument paragraph) rewritten.
+
+**Status:** ✅ **RESOLVED in v6.7.8** — see the banner above (filed OPEN: reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: the repro below is refused at `gx(b)`; the explicit `gx<Pt>(b)` control compiles and exits 8. `_gs_param` still records only a bare `name: T` / `name: *T` parameter as T's carrier.)
+**Placement:** 6.7.8 — shipped (the checked-dyn lane, bite D3) (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; the refusal is gate row R18b, added in 6.7.3); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a refusal with a documented workaround (`gx<Pt>(b)`), but the message blames a struct mismatch when the real gap is inference.
 **Affects:** cycc ≤ 6.7.6 (before 6.7.3 the call compiled and ran the i64 base, reading `b.n` at the wrong offset; since 6.7.3 it is refused).

@@ -63,10 +63,9 @@ impl Pt { fn md(self, d: f64 = 1.5): i64 { return 21; } }
 fn gen<T: Show>(v: T, b = A < B, c = 4): i64 { return v.show() * 100 + b * 10 + c; }
 fn gen_tail(p: Pt): i64 { return gen(p); }
 
-# Struct-returning callees with a default: a >16 B one (retptr) and a 9-16 B one (rax:rdx — not
-# on cx, which has no register-pair struct return; the gate's cx leg counts without its row).
+# Struct-returning callees with a default: a >16 B one (retptr) and a 9-16 B one (rax:rdx; cx's
+# r0:r4 since 6.7.8, so its row runs there too).
 fn mk(a, b = 7): Big { var r: Big = Big { a, b, a + b }; return r; }
-#ifndef CYRIUS_TARGET_CX
 fn mk2(a, b = 4): P2 { var r: P2 = P2 { a, b }; return r; }
 fn pair_ret(): i64 {
     var q: P2 = mk2(5);
@@ -75,7 +74,6 @@ fn pair_ret(): i64 {
     assert_eq(q2.x * 10 + q2.y, 91, "A14: a 9-16 B struct-returning callee, by name");
     return 0;
 }
-#endif
 # A 16-byte vector return (Win64: a retptr) with a default.
 fn vmk(a, b = 2): f64v2 { return f64v2(f64_from(a), f64_from(b)); }
 fn vrn(): f64v2 { return vmk(b: 1, a: 6); }
@@ -311,9 +309,7 @@ fn run(): i64 {
     alloc_init();
     direct();
     filled();
-    #ifndef CYRIUS_TARGET_CX
     pair_ret();
-    #endif
     consts_ctx();
     forward();
     named();

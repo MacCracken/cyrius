@@ -18,8 +18,8 @@
 # tests/gates/frontend/struct_copy_source_type_refused.sh and stack_enum_lossy_context.sh.
 #
 # CROSS-HOST: the copy, the retptr / pair receive and the vector receive are emitted per backend
-# (x86, PE retptr, Mach-O, aarch64). cx refuses the 16 B pair-return rows by name
-# (`int-class 16B struct pair-return ABI not supported`), so this file does not compile there.
+# (x86, PE retptr, Mach-O, aarch64, cx). cx refused the 16 B pair-return rows by name until 6.7.8;
+# it now runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R8).
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"

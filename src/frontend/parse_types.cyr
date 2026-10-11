@@ -350,26 +350,7 @@ fn _tup_is(S, sid): i64 {
 # panic latch is left as it was, so every refusal of a file is reported and none swallows the next
 # statement — and not at all under `--syntax-only` (lint's pre-pass resolves no type). 1 = reported.
 fn _tup_err(S, ti, msg, noff, tail): i64 {
-    if (_syntax_only == 1) { return 0; }
-    if (_panic == 1) { return 0; }
-    if (_tn_once(S, ti) == 0) { return 0; }
-    var sv = GTI(S);
-    STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
-    PRSTR(msg);
-    if (noff >= 0) {
-        syscall(SYS_WRITE, 2, "'", 1);
-        PRSTR(S + 0xEC00000 + noff);
-        syscall(SYS_WRITE, 2, "'", 1);
-    }
-    if (tail != 0) { PRSTR(tail); }
-    syscall(SYS_WRITE, 2, "\n", 1);
-    _err_excerpt(S);
-    _had_error = 1;
-    STI(S, sv);
-    return 1;
+    return _dyn_err(S, ti, msg, 0, noff, tail);   # 6.7.8: the one reporter, shared with dyn
 }
 # Cursor on a tuple type's `(` in a position the decision leaves open (`what` names it): refused by
 # name at the `(`, and the whole `( .. )` consumed — the parse goes on in sync.
@@ -528,24 +509,1811 @@ fn _tup_fields(S, si, np, n): i64 {
     }
     return 0;
 }
-# R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
-# tuple have no rule together yet. Read from the tokens: the nearest `fn` before `ti` is the
-# enclosing one (fns do not nest), generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
-fn _tup_gen_chk(S, ti): i64 {
+# The `fn` token whose signature or body holds token `ti`, else -1. Read from the tokens: the
+# nearest `fn` before `ti` is the enclosing one (fns do not nest) when `ti` is in its signature (no
+# `{` between them) or its `{ .. }` body. ⛔ 6.7.8 — a BODYLESS trait member (`fn pick<U>(..): i64;`)
+# ends at its `;`: the signature scan stops at a `;` or `}` (a signature holds neither). It ran on
+# to the next `{` — a struct's, or nothing — so a tuple-typed zone global or struct field right
+# after a trait whose last member is generic was "a tuple type in a generic fn" (6.7.7).
+fn _tok_enclosing_fn(S, ti): i64 {
     var k = ti - 1;
     while (k >= 0) {
         if (TOKTYP(S, k) == 32) { break; }
         k = k - 1;
     }
-    if (k < 0) { return 0; }
-    if (TOKTYP(S, k + 2) != 19) { return 0; }
+    if (k < 0) { return 0 - 1; }
     var j = k + 1;
     while (j < ti) {
-        if (TOKTYP(S, j) == 13) { break; }
+        var t = TOKTYP(S, j);
+        if (t == 13) { break; }
+        if (t == 5 || t == 14) { return 0 - 1; }
         j = j + 1;
     }
-    if (j < ti) { if (_tok_body_spans(S, k, ti) == 0) { return 0; } }
+    if (j < ti) { if (_tok_body_spans(S, k, ti) == 0) { return 0 - 1; } }
+    return k;
+}
+# R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
+# tuple have no rule together yet. Generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
+fn _tup_gen_chk(S, ti): i64 {
+    var k = _tok_enclosing_fn(S, ti);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k + 2) != 19) { return 0; }
     return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+}
+
+# ⛔ 6.7.8 — CHECKED `dyn` (the user's decisions, 2026-10-07): `o: dyn Show` is an ordinary 16-byte
+# struct of two words {data, vtable} — ADR-002's one-word model holds. THE TOKEN FOLD: before any
+# prepass records a token index, `dyn X` becomes ONE identifier token named `dyn X` (a space: no
+# lexed identifier spells it, so it collides with no user name), and `_dyn_prepass` registers that
+# name as a struct before any user struct. Every struct position then takes it unchanged — a
+# local, a global, a parameter (pass 1's scan too), a return (the rough pair scan), a field, a
+# copy checked by sid. The two words are named " data" / " vtable" (a leading space): no field
+# access reaches them (decision 7 — "unknown field 'data' on struct 'dyn Show'"). Each position
+# the decisions leave open is refused by name at the prepass, once per token. A unit that spells
+# no `dyn` folds nothing (`_lex_dyn_n`, lex.cyr): its tokens are untouched. CHANGELOG [6.7.8]
+var _dyn_ix = 0;   # the folded tokens: (index << 2) | 1 when a `+ B` after it was dropped (T2); | 2 a bare `dyn`
+var _dyn_nx = 0;
+var _dyn_nm = 0;   # one minted name per spelling: (X's name offset, `dyn X`'s)
+var _dyn_nn = 0;
+var _dyn_wd = 0;   # the word names " data" / " vtable" (name offset + 1), minted once
+var _dyn_wv = 0;
+var _dyn_hm = 0;   # per struct: 0 = not judged, 1 = holds no dyn, 2 = holds one (`_dyn_held`)
+
+fn _dyn_fold(S): i64 {
+    if (_lex_dyn_n == 0) { return 0; }
+    _dyn_ix = alloc(_lex_dyn_n * 8);
+    _dyn_nm = alloc(_lex_dyn_n * 16);
+    var n = GTCNT(S);
+    var r = 0;
+    var w = 0;
+    while (r < n) {
+        if (TOKTYP(S, r) == 173) {
+            if (TOKTYP(S, r + 1) == 2) {
+                r = _dyn_fold1(S, r, w);
+                w = w + 1;
+                continue;
+            }
+            _dyn_note(w, 2);   # a `dyn` with no trait name after it: T3, judged by the prepass
+        }
+        if (w != r) { _dyn_tok_mv(S, w, r); }
+        w = w + 1;
+        r = r + 1;
+    }
+    STCNT(S, w);
+    return 0;
+}
+# `dyn` at token `r`, the identifier X after it: ONE identifier at `w`, named `dyn X`, carrying
+# `dyn`'s line word (a diagnostic's caret points at `dyn`). A `+ B` run after it is dropped, its
+# reason recorded for the prepass (T2), so the parse goes on in sync. The next token to read.
+fn _dyn_fold1(S, r, w): i64 {
+    var lw = L64(S + 0xCC00000 + r * 8);
+    var nm = _dyn_name(S, TOKVAL(S, r + 1));
+    S64(S + 0x8C00000 + w * 8, 2);
+    S64(S + 0xAC00000 + w * 8, nm);
+    STLINE(S, w, lw);
+    var q = r + 2;
+    var plus = 0;
+    while (TOKTYP(S, q) == 6) {
+        if (TOKTYP(S, q + 1) != 2) { break; }
+        q = q + 2;
+        plus = 1;
+    }
+    _dyn_note(w, plus);
+    return q;
+}
+fn _dyn_note(w, f): i64 {
+    S64(_dyn_ix + _dyn_nx * 8, (w << 2) | f);
+    _dyn_nx = _dyn_nx + 1;
+    return 0;
+}
+fn _dyn_tok_mv(S, w, r): i64 {
+    S64(S + 0x8C00000 + w * 8, TOKTYP(S, r));
+    S64(S + 0xAC00000 + w * 8, TOKVAL(S, r));
+    STLINE(S, w, L64(S + 0xCC00000 + r * 8));
+    return 0;
+}
+# The name `dyn X` for X at name offset `xnoff` — one offset per spelling (LEXID already gives one
+# X one offset).
+fn _dyn_name(S, xnoff): i64 {
+    var i = 0;
+    while (i < _dyn_nn) {
+        if (L64(_dyn_nm + i * 16) == xnoff) { return L64(_dyn_nm + i * 16 + 8); }
+        i = i + 1;
+    }
+    var n = 0;
+    while (load8(S + 0xEC00000 + xnoff + n) != 0) { n = n + 1; }
+    var np = _dyn_mint(S, "dyn ", 4, n + 1);
+    i = 0;
+    while (i <= n) {
+        store8(S + 0xEC00000 + np + 4 + i, load8(S + 0xEC00000 + xnoff + i));
+        i = i + 1;
+    }
+    SNPOS(S, np + 4 + n + 1);
+    S64(_dyn_nm + _dyn_nn * 16, xnoff);
+    S64(_dyn_nm + _dyn_nn * 16 + 8, np);
+    _dyn_nn = _dyn_nn + 1;
+    return np;
+}
+# Write the `n` bytes of `s` at the name pool's top, `more` bytes reserved after them; the offset.
+# The caller moves the pool's top (SNPOS) past what it wrote.
+fn _dyn_mint(S, s, n, more): i64 {
+    NPOS_GUARD(S, n + more + 1);
+    var np = GNPOS(S);
+    var i = 0;
+    while (i < n) {
+        store8(S + 0xEC00000 + np + i, load8(s + i));
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + np + n, 0);
+    return np;
+}
+fn _dyn_word(S, s, n): i64 {
+    var np = _dyn_mint(S, s, n, 0);
+    SNPOS(S, np + n + 1);
+    return np + 1;
+}
+# The struct `dyn X` (name offset `noff`), registered on its first spelling: two 8-byte words.
+fn _dyn_reg(S, noff): i64 {
+    var sid = FINDSTRUCT(S, noff);
+    if (sid > 0) { return sid; }
+    sid = REGSTRUCT(S, noff);
+    if (sid == 0) { return 0; }
+    if (_dyn_wd == 0) { _dyn_wd = _dyn_word(S, " data", 5); }
+    if (_dyn_wv == 0) { _dyn_wv = _dyn_word(S, " vtable", 7); }
+    ADDFIELD(S, sid - 1, _dyn_wd - 1);
+    ADDFIELD(S, sid - 1, _dyn_wv - 1);
+    return sid;
+}
+# 1 = the source at token `st` is one whole call returning dyn `sid` (`;` after it) — at top level
+# its own path refuses it (no frame for a 9-16 B result), so a declaration backstop stays quiet.
+# 6.7.8 (D6): a method's too (`var G: dyn Show = Z.me();`, through a dyn or not).
+fn _dyn_src_call(S, st, sid): i64 {
+    var o = _gcall_open(S, st);
+    if (o < 0) { return _dyn_src_mcall(S, st, sid); }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
+    var fi = _gen_resolve_call(S, st);
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != sid) { return 0; }
+    return 1;
+}
+fn _dyn_src_mcall(S, st, sid): i64 {
+    if (_tok_method_open(S, st) == 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, st + 3) + 1) != 5) { return 0; }
+    var fi = _pair_callee_at(S, st);
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != sid) { return 0; }
+    return 1;
+}
+# 1 = struct `sid` (1-based) is a dyn: its name starts `dyn ` (only the fold mints one).
+fn _dyn_is(S, sid): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (sid > GSTC(S)) { return 0; }
+    if (L64(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8)) & 0xFFFFFFFF == 0x206E7964) { return 1; }
+    return 0;
+}
+# 1 = struct `sid` is a dyn or holds one in a field, directly or through a nested struct field
+# (a generic instance's included). Judged once per struct (`_dyn_hm`): asked only of a complete one.
+fn _dyn_held(S, sid): i64 {
+    if (_dyn_is(S, sid) == 1) { return 1; }
+    if (_dyn_nx == 0) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (sid > GSTC(S)) { return 0; }
+    if (_dyn_hm == 0) { _dyn_hm = alloc(1024); }
+    var m = load8(_dyn_hm + sid - 1);
+    if (m != 0) { return m - 1; }
+    var r = 0;
+    var fc = GETFCOUNT(S, sid - 1);
+    var i = 0;
+    while (i < fc) {
+        var ft = GETFTYPE(S, sid - 1, i);
+        if (_spi_is_nested(S, ft) == 1) { if (_dyn_held(S, ft) == 1) { r = 1; } }
+        i = i + 1;
+    }
+    store8(_dyn_hm + sid - 1, r + 1);
+    return r;
+}
+# ⛔ U1 / U2 — STRUCT LOCALS ARE NOT ZEROED, so `var o: dyn Show;` in a fn — or `var h: H;` /
+# `var hs: H[N]` where H holds a dyn, directly or through a nested struct field — left a vtable word
+# of whatever the frame held: a call through it jumps to garbage. Refused by name at the annotation
+# (`ann`), the name still declared (PARSE_VAR goes on, nothing cascades). A global is zeroed (a
+# zone global is refused uninitialised anyway). `_tup_var`'s first line; `noff` -1 for an array.
+# 6.7.8 (D5): `var o: dyn S = src;` whose source is no dyn value is declared here, the dyn formed in
+# place (`_dyn_var_init`: 1, the `;` consumed); a copy is left to PARSE_VAR's struct paths (0).
+fn _dyn_var(S, noff, pscale, ann): i64 {
+    if (pscale == 0) { if (ann != 0) { return _dyn_var_ann(S, ann); } }
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (PEEKT(S) == 5) {
+        _dyn_uninit(S, 0 - pscale, ann, noff);
+        return 0;
+    }
+    if (PEEKT(S) != 4) { return 0; }
+    if (_dyn_is(S, 0 - pscale) == 0) { return 0; }
+    return _dyn_var_init(S, noff, 0 - pscale);   # 6.7.8 (D5): 1 = declared, formed or refused
+}
+# 6.7.8 (review) — `var y: i64 = mk();` / `: u8` / `: f64` in a fn, `mk()` returning a dyn: PARSE_VAR's
+# struct receive infers its struct from a whole free call for an annotation that is no struct, so y
+# became the dyn its annotation says it is not (`y.area()` compiled). Refused at the call, in V4's
+# words; a bool's is `_bx_decl`'s. (A method / operator initialiser is `_sc_var_receive`'s.) 0.
+fn _dyn_var_ann(S, ann): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var a = GTI(S) + 1;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    if (_call_dotted(S, a) == 1) { return 0; }
+    if (TOKTYP(S, _call_close(S, a + 1) + 1) != 5) { return 0; }
+    if (_tn_resolve_at(S, ann) == _tn_code(4, 1)) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (_dyn_is(S, GFRS(S, fi)) == 0) { return 0; }
+    _dyn_err(S, a, "a ", GFRS(S, fi), 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    return 0;
+}
+fn _dyn_uninit(S, sid, ann, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (_dyn_held(S, sid) == 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return _dyn_err(S, ann, "declare ", sid, noff, " with its value - struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame"); }
+    if (noff < 0) { return _dyn_err(S, ann, "an array of ", sid, 0 - 1, " in a fn is refused - its records hold a dyn, struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame"); }
+    return _dyn_err(S, ann, "declare ", sid, noff, " with its value - it holds a dyn, struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame");
+}
+# T12 — the field of struct `si` typed by struct `fs` (its type token `ti`): a union cannot hold a dyn
+# (another member would write its words), nor can a generic struct have a dyn field (a type
+# parameter and a dyn do not combine yet: the struct `_sdef_tp_ti` is defining opens `<`).
+fn _dyn_field_chk(S, si, fs, ti): i64 {
+    if (_dyn_held(S, fs) == 0) { return 0; }
+    if (ISUNION(S, si) == 1) { return _dyn_err(S, ti, "a union cannot hold a dyn - another member would write its words", 0, 0 - 1, 0); }
+    if (_dyn_is(S, fs) == 0) { return 0; }
+    if (TOKTYP(S, _sdef_tp_ti) == 19) { return _dyn_err(S, ti, "a dyn field in a generic struct is refused - a type parameter and a dyn do not combine yet", 0, 0 - 1, 0); }
+    return 0;
+}
+
+# The prepass (`_tl_pass1`, right after `_tr_prepass`, so a trait name resolves): every folded
+# token registers its struct — a refused one too, so its later uses do not cascade — and is
+# checked where it stands. Reported through `_tup_err`'s reporter: once per token, the latch left
+# alone, silent under `--syntax-only`.
+fn _dyn_prepass(S): i64 {
+    var i = 0;
+    while (i < _dyn_nx) {
+        var e = L64(_dyn_ix + i * 8);
+        if ((e & 2) == 0) { _dyn_chk(S, e >> 2, e & 1); }
+        else { _dyn_bare(S, e >> 2); }
+        i = i + 1;
+    }
+    return 0;
+}
+# T3 — a `dyn` with no trait name after it, in a type position (after `:`, `<`, `*`, `[`, or a `,`
+# inside `<..>`), where the parser took any one token as the type (`o: dyn)`, `Vec<dyn>` compiled).
+# The token becomes the identifier `dyn`, so each type resolver after this refuses it at the same
+# token, silently (`_tn_once`): one report. In a name position the parser names the reserved word.
+var _dyn_bare_nm = 0;
+fn _dyn_bare(S, ti): i64 {
+    if (ti == 0) { return 0; }
+    var pt = TOKTYP(S, ti - 1);
+    var k = 0;
+    if (pt == 49 || pt == 19 || pt == 8 || pt == 28) { k = 1; }
+    if (pt == 31) { if (_dyn_opener(S, ti) == 19) { k = 1; } }
+    if (k == 0) { return 0; }
+    _dyn_err(S, ti, "`dyn` takes a trait's name - `dyn Show` for `trait Show`", 0, 0 - 1, 0);
+    if (_dyn_bare_nm == 0) { _dyn_bare_nm = _dyn_word(S, "dyn", 3); }
+    S64(S + 0x8C00000 + ti * 8, 2);
+    S64(S + 0xAC00000 + ti * 8, _dyn_bare_nm - 1);
+    return 0;
+}
+fn _dyn_chk(S, ti, plus): i64 {
+    var noff = TOKVAL(S, ti);
+    var sid = _dyn_reg(S, noff);
+    if (_dyn_pos(S, ti, sid) == 1) { return 0; }
+    if (plus == 1) { return _dyn_err(S, ti, "`dyn A + B` is refused - a dyn holds one vtable, of one trait", 0, 0 - 1, 0); }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 19) { return _dyn_err(S, ti, "", sid, 0 - 1, " takes no type arguments - a trait has none"); }
+    if (nt == 28) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be an array element - hold it in a record (`struct R { o: dyn ..; }`) and make an array of those"); }
+    if (_tr_find(S, noff + 4) < 0) { return _dyn_err(S, ti, "", 0, noff + 4, " is not a trait - `dyn` takes a declared trait's name"); }
+    return _dyn_fn_chk(S, ti);
+}
+# The position: a dyn type is written after a `:` (a var, a parameter, a return type, a field, a
+# trait member's signature). Every other position is refused by name (1 = refused).
+fn _dyn_pos(S, ti, sid): i64 {
+    if (ti == 0) { return _dyn_where(S, ti, sid); }
+    var pt = TOKTYP(S, ti - 1);
+    if (pt == 49) { return 0; }
+    if (pt == 19) {
+        if (_dyn_tok_is(S, ti - 2, "slice", 5) == 1) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a slice element"); }
+        return _dyn_targ(S, ti, sid);
+    }
+    if (pt == 31) { return _dyn_pos_comma(S, ti, sid); }
+    if (pt == 8) { return _dyn_err(S, ti, "a pointer to ", sid, 0 - 1, " is refused - a dyn is a two-word value; point at a record that holds one (`struct R { o: dyn ..; }`, `*R`)"); }
+    if (pt == 28) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a slice element"); }
+    if (pt == 10) { return _dyn_pos_paren(S, ti, ti - 1, sid); }
+    if (pt == 77) { return _dyn_err(S, ti, "`impl` takes a type that is not a dyn - implement the trait for a struct or a scalar", 0, 0 - 1, 0); }
+    if (pt == 55) { if (ti >= 3) { if (TOKTYP(S, ti - 3) == 77) {
+                return _dyn_err(S, ti, "`impl` takes a type that is not a dyn - implement the trait for a struct or a scalar", 0, 0 - 1, 0);
+            } } }
+    return _dyn_where(S, ti, sid);
+}
+fn _dyn_where(S, ti, sid): i64 {
+    _dyn_err(S, ti, "", sid, 0 - 1, " is a type - write it after a `:` (`o: dyn Show`)");
+    # As a VALUE (`= dyn Show`, `return dyn Show`, an argument) it would also be an undefined
+    # variable: it becomes the number 0 there, so the refusal above is the one report.
+    if (ti < 3) { return 1; }
+    var pt = TOKTYP(S, ti - 1);
+    var e = 0;
+    if (pt == 4 || pt == 33) { e = 1; }
+    if (pt == 10) { if (TOKTYP(S, ti - 2) == 2) { if (TOKTYP(S, ti - 3) != 32) { e = 1; } } }
+    if (e == 1) {
+        S64(S + 0x8C00000 + ti * 8, 1);
+        S64(S + 0xAC00000 + ti * 8, 0);
+    }
+    return 1;
+}
+# After a `,`: the bracket it is inside decides — `<` a type argument, `(` a tuple's element (`: (`)
+# or a `*fn(..)` parameter; else a name position.
+fn _dyn_pos_comma(S, ti, sid): i64 {
+    var t = _dyn_opener(S, ti);
+    if (t == 19) { return _dyn_targ(S, ti, sid); }
+    if (t == 10) { return _dyn_pos_paren(S, ti, _dyn_open_ti, sid); }
+    return _dyn_where(S, ti, sid);
+}
+# The bracket a `,` before token `ti` sits in: its token type (`(`, `<`, `[`), `_dyn_open_ti` its
+# index; 0 when a `;`, `{` or `}` comes first.
+var _dyn_open_ti = 0;
+fn _dyn_opener(S, ti): i64 {
+    var k = ti - 2;
+    var d = 0;
+    while (k >= 0) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        if (t == 11 || t == 20 || t == 29) { d = d + 1; }
+        elif (t == 39) { d = d + 2; }
+        elif (t == 152) { d = d + 3; }
+        elif (t == 10 || t == 19 || t == 28) {
+            if (d == 0) {
+                _dyn_open_ti = k;
+                return t;
+            }
+            d = d - 1;
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+# Inside the `(` at token `o`: `sizeof(`, a `*fn(..)` parameter, a tuple / multi-value element (`: (`).
+fn _dyn_pos_paren(S, ti, o, sid): i64 {
+    if (o >= 1) {
+        if (_dyn_tok_is(S, o - 1, "sizeof", 6) == 1) { return _dyn_err(S, ti, "sizeof(", sid, 0 - 1, ") is refused - a dyn is two words, and no layout of them is promised"); }
+        if (TOKTYP(S, o - 1) == 32) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a `*fn(..)` parameter - pass a record that holds one"); }
+        if (TOKTYP(S, o - 1) == 49) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a tuple or multi-value element - return or hold it alone"); }
+    }
+    return _dyn_where(S, ti, sid);
+}
+fn _dyn_targ(S, ti, sid): i64 {
+    return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a type argument - a collection holds pointers to records that hold a dyn");
+}
+# Token `ti` is the identifier spelled by the `n` bytes of `s`.
+fn _dyn_tok_is(S, ti, s, n): i64 {
+    if (ti < 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var p = S + 0xEC00000 + TOKVAL(S, ti);
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + n) != 0) { return 0; }
+    return 1;
+}
+# T11 — the fn whose signature or body holds the dyn: a generic, `async`, `const` or `#naked` fn is
+# refused (a type parameter, a suspended frame, a compile-time evaluation and a frameless body have
+# no rule with a dyn yet). Its prefix tokens are read back from its `fn`.
+fn _dyn_fn_chk(S, ti): i64 {
+    var k = _tok_enclosing_fn(S, ti);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k + 2) == 19) { return _dyn_err(S, ti, "a dyn type in a generic fn is refused - a type parameter and a dyn do not combine yet", 0, 0 - 1, 0); }
+    var t = _dyn_fn_pfx(S, k);
+    if (t == 134) { return _dyn_err(S, ti, "a dyn type in an `async fn` is refused - a suspended frame and a dyn do not combine yet", 0, 0 - 1, 0); }
+    if (t == 168) { return _dyn_err(S, ti, "a dyn type in a `const fn` is refused - a compile-time evaluation takes no dyn", 0, 0 - 1, 0); }
+    if (t == 133) { return _dyn_err(S, ti, "a dyn type in a `#naked` fn is refused - a body with no frame takes no dyn", 0, 0 - 1, 0); }
+    return 0;
+}
+# The prefix that makes the fn whose `fn` token is `k` an `async` (134), `const` (168) or `#naked`
+# (133) one, read back over its attribute tokens; else 0.
+fn _dyn_fn_pfx(S, k): i64 {
+    var j = k - 1;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 134 || t == 168 || t == 133) { return t; }
+        if (t != 73 && t != 153 && _tl_flag_tok(t) == 0) { return 0; }
+        j = j - 1;
+    }
+    return 0;
+}
+# The one reporter for a dyn refusal (and a tuple's, `_tup_err`): at token `ti`,
+# "<msg>[<struct sid's name> ]['<noff>'][<tail>]". Once per token, the panic latch left as it was
+# (every refusal of a file is reported, none swallows the next statement), and silent under
+# `--syntax-only` (lint's pre-pass resolves no type). 1 = reported.
+fn _dyn_err(S, ti, msg, sid, noff, tail): i64 {
+    if (_dyn_ebeg(S, ti) == 0) { return 0; }
+    PRSTR(msg);
+    if (sid > 0) {
+        _dyn_ps(S, sid);
+        if (noff >= 0) { syscall(SYS_WRITE, 2, " ", 1); }
+    }
+    if (noff >= 0) { _dyn_pq(S, noff); }
+    if (tail != 0) { PRSTR(tail); }
+    return _dyn_eend(S);
+}
+# The reporter's two halves, for a message with names in its middle: `_dyn_ebeg` (0 = say nothing:
+# `--syntax-only`, the panic latch, or this token already reported) prints the head; the caller
+# the words (`_dyn_ps` a struct's name, `_dyn_pn` a name, `_dyn_pq` a name quoted); `_dyn_eend` the
+# excerpt, and puts the cursor back.
+var _dyn_esv = 0;
+fn _dyn_ebeg(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    _dyn_esv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    return 1;
+}
+fn _dyn_eend(S): i64 {
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, _dyn_esv);
+    return 1;
+}
+fn _dyn_ps(S, sid): i64 { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8)); return 0; }
+fn _dyn_pn(S, noff): i64 { PRSTR(S + 0xEC00000 + noff); return 0; }
+fn _dyn_pq(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "'", 1);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'", 1);
+    return 0;
+}
+# The trait a dyn struct `sid` names (`dyn Show` -> Show's index), -1 when none.
+fn _dyn_tx(S, sid): i64 { return _tr_find(S, L64(S + 0x1A6018 + (sid - 1) * 8) + 4); }
+
+# ⛔ 6.7.8 (D5) — FORMING A DYN (the user's decisions 1, 2, 4, 6, 2026-10-07). At a destination typed
+# `dyn Tr` the source is classified from its TOKENS, before anything is emitted (`_dyn_src`):
+#   COPY   a dyn value — a dyn name, a whole call or method returning a struct, a dyn field: the
+#          struct paths take it (and refuse another struct by its sid);
+#   FORM   a `*T` the compiler knows — `&p` of an inline struct (a local, a by-value parameter's
+#          copy, an inline global), a `*T` local / parameter / global, an untyped impl `self`, a
+#          pointer-mode handle, a `*T` field, a call or method returning `*T` — or a DECLARED
+#          scalar (a local, a global or a parameter whose annotation names an integer, a float,
+#          bool, an enum or a handle: its value is the data word), or a literal (i64, f64, bool);
+#   REFUSED by name, at the source (F1-F11): an untyped name (it may hide a pointer, ADR-002), a
+#          bare inline struct (no implicit `&`), `&` of a pointer / a scalar / a dyn, a captured
+#          name, and every other expression.
+# T must have `impl Tr for T` (F6). The pair (Tr, T) is checked ONCE, at its first forming
+# (`_dyn_pair_chk`): each member's full signature against the trait's (A3: a parameter's or the
+# return's type by its resolved name, untyped = i64), the `self` form a slot can call (decision 2:
+# `self: T` of 8 B or less arrives in a register — refused, naming the method), and no async /
+# #naked slot. Then its VTABLE — a hidden global, one word per trait member in declaration order,
+# each T's method (or T's default instance, decision 6; `T_Trait_m` when the name collides) — is
+# registered, and FILLED AT EVERY FORMING SITE (`_dyn_fill`): no target relocates a data word
+# (PIE, Mach-O arm64, PE), so the table cannot be built in the image; every site writing the same
+# words keeps DCE exact and a `kernel;` build independent of the late replay. A member a dyn cannot
+# call (generic, no untyped `self`, variadic) has slot 0, its address never taken. The data word
+# is the source's value, the vtable word the table's address; both are stored ADDRESSED into an
+# inline aggregate (the declared one, or a frame temp the destination copies from). CHANGELOG [6.7.8]
+var _ti_dyn = 0;    # per impl (4096 words): 0 never formed, 1 refused, else (its vtable global + 1) << 1
+var _dsr_tp = 0;    # FORM: the type T's name, its bytes ...
+var _dsr_tn = 0;    # ... and their count
+var _dsr_ii = 0;    # FORM: the impl of the dyn's trait for T
+var _dsr_ds = 0;    # the dyn being formed (its sid), for the refusals' words
+var _dsc_tn = 0;    # per frame slot (16384 words): a declared scalar's annotation name — read only behind bit 62 (SLDSC)
+var _gv_tn = 0;     # per global: its annotation's name + 1 when a declared scalar, else 0 — written by every declaration
+var _gv_tnc = 0;    # its capacity
+var _dsc_pend = 0;  # a parameter's annotation (name + 1), from its type token until `_param_record` stamps the slot
+
+# The source spanning tokens [st, en) (`en` its terminator) of a dyn `dsid`: 0 COPY, 1 FORM (the
+# pair checked, `_dsr_ii` its impl), 2 REFUSED (reported). Parentheses wrapping the whole source
+# are transparent. `top` 1: a destination with no frame at top level (an assignment, a field, an
+# argument) refuses a FORM (F11). Emits nothing; the cursor is left alone.
+fn _dyn_src(S, st, en, dsid, top): i64 {
+    _dsr_ds = dsid;
+    var a = st;
+    var b = en;
+    var k = _pwrap_k(S, st);
+    if (k > 0) { if (_pw_end == en) { a = st + k; b = en - k; } }
+    var r = _dyn_src_in(S, a, b);
+    if (r != 1) { return r; }
+    if (top == 1) { if (GINFN(S) != 1) {
+            _dyn_err(S, a, "a dyn formed at top level has no frame to be built in - form it inside a fn (a top-level `var G: ", dsid, 0 - 1, " = ..;` declares one)");
+            return 2;
+        } }
+    var ii = _dyn_pair(S, dsid, a);
+    if (ii < 0) { return 2; }
+    _dsr_ii = ii;
+    return 1;
+}
+fn _dyn_src_in(S, a, b): i64 {
+    var t = TOKTYP(S, a);
+    if (b == a + 1) {
+        if (t == 2) { return _dyn_src_name(S, a); }
+        if (t == 1) { return _dyn_lit("i64", 3); }
+        if (t == 61) { return _dyn_lit("f64", 3); }
+        if (t == 169 || t == 170) { return _dyn_lit("bool", 4); }
+    }
+    if (b == a + 2) {
+        var t1 = TOKTYP(S, a + 1);
+        if (t == 7) {
+            if (t1 == 1) { return _dyn_lit("i64", 3); }
+            if (t1 == 61) { return _dyn_lit("f64", 3); }
+        }
+        if (t == 27) { if (t1 == 2) { return _dyn_src_addr(S, a); } }
+    }
+    if (t == 2) {
+        var c = _dyn_scall(S, a, b);
+        if (c >= 0) { return c; }
+        c = _dyn_schain(S, a, b);
+        if (c >= 0) { return c; }
+    }
+    return _dyn_f5(S, a);
+}
+fn _dyn_lit(s, n): i64 {
+    _dsr_tp = s;
+    _dsr_tn = n;
+    return 1;
+}
+# FORM from T named at `noff` (a struct's name, or a declared scalar's annotation).
+fn _dyn_tset(S, noff): i64 {
+    _dsr_tp = S + 0xEC00000 + noff;
+    var n = 0;
+    while (load8(_dsr_tp + n) != 0) { n = n + 1; }
+    _dsr_tn = n;
+    return 1;
+}
+fn _dyn_sform(S, sid): i64 { return _dyn_tset(S, L64(S + 0x1A6018 + (sid - 1) * 8)); }
+# One name: a local, a closure's capture, a global.
+fn _dyn_src_name(S, a): i64 {
+    var nm = TOKVAL(S, a);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) { return _dyn_src_local(S, li, a); }
+        var c = _dyn_src_cap(S, nm, a);
+        if (c >= 0) { return c; }
+    }
+    var vi = _findvar_core(S, nm);
+    if (vi >= 0) { return _dyn_src_global(S, vi, a); }
+    return _dyn_f5(S, a);
+}
+fn _dyn_src_local(S, li, a): i64 {
+    var lt = GLTYPE(S, li);
+    var s = 0;
+    if (lt < 0) { if (lt > 0 - 2048) { s = 0 - lt; } }
+    if (GLPTRP(S, li) == 1) {   # a `*T` local or parameter, an untyped impl `self`
+        if (s > 0) { return _dyn_sform(S, s); }
+        return _dyn_f8p(S, a);
+    }
+    if (s > 0) {
+        if (_dyn_is(S, s) == 1) { return 0; }
+        if (GLAGG(S, li) == 0) { return _dyn_sform(S, s); }   # a handle: the slot holds the address
+        return _dyn_frf(S, a, "no implicit `&`: write `&", "` (the dyn holds its address)");
+    }
+    if (lt <= 0 - 2048) { return _dyn_f5(S, a); }   # a vector
+    if (GLDSC(S, li) == 1) { return _dyn_tset(S, L64(_dsc_tn + li * 8)); }
+    return _dyn_f1(S, a);
+}
+# A closure's captured name (-1: not one). A captured dyn is a copy; any other capture is
+# refused (F4): its declaration is not this body's.
+fn _dyn_src_cap(S, nm, a): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var esl = _cl_snap_find(S, nm);
+    if (esl < 0) { return 0 - 1; }
+    var t = _cl_snap_type(esl);
+    if (t < 0) { if (t > 0 - 2048) { if (_dyn_is(S, 0 - t) == 1) { return 0; } } }
+    return _dyn_frf(S, a, "a closure's captured name: bind it to a declared variable first (`var n: i64 = ", ";`)");
+}
+fn _dyn_src_global(S, vi, a): i64 {
+    var pm = GVPM(S, vi);
+    var gt = GVTYPE(S, vi);
+    if (pm == 2) { if (gt > 0) {
+            if (_dyn_is(S, gt) == 1) { return 0; }
+            return _dyn_frf(S, a, "no implicit `&`: write `&", "` (the dyn holds its address)");
+        } }
+    if (pm == 1) { if (gt > 0) { return _dyn_sform(S, gt); } }
+    var ps = _gv_ptr_sid(S, vi);
+    if (ps > 0) { return _dyn_sform(S, ps); }
+    if (GVVEC(S, vi) != 0) { return _dyn_f5(S, a); }
+    if (gt < 0) { return _dyn_f8p(S, a); }   # a `*T` global, T no struct
+    var n1 = _gv_tn_get(vi);
+    if (n1 != 0) { return _dyn_tset(S, n1 - 1); }
+    return _dyn_f1(S, a);
+}
+# `& name` at token `a`.
+fn _dyn_src_addr(S, a): i64 {
+    var nm = TOKVAL(S, a + 1);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt <= 0 - 2048) { return _dyn_f5(S, a); }   # a vector
+            if (GLPTRP(S, li) == 1) { return _dyn_f3(S, a, 1); }
+            if (lt < 0) {
+                if (_dyn_is(S, 0 - lt) == 1) { return _dyn_f3d(S, a); }
+                if (GLAGG(S, li) == 1) { return _dyn_sform(S, 0 - lt); }
+                return _dyn_f3(S, a, 1);   # a handle
+            }
+            return _dyn_f3(S, a, 0);
+        }
+        var c = _dyn_src_cap(S, nm, a + 1);
+        if (c == 0) { return _dyn_f3d(S, a); }
+        if (c > 0) { return c; }
+    }
+    var vi = _findvar_core(S, nm);
+    if (vi < 0) { return _dyn_f5(S, a); }
+    var gt = GVTYPE(S, vi);
+    if (GVPM(S, vi) == 2) { if (gt > 0) {
+            if (_dyn_is(S, gt) == 1) { return _dyn_f3d(S, a); }
+            return _dyn_sform(S, gt);
+        } }
+    if (GVPM(S, vi) == 1) { return _dyn_f3(S, a, 1); }
+    if (_gv_ptr_sid(S, vi) > 0) { return _dyn_f3(S, a, 1); }
+    if (gt < 0) { return _dyn_f3(S, a, 1); }
+    if (GVVEC(S, vi) != 0) { return _dyn_f5(S, a); }
+    return _dyn_f3(S, a, 0);
+}
+# A whole call at token `a` — `f(..)`, `g<..>(..)`, `x.m(..)` — ending at `b` (-1: not one).
+fn _dyn_scall(S, a, b): i64 {
+    var o = _gcall_open(S, a);
+    if (o >= 0) {
+        if (_call_close(S, o) != b - 1) { return 0 - 1; }
+        var fi = _gen_resolve_call(S, a);
+        if (fi < 0) { return 0; }   # the call reports what it cannot resolve
+        return _dyn_sfn(S, fi, a);
+    }
+    if (_tok_method_open(S, a) == 0) { return 0 - 1; }
+    if (_call_close(S, a + 3) != b - 1) { return 0 - 1; }
+    var rs = _recv_sid(S, TOKVAL(S, a));
+    if (rs <= 0) { return _dyn_f5(S, a); }
+    var mf = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);   # 6.7.8 (D6): through a dyn, its prototype
+    if (mf < 0) { return 0; }   # the method reports itself
+    return _dyn_sfn(S, mf, a);
+}
+# A whole call of fn `fi`: a struct result is a copy (the struct paths check its type); a `*T`
+# result, T a struct, forms; any other result is refused.
+fn _dyn_sfn(S, fi, a): i64 {
+    var rs = GFRS(S, fi);
+    if (rs > 0) { if (rs < 2048) { return 0; } }
+    if (_fn_rpsid != 0) { if (L64(_fn_rpsid + fi * 8) > 0) { return _dyn_sform(S, L64(_fn_rpsid + fi * 8)); } }
+    return _dyn_f5(S, a);
+}
+# A field chain `a.f.g` at token `a` ending at `b` (-1: not one): a dyn leaf is a copy, a `*T`
+# leaf (T a struct) or a `Str` field forms; every hop through an inline struct field or a `*T`
+# field. A base or field that does not resolve is left to the struct paths (0), which name it.
+fn _dyn_schain(S, a, b): i64 {
+    if (b - a < 3) { return 0 - 1; }
+    var i = a + 1;
+    while (i < b) {
+        if (TOKTYP(S, i) != 41) { return 0 - 1; }
+        if (TOKTYP(S, i + 1) != 2) { return 0 - 1; }
+        i = i + 2;
+    }
+    if (i != b) { return 0 - 1; }
+    var sid = _dyn_base_sid(S, TOKVAL(S, a));
+    if (sid <= 0) {
+        if (_is_enum_name(S, TOKVAL(S, a)) == 1) { return _dyn_f5(S, a); }   # an enum constant
+        return 0;
+    }
+    i = a + 2;
+    while (i < b) {
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, i));
+        if (fi < 0) { return 0; }
+        var ft = GETFTYPE(S, sid - 1, fi);
+        var ps = _fld_ptr_sid(S, sid - 1, fi);
+        if (i + 1 == b) {
+            if (ps > 0) { return _dyn_sform(S, ps); }
+            if (ft > 0) {
+                if (_dyn_is(S, ft) == 1) { return 0; }
+                if (IS_STR_FIELD(S, ft) == 1) { return _dyn_sform(S, ft); }
+            }
+            return _dyn_f5(S, a);
+        }
+        if (ps > 0) { sid = ps; }
+        elif (ft > 0) { sid = ft; }
+        else { return _dyn_f5(S, a); }
+        i = i + 2;
+    }
+    return _dyn_f5(S, a);
+}
+# The struct a chain's base name reads fields of (a pointer's pointee), 0 = none.
+fn _dyn_base_sid(S, nm): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt < 0) { if (lt > 0 - 2048) { return 0 - lt; } }
+            return 0;
+        }
+        if (_CL_CAP_FIELD_IDX(S, nm) < 0 - 1) { return _cap_fld_sid; }
+    }
+    var vi = _findvar_core(S, nm);
+    if (vi < 0) { return 0; }
+    if (GVPM(S, vi) != 0) { if (GVTYPE(S, vi) > 0) { return GVTYPE(S, vi); } }
+    return _gv_ptr_sid(S, vi);
+}
+
+# The refusals of a source (each at token `a`; 2 = REFUSED).
+fn _dyn_fhead(S, a): i64 {
+    if (_dyn_ebeg(S, a) == 0) { return 0; }
+    PRSTR("cannot form ");
+    _dyn_ps(S, _dsr_ds);
+    return 1;
+}
+# F1 — an untyped name (decision 1: under ADR-002 it is an i64 that may hide a pointer).
+fn _dyn_f1(S, a): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from ");
+    _dyn_pq(S, TOKVAL(S, a));
+    PRSTR(" - an untyped name may hold a pointer (ADR-002): pass `&");
+    _dyn_pn(S, TOKVAL(S, a));
+    PRSTR("` for a struct, or bind it to a declared type (`var n: i64 = ");
+    _dyn_pn(S, TOKVAL(S, a));
+    PRSTR(";`)");
+    _dyn_eend(S);
+    return 2;
+}
+# F2 / F4 — "cannot form dyn S from 'x' - <w1>x<w2>".
+fn _dyn_frf(S, a, w1, w2): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from ");
+    _dyn_pq(S, TOKVAL(S, a));
+    PRSTR(" - ");
+    PRSTR(w1);
+    _dyn_pn(S, TOKVAL(S, a));
+    PRSTR(w2);
+    _dyn_eend(S);
+    return 2;
+}
+# F3 — `&x` of a pointer (`k` 1: a `*T`, a handle), of a scalar (0), of a dyn (`_dyn_f3d`).
+fn _dyn_f3(S, a, k): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from `&");
+    _dyn_pn(S, TOKVAL(S, a + 1));
+    if (k == 1) { PRSTR("` - it is a pointer already: write `"); }
+    else { PRSTR("` - a dyn of a scalar holds its value: write `"); }
+    _dyn_pn(S, TOKVAL(S, a + 1));
+    PRSTR("`");
+    _dyn_eend(S);
+    return 2;
+}
+fn _dyn_f3d(S, a): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from `&");
+    _dyn_pn(S, TOKVAL(S, a + 1));
+    PRSTR("` - it is a dyn: copy it whole (`= ");
+    _dyn_pn(S, TOKVAL(S, a + 1));
+    PRSTR("`)");
+    _dyn_eend(S);
+    return 2;
+}
+# F5 — any other expression.
+fn _dyn_f5(S, a): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from this expression - a dyn is formed from a `*T` the compiler knows (`&p`, a `*T` name, a pointer-mode handle, a `*T` field or call), a declared scalar or a literal: bind it to a declared variable first");
+    _dyn_eend(S);
+    return 2;
+}
+# F5 — a struct literal's element for a dyn field (`_spi_nested`) that is no whole dyn and no literal
+# number (`H { 1, 2, 3, 4 }` writes the words: V8): a source the literal would have to FORM — `&p`,
+# a name, a call. Refused, the element taken whole (1); `est` its first token (-1: carried in).
+fn _dyn_lit_form(S, est, ft): i64 {
+    if (est < 0) { return 0; }
+    var t = TOKTYP(S, est);
+    if (t == 1 || t == 61 || t == 7 || t == 169 || t == 170) { return 0; }
+    if (_dyn_ebeg(S, est) == 0) { return 1; }
+    PRSTR("a struct literal does not form a dyn - form it first (`var d: ");
+    _dyn_ps(S, ft);
+    PRSTR(" = ..;`) and write `d` here");
+    _dyn_eend(S);
+    return 1;
+}
+# F8 — a pointer to a scalar: a scalar's dyn holds its value.
+fn _dyn_f8p(S, a): i64 {
+    if (_dyn_fhead(S, a) == 0) { return 2; }
+    PRSTR(" from ");
+    _dyn_pq(S, TOKVAL(S, a));
+    PRSTR(" - a pointer to a scalar: the dyn of a scalar holds its value (bind it: `var n: i64 = *");
+    _dyn_pn(S, TOKVAL(S, a));
+    PRSTR(";`)");
+    _dyn_eend(S);
+    return 2;
+}
+
+# ── the pair (Tr, T): its impl, its one check, its vtable ───────────────────────────────────────
+# The impl of dyn `dsid`'s trait for T (`_dsr_tp` / `_dsr_tn`), checked and its vtable registered on
+# its first forming, reported at token `ti`; -1 = refused (F6, or the pair's own refusal).
+fn _dyn_pair(S, dsid, ti): i64 {
+    var tx = _dyn_tx(S, dsid);
+    if (tx < 0) { return 0 - 1; }   # no trait: T1 reported it
+    var ii = _dyn_impl_of(S, tx);
+    if (ii < 0) { return _dyn_f6(S, ti, tx); }
+    if (_ti_dyn == 0) { _ti_dyn = alloc(4096 * 8); }
+    var r = L64(_ti_dyn + ii * 8);
+    if (r == 1) { return 0 - 1; }   # refused at its first forming (reported there)
+    if (r == 0) {
+        if (_dyn_pair_chk(S, ii, tx, ti) == 0) {
+            S64(_ti_dyn + ii * 8, 1);
+            return 0 - 1;
+        }
+        S64(_ti_dyn + ii * 8, (_dyn_vt_reg(S, tx) + 1) << 1);
+    }
+    _dyn_vis(S, ii, tx, ti);
+    return ii;
+}
+# The impl of trait `tx` for the type named by T's bytes, -1 = none.
+fn _dyn_impl_of(S, tx): i64 {
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64 + 48) == tx) {
+            if (_dyn_tname_is(S, L64(_ti_tab + i * 64 + 8)) == 1) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+fn _dyn_tname_is(S, noff): i64 {
+    var q = S + 0xEC00000 + noff;
+    var i = 0;
+    while (i < _dsr_tn) {
+        if (load8(q + i) != load8(_dsr_tp + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(q + _dsr_tn) != 0) { return 0; }
+    return 1;
+}
+# F6 — no `impl Tr for T`.
+fn _dyn_f6(S, ti, tx): i64 {
+    if (_dyn_ebeg(S, ti) == 0) { return 0 - 1; }
+    PRSTR("no `impl ");
+    _dyn_pn(S, L64(_tr_tab + tx * 32));
+    PRSTR(" for ");
+    syscall(SYS_WRITE, 2, _dsr_tp, _dsr_tn);
+    PRSTR("` - a ");
+    _dyn_ps(S, _dsr_ds);
+    PRSTR(" is formed only from a type that implements ");
+    _dyn_pn(S, L64(_tr_tab + tx * 32));
+    _dyn_eend(S);
+    return 0 - 1;
+}
+# The vtable of trait `tx`: a hidden global of one word per member (at least one: a zero-size
+# global's store overwrote its neighbour), named nothing and dead to FINDVAR (`_HTEMP`'s top-level
+# arm). Registered inside a fn too, and program-wide BY DESIGN: every forming site, of every call,
+# thread and file, writes the same words (tests/gates/codegen/hidden_temp_census.sh names it). Its index.
+fn _dyn_vt_reg(S, tx): i64 {
+    var n = L64(_tr_tab + tx * 32 + 16);
+    if (n < 1) { n = 1; }
+    var _dvt = GVCNT(S);
+    S64(_varn_base + _dvt * 8, 0);
+    S64(_vars_base + _dvt * 8, n * 8);
+    SVDEAD(S, _dvt, 1);
+    SVCNT(S, _dvt + 1);
+    return _dvt;
+}
+# 1 = trait member `k` is callable through a dyn — a slot: not generic, and its first parameter an
+# untyped `self` and no `...`. (Calling another member through a dyn is refused at the call.)
+fn _dyn_slot_ok(S, k): i64 {
+    var tp = L64(_trm_ft + k * 8);
+    if (TOKTYP(S, tp + 2) == 19) { return 0; }
+    var o = _tr_paren(S, tp);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o + 1) != 2) { return 0; }
+    if (_noff_is(S, TOKVAL(S, o + 1), "self", 4) == 0) { return 0; }
+    if (TOKTYP(S, o + 2) == 49) { return 0; }
+    var j = 1;
+    while (_dps_param(S, o, j) == 1) {
+        if (_dps_va == 1) { return 0; }
+        j = j + 1;
+    }
+    return 1;
+}
+# Slot `k`'s fn for impl `ii` (T's own method, or T's default instance — `T_Trait_m` when the name
+# collides), -1 for a member that is no slot.
+fn _dyn_slot_fi(S, ii, k): i64 {
+    if (_dyn_slot_ok(S, k) == 0) { return 0 - 1; }
+    var m = L64(_trm_tab + k * 32);
+    return _tr_findfn_join(S, _tr_prefix(S, ii, m), m);
+}
+# F10 — each slot's fn is reached from this site as `&f` is: the `private` check and the
+# `#deprecated` warning, at every forming site.
+fn _dyn_vis(S, ii, tx, ti): i64 {
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        var fi = _dyn_slot_fi(S, ii, k);
+        if (fi >= 0) { _callee_site_checks(S, fi, L64(_fnt_names + fi * 8), ti); }
+        k = k + 1;
+    }
+    return 0;
+}
+# THE PAIR'S ONE CHECK (decision 4: impls never formed into a dyn keep the count-only check). 1 = ok.
+fn _dyn_pair_chk(S, ii, tx, ti): i64 {
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        var m = L64(_trm_tab + k * 32);
+        var fp = L64(_trm_ft + k * 8);   # the slot's code: the impl's own method, or the default
+        var im = _tim_of(S, ii, m);
+        if (im >= 0) {
+            fp = L64(_tim_tab + im * 24 + 8);
+            var d = _dyn_sig_eq(S, L64(_trm_ft + k * 8), fp);
+            if (d != 0) { return _dyn_f8(S, ti, ii, m, d); }
+        }
+        if (_dyn_slot_ok(S, k) == 1) {
+            var sf = _dyn_self_ok(S, ii, fp);
+            if (sf == 1) { return _dyn_f7(S, ti, ii, m); }
+            if (sf > 1) { return _dyn_f8(S, ti, ii, m, sf); }
+            var pf = _dyn_fn_pfx(S, fp);
+            if (pf == 134 || pf == 133) { return _dyn_f9(S, ti, ii, m, pf); }
+            # 10 — a slot returning a `: stack` pair where the member declares one value: the call
+            # through the dyn returns what the trait declares (the prototype's class, `_dyn_proto`).
+            if (_dyn_slot_pair(S, _dyn_slot_fi(S, ii, k), fp) == 1) {
+                if (_dyn_decl_pair(S, k) == 0) { return _dyn_f8(S, ti, ii, m, 10); }
+            }
+        }
+        k = k + 1;
+    }
+    return 1;
+}
+# A3 — 0 = the impl's method at `fn` token `fp` has the trait member at `tp`'s signature: each
+# parameter after `self`, then the return, by type (a name by its resolved type, untyped = i64,
+# every other token by its kind), generic-ness and `...` alike. Else what differs: 3 a parameter's
+# type (`_dsq_k` its name token), 4 the return type, 5 the parameter count, 6 one generic, 7 a `...`.
+var _dsq_k = 0;   # the trait's differing parameter (its name token)
+fn _dyn_sig_eq(S, tp, fp): i64 {
+    var ga = 0;
+    var gb = 0;
+    if (TOKTYP(S, tp + 2) == 19) { ga = 1; }
+    if (TOKTYP(S, fp + 2) == 19) { gb = 1; }
+    if (ga != gb) { return 6; }
+    var a = _tr_paren(S, tp);
+    var b = _tr_paren(S, fp);
+    if (a < 0 || b < 0) { return 0; }   # malformed: its own parse reports it
+    var k = 1;
+    var go = 1;
+    while (go == 1) {
+        var ha = _dps_param(S, a, k);
+        var xs = _dps_ts;
+        var xe = _dps_te;
+        var xv = _dps_va;
+        var xn = _dps_nm;
+        var hb = _dps_param(S, b, k);
+        if (ha + hb == 0) { go = 0; }
+        else {
+            if (ha != hb) { return 5; }
+            if (xv != _dps_va) { return 7; }
+            if (_dyn_ty_eq(S, xs, xe, _dps_ts, _dps_te) == 0) {
+                _dsq_k = xn;
+                return 3;
+            }
+            k = k + 1;
+        }
+    }
+    var ra = _dyn_ret_at(S, a);
+    var re = _dps_te;
+    var rb = _dyn_ret_at(S, b);
+    if (_dyn_ty_eq(S, ra, re, rb, _dps_te) == 0) { return 4; }
+    return 0;
+}
+# Parameter `k` of the list whose `(` is token `o`: 1 and its type's tokens [`_dps_ts`, `_dps_te`)
+# (empty when untyped; `_dps_va` 1 for `...`), or 0 when the list has no parameter `k`.
+var _dps_ts = 0;
+var _dps_te = 0;
+var _dps_va = 0;
+var _dps_nm = 0;   # ... and its first token (its name)
+fn _dps_param(S, o, k): i64 {
+    var q = o + 1;
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var n = 0;
+    while (n < k) {
+        q = _pl_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0; }
+        q = q + 1;
+        n = n + 1;
+    }
+    _dps_va = 0;
+    _dps_nm = q;
+    _dps_ts = q + 1;
+    _dps_te = q + 1;
+    if (TOKTYP(S, q) == 112) {
+        _dps_va = 1;
+        return 1;
+    }
+    if (TOKTYP(S, q + 1) == 49) {
+        _dps_ts = q + 2;
+        _dps_te = _dps_tend(S, q + 2, _pl_next(S, q));
+    }
+    return 1;
+}
+# A parameter's type from token `i` ends at its depth-0 `=` (a default), else at `e`.
+fn _dps_tend(S, i, e): i64 {
+    var d = 0;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (d == 0) { if (t == 4) { return i; } }
+        d = _pl_tdepth(t, d);
+        i = i + 1;
+    }
+    return e;
+}
+# The return type after the parameter list whose `(` is `o`: its first token, `_dps_te` its end
+# (both the token after the `)` when there is none — an untyped i64).
+fn _dyn_ret_at(S, o): i64 {
+    var c = _call_close(S, o);
+    _dps_te = c + 1;
+    if (TOKTYP(S, c + 1) != 49) { return c + 1; }
+    var i = c + 2;
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (d == 0) { if (t == 5 || t == 13) { _dps_te = i; return c + 2; } }
+        d = _pl_tdepth(t, d);
+        i = i + 1;
+    }
+    _dps_te = i;
+    return c + 2;
+}
+# Two types' tokens [a, ae) and [b, be): 1 = the same type. Absent is i64.
+fn _dyn_ty_eq(S, a, ae, b, be): i64 {
+    if (a == ae) { return _dyn_ty_i64(S, b, be); }
+    if (b == be) { return _dyn_ty_i64(S, a, ae); }
+    if (ae - a != be - b) { return 0; }
+    while (a < ae) {
+        var t = TOKTYP(S, a);
+        if (t != TOKTYP(S, b)) { return 0; }
+        if (t == 2) { if (_dyn_name_eq(S, a, b) == 0) { return 0; } }
+        if (t == 1) { if (TOKVAL(S, a) != TOKVAL(S, b)) { return 0; } }
+        a = a + 1;
+        b = b + 1;
+    }
+    return 1;
+}
+fn _dyn_ty_i64(S, i, e): i64 {
+    if (e == i) { return 1; }
+    if (e != i + 1) { return 0; }
+    if (TOKTYP(S, i) != 2) { return 0; }
+    if (_tn_resolve_at(S, i) == _tn_code(1, 8)) { return 1; }
+    return 0;
+}
+fn _dyn_name_eq(S, a, b): i64 {
+    var ca = _tn_resolve_at(S, a);
+    if (ca != 0) {
+        if (ca == _tn_resolve_at(S, b)) { return 1; }
+        return 0;
+    }
+    if (_tn_resolve_at(S, b) != 0) { return 0; }
+    return STREQ(S, TOKVAL(S, a), TOKVAL(S, b));
+}
+# The `self` a slot method (`fn` token `fp`) of impl `ii` declares: 0 = one a dyn's data word
+# feeds (untyped; for a struct T `self: *T` or a `self: T` over 8 B — address-passed; for a scalar
+# T `self: T`); 1 = decision 2 (`self: T`, T a struct of 8 B or less); 8 `self: Q`, Q not T; 9 a
+# scalar T's `self: *T`.
+fn _dyn_self_ok(S, ii, fp): i64 {
+    var o = _tr_paren(S, fp);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, 0) == 0) { return 0; }
+    var i = _dps_ts;
+    var e = _dps_te;
+    if (i == e) { return 0; }
+    var tn = L64(_ti_tab + ii * 64 + 8);
+    var sid = FINDSTRUCT(S, tn);
+    var p = 0;
+    if (TOKTYP(S, i) == 8) {
+        p = 1;
+        i = i + 1;
+    }
+    if (e != i + 1) { return 8; }
+    if (TOKTYP(S, i) != 2) { return 8; }
+    if (STREQ(S, TOKVAL(S, i), tn) == 0) { return 8; }
+    if (sid <= 0) {
+        if (p == 1) { return 9; }
+        return 0;
+    }
+    if (p == 1) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 1; }
+    return 0;
+}
+# "cannot form dyn S from T - its method 'm' " — the head of F7 / F8 / F9 (0 = say nothing).
+fn _dyn_mhead(S, ti, ii, m): i64 {
+    if (_dyn_fhead(S, ti) == 0) { return 0; }
+    PRSTR(" from ");
+    _dyn_pn(S, L64(_ti_tab + ii * 64 + 8));
+    PRSTR(" - its method ");
+    _dyn_pq(S, m);
+    return 1;
+}
+# F7 — decision 2.
+fn _dyn_f7(S, ti, ii, m): i64 {
+    if (_dyn_mhead(S, ti, ii, m) == 0) { return 0; }
+    PRSTR(" takes `self: ");
+    _dyn_pn(S, L64(_ti_tab + ii * 64 + 8));
+    PRSTR("` by value, and a struct of 8 bytes or less arrives in a register, not through the dyn's data word: declare `self` untyped (or `self: *");
+    _dyn_pn(S, L64(_ti_tab + ii * 64 + 8));
+    PRSTR("`)");
+    _dyn_eend(S);
+    return 0;
+}
+# F8 — a signature that differs from the trait's (decision 4, A3), `d` what (`_dyn_sig_eq`, `_dyn_self_ok`).
+fn _dyn_f8(S, ti, ii, m, d): i64 {
+    if (_dyn_mhead(S, ti, ii, m) == 0) { return 0; }
+    PRSTR(" does not match its declaration in trait ");
+    _dyn_pn(S, L64(_ti_tab + ii * 64));
+    PRSTR(": ");
+    if (d == 3) {
+        PRSTR("parameter ");
+        _dyn_pq(S, TOKVAL(S, _dsq_k));
+        PRSTR(" has another type (an untyped parameter is i64)");
+    }
+    elif (d == 4) { PRSTR("the return type differs (no return type is i64)"); }
+    elif (d == 5) { PRSTR("the parameter count differs"); }
+    elif (d == 6) { PRSTR("one is generic, the other is not"); }
+    elif (d == 7) { PRSTR("a variadic `...` differs"); }
+    elif (d == 8) {
+        PRSTR("its `self` is not ");
+        _dyn_pn(S, L64(_ti_tab + ii * 64 + 8));
+        PRSTR(" (declare `self` untyped)");
+    }
+    elif (d == 10) { PRSTR("it returns a `: stack` pair (a tag and a payload) where the trait declares one value - declare the return, in the trait and the impl, as the enum it returns (`: Result`)"); }
+    else { PRSTR("`self: *T` - the dyn of a scalar holds its value, not a pointer to it (declare `self` untyped, or `self: T`)"); }
+    _dyn_eend(S);
+    return 0;
+}
+# F9 — an `async` (134) or `#naked` (133) slot method: a dyn calls a plain fn.
+fn _dyn_f9(S, ti, ii, m, pf): i64 {
+    if (_dyn_mhead(S, ti, ii, m) == 0) { return 0; }
+    if (pf == 134) { PRSTR(" is `async`"); } else { PRSTR(" is `#naked`"); }
+    PRSTR(" - a dyn calls its methods as plain fns");
+    _dyn_eend(S);
+    return 0;
+}
+
+# ── the emission ────────────────────────────────────────────────────────────────────────────────
+# THE FILL, at every forming site (idempotent: every site writes the same words): slot k of impl
+# `ii`'s vtable = its fn's address (a fixup-type-3 load, as `&f`), stored addressed. rax = the
+# table's address. Every emitter is IR-recorded.
+fn _dyn_fill(S, ii): i64 {
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    var vt = (L64(_ti_dyn + ii * 8) >> 1) - 1;
+    var k0 = L64(_tr_tab + tx * 32 + 8);
+    var n = L64(_tr_tab + tx * 32 + 16);
+    var j = 0;
+    while (j < n) {
+        var fi = _dyn_slot_fi(S, ii, k0 + j);
+        if (fi >= 0) {
+            var fc = GFCNT(S);
+            if (fc >= 1048576) {
+                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                syscall(SYS_EXIT, 1);
+            }
+            ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi);
+            EPUSHR(S);
+            EVADDR_X1(S, vt);
+            if (j > 0) { EADDIMM_X1(S, j * 8); }
+            EPOPR(S);
+            ESTOC(S);
+        }
+        j = j + 1;
+    }
+    EVADDR(S, vt);
+    return 0;
+}
+# The data word was pushed (the source's value): build the dyn `dsid` of impl `ii` into the inline
+# aggregate `idx` (`_resolve_field_base_addr`'s encoding: `0 - 2 - slot` a frame slot, >= 0 a
+# global) — word 1 the vtable, word 0 the data — through addressed stores.
+fn _dyn_build(S, ii, dsid, idx): i64 {
+    _dyn_fill(S, ii);
+    EPUSHR(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    _resolve_field_base_addr(S, idx, dsid);
+    EADDIMM_X1(S, 8);
+    EPOPR(S);
+    ESTOC(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    _resolve_field_base_addr(S, idx, dsid);
+    EPOPR(S);
+    ESTOC(S);
+    return 0;
+}
+# The source (cursor on it) evaluated and its dyn built into aggregate `idx`. The impl is read before
+# the source is parsed: a dyn formed inside it (an argument of the call that returns the `*T`) is
+# classified in between.
+fn _dyn_emit(S, dsid, idx): i64 {
+    var ii = _dsr_ii;
+    PCMPE(S);
+    EPUSHR(S);
+    _dyn_build(S, ii, dsid, idx);
+    return 0;
+}
+# The terminator of a source from token `st`: its first depth-0 `term`, or the `)` / `]` / `}` that
+# closes what it sits in.
+fn _dyn_ext(S, st, term): i64 {
+    var k = st;
+    var d = 0;
+    var n = GTCNT(S);
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return k; }
+        if (d == 0) { if (t == term) { return k; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) {
+            if (d == 0) { return k; }
+            d = d - 1;
+        }
+        k = k + 1;
+    }
+    return k;
+}
+
+# ── the destinations (each a first-line hook in a small helper) ────────────────────────────────
+# `var o: dyn S = src;` (PARSE_VAR, through `_tup_var`; cursor on `=`): 1 = declared (the `;`
+# consumed); 0 = a copy, for the struct paths. In a fn the block is reserved with its span before
+# the source is parsed and named after (the source reads an outer `o`); a global after the first
+# statement is registered inline after its source. A refused source still declares the name.
+fn _dyn_var_init(S, noff, dsid): i64 {
+    var dti = GTI(S);
+    var st = dti + 1;
+    var en = _dyn_ext(S, st, 5);
+    var c = _dyn_src(S, st, en, dsid, 0);
+    if (c == 0) { return 0; }
+    STI(S, st);
+    if (GINFN(S) == 1) {
+        var named = _tup_lres(S, noff, 2);
+        if (named >= 0) {
+            if (c == 1) { _dyn_emit(S, dsid, 0 - 2 - named); }
+            _tup_lname(S, named, noff, dsid);
+        }
+    } else {
+        var ii = _dsr_ii;
+        if (c == 1) {
+            PCMPE(S);
+            EPUSHR(S);
+        }
+        var vc = _tup_greg(S, noff, dsid);
+        if (c == 1) { _dyn_build(S, ii, dsid, vc); }
+        SLVAR(S, vc);
+        _GVAR_VIS(S, vc, dti);
+        SVCNT(S, vc + 1);
+    }
+    STI(S, en);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# The declaration zone's `var G: dyn S = src;` (EMIT_GVAR_INITS, through `_gvi_tuple`; cursor on
+# the source): pass 1 registered G inline (`_gci_inline`). 1 = done (the `;` consumed).
+fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
+    if (gps >= 0) { return 0; }
+    if (gps <= 0 - 2048) { return 0; }
+    var dsid = 0 - gps;
+    if (_dyn_is(S, dsid) == 0) { return 0; }
+    var st = GTI(S);
+    var en = _dyn_ext(S, st, 5);
+    var c = _dyn_src(S, st, en, dsid, 0);
+    if (c == 0) { return _gvi_dyn_mcall(S, st, en, dsid); }
+    if (c == 1) {
+        if (idx >= 0) { if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == dsid) {
+                    _dyn_emit(S, dsid, idx);
+                    _gv_slvar(S, idx);
+                } } }
+    }
+    STI(S, en);
+    _gvk_left(S, gi, sti, idx);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# 6.7.8 (D6): a zone dyn copied from one whole METHOD call (`var Z2: dyn Show = Z.me();`, through a
+# dyn or not): the 16-byte result comes back in rax:rdx and the replay has no frame to receive it —
+# it stored rax alone (the data word, as the address of an inline dyn: a SIGSEGV at the first call).
+# Refused by name, as the free call is (`_refuse_toplevel_pair_init`). 1 = refused, `;` consumed.
+fn _gvi_dyn_mcall(S, st, en, dsid): i64 {
+    if (_dyn_src_mcall(S, st, dsid) == 0) { return 0; }
+    STI(S, st + 2);
+    _refuse_toplevel_struct_call(S, L64(_fnt_names + _pair_callee_at(S, st) * 8));
+    STI(S, en);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# `o = src;` into a dyn variable (`_try_aggregate_copy_assign`'s first line; a for step's `term` 11):
+# built in a frame temp, then copied in as a struct call's result is. 1 = done (`term` consumed).
+fn _dyn_asg(S, noff, term): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    var dsid = 0 - _agc_t;
+    if (_dyn_is(S, dsid) == 0) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var st = GTI(S);
+    var en = _dyn_ext(S, st, term);
+    var c = _dyn_src(S, st, en, dsid, 1);
+    if (c == 0) { return 0; }
+    if (c == 1) {
+        var t = _agg_temp(S, dsid);
+        _dyn_emit(S, dsid, 0 - 2 - t);
+        _agc_from_temp(S, t, dli, dgv, n, dsid);
+    }
+    STI(S, en);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# `h.o = src;` / `hp.o = src;` (`_fsc_src`'s first lines, `ft` the field's dyn): built in a frame
+# temp recorded as the copy's source (1); a refused source leaves 0 in rax for the ordinary store
+# (2, the source's first token marked reported); 0 = a copy.
+fn _dyn_fsc(S, ft, term): i64 {
+    var st = GTI(S);
+    var en = _dyn_ext(S, st, term);
+    var c = _dyn_src(S, st, en, ft, 1);
+    if (c == 0) { return 0; }
+    if (c == 2) {
+        _tn_once(S, st);
+        STI(S, en);
+        EMOVI(S, 0);
+        return 2;
+    }
+    var t = _agg_temp(S, ft);
+    _dyn_emit(S, ft, 0 - 2 - t);
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
+}
+# An argument to a `o: dyn S` parameter (`_try_push_struct_addr_arg`): built in a frame temp and
+# its address pushed — an address in this frame, so a tail call diverts (`_sarg_escapes`). 1 =
+# pushed; 0 = a copy (the struct arms).
+fn _dyn_sarg(S, fi, argc, tail): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    var ps = GFPSID(S, fi, argc);
+    if (_dyn_is(S, ps) == 0) { return 0; }
+    var st = GTI(S);
+    var en = _arg_next(S, st);
+    var c = _dyn_src(S, st, en, ps, 1);
+    if (c == 0) { return 0; }
+    if (c == 1) {
+        var t = _agg_temp(S, ps);
+        _dyn_emit(S, ps, 0 - 2 - t);
+        _sarg_escapes(fi, argc, tail);
+        EFLADDR(S, t);
+    } else {
+        STI(S, en);
+        EMOVI(S, 0);
+    }
+    EPUSHR(S);
+    return 1;
+}
+# `return src;` in a fn returning a dyn (`_ret_struct_pair`, after `_ret_peel`): built in a frame
+# temp and loaded as the pair. 1 = done; 0 = a copy (the pair arms).
+fn _dyn_ret(S): i64 {
+    var rs = _cur_fn_ret_sid;
+    if (_dyn_is(S, rs) == 0) { return 0; }
+    var st = GTI(S);
+    var en = _dyn_ext(S, st, _ret_term);
+    var c = _dyn_src(S, st, en, rs, 0);
+    if (c == 0) { return 0; }
+    var t = 0;
+    if (c == 1) {
+        t = _agg_temp(S, rs);
+        _dyn_emit(S, rs, 0 - 2 - t);
+    }
+    STI(S, en);
+    _ret_end(S);
+    if (c == 1) {
+        EFLLOAD_STRUCT_INT_PAIR(S, t);
+        var rp = EJMP0(S);
+        vec_push(rp_vec, rp);
+    }
+    return 1;
+}
+
+# ── declared scalars: the stamps a scalar source is read from ──────────────────────────────────
+# The annotation at token `ann` as a declared scalar's name + 1, else 0: a name (not behind `*`)
+# resolving to an integer, a float, bool, an enum or an 8-byte handle (cstring, Result, Vec, ..).
+# Only in a unit that spells `dyn` (`_dyn_nx`): every other unit records nothing.
+fn _dsc_name(S, ann): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    var k = _tn_class(_tn_resolve_at(S, ann));
+    if (k < 1) { return 0; }
+    if (k > 4) { return 0; }
+    return TOKVAL(S, ann) + 1;
+}
+# Frame slot `li` declared with annotation name `n1` (+ 1; 0 = none): the name, then bit 62 — LAST,
+# as the slot's other marks. A slot past the table is never stamped: refused as untyped, by name.
+fn _dsc_stamp(S, li, n1): i64 {
+    if (n1 == 0) { return 0; }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (_dsc_tn == 0) { _dsc_tn = alloc(16384 * 8); }
+    S64(_dsc_tn + li * 8, n1 - 1);
+    SLDSC(S, li);
+    return 0;
+}
+# A parameter's type token `ti` (`_tn_param_check`): pending until `_param_record` stamps its slot.
+fn _dsc_param(S, ti): i64 {
+    _dsc_pend = 0;
+    if (TOKTYP(S, ti - 1) == 8) { return 0; }   # `*T`: a pointer
+    _dsc_pend = _dsc_name(S, ti);
+    return 0;
+}
+fn _dsc_param_slot(S, li): i64 {
+    _dsc_stamp(S, li, _dsc_pend);
+    _dsc_pend = 0;
+    return 0;
+}
+# The #inline replay re-registers parameters by name (`_inl_bind_param`): parameter `ord` of callee
+# `fi`, at `slot`, stamped from the callee's definition, as its out-of-line body is.
+fn _dsc_inl(S, fi, ord, slot): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, ord) == 0) { return 0; }
+    if (_dps_ts == _dps_te) { return 0; }
+    _dsc_stamp(S, slot, _dsc_name(S, _dps_ts));
+    return 0;
+}
+# A global's declaration (`_gv_last_marks`): its annotation's name + 1, or 0 — every declaration,
+# so a redeclaration folded onto the slot clears a stale one. Grown as the global table grows.
+fn _gv_tn_set(S, vi, ann): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= _gv_tnc) {
+        var nc = _gv_tnc * 2;
+        if (nc < 4096) { nc = 4096; }
+        while (nc <= vi) { nc = nc * 2; }
+        var nb = alloc(nc * 8);
+        var i = 0;
+        while (i < _gv_tnc) {
+            S64(nb + i * 8, L64(_gv_tn + i * 8));
+            i = i + 1;
+        }
+        _gv_tn = nb;
+        _gv_tnc = nc;
+    }
+    S64(_gv_tn + vi * 8, _dsc_name(S, ann));
+    return 0;
+}
+fn _gv_tn_get(vi): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= _gv_tnc) { return 0; }
+    return L64(_gv_tn + vi * 8);
+}
+
+# ⛔ 6.7.8 (D6) — THE CALL THROUGH A DYN, `o.m(args)` (the user's decisions 3 and 7, 2026-10-07): an
+# INDIRECT call through slot k of the table word 1 points at, the data word passed as `self` —
+# visible in the declared type; static dispatch stays the default. The callee is the trait member's
+# PROTOTYPE, a fn-table entry named `dyn Show.m` (a space and a `.`: no identifier spells it, no user
+# fn collides), made on the first call naming the member (`_dyn_proto`: lazy, so a program that
+# calls through no dyn has none) from the member's signature at the trait, exactly as pass 1 records
+# a fn called before its definition (`_prescan_params`, `_prescan_ret_type`). So every argument goes
+# through the one marshaller every direct call shares (`_owncall_args_at`: a by-value struct's
+# address, a dyn formed in place, `: Str` literals, f32 rounding, SIMD), and the result through the
+# struct-call hooks (`_sc_pre_m` / `_sc_x8` / `_sc_post`: a 16 B pair, a retptr — aarch64's X8 —, a
+# chain `o.clone().show()`) and `_call_ret_marks` (an f64 comes back typed f64). A prototype has no
+# body, no defaults and no call fixup: no `shared;` export, no CYRIUS_SYMS line, no DCE note, and
+# its owner is the trait's file, so it is never "undefined". The callee is loaded from the table and
+# spilled to a fresh frame slot BEFORE `self` and the arguments (an argument may rewrite the dyn);
+# the call is `ECALLIND` on every target — PE too, never `ECALLPTR_PE`, whose forced alignment serves
+# a real Win64 callee (a dyn's callee is cyrius code) and which pops its own arguments: proven on
+# cass, ecb, ach and pi before this was written (the lane's D0). At top level the call opens the
+# indirect call's micro-frame (`PINDIRECT_CALL`'s). Refused by name at the method's name, the call
+# consumed: C1 a member the trait does not declare, C2 a generic member (decision 3), C3 one whose
+# first parameter is no untyped `self`, C4 a variadic one, C5 one returning multiple values, a
+# u128 or a vector, C6 named arguments; C7 the arity, in every call's words (`'dyn Show.m'
+# expects ..`). The lookaheads read the same prototype (`_meth_fn_at`'s dyn arm). CHANGELOG [6.7.8]
+var _dyn_p2 = 0;    # 1 once pass 1 has registered every struct: a prototype is made only from then on
+var _trm_pf = 0;    # per trait member (8192 words): its prototype fn + 1, 0 = not made yet
+var _dyc_t = 0;     # the call's struct-result temp (`_sc_pre_m`), read after the call
+
+# `x.m(..)` on a receiver of struct `sid` (PARSE_FIELD_LOAD's encoding `idx`; the cursor on `(`): 1 =
+# consumed — a call through a dyn, or a tuple's / a digit-led name's refusal (`_tup_meth_chk`).
+fn _meth_pre(S, fnoff, beg, idx, sid): i64 {
+    if (_dyn_is(S, sid) == 1) { return _dyn_call(S, fnoff, beg, idx, sid); }
+    return _tup_meth_chk(S, sid, fnoff);
+}
+fn _dyn_call(S, fnoff, beg, idx, sid): i64 {
+    var k = _dyn_callee(S, sid, fnoff, GTI(S) - 1);
+    if (k >= 0) { if (_pd_named_at(S, GTI(S)) == 1) {   # C6
+            _dyn_err(S, _pd_first_label(S, GTI(S) + 1), "named arguments need a direct call - a call through a ", sid, 0 - 1, " passes arguments by position");
+            k = 0 - 1;
+        } }
+    if (k < 0) {
+        _dyn_args_skip(S);
+        _mchain_skip(S);   # and a chain on the refused call's result
+        EMOVI(S, 0);
+        SESTYPE(S, 0);
+        return 1;
+    }
+    var pf = _dyn_proto(S, sid, k);
+    var j = k - L64(_tr_tab + L64(_trm_tab + k * 32 + 24) * 32 + 8);   # its slot
+    var na = _dyn_argc(S, GTI(S));
+    var ln = GTLINE(S, GTI(S));
+    if (_cur_fn_ix >= 0) { _dyn_call_in(S, pf, beg, idx, sid, j); }
+    else { _dyn_call_top(S, pf, beg, idx, sid, j); }
+    var t = _dyc_t;
+    var pn = L64(_fnt_names + pf * 8);
+    _CHECK_ARITY(S, ln, pn, pf, na + 1, 0);   # C7 (`self` counted, as the method form counts it)
+    SESTYPE(S, 0);
+    _sc_post(S, pf, pn, beg, t);
+    _call_ret_marks(S, pf);
+    _mcall_last = pf;
+    _method_chain(S, pf, pn, beg, t);
+    _cfo = 0;
+    return 1;
+}
+# The emission (cursor on the `(`; `j` the member's slot): the result's temp (x86 / cx: its address
+# int arg 0), the callee spilled, `self` = the data word, the arguments, X8, the indirect call.
+fn _dyn_call_in(S, pf, beg, idx, sid, j): i64 {
+    var pn = L64(_fnt_names + pf * 8);
+    var t = _sc_pre_m(S, pf, pn, beg);
+    var n0 = _sc_n0;
+    _fld_addr_ra(S, idx, sid, 8, j * 8);   # rax = &slot j of the table word 1 points at
+    ELOAD64(S);
+    var cp = _dyn_cslot(S);
+    EFLSTORE(S, cp);                       # the callee, before any argument is evaluated
+    _fld_addr_ra(S, idx, sid, 0, 0);       # rax = the data word
+    EPUSHR(S);                             # `self`, int arg n0
+    var ln = GTLINE(S, GTI(S));
+    STI(S, GTI(S) + 1);                    # (
+    var n = _owncall_args_at(S, pf, pn, 1 + n0, 1, ln);
+    _sc_x8(S, pf, t);
+    ECALLIND(S, cp);
+    ECALLCLEAN(S, n);
+    _dyc_t = t;
+    return 0;
+}
+# At top level there is no frame for the callee's slot: the indirect call's micro-frame (slot
+# numbering from 0 inside it, sized from the high-water; the enclosing state restored).
+fn _dyn_call_top(S, pf, beg, idx, sid, j): i64 {
+    var tl_flc = GFLC(S);
+    var tl_hwm = _flc_hwm;
+    SFLC(S, 0);
+    _flc_hwm = 0;
+    var tl_patch = ETLFRAME_OPEN(S);
+    _dyn_call_in(S, pf, beg, idx, sid, j);
+    var tl_n = GFLC(S);
+    if (_flc_hwm > tl_n) { tl_n = _flc_hwm; }
+    ETLFRAME_CLOSE(S, tl_patch, tl_n);
+    SFLC(S, tl_flc);
+    _flc_hwm = tl_hwm;
+    return 0;
+}
+# A fresh anonymous frame slot (`_PINDIRECT_CALL_IN`'s), the frame's high-water raised: an #inline
+# replay gives its slots back.
+fn _dyn_cslot(S): i64 {
+    var cp = GFLC(S);
+    S64(S + 0x5D9D000 + cp * 8, 0 - 1);
+    SLDEP(S, cp, 0);
+    SFLC(S, cp + 1);
+    if (cp + 1 > _flc_hwm) { _flc_hwm = cp + 1; }
+    return cp;
+}
+# A refused call's `( .. )`: stepped over — under `--syntax-only` (a trait in a sibling file, the
+# refusals silent) its arguments are parsed, so a grammar error in them is still reported.
+fn _dyn_args_skip(S): i64 {
+    if (_syntax_only == 0) {
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 11) {
+        var go = 1;
+        while (go == 1) {
+            if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+            PCMPE(S);
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            else { go = 0; }
+        }
+    }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The arguments in the list whose `(` is token `o`.
+fn _dyn_argc(S, o): i64 {
+    if (TOKTYP(S, o + 1) == 11) { return 0; }
+    var n = 0;
+    var q = o + 1;
+    var go = 1;
+    while (go == 1) {
+        n = n + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) == 31) { q = q + 1; }
+        else { go = 0; }
+    }
+    return n;
+}
+# The member `fnoff` of dyn `sid`'s trait a dyn can call: its index k, or -1 (refused at token `mti`,
+# the method's name; silent when the trait is unknown — T1 reported it, or a trait in a sibling file
+# under `--syntax-only`).
+fn _dyn_callee(S, sid, fnoff, mti): i64 {
+    var tx = _dyn_tx(S, sid);
+    if (tx < 0) { return 0 - 1; }
+    var k = _dyn_member(S, tx, fnoff);
+    if (k < 0) {   # C1
+        if (_dyn_ebeg(S, mti) == 0) { return 0 - 1; }
+        PRSTR("trait ");
+        _dyn_pn(S, L64(_tr_tab + tx * 32));
+        PRSTR(" declares no method ");
+        _dyn_pq(S, fnoff);
+        PRSTR(" - a ");
+        _dyn_ps(S, sid);
+        PRSTR(" calls only the methods its trait declares");
+        _dyn_eend(S);
+        return 0 - 1;
+    }
+    var w = _dyn_why(S, k);
+    if (w == 0) { return k; }
+    if (_dyn_ebeg(S, mti) == 0) { return 0 - 1; }
+    _dyn_pq(S, fnoff);
+    if (w == 2) { PRSTR(" is generic - a call through a "); }   # C2
+    elif (w == 3) { PRSTR(" takes no untyped `self` first - a call through a "); }   # C3
+    elif (w == 4) { PRSTR(" is variadic - a call through a "); }   # C4
+    elif (w == 5) { PRSTR(" returns multiple values - a call through a "); }   # C5
+    elif (w == 6) { PRSTR(" returns a u128 - a call through a "); }
+    else { PRSTR(" returns a vector - a call through a "); }
+    _dyn_ps(S, sid);
+    if (w == 2) { PRSTR(" has no instance of it to run: call it on the concrete type"); }
+    elif (w == 3) { PRSTR(" passes its data word as an untyped `self`"); }
+    elif (w == 4) { PRSTR(" passes a fixed argument list"); }
+    else { PRSTR(" returns one value - an integer, a float, a pointer or a struct"); }
+    _dyn_eend(S);
+    return 0 - 1;
+}
+# The index of trait `tx`'s member named `fnoff`, -1 = none.
+fn _dyn_member(S, tx, fnoff): i64 {
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        if (STREQ(S, L64(_trm_tab + k * 32), fnoff) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# Why trait member `k` cannot be called through a dyn: 0 it can; 2 generic; 3 no untyped `self`
+# first (none at all included); 4 variadic; 5 a multi-value return; 6 a u128; 7 a vector.
+fn _dyn_why(S, k): i64 {
+    var tp = L64(_trm_ft + k * 8);
+    if (TOKTYP(S, tp + 2) == 19) { return 2; }
+    var o = _tr_paren(S, tp);
+    if (o < 0) { return 3; }
+    if (TOKTYP(S, o + 1) != 2) { return 3; }
+    if (_noff_is(S, TOKVAL(S, o + 1), "self", 4) == 0) { return 3; }
+    if (TOKTYP(S, o + 2) == 49) { return 3; }
+    var i = 1;
+    while (_dps_param(S, o, i) == 1) {
+        if (_dps_va == 1) { return 4; }
+        i = i + 1;
+    }
+    var r = _dyn_ret_at(S, o);
+    if (r == _dps_te) { return 0; }   # no return type: an i64
+    var t = TOKTYP(S, r);
+    if (t == 10) { return 5; }
+    if (t == 105) { return 6; }
+    if (t == 2) { if (_classify_return_type(S, TOKVAL(S, r)) <= 0 - 2048) { return 7; } }
+    return 0;
+}
+# Member `k`'s prototype (made once): `dyn Show.m`, owned by the trait's file, its signature recorded
+# from the trait's tokens as pass 1 records a fn's — outside any impl (an untyped `self` there would
+# be typed the impl's `*T`), the cursor put back. Emits nothing.
+fn _dyn_proto(S, sid, k): i64 {
+    if (_trm_pf == 0) { _trm_pf = alloc(8192 * 8); }
+    var c = L64(_trm_pf + k * 8);
+    if (c != 0) { return c - 1; }
+    var fi = REGFN(S, _tr_joinc(S, L64(S + 0x1A6018 + (sid - 1) * 8), L64(_trm_tab + k * 32), 46));
+    var tx = L64(_trm_tab + k * 32 + 24);
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, L64(_tr_tab + tx * 32 + 24))) + 1);
+    var sv = GTI(S);
+    var si = _impl_tnoff;
+    var sii = _cur_ii;
+    _impl_tnoff = 0;
+    _cur_ii = 0 - 1;
+    STI(S, _tr_paren(S, L64(_trm_ft + k * 8)));
+    _prescan_params(S, fi);
+    _prescan_ret_type(S, fi);
+    _impl_tnoff = si;
+    _cur_ii = sii;
+    STI(S, sv);
+    # Its value class is the trait's declaration, as a body gives a direct callee's: 256, a `: stack`
+    # pair (`?` takes the two-register lowering, a one-name bind and a forwarding `return` are seen);
+    # else 1024, one value (a destructure is refused, as `var a, b = t.fi(1);` is). Every slot method
+    # agrees (`_dyn_pair_chk`, code 10). CHANGELOG [6.7.8]
+    if (_dyn_decl_pair(S, k) == 1) { SFLG(S, fi, GFLG(S, fi) | 256); }
+    else { SFLG(S, fi, GFLG(S, fi) | 1024); }
+    S64(_trm_pf + k * 8, fi + 1);
+    return fi;
+}
+# 1 = trait member `k` declares a `: stack` pair return: a name whose enum is declared `: stack` with a
+# payload variant (`_enum_decl_pair`) — `Result`, `Option` (a return type names no other enum).
+fn _dyn_decl_pair(S, k): i64 {
+    var o = _tr_paren(S, L64(_trm_ft + k * 8));
+    if (o < 0) { return 0; }
+    var r = _dyn_ret_at(S, o);
+    if (r == _dps_te) { return 0; }
+    if (TOKTYP(S, r) != 2) { return 0; }
+    return _enum_decl_pair(S, TOKVAL(S, r));
+}
+# 1 = `noff` names an enum declared `: stack` with a payload variant `V(x)`: its value is (tag,
+# payload) in two registers. Read from the declaration's tokens — its constructors' flag 256 waits
+# for pass 2 to reach the declaration, and a prototype is made once.
+fn _enum_decl_pair(S, noff): i64 {
+    if (_is_enum_name(S, noff) == 0) { return 0; }
+    var n = GTCNT(S);
+    var i = 0;
+    while (i < n) {
+        if (TOKTYP(S, i) == 60) { if (TOKTYP(S, i + 1) == 2) { if (STREQ(S, TOKVAL(S, i + 1), noff) == 1) {
+                    if (_enum_at_pair(S, i + 2) == 1) { return 1; }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The declaration after `enum NAME` at token j: `[<..>] : stack {` with a member `V(x)` (a variant
+# name first in its member, then `(` and a field name).
+fn _enum_at_pair(S, j): i64 {
+    if (TOKTYP(S, j) == 19) {
+        j = _tok_targs_close(S, j + 1);
+        if (j < 0) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, j) != 49) { return 0; }
+    if (TOKTYP(S, j + 1) != 111) { return 0; }
+    if (TOKTYP(S, j + 2) != 13) { return 0; }
+    j = j + 3;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 14) { return 0; }
+        if (t == 2) { if (TOKTYP(S, j + 1) == 10) { if (TOKTYP(S, j + 2) == 2) {
+                    var p = TOKTYP(S, j - 1);
+                    if (p == 13 || p == 5) { return 1; }
+                } } }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 = slot method `fi` (its code's `fn` token `fp`) returns a `: stack` pair — its flag 256, or, when
+# pass 2 has not reached its body yet (an impl below the forming site), its body's returns as
+# `_pair_prescan` reads them.
+fn _dyn_slot_pair(S, fi, fp): i64 {
+    if (fi >= 0) { if ((GFLG(S, fi) & 256) != 0) { return 1; } }
+    var o = _tr_paren(S, fp);
+    if (o < 0) { return 0; }
+    var j = _call_close(S, o) + 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 13) {
+            _ensure_pair_flags(S);
+            return _pair_body_scan(S, fp, j);
+        }
+        if (t == 5) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# `_meth_fn_at` on a dyn `sid` (the lookaheads: a declaration's inferred type, a destructure's
+# callee, a `Str` argument's routing, a forming source): member `mnoff`'s prototype, -1 when a dyn
+# cannot call it (the call itself reports that) or pass 1 is still registering structs.
+fn _dyn_mfn(S, sid, mnoff): i64 {
+    if (_dyn_p2 == 0) { return 0 - 1; }
+    var tx = _dyn_tx(S, sid);
+    if (tx < 0) { return 0 - 1; }
+    var k = _dyn_member(S, tx, mnoff);
+    if (k < 0) { return 0 - 1; }
+    if (_dyn_why(S, k) != 0) { return 0 - 1; }
+    return _dyn_proto(S, sid, k);
 }
 
 # ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,
@@ -588,6 +2356,11 @@ fn _sl_ptr_type(S, li, ps, ann): i64 {
 # annotation with no `=` after it (`var G: (i64, i64);` at top level) is left to the "uninitialized"
 # refusal its declaration gets anyway. CHANGELOG [6.7.7]
 fn _tup_ptr_refuse(S, sid, ti, noff): i64 {
+    if (_dyn_is(S, sid) == 1) {   # 6.7.8: nor is a dyn (`var o: dyn Show = 5;`)
+        if (TOKTYP(S, ti + 1) != 4) { return 0; }
+        if (_dyn_src_call(S, ti + 2, sid) == 1) { return 0; }   # a call of it judged itself (top level)
+        return _dyn_err(S, ti, "cannot initialize ", sid, noff, " with a value that is not a dyn");
+    }
     if (_tup_is(S, sid) == 0) { return 0; }
     if (TOKTYP(S, _call_close(S, ti) + 1) != 4) { return 0; }
     return _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
@@ -602,17 +2375,20 @@ fn _tup_svtype(S, vi, sid, noff, ti): i64 {
 # (6.7.3) and declared INTEGER (`st` = the annotation's integer width, 1..8; 16 is u128 / a slice),
 # which routes `println(n)` to its `_int` overload (_od_arg_kind, parse_fn.cyr). A global's marks are
 # the last declaration's (0 clears a redeclaration's). 6.7.8 (C2-3a): and a `*T`'s element kind
-# (`ann` the annotation's first token) — a global's beside GVTYPE, so it is no new shape.
+# (`ann` the annotation's first token) — a global's beside GVTYPE, so it is no new shape; 6.7.8 (D5):
+# and a declared scalar's annotation name, the type a dyn formed from it names.
 # CHANGELOG [6.7.6]
 fn _sl_last_marks(S, li, lbool, st, ann): i64 {
     SLBOOL(S, li, lbool);
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
     if (GLPTRP(S, li) == 1) { _sl_ptr_ed(S, li, ann); }
+    _dsc_stamp(S, li, _dsc_name(S, ann));   # 6.7.8 (D5): a declared scalar a dyn is formed from
     return 0;
 }
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
     _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
+    _gv_tn_set(S, vi, ann);   # 6.7.8 (D5)
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
     SVINTD(S, vi, n);
@@ -1202,6 +2978,7 @@ fn _sizeof_type(S, asrt): i64 {
 # no ABI at all. Widths still have no effect on a param. Pass 1 (_prescan_params) reads the same
 # names and reports nothing, so each is reported once.
 fn _tn_param_check(S, pnoff, fi, ptc): i64 {
+    _dsc_param(S, GTI(S));   # 6.7.8 (D5): a declared scalar, stamped on its slot by `_param_record`
     if (ptc != 0) { return 0; }
     var ti = GTI(S);
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
@@ -2039,7 +3816,11 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
         ADDFIELD(S, si, fnoff);
         return 0;
     }
-    if (fsid > 0) { ADDFIELDTYPED(S, si, fnoff, fsid); return 0; }
+    if (fsid > 0) {
+        _dyn_field_chk(S, si, fsid, GTI(S) - 1);   # 6.7.8: a dyn in a union / a generic struct
+        ADDFIELDTYPED(S, si, fnoff, fsid);
+        return 0;
+    }
     var k = _field_name_kind(S, tnoff);
     if (k < 0) {
         _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));

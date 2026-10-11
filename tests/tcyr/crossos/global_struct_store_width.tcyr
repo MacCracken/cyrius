@@ -30,8 +30,8 @@
 # after it. A..H in a fn: a local, a call, a method, a by-value parameter, a global, a wrapped
 # source, a for step, a closure capture. T at top level after the first statement: a global, and a
 # call when the struct fits in 8 bytes (a wider result needs a frame and is refused there). K: a
-# global declared after the first statement. J: the declaration-zone controls. cx refuses a
-# 9..16-byte struct return by name, so B and C are fenced off there for those shapes.
+# global declared after the first statement. J: the declaration-zone controls. Every row runs on
+# cx too: B and C for the 9..16-byte shapes since 6.7.8 (cx's r0:r4 struct pair).
 #
 # Mutation ledger (2026-10-09; a scratch copy of the tree, rebuilt with the one change; the gate
 # tests/gates/codegen/global_struct_store_width.sh runs this file on every leg):
@@ -362,20 +362,16 @@ fn rowsB8(): i64 {
     fncall0(f); gs_row(g, 8, "B8 H: GB8 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB9(): B9 { var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; return l; }
 impl B9 { fn pat(self): B9 { var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; return l; } }
-#endif
 fn putB9(p: B9): i64 { GB9 = p; return 0; }
 fn rowsB9(): i64 {
     var g = &GB9;
     gs_reset(g, 9);
     var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29;
     GB9 = l; gs_row(g, 9, "B9 A: GB9 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB9 = mkB9(); gs_row(g, 9, "B9 B: GB9 = mkB9() (a call)");
     GB9 = l.pat(); gs_row(g, 9, "B9 C: GB9 = l.pat() (a method)");
-    #endif
     putB9(l); gs_row(g, 9, "B9 D: GB9 = p (a by-value parameter)");
     GB9 = HB9; gs_row(g, 9, "B9 E: GB9 = HB9 (a global)");
     GB9 = (l); gs_row(g, 9, "B9 F: GB9 = (l) (a wrapped source)");
@@ -386,20 +382,16 @@ fn rowsB9(): i64 {
     fncall0(f); gs_row(g, 9, "B9 H: GB9 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB10(): B10 { var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; return l; }
 impl B10 { fn pat(self): B10 { var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; return l; } }
-#endif
 fn putB10(p: B10): i64 { GB10 = p; return 0; }
 fn rowsB10(): i64 {
     var g = &GB10;
     gs_reset(g, 10);
     var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A;
     GB10 = l; gs_row(g, 10, "B10 A: GB10 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB10 = mkB10(); gs_row(g, 10, "B10 B: GB10 = mkB10() (a call)");
     GB10 = l.pat(); gs_row(g, 10, "B10 C: GB10 = l.pat() (a method)");
-    #endif
     putB10(l); gs_row(g, 10, "B10 D: GB10 = p (a by-value parameter)");
     GB10 = HB10; gs_row(g, 10, "B10 E: GB10 = HB10 (a global)");
     GB10 = (l); gs_row(g, 10, "B10 F: GB10 = (l) (a wrapped source)");
@@ -410,20 +402,16 @@ fn rowsB10(): i64 {
     fncall0(f); gs_row(g, 10, "B10 H: GB10 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB11(): B11 { var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; return l; }
 impl B11 { fn pat(self): B11 { var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; return l; } }
-#endif
 fn putB11(p: B11): i64 { GB11 = p; return 0; }
 fn rowsB11(): i64 {
     var g = &GB11;
     gs_reset(g, 11);
     var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B;
     GB11 = l; gs_row(g, 11, "B11 A: GB11 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB11 = mkB11(); gs_row(g, 11, "B11 B: GB11 = mkB11() (a call)");
     GB11 = l.pat(); gs_row(g, 11, "B11 C: GB11 = l.pat() (a method)");
-    #endif
     putB11(l); gs_row(g, 11, "B11 D: GB11 = p (a by-value parameter)");
     GB11 = HB11; gs_row(g, 11, "B11 E: GB11 = HB11 (a global)");
     GB11 = (l); gs_row(g, 11, "B11 F: GB11 = (l) (a wrapped source)");
@@ -434,20 +422,16 @@ fn rowsB11(): i64 {
     fncall0(f); gs_row(g, 11, "B11 H: GB11 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB12(): B12 { var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; return l; }
 impl B12 { fn pat(self): B12 { var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; return l; } }
-#endif
 fn putB12(p: B12): i64 { GB12 = p; return 0; }
 fn rowsB12(): i64 {
     var g = &GB12;
     gs_reset(g, 12);
     var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C;
     GB12 = l; gs_row(g, 12, "B12 A: GB12 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB12 = mkB12(); gs_row(g, 12, "B12 B: GB12 = mkB12() (a call)");
     GB12 = l.pat(); gs_row(g, 12, "B12 C: GB12 = l.pat() (a method)");
-    #endif
     putB12(l); gs_row(g, 12, "B12 D: GB12 = p (a by-value parameter)");
     GB12 = HB12; gs_row(g, 12, "B12 E: GB12 = HB12 (a global)");
     GB12 = (l); gs_row(g, 12, "B12 F: GB12 = (l) (a wrapped source)");
@@ -458,20 +442,16 @@ fn rowsB12(): i64 {
     fncall0(f); gs_row(g, 12, "B12 H: GB12 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB13(): B13 { var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; return l; }
 impl B13 { fn pat(self): B13 { var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; return l; } }
-#endif
 fn putB13(p: B13): i64 { GB13 = p; return 0; }
 fn rowsB13(): i64 {
     var g = &GB13;
     gs_reset(g, 13);
     var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D;
     GB13 = l; gs_row(g, 13, "B13 A: GB13 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB13 = mkB13(); gs_row(g, 13, "B13 B: GB13 = mkB13() (a call)");
     GB13 = l.pat(); gs_row(g, 13, "B13 C: GB13 = l.pat() (a method)");
-    #endif
     putB13(l); gs_row(g, 13, "B13 D: GB13 = p (a by-value parameter)");
     GB13 = HB13; gs_row(g, 13, "B13 E: GB13 = HB13 (a global)");
     GB13 = (l); gs_row(g, 13, "B13 F: GB13 = (l) (a wrapped source)");
@@ -482,20 +462,16 @@ fn rowsB13(): i64 {
     fncall0(f); gs_row(g, 13, "B13 H: GB13 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB14(): B14 { var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; return l; }
 impl B14 { fn pat(self): B14 { var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; return l; } }
-#endif
 fn putB14(p: B14): i64 { GB14 = p; return 0; }
 fn rowsB14(): i64 {
     var g = &GB14;
     gs_reset(g, 14);
     var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E;
     GB14 = l; gs_row(g, 14, "B14 A: GB14 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB14 = mkB14(); gs_row(g, 14, "B14 B: GB14 = mkB14() (a call)");
     GB14 = l.pat(); gs_row(g, 14, "B14 C: GB14 = l.pat() (a method)");
-    #endif
     putB14(l); gs_row(g, 14, "B14 D: GB14 = p (a by-value parameter)");
     GB14 = HB14; gs_row(g, 14, "B14 E: GB14 = HB14 (a global)");
     GB14 = (l); gs_row(g, 14, "B14 F: GB14 = (l) (a wrapped source)");
@@ -506,20 +482,16 @@ fn rowsB14(): i64 {
     fncall0(f); gs_row(g, 14, "B14 H: GB14 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB15(): B15 { var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; return l; }
 impl B15 { fn pat(self): B15 { var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; return l; } }
-#endif
 fn putB15(p: B15): i64 { GB15 = p; return 0; }
 fn rowsB15(): i64 {
     var g = &GB15;
     gs_reset(g, 15);
     var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F;
     GB15 = l; gs_row(g, 15, "B15 A: GB15 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB15 = mkB15(); gs_row(g, 15, "B15 B: GB15 = mkB15() (a call)");
     GB15 = l.pat(); gs_row(g, 15, "B15 C: GB15 = l.pat() (a method)");
-    #endif
     putB15(l); gs_row(g, 15, "B15 D: GB15 = p (a by-value parameter)");
     GB15 = HB15; gs_row(g, 15, "B15 E: GB15 = HB15 (a global)");
     GB15 = (l); gs_row(g, 15, "B15 F: GB15 = (l) (a wrapped source)");
@@ -530,20 +502,16 @@ fn rowsB15(): i64 {
     fncall0(f); gs_row(g, 15, "B15 H: GB15 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkB16(): B16 { var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30; return l; }
 impl B16 { fn pat(self): B16 { var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30; return l; } }
-#endif
 fn putB16(p: B16): i64 { GB16 = p; return 0; }
 fn rowsB16(): i64 {
     var g = &GB16;
     gs_reset(g, 16);
     var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30;
     GB16 = l; gs_row(g, 16, "B16 A: GB16 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GB16 = mkB16(); gs_row(g, 16, "B16 B: GB16 = mkB16() (a call)");
     GB16 = l.pat(); gs_row(g, 16, "B16 C: GB16 = l.pat() (a method)");
-    #endif
     putB16(l); gs_row(g, 16, "B16 D: GB16 = p (a by-value parameter)");
     GB16 = HB16; gs_row(g, 16, "B16 E: GB16 = HB16 (a global)");
     GB16 = (l); gs_row(g, 16, "B16 F: GB16 = (l) (a wrapped source)");
@@ -634,20 +602,16 @@ fn rowsM7(): i64 {
     fncall0(f); gs_row(g, 7, "M7 H: GM7 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkM9(): M9 { var l: M9; l.a = 0x2827262524232221; l.b = 0x29; return l; }
 impl M9 { fn pat(self): M9 { var l: M9; l.a = 0x2827262524232221; l.b = 0x29; return l; } }
-#endif
 fn putM9(p: M9): i64 { GM9 = p; return 0; }
 fn rowsM9(): i64 {
     var g = &GM9;
     gs_reset(g, 9);
     var l: M9; l.a = 0x2827262524232221; l.b = 0x29;
     GM9 = l; gs_row(g, 9, "M9 A: GM9 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GM9 = mkM9(); gs_row(g, 9, "M9 B: GM9 = mkM9() (a call)");
     GM9 = l.pat(); gs_row(g, 9, "M9 C: GM9 = l.pat() (a method)");
-    #endif
     putM9(l); gs_row(g, 9, "M9 D: GM9 = p (a by-value parameter)");
     GM9 = HM9; gs_row(g, 9, "M9 E: GM9 = HM9 (a global)");
     GM9 = (l); gs_row(g, 9, "M9 F: GM9 = (l) (a wrapped source)");
@@ -658,20 +622,16 @@ fn rowsM9(): i64 {
     fncall0(f); gs_row(g, 9, "M9 H: GM9 = l in a closure (a captured source)");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn mkM15(): M15 { var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F; return l; }
 impl M15 { fn pat(self): M15 { var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F; return l; } }
-#endif
 fn putM15(p: M15): i64 { GM15 = p; return 0; }
 fn rowsM15(): i64 {
     var g = &GM15;
     gs_reset(g, 15);
     var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F;
     GM15 = l; gs_row(g, 15, "M15 A: GM15 = l (a local)");
-    #ifndef CYRIUS_TARGET_CX
     GM15 = mkM15(); gs_row(g, 15, "M15 B: GM15 = mkM15() (a call)");
     GM15 = l.pat(); gs_row(g, 15, "M15 C: GM15 = l.pat() (a method)");
-    #endif
     putM15(l); gs_row(g, 15, "M15 D: GM15 = p (a by-value parameter)");
     GM15 = HM15; gs_row(g, 15, "M15 E: GM15 = HM15 (a global)");
     GM15 = (l); gs_row(g, 15, "M15 F: GM15 = (l) (a wrapped source)");

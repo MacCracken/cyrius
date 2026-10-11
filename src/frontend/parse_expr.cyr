@@ -1577,6 +1577,8 @@ fn _bx_param(S, fi, pc, li, b): i64 {
 fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
     if (pc >= 1) { if (_pbool_get(fi, 0) == 2) { SLINTD(S, s0); } }
     if (pc >= 2) { if (_pbool_get(fi, 1) == 2) { SLINTD(S, s1); } }
+    if (pc >= 1) { _dsc_inl(S, fi, 0, s0); }   # 6.7.8 (D5): a declared scalar, as out of line
+    if (pc >= 2) { _dsc_inl(S, fi, 1, s1); }
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
@@ -1954,11 +1956,109 @@ fn _w128_rchk(S, ti0): i64 {
 # argument, a field store, a struct-literal element, `&t` — consumes the name without a factor.
 # (A whole tuple-typed FIELD is refused at its load, `_tup_fld_rchk`.) CHANGELOG [6.7.7]
 fn _tup_rchk(S, ti0): i64 {
+    if (_dyn_rchk(S, ti0) == 1) { return 0; }   # 6.7.8: a dyn is not a value either (V1, V2, V4)
     if (GTI(S) != ti0 + 1) { return 0; }
     if (TOKTYP(S, ti0) != 2) { return 0; }
     if (_tup_is(S, GESTYPE(S)) == 0) { return 0; }
     _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
     SESTYPE(S, 0);
+    return 0;
+}
+# ⛔ 6.7.8 — A DYN IS NOT A VALUE (decision 7: its two words are opaque). Under the struct rule a
+# whole dyn read as a value took its DATA word — `o + 1`, `o == p`, `if (o)`, `print(o)`, `var x = o;`
+# (inferring no struct from a name), an untyped argument, `load64(o)` — and `&o` handed out the
+# address both words are written through. Refused by name, once per token, the stamp cleared so no
+# operator dispatches (`dyn Show_add`):
+#   V1 a factor that is exactly one name whose load stamped a dyn's sid (`_tup_rchk`'s shape);
+#   V2 `&o`, the name a dyn-typed local, parameter, capture or global;
+#   V4 a dyn-returning call (free, method or operator) that is exactly this factor (its `_lsc`
+#      record spans it, nothing emitted since) — unless a DESTINATION armed it (`_sc_want` is its
+#      first token) and the factor ends the destination's expression (`;` `,` `)` `}` next). Those
+#      are copies — `var y: dyn Show = mk();`, `o2 = h.mk();`, a dyn argument — taken through
+#      PARSE_FACTOR by the destination's own `_sc_whole`; each destination steps inside a wrap
+#      (`(mk())`, the 6.7.6 rule) before it arms, so `_sc_want` is the call itself. The one that does
+#      not — an un-annotated `var x = (mk());`, which infers no struct and keeps the first word — is
+#      refused here. `return mk();` in a fn returning a dyn passes the call through the scalar path
+#      unarmed: it is `_dyn_rw`'s (wrapped or not). A statement call (`mk();`) reaches no factor.
+# Every other whole-dyn use — a copy, a dyn argument, a field store, a struct-literal element —
+# consumes the name without a factor. (A whole dyn FIELD is refused at its load, `_tup_fld_rchk`.)
+# CHANGELOG [6.7.8]
+fn _dyn_rchk(S, ti0): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    var e = GTI(S);
+    var t0 = TOKTYP(S, ti0);
+    var sid = GESTYPE(S);
+    if (e == ti0 + 1) { if (t0 == 2) { if (_dyn_is(S, sid) == 1) {
+                _dyn_err(S, ti0, "", sid, TOKVAL(S, ti0), " used as a value - call one of its methods, or copy it whole into a dyn");
+                SESTYPE(S, 0);
+                return 1;
+            } } }
+    if (e == ti0 + 2) { if (t0 == 27) {
+            sid = _sarg_name_sid(S, ti0 + 1);
+            if (_dyn_is(S, sid) == 1) {
+                _dyn_err(S, ti0, "the words of ", sid, TOKVAL(S, ti0 + 1), " are not addressable - `&` takes no dyn; copy it whole into a dyn");
+                return 1;
+            }
+        } }
+    if (_lsc_cp != GCP(S)) { return 0; }
+    if (_lsc_beg != ti0) { return 0; }
+    if (_lsc_end != e) { return 0; }
+    if (_dyn_is(S, _lsc_sid) == 0) { return 0; }
+    if (_dyn_want(S, ti0) == 1) {
+        _dyn_xb = ti0;   # let through for the destination, which must be this dyn (`_dyn_dst_chk`)
+        _dyn_xe = e;
+        _dyn_xs = _lsc_sid;
+        return 0;
+    }
+    _dyn_err(S, ti0, "a ", _lsc_sid, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    SESTYPE(S, 0);
+    _lsc_cp = 0 - 1;   # nor is it the left operand of an operator (`_op_lst`)
+    return 1;
+}
+# ⛔ 6.7.8 (review) — V4 LETS A WHOLE DYN RESULT THROUGH FOR AN ARMED DESTINATION, and three arm for
+# any type: an assignment (`x = mk();` into an untyped / i64 / `*T` variable or global, a for step), a
+# declaration with an annotation that is no struct (`var y: i64 = mk();`, `: *Sq`, `: f64`), and any
+# declaration at top level after the first statement (`var G = mk();` — no frame takes the 16 B, so
+# the store kept the first word). Each stored the DATA word — the leak V4 exists to stop. The
+# exemption is recorded (the factor's span and its dyn) and each of those destinations asks after its
+# parse: refused, V4's words at the call, unless the destination is that dyn (`dt` = `0 - sid`, as
+# `_agc_t` / PARSE_VAR's pscale give it). 1 = refused. (A tail call is the fourth path: it never reaches
+# the factor — `_tc_callee_divert`.) CHANGELOG [6.7.8]
+var _dyn_xb = 0 - 1;   # the last whole dyn result V4 let through: its first token,
+var _dyn_xe = 0 - 1;   # ... the token after it,
+var _dyn_xs = 0;       # ... and its dyn
+fn _dyn_dst_chk(S, st, dt): i64 {
+    if (_dyn_xb != st) { return 0; }
+    if (_dyn_xe != GTI(S)) { return 0; }
+    _dyn_xb = 0 - 1;
+    if (dt == 0 - _dyn_xs) { return 0; }
+    _dyn_err(S, st, "a ", _dyn_xs, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    return 1;
+}
+# 1 = the factor at `ti0` (just parsed, the cursor after it) is a whole expression a destination
+# armed: `_sc_want` at `ti0` or before it through `(` only, and `;` `,` `)` or `}` next.
+fn _dyn_want(S, ti0): i64 {
+    var nt = TOKTYP(S, GTI(S));
+    if (nt != 5 && nt != 31 && nt != 11 && nt != 14) { return 0; }
+    if (_sc_want == ti0) { return 1; }
+    return _dyn_wraps(S, _dyn_rw, ti0);
+}
+# 1 = `w` is `ti0`, or opens only `(` up to it.
+fn _dyn_wraps(S, w, ti0): i64 {
+    if (w < 0) { return 0; }
+    if (w > ti0) { return 0; }
+    while (w < ti0) {
+        if (TOKTYP(S, w) != 10) { return 0; }
+        w = w + 1;
+    }
+    return 1;
+}
+# `return mk();` in a fn returning a dyn: the pair-class return lets a call returning the same struct
+# through the scalar path's PCMPE (`_ret_struct_pair`), with no destination armed — its first token
+# (outside any wrap) is recorded here, a destination for `_dyn_want`.
+var _dyn_rw = 0 - 1;
+fn _dyn_ret_arm(S): i64 {
+    if (_dyn_is(S, _cur_fn_ret_sid) == 1) { _dyn_rw = GTI(S); }
     return 0;
 }
 # ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)`: a `(` group with a comma at its own depth. ONE detector
@@ -6993,6 +7093,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
 # it again at its old place, so the name pool and the fn table grow exactly as they always did.
 # -1 when there is no such fn yet. CHANGELOG [6.6.6]
 fn _op_fn_peek(S, stype, op_str, op_len): i64 {
+    if (_dyn_is(S, stype) == 1) {   # 6.7.8: a dyn has no operators (decision 7) — never `dyn Show_add`
+        _dyn_err(S, GTI(S) - 1, "", stype, 0 - 1, " has no operators - call one of its methods");
+        return 0 - 1;
+    }
     var np = GNPOS(S);
     var fi = FINDFN(S, BUILD_OP_NAME(S, stype, op_str, op_len));
     SNPOS(S, np);

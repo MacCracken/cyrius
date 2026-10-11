@@ -60,11 +60,8 @@ fn g_three(): i64 { var p = Pt { 7, 9 }; return gx(|a, b, c| a * b, p); }
 fn g_one(): i64 { var p = Pt { 7, 9 }; return gx_one(|a| a, p); }
 fn g_fwd(): i64 { var p = Pt { 7, 9 }; return outer(p); }
 fn g_named(): i64 { var p = Pt { 7, 9 }; return gx3(|a, b| a * b, p, n: 3); }
-# cx has no 9-16 B register-pair struct return, so the receive row is not built there.
-#ifndef CYRIUS_TARGET_CX
 fn pick<T>(c, v: T): T { return v; }
 fn g_recv(): i64 { var p = Pt { 7, 9 }; var q = pick(|a, b| a + b, p); return q.x * 10 + q.y; }
-#endif
 
 # ── _tc_str_literal_arg: a tail call's string literal into a `: Str` parameter ─────────────────
 fn sl(c, t: Str): i64 { return str_len(t) * 100 + fncall2(c, 2, 3); }
@@ -97,9 +94,7 @@ fn gc_lit(): i64 { return slg(pk<i64, i64>(1, 2), "hello"); }
 fn gxg<T>(c, v: T): i64 { return v.x * 100 + c; }
 fn gc_infer(): i64 { var p = Pt { 7, 9 }; return gxg(pk<i64, i64>(1, 2), p); }
 fn gc_infer_named(): i64 { var p = Pt { 7, 9 }; return gxg(pk<i64, i64>(1, 2), v: p); }
-#ifndef CYRIUS_TARGET_CX
 fn gc_recv(): i64 { var p = Pt { 7, 9 }; var q = pick(pk<i64, i64>(1, 2), p); return q.x * 10 + q.y; }
-#endif
 fn apg(c, n = 5): i64 { return fncall2(c, n, 1); }
 fn gc_two(): i64 { return wd(pk<i64, i64>(1, 2) + pk<i64, i64>(3, 4)); }
 fn gc_nest(): i64 { return wd(pk<i64, i64>(pk<i64, i64>(1, 2), 3)); }
@@ -124,9 +119,7 @@ fn rows(): i64 {
     assert_eq(g_one(), 705, "control: gx_one(|a| a, p)");
     assert_eq(g_fwd(), 702, "a generic forwards T past a closure: inner(|a, b| a + b, v)");
     assert_eq(g_named(), 903, "a named argument after the closure: gx3(|a, b| a * b, p, n: 3)");
-    #ifndef CYRIUS_TARGET_CX
     assert_eq(g_recv(), 79, "var q = pick(|a, b| a + b, p) receives the Pt");
-    #endif
     assert_eq(viaret(), 505, "the issue's shape 2: return sl(|a, b| a + b, \"hello\") wraps the literal");
     assert_eq(viavar(), 505, "control: the same call outside tail position");
     assert_eq(viaret3(), 505, "the tail form with a three-parameter closure");
@@ -143,9 +136,7 @@ fn rows(): i64 {
     assert_eq(gc_lit(), 62, "return slg(pk<i64, i64>(1, 2), \"hello\") wraps the literal");
     assert_eq(gc_infer(), 712, "gxg(pk<i64, i64>(1, 2), p) infers T = Pt");
     assert_eq(gc_infer_named(), 712, "gxg(pk<i64, i64>(1, 2), v: p) infers T = Pt by name");
-    #ifndef CYRIUS_TARGET_CX
     assert_eq(gc_recv(), 79, "var q = pick(pk<i64, i64>(1, 2), p) receives the Pt");
-    #endif
     assert_eq(gc_two(), 49, "two generic calls in one argument: wd(pk<..>(1, 2) + pk<..>(3, 4))");
     assert_eq(gc_nest(), 126, "a generic call inside a generic call's arguments");
     assert_eq(gc_clos(), 51, "a generic call in a closure body: apg(|a, b| pk<i64, i64>(a, b))");

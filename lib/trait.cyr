@@ -11,11 +11,13 @@
 #
 # ⚠ It is NOT the language's traits. Since 6.7.0 cyrius has `trait Show { ... }` and
 # `impl Show for Point { ... }` (docs/adr/007-traits.md): checked method sets with STATIC
-# dispatch, for which the compiler builds no vtables (ADR-007 §7) — so `impl` is not, and will
-# not become, sugar over this file. (This header said it would until 6.7.6.) Compiler-checked
-# run-time dispatch is planned as `dyn` later in 6.7.x: `o: dyn Show`, a 16-byte
-# { data, vtable } struct whose vtable the compiler builds and verifies from `impl Show for T`.
-# Note the order is the reverse of this file's { vtable, data }; the two do not interconvert.
+# dispatch (ADR-007 §7) — so `impl` is not, and will not become, sugar over this file. (This
+# header said it would until 6.7.6.) Compiler-checked run-time dispatch shipped in 6.7.8 as
+# `dyn`: `o: dyn Show`, a 16-byte { data, vtable } struct whose vtable the compiler builds and
+# verifies from `impl Show for T` (docs/guides/cyrius-guide.md, "Trait objects: `dyn`"). This
+# file stays as it is (the user's decision, 2026-10-10): an unchecked library pattern, nothing
+# deprecated or removed. Note the order is the reverse of this file's { vtable, data }; the two
+# do not interconvert.
 
 # 6.6.9: vtables are alloc'd and dispatched through fncall*, and the Display impls call fmt_int
 # and str_from / str_print — none of which this file included. CHANGELOG [6.6.9]

@@ -103,15 +103,14 @@ _wine_down() {
 }
 trap '_wine_down; rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
-ROWS_FLOOR=212      # every leg but cx
-ROWS_CX_FLOOR=167   # cx: no 9-16 B rax:rdx rows (see gen)
+ROWS_FLOOR=212      # every leg, cx included since 6.7.8
 fail=0
 
 # ── generate the probe ────────────────────────────────────────────────────────────────────
 # Vector classes: name, bytes. Every 8-byte word of a vector holds the same digit, and each
 # callee leads with (first word, last word) — so a lost upper half (f64v4's second XMM) shows.
-# `pair=1` adds the rows whose callee returns a 9-16 B struct in rax:rdx — cx refuses that ABI
-# outright (a compile error, not a miscompile), so the cx leg runs the `pair=0` variant.
+# `pair=1` adds the rows whose callee returns a 9-16 B struct in rax:rdx. Every leg runs them: cx
+# too since 6.7.8 (r0:r4); before, it refused that ABI outright and ran a `pair=0` variant.
 gen() {
 awk -v out="$1" -v rowsf="$2" -v pair="$3" '
 function p(s) { print s > out }
@@ -363,11 +362,9 @@ function pow10(k,   s, j) { s = "1"; for (j = 0; j < k; j++) s = s "0"; return s
 '
 }
 gen "$T/probe.cyr" "$T/rows" 1
-gen "$T/probe_cx.cyr" "$T/rows_cx" 0
 ROWS=$(cat "$T/rows")
-ROWS_CX=$(cat "$T/rows_cx")
-if [ "$ROWS" -lt "$ROWS_FLOOR" ] || [ "$ROWS_CX" -lt "$ROWS_CX_FLOOR" ]; then
-    echo "  FAIL: stack_param_homing: generated only $ROWS / $ROWS_CX rows (floors $ROWS_FLOOR / $ROWS_CX_FLOOR) — the matrix shrank"; exit 1
+if [ "$ROWS" -lt "$ROWS_FLOOR" ]; then
+    echo "  FAIL: stack_param_homing: generated only $ROWS rows (floor $ROWS_FLOOR) — the matrix shrank"; exit 1
 fi
 
 # run_leg <label> <program-file> <rows> <runner...>: the program must print exactly R<rows> and exit 0
@@ -405,8 +402,8 @@ else echo "  SKIP: qemu-aarch64 not installed (aarch64 leg — pi/ecb hardware l
 "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2> /dev/null && chmod +x "$T/cc_cx" || true
 "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2> /dev/null && chmod +x "$T/cxvm" || true
 if [ ! -s "$T/cc_cx" ] || [ ! -s "$T/cxvm" ]; then echo "  FAIL: [cx] could not build cycc_cx / cxvm"; fail=1
-else "$T/cc_cx" < "$T/probe_cx.cyr" > "$T/p.cyx" 2> /dev/null || true
-     cxr() { timeout 60 "$T/cxvm" < "$1"; }; run_leg cx "$T/p.cyx" "$(cat "$T/rows_cx")" cxr; fi
+else "$T/cc_cx" < "$T/probe.cyr" > "$T/p.cyx" 2> /dev/null || true
+     cxr() { timeout 60 "$T/cxvm" < "$1"; }; run_leg cx "$T/p.cyx" "$(cat "$T/rows")" cxr; fi
 
 # ── Win64 PE (wine — NOT hardware) ────────────────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1; then
@@ -751,4 +748,4 @@ echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnosti
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: stack_param_homing_matrix — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes and the correct-arity operators"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows (every leg, cx included) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes and the correct-arity operators"

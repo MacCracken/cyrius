@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (14, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (38, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -22,18 +22,31 @@
 #       faulting cx guest could exit 0, and "0" must never read as a pass for these rows.
 #   R4  tests/tcyr/crossos/narrow_slot_width.tcyr — native and cxvm each print
 #       `<N> passed, 0 failed` with N derived from the source (58 today, floor 58) and exit 0.
-#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (113, floor 113);
+#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (164, floor 164);
 #       cxvm: every assertion outside `#ifndef CYRIUS_TARGET_CX` blocks, indented ones included
-#       (70, floor 70) — the B02 LIT group and B04's CF group run there.
-#   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native: 94 (floor 94). cx: it does NOT
-#       compile (pre-existing: `mkpt`/`twice` return a 16 B Pt, "cx: int-class 16B struct
-#       pair-return ABI not supported"), so R3 carries its V3/V4 shapes for cx. The row pins that
-#       refusal as the ONLY kind of error (nine sites today), by name; the day cx compiles the
-#       file, the row instead requires it to pass on cxvm with the full count — it can never go
-#       quietly unrun.
+#       (163, floor 163 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
+#       CF group and, since 6.7.8, the 16 B pair-return rows and the SC rows (T inferred through a
+#       generic struct parameter) run there.
+#   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native and cxvm in full (96, floor 96).
+#       Until 6.7.8 cx refused it (`mkpt`/`twice` return a 16 B Pt, "cx: int-class 16B struct
+#       pair-return ABI not supported") and the row pinned that refusal by name; cx now has the
+#       r0:r4 struct pair, so the file must compile and pass in full there.
+#   R8  (6.7.8) every crossos file the cx 16 B pair refusal kept from compiling for cx and no other
+#       gate runs on cxvm — native and cxvm each print `<N> passed, 0 failed`, N derived from the
+#       source (floors: today's counts). The files whose `#ifndef CYRIUS_TARGET_CX` pair fences
+#       6.7.8 lifted run on cx in their own gates (default_named_args_checked.sh A5 / AC5,
+#       struct_value_codegen.sh A6, global_struct_store_width.sh, defer_every_return_path.sh,
+#       struct_pair_multi_value_crossing.sh) and R5 here.
 #   R7  tests/tcyr/crossos/tuple_values.tcyr (6.7.7, B4: tuples as values) — native and cxvm each
 #       print `<N> passed, 0 failed` with N derived from the source (65 at T3, 111 at T4, 168 at T5, 191 at T6: floor 191)
 #       and exit 0.
+#   R9  (6.7.8, dyn D5 / D6) tests/tcyr/crossos/dyn_objects.tcyr — forming a checked `dyn` (every FORM
+#       source, the declared scalars, the defaults, every destination, the records, the #inline
+#       replay; dispatched by hand through the vtable) and (D6) calling through one (every receiver,
+#       argument and result shape, the callee read before the arguments, copies, closures, defer /
+#       secret, recursion, #regalloc, top level): native and cxvm each print `<N> passed, 0 failed`,
+#       N derived from the source (37 at D5, 78 at D6, 81 at the review's §pairs: floor 81) — the whole
+#       file, no cx fence.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -337,31 +350,32 @@ inline "R3 B03 field argument + top-level copy-init (V3, V4)" "$T/b03.cyr" 128 "
 echo "R4-R5 — the crossos .tcyr files, native then cxvm, counts derived from the source:"
 tcyr_native tests/tcyr/crossos/narrow_slot_width.tcyr 58
 tcyr_cx     tests/tcyr/crossos/narrow_slot_width.tcyr 58
-tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 113
-tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 70
+tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 164
+tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 163
 
-echo "R6 — struct_field_value_copy.tcyr: native in full; on cx either refused BY NAME or run in full:"
-F=tests/tcyr/crossos/struct_field_value_copy.tcyr
-tcyr_native "$F" 94
-if "$CX" < "$F" > "$T/c.cyx" 2> "$T/ce"; then
-    echo "  note: cycc_cx now compiles $F — it must pass in full on cxvm"
-    tcyr_cx "$F" 94
-else
-    nerr=$(grep -c '^error' "$T/ce")
-    npr=$(grep -c '^error:.*cx: int-class 16B struct pair-return ABI not supported$' "$T/ce")
-    if [ "$nerr" -ge 1 ] && [ "$npr" = "$nerr" ]; then
-        ok "$F cxvm: refused by name, every error ($nerr) the known cx 16 B pair-return limit (R3 carries its V3/V4 shapes)"
-    else
-        bad "$F cxvm: $nerr error(s), $npr of them the 16 B pair-return refusal — any other is new: $(grep '^error' "$T/ce" | grep -v 'pair-return ABI not supported' | head -2 | tr '\n' ' ')"
-    fi
-fi
+echo "R6 — struct_field_value_copy.tcyr, native then cxvm in full (cx refused it until 6.7.8):"
+tcyr_native tests/tcyr/crossos/struct_field_value_copy.tcyr 96
+tcyr_cx     tests/tcyr/crossos/struct_field_value_copy.tcyr 96
 
 echo "R7 — tuple_values.tcyr (6.7.7, B4), native then cxvm, the count derived from the source:"
 tcyr_native tests/tcyr/crossos/tuple_values.tcyr 203
 tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 203
 
-WANT=14
+echo "R8 — the crossos files cx's 16 B pair refusal kept off cxvm (6.7.8), native then cxvm:"
+for _r8 in aggregate_storage_class:46 for_step_struct_assign:14 generic_two_param_struct:25 \
+           impl_inherent:4 method_chain:18 pair_return_shapes:6 struct_arg_type_accepted:38 \
+           struct_param_byvalue_copy:32 struct_ptrmode_assign_copy:59 struct_ptrmode_return_copy:17 \
+           struct_valued_call_sites:57; do
+    tcyr_native "tests/tcyr/crossos/${_r8%%:*}.tcyr" "${_r8##*:}"
+    tcyr_cx     "tests/tcyr/crossos/${_r8%%:*}.tcyr" "${_r8##*:}"
+done
+
+echo "R9 — dyn_objects.tcyr (6.7.8, dyn D5 forming / D6 the call), native then cxvm, the count derived from the source:"
+tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 81
+tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 81
+
+WANT=38
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + tuple_values counts derived from source, struct_field_value_copy's cx refusal pinned by name)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, and dyn_objects (the checked dyn's forming and calls) runs there whole"
 exit 0

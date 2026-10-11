@@ -125,9 +125,9 @@ fn flags(): i64 {
     assert_eq(f_faddr(), 1, "F18: if (&fn) after y = y - 3");
     assert_eq(f_gaddr(), 1, "F19: if (&global) after y = y - 3");
     assert_eq(f_floor(0x3FE0000000000000), 0, "F20: if (f64_floor(0.5 + 0)) is 0.0");
-#ifdef CYRIUS_TARGET_WIN
+    #ifdef CYRIUS_TARGET_WIN
     assert_eq(f_seek(0 - 1), 0, "F21: if (syscall(8, 1, 0, w + 1)): the PE lseek reroute's 0");
-#endif
+    #endif
     return 0;
 }
 
@@ -302,8 +302,7 @@ fn q_decls(): i64 {
     assert_eq(s3(&d9), 3, "Q30: the closure declares a struct-typed var of its own");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
-# A 16-byte struct comes back in rax:rdx — not on cx (its pair-return ABI is refused there).
+# A 16-byte struct comes back in rax:rdx (cx: r0:r4, since 6.7.8).
 struct P2 { x; y; }
 fn mk2(v): P2 { var t: P2 = P2 { v, v + 1 }; return t; }
 impl P2 { fn dup2(self): P2 { var t: P2 = P2 { self.x, self.y }; return t; } }
@@ -319,7 +318,6 @@ fn q_pairs(): i64 {
     assert_eq(w.x * 10 + w.y, 45, "Q26: w = (p.dup2())");
     return 0;
 }
-#endif
 
 # O — a struct result over 8 B as the RIGHT operand of an operator whose parameter takes it by
 # address (`*S`, or a by-value struct over 8 B): its temp's address, not its first word (SIGSEGV).
@@ -351,7 +349,6 @@ fn operands(): i64 {
     assert_eq(mkv(fncall1(|x| { var y = x; return y; }, 12)) - s, 3, "O14: ... as the LEFT operand");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 struct T2 { x; y; }
 struct U2 { x; y; }
 fn T2_add(a: T2, b: T2): i64 { return a.x + b.x + a.y + b.y; }
@@ -368,7 +365,6 @@ fn operand_pairs(): i64 {
     assert_eq(p + mkt2(4), 12, "O11: p + mkt2(4), a rax:rdx free call");
     return 0;
 }
-#endif
 
 # L — a struct result as the LEFT operand dispatches its operator fn from its own type (6.7.6 E2).
 struct LV { x; y; z; }
@@ -435,7 +431,6 @@ fn left_decls(): i64 {
     assert_eq(w5.v, 8, "L35: var w5: LW = mklw(2) + w;");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 struct LP { x; y; }
 struct LQ { x; y; }
 fn LP_add(a: LP, b: LP): i64 { return a.x + b.x + a.y + b.y; }
@@ -473,7 +468,6 @@ fn left_pair_decls(): i64 {
     assert_eq(lq(&q2), 306, "L38: return mklq(1) + a; from a `: LQ` (rax:rdx) fn");
     return 0;
 }
-#endif
 
 # R — a parenthesised return value in a struct-returning fn (6.7.6 E2).
 struct RW { v; }
@@ -508,7 +502,6 @@ fn rets(): i64 {
     assert_eq(w1.v * 10 + w2.v, 78, "R7: return (j); / return (mkrw(v)); from a `: RW` (8 B) fn");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn LP_mul(a: LP, b: LP): LP { var t: LP = LP { a.x * b.x, a.y * b.y }; return t; }
 fn rp1(j: LP): LP { return (j); }
 fn rp2(v): LP { return (mklp(v)); }
@@ -530,7 +523,6 @@ fn ret_pairs(): i64 {
     assert_eq(lpv(&r5), 46, "R14: return ((mklp(2))) * a;");
     return 0;
 }
-#endif
 
 # S — a `: Str` field into Str destinations: the handle, unchanged.
 struct HS { name: Str; k; }
@@ -573,19 +565,15 @@ fn rows(): i64 {
     q_fields();
     q_vars();
     q_decls();
-#ifndef CYRIUS_TARGET_CX
     q_pairs();
     operand_pairs();
-#endif
     operands();
     lefts();
     left_decls();
     rets();
-#ifndef CYRIUS_TARGET_CX
     left_pairs();
     left_pair_decls();
     ret_pairs();
-#endif
     assert_eq(GLR, 11, "L15: mklw(5) + GLW at top level, an 8 B value");
     assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");
     return 0;
