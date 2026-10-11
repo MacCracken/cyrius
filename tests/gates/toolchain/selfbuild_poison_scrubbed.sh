@@ -16,8 +16,8 @@
 #       CYRIUS_POISON= (EMPTY), writes a compiler that differs from the one it writes with the
 #       variable unset — so the scrub matters, and it must UNSET, not blank.
 #   P1  scripts/seed-derive-cycc.sh, release-gate.sh, version-bump.sh and bootstrap/bootstrap.sh
-#       unset CYRIUS_POISON before their first line that builds src/main.cyr (E4's rule in
-#       bounds_mode_checked.sh, for CYRIUS_BOUNDS).
+#       unset CYRIUS_POISON before their first line that builds src/main.cyr. (6.7.9: every OTHER
+#       self-build script — DERIVED, both variables — is E4's in bounds_mode_checked.sh.)
 #   P2  `CYRIUS_POISON=1 sh scripts/seed-derive-cycc.sh` is green (it was red). A seed-derive that
 #       is red WITHOUT the variable too fails here BY NAME — this gate cannot judge it then.
 #   P3  scripts/check.sh: (a) unsets CYRIUS_POISON nowhere at top level — the suite keeps it;

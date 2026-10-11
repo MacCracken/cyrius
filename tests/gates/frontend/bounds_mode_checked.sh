@@ -38,9 +38,20 @@
 #   E2  CYRIUS_BOUNDS=2 / true / yes refused by name, naming the value; no binary
 #   E3  a plain `#define CYRIUS_BOUNDS` is an ordinary define: it switches nothing (a `kernel;`
 #       build with it compiles, where `#bounds` + `kernel;` is refused)
-#   E4  the five self-build scripts (scripts/check.sh, release-gate.sh, seed-derive-cycc.sh,
-#       version-bump.sh, bootstrap/bootstrap.sh) unset CYRIUS_BOUNDS before their first build: an
-#       inherited CYRIUS_BOUNDS=1 must not switch the mode on in a self-build
+#   E4  (6.7.9: DERIVED, both variables) every self-build script unsets CYRIUS_BOUNDS and
+#       CYRIUS_POISON before its first code line naming a src/main*.cyr fork — an inherited one
+#       must not build a bounds-checked / poison-mode compiler (or install, ship, bench or verify
+#       one). The set: each shell script under scripts/ (a .sh, or a file whose #! line runs a
+#       shell — scripts/cyriusly) and bootstrap/ whose code (comment lines dropped) names a fork;
+#       floor 12, and both file shapes seen (scripts/install.sh, scripts/cyriusly). Named out:
+#       scripts/cyrius-watch.sh (src/main.cyr there is a user PROJECT's default entry — the user's
+#       mode must reach it) and scripts/hooks/pre-commit (a restore hint; it builds nothing). Two
+#       name no fork and are held BY NAME: bootstrap/bootstrap.sh (it builds the bootstrap compiler
+#       cybs; both variables) and scripts/check.sh (its self-builds are install.sh and the check
+#       driver: CYRIUS_BOUNDS; its CYRIUS_POISON stays for the suite, and
+#       tests/gates/toolchain/selfbuild_poison_scrubbed.sh P3 holds its self-builds to
+#       `_chk_selfbuild`). E4b: `CYRIUS_BOUNDS=1 CYRIUS_POISON=1 sh scripts/build-cycc-verify.sh`
+#       is green, and that inherited pair DOES change cycc(src) (anti-vacuous)
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
 #       CYRIUS_TARGET_EFI=1 -> refused by name (and nothing more: the refusal is fatal at once, so the
 #       injected checker is never compiled for a target it cannot serve); each control (the same
@@ -126,6 +137,19 @@
 #   MTL4 the build help's two --bounds lines dropped (cbt/cli_args.cyr)      -> RED TL3 build
 #   MTL5 the guide's stated violation line off by one (<source>:6)           -> RED TL4a
 #   MTL6 the guide's quoted constant warning reworded ("in" for "under")     -> RED TL4c
+# 6.7.9 E4 / E4b (the E4 block run alone on a scratch copy of the tree holding the one mutation;
+# the pre-fix tree: 13 RED — the twelve unscrubbed scripts and E4b; 2026-10-11):
+#   MQ1  install.sh's unset removed                                          -> RED E4 install.sh
+#   MQ2  cyriusly's unset (its setup arm) removed                            -> RED E4 cyriusly
+#   MQ3  funcgate-posix.sh unsets CYRIUS_BOUNDS only                         -> RED E4 (CYRIUS_POISON)
+#   MQ4  mac-selfhost.sh's unset moved below its first build                 -> RED E4 ("after")
+#   MQ5  install.sh blanks the pair (`CYRIUS_BOUNDS= CYRIUS_POISON=`)         -> RED E4 install.sh
+#   MQ6  a new scripts/new-cross.sh building src/main_aarch64.cyr, no scrub  -> RED E4 new-cross.sh
+#   MQ7  a new extensionless `#!/usr/bin/env bash` self-build, no scrub      -> RED E4 newtool
+#   MQ8  build-cycc-verify.sh's unset removed                                -> RED E4 + E4b (rc 3)
+#   MQ9  bootstrap.sh's CYRIUS_POISON unset removed                          -> RED E4 bootstrap.sh
+#   MQ10 (the gate) the fork regex blinded                                   -> RED E4 floor + both shapes
+#   MQ11 (the gate) the #! shape not scanned (only .sh)                      -> RED E4 misses cyriusly
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -282,13 +306,66 @@ printf '#define CYRIUS_BOUNDS\nkernel;\nvar x = 1;\n' > "$T/e3.cyr"
 cc e3 e3.cyr
 if [ "$RC" = 0 ]; then ok "E3 a plain #define CYRIUS_BOUNDS switches nothing (a kernel; build with it compiles)"
 else bad "E3 #define CYRIUS_BOUNDS + kernel;: rc $RC: $(head -1 "$T/e3.err")"; fi
-for s in scripts/check.sh scripts/release-gate.sh scripts/seed-derive-cycc.sh scripts/version-bump.sh bootstrap/bootstrap.sh; do
-    u=$(grep -nE '^[[:space:]]*unset([[:space:]]+[A-Z_]+)*[[:space:]]+CYRIUS_BOUNDS([[:space:]]|$)' "$s" | head -1 | cut -d: -f1 || true)
-    b=$(grep -nE 'src/main\.cyr' "$s" | grep -v '^[0-9]*:[[:space:]]*#' | head -1 | cut -d: -f1 || true)
-    if [ -z "$u" ]; then bad "E4 $s does not unset CYRIUS_BOUNDS (an inherited CYRIUS_BOUNDS=1 would switch the mode on in its self-build)"
-    elif [ -n "$b" ] && [ "$u" -gt "$b" ]; then bad "E4 $s unsets CYRIUS_BOUNDS at line $u, after its first build line $b"
-    else ok "E4 $s unsets CYRIUS_BOUNDS (line $u) before it builds"; fi
+# E4 (6.7.9) — DERIVED: every shell script under scripts/ and bootstrap/ whose code names a
+# src/main*.cyr fork is a self-build (the header says which two are named out, and why).
+# _e4_unset <file> <var>: the first line that unsets <var> (comment lines never match).
+_e4_unset() { grep -nE "^[[:space:]]*unset([[:space:]]+[A-Z_]+)*[[:space:]]+$2([[:space:]]|\$)" "$1" | head -1 | cut -d: -f1 || true; }
+: > "$T/e4set"
+for s in $(find scripts bootstrap -type f | LC_ALL=C sort); do
+    case "$s" in scripts/cyrius-watch.sh|scripts/hooks/pre-commit) continue ;; esac
+    case "$s" in
+        *.sh) ;;
+        */*.*) continue ;;
+        *) head -1 "$s" | grep -qE '^#!.*(/|env[[:space:]]+)(ba|da|k|z)?sh([[:space:]]|$)' || continue ;;
+    esac
+    b=$(grep -nE 'src/main[a-z_0-9]*\.cyr' "$s" | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1 || true)
+    [ -n "$b" ] && echo "$s $b" >> "$T/e4set"
 done
+e4n=$(grep -c . "$T/e4set" || true)
+if [ "$e4n" -lt 12 ]; then bad "E4 the derivation found $e4n self-build script(s) (floor 12) — the scan is blind"
+else ok "E4 the derivation finds $e4n self-build scripts (floor 12)"; fi
+for s in scripts/install.sh scripts/cyriusly; do
+    grep -q "^$s " "$T/e4set" || bad "E4 the derivation misses $s (a .sh and a #! script with no extension must each be seen)"
+done
+while read -r s b; do
+    e4bad=""
+    for v in CYRIUS_BOUNDS CYRIUS_POISON; do
+        u=$(_e4_unset "$s" "$v")
+        if [ -z "$u" ]; then e4bad="$e4bad; does not unset $v"
+        elif [ "$u" -gt "$b" ]; then e4bad="$e4bad; unsets $v at line $u, after"; fi
+    done
+    if [ -n "$e4bad" ]; then bad "E4 $s (first src/main*.cyr line $b)${e4bad} — an inherited one reaches its self-build"
+    else ok "E4 $s unsets CYRIUS_BOUNDS (line $(_e4_unset "$s" CYRIUS_BOUNDS)) and CYRIUS_POISON (line $(_e4_unset "$s" CYRIUS_POISON)) before line $b"; fi
+done < "$T/e4set"
+# By name: the two that name no fork. bootstrap.sh's first build line is its first `cat`.
+b=$(grep -nE '^[^#]*cat[[:space:]]' bootstrap/bootstrap.sh | head -1 | cut -d: -f1 || true)
+e4bad=""
+for v in CYRIUS_BOUNDS CYRIUS_POISON; do
+    u=$(_e4_unset bootstrap/bootstrap.sh "$v")
+    if [ -z "$u" ]; then e4bad="$e4bad; does not unset $v"
+    elif [ -n "$b" ] && [ "$u" -gt "$b" ]; then e4bad="$e4bad; unsets $v at line $u, after its first build line $b"; fi
+done
+if [ -n "$e4bad" ]; then bad "E4 bootstrap/bootstrap.sh${e4bad}"
+else ok "E4 bootstrap/bootstrap.sh unsets CYRIUS_BOUNDS and CYRIUS_POISON before it builds (line ${b:-?})"; fi
+u=$(_e4_unset scripts/check.sh CYRIUS_BOUNDS)
+if [ -n "$u" ]; then ok "E4 scripts/check.sh unsets CYRIUS_BOUNDS (line $u); its CYRIUS_POISON is selfbuild_poison_scrubbed.sh P3's"
+else bad "E4 scripts/check.sh does not unset CYRIUS_BOUNDS (an inherited CYRIUS_BOUNDS=1 would switch the mode on in its self-builds and its suite)"; fi
+# E4b — the scrub at run time, on the cheapest self-build script: the inherited pair leaves its
+# fixpoint green. A red run is judged against a clean one (red alone too: this row cannot judge).
+e4rc=0
+( CYRIUS_BOUNDS=1 CYRIUS_POISON=1; export CYRIUS_BOUNDS CYRIUS_POISON; sh scripts/build-cycc-verify.sh ) > "$T/e4b.on" 2>&1 || e4rc=$?
+if [ "$e4rc" = 0 ]; then
+    ( CYRIUS_BOUNDS=1 CYRIUS_POISON=1; export CYRIUS_BOUNDS CYRIUS_POISON; "$CC" < src/main.cyr > "$T/e4b.cc" 2> /dev/null ) || true
+    if [ -s "$T/e4b.cc" ] && ! cmp -s "$T/e4b.cc" build/cycc; then
+        ok "E4b CYRIUS_BOUNDS=1 CYRIUS_POISON=1 sh scripts/build-cycc-verify.sh is green (the pair changes cycc(src): $(wc -c < "$T/e4b.cc") B vs $(wc -c < build/cycc) B)"
+    else bad "E4b cannot judge: under CYRIUS_BOUNDS=1 CYRIUS_POISON=1 cycc(src) is build/cycc (or did not build) — the premise is gone (re-derive E4)"; fi
+    rm -f "$T/e4b.cc"
+else
+    e4rc0=0
+    ( unset CYRIUS_BOUNDS CYRIUS_POISON; sh scripts/build-cycc-verify.sh ) > "$T/e4b.off" 2>&1 || e4rc0=$?
+    if [ "$e4rc0" = 0 ]; then bad "E4b scripts/build-cycc-verify.sh is green alone and RED (rc $e4rc) under CYRIUS_BOUNDS=1 CYRIUS_POISON=1: $(grep -m1 -E 'FAIL|WARN' "$T/e4b.on")"
+    else bad "E4b cannot judge: scripts/build-cycc-verify.sh is RED without the variables too (rc $e4rc0): $(grep -m1 -E 'FAIL|WARN' "$T/e4b.off")"; fi
+fi
 
 # ── M4: where the mode has no meaning ────────────────────────────────────────────────────────────
 printf '#bounds\nkernel;\nvar x = 1;\n' > "$T/m4a.cyr"

@@ -23,6 +23,10 @@
 #   15 non-reproducible   16 map-build   17 map-run(hashmap/str). See
 # docs/development/issues/archived/2026-06-04-shipped-broken-functionality-found-by-consumers.md.
 set -e
+# 6.7.9 — a gate, so its verdict is the DEFAULT build's: an inherited CYRIUS_BOUNDS /
+# CYRIUS_POISON would build every program in it bounds-checked / poison-mode
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 CY="${1:?usage: funcgate-posix.sh <cyrius-bin> <scratch> <CYRIUS_HOME>}"
 WORK="${2:?scratch dir}"

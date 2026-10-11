@@ -18,6 +18,10 @@ set -e
 OUT_DIR="${1:?usage: build-macos-arm64-tarball.sh <out_dir>}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
+# 6.7.9 — every binary it ships is built here from src/ and programs/: an inherited
+# CYRIUS_BOUNDS / CYRIUS_POISON would ship a bounds-checked / poison-mode toolchain
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 VER=$(tr -d '[:space:]' < VERSION)
 STAGE="cyrius-${VER}-aarch64-macos"

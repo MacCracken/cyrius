@@ -34,6 +34,10 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# 6.7.9 — the fixpoint it checks is the DEFAULT build's: an inherited CYRIUS_BOUNDS /
+# CYRIUS_POISON would verify a bounds-checked / poison-mode compiler (and fail invariant 3)
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 CC="$ROOT/build/cycc"
 SRC="$ROOT/src/main.cyr"
