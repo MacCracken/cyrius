@@ -2142,6 +2142,7 @@ math::f64_lerp/3
 math::f64_max/2
 math::f64_min/2
 math::f64_parse/1
+math::f64_parse_n/2
 math::f64_parse_ok/2
 math::f64_sign/1
 math::gcd/2

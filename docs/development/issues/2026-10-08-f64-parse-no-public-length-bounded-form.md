@@ -1,6 +1,22 @@
-# `lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`) — OPEN
+# `lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`) — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: `f64_parse(s)` reads a NUL-terminated
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 8; CHANGELOG [6.7.9]) Public `f64_parse_n(s, n)` in `lib/math.cyr`:
+> the span `s[0..n)`, correctly rounded, `f64_parse`'s STRICT front (the proposed default) applied inside the span —
+> `nan` / `inf` count only whole within `n` ("na" at n = 2 is 0, "null" is 0), `n <= 0` is 0 — over the unchanged
+> lenient core `_f64_parse_n`, which stays internal. Both public entries share one private front, `_f64p_strict_n`;
+> `f64_parse(s)` is it at n = 2^31 - 1 (same reads, same bits), so a program defining its own `f64_parse_n` cannot
+> swap `f64_parse`'s body. Nothing past `n` is read: each byte of the front is read inside the span and only after
+> the one before it matched. The repro now builds: `a` = 2.57, `b` = `c` = 2.5. `tests/tcyr/math/f64_parse_rounding.tcyr`
+> runs all 8,064 corpus vectors and the 10,000 two-decimal literals through `f64_parse_n(span, len)` with digits
+> written right after the span, plus 42 explicit-length rows (span followed by digits that would flip a tie, through
+> tier 2, the trunc pair and the exact decimal; the strict words cut by `n`; a NUL inside the span; `n` = 0 / -1) and
+> 17 spans ending at a PROT_NONE page (a read of `s[n]` faults); `crossos/f64_parse_correctly_rounded.tcyr` gains 16
+> rows (one past 800 digits) — 86/86 on x86_64, aarch64 (qemu), PE (wine) and cxvm. Mutation-proven (9 mutants RED:
+> the bound dropped, the lenient front, an off-by-one on each strict word, the whitespace / sign scans unbounded, the
+> core's fraction / exponent loops unbounded, the -inf sign). bayan delegating `bayan_f64_parse` (and dropping `_d_*`)
+> is bayan's own patch, which ⛔ must not tag before cyrius 6.7.9 is out.
+
+**Status:** ✅ **RESOLVED in v6.7.9** (see the banner). Was: 🟡 OPEN — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: `f64_parse(s)` reads a NUL-terminated
 string to the first non-number byte (`f64_parse("2.57,")` with the wanted span "2.5" gives 2.57); the length-bounded
 core `_f64_parse_n(s, n)` is the only bounded entry and is underscore-internal; `f64_parse_n` is undefined. The
 vendored bayan still carries its own copy of the algorithm, `bayan_f64_parse(s, n)` (`lib/bayan.cyr:4696`).
