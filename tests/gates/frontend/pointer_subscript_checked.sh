@@ -248,8 +248,9 @@
 # a field that is no `*T` leave no step.
 #   PL0 tests/tcyr/crossos/typed_pointer_step.tcyr (op_rows_*: the issue's table at *i16 / *i32 / *i64 /
 #       *Pt, in a `+` and a `-` position, unparenthesised, as the right of `n +`, and the pointer-
-#       arithmetic controls; qm_rows: `(p?) + 1`) compiles with only its five `#inline ignored` notes;
-#       PL0s --syntax-only
+#       arithmetic controls; qm_rows: `(p?) + 1`; intrin_rows: a builtin at the head of a term,
+#       `bitget(m, 0, q) + 1`, is a plain value — 6.6.17's call rule, which PARSE_TERM's own dispatch
+#       skipped) compiles with only its five `#inline ignored` notes; PL0s --syntax-only
 #   PL  that file on every leg; PLR the issue's repro VERBATIM (it exited 255) on every leg
 #   PLW1-3 `0 | q`, `-q`, `hn(q).n` into a `*i32` warn "assigning non-pointer" (as `q | 0` / `h.n` did);
 #       PLWc pointer arithmetic with such an operand (`q + (x == q)`, `q - (k * q)`) warns nothing
@@ -269,6 +270,7 @@
 #   MPL8  a non-`*T` field keeps the word (_field_load_type) -> RED PL* PLR* PLW3 (12)
 #   MPL9  an operator fn's result keeps it (EMIT_OP_DISPATCH) -> RED PL* (4: `(v + q) + 1`)
 #   MPL10 a postfix `?` keeps it (_PARSE_TERM_IMPL)   -> RED PL* (4: `(p?) + 1`)
+#   MIN1  a builtin keeps its last argument's (PARSE_INTRIN) -> RED PL* (4: `bitget(m, 0, q) + 1`)
 #   (PL* / PLR* = the x86 legs and PE; the aarch64 / cx legs' compilers are built from this tree's src)
 #   The compiler before this bite -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe PLW1-3 PLWc PLD (the value
 #   file: 112 of 215 fail); its aarch64 / cx compilers exit 255 on the repro and 112 on the value file

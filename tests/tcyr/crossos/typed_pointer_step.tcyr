@@ -451,6 +451,22 @@ fn qm_rows(): i64 {
     return 0;
 }
 
+# ── a builtin at the head of a term is a plain value (6.6.17's call rule, 6.7.9) ───────────────
+# PARSE_TERM dispatches an intrinsic (bitget / bitset / bitclr, store8..64, f64_* ...) itself, past the
+# factor wrapper that resets a call's step, so its result kept its LAST argument's: with `q: *i32`,
+# `bitget(m, 0, q) + 1` added 4. As the right operand of `*` it was always right (the wrapper's).
+fn intrin_rows(): i64 {
+    var q: *i32 = &buf;
+    var w: *Pt = &buf;
+    var m = 0;
+    assert_eq(bitget(m, 0, q) + 1, 1, "*i32: bitget(m, 0, q) + 1");
+    assert_eq((bitget(m, 0, w)) - 1, 0 - 1, "*Pt: (bitget(m, 0, w)) - 1");
+    assert_eq(bitclr(m, 0, q) + 1, 1, "*i32: bitclr(m, 0, q) + 1");
+    assert_eq(m + bitget(m, 0, w) + 1, 1, "*Pt: m + bitget(m, 0, w) + 1");
+    assert_eq(m * bitget(m, 0, q) + 1, 1, "*i32 ctl: m * bitget(m, 0, q) + 1 (the right of `*`)");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
 generic_returns();
@@ -470,6 +486,7 @@ op_rows_i32();
 op_rows_i64();
 op_rows_Pt();
 qm_rows();
+intrin_rows();
 
 var A_u8: *u8 = &buf;
 var A_pt: *Pt = &buf;

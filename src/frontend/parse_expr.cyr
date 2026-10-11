@@ -6171,6 +6171,10 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp == 15) { return PARSE_IF_EXPR(S); }   # 6.7.4 (B3): `if (c) { a } else { b }` as a value
     var r = _PARSE_INTRIN_IMPL(S, ptyp);
     if (r != 1) { return r; }
+    # 6.7.9: a builtin's result is a plain value (6.6.17's call rule, `_call_scale_fix`) at BOTH
+    # tiers — PARSE_TERM's own dispatch skips the factor wrapper that applies it, so with `q: *i32`
+    # `bitget(m, 0, q) + 1` kept the last argument's step and added 4. CHANGELOG [6.7.9]
+    SPSC(S, 0);
     var k = _NEG_INTRIN_KIND(ptyp);
     if (k != 0) { _FBR_MARK(S, k); }
     # 6.7.3: f64_eq / f64_lt / f64_gt (68-70) and f64_le / f64_ge (164-165) are comparisons.
