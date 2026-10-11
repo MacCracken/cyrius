@@ -5430,7 +5430,8 @@ offsets past the params.
 
 ## Known Limitations
 
-- `for` loop step must be simple assignment (`i = i + 1`)
+- A classic `for` step is ONE assignment — any assignment a statement takes, `=` or a compound
+  operator (6.7.5) — ending at its `)` (6.7.8): not a call, not `i++`, not a comma list
 - Exit codes truncated to 0-255 (Linux limitation)
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
