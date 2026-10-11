@@ -1,7 +1,7 @@
 # A whole-struct store into a ZERO-size struct global writes 8 bytes over its neighbour — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-09 against the merged 6.7.7 compiler (l677-int @ 881895f6): the repro exits 0 where 77 is right (the 6.7.7 odd-size fix covers 3/5/6/7 B; width 0 still falls back to the 8-byte store).
-**Placement:** 6.7.13 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) (the globals lane) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** the 6.7.7 odd-size-global lane (out of scope); filed 2026-10-09.
 **Severity:** Low — zero-size structs are rare; silent corruption when they occur
 **Affects:** cycc ≤ 6.7.7

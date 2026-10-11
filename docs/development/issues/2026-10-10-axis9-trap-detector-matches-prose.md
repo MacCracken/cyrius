@@ -5,8 +5,7 @@ detector (the `wine9.awk` heredoc, extracted verbatim from `tests/gates/toolchai
 nothing for a clean wine fixture (private `WINEPREFIX` / `HOME` / `XDG_CACHE_HOME`, a `_wine_down` teardown in its
 EXIT trap) and FAILS the same fixture with one added line `check "the trap gate" 0`: "runs wine but no EXIT trap
 stops this prefix's wineserver ... and removes its server dir ...: check "the trap gate" 0".
-**Placement:** 6.7.11 — repair 1, the CLI lane, beside [axis 9 and a binfmt PE run](2026-10-08-wine-prefix-scan-misses-binfmt-pe-run.md)
-(the same detector; roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x.
+**Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-6a (two of its gate labels tripped it; the bite reworded
 the labels rather than change the detector).
 **Severity:** Low — a false RED in a hygiene gate (loud, never a false pass); the workaround is rewording a label.

@@ -5,7 +5,7 @@
 evaluates to 0. The free-fn spelling `m2(&p, 1.5) * 2` is 42. Re-verified 2026-10-10 against 6.7.8 @ 484763ed: the
 repro still exits 1 on x86_64, aarch64 (qemu), cx and PE (wine). ⚠ The Proposed fix's premise is wrong — see
 *An f64-returning method is never typed f64* below (appended by the 6.7.8 dyn lane's D0).
-**Placement:** 6.7.11 — Break 2, repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `method_f64_arg_leak.cyr`).
 **Severity:** Medium — a silent wrong value on an integer method result. The spurious warning is the only sign.
 **Affects:** cycc 6.7.0 – 6.7.6. Measured on 6.7.0, 6.7.3 and 6.7.6; earlier compilers reject the repro's inherent

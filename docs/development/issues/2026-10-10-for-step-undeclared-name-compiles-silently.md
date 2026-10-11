@@ -5,8 +5,7 @@
 and `for (..; ..; yy += 1)` with neither name declared anywhere also build (rc 0). The statement `zz = 1;` is refused
 "undefined variable 'zz'". The repro behaves the same with the installed 6.6.10, 6.6.20, 6.7.0, 6.7.3, 6.7.5, 6.7.6
 and 6.7.7 compilers.
-**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
-is the user's call, asked at that release's open: a program that compiles today is refused).
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-2b (the for-step work).
 **Severity:** High — a typo in a loop step is silently dropped: the loop variable never advances, so the program
 spins forever (or computes with a stale index) with no diagnostic.

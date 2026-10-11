@@ -5,7 +5,7 @@
 Broken pipe". The same program without the parent's `signal_ignore(SIGPIPE)` and `SIG_BLOCK` reports zeros and ends
 quietly. Every fork site in `lib/process.cyr` runs only `_proc_child_guard` (`:147`) between `fork` and `execve`, or
 nothing at all (`spawn`).
-**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*), the stdlib lane — placed 2026-10-09 — never 7.x. (POSIX keeps a blocked mask and SIG_IGN dispositions across `execve`; resetting them in the child — as a `posix_spawn` with SETSIGMASK / SETSIGDEF, or Python's `restore_signals`, does — is the stdlib's call, confirmed at the open.)
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-09 by thoth's repair batch 12 (its audit finding E4), which fixed the same defect in thoth's
 own capture child. Filed 2026-10-09, for review.
 **Severity:** Medium — wrong signal semantics in every program the exec family starts from a parent that ignores

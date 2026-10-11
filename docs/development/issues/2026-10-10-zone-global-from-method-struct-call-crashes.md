@@ -6,8 +6,7 @@ the installed 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers (6.7.0 is where an 
 The free-call form (`var G3: Q = mkf();`), the same method line after the first top-level statement, and a 24-byte
 method result are each refused by name ("'Q_mk' returns a struct by value, and a struct result needs storage in a
 fn's frame — call it inside a fn").
-**Placement:** 6.7.13 — repair 3, the globals lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 —
-never 7.x (the fix is the user's call, asked at that release's open: a program that compiles today is refused).
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D6 (a dyn destination; D6 refuses that form for a
 dyn, `_gvi_dyn_mcall`, gate row C9b).
 **Severity:** High — a clean build of a program that cannot run (SIGSEGV before `main`), with no diagnostic.

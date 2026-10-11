@@ -7,9 +7,7 @@ same way. With the `await` removed (no coroutine) the repro exits 73. A direct r
 (no closure) is right, and so is a scalar capture. It does not matter whether the closure is made before or after
 the `await`. Same results on the 6.7.6 tag, 6.7.0, 6.6.10 and 6.6.8; 6.6.0 – 6.6.7 crash (rc 139) on the same
 source.
-**Placement:** 6.7.13 — Break 2, repair 3, the frontend remainder (roadmap.md § *The releases after 6.7.7*) — placed
-2026-10-09 — never 7.x. It is the closure-capture copy (`_cl_emit_cap_word`), the same code as the u128 capture fix
-placed in that lane. Hosts: the three coroutine targets, x86_64 Linux, ach (x86 Mach-O) and cass (PE, wine first).
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-09 by the 6.7.7 B4 (tuples) lane, bite T6 (`scratchpad/b4t6/as4.cyr`). Because of it, no B4
 gate row pins a closure capture across an `await`.
 **Severity:** High — a silent miscompile: a wrong value with no diagnostic.

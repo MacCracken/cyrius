@@ -5,8 +5,7 @@
 `~5 + 10` → 15 (want 4), `~5 * 2` → 10 (want -12), `~0 + 3` → 3 (want 2), `~K + 1` → 6 (want -5); `var a = -K + 10;`
 is 15 too, and so is `-C + 10` with `const C = 5;`. `-5 + 10`, `(~5) + 10` and `(-K) + 10` are right. The repro exits 7 (seven wrong values) with the installed
 6.6.10, 6.6.20, 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers as well.
-**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
-is the user's call, asked at that release's open: what these expressions compute changes — from wrong to right).
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-1b (its probes; the same `_cfo` class as that bite's slice
 fix).
 **Severity:** High — a silent wrong value on valid, ordinary arithmetic; no diagnostic.

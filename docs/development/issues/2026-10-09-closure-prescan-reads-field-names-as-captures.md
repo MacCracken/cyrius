@@ -6,8 +6,7 @@
 the enclosing local renamed (`var yy = 5;`) the file compiles and exits 16, which is right. With `lib/alloc.cyr`
 included it compiles and computes the right value, but each closure becomes a capturing one, with a heap env holding
 a copy of `y` it never reads. Same refusal on the 6.7.6 tag, 6.7.0, 6.6.10, 6.6.5 and 6.6.0.
-**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
-It is a parser bug in the capture pre-scan, beside the named-argument label exemption 6.7.7 (B6) added there.
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-09 by the 6.7.7 B6 (default and named arguments) review
 (`scratchpad/review-b6-spec/repros/preexisting_struct_literal_field_capture.cyr`, the literal-label shape). The `.y`
 shape was found while verifying this filing. It predates B6.

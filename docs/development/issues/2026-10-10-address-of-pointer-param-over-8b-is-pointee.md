@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-10 against 6.7.8 @ 484763ed with the tree's `build/cycc`, and with the
 tree's cross compilers: the repro exits 3 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine). Fixing it changes what a
 compiling program does, so the direction is the user's call (it was filed, not fixed).
-**Placement:** 6.7.11 — Break 2, repair 1, the call-path lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x. (the fix changes what programs do — the user's call, asked at that open)
+**Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
 **Discovered:** 2026-10-10 while planning the 6.7.8 checked-`dyn` lane (repro `p11.cyr`, the lane's forming-source
 audit); filed by the lane's bite D0.
 **Severity:** Medium — a silent wrong value: the same spelling `&q` names two different things, with no diagnostic.
