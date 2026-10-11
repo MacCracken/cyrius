@@ -10246,22 +10246,23 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         _gsn_add(TOKVAL(S, i));
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
-    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk, ti - i - 2); }   # 6.7.8: `G<..T..>`
+    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk); }   # 6.7.8: `G<..T..>`
     return pk;
 }
 # ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
 # `gx(b)` with `b: Box<Pt>` inferred i64 and called the base (`b: Box`) — refused as a struct
 # mismatch since 6.7.3; and through `*Box<T>`, `gx(&b)` compiled and read `b.n` at the base's
-# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name,
-# `ptr` 1 behind the `*`), T a WHOLE type argument at depth 1, now carries T through G's slot.
+# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name),
+# T a WHOLE type argument at depth 1, now carries T through G's slot — both alike: a value or a
+# pointer argument binds T (`_gsc_arg`; 6.7.9 the by-value carrier's pointer too).
 # Per type parameter w, a 20-bit field of GFGM at bit 24 + 20w (bits 0-23 keep their meaning):
-#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 the `*` · bits 10-19 G's name
-#   token as an offset from the list's `(` — G is looked up when a call infers, so a struct
-#   declared below the fn is found.
+#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 unused (6.7.8's `*`) ·
+#   bits 10-19 G's name token as an offset from the list's `(` — G is looked up when a call
+#   infers, so a struct declared below the fn is found.
 # The first carrying parameter wins, as for a direct carrier; a direct carrier wins over this one
 # (`_gen_infer_tp`). `Box<Pair<T>>` (T nested) records nothing — its refusal stands.
 # CHANGELOG [6.7.8]
-fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
+fn _gs_carrier(S, fi, ti, pc, pk): i64 {
     var off = ti - _gs_open;
     if (off > 1023) { return pk; }
     var tp = GFTP(S, fi);
@@ -10273,7 +10274,7 @@ fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
         var t = TOKTYP(S, j);
         if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return pk; }
         if (d == 1) { if (slot < 2) { if (_gs_targ_whole(S, j) == 1) {
-                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (ptr << 9) | (off << 10));
+                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (off << 10));
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
@@ -10511,17 +10512,18 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     return c;
 }
 # ⛔ 6.7.8 — T through its STRUCT CARRIER (`_gs_carrier`; T has no direct one). The WHOLE
-# argument in the carrying position must be an instance of the parameter's G (`_gsc_arg`), and T
-# is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with `b: Box<Pt>` binds Pt
-# and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64 — today's base, and
-# its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the call instantiates
-# `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout). CHANGELOG [6.7.8]
+# argument in the carrying position must be (or point at) an instance of the parameter's G
+# (`_gsc_arg`), and T is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with
+# `b: Box<Pt>` binds Pt and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64
+# — today's base, and its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the
+# call instantiates `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout).
+# CHANGELOG [6.7.8]
 fn _gen_infer_sc(S, fi, open, f): i64 {
     var k = f & 255;
     if (k == 0) { return 0 - 8; }
     var a = _call_arg_for(S, fi, open, k - 1);
     if (a < 0) { return 0 - 8; }
-    var c = _gsc_arg(S, a, (f >> 9) & 1);
+    var c = _gsc_arg(S, a);
     var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
     if (r == 0) { return 0 - 8; }
     if (r < 0) { if (r != 0 - 8) { _gi_sc = 1; } }
@@ -10546,25 +10548,26 @@ fn _gsc_g(S, fi, off): i64 {
     return g;
 }
 # The struct a struct carrier's WHOLE argument at token a holds or points at, 0 when none (the
-# call then infers i64). ptr 0 (`b: G<T>`): a G<X> VALUE — a name, a struct global, a call
-# returning it; never a pointer (`&b`, a `*G<X>` name), which binds nothing and runs the base as
-# it compiles today. ptr 1 (`b: *G<T>`): what it POINTS AT — `&b` of an inline struct or a by-value
-# parameter, a `*G<X>` name or a `*G<X>`-returning call, or a G<X> value, whose address the call
-# passes (6.6.20). CHANGELOG [6.7.8]
-fn _gsc_arg(S, a, ptr): i64 {
+# call then infers i64): a G<X> VALUE — a name, a struct global, a call returning it — or what a
+# pointer POINTS AT — `&b` of an inline struct or a by-value parameter, a `*G<X>` name, field chain
+# or `*G<X>`-returning call. Both carriers read it alike: `b: *G<T>` is passed a G<X> value's
+# address (6.6.20), and `b: G<T>` an address-passed G<X>'s pointer as the struct (a typed pointer
+# converts, 6.7.3) — so `gx(&b)` / `gx(bp)` call `gx$Pt`, as `gx<Pt>(&b)` does. 6.7.8 bound nothing
+# for the by-value carrier's pointer: the i64 base ran on `Box<i64>`'s layout (b.n read as b.v.y,
+# 4 for 8). CHANGELOG [6.7.8], [6.7.9]
+fn _gsc_arg(S, a): i64 {
     var t = TOKTYP(S, a);
     if (t == 27) {
-        if (ptr == 0) { return 0; }
         if (_gsc_name_end(S, a + 1) == 0) { return 0; }
         return _gsc_addr_of(S, TOKVAL(S, a + 1));
     }
     if (t != 2) { return 0; }
-    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a, ptr); }
-    if (ptr == 1) { if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); } }
+    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a); }
+    if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); }
     if (_gsc_name_end(S, a) == 0) { return 0; }
-    return _gsc_name(S, TOKVAL(S, a), ptr);
+    return _gsc_name(S, TOKVAL(S, a));
 }
-# A `*G<T>` carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
+# A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
 # i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
@@ -10600,41 +10603,38 @@ fn _gsc_name_end(S, a): i64 {
     if (nt == 31 || nt == 11) { return 1; }
     return 0;
 }
-fn _gsc_call(S, a, ptr): i64 {
+fn _gsc_call(S, a): i64 {
     if (_call_is_whole_arg(S, a) == 0) { return 0; }
     var fi = FINDFN(S, TOKVAL(S, a));
     if (fi < 0) { return 0; }
-    if (ptr == 1) { if (_fn_rpsid != 0) {
-            var ps = L64(_fn_rpsid + fi * 8);
-            if (ps > 0) { return ps; }
-        } }
+    if (_fn_rpsid != 0) {
+        var ps = L64(_fn_rpsid + fi * 8);
+        if (ps > 0) { return ps; }
+    }
     var r = GFRS(S, fi);
     if (r > 0) { return r; }
     return 0;
 }
-fn _gsc_name(S, noff, ptr): i64 {
+fn _gsc_name(S, noff): i64 {
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
         var lt = GLTYPE(S, li);
         if (lt >= 0) { return 0; }
         if (lt <= 0 - 2048) { return 0; }
-        if (GLPTRP(S, li) == 1) { if (ptr == 0) { return 0; } }
         return 0 - lt;
     }
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0; }
-    if (ptr == 1) {
-        var ps = _gv_ptr_sid(S, vi);
-        if (ps > 0) { return ps; }
-    }
+    var ps = _gv_ptr_sid(S, vi);
+    if (ps > 0) { return ps; }
     if (GVPM(S, vi) == 0) { return 0; }
     var gt = GVTYPE(S, vi);
     if (gt > 0) { return gt; }
     return 0;
 }
-# `&name` (a `*G<T>` carrier only): an inline struct local, a by-value struct parameter (whose `&`
-# is the caller's struct, 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode
-# handle is the slot's address — a `**` — and binds nothing.
+# `&name`: an inline struct local, a by-value struct parameter (whose `&` is the caller's struct,
+# 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode handle is the slot's
+# address — a `**` — and binds nothing.
 fn _gsc_addr_of(S, noff): i64 {
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {

@@ -4966,13 +4966,16 @@ instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
 `b: Box<Pt>` calls `gx$Pt` and `b: Box<i32>` calls `gx$i32`, as `gx<Pt>(b)` /
 `gx<i32>(b)` do (before 6.7.8 the call reached the `Box` base and was refused). The
 WHOLE argument must be the instance: a local or by-value parameter, a struct
-global, or a call returning it. Through a `*Box<T>` parameter, what the argument
-POINTS AT binds: `&b`, a `bp: *Box<Pt>` name or a call returning one, a field
-declared `bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`,
-`G.h.bp`), or a `Box<Pt>` value (whose address the call passes) — before 6.7.8
-these compiled, ran the base and read `b.n` at the base's offset. A pointer passed to a by-value
-`b: Box<T>` binds nothing (the base runs, as before), and a plain `p: *T` keeps the
-rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
+global, or a call returning it — or a pointer to one, which binds what it POINTS AT:
+`&b`, a `bp: *Box<Pt>` name or a call returning one, a field declared
+`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). That
+holds through a `*Box<T>` parameter, which also takes a `Box<Pt>` value (the call
+passes its address), and through a by-value `b: Box<T>` — address-passed when the
+instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
+`gx<Pt>(&b)` does. Before
+6.7.8 (6.7.9 for the by-value parameter) these pointer calls compiled, ran the `i64`
+base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. A plain `p: *T` keeps
+the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
 (`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
 write `gx<Pt>(..)`.
 

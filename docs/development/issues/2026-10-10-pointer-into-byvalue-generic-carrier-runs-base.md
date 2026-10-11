@@ -1,6 +1,9 @@
-# A pointer passed to a by-value `b: Box<T>` parameter runs the generic's i64 base — `b.n` read at the wrong offset — OPEN
+# A pointer passed to a by-value `b: Box<T>` parameter runs the generic's i64 base — `b.n` read at the wrong offset — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 11, l679-crit; CHANGELOG [6.7.9]) A pointer passed to a by-value `b: G<T>` carrier binds T from what it points at, as the `*G<T>` carrier's has since 6.7.8 (the user's decision 2(b)): `_gsc_arg` (parse_fn.cyr) reads a value and a pointer alike for both carriers — `&name`, a `*G<X>` local / parameter / global, a `*G<X>`-returning call and a `*G<X>` field chain — and the pair scans' token readers (`_tok_gen_sc_sid` / `_tok_sc_ann`, parse.cyr) follow it too. The repro exits 248 (was 128) on x86 / IR=1 / IR=3 / DCE=1 / aarch64 (qemu) / cx / PE (wine); gate rows R18e (flipped, 8) / R18g / R18h (the repro verbatim) in `frontend/struct_arg_type_refused.sh` and G10 (21 rows, every pointer form) in `tests/tcyr/crossos/generic_struct_inference.tcyr` on the same legs, mutation-proven. A 1073-source differential compiles byte-identically, diagnostics included, except the repro and the values file.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above and *Resolution* below (reproduced on the 6.7.9 lane tip @
+b462800d before the fix: the repro exits 128). As filed: 🟡 OPEN — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
 2,053,536 B) with the tree's compiler and the cross compilers built from it: the repro exits 128 on x86_64, aarch64
 (qemu), cx (cxvm) and PE (wine), where 248 is right. The installed 6.7.4 and 6.7.7 compilers also exit 128. The
 merged tree's guide (§ *Generics*, `docs/guides/cyrius-guide.md:4945`) states the behaviour ("A pointer passed to a
@@ -71,3 +74,25 @@ same address the base does — only the layout changes, to the right one. Flip g
 rows for `&b`, a `*Box<Pt>` local, a `*Box<Pt>` parameter and a `*Box<Pt>`-returning call, at the four targets.
 If the user keeps "binds nothing" instead, the call must be refused by name (a pointer into a by-value generic
 carrier cannot pick its instance), never run the base on the wrong layout.
+
+## Resolution (6.7.9, the critical lane's bite 11)
+
+- **Direction (a)**, the user's decision 2(b): bind T from the pointee and run the `Box<Pt>` instance (128 → 248). The
+  by-value carrier (over 8 B) is address-passed, so the instance receives the very address the base did; only the
+  layout changes, to the right one. The explicit `gx<Pt>(..)` is the control for every form, and it already accepted
+  each one (a typed pointer converts into an address-passed struct parameter, 6.7.3).
+- **Both carriers now read the argument alike**: `_gsc_arg` lost its `ptr` parameter (and `_gsc_call`, `_gsc_name`
+  theirs; `_gs_carrier` no longer records bit 9). Every pointer form the `*G<T>` carrier took binds the by-value one:
+  `&b` of an inline local, a by-value parameter or a struct global, a `*Box<Pt>` local, parameter or global, a
+  `*Box<Pt>`-returning call, a `*Box<Pt>` field through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.bp`, two hops), by
+  name, in a body that is not inlined; and through it a stub base (`T` used as a struct — was refused, now the
+  instance), a `: T` return (`unbox(bp)` — was refused), `Box<i32>` (the scalar instance) and `Pr<T, U>` (both from
+  one pointer).
+- **The pair scans** (`_tok_gen_sc_sid`, `_tok_sc_ann`, parse.cyr) asked bit 9 before following `&name` or a `*G<..>`
+  annotation; they follow both for either carrier, so a `?` caller above its wrapper `var p = unbox(bp); return
+  p.hbx(d);` flags the pair (with the parser alone fixed it died, rc 139).
+- **Unchanged**: an untyped pointer (`var u = &b; gx(u)`) binds nothing, as for `*Box<T>` (no static struct); `&bp` of
+  a pointer is a `**` and binds nothing; an inline `Box<Pt>` field (`gx(h.b)`) keeps the base's refusal.
+- **Met in passing, filed** (not this bite's: it is the user's call): a typed pointer passed to a by-value struct
+  parameter of 8 B or less passes the address as the struct's value (`bs4(tp)` with `fn bs4(b: S4)`, `tp: *S4`) —
+  issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md.

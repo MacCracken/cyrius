@@ -367,8 +367,9 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
 # 6.7.8 — the same when T is carried by a generic struct parameter (`_gs_carrier`, field
 # f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
 # exists yet when the pair scans run, so a name is read from its DECLARATION's annotation (`b: G<..,
-# X, ..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its instance. Only
-# `&name` reaches a `*G<..>` carrier. Anything else answers 0 — a missed flag, never a false one.
+# X, ..>` or `b: *G<..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its
+# instance, `&name` as name — for either carrier (6.7.9: the by-value one too, as `_gsc_arg`).
+# Anything else answers 0 — a missed flag, never a false one.
 fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if ((f & 255) == 0) { return 0; }
     var at = _call_arg_for(S, fi, j + 1, (f & 255) - 1);
@@ -376,7 +377,6 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
     if (TOKTYP(S, at) == 27) {
-        if (((f >> 9) & 1) == 0) { return 0; }
         at = at + 1;
         if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
         f = f | (1 << 20);
@@ -404,13 +404,12 @@ fn _tok_sc_name(S, a, i, at, g, f): i64 {
     return _tok_sc_ann(S, d, g, f);
 }
 # The type argument in T's slot of the annotation after the declared name at token d, when it is a
-# plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` for a `*G` carrier
-# (bit 9 of f) not reached through `&` (bit 20: `&bp` is a `**`). 0 otherwise.
+# plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` not reached through
+# `&` (bit 20: `&bp` is a `**`). 0 otherwise.
 fn _tok_sc_ann(S, d, g, f): i64 {
     if (TOKTYP(S, d + 1) != 49) { return 0; }
     var at = d + 2;
     if (TOKTYP(S, at) == 8) {
-        if (((f >> 9) & 1) == 0) { return 0; }
         if (((f >> 20) & 1) == 1) { return 0; }
         at = at + 1;
     }
