@@ -1,6 +1,23 @@
-# No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra) — OPEN
+# No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra) — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: on a `tcp_socket()` fd,
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 6; CHANGELOG [6.7.9]) Parts (1) and (3), as the 6.7.9 selection
+> placed them. `sock_set_nodelay(fd, on)` in `lib/net.cyr`, beside `sock_set_send_timeout`: `on` != 0 sets
+> TCP_NODELAY (normalised to the int 1, so a wide `on` whose low 32 bits are 0 still sets it), 0 clears it, through
+> `_net_os_setopt(fd, 6, 1, ..)` — ws2_32 setsockopt (0xF032) on Windows, `setsockopt` elsewhere; 0 or -errno
+> (-WSAGetLastError on Windows); agnos declines with -38 and issues no syscall. New
+> `tests/tcyr/crossos/sock_set_nodelay.tcyr` sets, clears and re-sets it and READS IT BACK with getsockopt (a
+> sentinel-primed buffer, the reported length honoured — Darwin answers 4, `t_flags & TF_NODELAY`), plus a bad-fd
+> row (-EBADF / -WSAENOTSOCK): it does not compile before the fix, and passes 8/8 on x86_64, aarch64 (qemu), PE (wine)
+> and on real hardware — ecb, ach, cass and pi; the Mach-O and agnos builds are clean. Mutation-proven (7 mutants RED:
+> the helper absent, the Windows arm through the raw wrapper, `on` unnormalised, the option number wrong, a no-op
+> setter, a clear that does nothing, the error dropped). api-surface +1 (`net::sock_set_nodelay/2`).
+> **Part (2) is NOT taken:** the Windows raw `sys_setsockopt` keeps its -38 decline (6.6.7 / 6.6.11 — the raw
+> wrappers take Linux option numbers and close with CloseHandle, so routing one would trade an honest -38 for wrong
+> options); the helper is the portable route. yantra moving `_cdp_set_nodelay` onto `sock_set_nodelay` is a yantra
+> patch that ⛔ must not tag before cyrius 6.7.9 is out.
+
+**Status:** ✅ **RESOLVED in v6.7.9** (parts 1 and 3; part 2 declined — see the banner).
+Filing state: re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: on a `tcp_socket()` fd,
 `sys_setsockopt(fd, 6, 1, &one, 4)` (what yantra's `_cdp_set_nodelay` calls) FAILS as a PE32+ under wine while
 net.cyr's internal `_net_os_setopt` (ws2_32 setsockopt, 0xF032) succeeds on the same fd — probe exit 3 under wine,
 2 on Linux (both succeed). `lib/syscalls_windows.cyr:928` is still `{ return 0 - 38; }`; `lib/net.cyr` has no

@@ -2178,6 +2178,7 @@ net::sock_reuseport/1
 net::sock_send/3
 net::sock_send_a/4
 net::sock_send_all/3
+net::sock_set_nodelay/2
 net::sock_set_nonblocking/1
 net::sock_set_recv_timeout/3
 net::sock_set_send_timeout/3
