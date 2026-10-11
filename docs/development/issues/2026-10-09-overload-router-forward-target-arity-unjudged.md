@@ -1,7 +1,25 @@
-# The overload router sends a call to a later-defined `_str` sibling without judging its arity — since 6.7.7's F2 the call is refused, naming a fn the source never called — OPEN
+# The overload router sends a call to a later-defined `_str` sibling without judging its arity — since 6.7.7's F2 the call is refused, naming a fn the source never called — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc`
-1,916,288 B). The repro is refused with `error:<source>:10: 'pr_str' expects 2 arguments, got 1`. The source calls
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 20; its src hunk travels as the named hand-off
+> `quick.handoff.patch` to src/frontend/parse_fn.cyr's owner, the critical lane; CHANGELOG [6.7.9]) `_OV_ARITY_OK`
+> judges a not-yet-emitted sibling that pass 1 recorded (GFDS != 0) by its count, as it judges one defined above the
+> call: `if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 1; } }`. The filed repro calls `pr`
+> and exits 11 (refused before); a one-parameter `pr_str` below still routes. Reproduced first on 6.7.9's tree. Pass 1
+> fills the defaults row (`_pd_record_at`, from `_prescan_params_scan`) and the variadic flag before pass 2, so the
+> forward judgment reads the same `_fnt_params` / `_pd_min` / GFVA facts `_CHECK_ARITY` (F2) judges the routed call
+> by — the two agree, so a call that compiles today cannot change target. Measured: an instrumented compiler over
+> 946 inputs (src main forks, every tests/ `.tcyr` / `.cyr`, programs/, benches, fuzz, cbt/cyrius.cyr, the issue
+> repros) logs 94 routing judgments, exactly one of them a forward target — the filed repro; a base-vs-patched
+> differential over the same 946, default and `CYRIUS_DCE=1`, has zero codegen diffs and one status diff (the repro,
+> refused -> compiles). Gate: axis 7 of `tests/gates/frontend/overload_arity_dispatch.sh` (13 rows: each cell of the
+> table below, above and below; a return / tail row; argc above max; a defaulted and a variadic forward sibling; the
+> `_int` arm; the repro verbatim). Mutation-proven: the pre-fix line (the GFDS half dropped) fails 5 rows (NOEMIT),
+> the count without `_pd_min` fails 2, the variadic test moved below the count fails 1. The repro and the `_int` row
+> agree on qemu-aarch64, cxvm and PE (wine). A target no definition recorded (GFDS 0) keeps the permissive answer,
+> as proposed — observable only under `--allow-undef`, where `pr(s)` still reaches the undefined `pr_str` (a trap).
+
+**Status:** ✅ **RESOLVED in v6.7.9** (quick lane bite 20; the parse_fn.cyr hunk a named hand-off). Was: 🟡 OPEN —
+reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc` 1,916,288 B). The repro is refused with `error:<source>:10: 'pr_str' expects 2 arguments, got 1`. The source calls
 `pr(s)`, and `pr` takes one argument. The 6.7.6 tag's compiler builds the same file clean, and it exits 161, with
 garbage passed for `pr_str`'s `k`. With `pr_str` moved above `main`, both compilers route nothing and exit 11. With
 a one-parameter `pr_str` defined below, both route and exit 71. Routing depends on definition order.

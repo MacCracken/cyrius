@@ -20,9 +20,12 @@
 #
 # The corpus had ZERO coverage of either shape (fix 1 changes 0 of 253 .tcyr), which
 # is exactly why both survived so long. Hence this gate.
+#
+# 6.7.9 — axis 7: the arity gate judges a sibling defined BELOW the call as it judges
+# one above it. CYCC overrides the compiler (a candidate built from a patched src).
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC="${CYCC:-$ROOT/build/cycc}"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: overload_arity_dispatch: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
@@ -149,6 +152,85 @@ LIT='fn want(a: cstring): i64 { return 11; }
 '
 check "literal 42 to cstring param"  NOEMIT "$(run "$LIT"'fn main(): i64 { return want(42); }')"
 check "literal 0 (NULL) still legal" 11     "$(run "$LIT"'fn main(): i64 { return want(0); }')"
+
+# ---------------------------------------------------------------------------
+# AXIS 7 — a sibling defined BELOW the call is judged as one defined ABOVE it (6.7.9).
+# Pass 1 records every definition's count, defaults row and variadic flag before pass 2
+# parses a call, yet `_OV_ARITY_OK` let a not-yet-emitted sibling through unjudged: `h(s)`
+# reached a 2-parameter `h_str` defined below it — garbage for the second parameter on
+# 6.5.1 – 6.7.6, refused naming `h_str` since 6.7.7 (F2 checks every forward call) — while
+# the same sibling above the call was judged and `h` ran. Routing hung on definition order.
+# One row per cell of the filing's table (2- / 1-parameter sibling, above / below), the
+# _int arm, both count bounds, a defaulted and a variadic sibling, and the filed repro
+# verbatim (docs/development/issues/2026-10-09-overload-router-forward-target-arity-unjudged.md).
+# Mutation: put back `if (L64(_fnt_offsets + fi * 8) < 0) { return 1; }` (the GFDS half
+# dropped) and every "below, not routed" row goes NOEMIT; judge the count without
+# `_pd_min` (min = the parameter count) and both defaulted rows drop to 11; move the
+# variadic test below the count and the variadic row drops to 11.
+# ---------------------------------------------------------------------------
+echo "axis 7 — a sibling defined below the call is judged as one above it:"
+H1='fn h(a): i64 { return 11; }
+'
+H_STR2='fn h_str(s: Str, k): i64 { return 22 + k; }
+'
+H_STR1='fn h_str(s: Str): i64 { return 22; }
+'
+H_MAIN='fn main(): i64 { '"$MKSTR"' var r = h(s); return r; }
+'
+check "2-param _str sibling above: not routed"   11 "$(run "$HDR$H1$H_STR2$H_MAIN")"
+check "2-param _str sibling below: not routed"   11 "$(run "$HDR$H1$H_MAIN$H_STR2")"
+check "2-param below, return/tail: not routed"   11 \
+    "$(run "$HDR$H1"'fn main(): i64 { '"$MKSTR"' return h(s); }
+'"$H_STR2")"
+check "1-param _str sibling above: routed"       22 "$(run "$HDR$H1$H_STR1$H_MAIN")"
+check "1-param _str sibling below: routed"       22 "$(run "$HDR$H1$H_MAIN$H_STR1")"
+# The upper bound: a 2-argument call, a 1-parameter sibling (argc > max).
+T2='fn t2(a, b): i64 { return 11; }
+'
+T2_STR='fn t2_str(s: Str): i64 { return 22; }
+'
+T2_MAIN='fn main(): i64 { '"$MKSTR"' var r = t2(s, 7); return r; }
+'
+check "2-arg call, 1-param sibling above: not routed" 11 "$(run "$HDR$T2$T2_STR$T2_MAIN")"
+check "2-arg call, 1-param sibling below: not routed" 11 "$(run "$HDR$T2$T2_MAIN$T2_STR")"
+# A defaulted forward sibling: its min (pass 1's defaults row) admits the 1-argument call,
+# which reaches it with the default filled (20 + 5).
+D1='fn d(a): i64 { return 11; }
+'
+D_STR='fn d_str(s: Str, k = 5): i64 { return 20 + k; }
+'
+D_MAIN='fn main(): i64 { '"$MKSTR"' var r = d(s); return r; }
+'
+check "defaulted sibling above: routed, default filled" 25 "$(run "$HDR$D1$D_STR$D_MAIN")"
+check "defaulted sibling below: routed, default filled" 25 "$(run "$HDR$D1$D_MAIN$D_STR")"
+# A variadic forward sibling takes any tail: a 3-argument call to its one named
+# parameter is routed.
+check "variadic _str sibling below, 3 args: routed" 22 \
+    "$(run "$HDR"'fn v(a, b, c): i64 { return 11; }
+fn main(): i64 { '"$MKSTR"' var r = v(s, 1, 2); return r; }
+fn v_str(s: Str, ...): i64 { return 22; }
+')"
+# The _int arm runs the same gate.
+E1='fn em(a: cstring): i64 { return 11; }
+fn mk(): i64 { return 7; }
+fn main(): i64 { var r = em(mk()); return r; }
+'
+check "_int arm, 2-param sibling below: not routed" 11 \
+    "$(run "$E1"'fn em_int(a, k): i64 { return 22 + k; }
+')"
+check "_int arm, 1-param sibling below: routed"     22 \
+    "$(run "$E1"'fn em_int(a): i64 { return 22; }
+')"
+# The filed repro, verbatim: `pr` runs for both calls (1 * 10 + 1).
+check "filed repro: pr(s) reaches pr, exit 11" 11 \
+    "$(run 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); return pr(s) * 10 + pr(5); }
+fn pr_str(s: Str, k): i64 { return k; }
+syscall(60, main());
+')"
 
 echo ""
 if [ "$fails" = "0" ]; then
