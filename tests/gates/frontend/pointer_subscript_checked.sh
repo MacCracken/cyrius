@@ -112,7 +112,8 @@
 #   R2  a pointer / string / enum / vector element (`*cstring`, `*Color`, `**i64`, `*f64v2`), `*u128`
 #   R3  an array of struct / enum / cstring / pointer / vector elements
 #   R4  an untyped local / parameter / global, a declared i64, a bare / `stack var` / global / captured
-#       bare array (their own text), a slice element store (by name until C2-6a), a laundered pointer
+#       bare array (their own text), a laundered pointer; R4i since C2-6a a slice element store
+#       COMPILES (its rows: tests/gates/frontend/slice_position_refused.sh)
 #   R9 / R10 a bool element's `OP=` and a non-bool into one (R10c: boolean values compile); R11 a
 #       `: stack` pair stored or combined into an element — each exactly one error line
 #   W1-W4 the store warnings (an integer constant into a float element, narrowing into a `*u8`, an f32
@@ -688,7 +689,7 @@ refused r4e "cannot subscript 'b': $BA" "R4e: a bare local array" 'fn f(): i64 {
 refused r4f "cannot subscript 'b': $BA" "R4f: a \`stack var\` buffer" 'fn f(): i64 { stack var b[16]; return b[0]; }\nsyscall(60, f());\n'
 refused r4g "cannot subscript 'b': $BA" "R4g: a bare global array" 'var b[4];\nfn f(): i64 { return b[1]; }\nsyscall(60, f());\n'
 refused r4h "cannot subscript 'b': $BA" "R4h: a captured bare array" 'include "lib/alloc.cyr"\nfn f(): i64 { var b[16]; var k = || b[0]; return 0; }\nalloc_init();\nsyscall(60, f());\n'
-refused r4i "cannot subscript 's': a slice element is read as s[i]; a store into one is not supported" "R4i: a slice element store, by name (C2-6a opens it)" 'include "lib/slice.cyr"\nfn f(): i64 { var b: u8[4]; var s: [u8] = 0; slice_set(&s, &b, 4); s[1] = 9; return 0; }\nsyscall(60, f());\n'
+exits r4i 9 "R4i: a slice element store compiles since C2-6a (it was refused by name here)" 'include "lib/slice.cyr"\nfn f(): i64 { var b: u8[4]; var s: [u8] = 0; slice_set(&s, &b, 4); s[1] = 9; return b[1]; }\nsyscall(60, f());\n'
 refused r4j "cannot subscript 'q': $R4" "R4j: a pointer laundered through an untyped name (\`var q = p;\`) is a plain word" 'var B: i64[2];\nfn f(): i64 { var p: *i32 = &B; var q = p; return q[0]; }\nsyscall(60, f());\n'
 
 # R9-R11: the element store's checks, as a field of T's.

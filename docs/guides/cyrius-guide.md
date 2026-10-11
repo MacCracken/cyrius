@@ -388,8 +388,8 @@ refused here; `p[i]` was spelled `load16(p + i * 2)` and an `f32[N]` element
 `load32(&a + i * 4)`. `h.p[i]` and `f()[i]` were syntax errors (`expected ';', got '['`):
 `load32(h.p + i * 4)`.
 
-A `slice<T>` local keeps its own bounds-checked `s[i]` read (`lib/slice.cyr`); storing into a
-slice element is refused by name.
+A `slice<T>` local keeps its own bounds-checked `s[i]`, and since 6.7.8 stores into one too —
+`s[i] = v`, `s[i] OP= v`, the `for` step ([Slices](#slices)).
 
 ## Functions
 
@@ -1561,35 +1561,64 @@ var c = "\u{e9}";     # braced form:              C3 A9
 ```
 include "lib/slice.cyr"
 
-# Two equivalent type forms:
-var s: [u8] = 0;          # bracket form
-var t: slice<i64> = 0;    # ident form
+fn slices_demo(fd): i64 {     # a slice is a fn-local (6.7.8)
+    # Two equivalent type forms:
+    var s: [u8] = 0;          # bracket form
+    var t: slice<i64> = 0;    # ident form
 
-# Slice points at backing storage. Convention: ptr@0, len@8.
-var data[5];
-store8(&data, 65); store8(&data + 1, 66);  # ...
-slice_set(&s, &data, 5);
+    # Slice points at backing storage. Convention: ptr@0, len@8.
+    var data[5];
+    store8(&data, 65); store8(&data + 1, 66);  # ...
+    slice_set(&s, &data, 5);
 
-# Bounds-aware indexing — element-width-correct load (v5.8.15).
-# Out-of-range / negative idx → exit 134 + "slice bounds violation\n" to stderr.
-var b = s[0];           # = 65
-var c = s[2];           # = 67
+    # Bounds-aware indexing — element-width-correct load (v5.8.15).
+    # Out-of-range / negative idx → exit 134 + "slice bounds violation\n" to stderr.
+    var b = s[0];           # = 65
+    var c = s[2];           # = 67
 
-# Dot-syntax field access (v5.8.16). .ptr / .len only — other names error.
-var p = s.ptr;          # = &data
-var n = s.len;          # = 5
-s.len = 3;              # truncate the view
-s.ptr = &data + 1;      # rewrite view start
+    # Element stores (6.7.8) — checked the same way, in every mode.
+    s[1] = 90;              # one byte: data[1]
+    s[1] += 2;              # every compound operator: 92
+    for (var i = 0; i < 4; s[i] = 0) { i = i + 1; }   # the for step too
 
-# Slice-typed wrapper helpers (v5.8.18) — additive, take slice POINTERS.
-sys_read_slice(fd, &s);                 # read up to s.len bytes into s.data
-slice_copy_bytes(&dst, &src);           # memcpy with min-length cap
-slice_eq_bytes(&a, &b);                 # content equality
+    # Dot-syntax field access (v5.8.16). .ptr / .len only — other names error.
+    var p = s.ptr;          # = &data
+    var n = s.len;          # = 5
+    s.len = 3;              # truncate the view
+    s.ptr = &data + 1;      # rewrite view start
+
+    # Slice-typed wrapper helpers (v5.8.18) — additive, take slice POINTERS.
+    sys_read_slice(fd, &s);                 # read up to s.len bytes into s.data
+    slice_copy_bytes(&dst, &src);           # memcpy with min-length cap
+    slice_eq_bytes(&a, &b);                 # content equality
+    return 0;
+}
 ```
 
-Subscript and dot-syntax fire on **fn-local** slices only. Top-level
-slice vars still need the helper-fn API (`slice_ptr` / `slice_len` /
-`slice_unchecked_get_W`). See `lib/slice.cyr` for the full helper list.
+**Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
+checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
+violation` and exits 134, in every build. The value is checked as a store into an element of `T`:
+an `f64` into an `f32` element rounds, a `bool` element takes only a boolean, an integer constant
+into a float element warns, a wider integer into a narrow element warns "narrowing". `s[i] OP= v`
+(all eleven operators) and a `for` step store the same way; `OP=` combines with the element as
+`s[i]` reads it. Refused by name: a store into a struct or `u128` element (`store*` at
+`slice_ptr(&s) + i * sizeof(T)`), `OP=` on an `f64` / `f32` / `bool` element (the read `s[i]` is an
+untyped word, so write `s[i] = v`), and a slice subscripted inside a closure that captured it (pass
+`slice_ptr(&s)` / `slice_len(&s)`, or declare the slice in the closure). ⚠ Before 6.7.8 a store was
+"cannot subscript 's'"; the spelling was `store8(slice_ptr(&s) + i, v)`, which stays valid.
+
+**Slices are fn-locals (6.7.8).** `[T]` / `slice<T>` declares a `var` in a function (or a closure, or
+a generic instance at its `T`). Every other position is refused by name, once, the whole type
+consumed: a **parameter** (`fn f(s: [u8])` — pass `&s` and read `slice_ptr` / `slice_len`, or the
+pointer and the length), a **return type** (also as a multi-value element), a **struct or union
+field**, a **pointer to a slice** `*[T]` / `*slice<T>` (anywhere: pass `&s` as a plain pointer), a
+**global in the declaration zone** (before the first top-level statement), a **slice of slices**,
+a **type argument** (`g<[u8]>`) and a **tuple element**. Before 6.7.8 each was a generic parse error
+(`expected ')', got identifier 'u8'`, `expected identifier, got '['`, `unknown type 'slice'`, ...).
+A top-level `var s: [T]` AFTER the first top-level statement is still a 16-byte global, used through
+the helper API — `slice_set(&s, ..)`, `slice_ptr(&s)` / `slice_len(&s)`, `slice_unchecked_get_W` —
+as before: subscript and dot syntax fire on **fn-local** slices only. See `lib/slice.cyr` for the
+full helper list.
 
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to

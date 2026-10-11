@@ -231,7 +231,8 @@ fn _tn_refuse(S, ti, tail, noff2): i64 {
     } else {
         ERR_IDENT(S, "unknown type ", noff, tail, noff2);
         _tn_prefix_note(S, noff);
-        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union (missing include?)\n");
+        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union");
+        PRSTR(" (a fn-local var also takes a slice [T] / slice<T>; missing include?)\n");   # 6.7.8 (C2-6a)
     }
     STI(S, sv);
     _panic = 0;
@@ -305,7 +306,7 @@ fn _tn_head(S): i64 {
 # tuple's `(`, which _tn_slice_w refuses by name. One call where the arms read two.
 fn _tn_slice_head(S): i64 {
     var t = PEEKT(S);
-    if (t == 2 || t == 105 || t == 10) { return 1; }
+    if (t == 2 || t == 105 || t == 10 || t == 28) { return 1; }   # 6.7.8 (C2-6a): + `[`, refused there too
     return 0;
 }
 
@@ -384,6 +385,7 @@ fn _tup_elem(S, mode): i64 {
     var ti = GTI(S);
     var t = PEEKT(S);
     var k = 1;
+    if (_sl_ann_at(S, ti) == 1) { t = 28; }   # 6.7.8 (C2-6a): `slice<T>` is refused as `[T]` is
     if (t == 2) {
         var c = _tn_resolve_at(S, ti);
         if (c == _tn_code(1, 8)) { k = 1; }
@@ -708,7 +710,15 @@ fn _gv_holds_addr(S, vi): i64 {
 # (GLSLICE, util.cyr), because the word goes stale on slot reuse. CHANGELOG [6.7.8]
 fn _slice_lw(S, li): i64 {
     if (GLSLICE(S, li) == 0) { return 0; }
-    return GSLICE_W(S, li);
+    return GSLICE_W(S, li) & 0xFFFFFFFF;
+}
+# 6.7.8 (C2-6a): the element descriptor of slice local `li` (`_ek_*`, parse_decl.cyr: an integer's
+# width and sign, f64 / f32 / bool; 8 for any other word — a pointer, an enum, a cstring; 0 for a
+# struct), 0 when `li` is no slice. It rides the slice word above bit 31 (`_sl_slice`): the width
+# below it is sizeof(T), which passes 255 for a struct element.
+fn _slice_led(S, li): i64 {
+    if (GLSLICE(S, li) == 0) { return 0; }
+    return (GSLICE_W(S, li) >> 32) & 0xFF;
 }
 # ⛔ 6.7.8 (C2-3a) — THE STEP WORD CARRIES THE ELEMENT KIND. A typed pointer's step (sizeof(T), the
 # pointer-scale word GPSC while its value is in rax) says nothing about T's kind: `*u8` / `*i8` both
@@ -837,6 +847,11 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     while (PEEKT(S) == 8) {
         STI(S, GTI(S) + 1);
         n = n + 1;
+    }
+    if (_sl_ann_at(S, GTI(S)) == 1) {   # 6.7.8 (C2-6a): `*[T]` / `*slice<T>` — refused by name
+        if (quiet == 0) { _sl_err_ptr(S, GTI(S)); }
+        _sl_ann_skip(S);
+        return 8;
     }
     var ps = _ptr_step_peek(S, vnoff, quiet);
     if (n > 1) { ps = 8; }
@@ -1014,6 +1029,13 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         STI(S, GTI(S) - 1);                       # on the `)`: the caller steps past it
         return 8;
     }
+    if (_sl_ann_at(S, ti) == 1) {                 # 6.7.8 (C2-6a): `[[T]]`, `slice<slice<T>>`, ..
+        _sl_err(S, ti, "a slice cannot be the element of a slice (6.7.8: slices are fn-locals)",
+          " - keep each inner slice's slice_ptr / slice_len in a struct array");
+        _sl_ann_skip(S);
+        STI(S, GTI(S) - 1);                       # on its last token: the caller steps past it
+        return 8;
+    }
     if (TOKTYP(S, ti) == 105) { return 16; }      # u128
     if (TOKTYP(S, ti) != 2) { return 8; }
     var b = _tp_resolve(S, TOKVAL(S, ti));
@@ -1024,6 +1046,109 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         return 8;
     }
     return _tn_bytes(S, c);
+}
+
+# ⛔ 6.7.8 (C2-6a) — SLICES STAY FN-LOCALS, AND EVERY OTHER POSITION SAYS SO BY NAME (the user's
+# decision, 2026-10-10: "a slice PARAMETER and a slice declared in the declaration zone" refused
+# by name; a top-level slice after the first statement keeps compiling, through the helper API).
+# Only a fn-local `var` (PARSE_VAR) reads `[T]` / `slice<T>`; a parameter (`expected ')', got
+# identifier 'u8'`, and pass 1 counted the list short), a return (`expected identifier, got '['`),
+# a struct field, a declaration-zone global (`expected '=', got identifier 'u8'` /
+# `unknown type 'slice'`), a pointer to a slice `*[T]`, a slice of slices and a type argument
+# met generic parse errors. Each is now refused at its `[` / `slice`, once, and the whole type is
+# consumed so nothing cascades. (issues/2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
+# 1 when token `ti` begins a slice type: `[` or the word `slice` with its `<` (a program's own
+# `struct slice` keeps its name).
+fn _sl_ann_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 28) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# Cursor on a slice type's first token: consumes it whole — `[ .. ]` with any nesting, or
+# `slice<..>` (`>>` closing two). Stops, consuming nothing more, at a token no type holds.
+fn _sl_ann_skip(S): i64 {
+    if (PEEKT(S) != 28) {
+        STI(S, GTI(S) + 1);
+        SKIP_GENERICS(S);
+        return 0;
+    }
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12 || t == 5 || t == 13 || t == 14 || t == 4) { return 0; }
+        if (t == 28) { d = d + 1; }
+        if (t == 29) { d = d - 1; }
+        STI(S, GTI(S) + 1);
+        if (d <= 0) { go = 0; }
+    }
+    return 0;
+}
+# The refusal `a` + `b` at token `ti`, once per token (a generic body and the two passes read the
+# same tokens). A grammar refusal: reported under --syntax-only too. The parse goes on in sync.
+fn _sl_err(S, ti, a, b): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    PRSTR(a);
+    PRSTR(b);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# `*[T]` / `*slice<T>` at token `ti` (the slice's first token).
+fn _sl_err_ptr(S, ti): i64 {
+    return _sl_err(S, ti, "a pointer to a slice is not a type (6.7.8: slices are fn-locals)",
+      " - pass &s as a plain pointer and read slice_ptr / slice_len");
+}
+# A slice's pointer element `[*T]` / `slice<*T>`, cursor past its `*`: T checked by name and
+# consumed; `*[U]` / `*slice<U>` refused by name and consumed whole.
+fn _tn_slice_ptr_el(S, noff): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err_ptr(S, GTI(S));
+        _sl_ann_skip(S);
+        return 0;
+    }
+    if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    return 0;
+}
+# A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
+# width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
+# stores by it. 6.7.8 (C2-6a)
+fn _sl_slice(S, li, w, ann): i64 {
+    if (w <= 0) { return SLSLICE(S, li, w); }
+    var et = ann + 1;                              # `[T]`
+    if (TOKTYP(S, ann) != 28) { et = ann + 2; }    # `slice<T>`
+    return SLSLICE(S, li, w | (_slice_ek(S, et, w) << 32));
+}
+# The element descriptor of a slice of `w`-byte elements whose type is token `et`: an integer /
+# f64 / f32 / bool's (`_ek_at`); 8 for any other 8-byte element but a struct — a pointer `[*T]`,
+# an enum, a cstring: a word; 0 for a struct (a slice store refuses it by name), 16 for u128.
+fn _slice_ek(S, et, w): i64 {
+    if (TOKTYP(S, et) == 8) { return 8; }
+    var ed = _ek_at(S, et);
+    if (ed != 0) {
+        if (_ek_w(ed) == w) { return ed; }
+        return 0;
+    }
+    if (w != 8) { return 0; }
+    if (TOKTYP(S, et) != 2) { return 0; }
+    var c = 0;
+    var b = _tp_resolve(S, TOKVAL(S, et));
+    if (b != 0) { c = _tn_from_rc(b); } else { c = _tn_resolve_at(S, et); }
+    if (_tn_class(c) == 6) { return 0; }   # a struct
+    return 8;
 }
 
 # sizeof(T) at token `ti` — an expression (`asrt` 0) or an `#assert` operand (1): T's bytes, or 0
@@ -1078,6 +1203,7 @@ fn _sizeof_type(S, asrt): i64 {
 fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     if (ptc != 0) { return 0; }
     var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse(S, ti, " for parameter ", pnoff);
@@ -2104,11 +2230,26 @@ fn _sdef_tup_prescan(S, sname_ti): i64 {
     STI(S, sv);
     return 0;
 }
+# 1 when a field's annotation (cursor on its `:`) is a tuple's `(` (6.7.7) or, 6.7.8 (C2-6a), a slice:
+# both are `_sfield_tup`'s.
+fn _sfield_alt(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) == 10) { return 1; }
+    return _sl_ann_at(S, ti);
+}
 # The field `fnoff: ( .. )`, cursor on its `:` — the interned tuple (`_sdef_tup_prescan`), looked up;
-# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed.
+# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed. 6.7.8 (C2-6a):
+# a slice field `fnoff: [T]` / `slice<T>` is refused by name and kept as an i64 word (no cascade).
 fn _sfield_tup(S, si, fnoff, uni): i64 {
     STI(S, GTI(S) + 1);   # consume ':'
     var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 1) {
+        _sl_err(S, ti, "a slice cannot be a struct or union field (6.7.8: slices are fn-locals)",
+          " - keep its slice_ptr / slice_len in two fields");
+        _sl_ann_skip(S);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
     if (uni == 1) {
         _tup_err(S, ti, "union field ", fnoff, " cannot be a tuple");
         STI(S, _call_close(S, ti) + 1);
@@ -2165,7 +2306,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
             STI(S, GTI(S) + 1);
             # Check for type annotation: field: Type
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
-            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -2258,7 +2399,7 @@ fn PARSE_UNION_DEF(S): i64 {
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
-            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

@@ -2599,6 +2599,7 @@ fn _arr_sub_addr(S, noff): i64 {
         ix = FINDLOCAL(S, noff);
         if (ix >= 0) { k = 1; d = GLAEW(S, ix); pw = _slot_ptr_word(S, ix); }
     }
+    if (k == 1) { if (_slice_lw(S, ix) > 0) { return _slice_sub_addr(S, ix, noff); } }   # 6.7.8 (C2-6a): a store
     if (k == 0) { if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
                 var esl = _cl_snap_find(S, noff);
                 if (esl >= 0) {
@@ -2666,9 +2667,9 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
     if (_sub_bare(S, noff, k, ix) == 1) {
         return _sub_err(S, noff, ": a bare `var a[N]` states no element width - declare `var a: T[N]`", t, 0 - 1);
     }
-    if (k == 1) { if (_slice_lw(S, ix) > 0) {
-            return _sub_err(S, noff, ": a slice element is read as s[i]; a store into one is not supported",
-              " - store at slice_ptr(&s) + i * sizeof(T)", 0 - 1);
+    if (k == 2) { if (_sub_cslice(S, noff) == 1) {   # 6.7.8 (C2-6a): a captured slice (R12)
+            return _sub_err(S, noff, ": a slice is a fn-local - a closure cannot subscript a captured slice",
+              " (pass slice_ptr(&s) / slice_len(&s) into it, or declare the slice in the closure)", 0 - 1);
         } }
     return _sub_err(S, noff, ": it is not a typed array, a *T or a slice local - declare `var a: T[N]` or `p: *T`",
       t, 0 - 1);
@@ -2704,6 +2705,13 @@ fn _sub_ptr_sid(S, noff, k, ix): i64 {
     if (t >= 0) { return 0; }
     if (t <= 0 - 2048) { return 0; }   # a vector descriptor, no struct
     return 0 - t;
+}
+# 1 when the captured base is a slice local of the enclosing fn (the snapshot's bit 62, util.cyr
+# GLSLICE). 6.7.8 (C2-6a)
+fn _sub_cslice(S, noff): i64 {
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 62) & 1;
 }
 # 1 when the base is a bare array (`var a[N]` / `stack var a[N]`): a local's / a capture's bit 61
 # (util.cyr GLBARR), a global's `0x100` alone.
@@ -3112,6 +3120,59 @@ fn _slice_sub_read(S, li): i64 {
             return 1;
         } }
     return 0;
+}
+# ⛔ 6.7.8 (C2-6a) — A SLICE ELEMENT STORE: `s[i] = v`, `s[i] OP= v` and the classic-for step on a
+# slice local (`var s: [T]` / `slice<T>`), which was refused ("cannot subscript 's'"; by name since
+# C2-4a), so the spelling was `store8(slice_ptr(&s) + i, v)`. Cursor at `[` (from `_arr_sub_addr`):
+# consumes `[ idx ]` and leaves rax = the element's address from lib/slice.cyr's
+# `_slice_idx_addr(&s, i, sizeof(T))`, which checks i against s.len exactly as the reads do — out
+# of range is "slice bounds violation", exit 134, in EVERY mode (the decision checks "slice reads
+# AND writes"; an unchecked write beside the checked read would be the one unchecked slice
+# operation). Returns the descriptor `_esub_assign` stores by — an f64 into an f32 element rounds,
+# a bool element takes only a boolean, an integer constant into a float warns, a wider integer
+# into a narrow one warns — with an integer's sign dropped, so `OP=` loads the element as `s[i]`
+# reads it (zero-extended). 0 after a refusal by name: a struct / u128 element, and `OP=` on an
+# f64 / f32 / bool element (the slice read is an untyped word, so a float `OP=` would disagree
+# with `s[i] = s[i] op v`). CHANGELOG [6.7.8]
+fn _slice_sub_addr(S, li, noff): i64 {
+    var ed = _slice_led(S, li);
+    var w = _ek_w(ed);
+    var fi = 0 - 1;
+    if (w == 0 || w > 8) {
+        _sub_err(S, noff, ": a slice element store takes an integer, f64, f32, bool or pointer element",
+          " - this one is a struct or u128: store at slice_ptr(&s) + i * sizeof(T)", 0 - 1);
+        ed = 0;
+    } else {
+        fi = _FINDFN_CSTR(S, "_slice_idx_addr", 15);
+        if (fi < 0) {
+            ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 84);
+            ed = 0;
+        }
+    }
+    STI(S, GTI(S) + 1);       # consume [
+    if (ed != 0) {
+        _IR_REC0(S, IR_RAW_EMIT);   # the frame base is raw bytes on x86 (as the read marks it)
+        EFLADDR(S, li);       # &s, then the index, then sizeof(T): the read's call pattern
+        EPUSHR(S);
+    }
+    PCMPE(S);                 # rax = the index
+    if (ed != 0) {
+        EPUSHR(S);
+        EMOVI(S, w);
+        EPUSHR(S);
+        ECALLPOPS(S, 3);
+        ECALLFIX(S, fi);
+        ECALLCLEAN(S, 3);     # rax = the element's address, checked
+    }
+    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+    STI(S, GTI(S) + 1);       # consume ]
+    if (_ek_fk(ed) != 0) { if (PEEKT(S) != 4) { if (_asg_pair_at(S) == 1) {
+                _sub_err(S, noff, ": a compound assignment on an f64, f32 or bool slice element is not supported",
+                  " - the slice read is an untyped word; write s[i] = v", 0 - 1);
+                return ed;   # the operand still parses as the element's kind: nothing more is reported
+            } } }
+    if ((ed & 0x60) == 0x40) { ed = ed - 0x40; }   # unsigned, as `s[i]` reads it
+    return ed;
 }
 
 # The pointer-scale word with its element kind only when the kind is the value's own (the stamp,

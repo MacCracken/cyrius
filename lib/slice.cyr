@@ -240,6 +240,16 @@ fn _slice_idx_get_16(s_addr, idx): i64 {
     return load64(s_addr) + idx * 16;
 }
 
+# 6.7.8 (C2-6a): the ADDRESS of element `idx` of a slice whose elements are `w` bytes (1, 2, 4 or
+# 8), checked as the getters check a read. `s[i] = v`, `s[i] OP= v` and a for step store through
+# it (the compiler emits the call), so a slice write is bounds-checked in every mode, as a read is.
+fn _slice_idx_addr(s_addr, idx, w): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load64(s_addr) + idx * w;
+}
+
 # Unchecked variants — same shape, no bounds check. Caller's
 # responsibility to guarantee 0 <= idx < s.len. Useful inside
 # already-checked loops or perf hot paths where the bounds check

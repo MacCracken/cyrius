@@ -2347,6 +2347,11 @@ _chk_gate "$ROOT/tests/gates/frontend/pointer_subscript_checked.sh"
 # struct. Junk refused once on every arm; every arm still runs its step on x86 / IR / DCE /
 # aarch64 / cx / PE; fork parity. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/for_step_terminator_checked.sh"
+# 6.7.8 (C2-6a) — slices: `s[i] = v`, `s[i] OP= v` and the for step store through the bounds-checked
+# `_slice_idx_addr` (out of range: exit 134 in every mode, every leg); a slice parameter, return,
+# field, `*[T]`, declaration-zone global, slice of slices and type argument are refused by name, once
+# (they were generic parse errors). x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_position_refused.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.

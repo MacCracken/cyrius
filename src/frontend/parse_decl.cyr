@@ -4592,6 +4592,21 @@ fn _vecg_refuse(S, vi): i64 {
     ERR_IDENT(S, "vector global ", L64(_varn_base + vi * 8), " is read and written through its address (`&g` with a `*_ptr` form); a value-form vector is a local", 0 - 1);
     return 1;
 }
+# The declaration ladder's named-type head (`_tn_head`, cursor on the annotation). 6.7.8 (C2-6a): a
+# slice is refused by name (the user's decision, 2026-10-10: "a slice declared in the declaration
+# zone" — `var GS: [u8] = 0;` was `expected '=', got identifier 'u8'`, `slice<u8>` "unknown type
+# 'slice'") and consumed to its last token, which the ladder steps past: the global is a plain word,
+# so its uses do not cascade. A top-level slice AFTER the first statement is PARSE_VAR's and keeps
+# compiling (used through slice_ptr(&GS) / slice_len(&GS)).
+fn _gvar_ann_head(S): i64 {
+    var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 0) { return _tn_head(S); }
+    _sl_err(S, ti, "a slice cannot be declared in the declaration zone (6.7.8: slices are fn-locals)",
+      " - declare it in a fn; a top-level slice after the first statement is used through slice_ptr / slice_len");
+    _sl_ann_skip(S);
+    STI(S, GTI(S) - 1);
+    return 0;
+}
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -4659,7 +4674,7 @@ fn PARSE_GVAR_REG(S): i64 {
         if (PEEKT(S) == 8) { psc = _ptr_annot(S, noff, 0); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
-            if (_tn_head(S) == 1) {   # 6.7.7 (B4): or a tuple type's `(`
+            if (_gvar_ann_head(S) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.8: a slice refused
                 # ⛔ 6.6.16 (C8): the one type-name resolver, as PARSE_VAR's ladder. This one
                 # matched PREFIXES before the struct lookup (`var g: i8x = 300` was an i8 global,
                 # `var g: u8pair;` a u8 scalar, `var g: f64v2` an f64) and read an unknown name as
@@ -5109,6 +5124,10 @@ fn _gvi_ann(S, slot): i64 {
     }
     var ps = 0;
     if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); ps = 1; }
+    if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): a slice, refused by name at registration — stepped whole
+        _sl_ann_skip(S);
+        return 0;
+    }
     var sid = 0;
     if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
     STI(S, GTI(S) + 1);
@@ -6123,7 +6142,7 @@ fn PARSE_VAR(S): i64 {
                 # Pointer element: [*T] — width = 8 (pointer size); T must name a type (6.6.16)
                 STI(S, GTI(S) + 1);  # consume *
                 slice_elt_w = 8;
-                if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }  # consume ident
+                _tn_slice_ptr_el(S, noff);   # consume T (6.7.8: `*[U]` refused by name)
             } elif (_tn_slice_head(S) == 1) {   # 6.7.7: + a tuple's `(`, refused by _tn_slice_w
                 # Element [u8], [i32], [Foo], [u128]: sizeof(T) by the WHOLE name (a bound type
                 # parameter by its argument); an unknown name is refused — it was 8. CHANGELOG [6.6.16]
@@ -6152,7 +6171,7 @@ fn PARSE_VAR(S): i64 {
                 if (PEEKT(S) == 8) {
                     STI(S, GTI(S) + 1);  # consume *
                     slice_elt_w = 8;
-                    if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+                    _tn_slice_ptr_el(S, noff);
                 } elif (_tn_slice_head(S) == 1) {   # 6.7.7: + a tuple's `(`
                     slice_elt_w = _tn_slice_w(S, GTI(S), noff);   # 6.6.16 (C8): as `[T]` above
                     STI(S, GTI(S) + 1);
@@ -6861,7 +6880,7 @@ fn PARSE_VAR(S): i64 {
             SLDEP(S, li_canon, GSDEP(S));
             SLAGG(S, li_canon, 2);   # 6.6.5: a slice / u128 is a 2-slot INLINE pair
             SLTYPE(S, li_canon, 0);
-            SLSLICE(S, li_canon, slice_elt_w);   # 6.7.8 (C2-2a): the width + the slice bit 62 (util.cyr)
+            _sl_slice(S, li_canon, slice_elt_w, ann_ti);   # 6.7.8: width + slice bit 62 (C2-2a), element (C2-6a)
             _w16_local_init(S, li_canon, ann_ti);   # the initial value: a slice's, or (6.7.6) a u128's whole
             SFLC(S, li_canon + 1);
         } else {
