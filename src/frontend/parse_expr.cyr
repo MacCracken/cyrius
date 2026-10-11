@@ -87,11 +87,17 @@ fn _STR_FROM_NOFF(S): i64 {
 # 6.6.13: an 8-aligned trailer WORD after them (`_cl_snap_ps_off`) holds the enclosing fn's
 # `_cur_fn_pslots`, read here because `_fnst_save` zeroes it right after. See `_cl_snap_is_sptr`.
 # CHANGELOG [6.6.13]
+# 6.7.8: a second trailer word (+ 8) points at a copy of the declared scalars' names `_dsc_tn[0..n)`
+# (`_dsc_snap`, parse_types.cyr), read only behind depth-word bit 63, which this snapshot restores: a
+# closure's (or an inline generic instance's) own declared scalar overwrote the name and the enclosing
+# one's dyn named its type. `_cl_snap_extend`'s copies carry no such word — they are never restored.
+# CHANGELOG [6.7.8]
 fn _cl_snap_ps_off(n): i64 { return (n * 33 + 7) & (0 - 8); }
 fn _cl_save_locals(S, n): i64 {
     if (n <= 0) { return 0; }
-    var buf = alloc(_cl_snap_ps_off(n) + 8);
+    var buf = alloc(_cl_snap_ps_off(n) + 16);
     S64(buf + _cl_snap_ps_off(n), _cur_fn_pslots);
+    S64(buf + _cl_snap_ps_off(n) + 8, _dsc_snap(n));
     var i = 0;
     while (i < n) {
         S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
@@ -114,6 +120,7 @@ fn _cl_restore_locals(S, buf, n): i64 {
         i = i + 1;
     }
     _cl_lfi_copy(_lfi_base, buf + n * 32, n);
+    _dsc_unsnap(L64(buf + _cl_snap_ps_off(n) + 8), n);
     return 0;
 }
 fn _cl_lfi_copy(dst, src, n): i64 {

@@ -1940,6 +1940,27 @@ fn _dsc_stamp(S, li, n1): i64 {
     SLDSC(S, li);
     return 0;
 }
+# The names of frame slots [0, n), for the closure / inline-instance snapshot (`_cl_save_locals`):
+# a closure body or a generic instance reuses the slots from 0, its own declared scalar overwrites
+# the enclosing slot's name, and the snapshot puts bit 63 back — so the names go back with it.
+# 0 when nothing was ever stamped (no slot has bit 63 to read one). CHANGELOG [6.7.8]
+fn _dsc_snap(n): i64 {
+    if (_dsc_tn == 0) { return 0; }
+    var m = n;
+    if (m > 16384) { m = 16384; }
+    var b = alloc(m * 8);
+    var i = 0;
+    while (i < m) { S64(b + i * 8, L64(_dsc_tn + i * 8)); i = i + 1; }
+    return b;
+}
+fn _dsc_unsnap(b, n): i64 {
+    if (b == 0) { return 0; }
+    var m = n;
+    if (m > 16384) { m = 16384; }
+    var i = 0;
+    while (i < m) { S64(_dsc_tn + i * 8, L64(b + i * 8)); i = i + 1; }
+    return 0;
+}
 # A parameter's type token `ti` (`_tn_param_check`): pending until `_param_record` stamps its slot.
 fn _dsc_param(S, ti): i64 {
     _dsc_pend = 0;

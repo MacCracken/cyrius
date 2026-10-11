@@ -1728,7 +1728,9 @@ fn GLSLICE(S, li): i64 {
 # scalar read as a slice (`n += 1` on a `var n: i32` refused, `y[0]` on a `y: i64` parameter a slice
 # read) and every slice local as a stamped dyn source. Bit 63 has no other reader or writer: every
 # raw access of this word is GLDEP (masked to the low 32 bits), SLDEP, these accessors and the closure
-# snapshot's copies, which test single bits. CHANGELOG [6.7.8]
+# snapshot's copies, which test single bits. The snapshot restores this bit, so it restores `_dsc_tn`'s
+# entries with it (`_dsc_snap`): a closure's own declared scalar in the slot left the enclosing one's
+# dyn naming the closure local's type. CHANGELOG [6.7.8]
 fn SLDSC(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 63)); return 0; }
 fn GLDSC(S, li): i64 {
     if (li < 0) { return 0; }

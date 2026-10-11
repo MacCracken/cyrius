@@ -71,7 +71,12 @@
 #       no dyn source (AL1; AL2 in the slot a declared scalar of another fn held); a declared scalar is
 #       no slice — `y += 1` / `y[0]` / `y.len` on a declared `y: i64` parameter in a slice's old slot
 #       (AL3-AL5), `n += 1` / `n.len` on a `var n: i32` (AL6, AL7), a captured declared scalar
-#       subscripted in a closure (AL8); a real slice in a dyn unit reads, writes and `OP=`s (AL9)
+#       subscripted in a closure (AL8); a real slice in a dyn unit reads, writes and `OP=`s (AL9);
+#       (review) the closure snapshot restores bit 63 WITH the names it validates (`_dsc_tn`): a
+#       closure's own declared scalar in the slot of the enclosing fn's left that one's dyn naming the
+#       closure local's type — the wrong impl (AL10: 3005 for 1005, exit 213) or refused as "no `impl
+#       Num for cstring`" (AL11) — and an inline generic instance's the same (AL12, AL13), a closure
+#       nested in a closure (AL14); each on x86, aarch64, cx and PE (the AX legs, after A)
 #   K   (D5) a declaration-zone dyn in a `kernel;` build is named late, as every non-constant zone
 #       initializer is; the program's own forming runs
 #   PF  (D5) a parenthesised FORM source at every destination (a local, a zone and a post-statement
@@ -259,6 +264,10 @@
 #         (BUILT), AL6 (refused as a slice), AL7 (BUILT), AL8 (the captured-slice text); AL9 green
 #   M-AL2 SLSLICE never sets bit 62 (C2's M1b)                         -> AL9, IX1 (every leg: `s[1]` "cannot
 #         subscript"), IX3 dyn_subscripts
+#   M-AL3 the snapshot without `_dsc_snap` / `_dsc_unsnap` — the integration tip 85ee576f (and the dyn
+#         lane's 7482deb2) as it stood (a whole-tree copy, its own cross compilers) -> AL10 (exit 213),
+#         AL11 (refused: "no `impl Num for cstring`"), AL12 (213), AL13 (refused), AL14 (165) — on x86
+#         and every AX leg (aarch64, cx, PE)
 # The IX rows (each mutant a one-edit scratch copy of the WHOLE tree, its cycc built from it, this gate run
 # from that tree — so the aarch64 and cx legs' compilers carry the mutation too; the real tree green):
 #   M-AL1 (above)                                                      -> IX1 every leg (`n += 1` "compound
@@ -550,6 +559,17 @@ exits al6 6 "AL6: \`n += 1\` on a declared \`var n: i32\` (aliased: its signed-n
 refused al7 "no struct type in scope for 'n'" "AL7: \`n.len\` on a declared \`var n: i32\` (aliased: BUILT)" "${AS}fn b(): i64 { var n: i32 = 0 - 5; return n.len; }\nsyscall(60, b());\n"
 refused al8 "cannot subscript 'n': it is not a typed array" "AL8: a closure subscripting a captured declared \`n: i64\` (aliased: the snapshot's bit read as a captured slice)" "${AS}fn b(): i64 { var n: i64 = 7; var k = || n[0]; return callptr(k); }\nsyscall(60, b());\n"
 exits al9 48 "AL9: a real slice in a dyn unit still reads, writes and \`OP=\`s (anti-vacuous)" "${AS}fn b(): i64 { var w: i64[2]; w[0] = 4; w[1] = 5; var s: [i64] = 0; slice_set(&s, &w, 2); s[1] += 1; return s[0] * 10 + s[1] + s.len; }\nsyscall(60, b());\n"
+# AL10-AL14 (review) — a closure body (and an inline generic instance) reuses the frame slots from 0; the
+# snapshot put the enclosing slot's bit 63 back but not its `_dsc_tn` name, so a declared scalar of the
+# body in that slot decided the enclosing one's dyn. AL10 is the reporter's program verbatim; AL11 its
+# refusal variant (the closure's `cstring` in x's slot). The AX block runs each on aarch64, cx and PE.
+NM='trait Num { fn num(self): i64; }\nimpl Num for i64 { fn num(self): i64 { return self + 1000; } }\n'
+NU='impl Num for u8 { fn num(self): i64 { return self + 3000; } }\n'
+exits al10 5 "AL10: a closure's \`var y: u8\` in the slot of a declared \`x: i64\`, then \`var o: dyn Num = x;\` (it took \`impl Num for u8\`: 213)" "include \"lib/fnptr.cyr\";\n${NM}${NU}fn main(): i64 {\n    var x: i64 = 5;\n    var f = || { var y: u8 = 3; return y; };\n    var o: dyn Num = x;\n    return o.num() - 1000 + fncall0(f) - 3;\n}\nsyscall(60, main());\n"
+exits al11 5 "AL11: ... a closure's \`var s: cstring\` there (refused: \"no impl Num for cstring\" at a declared \`i64\`)" "include \"lib/fnptr.cyr\";\n${NM}fn main(): i64 {\n    var x: i64 = 5;\n    var f = || { var s: cstring = \"ab\"; return 0; };\n    var o: dyn Num = x;\n    return o.num() - 1000 + fncall0(f);\n}\nsyscall(60, main());\n"
+exits al12 5 "AL12: an inline generic instance's (\`g(p)\`, T = a struct) \`var s: u8\` in x's slot (213)" "${NM}${NU}struct Pt { x; y; }\nfn g<T>(a: T): i64 { var s: u8 = 3; return a.x + s; }\nfn main(): i64 {\n    var w0 = 0; var w1 = 0; var w2 = 0;\n    var x: i64 = 5;\n    var p = Pt { 0, 0 };\n    var r = g(p);\n    var o: dyn Num = x;\n    return o.num() - 1000 + r - 3 + w0 + w1 + w2;\n}\nsyscall(60, main());\n"
+exits al13 5 "AL13: ... its \`var s: cstring\` there (refused at a declared \`i64\`)" "${NM}struct Pt { x; y; }\nfn g<T>(a: T): i64 { var s: cstring = \"ab\"; return a.x; }\nfn main(): i64 {\n    var w0 = 0; var w1 = 0; var w2 = 0;\n    var x: i64 = 5;\n    var p = Pt { 0, 0 };\n    var r = g(p);\n    var o: dyn Num = x;\n    return o.num() - 1000 + r + w0 + w1 + w2;\n}\nsyscall(60, main());\n"
+exits al14 5 "AL14: a closure nested in a closure, each forming from its own declared scalar (165)" "include \"lib/fnptr.cyr\";\n${NM}${NU}fn main(): i64 {\n    var x: i64 = 5;\n    var f = || { var y: u8 = 3; var p: dyn Num = y; return p.num(); };\n    var o: dyn Num = x;\n    var g = || {\n        var z: i64 = 7;\n        var h = || { var q: u8 = 1; return q; };\n        var oz: dyn Num = z;\n        return oz.num() + fncall0(h);\n    };\n    return o.num() - 1000 + fncall0(f) - 3003 + fncall0(g) - 1008;\n}\nsyscall(60, main());\n"
 
 # ── K: a declaration-zone dyn in a `kernel;` build ─────────────────────────────────────────────────────
 printf '%b' "kernel;\n${SH}struct W { o: dyn Show; }\nvar P0 = P { 1, 2 };\nvar KD: dyn Show = &P0;\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nfn main(): i64 {\n    var o: dyn Show = &P0;\n    return dk(o) + 40;\n}\nsyscall(60, main());\n" > "$T/k01.cyr"
@@ -899,6 +919,31 @@ if command -v wine > /dev/null 2>&1; then
     done
 else echo "  SKIP A PE — wine not installed"; skips=$((skips + 1)); fi
 
+# AX: AL10-AL14 on aarch64 (qemu), cx (cxvm) and PE (wine) — the snapshot is the shared frontend's; each
+# fork's compiler is the one the A legs built from this tree. Each exits 5.
+for a in al10 al11 al12 al13 al14; do
+    if [ -x "$T/cc_a64" ]; then
+        if "$T/cc_a64" < "$T/$a.cyr" > "$T/$a.a" 2> "$T/$a.aerr"; then
+            chmod +x "$T/$a.a"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$a.a" > /dev/null 2>&1) || got=$?
+            [ "$got" -eq 5 ] && ok "AX $a aarch64 (qemu): exit 5" || bad "AX $a aarch64 (qemu): exit $got, want 5"
+        else bad "AX $a aarch64: did not compile: $(grep '^error' "$T/$a.aerr" | head -1)"; fi
+    else echo "  SKIP AX $a aarch64 — qemu-aarch64 or the aarch64 compiler missing"; skips=$((skips + 1)); fi
+    if [ -x "$T/cc_cx" ] && [ -x "$T/cxvm" ]; then
+        if "$T/cc_cx" < "$T/$a.cyr" > "$T/$a.cyx" 2> "$T/$a.cxerr" && [ -s "$T/$a.cyx" ]; then
+            got=0; timeout 60 "$T/cxvm" < "$T/$a.cyx" > /dev/null 2>&1 || got=$?
+            [ "$got" -eq 5 ] && ok "AX $a cx (cxvm): exit 5" || bad "AX $a cx (cxvm): exit $got, want 5"
+        else bad "AX $a cx: did not compile: $(grep '^error' "$T/$a.cxerr" | head -1)"; fi
+    else bad "AX $a cx: no cx compiler / cxvm (the A legs build them)"; fi
+    if command -v wine > /dev/null 2>&1; then
+        if CYRIUS_TARGET_WIN=1 "$CC" < "$T/$a.cyr" > "$T/$a.exe" 2> "$T/$a.werr" && [ -s "$T/$a.exe" ]; then
+            got=0
+            (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$a.exe" > /dev/null 2>&1) || got=$?
+            [ "$got" -eq 5 ] && ok "AX $a PE (wine): exit 5" || bad "AX $a PE (wine): exit $got, want 5"
+        else bad "AX $a PE: did not compile: $(grep '^error' "$T/$a.werr" | head -1)"; fi
+    else echo "  SKIP AX $a PE — wine not installed"; skips=$((skips + 1)); fi
+done
+
 # (D5, D6) tests/tcyr/crossos/dyn_objects.tcyr, the forming and calling file: every assertion passes
 # under CYRIUS_IR=1, CYRIUS_IR=3 and CYRIUS_DCE=1, on qemu-aarch64 and under wine (the count derived
 # from its source), and (D6) it compiles with no warning (an f64 result is typed, no prototype is
@@ -1065,4 +1110,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart (AL), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A); where dyn meets C2's subscripts, \`*p\` width, slices and the bounds-checked mode, every target (IX)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart and the closure / instance snapshot's names put back, every target (AL, AX), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A); where dyn meets C2's subscripts, \`*p\` width, slices and the bounds-checked mode, every target (IX)"
