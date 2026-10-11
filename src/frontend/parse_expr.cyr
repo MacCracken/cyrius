@@ -546,7 +546,7 @@ fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
             EFLLOAD(S, obj_slot);
             EADDRA_IMM(S, (wo + k) * 8);   # rax = &env[woff+k] (dest)
             EPUSHR(S);
-            _cl_emit_cap_word(S, base, nl, k);
+            _cl_emit_cap_word(S, base, nl, k, w);
             EPOPC(S);                      # rcx = dest
             ESTORE64(S);
             k = k + 1;
@@ -555,11 +555,26 @@ fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
     }
     return 0;
 }
-# rax = word k of the captured slot `base`: an enclosing local's (6.6.5: word k of an inline
-# aggregate lives at slot base - k), or — for an entry past `nl` — the enclosing closure's own
-# capture `base - nl`, read from that closure's env.
-fn _cl_emit_cap_word(S, base, nl, k): i64 {
-    if (base < nl) { EFLLOAD(S, base - k); return 0; }
+# rax = word k of the captured slot `base` (`w` words wide): an enclosing local's, or — for an
+# entry past `nl` — the enclosing closure's own capture `base - nl`, read from that closure's env.
+# Env word k must be the word at `&base + k*8`: the closure body reads field k there. On the stack
+# that is slot base - k (6.6.5). ⛔ In a suspending `async fn` it is not: the coroutine frame
+# ascends with the slot index and `_ECORO_AGG_OFF` bases an aggregate at its LOW slot, so slot
+# base - k holds word w-1-k, and the slot walk copied every captured struct, tuple and u128 in
+# reverse (`P2 { 1, 2 }` read as `{ 2, 1 }`, silently). There the words are read through the
+# aggregate's address, as every other coroutine consumer reads them; the stack form is unchanged,
+# byte for byte. CHANGELOG [6.7.9]
+fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
+    if (base < nl) {
+        if (w > 1 && _cur_fn_coro == 1) {
+            EFLADDR(S, base);
+            if (k > 0) { EADDRA_IMM(S, k * 8); }
+            ELOAD64(S);
+            return 0;
+        }
+        EFLLOAD(S, base - k);
+        return 0;
+    }
     _CL_CAP_WORDS_RA(S, base - nl);
     if (k > 0) { EADDRA_IMM(S, k * 8); }
     ELOAD64(S);
@@ -5506,7 +5521,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
             # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
             # 6.6.5: an AGGREGATE capture copies all its words. Word k of an enclosing
-            # inline aggregate lives at slot (base - k) and lands at env[woff + k], so
+            # inline aggregate — the word at `&base + k*8` (on the stack slot base - k; in a
+            # coroutine frame not, see `_cl_emit_cap_word`) — lands at env[woff + k], so
             # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
             # enclosing frame — which is what lets the body reuse the ordinary field math.
             # 6.6.17: a capture of the enclosing closure's own capture copies from its env.
