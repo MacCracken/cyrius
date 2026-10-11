@@ -486,16 +486,25 @@ fn _cl_ctx_woff(b, capi): i64 {
 }
 # Enter a closure literal: save the enclosing capture context (returned, for `_cl_ctx_restore`)
 # and install the closure's snapshot — the enclosing locals `locsnap` (n entries), extended by
-# the enclosing closure's captures when it has any.
-fn _cl_ctx_enter(S, locsnap, n): i64 {
+# the enclosing closure's captures when it has any. `st` is the closure's `_fnst_save` block.
+# ⛔ 6.7.9 — A CLOSURE AT TOP LEVEL HAS NO ENCLOSING FRAME, so none of its names is a capture.
+# A fn's end does not clear the local tables: at top level GFLC and the slot names still hold
+# the LAST fn compiled, and a global the closure read under the name of one of that fn's locals
+# or parameters was captured from a slot of a frame that does not exist (SIGSEGV, or a dead
+# slot's value). The table is still saved and put back around the closure as before; only the
+# capture lookup is empty outside a fn. CHANGELOG [6.7.9]
+fn _cl_ctx_enter(S, locsnap, n, st): i64 {
     var b = _cl_ctx_save();
+    var ls = 0;
+    var ln = 0;
+    if (_fnst_was_infn(st) == 1) { ls = locsnap; ln = n; }
     var m = 0;
     if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) { m = _cl_ncap; } }
-    var x = locsnap;
-    if (m > 0) { x = _cl_snap_extend(S, locsnap, n, m); }
+    var x = ls;
+    if (m > 0) { x = _cl_snap_extend(S, ls, ln, m); }
     _cl_snap = x;
-    _cl_snap_n = n + m;
-    _cl_snap_nl = n;
+    _cl_snap_n = ln + m;
+    _cl_snap_nl = ln;
     return b;
 }
 # A copy of snapshot `ls` (n entries, `_cl_save_locals`' layout) with one entry appended per
@@ -5330,7 +5339,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # slots, and restores the cursor.
         # 6.6.17: the whole enclosing capture context, and a snapshot that also lists the
         # enclosing closure's captures (`_cl_ctx_enter`).
-        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc);
+        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc, cl_st);
         _cl_prescan_captures(S, cl_zero);
         var cl_cap_shift = 0;
         if (_cl_capturing == 1) { cl_cap_shift = 1; }

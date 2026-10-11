@@ -1533,6 +1533,8 @@ fn _fnst_save(S): i64 {
     S64(S + 0x18F840, 0);
     return b;
 }
+# 1 when snapshot `b` was taken inside a fn (the enclosing GINFN), 0 at top level.
+fn _fnst_was_infn(b): i64 { return load64(b + 8); }
 # Leave the nested fn: drop its return patches and defer entries (both already emitted and
 # patched by it), then put every enclosing global back.
 fn _fnst_restore(S, b): i64 {
