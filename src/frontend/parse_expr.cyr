@@ -1353,6 +1353,14 @@ fn _neg_int(S): i64 {
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
+    SPSC(S, 0);   # 6.7.9: `-q` is a plain integer — no step (see _pexpr_bit_ps)
+    return 0;
+}
+# Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
+# adds 1; see _pexpr_bit_ps). CHANGELOG [6.7.9]
+fn _bnot_int(S): i64 {
+    ENOTR(S);
+    SPSC(S, 0);
     return 0;
 }
 
@@ -1700,11 +1708,11 @@ var _w128_cp = 0;
 var _w128_ti = 0;
 # ⛔ 6.7.8 (C2-5) — THE POINTER-KIND STAMP. `*p` reads and writes a narrow `*T`'s element at its
 # width, and the element kind rides the pointer-scale word (C2-3a) — but that word is "the last
-# factor's", not "this value's": nothing clears it when an operator CONSUMES a pointer, so after
-# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it still holds q's word (6.6.17's step leaks the same
-# way — `(x == q) + 1` adds 4; reported, not changed). A value's kind is its OWN only when the
-# producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR / _W128
-# pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
+# factor's", not "this value's": nothing cleared it when an operator CONSUMED a pointer, so after
+# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it held q's word (6.6.17's step leaked the same way —
+# `(x == q) + 1` added 4; 6.7.9 clears the word there, `_pexpr_bit_ps`). A value's kind is its OWN
+# only when the producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR /
+# _W128 pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
 # arithmetic on such a value (`_ptr_add` / `_int_plus_ptr` / `_ptr_sub`), an if-expression whose
 # branches agree (`_ie_finish`), carried across a `)` (`_paren_post`). Every reader of the kind as
 # a value's goes through `_pk_word`, which strips it otherwise; the step is never touched, so all
@@ -2981,7 +2989,8 @@ fn _arr_sub_stmt(S, noff): i64 {
 # (`_sub_post`); stores: PARSE_FIELD_STORE's `[` arm (`_fld_sub_store`), a call statement through
 # `_stmt_qmark` / `_stmt_call_field` (`_stmt_call_sub`), the classic-for step (`_step_call_sub`). The
 # element comes from the base's DECLARATION — a field's `_fld_ps`, a callee's `_fn_rps`, a method's
-# word (`_call_ret_ps`) — never from a pointer scale an argument left behind (`mk(q).n` keeps q's).
+# word (`_call_ret_ps`) — never from a pointer scale an argument left behind (`mk(q).n` kept q's
+# until 6.7.9).
 # Every other base is refused by name at the `[`, the brackets consumed: a field that is no `*T`, a
 # call returning none (a builtin, `callptr`, `fncallN`), `a[i][j]`, `&a[i]`, `(expr)[i]`, a literal;
 # a field / call this file cannot resolve is consumed silently under --syntax-only. No program that
@@ -3642,7 +3651,7 @@ fn _pk_word(S): i64 {
 # The PARSE_FACTOR wrapper's end (the factor began at token ti0): vouch for the word's kind when
 # its own producer wrote it last — a bare name (its slot / capture / global mark), a field whose
 # declaration is that `*T` (`_sub_word`: the load ended at the cursor), a call whose callee — or
-# method — declares it. `mk(q).n` keeps q's word and `-q` / `~q` theirs: not vouched for. `(E)`
+# method — declares it. `mk(q).n`, `-q` and `~q` are not vouched for (6.7.9: they keep no word). `(E)`
 # carries E's own stamp across the `)` (`_paren_post`).
 fn _pk_post(S, ti0): i64 {
     var w = GPSC(S);
@@ -3744,8 +3753,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     if (typ == 37) {
         STI(S, GTI(S) + 1);
         PARSE_FACTOR(S);
-        ENOTR(S);
-        return 0;
+        return _bnot_int(S);
     }
     if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); SESTYPE(S, F64_TYID); return 0; }
     # sizeof(Type) — compile-time constant (detected as IDENT "sizeof")
@@ -6532,6 +6540,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             ELOAD64(S);                       # rax = [result_ptr + 8] = payload
             _cfo = 0;                         # invalidate const-fold tracking
         }
+        SPSC(S, 0);   # 6.7.9: the payload is a plain value — `(p?) + 1` kept p's step (_pexpr_bit_ps)
     }
     var go = 1;
     while (go == 1) {
@@ -6702,6 +6711,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     }
                                     else { go = 0; }
                                 } } } } } } }
+        if (go == 1) { SPSC(S, 0); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps)
     }
     return 0;
 }
@@ -7092,6 +7102,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
     SESTYPE(S, 0);
+    SPSC(S, 0);   # 6.7.9: no step — `(v + q) + 1` took q's (_pexpr_bit_ps)
     _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
@@ -7206,6 +7217,24 @@ fn PEXPR(S): i64 {
     _rd_exit();
     _xd_check(S, _xd0, "expression");
     return 0;
+}
+
+# ⛔ 6.7.9 — A POINTER'S STEP OUTLIVED THE OPERATOR THAT CONSUMED THE POINTER. The pointer-scale
+# word is the LAST factor's, and only `+` / `-` wrote their result's back, so after any other
+# operator whose last operand was `q: *i32` the next `+ n` / `- n` stepped 4: `(x == q) + 100` was
+# 401, `(m & q) + 1` 4, `(-q) + 1` -q + 4, `mk(q).n + 1` 4 — silent, every target, 6.6.17-6.7.8.
+# An operator that produces a plain integer now leaves no step (the user's decision 1(a),
+# 2026-10-11): a comparison and an `&&` / `||` link (_PLOGIC_ATOM, _PLOGIC_AND, PCMPE); `* / % <<
+# >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
+# _bnot_int); an operator fn's result (EMIT_OP_DISPATCH); a field that is no `*T`
+# (_field_load_type, parse_decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
+# `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
+# the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
+fn _pexpr_bit_ps(S, typ, ps): i64 {
+    if (typ == 27) { SPSC(S, 0); return 0; }
+    if (typ == 35) { SPSC(S, 0); return 0; }
+    if (typ == 36) { SPSC(S, 0); return 0; }
+    return ps;
 }
 
 fn _PEXPR_IMPL(S): i64 {
@@ -7394,6 +7423,7 @@ fn _PEXPR_IMPL(S): i64 {
                                         }
                                         else { go = 0; }
                                     } } } } } } } }
+        ps = _pexpr_bit_ps(S, typ, ps);   # 6.7.9: `& | ^` give no pointer
     }
     return 0;
 }
@@ -7494,6 +7524,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 }
             }
             _cfo = 0;
+            SPSC(S, 0);    # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps)
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
         }
     }
@@ -7532,6 +7563,7 @@ fn _PLOGIC_AND(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 0);                 # short-circuited (left false) → result 0
         EPATCH(S, p_end);
+        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
         _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
         lop = PEEKT(S);
     }
@@ -7571,6 +7603,7 @@ fn PCMPE(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 1);                 # short-circuited (left true) → result 1
         EPATCH(S, p_end);
+        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
         _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
         lop = PEEKT(S);
     }

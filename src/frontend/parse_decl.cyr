@@ -1895,6 +1895,7 @@ fn _field_load_type(S, si, fi): i64 {
     if (k == 2) { SESTYPE(S, F32_TYID); }
     var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
     if (ps > 0) { SPSC(S, ps); }
+    else { SPSC(S, 0); }   # 6.7.9: no other field has a step (`mk(q).n` kept q's; _pexpr_bit_ps)
     if (GFBOOL(S, si, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool field's load is a boolean value
     return 0;
 }
