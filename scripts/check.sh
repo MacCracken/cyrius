@@ -2397,6 +2397,11 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's
 # subscripts, `*p` width, slices and the bounds-checked mode (tests/tcyr/crossos/dyn_subscripts.tcyr).
 _chk_gate "$ROOT/tests/gates/frontend/dyn_checked.sh"
+# 6.7.9 — an unmatched `}` at module scope is refused in pass 1, once, positioned (it silently ended
+# the unit: everything after it dropped, rc 0; in a multi-file build "undefined" errors in other
+# files — agnos's report). Every placement, the three-file shape, --syntax-only, every runnable
+# fork; the legitimate module-scope braces still compile and run. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/stray_brace_refused.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

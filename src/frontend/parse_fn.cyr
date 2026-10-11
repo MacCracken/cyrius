@@ -13046,7 +13046,7 @@ fn _prescan_tail_loop(S): i64 {
         # _prescan_fn_sig already consumes the `async` prefix — the two scanners agreeing is
         # the point. CHANGELOG [6.6.5]
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
-        elif (t == 14) { go = 0; }                     # stray '}' — where PARSE_PROG stops
+        elif (t == 14) { _tl_stray_brace(S); go = 0; }   # an unmatched '}' — refused (6.7.9)
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
@@ -13056,6 +13056,22 @@ fn _prescan_tail_loop(S): i64 {
         # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
     }
+    return 0;
+}
+
+# 6.7.9 — an unmatched `}` at module scope. Every declaration and statement before it was
+# consumed with its braces balanced, so a `}` the tail loop meets closes nothing. PARSE_PROG is
+# also the block parser (`}` ends its loop), so it stopped there and everything after the brace
+# was silently dropped: rc 0, `main` never compiled — and in a multi-file build the lost
+# definitions surfaced as "undefined" errors in OTHER files (agnos's report). Refused HERE, in
+# pass 1, before any body is parsed, so it is the first diagnostic and nothing cascades. The
+# hint covers the other way to get here: an extra `}` INSIDE a fn ends it early, and the fn's own
+# closing brace is the one left over. CHANGELOG [6.7.9]
+fn _tl_stray_brace(S): i64 {
+    var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
+    ERR_MSG(S, "unmatched '}' at module scope", 29);
+    if (quiet == 0) { syscall(SYS_WRITE, 2, "  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
+    syscall(SYS_EXIT, 1);
     return 0;
 }
 
