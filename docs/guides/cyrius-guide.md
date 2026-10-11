@@ -971,9 +971,10 @@ address, read and written 8 bytes as before**: an untyped name (`var w = p;` is 
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
-`*(1 + p)` through a `*u8` / `*i8` is the element as well, though a one-byte `n + p` keeps no step:
-its value is still no typed pointer, so `var q: *u8 = 1 + p;` warns and `(1 + p) - q` is a byte
-difference whatever `q` points at, as before 6.7.8. `load8` / `store16` / … stay valid for an
+`n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
+`var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
+at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
+the difference was a byte count). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a

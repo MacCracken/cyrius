@@ -219,13 +219,12 @@ fn PARSE_IF(S): i64 {
 # emit or token moves the result flags (the B2 stamp, the float-builtin flag), and by SHAPE for a
 # struct (GESTYPE leaks from an intrinsic's last argument). At the join, flags and peephole trackers
 # that describe only the LAST branch are reset (_ie_finish). CHANGELOG [6.7.4]
-# Per-expression state (nesting-safe), 9 words: [0] class (0 none yet, 1 integer, 2 f64, 3 f32,
+# Per-expression state (nesting-safe), 8 words: [0] class (0 none yet, 1 integer, 2 f64, 3 f32,
 # 4 a small struct), [8] its sid, [16] every branch boolean, [24] any f64 / f32 TYPED (not only
 # flagged), [32] the common float-builtin flag (-1 unset), [40] the common pointer scale (-1 unset),
-# [48] the widest SEXW, [56] the expression's first token, (6.7.8) [64] the common dereference word
-# (-1 unset; a branch's own step word, else its one-byte `n + p` kind — `_pkd_word`).
+# [48] the widest SEXW, [56] the expression's first token.
 fn PARSE_IF_EXPR(S): i64 {
-    var st = alloc(72);
+    var st = alloc(64);
     S64(st, 0);
     S64(st + 8, 0);
     S64(st + 16, 1);
@@ -234,7 +233,6 @@ fn PARSE_IF_EXPR(S): i64 {
     S64(st + 40, 0 - 1);
     S64(st + 48, 0);
     S64(st + 56, GTI(S));
-    S64(st + 64, 0 - 1);
     _ie_arm(S, st);
     _ie_finish(S, st);
     return 1;
@@ -437,8 +435,6 @@ fn _ie_kind(S, st, bti): i64 {
     var fbk = _FBR_KIND(S);
     var et = GESTYPE(S);
     var ps = _pk_word(S);   # 6.7.8 (C2-5): the branch's element kind only when its own
-    var dw = ps;            # 6.7.8: what `*` of the branch reads (a one-byte `n + p`'s kind too)
-    if (dw == 0) { dw = _pkd_word(S); }
     var xw = GEXW(S);
     var cl = 1;
     var sid = 0;
@@ -471,7 +467,6 @@ fn _ie_kind(S, st, bti): i64 {
     _ie_merge(S, st, bti, cl, sid, typed + isb * 2 + fbk * 4);
     # 6.7.8 (C2-3a): the pointer step words merge by step (`_ps_merge`) — two kinds of one step keep it.
     if (L64(st + 40) == 0 - 1) { S64(st + 40, ps); } else { S64(st + 40, _ps_merge(L64(st + 40), ps)); }
-    if (L64(st + 64) == 0 - 1) { S64(st + 64, dw); } elif (L64(st + 64) != dw) { S64(st + 64, 0); }
     if (xw > L64(st + 48)) { S64(st + 48, xw); }
     return 0;
 }
@@ -567,9 +562,6 @@ fn _ie_finish(S, st): i64 {
     var ps = L64(st + 40);
     if (ps < 0) { ps = 0; }
     _pk_set(S, ps);   # 6.7.8 (C2-5): the merged word, stamped (a kind only when every branch had it)
-    if (ps == 0) {    # 6.7.8: no step, but every branch dereferences to one 1-byte element (`1 + p`, `p`)
-        if (_ps_step(L64(st + 64)) == 1) { _PKD_MARK(S, L64(st + 64)); }
-    }
     SEXW(S, L64(st + 48));
     SESTYPE(S, 0);
     _fbr_k = 0;

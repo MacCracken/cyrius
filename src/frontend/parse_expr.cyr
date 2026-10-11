@@ -1437,13 +1437,10 @@ fn _FBR_ST(S): i64 {
 }
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
 fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
-# 6.7.8: the left operand's dereference-only kind (`_pkd_lhs`, `_op_lst`) survives the right one's
-# parse, which may hold a `+` / `-` of its own.
+# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does.
 fn _RHS_T(S): i64 {
-    var kl = _pkd_lhs;
     PARSE_TERM(S);
     _fbr_rhs = _FBR_KIND(S);
-    _pkd_lhs = kl;
     return 0;
 }
 
@@ -1727,43 +1724,13 @@ fn _PK_IS(S): i64 {
     if (GTI(S) != _pk_ti) { return 0; }
     return 1;
 }
-# ⛔ 6.7.8 (C2 review) — THE DEREFERENCE-ONLY KIND of a ONE-byte `n + p`. `n + p` with a `*u8` / `*i8`
-# on the right keeps no step (6.6.17: a step of 1 scales nothing, and the result's pointer-scale word
-# is the LEFT operand's, 0) — so it kept no element kind either, and `*(1 + p)` stored a WORD where
-# `*(p + 1)` stores the byte ("`*p` at the element's width — EVERYWHERE"). Giving the value its step
-# word would change what compiles: `(1 + p8) - q32` would become the different-sizes error and `var
-# q: *u8 = 1 + p;` would stop warning. So the word stays 0 and the kind goes on THIS stamp, which only
-# a dereference reads (`_deref_ed`): written by `_ptr_add` (`n + p`, and `n + v` / `v + n` / `v - n`
-# for such a value `v` — `_pkd_lhs` carries the left one's across the right operand's parse) and by
-# an if-expression whose branches all dereference to that element (`_ie_finish`), carried across a
-# `)` (`_paren_post`, bit 128). Nothing else reads it, so no step, difference, warning or emitted byte
-# changes. CHANGELOG [6.7.8]
-var _pkd_cp = 0;
-var _pkd_ti = 0;
-var _pkd_w = 0;
-var _pkd_lhs = 0;   # the `+` / `-` left operand's (`_op_lst`), kept across the right's parse (`_RHS_T`)
-fn _PKD_MARK(S, w): i64 { _pkd_cp = GCP(S); _pkd_ti = GTI(S); _pkd_w = w; return 0; }
-fn _PKD_IS(S): i64 {
-    if (_pkd_cp == 0) { return 0; }
-    if (GCP(S) != _pkd_cp) { return 0; }
-    if (GTI(S) != _pkd_ti) { return 0; }
-    return 1;
-}
-# The value's dereference-only word (step 1 and an element kind), 0 when it has none.
-fn _pkd_word(S): i64 {
-    if (_PKD_IS(S) == 0) { return 0; }
-    if (GPSC(S) != 0) { return 0; }
-    return _pkd_w;
-}
 # A parenthesised factor carries its result flags across its `)`: the float-builtin kind (low
-# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32), (6.7.8) the pointer-kind stamp (64)
-# and the dereference-only kind (128).
+# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32) and (6.7.8) the pointer-kind stamp (64).
 fn _paren_pre(S): i64 {
     var k = _FBR_KIND(S);
     if (_BX_IS(S) == 1) { k = k + 16; }
     if (_W128_IS(S) == 1) { k = k + 32; }
     if (_PK_IS(S) == 1) { k = k + 64; }
-    if (_PKD_IS(S) == 1) { k = k + 128; }
     return k;
 }
 fn _paren_post(S, k): i64 {
@@ -1771,7 +1738,6 @@ fn _paren_post(S, k): i64 {
     if ((k & 16) != 0) { _bxr_ti = GTI(S); }
     if ((k & 32) != 0) { _w128_ti = GTI(S); }
     if ((k & 64) != 0) { _pk_ti = GTI(S); }
-    if ((k & 128) != 0) { _pkd_ti = GTI(S); }
     return 0;
 }
 
@@ -3669,13 +3635,11 @@ fn _pk_post(S, ti0): i64 {
 # ⛔ 6.7.8 (C2-5) — `*p` AT THE ELEMENT'S WIDTH (the user's decision, 2026-10-10: "`*p`, `*p = v`,
 # `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32 rounding included)
 # read and write at the element's width, the same rule `p[i]` gets"). The element of a `*expr`
-# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, `n + p`
-# (a one-byte one through its dereference-only kind, `_pkd_word`), a parenthesised one — as its
-# descriptor (step 1, 2 or 4; an integer or an f32), else 0: the operand is a word address
-# (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
+# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, `n + p`,
+# a parenthesised one — as its descriptor (step 1, 2 or 4; an integer or an f32), else 0: the
+# operand is a word address (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
 fn _deref_ed(S): i64 {
     var w = _pk_word(S);
-    if (w == 0) { w = _pkd_word(S); }
     var st = _ps_step(w);
     if (st < 1) { return 0; }
     if (st > 4) { return 0; }
@@ -6726,7 +6690,8 @@ fn _PARSE_TERM_IMPL(S): i64 {
 # `n + p` with the integer on the left stepped 1 where `p + n` steps sizeof(T). Now (ps = the
 # left operand's step, rs = the right one's, both 0 for a plain value):
 #   p + n, p - n      the integer steps ps (unchanged)
-#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`)
+#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`); 6.7.9: a one-byte
+#                     `*T` (`*u8` / `*i8`, nothing to scale) keeps its word too (`_add_word`)
 #   p - q             the ELEMENT count (p - q) / ps when ps == rs; a NAMED ERROR when the steps
 #                     differ (`*i64 - *u8`, `*Pt - &buf`) — the result has no honest unit. Two
 #                     pointers to different types of the same size cannot be told apart: the step
@@ -6737,28 +6702,22 @@ fn _ptr_add(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
     var rs = _pk_word(S);   # 6.7.8 (C2-5): the right operand's kind only when its own
     if (ps == 0) { if (_ps_step(rs) > 1) { return _int_plus_ptr(S, rs); } }   # 6.7.8: the step, not the word
-    var dw = _pkd_add(S, ps, rs);   # 6.7.8: before the add — the right operand's stamps hold until then
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EUNSPILL(S);
     EADDR(S);
-    _pk_set(S, ps);
-    if (dw != 0) { _PKD_MARK(S, dw); }
-    return 0;
+    return _pk_set(S, _add_word(ps, rs));
 }
-# The dereference-only kind (`_PKD_MARK`) of an integer `+` (no step on the left, `ps`; the right
-# one's own word `rs`): a one-byte `*T` on the right (`n + p`) gives its word; else the right
-# operand's (`n + (m + p)`), else the left one's (`(n + p) + m`, `_pkd_lhs`). 0 for anything else.
-fn _pkd_add(S, ps, rs): i64 {
-    if (ps != 0) { return 0; }
-    if (rs != 0) {
-        if (_ps_step(rs) != 1) { return 0; }
-        if (((rs >> 40) & 0xFF) == 0) { return 0; }
-        return rs;
-    }
-    var rd = _pkd_word(S);
-    if (rd != 0) { return rd; }
-    return _pkd_lhs;
+# `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
+# user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
+# `*u8` where `p8 + 1` is one: `(1 + p8) - q32` built a byte difference and `var r: *u8 = 1 + p8;`
+# warned. A step 1 with no element kind (`&x`, a narrow scalar local) is no `*T`: not written.
+# CHANGELOG [6.7.9]
+fn _add_word(ps, rs): i64 {
+    if (ps != 0) { return ps; }
+    if (_ps_step(rs) != 1) { return 0; }
+    if (((rs >> 40) & 0xFF) == 0) { return 0; }
+    return rs;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
 # step word (6.7.8): the multiplier is its step, and the result keeps the word.
@@ -6780,15 +6739,11 @@ fn _ptr_sub(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }   # 6.7.6 (D2): `n - x` with a u128 x
     var rs = GPSC(S);
     if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
-    var dw = 0;   # 6.7.8: `(n + p) - m` keeps the left one's dereference-only kind; `v - q` is a difference
-    if (ps == 0) { if (rs == 0) { if (_pkd_word(S) == 0) { dw = _pkd_lhs; } } }
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
-    _pk_set(S, ps);
-    if (dw != 0) { _PKD_MARK(S, dw); }
-    return 0;
+    return _pk_set(S, ps);
 }
 # Pointer arithmetic's result: the pointer operand's word (`ps` / `rs`, read through `_pk_word`, so
 # its kind is there only when that operand's own), stamped as this value's. 6.7.8 (C2-5)
@@ -6937,7 +6892,6 @@ fn _op_lhs_sv(S, fi, beg, opti): i64 {
 # own struct, so a missing operator fn is refused by name as for a struct variable. Returns the
 # operand's struct for the `+ - * /` arms, else `_FBR_ST` as before. CHANGELOG [6.7.6]
 fn _op_lst(S, beg): i64 {
-    _pkd_lhs = _pkd_word(S);   # 6.7.8: a one-byte `n + p` left operand's dereference-only kind
     _lsc_hit = 0;
     if (_lsc_cp == GCP(S)) {
         if (_lsc_span(S, beg) == 1) {

@@ -467,6 +467,44 @@ fn intrin_rows(): i64 {
     return 0;
 }
 
+# ── `n + p` with a one-byte `*T` is that pointer, as `p + n` is (6.7.9) ───────────────────────────
+# `n + p8` (`*u8` / `*i8`: a step of 1, nothing to scale) wrote back the INTEGER's word, 0, so it was
+# no `*u8`: `var r: *u8 = 2 + p;` warned and `(1 + p8) - q32` built a byte difference (the gate's
+# DXc rows hold the diagnostics). It now keeps p's word. A step of 1 scales nothing, so every value
+# is the one it always was: these rows pin it on every leg — a difference of two such values (now an
+# element count, `_ptr_diff`), a typed declaration from one, the chains, each one-byte source. A
+# narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) - q` is `n - p`.
+fn ob_u8(): *u8 { return &buf; }
+fn onebyte_rows(a: *u8): i64 {
+    var p: *u8 = &buf;
+    var s: *i8 = &buf;
+    var h: Hold;
+    h.b = &buf;
+    D_u8 = &buf;
+    assert_eq((1 + p) - p, 1, "*u8: (1 + p) - p is an element count");
+    assert_eq((5 + p) - (2 + p), 3, "*u8: (5 + p) - (2 + p)");
+    assert_eq((3 + s) - p, 3, "*i8 - *u8: one step, an element count");
+    assert_eq(p - (4 + s), 0 - 4, "*u8: p - (4 + s)");
+    var r: *u8 = 2 + p;
+    assert_eq(d(r, p), 2, "*u8: var r: *u8 = 2 + p");
+    assert_eq(d(r + 1, p), 3, "*u8: a *u8 declared from 2 + p, + 1");
+    assert_eq(d((2 + p) + 3, p), 5, "*u8: (2 + p) + 3");
+    assert_eq(d(1 + (2 + p), p), 3, "*u8: 1 + (2 + p)");
+    assert_eq(d((6 + p) - 2, p), 4, "*u8: (6 + p) - 2");
+    assert_eq((6 + a) - a, 6, "*u8 parameter: (n + a) - a");
+    assert_eq((7 + h.b) - h.b, 7, "*u8 field: (n + h.b) - h.b");
+    assert_eq((8 + D_u8) - D_u8, 8, "*u8 global: (n + G) - G");
+    assert_eq((9 + ob_u8()) - p, 9, "*u8 call: (n + f()) - p");
+    var c = 1;
+    var q: *u8 = if (c > 0) { 1 + p } else { p };
+    assert_eq(d(q, p), 1, "*u8: an if-expression of 1 + p and p");
+    var w: u8 = 5;
+    var b: *i32 = &buf;
+    var bi: i64 = b;
+    assert_eq((1 + w) - b + bi, 6, "a u8 scalar: (1 + w) - q is n - p, no difference");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
 generic_returns();
@@ -487,6 +525,7 @@ op_rows_i64();
 op_rows_Pt();
 qm_rows();
 intrin_rows();
+onebyte_rows(&buf);
 
 var A_u8: *u8 = &buf;
 var A_pt: *Pt = &buf;
