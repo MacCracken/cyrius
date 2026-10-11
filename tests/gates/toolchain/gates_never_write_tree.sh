@@ -187,6 +187,10 @@
 #   z8. (6.6.17 review) fork_version_parity's       -> axis 9 FAIL (`removes a server dir NOT
 #      `_wine_down` stats "$T" instead of "$WP";         derived from the prefix it kills`) / the
 #      the detector's from_prefix rule off               stat_wrong_operand self-test FAIL
+#   z9. (6.7.9) detector: back to the pre-6.7.9 line  -> axis 9 self-test FAIL (c_trap_prose flagged
+#      test / quoted text not blanked / `trap` after     / every real trap lost + c_trap_prose /
+#      any whitespace / the simple-command cut off /     c_trap_prose / c_trap_prose + retrap_cmd /
+#      the then|do|else arm off / signal 0 refused       retrap_cmd / retrap_cmd)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -1042,6 +1046,9 @@ fi
 # exit, before the export ever did. The TEARDOWN is read from the LAST `trap … EXIT` line plus
 # the bodies of the functions it calls (two levels): one line kills with an inline private
 # prefix, and one line `rm`s the server dir (a /tmp/.wine- literal, or a variable assigned one).
+# That line is one whose `trap` is a COMMAND word with EXIT or 0 among its own signals, read
+# with every quoted string's contents blanked — a row label holding "trap" on a line ending in
+# an expected exit code 0 is prose, not the teardown (CHANGELOG [6.7.9]).
 # And no line outside a function `rm`s the PREFIX itself (any spelling a WINEPREFIX= took, or a
 # variable holding one) unless a teardown function is called first on that line: 5 gates
 # deleted it after their wine leg, so the EXIT teardown found nothing to stat and their server
@@ -1119,6 +1126,33 @@ function names(s, sp,    k, off, t, c) {   # does s spell sp as a whole word/pat
     }
     return 0
 }
+function code_only(s,    o, i, n, c, st, d) {   # s with every quoted string's contents blanked
+    o = ""; d = 0; n = length(s)   # (the quotes kept; a $( … ) inside a "…" is part of the string)
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (d && st[d] == "'") { if (c == "'") d--; if (!d) o = o c; continue }
+        if (c == "\\") { if (!d) o = o substr(s, i, 2); i++; continue }
+        if (d && st[d] == "\"") {
+            if (c == "\"") d--
+            else if (c == "$" && substr(s, i + 1, 1) == "(") { st[++d] = "("; i++ }
+            if (!d) o = o c
+            continue
+        }
+        if (c == "'" || c == "\"") { if (!d) o = o c; st[++d] = c; continue }
+        if (d && c == "(") { st[++d] = "("; continue }
+        if (d && c == ")") { d--; continue }
+        if (!d) o = o c
+    }
+    return o
+}
+function exit_trap(s,    u, r) {   # does s SET an EXIT trap? `trap` as a command word, EXIT / 0 among its signals
+    u = code_only(s)   # a label's "… trap …" and a trailing ` 0` were once read as one (CHANGELOG [6.7.9])
+    while (match(u, /(^|[;&|({])[ \t]*trap[ \t]|(^|[ \t;&|({])(then|do|else)[ \t]+trap[ \t]/)) {
+        u = substr(u, RSTART + RLENGTH); r = u; sub(/[;&|].*$/, "", r)   # this simple command only
+        if (r ~ /(^|[ \t])(EXIT|0)([ \t)}]|$)/) return 1
+    }
+    return 0
+}
 function teardown(L, depth,    s, n, w, k, f) {   # add trap line L and the fns it calls to TD
     s = LL[L]; TD[++ntd] = s
     if (depth >= 2) return
@@ -1165,7 +1199,7 @@ END {
             FE0[infn] = L; INFN[L] = 1
             if (s ~ /^[ \t]*\}[ \t;]*$/) infn = ""
         }
-        if (s ~ /(^|[ \t;&|])trap[ \t]/ && s ~ /[ \t](EXIT|0)([ \t;]|$)/) lasttrap = L
+        if (exit_trap(s)) lasttrap = L
     }
     # the prefix's spellings: every WINEPREFIX= value ("%s" runners aside), plus "$V" for a V
     # assigned one of them and the value of a V spelled as one ("$WP" <-> "$D/wp")
@@ -1313,6 +1347,18 @@ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINE
 { printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wp"\n'
   printf 'if [ -d "$WP" ] && command -v wineserver > /dev/null 2>&1; then WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; fi\n'; } > "$W/fx9/c_probe.sh"
 printf 'command -v wineserver > /dev/null 2>&1 && wineserver -k > /dev/null 2>&1\n' > "$W/fx9/probe_then_bare.sh"
+# 6.7.9: "the last EXIT trap" is a `trap` COMMAND whose signals hold EXIT / 0 — not a row label
+# holding the word "trap" on a line that ends in an expected exit code 0 (the issue's verbatim
+# label; C2-6a's two "... the trap is Tc)" labels; one with a `;` inside its quotes; one unquoted),
+# and not a non-EXIT trap followed, in a later command, by a `ulimit -f 0`. A late re-trap that IS a
+# command (after `then`, signal `0`) still replaces the teardown.
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache" WINEDEBUG=-all\nwine "$T/a.exe"\n'
+  printf 'check "the trap gate" 0\nexits T1c 0 "aarch64 (qemu): the trap is Tc)"\nok "step 2; trap 0 set" 0\n'
+  printf 'echo axis 9 trap rows: 0\n( trap '"''"' XFSZ; ulimit -f 0 && ./big ) || true\n'; } > "$W/fx9/c_trap_prose.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'if [ -d "$T" ]; then trap '"'"'rm -rf "$T"'"'"' 0; fi\n'
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n'; } > "$W/fx9/retrap_cmd.sh"
 st9=0; nbad9=0
 # <fixture> <the reason it must be flagged FOR> — a shape flagged only for some OTHER rule would
 # let the rule it exists for be switched off unnoticed
@@ -1325,12 +1371,14 @@ for fr in "bare|no private WINEPREFIX" "winepath_first|no private WINEPREFIX" "f
           "cyrius_home_only|no private HOME (" "prefix_rm_live|removes the wine prefix while" \
           "prefix_rm_var|removes the wine prefix while" "stat_wrong_operand|NOT derived from the prefix" \
           "no_teardown|no EXIT trap stops this prefix" "kill_no_rmdir|no EXIT trap removes its server dir" \
-          "straight_teardown|no EXIT trap stops this prefix"; do
+          "straight_teardown|no EXIT trap stops this prefix" "retrap_cmd|no EXIT trap stops this prefix"; do
     f=${fr%%|*}; why=${fr#*|}; nbad9=$((nbad9 + 1))
     _wine_shared "$W/fx9/$f.sh" | grep -qF -- "$why" || { echo "FAIL: axis 9 self-test: the '$f' shape was not flagged for '$why': $(_wine_shared "$W/fx9/$f.sh" | head -2)"; st9=1; }
 done
 [ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1 | head -1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
-for f in c_export c_inline c_wrapper c_scoped c_prose c_probe c_prefix_rm_after_down; do
+ngood9=0
+for f in c_export c_inline c_wrapper c_scoped c_prose c_probe c_prefix_rm_after_down c_trap_prose; do
+    ngood9=$((ngood9 + 1))
     [ -z "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: an isolated spelling ('$f') was flagged: $(_wine_shared "$W/fx9/$f.sh")"; st9=1; }
 done
 [ "$st9" = 0 ] || FAIL=1
@@ -1348,7 +1396,7 @@ if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
 elif [ "$bad9" != 0 ]; then
     FAIL=1
 elif [ "$st9" = 0 ]; then
-    echo "  ok: axis 9: all $nwine9 gates that run wine give it a private WINEPREFIX, HOME and XDG_CACHE_HOME under their own mktemp dir, kill no unscoped wineserver, and stop their server and remove its server dir on EXIT, never deleting the prefix under a live server ($n9 scripts scanned; self-tested on $nbad9 shapes + 7 clean spellings)"
+    echo "  ok: axis 9: all $nwine9 gates that run wine give it a private WINEPREFIX, HOME and XDG_CACHE_HOME under their own mktemp dir, kill no unscoped wineserver, and stop their server and remove its server dir on EXIT, never deleting the prefix under a live server ($n9 scripts scanned; self-tested on $nbad9 shapes + $ngood9 clean spellings)"
 fi
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
