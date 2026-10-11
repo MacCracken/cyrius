@@ -393,27 +393,59 @@ fn _cl_prescan_nested(S): i64 {
 # the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
 # closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
 # still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
-# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`;
-# a struct literal's field (`Pt { x: n, y: 2 }`, in a `{`) keeps its reading. CHANGELOG [6.7.7]
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`.
+# CHANGELOG [6.7.7]
 fn _cl_is_arg_label(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 49) { return 0; }
     if (ti < 1) { return 0; }
     var p = TOKTYP(S, ti - 1);
     if (p != 10 && p != 31) { return 0; }
-    var q = ti - 1;
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o) == 10) { return 1; }
+    return 0;
+}
+# The innermost bracket `(` `[` `{` still open at token `q` (counting `q` itself), or -1.
+fn _cl_open_brk(S, q): i64 {
     var d = 0;
     while (q >= 0) {
         var t = TOKTYP(S, q);
         if (t == 11 || t == 29 || t == 14) { d = d + 1; }
         elif (t == 10 || t == 28 || t == 13) {
-            if (d == 0) {
-                if (t == 10) { return 1; }
-                return 0;
-            }
+            if (d == 0) { return q; }
             d = d - 1;
         }
         q = q - 1;
     }
+    return 0 - 1;
+}
+# ⛔ 6.7.9 — A FIELD NAME IS NOT A READ EITHER. The pre-scan took `y` in `p.y` and in a struct
+# literal's `Pt { x: n, y: 2 }` for a read of the enclosing local `y`: a capture the body never
+# uses, so the closure was refused without lib/alloc.cyr, or built a heap env holding a copy of
+# `y` (6.6.0 - 6.7.8). A field name follows a `.` — but not a range's `..` (`for i in 0..y` reads
+# `y`; the lexer makes `..` two DOT tokens). A literal's label is `IDENT :` just after a `{` or
+# `,` whose innermost unclosed bracket is a `{` opened right after a struct name or a generic
+# struct's closing `>` (`Box<i64> { v: n }`). No other `IDENT :` stands there (`case y:` follows
+# `case`; there is no ternary), so a `case` value and a value after a label stay reads.
+# CHANGELOG [6.7.9]
+fn _cl_is_field_name(S, ti): i64 {
+    if (ti < 2) { return 0; }
+    if (TOKTYP(S, ti - 1) != 41) { return 0; }
+    if (TOKTYP(S, ti - 2) == 41) { return 0; }   # `0..y`: a range's bound
+    return 1;
+}
+fn _cl_is_lit_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 2) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 13 && p != 31) { return 0; }
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 1) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 20 || h == 39 || h == 152) { return 1; }   # `>` `>>` `>>>`: a generic literal's head
+    if (h != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, o - 1)) > 0) { return 1; }
     return 0;
 }
 # One identifier read in a closure body: capture it when it is a free variable.
@@ -421,6 +453,8 @@ fn _cl_prescan_ident(S, noff): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
     if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
+    if (_cl_is_field_name(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `p.y`'s `y`
+    if (_cl_is_lit_label(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `Pt { y: 2 }`'s `y`
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
     if (_cl_shadow_find(S, noff) >= 0) { return 0; }
     var esl = _cl_snap_find(S, noff);

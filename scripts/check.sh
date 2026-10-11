@@ -1066,6 +1066,11 @@ _chk_gate "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 # it. SIGSEGV on x86_64 / aarch64, a wrong value on cx; host, cx and aarch64-qemu legs.
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_closure_stale_locals.sh"
 
+# 6.7.9: a field name in a closure body (`p.y`, a struct literal's `y:` label) was taken as a
+# capture of the enclosing local `y` — refused without lib/alloc.cyr, or a needless heap env.
+# A range's `0..y` and a value after a label stay captures; host, cx and aarch64-qemu legs.
+_chk_gate "$ROOT/tests/gates/frontend/closure_field_names_not_captured.sh"
+
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
 # at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same
