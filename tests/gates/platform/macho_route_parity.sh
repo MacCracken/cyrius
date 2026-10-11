@@ -65,7 +65,10 @@ bad()  { printf '  FAIL: %s\n' "$1"; fail=$((fail + 1)); }
 allow_reason() {
     case "$1" in
     # ---- no Darwin syscall exists at all: nothing to renumber TO ----
-    SYS_ACCEPT4)      echo "both|Darwin has no accept4; lib/net.cyr uses accept(30)+fcntl for the flags" ;;
+    SYS_ACCEPT4)      echo "both|Darwin has no accept4. sys_accept4 (lib/syscalls_linux_common.cyr, not lib/net.cyr as this line said until 6.7.9) composes x86 accept 43 (routed -> BSD 30 on both backends) + fcntl for the flags under #ifdef CYRIUS_TARGET_MACOS, so neither Mac emits 288/242. The x86 peer keeps the name for portable source (6.7.9)" ;;
+    SYS_WAITID)       echo "both|nothing issues it on any target, and Darwin's waitid(173) is not a renumber: its option bits differ (Linux WSTOPPED 2 / WNOWAIT 0x01000000, Darwin 8 / 0x20) and it fills a differently laid-out siginfo_t (si_pid at offset 12, Linux 16). Both macOS peers declare the name for portable source (6.7.9)" ;;
+    SYS_SET_TID_ADDRESS)
+                      echo "both|Darwin has no set_tid_address (Linux's clear-child-tid futex hook); macOS threads are bsdthread_* + __ulock, and nothing issues it on any target. Both macOS peers declare the name for portable source (6.7.9)" ;;
     SYS_BRK)          echo "both|Darwin has no brk; macOS targets use lib/alloc_macos.cyr (mmap-based)" ;;
     SYS_EPOLL_CREATE1|SYS_EPOLL_CTL|SYS_EPOLL_WAIT)
                       echo "both|Darwin has no epoll; the BSD equivalent is kqueue, a different API not a renumber" ;;
@@ -262,6 +265,31 @@ printf '%s' "$DERIV" | grep -q '_esx_qon' \
 ALITS=$(printf '%s' "$DERIV" | grep -oE 'n == [0-9]+' | grep -oE '[0-9]+' | sort -n -u | tr '\n' ' ')
 if [ "$ALITS" = "228 1700 1701 " ]; then ok "_macho_arm_routes derives from ESYSXLAT; only the three __got reroutes are literal"
 else bad "unexpected literal route list in _macho_arm_routes: '$ALITS' (expected exactly the three __got reroutes '228 1700 1701 ')"; fi
+
+# ---------------------------------------------------------------- axis 4: unrouted declarations
+# Axes 1-2 judge only the names something ISSUES. The x86-macOS peer also DECLARES names no
+# macOS path emits (Darwin has no such syscall, or only one a bare renumber would get wrong):
+# kept so portable source compiles, and a raw syscall() of one is a SIGSYS / -78 at run time.
+# Such a name must say WHY it is kept, and this allow-list is where every reason lives (the
+# peer's header points here), so the list must cover the whole declared set, not just the
+# issued one. Until 6.7.9 SYS_ACCEPT4 sat silent under a comment saying its block IS routed,
+# and SYS_WAITID / SYS_SET_TID_ADDRESS had no reason anywhere. x86 only: the arm64-macOS peer
+# is the aarch64-LINUX peer, whose unrouted declarations are the Linux-only surface.
+# CHANGELOG [6.7.9]
+echo ""
+echo "axis 4 — every name the x86-macOS peer declares with no EMACHO_SYSXLAT row carries a reason:"
+a4n=0; a4f=0
+while read -r name num; do
+    routed "$TMP/x86_routes" "$num" && continue
+    a4n=$((a4n+1))
+    scope=$(allow_scope "$name")
+    if [ "$scope" = "x86" ] || [ "$scope" = "both" ]; then :
+    else printf '  FAIL: %s = %s is declared by %s with no EMACHO_SYSXLAT row and no allow-list reason — say why it is kept, or delete it\n' "$name" "$num" "$PEER_X86"; a4f=$((a4f+1)); fi
+done < "$TMP/peer_x86"
+# Floor: a scan that finds none (or a handful) would pass vacuously, so it must find 40.
+if [ "$a4n" -lt 40 ]; then bad "axis 4 found only $a4n unrouted x86-peer declarations (floor 40) — the scan is broken, not the peer"
+elif [ "$a4f" -eq 0 ]; then ok "all $a4n unrouted x86-macOS peer declarations carry an allow-list reason"
+else fail=$((fail + a4f)); fi
 
 echo ""
 echo "$pass passed, $fail failed"
