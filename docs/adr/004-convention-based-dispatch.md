@@ -31,5 +31,5 @@ point.scale(2);                          # Call → Point_scale(&point, 2)
 
 - Method names must be globally unique per struct (no overloading)
 - No dynamic dispatch — caller must know the concrete type
-- Trait objects (fat pointers) remain a library pattern (trait.cyr), not compiler-native
+- Trait objects (fat pointers) remain a library pattern (trait.cyr), not compiler-native (6.7.8: checked trait objects are compiler-native as `dyn`, opt-in per destination; static dispatch stays the default — ADR-007 §7.)
 - Future `impl` blocks will be syntactic sugar over this convention

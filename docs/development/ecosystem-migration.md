@@ -32,6 +32,98 @@ does or builds; never a per-repo worklist.*
 
 ## 6.7.x — the language minor
 
+### 6.7.8
+- **`*p` through a narrow `*T` reads and writes the element, not a word** (`*u8`..`*u32`, `*i8`..`*i32`, `*f32`;
+  `*p`, `*p = v`, `*p OP= v`, the for step). A program that compiled can compute differently: a read narrows (`*p`
+  through a `*u8` was 8 bytes, now 1, zero-extended; through a `*i32` 4, sign-extended — `var x = *s;` read the pair
+  `a[0] | a[1] << 32`, now `a[0]`); a store writes T's width (`*p = 0x41` through a `*u8` wrote 0x41 and seven zero
+  bytes, now one; `*q = 5` through a `*i32` no longer zeroes the next element; `*p = 1.5` through a `*f32` stores
+  binary32 1.5, not the f64 word); `*p OP= v` wraps at the element. `*(p + n)`, `*(n + p)`, a `*T` field (`*h.p`) and a
+  `: *T` call (`*f()`) likewise. Such stores now warn as `p[0] = v` does ("narrowing assignment"; "an integer stored
+  into an f64/f32 slot keeps its integer bits"), and a narrow read is a narrow value (`c = *p16;` with `c: u8` warns). To
+  keep the word through a typed pointer write `load64(p)` / `store64(p, v)`, or launder it: `var w = p; *w`. `*i64` /
+  `*u64` / `*f64` / `*bool` and untyped addresses are unchanged. No source in cyrius or its folds dereferences a narrow
+  `*T`.
+- **A signed slice element reads as the negative number it holds** (`[i8]` / `[i16]` / `[i32]`, `slice<i8>` ..): a
+  byte 0xFD in an `[i8]` read 253, now -3, so `s[i] < 0` can hold and `/`, `%`, `>>`, `>>>` and every comparison see
+  the negative value. For the unsigned value write `s[i] & 0xFF` (`& 0xFFFF`, `& 0xFFFFFFFF`) or declare the slice
+  `[u8]` / `[u16]` / `[u32]`. `slice_unchecked_get_1/2/4` (lib/slice.cyr) still zero-extend. No source in cyrius or its
+  folds declares a signed slice.
+- **`*G<T>` parameters infer `T`** (the user's decision, 2026-10-10). A generic taking `b: *Box<T>` (any `*G<.., T,
+  ..>`) called with `&b`, a `*Box<Pt>` name or call, a `Box<Pt>` value, or a field chain whose leaf is declared
+  `*Box<Pt>` (`gx(h.bp)`) now runs the `Pt` instance; before 6.7.8 it ran the i64 base and read `Box<Pt>` with
+  `Box<i64>`'s layout. A program that relied on the old value changes it — write `gx<i64>(..)` to keep the base. A
+  by-value `G<T>` parameter starts inferring only where the call was refused before.
+- **`dyn` is a reserved word.** A fn, variable, parameter, field, method or `[embed]` name spelled `dyn` no longer
+  compiles ("expected identifier, got reserved keyword 'dyn'"): rename it. Checked trait objects (`o: dyn Show`) are
+  opt-in per declaration — a program that spells no `dyn` compiles byte-identically — and `lib/trait.cyr` is unchanged.
+- **A trait's signatures are parsed.** A trait member whose signature does not parse as a `fn` signature (junk tokens,
+  a parameter that is not a name, a stray token before the `;`) or names a type that does not exist is a compile error
+  — also in a default method every impl overrides, which was never parsed. Fix the declaration; a valid trait is
+  unaffected.
+- **A slice is a fn-local; every other position is refused by name.** A slice parameter, return type, struct / union
+  field, `*[T]`, declaration-zone global, slice of slices, type argument or tuple element was already an error, under a
+  misleading text a tool may have matched (`expected ')', got identifier 'u8'`, `unknown type 'slice' …`, `expected
+  identifier, got '['`, `expected '=', got identifier 'u8'`); each is now "a slice cannot be a parameter (6.7.8: slices
+  are fn-locals) - …" or its sibling. Pass `&s` and read `slice_ptr` / `slice_len`. A top-level slice after the first
+  statement, a program's own `struct slice` and `g<slice<u8>>(..)` compile as before.
+- **An untyped parameter that subscripted as a slice is refused.** Such code compiled only when an earlier fn of the
+  same program declared a slice local in the same slot, and it read or wrote the frame, not a slice: `y[0]` is now
+  "cannot subscript 'y': …", `y.len` "no struct type in scope for 'y'". Conversely `y += 1` on such a parameter,
+  refused as "compound assignment to slice", compiles.
+- **A classic-`for` step with tokens between its value and its `)` is refused** ("expected ')', got number 2"): `i += 1
+  2`, `a[0] += 1 2`, `i += 1 ; junk`. They compiled and the extra tokens were ignored (on a struct step `a = b 2` they
+  also turned the whole-struct copy into a one-word store). Delete the stray tokens; a second update goes in the body.
+- **A constant subscript out of range warns in every build** — `a[5]` on a `u8[5]`, `a[K]` with a const `K` past N,
+  `p[0 - 1]` / `s[-1]` on a `*T` / slice: "index 5 is out of range [0, 5) for 'a' (an error under the bounds-checked
+  mode)". Nothing in cyrius's corpus, lib or folds draws it.
+- **The bounds-checked mode is opt-in** — `--bounds` (build / run / test / fuzz), `CYRIUS_BOUNDS=1` / `=0`, `[build]
+  bounds = true` / `false`, or a `#bounds` line in the entry file's leading block (argument > environment > manifest >
+  source). A program built under it: `a[i]` past a typed array's DECLARED N exits 134 even inside its rounded storage
+  (a `u8[5]` used as 8 bytes: declare `u8[8]`); a negative `p[i]` exits 134 (spell a deliberate one `*(p - 1)`, or wrap
+  it in `@unsafe { }`); a constant index out of range is an error; a checked subscript in a `#naked` fn is refused
+  (wrap it in `@unsafe { }`); a kernel / EFI image and a `shared;` / `object;` build are refused; `__cyrius_bounds_*` fn
+  names are the compiler's. Each checked access is a call — measure a hot loop with the mode before shipping it on.
+- **The mode's three spellings are taken.** An environment that exports `CYRIUS_BOUNDS` for another purpose: `1` turns
+  the mode on for every compile, and any value but `1` / `0` / empty fails every compile by name ("CYRIUS_BOUNDS must
+  be 0 or 1 (or unset)"). A source line that is exactly `#bounds` (a comment before 6.7.8) is a directive — in the
+  entry file's leading block it switches the mode on; anywhere else, and `#bounds <text>`, it is refused by name
+  (`#boundsx` and `# bounds` stay comments). `[build] bounds` is a known key and must be `true` / `false`.
+- **Additive:** `p[i]` on a `*T` (`load16(p + i * 2)` stays valid), `a[i]` on `f64[N]` / `f32[N]` / `bool[N]`, `h.p[i]`
+  / `f()[i]` / `o.m()[i]` on a field or callee declared `*T`, and `s[i] = v` / `s[i] OP= v` on a slice local — a slice
+  store is bounds-checked in every build, out of range exiting 134 "slice bounds violation" as a read does
+  (`store8(slice_ptr(&s) + i, v)` stays the unchecked spelling). Diagnostic texts a tool may match changed: "cannot
+  subscript 'x': it is not a typed array, a *T or a slice local - …" (was "… a pointer or scalar is not an array"), "…
+  a bare `var a[N]` states no element width - …", "… a subscript takes an integer, f64, f32 or bool element - …", and
+  `a[1][2] = 5;` is "a subscript's result is an element, not an array - …" (was "expected '=', got '['"). cx now builds
+  a program that returns or receives a 9-16 B struct.
+- **Windows hosts:** `cyrius fuzz --poison` now builds each harness in the poison mode (cycc.exe never received
+  CYRIUS_POISON before) — a harness that overwrites a redzone stops with exit 86 there, as on Linux and macOS. `cyrius
+  build --strict-pin` / `--pie` now hand cycc.exe CYRIUS_STRICT_PIN=1 / CYRIUS_PIE=1, which it does not act on yet
+  (filed) — a pin-faithful CI build still belongs on Linux.
+
+### 6.7.7
+- **A default in a trait method's parameter list is a compile error** — required signature or default method (it
+  compiled and was ignored; the user's decision, 2026-10-09). Defaults go on plain fns and inherent impl methods.
+- **Every forward call is arity-checked** (a call to a fn defined later in the file): a wrong count is the same error a
+  backward call gets. It compiled and passed garbage for the missing argument.
+- **A `: stack` pair stored into one slot through a field, a subscript, `*p` or `OP=` is refused by name** (`h.n =
+  f()`, `a[0] = f()`, `*p = f()`, `x += f()` dropped the payload): bind both, `var t, v = f();`, or use `?`.
+- **A by-value struct argument is the value it had where it was written** — a later argument's write no longer reaches
+  the callee (`rd(b, bump(&b))` read the bumped `b`). Where the copy is needed in TAIL position (`return f(G, n - 1,
+  g(acc));`) that call is an ordinary call and no longer runs in constant stack (the user's decision, 2026-10-09); bind
+  the later argument first (`var a2 = g(acc); return f(G, n - 1, a2);`) to keep the jump.
+- **aarch64: a 9–16 B struct return and a multi-value return agree** — `rethi()` after a struct return, `var a, b =
+  f()` of a struct-returning `f`, and a struct received from a multi-value return read the right second word (they
+  read a register the callee never wrote, on pi / ecb only).
+- **A whole-struct store into a 3 / 5 / 6 / 7-byte global stores exactly its bytes** (it wrote 8, over the next global).
+- **A closure literal's `|a, b|` comma no longer shifts the arguments after it** (generic inference, the Str tail-call
+  divert, overload routing); an explicit generic call's type arguments `pk<i64, i64>(..)` separate no arguments.
+- **`x += 1.5` on an integer place warns**, as `x = x + 1.5` did. **Additive:** tuples (`(a, b)`, `t.0`, `(i64, f64)`
+  types, `var t: (i64, i64) = f()`, `a, b = f();`) and default / named arguments (`fn f(a, b = 2)`, `f(1, b: 3)`).
+- **`scripts/ci.sh` installs the tarball release.yml packs** (one top-level `cyrius-<v>-x86_64-linux/`); a tarball in the
+  old `versions/<v>/` layout is refused by name. A home install.sh made is re-pointed, never written through.
+
 ### 6.7.6
 - **Every write into an `f32` rounds to f32** — initializers (`var x: f32 = 1.5`), assignments, field stores,
   struct-literal fields, arguments to an `f32` parameter. They stored the f64 bit pattern.

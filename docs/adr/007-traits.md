@@ -41,11 +41,24 @@ keep ADR-004's zero-overhead static dispatch.
    arithmetic; an explicit `self: T` keeps its by-value meaning.
 6. **`var q: T = p;` with `p: *T` copies `*p`** at every size (user decision, 2026-10-07). Aliasing
    is spelled `var q: *T = p;`.
-7. **Dispatch stays static (ADR-004).** No vtables are generated. Trait objects remain the
-   `lib/trait.cyr` library pattern for now. **Decided 2026-10-07 (user, at 6.7.1): 6.7.x adds
-   compiler-CHECKED trait objects** later in the minor — `o: dyn Show` an ordinary 16-byte
-   `{data, vtable}` struct whose vtable the compiler builds and verifies from `impl Show for T`; static
-   dispatch stays the default (roadmap.md, open question 5). This ADR is its prerequisite.
+7. **Dispatch stays static (ADR-004)** — the default. **Checked trait objects shipped in 6.7.8 as
+   `dyn`** (decided 2026-10-07 at 6.7.1; the eight questions answered 2026-10-10): `o: dyn Show` is
+   an ordinary 16-byte `{data, vtable}` struct, so ADR-002's one-word model holds. (1) A dyn is
+   formed automatically at a destination typed `dyn Tr` from an expression the compiler knows is a
+   `*T` (`&p`, a `*T` name / field / call, an untyped impl `self`, a pointer-mode handle), or from a
+   DECLARED scalar or a literal for a scalar impl (the data word holds the value); an untyped name
+   is refused (it may hide a pointer), and there is no implicit `&p`. (2) A `self: T` of 8 B or less
+   is refused when its impl is formed into a dyn, naming the method. (3) A generic member leaves
+   `dyn Tr` usable; only calling it through a dyn is refused. (4) Full signatures are checked for
+   every (trait, type) pair formed into a dyn; impls never formed keep the count-only check. (5)
+   `dyn` is not a type argument; a collection holds pointers to records holding a dyn. (6) A default
+   method's slot is T's own instance. (7) The two words are opaque — no field, value or address —
+   and `dyn A + B` is refused. (8) `lib/trait.cyr` is kept as is. The vtable is a hidden global
+   FILLED AT EACH FORMING SITE: no target relocates a word in data (x86 fixups patch code only,
+   Mach-O arm64 is `MH_PIE` with an empty rebase table, PE's `.reloc` lists code sites), and a slot
+   method is address-taken as `&f` makes one. The call loads the slot into a frame slot and calls
+   through it (`ECALLIND`) on every target, PE included — proven on ecb / ach / cass / pi before it
+   was written. The guide's *Trait objects: `dyn`* is the reference.
 
 8. **Trait bounds (6.7.1, roadmap.md § C3).** `fn f<T: Show + Eq>` and `struct Box<T: Show>`.
    User decisions (2026-10-07): a bound is a **contract** — on a bounded `T`-typed parameter or
