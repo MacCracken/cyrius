@@ -2416,6 +2416,11 @@ _chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
 # its result is typed f64 on every spelling, a generic method's included, and a bound is met at f64.
 # The filed repro, the warnings, the bound, and 44 rows, x86 / IR / DCE / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
+# 6.7.9 — `&q` of a `q: *P` parameter is its slot: for P over 8 B it was the pointee (6.6.6's by-value
+# arm also fired for a `*P`), so `load64(&q)` read q's first field and `store64(&q, o)` wrote the
+# caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/address_of_pointer_param.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

@@ -4096,7 +4096,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # The slot's CONTENT already IS the struct's address — load it. No `_fn_local_addr`
                 # here, deliberately: this frame's address does NOT escape (the pointer is the
                 # CALLER's), so a tail call in this fn stays legal. CHANGELOG [6.6.6]
-                if (_local_is_sptr_param(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
+                # 6.7.9: never for a `q: *P` parameter, whose `&q` is its slot (`_addr_is_slot_content`).
+                if (_addr_is_slot_content(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
                 var adisp = 0 - ((ali + 1) * 8);
                 # v4.9.1: shift past all reserved callee-saved slots
                 if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }

@@ -1007,6 +1007,13 @@ so the rule changed without a transition error.
 ⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
 bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
 
+**`&p` of a pointer is the slot that holds it** — a `*T` local, global or parameter, an untyped
+impl `self` — so `load64(&p)` is `p` and `store64(&p, o)` re-points `p` (6.7.9). ⚠ From 6.6.6 to
+6.7.8 a `*T` PARAMETER whose `T` is a struct over 8 bytes was the exception: its `&p` was `p`
+itself, the pointee, so `load64(&p)` read the struct's first field and `store64(&p, o)` wrote `o`
+into the caller's struct. (A by-value struct parameter is its own copy, so its `&q` is the copy's
+address — see [Returning a struct by value](#returning-a-struct-by-value-v666).)
+
 `*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
 return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
 pointer whose value steps `sizeof(T)` like any other, so it binds to a `*T` local without a
@@ -1389,7 +1396,8 @@ holding the pointer and returned 0. Both were silent, exit 0.
 ⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
 whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
 `p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
-`p: *T` parameter denotes the caller's struct.
+`p: *T` parameter denotes the caller's struct (`p.z` reads it) — and its `&p` is its slot too, as
+for any pointer (6.7.9; see [Pointers](#pointers)).
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
