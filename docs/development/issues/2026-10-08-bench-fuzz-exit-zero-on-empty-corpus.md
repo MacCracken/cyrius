@@ -12,6 +12,11 @@
 > checks; each of 4 mutants (either empty arm back to `return 0`, cmd_bench in the audit's mode, the audit in the
 > verb's) reddens its own rows. `test_section.sh` N3 ran `cyrius fuzz --no-lock` over a project with no `.fcyr` and
 > read the vacuous rc 0 as "the flag is accepted"; it now runs a real harness and requires `=== 1 passed, 0 failed ===`.
+> The bite's review found the sibling verb with the same defect, and it ships in the same bite: a bare `cyrius smoke`
+> with no `.smcyr` printed `No smoke harnesses found in tests/smcyr/ or smoke/` and exited 0; it now says `error: no
+> smoke harnesses found (looked in tests/smcyr/ and smoke/, recursively)`, keeps the hint, rc 1 (axis 6 rows 6g / 6h;
+> the check driver's v5.7.38 smoke check, which pinned the empty-directory rc 0, now requires rc 1 and the error).
+> `cyrius soak` is not affected: it always runs its self-host loop.
 
 **Status:** ✅ **RESOLVED** in v6.7.9 (the quick lane's bite 14). Filed OPEN — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b (CLI built from `cbt/cyrius.cyr` by the tree's
 `build/cycc`, throwaway `HOME` / `CYRIUS_HOME`): in a project with no `.bcyr` / `.fcyr`, `cyrius bench` and

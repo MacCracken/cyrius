@@ -3346,10 +3346,12 @@ fn cmd_smoke(): i64 {
         }
         sd = sd + 1;
     }
+    # 6.7.9: an EMPTY corpus fails, as bare `cyrius fuzz` / `bench` / `test` do — a CI line over
+    # harnesses that moved or were renamed passed vacuously. CHANGELOG [6.7.9]
     if (found == 0) {
-        println("  No smoke harnesses found in tests/smcyr/ or smoke/");
+        _err("no smoke harnesses found (looked in tests/smcyr/ and smoke/, recursively)");
         println("  Create *.smcyr files to define quick-validation programs.");
-        return 0;
+        return 1;
     }
     sys_write(STDOUT_FD, "\n=== ", 5);
     fmt_int(smoke_pass);
