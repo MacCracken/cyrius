@@ -6752,6 +6752,21 @@ fn _trs_type(S, i, q, tail, nm): i64 {
         i = i + 1;
         st = 1;
     }
+    # 6.7.8 — a slice in a trait member's signature is refused BY NAME, as in a fn definition (C2-6a's
+    # texts): the reader had no slice arm, so `[` met "expected identifier" and `slice<..>` "unknown
+    # type 'slice'" (issues/2026-10-09-slice-type-outside-fn-local-misdiagnosed.md, the residual).
+    if (_sl_ann_at(S, i) == 1) {
+        _trs_bad = 1;
+        if (st == 1) { _sl_err_ptr(S, i); return i; }
+        if (nm >= 0) {
+            _sl_err(S, i, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
+              " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
+            return i;
+        }
+        _sl_err(S, i, "a slice cannot be a return type (6.7.8: slices are fn-locals)",
+          " - fill a slice the caller passes as &s (slice_set), or return the pointer and the length");
+        return i;
+    }
     var t = TOKTYP(S, i);
     if (t == 105) { return i + 1; }   # u128
     if (t == 10) { return _trs_list(S, i + 1, q, tail, nm); }   # a tuple

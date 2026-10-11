@@ -152,6 +152,14 @@ refused s1c "$SP1" "S1c: a middle parameter, called BEFORE the definition (pass 
     "${SL}fn main(): i64 { return f(1, 0, 2); }\nfn f(a, s: [u8], b): i64 { return a + b; }\nsyscall(60, main());\n"
 refused s1d "$SP1" "S1d: an impl method's parameter" "${SL}impl i64 { fn m(self, s: [u8]): i64 { return 0; } }\nsyscall(60, 0);\n"
 refused s1e "$SP1" "S1e: with a default (\`s: [u8] = 0\`: the default is stepped, nothing more reported)" "${SL}fn f(s: [u8] = 0): i64 { return 0; }\nsyscall(60, 0);\n"
+# 6.7.8 — a trait member's signature (parsed since dyn D2) refuses a slice by name too: it met
+# "expected identifier, got '['" / "unknown type 'slice'" (the issue's residual, found at integration)
+refused s1t1 "$SP1" "S1t1: a trait required member's slice parameter \`s: [u8]\`" "${SL}trait T { fn m(self, s: [u8]): i64; }\nsyscall(60, 0);\n"
+refused s1t2 "$SP1" "S1t2: a trait member's \`s: slice<u8>\`" "${SL}trait T { fn m(self, s: slice<u8>): i64; }\nsyscall(60, 0);\n"
+refused s1t3 "$SRT" "S1t3: a trait member's slice return \`: [u8]\`" "${SL}trait T { fn m(self): [u8]; }\nsyscall(60, 0);\n"
+refused s1t4 "$SRT" "S1t4: a trait member's \`: slice<u8>\` return" "${SL}trait T { fn m(self): slice<u8>; }\nsyscall(60, 0);\n"
+refused s1t5 "$SP1" "S1t5: a trait DEFAULT member's slice parameter" "${SL}trait T { fn m(self, s: [u8]): i64 { return 0; } }\nsyscall(60, 0);\n"
+refused s1t6 "$SPP" "S1t6: a trait member's \`p: *[u8]\`" "${SL}trait T { fn m(self, p: *[u8]): i64; }\nsyscall(60, 0);\n"
 refused s1p1 "$SPP" "S1p1: \`p: *[u8]\` parameter" "${SL}fn f(p: *[u8]): i64 { return slice_len(p); }\nsyscall(60, 0);\n"
 refused s1p2 "$SPP" "S1p2: \`p: *slice<u8>\` parameter" "${SL}fn f(p: *slice<u8>): i64 { return 0; }\nsyscall(60, 0);\n"
 refused s1p3 "$SPP" "S1p3: a local \`var q: *[u8]\`" "${SL}fn f(): i64 { var b: i64[2]; var q: *[u8] = &b; return 0; }\nsyscall(60, f());\n"
