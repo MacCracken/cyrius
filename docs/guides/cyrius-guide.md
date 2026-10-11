@@ -340,8 +340,9 @@ var r: f64 = d[1] * 2.0;           # an f64 element is an f64 value: a float mul
 same bytes as `load16(&t + i * 2)` / `store16(p + i * 2, v)`, which stay valid (and are what
 `var a: i64[N]` code wrote before 6.6.12: `store64(&a + i * 8, v)`). A store truncates to the
 element as `store8/16/32` do. There is **no bounds check** — unless the program is built in the
-**bounds-checked mode** (6.7.8, [`#bounds` / `--bounds`](#preprocessor)), where `a[i]` is checked
-against the array's N and `p[i]` for a negative index. Inside a capturing closure an
+[**bounds-checked mode**](#the-bounds-checked-mode-678) (6.7.8: `#bounds`, `--bounds`), where `a[i]`
+is checked against the array's N and `p[i]` for a negative index only (`slice<T>` is the checked
+spelling of a pointer with a length). Inside a capturing closure an
 array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
 captured pointer's subscript reaches the memory it points at.
 
@@ -1599,7 +1600,9 @@ fn slices_demo(fd): i64 {     # a slice is a fn-local (6.7.8)
 ```
 
 **Reads.** `s[i]` loads the element at `s.ptr + i * sizeof(T)` at T's width, after checking `i`
-against `s.len` (out of range or negative: `slice bounds violation`, exit 134). An `[i8]` / `[i16]` /
+against `s.len` (out of range or negative: `slice bounds violation`, exit 134 — under the
+[bounds-checked mode](#the-bounds-checked-mode-678) the mode's own `bounds: index …` line, same
+exit). An `[i8]` / `[i16]` /
 `[i32]` (or `slice<i8>` ..) element is **sign-extended** (6.7.8): a stored `-3` reads `-3` and
 `s[0] < 0` holds, as for the same bytes in an `i8[N]` array, through a `*i8` or in an `i8` field. A
 `u8` / `u16` / `u32` element zero-extends; an `f64` / `f32` / `bool` element is read as an untyped
@@ -1636,6 +1639,122 @@ full helper list.
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to
 `slice_ptr` / `slice_len` / `slice_eq` etc. without conversion.
+
+## The bounds-checked mode (6.7.8)
+
+Off by default, the **bounds-checked mode** checks every subscript at run time — `a[i]` on a typed
+array, `s[i]` on a slice, `p[i]` on a typed pointer — and stops the program at the first index out
+of range, naming the file and the line the subscript is written on. It is switched on for a whole
+program; a program built without it carries not a byte of it.
+
+```
+#bounds
+var a: u8[5];
+
+fn fill(v): i64 {
+    for (var i = 0; i <= 5; i += 1) { a[i] = v; }   # <= : one element too many
+    return 0;
+}
+
+fn main(): i64 {
+    fill(7);
+    return 0;
+}
+```
+
+```text
+bounds: index 5 out of [0, 5) at <source>:5        <- stderr; the exit status is 134
+```
+
+Without the mode the sixth store lands in the spare bytes of the array's 8-byte slot, nothing is
+reported, and the program exits 0.
+
+**Switching it on.** Four spellings, one precedence — highest first:
+
+| Rung | Spelling | Off |
+|---|---|---|
+| argument | `--bounds` on `cyrius build` / `run` / `test` / `fuzz` (`run`: before the source) | — |
+| environment | `CYRIUS_BOUNDS=1` — read by every compile, `cycc` included | `CYRIUS_BOUNDS=0` |
+| manifest | `bounds = true` under `[build]` (build / run / test / fuzz) | `bounds = false` |
+| source | a `#bounds` line in the entry file's leading block | — |
+
+So `CYRIUS_BOUNDS=0` or `[build] bounds = false` turns a `#bounds` program's mode off.
+`CYRIUS_BOUNDS` unset or empty is no rung; any value but `0` / `1` is refused by name
+(`CYRIUS_BOUNDS must be 0 or 1 (or unset): <v>`). `cyrius build --print-config` shows the resolved
+`build.bounds` and the rung it came from. With the mode on the compiler predefines `CYRIUS_BOUNDS`
+for `#ifdef` — in every file, one included above the `#bounds` line too; a plain `#define
+CYRIUS_BOUNDS` is an ordinary define and switches nothing.
+
+`#bounds` is honoured only in the entry file's **leading block**: before it may stand blank lines,
+`#` comment lines and `include "…"` lines; a declaration, a statement, a `#define`, an `#if*` or an
+attribute ends the block.
+
+```
+# tool.cyr — checked in every build
+include "lib/io.cyr"
+#bounds
+
+fn main(): i64 { ... }
+```
+
+Anywhere else — after code, inside an `#ifdef` (taken or not), in an included file, in a `[build]
+modules` file — the line is refused by name: it switches the whole program, so a library must not
+be able to. `#bounds <anything>` is refused too; a `#bounds` inside a string is data. The mode is
+refused for a kernel or EFI image (`kernel;`, a bare-metal `--target`, `CYRIUS_TARGET_EFI=1`: a
+violation would have no stderr and no exit) and for a `shared;` / `object;` build (the checker would
+be defined in every object). Every hosted target carries it: x86-64 and aarch64 Linux, macOS
+(arm64, x86-64), Windows, agnos and cx.
+
+**What is checked.**
+
+| Subscript | Checked against |
+|---|---|
+| `a[i]` on `var a: T[N]` — local, global, static-storage local, capture, a generic `T[N]` instance | the declared `N`: `0 <= i < N` (a `u8[5]` is 5 elements, not its 8-byte slot) |
+| `s[i]` on a slice — read, `=`, `OP=`, the `for` step | its length: `0 <= i < s.len` |
+| `p[i]` on a `*T` — a name, `h.p[i]`, `f()[i]`, `o.m()[i]` | a NEGATIVE index only — a pointer has no extent; `slice<T>` is the checked spelling |
+
+A subscript is checked wherever it is written — a fn, top level, a closure, a `defer` body, a `for`
+step, an `#inline` fn's body, an `async fn` — once its index is evaluated and before it is used.
+**Not checked:** `load*` / `store*` at an explicit address, `*p`, and `*(p - 1)` — the spelling for
+a deliberate step before a pointer. `vec` and `lib/bounds.cyr` keep their own checks (exit 1). A
+redeclared global array (`var A: u8[5]; var A: u8[6];`, one storage) is the FIRST declaration's
+array: its `N` and its element type.
+
+**A violation** prints one line on stderr and exits **134**:
+
+```text
+bounds: index 5 out of [0, 5) at <source>:12
+bounds: index -1 out of [0, ...) at src/ring.cyr:40      <- a *T: no length to print
+```
+
+The file is named as every compiler diagnostic names it — `<source>` for the entry file (through
+`cyrius build` / `run` too), an included file by its include path — and the line is the one the
+subscript is WRITTEN on: an `#inline` fn's body, a generic instance and a `for` step name their own
+line, not their caller's. 134 is the code a slice's own check has always used: outside the mode a
+slice is still checked, every read and store, with its `slice bounds violation` line.
+
+**Constant indexes — in every build.** An index made only of integer literals, `+ - *`, parentheses
+and names that resolve to an integer `const` or an enum constant (a local of the same name wins, as
+anywhere) is judged at compile time, mode or not. In range, no run-time check is emitted: it costs
+nothing. Out of range, it is a warning in every build and an **error** under the mode:
+
+```text
+warning:<source>:4:6: index 5 is out of range [0, 5) for 'a' (an error under the bounds-checked mode)
+```
+
+(a `*T` or a slice: `index -1 is negative for 'p'`). `/`, `%`, shifts, calls and variables make the
+index a run-time one. A generic fn's instances report a constant once.
+
+**`@unsafe { }` turns the check off** for a subscript whose `[` lies inside the block (a constant out
+of range there is a warning, not an error). The block is LEXICAL: an `#inline` fn that subscripts
+keeps its check when it is called inside `@unsafe` — its body is not written there. A `#naked` fn
+cannot make the checker's call, so a checked subscript in one is refused by name under the mode
+(`the bounds check is a call, which a #naked fn cannot make - wrap the access in @unsafe { }`).
+
+**Cost.** Each checked access is a call into the checker — six small fns the compiler appends to the
+program when the mode is on (the `__cyrius_bounds_*` names are the compiler's); an in-range constant
+index costs nothing. Fns the program never reaches are counted by the `N unreachable fns` note and
+dropped by `CYRIUS_DCE=1`. Measure a hot loop under the mode before shipping it on.
 
 ## Traits and impl blocks (6.7.0)
 
@@ -2663,57 +2782,10 @@ skipped and an `#else` arm is taken. For an OS, use `#ifdef CYRIUS_TARGET_*`.
 `#ifplat` works in the main source and in included files. (Before v6.6.20 it was not
 evaluated in an included file, where both arms compiled.)
 
-`#bounds` (6.7.8) switches the **bounds-checked mode** on for the whole program — off by default.
-It is honoured only in the entry file's **leading block**: before it may stand blank lines, `#`
-comment lines and `include "…"` lines; a declaration, a statement, a `#define`, an `#if*` or an
-attribute ends the block.
-
-```
-# tool.cyr — checked in every build
-include "lib/io.cyr"
-#bounds
-
-fn main(): i64 { ... }
-```
-
-Anywhere else — after code, inside an `#ifdef` (taken or not), in an included file, in a
-`[build] modules` file — it is refused by name (the line switches the whole program, so a library
-must not be able to), and so is `#bounds <anything>`; a `#bounds` inside a string is data. The
-same switch from outside the source: `CYRIUS_BOUNDS=1` (`0` turns it off, unset or empty is no
-rung, any other value is refused by name), `[build] bounds = true` and `--bounds` on `cyrius
-build` / `run` / `test` / `fuzz`, with one precedence: argument > environment > manifest > the
-`#bounds` line (`CYRIUS_BOUNDS=0` or `[build] bounds = false` turns a `#bounds` program's mode
-off). With the mode on the compiler predefines `CYRIUS_BOUNDS` for `#ifdef` — in every file,
-including one included above the `#bounds` line; a plain `#define CYRIUS_BOUNDS` is an ordinary
-define and switches nothing. The mode is refused for a kernel or EFI image (`kernel;`, a
-bare-metal `--target`, `CYRIUS_TARGET_EFI=1`: a violation would have no stderr and no exit) and
-for a `shared;` / `object;` build.
-
-**What the mode checks** (6.7.8): every subscript — `a[i]` on a typed array against its exact `N`
-(a `u8[5]` is 5 elements, not its 8-byte slot), `s[i]` on a slice (read and write) against its
-length, `p[i]` on a `*T` for a negative index only (a pointer has no extent: `slice<T>` is the
-checked spelling) — on a local, a global, a capture, a field, a call result, in a generic
-instance, a `defer` body and a `for` step. A violation prints one line on stderr and exits **134**
-(the code a slice's own check uses — outside the mode a slice is still checked, with its
-`slice bounds violation` line):
-
-```
-bounds: index 5 out of [0, 5) at <source>:12
-bounds: index -1 out of [0, ...) at src/ring.cyr:40     # a *T: no length to print
-```
-
-— the file as every compiler diagnostic names it (`<source>` for the entry file), the line the
-subscript is written on (an `#inline` fn's body names its own line). Not checked: `load*` /
-`store*` at an explicit address, `*p` and `*(p - 1)`. A **constant** index — integer literals,
-`+ - *`, parentheses, integer consts and enum constants — is judged at compile time in every mode:
-in range, no run-time check is emitted; out of range (`a[K]` with `K = 5` on a `u8[5]`,
-`p[0 - 1]`), a warning — and an **error** under the mode. `@unsafe { }` turns the check off
-inside it (a constant out of range there warns): the block is lexical, so an `#inline` fn
-replayed inside one keeps its check. A `#naked` fn cannot make the checker's call: a checked
-subscript in one is refused by name (wrap it in `@unsafe { }`). A redeclared global array (`var A:
-u8[5]; var A: u8[6];`, one storage) is the FIRST declaration's array — its `N`. Each checked
-access is a call; constant indexes in range cost nothing. `lib/bounds.cyr` and `vec` keep their
-own checks (exit 1).
+`#bounds` (6.7.8) — a line of its own in the entry file's leading block (blank lines, `#` comments
+and `include "…"` lines may precede it) — switches the
+[bounds-checked mode](#the-bounds-checked-mode-678) on for the whole program, and the compiler then
+predefines `CYRIUS_BOUNDS` for `#ifdef`. Anywhere else, and with an argument, it is refused by name.
 
 ## Attributes
 
@@ -2736,6 +2808,7 @@ fn main() {
     var x = load64(some_other_raw_ptr);
 }
 # Nested @unsafe blocks emit a stylistic warning but compile.
+# 6.7.8 — under the bounds-checked mode a subscript inside @unsafe is not checked.
 
 # v5.6.4 — fn-level deprecation; warns at every call site
 #deprecated("use sha256_init() — sha1 is collision-broken")
@@ -2890,7 +2963,7 @@ output = "build/sakshi-smoke"
 defines = ["SAKSHI_SMOKE"]   # one `#define NAME` each; -D NAME / CYRIUS_DEFINES=A,B replace the list
 dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRIUS_DCE=0 turns it off)
 bounds = true                # the bounds-checked mode (6.7.8); --bounds / CYRIUS_BOUNDS=1, also for
-                             # run / test / fuzz (CYRIUS_BOUNDS=0 turns it off); see #bounds, Preprocessor
+                             # run / test / fuzz (CYRIUS_BOUNDS=0 turns it off); see The bounds-checked mode
 ```
 
 They configure every `cyrius build` in the project — a bare one AND `cyrius build <other source>
@@ -3250,7 +3323,7 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > failure; a corpus program is a test, so it is never counted as measured surface. `--per-entry`
 > lists, for every corpus entry, the public fns it references. ⚠ This is TEXT coverage — a
 > reference count, the same measure `.tcyr` corpora get — not execution coverage: building and
-> running instrumented programs (P5-B) is v6.7.x, alongside the bounds-checked build mode.
+> running instrumented programs (P5-B) is a later 6.7.x item.
 > Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).

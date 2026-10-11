@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/bounds_mode_checked.sh — 6.7.8 (C2-7, C2-8)
+# tests/gates/frontend/bounds_mode_checked.sh — 6.7.8 (C2-7, C2-8, C2-9)
 #
 # THE BOUNDS-CHECKED MODE'S SWITCH (the user's decision, 2026-10-10: "Flags: CYRIUS_BOUNDS=1 (all
 # seven forks, like CYRIUS_POISON); a CYRIUS_BOUNDS predefine for #ifdef; --bounds on build / test /
@@ -68,6 +68,14 @@
 #       one file (one interned name) and the last one's line; no `#pure` warning; a by-value struct
 #       argument beside a subscripting one keeps its value; `return g(a[i]);` (a tail call) in range
 #       and tripping; a suspending `async fn`'s frame in range and tripping
+#   TL  (C2-9) tools and the guide: the lane's eight value files pass `cyrfmt --check` and cyrlint
+#       with 0 warnings (TL1; each checker first shown to fail on a bad input, TL0); lib/slice.cyr's
+#       api-surface is the snapshot's and `_slice_idx_addr` stays private (TL2); build / run / test /
+#       fuzz --help describe --bounds, the top-level help shows [--bounds] on those four lines, bench
+#       says nothing of it (TL3); the guide's § The bounds-checked mode: its first example prints
+#       exactly the `bounds:` line its text fence states and exits 134, silent / exit 0 with
+#       CYRIUS_BOUNDS=0, and the constant warning and the #naked refusal it quotes are the
+#       compiler's texts (TL4). Each tool is built here from programs/ with $CC.
 #
 # MUTATION LEDGER (scratch trees, each its 2-stage mutant cycc; this gate and the named toolchain
 # gates run from that tree as CYCC=<mutant>; 2026-10-10):
@@ -109,6 +117,15 @@
 #   MS   the slice read's site removed (the getter's own trap answers)      -> RED V3a-V3d ("slice
 #        bounds violation", not the mode's line)
 #   MN   the #naked refusal dropped                                          -> RED R14
+# C2-9 (2026-10-10; this gate run from a scratch tree holding the one mutation, each RED exactly 1 of
+# 153 rows):
+#   MTL1 one line of deref_element_width.tcyr un-indented                    -> RED TL1a (that file)
+#   MTL2 a 130-column comment line in slice_signed_read.tcyr                 -> RED TL1b (that file; cyrlint
+#        exits 0 with a warning — the row reads its "0 warnings" line, not its exit code)
+#   MTL3 a public `slice_idx_addr` wrapper appended to lib/slice.cyr         -> RED TL2
+#   MTL4 the build help's two --bounds lines dropped (cbt/cli_args.cyr)      -> RED TL3 build
+#   MTL5 the guide's stated violation line off by one (<source>:6)           -> RED TL4a
+#   MTL6 the guide's quoted constant warning reworded ("in" for "under")     -> RED TL4c
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -583,7 +600,94 @@ for k in 4 5; do
     else ok_line "AS2 ... index 5: trips in the async frame" "$got" "$T/as$k.rerr" "bounds: index 5 out of [0, 5) at <source>:11"; fi
 done
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# C2-9 — TOOLS AND THE GUIDE: the lane's new value files are canonically formatted and lint clean;
+# the slice store's helper stays private (api-surface); every verb that takes --bounds says so in its
+# help; the guide's bounds-mode example prints the line it states, and the texts it quotes are the
+# compiler's. Each tool is built HERE from programs/ with $CC (never a stale build/ copy).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+TLF="tests/tcyr/crossos/pointer_subscript_values.tcyr tests/tcyr/crossos/pointer_subscript_bases.tcyr
+tests/tcyr/crossos/deref_element_width.tcyr tests/tcyr/crossos/slice_read_left_operand.tcyr
+tests/tcyr/crossos/slice_signed_read.tcyr tests/tcyr/crossos/slice_subscript_write.tcyr
+tests/tcyr/crossos/bounds_mode_in_range.tcyr tests/tcyr/crossos/bounds_mode_violation.tcyr"
+for t in cyrfmt cyrlint cyrius_api_surface; do
+    "$CC" < "programs/$t.cyr" > "$T/$t" 2> /dev/null && [ -s "$T/$t" ] && chmod +x "$T/$t" || { rm -f "$T/$t"; bad "TL: programs/$t.cyr does not build"; }
+done
+# TL0: the checkers can fail — a mis-indented copy is rejected by cyrfmt --check and a 121-column
+# line is flagged by cyrlint (a broken checker would call every file clean).
+printf 'fn f(): i64 {\nreturn 1;\n}\n' > "$T/tl_bad_fmt.cyr"
+printf 'fn f(): i64 {\n    return 1;   # %s\n}\n' "$(printf '%0110d' 0)" > "$T/tl_bad_lint.cyr"
+if [ -x "$T/cyrfmt" ] && ! "$T/cyrfmt" --check "$T/tl_bad_fmt.cyr" > /dev/null 2>&1; then ok "TL0a cyrfmt --check rejects a mis-indented file"
+else bad "TL0a cyrfmt --check accepted a mis-indented file (the format rows would prove nothing)"; fi
+if [ -x "$T/cyrlint" ] && "$T/cyrlint" "$T/tl_bad_lint.cyr" 2>&1 | grep -q 'exceeds 120'; then ok "TL0b cyrlint flags a line over 120 columns"
+else bad "TL0b cyrlint did not flag a 121-column line (the lint rows would prove nothing)"; fi
+ntl=0
+for f in $TLF; do
+    ntl=$((ntl + 1))
+    if [ ! -f "$f" ]; then bad "TL1 $f is missing"; continue; fi
+    if [ -x "$T/cyrfmt" ] && "$T/cyrfmt" --check "$f" > "$T/tl.fmt" 2>&1; then ok "TL1a $f: cyrfmt --check clean"
+    else bad "TL1a $f: cyrfmt --check: $(head -2 "$T/tl.fmt" | tr '\n' '|')"; fi
+    rc=0; [ -x "$T/cyrlint" ] && "$T/cyrlint" "$f" > "$T/tl.lint" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && grep -qx '0 warnings' "$T/tl.lint"; then ok "TL1b $f: cyrlint 0 warnings"
+    else bad "TL1b $f: cyrlint rc $rc: $(grep -m2 'warn\|error' "$T/tl.lint" | tr '\n' '|')"; fi
+done
+[ "$ntl" -ge 8 ] || bad "TL1: only $ntl lane value files listed (floor 8)"
+# TL2: api-surface — lib/slice.cyr's public surface is the snapshot's, so the C2-6a store helper
+# `_slice_idx_addr` (and anything the compiler calls) stays private.
+if [ -x "$T/cyrius_api_surface" ]; then
+    rc=0; "$T/cyrius_api_surface" --update --snapshot="$T/api.snap" > "$T/api.out" 2>&1 || rc=$?
+    grep '^slice::' "$T/api.snap" > "$T/api.slice.new" 2> /dev/null || true
+    grep '^slice::' docs/api-surface.snapshot > "$T/api.slice.old" || true
+    nsl=$(grep -c . "$T/api.slice.old" || true)
+    if [ "$rc" -ne 0 ] || [ "$nsl" -lt 20 ]; then bad "TL2 api-surface: rc $rc, $nsl slice rows in the snapshot (floor 20): $(tail -1 "$T/api.out")"
+    elif cmp -s "$T/api.slice.old" "$T/api.slice.new" && ! grep -q 'slice_idx_addr' "$T/api.snap"; then ok "TL2 lib/slice.cyr's public surface is the snapshot's ($nsl fns); _slice_idx_addr is private"
+    else bad "TL2 lib/slice.cyr's public surface changed: $(diff "$T/api.slice.old" "$T/api.slice.new" | grep '^[<>]' | head -3 | tr '\n' '|')"; fi
+fi
+# TL3: the help — every verb that takes --bounds names it (the hand-written rows, not only the
+# generated usage line); bench takes no --bounds and says nothing of it.
+cy() { (cd "$T/tlcwd" && env -u CYRIUS_BOUNDS HOME="$T/h" CYRIUS_HOME="$T/home" CYRIUS_RESOLVED=1 "$T/cyrius" "$@") < /dev/null 2>&1; }
+mkdir -p "$T/h" "$T/tlcwd"
+for v in build run test fuzz; do
+    if cy "$v" --help | grep -v '^Usage:' | grep -q -- '--bounds.*bounds-checked mode'; then ok "TL3 cyrius $v --help describes --bounds"
+    else bad "TL3 cyrius $v --help has no --bounds row"; fi
+done
+if cy bench --help | grep -q -- '--bounds'; then bad "TL3 cyrius bench --help mentions --bounds (bench does not take it)"
+else ok "TL3 cyrius bench --help: no --bounds"; fi
+cy --help > "$T/tl.help"
+for v in build run test fuzz; do
+    if grep -E "^  $v " "$T/tl.help" | grep -q -- '\[--bounds\]'; then ok "TL3 cyrius --help: the $v line shows [--bounds]"
+    else bad "TL3 cyrius --help: the $v line lacks [--bounds]"; fi
+done
+# TL4: the guide (docs/guides/cyrius-guide.md, § The bounds-checked mode): its first example
+# compiles, prints exactly the `bounds:` line the text fence after it states and exits 134; with
+# CYRIUS_BOUNDS=0 it is silent and exits 0. The constant-rule warning and the #naked refusal it
+# quotes are the compiler's texts.
+GUIDE=docs/guides/cyrius-guide.md
+awk '/^## The bounds-checked mode \(6\.7\.8\)/ { s = 1; next } s && /^## / { exit } s' "$GUIDE" > "$T/tl.sec"
+awk '/^```$/ && !inb { inb = 1; next } inb && /^```/ { exit } inb { print }' "$T/tl.sec" > "$T/tl_ex.cyr"
+TLW=$(awk '/^```text$/ { t = 1; next } t && /^```/ { exit } t' "$T/tl.sec" | sed -n 's/^\(bounds: index [^<]*<source>:[0-9]*\).*/\1/p' | head -1)
+if [ "$(grep -c . "$T/tl.sec")" -lt 40 ] || ! grep -q '^#bounds$' "$T/tl_ex.cyr" || [ -z "$TLW" ]; then
+    bad "TL4 the guide's bounds-mode section, its first example or its stated line was not found (section $(grep -c . "$T/tl.sec") lines)"
+else
+    rc=0; (cd "$T" && "$CC" < tl_ex.cyr > tl_ex.bin 2> tl_ex.cerr) || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "TL4a the guide's example does not compile: $(grep -m1 '^error' "$T/tl_ex.cerr")"
+    else chmod +x "$T/tl_ex.bin"; got=0; "$T/tl_ex.bin" > /dev/null 2> "$T/tl_ex.err" || got=$?; ok_line "TL4a the guide's example states its own violation line" "$got" "$T/tl_ex.err" "$TLW"; fi
+    rc=0; (cd "$T" && CYRIUS_BOUNDS=0 "$CC" < tl_ex.cyr > tl_ex0.bin 2> /dev/null) || rc=$?
+    chmod +x "$T/tl_ex0.bin" 2> /dev/null; got=0; "$T/tl_ex0.bin" > /dev/null 2> "$T/tl_ex0.err" || got=$?
+    if [ "$rc" -eq 0 ] && [ "$got" -eq 0 ] && [ ! -s "$T/tl_ex0.err" ]; then ok "TL4b ... with CYRIUS_BOUNDS=0: silent, exit 0 (as the guide says)"
+    else bad "TL4b the example with the mode off: rc $rc, exit $got, stderr: $(head -1 "$T/tl_ex0.err")"; fi
+fi
+TLK=$(grep -o "^warning:<source>:[0-9]*:[0-9]*: index 5 is out of range .*" "$T/tl.sec" | sed 's/^warning:<source>:[0-9]*:[0-9]*: //' | head -1)
+printf 'const K = 5;\nfn f(): i64 {\n    var a: u8[5];\n    a[K] = 1;\n    return 0;\n}\nsyscall(60, f());\n' > "$T/tl_k.cyr"
+"$CC" < "$T/tl_k.cyr" > /dev/null 2> "$T/tl_k.err" || true
+if [ -n "$TLK" ] && grep '^warning' "$T/tl_k.err" | sed 's/^warning:<source>:[0-9]*:[0-9]*: //' | grep -qxF -- "$TLK"; then ok "TL4c the constant-rule warning the guide quotes is the compiler's"
+else bad "TL4c the guide quotes '$TLK'; the compiler says: $(grep -m1 '^warning' "$T/tl_k.err")"; fi
+TLN=$(grep -o '(`the bounds check is a call[^`]*`)' "$T/tl.sec" | sed 's/^(`//; s/`)$//' | head -1)
+rc=0; "$CC" < "$T/r14.cyr" > /dev/null 2> "$T/tl_r14.err" || rc=$?
+if [ -n "$TLN" ] && [ "$rc" -ne 0 ] && grep '^error' "$T/tl_r14.err" | grep -qF -- "$TLN"; then ok "TL4d the #naked refusal the guide quotes is the compiler's"
+else bad "TL4d the guide quotes '$TLN'; the compiler says: $(grep -m1 '^error' "$T/tl_r14.err")"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G: $fails of $rows row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed ($rows rows; exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows: #bounds honoured only in the entry's leading block and refused by name everywhere else; CYRIUS_BOUNDS 1 / 0 / empty / refused; the environment beats the line; kernel / EFI / shared / object refused under the mode; the check — exact N, slices, *T negative only, the message and exit 134 on x86 / IR=3 / DCE / aarch64 / cx / PE / agnos; the constant rule; @unsafe; #naked; mode off holds no checker)"
+echo "PASS: $G ($rows rows: #bounds honoured only in the entry's leading block and refused by name everywhere else; CYRIUS_BOUNDS 1 / 0 / empty / refused; the environment beats the line; kernel / EFI / shared / object refused under the mode; the check — exact N, slices, *T negative only, the message and exit 134 on x86 / IR=3 / DCE / aarch64 / cx / PE / agnos; the constant rule; @unsafe; #naked; mode off holds no checker; the tools clean on the lane's files and the guide's example and quoted texts the compiler's)"
 exit 0
