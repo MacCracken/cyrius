@@ -31,15 +31,29 @@
 #           chains in the probe, and it returns correctly under qemu.
 #   axis 6  arm64 Mach-O: variable numbers at arities 1, 2, 2, 3 share 3 class stubs (3 heads;
 #           the chain depends on _esx_argc). Old code: 4.
+#   axis 7  a CHAINED row (6.7.9): `_esx_fold` sets cur = d after a body's `movz x8,#d` so a LATER
+#           row can match the renumbered value, and the shipped chain never reaches that update
+#           (esysxlat_row_order.sh keeps it free of live re-captures). A cross compiler built from a
+#           copy of the emitter with two synthetic ELF rows appended at the chain's end, 4000 -> 4001
+#           then 4001 -> 4002 (numbers no shipped row compares), must fold `syscall(4000)` to
+#           `movz x8,#4002` at its svc, carry both rows in the shared stub, and, under
+#           `qemu-aarch64 -strace`, make the same call as its `var` twin. The qemu leg is skipped
+#           BY NAME when qemu-aarch64 is absent.
 #
-# MUTATION LEDGER (measured 6.6.18, outside the gate):
+# MUTATION LEDGER (measured 6.6.18, outside the gate; (c) re-measured 6.7.9):
 #   (a) bypass the fold (ESYSXLAT without _esx_fold for a literal)  -> axis 1 FAILS (1,804 cmp x8 words)
 #   (b) keep only each kept body's LAST word                          -> axis 2 FAILS: ppoll gets a NULL
 #                                                                         timeout and blocks (qemu bounded
 #                                                                         at 30 s, the marker never runs)
-#   (c) never update cur after a movz x8                              -> NOT CAUGHT: esysxlat_row_order.sh
-#       keeps the chain free of a live re-capture (no row's output is a LATER row's source), so no
-#       live number needs a second match today. Written down rather than claimed.
+#   (c) never update cur after a movz x8                              -> axis 7 FAILS: syscall(4000) folds
+#                                                                         to movz x8,#4001 (the 4001 -> 4002
+#                                                                         row is dropped). Axes 1-6 still pass
+#                                                                         it: no shipped row's output is a
+#                                                                         LATER row's source. With axis 7's
+#                                                                         fold check removed, its qemu twin
+#                                                                         fails it too (4001 against the
+#                                                                         twin's 4002). A fold that stops at
+#                                                                         the first matching row: the same.
 #   (d) an ADR word placed in a row body (critic #7)                  -> every aarch64 build stops:
 #       "error: internal: ESYSXLAT fold refused chain word 6 (the row cmp x8,#2): ADR/ADRP in a row body"
 #   (e) drop the `#naked` carve-out in _esx_stub_site                 -> axis 5 FAILS (82 cmp x8 words,
@@ -111,9 +125,11 @@ chmod +x "$T/twin.bin"
 # ── axis 4: the variable-number sites share ONE chain (XLAT-2) ───────────────────────────────
 # The ELF row count is derived from the emitter source the way raw_syscall_literals_routed.sh
 # derives it (`cmp x8,#N` words inside ESYSXLAT's body), so a new row moves both sides.
-NROWS=$(awk '/^fn ESYSXLAT\(/{on=1} on && /^fn / && !/^fn ESYSXLAT\(/{on=0} on' "$ROOT/src/backend/aarch64/emit.cyr" \
+# ESRC: each ELF row's source number, one per line, in emission order (axis 7 reads it too).
+ESRC=$(awk '/^fn ESYSXLAT\(/{on=1} on && /^fn / && !/^fn ESYSXLAT\(/{on=0} on' "$ROOT/src/backend/aarch64/emit.cyr" \
     | grep -o 'EW(S, 0xF1[0-9A-Fa-f]\{6\})' | sed 's/EW(S, //; s/)//' \
-    | awk '{ w = strtonum($1); if (and(w, 0xFFC003FF) == 0xF100011F) n++ } END { print n + 0 }')
+    | awk '{ w = strtonum($1); if (and(w, 0xFFC003FF) == 0xF100011F) print rshift(and(w, 0x3FFC00), 10) }')
+NROWS=$(printf '%s\n' "$ESRC" | grep -c . || true)
 [ "$NROWS" -ge 40 ] || fail "decoded only $NROWS ELF rows from ESYSXLAT — the reader or the emitter shape moved"
 N4=$(_ncmp8 "$T/twin.bin")
 [ "$N4" = "$NROWS" ] || fail "$N4 cmp x8,#imm words for $NSITE variable-number sites — want exactly one shared chain ($NROWS rows), not one per site"
@@ -206,4 +222,64 @@ NH6=$(_words "$T/mv.bin" | grep -c '^d29ffff0$' || true)
 _words "$T/mv.bin" | grep -c '^d65f03c0$' > /dev/null || fail "no ret in the Mach-O probe — the class stubs are missing"
 echo "  axis 6: Mach-O 4 variable-number sites at 3 arities -> $NH6 class stubs"
 
-echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O and match their runtime twins; variable numbers share one stub per class; #naked keeps its inline chain)"
+# ── axis 7: a chained row — one row's movz x8 output is a LATER row's source ────────────────
+# _esx_fold's `cur = d` update is what lets a literal match a second row after the first one
+# renumbered it. Nothing above reaches it: the shipped chain holds no live re-capture. So build a
+# cross compiler whose ESYSXLAT ends with two synthetic ELF rows, 4000 -> 4001 then 4001 -> 4002,
+# in the chain's own shape (cmp x8,#src / b.ne +8 / movz x8,#dst; cmp takes a 12-bit immediate).
+# The emitter copy is spliced into a copy of the driver in place of its include, and the build
+# runs from $ROOT, so every other file is the live tree's. Words: _esx_arm_shift's formulas with
+# Rd = x8 for the movz, checked with llvm-mc (cmp x8,#4000 = F13E811F, movz x8,#4001 = D281F428,
+# movz x8,#4002 = D281F448).
+for s in 4000 4001 4002; do
+    if printf '%s\n' "$ESRC" | grep -qx "$s"; then
+        fail "a shipped ESYSXLAT row already compares x8 with #$s — axis 7 needs three numbers no row uses"
+    fi
+done
+_cmp8w() { printf '0x%08X' $((0xF100011F | ($1 << 10))); }
+_movz8w() { printf '0x%08X' $((0xD2800008 | ($1 << 5))); }
+EMIT="$ROOT/src/backend/aarch64/emit.cyr"
+EE=$(awk '/^fn ESYSXLAT\(/{on=1} on && /^}/{print NR; exit}' "$EMIT")
+[ -n "$EE" ] && [ "$(sed -n "$((EE - 1))p" "$EMIT")" = '    return 0;' ] \
+    || fail "ESYSXLAT no longer ends in '    return 0;' then '}' — axis 7 cannot append its rows before the return"
+R1="    EW(S, $(_cmp8w 4000)); EW(S, 0x54000041); EW(S, $(_movz8w 4001));  # axis 7: 4000 -> 4001"
+R2="    EW(S, $(_cmp8w 4001)); EW(S, 0x54000041); EW(S, $(_movz8w 4002));  # axis 7: 4001 -> 4002"
+awk -v n=$((EE - 1)) -v r1="$R1" -v r2="$R2" 'NR == n { print r1; print r2 } { print }' "$EMIT" > "$T/emit7.cyr"
+awk -v f="$T/emit7.cyr" '$0 == "include \"src/backend/aarch64/emit.cyr\"" { while ((getline l < f) > 0) print l; n++; next }
+    { print } END { exit (n != 1) }' "$ROOT/src/main_aarch64.cyr" > "$T/d7.cyr" \
+    || fail "src/main_aarch64.cyr does not include src/backend/aarch64/emit.cyr exactly once — axis 7 cannot splice its copy"
+rc=0; (cd "$ROOT" && "$CC" < "$T/d7.cyr" > "$T/cc7" 2> "$T/cc7.err") || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/cc7" ] || fail "cross-building the synthetic-row compiler failed (rc $rc): $(head -3 "$T/cc7.err")"
+chmod +x "$T/cc7"
+W4002=$(_movz8w 4002 | sed 's/^0x//' | tr 'A-F' 'a-f')
+# the fold check: a one-literal probe, no chain left, and x8 = 4002 at the svc
+printf 'syscall(4000);\n' > "$T/l7.cyr"
+rc=0; "$T/cc7" < "$T/l7.cyr" > "$T/l7.bin" 2> "$T/l7.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/l7.bin" ] || fail "the chained-row literal probe did not compile (rc $rc): $(head -3 "$T/l7.err")"
+N7=$(_ncmp8 "$T/l7.bin")
+[ "$N7" = 0 ] || fail "$N7 cmp x8,#imm words in a probe whose one syscall number is the literal 4000 — the chain was not folded"
+X7=$(_words "$T/l7.bin" | awk -v m="$W4002" 'p == m && $0 == "d4000001" {n++} {p = $0} END {print n + 0}')
+[ "$X7" = 1 ] || fail "syscall(4000) did not fold to movz x8,#4002 at its svc (words before each svc: $(_words "$T/l7.bin" | awk '$0 == "d4000001" {printf "%s ", p} {p = $0}')) — the 4000 -> 4001 row's output is the 4001 -> 4002 row's source, so _esx_fold must set cur = 4001 after the first body"
+# the stub and qemu checks: the literal, a gettid marker, then the same number through a `var` (the shared stub)
+printf '%s\n' 'var _fn = 0;' 'syscall(4000);' 'syscall(178);' '_fn = 4000;' 'syscall(_fn);' > "$T/t7.cyr"
+rc=0; "$T/cc7" < "$T/t7.cyr" > "$T/t7.bin" 2> "$T/t7.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/t7.bin" ] || fail "the chained-row twin probe did not compile (rc $rc): $(head -3 "$T/t7.err")"
+N7T=$(_ncmp8 "$T/t7.bin")
+[ "$N7T" = $((NROWS + 2)) ] || fail "$N7T cmp x8,#imm words in the chained-row twin probe — want $((NROWS + 2)): the shared stub with the 2 synthetic rows"
+if command -v qemu-aarch64 >/dev/null 2>&1; then
+    chmod +x "$T/t7.bin"
+    rc=0; (cd "$T" && timeout 30 qemu-aarch64 -strace ./t7.bin > /dev/null 2> "$T/st7") || rc=$?
+    sed 's/^[0-9]* //' "$T/st7" | grep -v '^exit' > "$T/st7b" || true
+    MK7=$(awk '/^gettid\(/ {print NR; exit}' "$T/st7b")
+    [ -n "$MK7" ] || fail "the chained-row twin never reached its gettid marker (qemu rc $rc, 124 = hung 30 s)"
+    [ "$MK7" = 2 ] || fail "the literal syscall(4000) made $((MK7 - 1)) strace lines before the marker, want 1"
+    L7=$(head -n 1 "$T/st7b")
+    V7=$(tail -n +3 "$T/st7b")
+    [ "$L7" = "$V7" ] || fail "the literal 4000 made '$L7' and its runtime-chain twin '$V7' — the fold and the chain disagree on a chained row"
+    printf '%s\n' "$L7" | grep -qw 4002 || fail "the literal 4000 reached the kernel as '$L7', not syscall 4002"
+    echo "  axis 7: synthetic rows 4000 -> 4001 -> 4002: the literal folds to movz x8,#4002, the stub carries $N7T rows, and qemu sees '$L7' from both"
+else
+    echo "  axis 7: synthetic rows 4000 -> 4001 -> 4002: the literal folds to movz x8,#4002 (the qemu twin SKIPPED: qemu-aarch64 absent)"
+fi
+
+echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O and match their runtime twins; a chained row folds through both renumbers; variable numbers share one stub per class; #naked keeps its inline chain)"
