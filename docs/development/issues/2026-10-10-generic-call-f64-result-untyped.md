@@ -74,3 +74,18 @@ instance's fi where the factor reads it, and call `_call_ret_marks` on that fi i
 same way: `gid(f) * 2.0` with `f: f32` warns the same "integer arithmetic" today). Rows: the repro's five rows plus `T = f32`, a `*T` return, a generic method
 (`p.m(h)`, after [the method issue](2026-10-09-method-call-result-keeps-last-arg-f64-type.md)), a forward call to an
 instance, at the four targets; the `var v = gid(h);` binding typed f64.
+
+## The method spelling needs its own arm (appended 2026-10-11, 6.7.9 critical lane bite 8)
+
+[The method issue](2026-10-09-method-call-result-keeps-last-arg-f64-type.md) is fixed: a method call's result is
+typed as a free call's (`_mcall_ret`: the reset, then `_call_ret_marks`). One consequence lands here. With
+`impl P { fn id<V>(self, w: V): V { return w; } }` and `h: f64`, `p.id(h) * 2.0` was 3.0 before that fix only because
+the method arm handed the LAST argument's type to the result (`p.id2(h, 1) * 2.0` was already integer arithmetic);
+it is now integer arithmetic with a kind-2 warning, exactly as `P_id(&p, h) * 2.0` and `gid(h) * 2.0` (shape 1)
+are. Measured on the bite-8 tree (x86_64): `p.id(h)`, `p.id(1.5)`, `p.id2(h, 1)` and `P_id(&p, h)` each `* 2.0`
+are integer arithmetic; `p.sc(h) * 2.0` with a plain `fn sc(self, w: f64): f64` is right.
+⚠ "Type the result from the fn the call REACHES" types nothing on the method spelling: the method arm calls the
+generic's i64 BASE ([2026-10-10-generic-method-call-runs-i64-base.md](2026-10-10-generic-method-call-runs-i64-base.md),
+placed 6.7.11), whose return is not -9. So this issue's generic-method row (`p.m(h)`) needs `V`'s binding from the
+method's arguments at the method arm (or that issue's instance), not only the free call's instance — or the method
+spelling stays wrong through 6.7.11.

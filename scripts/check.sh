@@ -2406,6 +2406,11 @@ _chk_gate "$ROOT/tests/gates/frontend/stray_brace_refused.sh"
 # fold folded the operand and dropped the operator (`-K + 10` was 15, `~5 * 2` 10; the rewind leaked
 # unary minus's pushed 0). The filed repro and 77 rows, x86 / IR / DCE / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/unary_constant_fold.sh"
+# 6.7.9 — a call's result is typed by its callee, never by its last argument: a method's result kept
+# the last argument's type (`p.m(1.5) * 2` was 0, `p.m(p) * 10` dispatched P_mul) and a `: f64` method
+# was untyped (`p.area() + 1.0` an integer add); a free struct call's field kept it too
+# (`mk(1.5).a * 2`). The three filed repros, the warnings, and 32 rows, x86 / IR / DCE / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

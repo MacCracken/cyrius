@@ -4340,6 +4340,7 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
     if (tgt >= 0) { ECALLTO(S, tgt); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, n);
+    SESTYPE(S, 0);   # 6.7.9: PARSE_FNCALL's D3 reset — `mk(1.5).a * 2` kept the f64 argument's type
     if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
     # 6.6.12: a struct result in rax — a <= 8 B struct's bytes (`dst` inline), or a `Str` handle
     # (`dst` pointer-mode, see `_struct_call_into`). Only `_call_field` asks for this class.

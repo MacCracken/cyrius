@@ -2593,7 +2593,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
 # else — every builtin, `callptr` / `fncallN`, an untyped or scalar return — is a plain value.
 # `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
 # `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
-# The method arm sets its result's scale itself (`_call_ret_ps`). CHANGELOG [6.6.17]
+# The method arm sets its result's scale itself (`_mcall_ret`). CHANGELOG [6.6.17]
 fn _call_scale_fix(S, ti): i64 {
     var t = TOKTYP(S, ti);
     var o = 0 - 1;
@@ -2623,6 +2623,16 @@ fn _call_ret_marks(S, fi): i64 {
     if (GFRS(S, fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
     _call_ret_ps(S, fi);
     return 0;
+}
+# ⛔ 6.7.9 — A METHOD CALL'S RESULT KEPT ITS LAST ARGUMENT'S TYPE. The method arm of
+# `_field_load_on` has no PARSE_FNCALL, so neither half of a free call's result typing ran: the
+# arguments' expression type survived the call (`p.m(1.5) * 2` with `m: i64` multiplied bit
+# patterns as doubles — 0; `p.m(p) * 10` dispatched `P_mul`), and a `: f64` method's result was
+# never typed f64 (`p.area() + 1.0` added integers). Both halves now, in a free call's order:
+# the reset (PARSE_FNCALL's v6.4.56 D3), then `_call_ret_marks` on the callee. CHANGELOG [6.7.9]
+fn _mcall_ret(S, fi): i64 {
+    SESTYPE(S, 0);
+    return _call_ret_marks(S, fi);
 }
 
 # 1 = `syscall(sc_num, ..)` with `got` user arguments is a KNOWN cross-target shape, not an

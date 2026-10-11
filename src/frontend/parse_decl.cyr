@@ -1814,7 +1814,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
-        _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
+        _mcall_ret(S, mfi);                       # 6.7.9: typed as a free call's result (6.6.17: + a `*T` step)
         _mcall_last = mfi;                             # 6.6.17: for a statement's #must_use
         _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
         return 0;

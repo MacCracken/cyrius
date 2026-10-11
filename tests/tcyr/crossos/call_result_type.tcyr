@@ -1,0 +1,118 @@
+# call_result_type.tcyr — 6.7.9: a call's result is typed by its CALLEE, never by its last argument.
+#
+# A call's arguments are parsed as expressions inside the call's factor, and the last one leaves its
+# expression type behind. PARSE_FNCALL resets it after the call (v6.4.56 D3) and `_call_ret_marks`
+# then types a `: f64` return f64. The METHOD arm of `_field_load_on` ran neither half: with an f64
+# last argument `p.m(1.5) * 2` multiplied the bit patterns of 21 and 2 as doubles (0) and
+# `p.m(1.5) / 2` divided them (10.5's bits); with a struct last argument `o.m(o) * 10` dispatched the
+# struct's operator fn (a silent wrong value when one exists, else "undefined function 'O_mul'"); and
+# a `: f64` method's result was never typed f64, so `p.area() + 1.0` added integers. The free
+# struct-returning call's field (`mkq(1.5).a`, `_struct_call_emit`) skipped the reset too. Both are
+# typed as a free call's now: the method arm runs `_mcall_ret` (the reset, then `_call_ret_marks`)
+# and `_struct_call_emit` the reset. 6.7.0 - 6.7.8, every target. Filed:
+# docs/development/issues/2026-10-09-method-call-result-keeps-last-arg-f64-type.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/call_result_type.sh, on the
+# four hardware hosts by the release gate's cross-OS leg. Every f64 expectation is compared as a BIT
+# PATTERN (assert_eq on an f64-typed value), so a float literal on the right is exact; every free-call
+# spelling beside a method row is the control the method must equal.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+struct CrP { x; }
+struct CrQ { a; b; }         # 16 B: returned in rax:rdx
+struct CrB { a; b; c; }      # 24 B: returned through a hidden pointer
+struct CrW { v: CrP; n; }    # a method on an inline field (`w.v.m(..)`)
+struct CrO { k; }
+fn CrO_mul(a, b): i64 { return 999; }   # the operator a leaked struct type dispatched
+
+trait CrSc { fn sc(self, d: f64): i64; }
+
+impl CrP {
+    fn m(self, d: f64): i64 { return 21; }
+    fn mk(self, k, d: f64): i64 { return self.x + k; }
+    fn mo(self, o): i64 { return 2; }
+    fn area(self): f64 { return 2.5; }
+    fn half(self, n): f64 { return f64_from(n) / 2.0; }
+    fn scale(self, d: f64): f64 { return d * 2.0; }
+    fn neg(self): f64 { return 0.0 - 2.5; }
+    fn ms(self, d: f64): CrP { var r = CrP { 21 }; return r; }
+    fn mq(self, d: f64): CrQ { var r = CrQ { 21, 2 }; return r; }
+    fn mb(self, d: f64): CrB { var r = CrB { 21, 2, 3 }; return r; }
+    fn pt(self, d: f64): *i64 { return 64; }
+    fn twice(self): i64 { return self.m(1.5) * 2; }
+    fn fsum(self): f64 { return self.area() + 1.0; }
+}
+impl CrSc for CrP { fn sc(self, d: f64): i64 { return self.x + 20; } }
+impl CrSc for i64 { fn sc(self, d: f64): i64 { return self + 20; } }
+fn cr_bnd<T: CrSc>(v: T): i64 { return v.sc(1.5) * 2; }
+
+fn cr_free_m(p, d: f64): i64 { return 21; }
+fn cr_free_area(p): f64 { return 2.5; }
+fn cr_free_neg(p): f64 { return 0.0 - 2.5; }
+fn cr_mkp(d: f64): CrP { var r = CrP { 21 }; return r; }
+fn cr_mkq(d: f64): CrQ { var r = CrQ { 21, 2 }; return r; }
+fn cr_mkb(d: f64): CrB { var r = CrB { 21, 2, 3 }; return r; }
+
+fn main(): i64 {
+    alloc_init();
+    var p = CrP { 1 };
+    var pp: *CrP = &p;
+    var w: CrW;
+    w.v.x = 3;
+    w.n = 4;
+    var o = CrO { 5 };
+
+    test_group("an integer method's result is an integer, whatever its last argument");
+    assert_eq(p.m(1.5) * 2, 42, "p.m(1.5) * 2 (the filed repro)");
+    assert_eq(cr_free_m(&p, 1.5) * 2, 42, "cr_free_m(&p, 1.5) * 2 (free control)");
+    assert_eq(p.m(1.5) / 2, 10, "p.m(1.5) / 2 (an integer divide)");
+    assert_eq(p.m(d: 1.5) * 2, 42, "p.m(d: 1.5) * 2 (named: reset in _pd_named already)");
+    assert_eq(p.mk(41, 1.5) * 2, 84, "p.mk(41, 1.5) * 2");
+    assert_eq(pp.m(1.5) * 2, 42, "pp.m(1.5) * 2 (a *T receiver)");
+    assert_eq(w.v.m(1.5) * 2, 42, "w.v.m(1.5) * 2 (an inline field's method)");
+    assert_eq(p.twice(), 42, "self.m(1.5) * 2 inside the impl");
+    assert_eq(cr_bnd(p), 42, "v.sc(1.5) * 2 on a bounded T = CrP");
+    assert_eq(cr_bnd(1), 42, "v.sc(1.5) * 2 on a bounded T = i64 (a scalar impl)");
+    var t = p.m(1.5) * 2 + p.m(2.5) * 2;
+    assert_eq(t, 84, "two method results in one expression");
+
+    test_group("a struct last argument is not the result's type");
+    assert_eq(p.mo(o) * 10, 20, "p.mo(o) * 10 (CrO_mul was dispatched: 999)");
+    assert_eq(p.mo(p) * 10, 20, "p.mo(p) * 10 (CrP has no operator: was undefined CrP_mul)");
+
+    test_group("a : f64 method's result is an f64");
+    assert_eq(p.area() + 1.0, 3.5, "p.area() + 1.0 (the filed f64-return repro)");
+    assert_eq(cr_free_area(&p) + 1.0, 3.5, "cr_free_area(&p) + 1.0 (free control)");
+    assert_eq(p.area() * p.area(), 6.25, "p.area() * p.area()");
+    assert_eq(pp.area() * 2.0, 5.0, "pp.area() * 2.0 (a *T receiver)");
+    assert_eq(p.half(5) + 1.0, 3.5, "p.half(5) + 1.0 (an integer last argument)");
+    assert_eq(p.scale(1.5) * 2.0, 6.0, "p.scale(1.5) * 2.0");
+    assert_eq(p.fsum(), 3.5, "self.area() + 1.0 inside the impl");
+    assert_eq(-p.area(), 0.0 - 2.5, "-p.area() (a float negation)");
+    var lt = 0;
+    if (p.neg() < 0.0 - 3.0) { lt = 1; }
+    assert_eq(lt, 0, "p.neg() < -3.0 is false (a float compare)");
+    var lf = 0;
+    if (cr_free_neg(&p) < 0.0 - 3.0) { lf = 1; }
+    assert_eq(lf, 0, "cr_free_neg(&p) < -3.0 is false (free control)");
+    var a: f64 = p.area() + 1.0;
+    assert_eq(a, 3.5, "var a: f64 = p.area() + 1.0");
+
+    test_group("a struct result's field is typed by the field");
+    assert_eq(p.ms(1.5).x * 2, 42, "p.ms(1.5).x * 2 (8 B result)");
+    assert_eq(p.mq(1.5).a * 2, 42, "p.mq(1.5).a * 2 (16 B, rax:rdx)");
+    assert_eq(p.mb(1.5).a * 2, 42, "p.mb(1.5).a * 2 (24 B, retptr)");
+    assert_eq(cr_mkp(1.5).x * 2, 42, "cr_mkp(1.5).x * 2 (free, 8 B)");
+    assert_eq(cr_mkq(1.5).a * 2, 42, "cr_mkq(1.5).a * 2 (free, 16 B)");
+    assert_eq(cr_mkb(1.5).a * 2, 42, "cr_mkb(1.5).a * 2 (free, 24 B)");
+    assert_eq(cr_mkq(1.5).b / 2, 1, "cr_mkq(1.5).b / 2 (an integer divide)");
+
+    test_group("a *T method's result steps by T");
+    assert_eq(p.pt(1.5) + 1, 72, "p.pt(1.5) + 1 (64 + 8)");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);
