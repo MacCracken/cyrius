@@ -1,6 +1,8 @@
-# `fhm_set` on a PRESENT key can rebuild (and double) the table — `lib/hashmap.cyr` stopped doing that at 6.6.20 — OPEN
+# `fhm_set` on a PRESENT key can rebuild (and double) the table — `lib/hashmap.cyr` stopped doing that at 6.6.20 — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 4, l679-crit; CHANGELOG [6.7.9]) At the trigger `fhm_set` now looks the key up first (`_fhm_slot`, the find half): a PRESENT key's value is stored in its slot and it returns 0 — no rebuild, no allocation, no -1, no entry moved under a walker (the user's decision 4(b), `lib/hashmap.cyr`'s rule). The repro exits 0 (cap 16, 0 B, 0 rebuilds); rows in `tests/tcyr/stdlib/hashmap_fast_rebuild_in_place.tcyr` (the doubling trigger, the exhausted allocator, a walk at the in-place trigger); `hashmap_fast_grow_refused.tcyr` forces its refusal with `ALLOC_MAX` instead of a planted capacity.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above (reproduced on the 6.7.9 lane tip @ efb355bb before the fix: cap 16 → 32, 544 B, 1 rebuild, exit 1). As filed: 🟡 OPEN — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
 `repros/2026-10-08-hashmap-fast-overwrite-rebuilds.cyr`: overwriting one of 14 live keys in a 16-slot map takes the
 table to 32 slots, allocates 544 B and counts one rebuild (exit 1; expected exit 0).
 **Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
