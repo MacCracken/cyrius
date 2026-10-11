@@ -15,7 +15,10 @@ self-build CYRIUS_POISON scrub — and the lanes' quick repairs met in passing. 
 the mode is off by default: nothing that compiled changes meaning except the changes marked ⚠, each the user's
 decision or an approved plan's.
 
-**Release gate** {GATES}
+**Release gate GREEN** (`release-gate.sh` on `b50fcf60`, 2026-10-11 01:07 → 01:19, **11 min 46 s**, the first run): fixpoint
+2,053,536 B, ARM lockstep 1,881,144 B, seed-derive OK, check.sh — **462 of 462** shell gates produced a result, 0 failed,
+the driver 131 of 131, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach,
+cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`).
 
 **Size:** cycc **2,053,536 B** (`.text` **1,840,016**), +133,136 B over 6.7.7's 1,920,400 — checked dyn (the type,
 the vtables filled at each forming site, the call, the signature checks, the cx 16-byte pair) and C2 (`*T` subscripts,
@@ -23,7 +26,10 @@ the element descriptors, slice writes, the flags, the injected check helpers and
 dead-code floor unchanged (52 fns / 10,597 B). `.tcyr` 543 → **553** (249 → **259** in `crossos/`); shell gates 448 →
 **458**. The pre-commit hook's `build/cycc` sanity band rises 2 MB → 3 MB (the compiler passed 2 MB here).
 
-**Bench:** {BENCH}
+**Bench:** self_compile **1,768 ms** (the gate's run, on a loaded box — load average ~8 from other sessions). Same-box
+interleaved A/B vs 6.7.7 (15 runs each): **1,394 → 1,399 ms on 6.7.7's source (+0.4 % median)**; on 6.7.8's own source
+1,712 → 1,782 ms by median (+4.1 %) but 1,637 → 1,627 ms by the fastest run (−0.6 %) — the load makes the medians noisy;
+re-measure on a quiet box before reading a trend into it.
 
 **Closed as decided** (user, 2026-10-10): `issues/2026-10-08-indirect-call-f64-result-untyped.md` — a call through a
 variable or a closure returning f64 gives an untyped word, the documented rule; typed fn pointers can come later as

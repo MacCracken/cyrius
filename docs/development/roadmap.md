@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.8** (2026-10-11, merged) — checked dyn + C2 · cycc **2,053,536 B** · `.text` **1,840,016** · `cycc-native-aarch64` **1,881,144 B** · **553** `.tcyr`, **259** in `crossos/` · **106** `lib/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **118** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.8** (2026-10-11, release gate GREEN) — checked dyn + C2 · cycc **2,053,536 B** · `.text` **1,840,016** · `cycc-native-aarch64` **1,881,144 B** · **553** `.tcyr`, **259** in `crossos/` · **106** `lib/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **118** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -45,8 +45,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.7 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) |
-| 6.7.8 | features: **checked `dyn`** + **C2** the bounds-checked mode |
+| 6.7.0 – 6.7.8 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) |
 | 6.7.9 | features: **B7** packed narrow fields + **P5-B** execution coverage (on C2's flag plumbing) |
 | 6.7.10 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |
 | 6.7.11 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
