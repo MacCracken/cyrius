@@ -231,7 +231,8 @@ fn _tn_refuse(S, ti, tail, noff2): i64 {
     } else {
         ERR_IDENT(S, "unknown type ", noff, tail, noff2);
         _tn_prefix_note(S, noff);
-        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union (missing include?)\n");
+        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union");
+        PRSTR(" (a fn-local var also takes a slice [T] / slice<T>; missing include?)\n");   # 6.7.8 (C2-6a)
     }
     STI(S, sv);
     _panic = 0;
@@ -305,7 +306,7 @@ fn _tn_head(S): i64 {
 # tuple's `(`, which _tn_slice_w refuses by name. One call where the arms read two.
 fn _tn_slice_head(S): i64 {
     var t = PEEKT(S);
-    if (t == 2 || t == 105 || t == 10) { return 1; }
+    if (t == 2 || t == 105 || t == 10 || t == 28) { return 1; }   # 6.7.8 (C2-6a): + `[`, refused there too
     return 0;
 }
 
@@ -384,6 +385,7 @@ fn _tup_elem(S, mode): i64 {
     var ti = GTI(S);
     var t = PEEKT(S);
     var k = 1;
+    if (_sl_ann_at(S, ti) == 1) { t = 28; }   # 6.7.8 (C2-6a): `slice<T>` is refused as `[T]` is
     if (t == 2) {
         var c = _tn_resolve_at(S, ti);
         if (c == _tn_code(1, 8)) { k = 1; }
@@ -554,12 +556,13 @@ fn _tup_gen_chk(S, ti): i64 {
 # the first statement 1/2/4/8 by T; and `p += n` 1 everywhere. Measured across ~/Repos: no source
 # declares a `*T` at all, so nothing relied on the old steps (drafts b7-measure).
 # A `*T` slot stays a full 8-byte word (6.6.16 C8: a narrow SLTYPE truncated the pointer). The
-# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step`, read only
+# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step` (6.7.8: the
+# step WORD, `_ps_word` — T's kind in bits 40-47, so the mark stays under 2^48 in magnitude), read only
 # when bit 56 of the depth word says the slot is a typed pointer (SLPTRP — set here for a local,
 # by `_param_record` for a parameter): the slice-width table is not reset for a parameter's slot,
 # so a mark is only trusted behind that bit, which every slot gets fresh. A step-8 local keeps
 # SLTYPE 8, the load path it always had. The mark rides the closure snapshot with the depth word
-# (`_cl_snap_ptr_step`). CHANGELOG [6.6.17]
+# (`_cl_snap_ptr_word`). CHANGELOG [6.6.17]
 # `ps` is PARSE_VAR's pscale: > 0 a pointer's step; 0 or `0 - sid` / a vector descriptor for
 # anything else, which is the SLTYPE as it stands.
 # ⛔ 6.6.17 — a `*Struct` local takes dot syntax like a `p: *Struct` parameter (`p.val`,
@@ -598,14 +601,18 @@ fn _tup_svtype(S, vi, sid, noff, ti): i64 {
 # 6.7.6 (Break 1, lane D) — the LAST marks of a scalar local's / global's registration: `bool`
 # (6.7.3) and declared INTEGER (`st` = the annotation's integer width, 1..8; 16 is u128 / a slice),
 # which routes `println(n)` to its `_int` overload (_od_arg_kind, parse_fn.cyr). A global's marks are
-# the last declaration's (0 clears a redeclaration's). CHANGELOG [6.7.6]
-fn _sl_last_marks(S, li, lbool, st): i64 {
+# the last declaration's (0 clears a redeclaration's). 6.7.8 (C2-3a): and a `*T`'s element kind
+# (`ann` the annotation's first token) — a global's beside GVTYPE, so it is no new shape.
+# CHANGELOG [6.7.6]
+fn _sl_last_marks(S, li, lbool, st, ann): i64 {
     SLBOOL(S, li, lbool);
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
+    if (GLPTRP(S, li) == 1) { _sl_ptr_ed(S, li, ann); }
     return 0;
 }
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
+    _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
     SVINTD(S, vi, n);
@@ -653,6 +660,32 @@ fn _gv_ptr_type(S, vi, ps, ann): i64 {
     if (vi < 1048576) { S64(_gv_psid + vi * 8, sid); }
     return 0;
 }
+# A `*T` global's element kind (6.7.8, C2-3a; `_ps_word`): a byte per global, written with the
+# last declaration's marks (`_gv_last_marks`) and NOT part of `_gv_same_shape`, so `var g: *u8`
+# redeclared `var g: *i8` folds as it always did (the later declaration's kind).
+var _gv_ped = 0;
+fn _gv_ped_set(vi, ed): i64 {
+    if (_gv_ped == 0) {
+        if (ed == 0) { return 0; }
+        _gv_ped = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_ped + vi, ed);
+    return 0;
+}
+fn _gv_ped_get(vi): i64 {
+    if (_gv_ped == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_ped + vi);
+}
+# The step word of a `*T` global `vi` (GVTYPE = 0 - its step, 6.6.17; T's kind beside it), else 0.
+fn _gv_ptr_word(S, vi): i64 {
+    var vt = GVTYPE(S, vi);
+    if (vt >= 0) { return 0; }
+    return _ps_word(0 - vt, _gv_ped_get(vi));
+}
 fn _gv_ptr_sid(S, vi): i64 {
     if (_gv_psid == 0) { return 0; }
     if (vi < 0) { return 0; }
@@ -671,12 +704,67 @@ fn _gv_holds_addr(S, vi): i64 {
     if (_gv_ptr_sid(S, vi) > 0) { return 1; }
     return 0;
 }
-# The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
-fn _slot_ptr_step(S, li): i64 {
+# 6.7.8 (C2-2a) — the element width of slice local `li` (sizeof(T): 1, 2, 4, 8, 16 or a struct's
+# bytes, which can pass 255), 0 when `li` is no slice. Every reader that asks "is this name a
+# slice?" asks here: a positive slice-width word is trusted only behind the slot's slice bit
+# (GLSLICE, util.cyr), because the word goes stale on slot reuse. CHANGELOG [6.7.8]
+fn _slice_lw(S, li): i64 {
+    if (GLSLICE(S, li) == 0) { return 0; }
+    return GSLICE_W(S, li) & 0xFFFFFFFF;
+}
+# 6.7.8 (C2-6a): the element descriptor of slice local `li` (`_ek_*`, parse_decl.cyr: an integer's
+# width and sign, f64 / f32 / bool; 8 for any other word — a pointer, an enum, a cstring; 0 for a
+# struct), 0 when `li` is no slice. It rides the slice word above bit 31 (`_sl_slice`): the width
+# below it is sizeof(T), which passes 255 for a struct element.
+fn _slice_led(S, li): i64 {
+    if (GLSLICE(S, li) == 0) { return 0; }
+    return (GSLICE_W(S, li) >> 32) & 0xFF;
+}
+# ⛔ 6.7.8 (C2-3a) — THE STEP WORD CARRIES THE ELEMENT KIND. A typed pointer's step (sizeof(T), the
+# pointer-scale word GPSC while its value is in rax) says nothing about T's kind: `*u8` / `*i8` both
+# step 1, `*u32` / `*f32` / `*i32` 4, `*f64` / `*bool` / `*i64` 8. So the step is stored and carried
+# as ONE word, `ps | ed << 40` (ed = the element descriptor, `_ek_of_ptr_ann`, parse_decl.cyr):
+# in the slot mark, a `name: *T` field's `_fld_ps`, a `: *T` return's `_fn_rps` (a global's GVTYPE
+# is a shape key, so its kind sits beside it in `_gv_ped`). Every setter of GPSC writes the word
+# and pointer arithmetic writes the operand's word back, so `p + n`, `p - n` and a parenthesised
+# pointer keep the kind exactly where they keep the step. The closed list of readers that use the
+# value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_int_plus_ptr`, `_ptr_diff` (parse_
+# expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
+# which the word preserves (ed is nonzero only when the step is). Nothing reads the kind yet: the
+# emitted bytes are unchanged. ⚠ `n + p` with a step-1 pointer drops its step, as it always has
+# (6.6.17: a step of 1 writes no word back); its kind reaches a dereference on the separate
+# dereference-only stamp (`_PKD_MARK`, parse_expr.cyr), never this word. CHANGELOG [6.7.8]
+fn _ps_word(ps, ed): i64 {
+    if (ps <= 0) { return ps; }
+    return ps | (ed << 40);
+}
+fn _ps_step(w): i64 {
+    if (w < 0) { return w; }
+    return w & 0xFFFFFFFFFF;
+}
+# Two branches' words: the same word, else the shared step without a kind, else 0 (no step).
+fn _ps_merge(a, b): i64 {
+    if (a == b) { return a; }
+    if (_ps_step(a) != _ps_step(b)) { return 0; }
+    return _ps_step(a);
+}
+# The step word of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
+fn _slot_ptr_word(S, li): i64 {
     if (GLPTRP(S, li) == 0) { return 0; }
     var w = GSLICE_W(S, li);
     if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
     return 8;
+}
+fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
+# A `var p: *T` local's kind, written into the mark `_sl_marks` just wrote (`ann` the annotation's
+# `*`). `_sl_marks` sits at cybs's 6-parameter cap, so `_sl_last_marks` calls this.
+fn _sl_ptr_ed(S, li, ann): i64 {
+    var ed = _ek_of_ptr_ann(S, ann);
+    if (ed == 0) { return 0; }
+    var w = GSLICE_W(S, li);
+    if (w > 0 - 0x7E01) { return 0; }
+    SSLICE_W(S, li, 0 - 0x7E00 - _ps_word(0 - w - 0x7E00, ed));
+    return 0;
 }
 # The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
 # plain word (0) whatever its SLTYPE says — a `p: *f32` parameter's slot is typed f32 and a
@@ -688,11 +776,26 @@ fn _load_lt(S, li): i64 {
     if (lt == 8) { return 8; }
     return 0;
 }
+# The factor's pointer scale for local `li` read at `lt` (`_load_lt`): `lt`, which a step-8 `*T`
+# local's SLTYPE 8 is — 6.7.8 (C2-3a): that local's step WORD, T's kind included, so a `*i64` /
+# `*f64` / `*bool` local carries its kind as every other typed pointer does (`_ps_word`). One call
+# in _PARSE_FACTOR_IMPL where `SPSC(S, lt)` was (a same-count swap: cybs's per-fn ceiling).
+fn _lt_spsc(S, li, lt): i64 {
+    if (lt == 8) {
+        var w = _slot_ptr_word(S, li);
+        if (w > 0) {
+            SPSC(S, w);
+            return 0;
+        }
+    }
+    SPSC(S, lt);
+    return 0;
+}
 # An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
 # step above.
 fn _sl_load_marks(S, li): i64 {
     _UFV_L(S, li);
-    var ps = _slot_ptr_step(S, li);
+    var ps = _slot_ptr_word(S, li);   # 6.7.8 (C2-3a): the step word, kind included
     if (ps > 0) { SPSC(S, ps); }
     if (GLBOOL(S, li) == 1) { _BX_MARK(S); }   # 6.7.3: a bool local's read is a boolean value
     if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): a u128 local's read is the u128
@@ -746,6 +849,11 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
         STI(S, GTI(S) + 1);
         n = n + 1;
     }
+    if (_sl_ann_at(S, GTI(S)) == 1) {   # 6.7.8 (C2-6a): `*[T]` / `*slice<T>` — refused by name
+        if (quiet == 0) { _sl_err_ptr(S, GTI(S)); }
+        _sl_ann_skip(S);
+        return 8;
+    }
     var ps = _ptr_step_peek(S, vnoff, quiet);
     if (n > 1) { ps = 8; }
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
@@ -781,9 +889,10 @@ fn _ptr_step_peek(S, vnoff, quiet): i64 {
 # (`struct Node { val; next: *Node; }` stepped 8, not 16), and a struct declared further down
 # (`struct A { p: *B; }`) was refused "declared after its use", so two structs could not point
 # at each other. Such a field records T's token (`0 - (ti + 1)`); `_fld_ps_get` sizes it.
-var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field (or T's token), 0 otherwise
+var _fld_ps = 0;   # per field-pool entry: the step word of a `*T` field (or T's token), 0 otherwise
 fn _add_ptr_field(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume ':'
+    var ed = _ek_of_ptr_ann(S, GTI(S));     # 6.7.8 (C2-3a): T's kind rides the step (`_ps_word`)
     var ps = _fld_ptr_late(S);
     if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
@@ -792,7 +901,7 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    S64(_fld_ps + ent * 8, ps);
+    S64(_fld_ps + ent * 8, _ps_word(ps, ed));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
     return 0;
 }
@@ -855,6 +964,7 @@ fn _fld_ptr_sid(S, si, fi): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return sid;
 }
+# A field's step word (6.7.8: kind included; a late struct T's, sized here, has none).
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }
     var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
@@ -873,7 +983,7 @@ fn _fld_ps_get(S, si, fi): i64 {
 # A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
 # call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
 # records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
-var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
+var _fn_rps = 0;   # per fn: the step word of a `*T` return (6.7.8: + the kind, `_ps_word`), else 0
 var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
 # ⛔ 6.6.20 — a generic INSTANCE's `: *T` is read under the instance's binding, as `_gtype_sid`
 # reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
@@ -894,10 +1004,11 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
         S64(_fn_rpsid + fi * 8, psid);
     }
+    var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
-    S64(_fn_rps + fi * 8, ps);
+    S64(_fn_rps + fi * 8, _ps_word(ps, ed));
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
     return 0;
 }
@@ -919,6 +1030,13 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         STI(S, GTI(S) - 1);                       # on the `)`: the caller steps past it
         return 8;
     }
+    if (_sl_ann_at(S, ti) == 1) {                 # 6.7.8 (C2-6a): `[[T]]`, `slice<slice<T>>`, ..
+        _sl_err(S, ti, "a slice cannot be the element of a slice (6.7.8: slices are fn-locals)",
+          " - keep each inner slice's slice_ptr / slice_len in a struct array");
+        _sl_ann_skip(S);
+        STI(S, GTI(S) - 1);                       # on its last token: the caller steps past it
+        return 8;
+    }
     if (TOKTYP(S, ti) == 105) { return 16; }      # u128
     if (TOKTYP(S, ti) != 2) { return 8; }
     var b = _tp_resolve(S, TOKVAL(S, ti));
@@ -929,6 +1047,109 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         return 8;
     }
     return _tn_bytes(S, c);
+}
+
+# ⛔ 6.7.8 (C2-6a) — SLICES STAY FN-LOCALS, AND EVERY OTHER POSITION SAYS SO BY NAME (the user's
+# decision, 2026-10-10: "a slice PARAMETER and a slice declared in the declaration zone" refused
+# by name; a top-level slice after the first statement keeps compiling, through the helper API).
+# Only a fn-local `var` (PARSE_VAR) reads `[T]` / `slice<T>`; a parameter (`expected ')', got
+# identifier 'u8'`, and pass 1 counted the list short), a return (`expected identifier, got '['`),
+# a struct field, a declaration-zone global (`expected '=', got identifier 'u8'` /
+# `unknown type 'slice'`), a pointer to a slice `*[T]`, a slice of slices and a type argument
+# met generic parse errors. Each is now refused at its `[` / `slice`, once, and the whole type is
+# consumed so nothing cascades. (issues/2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
+# 1 when token `ti` begins a slice type: `[` or the word `slice` with its `<` (a program's own
+# `struct slice` keeps its name).
+fn _sl_ann_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 28) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# Cursor on a slice type's first token: consumes it whole — `[ .. ]` with any nesting, or
+# `slice<..>` (`>>` closing two). Stops, consuming nothing more, at a token no type holds.
+fn _sl_ann_skip(S): i64 {
+    if (PEEKT(S) != 28) {
+        STI(S, GTI(S) + 1);
+        SKIP_GENERICS(S);
+        return 0;
+    }
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12 || t == 5 || t == 13 || t == 14 || t == 4) { return 0; }
+        if (t == 28) { d = d + 1; }
+        if (t == 29) { d = d - 1; }
+        STI(S, GTI(S) + 1);
+        if (d <= 0) { go = 0; }
+    }
+    return 0;
+}
+# The refusal `a` + `b` at token `ti`, once per token (a generic body and the two passes read the
+# same tokens). A grammar refusal: reported under --syntax-only too. The parse goes on in sync.
+fn _sl_err(S, ti, a, b): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    PRSTR(a);
+    PRSTR(b);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# `*[T]` / `*slice<T>` at token `ti` (the slice's first token).
+fn _sl_err_ptr(S, ti): i64 {
+    return _sl_err(S, ti, "a pointer to a slice is not a type (6.7.8: slices are fn-locals)",
+      " - pass &s as a plain pointer and read slice_ptr / slice_len");
+}
+# A slice's pointer element `[*T]` / `slice<*T>`, cursor past its `*`: T checked by name and
+# consumed; `*[U]` / `*slice<U>` refused by name and consumed whole.
+fn _tn_slice_ptr_el(S, noff): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err_ptr(S, GTI(S));
+        _sl_ann_skip(S);
+        return 0;
+    }
+    if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    return 0;
+}
+# A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
+# width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
+# stores by it. 6.7.8 (C2-6a)
+fn _sl_slice(S, li, w, ann): i64 {
+    if (w <= 0) { return SLSLICE(S, li, w); }
+    var et = ann + 1;                              # `[T]`
+    if (TOKTYP(S, ann) != 28) { et = ann + 2; }    # `slice<T>`
+    return SLSLICE(S, li, w | (_slice_ek(S, et, w) << 32));
+}
+# The element descriptor of a slice of `w`-byte elements whose type is token `et`: an integer /
+# f64 / f32 / bool's (`_ek_at`); 8 for any other 8-byte element but a struct — a pointer `[*T]`,
+# an enum, a cstring: a word; 0 for a struct (a slice store refuses it by name), 16 for u128.
+fn _slice_ek(S, et, w): i64 {
+    if (TOKTYP(S, et) == 8) { return 8; }
+    var ed = _ek_at(S, et);
+    if (ed != 0) {
+        if (_ek_w(ed) == w) { return ed; }
+        return 0;
+    }
+    if (w != 8) { return 0; }
+    if (TOKTYP(S, et) != 2) { return 0; }
+    var c = 0;
+    var b = _tp_resolve(S, TOKVAL(S, et));
+    if (b != 0) { c = _tn_from_rc(b); } else { c = _tn_resolve_at(S, et); }
+    if (_tn_class(c) == 6) { return 0; }   # a struct
+    return 8;
 }
 
 # sizeof(T) at token `ti` — an expression (`asrt` 0) or an `#assert` operand (1): T's bytes, or 0
@@ -983,6 +1204,7 @@ fn _sizeof_type(S, asrt): i64 {
 fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     if (ptc != 0) { return 0; }
     var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse(S, ti, " for parameter ", pnoff);
@@ -2009,11 +2231,26 @@ fn _sdef_tup_prescan(S, sname_ti): i64 {
     STI(S, sv);
     return 0;
 }
+# 1 when a field's annotation (cursor on its `:`) is a tuple's `(` (6.7.7) or, 6.7.8 (C2-6a), a slice:
+# both are `_sfield_tup`'s.
+fn _sfield_alt(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) == 10) { return 1; }
+    return _sl_ann_at(S, ti);
+}
 # The field `fnoff: ( .. )`, cursor on its `:` — the interned tuple (`_sdef_tup_prescan`), looked up;
-# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed.
+# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed. 6.7.8 (C2-6a):
+# a slice field `fnoff: [T]` / `slice<T>` is refused by name and kept as an i64 word (no cascade).
 fn _sfield_tup(S, si, fnoff, uni): i64 {
     STI(S, GTI(S) + 1);   # consume ':'
     var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 1) {
+        _sl_err(S, ti, "a slice cannot be a struct or union field (6.7.8: slices are fn-locals)",
+          " - keep its slice_ptr / slice_len in two fields");
+        _sl_ann_skip(S);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
     if (uni == 1) {
         _tup_err(S, ti, "union field ", fnoff, " cannot be a tuple");
         STI(S, _call_close(S, ti) + 1);
@@ -2070,7 +2307,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
             STI(S, GTI(S) + 1);
             # Check for type annotation: field: Type
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
-            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -2163,7 +2400,7 @@ fn PARSE_UNION_DEF(S): i64 {
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
-            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

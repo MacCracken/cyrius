@@ -1,0 +1,586 @@
+# pointer_subscript_values.tcyr — 6.7.8 (C2-4a) — `p[i]` on a typed pointer `*T` named by a local,
+# a `p: *T` parameter, a global, a closure capture or a generic instance's parameter, and `a[i]` on
+# `f64[N]` / `f32[N]` / `bool[N]` arrays: read, `=`, every compound operator and the for step, at
+# every element kind, on every backend.
+#
+# Before 6.7.8 `p[i]` on a pointer was refused ("a pointer or scalar is not an array") and so was
+# a float or bool array's `a[i]`: the only spelling was `load16(p + i * 2)` / `store16(..)`. `p[i]`
+# IS that: the element at `p + i * sizeof(T)` — the pointer's VALUE is the base where an array's
+# address is — loaded and stored at T's width and typed as a declared T is: an iN sign-extended, a
+# uN zero-extended, an f64 an f64 (`p[1] * 2.0` is a float multiply), an f32 its 4 bytes (`p[0] =
+# 1.5` stores 0x3FC00000 and `p[0] += q` stays single precision), a bool a boolean value. The
+# element descriptor rides the pointer's step word (`_ps_word`, src/frontend/parse_types.cyr) and
+# is read by `_arr_sub_addr` / `_esub_load` / `_esub_assign` (src/frontend/parse_expr.cyr).
+#
+# Every pointer points into BUF, which is zeroed before each group and followed by a canary; the
+# rows read the stored bytes back through `load8/16/32/64` at their byte offsets, so a wrong
+# scale, a wrong width or a lost sign cannot pass. The refusals (a struct, pointer, enum, string,
+# vector or u128 element; an untyped name; a bool compound; a non-bool into a bool element), an
+# `async fn` and the CYRIUS_IR=1 / IR=3 / DCE runs are tests/gates/frontend/pointer_subscript_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+var BUF: i64[8];
+var BUF_CAN = 0x5A5A5A5A5A5A5A5A;
+var G16: *i16 = 0;
+var GF: *f32 = 0;
+var GB: *bool = 0;
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+
+# ---- A1 / A2: a local `*T` of every integer kind: `=` at the element's width, the read sign- or
+# zero-extended, the neighbours untouched ----
+fn local_widths(): i64 {
+    zero();
+    var p8: *u8 = &BUF;
+    var s8: *i8 = &BUF;
+    p8[1] = 255;
+    assert_eq(s8[1], 0 - 1, "*i8: the byte 0xFF reads -1 (sign-extended)");
+    assert_eq(p8[1], 255, "*u8: the byte 0xFF reads 255 (zero-extended)");
+    s8[2] = 0 - 2;
+    assert_eq(load8(&BUF + 2), 254, "*i8: p[2] = -2 stores the byte 0xFE at byte 2");
+    assert_eq(load8(&BUF), 0, "*u8 / *i8: byte 0 untouched");
+    assert_eq(load8(&BUF + 3), 0, "*u8 / *i8: byte 3 untouched");
+    zero();
+    var p16: *u16 = &BUF;
+    var s16: *i16 = &BUF;
+    p16[1] = 0xFFFF;
+    assert_eq(s16[1], 0 - 1, "*i16: 0xFFFF reads -1");
+    assert_eq(p16[1], 65535, "*u16: 0xFFFF reads 65535");
+    s16[2] = 0 - 30000;
+    assert_eq(load16(&BUF + 4), 35536, "*i16: p[2] is bytes 4..5");
+    assert_eq(load16(&BUF), 0, "*i16: element 0 untouched");
+    assert_eq(load16(&BUF + 6), 0, "*i16: element 3 untouched");
+    zero();
+    var p32: *u32 = &BUF;
+    var s32: *i32 = &BUF;
+    p32[1] = 0xFFFFFFFF;
+    assert_eq(s32[1], 0 - 1, "*i32: 0xFFFFFFFF reads -1");
+    assert_eq(p32[1], 0xFFFFFFFF, "*u32: 0xFFFFFFFF reads 4294967295");
+    s32[2] = 0 - 2000000000;
+    assert_eq(load32(&BUF + 8), 2294967296, "*i32: p[2] is bytes 8..11");
+    assert_eq(load32(&BUF), 0, "*i32: element 0 untouched");
+    assert_eq(load32(&BUF + 12), 0, "*i32: element 3 untouched");
+    zero();
+    var p64: *u64 = &BUF;
+    var s64: *i64 = &BUF;
+    s64[2] = 0 - 123456789012;
+    p64[3] = 0x7FFFFFFFFFFFFFFF;
+    assert_eq(load64(&BUF + 16), 0 - 123456789012, "*i64: p[2] is bytes 16..23");
+    assert_eq(p64[2], 0 - 123456789012, "*u64: the same word");
+    assert_eq(s64[3], 0x7FFFFFFFFFFFFFFF, "*i64: p[3] is bytes 24..31");
+    assert_eq(load64(&BUF + 8), 0, "*i64: element 1 untouched");
+    s8[0] = 0 - 1;
+    s8[7] = 0 - 1;
+    assert_eq(load8(&BUF) + load8(&BUF + 7), 510, "*i8: p[0] and p[7] are bytes 0 and 7");
+    assert_eq(load8(&BUF + 1) + load8(&BUF + 6), 0, "*i8: bytes 1 and 6 untouched");
+    assert_eq(BUF_CAN, 0x5A5A5A5A5A5A5A5A, "local widths: the canary after BUF");
+    return 0;
+}
+
+# ---- A3: every compound operator, at every integer kind; a result wraps at the element ----
+fn ops_i8(): i64 {
+    zero();
+    var p: *i8 = &BUF;
+    p[1] = 20;
+    p[1] += 5;   assert_eq(p[1], 25, "*i8 +=");
+    p[1] -= 3;   assert_eq(p[1], 22, "*i8 -=");
+    p[1] *= 3;   assert_eq(p[1], 66, "*i8 *=");
+    p[1] /= 4;   assert_eq(p[1], 16, "*i8 /=");
+    p[1] %= 10;  assert_eq(p[1], 6, "*i8 %=");
+    p[1] <<= 4;  assert_eq(p[1], 96, "*i8 <<=");
+    p[1] >>= 2;  assert_eq(p[1], 24, "*i8 >>=");
+    p[1] |= 3;   assert_eq(p[1], 27, "*i8 |=");
+    p[1] &= 13;  assert_eq(p[1], 9, "*i8 &=");
+    p[1] ^= 6;   assert_eq(p[1], 15, "*i8 ^=");
+    p[1] -= 28;  assert_eq(p[1], 0 - 13, "*i8 -= below zero");
+    p[1] >>>= 1; assert_eq(p[1], 0 - 7, "*i8 >>>= (arithmetic)");
+    p[1] += 0 - 122;
+    assert_eq(p[1], 127, "*i8 += wraps past -128");
+    assert_eq(load8(&BUF), 0, "*i8 OP=: byte 0 untouched");
+    assert_eq(load8(&BUF + 2), 0, "*i8 OP=: byte 2 untouched");
+    return 0;
+}
+fn ops_u8(): i64 {
+    zero();
+    var p: *u8 = &BUF;
+    p[1] = 20;
+    p[1] += 5;   assert_eq(p[1], 25, "*u8 +=");
+    p[1] -= 3;   assert_eq(p[1], 22, "*u8 -=");
+    p[1] *= 3;   assert_eq(p[1], 66, "*u8 *=");
+    p[1] /= 4;   assert_eq(p[1], 16, "*u8 /=");
+    p[1] %= 10;  assert_eq(p[1], 6, "*u8 %=");
+    p[1] <<= 4;  assert_eq(p[1], 96, "*u8 <<=");
+    p[1] >>= 2;  assert_eq(p[1], 24, "*u8 >>=");
+    p[1] |= 3;   assert_eq(p[1], 27, "*u8 |=");
+    p[1] &= 13;  assert_eq(p[1], 9, "*u8 &=");
+    p[1] ^= 6;   assert_eq(p[1], 15, "*u8 ^=");
+    p[1] -= 28;  assert_eq(p[1], 243, "*u8 -= wraps at 0");
+    p[1] >>>= 1; assert_eq(p[1], 121, "*u8 >>>= (the element is zero-extended)");
+    p[1] += 200; assert_eq(p[1], 65, "*u8 += wraps at 256");
+    assert_eq(load8(&BUF + 2), 0, "*u8 OP=: byte 2 untouched");
+    return 0;
+}
+fn ops_i16(): i64 {
+    zero();
+    var p: *i16 = &BUF;
+    p[1] = 2000;
+    p[1] += 500;  assert_eq(p[1], 2500, "*i16 +=");
+    p[1] -= 300;  assert_eq(p[1], 2200, "*i16 -=");
+    p[1] *= 3;    assert_eq(p[1], 6600, "*i16 *=");
+    p[1] /= 4;    assert_eq(p[1], 1650, "*i16 /=");
+    p[1] %= 1000; assert_eq(p[1], 650, "*i16 %=");
+    p[1] <<= 4;   assert_eq(p[1], 10400, "*i16 <<=");
+    p[1] >>= 2;   assert_eq(p[1], 2600, "*i16 >>=");
+    p[1] |= 3;    assert_eq(p[1], 2603, "*i16 |=");
+    p[1] &= 0xFF; assert_eq(p[1], 43, "*i16 &=");
+    p[1] ^= 6;    assert_eq(p[1], 45, "*i16 ^=");
+    p[1] -= 100;  assert_eq(p[1], 0 - 55, "*i16 -= below zero");
+    p[1] >>>= 1;  assert_eq(p[1], 0 - 28, "*i16 >>>=");
+    p[1] *= 2000; assert_eq(p[1], 9536, "*i16 *= wraps at the element");
+    assert_eq(load16(&BUF), 0, "*i16 OP=: element 0 untouched");
+    assert_eq(load16(&BUF + 4), 0, "*i16 OP=: element 2 untouched");
+    return 0;
+}
+fn ops_u16(): i64 {
+    zero();
+    var p: *u16 = &BUF;
+    p[1] = 2000;
+    p[1] += 500;  assert_eq(p[1], 2500, "*u16 +=");
+    p[1] -= 300;  assert_eq(p[1], 2200, "*u16 -=");
+    p[1] *= 3;    assert_eq(p[1], 6600, "*u16 *=");
+    p[1] /= 4;    assert_eq(p[1], 1650, "*u16 /=");
+    p[1] %= 1000; assert_eq(p[1], 650, "*u16 %=");
+    p[1] <<= 4;   assert_eq(p[1], 10400, "*u16 <<=");
+    p[1] >>= 2;   assert_eq(p[1], 2600, "*u16 >>=");
+    p[1] |= 3;    assert_eq(p[1], 2603, "*u16 |=");
+    p[1] &= 0xFF; assert_eq(p[1], 43, "*u16 &=");
+    p[1] ^= 6;    assert_eq(p[1], 45, "*u16 ^=");
+    p[1] -= 100;  assert_eq(p[1], 65481, "*u16 -= wraps at 0");
+    p[1] >>>= 1;  assert_eq(p[1], 32740, "*u16 >>>=");
+    assert_eq(load16(&BUF + 4), 0, "*u16 OP=: element 2 untouched");
+    return 0;
+}
+fn ops_i32(): i64 {
+    zero();
+    var p: *i32 = &BUF;
+    p[1] = 200000;
+    p[1] += 500;     assert_eq(p[1], 200500, "*i32 +=");
+    p[1] -= 300;     assert_eq(p[1], 200200, "*i32 -=");
+    p[1] *= 3;       assert_eq(p[1], 600600, "*i32 *=");
+    p[1] /= 4;       assert_eq(p[1], 150150, "*i32 /=");
+    p[1] %= 100000;  assert_eq(p[1], 50150, "*i32 %=");
+    p[1] <<= 4;      assert_eq(p[1], 802400, "*i32 <<=");
+    p[1] >>= 2;      assert_eq(p[1], 200600, "*i32 >>=");
+    p[1] |= 3;       assert_eq(p[1], 200603, "*i32 |=");
+    p[1] &= 0xFFFF;  assert_eq(p[1], 3995, "*i32 &=");
+    p[1] ^= 6;       assert_eq(p[1], 3997, "*i32 ^=");
+    p[1] -= 10000;   assert_eq(p[1], 0 - 6003, "*i32 -= below zero");
+    p[1] >>>= 1;     assert_eq(p[1], 0 - 3002, "*i32 >>>=");
+    p[1] *= 1000000; assert_eq(p[1], 1292967296, "*i32 *= wraps at the element");
+    assert_eq(load32(&BUF), 0, "*i32 OP=: element 0 untouched");
+    assert_eq(load32(&BUF + 8), 0, "*i32 OP=: element 2 untouched");
+    return 0;
+}
+fn ops_u32(): i64 {
+    zero();
+    var p: *u32 = &BUF;
+    p[1] = 200000;
+    p[1] += 500;     assert_eq(p[1], 200500, "*u32 +=");
+    p[1] -= 300;     assert_eq(p[1], 200200, "*u32 -=");
+    p[1] *= 3;       assert_eq(p[1], 600600, "*u32 *=");
+    p[1] /= 4;       assert_eq(p[1], 150150, "*u32 /=");
+    p[1] %= 100000;  assert_eq(p[1], 50150, "*u32 %=");
+    p[1] <<= 4;      assert_eq(p[1], 802400, "*u32 <<=");
+    p[1] >>= 2;      assert_eq(p[1], 200600, "*u32 >>=");
+    p[1] |= 3;       assert_eq(p[1], 200603, "*u32 |=");
+    p[1] &= 0xFFFF;  assert_eq(p[1], 3995, "*u32 &=");
+    p[1] ^= 6;       assert_eq(p[1], 3997, "*u32 ^=");
+    p[1] -= 10000;   assert_eq(p[1], 4294961293, "*u32 -= wraps at 0");
+    p[1] >>>= 1;     assert_eq(p[1], 2147480646, "*u32 >>>= (the element is zero-extended)");
+    assert_eq(load32(&BUF + 8), 0, "*u32 OP=: element 2 untouched");
+    return 0;
+}
+fn ops_i64(): i64 {
+    zero();
+    var p: *i64 = &BUF;
+    var q: *u64 = &BUF;
+    p[1] = 2000000000000;
+    p[1] += 500;    assert_eq(p[1], 2000000000500, "*i64 +=");
+    p[1] -= 300;    assert_eq(p[1], 2000000000200, "*i64 -=");
+    p[1] *= 3;      assert_eq(p[1], 6000000000600, "*i64 *=");
+    p[1] /= 4;      assert_eq(p[1], 1500000000150, "*i64 /=");
+    p[1] %= 1000;   assert_eq(p[1], 150, "*i64 %=");
+    p[1] <<= 40;    assert_eq(p[1], 164926744166400, "*i64 <<=");
+    p[1] >>= 38;    assert_eq(p[1], 600, "*i64 >>=");
+    p[1] |= 3;      assert_eq(p[1], 603, "*i64 |=");
+    p[1] &= 0xFF;   assert_eq(p[1], 91, "*i64 &=");
+    p[1] ^= 6;      assert_eq(p[1], 93, "*i64 ^=");
+    p[1] -= 100;    assert_eq(p[1], 0 - 7, "*i64 -= below zero");
+    p[1] >>>= 1;    assert_eq(p[1], 0 - 4, "*i64 >>>=");
+    q[2] = 0 - 4;
+    q[2] >>= 62;    assert_eq(q[2], 3, "*u64 >>= (logical)");
+    q[2] += 0 - 1;  assert_eq(q[2], 2, "*u64 +=");
+    assert_eq(load64(&BUF), 0, "*i64 OP=: element 0 untouched");
+    assert_eq(load64(&BUF + 24), 0, "*i64 OP=: element 3 untouched");
+    return 0;
+}
+
+# ---- A4 / FS: the classic-for step takes `p[i] = v` and `p[i] OP= v` ----
+fn for_steps(): i64 {
+    zero();
+    var p: *i16 = &BUF;
+    for (var i = 0; i < 4; p[0] += 1) { i = i + 1; }
+    assert_eq(p[0], 4, "FS1 for step: `p[0] += 1` on a *i16 ran every iteration");
+    for (var j = 0; j < 3; p[j] = 0 - j) { j = j + 1; }
+    assert_eq(p[3], 0 - 3, "FS2 for step: `p[j] = 0 - j` on a *i16");
+    var q: *u8 = &BUF + 16;
+    for (var k = 0; k < 300; q[1] += 1) { k = k + 1; }
+    assert_eq(q[1], 44, "FS3 for step: `q[1] += 1` on a *u8 wraps at 256 (300 - 256)");
+    var d: *f64 = &BUF + 32;
+    d[0] = 0.0;
+    var h: f64 = 0.5;
+    for (var m = 0; m < 4; d[0] += h) { m = m + 1; }
+    assert(d[0] == 2.0, "FS4 for step: `d[0] += h` on a *f64 is a float add");
+    var f: *f32 = &BUF + 40;
+    f[0] = 0.0;
+    var g: f32 = 0.25;
+    for (var r = 0; r < 4; f[0] += g) { r = r + 1; }
+    assert_eq(load32(&BUF + 40), 0x3F800000, "FS5 for step: `f[0] += g` on a *f32 stays single precision (1.0)");
+    assert_eq(load32(&BUF + 44), 0, "FS5 for step: the *f32 step stores 4 bytes");
+    var b: *bool = &BUF + 48;
+    b[0] = false;
+    for (var t = 0; t < 3; b[0] = t >= 2) { t = t + 1; }
+    assert_eq(b[0], 1, "FS6 for step: `b[0] = t >= 2` on a *bool");
+    G16 = &BUF + 24;
+    G16[1] = 0;
+    for (var u = 0; u < 2; G16[1] -= 2) { u = u + 1; }
+    assert_eq(G16[1], 0 - 4, "FS7 for step: `G[1] -= 2` on a global *i16");
+    var cl = |x| {
+        var ws: *i32 = &BUF + 56;
+        ws[0] = 0;
+        for (var w = 0; w < x; ws[0] += 7) { w = w + 1; }
+        return ws[0];
+    };
+    assert_eq(fncall1(cl, 3), 21, "FS8 for step: `ws[0] += 7` on a *i32 local in a closure");
+    assert_eq(BUF_CAN, 0x5A5A5A5A5A5A5A5A, "for steps: the canary after BUF");
+    return 0;
+}
+
+# ---- A5: f64 — the element is an f64 value ----
+fn f64_elements(): i64 {
+    zero();
+    var p: *f64 = &BUF;
+    p[1] = 2.5;
+    assert_eq(load64(&BUF + 8), 0x4004000000000000, "*f64: p[1] = 2.5 stores the binary64 bits");
+    var r: f64 = p[1] * 2.0;
+    assert(r == 5.0, "*f64: p[1] * 2.0 is an f64 multiply (5.0)");
+    assert(p[1] + p[1] == 5.0, "*f64: p[1] + p[1] is an f64 add");
+    assert(p[1] < 3.0, "*f64: p[1] < 3.0 is an f64 compare");
+    assert(0.0 - p[1] < 0.0, "*f64: 0.0 - p[1] is negative");
+    p[1] += 1.5;  assert(p[1] == 4.0, "*f64 +=");
+    p[1] -= 0.5;  assert(p[1] == 3.5, "*f64 -=");
+    p[1] *= 2.0;  assert(p[1] == 7.0, "*f64 *=");
+    p[1] /= 4.0;  assert(p[1] == 1.75, "*f64 /=");
+    var x: f64 = p[1];
+    assert(x == 1.75, "*f64: var x: f64 = p[1]");
+    p[2] = x * 2.0;
+    assert(p[2] == 3.5, "*f64: an f64 expression stored");
+    assert_eq(load64(&BUF), 0, "*f64: element 0 untouched");
+    assert_eq(load64(&BUF + 24), 0, "*f64: element 3 untouched");
+    return 0;
+}
+
+# ---- A6: f32 — the element is its 4 bytes; an f64 value into it rounds ----
+fn f32_elements(): i64 {
+    zero();
+    var p: *f32 = &BUF;
+    p[0] = 1.5;
+    assert_eq(load32(&BUF), 0x3FC00000, "*f32: p[0] = 1.5 stores the binary32 bits");
+    assert_eq(load32(&BUF + 4), 0, "*f32: p[0] = 1.5 stores 4 bytes (p[1] untouched)");
+    var q: f32 = 0.25;
+    p[0] += q;
+    assert_eq(load32(&BUF), 0x3FE00000, "*f32: p[0] += q stays single precision (1.75)");
+    p[0] *= q;
+    assert_eq(load32(&BUF), 0x3EE00000, "*f32 *= (0.4375)");
+    p[0] -= q;
+    assert_eq(load32(&BUF), 0x3E400000, "*f32 -= (0.1875)");
+    p[0] /= q;
+    assert_eq(load32(&BUF), 0x3F400000, "*f32 /= (0.75)");
+    var d: f64 = 3.0;
+    p[2] = d;
+    assert_eq(load32(&BUF + 8), 0x40400000, "*f32: an f64 variable stored rounds to f32 (3.0)");
+    p[3] = d * 0.5;
+    assert_eq(load32(&BUF + 12), 0x3FC00000, "*f32: an f64 expression stored rounds (1.5)");
+    var y: f32 = p[0];
+    assert_eq(load32(&y), 0x3F400000, "*f32: var y: f32 = p[0] copies the bits (no re-rounding)");
+    assert(p[0] < p[2], "*f32: p[0] < p[2] is an f32 compare");
+    var z: f32 = p[0] + p[2];
+    assert_eq(load32(&z), 0x40700000, "*f32: p[0] + p[2] is an f32 add (3.75)");
+    assert_eq(load32(&BUF + 4), 0, "*f32: element 1 untouched");
+    return 0;
+}
+
+# ---- A7: bool — the element is a boolean value ----
+fn bool_elements(): i64 {
+    zero();
+    var p: *bool = &BUF;
+    p[1] = true;
+    assert_eq(load64(&BUF + 8), 1, "*bool: p[1] = true stores 1 in its 8 bytes");
+    var n = 0;
+    if (p[1]) { n = n + 1; }
+    if (p[0]) { n = n + 100; }
+    assert_eq(n, 1, "*bool: if (p[i]) tests the element");
+    var b: bool = p[1];
+    assert_eq(b, 1, "*bool: var b: bool = p[1] (a boolean value)");
+    p[2] = p[1] && n == 1;
+    assert_eq(p[2], 1, "*bool: p[2] = p[1] && n == 1");
+    p[3] = !p[1];
+    assert_eq(p[3], 0, "*bool: p[3] = !p[1]");
+    var k = 5;
+    p[0] = k < 3;
+    assert_eq(p[0], 0, "*bool: p[0] = k < 3");
+    var c: bool = p[1] || p[0];
+    assert_eq(c, 1, "*bool: p[1] || p[0]");
+    return 0;
+}
+
+# ---- A8: a `p: *T` parameter ----
+fn par_i16(p: *i16, i): i64 {
+    p[i] = 0 - 7;
+    p[i + 1] += 3;
+    return p[i];
+}
+fn par_u32(p: *u32, i): i64 {
+    p[i] = 0xFFFFFFFE;
+    p[i] += 1;
+    return p[i];
+}
+fn par_f64(p: *f64, i): f64 {
+    p[i] = 1.25;
+    p[i] *= 4.0;
+    return p[i] + 0.5;
+}
+fn par_f32(p: *f32, x: f32): i64 {
+    p[1] = x;
+    p[1] += x;
+    return load32(p + 1);
+}
+fn par_bool(p: *bool, i): i64 {
+    p[i] = i > 0;
+    if (p[i]) { return 1; }
+    return 0;
+}
+fn params(): i64 {
+    zero();
+    assert_eq(par_i16(&BUF, 1), 0 - 7, "parameter *i16: p[i] = -7 reads back");
+    assert_eq(load16(&BUF + 2), 65529, "parameter *i16: element 1 is bytes 2..3");
+    assert_eq(load16(&BUF + 4), 3, "parameter *i16: p[i + 1] += 3");
+    zero();
+    assert_eq(par_u32(&BUF, 2), 0xFFFFFFFF, "parameter *u32: zero-extended");
+    assert_eq(load32(&BUF + 12), 0, "parameter *u32: element 3 untouched");
+    zero();
+    var r: f64 = par_f64(&BUF, 3);
+    assert(r == 5.5, "parameter *f64: p[i] *= 4.0, then p[i] + 0.5");
+    zero();
+    var h: f32 = 0.75;
+    assert_eq(par_f32(&BUF, h), 0x3FC00000, "parameter *f32: p[1] = x; p[1] += x (1.5)");
+    assert_eq(load32(&BUF), 0, "parameter *f32: element 0 untouched");
+    zero();
+    assert_eq(par_bool(&BUF, 2), 1, "parameter *bool: p[i] = i > 0");
+    assert_eq(load64(&BUF + 16), 1, "parameter *bool: element 2");
+    return 0;
+}
+
+# ---- A9: a `*T` global, in a fn and as top-level statements (below) ----
+fn globals(): i64 {
+    zero();
+    G16 = &BUF;
+    G16[1] = 0 - 300;
+    G16[2] = G16[1] * 2;
+    assert_eq(G16[2], 0 - 600, "global *i16: G[2] = G[1] * 2");
+    G16[1] += 300;
+    assert_eq(G16[1], 0, "global *i16: G[1] += 300");
+    assert_eq(load16(&BUF + 4), 64936, "global *i16: element 2 is bytes 4..5");
+    GF = &BUF + 16;
+    GF[1] = 2.5;
+    assert_eq(load32(&BUF + 20), 0x40200000, "global *f32: G[1] = 2.5");
+    var q: f32 = 0.5;
+    GF[1] -= q;
+    assert_eq(load32(&BUF + 20), 0x40000000, "global *f32: G[1] -= q (2.0)");
+    GB = &BUF + 32;
+    GB[0] = true;
+    var t: bool = GB[0];
+    assert_eq(t, 1, "global *bool: G[0]");
+    return 0;
+}
+
+# ---- A10: a closure reads and writes through a captured `*T` (the pointee is shared) ----
+fn captures(): i64 {
+    zero();
+    var p: *u16 = &BUF;
+    var d: *f64 = &BUF + 16;
+    var b: *bool = &BUF + 32;
+    p[0] = 40000;
+    d[0] = 1.5;
+    var rd = |i| p[i] + 1;
+    assert_eq(fncall1(rd, 0), 40001, "capture *u16: p[i] + 1, zero-extended");
+    var wr = |i| { p[i] = 0 - 1; p[i] -= 1; return p[i]; };
+    assert_eq(fncall1(wr, 2), 65534, "capture *u16: p[i] = -1; p[i] -= 1");
+    assert_eq(load16(&BUF + 4), 65534, "capture *u16: wrote the shared pointee");
+    var fl = |x| { d[0] *= 2.0; if (d[0] > 2.5) { return x; } return 0; };
+    assert_eq(fncall1(fl, 7), 7, "capture *f64: d[0] *= 2.0 is a float multiply");
+    assert(d[0] == 3.0, "capture *f64: the shared pointee is 3.0");
+    var bl = |x| { b[0] = x > 1; if (b[0]) { return 1; } return 0; };
+    assert_eq(fncall1(bl, 2), 1, "capture *bool: b[0] = x > 1");
+    var outer = |i| {
+        var inner = |j| {
+            if (d[0] > 2.0) { return p[j]; }
+            return 0;
+        };
+        return fncall1(inner, i);
+    };
+    assert_eq(fncall1(outer, 0), 40000, "nested capture: p[j] and d[0] through two closures");
+    return 0;
+}
+
+# ---- A11: a generic instance's `p: *T` — each instance its T ----
+fn gget<T>(p: *T, i): T { return p[i]; }
+fn gset<T>(p: *T, i, v: T): i64 {
+    p[i] = v;
+    return 0;
+}
+fn generics(): i64 {
+    zero();
+    gset<i32>(&BUF, 1, 0 - 5);
+    assert_eq(gget<i32>(&BUF, 1), 0 - 5, "generic *T at T = i32: sign-extended");
+    assert_eq(load32(&BUF + 4), 4294967291, "generic *T at T = i32: element 1 is bytes 4..7");
+    assert_eq(load32(&BUF + 8), 0, "generic *T at T = i32: element 2 untouched");
+    gset<i8>(&BUF, 9, 0 - 56);
+    assert_eq(gget<i8>(&BUF, 9), 0 - 56, "generic *T at T = i8: sign-extended");
+    var u: *u8 = &BUF;
+    assert_eq(u[9], 200, "generic *T at T = i8: one byte stored (read through a *u8)");
+    gset<i16>(&BUF, 7, 0 - 2);
+    assert_eq(gget<i16>(&BUF, 7), 0 - 2, "generic *T at T = i16: element 7 is bytes 14..15");
+    assert_eq(u[9] + u[13], 200, "generic *T at T = i16: bytes 9 and 13 untouched");
+    var two: f64 = 2.25;
+    gset<f64>(&BUF, 2, two);
+    var r: f64 = gget<f64>(&BUF, 2);
+    assert(r * 2.0 == 4.5, "generic *T at T = f64: an f64 element");
+    return 0;
+}
+
+# ---- typed arrays of f64 / f32 / bool: read, `=`, `OP=` — local, global, captured ----
+var GA64: f64[4];
+var GA64_CAN = 0x0123456789ABCDEF;
+var GA32: f32[4];
+var GA32_CAN: i32 = 0x11223344;
+var GAB: bool[3];
+fn float_arrays(): i64 {
+    var before = 0x0BEF0BEF0BEF0BEF;
+    var a: f64[4];
+    var c: f32[4];
+    var b: bool[3];
+    var after = 0x0AF70AF70AF70AF7;
+    a[0] = 0.0; a[1] = 0.0; a[2] = 0.0; a[3] = 0.0;
+    c[0] = 0.0; c[1] = 0.0; c[2] = 0.0; c[3] = 0.0;
+    a[3] = 1.5;
+    a[3] *= 3.0;
+    assert(a[3] == 4.5, "local f64[4]: a[3] = 1.5; a[3] *= 3.0");
+    assert_eq(load64(&a + 24), 0x4012000000000000, "local f64[4]: element 3 is bytes 24..31");
+    c[3] = 1.5;
+    var q: f32 = 0.5;
+    c[3] += q;
+    assert_eq(load32(&c + 12), 0x40000000, "local f32[4]: c[3] = 1.5; c[3] += q (2.0, 4-byte stride)");
+    assert_eq(load32(&c + 8), 0, "local f32[4]: element 2 untouched");
+    b[2] = true;
+    b[0] = false;
+    var n = 0;
+    if (b[2]) { n = n + 1; }
+    if (b[0]) { n = n + 10; }
+    assert_eq(n, 1, "local bool[3]: if (b[i])");
+    assert_eq(before, 0x0BEF0BEF0BEF0BEF, "local float arrays: the canary declared before");
+    assert_eq(after, 0x0AF70AF70AF70AF7, "local float arrays: the canary declared after");
+    GA64[1] = 0.25;
+    GA64[1] += 0.5;
+    assert(GA64[1] == 0.75, "global f64[4]: G[1] = 0.25; G[1] += 0.5");
+    GA64[3] = 0.0 - 2.0;
+    assert(GA64[3] < 0.0, "global f64[4]: G[3] < 0.0");
+    var dd: f64 = 2.5;
+    GA32[3] = dd;
+    assert_eq(load32(&GA32 + 12), 0x40200000, "global f32[4]: an f64 into G[3] rounds (2.5)");
+    GA32[3] -= q;
+    assert_eq(load32(&GA32 + 12), 0x40000000, "global f32[4]: G[3] -= q (2.0)");
+    GAB[1] = dd > 2.0;
+    assert_eq(GAB[1], 1, "global bool[3]: G[1] = dd > 2.0");
+    assert_eq(GA64_CAN, 0x0123456789ABCDEF, "global f64[4]: the canary after it");
+    assert_eq(GA32_CAN, 0x11223344, "global f32[4]: the i32 canary directly after it");
+    var cl = |x| {
+        a[0] = a[3] + 1.0;
+        if (a[0] > 5.0) { return x; }
+        return 0;
+    };
+    assert_eq(fncall1(cl, 9), 9, "captured f64[4]: the closure's copy, a[0] = a[3] + 1.0 (5.5)");
+    var cf = |x| {
+        c[1] = 1.25;
+        c[1] *= c[1];
+        return load32(&c + 4);
+    };
+    assert_eq(fncall1(cf, 0), 0x3FC80000, "captured f32[4]: c[1] *= c[1] on the closure's copy (1.5625)");
+    var cb = |x| { b[1] = x == 3; return b[1] && b[2]; };
+    assert_eq(fncall1(cb, 3), 1, "captured bool[3]: b[1] = x == 3; b[1] && b[2]");
+    return 0;
+}
+
+# ---- an index with a side effect is evaluated once; an alias reads its own kind ----
+var CALLS = 0;
+fn idx(i): i64 {
+    CALLS = CALLS + 1;
+    return i;
+}
+fn indexing(): i64 {
+    zero();
+    var p: *u32 = &BUF;
+    p[idx(1)] = 9;
+    p[idx(1)] += 1;
+    assert_eq(CALLS, 2, "index: evaluated once per access (`=` and `OP=`)");
+    assert_eq(p[p[1] - 10], 0, "index: a subscript inside a subscript");
+    assert_eq(p[0 + 1] * p[1], 100, "index: subscripts as both operands");
+    var w: *i64 = &BUF;
+    assert_eq(w[0], 0x0000000A00000000, "alias: the *u32 store read through a *i64");
+    return 0;
+}
+
+local_widths();
+ops_i8();
+ops_u8();
+ops_i16();
+ops_u16();
+ops_i32();
+ops_u32();
+ops_i64();
+for_steps();
+f64_elements();
+f32_elements();
+bool_elements();
+params();
+globals();
+captures();
+generics();
+float_arrays();
+indexing();
+
+# ---- top level: statements through a global `*T` ----
+zero();
+G16 = &BUF;
+G16[3] = 0 - 2;
+G16[3] *= 21;
+assert_eq(G16[3], 0 - 42, "top level: G[3] = -2; G[3] *= 21 on a global *i16");
+assert_eq(load16(&BUF + 6), 65494, "top level: element 3 is bytes 6..7");
+var r = assert_summary();

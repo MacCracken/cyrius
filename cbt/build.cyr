@@ -1255,24 +1255,18 @@ fn _cc_env_is_target(e): i64 {
 
 # 6.6.20 — the flag-driven entries compile() injects into the compiler child's environment,
 # pushed onto `inj` in order; answers 1 when one of them selects the TARGET (--win, --agnos, a
-# bare-metal --target), so the inherited target selectors must go (`_cc_child_envp`).
-#   --strict-pin  CYRIUS_STRICT_PIN=1: cycc's pin-drift check fails instead of warning (v5.11.58,
-#                 the CI gating path).
+# bare-metal --target), so the inherited target selectors must go (`_cc_child_envp`). The
+# compiler FLAGS come first, from `_cc_flag_inject` — the one list both spawn arms hand the
+# compiler (6.7.8); the target selectors below are this (POSIX) arm's alone.
 #   --agnos       CYRIUS_TARGET_AGNOS=1 (v6.0.49);  --win  CYRIUS_TARGET_WIN=1, a PE32+ (v6.0.52).
 #                 Distinct emit targets — do not combine.
-#   --poison      CYRIUS_POISON=1 (v6.5.29, fuzz);  --pie  CYRIUS_PIE=1 (v6.6.5).
-#   dce           CYRIUS_DCE=1 from `[build] dce` / `--dce` (6.6.17) — only when the resolved value
-#                 did not come FROM the environment, which the child then inherits as it is.
 #   bare metal    CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1, and CYRIUS_KERNEL_BASE from
 #                 `[sections] base` (v6.3.3 #5).
 fn _cc_child_inject(inj): i64 {
     var tgt = 0;
-    if (_cfg_dce_inject == 1) { vec_push(inj, "CYRIUS_DCE=1"); }
-    if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
+    _cc_flag_inject(inj);
     if (_agnos_target == 1) { vec_push(inj, "CYRIUS_TARGET_AGNOS=1"); tgt = 1; }
     if (_win_target == 1) { vec_push(inj, "CYRIUS_TARGET_WIN=1"); tgt = 1; }
-    if (_poison_mode == 1) { vec_push(inj, "CYRIUS_POISON=1"); }
-    if (_pie_target == 1) { vec_push(inj, "CYRIUS_PIE=1"); }
     if (_baremetal_target == 1) {
         vec_push(inj, "CYRIUS_KERNEL=1");
         vec_push(inj, "CYRIUS_ELF64_KERNEL=1");
@@ -1280,6 +1274,60 @@ fn _cc_child_inject(inj): i64 {
         tgt = 1;
     }
     return tgt;
+}
+
+# 6.7.8 — THE compiler flags compile() hands the compiler, on BOTH spawn arms: the POSIX child's
+# envp (`_cc_child_inject`, injected entries FIRST) and the Windows arm (`_cc_win_env_apply`, on
+# the CLI's own environment, which the cmd.exe that runs cycc.exe inherits). Each entry is
+# "NAME=value", pushed onto `inj` in order. One list, so a flag cannot reach the compiler on one
+# host and not the other: the Windows arm set only CYRIUS_DCE and CYRIUS_BOUNDS, so `--poison`,
+# `--strict-pin` and `--pie` never reached cycc.exe.
+#   bounds        CYRIUS_BOUNDS=1 / =0 from `--bounds` / `[build] bounds` (6.7.8) — `=0` too, so a
+#                 manifest `false` beats the entry's `#bounds` line; an environment-origin value is
+#                 inherited as it is. Pushed first.
+#   dce           CYRIUS_DCE=1 from `[build] dce` / `--dce` (6.6.17) — only when the resolved value
+#                 did not come FROM the environment, which the child then inherits as it is.
+#   --strict-pin  CYRIUS_STRICT_PIN=1: cycc's pin-drift check fails instead of warning (v5.11.58,
+#                 the CI gating path).
+#   --poison      CYRIUS_POISON=1 (v6.5.29, fuzz);  --pie  CYRIUS_PIE=1 (v6.6.5).
+# A target selector is not a flag: it stays in `_cc_child_inject`. CHANGELOG [6.7.8]
+fn _cc_flag_inject(inj): i64 {
+    var be = _cc_bounds_entry();
+    if (be != 0) { vec_push(inj, be); }
+    if (_cfg_dce_inject == 1) { vec_push(inj, "CYRIUS_DCE=1"); }
+    if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
+    if (_poison_mode == 1) { vec_push(inj, "CYRIUS_POISON=1"); }
+    if (_pie_target == 1) { vec_push(inj, "CYRIUS_PIE=1"); }
+    return vec_len(inj);
+}
+
+# 6.7.8 — the Windows arm's half of `_cc_flag_inject`: set each "NAME=value" entry of
+# `inj` on this process (`_win_setenv`; Win32 has no envp to hand CreateProcessW here). 0 when
+# every entry is set, else the entry that could not be (the caller names it).
+#ifdef CYRIUS_TARGET_WIN
+fn _cc_win_env_apply(inj): i64 {
+    var i = 0;
+    while (i < vec_len(inj)) {
+        var e = vec_get(inj, i);
+        var n = 0;
+        while (load8(e + n) != 0 && load8(e + n) != 61) { n = n + 1; }
+        if (load8(e + n) != 61) { return e; }
+        var nm = alloc(n + 1);
+        memcpy(nm, e, n);
+        store8(nm + n, 0);
+        if (_win_setenv(nm, e + n + 1) != 0) { return e; }
+        i = i + 1;
+    }
+    return 0;
+}
+#endif
+
+# 6.7.8 (C2-7) — the CYRIUS_BOUNDS entry compile() hands the compiler (`_cfg_bounds_inject`):
+# "CYRIUS_BOUNDS=1", "CYRIUS_BOUNDS=0", or 0 for none (`_cc_flag_inject` pushes it).
+fn _cc_bounds_entry(): i64 {
+    if (_cfg_bounds_inject == 1) { return "CYRIUS_BOUNDS=1"; }
+    if (_cfg_bounds_inject == 2) { return "CYRIUS_BOUNDS=0"; }
+    return 0;
 }
 
 # 6.6.20 — THE compiler child's environment, for every POSIX compile: the injected entries
@@ -1584,12 +1632,16 @@ fn compile(source, output): i64 {
     # 6.6.17: a resolved `dce` reaches cycc through the environment it inherits, and `strict`
     # through its command line — neither crossed this arm before (CYRIUS_DCE only if the user's
     # own environment held it; `--strict` never), so [build] dce / strict were inert here.
-    if (_cfg_dce_inject == 1) {
-        if (_win_setenv("CYRIUS_DCE", "1") != 0) {
-            if (tmp_src != 0) { sys_unlink(tmp_src); }
-            _err("could not set CYRIUS_DCE=1 for the compiler ([build] dce / --dce)");
-            return 1;
-        }
+    # 6.7.8: EVERY compiler flag the POSIX arm injects crosses here too, from the same list
+    # (`_cc_flag_inject`) — this arm set only CYRIUS_DCE and CYRIUS_BOUNDS, so `--poison`,
+    # `--strict-pin` and `--pie` never reached cycc.exe. CHANGELOG [6.7.8]
+    var winj = vec_new();
+    _cc_flag_inject(winj);
+    var wbad = _cc_win_env_apply(winj);
+    if (wbad != 0) {
+        if (tmp_src != 0) { sys_unlink(tmp_src); }
+        _err_ctx("could not set the compiler's environment entry", wbad);
+        return 1;
     }
     var w_own = _cc_own_err_begin();
     wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);

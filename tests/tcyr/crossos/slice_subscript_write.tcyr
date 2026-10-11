@@ -1,0 +1,418 @@
+# slice_subscript_write.tcyr — 6.7.8 (C2-6a) — a SLICE ELEMENT STORE: `s[i] = v`, `s[i] OP= v` and the
+# classic-for step on a slice local (`var s: [T]` / `slice<T>`), on every backend.
+#
+# Before 6.7.8 a slice element could be read (`s[i]`, bounds-checked since v5.8.15) but not stored:
+# `s[1] = 9;` was "cannot subscript 's'", so the spelling was `store8(slice_ptr(&s) + i, v)`. The
+# store's address now comes from lib/slice.cyr's `_slice_idx_addr(&s, i, sizeof(T))`, which checks i
+# against s.len exactly as the reads do — out of range prints "slice bounds violation" and exits 134,
+# in every mode. The element is stored as an element of T is: 1, 2, 4 or 8 bytes, an f64 value into
+# an f32 element rounds, a bool element takes a boolean, a pointer element a word; `OP=` combines
+# with the element as `s[i]` reads it.
+#
+# Every slice views part of BUF, zeroed before each group; the rows read the stored bytes back
+# through load8/16/32/64 at their byte offsets, with the neighbours on both sides, so a wrong scale,
+# a wrong width or a store past the element cannot pass. Element values stay non-negative wherever a
+# row reads one back through `s[i]` or combines it with `/ % >> >>>`, so no row depends on how a
+# signed slice element is extended.
+#
+# SPAWN — the default-mode trap: the test runs ITSELF as a child that stores out of range, and checks
+# the child's exit 134 and its "slice bounds violation" line (an in-range child, anti-vacuous, exits
+# 65). Under the bounds-checked mode (CYRIUS_BOUNDS=1, `--bounds`, `[build] bounds = true`) the mode's
+# check runs first, so the child prints `bounds: index N out of [0, 4) at <source>:<line>` instead
+# (`#ifdef CYRIUS_BOUNDS`) — ⚠ those are this file's own line numbers: an edit that moves a child's
+# store must move its number (the gate runs this file under the mode too). Not under cx (no process
+# spawn there) nor qemu-user (it cannot exec a foreign binary — the gate passes `nospawn` on that leg):
+# tests/gates/frontend/slice_position_refused.sh checks the trap on both with its own rows, and runs
+# this file on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE
+# (wine), beside the refusals (a captured slice, a struct / u128 element, a float / bool `OP=`, and
+# every slice position outside a fn-local `var`).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+#ifndef CYRIUS_TARGET_CX
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/fs.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+#endif
+
+var BUF: i64[8];
+var CALLS = 0;
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+fn idx(i): i64 {
+    CALLS = CALLS + 1;
+    return i;
+}
+
+# ---- W1: `=` at every integer width: the element's bytes, the neighbours untouched ----
+fn widths(): i64 {
+    zero();
+    var u8s: [u8] = 0;
+    slice_set(&u8s, &BUF + 8, 4);
+    u8s[1] = 0xAB;
+    assert_eq(load8(&BUF + 9), 0xAB, "[u8]: s[1] = 0xAB stores byte 9");
+    assert_eq(load8(&BUF + 8), 0, "[u8]: byte 8 untouched");
+    assert_eq(load8(&BUF + 10), 0, "[u8]: byte 10 untouched");
+    assert_eq(u8s[1], 0xAB, "[u8]: s[1] reads it back");
+    var i8s: [i8] = 0;
+    slice_set(&i8s, &BUF + 16, 4);
+    i8s[2] = 0 - 2;
+    assert_eq(load8(&BUF + 18), 254, "[i8]: s[2] = -2 stores the byte 0xFE");
+    assert_eq(load8(&BUF + 17), 0, "[i8]: byte 17 untouched");
+    assert_eq(load8(&BUF + 19), 0, "[i8]: byte 19 untouched");
+    zero();
+    var u16s: [u16] = 0;
+    slice_set(&u16s, &BUF, 4);
+    u16s[1] = 0xBEEF;
+    assert_eq(load16(&BUF + 2), 0xBEEF, "[u16]: s[1] is bytes 2..3");
+    assert_eq(load16(&BUF), 0, "[u16]: element 0 untouched");
+    assert_eq(load16(&BUF + 4), 0, "[u16]: element 2 untouched");
+    var i16s: slice<i16> = 0;
+    slice_set(&i16s, &BUF + 8, 4);
+    i16s[3] = 0 - 30000;
+    assert_eq(load16(&BUF + 14), 35536, "slice<i16>: s[3] = -30000 is bytes 14..15");
+    assert_eq(load16(&BUF + 12), 0, "slice<i16>: element 2 untouched");
+    assert_eq(load64(&BUF + 16), 0, "slice<i16>: the next word untouched");
+    zero();
+    var u32s: [u32] = 0;
+    slice_set(&u32s, &BUF, 4);
+    u32s[1] = 0xDEADBEEF;
+    assert_eq(load32(&BUF + 4), 0xDEADBEEF, "[u32]: s[1] is bytes 4..7");
+    assert_eq(load32(&BUF), 0, "[u32]: element 0 untouched");
+    assert_eq(load32(&BUF + 8), 0, "[u32]: element 2 untouched");
+    var i32s: [i32] = 0;
+    slice_set(&i32s, &BUF + 16, 2);
+    i32s[0] = 0 - 7;
+    assert_eq(load32(&BUF + 16), 0xFFFFFFF9, "[i32]: s[0] = -7 stores 4 bytes");
+    assert_eq(load32(&BUF + 20), 0, "[i32]: element 1 untouched");
+    zero();
+    var u64s: [u64] = 0;
+    slice_set(&u64s, &BUF, 4);
+    u64s[1] = 0x1122334455667788;
+    assert_eq(load64(&BUF + 8), 0x1122334455667788, "[u64]: s[1] is bytes 8..15");
+    assert_eq(load64(&BUF), 0, "[u64]: element 0 untouched");
+    assert_eq(load64(&BUF + 16), 0, "[u64]: element 2 untouched");
+    var i64s: [i64] = 0;
+    slice_set(&i64s, &BUF + 16, 2);
+    i64s[1] = 0 - 123456789012;
+    assert_eq(load64(&BUF + 24), 0 - 123456789012, "[i64]: s[1] is bytes 24..31");
+    assert_eq(i64s[1], 0 - 123456789012, "[i64]: s[1] reads it back");
+    assert_eq(load64(&BUF + 32), 0, "[i64]: the word after untouched");
+    return 0;
+}
+
+# ---- W2: every compound operator, combined and stored at the element's width ----
+fn compounds(): i64 {
+    zero();
+    var s: [u8] = 0;
+    slice_set(&s, &BUF + 8, 4);
+    s[1] = 250;
+    s[1] += 10;    assert_eq(load8(&BUF + 9), 4, "[u8] += wraps at the element (260 -> 4)");
+    s[1] -= 5;     assert_eq(load8(&BUF + 9), 255, "[u8] -= wraps (4 - 5 -> 255)");
+    s[1] *= 2;     assert_eq(load8(&BUF + 9), 254, "[u8] *= (510 -> 254)");
+    s[1] /= 3;     assert_eq(load8(&BUF + 9), 84, "[u8] /=");
+    s[1] %= 10;    assert_eq(load8(&BUF + 9), 4, "[u8] %=");
+    s[1] |= 0xF0;  assert_eq(load8(&BUF + 9), 0xF4, "[u8] |=");
+    s[1] &= 0x3C;  assert_eq(load8(&BUF + 9), 0x34, "[u8] &=");
+    s[1] ^= 0xFF;  assert_eq(load8(&BUF + 9), 0xCB, "[u8] ^=");
+    s[1] <<= 1;    assert_eq(load8(&BUF + 9), 0x96, "[u8] <<= (0x196 -> 0x96)");
+    s[1] >>= 2;    assert_eq(load8(&BUF + 9), 0x25, "[u8] >>=");
+    s[1] >>>= 1;   assert_eq(load8(&BUF + 9), 0x12, "[u8] >>>=");
+    assert_eq(load8(&BUF + 8), 0, "[u8] OP=: byte 8 untouched");
+    assert_eq(load8(&BUF + 10), 0, "[u8] OP=: byte 10 untouched");
+    zero();
+    var w: [u16] = 0;
+    slice_set(&w, &BUF, 4);
+    w[2] = 65530;
+    w[2] += 10;    assert_eq(load16(&BUF + 4), 4, "[u16] += wraps (65540 -> 4)");
+    w[2] -= 6;     assert_eq(load16(&BUF + 4), 65534, "[u16] -= wraps");
+    w[2] >>= 1;    assert_eq(load16(&BUF + 4), 32767, "[u16] >>=");
+    w[2] *= 4;     assert_eq(load16(&BUF + 4), 65532, "[u16] *= wraps");
+    assert_eq(load16(&BUF + 2), 0, "[u16] OP=: element 1 untouched");
+    assert_eq(load16(&BUF + 6), 0, "[u16] OP=: element 3 untouched");
+    zero();
+    var n: [i8] = 0;
+    slice_set(&n, &BUF, 4);
+    n[1] = 0 - 3;
+    n[1] += 1;     assert_eq(load8(&BUF + 1), 0xFE, "[i8] += on a negative element (-2)");
+    n[1] *= 3;     assert_eq(load8(&BUF + 1), 0xFA, "[i8] *= (-6)");
+    n[1] -= 0 - 6; assert_eq(load8(&BUF + 1), 0, "[i8] -= (0)");
+    n[1] = 100;
+    n[1] += 100;   assert_eq(load8(&BUF + 1), 200, "[i8] += wraps at the byte (200 = -56)");
+    n[2] = 9;
+    n[2] /= 2;     assert_eq(load8(&BUF + 2), 4, "[i8] /=");
+    n[2] %= 3;     assert_eq(load8(&BUF + 2), 1, "[i8] %=");
+    n[2] <<= 6;    assert_eq(load8(&BUF + 2), 64, "[i8] <<=");
+    assert_eq(load8(&BUF), 0, "[i8] OP=: element 0 untouched");
+    assert_eq(load8(&BUF + 3), 0, "[i8] OP=: element 3 untouched");
+    zero();
+    var u: [u32] = 0;
+    slice_set(&u, &BUF, 4);
+    u[1] = 0xFFFFFFF0;
+    u[1] += 0x20;     assert_eq(load32(&BUF + 4), 0x10, "[u32] += wraps at 4 bytes");
+    u[1] |= 0xF000;   assert_eq(load32(&BUF + 4), 0xF010, "[u32] |=");
+    u[1] ^= 0x10;     assert_eq(load32(&BUF + 4), 0xF000, "[u32] ^=");
+    u[1] <<= 20;      assert_eq(load32(&BUF + 4), 0, "[u32] <<= shifts out of the element");
+    assert_eq(load32(&BUF + 8), 0, "[u32] OP=: element 2 untouched");
+    var v: [i32] = 0;
+    slice_set(&v, &BUF + 16, 2);
+    v[1] = 1000;
+    v[1] -= 3000;     assert_eq(load32(&BUF + 20), 0xFFFFF830, "[i32] -= below zero (-2000)");
+    v[1] &= 0xFF;     assert_eq(load32(&BUF + 20), 0x30, "[i32] &=");
+    v[1] >>>= 2;      assert_eq(load32(&BUF + 20), 12, "[i32] >>>= on a non-negative element");
+    assert_eq(load32(&BUF + 16), 0, "[i32] OP=: element 0 untouched");
+    zero();
+    var q: [i64] = 0;
+    slice_set(&q, &BUF + 8, 3);
+    q[1] = 7;
+    q[1] *= 1000000007;   assert_eq(load64(&BUF + 16), 7000000049, "[i64] *=");
+    q[1] -= 7000000050;   assert_eq(load64(&BUF + 16), 0 - 1, "[i64] -= below zero");
+    q[1] >>= 60;          assert_eq(load64(&BUF + 16), 15, "[i64] >>= (logical)");
+    q[1] %= 4;            assert_eq(q[1], 3, "[i64] %=");
+    assert_eq(load64(&BUF + 8), 0, "[i64] OP=: element 0 untouched");
+    assert_eq(load64(&BUF + 24), 0, "[i64] OP=: element 2 untouched");
+    return 0;
+}
+
+# ---- W3: the classic-for step stores through the slice (`=` and `OP=`), once per iteration ----
+fn steps(): i64 {
+    zero();
+    var s: [u32] = 0;
+    slice_set(&s, &BUF, 6);
+    for (var i = 0; i < 4; s[i - 1] = i * 10) { i = i + 1; }
+    assert_eq(load32(&BUF), 10, "for step `s[i - 1] = i * 10`: element 0");
+    assert_eq(load32(&BUF + 4), 20, "... element 1");
+    assert_eq(load32(&BUF + 8), 30, "... element 2");
+    assert_eq(load32(&BUF + 12), 40, "... element 3");
+    assert_eq(load32(&BUF + 16), 0, "... element 4 untouched");
+    for (var j = 0; j < 3; s[0] += 1) { j = j + 1; }
+    assert_eq(load32(&BUF), 13, "for step `s[0] += 1` runs once per iteration");
+    var k = 0;
+    for (k = 0; k < 2; s[k + 1] <<= 1) { k = k + 1; }
+    assert_eq(load32(&BUF + 8), 60, "for step `s[k + 1] <<= 1`: element 2");
+    assert_eq(load32(&BUF + 12), 80, "for step `s[k + 1] <<= 1`: element 3");
+    var b: [u8] = 0;
+    slice_set(&b, &BUF + 32, 4);
+    var m = 0;
+    for (m = 0; m < 3; b[m] = 200 + m) { m = m + 1; }
+    assert_eq(load8(&BUF + 33), 201, "for step `b[m] = 200 + m` on a [u8]: element 1");
+    assert_eq(load8(&BUF + 35), 203, "... element 3");
+    assert_eq(load8(&BUF + 32), 0, "... element 0 untouched (the step follows the body)");
+    return 0;
+}
+
+# ---- W4: f64, f32, bool and pointer elements ----
+fn kinds(): i64 {
+    zero();
+    var d: [f64] = 0;
+    slice_set(&d, &BUF, 2);
+    d[1] = 2.5;
+    assert_eq(load64(&BUF + 8), 0x4004000000000000, "[f64]: s[1] = 2.5 stores the binary64 bits");
+    var h: f64 = 0.75;
+    d[0] = h * 2.0;
+    assert_eq(load64(&BUF), 0x3FF8000000000000, "[f64]: an f64 expression stored (1.5)");
+    assert_eq(load64(&BUF + 16), 0, "[f64]: the word after untouched");
+    zero();
+    var f: [f32] = 0;
+    slice_set(&f, &BUF, 4);
+    f[0] = 1.5;
+    assert_eq(load32(&BUF), 0x3FC00000, "[f32]: s[0] = 1.5 stores the binary32 bits");
+    assert_eq(load32(&BUF + 4), 0, "[f32]: 4 bytes (s[1] untouched)");
+    var three: f64 = 3.0;
+    f[2] = three;
+    assert_eq(load32(&BUF + 8), 0x40400000, "[f32]: an f64 variable rounds to f32 (3.0)");
+    var qf: f32 = 0.25;
+    f[3] = qf;
+    assert_eq(load32(&BUF + 12), 0x3E800000, "[f32]: an f32 value is stored as is (0.25)");
+    f[1] = h + 1.0;
+    assert_eq(load32(&BUF + 4), 0x3FE00000, "[f32]: an f64 expression rounds (1.75)");
+    assert_eq(load64(&BUF + 16), 0, "[f32]: the word after untouched");
+    zero();
+    var b: [bool] = 0;
+    slice_set(&b, &BUF, 4);
+    b[1] = true;
+    b[2] = 3 > 2;
+    b[3] = false;
+    assert_eq(load64(&BUF + 8), 1, "[bool]: s[1] = true");
+    assert_eq(load64(&BUF + 16), 1, "[bool]: s[2] = 3 > 2 (a comparison)");
+    assert_eq(load64(&BUF + 24), 0, "[bool]: s[3] = false");
+    assert_eq(load64(&BUF), 0, "[bool]: element 0 untouched");
+    zero();
+    var ps: [*u8] = 0;
+    slice_set(&ps, &BUF, 2);
+    var str = "abc";
+    ps[1] = str;
+    assert_eq(load64(&BUF + 8), str, "[*u8]: a pointer element stores the word");
+    assert_eq(load8(ps[1] + 2), 99, "[*u8]: ... read back through s[1]");
+    return 0;
+}
+
+# ---- W5: the index — evaluated once, read from another slice, from the slice itself ----
+fn indexes(): i64 {
+    zero();
+    var s: [u16] = 0;
+    slice_set(&s, &BUF, 8);
+    CALLS = 0;
+    s[idx(3)] = 7;
+    assert_eq(CALLS, 1, "`s[f()] = v` calls f once");
+    s[idx(3)] += 5;
+    assert_eq(CALLS, 2, "`s[f()] += v` calls f once");
+    assert_eq(load16(&BUF + 6), 12, "s[f()] = 7; s[f()] += 5 -> 12");
+    var tb: u8[4];
+    tb[0] = 1;
+    var t: [u8] = 0;
+    slice_set(&t, &tb, 4);
+    s[t[0] + 4] = 9;
+    assert_eq(load16(&BUF + 10), 9, "an index that reads another slice (`s[t[0] + 4]`)");
+    s[s[5] - 9] = 33;
+    assert_eq(load16(&BUF), 33, "an index that reads the same slice (`s[s[5] - 9]`)");
+    s[7] = s[3] + s[5];
+    assert_eq(load16(&BUF + 14), 21, "the last element, from two reads of the slice");
+    return 0;
+}
+
+# ---- W6: where the slice lives — a closure's own local, a generic instance, a heap buffer ----
+fn gstore<T>(v): i64 {
+    zero();
+    var s: [T] = 0;
+    slice_set(&s, &BUF, 4);
+    s[1] = v;
+    s[1] += 1;
+    return load64(&BUF) + load64(&BUF + 8);
+}
+fn contexts(): i64 {
+    zero();
+    var c = |v| {
+        var s: [u8] = 0;
+        slice_set(&s, &BUF, 4);
+        s[2] = v;
+        s[2] += 1;
+        return load8(&BUF + 2);
+    };
+    assert_eq(fncall1(c, 40), 41, "a slice local inside a closure body: = and OP=");
+    assert_eq(gstore<i8>(5), 6 << 8, "gstore<i8>: [T] stores one byte (element 1)");
+    assert_eq(gstore<i32>(5), 6 << 32, "gstore<i32>: [T] stores four bytes (element 1)");
+    assert_eq(gstore<i64>(5), 6, "gstore<i64>: [T] stores the word (element 1)");
+    var hb = alloc(32);
+    store64(hb + 24, 0);
+    var hs: [i64] = 0;
+    slice_set(&hs, hb, 4);
+    hs[3] = 99;
+    assert_eq(load64(hb + 24), 99, "a slice over a heap buffer");
+    if (load64(hb + 24) == 99) {
+        var inner: [u8] = 0;
+        slice_set(&inner, hb, 8);
+        inner[0] = 0x7F;
+        assert_eq(load8(hb), 0x7F, "a slice declared in a nested block");
+    }
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+# ---- SPAWN: the default-mode trap — the child stores out of range ----
+fn child(mode): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    sys_dup2(1, 2);   # the capture sends stderr to /dev/null on POSIX: the trap's line goes to the pipe
+    #endif
+    #endif
+    var b: u8[4];
+    var s: [u8] = 0;
+    slice_set(&s, &b, 4);
+    if (streq(mode, "hi") == 1) { s[4] = 1; return 61; }
+    var neg = 0 - 1;   # a run-time index: a constant `s[0 - 1]` warns at compile time (6.7.8, C2-8)
+    if (streq(mode, "neg") == 1) { s[neg] = 1; return 62; }
+    if (streq(mode, "op") == 1) { s[4] += 1; return 63; }
+    if (streq(mode, "step") == 1) {
+        for (var i = 0; i < 9; s[i] = 7) { i = i + 1; }
+        return 64;
+    }
+    if (streq(mode, "edge") == 1) {
+        s[3] = 5;
+        return load8(&b + 3) + 60;
+    }
+    return 11;
+}
+fn spawn_run(mode, buf, st): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, mode);
+    return exec_capture_status(av, buf, 4096, st);
+}
+#ifdef CYRIUS_BOUNDS
+# Under the bounds-checked mode the mode's check runs first, so the child prints the mode's line: the
+# store's index and its line in this file. Compiled only under the mode — a mode-off binary holds no
+# `bounds: index` text (bounds_mode_checked.sh, row OFF).
+fn mode_line(mode): i64 {
+    if (streq(mode, "hi") == 1) { return "bounds: index 4 out of [0, 4) at <source>:333\n"; }
+    if (streq(mode, "neg") == 1) { return "bounds: index -1 out of [0, 4) at <source>:335\n"; }
+    if (streq(mode, "op") == 1) { return "bounds: index 4 out of [0, 4) at <source>:336\n"; }
+    return "bounds: index 4 out of [0, 4) at <source>:338\n";
+}
+#endif
+# The child's line: lib/slice.cyr's trap by default, the mode's under the bounds-checked mode.
+fn spawn_trap(mode, what, buf, st): i64 {
+    var n = spawn_run(mode, buf, st);
+    var want = "slice bounds violation\n";
+    #ifdef CYRIUS_BOUNDS
+    want = mode_line(mode);
+    #endif
+    var w = strlen(want);
+    assert_eq(load64(st), 134, what);
+    assert_eq(n, w, "... and wrote one line");
+    var same = 0;
+    if (n == w) { same = memeq(buf, want, w); }
+    assert_eq(same, 1, want);
+    return 0;
+}
+fn spawned(): i64 {
+    test_group("the default-mode trap: a slice store out of range exits 134");
+    var buf = alloc(4096);
+    var st = alloc(16);
+    spawn_run("edge", buf, st);
+    assert_eq(load64(st), 65, "an in-range store in the child (s[3] = 5) runs on");
+    spawn_trap("hi", "s[4] = 1 on a 4-element slice exits 134", buf, st);
+    spawn_trap("neg", "s[i] = 1 with i = -1 exits 134", buf, st);
+    spawn_trap("op", "s[4] += 1 exits 134", buf, st);
+    spawn_trap("step", "a for step past the end exits 134", buf, st);
+    return 0;
+}
+#endif
+
+fn slice_write_main(): i64 {
+    alloc_init();
+    var sp = 1;
+    #ifdef CYRIUS_TARGET_CX
+    sp = 0;
+    #endif
+    #ifndef CYRIUS_TARGET_CX
+    args_init();
+    if (argc() > 1) {
+        if (streq(argv(1), "nospawn") == 0) { return child(argv(1)); }
+        sp = 0;
+    }
+    #endif
+    widths();
+    compounds();
+    steps();
+    kinds();
+    indexes();
+    contexts();
+    #ifndef CYRIUS_TARGET_CX
+    if (sp == 1) { spawned(); }
+    #endif
+    return assert_summary();
+}
+var r = slice_write_main();
+syscall(60, r);

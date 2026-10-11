@@ -426,6 +426,19 @@ done
 # every gate whose fixture declares a `path` beside git/tag into a local-mode run, and
 # CYRIUS_LOCKED / CYRIUS_LIB_OVERLAY likewise. A gate that tests one sets it itself.
 unset CYRIUS_LOCAL CYRIUS_LOCKED CYRIUS_LIB_OVERLAY
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
+# 6.7.8 — the allocator poison mode is the other way round: an inherited CYRIUS_POISON STAYS for
+# the suite (`CYRIUS_POISON=1 sh scripts/check.sh` compiles every test in the poison mode), but
+# never reaches a SELF-BUILD. The compiler and the toolchain include lib/alloc.cyr, which reads it
+# (any value, an empty one included), so the staged toolchain refresh and the check driver would
+# be built in the poison mode — different binaries, written into build/ and kept for the next run.
+# Every self-build below runs through `_chk_selfbuild <cmd> <args...>` (the cyrius check driver's
+# own self-host rows already spawn the compiler with an empty environment).
+# Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh. CHANGELOG [6.7.8]
+_chk_selfbuild() { ( unset CYRIUS_POISON; "$@" ); }
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)
@@ -537,7 +550,7 @@ _chk_stage_home() {
     fi
     [ -d "$_CHK_LIVE_HOME/deps" ] && ln -s "$_CHK_LIVE_HOME/deps" "$_CHK_HOME/deps"
     [ -f "$_CHK_LIVE_HOME/signed-since" ] && cp "$_CHK_LIVE_HOME/signed-since" "$_CHK_HOME/signed-since"
-    if ! CYRIUS_HOME="$_CHK_HOME" sh "$ROOT/scripts/install.sh" --refresh-only > "$_CHK_HOME/.stage.log" 2>&1; then
+    if ! _chk_selfbuild env CYRIUS_HOME="$_CHK_HOME" sh "$ROOT/scripts/install.sh" --refresh-only > "$_CHK_HOME/.stage.log" 2>&1; then
         printf "error: could not stage a throwaway CYRIUS_HOME from the tree:\n" >&2
         cat "$_CHK_HOME/.stage.log" >&2
         rm -rf "$_CHK_HOME"
@@ -603,7 +616,7 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     # Gate: tests/gates/toolchain/check_concurrent_selectors_one_tree.sh. CHANGELOG [6.6.20]
     _CHK_BIN_NEW="$CHECK_BIN.new.$$"
     _CHK_BIN_ERR="$CHECK_BIN.err.$$"
-    if ! cat "$CHECK_SRC" | "$CC" > "$_CHK_BIN_NEW" 2>"$_CHK_BIN_ERR"; then
+    if ! cat "$CHECK_SRC" | _chk_selfbuild "$CC" > "$_CHK_BIN_NEW" 2>"$_CHK_BIN_ERR"; then
         printf "error: the check suite failed to compile:\n" >&2
         cat "$_CHK_BIN_ERR" >&2
         rm -f "$_CHK_BIN_NEW" "$_CHK_BIN_ERR"
@@ -2334,6 +2347,39 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.8 (C2-1b) — a slice read `s[i]` is a whole value as a left operand: a constant index armed the
+# constant folder (`return s[0] + 10;` exited 134, `s[1] * 2` SIGSEGV'd), a `*T` / struct index left
+# its step / type. x86 (plain, IR=1, IR=3, DCE=1), aarch64, cx, PE legs; mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_read_left_operand.sh"
+# 6.7.8 (C2) — what a subscript is and what it refuses by name. ST (C2-2a): a stale slice width is
+# no slice — an untyped / closure parameter in a slot an earlier fn's slice held compiled `y[0]`,
+# `y.len` as a slice (and refused `y += 1`); the slice bit 62 decides. x86 / IR=3 / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/pointer_subscript_checked.sh"
+# 6.7.8 (C2-2b) — every classic-for step ends at its `)`: the scalar and subscript arms never looked,
+# so `i += 1 2`, `a[0] += 1 2`, `i += 1 ; junk` built silently and `a = b 2` stored one word of a
+# struct. Junk refused once on every arm; every arm still runs its step on x86 / IR / DCE /
+# aarch64 / cx / PE; fork parity. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/for_step_terminator_checked.sh"
+# 6.7.8 (C2-6a) — slices: `s[i] = v`, `s[i] OP= v` and the for step store through the bounds-checked
+# `_slice_idx_addr` (out of range: exit 134 in every mode, every leg); a slice parameter, return,
+# field, `*[T]`, declaration-zone global, slice of slices and type argument are refused by name, once
+# (they were generic parse errors). x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_position_refused.sh"
+# 6.7.8 (C2-6c) — an [i8] / [i16] / [i32] slice element reads sign-extended (a stored -3 read 253,
+# `s[0] < 0` was false), as a typed array, a `*T` and a field do; `s[i] OP= v` loads it the same way;
+# the unsigned controls zero-extend. x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_signed_read.sh"
+# 6.7.8 (C2-7) — the bounds-checked mode's switch: CYRIUS_BOUNDS (1 / 0 / empty = no rung / other
+# refused by name) and a `#bounds` line honoured ONLY in the entry file's leading block — after code,
+# inside a conditional, in an included or a spliced `[build] modules` file it is refused by name; the
+# environment beats the line; the CYRIUS_BOUNDS predefine; kernel / EFI / shared / object refused
+# under the mode; the five self-build scripts unset it. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/bounds_mode_checked.sh"
+# 6.7.8 — an inherited CYRIUS_POISON never reaches a self-build (the compiler includes
+# lib/alloc.cyr, which reads it; seed-derive went RED under it): seed-derive, release-gate,
+# version-bump and bootstrap unset it; check.sh keeps it for its suite and scrubs only its own
+# self-builds (`_chk_selfbuild`). Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/selfbuild_poison_scrubbed.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.

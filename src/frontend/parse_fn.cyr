@@ -9620,9 +9620,14 @@ fn _mark_ptr_param(S): i64 {
     # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
+    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse_types.cyr), under the same binding.
     var ps = 8;
-    if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
+    var ed = 0;
+    if (PEEKT(S) != 8) {
+        ps = _ptr_step_peek(S, 0 - 1, 1);
+        ed = _ek_at(S, GTI(S));
+    }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_word(ps, ed));
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
@@ -9711,7 +9716,58 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_ptrp != li + 1) { MARK_SMALL_STRUCT(S, li, GLTYPE(S, li)); }
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
+    if (_cur_fn_slp == li + 1) { SLSLICE(S, li, 8 | (8 << 32)); }   # 6.7.8 (C2-6a): see _sl_param_refuse
+    _cur_fn_slp = 0;
     return 0;
+}
+# ⛔ 6.7.8 (C2-6a) — A SLICE PARAMETER IS REFUSED BY NAME (the user's decision, 2026-10-10: slices
+# stay locals; "a slice PARAMETER ... refused BY NAME"). `fn f(s: [u8])` was `expected ')', got
+# identifier 'u8'` (with `s.len` in the body a second error, and pass 1's count stopped at the `[`,
+# so a forward call met an arity error), `s: slice<u8>` "unknown type 'slice'". Token `ti` is the
+# slice's first token: `p: *[T]` is a pointer parameter (its own text); a slice parameter's slot is
+# marked a slice for the body (`_param_record`: `s.len`, `s[i]`, `s[i] = v` report nothing more —
+# the program does not build).
+var _cur_fn_slp = 0;   # the refused slice parameter's slot + 1 (the slot to come), 0 = none
+fn _sl_param_refuse(S, ti): i64 {
+    if (TOKTYP(S, ti - 1) == 8) { return _sl_err_ptr(S, ti); }
+    _cur_fn_slp = GFLC(S) + 1;
+    return _sl_err(S, ti, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
+      " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
+}
+# Pass 1's (quiet): one token and its `<..>`, or a slice's whole `[ .. ]`.
+fn _param_type_step_q(S): i64 {
+    if (PEEKT(S) == 28) {
+        _sl_ann_skip(S);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);
+    SKIP_GENERICS(S);
+    return 0;
+}
+# The parameter loop's "consume type", cursor on the type's token: one step, or a slice's whole
+# `[ .. ]`, refused by name.
+fn _param_type_step(S): i64 {
+    if (PEEKT(S) != 28) {
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    _sl_param_refuse(S, GTI(S));
+    _sl_ann_skip(S);
+    return 0;
+}
+# A return annotation the type-name path does not read (cursor on it): `: *T` (6.6.17) and, refused
+# by name, a slice `[T]` / `slice<T>` (6.7.8, C2-6a: `expected identifier, got '['` / `unknown type
+# 'slice'`). 1 when consumed here.
+fn _ret_ann_alt(S, fi): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err(S, GTI(S), "a slice cannot be a return type (6.7.8: slices are fn-locals)",
+          " - fill a slice the caller passes as &s (slice_set), or return the pointer and the length");
+        _sl_ann_skip(S);
+        return 1;
+    }
+    if (PEEKT(S) != 8) { return 0; }
+    _ret_ptr_annot(S, fi, 0);
+    return 1;
 }
 # v6.3.37 (C1) — why a fn's PARAMETERS keep it off the inline replay: 3 a struct/Str/Result/Option/
 # Tagged parameter (SLTYPE = -sid), 6 a `name: *T` parameter, 0 neither. The replay re-registers a
@@ -10712,6 +10768,11 @@ fn _enum_id_of(S, noff): i64 {
 
 fn _parse_one_type_arg(S): i64 {
     if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); return 0 - 8; }   # 6.7.7 (R3)
+    if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): `g<[u8]>` was "unknown type 'enum' as a type argument"
+        _sl_err(S, GTI(S), "a slice cannot be a type argument (6.7.8: slices are fn-locals)", "");
+        _sl_ann_skip(S);
+        return 0 - 8;
+    }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
@@ -11127,7 +11188,10 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { ERR_EXPECT(S, 2); return n; } } }   # 6.7.7: `(` refused by _mret_elem
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { if (PEEKT(S) != 28) {   # 6.7.7: `(`, 6.7.8: `[`
+                        ERR_EXPECT(S, 2);
+                        return n;
+                    } } } }   # refused by _mret_elem
         _bx_mret_note(S, fi, n, GTI(S));   # 6.7.3: a bool element
         var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
@@ -11154,6 +11218,14 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
 # 6.6.17: and an element takes type arguments (`(Box<i64>, i64)`), resolved as a single return
 # type's are (`_gtype_sid`): it was `expected ')', got '<'`.
 fn _mret_elem(S, fi, quiet): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {   # 6.7.8 (C2-6a): `(i64, [u8])` — refused by name, an i64 slot
+        if (quiet == 0) {
+            _sl_err(S, GTI(S), "a slice cannot be a return type (6.7.8: slices are fn-locals)",
+              " - not as a multi-value element either; return its pointer and its length");
+        }
+        _sl_ann_skip(S);
+        return 0 - 8;
+    }
     if (PEEKT(S) == 10) {   # 6.7.7 (R3): `((i64, i64), i64)` — a nested tuple, refused by name
         if (quiet == 0) { _tup_pos_refuse(S, "a multi-value return element"); }
         else { STI(S, _call_close(S, GTI(S)) + 1); }
@@ -11460,7 +11532,8 @@ fn _tok_calls(t): i64 {
 # 1 = token type `t` runs nothing: a literal (number / char, string, float, `true` / `false`), `.`,
 # `)` `[` `]`, a comparison, `& | ^ ~ % << >> >>>`, `&& || !`, and a closure's bars and the `,`
 # between its parameters (the only depth-0 `,` an argument holds) — never an operator a struct
-# dispatches (`+ - * /`, `_span_may_write`).
+# dispatches (`+ - * /`, `_span_may_write`). A subscript stays pure under the bounds-checked mode
+# (6.7.8): its check reads the index and exits or returns it — it never writes.
 fn _tok_pure(t): i64 {
     if (t == 1 || t == 30 || t == 61 || t == 169 || t == 170) { return 1; }
     if (t == 41 || t == 11 || t == 28 || t == 29 || t == 31) { return 1; }
@@ -11820,8 +11893,8 @@ fn _prescan_params_scan(S, fi): i64 {
                         # 6.7.7: a type token that is not a name (`u128`, the `fn` of `*fn`), taken
                         # as pass 2 takes it — stopping here counted the list short. A tuple type is
                         # stepped whole above (the token after it is the list's own). CHANGELOG [6.7.7]
-                        STI(S, GTI(S) + 1);
-                        SKIP_GENERICS(S);
+                        # 6.7.8 (C2-6a): and a slice's whole `[ .. ]` (pass 2 refuses it by name).
+                        _param_type_step_q(S);
                     }
                 }
                 if (PEEKT(S) == 4) { STI(S, _pl_dflt_end(S, GTI(S))); }   # 6.7.7 (B6): a default (recorded below)
@@ -12579,6 +12652,7 @@ fn _tl_pass1(S, objok): i64 {
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
+    _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
     return 0;
 }
 
@@ -14235,7 +14309,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # >8B). The former hard-error here is gone — the SIMD param branch
                 # below routes PE through struct_mask + a copy-in store rather than
                 # the SysV XMM path. See [[project_v6431_win64_valueform_simd]].
-                STI(S, GTI(S) + 1);  # consume type
+                _param_type_step(S);   # consume type (6.7.8, C2-6a: a slice `[T]` refused, consumed whole)
                 SKIP_GENERICS(S);    # skip <T> if present
             }
             # v5.10.38 — branch: SIMD param (f64v2/f64v4) needs
@@ -14498,8 +14572,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         if (PEEKT(S) == 10) {
             _parse_multiret_sig(S, fi, 0);
             _cur_fn_ret_scalar = MULTIRET_SID;
-        } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 0); }   # 6.6.17: `: *T`
-        else {
+        } elif (_ret_ann_alt(S, fi) == 0) {   # `: *T` (6.6.17) and a slice (6.7.8, refused) are taken there
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var rt_noff = PEEKV(S);
             # v6.3.5 CO-01 — classify the return type via the shared

@@ -18,6 +18,8 @@
 #   3b. package.version is what the build gets: `${file:VERSION}` expanded, `(unset)` when the
 #      file is missing (it printed the raw template while the build had no CYRIUS_PKG_VERSION).
 #   4. `--strict` and `-D X` are `argument` (strict marked held: no effect since 6.3.2).
+#   4b. (6.7.8) build.bounds at each rung: `[build] bounds`, CYRIUS_BOUNDS, `--bounds`; its default
+#      row names the rung below them, the entry file's `#bounds` line (axis 3).
 #   5. it builds nothing and resolves nothing: a project with [deps] stdlib gets no lib/ and no
 #      build/, exit 0.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -32,7 +34,7 @@ fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 chmod +x "$W/cyrius"
 mkdir -p "$W/home/bin"; cp "$CC" "$W/home/bin/cycc"
 # CYRIUS_RESOLVED=1: the consumer fixtures pin older toolchains; without it the CLI re-execs one.
-pc() { d=$1; shift; ( cd "$d" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config "$@" ); }
+pc() { d=$1; shift; ( cd "$d" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES -u CYRIUS_BOUNDS CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config "$@" ); }
 has() { grep -qF -- "$2" "$1" || { fail "$3: no line '$2' in:"; sed 's/^/      /' "$1"; }; }
 # the fixture's own value of [section] key, by awk (the header only; first occurrence)
 fx() { awk -v S="[$2]" -v K="$3" '/^---/ { exit } /^[ \t]*\[/ { s = $0; sub(/[ \t]*#.*/, "", s); in_s = (s == S); next }
@@ -75,6 +77,7 @@ has "$W/a3.out" '  build.entry = (unset)  (default)' "axis 3"
 has "$W/a3.out" '  build.output = (unset)  (default)' "axis 3"
 has "$W/a3.out" '  build.strict = false  (default)  [held: no effect since 6.3.2]' "axis 3"
 has "$W/a3.out" '  build.defines = []  (default)' "axis 3"
+has "$W/a3.out" "  build.bounds = false  (default: off unless the entry file's leading block has a #bounds line)" "axis 3"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: with no manifest every key reports its default"
 
 # ── axis 3b: package.version is what the BUILD gets ────────────────────────────────────
@@ -94,6 +97,18 @@ pc "$W/none" --strict -D ALPHA -DBETA > "$W/a4.out" 2>&1 || true
 has "$W/a4.out" '  build.strict = true  (argument: --strict)  [held: no effect since 6.3.2]' "axis 4"
 has "$W/a4.out" '  build.defines = ["ALPHA", "BETA"]  (argument: -D)' "axis 4"
 [ "$FAIL" = "$x" ] && echo "  ok axis 4: --strict and -D report as arguments"
+
+# ── axis 4b: bounds (6.7.8, C2-7) at each rung ──────────────────────────────────────────
+x=$FAIL
+mkdir -p "$W/bnd"
+printf '[build]\nbounds = true\n' > "$W/bnd/cyrius.cyml"
+pc "$W/bnd" > "$W/a4b.out" 2>&1 || true
+has "$W/a4b.out" '  build.bounds = true  (manifest: [build] bounds)' "axis 4b (manifest)"
+( cd "$W/bnd" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_BOUNDS=0 CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/a4b.out" 2>&1 || true
+has "$W/a4b.out" '  build.bounds = false  (environment: CYRIUS_BOUNDS)' "axis 4b (environment)"
+pc "$W/bnd" --bounds > "$W/a4b.out" 2>&1 || true
+has "$W/a4b.out" '  build.bounds = true  (argument: --bounds)' "axis 4b (argument)"
+[ "$FAIL" = "$x" ] && echo "  ok axis 4b: build.bounds reports the manifest, CYRIUS_BOUNDS and --bounds rungs (and, axis 3, its default)"
 
 # ── axis 5: builds nothing, resolves nothing ────────────────────────────────────────────
 x=$FAIL

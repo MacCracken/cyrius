@@ -4891,6 +4891,11 @@ fn PP_IFDEF_PASS(S): i64 {
                     if (skip_depth == 0) { PP_DEFINE_INCLUDED(S, tmp, dip); }
                     ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 }
+                # 6.7.8 (C2-7): a `#bounds` line in an included file — refused, consumed (_bnd_inc_line).
+                if (handled == 0) {
+                    var bip = _bnd_inc_line(S, tmp, ip, dip, bl);
+                    if (bip >= 0) { ip = bip; store8(out + op, 10); op = op + 1; bol = 1; handled = 1; }
+                }
                 if (handled == 0) { if (ISIFDEF(tmp, dip, bl) == 1) {
                         var _s = 3;
                         if (skip_depth == 0) {
@@ -5264,6 +5269,329 @@ fn PP_SCAN_INCDIR(S): i64 {
     return 0;
 }
 
+# ================================================================
+# 6.7.8 (C2-7) — THE BOUNDS-CHECKED MODE'S SWITCH: `CYRIUS_BOUNDS` and `#bounds`
+# ================================================================
+# The mode (off by default) is decided ONCE per compile, here, before PP_PASS evaluates the
+# first `#ifdef`, so the `CYRIUS_BOUNDS` predefine it sets is visible to every file — the entry
+# and everything it includes — with no `#ifdef`-before-`#bounds` ordering to get wrong. It lives
+# in the shared PREPROCESS, which all seven forks call: no fork carries a copy.
+#   CYRIUS_BOUNDS   `1` on, `0` off, unset or EMPTY no rung; any other value is refused by name
+#                   (cbt's `_cfg_env_bool` rule, so the CLI and the compiler agree).
+#   `#bounds`       a whole-program directive line, honoured ONLY in the entry file's LEADING
+#                   BLOCK: before it, blank lines, `#` comment lines (`#@` markers included) and
+#                   `include "…"` lines; a declaration, a statement, a `#define`, an `#if*` or an
+#                   attribute ends the block. Anywhere else — after code, inside a conditional,
+#                   in an included file, in a `[build] modules` file cbt splices in above the
+#                   `#@srcline` marker — it is refused by name: the line switches the WHOLE
+#                   program, so a library it reaches through an include must not be able to.
+#                   `#bounds <text>` is refused too. A `#bounds` inside a string is data.
+# The environment beats the line (`CYRIUS_BOUNDS=0` turns a `#bounds` program's mode off); cbt
+# resolves argument > environment > manifest and hands the result down as CYRIUS_BOUNDS, so the
+# whole chain is argument > environment > manifest > source. A plain `#define CYRIUS_BOUNDS` is
+# an ordinary define and switches nothing. Every `#bounds` line the scan judges is blanked
+# (its newline kept, so line numbers stay exact). CHANGELOG [6.7.8]
+var _bnd_mode = 0;   # 1 when the mode is on for this compile
+
+# 1 when the bytes at `base + q` are the word `#bounds` (not `#boundsx`).
+fn _bnd_word(base, q, n): i64 {
+    if (q + 7 > n) { return 0; }
+    if (load8(base + q) != 35) { return 0; }        # '#'
+    if (load8(base + q + 1) != 98) { return 0; }    # 'b'
+    if (load8(base + q + 2) != 111) { return 0; }   # 'o'
+    if (load8(base + q + 3) != 117) { return 0; }   # 'u'
+    if (load8(base + q + 4) != 110) { return 0; }   # 'n'
+    if (load8(base + q + 5) != 100) { return 0; }   # 'd'
+    if (load8(base + q + 6) != 115) { return 0; }   # 's'
+    if (q + 7 < n) { if (PP_IDBYTE(load8(base + q + 7)) == 1) { return 0; } }
+    return 1;
+}
+
+# 1 when the `#bounds` at `q` takes no argument: only blanks, then the end of the line or a
+# `#` comment.
+fn _bnd_bare(base, q, n): i64 {
+    var p = q + 7;
+    while (p < n) {
+        var c = load8(base + p);
+        if (c == 10) { return 1; }
+        if (c == 13) { return 1; }
+        if (c == 35) { return 1; }
+        if (PP_DBLANK(c) == 0) { return 0; }
+        p = p + 1;
+    }
+    return 1;
+}
+
+# 1 when the raw input holds the bytes `#bounds` anywhere — the fast path: a program without
+# them costs this one byte scan.
+fn _bnd_any(base, n): i64 {
+    var i = 0;
+    while (i + 7 <= n) {
+        if (load8(base + i) == 35) { if (_bnd_word(base, i, n) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The offset just past the line holding the first `#@srcline` marker PP_PASS would honour (at a
+# line start, outside a string), or 0 when there is none — everything above it is cbt's prepend.
+fn _bnd_entry_start(base, n): i64 {
+    var p = 0;
+    var st = 0;
+    while (p < n) {
+        if (st == 0) {
+            var q = PP_SKIP_WS(base, p, n);
+            if (ISSRCLINE(base, q, n) == 1) { return PP_SKIPLINE(base, q, n); }
+        }
+        var go = 1;
+        while (go == 1) {
+            if (p >= n) { go = 0; }
+            else {
+                var c = load8(base + p);
+                st = PP_LEXST_AT(base, p, n, st);
+                p = p + 1;
+                if (c == 10) { go = 0; }
+            }
+        }
+    }
+    return 0;
+}
+
+# 1 when the line at `p` (first non-blank byte at `q`) keeps the leading block open: a blank
+# line, a `#` comment (not a directive PP_PASS acts on, not an attribute, not a `#derive`), or an
+# `include` at column 0.
+fn _bnd_lead_line(base, p, q, n): i64 {
+    if (q >= n) { return 1; }
+    var c = load8(base + q);
+    if (c == 10) { return 1; }
+    if (c == 13) { return 1; }
+    # an `include` line only ASKS ISINCLUDE (PP_PASS handles the line, with its quote pre-check)
+    if (c != 35) {
+        if (q == p) { return ISINCLUDE(base, p, n); }
+        return 0;
+    }
+    if (PP_DISDIR(base, q, n) == 1) { return 0; }
+    if (LEXATTRWORD(base, q, n) != 0) { return 0; }
+    if (ISDERIVE(base, q, n) == 1) { return 0; }
+    if (ISDERIVE_DE(base, q, n) == 1) { return 0; }
+    if (ISDERIVE_ACC(base, q, n) == 1) { return 0; }
+    return 1;
+}
+
+# The refusal of a `#bounds` line outside the entry's leading block (M1), at `base + pos`.
+fn _bnd_refuse_place(S, base, pos): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR("#bounds must sit in the entry file's leading block (before any declaration, statement, ");
+    PRSTR("#define or #if) - it switches the whole program; or use --bounds / CYRIUS_BOUNDS=1 / [build] bounds\n");
+    _had_error = 1;
+    return 0;
+}
+
+# A refusal at raw offset `pos`, numbered as PP_PASS will number it: below the `#@srcline`
+# marker the user's own lines, above it the `#@incdir` line dropped. PP_PASS has not run yet, so
+# `_pp_srcline_bias` is lent for the one message.
+fn _bnd_err(S, pos, start, msg): i64 {
+    var base = S + _SRCB;
+    var sv = _pp_srcline_bias;
+    _pp_srcline_bias = 0;
+    if (GBL(S) >= 9) {
+        # "#@incdir " at byte 0: PP_PASS drops that line (bias 1)
+        if (load64(base) == 0x726964636E694023) { if (load8(base + 8) == 32) { _pp_srcline_bias = 1; } }
+    }
+    if (start > 0) { if (pos >= start) { _pp_srcline_bias = _pp_lineno_at(S, base, start) - 1; } }
+    if (msg == 0) { _bnd_refuse_place(S, base, pos); }
+    else { _pp_err_at(S, base, pos, msg); }
+    _pp_srcline_bias = sv;
+    return 0;
+}
+
+# Judge the `#bounds` line at `p` (the word at `q`): 1 when it is honoured; otherwise refused by
+# name. Either way its bytes are blanked, so no later pass reads it again.
+fn _bnd_line(S, p, q, start, lead): i64 {
+    var base = S + _SRCB;
+    var n = GBL(S);
+    var r = 0;
+    if (p < start) { _bnd_err(S, q, start, 0); }
+    elif (lead == 0) { _bnd_err(S, q, start, 0); }
+    elif (_bnd_bare(base, q, n) == 0) { _bnd_err(S, q, start, "#bounds takes no argument"); }
+    else { r = 1; }
+    var i = p;
+    while (i < n) {
+        var c = load8(base + i);
+        if (c == 10) { break; }
+        if (c != 13) { store8(base + i, 32); }
+        i = i + 1;
+    }
+    return r;
+}
+
+# Walk the raw entry line by line (string-aware, as PP_PASS reads it); judge each `#bounds`
+# line. 1 when one was honoured.
+fn _bnd_scan(S): i64 {
+    var base = S + _SRCB;
+    var n = GBL(S);
+    var start = _bnd_entry_start(base, n);
+    var p = 0;
+    var st = 0;
+    var lead = 1;
+    var on = 0;
+    while (p < n) {
+        if (st == 0) {
+            var q = PP_SKIP_WS(base, p, n);
+            if (p >= start) { if (lead == 1) { lead = _bnd_lead_line(base, p, q, n); } }
+            if (_bnd_word(base, q, n) == 1) { on = on | _bnd_line(S, p, q, start, lead); }
+        }
+        var go = 1;
+        while (go == 1) {
+            if (p >= n) { go = 0; }
+            else {
+                var c = load8(base + p);
+                st = PP_LEXST_AT(base, p, n, st);
+                p = p + 1;
+                if (c == 10) { go = 0; }
+            }
+        }
+    }
+    return on;
+}
+
+# The environment rung: 1 / 0, or -1 when CYRIUS_BOUNDS is unset or empty (and after refusing
+# any other value by name).
+fn _bnd_env_rung(S): i64 {
+    var e = _read_env("CYRIUS_BOUNDS");
+    if (e == 0) { return 0 - 1; }
+    var c = load8(e);
+    if (c == 0) { return 0 - 1; }
+    if (load8(e + 1) == 0) {
+        if (c == 49) { return 1; }
+        if (c == 48) { return 0; }
+    }
+    _pp_err_head(S, 0, 0);
+    PRSTR("CYRIUS_BOUNDS must be 0 or 1 (or unset): ");
+    PRSTR(e);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0 - 1;
+}
+
+# Decide the mode (see the block comment above) and, when it is on, predefine CYRIUS_BOUNDS.
+fn _bnd_setup(S): i64 {
+    _bnd_mode = 0;
+    var on = 0;
+    if (_bnd_any(S + _SRCB, GBL(S)) == 1) { on = _bnd_scan(S); }
+    var env = _bnd_env_rung(S);
+    if (env >= 0) { on = env; }
+    if (on == 1) {
+        PP_PREDEFINE(S, "CYRIUS_BOUNDS");
+        _bnd_mode = 1;
+    }
+    return 0;
+}
+
+# PP_IFDEF_PASS's arm: a `#bounds` line in INCLUDED content (the entry's own were judged and
+# blanked by _bnd_setup) is refused (M1) at its file:line and consumed. The offset past the
+# line, or -1 when the line at `dip` is not one.
+fn _bnd_inc_line(S, tmp, ip, dip, bl): i64 {
+    if (_bnd_word(tmp, dip, bl) == 0) { return 0 - 1; }
+    _bnd_refuse_place(S, tmp, dip);
+    return PP_SKIPLINE(tmp, ip, bl);
+}
+
+# ⛔ 6.7.8 (C2-8) — THE CHECKER, injected when the mode is on. A checked subscript calls
+# `__cyrius_bounds_chk(i, n, file, line)` (an array's exact N, or -1 for a `*T`: no extent, so only
+# a negative index trips) or `__cyrius_bounds_chks(i, &s, file, line)` (a slice: its length) — plain
+# cyrius appended to the FINISHED unit (after the macro pass and PP_RESOLVE_PKGVER), so every target
+# lowers it through the write / exit paths it already has (x86 and aarch64 ELF, both Mach-O forks
+# through the BSD numbers, PE through WriteFile / ExitProcess, cx through cxvm) and no backend grows
+# an emitter: aarch64 and cx compare signed only, a branch around a trap would need the jump table
+# and `_xdepth` patched by hand, a call needs neither. A violation prints
+# `bounds: index N out of [0, LEN) at <file>:<line>` (`[0, ...)` for a `*T`) on stderr and exits 134,
+# the code the always-on slice check uses. agnos (an x86 ELF with its own numbers: write #1 takes a
+# fourth, non-blocking argument; exit is #0) is read from the flag table: `_TARGET_AGNOS` is not set
+# until after PREPROCESS. The `__cyrius_` names are reserved for the compiler. Not a byte of it
+# exists with the mode off. CHANGELOG [6.7.8]
+# One line of the checker's text (`s`, its newline added) at `op`; the offset after it.
+fn _bnd_ln(out, op, s): i64 {
+    op = op + PP_EMIT_STR(out, op, s);
+    store8(out + op, 10);
+    return op + 1;
+}
+fn _bnd_finish(S): i64 {
+    if (_bnd_mode == 0) { return 0; }
+    var out = S + 0x459D000;
+    var op = GBL(S);
+    if (op + 4096 > 25165824) {
+        PRSTR("error: the bounds-checked mode's checker does not fit the 24MB preprocess buffer\n");
+        syscall(SYS_EXIT, 1);
+    }
+    op = PP_REANCHOR(S, out, op, "<bounds>", 1);
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_chk(i, n, f, l): i64 {");
+    op = _bnd_ln(out, op, "    if (i < 0) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    if (n >= 0) { if (i >= n) { __cyrius_bounds_fail(i, n, f, l); } }");
+    op = _bnd_ln(out, op, "    return i;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_chks(i, s, f, l): i64 {\n    var n = load64(s + 8);");
+    op = _bnd_ln(out, op, "    if (i < 0) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    if (i >= n) { __cyrius_bounds_fail(i, n, f, l); }");
+    op = _bnd_ln(out, op, "    return i;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_put(b, k, s): i64 {\n    var j = 0;\n    while (load8(s + j) != 0) {");
+    op = _bnd_ln(out, op, "        store8(b + k, load8(s + j));\n        k = k + 1;\n        j = j + 1;\n    }");
+    op = _bnd_ln(out, op, "    return k;\n}");
+    # the digits of a NEGATIVE value (`48 - v % 10`), so i64 MIN prints exactly
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_num(b, k, v): i64 {\n    var d[24];\n    var m = 0;");
+    op = _bnd_ln(out, op, "    if (v < 0) { store8(b + k, 45); k = k + 1; } else { v = 0 - v; }");
+    op = _bnd_ln(out, op, "    if (v == 0) { store8(&d, 48); m = 1; }");
+    op = _bnd_ln(out, op, "    while (v != 0) { store8(&d + m, 48 - v % 10); v = v / 10; m = m + 1; }");
+    op = _bnd_ln(out, op, "    while (m > 0) {\n        m = m - 1;\n        store8(b + k, load8(&d + m));");
+    op = _bnd_ln(out, op, "        k = k + 1;\n    }\n    return k;\n}");
+    var ag = 0;
+    if (PP_FLAG_SLOT(S, PP_HASH_CSTR("CYRIUS_TARGET_AGNOS")) >= 0) { ag = 1; }
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_w(p, n): i64 {");
+    if (ag == 1) { op = _bnd_ln(out, op, "    syscall(1, 2, p, n, 0);"); }
+    else { op = _bnd_ln(out, op, "    syscall(1, 2, p, n);"); }
+    op = _bnd_ln(out, op, "    return 0;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_bounds_fail(i, n, f, l): i64 {\n    var b[96];");
+    op = _bnd_ln(out, op, "    var k = __cyrius_bounds_put(&b, 0, \"bounds: index \");");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_num(&b, k, i);");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, k, \" out of [0, \");");
+    op = _bnd_ln(out, op, "    if (n < 0) { k = __cyrius_bounds_put(&b, k, \"...\"); }");
+    op = _bnd_ln(out, op, "    else { k = __cyrius_bounds_num(&b, k, n); }");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, k, \") at \");\n    __cyrius_bounds_w(&b, k);");
+    op = _bnd_ln(out, op, "    var m = 0;\n    while (load8(f + m) != 0) { m = m + 1; }\n    __cyrius_bounds_w(f, m);");
+    op = _bnd_ln(out, op, "    k = __cyrius_bounds_put(&b, 0, \":\");\n    k = __cyrius_bounds_num(&b, k, l);");
+    op = _bnd_ln(out, op, "    store8(&b + k, 10);\n    __cyrius_bounds_w(&b, k + 1);");
+    if (ag == 1) { op = _bnd_ln(out, op, "    syscall(0, 134);"); }
+    else { op = _bnd_ln(out, op, "    syscall(60, 134);"); }
+    op = _bnd_ln(out, op, "    return 0;\n}");
+    SBL(S, op);
+    return 0;
+}
+
+# The mode has no meaning where a violation has no stderr and no exit (a kernel or EFI image),
+# and a `shared;` / `object;` build would define the injected checker in every object: refused
+# by name, after pass 1 has read the source's own `kernel;` / `shared;` / `object;`
+# (CYRIUS_KERNEL=1 — a bare-metal `--target` — and CYRIUS_TARGET_EFI=1 are set before it).
+fn _bnd_target_check(S): i64 {
+    if (_bnd_mode == 0) { return 0; }
+    var km = L64(S + 0x18FCA0);
+    var why = 0;
+    if (km == 1 || _TARGET_EFI_APPLICATION == 1) {
+        why = "a kernel / EFI image (a violation has no stderr and no exit)";
+    } elif (km == 2 || km == 3) {
+        why = "a shared; or object; build (the checker would be defined in every object)";
+    }
+    if (why != 0) {
+        _pp_err_head(S, 0, 0);
+        PRSTR("the bounds-checked mode is not available for ");
+        PRSTR(why);
+        syscall(SYS_WRITE, 2, "\n", 1);
+        # 6.7.8 (C2-8): fatal at once — pass 2 would compile the injected checker for a target
+        # it cannot serve (an EFI image refuses its write's kernel32 import: a second error that
+        # names the compiler's own text).
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
 fn PREPROCESS(S): i64 {
     # v6.5.7: before any include is resolved — READFILE consults _pp_incdir.
     PP_SCAN_INCDIR(S);
@@ -5273,6 +5601,8 @@ fn PREPROCESS(S): i64 {
     # source
     # buffer too) and before anything reads it. See PP_NEUT_FMARK.
     PP_NEUT_PASS(S);
+    # 6.7.8 (C2-7): the bounds-checked mode, before the first `#ifdef` is evaluated.
+    _bnd_setup(S);
     PP_PASS(S);
     # Pass 2: evaluate #ifdef/#define in included content
     PP_IFDEF_PASS(S);
@@ -5280,5 +5610,7 @@ fn PREPROCESS(S): i64 {
     PP_MACRO_PASS(S);
     # 6.7.6: the `#@pkgver` declaration is judged on the FINISHED unit (see PP_RESOLVE_PKGVER).
     SBL(S, PP_RESOLVE_PKGVER(S + 0x459D000, GBL(S)));
+    # 6.7.8 (C2-8): the bounds-checked mode's checker, appended to the finished unit.
+    _bnd_finish(S);
     return 0;
 }

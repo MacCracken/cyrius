@@ -19,6 +19,15 @@
 # would start a new source line in the compiled unit); held / dropped / unknown keys warn by name
 # and the build still succeeds; the consumer manifests that DECLARE defines (ark, sigil —
 # verbatim fixtures) now resolve them.
+#
+# 6.7.8 (C2-7) — `[build] bounds` / CYRIUS_BOUNDS / --bounds, the bounds-checked mode, whose lowest
+# rung is the entry file's `#bounds` line (cycc's own): 9 rung combinations on `cyrius build`, each
+# observed twice — the CYRIUS_BOUNDS the stub was handed and the program's exit code under the real
+# cycc (5 when the CYRIUS_BOUNDS predefine is visible); a manifest `false` beats `#bounds` (it is
+# handed down as CYRIUS_BOUNDS=0); bad values refused by name; the injected entry is FIRST. Then the
+# other verbs that take --bounds — test (a file and a directory), tests, fuzz, run — and
+# `[build] bounds` reaching test / fuzz; `bench --bounds` is an unknown option. Mutation ledger:
+# tests/gates/frontend/bounds_mode_checked.sh (M14, M15, M29).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -32,7 +41,7 @@ chmod +x "$W/cyrius"
 mkdir -p "$W/stub/bin"
 cat > "$W/stub/bin/cycc" <<STUB
 #!/bin/sh
-{ printf 'argv:'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\ndce:%s\n' "\${CYRIUS_DCE-unset}"; } > "$W/stub.log"
+{ printf 'argv:'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\ndce:%s\nbounds:%s\n' "\${CYRIUS_DCE-unset}" "\${CYRIUS_BOUNDS-unset}"; } > "$W/stub.log"
 tr '\\0' '\\n' < /proc/\$\$/environ > "$W/stub.env" 2>/dev/null || true
 exec "$CC" "\$@"
 STUB
@@ -60,12 +69,12 @@ bld() {
     envs=""; while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs="$envs $1"; shift; done; [ "$#" -gt 0 ] && shift
     rm -f "$W/p/build/p" "$W/stub.log"
     RC=0
-    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES $envs CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" build "$@" ) > "$W/out" 2>&1 || RC=$?
+    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES -u CYRIUS_BOUNDS $envs CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" build "$@" ) > "$W/out" 2>&1 || RC=$?
     EXIT=none; [ -x "$W/p/build/p" ] && { EXIT=0; "$W/p/build/p" || EXIT=$?; }
-    ARGV=""; DCE=""
-    if [ -f "$W/stub.log" ]; then ARGV=$(sed -n 's/^argv://p' "$W/stub.log"); DCE=$(sed -n 's/^dce://p' "$W/stub.log"); fi
+    ARGV=""; DCE=""; BND=""
+    if [ -f "$W/stub.log" ]; then ARGV=$(sed -n 's/^argv://p' "$W/stub.log"); DCE=$(sed -n 's/^dce://p' "$W/stub.log"); BND=$(sed -n 's/^bounds://p' "$W/stub.log"); fi
 }
-pcfg() { ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES "$@" CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) 2>&1; }
+pcfg() { ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES -u CYRIUS_BOUNDS "$@" CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) 2>&1; }
 want() {  # want <row> <got> <expected>
     [ "$2" = "$3" ] || { fail "$1: got '$2', expected '$3'"; sed 's/^/      /' "$W/out" | head -4; }
 }
@@ -144,7 +153,7 @@ rb() {  # rb <env assignments...> -- <cli args...> : build with the REAL compile
     RC=0
     ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES -u CYRIUS_TARGET_WIN -u CYRIUS_TARGET_EFI \
         -u CYRIUS_TARGET_AGNOS -u CYRIUS_MACHO -u CYRIUS_MACHO_ARM -u CYRIUS_PIE -u CYRIUS_STRICT_PIN \
-        -u CYRIUS_KERNEL -u CYRIUS_ELF64_KERNEL $envs CYRIUS_HOME="$W/real" CYRIUS_RESOLVED=1 "$W/cyrius" build "$@" ) > "$W/out" 2>&1 || RC=$?
+        -u CYRIUS_KERNEL -u CYRIUS_ELF64_KERNEL -u CYRIUS_BOUNDS $envs CYRIUS_HOME="$W/real" CYRIUS_RESOLVED=1 "$W/cyrius" build "$@" ) > "$W/out" 2>&1 || RC=$?
 }
 magic() { od -An -tx1 -N4 "$W/p/o.bin" 2>/dev/null | tr -d ' \n'; }
 mk ''
@@ -173,6 +182,77 @@ mk ''; bld CYRIUS_PIE=0 -- --pie
 want "the child's first environment entry is the injected CYRIUS_PIE=1" "$(head -1 "$W/stub.env" 2>/dev/null)" CYRIUS_PIE=1
 want "the inherited CYRIUS_PIE=0 is dropped (one CYRIUS_PIE entry)" "$(grep -c '^CYRIUS_PIE=' "$W/stub.env" 2>/dev/null)" 1
 [ "$FAIL" = "$x" ] && echo "  ok injected entries: --win / --pie / --agnos / --strict-pin beat an inherited =0, --win drops CYRIUS_MACHO=1, and --win / --dce / bare metal hold past 8 KiB of environment (the injected entry is FIRST, the inherited same-name one dropped)"
+
+# ── bounds (6.7.8, C2-7): argument > environment > manifest > the entry's #bounds line ─────
+# The mode is observed where it lands: the stub records the CYRIUS_BOUNDS cycc was handed, and the
+# REAL cycc behind it predefines CYRIUS_BOUNDS when the mode is on — the program exits 5 with it, 0
+# without. A manifest `false` is handed down as CYRIUS_BOUNDS=0, so it beats the source's `#bounds`
+# (cycc's lowest rung); an environment-origin value is inherited as it is (the `dce` model).
+x=$FAIL
+printf 'var code = 0;\n#ifdef CYRIUS_BOUNDS\ncode = 5;\n#endif\nsyscall(60, code);\n' > "$W/p/src/nb.cyr"
+printf '#bounds\nvar code = 0;\n#ifdef CYRIUS_BOUNDS\ncode = 5;\n#endif\nsyscall(60, code);\n' > "$W/p/src/hb.cyr"
+mkb() { printf '[package]\nname = "p"\n\n[build]\nentry = "src/%s.cyr"\noutput = "build/p"\n%b' "$1" "$2" > "$W/p/cyrius.cyml"; }
+# brow <row> <entry nb|hb> <manifest line> <want exit> <want child CYRIUS_BOUNDS> <env...> -- <args...>
+brow() {
+    r=$1; e=$2; m=$3; we=$4; wb=$5; shift 5
+    mkb "$e" "$m"; bld "$@"
+    { [ "$RC" = 0 ] && [ "$EXIT" = "$we" ] && [ "$BND" = "$wb" ]; } \
+        || { fail "bounds $r: rc $RC, exit $EXIT (want $we), the compiler got CYRIUS_BOUNDS=$BND (want $wb)"; sed 's/^/      /' "$W/out" | head -3; }
+}
+brow "1 default: off" nb '' 0 unset --
+brow "2 the source's #bounds: on" hb '' 5 unset --
+brow "3 manifest false beats #bounds (handed down as 0)" hb 'bounds = false\n' 0 0 --
+brow "4 manifest true: on" nb 'bounds = true\n' 5 1 --
+brow "5 env 0 beats manifest true (inherited)" nb 'bounds = true\n' 0 0 CYRIUS_BOUNDS=0 --
+brow "6 env 1 beats manifest false (inherited)" hb 'bounds = false\n' 5 1 CYRIUS_BOUNDS=1 --
+brow "7 --bounds beats env 0 and manifest false (the inherited 0 is REPLACED)" nb 'bounds = false\n' 5 1 CYRIUS_BOUNDS=0 -- --bounds
+brow "8 env 0 beats the source's #bounds" hb '' 0 0 CYRIUS_BOUNDS=0 --
+brow "9 an EMPTY CYRIUS_BOUNDS is no rung: manifest true wins (injected over it)" nb 'bounds = true\n' 5 1 CYRIUS_BOUNDS= --
+mkb nb ''; bld CYRIUS_BOUNDS=true --
+{ [ "$RC" -ne 0 ] && grep -q 'CYRIUS_BOUNDS must be 0 or 1 (or unset): true' "$W/out" && [ "$EXIT" = none ]; } || fail "bounds: CYRIUS_BOUNDS=true was not refused by name (rc $RC, built: $EXIT)"
+mkb nb 'bounds = "yes"\n'; bld --
+{ [ "$RC" -ne 0 ] && grep -q '\[build\] bounds must be true or false' "$W/out" && [ "$EXIT" = none ]; } || fail "bounds: a mistyped [build] bounds was not refused by name (rc $RC, built: $EXIT)"
+mkb nb ''; bld CYRIUS_BOUNDS=0 -- --bounds
+want "bounds: the child's first environment entry is the injected CYRIUS_BOUNDS=1" "$(head -1 "$W/stub.env" 2>/dev/null)" CYRIUS_BOUNDS=1
+want "bounds: the inherited CYRIUS_BOUNDS=0 is dropped (one entry)" "$(grep -c '^CYRIUS_BOUNDS=' "$W/stub.env" 2>/dev/null)" 1
+[ "$FAIL" = "$x" ] && echo "  ok bounds (build): 9 rung combinations — default off, #bounds on, manifest false beats it (=0), true on, env 0 / 1 beat the manifest, --bounds beats both, env 0 beats #bounds, empty env is no rung; bad values refused by name; the injected entry is FIRST"
+
+# The other verbs that take --bounds read the same three rungs: test / tests / run / fuzz.
+x=$FAIL
+mkb nb ''
+mkdir -p "$W/p/bt" "$W/p/fuzz"
+printf '#ifdef CYRIUS_BOUNDS\nsyscall(60, 0);\n#endif\nsyscall(60, 1);\n' > "$W/p/bt/on.tcyr"
+cp "$W/p/bt/on.tcyr" "$W/p/fuzz/on.fcyr"
+# vb <cmd...>: run in the fixture project; VRC = its exit status (a test passes silently, rc 0)
+vb() { VRC=0; ( cd "$W/p" && env -u CYRIUS_BOUNDS -u CYRIUS_DEFINES CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$@" ) > "$W/vb.out" 2>&1 || VRC=$?; }
+vb "$W/cyrius" test --bounds bt/on.tcyr
+[ "$VRC" = 0 ] || fail "bounds: cyrius test --bounds did not compile the test in the mode (rc $VRC): $(grep -E 'FAIL|error' "$W/vb.out" | head -2 | tr '\n' ' ')"
+vb "$W/cyrius" test bt/on.tcyr
+{ [ "$VRC" = 1 ] && grep -q 'FAIL: bt/on.tcyr (exit 1)' "$W/vb.out"; } || fail "bounds: cyrius test without --bounds (the control): rc $VRC — the test cannot tell the mode"
+vb "$W/cyrius" tests --bounds bt
+{ [ "$VRC" = 0 ] && grep -qE '1 passed, 0 failed' "$W/vb.out"; } || fail "bounds: cyrius tests --bounds <dir> did not compile in the mode (rc $VRC): $(grep -E 'passed|FAIL|error' "$W/vb.out" | head -1)"
+vb "$W/cyrius" test --bounds bt
+{ [ "$VRC" = 0 ] && grep -qE '1 passed, 0 failed' "$W/vb.out"; } || fail "bounds: cyrius test --bounds <dir> did not compile in the mode (rc $VRC)"
+mkb nb 'bounds = true\n'
+vb "$W/cyrius" test bt/on.tcyr
+[ "$VRC" = 0 ] || fail "bounds: [build] bounds = true did not reach cyrius test (rc $VRC)"
+vb env CYRIUS_BOUNDS=0 "$W/cyrius" test bt/on.tcyr
+[ "$VRC" = 1 ] || fail "bounds: CYRIUS_BOUNDS=0 did not beat [build] bounds = true for cyrius test (rc $VRC)"
+vb "$W/cyrius" fuzz fuzz/on.fcyr
+grep -qE 'on\.fcyr +PASS' "$W/vb.out" || fail "bounds: [build] bounds = true did not reach cyrius fuzz: $(grep 'on.fcyr' "$W/vb.out")"
+mkb nb ''
+vb "$W/cyrius" fuzz --bounds fuzz/on.fcyr
+grep -qE 'on\.fcyr +PASS' "$W/vb.out" || fail "bounds: cyrius fuzz --bounds did not compile in the mode: $(grep 'on.fcyr' "$W/vb.out")"
+vb "$W/cyrius" fuzz fuzz/on.fcyr
+grep -qE 'on\.fcyr +FAIL' "$W/vb.out" || fail "bounds: cyrius fuzz without --bounds (the control) passed"
+RRC=0; ( cd "$W/p" && env -u CYRIUS_BOUNDS CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" run --bounds bt/on.tcyr ) > "$W/vb.out" 2>&1 || RRC=$?
+[ "$RRC" = 0 ] || fail "bounds: cyrius run --bounds: the program exited $RRC (want 0: compiled in the mode)"
+RRC=0; ( cd "$W/p" && env -u CYRIUS_BOUNDS CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" run bt/on.tcyr ) > "$W/vb.out" 2>&1 || RRC=$?
+[ "$RRC" = 1 ] || fail "bounds: cyrius run without --bounds (the control): exit $RRC (want 1)"
+RRC=0; ( cd "$W/p" && env -u CYRIUS_BOUNDS CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$W/cyrius" bench --bounds ) > "$W/vb.out" 2>&1 || RRC=$?
+{ [ "$RRC" -ne 0 ] && grep -q "unknown option '--bounds'" "$W/vb.out"; } || fail "bounds: cyrius bench --bounds was not refused as an unknown option (rc $RRC)"
+rm -rf "$W/p/bt" "$W/p/fuzz"
+[ "$FAIL" = "$x" ] && echo "  ok bounds (verbs): test / tests / fuzz / run take --bounds and [build] bounds (CYRIUS_BOUNDS=0 beats the manifest); bench refuses --bounds"
 
 # ── refusals ────────────────────────────────────────────────────────────────────────────
 x=$FAIL
@@ -209,4 +289,4 @@ done
 [ "$FAIL" = "$x" ] && echo "  ok consumers: ark's and sigil's [build] defines (verbatim) resolve from the manifest"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_precedence (dce / defines at every rung, for build and fuzz; strict held; refusals; held, dropped, unknown keys)"
+echo "PASS: build_config_precedence (dce / defines / bounds at every rung, for build, test, run and fuzz; strict held; refusals; held, dropped, unknown keys)"

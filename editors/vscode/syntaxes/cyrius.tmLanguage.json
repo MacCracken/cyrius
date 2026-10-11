@@ -59,7 +59,7 @@
       }
     },
     "directives": {
-      "match": "#(deprecated|pe_import|skip-lint|must_use|regalloc|endplat|include|assert|define|derive|ifndef|ifplat|endif|ifdef|elif|else)\\b",
+      "match": "#(deprecated|pe_import|skip-lint|must_use|regalloc|endplat|include|assert|bounds|define|derive|ifndef|ifplat|endif|ifdef|elif|else)\\b",
       "name": "keyword.preprocessor.cyrius"
     }
   }

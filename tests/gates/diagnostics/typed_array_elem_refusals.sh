@@ -9,10 +9,12 @@
 # one AND given that integer descriptor, so `g[1]` on a vector global compiled. The fix sizes by
 # element and keeps the subscript integer-only. That leaves three compile-time obligations:
 #
-#   axis 1  a subscript on a NON-integer element is refused, local and global, in both global
-#           zones — including the decl-zone vector global that used to compile. With the
-#           subscript refused, its stride cannot disagree with the new element size (f32 is
-#           now 4 bytes: a stride-8 subscript would be the very overrun this fixes).
+#   axis 1  a subscript on a struct / vector / pointer / enum element is refused, local and
+#           global, in both global zones — including the decl-zone vector global that used to
+#           compile. With the subscript refused, its stride cannot disagree with the element size.
+#   axis 1b 6.7.8 (C2-4a): an f64 / f32 / bool element subscripts — at ITS size: f32 is 4 bytes,
+#           so `a[3]` on `f32[4]` is bytes 12..15 and the next global / local is untouched (a
+#           stride-8 subscript would be the very overrun the element sizing fixed).
 #   axis 2  an element type that names nothing is refused BY NAME: an unknown name (local, both
 #           global zones), a struct declared BELOW a declaration-zone array (it was silently 8
 #           bytes per element), and every bad array of a file is reported, not only the first.
@@ -41,6 +43,10 @@
 #   drop its two call-site descriptor clears        -> loc_i64one + dz_i64one RED, 6 checks
 #                                                     (PARSE_ARRAY / PARSE_GVAR_ARR's `eb != ew`
 #                                                     covers every other prefix-named struct)
+# 6.7.8 (C2-4a, measured 2026-10-10): the R3 tail (" - its element is a struct, pointer, enum, string or
+# vector") dropped from _sub_refuse -> RED dz_i8v16_read loc_struct loc_u8pair (NOTINT); f32 rounding
+# dropped for an element (M4) -> RED axis 1b; the C2-3b compiler -> RED the five axis-1b rows (refused)
+# and the three NOTINT rows (the old text).
 # The 6.6.13-open compiler fails 70 checks here (every axis-2 and axis-3 row, the decl-zone
 # integer-vector subscripts, the prefix-named struct subscripts, and the generic sizes).
 set -u
@@ -80,25 +86,20 @@ runs() {
 }
 
 SUB="cannot subscript 'a'"
-NOTINT="an f64, f32, bool or struct element is not supported"
+NOTINT="its element is a struct, pointer, enum, string or vector"   # 6.7.8 (C2-4a): re-derived
 P3='struct P3 { x; y; z; }\n'
 PT='struct Pt { x; y; }\n'
 
-echo "axis 1 - a subscript on a non-integer element is refused (no stride to disagree with the size):"
+echo "axis 1 - a subscript on a struct, vector, pointer or enum element is refused (no stride to disagree with the size):"
 refused dz_i8v16_read  'var a: i8v16[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' "$SUB" "$NOTINT"
 refused dz_u32v4_write 'var a: u32v4[2];\nfn f(): i64 { a[1] = 5; return 0; }\nsyscall(60, f());\n' "$SUB"
 refused dz_i16v8_read  'var a: i16v8[2];\nfn f(): i64 { return a[0]; }\nsyscall(60, f());\n' "$SUB"
 refused dz_i64v2_read  'var a: i64v2[2];\nfn f(): i64 { return a[0]; }\nsyscall(60, f());\n' "$SUB"
 refused dz_f64v2_read  'var a: f64v2[2];\nfn f(): i64 { return a[0]; }\nsyscall(60, f());\n' "$SUB"
-refused dz_f32_read    'var a: f32[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' "$SUB"
 refused dz_struct_read "${P3}var a: P3[2];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n" "$SUB"
-refused pp_f32_write   'syscall(0, 0, 0, 0);\nvar a: f32[4];\na[1] = 7;\nsyscall(60, 0);\n' "$SUB"
 refused pp_vec_read    'syscall(0, 0, 0, 0);\nvar a: i8v16[2];\nsyscall(60, a[1]);\n' "$SUB"
-refused loc_f64_read   'fn f(): i64 {\n    var a: f64[4];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB" "$NOTINT"
-refused loc_f32_write  'fn f(): i64 {\n    var a: f32[4];\n    a[3] = 1;\n    return 0;\n}\nsyscall(60, f());\n' "$SUB"
 refused loc_struct     "${PT}fn f(): i64 {\n    var a: Pt[2];\n    return a[1];\n}\nsyscall(60, f());\n" "$SUB" "$NOTINT"
 refused loc_ptr        'fn f(): i64 {\n    var a: *i64[4];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
-refused loc_bool       'fn f(): i64 {\n    var a: bool[4];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
 refused loc_vec        'fn f(): i64 {\n    var a: f32v8[2];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
 refused loc_generic    "${PT}struct Box<T> { v: T; n; }\nfn f(): i64 {\n    var a: Box<Pt>[2];\n    return a[1];\n}\nsyscall(60, f());\n" "$SUB"
 # A struct NAMED like a scalar is a struct: the prefix ladders read `u8pair` as a u8 and gave its
@@ -112,6 +113,14 @@ refused loc_u8kind     'enum u8kind { K0 = 0; K1 = 1; }\nfn f(): i64 {\n    var 
 refused dz_u8pair      "${U8P}var a: u8pair[2];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n" "$SUB"
 refused dz_i64one      "${I1}var a: i64one[3];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n" "$SUB"
 refused pp_f64pair     'struct f64pair { x; y; }\nsyscall(0, 0, 0, 0);\nvar a: f64pair[2];\nsyscall(60, a[1]);\n' "$SUB"
+
+echo "axis 1b - an f64 / f32 / bool element subscripts at its own size (6.7.8):"
+# The same five shapes axis 1 refused until 6.7.8, each now run with a canary after the array.
+runs dz_f32_read   'var a: f32[4];\nvar can: i32 = 9;\nfn f(): i64 { a[3] = 1.5; return (load32(&a + 12) >> 24) + can; }\nsyscall(60, f());\n' 72
+runs pp_f32_write  'syscall(0, 0, 0, 0);\nvar a: f32[4];\nvar can: i32 = 5;\na[3] = 2.0;\nsyscall(60, (load32(&a + 12) >> 24) + can);\n' 69
+runs loc_f64_read  'fn f(): i64 {\n    var a: f64[4];\n    a[3] = 0.5;\n    a[3] += 0.25;\n    if (a[3] == 0.75) { return 6; }\n    return 1;\n}\nsyscall(60, f());\n' 6
+runs loc_f32_write 'fn f(): i64 {\n    var x = 3;\n    var a: f32[4];\n    var y = 4;\n    a[3] = 1.0;\n    a[0] = 0.0;\n    return (load32(&a + 12) >> 24) - 0x3F + x + y + load32(&a);\n}\nsyscall(60, f());\n' 7
+runs loc_bool      'fn f(): i64 {\n    var a: bool[4];\n    a[1] = true;\n    a[3] = false;\n    if (a[1]) { return 8 + a[3]; }\n    return 1;\n}\nsyscall(60, f());\n' 8
 
 echo "axis 2 - an element type that names nothing is refused by name:"
 refused dz_forward_struct "var g: P3[2];\nvar s = 1;\n${P3}syscall(60, s);\n" \

@@ -1,0 +1,273 @@
+#bounds
+# bounds_mode_in_range.tcyr — 6.7.8 (C2-8) — THE BOUNDS-CHECKED MODE, IN RANGE: every checked
+# subscript shape at its first and its last element, under `#bounds` (line 1 — the entry file's
+# leading block), on every backend. Nothing here may trip: a check that names the wrong N (the
+# slot's rounded 8 bytes for a `u8[5]`, a generic base's width), checks the SCALED index, loses the
+# index across its call, or checks inside `@unsafe` fails a row here (or exits 134 with its
+# `bounds:` line). The trips themselves — the message, the exit 134, from every base and context —
+# are bounds_mode_violation.tcyr's; the gate (tests/gates/frontend/bounds_mode_checked.sh) runs
+# both on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1, CYRIUS_STACK_ARRAYS=0 — every local
+# array in static storage), aarch64 (qemu), cx (cxvm) and PE (wine).
+#
+# What the mode checks (the user's decision, 2026-10-10): a typed array `a[i]` against its EXACT
+# N; a slice's reads and writes against its length; a `*T` subscript for a NEGATIVE index only (no
+# extent exists for a pointer). Every index here is a run-time value (a constant index provably in
+# range is checked at compile time and emits nothing — the gate's K rows).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+
+var BUF: i64[8];
+var BUF_CAN = 0x5A5A5A5A5A5A5A5A;
+var GA: u8[5];
+var GI: i32[3];
+var GF: f64[2];
+var GP: *i16 = 0;
+var DEF: u8[4];
+
+struct H { n; p: *i32; }
+impl H {
+    fn at(self, i): i64 { return self.p[i]; }
+    fn ptr(self): *i32 { return self.p; }
+}
+var GH = H { 0, 0 };
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+fn canary(what): i64 {
+    assert_eq(BUF_CAN, 0x5A5A5A5A5A5A5A5A, what);
+    return 0;
+}
+
+# ---- A1: local arrays of every integer width, filled and read through a run-time index at 0 ..
+# N-1 — `u8[5]`'s last element is index 4 (its N), not 7 (its slot) ----
+fn arrays_local(): i64 {
+    var a: u8[5];
+    var i = 0;
+    while (i < 5) { a[i] = 10 + i; i = i + 1; }
+    i = 0;
+    var s = 0;
+    while (i < 5) { a[i] += 1; s = s + a[i]; i = i + 1; }
+    assert_eq(s, 65, "u8[5]: a[i] = 10 + i; a[i] += 1 for i in 0..4 (11 + .. + 15)");
+    var last = 4;
+    var first = 0;
+    assert_eq(a[last], 15, "u8[5]: index 4, the last element (N = 5, not the slot's 8)");
+    assert_eq(a[first], 11, "u8[5]: index 0");
+    var b: i64[3];
+    var j = 2;
+    b[j] = 0 - 7;
+    b[first] = 9;
+    assert_eq(b[j] + b[first], 2, "i64[3]: indexes 2 and 0");
+    var c: i16[4];
+    var k = 3;
+    c[k] = 0 - 300;
+    c[k] -= 1;
+    assert_eq(c[k], 0 - 301, "i16[4]: index 3, sign-extended after the check");
+    var d: u32[2];
+    var one = 1;
+    d[one] = 4000000000;
+    assert_eq(d[one], 4000000000, "u32[2]: index 1");
+    var e: i8[1];
+    e[first] = 0 - 1;
+    assert_eq(e[first], 0 - 1, "i8[1]: its only element");
+    return 0;
+}
+
+# ---- A2: global arrays ----
+fn arrays_global(): i64 {
+    var i = 4;
+    GA[i] = 200;
+    GA[i] += 50;
+    assert_eq(GA[i], 250, "global u8[5]: index 4");
+    var z = 0;
+    GA[z] = 1;
+    assert_eq(GA[z], 1, "global u8[5]: index 0");
+    var two = 2;
+    GI[two] = 0 - 5;
+    assert_eq(GI[two], 0 - 5, "global i32[3]: index 2");
+    var one = 1;
+    GF[one] = 2.5;
+    assert(GF[one] * 2.0 == 5.0, "global f64[2]: index 1 is an f64");
+    return 0;
+}
+
+# ---- A3: f64 / f32 / bool arrays ----
+fn arrays_kinds(): i64 {
+    var d: f64[3];
+    var f: f32[2];
+    var b: bool[4];
+    var i = 2;
+    d[i] = 1.25;
+    d[i] *= 4.0;
+    assert(d[i] == 5.0, "f64[3]: index 2, d[i] *= 4.0");
+    var one = 1;
+    f[one] = 1.5;
+    assert_eq(load32(&f + 4), 0x3FC00000, "f32[2]: index 1 holds 1.5f");
+    var three = 3;
+    b[three] = i > 1;
+    var z = 0;
+    b[z] = false;
+    if (b[three]) { if (b[z] == false) { assert_eq(1, 1, "bool[4]: indexes 3 and 0"); } }
+    else { assert_eq(0, 1, "bool[4]: b[3] lost"); }
+    return 0;
+}
+
+# ---- A4: a generic `T[3]` at T = i32 (the instance's N and width) and at T = i64 ----
+fn gen_arr<T>(i, v: T): i64 {
+    var a: T[3];
+    a[i] = v;
+    var z = 0;
+    a[z] = v;
+    return a[i] + a[z];
+}
+fn arrays_generic(): i64 {
+    assert_eq(gen_arr<i32>(2, 0 - 4), 0 - 8, "gen_arr<i32>: T[3] index 2 and 0");
+    assert_eq(gen_arr<i64>(2, 21), 42, "gen_arr<i64>: T[3] index 2 and 0");
+    return 0;
+}
+
+# ---- A5: a captured array (the closure's copy) and a nested closure's capture ----
+fn arrays_captured(): i64 {
+    var a: i32[7];
+    var i = 0;
+    while (i < 7) { a[i] = i * 3; i = i + 1; }
+    var rd = |k| a[k];
+    assert_eq(fncall1(rd, 6), 18, "captured i32[7]: index 6");
+    assert_eq(fncall1(rd, 0), 0, "captured i32[7]: index 0");
+    var outer = |k| {
+        var inner = |m| a[m] + 1;
+        return fncall1(inner, k);
+    };
+    assert_eq(fncall1(outer, 6), 19, "nested capture of i32[7]: index 6");
+    return 0;
+}
+
+# ---- P1: `*T` subscripts on every base — a non-negative index never trips (a pointer has no
+# extent); index 0 and a far one ----
+fn bp(): *i32 { return &BUF; }
+fn gx<T>(p: *T, i): T { return p[i]; }
+fn pointers(q: *u16): i64 {
+    zero();
+    var p: *i32 = &BUF;
+    var z = 0;
+    var far = 15;
+    p[z] = 0 - 1;
+    p[far] = 7;
+    assert_eq(p[z] + p[far], 6, "a *i32 local: indexes 0 and 15");
+    q[far] = 65535;
+    assert_eq(q[far], 65535, "a *u16 parameter: index 15");
+    GP = &BUF;
+    GP[far] = 0 - 2;
+    assert_eq(GP[far], 0 - 2, "a *i16 global: index 15");
+    var c = |k| p[k];
+    assert_eq(fncall1(c, far), 7, "a captured *i32: index 15");
+    var h: H;
+    h.p = &BUF;
+    h.p[z] = 41;
+    assert_eq(h.p[z], 41, "a *i32 field: h.p[0]");
+    assert_eq(h.at(z), 41, "self.p[i] in a method");
+    assert_eq(bp()[far], 7, "a call returning *i32: bp()[15]");
+    assert_eq(h.ptr()[z], 41, "a method returning *i32: h.ptr()[0]");
+    assert_eq(gx<i32>(&BUF, far), 7, "a generic gx<i32>: p[15]");
+    canary("P1: canary after BUF");
+    return 0;
+}
+
+# ---- S1: slices — reads and writes at 0 and len-1: a [u8] (its getter), an [i8] (the signed read,
+# sign-extended after the check) and an [i64] ----
+fn slices(): i64 {
+    var b: u8[4];
+    var s: [u8] = 0;
+    slice_set(&s, &b, 4);
+    var z = 0;
+    var last = 3;
+    s[z] = 250;
+    s[last] = 7;
+    s[last] += 1;
+    assert_eq(s[z] + s[last], 258, "[u8] of 4: indexes 0 and 3");
+    var c: [i8] = 0;
+    slice_set(&c, &b, 4);
+    c[last] = 0 - 3;
+    assert_eq(c[last], 0 - 3, "[i8] of 4: index 3, sign-extended");
+    var w: i64[2];
+    var d: [i64] = 0;
+    slice_set(&d, &w, 2);
+    var one = 1;
+    d[one] = 0 - 99;
+    assert_eq(d[one], 0 - 99, "[i64] of 2: index 1");
+    return 0;
+}
+
+# ---- U: `@unsafe { }` turns the check off inside it — and only inside it (lexically) ----
+fn unsafe_blocks(): i64 {
+    var a: u8[5];
+    var six = 6;
+    @unsafe {
+        a[six] = 1;   # U1: past N = 5, inside the 8-byte slot: memory-safe, unchecked
+    }
+    var r = 0;
+    @unsafe { r = a[six]; }
+    assert_eq(r, 1, "U1: a[6] on u8[5] inside @unsafe does not trip");
+    zero();
+    var p: *u8 = &BUF + 8;
+    var m = 0 - 1;
+    store8(&BUF + 7, 33);
+    @unsafe { r = p[m]; }
+    assert_eq(r, 33, "U2: p[-1] through a pointer into the middle of a buffer, inside @unsafe");
+    return 0;
+}
+
+# ---- I: an `#inline` fn that subscripts, replayed at its call site; a `defer` body ----
+#inline
+fn at3(i): i64 { return GI[i]; }
+fn with_defer(i): i64 {
+    defer { DEF[i] = 9; }
+    DEF[i] = 4;
+    return DEF[i];
+}
+fn replays(): i64 {
+    var two = 2;
+    GI[two] = 17;
+    assert_eq(at3(two), 17, "an #inline fn's GI[i] (i32[3]), replayed at the call site: index 2");
+    var last = 3;
+    assert_eq(with_defer(last), 4, "a defer body's DEF[3] (u8[4]): the return value first");
+    assert_eq(DEF[last], 9, "... then the defer ran its store at index 3");
+    return 0;
+}
+
+# ---- F: the classic-for step stores through the check too ----
+fn steps(): i64 {
+    var a: u8[5];
+    var i = 0;
+    for (i = 0; i < 4; a[i] = i) { i = i + 1; }
+    var last = 4;
+    assert_eq(a[last], 4, "a for step `a[i] = i` up to index 4");
+    return 0;
+}
+
+fn in_range_main(): i64 {
+    alloc_init();
+    var on = 0;
+    #ifdef CYRIUS_BOUNDS
+    on = 1;
+    #endif
+    assert_eq(on, 1, "#bounds on line 1 predefines CYRIUS_BOUNDS");
+    arrays_local();
+    arrays_global();
+    arrays_kinds();
+    arrays_generic();
+    arrays_captured();
+    pointers(&BUF);
+    slices();
+    unsafe_blocks();
+    replays();
+    steps();
+    return assert_summary();
+}
+var r = in_range_main();
+syscall(60, r);
