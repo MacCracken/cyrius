@@ -1,9 +1,20 @@
-# A trait's required signature is never parsed, and an overridden default method's is not either — OPEN
+# A trait's required signature is never parsed, and an overridden default method's is not either — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`: junk in a
+> ✅ **RESOLVED in v6.7.8** (the dyn lane's bite D2; CHANGELOG [6.7.8]) Pass 2 walks every trait member's signature at
+> the trait (`_tr_sig_check`, src/frontend/parse_fn.cyr), emitting nothing, with PARSE_FN_DEF's grammar and words:
+> the parameter list (`name [: Type] [= default]`, `...`), each type (`*`.. then a name [<..>], a tuple, `u128`,
+> `*fn(..)`), the return type, then `;` or the body. The repro reports `expected ')', got '+'` at 9:19 AND
+> `expected ')', got number 1` at 10:19 (the overridden default), and fails. A grammar error is reported under
+> `--syntax-only` too and never holds the panic latch, so every member of a file reports; an unknown type name is
+> `unknown type 'X' for parameter 'n'` / `as a fn return type` (silent under `--syntax-only`, as every type-name
+> refusal is). A default that an impl INHERITS is left to PARSE_FN_DEF, which parses it whole for that impl — so the
+> inherited control reports exactly as before, once. Gate rows TS1–TS9 and V1–V4 in
+> `tests/gates/frontend/traits_checked.sh` (the repro verbatim; mutations M1–M6 in its header).
+
+**Status:** ✅ **RESOLVED in v6.7.8** — see the banner above (filed OPEN: reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`: junk in a
 trait's required signature (`fn sh(self, n + foo bar): i64;`) and in a default method that every impl overrides
-(`fn tw(self, k 1 2): i64 { … }`) compiles clean and runs (rc 0, exit 7).
-**Placement:** 6.7.8 — checked dyn bite D1 (a vtable is checked against parsed signatures) (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x. The default half shipped in 6.7.7: a default in any trait method's list is an error (user, 2026-10-09).
+(`fn tw(self, k 1 2): i64 { … }`) compiles clean and runs (rc 0, exit 7).)
+**Placement:** 6.7.8 — shipped (the checked-dyn lane, bite D2; the issue's "D1" was the sizing's numbering) (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x. The default half shipped in 6.7.7: a default in any trait method's list is an error (user, 2026-10-09).
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `tsig.cyr`).
 **Severity:** Low — invalid source accepted. Nothing that is valid miscompiles, because the unparsed tokens never
 reach codegen.

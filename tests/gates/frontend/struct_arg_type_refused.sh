@@ -11,8 +11,9 @@
 #   a forwarded by-value parameter, a tail call         -> a stack word (56, 184 on one run)
 #   `q + p` with `fn Q_add(a: Q, b: Q)`                 -> 1; `q + mkp()`, `q + p.dup()` -> SIGSEGV
 #   `sl(p)` into `fn sl(s: Str)`                        -> SIGSEGV (139)
-#   `gx(b)`, b: Box<Pt>, `fn gx<T>(b: Box<T>)`          -> 4 where 8 is right (T is not inferred
-#                                                          through Box<T>: the BASE gx ran)
+#   `gx(b)`, b: Box<Pt>, `fn gx<T>(b: Box<T>)`          -> 4 where 8 is right (T was not inferred
+#                                                          through Box<T>: the BASE gx ran; refused
+#                                                          here 6.7.3 - 6.7.7, inferred since 6.7.8: R18b)
 # and every other form below read the wrong struct silently. The RECEIVE path has refused the same
 # mismatch since 6.6.6 (`var q: Q = p;` -> "cannot copy 'p' into a variable of a different
 # struct/vector type"), so the argument path was the gap.
@@ -38,8 +39,8 @@
 # MUTATION LEDGER (6.7.3, each mutant built from the fixed tree with the one change; measured):
 #   base 6.7.3 build/cycc                              -> RED, all 41 refusal rows (compiled clean)
 #   `_sarg_type_err` always returns 0                  -> RED, all 41 refusal rows
-#   the local arm's `_sarg_type_err` dropped           -> RED R1 R3 R4c R10 R11 R12 R14 R15 R16 R17 R18 R18b R19 R20 R26 R33a R34a (re-measured 2026-10-08)
-#                                                         R15 R16 R17 R18 R18b R19 R20 R26 R33a R34a
+#   the local arm's `_sarg_type_err` dropped           -> RED R1 R3 R4c R10 R11 R12 R14 R15 R16 R17 R18 R18b R19 R20 R26 R33a R34a (re-measured 2026-10-08;
+#                                                         R18b is an acceptance row since 6.7.8)
 #   the whole-call check in `_try_push_struct_addr_arg` dropped
 #                                                      -> RED R2 R8
 #   the `_push_struct_expr_arg` check dropped          -> RED R9
@@ -54,6 +55,18 @@
 #   the method-receiver check dropped                  -> RED R32
 #   `_psid_def_note` writes a redefined fn's record    -> RED A9 (a false refusal)
 #   real tree                                          -> GREEN (41 refusal rows, 12 acceptance rows — R4a R4b R13b accept a typed pointer since the user's decision of 2026-10-08)
+#
+# 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse_fn.cyr):
+# R18b `gx(b)` flips from a refusal to an acceptance (exit 8, control `gx<Pt>(b)`). What stays: an
+# `x: T` parameter binds T before the struct carrier does (R18c — the literal's i64, so the
+# Box<Pt> is still refused against the base), a nested `Box<Pair<T>>` binds nothing (R18d), and a
+# POINTER into a by-value `b: Box<T>` binds nothing — the base runs, as it compiled before 6.7.8
+# (R18e; the `*Box<T>` carrier's pointer forms are tests/tcyr/crossos/generic_struct_inference.tcyr
+# G8). The filed repro is R18f, verbatim. Mutations (scratch tree, measured):
+#   `_gs_carrier` records nothing                      -> RED R18b R18f
+#   the struct carrier asked before an `x: T` one      -> RED R18c (compiles)
+#   the by-value carrier binding a pointer (`*Box<Pt>` local) -> RED R18e (8)
+#   real tree                                          -> GREEN (42 refusal rows, 15 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -251,10 +264,29 @@ fn bb<T: Sh>(x: T, y: T): i64 { return y.sh(); }
 fn go(): i64 { ${PQ} return bb(p, q); } syscall(60, go());"
 refuse "R18 gx<Pt>(a Box<Q>)" "cannot pass 'bq2' $MA 'gx\$Pt'" \
     "${T}fn go(): i64 { ${PQ} var bq2: Box<Q> = mk1(q); return gx<Pt>(bq2); } syscall(60, go());"
-# `gx(b)` does not infer T through `b: Box<T>`, so the BASE gx (T = i64, `b: Box`) is called with
-# a Box<Pt>: it read b.n at the base's offset — 4 (b.v.y) where 8 is right. Refused like R19.
-refuse "R18b gx(b), T not inferred: a Box<Pt> into the base" "cannot pass 'b' $MA 'gx'" \
-    "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return gx(b); } syscall(60, go());"
+# `gx(b)` did not infer T through `b: Box<T>`, so the BASE gx (T = i64, `b: Box`) was called with
+# a Box<Pt> and read b.n at the base's offset — 4 (b.v.y) where 8 is right; refused here 6.7.3 -
+# 6.7.7. Since 6.7.8 T is inferred through the struct carrier: `gx$Pt`, as `gx<Pt>(b)`.
+accept "R18b gx(b), T inferred through Box<T> (6.7.8)" \
+    "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return gx(b); } syscall(60, go());" \
+    8 \
+    "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return gx<Pt>(b); } syscall(60, go());"
+# An `x: T` parameter binds T before a struct carrier does (6.7.8: what compiled keeps its meaning):
+# the literal binds i64, the base takes `b: Box`, and the Box<Pt> is refused as before.
+refuse "R18c g4(b, 7): an x: T parameter binds T first" "cannot pass 'b' $MA 'g4'" \
+    "${T}fn g4<T>(b: Box<T>, x: T): i64 { return b.n; } fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return g4(b, 7); } syscall(60, go());"
+# T nested a level deeper binds nothing — the base, refused (write `gn<Pt>(b)`).
+refuse "R18d gn(b), T nested in Box<Pair<T>>" "cannot pass 'b' $MA 'gn'" \
+    "${T}struct Pair<U> { a: U; b: U; } fn gn<T>(b: Box<Pair<T>>): i64 { return b.n; } fn go(): i64 { var b: Box<Pair<Pt>>; b.n = 8; return gn(b); } syscall(60, go());"
+# A POINTER passed to a by-value `b: Box<T>` binds nothing: the base runs (b.n at its offset, 4),
+# exactly as it compiled before 6.7.8 — the struct carrier never changes a program that compiled.
+accept "R18e a *Box<Pt> into b: Box<T> binds nothing (the base, as before)" \
+    "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); var bp: *Box<Pt> = &b; return gx(bp); } syscall(60, go());" \
+    4 \
+    "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); var bp: *Box<Pt> = &b; return gx<i64>(bp); } syscall(60, go());"
+# The filed repro, verbatim (issues/archived/2026-10-08-generic-inference-through-generic-struct-param.md).
+RP="docs/development/issues/repros/2026-10-08-generic-inference-through-generic-struct-param.cyr"
+accept "R18f the filed repro, verbatim" "$(cat "$RP")" 8 "$(sed 's/gx(b)/gx<Pt>(b)/' "$RP")"
 refuse "R19 a Box<Pt> local into b: Box" "cannot pass 'b' $MA 'bs'" \
     "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return bs(b); } syscall(60, go());"
 refuse "R20 a Box local into b: Box<Pt>" "cannot pass 'b' $MA 'bi'" \

@@ -39,8 +39,8 @@ fn two(a, b): i64 { return 1; }
 fn two_str(s: Str): i64 { return 2; }
 
 fn mk(): Str { return str_from("made"); }
-# A struct returned BY VALUE, for the call-result rows. 24 bytes: cx has no 16-byte int-class
-# pair-return ABI, and this file runs there too.
+# A struct returned BY VALUE, for the call-result rows. 24 bytes, the retptr class (chosen when cx
+# had no 16-byte pair return; it has since 6.7.8 — the pair class is tests/gates/codegen/cx_struct_pair.sh's).
 struct Rec { name: Str; n; pad; }
 fn mkh(): Rec {
     var h: Rec;

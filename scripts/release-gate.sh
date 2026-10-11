@@ -120,6 +120,16 @@ if [ "${1:-}" = "--check-verdict" ]; then
 fi
 
 cd "$(dirname "$0")/.." || exit 2
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
+# 6.7.8 — so does the allocator poison mode: the compiler includes lib/alloc.cyr, which reads
+# CYRIUS_POISON (any value, an empty one included), so an inherited one builds a poison-mode compiler
+# that is not build/cycc. Unset, not blanked. Step 3's check.sh runs without it too — the release
+# verdict is the default build's; a poison run of the suite is `CYRIUS_POISON=1 sh scripts/check.sh`,
+# which keeps it for its tests. Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh
+unset CYRIUS_POISON
 QUICK=0
 [ "${1:-}" = "--quick" ] && QUICK=1
 

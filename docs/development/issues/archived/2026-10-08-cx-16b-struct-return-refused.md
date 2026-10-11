@@ -1,11 +1,21 @@
-# cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported") — OPEN
+# cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported") — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b: a cx compiler built from this tree
+> ✅ **RESOLVED in v6.7.8** (the dyn lane's bite D1; CHANGELOG [6.7.8]) cx's `EFLLOAD_STRUCT_INT_PAIR` /
+> `EFLSTORE_STRUCT_INT_PAIR` are the f64v2 pair's shape with **r4** in place of r1 — lo at the named slot, hi at
+> its filler — and r4 because it is cx's rdx peer, the multi-value second slot: a struct fn's `return (a, b);` /
+> `ret2` received as the struct, and a `return p;` read by `var a, b = f();` / `rethi()`, meet with no sync
+> (`ESTRUCT_PAIR_HI_SYNC` stays a no-op on cx, as on x86). The repro exits 42 under cxvm. Seventeen .tcyr files
+> that did not compile for cx now run there in full, and the `#ifndef CYRIUS_TARGET_CX` pair fences of six more are
+> lifted — gates `codegen/cx_struct_pair.sh` (new), `codegen/cx_crossos_rows_run.sh` (R6 in full, R8),
+> `codegen/struct_pair_multi_value_crossing.sh` (a cx leg), and the cx legs of `defer_every_return_path.sh`,
+> `stack_param_homing_matrix.sh`, `simd_return_shapes.sh` (A7) and `deprecated_every_call_path.sh` (the pair fixture).
+
+**Status:** ✅ **RESOLVED in v6.7.8** — see the banner above (filed OPEN: reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b: a cx compiler built from this tree
 (`cat src/main_cx.cyr | build/cycc`) refuses `fn p2(a, b): P2` (16 B) at its `return r;` and at the caller's
 `var q: P2 = p2(20, 22);`; the same source exits 42 on x86_64. A 24 B struct return (retptr) and a
 `return (a, b);` pair both run correctly under `cxvm` (exit 42). `tests/tcyr/crossos/for_step_struct_assign.tcyr`
-fails to compile for cx with four such errors.
-**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+fails to compile for cx with four such errors.)
+**Placement:** 6.7.8 — shipped (the checked-dyn lane, bite D1; placed 2026-10-09).
 **Discovered:** 6.7.5 B8 lane (roadmap commit e95f295d, pre-existing since v5.10.45); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium
 **Affects:** cycc v5.10.45 – 6.7.6, cx target only (`src/main_cx.cyr`)

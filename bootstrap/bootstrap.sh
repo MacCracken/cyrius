@@ -7,6 +7,15 @@
 #   cat program.cyr | ./build/cybs > program && chmod +x program
 
 set -e
+# 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
+# inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
+# sets it itself.
+unset CYRIUS_BOUNDS
+# 6.7.8 — so does the allocator poison mode: the compiler includes lib/alloc.cyr, which reads
+# CYRIUS_POISON (any value, an empty one included). cybs and asm read no environment, so nothing
+# below sees it today; unset here like every self-build script, so a compile added later cannot.
+# Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh
+unset CYRIUS_POISON
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$DIR")"
 

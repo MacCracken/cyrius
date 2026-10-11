@@ -1,0 +1,13 @@
+# 2026-10-10 — a generic whose body reads a generic struct parameter's T-typed field AS A STRUCT
+# (`b.v.y`, `b: Box<T>`) does not compile, called or not: the i64 base is parsed with `v` an i64.
+# Expected: compiles; exits 44 (gy$Pt reads b.v.y = 4, twice).
+# Actual:   error:<source>:8:38: expected ';', got '.'
+# Workaround (compiles, 44): `var t: T = b.v; return t.y;` — a T-typed local makes the base the stub.
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn gy<T>(b: Box<T>): i64 { return b.v.y; }
+fn go(): i64 {
+    var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8;
+    return gy(b) * 10 + gy<Pt>(b);
+}
+syscall(60, go());

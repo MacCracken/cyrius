@@ -677,6 +677,10 @@ fn _tc_callee_divert(S, cfi): i64 {
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
+    # 6.7.8 — a dyn-returning callee from a fn that does not return that dyn: the `jmp` handed our
+    # caller the dyn's DATA word as this fn's value (`return mk();` in an i64, untyped, `*T` or
+    # closure body) — the normal path is where V4 refuses it.
+    if (_dyn_is(S, GFRS(S, cfi)) == 1) { if (_cur_fn_ret_sid != GFRS(S, cfi)) { return 1; } }
     # (v6.3.36's "any address-passed param diverts" is replaced since 6.6.20 by the rules above
     # `_tc_after_args_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
@@ -889,6 +893,9 @@ fn _tcp_drop(S): i64 {
 # here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
 # `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
 fn _mret_land(S): i64 {
+    if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
+        _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
+    }
     if (_cur_fn_ret_pair == 1) { ESTRUCT_PAIR_HI_SYNC(S); }
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
@@ -1562,6 +1569,7 @@ fn _sarg_gv_sid(S, gvi): i64 {
 fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (fi < 0) { return 0; }
     if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
+    if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
@@ -2058,6 +2066,7 @@ fn _ret_struct_big(S): i64 {
 # same two registers (or a refused shape) left for the scalar path, the cursor at the value.
 fn _ret_struct_pair(S): i64 {
     _ret_peel(S);
+    if (_dyn_ret(S) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == _ret_term) {
             var _ip_noff = PEEKV(S);
@@ -2101,6 +2110,7 @@ fn _ret_struct_pair(S): i64 {
         if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
     }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
+    _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one
     return 0;
 }
 # ⛔ 6.6.17 (a1 review) — `return p;` from a fn returning a struct of 8 B or less, where `p: *T` is
@@ -4731,6 +4741,7 @@ fn _sc_pwrap(S, start): i64 {
 # untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_scv_dyn_chk(S, pscale, ext, start) == 1) { return 0; }   # 6.7.8
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field
     var t = _sc_whole(S, start);
@@ -4748,9 +4759,21 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     return 1;
 }
 
+# 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse_expr.cyr): in a fn an
+# untyped one infers the dyn (a copy) and a struct annotation is `_sc_decl_mismatch`'s; any other
+# annotation (`: i64`, `: *Sq`, `: f64`, a vector — `ext` a scalar / float / slice / bool one) is
+# refused. 1 = refused.
+fn _scv_dyn_chk(S, pscale, ext, start): i64 {
+    if (pscale == 0) { if (ext == 0) { return 0; } }
+    if (pscale < 0) { if (pscale > 0 - 2048) { return 0; } }
+    return _dyn_dst_chk(S, start, 0);
+}
+
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
-# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
+# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word — 6.7.8: never a
+# dyn's, which is refused whatever the annotation (a dyn global's own is `_dyn_var`'s).
 fn _sc_global_receive(S, pscale, start): i64 {
+    if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
@@ -5199,6 +5222,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     if (_cur_fn_ptrp == li + 1) { return 0; }
     var lt = GLTYPE(S, li);
     if (_agc_plain_big(S, lt) == 0) { return 0; }
+    if (_dyn_is(S, 0 - lt) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -5232,6 +5256,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
 # until a Future can carry a struct. CHANGELOG [6.6.6]
 fn _refuse_async_struct_return(S, fnoff, fi): i64 {
     if (_ret_agg_class(S, fi) == 0) { return 0; }
+    if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -6096,6 +6121,7 @@ var _tr_tab = 0;    # per trait (4 words): name, first method, method count, `tr
 var _tr_n = 0;
 var _trm_tab = 0;   # per trait method (4 words): name, parameter count, default `fn` token + 1 (0 = required), trait
 var _trm_n = 0;
+var _trm_ft = 0;    # per trait method: its `fn` token (6.7.8; the trait-object call's lazy prototypes read it)
 var _ti_tab = 0;    # per impl (8 words): trait name (0 = inherent), type name, first method, method count, `impl` token, `T_Trait` prefix (0 = not minted), trait index (-1 = unknown)
 var _ti_n = 0;
 var _tim_tab = 0;   # per impl method (3 words): name, `fn` token, parameter count
@@ -6108,6 +6134,7 @@ fn _tr_alloc(S): i64 {
     if (_tr_tab != 0) { return 0; }
     _tr_tab = alloc(1024 * 32);
     _trm_tab = alloc(8192 * 32);
+    _trm_ft = alloc(8192 * 8);
     _ti_tab = alloc(4096 * 64);
     _tim_tab = alloc(32768 * 24);
     return 0;
@@ -6252,6 +6279,7 @@ fn _tr_scan_tm(S, tx, p, end): i64 {
     S64(_trm_tab + _trm_n * 32 + 8, ar);
     S64(_trm_tab + _trm_n * 32 + 16, dflt);
     S64(_trm_tab + _trm_n * 32 + 24, tx);
+    S64(_trm_ft + _trm_n * 8, p);
     _trm_n = _trm_n + 1;
     return nx;
 }
@@ -6373,7 +6401,9 @@ fn _tr_prefix(S, ii, m): i64 {
     return pf;
 }
 # Intern `a_b` in the name pool (NPOS advances); returns its offset.
-fn _tr_join(S, a, b): i64 {
+fn _tr_join(S, a, b): i64 { return _tr_joinc(S, a, b, 95); }
+# ... `a`, the byte `c`, `b` (6.7.8: a trait-object call's prototype is `dyn Show.show`, `c` = `.`).
+fn _tr_joinc(S, a, b, c): i64 {
     var la = 0; while (load8(S + 0xEC00000 + a + la) != 0) { la = la + 1; }
     var lb = 0; while (load8(S + 0xEC00000 + b + lb) != 0) { lb = lb + 1; }
     NPOS_GUARD(S, la + 1 + lb + 1);
@@ -6381,7 +6411,7 @@ fn _tr_join(S, a, b): i64 {
     var w = at;
     var i = 0;
     while (i < la) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + a + i)); w = w + 1; i = i + 1; }
-    store8(S + 0xEC00000 + w, 95);
+    store8(S + 0xEC00000 + w, c);
     w = w + 1;
     i = 0;
     while (i < lb) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + b + i)); w = w + 1; i = i + 1; }
@@ -6628,6 +6658,7 @@ fn _tl_trait2(S): i64 {
             STI(S, end);
             return 0;
         }
+        var p0 = p;
         var op = _tr_paren(S, p);
         if (op < 0) { STI(S, p + 1); ERR_EXPECT(S, 2); STI(S, end); return 0; }
         _tr_arity(S, op);
@@ -6646,8 +6677,148 @@ fn _tl_trait2(S): i64 {
             STI(S, end);
             return 0;
         }
+        _tr_sig_check(S, tx, p0, op, q);   # 6.7.8: the signature itself
     }
     STI(S, end);
+    return 0;
+}
+
+# ⛔ 6.7.8 — A TRAIT MEMBER'S SIGNATURE IS PARSED. The pre-scan reads a member's name and counts its
+# commas (the impl's arity check), and until 6.7.8 nothing else read it: junk in a required
+# signature (`fn sh(self, n + foo bar): i64;`), an unknown type name, or junk in a default that every
+# impl overrides compiled, unread. Pass 2 walks each member's signature here, at the trait, emitting
+# nothing, with PARSE_FN_DEF's grammar and its words: `( [param {, param}] ) [: Ret]` and then the
+# `;` or the body; a param is `name [: Type] [= default]` or `...` (last); a Type is `*`.. then a
+# name [<..>], a tuple `( Type, .. )`, `u128`, or `*fn( Type, .. ) [: Type]`. A grammar error is
+# reported even under `--syntax-only` (lint asks exactly that) and never holds the panic latch, so
+# every member of a file reports; an unknown name is `_tn_refuse`'s (silent under `--syntax-only`).
+# One report per member. A default that some impl INHERITS is skipped: PARSE_FN_DEF parses that one
+# whole for the impl (`_tr_defaults`), so its signature is checked there, and reported once.
+# CHANGELOG [6.7.8]
+var _trs_bad = 0;   # the member being walked has reported (or stopped)
+# Member `fn` token `p` of trait `tx`: its `(` is token `op`, its `;` / body `{` token `q`.
+fn _tr_sig_check(S, tx, p, op, q): i64 {
+    if (TOKTYP(S, q) == 13) { if (_tr_dflt_inh(S, tx, TOKVAL(S, p + 1)) == 1) { return 0; } }
+    _trs_bad = 0;
+    var i = _trs_params(S, op + 1, q);
+    if (_trs_bad == 0) {
+        if (TOKTYP(S, i) == 49) {
+            if (TOKTYP(S, i + 1) == 10) { i = _trs_type(S, i + 1, q, " in a multi-value return type", 0 - 1); }
+            else { i = _trs_type(S, i + 1, q, " as a fn return type", 0 - 1); }
+        }
+    }
+    if (_trs_bad == 0) { if (i != q) { _trs_end(S, i); } }
+    return 0;
+}
+# 1 when an impl of trait `tx` does not define `m` — it inherits the default.
+fn _tr_dflt_inh(S, tx, m): i64 {
+    if (tx < 0) { return 0; }
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64 + 48) == tx) { if (_tim_of(S, i, m) < 0) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The parameter list from token `i` (just past its `(`): the token after its `)`.
+fn _trs_params(S, i, q): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    while (_trs_bad == 0) {
+        if (TOKTYP(S, i) == 112) { i = i + 1; }   # `...`: the last
+        else {
+            if (TOKTYP(S, i) != 2) { return _trs_err(S, i, 2); }
+            var pn = TOKVAL(S, i);
+            i = i + 1;
+            if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, " for parameter ", pn); }
+            if (_trs_bad == 1) { return i; }
+            if (TOKTYP(S, i) == 4) {   # 6.7.7 (B6): refused in pass 1 (`_pd_trait_refuse`); stepped over
+                i = _pl_dflt_end(S, i);
+                if (i > q) { i = q; }
+            }
+            if (TOKTYP(S, i) == 31) {
+                i = i + 1;
+                continue;
+            }
+        }
+        if (TOKTYP(S, i) != 11) { return _trs_err(S, i, 11); }
+        return i + 1;
+    }
+    return i;
+}
+# A type from token `i`; the token after it. `tail` / `nm` name the site in an unknown-type refusal.
+fn _trs_type(S, i, q, tail, nm): i64 {
+    var st = 0;
+    while (TOKTYP(S, i) == 8) {
+        i = i + 1;
+        st = 1;
+    }
+    var t = TOKTYP(S, i);
+    if (t == 105) { return i + 1; }   # u128
+    if (t == 10) { return _trs_list(S, i + 1, q, tail, nm); }   # a tuple
+    if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
+            if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
+            i = _trs_list(S, i + 2, q, tail, nm);
+            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, tail, nm); } }
+            return i;
+        } }
+    if (t != 2) { return _trs_err(S, i, 2); }
+    _trs_name(S, i, tail, nm);
+    i = i + 1;
+    if (TOKTYP(S, i) != 19) { return i; }
+    var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
+    while (i < q) {
+        t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        i = i + 1;
+        if (d <= 0) { return i; }
+    }
+    return _trs_err(S, i, 20);
+}
+# The types of a `( .. )` from token `i` (just past its `(`), comma-separated: the token after `)`.
+fn _trs_list(S, i, q, tail, nm): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    while (_trs_bad == 0) {
+        i = _trs_type(S, i, q, tail, nm);
+        if (_trs_bad == 1) { return i; }
+        if (TOKTYP(S, i) != 31) {
+            if (TOKTYP(S, i) != 11) { return _trs_err(S, i, 11); }
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+# A type name at token `i`: a type in scope (the member's own `<U>` included), or, for a parameter,
+# a by-name handle (`s: Str` with no lib/str.cyr — `_tn_param_check`'s rule). Else refused by name.
+fn _trs_name(S, i, tail, nm): i64 {
+    if (_tn_resolve_at(S, i) != 0) { return 0; }
+    if (nm >= 0) { if (_classify_param_type(S, TOKVAL(S, i)) != 0) { return 0; } }
+    _tn_refuse(S, i, tail, nm);
+    if (_syntax_only == 0) { _trs_bad = 1; }
+    return 0;
+}
+# A grammar error at token `ti` (ERR_EXPECT's words), the latch it set cleared; returns `ti`.
+fn _trs_err(S, ti, et): i64 {
+    _trs_bad = 1;
+    if (_panic == 1) { return ti; }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_EXPECT(S, et);
+    _panic = 0;
+    STI(S, sv);
+    return ti;
+}
+# A token between the signature and its `;` / body.
+fn _trs_end(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, "a trait method declaration ends with ';' (required) or a body (a default)", 73);
+    _panic = 0;
+    STI(S, sv);
     return 0;
 }
 # 1 when trait `tx` declares `m` more than once.
@@ -7085,8 +7256,11 @@ fn _bs_callee(S, bsi, sid): i64 {
     return _tr_findfn_join(S, _tr_prefix(S, ii, m), m);
 }
 # The lookahead sites' method lookup (`x.m(` with `x`'s struct `sid`, the method name at token `mti`):
-# a bounded site's own callee, else `Type_m`. One compare when the program has no bound.
+# a bounded site's own callee, else `Type_m`. One compare when the program has no bound. 6.7.8 (D6): on
+# a dyn, the member's prototype (`_dyn_mfn`) — so the lookaheads type a call through a dyn as its trait
+# declares it.
 fn _meth_fn_at(S, sid, mnoff, mti): i64 {
+    if (_dyn_is(S, sid) == 1) { return _dyn_mfn(S, sid, mnoff); }
     if (_bs_n > 0) {
         var b = _bs_find(S, mti);
         if (b >= 0) {
@@ -9620,9 +9794,14 @@ fn _mark_ptr_param(S): i64 {
     # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
+    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse_types.cyr), under the same binding.
     var ps = 8;
-    if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
+    var ed = 0;
+    if (PEEKT(S) != 8) {
+        ps = _ptr_step_peek(S, 0 - 1, 1);
+        ed = _ek_at(S, GTI(S));
+    }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_word(ps, ed));
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
@@ -9711,7 +9890,59 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_ptrp != li + 1) { MARK_SMALL_STRUCT(S, li, GLTYPE(S, li)); }
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
+    if (_cur_fn_slp == li + 1) { SLSLICE(S, li, 8 | (8 << 32)); }   # 6.7.8 (C2-6a): see _sl_param_refuse
+    _cur_fn_slp = 0;
+    _dsc_param_slot(S, li);   # 6.7.8 (D5): last
     return 0;
+}
+# ⛔ 6.7.8 (C2-6a) — A SLICE PARAMETER IS REFUSED BY NAME (the user's decision, 2026-10-10: slices
+# stay locals; "a slice PARAMETER ... refused BY NAME"). `fn f(s: [u8])` was `expected ')', got
+# identifier 'u8'` (with `s.len` in the body a second error, and pass 1's count stopped at the `[`,
+# so a forward call met an arity error), `s: slice<u8>` "unknown type 'slice'". Token `ti` is the
+# slice's first token: `p: *[T]` is a pointer parameter (its own text); a slice parameter's slot is
+# marked a slice for the body (`_param_record`: `s.len`, `s[i]`, `s[i] = v` report nothing more —
+# the program does not build).
+var _cur_fn_slp = 0;   # the refused slice parameter's slot + 1 (the slot to come), 0 = none
+fn _sl_param_refuse(S, ti): i64 {
+    if (TOKTYP(S, ti - 1) == 8) { return _sl_err_ptr(S, ti); }
+    _cur_fn_slp = GFLC(S) + 1;
+    return _sl_err(S, ti, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
+      " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
+}
+# Pass 1's (quiet): one token and its `<..>`, or a slice's whole `[ .. ]`.
+fn _param_type_step_q(S): i64 {
+    if (PEEKT(S) == 28) {
+        _sl_ann_skip(S);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);
+    SKIP_GENERICS(S);
+    return 0;
+}
+# The parameter loop's "consume type", cursor on the type's token: one step, or a slice's whole
+# `[ .. ]`, refused by name.
+fn _param_type_step(S): i64 {
+    if (PEEKT(S) != 28) {
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    _sl_param_refuse(S, GTI(S));
+    _sl_ann_skip(S);
+    return 0;
+}
+# A return annotation the type-name path does not read (cursor on it): `: *T` (6.6.17) and, refused
+# by name, a slice `[T]` / `slice<T>` (6.7.8, C2-6a: `expected identifier, got '['` / `unknown type
+# 'slice'`). 1 when consumed here.
+fn _ret_ann_alt(S, fi): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err(S, GTI(S), "a slice cannot be a return type (6.7.8: slices are fn-locals)",
+          " - fill a slice the caller passes as &s (slice_set), or return the pointer and the length");
+        _sl_ann_skip(S);
+        return 1;
+    }
+    if (PEEKT(S) != 8) { return 0; }
+    _ret_ptr_annot(S, fi, 0);
+    return 1;
 }
 # v6.3.37 (C1) — why a fn's PARAMETERS keep it off the inline replay: 3 a struct/Str/Result/Option/
 # Tagged parameter (SLTYPE = -sid), 6 a `name: *T` parameter, 0 neither. The replay re-registers a
@@ -9891,6 +10122,8 @@ fn _body_has_defer(S): i64 {
 var _gsn = 0;           # the T-typed names of the fn being scanned (params, then `var x: T`)
 var _gsn_n = 0;
 var _gs_at = 0;         # _gs_params: the token just past the parameter list
+var _gs_open = 0;       # _gs_params: its `(` (a struct carrier records G's name as an offset from it)
+var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64
 var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
 var _gm_closed = 0 - 1;
 
@@ -9912,6 +10145,7 @@ fn _gsn_has(noff): i64 {
 # 1-based index of the first parameter carrying each type parameter, packed as GFGM bits 8-23.
 fn _gs_params(S, fi, open): i64 {
     _gsn_n = 0;
+    _gs_open = open;
     var i = open + 1;
     var n = GTCNT(S);
     var pk = 0;
@@ -9953,6 +10187,57 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         _gsn_add(TOKVAL(S, i));
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
+    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk, ti - i - 2); }   # 6.7.8: `G<..T..>`
+    return pk;
+}
+# ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
+# `gx(b)` with `b: Box<Pt>` inferred i64 and called the base (`b: Box`) — refused as a struct
+# mismatch since 6.7.3; and through `*Box<T>`, `gx(&b)` compiled and read `b.n` at the base's
+# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name,
+# `ptr` 1 behind the `*`), T a WHOLE type argument at depth 1, now carries T through G's slot.
+# Per type parameter w, a 20-bit field of GFGM at bit 24 + 20w (bits 0-23 keep their meaning):
+#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 the `*` · bits 10-19 G's name
+#   token as an offset from the list's `(` — G is looked up when a call infers, so a struct
+#   declared below the fn is found.
+# The first carrying parameter wins, as for a direct carrier; a direct carrier wins over this one
+# (`_gen_infer_tp`). `Box<Pair<T>>` (T nested) records nothing — its refusal stands.
+# CHANGELOG [6.7.8]
+fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
+    var off = ti - _gs_open;
+    if (off > 1023) { return pk; }
+    var tp = GFTP(S, fi);
+    var j = ti + 2;
+    var slot = 0;
+    var d = 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return pk; }
+        if (d == 1) { if (slot < 2) { if (_gs_targ_whole(S, j) == 1) {
+                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (ptr << 9) | (off << 10));
+                } } }
+        if (t == 31) { if (d == 1) { slot = slot + 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return pk; }
+        j = j + 1;
+    }
+    return pk;
+}
+# 1 = the token at j is a whole type argument: a name between `<` / `,` and `,` / a closing `>`.
+fn _gs_targ_whole(S, j): i64 {
+    if (TOKTYP(S, j) != 2) { return 0; }
+    var pt = TOKTYP(S, j - 1);
+    if (pt != 19 && pt != 31) { return 0; }
+    var nt = TOKTYP(S, j + 1);
+    if (nt == 31 || nt == 20 || nt == 39 || nt == 152) { return 1; }
+    return 0;
+}
+fn _gs_sc_rec(pk, tn, tp, f): i64 {
+    if (tn == (tp & 0xFFFFFFFF) - 1) { if (((pk >> 24) & 255) == 0) { pk = pk | (f << 24); } }
+    if (tn == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (((pk >> 44) & 255) == 0) { pk = pk | (f << 44); } }
     return pk;
 }
 # From token i (past the parameter list) to the token after the body's `{`, or -1 (no body).
@@ -10154,7 +10439,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var m = GFGM(S, fi);
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
-    if (k == 0) { return 0 - 8; }
+    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF); }   # 6.7.8
     var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
@@ -10164,6 +10449,172 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     STI(S, sv);
     if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
     return c;
+}
+# ⛔ 6.7.8 — T through its STRUCT CARRIER (`_gs_carrier`; T has no direct one). The WHOLE
+# argument in the carrying position must be an instance of the parameter's G (`_gsc_arg`), and T
+# is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with `b: Box<Pt>` binds Pt
+# and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64 — today's base, and
+# its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the call instantiates
+# `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout). CHANGELOG [6.7.8]
+fn _gen_infer_sc(S, fi, open, f): i64 {
+    var k = f & 255;
+    if (k == 0) { return 0 - 8; }
+    var a = _call_arg_for(S, fi, open, k - 1);
+    if (a < 0) { return 0 - 8; }
+    var c = _gsc_arg(S, a, (f >> 9) & 1);
+    var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
+    if (r == 0) { return 0 - 8; }
+    if (r < 0) { if (r != 0 - 8) { _gi_sc = 1; } }
+    return r;
+}
+# 1 = the inference just run bound a struct carrier's T to a scalar other than i64, and fi has a
+# scalar instance (a stub generic keeps its refusal, as `gs<i32>(b)` does): the call instantiates.
+fn _gen_sc_inst(S, fi): i64 {
+    if (_gi_sc == 0) { return 0; }
+    if (_gen_stub(S, fi) != 0) { return 0; }
+    return 1;
+}
+# The generic struct G a struct carrier names: its name token is `off` past fi's `(`. 0 when it is
+# not a generic struct.
+fn _gsc_g(S, fi, off): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o + off) != 2) { return 0; }
+    var g = FINDSTRUCT(S, TOKVAL(S, o + off));
+    if (g <= 0) { return 0; }
+    if (GSTP(S, g - 1) == 0) { return 0; }
+    return g;
+}
+# The struct a struct carrier's WHOLE argument at token a holds or points at, 0 when none (the
+# call then infers i64). ptr 0 (`b: G<T>`): a G<X> VALUE — a name, a struct global, a call
+# returning it; never a pointer (`&b`, a `*G<X>` name), which binds nothing and runs the base as
+# it compiles today. ptr 1 (`b: *G<T>`): what it POINTS AT — `&b` of an inline struct or a by-value
+# parameter, a `*G<X>` name or a `*G<X>`-returning call, or a G<X> value, whose address the call
+# passes (6.6.20). CHANGELOG [6.7.8]
+fn _gsc_arg(S, a, ptr): i64 {
+    var t = TOKTYP(S, a);
+    if (t == 27) {
+        if (ptr == 0) { return 0; }
+        if (_gsc_name_end(S, a + 1) == 0) { return 0; }
+        return _gsc_addr_of(S, TOKVAL(S, a + 1));
+    }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a, ptr); }
+    if (ptr == 1) { if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); } }
+    if (_gsc_name_end(S, a) == 0) { return 0; }
+    return _gsc_name(S, TOKVAL(S, a), ptr);
+}
+# A `*G<T>` carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
+# what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
+# or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
+# i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
+# field keeps the base's own refusal). CHANGELOG [6.7.8]
+fn _gsc_chain(S, a): i64 {
+    var i = a + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { return 0; }
+        i = i + 2;
+    }
+    var nt = TOKTYP(S, i);
+    if (nt != 31 && nt != 11) { return 0; }
+    var sid = _dyn_base_sid(S, TOKVAL(S, a));
+    var k = a + 2;
+    while (k < i) {
+        if (sid <= 0) { return 0; }
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
+        if (fi < 0) { return 0; }
+        var ps = _fld_ptr_sid(S, sid - 1, fi);
+        if (k + 1 == i) {
+            if (ps > 0) { return ps; }
+            return 0;
+        }
+        if (ps > 0) { sid = ps; }
+        else { sid = GETFTYPE(S, sid - 1, fi); }
+        k = k + 2;
+    }
+    return 0;
+}
+fn _gsc_name_end(S, a): i64 {
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 31 || nt == 11) { return 1; }
+    return 0;
+}
+fn _gsc_call(S, a, ptr): i64 {
+    if (_call_is_whole_arg(S, a) == 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (ptr == 1) { if (_fn_rpsid != 0) {
+            var ps = L64(_fn_rpsid + fi * 8);
+            if (ps > 0) { return ps; }
+        } }
+    var r = GFRS(S, fi);
+    if (r > 0) { return r; }
+    return 0;
+}
+fn _gsc_name(S, noff, ptr): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return 0; }
+        if (lt <= 0 - 2048) { return 0; }
+        if (GLPTRP(S, li) == 1) { if (ptr == 0) { return 0; } }
+        return 0 - lt;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (ptr == 1) {
+        var ps = _gv_ptr_sid(S, vi);
+        if (ps > 0) { return ps; }
+    }
+    if (GVPM(S, vi) == 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { return gt; }
+    return 0;
+}
+# `&name` (a `*G<T>` carrier only): an inline struct local, a by-value struct parameter (whose `&`
+# is the caller's struct, 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode
+# handle is the slot's address — a `**` — and binds nothing.
+fn _gsc_addr_of(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 1) { return 0; }
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return 0; }
+        if (lt <= 0 - 2048) { return 0; }
+        if (GLAGG(S, li) == 1) { return 0 - lt; }
+        if (_local_is_sptr_param(S, li) == 1) { return 0 - lt; }
+        return 0;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVPM(S, vi) != 2) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { return gt; }
+    return 0;
+}
+# Per generic struct INSTANCE (1-based sid): its base's sid and its two type arguments, recorded
+# when `_instantiate_generic_struct` mints it. 1024 entries: REGSTRUCT's own cap. CHANGELOG [6.7.8]
+var _sinst = 0;
+fn _sinst_note(S, inst, base, c0, c1): i64 {
+    if (inst <= 0) { return 0; }
+    if (inst > 1024) { return 0; }
+    if (_sinst == 0) { _sinst = alloc(1024 * 24); }
+    var e = _sinst + (inst - 1) * 24;
+    S64(e, base);
+    S64(e + 8, c0);
+    S64(e + 16, c1);
+    return 0;
+}
+# The type argument in `slot` of struct c when c is an instance of the generic struct g, else 0.
+fn _sinst_conc(S, c, g, slot): i64 {
+    if (c <= 0) { return 0; }
+    if (c > 1024) { return 0; }
+    if (g <= 0) { return 0; }
+    if (_sinst == 0) { return 0; }
+    var e = _sinst + (c - 1) * 24;
+    if (L64(e) != g) { return 0; }
+    return L64(e + 8 + slot * 8);
 }
 # ⛔ 6.7.7 (B4, R4) — A TUPLE NEVER BINDS A TYPE PARAMETER. `first(t)` with `t: (i64, i64)` inferred
 # T = the tuple and minted `first$(i64, i64)` — a generic over a tuple, which the decision leaves open
@@ -10208,9 +10659,11 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (GFTP(S, fi) == 0) { return fi; }
     if (ex == 0) {
         var open = GTI(S) - 1;
+        _gi_sc = 0;
         var c0 = _gen_infer_tp(S, fi, open, 0);
         var c1 = _gen_infer_tp(S, fi, open, 1);
         if (c0 > 0 || c1 > 0) { return _gen_call_struct(S, fi, noff, c0, c1); }
+        if (_gen_sc_inst(S, fi) == 1) { return _gen_call_struct(S, fi, noff, c0, c1); }   # 6.7.8: `Box<i32>`
         _gh_inf0 = c0;
         _gh_inf1 = c1;
     }
@@ -10263,9 +10716,10 @@ fn _gen_resolve_call(S, ti): i64 {
             if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return fi; }
         }
     } else {
+        _gi_sc = 0;
         c0 = _gen_infer_tp(S, fi, ti + 1, 0);
         c1 = _gen_infer_tp(S, fi, ti + 1, 1);
-        if (c0 <= 0 && c1 <= 0) { return fi; }
+        if (c0 <= 0 && c1 <= 0) { if (_gen_sc_inst(S, fi) == 0) { return fi; } }   # 6.7.8: `Box<i32>`
         if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
     }
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
@@ -10360,9 +10814,10 @@ fn _tc_generic_divert(S, cfi, ti_after): i64 {
     if (GFTP(S, cfi) == 0) { return 0; }
     if (_gen_stub(S, cfi) != 0) { return 1; }
     if (_bnd_base_bad(S, cfi) == 1) { return 1; }   # 6.7.1 (C3): the head refuses its scalar call
+    _gi_sc = 0;
     if (_gen_infer_tp(S, cfi, ti_after, 0) > 0) { return 1; }
     if (_gen_infer_tp(S, cfi, ti_after, 1) > 0) { return 1; }
-    return 0;
+    return _gi_sc;   # 6.7.8: a struct carrier's scalar (`Box<i32>`) instantiates too
 }
 
 # v6.3.10 (instantiate-once): mint a deduped specialized name `base$<tyname>` into
@@ -10625,7 +11080,9 @@ fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     _inst_name = 0;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
-    return FINDSTRUCT(S, mangled);                   # 1-based instance sid
+    var r = FINDSTRUCT(S, mangled);                  # 1-based instance sid
+    _sinst_note(S, r, base_si + 1, conc0, conc1);    # 6.7.8: what inference reads back (_sinst_conc)
+    return r;
 }
 
 # v6.3.33: consume one type-arg-list `>` close. A `>` (token 20) closes one level. A
@@ -10687,6 +11144,7 @@ fn _type_arg_leaf(S, noff): i64 {
 # a type argument picks a WIDTH and a layout, so an alias that silently chose one is the bug this
 # replaced. An enum gets its own line: its values are i64, and "unknown type" reads as a typo.
 fn _refuse_type_arg_name(S, noff): i64 {
+    if (_dyn_bare_nm != 0) { if (noff == _dyn_bare_nm - 1) { return 0; } }   # 6.7.8: T3 named it
     if (_is_enum_name(S, noff) == 1) {
         ERR_IDENT(S, "", noff, " is an enum, not a type argument — enum values are i64; write i64", 0 - 1);
         return 0;
@@ -10712,6 +11170,11 @@ fn _enum_id_of(S, noff): i64 {
 
 fn _parse_one_type_arg(S): i64 {
     if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); return 0 - 8; }   # 6.7.7 (R3)
+    if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): `g<[u8]>` was "unknown type 'enum' as a type argument"
+        _sl_err(S, GTI(S), "a slice cannot be a type argument (6.7.8: slices are fn-locals)", "");
+        _sl_ann_skip(S);
+        return 0 - 8;
+    }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
@@ -11127,7 +11590,10 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { ERR_EXPECT(S, 2); return n; } } }   # 6.7.7: `(` refused by _mret_elem
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { if (PEEKT(S) != 28) {   # 6.7.7: `(`, 6.7.8: `[`
+                        ERR_EXPECT(S, 2);
+                        return n;
+                    } } } }   # refused by _mret_elem
         _bx_mret_note(S, fi, n, GTI(S));   # 6.7.3: a bool element
         var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
@@ -11154,6 +11620,14 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
 # 6.6.17: and an element takes type arguments (`(Box<i64>, i64)`), resolved as a single return
 # type's are (`_gtype_sid`): it was `expected ')', got '<'`.
 fn _mret_elem(S, fi, quiet): i64 {
+    if (_sl_ann_at(S, GTI(S)) == 1) {   # 6.7.8 (C2-6a): `(i64, [u8])` — refused by name, an i64 slot
+        if (quiet == 0) {
+            _sl_err(S, GTI(S), "a slice cannot be a return type (6.7.8: slices are fn-locals)",
+              " - not as a multi-value element either; return its pointer and its length");
+        }
+        _sl_ann_skip(S);
+        return 0 - 8;
+    }
     if (PEEKT(S) == 10) {   # 6.7.7 (R3): `((i64, i64), i64)` — a nested tuple, refused by name
         if (quiet == 0) { _tup_pos_refuse(S, "a multi-value return element"); }
         else { STI(S, _call_close(S, GTI(S)) + 1); }
@@ -11460,7 +11934,8 @@ fn _tok_calls(t): i64 {
 # 1 = token type `t` runs nothing: a literal (number / char, string, float, `true` / `false`), `.`,
 # `)` `[` `]`, a comparison, `& | ^ ~ % << >> >>>`, `&& || !`, and a closure's bars and the `,`
 # between its parameters (the only depth-0 `,` an argument holds) — never an operator a struct
-# dispatches (`+ - * /`, `_span_may_write`).
+# dispatches (`+ - * /`, `_span_may_write`). A subscript stays pure under the bounds-checked mode
+# (6.7.8): its check reads the index and exits or returns it — it never writes.
 fn _tok_pure(t): i64 {
     if (t == 1 || t == 30 || t == 61 || t == 169 || t == 170) { return 1; }
     if (t == 41 || t == 11 || t == 28 || t == 29 || t == 31) { return 1; }
@@ -11820,8 +12295,8 @@ fn _prescan_params_scan(S, fi): i64 {
                         # 6.7.7: a type token that is not a name (`u128`, the `fn` of `*fn`), taken
                         # as pass 2 takes it — stopping here counted the list short. A tuple type is
                         # stepped whole above (the token after it is the list's own). CHANGELOG [6.7.7]
-                        STI(S, GTI(S) + 1);
-                        SKIP_GENERICS(S);
+                        # 6.7.8 (C2-6a): and a slice's whole `[ .. ]` (pass 2 refuses it by name).
+                        _param_type_step_q(S);
                     }
                 }
                 if (PEEKT(S) == 4) { STI(S, _pl_dflt_end(S, GTI(S))); }   # 6.7.7 (B6): a default (recorded below)
@@ -11932,26 +12407,35 @@ fn _prescan_fn_sig(S): i64 {
         _prescan_params(S, fi);
         if (_pasync == 1) { SFBVCP(fi, 0); }   # 6.6.20: see `_pm_copies`
         if (_prescan_maybe_naked(S, start_ti) == 1) { SFBVCP(fi, 0); }
-        if (PEEKT(S) == 49) {       # optional `: ReturnType`
-            STI(S, GTI(S) + 1);     # consume ':'
-            if (PEEKT(S) == 10) {
-                # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
-                # FORWARD call can arity-check against a fn defined later.
-                _parse_multiret_sig(S, fi, 1);
-            } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
-            else {
-                if (PEEKT(S) == 2) {
-                    var rtc = _classify_return_type(S, PEEKV(S));
-                    rtc = _bx_sig_ret(S, fi, rtc, PEEKV(S));        # 6.7.3: `: bool` is an i64, bit 4096
-                    if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
-                    if (rtc != 0) { SFRS(S, fi, rtc); }
-                }
-            }
-        }
+        _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+
+# Pass 1, the cursor past fn `fi`'s parameter list: its optional `: ReturnType` recorded — a struct
+# sid (a generic instance's), -9 an f64, a multi-value signature, a `*T`'s pointee, a bool (the
+# cursor is left where those readers stop: `_prescan_ret_single` scans on to the `{`). Extracted from
+# `_prescan_fn_sig` (6.7.8): a trait-object call's prototype is recorded from its trait member's
+# signature the same way (`_dyn_proto`, parse_types.cyr).
+fn _prescan_ret_type(S, fi): i64 {
+    if (PEEKT(S) != 49) { return 0; }   # optional `: ReturnType`
+    STI(S, GTI(S) + 1);     # consume ':'
+    if (PEEKT(S) == 10) {
+        # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
+        # FORWARD call can arity-check against a fn defined later.
+        _parse_multiret_sig(S, fi, 1);
+    } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
+    else {
+        if (PEEKT(S) == 2) {
+            var rtc = _classify_return_type(S, PEEKV(S));
+            rtc = _bx_sig_ret(S, fi, rtc, PEEKV(S));        # 6.7.3: `: bool` is an i64, bit 4096
+            if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
+            if (rtc != 0) { SFRS(S, fi, rtc); }
+        }
+    }
     return 0;
 }
 
@@ -12569,7 +13053,9 @@ fn _prescan_tail_loop(S): i64 {
 # forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
+    _dyn_fold(S);     # 6.7.8: `dyn X` -> one identifier token, BEFORE any prepass records an index
     _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
+    _dyn_prepass(S);  # 6.7.8: each folded `dyn X` registered (its struct) and checked where it stands
     _cst_prepass(S);  # 6.7.2 (B1): every top-level const, wherever it sits (a size-0 pending slot)
     STI(S, 0);
     var go = 1;
@@ -12579,6 +13065,8 @@ fn _tl_pass1(S, objok): i64 {
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
+    _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
+    _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
     return 0;
 }
 
@@ -14235,7 +14723,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # >8B). The former hard-error here is gone — the SIMD param branch
                 # below routes PE through struct_mask + a copy-in store rather than
                 # the SysV XMM path. See [[project_v6431_win64_valueform_simd]].
-                STI(S, GTI(S) + 1);  # consume type
+                _param_type_step(S);   # consume type (6.7.8, C2-6a: a slice `[T]` refused, consumed whole)
                 SKIP_GENERICS(S);    # skip <T> if present
             }
             # v5.10.38 — branch: SIMD param (f64v2/f64v4) needs
@@ -14498,8 +14986,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         if (PEEKT(S) == 10) {
             _parse_multiret_sig(S, fi, 0);
             _cur_fn_ret_scalar = MULTIRET_SID;
-        } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 0); }   # 6.6.17: `: *T`
-        else {
+        } elif (_ret_ann_alt(S, fi) == 0) {   # `: *T` (6.6.17) and a slice (6.7.8, refused) are taken there
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var rt_noff = PEEKV(S);
             # v6.3.5 CO-01 — classify the return type via the shared

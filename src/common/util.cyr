@@ -1703,6 +1703,39 @@ fn GLBARR(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 61) & 1;
 }
+# ⛔ 6.7.8 (C2-2a) — bit 62: the slot is a SLICE local's canonical slot (`var s: [T]` / `slice<T>`).
+# A slice's element width lives in the per-slot slice-width table, which most registrations never
+# clear — a fn parameter, a closure parameter, a SIMD parameter, an inline replay's binding — so a
+# slot inherited the width of whatever slice last sat there, in ANY earlier fn: `fn b(x, y) {
+# return y[0]; }` compiled as a slice read of `&y` (y.len, y.len = v likewise; `y += 1` was refused
+# as "compound assignment to slice"). The width is now trusted only behind this bit (_slice_lw,
+# parse_types.cyr), which clears itself at the next registration's SLDEP like bits 56..61. SLSLICE
+# is the one writer of a slice's width (PARSE_VAR, after its SLAGG). CHANGELOG [6.7.8]
+fn SLSLICE(S, li, w): i64 {
+    SSLICE_W(S, li, w);
+    if (w > 0) { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 62)); }
+    return 0;
+}
+fn GLSLICE(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 62) & 1;
+}
+# 6.7.8 (the checked dyn, D5) — bit 63: the slot is a DECLARED SCALAR whose annotation's name sits in
+# `_dsc_tn` (parse_types.cyr), the type a dyn formed from it names. The bit is that side table's
+# VALIDITY: every registration writes SLDEP's whole word first, so a slot reused by an undeclared
+# local never reads a stale name. Written last at registration, like bits 58-62.
+# ⛔ NOT bit 62 — that is SLSLICE's (above): the dyn lane took it independently, so every declared
+# scalar read as a slice (`n += 1` on a `var n: i32` refused, `y[0]` on a `y: i64` parameter a slice
+# read) and every slice local as a stamped dyn source. Bit 63 has no other reader or writer: every
+# raw access of this word is GLDEP (masked to the low 32 bits), SLDEP, these accessors and the closure
+# snapshot's copies, which test single bits. The snapshot restores this bit, so it restores `_dsc_tn`'s
+# entries with it (`_dsc_snap`): a closure's own declared scalar in the slot left the enclosing one's
+# dyn naming the closure local's type. CHANGELOG [6.7.8]
+fn SLDSC(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 63)); return 0; }
+fn GLDSC(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 63) & 1;
+}
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.
 var _bxr_cp = 0;
@@ -2177,6 +2210,7 @@ fn TOKNAME(typ): i64 {
     if (typ == 170) { return "false"; }   # 6.7.3 (B2)
     if (typ == 171) { return "'!'"; }     # 6.7.3 (B2) logical not
     if (typ == 172) { return "do"; }      # 6.7.5 (B5)
+    if (typ == 173) { return "dyn"; }     # 6.7.8 (the checked trait object)
     if (typ == 78) { return "shared"; }
     # v6.4.77 — these two token numbers are DOUBLE-ASSIGNED by the lexer, so the
     # spelling cannot be recovered from the token type alone; name both. Verified
@@ -2303,6 +2337,7 @@ fn IS_KEYWORD_TOK(typ): i64 {
     if (typ == 169) { return 1; }  # true (6.7.3)
     if (typ == 170) { return 1; }  # false (6.7.3)
     if (typ == 172) { return 1; }  # do (6.7.5) — `loop` is contextual, never a token (_TOK_IS_LOOP)
+    if (typ == 173) { return 1; }  # dyn (6.7.8)
     if (typ == 78) { return 1; }   # shared
     if (typ == 79) { return 1; }   # object
     if (typ == 111) { return 1; }  # stack

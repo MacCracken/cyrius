@@ -104,10 +104,7 @@ fn mq_fwd_lit(n, d) { var v = mw_lit(n, d)?; return Ok(v + 15000); }
 fn mq_fwd_scope(n, d) { var v = mw_scope(n, d)?; return Ok(v + 18000); }
 fn mq_fwd_ptr(n, d) { var p: Pt; p.x = n; p.y = 0; var v = mw_ptr(&p, d)?; return Ok(v + 19000); }
 fn mq_fwd_tparam(n, d) { var p: Pt; p.x = n; p.y = 0; var v = mw_tparam(p, d)?; return Ok(v + 20000); }
-# Off on cx: `mkp` and `idp<Pt>` return the 16-byte `Pt` BY VALUE, and the cx backend has no 9-16 B
-# register-pair struct return ("cx: int-class 16B struct pair-return ABI not supported") — a cx
-# limit this file does not test, as in generic_struct_inference.tcyr.
-#ifndef CYRIUS_TARGET_CX
+# `mkp` and `idp<Pt>` return the 16-byte `Pt` BY VALUE (rax:rdx; cx's r0:r4 since 6.7.8).
 fn mkp(n): Pt { var p: Pt; p.x = n; p.y = 0; return p; }
 fn idp<T>(v: T): T { return v; }
 fn mq_fwd_call(n, d) { var v = mw_call(n, d)?; return Ok(v + 16000); }
@@ -116,7 +113,6 @@ fn mq_fwd_geni(n, d) { var v = mw_geni(n, d)?; return Ok(v + 21000); }
 fn mw_call(n, d) { var p = mkp(n); return p.half(d); }
 fn mw_gen(n, d) { var q: Pt; q.x = n; q.y = 0; var p = idp<Pt>(q); return p.half(d); }
 fn mw_geni(n, d) { var q: Pt; q.x = n; q.y = 0; var p = idp(q); return p.half(d); }
-#endif
 fn mw_ptr(pp: *Pt, d) { return pp.half(d); }
 fn mw_tparam<T>(p: T, d) { return p.div(d); }
 fn mw_lit(n, d) { var p = Pt { n, 0 }; return p.half(d); }
@@ -192,7 +188,6 @@ fn run_method_q(): i64 {
     var g2, h2 = mq_fwd_lit(6, 0);
     assert_eq(okerr(g1, h1, g2, h2), 1000990 + 15003,
         "MQ: `w(..)?`, w `var p = Pt { n, 0 }; return p.half(d);` defined AFTER");
-    #ifndef CYRIUS_TARGET_CX
     var g3, h3 = mq_fwd_call(6, 2);
     var g4, h4 = mq_fwd_call(6, 0);
     assert_eq(okerr(g3, h3, g4, h4), 1000990 + 16003, "MQ: the same, `var p = mkp(n);` (a `: Pt` fn)");
@@ -202,7 +197,6 @@ fn run_method_q(): i64 {
     var g9, h9 = mq_fwd_geni(6, 2);
     var g10, h10 = mq_fwd_geni(6, 0);
     assert_eq(okerr(g9, h9, g10, h10), 1000990 + 21003, "MQ: the same, `var p = idp(q);` (T inferred from q)");
-    #endif
     var g11, h11 = mq_fwd_ptr(6, 2);
     var g12, h12 = mq_fwd_ptr(6, 0);
     assert_eq(okerr(g11, h11, g12, h12), 1000990 + 19003, "MQ: the same, the receiver a `pp: *Pt` param");

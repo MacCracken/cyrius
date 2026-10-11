@@ -1,0 +1,12 @@
+struct P { x; y; }
+fn via_param(q: *P): i64 { var a = &q; return load64(a); }
+fn via_local(p0: P): i64 { var q: *P = &p0; var a = &q; return load64(a); }
+fn main(): i64 {
+    var p = P { 4, 2 };
+    var r1 = via_param(&p);
+    var r2 = via_local(p);
+    if (r1 == 4) { if (r2 != 4) { return 3; } }
+    return 0;
+}
+var rc = main();
+syscall(60, rc);

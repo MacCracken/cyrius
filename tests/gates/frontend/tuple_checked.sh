@@ -233,6 +233,9 @@
 #   MI3b `_pd_pclass` without its `(` arm -> I3b BUILDS (a tuple parameter given the default 0)
 #   MI4 `_pd_arg_at` pushes the bare value, bypassing `_call_arg_one`'s gates (b4_plan H19) -> I1 (a named
 #       tuple variable "used as a value"), I2 (a named literal refused as a stray), I4 / I4b BUILD, the tcyr
+# 6.7.8 REPAIR (the dyn lane; a scratch copy, its compiler rebuilt, this gate run with CYCC= the mutant):
+#   MR4 `_tok_enclosing_fn` (extracted from `_tup_gen_chk`) without its `;` / `}` stop -> R4s, R4t ("a tuple
+#       type in a generic fn": the scan ran past a bodyless generic trait member to the next `{`)
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -350,6 +353,12 @@ refused r04a "a tuple type in a generic fn is refused" "R4a: a tuple local in a 
 refused r04b "a tuple field in a generic struct is refused" "R4b: a tuple field in a generic struct" 'struct B<T> { v: T; t: (i64, i64); }\nfn f(): i64 { var b: B<i64>; b.v = 3; return b.v; }\nsyscall(60, f());\n'
 refused r04c "a tuple type in a generic fn is refused" "R4c: a tuple parameter in a generic fn's signature" 'fn g<T>(x: T, t: (i64, i64)): T { return x; }\nfn f(): i64 { return g(3, 0); }\nsyscall(60, f());\n'
 refused r04d "a tuple type in a generic fn is refused" "R4d: an un-annotated literal in a generic fn (it mints its type there; once over the instances)" 'fn g<T>(x: T): T {\n    var t = (x, 1);\n    return t.0;\n}\nfn f(): i64 { return g(3) + g(4); }\nsyscall(60, f());\n'
+# R4s / R4t (6.7.8 repair) — the enclosing-fn scan stops at a bodyless trait member's `;`: it ran on to the
+# next `{`, so a tuple right after a trait whose LAST member is generic and bodyless was refused as "in a
+# generic fn" (6.7.7) — a zone global's annotation, and a struct field (the struct's own `{` taken for the
+# member's body).
+exits r04s 3 "R4s: a tuple zone global right after \`trait Tr { fn pick<U>(..): i64; }\` (not in a generic fn)" 'trait Tr { fn pick<U>(self, u: U): i64; }\nvar t: (i64, i64) = (1, 2);\nsyscall(60, t.0 + t.1);\n'
+exits r04t 7 "R4t: a struct's tuple field right after the same trait" 'trait Tr { fn pick<U>(self, u: U): i64; }\nstruct H { a; p: (i64, i64); }\nfn f(): i64 { var h: H; h.p.0 = 3; h.p.1 = 4; return h.p.0 + h.p.1; }\nsyscall(60, f());\n'
 # R4e-R4r (T6) — a tuple never binds a type parameter by INFERENCE: `first(t)` minted `first$(i64, i64)`, a
 # generic over a tuple. Refused once, at the argument, whatever the generic's body (a struct-reading stub's
 # refusal and an inlined `x.0` stay quiet), the call's position or its receiver (a capture keeps the tuple).

@@ -1,0 +1,10 @@
+struct P { v; }
+impl P { fn area(self): f64 { return 2.5; } }
+fn main(): i64 {
+    var p = P { 1 };
+    var a: f64 = p.area() + 1.0;
+    if (a == 3.5) { return 42; }
+    return 1;
+}
+var rr = main();
+syscall(60, rr);

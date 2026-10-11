@@ -18,9 +18,9 @@
 #          compile-time diagnostic a .tcyr cannot observe)
 #   a64    the crossos tcyr + the async row under qemu-aarch64 (qemu is not hardware)
 #   pe     the crossos tcyr under wine, when installed (wine is not Windows)
-#   cx     its own program below: the tcyr's 16-byte struct rows do not compile on cx (the
-#          int-class pair-return ABI is refused there by name), so the cx leg carries 22 rows
-#          by hand — tail calls (zero-arg / arg / preceding the defer / self-recursive / pair),
+#   cx     the crossos tcyr under cxvm (since 6.7.8, when cx gained the 16-byte struct pair its
+#          struct rows need; every assertion, the count derived from the source), plus its own
+#          program below, 22 rows by hand — tail calls (zero-arg / arg / preceding the defer / self-recursive / pair),
 #          the local-first control, `return (a, b)` / `(a, b, c)` / ret2, an f64v2 and an
 #          f64v4 return (the r0..r3 quad), a `?` Err propagation and a `return Ok(x)` tail;
 #          the defer body's clobber is a 6-arg call plus f64v2 work, so every register of the
@@ -156,8 +156,9 @@ fn chk(got, want, label): i64 {
 }
 fn _clob6(a, b, c, d, e, f): i64 { return a + b + c + d + e + f; }
 # The defer body's clobber: a 6-arg call (r0-r5) AND f64v2 work, so every register of the
-# cx return convention — r0 scalar, r0:r1 pair / Ok-Err, r0:r1:r2 arity-3, r0..r3 the f64v4
-# quad — is overwritten unless EDEFER_SAVE/RESTORE carries it.
+# cx return convention — r0 scalar, r0:r4 pair / Ok-Err / a 9-16 B struct, r0:r4:r5 arity-3,
+# r0:r1 the f64v2 pair, r0..r3 the f64v4 quad — is overwritten unless EDEFER_SAVE/RESTORE
+# carries it.
 fn _vclob(): i64 { var q: f64v2 = f64v2_make(1, 2); var w: f64v2 = f64v2_make(5, 6); return f64v2_lo_ptr(&q) + f64v2_lo_ptr(&w); }
 fn clob(): i64 { var k = _clob6(1, 2, 3, 4, 5, 6); k = k + _vclob(); cran = cran + 1; return k; }
 fn _value(): i64 { return 42; }
@@ -205,6 +206,14 @@ if "$T/stage1" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx
     r=0; timeout 60 "$T/cxvm" < "$T/cx.cyx" > "$T/cx.out" 2>&1 || r=$?
     [ "$r" -eq 0 ] && ok "cx: 22 tail / pair / arity-3 / ret2 / f64v2 / f64v4 / ?-Err / Ok rows" || { bad "cx: $r rows failed"; sed 's/^/        /' "$T/cx.out" | head -8; }
   else bad "cx: the cx program did not compile"; sed -n 1,3p "$T/cx.err"; fi
+  # The crossos tcyr itself (6.7.8: it needs cx's 16-byte struct pair): every assertion call in the
+  # source, assert_summary aside, must report passed.
+  NTC=$(grep -oE '(^|[^_a-z])assert(_[a-z]+)?\(' "$TC" | grep -vc summary)
+  if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2>"$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
+    r=0; timeout 120 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || r=$?
+    if [ "$r" -eq 0 ] && tail -1 "$T/tc.cxout" | grep -q "^$NTC passed, 0 failed"; then ok "cx: crossos defer tcyr ($(tail -1 "$T/tc.cxout"))"
+    else bad "cx: crossos defer tcyr exit $r, want '$NTC passed, 0 failed', got: $(tail -1 "$T/tc.cxout")"; grep FAIL "$T/tc.cxout" | head -5; fi
+  else bad "cx: crossos defer tcyr did not compile: $(grep -m1 '^error' "$T/tc.cxerr")"; fi
 else bad "cx: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 
 echo "  $pass ok, $fail failed"

@@ -21,8 +21,8 @@
 # prints a (token, fn) pair once.
 #
 # ROWS — every fixture through five compilers built FROM THIS TREE: x86 (src/main.cyr), PE through
-# main.cyr (CYRIUS_TARGET_WIN=1), PE through src/main_win.cyr, the aarch64 cross and cx (cx skips
-# the 16-byte pair-return fixture: cx refuses that ABI by name). Plus the aarch64-native fork under
+# main.cyr (CYRIUS_TARGET_WIN=1), PE through src/main_win.cyr, the aarch64 cross and cx (the
+# 16-byte pair-return fixture included since 6.7.8). Plus the aarch64-native fork under
 # qemu-aarch64 when present. For each:
 #   1. the lines carrying a `#W` marker are EXACTLY the reported lines, one warning each — so a
 #      missing path, a double fire and a warning on a non-deprecated fn are all red;
@@ -207,7 +207,7 @@ alloc_init();
 var rc = main();
 syscall(60, rc);
 EOF
-# The 16-byte pair receive, declared and inferred (cx refuses this ABI by name: skipped there).
+# The 16-byte pair receive, declared and inferred (on cx too since 6.7.8: its r0:r4 struct pair).
 cat > "$T/fx/pair.cyr" <<'EOF'
 struct P2 { a: i64; b: i64; }
 fn early() {
@@ -335,7 +335,6 @@ for fx in "$T"/fx/*.cyr; do
     sed 's/^#deprecated(\(.*\))$/#assert 1, \1;/' "$fx" > "$T/strip.$n.cyr"
     grep -q '^#deprecated' "$T/strip.$n.cyr" && { _bad "$n: the stripped twin still carries an attribute"; continue; }
     for c in $COMPILERS; do
-        if [ "$c" = main_cx ] && [ "$n" = pair ]; then continue; fi
         arc=0; "$T/$c" < "$fx" > "$T/a.bin" 2> "$T/a.err" || arc=$?
         src=0; "$T/$c" < "$T/strip.$n.cyr" > "$T/s.bin" 2> "$T/s.err" || src=$?
         if [ "$arc" -ne 0 ] || [ ! -s "$T/a.bin" ]; then

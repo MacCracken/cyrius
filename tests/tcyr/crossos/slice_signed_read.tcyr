@@ -1,0 +1,395 @@
+# slice_signed_read.tcyr — 6.7.8 (C2-6c) — a SIGNED slice element is read SIGN-EXTENDED: `s[i]` on an
+# [i8] / [i16] / [i32] (or slice<i8> / slice<i16> / slice<i32>) slice local, and the element that
+# `s[i] OP= v` combines with, on every backend.
+#
+# Before 6.7.8 the read called lib/slice.cyr's `_slice_idx_get_1/2/4`, whose load8 / load16 / load32
+# ZERO-extend: a stored -3 in an [i8] read 253 and `s[0] < 0` was false — unlike the same bytes in an
+# `i8[N]` array, through a `*i8` or in an i8 field, which sign-extend. The user decided (2026-10-10)
+# that the slice read sign-extends too, and that `OP=` (6.7.8, C2-6a) loads the same way. The
+# controls: a [u8] / [u16] / [u32] element still zero-extends, an [i64] / [u64] one is a word. The
+# read is still checked against s.len — out of range prints "slice bounds violation" and exits 134
+# (the T rows of tests/gates/frontend/slice_signed_read.sh, on every leg).
+#
+# Every slice views part of BUF (zeroed before each group). The rows store through `s[i] = v` and
+# through store8/16/32 at byte offsets, then read back through `s[i]`, and through the typed array,
+# the `*T` and the field that hold the same bytes. The gate runs this file on x86 (plain,
+# CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+
+var BUF: i64[8];
+
+struct F8 { v: i8; }
+struct F16 { v: i16; }
+struct F32 { v: i32; }
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+fn neg(x): i64 { return 0 - x; }
+
+# ---- R: every signed width, its extremes and -1 ----
+fn r_i8(): i64 {
+    zero();
+    var s: [i8] = 0;
+    slice_set(&s, &BUF, 8);
+    s[0] = 0 - 3;
+    assert_eq(load8(&BUF), 0xFD, "[i8]: s[0] = -3 stores 0xFD");
+    assert_eq(s[0], 0 - 3, "[i8]: s[0] reads -3 (it read 253)");
+    assert_eq(s[0] < 0, 1, "[i8]: s[0] < 0 holds (it did not)");
+    store8(&BUF + 1, 0x80);
+    store8(&BUF + 2, 0x7F);
+    store8(&BUF + 3, 0xFF);
+    store8(&BUF + 4, 0x81);
+    assert_eq(s[1], 0 - 128, "[i8]: 0x80 reads -128");
+    assert_eq(s[2], 127, "[i8]: 0x7F reads 127");
+    assert_eq(s[3], 0 - 1, "[i8]: 0xFF reads -1");
+    assert_eq(s[4], 0 - 127, "[i8]: 0x81 reads -127");
+    assert_eq(s[5], 0, "[i8]: 0 reads 0");
+    var t: slice<i8> = 0;
+    slice_set(&t, &BUF, 8);
+    assert_eq(t[3], 0 - 1, "slice<i8>: 0xFF reads -1");
+    assert_eq(t[0] + t[2], 124, "slice<i8>: -3 + 127");
+    return 0;
+}
+fn r_i16(): i64 {
+    zero();
+    var s: [i16] = 0;
+    slice_set(&s, &BUF, 8);
+    s[0] = 0 - 30000;
+    assert_eq(load16(&BUF), 35536, "[i16]: s[0] = -30000 stores 0x8AD0");
+    assert_eq(s[0], 0 - 30000, "[i16]: s[0] reads -30000 (it read 35536)");
+    store16(&BUF + 2, 0x8000);
+    store16(&BUF + 4, 0x7FFF);
+    store16(&BUF + 6, 0xFFFF);
+    store16(&BUF + 8, 0x00FF);
+    assert_eq(s[1], 0 - 32768, "[i16]: 0x8000 reads -32768");
+    assert_eq(s[2], 32767, "[i16]: 0x7FFF reads 32767");
+    assert_eq(s[3], 0 - 1, "[i16]: 0xFFFF reads -1");
+    assert_eq(s[4], 255, "[i16]: 0x00FF reads 255 (the high byte is the sign)");
+    var t: slice<i16> = 0;
+    slice_set(&t, &BUF, 8);
+    assert_eq(t[3] < 0, 1, "slice<i16>: 0xFFFF < 0");
+    return 0;
+}
+fn r_i32(): i64 {
+    zero();
+    var s: [i32] = 0;
+    slice_set(&s, &BUF, 8);
+    s[0] = 0 - 7;
+    assert_eq(load32(&BUF), 0xFFFFFFF9, "[i32]: s[0] = -7 stores 0xFFFFFFF9");
+    assert_eq(s[0], 0 - 7, "[i32]: s[0] reads -7 (it read 4294967289)");
+    store32(&BUF + 4, 0x80000000);
+    store32(&BUF + 8, 0x7FFFFFFF);
+    store32(&BUF + 12, 0xFFFFFFFF);
+    store32(&BUF + 16, 0x0000FFFF);
+    assert_eq(s[1], 0 - 2147483648, "[i32]: 0x80000000 reads -2147483648");
+    assert_eq(s[2], 2147483647, "[i32]: 0x7FFFFFFF reads 2147483647");
+    assert_eq(s[3], 0 - 1, "[i32]: 0xFFFFFFFF reads -1");
+    assert_eq(s[4], 65535, "[i32]: 0x0000FFFF reads 65535");
+    var t: slice<i32> = 0;
+    slice_set(&t, &BUF, 8);
+    assert_eq(t[1] < t[2], 1, "slice<i32>: -2147483648 < 2147483647");
+    return 0;
+}
+
+# ---- U: the controls — unsigned elements zero-extend, 8-byte elements are words ----
+fn controls(): i64 {
+    zero();
+    store8(&BUF, 0xFD);
+    store16(&BUF + 8, 0xFFFD);
+    store32(&BUF + 16, 0xFFFFFFFD);
+    store64(&BUF + 24, 0 - 3);
+    var a: [u8] = 0;
+    slice_set(&a, &BUF, 8);
+    assert_eq(a[0], 253, "[u8]: 0xFD reads 253");
+    assert_eq(a[0] < 0, 0, "[u8]: 0xFD is not < 0");
+    var b: [u16] = 0;
+    slice_set(&b, &BUF + 8, 4);
+    assert_eq(b[0], 65533, "[u16]: 0xFFFD reads 65533");
+    var c: slice<u32> = 0;
+    slice_set(&c, &BUF + 16, 2);
+    assert_eq(c[0], 4294967293, "slice<u32>: 0xFFFFFFFD reads 4294967293");
+    var d: [i64] = 0;
+    slice_set(&d, &BUF + 24, 1);
+    assert_eq(d[0], 0 - 3, "[i64]: -3 is the word -3");
+    var e: [u64] = 0;
+    slice_set(&e, &BUF + 24, 1);
+    assert_eq(e[0], 0 - 3, "[u64]: the word 0xFFFFFFFFFFFFFFFD");
+    return 0;
+}
+
+# ---- M: the slice read equals the typed array, the `*T` and the field holding the same bytes ----
+# The field is a local struct's: a signed narrow field read THROUGH A POINTER is wrong under
+# CYRIUS_IR=3 (issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, open, placed 6.7.12), and the
+# gate runs this file under IR=3.
+fn m_i8(): i64 {
+    zero();
+    store64(&BUF, 0xFF81807F0201FE00);   # 00 FE 01 02 7F 80 81 FF
+    var s: [i8] = 0;
+    slice_set(&s, &BUF, 8);
+    var p: *i8 = &BUF;
+    var a: i8[8];
+    var i = 0;
+    while (i < 8) { store8(&a + i, load8(&BUF + i)); i = i + 1; }
+    var bad = 0;
+    i = 0;
+    while (i < 8) {
+        var want = load8(&BUF + i);
+        if (want >= 128) { want = want - 256; }
+        var f: F8;
+        store8(&f, load8(&BUF + i));
+        if (s[i] != want) { bad = bad + 1; }
+        if (s[i] != p[i]) { bad = bad + 10; }
+        if (s[i] != a[i]) { bad = bad + 100; }
+        if (s[i] != f.v) { bad = bad + 1000; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "[i8]: s[i] == the value == p[i] (*i8) == a[i] (i8[8]) == f.v (i8 field), 8 bytes");
+    return 0;
+}
+fn m_i16(): i64 {
+    zero();
+    store64(&BUF, 0xFFFF80007FFF8001);   # 8001 7FFF 8000 FFFF
+    store64(&BUF + 8, 0x00FF0100FF000001);
+    var s: [i16] = 0;
+    slice_set(&s, &BUF, 8);
+    var p: *i16 = &BUF;
+    var a: i16[8];
+    var i = 0;
+    while (i < 8) { store16(&a + i * 2, load16(&BUF + i * 2)); i = i + 1; }
+    var bad = 0;
+    i = 0;
+    while (i < 8) {
+        var want = load16(&BUF + i * 2);
+        if (want >= 32768) { want = want - 65536; }
+        var f: F16;
+        store16(&f, load16(&BUF + i * 2));
+        if (s[i] != want) { bad = bad + 1; }
+        if (s[i] != p[i]) { bad = bad + 10; }
+        if (s[i] != a[i]) { bad = bad + 100; }
+        if (s[i] != f.v) { bad = bad + 1000; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "[i16]: s[i] == the value == p[i] (*i16) == a[i] (i16[8]) == f.v (i16 field), 8 elements");
+    return 0;
+}
+fn m_i32(): i64 {
+    zero();
+    store64(&BUF, 0x7FFFFFFF80000000);
+    store64(&BUF + 8, 0x00000001FFFFFFFF);
+    store64(&BUF + 16, 0xFFFF0000FFFFFFF9);
+    var s: [i32] = 0;
+    slice_set(&s, &BUF, 6);
+    var p: *i32 = &BUF;
+    var a: i32[6];
+    var i = 0;
+    while (i < 6) { store32(&a + i * 4, load32(&BUF + i * 4)); i = i + 1; }
+    var bad = 0;
+    i = 0;
+    while (i < 6) {
+        var want = load32(&BUF + i * 4);
+        if (want >= 2147483648) { want = want - 4294967296; }
+        var f: F32;
+        store32(&f, load32(&BUF + i * 4));
+        if (s[i] != want) { bad = bad + 1; }
+        if (s[i] != p[i]) { bad = bad + 10; }
+        if (s[i] != a[i]) { bad = bad + 100; }
+        if (s[i] != f.v) { bad = bad + 1000; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "[i32]: s[i] == the value == p[i] (*i32) == a[i] (i32[6]) == f.v (i32 field), 6 elements");
+    return 0;
+}
+
+# ---- C: a negative element in every position a read takes ----
+fn ret_left(s0): i64 {
+    var b: i64[1];
+    var s: [i8] = 0;
+    slice_set(&s, &b, 4);
+    s[0] = s0;
+    return s[0] + 10;
+}
+fn ret_var_index(): i64 {
+    var b: i64[1];
+    var s: [i16] = 0;
+    slice_set(&s, &b, 4);
+    s[1] = 0 - 50;
+    var i = 1;
+    return s[i] + 10;
+}
+fn contexts(): i64 {
+    zero();
+    var s: [i8] = 0;
+    slice_set(&s, &BUF, 8);
+    s[0] = 0 - 3;
+    s[1] = 0 - 5;
+    s[2] = 5;
+    s[5] = 2;
+    assert_eq(s[0] + 10, 7, "C1: s[0] + 10 (left operand)");
+    assert_eq(10 + s[0], 7, "C2: 10 + s[0] (right operand)");
+    assert_eq(s[0] * s[1], 15, "C3: s[0] * s[1]");
+    assert_eq(s[0] - s[1], 2, "C4: s[0] - s[1]");
+    assert_eq(s[1] / 2, 0 - 2, "C5: s[1] / 2 (signed division)");
+    assert_eq(s[1] % 2, 0 - 1, "C6: s[1] % 2");
+    assert_eq(s[0] >>> 1, 0 - 2, "C7: s[0] >>> 1 (arithmetic)");
+    assert_eq(s[0] >> 60, 15, "C8: s[0] >> 60 (logical, of the 64-bit -3)");
+    assert_eq(s[0] & 0xFF, 253, "C9: s[0] & 0xFF");
+    assert_eq(s[0] == 0 - 3, 1, "C10: s[0] == -3");
+    assert_eq(s[0] < s[2], 1, "C11: s[0] < s[2] (-3 < 5; it was 253 < 5)");
+    assert_eq(s[1] < s[0], 1, "C12: s[1] < s[0] (-5 < -3)");
+    assert_eq(0 - s[0], 3, "C13: 0 - s[0]");
+    assert_eq(-s[1], 5, "C14: -s[1]");
+    assert_eq(neg(s[0]), 3, "C15: an argument, neg(s[0])");
+    assert_eq(ret_left(0 - 3), 7, "C16: return s[0] + 10;");
+    assert_eq(ret_var_index(), 0 - 40, "C17: var i = 1; return s[i] + 10; on [i16]");
+    var hit = 0;
+    if (s[0] < 0) { hit = 1; }
+    assert_eq(hit, 1, "C18: if (s[0] < 0) takes the branch");
+    var k = 0;
+    while (s[k] < 0) { k = k + 1; }
+    assert_eq(k, 2, "C19: while (s[k] < 0) stops at the first non-negative element");
+    var x = s[0];
+    assert_eq(x + 10, 7, "C20: var x = s[0]; x + 10");
+    var y: i8 = s[1];
+    assert_eq(y, 0 - 5, "C21: var y: i8 = s[1]");
+    var j = 2;
+    var v = s[j - 1];
+    assert_eq(v, 0 - 5, "C22: var j = 2; var v = s[j - 1];");
+    assert_eq(s[s[5]], 5, "C23: an index that is a read of the slice, s[s[5]]");
+    var w = if (s[0] < 0) { s[1] * 2 } else { 0 };
+    assert_eq(w, 0 - 10, "C24: an if-expression, its condition and branch");
+    var t: [i32] = 0;
+    slice_set(&t, &BUF + 8, 2);
+    t[0] = s[0];
+    assert_eq(load32(&BUF + 8), 0xFFFFFFFD, "C25: t[0] = s[0] ([i8] into [i32]) stores -3's four bytes");
+    assert_eq(t[0], 0 - 3, "C26: ... and reads -3");
+    var c = 0;
+    for (var m = s[1]; m < s[0]; m = m + 1) { c = c + 1; }
+    assert_eq(c, 2, "C27: a for from s[1] to s[0] (-5 .. -3) runs twice");
+    return 0;
+}
+
+# ---- O: `s[i] OP= v` combines with the element as `s[i]` reads it — the typed array's result ----
+fn ops(): i64 {
+    zero();
+    var n: [i8] = 0;
+    slice_set(&n, &BUF, 8);
+    var a: i8[8];
+    n[0] = 0 - 3;  n[0] >>= 1;
+    a[0] = 0 - 3;  a[0] >>= 1;
+    assert_eq(n[0], 0 - 2, "O1: [i8] -3 >>= 1 is -2 (0xFE; it was 126)");
+    assert_eq(n[0], a[0], "O1: ... as an i8[8] element");
+    n[1] = 0 - 7;  n[1] /= 2;
+    a[1] = 0 - 7;  a[1] /= 2;
+    assert_eq(n[1], 0 - 3, "O2: [i8] -7 /= 2 is -3 (it was 124)");
+    assert_eq(n[1], a[1], "O2: ... as an i8[8] element");
+    n[2] = 0 - 7;  n[2] %= 4;
+    a[2] = 0 - 7;  a[2] %= 4;
+    assert_eq(n[2], 0 - 3, "O3: [i8] -7 %= 4 is -3 (it was 1)");
+    assert_eq(n[2], a[2], "O3: ... as an i8[8] element");
+    n[3] = 0 - 8;  n[3] >>>= 1;
+    a[3] = 0 - 8;  a[3] >>>= 1;
+    assert_eq(n[3], 0 - 4, "O4: [i8] -8 >>>= 1 is -4 (it was 124)");
+    assert_eq(n[3], a[3], "O4: ... as an i8[8] element");
+    n[4] = 0 - 100;  n[4] -= 100;
+    assert_eq(n[4], 56, "O5: [i8] -100 -= 100 wraps at the byte (56)");
+    n[5] = 0 - 40;
+    for (var k = 0; k < 2; n[5] /= 2) { k = k + 1; }
+    assert_eq(n[5], 0 - 10, "O6: the for step n[5] /= 2, twice, from -40 (it was 54)");
+    assert_eq(load8(&BUF + 6), 0, "O: byte 6 untouched");
+    zero();
+    var h: [i16] = 0;
+    slice_set(&h, &BUF, 4);
+    var b: i16[4];
+    h[0] = 0 - 300;  h[0] >>= 3;
+    b[0] = 0 - 300;  b[0] >>= 3;
+    assert_eq(h[0], 0 - 38, "O7: [i16] -300 >>= 3 is -38 (0xFFDA; it was 8154)");
+    assert_eq(h[0], b[0], "O7: ... as an i16[4] element");
+    h[1] = 0 - 1000;  h[1] /= 7;
+    b[1] = 0 - 1000;  b[1] /= 7;
+    assert_eq(h[1], 0 - 142, "O8: [i16] -1000 /= 7 is -142");
+    assert_eq(h[1], b[1], "O8: ... as an i16[4] element");
+    assert_eq(load16(&BUF + 4), 0, "O: element 2 untouched");
+    zero();
+    var w: [i32] = 0;
+    slice_set(&w, &BUF, 4);
+    var c: i32[4];
+    w[0] = 0 - 100000;  w[0] /= 3;
+    c[0] = 0 - 100000;  c[0] /= 3;
+    assert_eq(w[0], 0 - 33333, "O9: [i32] -100000 /= 3 is -33333");
+    assert_eq(w[0], c[0], "O9: ... as an i32[4] element");
+    w[1] = 0 - 100000;  w[1] >>>= 4;
+    c[1] = 0 - 100000;  c[1] >>>= 4;
+    assert_eq(w[1], 0 - 6250, "O10: [i32] -100000 >>>= 4 is -6250");
+    assert_eq(w[1], c[1], "O10: ... as an i32[4] element");
+    w[2] = 0 - 1;  w[2] >>= 1;
+    c[2] = 0 - 1;  c[2] >>= 1;
+    assert_eq(w[2], 0 - 1, "O11: [i32] -1 >>= 1 keeps the element's 32 bits (-1)");
+    assert_eq(w[2], c[2], "O11: ... as an i32[4] element");
+    var u: [u8] = 0;
+    slice_set(&u, &BUF + 16, 4);
+    u[0] = 0xFD;  u[0] >>= 1;
+    assert_eq(u[0], 126, "O12: control: [u8] 0xFD >>= 1 is 126 (zero-extended)");
+    return 0;
+}
+
+# ---- L: where the slice lives — a generic instance, a closure's own local, a heap buffer ----
+fn gread<T>(v): i64 {
+    zero();
+    var s: [T] = 0;
+    slice_set(&s, &BUF, 4);
+    s[1] = v;
+    return s[1];
+}
+fn places(): i64 {
+    assert_eq(gread<i8>(0 - 3), 0 - 3, "L1: gread<i8>: [T] reads -3");
+    assert_eq(gread<i16>(0 - 3), 0 - 3, "L2: gread<i16>: [T] reads -3");
+    assert_eq(gread<i32>(0 - 3), 0 - 3, "L3: gread<i32>: [T] reads -3");
+    assert_eq(gread<i64>(0 - 3), 0 - 3, "L4: control: gread<i64> reads the word");
+    zero();
+    var c = |v| {
+        var s: [i8] = 0;
+        slice_set(&s, &BUF, 4);
+        s[2] = v;
+        return s[2];
+    };
+    assert_eq(fncall1(c, 0 - 9), 0 - 9, "L5: a slice local inside a closure body reads -9");
+    var hb = alloc(16);
+    store64(hb, 0);
+    store64(hb + 8, 0);
+    var hs: slice<i16> = 0;
+    slice_set(&hs, hb, 8);
+    hs[7] = 0 - 2;
+    assert_eq(hs[7], 0 - 2, "L6: a slice over a heap buffer reads -2");
+    if (hs[7] < 0) {
+        var inner: [i8] = 0;
+        slice_set(&inner, hb, 16);
+        assert_eq(inner[14], 0 - 2, "L7: a slice in a nested block: byte 14 is 0xFE (-2)");
+        assert_eq(inner[15], 0 - 1, "L7: ... byte 15 is 0xFF (-1)");
+    }
+    return 0;
+}
+
+fn slice_signed_main(): i64 {
+    alloc_init();
+    r_i8();
+    r_i16();
+    r_i32();
+    controls();
+    m_i8();
+    m_i16();
+    m_i32();
+    contexts();
+    ops();
+    places();
+    return assert_summary();
+}
+var r = slice_signed_main();
+syscall(60, r);

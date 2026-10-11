@@ -106,15 +106,18 @@ fn _cli_verb_compiles(verb): i64 {
 }
 
 fn _cli_spec_a(verb): i64 {
-    if (streq(verb, "build") == 1) { return "--no-deps|--strict|--strict-pin|--pie|--dry-run|--print-config|--dce"; }
+    if (streq(verb, "build") == 1) {
+        return "--no-deps|--strict|--strict-pin|--pie|--dry-run|--print-config|--dce|--bounds";
+    }
     # 6.7.6 (part T): run / test / bench / fuzz take --no-deps (no [deps] prepend — the test scope's
     # too) and --no-lock (the resolve writes no cyrius.lock), as build has; --local / --no-local /
-    # --locked come with the target block.
-    if (streq(verb, "run") == 1) { return "--dry-run|--no-deps|--no-lock"; }
-    if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock"; }
-    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock"; }
+    # --locked come with the target block. 6.7.8 (C2-7): --bounds — the bounds-checked mode — on every
+    # verb that compiles a program it then runs or ships (build / run / test / tests / fuzz).
+    if (streq(verb, "run") == 1) { return "--dry-run|--no-deps|--no-lock|--bounds"; }
+    if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
+    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "bench") == 1) { return "--timeout=|--no-deps|--no-lock"; }
-    if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock"; }
+    if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "check") == 1) { return "--with-deps"; }
     if (streq(verb, "capacity") == 1) { return "--check|--json"; }
     if (streq(verb, "soak") == 1) { return ""; }
@@ -306,6 +309,8 @@ fn _cli_help_extra(verb): i64 {
         println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
         println("  --pie              emit a position-independent executable (CYRIUS_PIE=1)");
         println("  --dce              dead-code elimination for this build (CYRIUS_DCE=1; [build] dce)");
+        println("  --bounds           the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds; a #bounds");
+        println("                     line in the entry file's leading block is the lowest rung)");
         println("  --strict           passed to cycc; no effect since 6.3.2 (a reachable undefined fn is");
         println("                     an error by default)");
         println("  --print-config     print every [build] value and where it came from (argument >");
@@ -330,6 +335,7 @@ fn _cli_help_extra(verb): i64 {
         println("  [test] stdlib / modules / defines / timeout / [test.embed] (and a test.cyml per");
         println("  directory) configure test, bench and fuzz compiles only; `cyrius help manifest`.");
         println("  Exit status: non-zero on any failing test, any compile failure, or no tests found.");
+        println("  --bounds    compile each test in the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds).");
     }
     if (streq(verb, "tests") == 1) {
         println("");
@@ -339,6 +345,12 @@ fn _cli_help_extra(verb): i64 {
         println("");
         println("  Everything after <source> is forwarded to the program, go-run style:");
         println("      cyrius run probe.cyr example.com 443");
+        println("  --bounds (before <source>): the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds).");
+    }
+    if (streq(verb, "fuzz") == 1) {
+        println("");
+        println("  --poison[=ab]  the allocator poison mode (CYRIUS_POISON=1); =ab runs each harness twice.");
+        println("  --bounds       compile each harness in the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds).");
     }
     return 0;
 }

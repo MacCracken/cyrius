@@ -134,9 +134,12 @@ Stack-allocated 16-byte fat pointer (`{ptr@0, len@8}`). The `slice<T>`
 helper API populates / inspects it. Byte-identical layout to the
 first 16 bytes of `Str` and `vec` (zero-cost interop).
 
-Subscript (`s[i]`, v5.8.15) and dot-syntax (`s.ptr` / `s.len`,
-v5.8.16) work on **fn-local** slices only. Top-level vars use the
-helper API.
+Subscript (`s[i]` reads v5.8.15; `s[i] = v`, `s[i] OP= v` and the `for` step 6.7.8) and
+dot-syntax (`s.ptr` / `s.len`, v5.8.16) work on **fn-local** slices only; every subscript is
+bounds-checked (`slice bounds violation`, exit 134), and an `[i8]` / `[i16]` / `[i32]` element
+reads sign-extended (6.7.8). A slice is not a parameter, a return type, a field or a
+declaration-zone global — each is refused by name (6.7.8): pass `&s`. A top-level slice declared
+after the first statement uses the helper API.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -153,6 +156,7 @@ helper API.
 | `slice_from_buf` | `slice_from_buf(&dst, buf, len) → 0` | Init from `(buf, len)` pair |
 | `vec_as_slice` | `vec_as_slice(&dst, v) → 0` | Snapshot vec's first 16 bytes |
 | `_slice_idx_get_W(&s, i)` | width 1/2/4/8/16 | Bounds-checked sized load (used by `s[i]` lowering) |
+| `_slice_idx_addr(&s, i, w)` | width 1/2/4/8 | Bounds-checked element address (used by `s[i] = v`, `s[i] OP= v` and a signed `s[i]`, 6.7.8) |
 | `slice_unchecked_get_W(&s, i)` | width 1/2/4/8/16 | Same as above, no bounds check |
 | `sys_read_slice` | `sys_read_slice(fd, &s) → n` | `sys_read` taking a slice (v5.8.18) |
 | `slice_copy_bytes` | `slice_copy_bytes(&dst, &src) → n` | `memcpy` with min-length cap (v5.8.18) |
@@ -543,8 +547,10 @@ Opt-in runtime bounds checking. Aborts with error message on violation.
 
 Vtable-based trait objects for run-time polymorphic dispatch — a library pattern with no
 compiler checking. It is not the language's `trait` / `impl Trait for Type` (6.7.0), which
-dispatch statically and build no vtables ([ADR-007](adr/007-traits.md) §7); checked `dyn`
-trait objects are planned later in 6.7.x. Includes: alloc, fmt, fnptr, str.
+dispatch statically ([ADR-007](adr/007-traits.md) §7), nor the language's checked trait objects,
+`dyn` (6.7.8 — the guide's [*Trait objects: `dyn`*](guides/cyrius-guide.md#trait-objects-dyn-678)),
+whose vtable the compiler builds and verifies; this file stays as the unchecked pattern, its
+`{ vtable, data }` order the reverse of a dyn's. Includes: alloc, fmt, fnptr, str.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

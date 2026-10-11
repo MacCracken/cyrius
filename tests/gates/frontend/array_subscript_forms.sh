@@ -10,11 +10,12 @@
 # cannot:
 #
 # AXIS 1 — the REFUSALS, each by name at file:line:col, exit 1, no binary. A bare `var a[N]`
-#   states no element width (N bytes in a fn, N slots at top level), so its subscript is refused
-#   rather than guessed; a scalar, a pointer and a `stack var` buffer are not element-typed
-#   arrays; a u128 element does not fit one register; an f64 / f32 / bool / struct element
-#   array is refused NAMING that shape (it is a `var a: T[N]`, so the bare/scalar explanation
-#   alone would misdescribe it). An unknown name is `undefined variable`.
+#   and a `stack var` buffer state no element width (N bytes in a fn, N slots at top level), so
+#   their subscript is refused rather than guessed; a scalar is no array; a u128 element does not
+#   fit one register; a struct element array is refused NAMING that shape (it is a `var a: T[N]`,
+#   so the bare/scalar explanation alone would misdescribe it). An unknown name is `undefined
+#   variable`. 6.7.8 (C2-4a): a `*T` and an f64 / f32 / bool element array subscript (axis 2);
+#   tests/gates/frontend/pointer_subscript_checked.sh holds their rows and the pointer refusals.
 # AXIS 2 — ANTI-VACUOUS: the typed spelling of every refused shape compiles and runs.
 # AXIS 3 — the runtime file under CYRIUS_IR=3 (the IR passes rewrite around unrecorded raw
 #   bytes: a signed element load read wrong there until it recorded itself) and by default.
@@ -28,8 +29,12 @@
 #   * make `_arr_desc` answer 8 for `ew <= 0` (a bare array read as i64 slots)
 #     -> axis 1's four bare rows RED (they compile).
 #   * drop `if (w < 0) { _IR_REC0(S, IR_RAW_EMIT); }` in _arr_sub_load -> axis 3's IR=3 row RED.
-#   * drop ", an f64, f32, bool or struct element is not supported" from the refusal text in
-#     _arr_sub_addr -> axis 1's four float/bool/struct naming rows RED.
+#   * drop " - its element is a struct, pointer, enum, string or vector" from the typed-array
+#     refusal in _sub_refuse -> axis 1's two struct naming rows RED (6.7.8, measured).
+#   * 6.7.8 (C2-4a): `_sub_bare` answering 0 -> the five bare rows RED (the untyped-name text); a
+#     non-pointer local taken as a `*i64` -> the bare / scalar / stack rows compile; the C2-3b
+#     compiler -> RED the eight re-derived refusal texts and the four axis-2 rows a 6.7.8 subscript
+#     opened (pointer_local, f64_global, f32_local, bool_global).
 #   * drop the slice guard in _arr_sub_read -> axis 5 RED (the slice is refused as not an array).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -62,35 +67,27 @@ runs() {
     check "$1: exits $3" "$3" "$rc"
 }
 
-NOTARR="cannot subscript 'a': \`a[i]\` needs an integer element-typed array"
-# A float, bool or struct element array IS `var a: T[N]`, so the refusal must name that shape
-# rather than explain it away as a bare array or a scalar (6.6.12 B20 review).
-NOTINT="an f64, f32, bool or struct element is not supported"
+# 6.7.8 (C2-4a): the texts are re-derived — a bare array, a scalar, a struct element each by name.
+BARE="cannot subscript 'a': a bare \`var a[N]\` states no element width"
+NOTARR="cannot subscript 'a': it is not a typed array, a *T or a slice local"
+# A struct element array IS `var a: T[N]`, so the refusal must name that shape rather than
+# explain it away as a bare array or a scalar (6.6.12 B20 review).
+NOTINT="its element is a struct, pointer, enum, string or vector"
 echo "axis 1 — the refusals, by name:"
 refused bare_local_write 'fn f(): i64 {\n    var a[16];\n    a[1] = 5;\n    return 0;\n}\nsyscall(60, f());\n' \
-    "error:<source>:3:6: $NOTARR"
+    "error:<source>:3:6: $BARE"
 refused bare_local_read  'fn f(): i64 {\n    var a[16];\n    return a[1];\n}\nsyscall(60, f());\n' \
-    "error:<source>:3:13: $NOTARR"
+    "error:<source>:3:13: $BARE"
 refused bare_global_read 'var a[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' \
-    "error:<source>:2:23: $NOTARR"
+    "error:<source>:2:23: $BARE"
 refused bare_toplevel_write 'var a[4];\nsyscall(60, 0);\na[2] = 7;\n' \
-    "error:<source>:3:2: $NOTARR"
+    "error:<source>:3:2: $BARE"
 refused scalar_local     'fn f(): i64 {\n    var a = 5;\n    return a[0];\n}\nsyscall(60, f());\n' \
     "error:<source>:3:13: $NOTARR"
-refused pointer_local    'var g: i64[2];\nfn f(): i64 {\n    var a: *i64 = &g;\n    return a[0];\n}\nsyscall(60, f());\n' \
-    "error:<source>:4:13: $NOTARR"
 refused stack_var        'fn f(): i64 {\n    stack var a[16];\n    a[0] = 1;\n    return 0;\n}\nsyscall(60, f());\n' \
-    "error:<source>:3:6: $NOTARR"
+    "error:<source>:3:6: $BARE"
 refused u128_element     'fn f(): i64 {\n    var a: u128[2];\n    return a[0];\n}\nsyscall(60, f());\n' \
     "error:<source>:3:13: cannot subscript 'a': a u128 element does not fit one register"
-refused f64_global       'var a: f64[4];\nfn f(): i64 { a[1] = 1; return 0; }\nsyscall(60, f());\n' \
-    "error:<source>:2:16: $NOTARR"
-refused f64_global_names 'var a: f64[4];\nfn f(): i64 { a[1] = 1; return 0; }\nsyscall(60, f());\n' \
-    "$NOTINT"
-refused f32_local        'fn f(): i64 {\n    var a: f32[4];\n    return a[0];\n}\nsyscall(60, f());\n' \
-    "$NOTINT"
-refused bool_global      'var a: bool[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' \
-    "error:<source>:2:23: $NOTARR"
 refused struct_local     'struct Pt { x; y; }\nfn f(): i64 {\n    var a: Pt[4];\n    return a[1];\n}\nsyscall(60, f());\n' \
     "$NOTINT"
 refused struct_global    'struct Pt { x; y; }\nvar a: Pt[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' \
@@ -103,6 +100,11 @@ runs typed_local_write 'fn f(): i64 {\n    var a: u8[16];\n    a[1] = 5;\n    re
 runs typed_global_read 'var a: i16[4];\nfn f(): i64 { a[1] = 0 - 3; return a[1] + 10; }\nsyscall(60, f());\n' 7
 runs typed_toplevel_write 'var a: i32[4];\nsyscall(0, 0, 0, 0);\na[2] = 7;\na[2] *= 6;\nsyscall(60, a[2]);\n' 42
 runs typed_i64_local 'fn f(): i64 {\n    var a: i64[4];\n    var i = 3;\n    a[i] = 40;\n    a[i] += 2;\n    return a[3];\n}\nsyscall(60, f());\n' 42
+# 6.7.8 (C2-4a): refused until 6.7.8, now subscripted — a `*T` local and f64 / f32 / bool arrays.
+runs pointer_local 'var g: i64[2];\nfn f(): i64 {\n    g[0] = 5;\n    var a: *i64 = &g;\n    return a[0];\n}\nsyscall(60, f());\n' 5
+runs f64_global 'var a: f64[4];\nfn f(): i64 { a[1] = 1.5; a[1] *= 2.0; if (a[1] == 3.0) { return 7; } return 1; }\nsyscall(60, f());\n' 7
+runs f32_local 'fn f(): i64 {\n    var a: f32[4];\n    a[0] = 2.5;\n    a[1] = 0.0;\n    return (load32(&a) >> 24) + load32(&a + 4);\n}\nsyscall(60, f());\n' 64
+runs bool_global 'var a: bool[4];\nfn f(): i64 { a[1] = true; if (a[1]) { return 3; } return 0; }\nsyscall(60, f());\n' 3
 
 echo "axis 3 — the runtime file by default and under CYRIUS_IR=3:"
 TC="$ROOT/tests/tcyr/crossos/typed_array_subscript.tcyr"
@@ -131,5 +133,5 @@ if [ "$fails" -ne 0 ]; then
     echo "FAIL: array_subscript_forms — $fails check(s) failed"
     exit 1
 fi
-echo "PASS: array_subscript_forms — 15 refusals named, 4 typed controls run, the runtime file green by default and under CYRIUS_IR=3, --syntax-only clean, the slice subscript untouched"
+echo "PASS: array_subscript_forms — 10 refusals named, 8 typed controls run, the runtime file green by default and under CYRIUS_IR=3, --syntax-only clean, the slice subscript untouched"
 exit 0

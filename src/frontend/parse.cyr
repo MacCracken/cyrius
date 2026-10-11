@@ -236,8 +236,15 @@ fn _tok_targs_close(S, i): i64 {
 # (`_tok_decl_sid`); with none, the global's (`_glob_name_sid`, `_recv_sid`'s global arm). 0 when
 # untyped. (A closure's own params are untyped, so a receiver among them never compiles.)
 fn _tok_name_sid(S, a, k, noff): i64 {
-    var b = a;
-    while (b < k) { if (TOKTYP(S, b) == 13) { break; } b = b + 1; }   # the body `{`: params lie before it
+    var i = _tok_name_decl(S, a, k, noff);
+    if (i >= 0) { return _tok_decl_sid(S, a, i, _tok_hdr_end(S, a, k)); }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# The token of the declaration that name reaches at token k (the walk above), or -1 (a global, or
+# none). 6.7.8: split out of `_tok_name_sid` for the struct carrier's annotation (`_tok_sc_name`).
+fn _tok_name_decl(S, a, k, noff): i64 {
+    var b = _tok_hdr_end(S, a, k);
     var cd = 0;
     var i = k - 1;
     while (i > a) {
@@ -247,15 +254,19 @@ fn _tok_name_sid(S, a, k, noff): i64 {
         elif (cd == 0) {
             if (t == 2) {
                 if (STREQ(S, TOKVAL(S, i), noff) == 1) {
-                    var r = _tok_decl_sid(S, a, i, b);
-                    if (r >= 0) { return r; }
+                    if (_tok_is_decl(S, i, b) == 1) { return i; }
                 }
             }
         }
         i = i - 1;
     }
-    var g = _glob_name_sid(S, noff);
-    return g;
+    return 0 - 1;
+}
+# The unit's body `{` (its params lie before it), or k when none precedes k.
+fn _tok_hdr_end(S, a, k): i64 {
+    var b = a;
+    while (b < k) { if (TOKTYP(S, b) == 13) { break; } b = b + 1; }
+    return b;
 }
 # What the name at token i is declared as: a struct id, 0 when untyped, -1 when the name there is not
 # a declaration. A declaration is `var NAME`, or a param `(NAME` / `, NAME` in the header (before
@@ -263,11 +274,8 @@ fn _tok_name_sid(S, a, k, noff): i64 {
 # parameter loop skips (`_mark_ptr_param`); a `var p: *T` local is a plain pointer — and an untyped
 # `var` takes its initializer's struct (`_tok_init_sid`). `a` is the unit's first token.
 fn _tok_decl_sid(S, a, i, b): i64 {
+    if (_tok_is_decl(S, i, b) == 0) { return 0 - 1; }
     var pt = TOKTYP(S, i - 1);
-    var d = 0;
-    if (pt == 3) { d = 1; }
-    elif (i < b) { if (pt == 10 || pt == 31) { d = 1; } }
-    if (d == 0) { return 0 - 1; }
     var r = 0;
     var nt = TOKTYP(S, i + 1);
     if (nt == 49) {
@@ -277,6 +285,14 @@ fn _tok_decl_sid(S, a, i, b): i64 {
     }
     elif (pt == 3) { if (nt == 4) { r = _tok_init_sid(S, a, i, i + 2); } }
     return r;
+}
+# 1 = the name at token i declares: `var NAME`, or a param `(NAME` / `, NAME` in the header (before
+# the body `{` at token b).
+fn _tok_is_decl(S, i, b): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt == 3) { return 1; }
+    if (i < b) { if (pt == 10 || pt == 31) { return 1; } }
+    return 0;
 }
 # The struct an untyped `var x = ..` (its name at token i) takes from the initializer at token j, as
 # PARSE_VAR infers it (`_lit_head`, `_var_rhs_call`): a literal `Name {` / `Name<..> {` (a generic
@@ -339,7 +355,7 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     var m = GFGM(S, fi);
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
-    if (pk == 0) { return 0; }
+    if (pk == 0) { return _tok_gen_sc_sid(S, a, i, j, fi, (m >> (24 + w * 20)) & 0xFFFFF); }   # 6.7.8
     var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) != 2) { return 0; }
@@ -347,6 +363,66 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
     elif (nt == 10) { if (_call_is_whole_arg(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
     return r;
+}
+# 6.7.8 — the same when T is carried by a generic struct parameter (`_gs_carrier`, field
+# f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
+# exists yet when the pair scans run, so a name is read from its DECLARATION's annotation (`b: G<..,
+# X, ..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its instance. Only
+# `&name` reaches a `*G<..>` carrier. Anything else answers 0 — a missed flag, never a false one.
+fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
+    if ((f & 255) == 0) { return 0; }
+    var at = _call_arg_for(S, fi, j + 1, (f & 255) - 1);
+    if (at < 0) { return 0; }
+    var g = _gsc_g(S, fi, (f >> 10) & 1023);
+    if (g <= 0) { return 0; }
+    if (TOKTYP(S, at) == 27) {
+        if (((f >> 9) & 1) == 0) { return 0; }
+        at = at + 1;
+        if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
+        f = f | (1 << 20);
+    }
+    if (TOKTYP(S, at) != 2) { return 0; }
+    var nt = TOKTYP(S, at + 1);
+    var r = 0;
+    if (nt == 31 || nt == 11) { r = _tok_sc_name(S, a, i, at, g, f); }
+    elif (nt == 10) {
+        if (_call_is_whole_arg(S, at) == 1) { r = _sinst_conc(S, _tok_init_sid(S, a, i, at), g, (f >> 8) & 1); }
+    }
+    if (r > 0) { if (GSTP(S, r - 1) == 0) { return r; } }
+    return 0;
+}
+# The name at token at (scope as `_tok_name_sid`, from the declaration being typed at token i): a
+# local or parameter by its annotation, an untyped `var b = f(..)` by its initializer's instance, a
+# global by its instance.
+fn _tok_sc_name(S, a, i, at, g, f): i64 {
+    var d = _tok_name_decl(S, a, i, TOKVAL(S, at));
+    if (d < 0) { return _sinst_conc(S, _glob_name_sid(S, TOKVAL(S, at)), g, (f >> 8) & 1); }
+    if (TOKTYP(S, d + 1) == 4) {
+        if (TOKTYP(S, d - 1) != 3) { return 0; }
+        return _sinst_conc(S, _tok_init_sid(S, a, d, d + 2), g, (f >> 8) & 1);
+    }
+    return _tok_sc_ann(S, d, g, f);
+}
+# The type argument in T's slot of the annotation after the declared name at token d, when it is a
+# plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` for a `*G` carrier
+# (bit 9 of f) not reached through `&` (bit 20: `&bp` is a `**`). 0 otherwise.
+fn _tok_sc_ann(S, d, g, f): i64 {
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    var at = d + 2;
+    if (TOKTYP(S, at) == 8) {
+        if (((f >> 9) & 1) == 0) { return 0; }
+        if (((f >> 20) & 1) == 1) { return 0; }
+        at = at + 1;
+    }
+    if (TOKTYP(S, at) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, at)) != g) { return 0; }
+    if (TOKTYP(S, at + 1) != 19) { return 0; }
+    var k = at + 2;
+    if (((f >> 8) & 1) == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31 && kt != 39 && kt != 152) { return 0; }   # a plain name, not `Pair<..>`
+    return FINDSTRUCT(S, TOKVAL(S, k));
 }
 # A method `x.m(` whose single-name receiver the tokens do not type — a generic fn's `p: T` param,
 # bound per instance — still has ONE answer when every struct's `T_m` agrees on the pair flag: the
@@ -427,36 +503,9 @@ fn _pair_prescan(S): i64 {
                                 }
                                 if (j < n) {
                                     if (TOKTYP(S, j) == 13) {
-                                        var bd = 0;
-                                        var k = j;
-                                        var go = 1;
-                                        while (go == 1) {
-                                            if (k >= n) { go = 0; }
-                                            else {
-                                                var t = TOKTYP(S, k);
-                                                if (t == 13) {
-                                                    # a closure body — its returns are its own
-                                                    var sk = _skip_nested_body(S, k);
-                                                    if (sk >= 0) { k = sk; } else { bd = bd + 1; }
-                                                }
-                                                elif (t == 14) {
-                                                    bd = bd - 1;
-                                                    if (bd == 0) { go = 0; }
-                                                }
-                                                elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
-                                                elif (t == 33) {                  # `return`
-                                                    # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
-                                                    var rf = _tok_ret_callee(S, i, k + 1);
-                                                    if (rf >= 0) {
-                                                        if ((GFLG(S, rf) & 256) != 0) {
-                                                            SFLG(S, pfi, GFLG(S, pfi) | 256);
-                                                            changed = 1;
-                                                            go = 0;
-                                                        }
-                                                    }
-                                                }
-                                                if (go == 1) { k = k + 1; }
-                                            }
+                                        if (_pair_body_scan(S, i, j) == 1) {
+                                            SFLG(S, pfi, GFLG(S, pfi) | 256);
+                                            changed = 1;
                                         }
                                     }
                                 }
@@ -468,6 +517,34 @@ fn _pair_prescan(S): i64 {
             i = i + 1;
         }
         if (changed == 0) { round = 6; } else { round = round + 1; }
+    }
+    return 0;
+}
+# 1 = the body whose `{` is token j (of the fn whose `fn` token is a — the unit `_tok_ret_callee`
+# resolves names in) has a `return f(..)` / `return g<..>(..)` / `return x.m(..)` whose callee is
+# flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
+# refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
+# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse_types.cyr).
+fn _pair_body_scan(S, a, j): i64 {
+    var n = GTCNT(S);
+    var bd = 0;
+    var k = j;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13) {
+            var sk = _skip_nested_body(S, k);   # a closure body — its returns are its own
+            if (sk >= 0) { k = sk; } else { bd = bd + 1; }
+        }
+        elif (t == 14) {
+            bd = bd - 1;
+            if (bd == 0) { return 0; }
+        }
+        elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
+        elif (t == 33) {                  # `return`
+            var rf = _tok_ret_callee(S, a, k + 1);   # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
+            if (rf >= 0) { if ((GFLG(S, rf) & 256) != 0) { return 1; } }
+        }
+        k = k + 1;
     }
     return 0;
 }
@@ -3050,7 +3127,7 @@ fn _asg_wide_refused(S, noff, li): i64 {
     if (li >= 0) {
         if (_is_simd_any(S, GLTYPE(S, li)) == 1) { k = 1; }
         elif (GLAEW(S, li) != 0) { k = 2; }
-        elif (GSLICE_W(S, li) > 0) { k = 3; }
+        elif (_slice_lw(S, li) > 0) { k = 3; }
         elif (GLBARR(S, li) == 1) { k = 4; }   # 6.7.6 (D2): a bare `var b[N]` / `stack var b[N]`
     } else {
         var gi = _findvar_core(S, noff);
@@ -3185,13 +3262,19 @@ fn _asg_compound_op(S, cop, lt): i64 {
 }
 
 # `*expr = v` / `*expr OP= v` (cursor on the `*`), ending at `term` — `;` for a statement, `)` for
-# a classic-for step: the address once, before the value, then a WORD store, as `*p` reads a word
-# whatever p's type (the guide's Pointers). 6.7.5 (B8): the compound form — it was "expected '=',
-# got '+'" — loads the word, `_asg_compound_op`s it (integer arithmetic) and stores it back. Out of
+# a classic-for step: the address once, before the value, then the store. 6.7.5 (B8): the compound
+# form — it was "expected '=', got '+'" — loads, `_asg_compound_op`s it and stores it back. Out of
 # _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
+# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse_expr.cyr) the element is written at its
+# width, as `p[0] = v` / `p[0] OP= v` write it: `=` checks the value as a store into an f32 element
+# (an f64 rounds, an integer constant warns), `OP=` loads the element at its width (sign- /
+# zero-extended; an f32 combines as an f32), a wider integer warns "narrowing". Every other operand
+# keeps the WORD store (`_asg_store_w` at width 0 is EPOPC + ESTORE64). Before, `*q = 5` through a
+# `*i32` zeroed the next element. CHANGELOG [6.7.8]
 fn _deref_store(S, term): i64 {
     STI(S, GTI(S) + 1);   # `*`
     PARSE_FACTOR(S);
+    var ed = _deref_ed(S);   # before the push: the operand's own kind
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
@@ -3199,14 +3282,19 @@ fn _deref_store(S, term): i64 {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
+            var ti = GTI(S);
             PCMPE(S);
+            if (_ek_fk(ed) == 2) { _ifs_bx(S, 2, ti, 0); }   # an f32 element: the field's checks
         }
+    } elif (ed != 0) {
+        _arr_sub_load(S, _ek_lw(ed));   # rax = the element at the address
+        _asg_compound_op(S, cop, _ek_lt(ed));
     } else {
         ELOAD64(S);       # rax = the word at the address
         _asg_compound_op(S, cop, 0);
     }
-    EPOPC(S);             # rcx = the address, rax = the value
-    ESTORE64(S);
+    if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from
+    _asg_store_w(S, _ek_lw(ed));   # rcx = the address, rax = the value; a word when ed is 0
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
     return 0;
@@ -3312,6 +3400,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
     if (_agc_t >= 0) { return 0; }
+    if (_dyn_is(S, 0 - _agc_t) == 1) { _dyn_err(S, st, "cannot assign a value that is not a dyn to ", 0 - _agc_t, noff, 0); return 1; }   # 6.7.8
     if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
     _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
     return 1;
@@ -3323,16 +3412,19 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
         } }
     var st = GTI(S);
     _agc_operand(S, noff);
-    _fla_arm(st, _agc_t);
+    var dt = _agc_t;
+    _fla_arm(st, dt);
     var fs = _fla_stp;
     if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
     PCMPE(S);
-    _bx_asg(S, noff, st);          # 6.7.3 (B2): a write into a bool takes a boolean value
+    var dx = _dyn_dst_chk(S, st, dt);   # 6.7.8: a whole dyn result goes only into that dyn
+    if (dx == 0) { _bx_asg(S, noff, st); }   # 6.7.3 (B2): a write into a bool takes a boolean value
     _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
     _fla_want = 0 - 1;
     _fla_stp = fs;
+    if (dx == 1) { return 0; }
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
@@ -3496,6 +3588,7 @@ fn _tup_asg_known(S, noff): i64 {
     return 0;
 }
 fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    if (_dyn_asg(S, noff, term) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
@@ -3739,6 +3832,7 @@ fn _must_use_warn(S, noff): i64 {
 # _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
 # BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
 fn _stmt_qmark(S, pair): i64 {
+    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse_expr.cyr)
     if (PEEKT(S) == 124) {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
@@ -4027,7 +4121,7 @@ fn _masg_kind(S, nm, li, ti): i64 {
         elif (_is_simd_any(S, lt) == 1) { k = 2; }
         elif (lt < 0) { if (GLAGG(S, li) == 1) { k = 1; tup = _tup_is(S, 0 - lt); } }
         elif (lt == F32_TYID) { k = 3; }
-        elif (GLSPAN(S, li) > 1) { k = 4; if (GSLICE_W(S, li) > 0) { k = 6; } }
+        elif (GLSPAN(S, li) > 1) { k = 4; if (_slice_lw(S, li) > 0) { k = 6; } }
     } else {
         var gi = _findvar_core(S, nm);
         if (gi < 0) { return 0; }

@@ -27,6 +27,14 @@
 #              --target=aarch64-bare-metal-elf` injects) and CYRIUS_KERNEL_BASE: the image's
 #              entry is base + 0x78 and it is byte-identical to the cross's. The native fork read
 #              neither: asked for a kernel image it wrote a 65 KB userland ELF, rc 0, without a word.
+#   bounds   — (6.7.8, C2-7) every runnable fork decides the bounds-checked mode the same way (the
+#              shared PREPROCESS's `_bnd_setup`): the CYRIUS_BOUNDS predefine, observed through an
+#              `#ifdef CYRIUS_BOUNDS` arm that names an undeclared marker (rc 1 naming it = on, rc
+#              0 = off) — unset off; CYRIUS_BOUNDS=1 on; a `#bounds` line on; `#bounds` with
+#              CYRIUS_BOUNDS=0 off; CYRIUS_BOUNDS=2 refused by name. The Mach-O drivers read the
+#              env through their envp walk, which cannot run here: the same rows (and a misplaced
+#              `#bounds` refused) were measured by hand at C2-7 on ecb (Mach-O arm64), ach (Mach-O
+#              x86_64), pi (native aarch64) and cass (cycc.exe), cross-built from this tree.
 #
 # MUTATION LEDGER (6.6.20, scratch copies of src/, never the repo):
 #   real tree                                          -> GREEN
@@ -37,6 +45,7 @@
 #   the `--sy` arms deleted from main_cx.cyr           -> RED "syntax cx" + "syntax cx.exe_wine"
 #   the CYRIUS_KERNEL / _BASE reads deleted from the native fork
 #                                                      -> RED "kernel native_qemu default" + "kernel native_qemu 0x40200000"
+#   (6.7.8) `_bnd_setup` not called from PREPROCESS   -> RED "bounds <every fork> env1 / line / env2"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_flag_parity: cannot cd to $ROOT"; exit 1; }
@@ -189,9 +198,33 @@ printf '%s\n' "$AFORKS" | while IFS='|' read -r l c; do
     done
 done
 
+# ── bounds: CYRIUS_BOUNDS and `#bounds` on every runnable fork ─────────────────────────
+printf '#ifdef CYRIUS_BOUNDS\nvar r = bounds_mode_marker_xq;\n#endif\nvar x = 1;\n' > "$T/bo.cyr"
+printf '#bounds\n#ifdef CYRIUS_BOUNDS\nvar r = bounds_mode_marker_xq;\n#endif\nvar x = 1;\n' > "$T/bl.cyr"
+printf '%s\n' "$FORKS" | while IFS='|' read -r l c; do
+    for how in unset env1 line line_env0 env2; do
+        rc=0
+        case $how in
+            unset)     env -u CYRIUS_BOUNDS $c < "$T/bo.cyr" > "$T/bm" 2> "$T/bm.err" || rc=$? ;;
+            env1)      env CYRIUS_BOUNDS=1 $c < "$T/bo.cyr" > "$T/bm" 2> "$T/bm.err" || rc=$? ;;
+            line)      env -u CYRIUS_BOUNDS $c < "$T/bl.cyr" > "$T/bm" 2> "$T/bm.err" || rc=$? ;;
+            line_env0) env CYRIUS_BOUNDS=0 $c < "$T/bl.cyr" > "$T/bm" 2> "$T/bm.err" || rc=$? ;;
+            env2)      env CYRIUS_BOUNDS=2 $c < "$T/bo.cyr" > "$T/bm" 2> "$T/bm.err" || rc=$? ;;
+        esac
+        echo x >> "$T/nrows"
+        case $how in
+            unset|line_env0) [ "$rc" = 0 ] || { echo "  FAIL: fork_flag_parity bounds $l $how: rc $rc (want 0: the mode off): $(grep -m1 error "$T/bm.err")"; echo x >> "$T/red"; } ;;
+            env1|line) { [ "$rc" != 0 ] && grep -q bounds_mode_marker_xq "$T/bm.err"; } \
+                || { echo "  FAIL: fork_flag_parity bounds $l $how: rc $rc (want 1 naming the marker: the CYRIUS_BOUNDS predefine visible)"; echo x >> "$T/red"; } ;;
+            env2) { [ "$rc" != 0 ] && grep -q 'CYRIUS_BOUNDS must be 0 or 1 (or unset): 2' "$T/bm.err"; } \
+                || { echo "  FAIL: fork_flag_parity bounds $l env2: rc $rc (want CYRIUS_BOUNDS=2 refused by name)"; echo x >> "$T/red"; } ;;
+        esac
+    done
+done
+
 [ -f "$T/nrows" ] && rows=$((rows + $(wc -l < "$T/nrows")))
 [ -f "$T/red" ] && fail=$((fail + $(wc -l < "$T/red")))
 
 if [ "$fail" -ne 0 ]; then echo "FAIL fork_flag_parity: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE / CYRIUS_KERNEL(_BASE); native refuses CYRIUS_MACHO_ARM"
+echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE / CYRIUS_KERNEL(_BASE); native refuses CYRIUS_MACHO_ARM; CYRIUS_BOUNDS / #bounds decided alike on every runnable fork"
 exit 0
