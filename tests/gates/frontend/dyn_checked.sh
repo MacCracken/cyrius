@@ -98,6 +98,18 @@
 #       ld links the object; S5 `shared;` exports none; S6 no CYRIUS_SYMS line; S7 no unreachable-fn note
 #   CG  (D6) what the call is: CG1 x86 `call [rbp+disp32]` (ff 95) per call; CG2 PE the same, and none of
 #       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`)
+#   IX  (6.7.8 integration) where the checked dyn meets C2's subscripts, `*p` width, slices and the
+#       bounds-checked mode: IX1 tests/tcyr/crossos/dyn_subscripts.tcyr (a dyn method's `self.p[i]` read /
+#       `=` / `+=` and its typed array local; a dyn call's `*T` result subscripted, `o.ptr()[i]`, and a
+#       `*u8` one's `o.bp()[i]` / `*o.bp()` writing one byte; a `*u8` dereference in a dyn method; a slice
+#       and a dyn formed from a declared `i32` in one fn) on x86 — mode off with no warning, CYRIUS_IR=3,
+#       CYRIUS_DCE=1, the mode by CYRIUS_BOUNDS=1 (the rung `--bounds` sets) and by a `#bounds` line —
+#       and on qemu-aarch64, cx and wine, mode off and on; IX2 under the mode, the violation of a dyn
+#       method's `self.p[i]` (a negative index) and its typed array's `a[i]` (its N) in an INCLUDED file
+#       (named, with the line) and of a dyn call's `*T` result `o.ptr()[m]` at the entry's line: exit 134
+#       and exactly the one line, the in-range run (k=0) exit 11 and silent — x86, aarch64, cx, PE;
+#       IX3 the mode on a program that forms dyns (dyn_objects.tcyr, every assertion, every target) and,
+#       mode off, not a byte of the checker in either dyn file (unset == CYRIUS_BOUNDS=0)
 #   A   the P program and (D6) the PD program on x86 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 #       cx (cxvm), PE (wine, a private prefix); (D5, D6) tests/tcyr/crossos/dyn_objects.tcyr under
 #       CYRIUS_IR=1 / 3 and CYRIUS_DCE=1, and on qemu-aarch64 and wine (cx runs it in
@@ -245,6 +257,22 @@
 #         own compiler)                                              -> AL1 (refused as "no `impl Num for
 #         cstring`"), AL2 (BUILT), AL3 (refused: "compound assignment to slice 'y'"), AL4 (BUILT), AL5
 #         (BUILT), AL6 (refused as a slice), AL7 (BUILT), AL8 (the captured-slice text); AL9 green
+#   M-AL2 SLSLICE never sets bit 62 (C2's M1b)                         -> AL9, IX1 (every leg: `s[1]` "cannot
+#         subscript"), IX3 dyn_subscripts
+# The IX rows (each mutant a one-edit scratch copy of the WHOLE tree, its cycc built from it, this gate run
+# from that tree — so the aarch64 and cx legs' compilers carry the mutation too; the real tree green):
+#   M-AL1 (above)                                                      -> IX1 every leg (`n += 1` "compound
+#         assignment to slice"), IX3 dyn_subscripts
+#   MX1  a dyn prototype records no `*T` step (`_fn_rps` zeroed in `_dyn_proto`) -> IX1 every leg, IX2 every
+#        leg and k ("cannot subscript the result of 'ptr'"), IX3 dyn_subscripts; CW
+#   MX2  `_deref_ed` answers 0 (every `*p` a word)                     -> IX1 every leg (5 of 26: §result's
+#        `*o.bp()`, §deref)
+#   MX3  the checker's `*T` rule trips at 0 (`i <= 0`)                 -> IX1 the mode-on legs, IX2 k=0 every leg
+#   MX4  the site's line off by one (`_bck_line`)                      -> IX2 k=1-3 every leg
+#   MX5  the checker's upper bound `i > n` (N itself in range)         -> IX2 k=2 every leg
+#   MX6  the checker injected with the mode off (`_bnd_finish`)        -> IX3 both files' mode-off rows; S7
+#   MX7  the injected checker's text broken (a missing `;`)            -> IX1 / IX3 the mode-on legs, IX2 every
+#        leg and k (`<bounds>:5:1: expected ';'`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -907,6 +935,134 @@ if command -v wine > /dev/null 2>&1; then
     else bad "A dyn_objects PE: did not compile: $(grep '^error' "$T/do.werr" | head -1)"; fi
 else echo "  SKIP A dyn_objects PE — wine not installed"; skips=$((skips + 1)); fi
 
+# ── IX: the 6.7.8 integration — the checked dyn meets C2's subscripts, `*p` at the element's width, slice
+# stores and the bounds-checked mode (each row also on aarch64 / cx / PE where a leg runs) ──────────────
+DS=tests/tcyr/crossos/dyn_subscripts.tcyr
+DSN=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$DS")
+[ "$DSN" -ge 26 ] || bad "IX: dyn_subscripts.tcyr holds $DSN assertions (floor 26) — the count or the file moved"
+ixsum() {   # <label> <exit> <output file> <want count>
+    tr -d '\r' < "$3" > "$3.n"
+    if [ "$2" -eq 0 ] && [ "$(tail -1 "$3.n")" = "$4 passed, 0 failed ($4 total)" ]; then ok "$1: $4/$4"
+    else bad "$1: exit $2, $(tail -1 "$3.n")"; fi
+}
+ixv() {     # <label> <exit> <stderr file> <the one line wanted>
+    tr -d '\r' < "$3" > "$3.n"
+    if [ "$2" -eq 134 ] && [ "$(wc -l < "$3.n")" -eq 1 ] && [ "$(cat "$3.n")" = "$4" ]; then ok "$1: exit 134, \`$4\`"
+    else bad "$1: exit $2, stderr \`$(head -2 "$3.n" | tr '\n' '|')\` (want 134 and \`$4\`)"; fi
+}
+ixwine() {  # <exe> <stdout> <stderr>: the exit status in $got
+    got=0
+    (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+        WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1" > "$2" 2> "$3") || got=$?
+}
+{ echo '#bounds'; cat "$DS"; } > "$T/ds_line.tcyr"
+# IX1 tests/tcyr/crossos/dyn_subscripts.tcyr — a dyn method's `self.p[i]` (read, `=`, `+=`) and its typed
+# array local, a dyn call's `*T` result subscripted (`o.ptr()[i]`, a `*u8` one's `o.bp()[i]` / `*o.bp()`
+# writing one byte), a `*u8` dereference in a dyn method, a slice and a dyn formed from a declared `i32`
+# in one fn — every assertion, with the mode off (no warning), CYRIUS_IR=3, CYRIUS_DCE=1, and under the
+# bounds-checked mode (CYRIUS_BOUNDS=1, the rung `cyrius build --bounds` sets; and the file's own
+# `#bounds` line): every index in range, nothing trips.
+for leg in off IR3 DCE BOUNDS line; do
+    src="$DS"; ev=""
+    case $leg in IR3) ev=CYRIUS_IR=3 ;; DCE) ev=CYRIUS_DCE=1 ;; BOUNDS) ev=CYRIUS_BOUNDS=1 ;; line) src="$T/ds_line.tcyr" ;; esac
+    rc=0; env $ev "$CC" < "$src" > "$T/ds_$leg.bin" 2> "$T/ds_$leg.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX1 x86 $leg: rc $rc: $(grep '^error' "$T/ds_$leg.err" | head -1)"; continue; fi
+    if [ "$leg" = off ] && grep -q 'warning' "$T/ds_$leg.err"; then bad "IX1 x86 off: a warning: $(grep warning "$T/ds_$leg.err" | head -1)"; fi
+    chmod +x "$T/ds_$leg.bin"; got=0; (cd "$T" && timeout 60 "./ds_$leg.bin" > "ds_$leg.out" 2>&1) || got=$?
+    ixsum "IX1 dyn_subscripts x86 $leg" "$got" "$T/ds_$leg.out" "$DSN"
+done
+for m in 0 1; do
+    if [ -x "$T/cc_a64" ]; then
+        rc=0; CYRIUS_BOUNDS=$m "$T/cc_a64" < "$DS" > "$T/ds$m.a" 2> "$T/ds$m.aerr" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX1 aarch64 CYRIUS_BOUNDS=$m: rc $rc: $(grep '^error' "$T/ds$m.aerr" | head -1)"
+        else chmod +x "$T/ds$m.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 "./ds$m.a" > "ds$m.aout" 2>&1) || got=$?
+            ixsum "IX1 dyn_subscripts aarch64 (qemu) CYRIUS_BOUNDS=$m" "$got" "$T/ds$m.aout" "$DSN"; fi
+    else echo "  SKIP IX1 aarch64 CYRIUS_BOUNDS=$m — qemu-aarch64 or the aarch64 compiler missing"; skips=$((skips + 1)); fi
+    if [ -x "$T/cc_cx" ] && [ -x "$T/cxvm" ]; then
+        rc=0; CYRIUS_BOUNDS=$m "$T/cc_cx" < "$DS" > "$T/ds$m.cyx" 2> "$T/ds$m.cxerr" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX1 cx CYRIUS_BOUNDS=$m: rc $rc: $(grep '^error' "$T/ds$m.cxerr" | head -1)"
+        else got=0; timeout 120 "$T/cxvm" < "$T/ds$m.cyx" > "$T/ds$m.cxout" 2>&1 || got=$?
+            ixsum "IX1 dyn_subscripts cx (cxvm) CYRIUS_BOUNDS=$m" "$got" "$T/ds$m.cxout" "$DSN"; fi
+    else bad "IX1 cx: no cx compiler / cxvm (the A legs build them)"; fi
+    if command -v wine > /dev/null 2>&1; then
+        rc=0; CYRIUS_BOUNDS=$m CYRIUS_TARGET_WIN=1 "$CC" < "$DS" > "$T/ds$m.exe" 2> "$T/ds$m.werr" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX1 PE CYRIUS_BOUNDS=$m: rc $rc: $(grep '^error' "$T/ds$m.werr" | head -1)"
+        else ixwine "ds$m.exe" "ds$m.wout" "ds$m.wrerr"; ixsum "IX1 dyn_subscripts PE (wine) CYRIUS_BOUNDS=$m" "$got" "$T/ds$m.wout" "$DSN"; fi
+    else echo "  SKIP IX1 PE CYRIUS_BOUNDS=$m — wine not installed"; skips=$((skips + 1)); fi
+done
+
+# IX2 a violation under the mode, from where the features meet — a dyn method's `self.p[i]` (a `*T`
+# field: a negative index) and its typed array local `a[i]` (its exact N) in an INCLUDED file, named by
+# its include path and the line; a dyn call's `*T` result `o.ptr()[m]` at the entry's line. Exit 134 and
+# exactly the one line; the in-range program (k = 0) exits 11 with nothing on stderr. Every target.
+mkdir -p "$T/ix"
+printf 'trait Buf { fn at(self, i): i64; fn ptr(self): *i64; fn el(self, i): i64; }\nstruct Rec { p: *i64; }\nimpl Buf for Rec {\n    fn at(self, i): i64 { return self.p[i]; }\n    fn ptr(self): *i64 { return self.p; }\n    fn el(self, i): i64 {\n        var a: i64[4];\n        a[0] = 1;\n        return a[i];\n    }\n}\n' > "$T/ix/dlib.cyr"
+printf 'include "dlib.cyr"\nvar MEM[4];\nfn main(k): i64 {\n    store64(&MEM, 5);\n    var r = Rec { &MEM };\n    var o: dyn Buf = &r;\n    var m = 0 - 2;\n    if (k == 1) { return o.at(0 - 1); }\n    if (k == 2) { return o.el(4); }\n    if (k == 3) { return o.ptr()[m]; }\n    return o.at(0) + o.el(0) + o.ptr()[0];\n}\nsyscall(60, main(K));\n' > "$T/ix/main.tpl"
+IXW1='bounds: index -1 out of [0, ...) at dlib.cyr:4'
+IXW2='bounds: index 4 out of [0, 4) at dlib.cyr:9'
+IXW3='bounds: index -2 out of [0, ...) at <source>:10'
+for k in 0 1 2 3; do sed "s/main(K)/main($k)/" "$T/ix/main.tpl" > "$T/ix/m$k.cyr"; done
+ixk() {     # <leg> <k> <exit> <stderr file>
+    case $2 in
+        0) if [ "$3" -eq 11 ] && [ ! -s "$4" ]; then ok "IX2 $1 k=0: in range, exit 11, stderr empty"
+           else bad "IX2 $1 k=0: exit $3 (want 11), stderr \`$(head -1 "$4")\`"; fi ;;
+        1) ixv "IX2 $1 k=1: a dyn method's \`self.p[i]\`, i = -1, in an included file" "$3" "$4" "$IXW1" ;;
+        2) ixv "IX2 $1 k=2: a dyn method's typed array \`a[i]\`, i = N" "$3" "$4" "$IXW2" ;;
+        3) ixv "IX2 $1 k=3: a dyn call's \`*T\` result \`o.ptr()[m]\`, m = -2" "$3" "$4" "$IXW3" ;;
+    esac
+}
+for k in 0 1 2 3; do
+    rc=0; (cd "$T/ix" && CYRIUS_BOUNDS=1 timeout 60 "$CC" < "m$k.cyr" > "m$k.bin" 2> "m$k.err") || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX2 x86 k=$k: rc $rc: $(grep '^error' "$T/ix/m$k.err" | head -1)"
+    else chmod +x "$T/ix/m$k.bin"; got=0; timeout 10 "$T/ix/m$k.bin" > /dev/null 2> "$T/ix/m$k.rerr" || got=$?; ixk x86 "$k" "$got" "$T/ix/m$k.rerr"; fi
+    if [ -x "$T/cc_a64" ]; then
+        rc=0; (cd "$T/ix" && CYRIUS_BOUNDS=1 timeout 60 "$T/cc_a64" < "m$k.cyr" > "m$k.a" 2> "m$k.aerr") || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX2 aarch64 k=$k: rc $rc: $(grep '^error' "$T/ix/m$k.aerr" | head -1)"
+        else chmod +x "$T/ix/m$k.a"; got=0; (cd "$T/ix" && timeout 60 qemu-aarch64 "./m$k.a" > /dev/null 2> "m$k.arerr") || got=$?; ixk "aarch64 (qemu)" "$k" "$got" "$T/ix/m$k.arerr"; fi
+    fi
+    if [ -x "$T/cc_cx" ] && [ -x "$T/cxvm" ]; then
+        rc=0; (cd "$T/ix" && CYRIUS_BOUNDS=1 timeout 60 "$T/cc_cx" < "m$k.cyr" > "m$k.cyx" 2> "m$k.cxerr") || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX2 cx k=$k: rc $rc: $(grep '^error' "$T/ix/m$k.cxerr" | head -1)"
+        else got=0; timeout 60 "$T/cxvm" < "$T/ix/m$k.cyx" > /dev/null 2> "$T/ix/m$k.cxrerr" || got=$?; ixk "cx (cxvm)" "$k" "$got" "$T/ix/m$k.cxrerr"; fi
+    fi
+    if command -v wine > /dev/null 2>&1; then
+        rc=0; (cd "$T/ix" && CYRIUS_BOUNDS=1 CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "m$k.cyr" > "../ixm$k.exe" 2> "m$k.werr") || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "IX2 PE k=$k: rc $rc: $(grep '^error' "$T/ix/m$k.werr" | head -1)"
+        else ixwine "ixm$k.exe" "ixm$k.wout" "ixm$k.wrerr"; ixk "PE (wine)" "$k" "$got" "$T/ixm$k.wrerr"; fi
+    fi
+done
+
+# IX3 the mode on programs that form dyns: dyn_objects.tcyr (no subscript of its own — the checker
+# rides along unused) passes every assertion under CYRIUS_BOUNDS=1 on every target; and with the mode
+# off not a byte of the checker exists in either dyn file — unset == CYRIUS_BOUNDS=0, byte for byte.
+rc=0; CYRIUS_BOUNDS=1 "$CC" < "$DO" > "$T/dob.bin" 2> "$T/dob.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "IX3 dyn_objects x86 CYRIUS_BOUNDS=1: rc $rc: $(grep '^error' "$T/dob.err" | head -1)"
+else chmod +x "$T/dob.bin"; got=0; (cd "$T" && timeout 60 ./dob.bin > dob.out 2>&1) || got=$?; ixsum "IX3 dyn_objects x86 CYRIUS_BOUNDS=1" "$got" "$T/dob.out" "$DON"; fi
+if [ -x "$T/cc_a64" ]; then
+    rc=0; CYRIUS_BOUNDS=1 "$T/cc_a64" < "$DO" > "$T/dob.a" 2> "$T/dob.aerr" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX3 dyn_objects aarch64 CYRIUS_BOUNDS=1: rc $rc: $(grep '^error' "$T/dob.aerr" | head -1)"
+    else chmod +x "$T/dob.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./dob.a > dob.aout 2>&1) || got=$?; ixsum "IX3 dyn_objects aarch64 (qemu) CYRIUS_BOUNDS=1" "$got" "$T/dob.aout" "$DON"; fi
+fi
+if [ -x "$T/cc_cx" ] && [ -x "$T/cxvm" ]; then
+    rc=0; CYRIUS_BOUNDS=1 "$T/cc_cx" < "$DO" > "$T/dob.cyx" 2> "$T/dob.cxerr" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX3 dyn_objects cx CYRIUS_BOUNDS=1: rc $rc: $(grep '^error' "$T/dob.cxerr" | head -1)"
+    else got=0; timeout 120 "$T/cxvm" < "$T/dob.cyx" > "$T/dob.cxout" 2>&1 || got=$?; ixsum "IX3 dyn_objects cx (cxvm) CYRIUS_BOUNDS=1" "$got" "$T/dob.cxout" "$DON"; fi
+fi
+if command -v wine > /dev/null 2>&1; then
+    rc=0; CYRIUS_BOUNDS=1 CYRIUS_TARGET_WIN=1 "$CC" < "$DO" > "$T/dob.exe" 2> "$T/dob.werr" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX3 dyn_objects PE CYRIUS_BOUNDS=1: rc $rc: $(grep '^error' "$T/dob.werr" | head -1)"
+    else ixwine dob.exe dob.wout dob.wrerr; ixsum "IX3 dyn_objects PE (wine) CYRIUS_BOUNDS=1" "$got" "$T/dob.wout" "$DON"; fi
+fi
+for f in "$DO" "$DS"; do
+    b=$(basename "$f" .tcyr)
+    rc=0; "$CC" < "$f" > "$T/$b.off" 2> /dev/null || rc=$?
+    CYRIUS_BOUNDS=0 "$CC" < "$f" > "$T/$b.off0" 2> /dev/null || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "IX3 $b mode off: rc $rc"
+    elif ! cmp -s "$T/$b.off" "$T/$b.off0"; then bad "IX3 $b: unset and CYRIUS_BOUNDS=0 differ"
+    elif grep -q 'bounds: index' "$T/$b.off"; then bad "IX3 $b: the checker's text is in a mode-off binary"
+    else ok "IX3 $b mode off: no checker byte, unset == CYRIUS_BOUNDS=0"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart (AL), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart (AL), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A); where dyn meets C2's subscripts, \`*p\` width, slices and the bounds-checked mode, every target (IX)"

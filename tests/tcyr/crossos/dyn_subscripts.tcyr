@@ -1,0 +1,160 @@
+# dyn_subscripts.tcyr — 6.7.8 integration: where the checked `dyn` (the dyn lane) meets C2's subscripts,
+# `*p` at the element's width and slice stores. Each section is a shape neither lane's own files hold:
+#
+#   §self      a method called THROUGH a dyn subscripts its `self` field: `self.p[i]` read, `=`, `+=`
+#              (C2-4b's field base, `self` the data word), and a typed array local of the method
+#   §result    a call through a dyn whose member returns `*T` is subscripted at the call: `o.ptr()[i]`
+#              read / `=` / `+=` (the prototype carries the member's `*T` return), and a narrow `*u8`
+#              result — `o.bp()[i]`, `*o.bp()`, `o.bp()[i] = v` / `+=` write ONE byte (C2-5)
+#   §deref     inside a dyn method, `*q` / `*q = v` through a `*u8` local and `*self.q` read the element,
+#              the neighbours intact (C2-5's width rule under the dyn's `self`)
+#   §same_fn   a slice local and a dyn formed from a declared `i32` in ONE fn: the slice reads, writes and
+#              `OP=`s, the declared scalar takes `OP=` and forms (the two lanes' slot-word stamps — bit 62 a
+#              slice, bit 63 a declared scalar — held apart; aliased, `n += 1` was "compound assignment to
+#              slice")
+#
+# Every index is in range: tests/gates/frontend/dyn_checked.sh (IX rows) compiles this file under the
+# bounds-checked mode too (nothing trips) and holds the violation of a dyn method's `self.p[i]` (its
+# file:line), and runs this file on x86 (mode off, CYRIUS_IR=3, CYRIUS_DCE=1, the mode by env and by
+# `#bounds`), qemu-aarch64, cx (cxvm) and wine, mode off and on.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/slice.cyr"
+
+trait Buf {
+    fn at(self, i): i64;
+    fn put(self, i, v): i64;
+    fn arr(self, i): i64;
+    fn ptr(self): *i64;
+    fn bp(self): *u8;
+    fn byte(self, i): i64;
+    fn poke(self, i, v): i64;
+    fn first(self): i64;
+}
+struct Rec { p: *i64; q: *u8; }
+impl Buf for Rec {
+    fn at(self, i): i64 { return self.p[i]; }
+    fn put(self, i, v): i64 {
+        self.p[i] = v;
+        self.p[i] += 1;
+        return self.p[i];
+    }
+    fn arr(self, i): i64 {
+        var a: i64[4];
+        a[0] = 7;
+        a[1] = 8;
+        a[2] = 9;
+        a[3] = self.p[0];
+        return a[i];
+    }
+    fn ptr(self): *i64 { return self.p; }
+    fn bp(self): *u8 { return self.q; }
+    fn byte(self, i): i64 {
+        var q: *u8 = self.q + i;
+        return *q;
+    }
+    fn poke(self, i, v): i64 {
+        var q: *u8 = self.q + i;
+        *q = v;
+        return 0;
+    }
+    fn first(self): i64 { return *self.q; }
+}
+
+var WM = 0;
+var BM = 0;
+fn mkrec(r: *Rec): i64 {
+    WM = alloc(32);
+    store64(WM, 10);
+    store64(WM + 8, 20);
+    store64(WM + 16, 30);
+    store64(WM + 24, 40);
+    BM = alloc(16);
+    store64(BM, 0x0807060504030201);
+    store64(BM + 8, 0x7F7F7F7F7F7F7F7F);
+    r.p = WM;
+    r.q = BM;
+    return 0;
+}
+
+# §self — `self.p[i]` in a method reached through the dyn.
+fn sec_self(): i64 {
+    var rec = Rec { 0, 0 };
+    mkrec(&rec);
+    var o: dyn Buf = &rec;
+    assert_eq(o.at(0), 10, "§self o.at(0): self.p[0] through the dyn");
+    assert_eq(o.at(3), 40, "§self o.at(3): self.p[3] (the last element)");
+    assert_eq(o.put(1, 50), 51, "§self o.put(1, 50): self.p[1] = v; self.p[1] += 1");
+    assert_eq(load64(WM + 8), 51, "§self ... the store reached the record's memory");
+    assert_eq(load64(WM + 16), 30, "§self ... its neighbour intact");
+    assert_eq(o.arr(2), 9, "§self a typed array local of the method, a[2]");
+    assert_eq(o.arr(3), 10, "§self ... a[3] = self.p[0]");
+    return 0;
+}
+
+# §result — the `*T` a call through a dyn returns, subscripted at the call.
+fn sec_result(): i64 {
+    var rec = Rec { 0, 0 };
+    mkrec(&rec);
+    var o: dyn Buf = &rec;
+    assert_eq(o.ptr()[2], 30, "§result o.ptr()[2]");
+    o.ptr()[2] = 33;
+    assert_eq(load64(WM + 16), 33, "§result o.ptr()[2] = 33");
+    o.ptr()[2] += 4;
+    assert_eq(o.ptr()[2], 37, "§result o.ptr()[2] += 4");
+    var pp: *i64 = o.ptr();
+    assert_eq(pp[3], 40, "§result a `*i64` local bound to the dyn's result, pp[3]");
+    assert_eq(o.bp()[2], 3, "§result o.bp()[2] through a `*u8` result: one byte");
+    assert_eq(*o.bp(), 1, "§result *o.bp(): one byte");
+    o.bp()[2] = 0x99;
+    assert_eq(load64(BM), 0x0807060504990201, "§result o.bp()[2] = 0x99 writes one byte");
+    o.bp()[1] += 1;
+    assert_eq(load64(BM), 0x0807060504990301, "§result o.bp()[1] += 1 writes one byte");
+    assert_eq(load64(BM + 8), 0x7F7F7F7F7F7F7F7F, "§result ... the next word intact");
+    return 0;
+}
+
+# §deref — a `*u8` dereference inside the dyn's method.
+fn sec_deref(): i64 {
+    var rec = Rec { 0, 0 };
+    mkrec(&rec);
+    var o: dyn Buf = &rec;
+    assert_eq(o.byte(5), 6, "§deref *q through a `*u8` local in the method: one byte");
+    assert_eq(o.first(), 1, "§deref *self.q: one byte");
+    o.poke(4, 0xEE);
+    assert_eq(load64(BM), 0x080706EE04030201, "§deref *q = 0xEE writes one byte, its neighbours intact");
+    assert_eq(load64(BM + 8), 0x7F7F7F7F7F7F7F7F, "§deref ... the next word intact");
+    return 0;
+}
+
+# §same_fn — a slice local and a dyn formed from a declared scalar, side by side.
+trait Num { fn num(self): i64; }
+impl Num for i32 { fn num(self): i64 { return self * 2; } }
+fn sec_same_fn(): i64 {
+    var w: i64[3];
+    w[0] = 1;
+    w[1] = 2;
+    w[2] = 3;
+    var s: [i64] = 0;
+    slice_set(&s, &w, 3);
+    var n: i32 = 0 - 5;
+    n += 1;
+    var o: dyn Num = n;
+    s[1] = o.num();
+    s[2] += n;
+    assert_eq(n, 0 - 4, "§same_fn a declared i32 beside a slice takes `+=` (no slice)");
+    assert_eq(o.num(), 0 - 8, "§same_fn ... and forms a dyn Num (the data word its value)");
+    assert_eq(s[1], 0 - 8, "§same_fn s[1] = o.num()");
+    assert_eq(s[2], 0 - 1, "§same_fn s[2] += n");
+    assert_eq(s[0] * 100 + s.len, 103, "§same_fn s[0], s.len");
+    assert_eq(w[1], 0 - 8, "§same_fn the slice wrote its backing array");
+    return 0;
+}
+
+alloc_init();
+sec_self();
+sec_result();
+sec_deref();
+sec_same_fn();
+var r = assert_summary();
+syscall(60, r);
