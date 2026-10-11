@@ -6,7 +6,7 @@
 'fncall1' returns 1 value"). The installed 6.7.7 `cycc` / `cycc_cx` give the same split. `cat
 tests/tcyr/crossos/method_pair_result.tcyr | cycc_cx` fails at line 79 with the same error, so that crossos file has
 never compiled for cx (no gate compiles it there: it is not one of `cx_crossos_rows_run.sh`'s row files).
-**Placement:** 6.7.10 — repair 1, the multi-value receives lane (roadmap.md § *The releases after 6.7.7*; it owns
+**Placement:** 6.7.11 — repair 1, the multi-value receives lane (roadmap.md § *The releases after 6.7.7*; it owns
 `_dt_arity_check`) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: the cx
 compiler starts compiling a shape it refuses today).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D1 (reported only, `~/.cache/c6/dyn_handoff.md` § D1

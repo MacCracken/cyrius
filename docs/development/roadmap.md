@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.8** (2026-10-11, release gate GREEN) — checked dyn + C2 · cycc **2,053,536 B** · `.text` **1,840,016** · `cycc-native-aarch64` **1,881,144 B** · **553** `.tcyr`, **259** in `crossos/` · **106** `lib/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **118** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.9** (2026-10-11, slot open) — 6.7.8 shipped · cycc **2,053,536 B** · `.text` **1,840,016** · `cycc-native-aarch64` **1,881,144 B** · **553** `.tcyr`, **259** in `crossos/` · **106** `lib/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **118** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -32,9 +32,11 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
    where it was found** (user, 2026-10-09), its own commit with its regression row; a quick fix that changes what
    compiles is still asked first. The repair releases are re-balanced at each one's open against what was filed since. A P0 security finding is reported the turn it is found — whether it interrupts
    the arc is the user's call.
-2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. Break 2 is 6.7.10 – 6.7.12 (user, 2026-10-09): the open
-   queue repaired to 0 bugs, so fuller audits can follow. 6.7.13 is the full security audit + the refactor /
-   optimization review (user, 2026-10-09). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.13
+2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. **6.7.9 is a repair batch before the next feature** (user,
+   2026-10-11): two lanes — the quick fixes and the critical / high issues — to take weight off the queue; B7 + P5-B
+   moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.13 (user, 2026-10-09): the open
+   queue repaired to 0 bugs, so fuller audits can follow. 6.7.14 is the full security audit + the refactor /
+   optimization review (user, 2026-10-09). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.14
    reviews produce ships first, in as many releases as it takes, and the closeout follows.
 3. **Every language decision is the user's** — asked at the arc's start, recorded with its date, never a lane's
    "default" (CLAUDE.md *Execution integrity*).
@@ -46,15 +48,16 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | Release | Content |
 |---|---|
 | 6.7.0 – 6.7.8 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) |
-| 6.7.9 | features: **B7** packed narrow fields + **P5-B** execution coverage (on C2's flag plumbing) |
-| 6.7.10 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |
-| 6.7.11 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
-| 6.7.12 | Break 2, repair 3: global initialisers · the IR arena (a heap-layout change) · diagnostics · u128 / asm / pointer-call stores · TLS conformance · plus whatever 6.7.8–6.7.11 file |
-| 6.7.13 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
-| 6.7.14 → | what the 6.7.13 reviews produce — the number of releases is open, set at 6.7.13's close (user, 2026-10-09) |
+| 6.7.9 | **a repair batch** (user, 2026-10-11): one lane of quick fixes, one of the critical / high issues — the issues and the decisions they need are chosen at its open (below) |
+| 6.7.10 | features: **B7** packed narrow fields + **P5-B** execution coverage (on C2's flag plumbing) |
+| 6.7.11 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |
+| 6.7.12 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
+| 6.7.13 | Break 2, repair 3: global initialisers · the IR arena (a heap-layout change) · diagnostics · u128 / asm / pointer-call stores · TLS conformance · plus whatever 6.7.8–6.7.12 file |
+| 6.7.14 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.15 → | what the 6.7.14 reviews produce — the number of releases is open, set at 6.7.14's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
-**Break 2 is 6.7.10 – 6.7.12** (user, 2026-10-09): repair the open queue to 0, so fuller audits can follow. Each repair
+**Break 2 is 6.7.11 – 6.7.13** (user, 2026-10-09): repair the open queue to 0, so fuller audits can follow. Each repair
 release runs its lanes in waves, at most two `src/` lanes at a time. Each lane owns its files, and a cross-lane hunk
 travels as a named hand-off patch. The binary is rebuilt once on the merged tree. There is one review round, and the
 decisions are asked in one round at the open. The `2026-10-09-*` links resolve when 6.7.7 merges; they are on the
@@ -63,117 +66,38 @@ lanes until then.
 **Why this order.** dyn and B7 both own `parse_types.cyr` and `parse_decl.cyr`'s field arms, so they never share a
 release; C2 pairs cleanly with either. dyn goes first for two reasons. It builds directly on B4's anonymous-struct
 interning and B6's argument marshaller. And its cx pair emitters must exist before B7 moves `f32 × 4` / `u8 × 16`
-structs into cx's 16-byte class. P5-B is split to 6.7.9 now, at planning, because 6.7.8's two `src/` lanes are
+structs into cx's 16-byte class. P5-B is split to 6.7.10 now, at planning, because 6.7.8's two `src/` lanes are
 taken; it reuses C2's flag plumbing. A third feature release is needed only if an open picks one of these:
 - dyn as a generic type argument (5c);
 - one of C2's heavy options: branch coverage, `*T` checked against poison headers, or raw `&a + e` checks;
 - typed fn pointers too big for the dyn lane;
 - u128 carriage inside 6.7.x. That needs the aarch64 register fix (6.7.7), so it would come after the repairs.
 
-## Spec — the remaining features
+## Spec — the remaining feature
+
+Shipped this minor (their specs and the user's decisions are in their CHANGELOG entries): traits, C3 bounds, `const`
+/ `const fn`, `bool`, the if-expression, `loop` / `do`, `OP=` on every lvalue, B4 tuples and B6 default / named
+arguments (6.7.7), checked `dyn` and the C2 bounds-checked mode (6.7.8).
 
 ⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`).
 
-- **B4 — tuples as values — DECIDED (user, 2026-10-08, at the 6.7.7 open): a tuple bridges to the multi-value
-  returns, captured by TYPE.** `(a, b)` builds a value laid out as an anonymous struct of 8-byte slots; `t.0` / `t.1`
-  read and write it (`OP=` included); `(i64, f64)` is a type wherever a struct type goes (a `var`, a parameter, a
-  field, a return). `var t: (i64, i64) = f();` captures every value of a multi-value call, and `a, b = f();`
-  re-assigns existing variables (the re-poll gap — a loop re-polling a `Result` had to bind a fresh pair each pass).
-  `var x = f();` keeps its documented first-value meaning (the `ret2` / `rethi()` idiom), so nothing that compiles
-  today changes. A shape the decision leaves open is refused by name (extensible later), never given a default
-  meaning. **The plan's forks (user, 2026-10-09):** an un-annotated literal with a float element is refused —
-  "declare the tuple's type" (`var p: (i64, f64) = (1, 2.5);`; under ADR-002 `var x = 1.5;` is not f64-typed either);
-  and the four lossy `: stack` pair stores (`h.n = f()`, `a[0] = f()`, `*p = f()`, `x += f()`) become the compile
-  error the guide already documents.
-- **B6 — default and named arguments — DECIDED (user, 2026-10-08, at the 6.7.7 open): constant defaults.**
-  `fn f(a, b = 2)`: a default is a compile-time constant (a literal, a `const`, a `const fn` call — the 6.7.2
-  evaluator) on a TRAILING parameter. `f(1, c: 3)`: named arguments follow the positionals, in any order, each
-  parameter at most once, evaluated left to right as written. Direct calls only — a call through a fn pointer or a
-  closure stays positional with its exact arity. The v6.5.1 arity check becomes min..max; overloading by arity stays
-  out (a count mismatch is never intentional). **The plan's forks (user, 2026-10-09):** a default in a trait's
-  required signature is an error (it compiled and was ignored — the signature's parameter list was never parsed); and
-  EVERY forward call is arity-checked, not only calls to defaulted fns.
 - **B7 — narrow unsigned and `f32` struct fields — layout DECIDED (user, 2026-10-08): packed.** `u8` / `u16` /
   `u32` become 1 / 2 / 4 bytes and zero-extend on read, `f32` 4 bytes, with no padding — the rule `i8` / `i16` / `i32`
   fields follow today (`struct { a: i8; b: i64; }` is 9 bytes). Only structs declaring one of them move — an ABI
   change: `lib/` declares none; cyrius's own tcyr files (23 fields) change in the release. It ships with its
   migration written up in the CHANGELOG and [ecosystem-migration.md](ecosystem-migration.md) — never silently.
-- **C2 — the opt-in bounds-checked memory mode — DECIDED (user, 2026-10-10, at the 6.7.8 open).** OFF by default;
-  `CYRIUS_BOUNDS=1` / a `CYRIUS_BOUNDS` predefine / `--bounds` / `[build] bounds = true` / a `#bounds` directive
-  (argument > env > manifest > source). Checked: typed arrays against their exact N, slice reads and writes, a `*T`
-  subscript for a negative index only; raw `load*/store*` stay unchecked; a provably out-of-range constant index warns
-  in every mode and is an error under it; `@unsafe { }` turns checks off. A violation prints `bounds: index N out of
-  [0, LEN) at <file>:<line>` and exits 134 (the slice check's code; lib/bounds.cyr and vec keep exit 1). **`*p` reads
-  and writes at the element's width everywhere** (a language change, approved) — `p[i]` covers integer / f64 / f32 /
-  bool elements on names, fields and call results. Slices stay locals: a slice PARAMETER and a slice declared in the
-  declaration zone are refused by name, while a post-statement top-level slice keeps compiling as documented (user,
-  2026-10-10 — correcting the open's premise). Signed slice elements read sign-extended; cbt's Windows compile arm
-  passes the same env flags as Linux; the self-build scripts scrub an inherited `CYRIUS_POISON`; the slice read as an
-  operator's left operand (a crash since at least 6.7.5) is fixed. **The stdlib run's trips are fixed in 6.7.8**, fold releases included; cyrlint stays in 6.7.10. With it,
-  proposal P5's execution half moves to 6.7.9 (on C2's flag plumbing).
-- **Checked `dyn` — DECIDED (user, 2026-10-07; the open shapes 2026-10-10).** Static dispatch stays the default
-  (ADR-004). `o: dyn Show` is an ordinary 16-byte `{data, vtable}` struct (ADR-002's one-word model holds); the
-  compiler builds and VERIFIES the vtable from `impl Show for T`, and `o.show()` is an indirect call visible in the
-  declared type. Formed automatically at a `dyn Tr` destination from a known `*T` or a declared scalar / literal (an
-  untyped name is refused); a `self: T` of 8 B or less makes forming that dyn refused by name; a generic member is
-  refused only when called through a dyn; full signatures are checked for every pair formed into a dyn (count-only
-  elsewhere, unchanged); `dyn` is not a type argument; the two words are opaque and `dyn A + B` is refused;
-  `lib/trait.cyr` is kept. Generic inference through `Box<T>` — and `*Box<T>` (a silent wrong layout today) — parameters ships in the same
-  lane. Why: the run-time
-  vtables `lib/trait.cyr` and hand-rolled code build are unchecked — a wrong slot or a missing method is a crash.
-
-## The releases after 6.7.7 (placed 2026-10-09)
+## The releases after 6.7.8 (placed 2026-10-09; shifted one 2026-10-11)
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09; sizes and the full lane maps: `~/.cache/c6/plan678_712.json`). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
 
-### 6.7.8 — checked `dyn` + C2 (features)
+### 6.7.9 — a repair batch (user, 2026-10-11)
 
-**Content.**
-- **Checked `dyn`**, bites D0–D6. Absorbs, as prerequisites:
-  - [a trait's required signature is never parsed](issues/archived/2026-10-09-trait-signature-parameter-list-unparsed.md)
-    (D1; the default half ships in 6.7.7);
-  - [cx refuses a 16-byte struct return](issues/archived/2026-10-08-cx-16b-struct-return-refused.md) (D6). The pair's high
-    word goes in r4, the multi-value register, so 6.7.7's aarch64 fix needs no cx bridge.
-- **C2**, bites 1–7: `*T` subscripts, slice writes, exact element counts, the `CYRIUS_BOUNDS` / `#bounds` plumbing,
-  the check, the crossos violation test, then the stdlib run under the mode. Absorbs:
-  - [a for-step never checks its `)`](issues/archived/2026-10-08-for-step-variable-subscript-close-paren-unchecked.md), because
-    the new `p[i]` step takes the same arm;
-  - [`*p` through a narrow `*T` is a word store](issues/archived/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md),
-    because `p[0] = v` and `*p = v` must not disagree.
-- Placed by the open's answer:
-  - [an indirect call's f64 result is untyped](issues/archived/2026-10-08-indirect-call-f64-result-untyped.md): (a) a bite in
-    the dyn lane · (b) goes to 6.7.10 · (c) closed at the open;
-  - [generic inference through `Box<T>`](issues/archived/2026-10-08-generic-inference-through-generic-struct-param.md): the
-    inference is a bite in the dyn lane; the diagnostic only goes to 6.7.12.
-- File at the open: slice parameters and top-level slices are mis-diagnosed parse errors.
+Before the next feature, take weight off the queue: **one lane of quick fixes** (small, no decision, any subsystem)
+and **one lane of the critical / high issues** (silent miscompiles, wrong artifacts, crashes on valid code). The
+issues each lane takes and the decisions they need are chosen at the open — the list is filled in here then. The rest
+keep their (shifted) placements.
 
-**Lanes.**
-- dyn (`src/`): parse_fn.cyr's trait module, parse_types.cyr, the `dyn` token and keyword tables, the method arm in
-  its own fn. It commits `build/cycc`.
-- C2 (`src/`): parse_expr.cyr's subscripts, the for-step, `_deref_store`, the trap emitters, the forks' env block,
-  cbt's `--bounds`.
-- Hand-offs: `backend/cx/emit.cyr` and the PARSE_FACTOR hook.
-- Bite 7 runs after both merge.
-
-**Decisions at the open.**
-- dyn 1–8: how a dyn is formed; `self: T` of 8 B or less; generic members; how far the signature check reaches;
-  dyn in collections; defaults (confirm); the two words opaque and `dyn A + B`; lib/trait.cyr's fate.
-- C2:
-  - what a violation does;
-  - which accesses are checked (raw `&a + e` in or out; a constant out-of-range index; `@unsafe`);
-  - what `*T` is checked against;
-  - `p[i]`'s reach and the `*p` width;
-  - slice scope;
-  - flag spelling and precedence;
-  - what the stdlib run's trips become.
-- The indirect call: (a) / (b) / (c).
-- Generic inference: the inference or the diagnostic.
-- cyrlint: stays in 6.7.10 (default) or folds in here.
-
-**Hosts.** D0 at slot one on ecb · ach · cass · pi and cxvm, probing an indirect call through the shared marshaller
-(`ECALLPTR_PE`) and struct returns through it. C2's child-process violation test runs on all four. `cyrius pulsar`.
-
-### 6.7.9 — B7 + P5-B (features)
+### 6.7.10 — B7 + P5-B (features)
 
 **Content.**
 - **B7** packed narrow fields, bites 0–6.
@@ -197,7 +121,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 **Hosts.** B7's all-sizes crossos file on all four. P5-B on the hosts its decision names. `cyrius pulsar`.
 
-### 6.7.10 — repair 1: the 6.7.7 follow-ons
+### 6.7.11 — repair 1: the 6.7.7 follow-ons
 
 **Content.**
 - Return registers:
@@ -237,7 +161,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 - Stdlib and folds:
   - [`fhm_set` rebuilds on a present key](issues/2026-10-08-hashmap-fast-overwrite-rebuilds-table.md);
   - [`f64_parse_n`](issues/2026-10-08-f64-parse-no-public-length-bounded-form.md), the cyrius half. ⛔ bayan's
-    delegation tags only after 6.7.10 ships;
+    delegation tags only after 6.7.11 ships;
   - [yantra's tests miss `security.cyr`](issues/2026-10-08-yantra-tests-miss-security-include.md). ⛔ Tag yantra
     1.0.10 before the re-vendor.
 
@@ -262,7 +186,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 **Hosts.** qemu-aarch64, then pi and ecb for the multi-value receive rows; `cyrius pulsar`. wine, then cass, for the
 Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 
-### 6.7.11 — repair 2: the platform release
+### 6.7.12 — repair 2: the platform release
 
 **Content.**
 - Darwin / aarch64 syscall translation:
@@ -319,7 +243,7 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - cass: MAX_PATH, the two-handle lock, the junction race, both launch forms, ProtectedRoots (admin), the cwd route,
   certutil's replacement.
 
-### 6.7.12 — repair 3
+### 6.7.13 — repair 3
 
 **Content.**
 - Global initialisers:
@@ -349,7 +273,7 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - TLS:
   - [native TLS conformance](issues/2026-10-08-tls-native-conformance-bite.md);
   - [the client-cert PEM sized at the CA maximum](issues/2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots.md).
-- Slack: what 6.7.8–6.7.11 file. If it does not fit, a further repair release is said at this open, inserted before the
+- Slack: what 6.7.8–6.7.12 file. If it does not fit, a further repair release is said at this open, inserted before the
   audit release (which renumbers by one).
 
 **Lanes.**
@@ -367,7 +291,7 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 
 **Hosts.** wine (IR=1 / IR=3 on the PE fork). Seed-derive (cybs compiles `ir.cyr`). openssl locally. The standard legs.
 
-### 6.7.13 — the full security audit + the refactor / optimization review (user, 2026-10-09)
+### 6.7.14 — the full security audit + the refactor / optimization review (user, 2026-10-09)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
@@ -387,7 +311,7 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.13's open):** folders with direct
+  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.14's open):** folders with direct
     names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
     `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
     `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
@@ -406,7 +330,7 @@ cannot pack filed.
     4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
        (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
        one-line include of the new home) and is the user's call per module.
-    5. **At 6.7.13, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
+    5. **At 6.7.14, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
        today's `file:line`.
 - **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
   language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
@@ -414,17 +338,17 @@ cannot pack filed.
   file `src/` includes must stay compilable by cybs (no new syntax there); a public symbol's removal or semantic change
   is the user's call (`removed_symbol_census.sh`); a fold's improvement lands in its SOURCE repo and is re-vendored.
 
-### 6.7.14 → — what the reviews produce, then the closeout (number open)
+### 6.7.15 → — what the reviews produce, then the closeout (number open)
 
-The 6.7.13 reviews' findings that did not pack into 6.7.13 ship next, in as many releases as they take — sized and
-placed at 6.7.13's close, never squeezed into the closeout. Then the closeout:
+The 6.7.14 reviews' findings that did not pack into 6.7.14 ship next, in as many releases as they take — sized and
+placed at 6.7.14's close, never squeezed into the closeout. Then the closeout:
 
 
 The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger:
 - **Mechanical:** `release-gate.sh` (record check.sh's count) and the bench.
 - **Judgment:** heap map (the retired IR bands), the dead-code floor, the 2–3 consolidations the minor earned, code
   review, cleanup.
-- **Compliance:** the security re-scan (the full audit ran in 6.7.13); folds byte-identical to their tags (yantra,
+- **Compliance:** the security re-scan (the full audit ran in 6.7.14); folds byte-identical to their tags (yantra,
   bayan); `verify-store.sh`.
 - **Docs:** CHANGELOG / roadmap / state; vidya (tuples, defaults, `dyn`, the bounds mode, packed fields, coverage);
   the backlog re-triaged to 0 open.
@@ -432,7 +356,7 @@ The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger
 ### Placed arcs — open by design (moved out of the bug queue)
 
 - [Native TLS capability limits](issues/2026-10-08-native-tls-capability-limits.md):
-  - items 1–5 go to [roadmap_6](roadmap_6.md), a capability arc on top of 6.7.12's conformance work;
+  - items 1–5 go to [roadmap_6](roadmap_6.md), a capability arc on top of 6.7.13's conformance work;
   - item 6 goes to [roadmap-future](roadmap-future.md), pending constant-time X448 / P-521 in sigil's source.
 - [Constant `if` arms](issues/2026-10-08-constant-if-arms-not-folded.md) → roadmap_6, beside the DCE compaction arc.
 - [The public-constants `const` migration](issues/2026-10-08-lib-public-constants-const-migration.md) → roadmap_6:
@@ -441,7 +365,7 @@ The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger
   roadmap-future: a CLI feature with two forks.
 - [Poison guard pages](issues/2026-10-08-poison-guard-pages-unbuilt.md) → roadmap-future: P6's unbuilt step, which
   needs a PE `VirtualProtect` reroute.
-- u128 carriage → roadmap_6, after 6.7.7's register fix. The file itself closes in 6.7.12.
+- u128 carriage → roadmap_6, after 6.7.7's register fix. The file itself closes in 6.7.13.
 
 ## Folded-stdlib follow-ups (cyrius's own work)
 

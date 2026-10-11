@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.9] — 2026-10-11
+
 ## [6.7.8] — 2026-10-10
 
 Checked `dyn` trait objects and C2 — the opt-in bounds-checked mode, with `p[i]` on typed pointers, `*p` at the

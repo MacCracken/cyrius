@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against the merged 6.7.7 tip (`/home/macro/.cache/c6/wt677/int`
 @ 06bd8981, its `build/cycc`, 1,916,288 B). The repro prints the errors for `xx` and `zz` but never the one for `yy`.
 The shapes measured below behave the same way. Identical on the installed 6.7.2, 6.7.4 and 6.7.6 compilers.
-**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.13 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 It is a diagnostics-only defect, so it goes with that release's Diagnostics group (the const-fn cascade and
 `error:0:1:` issue, the bare const statement, the const field access).
 **Discovered:** 2026-10-09 by the 6.7.7 B6 lane (default and named arguments), bite 2, outside its scope (listed in

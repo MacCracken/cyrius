@@ -4,7 +4,7 @@
 (`/home/macro/.cache/c6/wt677/int` @ 06bd8981). The tools were built from that tree with its `build/cycc`
 (1,916,288 B) and run on scratch copies of the repro. The `cyrius header`, `cyrius_api_surface` and `cyrdoc` binaries
 in the installed 6.7.6 store give the same output.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 These are scanner bugs, so they go with that release's Scanners group (api-surface's multi-line strings, the
 attribute word list in five tools).
 **Discovered:** 2026-10-09 by the 6.7.7 B6 lane (default and named arguments), bite 5 ("the tools that read a parameter

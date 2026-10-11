@@ -1,7 +1,7 @@
 # `var a, b = f();` from a struct callee wider than 16 B reads a wrong second value, silently, on every target — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-09 against the merged 6.7.7 compiler (l677-int @ 881895f6): the repro exits 50 where 56 is meant (x86; the 6.7.7 aarch64 lane saw the same on every target).
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*); the fix is a decision asked at its open (refusing a struct callee in the destructure stops code that compiles today — the B4 `a, b = f()` form already refuses it) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*); the fix is a decision asked at its open (refusing a struct callee in the destructure stops code that compiles today — the B4 `a, b = f()` form already refuses it) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.7 aarch64-registers lane (out of scope); filed 2026-10-09.
 **Severity:** High — a silent wrong value on valid-looking code
 **Affects:** cycc ≤ 6.7.7

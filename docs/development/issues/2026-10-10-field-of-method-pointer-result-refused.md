@@ -4,7 +4,7 @@
 `build/cycc`: `h.get().b` with `fn get(self): *P` is refused "cannot take a field of the result of 'H_get': it does not
 return a struct"; `get2(&h).b` with `fn get2(h: *H): *P` builds, as do `var q: *P = h.get(); q.b` and
 `H_get(h).b` (exit 44). The same refusal with the installed 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers.
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
 is the user's call, asked at that release's open: refused source starts compiling).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D6 (a dyn method call inherits the method arm's rule:
 `o.me().b` through a dyn is refused the same way).

@@ -6,10 +6,10 @@ heap address; 5 is right. Repro 2 is refused with `error:<source>:11:14: duplica
 once the trigger is removed. Each turns correct when the previous fn's parameter 0 is renamed, when another fn is
 defined between the two, or when the body has no `await`. Same results on the 6.7.6 tag, 6.7.0, 6.6.10, 6.6.9, 6.6.5,
 6.6.4 and 6.6.0.
-**Placement:** 6.7.12 — Break 2, repair 3, the frontend remainder (roadmap.md § *The releases after 6.7.7*) — placed
+**Placement:** 6.7.13 — Break 2, repair 3, the frontend remainder (roadmap.md § *The releases after 6.7.7*) — placed
 2026-10-09 — never 7.x. This is async coroutine setup in `parse_fn.cyr`, a frontend fix. It is the same stale-table
 class as
-[the top-level closure's stale capture](2026-10-09-toplevel-closure-captures-stale-fn-local.md) (6.7.10), so whichever
+[the top-level closure's stale capture](2026-10-09-toplevel-closure-captures-stale-fn-local.md) (6.7.11), so whichever
 lane lands first should check the other site.
 **Discovered:** 2026-10-09 by the 6.7.7 B4 (tuples) lane, bite T5. The lane met the refusal while writing a coroutine
 gate row. The silent read (repro 1) was found while verifying this filing.

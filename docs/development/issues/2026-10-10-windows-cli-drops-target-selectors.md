@@ -8,7 +8,7 @@ and `build --target=x86_64-bare-metal-elf hello.cyr bm.out` all exit 0 and print
 (2560 bytes)`; the three outputs are byte-identical PE images (`MZ`, md5 bc387dfa…). The bare-metal build also prints
 `kernel: entry 0x1000a8, load base 0x100000 (x86_64 ELF64 multiboot2)` — describing an ELF that was not written. Not
 re-run on cass (the code path is the PE arm of `compile()`, read below).
-**Placement:** 6.7.11 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never
+**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never
 7.x (the fix is the user's call, asked at that release's open: a command that "succeeds" today fails by name).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-8b (making cbt's Windows compile arm pass the compiler
 flags; the target selectors were left out of that list on purpose and nothing refuses them).

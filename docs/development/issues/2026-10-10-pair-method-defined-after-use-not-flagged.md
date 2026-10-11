@@ -6,7 +6,7 @@ above `usediv` gives the right exit, 11. With the impl below, `var q = p.div(d);
 (exit 1), where the impl above refuses it "a `: stack` enum returns two values — bind both". The repro dies the same
 way with the installed 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers (6.7.0 is where an inherent `impl Pt {`
 starts to parse).
-**Placement:** 6.7.10 — repair 1, the return-register lane (roadmap.md § *The releases after 6.7.7*) — placed
+**Placement:** 6.7.11 — repair 1, the return-register lane (roadmap.md § *The releases after 6.7.7*) — placed
 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: `var v = p.div(3);` above such an
 impl, which compiles today, starts being refused with "bind both").
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane (the integration review of bite D6's pair checks; recorded

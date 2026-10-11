@@ -5,7 +5,7 @@
 `fn mkd(p: *Q): dyn Show` it prints `cyr_val mkq(cyr_val a, cyr_val b);`, `cyr_val mkr(cyr_val a);` and
 `cyr_val mkd(cyr_val p);` — the same as for `fn plain(a): i64`. The installed 6.7.7 CLI prints the same four lines.
 The ABI each prototype misstates is read from the compiler (`_ret_agg_class`), not run against a C caller.
-**Placement:** 6.7.11 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never
+**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never
 7.x (the fix is the user's call, asked at that release's open: it changes a tool's output).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D7 (a `dyn` return is a 16-byte {data, vtable}
 pair; the header hands a C caller the data word alone). It predates the lane: the tool never reads a return type.

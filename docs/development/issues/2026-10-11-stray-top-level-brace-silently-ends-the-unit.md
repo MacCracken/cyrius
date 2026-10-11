@@ -1,7 +1,7 @@
 # A stray top-level `}` silently ends the translation unit — everything after it is dropped, `OK` — OPEN
 
 **Status:** 🟡 **OPEN** — filed by agnos (2026-10-11, agnos 1.57.12 ZFS write bite B4).
-**Placement:** 6.7.10 — Break 2, repair 1, the parser lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x. (High, consumer-reported by agnos; not a one-site fix — the top-level loop legitimately meets each fn definition's closing brace, so the stray one needs the scanners' brace accounting; checked 2026-10-11)
+**Placement:** 6.7.11 — Break 2, repair 1, the parser lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x. (High, consumer-reported by agnos; not a one-site fix — the top-level loop legitimately meets each fn definition's closing brace, so the stray one needs the scanners' brace accounting; checked 2026-10-11)
 **Discovered:** 2026-10-10/11 while building agnos's ZFS writer: a stray `}` left at top level in one kernel file made
 cycc report 62 "undefined variable" errors in OTHER files and nothing at the real line; it cost a bisect.
 **Severity:** High — silent truncation: a program that builds `OK` and runs is missing every definition after the brace.

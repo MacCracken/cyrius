@@ -237,18 +237,15 @@ about.
 Regenerate from the files (title = first heading, group = `**Placement:**`); never hand-count. The
 release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 
-**6.7.7 — in flight** (0)
+**6.7.9 — repair batch: the quick fixes + the critical / high (user, 2026-10-11)** (0)
 
 
-**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (0)
-
-
-**6.7.9 — features: B7 + P5-B** (2)
+**6.7.10 — features: B7 + P5-B** (2)
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
 
-**6.7.10 — Break 2, repair 1** (59)
+**6.7.11 — Break 2, repair 1** (59)
 
 - [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](2026-10-08-api-surface-multiline-string-desync.md)
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
@@ -310,7 +307,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A program's own `struct slice` is used by a parameter / pointer but not by a fn-local `var x: slice`](2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
 - [A stray top-level `}` silently ends the translation unit — everything after it is dropped, `OK`](2026-10-11-stray-top-level-brace-silently-ends-the-unit.md)
 
-**6.7.11 — Break 2, repair 2 (the platform release)** (23)
+**6.7.12 — Break 2, repair 2 (the platform release)** (23)
 
 - [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](2026-10-08-aarch64-native-region-literal-translated-silently.md)
 - [arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3)](2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md)
@@ -336,7 +333,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`--strict-pin` / CYRIUS_STRICT_PIN does nothing off Linux, and cycc.exe ignores CYRIUS_PIE](2026-10-10-strict-pin-and-pie-inert-off-linux.md)
 - [On Windows, `cyrius build --agnos` and `--target=x86_64-bare-metal-elf` write a plain PE and exit 0](2026-10-10-windows-cli-drops-target-selectors.md)
 
-**6.7.12 — Break 2, repair 3** (27)
+**6.7.13 — Break 2, repair 3** (27)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -366,7 +363,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [An unknown name followed by `<..>` is accepted as a type argument (`g<Nonexist<u8>>`, `Box<slice<u8>>`) and runs as the i64 base](2026-10-10-unknown-generic-name-accepted-as-type-argument.md)
 - [A declaration-zone global set from a METHOD returning a 9-16 byte struct compiles and crashes at startup](2026-10-10-zone-global-from-method-struct-call-crashes.md)
 
-**6.7.13 — the full security audit + the refactor / optimization review** (1)
+**6.7.14 — the full security audit + the refactor / optimization review** (1)
 
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 

@@ -5,7 +5,7 @@
 139) on x86_64 and aarch64 (qemu), exits 1 on cx (cxvm) and 5 on PE (wine), where 34 is right; repro (b) exits 3 on all
 four, where 0 is right. The installed 6.7.4 and 6.7.7 compilers give 139 and 3 on x86_64. The 6.7.8 dyn lane refuses
 both shapes for a `dyn` (its review commit 7482deb2 and bite D4's row V4d) but leaves every other struct as it was.
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*; PARSE_VAR's struct receive, a call-path
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*; PARSE_VAR's struct receive, a call-path
 defect) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: (a) changes what a
 compiling program does; (b) either refuses code that compiles or changes its value).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, reported only — (a) bite D4, (b) the lane's review round

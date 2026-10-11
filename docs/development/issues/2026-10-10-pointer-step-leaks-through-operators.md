@@ -6,7 +6,7 @@ on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine), where 0 is right; its contro
 installed 6.7.4 and 6.7.7 compilers also exit 255. The merged tree's own source names the leak and leaves it
 (`src/frontend/parse_expr.cyr:1694`–`1706`, C2-5's stamp comment: "6.6.17's step leaks the same way — `(x == q) + 1`
 adds 4; reported, not changed").
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*; an expression-codegen defect) — placed
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*; an expression-codegen defect) — placed
 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: compiling programs compute different
 values).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, reported only — bite C2-4b found the call-result field instance

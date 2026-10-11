@@ -6,7 +6,7 @@ path)" (plus a cascade "expected ')', got identifier 'b'"); `rd(a)` with an unty
 SIMD arg must be a 16-byte vector"; and `rd(b)` — a vector VALUE into the pointer parameter — compiles clean and dies
 of SIGSEGV (rc 139). A `var pl: *f64v2 = &b;` LOCAL reads the vector correctly. Both repros behave the same with the
 installed 6.6.10, 6.6.20, 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers.
-**Placement:** 6.7.10 — repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed
+**Placement:** 6.7.11 — repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed
 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: refused calls start compiling, and
 `rd(b)`, which compiles today, is refused).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-4a (`p[i]` on a `*T` parameter; the repros are in its

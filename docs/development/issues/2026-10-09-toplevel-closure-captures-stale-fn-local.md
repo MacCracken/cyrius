@@ -6,10 +6,10 @@ compiler built from the merged tree, run under qemu-aarch64). 12 is right, and i
 `w`'s parameter is renamed. It fails the same way when the name is one of `w`'s locals rather than a parameter, or
 its second parameter. A closure inside a fn reading the same global is right. Same results on the 6.7.6 tag, 6.7.0,
 6.6.10, 6.6.5 and 6.6.0.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 It is a parser / codegen bug in the closure literal's snapshot of the enclosing locals. It is the same stale-table
 class as
-[the coroutine's slot-0 name](2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md) (6.7.12), so whichever
+[the coroutine's slot-0 name](2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md) (6.7.13), so whichever
 lane lands first should check the other site.
 **Discovered:** 2026-10-09 by the 6.7.7 B6 (default and named arguments) review
 (`scratchpad/review-b6-spec/repros/preexisting_toplevel_stale_local_capture.cyr`). It predates B6.

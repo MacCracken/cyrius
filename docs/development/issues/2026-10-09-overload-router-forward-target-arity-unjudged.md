@@ -5,8 +5,8 @@
 `pr(s)`, and `pr` takes one argument. The 6.7.6 tag's compiler builds the same file clean, and it exits 161, with
 garbage passed for `pr_str`'s `k`. With `pr_str` moved above `main`, both compilers route nothing and exit 11. With
 a one-parameter `pr_str` defined below, both route and exit 71. Routing depends on definition order.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
-This is a decision-only item, asked at 6.7.10's open: the call-arguments lane owns `_fnc_route` and `_CHECK_ARITY`,
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+This is a decision-only item, asked at 6.7.11's open: the call-arguments lane owns `_fnc_route` and `_CHECK_ARITY`,
 and the fix changes which fn a call reaches.
 **Discovered:** 2026-10-09 by the 6.7.7 B6 (default and named arguments) lane, bite 3 (fork F2: every forward call
 arity-checked).

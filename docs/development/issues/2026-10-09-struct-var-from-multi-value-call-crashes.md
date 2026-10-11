@@ -1,7 +1,7 @@
 # `var p: P = f();` with a multi-value `f` compiles and crashes (the first value is taken as a pointer) — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-09 against the merged 6.7.7 compiler (l677-int @ 881895f6): the repro builds and exits 139 (SIGSEGV) on x86 (aarch64 the same, per the 6.7.7 aarch64 lane).
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*); refusing it is the user's call at the open (a crashing program stops compiling) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*); refusing it is the user's call at the open (a crashing program stops compiling) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.7 B4 lane (T0, as a note) and the aarch64-registers lane; filed 2026-10-09.
 **Severity:** Medium — a crash, not a silent value; the tuple capture refuses the same mismatch by name
 **Affects:** cycc ≤ 6.7.7

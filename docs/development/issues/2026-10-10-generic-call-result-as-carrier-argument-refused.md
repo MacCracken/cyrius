@@ -7,7 +7,7 @@ type in a call to 'gx'"; `gx<Pt>(mk1(p))` and `var b: Box<Pt> = mk1(p); gx(b)` b
 refused since 6.7.3). The merged tree's guide states the limit (§ *Generics*, `docs/guides/cyrius-guide.md:4947`: "a
 generic call's own result (`gx(mk(p))`) [is] not inferred — write `gx<Pt>(..)`"), but valid source is refused and the
 message blames a struct mismatch where the gap is inference.
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*; a call-path defect) — placed 2026-10-10 —
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*; a call-path defect) — placed 2026-10-10 —
 never 7.x (the fix is the user's call, asked at that release's open: refused code starts compiling).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D3 (reported only, `~/.cache/c6/dyn_handoff.md` § D3
 *Out of scope*).

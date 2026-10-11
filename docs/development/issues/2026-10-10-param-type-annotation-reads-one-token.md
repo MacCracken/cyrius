@@ -5,7 +5,7 @@
 "expected ')', got identifier 'i64'". The installed 6.7.4 and 6.7.7 compilers give the same two results. A `**i64`
 local and a `**i64` struct field compile on the same tip, and a trait's required signature (`_trs_type`, 6.7.8) reads
 `**T` and refuses `5` / `+` ("expected identifier") — only the fn definition's parameter list is wrong.
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*; a parser defect) — placed 2026-10-10 —
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*; a parser defect) — placed 2026-10-10 —
 never 7.x (the fix is the user's call, asked at that release's open: half (a) stops code compiling, half (b) starts
 compiling code refused today).
 **Discovered:** 2026-10-10 by the 6.7.8 lanes, reported only — (a) the checked-`dyn` lane's bite D2, (b) the C2 lane's

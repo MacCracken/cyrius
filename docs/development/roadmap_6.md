@@ -96,7 +96,7 @@ A design call, default **yes**: `net.cyr` grows a Unix-domain socket surface alo
 
 ### The native-TLS capability arc (placed 2026-10-09)
 
-1–2 releases on top of 6.7.12's conformance bite: RSA client / server keys, the full certificate chain,
+1–2 releases on top of 6.7.13's conformance bite: RSA client / server keys, the full certificate chain,
 `certificate_authorities`, 1.3 second-flight reassembly past one record, a libssl `tls_set_groups`
 ([issue](issues/2026-10-08-native-tls-capability-limits.md) items 1–5, open by design). Capabilities, not defects;
 item 2 changes what an existing multi-block PEM sends, so it is decided at the arc's open. Item 6 (X448 / secp521r1)
@@ -112,7 +112,7 @@ every name is the user's call at the arc's open, with a per-name collision surve
 ### u128 as a value type (placed 2026-10-09)
 
 u128 parameters, returns and struct fields carried as a 16-byte value — a call / return ABI change on five backends,
-after 6.7.7's aarch64 pair-register fix. 6.7.12 closes the bug half (the capture miscompile; the other shapes refused by
+after 6.7.7's aarch64 pair-register fix. 6.7.13 closes the bug half (the capture miscompile; the other shapes refused by
 name — [issue](issues/2026-10-08-u128-params-returns-fields-captures.md)); this is the carriage half.
 
 ### The syscall families still unnamed by the stdlib

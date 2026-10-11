@@ -7,7 +7,7 @@ from the merged tree, run under qemu-aarch64) and on the 6.7.6 tag. The position
 argument give the same result on 6.6.0, 6.6.10 and 6.7.0. The stores 6.7.7 closed (`h.n = f(7);`, `a[0] = f(7);`,
 `*p = f(7);`, `x += f(7);`, `var t = (f(7), 3);`) are refused on the same tip, and so are `var r = f(7);` and
 `r = f(7);`.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 This is the user's decision (2026-10-09, "File for later"): the guide's refusal is extended to these contexts in a
 repair release, not in 6.7.7. The call-arguments lane owns the argument pushes and the struct-literal stores.
 **Discovered:** 2026-10-09 by the 6.7.7 B4 (tuples) review. It predates B4 and was out of scope for the T5b bite,

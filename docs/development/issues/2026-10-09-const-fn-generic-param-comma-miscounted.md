@@ -5,7 +5,7 @@
 arguments"; the same file calling `pick(0, 1, 7)` builds and exits 7. A run-time call to the same fn counts two
 parameters (`pick(q, 1, 7)` is refused, "'pick' expects 2 arguments, got 3"). Identical on the installed 6.7.2,
 6.7.4 and 6.7.6 compilers.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x;
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x;
 a const-evaluator parser bug, in the release that repairs the 6.7.7 follow-ons.
 **Discovered:** 2026-10-09 by the 6.7.7 B6 lane (default and named arguments), bite 1b, outside its scope (listed in
 the 6.7.7 CHANGELOG draft's "reported by the lanes in passing, NOT filed"); filed 2026-10-09.

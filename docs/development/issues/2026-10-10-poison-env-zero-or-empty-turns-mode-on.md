@@ -5,7 +5,7 @@
 arm (exit 7); only an unset variable gives 0. The aarch64 and cx cross compilers built from the tip give 7 for `=0`
 too, and the installed 6.7.7 `cycc` does the same. `CYRIUS_BOUNDS` on the same tip reads `0` as off, empty as no
 setting, and refuses `no` by name ("CYRIUS_BOUNDS must be 0 or 1 (or unset): no").
-**Placement:** 6.7.11 — repair 2 (roadmap.md § *The releases after 6.7.7*; the compiler forks' environment block,
+**Placement:** 6.7.12 — repair 2 (roadmap.md § *The releases after 6.7.7*; the compiler forks' environment block,
 tooling on the hosts) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: what
 a build does under `CYRIUS_POISON=0` changes).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-7 (reported only, `~/.cache/c6/c2/changelog_handoff.md` §

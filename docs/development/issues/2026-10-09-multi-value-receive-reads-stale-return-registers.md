@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 on x86_64, aarch64 (qemu), cx (cxvm) and PE
 (wine), and against the installed 6.6.0 on x86_64: each seeded repro below exits the value an EARLIER call left in
 the register (77 or 88) on all four targets, with no diagnostic.
-**Placement:** 6.7.10 — Break 2, repair 1, the multi-value receives lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1, the multi-value receives lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 B4 (tuples) planners' probes (t7, d4, v1); filed 2026-10-09 by the B4 lane
 (bite T0).
 **Severity:** Medium — silent garbage in a binding; the declared-arity and one-value checks that exist do not reach

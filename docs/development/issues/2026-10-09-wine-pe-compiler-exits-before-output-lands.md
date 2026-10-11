@@ -1,7 +1,7 @@
 # Under wine, the PE compiler returns rc 3 at once with empty output; the full output lands later — OPEN
 
 **Status:** 🟡 **OPEN** — reported 2026-10-09 by the 6.7.7 merge step (`wine cycc.exe < in > out` with a private prefix on this box); not investigated. The late output is byte-identical to `CYRIUS_TARGET_WIN=1`.
-**Placement:** 6.7.11 — Break 2, repair 2 (roadmap.md § *The releases after 6.7.7*) (the Windows lanes; cass is the authority) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 2 (roadmap.md § *The releases after 6.7.7*) (the Windows lanes; cass is the authority) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.7 merge step (out of scope); filed 2026-10-09.
 **Severity:** Low — test-harness hazard: a check of rc or size straight after the call is misled
 **Affects:** the PE compiler under wine (this box)

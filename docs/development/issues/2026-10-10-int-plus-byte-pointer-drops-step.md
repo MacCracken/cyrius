@@ -7,7 +7,7 @@ spelled `p8 + 1` is silent), and `(1 + p8) - q32` builds as a plain byte differe
 installed 6.6.20, 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7 compilers (6.6.10 warns the same and has no different-sizes
 refusal yet). The dereference half the lanes also reported — `*(1 + p)` through a `*u8` read a WORD — is FIXED in
 6.7.8 (commit 963a6d2f, the C2 review: the element kind rides a dereference-only stamp; gate rows DX / DXr).
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
 is the user's call, asked at that release's open: `(1 + p8) - q32` stops compiling and a warning disappears).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bites C2-3a and C2-5 (`_ptr_add` writes back only the left
 operand's step word); gate row DXc pins today's behaviour.

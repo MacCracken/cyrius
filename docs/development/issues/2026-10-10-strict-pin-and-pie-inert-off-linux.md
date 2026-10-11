@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found while fixing the Windows compile arm (6.7.8 C2-8b); the arm now hands cycc.exe
 `CYRIUS_STRICT_PIN=1` and `CYRIUS_PIE=1`, and the compiler there does nothing with either.
-**Placement:** 6.7.11 — Break 2, repair 2, the CLI / platform lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 2, the CLI / platform lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-10 during 6.7.8 C2-8b (cbt's Windows arm passes `--poison` / `--strict-pin` / `--pie`)
 **Severity:** Medium (a CI pin-faithfulness switch that is silently inert on two of the three host OSes)
 **Affects:** cycc since v5.11.57 (the drift check), every macOS and Windows compiler

@@ -6,9 +6,9 @@ method-argument and declaration shapes compile with no diagnostic and exit 139 (
 where 34 is right. The same four results on x86_64 and on aarch64 (a cross compiler built from the merged tree, run
 under qemu-aarch64), and on the 6.7.6 tag's `build/cycc`. The free-call argument also crashes on 6.6.0, 6.6.10 and
 6.7.0. A tuple parameter / tuple field given the same call is refused by name (6.7.7's R17).
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 The multi-value receives and call arguments lanes own these sites. Refusing the four shapes changes what compiles, so
-the fix's shape is a one-line ask at 6.7.10's open: refuse by name (default) or build the struct from the values.
+the fix's shape is a one-line ask at 6.7.11's open: refuse by name (default) or build the struct from the values.
 **Discovered:** 2026-10-09 by the 6.7.7 B4 (tuples) lane, bite T3 (out of scope for tuples: R17 covers only a tuple
 parameter).
 **Severity:** High — a silent miscompile: a clean build that crashes or stores a wrong field, with no diagnostic.

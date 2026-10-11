@@ -4,11 +4,11 @@
 1,916,288 B; tree @ 06bd8981), each with `cycc_merged < f.cyr > /dev/null` from the tree root. Outputs are quoted
 with the excerpt lines dropped. Shape 5's swallow also reproduces on 6.7.6's `build/cycc` with `x = mk(7);` (the
 6.6.0 refusal).
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
-These are 6.7.7 follow-ons, in the code 6.7.10's lanes own: the tuple and pair refusals, the B6 marshaller, operator
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+These are 6.7.7 follow-ons, in the code 6.7.11's lanes own: the tuple and pair refusals, the B6 marshaller, operator
 dispatch. The older generic cascades stay in
 [2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md](2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md),
-which is placed in 6.7.12.
+which is placed in 6.7.13.
 **Discovered:** the 6.7.7 B4 (tuples) and B6 (default + named arguments) lanes and their review rounds, reported out
 of scope; filed 2026-10-09.
 **Severity:** Low. Every input is invalid and is refused, and no binary is written. The extra lines mislead, and

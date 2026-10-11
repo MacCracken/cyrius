@@ -8,7 +8,7 @@ failed"). The same cx compiler and VM built from the **6.7.6 tag's** `src/` and 
 predates 6.7.7. The minimal repro is
 [`repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr`](repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr):
 cx 136, x86 7, qemu-aarch64 7.
-**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.13 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 Its global-initialisers lane owns the same `_CF_TRY` static-init path (the const-init issue placed there), and cxvm
 is in that release's host list via the standard legs.
 **Discovered:** a 6.7.7 lane's cxvm run of `tests/tcyr/crossos/` (out of scope; it predates 6.7.7); filed

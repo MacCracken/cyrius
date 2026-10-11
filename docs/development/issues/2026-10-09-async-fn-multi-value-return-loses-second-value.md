@@ -8,9 +8,9 @@ with a value that is not a tuple"). The documented `rethi()` read gets the secon
 body. The repro forces once, calls another multi-value fn, forces again, and exits 19 where 12 is right. Same on the
 6.7.6 tag, 6.7.0 and 6.6.10. Before 6.6.10's force-once memo every `await` re-ran the body, so the stale read did not
 show (6.6.0, 6.6.4, 6.6.5 and 6.6.9 exit 12).
-**Placement:** 6.7.12 — Break 2, repair 3, the frontend remainder (roadmap.md § *The releases after 6.7.7*) — placed
+**Placement:** 6.7.13 — Break 2, repair 3, the frontend remainder (roadmap.md § *The releases after 6.7.7*) — placed
 2026-10-09 — never 7.x. It is a refusal by name in the async lowering, in the lane that also refuses u128 returns by
-name. The refusal stops a declaration that compiles today, so it is a one-line ask at 6.7.12's open (default: refuse).
+name. The refusal stops a declaration that compiles today, so it is a one-line ask at 6.7.13's open (default: refuse).
 **Discovered:** 2026-10-09 by the 6.7.7 B4 (tuples) lane, bite T5 (`return t;` of a tuple in an `async fn` is refused
 there. A declared multi-value return is not).
 **Severity:** High — a silent value loss. The declared second value is dropped with no diagnostic, and the one

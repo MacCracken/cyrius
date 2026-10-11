@@ -5,7 +5,7 @@
 (qemu), cx (cxvm) and PE (wine), where 0 is right, and each failing row warns "integer arithmetic with an f64 right
 operand". The installed 6.6.20, 6.7.4 and 6.7.7 compilers also exit 7. The C2 lane reported the explicit, return-only
 shape; verifying it found that EVERY inferred call is affected too (`gid(h) * 2.0`).
-**Placement:** 6.7.10 — repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*; it owns
+**Placement:** 6.7.11 — repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*; it owns
 [a method result keeps its last argument's f64 type](2026-10-09-method-call-result-keeps-last-arg-f64-type.md), the
 same result-typing site) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's open: a
 compiling program's value changes).

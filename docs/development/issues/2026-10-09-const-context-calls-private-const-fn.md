@@ -6,7 +6,7 @@ from `var X = pk();` at top level, is refused with "'pk' is private to its file"
 and each one accepts the call: a top-level `const`, a local `const`, a local or global array size, an enum value,
 `#assert` and a `switch` `case` label. A `#deprecated` const fn called from a const context does not warn, while the
 run-time call does. Identical on the installed 6.7.2 and 6.7.6 compilers.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x;
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x;
 it is a const-evaluator call-resolution bug, placed beside the 6.7.7 call-argument follow-ons.
 **Discovered:** 2026-10-09 by the 6.7.7 B6 lane (default and named arguments), bite 2, outside its scope. The 6.7.7
 CHANGELOG draft records that no issue file existed; filed 2026-10-09.

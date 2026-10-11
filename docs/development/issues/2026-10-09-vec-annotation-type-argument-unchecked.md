@@ -5,8 +5,8 @@ tree @ 06bd8981) and against 6.7.6's `build/cycc`, using
 [`repros/2026-10-09-vec-annotation-type-argument-unchecked.cyr`](repros/2026-10-09-vec-annotation-type-argument-unchecked.cyr).
 Both compile it with no diagnostic and it exits 1. Under the merged tip, `Box<(i64, i64)>`, `id<(i64, i64)>(..)` and a
 struct field `items: Vec<(i64, i64)>` are each refused by name.
-**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
-It is a question for 6.7.10's open, which decides the other B4 (tuple) follow-ons.
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+It is a question for 6.7.11's open, which decides the other B4 (tuple) follow-ons.
 **Discovered:** the 6.7.7 B4 (tuples) lane, bite T2. Its hand-off records "`var v: Vec<(i64, i64)> = ...` is NOT
 refused (it compiled before 6.7.7; the plan's R3 listed it)". Reported out of scope and filed 2026-10-09.
 **Severity:** Low. Nothing is miscompiled: a `Vec` is an 8-byte `vec_new()` handle whatever its `<T>` says. The type

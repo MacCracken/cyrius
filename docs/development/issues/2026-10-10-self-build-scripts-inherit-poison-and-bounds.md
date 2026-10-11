@@ -7,7 +7,7 @@ src/main.cyr` gives a 2,088,776 B compiler and `CYRIUS_BOUNDS=1` a 2,053,576 B o
 (a clean build equals it). The five scripts the 6.7.8 C2 lane covered (check.sh, release-gate.sh,
 seed-derive-cycc.sh, version-bump.sh, bootstrap/bootstrap.sh) scrub both, and gate row E4 of
 `tests/gates/frontend/bounds_mode_checked.sh` pins exactly those five.
-**Placement:** 6.7.11 — repair 2 (roadmap.md § *The releases after 6.7.7*; tooling on the hosts — the install, tarball,
+**Placement:** 6.7.12 — repair 2 (roadmap.md § *The releases after 6.7.7*; tooling on the hosts — the install, tarball,
 cross-OS and bench scripts) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at that release's
 open: what these scripts build changes).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-8b (reported only, `~/.cache/c6/c2/changelog_handoff.md` §

@@ -4,7 +4,7 @@
 `build/cycc`: `H { 7, (mkq(4, 9)), 8 }` is refused "unexpected '}'", where the same element without the parentheses
 builds and exits 64. The same refusal with the installed 6.6.10, 6.6.20, 6.7.0, 6.7.3, 6.7.5, 6.7.6 and 6.7.7
 compilers. A 24-byte struct element (`(mkr(4, 9))`) is refused the same way; an 8-byte one is right.
-**Placement:** 6.7.10 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix
 is the user's call, asked at that release's open: refused source starts compiling).
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D4 (a dyn literal element; D4 refuses that form for
 a dyn with its own two reports).
