@@ -1,0 +1,11 @@
+# A name a closure body declares without `var` right before it (a `for … in` variable, a local
+# const, the second name of a multi-value `var`) is taken as a capture of the enclosing local of
+# that name. None of the three closures reads the enclosing local.
+# Expected: compiles without lib/alloc.cyr, exits 22 (10 + 4 + 8). Actual (6.6.0 - 6.7.9):
+# "a capturing closure needs include "lib/alloc.cyr" for its heap env", once per closure.
+include "lib/fnptr.cyr"
+fn two(): (i64, i64) { return (3, 4); }
+fn fi(): i64 { var i = 3; var cl = |n| { var s = 0; for i in 0..4 { s = s + i + n; } return s; }; return fncall1(cl, 1); }
+fn fc(): i64 { var k = 5; var cl = |n| { const k = 3; return k + n; }; return fncall1(cl, 1); }
+fn fm(): i64 { var b = 5; var cl = |n| { var a, b = two(); return a + b + n; }; return fncall1(cl, 1); }
+syscall(60, fi() + fc() + fm());
