@@ -1,0 +1,239 @@
+# exec_child_signal_state.tcyr — CROSS-HOST: every child lib/process.cyr's exec family starts
+# (run, run_capture, spawn, exec_vec, exec_capture_status, exec_capture, exec_env, exec_vec_str,
+# exec_capture_str, exec_env_str, exec_cmd) begins with a fresh program's signal state, NOT its
+# parent's: SIGPIPE and SIGXFSZ at SIG_DFL and, on Linux, an empty signal mask. Every other
+# ignore is KEPT — a SIGHUP that `nohup` ignored is the operator's choice. Runs on ecb (macOS
+# arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg; Windows has no
+# fork and agnos no signal delivery, so there the file only reports its summary.
+#
+# ⛔ WHY (6.7.9). A blocked mask and an ignored disposition both survive fork AND execve, and the
+# exec family touched neither, so the child ran with whatever its parent blocked or ignored. The
+# filed repro (thoth's report, issues/2026-10-09-exec-family-child-inherits-signal-mask-and-
+# ignores.md): a parent that ignores SIGPIPE (sandhi's server entry points do) and blocks SIGINT
+# (a signalfd reader does) ran `/bin/sh -c "...; yes | head -1"` through exec_vec, and the child
+# reported `SigBlk: …0002`, `SigIgn: …1000` and "yes: standard output: Broken pipe".
+#
+# THE MECHANISM (tool_spawn_roundtrip.tcyr's): the test spawns ITSELF. With no arguments it is the
+# PARENT; with one it is a CHILD whose mode is that argument. The "sig" child reads its own state
+# back from the kernel and answers it as its exit code, 64 + the bits below (for the status
+# verbs); "sigc" also prints them on stdout (for the capturing verbs, which return a byte
+# count). 64 is deliberately not 0 / 1 / 127, so "the child ran and found nothing inherited"
+# cannot be confused with "nothing ran". The "pipe" child writes into a pipe with no reader: at SIG_DFL it dies of
+# SIGPIPE (128 + 13), the behaviour `yes | head -1` needs; an inherited ignore answers 66.
+# CHANGELOG [6.7.9]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+var SIG_HUP = 1;     # Linux and Darwin
+var SIG_XFSZ = 25;   # Linux and Darwin
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# This process's disposition of `sig`: 0 SIG_DFL, 1 SIG_IGN, else a handler; -1 when the
+# kernel refused the query. The handler is the first 8 bytes of the old action on both ABIs
+# (Linux rt_sigaction, BSD sigaction — the Mach-O routes renumber 13 / 134 to Darwin's 46).
+fn _disp(sig): i64 {
+    var old[32];
+    var i = 0;
+    while (i < 32) { store8(&old + i, 0); i = i + 1; }
+    var r = 0 - 1;
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    r = syscall(13, sig, 0, &old, 8);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    r = syscall(134, sig, 0, &old, 8);
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_X86
+    r = syscall(13, sig, 0, &old);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    r = syscall(134, sig, 0, &old);
+    #endif
+    #endif
+    if (r < 0) { return 0 - 1; }
+    return load64(&old);
+}
+
+# This thread's blocked mask (Linux); 0 where the floor declines sigprocmask (macOS).
+fn _mask(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var cur[8];
+    store64(&cur, 0);
+    if (sys_sigprocmask(SIG_BLOCK, 0, &cur) < 0) { return 0 - 1; }
+    return load64(&cur);
+    #endif
+    return 0;
+}
+
+# What the "sig" child found inherited: bit 0 SIGPIPE not at SIG_DFL, bit 1 SIGXFSZ not at
+# SIG_DFL, bit 2 SIGHUP's ignore LOST (it must survive), bit 3 a non-empty mask.
+fn _sig_bits(): i64 {
+    var b = 0;
+    if (_disp(SIGPIPE) != 0) { b = b | 1; }
+    if (_disp(SIG_XFSZ) != 0) { b = b | 2; }
+    if (_disp(SIG_HUP) != 1) { b = b | 4; }
+    if (_mask() != 0) { b = b | 8; }
+    return b;
+}
+#endif
+#endif
+
+fn _child(mode): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var b = _sig_bits();
+    if (streq(mode, "sig") == 1) { return 64 + b; }
+    if (streq(mode, "sigc") == 1) {
+        var t[8];
+        store8(&t, 83);                 # 'S'
+        store8(&t + 1, 48 + b / 10);
+        store8(&t + 2, 48 + b % 10);
+        store8(&t + 3, 10);
+        sys_write(1, &t, 4);
+        return 64 + b;
+    }
+    if (streq(mode, "pipe") == 1) {
+        var pfd[16];
+        if (sys_pipe(&pfd) < 0) { return 65; }
+        sys_close(load32(&pfd));
+        sys_write(load32(&pfd + 4), "x", 1);   # SIG_DFL: SIGPIPE ends the process here
+        return 66;                             # an inherited ignore: EPIPE, and on we went
+    }
+    #endif
+    #endif
+    return 11;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# The "sigc" child's bits from a capture ("Snn\n"), or -1 when the capture is not that.
+fn _cap_bits(buf, n): i64 {
+    if (n != 4) { return 0 - 1; }
+    if (load8(buf) != 83) { return 0 - 1; }
+    return (load8(buf + 1) - 48) * 10 + load8(buf + 2) - 48;
+}
+
+fn _av(mode): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, mode);
+    return av;
+}
+
+fn _avs(mode): i64 {
+    var av = vec_new();
+    vec_push(av, str_from(argv(0)));
+    vec_push(av, str_from(mode));
+    return av;
+}
+
+fn _parent(): i64 {
+    test_group("premise: the parent really holds the state a child must NOT inherit");
+    signal_ignore(SIGPIPE);        # what sandhi's server entry points do
+    signal_ignore(SIG_XFSZ);       # what a Python / Node launcher hands on
+    signal_ignore(SIG_HUP);        # what nohup does — this one the child must KEEP
+    assert_eq(_disp(SIGPIPE), 1, "the parent ignores SIGPIPE");
+    assert_eq(_disp(SIG_XFSZ), 1, "the parent ignores SIGXFSZ");
+    assert_eq(_disp(SIG_HUP), 1, "the parent ignores SIGHUP");
+    #ifdef CYRIUS_TARGET_LINUX
+    var set[8];
+    store64(&set, 2);              # bit 1 = SIGINT (signal 2): what a signalfd reader blocks
+    sys_sigprocmask(SIG_BLOCK, &set, 0);
+    assert_eq(_mask() & 2, 2, "the parent blocks SIGINT (Linux)");
+    #endif
+
+    test_group("every exec-family child starts at SIG_DFL with an empty mask, SIGHUP kept");
+    var buf = alloc(64);
+    var st = alloc(16);
+    var rt, rv = run(argv(0), "sig", 0);
+    assert_eq(result_unwrap_or(rt, rv, 0 - 1), 64, "run");
+    var ct, cv = run_capture(argv(0), "sigc", 0, buf, 64);
+    assert_eq(_cap_bits(buf, result_unwrap_or(ct, cv, 0)), 0, "run_capture");
+    var st1, sv1 = spawn(argv(0), "sig", 0);
+    var pid = result_unwrap_or(st1, sv1, 0 - 1);
+    assert_gt(pid, 0, "spawn started the child");
+    if (pid > 0) {
+        var wt, wv = wait_pid(pid);
+        assert_eq(result_unwrap_or(wt, wv, 0 - 1), 64, "spawn (no child guard, still reset)");
+    }
+    assert_eq(exec_vec(_av("sig")), 64, "exec_vec");
+    store64(st, 0 - 1);
+    var n = exec_capture_status(_av("sigc"), buf, 64, st);
+    assert_eq(load64(st), 64, "exec_capture_status (the exit)");
+    assert_eq(_cap_bits(buf, n), 0, "exec_capture_status (the capture)");
+    assert_eq(_cap_bits(buf, exec_capture(_av("sigc"), buf, 64)), 0, "exec_capture");
+    var env = vec_new();
+    vec_push(env, "CYRIUS_SIGNAL_STATE_TEST=1");
+    assert_eq(exec_env(_av("sig"), env), 64, "exec_env");
+    assert_eq(exec_vec_str(_avs("sig")), 64, "exec_vec_str");
+    assert_eq(_cap_bits(buf, exec_capture_str(_avs("sigc"), buf, 64)), 0, "exec_capture_str");
+    var envs = vec_new();
+    vec_push(envs, str_from("CYRIUS_SIGNAL_STATE_TEST=1"));
+    assert_eq(exec_env_str(_avs("sig"), envs), 64, "exec_env_str");
+    # Through /bin/sh: the shell is the reset child, and a non-interactive shell hands its own
+    # state on, the kept SIGHUP ignore included.
+    var cl = alloc(4096);
+    var e = cl;
+    store8(e, 39); e = e + 1;      # '...' around the path
+    var a0 = argv(0);
+    var k = 0;
+    while (load8(a0 + k) != 0 && k < 4000) { store8(e, load8(a0 + k)); e = e + 1; k = k + 1; }
+    store8(e, 39); e = e + 1;
+    memcpy(e, " sig", 4); e = e + 4;
+    store8(e, 0);
+    assert_eq(exec_cmd(cl), 64, "exec_cmd (through /bin/sh)");
+
+    test_group("the behaviour: a writer whose reader has gone dies of SIGPIPE, quietly");
+    var pt, pv = run(argv(0), "pipe", 0);
+    assert_eq(result_unwrap_or(pt, pv, 0 - 1), 128 + 13, "run: the child died of SIGPIPE (not EPIPE)");
+    var st2, sv2 = spawn(argv(0), "pipe", 0);
+    var pid2 = result_unwrap_or(st2, sv2, 0 - 1);
+    assert_gt(pid2, 0, "spawn started the pipe child");
+    if (pid2 > 0) {
+        var wt2, wv2 = wait_pid(pid2);
+        assert_eq(result_unwrap_or(wt2, wv2, 0 - 1), 128 + 13, "spawn: the child died of SIGPIPE");
+    }
+
+    signal_default(SIGPIPE);
+    signal_default(SIG_XFSZ);
+    signal_default(SIG_HUP);
+    #ifdef CYRIUS_TARGET_LINUX
+    sys_sigprocmask(SIG_UNBLOCK, &set, 0);
+    #endif
+    return 0;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() > 1) { return _child(argv(1)); }
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    _parent();
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: no fork, no POSIX signal state to inherit (process_win.cyr)");
+    assert_eq(signal_default(SIGPIPE), 0, "signal_default is the documented no-op");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("agnos: no signal delivery (process_agnos.cyr)");
+    assert_eq(signal_default(SIGPIPE), 0, "signal_default is the documented no-op");
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

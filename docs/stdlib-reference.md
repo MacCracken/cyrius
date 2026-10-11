@@ -634,6 +634,11 @@ Process management with Result returns.
 | `exec_capture` | `exec_capture(args, buf, len) → n` | Capture stdout (cstr argv vec); the exit status is discarded |
 | `exec_capture_status` | `exec_capture_status(args, buf, len, st) → n` | Capture stdout AND report the end: `st[0]` = exit code / 128+sig / -2 deadline kill / -1 nothing ran or the end was never observed (e.g. an inherited SIGCHLD = SIG_IGN), `st[1]` = 1 on a signal death (6.6.7). Use it whenever a failed run must not read as short output |
 
+**The child's signal state (6.7.9).** Every child these verbs start on Linux and macOS (`run`, `run_capture`,
+`spawn`, `exec_*`, `exec_cmd`) begins with SIGPIPE and SIGXFSZ at `SIG_DFL` and, on Linux, an empty signal mask —
+not its parent's ignores and blocked set, which would otherwise survive fork and `execve`. Every other ignore (a
+`nohup` SIGHUP) is inherited. A child that wants SIGPIPE ignored asks for it itself.
+
 ### fs.cyr
 
 Filesystem: paths, directories, tree walking.
