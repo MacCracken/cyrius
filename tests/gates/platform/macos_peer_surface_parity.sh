@@ -65,8 +65,6 @@ allow_reason() {
     case "$1" in
     "const SYS_EPOLL_PWAIT"|"const SYS_PIPE2"|"const SYS_READLINKAT"|"const SYS_SYMLINKAT")
         echo "an aarch64-Linux-only SPELLING: aarch64 dropped epoll_wait/pipe/readlink/symlink for these, and the x86_64 Linux peer does not declare them either, so no portable source names them (the x86 peers spell the same capability SYS_EPOLL_WAIT/SYS_PIPE/…)" ;;
-    "const SYS_PPOLL")
-        echo "Darwin has no ppoll: the number is unrouted on both Mach-O backends, so the x86-macOS peer must not mint one (the x86_64 Linux peer's 271, 6.7.9, is a Linux name). Portable source calls sys_ppoll (lib/syscalls_linux_common.cyr), whose macOS arm declines with -78 and never compiles the number" ;;
     "enum ErrnoOs")
         echo "the arm peer splits its one Darwin-valued errno (EAGAIN = 35 on macOS, 11 on Linux) into a per-target enum; the x86-macOS peer declares the same EAGAIN = 35 inside its Errno enum, so the MEMBER is on both surfaces and only the enum's name differs" ;;
     *) echo "" ;;
@@ -118,7 +116,7 @@ if [ "$missing" -eq 0 ]; then ok "no arm64-macOS name is missing from x86-macOS 
 else fail=$((fail + missing)); fi
 # An allow-list entry that no longer matches anything is stale: it would silently excuse a
 # FUTURE drift under the same name. Report it.
-for n in "const SYS_EPOLL_PWAIT" "const SYS_PIPE2" "const SYS_PPOLL" "const SYS_READLINKAT" "const SYS_SYMLINKAT" "enum ErrnoOs"; do
+for n in "const SYS_EPOLL_PWAIT" "const SYS_PIPE2" "const SYS_READLINKAT" "const SYS_SYMLINKAT" "enum ErrnoOs"; do
     grep -qxF "$n" "$TMP/only_arm" || bad "allow-list entry '$n' matches no arm-only name — remove it"
 done
 

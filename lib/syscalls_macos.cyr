@@ -255,6 +255,13 @@ enum SysNr {
     SYS_INOTIFY_INIT1 = 294;
     SYS_INOTIFY_ADD_WATCH = 254;
     SYS_INOTIFY_RM_WATCH = 255;
+    # 6.7.9 — SYS_PPOLL, the x86 Linux 271 the x86_64 Linux peer names since 6.7.9. NO route
+    # (Darwin has no ppoll): sys_ppoll declines with -78 here and never compiles the number.
+    # Declared because both Linux peers and the arm64-macOS peer declare it, so portable source
+    # names it, and because lib/syscalls_linux_common.cyr's CYRIUS_TARGET_LINUX arm of
+    # sys_ppoll names it: a peer that includes linux_common declares every name it issues
+    # (without it this file stopped compiling alone under a Linux target). CHANGELOG [6.7.9]
+    SYS_PPOLL = 271;
 }
 
 # ================================================================
