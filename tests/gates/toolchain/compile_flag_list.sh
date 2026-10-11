@@ -18,6 +18,27 @@
 #           arm spells a flag literal of its own — a second list cannot come back unseen.
 #   axis 3  ⭐ anti-vacuous: an extracted `_run_argv` that under-allocates by one slot (the
 #           old shape) is caught by axis 1's sizing check.
+# 6.7.8 — the same for the ENVIRONMENT: the compiler flags compile() injects (CYRIUS_BOUNDS,
+# CYRIUS_DCE, CYRIUS_STRICT_PIN, CYRIUS_POISON, CYRIUS_PIE) come from ONE list, `_cc_flag_inject`,
+# which the POSIX child's envp (`_cc_child_inject`) and the Windows arm (`_cc_win_env_apply`) both
+# read. The Windows arm kept its own hand list — CYRIUS_DCE and CYRIUS_BOUNDS only — so `--poison`,
+# `--strict-pin` and `--pie` never reached cycc.exe (the user's decision, 2026-10-10: fix it).
+#   axis 4  derived (reads the arm): compile()'s `#ifdef CYRIUS_TARGET_WIN` arm calls
+#           `_cc_flag_inject` and `_cc_win_env_apply` and sets no variable itself (`_win_setenv`);
+#           `_cc_child_inject` calls `_cc_flag_inject` and pushes nothing but target selectors
+#           (CYRIUS_TARGET_*, CYRIUS_KERNEL*, CYRIUS_ELF64_KERNEL); each flag entry literal is
+#           spelled once in cbt/build.cyr.
+#   axis 5  the REAL helpers, extracted, with a recording `_win_setenv`: for all 48 flag
+#           combinations (bounds off / =1 / =0 x dce x strict-pin x poison x pie), each with the
+#           target selectors off and on, the POSIX list is the flags in their documented order and
+#           then the targets, and the Windows arm sets exactly the flags — each split NAME / value
+#           — and no target; a `_win_setenv` that fails names the entry it failed on.
+#   axis 6  ⭐ anti-vacuous: an extracted `_cc_win_env_apply` that hands `_win_setenv` the value
+#           with its `=` (the split one byte short) is caught by axis 5.
+# Mutation ledger (each measured RED in a scratch copy): the Windows arm back to its hand list
+# (DCE + BOUNDS) -> axis 4, and build_config_windows_arm.sh axis 7 under wine; CYRIUS_POISON pushed
+# by `_cc_child_inject` instead of `_cc_flag_inject` -> axes 4 and 5; `_cc_win_env_apply` applying
+# only the first entry -> axis 5.
 # The flags actually reaching the compiler through the verbs are pinned elsewhere:
 # build_config_precedence.sh (`--strict` on POSIX) and build_config_windows_arm.sh (all three
 # on the PE arm, under wine).
@@ -124,5 +145,149 @@ run_probe "$T/short.cyr" > "$T/out_short"
 grep -q 'SHORT' "$T/out_short" || fail "axis 3: an argv allocation one slot short was NOT detected by axis 1's sizing check"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: ⭐ an argv allocation one slot short reads SHORT (axis 1's sizing check is live)"
 
+# ── axis 4 — the environment list, read out of the arm ───────────────────────────────────
+x=$FAIL
+awk '/^fn compile\(/ { inf = 1 } inf && /^[ \t]*#ifdef CYRIUS_TARGET_WIN/ { arm = 1; next } arm && /^[ \t]*#endif/ { exit } arm { print }' cbt/build.cyr | sed 's/#.*//' > "$T/winarm.cyr"
+if [ ! -s "$T/winarm.cyr" ]; then
+    fail "axis 4: compile()'s #ifdef CYRIUS_TARGET_WIN arm was not found in cbt/build.cyr"
+else
+    grep -q '_cc_flag_inject(' "$T/winarm.cyr" || fail "axis 4: the Windows arm does not build its environment from _cc_flag_inject (a hand list of its own is how it dropped --poison / --strict-pin / --pie)"
+    grep -q '_cc_win_env_apply(' "$T/winarm.cyr" || fail "axis 4: the Windows arm does not apply the list (_cc_win_env_apply)"
+    grep -n '_win_setenv(' "$T/winarm.cyr" > "$T/own" && fail "axis 4: the Windows arm sets a variable of its own: $(head -1 "$T/own")"
+fi
+fnbody _cc_child_inject > "$T/inject.cyr"
+if [ ! -s "$T/inject.cyr" ]; then
+    fail "axis 4: fn _cc_child_inject was not found in cbt/build.cyr"
+else
+    grep -q '_cc_flag_inject(' "$T/inject.cyr" || fail "axis 4: _cc_child_inject does not start from _cc_flag_inject"
+    grep -oE 'vec_push\(inj, "[A-Z0-9_]+=' "$T/inject.cyr" | sed 's/.*"//; s/=$//' > "$T/pushed" || true
+    [ -s "$T/pushed" ] || fail "axis 4: _cc_child_inject pushes no target selector — the scan is blind"
+    grep -vxE 'CYRIUS_(TARGET_[A-Z]+|MACHO|MACHO_ARM|KERNEL|KERNEL_BASE|ELF64_KERNEL)' "$T/pushed" > "$T/nontgt" \
+        && fail "axis 4: _cc_child_inject pushes a non-target entry of its own (the POSIX arm only): $(tr '\n' ' ' < "$T/nontgt")— put it in _cc_flag_inject"
+fi
+for lit in CYRIUS_DCE=1 CYRIUS_STRICT_PIN=1 CYRIUS_POISON=1 CYRIUS_PIE=1 CYRIUS_BOUNDS=1 CYRIUS_BOUNDS=0; do
+    n=$(sed 's/#.*//' cbt/build.cyr | grep -c -- "\"$lit\"" || true)
+    [ "$n" = 1 ] || fail "axis 4: \"$lit\" is spelled $n times in cbt/build.cyr (want 1: in _cc_flag_inject / _cc_bounds_entry)"
+done
+[ "$FAIL" = "$x" ] && echo "  ok axis 4: the Windows arm builds its environment from _cc_flag_inject and sets nothing of its own; _cc_child_inject adds only target selectors; each flag entry is spelled once"
+
+# ── axis 5 — the real helpers, every combination, both arms ──────────────────────────────
+for f in _cc_flag_inject _cc_bounds_entry _cc_child_inject _cc_win_env_apply; do
+    awk -v f="$f" '$0 ~ "^fn " f "\\(" { on = 1 } on { print } on && /^}/ { exit }' cbt/build.cyr > "$T/$f.cyr"
+    [ -s "$T/$f.cyr" ] || fail "axis 5: fn $f was not found in cbt/build.cyr"
+done
+mk_env_probe() {   # $1 = the _cc_win_env_apply source to use, $2 = output .cyr
+    {
+        echo 'include "lib/syscalls.cyr"'
+        echo 'include "lib/string.cyr"'
+        echo 'include "lib/alloc.cyr"'
+        echo 'include "lib/fmt.cyr"'
+        echo 'include "lib/vec.cyr"'
+        echo 'var _cfg_bounds_inject = 0;'
+        echo 'var _cfg_dce_inject = 0;'
+        echo 'var _strict_pin = 0;'
+        echo 'var _poison_mode = 0;'
+        echo 'var _pie_target = 0;'
+        echo 'var _agnos_target = 0;'
+        echo 'var _win_target = 0;'
+        echo 'var _baremetal_target = 0;'
+        echo 'var _section_base_env_ptr = 0;'
+        echo 'var _fail_on = 0;'
+        cat <<'CYR'
+fn put(s): i64 { sys_write(1, s, strlen(s)); return 0; }
+# The Windows arm's setter, recording "NAME=value;" per call; it fails (1) on the name _fail_on.
+fn _win_setenv(name, val): i64 {
+    if (_fail_on != 0) { if (streq(name, _fail_on) == 1) { return 1; } }
+    put(name); put("="); put(val); put(";");
+    return 0;
+}
+CYR
+        cat "$T/_cc_flag_inject.cyr" "$T/_cc_bounds_entry.cyr" "$T/_cc_child_inject.cyr" "$1"
+        cat <<'CYR'
+# One line per combination: the POSIX list (each entry + ";"), "|", what the Windows arm set.
+fn row(m, tg): i64 {
+    _cfg_bounds_inject = m % 3;
+    _cfg_dce_inject = (m / 3) & 1;
+    _strict_pin = (m / 6) & 1;
+    _poison_mode = (m / 12) & 1;
+    _pie_target = (m / 24) & 1;
+    _agnos_target = tg;
+    _win_target = tg;
+    _baremetal_target = tg;
+    var pv = vec_new();
+    _cc_child_inject(pv);
+    var i = 0;
+    while (i < vec_len(pv)) { put(vec_get(pv, i)); put(";"); i = i + 1; }
+    put("|");
+    var wv = vec_new();
+    _cc_flag_inject(wv);
+    var bad = _cc_win_env_apply(wv);
+    if (bad != 0) { put("FAILED:"); put(bad); }
+    put("\n");
+    return 0;
+}
+fn main(): i64 {
+    alloc_init();
+    _section_base_env_ptr = "CYRIUS_KERNEL_BASE=0x100000";
+    var tg = 0;
+    while (tg < 2) {
+        var m = 0;
+        while (m < 48) { row(m, tg); m = m + 1; }
+        tg = tg + 1;
+    }
+    _fail_on = "CYRIUS_POISON";
+    row(47, 0);
+    return 0;
+}
+var e = main();
+syscall(60, e);
+CYR
+    } > "$2"
+}
+run_env_probe() {   # $1 = _cc_win_env_apply source -> 97 lines, or BUILD-FAILED
+    mk_env_probe "$1" "$T/e.cyr"
+    if ! "$CC" < "$T/e.cyr" > "$T/e" 2> "$T/e.err" || [ ! -s "$T/e" ]; then
+        grep -E '^error' "$T/e.err" | head -2 | sed 's/^/    /'
+        echo BUILD-FAILED; return
+    fi
+    chmod +x "$T/e"
+    ( ulimit -c 0; "$T/e" ) 2> /dev/null
+}
+# The oracle, written from the documented order (bounds first, then dce, strict-pin, poison, pie;
+# the POSIX arm appends the target selectors; the Windows arm sets the flags and nothing else).
+env_want() {
+    tg=0
+    while [ $tg -lt 2 ]; do
+        m=0
+        while [ $m -lt 48 ]; do
+            f=""
+            case $((m % 3)) in 1) f="${f}CYRIUS_BOUNDS=1;" ;; 2) f="${f}CYRIUS_BOUNDS=0;" ;; esac
+            [ $(( (m / 3) & 1 )) = 1 ] && f="${f}CYRIUS_DCE=1;"
+            [ $(( (m / 6) & 1 )) = 1 ] && f="${f}CYRIUS_STRICT_PIN=1;"
+            [ $(( (m / 12) & 1 )) = 1 ] && f="${f}CYRIUS_POISON=1;"
+            [ $(( (m / 24) & 1 )) = 1 ] && f="${f}CYRIUS_PIE=1;"
+            t=""
+            [ $tg = 1 ] && t="CYRIUS_TARGET_AGNOS=1;CYRIUS_TARGET_WIN=1;CYRIUS_KERNEL=1;CYRIUS_ELF64_KERNEL=1;CYRIUS_KERNEL_BASE=0x100000;"
+            printf '%s%s|%s\n' "$f" "$t" "$f"
+            m=$((m + 1))
+        done
+        tg=$((tg + 1))
+    done
+    echo "CYRIUS_BOUNDS=0;CYRIUS_DCE=1;CYRIUS_STRICT_PIN=1;CYRIUS_POISON=1;CYRIUS_PIE=1;|CYRIUS_BOUNDS=0;CYRIUS_DCE=1;CYRIUS_STRICT_PIN=1;FAILED:CYRIUS_POISON=1"
+}
+x=$FAIL
+env_want > "$T/ewant"
+run_env_probe "$T/_cc_win_env_apply.cyr" > "$T/eout"
+cmp -s "$T/ewant" "$T/eout" || { fail "axis 5: the env list differs between the arms or from the documented order:"; diff "$T/ewant" "$T/eout" | sed 's/^/      /' | head -12; }
+[ "$FAIL" = "$x" ] && echo "  ok axis 5: all 48 flag combinations x targets off / on — the POSIX list is the flags then the targets, the Windows arm sets exactly the flags (NAME / value split) and no target; a failing set names its entry"
+
+# ── axis 6 — anti-vacuous: a split one byte short is caught ───────────────────────────────
+x=$FAIL
+sed 's/_win_setenv(nm, e + n + 1)/_win_setenv(nm, e + n)/' "$T/_cc_win_env_apply.cyr" > "$T/short_env.cyr"
+cmp -s "$T/_cc_win_env_apply.cyr" "$T/short_env.cyr" && fail "axis 6: the mutation did not apply (has _cc_win_env_apply's split changed shape?)"
+run_env_probe "$T/short_env.cyr" > "$T/eout_short"
+cmp -s "$T/ewant" "$T/eout_short" && fail "axis 6: a value handed to _win_setenv with its '=' was NOT detected by axis 5"
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: ⭐ a NAME / value split one byte short is caught by axis 5"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: compile_flag_list (one flag list for the POSIX argv and the PE command line; argv sized from it)"
+echo "PASS: compile_flag_list (one flag list for the POSIX argv and the PE command line; argv sized from it; one environment list for both spawn arms)"
