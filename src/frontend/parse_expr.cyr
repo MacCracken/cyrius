@@ -4285,8 +4285,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # follow-up that adds ESYSXLAT translations or `__got` reroutes
         # for specific syscalls the tools actually exercise.
         # v6.5.43 put the x86 Mach-O half beside it; v6.6.8 made both ARITY-aware and moved them
-        # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow.
-        _macho_warn_unrouted(sc_num, argc);
+        # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow; 6.7.10
+        # wraps it with the execution-coverage exit hook (parse_cov.cyr `_sc_args_done`).
+        _sc_args_done(S, sc_num, argc);
         # v6.5.51 — ELF-aarch64: a raw syscall NUMBER that is really an x86_64 number.
         # ESYSXLAT's aarch64 arm passes unmatched numbers through to the `svc` verbatim,
         # which is correct by design (native numbers must not be rewritten) — but it means

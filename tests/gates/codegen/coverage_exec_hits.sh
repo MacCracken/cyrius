@@ -40,8 +40,8 @@
 # (one line before EEXIT in each of the seven forks) calls the dump appended to the unit
 # (`_cov_finish`), which appends `# cyrius-coverage 1` and one `<count> <file>:<line> <name>` per fn
 # entered to CYRIUS_COVERAGE_FILE. Each row compiles under the mode, runs, and holds the exit to the
-# plain build's and the dump (sorted) to its expectation exactly. (The exit routes — `syscall(60,
-# ..)`, `sys_exit`, `panic` — are P5B-3's; these probes return from `main` or fall off the top level.)
+# plain build's and the dump (sorted) to its expectation exactly. (These probes return from `main`
+# or fall off the top level; the exit syscalls are group E.)
 #   H1  `main` returns 4: `2 <source>:1 a`, `1 .. b`, `1 .. main`; `never` absent
 #   H2  falling off the top level: the exit is the last var; `f` counted
 #   H3  an included fn is named by its include path and its own line
@@ -58,11 +58,44 @@
 #       struct return, a coroutine counted once across four forces): every result right (exit 50)
 #       and the program's records exact — x86, IR=3, aarch64 (qemu), PE (wine)
 #   B1  the highest fn indexes (generic instances minted in pass 2, after the dump's own fns) count
-#   M3  tests/tcyr/compiler/large_source.tcyr compiles and dumps (falling off its top level)
-#   CC1 an instrumented cycc compiles src/main.cyr byte-identical to cycc(src); its dump > 500 records
-#       (src/main.cyr's last `syscall(SYS_EXIT, ..)` falls off the top level instead, for now)
+#   M3  tests/tcyr/compiler/large_source.tcyr, verbatim, compiles and dumps ONE block (through its own
+#       last line, `syscall(60, r);` — the exit hook, group E)
+#   CC1 an instrumented cycc compiles src/main.cyr byte-identical to cycc(src); its dump is ONE block
+#       of > 500 records (through src/main.cyr's own `syscall(SYS_EXIT, _had_error);`)
 #   L1-L5 aarch64 (qemu), the main_aarch64_native fork (qemu), PE through main.cyr and through the
 #       main_win fork (wine), cx (cxvm; no `main` auto-call there, so its probes fall off the top level)
+#
+# GROUP E — EVERY EXIT ROUTE (P5B-3). A program that leaves through an exit syscall never reaches
+# `_cov_tail`, so the syscall builtin hooks every exit whose NUMBER is a compile-time constant
+# (parse_cov.cyr `_sc_args_done`, the 1-for-1 swap for `_macho_warn_unrouted` in
+# `_PARSE_FACTOR_IMPL`; `_cov_is_exit` per target: x86 ELF / x86 Mach-O / cx {60, 231}, aarch64 {60,
+# 93, 94}, PE {60}, agnos {0}), after the arguments are pushed and before every target lowering.
+# Each row holds the exit to the plain build's and to its stated value, and the program's own
+# records and the BLOCK count exactly:
+#   E1a `sys_exit(code())` three frames deep -> 5; code / deep2 / deep1 counted
+#   E1b `syscall(SYS_EXIT, code())` -> `code` counted (the hook follows the argument evaluation)
+#   E2  top-level `syscall(60, main())` -> `main` counted
+#   E3a `syscall(SYS_EXIT, 3)` in a fn (aarch64's 93); E3b `sys_exit_group(4)` (x86 231, aarch64 94,
+#       PE's wrapper issues 60)
+#   E4  `syscall(231, 23); syscall(60, 9)`: x86 / cx exit 23, aarch64 (munlockall) and PE (-38) exit 9
+#       — ONE block each
+#   E5a PE: raw 231 is -38 and the program goes on to exit 78 — ONE block; E5b PE: E4's shape
+#   E6  a CYRIUS_BOUNDS=1 violation -> 134 (the checker's own `syscall(60, 134)`), the violating fn
+#       counted; E7 `panic` -> 1
+#   E8  fork: the child's block and the parent's, both whole (O_APPEND); E9 four lib/thread workers
+#       (their raw-asm exits do not dump) -> `wk` 4, ONE block
+#   E10 an exit inside a `#naked` fn compiles and gets no call (objdump: none between its last
+#       argument and its `syscall`; the ordinary fn's exit has the dump's one)
+#   E11 `syscall(n, 0)` with a runtime-variable number: the exit unchanged and NO dump (the
+#       documented residual — never a partial block)
+#   E12 `const K = 60; syscall(K, 7)` -> a block; E13 an exit inside an `#inline` fn -> a block
+#   AG  agnos (generated, NOT run: no agnos host here, and #58 is vfork on Linux): the dump's #7 /
+#       0x501 / #58 / #6 immediates in the instrumented image only; a call precedes `syscall(0, ..)`,
+#       none precedes `syscall(60, ..)`
+#   DW  Darwin's 0x209 open flags in the x86 and arm64 Mach-O dumps, Linux's 0x441 in neither
+#   Legs: E1-E3, E11-E13 on x86, aarch64 (qemu), the native fork (qemu), PE via main.cyr and
+#   main_win (wine) and cx; E6 / E7 wherever `main` is auto-called; E8 / E9 on x86 and aarch64;
+#   E1b / E7 under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0
 #
 # MUTATION LEDGER (P5B-1; scratch copies of the tree, each its 2-stage mutant cycc, this gate and the
 # named gates run as CYCC=<mutant>; 2026-10-12):
@@ -90,6 +123,18 @@
 #        scripts/differential.sh sees it too. (Dropping the bare `if (_cov_mode == 1)` cannot self-host:
 #        the hits then address a band that was never registered.)
 #   ML   `_warn_large_static`'s subtraction removed               -> RED 1 of 79: H6 (303968 B under the mode)
+# MUTATION LEDGER (P5B-3; the same procedure, 2026-10-12; "N of 166"):
+#   MH   the exit hook removed (`_sc_args_done` calls no dump)     -> RED 74 of 166: M3, CC1b, E1-E7 / E12 /
+#        E13 on every leg and x86 codegen mode, E8, E10, AG2
+#   M12  the hook placed before the arguments (after the number)  -> RED 19 of 166: E1b (every leg and x86
+#        codegen mode) and E2 on every leg (`code` / `main` missing), E10b, AG2
+#   M9   231 added to the aarch64 predicate                      -> RED 2 of 166: E4 aarch64 + native (two blocks)
+#   M10  94 dropped from the aarch64 predicate                   -> RED 2 of 166: E3b aarch64 + native (no dump)
+#   M16  231 added to the PE predicate                           -> RED 3 of 166: E5a (both PE legs), E5b
+#   M11  the agnos predicate 60 for 0                            -> RED 1 of 166: AG2
+#   M14  Linux's open flags (1089) on Darwin                     -> RED 2 of 166: DW x86 + arm64 Mach-O
+#   M15  O_TRUNC for O_APPEND (577)                              -> RED 2 of 166: E8 x86 + aarch64 (the
+#        child's block lost)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -445,42 +490,42 @@ printf '%s\n1 <source>:1 a\n1 <source>:2 gen\n1 <source>:3 b\n1 <source>:2 gen$i
 hx "B1 the highest indexes (instances minted in pass 2) count exactly" "$T/b1.cyr" "$T" x86 "$T/b1.want" "$CC"
 
 # ── M3: a large program (tests/tcyr/compiler/large_source.tcyr, ~6,000 fns through its includes)
-# compiles and dumps. Its last line `syscall(60, r);` is an exit the dump does not see yet (the exit
-# routes are P5B-3's), so it falls off the top level here with the same exit value. ──────────────
-sed '$s/^syscall(60, r);$/var r_exit = r;/' tests/tcyr/compiler/large_source.tcyr > "$T/m3.cyr"
-if [ "$(tail -1 "$T/m3.cyr")" != 'var r_exit = r;' ]; then bad "M3: large_source.tcyr no longer ends in 'syscall(60, r);' — re-derive the row"
+# compiles and dumps — verbatim: its last line `syscall(60, r);` is an exit the syscall builtin's hook
+# sees (P5B-3). ────────────────────────────────────────────────────────────────────────────────
+if [ "$(tail -1 tests/tcyr/compiler/large_source.tcyr)" != 'syscall(60, r);' ]; then bad "M3: large_source.tcyr no longer ends in 'syscall(60, r);' — re-derive the row"
 else
     rm -f "$D"
-    rc=0; env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < "$T/m3.cyr" > "$T/m3.bin" 2> "$T/m3.err" || rc=$?
+    rc=0; env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < tests/tcyr/compiler/large_source.tcyr > "$T/m3.bin" 2> "$T/m3.err" || rc=$?
     if [ "$rc" != 0 ]; then bad "M3: rc $rc: $(grep -m1 '^error' "$T/m3.err")"
     else
         run_bin x86 "$T/m3.bin"
         nr=$(grep -cE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$' "$D" 2>/dev/null || true); nr=${nr:-0}
         nbad=$(grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' "$D" 2>/dev/null || true); nbad=${nbad:-0}
-        if [ "$GOT" = 0 ] && grep -q ' passed, 0 failed' "$T/m3.bin.out" && [ "$nr" -ge 10 ] && [ "$nbad" = 0 ] \
+        nh=$(grep -c "^$HDR\$" "$D" 2>/dev/null || true); nh=${nh:-0}
+        if [ "$GOT" = 0 ] && grep -q ' passed, 0 failed' "$T/m3.bin.out" && [ "$nr" -ge 10 ] && [ "$nbad" = 0 ] && [ "$nh" = 1 ] \
             && grep -qE '^[0-9]+ lib/string\.cyr:[0-9]+ streq$' "$D"; then
-            ok "M3 large_source.tcyr: exit 0, its asserts pass, $nr well-formed records (streq at its lib/string.cyr line)"
-        else bad "M3 large_source.tcyr: exit $GOT, $nr records, $nbad malformed: $(grep -m1 'passed' "$T/m3.bin.out")"; fi
+            ok "M3 large_source.tcyr (verbatim, its own syscall(60, r)): exit 0, its asserts pass, ONE block of $nr well-formed records (streq at its lib/string.cyr line)"
+        else bad "M3 large_source.tcyr: exit $GOT, $nh block(s), $nr records, $nbad malformed: $(grep -m1 'passed' "$T/m3.bin.out")"; fi
     fi
 fi
 
-# ── CC1: an instrumented cycc reproduces cycc from src, and its dump holds more than 500 records.
-# src/main.cyr's last line `syscall(SYS_EXIT, _had_error);` falls off the top level here instead
-# (the exit routes are P5B-3's); the same exit value. ─────────────────────────────────────────────
-sed '$s/^syscall(SYS_EXIT, _had_error);$/var _cov_cc1_rc = _had_error;/' src/main.cyr > "$T/cc1.cyr"
-if [ "$(tail -1 "$T/cc1.cyr")" != 'var _cov_cc1_rc = _had_error;' ]; then bad "CC1: src/main.cyr no longer ends in 'syscall(SYS_EXIT, _had_error);' — re-derive the row"
+# ── CC1: an instrumented cycc reproduces cycc from src, and its dump holds more than 500 records —
+# verbatim: src/main.cyr leaves through its own last line, `syscall(SYS_EXIT, _had_error);`, which
+# the syscall builtin's hook sees (P5B-3). ─────────────────────────────────────────────────────────
+if [ "$(tail -1 src/main.cyr)" != 'syscall(SYS_EXIT, _had_error);' ]; then bad "CC1: src/main.cyr no longer ends in 'syscall(SYS_EXIT, _had_error);' — re-derive the row"
 else
     rm -f "$D"
-    rc=0; env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < "$T/cc1.cyr" > "$T/cc1.bin" 2> /dev/null || rc=$?
+    rc=0; env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < src/main.cyr > "$T/cc1.bin" 2> /dev/null || rc=$?
     "$CC" < src/main.cyr > "$T/cc1.ref" 2> /dev/null || true
     if [ "$rc" != 0 ]; then bad "CC1: the instrumented cycc did not compile (rc $rc)"
     else
         chmod +x "$T/cc1.bin"; got=0; env -u CYRIUS_COVERAGE -u CYRIUS_COVERAGE_FILE "$T/cc1.bin" < src/main.cyr > "$T/cc1.out" 2> /dev/null || got=$?
         nr=$(grep -cE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$' "$D" 2>/dev/null || true); nr=${nr:-0}
+        nh=$(grep -c "^$HDR\$" "$D" 2>/dev/null || true); nh=${nh:-0}
         if [ "$got" = 0 ] && [ -s "$T/cc1.ref" ] && cmp -s "$T/cc1.out" "$T/cc1.ref"; then ok "CC1a the instrumented cycc compiles src/main.cyr byte-identical to cycc(src)"
         else bad "CC1a the instrumented cycc: exit $got; its output $(wc -c < "$T/cc1.out") B against cycc(src)'s $(wc -c < "$T/cc1.ref") B"; fi
-        if [ "$nr" -gt 500 ] && grep -qE '^[0-9]+ src/common/util\.cyr:[0-9]+ L64$' "$D"; then ok "CC1b its dump: $nr records (> 500), L64 at its src/common/util.cyr line"
-        else bad "CC1b its dump: $nr records (want > 500, with src/common/util.cyr's L64)"; fi
+        if [ "$nh" = 1 ] && [ "$nr" -gt 500 ] && grep -qE '^[0-9]+ src/common/util\.cyr:[0-9]+ L64$' "$D"; then ok "CC1b its dump (through src/main.cyr's own SYS_EXIT): ONE block, $nr records (> 500), L64 at its src/common/util.cyr line"
+        else bad "CC1b its dump: $nh block(s) (want 1), $nr records (want > 500, with src/common/util.cyr's L64)"; fi
     fi
 fi
 
@@ -514,6 +559,230 @@ if [ -x "$T/cc_cx" ]; then
     hx "L5 cx (cxvm): H3" "$T/h3.cyr" "$T" cxvm "$T/h3.want" "$T/cc_cx"
 else bad "L5 cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# GROUP E — EVERY EXIT ROUTE (P5B-3). A program that leaves through an exit syscall never reaches the
+# top level's `_cov_tail`, so the syscall builtin hooks each exit whose NUMBER is a compile-time
+# constant (parse_cov.cyr `_sc_args_done` / `_cov_is_exit`, the 1-for-1 swap for
+# `_macho_warn_unrouted` in `_PARSE_FACTOR_IMPL`): after the arguments are evaluated and pushed,
+# before every target lowering. The exit numbers are per target, measured: x86 ELF / x86 Mach-O / cx
+# {60, 231}; aarch64 {60, 93, 94} (raw 231 is munlockall there); PE {60} (raw 231 is -38 and the
+# program goes on; `sys_exit_group` issues 60); agnos {0}. Each row compiles under the mode, runs,
+# holds the exit to the plain build's (and to its stated value), and holds the program's own
+# (`<source>`) records and the BLOCK count exactly (the lib's records vary with the target's lib).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+cat > "$T/e1a.cyr" << 'EOF'
+include "lib/syscalls.cyr"
+fn code(): i64 { return 5; }
+fn deep2(): i64 { sys_exit(code()); return 0; }
+fn deep1(): i64 { return deep2(); }
+var r = deep1();
+var z = 9;
+EOF
+cat > "$T/e1b.cyr" << 'EOF'
+include "lib/syscalls.cyr"
+fn code(): i64 { return 5; }
+fn deep2(): i64 { syscall(SYS_EXIT, code()); return 0; }
+fn deep1(): i64 { return deep2(); }
+var r = deep1();
+var z = 9;
+EOF
+printf '%s\n1 <source>:2 code\n1 <source>:3 deep2\n1 <source>:4 deep1\n' "$HDR" > "$T/e1.want"
+printf 'fn main(): i64 { return 6; }\nsyscall(60, main());\n' > "$T/e2.cyr"
+printf '%s\n1 <source>:1 main\n' "$HDR" > "$T/e2.want"
+printf 'include "lib/syscalls.cyr"\nfn ex(): i64 { syscall(SYS_EXIT, 3); return 0; }\nvar r = ex();\nvar z = 9;\n' > "$T/e3a.cyr"
+printf 'include "lib/syscalls.cyr"\nfn ex(): i64 { sys_exit_group(4); return 0; }\nvar r = ex();\nvar z = 9;\n' > "$T/e3b.cyr"
+printf '%s\n1 <source>:2 ex\n' "$HDR" > "$T/e3.want"
+printf 'fn f(): i64 { return 1; }\nvar r = f();\nvar a = syscall(231, 23);\nsyscall(60, 9);\n' > "$T/e4.cyr"
+printf '%s\n1 <source>:1 f\n' "$HDR" > "$T/e4.want"
+printf 'fn main(): i64 {\n    var r = syscall(231, 23);\n    if (r == 0 - 38) { return 78; }\n    return 1;\n}\n' > "$T/e5.cyr"
+printf '%s\n1 <source>:1 main\n' "$HDR" > "$T/e5.want"
+printf 'var A: i64[4];\nfn bad(i): i64 { return A[i]; }\nfn main(): i64 { return bad(7); }\n' > "$T/e6.cyr"
+printf '%s\n1 <source>:2 bad\n1 <source>:3 main\n' "$HDR" > "$T/e6.want"
+cat > "$T/e7.cyr" << 'EOF'
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+fn chk(x): i64 { if (x > 2) { panic("too big"); } return x; }
+fn main(): i64 { chk(1); chk(5); return 9; }
+EOF
+printf '%s\n2 <source>:4 chk\n1 <source>:5 main\n' "$HDR" > "$T/e7.want"
+cat > "$T/e8.cyr" << 'EOF'
+include "lib/syscalls.cyr"
+fn child(): i64 { return 3; }
+fn main(): i64 {
+    var pid = sys_fork();
+    if (pid == 0) { child(); sys_exit(0); }
+    var st = 0;
+    sys_waitpid(pid, &st, 0);
+    return 7;
+}
+EOF
+printf '%s\n%s\n1 <source>:2 child\n1 <source>:3 main\n1 <source>:3 main\n' "$HDR" "$HDR" > "$T/e8.want"
+cat > "$T/e9.cyr" << 'EOF'
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+fn wk(arg): i64 { return arg + 1; }
+fn main(): i64 {
+    alloc_init();
+    var t0 = thread_create(&wk, 1);
+    var t1 = thread_create(&wk, 2);
+    var t2 = thread_create(&wk, 3);
+    var t3 = thread_create(&wk, 4);
+    thread_join(t0); thread_join(t1); thread_join(t2); thread_join(t3);
+    return 11;
+}
+EOF
+printf '%s\n4 <source>:4 wk\n1 <source>:5 main\n' "$HDR" > "$T/e9.want"
+printf 'var n = 60;\nfn f(): i64 { return 1; }\nvar r = f();\nsyscall(n, 0);\n' > "$T/e11.cyr"
+printf 'const K = 60;\nfn f(): i64 { syscall(K, 7); return 0; }\nvar r = f();\n' > "$T/e12.cyr"
+printf '%s\n1 <source>:2 f\n' "$HDR" > "$T/e12.want"
+printf '#inline\nfn die(c): i64 { syscall(60, c); return 0; }\nfn f(): i64 { die(12); return 0; }\nvar r = f();\n' > "$T/e13.cyr"
+printf '%s\n1 <source>:3 f\n' "$HDR" > "$T/e13.want"
+
+# ex_ <row> <src> <runner> <want> <exit> <compiler> [env...]: hx in the tree (lib includes resolve
+# there) over the program's own records, the exit stated
+ex_() {
+    row=$1; src=$2; runr=$3; want=$4; HXE=$5; comp=$6; shift 6
+    HXF='<source>'
+    hx "$row" "$src" "$ROOT" "$runr" "$want" "$comp" "$@"
+    HXE=""; HXF=""
+}
+# en <row> <src> <runner> <compiler> [env...]: an exit the hook cannot see — the exit equals the
+# plain build's, and NO dump is written (the documented residual, never a partial block)
+en() {
+    row=$1; src=$2; runr=$3; comp=$4; shift 4
+    f="$D"; [ "$runr" = pe ] && f=cov.out
+    rm -f "$D"
+    rc=0; (cd "$ROOT" && env "$@" CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$f" $comp < "$src" > "$T/en.bin" 2> "$T/en.err") || rc=$?
+    rc0=0; (cd "$ROOT" && env -u CYRIUS_COVERAGE -u CYRIUS_COVERAGE_FILE "$@" $comp < "$src" > "$T/en.plain" 2> /dev/null) || rc0=$?
+    if [ "$rc" != 0 ] || [ "$rc0" != 0 ]; then bad "$row: did not compile (rc $rc / $rc0 plain): $(grep -m1 '^error' "$T/en.err")"; return; fi
+    run_bin "$runr" "$T/en.plain"; pgot=$GOT
+    rm -f "$D"
+    run_bin "$runr" "$T/en.bin"; got=$GOT
+    if [ "$got" != "$pgot" ]; then bad "$row: exit $got under the mode, $pgot plain"
+    elif [ -e "$D" ]; then bad "$row: exit $got, but a dump was written: $(tr '\n' '|' < "$D")"
+    else ok "$row (exit $got; no dump)"; fi
+}
+# eleg <leg> <runner> <compiler> [env...]: the rows every target runs (each falls off or calls its
+# top level explicitly, so cx — no `main` auto-call — runs them too)
+eleg() {
+    leg=$1; runr=$2; comp=$3; shift 3
+    ex_ "E1a $leg: sys_exit(code()) three frames deep" "$T/e1a.cyr" "$runr" "$T/e1.want" 5 "$comp" "$@"
+    ex_ "E1b $leg: syscall(SYS_EXIT, code()) — the argument evaluated before the dump" "$T/e1b.cyr" "$runr" "$T/e1.want" 5 "$comp" "$@"
+    ex_ "E2 $leg: top-level syscall(60, main())" "$T/e2.cyr" "$runr" "$T/e2.want" 6 "$comp" "$@"
+    ex_ "E3a $leg: syscall(SYS_EXIT, 3) in a fn" "$T/e3a.cyr" "$runr" "$T/e3.want" 3 "$comp" "$@"
+    ex_ "E3b $leg: sys_exit_group(4) in a fn" "$T/e3b.cyr" "$runr" "$T/e3.want" 4 "$comp" "$@"
+    en  "E11 $leg: syscall(n, 0) with a runtime-variable number (the documented residual)" "$T/e11.cyr" "$runr" "$comp" "$@"
+    ex_ "E12 $leg: const K = 60; syscall(K, 7)" "$T/e12.cyr" "$runr" "$T/e12.want" 7 "$comp" "$@"
+    ex_ "E13 $leg: an exit inside an #inline fn" "$T/e13.cyr" "$runr" "$T/e13.want" 12 "$comp" "$@"
+}
+# emain <leg> <runner> <compiler> [env...]: the rows that leave from an auto-called `main`
+emain() {
+    leg=$1; runr=$2; comp=$3; shift 3
+    ex_ "E6 $leg: a CYRIUS_BOUNDS=1 violation (the checker's own exit)" "$T/e6.cyr" "$runr" "$T/e6.want" 134 "$comp" "$@" CYRIUS_BOUNDS=1
+    ex_ "E7 $leg: panic" "$T/e7.cyr" "$runr" "$T/e7.want" 1 "$comp" "$@"
+}
+# eproc <leg> <runner> <compiler>: fork and threads (POSIX targets)
+eproc() {
+    leg=$1; runr=$2; comp=$3
+    ex_ "E8 $leg: fork — the child's block and the parent's, both whole" "$T/e8.cyr" "$runr" "$T/e8.want" 7 "$comp"
+    nb=$(tr -d '\r' < "$D" 2>/dev/null | grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' || true)
+    if [ -f "$D" ] && [ "${nb:-0}" = 0 ]; then ok "E8' $leg: every line of the two blocks is a header or a whole record"
+    else bad "E8' $leg: ${nb:-?} malformed line(s) in the fork's dump: $(tr '\n' '|' < "$D" 2>/dev/null | cut -c1-300)"; fi
+    ex_ "E9 $leg: 4 lib/thread workers (their raw-asm exits do not dump; the process exit does, once)" "$T/e9.cyr" "$runr" "$T/e9.want" 11 "$comp"
+}
+
+# ── E on x86 ELF ──────────────────────────────────────────────────────────────────────────────
+eleg x86 x86 "$CC"
+ex_ "E4 x86: raw syscall(231, 23) is exit_group here — exit 23, ONE block" "$T/e4.cyr" x86 "$T/e4.want" 23 "$CC"
+emain x86 x86 "$CC"
+eproc x86 x86 "$CC"
+for m in CYRIUS_IR=1 CYRIUS_IR=3 CYRIUS_DCE=1 CYRIUS_PIE=1 CYRIUS_STACK_ARRAYS=0; do
+    ex_ "E1b x86, $m" "$T/e1b.cyr" x86 "$T/e1.want" 5 "$CC" "$m"
+    ex_ "E7 x86, $m" "$T/e7.cyr" x86 "$T/e7.want" 1 "$CC" "$m"
+done
+
+# ── E10: an exit inside a #naked fn compiles, and no call is emitted there (a #naked fn has no
+# frame to call from); the control — the same exit in an ordinary fn — has the dump's one call
+# between its last argument and its `syscall` ──────────────────────────────────────────────────
+# ncalls <binary> <imm>: the `call`s between `mov $<imm>,%eax` and the next `syscall`
+ncalls() { objdump -d "$1" | awk -v im="\$$2,%eax" 'index($0, "mov    " im) { f = 1; c = 0; next } f && /\tcall/ { c++ } f && /\tsyscall/ { print c; exit }'; }
+if command -v objdump > /dev/null 2>&1; then
+    printf '#naked\nfn nk() { syscall(60, 77); }\nfn okx(): i64 { syscall(60, 78); return 0; }\nvar sel = 0;\nif (sel == 1) { nk(); }\nokx();\n' > "$T/e10.cyr"
+    printf '%s\n1 <source>:3 okx\n' "$HDR" > "$T/e10.want"
+    ex_ "E10a a program with an exit inside a #naked fn compiles and dumps through its other exit" "$T/e10.cyr" x86 "$T/e10.want" 78 "$CC"
+    rc=0; (cd "$T" && env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < e10.cyr > e10.bin 2> /dev/null) || rc=$?
+    n77=$(ncalls "$T/e10.bin" 0x4d); n78=$(ncalls "$T/e10.bin" 0x4e)
+    if [ "$rc" = 0 ] && [ "$n77" = 0 ] && [ "$n78" = 1 ]; then ok "E10b objdump: no call before the #naked fn's exit; the ordinary fn's exit has the dump's one"
+    else bad "E10b objdump: rc $rc; calls before the #naked exit '$n77' (want 0), before the ordinary exit '$n78' (want 1)"; fi
+else echo "  SKIP (named): E10a / E10b / AG1 / AG2 — objdump is not installed"; fi
+
+# ── AG: agnos (generated, NOT run — there is no agnos host here, and #58 is vfork on Linux): the
+# dump's open #7 with 0x501, the seek #58, the close #6; the exit is #0, so a call precedes
+# `syscall(0, ..)` and none precedes `syscall(60, ..)` (60 is no exit on agnos) ─────────────────
+printf 'fn ex0(): i64 { syscall(0, 77); return 0; }\nfn nx(): i64 { syscall(60, 78); return 0; }\nvar sel = 0;\nif (sel == 1) { nx(); }\nex0();\n' > "$T/ag.cyr"
+rc=0; (cd "$T" && env CYRIUS_TARGET_AGNOS=1 CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/ag_never_run.out" "$CC" < ag.cyr > ag.bin 2> /dev/null) || rc=$?
+rc0=0; (cd "$T" && env CYRIUS_TARGET_AGNOS=1 "$CC" < ag.cyr > ag.off 2> /dev/null) || rc0=$?
+if command -v objdump > /dev/null 2>&1; then
+    agm=""
+    for im in 0x7 0x501 0x3a 0x6; do
+        a1=$(objdump -d "$T/ag.bin" | grep -cE "mov +\\\$$im,%eax" || true); a0=$(objdump -d "$T/ag.off" | grep -cE "mov +\\\$$im,%eax" || true)
+        [ "$a1" -gt "$a0" ] || agm="$agm $im($a1 on, $a0 off)"
+    done
+    if [ "$rc" = 0 ] && [ "$rc0" = 0 ] && [ -z "$agm" ]; then ok "AG1 agnos: the dump's #7 / 0x501 / #58 / #6 immediates are in the instrumented image only"
+    else bad "AG1 agnos: rc $rc / $rc0; immediates not added by the mode:$agm"; fi
+    a0c=$(ncalls "$T/ag.bin" 0x4d); a60=$(ncalls "$T/ag.bin" 0x4e)
+    if [ "$rc" = 0 ] && [ "$a0c" = 1 ] && [ "$a60" = 0 ]; then ok "AG2 agnos: the dump's call precedes syscall(0, ..) (its exit), none precedes syscall(60, ..)"
+    else bad "AG2 agnos: calls before syscall(0, ..) '$a0c' (want 1), before syscall(60, ..) '$a60' (want 0)"; fi
+fi
+
+# ── DW: Darwin's O_WRONLY | O_CREAT | O_APPEND is 0x209 (Linux's 1089 = 0x441 would be O_WRONLY |
+# O_NONBLOCK | ... there): x86 Mach-O `mov eax, 0x209` (b8 09 02 00 00), arm64 Mach-O `movz x0,
+# #0x209` (20 41 80 d2) — and the Linux immediate in neither. Compile-verified here; the run is the
+# ach / ecb leg (P5B-7). ─────────────────────────────────────────────────────────────────────────
+hexs() { od -An -v -tx1 "$1" | tr -d '\n' | tr -s ' ' | grep -o "$2" | wc -l | tr -d ' '; }
+dw() {   # <writer> <compiler> <darwin bytes> <linux bytes> [env...]
+    w=$1; comp=$2; dk=$3; lk=$4; shift 4
+    rc=0; (cd "$T" && env "$@" CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/dw_never_run.out" $comp < h2.cyr > dw.bin 2> /dev/null) || rc=$?
+    nd=$(hexs "$T/dw.bin" "$dk"); nl=$(hexs "$T/dw.bin" "$lk")
+    if [ "$rc" = 0 ] && [ "$nd" -ge 1 ] && [ "$nl" = 0 ]; then ok "DW $w: the dump opens with Darwin's 0x209 ($nd), never Linux's 0x441"
+    else bad "DW $w: rc $rc; Darwin 0x209 x$nd (want >= 1), Linux 0x441 x$nl (want 0)"; fi
+}
+dw "x86 Mach-O (CYRIUS_MACHO=1)" "$CC" ' b8 09 02 00 00' ' b8 41 04 00 00' CYRIUS_MACHO=1
+if [ -x "$T/cc_a64" ]; then dw "arm64 Mach-O (CYRIUS_MACHO_ARM=1)" "$T/cc_a64" ' 20 41 80 d2' ' 20 88 80 d2' CYRIUS_MACHO_ARM=1
+else bad "DW arm64 Mach-O: src/main_aarch64.cyr did not build"; fi
+
+# ── E on the other targets ────────────────────────────────────────────────────────────────────
+if [ "$HAVE_QEMU" = 1 ]; then
+    if [ -x "$T/cc_a64" ]; then
+        eleg "aarch64 (qemu)" qemu "$T/cc_a64"
+        ex_ "E4 aarch64 (qemu): raw 231 is munlockall here; syscall(60, 9) exits 9 with ONE block" "$T/e4.cyr" qemu "$T/e4.want" 9 "$T/cc_a64"
+        emain "aarch64 (qemu)" qemu "$T/cc_a64"
+        eproc "aarch64 (qemu)" qemu "$T/cc_a64"
+    else bad "E aarch64: src/main_aarch64.cyr did not build"; fi
+    if [ -x "$T/cc_a64n" ]; then
+        eleg "the native aarch64 fork (qemu)" qemu "qemu-aarch64 $T/cc_a64n"
+        ex_ "E4 the native aarch64 fork (qemu): exit 9, ONE block" "$T/e4.cyr" qemu "$T/e4.want" 9 "qemu-aarch64 $T/cc_a64n"
+        emain "the native aarch64 fork (qemu)" qemu "qemu-aarch64 $T/cc_a64n"
+    else bad "E src/main_aarch64_native.cyr did not build"; fi
+fi
+if [ "$HAVE_WINE" = 1 ]; then
+    eleg "PE through main.cyr (wine)" pe "$CC" CYRIUS_TARGET_WIN=1
+    ex_ "E5a PE through main.cyr (wine): raw 231 is -38 here, the program goes on to exit 78 — ONE block" "$T/e5.cyr" pe "$T/e5.want" 78 "$CC" CYRIUS_TARGET_WIN=1
+    ex_ "E5b PE through main.cyr (wine): raw 231 then syscall(60, 9) — exit 9, ONE block" "$T/e4.cyr" pe "$T/e4.want" 9 "$CC" CYRIUS_TARGET_WIN=1
+    emain "PE through main.cyr (wine)" pe "$CC" CYRIUS_TARGET_WIN=1
+    if [ -x "$T/cc_win" ]; then
+        eleg "PE through the main_win fork (wine)" pe "$T/cc_win"
+        ex_ "E5a PE through the main_win fork (wine): raw 231, exit 78, ONE block" "$T/e5.cyr" pe "$T/e5.want" 78 "$T/cc_win"
+        emain "PE through the main_win fork (wine)" pe "$T/cc_win"
+    else bad "E src/main_win.cyr did not build"; fi
+fi
+if [ -x "$T/cc_cx" ]; then
+    eleg "cx (cxvm)" cxvm "$T/cc_cx"
+    ex_ "E4 cx (cxvm): cxvm passes 231 to the host as exit_group — exit 23, ONE block" "$T/e4.cyr" cxvm "$T/e4.want" 23 "$T/cc_cx"
+else bad "E cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL $G: $fails of $rows row(s) red"; exit 1; fi
-echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx"
+echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural)"
 exit 0

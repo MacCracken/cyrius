@@ -99,7 +99,8 @@ fn _cov_pass1(S): i64 {
 # shape), so every target lowers it through the open / write / close it already has. It appends
 # one block to CYRIUS_COVERAGE_FILE: `# cyrius-coverage 1`, then `<count> <file>:<line> <name>` for
 # each fn entered and `- <file>:<line> <name>` for each one not instrumented. `_cov_tail` calls it
-# just before the top level's exit in each of the seven forks. CHANGELOG [6.7.10]
+# just before the top level's exit in each of the seven forks, and the syscall builtin before every
+# exit syscall whose number is a constant (`_sc_args_done`, below). CHANGELOG [6.7.10]
 var _cov_hv = 0 - 1;    # the counter band's hidden global (8 B per fn index)
 var _cov_mv = 0 - 1;    # the fn map's hidden global
 var _cov_def = 0;       # per fn index: 0 = no counted body; else its `fn` token + 1 (negated: not instrumented)
@@ -187,6 +188,47 @@ fn _cov_call_dump(S): i64 {
     ECALLCLEAN(S, 2);
     _cfo = 0;
     _flags_reflect_rax = 0;
+    return 0;
+}
+
+# THE EXIT ROUTES. A program that leaves through an exit syscall never reaches the top level's
+# `_cov_tail`, so the syscall builtin hooks every exit whose NUMBER is a compile-time constant
+# (literal, const, enum — what the arm already folds into `sc_num`): `sys_exit`, `sys_exit_group`,
+# `panic`, the lib aborts, the bounds checker's 134, a forked child's exit. The hook runs once the
+# arguments are evaluated and pushed (so `syscall(60, f())` counts `f`) and before every target
+# lowering (the PE / Mach-O reroutes, ESCPOPS); the dump call leaves the pushed arguments where
+# they are. Not seen ("lost on a crash or kill"): an `asm` exit, a runtime-variable number, an exit
+# inside a `#naked` fn (it has no frame to call from), an exec, a signal.
+# `_PARSE_FACTOR_IMPL` calls this in place of `_macho_warn_unrouted` (a 1-for-1 swap: that fn is
+# at cybs's per-fn reference ceiling). CHANGELOG [6.7.10]
+fn _sc_args_done(S, sc_num, argc): i64 {
+    _macho_warn_unrouted(sc_num, argc);
+    if (_cov_mode == 0) { return 0; }
+    if (_cur_fn_naked == 1) { return 0; }
+    if (_cov_is_exit(sc_num) == 1) { _cov_call_dump(S); }
+    return 0;
+}
+
+# 1 when syscall number `n` ends the process on this target, measured per backend: raw 231 is
+# munlockall on ELF-aarch64 (and has no arm64 Mach-O row) and is not rerouted on PE (-38, the
+# program goes on — `sys_exit_group` issues 60 there), so it is an exit on x86 ELF / x86 Mach-O /
+# cx only; aarch64's own 93 / 94 and the 60 ESYSXLAT maps; agnos #0 (no exit_group).
+fn _cov_is_exit(n): i64 {
+    if (_TARGET_AGNOS == 1) {
+        if (n == 0) { return 1; }
+        return 0;
+    }
+    if (_TARGET_PE == 1) {
+        if (n == 60) { return 1; }
+        return 0;
+    }
+    if (n == 60) { return 1; }
+    if (_AARCH64_BACKEND == 1) {
+        if (n == 93) { return 1; }
+        if (n == 94) { return 1; }
+        return 0;
+    }
+    if (n == 231) { return 1; }
     return 0;
 }
 
