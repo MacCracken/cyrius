@@ -240,10 +240,12 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.9 — repair batch: the quick fixes + the critical / high (user, 2026-10-11)** (0)
 
 
-**6.7.10 — features: B7 + P5-B** (2)
+**6.7.10 — features: B7 + P5-B** (4)
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
+- [`lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx](2026-10-11-sakshi-fold-has-no-cx-arm.md)
+- [Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer](2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
 
 **6.7.11 — Break 2, repair 1** (44)
 
@@ -292,7 +294,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`+| +? -| -?` on a typed pointer add an unscaled count, then hand the result the pointer's step: with `q: *i32`, `(q +| 1) + 1` is `q + 5` — OPEN (a decision)](2026-10-11-saturating-op-keeps-left-pointer-step-decision.md)
 - [A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
 
-**6.7.12 — Break 2, repair 2 (the platform release)** (20)
+**6.7.12 — Break 2, repair 2 (the platform release)** (18)
 
 - [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](2026-10-08-aarch64-native-region-literal-translated-silently.md)
 - [arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3)](2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md)
@@ -312,8 +314,6 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius pulsar` and the CLI's on-demand cx builds hand an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` to the compiler they build](2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md)
 - [On macOS an exec-family child still inherits a signal mask its parent inherited from a launcher](2026-10-11-macos-exec-child-keeps-launcher-signal-mask.md)
 - [The macOS release tarballs ship two of the three `[release] scripts` — `cyrius-watch.sh` is left out — OPEN (a decision)](2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md)
-- [`lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx](2026-10-11-sakshi-fold-has-no-cx-arm.md)
-- [Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer](2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
 
 **6.7.13 — Break 2, repair 3** (28)
 

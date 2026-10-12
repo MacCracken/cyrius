@@ -4,9 +4,9 @@
 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B): `include "lib/sigil.cyr"` alone, and
 `include "lib/tls.cyr"` alone, each compile with rc 0 and print the two warnings below. Not covered by any open issue
 (the 2026-06-30 stack-arrays filing recorded this buffer as the sole `note:` case; 6.6.5 made that note a warning).
-**Placement:** 6.7.12 — repair 2, the fold refolds beside bayan's (roadmap.md § *The releases after 6.7.8*) — placed
-2026-10-11 — never 7.x. ⛔ The fix is a sigil release (the user tags it), then a byte-identical re-vendor: cyrius
-6.7.12 cannot tag with the refold pending.
+**Placement:** 6.7.10 — the 6.7.9 fold wave (roadmap.md § *6.7.10*; moved from 6.7.12 2026-10-11 with bayan's refold,
+user: "do the stdlib updates so they can be folded into 6.7.10") — never 7.x. ⛔ The fix is sigil 3.13.12, prepared
+2026-10-11 (the user tags it), then a byte-identical re-vendor: cyrius 6.7.10 cannot tag with the refold pending.
 **Discovered:** 2026-10-11 during 6.7.9's yantra test-include fix (the warning-noise class that issue closed).
 **Severity:** Low — no wrong value; two warnings on every TLS / crypto consumer's build, the noise that teaches a
 reader to skip warnings. A folded-stdlib defect, so high priority.

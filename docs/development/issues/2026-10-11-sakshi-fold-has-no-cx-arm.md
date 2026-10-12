@@ -5,9 +5,9 @@ Verified 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,05
 from `src/main_cx.cyr`): a two-line program that includes `lib/sakshi.cyr` stops with 10 "undefined variable" errors
 on cx and builds on every native target. Every installed `lib/sakshi.cyr` from 6.6.0 to 6.7.9 has no
 `CYRIUS_TARGET_CX` arm (`grep -c CYRIUS_TARGET_CX` = 0).
-**Placement:** 6.7.12 — repair 2, the fold refolds beside bayan's (roadmap.md § *The releases after 6.7.8*) — placed
-2026-10-11 — never 7.x. ⛔ The fix is a sakshi release (the user tags it), then a byte-identical re-vendor: cyrius
-6.7.12 cannot tag with the refold pending.
+**Placement:** 6.7.10 — the 6.7.9 fold wave (roadmap.md § *6.7.10*; moved from 6.7.12 2026-10-11 with bayan's refold,
+user: "do the stdlib updates so they can be folded into 6.7.10") — never 7.x. ⛔ The fix is sakshi 2.5.9, prepared
+2026-10-11 (the user tags it), then a byte-identical re-vendor: cyrius 6.7.10 cannot tag with the refold pending.
 **Discovered:** 2026-10-11 during 6.7.9's quick lane: `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`
 does not compile for cx, and its first error is in `lib/sakshi.cyr:248`.
 **Severity:** Medium — a hard compile failure, by name, on one target; no wrong value. A folded-stdlib defect, so high

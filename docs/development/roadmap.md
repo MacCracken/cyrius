@@ -99,9 +99,20 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
     B7 moves structs across that line.
 - **P5-B**, the per-fn hit after `EFNPRO`, the fn map and `cyrius coverage` running the corpus. Closes
   [P5](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md).
+- **The 6.7.9 fold wave**, prepared in the fold repos 2026-10-11 (user: "do the stdlib updates so they can be folded
+  into 6.7.10"), each re-vendored byte-identical from its tag with its `docs/ecosystem.md` row. ⛔ 6.7.10 does not
+  tag with a refold pending — each waits on the user's fold tag, and yukti's on sakshi's.
+  - sakshi 2.5.9 — the cx arm: [sakshi has no cx arm](issues/2026-10-11-sakshi-fold-has-no-cx-arm.md) (a cx row in
+    `cx_crossos_rows_run.sh`; `yukti_statfs_and_stdlib_constants.tcyr` compiles for cx).
+  - sigil 3.13.12 — `hash_file_into`'s per-call buffer: [sigil's static read buffer warns on every build](issues/2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
+    (a gate: `include "lib/tls.cyr"` compiles with no warning).
+  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped (adds the `math` leaf).
+  - yantra 1.0.11 — `_cdp_set_nodelay` is `sock_set_nodelay` (TCP_NODELAY is now set on Windows).
+  - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll`; pins sakshi 2.5.9.
 
 **Lanes.** B7 (`src/`: parse_types.cyr, parse_decl.cyr, lex_pp.cyr's derive, util.cyr, lib/str.cyr; it commits
-`build/cycc`) · P5-B (`src/` + cbt: the `EFNPRO` sites, the three backend EFNPROs, the forks, the coverage verb).
+`build/cycc`) · P5-B (`src/` + cbt: the `EFNPRO` sites, the three backend EFNPROs, the forks, the coverage verb) ·
+the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row and the sigil no-warning gate).
 
 **Decisions at the open.**
 - The handle line: option 1 (handle), 2 (refuse or warn) or 3 (document).
@@ -184,7 +195,6 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
   - [the CLI path / reporting leftovers](issues/2026-10-08-cli-path-and-reporting-leftovers.md) (all eight items);
   - [deps before `lib sync` stamps the new pin](issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md);
   - [`deps --verify` on CRLF](issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md).
-- Folds: the bayan delegation to `f64_parse_n` is refolded, which closes the f64_parse issue.
 
 **Lanes.**
 - Wave 1, both at slot one on hardware:
@@ -194,8 +204,7 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - Alongside:
   - syscall peers: owns `lib/syscalls_*.cyr` and takes `sys_symlink` and the cwd wrapper as hand-offs;
   - Windows runtime + trust;
-  - CLI (`cbt/deps.cyr`, `cbt/manifest.cyr`, the in-process SHA-256);
-  - the bayan refold.
+  - CLI (`cbt/deps.cyr`, `cbt/manifest.cyr`, the in-process SHA-256).
 
 **Decisions at the open.**
 - Native-region literals: warn only (default) or stop translating.
@@ -352,10 +361,8 @@ checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-res
 - [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/archived/2026-10-08-sock-set-nodelay-windows-route.md)
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md)
 - [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/archived/2026-10-08-yantra-tests-miss-security-include.md)
-- **Adoptions 6.7.9 opened** (each a fold patch that raises its cyrius pin, so ⛔ none tags before cyrius 6.7.9 is out;
-  then re-vendored byte-identical): yukti → the new `sys_ppoll` (dropping `_yk_ppoll`, its local `SYS_PPOLL` and its
-  agnos `#ifdef`s); bayan → `f64_parse_n` (dropping its second parser copy `_d_*`); yantra → `sock_set_nodelay` in
-  `_cdp_set_nodelay`.
+- **Adoptions 6.7.9 opened** — prepared 2026-10-11 as fold patches pinned to cyrius 6.7.9, refolded in 6.7.10 (§ 6.7.10
+  above, with the sakshi and sigil fixes): yukti → `sys_ppoll`; bayan → `f64_parse_n`; yantra → `sock_set_nodelay`.
 - **Constraints on any fold release**: never change the fold API cyrius's own `lib/` calls (sigil's 73 fns, 8 of them
   private `_x509_*` / `_ecdsa_*` used by `tls_native_hs12` / `hs13` / `tls.cyr`; sakshi's 6 in `log.cyr`; bayan
   `base64_encode` in `ws` / `ws_server`; sandhi `sandhi_server_find_header` in `ws_server`). cyrius must not make the
