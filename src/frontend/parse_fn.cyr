@@ -11,6 +11,8 @@
 
 # v5.5.38: control-flow fns (if/while/for + cond helpers) extracted.
 include "src/frontend/parse_ctrl.cyr"
+# 6.7.10 (P5-B): the execution-coverage mode — its switch and refusal (PREPROCESS and _tl_pass1 call in).
+include "src/frontend/parse_cov.cyr"
 
 # ================================================================
 # FUNCTION TABLE + CODEGEN
@@ -13237,6 +13239,7 @@ fn _tl_pass1(S, objok): i64 {
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
     _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
+    _cov_pass1(S);    # 6.7.10 (P5B-1): the execution-coverage mode, likewise (parse_cov.cyr)
     _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
     return 0;
 }

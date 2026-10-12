@@ -157,7 +157,9 @@ case "${1:-help}" in
         # CYRIUS_POISON would install bounds-checked / poison-mode ones. Here, not at the top: no
         # other verb builds anything. (gate row E4, tests/gates/frontend/bounds_mode_checked.sh)
         # CHANGELOG [6.7.9]
-        unset CYRIUS_BOUNDS CYRIUS_POISON
+        # 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+        # CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+        unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
         VERSION="$(tr -d '[:space:]' < VERSION)"
         echo "Setting up Cyrius $VERSION from $(pwd)..."

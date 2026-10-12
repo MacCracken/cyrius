@@ -21,7 +21,9 @@ cd "$ROOT"
 # 6.7.9 — every binary it ships is built here from src/ and programs/: an inherited
 # CYRIUS_BOUNDS / CYRIUS_POISON would ship a bounds-checked / poison-mode toolchain
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 VER=$(tr -d '[:space:]' < VERSION)
 STAGE="cyrius-${VER}-aarch64-macos"

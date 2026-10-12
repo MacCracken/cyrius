@@ -5470,10 +5470,10 @@ fn _bnd_scan(S): i64 {
     return on;
 }
 
-# The environment rung: 1 / 0, or -1 when CYRIUS_BOUNDS is unset or empty (and after refusing
-# any other value by name).
-fn _bnd_env_rung(S): i64 {
-    var e = _read_env("CYRIUS_BOUNDS");
+# An environment rung: 1 / 0, or -1 when the variable `name` is unset or empty (and after
+# refusing any other value by name). Shared by CYRIUS_BOUNDS and CYRIUS_COVERAGE (parse_cov.cyr).
+fn _pp_env_rung(S, name): i64 {
+    var e = _read_env(name);
     if (e == 0) { return 0 - 1; }
     var c = load8(e);
     if (c == 0) { return 0 - 1; }
@@ -5482,12 +5482,14 @@ fn _bnd_env_rung(S): i64 {
         if (c == 48) { return 0; }
     }
     _pp_err_head(S, 0, 0);
-    PRSTR("CYRIUS_BOUNDS must be 0 or 1 (or unset): ");
+    PRSTR(name);
+    PRSTR(" must be 0 or 1 (or unset): ");
     PRSTR(e);
     syscall(SYS_WRITE, 2, "\n", 1);
     _had_error = 1;
     return 0 - 1;
 }
+fn _bnd_env_rung(S): i64 { return _pp_env_rung(S, "CYRIUS_BOUNDS"); }
 
 # Decide the mode (see the block comment above) and, when it is on, predefine CYRIUS_BOUNDS.
 fn _bnd_setup(S): i64 {
@@ -5618,6 +5620,8 @@ fn PREPROCESS(S): i64 {
     PP_NEUT_PASS(S);
     # 6.7.8 (C2-7): the bounds-checked mode, before the first `#ifdef` is evaluated.
     _bnd_setup(S);
+    # 6.7.10 (P5B-1): the execution-coverage mode (src/frontend/parse_cov.cyr), likewise.
+    _cov_setup(S);
     PP_PASS(S);
     # Pass 2: evaluate #ifdef/#define in included content
     PP_IFDEF_PASS(S);

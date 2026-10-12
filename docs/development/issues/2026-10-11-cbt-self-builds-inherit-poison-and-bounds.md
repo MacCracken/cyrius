@@ -13,6 +13,11 @@ check passes. `scripts/install.sh --refresh-only` then copies that `build/cycc` 
 rebuilt there. The 6.7.9 install.sh scrub cannot help, because the compiler was built before install.sh ran. This is
 a bug, not a ledger id: the variable is the developer's own shell.
 **Affects:** `CYRIUS_POISON` since 6.5.29 and `CYRIUS_BOUNDS` since 6.7.8, through the 6.7.9 quick lane's tip.
+**Addendum (2026-10-12, 6.7.10 P5B-1):** a third inherited variable, `CYRIUS_COVERAGE` (the execution-coverage mode),
+reaches the same three sites. An inherited `CYRIUS_COVERAGE=1` with no `CYRIUS_COVERAGE_FILE` makes every one of
+those self-builds a refusal; with a file it builds an instrumented compiler. P5B-1 added it to every self-build
+SCRIPT's scrub (gate row E4 / E4c, `tests/gates/frontend/bounds_mode_checked.sh`); the CLI sites stay this issue's,
+and the fix's filter covers `CYRIUS_COVERAGE` (and `CYRIUS_COVERAGE_FILE`) too. Not fixed here.
 
 ## Summary
 

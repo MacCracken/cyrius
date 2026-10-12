@@ -37,7 +37,9 @@ cd "$ROOT"
 # 6.7.9 — the fixpoint it checks is the DEFAULT build's: an inherited CYRIUS_BOUNDS /
 # CYRIUS_POISON would verify a bounds-checked / poison-mode compiler (and fail invariant 3)
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 CC="$ROOT/build/cycc"
 SRC="$ROOT/src/main.cyr"

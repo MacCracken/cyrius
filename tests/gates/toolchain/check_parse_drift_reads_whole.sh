@@ -7,8 +7,8 @@
 # direct emit (`EB(S, 0x..`) in their tails was never seen and the row read PASS.
 #
 # ROWS — the driver built from this tree, its `--parse-drift-row` mode run over a staged root
-# holding copies of the six parse files:
-#   tree     the real six files                                  -> PASS, "read whole"
+# holding copies of the seven parse files (6.7.10: parse_cov.cyr joined the six):
+#   tree     the real seven files                                -> PASS, "read whole"
 #   tail     a direct emit appended to parse_fn.cyr (past 256 KB) -> FAIL naming parse_fn.cyr
 #   huge     parse_types.cyr replaced by a 17 MiB (sparse) file    -> FAIL, refused by name
 #   missing  parse_ctrl.cyr removed                               -> FAIL, "missing"
@@ -38,16 +38,16 @@ strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
     || { echo "FAIL: $NAME — the check driver does not compile"; sed 's/^/    /' "$T/drv.err"; exit 1; }
 chmod +x "$T/drv"
 n=$(ls "$ROOT"/src/frontend/parse*.cyr | wc -l)
-[ "$n" -eq 6 ] || { echo "FAIL: $NAME — expected the 6 parse files the row names, found $n under src/frontend/"; exit 1; }
+[ "$n" -eq 7 ] || { echo "FAIL: $NAME — expected the 7 parse files the row names, found $n under src/frontend/"; exit 1; }
 big=$(wc -c < "$ROOT/src/frontend/parse_fn.cyr")
 [ "$big" -gt 262144 ] || { echo "FAIL: $NAME — parse_fn.cyr is $big bytes; the tail row needs a file past 256 KB"; exit 1; }
 
-# stage <dir>: a root holding copies of the six parse files
+# stage <dir>: a root holding copies of the seven parse files
 stage() { mkdir -p "$1/src/frontend" && cp "$ROOT"/src/frontend/parse*.cyr "$1/src/frontend/"; }
 # row <dir> -> rc; output in <dir>.out (ANSI stripped)
 row() { rc=0; ( cd "$1" && timeout 120 "$T/drv" --parse-drift-row ) > "$1.raw" 2>&1 || rc=$?; strip_ansi < "$1.raw" > "$1.out"; echo "$rc"; }
 
-echo "row tree: the real six files (copied — the row never runs in the tree)"
+echo "row tree: the real seven files (copied — the row never runs in the tree)"
 stage "$T/tree"
 check "the row passes" 0 "$(row "$T/tree")"
 check "  and says each file was read whole" yes "$(grep -q 'each read whole through its last fn' "$T/tree.out" && echo yes || echo no)"

@@ -429,7 +429,9 @@ unset CYRIUS_LOCAL CYRIUS_LOCKED CYRIUS_LIB_OVERLAY
 # 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
 # inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
 # sets it itself.
-unset CYRIUS_BOUNDS
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_COVERAGE
 # 6.7.8 — the allocator poison mode is the other way round: an inherited CYRIUS_POISON STAYS for
 # the suite (`CYRIUS_POISON=1 sh scripts/check.sh` compiles every test in the poison mode), but
 # never reaches a SELF-BUILD. The compiler and the toolchain include lib/alloc.cyr, which reads it
@@ -2387,6 +2389,11 @@ _chk_gate "$ROOT/tests/gates/frontend/slice_signed_read.sh"
 # environment beats the line; the CYRIUS_BOUNDS predefine; kernel / EFI / shared / object refused
 # under the mode; the five self-build scripts unset it. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/bounds_mode_checked.sh"
+# 6.7.10 (P5-B) — the execution-coverage mode. Group S (P5B-1), its switch: CYRIUS_COVERAGE (1 / 0 /
+# empty / other refused by name) and the required CYRIUS_COVERAGE_FILE (no default; the 255 B edge);
+# the CYRIUS_COVERAGE predefine; kernel / EFI / shared / object refused under the mode; no source
+# spelling; the flag table's headroom; mode off byte-identical. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/coverage_exec_hits.sh"
 # 6.7.8 (C2-10) — the corpus runs clean under the bounds-checked mode: every subscript-using .tcyr
 # compiles with CYRIUS_BOUNDS=1 (no constant-index diagnostic) and each that reaches the checker runs
 # in the driver's .tcyr environment to exit 0 with no `bounds:` line; every lib module compiles under
