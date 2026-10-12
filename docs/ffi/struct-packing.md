@@ -1,10 +1,12 @@
 # Struct-packing pattern for C FFI
 
 When `fncallN` can't call a C function directly (struct-by-value
-args, float args, variadic, >6 args on aarch64 — see
-[`fncall-abi.md`](fncall-abi.md)), the canonical fix is a C shim
+args, float args, variadic, >6 args on aarch64, 8 args on x86_64
+SysV — see [`fncall-abi.md`](fncall-abi.md)), the canonical fix is a C shim
 that accepts a packed-args struct by pointer. This doc shows the
-pattern with real examples from mabda's `deps/wgpu_main.c`.
+pattern with examples from mabda's `deps/wgpu_main.c` (mabda's cyrius
+side is the folded `lib/mabda.cyr`). Examples 1 and 2 are those shims
+as first written; the note under each says what mabda does today.
 
 **Landed:** v5.4.13 (alongside `fncall7` / `fncall8`).
 
@@ -42,7 +44,7 @@ void wgpuBufferMapAsync(
 );
 ```
 
-Shim (`mabda/deps/wgpu_main.c:57-76`):
+Shim (as first written in `mabda/deps/wgpu_main.c`):
 
 ```c
 typedef struct {
@@ -65,7 +67,7 @@ void wgpu_shim_buffer_map(WGPUDevice device, WgpuMapArgs* args) {
 }
 ```
 
-Cyrius caller (`mabda/src/wgpu_ffi.cyr`):
+Cyrius caller:
 
 ```cyrius
 var args = alloc(40);                  # sizeof(WgpuMapArgs)
@@ -77,13 +79,30 @@ store64(args + 32, &status);
 fncall2(_fp(buffer_map_shim), device, args);
 ```
 
+The same args as a cyrius struct — five 8-byte fields, so the same
+offsets and size (see *Layout* below):
+
+```cyrius
+struct WgpuMapArgs { buffer; mode; offset; size; status_ptr; }   # sizeof 40
+
+var args = WgpuMapArgs { buffer_handle, mode, offset, size, &status };
+fncall2(_fp(buffer_map_shim), device, &args);
+```
+
+**mabda today** (`wgpu_buffer_map_sync` in `lib/mabda.cyr`): the
+shim takes `(device, buffer, mode, offset, size,
+status_ptr)` as six scalars and is called with `fncall6`. It is still
+a shim — it builds the by-value `WGPUBufferMapCallbackInfo` and polls —
+but six scalars meet every direct-call condition in
+[`fncall-abi.md`](fncall-abi.md), so nothing needs packing. Pack only
+past those conditions.
+
 ---
 
 ## Example 2 — `wgpu_shim_copy_buffer_to_buffer` (6 args)
 
-Original C API takes 6 scalars — would be direct-callable if not
-for the wgpu-specific reasons to consolidate shims. Packs into
-`WgpuCopyArgs` for consistency with Example 1:
+Original C API takes 6 scalars. As first written, the shim packed
+them into `WgpuCopyArgs` for consistency with Example 1:
 
 ```c
 typedef struct {
@@ -104,12 +123,11 @@ void wgpu_shim_copy_buffer_to_buffer(
 }
 ```
 
-Note: this case could use `fncall6` directly post-v5.4.13, but the
-shim stays. Reason: consolidating all copy/buffer operations behind
-one shim pattern gives mabda a single surface to instrument, audit,
-and bench — and insulates from future ABI evolutions (if wgpu-native
-adds a descriptor-struct version of this call, the cyrius side
-doesn't change).
+**mabda today** (`wgpu_command_encoder_copy_buffer_to_buffer` in
+`lib/mabda.cyr`): this shim is gone — six scalars need none, so mabda
+calls `wgpuCommandEncoderCopyBufferToBuffer` directly with `fncall6`.
+The packed form above is the shape such a shim takes; a
+direct-callable API does not need one.
 
 ---
 
@@ -171,6 +189,17 @@ types). Match cyrius's `store64(args + offset, value)` write
 pattern. Don't mix widths or embed sub-structs — the shim unpacks
 into the real descriptor.
 
+A cyrius `struct` follows the same rule only when every field is
+8 bytes (an untyped field, `i64`, a `*T`, `cstring`, …). Cyrius lays
+fields out in declaration order with **no alignment padding** — a
+narrow field (`i8` / `i16` / `i32`) is packed against the next one
+(`struct { a: i32; b: i64; }` is 12 bytes, `b` at offset 4) where C
+pads to 16 with `b` at 8 — so a narrow cyrius field does not line up
+with the C struct. ⚠ `u8` / `u16` / `u32` and `f32` fields are full
+8-byte words, so they do not match a narrow C field either. The width
+of each field type is in the *Field types* table of
+[`cyrius-guide.md`](../guides/cyrius-guide.md#field-types-v6610).
+
 ### Lifetime
 
 The `args` pointer is valid **only for the duration of the
@@ -189,11 +218,14 @@ syscall return convention). Callers then `assert_eq(r, 0, "…")`.
 
 ### Build integration
 
-C shims live in `deps/NAME_main.c` alongside the vendored C deps.
-`cyrius.cyml` `[build.c_deps]` (or the equivalent at the consumer
-repo) names the C file; cyrius's build driver invokes the system
-C compiler to produce an object that links into the final binary.
-No changes needed at the cyrius-stdlib level.
+`cyrius build` compiles cyrius only: no `cyrius.cyml` key names C
+sources (`cyrius help manifest` lists every key) and the build
+never runs a C compiler. The shims are built with the C toolchain
+as part of the C side the program already has — mabda keeps them in
+`deps/wgpu_main.c`, its C launcher (see "Satisfying it" in
+[`fncall-abi.md`](fncall-abi.md)) — and their addresses reach cyrius
+as function pointers. No changes are needed at the cyrius-stdlib
+level.
 
 ---
 
@@ -202,5 +234,7 @@ No changes needed at the cyrius-stdlib level.
 - [`fncall-abi.md`](fncall-abi.md) — direct-vs-shim decision table.
 - `lib/fnptr.cyr` — `fncallN` implementations + header comment.
 - mabda `docs/issues/2026-04-19-fncall6-wgpu-crash-resolution.md`
-  — the case study that surfaced this pattern as a policy.
+  — the case study that surfaced this pattern as a policy (its
+  crash's root cause was the `%fs` prerequisite in `fncall-abi.md`,
+  not the argument count).
 - mabda `deps/wgpu_main.c` — reference implementation of 5+ shims.

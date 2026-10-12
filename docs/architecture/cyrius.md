@@ -2,14 +2,12 @@
 
 > Sovereign, self-hosting systems language. Assembly up.
 
-> **Doc currency** (reviewed at v6.4.62; framing last reworked at the
-> v5.11.63 sweep): the principles and self-hosting framing below are
-> durable across the v5.x → v6.x cycles.
-> Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
-> retained for narrative continuity — they refer to the pre-rename
-> compiler binary (`cc3` → `cc5` at v5.0.0; `cc5` → `cycc` at v6.0.0,
-> alongside `cyrc` → `cybs` — these are the final, permanent binary
-> names per CLAUDE.md's permanent-binary-name rule). For current per-release
+> **Doc currency** (reviewed at 6.7.9): the principles, the self-hosting
+> framing and the source layout below are durable across releases.
+> Historical version anchors (the cc3 era, the Phase list) are retained for
+> narrative continuity — they refer to the pre-rename compiler binary
+> (`cc3` → `cc5` at v5.0.0; `cc5` → `cycc` at v6.0.0, alongside `cyrc` →
+> `cybs` — the final, permanent binary names). For current per-release
 > state, see [`../development/state.md`](../development/state.md);
 > for shipped work, [`../../CHANGELOG.md`](../../CHANGELOG.md).
 
@@ -42,7 +40,10 @@ scopes** and holds them to different standards.
 > `cc' == cc''` byte-for-byte.
 
 This is the **3-step fixpoint** (`a → b → c`, `b == c`, from v5.6.7
-onward). It verifies:
+onward), and beside it the **seed derive** — the committed seed assembles
+`cybs`, `cybs` compiles `src/main.cyr` into a first-generation `cycc`, and
+that one compiles `src/main.cyr` into a `cycc` byte-identical to
+`build/cycc` (the bootstrap block below). It verifies:
 
 - The compiler is deterministic (no timestamps, random UUIDs,
   iteration-order dependencies).
@@ -52,8 +53,8 @@ onward). It verifies:
   ordering, memory-address-derived state) has been squeezed out of
   codegen.
 
-**Status: green on every target**, verified by `scripts/check.sh`
-on every commit. This is the load-bearing invariant — if this
+**Status: green on every target**, verified by `scripts/check.sh` and
+steps 1–2 of `scripts/release-gate.sh` before every release. This is the load-bearing invariant — if this
 breaks, cyrius is broken. If this holds, a cyrius-emitted binary
 on any target is bit-for-bit reproducible by anyone else who runs
 the same source through the same compiler.
@@ -80,17 +81,20 @@ not control:
    ran exit=42 cleanly on macOS Sonoma may exit=1 on Sequoia not
    because our bytes changed but because dyld's posture did.
 
-**Status per platform (as of v6.4.62):**
+**Status per platform (as of 6.7.9):**
 
 | Target | Narrow scope | Broad scope | Notes |
 |--------|--------------|-------------|-------|
-| Linux x86_64 | ✅ | ✅ | Daily-driver host. Byte-identical 3-step fixpoint at both `IR_ENABLED == 0` and `IR_ENABLED == 3`, self-host compile ~627 ms. |
+| Linux x86_64 | ✅ | ✅ | Daily-driver host. Byte-identical 3-step fixpoint by default and under `CYRIUS_IR=3` (`tests/gates/ir-opt/ir3_fold_jump_span.sh`); the self-compile time of each release is in its CHANGELOG bench line. |
 | Linux aarch64 (cross) | ✅ | ✅ (cross-built binary runs on Pi) | `programs/checks/platform_aarch64.cyr` (via `scripts/check.sh`) gates the runtime path. |
-| Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Earlier `_TARGET_MACHO` framing was stale shape from pre-v5.6.12 source. `programs/checks/platform_aarch64.cyr` is the active gate. |
-| macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `programs/checks/platform_win_macho.cyr` is the active gate. |
+| Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Re-verified on real `pi` by every release gate (step 4); the tracked `build/cycc-native-aarch64` is held in lockstep by step 1b. |
+| macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `cycc` self-hosts byte-identical on real `ecb` since v6.0.45, re-verified by every release gate (step 4); `programs/checks/platform_win_macho.cyr` is the local cross-build gate. |
 | macOS x86_64 Mach-O (Intel) | ✅ | ✅ | Revived at **v6.4.59** (Intel-Mac x86_64 Mach-O revival — wrapper arch/env, cycc `_read_env` un-stub, `_lint_macho_buf` lint, x86 release tarball). The full toolchain self-hosts byte-identical on real Intel hardware (`ach`), now a first-class release-gate host. Apple Intel is EOL upstream so arm64 stays primary, but x86-macho is release-gated, not parity-only. |
-| Windows 11 PE32+ | ✅ | ✅ | Substantially complete as of **v6.1.18** — process creation, threading, TLS-via-args, env, file I/O, and **directory enumeration** (`lib/fs_win.cyr` + FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) all work; `EPE_SYSCALL_DYNAMIC` var-syscall dispatch + portable mutex + `cycc_win` in the release tarball (v6.1.16); `nanosleep(35)`→`Sleep` (v6.1.17). Self-host gate fixture closed at v5.6.36; `programs/checks/platform_win_macho.cyr` is the active gate. v5.6.31 fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
-| cyrius-x portable (`.cyx`) | ✅ | ✅ (runs on all 4 hosts) | Portable bytecode target closed at **v6.4.20** — a single `.cyx` doing I/O runs byte-for-byte on x86_64 Linux, aarch64 (pi), Windows (cass), and macOS (ecb) via the `cxvm` runner; the compiler runtime-renumbers guest syscalls so no cxvm translation table is needed. SIMD lowers to per-lane scalar loops (v6.4.32). |
+| Windows 11 PE32+ | ✅ | ✅ | Substantially complete as of **v6.1.18** — process creation, threading, env, file I/O, and **directory enumeration** (`lib/fs_win.cyr` + FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) all work; `EPE_SYSCALL_DYNAMIC` var-syscall dispatch + portable mutex + `cycc_win` in the release tarball (v6.1.16); `nanosleep(35)`→`Sleep` (v6.1.17). Self-host gate fixture closed at v5.6.36; `cycc` self-hosts byte-identical on real `cass` in every release gate (step 4); `programs/checks/platform_win_macho.cyr` is the local cross-build gate. |
+| cyrius-x portable (`.cyx`) | ✅ | ✅ (runs on all 4 hosts) | Portable bytecode target closed at **v6.4.20** — a single `.cyx` doing I/O runs byte-for-byte on x86_64 Linux, aarch64 (pi), Windows (cass), and macOS (ecb) via the `cxvm` runner. A guest names x86-Linux syscall numbers; `cxvm` translates the pointer arguments of the calls it serves and issues them through its own host build's routing, so no per-host table lives in the bytecode ([platform-status.md](../platform-status.md) § *cyrius-x guest contract*). SIMD lowers to per-lane scalar loops (v6.4.32). |
+
+The emit-only targets — AGNOS ring-3 userspace, the UEFI application and the bare-metal kernel
+image — are not self-host targets; their status is in [platform-status.md](../platform-status.md).
 
 ### Why the distinction matters
 
@@ -116,7 +120,40 @@ skip-stubs pre-fix (so check.sh
 stayed green while the investigation was queued) and flipped
 to active PASS as the slot closed. Narrow-scope gates never
 skip; they always run and must pass. As of v5.6.43, all three
-broad-scope gates are active.
+broad-scope gates are active. Today the broad scope is proven on real
+hardware by step 4 of `scripts/release-gate.sh`: `ecb`, `ach`, `cass`
+and `pi` each self-host `cycc` byte-identical and run the
+`tests/tcyr/crossos/` suite before every release.
+
+## Source layout
+
+One shared front end, a backend per instruction set or container, and a small driver ("fork")
+per compiler binary. Every fork includes the same `frontend/` files (the TypeScript front end is
+`cycc`'s alone) and the shared `backend/common/` code, and differs in which backends it pulls in —
+shared code is never re-forked into a driver.
+
+| Path | What it is |
+|------|------------|
+| `src/main.cyr` | `cycc`, the x86_64 compiler — ELF by default, x86_64 Mach-O under `CYRIUS_MACHO=1`, PE32+ under `CYRIUS_TARGET_WIN=1`, and the TypeScript front end; the binary the self-host fixpoint and the seed derive are about |
+| `src/main_aarch64.cyr` | The aarch64 cross compiler, `cycc_aarch64` (an x86_64 binary that emits aarch64 ELF) |
+| `src/main_aarch64_native.cyr` | The native aarch64 compiler, `cycc-native-aarch64` (built by `cycc_aarch64`; runs on ARM) |
+| `src/main_aarch64_macho.cyr` / `src/main_x86_macho.cyr` | The compilers that run on macOS — arm64 (built by `cycc_aarch64` with `CYRIUS_MACHO_ARM=1`) and x86_64 (built by `cycc` with `CYRIUS_MACHO=1`) |
+| `src/main_win.cyr` | `cycc_win`, the compiler that runs on Windows (built by `cycc` with `CYRIUS_TARGET_WIN=1`) |
+| `src/main_cx.cyr` | The cyrius-x bytecode compiler, `cycc_cx` (its output runs under `programs/cxvm.cyr`) |
+| `src/version_str.cyr` | The version string — generated from `VERSION` by `scripts/version-bump.sh`, never hand-edited |
+| `src/frontend/` | `lex`, `lex_pp` (the preprocessor), `parse` and its `parse_types` / `parse_expr` / `parse_decl` / `parse_fn` / `parse_ctrl` split; `ts/` is the TypeScript front end (x86 `cycc` only) |
+| `src/backend/x86/` | `emit`, `jump`, `fixup`, `decode`, `float` (SSE / AVX and all SIMD) |
+| `src/backend/aarch64/` | `emit`, `jump`, `fixup` |
+| `src/backend/macho/` | The Mach-O writers: `emit` (x86_64), `emit_arm64` |
+| `src/backend/pe/` | The PE32+ writer (`emit`) |
+| `src/backend/cx/` | The bytecode emitter |
+| `src/backend/js/` | TS / TSX → JS (`cycc --emit-js`) |
+| `src/backend/common/` | `tokens` and `env` (every fork) and `runtime` (every native fork; the cx driver keeps its own fixup recording) |
+| `src/common/` | `util`, `ir`, `heap_regions` (the heap bases and caps, one copy for the drivers), `syscall_xlat` (generated by `programs/gen_syscall_xlat.cyr` from the two Linux syscall peers) |
+
+The CLI (`cbt/cyrius.cyr` and its `cbt/*.cyr` modules), the stdlib (`lib/`) and the tools
+(`programs/`) are compiled by `cycc` like any other project; `bootstrap/` holds the seed and the
+two sources it builds from (below).
 
 ## Why Not Just Fork Rust
 
@@ -234,7 +271,7 @@ All 9 items complete:
 ### Phase 10 — Prove at Scale (in progress)
 - Migrate Ark package manager to Cyrius
 - AGNOS userland tools (cyrfmt/cyrlint/cyrdoc/cybs all self-hosting)
-- Benchmark suite vs C/Rust (`docs/development/benchmarks.md`)
+- Benchmark suite vs C/Rust (`docs/benchmarks.md`)
 - Compiler optimization arc (v5.6.x): O1 FNV-1a, O2 peephole (5/5
   shipped), O3 IR passes (LASE + const-fold + DCE shipped, copy-prop
   + dead-store + fixpoint pinned v5.6.18, regalloc v5.6.19, codebuf
@@ -242,18 +279,24 @@ All 9 items complete:
 - Documentation + tutorials (`docs/guides/cyrius-guide.md` ongoing)
 
 ### Phase 11 — Full Sovereignty
-- AGNOS builds entirely with Cyrius on x86_64 + aarch64 + RISC-V (v5.7.0)
-- Full cross-bootstrap (x86_64 ↔ aarch64 ↔ rv64)
-- Bare-metal target (v5.8.0)
-- Pure-cyrius TLS 1.3 stack (v5.9.x — retires libssl.so.3 dynlib bridge)
+- AGNOS builds entirely with Cyrius on x86_64 + aarch64 + RISC-V
+- Full cross-bootstrap (x86_64 ↔ aarch64 ↔ rv64) — RISC-V is pinned at v6.8.x or v6.9.x
+  ([`roadmap_6.md`](../development/roadmap_6.md))
+- Bare-metal target — **shipped**: the `--target=<arch>-bare-metal-elf` triple and the kernel
+  deliverables (v6.2.27 – v6.3.4), the forbidden-module check (v6.5.24)
+- Pure-cyrius TLS stack — **shipped**: native TLS 1.2 + 1.3 (`lib/tls_native.cyr`, v6.0.x), the
+  default backend since v6.1.21; the `libssl.so.3` bridge remains as an opt-in
+  (`-D CYRIUS_TLS_LIBSSL`)
 - No external toolchain in any path — the entire stack is owned
 
 ## What Stays from Rust (Eventually)
 
-- Ownership + borrow checker (the core safety model)
-- Type system concepts (traits, generics, lifetimes)
+- Ownership + borrow checker (the core safety model) — not in the language today
+- Type system concepts (traits, generics, lifetimes) — generics, and traits with `impl` blocks
+  (6.7.0) and checked `dyn` trait objects (6.7.8), have shipped; lifetimes have not
 - Zero-cost abstractions
-- `unsafe` as an explicit opt-in
+- `unsafe` as an explicit opt-in — `@unsafe { }` exists (v5.6.3); under the bounds-checked mode
+  (6.7.8) it is what turns a subscript's check off
 
 ## What's Already Gone
 
@@ -268,12 +311,14 @@ All 9 items complete:
 ## The Bootstrap — From Metal to Language
 
 ```
-bootstrap/asm (29KB committed binary)
-  → assembles cybs.cyr → cybs (~21 KB compiler)
-    → compiles asm.cyr → asm_v2 (byte-identical ✓)
+bootstrap/asm (29KB committed binary — the seed)
+  → assembles bootstrap/cybs.cyr → cybs (~21 KB bootstrap compiler)
+    → compiles bootstrap/asm.cyr → asm_v2 (byte-identical to the seed ✓)
+    → compiles src/main.cyr → gen1 (a working cycc)
+      → gen1 compiles src/main.cyr → gen2 == build/cycc ✓ (scripts/seed-derive-cycc.sh)
 
-Archive: seed (Rust, 2254 lines) — independent verification path
-Trust: SHA256 manifest + reproducibility script
+Archive: archive/seed/ (Rust, 2254 lines) — independent re-derivation of the seed
+Trust: bootstrap/SHA256SUMS + bootstrap/verify.sh (rebuilds the seed from the Rust archive)
 ```
 
 The seed is small, auditable, and ours. No downloaded binaries. No trust in someone else's CI. The primitives — integers, pointers, registers, memory — are real. They correspond to hardware. The safety system (borrow checker, lifetimes, ownership) will be built *on top of* this reality, not as a replacement for understanding it.

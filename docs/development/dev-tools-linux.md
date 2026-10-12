@@ -6,7 +6,8 @@
 > Siblings (to be added): `dev-tools-macos.md`, `dev-tools-windows.md`.
 >
 > Reference distro: **Arch Linux** (`pacman`). `apt` equivalents are listed for
-> Ubuntu-based hosts (e.g. the `pi` aarch64 target host, GitHub CI runners).
+> Ubuntu-based hosts (e.g. the `pi` aarch64 target host, the GitHub CI's Linux runners, which
+> run `ubuntu-26.04`).
 
 ## Why this matters (the v6.0.45 lesson)
 
@@ -34,36 +35,42 @@ Ubuntu/Debian (`pi`, CI images):
 
 ```sh
 sudo apt-get install -y \
-  qemu-user-static qemu-system-x86 wine llvm binutils gdb lldb openssh-client python3-yaml \
+  qemu-user qemu-system-x86 wine llvm binutils gdb lldb openssh-client python3-yaml \
   xxd file coreutils python3 openssl curl
 ```
+
+On Ubuntu 26.04 `qemu-user` ships the static binaries (named `qemu-aarch64`) and there is no
+`qemu-user-static` package. On an older Ubuntu / Debian `qemu-user` still provides `qemu-aarch64`;
+its `qemu-user-static` package names the binary `qemu-aarch64-static`, which this file's commands
+do not call.
 
 ## Tools
 
 | Tool | Arch pkg | apt pkg | Why it's needed | Verify |
 |------|----------|---------|-----------------|--------|
-| `qemu-aarch64` | `qemu-user` | `qemu-user-static` | Run the **aarch64 ELF** cycc locally — reproduce/bisect the native-aarch64 self-host without SSHing to `pi` | `qemu-aarch64 --version` |
-| `qemu-system-x86_64` | `qemu-system-x86` | `qemu-system-x86` | **`check.sh` gate** — `scripts/qemu-boot-gate.sh` really BOOTS the `kernel;` build and asserts it writes `AGNOS` to serial. **Absent → the gate prints `SKIP` and check.sh still reads green** (CI sets `CYRIUS_REQUIRE_BOOT=1` to make that a hard FAIL) | `qemu-system-x86_64 --version` |
+| `qemu-aarch64` | `qemu-user` | `qemu-user` | Run the **aarch64 ELF** cycc locally — reproduce/bisect the native-aarch64 self-host without SSHing to `pi` | `qemu-aarch64 --version` |
+| `qemu-system-x86_64` | `qemu-system-x86` | `qemu-system-x86` | **`check.sh` gate** — `scripts/qemu-boot-gate.sh` really BOOTS the `kernel;` build and asserts it writes `AGNOS` to serial. **Absent → the gate exits 77, a SKIP: check.sh still exits 0** (`GREEN, with N gate(s) SKIPPED`), while `release-gate.sh` step 3 fails on it; CI sets `CYRIUS_REQUIRE_BOOT=1` to make it a hard FAIL | `qemu-system-x86_64 --version` |
 | `wine` | `wine` | `wine` | Run the **Windows PE** `cycc.exe` locally — reproduce/bisect the Windows self-host without SSHing to `cass` | `wine --version` |
 | `llvm-objdump` | `llvm` | `llvm` | Disassemble **x86-64 / aarch64 / PE / Mach-O** — read codegen out of any emitted target binary | `llvm-objdump --version` |
-| `objdump` / `nm` | `binutils` | `binutils` | x86-64 ELF disasm / quick header dumps; `nm` backs the agnos cross-build gate's symbol check | `objdump --version` |
+| `objdump` / `nm` | `binutils` | `binutils` | x86-64 ELF disasm (several check.sh gates read `objdump -d`) / quick header and symbol dumps | `objdump --version` |
 | `gdb` | `gdb` | `gdb` | Debug the x86-64 Linux cycc + emitted ELF | `gdb --version` |
 | `lldb` | `lldb` | `lldb` | Debug under wine / inspect Mach-O-shaped output | `lldb --version` |
 | `ssh` / `scp` | `openssh` | `openssh-client` | **Authoritative** cross-host self-host verification on real hardware (`ecb`/`ach`/`pi`/`cass`) — see `scripts/cross-os-selfhost.sh` | `ssh -V` |
-| `python` + `pyyaml` | `python` `python-yaml` | `python3` `python3-yaml` | Validate `.github/workflows/*.yml` locally; CI parses PE headers with python | `python3 -c "import yaml"` |
+| `python` + `pyyaml` | `python` `python-yaml` | `python3` `python3-yaml` | Validate `.github/workflows/*.yml` locally; CI parses PE headers with python, and some check.sh gates (`scripts/sign-efi-gate.sh` among them) run python helpers | `python3 -c "import yaml"` |
 | `xxd` | `xxd` | `xxd` | Inspect Mach-O/PE magic + byte-level header gates | `xxd -v` |
 | `file` | `file` | `file` | Confirm emitted binary format (`Mach-O … arm64`, `PE32+`, `ELF … aarch64`) | `file --version` |
 | `sha256sum` | `coreutils` | `coreutils` | Byte-identical self-host proof + release checksums | `sha256sum --version` |
 | `tar` | `tar`* | `tar` | Bundle `src/ lib/ VERSION` for shipping to verification hosts | `tar --version` |
-| `openssl` | `openssl` | `openssl` | **`check.sh` gate** — `scripts/sign-efi-gate.sh` uses it as the *independent oracle* (it is not used by the signer) that `cyrius sign-efi`'s Authenticode signature is one real UEFI firmware would accept. **Absent → `SKIP …: openssl not available`, exit 0** | `openssl version` |
+| `openssl` | `openssl` | `openssl` | **`check.sh` gate** — `scripts/sign-efi-gate.sh` uses it as the *independent oracle* (it is not used by the signer) that `cyrius sign-efi`'s Authenticode signature is one real UEFI firmware would accept. **Absent → `SKIP sign-efi-gate: openssl not available`, exit 77** (a SKIP, as above) | `openssl version` |
 | `curl` | `curl` | `curl` | Release + install paths (`scripts/ci.sh`, `install.sh`, `release-lib.sh`) and **the only sanctioned way to reach the GitHub API** — `gh` is banned per CLAUDE.md | `curl --version` |
 
 \* `tar`, `getent`, `cmp`, `printf` ship in the base system.
 
-> ⚠ **The two `check.sh` gates above SKIP silently when their tool is missing** — the run
-> still prints `N passed, 0 failed`. That is the same green-checkmark-over-nothing shape the
-> cross-OS principle exists to stop, so on a box that gates releases, treat `qemu-system-x86`
-> and `openssl` as required, not optional.
+> ⚠ **The two `check.sh` gates above SKIP when their tool is missing** — check.sh still exits 0,
+> its summary `GREEN, with N gate(s) SKIPPED` listing them. That is the same
+> green-checkmark-over-nothing shape the cross-OS principle exists to stop, and `release-gate.sh`
+> refuses it (step 3 fails on a SKIP it does not name in `RG_SKIP_ALLOW`), so on a box that gates
+> releases, treat `qemu-system-x86` and `openssl` as required, not optional.
 
 The cyrius compiler itself is **bootstrapped**, not packaged: `sh bootstrap/bootstrap.sh` (seed asm → `cybs` → `cycc`). No crates.io, no toolchain package — that's the point.
 
@@ -73,25 +80,23 @@ The cyrius compiler itself is **bootstrapped**, not packaged: `sh bootstrap/boot
   changes with the target, not just the env var (`scripts/build-macos-*-tarball.sh` and
   `scripts/cross-os-selfhost.sh` are the authority on which pairs are correct):
 
-  - aarch64 ELF — `cat src/main_aarch64.cyr | build/cycc`
+  - aarch64 ELF — `cat src/main_aarch64.cyr | build/cycc > cc_a64 && chmod +x cc_a64` gives the
+    x86-64 cross compiler that emits aarch64 ELF; `cat src/main_aarch64.cyr | ./cc_a64 > cycc_a64`
+    gives the aarch64-hosted compiler
   - x86 Mach-O — `cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 build/cycc`
-  - arm64 Mach-O — **two steps**: `cat src/main_aarch64.cyr | build/cycc > cc_a64 && chmod +x cc_a64`,
-    then `cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./cc_a64`
-  - Windows PE — `cat src/main_win.cyr | build/cycc > cycc_win`, then `cat src/main_win.cyr | ./cycc_win`
+  - arm64 Mach-O — **two steps**: `cc_a64` as above, then
+    `cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./cc_a64`
+  - Windows PE — `cat src/main_win.cyr | build/cycc > cycc_win`, then `cat src/main_win.cyr | ./cycc_win > cycc.exe`
   - cx bytecode — `cat src/main_cx.cyr | build/cycc`
 
-  All from the x86 seed. ⚠ **arm64 Mach-O is the one that is NOT a one-liner**, and this list
-  claimed it was until 6.6.6: `CYRIUS_MACHO_ARM=1 build/cycc` is refused by
-  `src/backend/x86/fixup.cyr` (*"requires the aarch64 backend. Use ./build/cycc_aarch64"*) — it
-  exits **1 after writing 0 bytes**, so a `>` redirect leaves a plausible-looking empty file. The
-  env var selects the Mach-O *container*; the arm64 *instructions* come from the aarch64 backend,
-  which on an x86 box only exists once `main_aarch64.cyr` has been cross-emitted. Both named
-  authorities above already did it in two steps (`scripts/build-macos-arm64-tarball.sh:30-38`,
-  `scripts/cross-os-selfhost.sh:128`); this line contradicted them. Measured at 6.6.6 on x86_64
-  Linux: one-liner → rc 1 / 0 B; two-step → rc 0 / 1,065,396 B / `Mach-O 64-bit arm64 executable`.
-  The other four lines were re-run at 6.6.6 and are correct as written.
-- **Local self-host repro:** `qemu-aarch64 ./cycc_a64 < src/main_aarch64.cyr` and `wine ./cycc.exe < src/main_win.cyr` reproduce the real-hardware self-host result locally.
-- **Authoritative verify:** `sh scripts/cross-os-selfhost.sh <ecb|ach|pi|cass> [tcyr-subdir]` self-hosts on the real host (qemu/wine are for fast iteration; **real hardware is the gate** — see CLAUDE.md "Cross-OS self-host is non-negotiable, on REAL hardware"). Arg 2 is a **subdirectory of `tests/tcyr`**, not a filename glob: the release gate passes `crossos` for all four hosts (`scripts/release-gate.sh` step 4, its `for H in ecb ach cass pi` loop), and a directory that does not exist is a hard `LIBTEST_FAIL` (`scripts/cross-os-selfhost.sh`, the `no such directory tests/tcyr/$LIBTEST` check) instead of a glob that matches nothing and passes. `CYRIUS_CROSS_OS_FULL=1` runs the whole `tests/tcyr` corpus instead. Safe to run concurrently since v6.6.6 (a private `mktemp -d` locally, a per-run `~/_cyaud_<id>` remotely); the release gate still walks the hosts one at a time, for load. *(This line said the gate passes the `vr01_` **glob** — the filename prefix retired at v6.5.11; corrected 6.6.6. The other live docs that still told you to ADD a `vr01_` file for every new syscall wrapper — which opts it OUT of the cross-OS leg — were corrected at 6.6.20: CLAUDE.md, the guide, cycle-discipline.md, platform-status.md, roadmap-future.md. Historical narrative in the CHANGELOG / completed-phases.md keeps the old name.)*
+  All from the x86 seed. ⚠ **arm64 Mach-O is the one that is NOT a one-liner**:
+  `CYRIUS_MACHO_ARM=1 build/cycc` is refused by `src/backend/x86/fixup.cyr` (*"requires the
+  aarch64 backend. Use ./build/cycc_aarch64"*) — it exits **1 after writing 0 bytes**, so a `>`
+  redirect leaves a plausible-looking empty file. The env var selects the Mach-O *container*;
+  the arm64 *instructions* come from the aarch64 backend, which on an x86 box only exists once
+  `main_aarch64.cyr` has been cross-emitted.
+- **Local self-host repro:** `qemu-aarch64 ./cycc_a64 < src/main_aarch64.cyr` and `wine ./cycc.exe < src/main_win.cyr` (run from the repo root, with `cycc_a64` / `cycc.exe` from the lines above) reproduce the real-hardware self-host result locally: each output equals its compiler byte for byte.
+- **Authoritative verify:** `sh scripts/cross-os-selfhost.sh <ecb|ach|pi|cass> [tcyr-subdir]` self-hosts on the real host (qemu/wine are for fast iteration; **real hardware is the gate** — see CLAUDE.md "Cross-OS self-host is non-negotiable, on REAL hardware"). Arg 2 is a **subdirectory of `tests/tcyr`**, not a filename glob: the release gate passes `crossos` for all four hosts (`scripts/release-gate.sh` step 4), and a directory that does not exist is a hard `LIBTEST_FAIL` (`scripts/cross-os-selfhost.sh`, the `no such directory tests/tcyr/$LIBTEST` check) instead of a glob that matches nothing and passes. `CYRIUS_CROSS_OS_FULL=1` runs the whole `tests/tcyr` corpus instead. Safe to run concurrently (a private `mktemp -d` locally, a per-run `~/_cyaud_<id>` remotely, `C:\cyrius-tests\_cyaud_<id>` on cass): the release gate starts the four legs beside check.sh and waits for them at step 4 (`CYRIUS_GATE_SERIAL=1` walks them one at a time after it).
 
 ## Verify your env
 
@@ -106,5 +111,6 @@ python3 -c "import yaml" 2>/dev/null && echo "✅ pyyaml" || echo "❌ pyyaml"
 A `❌` on `qemu-aarch64` or `wine` means platform self-host bugs can only be
 reproduced by SSHing to `pi`/`cass` — install them before any cross-target
 codegen work. A `❌` on `qemu-system-x86_64` or `openssl` is worse in kind: those
-two gates do not fail, they **SKIP**, so check.sh comes back green over untested
-kernel boot and untested EFI signing.
+two gates do not fail, they **SKIP**, so check.sh comes back `GREEN, with N gate(s)
+SKIPPED` over untested kernel boot and untested EFI signing — and the release gate
+then fails.

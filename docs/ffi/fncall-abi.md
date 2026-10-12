@@ -5,8 +5,7 @@ calling function pointers. This doc is the canonical reference for
 when you can call a function directly via `fncallN` and when you
 must route through a C shim.
 
-**Landed:** v5.4.13 (ceiling lifted from 6 to 8; see
-`../development/roadmap.md §v5.4.13`).
+**Landed:** v5.4.13 (ceiling lifted from 6 to 8; CHANGELOG [5.4.13]).
 
 ---
 
@@ -20,6 +19,11 @@ header for the authoritative breakdown):
 | x86_64 SysV (Linux/macOS/agnos) | 1–6 in `rdi, rsi, rdx, rcx, r8, r9` | cyrius's order: the LAST at `[rsp+0]`, then backwards | `rax`  | `rax`             |
 | x86_64 MS-x64 (Windows PE / UEFI) | 1–4 in `rcx, rdx, r8, r9`, +32 B shadow space | `[rsp+0x20+(N-5)*8]` | `rax`  | `rax`             |
 | aarch64 (cyrius subset of AAPCS64) | 1–6 in `x0, x1, x2, x3, x4, x5`   | cyrius's order: the LAST at `[sp+0]`, then backwards, 16 B apart | `x0`   | `x9`              |
+| cx bytecode | 1–232 in `r3..r234` | the guest stack, in order: 0-based argument k ≥ 232 at `[sp + 8*(k-232)]` | `r0` | `r251` (`callind`) |
+
+On cx `fncallN` has no asm: each body is `return callptr(fp, …);`, the bytecode's own
+indirect call (the register map is the comment above `_CX_ARG_REGS` in
+`src/backend/cx/emit.cyr`).
 
 On aarch64 cyrius uses only **6** argument registers (not AAPCS64's
 8) to stay symmetric with x86_64 SysV. Stack args on aarch64 occupy
@@ -99,13 +103,51 @@ If all five hold, direct call is correct:
 
 ```cyrius
 fn add3(a, b, c) { return a + b + c; }
-var r = fncall3(&add3, 1, 2, 3);           // cyrius → cyrius, all scalars
+var r = fncall3(&add3, 1, 2, 3);           # cyrius → cyrius, all scalars
 ```
 
 ```cyrius
-// C declared: int64_t some_c_api(int64_t, int64_t);
-var r = fncall2(_c_fp, 42, 99);            // cyrius → C, ≤ 6 scalar args on x86 or aarch64
+# C declared: int64_t some_c_api(int64_t, int64_t);
+var r = fncall2(_c_fp, 42, 99);            # cyrius → C, ≤ 6 scalar args on x86 or aarch64
 ```
+
+Conditions 2 and 3 are about a **C** callee. A cyrius callee reached through `fncallN` gets
+cyrius's own convention, below.
+
+### What `fncallN` hands a cyrius callee
+
+`fncallN` passes every argument as one integer-register word. What that word has to be
+depends on the cyrius parameter it lands in:
+
+- **A struct of 8 bytes or less** travels as its value, in one register:
+  `fncall1(&small, s)` for `fn small(s: S8)`.
+- **A struct over 8 bytes, and every tuple** (a tuple is at least 16 bytes), travels by
+  address and the callee copies it into its own frame on entry, so its writes never reach
+  the caller: `fncall1(&bump, &p)` for `fn bump(q: P3)`. A direct call passes the same
+  address; since 6.7.7 it first copies the struct to a temporary when a later argument could
+  write it, which a `fncallN` argument list does not do for you.
+- **An `f64` / `f32` parameter** is its bit pattern in an integer register (ADR-002), so
+  `fncall2(&g, a, 0)` reaches `fn g(x: f64, k): f64`.
+- **A value-form vector parameter** (`f64v2`, `f32v4`, …) travels in vector registers —
+  XMM on SysV, V on aarch64, the `r235..` band on cx (by address on Win64) — which `fncallN`
+  never loads: give the callee a pointer parameter and pass `&v` instead.
+- **Default and named arguments** are filled only at a direct call (6.7.7): through `fncallN`
+  or `callptr` every argument is passed by position, and a call short of a defaulted fn's
+  parameters is refused (`a call through a fn pointer passes every argument: 'f' takes 2
+  (defaults fill only direct calls)`).
+- **Results.** One word comes back in `rax` / `x0` / `r0`. A two-value result (`return (a,
+  b)`) is the pair `rax:rdx` / `x0:x1` / `r0:r4`, and `var a, b = fncallN(..)` receives it on
+  every target (on cx since 6.7.9). A 9–16 byte struct result comes back in that register
+  pair, so `var a, b = fncallN(..)` receives its two words. A larger one is written through a
+  hidden pointer that only a direct call supplies, so it needs a direct call (`var p: P3 =
+  fncall1(&mk3, 1)` for `fn mk3(a): P3` compiles and faults); so does a vector result (see
+  *Returning a struct by value* in
+  [`cyrius-guide.md`](../guides/cyrius-guide.md#returning-a-struct-by-value-v666) for the
+  out-pointer spelling).
+
+This is not the C convention: SysV passes a 9–16 byte struct in two registers and a larger
+one in stack memory, and AAPCS64 has its own composite rules — which is why a C callee that
+takes a struct by value needs a shim (next section).
 
 ---
 
@@ -138,8 +180,10 @@ Look at the C signature. If you see:
 - `float`, `double`, `WGPUColor` (which holds doubles) — shim required.
 - `...` at the end of the parameter list — variadic, shim required.
 
-wgpu-native is heavy on by-value descriptors, so most wgpu FFI
-slots go through shims. Pure-integer APIs like `sigil`'s hash
+wgpu-native has by-value descriptors and callback-info structs, so
+the wgpu FFI slots that take one go through shims; in mabda's fn
+table (the folded `lib/mabda.cyr`) those are a minority, and the rest
+take scalars and pointers and are called directly. Pure-integer APIs like `sigil`'s hash
 primitives, `sakshi`'s allocators, and `yukti`'s permission checks
 can use `fncallN` directly.
 
@@ -157,9 +201,8 @@ behaviour on both arches. The cost is that aarch64 direct C calls
 with 7–8 args must shim — a small cost given wgpu-scale APIs shim
 anyway for struct-by-value reasons.
 
-If a future release widens cyrius's convention to AAPCS64-proper on
-aarch64, that would be a v6.0.0-class ABI break (symmetric to the
-`cyrc → cybs` / `cc5 → cycc` rename era) and not a v5.4.x patch.
+Widening cyrius's convention to AAPCS64-proper on aarch64 would be an
+ABI break for every aarch64 caller and callee, not a patch.
 
 ---
 
@@ -194,7 +237,7 @@ assertions covering callers with 7/8/9/10/11 params hitting an
 SSE-using leaf) was added as the regression gate.
 Sandhi-filed: `sandhi/docs/issues/2026-04-25-cyrius-7arg-frame-tls-connect-segfault.md`.
 
-**6.6.5 generalises this, and corrects two claims in the paragraph above.**
+**6.6.5 generalises this, and corrects two claims this section used to make.**
 
 1. The v5.6.41 rule padded on `nextra & 1` alone, which assumes the call
    is emitted with NOTHING else pending — true at statement level, false
@@ -202,7 +245,7 @@ Sandhi-filed: `sandhi/docs/issues/2026-04-25-cyrius-7arg-frame-tls-connect-segfa
    `depth` is the number of values the enclosing expressions have pushed;
    at depth 0 it reduces to exactly the old test, which is why 7-arg
    calls at statement level are byte-identical across the change.
-2. **"The Win64 path was already correct" was wrong twice.** Its
+2. **The Win64 path, which this section called "already correct", was wrong twice.** Its
    `framesize & 15` branch only rounds the frame; the parity pad it also
    applied (`n & 1`) had the same depth-blind assumption. And underneath
    both, the PE *base* was inverted: Windows enters an image with the
@@ -283,10 +326,11 @@ integer args returns the right result when called via `fncallN`.
 > `movdqa` spills. The gate now covers both positions; a gate proves only
 > the position it tests.
 
-The folklore that **"`fncall6` into extern-C (wgpu) is unreliable"** — carried
-in mabda's `wgpu_ffi.cyr` / `compute.cyr` / `texture.cyr` comments, which
-work around it by packing args into a struct and calling `fncall2` instead —
-was a **misdiagnosis of a TLS/`%fs` init problem**:
+The folklore that **"`fncall6` into extern-C (wgpu) is unreliable"** — once
+carried in mabda's `wgpu_ffi.cyr` / `compute.cyr` / `texture.cyr` comments,
+which worked around it by packing args into a struct and calling `fncall2`
+instead (mabda now calls its six-scalar slots with `fncall6`; see
+`lib/mabda.cyr`) — was a **misdiagnosis of a TLS/`%fs` init problem**:
 
 - Any glibc-compiled C function with an array/buffer local carries
   `-fstack-protector` and begins with `mov %fs:0x28, %rax` (the stack-canary
@@ -295,9 +339,9 @@ was a **misdiagnosis of a TLS/`%fs` init problem**:
   it; it merely correlated with the 6-arg wgpu entry points, which have local
   buffers). The struct-packing "workaround" only sidestepped it by chance
   when the packed callee happened not to be stack-protected.
-- The failure the C-launcher model was invented to avoid (ADR-004: *"calling
-  libc's dlopen from a non-libc process crashes — TLS not initialized"*) is
-  the same root cause.
+- The failure the C-launcher model was invented to avoid (mabda's ADR-004:
+  *"calling libc's dlopen from a non-libc process crashes — TLS not
+  initialized"*) is the same root cause.
 
 ### Satisfying it
 
@@ -305,15 +349,17 @@ was a **misdiagnosis of a TLS/`%fs` init problem**:
    full libc init (`%fs`, pthreads, dynamic linker), pre-inits the GPU, builds
    the fn-pointer table, then calls into cyrius. `%fs` is already glibc's, so
    every `fncallN` into wgpu works. This is the shipping model through the
-   NVIDIA wgpu route's life (mabda v5.0, per ADR-006).
+   NVIDIA wgpu route's life (mabda v5.0, per mabda's ADR-006).
 2. **Pure-cyrius dlopen** — call `dynlib_bootstrap_cpu_features()` +
    `dynlib_bootstrap_tls()` (+ `dynlib_bootstrap_stack_end(0)`) before the
-   first extern-C `fncallN`. See `tests/tcyr/dynlib_init.tcyr`.
+   first extern-C `fncallN` (all three in `lib/dynlib.cyr`). See
+   `tests/tcyr/platform/dynlib_init.tcyr`.
 
 ### Coexisting cyrius thread-locals in a foreign host
 
 If cyrius code in a glibc-hosted process **also** uses its own thread-locals
-(sigil crypto banking on slot 8, patra on slots 0-4), `thread_local_init`
+(sigil's crypto banking and patra's per-thread state, in slots each takes from
+`thread_local_alloc()` at init), `thread_local_init`
 would `arch_prctl(ARCH_SET_FS)` a fresh cyrius block over glibc's `%fs` —
 wiping the TCB self-pointer at offset 0 and the **stack canary at 0x28**, and
 `thread_local_set(5, …)` (offset `0x28`) would overwrite the canary directly.
@@ -349,4 +395,5 @@ no-clobber / canary-intact proof.
   `tests/tcyr/crossos/call_site_stack_alignment.tcyr` — 6.6.5: rsp is
   16-aligned at every call, in every expression position, on every host.
 - mabda's `docs/issues/2026-04-19-fncall6-wgpu-crash-resolution.md`
-  — concrete case study of the struct-by-value failure mode.
+  — the case that made struct-packing the policy; its root cause was the
+  `%fs` prerequisite above, not the argument count.

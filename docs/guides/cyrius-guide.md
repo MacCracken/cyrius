@@ -12,13 +12,20 @@ cyrius build hello.cyr build/hello           # Compile (resolves deps from cyriu
 ## Types
 
 The core type is the 64-bit integer (`i64`) — no separate pointer type at
-the value level (see ADR-002). Type annotations are optional and don't
-enforce:
+the value level (see ADR-002). Type annotations are optional, and an `i64`
+one changes no code — it only marks the name a declared scalar, which forming a
+[`dyn`](#trait-objects-dyn-678) from it needs:
 
 ```
 var x = 42;
-var y: i64 = 42;      # Same thing — annotation is documentation
+var y: i64 = 42;      # Same thing — an i64 annotation is documentation
 ```
+
+Other annotations do carry meaning: a narrow integer variable (`i8`..`i32`, `u8`..`u32`) is stored
+at its width (a struct field's widths are in [Field types](#field-types-v6610)), an `f64` / `f32`
+makes arithmetic on it float, a `*T` steps `sizeof(T)` and takes `p[i]`,
+a `bool` checks every write into it, and a struct type is checked on copies and arguments — see
+[Type names](#type-names-6616) and the sections each one points to.
 
 `i64` is the core tenet, not the only type. A deliberate, narrow exception
 exists for math hot paths: scalar `f64` floats and the SIMD vector types
@@ -137,7 +144,9 @@ float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
 an `f64` warns: 1's bits are a subnormal, write `t += 1.0`). Until 6.6.11 only a local got
 the float arithmetic: `G += 1.0` on an `f64` global added the two bit patterns as integers,
 and `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran twice instead of four times, silently.
-`%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` are integer operations on any variable. A
+`%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` are integer operations on any variable. On an
+INTEGER place, `x += 1.5` (and `-=`, `*=`, `/=`, on a variable, a field, an element or `*p`) warns
+`integer arithmetic with an f64 right operand`, as `x = x + 1.5` does (6.7.7). A
 `for` step accepts all eleven compound operators (it used to accept five; `>>>=` since 6.7.5).
 Since 6.7.5 the same float rules hold on an `f64` / `f32` **field** (`p.x *= 2.0`) — see
 [Compound assignment](#compound-assignment-every-lvalue-675).
@@ -148,7 +157,7 @@ Since 6.7.5 the same float rules hold on an `f64` / `f32` **field** (`p.x *= 2.0
 var x = 10;            # Global or local (context-dependent)
 var buf[256];          # Bare array — see byte-vs-slot note below
 var slots: i64[256];   # Element-typed array — 256 i64 SLOTS (2048 bytes), anywhere
-slots[3] = 7;          # Subscript (element-typed arrays only, since 6.6.12)
+slots[3] = 7;          # Subscript: an element-typed array, a *T or a slice (see Subscripts)
 x = x + 1;             # Reassignment
 ```
 
@@ -171,6 +180,7 @@ matches the **whole** name:
 | a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
 | a tuple `(i64, f64)` (6.7.7) | — | 8 bytes per element; only a `var`, a parameter, a struct field and a multi-value return take it (`sizeof((..))` is refused) — see [Tuples](#tuples) |
+| `dyn Tr` (6.7.8) | — | two opaque words (16 bytes), wherever a struct type goes after a `:`; `sizeof(dyn Tr)` is refused — see [Trait objects](#trait-objects-dyn-678) |
 
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
 parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
@@ -190,9 +200,11 @@ whole`). A type with no place at a site is refused once, its `<..>` with it
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
-by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector
-type, `Result`, `Option`, `Tagged`, `cstring` or a pointer `*T` (6.6.17) — `fn f(): u8` is
-refused by name (return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, `bool`
+(6.7.3), a vector type, `Result`, `Option`, `Tagged`, `cstring`, a pointer `*T` (6.6.17), a
+multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `dyn Tr` (6.7.8)
+— `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
+type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -415,12 +427,21 @@ var r = add(20, 22);   # r = 42
   (`f64v2`, `f64v4`, `f32v4`, `i32v4`) beside 14 or more integer arguments overwrote the 14th
   one there, because cx's vector registers were integer argument registers from that point.
 - Forward calls work (functions can call functions defined later)
-- Relaxed ordering: functions can appear after statements (v1.11.0+)
+- Relaxed ordering: functions can appear after top-level statements. A `struct`, `enum`, `trait`
+  or `impl` cannot — they belong to the declaration section, before the first top-level statement
+  (one after it is `unexpected struct` / `enum` / `trait` / `impl`).
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
   SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
-- All functions return a value (`return 0;` if nothing to return)
+- **An unmatched `}` at module scope is refused** (6.7.9): `error: unmatched '}' at module scope`,
+  with a hint that an extra `}` inside a fn closes it early and leaves the fn's own closing brace
+  over. Before 6.7.9 the brace silently ended the unit: everything after it was dropped, the build
+  said OK, and in a multi-file build the lost definitions surfaced as "undefined" errors in other
+  files.
+- All functions return a value (`return 0;` if nothing to return) — one value, or two or three
+  from a fn declared `: (T1, T2)` / `: (T1, T2, T3)` (see [Multi-Return](#multi-return) and
+  [Tuples](#tuples))
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading by arity, so a count mismatch is never intentional). The count must lie between
   the fn's required parameters and all of them: a fn that declares parameter defaults
@@ -449,11 +470,9 @@ var r = add(20, 22);   # r = 42
   must change its receiver takes an untyped `self` or `self: *T`.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
-`src/common/util.cyr` is the single source of truth — **79** builtin/intrinsic names
-(re-derived at 6.6.13 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
-grep -c 'return "'`, after `f64_le` / `f64_ge` / `f64_trunc` moved from `lib/math.cyr` fns to
-builtins; this line said 67 until 6.6.5, which was the count when the diagnostic was added at
-v6.4.77 and the table has grown since), plus the statement keywords. `IS_KEYWORD_TOK`
+`src/common/util.cyr` is the single source of truth for the builtin/intrinsic names — count them
+from the table (`sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr | grep -c 'return "'`)
+rather than from any doc, since the table grows — plus the statement keywords. `IS_KEYWORD_TOK`
 *derives* from that table for the BUILTIN half — ⚠ but it enumerates the statement keywords
 SEPARATELY, so those two CAN drift; the table, not this paragraph, is the authority. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
 `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` / `iv_*` intrinsic, and `union`,
@@ -467,8 +486,7 @@ var f64_add = 1;
 #   (cannot be used as an identifier; rename the variable/field/fn)
 ```
 
-Read the table rather than memorising a subset — the partial lists that used to appear in
-docs were the reason people were surprised by the other sixty.
+Read the table rather than memorising a subset: the names above are examples, not the list.
 
 **`do` is reserved; `loop` is not (6.7.5).** `do` (the `do … while` statement) is a full
 statement keyword: `fn do()`, `var do` and a field named `do` are refused by name. `loop` is
@@ -621,7 +639,8 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   named one, a name through `fncallN`) still fire there.
 - **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
   count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
-  `_slice_idx_get_N` family, the `_chk_*` / `_sat_*` overflow helpers, the `_f64_*_polyfill`
+  `_slice_idx_get_N` family and `_slice_idx_addr` (6.7.8, the slice store), the `_chk_*` /
+  `_sat_*` overflow helpers, the `_f64_*_polyfill`
   family and `f64v2_make` / `f64v4_make`. None of them may take a default, because such a
   call would never fill it. Row S-R5 of `tests/gates/frontend/default_named_args_checked.sh`
   derives that list from `src/` and fails on a definition that declares one.
@@ -693,7 +712,6 @@ for x in v { ... }              # x = vec_get(v, 0), vec_get(v, 1), ...
 #   between is transparent to it — `continue` inside a case skips to the loop's next
 #   iteration, it does not fall out of the switch. In a `do … while` it goes to the
 #   CONDITION (as in C), never straight back to the top.
-# continue works correctly in all loop types (v1.11.1 bug #13 fix)
 # Both must have something to leave IN THE SAME FUNCTION (v6.6.7): a `break` with no
 #   enclosing loop/switch/match, or a `continue` with no enclosing loop, is a compile
 #   error ("break outside a loop or switch" / "continue outside a loop") — including one
@@ -1065,6 +1083,12 @@ var a = Point { 1, 2 };
 var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
 
+⚠ Known defect (6.7.9): the **named** literal is refused in the declaration section — at top level
+before the first top-level statement, `var q = Point { x: 10, y: 20 };` reports `undefined variable
+'x'`. It works inside a fn and after the first top-level statement; in the declaration section,
+write the positional form (`Point { 10, 20 }`). Tracked in `docs/development/issues/` (the declaration-zone named struct
+literal).
+
 A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
 section says about a struct value holds for it. See [Tuples](#tuples).
 
@@ -1112,8 +1136,9 @@ fn demo(): i64 {
 
 Inside a fn the result lands in a frame temporary and the field is read from it, exactly as for
 a named struct: the same widths, sign-extension and `f64` typing. A method applies to the result
-itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3).total();`); as
-for a named struct, not to a nested field (`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
+itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3).total();`) and,
+since 6.7.0, to a nested field of it (`mk(3).v.sum()` calls `Pt_sum` with the field's address, as
+`b.v.sum()` does — see *Traits and impl blocks*). At top level there is no frame:
 `var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
 (`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
@@ -1148,6 +1173,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `Vec` / `Vec<T>` | 8 | A handle. |
 | `*T` (any type name `T`) | 8 | A pointer: `p.f + n` steps `sizeof(T)` (see [Pointers](#pointers)). Since 6.6.17. |
 | a tuple `(T1, T2, ..)` | 8 × elements | Stored **inline**, an anonymous struct of 8-byte slots: `h.p.0`, `h.p = (1, 2);`. Since 6.7.7 — see [Tuples](#tuples). |
+| `dyn Tr` | 16 | Two opaque words, stored inline; formed or copied whole (`h.o = &p;`) and called through (`h.o.m()`). A struct local holding one is declared with its value. Not in a generic struct, a union or a `#derive`d struct. Since 6.7.8 — see [Trait objects](#trait-objects-dyn-678). |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
 
 ⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
@@ -1165,7 +1191,8 @@ silently an 8-byte i64, and three cases were silent miscompiles:
   type.
 
 A struct cannot contain itself (`struct Node { next: Node; }` crashed the compiler before
-v6.6.10); a link to another node is an `i64` (pointer) field.
+v6.6.10); a link to another node is a pointer field, `next: *Node` (6.6.17 — see
+[Pointers](#pointers)), or an untyped `i64` one.
 
 **f64 fields are typed; `#derive(accessors)` getters are not.** For
 `struct P { x: f64; y: f64; }`, `p.x + p.y` is a float add. Before v6.6.10 every operator on
@@ -1276,9 +1303,9 @@ look reasonable:
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
   wrong lane on Windows. ⚠ There is **no** working spelling for a vector-returning `callptr`
-  today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too, and has been — measured at 6.6.5
-  and at 6.6.6 it reads `0` and a garbage high lane on x86_64, with no diagnostic. Reported for
-  a later bite. Two spellings that DO work, both verified: call the function by name into a
+  today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too — it still compiles with no
+  diagnostic at 6.7.9 and reads wrong lanes on x86_64 (measured at 6.6.5, 6.6.6 and 6.7.9).
+  Two spellings that DO work, both verified: call the function by name into a
   vector local (`var v: f64v2 = mkv(41, 7);`), or, when the target really must be indirect,
   give it an out-pointer and have it store the lanes —
   `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
@@ -1351,7 +1378,7 @@ a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE
 a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse. (`gx(b)` for
 `fn gx<T>(b: Box<T>)` was refused here from 6.7.3 to 6.7.7: `T` was not inferred through `Box<T>`,
 so the call reached the `Box` base. Since 6.7.8 it infers `T = Pt` and calls `gx$Pt` — see
-*Generics*.) An argument with NO struct type stays accepted: `&p` (an address, as
+[Generic Functions](#generic-functions).) An argument with NO struct type stays accepted: `&p` (an address, as
 `var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
@@ -1428,8 +1455,7 @@ buffer shared by all calls and all threads; use alloc() for per-call storage
                   ^
 ```
 
-The position names the DECLARATION. (Before v6.6.5 the line was a `note:` with no position at
-all, and the first v6.6.5 cut of it named the statement AFTER the declaration.)
+The position names the DECLARATION.
 
 Its NAME is still scoped to its fn, so it cannot collide with a global elsewhere in the
 program. Use `alloc()` when you need per-call or per-thread storage for a buffer that large.
@@ -1619,7 +1645,7 @@ fn slices_demo(fd): i64 {     # a slice is a fn-local (6.7.8)
     s.ptr = &data + 1;      # rewrite view start
 
     # Slice-typed wrapper helpers (v5.8.18) — additive, take slice POINTERS.
-    sys_read_slice(fd, &s);                 # read up to s.len bytes into s.data
+    sys_read_slice(fd, &s);                 # read up to s.len bytes into s.ptr
     slice_copy_bytes(&dst, &src);           # memcpy with min-length cap
     slice_eq_bytes(&a, &b);                 # content equality
     return 0;
@@ -1789,7 +1815,7 @@ A **trait** declares a method set; an **impl** gives a type those methods. Dispa
 method call is a direct call to a mangled name, as [ADR-004](../adr/004-convention-based-dispatch.md)
 set out; [ADR-007](../adr/007-traits.md) records the trait design.
 
-```cyr
+```cyrius
 struct Point { x; y; }
 
 trait Show {
@@ -1806,16 +1832,20 @@ impl Point {                                              # inherent: no trait
     fn norm1(self): i64 { return self.x + self.y; }
 }
 
-var p = Point_new(1, 2);
-p.show();          # 12  -> Point_show(&p)
-p.twice();         # 24  -> the default, instantiated for Point
-Point_Show_show(p) # 12  -> the trait-qualified name
+fn demo(): i64 {
+    var p = Point_new(1, 2);      # a 16-byte struct result: it needs a fn's frame
+    var a = p.show();             # 12  -> Point_show(&p)
+    var b = p.twice();            # 24  -> the default, instantiated for Point
+    var c = Point_Show_show(p);   # 12  -> the trait-qualified name
+    return a + b + c;             # 48
+}
 ```
 
 - **`impl X for T` is checked.** An undeclared trait, a method `X` does not declare, a different
   parameter count, and a required method left out are compile errors naming the trait. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
-  first top-level statement), like `struct` and `fn`.
+  first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
+  statements.
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
@@ -2054,10 +2084,10 @@ fn print_str(s: Str) {
 }
 ```
 
-The `: Type` annotation is required — untyped locals storing
-struct pointers fall through to the existing error path.
-PARSE_FIELD_LOAD/STORE auto-detects pointer-vs-inline by checking
-the slot above the named slot for the v5.5.36 sentinel name (-1).
+The `: Type` annotation is required — an untyped local holding a
+struct pointer is refused at `.field` (`no struct type in scope`).
+Whether a struct-typed name holds the struct inline or a pointer to
+it is recorded at its declaration (see [Where a struct lives](#where-a-struct-lives-v665)).
 
 ### A string literal passed to a `: Str` parameter is wrapped for you
 
@@ -2069,23 +2099,13 @@ var n = slen("abcde");        # = 5 — the compiler emits str_from("abcde")
 
 The wrap is driven by the CALLEE's `: Str` annotation, so it happens
 wherever the call is written — and *wherever* means on every target as well
-as in every call syntax. **This was uniform only from v6.6.5**, and it took
-three passes to make the claim true:
-
-- `obj.m("lit")` — the method-dot path marshals its arguments through its own
-  loop and never ran the wrap.
-- `return f("lit")` — the tail position emits its own epilogue and jump, and
-  never ran it either. `var r = f("abcde")` and `return f("abcde")` returned
-  **5 and 0 in the same program**.
-- `var v: f64v2 = f("lit", k)` **on Windows only** — a 16/32-byte vector
-  return is written through a hidden pointer there, so the receive emits its
-  own call, with its own argument loop. The same source gave 5 on Linux and
-  0 on Windows.
-
-In each case the callee received a raw cstring pointer and every `Str`
-accessor read the wrong shape, silently. If you are reading a bug report from
-before 6.6.5 that blames `str_len`, check which call syntax it used — and
-which target it ran on.
+as in every call syntax: a direct call, a method `obj.m("lit")`, a tail call
+`return f("lit")`, a named argument, and a vector-returning receive
+(`var v: f64v2 = f("lit", k)`, which on Windows writes through a hidden
+pointer). ⚠ Before v6.6.5 the method, tail-call and Windows vector-receive
+paths skipped the wrap: the callee received a raw cstring pointer and every
+`Str` accessor read the wrong shape, silently (`var r = f("abcde")` and
+`return f("abcde")` returned 5 and 0 in the same program).
 
 If you would rather not depend on the wrap at all, `f(str_from("abcde"))` is
 always correct and always has been.
@@ -2101,7 +2121,7 @@ syscall(60, 0);                      # exit(0)
 ## Multi-Return
 
 ```
-# Native multi-return (v3.7.2) — return (a, b) puts values in rax:rdx
+# Native multi-return (v3.7.2) — return (a, b) puts values in two return registers (rax:rdx on x86_64)
 fn divmod(a, b) { return (a / b, a % b); }
 var q, r = divmod(10, 3);       # q = 3, r = 1 — destructuring bind
 q, r = divmod(20, 3);           # q = 6, r = 2 — re-assigns existing variables (6.7.7)
@@ -2637,8 +2657,7 @@ include "lib/simd.cyr"
 
 # Value form — pass the vectors themselves (all targets)
 # ⚠ `f32_from` takes an f64 BIT PATTERN, not an integer — `f32_from(1)` reads integer 1 as f64
-# bits, a denormal ~5e-324, and narrows to f32 ZERO. Use real float literals. This example said
-# `f32_from(1)` until v6.6.2 and therefore built an all-zero vector.
+# bits, a denormal ~5e-324, and narrows to f32 ZERO. Use real float literals.
 var a: f32v4 = f32v4_make(f32_from(1.0), f32_from(2.0), f32_from(3.0), f32_from(4.0));
 var b: f32v4 = f32v4_splat(f32_from(10.0));
 var r: f32v4 = f32v4_add(a, b);          # {11, 12, 13, 14}
@@ -2661,9 +2680,10 @@ var s: i32v4 = i32v4_add(p, q);          # {11, 12, 13, 14}
 
 Constructors (`*_make`, `*_splat`), lane extractors (`*_lane0` … per lane),
 and the arithmetic wrappers exist for every vector type. Value-form
-wrappers are gated on `CYRIUS_HAS_VAL_SIMD_PARAMS` (defined by every
-`main_*.cyr`); on Win64 PE only the pointer form is present, but the
-overload dispatch still routes `f32v4_add(&a, &b)` transparently.
+wrappers are gated on `CYRIUS_HAS_VAL_SIMD_PARAMS`, which every compiler
+fork predefines — the Win64 PE one included (value-form SIMD parameters
+and returns since v6.4.31) — and the overload dispatch routes
+`f32v4_add(&a, &b)` to the pointer form on every target.
 
 ### Runtime capability gating (x86)
 
@@ -3063,9 +3083,9 @@ plain call gets — `#deprecated` at every call (a call parsed before the `impl`
 
 ```
 struct Acct { bal; }
-impl Ops for Acct {
+impl Acct {
     #must_use
-    fn take(self, n): i64 { store64(self, load64(self) - n); return load64(self); }
+    fn take(self, n): i64 { self.bal = self.bal - n; return self.bal; }
     #deprecated("use take")
     fn withdraw(self, n): i64 { return Acct_take(self, n); }
 }
@@ -3141,7 +3161,10 @@ myproject/
 directory argument ran nothing, printed nothing and exited 0. A path that does not exist is
 now refused rather than silently building a do-nothing program, and every `bench` / `fuzz` form
 prints the `=== N passed, M failed ===` summary — their single-file form used not to, which made
-it unscriptable. `cyrius test <file>` prints the test's own output (its `N passed, M failed (T
+it unscriptable. A bare `cyrius bench`, `cyrius fuzz` or `cyrius smoke` that finds nothing to run
+exits 1 with `error: no benchmarks found (looked in benches/ and tests/, recursively)` (and the
+fuzz / smoke equivalents), as a bare `cyrius test` does — ⚠ before 6.7.9 they printed "No … found"
+and exited 0. `cyrius test <file>` prints the test's own output (its `N passed, M failed (T
 total)` assert summary, not a `===` line) and its exit status is the test's: non-zero, with a
 `FAIL:` line naming the file, when the test exits non-zero, dies of a signal, times out, or exits
 0 with an assert summary that reports failures (or, when its source calls `assert_summary()`, with
@@ -3157,8 +3180,8 @@ with an `N passed, M failed` tally of the files they ran.
 may mix files and directories and each file runs once, and a bare `cyrius test` is unchanged.
 A directory holding no `.tcyr` is a failure, by name. Until 6.7.6 `cyrius test <dir>` was
 `error: not a file` and the directory walk was a second verb, `cyrius tests [dir]`; that
-spelling still works for one release and prints a one-line notice naming the replacement
-(`cyrius test <dir>`; a bare `cyrius tests` was `cyrius test tests`).
+spelling is a deprecated alias (still accepted at 6.7.9, to be removed) that prints a one-line
+notice naming the replacement (`cyrius test <dir>`; a bare `cyrius tests` was `cyrius test tests`).
 
 ## Manifest keys (`cyrius.cyml`)
 
@@ -3208,7 +3231,7 @@ nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests de
 test sweep — compile each test with only the includes the file itself writes: no `[deps] stdlib`
 prepend. It is for a project whose tests are self-contained, the way cycc compiles a file fed to
 it directly: there, a test that defines a fn some prepended stdlib module also defines (this
-repo's 22 tests with `fn run()`, against `lib/process.cyr`'s `fn run(cmd, arg1, arg2)`) is a
+repo's tests that define `fn run()`, against `lib/process.cyr`'s `fn run(cmd, arg1, arg2)`) is a
 duplicate-fn error under the prepend and compiles fine without it. Absent or `false` changes
 nothing; `[embed]`, `[build] modules` and defines still apply. A
 mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
@@ -3386,14 +3409,14 @@ scope   = "test"                           # resolved and pinned like any dep; t
 ```
 
 - **`files`** is what a bare `cyrius test` runs before every `.tcyr` under `tests/` (a file, a
-  directory, or a list of either). `[build] test` is its older spelling (41 manifests) and is read
+  directory, or a list of either). `[build] test` is its older spelling and is read
   when `[test] files` is absent; with both, `[test] files` is read and `[build] test` is warned
   by name.
 - **`stdlib`** leaves are vendored into `lib/` and locked by EVERY resolve, whichever verb ran it,
   so `lib/` and `cyrius.lock` are one function of the manifest — a build and a test never take
   turns rewriting the lock. Only the test scope prepends them (after the `[deps]` prepend). So a
-  production binary no longer carries `assert` / `bench` (a hello world: 111,456 B with them in
-  `[deps] stdlib`, 98,280 B with them here), and a published `dist/<pkg>.deps` sidecar never
+  production binary no longer carries `assert` / `bench` (a hello world, measured at 6.7.6:
+  111,456 B with them in `[deps] stdlib`, 98,280 B with them here), and a published `dist/<pkg>.deps` sidecar never
   names them (the sidecar is compile-verified from the bundle alone since 6.6.18; measured on the
   12 fold repos' bundles, their sidecars are byte-identical either way). `cyrius init` writes
   `assert` / `bench` here. A manifest whose only dependency is a test leaf still resolves.
@@ -3486,7 +3509,7 @@ cyrius test tests/tcyr/crossos           # a directory: every .tcyr under it, re
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
 cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6.5)
-cyrius tests [dir]                       # DEPRECATED (6.7.6): `cyrius test <dir>`; goes in the next release
+cyrius tests [dir]                       # DEPRECATED alias (6.7.6) of `cyrius test <dir>`; to be removed
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
 cyrius fuzz --poison [path|dir]          # poisoning allocators + redzones; an overwrite exits 86 (6.6.18)
@@ -3917,11 +3940,10 @@ cyrius lint --exit-with-count a.cyr b.cyr           # exit = TOTAL warnings over
 warning count summed over every file, clamped to 255 (an exit code is 8 bits — 256 used to
 exit **0**). An unreadable file always forces a non-zero exit, even when the count is 0.
 
-⚠ This block read `cyrius lint  # lint all stdlib` until v6.6.5, and a bare `cyrius lint`
-has never done that — it prints usage and exits 1. Corrected together with the argument
-handling itself: flags may now appear **in any position**, an undeclared `-`-prefixed token
-is an error that names it, and every file you pass is linted (it used to lint the FIRST one
-and report that verdict for the lot, which is how ranga's CI linted 1 of 41 files). See
+A bare `cyrius lint` (no file) prints usage and exits 1 — it does not lint the stdlib. Flags
+may appear **in any position**, an undeclared `-`-prefixed token is an error that names it, and
+every file you pass is linted (⚠ before v6.6.5 it linted the FIRST one and reported that verdict
+for the lot). See
 `docs/development/issues/archived/2026-09-16-mabda-lint-wrapper-drops-strict-deferrals.md`.
 
 Rules: trailing whitespace, tabs, line length >120 chars, camelCase
@@ -3988,10 +4010,9 @@ so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, an
 lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
 inside a string, are now left alone.
 
-⛔ **And an invocation opened in a `#` comment used to delete your code.** This guide said, for one
-release, that a macro inside a comment "cannot change what is compiled — a `#define` body stops at
-the newline". That covers only what an expansion *writes*. What it *reads* ran to the matching `)`
-wherever that was, so with `#define M(a) 0` in scope the comment
+⛔ **And an invocation opened in a `#` comment used to delete your code.** A `#define` body
+stops at the newline, but that covers only what an expansion *writes*. What it *reads* ran to the
+matching `)` wherever that was, so with `#define M(a) 0` in scope the comment
 
 ```
 # TODO: fix M(
@@ -4263,8 +4284,7 @@ function can receive a Result in one argument and read its payload:
 | `tagged_new` | **RESTORED (v6.6.2)** | in `lib/boxed.cyr`; it builds the same 16-byte box it always did, so every call site is correct as written |
 
 ⛔ **THE `is_*` ROW SAYS "ARITY UNCHANGED", NOT "SAFE", AND THE DIFFERENCE COSTS REAL BUGS.**
-This table read *"unchanged"* for that whole row until v6.6.2, and it was wrong. Their bodies were
-rewritten from `load64(box)` to a direct register compare. On a value-form tag that is correct; on
+Their bodies were rewritten from `load64(box)` to a direct register compare. On a value-form tag that is correct; on
 a **raw box** every one of them answers wrongly, compiling clean and exiting 0:
 
 ```text
@@ -4285,10 +4305,8 @@ value form it is forced: rdx never reaches a parameter. The v6.6.0 note generali
 restoring it would make stale `Result` reads compile and dereference a tag (0 or 1) as a pointer:
 a named compile error traded for a SIGSEGV.
 
-⚠ **The example below used to be the pre-flip one** — five compile errors, two lines under the
-table that announces the change. It is now the working form, and
-`tests/gates/toolchain/guide_examples_compile.sh` compiles every fenced block in this file so it
-cannot rot back.
+The example below is the value-form spelling; `tests/gates/toolchain/guide_examples_compile.sh`
+compiles the fenced blocks in this file and fails on a stale-API error, so it cannot rot back.
 
 ```
 include "lib/tagged.cyr"          # Option / Either (+ lib/boxed.cyr transitively)
@@ -4371,9 +4389,12 @@ chain(100, 0, 5);                # Err(1) from first ?
 `var x = expr?;` form).
 
 `?` outside any fn body is a parse-time error
-(`?: '?' propagation operator only valid inside a fn body`). The
-stricter "outside Result-returning fn is type error" check is
-pending fn return-type tracking.
+(`?: '?' propagation operator only valid inside a fn body`). Inside a
+fn that otherwise returns one value (`fn f(x): i64 { var v = g(x)?; … }`),
+`?` makes its `Err` path return a `: stack` pair, so the compiler WARNS
+with the every-path rule (*"returns a `: stack` pair on another path but
+a SINGLE value here"*, see *Bind the pair as a pair*) — a warning, not an
+error: declare the fn `: Result` and return a variant on every path.
 
 ## No try / catch — design decision
 
@@ -4418,9 +4439,9 @@ enum-variant namespace.
 | Module | Enum | Variants |
 |--------|------|----------|
 | `lib/io.cyr` | `IoError` | `IoNotFound` `IoAccessDenied` `IoBadFd` `IoFailed` `IoOther` |
-| `lib/json.cyr` | `JsonError` | `JsonIoErr` `JsonParseErr` `JsonOther` |
-| `lib/toml.cyr` | `TomlError` | `TomlIoErr` `TomlParseErr` `TomlOther` |
-| `lib/cyml.cyr` | `CymlError` | `CymlIoErr` `CymlOther` |
+| `lib/bayan.cyr` (json) | `JsonError` | `JsonIoErr` `JsonParseErr` `JsonOther` |
+| `lib/bayan.cyr` (toml) | `TomlError` | `TomlIoErr` `TomlParseErr` `TomlOther` |
+| `lib/bayan.cyr` (cyml) | `CymlError` | `CymlIoErr` `CymlOther` |
 | `lib/http.cyr` | `HttpError` | `HttpBadUrl` `HttpNetErr` `HttpNon2xx` `HttpOther` |
 | `lib/dynlib.cyr` | `DynlibError` | `DynlibNotFound` `DynlibBadElf` `DynlibSymMissing` `DynlibOther` |
 | `lib/pwd.cyr` | `PwdError` | `PwdNotFound` `PwdLoadFailed` `PwdBufTooSmall` `PwdOther` |
@@ -4507,9 +4528,8 @@ while (i < 3) {
 > an unpatched jump — also a SIGSEGV. Only `return` bodies were safe, which is why the
 > corpus did not catch it. If you are reading code written against an older compiler,
 > case bodies phrased entirely as `case N: { return …; }` are likely a workaround.
-> **Whether `break` should break the switch (C semantics, what ships today) or be
-> rejected outright remains open to the maintainer** — this section documents what the
-> compiler does now.
+> `break` leaving the switch / match (C semantics) is settled language, confirmed by the
+> maintainer at v6.5.20 (CHANGELOG [6.5.20]).
 
 ## Match (Pattern Match, v5.8.22+)
 
@@ -4757,8 +4777,7 @@ fn adder(a): i64 {
 
 ⚠ Before 6.6.17 this did not compile: the inner closure's reference to an enclosing
 function's variable was refused `undefined variable`, and an outer capturing closure that merely
-contained a nested closure lost its own captures after it (refused the same way). This section
-used to call it "captured closures are flat", which was a compiler limit, not a rule. Pinned by
+contained a nested closure lost its own captures after it (refused the same way). Pinned by
 `tests/tcyr/crossos/closure_nested_capture.tcyr`.
 
 ## Constants and `const fn` (6.7.2)
@@ -4847,7 +4866,7 @@ in parentheses. Everything else is refused by name — the literals `0` and `1` 
 ```
 var b: bool = 1;      # error: cannot initialize bool 'b' with a value that is not a bool
 b = n;                # error: cannot assign a value that is not a bool to bool 'b'
-b += 1;               # error: compound assignment to bool 'b' is refused (write `b = !b`)
+b += 1;               # error: compound assignment to bool 'b' is refused - its result is not a bool (write `b = b && c`, `b = !b`)
 p.on = 2;             # error: cannot store a value that is not a bool into bool field 'on'
 set(1);               # error: cannot pass a value that is not a bool to bool parameter 'on' of 'set'
 fn g(): bool { return 1; }   # error: cannot return a value that is not a bool from bool fn 'g'
@@ -5083,9 +5102,9 @@ annotation declares — what `var b: Box<i32>` occupies (4 for the `Box` above, 
 (`expected '=', got end of file`), `Box<Vec<i64>>` and a `Vec<Box<..>>` field were refused,
 and `sizeof(Box<i64>)` and `(Box<i64>, i64)` were `expected ')', got '<'`.
 
-**Status & limits (6.7.1).** Generic functions and structs are supported over
-i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
-explicit, with any body (a small straight-line body is inlined at its call sites;
+**Status & limits.** Generic functions and structs are supported over
+i64, `f64` (inferred from a whole f64 argument since 6.7.9), narrow scalars
+(`i32`/`i16`/`i8`), and struct type arguments, inferred or explicit, with any body (a small straight-line body is inlined at its call sites;
 anything else is an ordinary call). At most two type parameters are recorded. A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
@@ -5263,7 +5282,9 @@ pointer. A **value-form vector RETURN** (`async fn f(): f64v2`) is refused for t
 same reason and in the same words — a vector travels in XMM/V, or by pointer on
 Win64, never in rax — so it too yielded 0 with no diagnostic before v6.6.6. Every
 16-byte and 32-byte class is covered, `f64v2`/`f32v4`/`f64v4`/`i32v4` alike;
-return a pointer to the vector.
+return a pointer to the vector. A **tuple** parameter (6.7.7: pass its elements as separate
+parameters) and a tuple return (`return t;` from an `async fn`) are refused by name, and so is
+any `dyn` type in an `async fn` (6.7.8).
 
 ## Global Initializers
 
@@ -5318,9 +5339,7 @@ called). The fix is a constant, an assignment in the program, or a function that
 value (a string literal inside a fn is an address baked into its code).
 
 Until 6.6.8 deferred initializers were capped at **4096 per compilation unit**
-(`too many initialized globals (max 4096)`), and this section documented the counting
-rule wrongly: `= -1` never counted, while `= 0` and string literals did. Since 6.6.9
-there is no cap; the table grows. Enum members (`enum E { A = 0; B = 1; }`) are
+(`too many initialized globals (max 4096)`). Since 6.6.9 there is no cap; the table grows. Enum members (`enum E { A = 0; B = 1; }`) are
 const-folded at parse time and never were deferred. The limit that remains is the var
 table itself — 1,048,576 globals, enum members and top-level arrays together.
 
@@ -5492,7 +5511,7 @@ include "lib/io.cyr"      # File I/O: file_open, file_read, file_write, file_clo
                           # + the portable x* wrapper set (see below)
 include "lib/fmt.cyr"     # Formatting: fmt_int, fmt_hex, fmt_hex0x, fmt_bool, fmt_byte
 include "lib/args.cyr"    # CLI args: args_init, argc, argv
-include "lib/fnptr.cyr"   # Function pointers: fncall0, fncall1, fncall2
+include "lib/fnptr.cyr"   # Function pointers: fncall0 .. fncall8
 include "lib/thread.cyr"  # Threads (clone+mmap) incl. thread_create_detached / thread_is_done,
                           # mutex (three-state futex), MPMC channels (chan_send/recv + try_ variants; blocking where `CHAN_BLOCKING == 1`)
 include "lib/async.cyr"   # Async primitives
@@ -5635,7 +5654,7 @@ var v = 0; pos = pb_read_varint(buf, pos, len, &v);  # v = 150
 The AGNOS components (agnostik, agnosys, …) are **downstream sibling
 repos**, not bundled in cyrius's `lib/`. Consume them as named deps in
 `cyrius.cyml` — the build tool resolves each picked module to a flat,
-namespaced file `lib/{depname}_{basename}.cyr` (see *Dependencies* above;
+namespaced file `lib/{depname}_{basename}.cyr` (see *Build Tool & Dependencies* above;
 there is no `lib/{depname}/` subdirectory form):
 
 ```
@@ -5699,25 +5718,26 @@ offsets past the params.
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
   — see **Global Initializers**
-- **79** builtin/intrinsic names (re-derived at 6.6.13; this bullet still said 67, the v6.4.77
-  count) plus the statement keywords are reserved and cannot be used
-  as identifiers — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list; see the
-  reserved-word note under **Functions**. So, since 6.6.20, are the 11 identifier-spelled
-  intrinsics `sizeof`, `mulh64` and `fncall0`..`fncall8`, which that table does not hold. (This bullet used to name four of them, which is
-  how the other sixty came as a surprise.)
+- Every builtin/intrinsic name plus the statement keywords is reserved and cannot be used
+  as an identifier — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list (count it from
+  there); see the reserved-word note under **Functions**. So, since 6.6.20, are the 11
+  identifier-spelled intrinsics `sizeof`, `mulh64` and `fncall0`..`fncall8`, which that table
+  does not hold.
 - Closures (`|x| body`) support lexical capture by value (v6.3.8) — a body may
-  reference enclosing locals, captured by value at construction. Windows PE has
-  supported capturing closures since v6.4.26 (this bullet claimed otherwise for
-  eight minors). A capturing closure is capped at five parameters on
-  Linux/macOS and three on Windows, its value is an opaque handle rather than an
-  address, and it must be written inside a function. See the **Closures**
-  section.
+  reference enclosing locals, captured by value at construction, on every target (Windows PE
+  since v6.4.26). A capturing closure is capped at five parameters (three on Windows) and its
+  value is an opaque handle rather than an address. Capture by value is of an enclosing fn's
+  locals: a closure written at top level captures nothing and reads top-level variables live
+  (it sees a later assignment). See the **Closures** section.
 
 ## Gotchas
 
 - **Dynamic loop bounds**: `for (i = 0; i < GLOBAL; ...)` re-evaluates each iteration
-- **Operator overloading**: multi-field structs pass addresses, single-field pass values
-- **Enum constructors**: auto-generated `Ok(42)` calls `alloc()` — init heap first
+- **Operator overloading**: a struct operand over 8 bytes is passed by address (and copied on
+  entry when the parameter is by value); one of 8 bytes or less is passed by value
+- **Enum constructors**: a BOXED payload variant (an `enum` without `: stack`) calls `alloc()` —
+  init the heap first. The stdlib's `Ok` / `Err` / `Some` / `None` are `: stack` since v6.6.0 and
+  allocate nothing
 
 ## Building
 
@@ -5742,8 +5762,8 @@ qemu-system-x86_64 -kernel build/kernel -serial stdio -display none
 ## Targeting Windows (PE) (v6.1.16+)
 
 Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from Linux or macOS via
-the `--win` cross-compilation flag. The compiler injects the `CYRIUS_TARGET_WIN=1`
-environment variable into the build pipeline, routing platform-specific code paths
+the `--win` cross-compilation flag. `cyrius build --win` sets `CYRIUS_TARGET_WIN=1` in the
+compiler's environment, routing platform-specific code paths
 through Windows syscall reroutes (kernel32 and shell32 imports) instead of POSIX
 syscalls.
 
@@ -5757,21 +5777,21 @@ cyrius build --win src/main.cyr build/myapp.exe
 CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
-The output is a valid PE32+ executable that runs on Windows x86_64. The flag is
-mutually exclusive with `--agnos` (bare-metal kernel target) and `--aarch64`
-(ARM64 cross-compile); `--win` implies the x86_64 instruction set.
+The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
+x86_64 instruction set. Give ONE target flag per build: `--win`, `--agnos` (the agnos ring-3
+userspace target) and `--aarch64` (ARM64 cross-compile) each select a different target, and a
+combination is not refused — one of them silently wins (measured at 6.7.9: `--win --aarch64`
+builds the aarch64 ELF, `--win --agnos` the PE).
 
 ### Conditional Compilation
 
 Use the `#ifdef CYRIUS_TARGET_WIN` preprocessor guard to write cross-platform
 code. The compiler defines exactly one of `CYRIUS_TARGET_LINUX`, `CYRIUS_TARGET_WIN`,
-`CYRIUS_TARGET_MACOS`, `CYRIUS_TARGET_AGNOS` or `CYRIUS_TARGET_CX` per build.
-(This line listed only the first three until v6.6.6. `CYRIUS_TARGET_AGNOS` has
-been predefined since v6.0.48 and is used throughout `lib/`; `CYRIUS_TARGET_CX`
-is new in v6.6.6 — before it, the cx driver predefined NOTHING, so every
-per-target `#ifdef` arm in the stdlib matched nothing on cx and those modules
-compiled to *nothing*, which is why `include "lib/assert.cyr"` did not compile
-for the cx target at all.)
+`CYRIUS_TARGET_MACOS`, `CYRIUS_TARGET_AGNOS` or `CYRIUS_TARGET_CX` per build (a UEFI
+image, `CYRIUS_TARGET_EFI=1`, is a PE build: it gets `CYRIUS_TARGET_WIN` plus
+`CYRIUS_TARGET_EFI`). ⚠ Before v6.6.6 the cx driver predefined none of them, so every
+per-target `#ifdef` arm in the stdlib matched nothing on cx (`include "lib/assert.cyr"` did
+not compile for cx at all).
 
 ```cyrius
 #ifdef CYRIUS_TARGET_WIN
@@ -5989,9 +6009,7 @@ Each routable pair emits the kernel32 call inline. Unknown syscalls return -38
 (ENOSYS), matching POSIX semantics, so a path that is genuinely dead on Windows can
 compile without being routed.
 
-> ⛔ **v6.6.6 — the example that used to close that sentence was the opposite of dead.**
-> It read *"(e.g., POSIX fork/execve) can compile without routing them"*, and that belief
-> is what licensed twelve unguarded `sys_fork` sites in `cbt/`. `fork`/`execve`/`waitpid`
+> ⛔ **A POSIX fork path is NOT dead on Windows.** `fork`/`execve`/`waitpid`
 > are not unrouted syscalls returning -38 — they are **wrappers**
 > (`lib/syscalls_windows.cyr`) that `return 0 - 1`. So a POSIX fork/wait on PE does not
 > fail; it **succeeds wrongly**: `pid` is `-1`, the parent takes the `pid != 0` branch,
@@ -6022,16 +6040,9 @@ footing as every other target: with nothing pending on the expression stack, RSP
 16-aligned, and the call emitters pad for an odd number of pending values. Cyrius function
 prologues, the kernel32 reroutes and `callptr` all maintain that invariant.
 
-> ⛔ **This paragraph used to describe a shim that did not exist.** It claimed the entry
-> "`sub rsp, 8`s to align" — disassembly of any 6.6.4 PE shows the landing going straight
-> from the entry jump into user code. The whole PE base therefore ran one parity off: every
-> statement-level call entered its callee at RSP ≡ 0, and the calls that happened to be
-> correctly aligned were the ones nested at odd depth inside an expression. It was
-> survivable only because cyrius-emitted code uses no aligned SSE, while the seven
-> fixed-frame kernel32 reroutes had each been hand-tuned to the inverted base — so
-> `f(0, open(path))` crashed inside kernelbase's own `movaps` in CreateFileW. The shim
-> described here is real as of 6.6.5, and the reroute frames were retuned in the same
-> change. See CHANGELOG [6.6.5].
+> ⚠ Before 6.6.5 the PE landing had no `sub rsp, 8`, so the whole PE base ran one parity off:
+> every statement-level call entered its callee at RSP ≡ 0, and `f(0, open(path))` crashed
+> inside kernelbase's own `movaps` in CreateFileW. See CHANGELOG [6.6.5].
 
 **UEFI (`CYRIUS_TARGET_EFI=1`) shares that entry convention and adds one rule of its own.**
 A UEFI Application's entry point IS an MS-x64 function and firmware reads `rax` as the
@@ -6069,21 +6080,25 @@ of `tests/gates/codegen/call_site_stack_alignment.sh`.
 
 ### Limitations
 
-**Path Widening (v6.1.16–v6.1.18)**
+**Paths: UTF-8, widened at the kernel32 boundary (6.6.11)**
 
-Paths are ASCII zero-extended to UTF-16LE — characters outside the ASCII range
-(0x00–0x7F) are not supported. This is sufficient for the toolchain's own
-cross-compile paths (e.g., `C:\cyrius\lib` vs `/usr/local/cyrius/lib`); Unicode
-install paths or filenames with non-ASCII characters will silently truncate or
-corrupt. This limitation applies to file open, directory listing, and process
-creation. A future release can implement full UTF-8 → UTF-16LE transcoding
-(surrogate pair handling, etc.).
+A path is UTF-8 in the cyrius API and is widened to UTF-16LE where it meets kernel32 —
+`MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS)`, surrogate pairs included. Invalid UTF-8,
+or a path with no room, is REFUSED (the call returns -1) — never guessed or cut — and a path
+whose full form is 248 units or more is passed as `\\?\<full>` (`\\?\UNC\…` for a share). That
+holds for open / create / mkdir / unlink / rename / rmdir since 6.6.11 and for the directory
+calls (`is_dir`, `dir_list`, `is_symlink`, `sys_access`, `xmkdir_p`) since 6.6.12. ⚠ Before
+6.6.11 a path was copied one byte per UTF-16 unit and cut at 260 units: a non-ASCII name
+failed, and a long relative `O_CREAT` open returned a handle for the name cut short.
 
-**UDP Sockets**
+**Sockets**
 
-`lib/socket.cyr` does not route UDP on PE. TCP is supported via the WinSock2 ABI
-(when a consumer demands it); UDP datagram dispatch to the Winsock API is tracked
-for a future release.
+`lib/net.cyr` reaches Winsock (ws2_32) since 6.6.11: `tcp_socket` / `udp_socket`, bind,
+connect, listen, accept, send / recv, shutdown, the socket options and the non-blocking forms
+work as on Linux — the SOCKET is the fd, and a failure is `-WSAGetLastError`, with
+WSAEWOULDBLOCK (and, for send / recv, WSAETIMEDOUT) reported as -EAGAIN. `sock_set_nodelay`
+sets TCP_NODELAY there too (6.7.9). The raw `sys_*` socket wrappers keep the PE peer's -38
+decline: go through `lib/net.cyr`'s verbs.
 
 **COM and Advanced Windows APIs**
 
@@ -6198,7 +6213,7 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines an append-only syscall surface: **#0–#104 and #106–#108** at agnos 1.57.10
+agnos defines an append-only syscall surface: **#0–#104 and #106–#108**
 (`lib/syscalls_x86_64_agnos.cyr`; #105 was withdrawn and is never re-added). Beyond the
 GPU-compute band #82–#91 it carries `gpu_shader_op` (#92), `gpu_modeset_op` (#93),
 `gpu_recover_op` (#94), `uptime_us` (#95), **`fork` (#96, minted at v6.5.37 / agnos 1.56.55 —
@@ -6260,7 +6275,7 @@ lib/process.cyr           → lib/process_agnos.cyr
 lib/io.cyr (getenv)       → delegates to lib/args_agnos.cyr::_agnos_getenv
 ```
 
-**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (#0–#95 + #97),
+**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (#0–#104 + #106–#108),
 with wrappers (`sys_write`, `sys_read`, `sys_open`, `sys_spawn`, `sys_waitpid`,
 `sys_mmap`, `sys_stat`, the socket/UDP/ICMP networking band, framebuffer/blit/keyboard,
 the GPU-compute band `sys_gpu_dispatch`..`sys_gpu_blit_bb` (#82–#91), the
@@ -6499,19 +6514,19 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
-- Socket options: `sys_setsockopt` is a -38 decline stub (6.6.16); deadlines go through
+- Socket options: `sys_setsockopt` is a -38 decline stub (6.6.16), and `sock_set_nodelay`
+  declines -38 (6.7.9: agnos has no TCP options); deadlines go through
   `sock_set_recv_timeout` / `sock_set_send_timeout`
+- `sys_ppoll`, `sys_ioctl` and `sys_fstatat` link but decline -38 (6.7.9 — no agnos number is
+  minted for them), so portable source that names them compiles without an `#ifdef`
 - The `cyrius` CLI: built for agnos (6.6.17) it answers `version` and `help` only — its verbs
   run cycc as a child process through fork / execve / waitpid. Compile with `cycc` directly
 
-The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 at agnos 1.57.9 (#105 withdrawn)**. The
+The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 (#108 since agnos 1.57.9; #105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —
 as canonical: any number / signature / struct-layout change there must land in this guide and
 `lib/syscalls_x86_64_agnos.cyr` in the same change. `agnos/docs/development/agnos-userland-abi.md`
-is a *secondary* reference and where it disagrees with the kernel, the doc is the bug. (Until
-v6.5.7 the peer's header named that doc as its authority while the doc named the peer as part
-of *its* authority — a doc → cyrius → doc circle in which a wrong number could be "verified"
-against itself. The kernel was always the tiebreak.) Follow-up arcs are tracked in
+is a *secondary* reference and where it disagrees with the kernel, the doc is the bug. Follow-up arcs are tracked in
 `docs/development/issues/`; the spawn-argv gap's original filing
 ("2026-06-03-agnos-followup-after-boot.md") has since moved to `issues/archived/`.
 
@@ -6524,15 +6539,12 @@ and aarch64 (v6.1.8), producing ET_DYN binaries with `p_vaddr=0` and
 base-relative entry points. The full tcyr test corpus runs correctly as
 ASLR-loaded PIE binaries on both architectures.
 
-Enable PIE via the `--pie` flag or `CYRIUS_PIE=1` environment variable:
-
-⚠ Until v6.6.5 the wrapper had no `--pie` arm, so the documented command below errored with
-`unknown flag '--pie'` and only the environment variable worked. The flag is real now (it
-sets `CYRIUS_PIE=1` on the compiler's environment); the doc had been wrong, not the reader.
-
+Enable PIE via the `--pie` flag or `CYRIUS_PIE=1` environment variable (`--pie` sets
+`CYRIUS_PIE=1` in the compiler's environment; ⚠ before v6.6.5 the CLI refused the flag as
+`unknown flag '--pie'` and only the environment variable worked):
 
 ```sh
-cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64 (real since v6.6.5)
+cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64
 # or
 CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
 ```
@@ -6571,16 +6583,17 @@ Example:
 
 ```cyrius
 var global_int = 42;
-var global_ptr = 0: i64;   # Will be filled with &fn_target
+var global_ptr = 0;        # filled with &fn_target at run time
 
 fn fn_target() { return 1; }
 
 fn main() {
     global_ptr = &fn_target;
-    var x = global_int;    # &var under ASLR load: RIP-relative
-    var r = fnc alloc(global_ptr);   # Indirect call at randomized base
-    return x;              # 42 — correct under any ASLR offset
+    var x = global_int;    # a global read: RIP-relative under an ASLR load
+    var r = callptr(global_ptr);   # an indirect call at the randomized base
+    return x + r - 1;      # 42 — correct under any ASLR offset
 }
+syscall(60, main());
 ```
 
 ### Relationship to `shared` & Object Mode
@@ -6794,17 +6807,11 @@ is out of range. The output is tested to round-trip through `node --check`
 standalone `cycc_aarch64` and `cycc_win` cross-compilers do not include
 the TS frontend.
 
-> ⛔ **v6.6.6 — until this release "x86-Linux-only" was documentation, not behaviour, and
-> what happened elsewhere was worse than a failure.** The CLI forked the host's cycc with
-> `--emit-js`; that compiler does not know the flag, so it **ignored it**, read its
-> **empty** stdin, emitted a runnable binary, and the CLI renamed that over the `.js` and
-> printed `OK`. Measured on real pi at 6.6.6: `emit-js t.ts -> out.js [js] OK`, exit 0,
-> `out.js` a 65,888-byte aarch64 ELF. `cyrius build --target=js` now **refuses by name**
-> on every host whose compiler is not built from `src/main.cyr`, naming that host's fork,
-> and writes no output file. Verified on real ecb, ach and pi; pinned by
-> `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh`, whose axis 1 re-derives
-> "`src/main.cyr` alone carries the TS front end" from the include graph each run.
-> See CHANGELOG [6.6.6].
+> On every other host `cyrius build --target=js` **refuses by name** (v6.6.6), naming the
+> fork that host's compiler is built from, and writes no output file. ⛔ Before v6.6.6 the
+> CLI ran the host's cycc with `--emit-js`, which that compiler ignored: it compiled its empty
+> stdin into a runnable binary, the CLI renamed that over the `.js` and printed `OK`. Pinned
+> by `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh`. See CHANGELOG [6.6.6].
 
 ### Limitations
 
@@ -6815,7 +6822,7 @@ the TS frontend.
 
 ## Example Programs
 
-See `programs/` for 97 examples:
+See `programs/` for example programs (beside the toolchain's own tools and target probes):
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)

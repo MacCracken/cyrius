@@ -6,33 +6,31 @@
 A self-hosting systems language that bootstraps from a 29KB binary. No Rust, no LLVM, no Python. Designed to write the AGNOS operating system kernel.
 
 ### What can I build with it?
-CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 + x86_64 Mach-O), or Windows (x86_64 PE32+) — all self-host cycc byte-identical. See `programs/` for 97 examples.
+CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 + x86_64 Mach-O), or Windows (x86_64 PE32+) — cycc self-hosts byte-identical on all of them — plus portable `.cyx` bytecode (run by `cxvm`), AGNOS userspace, bare-metal kernels and UEFI applications. `programs/` holds the toolchain's own tools (the LSP, formatter, linter, doc generator, …) and small demo programs (`cat`, `wc`, `grep`, `life`, `brainfuck`, `sieve`, …).
 
 ### How is everything i64?
-The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64`/`f32` floats plus the full SIMD vector set: `f64v2`/`f64v4`, `f32v4`/`f32v8`, and the integer vectors `i8v16`/`i16v8`/`i32v4`/`i64v2` (`lib/math.cyr`, `lib/simd.cyr`), all shipped in the v6.4.x SIMD arc (Phase 5 complete on all four backends) — which are bit-pattern values, not a full float type system. Everything else is an i64.
+The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64`/`f32` floats plus the full SIMD vector set: `f64v2`/`f64v4`, `f32v4`/`f32v8`, and the integer vectors `i8v16`/`i16v8`/`i32v4`/`i64v2` (`lib/math.cyr`, `lib/simd.cyr`), on every backend — which are bit-pattern values, not a full float type system. Everything else is built from i64 words: a `bool` is a word holding 0 or 1, a slice is a (pointer, length) pair, a `u128` or a tuple is two or more words.
 
 ### Where are the types?
-Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
+An `i64` annotation (`var x: i64 = 42`) is documentation — an untyped `var` is already an i64 word. Other annotations change what the code does, and the compiler checks them: an `f64` / `f32` makes its arithmetic floating-point (every write into an `f32` rounds to f32), a write into a `bool` must be a boolean value, a `*T` steps and subscripts by `sizeof(T)`, a struct type gives field access and by-value copies, and a struct argument must match its parameter's struct type. A typed pointer assigned a non-pointer (`var p: *i64 = 7`) warns, and so does integer arithmetic with a float operand. Generics (`fn foo<T>()`, `struct Box<T>`) are instantiated per type argument; traits and `impl` blocks are checked, trait bounds (`<T: Show>`) are checked at the definition and at every instantiation, and `dyn Trait` is a checked trait object. See the guide's *Traits and impl blocks*, *Trait objects: `dyn`* and *Generic Functions*.
 
 ### Is it fast?
-The compiler self-compiles in ~920 ms (923 ms at the v6.6.19 release gate; cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.59 MB output — 1,586,184 B at v6.6.19 — `BENCHMARKS.md` carries the canonical, every-release figure). ⚠ Treat a single self_compile figure as noise: this box read 648–701 ms across one release with no code change between runs, and 731 vs 734 ms across two runs an hour apart at v6.6.1. Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~650 ms as growth-tax over the v6.0.x–v6.4.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error, the v6.4.x SIMD compute arc — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler compiles itself in a second or two on a desktop x86_64 box, and the result is byte-identical to the compiler that built it (a 3-step fixpoint). Each release's self_compile time and cycc size are recorded in its `CHANGELOG.md` entry (**Bench** and **Size**); `BENCHMARKS.md` tracks self_compile across runs. ⚠ Treat a single self_compile figure as noise: it moves between runs with no code change, and with the box's load. The small `programs/` utilities (`cat`, `wc`, `head`, …) build to static, libc-free binaries of a few KB. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
 ## Troubleshooting
 
 ### Reading a syntax error
-Since **v6.4.60** every diagnostic is `error:<file>:<line>:<col>: <message>`
-followed by the offending source line and a caret (`^`) under the exact column
-— no more opaque `error at token N (type=T)` codes. Since **v6.4.62** cycc runs
-in **panic-mode recovery**: it reports *many* errors in one compile (not just the
+Every diagnostic is `error:<file>:<line>:<col>: <message>` (`<source>` names the
+entry file, an included file's path names that file), followed by the offending
+source line and a caret (`^`) under the exact column. cycc runs in
+**panic-mode recovery**: it reports *many* errors in one compile (not just the
 first), emits **no** output binary when any error fired, and never hangs or
 crashes on hostile input. Common syntax causes:
 - **Missing expression before `;`** — empty assignments like `var x = ;`.
-- **Comparison in a function-call argument** — `f(a == b)` isn't allowed; bind
-  the comparison to a `var` first.
-- **`return` outside a function body**, or a reserved keyword (`default`,
-  `secret`, `pub`, `shared`) used as an identifier.
+- **A reserved keyword used as an identifier** (`default`, `secret`, `pub`,
+  `shared`, …) — the message names the word.
 - **`<` parsed as comparison when you meant generics** — generics live on
   function/struct *definitions* (`fn foo<T>()`), not in expressions.
 
@@ -40,40 +38,35 @@ crashes on hostile input. Common syntax causes:
 the recovery watchdog tripped on deeply malformed input — fix the earliest
 reported error and recompile.)
 
-### "error: duplicate var at token N"
-Two `var` declarations with the same name in the same function. Cyrius has no block scoping — all vars in a function share one scope. Rename the duplicate.
+### "duplicate variable"
+Two `var` declarations with the same name in the same block. Every braced body (`if`, `while`, `for`, a plain `{ }` block, a fn body) is its own scope: a `var` declared inside a block is not visible after it, and one of the same name as an outer variable hides that variable only inside the block. Rename the duplicate, or assign to the existing variable. (A top-level `var` redeclared is not this error — see the guide's *Global Initializers*.)
+
+### "a `: stack` enum returns two values — bind both"
+`Result`, `Option` and `Either` (and any `enum Name: stack`) return a (tag, payload) register pair, so `var r = f();` would keep the tag and drop the payload — it is refused. Bind both halves: `var tag, val = f();`, then test the tag (`is_ok(tag)`) and use `val` as the payload. `f()?` propagates both halves.
 
 ### fixup / function / code-buffer capacity
-As of **v6.2.0 (Phase 0)** the three former pressure tables are **growable** —
-they relocate off-heap and double on demand, ending the cap-raise treadmill that
-ran through v5.x (the fixup table alone went 16K → 32K → 262K → 1M):
-- **fixup table** — grows to a 64M-entry ceiling (was a fixed 1M cap; the old
-  `error: fixup table full` no longer fires)
-- **fn-tables** — grow + rehash to a 32,768-function ceiling (was a fixed 8192 cap)
-- **codebuf** — 8 MiB initial (off-heap), grows +8 MiB per step to a 64 MiB ceiling
-  (was a fixed 3 MB in-heap cap; growable-by-doubling since v6.2.0, 8 MiB + linear at v6.4.49)
+The three former pressure tables are **growable** — each grows on demand into
+off-heap memory:
+- **fixup table** — grows to a 64M-entry ceiling
+- **fn-tables** — grow + rehash to a 131,072-function ceiling
+- **codebuf** — 8 MiB initial, grows +8 MiB per step to a 64 MiB ceiling
 
+(On the cx bytecode target the fixup table and the code buffer are fixed-size.)
 You'd only hit a ceiling on a genuinely pathological compilation. `cyrius capacity
---check src/main.cyr` still reports headroom; splitting into separately-compiled
-units remains the fallback for the rare ceiling case.
+--check src/main.cyr` reports headroom against every table; splitting into
+separately-compiled units remains the fallback for the rare ceiling case.
 
 ### Program exits with wrong code
 Exit codes are truncated to 0-255 (Linux limitation). Use `print_num()` or `fmt_int()` to display values larger than 255.
 
-### Enum values are 0 inside functions
-This was a bug (fixed long ago). If you're on a pre-v1 version, update to a current release. The fix: enum init code must run before global var init code in the compiler entry point.
-
-### "include" string literal breaks compilation
-The preprocessor eats `"include "` patterns in string literals. Workaround: build the pattern at runtime using `store8()`. See the cybs source for an example.
-
 ### aarch64 binary crashes with SIGILL
-Check that you're using `cycc_aarch64` (the cross-compiler) and running via `qemu-aarch64`. Common encoding bugs were fixed long ago; update to a current release.
+Check that you built it for aarch64 — `cyrius build --aarch64 <src> <out>` (which runs the `cycc_aarch64` cross-compiler) — and that you run it on aarch64 hardware or under `qemu-aarch64`. An x86_64 binary on an aarch64 host, or the reverse, fails before your code runs.
 
 ### Vec bounds check aborts
 `vec_get`/`vec_set` abort on out-of-bounds access. Check your indices. Use `vec_len()` to verify before accessing.
 
 ### `alloc()` returns 0
-You forgot to call `alloc_init()` at the start of `main()`.
+The request was zero or negative, larger than `ALLOC_MAX` (2 GiB), or the OS refused the memory. It is not a missing `alloc_init()`: that call is optional, and the first `alloc()` sets up the heap.
 
 ### Strings print garbage
 String literals are null-terminated, but if you're building strings manually, make sure to `store8(buf + len, 0)` for the null terminator.
@@ -82,16 +75,15 @@ String literals are null-terminated, but if you're building strings manually, ma
 
 ## Known Limitations
 
-1. No `&&`/`||` mixed in same condition — use nested `if`
-2. For loop step must be simple assignment (`i = i + 1`)
-3. Exit codes truncated to 0-255
-4. Max 4096 global vars with non-literal initializers per compilation unit (raised from 1024 at v6.3.41); integer-literal inits and enum members don't count (use enums for constants)
-5. Fixup entries: growable since v6.2.0, 64M-entry ceiling (was a fixed 1M cap — `cyrius capacity --check` to monitor headroom)
-6. Functions per compilation: growable since v6.2.0, 32,768 ceiling (was a fixed 8192 cap)
-7. Negative literals work (`-5`, `-1.5`, `-x`). For a FLOAT, never write `0 - N`: an operator is typed by its LEFT operand, so `0 - 1.5` is integer arithmetic on 1.5's bits (it is -3.0 — warned since 6.6.8). Write `-1.5`, `-x` or `0.0 - x` — with `x` typed `f64`; on an UNTYPED var or struct field holding float bits, `-x` is integer negation too, so write `f64_neg(x)`. (This entry used to say "no negative literals — use `(0 - N)`", which was the float trap written down as advice; float unary minus itself was broken until 6.6.8, where `-1.0` was -4.0.)
-8. `default`, `match`, `in` are keywords — don't use as variable names
-9. Block closures (`|x| { ... }`) capture enclosing locals by value (since v6.3.8), but only work inside functions, not at global scope
-10. `f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` are within 1 ulp with IEEE special values on every target (6.6.8), but not bit-identical ACROSS targets: x86 uses x87, aarch64 a software port. For identical bits everywhere call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` / `_f64_exp2_polyfill` in `lib/math.cyr` directly — supported entry points despite the `_` prefix (see `docs/stdlib-reference.md`, *math.cyr*); the sin/cos/atan polyfills stay private. See the guide's *Math Builtins*.
+1. A classic `for` step is ONE assignment — `=` or a compound operator (`i = i + 1`, `i += 2`, `p.n += 1`) — not a call, not `i++`, not a comma list
+2. Exit codes truncated to 0-255
+3. At most 1,048,576 globals, enum members and top-level arrays per compilation unit (the var table); globals with non-literal initializers have no separate cap
+4. Fixup entries: growable to a 64M-entry ceiling (`cyrius capacity --check` to monitor headroom)
+5. Functions per compilation: growable to a 131,072 ceiling
+6. Negative literals work (`-5`, `-1.5`, `-x`). For a FLOAT, never write `0 - N`: an operator is typed by its LEFT operand, so `0 - 1.5` is integer arithmetic on 1.5's bits (it is -3.0 — the compiler warns). Write `-1.5`, `-x` or `0.0 - x` — with `x` typed `f64`; on an UNTYPED var or struct field holding float bits, `-x` is integer negation too (warned when an untyped variable was initialised from a float), so write `f64_neg(x)`.
+7. Reserved words are a class, not a short list — the builtins and intrinsics (`syscall`, `load64`, the `f64_*` builtins, `sizeof`, `fncall0`..`fncall8`, …) and the statement keywords (`default`, `match`, `in`, `trait`, `impl`, `dyn`, `do`, `true`, `false`, `const`, …) cannot be identifiers. The error names the word you hit; see the guide's reserved-word note under *Functions*. `loop` and `kernel` are contextual and stay usable as names.
+8. A capturing closure (one that reads an enclosing local) takes at most five parameters on Linux and macOS, three on Windows — its environment rides in one argument register — and needs `include "lib/alloc.cyr"` for its heap environment. Closures work at top level as well as inside functions.
+9. `f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` and `f64_atan` are within 1 ulp with IEEE special values on every target, but not bit-identical ACROSS targets: x86 uses x87, aarch64 a software port. For identical bits everywhere call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` / `_f64_exp2_polyfill` / `_f64_atan_polyfill` in `lib/math.cyr` directly — supported entry points despite the `_` prefix (see `docs/stdlib-reference.md`, *math.cyr*). `f64_sin` / `f64_cos` already run the same polyfill on every target (include `lib/math.cyr` to use them). See the guide's *Math Builtins*.
 
 ## Gotchas
 
@@ -99,9 +91,13 @@ String literals are null-terminated, but if you're building strings manually, ma
    `GLOBAL` each iteration. If the body modifies `GLOBAL`, the loop count changes.
    Fix: `var limit = GLOBAL; for (var i = 0; i < limit; ...)`.
 
-2. **Operator overloading with stack structs**: `a + b` where `a` is a struct
-   literal (`var a = Point { 1, 2 }`) passes the first field value, not the address.
-   Works correctly for pointer-based types (`Str`, `Vec`).
+2. **Operator overloading passes a struct by its size**: `a + b` on struct values
+   calls `T_add(a, b)`; an operand of 8 bytes or less arrives by value, a larger one
+   (`var a = Point { 1, 2 }`) by address. Type the operator fn's parameters
+   (`fn Point_add(a: *Point, b: *Point)` or `a: Point`) so `a.x` resolves.
 
-3. **Enum constructors need alloc**: `Ok(42)` calls `alloc(16)` internally.
-   Must call `alloc_init()` before using auto-generated constructors.
+3. **Boxed enum constructors need `lib/alloc.cyr`**: a payload variant of a plain
+   `enum` (no `: stack`) allocates its box with `alloc()`, so include `lib/alloc.cyr`
+   wherever you construct one (`alloc_init()` is optional). `Ok(42)` does not
+   allocate: `Result`, `Option`, `Either` and any `enum Name: stack` return a
+   (tag, payload) register pair.

@@ -1,6 +1,8 @@
 # `lib/tls.cyr` — hook-surface contract
 
-Formal contract for the public surface of `lib/tls.cyr`, **pinned at 6.6.13**.
+Formal contract for the public surface of `lib/tls.cyr`, **pinned at 6.6.13** and amended in
+place through 6.6.17 (each amendment names its release in the row it changed). No release from
+6.6.18 through 6.7.9 amended it.
 
 It was first pinned at v5.10.42, after the surface stabilised across v5.6.40 (ALPN hook),
 v5.10.13 (typed wrappers), v5.10.21 (session + 0-RTT) and v5.10.27 (staged connect for

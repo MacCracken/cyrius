@@ -1,6 +1,6 @@
 # Cyrius Benchmarks
 
-> **This page is a pointer hub.** Live benchmark data lives in three
+> **This page is a pointer hub.** Live benchmark data lives in a few
 > places, each on its own update cadence. Use the table below to find
 > the source you need.
 
@@ -8,9 +8,11 @@
 
 | You want… | Read this | Refreshed |
 |-----------|-----------|-----------|
-| **Current** compiler self-host + stdlib microbench timings (3-tier auto-gen, machine-readable run history) | [`/BENCHMARKS.md`](../BENCHMARKS.md) at repo root | Every `sh scripts/bench-history.sh` invocation; CSV history in `bench-history.csv`. Mandatory on every release (release-gate step 5) |
+| **Current** compiler self-host + stdlib microbench timings (3-tier auto-gen, machine-readable run history) | [`/BENCHMARKS.md`](../BENCHMARKS.md) at repo root | Every `sh scripts/bench-history.sh` invocation; CSV history in [`bench-history.csv`](../bench-history.csv) (repo root). Mandatory on every release (release-gate step 5) |
+| What a recorded row means — the measurement regimes, and which historical rows are not comparable | [`docs/development/benchmark-regimes.md`](development/benchmark-regimes.md) | When the measurement method changes |
+| The headline per release (self_compile ms + cycc size, and the same-box A/B against the previous release) | each release's **Bench** / **Size** lines in [`CHANGELOG.md`](../CHANGELOG.md) | Every `.NN` release |
 | `exit42` binary size across languages (C / Rust / Go / Zig / Cyrius) on Linux ELF + Windows PE | [`docs/size-comparisons.md`](size-comparisons.md) | Every minor / major release |
-| Compiler perf-arc narrative (v5.6.x optimization arc: peephole / regalloc / DCE per-pass deltas) | [`docs/development/benchmarks.md`](development/benchmarks.md) — historical | Frozen — bounded to v5.6.x; do NOT quote as current state |
+| Compiler perf-arc narrative (v5.6.x optimization arc: peephole / regalloc / DCE per-pass deltas) | [`docs/development/archive/benchmarks.md`](development/archive/benchmarks.md) — historical | Frozen — bounded to v5.6.x; do NOT quote as current state |
 | Toolchain disk footprint (cycc + cyrius + cyrfmt + cyrlint + …) | [`docs/size-comparisons.md`](size-comparisons.md) §"Cyrius self-host context" | Every minor / major release |
 
 ## Auto-generated, not hand-maintained
@@ -44,7 +46,13 @@ auto-highlights drift between the most recent three runs.
 ⚠ Read a single run with suspicion. The v6.5.7 entry recorded 649 / 670 /
 701 ms for three runs of the **same binary** — a 52 ms spread, wider than
 the release-over-release delta — so quote a range, and triage a perf move
-as growth-tax by default rather than bisecting on one number.
+as growth-tax by default rather than bisecting on one number. The load on
+the box matters as much: `bench-history.csv`'s `compiler/self_compile` row
+reads 1,291 ms at the 6.7.7 gate (`07bcc23f`), **1,768 ms** at the 6.7.8 gate
+(`b50fcf60`, a box at load average ~8) and 1,437 ms at the 6.7.9 gate
+(`fbcbc512`) — while the same-box interleaved A/B that 6.7.8's CHANGELOG
+entry records measured +0.4 % against 6.7.7 on 6.7.7's source. The A/B, not
+the history row, is the release-over-release figure.
 
 ## Why this stub exists
 
@@ -56,7 +64,7 @@ established `size-comparisons.md` as the per-release binary-size
 surface; the v5.7.x `scripts/bench-history.sh` introduction
 established `BENCHMARKS.md` (root) as the auto-gen perf surface.
 
-This stub stays at `docs/benchmarks.md` so external links (README,
+This stub stays at `docs/benchmarks.md` so links to it (README,
 vidya entries, CI workflow's "Required docs exist" check in
 `.github/workflows/ci.yml`) keep resolving — but every link here is
 a pointer at a more authoritative source.

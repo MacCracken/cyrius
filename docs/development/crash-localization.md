@@ -3,8 +3,9 @@
 Since v4.3.1, the cyrius compiler can dump a symbol table during compilation.
 Combined with systemd-coredump and a little ELF arithmetic, this turns an
 opaque SIGSEGV into a concrete `function + offset` trace — even without gdb
-installed. (The compiler binary was renamed `cc3` → `cc5` at v5.0.0 and `cc5` →
-`cycc` at v6.0.0; `cycc` is the permanent name per the binary-name rule in CLAUDE.md.)
+installed. Every backend writes the dump except cx (x86_64 ELF since v4.3.1;
+aarch64 ELF, Mach-O and PE since v6.3.23 — `_emit_sym_dump` in
+`src/backend/common/runtime.cyr`).
 
 ## Usage
 
@@ -21,6 +22,11 @@ CYRIUS_SYMS=/tmp/myproj-syms.txt cyrius build
 ```
 
 Zero cost when the env var is unset — the feature is purely opt-in.
+
+The addresses are where the function sits in the image. A default (non-PIE)
+Linux ELF loads at `0x400000` (a PE at its ImageBase), so they match the
+absolute addresses in a stack trace; with `--pie` the image base is 0, so
+match a frame's `+ 0x…` offset from the binary instead.
 
 ## Mapping a crash to a function
 
@@ -63,10 +69,7 @@ don't appear in the stack — the callee's caller is the next frame up.
 - **Live tracing**: install `strace` — syscall-level tracing shows which
   fd/path/size combo preceded the fault.
 
-## Known open bugs (diagnosed with this tool)
+## Open bugs
 
-Earlier known-bug list (libro PatraStore Heisenbug from v3.4.8+) has
-since resolved — current open bugs live in
-[`docs/development/issues/`](issues/). This page focuses on the
-CYRIUS_SYMS mechanism itself, which has been stable since v4.3.1
-across the cc3 → cc5 → cycc renames and through v6.4.x.
+Open bugs, including crashes this tool localized, live in
+[`docs/development/issues/`](issues/).

@@ -131,7 +131,7 @@ the 5 → 6 step.
 
 ## Why a single timer constant cannot be written down
 
-One clock read, measured on the four hosts the release gate runs on:
+One clock read, measured on the dev box and three of the release gate's hosts:
 
 | host | clock path | cost |
 |---|---|---|
@@ -141,7 +141,8 @@ One clock read, measured on the four hosts the release gate runs on:
 | ach (macOS x86_64) | libSystem `clock_gettime_nsec_np` | ~64–68 ns |
 
 A 230× spread. The filing asked for the constant to be corrected to ~1,320 ns; that
-value would have been wrong on three of the four hosts, and **4–8× too high** on ecb.
+value would have been wrong on three of the four hosts, and **about 40–90× too high** on ecb
+(the documented ~120 ns it replaced was already 4–8× too high there).
 So `lib/bench.cyr` measures it instead — `bench_clock_overhead_ns()`.
 
 ⚠ **It also moves between reboots of the same machine.** The TSC-watchdog trip

@@ -6,6 +6,18 @@ type: state
 
 # Documentation Health — cyrius
 
+> **2026-10-12 (6.7.9) — the user-doc sweep** ("a cyrius doc sweep and cleanup, README and guides where needed"):
+> 19 user / reference / dev docs re-verified in five lanes, each a fixer then an independent verifier that re-derived
+> every changed claim (figures from the tree and the tagged 6.7.9 slot, examples compiled and RUN — the README's on
+> x86, aarch64, PE, cx and under `CYRIUS_BOUNDS=1` — links and anchors resolved, the doc-reading gates re-run). What it
+> found: **the README's language example no longer compiled** on 6.7.x (an `impl` of an undeclared trait, `load64(self
+> + 8)` on an untyped `self`); its feature list stopped at 6.6 (no traits, `dyn`, tuples, default / named arguments,
+> bounds mode); the toolchain sizes were 6.6.19's; `cyrius audit` was described as running vet and deny, which it does
+> not; `struct-packing.md` (last touched 2026-04-19) and `fncall-abi.md` predated the by-value copy and the 9–16 B
+> result pair; the guide's typed-errors table named the pre-bayan `json` / `toml` / `cyml` modules. No rules file,
+> ADR, issue, CHANGELOG or roadmap was edited by the sweep (each verifier checked `git diff --name-only`). Stale lines
+> found in files outside the sweep went to the user or to `issues/`, not edited.
+>
 > **2026-10-08 (6.7.6) — `docs/development/` audit only:** seven docs archived and the three per-release migration
 > notes consolidated into `ecosystem-migration.md` (Tier 3 below); the rest of this ledger is the 6.6.20 sweep's.
 >
@@ -333,10 +345,11 @@ type: state
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh — re-verified at 6.6.20** | 22 | Tier 1: `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `VERSION`, `BENCHMARKS.md`, `cyrius-guide.md`, `faq.md`, `stdlib-modules.md`, `ecosystem.md`, `size-comparisons.md`, `api-surface.snapshot` · Tier 2: `package-format.md` · Tier 3: `state.md`, `roadmap.md`, `roadmap_6.md`, `roadmap-future.md`, `completed-phases.md`, `cycle-discipline.md`, `ecosystem-migration-6.6.18.md`, `dev-tools-linux.md`, `lib-tls-contract.md` · Tier 4: ADR-003. |
-| 🟡 **Stale in part — refresh in place** | 3 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no vulnerability past the thread guard-page hardening item). (`module-manifest-design.md` was archived 2026-10-08.) |
-| 🟠 **Read-through outstanding** | 1 | `stdlib-reference.md` — coverage of the 106 modules last counted at v6.5.10. |
-| 🔵 **Evergreen / not re-verified at 6.6.20** | 12 | `tutorial.md`, `docs/benchmarks.md`, `editor-integration.md`, `benchmark-regimes.md`, `crash-localization.md`, ADR-001/-002/-004/-005/-006, `fncall-abi.md`, `struct-packing.md`. |
+| ✅ **Fresh — re-verified at 6.7.9 (2026-10-12 sweep)** | 19 | Tier 1: `README.md`, `cyrius-guide.md`, `faq.md`, `tutorial.md`, `editor-integration.md`, `stdlib-modules.md`, `stdlib-reference.md` (coverage: see its row), `size-comparisons.md`, `docs/benchmarks.md`, `platform-status.md` · Tier 2: `architecture/cyrius.md`, `package-format.md` · Tier 3: `dev-tools-linux.md`, `lib-tls-contract.md`, `threat-model.md`, `benchmark-regimes.md`, `crash-localization.md` · Tier 4: `fncall-abi.md`, `struct-packing.md`. |
+| ✅ **Fresh — re-verified at 6.6.20** | 14 | Tier 1: `CHANGELOG.md`, `CLAUDE.md`, `VERSION`, `BENCHMARKS.md`, `ecosystem.md`, `api-surface.snapshot` · Tier 3: `state.md`, `roadmap.md`, `roadmap_6.md`, `roadmap-future.md`, `completed-phases.md`, `cycle-discipline.md`, `ecosystem-migration-6.6.18.md` · Tier 4: ADR-003. |
+| 🟡 **Stale in part — refresh in place** | 0 | None (the three 6.6.20 rows — `platform-status.md`, `architecture/cyrius.md`, `threat-model.md` — re-verified 2026-10-12). |
+| 🟠 **Read-through outstanding** | 0 | None (`stdlib-reference.md` re-counted 2026-10-12; its tables stay curated, not exhaustive — see its row). |
+| 🔵 **Evergreen / not re-verified at 6.6.20** | 5 | ADR-001/-002/-004/-005/-006. |
 | 🗄 **Historical, kept in place** | 0 | The five moved to `docs/development/archive/` on 2026-10-08 (the per-release migration notes consolidated into `ecosystem-migration.md`). |
 | 📄 **Point-in-time, not refreshed** | 5 | The 3 active audits (Tier 5) and the 2 open proposals (Tier 6). |
 | 📦 **Archive — frozen by design** | 520 | `docs/development/archive/` (**8**) + `docs/development/issues/archived/` (**473**) + `docs/development/proposals/archived/` (**34**) + `docs/audit/archived/` (**5**). |
@@ -373,21 +386,21 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `README.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Every figure re-derived (CLN-09): cycc 1,586,184 B, the cross / LSP / linker / toolchain sizes from the tagged 6.6.19 slot, 106 modules with current fold versions, 5,827 API fns, 482 `.tcyr`, 376 registered gates, 107 reserved tokens, the *Caps + heap* paragraph from the heap map. It had been frozen at v6.6.1 while this table called a v6.3.0 snapshot Fresh. |
+| `README.md` | 2026-10-12 | ✅ Fresh (re-derived 6.7.9) | Every figure re-derived from the tree and the tagged 6.7.9 slot (cycc 2,057,736 B, the cross / LSP / linker / toolchain sizes, the language-surface table from `util.cyr`'s tables, the twelve folds from `lib/` headers). The language example rewritten — the old one no longer compiled on 6.7.x — and RUN on x86 / aarch64 / PE / cx / `CYRIUS_BOUNDS=1` (exit 55); the feature list covers 6.7.x; the volatile counts point at `state.md`. |
 | `CHANGELOG.md` | 2026-10-06 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through **v6.6.19**; the `[6.6.20]` section is written at the closeout's integration. |
 | `CLAUDE.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Version 6.6.20 (version-bump). Derived counts re-derived (CLN-06: lib 106, programs 85, the reserved class 107 with `f64_sqrt` / `callptr`, the src listing), the `vr01_` instruction replaced (CLN-04), stale `file:line` cites cited by name. |
 | `VERSION` | 2026-10-06 | ✅ Fresh | `6.6.20`. Single source of truth; bumped only by `scripts/version-bump.sh`. |
 | `BENCHMARKS.md` (root) | 2026-10-06 | ✅ Fresh | Auto-generated by `scripts/bench-history.sh` at every release gate (6.6.19: self_compile 923 ms). |
-| `docs/guides/cyrius-guide.md` | 2026-10-06 | ✅ Fresh | Covers the minor's features (`[embed]`, `--print-config`, `help manifest`, `--poison`, `#deprecated`, `f64_le`/`ge`/`trunc`, the value-form `Result`, pointer fields — checked by the 6.6.20 cleanup audit). 6.6.20 replaced its `vr01_` wrapper instruction and the aarch64 `f32v8` "return-0 stubs" caveat. |
-| `docs/guides/tutorial.md` | 2026-09-06 | 🔵 Not re-verified at 6.6.20 | No version or size claims to drift; onboarding prose. |
-| `docs/guides/faq.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Self-compile and size re-derived (923 ms / 1,586,184 B at v6.6.19). |
-| `docs/stdlib-modules.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | 106 modules; `boxed`, `alloc_cx`, `tls_hostid`, `poison` indexed (none was). Refresh when a `lib/*.cyr` module is added or removed. |
-| `docs/stdlib-reference.md` | 2026-10-06 | 🟠 Read-through (coverage) | Per-function API; touched every release a surface changes. Coverage of the 106 modules was last counted at v6.5.10 (65 of 99); re-count at the next doc sweep. Mirrors `docs/api-surface.snapshot`. |
-| `docs/benchmarks.md` | 2026-08-07 | 🔵 Evergreen | Pointer hub for the three bench surfaces (`/BENCHMARKS.md`, size comparisons, the historical perf arc). |
+| `docs/guides/cyrius-guide.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | 136 headings, every anchor resolves; 6.7.x contradictions in older sections corrected (multi-value returns, argument limits, `dyn`, defaults / named arguments, the bounds mode); the typed-errors table names `lib/bayan.cyr`. `guide_examples_compile`, `manifest_key_inventory`, `bounds_mode_checked`, `dyn_checked`, `global_redeclaration_one_definition` green. Still carries pre-6.7 "before vX" notes — which toolchains count as supported is the user's call. No table of contents. |
+| `docs/guides/tutorial.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Every step run as written (`cyrius init`, build, run, test); the bootstrap comment says what `bootstrap.sh` builds. |
+| `docs/guides/faq.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Every example compiled and run with 6.7.9; answers predating 6.7.x corrected; it quotes no volatile size or timing figure. A top-level `return` is no longer listed as a syntax error (6.7.9 compiles it — whether it is valid cyrius is the user's call). |
+| `docs/stdlib-modules.md` | 2026-10-12 | ✅ Fresh (re-derived 6.7.9) | 106 `lib/*.cyr` + the `lib/unicode/` modules, each listed once; refresh when a module is added or removed. |
+| `docs/stdlib-reference.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Every module has its section and every documented signature matches `lib/` (0 mismatches); the 6.7.x additions documented. The tables stay curated: 744 of 1,819 first-party public symbols are untabulated (simd, str, chrono, async, hashmap, net, the raw syscall wrappers) — `docs/api-surface.snapshot` is the exhaustive list. |
+| `docs/benchmarks.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Pointer hub for the three bench surfaces; its current figures come from the recorded bench history. |
 | `docs/ecosystem.md` | 2026-10-06 | ✅ Fresh (verified 6.6.20) | The 12 fold rows equal each fold's latest tag (the 6.6.20 downstream check; `fold_table_matches_vendored` gates it). |
-| `docs/guides/editor-integration.md` | 2026-07-12 | 🔵 Not re-verified at 6.6.20 | LSP + editor configs. |
-| `docs/size-comparisons.md` | 2026-10-06 | ✅ Fresh (re-measured 6.6.20) | The three Cyrius exit42 rows re-measured and RUN (504 / 4,448 / 1,536, unchanged); the self-host block re-read from the tagged 6.6.19 slot — it still carried the 35 MB installed-tree error the README had fixed at v6.6.1. The C / Rust / Go / Zig sweep is still the v6.5.33 one, as its header says. |
-| `docs/platform-status.md` | 2026-10-06 | 🟡 Partly re-derived | The x86 cycc size and the cross-host line (crossos 197 at the 6.6.19 gate) re-derived at 6.6.20; the rows are as verified 2026-09-08 and its header now says so. Full row-by-row re-check due at the next sweep. |
+| `docs/guides/editor-integration.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Matches what `programs/cyrius-lsp.cyr` implements, including its gaps (diagnostics land on the line only; `.cyr` files only); covers Neovim. The `cyrius-plugins` marketplace claims were not checked (another repo). |
+| `docs/size-comparisons.md` | 2026-10-12 | ✅ Fresh (re-measured 6.7.9) | Every exit42 row re-measured and RUN on Linux and PE (Cyrius 504 / 4,448 / 1,536, unchanged); C / Rust / Go / Zig re-run on the current toolchains and the multipliers recomputed; the reproduction block runs as written. |
+| `docs/platform-status.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Every row re-checked against the live tree (the cx guest contract, Windows / macOS / aarch64 / agnos); cass's 32 full-corpus failures from v6.5.33 are stated as open (untriaged). |
 | `docs/api-surface.snapshot` | 2026-10-06 | ✅ Generated | 5,827 lines. Regenerated by `cyrius_api_surface`; gated in `check.sh`. |
 
 ---
@@ -396,8 +409,8 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `cyrius.md` | 2026-07-12 | 🟡 Stale in part | Principles and the self-hosting framing are durable; its per-platform table is "as of v6.4.62". Re-verify the table at the next sweep. |
-| `package-format.md` | 2026-10-05 | ✅ Fresh | Touched for 6.6.17's manifest work. |
+| `cyrius.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | The source layout matches `src/` (forks, `frontend/`, `backend/`, `common/`); the bootstrap text says what cybs builds (gen1, then gen2 == `build/cycc`). |
+| `package-format.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Against `cbt/` (the `cyrius.cyml` keys, distlib, the lock); `package` described as what it does (it compiles; no `.ark` writer exists). |
 
 ---
 
@@ -414,11 +427,11 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 | `completed-phases.md` | 2026-10-08 | ✅ Fresh | v6.7.x section (6.7.0–6.7.6); the v6.5.x close corrected to .73; v6.6.x / v6.7.x rows in the per-minor table. |
 | `cycle-discipline.md` | 2026-10-08 | ✅ Fresh | The closeout checklist + ledger. |
 | `ecosystem-migration.md` | 2026-10-08 | ✅ Fresh — new | The consolidated consumer migration guide (pin-move procedure + per-release changes 6.6.0 → 6.7.6); replaces the three per-release notes. |
-| `dev-tools-linux.md` | 2026-10-06 | ✅ Fresh | Per-environment toolchain. |
-| `benchmark-regimes.md` | 2026-10-01 | 🔵 Evergreen ledger | Which bench rows are comparable; extend it when a measurement regime changes (a gate requires the file). |
-| `lib-tls-contract.md` | 2026-10-05 | ✅ Fresh | Stdlib TLS contract, re-pinned to the 6.6.13 surface. Verify at the next minor closeout. |
-| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | Names no vulnerability past the thread guard-page item; re-read at the next full security audit. |
-| `crash-localization.md` | 2026-10-08 | ✅ Fresh | The `CYRIUS_SYMS` mechanism; its example set the variable on `cat` instead of the compiler (fixed, verified through `cyrius build`). |
+| `dev-tools-linux.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Tools and commands checked to exist and run; the CI runner list and the cass staging path corrected. |
+| `benchmark-regimes.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Matches the bench scripts; one figure's arithmetic corrected. Extend it when a measurement regime changes (a gate requires the file). |
+| `lib-tls-contract.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Against `lib/tls*.cyr` and the 6.7.x CHANGELOG TLS entries. |
+| `threat-model.md` | 2026-10-12 | ✅ Facts re-checked 6.7.9 | Stale facts corrected only — not a security review. Its framing (compiled source as untrusted input, `cyrius audit` before every commit) differs from CLAUDE.md's security rule; reported to the user, neither file changed. |
+| `crash-localization.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | The `CYRIUS_SYMS` mechanism and its commands checked. |
 | `archive/` | 2026-10-08 | 📦 Archived | 2026-10-08 audit moved here: `migration-strategy.md` (the v5.7.39 Rust-port wave plan), `ecosystem-migration-6.6.2.md` / `-6.6.13.md` / `-6.6.18.md` (consolidated into `ecosystem-migration.md`), `module-manifest-design.md` (its non-goals — no lock file, no transitive deps — contradict today's manifest; the guide and `architecture/package-format.md` are current), `benchmarks.md` (the v5.6.x arc), `process-notes.md` (pre-v5.0.0 journal). |
 
 ---
@@ -471,8 +484,8 @@ Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` b
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `fncall-abi.md` | 2026-09-17 | 🔵 Not re-verified at 6.6.20 | `fncallN` (int-class scalar calls). |
-| `struct-packing.md` | 2026-04-19 | 🔵 Not re-verified at 6.6.20 | `fncallN` struct-by-value shims. |
+| `fncall-abi.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Against today's codegen: the by-value copy (6.7.7), 9–16 B results as a pair, the cx vector band; probes on x86 / aarch64 / cx / PE. A >16 B struct result through `fncallN` is not refused (filed). |
+| `struct-packing.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Rewritten to the CURRENT layout rule (verified by `sizeof` / offset probes); B7 packed narrow fields is 6.7.10 work and is not documented yet. |
 
 ---
 

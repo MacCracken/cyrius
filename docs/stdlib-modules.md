@@ -1,19 +1,13 @@
 # Standard Library — Module Index
 
 > Categorized inventory of the Cyrius standard library: **106 `lib/*.cyr`
-> modules** (derived at 6.6.20) (vendored sibling distfiles folded byte-identical, sandhi-pattern)
-> with **0 git deps**. This is the *what-exists* map; for per-function
-> signatures see [`stdlib-reference.md`](stdlib-reference.md).
->
-> ⚠ **The category table below itemises ~75 of those 106 by design.** The
-> remainder are per-OS / per-arch sub-modules dispatched from a parent
-> (`alloc_windows`, `args_win`, `async_macos`, `process_agnos`, `sync_windows`,
-> `thread_win`, the six `syscalls_*` peers, the six `tls_native_*` splits, …);
-> their public surface IS the parent's, so they are covered by
-> `stdlib-reference.md`'s "Platform sub-modules" section rather than listed
-> twice. Derive the real count with `ls lib/*.cyr | wc -l` — this header said
-> **99** until v6.6.1 and **102** until 6.6.20 (it missed `boxed`, `poison`, `tls_hostid`
-> and the cx allocator peer `alloc_cx`, all added in v6.6.x).
+> modules** plus the `lib/unicode/` family (3 modules and 4 data / decoder sidecars), at 6.7.9 —
+> the twelve folded stdlibs vendored byte-identical among them (sandhi-pattern), with **0 git
+> deps**. Every module appears once in the category table below, the per-OS / per-target peers
+> and the `tls_native_*` splits in a row of their own (their public surface IS the parent's).
+> This is the *what-exists* map; for per-function signatures see
+> [`stdlib-reference.md`](stdlib-reference.md). Re-derive the count with `ls lib/*.cyr | wc -l`
+> and `ls lib/unicode/`.
 
 ## Fold-in lineage
 
@@ -21,12 +15,8 @@ Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
 
 ⚠ This list records **fold-in events** — which release first vendored each dep.
-It is history and does not move. Two entries used to append a current-state
-aside ("15,119 lines at the current 1.9.10 fold", "6,689 lines at the current
-1.0.6 fold"); both were stale by v6.6.1 (sandhi is at 1.9.16, niyama at 1.0.10,
-and the niyama fold is 7,323 lines, not 6,689). A live number parked inside a
-historical entry has nothing to keep it honest, so they are removed — current
-fold versions live in [ecosystem.md](ecosystem.md)'s gated table.
+It is history and does not move; current fold versions live in
+[ecosystem.md](ecosystem.md)'s gated table.
 
 - v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy)
 - v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
@@ -35,6 +25,7 @@ fold versions live in [ecosystem.md](ecosystem.md)'s gated table.
 - **v6.0.x** — mabda 3.0.1 (GPU integration)
 - **v6.1.25** — bayan 1.0.0 (data-format & big-integer **carve** OUT of stdlib: json / toml / cyml / csv / base64 / bigint / u128 → `lib/bayan.cyr`, public fns renamed `bayan_*` with back-compat aliases; opt-in `include "lib/bayan.cyr"`).
 - **v6.1.26** — ganita 1.0.0 (linear-algebra & advanced-math **carve**: matrix + linalg + the advanced half of math → `lib/ganita.cyr`, renamed `ganita_*` with aliases. Closes Phase E — the stdlib data/math carve).
+- **v6.2.26** — yantra 1.0.0 (UI / end-to-end testing: WebDriver + Appium + Chromium-CDP RPC).
 
 Mabda (GPU integration) folded into stdlib at 3.0.1 (v6.0.x,
 sandhi-pattern), removed from `[deps]`; with mabda vendored its
@@ -42,10 +33,10 @@ transitive `agnosys` is no longer pulled, leaving zero `[deps.*]`
 git resolutions.
 
 The folded distlibs keep their own upstream repos and own API docs —
-this index only records the module's presence + fold tag. The folds at
-sandhi / sigil bump regularly (e.g. sandhi 1.4.10 / sigil 3.7.8 at
-v6.1.22); the version in the category table is the *initial* fold, not
-the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
+this index only records the module's presence and the release that first
+folded it. Every fold is re-vendored as it releases, so the release named in
+the category table is the *initial* fold, not the current pin (see
+[`ecosystem.md`](ecosystem.md) for live pins).
 
 ## First-party additions
 
@@ -77,6 +68,9 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
   IP literal vs DNS name, RFC 9525 §6.3 — shared by the native and libssl TLS backends, internal to the TLS
   stack); `lib/poison.cyr` (6.6.18: the shared poison core behind `cyrius fuzz --poison` — fill byte,
   redzones, report, exit 86 — and `poison_allocator()`).
+- **6.7.x — no new module files; new surface inside existing ones** (6.7.9): `sys_ppoll` in every
+  syscall peer (and `sys_ioctl` / `sys_fstatat` on agnos, as -38 declines), `sock_set_nodelay` in
+  `lib/net.cyr`, `f64_parse_n` in `lib/math.cyr`.
 
 ## Categories
 
@@ -85,17 +79,17 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | Core | string, fmt, **alloc** (global bump + arenas + the `Allocator` vtable; growable arenas + `ARENA_FULL_*` exhaustion policy since v6.5.9), io, vec, slice, str, args, fnptr, flags |
 | Types | **boxed** (runtime-tagged BOX primitives; v6.6.2), tagged (Option / Either), result (Result + `?` operator; v5.8.28-.32 — **all three are the value form since v6.6.0**: a payload variant returns `(tag, payload)` in a register pair, so construction allocates zero bytes), hashmap, hashmap_fast, **hashseed** (per-process hash seed + finalizer shared by both hashmap variants — closes a HashDoS where an attacker precomputes a colliding key set offline from published constants; measured 934× degradation on 8192 keys before it landed), trait, assert, bounds |
 | System | syscalls, callback, process, bench, **sys** (uname / sysinfo / is_root introspection; v6.1.28) |
-| Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, sync (mutex/once over futex), freelist |
-| Testing & bench tooling | **test** (assertion/test-runner primitives), **regression** (bench-regression harness), **audit_walk** (source-tree audit walker), **poison** (the `--poison` core: fill byte, redzones, `poison_allocator()`; 6.6.18) |
-| Math/regex (stdlib primitives) | regex, math (F64 constants + basic ops + gcd/lcm + f64_parse + f64-builtin polyfills) |
+| Concurrency | thread (OS threads on Linux, macOS and Windows + a bounded MPMC channel), thread_local (128 per-thread slots + a slot allocator), atomic, async, sync (portable mutex: futex / `__ulock` / SRWLOCK), freelist (size-class allocator with individual free) |
+| Testing & bench tooling | **test** (assertion/test-runner primitives), **regression** (the check-driver primitives carved from `programs/checks/`: process runs with deadlines, buffer scans, SSH / cross-host helpers), **audit_walk** (source-tree audit walker), **poison** (the `--poison` core: fill byte, redzones, `poison_allocator()`; 6.6.18) |
+| Math/regex (stdlib primitives) | regex, math (F64 constants + basic ops + gcd/lcm + correctly rounded `f64_parse` / `f64_parse_n` + f64-builtin polyfills), **overflow** (the saturating `+\| -\| *\|` and checked `+? -? *?` operators' call targets) |
 | **SIMD** | **simd** — typed vectors (f32v4/f64v2/f64v4/f32v8 + integer vectors i8v16/i16v8/i32v4/i64v2 + unsigned) + packed flat-array verbs (`f32v_`/`f64v_`/`iv_` add/sub/mul/div/sqrt/abs/fmadd/dot/scale/axpy, `iv_dp8`); **Phase 5 complete (v6.4.32)** on all four backends — x86 SSE+AVX2, aarch64 NEON, Win64 PE (value-form params + returns), cx bytecode (per-lane scalar). See `lib/simd.cyr`. |
 | **Data (protobuf)** | **protobuf** — protobuf proto3 wire encode/decode (`lib/protobuf.cyr`). |
-| **Data formats + big-int (bayan)** | **bayan** — json / toml / cyml / csv / base64 / bigint (`u256`) / u128; folded v6.1.25, opt-in `include "lib/bayan.cyr"`; canonical `bayan_*` API + legacy aliases (`json_parse`, `u256_add`, …). Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must include bayan. |
-| **Linear algebra + advanced math (ganita)** | **ganita** — matrix (`ganita_mat_*`) + linalg (LU/det/inv/Cholesky/QR/least-squares/eigen/SVD) + advanced math (transcendental + fibonacci/binomial); folded v6.1.26, opt-in `include "lib/ganita.cyr"`; `ganita_*` + legacy aliases (`mat_mul`, `f64_pow`, …). Keep stdlib `math` in scope (f64-exp/ln polyfills). |
-| Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD), unicode/_decode |
-| Crypto | sha1, keccak, ct (constant-time primitives), overflow, **random** (kernel entropy via getrandom) |
+| **Data formats + big-int (bayan)** | **bayan** — json / toml / cyml / csv / base64 / yaml / pdf / round-trip f64 ↔ decimal / bigint (`u256`) / u128; folded v6.1.25, opt-in `include "lib/bayan.cyr"`; canonical `bayan_*` API + legacy aliases (`json_parse`, `u256_add`, …). The modules that call carved fns — `ws`, `ws_server`, the sigil and yantra folds — include it themselves (6.6.19); `tls_native` gets it through sigil. |
+| **Linear algebra + advanced math (ganita)** | **ganita** — matrix (`ganita_mat_*`) + linalg (LU/det/inv/Cholesky/QR/least-squares/eigen/SVD) + advanced math (transcendental + fibonacci/binomial) + an f32 scalar tier; folded v6.1.26, opt-in `include "lib/ganita.cyr"`; `ganita_*` + legacy aliases (`mat_mul`, `f64_pow`, …). The bundle includes stdlib `math` itself (the f64 polyfills). |
+| Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD) — Unicode 17.0.0; data sidecars unicode/_categories_data, unicode/_casefold_data, unicode/_normalize_data and the shared decoder unicode/_decode |
+| Crypto | sha1, keccak, ct (constant-time primitives), **random** (kernel entropy via getrandom) |
 | Sandboxing | **security** (Landlock policy enums; v5.7.35) |
-| Network | net, http, ws, ws_server, tls, **tls_hostid** (the host-identity classifier both TLS backends share; internal), **tls_native** (sovereign TLS 1.3 client+server, sigil X.509 — default backend since v6.1.21), **sandhi** (HTTP/2 + RPC; folded v5.7.0) |
+| Network | net, http, ws, ws_server, tls, **tls_hostid** (the host-identity classifier both TLS backends share; internal), **tls_native** (sovereign TLS 1.2 + 1.3 client+server, sigil X.509 — default backend since v6.1.21; split since v6.2.5 into tls_native_lowlevel, tls_native_keysched, tls_native_ctx, tls_native_hs13, tls_native_hs12, tls_native_conn), **sandhi** (HTTP/2 + RPC; folded v5.7.0) |
 | Regex | **niyama** (5 engines: bre / re2 / pcre / fuzzy / vim; folded v5.9.0) |
 | Filesystem | fs |
 | Audio | **vani** (ALSA PCM + ring buffer + mixer; folded v5.8.0, refolded v5.8.65) |
@@ -110,6 +104,7 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | UI / E2E testing | **yantra** (folded v6.2.26; UI + end-to-end test framework) |
 | Compression | **sankoch** (folded v5.8.65) |
 | GPU | **mabda** (folded v6.0.x; opt-in `include "lib/mabda.cyr"`; current pin in [ecosystem.md](ecosystem.md)) |
+| Platform sub-modules (included by their parent, never directly) | alloc_windows / alloc_macos / alloc_agnos / alloc_cx (alloc) · args_win / args_macos / args_agnos (args) · async_win / async_macos / async_agnos (async) · fs_win (fs) · process_win / process_agnos (process) · regression_agnos (regression) · sync_windows / sync_macos (sync) · syscalls_x86_64_linux / syscalls_aarch64_linux / syscalls_linux_common / syscalls_macos / syscalls_windows / syscalls_x86_64_agnos (syscalls) · thread_win / thread_macos / thread_agnos (thread) |
 
 ## See also
 
