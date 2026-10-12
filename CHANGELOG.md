@@ -6,8 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.9] — 2026-10-11
 
-⛔ **Do not tag 6.7.9 until yantra 1.0.10 is tagged and `lib/yantra.cyr` is refolded from it** (`cyrius distlib` at
-the tag, byte-compared; its `docs/ecosystem.md` row updated).
+**yantra 1.0.10 refolded** — `lib/yantra.cyr` is `cyrius distlib` at the tag (`53694cc`) with 6.7.9's distlib,
+byte-identical to that output; `docs/ecosystem.md`'s row names it. Besides the version stamp, its Requires block drops
+`include "lib/ws_server.cyr"` (13 leaves): yantra calls none of `ws_server`'s fns — the 14th leaf was 6.7.6's
+directory-order owner artifact, which 6.7.7's distlib fix closed.
 
 A repair batch (the user, 2026-10-11: "a lane of easy to knock out and one for critical / high priority items", to
 take weight off the queue before B7 + P5-B, now 6.7.10): **39 issues in two worktree lanes** — 20 quick fixes (lib /
@@ -433,9 +435,7 @@ ecosystem-migration entry.
   `scripts/ci/no-undefined-fns.sh` (every `tests/` and `programs/` file, floor 19; against 1.0.9 it names all ten).
   yantra's CI ran isolated (sibci): build-and-test, the Chromium and WebDriver E2E and bench green; the Firefox / WebKit
   / Android / iOS files build clean under the new step. The bundle was never affected (`[lib] modules` lists security
-  first) and changes only in its version stamps. ⛔ `lib/yantra.cyr` is refolded (`cyrius distlib` at the 1.0.10 tag,
-  byte-compared) and its `docs/ecosystem.md` row updated once the user tags yantra 1.0.10; 6.7.9 does not tag before
-  that.
+  first). Refolded at the 1.0.10 tag (the header's yantra line): version stamps plus a 13-leaf Requires block.
 
 **The compiler**
 
