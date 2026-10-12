@@ -1812,6 +1812,7 @@ if (_epi_km == 3 || _epi_km == 2) {
     # reach the same `ret` through the parser and got no compensation while this was the
     # only site (measured under OVMF: #UD and #GP respectively). CHANGELOG [6.6.5]
     # Executable mode: exit via syscall(60, exit_code)
+    _cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
     EEXIT(S);
 }
 

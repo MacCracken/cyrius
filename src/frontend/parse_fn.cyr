@@ -11,7 +11,7 @@
 
 # v5.5.38: control-flow fns (if/while/for + cond helpers) extracted.
 include "src/frontend/parse_ctrl.cyr"
-# 6.7.10 (P5-B): the execution-coverage mode — its switch and refusal (PREPROCESS and _tl_pass1 call in).
+# 6.7.10 (P5-B): the execution-coverage mode — its switch, the per-fn counters, the map and the dump.
 include "src/frontend/parse_cov.cyr"
 
 # ================================================================
@@ -12923,6 +12923,7 @@ fn _tl_assert(S, arm): i64 {
 # passes since 6.6.10; cx has no liveness pass and passes 0, so it skips the hint.
 # CHANGELOG [6.6.9] [6.6.10]
 fn _warn_large_static(totvar, dvb, dcn): i64 {
+    totvar = totvar - _cov_bytes;   # 6.7.10: the execution-coverage band and map are the mode's, not the program's
     if (totvar <= 131072) { return 0; }
     syscall(SYS_WRITE, 2, "warning: large static data (", 28);
     PRNUM(totvar);
@@ -15338,7 +15339,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
         EMOVI(S, 0);                                  # dead stub: rax = 0
     } else {
-        PARSE_PROG(S);
+        _cov_body(S, fi, _defstart_ti);   # 6.7.10 (P5-B): the coverage hit, then PARSE_PROG
     }
     # v6.5.69 — THE RESUME DISPATCH, emitted at fn END where every landing pad is already a
     # known code position, so only the single forward jump from the fn top needs patching.

@@ -5631,5 +5631,7 @@ fn PREPROCESS(S): i64 {
     SBL(S, PP_RESOLVE_PKGVER(S + 0x459D000, GBL(S)));
     # 6.7.8 (C2-8): the bounds-checked mode's checker, appended to the finished unit.
     _bnd_finish(S);
+    # 6.7.10 (P5B-2): the execution-coverage mode's dump, likewise (parse_cov.cyr).
+    _cov_finish(S);
     return 0;
 }

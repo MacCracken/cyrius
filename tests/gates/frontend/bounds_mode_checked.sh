@@ -56,7 +56,10 @@
 #       in every script it derives and both named ones (check.sh unsets it with CYRIUS_BOUNDS). E4c:
 #       an inherited CYRIUS_COVERAGE=1 with no CYRIUS_COVERAGE_FILE (which makes every compile that
 #       sees it a refusal — anti-vacuous: shown on cycc(src) first) leaves
-#       scripts/build-cycc-verify.sh and scripts/seed-derive-cycc.sh green
+#       scripts/build-cycc-verify.sh and scripts/seed-derive-cycc.sh green. (6.7.10, P5B-2) E4d: the
+#       same with a CYRIUS_COVERAGE_FILE — the mode then INSTRUMENTS every compile that sees it, so an
+#       unscrubbed script builds an instrumented cycc — green on both (anti-vacuous: the pair changes
+#       cycc(src), as E4b's does)
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
 #       CYRIUS_TARGET_EFI=1 -> refused by name (and nothing more: the refusal is fatal at once, so the
 #       injected checker is never compiled for a target it cannot serve); each control (the same
@@ -161,6 +164,8 @@
 #   MS5c check.sh's CYRIUS_COVERAGE dropped from its unset                   -> RED E4 check.sh
 #   MS5d bootstrap.sh's CYRIUS_COVERAGE dropped from its unset               -> RED E4 bootstrap.sh
 #   MS6  `_pp_env_rung`'s refusal text altered (" (or unset) : ")             -> RED E2 (all three values)
+# 6.7.10 E4d (P5B-2; the same procedure):
+#   MS5e build-cycc-verify.sh's CYRIUS_COVERAGE dropped from its unset       -> RED E4 + E4c + E4d (build-cycc-verify)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -401,6 +406,27 @@ else
     done
 fi
 rm -f "$T/e4c.cc"
+# E4d (6.7.10, P5B-2) — the same with a CYRIUS_COVERAGE_FILE: an inherited mode then INSTRUMENTS
+# every compile that sees it (no refusal), so a script that does not unset it builds an instrumented
+# cycc and its fixpoint goes RED. Premise first (E4b's): the pair changes cycc(src).
+e4d=0
+( CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/e4d.cov"; export CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE; "$CC" < src/main.cyr > "$T/e4d.cc" 2> /dev/null ) || e4d=$?
+if [ "$e4d" != 0 ] || [ ! -s "$T/e4d.cc" ] || cmp -s "$T/e4d.cc" build/cycc; then
+    bad "E4d cannot judge: under CYRIUS_COVERAGE=1 + a FILE cycc(src) is rc $e4d, or build/cycc itself — the premise is gone"
+else
+    for s in scripts/build-cycc-verify.sh scripts/seed-derive-cycc.sh; do
+        e4rc=0
+        ( CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/e4d.cov"; export CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE; sh "$s" ) > "$T/e4d.on" 2>&1 || e4rc=$?
+        if [ "$e4rc" = 0 ]; then ok "E4d CYRIUS_COVERAGE=1 + a FILE (cycc(src) instrumented: $(wc -c < "$T/e4d.cc") B vs $(wc -c < build/cycc) B) sh $s is green"
+        else
+            e4rc0=0
+            ( unset CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE; sh "$s" ) > "$T/e4d.off" 2>&1 || e4rc0=$?
+            if [ "$e4rc0" = 0 ]; then bad "E4d sh $s is green alone and RED (rc $e4rc) under CYRIUS_COVERAGE=1 + a FILE: $(grep -m1 -E 'FAIL|error|differ' "$T/e4d.on" || tail -1 "$T/e4d.on")"
+            else bad "E4d cannot judge: sh $s is RED without the variables too (rc $e4rc0): $(grep -m1 -E 'FAIL|error' "$T/e4d.off")"; fi
+        fi
+    done
+fi
+rm -f "$T/e4d.cc" "$T/e4d.cov"
 
 # ── M4: where the mode has no meaning ────────────────────────────────────────────────────────────
 printf '#bounds\nkernel;\nvar x = 1;\n' > "$T/m4a.cyr"
