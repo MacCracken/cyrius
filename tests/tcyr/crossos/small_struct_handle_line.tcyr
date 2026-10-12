@@ -1,0 +1,1130 @@
+# small_struct_handle_line.tcyr — 6.7.10 (B7-1). THE HANDLE LINE: a struct local of 8 B or less
+# initialised from anything that is not a struct value of its type is a HANDLE, as one over 8 B is
+# (the user's decision, 2026-10-12). One rule at every size.
+#
+# ⛔ THE ASYMMETRY, 6.6.5 through 6.7.9. `var hq: H = alloc(16);` (16 B) declared a handle — its slot
+# held the address and `hq.a = 7` wrote the heap object — while `var q: S8 = alloc(8);` (8 B), or
+# `= &s`, `= gp()` with `fn gp(): *S8`, declared an INLINE S8 whose one field was the address: `q.v`
+# read the address back and `q.v = 5` never reached the object, with no diagnostic (MARK_SMALL_STRUCT
+# marked every struct local of 8 B or less inline, whatever its initialiser). The filed repro exited
+# 17 where 237 is right (docs/development/issues/2026-10-08-small-struct-local-from-address-is-
+# value-not-handle.md; its verbatim run is tests/gates/codegen/small_struct_handle_line.sh R0).
+#
+# THE RULE, measured against the 16 B behaviour (the spec — every `_8` row below has an `_h` twin
+# over 8 B and both must give the row's constant, except where a 16 B twin cannot exist):
+#   * a COPY (the local is inline): a literal, a field, a local / `(local)`, a by-value parameter, a
+#     value global, a capture of a struct's words, a `*T` name, `*p` (6.7.10: copied at EVERY size —
+#     over 8 B `var q: H = *p` was a handle holding the word `*p` read, and `q.v = 9` SIGSEGV'd), a
+#     whole free / generic / wrapped call, a method, an operator, an if-expression, an inferred
+#     `var q = mk8(5)`;
+#   * a HANDLE: an untyped value, `alloc(..)`, `&x`, a `*T` call, an untyped call, an integer
+#     (`var q: S8 = 0;` is a NULL handle, `= 9` a handle to address 9 — `+` on it is pointer
+#     arithmetic, no operator dispatch, as at 16 B);
+#   * a BIND (a second handle): a declaration from a handle, a local or a captured one.
+#   A handle's consumers take its STRUCT, as over 8 B: a by-value argument (`take8(a)`,
+#   `take8((a))`, a method's, a generic's, from a closure), `return a` / `return (a)`, an operator's
+#   right operand, an if-expression branch, `q = a` / `a = q` (copied through the address; handle
+#   <- handle REBINDS at any type, but a closure's CAPTURED handle is a source the copy goes through,
+#   as at 16 B), `a = mk()` / `a = b.dbl()` / `a = b + b` / `a = if ..` / `a = w.s`
+#   (copied into the object), `w.s = a`, a nested literal element, a closure capture (the env word is
+#   the address), defer, match and #regalloc bodies. A handle into a `*T` parameter, an untyped
+#   parameter, a closure's parameter, a `self: *T` receiver or a dyn passes its address, and `&a` is
+#   its slot, as at 16 B. (An `#inline` fn with a struct parameter is not inlined — a plain call, the
+#   argument row's path; an `async fn` body is the gate's AS row: CYRIUS_ASYNC=1.)
+#   A copy is told from an alias by a WRITE after it: `src.v * 100 + before * 10 + after`, so 559 is
+#   "5 copied, the copy written 9, the source unchanged".
+# The SIZE rows (1..8 B: i8 / i16 / i32 compositions, signed values) run the by-value consumers on
+# a handle of each size: argument, `(arg)`, return, `return (h)`, `q = h`, `h = q` and `h = mk()`
+# (with a guard byte right after the object: no byte past it is written), operator right operand,
+# if-expression branch, closure capture. 3 / 5 / 6 / 7 B are copied byte-exact through a frame temp
+# (no byte past the object is read — the end-of-mapping P row is the gate's).
+#
+# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (M2 .. M15), which runs this
+# file on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE
+# (wine). CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+
+struct S8 { v; }                     # 8 B
+struct H { v; w; }                   # 16 B — the twin
+struct U8 { u; }                     # 8 B, another type
+struct UH { u; x; }                  # 16 B, another type
+struct W8 { s: S8; n; }
+struct WH { s: H; n; }
+struct I4 { a: i32; }
+struct I12 { a: i32; b; }
+struct Q8 { v; }
+struct QH { v; w; }
+
+trait Show { fn show(self): i64; }
+impl Show for Q8 { fn show(self: *Q8): i64 { return self.v + 500; } }
+impl Show for QH { fn show(self: *QH): i64 { return self.v + 500; } }
+struct DW { o: dyn Show; }
+fn dk0(o: dyn Show): i64 {
+    var w: DW = DW { o };
+    return callptr(load64(load64(&w + 8)), load64(&w));
+}
+
+var GB8 = 0;
+var GBH = 0;
+var GR = 0;
+var G8 = S8 { 5 };
+var GH = H { 5, 0 };
+var GP8: *S8 = 0;
+var GPH: *H = 0;
+
+fn mk8(n): S8 { var r: S8; r.v = n; return r; }
+fn mkh(n): H { var r: H; r.v = n; r.w = 0; return r; }
+fn gp8(): *S8 { return GB8; }
+fn gph(): *H { return GBH; }
+fn ga8() { return GB8; }
+fn gah() { return GBH; }
+fn S8_dbl(self: S8): S8 { var r: S8; r.v = self.v * 2; return r; }
+fn H_dbl(self: H): H { var r: H; r.v = self.v * 2; r.w = 0; return r; }
+fn S8_add(l: S8, r: S8): S8 { var t: S8; t.v = l.v + r.v; return t; }
+fn H_add(l: H, r: H): H { var t: H; t.v = l.v + r.v; t.w = 0; return t; }
+fn S8_sub(a: *S8, b: *S8): i64 { return a.v - b.v; }
+fn H_sub(a: *H, b: *H): i64 { return a.v - b.v; }
+fn S8_with(self: S8, o: S8) { return self.v * 10 + o.v; }
+fn H_with(self: H, o: H) { return self.v * 10 + o.v; }
+fn S8_pm(self: *S8) { return self.v + 100; }
+fn H_pm(self: *H) { return self.v + 100; }
+fn take8(s: S8) { return s.v; }
+fn takeh(s: H) { return s.v; }
+fn rp8(p: *S8) { return p.v; }
+fn rph(p: *H) { return p.v; }
+fn tu(x) { return load64(x); }
+fn idg<T>(x: T): T { return x; }
+fn tg8<T>(k: T, s: S8) { return k + s.v; }
+fn tgh<T>(k: T, s: H) { return k + s.v; }
+
+# ── the initialiser matrix: COPIES (559: 5 copied, the copy then written 9, the source still 5) ──
+fn i_local_8() { var a: S8; a.v = 5; var q: S8 = a; var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_local_h() { var a: H; a.v = 5; var q: H = a; var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_paren_8() { var a: S8; a.v = 5; var q: S8 = (a); var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_paren_h() { var a: H; a.v = 5; var q: H = (a); var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_field_8() {
+    var w: W8;
+    w.s.v = 5;
+    w.n = 0;
+    var q: S8 = w.s;
+    var b = q.v;
+    q.v = 9;
+    return w.s.v * 100 + b * 10 + q.v;
+}
+fn i_field_h() {
+    var w: WH;
+    w.s.v = 5;
+    w.n = 0;
+    var q: H = w.s;
+    var b = q.v;
+    q.v = 9;
+    return w.s.v * 100 + b * 10 + q.v;
+}
+fn i_param_8p(p: S8) { var q: S8 = p; var b = q.v; q.v = 9; return p.v * 100 + b * 10 + q.v; }
+fn i_param_hp(p: H) { var q: H = p; var b = q.v; q.v = 9; return p.v * 100 + b * 10 + q.v; }
+fn i_param_8() { var a: S8; a.v = 5; return i_param_8p(a); }
+fn i_param_h() { var a: H; a.v = 5; return i_param_hp(a); }
+fn i_global_8() { var q: S8 = G8; var b = q.v; q.v = 9; return G8.v * 100 + b * 10 + q.v; }
+fn i_global_h() { var q: H = GH; var b = q.v; q.v = 9; return GH.v * 100 + b * 10 + q.v; }
+fn i_cap_8() {
+    var a: S8;
+    a.v = 5;
+    var f = |d| { var q: S8 = a; var b = q.v; q.v = 9 + d; return a.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn i_cap_h() {
+    var a: H;
+    a.v = 5;
+    var f = |d| { var q: H = a; var b = q.v; q.v = 9 + d; return a.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn i_pname_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_pname_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_deref_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = *p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_deref_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = *p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_derefg_8() {
+    var a: S8;
+    a.v = 5;
+    GP8 = &a;
+    var q: S8 = *GP8;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_derefg_h() { var a: H; a.v = 5; GPH = &a; var q: H = *GPH; var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_derefp_8p(p: *S8) { var q: S8 = *p; var b = q.v; q.v = 9; return p.v * 100 + b * 10 + q.v; }
+fn i_derefp_hp(p: *H) { var q: H = *p; var b = q.v; q.v = 9; return p.v * 100 + b * 10 + q.v; }
+fn i_derefp_8() { var a: S8; a.v = 5; return i_derefp_8p(&a); }
+fn i_derefp_h() { var a: H; a.v = 5; return i_derefp_hp(&a); }
+fn i_derefc_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var f = |d| { var q: S8 = *p; var b = q.v; q.v = 9 + d; return p.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn i_derefc_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var f = |d| { var q: H = *p; var b = q.v; q.v = 9 + d; return p.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn i_call_8() { var q: S8 = mk8(5); var r: S8 = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_call_h() { var q: H = mkh(5); var r: H = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_callw_8() { var q: S8 = (mk8(5)); var r: S8 = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_callw_h() { var q: H = (mkh(5)); var r: H = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_gen_8() { var a: S8; a.v = 5; var q: S8 = idg(a); var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_gen_h() { var a: H; a.v = 5; var q: H = idg(a); var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+fn i_meth_8() {
+    var a: S8;
+    a.v = 5;
+    var q: S8 = a.dbl();
+    var r: S8 = q;
+    var b = r.v;
+    r.v = 9;
+    return q.v * 100 + b * 10 + r.v;
+}
+fn i_meth_h() {
+    var a: H;
+    a.v = 5;
+    var q: H = a.dbl();
+    var r: H = q;
+    var b = r.v;
+    r.v = 9;
+    return q.v * 100 + b * 10 + r.v;
+}
+fn i_op_8() {
+    var a: S8;
+    a.v = 5;
+    var c: S8;
+    c.v = 2;
+    var q: S8 = a + c;
+    var r: S8 = q;
+    var b = r.v;
+    r.v = 9;
+    return q.v * 100 + b * 10 + r.v;
+}
+fn i_op_h() {
+    var a: H;
+    a.v = 5;
+    var c: H;
+    c.v = 2;
+    var q: H = a + c;
+    var r: H = q;
+    var b = r.v;
+    r.v = 9;
+    return q.v * 100 + b * 10 + r.v;
+}
+# An if-expression branch over 8 B is refused (`_ie_big_err`): no 16 B twin.
+fn i_ie_8(k) {
+    var a: S8;
+    a.v = 5;
+    var c: S8;
+    c.v = 2;
+    var q: S8 = if (k == 1) { a } else { c };
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn i_inf_8() { var q = mk8(5); var r: S8 = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_inf_h() { var q = mkh(5); var r: H = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_lit_8() { var q: S8 = S8 { 5 }; var r: S8 = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+fn i_lit_h() { var q: H = H { 5, 0 }; var r: H = q; var b = r.v; r.v = 9; return q.v * 100 + b * 10 + r.v; }
+
+# ── HANDLES: the write through the local reaches the object (9) ──
+fn h_untyped_8() { var x = alloc(8); store64(x, 5); var q: S8 = x; q.v = 9; return load64(x); }
+fn h_untyped_h() { var x = alloc(16); store64(x, 5); var q: H = x; q.v = 9; return load64(x); }
+fn h_alloc_8() { var q: S8 = alloc(8); q.v = 9; return load64(q); }
+fn h_alloc_h() { var q: H = alloc(16); q.v = 9; return load64(q); }
+fn h_addr_8() { var a: S8; a.v = 5; var q: S8 = &a; q.v = 9; return a.v; }
+fn h_addr_h() { var a: H; a.v = 5; var q: H = &a; q.v = 9; return a.v; }
+fn h_pcall_8() { GB8 = alloc(8); var q: S8 = gp8(); q.v = 9; return load64(GB8); }
+fn h_pcall_h() { GBH = alloc(16); var q: H = gph(); q.v = 9; return load64(GBH); }
+fn h_ucall_8() { GB8 = alloc(8); var q: S8 = ga8(); q.v = 9; return load64(GB8); }
+fn h_ucall_h() { GBH = alloc(16); var q: H = gah(); q.v = 9; return load64(GBH); }
+fn h_zero_8() { var q: S8 = 0; var h: S8 = alloc(8); h.v = 3; q = h; q.v = 9; return h.v; }
+fn h_zero_h() { var q: H = 0; var h: H = alloc(16); h.v = 3; q = h; q.v = 9; return h.v; }
+fn h_int_8() { var q: S8 = 9; return q + 0; }
+fn h_int_h() { var q: H = 9; return q + 0; }
+fn h_i32_8() { var x = alloc(8); var q: I4 = x; q.a = 0 - 3; return load32(x); }
+fn h_i32_h() { var x = alloc(16); var q: I12 = x; q.a = 0 - 3; return load32(x); }
+
+# ── BINDS: a declaration from a handle is a second handle to the same object (9) ──
+fn b_local_8() { var h: S8 = alloc(8); h.v = 5; var c: S8 = h; c.v = 9; return h.v; }
+fn b_local_h() { var h: H = alloc(16); h.v = 5; var c: H = h; c.v = 9; return h.v; }
+fn b_cap_8() {
+    var h: S8 = alloc(8);
+    h.v = 5;
+    var f = |d| { var c: S8 = h; c.v = 9 + d; return 0; };
+    callptr(f, 0);
+    return h.v;
+}
+fn b_cap_h() {
+    var h: H = alloc(16);
+    h.v = 5;
+    var f = |d| { var c: H = h; c.v = 9 + d; return 0; };
+    callptr(f, 0);
+    return h.v;
+}
+
+# ── CONSUMERS of a handle `a` (its object's v = 5) ──
+fn c_arg_8() { var a: S8 = alloc(8); a.v = 5; return take8(a); }
+fn c_arg_h() { var a: H = alloc(16); a.v = 5; return takeh(a); }
+fn c_argp_8() { var a: S8 = alloc(8); a.v = 5; return take8((a)); }
+fn c_argp_h() { var a: H = alloc(16); a.v = 5; return takeh((a)); }
+fn c_argm_8() { var a: S8 = alloc(8); a.v = 5; var b: S8; b.v = 1; return b.with(a); }
+fn c_argm_h() { var a: H = alloc(16); a.v = 5; var b: H; b.v = 1; return b.with(a); }
+fn c_argg_8() { var a: S8 = alloc(8); a.v = 5; return tg8(1, a); }
+fn c_argg_h() { var a: H = alloc(16); a.v = 5; return tgh(1, a); }
+fn c_gen_8() {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var q: S8 = idg(a);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn c_gen_h() {
+    var a: H = alloc(16);
+    a.v = 5;
+    var q: H = idg(a);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn c_recv_8() { var a: S8 = alloc(8); a.v = 5; var b: S8; b.v = 1; return a.with(b); }
+fn c_recv_h() { var a: H = alloc(16); a.v = 5; var b: H; b.v = 1; return a.with(b); }
+fn c_recvd_8() { var a: S8 = alloc(8); a.v = 5; var q: S8 = a.dbl(); return q.v; }
+fn c_recvd_h() { var a: H = alloc(16); a.v = 5; var q: H = a.dbl(); return q.v; }
+fn c_ret_8f(): S8 { var a: S8 = alloc(8); a.v = 5; return a; }
+fn c_ret_hf(): H { var a: H = alloc(16); a.v = 5; return a; }
+fn c_ret_8() { var q: S8 = c_ret_8f(); return q.v; }
+fn c_ret_h() { var q: H = c_ret_hf(); return q.v; }
+fn c_retp_8f(): S8 { var a: S8 = alloc(8); a.v = 5; return (a); }
+fn c_retp_hf(): H { var a: H = alloc(16); a.v = 5; return (a); }
+fn c_retp_8() { var q: S8 = c_retp_8f(); return q.v; }
+fn c_retp_h() { var q: H = c_retp_hf(); return q.v; }
+fn c_opr_8() { var a: S8 = alloc(8); a.v = 5; var b: S8; b.v = 1; var q: S8 = b + a; return q.v; }
+fn c_opr_h() { var a: H = alloc(16); a.v = 5; var b: H; b.v = 1; var q: H = b + a; return q.v; }
+fn c_opl_8() { var x = alloc(8); var a: S8 = x; return (a + 8) - x; }
+fn c_opl_h() { var x = alloc(16); var a: H = x; return (a + 8) - x; }
+fn c_ie_8(k) {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var c: S8;
+    c.v = 2;
+    var q: S8 = if (k == 1) { a } else { c };
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn c_ain_8() {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var q: S8;
+    q.v = 1;
+    q = a;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn c_ain_h() {
+    var a: H = alloc(16);
+    a.v = 5;
+    var q: H;
+    q.v = 1;
+    q = a;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn c_aout_8() { var x = alloc(8); var a: S8 = x; a.v = 5; var q: S8; q.v = 7; a = q; q.v = 1; return load64(x); }
+fn c_aout_h() { var x = alloc(16); var a: H = x; a.v = 5; var q: H; q.v = 7; a = q; q.v = 1; return load64(x); }
+fn c_rb_8() {
+    var x = alloc(8);
+    var a: S8 = x;
+    a.v = 5;
+    var h: S8 = alloc(8);
+    h.v = 3;
+    a = h;
+    a.v = 8;
+    return load64(x) * 10 + h.v;
+}
+fn c_rb_h() {
+    var x = alloc(16);
+    var a: H = x;
+    a.v = 5;
+    var h: H = alloc(16);
+    h.v = 3;
+    a = h;
+    a.v = 8;
+    return load64(x) * 10 + h.v;
+}
+fn c_rbt_8() {
+    var x = alloc(8);
+    var a: S8 = x;
+    a.v = 5;
+    var u: U8 = alloc(8);
+    u.u = 3;
+    a = u;
+    a.v = 8;
+    return load64(x) * 10 + u.u;
+}
+fn c_rbt_h() {
+    var x = alloc(16);
+    var a: H = x;
+    a.v = 5;
+    var u: UH = alloc(16);
+    u.u = 3;
+    a = u;
+    a.v = 8;
+    return load64(x) * 10 + u.u;
+}
+fn c_acall_8() { var x = alloc(8); var a: S8 = x; a.v = 5; a = mk8(7); return load64(x); }
+fn c_acall_h() { var x = alloc(16); var a: H = x; a.v = 5; a = mkh(7); return load64(x); }
+fn c_acallw_8() { var x = alloc(8); var a: S8 = x; a.v = 5; a = (mk8(7)); return load64(x); }
+fn c_acallw_h() { var x = alloc(16); var a: H = x; a.v = 5; a = (mkh(7)); return load64(x); }
+fn c_ameth_8() { var x = alloc(8); var a: S8 = x; a.v = 5; var b: S8; b.v = 4; a = b.dbl(); return load64(x); }
+fn c_ameth_h() { var x = alloc(16); var a: H = x; a.v = 5; var b: H; b.v = 4; a = b.dbl(); return load64(x); }
+fn c_aop_8() { var x = alloc(8); var a: S8 = x; a.v = 5; var b: S8; b.v = 4; a = b + b; return load64(x); }
+fn c_aop_h() { var x = alloc(16); var a: H = x; a.v = 5; var b: H; b.v = 4; a = b + b; return load64(x); }
+fn c_aie_8(k) {
+    var x = alloc(8);
+    var a: S8 = x;
+    a.v = 5;
+    var b: S8;
+    b.v = 4;
+    a = if (k == 1) { b } else { b };
+    return load64(x);
+}
+fn c_afld_8() { var x = alloc(8); var a: S8 = x; a.v = 5; var w: W8; w.s.v = 6; a = w.s; return load64(x); }
+fn c_afld_h() { var x = alloc(16); var a: H = x; a.v = 5; var w: WH; w.s.v = 6; a = w.s; return load64(x); }
+fn c_agl_8() { var x = alloc(8); var a: S8 = x; a.v = 5; a = G8; return load64(x); }
+fn c_agl_h() { var x = alloc(16); var a: H = x; a.v = 5; a = GH; return load64(x); }
+fn c_gla_8() { var a: S8 = alloc(8); a.v = 6; G8 = a; a.v = 1; var r = G8.v; G8.v = 5; return r; }
+fn c_gla_h() { var a: H = alloc(16); a.v = 6; GH = a; a.v = 1; var r = GH.v; GH.v = 5; return r; }
+fn c_fst_8() { var a: S8 = alloc(8); a.v = 5; var w: W8; w.s = a; a.v = 1; return w.s.v; }
+fn c_fst_h() { var a: H = alloc(16); a.v = 5; var w: WH; w.s = a; a.v = 1; return w.s.v; }
+fn c_nlit_8() { var a: S8 = alloc(8); a.v = 5; var w = W8 { a, 2 }; a.v = 1; return w.s.v * 10 + w.n; }
+fn c_nlit_h() { var a: H = alloc(16); a.v = 5; var w = WH { a, 2 }; a.v = 1; return w.s.v * 10 + w.n; }
+fn c_ncap_8() {
+    var x = alloc(8);
+    var a: S8 = x;
+    a.v = 5;
+    var f = |d| { var g = |e| { a.v = a.v + e; return 0; }; callptr(g, d); return 0; };
+    callptr(f, 4);
+    return load64(x);
+}
+fn c_ncap_h() {
+    var x = alloc(16);
+    var a: H = x;
+    a.v = 5;
+    var f = |d| { var g = |e| { a.v = a.v + e; return 0; }; callptr(g, d); return 0; };
+    callptr(f, 4);
+    return load64(x);
+}
+fn c_carg_8() { var a: S8 = alloc(8); a.v = 5; var f = |d| { return take8(a) + d; }; return callptr(f, 0); }
+fn c_carg_h() { var a: H = alloc(16); a.v = 5; var f = |d| { return takeh(a) + d; }; return callptr(f, 0); }
+fn c_cin_8() {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var f = |d| { var q: S8; q.v = 1; q = a; var b = q.v; q.v = 9 + d; return a.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn c_cin_h() {
+    var a: H = alloc(16);
+    a.v = 5;
+    var f = |d| { var q: H; q.v = 1; q = a; var b = q.v; q.v = 9 + d; return a.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn c_crb_8() {
+    var y = alloc(8);
+    var h: S8 = alloc(8);
+    h.v = 5;
+    var f = |d| { var x: S8 = y; x.v = 1; x = h; x.v = x.v + d; return 0; };
+    callptr(f, 2);
+    return h.v * 10 + load64(y);
+}
+fn c_crb_h() {
+    var y = alloc(16);
+    var h: H = alloc(16);
+    h.v = 5;
+    var f = |d| { var x: H = y; x.v = 1; x = h; x.v = x.v + d; return 0; };
+    callptr(f, 2);
+    return h.v * 10 + load64(y);
+}
+fn c_copr_8() {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var f = |d| { var b: S8; b.v = d; var q: S8 = b + a; return q.v; };
+    return callptr(f, 1);
+}
+fn c_copr_h() {
+    var a: H = alloc(16);
+    a.v = 5;
+    var f = |d| { var b: H; b.v = d; var q: H = b + a; return q.v; };
+    return callptr(f, 1);
+}
+fn c_cie_8() {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var f = |d| { var b: S8; b.v = d; var q: S8 = if (d == 1) { a } else { b }; return q.v; };
+    return callptr(f, 1);
+}
+fn c_def_8() { var a: S8 = alloc(8); a.v = 5; defer { GR = take8(a); } a.v = 6; return 0; }
+fn c_def_h() { var a: H = alloc(16); a.v = 5; defer { GR = takeh(a); } a.v = 6; return 0; }
+fn c_match_8(k) {
+    var a: S8 = alloc(8);
+    a.v = 5;
+    var r = 0;
+    match k { 1 => { r = take8(a); } 2 => { r = 0; } } return r;
+}
+fn c_match_h(k) {
+    var a: H = alloc(16);
+    a.v = 5;
+    var r = 0;
+    match k { 1 => { r = takeh(a); } 2 => { r = 0; } } return r;
+}
+#regalloc
+fn c_ra_8() { var x = alloc(8); var a: S8 = x; a.v = 5; var r = take8(a); return r + a.v; }
+#regalloc
+fn c_ra_h() { var x = alloc(16); var a: H = x; a.v = 5; var r = takeh(a); return r + a.v; }
+# ...and where a handle passes its ADDRESS, as at 16 B
+fn x_ptrarg_8() { var a: S8 = alloc(8); a.v = 5; return rp8(a); }
+fn x_ptrarg_h() { var a: H = alloc(16); a.v = 5; return rph(a); }
+fn x_ptrop_8() { var a: S8 = alloc(8); a.v = 5; var b: S8; b.v = 9; return b - a; }
+fn x_ptrop_h() { var a: H = alloc(16); a.v = 5; var b: H; b.v = 9; return b - a; }
+fn x_ptrself_8() { var a: S8 = alloc(8); a.v = 5; return a.pm(); }
+fn x_ptrself_h() { var a: H = alloc(16); a.v = 5; return a.pm(); }
+fn x_clo_8() { var a: S8 = alloc(8); a.v = 5; var f = |s| { return load64(s); }; return callptr(f, a); }
+fn x_clo_h() { var a: H = alloc(16); a.v = 5; var f = |s| { return load64(s); }; return callptr(f, a); }
+fn x_untyped_8() { var a: S8 = alloc(8); a.v = 5; return tu(a); }
+fn x_untyped_h() { var a: H = alloc(16); a.v = 5; return tu(a); }
+fn x_dyn_8() { var a: Q8 = alloc(8); a.v = 7; var o: dyn Show = a; return dk0(o); }
+fn x_dyn_h() { var a: QH = alloc(16); a.v = 7; var o: dyn Show = a; return dk0(o); }
+fn x_addr_8() { var x = alloc(8); var a: S8 = x; return load64(&a) - x; }
+fn x_addr_h() { var x = alloc(16); var a: H = x; return load64(&a) - x; }
+fn x_opeq_8() { var x = alloc(8); var a: S8 = x; a.v = 5; a.v += 3; return load64(x); }
+fn x_opeq_h() { var x = alloc(16); var a: H = x; a.v = 5; a.v += 3; return load64(x); }
+
+struct T1 { a: i8; }
+struct T2 { a: i16; }
+struct T3 { a: i16; b: i8; }
+struct T4 { a: i32; }
+struct T5 { a: i32; b: i8; }
+struct T6 { a: i32; b: i16; }
+struct T7 { a: i32; b: i16; c: i8; }
+struct T8 { a: i32; b: i32; }
+
+# 1 B: a: i8
+fn zs1(s: T1) { return s.a; }
+fn zset1(p: *T1) { p.a = 0 - 3; return 0; }
+fn zzero1(p: *T1) { p.a = 0; return 0; }
+fn zmk1(): T1 { var r: T1; zset1(&r); return r; }
+fn zrt1(): T1 { var h: T1 = alloc(16); zset1(h); return h; }
+fn zrp1(): T1 { var h: T1 = alloc(16); zset1(h); return (h); }
+fn T1_add(l: T1, r: T1): T1 { var t: T1; t.a = l.a + r.a; return t; }
+fn zobj1(x) { var h: T1 = x; return zs1(h); }
+fn z1_arg() { var h: T1 = alloc(16); zset1(h); return zs1(h); }
+fn z1_argp() { var h: T1 = alloc(16); zset1(h); return zs1((h)); }
+fn z1_ret() { var q: T1 = zrt1(); return zs1(q); }
+fn z1_retp() { var q: T1 = zrp1(); return zs1(q); }
+fn z1_in() { var h: T1 = alloc(16); zset1(h); var q: T1; zzero1(&q); q = h; zzero1(h); return zs1(q); }
+fn z1_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T1 = x;
+    var q: T1;
+    zset1(&q);
+    h = q;
+    zzero1(&q);
+    if (load8(x + 1) != 0x5A) { return 1; } return zobj1(x);
+}
+fn z1_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T1 = x;
+    h = zmk1();
+    if (load8(x + 1) != 0x5A) { return 1; } return zobj1(x);
+}
+fn z1_opr() { var h: T1 = alloc(16); zset1(h); var z: T1; zzero1(&z); var q: T1 = z + h; return zs1(q); }
+fn z1_ie(k) {
+    var h: T1 = alloc(16);
+    zset1(h);
+    var z: T1;
+    zzero1(&z);
+    var q: T1 = if (k == 1) { h } else { z };
+    return zs1(q);
+}
+fn z1_cap() { var h: T1 = alloc(16); zset1(h); var f = |d| { return zs1(h) + d; }; return callptr(f, 0); }
+
+# 2 B: a: i16
+fn zs2(s: T2) { return s.a; }
+fn zset2(p: *T2) { p.a = 0 - 300; return 0; }
+fn zzero2(p: *T2) { p.a = 0; return 0; }
+fn zmk2(): T2 { var r: T2; zset2(&r); return r; }
+fn zrt2(): T2 { var h: T2 = alloc(16); zset2(h); return h; }
+fn zrp2(): T2 { var h: T2 = alloc(16); zset2(h); return (h); }
+fn T2_add(l: T2, r: T2): T2 { var t: T2; t.a = l.a + r.a; return t; }
+fn zobj2(x) { var h: T2 = x; return zs2(h); }
+fn z2_arg() { var h: T2 = alloc(16); zset2(h); return zs2(h); }
+fn z2_argp() { var h: T2 = alloc(16); zset2(h); return zs2((h)); }
+fn z2_ret() { var q: T2 = zrt2(); return zs2(q); }
+fn z2_retp() { var q: T2 = zrp2(); return zs2(q); }
+fn z2_in() { var h: T2 = alloc(16); zset2(h); var q: T2; zzero2(&q); q = h; zzero2(h); return zs2(q); }
+fn z2_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T2 = x;
+    var q: T2;
+    zset2(&q);
+    h = q;
+    zzero2(&q);
+    if (load8(x + 2) != 0x5A) { return 1; } return zobj2(x);
+}
+fn z2_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T2 = x;
+    h = zmk2();
+    if (load8(x + 2) != 0x5A) { return 1; } return zobj2(x);
+}
+fn z2_opr() { var h: T2 = alloc(16); zset2(h); var z: T2; zzero2(&z); var q: T2 = z + h; return zs2(q); }
+fn z2_ie(k) {
+    var h: T2 = alloc(16);
+    zset2(h);
+    var z: T2;
+    zzero2(&z);
+    var q: T2 = if (k == 1) { h } else { z };
+    return zs2(q);
+}
+fn z2_cap() { var h: T2 = alloc(16); zset2(h); var f = |d| { return zs2(h) + d; }; return callptr(f, 0); }
+
+# 3 B: a: i16, b: i8
+fn zs3(s: T3) { return s.a * 100000 + s.b; }
+fn zset3(p: *T3) { p.a = 0 - 300; p.b = 0 - 4; return 0; }
+fn zzero3(p: *T3) { p.a = 0; p.b = 0; return 0; }
+fn zmk3(): T3 { var r: T3; zset3(&r); return r; }
+fn zrt3(): T3 { var h: T3 = alloc(16); zset3(h); return h; }
+fn zrp3(): T3 { var h: T3 = alloc(16); zset3(h); return (h); }
+fn T3_add(l: T3, r: T3): T3 { var t: T3; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj3(x) { var h: T3 = x; return zs3(h); }
+fn z3_arg() { var h: T3 = alloc(16); zset3(h); return zs3(h); }
+fn z3_argp() { var h: T3 = alloc(16); zset3(h); return zs3((h)); }
+fn z3_ret() { var q: T3 = zrt3(); return zs3(q); }
+fn z3_retp() { var q: T3 = zrp3(); return zs3(q); }
+fn z3_in() { var h: T3 = alloc(16); zset3(h); var q: T3; zzero3(&q); q = h; zzero3(h); return zs3(q); }
+fn z3_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T3 = x;
+    var q: T3;
+    zset3(&q);
+    h = q;
+    zzero3(&q);
+    if (load8(x + 3) != 0x5A) { return 1; } return zobj3(x);
+}
+fn z3_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T3 = x;
+    h = zmk3();
+    if (load8(x + 3) != 0x5A) { return 1; } return zobj3(x);
+}
+fn z3_opr() { var h: T3 = alloc(16); zset3(h); var z: T3; zzero3(&z); var q: T3 = z + h; return zs3(q); }
+fn z3_ie(k) {
+    var h: T3 = alloc(16);
+    zset3(h);
+    var z: T3;
+    zzero3(&z);
+    var q: T3 = if (k == 1) { h } else { z };
+    return zs3(q);
+}
+fn z3_cap() { var h: T3 = alloc(16); zset3(h); var f = |d| { return zs3(h) + d; }; return callptr(f, 0); }
+
+# 4 B: a: i32
+fn zs4(s: T4) { return s.a; }
+fn zset4(p: *T4) { p.a = 0 - 70000; return 0; }
+fn zzero4(p: *T4) { p.a = 0; return 0; }
+fn zmk4(): T4 { var r: T4; zset4(&r); return r; }
+fn zrt4(): T4 { var h: T4 = alloc(16); zset4(h); return h; }
+fn zrp4(): T4 { var h: T4 = alloc(16); zset4(h); return (h); }
+fn T4_add(l: T4, r: T4): T4 { var t: T4; t.a = l.a + r.a; return t; }
+fn zobj4(x) { var h: T4 = x; return zs4(h); }
+fn z4_arg() { var h: T4 = alloc(16); zset4(h); return zs4(h); }
+fn z4_argp() { var h: T4 = alloc(16); zset4(h); return zs4((h)); }
+fn z4_ret() { var q: T4 = zrt4(); return zs4(q); }
+fn z4_retp() { var q: T4 = zrp4(); return zs4(q); }
+fn z4_in() { var h: T4 = alloc(16); zset4(h); var q: T4; zzero4(&q); q = h; zzero4(h); return zs4(q); }
+fn z4_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T4 = x;
+    var q: T4;
+    zset4(&q);
+    h = q;
+    zzero4(&q);
+    if (load8(x + 4) != 0x5A) { return 1; } return zobj4(x);
+}
+fn z4_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T4 = x;
+    h = zmk4();
+    if (load8(x + 4) != 0x5A) { return 1; } return zobj4(x);
+}
+fn z4_opr() { var h: T4 = alloc(16); zset4(h); var z: T4; zzero4(&z); var q: T4 = z + h; return zs4(q); }
+fn z4_ie(k) {
+    var h: T4 = alloc(16);
+    zset4(h);
+    var z: T4;
+    zzero4(&z);
+    var q: T4 = if (k == 1) { h } else { z };
+    return zs4(q);
+}
+fn z4_cap() { var h: T4 = alloc(16); zset4(h); var f = |d| { return zs4(h) + d; }; return callptr(f, 0); }
+
+# 5 B: a: i32, b: i8
+fn zs5(s: T5) { return s.a * 100000 + s.b; }
+fn zset5(p: *T5) { p.a = 0 - 70000; p.b = 0 - 4; return 0; }
+fn zzero5(p: *T5) { p.a = 0; p.b = 0; return 0; }
+fn zmk5(): T5 { var r: T5; zset5(&r); return r; }
+fn zrt5(): T5 { var h: T5 = alloc(16); zset5(h); return h; }
+fn zrp5(): T5 { var h: T5 = alloc(16); zset5(h); return (h); }
+fn T5_add(l: T5, r: T5): T5 { var t: T5; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj5(x) { var h: T5 = x; return zs5(h); }
+fn z5_arg() { var h: T5 = alloc(16); zset5(h); return zs5(h); }
+fn z5_argp() { var h: T5 = alloc(16); zset5(h); return zs5((h)); }
+fn z5_ret() { var q: T5 = zrt5(); return zs5(q); }
+fn z5_retp() { var q: T5 = zrp5(); return zs5(q); }
+fn z5_in() { var h: T5 = alloc(16); zset5(h); var q: T5; zzero5(&q); q = h; zzero5(h); return zs5(q); }
+fn z5_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T5 = x;
+    var q: T5;
+    zset5(&q);
+    h = q;
+    zzero5(&q);
+    if (load8(x + 5) != 0x5A) { return 1; } return zobj5(x);
+}
+fn z5_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T5 = x;
+    h = zmk5();
+    if (load8(x + 5) != 0x5A) { return 1; } return zobj5(x);
+}
+fn z5_opr() { var h: T5 = alloc(16); zset5(h); var z: T5; zzero5(&z); var q: T5 = z + h; return zs5(q); }
+fn z5_ie(k) {
+    var h: T5 = alloc(16);
+    zset5(h);
+    var z: T5;
+    zzero5(&z);
+    var q: T5 = if (k == 1) { h } else { z };
+    return zs5(q);
+}
+fn z5_cap() { var h: T5 = alloc(16); zset5(h); var f = |d| { return zs5(h) + d; }; return callptr(f, 0); }
+
+# 6 B: a: i32, b: i16
+fn zs6(s: T6) { return s.a * 100000 + s.b; }
+fn zset6(p: *T6) { p.a = 0 - 70000; p.b = 0 - 300; return 0; }
+fn zzero6(p: *T6) { p.a = 0; p.b = 0; return 0; }
+fn zmk6(): T6 { var r: T6; zset6(&r); return r; }
+fn zrt6(): T6 { var h: T6 = alloc(16); zset6(h); return h; }
+fn zrp6(): T6 { var h: T6 = alloc(16); zset6(h); return (h); }
+fn T6_add(l: T6, r: T6): T6 { var t: T6; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj6(x) { var h: T6 = x; return zs6(h); }
+fn z6_arg() { var h: T6 = alloc(16); zset6(h); return zs6(h); }
+fn z6_argp() { var h: T6 = alloc(16); zset6(h); return zs6((h)); }
+fn z6_ret() { var q: T6 = zrt6(); return zs6(q); }
+fn z6_retp() { var q: T6 = zrp6(); return zs6(q); }
+fn z6_in() { var h: T6 = alloc(16); zset6(h); var q: T6; zzero6(&q); q = h; zzero6(h); return zs6(q); }
+fn z6_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T6 = x;
+    var q: T6;
+    zset6(&q);
+    h = q;
+    zzero6(&q);
+    if (load8(x + 6) != 0x5A) { return 1; } return zobj6(x);
+}
+fn z6_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T6 = x;
+    h = zmk6();
+    if (load8(x + 6) != 0x5A) { return 1; } return zobj6(x);
+}
+fn z6_opr() { var h: T6 = alloc(16); zset6(h); var z: T6; zzero6(&z); var q: T6 = z + h; return zs6(q); }
+fn z6_ie(k) {
+    var h: T6 = alloc(16);
+    zset6(h);
+    var z: T6;
+    zzero6(&z);
+    var q: T6 = if (k == 1) { h } else { z };
+    return zs6(q);
+}
+fn z6_cap() { var h: T6 = alloc(16); zset6(h); var f = |d| { return zs6(h) + d; }; return callptr(f, 0); }
+
+# 7 B: a: i32, b: i16, c: i8
+fn zs7(s: T7) { return s.a * 1000000000 + s.b * 100000 + s.c; }
+fn zset7(p: *T7) { p.a = 0 - 70000; p.b = 0 - 300; p.c = 0 - 4; return 0; }
+fn zzero7(p: *T7) { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn zmk7(): T7 { var r: T7; zset7(&r); return r; }
+fn zrt7(): T7 { var h: T7 = alloc(16); zset7(h); return h; }
+fn zrp7(): T7 { var h: T7 = alloc(16); zset7(h); return (h); }
+fn T7_add(l: T7, r: T7): T7 { var t: T7; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn zobj7(x) { var h: T7 = x; return zs7(h); }
+fn z7_arg() { var h: T7 = alloc(16); zset7(h); return zs7(h); }
+fn z7_argp() { var h: T7 = alloc(16); zset7(h); return zs7((h)); }
+fn z7_ret() { var q: T7 = zrt7(); return zs7(q); }
+fn z7_retp() { var q: T7 = zrp7(); return zs7(q); }
+fn z7_in() { var h: T7 = alloc(16); zset7(h); var q: T7; zzero7(&q); q = h; zzero7(h); return zs7(q); }
+fn z7_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T7 = x;
+    var q: T7;
+    zset7(&q);
+    h = q;
+    zzero7(&q);
+    if (load8(x + 7) != 0x5A) { return 1; } return zobj7(x);
+}
+fn z7_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T7 = x;
+    h = zmk7();
+    if (load8(x + 7) != 0x5A) { return 1; } return zobj7(x);
+}
+fn z7_opr() { var h: T7 = alloc(16); zset7(h); var z: T7; zzero7(&z); var q: T7 = z + h; return zs7(q); }
+fn z7_ie(k) {
+    var h: T7 = alloc(16);
+    zset7(h);
+    var z: T7;
+    zzero7(&z);
+    var q: T7 = if (k == 1) { h } else { z };
+    return zs7(q);
+}
+fn z7_cap() { var h: T7 = alloc(16); zset7(h); var f = |d| { return zs7(h) + d; }; return callptr(f, 0); }
+
+# 8 B: a: i32, b: i32
+fn zs8(s: T8) { return s.a * 100000 + s.b; }
+fn zset8(p: *T8) { p.a = 0 - 70000; p.b = 0 - 80000; return 0; }
+fn zzero8(p: *T8) { p.a = 0; p.b = 0; return 0; }
+fn zmk8(): T8 { var r: T8; zset8(&r); return r; }
+fn zrt8(): T8 { var h: T8 = alloc(16); zset8(h); return h; }
+fn zrp8(): T8 { var h: T8 = alloc(16); zset8(h); return (h); }
+fn T8_add(l: T8, r: T8): T8 { var t: T8; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj8(x) { var h: T8 = x; return zs8(h); }
+fn z8_arg() { var h: T8 = alloc(16); zset8(h); return zs8(h); }
+fn z8_argp() { var h: T8 = alloc(16); zset8(h); return zs8((h)); }
+fn z8_ret() { var q: T8 = zrt8(); return zs8(q); }
+fn z8_retp() { var q: T8 = zrp8(); return zs8(q); }
+fn z8_in() { var h: T8 = alloc(16); zset8(h); var q: T8; zzero8(&q); q = h; zzero8(h); return zs8(q); }
+fn z8_out() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T8 = x;
+    var q: T8;
+    zset8(&q);
+    h = q;
+    zzero8(&q);
+    if (load8(x + 8) != 0x5A) { return 1; } return zobj8(x);
+}
+fn z8_call() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var h: T8 = x;
+    h = zmk8();
+    if (load8(x + 8) != 0x5A) { return 1; } return zobj8(x);
+}
+fn z8_opr() { var h: T8 = alloc(16); zset8(h); var z: T8; zzero8(&z); var q: T8 = z + h; return zs8(q); }
+fn z8_ie(k) {
+    var h: T8 = alloc(16);
+    zset8(h);
+    var z: T8;
+    zzero8(&z);
+    var q: T8 = if (k == 1) { h } else { z };
+    return zs8(q);
+}
+fn z8_cap() { var h: T8 = alloc(16); zset8(h); var f = |d| { return zs8(h) + d; }; return callptr(f, 0); }
+
+alloc_init();
+test_group("the handle line: 8 B rows and their 16 B twins");
+assert_eq(i_local_8(), 559, "init: a local copies");
+assert_eq(i_local_8(), i_local_h(), "  = its 16 B twin");
+assert_eq(i_paren_8(), 559, "init: (a local) copies");
+assert_eq(i_paren_8(), i_paren_h(), "  = its 16 B twin");
+assert_eq(i_field_8(), 559, "init: a struct field copies");
+assert_eq(i_field_8(), i_field_h(), "  = its 16 B twin");
+assert_eq(i_param_8(), 559, "init: a by-value parameter copies");
+assert_eq(i_param_8(), i_param_h(), "  = its 16 B twin");
+assert_eq(i_global_8(), 559, "init: a value global copies");
+assert_eq(i_global_8(), i_global_h(), "  = its 16 B twin");
+assert_eq(i_cap_8(), 559, "init: a capture of the struct's words copies");
+assert_eq(i_cap_8(), i_cap_h(), "  = its 16 B twin");
+assert_eq(i_pname_8(), 559, "init: a *T name copies");
+assert_eq(i_pname_8(), i_pname_h(), "  = its 16 B twin");
+assert_eq(i_deref_8(), 559, "init: *p copies (over 8 B too, 6.7.10)");
+assert_eq(i_deref_8(), i_deref_h(), "  = its 16 B twin");
+assert_eq(i_derefg_8(), 559, "init: *G (a *T global) copies");
+assert_eq(i_derefg_8(), i_derefg_h(), "  = its 16 B twin");
+assert_eq(i_derefp_8(), 559, "init: *p (a *T parameter) copies");
+assert_eq(i_derefp_8(), i_derefp_h(), "  = its 16 B twin");
+assert_eq(i_derefc_8(), 559, "init: *p (a captured *T) copies");
+assert_eq(i_derefc_8(), i_derefc_h(), "  = its 16 B twin");
+assert_eq(i_call_8(), 559, "init: a free call copies");
+assert_eq(i_call_8(), i_call_h(), "  = its 16 B twin");
+assert_eq(i_callw_8(), 559, "init: a wrapped free call copies");
+assert_eq(i_callw_8(), i_callw_h(), "  = its 16 B twin");
+assert_eq(i_gen_8(), 559, "init: a generic call copies");
+assert_eq(i_gen_8(), i_gen_h(), "  = its 16 B twin");
+assert_eq(i_meth_8(), 1109, "init: a method result copies");
+assert_eq(i_meth_8(), i_meth_h(), "  = its 16 B twin");
+assert_eq(i_op_8(), 779, "init: an operator result copies");
+assert_eq(i_op_8(), i_op_h(), "  = its 16 B twin");
+assert_eq(i_inf_8(), 559, "init: an inferred `var q = mk8(5)` copies");
+assert_eq(i_inf_8(), i_inf_h(), "  = its 16 B twin");
+assert_eq(i_lit_8(), 559, "init: a literal copies");
+assert_eq(i_lit_8(), i_lit_h(), "  = its 16 B twin");
+assert_eq(h_untyped_8(), 9, "handle: from an untyped value");
+assert_eq(h_untyped_8(), h_untyped_h(), "  = its 16 B twin");
+assert_eq(h_alloc_8(), 9, "handle: from alloc");
+assert_eq(h_alloc_8(), h_alloc_h(), "  = its 16 B twin");
+assert_eq(h_addr_8(), 9, "handle: from &x");
+assert_eq(h_addr_8(), h_addr_h(), "  = its 16 B twin");
+assert_eq(h_pcall_8(), 9, "handle: from a *T call");
+assert_eq(h_pcall_8(), h_pcall_h(), "  = its 16 B twin");
+assert_eq(h_ucall_8(), 9, "handle: from an untyped call");
+assert_eq(h_ucall_8(), h_ucall_h(), "  = its 16 B twin");
+assert_eq(h_zero_8(), 9, "handle: from 0, then rebound to a handle");
+assert_eq(h_zero_8(), h_zero_h(), "  = its 16 B twin");
+assert_eq(h_int_8(), 9, "handle: from an integer, + is pointer arithmetic");
+assert_eq(h_int_8(), h_int_h(), "  = its 16 B twin");
+assert_eq(h_i32_8(), 4294967293, "handle: an i32-field struct from an address");
+assert_eq(h_i32_8(), h_i32_h(), "  = its 16 B twin");
+assert_eq(b_local_8(), 9, "bind: from a handle local");
+assert_eq(b_local_8(), b_local_h(), "  = its 16 B twin");
+assert_eq(b_cap_8(), 9, "bind: from a captured handle");
+assert_eq(b_cap_8(), b_cap_h(), "  = its 16 B twin");
+assert_eq(c_arg_8(), 5, "consumer: a by-value argument takes the struct");
+assert_eq(c_arg_8(), c_arg_h(), "  = its 16 B twin");
+assert_eq(c_argp_8(), 5, "consumer: a (wrapped) argument");
+assert_eq(c_argp_8(), c_argp_h(), "  = its 16 B twin");
+assert_eq(c_argm_8(), 15, "consumer: a method's argument");
+assert_eq(c_argm_8(), c_argm_h(), "  = its 16 B twin");
+assert_eq(c_argg_8(), 6, "consumer: a generic's by-value argument");
+assert_eq(c_argg_8(), c_argg_h(), "  = its 16 B twin");
+assert_eq(c_gen_8(), 559, "consumer: a generic identity copies");
+assert_eq(c_gen_8(), c_gen_h(), "  = its 16 B twin");
+assert_eq(c_recv_8(), 51, "consumer: a by-value receiver");
+assert_eq(c_recv_8(), c_recv_h(), "  = its 16 B twin");
+assert_eq(c_recvd_8(), 10, "consumer: a by-value receiver, struct result");
+assert_eq(c_recvd_8(), c_recvd_h(), "  = its 16 B twin");
+assert_eq(c_ret_8(), 5, "consumer: return a");
+assert_eq(c_ret_8(), c_ret_h(), "  = its 16 B twin");
+assert_eq(c_retp_8(), 5, "consumer: return (a)");
+assert_eq(c_retp_8(), c_retp_h(), "  = its 16 B twin");
+assert_eq(c_opr_8(), 6, "consumer: an operator's right operand");
+assert_eq(c_opr_8(), c_opr_h(), "  = its 16 B twin");
+assert_eq(c_opl_8(), 8, "consumer: a left operand is pointer arithmetic");
+assert_eq(c_opl_8(), c_opl_h(), "  = its 16 B twin");
+assert_eq(c_ain_8(), 559, "consumer: q = a copies");
+assert_eq(c_ain_8(), c_ain_h(), "  = its 16 B twin");
+assert_eq(c_aout_8(), 7, "consumer: a = q copies into the object");
+assert_eq(c_aout_8(), c_aout_h(), "  = its 16 B twin");
+assert_eq(c_rb_8(), 58, "consumer: handle <- handle rebinds");
+assert_eq(c_rb_8(), c_rb_h(), "  = its 16 B twin");
+assert_eq(c_rbt_8(), 58, "consumer: handle <- handle of another type rebinds");
+assert_eq(c_rbt_8(), c_rbt_h(), "  = its 16 B twin");
+assert_eq(c_acall_8(), 7, "consumer: a = mk() copies into the object");
+assert_eq(c_acall_8(), c_acall_h(), "  = its 16 B twin");
+assert_eq(c_acallw_8(), 7, "consumer: a = (mk()) copies into the object");
+assert_eq(c_acallw_8(), c_acallw_h(), "  = its 16 B twin");
+assert_eq(c_ameth_8(), 8, "consumer: a = b.dbl() copies into the object");
+assert_eq(c_ameth_8(), c_ameth_h(), "  = its 16 B twin");
+assert_eq(c_aop_8(), 8, "consumer: a = b + b copies into the object");
+assert_eq(c_aop_8(), c_aop_h(), "  = its 16 B twin");
+assert_eq(c_afld_8(), 6, "consumer: a = w.s copies into the object");
+assert_eq(c_afld_8(), c_afld_h(), "  = its 16 B twin");
+assert_eq(c_agl_8(), 5, "consumer: a = G copies into the object");
+assert_eq(c_agl_8(), c_agl_h(), "  = its 16 B twin");
+assert_eq(c_gla_8(), 6, "consumer: G = a copies");
+assert_eq(c_gla_8(), c_gla_h(), "  = its 16 B twin");
+assert_eq(c_fst_8(), 5, "consumer: w.s = a copies");
+assert_eq(c_fst_8(), c_fst_h(), "  = its 16 B twin");
+assert_eq(c_nlit_8(), 52, "consumer: a nested literal element copies");
+assert_eq(c_nlit_8(), c_nlit_h(), "  = its 16 B twin");
+assert_eq(c_ncap_8(), 9, "consumer: a nested closure writes the object");
+assert_eq(c_ncap_8(), c_ncap_h(), "  = its 16 B twin");
+assert_eq(c_carg_8(), 5, "consumer: a captured handle as an argument");
+assert_eq(c_carg_8(), c_carg_h(), "  = its 16 B twin");
+assert_eq(c_cin_8(), 559, "consumer: q = a with a captured handle copies");
+assert_eq(c_cin_8(), c_cin_h(), "  = its 16 B twin");
+assert_eq(c_crb_8(), 57, "consumer: handle = a captured handle copies (a capture is a value source)");
+assert_eq(c_crb_8(), c_crb_h(), "  = its 16 B twin");
+assert_eq(c_copr_8(), 6, "consumer: a captured handle as an operator's right operand");
+assert_eq(c_copr_8(), c_copr_h(), "  = its 16 B twin");
+assert_eq(c_match_8(1), 5, "consumer: in a match arm");
+assert_eq(c_match_8(1), c_match_h(1), "  = its 16 B twin");
+assert_eq(c_ra_8(), 10, "consumer: in a #regalloc fn");
+assert_eq(c_ra_8(), c_ra_h(), "  = its 16 B twin");
+assert_eq(x_ptrarg_8(), 5, "address: into a *T parameter");
+assert_eq(x_ptrarg_8(), x_ptrarg_h(), "  = its 16 B twin");
+assert_eq(x_ptrop_8(), 4, "address: into a *T operator operand");
+assert_eq(x_ptrop_8(), x_ptrop_h(), "  = its 16 B twin");
+assert_eq(x_ptrself_8(), 105, "address: a self: *T receiver");
+assert_eq(x_ptrself_8(), x_ptrself_h(), "  = its 16 B twin");
+assert_eq(x_untyped_8(), 5, "address: into an untyped parameter");
+assert_eq(x_untyped_8(), x_untyped_h(), "  = its 16 B twin");
+assert_eq(x_clo_8(), 5, "address: into a closure's parameter");
+assert_eq(x_clo_8(), x_clo_h(), "  = its 16 B twin");
+assert_eq(x_dyn_8(), 507, "address: a dyn formed from a handle");
+assert_eq(x_dyn_8(), x_dyn_h(), "  = its 16 B twin");
+assert_eq(x_addr_8(), 0, "address: &a is the slot holding the address");
+assert_eq(x_addr_8(), x_addr_h(), "  = its 16 B twin");
+assert_eq(x_opeq_8(), 8, "OP= on a handle's field writes the object");
+assert_eq(x_opeq_8(), x_opeq_h(), "  = its 16 B twin");
+assert_eq(i_ie_8(1), 559, "init: an if-expression copies (no 16 B twin: a branch over 8 B is refused)");
+assert_eq(c_ie_8(1), 559, "consumer: an if-expression branch takes the struct");
+assert_eq(c_aie_8(1), 4, "consumer: a = if .. copies into the object");
+assert_eq(c_cie_8(), 5, "consumer: a captured handle as an if-expression branch");
+c_def_8();
+var gd8 = GR;
+c_def_h();
+assert_eq(gd8, 6, "consumer: a defer body takes the struct");
+assert_eq(gd8, GR, "  = its 16 B twin");
+test_group("the handle line at every size 1..8 B");
+assert_eq(z1_arg(), -3, "1 B: arg");
+assert_eq(z1_argp(), -3, "1 B: argp");
+assert_eq(z1_ret(), -3, "1 B: ret");
+assert_eq(z1_retp(), -3, "1 B: retp");
+assert_eq(z1_in(), -3, "1 B: in");
+assert_eq(z1_out(), -3, "1 B: out");
+assert_eq(z1_call(), -3, "1 B: call");
+assert_eq(z1_opr(), -3, "1 B: opr");
+assert_eq(z1_cap(), -3, "1 B: cap");
+assert_eq(z1_ie(1), -3, "1 B: ie");
+assert_eq(z2_arg(), -300, "2 B: arg");
+assert_eq(z2_argp(), -300, "2 B: argp");
+assert_eq(z2_ret(), -300, "2 B: ret");
+assert_eq(z2_retp(), -300, "2 B: retp");
+assert_eq(z2_in(), -300, "2 B: in");
+assert_eq(z2_out(), -300, "2 B: out");
+assert_eq(z2_call(), -300, "2 B: call");
+assert_eq(z2_opr(), -300, "2 B: opr");
+assert_eq(z2_cap(), -300, "2 B: cap");
+assert_eq(z2_ie(1), -300, "2 B: ie");
+assert_eq(z3_arg(), -30000004, "3 B: arg");
+assert_eq(z3_argp(), -30000004, "3 B: argp");
+assert_eq(z3_ret(), -30000004, "3 B: ret");
+assert_eq(z3_retp(), -30000004, "3 B: retp");
+assert_eq(z3_in(), -30000004, "3 B: in");
+assert_eq(z3_out(), -30000004, "3 B: out");
+assert_eq(z3_call(), -30000004, "3 B: call");
+assert_eq(z3_opr(), -30000004, "3 B: opr");
+assert_eq(z3_cap(), -30000004, "3 B: cap");
+assert_eq(z3_ie(1), -30000004, "3 B: ie");
+assert_eq(z4_arg(), -70000, "4 B: arg");
+assert_eq(z4_argp(), -70000, "4 B: argp");
+assert_eq(z4_ret(), -70000, "4 B: ret");
+assert_eq(z4_retp(), -70000, "4 B: retp");
+assert_eq(z4_in(), -70000, "4 B: in");
+assert_eq(z4_out(), -70000, "4 B: out");
+assert_eq(z4_call(), -70000, "4 B: call");
+assert_eq(z4_opr(), -70000, "4 B: opr");
+assert_eq(z4_cap(), -70000, "4 B: cap");
+assert_eq(z4_ie(1), -70000, "4 B: ie");
+assert_eq(z5_arg(), -7000000004, "5 B: arg");
+assert_eq(z5_argp(), -7000000004, "5 B: argp");
+assert_eq(z5_ret(), -7000000004, "5 B: ret");
+assert_eq(z5_retp(), -7000000004, "5 B: retp");
+assert_eq(z5_in(), -7000000004, "5 B: in");
+assert_eq(z5_out(), -7000000004, "5 B: out");
+assert_eq(z5_call(), -7000000004, "5 B: call");
+assert_eq(z5_opr(), -7000000004, "5 B: opr");
+assert_eq(z5_cap(), -7000000004, "5 B: cap");
+assert_eq(z5_ie(1), -7000000004, "5 B: ie");
+assert_eq(z6_arg(), -7000000300, "6 B: arg");
+assert_eq(z6_argp(), -7000000300, "6 B: argp");
+assert_eq(z6_ret(), -7000000300, "6 B: ret");
+assert_eq(z6_retp(), -7000000300, "6 B: retp");
+assert_eq(z6_in(), -7000000300, "6 B: in");
+assert_eq(z6_out(), -7000000300, "6 B: out");
+assert_eq(z6_call(), -7000000300, "6 B: call");
+assert_eq(z6_opr(), -7000000300, "6 B: opr");
+assert_eq(z6_cap(), -7000000300, "6 B: cap");
+assert_eq(z6_ie(1), -7000000300, "6 B: ie");
+assert_eq(z7_arg(), -70000030000004, "7 B: arg");
+assert_eq(z7_argp(), -70000030000004, "7 B: argp");
+assert_eq(z7_ret(), -70000030000004, "7 B: ret");
+assert_eq(z7_retp(), -70000030000004, "7 B: retp");
+assert_eq(z7_in(), -70000030000004, "7 B: in");
+assert_eq(z7_out(), -70000030000004, "7 B: out");
+assert_eq(z7_call(), -70000030000004, "7 B: call");
+assert_eq(z7_opr(), -70000030000004, "7 B: opr");
+assert_eq(z7_cap(), -70000030000004, "7 B: cap");
+assert_eq(z7_ie(1), -70000030000004, "7 B: ie");
+assert_eq(z8_arg(), -7000080000, "8 B: arg");
+assert_eq(z8_argp(), -7000080000, "8 B: argp");
+assert_eq(z8_ret(), -7000080000, "8 B: ret");
+assert_eq(z8_retp(), -7000080000, "8 B: retp");
+assert_eq(z8_in(), -7000080000, "8 B: in");
+assert_eq(z8_out(), -7000080000, "8 B: out");
+assert_eq(z8_call(), -7000080000, "8 B: call");
+assert_eq(z8_opr(), -7000080000, "8 B: opr");
+assert_eq(z8_cap(), -7000080000, "8 B: cap");
+assert_eq(z8_ie(1), -7000080000, "8 B: ie");
+var r = assert_summary();

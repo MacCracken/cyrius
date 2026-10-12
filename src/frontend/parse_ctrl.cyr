@@ -332,6 +332,7 @@ fn _ie_branch(S, st): i64 {
     _sc_beg = 0 - 1;   # only this branch's own struct-call record may match
     PCMPE(S);
     _fpk_want = fk;
+    _hl_bare_val(S, bti, GTI(S));   # 6.7.10 (B7-1): a handle of 8 B or less is its struct
     _ie_kind(S, st, bti);
     if (PEEKT(S) == 5) {
         ERR_MSG(S, "an if expression branch holds one expression, without ';' - an if statement runs statements", 91);

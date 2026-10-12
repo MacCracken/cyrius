@@ -2819,10 +2819,11 @@ fn _agc_hdl(): i64 {
     if (_agc_gvi <= 0 - 1000) { return 1; }
     return 0;
 }
-# 1 = `t` (a `0 - sid` type) is a plain struct over 8 B — the only kind a handle copies. `Str` /
-# `Result` / `Option` / `Tagged` are excluded by name through the classifier that builds a fn's
-# structmask, as `_local_is_sptr_param` excludes them: their slots hold heap handles that every
-# assignment rebinds (the stdlib's convention). A <= 8 B struct is held by value. CHANGELOG [6.6.16]
+# 1 = `t` (a `0 - sid` type) is a plain struct over 8 B. `Str` / `Result` / `Option` / `Tagged` are
+# excluded by name through the classifier that builds a fn's structmask, as `_local_is_sptr_param`
+# excludes them: their slots hold heap handles that every assignment rebinds (the stdlib's
+# convention). A handle of 8 B or less is a local's own answer (`_small_hdl`, 6.7.10); a global
+# of 8 B or less is held by value. CHANGELOG [6.6.16]
 fn _agc_plain_big(S, t): i64 {
     if (t >= 0) { return 0; }
     if (t <= 0 - 2048) { return 0; }
@@ -2835,8 +2836,10 @@ fn _agc_plain_big(S, t): i64 {
 # handle (2), or not an aggregate operand (0 returned). Kept out of `_agc_operand` for cybs's
 # per-fn reference limit. Since C7 a by-value parameter is copied into an inline local in the
 # prologue (`_sptr_params_localize`), so 1 is left only for a `#naked` fn's. CHANGELOG [6.6.16]
+# 6.7.10 (B7-1): and a HANDLE of 8 B or less (the handle line), one slot (`_hl_small_copy`).
 fn _agc_handle_local(S, li): i64 {
     var lt = GLTYPE(S, li);
+    if (_small_hdl(S, li) == 1) { _agc_pp = 2; _agc_li = li; _agc_t = lt; return 1; }
     if (_agc_plain_big(S, lt) == 0) { return 0; }
     _agc_pp = 2;
     if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(S, li) == 0) { _agc_pp = 1; } }
@@ -2938,7 +2941,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     # a `Box<Pt>` (the field argument infers T = i64) is refused by name. CHANGELOG [6.6.11]
     if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
     var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return 0; }
+    if (cls == 0) { return _hl_call_into(S, fi, n, term); }   # 6.7.10 (B7-1): into a handle
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -2955,6 +2958,65 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     return 1;
 }
 
+# ⛔ 6.7.10 (B7-1) — `dst = src;` between one-slot (8 B or less) struct operands (`_agc_operand` just
+# ran on `dst`), now that one can be a HANDLE (the handle line): exactly as over 8 B — handle <- handle
+# is a pointer REBIND, at any pair of struct types, before the type check (0: the one-word store); a
+# handle and a value COPY the struct through the handle's address, byte-exact. Two values keep the
+# one-word store, and a mismatch is refused by name, as before. 1 = copied (`src ;` consumed).
+fn _hl_small_copy(S, noff, src_noff, dt): i64 {
+    var dh = _agc_hdl();
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    _agc_src_operand(S, src_noff);
+    var sh = _agc_hdl();
+    if (dh == 1) { if (sh == 1) { return 0; } }
+    if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }
+    # A CAPTURED handle is a source the copy goes through (its word is the address), never a rebind
+    # — as over 8 B, where `_agc_src_operand` answers a capture as a value. (`_CL_CAP_BASE_RA`)
+    if (_agc_li == 0 - 2) { if (_hl_cap_hdl(S, src_noff) > 0) { sh = 1; } }
+    if (dh + sh == 0) { return 0; }
+    if (_agc_t != dt) { return 0; }
+    var sli = _agc_li;
+    if (_agc_pp != 0) { sli = _AGC_DREF(sli); }
+    _agc_copy_bytes(S, dli, dgv, sli, _agc_gvi, STRUCTSZ(S, (0 - dt) - 1));
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    STI(S, GTI(S) + 2);   # src ;
+    return 1;
+}
+# 6.7.10 (B7-1) — a struct of 8 B or less in rax (a method / operator / if-expression result, a free
+# call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
+# into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
+# consumed). `_hl_res_into` is the record's arm: `_agc_operand` just ran on the destination; a value
+# destination keeps the one-word store (0).
+fn _hl_res_into(S, term, sid): i64 {
+    if (_agc_hdl() == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    return _hl_val_into(S, term, sid, _agc_li, _agc_gvi);
+}
+fn _hl_val_into(S, term, sid, dli, dgv): i64 {
+    var t = _agg_temp(S, sid);
+    EFLSTORE(S, t);
+    if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
+    _agc_copy_bytes(S, dli, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
+# `a = mk(..);` — a free call returning a struct of 8 B or less (class 0, in rax) into a HANDLE `a` of
+# its type (`n` = `_agc_operand`'s span): parsed, then `_hl_val_into`. 0 leaves the cursor alone.
+fn _hl_call_into(S, fi, n, term): i64 {
+    if (n != 1) { return 0; }
+    if (_agc_hdl() == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_agc_t != 0 - rs) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    PCMPE(S);
+    return _hl_val_into(S, term, rs, dli, dgv);
+}
 # `x = f(..);` — x a struct operand (`_agc_operand` just ran) and f returning a DIFFERENT struct:
 # refused by name (1). Reads `_agc_t`. CHANGELOG [6.6.11]
 # 6.6.16 (C2): into a HANDLE, a call returning a struct HANDLE (`Str`: class 0 over 8 B, the
@@ -3449,7 +3511,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
-    if (t == 0 - 3) { return 0; }
+    if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
@@ -3628,10 +3690,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     var dt = _agc_t;
     var src_noff = TOKVAL(S, GTI(S));
     if (nslots <= 1) {
-        if (dt < 0) {
-            _agc_src_operand(S, src_noff);
-            _AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff);
-        }
+        if (dt < 0) { return _hl_small_copy(S, noff, src_noff, dt); }   # 6.7.10 (B7-1): + a handle
         return 0;
     }
     # ⛔ 6.6.16 (C2) — read whether the destination is a HANDLE (`_agc_hdl`) before the source

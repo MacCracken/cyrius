@@ -579,12 +579,16 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
 # struct's ADDRESS, so the word is loaded.
 # 6.6.17 (a2): so does a captured `p: *T` PARAMETER whatever T's size — read from the PTRP bit the
 # snapshot carries (`_cl_snap_ptrp`). A `*B1` (8 B) capture read the pointer itself as `p.v`.
+# 6.7.10 (B7-1): and a captured HANDLE of 8 B or less (the handle line) — an enclosing slot with no
+# inline span holds the address, as over 8 B; an inline one (span 1) is the struct's word.
 fn _CL_CAP_BASE_RA(S, capi, sid): i64 {
     _CL_CAP_WORDS_RA(S, capi);
     if (L64(&_cl_cap_w + capi * 8) == 1) {
         if (sid > 0) {
+            var esl = L64(&_cl_cap_slots + capi * 8);
             if (STRUCTSZ(S, sid - 1) > 8) { ELOAD64(S); }
-            elif (_cl_snap_ptrp(L64(&_cl_cap_slots + capi * 8)) == 1) { ELOAD64(S); }
+            elif (_cl_snap_ptrp(esl) == 1) { ELOAD64(S); }
+            elif (_cl_snap_span(esl) == 0) { ELOAD64(S); }
         }
     }
     return 0;
@@ -5457,6 +5461,7 @@ fn EMIT_GVAR_INITS(S): i64 {
 # `_agc_operand` and `_push_struct_addr_global` are: GVTYPE alone cannot answer it, because
 # its positive range is shared with scalar widths. CHANGELOG [6.6.5]
 var _sci_gsrc = 0 - 1;
+var _sci_sval = 0;   # 6.7.10 (B7-1): 1 = the copy-init source was a struct VALUE of 8 B or less
 fn _sci_global_src(S, snoff, pscale): i64 {
     var gvi = FINDVAR(S, snoff);
     if (gvi < 0) { return 0 - 1; }
@@ -5719,13 +5724,22 @@ fn _gci_toplevel(S, noff, pscale): i64 {
 }
 
 fn _try_struct_copy_init(S, noff, pscale): i64 {
+    _sci_sval = 0;   # 6.7.10 (B7-1): never a stale answer for this declaration
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
-    if (ci_pk < 0) { return 0; }
-    var ci_ti = GTI(S) + 1 + ci_pk;
+    var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
+    if (ci_pk < 0) {
+        ci_dr = _sci_star(S, GTI(S) + 1);
+        if (ci_dr == 0) { return 0; }
+        ci_pk = 0;
+    }
+    var ci_ti = GTI(S) + 1 + ci_pk + ci_dr;
     var src_li = FINDLOCAL(S, TOKVAL(S, ci_ti));
+    if (ci_dr == 1) {
+        if (src_li >= 0) { if (GLPTRP(S, src_li) == 0) { return 0; } }
+    }
     # ⛔ 6.6.5 — A GLOBAL SOURCE WAS NOT A COPY, IT WAS A CRASH. `var b: P = A;` for a
     # top-level `var A = P { 1, 2 };` fell out of this path (FINDLOCAL fails) into the scalar
     # init, which stored A's ADDRESS into a slot marked struct-typed — so `b.x` dereferenced
@@ -5735,13 +5749,17 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     _sci_gsrc = 0 - 1;
     var _ptr_src = 0;   # 6.7.0: the source is a `*T` — copied THROUGH it at every size
     var _cs = 0;
-    if (src_li < 0) { _cs = _sci_cap_src(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.6.13
+    if (src_li < 0) {
+        if (ci_dr == 1) { _cs = _sci_cap_deref(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.7.10
+        else { _cs = _sci_cap_src(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.6.13
+    }
     if (_cs == 2) { return 0; }
-    if (_cs == 1) { src_li = 0 - 2; }
+    if (_cs == 1) { src_li = 0 - 2; _ptr_src = ci_dr; }
     elif (src_li < 0) {
         var _gp = _sci_gptr_src(S, TOKVAL(S, ci_ti), pscale);   # 6.7.0: a `*T` global
         if (_gp <= 0 - 1000) { _sci_gsrc = _gp; _ptr_src = 1; }
         if (_ptr_src == 0) {
+            if (ci_dr == 1) { return _sci_gderef_err(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.7.10
             var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
             if (_gs < 0) {
                 # 6.6.6 — a struct-typed GLOBAL source of a DIFFERENT type is a type error, not a
@@ -5796,7 +5814,10 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     else {
         var dst_sid = 0 - pscale;
         var sz = STRUCTSZ(S, dst_sid - 1);
-        if (sz <= 8) { if (_ptr_src == 0) { return 0; } }   # 6.7.0: a `*T` source copies at 8 B too
+        # 6.7.0: a `*T` source copies at 8 B too. 6.7.10 (B7-1): any other source left here is a
+        # struct VALUE of the type (an inline local, a by-value parameter, a value global, a capture
+        # of the struct's words) — PARSE_VAR's scalar init copies its one word and marks it inline.
+        if (sz <= 8) { if (_ptr_src == 0) { _sci_sval = 1; return 0; } }
         var aligned = (sz + 7) & (0 - 8);
         nslots = aligned / 8;
     }
@@ -5844,7 +5865,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     STI(S, GTI(S) + 1);   # consume '='
     STI(S, GTI(S) + 1);   # consume IDENT
     STI(S, GTI(S) + 1);   # consume ';'
-    STI(S, GTI(S) + 2 * ci_pk);   # 6.7.6: and the wrap's `(` / `)`
+    STI(S, GTI(S) + 2 * ci_pk + ci_dr);   # 6.7.6: and the wrap's `(` / `)`; 6.7.10: the `*`
     return 1;
 }
 # ⛔ 6.7.6 — the name source of `var v: K = <src>;` at token `ti`: 0 for `IDENT ;`, `k` for the
@@ -6994,12 +7015,13 @@ fn PARSE_VAR(S): i64 {
             # v5.8.14 §6: per-local slice element width (0 = not a slice).
             SSLICE_W(S, li, slice_elt_w);
             # 6.6.5 — THE LAYOUT IS RECORDED HERE, AND THE ABSENCE OF THE MARK IS THE POINT.
-            # This branch produces BOTH shapes of struct-typed local and they are told apart by
-            # width, not by anything visible at the use site: a struct over 8 B initialised from
-            # an expression (`var p: P = mk();`, `var s = str_from(x);`) leaves the slot holding
-            # an ADDRESS, while one that fits in 8 B holds the value itself. Leaving the bit
-            # clear for the wide case is what stops `p.y` reading the frame instead of the heap.
-            MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
+            # This branch produces BOTH shapes of struct-typed local and nothing visible at the use
+            # site tells them apart: one initialised from an address (`var p: P = alloc(16);`,
+            # `var s = str_from(x);`) leaves the slot holding an ADDRESS, while a struct VALUE of 8 B
+            # or less (`var q: S8 = mk8(1);`) is the slot. Leaving the bit clear for the handle is
+            # what stops `p.y` reading the frame instead of the heap. 6.7.10 (B7-1): the line is the
+            # initialiser at every size (the handle line), no longer the width — `_mark_small_init`.
+            _mark_small_init(S, li, scv_start);
             # v6.3.35: mark a SIGNED sub-i64 scalar local with a NEGATIVE sentinel in the
             # (otherwise-0-for-scalars) slice-width table — slice-logic only checks `>0`, so
             # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
@@ -7067,3 +7089,177 @@ fn PARSE_VAR(S): i64 {
 # PARSE_ASSIGN removed v5.5.40 closeout — assignment is handled inline
 # by PARSE_STMT's expression path (assignment-as-expression). The fn
 # was orphaned across every main_*.cyr entry point per the DCE audit.
+
+# ⛔ 6.7.10 (B7-1) — THE HANDLE LINE (the user's decision, 2026-10-12): a struct local of 8 B or less
+# initialised from anything that is not a struct value of its type is a HANDLE, as one over 8 B is —
+# its slot holds the address, `q.v = 5` writes the object, and every consumer that takes its struct
+# (a by-value argument, `return q`, an operator's right operand, an if-expression branch, a copy)
+# copies through it. It used to be marked inline whatever the initialiser, so `var q: S8 = alloc(8);`
+# (or `= &s`, `= gp()` with `fn gp(): *S8`) held the ADDRESS as q.v and its writes never reached the
+# object. Marked inline (MARK_SMALL_STRUCT, unchanged) only for a struct value: a name source that
+# `_try_struct_copy_init` let through (`_sci_sval`: an inline local, a by-value parameter, a value
+# global, a captured struct's words), a whole method / operator / if-expression / dyn-call result
+# (`_sc_whole` -3), or a whole free or generic call returning the type (`_hl_call_whole`). A literal,
+# a field, `*p` and a `*T` name take their own copy paths and never reach here. CHANGELOG [6.7.10]
+fn _mark_small_init(S, li, start): i64 {
+    var sv = _sci_sval;
+    _sci_sval = 0;
+    var t = GLTYPE(S, li);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    var sid = 0 - t;
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    if (sv == 0) { if (_hl_sval(S, start, sid) == 0) { return 0; } }
+    MARK_SMALL_STRUCT(S, li, t);
+    return 0;
+}
+# 1 = the initialiser [start, cursor) is a whole struct-valued call of struct `sid`: a method,
+# operator, if-expression or dyn call (the -3 record), or a free / generic call (`_hl_call_whole`).
+fn _hl_sval(S, start, sid): i64 {
+    if (_sc_whole(S, start) == 0 - 3) { if (_sc_sid == sid) { return 1; } }
+    return _hl_call_whole(S, start, sid);
+}
+# 1 = [start, cursor) is one whole free or generic call (inside any wrap) of a fn returning struct
+# `sid` by value — a free call records no -3 (a `: *T` call is a handle: its return is not `sid`).
+# Resolved after the parse, a dedup hit, as `_sarg_byval_small` resolves its argument.
+fn _hl_call_whole(S, start, sid): i64 {
+    var k = _pwrap_k(S, start);
+    var c = start + k;
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 + k != GTI(S)) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }
+    if (GFRS(S, fi) != sid) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.10 (B7-1) — `var q: T = *p;` with `p: *T`: `*p` is a struct VALUE (the user's decision,
+# 2026-10-12) and is copied through p at every size, as `var q: T = p;` is (6.7.0). Over 8 B the
+# scalar init bound q as a handle holding the word `*p` read (the first field), and the first `q.a = 9`
+# SIGSEGV'd. 1 = the initialiser at token `ti` is `* IDENT ;`.
+fn _sci_star(S, ti): i64 {
+    if (TOKTYP(S, ti) != 8) { return 0; }
+    if (TOKTYP(S, ti + 1) != 2) { return 0; }
+    if (TOKTYP(S, ti + 2) != 5) { return 0; }
+    return 1;
+}
+# `*p` with `p` a closure capture: 1 = a captured `*T` of the declared type (copied through the
+# word it captured, `_CL_CAP_BASE_RA`); 2 = anything else (the scalar init, as before). A `*U` of
+# another struct is refused by name, as `var q: T = p;` refuses it.
+fn _sci_cap_deref(S, snoff, dnoff, pscale): i64 {
+    var t = _fsc_cap_src(S, snoff);
+    if (t == 0) { return 0; }
+    if (_cl_snap_ptrp(_cl_snap_find(S, snoff)) == 0) { return 2; }
+    if (t != pscale) { _AGG_ASSIGN_TYPE_ERR(S, pscale, t, dnoff, snoff); return 2; }
+    return 1;
+}
+# `*G` with `G` a global that is not a `*T` of the declared type: a `*U` of another struct is refused
+# by name; anything else (an untyped word) is the scalar init's. Returns 0.
+fn _sci_gderef_err(S, snoff, dnoff, pscale): i64 {
+    var gvi = FINDVAR(S, snoff);
+    if (gvi < 0) { return 0; }
+    var ps = _gv_ptr_sid(S, gvi);
+    if (ps <= 0) { return 0; }
+    _AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, dnoff, snoff);
+    return 0;
+}
+# ⛔ 6.7.10 (B7-1) — 1 = local `li` is a HANDLE of 8 B or less (the handle line, `_mark_small_init`):
+# a struct-typed local of this fn that is not inline, not a `*T` and not a parameter (a by-value
+# one of 8 B or less is inline, MARK_SMALL_STRUCT at the parameter). Nothing answered 1 before the
+# handle line — every such local was marked inline — so each consumer arm keyed on it is inert on a
+# program without one. CHANGELOG [6.7.10]
+fn _small_hdl(S, li): i64 {
+    if (li < 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (li < _cur_fn_pslots) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    var t = GLTYPE(S, li);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    if (STRUCTSZ(S, (0 - t) - 1) > 8) { return 0; }
+    return 1;
+}
+# 1 = a load of `sz` bytes is one instruction (1, 2, 4, 8).
+fn _hl_wpow(sz): i64 {
+    if (sz == 1 || sz == 2 || sz == 4 || sz == 8) { return 1; }
+    return 0;
+}
+# rax = the STRUCT a handle of 8 B or less points at (`li` a local, struct `sid`), as a by-value
+# consumer takes a struct of that class: one load of 1 / 2 / 4 / 8 bytes, else (3, 5, 6, 7) a
+# byte-exact copy into a frame temp whose slot is loaded — no byte past the object is read.
+fn _hdl_val_ra(S, li, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    if (_hl_wpow(sz) == 1) {
+        EFLLOAD(S, li);
+        EMOVCA(S);
+        EFIELD_LOAD_W(S, sz);
+        return 0;
+    }
+    EFLLOAD(S, _sptr_param_temp(S, li, sid));
+    return 0;
+}
+# Inside a closure: the struct a CAPTURED name `noff` is a handle of, 8 B or less (its enclosing slot
+# one word, not inline, not a `*T`), else 0. Its one captured word is the address (`_CL_CAP_BASE_RA`).
+fn _hl_cap_hdl(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    var capi = _cl_cap_find(esl);
+    if (capi < 0) { return 0; }
+    if (L64(&_cl_cap_w + capi * 8) != 1) { return 0; }
+    if (_cl_snap_span(esl) != 0) { return 0; }
+    if (_cl_snap_ptrp(esl) == 1) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    if (STRUCTSZ(S, (0 - t) - 1) > 8) { return 0; }
+    return 0 - t;
+}
+# rax = the struct a captured handle `noff` (struct `sid`, `_hl_cap_hdl`) points at; `_hdl_val_ra`'s
+# two shapes, through the capture source record (`_fsc_cap_src`).
+fn _hl_cap_val_ra(S, noff, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    _fsc_cap_src(S, noff);
+    if (_hl_wpow(sz) == 1) {
+        _resolve_field_base_addr(S, _fsc_fidx, sid);
+        EFIELD_LOAD_W(S, sz);
+        return 0;
+    }
+    var t = _agg_temp(S, sid);
+    _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, sz);
+    EFLLOAD(S, t);
+    return 0;
+}
+# The by-value consumers (an argument, a `return`, an operator's right operand, an if-expression
+# branch): when the expression [b, e) just parsed is a bare name, inside any balanced parentheses,
+# that is a handle of 8 B or less — a local or a closure capture — rax becomes its STRUCT (the parse
+# left the handle's address there), as a struct over 8 B is taken through its handle. 1 = done.
+fn _hl_bare_val(S, b, e): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var a = _ie_unparen(S, b, e);
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nm = TOKVAL(S, a);
+    var li = FINDLOCAL(S, nm);
+    if (li >= 0) {
+        if (_small_hdl(S, li) == 0) { return 0; }
+        _hdl_val_ra(S, li, 0 - GLTYPE(S, li));
+        return 1;
+    }
+    var cs = _hl_cap_hdl(S, nm);
+    if (cs <= 0) { return 0; }
+    _hl_cap_val_ra(S, nm, cs);
+    return 1;
+}
+# 1 = parameter `k` of fn `fi` takes a struct of 8 B or less BY VALUE (one word, no struct-mask bit).
+fn _hl_byval(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (_pm_struct(fi, k) != 0) { return 0; }
+    if (STRUCTSZ(S, ps - 1) > 8) { return 0; }
+    return 1;
+}
