@@ -67,7 +67,9 @@ chain `o.i.x`), `var u = y;` (an `f64` / `f32` local or parameter) and `var g = 
 global) type `t`, `u` and `g` the same way, so `t + t` is a float add and `-t` a float
 negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns. Only a
 bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
-(v6.5.21), which types `x` from the declared return. It does NOT cover an **untyped**
+(v6.5.21), which types `x` from the declared return, as it does (6.7.9) a whole method call
+ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(1).area()`
+with `fn area(self): f64`. It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
@@ -993,7 +995,8 @@ different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — the
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
 only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
 computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
-unary `-` / `~`, `p?`, an operator fn's result and a field that is no `*T` — `(x == p) + 1`,
+unary `-` / `~`, `p?`, an operator fn's result (unless the operator fn declares `: *T`: then,
+as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
 `(k * p) + 1`, `(m & p) + 1`, `(-p) + 1` and `mk(p).n + 1` add 1, and such a value assigned to a
 `*T` warns "assigning non-pointer to typed pointer". (Before 6.7.9 the pointer's step leaked
 through them: with `p: *i32`, `(x == p) + 100` was 401.) (Before 6.6.17,

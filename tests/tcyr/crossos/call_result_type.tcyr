@@ -12,7 +12,9 @@
 # and `_struct_call_emit` the reset. 6.7.0 - 6.7.8, every target. Filed:
 # docs/development/issues/2026-10-09-method-call-result-keeps-last-arg-f64-type.md
 # And the binding (6.7.9, found beside the generic f64 bite): `var ua = p.area();` was an untyped
-# word where `var uf = fa(&p);` is an f64 (v6.5.21) — `_var_rhs_msid` now types it from the method.
+# word where `var uf = fa(&p);` is an f64 (v6.5.21) — `_var_rhs_msid` now types it from the method;
+# a method ending a longer chain (`w.v.area()`, `self.v.area()`, `p.ms(1.5).area()`,
+# `cr_mkp(1.5).area()`) from the result's type once parsed (`_var_rhs_mchain`, the 6.7.9 review).
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/call_result_type.sh, on the
 # four hardware hosts by the release gate's cross-OS leg. Every f64 expectation is compared as a BIT
 # PATTERN (assert_eq on an f64-typed value), so a float literal on the right is exact; every free-call
@@ -47,6 +49,7 @@ impl CrP {
     fn twice(self): i64 { return self.m(1.5) * 2; }
     fn fsum(self): f64 { return self.area() + 1.0; }
 }
+impl CrW { fn warea(self): f64 { var x = self.v.area(); return x + 1.0; } }
 impl CrSc for CrP { fn sc(self, d: f64): i64 { return self.x + 20; } }
 impl CrSc for i64 { fn sc(self, d: f64): i64 { return self + 20; } }
 fn cr_bnd<T: CrSc>(v: T): i64 { return v.sc(1.5) * 2; }
@@ -106,6 +109,17 @@ fn main(): i64 {
     assert_eq(ua + 1.0, 3.5, "var ua = p.area(); ua + 1.0 (an f64 binding, as a free call's)");
     var uf = cr_free_area(&p);
     assert_eq(uf + 1.0, 3.5, "var uf = cr_free_area(&p); uf + 1.0 (free control)");
+    var uw = w.v.area();
+    assert_eq(uw + 1.0, 3.5, "var uw = w.v.area(); uw + 1.0 (an inline field's method)");
+    assert_eq(w.warea(), 3.5, "var x = self.v.area(); x + 1.0 inside the impl");
+    var uc = p.ms(1.5).area();
+    assert_eq(uc + 1.0, 3.5, "var uc = p.ms(1.5).area(); uc + 1.0 (a method on a method's result)");
+    var um = cr_mkp(1.5).area();
+    assert_eq(um + 1.0, 3.5, "var um = cr_mkp(1.5).area(); um + 1.0 (a method on a free call's result)");
+    var upp = pp.area();
+    assert_eq(upp + 1.0, 3.5, "var upp = pp.area(); upp + 1.0 (a *T receiver)");
+    var ui = w.v.m(1.5);
+    assert_eq(ui * 2, 42, "var ui = w.v.m(1.5); ui * 2 (an integer method's binding stays an integer)");
 
     test_group("a struct result's field is typed by the field");
     assert_eq(p.ms(1.5).x * 2, 42, "p.ms(1.5).x * 2 (8 B result)");

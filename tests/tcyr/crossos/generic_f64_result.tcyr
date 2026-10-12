@@ -53,7 +53,9 @@ impl GfP {
     fn id<V>(self, w: V): V { return w; }
     fn id2<V>(self, w: V, k): V { return w; }
     fn dbl<V>(self, w: V): V { return w + w; }
+    fn me(self): GfP { var r = GfP { 7 }; return r; }
 }
+struct GfW { v: GfP; n; }
 
 var GF_G: f64 = 1.5;
 
@@ -120,6 +122,15 @@ fn main(): i64 {
     assert_eq(p.dbl(h), 3.0, "p.dbl(h): w + w is an f64 add");
     var w = p.id(h);
     assert_eq(w * 2.0, 3.0, "var w = p.id(h); w * 2.0 (an f64 binding)");
+    var gw: GfW;
+    gw.v.v = 3;
+    gw.n = 4;
+    var wf = gw.v.id(h);
+    assert_eq(wf * 2.0, 3.0, "var wf = gw.v.id(h); wf * 2.0 (an inline field's method: an f64 binding)");
+    var wc = p.me().id(h);
+    assert_eq(wc * 2.0, 3.0, "var wc = p.me().id(h); wc * 2.0 (a method's result: an f64 binding)");
+    var wi = gw.v.id(7);
+    assert_eq(wi * 2, 14, "var wi = gw.v.id(7); wi * 2 (V = i64: an integer binding)");
     assert_eq(GfP_id(&p, h) * 2.0, 3.0, "GfP_id(&p, h) * 2.0 (the free spelling)");
     assert_eq(GfP_id<f64>(&p, h) * 2.0, 3.0, "GfP_id<f64>(&p, h) * 2.0 (the explicit control)");
     assert_eq(p.id(7) * 2, 14, "p.id(7) * 2 (V = i64)");

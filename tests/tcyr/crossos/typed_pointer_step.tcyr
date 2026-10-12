@@ -256,6 +256,13 @@ struct Hn { n; m; }
 struct Vo { x; }
 fn Vo_add(a, b): i64 { return 10; }
 fn Vo_mul(a, b): i64 { return 20; }
+# An operator fn that DECLARES `: *T` produces a pointer: its result steps by T, as its free call
+# `Vp_add(vp, q) + 1` does (6.6.17's call rule; the 6.7.9 review — bite 5 had reset it to 0).
+struct Vp { x; }
+fn Vp_add(a, b): *i32 { return b; }
+fn Vp_mul(a, b): *Pt { return b; }
+fn Vp_sub(a, b): *i16 { return b; }
+fn Vp_div(a, b): *i64 { return b; }
 var HNB[2];
 fn hn_mk(q): Hn { var h: Hn; h.n = 0; h.m = 0; return h; }
 fn hn_mp(q): *Hn { return &HNB; }
@@ -337,6 +344,17 @@ fn op_rows_i32(): i64 {
     v.x = 0;
     assert_eq((v + q) + 1, 11, "*i32: (v + q) + 1 (an operator fn's result)");
     assert_eq((v * q) - 1, 19, "*i32: (v * q) - 1");
+    var vp: Vp;
+    vp.x = 0;
+    assert_eq(d((vp + q) + 1, q), 4, "*i32: (vp + q) + 1 steps 4 (Vp_add declares : *i32)");
+    assert_eq((vp + q) + 1, Vp_add(vp, q) + 1, "*i32: (vp + q) + 1 is the free call's Vp_add(vp, q) + 1");
+    assert_eq(d((vp * q) - 1, q), 0 - 24, "*i32: (vp * q) - 1 steps sizeof(Pt) (Vp_mul declares : *Pt)");
+    assert_eq(d(vp + q + 2, q), 2 * 4, "*i32: vp + q + 2 steps 2 * 4 (the + loop's left step)");
+    assert_eq(d(vp * q + 1, q), 24, "*i32: vp * q + 1 steps sizeof(Pt) (the * loop keeps it)");
+    assert_eq(d((vp - q) + 1, q), 2, "*i32: (vp - q) + 1 steps 2 (Vp_sub declares : *i16)");
+    assert_eq(d(vp - q - 1, q), 0 - 2, "*i32: vp - q - 1 steps 2 (the - loop's left step)");
+    assert_eq(d(vp / q + 3, q), 3 * 8, "*i32: vp / q + 3 steps 3 * 8 (Vp_div declares : *i64)");
+    assert_eq(d(2 + (vp * q), q), 2 * 24, "*i32: 2 + (vp * q) steps 2 * sizeof(Pt) (n + p)");
     assert_eq(d((q) + 1, q), 4, "*i32 ctl: (q) + 1 steps");
     assert_eq(d((q + 1) + 1, q), 2 * 4, "*i32 ctl: (q + 1) + 1");
     assert_eq(d(2 + q, q), 2 * 4, "*i32 ctl: 2 + q");

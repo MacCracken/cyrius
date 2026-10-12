@@ -2798,11 +2798,16 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
 # 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last
 # argument left (`_call_scale_fix`).
 fn _call_ret_ps(S, fi): i64 {
-    var ps = 0;
-    if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
-    SPSC(S, ps);
+    SPSC(S, _fn_ret_ps(fi));
     if (_bx_fn_is_bool(S, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool fn's call is a boolean value
     return 0;
+}
+# Fn `fi`'s declared `: *T` step word (`_fn_rps`), 0 for any other return or an unresolved fn (-1):
+# a call's step, and (6.7.9) an operator fn's (EMIT_OP_DISPATCH).
+fn _fn_ret_ps(fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rps == 0) { return 0; }
+    return L64(_fn_rps + fi * 8);
 }
 
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its

@@ -43,6 +43,9 @@
 #                                                every leg; R1-R3 and W green (no free struct call there)
 #   M4 `_var_rhs_msid` without its f64 line    -> RED T the `var ua = p.area();` binding row on every leg
 #      (the 6.7.9 binding repair)                 (33 of 34); R1-R3 and W green
+#   M5 PARSE_VAR without `_var_rhs_mchain`     -> RED T the 4 longer-chain binding rows (`w.v.area()`,
+#      (the 6.7.9 review: a method ending a      `self.v.area()`, `p.ms(1.5).area()`, `cr_mkp(1.5).area()`)
+#      longer chain)                              on every leg, aarch64 / cx included (36 of 40); R1-R3, W green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -77,7 +80,7 @@ R3="$RP-struct-arg.cyr"
 for f in "$TC" "$R1" "$R2" "$R3"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=34
+FLOOR=40
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.

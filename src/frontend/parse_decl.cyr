@@ -832,6 +832,31 @@ fn _var_rhs_msid(S, ti): i64 {
     if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
     return rs;
 }
+# 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
+# `p.me().area()`, `mk(1).area()`, `w.v.id(h)` at V = f64 — whose receiver no peek above resolves.
+# It is judged once parsed, from the type the method arm gave the result (`_mcall_ret`): the whole
+# initialiser `ti`..`end` must be one chain `name[<..>](..)?(.name((..))?)*` that ENDS in `.m(..)`,
+# with `;` at `end` — `a + p.area()` and a field read (`_decl_float_copy`'s) are not. -9 (an f64
+# binding) or 0. CHANGELOG [6.7.9]
+fn _var_rhs_mchain(S, ti, end): i64 {
+    if (GESTYPE(S) != F64_TYID) { return 0; }
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var k = ti + 1;
+    var o = _gcall_open(S, ti);
+    if (o >= 0) { k = _call_close(S, o) + 1; }
+    elif (TOKTYP(S, ti) != 2) { return 0; }
+    var m = 0;
+    while (k < end) {
+        if (TOKTYP(S, k) != 41) { return 0; }
+        if (TOKTYP(S, k + 1) != 2) { return 0; }
+        m = 0;
+        k = k + 2;
+        if (TOKTYP(S, k) == 10) { m = 1; k = _call_close(S, k) + 1; }
+    }
+    if (k != end) { return 0; }
+    if (m == 0) { return 0; }
+    return 0 - 9;
+}
 
 # ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
 # `struct Box { v: Pt; n; }` parsed `p` as an ordinary value (a struct's value is its FIRST word)
@@ -6831,6 +6856,9 @@ fn PARSE_VAR(S): i64 {
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
     _decl_float_init(S, lfloat, scv_start);
+    if (_ti_inferred_sid == 0) { if (pscale == 0) { if (scalar_type + lbool == 0) {   # 6.7.9: `var a = w.v.area();`
+                _ti_inferred_sid = _var_rhs_mchain(S, scv_start, GTI(S));
+            } } }
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);

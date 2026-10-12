@@ -263,6 +263,9 @@
 #       PLWc pointer arithmetic with such an operand (`q + (x == q)`, `q - (k * q)`) warns nothing
 #   PLD `p16 - (k * q32)` is `p - n` (it was refused as a different-sizes difference); PLDc `p16 - q32`
 #       still is
+#   PLWo (6.7.9 review) an operator fn that DECLARES `: *T` gives a pointer stepping by T, as its free
+#       call does — `v + q`, `v * q`, `(v + q) + 1` into a `*i32` warn nothing (bite 5 reset the step
+#       to 0: `(v + q) + 1` stepped 1, and they warned); PLW4 a plain-return one's result still warns
 #
 # MUTATION LEDGER (6.7.9, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant> and
 # the value file; 2026-10-11):
@@ -277,6 +280,14 @@
 #   MPL8  a non-`*T` field keeps the word (_field_load_type) -> RED PL* PLR* PLW3 (12)
 #   MPL9  an operator fn's result keeps it (EMIT_OP_DISPATCH) -> RED PL* (4: `(v + q) + 1`)
 #   MPL10 a postfix `?` keeps it (_PARSE_TERM_IMPL)   -> RED PL* (4: `(p?) + 1`)
+#   MPL11 (6.7.9 review) the operator fn's step forced to 0, bite 5's `SPSC(S, 0)` (EMIT_OP_DISPATCH)
+#                                                     -> RED PL* (the `Vp` rows) PLWo
+#   MPL12 the `+` / `-` loop not taking it (`ps = GPSC(S)` dropped, either arm)
+#                                                     -> RED PL* (`vp + q + 2` / `vp - q - 1`)
+#   MPL13 the `*` / `/` loop resetting it (`continue` dropped, either arm)
+#                                                     -> RED PL* (`vp * q + 1`, `(vp * q) - 1`, `2 + (vp * q)`
+#                                                        / `vp / q + 3`) PLWo (the `*` arm)
+#   (MPL11-13: every leg, aarch64 / cx included — their compilers built from the mutated copy)
 #   MIN1  a builtin keeps its last argument's (PARSE_INTRIN) -> RED PL* (4: `bitget(m, 0, q) + 1`)
 #   (PL* / PLR* = the x86 legs and PE; the aarch64 / cx legs' compilers are built from this tree's src)
 #   The compiler before this bite -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe PLW1-3 PLWc PLD (the value
@@ -988,6 +999,15 @@ printf '%b' "${PLH}fn f(): i64 {\n    var q: *i32 = &B;\n    var x = 0;\n    var
 rc=0; timeout 60 "$CC" < "$T/plwc.cyr" > "$T/plwc.bin" 2> "$T/plwc.err" || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/plwc.err"; then ok "PLWc: q + (x == q), (q), q - (k * q), (x == q) + q into a *i32 warn nothing"
 else bad "PLWc: rc $rc: $(grep '^warning\|^error' "$T/plwc.err" | head -1)"; fi
+# PLWo: an operator fn that DECLARES `: *T` gives a pointer, as its free call does (6.7.9 review: bite
+# 5 reset its step to 0 and warned): into a `*i32` `v + q`, `v * q`, `(v + q) + 1` warn nothing; PLW4
+# its control, a plain-return operator fn's result, warns as `0 | q` does.
+printf '%b' "struct Vp { x; }\nfn Vp_add(a, b): *i32 { return b; }\nfn Vp_mul(a, b): *i32 { return b; }\nvar B: i64[8];\nfn f(): i64 {\n    var q: *i32 = &B;\n    var v: Vp;\n    v.x = 0;\n    var a: *i32 = v + q;\n    var b: *i32 = v * q;\n    var c: *i32 = (v + q) + 1;\n    return 0;\n}\nsyscall(60, f());\n" > "$T/plwo.cyr"
+rc=0; timeout 60 "$CC" < "$T/plwo.cyr" > "$T/plwo.bin" 2> "$T/plwo.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/plwo.err"; then ok "PLWo: v + q, v * q, (v + q) + 1 with a : *i32 operator fn into a *i32 warn nothing"
+else bad "PLWo: rc $rc: $(grep '^warning\|^error' "$T/plwo.err" | head -1)"; fi
+warns plw4 "assigning non-pointer to typed pointer" "PLW4: var r: *i32 = v + q; with a plain-return operator fn warns" \
+    'struct Vo { x; }\nfn Vo_add(a, b): i64 { return 10; }\nvar B: i64[8];\nfn f(): i64 { var q: *i32 = &B; var v: Vo; v.x = 0; var r: *i32 = v + q; return 0; }\nsyscall(60, f());\n'
 # PLD: `p16 - (k * q32)` is `p - n` (an integer count), no longer the different-sizes difference it
 # was refused as — k * q32 is no pointer; `p16 - q32` stays that error (DXc4's shape).
 exits pld 3 "PLD: p16 - (k * q32) steps the integer by 2 (it was refused as a pointer difference)" \
@@ -997,4 +1017,4 @@ refused pldc "pointer difference of pointers with different element sizes" "PLDc
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"

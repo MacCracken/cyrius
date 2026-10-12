@@ -12,8 +12,9 @@
 # f64 instance (`_gen_infer_tp`'s `_gi_sc`), that instance's `: T` is an f64 return, the inferred
 # call is typed from the instance it reaches (`_gcall_ret_f64`), the explicit one by
 # `_call_ret_marks`, and a generic METHOD binds an f64 V the same way (`_mcall_gen`, and
-# `_var_rhs_msid` for `var w = p.id(h);`). The user's decision 1(e). 6.6.20 - 6.7.8 measured, every
-# target. Filed: docs/development/issues/2026-10-10-generic-call-f64-result-untyped.md
+# `_var_rhs_msid` for `var w = p.id(h);`, `_var_rhs_mchain` for `var wf = gw.v.id(h);`). The user's
+# decision 1(e). 6.6.20 - 6.7.8 measured, every target.
+# Filed: docs/development/issues/2026-10-10-generic-call-f64-result-untyped.md
 #
 #   R1 the filed repro, verbatim, exits 0 (7 before: rows 1, 2, 4) on x86_64, x86_64 CYRIUS_IR=3,
 #      aarch64 (qemu), cx (cxvm) and PE (wine)
@@ -51,6 +52,8 @@
 #   M8  `_ic_call_rs` reverted to GFRS             -> RED T `gf_gid(gf_gid(h))` on every leg
 #   M9  no float-literal inference (`_ic_flit`)    -> RED T `gf_gid(1.5)` and `p.id(1.5)` on every leg
 #   M10 no f64-global inference                    -> RED T `gf_gid(GF_G)` on every leg
+#   M11 PARSE_VAR without `_var_rhs_mchain` (the  -> RED T `var wf = gw.v.id(h);` and `var wc = p.me().id(h);`
+#       6.7.9 review: a longer receiver's binding)    on every leg, aarch64 / cx included (45 of 47)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -82,7 +85,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-call-f64-result-untyped.cyr
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=44
+FLOOR=47
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.

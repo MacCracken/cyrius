@@ -6607,7 +6607,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
@@ -6668,7 +6668,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
                             var crv = PEEKV(S);
@@ -7145,7 +7145,11 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
     SESTYPE(S, 0);
-    SPSC(S, 0);   # 6.7.9: no step — `(v + q) + 1` took q's (_pexpr_bit_ps)
+    # ⛔ 6.7.9 — the result's step is the operator fn's DECLARED one, as its free call's is (6.6.17):
+    # `: *T` steps sizeof(T), any other return none — `(v + q) + 1` took q's (bite 5), and the review
+    # found bite 5's flat 0 stepped a `: *i32` result by 1. The `+` / `-` loop takes it as its left
+    # step (`v + q + 1`), and the `*` / `/` loop skips its own reset (`v * q + 1`). CHANGELOG [6.7.9]
+    SPSC(S, _fn_ret_ps(ofi));
     _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
@@ -7199,6 +7203,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, n);
     SESTYPE(S, 0);
+    SPSC(S, 0);   # 6.7.9: a struct result is no pointer (EMIT_OP_DISPATCH; the `*` / `/` loop skips its reset)
     _sc_post(S, ofi, opnoff, beg, t);
     return 0;
 }
@@ -7269,7 +7274,8 @@ fn PEXPR(S): i64 {
 # An operator that produces a plain integer now leaves no step (the user's decision 1(a),
 # 2026-10-11): a comparison and an `&&` / `||` link (_PLOGIC_ATOM, _PLOGIC_AND, PCMPE); `* / % <<
 # >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
-# _bnot_int); an operator fn's result (EMIT_OP_DISPATCH); a field that is no `*T`
+# _bnot_int); an operator fn's result with no `: *T` return (EMIT_OP_DISPATCH: a `: *T` one steps
+# by T, as its free call does); a field that is no `*T`
 # (_field_load_type, parse_decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
@@ -7301,7 +7307,7 @@ fn _PEXPR_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
+            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
             else {
                 # Fold only if right side is a plain literal (not followed by * / % << >>)
                 var add_can_fold = 0;
@@ -7330,7 +7336,7 @@ fn _PEXPR_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
+                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
                 else {
                     var sub_can_fold = 0;
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
