@@ -100,8 +100,9 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 - **P5-B**, the per-fn hit after `EFNPRO`, the fn map and `cyrius coverage` running the corpus. Closes
   [P5](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md).
 - **The 6.7.9 fold wave**, prepared in the fold repos 2026-10-11 (user: "do the stdlib updates so they can be folded
-  into 6.7.10"), each re-vendored byte-identical from its tag with its `docs/ecosystem.md` row. ⛔ 6.7.10 does not
-  tag with a refold pending — each waits on the user's fold tag, and yukti's on sakshi's.
+  into 6.7.10"), each re-vendored byte-identical from its tag with its `docs/ecosystem.md` row. sakshi 2.5.9,
+  sigil 3.13.12, bayan 1.5.14 and yantra 1.0.11 are tagged; yukti 2.3.17 is ready at `be504f5` (it keeps sakshi
+  2.5.8, the tag cyrius 6.7.9 bundles, by yukti's lockstep rule). ⛔ 6.7.10 does not tag with a refold pending.
   - sakshi 2.5.9 — the cx arm: [sakshi has no cx arm](issues/2026-10-11-sakshi-fold-has-no-cx-arm.md) (a cx row in
     `cx_crossos_rows_run.sh`; `yukti_statfs_and_stdlib_constants.tcyr` compiles for cx).
   - sigil 3.13.12 — `hash_file_into`'s per-call buffer: [sigil's static read buffer warns on every build](issues/2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
@@ -112,7 +113,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
     `lib/math.cyr`'s comments on bayan's `_d_` copy go; a migration note (a hand-written include list adds
     `lib/math.cyr` before `lib/bayan.cyr`).
   - yantra 1.0.11 — `_cdp_set_nodelay` is `sock_set_nodelay` (TCP_NODELAY is now set on Windows).
-  - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll`; pins sakshi 2.5.9.
+  - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll` (and `sys_ioctl` its `_yk_ioctl`).
 
 **Lanes.** B7 (`src/`: parse_types.cyr, parse_decl.cyr, lex_pp.cyr's derive, util.cyr, lib/str.cyr; it commits
 `build/cycc`) · P5-B (`src/` + cbt: the `EFNPRO` sites, the three backend EFNPROs, the forks, the coverage verb) ·
@@ -365,6 +366,7 @@ checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-res
 - [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/archived/2026-10-08-sock-set-nodelay-windows-route.md)
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md)
 - [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/archived/2026-10-08-yantra-tests-miss-security-include.md)
+- [sigil has no runtime logging: none of its `src/` files calls sakshi](issues/2026-10-12-sigil-has-no-runtime-logging.md) — unplaced (the user, 2026-10-12: "leave it for later")
 - **Adoptions 6.7.9 opened** — prepared 2026-10-11 as fold patches pinned to cyrius 6.7.9, refolded in 6.7.10 (§ 6.7.10
   above, with the sakshi and sigil fixes): yukti → `sys_ppoll`; bayan → `f64_parse_n`; yantra → `sock_set_nodelay`.
 - **Constraints on any fold release**: never change the fold API cyrius's own `lib/` calls (sigil's 73 fns, 8 of them

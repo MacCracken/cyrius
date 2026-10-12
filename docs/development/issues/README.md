@@ -359,6 +359,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
 - [agnos — `CYRIUS_DCE=1` cannot shrink a `kernel;` image: compaction miscompiles through 6.6.19 and is declined from 6.6.20 on](2026-10-10-agnos-kernel-dce-compaction-moves-data.md)
 
+**Unplaced** (1)
+
+- [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
+
 ## Recommended security floor
 
 When filing a consumer bug, report the Cyrius version you're on
