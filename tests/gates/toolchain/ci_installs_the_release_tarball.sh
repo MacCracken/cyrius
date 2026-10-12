@@ -55,6 +55,11 @@
 #      (axis 2's sh home) runs it and evaluates `return 6 * 7;` to "= 42". On a fixture checkout: a
 #      name in both places ships the shims/ copy (install.sh's order), a scripts/-only name ships,
 #      and a listed name in neither place fails the step, naming it, with no tarball.
+#   9  (6.7.10) every [release] cross_bins entry but cycc-native-aarch64 (the aarch64-HOSTED
+#      compiler; the aarch64 tarball ships its own cycc) is built by a release.yml line ending
+#      `> ./build/<bin>` and is in the tarball's bin/, byte-identical to build/'s copy. cycc_cx was
+#      listed and built by install.sh but never packed — a tarball install had cxvm and no cx
+#      compiler (found by sakshi 2.5.9's cx CI lane).
 #
 # MUTATION LEDGER (6.7.7, measured: this gate run from a scratch root carrying a mutated copy)
 #   a. the 6.7.6 ci.sh verbatim                 -> axis 2 RED in both shells (exit 1, "cycc not
@@ -99,6 +104,11 @@
 #   r. the `else` (neither place) branch dropped -> axis 8's missing-script row RED (exit 0, built)
 #   s. scripts/ looked in before scripts/shims/  -> axis 8's both-places row RED (the flat copy)
 #   t. its `exit 1` dropped (named, not failed)  -> axis 8's missing-script row RED (exit 0, built)
+# (6.7.10, measured the same way)
+#   u. the 6.7.9 release.yml verbatim           -> axis 9 RED: cycc_cx not built, not in bin/
+#   v. only the package step's cycc_cx copy      -> axis 9 RED: cycc_cx MISSING from bin/
+#      dropped
+#   w. only the build step's cycc_cx line dropped -> axis 9 RED: release.yml never builds it
 # The tree -> PASS.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -441,5 +451,17 @@ else
     bad "axis 8: a listed script found nowhere: the step exit $RC, $( grep -q 'zz_missing\.sh' "$W/out" && echo 'named' || echo 'NOT named'), tarball $( [ -e "$CO8/dist/$TB" ] && echo BUILT || echo absent)"
 fi
 
+# ── axis 9: every x86_64 cross-bin is built and ships (cycc_cx never did: cxvm without its compiler) ──
+a9=0; NC=0
+for b in $(_rel cross_bins); do
+    [ "$b" = "cycc-native-aarch64" ] && continue   # the aarch64-hosted compiler: not an x86_64 tool
+    NC=$((NC + 1))
+    grep -qE "> \./build/$b( |\$)" "$WF" || { bad "axis 9: release.yml never builds ./build/$b"; a9=1; }
+    cmp -s "$CO/build/$b" "$EXP/bin/$b" \
+        || { bad "axis 9: cross-bin $b $( [ -e "$EXP/bin/$b" ] && echo "is in the tarball's bin/ but is not build/'s copy" || echo "is MISSING from the tarball's bin/")"; a9=1; }
+done
+[ "$NC" -ge 3 ] || { echo "FAIL: $NAME — axis 9 read $NC x86_64 cross-bin(s) from [release] cross_bins; the reader is blind"; exit 1; }
+[ "$a9" -eq 0 ] && echo "  ok axis 9: all $NC x86_64 cross-bins ([release] cross_bins but cycc-native-aarch64) are built by release.yml and in the tarball's bin/"
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — links its stdlib as \$CYRIUS_HOME/lib for a project with no pin, refuses one that is not release-shaped, and re-points an install.sh or plain-bin home without touching its old slot; the step ships every [release] script, scripts/shims/ first, and fails on one it cannot find)"
+echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — links its stdlib as \$CYRIUS_HOME/lib for a project with no pin, refuses one that is not release-shaped, and re-points an install.sh or plain-bin home without touching its old slot; the step ships every [release] script, scripts/shims/ first, and fails on one it cannot find; every x86_64 cross-bin is built and packed)"
