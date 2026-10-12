@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — filed 2026-10-11 from the 6.7.9 quick lane (bite 10). That bite added the scrub to every
 self-build SCRIPT. The same leak in the CLI (cbt/) did not fit in it: a cyrius-side environment filter on two POSIX
 exec sites, the Windows spawn arm, and a behavioural gate with a stub compiler on Linux and under wine.
-**Placement:** unplaced — for the user at the 6.7.9 merge.
+**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.8*; `cbt/pulsar.cyr` / `cbt/build.cyr`, the Windows arm under wine, then cass) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's self-build scrub
 ([the scripts issue](2026-10-10-self-build-scripts-inherit-poison-and-bounds.md)), by looking for every OTHER place
 that builds a `src/main*.cyr` fork. Verified with the repro below on the quick lane's tip.

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — filed 2026-10-11 from the 6.7.9 quick lane (bite 5), where the same class was fixed for
 every non-TLS twin; the TLS stack's 190 read sites and one API question did not pack into that bite.
-**Placement:** unplaced — for the user at the 6.7.9 merge (the lane proposes 6.7.11, beside the other lib/ items).
+**Placement:** 6.7.13 — repair 3, the TLS lane (roadmap.md § *The releases after 6.7.8*; it owns `lib/tls_native_hs12.cyr` / `hs13.cyr`, where all but about a dozen of the 190 reads are; the lane proposed 6.7.11). Item 2 (is `TLS_RECORD_MAX_PLAINTEXT` a tunable?) is asked at the open, beside [the bound vars' API](2026-10-11-tls-public-bound-vars-api-decision.md) and [`TLS_CA_MAX_ROOTS`](2026-10-11-tls-ca-max-roots-unread-decision.md) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's lib-literal-bounds fix (issues/2026-10-08-lib-literal-bounds-and-writable-
 public-bounds.md item 5), by deriving every `var X = _X;` twin in cyrius's own lib/ and listing where the var is read.
 **Severity:** Medium (the item-5 class: a program that writes a public bound var corrupts memory; no attacker crosses a

@@ -6,7 +6,7 @@
 five `fn main` files that no target-side assert ever ran on cx. Reproduced on the lane tip and with every installed
 `cycc_cx` / `cxvm` pair (6.6.2 – 6.7.9). Not fixed in that bite: it changes what cx programs compute (a `main` that
 never ran starts running, asserts and all), so it is the user's call.
-**Placement:** unpinned. For the user to place in the 6.x-line backlog.
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.8*; a cx codegen defect, verified on cxvm) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 18 (the cx folded-global fix).
 **Severity:** Medium. Silent: the program builds, runs nothing of `main`, and exits with the last declaration-zone
 global's value (often 0, so a test reads as passed). Only cx is affected.

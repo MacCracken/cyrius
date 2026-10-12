@@ -284,7 +284,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
 
-**6.7.11 — Break 2, repair 1** (34)
+**6.7.11 — Break 2, repair 1** (44)
 
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
 - [cybs reports a bare "syntax error" (or "undefined variable") with no file, line or construct](2026-10-08-cybs-bare-syntax-error-no-location.md)
@@ -320,8 +320,18 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A pointer-to-vector PARAMETER (`p: *f64v2`) is taken as a by-value vector: `rd(&b)` is refused, `rd(b)` builds and SIGSEGVs](2026-10-10-pointer-to-vector-parameter-is-value-form.md)
 - [A local's struct receive from a call: `var x = (mk());` infers nothing, `var x: u8 = mk();` infers the struct over its annotation](2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md)
 - [A program's own `struct slice` is used by a parameter / pointer but not by a fn-local `var x: slice`](2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+- [`await f` keeps its operand's pointer step: with `f: *i32`, `(await f) + 1` adds 4](2026-10-11-await-result-keeps-typed-pointer-step.md)
+- [A bounded generic called at `f64` is refused unless the trait ALSO has `impl … for i64`: `gb(h)` with only `impl Show for f64` says "needs `impl Show for i64`"](2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md)
+- [Inside a closure, `s.len` of a captured slice and `q.y` of a captured untyped struct copy (`var q = p;`) are refused as "undefined variable"](2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md)
+- [A name a closure body declares without a `var` right before it is taken as a capture of the enclosing local](2026-10-11-closure-prescan-reads-declared-names-as-captures.md)
+- [cx never auto-calls `fn main`: a program that leaves `main` to the entry epilogue does nothing on cx](2026-10-11-cx-does-not-auto-call-main.md)
+- [`*p = l` through a `p: *S` (a struct pointer) stores neither the struct nor one word consistently — a zero-size `S` is overrun by 8 bytes, a small `S` gets its first field only, a 16-byte `S` its first 8 bytes](2026-10-11-deref-store-through-struct-pointer-decision.md)
+- [A narrow scalar LOCAL (`u8` / `i16` / `i32`) is a one-byte pointer to the step checks, and `n + &x` is no pointer where `&x + n` is](2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md)
+- [Under `--allow-undef`, an undefined `_str` / `_int` sibling still takes its base's call: `pr(s)` reaches the undefined `pr_str` and traps (rc 132) instead of calling the defined `pr`](2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md)
+- [`+| +? -| -?` on a typed pointer add an unscaled count, then hand the result the pointer's step: with `q: *i32`, `(q +| 1) + 1` is `q + 5`](2026-10-11-saturating-op-keeps-left-pointer-step-decision.md)
+- [A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
 
-**6.7.12 — Break 2, repair 2 (the platform release)** (15)
+**6.7.12 — Break 2, repair 2 (the platform release)** (20)
 
 - [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](2026-10-08-aarch64-native-region-literal-translated-silently.md)
 - [arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3)](2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md)
@@ -338,8 +348,13 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`CYRIUS_POISON=0` (or empty, or any value) turns the poison mode ON — every compiler fork tests only "is it set"](2026-10-10-poison-env-zero-or-empty-turns-mode-on.md)
 - [`--strict-pin` / CYRIUS_STRICT_PIN does nothing off Linux, and cycc.exe ignores CYRIUS_PIE](2026-10-10-strict-pin-and-pie-inert-off-linux.md)
 - [On Windows, `cyrius build --agnos` and `--target=x86_64-bare-metal-elf` write a plain PE and exit 0](2026-10-10-windows-cli-drops-target-selectors.md)
+- [`cyrius pulsar` and the CLI's on-demand cx builds hand an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` to the compiler they build](2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md)
+- [On macOS an exec-family child still inherits a signal mask its parent inherited from a launcher](2026-10-11-macos-exec-child-keeps-launcher-signal-mask.md)
+- [The macOS release tarballs ship two of the three `[release] scripts` — `cyrius-watch.sh` is left out](2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md)
+- [`lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx](2026-10-11-sakshi-fold-has-no-cx-arm.md)
+- [Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer](2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
 
-**6.7.13 — Break 2, repair 3** (21)
+**6.7.13 — Break 2, repair 3** (28)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -362,6 +377,13 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A non-generic fn's parameter type `Mp<K, V>` with `K` / `V` never declared compiles silently](2026-10-09-undeclared-generic-type-arguments-accepted.md)
 - [An error inside a generic fn's body is printed once per instance](2026-10-10-generic-body-errors-reported-per-instance.md)
 - [An unknown name followed by `<..>` is accepted as a type argument (`g<Nonexist<u8>>`, `Box<slice<u8>>`) and runs as the i64 base](2026-10-10-unknown-generic-name-accepted-as-type-argument.md)
+- [A top-level global whose constant initializer folds to ZERO, or folds through an enum constant, re-runs the expression at startup: `var R = INT_MIN % -1;` kills x86 and cx (136) and is 0 on aarch64](2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md)
+- [`#inline` on an `async fn` is silently a no-op: no "#inline ignored" warning](2026-10-11-inline-on-async-fn-silently-ignored.md)
+- [An explicit type argument on a METHOD call (`p.id<f64>(h)`) is refused as "unknown field 'id'" and "undefined variable 'f64'"](2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md)
+- [A struct literal anywhere but a `var` initializer (`G = P { 5 };`, `f(P { 5, 6 })`, `(P { .. })`) is refused as "undefined variable 'P'"](2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
+- [`TLS_CA_MAX_ROOTS` bounds nothing since 6.7.9 — keep the public name or retire it](2026-10-11-tls-ca-max-roots-unread-decision.md)
+- [The public bound vars (`var X = _X;`): stay writable, or become read-only — the TLS stack's first](2026-10-11-tls-public-bound-vars-api-decision.md)
+- [The native TLS stack's public bound vars still drive storage their consts size: a raised `TLS12_RANDOM_LEN` smashes the stack](2026-10-11-tls-public-bound-vars-drive-const-storage.md)
 
 **6.7.14 — the full security audit + the refactor / optimization review** (1)
 

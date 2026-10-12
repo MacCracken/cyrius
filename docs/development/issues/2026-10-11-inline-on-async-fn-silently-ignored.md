@@ -6,7 +6,7 @@
 with the installed 6.7.8 compiler (older installed compilers cannot compile the tree's current `lib/`). It was not fixed
 in that bite: the fix adds a warning to builds that compile with no warning today, and it touches the fn-definition
 path's inline classification, a separate site from the slot-0 reservation.
-**Placement:** unpinned. For the user to place in the 6.x-line backlog.
+**Placement:** 6.7.13 — repair 3, the diagnostics lane (roadmap.md § *The releases after 6.7.8*) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 15 (the coroutine slot-0 reset).
 **Severity:** Low. A diagnostic gap: no wrong value, and nothing is refused. It breaks v6.5.63's contract that an
 ignored `#inline` says so ("a request that silently does nothing is that same defect with a token in front of it").

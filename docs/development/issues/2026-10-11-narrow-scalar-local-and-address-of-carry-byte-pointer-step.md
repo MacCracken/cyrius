@@ -5,7 +5,7 @@
 critical lane's bite 6), and reproduced on that lane's tip with the tree's compiler and with the installed 6.6.20 and
 6.7.0 compilers. Not fixed there: both halves change what compiles or what warns, which the 6.7.9 decisions do not
 cover (decision 1(b) is the one-byte `*T` only).
-**Placement:** unpinned — for the user to place (it changes what compiles).
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.8*; the pointer-step rules in parse_expr.cyr, beside 6.7.9's) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's `n + p8` fix (the `_add_word` element-kind test is what keeps it out).
 **Severity:** Low — a refusal of a rare valid expression and a missing / spurious warning; no wrong value.
 **Affects:** cycc 6.6.17 – 6.7.9, every target (the pointer-scale word is frontend state).

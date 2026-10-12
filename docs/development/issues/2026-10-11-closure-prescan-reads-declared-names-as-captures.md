@@ -5,7 +5,7 @@
 (6.7.9, the critical lane's bite 14). Reproduced on that lane's tip with the tree's compiler, and with the installed
 6.6.0, 6.7.0 and 6.7.8 compilers. It was not fixed in that bite: the declared-name forms need their own scoping in the
 pre-scan (a `for … in` variable's scope is the loop), and that is a separate class from field names.
-**Placement:** unpinned. For the user to place in the 6.x-line backlog.
+**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.8*; a parser defect, the closure pre-scan beside 6.7.9's field-name fix) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 14 (the field-name exemptions), while probing which other non-reads
 the pre-scan still captures.
 **Severity:** Medium. Valid source is refused, and the workaround is to include `lib/alloc.cyr` or rename the enclosing
