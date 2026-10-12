@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (46, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (50, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -62,6 +62,11 @@
 #       INT_MIN since 6.6.20) ran cxvm's idiv and died SIGFPE (136): native and cxvm each print
 #       `<N> passed, 0 failed`, N derived from the source (13, floor 13), the whole file (the
 #       critical lane's hand-off; its own rows are cx_forward_read_constant_global.sh G-J).
+#   R13 (6.7.10) the sakshi fold on cx (sakshi 2.5.9's CYRIUS_TARGET_CX arm — before it every program
+#       that included lib/sakshi.cyr stopped on cx with 10 "undefined variable '_SK_SYS_*'" errors): a
+#       log line, a span and, on cx only, sakshi_output_udp's refusal (-1) — native and cxvm each exit 0
+#       with the `cx-rows sakshi ok` marker, and each leg's stderr carries the `[INFO] cx-sakshi log
+#       line` the program logged (4 rows).
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -101,6 +106,9 @@
 #   g. (R12) the critical lane's bite 18 reverted in parse_decl.cyr (cx keeps the deferred replay of
 #      a folded global), that tree's cycc_cx passed as CYCC_CX -> R12 cxvm RED (exit 136, SIGFPE),
 #      45 green.
+#   h. (R13, 6.7.10, measured in the refold worktree; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the
+#      6.7.9 fold, no cx arm) -> R13 cxvm RED twice ("undefined variable '_SK_SYS_WRITE'" at
+#      lib/sakshi.cyr:248; no log line), both native legs green, 48 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -489,8 +497,38 @@ echo "R12 — const_fold_int_min_div.tcyr (6.6.20 RPD-06; cx replayed the folded
 tcyr_native tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
 tcyr_cx     tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
 
-WANT=46
+# ── R13 — the sakshi fold on cx (6.7.10) ──
+cat > "$T/sk.cyr" <<'EOF'
+# R13: the sakshi fold on cx (sakshi 2.5.9's cx arm): a log line to stderr, a span, the UDP refusal.
+include "lib/syscalls.cyr"
+include "lib/sakshi.cyr"
+fn go(): i64 {
+    var bad = 0;
+    sakshi_set_level(SK_INFO);
+    sakshi_info("cx-sakshi log line", 18);
+    sakshi_span_enter("cxspan", 6);
+    if (sakshi_span_depth() != 1) { bad = bad | 1; }
+    sakshi_span_exit();
+    if (sakshi_span_depth() != 0) { bad = bad | 2; }
+    #ifdef CYRIUS_TARGET_CX
+    if (sakshi_output_udp(0x0100007F, 9999) != 0 - 1) { bad = bad | 4; }
+    #endif
+    return bad;
+}
+var _b = go();
+if (_b == 0) { syscall(1, 1, "cx-rows sakshi ok\n", 18); }
+syscall(60, _b);
+EOF
+
+echo "R13 — the sakshi fold on cx (6.7.10: sakshi 2.5.9's cx arm), native then cxvm:"
+inline "R13 a log line, a span and the cx UDP refusal" "$T/sk.cyr" 0 "cx-rows sakshi ok"
+for _leg in native:no cxvm:co; do
+    if grep -q '\[INFO\] cx-sakshi log line$' "$T/${_leg#*:}"; then ok "R13 ${_leg%%:*}: the log line reached stderr"
+    else bad "R13 ${_leg%%:*}: no '[INFO] cx-sakshi log line' in its output"; fi
+done
+
+WANT=50
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, and a folded INT_MIN / -1 global never traps cxvm"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, and the sakshi fold logs and spans on cx"
 exit 0
