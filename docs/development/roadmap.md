@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.9** (2026-10-11, slot open) — 6.7.8 shipped · cycc **2,053,536 B** · `.text` **1,840,016** · `cycc-native-aarch64` **1,881,144 B** · **553** `.tcyr`, **259** in `crossos/` · **106** `lib/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **118** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.9** (2026-10-11, merged) — the repair batch · cycc **2,057,736 B** · `.text` **1,845,440** · `cycc-native-aarch64` **1,881,280 B** · **562** `.tcyr`, **267** in `crossos/` · **106** `lib/*.cyr` · **467** shell gates under `tests/gates/<bucket>/` · api-surface **5,835** · **101** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -97,51 +97,50 @@ first), one lane of the critical / high issues (silent wrong values, crashes on 
 2026-10-11 from every open issue's size; the twelve fixes that change what compiles or computes were all approved as
 recommended at the open (the pointer-step reset, `n + p8` typed, unary `-` / `~` in the fold, method and generic
 f64 results typed, `&q` of a `*P` parameter, pointer-to-`Box<T>` inference, the stray top-level `}` / undeclared
-for-step / zone method-struct-call refusals, the exec-family signal reset, `fhm_set` in place). **39 issues; the
-queue 118 → 79 when it ships.**
+for-step / zone method-struct-call refusals, the exec-family signal reset, `fhm_set` in place). **39 issues fixed; 22 more filed or placed from what the lanes met — the queue 118 → 101.**
 
 **Quick lane (20):**
-- [`var t, v = fncallN(..)` is refused on cx only — `crossos/method_pair_result.tcyr` has never built for cx](issues/2026-10-10-fncall-destructure-refused-on-cx-only.md)
-- [Every PE build that includes `lib/syscalls.cyr` warns "syscall 12 … is not routed" (Windows `sys_brk`)](issues/2026-10-08-pe-sys-brk-unrouted-syscall-warning.md)
-- [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
-- [The x86-macOS peer `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288`, which no macOS path emits](issues/2026-10-08-macos-peer-declares-unused-sys-accept4.md)
-- [Literal bounds left in `lib/`: hand-kept 1024 / 64 / 40 copies, two arrays 8× their stated size, and loops bounded by writable public vars](issues/2026-10-08-lib-literal-bounds-and-writable-public-bounds.md)
-- [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/2026-10-08-sock-set-nodelay-windows-route.md)
-- [`tls_native_set_client_cert` sizes its PEM decode at `TLS_CA_MAX_ROOTS` (300), not from the input](issues/2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots.md)
-- [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/2026-10-08-f64-parse-no-public-length-bounded-form.md)
-- [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/2026-10-08-yantra-tests-miss-security-include.md)
-- [Eleven scripts build the compiler from `src/` without scrubbing an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` — `install.sh` among them](issues/2026-10-10-self-build-scripts-inherit-poison-and-bounds.md)
-- [`scripts/ci.sh` never links `$CYRIUS_HOME/lib` on a fresh home](issues/2026-10-08-ci-sh-fresh-home-links-no-lib.md)
-- [The x86_64 release tarball ships without `cyrius-repl.sh` (release.yml looks only in `scripts/`, not `scripts/shims/`)](issues/2026-10-08-release-tarball-misses-shim-scripts.md)
-- [`cyrius init` prints "Created <x>/" and exits 0 when its templates are missing](issues/2026-10-08-cyrius-init-exits-zero-with-missing-templates.md)
-- [Bare `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing to run](issues/2026-10-08-bench-fuzz-exit-zero-on-empty-corpus.md)
-- [`gates_never_write_tree.sh` axis 9 takes any line holding ` trap ` and a trailing ` 0` as the EXIT trap — a prose label fails a clean wine gate](issues/2026-10-10-axis9-trap-detector-matches-prose.md)
-- [`gates_never_write_tree.sh` axis 9 cannot see a PE binary run directly through binfmt_misc](issues/2026-10-08-wine-prefix-scan-misses-binfmt-pe-run.md)
-- [Under wine, the PE compiler returns rc 3 at once with empty output; the full output lands later](issues/2026-10-09-wine-pe-compiler-exits-before-output-lands.md)
-- [`esysxlat_fold.sh` passes a fold that never updates `cur` (mutation (c) is not caught)](issues/2026-10-08-esysxlat-fold-gate-blind-to-cur-update.md)
-- [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](issues/2026-10-08-api-surface-multiline-string-desync.md)
-- [The overload router sends a call to a later-defined `_str` sibling without judging its arity — since 6.7.7's F2 the call is refused, naming a fn the source never called](issues/2026-10-09-overload-router-forward-target-arity-unjudged.md)
+- [`var t, v = fncallN(..)` is refused on cx only — `crossos/method_pair_result.tcyr` has never built for cx](issues/archived/2026-10-10-fncall-destructure-refused-on-cx-only.md)
+- [Every PE build that includes `lib/syscalls.cyr` warns "syscall 12 … is not routed" (Windows `sys_brk`)](issues/archived/2026-10-08-pe-sys-brk-unrouted-syscall-warning.md)
+- [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/archived/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
+- [The x86-macOS peer `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288`, which no macOS path emits](issues/archived/2026-10-08-macos-peer-declares-unused-sys-accept4.md)
+- [Literal bounds left in `lib/`: hand-kept 1024 / 64 / 40 copies, two arrays 8× their stated size, and loops bounded by writable public vars](issues/archived/2026-10-08-lib-literal-bounds-and-writable-public-bounds.md)
+- [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/archived/2026-10-08-sock-set-nodelay-windows-route.md)
+- [`tls_native_set_client_cert` sizes its PEM decode at `TLS_CA_MAX_ROOTS` (300), not from the input](issues/archived/2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots.md)
+- [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/archived/2026-10-08-f64-parse-no-public-length-bounded-form.md)
+- [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/archived/2026-10-08-yantra-tests-miss-security-include.md)
+- [Eleven scripts build the compiler from `src/` without scrubbing an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` — `install.sh` among them](issues/archived/2026-10-10-self-build-scripts-inherit-poison-and-bounds.md)
+- [`scripts/ci.sh` never links `$CYRIUS_HOME/lib` on a fresh home](issues/archived/2026-10-08-ci-sh-fresh-home-links-no-lib.md)
+- [The x86_64 release tarball ships without `cyrius-repl.sh` (release.yml looks only in `scripts/`, not `scripts/shims/`)](issues/archived/2026-10-08-release-tarball-misses-shim-scripts.md)
+- [`cyrius init` prints "Created <x>/" and exits 0 when its templates are missing](issues/archived/2026-10-08-cyrius-init-exits-zero-with-missing-templates.md)
+- [Bare `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing to run](issues/archived/2026-10-08-bench-fuzz-exit-zero-on-empty-corpus.md)
+- [`gates_never_write_tree.sh` axis 9 takes any line holding ` trap ` and a trailing ` 0` as the EXIT trap — a prose label fails a clean wine gate](issues/archived/2026-10-10-axis9-trap-detector-matches-prose.md)
+- [`gates_never_write_tree.sh` axis 9 cannot see a PE binary run directly through binfmt_misc](issues/archived/2026-10-08-wine-prefix-scan-misses-binfmt-pe-run.md)
+- [Under wine, the PE compiler returns rc 3 at once with empty output; the full output lands later](issues/archived/2026-10-09-wine-pe-compiler-exits-before-output-lands.md)
+- [`esysxlat_fold.sh` passes a fold that never updates `cur` (mutation (c) is not caught)](issues/archived/2026-10-08-esysxlat-fold-gate-blind-to-cur-update.md)
+- [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](issues/archived/2026-10-08-api-surface-multiline-string-desync.md)
+- [The overload router sends a call to a later-defined `_str` sibling without judging its arity — since 6.7.7's F2 the call is refused, naming a fn the source never called](issues/archived/2026-10-09-overload-router-forward-target-arity-unjudged.md)
 
 **Critical / high lane (19):**
-- [A whole-struct store into a ZERO-size struct global writes 8 bytes over its neighbour](issues/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md)
-- [A stray top-level `}` silently ends the translation unit — everything after it is dropped, `OK`](issues/2026-10-11-stray-top-level-brace-silently-ends-the-unit.md)
-- [A child the exec family starts keeps its parent's signal mask and ignored dispositions](issues/2026-10-09-exec-family-child-inherits-signal-mask-and-ignores.md)
-- [`fhm_set` on a PRESENT key can rebuild (and double) the table — `lib/hashmap.cyr` stopped doing that at 6.6.20](issues/2026-10-08-hashmap-fast-overwrite-rebuilds-table.md)
-- [A pointer's step outlives the operator that consumed it: with `q: *i32`, `(x == q) + 100` adds 400](issues/2026-10-10-pointer-step-leaks-through-operators.md)
-- [`n + p` with a one-byte `*T` (`*u8` / `*i8`) is no typed pointer, where `p + n` is — `(1 + p8) - q32` builds, `var r: *u8 = 1 + p8;` warns](issues/2026-10-10-int-plus-byte-pointer-drops-step.md)
-- [The run-time constant fold folds a literal operator OVER a unary `-` / `~` operand: `-K + 10` is 15, `~5 + 10` is 15](issues/2026-10-10-unary-minus-and-not-folded-over-by-literal-operator.md)
-- [A method call's result keeps its last argument's f64 type](issues/2026-10-09-method-call-result-keeps-last-arg-f64-type.md)
-- [A generic call's `T = f64` result is an untyped word when T is inferred or only the return type — `gid(h) * 2.0` multiplies bits](issues/2026-10-10-generic-call-f64-result-untyped.md)
-- [`&q` of a `q: *P` PARAMETER is the pointee's address when P is a struct over 8 B — every other pointer gives the slot's](issues/2026-10-10-address-of-pointer-param-over-8b-is-pointee.md)
-- [A pointer passed to a by-value `b: Box<T>` parameter runs the generic's i64 base — `b.n` read at the wrong offset](issues/2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.md)
-- [A closure made inside a suspending `async fn` captures a multi-word struct or tuple with its words reversed](issues/2026-10-09-coroutine-closure-captures-aggregate-words-reversed.md)
-- [A top-level closure captures a global from the previous fn's dead locals when the names match — SIGSEGV](issues/2026-10-09-toplevel-closure-captures-stale-fn-local.md)
-- [A field name inside a closure body is taken as a capture of the enclosing local of that name](issues/2026-10-09-closure-prescan-reads-field-names-as-captures.md)
-- [A coroutine's reserved slot 0 keeps the previous fn's parameter name — a global of that name reads the frame address, and a local of that name is a "duplicate variable"](issues/2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md)
-- [`_pm_copies` answers 0 past parameter 61: a by-value struct at parameter 62+ is neither snapshotted nor treated as copied](issues/2026-10-09-by-value-copy-mask-62-parameter-limit.md)
-- [A `for` step assigning an UNDECLARED name compiles and stores nothing (`for (i = 0; i < 5; j = i + 1)` never ends)](issues/2026-10-10-for-step-undeclared-name-compiles-silently.md)
-- [cx: a constant-folded global initializer is re-evaluated at run time, so `var Q = INT_MIN / -1;` kills cxvm with SIGFPE](issues/2026-10-09-cx-folded-global-reevaluated-int-min-div.md)
-- [A declaration-zone global set from a METHOD returning a 9-16 byte struct compiles and crashes at startup](issues/2026-10-10-zone-global-from-method-struct-call-crashes.md)
+- [A whole-struct store into a ZERO-size struct global writes 8 bytes over its neighbour](issues/archived/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md)
+- [A stray top-level `}` silently ends the translation unit — everything after it is dropped, `OK`](issues/archived/2026-10-11-stray-top-level-brace-silently-ends-the-unit.md)
+- [A child the exec family starts keeps its parent's signal mask and ignored dispositions](issues/archived/2026-10-09-exec-family-child-inherits-signal-mask-and-ignores.md)
+- [`fhm_set` on a PRESENT key can rebuild (and double) the table — `lib/hashmap.cyr` stopped doing that at 6.6.20](issues/archived/2026-10-08-hashmap-fast-overwrite-rebuilds-table.md)
+- [A pointer's step outlives the operator that consumed it: with `q: *i32`, `(x == q) + 100` adds 400](issues/archived/2026-10-10-pointer-step-leaks-through-operators.md)
+- [`n + p` with a one-byte `*T` (`*u8` / `*i8`) is no typed pointer, where `p + n` is — `(1 + p8) - q32` builds, `var r: *u8 = 1 + p8;` warns](issues/archived/2026-10-10-int-plus-byte-pointer-drops-step.md)
+- [The run-time constant fold folds a literal operator OVER a unary `-` / `~` operand: `-K + 10` is 15, `~5 + 10` is 15](issues/archived/2026-10-10-unary-minus-and-not-folded-over-by-literal-operator.md)
+- [A method call's result keeps its last argument's f64 type](issues/archived/2026-10-09-method-call-result-keeps-last-arg-f64-type.md)
+- [A generic call's `T = f64` result is an untyped word when T is inferred or only the return type — `gid(h) * 2.0` multiplies bits](issues/archived/2026-10-10-generic-call-f64-result-untyped.md)
+- [`&q` of a `q: *P` PARAMETER is the pointee's address when P is a struct over 8 B — every other pointer gives the slot's](issues/archived/2026-10-10-address-of-pointer-param-over-8b-is-pointee.md)
+- [A pointer passed to a by-value `b: Box<T>` parameter runs the generic's i64 base — `b.n` read at the wrong offset](issues/archived/2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.md)
+- [A closure made inside a suspending `async fn` captures a multi-word struct or tuple with its words reversed](issues/archived/2026-10-09-coroutine-closure-captures-aggregate-words-reversed.md)
+- [A top-level closure captures a global from the previous fn's dead locals when the names match — SIGSEGV](issues/archived/2026-10-09-toplevel-closure-captures-stale-fn-local.md)
+- [A field name inside a closure body is taken as a capture of the enclosing local of that name](issues/archived/2026-10-09-closure-prescan-reads-field-names-as-captures.md)
+- [A coroutine's reserved slot 0 keeps the previous fn's parameter name — a global of that name reads the frame address, and a local of that name is a "duplicate variable"](issues/archived/2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md)
+- [`_pm_copies` answers 0 past parameter 61: a by-value struct at parameter 62+ is neither snapshotted nor treated as copied](issues/archived/2026-10-09-by-value-copy-mask-62-parameter-limit.md)
+- [A `for` step assigning an UNDECLARED name compiles and stores nothing (`for (i = 0; i < 5; j = i + 1)` never ends)](issues/archived/2026-10-10-for-step-undeclared-name-compiles-silently.md)
+- [cx: a constant-folded global initializer is re-evaluated at run time, so `var Q = INT_MIN / -1;` kills cxvm with SIGFPE](issues/archived/2026-10-09-cx-folded-global-reevaluated-int-min-div.md)
+- [A declaration-zone global set from a METHOD returning a 9-16 byte struct compiles and crashes at startup](issues/archived/2026-10-10-zone-global-from-method-struct-call-crashes.md)
 
 **Lanes.** The critical lane owns `src/` (and `lib/process.cyr`, `lib/hashmap_fast.cyr`, the guide); the quick lane
 owns the rest of `lib/`, `scripts/`, `cbt/`, `programs/`, the yantra fold and their gates — one router hunk in
@@ -151,8 +150,6 @@ owns the rest of `lib/`, `scripts/`, `cbt/`, `programs/`, the yantra fold and th
 
 **Content.**
 - **B7** packed narrow fields, bites 0–6.
-  - Bite 0's prerequisite — [the odd-size global struct store](issues/archived/2026-10-09-global-odd-size-struct-store-overwrites-next-global.md) — ships in 6.7.7 (user, 2026-10-09); the
-    B7 crossos file adds every size 1–16 to its global rows.
   - It rides the derive bite: [`#derive(Serialize)` and `: cstring` fields](issues/2026-10-08-derive-serialize-cstring-fields.md)
     (asked by sigil).
   - It closes here whatever the answer: [an 8 B struct local from an address is a value](issues/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
@@ -180,7 +177,6 @@ owns the rest of `lib/`, `scripts/`, `cbt/`, `programs/`, the yantra fold and th
 - Call arguments:
   - [a parenthesised struct argument of 8 B or less skips the type check](issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md);
   - [an integer into an f64 parameter](issues/2026-10-09-int-argument-to-f64-param-silent.md);
-  - [a method result keeps its last argument's f64 type](issues/2026-10-09-method-call-result-keeps-last-arg-f64-type.md).
 - Struct operators, on the merge of the two lanes above:
   - [six struct-operator defects](issues/2026-10-08-struct-operator-results.md);
   - [a struct field as the left operand](issues/2026-10-08-struct-field-left-operand-never-dispatches.md);
@@ -195,25 +191,13 @@ owns the rest of `lib/`, `scripts/`, `cbt/`, `programs/`, the yantra fold and th
   - [cybs: a bare "syntax error"](issues/2026-10-08-cybs-bare-syntax-error-no-location.md), within the 11-label
     headroom.
 - Install:
-  - [`ci.sh`'s fresh home](issues/2026-10-08-ci-sh-fresh-home-links-no-lib.md);
-  - [`cyrius init` exits 0](issues/2026-10-08-cyrius-init-exits-zero-with-missing-templates.md);
-  - [the tarballs miss shim scripts](issues/2026-10-08-release-tarball-misses-shim-scripts.md) (every tarball step).
 - Scanners:
-  - [api-surface's multi-line strings](issues/2026-10-08-api-surface-multiline-string-desync.md);
   - [the attribute word list in five tools](issues/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md);
   - [cyrlint's two rules](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
 - CLI:
-  - [bench / fuzz exit 0 on an empty corpus](issues/2026-10-08-bench-fuzz-exit-zero-on-empty-corpus.md) (rc 1, in
-    ecosystem-migration.md);
   - [distlib's two owner rules](issues/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md);
   - [a killed run's temp dir](issues/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md);
-  - [axis 9 and a binfmt PE run](issues/2026-10-08-wine-prefix-scan-misses-binfmt-pe-run.md).
 - Stdlib and folds:
-  - [`fhm_set` rebuilds on a present key](issues/2026-10-08-hashmap-fast-overwrite-rebuilds-table.md);
-  - [`f64_parse_n`](issues/2026-10-08-f64-parse-no-public-length-bounded-form.md), the cyrius half. ⛔ bayan's
-    delegation tags only after 6.7.11 ships;
-  - [yantra's tests miss `security.cyr`](issues/2026-10-08-yantra-tests-miss-security-include.md). ⛔ Tag yantra
-    1.0.10 before the re-vendor.
 
 **Lanes.**
 - Wave 1: multi-value receives (`src/`, owns the destructure drains; the aarch64 register fix ships in 6.7.7) · call arguments (`src/`,
@@ -242,7 +226,6 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - Darwin / aarch64 syscall translation:
   - [x86-macOS `EMACHO_SYSXLAT` not folded](issues/2026-10-08-x86-macos-emacho-sysxlat-not-folded.md) (XLAT-2 in);
   - [an arm64-macOS literal carries pipe / fork fixups](issues/2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md);
-  - [`esysxlat_fold.sh` blind to `cur`](issues/2026-10-08-esysxlat-fold-gate-blind-to-cur-update.md);
   - [a native-aarch64 region translates literals silently](issues/2026-10-08-aarch64-native-region-literal-translated-silently.md).
 - Windows reroutes:
   - [the `[embed]` link race](issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md) — both halves, because a
@@ -250,11 +233,6 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
   - [`sys_symlink` without `\\?\`](issues/2026-10-08-windows-symlink-no-long-path-prefix.md);
   - [`xflock` without `LockFileEx`](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md).
 - Syscall peers and stdlib:
-  - [no `ppoll`; agnos `ioctl` / `fstatat`](issues/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md);
-  - [Windows `sys_brk` warns](issues/2026-10-08-pe-sys-brk-unrouted-syscall-warning.md) (plus `lib/mmap.cyr:48`);
-  - [no `sock_set_nodelay`](issues/2026-10-08-sock-set-nodelay-windows-route.md);
-  - [the macOS peer's `SYS_ACCEPT4`](issues/2026-10-08-macos-peer-declares-unused-sys-accept4.md);
-  - [literal bounds left in `lib/`](issues/2026-10-08-lib-literal-bounds-and-writable-public-bounds.md).
 - Windows runtime and trust:
   - [`async_iocp_pe` step 2](issues/2026-10-08-async-iocp-pe-plain-cmd-c-step2.md) (re-verified first; the gate runs
     both launch forms);
@@ -322,7 +300,6 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
   - [`asm { in al, dx; }`](issues/2026-10-08-asm-in-mnemonic-unreachable.md).
 - TLS:
   - [native TLS conformance](issues/2026-10-08-tls-native-conformance-bite.md);
-  - [the client-cert PEM sized at the CA maximum](issues/2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots.md).
 - Slack: what 6.7.8–6.7.12 file. If it does not fit, a further repair release is said at this open, inserted before the
   audit release (which renumbers by one).
 
@@ -426,12 +403,16 @@ list (W2 left there: public `const` / `bool` sweeps in each repo's own minor, tr
 checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-resumption test). Filed here:
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](issues/2026-10-08-derive-serialize-cstring-fields.md)
-- [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/2026-10-08-f64-parse-no-public-length-bounded-form.md)
+- [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/archived/2026-10-08-f64-parse-no-public-length-bounded-form.md)
 - [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](issues/2026-10-08-lib-public-constants-const-migration.md)
-- [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
-- [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/2026-10-08-sock-set-nodelay-windows-route.md)
+- [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/archived/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
+- [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/archived/2026-10-08-sock-set-nodelay-windows-route.md)
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md)
-- [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/2026-10-08-yantra-tests-miss-security-include.md)
+- [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/archived/2026-10-08-yantra-tests-miss-security-include.md)
+- **Adoptions 6.7.9 opened** (each a fold patch that raises its cyrius pin, so ⛔ none tags before cyrius 6.7.9 is out;
+  then re-vendored byte-identical): yukti → the new `sys_ppoll` (dropping `_yk_ppoll`, its local `SYS_PPOLL` and its
+  agnos `#ifdef`s); bayan → `f64_parse_n` (dropping its second parser copy `_d_*`); yantra → `sock_set_nodelay` in
+  `_cdp_set_nodelay`.
 - **Constraints on any fold release**: never change the fold API cyrius's own `lib/` calls (sigil's 73 fns, 8 of them
   private `_x509_*` / `_ecdsa_*` used by `tls_native_hs12` / `hs13` / `tls.cyr`; sakshi's 6 in `log.cyr`; bayan
   `base64_encode` in `ws` / `ws_server`; sandhi `sandhi_server_find_header` in `ws_server`). cyrius must not make the
