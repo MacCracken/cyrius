@@ -25,14 +25,18 @@ got wrong against cyrius's own rules; ⚠ marks a fix that changes a lib/ or too
 bump is in ecosystem-migration.md § 6.7.9. Every compiler bite carries a differential compile of the tree, and its
 bullet names what moved.
 
-**Release gate** {GATES}
+**Release gate GREEN** (`release-gate.sh` on `fbcbc512`, 2026-10-11 20:52 → 21:02, **10 min 16 s**, the first run): fixpoint
+2,057,736 B, ARM lockstep 1,881,280 B, seed-derive OK, check.sh — **471 of 471** shell gates produced a result, 0 failed,
+the driver 131 of 131, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach,
+cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`).
 
 **Size:** cycc **2,057,736 B** (`.text` **1,845,440**), +4,200 B over 6.7.8's 2,053,536 — the fixes are mostly
 removals and narrow checks; dead-code floor unchanged (52 fns / 10,597 B). `.tcyr` 553 → **562** (259 → **267** in
 `crossos/`); shell gates 458 → **467**; api-surface 5,828 → **5,835** (`f64_parse_n`, `sock_set_nodelay`, three
 `sys_ppoll` peers, agnos `sys_ioctl` / `sys_fstatat`).
 
-**Bench:** {BENCH}
+**Bench:** self_compile **1,437 ms** (the gate's run). Same-box interleaved A/B vs 6.7.8 (15 runs each, a quiet box):
+**1,440 → 1,434 ms on 6.7.8's source (−0.4 % median, −0.4 % fastest)**, 1,450 → 1,447 ms on 6.7.9's own (−0.2 %).
 
 ### Changed — the approved behaviour changes (user, 2026-10-11)
 
