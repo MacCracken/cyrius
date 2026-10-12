@@ -1781,13 +1781,15 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # `_fpk` record, parse_decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
 # other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
 # 6.7.10 (B7-1): a HANDLE of 8 B or less (`take(a)`, `take((a))`) passes the struct it points at, as
-# one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. CHANGELOG [6.7.10]
+# one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
+# POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
+    var ps = GPSC(S);
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
-    if (_hl_byval(S, fi, argc) == 1) { _hl_bare_val(S, st, GTI(S)); }
+    if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     EPUSHR(S);
     return 1;
 }
@@ -5038,6 +5040,7 @@ fn _op_rhs(S, fi): i64 {
         else { big = _op_big_arm(S, rb); }   # 6.7.6: a struct over 8 B
     }
     PARSE_TERM(S);
+    var rps = GPSC(S);   # 6.7.10 (B7-1b): the operand's pointer step, for `_hl_byval_arg`
     if (big >= 0) { _op_big_disarm(big); }
     _bx_op_rhs(S, fi, rb);   # 6.7.3: an operator fn's bool parameter 1
     if (arm == 1) {
@@ -5050,8 +5053,9 @@ fn _op_rhs(S, fi): i64 {
     var sv = 1;
     if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
     _op_arg_check(S, fi, rb);   # 6.7.3
-    # 6.7.10 (B7-1): a HANDLE of 8 B or less into a by-value parameter passes its struct (`b + a`).
-    if (_hl_byval(S, fi, 1) == 1) { if (_hl_bare_val(S, rb, GTI(S)) == 1) { return 0 - 1; } }
+    # 6.7.10 (B7-1): a HANDLE of 8 B or less into a by-value parameter passes its struct (`b + a`);
+    # (B7-1b) a typed pointer or `&s` passes the struct it points at (`b + sp`, `b + &s`).
+    if (_hl_byval(S, fi, 1) == 1) { if (_hl_byval_arg(S, fi, 1, rb, rps) == 1) { return 0 - 1; } }
     return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
 }
 # ⛔ 6.7.3 — the right operand [rb, cursor) of operator fn `fi`, already parsed, is ARGUMENT 1 of

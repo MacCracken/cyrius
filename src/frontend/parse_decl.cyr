@@ -7279,6 +7279,96 @@ fn _hl_byval(S, fi, k): i64 {
     if (STRUCTSZ(S, ps - 1) > 8) { return 0; }
     return 1;
 }
+# ⛔ 6.7.10 (B7-1b) — A POINTER INTO A BY-VALUE STRUCT PARAMETER OF 8 B OR LESS PASSES THE STRUCT IT
+# POINTS AT (the user's decision 7, 2026-10-12), as one over 8 B always did: that parameter is
+# address-passed, so the pointer was the argument. A struct of 8 B or less travels in one word, and
+# `bs1(sp)` (`sp: *S1`), `bs1(&s)`, a `*S1` parameter, a `: *S1` call, method or field, a `*S1`
+# global or capture, `gw(wp)` into `w: W1<T>`, `bs1(sp + i)` and `s + sp` into an operator fn pushed
+# the ADDRESS as that word — the callee read the pointer's bits as its fields, on every target, from
+# 6.6.0 (issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md: 0 where 111 is right).
+# An untyped value is not a pointer here: it is the struct's word, as before. `_hl_byval_arg` is the
+# by-value argument's tail (`_sarg_byval_small`, `_op_rhs`), after the parse: a handle's struct
+# (B7-1), else a pointer's. 1 = rax replaced. CHANGELOG [6.7.10]
+fn _hl_byval_arg(S, fi, k, b, ps): i64 {
+    if (_hl_bare_val(S, b, GTI(S)) == 1) { return 1; }
+    if (_hl_parg(S, b, GTI(S), ps) == 0) { return 0; }
+    _hl_pval_ra(S, GFPSID(S, fi, k));
+    return 1;
+}
+# 1 = the argument [b, e) just parsed, its pointer step `ps` (GPSC after its parse), is a typed pointer
+# or an address — a `*T` name, `&name` (a variable's: `&fn` has no step), a call / method / field
+# declared `*T`, pointer arithmetic on one — by the compiler's own typing. Step 1 is ambiguous: an i8 /
+# i16 / i32 local also reads with step 1 (`n + 2` adds 2, v6.3.34), so it is decided by `_hl_p1`.
+fn _hl_parg(S, b, e, ps): i64 {
+    if (ps <= 0) { return 0; }
+    if (ps > 1) { return 1; }
+    if (GINFN(S) != 1) { return 1; }
+    return _hl_p1(S, b, e);
+}
+# Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the leftmost term of a
+# top-level `+` / `-` chain carried it; a primary that reads an i8 / i16 / i32 local (a bare name, an
+# if-expression's branch) is a value, any other (`&s`, `pb`, `mk1p()`, `h.p` of a `*T` step 1) an address.
+fn _hl_p1(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    var k = _hl_addop(S, a, e);
+    if (k > a) { return _hl_p1(S, a, k); }
+    while (a < e) {
+        if (_hl_narrow_at(S, a) == 1) { return 0; }
+        a = a + 1;
+    }
+    return 1;
+}
+# The first `+` / `-` (`+%` / `-%` too) of [a, e) outside any bracket, past its first token, else -1.
+fn _hl_addop(S, a, e): i64 {
+    var d = 0;
+    var i = a;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        elif (d == 0) {
+            if (i > a) { if (t == 6 || t == 7 || t == 113 || t == 116) { return i; } }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# 1 = token `i` reads an i8 / i16 / i32 local or parameter (not `&n`, not a field name `.n`).
+fn _hl_narrow_at(S, i): i64 {
+    if (TOKTYP(S, i) != 2) { return 0; }
+    var pt = TOKTYP(S, i - 1);
+    if (pt == 27 || pt == 41) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, i));
+    if (li < 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    var t = GLTYPE(S, li);
+    if (t > 0) { if (t < 8) { return 1; } }
+    return 0;
+}
+# rax (an address) becomes the struct `sid` (8 B or less) it points at, as a by-value consumer takes
+# it: one load of 1 / 2 / 4 / 8 bytes, else (3, 5, 6, 7) a byte-exact copy into a temp — a frame temp
+# in a fn, a hidden global at top level — whose word is loaded: no byte past the object is read.
+fn _hl_pval_ra(S, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    if (_hl_wpow(sz) == 1) {
+        EMOVCA(S);
+        EFIELD_LOAD_W(S, sz);
+        return 0;
+    }
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (h >= 0) {
+        var t = _agg_temp(S, sid);
+        _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(h), 0 - 1, sz);
+        EFLLOAD(S, t);
+        return 0;
+    }
+    var tg = _hl_gtemp(S);
+    _agc_copy_bytes(S, 0 - 1, tg, 0 - 1, 0 - 1000 - (0 - 2 - h), sz);
+    EVLOAD(S, tg);
+    return 0;
+}
 
 # ⛔ 6.7.10 (B7-1g) — THE HANDLE LINE FOR GLOBALS (the user's decision 5, 2026-10-12: one rule for locals
 # and globals at every size). A struct global of 8 B or less initialised from anything that is not a

@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (50, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (52, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -73,6 +73,11 @@
 #       at top level) and size 1..8 B against its 16 B twin: native and cxvm each print `<N> passed,
 #       0 failed`, N derived from the source (243, floor 243), the whole file (its own gate rows,
 #       small_struct_handle_line.sh R2, run it on x86 / IR / DCE / aarch64 / cx / PE too).
+#   R15 (6.7.10, B7-1b) tests/tcyr/crossos/small_struct_pointer_arg.tcyr — a typed pointer or `&s` into a
+#       by-value struct parameter of 8 B or less passes the struct it points at, every form, consumer
+#       and size 1..8 B against its 16 B twin: native and cxvm each print `<N> passed, 0 failed`, N
+#       derived from the source (69, floor 69), the whole file (its own gate rows,
+#       small_struct_handle_line.sh R3, run it on x86 / IR / DCE / aarch64 / cx / PE too).
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -508,8 +513,12 @@ echo "R14 — small_struct_global_handle_line.tcyr (6.7.10 B7-1g: the handle lin
 tcyr_native tests/tcyr/crossos/small_struct_global_handle_line.tcyr 243
 tcyr_cx     tests/tcyr/crossos/small_struct_global_handle_line.tcyr 243
 
-WANT=50
+echo "R15 — small_struct_pointer_arg.tcyr (6.7.10 B7-1b: a pointer into a by-value struct of 8 B or less), native then cxvm:"
+tcyr_native tests/tcyr/crossos/small_struct_pointer_arg.tcyr 69
+tcyr_cx     tests/tcyr/crossos/small_struct_pointer_arg.tcyr 69
+
+WANT=52
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, and the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, and a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg)"
 exit 0
