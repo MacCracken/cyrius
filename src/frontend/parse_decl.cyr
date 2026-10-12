@@ -5084,7 +5084,8 @@ fn _gvk_warn(S, sti): i64 {
 # A struct literal at the cursor (past `{`) whose every leaf is a constant — an integer, an enum
 # constant or a constant expression of them; a float literal (optionally negated) in a float field —
 # is written into slot `idx`'s blob, each leaf at its FIELDOFF and FIELDSZ, the bytes the replayed
-# stores write (EMIT_STRUCT_FIELD_W: a float literal is its binary64 bits in an f64 or f32 field).
+# stores write (EMIT_STRUCT_FIELD_W: a float literal is its binary64 bits in an f64 field, its
+# binary32 bits zero-extended in an f32 field).
 # Nested struct fields are walked into, as _spi_fields walks them (a constant into a nested field is
 # its first leaf). Not baked: a union, a Str / Vec / u128 leaf, a name or call (a whole struct value
 # is one), a string, a named-field list — anything the walk does not fully understand. Reads tokens
@@ -5133,6 +5134,9 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
     if (_gai_ok == 1) {
         ti = ti + 1;
         if (TOKTYP(S, ti - 1) == 7) { ti = ti + 1; }
+        # An f32 field holds binary32 bits (the replayed store rounds, _f32_init_round): an x86
+        # kernel runs that store after its program, so it read 1.5's binary64 bits (0.0). CHANGELOG [6.7.10]
+        if (GFFK(S, si, fi) == 2) { v = _gai_f32(v); }
     } else {
         var tm = 31;   # 6.7.7: a tuple literal's last element ends at its `)`
         if (_spc_cl == 11) { if (fi == GETFCOUNT(S, si) - 1) { tm = 11; } }
