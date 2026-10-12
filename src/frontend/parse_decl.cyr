@@ -7192,6 +7192,23 @@ fn _small_hdl(S, li): i64 {
     if (STRUCTSZ(S, (0 - t) - 1) > 8) { return 0; }
     return 1;
 }
+# ⛔ 6.7.10 (B7-1c) — STRUCT COPIES ARE SIZE-INDEPENDENT (the user's decision 6, 2026-10-12): `l = p` /
+# `G = p` with `p: *S` copy the struct p points at, and `q = r` through `q: *S` copies r into the
+# pointee, at every size — as over 8 B, where a `*T` local or parameter is a copy-assign HANDLE
+# (`_agc_plain_big`). One of 8 B or less was not an operand at all, so `l = p` stored the POINTER into
+# `l.v` and `q = r` rebound q to r's word (S3). 1 = local `li` is a `*T` (a local or a parameter) of a
+# struct of 8 B or less; `_agc_handle_local` answers it as a handle, one slot. CHANGELOG [6.7.10]
+fn _small_sptr(S, li): i64 {
+    if (li < 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    if (GLPTRP(S, li) != 1) { return 0; }
+    var t = GLTYPE(S, li);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    if (STRUCTSZ(S, (0 - t) - 1) > 8) { return 0; }
+    return 1;
+}
 # 1 = a load of `sz` bytes is one instruction (1, 2, 4, 8).
 fn _hl_wpow(sz): i64 {
     if (sz == 1 || sz == 2 || sz == 4 || sz == 8) { return 1; }
@@ -7213,7 +7230,16 @@ fn _hdl_val_ra(S, li, sid): i64 {
 }
 # Inside a closure: the struct a CAPTURED name `noff` is a handle of, 8 B or less (its enclosing slot
 # one word, not inline, not a `*T`), else 0. Its one captured word is the address (`_CL_CAP_BASE_RA`).
-fn _hl_cap_hdl(S, noff): i64 {
+fn _hl_cap_hdl(S, noff): i64 { return _hl_cap_word(S, noff, 0); }
+# 1 = a captured name's one word is the address of a struct of 8 B or less: a handle, or (6.7.10,
+# B7-1c) a `*T` — a copy-assign source the copy goes through, as over 8 B (`_hl_small_copy`).
+fn _hl_cap_addr(S, noff): i64 {
+    if (_hl_cap_word(S, noff, 0) > 0) { return 1; }
+    if (_hl_cap_word(S, noff, 1) > 0) { return 1; }
+    return 0;
+}
+# `_hl_cap_hdl`'s lookup; `ptrp` 1 asks for a captured `*T` instead of a handle.
+fn _hl_cap_word(S, noff, ptrp): i64 {
     if (_cl_capturing != 1) { return 0; }
     if (_cl_env_lidx < 0) { return 0; }
     var esl = _cl_snap_find(S, noff);
@@ -7222,7 +7248,7 @@ fn _hl_cap_hdl(S, noff): i64 {
     if (capi < 0) { return 0; }
     if (L64(&_cl_cap_w + capi * 8) != 1) { return 0; }
     if (_cl_snap_span(esl) != 0) { return 0; }
-    if (_cl_snap_ptrp(esl) == 1) { return 0; }
+    if (_cl_snap_ptrp(esl) != ptrp) { return 0; }
     var t = _cl_snap_type(esl);
     if (t >= 0) { return 0; }
     if (t <= 0 - 2048) { return 0; }

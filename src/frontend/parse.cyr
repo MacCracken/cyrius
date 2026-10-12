@@ -2836,10 +2836,11 @@ fn _agc_plain_big(S, t): i64 {
 # handle (2), or not an aggregate operand (0 returned). Kept out of `_agc_operand` for cybs's
 # per-fn reference limit. Since C7 a by-value parameter is copied into an inline local in the
 # prologue (`_sptr_params_localize`), so 1 is left only for a `#naked` fn's. CHANGELOG [6.6.16]
-# 6.7.10 (B7-1): and a HANDLE of 8 B or less (the handle line), one slot (`_hl_small_copy`).
+# 6.7.10 (B7-1): and a HANDLE of 8 B or less (the handle line), one slot (`_hl_small_copy`); (B7-1c)
+# and a `*T` of one (`_small_sptr`), as a `*T` over 8 B is a handle through `_agc_plain_big`.
 fn _agc_handle_local(S, li): i64 {
     var lt = GLTYPE(S, li);
-    if (_small_hdl(S, li) == 1) { _agc_pp = 2; _agc_li = li; _agc_t = lt; return 1; }
+    if (_small_hdl(S, li) + _small_sptr(S, li) > 0) { _agc_pp = 2; _agc_li = li; _agc_t = lt; return 1; }
     if (_agc_plain_big(S, lt) == 0) { return 0; }
     _agc_pp = 2;
     if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(S, li) == 0) { _agc_pp = 1; } }
@@ -2961,10 +2962,11 @@ fn _try_struct_call_assign(S, noff, term): i64 {
 }
 
 # ⛔ 6.7.10 (B7-1) — `dst = src;` between one-slot (8 B or less) struct operands (`_agc_operand` just
-# ran on `dst`), now that one can be a HANDLE (the handle line): exactly as over 8 B — handle <- handle
-# is a pointer REBIND, at any pair of struct types, before the type check (0: the one-word store); a
-# handle and a value COPY the struct through the handle's address, byte-exact. Two values keep the
-# one-word store, and a mismatch is refused by name, as before. 1 = copied (`src ;` consumed).
+# ran on `dst`), now that one can be a HANDLE (the handle line) or a `*T` (B7-1c, `_small_sptr`):
+# exactly as over 8 B — handle <- handle is a pointer REBIND, at any pair of struct types, before the
+# type check (0: the one-word store); a handle and a value COPY the struct through the handle's address,
+# byte-exact. Two values keep the one-word store, and a mismatch is refused by name, as before. 1 =
+# copied (`src ;` consumed).
 fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     var dh = _agc_hdl();
     var dli = _agc_li;
@@ -2974,9 +2976,9 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     var sh = _agc_hdl();
     if (dh == 1) { if (sh == 1) { return 0; } }
     if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }
-    # A CAPTURED handle is a source the copy goes through (its word is the address), never a rebind
-    # — as over 8 B, where `_agc_src_operand` answers a capture as a value. (`_CL_CAP_BASE_RA`)
-    if (_agc_li == 0 - 2) { if (_hl_cap_hdl(S, src_noff) > 0) { sh = 1; } }
+    # A CAPTURED handle or `*T` (B7-1c) is a source the copy goes through (its word is the address),
+    # never a rebind — as over 8 B, where `_agc_src_operand` answers a capture as a value.
+    if (_agc_li == 0 - 2) { sh = _hl_cap_addr(S, src_noff); }
     if (dh + sh == 0) { return 0; }
     if (_agc_t != dt) { return 0; }
     var sli = _agc_li;

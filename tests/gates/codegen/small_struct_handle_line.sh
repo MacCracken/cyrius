@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/codegen/small_struct_handle_line.sh — 6.7.10 (B7-1, B7-1g, B7-1b)
+# tests/gates/codegen/small_struct_handle_line.sh — 6.7.10 (B7-1, B7-1g, B7-1b, B7-1c)
 #
 # THE HANDLE LINE (the user's decision, 2026-10-12): a struct local of 8 B or less initialised from
 # anything that is not a struct value of its type is a HANDLE, as one over 8 B is — its slot holds
@@ -63,6 +63,21 @@
 #   PP (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping passed by value — a `*T`
 #      local, a `: *S7` call, an operator's right operand, a `*S7` global, a closure, and at TOP LEVEL
 #      (a hidden global temp) — exit 0, no byte past the object read
+#
+# B7-1c — STRUCT COPIES ARE SIZE-INDEPENDENT (the user's decision 6, 2026-10-12): `l = p` / `G = p` with
+# `p: *S` copy the struct p points at, and `q = r` through `q: *S` copies r into the pointee, at every
+# size, as over 8 B (where a `*T` local or parameter is a copy-assign handle). Through 6.7.9 a `*T` of a
+# struct of 8 B or less was no struct operand: `l = p` / `G = p` stored the POINTER into the first
+# field, `q = r` / `p = l` rebound the pointer to r's word, and a call / method / operator /
+# if-expression / field result into a `*T` stored the struct's word as the pointer. Its runtime half
+# is tests/tcyr/crossos/small_struct_pointer_copy.tcyr (every shape against its 16 B twin, the
+# rebinds, closures, sizes 1..8 B with a guard byte):
+#   R5 that file on the same legs as R1, N derived from it (floor 67)
+#   CP compile rows (x86): a struct value of ANOTHER type is refused by name, as over 8 B — `l = pu`,
+#      `pu = l`, `G = pu`, `q = G` (`q: *U8`) and `p = mku(1)`, at 8 B, with the 16 B twins of
+#      `l = pu` and `p = mku(1)`; a `*U` of another struct into a `*T` still REBINDS (exit 17)
+#   PM (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping: `l = p`, `p = l`, `G = p`,
+#      `q = r`, `l = q`, `q = G`, `p = mk7()` — exit 0, no byte past the object read or written
 #
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
@@ -153,6 +168,21 @@
 #                                                      SIGILL, cxvm out of range), PP x2
 #   MB9 `_sarg_byval_small` without `_hl_byval_arg`  -> RED 16: R3 5 of 69 rows x7, R4 exit 0 x7, PP x2 (and
 #                                                      B1-B4)
+# B7-1c MUTATION LEDGER (2026-10-12, the same method):
+#   the B7-1b tree (d046368e, no *T operand)          -> RED 14: R5 x7 (`l = p` held the pointer, then
+#                                                      `q = r` rebound q: SIGSEGV x86 x4 / aarch64, cxvm out of
+#                                                      range, PE a crash), CP1-CP5 (compiled), PM x2 (exit 1)
+#   MC1 `_small_sptr` answering 0                     -> RED 14: the same rows as the B7-1b tree
+#   MC2 `_hl_cap_addr` without the `*T` arm           -> RED 7: R5 6 rows x7 (`l = p`, `G = p`, `l = q` from a
+#                                                      closure's captured `*T`, each with its twin row: the
+#                                                      pointer word stored)
+#   MC3 `_hl_small_copy` copying 8 bytes at every size -> RED 27: R1 7 rows x7, R2 7 rows x7, R5 7 rows x7 (the
+#                                                      guard bytes after 1..7 B objects overwritten), GP x2, PM x2,
+#                                                      P x2 (exit 139: the 8-byte copy reads past the mapping)
+#   MC4 `_hl_small_copy` without the handle <- handle rebind
+#                                                   -> RED 24: R1 / R2 / R5 do not compile x21 (`a = u`,
+#                                                      `X8 = AU8`, `p = pu` refused as copies), C1, CP6, GC5 (a
+#                                                      handle copied through instead of rebound: SIGSEGV)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -195,6 +225,11 @@ TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 NP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TP")
 PFLOOR=69
 if [ "$NP" -lt "$PFLOOR" ]; then echo "FAIL: $G: only $NP rows in $TP (floor $PFLOOR) — rows were lost"; exit 1; fi
+TQ=tests/tcyr/crossos/small_struct_pointer_copy.tcyr
+[ -f "$TQ" ] || { echo "FAIL: $G: $TQ is missing"; exit 1; }
+NQ=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TQ")
+QFLOOR=67
+if [ "$NQ" -lt "$QFLOOR" ]; then echo "FAIL: $G: only $NQ rows in $TQ (floor $QFLOOR) — rows were lost"; exit 1; fi
 
 # The filed repro, verbatim (docs/development/issues/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
 cat > "$D/repro.cyr" <<'EOF'
@@ -325,6 +360,15 @@ for leg in $XLEGS $OTHER; do
     else bad "R4 $leg: exit $RC, want 111"; fi
 done
 
+echo "R5. $TQ ($NQ rows: struct copies through a *T of 8 B or less)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TQ" "$D/pq_$n"
+    if [ "$RC" -eq -1 ]; then bad "R5 $leg: the values file did not build: $(grep '^error' "$D/pq_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NQ passed, 0 failed ($NQ total)" ]; then ok "R5 $leg: $LAST"
+    else bad "R5 $leg: exit $RC, '$LAST' (want '$NQ passed, 0 failed ($NQ total)') $(grep -m3 'FAIL' "$D/pq_$n.out" | tr '\n' ' ')"; fi
+done
+
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -391,6 +435,24 @@ crow "GC5 a global bound to a handle declared BELOW it binds (the sweep repeats)
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nvar G2: S8 = G1;\nvar G1: S8 = alloc(8);\nfn f() { G1.v = 1; G2 = G1; G2.v = 4; return G1.v; }\nsyscall(60, f());\n'
 crow "GC5 a dispatch on a handle declared below it is pointer arithmetic (the sweep repeats)" 0 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = 77; return r; }\nvar G2: S8 = G1 + 8;\nvar G1: S8 = alloc(8);\nsyscall(60, load64(&G2) - 8);\n'
+
+echo "CP. struct copies through a *T of 8 B or less: another struct type refused by name, as over 8 B (x86)"
+crow "CP1 l = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var l: S8; l.v = 1; l = pu; return l.v; }\nsyscall(60, f());\n'
+crow "CP1 its 16 B twin" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn f() { var u: UH; u.u = 4; var pu: *UH = &u; var l: H; l.v = 1; l = pu; return l.v; }\nsyscall(60, f());\n'
+crow "CP2 pu = l (pu: *U8) refused" "refuse:cannot copy 'l' into a variable of a different struct/vector type: 'pu'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var l: S8; l.v = 1; pu = l; return u.u; }\nsyscall(60, f());\n'
+crow "CP3 G = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'G'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar G = S8 { 0 };\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; G = pu; return G.v; }\nsyscall(60, f());\n'
+crow "CP4 q = G through q: *U8 refused" "refuse:cannot copy 'G' into a variable of a different struct/vector type: 'q'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar G = S8 { 0 };\nfn f(q: *U8) { q = G; return q.u; }\nfn g() { var u: U8; u.u = 4; return f(&u); }\nsyscall(60, g());\n'
+crow "CP5 p = mku(1) (a U8 value) into p: *S8 refused" "refuse:cannot copy 'mku' into a variable of a different struct/vector type: 'p'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn mku(n): U8 { var r: U8; r.u = n; return r; }\nfn f() { var x: S8; x.v = 1; var p: *S8 = &x; p = mku(1); return x.v; }\nsyscall(60, f());\n'
+crow "CP5 its 16 B twin" "refuse:cannot copy 'mku' into a variable of a different struct/vector type: 'p'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn mku(n): UH { var r: UH; r.u = n; r.x = 0; return r; }\nfn f() { var x: H; x.v = 1; var p: *H = &x; p = mku(1); return x.v; }\nsyscall(60, f());\n'
+crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var a: S8; a.v = 1; var u: U8; u.u = 2; var p: *S8 = &a; var pu: *U8 = &u; p = pu; p.v = 7; return a.v * 10 + u.u; }\nsyscall(60, f());\n'
 
 cat > "$D/gp.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -471,6 +533,57 @@ for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
     if [ "$RC" -eq -1 ]; then bad "PP $leg: did not build: $(grep '^error' "$D/pp_$leg.err" | head -1)"
     elif [ "$RC" -eq 0 ]; then ok "PP $leg: exit 0"
     else bad "PP $leg: exit $RC, want 0 (139 = a read past the object)"; fi
+done
+
+cat > "$D/pm.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+var G7 = S7 { 0, 0, 0 };
+fn take7(s: S7): i64 { return s.a + s.b + s.c; }
+fn mk7(): S7 { var t: S7; t.a = 200; t.b = 40; t.c = 6; return t; }
+fn qr(q: *S7, r: S7): i64 { q = r; return 0; }
+fn lq(q: *S7): i64 { var l: S7; l = q; return take7(l); }
+fn qg(q: *S7): i64 { q = G7; return 0; }
+fn run(): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (m <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, m + 4096, 4096) != 0) { return 91; }
+    var p: *S7 = 0;
+    p = m + 4096 - 7;
+    p.a = 100;
+    p.b = 20;
+    p.c = 3;
+    var l: S7;
+    l = p;
+    if (take7(l) != 123) { return 1; }
+    G7 = p;
+    if (take7(G7) != 123) { return 2; }
+    if (lq(p) != 123) { return 3; }
+    var r: S7;
+    r.a = 200;
+    r.b = 40;
+    r.c = 6;
+    qr(p, r);
+    if (p.a + p.b + p.c != 246) { return 4; }
+    l.a = 300;
+    l.b = 50;
+    l.c = 9;
+    p = l;
+    if (p.a + p.b + p.c != 359) { return 5; }
+    qg(p);
+    if (p.a + p.b + p.c != 123) { return 6; }
+    p = mk7();
+    if (p.a + p.b + p.c != 246) { return 7; }
+    return 0;
+}
+syscall(60, run());
+EOF
+echo "PM. a *S7 onto the last 7 bytes of a mapping: l = p, G = p, l = q, q = r, p = l, q = G, p = mk7() — no byte past it"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/pm.cyr" "$D/pm_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PM $leg: did not build: $(grep '^error' "$D/pm_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "PM $leg: exit 0"
+    else bad "PM $leg: exit $RC, want 0 (139 = a byte past the object read or written)"; fi
 done
 
 cat > "$D/p.cyr" <<'EOF'
@@ -575,4 +688,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"

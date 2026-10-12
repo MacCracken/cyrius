@@ -1,0 +1,802 @@
+# small_struct_pointer_copy.tcyr — 6.7.10 (B7-1c). STRUCT COPIES ARE SIZE-INDEPENDENT (the user's
+# decision 6, 2026-10-12): `l = p` / `G = p` with `p: *S` copy the struct p points at, and `q = r`
+# through `q: *S` copies r into the pointee, at every size — as over 8 B.
+#
+# ⛔ THE ASYMMETRY, 6.7.0 through 6.7.9 (measured). Over 8 B a `*T` local or parameter is a copy-assign HANDLE
+# (its slot holds the address): `l = p` copied `*p` into l, `G = p` into the global, `q = r` and
+# `p = l` copied into the pointee, and `p = p2` rebound p. A `*T` of a struct of 8 B or less was not a
+# struct operand at all, so the same statements were one-word stores, with no diagnostic: `l = p` and
+# `G = p` stored the POINTER into the first field (`l.v` read the address), and `q = r` / `p = l`
+# rebound q / p to r's word (the pointee never changed; the next `q.v` read through r's field as an
+# address). The other struct-copy sources into a `*T` were stores of the struct's word too:
+# `p = mk8(4)`, `p = l.dbl()`, `p = l + m`, `p = if (c) { l } else { m }`, `p = w.s`, each a garbage
+# pointer.
+#
+# THE RULE, every `_8` row against its `_h` twin over 8 B (both must give the row's constant, except
+# the if-expression: a struct VALUE over 8 B is no if-expression branch, `_ie_big_err`):
+#   * a COPY between a `*T` (a local, a parameter — `self: *T` too —, a closure's captured `*T` as a
+#     source) and a struct value (an inline local, a by-value parameter, a value global, a captured
+#     struct): `l = p`, `G = p`, `l = q`, `G = q`, `q = r`, `q = G`, `p = l`, `p = G`, wrapped (`l =
+#     (p)`, `p = ((l))`); and a struct result into a `*T`: a call, a wrapped call, a method, an
+#     operator, an if-expression, a field — each copied into the POINTEE, byte-exact (3 / 5 / 6 / 7 B
+#     too: the guard byte after the object is kept); in a fn, a closure body, a defer body, a
+#     #regalloc fn;
+#   * a REBIND (the one-word store, as over 8 B): `*T` <- `*T` (`p = p2`, `q = q2`, `p = pu` of
+#     another struct), `*T` <- handle and handle <- `*T` — at any pair of struct types;
+#   * a captured `*T` SOURCE into a `*T` local copies (`pc = p` in a closure body), as over 8 B, where a
+#     capture is a value source (6.6.13);
+#   * THE BOUNDARY (unchanged, as over 8 B): a `*i64` (or an untyped local holding an address) into a
+#     struct value stores its word.
+# A copy is told from an alias by a WRITE after it. A struct value of ANOTHER type is refused by name,
+# as over 8 B (`l = pu`, `pu = l`, `G = pu`, `q = G`, `p = mku(1)`: the gate's CP rows).
+# Not here: a `*T` GLOBAL (`l = GP`, `GP = l`), a `: *T` call (`l = gp()`) and a `*T` field (`l = w.p`)
+# store the word at EVERY size (over 8 B too) — a separate, pre-existing defect.
+# The SIZE rows (1..8 B: i8 / i16 / i32 compositions, signed values) run the six shapes on each size
+# with a guard byte right after the object (a field of the enclosing struct, a global declared after
+# the value global): no byte past the object is written. The end-of-mapping row is the gate's (PM).
+#
+# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (MC1 .. MC4), which runs this file
+# on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+
+struct S8 { v; }                     # 8 B
+struct H { v; w; }                   # 16 B — the twin
+struct U8 { u; }                     # 8 B, another type
+struct UH { u; x; }                  # 16 B, another type
+struct W8 { s: S8; n; }
+struct WH { s: H; n; }
+
+var G8 = S8 { 0 };
+var GH = H { 0, 0 };
+var GD8 = 0;
+var GDH = 0;
+
+fn mk8(n): S8 { var r: S8; r.v = n; return r; }
+fn mkh(n): H { var r: H; r.v = n; r.w = 0; return r; }
+impl S8 { fn dbl(self: S8): S8 { var r: S8; r.v = self.v * 2; return r; } }
+impl H { fn dbl(self: H): H { var r: H; r.v = self.v * 2; r.w = 0; return r; } }
+impl S8 { fn setto(self: *S8, o: S8): i64 { self = o; return self.v; } }
+impl H { fn setto(self: *H, o: H): i64 { self = o; return self.v; } }
+fn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v + b.v; return r; }
+fn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }
+
+# ── the six shapes (`src.v` copied; the write after it tells a copy from an alias) ──
+# l = p: 5 copied, then x written 6 -> 56
+fn s_lp_8() { var x: S8; x.v = 5; var p: *S8 = &x; var l: S8; l.v = 1; l = p; x.v = 6; return l.v * 10 + x.v; }
+fn s_lp_h() {
+    var x: H; x.v = 5; x.w = 0;
+    var p: *H = &x;
+    var l: H; l.v = 1; l.w = 0;
+    l = p;
+    x.v = 6;
+    return l.v * 10 + x.v;
+}
+# G = p -> 56
+fn s_gp_8() { var x: S8; x.v = 5; var p: *S8 = &x; G8.v = 1; G8 = p; x.v = 6; return G8.v * 10 + x.v; }
+fn s_gp_h() { var x: H; x.v = 5; x.w = 0; var p: *H = &x; GH.v = 1; GH = p; x.v = 6; return GH.v * 10 + x.v; }
+# q = r through a *T parameter: the pointee gets 7; the callee's later write to r stays its own -> 777
+fn s_qr_p8(q: *S8, r: S8) { q = r; r.v = 9; return q.v; }
+fn s_qr_ph(q: *H, r: H) { q = r; r.v = 9; return q.v; }
+fn s_qr_8() { var d: S8; d.v = 1; var r: S8; r.v = 7; var k = s_qr_p8(&d, r); return d.v * 100 + k * 10 + r.v; }
+fn s_qr_h() {
+    var d: H; d.v = 1; d.w = 0;
+    var r: H; r.v = 7; r.w = 0;
+    var k = s_qr_ph(&d, r);
+    return d.v * 100 + k * 10 + r.v;
+}
+# l = q: 5 copied out of the pointee, then the pointee written 9 -> 599
+fn s_lq_p8(q: *S8) { var l: S8; l.v = 1; l = q; q.v = 9; return l.v * 10 + q.v; }
+fn s_lq_ph(q: *H) { var l: H; l.v = 1; l.w = 0; l = q; q.v = 9; return l.v * 10 + q.v; }
+fn s_lq_8() { var x: S8; x.v = 5; var r = s_lq_p8(&x); return r * 10 + x.v; }
+fn s_lq_h() { var x: H; x.v = 5; x.w = 0; var r = s_lq_ph(&x); return r * 10 + x.v; }
+# q = G: 4 into the pointee, then G written 9 -> 449
+fn s_qg_p8(q: *S8) { q = G8; G8.v = 9; return q.v; }
+fn s_qg_ph(q: *H) { q = GH; GH.v = 9; return q.v; }
+fn s_qg_8() { G8.v = 4; var d: S8; d.v = 1; var k = s_qg_p8(&d); return d.v * 100 + k * 10 + G8.v; }
+fn s_qg_h() { GH.v = 4; GH.w = 0; var d: H; d.v = 1; d.w = 0; var k = s_qg_ph(&d); return d.v * 100 + k * 10 + GH.v; }
+# p = l: 3 into the pointee (p still points at y), then l written 4 -> 334
+fn s_pl_8() {
+    var y: S8;
+    y.v = 1;
+    var p: *S8 = &y;
+    var l: S8;
+    l.v = 3;
+    p = l;
+    l.v = 4;
+    return y.v * 100 + p.v * 10 + l.v;
+}
+fn s_pl_h() {
+    var y: H; y.v = 1; y.w = 0;
+    var p: *H = &y;
+    var l: H; l.v = 3; l.w = 0;
+    p = l;
+    l.v = 4;
+    return y.v * 100 + p.v * 10 + l.v;
+}
+# G = q -> 59; p = G -> 67
+fn s_gq_p8(q: *S8) { G8 = q; q.v = 9; return G8.v; }
+fn s_gq_ph(q: *H) { GH = q; q.v = 9; return GH.v; }
+fn s_gq_8() { var x: S8; x.v = 5; var k = s_gq_p8(&x); return k * 10 + x.v; }
+fn s_gq_h() { var x: H; x.v = 5; x.w = 0; var k = s_gq_ph(&x); return k * 10 + x.v; }
+fn s_pg_8() { G8.v = 6; var y: S8; y.v = 1; var p: *S8 = &y; p = G8; G8.v = 7; return y.v * 10 + G8.v; }
+fn s_pg_h() {
+    GH.v = 6;
+    GH.w = 0;
+    var y: H;
+    y.v = 1;
+    y.w = 0;
+    var p: *H = &y;
+    p = GH;
+    GH.v = 7;
+    return y.v * 10 + GH.v;
+}
+# wrapped: l = (p), py = ((l)) -> 556
+fn s_wrap_8() {
+    var x: S8; x.v = 5;
+    var p: *S8 = &x;
+    var l: S8; l.v = 1;
+    l = (p);
+    var y: S8; y.v = 1;
+    var py: *S8 = &y;
+    py = ((l));
+    x.v = 6;
+    return l.v * 100 + y.v * 10 + x.v;
+}
+fn s_wrap_h() {
+    var x: H; x.v = 5; x.w = 0;
+    var p: *H = &x;
+    var l: H; l.v = 1; l.w = 0;
+    l = (p);
+    var y: H; y.v = 1; y.w = 0;
+    var py: *H = &y;
+    py = ((l));
+    x.v = 6;
+    return l.v * 100 + y.v * 10 + x.v;
+}
+# self = o through `self: *T` -> 44 (o stored before the receiver: see the IR=3 note in small_struct_pointer_arg.tcyr)
+fn s_self_8() { var o: S8; o.v = 4; var y: S8; y.v = 1; var k = y.setto(o); return y.v * 10 + k; }
+fn s_self_h() { var o: H; o.v = 4; o.w = 0; var y: H; y.v = 1; y.w = 0; var k = y.setto(o); return y.v * 10 + k; }
+
+# ── a struct result into a *T: copied into the pointee ──
+fn x_call_8() { var y: S8; y.v = 1; var p: *S8 = &y; p = mk8(4); return y.v * 10 + p.v; }
+fn x_call_h() { var y: H; y.v = 1; y.w = 0; var p: *H = &y; p = mkh(4); return y.v * 10 + p.v; }
+fn x_wcall_8() { var y: S8; y.v = 1; var p: *S8 = &y; p = (mk8(4)); return y.v * 10 + p.v; }
+fn x_wcall_h() { var y: H; y.v = 1; y.w = 0; var p: *H = &y; p = (mkh(4)); return y.v * 10 + p.v; }
+fn x_meth_8() { var l: S8; l.v = 3; var y: S8; y.v = 1; var p: *S8 = &y; p = l.dbl(); return y.v * 10 + l.v; }
+fn x_meth_h() {
+    var l: H;
+    l.v = 3;
+    l.w = 0;
+    var y: H;
+    y.v = 1;
+    y.w = 0;
+    var p: *H = &y;
+    p = l.dbl();
+    return y.v * 10 + l.v;
+}
+fn x_op_8() {
+    var y: S8;
+    y.v = 1;
+    var p: *S8 = &y;
+    var l: S8;
+    l.v = 3;
+    var m: S8;
+    m.v = 4;
+    p = l + m;
+    return y.v * 10 + p.v;
+}
+fn x_op_h() {
+    var y: H; y.v = 1; y.w = 0;
+    var p: *H = &y;
+    var l: H; l.v = 3; l.w = 0;
+    var m: H; m.v = 4; m.w = 0;
+    p = l + m;
+    return y.v * 10 + p.v;
+}
+fn x_ie_8(c) {
+    var y: S8; y.v = 1;
+    var p: *S8 = &y;
+    var l: S8; l.v = 3;
+    var m: S8; m.v = 4;
+    p = if (c == 1) { l } else { m };
+    l.v = 5;
+    m.v = 5;
+    return y.v;
+}
+fn x_field_8() {
+    var y: S8;
+    y.v = 1;
+    var p: *S8 = &y;
+    var w: W8;
+    w.s.v = 5;
+    w.n = 0;
+    p = w.s;
+    w.s.v = 6;
+    return y.v * 10 + w.s.v;
+}
+fn x_field_h() {
+    var y: H; y.v = 1; y.w = 0;
+    var p: *H = &y;
+    var w: WH; w.s.v = 5; w.s.w = 0; w.n = 0;
+    p = w.s;
+    w.s.v = 6;
+    return y.v * 10 + w.s.v;
+}
+
+# ── rebinds: *T <- *T, *T <- handle, handle <- *T (the object written afterwards is the new one) ──
+fn r_pp_8() {
+    var a: S8;
+    a.v = 1;
+    var b: S8;
+    b.v = 2;
+    var p: *S8 = &a;
+    var p2: *S8 = &b;
+    p = p2;
+    p.v = 7;
+    return a.v * 10 + b.v;
+}
+fn r_pp_h() {
+    var a: H; a.v = 1; a.w = 0;
+    var b: H; b.v = 2; b.w = 0;
+    var p: *H = &a;
+    var p2: *H = &b;
+    p = p2;
+    p.v = 7;
+    return a.v * 10 + b.v;
+}
+fn r_qq_p8(q: *S8, q2: *S8) { q = q2; q.v = 7; return 0; }
+fn r_qq_ph(q: *H, q2: *H) { q = q2; q.v = 7; return 0; }
+fn r_qq_8() { var a: S8; a.v = 1; var b: S8; b.v = 2; r_qq_p8(&a, &b); return a.v * 10 + b.v; }
+fn r_qq_h() { var a: H; a.v = 1; a.w = 0; var b: H; b.v = 2; b.w = 0; r_qq_ph(&a, &b); return a.v * 10 + b.v; }
+fn r_ph_8() {
+    var a: S8;
+    a.v = 1;
+    var p: *S8 = &a;
+    var h: S8 = alloc(8);
+    h.v = 2;
+    p = h;
+    p.v = 7;
+    return a.v * 10 + h.v;
+}
+fn r_ph_h() {
+    var a: H;
+    a.v = 1;
+    a.w = 0;
+    var p: *H = &a;
+    var h: H = alloc(16);
+    h.v = 2;
+    p = h;
+    p.v = 7;
+    return a.v * 10 + h.v;
+}
+fn r_hp_8() {
+    var a: S8;
+    a.v = 1;
+    var p: *S8 = &a;
+    var h: S8 = alloc(8);
+    h.v = 2;
+    h = p;
+    h.v = 7;
+    return a.v * 10 + p.v;
+}
+fn r_hp_h() {
+    var a: H;
+    a.v = 1;
+    a.w = 0;
+    var p: *H = &a;
+    var h: H = alloc(16);
+    h.v = 2;
+    h = p;
+    h.v = 7;
+    return a.v * 10 + p.v;
+}
+fn r_pu_8() {
+    var a: S8;
+    a.v = 1;
+    var u: U8;
+    u.u = 2;
+    var p: *S8 = &a;
+    var pu: *U8 = &u;
+    p = pu;
+    p.v = 7;
+    return a.v * 10 + u.u;
+}
+fn r_pu_h() {
+    var a: H; a.v = 1; a.w = 0;
+    var u: UH; u.u = 2; u.x = 0;
+    var p: *H = &a;
+    var pu: *UH = &u;
+    p = pu;
+    p.v = 7;
+    return a.v * 10 + u.u;
+}
+
+# ── closures ──
+# l = p with p a captured *T (5 copied; then p written 6) -> 566
+fn k_lp_8() {
+    var x: S8;
+    x.v = 5;
+    var p: *S8 = &x;
+    var f = |d| { var l: S8; l.v = 1; l = p; p.v = 6 + d; return l.v * 10 + p.v; };
+    var r = callptr(f, 0);
+    return r * 10 + x.v;
+}
+fn k_lp_h() {
+    var x: H;
+    x.v = 5;
+    x.w = 0;
+    var p: *H = &x;
+    var f = |d| { var l: H; l.v = 1; l.w = 0; l = p; p.v = 6 + d; return l.v * 10 + p.v; };
+    var r = callptr(f, 0);
+    return r * 10 + x.v;
+}
+# pc = m: a closure's own *T destination -> 34
+fn k_pl_8() {
+    var f = |d| {
+        var y: S8; y.v = 1;
+        var pc: *S8 = &y;
+        var m: S8; m.v = 3 + d;
+        pc = m;
+        m.v = 4;
+        return y.v * 10 + m.v;
+    };
+    return callptr(f, 0);
+}
+fn k_pl_h() {
+    var f = |d| {
+        var y: H; y.v = 1; y.w = 0;
+        var pc: *H = &y;
+        var m: H; m.v = 3 + d; m.w = 0;
+        pc = m;
+        m.v = 4;
+        return y.v * 10 + m.v;
+    };
+    return callptr(f, 0);
+}
+# pc = p, p a captured *T: a copy into pc's pointee, as over 8 B -> 56
+fn k_pcap_8() {
+    var x: S8;
+    x.v = 5;
+    var p: *S8 = &x;
+    var f = |d| { var y: S8; y.v = 1; var pc: *S8 = &y; pc = p; p.v = 6 + d; return y.v * 10 + p.v; };
+    return callptr(f, 0);
+}
+fn k_pcap_h() {
+    var x: H;
+    x.v = 5;
+    x.w = 0;
+    var p: *H = &x;
+    var f = |d| { var y: H; y.v = 1; y.w = 0; var pc: *H = &y; pc = p; p.v = 6 + d; return y.v * 10 + p.v; };
+    return callptr(f, 0);
+}
+# G = p, p a captured *T -> 56
+fn k_gp_8() {
+    var x: S8;
+    x.v = 5;
+    var p: *S8 = &x;
+    var f = |d| { G8 = p; p.v = 6 + d; return G8.v * 10 + p.v; };
+    return callptr(f, 0);
+}
+fn k_gp_h() {
+    var x: H;
+    x.v = 5;
+    x.w = 0;
+    var p: *H = &x;
+    var f = |d| { GH = p; p.v = 6 + d; return GH.v * 10 + p.v; };
+    return callptr(f, 0);
+}
+# l = q, q a captured *T parameter -> 566
+fn k_lq_p8(q: *S8) {
+    var f = |d| { var l: S8; l.v = 1; l = q; q.v = 6 + d; return l.v * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn k_lq_ph(q: *H) {
+    var f = |d| { var l: H; l.v = 1; l.w = 0; l = q; q.v = 6 + d; return l.v * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn k_lq_8() { var x: S8; x.v = 5; return k_lq_p8(&x) * 10 + x.v; }
+fn k_lq_h() { var x: H; x.v = 5; x.w = 0; return k_lq_ph(&x) * 10 + x.v; }
+# pc = l, l a captured struct value (its words at the capture: 3) -> 3
+fn k_pv_8() {
+    var l: S8;
+    l.v = 3;
+    var f = |d| { var y: S8; y.v = 1; var pc: *S8 = &y; pc = l; return y.v + d; };
+    l.v = 4;
+    return callptr(f, 0);
+}
+fn k_pv_h() {
+    var l: H;
+    l.v = 3;
+    l.w = 0;
+    var f = |d| { var y: H; y.v = 1; y.w = 0; var pc: *H = &y; pc = l; return y.v + d; };
+    l.v = 4;
+    return callptr(f, 0);
+}
+
+# ── defer and #regalloc bodies ──
+fn d_8() { var x: S8; x.v = 5; var p: *S8 = &x; var l: S8; l.v = 1; defer { l = p; GD8 = l.v; } x.v = 6; return 0; }
+fn d_h() {
+    var x: H;
+    x.v = 5;
+    x.w = 0;
+    var p: *H = &x;
+    var l: H;
+    l.v = 1;
+    l.w = 0;
+    defer { l = p; GDH = l.v; }
+    x.v = 6;
+    return 0;
+}
+#regalloc
+fn ra_8() {
+    var x: S8;
+    x.v = 5;
+    var p: *S8 = &x;
+    var l: S8;
+    l.v = 1;
+    l = p;
+    var y: S8;
+    y.v = 1;
+    var q: *S8 = &y;
+    q = l;
+    x.v = 6;
+    return l.v * 100 + y.v * 10 + x.v;
+}
+#regalloc
+fn ra_h() {
+    var x: H; x.v = 5; x.w = 0;
+    var p: *H = &x;
+    var l: H; l.v = 1; l.w = 0;
+    l = p;
+    var y: H; y.v = 1; y.w = 0;
+    var q: *H = &y;
+    q = l;
+    x.v = 6;
+    return l.v * 100 + y.v * 10 + x.v;
+}
+
+# ── the boundary: a *i64 — its word, as over 8 B ──
+fn b_i64p_8() { var k = 9; var pi: *i64 = &k; var l: S8; l.v = 1; l = pi; if (l.v == pi) { return 1; } return 0; }
+fn b_i64p_h() {
+    var k = 9;
+    var pi: *i64 = &k;
+    var l: H;
+    l.v = 1;
+    l.w = 0;
+    l = pi;
+    if (l.v == pi) { return 1; }
+    return 0;
+}
+
+# ── every size 1..8 B: the six shapes, a guard byte after the object (a field; a global declared after it) ──
+struct B1 { a: i8; }
+struct C1 { b: B1; g: i8; }
+struct B2 { a: i16; }
+struct C2 { b: B2; g: i8; }
+struct B3 { a: i8; b: i8; c: i8; }
+struct C3 { b: B3; g: i8; }
+struct B4 { a: i32; }
+struct C4 { b: B4; g: i8; }
+struct B5 { a: i32; b: i8; }
+struct C5 { b: B5; g: i8; }
+struct B6 { a: i32; b: i16; }
+struct C6 { b: B6; g: i8; }
+struct B7 { a: i32; b: i16; c: i8; }
+struct C7 { b: B7; g: i8; }
+struct B8 { a: i32; b: i32; }
+struct C8 { b: B8; g: i8; }
+
+var GB1 = B1 { 0 };
+var ZB1: i8 = 99;
+var GB2 = B2 { 0 };
+var ZB2: i8 = 99;
+var GB3 = B3 { 0, 0, 0 };
+var ZB3: i8 = 99;
+var GB4 = B4 { 0 };
+var ZB4: i8 = 99;
+var GB5 = B5 { 0, 0 };
+var ZB5: i8 = 99;
+var GB6 = B6 { 0, 0 };
+var ZB6: i8 = 99;
+var GB7 = B7 { 0, 0, 0 };
+var ZB7: i8 = 99;
+var GB8 = B8 { 0, 0 };
+var ZB8: i8 = 99;
+
+fn q1_r(q: *B1, r: B1) { q = r; return 0; }
+fn q1_g(q: *B1) { q = GB1; return 0; }
+fn q1_l(q: *B1) { var l: B1; l.a = 5; l = q; if (l.a == 0 - 7) { return 1; } return 0; }
+fn z1() {
+    var c: C1; c.b.a = 0 - 7; c.g = 99;
+    var p: *B1 = &c;
+    var k = 0;
+    var l: B1; l.a = 5;
+    l = p;
+    p.a = 5;
+    if (l.a == 0 - 7) { k = k + 1; }
+    var m: B1; m.a = 5;
+    p = m;
+    m.a = 0 - 7;
+    if (c.b.a == 5 && c.g == 99) { k = k + 1; }
+    GB1 = p;
+    if (GB1.a == 5 && ZB1 == 99) { k = k + 1; }
+    var r: B1; r.a = 0 - 7;
+    q1_r(&c, r);
+    if (c.b.a == 0 - 7 && c.g == 99) { k = k + 1; }
+    k = k + q1_l(&c);
+    q1_g(&c);
+    if (c.b.a == 5 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q2_r(q: *B2, r: B2) { q = r; return 0; }
+fn q2_g(q: *B2) { q = GB2; return 0; }
+fn q2_l(q: *B2) { var l: B2; l.a = 301; l = q; if (l.a == 0 - 300) { return 1; } return 0; }
+fn z2() {
+    var c: C2; c.b.a = 0 - 300; c.g = 99;
+    var p: *B2 = &c;
+    var k = 0;
+    var l: B2; l.a = 301;
+    l = p;
+    p.a = 301;
+    if (l.a == 0 - 300) { k = k + 1; }
+    var m: B2; m.a = 301;
+    p = m;
+    m.a = 0 - 300;
+    if (c.b.a == 301 && c.g == 99) { k = k + 1; }
+    GB2 = p;
+    if (GB2.a == 301 && ZB2 == 99) { k = k + 1; }
+    var r: B2; r.a = 0 - 300;
+    q2_r(&c, r);
+    if (c.b.a == 0 - 300 && c.g == 99) { k = k + 1; }
+    k = k + q2_l(&c);
+    q2_g(&c);
+    if (c.b.a == 301 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q3_r(q: *B3, r: B3) { q = r; return 0; }
+fn q3_g(q: *B3) { q = GB3; return 0; }
+fn q3_l(q: *B3) {
+    var l: B3;
+    l.a = 4;
+    l.b = 5;
+    l.c = 0 - 6;
+    l = q;
+    if (l.a == 1 && l.b == 0 - 2 && l.c == 3) { return 1; }
+    return 0;
+}
+fn z3() {
+    var c: C3; c.b.a = 1; c.b.b = 0 - 2; c.b.c = 3; c.g = 99;
+    var p: *B3 = &c;
+    var k = 0;
+    var l: B3; l.a = 4; l.b = 5; l.c = 0 - 6;
+    l = p;
+    p.a = 4;
+    if (l.a == 1 && l.b == 0 - 2 && l.c == 3) { k = k + 1; }
+    var m: B3; m.a = 4; m.b = 5; m.c = 0 - 6;
+    p = m;
+    m.a = 1;
+    if (c.b.a == 4 && c.b.b == 5 && c.b.c == 0 - 6 && c.g == 99) { k = k + 1; }
+    GB3 = p;
+    if (GB3.a == 4 && GB3.b == 5 && GB3.c == 0 - 6 && ZB3 == 99) { k = k + 1; }
+    var r: B3; r.a = 1; r.b = 0 - 2; r.c = 3;
+    q3_r(&c, r);
+    if (c.b.a == 1 && c.b.b == 0 - 2 && c.b.c == 3 && c.g == 99) { k = k + 1; }
+    k = k + q3_l(&c);
+    q3_g(&c);
+    if (c.b.a == 4 && c.b.b == 5 && c.b.c == 0 - 6 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q4_r(q: *B4, r: B4) { q = r; return 0; }
+fn q4_g(q: *B4) { q = GB4; return 0; }
+fn q4_l(q: *B4) { var l: B4; l.a = 70001; l = q; if (l.a == 0 - 70000) { return 1; } return 0; }
+fn z4() {
+    var c: C4; c.b.a = 0 - 70000; c.g = 99;
+    var p: *B4 = &c;
+    var k = 0;
+    var l: B4; l.a = 70001;
+    l = p;
+    p.a = 70001;
+    if (l.a == 0 - 70000) { k = k + 1; }
+    var m: B4; m.a = 70001;
+    p = m;
+    m.a = 0 - 70000;
+    if (c.b.a == 70001 && c.g == 99) { k = k + 1; }
+    GB4 = p;
+    if (GB4.a == 70001 && ZB4 == 99) { k = k + 1; }
+    var r: B4; r.a = 0 - 70000;
+    q4_r(&c, r);
+    if (c.b.a == 0 - 70000 && c.g == 99) { k = k + 1; }
+    k = k + q4_l(&c);
+    q4_g(&c);
+    if (c.b.a == 70001 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q5_r(q: *B5, r: B5) { q = r; return 0; }
+fn q5_g(q: *B5) { q = GB5; return 0; }
+fn q5_l(q: *B5) { var l: B5; l.a = 7001; l.b = 0 - 5; l = q; if (l.a == 0 - 7000 && l.b == 4) { return 1; } return 0; }
+fn z5() {
+    var c: C5; c.b.a = 0 - 7000; c.b.b = 4; c.g = 99;
+    var p: *B5 = &c;
+    var k = 0;
+    var l: B5; l.a = 7001; l.b = 0 - 5;
+    l = p;
+    p.a = 7001;
+    if (l.a == 0 - 7000 && l.b == 4) { k = k + 1; }
+    var m: B5; m.a = 7001; m.b = 0 - 5;
+    p = m;
+    m.a = 0 - 7000;
+    if (c.b.a == 7001 && c.b.b == 0 - 5 && c.g == 99) { k = k + 1; }
+    GB5 = p;
+    if (GB5.a == 7001 && GB5.b == 0 - 5 && ZB5 == 99) { k = k + 1; }
+    var r: B5; r.a = 0 - 7000; r.b = 4;
+    q5_r(&c, r);
+    if (c.b.a == 0 - 7000 && c.b.b == 4 && c.g == 99) { k = k + 1; }
+    k = k + q5_l(&c);
+    q5_g(&c);
+    if (c.b.a == 7001 && c.b.b == 0 - 5 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q6_r(q: *B6, r: B6) { q = r; return 0; }
+fn q6_g(q: *B6) { q = GB6; return 0; }
+fn q6_l(q: *B6) {
+    var l: B6;
+    l.a = 7002;
+    l.b = 301;
+    l = q;
+    if (l.a == 0 - 7000 && l.b == 0 - 300) { return 1; }
+    return 0;
+}
+fn z6() {
+    var c: C6; c.b.a = 0 - 7000; c.b.b = 0 - 300; c.g = 99;
+    var p: *B6 = &c;
+    var k = 0;
+    var l: B6; l.a = 7002; l.b = 301;
+    l = p;
+    p.a = 7002;
+    if (l.a == 0 - 7000 && l.b == 0 - 300) { k = k + 1; }
+    var m: B6; m.a = 7002; m.b = 301;
+    p = m;
+    m.a = 0 - 7000;
+    if (c.b.a == 7002 && c.b.b == 301 && c.g == 99) { k = k + 1; }
+    GB6 = p;
+    if (GB6.a == 7002 && GB6.b == 301 && ZB6 == 99) { k = k + 1; }
+    var r: B6; r.a = 0 - 7000; r.b = 0 - 300;
+    q6_r(&c, r);
+    if (c.b.a == 0 - 7000 && c.b.b == 0 - 300 && c.g == 99) { k = k + 1; }
+    k = k + q6_l(&c);
+    q6_g(&c);
+    if (c.b.a == 7002 && c.b.b == 301 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q7_r(q: *B7, r: B7) { q = r; return 0; }
+fn q7_g(q: *B7) { q = GB7; return 0; }
+fn q7_l(q: *B7) {
+    var l: B7;
+    l.a = 8;
+    l.b = 0 - 301;
+    l.c = 5;
+    l = q;
+    if (l.a == 0 - 7 && l.b == 300 && l.c == 0 - 4) { return 1; }
+    return 0;
+}
+fn z7() {
+    var c: C7; c.b.a = 0 - 7; c.b.b = 300; c.b.c = 0 - 4; c.g = 99;
+    var p: *B7 = &c;
+    var k = 0;
+    var l: B7; l.a = 8; l.b = 0 - 301; l.c = 5;
+    l = p;
+    p.a = 8;
+    if (l.a == 0 - 7 && l.b == 300 && l.c == 0 - 4) { k = k + 1; }
+    var m: B7; m.a = 8; m.b = 0 - 301; m.c = 5;
+    p = m;
+    m.a = 0 - 7;
+    if (c.b.a == 8 && c.b.b == 0 - 301 && c.b.c == 5 && c.g == 99) { k = k + 1; }
+    GB7 = p;
+    if (GB7.a == 8 && GB7.b == 0 - 301 && GB7.c == 5 && ZB7 == 99) { k = k + 1; }
+    var r: B7; r.a = 0 - 7; r.b = 300; r.c = 0 - 4;
+    q7_r(&c, r);
+    if (c.b.a == 0 - 7 && c.b.b == 300 && c.b.c == 0 - 4 && c.g == 99) { k = k + 1; }
+    k = k + q7_l(&c);
+    q7_g(&c);
+    if (c.b.a == 8 && c.b.b == 0 - 301 && c.b.c == 5 && c.g == 99) { k = k + 1; }
+    return k;
+}
+fn q8_r(q: *B8, r: B8) { q = r; return 0; }
+fn q8_g(q: *B8) { q = GB8; return 0; }
+fn q8_l(q: *B8) { var l: B8; l.a = 11; l.b = 0 - 12; l = q; if (l.a == 0 - 9 && l.b == 10) { return 1; } return 0; }
+fn z8() {
+    var c: C8; c.b.a = 0 - 9; c.b.b = 10; c.g = 99;
+    var p: *B8 = &c;
+    var k = 0;
+    var l: B8; l.a = 11; l.b = 0 - 12;
+    l = p;
+    p.a = 11;
+    if (l.a == 0 - 9 && l.b == 10) { k = k + 1; }
+    var m: B8; m.a = 11; m.b = 0 - 12;
+    p = m;
+    m.a = 0 - 9;
+    if (c.b.a == 11 && c.b.b == 0 - 12 && c.g == 99) { k = k + 1; }
+    GB8 = p;
+    if (GB8.a == 11 && GB8.b == 0 - 12 && ZB8 == 99) { k = k + 1; }
+    var r: B8; r.a = 0 - 9; r.b = 10;
+    q8_r(&c, r);
+    if (c.b.a == 0 - 9 && c.b.b == 10 && c.g == 99) { k = k + 1; }
+    k = k + q8_l(&c);
+    q8_g(&c);
+    if (c.b.a == 11 && c.b.b == 0 - 12 && c.g == 99) { k = k + 1; }
+    return k;
+}
+
+alloc_init();
+assert_eq(s_lp_8(), 56, "l = p: *p copied into l (not an alias)");
+assert_eq(s_lp_8(), s_lp_h(), "  = its 16 B twin");
+assert_eq(s_gp_8(), 56, "G = p: *p copied into a value global");
+assert_eq(s_gp_8(), s_gp_h(), "  = its 16 B twin");
+assert_eq(s_qr_8(), 777, "q = r through a *T parameter: r copied into the pointee");
+assert_eq(s_qr_8(), s_qr_h(), "  = its 16 B twin");
+assert_eq(s_lq_8(), 599, "l = q: the pointee copied out of a *T parameter");
+assert_eq(s_lq_8(), s_lq_h(), "  = its 16 B twin");
+assert_eq(s_qg_8(), 449, "q = G: a value global copied into the pointee");
+assert_eq(s_qg_8(), s_qg_h(), "  = its 16 B twin");
+assert_eq(s_pl_8(), 334, "p = l: a *T local's pointee takes the copy, p still points at it");
+assert_eq(s_pl_8(), s_pl_h(), "  = its 16 B twin");
+assert_eq(s_gq_8(), 59, "G = q");
+assert_eq(s_gq_8(), s_gq_h(), "  = its 16 B twin");
+assert_eq(s_pg_8(), 67, "p = G");
+assert_eq(s_pg_8(), s_pg_h(), "  = its 16 B twin");
+assert_eq(s_wrap_8(), 556, "l = (p), py = ((l))");
+assert_eq(s_wrap_8(), s_wrap_h(), "  = its 16 B twin");
+assert_eq(s_self_8(), 44, "self = o through self: *T");
+assert_eq(s_self_8(), s_self_h(), "  = its 16 B twin");
+assert_eq(x_call_8(), 44, "p = mk8(4): a call's struct into the pointee");
+assert_eq(x_call_8(), x_call_h(), "  = its 16 B twin");
+assert_eq(x_wcall_8(), 44, "p = (mk8(4))");
+assert_eq(x_wcall_8(), x_wcall_h(), "  = its 16 B twin");
+assert_eq(x_meth_8(), 63, "p = l.dbl(): a method's struct into the pointee");
+assert_eq(x_meth_8(), x_meth_h(), "  = its 16 B twin");
+assert_eq(x_op_8(), 77, "p = l + m: an operator's struct into the pointee");
+assert_eq(x_op_8(), x_op_h(), "  = its 16 B twin");
+assert_eq(x_ie_8(1) * 10 + x_ie_8(0), 34, "p = if (c) { l } else { m }: into the pointee (no 16 B twin: _ie_big_err)");
+assert_eq(x_field_8(), 56, "p = w.s: a field's struct into the pointee");
+assert_eq(x_field_8(), x_field_h(), "  = its 16 B twin");
+assert_eq(r_pp_8(), 17, "p = p2 rebinds");
+assert_eq(r_pp_8(), r_pp_h(), "  = its 16 B twin");
+assert_eq(r_qq_8(), 17, "q = q2 (two *T parameters) rebinds");
+assert_eq(r_qq_8(), r_qq_h(), "  = its 16 B twin");
+assert_eq(r_ph_8(), 17, "p = h (a handle) rebinds");
+assert_eq(r_ph_8(), r_ph_h(), "  = its 16 B twin");
+assert_eq(r_hp_8(), 77, "h = p (into a handle) rebinds");
+assert_eq(r_hp_8(), r_hp_h(), "  = its 16 B twin");
+assert_eq(r_pu_8(), 17, "p = pu (a *U of another struct) rebinds");
+assert_eq(r_pu_8(), r_pu_h(), "  = its 16 B twin");
+assert_eq(k_lp_8(), 566, "closure: l = p, p a captured *T");
+assert_eq(k_lp_8(), k_lp_h(), "  = its 16 B twin");
+assert_eq(k_pl_8(), 34, "closure: pc = m into the closure's own *T");
+assert_eq(k_pl_8(), k_pl_h(), "  = its 16 B twin");
+assert_eq(k_pcap_8(), 56, "closure: pc = p, p a captured *T, copies (a capture is a value source)");
+assert_eq(k_pcap_8(), k_pcap_h(), "  = its 16 B twin");
+assert_eq(k_gp_8(), 56, "closure: G = p, p a captured *T");
+assert_eq(k_gp_8(), k_gp_h(), "  = its 16 B twin");
+assert_eq(k_lq_8(), 566, "closure: l = q, q a captured *T parameter");
+assert_eq(k_lq_8(), k_lq_h(), "  = its 16 B twin");
+assert_eq(k_pv_8(), 3, "closure: pc = l, l a captured struct (its words at the capture)");
+assert_eq(k_pv_8(), k_pv_h(), "  = its 16 B twin");
+d_8();
+d_h();
+assert_eq(GD8, 6, "a defer body: l = p at the fn's return");
+assert_eq(GD8, GDH, "  = its 16 B twin");
+assert_eq(ra_8(), 556, "a #regalloc fn: l = p, q = l");
+assert_eq(ra_8(), ra_h(), "  = its 16 B twin");
+assert_eq(b_i64p_8(), 1, "boundary: a *i64 into a struct value is its word");
+assert_eq(b_i64p_8(), b_i64p_h(), "  = its 16 B twin");
+assert_eq(z1(), 6, "1 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z2(), 6, "2 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z3(), 6, "3 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z4(), 6, "4 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z5(), 6, "5 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z6(), 6, "6 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z7(), 6, "7 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+assert_eq(z8(), 6, "8 B: l = p (no alias), p = l, G = p, q = r, l = q, q = G; the guard byte kept");
+var r = assert_summary();
