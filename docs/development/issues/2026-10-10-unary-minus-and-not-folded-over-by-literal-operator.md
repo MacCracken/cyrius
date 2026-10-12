@@ -1,6 +1,8 @@
-# The run-time constant fold folds a literal operator OVER a unary `-` / `~` operand: `-K + 10` is 15, `~5 + 10` is 15 — OPEN
+# The run-time constant fold folds a literal operator OVER a unary `-` / `~` operand: `-K + 10` is 15, `~5 + 10` is 15 — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f) with its
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 7, l679-crit; CHANGELOG [6.7.9]) unary `-` and `~` disarm the run-time fold after emitting their operator (`_cfo = 0` in `_neg_int` / `_bnot_int`, parse_expr.cyr; the unreachable second `~` arm deleted), so `-K + 10` is 5 and `~5 * 2` is -12 (the user's decision 1(c)); the rewind also leaked unary minus's pushed 0 (`1 + -K * 2` was 10), gone with it. Only the repro's output changes in a 1067-source differential; rows: the repro verbatim (exit 0) and `tests/tcyr/crossos/unary_constant_fold.tcyr` (77 rows, 57 red before) on x86 / IR=1 / IR=3 / DCE=1, aarch64 (qemu), cx and PE (wine) through `frontend/unary_constant_fold.sh`, mutation-proven.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above (reproduced on the 6.7.9 lane tip @ 5ed8b02e before the fix: exit 7). As filed: 🟡 OPEN — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f) with its
 `build/cycc`: with `enum E { K = 5; }`, `-K + 10` → 15 (want 5), `-E.K + 10` → 15, `-K * 2` → 10 (want -10),
 `~5 + 10` → 15 (want 4), `~5 * 2` → 10 (want -12), `~0 + 3` → 3 (want 2), `~K + 1` → 6 (want -5); `var a = -K + 10;`
 is 15 too, and so is `-C + 10` with `const C = 5;`. `-5 + 10`, `(~5) + 10` and `(-K) + 10` are right. The repro exits 7 (seven wrong values) with the installed

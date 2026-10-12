@@ -1,0 +1,162 @@
+# tls_client_cert_pem_sizing.tcyr — 6.7.9: tls_native_set_client_cert's PEM decode is sized by the
+# input, not by a trust-bundle cap.
+#
+# Issue 2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots. The PEM path took its leaf
+# through a TLS_CA_MAX_ROOTS (300) x 16 B chain table whatever the file held, and passed 300 as the
+# STRICT decode's max_certs: a one-block PEM cost a 4,800 B table, a well-formed leaf followed by 300
+# more blocks was refused TLS_ERR_CERT_INVALID, and a program that lowered the public var to 0 broke
+# every PEM client certificate. Now the table is pem_count_cert_blocks x 16 B, as a trust bundle's is
+# (_tn_ca_parse_set), and the decode stays STRICT: a bad first block fails, it never hands back the
+# next certificate.
+#
+# Measured on the global heap: the PEM path's cost over the DER path (which allocates only the parsed
+# leaf) is exactly the chain table plus the DER pool — 16 B per block + the PEM's length, each
+# rounded to 8 as alloc() does.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _cp_block = 0;             # one PEM block, NUL-terminated (built by _cp_mk_block)
+var _cp_der = 0;               # the leaf's DER, taken from a one-block install
+var _cp_der_len = 406;
+var _cp_der_cost = 0;          # global heap the DER path takes (the parsed leaf alone)
+
+fn _cp_r8(n): i64 { return (n + 7) & (0 - 8); }
+
+fn _cp_put(p, o, s): i64 {
+    var l = strlen(s);
+    memcpy(p + o, s, l);
+    return o + l;
+}
+
+# A self-signed P-256 certificate (CN = SAN DNS = localhost), 406 B of DER, as one PEM block with
+# its base64 wrapped at 64 columns (openssl's and base64 -w 64's shape).
+fn _cp_mk_block(): i64 {
+    var p = alloc(1024);
+    var o = _cp_put(p, 0, "-----BEGIN CERTIFICATE-----\n");
+    o = _cp_put(p, o, "MIIBkjCCATmgAwIBAgIUN0FgSN+YtJ/VsnjbAOvQ4fh7bUAwCgYIKoZIzj0EAwIw\n");
+    o = _cp_put(p, o, "FDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAw\n");
+    o = _cp_put(p, o, "MDAwMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\n");
+    o = _cp_put(p, o, "AQcDQgAEDXpGvDB1EfJKU9z5c+Df4gWNtI19uLOUH6gBdmQa142hK4AaEklNSTEr\n");
+    o = _cp_put(p, o, "9bCsMS89ULyiKCEm/d0DZSATv4tJxaNpMGcwHQYDVR0OBBYEFDvdbC1If4VIUfQI\n");
+    o = _cp_put(p, o, "NW5miAN1vWdDMB8GA1UdIwQYMBaAFDvdbC1If4VIUfQINW5miAN1vWdDMA8GA1Ud\n");
+    o = _cp_put(p, o, "EwEB/wQFMAMBAf8wFAYDVR0RBA0wC4IJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cA\n");
+    o = _cp_put(p, o, "MEQCIDZb0RL5uPrsUMm0os9+xIfMQkkBhwuBVrNJ26FeHN6BAiAMHsf27v7FvJl2\n");
+    o = _cp_put(p, o, "9VpwYIsH1mnHgYP6COmoYzcNF+Od8w==\n");
+    o = _cp_put(p, o, "-----END CERTIFICATE-----\n");
+    store8(p + o, 0);
+    return p;
+}
+
+# `n` copies of the block, back to back; the length through `out_len`.
+fn _cp_pem(n, out_len): i64 {
+    var bl = strlen(_cp_block);
+    var p = alloc(n * bl + 1);
+    var i = 0;
+    while (i < n) {
+        memcpy(p + i * bl, _cp_block, bl);
+        i = i + 1;
+    }
+    store8(p + n * bl, 0);
+    store64(out_len, n * bl);
+    return p;
+}
+
+# Install `pem[0..len)` on a fresh client ctx; returns the rc and writes the global heap the call
+# took through `out_cost` and the ctx through `out_ctx`.
+fn _cp_install(pem, len, is_der, out_cost, out_ctx): i64 {
+    var c = tls_native_new_client("localhost", 9);
+    var u0 = alloc_used();
+    var rc = tls_native_set_client_cert(c, pem, len, is_der);
+    store64(out_cost, alloc_used() - u0);
+    store64(out_ctx, c);
+    return rc;
+}
+
+# The leaf installed on `c` is the block's certificate, byte for byte.
+fn _cp_leaf_is_block(c): i64 {
+    if (load64(c + TLS_CTX_OFF_CERT_LEN) != _cp_der_len) { return 0; }
+    return memeq(load64(c + TLS_CTX_OFF_CERT_CHAIN), _cp_der, _cp_der_len);
+}
+
+fn test_warm(): i64 {
+    test_group("the DER baseline: the leaf alone");
+    # The first call pays sigil's one-time PEM / x509 table set-up; nothing below is measured on it.
+    var cost = 0;
+    var c = 0;
+    var len = 0;
+    var pem = _cp_pem(1, &len);
+    assert_eq(_cp_install(pem, len, 0, &cost, &c), TLS_OK, "a one-block PEM installs (warm-up)");
+    assert_eq(load64(c + TLS_CTX_OFF_CERT_LEN), _cp_der_len, "its leaf decodes to 406 B of DER");
+    _cp_der = load64(c + TLS_CTX_OFF_CERT_CHAIN);
+    assert_eq(_cp_install(_cp_der, _cp_der_len, 1, &cost, &c), TLS_OK, "the same leaf installs as DER");
+    _cp_der_cost = cost;
+    assert_gt(_cp_der_cost, 0, "the DER path allocates the parsed leaf");
+    assert_eq(_cp_leaf_is_block(c), 1, "the DER install holds the leaf");
+    return 0;
+}
+
+# n blocks: TLS_OK, the first block's leaf, and a table of n entries — never 300.
+fn _cp_blocks(n, what): i64 {
+    var len = 0;
+    var pem = _cp_pem(n, &len);
+    var cost = 0;
+    var c = 0;
+    assert_eq(_cp_install(pem, len, 0, &cost, &c), TLS_OK, what);
+    assert_eq(_cp_leaf_is_block(c), 1, "the installed leaf is the first block's certificate");
+    assert_eq(cost - _cp_der_cost, n * 16 + _cp_r8(len), "the decode took n x 16 B + the DER pool, no more");
+    return 0;
+}
+
+fn test_sized_by_input(): i64 {
+    test_group("the chain table is sized by the PEM's own block count");
+    _cp_blocks(1, "1 block: installs (a 16 B table, not 4,800 B)");
+    _cp_blocks(2, "2 blocks: installs (a 32 B table)");
+    _cp_blocks(300, "300 blocks: installs");
+    _cp_blocks(301, "301 blocks: the well-formed leaf installs (was TLS_ERR_CERT_INVALID)");
+    return 0;
+}
+
+fn test_public_bound_not_read(): i64 {
+    test_group("TLS_CA_MAX_ROOTS no longer bounds a client certificate");
+    var saved = TLS_CA_MAX_ROOTS;
+    TLS_CA_MAX_ROOTS = 0;
+    _cp_blocks(1, "with TLS_CA_MAX_ROOTS = 0 a one-block PEM still installs");
+    TLS_CA_MAX_ROOTS = 1;
+    _cp_blocks(3, "with TLS_CA_MAX_ROOTS = 1 a three-block PEM still installs");
+    TLS_CA_MAX_ROOTS = saved;
+    return 0;
+}
+
+fn test_strict_kept(): i64 {
+    test_group("the decode stays strict: the leaf is the FIRST block or nothing");
+    var bl = strlen(_cp_block);
+    var cost = 0;
+    var c = 0;
+    # A malformed first block (bad base64) before a good one: refused, never the second certificate.
+    var bad = "-----BEGIN CERTIFICATE-----\nMII!!!!\n-----END CERTIFICATE-----\n";
+    var badl = strlen(bad);
+    var p = alloc(badl + bl + 1);
+    memcpy(p, bad, badl);
+    memcpy(p + badl, _cp_block, bl);
+    store8(p + badl + bl, 0);
+    assert_eq(_cp_install(p, badl + bl, 0, &cost, &c), TLS_ERR_CERT_INVALID,
+      "a malformed first block is refused, not skipped to the next");
+    assert_eq(load64(c + TLS_CTX_OFF_CERT_CHAIN), 0, "no leaf is installed");
+    # No BEGIN marker at all: nothing to size a table by.
+    var none = "not a certificate\n";
+    assert_eq(_cp_install(none, strlen(none), 0, &cost, &c), TLS_ERR_CERT_INVALID,
+      "a PEM with no certificate block is refused");
+    assert_eq(cost, 0, "and allocates nothing");
+    return 0;
+}
+
+alloc_init();
+_cp_block = _cp_mk_block();
+test_warm();
+test_sized_by_input();
+test_public_bound_not_read();
+test_strict_kept();
+var r = assert_summary();

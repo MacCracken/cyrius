@@ -1,0 +1,6 @@
+struct E { }
+var G: E = E { };
+var N1: i8 = 77;
+fn run(): i64 { var l: E; G = l; return 0; }
+var rr = run();
+syscall(60, N1);

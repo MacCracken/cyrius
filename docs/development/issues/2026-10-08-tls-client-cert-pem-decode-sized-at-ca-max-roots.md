@@ -1,6 +1,21 @@
-# `tls_native_set_client_cert` sizes its PEM decode at `TLS_CA_MAX_ROOTS` (300), not from the input — OPEN
+# `tls_native_set_client_cert` sizes its PEM decode at `TLS_CA_MAX_ROOTS` (300), not from the input — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 7; CHANGELOG [6.7.9]) The PEM path sizes its chain table from the
+> input — `pem_count_cert_blocks(cert, cert_len)`, refused `TLS_ERR_CERT_INVALID` below 1 block before anything is
+> allocated, `blocks * 16` B, `blocks` as the strict decode's `max_certs` — as `_tn_ca_parse_set` does. The decode
+> stays STRICT (a bad first block fails, never the next certificate): it walks non-overlapping BEGIN markers only, so
+> it never visits more blocks than the greedy count and cannot run out of entries. The repro now reads `one.pem rc=0
+> alloc_bytes=1368` (was 6,152), `c300.pem rc=0`, `c301.pem rc=0` (was -6). New
+> `tests/tcyr/crypto/tls_client_cert_pem_sizing.tcyr` (27 rows; 12 RED before the fix): 1 / 2 / 300 / 301 blocks
+> install the first block's leaf at exactly 16 B per block + the DER pool over the DER path, `TLS_CA_MAX_ROOTS` set
+> to 0 and 1 changes nothing, a malformed first block before a good one is refused with no leaf installed, and a PEM
+> with no block is refused with 0 B allocated; also green under qemu-aarch64. Mutation-proven (4 mutants RED: the
+> lenient decode, a table one entry too long, `TLS_CA_MAX_ROOTS` as `max_certs` again, the `blocks < 1` refusal
+> dropped). `TLS_CA_MAX_ROOTS` now has no reader; the public name is KEPT (the 6.7.9 selection: retiring it is the
+> user's removed-symbol call, not taken here), its comment says it bounds nothing.
+
+**Status:** ✅ **RESOLVED in v6.7.9** (see the banner).
+Filing state: re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
 `repros/2026-10-08-tls-client-cert-pem-scratch.cyr`: a one-block client PEM allocates a 4,800-byte table
 (6,152 B in all), and a well-formed leaf followed by 300 more blocks is refused `-6` (`TLS_ERR_CERT_INVALID`).
 **Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.

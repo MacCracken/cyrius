@@ -137,6 +137,40 @@ fn _fcr_lead_zeros() {
 }
 assert_eq(_fcr_lead_zeros(), 0x3FB999999999999A, "0.(400 zeros)1e400 == 0.1");
 
+test_group("f64_parse_n: the span s[0..n), the bytes after it unread (6.7.9)");
+# Issue 2026-10-08: the public length-bounded entry. Each row's text runs on past n with
+# digits that would change the value if read; every tier sees only s[0..n).
+fn _fcn(s, n, want) { return assert_eq(f64_parse_n(s, n), want, s); }
+_fcn("2.57,", 3, 0x4004000000000000);
+_fcn("2.57,", 5, 0x40048F5C28F5C28F);
+_fcn("1e57", 3, 0x40F86A0000000000);
+_fcn("9007199254740993.0001", 16, 0x4340000000000000);
+_fcn("9007199254740993.0001", 21, 0x4340000000000001);
+_fcn("4503599627370496.50000000000000000001", 18, 0x4330000000000000);
+_fcn("4503599627370496.50000000000000000001", 37, 0x4330000000000001);
+_fcn("2.2250738585072011e-3087", 23, 0x000FFFFFFFFFFFFF);
+_fcn("nan", 3, 0x7FF8000000000000);
+_fcn("nan", 2, 0);
+_fcn("-inf", 4, 0xFFF0000000000000);
+_fcn("-inf", 3, 0);
+_fcn("null", 4, 0);
+_fcn("1.5", 0, 0);
+# Past 800 digits: the tie + `zeros` zeros + "1", parsed over its first n bytes.
+fn _fcn_long(zeros, n) {
+    var mid = "1.00000000000000011102230246251565404236316680908203125";
+    var ml = strlen(mid);
+    var buf = alloc(ml + zeros + 2);
+    memcpy(buf, mid, ml);
+    var i = 0;
+    while (i < zeros) { store8(buf + ml + i, 48); i = i + 1; }
+    store8(buf + ml + zeros, 49);
+    store8(buf + ml + zeros + 1, 0);
+    if (n < 0) { return f64_parse_n(buf, ml + zeros + 1); }
+    return f64_parse_n(buf, n);
+}
+assert_eq(_fcn_long(800, 0 - 1), 0x3FF0000000000001, "n: tie + 800 zeros + 1 -> rounds up");
+assert_eq(_fcn_long(800, 55 + 800), 0x3FF0000000000000, "n: the span stops before the 1 -> exact tie, even");
+
 test_group("f64_parse_ok shares the parser");
 var _fcr_o = 0;
 assert_eq(f64_parse_ok("123e-310", &_fcr_o), 1, "ok: 123e-310");

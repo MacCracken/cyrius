@@ -486,9 +486,13 @@ else fail "N2: lean rc $r1 (want non-zero), own rc $RC"; show; fi
 # each must FAIL TO COMPILE (strlen undefined without the prepend), not be refused as a flag
 cy n run --no-deps src/lean.cyr; r1=$RC; cp "$W/out" "$W/n1.out"; cat "$W/err" >> "$W/n1.out"
 cy n bench --no-deps benches/lean.bcyr; r2=$RC; cp "$W/out" "$W/n2.out"; cat "$W/err" >> "$W/n2.out"
+# fuzz runs a real harness: an EMPTY corpus fails the bare verb since 6.7.9 (corpus_walk_rules.sh axis 6),
+# and this row's rc 0 used to be that vacuous pass over a project with no .fcyr
+mkdir -p "$W/n/fuzz" && printf 'var r = 0;\nsyscall(60, r);\n' > "$W/n/fuzz/ok.fcyr"
 cy n fuzz --no-lock; r3=$RC; cp "$W/out" "$W/n3.out"; cat "$W/err" >> "$W/n3.out"
 if [ "$r1" != 0 ] && grep -q "strlen" "$W/n1.out" && [ "$r2" != 0 ] && grep -q "strlen" "$W/n2.out" && [ "$r3" = 0 ] \
-    && ! grep -qi 'unknown\|not declared\|does not take' "$W/n1.out" "$W/n2.out" "$W/n3.out"; then echo "  ok N3: run / bench take --no-deps (strlen undefined without the prepend), fuzz takes --no-lock"
+    && grep -qF '=== 1 passed, 0 failed ===' "$W/n3.out" \
+    && ! grep -qi 'unknown\|not declared\|does not take' "$W/n1.out" "$W/n2.out" "$W/n3.out"; then echo "  ok N3: run / bench take --no-deps (strlen undefined without the prepend), fuzz takes --no-lock (and runs its harness)"
 else fail "N3: run rc $r1, bench rc $r2, fuzz rc $r3"; cat "$W/n1.out" "$W/n2.out" "$W/n3.out" | sed 's/^/      /' | head -8; fi
 cy n test --help
 if grep -q -- '--no-deps' "$W/out" && grep -q -- '--no-lock' "$W/out" && grep -q -- '--timeout' "$W/out" && grep -q -- '--locked' "$W/out"; then

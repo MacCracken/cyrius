@@ -244,6 +244,285 @@ fn generic_returns(): i64 {
     return 0;
 }
 
+# ── a pointer's step dies with the operator that consumed it (6.7.9) ───────────────────────────
+# The pointer-scale word is the LAST factor's, and only `+` / `-` wrote their result's back, so after
+# any other operator whose last operand was `q: *T` the next `+ n` / `- n` stepped sizeof(T): with
+# `q: *i32`, `(x == q) + 100` was 401, `(m & q) + 1` 4, `(-q) + 1` -q + 4 and `mk(q).n + 1` 4
+# (6.6.17 - 6.7.8, every target, silent). An operator that produces a plain integer leaves no step
+# (the user's decision 1(a), 2026-10-11): each row is such an integer `+ n` / `- n`, measured
+# against the same expression on `qq`, the untyped copy of q. The `ctl` rows are pointer arithmetic,
+# unchanged. issues/2026-10-10-pointer-step-leaks-through-operators.md
+struct Hn { n; m; }
+struct Vo { x; }
+fn Vo_add(a, b): i64 { return 10; }
+fn Vo_mul(a, b): i64 { return 20; }
+# An operator fn that DECLARES `: *T` produces a pointer: its result steps by T, as its free call
+# `Vp_add(vp, q) + 1` does (6.6.17's call rule; the 6.7.9 review — bite 5 had reset it to 0).
+struct Vp { x; }
+fn Vp_add(a, b): *i32 { return b; }
+fn Vp_mul(a, b): *Pt { return b; }
+fn Vp_sub(a, b): *i16 { return b; }
+fn Vp_div(a, b): *i64 { return b; }
+var HNB[2];
+fn hn_mk(q): Hn { var h: Hn; h.n = 0; h.m = 0; return h; }
+fn hn_mp(q): *Hn { return &HNB; }
+fn op_rows_i16(): i64 {
+    var q: *i16 = &buf;
+    var qq: i64 = q;
+    var x = 0; var base = 1; var m = 0; var z = 0; var k = 1;
+    store64(&HNB, 0); store64(&HNB + 8, 0);
+    assert_eq((qq == q) + 100, 101, "*i16: (qq == q) + 100");
+    assert_eq((qq != q) - 1, 0 - 1, "*i16: (qq != q) - 1");
+    assert_eq((qq < q) + 1, 1, "*i16: (qq < q) + 1");
+    assert_eq((qq >= q) - 1, 0, "*i16: (qq >= q) - 1");
+    assert_eq((base && q) + 1, 2, "*i16: (base && q) + 1");
+    assert_eq((z || q) - 1, 0, "*i16: (z || q) - 1");
+    assert_eq((k * q) + 1, qq + 1, "*i16: (k * q) + 1");
+    assert_eq((qq / q) - 1, 0, "*i16: (qq / q) - 1");
+    assert_eq((qq % q) + 1, 1, "*i16: (qq % q) + 1");
+    assert_eq((z << q) + 1, 1, "*i16: (z << q) + 1");
+    assert_eq((z >>> q) - 1, 0 - 1, "*i16: (z >>> q) - 1");
+    assert_eq((m & q) + 1, 1, "*i16: (m & q) + 1");
+    assert_eq((z | q) - 1, qq - 1, "*i16: (z | q) - 1");
+    assert_eq((z ^ q) + 1, qq + 1, "*i16: (z ^ q) + 1");
+    assert_eq((~q) + 1, (~qq) + 1, "*i16: (~q) + 1");
+    assert_eq((-q) - 1, (0 - qq) - 1, "*i16: (-q) - 1");
+    assert_eq(-q + 1, (0 - qq) + 1, "*i16: -q + 1");
+    assert_eq(hn_mk(q).n + 1, 1, "*i16: mk(q).n + 1 (a by-value struct result's field)");
+    assert_eq(hn_mk(q).m - 1, 0 - 1, "*i16: mk(q).m - 1");
+    assert_eq(hn_mp(q).n + 1, 1, "*i16: mp(q).n + 1 (a *H result's field)");
+    assert_eq(k * q + 1, qq + 1, "*i16: k * q + 1");
+    assert_eq(q & qq + 1, qq + 1, "*i16: q & qq + 1 (the left operand's step)");
+    assert_eq(q ^ qq - 1, 0 - 1, "*i16: q ^ qq - 1");
+    assert_eq(z + (qq == q) + 1, 2, "*i16: z + (qq == q) + 1");
+    assert_eq(z + (k * q) - 1, qq - 1, "*i16: z + (k * q) - 1");
+    var v: Vo;
+    v.x = 0;
+    assert_eq((v + q) + 1, 11, "*i16: (v + q) + 1 (an operator fn's result)");
+    assert_eq((v * q) - 1, 19, "*i16: (v * q) - 1");
+    assert_eq(d((q) + 1, q), 2, "*i16 ctl: (q) + 1 steps");
+    assert_eq(d((q + 1) + 1, q), 2 * 2, "*i16 ctl: (q + 1) + 1");
+    assert_eq(d(2 + q, q), 2 * 2, "*i16 ctl: 2 + q");
+    assert_eq(d(q + (qq == q), q), 2, "*i16 ctl: q + (qq == q) steps one element");
+    var q3: *i16 = q + 3;
+    assert_eq((q3 - q) + 1, 4, "*i16 ctl: (q3 - q) + 1, an element count");
+    store64(&buf, 0x0807060504030201); store64(&buf + 8, 0x100F0E0D0C0B0A09);
+    assert_eq(*(q + 1), q[1], "*i16 ctl: *(q + 1) reads the element q[1] reads");
+    return 0;
+}
+fn op_rows_i32(): i64 {
+    var q: *i32 = &buf;
+    var qq: i64 = q;
+    var x = 0; var base = 1; var m = 0; var z = 0; var k = 1;
+    store64(&HNB, 0); store64(&HNB + 8, 0);
+    assert_eq((qq == q) + 100, 101, "*i32: (qq == q) + 100");
+    assert_eq((qq != q) - 1, 0 - 1, "*i32: (qq != q) - 1");
+    assert_eq((qq < q) + 1, 1, "*i32: (qq < q) + 1");
+    assert_eq((qq >= q) - 1, 0, "*i32: (qq >= q) - 1");
+    assert_eq((base && q) + 1, 2, "*i32: (base && q) + 1");
+    assert_eq((z || q) - 1, 0, "*i32: (z || q) - 1");
+    assert_eq((k * q) + 1, qq + 1, "*i32: (k * q) + 1");
+    assert_eq((qq / q) - 1, 0, "*i32: (qq / q) - 1");
+    assert_eq((qq % q) + 1, 1, "*i32: (qq % q) + 1");
+    assert_eq((z << q) + 1, 1, "*i32: (z << q) + 1");
+    assert_eq((z >>> q) - 1, 0 - 1, "*i32: (z >>> q) - 1");
+    assert_eq((m & q) + 1, 1, "*i32: (m & q) + 1");
+    assert_eq((z | q) - 1, qq - 1, "*i32: (z | q) - 1");
+    assert_eq((z ^ q) + 1, qq + 1, "*i32: (z ^ q) + 1");
+    assert_eq((~q) + 1, (~qq) + 1, "*i32: (~q) + 1");
+    assert_eq((-q) - 1, (0 - qq) - 1, "*i32: (-q) - 1");
+    assert_eq(-q + 1, (0 - qq) + 1, "*i32: -q + 1");
+    assert_eq(hn_mk(q).n + 1, 1, "*i32: mk(q).n + 1 (a by-value struct result's field)");
+    assert_eq(hn_mk(q).m - 1, 0 - 1, "*i32: mk(q).m - 1");
+    assert_eq(hn_mp(q).n + 1, 1, "*i32: mp(q).n + 1 (a *H result's field)");
+    assert_eq(k * q + 1, qq + 1, "*i32: k * q + 1");
+    assert_eq(q & qq + 1, qq + 1, "*i32: q & qq + 1 (the left operand's step)");
+    assert_eq(q ^ qq - 1, 0 - 1, "*i32: q ^ qq - 1");
+    assert_eq(z + (qq == q) + 1, 2, "*i32: z + (qq == q) + 1");
+    assert_eq(z + (k * q) - 1, qq - 1, "*i32: z + (k * q) - 1");
+    var v: Vo;
+    v.x = 0;
+    assert_eq((v + q) + 1, 11, "*i32: (v + q) + 1 (an operator fn's result)");
+    assert_eq((v * q) - 1, 19, "*i32: (v * q) - 1");
+    var vp: Vp;
+    vp.x = 0;
+    assert_eq(d((vp + q) + 1, q), 4, "*i32: (vp + q) + 1 steps 4 (Vp_add declares : *i32)");
+    assert_eq((vp + q) + 1, Vp_add(vp, q) + 1, "*i32: (vp + q) + 1 is the free call's Vp_add(vp, q) + 1");
+    assert_eq(d((vp * q) - 1, q), 0 - 24, "*i32: (vp * q) - 1 steps sizeof(Pt) (Vp_mul declares : *Pt)");
+    assert_eq(d(vp + q + 2, q), 2 * 4, "*i32: vp + q + 2 steps 2 * 4 (the + loop's left step)");
+    assert_eq(d(vp * q + 1, q), 24, "*i32: vp * q + 1 steps sizeof(Pt) (the * loop keeps it)");
+    assert_eq(d((vp - q) + 1, q), 2, "*i32: (vp - q) + 1 steps 2 (Vp_sub declares : *i16)");
+    assert_eq(d(vp - q - 1, q), 0 - 2, "*i32: vp - q - 1 steps 2 (the - loop's left step)");
+    assert_eq(d(vp / q + 3, q), 3 * 8, "*i32: vp / q + 3 steps 3 * 8 (Vp_div declares : *i64)");
+    assert_eq(d(2 + (vp * q), q), 2 * 24, "*i32: 2 + (vp * q) steps 2 * sizeof(Pt) (n + p)");
+    assert_eq(d((q) + 1, q), 4, "*i32 ctl: (q) + 1 steps");
+    assert_eq(d((q + 1) + 1, q), 2 * 4, "*i32 ctl: (q + 1) + 1");
+    assert_eq(d(2 + q, q), 2 * 4, "*i32 ctl: 2 + q");
+    assert_eq(d(q + (qq == q), q), 4, "*i32 ctl: q + (qq == q) steps one element");
+    var q3: *i32 = q + 3;
+    assert_eq((q3 - q) + 1, 4, "*i32 ctl: (q3 - q) + 1, an element count");
+    store64(&buf, 0x0807060504030201); store64(&buf + 8, 0x100F0E0D0C0B0A09);
+    assert_eq(*(q + 1), q[1], "*i32 ctl: *(q + 1) reads the element q[1] reads");
+    return 0;
+}
+fn op_rows_i64(): i64 {
+    var q: *i64 = &buf;
+    var qq: i64 = q;
+    var x = 0; var base = 1; var m = 0; var z = 0; var k = 1;
+    store64(&HNB, 0); store64(&HNB + 8, 0);
+    assert_eq((qq == q) + 100, 101, "*i64: (qq == q) + 100");
+    assert_eq((qq != q) - 1, 0 - 1, "*i64: (qq != q) - 1");
+    assert_eq((qq < q) + 1, 1, "*i64: (qq < q) + 1");
+    assert_eq((qq >= q) - 1, 0, "*i64: (qq >= q) - 1");
+    assert_eq((base && q) + 1, 2, "*i64: (base && q) + 1");
+    assert_eq((z || q) - 1, 0, "*i64: (z || q) - 1");
+    assert_eq((k * q) + 1, qq + 1, "*i64: (k * q) + 1");
+    assert_eq((qq / q) - 1, 0, "*i64: (qq / q) - 1");
+    assert_eq((qq % q) + 1, 1, "*i64: (qq % q) + 1");
+    assert_eq((z << q) + 1, 1, "*i64: (z << q) + 1");
+    assert_eq((z >>> q) - 1, 0 - 1, "*i64: (z >>> q) - 1");
+    assert_eq((m & q) + 1, 1, "*i64: (m & q) + 1");
+    assert_eq((z | q) - 1, qq - 1, "*i64: (z | q) - 1");
+    assert_eq((z ^ q) + 1, qq + 1, "*i64: (z ^ q) + 1");
+    assert_eq((~q) + 1, (~qq) + 1, "*i64: (~q) + 1");
+    assert_eq((-q) - 1, (0 - qq) - 1, "*i64: (-q) - 1");
+    assert_eq(-q + 1, (0 - qq) + 1, "*i64: -q + 1");
+    assert_eq(hn_mk(q).n + 1, 1, "*i64: mk(q).n + 1 (a by-value struct result's field)");
+    assert_eq(hn_mk(q).m - 1, 0 - 1, "*i64: mk(q).m - 1");
+    assert_eq(hn_mp(q).n + 1, 1, "*i64: mp(q).n + 1 (a *H result's field)");
+    assert_eq(k * q + 1, qq + 1, "*i64: k * q + 1");
+    assert_eq(q & qq + 1, qq + 1, "*i64: q & qq + 1 (the left operand's step)");
+    assert_eq(q ^ qq - 1, 0 - 1, "*i64: q ^ qq - 1");
+    assert_eq(z + (qq == q) + 1, 2, "*i64: z + (qq == q) + 1");
+    assert_eq(z + (k * q) - 1, qq - 1, "*i64: z + (k * q) - 1");
+    var v: Vo;
+    v.x = 0;
+    assert_eq((v + q) + 1, 11, "*i64: (v + q) + 1 (an operator fn's result)");
+    assert_eq((v * q) - 1, 19, "*i64: (v * q) - 1");
+    assert_eq(d((q) + 1, q), 8, "*i64 ctl: (q) + 1 steps");
+    assert_eq(d((q + 1) + 1, q), 2 * 8, "*i64 ctl: (q + 1) + 1");
+    assert_eq(d(2 + q, q), 2 * 8, "*i64 ctl: 2 + q");
+    assert_eq(d(q + (qq == q), q), 8, "*i64 ctl: q + (qq == q) steps one element");
+    var q3: *i64 = q + 3;
+    assert_eq((q3 - q) + 1, 4, "*i64 ctl: (q3 - q) + 1, an element count");
+    store64(&buf, 0x0807060504030201); store64(&buf + 8, 0x100F0E0D0C0B0A09);
+    assert_eq(*(q + 1), q[1], "*i64 ctl: *(q + 1) reads the element q[1] reads");
+    return 0;
+}
+fn op_rows_Pt(): i64 {
+    var q: *Pt = &buf;
+    var qq: i64 = q;
+    var x = 0; var base = 1; var m = 0; var z = 0; var k = 1;
+    store64(&HNB, 0); store64(&HNB + 8, 0);
+    assert_eq((qq == q) + 100, 101, "*Pt: (qq == q) + 100");
+    assert_eq((qq != q) - 1, 0 - 1, "*Pt: (qq != q) - 1");
+    assert_eq((qq < q) + 1, 1, "*Pt: (qq < q) + 1");
+    assert_eq((qq >= q) - 1, 0, "*Pt: (qq >= q) - 1");
+    assert_eq((base && q) + 1, 2, "*Pt: (base && q) + 1");
+    assert_eq((z || q) - 1, 0, "*Pt: (z || q) - 1");
+    assert_eq((k * q) + 1, qq + 1, "*Pt: (k * q) + 1");
+    assert_eq((qq / q) - 1, 0, "*Pt: (qq / q) - 1");
+    assert_eq((qq % q) + 1, 1, "*Pt: (qq % q) + 1");
+    assert_eq((z << q) + 1, 1, "*Pt: (z << q) + 1");
+    assert_eq((z >>> q) - 1, 0 - 1, "*Pt: (z >>> q) - 1");
+    assert_eq((m & q) + 1, 1, "*Pt: (m & q) + 1");
+    assert_eq((z | q) - 1, qq - 1, "*Pt: (z | q) - 1");
+    assert_eq((z ^ q) + 1, qq + 1, "*Pt: (z ^ q) + 1");
+    assert_eq((~q) + 1, (~qq) + 1, "*Pt: (~q) + 1");
+    assert_eq((-q) - 1, (0 - qq) - 1, "*Pt: (-q) - 1");
+    assert_eq(-q + 1, (0 - qq) + 1, "*Pt: -q + 1");
+    assert_eq(hn_mk(q).n + 1, 1, "*Pt: mk(q).n + 1 (a by-value struct result's field)");
+    assert_eq(hn_mk(q).m - 1, 0 - 1, "*Pt: mk(q).m - 1");
+    assert_eq(hn_mp(q).n + 1, 1, "*Pt: mp(q).n + 1 (a *H result's field)");
+    assert_eq(k * q + 1, qq + 1, "*Pt: k * q + 1");
+    assert_eq(q & qq + 1, qq + 1, "*Pt: q & qq + 1 (the left operand's step)");
+    assert_eq(q ^ qq - 1, 0 - 1, "*Pt: q ^ qq - 1");
+    assert_eq(z + (qq == q) + 1, 2, "*Pt: z + (qq == q) + 1");
+    assert_eq(z + (k * q) - 1, qq - 1, "*Pt: z + (k * q) - 1");
+    var v: Vo;
+    v.x = 0;
+    assert_eq((v + q) + 1, 11, "*Pt: (v + q) + 1 (an operator fn's result)");
+    assert_eq((v * q) - 1, 19, "*Pt: (v * q) - 1");
+    assert_eq(d((q) + 1, q), 24, "*Pt ctl: (q) + 1 steps");
+    assert_eq(d((q + 1) + 1, q), 2 * 24, "*Pt ctl: (q + 1) + 1");
+    assert_eq(d(2 + q, q), 2 * 24, "*Pt ctl: 2 + q");
+    assert_eq(d(q + (qq == q), q), 24, "*Pt ctl: q + (qq == q) steps one element");
+    var q3: *Pt = q + 3;
+    assert_eq((q3 - q) + 1, 4, "*Pt ctl: (q3 - q) + 1, an element count");
+    return 0;
+}
+
+# `p?` reads the Result p points at (tag 0 = Ok, then the payload) and yields the payload — a plain
+# value: `(p?) + 1` stepped sizeof(T) too. issues/2026-10-10-pointer-step-leaks-through-operators.md
+var QMB[2];
+fn qm_rows(): i64 {
+    store64(&QMB, 0);
+    store64(&QMB + 8, 5);
+    var a: *i16 = &QMB;
+    var b: *i32 = &QMB;
+    var c: *i64 = &QMB;
+    var e: *Pt = &QMB;
+    assert_eq((a?) + 1, 6, "*i16: (p?) + 1, a Result's payload");
+    assert_eq((b?) - 1, 4, "*i32: (p?) - 1");
+    assert_eq(c? + 1, 6, "*i64: p? + 1");
+    assert_eq((e?) + 1, 6, "*Pt: (p?) + 1");
+    return 0;
+}
+
+# ── a builtin at the head of a term is a plain value (6.6.17's call rule, 6.7.9) ───────────────
+# PARSE_TERM dispatches an intrinsic (bitget / bitset / bitclr, store8..64, f64_* ...) itself, past the
+# factor wrapper that resets a call's step, so its result kept its LAST argument's: with `q: *i32`,
+# `bitget(m, 0, q) + 1` added 4. As the right operand of `*` it was always right (the wrapper's).
+fn intrin_rows(): i64 {
+    var q: *i32 = &buf;
+    var w: *Pt = &buf;
+    var m = 0;
+    assert_eq(bitget(m, 0, q) + 1, 1, "*i32: bitget(m, 0, q) + 1");
+    assert_eq((bitget(m, 0, w)) - 1, 0 - 1, "*Pt: (bitget(m, 0, w)) - 1");
+    assert_eq(bitclr(m, 0, q) + 1, 1, "*i32: bitclr(m, 0, q) + 1");
+    assert_eq(m + bitget(m, 0, w) + 1, 1, "*Pt: m + bitget(m, 0, w) + 1");
+    assert_eq(m * bitget(m, 0, q) + 1, 1, "*i32 ctl: m * bitget(m, 0, q) + 1 (the right of `*`)");
+    return 0;
+}
+
+# ── `n + p` with a one-byte `*T` is that pointer, as `p + n` is (6.7.9) ───────────────────────────
+# `n + p8` (`*u8` / `*i8`: a step of 1, nothing to scale) wrote back the INTEGER's word, 0, so it was
+# no `*u8`: `var r: *u8 = 2 + p;` warned and `(1 + p8) - q32` built a byte difference (the gate's
+# DXc rows hold the diagnostics). It now keeps p's word. A step of 1 scales nothing, so every value
+# is the one it always was: these rows pin it on every leg — a difference of two such values (now an
+# element count, `_ptr_diff`), a typed declaration from one, the chains, each one-byte source. A
+# narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) - q` is `n - p`.
+fn ob_u8(): *u8 { return &buf; }
+fn onebyte_rows(a: *u8): i64 {
+    var p: *u8 = &buf;
+    var s: *i8 = &buf;
+    var h: Hold;
+    h.b = &buf;
+    D_u8 = &buf;
+    assert_eq((1 + p) - p, 1, "*u8: (1 + p) - p is an element count");
+    assert_eq((5 + p) - (2 + p), 3, "*u8: (5 + p) - (2 + p)");
+    assert_eq((3 + s) - p, 3, "*i8 - *u8: one step, an element count");
+    assert_eq(p - (4 + s), 0 - 4, "*u8: p - (4 + s)");
+    var r: *u8 = 2 + p;
+    assert_eq(d(r, p), 2, "*u8: var r: *u8 = 2 + p");
+    assert_eq(d(r + 1, p), 3, "*u8: a *u8 declared from 2 + p, + 1");
+    assert_eq(d((2 + p) + 3, p), 5, "*u8: (2 + p) + 3");
+    assert_eq(d(1 + (2 + p), p), 3, "*u8: 1 + (2 + p)");
+    assert_eq(d((6 + p) - 2, p), 4, "*u8: (6 + p) - 2");
+    assert_eq((6 + a) - a, 6, "*u8 parameter: (n + a) - a");
+    assert_eq((7 + h.b) - h.b, 7, "*u8 field: (n + h.b) - h.b");
+    assert_eq((8 + D_u8) - D_u8, 8, "*u8 global: (n + G) - G");
+    assert_eq((9 + ob_u8()) - p, 9, "*u8 call: (n + f()) - p");
+    var c = 1;
+    var q: *u8 = if (c > 0) { 1 + p } else { p };
+    assert_eq(d(q, p), 1, "*u8: an if-expression of 1 + p and p");
+    var w: u8 = 5;
+    var b: *i32 = &buf;
+    var bi: i64 = b;
+    assert_eq((1 + w) - b + bi, 6, "a u8 scalar: (1 + w) - q is n - p, no difference");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
 generic_returns();
@@ -258,6 +537,13 @@ assert_eq(cap_param(&buf), 4, "a captured *i32 parameter + 1");
 decl_globals();
 fields_and_returns();
 assert_eq(d(ret_pt() + 1, ret_pt()), 24, "a *Pt return + 1");
+op_rows_i16();
+op_rows_i32();
+op_rows_i64();
+op_rows_Pt();
+qm_rows();
+intrin_rows();
+onebyte_rows(&buf);
 
 var A_u8: *u8 = &buf;
 var A_pt: *Pt = &buf;

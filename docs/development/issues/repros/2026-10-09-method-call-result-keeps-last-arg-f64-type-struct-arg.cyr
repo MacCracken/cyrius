@@ -1,0 +1,5 @@
+include "lib/syscalls.cyr"
+struct P { v; }
+impl P { fn m(self, q): i64 { return 2; } }
+fn main(): i64 { var p = P { 5 }; return p.m(p) * 10; }
+syscall(60, main());

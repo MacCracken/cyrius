@@ -1,7 +1,21 @@
-# Eleven scripts build the compiler from `src/` without scrubbing an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` — `install.sh` among them — OPEN
+# Eleven scripts build the compiler from `src/` without scrubbing an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` — `install.sh` among them — RESOLVED
 
-**Status:** 🟡 **OPEN** — verified 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
-2,053,536 B) with the repro script (read-only; its probes go to a mktemp directory): eleven scripts under `scripts/`
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 10; CHANGELOG [6.7.9]) The eleven listed scripts and a twelfth,
+> `scripts/cyriusly`, now run `unset CYRIUS_BOUNDS CYRIUS_POISON` before they build. cyriusly is a shell script with
+> no `.sh` suffix; its `setup` arm builds the tools and `cycc_aarch64` from the checkout, and `install.sh
+> --refresh-only` installs those builds as they are. The derivation that produced the table missed it. Gate row E4 of
+> `tests/gates/frontend/bounds_mode_checked.sh` is DERIVED now and checks both variables. Its set is every shell
+> script under `scripts/` and `bootstrap/` (a `.sh`, or a `#!` shell file) whose code names a `src/main*.cyr`
+> fork, with a floor of 12; today it finds 15. `cyrius-watch.sh` (a project watcher) and `hooks/pre-commit` (a
+> restore hint) are named out. `bootstrap.sh` and `check.sh` name no fork and are checked by name. Row E4b runs
+> `CYRIUS_BOUNDS=1 CYRIUS_POISON=1 sh scripts/build-cycc-verify.sh`, which is green; it was rc 3 before the fix,
+> because the inherited pair changes cycc(src): 2,092,928 B against 2,053,536 B. Before the fix the E4 block was RED
+> on 13 rows. Eleven mutations of the fix and of the gate each turned it RED (the gate's ledger). The CLI's own
+> self-builds (`cyrius pulsar`, the on-demand cx compiler / cxvm builds) have the same leak and are filed:
+> [2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md](2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md).
+
+**Status:** ✅ **RESOLVED** (v6.7.9, the quick lane's bite 10). Was 🟡 OPEN,
+verified 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged` 2,053,536 B) with the repro script (read-only; its probes go to a mktemp directory): eleven scripts under `scripts/`
 build from `src/main*.cyr` and unset neither variable, and from the same tree `CYRIUS_POISON=1 build/cycc <
 src/main.cyr` gives a 2,088,776 B compiler and `CYRIUS_BOUNDS=1` a 2,053,576 B one, each different from `build/cycc`
 (a clean build equals it). The five scripts the 6.7.8 C2 lane covered (check.sh, release-gate.sh,

@@ -399,7 +399,14 @@ fn emit_num(out, oo_p, v): i64 {
 fn main(): i64 {
     args_init();
     var outp = "src/common/syscall_xlat.cyr";
+    # 6.7.9 — one operand, never a flag: `gen_syscall_xlat --help` wrote the table to a file
+    # named `--help` and exited 0. CHANGELOG [6.7.9]
     if (argc() >= 2) { outp = argv(1); }
+    if (argc() > 2 || load8(outp) == 45) {
+        var usage = "error: gen_syscall_xlat takes one operand, never a flag\n  usage: gen_syscall_xlat [OUT]\n";
+        syscall(SYS_WRITE, 2, usage, strlen(usage));
+        return 2;
+    }
     var xb = alloc(262144);
     var ab = alloc(262144);
     var xlen = file_read_all("lib/syscalls_x86_64_linux.cyr", xb, 262143);

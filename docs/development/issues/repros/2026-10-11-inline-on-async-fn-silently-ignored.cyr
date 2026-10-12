@@ -1,0 +1,16 @@
+# Build with CYRIUS_ASYNC=1. `#inline` on an `async fn` (a plain Future or a coroutine) has no
+# effect and no diagnostic; the same directive on a plain fn it cannot inline is warned
+# "#inline ignored: <reason>" (v6.5.63's contract).
+# Expected: a warning per async fn naming why (its body runs through future_force's fn pointer).
+# Actual (6.7.9 crit tip): no warning; exits 15.
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+fn nopark(): i64 { return 7; }
+#inline
+async fn pl(x): i64 { return x + 1; }
+#inline
+async fn co(C): i64 { return await nopark(); }
+#inline
+fn sy(x): i64 { return x + 2; }
+fn main(): i64 { alloc_init(); var F = pl(4); var r = future_force(F); var G = co(0); var q = future_force(G); q = future_force(G); return r + q + sy(1); }
+syscall(60, main());

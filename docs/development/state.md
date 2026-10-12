@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.9 — in flight** (slot open 2026-10-11; 6.7.8 shipped 2026-10-11, tag `6.7.8` @ `e902f61c`, the store slot refreshed from the tag): **a repair batch** — a lane of quick fixes and a lane of the critical / high issues (user, 2026-10-11). |
-| **cycc** | x86 **2,053,536 B** (`.text` **1,840,016**) at 6.7.8 (in flight), +133,136 B over 6.7.7's 1,920,400 B — checked dyn + C2. `build/cycc-native-aarch64` **1,881,144 B** (`cyrius pulsar`, 2026-10-11). Dead-code floor **52 fns / 10,597 B** (x86, unchanged). The pre-commit band is 3 MB since 6.7.8. |
+| **cycc** | x86 **2,057,736 B** (`.text` **1,845,440**) at 6.7.9 (in flight: the two lanes merged + the hand-offs), +4,200 B over 6.7.8's 2,053,536 B — the repair batch. `build/cycc-native-aarch64` **1,881,144 B** (`cyrius pulsar`, 2026-10-11 — 6.7.8's; regenerated at 6.7.9's release prep). Dead-code floor **52 fns / 10,597 B** (x86, unchanged). The pre-commit band is 3 MB since 6.7.8. |
 | **Bootstrap / cross-OS** | 6.7.8: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on REAL hardware through `scripts/release-gate.sh` (on `b50fcf60`). seed **29,024 B** → cybs → cycc byte-identical; `build/cycc-native-aarch64` in lockstep (step 1b). |
 | **Gates** | 6.7.8 `release-gate.sh` GREEN on the first run (2026-10-11, 11 min 46 s): check.sh 462 of 462 shell gates, 0 failed, the driver 131 of 131, the 2 named agnos-parity SKIPs. Bench: self_compile 1,768 ms on a loaded box; same-box A/B vs 6.7.7 +0.4 % on 6.7.7's source. |
 | **Corpus** | **553** `.tcyr` (**259** in `crossos/`; `tests/tcyr/CORPUS_FLOOR` 503) · **106** `lib/*.cyr` · **85** `programs/*.cyr` · **458** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** (DERIVED 2026-10-11) |

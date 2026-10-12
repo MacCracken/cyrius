@@ -17,6 +17,10 @@
 #     shared names would compile with only a `duplicate fn` warning and the last-included
 #     copy's bodies would silently replace the other's.
 #   * the filed repro's rows and the front-matter cases carry hard-coded bits.
+# 6.7.9: every vector also runs through the public length-bounded f64_parse_n (issue
+# 2026-10-08) with its explicit length and two more digits written right after the span
+# — any read past n changes the value — and the bounded rows run with the span ending
+# at a PROT_NONE page, so a read of s[n] faults instead of passing unseen.
 # A corpus COUNT FLOOR guards the read: an unreadable or truncated file fails here, it
 # does not pass green with zero vectors checked.
 #
@@ -33,6 +37,7 @@ include "lib/fnptr.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
+include "lib/mmap.cyr"
 include "lib/math.cyr"
 include "lib/bayan.cyr"
 include "lib/assert.cyr"
@@ -42,6 +47,7 @@ alloc_init();
 fn _fpr_out(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
 
 var _fpr_ok_mismatch = 0;
+var _fpr_n_wrong = 0;
 
 # Run one `<hexbits> <text>` corpus. Returns the number of vectors read; adds the
 # wrong ones to the assertion tally (the first three are printed with their bits).
@@ -52,7 +58,7 @@ fn _fpr_corpus(path, floor) {
     assert_gt(len, 0, path);
     if (len <= 0) { return 0; }
     assert_lt(len, cap, "corpus fits the read buffer");
-    var tb = alloc(1024);
+    var tb = alloc(1040);
     var pos = 0;
     var cnt = 0;
     var bad = 0;
@@ -82,6 +88,16 @@ fn _fpr_corpus(path, floor) {
         var o = 0;
         if (f64_parse_ok(tb, &o) != 1 || o != got) { _fpr_ok_mismatch = _fpr_ok_mismatch + 1; }
         if (bayan_f64_parse(tb, tlen) != got) { bay = bay + 1; }
+        # the span followed by digits: "77" continues the mantissa or the exponent
+        store8(tb + tlen, 55); store8(tb + tlen + 1, 55); store8(tb + tlen + 2, 0);
+        if (f64_parse_n(tb, tlen) != bits) {
+            if (_fpr_n_wrong < 3) {
+                store8(tb + tlen, 0);
+                _fpr_out("  f64_parse_n WRONG "); _fpr_out(tb); _fpr_out(" got ");
+                fmt_hex0x(f64_parse_n(tb, tlen)); _fpr_out("\n");
+            }
+            _fpr_n_wrong = _fpr_n_wrong + 1;
+        }
         if (got != bits) {
             if (bad < 3) {
                 _fpr_out("  WRONG "); _fpr_out(tb); _fpr_out(" got "); fmt_hex0x(got);
@@ -100,6 +116,7 @@ test_group("bayan 1.5.10 corpora, bit-exact");
 _fpr_corpus("tests/data/f64parse/f64parse.vec", 7700);
 _fpr_corpus("tests/data/f64parse/f64.vec", 328);
 assert_eq(_fpr_ok_mismatch, 0, "f64_parse_ok returns 1 and the f64_parse bits for every vector");
+assert_eq(_fpr_n_wrong, 0, "corpus vectors f64_parse_n(span, len) gets wrong with digits after the span");
 
 test_group("the 10,000 literals 0.00 .. 99.99 against bayan_f64_parse");
 fn _fpr_two_decimals() {
@@ -121,9 +138,14 @@ fn _fpr_two_decimals() {
             if (bad < 3) { _fpr_out("  WRONG "); _fpr_out(tb); _fpr_out("\n"); }
             bad = bad + 1;
         }
+        store8(tb + w, 55); store8(tb + w + 1, 0);     # "12.347": the span is 5 bytes
+        if (f64_parse_n(tb, w) != got) {
+            if (bad < 3) { _fpr_out("  f64_parse_n WRONG "); _fpr_out(tb); _fpr_out("\n"); }
+            bad = bad + 1;
+        }
         n = n + 1;
     }
-    assert_eq(bad, 0, "two-decimal literals that differ from bayan_f64_parse");
+    assert_eq(bad, 0, "two-decimal literals that differ from bayan_f64_parse (or f64_parse_n)");
     assert_eq(n, 10000, "two-decimal literal count");
     return 0;
 }
@@ -132,6 +154,7 @@ _fpr_two_decimals();
 test_group("the filed repro's rows (issue 2026-09-30)");
 fn _fpr_row(s, want) {
     assert_eq(f64_parse(s), want, s);
+    assert_eq(f64_parse_n(s, strlen(s)), want, s);
     assert_eq(bayan_f64_parse(s, strlen(s)), want, s);
     return 0;
 }
@@ -185,5 +208,89 @@ assert_eq(f64_parse_ok("0.3", &_fpr_o), 1, "ok: 0.3");
 assert_eq(_fpr_o, 0x3FD3333333333333, "ok: 0.3 bits");
 assert_eq(f64_parse_ok("-inf", &_fpr_o), 1, "ok: -inf");
 assert_eq(_fpr_o, 0xFFF0000000000000, "ok: -inf bits");
+
+test_group("f64_parse_n: the span s[0..n) (issue 2026-10-08)");
+# _fpn(text, n, want): f64_parse_n over the first n bytes of text.
+fn _fpn(s, n, want) { return assert_eq(f64_parse_n(s, n), want, s); }
+assert_eq(f64_parse("2.57,"), 0x40048F5C28F5C28F, "the filed repro: f64_parse reads past the field");
+_fpn("2.57,", 3, 0x4004000000000000);              # the filed repro: the field "2.5"
+_fpn("2.57,", 4, 0x40048F5C28F5C28F);
+_fpn("2.57,", 5, 0x40048F5C28F5C28F);
+_fpn("123456", 3, 0x405EC00000000000);
+_fpn("0.30000000000000004", 3, 0x3FD3333333333333);
+_fpn("1e57", 3, 0x40F86A0000000000);               # the exponent ends at n: 1e5
+_fpn("1e57", 2, 0x3FF0000000000000);               # "1e": no exponent digits
+_fpn("1e-3", 3, 0x3FF0000000000000);               # "1e-"
+_fpn("1.5e+37", 6, 0x4097700000000000);            # 1.5e+3
+_fpn("-0.5x", 4, 0xBFE0000000000000);
+_fpn(" \t -1.5", 7, 0xBFF8000000000000);
+_fpn("+2", 2, 0x4000000000000000);
+_fpn(".5", 2, 0x3FE0000000000000);
+_fpn(".5", 1, 0);                                  # "." alone: no digits
+_fpn("5.", 2, 0x4014000000000000);
+_fpn("-0", 2, 0x8000000000000000);
+_fpn("-1.5", 1, 0);                                # a bare sign
+_fpn("  1.5", 2, 0);                               # whitespace only
+_fpn("1.5", 0, 0);
+_fpn("1.5", 0 - 1, 0);
+# The digits after the span decide a tie: in the span it is a tie (to even); read past
+# n it is above the tie. Tier 2 / tier 3 (trunc) and the exact decimal see only s[0..n).
+_fpn("90071992547409930001", 16, 0x4340000000000000);
+_fpn("9007199254740993.0001", 16, 0x4340000000000000);
+_fpn("9007199254740993.0001", 21, 0x4340000000000001);
+_fpn("4503599627370496.50000000000000000001", 18, 0x4330000000000000);
+_fpn("4503599627370496.50000000000000000001", 37, 0x4330000000000001);
+_fpn("2.2250738585072011e-3087", 23, 0x000FFFFFFFFFFFFF);
+_fpn("12345678901234567890123456", 23, 0x4484EA15B273B38A);
+# A NUL inside the span ends the number, as any non-number byte does.
+var _fpn_nul = alloc(8);
+store8(_fpn_nul, 49); store8(_fpn_nul + 1, 46); store8(_fpn_nul + 2, 53);
+store8(_fpn_nul + 3, 0); store8(_fpn_nul + 4, 57); store8(_fpn_nul + 5, 0);
+assert_eq(f64_parse_n(_fpn_nul, 5), 0x3FF8000000000000, "1.5 NUL 9 at n = 5");
+
+test_group("f64_parse_n: f64_parse's strict nan / inf, whole inside the span");
+_fpn("nan", 3, 0x7FF8000000000000);
+_fpn("NaN,", 3, 0x7FF8000000000000);
+_fpn("-nan", 4, 0x7FF8000000000000);
+_fpn("nan", 2, 0);                                 # "na"
+_fpn("nan", 1, 0);
+_fpn("inf", 3, 0x7FF0000000000000);
+_fpn("Infinity", 3, 0x7FF0000000000000);
+_fpn("-inf", 4, 0xFFF0000000000000);
+_fpn("-inf", 3, 0);                                # "-in"
+_fpn("inf", 1, 0);
+_fpn("null", 4, 0);                                # strict: not a NaN ...
+assert_eq(_f64_parse_n("null", 4), 0x7FF8000000000000, "... where the lenient core says NaN");
+_fpn("i1", 2, 0);
+_fpn("x1", 2, 0);
+
+test_group("f64_parse_n never reads s[n]: each span ends at a PROT_NONE page");
+# A 64 KiB guard (a whole page at 4 / 16 / 64 KiB) after 64 KiB of readable memory.
+var _fpg = cyr_mmap(0, 131072, 3, 34, 0 - 1, 0);
+assert_gt(_fpg, 0, "guard mapping");
+assert_eq(cyr_mprotect(_fpg + 65536, 65536, 0), 0, "guard page PROT_NONE");
+fn _fpg_row(s, want) {
+    var n = strlen(s);
+    var p = _fpg + 65536 - n;
+    memcpy(p, s, n);
+    return assert_eq(f64_parse_n(p, n), want, s);
+}
+_fpg_row("nan", 0x7FF8000000000000);
+_fpg_row("na", 0);
+_fpg_row("n", 0);
+_fpg_row("-inf", 0xFFF0000000000000);
+_fpg_row("in", 0);
+_fpg_row("i", 0);
+_fpg_row("-", 0);
+_fpg_row(" ", 0);
+_fpg_row("7", 0x401C000000000000);
+_fpg_row("1.", 0x3FF0000000000000);
+_fpg_row("1e", 0x3FF0000000000000);
+_fpg_row("1e-", 0x3FF0000000000000);
+_fpg_row("1.5e+3", 0x4097700000000000);
+_fpg_row("9007199254740993", 0x4340000000000000);
+_fpg_row("12345678901234567890123", 0x4484EA15B273B38A);
+_fpg_row("2.2250738585072011e-308", 0x000FFFFFFFFFFFFF);
+_fpg_row("2.225073858507201136057409796709131975934819546351645648e-308", 0x000FFFFFFFFFFFFF);
 
 var r = assert_summary();

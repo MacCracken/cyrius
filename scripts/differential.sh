@@ -45,6 +45,10 @@
 
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# 6.7.9 — it proves the DEFAULT build logic-preserving (its corpus holds src/main.cyr): an
+# inherited CYRIUS_BOUNDS / CYRIUS_POISON would compare bounds-checked / poison-mode builds
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 QUICK=0
 SMOKE=0

@@ -67,7 +67,9 @@ chain `o.i.x`), `var u = y;` (an `f64` / `f32` local or parameter) and `var g = 
 global) type `t`, `u` and `g` the same way, so `t + t` is a float add and `-t` a float
 negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns. Only a
 bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
-(v6.5.21), which types `x` from the declared return. It does NOT cover an **untyped**
+(v6.5.21), which types `x` from the declared return, as it does (6.7.9) a whole method call
+ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(1).area()`
+with `fn area(self): f64`. It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
@@ -173,7 +175,8 @@ matches the **whole** name:
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
 parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
 is a float add; the parameter still arrives in an integer register, as a non-generic `x: f64`
-does) and `var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+does), a `: T` return is an `f64` return, typed `f64` at every call (6.7.9), and `var a: T[N]`
+holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
 6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
 zero-extended; before 6.6.17 an instance INLINED at a call inside a fn — a one-statement
 body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base,
@@ -971,9 +974,10 @@ address, read and written 8 bytes as before**: an untyped name (`var w = p;` is 
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
-`*(1 + p)` through a `*u8` / `*i8` is the element as well, though a one-byte `n + p` keeps no step:
-its value is still no typed pointer, so `var q: *u8 = 1 + p;` warns and `(1 + p) - q` is a byte
-difference whatever `q` points at, as before 6.7.8. `load8` / `store16` / … stay valid for an
+`n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
+`var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
+at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
+the difference was a byte count). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
@@ -989,7 +993,13 @@ through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q 
 of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
 different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
-only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. (Before 6.6.17,
+only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
+computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
+unary `-` / `~`, `p?`, an operator fn's result (unless the operator fn declares `: *T`: then,
+as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
+`(k * p) + 1`, `(m & p) + 1`, `(-p) + 1` and `mk(p).n + 1` add 1, and such a value assigned to a
+`*T` warns "assigning non-pointer to typed pointer". (Before 6.7.9 the pointer's step leaked
+through them: with `p: *i32`, `(x == p) + 100` was 401.) (Before 6.6.17,
 `q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
 its last argument's step.)
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
@@ -999,6 +1009,13 @@ first statement, and `p += n` 1 everywhere. No source in the ecosystem declared 
 so the rule changed without a transition error.
 ⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
 bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
+
+**`&p` of a pointer is the slot that holds it** — a `*T` local, global or parameter, an untyped
+impl `self` — so `load64(&p)` is `p` and `store64(&p, o)` re-points `p` (6.7.9). ⚠ From 6.6.6 to
+6.7.8 a `*T` PARAMETER whose `T` is a struct over 8 bytes was the exception: its `&p` was `p`
+itself, the pointee, so `load64(&p)` read the struct's first field and `store64(&p, o)` wrote `o`
+into the caller's struct. (A by-value struct parameter is its own copy, so its `&q` is the copy's
+address — see [Returning a struct by value](#returning-a-struct-by-value-v666).)
 
 `*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
 return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
@@ -1382,7 +1399,8 @@ holding the pointer and returned 0. Both were silent, exit 0.
 ⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
 whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
 `p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
-`p: *T` parameter denotes the caller's struct.
+`p: *T` parameter denotes the caller's struct (`p.z` reads it) — and its `&p` is its slot too, as
+for any pointer (6.7.9; see [Pointers](#pointers)).
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
@@ -1390,7 +1408,9 @@ forms alike) is a compile error naming the fn — call it inside a fn. That incl
 declared ahead of the first top-level statement, generic calls (`var G: W1<Pt> = mkw(p);`)
 and non-generic ones (`var G: Pt = mkp(2);`) alike: before v6.6.11 that leading block was
 never checked, so both compiled and `G.x` SIGSEGV'd, and after a statement the generic form
-was checked against its 8-byte base and built too. An untyped `var g = pair_fn(..)` of a
+was checked against its 8-byte base and built too. The method and operator forms in that
+leading block (`var G2: Q = Q0.mk();`, a generic method, `(Q0.mk())`, `Q0 + Q1`) are refused
+since 6.7.9: before it they built and `G2.a` SIGSEGV'd. An untyped `var g = pair_fn(..)` of a
 9-16 B struct still yields its first word.
 Before v6.6.6 a struct result had storage only in the two declaration forms inside a fn —
 `var p: T = f(..)` and the inferred `var p = f(..)` — and only for a plain fn call. Every other
@@ -4928,8 +4948,21 @@ on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
 every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
 `g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
-parameter (a pointer, like a `var q: *Pt` local). Any other argument infers
-`i64`, or the width a scalar-returning call declares.
+parameter (a pointer, like a `var q: *Pt` local). An **f64** argument — an `f64`
+local or parameter, an `f64` global, a float literal, a call returning `f64` (a
+generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
+exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
+is a float multiply and `var v = gid(h);` declares an `f64` (6.7.9; before it the
+call ran the i64 base — `dbl(h)` with `x + x` added the double's bits — and its
+result was an untyped word, so `gid(h) * 2.0` multiplied the bits as integers with
+a warning; so did `gg<f64>(&q) * 2.0`, a `T` named only in the return). The same
+WHOLE-argument rule holds — `g(h * 2.0)` infers `i64` — and an `f32` is not a type
+argument, so `g(f)` with `f: f32` infers `i64`. A generic method binds an `f64`
+type parameter from its arguments the same way (`p.id(h)` calls the `f64`
+instance, as `P_id(&p, h)` does). A bound is then met at `f64`: `gb(h)` with
+`fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
+`gb<f64>(h)` is. Any other argument infers `i64`, or the width a scalar-returning
+call declares.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
@@ -4938,13 +4971,16 @@ instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
 `b: Box<Pt>` calls `gx$Pt` and `b: Box<i32>` calls `gx$i32`, as `gx<Pt>(b)` /
 `gx<i32>(b)` do (before 6.7.8 the call reached the `Box` base and was refused). The
 WHOLE argument must be the instance: a local or by-value parameter, a struct
-global, or a call returning it. Through a `*Box<T>` parameter, what the argument
-POINTS AT binds: `&b`, a `bp: *Box<Pt>` name or a call returning one, a field
-declared `bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`,
-`G.h.bp`), or a `Box<Pt>` value (whose address the call passes) — before 6.7.8
-these compiled, ran the base and read `b.n` at the base's offset. A pointer passed to a by-value
-`b: Box<T>` binds nothing (the base runs, as before), and a plain `p: *T` keeps the
-rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
+global, or a call returning it — or a pointer to one, which binds what it POINTS AT:
+`&b`, a `bp: *Box<Pt>` name or a call returning one, a field declared
+`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). That
+holds through a `*Box<T>` parameter, which also takes a `Box<Pt>` value (the call
+passes its address), and through a by-value `b: Box<T>` — address-passed when the
+instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
+`gx<Pt>(&b)` does. Before
+6.7.8 (6.7.9 for the by-value parameter) these pointer calls compiled, ran the `i64`
+base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. A plain `p: *T` keeps
+the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
 (`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
 write `gx<Pt>(..)`.
 
@@ -5655,7 +5691,10 @@ offsets past the params.
 ## Known Limitations
 
 - A classic `for` step is ONE assignment — any assignment a statement takes, `=` or a compound
-  operator (6.7.5) — ending at its `)` (6.7.8): not a call, not `i++`, not a comma list
+  operator (6.7.5) — ending at its `)` (6.7.8): not a call, not `i++`, not a comma list. Its
+  destination resolves as the statement's does: `for (i = 0; i < 5; j = i + 1)` with `j` declared
+  nowhere (or a fn's name, or a closure's captured name) is `undefined variable 'j'` — before
+  6.7.9 it compiled and stored nothing, so the loop never advanced
 - Exit codes truncated to 0-255 (Linux limitation)
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9

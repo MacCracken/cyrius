@@ -1,6 +1,15 @@
-# `gates_never_write_tree.sh` axis 9 takes any line holding ` trap ` and a trailing ` 0` as the EXIT trap — a prose label fails a clean wine gate — OPEN
+# `gates_never_write_tree.sh` axis 9 takes any line holding ` trap ` and a trailing ` 0` as the EXIT trap — a prose label fails a clean wine gate — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f): axis 9's
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 15; CHANGELOG [6.7.9]) axis 9 takes "the last EXIT trap" only from
+> a line whose `trap` is a COMMAND word (line start, or after `;` `&` `|` `(` `{` / `then` `do` `else`) with EXIT or 0
+> among that simple command's own arguments, read with every quoted string's contents blanked (`code_only` /
+> `exit_trap` in `wine9.awk`). The issue's prose fixture is clean. Of the 459 scripts axis 9 scans, all keep the
+> trap line the old test chose but four, each a misreading it made (two prose `_fail "… EXIT trap …"` lines, one
+> `ulimit -c 0 && trap '' XFSZ`, one `trap '' XFSZ; ulimit -f 0`); each now resolves to its real `trap … EXIT`. None of
+> the four runs wine, so no verdict changed. New self-test fixtures: `c_trap_prose` (must stay clean; flagged by the pre-fix test) and
+> `retrap_cmd` (a later `then trap '…' 0` must still replace the teardown).
+
+**Status:** ✅ **RESOLVED** in v6.7.9 (the quick lane's bite 15). Filed OPEN — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f): axis 9's
 detector (the `wine9.awk` heredoc, extracted verbatim from `tests/gates/toolchain/gates_never_write_tree.sh`) prints
 nothing for a clean wine fixture (private `WINEPREFIX` / `HOME` / `XDG_CACHE_HOME`, a `_wine_down` teardown in its
 EXIT trap) and FAILS the same fixture with one added line `check "the trap gate" 0`: "runs wine but no EXIT trap

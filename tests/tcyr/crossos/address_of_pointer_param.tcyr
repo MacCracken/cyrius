@@ -1,0 +1,96 @@
+# address_of_pointer_param.tcyr — 6.7.9: `&q` of a `q: *P` PARAMETER is the slot that holds the
+# pointer, as `&` of every other pointer is.
+#
+# ⛔ THE DEFECT, 6.6.6 - 6.7.8. 6.6.6 made `&q` of an ADDRESS-PASSED BY-VALUE struct parameter (`fn
+# h(q: P)`, P over 8 B, whose slot then held the caller's struct's address) evaluate to that address
+# — the slot's content. Its test (`_local_is_sptr_param`) also answers 1 for a `q: *P` parameter,
+# which has the same struct type and non-inline layout, and nothing asked whether the slot was a
+# pointer. So for P over 8 B `&q` was q itself (the pointee's address): `load64(&q)` read q's first
+# field, `store64(&q, o)` wrote o's address INTO the caller's struct, and `&q == q` — while the same
+# `&q` on a `*P` local, a `*Q` of 8 B or less and a `*i64` was the slot's address (as in 6.6.5). Since
+# 6.6.16 a by-value parameter is copied into its own inline local, so the arm was left firing only for
+# `*P` parameters (and for a `#naked` fn's by-value one, which keeps it). The user's decision 2(a).
+# Filed: docs/development/issues/2026-10-10-address-of-pointer-param-over-8b-is-pointee.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/address_of_pointer_param.sh
+# (which also holds the `#naked` rows), on the four hardware hosts by the release gate's cross-OS leg.
+# Each row builds its own structs, so a wrong `&q` cannot spill into the next row.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+struct Ao16 { x; y; }        # 16 B: the size the defect needed
+struct Ao8 { x; }            # 8 B
+struct Ao24 { a; b; c; }     # 24 B: the retptr class
+
+# --- a `*T` parameter: `&q` is its slot, so `load64(&q)` is q ------------------------------------
+fn ao16_slot(q: *Ao16): i64 { return load64(&q); }
+fn ao24_slot(q: *Ao24): i64 { return load64(&q); }
+fn ao16_second(k, q: *Ao16): i64 { return load64(&q); }
+fn ao16_seventh(a, b, c, d, e, f, q: *Ao16): i64 { return load64(&q); }   # stack-passed on SysV / Win64
+fn ao16_ne(q: *Ao16): i64 { var a = &q; if (a == q) { return 0; } return 1; }
+# A write through `&q` REBINDS the parameter; the caller's struct is not written.
+fn ao16_rebind(q: *Ao16, o: *Ao16): i64 { store64(&q, o); return q.x; }
+# `&q` handed on is a pointer to the pointer — in a tail position, so this frame must outlive the call.
+fn ao_deref2(pp, want): i64 { var p = load64(pp); if (p != want) { return 0 - 1; } return load64(p); }
+fn ao16_pp(q: *Ao16): i64 { return ao_deref2(&q, q); }
+impl Ao16 {
+    fn self_slot(self): i64 { return load64(&self); }              # an untyped `self` is a `*Ao16`
+    fn self_slot_t(self: *Ao16): i64 { return load64(&self); }
+    fn self_copy(self: Ao16): i64 { return load64(&self); }        # by value: its own copy
+}
+fn ao_gslot<T>(q: *T): i64 { return load64(&q); }
+# --- the controls: `&` of these was always the slot (or the copy) ----------------------------------
+fn ao8_slot(q: *Ao8): i64 { return load64(&q); }
+fn aoi_slot(q: *i64): i64 { return load64(&q); }
+fn ao16_local(p0: *Ao16): i64 { var q: *Ao16 = p0; return load64(&q); }
+fn ao16_bv_first(q: Ao16): i64 { return load64(&q); }
+fn ao16_bv_write(q: Ao16): i64 { store64(&q, 9); return q.x; }
+fn ao16_bv_ne(q: Ao16, o: *Ao16): i64 { var a = &q; if (a == o) { return 0; } return 1; }
+
+fn row_slot16(): i64 { var p = Ao16 { 4, 2 }; if (ao16_slot(&p) == &p) { return 1; } return 0; }
+fn row_slot24(): i64 { var r = Ao24 { 4, 5, 6 }; if (ao24_slot(&r) == &r) { return 1; } return 0; }
+fn row_second(): i64 { var p = Ao16 { 4, 2 }; if (ao16_second(1, &p) == &p) { return 1; } return 0; }
+fn row_seventh(): i64 { var p = Ao16 { 4, 2 }; if (ao16_seventh(1, 2, 3, 4, 5, 6, &p) == &p) { return 1; } return 0; }
+fn row_ne(): i64 { var p = Ao16 { 4, 2 }; return ao16_ne(&p); }
+fn row_rebind(): i64 {
+    var p = Ao16 { 4, 2 };
+    var o = Ao16 { 7, 8 };
+    var v = ao16_rebind(&p, &o);
+    return v * 100 + p.x;
+}
+fn row_pp(): i64 { var p = Ao16 { 4, 2 }; return ao16_pp(&p); }
+fn row_self(): i64 { var p = Ao16 { 4, 2 }; if (p.self_slot() == &p) { return 1; } return 0; }
+fn row_self_t(): i64 { var p = Ao16 { 4, 2 }; if (p.self_slot_t() == &p) { return 1; } return 0; }
+fn row_self_copy(): i64 { var p = Ao16 { 4, 2 }; return p.self_copy(); }
+fn row_gen_explicit(): i64 { var p = Ao16 { 4, 2 }; if (ao_gslot<Ao16>(&p) == &p) { return 1; } return 0; }
+fn row_gen_inferred(): i64 { var p = Ao16 { 4, 2 }; if (ao_gslot(&p) == &p) { return 1; } return 0; }
+fn row_slot8(): i64 { var s = Ao8 { 4 }; if (ao8_slot(&s) == &s) { return 1; } return 0; }
+fn row_sloti(): i64 { var n = 4; if (aoi_slot(&n) == &n) { return 1; } return 0; }
+fn row_local(): i64 { var p = Ao16 { 4, 2 }; if (ao16_local(&p) == &p) { return 1; } return 0; }
+fn row_bv_first(): i64 { var p = Ao16 { 4, 2 }; return ao16_bv_first(p); }
+fn row_bv_write(): i64 { var p = Ao16 { 4, 2 }; var v = ao16_bv_write(p); return v * 100 + p.x; }
+fn row_bv_ne(): i64 { var p = Ao16 { 4, 2 }; return ao16_bv_ne(p, &p); }
+
+# A `*Ao16` global's `&` is its slot too (a global, never a parameter: a control).
+var AO_G: *Ao16 = 0;
+fn row_global(): i64 { var p = Ao16 { 4, 2 }; AO_G = &p; if (load64(&AO_G) == &p) { return 1; } return 0; }
+
+assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
+assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
+assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");
+assert_eq(row_seventh(), 1, "*Ao16 as the seventh (stack-passed) parameter: load64(&q) is q");
+assert_eq(row_ne(), 1, "*Ao16 parameter: &q is not q");
+assert_eq(row_rebind(), 704, "*Ao16 parameter: store64(&q, &o) rebinds q (q.x = 7), the caller's p.x stays 4");
+assert_eq(row_pp(), 4, "*Ao16 parameter: &q handed on (a tail call) is a pointer to the pointer");
+assert_eq(row_self(), 1, "untyped self (a *Ao16): load64(&self) is self");
+assert_eq(row_self_t(), 1, "self: *Ao16: load64(&self) is self");
+assert_eq(row_gen_explicit(), 1, "ao_gslot<Ao16> (q: *T at Ao16): load64(&q) is q");
+assert_eq(row_gen_inferred(), 1, "ao_gslot(&p) inferred: load64(&q) is q");
+assert_eq(row_slot8(), 1, "control: *Ao8 (8 B) parameter: load64(&q) is q");
+assert_eq(row_sloti(), 1, "control: *i64 parameter: load64(&q) is q");
+assert_eq(row_local(), 1, "control: *Ao16 local: load64(&q) is q");
+assert_eq(row_global(), 1, "control: *Ao16 global: load64(&G) is G");
+assert_eq(row_self_copy(), 4, "control: self: Ao16 (its own copy): load64(&self) is self.x");
+assert_eq(row_bv_first(), 4, "control: by-value Ao16 (its own copy): load64(&q) is q.x");
+assert_eq(row_bv_write(), 904, "control: by-value Ao16: store64(&q, 9) writes the copy (q.x = 9), p.x stays 4");
+assert_eq(row_bv_ne(), 1, "control: by-value Ao16: &q is the copy, not the caller's &p");
+var r = assert_summary();

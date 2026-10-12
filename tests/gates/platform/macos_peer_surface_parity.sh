@@ -63,8 +63,8 @@ bad() { printf '  FAIL: %s\n' "$1"; fail=$((fail + 1)); }
 # a nameless allow-list is indistinguishable from the drift this gate exists to catch.
 allow_reason() {
     case "$1" in
-    "const SYS_EPOLL_PWAIT"|"const SYS_PIPE2"|"const SYS_PPOLL"|"const SYS_READLINKAT"|"const SYS_SYMLINKAT")
-        echo "an aarch64-Linux-only SPELLING: aarch64 dropped epoll_wait/pipe/poll/readlink/symlink for these, and the x86_64 Linux peer does not declare them either, so no portable source names them (the x86 peers spell the same capability SYS_EPOLL_WAIT/SYS_PIPE/…)" ;;
+    "const SYS_EPOLL_PWAIT"|"const SYS_PIPE2"|"const SYS_READLINKAT"|"const SYS_SYMLINKAT")
+        echo "an aarch64-Linux-only SPELLING: aarch64 dropped epoll_wait/pipe/readlink/symlink for these, and the x86_64 Linux peer does not declare them either, so no portable source names them (the x86 peers spell the same capability SYS_EPOLL_WAIT/SYS_PIPE/…)" ;;
     "enum ErrnoOs")
         echo "the arm peer splits its one Darwin-valued errno (EAGAIN = 35 on macOS, 11 on Linux) into a per-target enum; the x86-macOS peer declares the same EAGAIN = 35 inside its Errno enum, so the MEMBER is on both surfaces and only the enum's name differs" ;;
     *) echo "" ;;
@@ -116,7 +116,7 @@ if [ "$missing" -eq 0 ]; then ok "no arm64-macOS name is missing from x86-macOS 
 else fail=$((fail + missing)); fi
 # An allow-list entry that no longer matches anything is stale: it would silently excuse a
 # FUTURE drift under the same name. Report it.
-for n in "const SYS_EPOLL_PWAIT" "const SYS_PIPE2" "const SYS_PPOLL" "const SYS_READLINKAT" "const SYS_SYMLINKAT" "enum ErrnoOs"; do
+for n in "const SYS_EPOLL_PWAIT" "const SYS_PIPE2" "const SYS_READLINKAT" "const SYS_SYMLINKAT" "enum ErrnoOs"; do
     grep -qxF "$n" "$TMP/only_arm" || bad "allow-list entry '$n' matches no arm-only name — remove it"
 done
 

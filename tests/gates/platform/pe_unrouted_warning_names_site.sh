@@ -78,5 +78,25 @@ for f in runtime.cyr lex_pp.cyr; do
     fi
 done
 
+# 6.7.9: the stdlib's Windows stubs issue no unrouted syscall. lib/syscalls_windows.cyr's sys_brk
+# and lib/mmap.cyr's cyr_mprotect returned -38 on PE through a raw syscall(12) / syscall(10) that
+# no PE route takes, so EVERY PE build that included lib/syscalls.cyr warned at sys_brk, and every
+# one that included lib/mmap.cyr (lib/freelist.cyr and lib/thread.cyr pull it in) at cyr_mprotect —
+# called or not: a standing false warning that teaches a user to ignore the real ones. Both return
+# the -38 themselves now (measured under wine 11.19: -38 from each, before and after). A PE build
+# of the four modules that CALLS both stubs warns at nothing; the sub.cyr rows above are its
+# anti-vacuous half (the same compiler warns at real unrouted sites).
+# Mutants (2026-10-11): sys_brk's body back to `syscall(SYS_BRK, addr)`; cyr_mprotect's
+# CYRIUS_TARGET_WIN arm dropped; the arm kept but the syscall(10) arm no longer guarded by
+# `#ifndef CYRIUS_TARGET_WIN` (a dead raw call still warns) — each fails this row by name.
+printf 'include "lib/syscalls.cyr"\ninclude "lib/mmap.cyr"\ninclude "lib/freelist.cyr"\ninclude "lib/thread.cyr"\nvar r = sys_brk(0) + cyr_mprotect(0, 4096, 0);\nsyscall(60, 0 - r);\n' > "$D/st.cyr"
+( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/st.cyr" > "$D/st.exe" 2> "$D/st.err" ) \
+    || { bad "PE compile of the stdlib-stub probe (syscalls + mmap + freelist + thread) failed:"; head -c 400 "$D/st.err"; echo; }
+[ -s "$D/st.exe" ] || bad "PE compile of the stdlib-stub probe produced no binary"
+if grep -q 'is not routed' "$D/st.err"; then
+    bad "a PE build of lib/syscalls.cyr + mmap + freelist + thread warns an unrouted syscall (a stub that issues a raw call):"
+    grep 'is not routed' "$D/st.err" | cut -c1-160
+fi
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20)"
+echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9)"

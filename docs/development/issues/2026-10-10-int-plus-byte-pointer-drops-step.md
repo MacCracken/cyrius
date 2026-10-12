@@ -1,6 +1,8 @@
-# `n + p` with a one-byte `*T` (`*u8` / `*i8`) is no typed pointer, where `p + n` is — `(1 + p8) - q32` builds, `var r: *u8 = 1 + p8;` warns — OPEN
+# `n + p` with a one-byte `*T` (`*u8` / `*i8`) is no typed pointer, where `p + n` is — `(1 + p8) - q32` builds, `var r: *u8 = 1 + p8;` warns — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f) with its
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 6, l679-crit; CHANGELOG [6.7.9]) `n + p` with a one-byte `*T` on the right keeps p's word, as `p + n` does (the user's decision 1(b); `_add_word` in parse_expr.cyr — a step of 1 with no element kind, `&x` or a narrow scalar, is no `*T` and is not written): `(1 + p8) - q32` is the different-sizes error, `var r: *u8 = 1 + p8;` is silent, `(1 + p8) - p8` stays an element count; the dereference-only stamp 6.7.8 added for `*(1 + p8)` is folded into the word and removed. No emitted byte changes (a 1098-source corpus differential is identical, diagnostics aside from the repro's). The repro gives exactly d1, d2, d3 refused and no warning; rows: `frontend/pointer_subscript_checked.sh` DXc1-5 (DXc inverted, from each one-byte source), DXn, DXR and `tests/tcyr/crossos/typed_pointer_step.tcyr` `onebyte_rows` on every leg, mutation-proven.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above (reproduced on the 6.7.9 lane tip @ 7566a428 before the fix: the warning at 8:24, d1 and d3 refused, d2 silent). As filed: 🟡 OPEN — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f) with its
 `build/cycc`: in the repro `var r: *u8 = 1 + p8;` warns "assigning non-pointer to typed pointer" (the same line
 spelled `p8 + 1` is silent), and `(1 + p8) - q32` builds as a plain byte difference, while `(p8 + 1) - q32` and
 `(1 + q32) - p8` are both refused "pointer difference of pointers with different element sizes". The same with the

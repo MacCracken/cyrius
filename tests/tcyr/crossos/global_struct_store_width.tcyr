@@ -45,6 +45,17 @@
 #   GREEN, recorded: M5 x86 without the closing `rol` (no caller reads rax after the store; it is
 #   kept so EVSTORE_W leaves rax as every store emitter does) and M8 `_gv_store` back to exact
 #   1 / 2 / 4 (no declaration reaches it at an odd width — above).
+#
+# 6.7.9 — WIDTH 0. An inline `struct E { }` global owns no bytes, so the next global starts AT its
+# address, and `_asg_store_slot` sent width 0 to EVSTORE_W, whose fallback is the 8-byte store: every
+# A..H / T / K form overwrote the next eight bytes. A width-0 global now stores nothing (one frontend
+# condition, every backend). The B0 rows: HB0 sits on the pattern word HB0P (a zero-size place reads
+# as the word at its address), and TB0_0..TB0_6 start at GB0 itself. Width 0 has no other source: a
+# declaration from an expression (`var DGB0: B0 = HB0;`, the J control) takes an 8-byte slot, an
+# array is at least 8 bytes, a `const` has no storage and refuses assignment.
+# Filed: docs/development/issues/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md
+#   the 6.7.9-open compiler (cda7fad9), before the fix (= M9, the width-0 condition removed) -> the
+#   12 B0 store rows red on x86 (default, IR=1, IR=3, DCE=1), aarch64 (qemu), cx and PE (wine).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -73,6 +84,7 @@ struct M6 { a: i32; b: i16; }
 struct M7 { a: i32; b: i16; c: i8; }
 struct M9 { a: i64; b: i8; }
 struct M15 { a: i64; b: i32; c: i16; d: i8; }
+struct B0 { }
 
 # Per shape X: HX holds the pattern (byte k = 0x21 + k), GX is the destination, and the seven
 # `i8` globals TX_0..TX_6 are packed right after GX (asserted by the L rows) with 0x51..0x57.
@@ -142,6 +154,13 @@ var TM9_0: i8 = 0x51; var TM9_1: i8 = 0x52; var TM9_2: i8 = 0x53; var TM9_3: i8 
 var HM15: M15 = M15 { 0x2827262524232221, 0x2C2B2A29, 0x2E2D, 0x2F };
 var GM15: M15 = M15 { 0, 0, 0, 0 };
 var TM15_0: i8 = 0x51; var TM15_1: i8 = 0x52; var TM15_2: i8 = 0x53; var TM15_3: i8 = 0x54; var TM15_4: i8 = 0x55; var TM15_5: i8 = 0x56; var TM15_6: i8 = 0x57;
+# B0 — a ZERO-size struct (6.7.9): GB0 owns no bytes, so TB0_0 starts AT GB0's address and a store
+# into GB0 stores nothing. A value read from a zero-size place is the word at its address, so HB0
+# sits on the pattern word HB0P: storing that value would put 0x21.. over TB0_0..
+var HB0: B0 = B0 { };
+var HB0P: i64 = 0x2827262524232221;
+var GB0: B0 = B0 { };
+var TB0_0: i8 = 0x51; var TB0_1: i8 = 0x52; var TB0_2: i8 = 0x53; var TB0_3: i8 = 0x54; var TB0_4: i8 = 0x55; var TB0_5: i8 = 0x56; var TB0_6: i8 = 0x57;
 
 # The declaration-zone controls: a copy-init and a call-init of an odd shape register a full
 # 8-byte global (measured), so the 8-byte replay store is in bounds; each is followed by a packed
@@ -166,6 +185,8 @@ var DGB7: B7 = HB7;
 var DGTB7: i8 = 0x51;
 var DCB7: B7 = dmkB7();
 var DCTB7: i8 = 0x52;
+var DGB0: B0 = HB0;
+var DGTB0: i8 = 0x51;
 
 # -1 when the n bytes at g are the pattern 0x21 + k; else the first offset that is not.
 fn gs_pat(g, n): i64 {
@@ -202,6 +223,27 @@ fn gs_row(g, n, what): i64 {
     return 0;
 }
 
+# B0: every form stores nothing — the seven bytes AT GB0 (TB0_0..TB0_6) keep their values.
+fn mkB0(): B0 { var l: B0 = HB0; return l; }
+impl B0 { fn pat(self): B0 { var l: B0 = HB0; return l; } }
+fn putB0(p: B0): i64 { GB0 = p; return 0; }
+fn rowsB0(): i64 {
+    var g = &GB0;
+    gs_reset(g, 0);
+    var l: B0 = HB0;
+    GB0 = l; gs_row(g, 0, "B0 A: GB0 = l (a local)");
+    GB0 = mkB0(); gs_row(g, 0, "B0 B: GB0 = mkB0() (a call)");
+    GB0 = l.pat(); gs_row(g, 0, "B0 C: GB0 = l.pat() (a method)");
+    putB0(l); gs_row(g, 0, "B0 D: GB0 = p (a by-value parameter)");
+    GB0 = HB0; gs_row(g, 0, "B0 E: GB0 = HB0 (a global)");
+    GB0 = (l); gs_row(g, 0, "B0 F: GB0 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB0 = l) { i = i + 1; }
+    gs_row(g, 0, "B0 G: a for step GB0 = l");
+    var f = || { GB0 = l; return 0; };
+    fncall0(f); gs_row(g, 0, "B0 H: GB0 = l in a closure (a captured source)");
+    return 0;
+}
 fn mkB1(): B1 { var l: B1; l.f0 = 0x21; return l; }
 impl B1 { fn pat(self): B1 { var l: B1; l.f0 = 0x21; return l; } }
 fn putB1(p: B1): i64 { GB1 = p; return 0; }
@@ -712,6 +754,9 @@ assert_eq(gs_tail(&TM9_0), 0 - 1, "M9 I: TM9_0..TM9_6 hold their image values");
 assert_eq(&TM15_0 - &GM15, 15, "M15 I: TM15_0 is packed right after GM15");
 assert_eq(gs_pat(&HM15, 15), 0 - 1, "M15 I: HM15 holds the pattern");
 assert_eq(gs_tail(&TM15_0), 0 - 1, "M15 I: TM15_0..TM15_6 hold their image values");
+assert_eq(&TB0_0 - &GB0, 0, "B0 I: TB0_0 starts at GB0 (a zero-size global owns no bytes)");
+assert_eq(gs_pat(&HB0P, 8), 0 - 1, "B0 I: HB0P (at HB0) holds the pattern");
+assert_eq(gs_tail(&TB0_0), 0 - 1, "B0 I: TB0_0..TB0_6 hold their image values");
 
 assert_eq(gs_pat(&DGB3, 3), 0 - 1, "B3 J: var DGB3 = HB3; (declaration zone) holds the pattern");
 assert_eq(DGTB3, 0x51, "B3 J: the i8 after DGB3 keeps its value");
@@ -729,8 +774,10 @@ assert_eq(gs_pat(&DGB7, 7), 0 - 1, "B7 J: var DGB7 = HB7; (declaration zone) hol
 assert_eq(DGTB7, 0x51, "B7 J: the i8 after DGB7 keeps its value");
 assert_eq(gs_pat(&DCB7, 7), 0 - 1, "B7 J: var DCB7 = dmkB7(); (declaration zone) holds the pattern");
 assert_eq(DCTB7, 0x52, "B7 J: the i8 after DCB7 keeps its value");
+assert_eq(DGTB0, 0x51, "B0 J: the i8 after var DGB0 = HB0; (declaration zone) keeps its value");
 
 # In a fn: every store form, every shape.
+rowsB0();
 rowsB1();
 rowsB2();
 rowsB3();
@@ -790,6 +837,8 @@ GM7 = HM7; gs_row(&GM7, 7, "M7 T: GM7 = HM7 at top level");
 GM7 = mkM7(); gs_row(&GM7, 7, "M7 T: GM7 = mkM7() at top level");
 GM9 = HM9; gs_row(&GM9, 9, "M9 T: GM9 = HM9 at top level");
 GM15 = HM15; gs_row(&GM15, 15, "M15 T: GM15 = HM15 at top level");
+GB0 = HB0; gs_row(&GB0, 0, "B0 T: GB0 = HB0 at top level");
+GB0 = mkB0(); gs_row(&GB0, 0, "B0 T: GB0 = mkB0() at top level");
 
 # A global declared after the first statement (PARSE_VAR's registration) is packed the same way.
 var LGB3: B3 = B3 { 0, 0, 0 };
@@ -816,6 +865,12 @@ assert_eq(&LTM6_0 - &LGM6, 6, "M6 K: LTM6_0 is packed right after LGM6");
 LGM6 = HM6; gs_row(&LGM6, 6, "M6 K: LGM6 = HM6 (declared after the first statement)");
 fn lputM6(): i64 { var l: M6 = HM6; LGM6 = l; return 0; }
 lputM6(); gs_row(&LGM6, 6, "M6 K: LGM6 = l in a fn");
+var LGB0: B0 = B0 { };
+var LTB0_0: i8 = 0x51; var LTB0_1: i8 = 0x52; var LTB0_2: i8 = 0x53; var LTB0_3: i8 = 0x54; var LTB0_4: i8 = 0x55; var LTB0_5: i8 = 0x56; var LTB0_6: i8 = 0x57;
+assert_eq(&LTB0_0 - &LGB0, 0, "B0 K: LTB0_0 starts at LGB0");
+LGB0 = HB0; gs_row(&LGB0, 0, "B0 K: LGB0 = HB0 (declared after the first statement)");
+fn lputB0(): i64 { var l: B0 = HB0; LGB0 = l; return 0; }
+lputB0(); gs_row(&LGB0, 0, "B0 K: LGB0 = l in a fn");
 
 var r = assert_summary();
 syscall(SYS_EXIT, r);

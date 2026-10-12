@@ -1108,18 +1108,24 @@ fn _pbool_reset(fi): i64 {
 # first such parameter and grown on demand, so no parameter count is refused. The table is
 # lazy-alloc'd at the max fn cap like _fnt_tparams, so the brk layout does not move.
 var _fnt_pmhi = 0;
-fn _pm_row_get(fi, ord): i64 {
-    if (_fnt_pmhi == 0) { return 0; }
+fn _pm_row_get(fi, ord): i64 { return _prow_get(_fnt_pmhi, fi, ord); }
+# The row of fn `fi`, holding at least ordinal `ord` (allocated / grown, zero-filled).
+fn _pm_row_at(fi, ord): i64 {
+    if (_fnt_pmhi == 0) { _fnt_pmhi = alloc(131072 * 8); }
+    return _prow_at(_fnt_pmhi, fi, ord);
+}
+# The byte-per-ordinal row shape, over a table `tbl` (0 = not allocated: every byte 0) — the kind row
+# above and the copies row (`_bvhi_*`, 6.7.9).
+fn _prow_get(tbl, fi, ord): i64 {
+    if (tbl == 0) { return 0; }
     if (fi < 0) { return 0; }
-    var row = L64(_fnt_pmhi + fi * 8);
+    var row = L64(tbl + fi * 8);
     if (row == 0) { return 0; }
     if (ord >= load64(row)) { return 0; }
     return load8(row + 8 + ord);
 }
-# The row of fn `fi`, holding at least ordinal `ord` (allocated / grown, zero-filled).
-fn _pm_row_at(fi, ord): i64 {
-    if (_fnt_pmhi == 0) { _fnt_pmhi = alloc(131072 * 8); }
-    var row = L64(_fnt_pmhi + fi * 8);
+fn _prow_at(tbl, fi, ord): i64 {
+    var row = L64(tbl + fi * 8);
     var cap = 0;
     if (row != 0) { cap = load64(row); }
     if (ord < cap) { return row; }
@@ -1131,8 +1137,18 @@ fn _pm_row_at(fi, ord): i64 {
     i = 0;
     while (i < cap) { store8(nr + 8 + i, load8(row + 8 + i)); i = i + 1; }
     store64(nr, ncap);
-    S64(_fnt_pmhi + fi * 8, nr);
+    S64(tbl + fi * 8, nr);
     return nr;
+}
+fn _prow_reset(tbl, fi): i64 {
+    if (tbl == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(tbl + fi * 8);
+    if (row == 0) { return 0; }
+    var n = load64(row);
+    var i = 0;
+    while (i < n) { store8(row + 8 + i, 0); i = i + 1; }
+    return 0;
 }
 fn _pm_row_or(fi, ord, k): i64 {
     if (fi < 0) { return 0; }
@@ -1146,16 +1162,7 @@ fn _pm_row_clr(fi, ord, k): i64 {
     store8(row + 8 + ord, load8(row + 8 + ord) & (255 - k));
     return 0;
 }
-fn _pm_row_reset(fi): i64 {
-    if (_fnt_pmhi == 0) { return 0; }
-    if (fi < 0) { return 0; }
-    var row = L64(_fnt_pmhi + fi * 8);
-    if (row == 0) { return 0; }
-    var n = load64(row);
-    var i = 0;
-    while (i < n) { store8(row + 8 + i, 0); i = i + 1; }
-    return 0;
-}
+fn _pm_row_reset(fi): i64 { return _prow_reset(_fnt_pmhi, fi); }
 # 1 when any overflow ordinal of fn `fi` carries a kind bit in `k`.
 fn _pm_row_any(fi, k): i64 {
     if (_fnt_pmhi == 0) { return 0; }
@@ -1174,6 +1181,19 @@ fn _pm_row_any(fi, k): i64 {
 # prologue, so an address its caller passes for it is not held once the call returns. Written by
 # pass 1 (parse_fn.cyr `_bvcp_note`), read by `_pm_copies`. Lazy-alloc'd at the max fn cap like
 # _fnt_pmhi, so the brk layout does not move.
+# 6.7.9 — and an ordinal past 61 in the fn's COPIES ROW (`_fnt_bvhi`, the `_prow_*` shape: 1 =
+# copied), its own table because the kind row's byte is full and is rebuilt by every definition
+# pass 2 parses, where this record is never written for a redefined fn. A record is replaced whole:
+# `_bvhi_reset` clears the row before the scan that writes it (`_bvcp_bit`). CHANGELOG [6.7.9]
+var _fnt_bvhi = 0;
+fn _bvhi_get(fi, ord): i64 { return _prow_get(_fnt_bvhi, fi, ord); }
+fn _bvhi_reset(fi): i64 { return _prow_reset(_fnt_bvhi, fi); }
+fn _bvhi_set(fi, ord): i64 {
+    if (fi < 0) { return 0; }
+    if (_fnt_bvhi == 0) { _fnt_bvhi = alloc(131072 * 8); }
+    store8(_prow_at(_fnt_bvhi, fi, ord) + 8 + ord, 1);
+    return 0;
+}
 var _fnt_bvcp = 0;
 fn GFBVCP(fi): i64 {
     if (_fnt_bvcp == 0) { return 0; }

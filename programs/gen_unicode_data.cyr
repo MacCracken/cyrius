@@ -1174,7 +1174,14 @@ fn gen_normalize(): i64 {
 
 alloc_init();
 args_init();
+# 6.7.9 — one operand, never a flag (`gen_unicode_data --help` took `--help` as OUTDIR).
+# CHANGELOG [6.7.9]
 if (argc() >= 2) { _ucd_outdir = argv(1); }
+if (argc() > 2 || load8(_ucd_outdir) == 45) {
+    var _ucd_usage = "error: gen_unicode_data takes one operand, never a flag\n  usage: gen_unicode_data [OUTDIR]\n";
+    syscall(SYS_WRITE, 2, _ucd_usage, strlen(_ucd_usage));
+    syscall(SYS_EXIT, 2);
+}
 
 var rc = gen_categories();
 if (rc != 0) { syscall(SYS_EXIT, rc); }

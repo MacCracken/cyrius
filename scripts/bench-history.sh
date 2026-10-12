@@ -16,6 +16,10 @@ set -e
 #   3 — Compiler/toolchain (self-compile, tools)   ~30s
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 6.7.9 — it measures the DEFAULT build (the self-compile row, every bench program): an inherited
+# CYRIUS_BOUNDS / CYRIUS_POISON would bench a bounds-checked / poison-mode one
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 CC="$REPO_ROOT/build/cycc"
 HISTORY_FILE="$REPO_ROOT/bench-history.csv"
 BENCHMARKS_MD="$REPO_ROOT/BENCHMARKS.md"

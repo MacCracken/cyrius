@@ -8,6 +8,10 @@
 #   ./mac-selfhost.sh [path-to-cycc_macho] [path-to-main_aarch64_macho.cyr]
 # Defaults: ./cycc_macho and ./main_aarch64_macho.cyr (or src/...)
 set -e
+# 6.7.9 — the self-host it runs is cycc_macho compiling its own source: an inherited
+# CYRIUS_BOUNDS / CYRIUS_POISON would self-host a bounds-checked / poison-mode compiler
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 CC5=${1:-./cycc_macho}
 SRC=${2:-}

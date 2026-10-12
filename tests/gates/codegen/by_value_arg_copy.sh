@@ -65,6 +65,21 @@
 #   M12 the tail arm does not restore `_tc_snap_div`          -> T5 (the closure's arm clears it:
 #                                                              `jmp rc` with the copy in the frame)
 #   (TU1 is killed by M8 — two `jmp`s, no call — and by M11 — two calls; TU2 by M11: SIGSEGV)
+# 6.7.9 (issue 2026-10-09-by-value-copy-mask-62-parameter-limit — the tcyr's rows at parameter 62
+# and later, past the 62-bit copies mask; each mutant a scratch tree, this gate run there):
+#   M13 `_pm_copies` answers 0 past ordinal 61 (the pre-fix line) -> A1-A6: the tcyr's seven rows
+#                                                              at 62+ (11 where 1 is right) and its
+#                                                              1,000,000-deep walk (SIGSEGV on x86 /
+#                                                              aarch64: the address escaped)
+#   M14 pass 1 (`_bvcp_note`, `_tup_bvcp`) records nothing past 61 -> A1-A6: the two rows whose
+#                                                              callee is defined after the call
+#   M15 pass 2 (`_sptr_params_copy`) records nothing past 61    -> A1-A6: the rows after the
+#                                                              definition (62, 66, tail, generic,
+#                                                              method) and the walk
+#   M16 `_bvcp_note` past 61 skips the address-passed test      -> A1-A6: the 8 B control `rs62`
+#                                                              (its value taken for an address)
+#   (a definition's copies row replaced whole, and none written for a redefined fn, is
+#   fn_redefinition_binds_last.sh's)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

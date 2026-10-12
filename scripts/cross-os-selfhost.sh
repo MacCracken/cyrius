@@ -32,6 +32,10 @@
 #   ecb-install  macOS arm64 packaging gate    — real install.sh -> cyrius build -> exit 42
 # See CHANGELOG [6.0.45].
 set -e
+# 6.7.9 — the self-host it runs rebuilds cycc and the cx compiler from src/ here: an inherited
+# CYRIUS_BOUNDS / CYRIUS_POISON would self-host a bounds-checked / poison-mode compiler
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install> [tcyr-glob]}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

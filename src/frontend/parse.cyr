@@ -367,8 +367,9 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
 # 6.7.8 — the same when T is carried by a generic struct parameter (`_gs_carrier`, field
 # f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
 # exists yet when the pair scans run, so a name is read from its DECLARATION's annotation (`b: G<..,
-# X, ..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its instance. Only
-# `&name` reaches a `*G<..>` carrier. Anything else answers 0 — a missed flag, never a false one.
+# X, ..>` or `b: *G<..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its
+# instance, `&name` as name — for either carrier (6.7.9: the by-value one too, as `_gsc_arg`).
+# Anything else answers 0 — a missed flag, never a false one.
 fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if ((f & 255) == 0) { return 0; }
     var at = _call_arg_for(S, fi, j + 1, (f & 255) - 1);
@@ -376,7 +377,6 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
     if (TOKTYP(S, at) == 27) {
-        if (((f >> 9) & 1) == 0) { return 0; }
         at = at + 1;
         if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
         f = f | (1 << 20);
@@ -404,13 +404,12 @@ fn _tok_sc_name(S, a, i, at, g, f): i64 {
     return _tok_sc_ann(S, d, g, f);
 }
 # The type argument in T's slot of the annotation after the declared name at token d, when it is a
-# plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` for a `*G` carrier
-# (bit 9 of f) not reached through `&` (bit 20: `&bp` is a `**`). 0 otherwise.
+# plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` not reached through
+# `&` (bit 20: `&bp` is a `**`). 0 otherwise.
 fn _tok_sc_ann(S, d, g, f): i64 {
     if (TOKTYP(S, d + 1) != 49) { return 0; }
     var at = d + 2;
     if (TOKTYP(S, at) == 8) {
-        if (((f >> 9) & 1) == 0) { return 0; }
         if (((f >> 20) & 1) == 1) { return 0; }
         at = at + 1;
     }
@@ -1534,6 +1533,8 @@ fn _fnst_save(S): i64 {
     S64(S + 0x18F840, 0);
     return b;
 }
+# 1 when snapshot `b` was taken inside a fn (the enclosing GINFN), 0 at top level.
+fn _fnst_was_infn(b): i64 { return load64(b + 8); }
 # Leave the nested fn: drop its return patches and defer entries (both already emitted and
 # patched by it), then put every enclosing global back.
 fn _fnst_restore(S, b): i64 {
@@ -3199,10 +3200,27 @@ fn _asg_store_slot(S, idx, g): i64 {
     var avsz = L64(_vars_base + idx * 8);
     if (avsz < 8) {
         if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
-        EVSTORE_W(S, idx, avsz);
+        # A zero-size global (an inline `struct E { }`) owns no bytes: nothing is stored. Width 0
+        # took EVSTORE_W's 8-byte fallback over the next global. CHANGELOG [6.7.9]
+        if (avsz > 0) { EVSTORE_W(S, idx, avsz); }
     }
     else { EVSTORE(S, idx); }
     SLVAR(S, idx);
+    return 0;
+}
+# An assignment whose destination is neither a local nor a global: "undefined variable 'x'" at the
+# cursor (the value's end), its excerpt and the block-scope note. ONE report for the statement arm
+# and the classic-for step, which stored nothing and said nothing — `for (i = 0; i < 5; j = i + 1)`
+# with `j` declared nowhere looped forever. The caller keeps its --syntax-only skip. CHANGELOG [6.7.9]
+fn _asg_undef_report(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'\n", 2);
+    _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
+    _gv_note_blockscoped(S, noff);   # 6.6.6: see there
+    _had_error = 1;
     return 0;
 }
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
@@ -4850,14 +4868,8 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     STI(S, GTI(S) + 1);
                     return 0;
                 }
-                syscall(SYS_WRITE, 2, "error:", 6);
-                _err_head(S);
-                syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0xEC00000 + noff);
-                syscall(SYS_WRITE, 2, "'\n", 2);
-                _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
-                _gv_note_blockscoped(S, noff);   # 6.6.6: see there
-                _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
+                _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
+                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {

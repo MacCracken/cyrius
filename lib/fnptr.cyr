@@ -47,6 +47,11 @@
 #       never runs these bodies; an ADDRESS-TAKEN `&fncallN` called through
 #       another indirect call does — it returned 0 for every callee on cx until
 #       6.7.6, when this arm was added. CHANGELOG [6.7.6]
+#     - The arm is `return callptr(..);`, never `result = callptr(..)`: a body
+#       whose every return is one value is "provably one value" (GFLG 1024), and
+#       `var t, v = fncallN(..)` is then refused — on cx alone, as every other
+#       target's body is an `asm` block. Returning the call keeps the callee's
+#       pair (r0:r4) and the answer the same everywhere. CHANGELOG [6.7.9]
 #
 # Common to all backends:
 #   - fp loaded into rax (x86) / x9 (aarch64) for the indirect call.
@@ -171,7 +176,7 @@ fn fncall0(fp): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp);
+    return callptr(fp);
     #endif
     return result;
 }
@@ -244,7 +249,7 @@ fn fncall1(fp, a): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a);
+    return callptr(fp, a);
     #endif
     return result;
 }
@@ -323,7 +328,7 @@ fn fncall2(fp, a, b): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b);
+    return callptr(fp, a, b);
     #endif
     return result;
 }
@@ -408,7 +413,7 @@ fn fncall3(fp, a, b, c): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c);
+    return callptr(fp, a, b, c);
     #endif
     return result;
 }
@@ -499,7 +504,7 @@ fn fncall4(fp, a, b, c, d): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c, d);
+    return callptr(fp, a, b, c, d);
     #endif
     return result;
 }
@@ -599,7 +604,7 @@ fn fncall5(fp, a, b, c, d, e): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c, d, e);
+    return callptr(fp, a, b, c, d, e);
     #endif
     return result;
 }
@@ -706,7 +711,7 @@ fn fncall6(fp, a, b, c, d, e, f): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c, d, e, f);
+    return callptr(fp, a, b, c, d, e, f);
     #endif
     return result;
 }
@@ -851,7 +856,7 @@ fn fncall7(fp, a, b, c, d, e, f, g): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c, d, e, f, g);
+    return callptr(fp, a, b, c, d, e, f, g);
     #endif
     return result;
 }
@@ -997,7 +1002,7 @@ fn fncall8(fp, a, b, c, d, e, f, g, h): i64 {
     }
     #endif
     #ifdef CYRIUS_TARGET_CX
-    result = callptr(fp, a, b, c, d, e, f, g, h);
+    return callptr(fp, a, b, c, d, e, f, g, h);
     #endif
     return result;
 }

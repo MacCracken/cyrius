@@ -87,6 +87,23 @@ else
     echo "  ok: the committed table re-derives byte-identically from the stdlib peers (regenerated under \$D, tree untouched)"
 fi
 
+# ── axis 1b (6.7.9): one operand, never a flag ─────────────────────────────────────
+# `gen_syscall_xlat --help` wrote the table to a file named `--help` and exited 0. Run in an
+# empty cwd, so a regressed generator cannot write the tree (it fails reading lib/ there).
+if [ -x "$D/gen" ]; then
+    mkdir -p "$D/cwd1b"
+    r1=0; ( cd "$D/cwd1b" && exec "$D/gen" --help ) > "$D/g1b.out" 2>&1 || r1=$?
+    r2=0; ( cd "$D/cwd1b" && exec "$D/gen" a.cyr b.cyr ) >> "$D/g1b.out" 2>&1 || r2=$?
+    if [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$(grep -c 'takes one operand, never a flag' "$D/g1b.out")" = 2 ] \
+      && [ -z "$(ls -A "$D/cwd1b")" ]; then
+        echo "  ok: axis 1b: \`gen_syscall_xlat --help\` and a second operand are refused (rc 2, by name), nothing written"
+    else
+        echo "FAIL: axis 1b: a flag or a second operand was not refused (rc $r1 / $r2; cwd holds: $(ls -A "$D/cwd1b" | paste -sd' ' -))"
+        sed 's/^/      /' "$D/g1b.out" | head -4
+        FAIL=1
+    fi
+fi
+
 # ── axis 2: ZERO false positives on the compiler's own aarch64 source ─────────────
 ./build/cycc < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null
 chmod +x "$D/cc_a64"

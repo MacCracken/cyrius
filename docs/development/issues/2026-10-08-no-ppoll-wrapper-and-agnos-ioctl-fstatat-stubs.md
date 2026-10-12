@@ -1,6 +1,19 @@
-# No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti) — OPEN
+# No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti) — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: a program calling `sys_ppoll(…)` is
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 3; CHANGELOG [6.7.9]) `sys_ppoll(fds, nfds, tsp, sigmask,
+> sigsetsize)` is one `lib/syscalls_linux_common.cyr` definition — x86_64 issues 271 (the x86_64 peer now names
+> `SYS_PPOLL = 271`), aarch64 the peer's 1073 alias (ESYSXLAT → 73), macOS declines with -78 without compiling the
+> number, cx with -38 — and the PE and agnos peers decline with -38; the agnos peer gained `sys_ioctl` / `sys_fstatat`
+> (-38, no Linux number minted). The repro's three calls compile on every target. yukti's same-value local
+> `SYS_PPOLL = 271` builds warning-free beside the peer's; its switch to `sys_ppoll` is a yukti patch, ⛔ not before
+> cyrius 6.7.9 is out. The derived `src/common/syscall_xlat.cyr` gains the 271 row (a named hand-off to the src/
+> owner: a raw `syscall(271, ..)` on ELF-aarch64 is now diagnosed — it is `process_vm_writev` there).
+> `tests/tcyr/crossos/ppoll_ioctl_fstatat_every_target.tcyr` (19 rows on Linux: the timespec timeout, POLLIN,
+> POLLNVAL, EINVAL for a bad tv_nsec and for a wrong sigsetsize; -78 / -38 elsewhere) fails to compile on every target
+> before the fix; passes on x86_64, aarch64 (qemu) and PE (wine), builds warning-free for both Mach-O targets, and runs
+> clean on agnos under the fake kernel; mutation-proven (6 mutants RED).
+
+**Status:** ✅ **RESOLVED in v6.7.9** (see the banner). Was: 🟡 OPEN — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: a program calling `sys_ppoll(…)` is
 refused on x86_64 and aarch64 Linux (`undefined function 'sys_ppoll'`; no peer defines it), and one calling
 `sys_ioctl` / `sys_fstatat` is refused under `CYRIUS_TARGET_AGNOS=1` (both undefined) while the Linux build is rc 0.
 yukti carries the stopgaps (`lib/yukti.cyr:64-70, 242-267, 314-345`).

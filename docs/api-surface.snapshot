@@ -2142,6 +2142,7 @@ math::f64_lerp/3
 math::f64_max/2
 math::f64_min/2
 math::f64_parse/1
+math::f64_parse_n/2
 math::f64_parse_ok/2
 math::f64_sign/1
 math::gcd/2
@@ -2178,6 +2179,7 @@ net::sock_reuseport/1
 net::sock_send/3
 net::sock_send_a/4
 net::sock_send_all/3
+net::sock_set_nodelay/2
 net::sock_set_nonblocking/1
 net::sock_set_recv_timeout/3
 net::sock_set_send_timeout/3
@@ -4644,6 +4646,7 @@ syscalls_linux_common::sys_nanosleep/2
 syscalls_linux_common::sys_openat/4
 syscalls_linux_common::sys_pidfd_open/2
 syscalls_linux_common::sys_pivot_root/2
+syscalls_linux_common::sys_ppoll/5
 syscalls_linux_common::sys_prctl/5
 syscalls_linux_common::sys_process_vm_readv/6
 syscalls_linux_common::sys_process_vm_writev/6
@@ -4780,6 +4783,7 @@ syscalls_windows::sys_nanosleep/2
 syscalls_windows::sys_open/3
 syscalls_windows::sys_pipe/1
 syscalls_windows::sys_pivot_root/2
+syscalls_windows::sys_ppoll/5
 syscalls_windows::sys_process_vm_readv/6
 syscalls_windows::sys_process_vm_writev/6
 syscalls_windows::sys_qpc/1
@@ -4869,6 +4873,7 @@ syscalls_x86_64_agnos::sys_fork/0
 syscalls_x86_64_agnos::sys_fremovexattr/2
 syscalls_x86_64_agnos::sys_fsetxattr/5
 syscalls_x86_64_agnos::sys_fstat/2
+syscalls_x86_64_agnos::sys_fstatat/4
 syscalls_x86_64_agnos::sys_fstatfs/2
 syscalls_x86_64_agnos::sys_fsync/1
 syscalls_x86_64_agnos::sys_ftruncate/2
@@ -4897,6 +4902,7 @@ syscalls_x86_64_agnos::sys_gpu_recover_op/1
 syscalls_x86_64_agnos::sys_gpu_shader_op/2
 syscalls_x86_64_agnos::sys_icmp_echo/1
 syscalls_x86_64_agnos::sys_icmp_echo_ex/2
+syscalls_x86_64_agnos::sys_ioctl/3
 syscalls_x86_64_agnos::sys_kbscan/2
 syscalls_x86_64_agnos::sys_kill/2
 syscalls_x86_64_agnos::sys_kill_tree/2
@@ -4935,6 +4941,7 @@ syscalls_x86_64_agnos::sys_open/3
 syscalls_x86_64_agnos::sys_pause/0
 syscalls_x86_64_agnos::sys_pipe/1
 syscalls_x86_64_agnos::sys_pivot_root/2
+syscalls_x86_64_agnos::sys_ppoll/5
 syscalls_x86_64_agnos::sys_process_vm_readv/6
 syscalls_x86_64_agnos::sys_process_vm_writev/6
 syscalls_x86_64_agnos::sys_proclist/2

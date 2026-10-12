@@ -1984,8 +1984,10 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # CurrentUser ROOT store, 6.6.14).
 # CA_ROOT holds a trust-anchor SET: a ptr to [count][root0 ptr]...[rootN-1 ptr].
 # (.78: was a single root; now a set so system bundles + multi-root PEM work.)
-# TLS_CA_MAX_ROOTS now bounds only tls_native_set_client_cert's leaf decode; a trust bundle's
-# chain scratch is sized from its own block count (6.6.13, see _tn_ca_parse_set).
+# TLS_CA_MAX_ROOTS bounds nothing: a trust bundle's chain scratch is sized from its own block count
+# (6.6.13, _tn_ca_parse_set) and so is a client certificate's leaf decode (6.7.9,
+# tls_native_set_client_cert). The public name is kept, so a program that assigns it still
+# compiles; retiring it is a removed-symbol decision. CHANGELOG [6.7.9]
 var TLS_CA_MAX_ROOTS = 300;
 
 # Parse a trust bundle into a root set [count][root ptrs...] — the layout verify_chain reads.
@@ -2617,7 +2619,7 @@ fn _tn_ca_read_win(buf, cap, refused, purpose): i64 {
 # v6.2.8: mTLS client-auth — install the CLIENT's own certificate so it can
 # present it when a server sends a CertificateRequest. The wire Certificate
 # message sends raw DER (`_tn_build_certificate` reads CERT_CHAIN), so a PEM
-# input (is_der==0) is decoded to its leaf DER via `pem_decode_certs` first;
+# input (is_der==0) is decoded to its leaf DER via `pem_decode_certs_into` first;
 # DER input (is_der==1) is stored verbatim. Parses the leaf via `_tn_load_cert`.
 # Pair with `tls_native_set_client_key`; CREDS_LOADED is set once both halves
 # are in. CLIENT role only. Returns TLS_OK / negative TLS_ERR_*. See issue
@@ -2630,12 +2632,20 @@ fn tls_native_set_client_cert(ctx, cert, cert_len, is_der): i64 {
     var der = cert;
     var dlen = cert_len;
     if (is_der == 0) {
-        # PEM → first (leaf) DER cert.
-        var chain = _tn_alloc(ctx, TLS_CA_MAX_ROOTS * 16);
+        # PEM → first (leaf) DER cert. ⛔ The chain table is sized from the input's own block
+        # count, as _tn_ca_parse_set's is, never a fixed cap: TLS_CA_MAX_ROOTS (300) cost 4,800 B
+        # for one block and refused a well-formed leaf once 300 more blocks followed it. The
+        # strict decode walks non-overlapping BEGIN markers only, never more than
+        # pem_count_cert_blocks' greedy count, so it cannot run out of entries. It stays STRICT:
+        # a bad first block must fail, not hand back the next certificate (CHANGELOG [6.6.14]).
+        # CHANGELOG [6.7.9]
+        var blocks = pem_count_cert_blocks(cert, cert_len);
+        if (blocks < 1) { return TLS_ERR_CERT_INVALID; }
+        var chain = _tn_alloc(ctx, blocks * 16);
         if (chain == 0) { return TLS_ERR_OOM; }
         var pool = _tn_alloc(ctx, cert_len);          # DER <= 3/4 of its base64
         if (pool == 0) { return TLS_ERR_OOM; }
-        var n = pem_decode_certs_into(cert, cert_len, chain, TLS_CA_MAX_ROOTS, pool, cert_len);
+        var n = pem_decode_certs_into(cert, cert_len, chain, blocks, pool, cert_len);
         if (n < 1) { return TLS_ERR_CERT_INVALID; }
         der = load64(chain);
         dlen = load64(chain + 8);

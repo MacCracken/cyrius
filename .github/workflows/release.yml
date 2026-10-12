@@ -129,8 +129,18 @@ jobs:
           # `cyrius build --win` / the sakshi-CI cycc_win guard fail.
           [ -f "build/cycc_win" ] && cp "build/cycc_win" "$STAGE/bin/"
           cp bootstrap/asm "$STAGE/bin/"
+          # The CLI shims live in scripts/shims/ (v5.11.69), the user-facing scripts flat in scripts/:
+          # look in shims/ first, as install.sh does, and FAIL on a listed script found in neither —
+          # the scripts/-only lookup skipped cyrius-repl.sh silently. CHANGELOG [6.7.9]
           for script in $SCRIPTS; do
-            [ -f "scripts/$script" ] && cp "scripts/$script" "$STAGE/bin/"
+            if [ -f "scripts/shims/$script" ]; then
+              cp "scripts/shims/$script" "$STAGE/bin/"
+            elif [ -f "scripts/$script" ]; then
+              cp "scripts/$script" "$STAGE/bin/"
+            else
+              echo "ERROR: cyrius.cyml [release] scripts lists $script, found in neither scripts/shims/ nor scripts/"
+              exit 1
+            fi
           done
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*

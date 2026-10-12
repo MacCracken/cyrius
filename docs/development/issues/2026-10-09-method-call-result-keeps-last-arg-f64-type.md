@@ -1,6 +1,9 @@
-# A method call's result keeps its last argument's f64 type — OPEN
+# A method call's result keeps its last argument's f64 type — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`. With
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 8, l679-crit; CHANGELOG [6.7.9]) a method call's result is typed as a free call's (the user's decision 1(d)): the method arm of `_field_load_on` runs `_mcall_ret` (parse_expr.cyr: PARSE_FNCALL's reset, then `_call_ret_marks`) in place of `_call_ret_ps`, so `p.m(1.5) * 2` is 42, `p.area() + 1.0` an f64 add and `p.m(p) * 10` 20; `_struct_call_emit` (parse_fn.cyr) takes the same reset, so a free struct call's field (`mk(1.5).a * 2`) is 42 too. No other source in a 925-file differential compiles differently; rows: the three repros verbatim and `tests/tcyr/crossos/call_result_type.tcyr` (32 rows; before the fix it does not build — `p.mo(p) * 10`: undefined `CrP_mul` — and without that row 25 of 31 are red) on x86 / IR=1 / IR=3 / DCE=1, aarch64 (qemu), cx and PE (wine), plus the warnings, through `frontend/call_result_type.sh`, mutation-proven. The binding follows: `var a = p.area();` (bite 9, in passing: `_var_rhs_msid`) and, from the 6.7.9 review, a method ending a longer chain — `w.v.area()`, `self.v.area()`, `p.ms(1.5).area()`, `mk(1.5).area()` (`_var_rhs_mchain`, parse_decl.cyr; 40 rows now).
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above and *Resolution* below (reproduced on the 6.7.9 lane tip @ 39e03157
+before the fix: the three repros exit 1, 1 and "undefined function 'P_mul'"). As filed: 🟡 OPEN — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`. With
 `fn m(self, d: f64): i64` returning 21, `p.m(1.5) * 2` warns "f64 arithmetic with a non-f64 right operand" and
 evaluates to 0. The free-fn spelling `m2(&p, 1.5) * 2` is 42. Re-verified 2026-10-10 against 6.7.8 @ 484763ed: the
 repro still exits 1 on x86_64, aarch64 (qemu), cx and PE (wine). ⚠ The Proposed fix's premise is wrong — see
@@ -113,6 +116,9 @@ result (`_call_ret_marks` on the trait member's prototype), so it does not wait 
 The same missing reset with a struct as the last argument is a loud failure on valid source, not a wrong value: the
 leaked expression type is the struct, so an outer operator dispatches the struct's operator fn.
 
+`docs/development/issues/repros/2026-10-09-method-call-result-keeps-last-arg-f64-type-struct-arg.cyr` (added at the fix,
+verbatim from this section):
+
 ```cyrius
 include "lib/syscalls.cyr"
 struct P { v; }
@@ -128,3 +134,25 @@ expected: exit 20 (the free spelling `fn m(a, q: P): i64` called as `m(1, p) * 1
 ```
 
 The fix above (`SESTYPE(S, 0)` before `_call_ret_marks`) covers it; add it as a third gate row.
+
+## Resolution (6.7.9, the critical lane's bite 8)
+
+- **The method arm** (`_field_load_on`, parse_decl.cyr) ends `ECALLCLEAN` → `_sc_post` → `_mcall_ret(S, mfi)`; the new
+  helper (parse_expr.cyr, beside `_call_ret_marks`) is `SESTYPE(S, 0)` then `_call_ret_marks`, so the method arm's body
+  gains no reference (cybs's per-fn ceiling) and the order is the free call's. Every receiver form takes it: a local,
+  a `*T`, an inline field (`w.v.m(..)`), `self.m(..)`, a bounded `T`'s trait method (a struct or a scalar impl), and the
+  method's struct result before `_method_chain` (`p.mq(1.5).a`). The named-argument form was already reset
+  (`_pd_named`), and the `dyn` call already did both halves.
+- **`_struct_call_emit`** (parse_fn.cyr), the other call that marshals its own arguments into an expression's value,
+  missed the same reset: `mk(1.5).a * 2` for a free fn returning a struct of any size was 0. It resets after
+  `ECALLCLEAN` now. Its other callers are receives and stores, where the type is not read (measured: unchanged).
+- **The PE vector receives** (`var v: f64v2 = f(..);`, the f64v4 form, PE `return f(..);`) end their statement, so no
+  operator ever sees their type: nothing to reset.
+- **Warnings** move with the type: `2 * p.m(1.5)` no longer draws a kind 2, `p.area() * 3` now draws the kind 1 that
+  `fa(&p) * 3` draws, and `p.m(1.5) * 2.0` the kind 2.
+- ⚠ **A generic method whose `V` is `f64`** — `p.id(h) * 2.0` with `fn id<V>(self, w: V): V` and `h: f64` — was right
+  only because the leak handed the LAST argument's type to the result (`p.id2(h, 1) * 2.0` was already wrong). It is
+  now integer arithmetic with a kind-2 warning, exactly as the free spellings `P_id(&p, h) * 2.0` and `gid(h) * 2.0`
+  are: that is [the generic-call issue](2026-10-10-generic-call-f64-result-untyped.md) (the user's decision 1(e), the
+  next bite), whose rows already include a generic method; a note there records why the method spelling needs its own
+  arm.

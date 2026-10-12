@@ -393,27 +393,59 @@ fn _cl_prescan_nested(S): i64 {
 # the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
 # closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
 # still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
-# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`;
-# a struct literal's field (`Pt { x: n, y: 2 }`, in a `{`) keeps its reading. CHANGELOG [6.7.7]
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`.
+# CHANGELOG [6.7.7]
 fn _cl_is_arg_label(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 49) { return 0; }
     if (ti < 1) { return 0; }
     var p = TOKTYP(S, ti - 1);
     if (p != 10 && p != 31) { return 0; }
-    var q = ti - 1;
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o) == 10) { return 1; }
+    return 0;
+}
+# The innermost bracket `(` `[` `{` still open at token `q` (counting `q` itself), or -1.
+fn _cl_open_brk(S, q): i64 {
     var d = 0;
     while (q >= 0) {
         var t = TOKTYP(S, q);
         if (t == 11 || t == 29 || t == 14) { d = d + 1; }
         elif (t == 10 || t == 28 || t == 13) {
-            if (d == 0) {
-                if (t == 10) { return 1; }
-                return 0;
-            }
+            if (d == 0) { return q; }
             d = d - 1;
         }
         q = q - 1;
     }
+    return 0 - 1;
+}
+# ⛔ 6.7.9 — A FIELD NAME IS NOT A READ EITHER. The pre-scan took `y` in `p.y` and in a struct
+# literal's `Pt { x: n, y: 2 }` for a read of the enclosing local `y`: a capture the body never
+# uses, so the closure was refused without lib/alloc.cyr, or built a heap env holding a copy of
+# `y` (6.6.0 - 6.7.8). A field name follows a `.` — but not a range's `..` (`for i in 0..y` reads
+# `y`; the lexer makes `..` two DOT tokens). A literal's label is `IDENT :` just after a `{` or
+# `,` whose innermost unclosed bracket is a `{` opened right after a struct name or a generic
+# struct's closing `>` (`Box<i64> { v: n }`). No other `IDENT :` stands there (`case y:` follows
+# `case`; there is no ternary), so a `case` value and a value after a label stay reads.
+# CHANGELOG [6.7.9]
+fn _cl_is_field_name(S, ti): i64 {
+    if (ti < 2) { return 0; }
+    if (TOKTYP(S, ti - 1) != 41) { return 0; }
+    if (TOKTYP(S, ti - 2) == 41) { return 0; }   # `0..y`: a range's bound
+    return 1;
+}
+fn _cl_is_lit_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 2) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 13 && p != 31) { return 0; }
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 1) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 20 || h == 39 || h == 152) { return 1; }   # `>` `>>` `>>>`: a generic literal's head
+    if (h != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, o - 1)) > 0) { return 1; }
     return 0;
 }
 # One identifier read in a closure body: capture it when it is a free variable.
@@ -421,6 +453,8 @@ fn _cl_prescan_ident(S, noff): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
     if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
+    if (_cl_is_field_name(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `p.y`'s `y`
+    if (_cl_is_lit_label(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `Pt { y: 2 }`'s `y`
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
     if (_cl_shadow_find(S, noff) >= 0) { return 0; }
     var esl = _cl_snap_find(S, noff);
@@ -486,16 +520,25 @@ fn _cl_ctx_woff(b, capi): i64 {
 }
 # Enter a closure literal: save the enclosing capture context (returned, for `_cl_ctx_restore`)
 # and install the closure's snapshot — the enclosing locals `locsnap` (n entries), extended by
-# the enclosing closure's captures when it has any.
-fn _cl_ctx_enter(S, locsnap, n): i64 {
+# the enclosing closure's captures when it has any. `st` is the closure's `_fnst_save` block.
+# ⛔ 6.7.9 — A CLOSURE AT TOP LEVEL HAS NO ENCLOSING FRAME, so none of its names is a capture.
+# A fn's end does not clear the local tables: at top level GFLC and the slot names still hold
+# the LAST fn compiled, and a global the closure read under the name of one of that fn's locals
+# or parameters was captured from a slot of a frame that does not exist (SIGSEGV, or a dead
+# slot's value). The table is still saved and put back around the closure as before; only the
+# capture lookup is empty outside a fn. CHANGELOG [6.7.9]
+fn _cl_ctx_enter(S, locsnap, n, st): i64 {
     var b = _cl_ctx_save();
+    var ls = 0;
+    var ln = 0;
+    if (_fnst_was_infn(st) == 1) { ls = locsnap; ln = n; }
     var m = 0;
     if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) { m = _cl_ncap; } }
-    var x = locsnap;
-    if (m > 0) { x = _cl_snap_extend(S, locsnap, n, m); }
+    var x = ls;
+    if (m > 0) { x = _cl_snap_extend(S, ls, ln, m); }
     _cl_snap = x;
-    _cl_snap_n = n + m;
-    _cl_snap_nl = n;
+    _cl_snap_n = ln + m;
+    _cl_snap_nl = ln;
     return b;
 }
 # A copy of snapshot `ls` (n entries, `_cl_save_locals`' layout) with one entry appended per
@@ -546,7 +589,7 @@ fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
             EFLLOAD(S, obj_slot);
             EADDRA_IMM(S, (wo + k) * 8);   # rax = &env[woff+k] (dest)
             EPUSHR(S);
-            _cl_emit_cap_word(S, base, nl, k);
+            _cl_emit_cap_word(S, base, nl, k, w);
             EPOPC(S);                      # rcx = dest
             ESTORE64(S);
             k = k + 1;
@@ -555,11 +598,26 @@ fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
     }
     return 0;
 }
-# rax = word k of the captured slot `base`: an enclosing local's (6.6.5: word k of an inline
-# aggregate lives at slot base - k), or — for an entry past `nl` — the enclosing closure's own
-# capture `base - nl`, read from that closure's env.
-fn _cl_emit_cap_word(S, base, nl, k): i64 {
-    if (base < nl) { EFLLOAD(S, base - k); return 0; }
+# rax = word k of the captured slot `base` (`w` words wide): an enclosing local's, or — for an
+# entry past `nl` — the enclosing closure's own capture `base - nl`, read from that closure's env.
+# Env word k must be the word at `&base + k*8`: the closure body reads field k there. On the stack
+# that is slot base - k (6.6.5). ⛔ In a suspending `async fn` it is not: the coroutine frame
+# ascends with the slot index and `_ECORO_AGG_OFF` bases an aggregate at its LOW slot, so slot
+# base - k holds word w-1-k, and the slot walk copied every captured struct, tuple and u128 in
+# reverse (`P2 { 1, 2 }` read as `{ 2, 1 }`, silently). There the words are read through the
+# aggregate's address, as every other coroutine consumer reads them; the stack form is unchanged,
+# byte for byte. CHANGELOG [6.7.9]
+fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
+    if (base < nl) {
+        if (w > 1 && _cur_fn_coro == 1) {
+            EFLADDR(S, base);
+            if (k > 0) { EADDRA_IMM(S, k * 8); }
+            ELOAD64(S);
+            return 0;
+        }
+        EFLLOAD(S, base - k);
+        return 0;
+    }
     _CL_CAP_WORDS_RA(S, base - nl);
     if (k > 0) { EADDRA_IMM(S, k * 8); }
     ELOAD64(S);
@@ -1347,12 +1405,26 @@ fn _NEG_F32(S): i64 {
 
 # Unary minus on an integer operand (the pushed 0 below it): `0 - x`. 6.7.6 (D2): on a u128 it is the
 # u128 `0 - x`, all 128 bits (_w128_ilhs). Out of _PARSE_FACTOR_IMPL (cybs's per-fn reference limit).
+# ⛔ `_cfo = 0`: a constant operand (`K`, `E.K`, a `const`) armed the run-time fold, and the next
+# literal operator rewound the code to it, so `-K + 10` folded `5 + 10` (and left the pushed 0 on
+# the stack: `1 + -K * 2` was 10). A unary result is never a foldable constant. CHANGELOG [6.7.9]
 fn _neg_int(S): i64 {
+    _cfo = 0;
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }
     if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
+    SPSC(S, 0);   # 6.7.9: `-q` is a plain integer — no step (see _pexpr_bit_ps)
+    return 0;
+}
+# Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
+# adds 1; see _pexpr_bit_ps), and no armed constant fold either (`~5 * 2` folded `5 * 2`; see
+# _neg_int). CHANGELOG [6.7.9]
+fn _bnot_int(S): i64 {
+    _cfo = 0;
+    ENOTR(S);
+    SPSC(S, 0);
     return 0;
 }
 
@@ -1429,13 +1501,10 @@ fn _FBR_ST(S): i64 {
 }
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
 fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
-# 6.7.8: the left operand's dereference-only kind (`_pkd_lhs`, `_op_lst`) survives the right one's
-# parse, which may hold a `+` / `-` of its own.
+# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does.
 fn _RHS_T(S): i64 {
-    var kl = _pkd_lhs;
     PARSE_TERM(S);
     _fbr_rhs = _FBR_KIND(S);
-    _pkd_lhs = kl;
     return 0;
 }
 
@@ -1700,11 +1769,11 @@ var _w128_cp = 0;
 var _w128_ti = 0;
 # ⛔ 6.7.8 (C2-5) — THE POINTER-KIND STAMP. `*p` reads and writes a narrow `*T`'s element at its
 # width, and the element kind rides the pointer-scale word (C2-3a) — but that word is "the last
-# factor's", not "this value's": nothing clears it when an operator CONSUMES a pointer, so after
-# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it still holds q's word (6.6.17's step leaks the same
-# way — `(x == q) + 1` adds 4; reported, not changed). A value's kind is its OWN only when the
-# producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR / _W128
-# pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
+# factor's", not "this value's": nothing cleared it when an operator CONSUMED a pointer, so after
+# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it held q's word (6.6.17's step leaked the same way —
+# `(x == q) + 1` added 4; 6.7.9 clears the word there, `_pexpr_bit_ps`). A value's kind is its OWN
+# only when the producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR /
+# _W128 pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
 # arithmetic on such a value (`_ptr_add` / `_int_plus_ptr` / `_ptr_sub`), an if-expression whose
 # branches agree (`_ie_finish`), carried across a `)` (`_paren_post`). Every reader of the kind as
 # a value's goes through `_pk_word`, which strips it otherwise; the step is never touched, so all
@@ -1719,43 +1788,13 @@ fn _PK_IS(S): i64 {
     if (GTI(S) != _pk_ti) { return 0; }
     return 1;
 }
-# ⛔ 6.7.8 (C2 review) — THE DEREFERENCE-ONLY KIND of a ONE-byte `n + p`. `n + p` with a `*u8` / `*i8`
-# on the right keeps no step (6.6.17: a step of 1 scales nothing, and the result's pointer-scale word
-# is the LEFT operand's, 0) — so it kept no element kind either, and `*(1 + p)` stored a WORD where
-# `*(p + 1)` stores the byte ("`*p` at the element's width — EVERYWHERE"). Giving the value its step
-# word would change what compiles: `(1 + p8) - q32` would become the different-sizes error and `var
-# q: *u8 = 1 + p;` would stop warning. So the word stays 0 and the kind goes on THIS stamp, which only
-# a dereference reads (`_deref_ed`): written by `_ptr_add` (`n + p`, and `n + v` / `v + n` / `v - n`
-# for such a value `v` — `_pkd_lhs` carries the left one's across the right operand's parse) and by
-# an if-expression whose branches all dereference to that element (`_ie_finish`), carried across a
-# `)` (`_paren_post`, bit 128). Nothing else reads it, so no step, difference, warning or emitted byte
-# changes. CHANGELOG [6.7.8]
-var _pkd_cp = 0;
-var _pkd_ti = 0;
-var _pkd_w = 0;
-var _pkd_lhs = 0;   # the `+` / `-` left operand's (`_op_lst`), kept across the right's parse (`_RHS_T`)
-fn _PKD_MARK(S, w): i64 { _pkd_cp = GCP(S); _pkd_ti = GTI(S); _pkd_w = w; return 0; }
-fn _PKD_IS(S): i64 {
-    if (_pkd_cp == 0) { return 0; }
-    if (GCP(S) != _pkd_cp) { return 0; }
-    if (GTI(S) != _pkd_ti) { return 0; }
-    return 1;
-}
-# The value's dereference-only word (step 1 and an element kind), 0 when it has none.
-fn _pkd_word(S): i64 {
-    if (_PKD_IS(S) == 0) { return 0; }
-    if (GPSC(S) != 0) { return 0; }
-    return _pkd_w;
-}
 # A parenthesised factor carries its result flags across its `)`: the float-builtin kind (low
-# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32), (6.7.8) the pointer-kind stamp (64)
-# and the dereference-only kind (128).
+# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32) and (6.7.8) the pointer-kind stamp (64).
 fn _paren_pre(S): i64 {
     var k = _FBR_KIND(S);
     if (_BX_IS(S) == 1) { k = k + 16; }
     if (_W128_IS(S) == 1) { k = k + 32; }
     if (_PK_IS(S) == 1) { k = k + 64; }
-    if (_PKD_IS(S) == 1) { k = k + 128; }
     return k;
 }
 fn _paren_post(S, k): i64 {
@@ -1763,7 +1802,6 @@ fn _paren_post(S, k): i64 {
     if ((k & 16) != 0) { _bxr_ti = GTI(S); }
     if ((k & 32) != 0) { _w128_ti = GTI(S); }
     if ((k & 64) != 0) { _pk_ti = GTI(S); }
-    if ((k & 128) != 0) { _pkd_ti = GTI(S); }
     return 0;
 }
 
@@ -2582,7 +2620,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_ta_do == 0) {
         _ta_explicit = 1;               # set right before the call that reads it (see below)
         PARSE_FNCALL(S, noff);          # all-i64: call the base
-        _call_ret_ps(S, fi);            # 6.6.17: a `*T` return's pointer scale
+        _call_ret_marks(S, fi);         # 6.6.17: a `*T` return's pointer scale (6.7.9: + an f64)
         return 0;
     }
     # non-i64: monomorphize on demand + call the specialized fn.
@@ -2601,7 +2639,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
-    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_ps(S, _spec); }
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
     else { PARSE_FNCALL(S, noff); }
     return 0;
 }
@@ -2613,7 +2651,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
 # else — every builtin, `callptr` / `fncallN`, an untyped or scalar return — is a plain value.
 # `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
 # `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
-# The method arm sets its result's scale itself (`_call_ret_ps`). CHANGELOG [6.6.17]
+# The method arm sets its result's scale itself (`_mcall_ret`). CHANGELOG [6.6.17]
 fn _call_scale_fix(S, ti): i64 {
     var t = TOKTYP(S, ti);
     var o = 0 - 1;
@@ -2631,8 +2669,24 @@ fn _call_scale_fix(S, ti): i64 {
         var fi = _pair_gen_inst(S, ti);
         if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
         _lsc_free(S, ti, o, fi);   # 6.7.6: a struct result, for a left operand
+        _gcall_ret_f64(S, ti, fi);  # 6.7.9: an inferred instance's f64
     }
     SPSC(S, ps);
+    return 0;
+}
+# ⛔ 6.7.9 — AN INFERRED GENERIC CALL'S f64 RESULT WAS AN UNTYPED WORD. The call arm types a result
+# from FINDFN's entry, which for a generic is its i64 BASE (`: T` an i64), while the call reaches
+# the instance its arguments bind: `gid(h)` with `h: f64` calls `gid$f64`, whose `: T` is an f64
+# return (`_gtype_tp_ret`). `gid(h) * 2.0` multiplied the double's bits. The instance `fi` the
+# call at `ti` reached types it here, as `_call_ret_marks` does a `: f64` fn's; the explicit
+# spelling `gid<f64>(h)` types its own (`_explicit_generic_call`). CHANGELOG [6.7.9]
+fn _gcall_ret_f64(S, ti, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    if (GFRS(S, fi) != 0 - 9) { return 0; }
+    if (GFRS(S, FINDFN(S, TOKVAL(S, ti))) == 0 - 9) { return 0; }   # the call arm typed it
+    EMOVQ_A_X0(S);
+    SESTYPE(S, F64_TYID);
     return 0;
 }
 # After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
@@ -2643,6 +2697,16 @@ fn _call_ret_marks(S, fi): i64 {
     if (GFRS(S, fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
     _call_ret_ps(S, fi);
     return 0;
+}
+# ⛔ 6.7.9 — A METHOD CALL'S RESULT KEPT ITS LAST ARGUMENT'S TYPE. The method arm of
+# `_field_load_on` has no PARSE_FNCALL, so neither half of a free call's result typing ran: the
+# arguments' expression type survived the call (`p.m(1.5) * 2` with `m: i64` multiplied bit
+# patterns as doubles — 0; `p.m(p) * 10` dispatched `P_mul`), and a `: f64` method's result was
+# never typed f64 (`p.area() + 1.0` added integers). Both halves now, in a free call's order:
+# the reset (PARSE_FNCALL's v6.4.56 D3), then `_call_ret_marks` on the callee. CHANGELOG [6.7.9]
+fn _mcall_ret(S, fi): i64 {
+    SESTYPE(S, 0);
+    return _call_ret_marks(S, fi);
 }
 
 # 1 = `syscall(sc_num, ..)` with `got` user arguments is a KNOWN cross-target shape, not an
@@ -2981,7 +3045,8 @@ fn _arr_sub_stmt(S, noff): i64 {
 # (`_sub_post`); stores: PARSE_FIELD_STORE's `[` arm (`_fld_sub_store`), a call statement through
 # `_stmt_qmark` / `_stmt_call_field` (`_stmt_call_sub`), the classic-for step (`_step_call_sub`). The
 # element comes from the base's DECLARATION — a field's `_fld_ps`, a callee's `_fn_rps`, a method's
-# word (`_call_ret_ps`) — never from a pointer scale an argument left behind (`mk(q).n` keeps q's).
+# word (`_call_ret_ps`) — never from a pointer scale an argument left behind (`mk(q).n` kept q's
+# until 6.7.9).
 # Every other base is refused by name at the `[`, the brackets consumed: a field that is no `*T`, a
 # call returning none (a builtin, `callptr`, `fncallN`), `a[i][j]`, `&a[i]`, `(expr)[i]`, a literal;
 # a field / call this file cannot resolve is consumed silently under --syntax-only. No program that
@@ -3642,7 +3707,7 @@ fn _pk_word(S): i64 {
 # The PARSE_FACTOR wrapper's end (the factor began at token ti0): vouch for the word's kind when
 # its own producer wrote it last — a bare name (its slot / capture / global mark), a field whose
 # declaration is that `*T` (`_sub_word`: the load ended at the cursor), a call whose callee — or
-# method — declares it. `mk(q).n` keeps q's word and `-q` / `~q` theirs: not vouched for. `(E)`
+# method — declares it. `mk(q).n`, `-q` and `~q` are not vouched for (6.7.9: they keep no word). `(E)`
 # carries E's own stamp across the `)` (`_paren_post`).
 fn _pk_post(S, ti0): i64 {
     var w = GPSC(S);
@@ -3660,13 +3725,11 @@ fn _pk_post(S, ti0): i64 {
 # ⛔ 6.7.8 (C2-5) — `*p` AT THE ELEMENT'S WIDTH (the user's decision, 2026-10-10: "`*p`, `*p = v`,
 # `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32 rounding included)
 # read and write at the element's width, the same rule `p[i]` gets"). The element of a `*expr`
-# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, `n + p`
-# (a one-byte one through its dereference-only kind, `_pkd_word`), a parenthesised one — as its
-# descriptor (step 1, 2 or 4; an integer or an f32), else 0: the operand is a word address
-# (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
+# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, `n + p`,
+# a parenthesised one — as its descriptor (step 1, 2 or 4; an integer or an f32), else 0: the
+# operand is a word address (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
 fn _deref_ed(S): i64 {
     var w = _pk_word(S);
-    if (w == 0) { w = _pkd_word(S); }
     var st = _ps_step(w);
     if (st < 1) { return 0; }
     if (st > 4) { return 0; }
@@ -3744,8 +3807,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     if (typ == 37) {
         STI(S, GTI(S) + 1);
         PARSE_FACTOR(S);
-        ENOTR(S);
-        return 0;
+        return _bnot_int(S);
     }
     if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); SESTYPE(S, F64_TYID); return 0; }
     # sizeof(Type) — compile-time constant (detected as IDENT "sizeof")
@@ -4092,7 +4154,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # The slot's CONTENT already IS the struct's address — load it. No `_fn_local_addr`
                 # here, deliberately: this frame's address does NOT escape (the pointer is the
                 # CALLER's), so a tail call in this fn stays legal. CHANGELOG [6.6.6]
-                if (_local_is_sptr_param(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
+                # 6.7.9: never for a `q: *P` parameter, whose `&q` is its slot (`_addr_is_slot_content`).
+                if (_addr_is_slot_content(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
                 var adisp = 0 - ((ali + 1) * 8);
                 # v4.9.1: shift past all reserved callee-saved slots
                 if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
@@ -5202,13 +5265,6 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         return 0;
     }
     if (typ == 8) { return _deref_read(S); }   # *expr
-    if (typ == 37) {
-        # ~ bitwise NOT
-        STI(S, GTI(S) + 1);
-        PARSE_FACTOR(S);
-        ENOTR(S);
-        return 0;
-    }
     if (typ == 135) {
         # v6.3.11 (G): await e — force a Future to its value. Lowers to
         # future_force(e): eval the operand factor (→ rax = the Future object built
@@ -5317,7 +5373,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # slots, and restores the cursor.
         # 6.6.17: the whole enclosing capture context, and a snapshot that also lists the
         # enclosing closure's captures (`_cl_ctx_enter`).
-        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc);
+        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc, cl_st);
         _cl_prescan_captures(S, cl_zero);
         var cl_cap_shift = 0;
         if (_cl_capturing == 1) { cl_cap_shift = 1; }
@@ -5508,7 +5564,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
             # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
             # 6.6.5: an AGGREGATE capture copies all its words. Word k of an enclosing
-            # inline aggregate lives at slot (base - k) and lands at env[woff + k], so
+            # inline aggregate — the word at `&base + k*8` (on the stack slot base - k; in a
+            # coroutine frame not, see `_cl_emit_cap_word`) — lands at env[woff + k], so
             # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
             # enclosing frame — which is what lets the body reuse the ordinary field math.
             # 6.6.17: a capture of the enclosing closure's own capture copies from its env.
@@ -6163,6 +6220,10 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp == 15) { return PARSE_IF_EXPR(S); }   # 6.7.4 (B3): `if (c) { a } else { b }` as a value
     var r = _PARSE_INTRIN_IMPL(S, ptyp);
     if (r != 1) { return r; }
+    # 6.7.9: a builtin's result is a plain value (6.6.17's call rule, `_call_scale_fix`) at BOTH
+    # tiers — PARSE_TERM's own dispatch skips the factor wrapper that applies it, so with `q: *i32`
+    # `bitget(m, 0, q) + 1` kept the last argument's step and added 4. CHANGELOG [6.7.9]
+    SPSC(S, 0);
     var k = _NEG_INTRIN_KIND(ptyp);
     if (k != 0) { _FBR_MARK(S, k); }
     # 6.7.3: f64_eq / f64_lt / f64_gt (68-70) and f64_le / f64_ge (164-165) are comparisons.
@@ -6532,6 +6593,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             ELOAD64(S);                       # rax = [result_ptr + 8] = payload
             _cfo = 0;                         # invalidate const-fold tracking
         }
+        SPSC(S, 0);   # 6.7.9: the payload is a plain value — `(p?) + 1` kept p's step (_pexpr_bit_ps)
     }
     var go = 1;
     while (go == 1) {
@@ -6545,7 +6607,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
@@ -6606,7 +6668,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
                             var crv = PEEKV(S);
@@ -6702,6 +6764,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     }
                                     else { go = 0; }
                                 } } } } } } }
+        if (go == 1) { SPSC(S, 0); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps)
     }
     return 0;
 }
@@ -6712,7 +6775,8 @@ fn _PARSE_TERM_IMPL(S): i64 {
 # `n + p` with the integer on the left stepped 1 where `p + n` steps sizeof(T). Now (ps = the
 # left operand's step, rs = the right one's, both 0 for a plain value):
 #   p + n, p - n      the integer steps ps (unchanged)
-#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`)
+#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`); 6.7.9: a one-byte
+#                     `*T` (`*u8` / `*i8`, nothing to scale) keeps its word too (`_add_word`)
 #   p - q             the ELEMENT count (p - q) / ps when ps == rs; a NAMED ERROR when the steps
 #                     differ (`*i64 - *u8`, `*Pt - &buf`) — the result has no honest unit. Two
 #                     pointers to different types of the same size cannot be told apart: the step
@@ -6723,28 +6787,22 @@ fn _ptr_add(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
     var rs = _pk_word(S);   # 6.7.8 (C2-5): the right operand's kind only when its own
     if (ps == 0) { if (_ps_step(rs) > 1) { return _int_plus_ptr(S, rs); } }   # 6.7.8: the step, not the word
-    var dw = _pkd_add(S, ps, rs);   # 6.7.8: before the add — the right operand's stamps hold until then
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EUNSPILL(S);
     EADDR(S);
-    _pk_set(S, ps);
-    if (dw != 0) { _PKD_MARK(S, dw); }
-    return 0;
+    return _pk_set(S, _add_word(ps, rs));
 }
-# The dereference-only kind (`_PKD_MARK`) of an integer `+` (no step on the left, `ps`; the right
-# one's own word `rs`): a one-byte `*T` on the right (`n + p`) gives its word; else the right
-# operand's (`n + (m + p)`), else the left one's (`(n + p) + m`, `_pkd_lhs`). 0 for anything else.
-fn _pkd_add(S, ps, rs): i64 {
-    if (ps != 0) { return 0; }
-    if (rs != 0) {
-        if (_ps_step(rs) != 1) { return 0; }
-        if (((rs >> 40) & 0xFF) == 0) { return 0; }
-        return rs;
-    }
-    var rd = _pkd_word(S);
-    if (rd != 0) { return rd; }
-    return _pkd_lhs;
+# `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
+# user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
+# `*u8` where `p8 + 1` is one: `(1 + p8) - q32` built a byte difference and `var r: *u8 = 1 + p8;`
+# warned. A step 1 with no element kind (`&x`, a narrow scalar local) is no `*T`: not written.
+# CHANGELOG [6.7.9]
+fn _add_word(ps, rs): i64 {
+    if (ps != 0) { return ps; }
+    if (_ps_step(rs) != 1) { return 0; }
+    if (((rs >> 40) & 0xFF) == 0) { return 0; }
+    return rs;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
 # step word (6.7.8): the multiplier is its step, and the result keeps the word.
@@ -6766,15 +6824,11 @@ fn _ptr_sub(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }   # 6.7.6 (D2): `n - x` with a u128 x
     var rs = GPSC(S);
     if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
-    var dw = 0;   # 6.7.8: `(n + p) - m` keeps the left one's dereference-only kind; `v - q` is a difference
-    if (ps == 0) { if (rs == 0) { if (_pkd_word(S) == 0) { dw = _pkd_lhs; } } }
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
-    _pk_set(S, ps);
-    if (dw != 0) { _PKD_MARK(S, dw); }
-    return 0;
+    return _pk_set(S, ps);
 }
 # Pointer arithmetic's result: the pointer operand's word (`ps` / `rs`, read through `_pk_word`, so
 # its kind is there only when that operand's own), stamped as this value's. 6.7.8 (C2-5)
@@ -6923,7 +6977,6 @@ fn _op_lhs_sv(S, fi, beg, opti): i64 {
 # own struct, so a missing operator fn is refused by name as for a struct variable. Returns the
 # operand's struct for the `+ - * /` arms, else `_FBR_ST` as before. CHANGELOG [6.7.6]
 fn _op_lst(S, beg): i64 {
-    _pkd_lhs = _pkd_word(S);   # 6.7.8: a one-byte `n + p` left operand's dereference-only kind
     _lsc_hit = 0;
     if (_lsc_cp == GCP(S)) {
         if (_lsc_span(S, beg) == 1) {
@@ -7092,6 +7145,11 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
     SESTYPE(S, 0);
+    # ⛔ 6.7.9 — the result's step is the operator fn's DECLARED one, as its free call's is (6.6.17):
+    # `: *T` steps sizeof(T), any other return none — `(v + q) + 1` took q's (bite 5), and the review
+    # found bite 5's flat 0 stepped a `: *i32` result by 1. The `+` / `-` loop takes it as its left
+    # step (`v + q + 1`), and the `*` / `/` loop skips its own reset (`v * q + 1`). CHANGELOG [6.7.9]
+    SPSC(S, _fn_ret_ps(ofi));
     _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
@@ -7145,6 +7203,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, n);
     SESTYPE(S, 0);
+    SPSC(S, 0);   # 6.7.9: a struct result is no pointer (EMIT_OP_DISPATCH; the `*` / `/` loop skips its reset)
     _sc_post(S, ofi, opnoff, beg, t);
     return 0;
 }
@@ -7208,6 +7267,25 @@ fn PEXPR(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.9 — A POINTER'S STEP OUTLIVED THE OPERATOR THAT CONSUMED THE POINTER. The pointer-scale
+# word is the LAST factor's, and only `+` / `-` wrote their result's back, so after any other
+# operator whose last operand was `q: *i32` the next `+ n` / `- n` stepped 4: `(x == q) + 100` was
+# 401, `(m & q) + 1` 4, `(-q) + 1` -q + 4, `mk(q).n + 1` 4 — silent, every target, 6.6.17-6.7.8.
+# An operator that produces a plain integer now leaves no step (the user's decision 1(a),
+# 2026-10-11): a comparison and an `&&` / `||` link (_PLOGIC_ATOM, _PLOGIC_AND, PCMPE); `* / % <<
+# >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
+# _bnot_int); an operator fn's result with no `: *T` return (EMIT_OP_DISPATCH: a `: *T` one steps
+# by T, as its free call does); a field that is no `*T`
+# (_field_load_type, parse_decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
+# `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
+# the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
+fn _pexpr_bit_ps(S, typ, ps): i64 {
+    if (typ == 27) { SPSC(S, 0); return 0; }
+    if (typ == 35) { SPSC(S, 0); return 0; }
+    if (typ == 36) { SPSC(S, 0); return 0; }
+    return ps;
+}
+
 fn _PEXPR_IMPL(S): i64 {
     var _xbeg = GTI(S);   # every `+` / `-` dispatch's lhs starts here (left-assoc) (6.6.6)
     PARSE_TERM(S);
@@ -7229,7 +7307,7 @@ fn _PEXPR_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
+            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
             else {
                 # Fold only if right side is a plain literal (not followed by * / % << >>)
                 var add_can_fold = 0;
@@ -7258,7 +7336,7 @@ fn _PEXPR_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
+                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
                 else {
                     var sub_can_fold = 0;
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
@@ -7394,6 +7472,7 @@ fn _PEXPR_IMPL(S): i64 {
                                         }
                                         else { go = 0; }
                                     } } } } } } } }
+        ps = _pexpr_bit_ps(S, typ, ps);   # 6.7.9: `& | ^` give no pointer
     }
     return 0;
 }
@@ -7494,6 +7573,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 }
             }
             _cfo = 0;
+            SPSC(S, 0);    # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps)
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
         }
     }
@@ -7532,6 +7612,7 @@ fn _PLOGIC_AND(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 0);                 # short-circuited (left false) → result 0
         EPATCH(S, p_end);
+        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
         _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
         lop = PEEKT(S);
     }
@@ -7571,6 +7652,7 @@ fn PCMPE(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 1);                 # short-circuited (left true) → result 1
         EPATCH(S, p_end);
+        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
         _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
         lop = PEEKT(S);
     }

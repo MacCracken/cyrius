@@ -1,0 +1,21 @@
+# TLS12_RANDOM_LEN is a writable public var (lib/tls_native_hs12.cyr:150, initialised from
+# `const _TLS12_RANDOM_LEN = 32`), and tls_native_12_master_secret copies TWO randoms of
+# TLS12_RANDOM_LEN bytes each into `var seed[_TLS12_SEED_LEN]` — a 64-byte stack array sized by
+# the const. After the var is raised the copy runs off the end of the stack frame.
+# Actual on 6.7.9-dev (x86_64 Linux): killed by SIGSEGV (exit 139), "returned" never printed.
+# Expected: "returned", exit 0 — the PRF seed copy bounded by the storage it fills.
+#   cat docs/development/issues/repros/2026-10-11-tls12-random-len-writable-bound.cyr \
+#     | build/cycc > /tmp/tr && chmod +x /tmp/tr && /tmp/tr; echo "exit $?"
+include "lib/tls_native.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    TLS12_RANDOM_LEN = 256;
+    var cr = alloc(256); var sr = alloc(256); var pm = alloc(48); var out = alloc(48);
+    memset(cr, 65, 256); memset(sr, 66, 256); memset(pm, 1, 48);
+    tls_native_12_master_secret(0xC02F, pm, 48, cr, sr, out);
+    syscall(1, 1, "returned\n", 9);
+    return 0;
+}
+var rc = main();
+syscall(60, rc);

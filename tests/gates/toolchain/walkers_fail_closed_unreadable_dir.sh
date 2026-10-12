@@ -239,7 +239,8 @@ else
     chmod 000 "$M/tests/smcyr"
     cy "$M" smoke
     chmod 755 "$M/tests/smcyr"
-    check "W11 \`cyrius smoke\` with tests/smcyr unreadable: rc 1, named, never 'No smoke harnesses found'" "1 yes no" "$RC $(has 'cannot list directory: tests/smcyr') $(has 'No smoke harnesses found')"
+    # 'smoke harnesses found' matches the empty-corpus line both before and after 6.7.9 reworded it.
+    check "W11 \`cyrius smoke\` with tests/smcyr unreadable: rc 1, named, never the empty-corpus line" "1 yes no" "$RC $(has 'cannot list directory: tests/smcyr') $(has 'smoke harnesses found')"
 
     mkdir -p "$K/tests/scyr"
     printf 'var r = 0;\nsyscall(60, r);\n' > "$K/tests/scyr/h.scyr"

@@ -1,6 +1,9 @@
-# A closure made inside a suspending `async fn` captures a multi-word struct or tuple with its words reversed — OPEN
+# A closure made inside a suspending `async fn` captures a multi-word struct or tuple with its words reversed — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc`
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 12, l679-crit; CHANGELOG [6.7.9]) The env copy reads a multi-word local of a coroutine through the aggregate's address (`EFLADDR(base)` + k*8, as every other coroutine consumer of it does), so env word k is field k: the repro exits 73 (was 91) on x86_64 and PE (wine); every captured struct, tuple, u128, array and slice is in field order. Rows: `frontend/coroutine_midbody_suspend.sh` axis 11 (twelve shapes, the closure before and after the await) and `frontend/tuple_checked.sh` AS3, mutation-proven. The stack form is byte-identical.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above and *Resolution* below (reproduced on the 6.7.9 lane tip
+@ 767f8a54 before the fix: the repro exits 91). As filed: 🟡 OPEN — reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc`
 1,916,288 B, `CYRIUS_ASYNC=1`) on x86_64. The repro compiles clean and exits 91: the 2-word `P2 { 1, 2 }` read 12
 and the 3-word `P3 { 1, 2, 3 }` read 123, where 21 and 321 are right (exit 73). A captured tuple `(1, 2)` reads 12 the
 same way. With the `await` removed (no coroutine) the repro exits 73. A direct read of the struct in the coroutine
@@ -101,3 +104,27 @@ the `await`. Add a mutation that restores the slot walk. Then the B4 gate can pi
 
 Inside a suspending `async fn`, capture the fields as scalars (`var px = p.x; var py = p.y; || py * 10 + px`), or
 capture a pointer to the struct.
+
+## Resolution (6.7.9, the critical lane's bite 12)
+
+- **The fix is the proposed one, behind the coroutine test**: `_cl_emit_cap_word` (parse_expr.cyr) takes the capture's
+  width from `_cl_emit_env_caps`. For an enclosing local of `w > 1` words in a coroutine body (`_cur_fn_coro`, a
+  common variable, so the aarch64 and cx forks need no stub), word k is `EFLADDR(S, base)`, `EADDRA_IMM(k * 8)`,
+  `ELOAD64`. `EFLADDR` goes through `_ECORO_LEA` / `_ECORO_AGG_OFF`, so the copy and the closure body agree on where the
+  block is. A single-word capture keeps `EFLLOAD`, and the stack form is unchanged. A capture of an enclosing closure's
+  capture reads that closure's env by word offset, as before.
+- **Wider than filed**: every multi-word local was reversed, not only structs and tuples. A struct from a call, a
+  `var q: P2 = p;` copy, a `u128`, an `i64[3]` array and a slice were reversed too (the slice came back as garbage).
+  So were scalars around a struct and a nested closure capturing through the outer one. All of them are now in field
+  order. The u128 capture that the 6.7.13 filing (`2026-10-08-u128-params-returns-fields-captures.md`, item 4) describes
+  now gets its words in order in a coroutine. Its read as a value is still that filing's to fix.
+- **Rows**: `tests/gates/frontend/coroutine_midbody_suspend.sh` axis 11 has twelve shapes, each against a non-async
+  control with the same body, with `trash()` between the forces. With the fix removed every row is red (exit 101 first).
+  `EFLADDR(base - k)` per word is red too. The arm taken for every `w > 1` capture, coroutine or not, stays green: on
+  the stack `&base + k*8` is slot base - k, and the coroutine test only keeps those bytes unchanged.
+  `tests/gates/frontend/tuple_checked.sh` AS3 is the B4 row this filing asked for: a tuple captured before and after an
+  await (34512 before the fix, 54321 now).
+- **Targets**: x86_64 Linux and PE (wine, a private prefix) were measured: the repro gives 91 → 73 and the axis-11 probe
+  101 → 0 on both. The x86 Mach-O build compiles the probe; ach was not run, because the bite is not hardware-bound
+  and Mach-O shares the x86 emitter's `EFLADDR`. aarch64 and cx refuse a suspending `async fn`.
+- **Unchanged**: 798 tree sources compile byte-identically, `CYRIUS_ASYNC=1`, stdout, stderr and exit code.
