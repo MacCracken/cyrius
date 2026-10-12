@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.10] — 2026-10-12
+
 ## [6.7.9] — 2026-10-11
 
 **yantra 1.0.10 refolded** — `lib/yantra.cyr` is `cyrius distlib` at the tag (`53694cc`) with 6.7.9's distlib,

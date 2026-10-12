@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.9** (2026-10-11, release gate GREEN) — the repair batch · cycc **2,057,736 B** · `.text` **1,845,440** · `cycc-native-aarch64` **1,881,280 B** · **562** `.tcyr`, **267** in `crossos/` · **106** `lib/*.cyr` · **467** shell gates under `tests/gates/<bucket>/` · api-surface **5,835** · **101** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.10** (2026-10-12) — the repair batch · cycc **2,057,736 B** · `.text` **1,845,440** · `cycc-native-aarch64` **1,881,280 B** · **562** `.tcyr`, **267** in `crossos/` · **106** `lib/*.cyr` · **467** shell gates under `tests/gates/<bucket>/` · api-surface **5,835** · **101** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -119,11 +119,16 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 `build/cycc`) · P5-B (`src/` + cbt: the `EFNPRO` sites, the three backend EFNPROs, the forks, the coverage verb) ·
 the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row and the sigil no-warning gate).
 
-**Decisions at the open.**
-- The handle line: option 1 (handle), 2 (refuse or warn) or 3 (document).
-- The cstring wire shape: NULL ↔ `null`, decoded as a fresh copy.
-- P5-B: granularity, sink (a Windows mapping route), hosts, spelling, whether a nonzero exit fails the run, whether
-  `.tcyr` files are executed.
+**Decided at the open (user, 2026-10-12; `~/.cache/c6/6710_decisions.md`).**
+- **The handle line:** a struct local of 8 B or less initialised from anything that is not a struct value of its type
+  is a HANDLE, as over 8 B; a struct literal or value still copies — one rule for every size (a behaviour change:
+  CHANGELOG + `ecosystem-migration.md`).
+- **The cstring wire shape:** a NULL `: cstring` field ↔ JSON `null`; non-NULL ↔ an escaped JSON string, decoded as a
+  fresh NUL-terminated copy.
+- **P5-B depth:** per-fn hit counters set after each prologue, dumped when the program exits (lost on a crash or
+  kill); every target, no new OS route. Flag off ⇒ byte-identical output.
+- **P5-B CLI:** a new `cyrius coverage --exec` / `[coverage] exec` — `[coverage] programs` keeps meaning text coverage;
+  `.tcyr` files are executed too; a nonzero exit fails the run by name; Linux, macOS and Windows.
 
 **Hosts.** B7's all-sizes crossos file on all four. P5-B on the hosts its decision names. `cyrius pulsar`.
 
