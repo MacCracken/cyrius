@@ -62,6 +62,7 @@ fn _SYSX_MEANT(n): i64 {
     if (n == 294) { return "inotify_init1"; }
     if (n == 254) { return "inotify_add_watch"; }
     if (n == 255) { return "inotify_rm_watch"; }
+    if (n == 271) { return "ppoll"; }
     if (n == 257) { return "openat"; }
     if (n == 258) { return "mkdirat"; }
     if (n == 264) { return "renameat"; }
@@ -122,6 +123,7 @@ fn _SYSX_USE(n): i64 {
     if (n == 294) { return "SYS_INOTIFY_INIT1"; }
     if (n == 254) { return "SYS_INOTIFY_ADD_WATCH"; }
     if (n == 255) { return "SYS_INOTIFY_RM_WATCH"; }
+    if (n == 271) { return "SYS_PPOLL"; }
     if (n == 257) { return "SYS_OPENAT"; }
     if (n == 258) { return "SYS_MKDIRAT"; }
     if (n == 264) { return "SYS_RENAMEAT"; }
@@ -188,6 +190,7 @@ fn _SYSX_ACTUALLY(n): i64 {
     if (n == 97) { return "unshare"; }
     if (n == 292) { return "io_pgetevents"; }
     if (n == 294) { return "kexec_file_load"; }
+    if (n == 271) { return "process_vm_writev"; }
     if (n == 264) { return "name_to_handle_at"; }
     if (n == 265) { return "open_by_handle_at"; }
     if (n == 268) { return "setns"; }
