@@ -23,7 +23,7 @@ function activate(context) {
   if (!lspPath) {
     const vscode = require("vscode");
     vscode.window.showWarningMessage(
-      "cyrius-lsp not found. Install it to ~/.local/bin/cyrius-lsp for diagnostics."
+      "cyrius-lsp not found (looked in $CYRIUS_HOME/bin, ~/.local/bin, /usr/local/bin). The Cyrius toolchain installs it to ~/.cyrius/bin."
     );
     return;
   }

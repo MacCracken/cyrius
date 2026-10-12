@@ -16,7 +16,7 @@ vim.api.nvim_create_autocmd("FileType", {
       name = "cyrius-lsp",
       cmd = { "cyrius-lsp" }, -- must be in PATH or use absolute path
       root_dir = vim.fs.dirname(
-        vim.fs.find({ "cyrius.toml", ".git" }, { upward = true })[1]
+        vim.fs.find({ "cyrius.cyml", ".git" }, { upward = true })[1]
       ),
     })
   end,

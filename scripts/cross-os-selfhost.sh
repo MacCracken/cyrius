@@ -37,7 +37,7 @@ set -e
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
 unset CYRIUS_BOUNDS CYRIUS_POISON
 
-HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install> [tcyr-glob]}"
+HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install> [tcyr-subdir]}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }

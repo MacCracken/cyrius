@@ -798,8 +798,8 @@ fn READFILE(path, dst, maxsz): i64 {
     # allowed via CYRIUS_ALLOW_PARENT_INCLUDES=1. Bote (and any project
     # with sibling-directory deps via `[deps.X] path = "../foo"`) needs
     # the override; default behavior stays strict for untrusted-source
-    # builds. `cyrius build` can set the env automatically when it
-    # resolves deps with a relative `..` path.
+    # builds. `cyrius build` does not set it: a project whose deps sit at a
+    # relative `..` path sets CYRIUS_ALLOW_PARENT_INCLUDES=1 itself.
     var _env_parent = _read_env("CYRIUS_ALLOW_PARENT_INCLUDES");
     var allow_parent = 0;
     if (_env_parent != 0) {
