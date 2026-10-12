@@ -1,0 +1,107 @@
+# sock_set_nodelay.tcyr — 6.7.9: lib/net.cyr's `sock_set_nodelay(fd, on)` sets and clears
+# TCP_NODELAY on every target that has TCP options, and declines -38 on agnos. CHANGELOG [6.7.9]
+#
+# THE GAP THIS GUARDS: net.cyr had no NODELAY helper, so callers (yantra's `_cdp_set_nodelay`, on
+# every CDP connect) dropped to the raw `sys_setsockopt(fd, 6, 1, &one, 4)` — which on Windows is
+# the peer's -38 decline (lib/syscalls_windows.cyr: the raw wrappers take Linux option numbers),
+# so NODELAY was never set there and every request-response round trip paid the ~40 ms Nagle /
+# delayed-ACK stall, silently (the caller ignored the -38). The helper takes net.cyr's own route
+# (ws2_32 setsockopt on Windows), the one sock_reuse and the timeouts use.
+#
+# Each row READS THE OPTION BACK with getsockopt (raw: 55 on POSIX, the 0xF026 ws2_32 reroute on
+# PE), so a setter that returns 0 without setting anything fails. A read primes its buffer with a
+# sentinel, so a getsockopt that writes nothing cannot read as "clear". Any non-zero value reads as
+# set: Darwin answers `t_flags & TF_NODELAY` (4), not 1. The length getsockopt reports is honoured
+# (4 on POSIX; Winsock may answer a 1-byte BOOLEAN).
+#
+# Rows per target:
+#   Linux / macOS / Windows — set reads back set, clear reads back clear, a wide `on`
+#                             (0x100000000, whose low 32 bits are 0) still sets, and a bad fd is
+#                             an error (-EBADF on POSIX, -WSAENOTSOCK on Windows), never a 0.
+#   agnos                   — -38: agnos has no TCP options. agnos runs this file only through the
+#                             corpus cross-compile gate; the row is asserted, not skipped.
+# MUTATIONS (6.7.9): the helper deleted → the file does not compile; its Windows arm through the
+# raw sys_setsockopt → wine's set row reads -38; `store32(&v, on)` unnormalised → the wide-`on`
+# row reads clear; the option number 1 → 2 (TCP_MAXSEG) → the set row reads back clear.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# TCP_NODELAY on `fd` as getsockopt reports it (0 = clear, non-zero = set), or a negative code:
+# -1000 getsockopt failed, -2000 - n an unexpected option length n.
+fn _nd_get(fd): i64 {
+    var v[8];
+    var len[8];
+    store64(&v, 0x5A5A5A5A5A5A5A5A);               # a sentinel: an unwritten buffer is not "clear"
+    store64(&len, 4);                              # socklen_t (POSIX) / int (Winsock), 4 B
+    var r = 0;
+    #ifdef CYRIUS_TARGET_WIN
+    r = syscall(0xF026, fd, 6, 1, &v, &len) & 0xFFFFFFFF;    # ws2_32 getsockopt: an int result
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    r = syscall(55, fd, 6, 1, &v, &len);           # getsockopt(IPPROTO_TCP, TCP_NODELAY)
+    #endif
+    if (r != 0) { return 0 - 1000; }
+    var n = load32(&len) & 0xFFFFFFFF;
+    if (n == 1) { return load8(&v) & 0xFF; }
+    if (n == 4) { return load32(&v) & 0xFFFFFFFF; }
+    return 0 - 2000 - n;
+}
+
+# 1 when getsockopt reads TCP_NODELAY set (any non-zero value); else _nd_get's answer (0 = clear,
+# negative = the read failed), so a failing row prints what was read.
+fn _nd_set(fd): i64 {
+    var g = _nd_get(fd);
+    if (g > 0) { return 1; }
+    return g;
+}
+
+fn _nd_run(): i64 {
+    var t, fd = tcp_socket();
+    assert_eq(is_err_result(t), 0, "tcp_socket");
+    if (is_err_result(t) == 1) { return 0 - 1; }
+
+    assert_eq(sock_set_nodelay(fd, 1), 0, "sock_set_nodelay(fd, 1) returns 0");
+    assert_eq(_nd_set(fd), 1, "after sock_set_nodelay(fd, 1), getsockopt reads TCP_NODELAY set (non-zero)");
+
+    assert_eq(sock_set_nodelay(fd, 0), 0, "sock_set_nodelay(fd, 0) returns 0");
+    assert_eq(_nd_get(fd), 0, "after sock_set_nodelay(fd, 0), getsockopt reads TCP_NODELAY clear (0)");
+
+    # The option is an int: an `on` whose low 32 bits are 0 must still set it.
+    assert_eq(sock_set_nodelay(fd, 0x100000000), 0, "sock_set_nodelay(fd, 0x100000000) returns 0");
+    assert_eq(_nd_set(fd), 1, "a wide non-zero `on` (low 32 bits 0) sets TCP_NODELAY, never clears it");
+
+    sock_close(fd);
+
+    # A bad fd reaches the real setsockopt and fails: never a 0 from a stub or a dropped result.
+    var b = sock_set_nodelay(0 - 1, 1);
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(b, 0 - 10038, "sock_set_nodelay on socket -1 is -WSAENOTSOCK(10038)");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(b, 0 - 9, "sock_set_nodelay on fd -1 is -EBADF(9)");
+    #endif
+    return 0;
+}
+#endif
+
+fn _nd_main(): i64 {
+    test_group("sock_set_nodelay sets / clears TCP_NODELAY (agnos: declines -38)");
+    #ifdef CYRIUS_TARGET_AGNOS
+    assert_eq(sock_set_nodelay(3, 1), 0 - 38, "sock_set_nodelay declines with -ENOSYS(-38) on agnos");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    _nd_run();
+    #endif
+    return 0;
+}
+
+_nd_main();
+var r = assert_summary();

@@ -15,10 +15,10 @@
 # ⭐ THE TARBALL HERE IS release.yml's. The step's `run:` body is read out of the workflow and run
 # under `bash -e` (GitHub's default `run:` shell) in a scratch checkout holding what it reads — the
 # tree's cyrius.cyml, VERSION, LICENSE, scripts/, lib/, bootstrap/asm, the init templates, and a
-# build/ with every [release] bin and cross-bin (the tracked build/cycc real, so the installed
-# compiler can be RUN; the rest stubs). A change to the packaging is a change to what this gate
-# installs. A stub curl serves the step's dist/ as the release host; no network, throwaway HOME /
-# CYRIUS_HOME / TMPDIR, never the live store.
+# build/ with every [release] bin and cross-bin (the tracked build/cycc real, and the CLI built from
+# cbt/cyrius.cyr by it, so the installed compiler and CLI can be RUN; the rest stubs). A change to
+# the packaging is a change to what this gate installs. A stub curl serves the step's dist/ as the
+# release host; no network, throwaway HOME / CYRIUS_HOME / TMPDIR, never the live store.
 #
 # AXES
 #   1  ANTI-VACUOUS: the package step was found in release.yml, ran green, and produced
@@ -39,6 +39,22 @@
 #      (`_switch_active`) — under `sh` and `bash -eo pipefail`: exit 0; versions/<old> keeps exactly
 #      its entries, each a regular file byte-identical to before (never a link into the new slot);
 #      every tarball bin resolves through $CYRIUS_HOME/bin and $CYRIUS_HOME/lib is the new stdlib.
+#   6  (6.7.9) on the FRESH home of axis 2, in both shells: $CYRIUS_HOME/lib is a link naming
+#      versions/<v>/lib (it was never created — install.sh's `_switch_active` makes it, ci.sh's
+#      plain-bin branch did not), and the INSTALLED cyrius builds a project whose cyrius.cyml has
+#      no `cyrius =` pin and `[deps] stdlib = ["string", "syscalls"]` — the stdlib found through
+#      $CYRIUS_HOME/lib, `_dep_find_stdlib_dir` fallback (c) — to a program exiting 6.
+#   7  (6.7.9) over a plain-bin home whose lib already exists, in both shells: a link into
+#      versions/<old> (the home ci.sh itself leaves, re-installed at a newer version) and a legacy
+#      REAL directory: $CYRIUS_HOME/lib becomes a link naming versions/<v>/lib, versions/<old>
+#      keeps exactly its entries, every tarball bin resolves through $CYRIUS_HOME/bin.
+#   8  (6.7.9) the package step ships every script cyrius.cyml's [release] lists (read here by a
+#      reader of the gate's own, its count checked against the step's) into the tarball's bin/,
+#      executable and byte-identical to scripts/shims/<s> when that exists, else scripts/<s> —
+#      cyrius-repl.sh, the CLI's repl shim, was never in a tarball — and the INSTALLED `cyrius repl`
+#      (axis 2's sh home) runs it and evaluates `return 6 * 7;` to "= 42". On a fixture checkout: a
+#      name in both places ships the shims/ copy (install.sh's order), a scripts/-only name ships,
+#      and a listed name in neither place fails the step, naming it, with no tarball.
 #
 # MUTATION LEDGER (6.7.7, measured: this gate run from a scratch root carrying a mutated copy)
 #   a. the 6.7.6 ci.sh verbatim                 -> axis 2 RED in both shells (exit 1, "cycc not
@@ -64,6 +80,25 @@
 #   j. the lib re-point dropped                 -> axis 5 RED (lib still the old slot's stdlib)
 #   k. `ln -sf` (no -n) for the bin link        -> axis 5 RED (versions/<old>/bin/bin appears; the
 #                                                  old binaries still active)
+# (6.7.9, measured the same way)
+#   l. the 6.7.8 ci.sh verbatim                 -> axis 6 RED in both shells ($CYRIUS_HOME/lib
+#                                                  ABSENT), axis 7 RED in all four rows (the old
+#                                                  stdlib still active); axes 1-5 green
+#   m. `ln -sf` (no -n) in `_point_lib`         -> axes 5 and 7-link RED in both shells
+#                                                  (versions/<old>/lib/lib planted, lib still old)
+#   n. its legacy real-directory removal dropped -> axis 7-dir RED in both shells (lib/lib planted
+#                                                  inside the real directory, lib still old)
+#   o. only the plain-bin branch's `_point_lib` -> axis 6 RED in both shells, axis 7 RED in all
+#      dropped                                     four rows
+#   p. (anti-vacuous probe of axis 6's build) the -> axis 6 RED in both shells: "error: cannot find
+#      gate removing $CYRIUS_HOME/lib before it    cyrius stdlib", the consumer's symptom
+#   q. the 6.7.8 release.yml verbatim (scripts/  -> axis 8 RED in all four rows: cyrius-repl.sh
+#      only, a missing one skipped)                MISSING, the installed `cyrius repl` exit 127,
+#                                                  the scripts/ copy shipped, the step exit 0 with
+#                                                  a tarball; axes 1-7 green
+#   r. the `else` (neither place) branch dropped -> axis 8's missing-script row RED (exit 0, built)
+#   s. scripts/ looked in before scripts/shims/  -> axis 8's both-places row RED (the flat copy)
+#   t. its `exit 1` dropped (named, not failed)  -> axis 8's missing-script row RED (exit 0, built)
 # The tree -> PASS.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -133,6 +168,10 @@ for b in $(_rel bins) $(_rel cross_bins); do
 done
 [ "$NB" -ge 10 ] || { echo "FAIL: $NAME — only $NB [release] bin(s) read from cyrius.cyml; the reader is blind"; exit 1; }
 cp "$CC" "$CO/build/cycc"
+# the CLI real too (axis 6 runs it): the tree's cbt/cyrius.cyr, built by the tree's compiler
+( cd "$ROOT" && "$CC" < cbt/cyrius.cyr > "$CO/build/cyrius" 2> "$W/cli.err" ) && [ -s "$CO/build/cyrius" ] \
+    || { echo "FAIL: $NAME — cbt/cyrius.cyr does not build: $(grep -m1 error "$W/cli.err")"; exit 1; }
+chmod 755 "$CO/build/cyrius"
 # the release host (and anything the step might fetch): a stub curl, never the network
 cat > "$W/stub/curl" <<EOF
 #!/bin/sh
@@ -212,6 +251,31 @@ for sh_ in "sh" "bash -eo pipefail"; do
     elif [ "$a2" -eq 0 ]; then
         echo "  skip axis 3 [$sh_]: the x86_64-linux cycc cannot run on $(uname -s)-$(uname -m)"
     fi
+    # axis 6: the fresh home's stdlib name — what a manifest with no `cyrius =` pin resolves
+    # (`_dep_find_stdlib_dir` fallback (c), cbt/deps.cyr)
+    [ "$a2" -eq 0 ] || continue
+    a6=0
+    { [ -L "$H/lib" ] && [ "$(readlink "$H/lib")" = "$VD/lib" ] && diff -r "$EXP/lib" "$H/lib" > /dev/null 2>&1; } \
+        || { bad "axis 6 [$sh_]: \$CYRIUS_HOME/lib is $( [ -L "$H/lib" ] && echo "a link to $(readlink "$H/lib")" || { [ -e "$H/lib" ] && echo 'not a link' || echo ABSENT; }), not a link to versions/$V/lib"; a6=1; }
+    if [ "$a6" -eq 0 ] && [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
+        P="$W/h-${sh_%% *}/nopin"
+        mkdir -p "$P/src"
+        printf '[package]\nname = "nopin"\nversion = "0.1.0"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/nopin"\n\n[deps]\nstdlib = ["string", "syscalls"]\n' > "$P/cyrius.cyml"
+        printf 'var r = strlen("stdlib");\nsys_exit_group(r);\n' > "$P/src/main.cyr"
+        RC6=0
+        ( cd "$P" && env -i HOME="$W/h-${sh_%% *}" CYRIUS_HOME="$H" PATH="$H/bin:/usr/bin:/bin" TMPDIR="$W/h-${sh_%% *}/tmp" \
+            "$H/bin/cyrius" build ) > "$W/out" 2>&1 || RC6=$?
+        if [ "$RC6" -ne 0 ] || [ ! -x "$P/build/nopin" ]; then
+            bad "axis 6 [$sh_]: the installed cyrius cannot build a project with no \`cyrius =\` pin (exit $RC6)"; a6=1
+        else
+            RC6=0; "$P/build/nopin" || RC6=$?
+            [ "$RC6" -eq 6 ] || { bad "axis 6 [$sh_]: the no-pin project's program exited $RC6, not 6"; a6=1; }
+        fi
+        rm -rf "$P"
+        [ "$a6" -eq 0 ] && echo "  ok axis 6 [$sh_]: on a fresh home \$CYRIUS_HOME/lib links versions/$V/lib, and the installed cyrius builds a project with no \`cyrius =\` pin from it"
+    elif [ "$a6" -eq 0 ]; then
+        echo "  ok axis 6 [$sh_]: on a fresh home \$CYRIUS_HOME/lib links versions/$V/lib (the no-pin build is skipped: the x86_64-linux CLI cannot run on $(uname -s)-$(uname -m))"
+    fi
 done
 
 # ── axis 4: a tarball that is not release-shaped is refused ──
@@ -282,5 +346,100 @@ for sh_ in "sh" "bash -eo pipefail"; do
     [ "$a5" -eq 0 ] && echo "  ok axis 5 [$sh_]: over a home whose bin / lib link into versions/$OLD, ci.sh re-points both to versions/$V and leaves versions/$OLD byte-identical"
 done
 
+# ── axis 7: a plain-bin home with a stdlib name already there gets it re-pointed ──
+# `link`: the home ci.sh itself leaves (a plain bin/ of per-file links, lib a link into
+# versions/<old>) — a cached CI home re-installed at a newer version. `dir`: lib a legacy REAL
+# directory, as install.sh's `_relink_active` replaces it.
+for kind in link dir; do
+    for sh_ in "sh" "bash -eo pipefail"; do
+        HH="$W/h7-$kind-${sh_%% *}"; H="$HH/.cyrius"; OD="$H/versions/$OLD"
+        fresh_home "$HH"
+        mkdir -p "$OD/bin" "$OD/lib" "$H/bin"
+        for b in cycc cyrius; do printf '#!/bin/sh\necho "old %s %s"\n' "$b" "$OLD" > "$OD/bin/$b"; ln -s "$OD/bin/$b" "$H/bin/$b"; done
+        chmod 755 "$OD/bin/cycc" "$OD/bin/cyrius"
+        printf '# only in the old slot\n' > "$OD/lib/old_only.cyr"
+        echo "$OLD" > "$OD/VERSION"; echo "$OLD" > "$H/current"
+        if [ "$kind" = link ]; then ln -s "$OD/lib" "$H/lib"; else cp -R "$OD/lib" "$H/lib"; fi
+        rm -rf "$W/old7"; cp -R "$OD" "$W/old7"
+        # shellcheck disable=SC2086  # the shell and its flags are words by construction
+        run_ci_in "$HH" $sh_
+        a7=0
+        { [ "$RC" -eq 0 ] && grep -q 'cycc:  ok' "$W/out"; } || { bad "axis 7 $kind [$sh_]: ci.sh over a plain-bin home exit $RC"; a7=1; }
+        [ "$(cd "$OD" && find . | LC_ALL=C sort | tr '\n' ' ')" = "$(cd "$W/old7" && find . | LC_ALL=C sort | tr '\n' ' ')" ] \
+            || { bad "axis 7 $kind [$sh_]: versions/$OLD's entries changed: $(cd "$OD" && find . | LC_ALL=C sort | tr '\n' ' ')"; a7=1; }
+        { [ -L "$H/lib" ] && [ "$(readlink "$H/lib")" = "$H/versions/$V/lib" ] && diff -r "$EXP/lib" "$H/lib" > /dev/null 2>&1; } \
+            || { bad "axis 7 $kind [$sh_]: \$CYRIUS_HOME/lib is not a link to versions/$V/lib$( [ -e "$H/lib/old_only.cyr" ] && echo " (still the old stdlib)")"; a7=1; }
+        for f in "$EXP/bin"/*; do
+            b=$(basename "$f")
+            cmp -s "$f" "$H/bin/$b" || { bad "axis 7 $kind [$sh_]: \$CYRIUS_HOME/bin/$b does not resolve to versions/$V/bin/$b"; a7=1; break; }
+        done
+        [ "$a7" -eq 0 ] && echo "  ok axis 7 $kind [$sh_]: over a plain-bin home whose lib is $( [ "$kind" = link ] && echo "a link into versions/$OLD" || echo 'a legacy real directory'), \$CYRIUS_HOME/lib now links versions/$V/lib and versions/$OLD is unchanged"
+    done
+done
+
+# ── axis 8: every [release] script ships — scripts/shims/ first, as install.sh — and a listed ──
+# script found nowhere fails the package step (it was skipped silently: no cyrius-repl.sh, ever)
+run_pkg() {   # run_pkg <checkout> — release.yml's package step in it, as axis 1 runs it
+    RC=0
+    ( cd "$1" && env -i PATH="$W/stub:/usr/bin:/bin" HOME="$W/bhome" TMPDIR="$W/btmp" GITHUB_REF_NAME="$V" \
+        bash -e "$W/package.sh" ) > "$W/out" 2>&1 || RC=$?
+}
+# the listed names, read WITHOUT the step's awk (a reader the gate shares with the step reads green)
+SCR=$(awk '/^\[release\]/ { r = 1; next } r && /^\[/ { exit } r && /^scripts[ \t]*=/ { print }' "$ROOT/cyrius.cyml" \
+    | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+NS=0; NSH=0; a8=0; rm -f "$W/out"
+for s in $SCR; do
+    NS=$((NS + 1))
+    if [ -f "$ROOT/scripts/shims/$s" ]; then src="scripts/shims/$s"; NSH=$((NSH + 1)); else src="scripts/$s"; fi
+    { [ -f "$EXP/bin/$s" ] && [ -x "$EXP/bin/$s" ] && cmp -s "$ROOT/$src" "$EXP/bin/$s"; } \
+        || { bad "axis 8: [release] script $s $( [ -e "$EXP/bin/$s" ] && echo "is in the tarball's bin/ but is not an executable copy of $src" || echo "is MISSING from the tarball's bin/ ($src)")"; a8=1; }
+done
+# shellcheck disable=SC2046  # word count of the step reader's list
+[ "$NS" -ge 1 ] && [ "$NS" -eq $(echo $(_rel scripts) | wc -w) ] \
+    || { echo "FAIL: $NAME — axis 8 read $NS [release] script(s), the step's reader $(echo $(_rel scripts) | wc -w); a reader is blind"; exit 1; }
+[ "$a8" -eq 0 ] && echo "  ok axis 8: all $NS [release] scripts are in the tarball's bin/, executable and byte-identical to their source ($NSH from scripts/shims/)"
+# the symptom: `cyrius repl` from the installed CLI (axis 2's sh home) finds its shim and evaluates
+H="$W/h-sh/.cyrius"
+if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] && [ -x "$H/bin/cyrius" ]; then
+    mkdir -p "$W/repl" && ln -sfn "$H/lib" "$W/repl/lib"
+    RC=0
+    ( cd "$W/repl" && printf 'return 6 * 7;\n:q\n' | env -i HOME="$W/h-sh" CYRIUS_HOME="$H" PATH="$H/bin:/usr/bin:/bin" \
+        TMPDIR="$W/h-sh/tmp" "$H/bin/cyrius" repl ) > "$W/out" 2>&1 || RC=$?
+    { [ "$RC" -eq 0 ] && grep -q '= 42$' "$W/out" && grep -q '^> bye$' "$W/out"; } \
+        && echo "  ok axis 8: the installed \`cyrius repl\` runs its shim from \$CYRIUS_HOME/bin and evaluates 6 * 7 = 42" \
+        || bad "axis 8: the installed \`cyrius repl\` exit $RC, no '= 42'"
+else
+    echo "  skip axis 8 (repl): the x86_64-linux CLI cannot run on $(uname -s)-$(uname -m), or axis 2 installed none"
+fi
+# the lookup itself, on a fixture checkout: a name in both places ships the shims/ copy, a flat-only
+# name ships, and a listed name in neither place fails the step by name with no tarball
+CO8="$W/co8"
+cp -R "$CO" "$CO8" && rm -rf "$CO8/dist" "${CO8:?}/$STAGE" || { echo "FAIL: $NAME — cannot copy the axis-8 checkout"; exit 1; }
+printf '#!/bin/sh\necho shims\n' > "$CO8/scripts/shims/zz_both.sh"
+printf '#!/bin/sh\necho flat\n' > "$CO8/scripts/zz_both.sh"
+printf '#!/bin/sh\necho flat-only\n' > "$CO8/scripts/zz_flat.sh"
+sed 's/^scripts = \["/scripts = ["zz_both.sh", "zz_flat.sh", "/' "$CO/cyrius.cyml" > "$CO8/cyrius.cyml"
+grep -q '^scripts = \["zz_both.sh", "zz_flat.sh", "' "$CO8/cyrius.cyml" \
+    || { echo "FAIL: $NAME — cannot list the axis-8 fixture scripts in cyrius.cyml (its [release] scripts line changed shape)"; exit 1; }
+run_pkg "$CO8"
+X8="$W/x8"; mkdir -p "$X8"
+if [ "$RC" -ne 0 ] || ! tar xzf "$CO8/dist/$TB" -C "$X8" 2> /dev/null; then
+    bad "axis 8: the package step over the fixture listing exit $RC, no tarball"
+elif ! cmp -s "$CO8/scripts/shims/zz_both.sh" "$X8/$STAGE/bin/zz_both.sh"; then
+    bad "axis 8: a script in both scripts/shims/ and scripts/ shipped $( [ -e "$X8/$STAGE/bin/zz_both.sh" ] && echo 'the scripts/ copy' || echo 'NOT AT ALL'), not the scripts/shims/ one (install.sh's order)"
+elif ! cmp -s "$CO8/scripts/zz_flat.sh" "$X8/$STAGE/bin/zz_flat.sh"; then
+    bad "axis 8: a script only in scripts/ did not ship"
+else
+    echo "  ok axis 8: a listed script in both places ships the scripts/shims/ copy, one only in scripts/ ships"
+fi
+rm -rf "$CO8/dist" "${CO8:?}/$STAGE"
+sed 's/^scripts = \["/scripts = ["zz_missing.sh", "/' "$CO/cyrius.cyml" > "$CO8/cyrius.cyml"
+run_pkg "$CO8"
+if [ "$RC" -ne 0 ] && grep -q 'zz_missing\.sh' "$W/out" && [ ! -e "$CO8/dist/$TB" ]; then
+    echo "  ok axis 8: a listed script in neither scripts/shims/ nor scripts/ fails the package step by name (exit $RC), no tarball"
+else
+    bad "axis 8: a listed script found nowhere: the step exit $RC, $( grep -q 'zz_missing\.sh' "$W/out" && echo 'named' || echo 'NOT named'), tarball $( [ -e "$CO8/dist/$TB" ] && echo BUILT || echo absent)"
+fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — refuses one that is not release-shaped, and re-points an install.sh home without touching its old slot)"
+echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — links its stdlib as \$CYRIUS_HOME/lib for a project with no pin, refuses one that is not release-shaped, and re-points an install.sh or plain-bin home without touching its old slot; the step ships every [release] script, scripts/shims/ first, and fails on one it cannot find)"

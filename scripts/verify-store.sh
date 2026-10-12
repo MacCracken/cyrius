@@ -32,6 +32,11 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# 6.7.9 — it rebuilds a tag's cross-bins to compare with the store, and --restore installs them:
+# an inherited CYRIUS_BOUNDS / CYRIUS_POISON would report drift, or restore bounds-checked /
+# poison-mode compilers
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 STORE="${CYRIUS_HOME:-$HOME/.cyrius}"
 MODE=report; RESTORE_V=""
 [ "${1:-}" = "--restore" ] && { MODE=restore; RESTORE_V="${2:-}"; [ -n "$RESTORE_V" ] || { echo "usage: $0 --restore <version>" >&2; exit 2; }; }

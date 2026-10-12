@@ -420,11 +420,18 @@ fn _subst_lookup(keyptr, keylen): i64 {
     return 0;
 }
 
+# Templates that could not be opened, and the directory they were looked for in — so the
+# INCOMPLETE-scaffold report names where it looked, not only which names it missed.
+var _rw_tpl_missing = 0;
+var _rw_tpl_dir = 0;
+
 # Read <templates_dir>/<name>, substitute {KEY}. Rendered cstring or 0.
 fn _render_template(templates_dir, name): i64 {
     var path = _join(templates_dir, name);
     var fd = sys_open(path, 0, 0);
     if (fd < 0) {
+        _rw_tpl_missing = _rw_tpl_missing + 1;
+        _rw_tpl_dir = templates_dir;
         _eprint("error: missing template '");
         _eprint(name);
         _eprint("'\n");
@@ -434,7 +441,10 @@ fn _render_template(templates_dir, name): i64 {
     var raw = alloc(cap);
     var n = sys_read(fd, raw, cap - 1);
     sys_close(fd);
-    if (n < 0) { return 0; }
+    if (n < 0) {
+        _eprint("error: cannot read template "); _eprint(path); _eprint("\n");
+        return 0;
+    }
     store8(raw + n, 0);
 
     var out = str_builder_new();
@@ -511,22 +521,39 @@ fn _rw_report(): i64 {
     _eprint("\nerror: scaffold INCOMPLETE — ");
     _eprint(str_data(str_from_int(_rw_fails)));
     _eprint(" file(s) could not be created (see the errors above)\n");
+    if (_rw_tpl_missing > 0) {
+        _eprint("  ");
+        _eprint(str_data(str_from_int(_rw_tpl_missing)));
+        _eprint(" template(s) missing from "); _eprint(_rw_tpl_dir);
+        _eprint("\n  the toolchain install is incomplete — reinstall it\n");
+    }
     _eprint("  the project tree is partial; do not treat it as ready\n");
     return 1;
 }
 
-# Skip-if-exists variant (in-place mode). Prints a skip line.
+# Skip-if-exists variant (in-place mode). Prints a skip line. Writes through `_rw`, so a
+# template it cannot render or a file it cannot write counts toward `_rw_report`.
+# CHANGELOG [6.7.9] — it called _render_template / _write_file itself and dropped their -1,
+# so every greenfield init with its templates missing printed "Created <x>/" and exited 0.
 fn _rw_wia(templates_dir, tpl, proj_root, rel, inplace): i64 {
-    var dst = _join(proj_root, rel);
     if (inplace == 1) {
+        var dst = _join(proj_root, rel);
         if (file_exists(dst) == 1) {
             _print("  skip: "); _print(dst); _print(" (already exists)\n");
             return 0;
         }
     }
-    var content = _render_template(templates_dir, tpl);
-    if (content == 0) { return 0 - 1; }
-    return _write_file(dst, content);
+    return _rw(templates_dir, tpl, proj_root, rel);
+}
+
+# Refuse before writing anything when the template directory itself is absent: every file of
+# a greenfield scaffold or a port comes from it, and a port moves the original tree aside
+# before rendering. Returns 0 when it is a directory, else 1 with the path named.
+fn _require_templates(templates_dir): i64 {
+    if (is_dir(str_from(templates_dir)) == 1) { return 0; }
+    _eprint("error: the cyrius-init templates are missing — no directory "); _eprint(templates_dir);
+    _eprint("\n  the toolchain install is incomplete — reinstall it; nothing was created\n");
+    return 1;
 }
 
 # ────────────────────────────────────────────────────────────
@@ -918,6 +945,8 @@ fn _run_init(start): i64 {
     if (templates_dir == 0) { _eprint("error: cannot resolve templates dir from argv[0]\n"); return 1; }
     var ver = _detect_version(templates_dir, argv(0));
     if (ver == 0) { _eprint("  error: no cyrius toolchain detected — install first or set CYRIUS_VER\n"); return 1; }
+    # Greenfield only: an in-place init skips every file that exists and may need no template.
+    if (inplace == 0) { if (_require_templates(templates_dir) != 0) { return 1; } }
 
     var desc = description;
     if (desc == 0) {
@@ -1015,7 +1044,8 @@ fn _run_init(start): i64 {
     # vendor stdlib
     var lib_count = _vendor_stdlib(templates_dir, proj_root, inplace);
 
-    # done
+    # done — an incomplete scaffold is reported as one, never as "Created".
+    if (_rw_fails != 0) { return _rw_report(); }
     _print("\n");
     if (inplace == 1) {
         _print("Initialized "); _print(disp); _print(" (in-place, --language=none)\n");
@@ -1255,6 +1285,7 @@ fn _run_port(start): i64 {
     _sv_ver = ver;
 
     if (dry == 1) { _port_dry_run(name, loc); return 0; }
+    if (_require_templates(templates_dir) != 0) { return 1; }
 
     _print("=== Porting "); _print(name); _print(" to Cyrius ===\n");
     _print("  "); _print(_sv_srclang); _print(" source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
@@ -1296,11 +1327,12 @@ fn _run_port(start): i64 {
     _sv_ci_src = "src/main.cyr";
     _sv_ci_out = "${{ github.event.repository.name }}";
 
-    _rw(templates_dir, "main-cyr-port", target, "src/main.cyr");
-    _print("  Created src/main.cyr\n");
-    _rw(templates_dir, "cyrius-cyml-port", target, "cyrius.cyml");
-    _print("  Created cyrius.cyml\n");
+    # Each "Created" line follows a write that happened (`_rw` returns 0); a failed one is
+    # already named by `_rw` and counted for `_rw_report`. CHANGELOG [6.7.9]
+    if (_rw(templates_dir, "main-cyr-port", target, "src/main.cyr") == 0) { _print("  Created src/main.cyr\n"); }
+    if (_rw(templates_dir, "cyrius-cyml-port", target, "cyrius.cyml") == 0) { _print("  Created cyrius.cyml\n"); }
 
+    var docs_fails = _rw_fails;
     _rw(templates_dir, "adr-readme", target, "docs/adr/README.md");
     _rw(templates_dir, "adr-template.md", target, "docs/adr/template.md");
     _rw(templates_dir, "architecture-readme.md", target, "docs/architecture/README.md");
@@ -1309,13 +1341,14 @@ fn _run_port(start): i64 {
     _rw(templates_dir, "state-md-port", target, "docs/development/state.md");
     _rw(templates_dir, "roadmap-md-port", target, "docs/development/roadmap.md");
     _rw(templates_dir, "claude-md-port", target, "CLAUDE.md");
-    _print("  Created docs/ tree (adr/architecture/guides/examples/development) + CLAUDE.md\n");
+    if (_rw_fails == docs_fails) {
+        _print("  Created docs/ tree (adr/architecture/guides/examples/development) + CLAUDE.md\n");
+    }
 
     # .gitignore: create if absent, else append the port-specific lines.
     var gi = _join(target, ".gitignore");
     if (file_exists(gi) == 0) {
-        _rw(templates_dir, "gitignore-port", target, ".gitignore");
-        _print("  Created .gitignore\n");
+        if (_rw(templates_dir, "gitignore-port", target, ".gitignore") == 0) { _print("  Created .gitignore\n"); }
     } else {
         var gbuf = alloc(131072);
         var gn = file_read_all(gi, gbuf, 131071);
@@ -1367,18 +1400,24 @@ fn _run_port(start): i64 {
         }
     }
 
-    _rw(templates_dir, "ci.yml", target, ".github/workflows/ci.yml");
-    _print("  Created .github/workflows/ci.yml\n");
-    _rw(templates_dir, "release.yml", target, ".github/workflows/release.yml");
-    _print("  Created .github/workflows/release.yml\n");
+    if (_rw(templates_dir, "ci.yml", target, ".github/workflows/ci.yml") == 0) {
+        _print("  Created .github/workflows/ci.yml\n");
+    }
+    if (_rw(templates_dir, "release.yml", target, ".github/workflows/release.yml") == 0) {
+        _print("  Created .github/workflows/release.yml\n");
+    }
 
-    _rw(templates_dir, "proj-tcyr", target, _tests_rel(name, ".tcyr"));
-    _print("  Created tests/"); _print(name); _print(".tcyr\n");
-    _rw(templates_dir, "proj-bcyr", target, _tests_rel(name, ".bcyr"));
-    _print("  Created tests/"); _print(name); _print(".bcyr\n");
-    _rw(templates_dir, "proj-fcyr", target, _tests_rel(name, ".fcyr"));
-    _print("  Created tests/"); _print(name); _print(".fcyr\n");
+    if (_rw(templates_dir, "proj-tcyr", target, _tests_rel(name, ".tcyr")) == 0) {
+        _print("  Created tests/"); _print(name); _print(".tcyr\n");
+    }
+    if (_rw(templates_dir, "proj-bcyr", target, _tests_rel(name, ".bcyr")) == 0) {
+        _print("  Created tests/"); _print(name); _print(".bcyr\n");
+    }
+    if (_rw(templates_dir, "proj-fcyr", target, _tests_rel(name, ".fcyr")) == 0) {
+        _print("  Created tests/"); _print(name); _print(".fcyr\n");
+    }
 
+    if (_rw_fails != 0) { return _rw_report(); }
     _print("\n");
     _print("=== "); _print(name); _print(" ready for porting ===\n");
     _print("  "); _print(_sv_srclang); _print(" ("); _print(_sv_olddir); _print("/): "); _print(str_data(str_from_int(loc))); _print(" lines\n");

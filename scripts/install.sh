@@ -15,6 +15,11 @@
 #   CYRIUS_HOME      install directory (default: ~/.cyrius)
 
 set -e
+# 6.7.9 — every build below (a source install's cycc, the cross-bins, the tools) is a self-build
+# whose output is INSTALLED: an inherited CYRIUS_BOUNDS / CYRIUS_POISON would install a
+# bounds-checked / poison-mode toolchain
+# (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
+unset CYRIUS_BOUNDS CYRIUS_POISON
 
 # 6.6.17: whether CYRIUS_HOME was DEFAULTED — then it is the user's store by definition, and
 # the --refresh-only released-slot guard treats it as live whether or not it resolves.

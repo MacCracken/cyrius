@@ -1082,6 +1082,7 @@ the `_f64_trig_*` fns — remain private.)
 | `gcd` | `gcd(a, b) → i64` | Greatest common divisor |
 | `lcm` | `lcm(a, b) → i64` | Least common multiple |
 | `f64_parse` | `f64_parse(s) → i64` | Parse null-terminated string to f64 — correctly rounded (the nearest double, ties to even, subnormals and both range ends included; 6.6.13). Strict `nan` / `inf` front matter; no digits → 0 |
+| `f64_parse_n` | `f64_parse_n(s, n) → i64` | The span `s[0..n)` (no NUL needed; the bytes after it are never read) — `f64_parse`'s grammar and correct rounding, its strict `nan` / `inf` whole inside the span; `n <= 0` → 0. `f64_parse_n("2.57,", 3)` is 2.5 (6.7.9) |
 | `f64_parse_ok` | `f64_parse_ok(s, out) → i64` | Parse with success flag; on success `*out` is exactly `f64_parse(s)` |
 | `_f64_exp_polyfill` | `_f64_exp_polyfill(x) → i64` | e^x — ≤1 ulp, IEEE specials (+inf→+inf, -inf→+0, overflow→+inf, gradual underflow), **same bits on every target** (6.6.8) |
 | `_f64_exp2_polyfill` | `_f64_exp2_polyfill(x) → i64` | 2^x — ≤1 ulp, `exp2(k) == 2^k` exactly for integral k, IEEE specials, **same bits on every target** (6.6.8) |

@@ -187,6 +187,17 @@
 #   z8. (6.6.17 review) fork_version_parity's       -> axis 9 FAIL (`removes a server dir NOT
 #      `_wine_down` stats "$T" instead of "$WP";         derived from the prefix it kills`) / the
 #      the detector's from_prefix rule off               stat_wrong_operand self-test FAIL
+#   z9. (6.7.9) detector: back to the pre-6.7.9 line  -> axis 9 self-test FAIL (c_trap_prose flagged
+#      test / quoted text not blanked / `trap` after     / every real trap lost + c_trap_prose /
+#      any whitespace / the simple-command cut off /     c_trap_prose / c_trap_prose + retrap_cmd /
+#      the then|do|else arm off / signal 0 refused       retrap_cmd / retrap_cmd)
+#   z10. (6.7.9) detector: exe_run off / a $( … )     -> axis 9 self-test FAIL (exe_direct, exe_no_
+#      in "…" not code / XV from V= off / from `for`     teardown, exe_forms / exe_forms line 5 / 4 /
+#      off / quotes not masked / the run-prefix skip     9 / c_exe_lookalike / exe_forms 7, 8 / c_exe_
+#      off / the inline prefix ignored / no `runs = 1`   inline / exe_no_teardown / c_exe_lookalike /
+#      / the glob exclusion off / the reserved-word      exe_forms 9, 10 / exe_forms 4 / exe_forms 11
+#      skip off / the XV line filter off / `|` not a     / exe_forms 3 + 8 and c_exe_inline +
+#      command start / assignments not skipped           c_exe_lookalike) — 13 mutants
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -1042,6 +1053,9 @@ fi
 # exit, before the export ever did. The TEARDOWN is read from the LAST `trap … EXIT` line plus
 # the bodies of the functions it calls (two levels): one line kills with an inline private
 # prefix, and one line `rm`s the server dir (a /tmp/.wine- literal, or a variable assigned one).
+# That line is one whose `trap` is a COMMAND word with EXIT or 0 among its own signals, read
+# with every quoted string's contents blanked — a row label holding "trap" on a line ending in
+# an expected exit code 0 is prose, not the teardown (CHANGELOG [6.7.9]).
 # And no line outside a function `rm`s the PREFIX itself (any spelling a WINEPREFIX= took, or a
 # variable holding one) unless a teardown function is called first on that line: 5 gates
 # deleted it after their wine leg, so the EXIT teardown found nothing to stat and their server
@@ -1049,9 +1063,18 @@ fi
 # "Private" = the value is "$V/…" (or "%s" filled from one) where V was assigned a mktemp, or a
 # path under such a V (followed through further assignments). "Runs wine" = `wine`/`wine64`/
 # `winepath` followed by an operand (a $-expansion, ./ or ..\, X.exe, cmd, reg, -flag) — so
-# prose ("wine not installed"), `command -v wine` and comments do not count. Line order stands
-# in for straight-line order: an export in an earlier, untaken branch would read as set (the
-# 23 gates use none of that shape). This file is excluded: its fixtures spell the bad shapes.
+# prose ("wine not installed"), `command -v wine` and comments do not count. ALSO "runs wine": a
+# COMMAND WORD that names a .exe — a path ending .exe (`"$T/a.exe"`, `./a.exe`, `"$T"/a.exe`), a
+# `$V.exe`, or a variable assigned one (`V="$T/a.exe"`, `for V in … a.exe …`) — at the head of a
+# simple command (after assignments, if / then / do / ! / {, and time / exec / env / nice /
+# nohup / command / stdbuf / timeout with its flags and duration), in a `$( … )` or backquotes,
+# quoted or not. A host whose binfmt_misc registers wine for MZ images (`DOSWin`: interpreter
+# /usr/bin/wine, magic 4d5a) runs it as wine in the inherited environment — the shared ~/.wine,
+# its server, the user's ~/.cache (CHANGELOG [6.7.9]). A PE written WITHOUT a .exe name and run
+# directly is not seen (no gate does that: each PE output not named .exe is only inspected).
+# Line order stands in for straight-line order: an export in an earlier, untaken branch would
+# read as set (the 23 gates use none of that shape). This file is excluded: its fixtures spell
+# the bad shapes.
 cat > "$W/wine9.awk" <<'AWK'
 function dref(s,    v) {   # does s expand a mktemp-derived variable?
     for (v in DV) if (match(s, "\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)")) return 1
@@ -1119,6 +1142,76 @@ function names(s, sp,    k, off, t, c) {   # does s spell sp as a whole word/pat
     }
     return 0
 }
+function code_only(s,    o, i, n, c, st, d) {   # s with every quoted string's contents blanked
+    o = ""; d = 0; n = length(s)   # (the quotes kept; a $( … ) inside a "…" is part of the string)
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (d && st[d] == "'") { if (c == "'") d--; if (!d) o = o c; continue }
+        if (c == "\\") { if (!d) o = o substr(s, i, 2); i++; continue }
+        if (d && st[d] == "\"") {
+            if (c == "\"") d--
+            else if (c == "$" && substr(s, i + 1, 1) == "(") { st[++d] = "("; i++ }
+            if (!d) o = o c
+            continue
+        }
+        if (c == "'" || c == "\"") { if (!d) o = o c; st[++d] = c; continue }
+        if (d && c == "(") { st[++d] = "("; continue }
+        if (d && c == ")") { d--; continue }
+        if (!d) o = o c
+    }
+    return o
+}
+function exit_trap(s,    u, r) {   # does s SET an EXIT trap? `trap` as a command word, EXIT / 0 among its signals
+    u = code_only(s)   # a label's "… trap …" and a trailing ` 0` were once read as one (CHANGELOG [6.7.9])
+    while (match(u, /(^|[;&|({])[ \t]*trap[ \t]|(^|[ \t;&|({])(then|do|else)[ \t]+trap[ \t]/)) {
+        u = substr(u, RSTART + RLENGTH); r = u; sub(/[;&|].*$/, "", r)   # this simple command only
+        if (r ~ /(^|[ \t])(EXIT|0)([ \t)}]|$)/) return 1
+    }
+    return 0
+}
+function cmd_map(s,    o, i, n, c, st, d, top) {   # s, same length, every quoted string's contents masked to "x"
+    o = ""; d = 0; n = length(s)   # (quotes kept) — a $( … ) inside "…" is code again, unlike code_only
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1); top = d ? st[d] : ""
+        if (top == "'") { if (c == "'") { d--; o = o c } else o = o "x"; continue }
+        if (c == "\\") { o = o (top == "\"" ? "x" : "\\"); if (i < n) o = o "x"; i++; continue }
+        if (top == "\"") {
+            if (c == "\"") { d--; o = o c }
+            else if (c == "$" && substr(s, i + 1, 1) == "(") { st[++d] = "("; o = o "$("; i++ }
+            else o = o "x"
+            continue
+        }
+        if (c == "'" || c == "\"") { st[++d] = c; o = o c; continue }
+        if (top == "(" && c == "(") st[++d] = "("
+        else if (top == "(" && c == ")") d--
+        o = o c
+    }
+    return o
+}
+function exe_run(s,    m, n, i, ws, x, pfx, parg, pdur, nm) {   # the column of a command word naming a .exe, or 0
+    m = cmd_map(s); n = length(m); i = 1   # binfmt_misc runs it as wine (CHANGELOG [6.7.9])
+    while (i <= n) {   # each simple command: its first word past assignments, reserved words and run-prefixes
+        pfx = 0; parg = 0; pdur = 0
+        while (i <= n) {
+            while (i <= n && substr(m, i, 1) ~ /[ \t]/) i++
+            if (i > n || substr(m, i, 1) ~ /[;&|(`)<>]/) break
+            ws = i
+            while (i <= n && substr(m, i, 1) !~ /[ \t;&|(`)<>]/) i++
+            x = substr(s, ws, i - ws); gsub(/["']/, "", x)
+            if (parg) { parg = 0; continue }
+            if (pfx && x ~ /^-/) { if (x ~ /^-[sknu]$/) parg = 1; continue }   # timeout -s SIG / -k T, nice -n N, env -u V
+            if (pdur) { pdur = 0; if (x ~ /^[0-9.]+[smhd]?$/) continue }
+            if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || x ~ /^(if|then|do|else|elif|while|until|!|\{|\})$/) continue
+            if (x ~ /^(time|exec|command|nohup|nice|env|stdbuf|timeout)$/) { pfx = 1; pdur = (x == "timeout"); continue }
+            if (x !~ /[*?[]/ && (x ~ /\/.*\.exe$/ || x ~ /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\.exe$/)) return ws
+            nm = x; if (match(nm, /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/)) { gsub(/[${}]/, "", nm); if (nm in XV) return ws }
+            break
+        }
+        while (i <= n && substr(m, i, 1) !~ /[;&|(`]/) i++   # on to the next command
+        i++
+    }
+    return 0
+}
 function teardown(L, depth,    s, n, w, k, f) {   # add trap line L and the fns it calls to TD
     s = LL[L]; TD[++ntd] = s
     if (depth >= 2) return
@@ -1138,17 +1231,27 @@ BEGIN { VN[1] = "WINEPREFIX"; VN[2] = "HOME"; VN[3] = "XDG_CACHE_HOME" }
 }
 END {
     # mktemp-derived variables: V=$(mktemp …), then any V="$U/…" with U derived (3 passes);
-    # SV = variables assigned a /tmp/.wine- path (a server dir)
+    # SV = variables assigned a /tmp/.wine- path (a server dir); XV = variables assigned a .exe
     for (i = 1; i <= nl; i++) {
         s = LL[ORD[i]]; t = s
         while (match(t, /(^|[ \t;&|(])[A-Za-z_][A-Za-z0-9_]*=/)) {
             a = substr(t, RSTART, RLENGTH); sub(/^[ \t;&|(]/, "", a); nm = substr(a, 1, length(a) - 1)
             t = substr(t, RSTART + RLENGTH); v = val(t)
             if (index(v, "/tmp/.wine-")) { SV[nm] = 1; SVV[nm] = s }
+            if (v ~ /\.exe$/ && v !~ /[*?[]/) XV[nm] = 1
             if (v ~ /^\$\([ \t]*([^ \t)]*\/)?mktemp([ \t)]|$)/ || t ~ /^`([^ \t`]*\/)?mktemp/) DV[nm] = 1
             else if (nm != "WINEPREFIX" && nm != "HOME" && nm != "XDG_CACHE_HOME") { AS[nm] = AS[nm] SUBSEP v }
         }
     }
+    for (i = 1; i <= nl; i++) if (index(LL[ORD[i]], ".exe") && index(LL[ORD[i]], "for")) {   # and a `for V in … a.exe …`
+        t = cmd_map(LL[ORD[i]])
+        if (match(t, /(^|[ \t;&|(])for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t][^;&|]*/)) {
+            a = substr(LL[ORD[i]], RSTART, RLENGTH); nm = a; sub(/^[ \t;&|(]*for[ \t]+/, "", nm); sub(/[ \t].*$/, "", nm)
+            if (a ~ /\.exe([" \t]|$)/) XV[nm] = 1
+        }
+    }
+    XVRE = ""; for (v in XV) XVRE = XVRE (XVRE == "" ? "" : "|") v   # a line naming no .exe and no XV skips exe_run
+    if (XVRE != "") XVRE = "\\$(\\{(" XVRE ")\\}|(" XVRE "))([^A-Za-z0-9_]|$)"
     for (pass = 0; pass < 3; pass++) for (nm in AS) if (!(nm in DV)) {
         n = split(AS[nm], vs, SUBSEP)
         for (j = 1; j <= n; j++) for (d in DV) if (match(vs[j], "^\\$(\\{" d "\\}|" d ")(/|$)")) DV[nm] = 1
@@ -1165,7 +1268,7 @@ END {
             FE0[infn] = L; INFN[L] = 1
             if (s ~ /^[ \t]*\}[ \t;]*$/) infn = ""
         }
-        if (s ~ /(^|[ \t;&|])trap[ \t]/ && s ~ /[ \t](EXIT|0)([ \t;]|$)/) lasttrap = L
+        if (exit_trap(s)) lasttrap = L
     }
     # the prefix's spellings: every WINEPREFIX= value ("%s" runners aside), plus "$V" for a V
     # assigned one of them and the value of a V spelled as one ("$WP" <-> "$D/wp")
@@ -1201,6 +1304,11 @@ END {
             runs = 1; miss = ""
             for (vi = 1; vi <= 3; vi++) if (!inline_ok(s, p + 1, VN[vi]) && !EXP[VN[vi]]) miss = miss (miss == "" ? "" : ", ") VN[vi]
             if (miss != "") { print L ": runs wine with no private " miss " (WINEPREFIX: the shared ~/.wine; HOME / XDG_CACHE_HOME: a fresh prefix writes the user's ~/.cache): " s; break }
+        }
+        if ((index(s, ".exe") || (XVRE != "" && s ~ XVRE)) && (p = exe_run(s)) > 0) {
+            runs = 1; miss = ""
+            for (vi = 1; vi <= 3; vi++) if (!inline_ok(s, p, VN[vi]) && !EXP[VN[vi]]) miss = miss (miss == "" ? "" : ", ") VN[vi]
+            if (miss != "") print L ": runs a .exe directly, which binfmt_misc hands to wine, with no private " miss " (the shared ~/.wine and the user's ~/.cache): " s
         }
         if (match(s, /(^|[^A-Za-z0-9_.-])rm[ \t]/) && !(L in INFN)) {
             rp = RSTART; hit = 0
@@ -1313,6 +1421,84 @@ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINE
 { printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wp"\n'
   printf 'if [ -d "$WP" ] && command -v wineserver > /dev/null 2>&1; then WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; fi\n'; } > "$W/fx9/c_probe.sh"
 printf 'command -v wineserver > /dev/null 2>&1 && wineserver -k > /dev/null 2>&1\n' > "$W/fx9/probe_then_bare.sh"
+# 6.7.9: "the last EXIT trap" is a `trap` COMMAND whose signals hold EXIT / 0 — not a row label
+# holding the word "trap" on a line that ends in an expected exit code 0 (the issue's verbatim
+# label; C2-6a's two "... the trap is Tc)" labels; one with a `;` inside its quotes; one unquoted),
+# and not a non-EXIT trap followed, in a later command, by a `ulimit -f 0`. A late re-trap that IS a
+# command (after `then`, signal `0`) still replaces the teardown.
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache" WINEDEBUG=-all\nwine "$T/a.exe"\n'
+  printf 'check "the trap gate" 0\nexits T1c 0 "aarch64 (qemu): the trap is Tc)"\nok "step 2; trap 0 set" 0\n'
+  printf 'echo axis 9 trap rows: 0\n( trap '"''"' XFSZ; ulimit -f 0 && ./big ) || true\n'; } > "$W/fx9/c_trap_prose.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'if [ -d "$T" ]; then trap '"'"'rm -rf "$T"'"'"' 0; fi\n'
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n'; } > "$W/fx9/retrap_cmd.sh"
+# 6.7.9: a .exe run DIRECTLY is a wine run wherever binfmt_misc registers wine for MZ images.
+# exe_direct is the issue's verbatim script (2026-10-08-wine-prefix-scan-misses-binfmt-pe-run.md);
+# exe_forms holds one command-word spelling per line (its expected flagged lines are checked
+# below); c_exe_export is exe_direct's clean twin, its private prefix exported first.
+cat > "$W/fx9/exe_direct.sh" <<'FX'
+#!/bin/sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+cat src/main_win.cyr | build/cycc > "$T/cc_win"
+printf 'syscall(60, 0);\n' | "$T/cc_win" > "$T/hello.exe"
+chmod +x "$T/hello.exe"
+"$T/hello.exe" || exit 1
+FX
+cat > "$W/fx9/exe_forms.sh" <<'FX'
+T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }
+( cd "$T" && ./a.exe )
+EXE="$T/c.exe"
+"$EXE" > "$T/out"
+x="$("$T/e.exe")"
+y=`"$T"/r.exe`
+timeout -s KILL 10 "$T/g.exe"
+FOO=1 env A=1 "$T/h.exe"
+for e in "$T"/a.exe "$T"/b.exe; do "$e"; done
+if ! { "$T/i.exe"; }; then :; fi
+printf 'x' | ${T}/j.exe
+"$OUT.exe" -v
+FX
+{ cat <<'FX'
+T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }
+WP="$T/wine"
+trap 'rm -rf "$T"' EXIT
+export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"
+"$T/a.exe"
+FX
+} > "$W/fx9/exe_no_teardown.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP; cat <<'FX'
+cat src/main_win.cyr | build/cycc > "$T/cc_win"
+printf 'syscall(60, 0);\n' | "$T/cc_win" > "$T/hello.exe"
+chmod +x "$T/hello.exe"
+export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache" WINEDEBUG=-all
+"$T/hello.exe" || exit 1
+FX
+} > "$W/fx9/c_exe_export.sh"
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\nWP="$D/wp"\n'; _fx9_down D WP; cat <<'FX'
+( cd "$D" && WINEPREFIX="$D/wp" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache" ./t.exe )
+EXE="$D/u.exe"; WINEPREFIX="$WP" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache" timeout 60 "$EXE" arg
+FX
+} > "$W/fx9/c_exe_inline.sh"
+# a .exe as an operand, a redirect target, a label, a glob, a remote command: no run here
+cat > "$W/fx9/c_exe_lookalike.sh" <<'FX'
+T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }
+trap 'rm -rf "$T"' EXIT
+CYRIUS_TARGET_WIN=1 "$CC" < "$T/p.cyr" > "$T/a.exe" 2> "$T/a.err"
+chmod +x "$T/a.exe"; cmp "$T/a.exe" "$T/b.exe"; cp a.exe "$T"/b.exe
+[ -s "$T/a.exe" ] && file "$T/a.exe"
+OUT="$T/o.exe"; cp "$T/a.exe" "$OUT"; chmod +x "$OUT"
+trow "Windows PE (cycc.exe built from src/main_win.cyr)" no
+echo "run $T/a.exe now; ./b.exe | x"
+check "PE (x.exe)" "$( [ -s "$T/y.exe" ] && echo yes)"
+x=$(printf '%s' "$T/a.exe")
+scp "$T/a.exe" cass:C:/cyrius-tests/; ssh cass 'cd C:\t & .\a.exe & echo %errorlevel%'
+case "$f" in
+    */*.exe) : ;;
+esac
+for f in "$T"/*.exe; do cmp "$f" x; done
+FX
 st9=0; nbad9=0
 # <fixture> <the reason it must be flagged FOR> — a shape flagged only for some OTHER rule would
 # let the rule it exists for be switched off unnoticed
@@ -1325,12 +1511,21 @@ for fr in "bare|no private WINEPREFIX" "winepath_first|no private WINEPREFIX" "f
           "cyrius_home_only|no private HOME (" "prefix_rm_live|removes the wine prefix while" \
           "prefix_rm_var|removes the wine prefix while" "stat_wrong_operand|NOT derived from the prefix" \
           "no_teardown|no EXIT trap stops this prefix" "kill_no_rmdir|no EXIT trap removes its server dir" \
-          "straight_teardown|no EXIT trap stops this prefix"; do
+          "straight_teardown|no EXIT trap stops this prefix" "retrap_cmd|no EXIT trap stops this prefix" \
+          "exe_direct|runs a .exe directly, which binfmt_misc hands to wine, with no private WINEPREFIX" \
+          "exe_no_teardown|no EXIT trap stops this prefix"; do
     f=${fr%%|*}; why=${fr#*|}; nbad9=$((nbad9 + 1))
     _wine_shared "$W/fx9/$f.sh" | grep -qF -- "$why" || { echo "FAIL: axis 9 self-test: the '$f' shape was not flagged for '$why': $(_wine_shared "$W/fx9/$f.sh" | head -2)"; st9=1; }
 done
 [ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1 | head -1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
-for f in c_export c_inline c_wrapper c_scoped c_prose c_probe c_prefix_rm_after_down; do
+[ "$(_wine_shared "$W/fx9/exe_direct.sh" | cut -d: -f1 | head -1)" = 7 ] || { echo "FAIL: axis 9 self-test: the issue's direct run (exe_direct line 7) was not flagged first: $(_wine_shared "$W/fx9/exe_direct.sh" | head -2)"; st9=1; }
+# exe_forms: every line but the mktemp (1) and the bare assignment (3) is a direct .exe run
+nbad9=$((nbad9 + 1)); h9=$(_wine_shared "$W/fx9/exe_forms.sh" | grep -F 'runs a .exe directly' | cut -d: -f1 | tr '\n' ' ')
+[ "$h9" = "2 4 5 6 7 8 9 10 11 12 " ] || { echo "FAIL: axis 9 self-test: exe_forms flagged lines '$h9' (want '2 4 5 6 7 8 9 10 11 12 ')"; st9=1; }
+ngood9=0
+for f in c_export c_inline c_wrapper c_scoped c_prose c_probe c_prefix_rm_after_down c_trap_prose \
+         c_exe_export c_exe_inline c_exe_lookalike; do
+    ngood9=$((ngood9 + 1))
     [ -z "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: an isolated spelling ('$f') was flagged: $(_wine_shared "$W/fx9/$f.sh")"; st9=1; }
 done
 [ "$st9" = 0 ] || FAIL=1
@@ -1348,7 +1543,7 @@ if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
 elif [ "$bad9" != 0 ]; then
     FAIL=1
 elif [ "$st9" = 0 ]; then
-    echo "  ok: axis 9: all $nwine9 gates that run wine give it a private WINEPREFIX, HOME and XDG_CACHE_HOME under their own mktemp dir, kill no unscoped wineserver, and stop their server and remove its server dir on EXIT, never deleting the prefix under a live server ($n9 scripts scanned; self-tested on $nbad9 shapes + 7 clean spellings)"
+    echo "  ok: axis 9: all $nwine9 gates that run wine give it a private WINEPREFIX, HOME and XDG_CACHE_HOME under their own mktemp dir, kill no unscoped wineserver, and stop their server and remove its server dir on EXIT, never deleting the prefix under a live server ($n9 scripts scanned; self-tested on $nbad9 shapes + $ngood9 clean spellings)"
 fi
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi

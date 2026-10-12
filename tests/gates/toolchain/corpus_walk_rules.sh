@@ -19,11 +19,22 @@
 #                                                                    with the capped directory named
 # so each verb must report EXACTLY 3 passed, 0 failed, rc 0, and the depth-cap warning.
 # Plus an ABSENT-root axis: no fuzz/ and no benches/ is an empty scope, not "cannot list".
+# Plus an EMPTY-corpus axis (6.7.9): the bare verb over a corpus that holds nothing FAILS — rc 1
+# and an `error:` naming the roots — for fuzz, bench and smoke as for test, both with every root
+# absent and with the roots present but holding no file of the verb's extension (a corpus that
+# moved or was renamed). bench, fuzz and smoke printed "No … found" and exited 0, so a CI line over
+# a moved corpus passed vacuously. `cyrius audit`'s bench stage stays non-fatal: no benches is a
+# `skip:` there, never an `error:` under a passing audit. (smoke has no corpus-walk fixture above:
+# it walks tests/smcyr/ and smoke/ through _cbt_find_files, not _corpus_walk_d; axis 6 is its row.)
 #
 # MUTATIONS (each against _corpus_walk_d): the is_symlink guard removed → the loop is walked to
 # the cap and the counts inflate; `elif` made a second `if` → d.X is handed to the runner as a
 # file; `nl > el` made `>=` → the dotfile runs (4 passed); the absent-root check removed → the
-# absent axis reports "cannot list directory".
+# absent axis reports "cannot list directory". Against the empty-corpus rule (6.7.9, measured
+# 2026-10-11 in a scratch copy): cmd_fuzz's empty arm back to `return 0` → 6a/6d red; _bench_all's
+# empty arm back to `return 0` → 6b/6e red; cmd_bench calling `_bench_all(0)` (the audit's mode) →
+# 6b/6e red; the audit stage calling `_bench_all(1)` → 6f red (an `error:` under a passing audit);
+# cmd_smoke's empty arm back to `return 0` → 6g/6h red (the 6.7.9 review: the sibling verb).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -112,8 +123,36 @@ cy "$Q" bench
 check "bench rc 0, '=== 1 passed, 0 failed ==='" "0 yes" "$RC $(has '=== 1 passed, 0 failed ===')"
 check "bench never says 'cannot list directory'" "no" "$(has 'cannot list directory')"
 
+echo "axis 6 — an EMPTY corpus fails the bare verb, as bare \`cyrius test\` does (6.7.9):"
+E="$T/empty"; mkdir -p "$E"
+printf '[package]\nname = "ce"\nversion = "0.1.0"\n' > "$E/cyrius.cyml"
+cy "$E" fuzz
+check "6a fuzz, every root absent: rc 1, named" "1 yes" "$RC $(has 'error: no fuzz harnesses found (looked in fuzz/ and tests/, recursively)')"
+cy "$E" bench
+check "6b bench, every root absent: rc 1, named" "1 yes" "$RC $(has 'error: no benchmarks found (looked in benches/ and tests/, recursively)')"
+cy "$E" test
+check "6c test, every root absent: rc 1 (the rule fuzz and bench now share)" "1 yes" "$RC $(has 'No .tcyr files found under tests/')"
+echo "        — and with every root present, holding no file of the verb's extension:"
+M="$T/moved"; mkdir -p "$M/fuzz/old" "$M/benches/old" "$M/tests"
+printf '[package]\nname = "cm"\nversion = "0.1.0"\n' > "$M/cyrius.cyml"
+printf "$OK" > "$M/fuzz/old/h.fcyr.bak"
+printf "$OK" > "$M/benches/old/b.bcyr.bak"
+printf "$OK" > "$M/tests/only.tcyr"
+cy "$M" fuzz
+check "6d fuzz, fuzz/ and tests/ hold no .fcyr: rc 1, named, no tally" "1 yes no" "$RC $(has 'error: no fuzz harnesses found') $(has ' passed, ')"
+cy "$M" bench
+check "6e bench, benches/ and tests/ hold no .bcyr: rc 1, named, no tally" "1 yes no" "$RC $(has 'error: no benchmarks found') $(has ' passed, ')"
+cy "$E" audit
+check "6f audit's bench stage stays non-fatal: rc 0, a skip, no error" "0 yes no" "$RC $(has 'skip: no benchmarks (benches/ and tests/ hold no .bcyr)') $(has 'error:')"
+cy "$E" smoke
+check "6g smoke, every root absent: rc 1, named" "1 yes" "$RC $(has 'error: no smoke harnesses found (looked in tests/smcyr/ and smoke/, recursively)')"
+mkdir -p "$M/tests/smcyr/old" "$M/smoke"
+printf "$OK" > "$M/tests/smcyr/old/s.smcyr.bak"
+cy "$M" smoke
+check "6h smoke, tests/smcyr/ and smoke/ hold no .smcyr: rc 1, named, no tally" "1 yes no" "$RC $(has 'error: no smoke harnesses found') $(has ' passed, ')"
+
 if [ "$fails" = "0" ]; then
-    echo "PASS: $NAME — test, fuzz and bench walk one corpus the same way"
+    echo "PASS: $NAME — test, fuzz and bench walk one corpus the same way, and an empty one fails each bare verb (smoke too)"
     exit 0
 fi
 echo "FAIL: $NAME — $fails assertion(s) failed"

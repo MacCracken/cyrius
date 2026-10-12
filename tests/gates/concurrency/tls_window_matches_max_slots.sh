@@ -27,6 +27,12 @@
 # is RED. Mutation ledger (6.7.6, each RED in a scratch copy): the save buffer back to
 # `i64[128]`; `_tlocal_fallback[128]`; `var TLOCAL_MAX_SLOTS = 128;`; the Windows block back to
 # `alloc(1024)`; `_THR_HDR = 1040`.
+# 6.7.9: the loops are bounded by the CONST too. 6.7.6 left them on the public var, so a program
+# that raised TLOCAL_MAX_SLOTS (as thread_local_alloc's comment advised) had agnos's thread_create
+# copy past its const-sized stack snapshot — measured under the fake kernel: SIGSEGV
+# (crossos/thread_local_alloc_bounded_by_storage.tcyr). Axis 2 now requires the const and refuses
+# the var; lib_buffers_sized_by_const.sh axis 6 holds every other read of the var in lib/.
+# Mutation (6.7.9): one save loop back to `i < TLOCAL_MAX_SLOTS` -> axis 2 RED.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -37,7 +43,7 @@ MAX=$(grep -E '^const _TLOCAL_MAX_SLOTS = [0-9]+;' "$ROOT/lib/thread_local.cyr" 
 [ "$MAX" -gt 0 ] || fail "_TLOCAL_MAX_SLOTS parsed as '$MAX'"
 # ── axis 0 (6.7.6): the public var IS the const, not a second copy of the number ─────────
 grep -qE '^var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;' "$ROOT/lib/thread_local.cyr" \
-    || fail "lib/thread_local.cyr: 'var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;' is gone — a literal there is a second copy of the slot count, and the loops bounded by the var would drift from the buffers sized by the const"
+    || fail "lib/thread_local.cyr: 'var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;' is gone — a literal there is a second copy of the slot count, and the value a caller reads would drift from the storage the const sizes"
 
 for f in lib/thread_agnos.cyr; do
     # ── axis 1: the save buffer is sized by the const (6.7.6; it was a literal 128) ──
@@ -56,9 +62,12 @@ for f in lib/thread_agnos.cyr; do
     # what it protects. A gate that pins the mechanism fails good changes and, worse, passes
     # bad ones that keep the shape (v6.5.36's enum gate stayed green through five bad releases
     # for precisely this reason). So: at least the save+restore pair, and ZERO literal bounds.
-    LOOPS=$(grep -cE 'while \(i < TLOCAL_MAX_SLOTS\) \{' "$ROOT/$f" || true)
+    LOOPS=$(grep -cE 'while \(i < _TLOCAL_MAX_SLOTS\) \{' "$ROOT/$f" || true)
     [ "$LOOPS" -ge 2 ] \
-        || fail "$f: expected at least 2 loops bounded by TLOCAL_MAX_SLOTS (save + restore), found $LOOPS"
+        || fail "$f: expected at least 2 loops bounded by _TLOCAL_MAX_SLOTS (save + restore), found $LOOPS"
+    VAR=$(grep -cE 'while \(i < TLOCAL_MAX_SLOTS\)' "$ROOT/$f" || true)
+    [ "$VAR" -eq 0 ] \
+        || fail "$f: found $VAR TLS loop(s) bounded by the public var TLOCAL_MAX_SLOTS — a program that raises it copies past the const-sized snapshot (the 6.7.9 defect); bound it by _TLOCAL_MAX_SLOTS"
     LIT=$(grep -cE 'while \(i < [0-9]+\) \{' "$ROOT/$f" || true)
     [ "$LIT" -eq 0 ] \
         || fail "$f: found $LIT TLS loop(s) bounded by a numeric LITERAL — that is the v6.5.39 defect exactly (the window was 16 while TLOCAL_MAX_SLOTS was 128), and it under-copies silently rather than overflowing"
@@ -111,4 +120,4 @@ XB=$(awk '/^#ifndef CYRIUS_ARCH_AARCH64$/{a=1} a&&/^#endif$/{a=0} a' "$ROOT/lib/
 printf '%s' "$XB" | grep -q '_tls_gs_word0()' \
     || fail "lib/thread_local.cyr: the x86-macOS _tlocal_base() does not read the per-thread gs header — every real thread would share one slot array"
 
-echo "PASS: tls_window_matches_max_slots (_TLOCAL_MAX_SLOTS=$MAX sizes every slot buffer and TLOCAL_MAX_SLOTS derives from it; the serial peer saves the full range; macOS snapshots nothing and x86-macOS reads per-thread gs slots)"
+echo "PASS: tls_window_matches_max_slots (_TLOCAL_MAX_SLOTS=$MAX sizes every slot buffer and bounds the serial peer's save / restore; TLOCAL_MAX_SLOTS derives from it; macOS snapshots nothing and x86-macOS reads per-thread gs slots)"

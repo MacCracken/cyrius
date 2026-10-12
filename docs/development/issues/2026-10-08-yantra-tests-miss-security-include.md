@@ -1,10 +1,22 @@
-# yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings) — OPEN
+# yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings) — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b and yantra 1.0.9 (`f12b9eb`, the folded
-tag): each of the nine files below, compiled from a scratch `git archive` copy with cyrius's `lib/` and
-`lib/assert.cyr` prepended (as the manifest does), builds rc 0 with `warning: undefined function
-'yantra_tls_pin_verify_ed25519'` and `… 'yantra_tls_pin_verify_hybrid'`. The roadmap named only the Android / iOS
-e2e files; the set is wider.
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 9; yantra `53694cc`, its 1.0.10 release commit; CHANGELOG [6.7.9])
+> Fixed at the source. The nine test files and a tenth of the same shape, `programs/benchmarks.cyr`, now include
+> `src/security.cyr` after `src/runtime.cyr` (the `[lib] modules` order). The filed repro now reports 0 warnings for
+> every file. yantra's CI gains `scripts/ci/no-undefined-fns.sh`. It builds all 19 `tests/` and `programs/` files
+> (that count is a floor) and fails on an `undefined function` warning, naming the file. Against 1.0.9 it fails on all
+> ten files. On 1.0.10 it passes. With one include removed, it fails on that file. yantra's CI ran isolated
+> (sibci, pin 6.7.5) with build-and-test, the Chromium and WebDriver E2E, and bench green. The Firefox, WebKit,
+> Android and iOS jobs need drivers this box lacks, and the new step compiles all four of those files clean. ⛔ The
+> bundle changes only in its version stamps (`# Version: 1.0.10`, `yantra_version()` → `"1.0.10"`), but that is a
+> change, so cyrius 6.7.9 cannot tag until the user tags yantra 1.0.10 and `lib/yantra.cyr` is refolded from that
+> tag (`cyrius distlib`, byte-compared) with its `docs/ecosystem.md` row updated.
+
+**Status:** ✅ **RESOLVED** (v6.7.9, yantra 1.0.10; the refold follows the user's tag). Was 🟡 OPEN, re-verified
+2026-10-08 against 6.7.6 @ 2fb6ad8b and yantra 1.0.9 (`f12b9eb`, the folded tag): each of the nine files below,
+compiled from a scratch `git archive` copy with cyrius's `lib/` and `lib/assert.cyr` prepended (as the manifest
+does), builds rc 0 with `warning: undefined function 'yantra_tls_pin_verify_ed25519'` and
+`… 'yantra_tls_pin_verify_hybrid'`. The roadmap named only the Android / iOS e2e files; the set is wider.
 **Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.
 **Discovered:** the 6.7.6 fold wave (W2, yantra 1.0.9 — the Android / iOS E2E runs, "results unaffected, 4/4
 each"); filed 2026-10-08 from roadmap.md.

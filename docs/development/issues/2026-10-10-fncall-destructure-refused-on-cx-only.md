@@ -1,12 +1,18 @@
-# `var t, v = fncallN(..)` is refused on cx only — `crossos/method_pair_result.tcyr` has never built for cx — OPEN
+# `var t, v = fncallN(..)` is refused on cx only — `crossos/method_pair_result.tcyr` has never built for cx — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
-2,053,536 B) with the tree's compiler and the cross compilers built from it: the repro exits 83 on x86_64, aarch64
-(qemu) and PE (wine), and the cx compiler (`src/main_cx.cyr`) refuses it ("multi-value destructure binds 2 names, but
-'fncall1' returns 1 value"). The installed 6.7.7 `cycc` / `cycc_cx` give the same split. `cat
-tests/tcyr/crossos/method_pair_result.tcyr | cycc_cx` fails at line 79 with the same error, so that crossos file has
-never compiled for cx (no gate compiles it there: it is not one of `cx_crossos_rows_run.sh`'s row files).
-**Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 1; CHANGELOG [6.7.9]) lib/fnptr.cyr's nine cx arms are
+> `return callptr(..);` (candidate 1), so no target proves an `fncallN` body one-valued and `var t, v = fncallN(..)`
+> compiles and runs everywhere: the repro exits 83 on x86_64, aarch64 (qemu), PE (wine) and cxvm, and
+> `method_pair_result.tcyr` builds for cx for the first time (31/31). The x86_64 / aarch64 / PE outputs are
+> byte-identical (the arm is preprocessed out there). Gate rows R10 (the repro verbatim; fncall0..8 each destructured,
+> plus the body run through `&fncall1` / `&fncall8`) and R11 (method_pair_result on cxvm) of
+> `tests/gates/codegen/cx_crossos_rows_run.sh`, mutation-proven.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above. (Filed: reproduced 2026-10-10 against the merged
+6.7.8 tip (l678-int @ 85ee576f, `cycc_merged` 2,053,536 B): the repro exited 83 on x86_64, aarch64 (qemu) and PE
+(wine), and the cx compiler (`src/main_cx.cyr`) refused it; `method_pair_result.tcyr` failed for cx at line 79 and no
+gate compiled it there.)
+**Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — shipped.
 **Discovered:** 2026-10-10 by the 6.7.8 checked-`dyn` lane, bite D1 (reported only, `~/.cache/c6/dyn_handoff.md` § D1
 *Out of scope*).
 **Severity:** Medium — a hard failure on one target for source the other three compile; the crossos file's cx coverage

@@ -27,8 +27,9 @@
 # fd that CLOSES successfully (a positive errno from Darwin would not), and fstatat answering
 # "/" but refusing a path that does not exist (a wrong call that ignores its path would not).
 # mount / umount2 are exercised on PE only: on Darwin the Linux numbers have no route.
-# agnos is not part of this corpus's targets and defines none of these names (its sys_mount
-# is a 0-arity stub). CHANGELOG [6.6.7]
+# agnos is outside this file — the second block is `#ifndef CYRIUS_TARGET_AGNOS`: its rows assert
+# the real Linux / Darwin calls, which agnos does not have (its sys_ioctl / sys_fstatat decline
+# with -38 since 6.7.9, pinned by ppoll_ioctl_fstatat_every_target.tcyr). CHANGELOG [6.6.7]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

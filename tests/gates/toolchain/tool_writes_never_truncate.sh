@@ -133,6 +133,19 @@ done
 [ -e "$D/run/lib" ] && { fail "axis 1: the generator wrote lib/ under its cwd although OUTDIR was given"; a1=1; }
 [ "$a1" = 0 ] && echo "  ok: axis 1: unconstrained, gen_unicode_data reproduces all 3 committed tables into OUTDIR"
 
+# ── axis 1b (6.7.9): one operand, never a flag — `--help` was taken as OUTDIR ──
+ls -A "$D/run" > "$D/a1b.before"
+r1=0; ( cd "$D/run" && exec "$GEN" --help ) > "$D/a1b.out" 2>&1 || r1=$?
+r2=0; ( cd "$D/run" && exec "$GEN" "$D/ok" "$D/ok" ) >> "$D/a1b.out" 2>&1 || r2=$?
+ls -A "$D/run" > "$D/a1b.after"
+if [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$(grep -c 'takes one operand, never a flag' "$D/a1b.out")" = 2 ] \
+  && cmp -s "$D/a1b.before" "$D/a1b.after"; then
+    echo "  ok: axis 1b: \`gen_unicode_data --help\` and a second operand are refused (rc 2, by name), nothing written"
+else
+    fail "axis 1b: a flag or a second operand was not refused (rc $r1 / $r2; cwd now: $(paste -sd' ' - < "$D/a1b.after"))"
+    sed 's/^/      /' "$D/a1b.out" | head -4
+fi
+
 # ── axis 2: every table larger than the limit -> non-zero, all three kept, no temp left ──
 _seed "$D/fsz" || { echo "FAIL: cannot seed $D/fsz"; exit 1; }
 _seed "$D/seed" || { echo "FAIL: cannot seed $D/seed"; exit 1; }

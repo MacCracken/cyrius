@@ -1,9 +1,21 @@
-# The x86-macOS peer `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288`, which no macOS path emits — OPEN
+# The x86-macOS peer `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288`, which no macOS path emits — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b by grep: the only reader of
-`SYS_ACCEPT4` in `lib/` is the `#ifndef CYRIUS_TARGET_MACOS` arm of `sys_accept4`
-(`lib/syscalls_linux_common.cyr:1279-1281`); the macOS arm composes `accept` (43 → BSD 30) + fcntl. The x86 Mach-O
-EMACHO_SYSXLAT has no 288 row. Not re-run on hardware (needs ach) — nothing executes it.
+> ✅ **RESOLVED in v6.7.9** (the quick lane's bite 4; CHANGELOG [6.7.9]) Option (b), the decision (user, 2026-10-11):
+> the name is KEPT, and the peer now says why — a comment at the declaration (Darwin has no accept4; `sys_accept4`
+> composes accept 43 → BSD 30 + fcntl under `#ifdef CYRIUS_TARGET_MACOS`, so 288 is never emitted; kept for portable
+> source) and a header paragraph, NAMES WITH NO ROUTE, for the whole class (declared for portable source, never emitted
+> by the stdlib, a raw use warns at compile time and is SIGSYS / -78 at run time, each reason in the route gate's
+> allow-list). The class had two worse members the filing missed: `SYS_WAITID = 247` and `SYS_SET_TID_ADDRESS = 218`
+> had no route, no issuer and no reason anywhere — both now carry one. `platform/macho_route_parity.sh` axis 4: every
+> name the x86-macOS peer declares with no EMACHO_SYSXLAT row carries an allow-list reason (floor 40) —
+> RED before (WAITID, SET_TID_ADDRESS), green after; the ACCEPT4 reason, which named `lib/net.cyr`, now names
+> `sys_accept4`. Nothing that compiles changes: an x86-macOS build naming all three is byte-identical before / after.
+
+**Status:** ✅ **RESOLVED in v6.7.9** (option b, comment-only; see the banner). Was 🟡 OPEN — re-verified
+2026-10-08 against 6.7.6 @ 2fb6ad8b by grep: the only reader of `SYS_ACCEPT4` in `lib/` is the
+`#ifndef CYRIUS_TARGET_MACOS` arm of `sys_accept4` (`lib/syscalls_linux_common.cyr:1279-1281`); the macOS arm
+composes `accept` (43 → BSD 30) + fcntl. The x86 Mach-O EMACHO_SYSXLAT has no 288 row. Not re-run on hardware (needs
+ach) — nothing executes it.
 **Placement:** 6.7.9 — the repair batch, the quick-fix lane (user, 2026-10-11) — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog as cosmetic); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — cosmetic; a raw `syscall(SYS_ACCEPT4, …)` on x86-macOS fails closed with -ENOSYS (see below).
