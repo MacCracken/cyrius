@@ -2399,6 +2399,12 @@ _chk_gate "$ROOT/tests/gates/codegen/coverage_exec_hits.sh"
 # in the driver's .tcyr environment to exit 0 with no `bounds:` line; every lib module compiles under
 # the mode exactly as without it; floors on the files selected and reached; a planted trip is caught.
 _chk_gate "$ROOT/tests/gates/memory/bounds_mode_corpus.sh"
+# 6.7.10 (P5B-5) — the corpus runs unchanged under the execution-coverage mode: every .tcyr compiled
+# plain and with CYRIUS_COVERAGE=1, on x86 and under CYRIUS_IR=3, gives the same compile status and
+# exit, and every run that exits 0 leaves a well-formed record (floors from tests/tcyr/CORPUS_FLOOR);
+# an instrumented cycc reproduces cycc; planted no-record / exit / compile deltas and a malformed
+# dump are caught. `# check: serial` (its own workers, alone after the pool). Ledger in the header.
+_chk_gate "$ROOT/tests/gates/memory/coverage_mode_corpus.sh"
 # 6.7.8 — an inherited CYRIUS_POISON never reaches a self-build (the compiler includes
 # lib/alloc.cyr, which reads it; seed-derive went RED under it): seed-derive, release-gate,
 # version-bump and bootstrap unset it; check.sh keeps it for its suite and scrubs only its own
