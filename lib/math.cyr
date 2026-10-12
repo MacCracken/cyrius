@@ -831,10 +831,11 @@ fn lcm(a, b): i64 {
 # ~23% of two-decimal literals came back 1 ulp off, 0.0001e310 overflowed to Inf
 # and subnormals flushed to 0.
 #
-# Names carry a private _f64p_ / _F64P_ prefix because lib/bayan.cyr folds the same
-# algorithm under _d_ / _D_: cycc resolves a duplicate fn or global "last definition
-# wins" with only a warning, so shared names would silently swap one copy's bodies
-# for the other's. The tables are typed array initializers, written into the
+# Names carry a private _f64p_ / _F64P_ prefix: cycc resolves a duplicate fn or global
+# "last definition wins" with only a warning, so a shared name would silently swap one
+# definition's body for another's. (lib/bayan.cyr folded a second copy of this parser
+# under _d_ / _D_ until bayan 1.5.14, which delegates to f64_parse_n; its Grisu2
+# formatter keeps the _d_ / _D_ names.) The tables are typed array initializers, written into the
 # program image: no lazy init, so nothing to race between threads, and no decode
 # per lookup (they were hex text decoded on every read until 6.7.10 — tier 2 paid
 # ~50 ns a parse for it; CHANGELOG [6.7.10]).
