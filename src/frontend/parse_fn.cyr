@@ -4648,6 +4648,11 @@ var _scv_term = 5;   # ... and the token that ends the initialiser inside them (
 # bits, + 1) and the save's depth (high), so a disarm reads its own save even after an unbalanced
 # inner one. CHANGELOG [6.7.6]
 var _scv_vec = 0;
+# 6.7.9 — 1 = the initialiser the last `_scv_disarm` closed reported an error of its own (`_had_error`
+# 0 at its arm, 1 at its disarm): its whole-result refusal (`_sc_global_pair`) would be a second
+# report of a line already refused — `var G: Pt = mk2(3) + H;` (the left operand). A file with an
+# earlier error cannot tell, and may report both.
+var _scv_err = 0;
 fn _scv_save(): i64 {
     if (_scv_vec == 0) { _scv_vec = vec_new(); }
     var d = vec_len(_scv_vec);
@@ -4655,6 +4660,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _scv_term);
     vec_push(_scv_vec, _sc_fcw);
     vec_push(_scv_vec, _fla_want);
+    vec_push(_scv_vec, _had_error);
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -4680,6 +4686,8 @@ fn _scv_arm(S, pscale): i64 {
 fn _scv_disarm(S, w): i64 {
     _sc_want = (w & 0xFFFFFFFF) - 1;
     if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
+    _scv_err = 0;
+    if (vec_get(_scv_vec, (w >> 32) + 4) == 0) { _scv_err = _had_error; }   # 6.7.9
     _scv_restore(w >> 32);
     return 0;
 }
@@ -4796,6 +4804,13 @@ fn _scv_dyn_chk(S, pscale, ext, start): i64 {
 fn _sc_global_receive(S, pscale, start): i64 {
     if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
+    return _sc_global_pair(S, pscale, start);
+}
+# ⛔ 6.7.9 — the struct half, shared with the declaration zone's replay (`_gvi_expr`), which ran only
+# `_sc_global_mismatch`: `var G2: Q = Q0.mk();` before the first statement (a 9-16 B method, a generic
+# method, `(Q0.mk())`, an operator `Q0 + Q1`) stored rax — the struct's first WORD — as the address of
+# the inline G2, and the first `G2.a` SIGSEGV'd. Now refused by name there too. CHANGELOG [6.7.9]
+fn _sc_global_pair(S, pscale, start): i64 {
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }

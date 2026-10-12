@@ -1405,7 +1405,9 @@ forms alike) is a compile error naming the fn — call it inside a fn. That incl
 declared ahead of the first top-level statement, generic calls (`var G: W1<Pt> = mkw(p);`)
 and non-generic ones (`var G: Pt = mkp(2);`) alike: before v6.6.11 that leading block was
 never checked, so both compiled and `G.x` SIGSEGV'd, and after a statement the generic form
-was checked against its 8-byte base and built too. An untyped `var g = pair_fn(..)` of a
+was checked against its 8-byte base and built too. The method and operator forms in that
+leading block (`var G2: Q = Q0.mk();`, a generic method, `(Q0.mk())`, `Q0 + Q1`) are refused
+since 6.7.9: before it they built and `G2.a` SIGSEGV'd. An untyped `var g = pair_fn(..)` of a
 9-16 B struct still yields its first word.
 Before v6.6.6 a struct result had storage only in the two declaration forms inside a fn —
 `var p: T = f(..)` and the inferred `var p = f(..)` — and only for a plain fn call. Every other

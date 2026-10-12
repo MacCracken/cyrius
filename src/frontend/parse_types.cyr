@@ -1798,7 +1798,7 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     var st = GTI(S);
     var en = _dyn_ext(S, st, 5);
     var c = _dyn_src(S, st, en, dsid, 0);
-    if (c == 0) { return _gvi_dyn_mcall(S, st, en, dsid); }
+    if (c == 0) { return 0; }   # a whole method's 16 B result: `_gvi_expr` refuses it (`_sc_global_pair`)
     if (c == 1) {
         if (idx >= 0) { if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == dsid) {
                     _dyn_emit(S, dsid, idx);
@@ -1807,19 +1807,6 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     }
     STI(S, en);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
-    return 1;
-}
-# 6.7.8 (D6): a zone dyn copied from one whole METHOD call (`var Z2: dyn Show = Z.me();`, through a
-# dyn or not): the 16-byte result comes back in rax:rdx and the replay has no frame to receive it —
-# it stored rax alone (the data word, as the address of an inline dyn: a SIGSEGV at the first call).
-# Refused by name, as the free call is (`_refuse_toplevel_pair_init`). 1 = refused, `;` consumed.
-fn _gvi_dyn_mcall(S, st, en, dsid): i64 {
-    if (_dyn_src_mcall(S, st, dsid) == 0) { return 0; }
-    STI(S, st + 2);
-    _refuse_toplevel_struct_call(S, L64(_fnt_names + _pair_callee_at(S, st) * 8));
-    STI(S, en);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;

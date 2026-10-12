@@ -49,6 +49,24 @@
 #   `_gen_decl_check` returns 0                            -> RED DG
 #   real tree                                              -> GREEN
 #
+# Z (6.7.9) — THE SAME STRUCT, NO FRAME, IN THE DECLARATION ZONE. A whole METHOD or OPERATOR result
+# of 9-16 B (rax:rdx) into a global of the SAME struct before the first top-level statement —
+# `var G2: Q = Q0.mk();`, a generic method, `(Q0.mk())`, `Q0 + Q1` — compiled clean (rc 0, no
+# diagnostic) on 6.7.0-6.7.8 and SIGSEGV'd at the first `G2.a`: the replay (`_gvi_expr`) ran only
+# the type half of PARSE_VAR's top-level check and stored rax, the struct's first WORD, as the
+# address of the inline G2. The free call and the same line after a statement were refused by
+# name; now the zone is too (`_sc_global_pair`, src/frontend/parse_fn.cyr — the struct half of
+# `_sc_global_receive`, shared; 6.7.8's dyn-only `_gvi_dyn_mcall` is subsumed and removed). Each
+# refusal is exactly ONE error line: a line refused INSIDE its initialiser (an operand, an argument)
+# is not refused again for its result (`_scv_err`, set by `_scv_disarm`). Filed: docs/development/issues/
+# 2026-10-10-zone-global-from-method-struct-call-crashes.md (Z1 is its repro verbatim).
+#   6.7.8 build/cycc / the 6.7.9 tree before the bite      -> RED Z1 Z3 Z4 Z5 (BUILT)
+#   `_gvi_expr` back on `_sc_global_mismatch` alone        -> RED Z1 Z3 Z4 Z5 (and dyn_checked C9b)
+#   `_sc_global_pair` without its `_sc_whole` -1 test      -> RED Z1 Z3 Z4 Z5 Z8 (and dyn_checked C9a C9b)
+#   `_gvi_expr` without its `_scv_err` test (the result     -> RED Z9 Z10 (2 error lines; and struct_value_codegen
+#     refused after a refusal inside the initialiser)            L15)
+#   real tree                                              -> GREEN
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -62,16 +80,20 @@ trap 'rm -rf "$D"' EXIT
 MF="into a struct field of a different struct type"
 MA="into a variable of a different struct/vector type"
 MD="fn return struct-id differs from declared var type"
+MT="returns a struct by value, and a struct result needs storage in a fn's frame"
 pass=0; fail=0; nrefuse=0; naccept=0
 
-refuse() {  # $1 label  $2 expected message  $3 source
+refuse() {  # $1 label  $2 expected message  $3 source  [$4 "one" = exactly one error line]
     printf '%s' "$3" > "$D/r.cyr"
     rc=0
     cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || rc=$?
     nrefuse=$((nrefuse+1))
+    nerr=$(grep -c '^error' "$D/r.err" 2>/dev/null || true)
     if grep -q "$2" "$D/r.err" 2>/dev/null; then
         if [ -s "$D/r.bin" ]; then
             printf '  FAIL: %-34s reported but still emitted a binary\n' "$1"; fail=$((fail+1))
+        elif [ "${4:-}" = "one" ] && [ "$nerr" != "1" ]; then
+            printf '  FAIL: %-34s %s error lines, want exactly 1\n' "$1" "$nerr"; fail=$((fail+1))
         else
             printf '  ok(refused): %-28s\n' "$1"; pass=$((pass+1))
         fi
@@ -208,6 +230,62 @@ refuse "FL8 z = h.p  (8 B field src)" "$MA" "$T"'struct HQ8 { p: Q8; }
 fn main(): i64 { var h: HQ8; var z: P8; z = h.p; return 0; }'"$E"
 refuse "FL3 var z: Od2 = h.o  (3 B field)" "$MA" "$T"'fn main(): i64 { var h: H; var z: Od2 = h.o; return 0; }'"$E"
 
+# Z (6.7.9) — the SAME struct into a declaration-zone global: no frame for a 9-16 B result, refused
+# by name exactly once, as the free call and the post-statement line are (see the header).
+ZQ='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct E { a; }
+struct Q3 { a; b; c; }
+impl Q {
+    fn mk(self): Q { var q = Q { self.a + 1, self.b + 2 }; return q; }
+    fn gmk<T>(self, x: T): Q { var q = Q { self.a + x, self.b + 2 }; return q; }
+    fn big(self): Q3 { var r = Q3 { 1, 2, 3 }; return r; }
+}
+impl E { fn mk(self): E { var e = E { self.a + 3 }; return e; } }
+fn Q_add(x: Q, y: Q): Q { var r = Q { x.a + y.a, x.b + y.b }; return r; }
+fn mkf(): Q { var q = Q { 5, 7 }; return q; }
+var Q0: Q = Q { 4, 5 };
+var Q1: Q = Q { 1, 2 };
+var E0: E = E { 4 };
+'
+echo "the declaration zone — a 9-16 B struct result of the SAME struct has no frame (6.7.9):"
+refuse "Z1 the filed repro  (zone method)" "'Q_mk' $MT" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q = Q { self.a + 1, self.b + 2 }; return q; } }
+var Q0: Q = Q { 4, 5 };
+var G2: Q = Q0.mk();                     # compiles; the binary SIGSEGVs (rc 139); want exit 57
+syscall(60, G2.a * 10 + G2.b);
+' one
+refuse "Z2 = Q0.mk().mk()  (zone chain)" "'Q_mk' $MT" "$ZQ"'var G2: Q = Q0.mk().mk();
+syscall(60, G2.a * 10 + G2.b);
+' one
+refuse "Z3 = Q0.gmk(1)  (zone generic method)" "'Q_gmk' $MT" "$ZQ"'var G2: Q = Q0.gmk(1);
+syscall(60, G2.a * 10 + G2.b);
+' one
+refuse "Z4 = (Q0.mk())  (zone, wrapped)" "'Q_mk' $MT" "$ZQ"'var G2: Q = (Q0.mk());
+syscall(60, G2.a * 10 + G2.b);
+' one
+refuse "Z5 = Q0 + Q1  (zone operator)" "'Q_add' $MT" "$ZQ"'var G2: Q = Q0 + Q1;
+syscall(60, G2.a * 10 + G2.b);
+' one
+refuse "Z6 = mkf()  (zone free call, as ever)" "'mkf' $MT" "$ZQ"'var G3: Q = mkf();
+syscall(60, G3.a * 10 + G3.b);
+' one
+refuse "Z7 = Q0.big()  (zone 24 B, as ever)" "'Q_big' $MT" "$ZQ"'var G4: Q3 = Q0.big();
+syscall(60, G4.c);
+' one
+refuse "Z8 = Q0.mk()  (after a statement)" "'Q_mk' $MT" "$ZQ"'syscall(1, 1, "", 0);
+var G2: Q = Q0.mk();
+syscall(60, G2.a * 10 + G2.b);
+' one
+# A line refused INSIDE its initialiser is that refusal alone: the result is not refused again.
+refuse "Z9 = Q0 + Q0.mk()  (zone, right operand)" "the right operand of 'Q_add' is passed by address" "$ZQ"'var G2: Q = Q0 + Q0.mk();
+syscall(60, G2.a);
+' one
+refuse "Z10 = Q0.gmk(nope)  (zone, bad argument)" "undefined variable 'nope'" "$ZQ"'var G2: Q = Q0.gmk(nope);
+syscall(60, G2.a);
+' one
+
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
 struct Box { v: Pt; n; }
@@ -255,6 +333,27 @@ var GZ = Od2 { 0, 0 };
 GZ.c = 1;
 GZ.d = 2;
 syscall(60, GZ.c * 10 + GZ.d);
+'
+
+accept "ZK1 var GE: E = E0.mk()  (zone 8 B)" "$ZQ"'var GE: E = E0.mk();
+syscall(60, GE.a);
+' 7 "$ZQ"'var GE = E { 0 };
+GE.a = 7;
+syscall(60, GE.a);
+'
+accept "ZK2 var G2 = Q0.mk()  (untyped: word 1)" "$ZQ"'var G2 = Q0.mk();
+syscall(60, G2 * 10);
+' 50 "$ZQ"'var G2 = 5;
+syscall(60, G2 * 10);
+'
+accept "ZK3 G2 = Q0.mk() in a fn  (the fix-it)" "$ZQ"'var G2: Q = Q { 0, 0 };
+fn init(): i64 { G2 = Q0.mk(); return 0; }
+init();
+syscall(60, G2.a * 10 + G2.b);
+' 57 "$ZQ"'var G2: Q = Q { 0, 0 };
+G2.a = 5;
+G2.b = 7;
+syscall(60, G2.a * 10 + G2.b);
 '
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
