@@ -106,7 +106,11 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
     `cx_crossos_rows_run.sh`; `yukti_statfs_and_stdlib_constants.tcyr` compiles for cx).
   - sigil 3.13.12 — `hash_file_into`'s per-call buffer: [sigil's static read buffer warns on every build](issues/2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
     (a gate: `include "lib/tls.cyr"` compiles with no warning).
-  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped (adds the `math` leaf).
+  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped (adds the `math` leaf). With
+    the refold: `tests/tcyr/math/f64_parse_rounding.tcyr`'s 10,000-literal check against `bayan_f64_parse` ("a separate
+    copy of the algorithm") would compare the stdlib parser with itself — re-aim it (an exact-rational oracle);
+    `lib/math.cyr`'s comments on bayan's `_d_` copy go; a migration note (a hand-written include list adds
+    `lib/math.cyr` before `lib/bayan.cyr`).
   - yantra 1.0.11 — `_cdp_set_nodelay` is `sock_set_nodelay` (TCP_NODELAY is now set on Windows).
   - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll`; pins sakshi 2.5.9.
 
