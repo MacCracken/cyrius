@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (44, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (46, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -57,6 +57,11 @@
 #   R11 (6.7.9) tests/tcyr/crossos/method_pair_result.tcyr (6.6.16, C4) — it destructures
 #       `fncall1(g, d)`, so it had never compiled for cx: native and cxvm each print `<N> passed,
 #       0 failed`, N derived from the source (31, floor 31), the whole file.
+#   R12 (6.7.9) tests/tcyr/crossos/const_fold_int_min_div.tcyr (6.6.20, RPD-06) — cx replayed a
+#       constant-folded global's initializer at run time, so `var Q = INT_MIN / -1;` (folded to
+#       INT_MIN since 6.6.20) ran cxvm's idiv and died SIGFPE (136): native and cxvm each print
+#       `<N> passed, 0 failed`, N derived from the source (13, floor 13), the whole file (the
+#       critical lane's hand-off; its own rows are cx_forward_read_constant_global.sh G-J).
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -88,11 +93,14 @@
 #      "guest address out of range: 3"), R6 native RED
 #   (Before the cxvm host-memory bug's cxvm bounds checks the c/d cx legs exited 63 / 64 — B03's hand-off numbers;
 #   cxvm now traps the stray access, exit 1, which the row reads as RED just the same.)
-#   6.7.9, R10 / R11 (a scratch copy of the tree; the real tree 44/44):
+#   6.7.9, R10 / R11 (a scratch copy of the tree; the real tree 44/44, 46/46 with R12):
 #   e. lib/fnptr.cyr's nine cx arms back to `result = callptr(..);` -> R10a, R10b and R11 cxvm RED
 #      ("binds 2 names, but 'fncall1' returns 1 value"; R10b names fncall0), 41 green.
 #   f. fncall8's cx arm alone back -> R10b cxvm RED (names fncall8), 43 green; fncall0's alone ->
 #      R10b cxvm RED (names fncall0), 43 green.
+#   g. (R12) the critical lane's bite 18 reverted in parse_decl.cyr (cx keeps the deferred replay of
+#      a folded global), that tree's cycc_cx passed as CYCC_CX -> R12 cxvm RED (exit 136, SIGFPE),
+#      45 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -477,8 +485,12 @@ echo "R11 — method_pair_result.tcyr (6.6.16 C4; never compiled for cx until 6.
 tcyr_native tests/tcyr/crossos/method_pair_result.tcyr 31
 tcyr_cx     tests/tcyr/crossos/method_pair_result.tcyr 31
 
-WANT=44
+echo "R12 — const_fold_int_min_div.tcyr (6.6.20 RPD-06; cx replayed the folded INT_MIN / -1 until 6.7.9), native then cxvm:"
+tcyr_native tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
+tcyr_cx     tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
+
+WANT=46
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, and var t, v = fncallN(..) + method_pair_result build and run on cx as natively"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, and a folded INT_MIN / -1 global never traps cxvm"
 exit 0
