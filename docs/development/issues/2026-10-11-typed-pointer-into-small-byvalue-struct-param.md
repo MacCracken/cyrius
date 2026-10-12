@@ -6,7 +6,7 @@
 cross compilers, and with the installed 6.6.0, 6.6.4, 6.6.5, 6.6.10, 6.6.20, 6.7.2, 6.7.3 and 6.7.7 compilers. Not
 fixed there: either fix (refuse the argument, or copy the struct through the pointer) changes what compiles or what a
 program computes, which the 6.7.9 decisions do not cover.
-**Placement:** 6.7.11 — repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.8*; beside [the parenthesised ≤ 8 B struct argument](2026-10-08-paren-arg-small-byval-struct-skips-type-check.md)) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
+**Placement:** 6.7.10 — B7's bite 1b (roadmap.md § *6.7.10*): decided 2026-10-12 — a `*T` / `&s` argument into a by-value struct parameter copies the struct it points to, at every size (the user, at B7's planning: it ships before the layout change shrinks structs into the broken case). Moved from 6.7.11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's by-value generic carrier fix: `gw(wp)` with `fn gw<T>(w: W1<T>)` and
 `wp: *W1<i32>` now calls `gw$i32` as `gw<i32>(wp)` does, and both read the pointer's bits as `w.v`.
 **Severity:** High — a silent wrong value on source that compiles clean, every target measured.

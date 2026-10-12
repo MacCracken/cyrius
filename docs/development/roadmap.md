@@ -107,11 +107,10 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
     `cx_crossos_rows_run.sh`; `yukti_statfs_and_stdlib_constants.tcyr` compiles for cx).
   - sigil 3.13.12 — `hash_file_into`'s per-call buffer: [sigil's static read buffer warns on every build](issues/2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
     (a gate: `include "lib/tls.cyr"` compiles with no warning).
-  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped (adds the `math` leaf). With
-    the refold: `tests/tcyr/math/f64_parse_rounding.tcyr`'s 10,000-literal check against `bayan_f64_parse` ("a separate
-    copy of the algorithm") would compare the stdlib parser with itself — re-aim it (an exact-rational oracle);
-    `lib/math.cyr`'s comments on bayan's `_d_` copy go; a migration note (a hand-written include list adds
-    `lib/math.cyr` before `lib/bayan.cyr`).
+  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped. Its bundle's Requires block
+    includes `lib/math.cyr` itself, so no consumer include changes. With the refold: `f64_parse_rounding.tcyr`'s
+    10,000-literal check is re-aimed at IEEE division (it compared the stdlib with itself); `lib/math.cyr`'s comment on
+    bayan's `_d_` copy.
   - yantra 1.0.11 — `_cdp_set_nodelay` is `sock_set_nodelay` (TCP_NODELAY is now set on Windows).
   - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll` (and `sys_ioctl` its `_yk_ioctl`).
 
@@ -129,6 +128,17 @@ the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row a
   kill); every target, no new OS route. Flag off ⇒ byte-identical output.
 - **P5-B CLI:** a new `cyrius coverage --exec` / `[coverage] exec` — `[coverage] programs` keeps meaning text coverage;
   `.tcyr` files are executed too; a nonzero exit fails the run by name; Linux, macOS and Windows.
+
+**Decided at planning (user, 2026-10-12; the plans: `~/.cache/c6/b76710_plan.md`, `p5b6710_plan.md`).**
+- The handle line covers struct **globals** too — one rule for locals and globals at every size.
+- **Struct copies are size-independent:** `*p` is a struct value (`var q: S = *p` copies at every size), and
+  `l = p` / `G = p` / `q = r` copy the struct at every size, as over 8 B today.
+- **`&c` into a by-value struct parameter copies through the pointer** at every size — closes
+  [a pointer into a by-value struct parameter of 8 B or less](issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
+  here (moved from 6.7.11), before the layout bite.
+- An `f32` field in `#derive(Serialize)` is written widened to f64; the lossy `Str` field decode is fixed with B7-4's
+  unescape helper (the pairs form returns a fresh copy).
+- `[coverage] exec` is a list of program globs; `--exec=<glob>` overrides it; `[coverage] programs` stays text-only.
 
 **Hosts.** B7's all-sizes crossos file on all four. P5-B on the hosts its decision names. `cyrius pulsar`.
 
@@ -162,6 +172,13 @@ the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row a
   - [distlib's two owner rules](issues/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md);
   - [a killed run's temp dir](issues/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md);
 - Stdlib and folds:
+
+- Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
+  - [BENCHMARKS.md prints the cycc size rows (byte counts) as milliseconds — `cc5_bytes | 1ms | 2ms | 2ms` — and the file-size row is still named `size/cc5_bytes`](issues/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md);
+  - [The "cannot be a fn return type" note lists an incomplete return-type set: `bool`, a multi-value `(T1, T2)`, `dyn Tr` and a generic's `T` are accepted but not named](issues/2026-10-12-return-type-refusal-note-incomplete.md);
+  - [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](issues/2026-10-12-sandhi-include-prints-large-static-advisory.md);
+  - [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](issues/2026-10-12-struct-result-through-fn-pointer-faults.md);
+  - [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](issues/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md);
 
 **Lanes.**
 - Wave 1: multi-value receives (`src/`, owns the destructure drains; the aarch64 register fix ships in 6.7.7) · call arguments (`src/`,
@@ -205,6 +222,15 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
   - [the CLI path / reporting leftovers](issues/2026-10-08-cli-path-and-reporting-leftovers.md) (all eight items);
   - [deps before `lib sync` stamps the new pin](issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md);
   - [`deps --verify` on CRLF](issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md).
+
+- Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
+  - [cass (Windows) full-corpus failures were never triaged into named skips vs real failures — the last count is v6.5.33's 32 of 282, the corpus is now 562, and no open issue tracks it](issues/2026-10-12-cass-full-corpus-failures-untriaged.md);
+  - [`cyrius build` takes contradictory target flags (`--win --aarch64`, `--win --agnos`, `--aarch64 --target=js`, …), silently keeps one and exits 0](issues/2026-10-12-combined-target-flags-silently-resolved.md);
+  - [cx's fixed 512 KiB code buffer: `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr` stops with a bare "codebuf overflow" on cx](issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md);
+  - [`cyriusly setup` (compiled): its "bootstrap cycc" step builds no cycc, its cross-bin loop can never match, and it builds the installed tools under an inherited `CYRIUS_BOUNDS`](issues/2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md);
+  - [`cyrius init --help`, `cyrius port --help` and `cyrius sign-efi --help` (and `-h`) fail as unknown flags, while `cyrius --help` promises every command takes `--help`](issues/2026-10-12-init-port-sign-efi-reject-help.md);
+  - [`cyrius package` with a missing `[build] entry` prints "package ready: build/<out>" and exits 0 with no artifact; its help row promises an `.ark` it never writes](issues/2026-10-12-package-missing-entry-reports-ready.md);
+  - [`cyrius tests` still says it "goes in the next release" three releases after the one it named — when the deprecated alias is removed](issues/2026-10-12-tests-verb-deprecated-alias-removal-decision.md);
 
 **Lanes.**
 - Wave 1, both at slot one on hardware:
@@ -264,6 +290,13 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
   - [native TLS conformance](issues/2026-10-08-tls-native-conformance-bite.md);
 - Slack: what 6.7.8–6.7.12 file. If it does not fit, a further repair release is said at this open, inserted before the
   audit release (which renumbers by one).
+
+- Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
+  - [A declaration after the first top-level statement: `fn` / `const` are taken, `struct` / `enum` / `trait` / `impl` / `union` / `mod` / `use` / `public` / `async fn` are refused, `impl` with a cascade, `async fn` and `union` by a misleading message](issues/2026-10-12-declarations-after-first-statement-decision.md);
+  - [cyrius-lsp diagnostics: the column lands in the message, an included file's error lands on the open file, and `.tcyr` / `.bcyr` / `.fcyr` / `.scyr` / `.smcyr` get nothing](issues/2026-10-12-lsp-diagnostics-column-file-and-extensions.md);
+  - [A top-level `return` compiles with no diagnostic and does not return: execution continues past it on x86_64 / PE and it hangs on aarch64 / cx](issues/2026-10-12-top-level-return-decision.md);
+  - ["assigning non-pointer to typed pointer" is missing for a declaration-zone `*T` global and for an assignment to a local or parameter `*T` of a scalar `T`](issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md);
+  - [`programs/wc.cyr` (a demo): counts of 8 or more digits run together with no separator, and VT / FF do not separate words](issues/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md);
 
 **Lanes.**
 - Wave 1: globals (`src/`) · IR arena (`src/`, commits `build/cycc`, two-step).

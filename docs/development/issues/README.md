@@ -240,14 +240,15 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.9 — repair batch: the quick fixes + the critical / high (user, 2026-10-11)** (0)
 
 
-**6.7.10 — features: B7 + P5-B** (4)
+**6.7.10 — features: B7 + P5-B** (5)
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
 - [`lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx](2026-10-11-sakshi-fold-has-no-cx-arm.md)
 - [Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer](2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
+- [A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
 
-**6.7.11 — Break 2, repair 1** (44)
+**6.7.11 — Break 2, repair 1** (48)
 
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
 - [cybs reports a bare "syntax error" (or "undefined variable") with no file, line or construct](2026-10-08-cybs-bare-syntax-error-no-location.md)
@@ -292,9 +293,13 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A narrow scalar LOCAL (`u8` / `i16` / `i32`) is a one-byte pointer to the step checks, and `n + &x` is no pointer where `&x + n` is](2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md)
 - [Under `--allow-undef`, an undefined `_str` / `_int` sibling still takes its base's call: `pr(s)` reaches the undefined `pr_str` and traps (rc 132) instead of calling the defined `pr` — OPEN (a decision)](2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md)
 - [`+| +? -| -?` on a typed pointer add an unscaled count, then hand the result the pointer's step: with `q: *i32`, `(q +| 1) + 1` is `q + 5` — OPEN (a decision)](2026-10-11-saturating-op-keeps-left-pointer-step-decision.md)
-- [A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
+- [BENCHMARKS.md prints the cycc size rows (byte counts) as milliseconds — `cc5_bytes | 1ms | 2ms | 2ms` — and the file-size row is still named `size/cc5_bytes`](2026-10-12-benchmarks-md-size-rows-formatted-as-time.md)
+- [The "cannot be a fn return type" note lists an incomplete return-type set: `bool`, a multi-value `(T1, T2)`, `dyn Tr` and a generic's `T` are accepted but not named](2026-10-12-return-type-refusal-note-incomplete.md)
+- [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](2026-10-12-sandhi-include-prints-large-static-advisory.md)
+- [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](2026-10-12-struct-result-through-fn-pointer-faults.md)
+- [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md)
 
-**6.7.12 — Break 2, repair 2 (the platform release)** (18)
+**6.7.12 — Break 2, repair 2 (the platform release)** (25)
 
 - [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](2026-10-08-aarch64-native-region-literal-translated-silently.md)
 - [arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3)](2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md)
@@ -314,8 +319,15 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius pulsar` and the CLI's on-demand cx builds hand an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` to the compiler they build](2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md)
 - [On macOS an exec-family child still inherits a signal mask its parent inherited from a launcher](2026-10-11-macos-exec-child-keeps-launcher-signal-mask.md)
 - [The macOS release tarballs ship two of the three `[release] scripts` — `cyrius-watch.sh` is left out — OPEN (a decision)](2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md)
+- [cass (Windows) full-corpus failures were never triaged into named skips vs real failures — the last count is v6.5.33's 32 of 282, the corpus is now 562, and no open issue tracks it](2026-10-12-cass-full-corpus-failures-untriaged.md)
+- [`cyrius build` takes contradictory target flags (`--win --aarch64`, `--win --agnos`, `--aarch64 --target=js`, …), silently keeps one and exits 0](2026-10-12-combined-target-flags-silently-resolved.md)
+- [cx's fixed 512 KiB code buffer: `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr` stops with a bare "codebuf overflow" on cx](2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md)
+- [`cyriusly setup` (compiled): its "bootstrap cycc" step builds no cycc, its cross-bin loop can never match, and it builds the installed tools under an inherited `CYRIUS_BOUNDS`](2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md)
+- [`cyrius init --help`, `cyrius port --help` and `cyrius sign-efi --help` (and `-h`) fail as unknown flags, while `cyrius --help` promises every command takes `--help`](2026-10-12-init-port-sign-efi-reject-help.md)
+- [`cyrius package` with a missing `[build] entry` prints "package ready: build/<out>" and exits 0 with no artifact; its help row promises an `.ark` it never writes](2026-10-12-package-missing-entry-reports-ready.md)
+- [`cyrius tests` still says it "goes in the next release" three releases after the one it named — when the deprecated alias is removed — OPEN (a decision)](2026-10-12-tests-verb-deprecated-alias-removal-decision.md)
 
-**6.7.13 — Break 2, repair 3** (28)
+**6.7.13 — Break 2, repair 3** (33)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -345,6 +357,11 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`TLS_CA_MAX_ROOTS` bounds nothing since 6.7.9 — keep the public name or retire it — OPEN (a decision)](2026-10-11-tls-ca-max-roots-unread-decision.md)
 - [The public bound vars (`var X = _X;`): stay writable, or become read-only — the TLS stack's first — OPEN (a decision)](2026-10-11-tls-public-bound-vars-api-decision.md)
 - [The native TLS stack's public bound vars still drive storage their consts size: a raised `TLS12_RANDOM_LEN` smashes the stack](2026-10-11-tls-public-bound-vars-drive-const-storage.md)
+- [A declaration after the first top-level statement: `fn` / `const` are taken, `struct` / `enum` / `trait` / `impl` / `union` / `mod` / `use` / `public` / `async fn` are refused, `impl` with a cascade, `async fn` and `union` by a misleading message — OPEN (a decision)](2026-10-12-declarations-after-first-statement-decision.md)
+- [cyrius-lsp diagnostics: the column lands in the message, an included file's error lands on the open file, and `.tcyr` / `.bcyr` / `.fcyr` / `.scyr` / `.smcyr` get nothing](2026-10-12-lsp-diagnostics-column-file-and-extensions.md)
+- [A top-level `return` compiles with no diagnostic and does not return: execution continues past it on x86_64 / PE and it hangs on aarch64 / cx — OPEN (a decision)](2026-10-12-top-level-return-decision.md)
+- ["assigning non-pointer to typed pointer" is missing for a declaration-zone `*T` global and for an assignment to a local or parameter `*T` of a scalar `T`](2026-10-12-typed-pointer-non-pointer-warning-gaps.md)
+- [`programs/wc.cyr` (a demo): counts of 8 or more digits run together with no separator, and VT / FF do not separate words](2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md)
 
 **6.7.14 — the full security audit + the refactor / optimization review** (1)
 
