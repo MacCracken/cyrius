@@ -97,6 +97,33 @@
 #   main_win (wine) and cx; E6 / E7 wherever `main` is auto-called; E8 / E9 on x86 and aarch64;
 #   E1b / E7 under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0
 #
+# GROUP F — EVERY FN SHAPE (P5B-4). An `#inline` replay re-parses its callee's body inside the
+# caller and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
+# PARSE_FNCALL's one PARSE_PROG; the callee's line recorded only when its definition has not); a
+# closure bumps its own once its frame is open (`_cl_frame_open`, the 1-for-1 swap for
+# `_PARSE_FACTOR_IMPL`'s one ESUBRSP), named at its closing bar's line; a `#naked` fn is recorded as
+# not instrumented (`- <file>:<line> <name>`). Each probe falls off the top level and its WHOLE dump
+# is held exactly (a closure's `__clNNNNN` — its fn index — is compared as `__cl#` everywhere):
+#   F1  `#inline inl` replayed twice directly and once inside a replayed `#inline inl2` -> 3; inl2 1
+#   F2  closures: an expression closure x2, a block closure, a bar list over two lines (named at its
+#       closing bar's line), a `||` closure, one inside a fn called twice — each at its line
+#   F3  `gen<f64>` (minted `gen$i`) and the base called at i64 both count; an uncalled generic absent
+#   F4  a method (`P_sum`); its uncalled sibling absent
+#   F5  CYRIUS_ASYNC=1: `outer$impl` once across four forces (it suspends twice mid-body), `job$impl`
+#       2, no constructor record (x86 and PE: aarch64 refuses a mid-body await by name, cx too)
+#   F6  `#naked nk` -> `- <source>:2 nk` (E10a carries one too; M3 shows lib/fdlopen.cyr's two). cx
+#       takes no `#naked` (an ordinary fn there): no record
+#   F7  no `__cyrius_` record ever — the dump's own fns (F7a), and CYRIUS_BOUNDS=1's checker on every
+#       runtime subscript (F7b)
+#   F8  a fn and a closure with `defer`, each 1 (the defer-init jump never re-runs the hit)
+#   A7  a self tail call `tail2(3)` -> 4 and a tail chain ta / tb -> 3 / 2 (ETAILJMP re-enters at the
+#       prologue: every entry counts)
+#   A6  a top-level indirect call (aarch64 / cx open a micro-frame with EFNPRO there) adds no record
+#   Legs: all on x86, aarch64 (qemu), the native fork (qemu), PE via main.cyr and main_win (wine) and
+#   cx (cxvm); F1 / F2 / F8 also under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0. The rows
+#   P5B-2 / P5B-3 wrote that these shapes reach: A4 (`capt`'s closure), E10a (`- <source>:2 nk`), E13
+#   (`die`, the `#inline` exit), M3 / E8' (a `-` record is a well-formed line)
+#
 # MUTATION LEDGER (P5B-1; scratch copies of the tree, each its 2-stage mutant cycc, this gate and the
 # named gates run as CYCC=<mutant>; 2026-10-12):
 #   MS1  `_cov_setup`'s PP_PREDEFINE dropped                     -> RED S2a S2b S5d
@@ -135,6 +162,18 @@
 #   M14  Linux's open flags (1089) on Darwin                     -> RED 2 of 166: DW x86 + arm64 Mach-O
 #   M15  O_TRUNC for O_APPEND (577)                              -> RED 2 of 166: E8 x86 + aarch64 (the
 #        child's block lost)
+# MUTATION LEDGER (P5B-4; the same procedure, 2026-10-12; "N of 243"):
+#   M6   the replay swap reverted (PARSE_FNCALL's PARSE_PROG)     -> RED 17 of 243: F1 on every leg and x86
+#        codegen mode, E13 on every leg (`inl` / `die` absent)
+#   M7   the closure swap reverted (`_PARSE_FACTOR_IMPL`'s ESUBRSP) -> RED 32 of 243: F2 / F8 / A6 on every leg
+#        and x86 codegen mode, A4 x86 / IR=3 / aarch64 / PE (`capt`'s closure absent)
+#   M7b  the closure's line taken at its REGFN (the opening side) -> RED 11 of 243: F2 on every leg and x86
+#        codegen mode (the two-line bar list named at line 5, not 6)
+#   MN   the naked branch dropped (no `-` record)                 -> RED 6 of 243: F6 on the five legs that take
+#        `#naked` (cx does not), E10a
+#   MO   the `__cyrius_` skip dropped (`_cov_own`)                -> RED 109 of 243: F7a / F7b (the dump's own
+#        fns, `__cyrius_bounds_chk`) and every whole-dump row (H1-H4 H8, A2, B1, L1-L5, group F); H7 (8 hits,
+#        not 4). The `<source>`-filtered rows (A4, group E) stay green, as they must
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -330,8 +369,10 @@ hx() {
     if [ "$got" != "$pgot" ]; then bad "$row: exit $got under the mode, $pgot plain"; return; fi
     if [ -n "$HXE" ] && [ "$got" != "$HXE" ]; then bad "$row: exit $got (want $HXE: a result is wrong)"; return; fi
     if [ ! -f "$D" ]; then bad "$row: exit $got, but no dump at the CYRIUS_COVERAGE_FILE"; return; fi
-    if [ -n "$HXF" ]; then tr -d '\r' < "$D" | grep -F -e "$HDR" -e "$HXF" | LC_ALL=C sort > "$T/hx.got"
-    else tr -d '\r' < "$D" | LC_ALL=C sort > "$T/hx.got"; fi
+    # a closure's registered name is `__cl` + its fn index (5 digits), which moves with every fn an
+    # include adds and differs by target: normalised to `__cl#` (its line names it)
+    if [ -n "$HXF" ]; then tr -d '\r' < "$D" | grep -F -e "$HDR" -e "$HXF" | sed 's/ __cl[0-9][0-9][0-9][0-9][0-9]$/ __cl#/' | LC_ALL=C sort > "$T/hx.got"
+    else tr -d '\r' < "$D" | sed 's/ __cl[0-9][0-9][0-9][0-9][0-9]$/ __cl#/' | LC_ALL=C sort > "$T/hx.got"; fi
     LC_ALL=C sort "$want" > "$T/hx.want"
     if cmp -s "$T/hx.got" "$T/hx.want"; then ok "$row (exit $got; $(grep -vc '^#' "$T/hx.got") record(s), exact)"
     else bad "$row: exit $got; the dump differs — got: $(tr '\n' '|' < "$T/hx.got") want: $(tr '\n' '|' < "$T/hx.want")"; fi
@@ -436,7 +477,7 @@ fn main(): i64 {
     return r + 50;
 }
 EOF
-printf '%s\n1 <source>:3 mk\n1 <source>:4 seven\n1 <source>:6 hot\n2 <source>:7 four\n1 <source>:8 capt\n1 <source>:9 main\n' "$HDR" > "$T/a4.want"
+printf '%s\n1 <source>:3 mk\n1 <source>:4 seven\n1 <source>:6 hot\n2 <source>:7 four\n1 <source>:8 capt\n1 <source>:8 __cl#\n1 <source>:9 main\n' "$HDR" > "$T/a4.want"
 cat > "$T/a5.cyr" << 'EOF'
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -500,11 +541,12 @@ else
     else
         run_bin x86 "$T/m3.bin"
         nr=$(grep -cE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$' "$D" 2>/dev/null || true); nr=${nr:-0}
-        nbad=$(grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' "$D" 2>/dev/null || true); nbad=${nbad:-0}
+        nbad=$(grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^- [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' "$D" 2>/dev/null || true); nbad=${nbad:-0}
         nh=$(grep -c "^$HDR\$" "$D" 2>/dev/null || true); nh=${nh:-0}
+        nn=$(grep -cE '^- ' "$D" 2>/dev/null || true); nn=${nn:-0}
         if [ "$GOT" = 0 ] && grep -q ' passed, 0 failed' "$T/m3.bin.out" && [ "$nr" -ge 10 ] && [ "$nbad" = 0 ] && [ "$nh" = 1 ] \
             && grep -qE '^[0-9]+ lib/string\.cyr:[0-9]+ streq$' "$D"; then
-            ok "M3 large_source.tcyr (verbatim, its own syscall(60, r)): exit 0, its asserts pass, ONE block of $nr well-formed records (streq at its lib/string.cyr line)"
+            ok "M3 large_source.tcyr (verbatim, its own syscall(60, r)): exit 0, its asserts pass, ONE block of $nr well-formed records + $nn '-' (a lib #naked fn) (streq at its lib/string.cyr line)"
         else bad "M3 large_source.tcyr: exit $GOT, $nh block(s), $nr records, $nbad malformed: $(grep -m1 'passed' "$T/m3.bin.out")"; fi
     fi
 fi
@@ -638,7 +680,7 @@ printf 'var n = 60;\nfn f(): i64 { return 1; }\nvar r = f();\nsyscall(n, 0);\n' 
 printf 'const K = 60;\nfn f(): i64 { syscall(K, 7); return 0; }\nvar r = f();\n' > "$T/e12.cyr"
 printf '%s\n1 <source>:2 f\n' "$HDR" > "$T/e12.want"
 printf '#inline\nfn die(c): i64 { syscall(60, c); return 0; }\nfn f(): i64 { die(12); return 0; }\nvar r = f();\n' > "$T/e13.cyr"
-printf '%s\n1 <source>:3 f\n' "$HDR" > "$T/e13.want"
+printf '%s\n1 <source>:2 die\n1 <source>:3 f\n' "$HDR" > "$T/e13.want"
 
 # ex_ <row> <src> <runner> <want> <exit> <compiler> [env...]: hx in the tree (lib includes resolve
 # there) over the program's own records, the exit stated
@@ -687,7 +729,7 @@ emain() {
 eproc() {
     leg=$1; runr=$2; comp=$3
     ex_ "E8 $leg: fork — the child's block and the parent's, both whole" "$T/e8.cyr" "$runr" "$T/e8.want" 7 "$comp"
-    nb=$(tr -d '\r' < "$D" 2>/dev/null | grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' || true)
+    nb=$(tr -d '\r' < "$D" 2>/dev/null | grep -vcE '^[0-9]+ [^ ]+:[0-9]+ [^ ]+$|^- [^ ]+:[0-9]+ [^ ]+$|^# cyrius-coverage 1$' || true)
     if [ -f "$D" ] && [ "${nb:-0}" = 0 ]; then ok "E8' $leg: every line of the two blocks is a header or a whole record"
     else bad "E8' $leg: ${nb:-?} malformed line(s) in the fork's dump: $(tr '\n' '|' < "$D" 2>/dev/null | cut -c1-300)"; fi
     ex_ "E9 $leg: 4 lib/thread workers (their raw-asm exits do not dump; the process exit does, once)" "$T/e9.cyr" "$runr" "$T/e9.want" 11 "$comp"
@@ -710,8 +752,8 @@ done
 ncalls() { objdump -d "$1" | awk -v im="\$$2,%eax" 'index($0, "mov    " im) { f = 1; c = 0; next } f && /\tcall/ { c++ } f && /\tsyscall/ { print c; exit }'; }
 if command -v objdump > /dev/null 2>&1; then
     printf '#naked\nfn nk() { syscall(60, 77); }\nfn okx(): i64 { syscall(60, 78); return 0; }\nvar sel = 0;\nif (sel == 1) { nk(); }\nokx();\n' > "$T/e10.cyr"
-    printf '%s\n1 <source>:3 okx\n' "$HDR" > "$T/e10.want"
-    ex_ "E10a a program with an exit inside a #naked fn compiles and dumps through its other exit" "$T/e10.cyr" x86 "$T/e10.want" 78 "$CC"
+    printf '%s\n- <source>:2 nk\n1 <source>:3 okx\n' "$HDR" > "$T/e10.want"
+    ex_ "E10a a program with an exit inside a #naked fn compiles and dumps through its other exit (nk: not instrumented)" "$T/e10.cyr" x86 "$T/e10.want" 78 "$CC"
     rc=0; (cd "$T" && env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D" "$CC" < e10.cyr > e10.bin 2> /dev/null) || rc=$?
     n77=$(ncalls "$T/e10.bin" 0x4d); n78=$(ncalls "$T/e10.bin" 0x4e)
     if [ "$rc" = 0 ] && [ "$n77" = 0 ] && [ "$n78" = 1 ]; then ok "E10b objdump: no call before the #naked fn's exit; the ordinary fn's exit has the dump's one"
@@ -783,6 +825,162 @@ if [ -x "$T/cc_cx" ]; then
     ex_ "E4 cx (cxvm): cxvm passes 231 to the host as exit_group — exit 23, ONE block" "$T/e4.cyr" cxvm "$T/e4.want" 23 "$T/cc_cx"
 else bad "E cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# GROUP F — EVERY FN SHAPE (P5B-4). An `#inline` replay re-parses its callee's body inside the
+# CALLER and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
+# `PARSE_FNCALL`'s PARSE_PROG); a closure bumps its own once its frame is open (`_cl_frame_open`,
+# the 1-for-1 swap for `_PARSE_FACTOR_IMPL`'s ESUBRSP), named at its closing bar's line; a `#naked`
+# fn is recorded as not instrumented (`- <file>:<line> <name>`). Each probe falls off the top level
+# (cx has no `main` auto-call), holds the exit to the plain build's and to its stated value, and the
+# whole dump exactly (no lib is included, so every record is the program's own).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+cat > "$T/f1.cyr" << 'EOF'
+#inline
+fn inl(x): i64 { return x + 1; }
+#inline
+fn inl2(x): i64 { return inl(x) * 2; }
+fn user(): i64 { return inl(2) + inl(3) + inl2(1); }
+var r = user();
+EOF
+printf '%s\n3 <source>:2 inl\n1 <source>:4 inl2\n1 <source>:5 user\n' "$HDR" > "$T/f1.want"
+cat > "$T/f2.cyr" << 'EOF'
+var add = |a, b| a + b;
+var g = |a, b| {
+    return a * b;
+};
+var h = |a,
+         b| a - b;
+var z0 = || 5;
+fn mk(): i64 { var c = |x| x * 3; return callptr(c, 2) + callptr(c, 1); }
+var r = callptr(add, 1, 2) + callptr(add, 3, 4) + callptr(g, 2, 3) + callptr(h, 9, 1) + callptr(z0) + mk();
+EOF
+printf '%s\n2 <source>:1 __cl#\n1 <source>:2 __cl#\n1 <source>:6 __cl#\n1 <source>:7 __cl#\n1 <source>:8 mk\n2 <source>:8 __cl#\n' "$HDR" > "$T/f2.want"
+printf 'fn gen<T>(x: T): i64 { return 2; }\nfn gnever<T>(x: T): i64 { return 3; }\nvar g = gen<f64>(1.5) + gen(4);\n' > "$T/f3.cyr"
+printf '%s\n1 <source>:1 gen\n1 <source>:1 gen$i\n' "$HDR" > "$T/f3.want"
+cat > "$T/f4.cyr" << 'EOF'
+struct P { a; b; }
+impl P {
+    fn sum(self): i64 { return self.a + self.b; }
+    fn unused(self): i64 { return 0; }
+}
+fn run(): i64 { var p = P { 3, 4 }; return p.sum(); }
+var s = run();
+EOF
+printf '%s\n1 <source>:3 P_sum\n1 <source>:6 run\n' "$HDR" > "$T/f4.want"
+printf '#naked\nfn nk() { syscall(60, 77); }\nfn f(): i64 { return 1; }\nvar r = f();\n' > "$T/f6.cyr"
+printf '%s\n- <source>:2 nk\n1 <source>:3 f\n' "$HDR" > "$T/f6.want"
+# cx ignores `#naked` (parse_fn.cyr: the attribute is not taken on cx — it has no raw-asm body), so
+# there `nk` is an ordinary fn, instrumented and never entered: no record at all
+printf '%s\n1 <source>:3 f\n' "$HDR" > "$T/f6cx.want"
+F6W="$T/f6.want"; F6N=""
+printf 'var A: i64[4];\nfn rd(i): i64 { return A[i]; }\nA[2] = 5;\nvar r = rd(1) + rd(2);\n' > "$T/f7.cyr"
+printf '%s\n2 <source>:2 rd\n' "$HDR" > "$T/f7.want"
+cat > "$T/f8.cyr" << 'EOF'
+fn dfr(k): i64 {
+    var r = k;
+    defer { r = 0; }
+    return r + 1;
+}
+var dc = |x| { var y = x; defer { y = 0; } return y + 2; };
+var d = dfr(5) + callptr(dc, 1);
+EOF
+printf '%s\n1 <source>:1 dfr\n1 <source>:6 __cl#\n' "$HDR" > "$T/f8.want"
+cat > "$T/a7.cyr" << 'EOF'
+fn tail2(n): i64 {
+    if (n == 0) { return 0; }
+    return tail2(n - 1);
+}
+fn ta(n): i64 {
+    if (n == 0) { return 7; }
+    return tb(n - 1);
+}
+fn tb(n): i64 { return ta(n); }
+var t = tail2(3) + ta(2);
+EOF
+printf '%s\n4 <source>:1 tail2\n3 <source>:5 ta\n2 <source>:9 tb\n' "$HDR" > "$T/a7.want"
+printf 'fn f(x): i64 { return x + 1; }\nvar fp = &f;\nvar r = callptr(fp, 4);\nvar c = |x| x + 2;\nvar q = callptr(c, r);\n' > "$T/a6.cyr"
+printf '%s\n1 <source>:1 f\n1 <source>:4 __cl#\n' "$HDR" > "$T/a6.want"
+# fx <row> <src> <runner> <want> <exit> <compiler> [env...]: hx in $T over the whole dump, the exit stated
+fx() {
+    row=$1; src=$2; runr=$3; want=$4; HXE=$5; comp=$6; shift 6
+    hx "$row" "$src" "$T" "$runr" "$want" "$comp" "$@"
+    HXE=""
+}
+# fleg <leg> <runner> <compiler> [env...]: the shapes every target runs
+fleg() {
+    leg=$1; runr=$2; comp=$3; shift 3
+    fx "F1 $leg: #inline replays (two direct, one nested in a replayed #inline) bump the callee" "$T/f1.cyr" "$runr" "$T/f1.want" 11 "$comp" "$@"
+    fx "F2 $leg: closures — expression x2, block, a bar list over two lines (its closing bar's line), ||, one in a fn x2" "$T/f2.cyr" "$runr" "$T/f2.want" 38 "$comp" "$@"
+    fx "F4 $leg: a method (P_sum; the uncalled method absent)" "$T/f4.cyr" "$runr" "$T/f4.want" 7 "$comp" "$@"
+    fx "F3 $leg: gen<f64> (minted gen\$i) and the base called at i64 both count; the uncalled generic is absent" "$T/f3.cyr" "$runr" "$T/f3.want" 4 "$comp" "$@"
+    fx "F6 $leg: a #naked fn is a '-' record (not instrumented), never a count$F6N" "$T/f6.cyr" "$runr" "$F6W" 1 "$comp" "$@"
+    fx "F7a $leg: no __cyrius_ record (the dump's own fns)" "$T/f7.cyr" "$runr" "$T/f7.want" 5 "$comp" "$@"
+    fx "F7b $leg: no __cyrius_ record under CYRIUS_BOUNDS=1 (the checker's fns entered on every subscript)" "$T/f7.cyr" "$runr" "$T/f7.want" 5 "$comp" "$@" CYRIUS_BOUNDS=1
+    fx "F8 $leg: a fn and a closure with defer, each counted once (the defer-init jump never re-runs the hit)" "$T/f8.cyr" "$runr" "$T/f8.want" 9 "$comp" "$@"
+    fx "A7 $leg: a self tail call and a tail chain count every entry (tail2 4, ta 3, tb 2)" "$T/a7.cyr" "$runr" "$T/a7.want" 7 "$comp" "$@"
+    fx "A6 $leg: a top-level indirect call (its micro-frame's prologue) adds no record" "$T/a6.cyr" "$runr" "$T/a6.want" 7 "$comp" "$@"
+}
+
+# ── F on x86 ELF, and F1 / F2 / F8 under every x86 codegen mode ─────────────────────────────────
+fleg x86 x86 "$CC"
+for m in CYRIUS_IR=1 CYRIUS_IR=3 CYRIUS_DCE=1 CYRIUS_PIE=1 CYRIUS_STACK_ARRAYS=0; do
+    fx "F1 x86, $m" "$T/f1.cyr" x86 "$T/f1.want" 11 "$CC" "$m"
+    fx "F2 x86, $m" "$T/f2.cyr" x86 "$T/f2.want" 38 "$CC" "$m"
+    fx "F8 x86, $m" "$T/f8.cyr" x86 "$T/f8.want" 9 "$CC" "$m"
+done
+# F5 — an `async fn`'s body is `f$impl`, counted at its state-0 landing: `outer$impl` once across
+# four forces of its future (it suspends twice mid-body), `job$impl` once per future (two); the
+# constructors (`outer`, `job`: no source body of their own) are never a record
+cat > "$T/f5.cyr" << 'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+async fn job(n): i64 { return n + 1; }
+async fn outer(C): i64 {
+    var x = 1;
+    var s1 = await job(1);
+    x = x + s1;
+    var s2 = await job(2);
+    x = x + s2;
+    return x;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = outer(0);
+    var r1 = future_force(C); var r2 = future_force(C); var r3 = future_force(C); var r4 = future_force(C);
+    if (r4 != 6) { return 1; }
+    return 50;
+}
+EOF
+printf '%s\n2 <source>:8 job$impl\n1 <source>:9 outer$impl\n1 <source>:17 main\n' "$HDR" > "$T/f5.want"
+ax "F5 x86 (CYRIUS_ASYNC=1): outer\$impl once across four forces, job\$impl 2, no constructor record" "$T/f5.cyr" x86 "$T/f5.want" "$CC" CYRIUS_ASYNC=1
+# (F5 runs on x86 and PE only: a mid-body `await` is refused by name on aarch64 — "`async fn`
+# mid-body suspend is x86-only so far" — and cx)
+
+# ── F on the other targets ────────────────────────────────────────────────────────────────────
+if [ "$HAVE_QEMU" = 1 ]; then
+    if [ -x "$T/cc_a64" ]; then
+        fleg "aarch64 (qemu)" qemu "$T/cc_a64"
+    else bad "F aarch64: src/main_aarch64.cyr did not build"; fi
+    if [ -x "$T/cc_a64n" ]; then fleg "the native aarch64 fork (qemu)" qemu "qemu-aarch64 $T/cc_a64n"
+    else bad "F src/main_aarch64_native.cyr did not build"; fi
+fi
+if [ "$HAVE_WINE" = 1 ]; then
+    fleg "PE through main.cyr (wine)" pe "$CC" CYRIUS_TARGET_WIN=1
+    ax "F5 PE through main.cyr (wine; CYRIUS_ASYNC=1)" "$T/f5.cyr" pe "$T/f5.want" "$CC" CYRIUS_TARGET_WIN=1 CYRIUS_ASYNC=1
+    if [ -x "$T/cc_win" ]; then fleg "PE through the main_win fork (wine)" pe "$T/cc_win"
+    else bad "F src/main_win.cyr did not build"; fi
+fi
+if [ -x "$T/cc_cx" ]; then
+    F6W="$T/f6cx.want"; F6N=" — cx takes no #naked: nk is an ordinary fn, never entered, so no record"
+    fleg "cx (cxvm)" cxvm "$T/cc_cx"
+    F6W="$T/f6.want"; F6N=""
+else bad "F cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL $G: $fails of $rows row(s) red"; exit 1; fi
-echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural)"
+echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural); every fn shape (#inline replays, closures, generics, methods, async bodies, #naked as not instrumented, no __cyrius_ record, defer, tail calls, the top-level micro-frame)"
 exit 0

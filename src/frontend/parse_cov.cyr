@@ -82,10 +82,16 @@ fn _cov_pass1(S): i64 {
 # THE COUNTERS, THE MAP AND THE DUMP. Every fn body bumps its own 8-byte counter at its FIRST byte:
 # after the frame, the parameter homing, the by-value struct copies, the defer-init jump and the
 # coroutine state-0 landing, before the first statement (`_cov_body`, which `_PARSE_FN_DEF_IMPL`
-# calls in place of its PARSE_PROG). Not inside EFNPRO: the arguments are still live in registers
-# there, EFNPRO does not know the fn index, and it also opens things that are not fns (the
-# top-level micro-frame, `_cyrius_init`, the constructors). At the body start every register is
-# dead, so the hit is the ordinary accumulator emitters every backend has (no backend changes).
+# calls in place of its PARSE_PROG); each `#inline` replay bumps its callee's (`_cov_body` again,
+# in `PARSE_FNCALL`), and a closure bumps its own once its frame is open (`_cl_frame_open`). A
+# `#naked` fn is not instrumented: its line is dumped as `- <file>:<line> <name>`, never as a
+# count. Generic instances, methods, derive-made fns and an `async fn`'s `f$impl` (at its state-0
+# landing: once per future, never per resume) are ordinary bodies; the async and enum
+# constructors (no source fn) and a generic base's dead stub have none. Not inside EFNPRO: the
+# arguments are still live in registers there, EFNPRO does not know the fn index, and it also
+# opens things that are not fns (the top-level micro-frame, `_cyrius_init`, the constructors). At
+# the body start every register is dead, so the hit is the ordinary accumulator emitters every
+# backend has (no backend changes).
 # The address stays on the stack, not in a register: cx's EADDRA_IMM clobbers r1.
 #
 # The counters are ONE hidden global (`_cov_hv`), registered in pass 1 the way `_dyn_vt_reg`
@@ -156,19 +162,53 @@ fn _cov_hit(S, fi): i64 {
     return 0;
 }
 
-# `_PARSE_FN_DEF_IMPL`'s body (its one PARSE_PROG): the hit first, unless the mode is off, the fn
-# is the compiler's own, or it is `#naked` (no frame; its body is raw asm). `ti` = its `fn` token.
+# A body's start, then its PARSE_PROG: `_PARSE_FN_DEF_IMPL`'s (`ti` its `fn` token) and the
+# `#inline` replay's in `PARSE_FNCALL` (`ti` -1: the callee's body re-parsed inside the CALLER, so
+# every replay bumps the callee's counter) — each that fn's one PARSE_PROG, swapped 1-for-1.
+# Nothing when the mode is off or the fn is the compiler's own. A `#naked` fn has no frame and a
+# raw-asm body: no hit, and its line is recorded as not instrumented (`- ` in the dump). A replay
+# inside a `#naked` CALLER gets no hit either (it would push and clobber inside the raw body).
 fn _cov_body(S, fi, ti): i64 {
     if (_cov_mode == 1) {
-        if (_cur_fn_naked == 0) {
-            if (_cov_own(S, fi) == 0) {
+        if (_cov_own(S, fi) == 0) {
+            if (_cur_fn_naked == 1) {
+                if (ti >= 0) { _cov_mark(S, fi, ti, 1); }
+            } else {
                 _cov_hit(S, fi);
-                _cov_mark(S, fi, ti, 0);
+                if (ti < 0) { ti = _cov_rti(S, fi); }
+                if (ti >= 0) { _cov_mark(S, fi, ti, 0); }
             }
         }
     }
     PARSE_PROG(S);
     return 0;
+}
+
+# A replay's line: -1 when the callee's is recorded already (its definition is parsed before any
+# replay of it, so this is the usual answer — kept as the rule, not assumed); else its `fn` token
+# (GFDS holds it + 1, 0 = unrecorded), else its body's first token.
+fn _cov_rti(S, fi): i64 {
+    if (_cov_def != 0) {
+        if (load64(_cov_def + fi * 8) != 0) { return 0 - 1; }
+    }
+    var t = GFDS(S, fi) - 1;
+    if (t < 0) { t = GFBS(S, fi); }
+    return t;
+}
+
+# A closure's frame: `_PARSE_FACTOR_IMPL`'s one ESUBRSP, swapped 1-for-1 (that fn is at cybs's
+# per-fn reference ceiling). ESUBRSP, then the hit: after every parameter and the environment are
+# homed, before the defer-init jump, for both body forms (`{ .. }` and a single expression).
+# Returns ESUBRSP's patch handle. The line is the closure's closing bar's (`|`, or the `||` of a
+# zero-parameter closure: the token just consumed). `_fnst_save` has cleared `_cur_fn_naked` — the
+# closure is its own fn with its own frame, even inside a `#naked` one. CHANGELOG [6.7.10]
+fn _cl_frame_open(S, clfi): i64 {
+    var p = ESUBRSP(S);
+    if (_cov_mode == 1) {
+        _cov_hit(S, clfi);
+        _cov_mark(S, clfi, GTI(S) - 1, 0);
+    }
+    return p;
 }
 
 # A call of `__cyrius_cov_dump(&band, &map)` (`_bck_site`'s pattern: ECALLPOPS / ECALLCLEAN give

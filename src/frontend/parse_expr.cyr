@@ -5486,7 +5486,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # [rsp-8] == [rbp-8], clobbering param slot 0, so `|x| x` returned garbage.
         # v6.3.7 — capture the patch handle and patch the real frame size below
         # (mirrors PARSE_FN_DEF's prologue ESUBRSP → EPATCHFRAME).
-        var cl_frame_patch = ESUBRSP(S);
+        var cl_frame_patch = _cl_frame_open(S, clfi);   # 6.7.10 (P5-B): ESUBRSP, then the coverage hit
         # 6.6.7 — defer-flag init jmp, resolved at the closure's end exactly as PARSE_FN_DEF does.
         var cl_dij = EJMP0(S);
         var cl_bcp = GCP(S);

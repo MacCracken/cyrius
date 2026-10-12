@@ -6077,7 +6077,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var _cfrs = GFRS(S, fi);
                     if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
                     STI(S, GFBS(S, fi));
-                    PARSE_PROG(S);
+                    _cov_body(S, fi, 0 - 1);   # 6.7.10 (P5-B): the replay bumps the callee's counter, then PARSE_PROG
                     _cur_fn_ret_scalar = _rs_saved;
                     SSDEP(S, _sdep_saved);
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
