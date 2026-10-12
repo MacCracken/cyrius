@@ -60,11 +60,13 @@
 # refusal is exactly ONE error line: a line refused INSIDE its initialiser (an operand, an argument)
 # is not refused again for its result (`_scv_err`, set by `_scv_disarm`). Filed: docs/development/issues/
 # 2026-10-10-zone-global-from-method-struct-call-crashes.md (Z1 is its repro verbatim).
-#   6.7.8 build/cycc / the 6.7.9 tree before the bite      -> RED Z1 Z3 Z4 Z5 (BUILT)
+#   6.7.8 build/cycc / the 6.7.9 tree before the bite      -> RED Z1 Z3 Z4 Z5 (BUILT), Z11 Z12 Z13 (2 error lines)
 #   `_gvi_expr` back on `_sc_global_mismatch` alone        -> RED Z1 Z3 Z4 Z5 (and dyn_checked C9b)
 #   `_sc_global_pair` without its `_sc_whole` -1 test      -> RED Z1 Z3 Z4 Z5 Z8 (and dyn_checked C9a C9b)
-#   `_gvi_expr` without its `_scv_err` test (the result     -> RED Z9 Z10 (2 error lines; and struct_value_codegen
-#     refused after a refusal inside the initialiser)            L15)
+#   `_sc_global_pair` without its `_scv_err` test (the      -> RED Z9 Z10 Z11 Z12 Z13 (2 error lines; and
+#     result refused after a refusal inside the initialiser)     struct_value_codegen L15)
+#   the test in `_gvi_expr` only (the zone; bite 19's first    -> RED Z11 Z12 Z13 (2 error lines: the
+#     commit)                                                     post-statement line, as on 6.7.8)
 #   real tree                                              -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -283,6 +285,19 @@ refuse "Z9 = Q0 + Q0.mk()  (zone, right operand)" "the right operand of 'Q_add' 
 syscall(60, G2.a);
 ' one
 refuse "Z10 = Q0.gmk(nope)  (zone, bad argument)" "undefined variable 'nope'" "$ZQ"'var G2: Q = Q0.gmk(nope);
+syscall(60, G2.a);
+' one
+# ... and after a statement, through the same `_sc_global_pair` (6.7.9: before it, two error lines).
+refuse "Z11 = Q0 + Q0.mk()  (after, right operand)" "the right operand of 'Q_add' is passed by address" "$ZQ"'syscall(1, 1, "", 0);
+var G2: Q = Q0 + Q0.mk();
+syscall(60, G2.a);
+' one
+refuse "Z12 = Q0.mk() + Q1  (after, left operand)" "the left operand of 'Q_add' is passed by address" "$ZQ"'syscall(1, 1, "", 0);
+var G2: Q = Q0.mk() + Q1;
+syscall(60, G2.a);
+' one
+refuse "Z13 = Q0.gmk(nope)  (after, bad argument)" "undefined variable 'nope'" "$ZQ"'syscall(1, 1, "", 0);
+var G2: Q = Q0.gmk(nope);
 syscall(60, G2.a);
 ' one
 

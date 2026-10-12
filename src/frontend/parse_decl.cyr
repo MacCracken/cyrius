@@ -5252,7 +5252,6 @@ fn _gvi_expr(S, gps): i64 {
     var w = _scv_arm(S, gps);
     PCMPE(S);
     _scv_disarm(S, w);
-    if (_scv_err == 1) { _sc_global_mismatch(S, gps, st); return 0; }   # 6.7.9: refused inside, once
     _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
     return 0;
 }

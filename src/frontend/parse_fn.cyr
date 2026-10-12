@@ -4809,9 +4809,12 @@ fn _sc_global_receive(S, pscale, start): i64 {
 # ⛔ 6.7.9 — the struct half, shared with the declaration zone's replay (`_gvi_expr`), which ran only
 # `_sc_global_mismatch`: `var G2: Q = Q0.mk();` before the first statement (a 9-16 B method, a generic
 # method, `(Q0.mk())`, an operator `Q0 + Q1`) stored rax — the struct's first WORD — as the address of
-# the inline G2, and the first `G2.a` SIGSEGV'd. Now refused by name there too. CHANGELOG [6.7.9]
+# the inline G2, and the first `G2.a` SIGSEGV'd. Now refused by name there too — once in either place:
+# a line refused inside its initialiser (`_scv_err`: an operand, an argument) is not refused again
+# for its result. CHANGELOG [6.7.9]
 fn _sc_global_pair(S, pscale, start): i64 {
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }   # refused inside its initialiser: that refusal alone (6.7.9)
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);

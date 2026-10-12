@@ -126,7 +126,7 @@
 #   M-D3 `_ret_expr_head` without its call-head arm           -> RED A1-A6 (tcyr L33 refused); L13
 #       green — a rax:rdx `+` result passes through the call-return path
 #   M-D4 `_refuse_toplevel_pair_init` without `_call_ends_at` -> RED L15 (2 error lines)
-#   M-D5 (6.7.9) `_gvi_expr` without its `_scv_err` test     -> RED L15 (2 error lines: the zone now refuses
+#   M-D5 (6.7.9) `_sc_global_pair` without its `_scv_err` test -> RED L15 (2 error lines: the zone now refuses
 #       a whole 9-16 B operator result, once — struct_result_type_refused.sh rows Z)
 #   M-R1 `_ret_peel` never peeling                           -> RED R1-R5, A1-A6 (no build)
 #   M-R2 `_ret_end` without `_pw_close`                       -> RED R1-R3 (expected ';'), A1-A6 (no build)

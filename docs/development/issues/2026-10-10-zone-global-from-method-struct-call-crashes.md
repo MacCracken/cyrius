@@ -75,7 +75,9 @@ struct half is now its own helper, `_sc_global_pair`, called by both: `_sc_globa
 arms in front of it, and `_gvi_expr` calls it where it called `_sc_global_mismatch`. A line refused INSIDE its
 initialiser is that refusal alone. That covers an operand, as in `var G: Pt = mk2(3) + H;` (struct_value_codegen L15,
 one error since 6.7.6), and a bad argument. The zone checks `_scv_err` before the result refusal. `_scv_disarm` sets
-`_scv_err` when `_had_error` went from 0 at the arm to 1 at the disarm.
+`_scv_err` when `_had_error` went from 0 at the arm to 1 at the disarm. The follow-up commit after bite 19 (met in
+passing) moved that test into the shared `_sc_global_pair`, so the post-statement line reports once too (rows
+Z11-Z13). Before it, that line drew a second error for the result.
 
 Premise check, past the filing: the hole was wider than a method on a single name. The same zone line also built and
 SIGSEGV'd for a generic method (`Q0.gmk(1)`), a wrapped method (`(Q0.mk())`) and an overloaded operator (`Q0 + Q1`,
