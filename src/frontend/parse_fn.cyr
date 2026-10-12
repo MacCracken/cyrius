@@ -5677,15 +5677,18 @@ fn _CALL_ARGC_PEEK(S): i64 {
 
 # v6.5.1 — may `fi` be used as an overload-redirect target for a call supplying
 # `argc` arguments? Shared by the _str and _int dispatch arms so the two cannot
-# drift. Deliberately permissive in the two cases where the param count is not
-# yet knowable, which preserves pre-6.5.1 behaviour rather than silently dropping
-# a legitimate redirect:
-#   - target not yet DEFINED (offset < 0): routed as before 6.5.1. (`_CHECK_ARITY` checks
-#     the routed call since 6.7.7, against pass 1's count.)
+# drift. The count is the target's min..max (6.7.7: a sibling that declares defaults fills the
+# rest), judged alike for a sibling defined above or BELOW the call: pass 1 records every
+# definition's count, variadic flag and defaults row (GFDS != 0) before pass 2 parses a call —
+# the facts `_CHECK_ARITY` judges a forward call by. Permissive only where nothing is known:
+#   - target no definition recorded (offset < 0, GFDS 0): routed as before 6.5.1, into the
+#     undefined-function diagnostic.
 #   - target is VARIADIC: arity is unconstrained by construction.
-# 6.7.7: the count is the target's min..max (a sibling that declares defaults fills the rest).
+# 6.7.9: a forward sibling was let through unjudged, so `pr(s)` reached a 2-parameter `pr_str`
+# defined below it — garbage for the second parameter, refused naming `pr_str` since 6.7.7 —
+# where the same sibling above the call was judged and `pr` ran. CHANGELOG [6.5.1] [6.7.9]
 fn _OV_ARITY_OK(S, fi, argc): i64 {
-    if (L64(_fnt_offsets + fi * 8) < 0) { return 1; }
+    if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 1; } }
     if (GFVA(S, fi) != 0) { return 1; }
     if (argc > L64(_fnt_params + fi * 8)) { return 0; }
     if (argc >= _pd_min(fi)) { return 1; }
