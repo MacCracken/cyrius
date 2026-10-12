@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/codegen/small_struct_handle_line.sh — 6.7.10 (B7-1)
+# tests/gates/codegen/small_struct_handle_line.sh — 6.7.10 (B7-1, B7-1g)
 #
 # THE HANDLE LINE (the user's decision, 2026-10-12): a struct local of 8 B or less initialised from
 # anything that is not a struct value of its type is a HANDLE, as one over 8 B is — its slot holds
@@ -32,6 +32,24 @@
 #   AS (x86_64, CYRIUS_ASYNC=1 — a mid-body suspend is x86-only so far) an `async fn` body: a
 #      handle, a bind, a by-value argument, a copy into the object and a returned handle across two
 #      awaits — exit 0
+#
+# B7-1g — THE HANDLE LINE FOR GLOBALS (the user's decision 5, 2026-10-12: one rule for locals and
+# globals at every size): a struct global of 8 B or less initialised from anything that is not a
+# struct value of its type is a handle (GVPM 1), as over 8 B. Its runtime half is
+# tests/tcyr/crossos/small_struct_global_handle_line.tcyr (the declaration zone — judged from its
+# tokens at the end of pass 1, a fn declared below included — and after the first statement; every
+# consumer in a fn and at top level; every size 1..8 B):
+#   R2 that file on the same legs as R1, N derived from it (floor 243)
+#   GC compile rows (x86): GC1 `var ga: Num = 1;` is a handle global — `ga + gb` is pointer
+#      arithmetic (3, no `Num_add`), as at 16 B; a struct value global still dispatches (102); GC2
+#      `var G: S8 = *GU;` with `GU: *U8` refused by name in the zone and after it, at 8 and 16 B;
+#      GC3 `var G: H = *P;` with P declared below G refused by name (pass 1 could not register G
+#      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
+#      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
+#      declared below it binds, and an operator on such a handle is pointer arithmetic
+#   GP (Linux x86_64 + aarch64) a 7 B handle GLOBAL onto the last 7 bytes of a mapping: by value,
+#      returned, an operator's right operand, an if-expression branch, `c = G`, and at TOP LEVEL
+#      (a hidden global, no frame) — exit 0, no byte past the object read
 #
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
@@ -69,6 +87,42 @@
 #                                                      the next handle inline)
 #   M20 a CAPTURED handle source counted before the rebind test (`h = cap` rebinds h instead of copying
 #       through it, as 16 B does)                   -> RED 7: R1 2 rows x7
+# B7-1g MUTATION LEDGER (2026-10-12, the same method; the B7-1 compiler cannot build the R2 file at
+# all — `X8 = AU8` between two inline globals of different types is refused, a dyn wants `&QG8`):
+#   MG1  `_gz_sweep` returns at once (no zone global becomes a handle) -> RED 15: R2 does not compile x7
+#                                                      (`X8 = AU8`), GC1 102, GC4 x3 / GC5 x2 / GP x2 refused
+#                                                      by the replay's check (`_gz_agree`: "misread")
+#   MG2  `_gz_sval` answering 0 (every zone global a handle) -> RED 8: R2 refused by `_gz_agree` x7 (IN8),
+#                                                      GC4 (the check fires before the shape refusal)
+#   MG3  `_gz_op` answering 0 (operators typed as no struct) -> RED 7: R2 refused by `_gz_agree` x7 (IO8)
+#   MG3b MG3 with `_gz_agree` never refusing        -> RED 7: R2 x7 (a fault on x86 x4 / aarch64 / PE, 3
+#                                                      rows on cxvm: the operator results held as addresses)
+#                                                      — the replay's check is the net
+#   MG4  `_gz_late` answering 2 (after the first statement, the old value slot) -> RED 9: R2 x7 (a fault
+#                                                      on x86 x4 / aarch64 / PE, 3 rows on cxvm: the alloc /
+#                                                      &x writes stay in the global), GP x2
+#   MG5  `_agc_handle_global` without the small arm -> RED 9: R2 x7 (`q = G` copied the address: a fault
+#                                                      on x86 x4 / aarch64 / PE, cxvm out of range), GP x2
+#   MG6  `_hl_gbare` answering 0                     -> RED 9: R2 61 rows x7 (arguments, operands, branches
+#                                                      took the address), GP x2
+#   MG7  `_ret_small_ptrp` without `_ret_small_gh`  -> RED 9: R2 19 rows x7 (`return G` the address), GP x2
+#   MG8  no top-level temp (`_hl_res_into` / `_hl_call_into` back behind GINFN) -> RED 7: R2 x7 (`X8 =
+#                                                      mk8(6)` at top level rebinds X8 to address 6: a fault
+#                                                      on every leg, cxvm out of range)
+#   MG9  `_hg_val_ra` loading 8 bytes at every size  -> RED 2: GP x86 and GP aarch64 exit 139
+#   MG10 `_gz_star` answering 0                      -> RED 7: R2 refused x7 (`var IDH: H = *PSH;` not inline
+#                                                      in pass 1: "declared below")
+#   MG11 `_gz_star_src` without the type check       -> RED 3: GC2 x3 (`*GU` of a U8 / UH compiled)
+#   MG12 the sweep walks once (no repeat)            -> RED 2: GC5 x2 (refused by `_gz_agree`)
+#   MG13 `_gz_shapes` returns at once                -> RED 2: GC4 x2 (the literal-then-handle redeclaration
+#                                                      compiled; the call-then-handle one caught by `_gz_agree`)
+#   MG14 `_gz_reg` not noting a literal              -> RED 1: GC4 (the literal-then-handle redeclaration)
+#   MG15 `_gz_chain` without the method arm          -> RED 7: R2 refused by `_gz_agree` x7 (IM8)
+#   MG16 `_gz_ie` answering 0                         -> RED 7: R2 refused by `_gz_agree` x7 (IE8)
+#   MG17 `_hl_capn` answering 0 (a capture is never checked) -> RED 16: R1 13 rows x7 (a captured handle's
+#                                                      consumers), R2 1 row x7 (a capture named like a global),
+#                                                      P x2
+#   MG18 `_gz_split` without the generic-call skip   -> RED 7: R2 refused by `_gz_agree` x7 (`idg<S8>(..)`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -101,6 +155,11 @@ TC=tests/tcyr/crossos/small_struct_handle_line.tcyr
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
 FLOOR=220
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
+TG=tests/tcyr/crossos/small_struct_global_handle_line.tcyr
+[ -f "$TG" ] || { echo "FAIL: $G: $TG is missing"; exit 1; }
+NG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TG")
+GFLOOR=243
+if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GFLOOR) — rows were lost"; exit 1; fi
 
 # The filed repro, verbatim (docs/development/issues/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
 cat > "$D/repro.cyr" <<'EOF'
@@ -184,6 +243,15 @@ for leg in $XLEGS $OTHER; do
     else bad "R1 $leg: exit $RC, '$LAST' (want '$N passed, 0 failed ($N total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "R2. $TG ($NG rows: the handle line for globals)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TG" "$D/g_$n"
+    if [ "$RC" -eq -1 ]; then bad "R2 $leg: the values file did not build: $(grep '^error' "$D/g_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NG passed, 0 failed ($NG total)" ]; then ok "R2 $leg: $LAST"
+    else bad "R2 $leg: exit $RC, '$LAST' (want '$NG passed, 0 failed ($NG total)') $(grep -m3 'FAIL' "$D/g_$n.out" | tr '\n' ' ')"; fi
+done
+
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -224,6 +292,74 @@ crow "C5 its 16 B twin" 3 \
   'include "lib/alloc.cyr"\nstruct H { v; w; }\nfn f(): (i64, i64) { var a: H = alloc(16); a.v = 3; return (a, 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
 crow "C6 a U8 handle returned from an S8 fn returns its struct" 3 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nstruct U8 { u; }\nfn f(): S8 { var u: U8 = alloc(8); u.u = 3; return u; }\nfn g() { var q: S8 = f(); return q.v; }\nalloc_init();\nsyscall(60, g());\n'
+
+echo "GC. compile rows for globals (x86)"
+crow "GC1 var ga: Num = 1 is a handle global: ga + gb is pointer arithmetic, no dispatch" 3 \
+  'struct Num { v; }\nfn Num_add(a, b) { return a * 100 + b; }\nvar ga: Num = 1;\nvar gb: Num = 2;\nfn f() { return ga + gb; }\nsyscall(60, f());\n'
+crow "GC1 its 16 B twin" 3 \
+  'struct V2 { a; b; }\nfn V2_add(a, b) { return 77; }\nvar ga: V2 = 1;\nvar gb: V2 = 2;\nfn f() { return ga + gb; }\nsyscall(60, f());\n'
+crow "GC1 a global struct value still dispatches" 102 \
+  'struct Num { v; }\nfn Num_add(a, b) { return a * 100 + b; }\nvar ga = Num { 1 };\nvar gb = Num { 2 };\nfn f() { return ga + gb; }\nsyscall(60, f());\n'
+crow "GC2 var G: S8 = *GU (GU: *U8) refused in the declaration zone" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar G: S8 = *GU;\nsyscall(60, G.v);\n'
+crow "GC2 var G: H = *GU (GU: *UH) refused in the declaration zone" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar G: H = *GU;\nsyscall(60, G.v);\n'
+crow "GC2 var G: S8 = *GU refused after the first statement" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar k = 0;\nk = 1;\nvar G: S8 = *GU;\nsyscall(60, G.v);\n'
+crow "GC3 var G: H = *P with P declared below it refused by name" "refuse:from a global declared below it" \
+  'struct H { v; w; }\nvar G: H = *P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
+crow "GC4 a global declared a value and then a handle is refused" "refuse:redeclared with a different type or size" \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nvar G = S8 { 1 };\nvar G: S8 = alloc(8);\nsyscall(60, G.v);\n'
+crow "GC4 ... a call value and then a handle" "refuse:redeclared with a different type or size" \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn mk(n): S8 { var r: S8; r.v = n; return r; }\nvar G: S8 = mk(1);\nvar G: S8 = alloc(8);\nsyscall(60, G.v);\n'
+crow "GC4 two handle declarations of one global fold" 6 \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nvar G: S8 = alloc(8);\nvar G: S8 = alloc(8);\nfn f() { G.v = 6; return load64(load64(&G)); }\nsyscall(60, f());\n'
+crow "GC5 a global bound to a handle declared BELOW it binds (the sweep repeats)" 4 \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nvar G2: S8 = G1;\nvar G1: S8 = alloc(8);\nfn f() { G1.v = 1; G2 = G1; G2.v = 4; return G1.v; }\nsyscall(60, f());\n'
+crow "GC5 a dispatch on a handle declared below it is pointer arithmetic (the sweep repeats)" 0 \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = 77; return r; }\nvar G2: S8 = G1 + 8;\nvar G1: S8 = alloc(8);\nsyscall(60, load64(&G2) - 8);\n'
+
+cat > "$D/gp.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+var GA: S7 = 0;
+var GZ = S7 { 0, 0, 0 };
+fn take7(s: S7): i64 { return s.a + s.b + s.c; }
+fn r7(): S7 { return GA; }
+fn S7_add(l: S7, r: S7): S7 { var t: S7; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn run(): i64 {
+    var p = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (p <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, p + 4096, 4096) != 0) { return 91; }
+    GA = p + 4096 - 7;
+    GA.a = 100;
+    GA.b = 20;
+    GA.c = 3;
+    if (take7(GA) != 123) { return 1; }
+    var q: S7 = r7();
+    if (take7(q) != 123) { return 2; }
+    var w: S7 = GZ + GA;
+    if (take7(w) != 123) { return 3; }
+    var v: S7 = if (q.a == 100) { GA } else { GZ };
+    if (take7(v) != 123) { return 4; }
+    var c: S7;
+    c = GA;
+    if (take7(c) != 123) { return 5; }
+    return 0;
+}
+var e = run();
+if (e == 0) { if (take7(GA) != 123) { e = 6; } }
+var t: S7 = GZ + GA;
+if (e == 0) { if (take7(t) != 123) { e = 7; } }
+syscall(60, e);
+EOF
+echo "GP. a 7 B handle GLOBAL ending a mapping, in a fn and at top level: no byte past it is read"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/gp.cyr" "$D/gp_$leg"
+    if [ "$RC" -eq -1 ]; then bad "GP $leg: did not build: $(grep '^error' "$D/gp_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "GP $leg: exit 0"
+    else bad "GP $leg: exit $RC, want 0 (139 = a read past the object)"; fi
+done
 
 cat > "$D/p.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -327,4 +463,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row (R1) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C), no read past a 7 B object (P), an async body (AS)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), an async body (AS)"

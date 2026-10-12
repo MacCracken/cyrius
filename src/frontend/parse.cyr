@@ -2848,10 +2848,12 @@ fn _agc_handle_local(S, li): i64 {
     var n = AGG_NSLOTS(S, lt);
     return n;
 }
-# A pointer-mode global (GVPM 1) of a plain struct over 8 B: a handle, in the deref band.
+# A pointer-mode global (GVPM 1) of a plain struct over 8 B: a handle, in the deref band. 6.7.10
+# (B7-1g): and one of 8 B or less (the handle line), one slot (`_hl_small_copy`).
 fn _agc_handle_global(S, gvi): i64 {
     if (GVPM(S, gvi) != 1) { return 0; }
     var t = 0 - GVTYPE(S, gvi);
+    if (_small_ghdl(S, gvi) == 1) { _agc_gvi = 0 - 1000 - gvi; _agc_t = t; return 1; }   # 6.7.10 (B7-1g)
     if (_agc_plain_big(S, t) == 0) { return 0; }
     _agc_gvi = 0 - 1000 - gvi;
     _agc_t = t;
@@ -2988,17 +2990,19 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
 # call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
 # into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
 # consumed). `_hl_res_into` is the record's arm: `_agc_operand` just ran on the destination; a value
-# destination keeps the one-word store (0).
+# destination keeps the one-word store (0). (B7-1g) At top level, into a handle global, the temp is a
+# hidden global (`_hl_gtemp`): there is no frame.
 fn _hl_res_into(S, term, sid): i64 {
     if (_agc_hdl() == 0) { return 0; }
-    if (GINFN(S) != 1) { return 0; }
     return _hl_val_into(S, term, sid, _agc_li, _agc_gvi);
 }
 fn _hl_val_into(S, term, sid, dli, dgv): i64 {
-    var t = _agg_temp(S, sid);
-    EFLSTORE(S, t);
+    var t = 0 - 1;
+    var tg = 0 - 1;
+    if (GINFN(S) == 1) { t = _agg_temp(S, sid); EFLSTORE(S, t); }
+    else { tg = _hl_gtemp(S); EVSTORE(S, tg); }   # 6.7.10 (B7-1g): top level, a hidden global
     if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
-    _agc_copy_bytes(S, dli, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
+    _agc_copy_bytes(S, dli, dgv, t, tg, STRUCTSZ(S, sid - 1));
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
@@ -3008,7 +3012,6 @@ fn _hl_val_into(S, term, sid, dli, dgv): i64 {
 fn _hl_call_into(S, fi, n, term): i64 {
     if (n != 1) { return 0; }
     if (_agc_hdl() == 0) { return 0; }
-    if (GINFN(S) != 1) { return 0; }
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (_agc_t != 0 - rs) { return 0; }

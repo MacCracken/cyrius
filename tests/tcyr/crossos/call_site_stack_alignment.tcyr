@@ -235,7 +235,9 @@ struct OpV {
 fn OpV_add(a, b) { return b + align_probe(); }
 # ⚠ Declared HERE, above the first top-level statement: a global declared after one is
 # file-private and loses the struct-type annotation the dispatch keys on.
-var opv: OpV = 5;
+# 6.7.10: a struct VALUE — `var opv: OpV = 5;` is a handle to address 5 since the handle line covers
+# globals (B7-1g), and a handle as a left operand does not dispatch.
+var opv = OpV { 5 };
 
 #derive(accessors)
 struct Rec {

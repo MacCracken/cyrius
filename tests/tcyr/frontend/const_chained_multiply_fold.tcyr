@@ -23,12 +23,14 @@ fn OpV_div(a, b) { return 2000 + b; }
 fn OpV_add(a, b) { return 3000 + b; }
 fn OpV_sub(a, b) { return 4000 + b; }
 
-var _opf_p: OpV = 5;
-var _opf_q: OpV = 5;
-var _opf_r: OpV = 5;
-var _opf_s: OpV = 5;
-var _opf_p2: OpV = 5;
-var _opf_q2: OpV = 5;
+# 6.7.10: struct VALUES — `var _opf_p: OpV = 5;` is a handle to address 5 since the handle line
+# covers globals (B7-1g), and a handle as a left operand does not dispatch.
+var _opf_p = OpV { 5 };
+var _opf_q = OpV { 5 };
+var _opf_r = OpV { 5 };
+var _opf_s = OpV { 5 };
+var _opf_p2 = OpV { 5 };
+var _opf_q2 = OpV { 5 };
 
 var OPF_MUL = _opf_p * 3 + 1;
 var OPF_DIV = _opf_q / 3 + 1;

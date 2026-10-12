@@ -2146,7 +2146,7 @@ fn _ret_small_ptrp(S): i64 {
     var k = _hl_ret_k(S);
     if (k < 0) { return 0; }
     var li = FINDLOCAL(S, TOKVAL(S, GTI(S) + k));
-    if (li < 0) { return 0; }
+    if (li < 0) { return _ret_small_gh(S, k); }   # 6.7.10 (B7-1g): a handle global
     var hl = _small_hdl(S, li);
     if (_is_ptr_param(S, li) == 0) { if (hl == 0) { return 0; } }
     if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { if (hl == 0) { return 0; } }
@@ -13197,6 +13197,7 @@ fn _prescan_tail(S): i64 {
     _pre_dep_pending = 0;                # the end of pass 1: nothing may carry into pass 2
     SMOD(S, svmod);
     STI(S, sv);
+    _gz_sweep(S);   # 6.7.10 (B7-1g): every fn is registered — the zone's small struct globals judged
     return 0;
 }
 

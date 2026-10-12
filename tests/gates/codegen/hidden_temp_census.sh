@@ -117,7 +117,10 @@ fi
 # 6.7.7 (call arguments): _sarg_snap — a by-value argument a later argument may write is copied
 # where it stands: one word holds its address; at top level the copy itself is a dead global
 # resized to the struct (inside a fn it is a frame block, `_agg_temp_t`; parse_fn.cyr).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2"
+# 6.7.10 (B7-1g): _hl_gtemp — a struct of 8 B or less taken through a handle GLOBAL at TOP LEVEL (an
+# argument, an operand, a copy into the object) passes through a dead 8-byte global (inside a fn it is
+# a frame temp, `_agg_temp`; parse_decl.cyr).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
