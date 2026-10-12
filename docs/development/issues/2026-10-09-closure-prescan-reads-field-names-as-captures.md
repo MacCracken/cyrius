@@ -1,6 +1,9 @@
-# A field name inside a closure body is taken as a capture of the enclosing local of that name — OPEN
+# A field name inside a closure body is taken as a capture of the enclosing local of that name — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc`
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 14, l679-crit; CHANGELOG [6.7.9]) The capture pre-scan skips a field name after `.` (not a range's `..`) and a struct literal's `IDENT :` label (`_cl_is_field_name`, `_cl_is_lit_label`): the repro compiles without lib/alloc.cyr and exits 16 on x86_64, aarch64 (qemu) and cx. Gate `frontend/closure_field_names_not_captured.sh` (15 rows on host, cx and aarch64, plus the repro file; mutation-proven). Of 948 tree sources, two compile differently: the repro, and a `.tcyr` whose closure loses a needless env.
+
+**Status:** ✅ **RESOLVED in v6.7.9**. See the banner above and *Resolution* below. It was reproduced on the 6.7.9 lane tip
+@ 4f591437 before the fix, refused twice. As filed: 🟡 OPEN — reproduced 2026-10-09 against the merged 6.7.7 tip (`int` @ 06bd8981, `build/cycc`
 1,916,288 B), on x86_64 and aarch64 (a cross compiler built from the merged tree). The repro is refused twice with
 `a capturing closure needs include "lib/alloc.cyr" for its heap env`. Neither closure reads the enclosing `y`. With
 the enclosing local renamed (`var yy = 5;`) the file compiles and exits 16, which is right. With `lib/alloc.cyr`
@@ -87,3 +90,32 @@ exemption.
 
 Include `lib/alloc.cyr` and call `alloc_init()` (the result is right, at the cost of an env), or rename the
 enclosing local.
+
+## Resolution (6.7.9, the critical lane's bite 14)
+
+- **Two more exemptions in `_cl_prescan_ident`** (parse_expr.cyr), as proposed:
+  - `_cl_is_field_name`: the token before the name is a `.` and the one before that is not. A range's `..` lexes as
+    two DOT tokens, so `for i in 0..y` still reads `y` (rows K5 and K6). `0..p.y` reads `p` and not `y` (row F).
+  - `_cl_is_lit_label`: an `IDENT :` right after a `{` or a `,` whose innermost open bracket is a `{` opened right
+    after a struct name (`FINDSTRUCT`) or a generic struct's closing `>` / `>>` / `>>>` (`Box<i64> { v: n, w: 2 }`,
+    row G). The innermost-open-bracket walk is now `_cl_open_brk`, shared with 6.7.7's `_cl_is_arg_label`, whose
+    behaviour is unchanged.
+  - A `case` value follows `case`, and cyrius has no ternary, so no other `IDENT :` stands after a `{` or `,`. The value
+    after a label stays a read: `Pt { x: n, y: y }` still captures `y` (rows K1 and K2).
+- **Rows**: `tests/gates/frontend/closure_field_names_not_captured.sh` covers the repro (R, plus the file itself), the
+  label alone (L), `.y` alone (D), an expression body (E), a field chain `l.a.y` (C), a generic literal (G), a nested
+  closure (N) and a range bounded by a field (F). Each row compiles without lib/alloc.cyr. The controls are K1–K7:
+  a real capture is still refused without lib/alloc.cyr, and with it the capture is by value (K2 and K4 set `y = 50`
+  after the closure is made), a range's bound is the captured local and not a global of that name (K6 gives 21, not
+  63), and a captured struct's fields are read alongside a captured `y` (K7). The gate runs on host x86_64, cx (cxvm)
+  and aarch64 (qemu). Mutation-proven from scratch trees: the pre-fix src makes 25 of 46 checks red, and so does the
+  `.` test dropped. Dropping the label test makes 13 red, dropping the `..` guard 6 (K5 and K6), and dropping the
+  generic head 3 (G).
+- **Differential**: 948 tree sources were compiled with the pre-fix and the fixed stage-1 compilers: the src
+  compilers, every `.tcyr`, programs, benches, fuzz and the filed repros. Two of them differ in stdout, stderr or
+  exit code. One is the repro (refused before). The other is `tests/tcyr/crossos/struct_value_codegen.tcyr`, whose
+  closure `|x| { var t: P3 = mk3(x); return t.z; }` sat beside a local `z` (a 4-word struct). It no longer copies
+  `z` into a heap env, so the binary's bytes change by design. It still passes 146 / 146 on x86_64 and on aarch64 (qemu).
+- **Not this filing**: a name the closure body DECLARES without a `var` right before it is still taken as a capture of
+  the enclosing local. That covers a `for i in` variable, a local `const k`, and the `b` of `var a, b = two();`. It is
+  filed as `2026-10-11-closure-prescan-reads-declared-names-as-captures.md`.

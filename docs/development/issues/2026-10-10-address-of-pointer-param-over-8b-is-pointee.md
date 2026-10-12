@@ -1,6 +1,9 @@
-# `&q` of a `q: *P` PARAMETER is the pointee's address when P is a struct over 8 B — every other pointer gives the slot's — OPEN
+# `&q` of a `q: *P` PARAMETER is the pointee's address when P is a struct over 8 B — every other pointer gives the slot's — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against 6.7.8 @ 484763ed with the tree's `build/cycc`, and with the
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 10, l679-crit; CHANGELOG [6.7.9]) `&q` of a `q: *P` parameter is the slot that holds the pointer, as for every other pointer and as in 6.6.5 (the user's decision 2(a)): the `&IDENT` arm of `_PARSE_FACTOR_IMPL` (parse_expr.cyr) asks the new `_addr_is_slot_content` (parse_fn.cyr: `_local_is_sptr_param` and not `_is_ptr_param`) in place of `_local_is_sptr_param` alone, so the 6.6.6 load fires only for an address-passed BY-VALUE parameter (since 6.6.16 a `#naked` fn's). The repro exits 0 (was 3) and the size probe 80 (was 53) on x86 / IR=3 / aarch64 (qemu) / cx / PE (wine); `tests/tcyr/crossos/address_of_pointer_param.tcyr` (19 rows, 10 red before) on x86 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE and the `#naked` halves through `frontend/address_of_pointer_param.sh`, mutation-proven two ways. A 1069-source differential compiles byte-identically, diagnostics included, except the repro and the new values file.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above and *Resolution* below (reproduced on the 6.7.9 lane tip @
+fa3598fc before the fix: the repro exits 3, the size probe 53). As filed: 🟡 OPEN — reproduced 2026-10-10 against 6.7.8 @ 484763ed with the tree's `build/cycc`, and with the
 tree's cross compilers: the repro exits 3 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine). Fixing it changes what a
 compiling program does, so the direction is the user's call (it was filed, not fixed).
 **Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
@@ -109,3 +112,24 @@ forms from `q` itself.
 
 Do not take the address of a pointer parameter; copy it into a local first (`var q2: *P = q; var a = &q2;`), which
 gives the slot's address on every version.
+
+## Resolution (6.7.9, the critical lane's bite 10)
+
+- **Direction (a)**, the user's decision 2(a): `&q` of a `*T` parameter is the slot's address. The arm keeps its 6.6.6 job
+  for an address-passed by-value parameter — since 6.6.16 only a `#naked` fn's (every other one is copied into an inline
+  local in the prologue, and an `async fn` refuses one) — through `_addr_is_slot_content` (parse_fn.cyr, beside
+  `_local_is_sptr_param`), so `_PARSE_FACTOR_IMPL` swaps one call for another and gains no reference (cybs's per-fn
+  ceiling). A `*P` parameter's `&q` now takes the ordinary slot path, which also marks the frame address as escaped
+  (`_fn_local_addr`): a `return f(&q);` no longer tail-calls, as for any local's `&` (row "handed on").
+- **Every `*P` spelling** takes it: a `q: *P` parameter at any position (a register or a stack-passed one), an untyped
+  impl `self` and `self: *P` (both marked `*T` by the parameter loop), and a generic instance's `q: *T` at `T = P`.
+  The inferred `ao_gslot(&p)` binds `T = i64` (the base, already the slot) and is a control, as are a `*Q` of 8 B or
+  less, a `*i64`, a `*P` local and global (each `&` its slot), a by-value `P` parameter and a `self: P` (each `&` its
+  copy).
+- **The other readers of `_local_is_sptr_param`** were checked against a `*P` parameter: `_sptr_param_in`,
+  `_agc_handle_local`, `_asg_struct_refused`, `_gsc_addr_of` and the copy-init (`parse_decl.cyr`) ask `GLPTRP` /
+  `_is_ptr_param` first; measured before and after: `q + 1` on a `*P` parameter does not dispatch `P_add`, and
+  `return q;` from a `: P` fn copies the struct through the pointer, as `var y: P = q;` does (6.7.0).
+- **The workaround** (`var q2: *P = q; var a = &q2;`) is unchanged; a program that relied on `&q` being the pointee
+  writes `q`.
+

@@ -1,6 +1,8 @@
-# A pointer's step outlives the operator that consumed it: with `q: *i32`, `(x == q) + 100` adds 400 — OPEN
+# A pointer's step outlives the operator that consumed it: with `q: *i32`, `(x == q) + 100` adds 400 — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 5, l679-crit; CHANGELOG [6.7.9]) Every operator that produces a plain integer now leaves no pointer step (the user's decision 1(a)): a comparison and each `&&` / `||` link, `* / % << >> >>>` and `*| *?`, a postfix `?`, `& | ^` (the left step too), unary `-` / `~`, an operator fn's result with a plain return and a field that is no `*T` (`_pexpr_bit_ps` in parse_expr.cyr names them all); an operator fn that declares `: *T` gives a pointer stepping by T, as its free call does — `(v + q) + 1`, `v + q + 1`, `v * q + 1` (the 6.7.9 review: the bite had reset it to 0, so a `: *i32` result stepped 1 and warned "assigning non-pointer"; `_fn_ret_ps`, rows `Vp` in `op_rows_i32` and PLWo / PLW4); `p ± n`, `n + p`, `p - q` are unchanged. The repro exits 0 on x86_64 (default, IR=1, IR=3, DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); rows: `tests/tcyr/crossos/typed_pointer_step.tcyr` `op_rows_*` / `qm_rows` (every table shape at `*i16` / `*i32` / `*i64` / `*Pt`, `+` and `-`, 112 of 215 red before) and `frontend/pointer_subscript_checked.sh` PL / PLR / PLW / PLD, mutation-proven per reset.
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above (reproduced on the 6.7.9 lane tip @ ef89f9e9 before the fix: exit 255). As filed: 🟡 OPEN — reproduced 2026-10-10 against the merged 6.7.8 tip (l678-int @ 85ee576f, `cycc_merged`
 2,053,536 B) with the tree's compiler and the cross compilers built from it: the repro exits 255 (all eight rows wrong)
 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine), where 0 is right; its control row (`(0 - q) + 1`) is right. The
 installed 6.7.4 and 6.7.7 compilers also exit 255. The merged tree's own source names the leak and leaves it

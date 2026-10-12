@@ -20,16 +20,23 @@
 #   F  the 6.7.5 arms beside them, unchanged: a field step and a `*p` step with junk, the 6.7.7
 #      multi-value step `x, y = f2() 2` (its own refusal)
 #   L  the lvalue refusal (a const, an enum constant) is the step's ONE error: no `)` check after it
+#   U  6.7.9: a step whose destination is neither a local nor a global is the statement's ONE error,
+#      "undefined variable 'x'" — it compiled and stored nothing, so the loop never advanced: U1 the
+#      issue's repro verbatim (`j = i + 1`), `zz = 1`, `yy += 1`, a top-level step, a fn's name, a
+#      captured name in a closure's step (the guide: a captured NAME is not an lvalue there)
+#      (issues/2026-10-10-for-step-undeclared-name-compiles-silently.md)
 #   X  `--syntax-only` (what `cyrius lint` runs): a step on a global / struct the file cannot see
-#      stays silent (no invented "expected ')'"); junk is still reported there
+#      stays silent (no invented "expected ')'", no "undefined variable", `+=` and `=`); junk is
+#      still reported there
 #   V  ANTI-VACUOUS: every step arm still runs its step — scalar local / global `=` and `OP=`, a
 #      subscript at a constant / variable index (local and global), an f64, inner parentheses, call
 #      values, a field, `*p`, a multi-value call, and the aggregate helpers that consume the `)`
 #      themselves (a struct copy, a struct call, a wrapped source, a global struct, a tuple
-#      literal), plus a top-level step — on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1),
+#      literal), a top-level step, and a step on a global declared AFTER its fn (6.7.9: still
+#      found, still stored) — on x86 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1),
 #      aarch64 (qemu), cx (cxvm) and PE (wine); A: tests/tcyr/crossos/for_step_struct_assign.tcyr
 #      (every aggregate helper's step, 6.6.20) builds and passes
-#   P  fork parity: J1-J6 refused the same by the aarch64 and cx compilers built from this tree
+#   P  fork parity: J1-J6 and U1 refused the same by the aarch64 and cx compilers built from this tree
 #
 # MUTATION LEDGER (scratch trees, each rebuilt with the one change, run as CYCC=<mutant>; 2026-10-10):
 #   M2a `_for_step_replay` without its `)` check after `_arr_sub_assign`
@@ -42,6 +49,11 @@
 #                                                           struct_paren, struct_global, tuple_step
 #                                                           each, measured one at a time) and A
 #   the 6.7.7 parse_ctrl.cyr (the pre-fix compiler)      -> RED J1-J16 X3 P (29 rows)
+# 2026-10-11 (6.7.9):
+#   M3a `_for_step_assign` without the `else` after FINDVAR (the step stores nothing, silently)
+#                                                        -> RED U1-U6 P(U1) (each BUILDS)
+#   M3b the report without its `_syntax_only == 0` guard -> RED X1 X4 ("undefined variable")
+#   the pre-fix compiler (crit bite 16's tree)           -> RED U1-U6 P(U1)
 # (A check after the lvalue refusal is swallowed by the parse's panic flag — the L rows pin one
 # error line, which holds either way: measured, no mutation of that site is observable.)
 set -u
@@ -134,10 +146,20 @@ refused f03 "multi-value destructure needs a call on the right-hand side" "F3: a
 refused l01 "cannot assign to const 'K'" "L1: a const, K += 2 3" 'const K = 1;\nfn main() {\n    var s = 0;\n    for (s = 0; s < 3; K += 2 3) { s = s + 1; }\n    return s;\n}\n'"$E"
 refused l02 "cannot assign to enum constant 'A'" "L2: an enum constant, A = 1 2" 'enum E { A; B; }\nfn main() {\n    var s = 0;\n    for (s = 0; s < 3; A = 1 2) { s = s + 1; }\n    return s;\n}\n'"$E"
 
+# ── U: a destination declared nowhere is the statement's "undefined variable" (6.7.9) ────────
+U1=$(cat docs/development/issues/repros/2026-10-10-for-step-undeclared-name-compiles-silently.cyr)
+refused u01 "undefined variable 'j'" "U1: the issue's repro, j = i + 1 (built, looped to its guard)" "$U1"
+refused u02 "undefined variable 'zz'" "U2: zz = 1" 'fn main() {\n    var n = 0;\n    for (n = 0; n < 3; zz = 1) { n = n + 1; }\n    return n;\n}\n'"$E"
+refused u03 "undefined variable 'yy'" "U3: a compound step, yy += 1" 'fn main() {\n    var n = 0;\n    var c = 0;\n    for (n = 0; n < 3; yy += 1) { c = c + 1; if (c > 9) { return 99; } }\n    return c;\n}\n'"$E"
+refused u04 "undefined variable 'j'" "U4: a top-level step, j = i + 1" 'var i = 0;\nvar s = 0;\nfor (i = 0; i < 3; j = i + 1) { s = s + 1; i = i + 1; }\nsyscall(60, s);\n'
+refused u05 "undefined variable 'g'" "U5: a fn's name, g = 1 (as the statement)" 'fn g(): i64 { return 1; }\nfn main() {\n    var i = 0;\n    for (i = 0; i < 3; g = 1) { i = i + 1; }\n    return i;\n}\n'"$E"
+refused u06 "undefined variable 't'" "U6: a captured name in a closure's step, t += 1 (as the statement)" 'include "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn main() {\n    alloc_init();\n    var t = 0;\n    var f = |n| { var k = 0; for (k = 0; k < n; t += 1) { k = k + 1; } return k * 10 + t; };\n    return fncall1(f, 4);\n}\n'"$E"
+
 # ── X: --syntax-only ──────────────────────────────────────────────────────────────────────────
 synonly x01 "X1: a step on a global the file cannot see (G_SIB += 1)" 'fn k(n): i64 {\n    var i = 0;\n    for (i = 0; i < n; G_SIB += 1) { i = i + 1; }\n    return i;\n}\n'
 synonly x02 "X2: a step whose value is a field of a struct the file cannot see (i = e.size)" 'fn k(e): i64 {\n    var i = 0;\n    for (i = 0; i < 3; i = e.size) { i = i + 1; }\n    return i;\n}\n'
 synrefused x03 "$X2" "X3: junk is still reported under --syntax-only" 'fn k(n): i64 {\n    var i = 0;\n    for (i = 0; i < n; i += 1 2) { }\n    return i;\n}\n'
+synonly x04 "X4: a plain step on a global the file cannot see (G_SIB = i + 1)" 'fn k(n): i64 {\n    var i = 0;\n    for (i = 0; i < n; G_SIB = i + 1) { i = i + 1; }\n    return i;\n}\n'
 
 # ── V: every step arm still runs its step (exit 0; else the failing check's number) ──────────
 cat > "$T/steps.cyr" <<'EOF'
@@ -169,6 +191,8 @@ fn struct_call(): i64 { var a = P3 { 1, 2, 3 }; var n = 0; for (n = 0; n < 1; a 
 fn struct_paren(): i64 { var a = P3 { 1, 2, 3 }; var b = P3 { 4, 5, 6 }; var n = 0; for (n = 0; n < 1; a = (b)) { n = n + 1; } return a.x * 100 + a.y * 10 + a.z; }
 fn struct_global(): i64 { var n = 0; for (n = 0; n < 1; GP = GQ) { n = n + 1; } return GP.x * 100 + GP.y * 10 + GP.z; }
 fn tuple_step(): i64 { var t = (1, 2); var n = 0; for (n = 0; n < 1; t = (5, 6)) { n = n + 1; } return t.0 * 10 + t.1; }
+fn later_global(): i64 { var s = 0; var i = 0; for (i = 0; i < 3; GLATE = i + 1) { s = s + 1; if (s > 9) { return 0; } i = GLATE; } return s * 10 + GLATE; }
+var GLATE = 0;
 var TI = 0;
 var TS = 0;
 for (TI = 0; TI < 3; TI += 1) { TS = TS + 1; }
@@ -193,6 +217,7 @@ fn main(): i64 {
     if (struct_global() != 456) { return 18; }
     if (tuple_step() != 56) { return 19; }
     if (TS * 10 + TI != 33) { return 20; }
+    if (later_global() != 44) { return 21; }
     return 0;
 }
 var rc = main();
@@ -263,8 +288,9 @@ for leg in a64 cx; do
     refused "p${leg}4" "$X2" "P4 ($leg): J4" "$J4" "$pc"
     refused "p${leg}5" "expected ')', got ';'" "P5 ($leg): J5" "$J5" "$pc"
     refused "p${leg}6" "$X2" "P6 ($leg): J6" "$J6" "$pc"
+    refused "p${leg}7" "undefined variable 'j'" "P7 ($leg): U1" "$U1" "$pc"
 done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — every classic-for step ends at its \`)\`: junk refused once on every arm (J, F, L, X), every arm still runs its step on x86 / IR / DCE / aarch64 / cx / PE (V, A), fork parity (P)"
+echo "PASS: $G — every classic-for step ends at its \`)\`: junk refused once on every arm (J, F, L, X), a destination declared nowhere refused as the statement (U), every arm still runs its step on x86 / IR / DCE / aarch64 / cx / PE (V, A), fork parity (P)"

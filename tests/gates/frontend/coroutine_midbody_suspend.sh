@@ -678,5 +678,92 @@ chmod +x "$T/a10"; g10=0; timeout 30 "$T/a10" > /dev/null 2>&1 || g10=$?
   echo "  deadline sentinel) starved behind a coroutine that never parks."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+# ── axis 11 — A CLOSURE'S CAPTURE OF A MULTI-WORD LOCAL IN A COROUTINE (6.7.9) ─────────────
+# ⛔ The closure's env copy walked its SOURCE by slot index (word k from slot base - k, the stack
+# layout) and wrote its DESTINATION by word offset, the one consumer of axis 9's aggregate that did
+# not ask `_ECORO_AGG_OFF` where the block is. The coroutine frame ascends with the slot index, so
+# every captured struct, tuple, u128, array and slice reached the closure with its words REVERSED:
+# `P2 { 1, 2 }` read as `{ 2, 1 }`, silently, since 6.6.8 (6.6.0 - 6.6.7 crashed on it). The copy
+# now reads the words through the aggregate's address, as every other coroutine consumer does.
+# Rows (exit 100 + row): 1 a 2-word struct literal, the closure made AFTER the await (the filed
+# repro); 2 a 3-word literal, the closure made BEFORE it; 3 a typed `var p: P2;`; 4 / 5 a 2- and a
+# 3-tuple; 6 a 24-byte struct from a call; 7 a copy-init `var q: P2 = p;`; 8 a u128 (its words
+# through `&w`); 9 an `i64[3]`; 10 a slice; 11 scalars on both sides of a struct; 12 a nested
+# closure capturing through the outer one's env. Expected values come from the NON-ASYNC control
+# fns with identical bodies; `trash()` runs between the forces, as in axis 9.
+# MUTATION LEDGER (each rebuilt from the mutated src and measured, 2026-10-11):
+#   * the pre-fix compiler, or the coroutine arm of `_cl_emit_cap_word` disabled (the slot walk)
+#                                                 -> exit 101, and EVERY row red on its own
+#     (the probe rewritten to report all twelve); tuple_checked.sh AS3 red too.
+#   * `EFLADDR(S, base - k)` per word (a slot walk spelled as addresses) -> exit 101.
+#   * the arm taken for every `w > 1` capture, coroutine or not -> GREEN (tuple_checked.sh too, its
+#     aarch64 / cx / PE legs included): on the stack `&base + k*8` IS slot base - k. The
+#     `_cur_fn_coro` test keeps the stack form byte-identical; it is not what makes this right.
+cat > "$T/a11.cyr" <<EOF
+${PRE}
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+struct P2 { x; y; }
+struct P3 { x; y; z; }
+var g_buf[16];
+fn nopark(): i64 { return 0; }
+fn trash(n) { var pad[512]; store64(&pad, 123456789); if (n > 0) { trash(n - 1); } return load64(&pad); }
+fn mk3(a, b, c): P3 { var r = P3 { a, b, c }; return r; }
+fn run2(F): i64 { future_force(F); trash(40); return future_force(F); }
+async fn lit2(s): i64 { var p = P2 { s, s + 5 }; var s1 = await nopark(); var c = || p.y * 100 + p.x; return fncall0(c); }
+fn ctrl_lit2(s): i64 { var p = P2 { s, s + 5 }; var c = || p.y * 100 + p.x; return fncall0(c); }
+async fn lit3(s): i64 { var q = P3 { s, s + 1, s + 2 }; var d = || q.z * 10000 + q.y * 100 + q.x; var s1 = await nopark(); return fncall0(d); }
+fn ctrl_lit3(s): i64 { var q = P3 { s, s + 1, s + 2 }; var d = || q.z * 10000 + q.y * 100 + q.x; return fncall0(d); }
+async fn typed2(s): i64 { var p: P2; p.x = s; p.y = s * 3; var s1 = await nopark(); var c = || p.y * 100 + p.x; return fncall0(c); }
+fn ctrl_typed2(s): i64 { var p: P2; p.x = s; p.y = s * 3; var c = || p.y * 100 + p.x; return fncall0(c); }
+async fn tup2(s): i64 { var t = (s, s + 7); var s1 = await nopark(); var c = || t.1 * 100 + t.0; return fncall0(c); }
+fn ctrl_tup2(s): i64 { var t = (s, s + 7); var c = || t.1 * 100 + t.0; return fncall0(c); }
+async fn tup3(s): i64 { var t = (s, s + 1, s + 2); var c = || t.2 * 10000 + t.1 * 100 + t.0; var s1 = await nopark(); return fncall0(c); }
+fn ctrl_tup3(s): i64 { var t = (s, s + 1, s + 2); var c = || t.2 * 10000 + t.1 * 100 + t.0; return fncall0(c); }
+async fn call3(s): i64 { var p = mk3(s, s + 2, s + 4); var s1 = await nopark(); var c = || p.z * 10000 + p.y * 100 + p.x; return fncall0(c); }
+fn ctrl_call3(s): i64 { var p = mk3(s, s + 2, s + 4); var c = || p.z * 10000 + p.y * 100 + p.x; return fncall0(c); }
+async fn copy2(s): i64 { var p = P2 { s, s + 4 }; var q: P2 = p; var s1 = await nopark(); var c = || q.y * 100 + q.x; return fncall0(c); }
+fn ctrl_copy2(s): i64 { var p = P2 { s, s + 4 }; var q: P2 = p; var c = || q.y * 100 + q.x; return fncall0(c); }
+async fn wide(s): i64 { var w: u128 = 0; store64(&w, s); store64(&w + 8, s + 6); var s1 = await nopark(); var c = || load64(&w + 8) * 100 + load64(&w); return fncall0(c); }
+fn ctrl_wide(s): i64 { var w: u128 = 0; store64(&w, s); store64(&w + 8, s + 6); var c = || load64(&w + 8) * 100 + load64(&w); return fncall0(c); }
+async fn arr3(s): i64 { var a: i64[3]; a[0] = s; a[1] = s + 1; a[2] = s + 2; var s1 = await nopark(); var c = || a[2] * 10000 + a[1] * 100 + a[0]; return fncall0(c); }
+fn ctrl_arr3(s): i64 { var a: i64[3]; a[0] = s; a[1] = s + 1; a[2] = s + 2; var c = || a[2] * 10000 + a[1] * 100 + a[0]; return fncall0(c); }
+async fn sl(s): i64 { var v: [u8] = 0; slice_set(&v, &g_buf, s); var s1 = await nopark(); var c = || slice_len(&v) * 10 + (slice_ptr(&v) == &g_buf); return fncall0(c); }
+fn ctrl_sl(s): i64 { var v: [u8] = 0; slice_set(&v, &g_buf, s); var c = || slice_len(&v) * 10 + (slice_ptr(&v) == &g_buf); return fncall0(c); }
+async fn mixed(s): i64 { var a = s; var p = P2 { s + 1, s + 2 }; var b = s + 3; var s1 = await nopark(); var c = || a * 1000000 + p.y * 10000 + p.x * 100 + b; return fncall0(c); }
+fn ctrl_mixed(s): i64 { var a = s; var p = P2 { s + 1, s + 2 }; var b = s + 3; var c = || a * 1000000 + p.y * 10000 + p.x * 100 + b; return fncall0(c); }
+async fn nest(s): i64 { var p = P2 { s, s + 8 }; var s1 = await nopark(); var c = || { var d = || p.y * 100 + p.x; return fncall0(d); }; return fncall0(c); }
+fn ctrl_nest(s): i64 { var p = P2 { s, s + 8 }; var c = || { var d = || p.y * 100 + p.x; return fncall0(d); }; return fncall0(c); }
+fn main(): i64 {
+    alloc_init();
+    if (run2(lit2(1)) != ctrl_lit2(1)) { return 101; }
+    if (run2(lit3(1)) != ctrl_lit3(1)) { return 102; }
+    if (run2(typed2(2)) != ctrl_typed2(2)) { return 103; }
+    if (run2(tup2(1)) != ctrl_tup2(1)) { return 104; }
+    if (run2(tup3(3)) != ctrl_tup3(3)) { return 105; }
+    if (run2(call3(1)) != ctrl_call3(1)) { return 106; }
+    if (run2(copy2(2)) != ctrl_copy2(2)) { return 107; }
+    if (run2(wide(1)) != ctrl_wide(1)) { return 108; }
+    if (run2(arr3(4)) != ctrl_arr3(4)) { return 109; }
+    if (run2(sl(7)) != ctrl_sl(7)) { return 110; }
+    if (run2(mixed(1)) != ctrl_mixed(1)) { return 111; }
+    if (run2(nest(1)) != ctrl_nest(1)) { return 112; }
+    return 0;
+}
+var e = main();
+syscall(60, e);
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a11.cyr" > "$T/a11" 2>"$T/a11.err" || {
+  echo "FAIL coroutine_midbody_suspend axis11: the capture probe did not compile"; grep -m2 '^error' "$T/a11.err"; exit 1; }
+[ -s "$T/a11" ] || { echo "FAIL coroutine_midbody_suspend axis11: empty binary"; exit 1; }
+chmod +x "$T/a11"; g11=0; timeout 30 "$T/a11" || g11=$?
+[ "$g11" -eq 0 ] || {
+  echo "FAIL coroutine_midbody_suspend axis11: exit $g11 — a closure made in a suspending async fn read a"
+  echo "  captured multi-word local wrong (100 + row: 1 a 2-word struct, 2 a 3-word one made before the"
+  echo "  await, 3 a typed struct, 4/5 tuples, 6 a struct from a call, 7 a copy-init, 8 a u128, 9 an array,"
+  echo "  10 a slice, 11 scalars around a struct, 12 a nested closure). Words reversed = the env copy walked"
+  echo "  the coroutine frame by slot index (_cl_emit_cap_word)."
+  exit 1; }
+
+echo "PASS coroutine_midbody_suspend: a closure made in a coroutine captures a struct / tuple / u128 / array / slice in field order (before and after the await, nested) · the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

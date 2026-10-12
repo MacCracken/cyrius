@@ -205,10 +205,18 @@
 #       untyped word, the documented rule); DW5 an i64 element into a `*f32` and an f32 OP= warn nothing
 #   DM  `*p, x = f2();` through a `*i32` keeps the deref's own refusal, once
 #   DX  `*(1 + p) = v` through a `*u8` stores ONE byte and `*(0 + q)` through a `*i8` reads -1 (the C2
-#       review: a 1-byte `n + p` keeps no step — 6.6.17 — so its kind reaches the dereference on its own
-#       stamp, `_PKD_MARK`; it was a WORD); DXc what compiles is unchanged: `(1 + p8) - q32` is still a
-#       byte difference, `var q: *u8 = 1 + p8;` (and an if-expression of it) still warns, `p8 + 1 - q32`
-#       is still the different-sizes error (giving `1 + p8` its step word would change all three)
+#       review; it was a WORD). 6.7.8 carried that kind on a dereference-only stamp; 6.7.9 gives `n + p`
+#       p's word (below), which carries it, and the stamp is gone
+#   DXc `n + p8` IS that `*u8` (6.7.9; the user's decision 1(b), 2026-10-11; issues/2026-10-10-int-plus-
+#       byte-pointer-drops-step.md — `_ptr_add` wrote back the INTEGER's word, 0). DXc1 `(1 + p8) - q32`
+#       is the different-sizes error from each one-byte source (local, parameter, global, field, call,
+#       `*i8`), as `(p8 + 1) - q32` is (it built a byte difference); DXc2 `var r: *u8 = 1 + p8;` from
+#       each source, `*i8`, `7 + (1 + p8)` and a global / field store warn nothing (they warned); DXc3
+#       an if-expression of `1 + p8` and `p8`, and `k + p8` on a capture, warn nothing; DXc4 `p8 + 1 -
+#       q32` (the control) is still refused; DXc5 `(1 + p8) - p8` and `(1 + i8) - p8` (one size) stay an
+#       element count; DXn a narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) -
+#       q32` is `n - p`; DXR the issue's repro VERBATIM: d1, d2, d3 refused, r silent. The value file's
+#       onebyte_rows (in typed_pointer_step.tcyr, the PL legs) pin every value, which no row changes.
 #
 # MUTATION LEDGER (C2-5, scratch trees, each its 2-stage mutant cycc, this gate + the value file as
 # CYCC=<mutant>; 2026-10-10):
@@ -225,20 +233,65 @@
 #   MPK8 / MPK9 / MPK10  `+`'s left operand, `n + p`'s right, an if-expression branch read through
 #         GPSC, not `_pk_word` -> RED Da-Dg (a bitwise operand of `+`, of `n +`, a bitwise branch)
 #   MPK11 `_pk_post` vouches for no bare name -> RED Da-Dg DRa-DRe AS3 DW1-DW3 (51 checks)
-#   (C2 review, the one-byte `n + p`; the counts are the value file's D6b / D6c checks):
-#   MPKD1 `_ptr_add` stamps no dereference-only kind -> RED Da-Dg DX DXr (12 checks)
-#   MPKD2 `_paren_post` drops it at `)` -> RED Da-Dg DX DXr (12 checks)
-#   MPKD3 `_pkd_lhs` not kept across the right operand (`_RHS_T`) -> RED Da-Dg (5 checks: `n + p - a * b`)
-#   MPKD4 `_ptr_sub` keeps the left kind whatever the right is -> RED Da-Dg (2: `(n + p) - p + w`)
-#   MPKD5 the if-expression keeps the first branch's kind -> RED Da-Dg (1: an untyped branch)
-#   MPKD6 `_PKD_IS` ignores the code pointer -> RED Da-Dg (3: `(m & (n + p)) + 0`, a negation)
-#   MPKD7 `_ptr_add` gives `n + p` its step word instead -> RED DXc1 DXc2 DXc3 (what compiles; the value
-#         file passes, DXc4 is the control — an error either way)
+#   (6.7.9, the one-byte `n + p` keeps p's word — `_add_word`; scratch trees, 2-stage mutant cycc, 2026-10-11):
+#   MOB1  `_add_word` writes the left word back (the old rule) -> RED Da-Dg (`*(n + p) = v` stores a
+#         word: the dereference reads the word now), DX DXr DXc1 (6) DXc2 DXc3 DXR PL0
+#   MOB2  `_add_word` writes any step-1 word (no element-kind test) -> RED DXn, PL0 PL0s PLa-PLg (the value
+#         file's `(1 + w) - q` with `w: u8` refused as a pointer difference)
+#   The compiler before this bite -> RED DXc1 (6) DXc2 DXc3 DXR PL0 (its two warnings); the values all pass
+#   (235 of 235: a step of 1 scales nothing). The dereference-only stamp's removal is proven by a corpus
+#   differential: 1098 tree sources compile byte-identically, diagnostics included, with and without it.
 #   MSEXW an f32 element's store keeps the value's width -> RED DW5 ("narrowing assignment")
 #   M27   `_slot_ptr_step` unmasked: EQUIVALENT — its one caller's `p += n` scales through EPTR_SCALE,
 #         which masks too (C2-3a); typed_pointer_step.tcyr and this gate stay green
 #   The C2-4b compiler (before this bite) -> RED Da Db De Df Dg DRa DRb DRe AS3 DW1-DW3 (Dc / Dd / DRc /
 #   DRd pass: those legs' compilers are built from this tree's src); the value file: 64 of 120 fail
+#
+# PL / PLR / PLW / PLD — A POINTER'S STEP DIES WITH THE OPERATOR THAT CONSUMED IT (6.7.9; the user's
+# decision 1(a), 2026-10-11; issues/2026-10-10-pointer-step-leaks-through-operators.md). The step word
+# is the last factor's and only `+` / `-` wrote theirs back, so with `q: *i32` `(x == q) + 100` was 401,
+# `(m & q) + 1` 4, `(-q) + 1` -q + 4, `mk(q).n + 1` 4 (6.6.17-6.7.8, every target). Now a comparison,
+# `&&` / `||`, `* / % << >> >>>`, `& | ^`, unary `-` / `~`, a postfix `?`, an operator fn's result and
+# a field that is no `*T` leave no step.
+#   PL0 tests/tcyr/crossos/typed_pointer_step.tcyr (op_rows_*: the issue's table at *i16 / *i32 / *i64 /
+#       *Pt, in a `+` and a `-` position, unparenthesised, as the right of `n +`, and the pointer-
+#       arithmetic controls; qm_rows: `(p?) + 1`; intrin_rows: a builtin at the head of a term,
+#       `bitget(m, 0, q) + 1`, is a plain value — 6.6.17's call rule, which PARSE_TERM's own dispatch
+#       skipped) compiles with only its five `#inline ignored` notes; PL0s --syntax-only
+#   PL  that file on every leg; PLR the issue's repro VERBATIM (it exited 255) on every leg
+#   PLW1-3 `0 | q`, `-q`, `hn(q).n` into a `*i32` warn "assigning non-pointer" (as `q | 0` / `h.n` did);
+#       PLWc pointer arithmetic with such an operand (`q + (x == q)`, `q - (k * q)`) warns nothing
+#   PLD `p16 - (k * q32)` is `p - n` (it was refused as a different-sizes difference); PLDc `p16 - q32`
+#       still is
+#   PLWo (6.7.9 review) an operator fn that DECLARES `: *T` gives a pointer stepping by T, as its free
+#       call does — `v + q`, `v * q`, `(v + q) + 1` into a `*i32` warn nothing (bite 5 reset the step
+#       to 0: `(v + q) + 1` stepped 1, and they warned); PLW4 a plain-return one's result still warns
+#
+# MUTATION LEDGER (6.7.9, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant> and
+# the value file; 2026-10-11):
+#   MPL1  no reset after a comparison (_PLOGIC_ATOM)  -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe (20 checks)
+#   MPL2  none after an `&&` link (_PLOGIC_AND)       -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe (4)
+#   MPL3  none after an `||` link (PCMPE)             -> RED PLa PLb PLf PLg PLe (4)
+#   MPL4  none after `* / % << >> >>>` (the TERM loop) -> RED PL* PLR* PLWc PLD (28)
+#   MPL5  none after `& | ^` (_pexpr_bit_ps)          -> RED PL* PLR* PLW1 (20)
+#   MPL5b `& | ^` clear the word but keep the left step -> RED PL* (8: `q & qq + 1`, `q ^ qq - 1`)
+#   MPL6  none after unary `-` (_neg_int)             -> RED PL* PLW2 (8)
+#   MPL7  none after unary `~` (_bnot_int)            -> RED PL* PLR* (4)
+#   MPL8  a non-`*T` field keeps the word (_field_load_type) -> RED PL* PLR* PLW3 (12)
+#   MPL9  an operator fn's result keeps it (EMIT_OP_DISPATCH) -> RED PL* (4: `(v + q) + 1`)
+#   MPL10 a postfix `?` keeps it (_PARSE_TERM_IMPL)   -> RED PL* (4: `(p?) + 1`)
+#   MPL11 (6.7.9 review) the operator fn's step forced to 0, bite 5's `SPSC(S, 0)` (EMIT_OP_DISPATCH)
+#                                                     -> RED PL* (the `Vp` rows) PLWo
+#   MPL12 the `+` / `-` loop not taking it (`ps = GPSC(S)` dropped, either arm)
+#                                                     -> RED PL* (`vp + q + 2` / `vp - q - 1`)
+#   MPL13 the `*` / `/` loop resetting it (`continue` dropped, either arm)
+#                                                     -> RED PL* (`vp * q + 1`, `(vp * q) - 1`, `2 + (vp * q)`
+#                                                        / `vp / q + 3`) PLWo (the `*` arm)
+#   (MPL11-13: every leg, aarch64 / cx included — their compilers built from the mutated copy)
+#   MIN1  a builtin keeps its last argument's (PARSE_INTRIN) -> RED PL* (4: `bitget(m, 0, q) + 1`)
+#   (PL* / PLR* = the x86 legs and PE; the aarch64 / cx legs' compilers are built from this tree's src)
+#   The compiler before this bite -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe PLW1-3 PLWc PLD (the value
+#   file: 112 of 215 fail); its aarch64 / cx compilers exit 255 on the repro and 112 on the value file
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -871,28 +924,97 @@ else bad "DW5: rc $rc: $(grep '^warning\|^error' "$T/dw5.err" | head -1)"; fi
 # DM: a narrow `*p` in a multi-value assignment keeps the deref's own refusal, once.
 refused dm "\`*p\` is not one" "DM: *p, x = f2(); through a \`*i32\`" 'fn f2(): i64 { return (3, 4); }\nvar B: i64[2];\nfn f(): i64 { var p: *i32 = &B; var x = 0; *p, x = f2(); return x; }\nsyscall(60, f());\n'
 
-# DX: `*(1 + p)` through a ONE-byte `*T` is the element (the C2 review; it was a WORD — `n + p` with
-# a step of 1 keeps no step, 6.6.17, and so kept no kind). The kind rides a stamp only a dereference
-# reads, so what compiles is unchanged (DXc). The value file's D6b / D6c hold every base and form.
+# DX: `*(1 + p)` through a ONE-byte `*T` is the element (the C2 review; it was a WORD). 6.7.9: `n + p`
+# keeps p's word, as `p + n` does, so the dereference reads it there. The value file's D6b / D6c hold
+# every base and form.
 exits dx 3 "DX: *(1 + p) = v through a \`*u8\` stores one byte" \
     'var B: i64[2];\nfn f(): i64 { store64(&B, 0x1111111111111111); var p: *u8 = &B; *(1 + p) = 0; if (load64(&B) == 0x1111111111110011) { return 3; } if (load64(&B) == 0x11) { return 2; } return 1; }\nsyscall(60, f());\n'
 exits dxr 3 "DXr: *(0 + q) through a \`*i8\` reads -1 (sign-extended)" \
     'var B: i64[2];\nfn f(): i64 { store64(&B, 0x11111111111111FF); var q: *i8 = &B; if (*(0 + q) == 0 - 1) { return 3; } return 1; }\nsyscall(60, f());\n'
-printf '%b' 'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q32: *u32 = &B; return (1 + p8) - q32; }\nsyscall(60, f());\n' > "$T/dxc1.cyr"
-rc=0; timeout 60 "$CC" < "$T/dxc1.cyr" > "$T/dxc1.bin" 2> "$T/dxc1.err" || rc=$?
-if [ "$rc" -ne 0 ] || grep -q '^warning\|^error' "$T/dxc1.err"; then bad "DXc1: (1 + p8) - q32: rc $rc: $(grep '^warning\|^error' "$T/dxc1.err" | head -1)"
-else
-    chmod +x "$T/dxc1.bin"; got=0; timeout 10 "$T/dxc1.bin" > /dev/null 2>&1 || got=$?
-    if [ "$got" -eq 1 ]; then ok "DXc1: (1 + p8) - q32 is still a byte difference, with no diagnostic: exit 1"
-    else bad "DXc1: (1 + p8) - q32: exit $got, want 1"; fi
-fi
-warns dxc2 "assigning non-pointer to typed pointer" "DXc2: var q: *u8 = 1 + p8; still warns" \
-    'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q: *u8 = 1 + p8; return *q; }\nsyscall(60, f());\n'
-warns dxc3 "assigning non-pointer to typed pointer" "DXc3: an if-expression of 1 + p8 and p8 into a *u8 still warns" \
-    'var B: i64[2];\nfn f(): i64 { var c = 1; var p8: *u8 = &B; var q: *u8 = if (c > 0) { 1 + p8 } else { p8 }; return *q; }\nsyscall(60, f());\n'
+# DXc: `n + p8` IS that `*u8` (6.7.9; the user's decision 1(b), 2026-10-11; issues/2026-10-10-int-plus-
+# byte-pointer-drops-step.md). It wrote the integer's word back, 0: `(1 + p8) - q32` built a byte
+# difference where `(p8 + 1) - q32` is refused, and `var r: *u8 = 1 + p8;` warned where `p8 + 1` is
+# silent. Each one-byte source (a local, a parameter, a global, a field, a call, a capture), `*i8`
+# too, both diagnostics; DXc4 the control; DXn a narrow SCALAR (step 1, no `*T`) stays an integer.
+DXH='var B: i64[2];\nvar G8: *u8 = 0;\nstruct H8 { n; b: *u8; }\nfn mk8(): *u8 { return &B; }\n'
+for src in p8 a8 G8 h.b 'mk8()' si8; do
+    refused "dxc1_$(printf '%s' "$src" | tr -dc 'a-z0-9')" "pointer difference of pointers with different element sizes" \
+        "DXc1: (1 + $src) - q32 is the different-sizes error, as ($src + 1) - q32 is (it was a byte difference)" \
+        "${DXH}fn f(a8: *u8): i64 { var p8: *u8 = &B; var si8: *i8 = &B; var h: H8; h.b = &B; G8 = &B; var q32: *u32 = &B; return (1 + $src) - q32; }\nsyscall(60, f(&B));\n"
+done
+printf '%b' "${DXH}fn f(a8: *u8, ai8: *i8): i64 {\n    var p8: *u8 = &B;\n    var h: H8;\n    h.b = &B;\n    G8 = &B;\n    var r1: *u8 = 1 + p8;\n    var r2: *u8 = 2 + a8;\n    var r3: *u8 = 3 + G8;\n    var r4: *u8 = 4 + h.b;\n    var r5: *u8 = 5 + mk8();\n    var r6: *i8 = 6 + ai8;\n    var r7: *u8 = 7 + (1 + p8);\n    G8 = 1 + p8;\n    h.b = 2 + p8;\n    return *r1;\n}\nsyscall(60, f(&B, &B));\n" > "$T/dxc2.cyr"
+rc=0; timeout 60 "$CC" < "$T/dxc2.cyr" > "$T/dxc2.bin" 2> "$T/dxc2.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/dxc2.err"; then ok "DXc2: n + p from each one-byte source into a *u8 / *i8 declaration or global warns nothing"
+else bad "DXc2: rc $rc: $(grep '^warning\|^error' "$T/dxc2.err" | head -2 | tr '\n' '|')"; fi
+printf '%b' 'include "lib/alloc.cyr"\nvar B: i64[2];\nfn f(): i64 {\n    alloc_init();\n    var c = 1;\n    var p8: *u8 = &B;\n    var q: *u8 = if (c > 0) { 1 + p8 } else { p8 };\n    var g = |k| { var z: *u8 = k + p8; return z; };\n    return *q;\n}\nsyscall(60, f());\n' > "$T/dxc3.cyr"
+rc=0; timeout 60 "$CC" < "$T/dxc3.cyr" > "$T/dxc3.bin" 2> "$T/dxc3.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/dxc3.err"; then ok "DXc3: an if-expression of 1 + p8 and p8, and k + p8 on a capture, into a *u8 warn nothing"
+else bad "DXc3: rc $rc: $(grep '^warning\|^error' "$T/dxc3.err" | head -2 | tr '\n' '|')"; fi
 refused dxc4 "pointer difference of pointers with different element sizes" "DXc4: p8 + 1 - q32 is still the different-sizes error" \
     'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var q32: *u32 = &B; return p8 + 1 - q32; }\nsyscall(60, f());\n'
+exits dxc5 1 "DXc5: (1 + p8) - p8 and (1 + i8) - p8 stay legal (one element size): an element count" \
+    'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var i8: *i8 = &B; return (1 + p8) - p8 + ((1 + i8) - p8) - 1; }\nsyscall(60, f());\n'
+exits dxn 6 "DXn: (1 + w) - q32 with w: u8 (a narrow scalar, no *T) is still n - p" \
+    'var B: i64[2];\nfn f(): i64 { var w: u8 = 5; var q32: *u32 = &B; var qa: i64 = q32; return (1 + w) - q32 + qa; }\nsyscall(60, f());\n'
+# DXR: the issue's repro VERBATIM: exactly its three differences refused (lines 9, 10, 11 — d2 was
+# silent), and no warning at r (line 8).
+DXRP=docs/development/issues/repros/2026-10-10-int-plus-byte-pointer-drops-step.cyr
+[ -f "$DXRP" ] || { echo "FAIL: $G: $DXRP missing"; exit 1; }
+rc=0; timeout 60 "$CC" < "$DXRP" > "$T/dxr_rep.bin" 2> "$T/dxr_rep.err" || rc=$?
+dl=$(grep '^error' "$T/dxr_rep.err" | grep 'pointer difference of pointers with different element sizes' | sed 's/^error:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$rc" -ne 0 ] && [ "$dl" = "9 10 11 " ] && [ "$(grep -c '^error' "$T/dxr_rep.err")" -eq 3 ] && ! grep -q '^warning' "$T/dxr_rep.err"; then
+    ok "DXR: the issue's repro: d1, d2 and d3 refused, r silent"
+else bad "DXR: rc $rc, refused lines '$dl': $(grep '^warning\|^error' "$T/dxr_rep.err" | head -4 | tr '\n' '|')"; fi
+
+# ── PL: a pointer's step dies with the operator that consumed it (6.7.9) ──────────────────────
+# PL0: the value file (its op_rows_* section holds the issue's table) compiles with only the five
+# `#inline ignored` notes it has always had, and --syntax-only reports no error; PL: it on every leg.
+TPS=tests/tcyr/crossos/typed_pointer_step.tcyr
+[ -f "$TPS" ] || { echo "FAIL: $G: $TPS missing"; exit 1; }
+cp "$TPS" "$T/tps.cyr"
+rc=0; "$CC" < "$T/tps.cyr" > "$T/tps.chk" 2> "$T/tps.chk.err" || rc=$?
+nw=$(grep '^warning\|^error' "$T/tps.chk.err" | grep -vc '#inline ignored: pointer (\*T) parameter' || true)
+if [ "$rc" -eq 0 ] && [ "$nw" -eq 0 ]; then ok "PL0: the step file compiles, no new diagnostic ($(grep -c 'assert_eq' "$T/tps.cyr") asserts)"
+else bad "PL0: rc $rc, $nw diagnostic line(s): $(grep '^warning\|^error' "$T/tps.chk.err" | grep -v '#inline ignored' | head -2 | tr '\n' '|')"; fi
+rc=0; "$CC" --syntax-only < "$T/tps.cyr" > /dev/null 2> "$T/tps.so.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/tps.so.err"; then ok "PL0s: --syntax-only (cyrius lint) reports no error"
+else bad "PL0s: --syntax-only rc $rc: $(grep '^error' "$T/tps.so.err" | head -1)"; fi
+legs tps PL "every operator that consumes a pointer leaves no step, at *i16 / *i32 / *i64 / *Pt; the controls step; a one-byte n + p keeps its values" full
+# PLR: the issue's repro VERBATIM (issues/2026-10-10-pointer-step-leaks-through-operators.md; it exited
+# 255, every row wrong) on every leg.
+PLRP=docs/development/issues/repros/2026-10-10-pointer-step-leaks-through-operators.cyr
+[ -f "$PLRP" ] || { echo "FAIL: $G: $PLRP missing"; exit 1; }
+cp "$PLRP" "$T/plr.cyr"
+legs plr PLR "the issue's repro exits 0 (it exited 255)"
+# PLW: what such a value is told when it goes into a `*T`: a plain integer, so `0 | q`, `-q` and an
+# untyped field of a call warn as `q | 0` and `h.n` always did; PLWc: pointer arithmetic does not.
+PLH='struct Hn { n; m; }\nfn hn(q): Hn { var h: Hn; h.n = 0; h.m = 0; return h; }\nvar B: i64[8];\n'
+warns plw1 "assigning non-pointer to typed pointer" "PLW1: var r: *i32 = 0 | q; warns as q | 0 does" \
+    "${PLH}fn f(): i64 { var q: *i32 = &B; var r: *i32 = 0 | q; return 0; }\nsyscall(60, f());\n"
+warns plw2 "assigning non-pointer to typed pointer" "PLW2: var r: *i32 = -q; warns" \
+    "${PLH}fn f(): i64 { var q: *i32 = &B; var r: *i32 = -q; return 0; }\nsyscall(60, f());\n"
+warns plw3 "assigning non-pointer to typed pointer" "PLW3: var r: *i32 = hn(q).n; warns as h.n does" \
+    "${PLH}fn f(): i64 { var q: *i32 = &B; var r: *i32 = hn(q).n; return 0; }\nsyscall(60, f());\n"
+printf '%b' "${PLH}fn f(): i64 {\n    var q: *i32 = &B;\n    var x = 0;\n    var k = 1;\n    var a: *i32 = q + (x == q);\n    var b: *i32 = (q);\n    var c: *i32 = q - (k * q);\n    var d: *i32 = (x == q) + q;\n    return 0;\n}\nsyscall(60, f());\n" > "$T/plwc.cyr"
+rc=0; timeout 60 "$CC" < "$T/plwc.cyr" > "$T/plwc.bin" 2> "$T/plwc.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/plwc.err"; then ok "PLWc: q + (x == q), (q), q - (k * q), (x == q) + q into a *i32 warn nothing"
+else bad "PLWc: rc $rc: $(grep '^warning\|^error' "$T/plwc.err" | head -1)"; fi
+# PLWo: an operator fn that DECLARES `: *T` gives a pointer, as its free call does (6.7.9 review: bite
+# 5 reset its step to 0 and warned): into a `*i32` `v + q`, `v * q`, `(v + q) + 1` warn nothing; PLW4
+# its control, a plain-return operator fn's result, warns as `0 | q` does.
+printf '%b' "struct Vp { x; }\nfn Vp_add(a, b): *i32 { return b; }\nfn Vp_mul(a, b): *i32 { return b; }\nvar B: i64[8];\nfn f(): i64 {\n    var q: *i32 = &B;\n    var v: Vp;\n    v.x = 0;\n    var a: *i32 = v + q;\n    var b: *i32 = v * q;\n    var c: *i32 = (v + q) + 1;\n    return 0;\n}\nsyscall(60, f());\n" > "$T/plwo.cyr"
+rc=0; timeout 60 "$CC" < "$T/plwo.cyr" > "$T/plwo.bin" 2> "$T/plwo.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/plwo.err"; then ok "PLWo: v + q, v * q, (v + q) + 1 with a : *i32 operator fn into a *i32 warn nothing"
+else bad "PLWo: rc $rc: $(grep '^warning\|^error' "$T/plwo.err" | head -1)"; fi
+warns plw4 "assigning non-pointer to typed pointer" "PLW4: var r: *i32 = v + q; with a plain-return operator fn warns" \
+    'struct Vo { x; }\nfn Vo_add(a, b): i64 { return 10; }\nvar B: i64[8];\nfn f(): i64 { var q: *i32 = &B; var v: Vo; v.x = 0; var r: *i32 = v + q; return 0; }\nsyscall(60, f());\n'
+# PLD: `p16 - (k * q32)` is `p - n` (an integer count), no longer the different-sizes difference it
+# was refused as — k * q32 is no pointer; `p16 - q32` stays that error (DXc4's shape).
+exits pld 3 "PLD: p16 - (k * q32) steps the integer by 2 (it was refused as a pointer difference)" \
+    'var B: i64[8];\nfn f(): i64 { var p: *i16 = &B + 64; var q: *i32 = &B; var k = 1; var pa: i64 = p; var qa: i64 = q; var r = p - (k * q); if (pa - r == 2 * qa) { return 3; } return 1; }\nsyscall(60, f());\n'
+refused pldc "pointer difference of pointers with different element sizes" "PLDc: p16 - q32 is still the different-sizes error" \
+    'var B: i64[8];\nfn f(): i64 { var p: *i16 = &B; var q: *i32 = &B; return p - q; }\nsyscall(60, f());\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too with nothing else changed (DX, DXr, DXc)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"

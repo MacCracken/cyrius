@@ -1061,6 +1061,16 @@ _chk_gate "$ROOT/tests/gates/frontend/fn_redefinition_binds_last.sh"
 # the pass-2 skip is copied into every `src/main*.cyr`.
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 
+# 6.7.9: a closure at top level captured a global from the last fn's dead locals when the names
+# matched — the local table is not cleared at a fn's end, and the closure's capture lookup read
+# it. SIGSEGV on x86_64 / aarch64, a wrong value on cx; host, cx and aarch64-qemu legs.
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_closure_stale_locals.sh"
+
+# 6.7.9: a field name in a closure body (`p.y`, a struct literal's `y:` label) was taken as a
+# capture of the enclosing local `y` — refused without lib/alloc.cyr, or a needless heap env.
+# A range's `0..y` and a value after a label stay captures; host, cx and aarch64-qemu legs.
+_chk_gate "$ROOT/tests/gates/frontend/closure_field_names_not_captured.sh"
+
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
 # at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same
@@ -2397,6 +2407,30 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's
 # subscripts, `*p` width, slices and the bounds-checked mode (tests/tcyr/crossos/dyn_subscripts.tcyr).
 _chk_gate "$ROOT/tests/gates/frontend/dyn_checked.sh"
+# 6.7.9 — an unmatched `}` at module scope is refused in pass 1, once, positioned (it silently ended
+# the unit: everything after it dropped, rc 0; in a multi-file build "undefined" errors in other
+# files — agnos's report). Every placement, the three-file shape, --syntax-only, every runnable
+# fork; the legitimate module-scope braces still compile and run. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/stray_brace_refused.sh"
+# 6.7.9 — unary `-` / `~` on a constant binds tighter than a literal operator after it: the run-time
+# fold folded the operand and dropped the operator (`-K + 10` was 15, `~5 * 2` 10; the rewind leaked
+# unary minus's pushed 0). The filed repro and 77 rows, x86 / IR / DCE / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/unary_constant_fold.sh"
+# 6.7.9 — a call's result is typed by its callee, never by its last argument: a method's result kept
+# the last argument's type (`p.m(1.5) * 2` was 0, `p.m(p) * 10` dispatched P_mul) and a `: f64` method
+# was untyped (`p.area() + 1.0` an integer add); a free struct call's field kept it too
+# (`mk(1.5).a * 2`). The three filed repros, the warnings, and 34 rows, x86 / IR / DCE / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
+# 6.7.9 — a generic call whose T = f64 is inferred, or names T only in its return, is an f64: `gid(h)`
+# ran the i64 base and `gid(h) * 2.0` / `gg<f64>(&h) * 2.0` multiplied bits; the f64 instance runs and
+# its result is typed f64 on every spelling, a generic method's included, and a bound is met at f64.
+# The filed repro, the warnings, the bound, and 44 rows, x86 / IR / DCE / aarch64 / cx / PE.
+_chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
+# 6.7.9 — `&q` of a `q: *P` parameter is its slot: for P over 8 B it was the pointee (6.6.6's by-value
+# arm also fired for a `*P`), so `load64(&q)` read q's first field and `store64(&q, o)` wrote the
+# caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/address_of_pointer_param.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

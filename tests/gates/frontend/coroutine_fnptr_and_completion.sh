@@ -41,7 +41,10 @@
 #      Future bound to a variable forces                                                    6.6.10
 #   K  a plain Future forced 3 times runs its body once (was 103 203 303)                 6.6.10
 #   L  a plain async fn with 9 parameters is refused by name; 8 compiles                  6.6.10
-#   PE (wine) G H I1 J3 J4 K, aarch64 (qemu) K, cx (cxvm) K + L + the coroutine refusal (the cx
+#   N1-N3 the coroutine's slot 0 (SELF) carries no name, flags or type of the previous fn's
+#      local 0: a global of that name is the global (was SELF's address), a local of that name is
+#      no duplicate, a #inline coroutine names no stale parameter reason                  6.7.9
+#   PE (wine) G H I1 J3 J4 K N1 N2, aarch64 (qemu) K, cx (cxvm) K + L + the coroutine refusal (the cx
 #   leg says PENDING while the tree has no src/backend/common/env.cyr — S2 bite 10 — and FAILS if
 #   that file exists and the cx compiler still refuses CYRIUS_ASYNC).
 #
@@ -54,7 +57,8 @@
 # (x86, PE, aarch64) and J3 RED. Raise the arity cap -> L RED. Spill no pending pushes in
 # `_await_coro_suspend` (d = 0) -> J4 and PE J4 RED. Drop the parenthesis look-through in
 # `_await_operand_is_future` -> J5 RED. 6.6.12: push `_defer_emit_init`'s fall-through jmp for a
-# coroutine again -> M RED.
+# coroutine again -> M RED. 6.7.9: drop `_coro_slot0_reserve`'s name reset -> N1, N2 and PE N1, N2
+# RED; its SLDEP -> N3 RED (a pointer reason); its SLTYPE -> N3 RED (a struct reason).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -482,6 +486,121 @@ if [ "$rc" -ne 1 ]; then bad "L: a 9-parameter plain async fn compiled (rc $rc),
 elif grep -q 'async fn `a9` takes 9 parameters' "$T/l.err" && ! grep -q '`a8`' "$T/l.err"; then ok "L: a9 refused by name, a8 accepted"
 else bad "L: the refusal did not name a9 (or named a8): $(grep -m1 '^error' "$T/l.err")"; fi
 
+# N (6.7.9) — a coroutine's reserved slot 0 (SELF) is ANONYMOUS. It was reserved by count only
+# (`SFLC(S, 1)`), and the local tables are not cleared between fns, so it kept the PREVIOUS fn's
+# local 0. Its NAME resolved to SELF inside the coroutine: a global of that name read the frame's
+# address (N1: 99 for 5 after `fn m2(a)`, and 99 for 42 after a parameterless fn whose first `var`
+# is `g`), a write to it stored over SELF (N1: 0 and the global left at 5, for 6 6), and a local of
+# that name was refused as a "duplicate variable" (N2, the filing's repro 2, plus one declared after
+# an await). Its depth word's flag bits and its type reached `_inl_param_why`, which warned a
+# `#inline` coroutine off a `*T` / struct parameter it does not have (N3). N1's last value (a
+# renamed parameter) is the control. Mutations: drop the name reset in `_coro_slot0_reserve` -> N1
+# '99 99 0 5 5' and N2 "duplicate variable"; drop its SLDEP -> N3 names a pointer parameter; drop its
+# SLTYPE -> N3 names a struct parameter.
+cat > "$T/n1.cyr" <<EOF
+$PRE
+var a = 5;
+var g = 40;
+var w = 5;
+var a2 = 5;
+fn m2(a): i64 { return a; }
+async fn n_read(C): i64 {
+    var s1 = await nopark();
+    if (a > 65536) { return 99; }
+    return a;
+}
+fn m3(): i64 { var g = 1; return g; }
+async fn n_var(C): i64 {
+    var s1 = await nopark();
+    if (g > 65536) { return 99; }
+    return g + 2;
+}
+fn m4(w, k): i64 { return w + k; }
+async fn n_write(C): i64 {
+    var s1 = await nopark();
+    w = w + 1;
+    var s2 = await nopark();
+    if (w > 65536) { return 99; }
+    return w;
+}
+fn m5(z): i64 { return z; }
+async fn n_ctrl(C): i64 {
+    var s1 = await nopark();
+    return a2;
+}
+fn drain(F): i64 {
+    var r = future_force(F);
+    r = future_force(F);
+    r = future_force(F);
+    fmt_int(r); syscall(1, 1, " ", 1);
+    return r;
+}
+fn main(): i64 {
+    alloc_init();
+    drain(n_read(0));
+    drain(n_var(0));
+    drain(n_write(0));
+    fmt_int(w); syscall(1, 1, " ", 1);
+    drain(n_ctrl(0));
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run n1 '5 42 6 6 5 ' "N1: a global named like the previous fn's local 0 is the global, read and written, in a coroutine"
+
+cat > "$T/n2.cyr" <<EOF
+$PRE
+fn m2(a, b): i64 { return a + b; }
+async fn steps(C): i64 {
+    var a = 3;
+    var s1 = await nopark();
+    return a;
+}
+fn m3(q): i64 { return q; }
+async fn twice(C): i64 {
+    var s1 = await nopark();
+    var q = 4;
+    var s2 = await nopark();
+    return q * 10 + C;
+}
+fn main(): i64 {
+    alloc_init();
+    var F = steps(0); var r = future_force(F); r = future_force(F);
+    fmt_int(r); syscall(1, 1, " ", 1);
+    var G = twice(2); r = future_force(G); r = future_force(G); r = future_force(G);
+    fmt_int(r);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run n2 '3 42' "N2: a coroutine local named like the previous fn's parameter 0 is no duplicate"
+
+cat > "$T/n3.cyr" <<EOF
+$PRE
+fn m(p: *i64): i64 { return p[0]; }
+#inline
+async fn st(C): i64 { return await nopark() + 7; }
+fn m2(s: Str): i64 { return 1; }
+#inline
+async fn st2(C): i64 { return await nopark() + 8; }
+fn main(): i64 {
+    alloc_init();
+    var F = st(0); var r = future_force(F); r = future_force(F);
+    fmt_int(r); syscall(1, 1, " ", 1);
+    var G = st2(0); r = future_force(G); r = future_force(G);
+    fmt_int(r);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run n3 '7 8' "N3: a #inline coroutine after a *T / Str-parameter fn"
+if grep -qF -e '#inline ignored: pointer (*T) parameter' -e '#inline ignored: struct/aggregate parameter' "$T/n3.err"; then
+    bad "N3: the previous fn's slot-0 type reached the coroutine: $(grep -m1 '#inline ignored' "$T/n3.err")"
+else ok "N3: no stale *T / struct parameter reason for a coroutine that has neither"; fi
+
 # ── the same rows on PE (wine) and, for the plain-Future row, aarch64 (qemu) ──────────────────
 # CYRIUS_ASYNC is a compiler env knob, so async rows exist only as shell gates; these legs are what
 # exercises the lockstep lib/async.cyr + constructor off the x86_64-Linux path.
@@ -505,6 +624,8 @@ if command -v wine > /dev/null 2>&1; then
     xrun "$WRUN" "$WCC" j3 '0 0 0 0 0 0 21132 21132 11' "PE J3: await values"
     xrun "$WRUN" "$WCC" j4 '105 7 15 1005 5008 105 5 106 1025 55 ' "PE J4: await inside a larger expression"
     xrun "$WRUN" "$WCC" k '103 103 103 7 7 11' "PE K: a plain Future runs once"
+    xrun "$WRUN" "$WCC" n1 '5 42 6 6 5 ' "PE N1: a global named like the previous fn's local 0, in a coroutine"
+    xrun "$WRUN" "$WCC" n2 '3 42' "PE N2: a coroutine local named like the previous fn's parameter 0"
 else echo "  SKIP: PE leg (wine not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && chmod +x "$T/cc_a64"; then
@@ -544,4 +665,4 @@ else bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: coroutine_fnptr_and_completion — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); no dead jmp after the resume dispatch (M); PE / aarch64 / cx legs"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); no dead jmp after the resume dispatch (M); slot 0 (SELF) keeps no previous fn's local name, flags or type (N1-N3); PE / aarch64 / cx legs"

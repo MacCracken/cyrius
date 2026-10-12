@@ -210,8 +210,9 @@
 #   M-C10 `_meth_fn_at`'s dyn arm gone (no lookahead sees a prototype) -> C8c, C8d, C9a, C9b (BUILT), PD, A pd
 #         (a `*P` result no longer forms: "not a dyn")
 #   M-C11 `_dyn_src_call`'s method arm gone                         -> C9a (a second error, "not a dyn")
-#   M-C12 `_gvi_dyn_mcall` gone                                     -> C9b (BUILT: the zone replay kept the data
-#         word alone, a SIGSEGV at the first call)
+#   M-C12 `_gvi_expr` back on `_sc_global_mismatch` alone           -> C9b (BUILT: the zone replay kept the data
+#         word alone, a SIGSEGV at the first call). 6.7.9: that refusal (`_sc_global_pair`) subsumed 6.7.8's
+#         dyn-only `_gvi_dyn_mcall`, removed (struct_result_type_refused.sh, rows Z).
 #   M-C13 no arity check (C7)                                       -> C7a, C7b (BUILT)
 #   M-C14 a multi-value member not refused (C5)                     -> C5a, C5b
 #   M-C15 a refused call's arguments parsed, not stepped over       -> C1c (a second error: V1 on `o`)

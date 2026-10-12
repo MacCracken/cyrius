@@ -29,6 +29,19 @@
 #     and a walk that skips its anchor group each fail rows here;
 #   * NO EMPTY SLOT ANYWHERE (tombstones written outside the API): the rebuild cannot anchor,
 #     falls back to fresh arrays at the same capacity, and the insert still succeeds.
+#
+# ⛔ AN OVERWRITE NEVER REBUILDS (6.7.9 — lib/hashmap.cyr's rule since 6.6.20). fhm_set checked its
+# trigger BEFORE anything looked the key up, so overwriting a PRESENT key at the trigger rebuilt
+# the table: 14 live in 16 slots doubled to 32 (544 B), with the allocator exhausted the overwrite
+# returned -1 and dropped the value, and at the in-place trigger it moved entries under a caller
+# walking the arrays. Rows:
+#   * the DOUBLING trigger (14 live in 16 slots): an overwrite returns 0, stores the value, keeps
+#     the capacity, the arrays and the count, allocates 0 B and rebuilds nothing — and with
+#     ALLOC_MAX = 0 it still succeeds, while a NEW key there returns -1 (anti-vacuous);
+#   * the IN-PLACE trigger (the fixed layout above, before its insert): a walk over the arrays that
+#     overwrites every live entry as it goes finds each one where it was, rebuilds nothing, keeps
+#     every tombstone and allocates nothing.
+# Each of these rows fails on 6.7.8's fhm_set (the trigger ahead of the lookup).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -152,6 +165,30 @@ fn _fx_all(m, buf, n, g, want_present): i64 {
         i = i + 1;
     }
     return ok;
+}
+
+# Overwrite every live entry with its own value while walking the arrays, as a caller iterating
+# the map does. Returns how many entries the walk did not find where it left them (moved by a
+# rebuild); 0 when an overwrite never rebuilds. Stores `seen` live entries into *seen.
+fn _fx_overwrite_walk(m, seen): i64 {
+    var cap = fhm_cap(m);
+    var moved = 0;
+    var n = 0;
+    var i = 0;
+    while (i < cap) {
+        var b = load8(load64(m) + i);
+        if (b != 0) {
+            if (b != 255) {
+                var k = load64(load64(m + 8) + i * 8);
+                fhm_set(m, k, fhm_get(m, k));
+                if (_fx_slot_of(m, k) != i) { moved = moved + 1; }
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    store64(seen, n);
+    return moved;
 }
 
 # Hold `live` keys and replace the oldest with a new one `rounds` times, once the table has
@@ -279,6 +316,18 @@ fn _fx_layout_rows(): i64 {
     assert_eq(_fhm_empty16(load64(m), 0), 0, "group 0 has no EMPTY slot before the rebuild (anti-vacuous)");
     assert_eq(_fhm_empty16(load64(m), 16), 0, "group 1 has no EMPTY slot before the rebuild (anti-vacuous)");
     assert(_fhm_empty16(load64(m), 32) != 0, "group 2 is the first group with an EMPTY slot (anti-vacuous)");
+    # 6.7.9: OVERWRITES at the trigger rebuild nothing, so a walk that overwrites as it goes stays valid
+    var t0 = load64(m + 40);
+    var c0 = fhm_count(m);
+    var seen = alloc(8);
+    var w0 = alloc_used();
+    assert_eq(_fx_overwrite_walk(m, seen), 0, "each entry a walk overwrites at the trigger stays in its slot");
+    assert_eq(load64(seen), c0, "the walk saw every live entry exactly once");
+    assert_eq(_fhm_rebuilds, reb0, "an overwrite at the in-place trigger does not rebuild");
+    assert_eq(load64(m + 40), t0, "an overwrite at the in-place trigger keeps every tombstone");
+    assert_eq(fhm_count(m), c0, "an overwrite at the in-place trigger keeps the count");
+    assert_eq(alloc_used() - w0, 0, "an overwrite at the in-place trigger allocates nothing");
+    assert_eq(_fx_slot_of(m, kx), 32, "X, overwritten at the trigger, stays in group 2");
     var a0 = load64(m);
     var a1 = load64(m + 8);
     var a2 = load64(m + 16);
@@ -356,6 +405,76 @@ fn _fx_no_empty_rows(): i64 {
     return 0;
 }
 
+# A fresh map holding keys 0..13 of `ks` ("a".."n" -> 0..13): 14 live in 16 slots, the doubling trigger.
+fn _fx_map14(ks): i64 {
+    var m = fhm_new();
+    var i = 0;
+    while (i < 14) { fhm_set(m, load64(ks + i * 8), i); i = i + 1; }
+    assert_eq(fhm_cap(m), 16, "14 keys stay in a 16-slot table (anti-vacuous)");
+    assert((fhm_count(m) + load64(m + 40)) * 8 >= fhm_cap(m) * 7, "the table sits at its trigger (anti-vacuous)");
+    assert(fhm_count(m) * 16 >= fhm_cap(m) * 7, "the trigger would DOUBLE the table (anti-vacuous)");
+    return m;
+}
+
+# 1 when keys lo..hi-1 of `ks` read back their index.
+fn _fx_held(m, ks, lo, hi): i64 {
+    var ok = 1;
+    var i = lo;
+    while (i < hi) {
+        if (fhm_get_or(m, load64(ks + i * 8), 0 - 7) != i) { ok = 0; }
+        i = i + 1;
+    }
+    return ok;
+}
+
+# The doubling trigger (14 live in 16 slots): an overwrite needs no room, so it neither doubles
+# nor allocates — and succeeds with the allocator exhausted. CHANGELOG [6.7.9]
+fn _fx_overwrite_doubling_rows(): i64 {
+    var ks = alloc(15 * 8);
+    var i = 0;
+    while (i < 15) {
+        var k = alloc(8);
+        store8(k, 97 + i);
+        store8(k + 1, 0);
+        store64(ks + i * 8, k);
+        i = i + 1;
+    }
+    var m = _fx_map14(ks);
+    var a0 = load64(m);
+    var a1 = load64(m + 8);
+    var a2 = load64(m + 16);
+    var r0 = _fhm_rebuilds;
+    var u0 = alloc_used();
+    assert_eq(fhm_set(m, load64(ks), 999), 0, "an overwrite at the doubling trigger returns 0");
+    assert_eq(fhm_get(m, load64(ks)), 999, "the overwrite stored its value");
+    assert_eq(fhm_cap(m), 16, "an overwrite does not double the table");
+    assert_eq(alloc_used() - u0, 0, "an overwrite allocates 0 bytes");
+    assert_eq(_fhm_rebuilds - r0, 0, "an overwrite rebuilds nothing");
+    assert_eq(fhm_count(m), 14, "an overwrite keeps the count");
+    assert_eq(load64(m), a0, "metadata array kept");
+    assert_eq(load64(m + 8), a1, "keys array kept");
+    assert_eq(load64(m + 16), a2, "values array kept");
+    assert_eq(_fx_held(m, ks, 1, 14), 1, "every other key still reads back");
+    # a second map at the trigger, the allocator exhausted: the overwrite still lands; a NEW key
+    # cannot (its doubling is refused)
+    var m2 = _fx_map14(ks);
+    var b0 = load64(m2);
+    var saved = ALLOC_MAX;
+    ALLOC_MAX = 0;
+    var rover = fhm_set(m2, load64(ks + 13 * 8), 1313);
+    var rnew = fhm_set(m2, load64(ks + 14 * 8), 14);
+    ALLOC_MAX = saved;
+    assert_eq(rover, 0, "an overwrite at the trigger with the allocator exhausted returns 0");
+    assert_eq(fhm_get(m2, load64(ks + 13 * 8)), 1313, "an overwrite with the allocator exhausted stores its value");
+    assert_eq(rnew, 0 - 1, "a NEW key at the trigger with the allocator exhausted returns -1 (anti-vacuous)");
+    assert_eq(fhm_has(m2, load64(ks + 14 * 8)), 0, "the refused new key was not inserted");
+    assert_eq(fhm_cap(m2), 16, "the capacity is unchanged");
+    assert_eq(load64(m2), b0, "the table was not replaced");
+    assert_eq(fhm_count(m2), 14, "the count is unchanged");
+    assert_eq(_fx_held(m2, ks, 0, 13), 1, "every other key still reads back");
+    return 0;
+}
+
 fn main(): i64 {
     alloc_init();
     _fx_tmp = alloc(32);
@@ -364,10 +483,12 @@ fn main(): i64 {
     _hm_seed = 0x5DEECE66D;
     test_group("steady-size churn just under the 43.75% doubling line allocates nothing");
     _fx_steady_rows(56, 100000);
-    test_group("fixed layout: chains that cross groups the walk refills");
+    test_group("fixed layout: chains that cross groups the walk refills; overwrites at the trigger");
     _fx_layout_rows();
     test_group("a table with no EMPTY slot still rebuilds");
     _fx_no_empty_rows();
+    test_group("an overwrite at the doubling trigger neither rebuilds nor allocates");
+    _fx_overwrite_doubling_rows();
     var rc = assert_summary();
     return rc;
 }

@@ -129,9 +129,14 @@
 # naming it; G8 the `*Box<T>` carrier — `&b`, a `*Box<Pt>` local, parameter or call, `&` of a
 # by-value parameter, a Box<Pt> value or call and a struct global (their address passed); G9 (review)
 # a field declared `*Box<Pt>` reached through a chain — a local, a `*H` local, `self`, a global, a
-# `*H` global, two hops — and a `: T` return through it. What
-# stays refused (`Box<Pair<T>>`, an `x: T` binding i64 against a Box<Pt>) and the by-value
-# carrier's pointer (it binds nothing: the base, as before) are struct_arg_type_refused.sh R18b-R18f.
+# `*H` global, two hops — and a `: T` return through it; G10 (6.7.9, the user's decision 2(b)) a
+# POINTER into the by-value `b: Box<T>` carrier binds T from its pointee, as G8 does for `*Box<T>`:
+# 6.6.10 - 6.7.8 bound nothing and ran the i64 base on Box<i64>'s layout (`b.n` read as b.v.y, 4
+# for 8) — `&b`, a `*Box<Pt>` local, parameter, call, field chain, global and `&G`, `&b` of a
+# by-value parameter, by name, a body not inlined, a stub base (was refused), a `: T` return,
+# `Box<i32>` and `Pr<T, U>` through a pointer, and the pair scans (`?` above its wrapper through
+# `unbox(bp)` / `unbox(&b)`). What stays refused (`Box<Pair<T>>`, an `x: T` binding i64 against a
+# Box<Pt>) is struct_arg_type_refused.sh R18b-R18d; R18e-R18h pin the by-value pointer at 8.
 # MUTATIONS (scratch tree, measured), each RED here:
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
@@ -141,7 +146,11 @@
 #   MG7 no `gsz$i32` for a scalar carrier in the head     -> the file does not build (G5)
 #   MG8 (review) `_gsc_chain` gone (a field chain binds nothing) -> the file does not build (G9's `: T`
 #       return); without that row G9 reads 4 for 8
-# (MG5, a pointer binding the by-value carrier, is RED at struct_arg_type_refused.sh R18e.)
+#   MG9 (6.7.9) the fix reverted (the by-value carrier's pointer binds nothing) -> the file does not
+#       build (G10's stub base and `unbox(bp)` are refused); without those rows 15 G10 rows fail
+#       (4 for 8, 44 / 45 for 88, a stray word for `gsz(&bi)` / `g22(&q2)`)
+#   MG10 (6.7.9) the pair scans' `&` (`_tok_gen_sc_sid`) or `*G<..>` (`_tok_sc_ann`) left on the
+#       `*G<T>` carrier only                              -> rc 139 (G10's `?` above its wrapper)
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -587,6 +596,19 @@ fn gpv<T>(b: *Box<T>): T { var r: T = b.v; return r; }
 var GB9: Box<Pt> = Box<Pt> { gws, 8 };
 var GH9 = H9 { 5, &GB9 };
 var GHP9: *H9 = &GH9;
+# G10 (6.7.9): a POINTER passed to a by-value `b: Box<T>` carrier binds T from what it points at.
+fn sc_vp(bp: *Box<Pt>): i64 { return gx(bp); }
+fn sc_vpn(bp: *Box<Pt>): i64 { var r = gx(bp); return r; }
+fn sc_va(b: Box<Pt>): i64 { return gx(&b); }
+impl H9 { fn gov(self): i64 { return gx(self.bp); } }
+fn gvy<T>(b: Box<T>): i64 { var p: T = b.v; return p.y; }   # T used as a struct: the base is a stub
+var GBP10: *Box<Pt> = &GB9;
+# The `?` caller sits ABOVE its wrapper, whose `p` is typed only through `unbox`'s by-value carrier
+# given a pointer — `hbx` is a pair on Pt, one value on Qc — so the pair scans must follow it too.
+fn sc_qp(n, d) { var v = sc_unbp(n, d)?; return Ok(v + 22000); }
+fn sc_unbp(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var bp: *Box<Pt> = &b; var p = unbox(bp); return p.hbx(d); }
+fn sc_qa(n, d) { var v = sc_unba(n, d)?; return Ok(v + 33000); }
+fn sc_unba(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var p = unbox(&b); return p.hbx(d); }
 
 fn run_struct_carrier(): i64 {
     test_group("T inferred through a generic struct parameter (6.7.8)");
@@ -645,6 +667,33 @@ fn run_struct_carrier(): i64 {
     assert_eq(gpx(hh9.hp.bp), 8, "G9: ... two hops through a `*H` field (was 4)");
     var u9 = gpv(h9.bp);
     assert_eq(u9.x * 10 + u9.y, 34, "G9: a `: T` return through the field binds T = Pt (was refused)");
+    test_group("a pointer into a by-value `b: Box<T>` carrier binds T from its pointee (6.7.9)");
+    assert_eq(gx(&b), 8, "G10: `gx(&b)` calls gx$Pt (was 4: the i64 base read b.n at Box<i64>'s offset, b.v.y)");
+    assert_eq(gx(bp), 8, "G10: a `*Box<Pt>` local (was 4)");
+    assert_eq(sc_vp(&b), 8, "G10: a `*Box<Pt>` parameter, tail position (was 4)");
+    assert_eq(sc_vpn(&b), 8, "G10: a `*Box<Pt>` parameter, `var r = gx(bp);` (was 4)");
+    assert_eq(gx(sc_pid(&b)), 8, "G10: a call returning `*Box<Pt>` (was 4)");
+    assert_eq(sc_va(b), 8, "G10: `&b` of a by-value Box<Pt> parameter (was 4)");
+    assert_eq(gx(h9.bp) + gx(hp9.bp) * 10, 88, "G10: a `*Box<Pt>` field, `gx(h.bp)` / `gx(hp.bp)` (was 44)");
+    assert_eq(h9.gov(), 8, "G10: ... of `self` in a method, `gx(self.bp)` (was 4)");
+    assert_eq(gx(GH9.bp) + gx(hh9.hp.bp) * 10, 88, "G10: ... of a global, two hops through a `*H` field (was 45)");
+    assert_eq(gx(&GB9), 8, "G10: `&G` of a struct global (was 5: GB9.v.y)");
+    assert_eq(gx(GBP10), 8, "G10: a `*Box<Pt>` global (was 5)");
+    assert_eq(gx(b: bp), 8, "G10: by name (was 4)");
+    assert_eq(gxl(bp), 16, "G10: a body that is not inlined (was 8)");
+    assert_eq(gvy(bp) * 10 + gvy(&b), 44, "G10: a struct-using generic (its base a stub) through a pointer (was refused)");
+    var u10 = unbox(bp);
+    assert_eq(u10.x * 10 + u10.y, 34, "G10: `var u = unbox(bp);` receives the Pt (a `: T` return; was refused)");
+    assert_eq(unbox(&b).y, 4, "G10: `unbox(&b).y`");
+    assert_eq(gsz(&bi), 408, "G10: `gsz(&bi)`, bi: Box<i32>, instantiates gsz$i32 (was a stray word: the Box base read past the 12 B)");
+    assert_eq(g22(&q2), 5608, "G10: `Pr<T, U>` binds both through one pointer (was a stray word)");
+    var s1, w1 = sc_qp(6, 2);
+    var s2, w2 = sc_qp(6, 0);
+    assert_eq(s1 * 100000 + w1 + s2 * 1000000 + w2 * 10, 1000990 + 22003,
+        "G10: `w(..)?` above its wrapper `var p = unbox(bp); return p.hbx(d);` (the pair scans type p)");
+    var s3, w3 = sc_qa(6, 3);
+    assert_eq(s3 * 100000 + w3, 33002, "G10: ... and `var p = unbox(&b);`");
+    assert_eq(gx<Pt>(&b) + gx<Pt>(bp) * 10, 88, "control: the explicit `gx<Pt>(&b)` / `gx<Pt>(bp)`");
     return 0;
 }
 

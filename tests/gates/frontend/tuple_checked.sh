@@ -53,8 +53,10 @@
 #         R20 `(a, b) = f();` / `var (q, r) = f();` unchanged
 #      AS2 a capture, a re-capture and `a, q = f()` in a SUSPENDING `async fn` across awaits (CG1: the stores are
 #         addressed — the coroutine's heap frame orders an aggregate from its low slot)
+#      AS3 (6.7.9) a tuple captured by a closure in a SUSPENDING `async fn`, before and after the await (the capture
+#         copy is addressed too; it walked the slots and reversed the words)
 #   T6 — generics, const fns, closures (the positive closure and defer shapes are tuple_values.tcyr's `closures` /
-#      `defers`; a tuple across an `await` is AS1 / AS2, `return t;` in an `async fn` R14m / R14p, a tuple
+#      `defers`; a tuple across an `await` is AS1 - AS3, `return t;` in an `async fn` R14m / R14p, a tuple
 #      parameter R6a):
 #      R4e-R4q a tuple binding a type parameter by INFERENCE (`first(t)` minted `first$(i64, i64)`): a local, a
 #         parameter, a global, either type parameter, a struct-reading or value-using generic body, a capture / a
@@ -832,6 +834,13 @@ refused cl2 "undefined variable 't'" "CL2: \`t = m2(5);\` to a captured tuple" '
 CC_SV=$CC; CC="$T/acc5"
 exits as2 0 "AS2: \`var t: (i64, i64, i64) = m3(..);\`, \`t = m3(..);\` and \`a, q = m2(a);\` across awaits" 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nstruct P2 { x; y; }\nfn nopark(): i64 { return 0; }\nfn m3(x, y, z): (i64, i64, i64) { return (x, y, z); }\nfn m2(x): (i64, i64) { return (x, 1); }\nasync fn steps(C): i64 {\n    var a = 3;\n    var t: (i64, i64, i64) = m3(5, 6, 7);\n    var p = P2 { 1, 2 };\n    var b = 4;\n    var s1 = await nopark();\n    t = m3(t.2, t.0, b);\n    var q = 0;\n    var s2 = await nopark();\n    a, q = m2(a);\n    return t.0 * 1000 + t.1 * 100 + t.2 * 10 + a + p.y * 10000 + q * 100000;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(0);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    if (r3 != 127543) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
 CC=$CC_SV
+# AS3 (6.7.9) — a tuple CAPTURED by a closure in a suspending `async fn`, the closure made before the await
+# and after it: the capture copied the block by slot index while the coroutine frame orders it from its low
+# slot, so every word landed reversed (`(1, 2)` read as `(2, 1)`: 34512 here, silently). Before the fix no row
+# could pin this; coroutine_midbody_suspend.sh axis 11 is the full matrix (structs, u128, arrays, slices).
+CC_SV=$CC; CC="$T/acc5"
+exits as3 0 "AS3: a tuple captured by a closure in a suspending async fn, before and after the await" 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/async.cyr"\nfn nopark(): i64 { return 0; }\nasync fn steps(C): i64 {\n    var t = (1, 2);\n    var u: (i64, i64, i64) = (3, 4, 5);\n    var c = || u.2 * 100 + u.1 * 10 + u.0;\n    var s1 = await nopark();\n    var d = || t.1 * 10 + t.0;\n    return fncall0(c) * 100 + fncall0(d);\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(0);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    if (r2 != 54321) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
+CC=$CC_SV
 
 # ── X: --syntax-only (cyrius lint's pre-pass) ──────────────────────────────────────────────────────
 # A fn with a tuple parameter, its call, and calls to a sibling file's fns (unknown here) with a tuple
@@ -999,4 +1008,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

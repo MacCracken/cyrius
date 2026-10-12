@@ -816,16 +816,46 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # free call's 8-byte result and a method's 16 / 24-byte one were typed). The whole initialiser must
 # be the call (`... );`), as `_var_rhs_call` requires of a free call. Larger results keep their
 # temp-receive path (`_sc_var_receive`). 0 = not such a call.
+# 6.7.9: and a `: f64` method's result (-9) types it f64, as `var x = f();` is (v6.5.21): `var a =
+# p.area();` was an untyped word, so `a + 1.0` added integers — a generic method's at the instance
+# its arguments reach (`_mcall_gen`: `var w = p.id(h);`). CHANGELOG [6.7.9]
 fn _var_rhs_msid(S, ti): i64 {
     if (_tok_method_open(S, ti) == 0) { return 0; }
     if (TOKTYP(S, _call_close(S, ti + 3) + 1) != 5) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
+    mf = _mcall_gen(S, mf, ti + 3);
     var rs = GFRS(S, mf);
+    if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
     if (rs > 2047) { return 0; }
     if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
     return rs;
+}
+# 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
+# `p.me().area()`, `mk(1).area()`, `w.v.id(h)` at V = f64 — whose receiver no peek above resolves.
+# It is judged once parsed, from the type the method arm gave the result (`_mcall_ret`): the whole
+# initialiser `ti`..`end` must be one chain `name[<..>](..)?(.name((..))?)*` that ENDS in `.m(..)`,
+# with `;` at `end` — `a + p.area()` and a field read (`_decl_float_copy`'s) are not. -9 (an f64
+# binding) or 0. CHANGELOG [6.7.9]
+fn _var_rhs_mchain(S, ti, end): i64 {
+    if (GESTYPE(S) != F64_TYID) { return 0; }
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var k = ti + 1;
+    var o = _gcall_open(S, ti);
+    if (o >= 0) { k = _call_close(S, o) + 1; }
+    elif (TOKTYP(S, ti) != 2) { return 0; }
+    var m = 0;
+    while (k < end) {
+        if (TOKTYP(S, k) != 41) { return 0; }
+        if (TOKTYP(S, k + 1) != 2) { return 0; }
+        m = 0;
+        k = k + 2;
+        if (TOKTYP(S, k) == 10) { m = 1; k = _call_close(S, k) + 1; }
+    }
+    if (k != end) { return 0; }
+    if (m == 0) { return 0; }
+    return 0 - 9;
 }
 
 # ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
@@ -1764,6 +1794,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
             mfi = REGFN(S, mname);
         }
+        mfi = _mcall_gen(S, mfi, GTI(S));    # 6.7.9: an f64 type parameter's instance
         mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
         # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
@@ -1814,7 +1845,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
-        _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
+        _mcall_ret(S, mfi);                       # 6.7.9: typed as a free call's result (6.6.17: + a `*T` step)
         _mcall_last = mfi;                             # 6.6.17: for a statement's #must_use
         _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
         return 0;
@@ -1895,6 +1926,7 @@ fn _field_load_type(S, si, fi): i64 {
     if (k == 2) { SESTYPE(S, F32_TYID); }
     var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
     if (ps > 0) { SPSC(S, ps); }
+    else { SPSC(S, 0); }   # 6.7.9: no other field has a step (`mk(q).n` kept q's; _pexpr_bit_ps)
     if (GFBOOL(S, si, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool field's load is a boolean value
     return 0;
 }
@@ -4303,31 +4335,19 @@ fn _w16_global_init(S, vi, st, ann): i64 {
     return 0;
 }
 
-# cx does not bake a scalar constant into its var data (it opts out of the static-init path,
-# below), so a CONSTANT global is stored FIRST, ahead of every deferred initializer — the same
-# "from program start" the image gives every other target. (⚠ This line read "cx has no file
-# image"; a .cyx does carry its var data — written as zeros, copied into the guest by cxvm —
-# and 6.6.16's array lists are baked into it, main_cx.cyr.)
+# cx bakes no scalar into its .cyx var data (cxvm copies it into the guest; only 6.6.16's array
+# lists are written there, main_cx.cyr), so the static-init value every constant global records in
+# gvar_initval (_vgsi_base) is stored HERE, at startup, ahead of every deferred initializer — the
+# "from program start" the file image gives the other five targets. That covers a plain constant
+# global (PARSE_GVAR_REG's static-init path, which cx takes like every target since 6.7.9), a
+# constant redeclaration or shadow, and the enum-named scalars _gvk_pre folds (those keep their
+# replayed store on every target). A forward read agrees with the image targets
 #
-# 6.6.6 bite 19d — EVERY constant global, not only a redeclared one. ⚠ The line that stood
-# here read "Only a redeclaration records a value on cx (see PARSE_GVAR_REG)", which was both
-# the behaviour and the defect: a plain `var a = 5;` recorded nothing, so a forward read of it
-# got 0 on cx and 5 everywhere else.
-#
-# cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its scalar
-# globals are zero in the .cyx var data, so the runtime store in EMIT_GVAR_INITS is what gives
-# them their value. But that replay runs in DECLARATION ORDER, so a forward read saw 0:
-#
-#     var b = a;      # 5 on x86 / aarch64 / Mach-O / PE, 0 on cx
+#     var b = a;      # 5 on every target
 #     var a = 5;
-#     syscall(60, b);
 #
-# On every other target `a` is baked into the file image, so `b`'s initializer reads 5 no
-# matter where `a` is declared. The prestore below existed for the redeclaration and shadow
-# cases only, because those are the ones that RECORDED a value in gvar_initval. Recording the
-# folded constant for cx too — without setting `sit_lit`, so cx keeps its runtime store —
-# makes this loop cover every constant global and puts cx back in agreement with the other
-# five targets. CHANGELOG [6.6.6]
+# and a static-init value is never computed again at run time (`var Q = INT_MIN / -1;` trapped
+# in cxvm's `idiv` while cx alone replayed it). CHANGELOG [6.6.6] [6.7.9]
 #
 # 6.6.16 (C1): a slot a leading-block array list writes is left to the .cyx var data, where the
 # list is baked (main_cx.cyr) — its blob was seeded with this constant (_gai_cx_blobs).
@@ -4791,11 +4811,10 @@ fn PARSE_GVAR_REG(S): i64 {
         # path. Conservative on purpose — no false positives means no
         # silent value drift versus today's behavior.
         #
-        # cx-mode opt-out: the cx bytecode backend has no file-image
-        # var area; its gvars live in cxvm-allocated memory zeroed at
-        # cxvm startup. Skipping the runtime store would leave them
-        # zero. Keep the runtime-store path for cx; static-init is
-        # an x86 / aarch64 / MachO / PE optimization.
+        # cx takes this path too (6.7.9): its scalar globals are zero in the .cyx var data, and
+        # _gv_cx_prestore stores every recorded value at startup, before the replay. cx used to
+        # opt out and ALSO replay the initializer, so a folded value was computed again at run
+        # time there alone: `var Q = INT_MIN / -1;` trapped in cxvm's `idiv`. CHANGELOG [6.7.9]
         # v6.2.11: capture a `= NUM ;` literal for the collision guardrail,
         # INDEPENDENT of the static-init opt below (which skipped shadowing
         # redefinitions until 6.6.6 — and a collision warning must fire EXACTLY on
@@ -4816,7 +4835,7 @@ fn PARSE_GVAR_REG(S): i64 {
         if (_cf_ok == 1) {
             cf_has = 1;
             cf_val = fv;
-            if (_TARGET_CX != 1 && fv != 0) {
+            if (fv != 0) {
                 sit_lit = 1;
                 sit_val = fv;
             }
@@ -4925,12 +4944,8 @@ fn PARSE_GVAR_REG(S): i64 {
     # static-init vars would silently fall out of the last-var chain
     # and the binary would exit with whatever rax held — exit-code
     # corruption the runtime-store path can't reproduce.
-    # 6.6.6: on cx a constant global is ALSO recorded here, so _gv_cx_prestore gives it its
-    # value before the deferred-init replay and a forward read stops seeing 0. `sit_lit` stays
-    # 0, so cx keeps the runtime store as well — it writes the same value. See _gv_cx_prestore.
-    if (_TARGET_CX == 1) { if (cf_has == 1) { if (is_struct == 0) { if (sit_lit == 0) {
-                    S64(_vgsi_base + gvi * 8, cf_val);
-                } } } }
+    # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
+    # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
@@ -5262,7 +5277,7 @@ fn _gvi_expr(S, gps): i64 {
     var w = _scv_arm(S, gps);
     PCMPE(S);
     _scv_disarm(S, w);
-    _sc_global_mismatch(S, gps, st);
+    _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
     return 0;
 }
 
@@ -6841,6 +6856,9 @@ fn PARSE_VAR(S): i64 {
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
     _decl_float_init(S, lfloat, scv_start);
+    if (_ti_inferred_sid == 0) { if (pscale == 0) { if (scalar_type + lbool == 0) {   # 6.7.9: `var a = w.v.area();`
+                _ti_inferred_sid = _var_rhs_mchain(S, scv_start, GTI(S));
+            } } }
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);

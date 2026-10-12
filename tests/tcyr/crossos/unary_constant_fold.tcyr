@@ -1,0 +1,194 @@
+# unary_constant_fold.tcyr — 6.7.9: unary `-` / `~` on a constant operand, then a literal operator.
+#
+# The expression parser folds `K op L` at compile time when its left operand was a constant factor (an
+# integer literal, an enum constant or a `const`, 0 - 0xFFFF) and L is an integer literal: the factor
+# arms the fold (`_cfo`, its value `_cfv`, its code position `_cfp`) and the next `+ - * / << >> & | ^`
+# rewinds the code to `_cfp` and emits the folded constant. Unary `-` (on anything but a literal) and
+# unary `~` parsed their operand as a factor — which armed the fold with the OPERAND's value — and
+# emitted the negation / complement after it without disarming, so the next operator folded the
+# operand and dropped the unary op: `-K + 10` was 15, `~5 * 2` 10. The rewind also dropped the `0`
+# that unary minus pushes, so the stack was left one word deep: `1 + -K * 2` popped that 0 as its
+# left operand (10), and a loop over such an expression grew the stack every iteration. 6.6.10 - 6.7.8,
+# every target (the fold is in the shared frontend). `_neg_int` / `_bnot_int` (parse_expr.cyr) now
+# disarm it. Filed: docs/development/issues/2026-10-10-unary-minus-and-not-folded-over-by-literal-operator.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/unary_constant_fold.sh, on the
+# four hardware hosts by the release gate's cross-OS leg. Every expected value is the arithmetic the
+# guide states (unary operators bind tighter than every binary one), written without a unary operator.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+enum UfE { UK = 5; UZ = 0; UW = 0xFFFF; }
+const UC = 5;
+const UC2 = UC * 2;
+
+var uf_one = 1;
+# Declaration-zone globals (before the first statement) and a global after it.
+var uf_g1 = -UK + 10;
+var uf_g2 = ~5 * 2;
+var uf_g3 = -UC + 10;
+var uf_g4 = uf_one + -UK * 2;
+alloc_init();
+var uf_g5 = -UfE.UK << 1;
+var uf_g6 = ~UK & 3;
+
+fn uf_ret_neg(): i64 { return -UK + 10; }
+fn uf_ret_not(): i64 { return ~UC * 2; }
+fn uf_id(v): i64 { return v; }
+
+# A loop whose body folded over `-UK`: wrong by 15 a turn, and one word of stack leaked a turn.
+fn uf_loop(n): i64 {
+    var s = 0;
+    var i = 0;
+    while (i < n) {
+        s = s + (-UK * 2);
+        i = i + 1;
+    }
+    return s;
+}
+
+# The filed repro's ten shapes.
+fn uf_repro(): i64 {
+    test_group("the filed repro");
+    assert_eq(-UK + 10, 5, "-K + 10");
+    assert_eq(-UfE.UK + 10, 5, "-E.K + 10");
+    assert_eq(-UK * 2, 0 - 10, "-K * 2");
+    assert_eq(~5 + 10, 4, "~5 + 10");
+    assert_eq(~5 * 2, 0 - 12, "~5 * 2");
+    assert_eq(~0 + 3, 2, "~0 + 3");
+    assert_eq(~UK + 1, 0 - 5, "~K + 1");
+    assert_eq(-5 + 10, 5, "-5 + 10 (a literal operand: always right)");
+    assert_eq((~5) + 10, 4, "(~5) + 10 (parenthesised: always right)");
+    assert_eq((-UK) + 10, 5, "(-K) + 10 (parenthesised: always right)");
+    return 0;
+}
+
+# Unary minus on each kind of constant operand, then each folding operator (and two that never fold).
+fn uf_neg(): i64 {
+    var k = 5;
+    test_group("unary - on a constant, then a literal operator");
+    assert_eq(-UC + 10, 5, "-C + 10 (a const)");
+    assert_eq(-UC2 + 10, 0, "-C2 + 10 (a const from an expression)");
+    assert_eq(-UfE.UK * 3, 0 - 15, "-E.K * 3");
+    assert_eq(-UK - 1, 0 - 6, "-K - 1");
+    assert_eq(-UK << 1, 0 - 10, "-K << 1");
+    assert_eq(-UK >> 1, (0 - k) >> 1, "-K >> 1 (logical)");
+    assert_eq(-UK / 2, 0 - 2, "-K / 2");
+    assert_eq(-UK % 3, 0 - 2, "-K % 3");
+    assert_eq(-UK & 3, 3, "-K & 3");
+    assert_eq(-UK | 8, 0 - 5, "-K | 8");
+    assert_eq(-UK ^ 1, 0 - 6, "-K ^ 1");
+    assert_eq(-UK == 0 - 5, 1, "-K == -5");
+    assert_eq(-UK + 10 + 1, 6, "-K + 10 + 1");
+    assert_eq(-UK * 2 + 1, 0 - 9, "-K * 2 + 1");
+    assert_eq(-UW + 1, 0 - 65534, "-W + 1 (the largest foldable constant)");
+    assert_eq(-UZ + 3, 3, "-Z + 3 (zero)");
+    assert_eq(-UK * 0, 0, "-K * 0");
+    assert_eq(-UK * 1, 0 - 5, "-K * 1");
+    assert_eq(-UK + 0, 0 - 5, "-K + 0");
+    return 0;
+}
+
+# Unary `~` on a literal, a const and an enum constant, then each folding operator.
+fn uf_not(): i64 {
+    test_group("unary ~ on a constant, then a literal operator");
+    assert_eq(~5 - 1, 0 - 7, "~5 - 1");
+    assert_eq(~5 << 2, 0 - 24, "~5 << 2");
+    assert_eq(~5 / 2, 0 - 3, "~5 / 2");
+    assert_eq(~UK & 3, 2, "~K & 3");
+    assert_eq(~UK | 1, 0 - 5, "~K | 1");
+    assert_eq(~UK ^ 3, 0 - 7, "~K ^ 3");
+    assert_eq(~UC * 2, 0 - 12, "~C * 2 (a const)");
+    assert_eq(~UfE.UK + 1, 0 - 5, "~E.K + 1");
+    assert_eq(~UZ + 3, 2, "~Z + 3 (zero)");
+    assert_eq(~0xFFFF + 1, 0 - 65535, "~0xFFFF + 1");
+    return 0;
+}
+
+# Unary operators stacked, and an operand in parentheses.
+fn uf_nested(): i64 {
+    test_group("stacked unary operators");
+    assert_eq(-(UK) * 2, 0 - 10, "-(K) * 2");
+    assert_eq(- -UK + 1, 6, "- -K + 1");
+    assert_eq(~~5 + 1, 6, "~~5 + 1");
+    assert_eq(-~5 + 1, 7, "-~5 + 1");
+    assert_eq(~-UK + 1, 5, "~-K + 1");
+    assert_eq(-~UK * 2, 12, "-~K * 2");
+    assert_eq(~(UK) + 1, 0 - 5, "~(K) + 1");
+    return 0;
+}
+
+# The rewind dropped unary minus's pushed 0, leaving the stack a word deep: an enclosing operator
+# popped that 0 instead of its own left operand.
+fn uf_stack(): i64 {
+    test_group("the stack around the folded operand");
+    assert_eq(1 + -UK * 2, 0 - 9, "1 + -K * 2");
+    assert_eq(uf_one + -UK * 2, 0 - 9, "one + -K * 2");
+    assert_eq(uf_one + (- -UK + 1), 7, "one + (- -K + 1)");
+    assert_eq(uf_one + (-UZ + 3), 4, "one + (-Z + 3)");
+    assert_eq(uf_one * 100 + (-UK * 2), 90, "one * 100 + (-K * 2)");
+    assert_eq(uf_id(-UK + 10) + uf_id(~5 * 2), 0 - 7, "f(-K + 10) + f(~5 * 2)");
+    assert_eq(uf_loop(100000), 0 - 1000000, "100000 turns of s + (-K * 2)");
+    return 0;
+}
+
+# Where the expression sits: a local, the declaration-zone and later globals, a return, a condition,
+# an argument, an index.
+fn uf_contexts(): i64 {
+    var a = -UK + 10;
+    var arr: i64[4];
+    arr[0] = 10; arr[1] = 11; arr[2] = 12; arr[3] = 13;
+    var b = 0;
+    if (-UK + 10 == 5) { b = 1; }
+    var w = 0;
+    var n = 0;
+    while (n < ~5 + 10) { n = n + 1; w = w + 1; }
+    test_group("contexts");
+    assert_eq(a, 5, "a local initialiser");
+    assert_eq(uf_g1, 5, "a global: -K + 10");
+    assert_eq(uf_g2, 0 - 12, "a global: ~5 * 2");
+    assert_eq(uf_g3, 5, "a global: -C + 10");
+    assert_eq(uf_g4, 0 - 9, "a global: one + -K * 2");
+    assert_eq(uf_g5, 0 - 10, "a global after the first statement: -E.K << 1");
+    assert_eq(uf_g6, 2, "a global after the first statement: ~K & 3");
+    assert_eq(uf_ret_neg(), 5, "return -K + 10");
+    assert_eq(uf_ret_not(), 0 - 12, "return ~C * 2");
+    assert_eq(b, 1, "if (-K + 10 == 5)");
+    assert_eq(w, 4, "while (n < ~5 + 10)");
+    assert_eq(uf_id(-UK * 2), 0 - 10, "an argument");
+    assert_eq(arr[-UK + 6], 11, "an index: arr[-K + 6]");
+    assert_eq(arr[~UK + 9], 13, "an index: arr[~K + 9]");
+    return 0;
+}
+
+# Unchanged: a literal operand of `-`, the fold itself, and a variable operand.
+fn uf_controls(): i64 {
+    var x = 5;
+    test_group("controls");
+    assert_eq(-5 * 2, 0 - 10, "-5 * 2");
+    assert_eq(-5 - 1, 0 - 6, "-5 - 1");
+    assert_eq(UK + 10, 15, "K + 10 (still folded)");
+    assert_eq(UK * 2 + 1, 11, "K * 2 + 1 (still folded)");
+    assert_eq(UC << 2, 20, "C << 2 (still folded)");
+    assert_eq(-x + 10, 5, "-x + 10 (a variable)");
+    assert_eq(~x * 2, 0 - 12, "~x * 2 (a variable)");
+    return 0;
+}
+
+var r1 = uf_repro();
+var r2 = uf_neg();
+var r3 = uf_not();
+var r4 = uf_nested();
+var r5 = uf_stack();
+var r6 = uf_contexts();
+var r7 = uf_controls();
+# At top level (no frame): the same shapes.
+test_group("top level");
+var uf_t1 = -UK + 10;
+assert_eq(uf_t1, 5, "top level: -K + 10");
+assert_eq(uf_one + -UK * 2, 0 - 9, "top level: one + -K * 2");
+assert_eq(~5 * 2, 0 - 12, "top level: ~5 * 2");
+var r = assert_summary();
+syscall(60, r);

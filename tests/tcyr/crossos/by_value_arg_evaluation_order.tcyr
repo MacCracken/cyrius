@@ -11,7 +11,8 @@
 # after the call, a struct-valued receive, a method's argument and its by-value `self`, named
 # arguments (in order and reordered), a tail call (the ordinary path and the tail arm), an
 # operator's left operand (an i64 and a struct result), a later argument that writes through an
-# operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1).
+# operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1);
+# 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask.
 # On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
 # the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
 # argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
@@ -147,7 +148,150 @@ fn vec_wide(): i64 {
     if (rv4(0, v, bump(&v)) != v0) { return 1; }
     return 0;
 }
+# ── past parameter 61 (6.7.9) ───────────────────────────────────────────────────────────────────
+# The copies record was a 62-bit mask (`_pm_copies` answered 0 past ordinal 61), so a by-value
+# struct at parameter 62 or later was never copied where it stands: r62(.., b, bump(&b)) read 11
+# where 1 is right, on every backend (a Win64 vector the same), and its address escaped, so a self
+# tail call beside it lost its `jmp` (SIGSEGV 1,000,000 deep). Ordinal 61 is the control, and so
+# are an 8 B struct (by value) and a `*Big` (a pointer) at 62. A call parsed before the definition
+# reads pass 1's record (rfwd62, rt62, rs62, rp62 are defined below their callers), the rest the
+# definition's, a generic instance's only that. Issue 2026-10-09-by-value-copy-mask-62-parameter-limit.
+fn r61(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, s: Big, z, y): i64 { return s.a; }
+fn r62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: Big, z): i64 { return s.a; }
+fn r66(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63,
+    a64, a65, s: Big, z, y, x): i64 { return s.a; }
+fn rg62<T>(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: T, z): i64 { return s.a; }
+fn Big_arg62(self, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16,
+    a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32,
+    a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47, a48,
+    a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: Big, z): i64 { return s.a; }
+fn rv62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, v: f64v2, z): i64 { return load64(&v); }
+fn hi61(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    return r61(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b), 0);
+}
+fn hi62(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var r = r62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b));
+    return r;
+}
+fn hi66(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var r = r66(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, b, bump(&b), 0, 0);
+    return r;
+}
+fn hi_tail(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    return r62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b));
+}
+fn hi_fwd(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    return rfwd62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b));
+}
+fn hi_tuple(): i64 {
+    var t: (i64, i64, i64) = (1, 2, 3);
+    return rt62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, t, bump(&t));
+}
+fn hi_generic(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    return rg62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b));
+}
+fn hi_method(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var o: Big = Big { 0, 0, 0 };
+    return o.arg62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, bump(&b));
+}
+fn hi_vec(): i64 {
+    var v: f64v2 = f64v2(f64_from(1), f64_from(2));
+    var v0 = load64(&v);
+    if (rv62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, v, bump(&v)) != v0) { return 1; }
+    return 0;
+}
+fn hi_small(): i64 {
+    var s: Sm = Sm { 1 };
+    return rs62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, s, bump(&s));
+}
+fn hi_ptr(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    return rp62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, &b, bump(&b));
+}
+# the address of `b` passed at ordinal 62 is held by nothing once r62 returns: the self tail call
+# keeps its `jmp`
+fn hi_walk(n, acc): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var x = r62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b, n);
+    if (n == 0) { return acc + x; }
+    return hi_walk(n - 1, acc + 1);
+}
 fn fwd(s: Big, z): i64 { return s.a; }
+fn rfwd62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: Big, z): i64 { return s.a; }
+fn rt62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, t: (i64, i64, i64), z): i64 { return t.0; }
+fn rs62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: Sm, z): i64 { return s.a; }
+fn rp62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+    a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+    a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+    a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, s: *Big, z): i64 { return s.a; }
 
 alloc_init();
 assert_eq(issue(), 0, "the issue's repro: rd(b, bump(&b)) / rm(m, ..) read 1 (24 B, 16 B; the 8 B control)");
@@ -179,6 +323,18 @@ assert_eq(form_op_struct(), 111, "... with a struct result: b - pbump(&b)");
 assert_eq(vec_first(), 0, "an f64v2 argument: rv(v, bump(&v)) reads the low lane as written");
 assert_eq(vec_mid(), 0, "an f64v2 between two arguments: rv2(0, v, bump(&v))");
 assert_eq(vec_wide(), 0, "an f64v4 argument: rv4(0, v, bump(&v))");
+assert_eq(hi61(), 1, "control: a by-value struct at parameter 61");
+assert_eq(hi62(), 1, "past the mask: a by-value struct at parameter 62, r62(.., b, bump(&b))");
+assert_eq(hi66(), 1, "... at parameter 66 of 70");
+assert_eq(hi_tail(), 1, "... a tail call: return r62(.., b, bump(&b))");
+assert_eq(hi_fwd(), 1, "... a fn defined after the call (pass 1's record)");
+assert_eq(hi_tuple(), 1, "... a by-value tuple, defined after the call");
+assert_eq(hi_generic(), 1, "... a generic instance (the definition's record only)");
+assert_eq(hi_method(), 1, "... a method's argument: o.arg62(.., b, bump(&b))");
+assert_eq(hi_vec(), 0, "... an f64v2 at parameter 62 (Win64: by address, copied in)");
+assert_eq(hi_small(), 1, "... control: an 8 B struct at parameter 62 travels by value, never copied in");
+assert_eq(hi_ptr(), 11, "... control: a `*Big` at parameter 62 is a pointer, never copied: it sees the write");
+assert_eq(hi_walk(1000000, 0), 1000001, "... beside a self tail call 1,000,000 deep (the address does not escape)");
 # top level: no frame — the copy is a hidden global
 G.a = 1;
 assert_eq(rd(G, bump(&G)), 1, "top level: rd(G, bump(&G))");
@@ -188,4 +344,9 @@ G.a = 1;
 assert_eq(G.get(bump(&G)), 1, "top level: a by-value self, G.get(bump(&G))");
 G.a = 1;
 assert_eq(G + pbump(&G), 111, "top level: an operator's left operand, G + pbump(&G)");
+G.a = 1;
+assert_eq(r62(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, G, bump(&G)), 1, "top level: a global at parameter 62, r62(.., G, bump(&G))");
 var r = assert_summary();

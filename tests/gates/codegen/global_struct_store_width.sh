@@ -16,6 +16,10 @@
 # ach / cass / pi; this gate runs it on the legs this box has, compilers built from this tree:
 #   R  the filed repro, verbatim, exits 77 (0 before the fix: the i8 after G was overwritten) on
 #      x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
+#   R0 6.7.9 — the ZERO-size filing's repro, verbatim (`struct E { }`; G owns no bytes, so N1 starts
+#      AT G): exits 77 on the same legs. EVSTORE_W's width 0 took the 8-byte fallback; the store
+#      helper `_asg_store_slot` (parse.cyr) now stores nothing at width 0. Filed:
+#      docs/development/issues/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md
 #   T  the values file on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 #      cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived from the file (one row per
 #      `gs_row(` call or top-level `assert_eq(`; on cx without the `#ifndef CYRIUS_TARGET_CX` blocks)
@@ -33,6 +37,9 @@
 #   M7 cx later pieces stored at r1 + 0        -> RED T cx (G's tail bytes wrong); R green, as M6
 #   GREEN, recorded (see the tcyr header): M5 x86 without the closing `rol`, M8 `_gv_store` back to
 #   exact 1 / 2 / 4.
+# 6.7.9 (2026-10-11, width 0; the tcyr's B0 rows):
+#   the 6.7.9-open compiler (cda7fad9)         -> RED R0 (exit 0) and T (the 12 B0 store rows) on every leg
+#   M9 `_asg_store_slot` storing at width 0    -> the same (the fix reverted)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -63,11 +70,13 @@ TC=tests/tcyr/crossos/global_struct_store_width.tcyr
 REPRO=docs/development/issues/repros/2026-10-09-global-odd-size-struct-store-overwrites-next-global.cyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 [ -f "$REPRO" ] || { echo "FAIL: $G: $REPRO is missing"; exit 1; }
+REPRO0=docs/development/issues/repros/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.cyr
+[ -f "$REPRO0" ] || { echo "FAIL: $G: $REPRO0 is missing"; exit 1; }
 # One row per `gs_row(` call (not its definition) or top-level `assert_eq(`; NCX leaves out the
 # rows inside `#ifndef CYRIUS_TARGET_CX` blocks. The floor keeps a gutted file from passing.
 N=$(awk '/^fn gs_row/{next} /gs_row\(|^assert_eq\(/{n++} END{print n+0}' "$TC")
 NCX=$(awk '/^[[:space:]]*#ifndef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} /^fn gs_row/{next} !s && /gs_row\(|^assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=300
+FLOOR=321
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -118,6 +127,14 @@ for leg in x86 $OTHER; do
     else bad "R $leg: exit $RC, want 77"; fi
 done
 
+echo "R0. the zero-size filing's repro, verbatim (exit 77; 0 = the i8 at G overwritten)"
+for leg in x86 $OTHER; do
+    run_leg "$leg" "$REPRO0" "$D/r0_$leg"
+    if [ "$RC" -eq -1 ]; then bad "R0 $leg: did not build: $(grep '^error' "$D/r0_$leg.err" | head -1)"
+    elif [ "$RC" -eq 77 ]; then ok "R0 $leg: exit 77"
+    else bad "R0 $leg: exit $RC, want 77"; fi
+done
+
 echo "T. $TC ($N rows; $NCX on cx)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -130,4 +147,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a whole-struct store into a global writes exactly its bytes: the filed repro (R) and every size 1..16 x every store form (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a whole-struct store into a global writes exactly its bytes: the filed repros (R; R0, zero-size) and every size 0..16 x every store form (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

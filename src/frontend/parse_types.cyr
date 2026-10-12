@@ -1798,7 +1798,7 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     var st = GTI(S);
     var en = _dyn_ext(S, st, 5);
     var c = _dyn_src(S, st, en, dsid, 0);
-    if (c == 0) { return _gvi_dyn_mcall(S, st, en, dsid); }
+    if (c == 0) { return 0; }   # a whole method's 16 B result: `_gvi_expr` refuses it (`_sc_global_pair`)
     if (c == 1) {
         if (idx >= 0) { if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == dsid) {
                     _dyn_emit(S, dsid, idx);
@@ -1807,19 +1807,6 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     }
     STI(S, en);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
-    return 1;
-}
-# 6.7.8 (D6): a zone dyn copied from one whole METHOD call (`var Z2: dyn Show = Z.me();`, through a
-# dyn or not): the 16-byte result comes back in rax:rdx and the replay has no frame to receive it —
-# it stored rax alone (the data word, as the address of an inline dyn: a SIGSEGV at the first call).
-# Refused by name, as the free call is (`_refuse_toplevel_pair_init`). 1 = refused, `;` consumed.
-fn _gvi_dyn_mcall(S, st, en, dsid): i64 {
-    if (_dyn_src_mcall(S, st, dsid) == 0) { return 0; }
-    STI(S, st + 2);
-    _refuse_toplevel_struct_call(S, L64(_fnt_names + _pair_callee_at(S, st) * 8));
-    STI(S, en);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -2525,12 +2512,11 @@ fn _slice_led(S, li): i64 {
 # is a shape key, so its kind sits beside it in `_gv_ped`). Every setter of GPSC writes the word
 # and pointer arithmetic writes the operand's word back, so `p + n`, `p - n` and a parenthesised
 # pointer keep the kind exactly where they keep the step. The closed list of readers that use the
-# value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_int_plus_ptr`, `_ptr_diff` (parse_
-# expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
+# value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_add_word`, `_int_plus_ptr`, `_ptr_diff`
+# (parse_expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
 # which the word preserves (ed is nonzero only when the step is). Nothing reads the kind yet: the
-# emitted bytes are unchanged. ⚠ `n + p` with a step-1 pointer drops its step, as it always has
-# (6.6.17: a step of 1 writes no word back); its kind reaches a dereference on the separate
-# dereference-only stamp (`_PKD_MARK`, parse_expr.cyr), never this word. CHANGELOG [6.7.8]
+# emitted bytes are unchanged. CHANGELOG [6.7.8] (6.7.9: `n + p` with a one-byte `*T` keeps p's
+# word as `p + n` does — `_add_word`, parse_expr.cyr.)
 fn _ps_word(ps, ed): i64 {
     if (ps <= 0) { return ps; }
     return ps | (ed << 40);
@@ -2812,11 +2798,16 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
 # 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last
 # argument left (`_call_scale_fix`).
 fn _call_ret_ps(S, fi): i64 {
-    var ps = 0;
-    if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
-    SPSC(S, ps);
+    SPSC(S, _fn_ret_ps(fi));
     if (_bx_fn_is_bool(S, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool fn's call is a boolean value
     return 0;
+}
+# Fn `fi`'s declared `: *T` step word (`_fn_rps`), 0 for any other return or an unresolved fn (-1):
+# a call's step, and (6.7.9) an operator fn's (EMIT_OP_DISPATCH).
+fn _fn_ret_ps(fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rps == 0) { return 0; }
+    return L64(_fn_rps + fi * 8);
 }
 
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its

@@ -1,11 +1,14 @@
-# cx: a constant-folded global initializer is re-evaluated at run time, so `var Q = INT_MIN / -1;` kills cxvm with SIGFPE — OPEN
+# cx: a constant-folded global initializer is re-evaluated at run time, so `var Q = INT_MIN / -1;` kills cxvm with SIGFPE — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09. `tests/tcyr/crossos/const_fold_int_min_div.tcyr`, compiled by a
-`src/main_cx.cyr` compiler and run under a `programs/cxvm.cyr` VM (both built by the merged 6.7.7 tip `cycc_merged`,
-tree @ 06bd8981), **exits 136 (SIGFPE, core dumped)**. The same file exits 0 natively on x86_64, under qemu-aarch64
-(the tree's `src/main_aarch64.cyr` cross compiler) and under wine (the `src/main_win.cyr` PE compiler; "13 passed, 0
-failed"). The same cx compiler and VM built from the **6.7.6 tag's** `src/` and `programs/` also exit 136, so it
-predates 6.7.7. The minimal repro is
+> ✅ **RESOLVED in v6.7.9** (the critical lane's bite 18, l679-crit; CHANGELOG [6.7.9]) cx takes the static-init path for a folded nonzero global like the five image targets — PARSE_GVAR_REG's `_TARGET_CX != 1` opt-out is gone, so `_gv_cx_prestore` stores the value at startup and no replay evaluates the initializer again: the repro gives 7 on cx (was 136) and `tests/tcyr/crossos/const_fold_int_min_div.tcyr` passes 13/13 under cxvm. Rows G-J in tests/gates/codegen/cx_forward_read_constant_global.sh (host, cx, qemu-aarch64), mutation-proven (its ledger).
+
+**Status:** ✅ **RESOLVED in v6.7.9** — see the banner above and *Resolution* below. Reproduced on the 6.7.9 lane tip @
+952e66a1 before the fix: the repro exits 136 under cxvm. As filed: 🟡 OPEN — reproduced 2026-10-09.
+`tests/tcyr/crossos/const_fold_int_min_div.tcyr`, compiled by a `src/main_cx.cyr` compiler and run under a
+`programs/cxvm.cyr` VM (both built by the merged 6.7.7 tip `cycc_merged`, tree @ 06bd8981), **exits 136 (SIGFPE, core
+dumped)**. The same file exits 0 natively on x86_64, under qemu-aarch64 (the tree's `src/main_aarch64.cyr` cross
+compiler) and under wine (the `src/main_win.cyr` PE compiler; "13 passed, 0 failed"). The same cx compiler and VM
+built from the **6.7.6 tag's** `src/` and `programs/` also exit 136, so it predates 6.7.7. The minimal repro is
 [`repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr`](repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr):
 cx 136, x86 7, qemu-aarch64 7.
 **Placement:** 6.7.9 — the repair batch, the critical / high lane (user, 2026-10-11) — never 7.x.
@@ -99,3 +102,38 @@ Either way, refresh the stale comment at `parse_decl.cyr:4628`. Add a cx row (a 
 also have the cx leg run `tests/tcyr/crossos/const_fold_int_min_div.tcyr`, which now compiles under cx with
 `lib/assert.cyr`. cxvm's run-time `/` and `%` keep host semantics, the same as native x86, so they are not changed
 here.
+
+## Resolution (6.7.9)
+
+The proposed fix's first option without its bake: `if (_TARGET_CX != 1 && fv != 0)` in PARSE_GVAR_REG
+(`parse_decl.cyr`) is `if (fv != 0)`, so a folded nonzero scalar records its value (`_vgsi_base`) and queues no
+replay entry on cx as on every target. cx's .cyx var data still holds no scalar, so `_gv_cx_prestore`'s EMOVI + store
+at startup — ahead of every deferred initializer — is what gives the global its value; no `main_cx.cyr` bake was
+needed. 6.6.6's cx-only record of the folded value (`if (_TARGET_CX == 1) { … S64(_vgsi_base …, cf_val) }`) is
+removed: the static-init branch writes the same slot now, and mutation 2 shows it had been redundant since 6.6.16's
+`_gvk_pre` (which records a deferred constant entry too). The stale comments (the cx opt-out at the static-init test,
+`_gv_cx_prestore`'s header, the 6.6.6 note) are rewritten to what the code does.
+
+What changes on cx, each now what x86 / aarch64 / Mach-O / PE already did (measured on all of them):
+- a folded INT_MIN / -1 (decimal or hex) is INT_MIN and no longer traps cxvm (rows G, H);
+- a constant global that an EARLIER initializer's call writes keeps that write: `fn s() { a = 9; } var d = s();
+  var a = 5;` reads 9 (cx re-stored 5 at the replay — the filing's "the run-time store writes the value the fold
+  already produced" missed this) (row I);
+- the implicit exit's last var is the last REPLAYED global, as on the image targets: `var y = f(); var x = 5;` with
+  no explicit exit exits with f()'s value (cx exited 5) (row J).
+
+Premise check on the filing's proposed rows: `var R = INT_MIN % -1;` cannot exit cleanly on cx alone. A folded ZERO
+(and an enum-named fold) keeps its run-time store on EVERY target — 6.6.20's CHANGELOG says so and
+`const_fold_int_min_div.tcyr` leaves the scalar `%` out for that reason — so it traps on native x86 exactly as on cx
+(measured: x86 136, cx 136, qemu-aarch64 7, whose `sdiv` does not trap). cx now agrees with x86 there; changing that
+for every target is a separate question, not this bug.
+
+Verification: the 3-stage fixpoint and `scripts/seed-derive-cycc.sh` OK; x86, aarch64 (558 `.tcyr`) and PE (the
+crossos set) compile byte-identical output before and after (the change is cx-only by construction); every
+`tests/gates/codegen/cx_*.sh` gate and the 69 other gates that build `main_cx` / `cxvm` pass; a cxvm differential
+over the `.tcyr` corpus (pre-fix cx vs fixed) changes only `const_fold_int_min_div.tcyr` (136 → 13/13), addresses
+and timings, and the exit codes of five `fn main` files that cx never runs (row J's last var;
+[`2026-10-11-cx-does-not-auto-call-main.md`](2026-10-11-cx-does-not-auto-call-main.md), filed from this bite).
+Mutations (scratch trees, the gate run there): the 6.7.8 tree → RED cx G H I J; the opt-out restored alone → RED cx
+G H I J; `_gv_cx_prestore` a no-op → RED cx sanity + A B C F G H. Adding `const_fold_int_min_div.tcyr` to
+`cx_crossos_rows_run.sh` is the quick lane's (it owns that gate).

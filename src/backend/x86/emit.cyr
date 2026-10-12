@@ -5217,9 +5217,10 @@ fn EVADDR_X1(S, idx): i64 {
 # aggregate's LOWEST-INDEX slot instead, so the `n` words of the block are exactly the `n`
 # heap slots the block owns. The word ORDER inside the block is reversed relative to the
 # stack, which is invisible: every consumer either addresses the block through this one base
-# (field load/store, method self, by-value push, zero-fill, `&name`) or walks BOTH sides by
-# slot index (`_try_aggregate_copy_assign`, `_try_struct_copy_init`), and a permutation
-# applied identically to source and destination copies the same word to the same word.
+# (field load/store, method self, by-value push, zero-fill, `&name`, a closure's capture copy —
+# 6.7.9, `_cl_emit_cap_word`) or walks BOTH sides by slot index (`_try_aggregate_copy_assign`,
+# `_try_struct_copy_init`), and a permutation applied identically to source and destination
+# copies the same word to the same word. A walk of ONE side by slot index reverses the block.
 # ⛔ The first cut of this (6.6.5 review round 1) REFUSED span > 1 instead. That was a
 # capability regression, not a diagnostic: `var q: P2; q.x=1; q.y=22; await ...; return q.y;`
 # and even a struct used ONLY before the first suspend compiled on 6.6.4 and returned the

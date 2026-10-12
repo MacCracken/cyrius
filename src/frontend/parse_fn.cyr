@@ -1911,6 +1911,16 @@ fn _local_is_sptr_param(S, li): i64 {
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
 }
+# ⛔ 6.7.9 — 1 when `&q` of slot `li` is the slot's CONTENT: an address-passed by-value struct
+# parameter, whose slot holds the caller's struct's address (since 6.6.16 only a `#naked` fn's: the
+# rest are copied in, and an `async fn` refuses one). A `q: *P` parameter (an untyped impl `self`) has
+# the same `-sid` type and non-inline layout, so `_local_is_sptr_param` answers 1 for it, but its
+# slot holds a POINTER: `&q` is the slot's address, as for a `*P` local, a `*Q` of 8 B or less, a
+# `*i64` and in 6.6.5. It was the pointee (`load64(&q)` read q's first field). CHANGELOG [6.7.9]
+fn _addr_is_slot_content(S, li): i64 {
+    if (_is_ptr_param(S, li) == 1) { return 0; }
+    return _local_is_sptr_param(S, li);
+}
 
 # 6.6.6 — materialise an address-passed struct parameter as an INLINE frame aggregate, so the
 # `return` paths (which address a local's slots directly) read the struct and not the pointer.
@@ -2311,22 +2321,27 @@ fn _sptr_param_temp(S, li, sid): i64 {
 # call parsed after it. Writing its record here raised a bit for `f(q: P3)` above `f(q: *P3)` (the
 # signature check lets the pair through: both address-pass the same struct), and a later tail call
 # kept its `jmp` while the `*P3` body held `&s` — a silent wrong value. CHANGELOG [6.6.20]
+# 6.7.9: `rf` is the fn the record is written for, -1 for a redefinition (SFBVCP and `_bvhi_*` write
+# nothing for it); its copies row past ordinal 61 is replaced whole, as the mask is.
 fn _sptr_params_localize(S): i64 {
     var m = 0;
-    if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S); } }
-    if ((GFLG(S, _cur_fn_ix) & 2048) == 0) { SFBVCP(_cur_fn_ix, m); }
+    var rf = _cur_fn_ix;
+    if ((GFLG(S, rf) & 2048) != 0) { rf = 0 - 1; }
+    _bvhi_reset(rf);
+    if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S, rf); } }
+    SFBVCP(rf, m);
     return 0;
 }
 # Each parameter owns exactly ONE named slot (a vector's filler slots are -1), so a parameter's
 # ordinal is the number of named slots below it — counted before `_sptr_param_localize1` renames
-# the slot. Returns the copied ordinals below 62.
-fn _sptr_params_copy(S): i64 {
+# the slot. Returns the copied ordinals below 62; one past 61 goes to `rf`'s copies row.
+fn _sptr_params_copy(S, rf): i64 {
     var m = 0;
     var ord = 0;
     var li = 0;
     while (li < _cur_fn_pslots) {
         if (L64(S + 0x5D9D000 + li * 8) != 0 - 1) {
-            if (_sptr_param_in(S, li) == 1) { if (ord < 62) { m = m | (1 << ord); } }
+            if (_sptr_param_in(S, li) == 1) { m = _bvcp_bit(rf, m, ord); }
             ord = ord + 1;
         }
         li = li + 1;
@@ -3699,13 +3714,18 @@ fn _pd_c14_note(S): i64 {
 # (`_call_arg_start`); with one, a positional before the first label, else the value after the
 # label naming parameter k, else -1. So `g(n: 2, x: p)` instantiates `g$Pt` as `g(p, 2)` does.
 fn _call_arg_for(S, fi, open, k): i64 {
-    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, k); }
+    return _call_arg_pk(S, fi, open, k, k);
+}
+# ... where `pk` is the POSITION that passes parameter k: k on a free call, k - 1 on a method call,
+# whose `self` (parameter 0) is the receiver and not in the list (`_mcall_infer`, 6.7.9).
+fn _call_arg_pk(S, fi, open, k, pk): i64 {
+    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, pk); }
     var q = open + 1;
     var pc = 0;
     var n = GTCNT(S);
     while (q < n) {
         if (_pd_label_at(S, q) == 1) { break; }
-        if (pc == k) { return _call_arg_start(S, open, k); }
+        if (pc == pk) { return _call_arg_start(S, open, pk); }
         pc = pc + 1;
         q = _arg_next(S, q);
         if (TOKTYP(S, q) != 31) { return 0 - 1; }
@@ -4340,6 +4360,7 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
     if (tgt >= 0) { ECALLTO(S, tgt); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, n);
+    SESTYPE(S, 0);   # 6.7.9: PARSE_FNCALL's D3 reset — `mk(1.5).a * 2` kept the f64 argument's type
     if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
     # 6.6.12: a struct result in rax — a <= 8 B struct's bytes (`dst` inline), or a `Str` handle
     # (`dst` pointer-mode, see `_struct_call_into`). Only `_call_field` asks for this class.
@@ -4627,6 +4648,11 @@ var _scv_term = 5;   # ... and the token that ends the initialiser inside them (
 # bits, + 1) and the save's depth (high), so a disarm reads its own save even after an unbalanced
 # inner one. CHANGELOG [6.7.6]
 var _scv_vec = 0;
+# 6.7.9 — 1 = the initialiser the last `_scv_disarm` closed reported an error of its own (`_had_error`
+# 0 at its arm, 1 at its disarm): its whole-result refusal (`_sc_global_pair`) would be a second
+# report of a line already refused — `var G: Pt = mk2(3) + H;` (the left operand). A file with an
+# earlier error cannot tell, and may report both.
+var _scv_err = 0;
 fn _scv_save(): i64 {
     if (_scv_vec == 0) { _scv_vec = vec_new(); }
     var d = vec_len(_scv_vec);
@@ -4634,6 +4660,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _scv_term);
     vec_push(_scv_vec, _sc_fcw);
     vec_push(_scv_vec, _fla_want);
+    vec_push(_scv_vec, _had_error);
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -4659,6 +4686,8 @@ fn _scv_arm(S, pscale): i64 {
 fn _scv_disarm(S, w): i64 {
     _sc_want = (w & 0xFFFFFFFF) - 1;
     if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
+    _scv_err = 0;
+    if (vec_get(_scv_vec, (w >> 32) + 4) == 0) { _scv_err = _had_error; }   # 6.7.9
     _scv_restore(w >> 32);
     return 0;
 }
@@ -4775,7 +4804,17 @@ fn _scv_dyn_chk(S, pscale, ext, start): i64 {
 fn _sc_global_receive(S, pscale, start): i64 {
     if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
+    return _sc_global_pair(S, pscale, start);
+}
+# ⛔ 6.7.9 — the struct half, shared with the declaration zone's replay (`_gvi_expr`), which ran only
+# `_sc_global_mismatch`: `var G2: Q = Q0.mk();` before the first statement (a 9-16 B method, a generic
+# method, `(Q0.mk())`, an operator `Q0 + Q1`) stored rax — the struct's first WORD — as the address of
+# the inline G2, and the first `G2.a` SIGSEGV'd. Now refused by name there too — once in either place:
+# a line refused inside its initialiser (`_scv_err`: an operand, an argument) is not refused again
+# for its result. CHANGELOG [6.7.9]
+fn _sc_global_pair(S, pscale, start): i64 {
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }   # refused inside its initialiser: that refusal alone (6.7.9)
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);
@@ -9773,13 +9812,19 @@ fn _capture_tparams(S): i64 {
 # already canonical); a struct local (GLTYPE = -sid) → +sid; everything else (plain
 # int, literal, complex expr) → i64 (-8). Narrow-scalar args infer as i64 — explicit
 # `foo<i32>(x)` (the wired-up call form) pins those precisely.
+# ⛔ 6.7.9 — an f64 argument binds f64 (-9), as an f64-returning call already did: an f64 local
+# or parameter, an f64 global (`_infer_conc_global`) and a float literal, each as the WHOLE
+# argument (`_gen_arg_whole`; `g(h * 2.0)` stays i64, as `g(p + 1)` does). They inferred i64, so
+# `gid(h)` ran the i64 base and its result was an untyped word — `gid(h) * 2.0` multiplied the
+# double's bits. An f32 is not a type argument (nor a return type): it stays i64. CHANGELOG [6.7.9]
 fn _infer_conc_at_cursor(S): i64 {
+    if (PEEKT(S) == 61) { return _ic_flit(S); }
     if (PEEKT(S) == 2) {
         var _ic_noff = PEEKV(S);
         if (TOKTYP(S, GTI(S) + 1) == 10) {
             var _ic_fi = FINDFN(S, _ic_noff);
             if (_ic_fi >= 0) {
-                var _ic_ret = GFRS(S, _ic_fi);
+                var _ic_ret = _ic_call_rs(S, _ic_fi);   # 6.7.9: + a generic's f64 instance
                 if (_ic_ret != 0) { return _ic_ret; }
             }
         } else {
@@ -9790,6 +9835,7 @@ fn _infer_conc_at_cursor(S): i64 {
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
                 if (_is_ptr_param(S, _ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
+                if (_load_lt(S, _ic_lli) == F64_TYID) { return 0 - 9; }   # 6.7.9
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
@@ -9995,6 +10041,26 @@ fn _param_float(S, li, pc, flt, pack): i64 {
     if (pc == 1) { return pack | (f << 16); }
     return pack;
 }
+# The return of the call `IDENT(` at the cursor to fi: FINDFN's entry's, or for a generic whose
+# call there reaches an f64 instance (`gid(gid(h))`) that instance's f64 — what the call is typed
+# as (`_gcall_ret_f64`). A peek: the inner resolve's own `_gi_sc` is not this inference's.
+fn _ic_call_rs(S, fi): i64 {
+    var r = GFRS(S, fi);
+    if (r != 0 - 8) { return r; }
+    if (_MONOMORPH_OK == 0) { return r; }
+    if (GFTP(S, fi) == 0) { return r; }
+    var sv = _gi_sc;
+    var ifi = _pair_gen_inst(S, GTI(S));
+    _gi_sc = sv;
+    if (ifi >= 0) { if (GFRS(S, ifi) == 0 - 9) { return 0 - 9; } }
+    return r;
+}
+# A float literal at the cursor: f64 when it is the whole argument (a `,` or the `)` follows).
+fn _ic_flit(S): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt == 31 || nt == 11) { return 0 - 9; }
+    return 0 - 8;
+}
 fn _is_ptr_param(S, li): i64 {
     if (li < 0) { return 0; }
     if (li >= _cur_fn_pslots) { return 0; }
@@ -10007,6 +10073,7 @@ fn _is_ptr_param(S, li): i64 {
 fn _infer_conc_global(S, noff): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
+    if (GVTYPE(S, vi) == F64_TYID) { return 0 - 9; }   # 6.7.9: an f64 global binds f64
     if (GVPM(S, vi) == 0) { return 0 - 8; }
     var t = GVTYPE(S, vi);
     if (t > 0) { return t; }
@@ -10080,6 +10147,21 @@ fn _fn_body_has_await_ahead(S): i64 {
     STI(S, _sv);
     return _r;
 }
+# 6.7.9 — reserve a coroutine's slot 0 (SELF, homed by the prologue) as an ANONYMOUS slot. The
+# local tables are not cleared between fns, so reserving it by count alone (`SFLC(S, 1)`) left the
+# previous fn's local 0 on it: its NAME resolved to SELF inside the coroutine (a global of that name
+# read the frame's address, a local of that name was a "duplicate variable"), and its depth word's
+# flag bits and its type reached the slot walkers (`_inl_param_why` named a `*T` / struct parameter
+# the coroutine does not have). Name -1, depth word and type 0, as every anonymous slot; the slice
+# width is trusted only behind the depth word's bit 62 and the float flag is cleared by SFLC.
+# Gate: tests/gates/frontend/coroutine_fnptr_and_completion.sh rows N. CHANGELOG [6.7.9]
+fn _coro_slot0_reserve(S): i64 {
+    S64(S + 0x5D9D000, 0 - 1);
+    SLDEP(S, 0, 0);
+    SLTYPE(S, 0, 0);
+    SFLC(S, 1);
+    return 0;
+}
 
 fn _body_has_await(S): i64 {
     var _sv = GTI(S);
@@ -10138,7 +10220,7 @@ var _gsn = 0;           # the T-typed names of the fn being scanned (params, the
 var _gsn_n = 0;
 var _gs_at = 0;         # _gs_params: the token just past the parameter list
 var _gs_open = 0;       # _gs_params: its `(` (a struct carrier records G's name as an offset from it)
-var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64
+var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64 (6.7.9: or f64 did)
 var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
 var _gm_closed = 0 - 1;
 
@@ -10202,22 +10284,23 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         _gsn_add(TOKVAL(S, i));
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
-    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk, ti - i - 2); }   # 6.7.8: `G<..T..>`
+    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk); }   # 6.7.8: `G<..T..>`
     return pk;
 }
 # ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
 # `gx(b)` with `b: Box<Pt>` inferred i64 and called the base (`b: Box`) — refused as a struct
 # mismatch since 6.7.3; and through `*Box<T>`, `gx(&b)` compiled and read `b.n` at the base's
-# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name,
-# `ptr` 1 behind the `*`), T a WHOLE type argument at depth 1, now carries T through G's slot.
+# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name),
+# T a WHOLE type argument at depth 1, now carries T through G's slot — both alike: a value or a
+# pointer argument binds T (`_gsc_arg`; 6.7.9 the by-value carrier's pointer too).
 # Per type parameter w, a 20-bit field of GFGM at bit 24 + 20w (bits 0-23 keep their meaning):
-#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 the `*` · bits 10-19 G's name
-#   token as an offset from the list's `(` — G is looked up when a call infers, so a struct
-#   declared below the fn is found.
+#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 unused (6.7.8's `*`) ·
+#   bits 10-19 G's name token as an offset from the list's `(` — G is looked up when a call
+#   infers, so a struct declared below the fn is found.
 # The first carrying parameter wins, as for a direct carrier; a direct carrier wins over this one
 # (`_gen_infer_tp`). `Box<Pair<T>>` (T nested) records nothing — its refusal stands.
 # CHANGELOG [6.7.8]
-fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
+fn _gs_carrier(S, fi, ti, pc, pk): i64 {
     var off = ti - _gs_open;
     if (off > 1023) { return pk; }
     var tp = GFTP(S, fi);
@@ -10229,7 +10312,7 @@ fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
         var t = TOKTYP(S, j);
         if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return pk; }
         if (d == 1) { if (slot < 2) { if (_gs_targ_whole(S, j) == 1) {
-                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (ptr << 9) | (off << 10));
+                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (off << 10));
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
@@ -10463,20 +10546,22 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var c = _infer_conc_at_cursor(S);
     STI(S, sv);
     if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
+    if (c == 0 - 9) { _gi_sc = 1; }   # 6.7.9: an f64 binding calls its instance, as `g<f64>(..)` does
     return c;
 }
 # ⛔ 6.7.8 — T through its STRUCT CARRIER (`_gs_carrier`; T has no direct one). The WHOLE
-# argument in the carrying position must be an instance of the parameter's G (`_gsc_arg`), and T
-# is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with `b: Box<Pt>` binds Pt
-# and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64 — today's base, and
-# its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the call instantiates
-# `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout). CHANGELOG [6.7.8]
+# argument in the carrying position must be (or point at) an instance of the parameter's G
+# (`_gsc_arg`), and T is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with
+# `b: Box<Pt>` binds Pt and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64
+# — today's base, and its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the
+# call instantiates `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout).
+# CHANGELOG [6.7.8]
 fn _gen_infer_sc(S, fi, open, f): i64 {
     var k = f & 255;
     if (k == 0) { return 0 - 8; }
     var a = _call_arg_for(S, fi, open, k - 1);
     if (a < 0) { return 0 - 8; }
-    var c = _gsc_arg(S, a, (f >> 9) & 1);
+    var c = _gsc_arg(S, a);
     var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
     if (r == 0) { return 0 - 8; }
     if (r < 0) { if (r != 0 - 8) { _gi_sc = 1; } }
@@ -10501,25 +10586,26 @@ fn _gsc_g(S, fi, off): i64 {
     return g;
 }
 # The struct a struct carrier's WHOLE argument at token a holds or points at, 0 when none (the
-# call then infers i64). ptr 0 (`b: G<T>`): a G<X> VALUE — a name, a struct global, a call
-# returning it; never a pointer (`&b`, a `*G<X>` name), which binds nothing and runs the base as
-# it compiles today. ptr 1 (`b: *G<T>`): what it POINTS AT — `&b` of an inline struct or a by-value
-# parameter, a `*G<X>` name or a `*G<X>`-returning call, or a G<X> value, whose address the call
-# passes (6.6.20). CHANGELOG [6.7.8]
-fn _gsc_arg(S, a, ptr): i64 {
+# call then infers i64): a G<X> VALUE — a name, a struct global, a call returning it — or what a
+# pointer POINTS AT — `&b` of an inline struct or a by-value parameter, a `*G<X>` name, field chain
+# or `*G<X>`-returning call. Both carriers read it alike: `b: *G<T>` is passed a G<X> value's
+# address (6.6.20), and `b: G<T>` an address-passed G<X>'s pointer as the struct (a typed pointer
+# converts, 6.7.3) — so `gx(&b)` / `gx(bp)` call `gx$Pt`, as `gx<Pt>(&b)` does. 6.7.8 bound nothing
+# for the by-value carrier's pointer: the i64 base ran on `Box<i64>`'s layout (b.n read as b.v.y,
+# 4 for 8). CHANGELOG [6.7.8], [6.7.9]
+fn _gsc_arg(S, a): i64 {
     var t = TOKTYP(S, a);
     if (t == 27) {
-        if (ptr == 0) { return 0; }
         if (_gsc_name_end(S, a + 1) == 0) { return 0; }
         return _gsc_addr_of(S, TOKVAL(S, a + 1));
     }
     if (t != 2) { return 0; }
-    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a, ptr); }
-    if (ptr == 1) { if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); } }
+    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a); }
+    if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); }
     if (_gsc_name_end(S, a) == 0) { return 0; }
-    return _gsc_name(S, TOKVAL(S, a), ptr);
+    return _gsc_name(S, TOKVAL(S, a));
 }
-# A `*G<T>` carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
+# A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
 # i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
@@ -10555,41 +10641,38 @@ fn _gsc_name_end(S, a): i64 {
     if (nt == 31 || nt == 11) { return 1; }
     return 0;
 }
-fn _gsc_call(S, a, ptr): i64 {
+fn _gsc_call(S, a): i64 {
     if (_call_is_whole_arg(S, a) == 0) { return 0; }
     var fi = FINDFN(S, TOKVAL(S, a));
     if (fi < 0) { return 0; }
-    if (ptr == 1) { if (_fn_rpsid != 0) {
-            var ps = L64(_fn_rpsid + fi * 8);
-            if (ps > 0) { return ps; }
-        } }
+    if (_fn_rpsid != 0) {
+        var ps = L64(_fn_rpsid + fi * 8);
+        if (ps > 0) { return ps; }
+    }
     var r = GFRS(S, fi);
     if (r > 0) { return r; }
     return 0;
 }
-fn _gsc_name(S, noff, ptr): i64 {
+fn _gsc_name(S, noff): i64 {
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
         var lt = GLTYPE(S, li);
         if (lt >= 0) { return 0; }
         if (lt <= 0 - 2048) { return 0; }
-        if (GLPTRP(S, li) == 1) { if (ptr == 0) { return 0; } }
         return 0 - lt;
     }
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0; }
-    if (ptr == 1) {
-        var ps = _gv_ptr_sid(S, vi);
-        if (ps > 0) { return ps; }
-    }
+    var ps = _gv_ptr_sid(S, vi);
+    if (ps > 0) { return ps; }
     if (GVPM(S, vi) == 0) { return 0; }
     var gt = GVTYPE(S, vi);
     if (gt > 0) { return gt; }
     return 0;
 }
-# `&name` (a `*G<T>` carrier only): an inline struct local, a by-value struct parameter (whose `&`
-# is the caller's struct, 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode
-# handle is the slot's address — a `**` — and binds nothing.
+# `&name`: an inline struct local, a by-value struct parameter (whose `&` is the caller's struct,
+# 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode handle is the slot's
+# address — a `**` — and binds nothing.
 fn _gsc_addr_of(S, noff): i64 {
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
@@ -10685,6 +10768,41 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }   # 6.7.1 (C3)
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return fi;
+}
+# ⛔ 6.7.9 — A GENERIC METHOD'S f64 TYPE PARAMETER. `p.id(h)` with `fn id<V>(self, w: V): V` and
+# `h: f64` called the i64 base: its result was an untyped word (`p.id(h) * 2.0` an integer
+# multiply) and `p.dbl(h)` added the double's bits — the free spelling `P_id(&p, h)` now calls the
+# f64 instance (`_gen_infer_tp`), and so does this arm, before `self` and the arguments, with the
+# `(` at `open`. Only an f64 binding is taken here: a struct one stays the base's, as before
+# (docs/development/issues/2026-10-10-generic-method-call-runs-i64-base.md). CHANGELOG [6.7.9]
+fn _mcall_gen(S, fi, open): i64 {
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (fi < 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    if (TOKTYP(S, open) != 10) { return fi; }
+    if (_gen_stub(S, fi) != 0) { return fi; }   # (and GFGM is recorded)
+    var c0 = _mcall_infer(S, fi, open, 0);
+    var c1 = 0;
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, fi, open, 1); }
+    if (c0 > 0 || c1 > 0) { return fi; }
+    if (c0 != 0 - 9) { if (c1 != 0 - 9) { return fi; } }
+    var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec >= 0) { return spec; }
+    return fi;
+}
+# `_gen_infer_tp` for a method call: type parameter `which`'s carrying parameter k is passed at
+# position k - 1. A struct carrier or `self` itself carrying it (k < 2) infers i64 here.
+fn _mcall_infer(S, fi, open, which): i64 {
+    var k = (GFGM(S, fi) >> (8 + which * 8)) & 255;
+    if (k < 2) { return 0 - 8; }
+    var a = _call_arg_pk(S, fi, open, k - 1, k - 2);
+    if (a < 0) { return 0 - 8; }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var sv = GTI(S);
+    STI(S, a);
+    var c = _infer_conc_at_cursor(S);
+    STI(S, sv);
+    return c;
 }
 fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
@@ -11877,30 +11995,46 @@ fn _fn_self_byval(fi): i64 {
 # before the definition knows it, and again, exactly, where the definition emits the copy
 # (`_sptr_params_localize` — a generic's instance, which pass 1 never sees, included; never for a
 # redefined fn, whose calls all reach the LAST definition pass 1 recorded). 0 for a `*T`
-# or untyped parameter, an ordinal past 61, a `#naked` or `async` fn (pass 1: `_prescan_fn_sig`)
-# and a fn neither pass has recorded. ⚠ Pass 1 must never record a copy the definition does not
-# make — a call parsed before the definition would keep a `jmp` that the callee's pointer outlives
-# (checked over the tcyr corpus and programs/, x86 and PE, at 6.6.20).
+# or untyped parameter, a `#naked` or `async` fn (pass 1: `_prescan_fn_sig`) and a fn neither pass
+# has recorded. ⚠ Pass 1 must never record a copy the definition does not make — a call parsed
+# before the definition would keep a `jmp` that the callee's pointer outlives (checked over the
+# tcyr corpus and programs/, x86 and PE, at 6.6.20).
+# ⛔ 6.7.9 — an ordinal past 61 is in the fn's copies row (util.cyr `_bvhi_*`): this answered 0
+# there, so a by-value struct at parameter 62+ was never copied where it stands — `r62(.., b,
+# bump(&b))` read 11 where 1 is right — and its address escaped (`_sarg_escapes`). Issue
+# 2026-10-09-by-value-copy-mask-62-parameter-limit. CHANGELOG [6.7.9]
 fn _pm_copies(fi, argc): i64 {
-    if (argc >= 62) { return 0; }
+    if (argc >= 62) { return _bvhi_get(fi, argc); }
     return (GFBVCP(fi) >> argc) & 1;
+}
+# Parameter `pc` of fn `fi` is copied in: its bit in the mask `m`, or past 61 its byte in the row.
+fn _bvcp_bit(fi, m, pc): i64 {
+    if (pc < 62) { return m | (1 << pc); }
+    _bvhi_set(fi, pc);
+    return m;
+}
+# Pass 1, no copy for fn `fi` (`async`, a possible `#naked`): the mask and the row both cleared.
+fn _bvcp_none(fi): i64 {
+    SFBVCP(fi, 0);
+    return _bvhi_reset(fi);
 }
 # Pass 1's half: parameter `pc`, cursor on its type name, `smask` the struct mask with this
 # parameter's bit already decided, `inst` its struct (the instance for a generic) or <= 0.
 # Mirrors `_local_is_sptr_param`'s test: address-passed, not a `*T`, not a handle (`Str` /
 # `Result` / `Option` / `Tagged` — they never take the bit), and a plain struct or a Win64 vector.
+# Past ordinal 61 the address-passed bit is the kind row's (`_psid_addr`) and the copy goes to the
+# copies row (`_bvcp_bit`) — `_cur_fn_ix` is the fn being scanned (`_prescan_params`).
 fn _bvcp_note(S, m, smask, pc, inst): i64 {
-    if (pc >= 62) { return m; }
-    if (((smask >> pc) & 1) == 0) { return m; }
+    if (_psid_addr(_cur_fn_ix, pc, smask) == 0) { return m; }
     if (TOKTYP(S, GTI(S) - 1) == 8) { return m; }
     var c = _classify_param_type(S, PEEKV(S));
     if (c == 0) {
-        if (inst > 0) { return m | (1 << pc); }
+        if (inst > 0) { return _bvcp_bit(_cur_fn_ix, m, pc); }
         return m;
     }
     if (_TARGET_PE == 0) { return m; }
-    if (c >= 6) { if (c <= 8) { return m | (1 << pc); } }
-    if (c <= 0 - 2048) { return m | (1 << pc); }
+    if (c >= 6) { if (c <= 8) { return _bvcp_bit(_cur_fn_ix, m, pc); } }
+    if (c <= 0 - 2048) { return _bvcp_bit(_cur_fn_ix, m, pc); }
     return m;
 }
 # 1 when a `#naked` may apply to the fn whose `fn` token is `ti`: a token 133 anywhere after the
@@ -12193,8 +12327,7 @@ fn _tup_pscan(S, fi, pc, smask, isptr): i64 {
 # ... and its prologue copy (`_bvcp_note`'s plain-struct answer): every tuple parameter is copied in.
 fn _tup_bvcp(m, pc): i64 {
     if (_tup_pt <= 0) { return m; }
-    if (pc >= 62) { return m; }
-    return m | (1 << pc);
+    return _bvcp_bit(_cur_fn_ix, m, pc);
 }
 fn _psid_addr(fi, pc, mask): i64 {
     if (pc < 62) { return (mask >> pc) & 1; }
@@ -12243,6 +12376,7 @@ fn _psid_scan(S, fi, pc, base, mask, isptr): i64 {
 fn _prescan_params(S, fi): i64 {
     var sv = _cur_fn_ix;
     _cur_fn_ix = fi;
+    _bvhi_reset(fi);   # 6.7.9: the scan's copies past ordinal 61 replace the last record (`_bvcp_bit`)
     _prescan_params_scan(S, fi);
     _cur_fn_ix = sv;
     return 0;
@@ -12420,8 +12554,8 @@ fn _prescan_fn_sig(S): i64 {
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
         else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }   # never leave a stale private bit
         _prescan_params(S, fi);
-        if (_pasync == 1) { SFBVCP(fi, 0); }   # 6.6.20: see `_pm_copies`
-        if (_prescan_maybe_naked(S, start_ti) == 1) { SFBVCP(fi, 0); }
+        if (_pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
+        if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
         _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
@@ -12587,6 +12721,8 @@ fn _gtype_sid(S, fi, base): i64 {
 # the caller's struct ADDRESS: `q = idp(p)` stored a pointer into `q.x`, `var q: Pt = idp(p)` said
 # "no struct type in scope". `Str` keeps its rax heap-handle return through the same exclusion a
 # written `: Str` gets (the rough scan's pair test). 0 = not an instance's struct-bound `: T`.
+# ⛔ 6.7.9 — and T = f64 is an f64 return (-9), as a written `: f64` is: an instance used to record
+# the base's i64 (-8) and hand the double back in rax, which no call site types. CHANGELOG [6.7.9]
 fn _gtype_tp_ret(S, fi, noff): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     if (_inst_conc0 == 0) { return 0; }
@@ -12595,6 +12731,7 @@ fn _gtype_tp_ret(S, fi, noff): i64 {
     var c = 0;
     if ((tp & 0xFFFFFFFF) == noff + 1) { c = _inst_conc0; }
     if (((tp >> 32) & 0xFFFFFFFF) == noff + 1) { c = _inst_conc1; }
+    if (c == 0 - 9) { return c; }   # 6.7.9: T = f64 — the instance returns an f64 (xmm0 on x86)
     if (c <= 0) { return 0; }
     return c;
 }
@@ -13046,7 +13183,7 @@ fn _prescan_tail_loop(S): i64 {
         # _prescan_fn_sig already consumes the `async` prefix — the two scanners agreeing is
         # the point. CHANGELOG [6.6.5]
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
-        elif (t == 14) { go = 0; }                     # stray '}' — where PARSE_PROG stops
+        elif (t == 14) { _tl_stray_brace(S); go = 0; }   # an unmatched '}' — refused (6.7.9)
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
@@ -13056,6 +13193,22 @@ fn _prescan_tail_loop(S): i64 {
         # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
     }
+    return 0;
+}
+
+# 6.7.9 — an unmatched `}` at module scope. Every declaration and statement before it was
+# consumed with its braces balanced, so a `}` the tail loop meets closes nothing. PARSE_PROG is
+# also the block parser (`}` ends its loop), so it stopped there and everything after the brace
+# was silently dropped: rc 0, `main` never compiled — and in a multi-file build the lost
+# definitions surfaced as "undefined" errors in OTHER files (agnos's report). Refused HERE, in
+# pass 1, before any body is parsed, so it is the first diagnostic and nothing cascades. The
+# hint covers the other way to get here: an extra `}` INSIDE a fn ends it early, and the fn's own
+# closing brace is the one left over. CHANGELOG [6.7.9]
+fn _tl_stray_brace(S): i64 {
+    var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
+    ERR_MSG(S, "unmatched '}' at module scope", 29);
+    if (quiet == 0) { syscall(SYS_WRITE, 2, "  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
+    syscall(SYS_EXIT, 1);
     return 0;
 }
 
@@ -14598,7 +14751,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # missing machinery as the arity-7 miscompile, and fixed in the same place.
     _pending_coro = 0;
     if (_is_async == 1) {
-        if (_fn_body_has_await_ahead(S) == 1) { _pending_coro = 1; SFLC(S, 1); }
+        if (_fn_body_has_await_ahead(S) == 1) { _pending_coro = 1; _coro_slot0_reserve(S); }
     }
     var simd_pc = 0;
     var int_pc = 0;
