@@ -386,6 +386,70 @@ fn _test_grade_why(gv): i64 {
     return "the assert summary reports failures";
 }
 
+# The FAIL row for a unit that ran and did not exit 0 — a timeout, a signal or an exit status —
+# in `cyrius test`'s words; `cyrius coverage --exec` names a failing RUN program with it too
+# (6.7.10). The caller counts the failure.
+fn _test_fail_exit(source, exit_code): i64 {
+    if (exit_code == _RUN_TIMEOUT_KILLED) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (timed out after ", 18);
+        var tbuf[24];
+        var tlen = fmt_int_buf(_run_timeout_ms() / 1000, &tbuf);
+        sys_write(STDERR_FD, &tbuf, tlen);
+        # strlen, not a hand-counted literal: the first cut of this line counted 61
+        # for a 63-byte string (the em-dash is 3 bytes) and truncated its own hint
+        # mid-word. There is no reason to count bytes by hand when strlen is in scope.
+        # 6.7.6: the three channels, highest first (argument > environment > manifest)
+        var tmsg = "s — killed; --timeout <seconds>, CYRIUS_TEST_TIMEOUT or [test] timeout raise it, 0 disables)\n";
+        sys_write(STDERR_FD, tmsg, strlen(tmsg));
+    } else {
+        # ⛔ v6.5.37 — NAME THE FAILING TEST, AND SAY IF IT DIED OF A SIGNAL.
+        #
+        # Only the compile-error and timeout branches printed anything, so an ordinary
+        # non-zero exit — an assertion failure OR a SIGSEGV — was counted and never
+        # announced. The suite printed "283 passed, 1 failed" with no indication of WHICH
+        # file, leaving a hand bisect over 284 tests; the singular `cyrius test <file>`
+        # printed NOTHING AT ALL and merely exited 139.
+        #
+        # ⚠ THE FILING THAT PROMPTED THIS (prani, 2026-08-31) CLAIMED THE RUN WAS SCORED AS
+        # A PASS. IT IS NOT, and that is worth recording so nobody re-fixes it: measured at
+        # 6.5.36, a .tcyr that segfaults gives `cyrius test` exit 139 and the suite exit 1
+        # with the failure counted. The reporter almost certainly read `$?` through a pipe,
+        # which yields the LAST command's status — the same trap CLAUDE.md already warns
+        # about for check.sh's grep summary. The real defect is silence, not mis-scoring.
+        #
+        # A signal is distinguished because it is a different KIND of failure: an assertion
+        # failure is the test's verdict, a SIGSEGV is the test never reaching one.
+        # 6.7.6: read from the wait status (`_run_last_signal`), not from exit_code > 128 — a test
+        # that exits 232 was "killed by signal 104".
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var sig = _run_last_signal;
+        if (sig > 0) {
+            var smsg = " (killed by signal ";
+            sys_write(STDERR_FD, smsg, strlen(smsg));
+            var sbuf[24];
+            var slen = fmt_int_buf(sig, &sbuf);
+            sys_write(STDERR_FD, &sbuf, slen);
+            if (sig == 11) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
+            if (sig == 6) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
+            if (sig == 4) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
+            if (sig == 8) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
+            var send = " — the test never reached a verdict)\n";
+            sys_write(STDERR_FD, send, strlen(send));
+        } else {
+            var emsg = " (exit ";
+            sys_write(STDERR_FD, emsg, strlen(emsg));
+            var ebuf[24];
+            var elen = fmt_int_buf(exit_code, &ebuf);
+            sys_write(STDERR_FD, &ebuf, elen);
+            sys_write(STDERR_FD, ")\n", 2);
+        }
+    }
+    return 0;
+}
+
 fn cmd_test(source): i64 {
     # v6.6.5 — `cyrius test --dry-run f.tcyr` consumed the flag and RAN the test
     # anyway (measured: "T1 RAN", exit 3). A dry run compiles nothing and runs
@@ -470,9 +534,14 @@ fn cmd_test(source): i64 {
     var cbuf = file_read_whole(cap, &clen);
     sys_unlink(cap);
     if (cbuf == 0) { clen = 0; }
-    if (clen > 0) { sys_write(STDOUT_FD, cbuf, clen); }
+    var gv = 0;
+    if (exit_code == 0) { gv = _test_grade(source, cbuf, clen); }
+    # 6.7.10 (P5-B): under `cyrius coverage --exec` (`_covx_dump`) only a FAILING test's output is
+    # echoed — the run is the coverage report's, not a test log. CHANGELOG [6.7.10]
+    if (clen > 0) {
+        if (_covx_dump == 0 || exit_code != 0 || gv != 0) { sys_write(STDOUT_FD, cbuf, clen); }
+    }
     if (exit_code == 0) {
-        var gv = _test_grade(source, cbuf, clen);
         if (gv == 0) {
             _pass = _pass + 1;
             return 0;
@@ -486,63 +555,7 @@ fn cmd_test(source): i64 {
         _fail = _fail + 1;
         return 1;
     }
-    if (exit_code == _RUN_TIMEOUT_KILLED) {
-        sys_write(STDERR_FD, "  FAIL: ", 8);
-        sys_write(STDERR_FD, source, strlen(source));
-        sys_write(STDERR_FD, " (timed out after ", 18);
-        var tbuf[24];
-        var tlen = fmt_int_buf(_run_timeout_ms() / 1000, &tbuf);
-        sys_write(STDERR_FD, &tbuf, tlen);
-        # strlen, not a hand-counted literal: the first cut of this line counted 61
-        # for a 63-byte string (the em-dash is 3 bytes) and truncated its own hint
-        # mid-word. There is no reason to count bytes by hand when strlen is in scope.
-        # 6.7.6: the three channels, highest first (argument > environment > manifest)
-        var tmsg = "s — killed; --timeout <seconds>, CYRIUS_TEST_TIMEOUT or [test] timeout raise it, 0 disables)\n";
-        sys_write(STDERR_FD, tmsg, strlen(tmsg));
-    } else {
-        # ⛔ v6.5.37 — NAME THE FAILING TEST, AND SAY IF IT DIED OF A SIGNAL.
-        #
-        # Only the compile-error and timeout branches printed anything, so an ordinary
-        # non-zero exit — an assertion failure OR a SIGSEGV — was counted and never
-        # announced. The suite printed "283 passed, 1 failed" with no indication of WHICH
-        # file, leaving a hand bisect over 284 tests; the singular `cyrius test <file>`
-        # printed NOTHING AT ALL and merely exited 139.
-        #
-        # ⚠ THE FILING THAT PROMPTED THIS (prani, 2026-08-31) CLAIMED THE RUN WAS SCORED AS
-        # A PASS. IT IS NOT, and that is worth recording so nobody re-fixes it: measured at
-        # 6.5.36, a .tcyr that segfaults gives `cyrius test` exit 139 and the suite exit 1
-        # with the failure counted. The reporter almost certainly read `$?` through a pipe,
-        # which yields the LAST command's status — the same trap CLAUDE.md already warns
-        # about for check.sh's grep summary. The real defect is silence, not mis-scoring.
-        #
-        # A signal is distinguished because it is a different KIND of failure: an assertion
-        # failure is the test's verdict, a SIGSEGV is the test never reaching one.
-        # 6.7.6: read from the wait status (`_run_last_signal`), not from exit_code > 128 — a test
-        # that exits 232 was "killed by signal 104".
-        sys_write(STDERR_FD, "  FAIL: ", 8);
-        sys_write(STDERR_FD, source, strlen(source));
-        var sig = _run_last_signal;
-        if (sig > 0) {
-            var smsg = " (killed by signal ";
-            sys_write(STDERR_FD, smsg, strlen(smsg));
-            var sbuf[24];
-            var slen = fmt_int_buf(sig, &sbuf);
-            sys_write(STDERR_FD, &sbuf, slen);
-            if (sig == 11) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
-            if (sig == 6) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
-            if (sig == 4) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
-            if (sig == 8) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
-            var send = " — the test never reached a verdict)\n";
-            sys_write(STDERR_FD, send, strlen(send));
-        } else {
-            var emsg = " (exit ";
-            sys_write(STDERR_FD, emsg, strlen(emsg));
-            var ebuf[24];
-            var elen = fmt_int_buf(exit_code, &ebuf);
-            sys_write(STDERR_FD, &ebuf, elen);
-            sys_write(STDERR_FD, ")\n", 2);
-        }
-    }
+    _test_fail_exit(source, exit_code);
     _fail = _fail + 1;
     return exit_code;
 }

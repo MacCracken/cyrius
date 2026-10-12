@@ -1,0 +1,25 @@
+# Exits 0 by `syscall(SYS_EXIT, 0)` inside a fn. Enters sh_a, sh_b, the #inline sh_inl (a replay,
+# no call) and sh_gen<f64>; names sh_d only in a branch it never takes. Its OWN fns are `<source>`
+# records, never src/ surface: `shapes_local`, and a `shapes` that shadows src/shapes.cyr's (the
+# compiler warns: the last definition wins) — neither may mark src's `shapes` executed.
+include "src/shapes.cyr"
+
+fn shapes_local(): i64 { return 1; }
+
+fn shapes(): i64 { return 2; }
+
+fn run(): i64 {
+    var n = sh_a(1) + sh_b(2) + sh_inl(3);
+    var g: f64 = sh_gen<f64>(1.5);
+    if (n == 0 - 99) { n = sh_d(n); }
+    n = n + shapes_local() + shapes();
+    if (n != 19) { return 1; }
+    return 0;
+}
+
+fn bye(rc): i64 {
+    syscall(SYS_EXIT, rc);
+    return rc;
+}
+
+bye(run());

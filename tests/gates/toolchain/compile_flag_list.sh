@@ -39,6 +39,10 @@
 # (DCE + BOUNDS) -> axis 4, and build_config_windows_arm.sh axis 7 under wine; CYRIUS_POISON pushed
 # by `_cc_child_inject` instead of `_cc_flag_inject` -> axes 4 and 5; `_cc_win_env_apply` applying
 # only the first entry -> axis 5.
+# 6.7.10 (P5-B) — `cyrius coverage --exec` adds CYRIUS_COVERAGE=1 + CYRIUS_COVERAGE_FILE=<dump> to the same
+# list (`_cc_flag_inject`, while `_covx_dump` is set), LAST among the flags: axis 5 drives it alone and
+# with every other flag and the targets on; axis 4 counts its literal once. (The arm deletes the two
+# again once the compiler exits — `_covx_win_unset`, outside the arm text; coverage_exec_cli.sh W1.)
 # The flags actually reaching the compiler through the verbs are pinned elsewhere:
 # build_config_precedence.sh (`--strict` on POSIX) and build_config_windows_arm.sh (all three
 # on the PE arm, under wine).
@@ -165,7 +169,7 @@ else
     grep -vxE 'CYRIUS_(TARGET_[A-Z]+|MACHO|MACHO_ARM|KERNEL|KERNEL_BASE|ELF64_KERNEL)' "$T/pushed" > "$T/nontgt" \
         && fail "axis 4: _cc_child_inject pushes a non-target entry of its own (the POSIX arm only): $(tr '\n' ' ' < "$T/nontgt")— put it in _cc_flag_inject"
 fi
-for lit in CYRIUS_DCE=1 CYRIUS_STRICT_PIN=1 CYRIUS_POISON=1 CYRIUS_PIE=1 CYRIUS_BOUNDS=1 CYRIUS_BOUNDS=0; do
+for lit in CYRIUS_DCE=1 CYRIUS_STRICT_PIN=1 CYRIUS_POISON=1 CYRIUS_PIE=1 CYRIUS_BOUNDS=1 CYRIUS_BOUNDS=0 CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE=; do
     n=$(sed 's/#.*//' cbt/build.cyr | grep -c -- "\"$lit\"" || true)
     [ "$n" = 1 ] || fail "axis 4: \"$lit\" is spelled $n times in cbt/build.cyr (want 1: in _cc_flag_inject / _cc_bounds_entry)"
 done
@@ -193,8 +197,19 @@ mk_env_probe() {   # $1 = the _cc_win_env_apply source to use, $2 = output .cyr
         echo 'var _baremetal_target = 0;'
         echo 'var _section_base_env_ptr = 0;'
         echo 'var _fail_on = 0;'
+        echo 'var _covx_dump = 0;'
         cat <<'CYR'
 fn put(s): i64 { sys_write(1, s, strlen(s)); return 0; }
+# cbt's `_cat2` (cbt/deps.cyr), which `_cc_flag_inject` builds the dump entry with.
+fn _cat2(a, b): i64 {
+    var la = strlen(a);
+    var lb = strlen(b);
+    var p = alloc(la + lb + 1);
+    memcpy(p, a, la);
+    memcpy(p + la, b, lb);
+    store8(p + la + lb, 0);
+    return p;
+}
 # The Windows arm's setter, recording "NAME=value;" per call; it fails (1) on the name _fail_on.
 fn _win_setenv(name, val): i64 {
     if (_fail_on != 0) { if (streq(name, _fail_on) == 1) { return 1; } }
@@ -237,6 +252,10 @@ fn main(): i64 {
     }
     _fail_on = "CYRIUS_POISON";
     row(47, 0);
+    _fail_on = 0;
+    _covx_dump = "/t/cov_1";
+    row(0, 0);
+    row(47, 1);
     return 0;
 }
 var e = main();
@@ -274,6 +293,10 @@ env_want() {
         tg=$((tg + 1))
     done
     echo "CYRIUS_BOUNDS=0;CYRIUS_DCE=1;CYRIUS_STRICT_PIN=1;CYRIUS_POISON=1;CYRIUS_PIE=1;|CYRIUS_BOUNDS=0;CYRIUS_DCE=1;CYRIUS_STRICT_PIN=1;FAILED:CYRIUS_POISON=1"
+    # 6.7.10: the coverage entries, alone and after every other flag (the targets after them on POSIX)
+    echo "CYRIUS_COVERAGE=1;CYRIUS_COVERAGE_FILE=/t/cov_1;|CYRIUS_COVERAGE=1;CYRIUS_COVERAGE_FILE=/t/cov_1;"
+    cv="CYRIUS_BOUNDS=0;CYRIUS_DCE=1;CYRIUS_STRICT_PIN=1;CYRIUS_POISON=1;CYRIUS_PIE=1;CYRIUS_COVERAGE=1;CYRIUS_COVERAGE_FILE=/t/cov_1;"
+    echo "${cv}CYRIUS_TARGET_AGNOS=1;CYRIUS_TARGET_WIN=1;CYRIUS_KERNEL=1;CYRIUS_ELF64_KERNEL=1;CYRIUS_KERNEL_BASE=0x100000;|${cv}"
 }
 x=$FAIL
 env_want > "$T/ewant"

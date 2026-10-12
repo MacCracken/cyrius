@@ -2292,8 +2292,15 @@ _chk_gate "$ROOT/tests/gates/toolchain/toml_key_boundary_and_values.sh"
 
 # 6.6.17 (P5-A) — `cyrius coverage` takes RUN programs as a TEXT corpus ([coverage] programs, or
 # --programs which wins), `*` within one path segment, empty globs named, corpus programs not
-# measured, and --per-entry names which entry references which fn. Execution coverage is v6.7.x.
+# measured, and --per-entry names which entry references which fn. Execution coverage is --exec (below).
 _chk_gate "$ROOT/tests/gates/toolchain/coverage_run_programs.sh"
+
+# 6.7.10 (P5-B) — `cyrius coverage --exec[=<glob>]` / `[coverage] exec`: every .tcyr (as `cyrius test`
+# runs it) and every exec program built with CYRIUS_COVERAGE=1 and run; a public fn counts once a
+# run's dump records entering it (by name: a path component, a `<source>` fn and a `$` suffix never
+# count another fn). A failed run is named and fails the run after the report; the text mode is
+# 6.7.9's stdout byte for byte; the Windows arm under wine deletes the mode before the program runs.
+_chk_gate "$ROOT/tests/gates/toolchain/coverage_exec_cli.sh"
 
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a

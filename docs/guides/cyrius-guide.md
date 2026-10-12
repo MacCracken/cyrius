@@ -3280,6 +3280,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |
 | `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
 | `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
+| `[coverage]` | `exec` | read | — | — | `--exec` | cyrius coverage --exec: RUN programs built instrumented and run; the fns they enter are counted (globs) |
 | `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
 | `[embed]` | `*` | read | — | — | — | every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry |
 | `[test]` | `files` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list) first, then tests/ ([build] test is the older spelling) |
@@ -3522,6 +3523,7 @@ cyrius distlib --all                     # regenerate the base bundle AND every 
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
 cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
 cyrius coverage --programs 'programs/*_test.cyr' --per-entry   # RUN programs join the corpus (6.6.17); which entry references which fn
+cyrius coverage --exec='programs/*_test.cyr' [--min <pct>]     # EXECUTION coverage (6.7.10): every .tcyr + these programs built instrumented and run; --min gates the executed %
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -3572,9 +3574,26 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > `programs/sub/`); a glob that matches nothing, or a program that does not exist, is a named
 > failure; a corpus program is a test, so it is never counted as measured surface. `--per-entry`
 > lists, for every corpus entry, the public fns it references. ⚠ This is TEXT coverage — a
-> reference count, the same measure `.tcyr` corpora get — not execution coverage: building and
-> running instrumented programs (P5-B) is a later 6.7.x item.
+> reference count, the same measure `.tcyr` corpora get — not execution coverage, which is
+> `--exec` (below). `[coverage] programs` stays text in both modes.
 > Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
+>
+> ⚠ **`coverage --exec` measures what RUNS** (6.7.10). `cyrius coverage --exec[=<glob>]`
+> (repeatable), or `[coverage] exec = ["programs/*_test.cyr"]` in cyrius.cyml (which alone turns
+> the mode on; `--exec=<glob>` replaces its list), builds every `tests/**/*.tcyr` — exactly as
+> `cyrius test` builds and grades it — and every program the globs name (as `cyrius run` builds
+> it) with the execution-coverage mode on (`CYRIUS_COVERAGE=1`, a dump file of its own), runs
+> each one, and counts a public fn as executed once a run's dump records entering it. The report
+> keeps every reference figure as text mode prints it and adds `E/T executed` per file and
+> `Functions executed: E/T (p%)`; `--min` gates the executed percentage, and `-v` (or a failed
+> `--min`) lists the unexecuted fns (`#naked` ones say they are not instrumented). The count is
+> by NAME, as the reference count is: a record's path, the entry file's own fns (`<source>`) and
+> a generic instance's `$` suffix never mark a different fn executed. A run that fails — a
+> nonzero exit, a signal, a timeout, or an exit 0 that left no coverage record (an `asm` exit,
+> a runtime-variable exit number, an exec) — is named (`FAIL: <path> (exit N)`); every entry
+> still runs, the report is still printed, and the run exits 1. A dump path over 255 bytes (a
+> very long `TMPDIR`) is refused by name before anything is built. Pinned by
+> `tests/gates/toolchain/coverage_exec_cli.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
 > The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows, macOS

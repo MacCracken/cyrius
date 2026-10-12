@@ -1,0 +1,6 @@
+# One level down (`programs/*_test.cyr` does not reach it), and it spells its include path its own
+# way: its record reads `./src/shapes.cyr:<line> sh_d`, and the NAME is what counts.
+include "./src/shapes.cyr"
+
+var r = sh_d(3) - 9;
+syscall(SYS_EXIT, r);

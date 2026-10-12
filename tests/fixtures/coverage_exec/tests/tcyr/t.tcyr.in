@@ -1,0 +1,5 @@
+# The fixture's one test (the gate renames it t.tcyr): sh_c is entered only here.
+include "src/shapes.cyr"
+
+assert_eq(sh_c(5), 4, "sh_c");
+var r = assert_summary();

@@ -136,6 +136,8 @@ fn _help_build(): i64 {
     _help_row("fuzz [--poison[=ab]] [--bounds] [file.fcyr|dir]", "run fuzz harnesses (default: fuzz/ + tests/)");
     _help_row("coverage [--full] [--min <pct>]",
       "reference coverage of project src/ (--full=vendored lib/; --min gates CI)");
+    _help_row("coverage --exec",
+      "execution coverage: every .tcyr + each [coverage] exec / --exec=<glob> program, run instrumented");
     _help_row("doctest <file.cyr>", "run doc examples");
     _help_row("smoke", "run tests/smcyr/*.smcyr quick-validation programs");
     _help_row("soak [N]", "N-iter self-host loop + tests/scyr/*.scyr harnesses");
@@ -702,6 +704,9 @@ fn main(): i64 {
     # The BEGIN/END markers are the gate's parse anchors: keep the verbs between
     # them and keep every OTHER streq(cmd, ...) a real dispatch site.
     # CHANGELOG [6.5.19].
+    # 6.7.10 (P5-B): `coverage` joins ONLY in its exec mode (`--exec` / `[coverage] exec`,
+    # `_covx_wanted`, cbt/quality.cyr), which builds every corpus entry; the text mode compiles
+    # nothing and resolves nothing, exactly as before. CHANGELOG [6.7.10]
     # 6.6.17: `cyrius build --print-config` resolves the configuration and prints it, then exits
     # WITHOUT building — so it runs here, ahead of the dep resolver below, which writes lib/.
     if (streq(cmd, "build") == 1 && _cli_has("--print-config") == 1) {
@@ -710,7 +715,7 @@ fn main(): i64 {
         return _cfg_print_config(_cli_pos_at(0), _cli_pos_at(1));
     }
     # AUTO_DEPS_VERBS BEGIN
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1 || (streq(cmd, "coverage") == 1 && _covx_wanted() == 1)) {
         # AUTO_DEPS_VERBS END
         # 6.7.6 (R): the operands are checked BEFORE the resolve — `cyrius run missing.cyr` cloned
         # and vendored every dependency and only then said "no such file".
@@ -1223,7 +1228,15 @@ fn main(): i64 {
                 return 1;
             }
         }
-        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0), cov_progs, _cli_has("--per-entry"));
+        # 6.7.10 (P5-B): EXECUTION coverage — `--exec[=<glob>]` (repeatable) beats `[coverage] exec`;
+        # 0 = the text mode, untouched. The exec mode builds the .tcyr in the test scope (cmd_test),
+        # as `cyrius test` does; its programs build in the build scope (_covx_prog).
+        var cov_x = _covx_resolve();
+        if (cov_x < 0) { return 1; }
+        if (cov_x != 0) {
+            if (_tc_setup("test") != 0) { return 1; }
+        }
+        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0), cov_progs, _cli_has("--per-entry"), cov_x);
     }
 
     if (streq(cmd, "doctest") == 1) {

@@ -77,6 +77,8 @@ fn _mf_vocab_b(i): i64 {
     if (i == 45) { return "test.embed|*|read|-|-|-|test / bench / fuzz compiles only: as [embed] (NAME() / NAME_len())"; }
     # 6.7.8 (C2-7): the bounds-checked mode — every verb that takes --bounds reads it
     if (i == 46) { return "build|bounds|read|-|CYRIUS_BOUNDS|--bounds|build / run / test / fuzz: the bounds-checked mode (bool); an entry file's #bounds line is the lowest rung"; }
+    # 6.7.10 (P5-B): the execution-coverage mode's programs — `[coverage] programs` stays TEXT coverage
+    if (i == 47) { return "coverage|exec|read|-|-|--exec|cyrius coverage --exec: RUN programs built instrumented and run; the fns they enter are counted (globs)"; }
     return 0;
 }
 
@@ -1320,7 +1322,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 21;
+var _CFG_N = 22;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -1344,6 +1346,7 @@ var _CK_TEST_TIMEOUT = 17; # an int (seconds); 0 = no deadline
 var _CK_TEST_STDLIB = 18;
 var _CK_TEST_EMBED = 19;   # [test.embed], as "NAME=path"
 var _CK_BOUNDS = 20;       # 6.7.8 (C2-7): the bounds-checked mode (bool; build / run / test / fuzz)
+var _CK_COV_EXEC = 21;     # 6.7.10 (P5-B): [coverage] exec, the execution-coverage programs (globs)
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -1377,6 +1380,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_TEST_STDLIB) { return "test.stdlib"; }
     if (i == _CK_TEST_EMBED) { return "test.embed"; }
     if (i == _CK_BOUNDS) { return "build.bounds"; }
+    if (i == _CK_COV_EXEC) { return "coverage.exec"; }
     return "embed";
 }
 
@@ -1386,7 +1390,7 @@ fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE || i == _CK_BOUNDS) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
     if (i == _CK_TEST_FILES || i == _CK_TEST_MODULES || i == _CK_TEST_DEFINES || i == _CK_TEST_STDLIB) { return 2; }
-    if (i == _CK_TEST_EMBED) { return 2; }
+    if (i == _CK_TEST_EMBED || i == _CK_COV_EXEC) { return 2; }
     return 0;
 }
 
@@ -1622,6 +1626,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_mf_bool(_CK_TEST_STANDALONE, "build", "test_standalone") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_PROGRAMS, "coverage", "programs") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_COV_EXEC, "coverage", "exec") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
     # package.version is printed as the BUILD sees it: `${file:PATH}` expanded, and unset (no

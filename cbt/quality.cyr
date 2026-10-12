@@ -34,11 +34,18 @@
 # 6.6.17 (P5-A): RUN PROGRAMS join the corpus — `programs` is a vec of globs (`--programs`, else
 # `[coverage] programs`), each matched file read whole, blanked and counted exactly as a .tcyr is.
 # This is TEXT coverage (the same reference count .tcyr corpora get), NOT execution coverage —
-# that is P5-B, v6.7.x. A corpus program is a test, so it leaves the measured surface (the '.'
+# that is `--exec` (6.7.10, below). A corpus program is a test, so it leaves the measured surface (the '.'
 # fallback would otherwise count it and let it reference itself). `per_entry` adds the view of
 # which corpus entry references which public fn. rekha, sadish, dhancha, setu and mishran test
 # with programs/*_test.cyr and read ~0%. CHANGELOG [6.6.17]
-fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
+# 6.7.10 (P5-B): EXECUTION coverage beside it — `xprogs` (0 = text mode, untouched) is the vec of
+# `--exec=<glob>` / `[coverage] exec` globs (possibly empty). Every tests/**/*.tcyr and every
+# program those globs name is built instrumented and run (`_covx_run`); a public fn counts as
+# executed once a run's dump records entering it (`_covx_read`, the NAME model the reference count
+# uses). The reference figures print exactly as in text mode; the executed ones are added, and
+# `--min` gates the executed %. A failed run (a nonzero exit, a signal, a timeout, no coverage
+# record) is named as it happens and fails the run after the report. CHANGELOG [6.7.10]
+fn cmd_coverage(full, min_pct, root_arg, programs, per_entry, xprogs): i64 {
 
     # Scan root: an explicit callout wins, then lib/ for --full, else the project's own
     # src/ (recursive).
@@ -72,14 +79,26 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
     var prog_files = 0;
     if (programs != 0) {
         if (vec_len(programs) > 0) {
-            prog_files = _cov_expand_programs(programs);
+            prog_files = _cov_expand_programs(programs, "programs");
             if (prog_files == 0) { return 1; }
             sys_write(STDOUT_FD, "  corpus: tests/**/*.tcyr + ", 28);
             fmt_int(vec_len(prog_files));
             println(" RUN program(s), as text (references, not execution)");
         }
     }
+    # 6.7.10 (P5-B): the exec programs, expanded the same way (a glob that matches nothing fails)
+    var xprog_files = vec_new();
+    if (xprogs != 0) {
+        if (vec_len(xprogs) > 0) {
+            xprog_files = _cov_expand_programs(xprogs, "exec");
+            if (xprog_files == 0) { return 1; }
+        }
+        sys_write(STDOUT_FD, "  exec: tests/**/*.tcyr + ", 26);
+        fmt_int(vec_len(xprog_files));
+        println(" RUN program(s), built instrumented and run (execution coverage)");
+    }
     println("");
+    var xtests = vec_new();                   # 6.7.10: the .tcyr the exec run builds and runs
     var ent_path = vec_new();                 # corpus entries, for --per-entry
     var ent_off = vec_new();
     var ent_len = vec_new();
@@ -165,6 +184,7 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
                         vec_push(ent_len, n);
                         corpus_len = corpus_len + n;
                     }
+                    vec_push(xtests, str_data(tf));
                     ti = ti + 1;
                 }
             } else {
@@ -213,6 +233,22 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
         _err("coverage: out of memory indexing the test corpus");
         return 1;
     }
+    # 6.7.10 (P5-B): the exec run — every .tcyr, then every exec program, built instrumented and run.
+    # `xids` holds the fns some run entered (names), `kids` the #naked ones it reported as not
+    # instrumented; `xfailed` the runs that failed, each already named.
+    var xids = 0;
+    var kids = 0;
+    var xfailed = 0;
+    if (xprogs != 0) {
+        xfailed = _covx_run(xtests, xprog_files);
+        if (xfailed < 0) { return 1; }
+        xids = _covx_ids(_covx_xsb);
+        kids = _covx_ids(_covx_ksb);
+        if (xids == 0 || kids == 0) {
+            _err("coverage: out of memory indexing the executed fns");
+            return 1;
+        }
+    }
 
     # The sources to measure. ⛔ 6.6.8: the vendored-tree prune is applied at the TOP LEVEL
     # of the '.' fallback only. It used to be a by-NAME prune at every depth, so a project
@@ -223,6 +259,7 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
     var srcs = _cov_sources(root);
     if (srcs == 0) { return 1; }             # 6.6.10: a directory could not be listed (named)
     if (prog_files != 0) { srcs = _cov_drop_corpus(srcs, prog_files); }
+    if (vec_len(xprog_files) > 0) { srcs = _cov_drop_corpus(srcs, xprog_files); }
     var all_path = vec_new();                 # every public fn, for --per-entry
     var all_name = vec_new();
 
@@ -232,6 +269,9 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
     var covered_fns = 0;
     var miss_path = vec_new();                # unreferenced public fns, for the report
     var miss_name = vec_new();
+    var xcovered_fns = 0;                     # 6.7.10: executed public fns, and the rest
+    var xmiss_path = vec_new();
+    var xmiss_name = vec_new();
     # ⛔ 6.6.8: WHOLE-FILE READS. Each source went into a fixed 256 KiB buffer with no
     # truncation check, so every fn past the cut was never counted — bayan's pdf.cyr
     # (399,907 B) showed 114 of its 152 fns. `file_read_whole_into` grows the buffer (it
@@ -260,6 +300,7 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
 
         var pub_fns = 0;
         var called = 0;
+        var xcalled = 0;
         var pos = 0;
         var depth = 0;                        # brace depth: only depth-0 fns are top-level
         while (pos < ln) {
@@ -294,6 +335,15 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
                     vec_push(miss_path, spath);
                     vec_push(miss_name, str_from_buf(lbuf + ns, fname_len));
                 }
+                if (xids != 0) {
+                    if (_src_ids_has(xids, lbuf + ns, fname_len) == 1) {
+                        xcalled = xcalled + 1;
+                        xcovered_fns = xcovered_fns + 1;
+                    } else {
+                        vec_push(xmiss_path, spath);
+                        vec_push(xmiss_name, str_from_buf(lbuf + ns, fname_len));
+                    }
+                }
             }
             pos = le + 1;
         }
@@ -315,7 +365,14 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
         fmt_int(called);
         sys_write(STDOUT_FD, "/", 1);
         fmt_int(pub_fns);
-        sys_write(STDOUT_FD, " fns\n", 5);
+        if (xids == 0) { sys_write(STDOUT_FD, " fns\n", 5); }
+        else {
+            sys_write(STDOUT_FD, " fns, ", 6);
+            fmt_int(xcalled);
+            sys_write(STDOUT_FD, "/", 1);
+            fmt_int(pub_fns);
+            sys_write(STDOUT_FD, " executed\n", 10);
+        }
     }
 
     var pct = 0;
@@ -335,6 +392,27 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
     sys_write(STDOUT_FD, " (", 2);
     fmt_int(pct);
     println("%)  [reference coverage — a floor, not a correctness proof]");
+    # 6.7.10 (P5-B): the executed figure, and what the exec run did
+    var xpct = 0;
+    if (xids != 0) {
+        if (total_fns > 0) { xpct = (xcovered_fns * 100) / total_fns; }
+        sys_write(STDOUT_FD, "  Functions executed: ", 22);
+        fmt_int(xcovered_fns);
+        sys_write(STDOUT_FD, "/", 1);
+        fmt_int(total_fns);
+        sys_write(STDOUT_FD, " (", 2);
+        fmt_int(xpct);
+        println("%)  [execution coverage — entered at least once by a corpus run]");
+        sys_write(STDOUT_FD, "  Corpus runs: ", 15);
+        fmt_int(vec_len(xtests) + vec_len(xprog_files));
+        sys_write(STDOUT_FD, " (", 2);
+        fmt_int(vec_len(xtests));
+        sys_write(STDOUT_FD, " .tcyr, ", 8);
+        fmt_int(vec_len(xprog_files));
+        sys_write(STDOUT_FD, " program(s)), ", 14);
+        fmt_int(xfailed);
+        println(" failed");
+    }
 
     # ⛔ v6.5.8: MEASURING NOTHING IS NOT PASSING. This printed a `note:` and returned 0,
     # so `cyrius coverage --min 80` in a directory with no sources — a mistyped path, a CI
@@ -345,25 +423,51 @@ fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
         _err_ctx("no public functions found — nothing was measured, so this is not a pass; check the path", root);
         return 1;
     }
+    # 6.7.10 (P5-B): under --exec, --min gates the EXECUTED percentage — the number the mode exists for
+    var gpct = pct;
+    if (xids != 0) { gpct = xpct; }
     var gate_fail = 0;
-    if (min_pct >= 0) { if (pct < min_pct) { gate_fail = 1; } }
+    if (min_pct >= 0) { if (gpct < min_pct) { gate_fail = 1; } }
     # Name the misses under -v and whenever the gate fails: a failed gate with only a
     # percentage tells a project nothing about WHAT to cover. CHANGELOG [6.6.8]
-    if (_verbose == 1 || gate_fail == 1) { _cov_print_misses(miss_path, miss_name); }
+    if (_verbose == 1 || (gate_fail == 1 && xids == 0)) { _cov_print_misses(miss_path, miss_name); }
+    if (xids != 0 && (_verbose == 1 || gate_fail == 1)) { _covx_print_misses(xmiss_path, xmiss_name, kids); }
     if (per_entry == 1) {
         if (_cov_print_per_entry(corpus, ent_path, ent_off, ent_len, all_path, all_name) != 0) { return 1; }
     }
+    var rc = 0;
     if (min_pct >= 0) {
         if (gate_fail == 1) {
             sys_write(STDERR_FD, "coverage gate FAILED: ", 22);
-            fmt_int_fd(2, pct); sys_write(STDERR_FD, "% < --min ", 10); fmt_int_fd(2, min_pct);
+            fmt_int_fd(2, gpct);
+            if (xids != 0) { sys_write(STDERR_FD, "% executed < --min ", 19); }
+            else { sys_write(STDERR_FD, "% < --min ", 10); }
+            fmt_int_fd(2, min_pct);
             sys_write(STDERR_FD, "%\n", 2);
-            return 1;
+            rc = 1;
+        } else {
+            sys_write(STDOUT_FD, "  gate OK: ", 11);
+            fmt_int(gpct);
+            if (xids != 0) { sys_write(STDOUT_FD, "% executed >= --min ", 20); }
+            else { sys_write(STDOUT_FD, "% >= --min ", 11); }
+            fmt_int(min_pct);
+            println("%");
         }
-        sys_write(STDOUT_FD, "  gate OK: ", 11);
-        fmt_int(pct); sys_write(STDOUT_FD, "% >= --min ", 11); fmt_int(min_pct); println("%");
     }
-    return 0;
+    # 6.7.10 (P5-B): a corpus run that failed fails the run — after the report, so every entry ran
+    # and the figures are there to read
+    if (xfailed > 0) {
+        _progress_close();
+        _err_count = _err_count + 1;
+        sys_write(STDERR_FD, "error: coverage --exec: ", 24);
+        fmt_int_fd(2, xfailed);
+        sys_write(STDERR_FD, " of ", 4);
+        fmt_int_fd(2, vec_len(xtests) + vec_len(xprog_files));
+        var xfm = " corpus run(s) failed, each named above — the report is complete, the run is not a pass\n";
+        sys_write(STDERR_FD, xfm, strlen(xfm));
+        rc = 1;
+    }
+    return rc;
 }
 
 # The `.cyr` files cmd_coverage measures under `root`. A named root (src/, lib/, a callout)
@@ -599,7 +703,8 @@ fn _cov_glob_walk(dir, depth, pat, out): i64 {
 # 6.6.17 (P5-A): the RUN programs a list of globs names, sorted and de-duplicated. A literal path
 # must be a file; a glob must match at least one — either miss is a named failure (0), because a
 # typo'd glob would otherwise drop the whole programs corpus and the percentage with it.
-fn _cov_expand_programs(pats): i64 {
+# `key` names the list in the messages: "programs" (text) or "exec" (6.7.10).
+fn _cov_expand_programs(pats, key): i64 {
     var out = vec_new();
     var i = 0;
     while (i < vec_len(pats)) {
@@ -607,7 +712,8 @@ fn _cov_expand_programs(pats): i64 {
         i = i + 1;
         if (_cov_has_wild(pat) == 0) {
             if (file_exists(pat) == 0 || is_dir(str_from(pat)) == 1) {
-                _err_ctx("coverage: no such program (--programs / [coverage] programs)", pat);
+                var nsp = _cat2(_cat2("coverage: no such program (--", key), " / [coverage] ");
+                _err_ctx(_cat2(_cat2(nsp, key), ")"), pat);
                 return 0;
             }
             _cov_push_unique(out, pat);
@@ -639,7 +745,7 @@ fn _cov_expand_programs(pats): i64 {
             if (_cov_glob_walk(dir, depth, pat, m) != 0) { return 0; }
         }
         if (vec_len(m) == 0) {
-            _err_ctx("coverage: this programs glob matches no file", pat);
+            _err_ctx(_cat2(_cat2("coverage: this ", key), " glob matches no file"), pat);
             return 0;
         }
         var mi = 0;
@@ -650,6 +756,283 @@ fn _cov_expand_programs(pats): i64 {
     }
     vec_sort_by(out, &_cov_cstr_cmp);
     return out;
+}
+
+# ================================================================
+# 6.7.10 (P5-B) — EXECUTION COVERAGE: `cyrius coverage --exec[=<glob>]` / `[coverage] exec`
+# ================================================================
+# The compiler half is the CYRIUS_COVERAGE=1 mode (src/frontend/parse_cov.cyr): every fn body bumps
+# its own counter, and the program appends `# cyrius-coverage 1` and one `<count> <file>:<line>
+# <name>` per fn it entered (`- <file>:<line> <name>` for a #naked fn, which is not instrumented) to
+# CYRIUS_COVERAGE_FILE when it leaves through the top level or an exit syscall with a constant
+# number. This half builds each corpus entry in that mode with a dump file of its own, runs it, and
+# reads the dump. A run can leave no record — an asm exit, a runtime-variable exit number, an exec,
+# an open the program's own sandbox denies — and one that exits 0 with no record FAILS by name: a
+# silent zero would read as unexecuted code (the fail-open class 6.6.10 closed). The dump records
+# counts; only hit-ness is read (a forked child's block repeats its parent's counts).
+var _covx_xsb = 0;    # the executed fns' names, one per line (a str_builder)
+var _covx_ksb = 0;    # the #naked fns' names: reported "not instrumented", never counted
+
+# 1 when this `cyrius coverage` runs in the exec mode: `--exec` (with or without a glob), or a
+# non-empty `[coverage] exec`. Asked by the AUTO_DEPS chain (cbt/cyrius.cyr) so an exec run gets
+# the [deps] prepend its builds need, and a text run resolves nothing, as before. A malformed
+# manifest or `[coverage] exec` answers 0 here; the coverage branch names it before anything runs.
+fn _covx_wanted(): i64 {
+    if (_cli_has("--exec") == 1) { return 1; }
+    if (_mf_load() != 1) { return 0; }
+    var mx = _mf_strs("coverage", "exec");
+    if (_toml_bad == 1) {
+        _toml_bad = 0;
+        return 0;
+    }
+    if (mx == 0) { return 0; }
+    if (vec_len(mx) == 0) { return 0; }
+    return 1;
+}
+
+# The exec mode's program globs: `--exec=<glob>` (repeatable) beats `[coverage] exec`, the one
+# precedence every key follows. Answers 0 for the text mode (no `--exec`, no `[coverage] exec`), a
+# vec (empty for a bare `--exec` with no manifest list: the .tcyr corpus alone), or -1 after naming
+# a manifest that cannot be read or an `exec` that is not a glob or a list of globs.
+fn _covx_resolve(): i64 {
+    var xv = _cli_values("--exec");
+    if (vec_len(xv) > 0) { return xv; }
+    if (_mf_load() < 0) { return 0 - 1; }
+    var mx = _mf_strs("coverage", "exec");
+    if (_toml_bad == 1) {
+        _cfg_bad("coverage", "exec", "a glob or an array of globs");
+        return 0 - 1;
+    }
+    if (mx != 0) {
+        if (vec_len(mx) > 0) { return mx; }
+    }
+    if (_cli_has("--exec") == 1) { return vec_new(); }
+    return 0;
+}
+
+# `<tmp>/cov_<n>` — the dump file of the run's n-th entry.
+fn _covx_dump_path(n): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cov_");
+    str_builder_add_int(sb, n);
+    return _cbt_tmpfile(str_data(str_builder_build(sb)));
+}
+
+fn _covx_fail(path, why): i64 {
+    sys_write(STDERR_FD, "  FAIL: ", 8);
+    sys_write(STDERR_FD, path, strlen(path));
+    sys_write(STDERR_FD, why, strlen(why));
+    sys_write(STDERR_FD, "\n", 1);
+    return 1;
+}
+
+# Build and run every corpus entry instrumented — each .tcyr, then each exec program — and gather
+# the fns their dumps record. Every entry runs whatever the others did. Answers the number of
+# failed runs (each named as it happened), or -1 after naming why nothing could run.
+fn _covx_run(tests, progs): i64 {
+    _covx_xsb = str_builder_new();
+    _covx_ksb = str_builder_new();
+    var total = vec_len(tests) + vec_len(progs);
+    if (total == 0) {
+        var nm = "coverage --exec: nothing to run — no tests/**/*.tcyr and no --exec / [coverage] exec program;";
+        _err(_cat2(nm, " nothing was executed, so this is not a pass"));
+        return 0 - 1;
+    }
+    # The longest dump path, checked before anything is built: the compiler reads
+    # CYRIUS_COVERAGE_FILE through a 255-byte buffer, and a longer value is refused there.
+    var lp = _covx_dump_path(total);
+    if (strlen(lp) > 255) {
+        var lm = "coverage --exec: the coverage dump path is over 255 bytes, more than the compiler reads from";
+        _err_ctx(_cat2(lm, " CYRIUS_COVERAGE_FILE; set TMPDIR to a shorter directory"), lp);
+        return 0 - 1;
+    }
+    var failed = 0;
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(tests)) {
+        n = n + 1;
+        failed = failed + _covx_entry(vec_get(tests, i), 1, n);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < vec_len(progs)) {
+        n = n + 1;
+        failed = failed + _covx_entry(vec_get(progs, i), 0, n);
+        i = i + 1;
+    }
+    return failed;
+}
+
+# One corpus entry: its dump created fresh (0600, ours, `O_EXCL`: the program only appends to it),
+# the entry built in the coverage mode and run — a .tcyr through `cmd_test` whole (the test scope,
+# [test], the timeout, the assert-summary grade, the FAIL wording), a program through `_covx_prog`
+# — then the dump read and removed. 0 when it passed and left a record, else 1 (named).
+fn _covx_entry(path, is_test, n): i64 {
+    var dp = _covx_dump_path(n);
+    sys_unlink(dp);
+    var fd = sys_open(dp, O_WRONLY | O_CREAT | O_EXCL, 0x180);
+    if (fd < 0) {
+        _err_ctx("coverage --exec cannot create the run's coverage dump", dp);
+        return _covx_fail(path, " (not run)");
+    }
+    sys_close(fd);
+    _covx_dump = dp;
+    var rc = 0;
+    if (is_test == 1) { rc = cmd_test(path); }
+    else { rc = _covx_prog(path); }
+    _covx_dump = 0;
+    var hdr = _covx_read(dp);
+    sys_unlink(dp);
+    if (rc != 0) { return 1; }
+    if (hdr == 1) { return 0; }
+    var nr = " (exited 0 but left no coverage record: an asm exit, a runtime-variable exit number, an exec,";
+    return _covx_fail(path, _cat2(nr, " or an open the program's sandbox denied)"));
+}
+
+# An exec program, in the BUILD scope (as `cyrius run`: no [test] modules / defines / stdlib), run
+# with its stdout captured and shown only when it fails. 0 when it exited 0, else 1 (named in
+# `cyrius test`'s words).
+fn _covx_prog(path): i64 {
+    var ts = _test_scope;
+    _test_scope = 0;
+    var r = _covx_prog_run(path);
+    _test_scope = ts;
+    return r;
+}
+
+fn _covx_prog_run(path): i64 {
+    var bin = _cbt_tmpexe("covx_bin");
+    var pre_err = _err_count;
+    if (compile(path, bin) != 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, path, strlen(path));
+        if (_compile_fail_verdict(pre_err, STDERR_FD, ": compile error") == 1) {
+            var nc = " (not compiled; see the error above)\n";
+            sys_write(STDERR_FD, nc, strlen(nc));
+        }
+        sys_unlink(bin);
+        return 1;
+    }
+    var cap = _cbt_tmpfile("covx_out");
+    sys_unlink(cap);
+    var cfd = sys_open(cap, O_WRONLY | O_CREAT | O_EXCL, 0x180);
+    if (cfd < 0) {
+        _err_ctx("coverage --exec cannot capture the program's output", cap);
+        sys_unlink(bin);
+        return _covx_fail(path, " (not run)");
+    }
+    sys_close(cfd);
+    _run_stdout_to = cap;
+    var ec = run_binary_timed(bin, _run_timeout_ms(), 0);
+    _run_stdout_to = 0;
+    sys_unlink(bin);
+    var clen = 0;
+    var cbuf = file_read_whole(cap, &clen);
+    sys_unlink(cap);
+    if (ec == 0) { return 0; }
+    if (cbuf != 0 && clen > 0) { sys_write(STDOUT_FD, cbuf, clen); }
+    _test_fail_exit(path, ec);
+    return 1;
+}
+
+# Read one dump: every record after a `# cyrius-coverage 1` header joins the name sets
+# (`_covx_record`). 1 when a header was there, else 0 (no file, an empty one, or no header).
+fn _covx_read(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0; }
+    var hdr = 0;
+    var p = 0;
+    while (p < n) {
+        var e = p;
+        while (e < n && load8(b + e) != 10) { e = e + 1; }
+        if (e - p == 19 && memeq(b + p, "# cyrius-coverage 1", 19) == 1) { hdr = 1; }
+        elif (hdr == 1) { _covx_record(b + p, e - p); }
+        p = e + 1;
+    }
+    return hdr;
+}
+
+# One record r[0, n): `<count> <file>:<line> <name>` (a count >= 1) or `- <file>:<line> <name>`.
+# ONLY the NAME field (the last one) joins a set: the whole line would add `src`, `shapes` and
+# `cyr` from the path, and a fn named like a path component would read as executed. The entry's
+# own fns (`<source>`) and the compiler's (`__cyrius_*`, closures `__cl*`) are not measured
+# surface; a generic instance or an async body counts for its fn — the name is cut at its first
+# `$` (`gen$f64` -> gen, `f$impl` -> f). 1 when a name was added, else 0.
+fn _covx_record(r, n): i64 {
+    var naked = 0;
+    var f = 0;
+    if (n > 0 && load8(r) == 45) {
+        naked = 1;
+        f = 1;
+    } else {
+        if (n == 0 || load8(r) < 49 || load8(r) > 57) { return 0; }
+        while (f < n && load8(r + f) >= 48 && load8(r + f) <= 57) { f = f + 1; }
+    }
+    if (f >= n || load8(r + f) != 32) { return 0; }
+    var fs = f + 1;
+    if (n - fs >= 9 && memeq(r + fs, "<source>:", 9) == 1) { return 0; }
+    var ls = n;
+    while (ls > fs && load8(r + ls - 1) != 32) { ls = ls - 1; }
+    if (ls <= fs) { return 0; }
+    var nm = r + ls;
+    var nl = n - ls;
+    if (nl >= 9 && memeq(nm, "__cyrius_", 9) == 1) { return 0; }
+    if (nl >= 4 && memeq(nm, "__cl", 4) == 1) { return 0; }
+    var k = 0;
+    while (k < nl && load8(nm + k) != 36) { k = k + 1; }
+    if (k == 0) { return 0; }
+    var sb = _covx_xsb;
+    if (naked == 1) { sb = _covx_ksb; }
+    str_builder_add(sb, str_new(nm, k));
+    str_builder_add_cstr(sb, "\n");
+    return 1;
+}
+
+# The name set of one builder's lines (the identifier set text coverage asks, `_src_ids_*`); each
+# line is ONE name, added whole — never re-tokenised, so a name holding a byte outside an
+# identifier cannot lend its parts to another fn. 0 when out of memory.
+fn _covx_ids(sb): i64 {
+    var s = str_builder_build(sb);
+    if (s == 0) { return 0; }
+    var b = str_data(s);
+    var n = str_len(s);
+    var set = _src_ids_new(n);
+    if (set == 0) { return 0; }
+    var p = 0;
+    while (p < n) {
+        var e = p;
+        while (e < n && load8(b + e) != 10) { e = e + 1; }
+        if (e > p) {
+            if (_src_ids_add(set, b + p, e - p) != 0) { return 0; }
+        }
+        p = e + 1;
+    }
+    return set;
+}
+
+# The public fns no corpus run entered, one `  <source path>: <name>` per line; a #naked one (its
+# body is not instrumented, so it can never read as entered) says so.
+fn _covx_print_misses(miss_path, miss_name, kids): i64 {
+    var nm = vec_len(miss_name);
+    println("");
+    sys_write(STDOUT_FD, "-- Unexecuted (", 15);
+    fmt_int(nm);
+    println(") --");
+    var nk = "  (#naked: not instrumented)";
+    var mi = 0;
+    while (mi < nm) {
+        var mp = vec_get(miss_path, mi);
+        var mn = vec_get(miss_name, mi);
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, mp, strlen(mp));
+        sys_write(STDOUT_FD, ": ", 2);
+        sys_write(STDOUT_FD, str_data(mn), str_len(mn));
+        if (_src_ids_has(kids, str_data(mn), str_len(mn)) == 1) { sys_write(STDOUT_FD, nk, strlen(nk)); }
+        println("");
+        mi = mi + 1;
+    }
+    return 0;
 }
 
 # ================================================================

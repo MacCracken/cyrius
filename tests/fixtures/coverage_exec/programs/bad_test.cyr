@@ -1,0 +1,5 @@
+# Enters sh_c, then exits 1: a failing RUN program fails `cyrius coverage --exec`, by name.
+include "src/shapes.cyr"
+
+var r = sh_c(2);
+syscall(SYS_EXIT, r);

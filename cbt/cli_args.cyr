@@ -132,7 +132,7 @@ fn _cli_spec_b(verb): i64 {
     if (streq(verb, "lint") == 1) { return "--strict|--strict-deferrals|--exit-with-count"; }
     if (streq(verb, "fmt") == 1) { return "--check|--dry|--write"; }
     if (streq(verb, "doc") == 1) { return "--check"; }
-    if (streq(verb, "coverage") == 1) { return "--full|--min=|--programs=|--per-entry"; }
+    if (streq(verb, "coverage") == 1) { return "--full|--min=|--programs=|--per-entry|--exec?"; }
     if (streq(verb, "api-surface") == 1) { return "--update|--scope=|--snapshot="; }
     if (streq(verb, "deps") == 1) { return "--verify|--lock|--no-lock|--relock|--dry-run"; }
     if (streq(verb, "clean") == 1) { return "--dry-run"; }
@@ -321,7 +321,13 @@ fn _cli_help_extra(verb): i64 {
         println("");
         println("  --programs <glob>  add RUN programs (e.g. 'programs/*_test.cyr') to the corpus; repeatable;");
         println("                     beats ./cyrius.cyml [coverage] programs. TEXT coverage (references),");
-        println("                     not execution coverage (that is v6.7.x).");
+        println("                     not execution coverage (that is --exec).");
+        println("  --exec[=<glob>]    EXECUTION coverage as well: every tests/**/*.tcyr (run as `cyrius test`");
+        println("                     runs it) and every RUN program the glob names (repeatable; beats");
+        println("                     ./cyrius.cyml [coverage] exec, which alone turns the mode on) is built");
+        println("                     instrumented and run; a fn counts once a run enters it. A nonzero exit,");
+        println("                     a signal, a timeout or a run that leaves no coverage record fails the");
+        println("                     run, by name; --min gates the executed percentage.");
         println("  --per-entry        list, for each corpus entry, the public fns it references");
     }
     if (streq(verb, "test") == 1) {
@@ -455,6 +461,7 @@ fn _cli_fail(verb, msg, tok): i64 {
 fn _cli_multi(name): i64 {
     if (streq(name, "-D") == 1) { return 1; }
     if (streq(name, "--programs") == 1) { return 1; }
+    if (streq(name, "--exec") == 1) { return 1; }
     if (streq(name, "--features") == 1) { return 1; }
     return 0;
 }

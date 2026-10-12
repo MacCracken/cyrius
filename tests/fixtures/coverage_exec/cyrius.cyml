@@ -1,0 +1,10 @@
+# The `cyrius coverage --exec` fixture (tests/gates/toolchain/coverage_exec_cli.sh): a rekha-shaped
+# project — a src/ library, RUN programs (programs/*_test.cyr), one .tcyr. The gate copies it to a
+# scratch directory and renames tests/tcyr/t.tcyr.in to t.tcyr (a .tcyr under this repo's tests/
+# would join this repo's own `cyrius test` corpus).
+[package]
+name = "coverage_exec"
+version = "0.1.0"
+
+[deps]
+stdlib = ["syscalls", "string", "alloc", "io", "fmt", "vec", "assert"]

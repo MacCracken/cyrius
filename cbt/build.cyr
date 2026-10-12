@@ -1290,6 +1290,8 @@ fn _cc_child_inject(inj): i64 {
 #   --strict-pin  CYRIUS_STRICT_PIN=1: cycc's pin-drift check fails instead of warning (v5.11.58,
 #                 the CI gating path).
 #   --poison      CYRIUS_POISON=1 (v6.5.29, fuzz);  --pie  CYRIUS_PIE=1 (v6.6.5).
+#   coverage      CYRIUS_COVERAGE=1 + CYRIUS_COVERAGE_FILE=<its dump> while `cyrius coverage --exec`
+#                 builds a corpus entry (`_covx_dump`, cbt/quality.cyr; 6.7.10).
 # A target selector is not a flag: it stays in `_cc_child_inject`. CHANGELOG [6.7.8]
 fn _cc_flag_inject(inj): i64 {
     var be = _cc_bounds_entry();
@@ -1298,8 +1300,31 @@ fn _cc_flag_inject(inj): i64 {
     if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
     if (_poison_mode == 1) { vec_push(inj, "CYRIUS_POISON=1"); }
     if (_pie_target == 1) { vec_push(inj, "CYRIUS_PIE=1"); }
+    if (_covx_dump != 0) {
+        vec_push(inj, "CYRIUS_COVERAGE=1");
+        vec_push(inj, _cat2("CYRIUS_COVERAGE_FILE=", _covx_dump));
+    }
     return vec_len(inj);
 }
+
+# 6.7.10 (P5-B) — the dump file of the corpus entry `cyrius coverage --exec` is building and running
+# (a path in the CLI's private temp directory), 0 when nothing is being instrumented. Non-zero, every
+# compile() hands the compiler the execution-coverage mode (`_cc_flag_inject`), and `cmd_test` echoes
+# only a failing test's output. CHANGELOG [6.7.10]
+var _covx_dump = 0;
+
+# 6.7.10 (P5-B) — the Windows arm sets the compiler's entries on THIS process, so the program run
+# next would inherit the coverage mode: one that runs cycc itself (a test of the toolchain) would
+# have every compile it starts instrumented, or refused for want of the file. Both are deleted once
+# the compiler has exited. CHANGELOG [6.7.10]
+#ifdef CYRIUS_TARGET_WIN
+fn _covx_win_unset(): i64 {
+    if (_covx_dump == 0) { return 0; }
+    _win_setenv("CYRIUS_COVERAGE", 0);
+    _win_setenv("CYRIUS_COVERAGE_FILE", 0);
+    return 0;
+}
+#endif
 
 # 6.7.8 — the Windows arm's half of `_cc_flag_inject`: set each "NAME=value" entry of
 # `inj` on this process (`_win_setenv`; Win32 has no envp to hand CreateProcessW here). 0 when
@@ -1639,6 +1664,7 @@ fn compile(source, output): i64 {
     _cc_flag_inject(winj);
     var wbad = _cc_win_env_apply(winj);
     if (wbad != 0) {
+        _covx_win_unset();
         if (tmp_src != 0) { sys_unlink(tmp_src); }
         _err_ctx("could not set the compiler's environment entry", wbad);
         return 1;
@@ -1646,6 +1672,7 @@ fn compile(source, output): i64 {
     var w_own = _cc_own_err_begin();
     wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);
     _cc_own_err_end(w_own, wrc);
+    _covx_win_unset();   # 6.7.10: the program run next never inherits the coverage mode
     if (tmp_src != 0) { sys_unlink(tmp_src); }
     # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
     # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
