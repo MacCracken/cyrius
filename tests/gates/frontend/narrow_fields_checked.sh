@@ -11,10 +11,11 @@
 #
 # The runtime half is tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr (its header lists the rows:
 # sizeof / offsets, zero-extension and wrap, unaligned `*T` access, f32, literals, the by-value class
-# sweep at every size 1..17 and 20, operators and self, `*C4` stepping, the handle line). This gate:
+# sweep at every size 1..17 and 20, operators and self — on value GLOBALS under 8 B too (the review fix),
+# `*C4` stepping, the handle line). This gate:
 #   A  that file on the legs this box has, compilers built from this tree: x86_64 (default,
 #      CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE (wine) — "N passed,
-#      0 failed (N total)", N derived from the file (floor 199)
+#      0 failed (N total)", N derived from the file (floor 210)
 #   W  a struct redefined with another narrow kind warns ("redefined with a different layout"):
 #      W1 i8 vs u8 and W2 i32 vs f32 (they warned through 6.7.9, when u8 / f32 were 8 bytes, and
 #      share a width now: the kind tells them apart), W3 u8 vs u16 and W4 u32 vs f32 (new: their
@@ -75,6 +76,13 @@
 #                                                      whose only float is an f32)
 #   M23u PP_DFIELD_INT without the u64 exclusion     -> RED 1: S2 (a u64 field builds, written signed)
 #   M23d the decoders' f32 store without f32_from (store32 of the f64 bits) -> RED 6: S1 x6 (35 checks)
+# The B7-2 review fix (2026-10-12, the same method): a struct VALUE global under 8 B as an operator's
+# operand (`OGA + OGB` with `C4` / `C3` / `{ u16; u16 }` / `{ f32 }` / `{ i32 }` globals) dispatches:
+#   M31 `_gv_narrow_sx` recording no struct (the global read as an i8..i32 scalar, the B7-2 code)
+#                                                   -> RED 5: A x86 x4 and PE (the declaration-zone
+#                                                      `var OGC: C4 = OGA + OGB;` refused as a misread);
+#                                                      without that row: 2 rows red (4457 for 4357, the
+#                                                      words integer-added) and `og_decl` SIGSEGVs
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -105,7 +113,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=199
+FLOOR=210
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
