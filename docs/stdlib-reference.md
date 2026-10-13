@@ -126,6 +126,10 @@ Fat string type: `{data: ptr, len: i64}`. Includes: alloc, string, fmt, vec.
 | `str_builder_add` | `str_builder_add(sb, str)` | Append Str |
 | `str_builder_add_cstr` | `str_builder_add_cstr(sb, cstr)` | Append C string |
 | `str_builder_add_int` | `str_builder_add_int(sb, n)` | Append integer |
+| `str_builder_add_json_str` | `str_builder_add_json_str(sb, s: Str)` | Append a Str as a quoted JSON string (`"`, `\` and U+0000..U+001F escaped; other bytes verbatim) |
+| `str_builder_add_json_cstr` | `str_builder_add_json_cstr(sb, cstr)` | Append a C string as a JSON value: `null` for 0, else the same escaped string (6.7.10) |
+| `str_json_unescape` | `str_json_unescape(p, n) → Str` | Decode the `n` bytes between a JSON string's quotes (RFC 8259: `\uHHHH` as UTF-8, a surrogate pair joined, a lone surrogate U+FFFD) into a fresh Str; 0 if alloc fails (6.7.10) |
+| `str_json_unescape_cstr` | `str_json_unescape_cstr(p, n) → cstr` | The same decode into a fresh NUL-terminated C string (a decoded U+0000 ends it); 0 if alloc fails (6.7.10) |
 | `str_builder_build` | `str_builder_build(sb) → Str` | Finalize to Str |
 
 ### slice.cyr
