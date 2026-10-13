@@ -1286,6 +1286,8 @@ var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
 var _sc_sid = 0;        # the struct it returned
 var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
 var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
+var _sc_opb = 0 - 1;    # 6.7.10: the span of the last <= 8 B record an OPERATOR made (`_sc_post_op`)
+var _sc_ope = 0 - 1;
 # The span of the last >16 B call `_sc_pre` REFUSED at top level (not recorded above, so no
 # destination re-refuses it): a positional literal's nested field takes it as the whole field,
 # instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]
@@ -1302,6 +1304,25 @@ var _lsc_cp = 0 - 1;    # the code pointer where it ended
 var _lsc_sid = 0;       # its struct
 var _lsc_tmp = 0 - 1;   # its frame temp; -1 / -4 = in rax (rax:rdx over 8 B) or no frame
 var _lsc_hit = 0;       # 1 = `_op_lst` matched the left operand just classified
+# ⛔ 6.7.10 — A STRUCT-TYPED FIELD OR A `*T` DEREFERENCE AS THE LEFT OPERAND (the user's decision 11):
+# the last whole struct-typed field read (`_flo_note`, at its load) and the last dereference of a `*S`
+# an operator may follow (`_dlo_park`: its pointer parked in a hidden temp before the load), each
+# stamped with the code pointer after its load, as `_lsc_*` is. `_op_lst` matches them. CHANGELOG [6.7.10]
+var _flo_beg = 0 - 1;   # the field read's first token (the chain's)
+var _flo_end = 0 - 1;   # the token after it
+var _flo_cp = 0 - 1;    # the code pointer after its load
+var _flo_sid = 0;       # the field's struct
+var _flo_idx = 0;       # its base, PARSE_FIELD_LOAD's encoding (idx, sid) ...
+var _flo_bsid = 0;
+var _flo_off = 0;       # ... and the field's byte offset in it
+var _flo_hit = 0;       # 1 = `_op_lst` matched it
+var _dlo_beg = 0 - 1;   # the dereference's `*`
+var _dlo_end = 0 - 1;   # the token after its operand
+var _dlo_cp = 0 - 1;    # the code pointer after its load
+var _dlo_sid = 0;       # the struct its `*S` operand points at
+var _dlo_h = 0;         # the hidden temp holding that pointer (`_HTEMP`)
+var _dlo_hit = 0;       # 1 = `_op_lst` matched it
+var _dro_want = 0 - 1;  # the `*` an address-passed argument / right operand asks `_dlo_park` to park (ops-5)
 var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
 var _fnc_lt = 0 - 1;    #   its temp,
 var _fnc_lcp = 0 - 1;   #   and the code pointer after it
@@ -2988,6 +3009,40 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     STI(S, GTI(S) + 2);   # src ;
     return 1;
 }
+# ⛔ 6.7.10 — STRUCT COPIES THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD (the user's decision 6,
+# 2026-10-12: struct copies are size-independent, and a copy through a `*T` copies the struct). B7-1c made a
+# `*T` LOCAL or PARAMETER a copy operand at every size; a `*T` global's name, a call or method declared
+# `: *T` and a `*T` field were no operand at ANY size, 16 B included: `l = GP`, `G = GP`, `l = gp()`,
+# `l = w.p` stored the POINTER word into the first field — silently (6.6.17 – 6.7.10 measured). The source
+# [st, cursor) just parsed — rax holds the pointer — read by the compiler's own typing (`_hl_psrc`): into a
+# struct VALUE (an inline local, a value global, a by-value parameter) the pointer is parked and the struct it
+# points at copied byte-exact (no byte past it read); into a handle or a `*T` it stays the one-word store (a
+# rebind, as `*T` <- `*T` is); a `*U` of another struct is refused by name. 1 = copied (`term` consumed).
+# CHANGELOG [6.7.10]
+fn _hl_psrc_copy(S, noff, st, term): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (n == 0) { return 0; }
+    if (_agc_hdl() == 1) { return 0; }
+    var dt = _agc_t;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ps - 1)) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, dt, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
 # 6.7.10 (B7-1) — a struct of 8 B or less in rax (a method / operator / if-expression result, a free
 # call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
 # into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
@@ -3512,7 +3567,10 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (dx == 1) { return 0; }
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+    if (t == 0 - 2) {
+        if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
+        _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0;   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+    }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }

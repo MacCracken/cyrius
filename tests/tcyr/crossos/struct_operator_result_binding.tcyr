@@ -1,0 +1,220 @@
+# struct_operator_result_binding.tcyr — 6.7.10. AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A
+# STRUCT TAKES THE STRUCT TYPE AT EVERY SIZE (the user's decision 12, 2026-10-12), as it did over 8 B:
+# `c.g` reads and writes the field and `c + c` dispatches the operator again.
+#
+# ⛔ THROUGH 6.7.9 an operator result of 8 B or less was a plain word: the untyped binding held the
+# struct's bytes with no type, so `c.g` was "no struct type in scope for 'c'" and `c + c` added two
+# integers, while the same expression over 8 B named its temporary `c` (`_sc_var_receive`) and typed it.
+# 6.7.10's packed fields moved `struct C4 { r: u8; g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so
+# `var c = A + B; c.g = 1;` — which compiled through 6.7.9 — was refused.
+#
+# THE RULE, every row against its 16 B twin (both give the row's constant): the binding is an inline
+# struct of the operator fn's RETURN type (`S_add` may return another struct), a copy (a write to c
+# leaves a and b), whatever the left operand is — a variable, a field, a dereference, a call result (the
+# operator's type wins over the leading call's, as over 8 B), wrapped, chained — and for `+ - * /`.
+# An operator returning an INTEGER leaves the binding untyped (`var r = a - b; r + 1` is an integer
+# add). At top level an untyped global keeps the struct's word, untyped, at every size (over 8 B a
+# global's operator result has no temporary to name).
+#
+# CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R8 runs this file on x86_64 (plain,
+# CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
+# cross-OS leg on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+struct C4 { r: u8; g: u8; b: u8; a: u8; }          # 4 B (32 through 6.7.9)
+struct S8 { v; }
+struct H { v; w; }
+struct U8 { u; }
+struct UH { u; x; }
+struct T3 { x; y; z; }
+struct W8 { n; s: S8; }
+struct WH { n; s: H; }
+
+fn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }
+fn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v * 3 + b.v; return r; }
+fn H_add(a: H, b: H): H { var r: H; r.v = a.v * 3 + b.v; r.w = a.w + b.w; return r; }
+fn T3_add(a: T3, b: T3): T3 { var r: T3; r.x = a.x * 3 + b.x; r.y = a.y + b.y; r.z = a.z + b.z; return r; }
+fn S8_mul(a: S8, b: S8): U8 { var r: U8; r.u = a.v * b.v; return r; }
+fn H_mul(a: H, b: H): UH { var r: UH; r.u = a.v * b.v; r.x = 0; return r; }
+fn S8_div(a: *S8, b: *S8): S8 { var r: S8; r.v = a.v / b.v; return r; }
+fn H_div(a: *H, b: *H): H { var r: H; r.v = a.v / b.v; r.w = 0; return r; }
+fn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }
+fn H_sub(a: H, b: H): i64 { return a.v - b.v; }
+fn mk8(n): S8 { var r: S8; r.v = n; return r; }
+fn mkh(n): H { var r: H; r.v = n; r.w = 1; return r; }
+fn take8(s: S8): i64 { return s.v; }
+fn takeh(s: H): i64 { return s.v; }
+
+# ── the filed C4 case: c.g = 1 (it was refused since 4 B), c + c dispatches again, A and B kept ──
+fn c4_case() {
+    var A = C4 { 1, 2, 3, 4 };
+    var B = C4 { 10, 20, 30, 40 };
+    var c = A + B;
+    c.g = 1;
+    var d = c + c;
+    var k = 0;
+    if (c.r == 11) { if (c.g == 1) { if (c.b == 33) { if (c.a == 44) { k = k + 1; } } } }
+    if (d.r == 22) { if (d.g == 2) { if (d.b == 66) { if (d.a == 88) { k = k + 10; } } } }
+    if (A.g == 2) { if (B.g == 20) { k = k + 100; } }
+    return k;
+}
+fn c4_wrap() {
+    var A = C4 { 250, 2, 3, 4 };
+    var B = C4 { 10, 20, 30, 40 };
+    var c = A + B;
+    return c.r * 100 + c.g;
+}
+
+# ── 8 B against its 16 B twin: a = 4 (H: 4, 1), b = 70 (H: 70, 2) ──
+fn b_var_8() {
+    var a: S8 = S8 { 4 };
+    var b: S8 = S8 { 70 };
+    var c = a + b;
+    c.v = c.v + 1;
+    return c.v * 100 + a.v;
+}
+fn b_var_h() {
+    var a: H = H { 4, 1 };
+    var b: H = H { 70, 2 };
+    var c = a + b;
+    c.v = c.v + 1;
+    return c.v * 100 + a.v + (c.w - 3) * 100000;
+}
+fn b_again_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a + b; var d = c + c; return d.v; }
+fn b_again_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = a + b; var d = c + c; return d.v; }
+fn b_other_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a * b; c.u = c.u + 1; return c.u; }
+fn b_other_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = a * b; c.u = c.u + 1; return c.u; }
+fn b_div_8() { var a: S8 = S8 { 70 }; var b: S8 = S8 { 4 }; var c = a / b; return c.v; }
+fn b_div_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var c = a / b; return c.v; }
+fn b_lcall_8() { var b: S8 = S8 { 70 }; var c = mk8(4) * b; c.u = c.u + 1; return c.u; }
+fn b_lcall_h() { var b: H = H { 70, 2 }; var c = mkh(4) * b; c.u = c.u + 1; return c.u; }
+fn b_field_8() {
+    var w: W8 = W8 { 0, 4 };
+    var b: S8 = S8 { 70 };
+    var c = w.s + b;
+    c.v = c.v + 1;
+    return c.v * 100 + w.s.v;
+}
+fn b_field_h() {
+    var w: WH = WH { 0, 4, 1 };
+    var b: H = H { 70, 2 };
+    var c = w.s + b;
+    c.v = c.v + 1;
+    return c.v * 100 + w.s.v;
+}
+fn b_deref_8() { var x: S8 = S8 { 4 }; var p: *S8 = &x; var b: S8 = S8 { 70 }; var c = *p + b; return c.v; }
+fn b_deref_h() { var x: H = H { 4, 1 }; var p: *H = &x; var b: H = H { 70, 2 }; var c = *p + b; return c.v; }
+fn b_paren_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = (a + b); return c.v; }
+# the twin is 24 B: a 9-16 B result in parentheses has no temporary for an untyped binding to name (a
+# pre-existing gap of the 6.7.6 wrap rule, reported), while a retptr result's temporary is named
+fn b_paren_t() { var a: T3 = T3 { 4, 1, 1 }; var b: T3 = T3 { 70, 2, 2 }; var c = (a + b); return c.x; }
+fn b_chain_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a + b + a; return c.v; }
+fn b_chain_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = a + b + a; return c.v; }
+fn b_arg_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a + b; return take8(c); }
+fn b_arg_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = a + b; return takeh(c); }
+fn b_clos_8() {
+    var a: S8 = S8 { 4 };
+    var b: S8 = S8 { 70 };
+    var f = |d| { var c = a + b; return c.v + d; };
+    return callptr(f, 0);
+}
+fn b_clos_h() {
+    var a: H = H { 4, 1 };
+    var b: H = H { 70, 2 };
+    var f = |d| { var c = a + b; return c.v + d; };
+    return callptr(f, 0);
+}
+# an integer-returning operator leaves the binding untyped: `r + 1` is an integer add
+fn b_int_8() { var a: S8 = S8 { 70 }; var b: S8 = S8 { 4 }; var r = a - b; return r + 1; }
+fn b_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = a - b; return r + 1; }
+
+# ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
+struct Z1 { a: u8; }
+struct Z2 { a: u16; }
+struct Z3 { a: u8; b: u16; }
+struct Z5 { a: u32; b: u8; }
+struct Z6 { a: u32; b: u16; }
+struct Z7 { a: u32; b: u16; c: u8; }
+fn Z1_add(l: Z1, r: Z1): Z1 { var t: Z1; t.a = l.a + r.a; return t; }
+fn Z2_add(l: Z2, r: Z2): Z2 { var t: Z2; t.a = l.a + r.a; return t; }
+fn Z3_add(l: Z3, r: Z3): Z3 { var t: Z3; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn Z5_add(l: Z5, r: Z5): Z5 { var t: Z5; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn Z6_add(l: Z6, r: Z6): Z6 { var t: Z6; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn Z7_add(l: Z7, r: Z7): Z7 { var t: Z7; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+# each: x = (3, 4, 5), y = (1, 1, 1): c = x + y, c.a += 10, d = c + c -> d.a = 28 (d.b 10, d.c 12)
+fn z1() { var x: Z1; x.a = 3; var y: Z1; y.a = 1; var c = x + y; c.a = c.a + 10; var d = c + c; return d.a; }
+fn z2() { var x: Z2; x.a = 3; var y: Z2; y.a = 1; var c = x + y; c.a = c.a + 10; var d = c + c; return d.a; }
+fn z3() {
+    var x: Z3; x.a = 3; x.b = 4;
+    var y: Z3; y.a = 1; y.b = 1;
+    var c = x + y;
+    c.a = c.a + 10;
+    var d = c + c;
+    return d.a + d.b * 100;
+}
+fn z5() {
+    var x: Z5; x.a = 3; x.b = 4;
+    var y: Z5; y.a = 1; y.b = 1;
+    var c = x + y;
+    c.a = c.a + 10;
+    var d = c + c;
+    return d.a + d.b * 100;
+}
+fn z6() {
+    var x: Z6; x.a = 3; x.b = 4;
+    var y: Z6; y.a = 1; y.b = 1;
+    var c = x + y;
+    c.a = c.a + 10;
+    var d = c + c;
+    return d.a + d.b * 100;
+}
+fn z7() {
+    var x: Z7; x.a = 3; x.b = 4; x.c = 5;
+    var y: Z7; y.a = 1; y.b = 1; y.c = 1;
+    var c = x + y;
+    c.a = c.a + 10;
+    var d = c + c;
+    return d.a + d.b * 100 + d.c * 10000;
+}
+
+# ── top level: an untyped global keeps the operator result's word, untyped, as over 8 B ──
+var GA = S8 { 4 };
+var GB = S8 { 70 };
+var TG = GA + GB;
+
+assert_eq(c4_case(), 111, "the filed C4 case: var c = A + B; c.g = 1; c + c (A and B kept)");
+assert_eq(c4_wrap(), 422, "C4: the u8 channel wraps in the operator (250 + 10 = 4)");
+assert_eq(b_var_8(), 8304, "var c = a + b: an inline S8, a copy (a kept)");
+assert_eq(b_var_8(), b_var_h(), "  = its 16 B twin");
+assert_eq(b_again_8(), 328, "c + c dispatches again");
+assert_eq(b_again_8(), b_again_h(), "  = its 16 B twin");
+assert_eq(b_other_8(), 281, "var c = a * b: the operator's return type (U8), not the operands'");
+assert_eq(b_other_8(), b_other_h(), "  = its 16 B twin");
+assert_eq(b_div_8(), 17, "var c = a / b (*S parameters)");
+assert_eq(b_div_8(), b_div_h(), "  = its 16 B twin");
+assert_eq(b_lcall_8(), 281, "var c = mk(4) * b: the operator's type wins over the leading call's");
+assert_eq(b_lcall_8(), b_lcall_h(), "  = its 16 B twin");
+assert_eq(b_field_8(), 8304, "var c = w.s + b: a field left operand (w.s kept)");
+assert_eq(b_field_8(), b_field_h(), "  = its 16 B twin");
+assert_eq(b_deref_8(), 82, "var c = *p + b: a dereference left operand");
+assert_eq(b_deref_8(), b_deref_h(), "  = its 16 B twin");
+assert_eq(b_paren_8(), 82, "var c = (a + b)");
+assert_eq(b_paren_8(), b_paren_t(), "  = its 24 B twin");
+assert_eq(b_chain_8(), 250, "var c = a + b + a");
+assert_eq(b_chain_8(), b_chain_h(), "  = its 16 B twin");
+assert_eq(b_arg_8(), 82, "take(c): c passed by value");
+assert_eq(b_arg_8(), b_arg_h(), "  = its 16 B twin");
+assert_eq(b_clos_8(), 82, "var c = a + b in a closure body");
+assert_eq(b_clos_8(), b_clos_h(), "  = its 16 B twin");
+assert_eq(b_int_8(), 67, "an integer-returning operator: the binding stays untyped");
+assert_eq(b_int_8(), b_int_h(), "  = its 16 B twin");
+assert_eq(z1(), 28, "1 B: c.a written, c + c");
+assert_eq(z2(), 28, "2 B: c.a written, c + c");
+assert_eq(z3(), 1028, "3 B: c.a written, c + c");
+assert_eq(z5(), 1028, "5 B: c.a written, c + c");
+assert_eq(z6(), 1028, "6 B: c.a written, c + c");
+assert_eq(z7(), 121028, "7 B: c.a written, c + c");
+assert_eq(TG, 82, "top level: an untyped global keeps the result's word");
+var r = assert_summary();

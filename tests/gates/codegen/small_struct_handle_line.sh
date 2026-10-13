@@ -55,9 +55,10 @@
 #      `var G: S8 = *GU;` with `GU: *U8` refused by name in the zone and after it, at 8 and 16 B;
 #      GC6 (the review fix) `(*GU)` / `*gu()` of another struct refused by name in the zone and after it;
 #      GC7 `var G: H = *gp();` with gp declared below G refused by name (pass 1 sizes G);
-#      GC8 (the review fix) `var G: S8 = GW.s + A;` — an operator whose left operand is a FIELD does not
-#      dispatch (it never did: the first words are added) — in the zone, after it and in a fn: each
-#      a handle holding the sum (exit 9), the zone no longer refusing it as a misread;
+#      GC8 (the review fix; 6.7.10 decision 11) `var G: S8 = GW.s + A;` — an operator whose left operand is
+#      a FIELD dispatches `S8_add`, its result a struct value (exit 19), in the zone, after it and in a fn:
+#      the zone's typer (`_gz_lty`) and the parse agree (through the review fix the field did not
+#      dispatch: a handle holding the summed first words, exit 9);
 #      GC3 `var G: H = *P;` with P declared below G refused by name (pass 1 could not register G
 #      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
 #      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
@@ -93,6 +94,63 @@
 #      `l = pu` and `p = mku(1)`; a `*U` of another struct into a `*T` still REBINDS (exit 17)
 #   PM (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping: `l = p`, `p = l`, `G = p`,
 #      `q = r`, `l = q`, `q = G`, `p = mk7()` — exit 0, no byte past the object read or written
+#
+# 6.7.10 (the user's decision 11) — A STRUCT-TYPED FIELD OR A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND
+# DISPATCHES `S_add` (`S_sub`, `S_mul`, `S_div`) as a struct variable does, at every size, and the result is
+# a struct value. Through 6.7.9 (and 6.7.10 before it) only a variable or a struct result typed the left
+# operand: a field or a dereference loaded its first word and the integer arm ran — no operator fn, silently
+# (issues/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9). Its
+# runtime half is tests/tcyr/crossos/struct_field_left_operand.tcyr (every base shape against its 16 B twin,
+# 24 B, sizes 1..8 B with a guard byte, top level):
+#   R6 that file on the same legs as R1, N derived from it (floor 88)
+#   R7 the filed repro, VERBATIM: exit 139 (`P2_sub(&h.p, &s)` = 100 + 3·10 + 9) on the same legs — and,
+#      since 139 is SIGSEGV's code natively, R7d its twin returning `(h.p - s) - 100` (exit 39) beside it
+#      (250 / 150 = the integer 3 - 9 the field gave)
+#   F  compile rows (x86), each refused exactly as its struct-variable twin: F1 `w.s + 1` / `*p + 1` with no
+#      `S8_add` ("undefined function 'S8_add'"); F2 `fn S8_add(a: U8, ..)` — the field passed to a parameter
+#      of another struct, by name; F3 `var G: H = GW.s + A;` at top level (a 9-16 B result needs a frame),
+#      in the declaration zone and after it; F4 `var R = takeh(*GP + A);` at top level — a dereference-led
+#      result as a by-value argument over 8 B — refused as `takeh(GW.s + A)` is (it compiled and SIGSEGV'd)
+#
+# 6.7.10 (the user's decision 12) — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES THE
+# STRUCT TYPE AT EVERY SIZE, as over 8 B (where the result's temporary becomes `c`): `c.g` works and `c + c`
+# dispatches. Of 8 B or less the result was an untyped word — and 6.7.10's packed fields moved `C4 { r: u8;
+# g: u8; b: u8; a: u8; }` from 32 B to 4, so `var c = A + B; c.g = 1;` was refused. Its runtime half is
+# tests/tcyr/crossos/struct_operator_result_binding.tcyr (the C4 case, every shape against its 16 B twin,
+# the operator's own return type, sizes 1..7 B, top level):
+#   R8 that file on the same legs as R1, N derived from it (floor 33)
+#   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
+#      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
+#
+# 6.7.10 (decision 6 completed) — A STRUCT COPY THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD COPIES THE
+# STRUCT, at every size: `l = GP`, `G = GP`, `l = gp()`, `l = w.p` (any chain, wrapped) into a struct value
+# copy the pointee, as `l = p` through a `*T` local does (B7-1c). Through 6.7.9 — over 8 B too — each stored
+# the POINTER word into the first field. A `*T` or handle destination still rebinds. Its runtime half is
+# tests/tcyr/crossos/struct_pointer_source_copy.tcyr (every shape against its 16 B twin, the rebinds, sizes
+# 1..7 B with a guard global, top level):
+#   R9 that file on the same legs as R1, N derived from it (floor 47)
+#   CQ compile rows (x86): a `*U` of another struct is refused by name, as `l = pu` is — `l = GU`, `l = gu()`,
+#      `l = w.pu`, and `G = GU` at 16 B; a `*i64` global into a struct value stays its word (exit 1);
+#      (ops-6) CQ6 pointer arithmetic on a `*U` — `l = pu + 1`, `l = pu + k` — refused naming the pointer;
+#      CQ7 arithmetic on a `*i64` into a struct value stays its word (exit 1)
+#   PQ (Linux x86_64 + aarch64) a `*S7` global / `: *S7` call / `*S7` field onto the LAST 7 bytes of a mapping:
+#      `l = GP`, `G = GP`, `l = gp()`, `l = w.p`, (ops-6) `l = GP + 0`, at top level `G = GP` — exit 0, no byte
+#      past the object read
+# (ops-6) POINTER ARITHMETIC ON A `*T` is such a source too: `l = p + 1`, `l = (p + 1)`, `l = 1 + p`, `l = GQ + 1`,
+# `G = q - 1` copy the struct the result points at (R9's rows); they stored the pointer word at every size. A
+# `*T` or handle destination still rebinds (`q = p + 1`, `p = p + 1` — R9's `r_ar` rows).
+#
+# 6.7.10 (decision 6, ops-5) — A WHOLE DEREFERENCE OF A `*S` AS AN ADDRESS-PASSED ARGUMENT OR RIGHT OPERAND
+# PASSES THE STRUCT IT POINTS AT: `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into a by-value
+# parameter over 8 B or a `*S` parameter of any size, and `a - *p` into such an operator parameter, pass the
+# pointer, as `take(p)` / `a - p` do. Through 6.7.9 the WORD the dereference read was pushed as the struct's
+# address (SIGSEGV; PE an access violation; cx a guest error). Its runtime half is
+# tests/tcyr/crossos/struct_deref_whole_operand.tcyr (every shape against its 16 B twin, 24 B, `*S` parameters
+# of 1 / 3 / 7 / 8 B, top level):
+#   R10 that file on the same legs as R1, N derived from it (floor 58)
+#   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
+#      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
+#      word it reads (exit 5: the word is the struct's address, as before)
 #
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
@@ -223,6 +281,68 @@
 #                                                   -> RED 7: R2 x7 (`IPF8 = PW8S.s` a handle holding the
 #                                                      field's word: SIGSEGV)
 #   MF5 `_gz_lty` dispatching on a field again        -> RED 1: GC8 (the zone refuses `GW.s + A` as a misread)
+#       (6.7.10 decision 11 inverted this row: a field now dispatches; MO6 below is its mutant)
+# DECISION-11 MUTATION LEDGER (2026-10-12, the same method):
+#   the B7 tree (67b9ef93, no field / dereference dispatch) -> RED 29: R6 does not build x7 (`return w.s + a;`
+#                                                      from a 9-16 B struct fn refused), R7 250 x7, R7d x7 (SIGSEGV:
+#                                                      the integer `h.p - s` kept s's type and `- 100` dispatched
+#                                                      P2_sub(&s, 100) — the struct-operator-results item 2), GC8 x3
+#                                                      (exit 9), F1 x2 / F2 / F3 x2 (each compiled: no dispatch)
+#   MO1  `_flo_note` stamping nothing                 -> RED 28: the B7 tree's rows but F1 `*p + 1`
+#   MO2  `_dlo_park` answering 0                      -> RED 8: R6 does not build x7 (`return *p + a;`), F1 `*p + 1`
+#   MO3  `_opd_lst` never matching                    -> RED 29: the B7 tree's rows
+#   MO4  `_opd_lhs_sv` passing a field's VALUE at every size (no address) -> RED 16: R6 x7 (SIGSEGV; cxvm
+#                                                      out of range; PE a crash), R7d x5 (139), R7 / R7d cx, PE
+#   MO5  `_ret_lopd` answering 0                      -> RED 7: R6 does not build x7 (`return w.s + a;`)
+#   MO6  `_gz_lty` not dispatching on a field (kind 5) -> RED 8: R6 x7 and GC8 (the zone refuses `var TQ8: S8 =
+#                                                      GZW8.s + GA8;` as a misread)
+#   MO7  `_gz_deref` answering 0                      -> RED 7: R6 x7 (the zone refuses `var TD8: S8 = *GZP8 + GA8;`)
+#   MO8  `_opd_operand` without `_hl_pval_ra` (a dereference by value passes the pointer) -> RED 7: R6 22
+#                                                      rows x7
+#   MO9  `_dlo_opnext` without the wrap skip          -> RED 7: R6 x7 (`(*ps) + a` not parked: a handle holding
+#                                                      the integer, SIGSEGV; cxvm 3 rows)
+#   MO10 `_flo_addr_ra` without the field's offset    -> RED 21: R6 27 rows x7, R7 119 / R7d 19 x14
+#   MO11 `_OP_OPERAND_ADDR` without the `_OPD_SV` arm  -> RED 21: R6 x7 (SIGSEGV; cxvm out of range), R7 / R7d x14
+#   MO12 (ops-4) `_try_push_struct_addr_arg` without its `*` arm (a dereference-led argument to the value push)
+#                                                   -> RED 9: R6 x7 (`takeh(*ps + a)`: the result's first word pushed
+#                                                      as its address — SIGSEGV x86 x4 / aarch64, a PE crash, cxvm 5 rows),
+#                                                      F4 x2 (compiled)
+# DECISION-12 MUTATION LEDGER (2026-10-12, the same method):
+#   the ops-1 tree (no untyped binding typed)        -> RED 8: R8 does not build x7 (`c.g`: "no struct type in
+#                                                      scope for 'c'"), B1
+#   MB1  `_sc_op_whole` answering 0                    -> RED 8: as the ops-1 tree
+#   MB2  `_sc_post_op` never noting the operator's span -> RED 8: as the ops-1 tree
+#   MB3  `_var_rhs_post` keeping a leading call's type over the operator's -> RED 7: R8 does not build x7
+#                                                      (`var c = mk8(4) * b; c.u` — "unknown field 'u' on 'S8'")
+#   MB4  `_sc_op_whole` typing ANY whole result of 8 B or less (a method chain, an if-expression too, not only
+#        an operator's) -> GREEN: no row pins that a method chain's or an if-expression's untyped binding stays
+#        untyped — decision 12 names operators; whether those take their type too is the user's question
+# DECISION-6 (completed) MUTATION LEDGER (2026-10-12, the same method):
+#   the ops-2 tree (no *T global / call / field operand) -> RED 13: R9 34 of 38 rows x7 (the pointer word stored:
+#                                                      62938168 where 58), CQ1-CQ4 (compiled), PQ x2 (exit 1)
+#   MQ1  `_hl_psrc_copy` answering 0                  -> RED 13: as the ops-2 tree
+#   MQ3  the copy rounded up to whole words          -> RED 9: R9 the 7 size rows x7 (the guard global after a
+#                                                      1..7 B value global overwritten), PQ x2 (exit 139: read past)
+#   MQ4  no rebind for a handle / `*T` destination   -> RED 7: R9 2 rows x7 (`q = GP` through `q: *S` copied into
+#                                                      the caller's struct: 95 where 19)
+#   MQ5  no type check                                -> RED 4: CQ1-CQ4 (a `*U` of another struct copied)
+#   MQ6  no step cross-check (`_ps_step(GPSC)` against the size) -> GREEN: defensive — no source is known where
+#        `_hl_psrc`'s token typing and the parse's step disagree
+#   MQ7  `_hl_psrc` without its `*T` test (`_hl_cp`)  -> GREEN: defensive — every struct-VALUE source reaching the
+#        assignment takes its own copy path first (a field `_fla_take`, a call / method / operator its record)
+#   (ops-6, 2026-10-13) the ops-5 tree (cf537b6e, no pointer-arithmetic source) -> RED 11: R9 7 of 47 rows x7
+#                                                      (the pointer word stored), CQ6 x2 (compiled), PQ x2 (exit 6)
+#   MQ8  `_hl_psrc` without its pointer-arithmetic arm -> RED 11: as the ops-5 tree
+#   MQ9  `_hl_pnm` naming the last name (no `_hl_psid` side) -> RED 1: CQ6 `l = pu + k` (names 'k')
+# OPS-5 MUTATION LEDGER (2026-10-13, the same method):
+#   the ops-4 tree (3faadc9e, no whole-dereference operand) -> RED 11: R10 x7 (SIGSEGV x86 x4 / aarch64, a PE
+#                                                      crash, cxvm "guest address out of range: 5"), D1 x2 / D2 x2
+#                                                      (compiled)
+#   MD1  `_dlo_park` without the `_dro_want` arm      -> RED 11: as the ops-4 tree
+#   MD2  `_push_struct_expr_arg` without its `_dro_take` arm -> RED 9: R10 x7, D1 x2 (compiled)
+#   MD3  `_op_rhs` without its `_dro_take` arm        -> RED 9: R10 x7, D2 x2 (compiled)
+#   MD4  `_dro_check` answering 0 (no type check)     -> RED 4: D1 x2 / D2 x2 (compiled)
+#   MD5  `_op_rhs`'s want without the wrap (`_dro_want = rb`) -> RED 7: R10 x7 (`a - (*p)`, `a * (*q)`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -409,6 +529,89 @@ for leg in $XLEGS $OTHER; do
     else bad "R5 $leg: exit $RC, '$LAST' (want '$NQ passed, 0 failed ($NQ total)') $(grep -m3 'FAIL' "$D/pq_$n.out" | tr '\n' ' ')"; fi
 done
 
+TD=tests/tcyr/crossos/struct_deref_whole_operand.tcyr
+[ -f "$TD" ] || { echo "FAIL: $G: $TD is missing"; exit 1; }
+ND=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TD")
+DFLOOR=58
+if [ "$ND" -lt "$DFLOOR" ]; then echo "FAIL: $G: only $ND rows in $TD (floor $DFLOOR) — rows were lost"; exit 1; fi
+
+TF=tests/tcyr/crossos/struct_field_left_operand.tcyr
+[ -f "$TF" ] || { echo "FAIL: $G: $TF is missing"; exit 1; }
+NF=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TF")
+FFLOOR=88
+if [ "$NF" -lt "$FFLOOR" ]; then echo "FAIL: $G: only $NF rows in $TF (floor $FFLOOR) — rows were lost"; exit 1; fi
+echo "R6. $TF ($NF rows: a struct-typed field or a *T dereference as an operator's left operand)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TF" "$D/fl_$n"
+    if [ "$RC" -eq -1 ]; then bad "R6 $leg: the values file did not build: $(grep '^error' "$D/fl_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NF passed, 0 failed ($NF total)" ]; then ok "R6 $leg: $LAST"
+    else bad "R6 $leg: exit $RC, '$LAST' (want '$NF passed, 0 failed ($NF total)') $(grep -m3 'FAIL' "$D/fl_$n.out" | tr '\n' ' ')"; fi
+done
+
+# The filed repro, verbatim (docs/development/issues/2026-10-08-struct-field-left-operand-never-dispatches.md).
+cat > "$D/repro_f.cyr" <<'EOF'
+struct P2 { x; y; }
+struct H { n; p: P2; }
+fn P2_sub(a: *P2, b: *P2): i64 { return 100 + a.x * 10 + b.x; }
+fn main(): i64 {
+    var h: H = H { 1, 3, 4 };
+    var s: P2 = P2 { 9, 9 };
+    return h.p - s;
+}
+syscall(60, main());
+EOF
+sed 's/    return h.p - s;/    return (h.p - s) - 100;/' "$D/repro_f.cyr" > "$D/repro_fd.cyr"
+echo "R7. the filed field-left-operand repro, verbatim (exit 139 = P2_sub; 250 = the integer 3 - 9), and its twin (R7d, exit 39)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/repro_f.cyr" "$D/r7_$n"
+    if [ "$RC" -eq -1 ]; then bad "R7 $leg: did not build: $(grep '^error' "$D/r7_$n.err" | head -1)"
+    elif [ "$RC" -eq 139 ]; then ok "R7 $leg: exit 139"
+    else bad "R7 $leg: exit $RC, want 139"; fi
+    run_leg "$leg" "$D/repro_fd.cyr" "$D/r7d_$n"
+    if [ "$RC" -eq -1 ]; then bad "R7d $leg: did not build: $(grep '^error' "$D/r7d_$n.err" | head -1)"
+    elif [ "$RC" -eq 39 ]; then ok "R7d $leg: exit 39"
+    else bad "R7d $leg: exit $RC, want 39"; fi
+done
+
+TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
+[ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
+NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
+BFLOOR=33
+if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
+echo "R8. $TB ($NB rows: an untyped binding of a struct-returning operator takes the struct type)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TB" "$D/ob_$n"
+    if [ "$RC" -eq -1 ]; then bad "R8 $leg: the values file did not build: $(grep '^error' "$D/ob_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NB passed, 0 failed ($NB total)" ]; then ok "R8 $leg: $LAST"
+    else bad "R8 $leg: exit $RC, '$LAST' (want '$NB passed, 0 failed ($NB total)') $(grep -m3 'FAIL' "$D/ob_$n.out" | tr '\n' ' ')"; fi
+done
+
+TS=tests/tcyr/crossos/struct_pointer_source_copy.tcyr
+[ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
+NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
+SFLOOR=47
+if [ "$NS" -lt "$SFLOOR" ]; then echo "FAIL: $G: only $NS rows in $TS (floor $SFLOOR) — rows were lost"; exit 1; fi
+echo "R9. $TS ($NS rows: a struct copy through a *T global, a : *T call or a *T field)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TS" "$D/ps_$n"
+    if [ "$RC" -eq -1 ]; then bad "R9 $leg: the values file did not build: $(grep '^error' "$D/ps_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NS passed, 0 failed ($NS total)" ]; then ok "R9 $leg: $LAST"
+    else bad "R9 $leg: exit $RC, '$LAST' (want '$NS passed, 0 failed ($NS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
+done
+
+echo "R10. $TD ($ND rows: a whole dereference of a *S as an address-passed argument or right operand)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TD" "$D/dw_$n"
+    if [ "$RC" -eq -1 ]; then bad "R10 $leg: the values file did not build: $(grep '^error' "$D/dw_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$ND passed, 0 failed ($ND total)" ]; then ok "R10 $leg: $LAST"
+    else bad "R10 $leg: exit $RC, '$LAST' (want '$ND passed, 0 failed ($ND total)') $(grep -m3 'FAIL' "$D/dw_$n.out" | tr '\n' ' ')"; fi
+done
+
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -483,11 +686,11 @@ crow "GC6 var G: H = (*GU) refused after the first statement" "refuse:cannot cop
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar k = 0;\nk = 1;\nvar G: H = (*GU);\nsyscall(60, G.v);\n'
 crow "GC7 var G: H = *gp() with gp declared below it refused by name (over 8 B pass 1 sizes G)" "refuse:from a dereference of a global or fn declared below it" \
   'struct H { v; w; }\nvar A = H { 4, 0 };\nvar G: H = *gp();\nfn gp(): *H { return &A; }\nsyscall(60, G.v);\n'
-crow "GC8 var G: S8 = GW.s + A in the zone: a field left operand does not dispatch (as through 6.7.9), the zone agrees" 9 \
+crow "GC8 var G: S8 = GW.s + A in the zone: a field left operand dispatches S8_add (decision 11), a value — the zone agrees" 19 \
   'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nvar A = S8 { 4 };\nvar S0 = S8 { 5 };\nvar GW = W { S0, 1 };\nvar G: S8 = GW.s + A;\nsyscall(60, load64(&G));\n'
-crow "GC8 the same after the first statement" 9 \
+crow "GC8 the same after the first statement" 19 \
   'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nvar A = S8 { 4 };\nvar S0 = S8 { 5 };\nvar GW = W { S0, 1 };\nvar k = 0;\nk = 1;\nvar G: S8 = GW.s + A;\nsyscall(60, load64(&G));\n'
-crow "GC8 a local: the same" 9 \
+crow "GC8 a local: the same" 19 \
   'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nfn f() { var a = S8 { 4 }; var s0 = S8 { 5 }; var w = W { s0, 1 }; var q: S8 = w.s + a; return load64(&q); }\nsyscall(60, f());\n'
 crow "GC3 var G: H = *P with P declared below it refused by name" "refuse:from a global declared below it" \
   'struct H { v; w; }\nvar G: H = *P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
@@ -519,6 +722,115 @@ crow "CP5 its 16 B twin" "refuse:cannot copy 'mku' into a variable of a differen
   'struct H { v; w; }\nstruct UH { u; x; }\nfn mku(n): UH { var r: UH; r.u = n; r.x = 0; return r; }\nfn f() { var x: H; x.v = 1; var p: *H = &x; p = mku(1); return x.v; }\nsyscall(60, f());\n'
 crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var a: S8; a.v = 1; var u: U8; u.u = 2; var p: *S8 = &a; var pu: *U8 = &u; p = pu; p.v = 7; return a.v * 10 + u.u; }\nsyscall(60, f());\n'
+
+echo "CQ. a struct copy through a *T global / : *T call / *T field: another struct type refused by name (x86)"
+crow "CQ1 l = GU (GU: *U8 a global) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nvar GU: *U8 = &XU;\nfn f() { var l: S8; l.v = 1; l = GU; return l.v; }\nsyscall(60, f());\n'
+crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn gu(): *U8 { return &XU; }\nfn f() { var l: S8; l.v = 1; l = gu(); return l.v; }\nsyscall(60, f());\n'
+crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nvar XU = U8 { 4 };\nfn f() { var w = WU { &XU }; var l: S8; l.v = 1; l = w.pu; return l.v; }\nsyscall(60, f());\n'
+crow "CQ4 G = GU at 16 B (GU: *UH) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nvar GU: *UH = &XU;\nvar G = H { 0, 0 };\nfn f() { G = GU; return G.v; }\nsyscall(60, f());\n'
+crow "CQ5 l = GI (GI: *i64) into a struct value stays its word" 1 \
+  'struct S8 { v; }\nvar XI = 4;\nvar GI: *i64 = &XI;\nfn f() { var l: S8; l.v = 1; l = GI; return l.v == load64(&GI); }\nsyscall(60, f());\n'
+crow "CQ6 l = pu + 1 (pointer arithmetic on a *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn f() { var pu: *U8 = &XU; var l: S8; l.v = 1; l = pu + 1; return l.v; }\nsyscall(60, f());\n'
+crow "CQ6 l = pu + k (16 B) refused naming the pointer" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nfn f() { var k = 0; var pu: *UH = &XU; var l: H; l.v = 1; l = pu + k; return l.v; }\nsyscall(60, f());\n'
+crow "CQ7 l = pi + 0 (pi: *i64) into a struct value stays its word" 1 \
+  'struct S8 { v; }\nvar XI = 4;\nfn f() { var pi: *i64 = &XI; var l: S8; l.v = 1; l = pi + 0; return l.v == pi; }\nsyscall(60, f());\n'
+
+echo "B. an untyped binding of an operator result (x86)"
+crow "B1 the C4 case: var c = A + B; c.g = 1; c + c" 111 \
+  'struct C4 { r: u8; g: u8; b: u8; a: u8; }\nfn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }\nfn f() { var A = C4 { 1, 2, 3, 4 }; var B = C4 { 10, 20, 30, 40 }; var c = A + B; c.g = 1; var d = c + c; var k = 0; if (c.r == 11) { if (c.g == 1) { if (c.b == 33) { if (c.a == 44) { k = k + 1; } } } } if (d.g == 2) { if (d.a == 88) { k = k + 10; } } if (A.g == 2) { k = k + 100; } return k; }\nsyscall(60, f());\n'
+crow "B2 var r = a - b with S8_sub returning i64: r untyped" "refuse:no struct type in scope for 'r'" \
+  'struct S8 { v; }\nfn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }\nfn f() { var a = S8 { 7 }; var b = S8 { 4 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
+crow "B2 its 16 B twin" "refuse:no struct type in scope for 'r'" \
+  'struct H { v; w; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 7, 0 }; var b = H { 4, 0 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
+
+echo "F. a field / dereference left operand refused exactly as a struct variable is (x86)"
+crow "F1 w.s + 1 with no S8_add refused" "refuse:undefined function 'S8_add'" \
+  'struct S8 { v; }\nstruct W { n; s: S8; }\nfn f() { var w = W { 1, 5 }; return w.s + 1; }\nsyscall(60, f());\n'
+crow "F1 its variable twin, s + 1" "refuse:undefined function 'S8_add'" \
+  'struct S8 { v; }\nfn f() { var s = S8 { 5 }; return s + 1; }\nsyscall(60, f());\n'
+crow "F1 *p + 1 (p: *S8) with no S8_add refused" "refuse:undefined function 'S8_add'" \
+  'struct S8 { v; }\nfn f() { var s = S8 { 5 }; var p: *S8 = &s; return *p + 1; }\nsyscall(60, f());\n'
+crow "F2 w.s + a into S8_add(a: U8, ..) refused by name" "refuse:cannot pass 'w' to a parameter of a different struct type in a call to 'S8_add'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nstruct W { n; s: S8; }\nfn S8_add(a: U8, b: S8): i64 { return a.u; }\nfn f() { var w = W { 1, 5 }; var a = S8 { 4 }; return w.s + a; }\nsyscall(60, f());\n'
+crow "F2 its variable twin" "refuse:cannot pass 's' to a parameter of a different struct type in a call to 'S8_add'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn S8_add(a: U8, b: S8): i64 { return a.u; }\nfn f() { var s = S8 { 5 }; var a = S8 { 4 }; return s + a; }\nsyscall(60, f());\n'
+crow "F3 var G: H = GW.s + A in the zone refused (a 9-16 B result needs a frame)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
+crow "F3 ... after the first statement" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
+
+crow "F4 var R = takeh(*GP + A) at top level refused (a dereference-led 9-16 B result as an argument needs a frame)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar X = H { 5, 0 };\nvar GP: *H = &X;\nvar A = H { 4, 0 };\nvar R = takeh(*GP + A);\nsyscall(60, R);\n'
+crow "F4 ... after the first statement" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar X = H { 5, 0 };\nvar GP: *H = &X;\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(*GP + A);\nsyscall(60, R);\n'
+crow "F4 its field twin, takeh(GW.s + A)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(GW.s + A);\nsyscall(60, R);\n'
+
+echo "D. a whole dereference as an address-passed argument or right operand: another struct refused by name (x86)"
+crow "D1 takeh(*pu) (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'takeh'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var y = UH { 5, 0 }; var pu: *UH = &y; return takeh(*pu); }\nsyscall(60, f());\n'
+crow "D1 rd8(*pu) into a *S8 parameter (pu: *U8) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'rd8'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn rd8(p: *S8): i64 { return p.v; }\nfn f() { var y = U8 { 5 }; var pu: *U8 = &y; return rd8(*pu); }\nsyscall(60, f());\n'
+crow "D2 a - *pu (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'H_sub'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; var y = UH { 5, 0 }; var pu: *UH = &y; return a - *pu; }\nsyscall(60, f());\n'
+crow "D2 a - *gu() (a : *UH fn) refused" "refuse:cannot pass 'gu' to a parameter of a different struct type in a call to 'H_sub'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar GY = UH { 5, 0 };\nfn gu(): *UH { return &GY; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; return a - *gu(); }\nsyscall(60, f());\n'
+crow "D3 takeh(*y) with y untyped keeps the word it reads (the struct's address here)" 5 \
+  'struct H { v; w; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var x = H { 5, 0 }; var cell = &x; var y = &cell; return takeh(*y); }\nsyscall(60, f());\n'
+
+cat > "$D/pq.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+struct W7 { n; p: *S7; }
+var GP: *S7 = 0;
+var G = S7 { 0, 0, 0 };
+fn take7(s: S7): i64 { return s.a + s.b + s.c; }
+fn gp(): *S7 { return GP; }
+fn run(): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (m <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, m + 4096, 4096) != 0) { return 91; }
+    GP = m + 4096 - 7;
+    GP.a = 100;
+    GP.b = 20;
+    GP.c = 3;
+    var l: S7;
+    l = GP;
+    if (take7(l) != 123) { return 1; }
+    G = GP;
+    if (take7(G) != 123) { return 2; }
+    var k: S7;
+    k = gp();
+    if (take7(k) != 123) { return 3; }
+    var w: W7;
+    w.n = 0;
+    w.p = GP;
+    var j: S7;
+    j = w.p;
+    if (take7(j) != 123) { return 4; }
+    var ma: S7;
+    ma = GP + 0;
+    if (take7(ma) != 123) { return 6; }
+    return 0;
+}
+var e = run();
+var T = S7 { 0, 0, 0 };
+if (e == 0) { T = GP; if (take7(T) != 123) { e = 5; } }
+syscall(60, e);
+EOF
+echo "PQ. a *S7 global / : *S7 call / *S7 field onto the last 7 bytes of a mapping: l = GP, G = GP, l = gp(), l = w.p, top level — no byte past it"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/pq.cyr" "$D/pq_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PQ $leg: did not build: $(grep '^error' "$D/pq_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "PQ $leg: exit 0"
+    else bad "PQ $leg: exit $RC, want 0 (139 = a byte past the object read)"; fi
+done
 
 cat > "$D/gp.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -840,4 +1152,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D)"

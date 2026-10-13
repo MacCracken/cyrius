@@ -1292,12 +1292,10 @@ a fn declared `: S8`, an operator's right operand, an if-expression branch, and 
 copy (below), in a fn and at top level. A closure captures the handle and reads through it. As
 an operator's LEFT operand a handle is pointer arithmetic (no dispatch), and `&q` is its slot.
 
-⚠ An operator whose LEFT operand is a struct-typed FIELD or a DEREFERENCE does not dispatch
-(`w.s + a`, `*p + a` add the first words — as through 6.7.9, at every size): only a struct
-variable or a struct result types the left operand. Its result is an integer, so
-`var q: S8 = w.s + a;` is a handle holding that sum (through 6.7.9, at 8 bytes or less, an inline
-`q` whose field was the sum). Name the operand first — `var l: S8 = w.s; var q: S8 = l + a;` —
-for the `S8_add` dispatch.
+An operator whose LEFT operand is a struct-typed FIELD or a DEREFERENCE dispatches (6.7.10): `var q:
+S8 = w.s + a;` calls `S8_add` and copies its result, as `l + a` with a struct variable `l` does
+(see *Parentheses, struct operands and `Str` fields*). Through 6.7.9 the first words were added,
+and in 6.7.10 before the fix `q` was a handle holding that sum.
 
 ⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
 layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
@@ -1328,10 +1326,22 @@ less was outside the rule: no struct variable of that size was a handle (the han
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
 into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct
 never changed) — each silently; a copy between two different struct types through such a `*T`
-(`l = pu`) compiled and stored a word, and is refused now, as over 8 bytes. ⚠ Known defect
-(6.7.10), at every size: a `*T` GLOBAL, a call declared `: *T` and a `*T` field are no copy
-operands yet — `l = GP`, `l = gp()` and `l = w.p` store the pointer word into `l`'s first field.
-Copy through a `*T` local (`var p: *S8 = GP; l = p;`).
+(`l = pu`) compiled and stored a word, and is refused now, as over 8 bytes. A `*T` GLOBAL, a call
+or method declared `: *T` and a `*T` field were no copy operands at ANY size until 6.7.10: `l =
+GP`, `G = GP`, `l = gp()` and `l = w.p` stored the pointer word into the first field, over 8 bytes
+too. They copy the struct into a struct value now, as a `*T` local does (a `*U` of another struct
+refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`). So
+does pointer arithmetic on a `*T` (`l = p + 1`, `l = (p + 1)`, `l = 1 + GP`, `G = q - 1`: the struct
+the result points at), which stored the pointer word too; `q = q + 1` through a `*T` still steps it.
+⚠ Known defect (6.7.10): a GENERIC call declared `: *T` (`fn gp<T>(): *T`) is no struct source at any
+size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and `gp<S>().v` is refused
+(the instance records T's step but not its struct): bind it to a `*S` first (`var p: *S = gp<S>();`).
+⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
+first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
+⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s
+= GP`, `o.s = gp()`, `o.s = w.p`), and an ASSIGNMENT from a dereference stores one word (`l = *p`,
+`G = *p`, `o.s = *p`; the declaration `var l2: S = *p;` copies): copy through a `*T` local (`var p2:
+*S = GP; o.s = p2;`, `l = p`).
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
 class from its source: from a pointer-mode local or global it declares `q` as a second pointer to
@@ -1639,6 +1649,46 @@ heap handle and never dispatches (`gs() + 8` is pointer arithmetic). The same ex
 an argument (`sz(mk3(1) + a)`), a declaration's initialiser (`var r = mk3(4) - s;`, `var q: P3 =
 mk3(1) + a;`) and a struct fn's return value (`return mk3(1) + a;`) — those two were `expected
 ';', got '-'` before 6.7.6, the receive having taken the call alone.
+
+**A struct-typed field or a `*T` dereference is a LEFT operand too** (6.7.10, the user's decision):
+`w.s + a`, `p.s + a` through a `*W`, `mk(1).s + a`, `self.s * a`, `o.w.s - a`, `(w.s) + a`, `*p + a`,
+`(*p) + a`, `*gp() + a` and `*w.ps / a` call `S_add` (`S_sub`, `S_mul`, `S_div`) for the field's
+struct, or the struct the `*S` points at, exactly as a struct variable in that place does, at every
+size: into a `*S` parameter or over 8 bytes the field's own address (or the pointer) is passed — a
+write through it reaches the field — else its value. The result is a struct value: it is copied by
+a declaration or an assignment, passed, returned (`return w.s + a;` from a struct fn) and chained
+(`w.s + a + a`). A missing `S_op` is refused by name as for a variable (`w.s + 1` with no `S_add`),
+as is an operator fn whose first parameter is another struct, and, at top level, a 9-16 byte result
+(`var G: H = GW.s + A;`). Through 6.7.9 only a variable or a struct result typed the left operand:
+`h.p - s` subtracted the first words (250 where `P2_sub` gives 139), silently, at every size. A
+`*T` field itself is a pointer (`w.p + 1` steps it), a `Str` field a handle, and `-w.s + a`
+negates a word first (no dispatch). ⚠ Known defect (6.7.10): a dereference of a `*S` of 1 to 7
+bytes, and a whole field of 3, 5, 6 or 7 bytes, is still loaded as an 8-byte word on the way (as in
+every value use of one — an argument, a right operand): an object ending exactly at the end of a
+mapping faults.
+
+**A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
+`take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass
+the struct `p` points at exactly as a struct variable in that place does — to a by-value parameter over
+8 bytes (or an operator's) the pointer, which the callee copies, so its writes stay in its copy; to a
+`*S` parameter of any size the pointee itself, so a write reaches it. A dereference-led operator result
+is an argument like any other (`take(*p + a)`; at top level a 9-16 byte one is refused by name, as
+`take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass 'pu' to a parameter of a
+different struct type*); an untyped `*x` is still the word it reads. Through 6.7.9 the word the
+dereference read was passed as the struct's address — a crash on every target.
+
+**An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
+the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads
+and writes it, `c + c` dispatches again, `take(c)` passes it — whatever the left operand is (a
+variable, a field, a dereference, a call, wrapped, chained); the operator's return type wins over a
+leading call's (`var c = mk(4) * b;` is `S_mul`'s type), as it did over 8 bytes, where the result's
+temporary becomes `c`. Through 6.7.9 a result of 8 bytes or less was an untyped word: `c.f` was *no
+struct type in scope for 'c'* and `c + c` added integers — and 6.7.10's packed fields moved `struct
+C4 { r: u8; g: u8; b: u8; a: u8; }` from 32 bytes to 4, so `var c = A + B; c.g = 1;` stopped
+compiling until this. An operator returning an integer leaves the binding untyped, and an untyped
+global keeps the result's word at every size. ⚠ A 9-16 byte result in parentheses (`var c = (a +
+b);`) is still an untyped word (it has no temporary to name): write `var c: T = (a + b);` or drop
+the parentheses.
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
