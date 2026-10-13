@@ -137,6 +137,8 @@
 #   G4  its reserved-name claims: a program's own `__cyrius_` fn gets no line, and one that reuses
 #       `__cyrius_cov_dump` is replaced by the compiler's — the `duplicate fn` warning names it, and
 #       the block is still written
+#   G5  its `<line>` rule for a fn a `#derive` writes ("named at its struct's closing `}`"): a derive
+#       probe whose `#derive`, `struct`, field and `}` lines all differ dumps P_x / P_set_x at the `}` line
 #
 # MUTATION LEDGER (P5B-1; scratch copies of the tree, each its 2-stage mutant cycc, this gate and the
 # named gates run as CYCC=<mutant>; 2026-10-12):
@@ -193,6 +195,8 @@
 #   MG2  the guide's quoted `0 or 1` refusal altered                 -> RED 1 of 250: G2
 #   MG3  a fifth dump fn in `_cov_finish` (its 2-stage cycc)         -> RED 1 of 250: G3
 #   MG4  the guide's stated exit altered (`# 11` -> `# 12`)           -> RED 2 of 250: G1 G1'
+#   MG5  the guide's derive clause altered (`closing `}`` -> `struct` line) -> RED 1 of 251: G5 (the 6.7.10
+#        review: the guide said every `<line>` is the `fn` keyword's, which a derive-written fn has not)
 # NOT MUTATION-PROVABLE, said by name (plan §5; the 6.7.10 review), kept as defensive lines:
 #   - the two `_IR_REC0(S, IR_RAW_EMIT)` marks in `_cov_hit`: P11 measured identical output without them;
 #     the IR=3 rows are pinned by M2.
@@ -1071,7 +1075,19 @@ if [ "$RC" = 0 ]; then chmod +x "$T/g4.bin"; "$T/g4.bin" > /dev/null 2>&1 || got
 if [ "$RC" = 0 ] && [ "$got" = 2 ] && grep -q "^warning.*duplicate fn '__cyrius_cov_dump'" "$T/g4.err" && cmp -s "$T/g4.cov" "$T/g4.want"; then
     ok "G4 a program's own __cyrius_ fn gets no line; its __cyrius_cov_dump is replaced, named by the duplicate-fn warning (exit 2, the block written)"
 else bad "G4 rc $RC, exit $got; warning: $(grep -m1 'duplicate fn' "$T/g4.err"); dump: $(tr '\n' '|' < "$T/g4.cov" 2> /dev/null)"; fi
+# G5 — the `<line>` of a fn a #derive writes is its struct's closing `}` (the guide's clause), not the
+# `#derive` (1), `struct` (2) or a field (3 / 4) line
+GD5=$(grep -c "a fn a \`#derive\` writes has no \`fn\` of its own and is named at its struct's closing \`}\`" "$T/g.sec")
+printf '#derive(accessors)\nstruct P {\n    x;\n    y;\n}\nvar buf[2];\nP_set_x(&buf, 3);\nvar r = P_x(&buf);\nsyscall(60, r);\n' > "$T/g5.cyr"
+printf '# cyrius-coverage 1\n1 <source>:5 P_x\n1 <source>:5 P_set_x\n' > "$T/g5.want"
+rm -f "$T/g5.cov"
+cc g5 g5.cyr CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/g5.cov"
+got=0
+if [ "$RC" = 0 ]; then chmod +x "$T/g5.bin"; "$T/g5.bin" > /dev/null 2>&1 || got=$?; fi
+if [ "$GD5" = 1 ] && [ "$RC" = 0 ] && [ "$got" = 3 ] && cmp -s "$T/g5.cov" "$T/g5.want"; then
+    ok "G5 the guide names a #derive-written fn at its struct's closing \`}\`, and the dump does (P_x / P_set_x at line 5)"
+else bad "G5 the guide's derive clause found $GD5 time(s) (want 1); rc $RC, exit $got (want 3); dump: $(tr '\n' '|' < "$T/g5.cov" 2> /dev/null)"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL $G: $fails of $rows row(s) red"; exit 1; fi
-echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural); every fn shape (#inline replays, closures, generics, methods, async bodies, #naked as not instrumented, no __cyrius_ record, defer, tail calls, the top-level micro-frame); the guide's example, quoted texts and reserved names held to the compiler"
+echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural); every fn shape (#inline replays, closures, generics, methods, async bodies, #naked as not instrumented, no __cyrius_ record, defer, tail calls, the top-level micro-frame); the guide's example, quoted texts, reserved names and derive line rule held to the compiler"
 exit 0

@@ -1886,7 +1886,8 @@ target carries it: x86-64 and aarch64 Linux, macOS (arm64, x86-64), Windows, agn
 A fn never entered has no line. `<file>` is named as every compiler diagnostic names it — an included
 file by its include path as written (`lib/assert.cyr`, `src/parse.cyr`), `<source>` for the entry
 file (through `cyrius build` / `run` too). `<line>` is the line of the `fn` keyword; a closure's is its
-closing `|` (or its `||`). `<name>` is the name the compiler registers: `P_sum` for a method,
+closing `|` (or its `||`); a fn a `#derive` writes has no `fn` of its own and is named at its struct's closing `}`.
+`<name>` is the name the compiler registers: `P_sum` for a method,
 `gen$i32` for `gen<i32>` (an `i64` instance is `gen` itself), `f$impl` for an `async fn f`'s body,
 `__clNNNNN` for a closure (the number is an index, so it moves as fns are added). The counts are
 this process's. A dump that cannot open its file — an open the program's own sandbox denies, a path
