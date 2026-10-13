@@ -193,6 +193,17 @@
 #   MG2  the guide's quoted `0 or 1` refusal altered                 -> RED 1 of 250: G2
 #   MG3  a fifth dump fn in `_cov_finish` (its 2-stage cycc)         -> RED 1 of 250: G3
 #   MG4  the guide's stated exit altered (`# 11` -> `# 12`)           -> RED 2 of 250: G1 G1'
+# NOT MUTATION-PROVABLE, said by name (plan §5; the 6.7.10 review), kept as defensive lines:
+#   - the two `_IR_REC0(S, IR_RAW_EMIT)` marks in `_cov_hit`: P11 measured identical output without them;
+#     the IR=3 rows are pinned by M2.
+#   - `_cfo = 0` in `_cov_hit` and in `_cov_call_dump` (src/frontend/parse_cov.cyr). Every factor that can
+#     precede a fold clears or re-arms `_cfo` itself (a variable load, a call, a unary operator, the
+#     syscall builtin), so a fold armed before the hit or the dump call is never consulted after it.
+#     Measured, each line removed in its own 2-stage mutant cycc (MY2 the hit's, MY3 the dump call's):
+#     this gate GREEN 250 / 250, coverage_mode_corpus.sh GREEN, and the shapes that put a fold around a
+#     hit (`3 + c7()`, `c7() + 4`, `2 * k5(9)`, `1 + k5(2) + 1` with #inline literal bodies, `4 * f2(1) * 2`,
+#     `6 + f2(2)`) compile BYTE-IDENTICAL to the tree compiler's under IR=0 / 1 / 3. Plan hazard H22's
+#     "pinned by A1-A7" did not hold: no row pins them, and none can while no factor leaves `_cfo` armed.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
