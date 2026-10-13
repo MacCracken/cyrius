@@ -7479,8 +7479,10 @@ fn _hl_pval_ra(S, sid): i64 {
 # `_ret_small_gh`, `_agc_handle_global`); a handle as an operator's left operand is pointer arithmetic,
 # as over 8 B. CHANGELOG [6.7.10]
 var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, initialiser token) pairs
-# `_gz_ty`'s kind of value: 1 a call / method / operator / if-expression result, 2 an inline global or
-# a field, 3 a handle global, 4 an operand an operator dispatches on that is no value (`-g`).
+# `_gz_ty`'s kind of value: 1 a call / method / operator / if-expression result, 2 an inline global, 3 a
+# handle global, 4 an operand an operator dispatches on that is no value (`-g`), 5 a struct-typed field (a
+# struct value, but no operator's left operand dispatches on a field — the parser types only a variable or
+# a struct result there, B7 review), 6 a `*T` (the struct it points at; a receiver, never a value).
 var _gz_k = 0;
 var _gz_gb = 0;  # the generic struct a whole generic call's `: G<T>` return names (its instance is the call's)
 # PARSE_GVAR_REG, the slot known (`gvi`; `ti` the initialiser's first token): a struct global of 8 B or
@@ -7553,6 +7555,7 @@ fn _gz_sval(S, b, sid): i64 {
     if (_gci_src(S, b) == sid) { return 1; }
     if (_gz_star(S, b, sid) == 1) { return 1; }
     if (_gz_pname(S, b) == 1) { return 1; }
+    if (_gz_fsrc(S, b, sid) == 1) { return 1; }   # 6.7.10 (review): a field through a `*T`
     var t = _gz_ty(S, b, _gz_end(S, b));
     if (_gz_k != 1) { return 0; }
     if (t == sid) { return 1; }
@@ -7565,7 +7568,20 @@ fn _gz_truth(S, ti, sid): i64 {
     if (_gci_src(S, ti) == sid) { return 1; }
     if (_gz_star(S, ti, sid) == 1) { return 1; }
     if (_gz_pname(S, ti) == 1) { return 1; }
+    if (_gz_fsrc(S, ti, sid) == 1) { return 1; }   # 6.7.10 (review): a field through a `*T`
     return _hl_sval(S, ti, sid);
+}
+# ⛔ 6.7.10 (B7 review) — 1 = the initialiser at token `b` (up to its `;`, inside any parentheses) is a
+# chain ending in a struct-typed FIELD of struct `sid` (`_gz_ty` kind 5) — through a `*T` global, a `: *T`
+# call, a `*T` field or a call's result (`P.s`, `gp().s`, `GW.p.s`): a struct value, as a field is (decision
+# 1). The handle line for globals (B7-1g) judged only a chain from an inline global (`_gci_src`), so `var G:
+# S8 = P.s;` became a handle holding the field's word and SIGSEGV'd at its first write (an inline copy
+# through 6.7.9). Read from the tokens, the same in the sweep and in the replay's check.
+fn _gz_fsrc(S, b, sid): i64 {
+    var t = _gz_ty(S, b, _gz_end(S, b));
+    if (_gz_k != 5) { return 0; }
+    if (t != sid) { return 0; }
+    return 1;
 }
 # ⚠ 6.7.10 (B7-1g) — `var G: T = P;` with P a `*U` global's NAME (inside any parentheses): left with the
 # layout it had (8 B or less, an inline value holding the pointer word; over 8 B, a handle bound to P's
@@ -7720,6 +7736,7 @@ fn _gz_op(S, b, p): i64 {
 fn _gz_lty(S, b, p): i64 {
     var t = _gz_ty(S, b, p);
     if (_gz_k == 3) { return 0; }
+    if (_gz_k >= 5) { return 0; }   # 6.7.10 (review): a field or a `*T` dispatches nothing
     if (t >= 2048) { return 0; }
     if (t == _STR_SID(S)) { return 0; }
     return t;
@@ -7747,6 +7764,10 @@ fn _gz_unary(S, b, e): i64 {
     return _gz_chain(S, b, e);
 }
 # `name`, `f(..)`, `g<..>(..)`, then `.field` / `.method(..)` steps up to `e`: the struct at its end.
+# ⛔ 6.7.10 (B7 review) — a `*T` is a RECEIVER too, as the parser's field and method access takes it: a
+# `*T` global, a call or method declared `: *T`, a `*T` field (kind 6 at the end — the struct it points at,
+# never a value). The sweep judged `var G: S8 = P.dbl();` (`P: *S8`), `gp().dbl()` and `GW.p.dbl()` handles
+# while the replay's parse recorded the method's struct result, and refused the valid program as a misread.
 fn _gz_chain(S, b, e): i64 {
     var t = 0;
     var k = 0;
@@ -7758,15 +7779,22 @@ fn _gz_chain(S, b, e): i64 {
         if (c >= e) { return 0; }
         t = _gz_call_rs(S, b);
         k = 1;
+        if (t == 0) { if (o == b + 1) {
+                t = _hl_fn_psid(FINDFN(S, TOKVAL(S, b)));   # `fn gp(): *T`
+                k = 6;
+            } }
         i = c + 1;
     } else {
         var gvi = _findvar_core(S, TOKVAL(S, b));
         if (gvi < 0) { return 0; }
         var pm = GVPM(S, gvi);
-        if (pm == 0) { return 0; }
         t = GVTYPE(S, gvi);
         k = 2;
         if (pm == 1) { k = 3; }
+        if (pm == 0) {
+            t = _gv_ptr_sid(S, gvi);   # a `*T` global
+            k = 6;
+        }
     }
     while (i < e) {
         if (t <= 0) { return 0; }
@@ -7779,14 +7807,24 @@ fn _gz_chain(S, b, e): i64 {
             var mc = _call_close(S, i + 2);
             t = GFRS(S, mf);
             k = 1;
+            if (t <= 0) {
+                t = _hl_fn_psid(mf);   # a method declared `: *T`
+                k = 6;
+            }
             _gz_gb = 0;
             i = mc + 1;
         } else {
             var fi = FINDFIELD(S, t - 1, TOKVAL(S, i + 1));
             if (fi < 0) { return 0; }
-            t = GETFTYPE(S, t - 1, fi);
-            if (IS_STR_FIELD(S, t) == 1) { return 0; }
-            k = 2;
+            var fp = _fld_ptr_sid(S, t - 1, fi);
+            k = 5;
+            if (fp > 0) {
+                t = fp;   # a `*T` field
+                k = 6;
+            } else {
+                t = GETFTYPE(S, t - 1, fi);
+                if (IS_STR_FIELD(S, t) == 1) { return 0; }
+            }
             i = i + 2;
         }
     }
@@ -7838,7 +7876,7 @@ fn _gz_bty(S, a, b): i64 {
             if (_gcall_open(S, a2) < 0) { return _sarg_gv_sid(S, _findvar_core(S, TOKVAL(S, a2))); }
         } }
     var t = _gz_ty(S, a, b);
-    if (_gz_k == 1 || _gz_k == 2) { return t; }
+    if (_gz_k == 1 || _gz_k == 2 || _gz_k == 5) { return t; }
     return 0;
 }
 # The replay's check, the initialiser at `ti` just parsed (cursor on its `;`): a declaration-zone struct

@@ -1292,6 +1292,13 @@ a fn declared `: S8`, an operator's right operand, an if-expression branch, and 
 copy (below), in a fn and at top level. A closure captures the handle and reads through it. As
 an operator's LEFT operand a handle is pointer arithmetic (no dispatch), and `&q` is its slot.
 
+⚠ An operator whose LEFT operand is a struct-typed FIELD or a DEREFERENCE does not dispatch
+(`w.s + a`, `*p + a` add the first words — as through 6.7.9, at every size): only a struct
+variable or a struct result types the left operand. Its result is an integer, so
+`var q: S8 = w.s + a;` is a handle holding that sum (through 6.7.9, at 8 bytes or less, an inline
+`q` whose field was the sum). Name the operand first — `var l: S8 = w.s; var q: S8 = l + a;` —
+for the `S8_add` dispatch.
+
 ⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
 layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
 over 8.

@@ -49,12 +49,15 @@
 # tests/tcyr/crossos/small_struct_global_handle_line.tcyr (the declaration zone — judged from its
 # tokens at the end of pass 1, a fn declared below included — and after the first statement; every
 # consumer in a fn and at top level; every size 1..8 B):
-#   R2 that file on the same legs as R1, N derived from it (floor 258)
+#   R2 that file on the same legs as R1, N derived from it (floor 267)
 #   GC compile rows (x86): GC1 `var ga: Num = 1;` is a handle global — `ga + gb` is pointer
 #      arithmetic (3, no `Num_add`), as at 16 B; a struct value global still dispatches (102); GC2
 #      `var G: S8 = *GU;` with `GU: *U8` refused by name in the zone and after it, at 8 and 16 B;
 #      GC6 (the review fix) `(*GU)` / `*gu()` of another struct refused by name in the zone and after it;
 #      GC7 `var G: H = *gp();` with gp declared below G refused by name (pass 1 sizes G);
+#      GC8 (the review fix) `var G: S8 = GW.s + A;` — an operator whose left operand is a FIELD does not
+#      dispatch (it never did: the first words are added) — in the zone, after it and in a fn: each
+#      a handle holding the sum (exit 9), the zone no longer refusing it as a misread;
 #      GC3 `var G: H = *P;` with P declared below G refused by name (pass 1 could not register G
 #      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
 #      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
@@ -212,6 +215,14 @@
 #   MR8 `_sci_dexpr` without the type check          -> RED 4: C7 x4 (a `*U` of another struct compiled)
 #   MR9 `_sci_dexpr` copying the slot-rounded size (8 bytes for a 7 B struct) -> RED 2: PD x86 and PD
 #                                                      aarch64 exit 139
+#   MF1 `_gz_chain` without the `*T` global receiver -> RED 7: R2 x7 (`IPM8 = PS8.dbl()` refused as a zone
+#                                                      misread)
+#   MF2 `_gz_chain` without the `: *T` call receiver -> RED 7: R2 x7 (`IGM8 = gs8().dbl()` a misread)
+#   MF3 `_gz_chain` without the `*T` field receiver -> RED 7: R2 x7 (`IWM8 = PWG8.p.dbl()` a misread)
+#   MF4 `_gz_fsrc` answering 0 (a field through a `*T` not a value)
+#                                                   -> RED 7: R2 x7 (`IPF8 = PW8S.s` a handle holding the
+#                                                      field's word: SIGSEGV)
+#   MF5 `_gz_lty` dispatching on a field again        -> RED 1: GC8 (the zone refuses `GW.s + A` as a misread)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -247,7 +258,7 @@ if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR
 TG=tests/tcyr/crossos/small_struct_global_handle_line.tcyr
 [ -f "$TG" ] || { echo "FAIL: $G: $TG is missing"; exit 1; }
 NG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TG")
-GFLOOR=258
+GFLOOR=267
 if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GFLOOR) — rows were lost"; exit 1; fi
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
@@ -472,6 +483,12 @@ crow "GC6 var G: H = (*GU) refused after the first statement" "refuse:cannot cop
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar k = 0;\nk = 1;\nvar G: H = (*GU);\nsyscall(60, G.v);\n'
 crow "GC7 var G: H = *gp() with gp declared below it refused by name (over 8 B pass 1 sizes G)" "refuse:from a dereference of a global or fn declared below it" \
   'struct H { v; w; }\nvar A = H { 4, 0 };\nvar G: H = *gp();\nfn gp(): *H { return &A; }\nsyscall(60, G.v);\n'
+crow "GC8 var G: S8 = GW.s + A in the zone: a field left operand does not dispatch (as through 6.7.9), the zone agrees" 9 \
+  'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nvar A = S8 { 4 };\nvar S0 = S8 { 5 };\nvar GW = W { S0, 1 };\nvar G: S8 = GW.s + A;\nsyscall(60, load64(&G));\n'
+crow "GC8 the same after the first statement" 9 \
+  'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nvar A = S8 { 4 };\nvar S0 = S8 { 5 };\nvar GW = W { S0, 1 };\nvar k = 0;\nk = 1;\nvar G: S8 = GW.s + A;\nsyscall(60, load64(&G));\n'
+crow "GC8 a local: the same" 9 \
+  'struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var z: S8; z.v = a.v * 3 + b.v; return z; }\nstruct W { s: S8; n; }\nfn f() { var a = S8 { 4 }; var s0 = S8 { 5 }; var w = W { s0, 1 }; var q: S8 = w.s + a; return load64(&q); }\nsyscall(60, f());\n'
 crow "GC3 var G: H = *P with P declared below it refused by name" "refuse:from a global declared below it" \
   'struct H { v; w; }\nvar G: H = *P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
 crow "GC4 a global declared a value and then a handle is refused" "refuse:redeclared with a different type or size" \
