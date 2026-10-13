@@ -4649,6 +4649,19 @@ fn _sc_post_small(S, fi, noff, beg): i64 {
     return 0;
 }
 
+# 6.7.10 — the scalar operator dispatch's record (EMIT_OP_DISPATCH): `_sc_post_small`'s, its span also
+# noted as an OPERATOR's, for the untyped binding (`_sc_op_whole`, decision 12).
+fn _sc_post_op(S, fi, noff, beg): i64 {
+    _sc_post_small(S, fi, noff, beg);
+    _sc_opb = 0 - 1;
+    if (_sc_tmp != 0 - 3) { return 0; }
+    if (_sc_beg != beg) { return 0; }
+    if (_sc_end != GTI(S)) { return 0; }
+    _sc_opb = beg;
+    _sc_ope = _sc_end;
+    return 0;
+}
+
 # A struct-typed declaration (`pscale` = `0 - sid`) initialised from a recorded struct call of a
 # different struct: refused (1). CHANGELOG [6.6.11]
 fn _sc_decl_mismatch(S, pscale, sid): i64 {

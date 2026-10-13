@@ -1655,6 +1655,19 @@ bytes, and a whole field of 3, 5, 6 or 7 bytes, is still loaded as an 8-byte wor
 every value use of one — an argument, a right operand): an object ending exactly at the end of a
 mapping faults.
 
+**An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
+the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads
+and writes it, `c + c` dispatches again, `take(c)` passes it — whatever the left operand is (a
+variable, a field, a dereference, a call, wrapped, chained); the operator's return type wins over a
+leading call's (`var c = mk(4) * b;` is `S_mul`'s type), as it did over 8 bytes, where the result's
+temporary becomes `c`. Through 6.7.9 a result of 8 bytes or less was an untyped word: `c.f` was *no
+struct type in scope for 'c'* and `c + c` added integers — and 6.7.10's packed fields moved `struct
+C4 { r: u8; g: u8; b: u8; a: u8; }` from 32 bytes to 4, so `var c = A + B; c.g = 1;` stopped
+compiling until this. An operator returning an integer leaves the binding untyped, and an untyped
+global keeps the result's word at every size. ⚠ A 9-16 byte result in parentheses (`var c = (a +
+b);`) is still an untyped word (it has no temporary to name): write `var c: T = (a + b);` or drop
+the parentheses.
+
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
 the 6.6.16 handle rule). Into a struct VALUE of another type it is refused by name, as a `Str`

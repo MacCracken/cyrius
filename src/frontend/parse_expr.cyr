@@ -7261,7 +7261,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # found bite 5's flat 0 stepped a `: *i32` result by 1. The `+` / `-` loop takes it as its left
     # step (`v + q + 1`), and the `*` / `/` loop skips its own reset (`v * q + 1`). CHANGELOG [6.7.9]
     SPSC(S, _fn_ret_ps(ofi));
-    _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
+    _sc_post_op(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
 

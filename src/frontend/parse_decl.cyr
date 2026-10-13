@@ -851,6 +851,33 @@ fn _var_rhs_msid(S, ti): i64 {
     if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
     return rs;
 }
+# The untyped declaration's type, judged once its initialiser at `start` is parsed (`sid0` the type the
+# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): an OPERATOR's
+# struct result of 8 B or less (`_sc_op_whole`, which wins over a leading call's type, as over 8 B), else
+# `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
+fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
+    if (pscale != 0) { return sid0; }
+    if (sl != 0) { return sid0; }
+    var os = _sc_op_whole(S, start);
+    if (os > 0) { return os; }
+    if (sid0 != 0) { return sid0; }
+    return _var_rhs_mchain(S, start, GTI(S));
+}
+# ⛔ 6.7.10 — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES ITS TYPE AT EVERY SIZE (the
+# user's decision 12, 2026-10-12), as over 8 B, where the result's temporary BECOMES `c` (`_sc_var_receive`).
+# Of 8 B or less the result is a value in rax with no temporary, so `c` was an untyped word: `c.g` was "no
+# struct type in scope for 'c'" and `c + c` added integers — and 6.7.10's packed fields moved `C4 { r: u8;
+# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. The struct of
+# the whole initialiser [start, cursor) when it is one operator dispatch's result of 8 B or less (inside any
+# wrap; `_sc_post_op` noted it), else 0. A method's or an if-expression's result is not an operator's. A
+# global does not read it (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over
+# 8 B. CHANGELOG [6.7.10]
+fn _sc_op_whole(S, start): i64 {
+    if (_sc_whole(S, start) != 0 - 3) { return 0; }
+    if (_sc_beg != _sc_opb) { return 0; }
+    if (_sc_end != _sc_ope) { return 0; }
+    return _sc_sid;
+}
 # 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
 # `p.me().area()`, `mk(1).area()`, `w.v.id(h)` at V = f64 — whose receiver no peek above resolves.
 # It is judged once parsed, from the type the method arm gave the result (`_mcall_ret`): the whole
@@ -6995,9 +7022,7 @@ fn PARSE_VAR(S): i64 {
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
     _decl_float_init(S, lfloat, scv_start);
-    if (_ti_inferred_sid == 0) { if (pscale == 0) { if (scalar_type + lbool == 0) {   # 6.7.9: `var a = w.v.area();`
-                _ti_inferred_sid = _var_rhs_mchain(S, scv_start, GTI(S));
-            } } }
+    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start);   # 6.7.9; 6.7.10
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);

@@ -111,6 +111,16 @@
 #      of another struct, by name; F3 `var G: H = GW.s + A;` at top level (a 9-16 B result needs a frame),
 #      in the declaration zone and after it
 #
+# 6.7.10 (the user's decision 12) — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES THE
+# STRUCT TYPE AT EVERY SIZE, as over 8 B (where the result's temporary becomes `c`): `c.g` works and `c + c`
+# dispatches. Of 8 B or less the result was an untyped word — and 6.7.10's packed fields moved `C4 { r: u8;
+# g: u8; b: u8; a: u8; }` from 32 B to 4, so `var c = A + B; c.g = 1;` was refused. Its runtime half is
+# tests/tcyr/crossos/struct_operator_result_binding.tcyr (the C4 case, every shape against its 16 B twin,
+# the operator's own return type, sizes 1..7 B, top level):
+#   R8 that file on the same legs as R1, N derived from it (floor 33)
+#   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
+#      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
+#
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
 #   real tree                                         -> GREEN
@@ -262,6 +272,16 @@
 #                                                      the integer, SIGSEGV; cxvm 3 rows)
 #   MO10 `_flo_addr_ra` without the field's offset    -> RED 21: R6 27 rows x7, R7 119 / R7d 19 x14
 #   MO11 `_OP_OPERAND_ADDR` without the `_OPD_SV` arm  -> RED 21: R6 x7 (SIGSEGV; cxvm out of range), R7 / R7d x14
+# DECISION-12 MUTATION LEDGER (2026-10-12, the same method):
+#   the ops-1 tree (no untyped binding typed)        -> RED 8: R8 does not build x7 (`c.g`: "no struct type in
+#                                                      scope for 'c'"), B1
+#   MB1  `_sc_op_whole` answering 0                    -> RED 8: as the ops-1 tree
+#   MB2  `_sc_post_op` never noting the operator's span -> RED 8: as the ops-1 tree
+#   MB3  `_var_rhs_post` keeping a leading call's type over the operator's -> RED 7: R8 does not build x7
+#                                                      (`var c = mk8(4) * b; c.u` — "unknown field 'u' on 'S8'")
+#   MB4  `_sc_op_whole` typing ANY whole result of 8 B or less (a method chain, an if-expression too, not only
+#        an operator's) -> GREEN: no row pins that a method chain's or an if-expression's untyped binding stays
+#        untyped — decision 12 names operators; whether those take their type too is the user's question
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -488,6 +508,20 @@ for leg in $XLEGS $OTHER; do
     else bad "R7d $leg: exit $RC, want 39"; fi
 done
 
+TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
+[ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
+NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
+BFLOOR=33
+if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
+echo "R8. $TB ($NB rows: an untyped binding of a struct-returning operator takes the struct type)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TB" "$D/ob_$n"
+    if [ "$RC" -eq -1 ]; then bad "R8 $leg: the values file did not build: $(grep '^error' "$D/ob_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NB passed, 0 failed ($NB total)" ]; then ok "R8 $leg: $LAST"
+    else bad "R8 $leg: exit $RC, '$LAST' (want '$NB passed, 0 failed ($NB total)') $(grep -m3 'FAIL' "$D/ob_$n.out" | tr '\n' ' ')"; fi
+done
+
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -598,6 +632,14 @@ crow "CP5 its 16 B twin" "refuse:cannot copy 'mku' into a variable of a differen
   'struct H { v; w; }\nstruct UH { u; x; }\nfn mku(n): UH { var r: UH; r.u = n; r.x = 0; return r; }\nfn f() { var x: H; x.v = 1; var p: *H = &x; p = mku(1); return x.v; }\nsyscall(60, f());\n'
 crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var a: S8; a.v = 1; var u: U8; u.u = 2; var p: *S8 = &a; var pu: *U8 = &u; p = pu; p.v = 7; return a.v * 10 + u.u; }\nsyscall(60, f());\n'
+
+echo "B. an untyped binding of an operator result (x86)"
+crow "B1 the C4 case: var c = A + B; c.g = 1; c + c" 111 \
+  'struct C4 { r: u8; g: u8; b: u8; a: u8; }\nfn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }\nfn f() { var A = C4 { 1, 2, 3, 4 }; var B = C4 { 10, 20, 30, 40 }; var c = A + B; c.g = 1; var d = c + c; var k = 0; if (c.r == 11) { if (c.g == 1) { if (c.b == 33) { if (c.a == 44) { k = k + 1; } } } } if (d.g == 2) { if (d.a == 88) { k = k + 10; } } if (A.g == 2) { k = k + 100; } return k; }\nsyscall(60, f());\n'
+crow "B2 var r = a - b with S8_sub returning i64: r untyped" "refuse:no struct type in scope for 'r'" \
+  'struct S8 { v; }\nfn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }\nfn f() { var a = S8 { 7 }; var b = S8 { 4 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
+crow "B2 its 16 B twin" "refuse:no struct type in scope for 'r'" \
+  'struct H { v; w; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 7, 0 }; var b = H { 4, 0 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
 
 echo "F. a field / dereference left operand refused exactly as a struct variable is (x86)"
 crow "F1 w.s + 1 with no S8_add refused" "refuse:undefined function 'S8_add'" \
@@ -935,4 +977,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B)"
