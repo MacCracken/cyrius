@@ -62,7 +62,9 @@
 #   XH  (static) every host scripts/release-gate.sh's step 4 walks has a leg in
 #       scripts/cross-os-selfhost.sh that runs X1 and X2 on the hardware (_co_cov_stage, its X1 run,
 #       `_co_cov_check <host>`) and fails as `SELFHOST_FAIL: <host> — coverage --exec`; the checker
-#       still grades X1's exit 0 and exact 5/7, and X2's exit 1 and named bad_test failure
+#       still grades X1's exit 0 and exact 5/7, and X2's exit 1 and named bad_test failure; the cass
+#       leg's failure prints what Windows Defender holds against the run (`_co_cass_defender`, which
+#       asks Get-MpThreat) before its SELFHOST_FAIL, so a quarantined instrumented PE reads as one
 #
 # MUTANTS (each measured RED in a scratch copy, 2026-10-12; the rows each turned RED):
 #   N1  the coverage entries not injected (_cc_flag_inject)       X1 X2 X4 X8 X9 W1 (no record)
@@ -90,6 +92,8 @@
 #   NH3 _co_cov_check's 5/7 weakened to a prefix                   XH
 #   NH4 a fifth host added to release-gate.sh's loop, no leg       XH
 #   NH5 _co_cov_check's X2 exit-code grade deleted                 XH
+#   NH6 the cass failure branch's `_co_cass_defender;` deleted       XH
+#   NH7 `Get-MpThreat` dropped from _co_cass_defender               XH
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -445,7 +449,10 @@ CK=$(cofn _co_cov_check)
 printf '%s\n' "$CK" | grep -qF '[ "$_COV_RC1" = 0 ]' && printf '%s\n' "$CK" | grep -qF '[ "$_COV_RC2" = 1 ]' || fail "XH: _co_cov_check no longer grades X1's exit 0 and X2's exit 1"
 printf '%s\n' "$CK" | grep -qF "'  Functions executed: 5/7 (71%)  [execution coverage" || fail "XH: _co_cov_check no longer holds X1's exact 'Functions executed: 5/7 (71%)'"
 printf '%s\n' "$CK" | grep -qF "'  FAIL: programs/bad_test.cyr (exit 1)'" || fail "XH: _co_cov_check no longer holds X2's named 'FAIL: programs/bad_test.cyr (exit 1)'"
-[ "$FAIL" = "$x" ] && echo "  ok XH: all $nh hardware legs ($HOSTS) run X1 + X2 and fail as 'SELFHOST_FAIL: <host> — coverage --exec'; the checker grades both exit codes, 5/7 and bad_test's exit 1"
+coleg cass | grep -qF '|| { _co_cass_defender; echo "SELFHOST_FAIL: cass — coverage --exec' \
+    || fail "XH: the cass leg's coverage failure does not print Defender's threats (_co_cass_defender) before its SELFHOST_FAIL"
+cofn _co_cass_defender | grep -q 'ssh \$SSHO cass "Get-MpThreat ' || fail "XH: _co_cass_defender does not ask cass for Get-MpThreat"
+[ "$FAIL" = "$x" ] && echo "  ok XH: all $nh hardware legs ($HOSTS) run X1 + X2 and fail as 'SELFHOST_FAIL: <host> — coverage --exec'; the checker grades both exit codes, 5/7 and bad_test's exit 1; cass's failure asks Get-MpThreat first"
 
 [ "$FAIL" = 0 ] || { echo "FAIL: coverage_exec_cli — $FAIL row(s)"; exit 1; }
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: coverage_exec_cli — every row that ran passed; W1 could not run (exit 77: a SKIP, not a PASS)"; exit 77; fi

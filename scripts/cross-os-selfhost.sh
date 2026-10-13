@@ -334,6 +334,18 @@ _co_cov_check() {
   return "$_cbad"
 }
 
+# _co_cass_defender — on a failed cass coverage step, what Windows Defender holds against this run's
+# directory. The instrumented runs build unsigned PE binaries under wcov (covx_bin.exe, test_bin.exe),
+# and Defender's ML engine quarantines such files: that reads as a 0-byte file or "cannot execute",
+# which looks like a compiler bug and is not one (CLAUDE.md, cass). Best-effort and diagnostic only —
+# it prints, and never changes the verdict. CHANGELOG [6.7.10]
+_co_cass_defender() {
+  echo "  coverage: Windows Defender's threats naming $RD (Get-MpThreat; none listed = nothing of this run's held):"
+  { ssh $SSHO cass "Get-MpThreat | Where-Object { (\$_.Resources -join ' ') -like '*$RD*' } | Select-Object -Property ThreatName,Resources | Format-List" 2>&1 \
+      | tr -d '\r' | sed '/^ *$/d; s/^/      /' | head -20; } || true
+  return 0
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -681,8 +693,10 @@ case "$HOST" in
     ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && rmdir wcov"' || _COV_LEFT="(wcov is not empty)"
     rm -f "$CO_TMP"/_cov1.out "$CO_TMP"/_cov1.err "$CO_TMP"/_cov2.out "$CO_TMP"/_cov2.err
     scp -q $SSHO "cass:$WRDS/_cov1.out" "cass:$WRDS/_cov1.err" "cass:$WRDS/_cov2.out" "cass:$WRDS/_cov2.err" "$CO_TMP/" 2>/dev/null || true
+    # A miss also prints what Defender holds against this run (_co_cass_defender, Get-MpThreat), so a
+    # quarantined instrumented binary reads as one, not as a compiler bug.
     _co_cov_check cass '3 (1 .tcyr, 2 program(s)), 1 failed' \
-      || { echo "SELFHOST_FAIL: cass — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; wcov left empty) FAILED. Remote output: $WRD\\_cov1.*, _cov2.*. NOT SELFHOST_OK."; exit 1; }
+      || { _co_cass_defender; echo "SELFHOST_FAIL: cass — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; wcov left empty) FAILED. Remote output: $WRD\\_cov1.*, _cov2.*. NOT SELFHOST_OK."; exit 1; }
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same
