@@ -1394,14 +1394,20 @@ fn _fla_var_receive(S, noff, pscale): i64 {
 # the free call `Odd_sum(x)` pushes x's value; the method arm below pushed `&x` for every `self`,
 # and the callee read its fields out of the address: `x.sum()` returned garbage on every backend.
 # Loaded through the same base-address resolution the field access uses, at the struct's width
-# rounded up to a load (3 -> 4, 5..7 -> 8); the callee reads only the declared fields. CHANGELOG [6.6.11]
+# (1, 2, 4, 8); the callee reads only the declared fields. CHANGELOG [6.6.11]
+# ⛔ 6.7.10 (B7 review) — a 3 / 5 / 6 / 7 B receiver was loaded rounded UP to a load (3 -> 4, 5..7 -> 8),
+# reading past the object: a `*S7` (or, since the handle line, a handle) onto the last 7 bytes of a
+# mapping SIGSEGV'd in `pp.sum()`. It is copied byte-exact through its address now, as every other
+# by-value consumer of an odd-sized struct is (`_hl_pval_ra`). CHANGELOG [6.7.10]
 fn _self_value_ra(S, idx, sid): i64 {
-    _resolve_field_base_addr(S, idx, sid);
     var sz = STRUCTSZ(S, sid - 1);
-    var w = 8;
-    if (sz <= 4) { w = 4; }
-    if (sz <= 2) { w = sz; }
-    EFIELD_LOAD_W(S, w);
+    if (_hl_wpow(sz) == 0) {
+        _fld_addr_ra(S, idx, sid, 0, 0 - 1);
+        _hl_pval_ra(S, sid);
+        return 0;
+    }
+    _resolve_field_base_addr(S, idx, sid);
+    EFIELD_LOAD_W(S, sz);
     return 0;
 }
 

@@ -29,6 +29,9 @@
 #      whose second page is unmapped: passed by value, returned, an operator's right operand, an
 #      if-expression branch, a closure capture's argument and `c = a` — exit 0, no fault (no byte
 #      past the object is read)
+#   PS (Linux x86_64 + aarch64; the review fix) a method's by-value `self: S7` / `self: S3` whose
+#      receiver ends a mapping — a `*S7` local, a handle, a handle global, a `*S7` global, at top level
+#      too: exit 0. The receiver was loaded rounded up to 4 / 8 bytes (`_self_value_ra`, 6.6.11)
 #   AS (x86_64, CYRIUS_ASYNC=1 — a mid-body suspend is x86-only so far) an `async fn` body: a
 #      handle, a bind, a by-value argument, a copy into the object and a returned handle across two
 #      awaits — exit 0
@@ -183,6 +186,9 @@
 #                                                   -> RED 24: R1 / R2 / R5 do not compile x21 (`a = u`,
 #                                                      `X8 = AU8`, `p = pu` refused as copies), C1, CP6, GC5 (a
 #                                                      handle copied through instead of rebound: SIGSEGV)
+# REVIEW-FIX MUTATION LEDGER (2026-10-12, the same method):
+#   MR1 `_self_value_ra` loading a 3 / 5 / 6 / 7 B receiver rounded up to 4 / 8 bytes (the 6.6.11 code)
+#                                                   -> RED 2: PS x86 and PS aarch64 exit 139
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -630,6 +636,54 @@ for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
     else bad "P $leg: exit $RC, want 0 (139 = a read past the object)"; fi
 done
 
+cat > "$D/ps.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+fn S7_sum(self: S7): i64 { return self.a + self.b + self.c; }
+struct S3 { a: i16; c: i8; }
+fn S3_sum(self: S3): i64 { return self.a + self.c; }
+var GH: S7 = 0;
+var GP: *S7 = 0;
+fn run(): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (m <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, m + 4096, 4096) != 0) { return 91; }
+    var pp: *S7 = 0;
+    pp = m + 4096 - 7;
+    pp.a = 100;
+    pp.b = 20;
+    pp.c = 3;
+    if (pp.sum() != 123) { return 1; }
+    var h: S7 = m + 4096 - 7;
+    if (h.sum() != 123) { return 2; }
+    GH = m + 4096 - 7;
+    if (GH.sum() != 123) { return 3; }
+    GP = pp;
+    if (GP.sum() != 123) { return 4; }
+    var m3 = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (syscall(SYS_MUNMAP, m3 + 4096, 4096) != 0) { return 92; }
+    var p3: *S3 = 0;
+    p3 = m3 + 4096 - 3;
+    p3.a = 40;
+    p3.c = 2;
+    if (p3.sum() != 42) { return 5; }
+    var v = S7 { 1, 2, 3 };
+    if (v.sum() != 6) { return 6; }
+    return 0;
+}
+var e = run();
+if (e == 0) { if (GP.sum() != 123) { e = 7; } }
+if (e == 0) { if (GH.sum() != 123) { e = 8; } }
+syscall(60, e);
+EOF
+echo "PS. a by-value self of 7 / 3 B ending a mapping (a *T, a handle, a handle global, a *T global, at top level): no byte past it is read"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/ps.cyr" "$D/ps_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PS $leg: did not build: $(grep '^error' "$D/ps_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "PS $leg: exit 0"
+    else bad "PS $leg: exit $RC, want 0 (139 = a read past the receiver)"; fi
+done
+
 cat > "$D/as.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -688,4 +742,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"
