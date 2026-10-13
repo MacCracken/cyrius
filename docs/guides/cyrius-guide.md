@@ -1330,7 +1330,12 @@ never changed) — each silently; a copy between two different struct types thro
 or method declared `: *T` and a `*T` field were no copy operands at ANY size until 6.7.10: `l =
 GP`, `G = GP`, `l = gp()` and `l = w.p` stored the pointer word into the first field, over 8 bytes
 too. They copy the struct into a struct value now, as a `*T` local does (a `*U` of another struct
-refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`).
+refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`). So
+does pointer arithmetic on a `*T` (`l = p + 1`, `l = (p + 1)`, `l = 1 + GP`, `G = q - 1`: the struct
+the result points at), which stored the pointer word too; `q = q + 1` through a `*T` still steps it.
+⚠ Known defect (6.7.10): a GENERIC call declared `: *T` (`fn gp<T>(): *T`) is no struct source at any
+size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and `gp<S>().v` is refused
+(the instance records T's step but not its struct): bind it to a `*S` first (`var p: *S = gp<S>();`).
 ⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
 first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
 ⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s

@@ -8214,9 +8214,16 @@ fn _hl_pchain(S, b, e): i64 {
 # The struct a `*T` assignment SOURCE [a, e) points at (`_hl_psrc_copy`, parse.cyr): a `*T` GLOBAL's name,
 # or a chain ending in a call or method declared `: *T` or in a `*T` field (`_hl_pchain` with a `*T` at its
 # end) — `_hl_dnm` its last name, for a refusal — else 0. A `*T` local, parameter or capture is
-# `_try_aggregate_copy_assign`'s operand (B7-1c); pointer arithmetic (`p + 1`) is not this. CHANGELOG [6.7.10]
+# `_try_aggregate_copy_assign`'s operand (B7-1c). CHANGELOG [6.7.10]
+# (ops-6) and pointer arithmetic on any `*T` (`p + n`, `n + p`, `GP - n`, wrapped — `_hl_psid`'s typing): it
+# stored the pointer word into the first field at every size.
 fn _hl_psrc(S, a, e): i64 {
     if (a >= e) { return 0; }
+    if (_hl_addop(S, a, e) > a) {   # ops-6: pointer arithmetic
+        var pt = _hl_psid(S, a, e);
+        if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); }
+        return pt;
+    }
     if (TOKTYP(S, a) != 2) { return 0; }
     if (e == a + 1) { if (GINFN(S) == 1) {
             if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0; }
@@ -8224,13 +8231,25 @@ fn _hl_psrc(S, a, e): i64 {
         } }
     var t = _hl_pchain(S, a, e);
     if (_hl_cp != 1) { return 0; }
-    _hl_dnm = TOKVAL(S, a);
+    _hl_dnm = _hl_pnm(S, a, e);
+    return t;
+}
+# The name a refusal of the `*T` expression [a, e) names: in pointer arithmetic the pointer operand's (the
+# side `_hl_psid` types), else the last name of the chain (`w.pu` -> `pu`, `gu()` -> `gu`).
+fn _hl_pnm(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    var k = _hl_addop(S, a, e);
+    if (k > a) {
+        if (_hl_psid(S, a, k) > 0) { return _hl_pnm(S, a, k); }
+        return _hl_pnm(S, k + 1, e);
+    }
     var i = e - 1;
     while (i > a) {
-        if (TOKTYP(S, i) == 2) { _hl_dnm = TOKVAL(S, i); i = a; }
+        if (TOKTYP(S, i) == 2) { return TOKVAL(S, i); }
         i = i - 1;
     }
-    return t;
+    return TOKVAL(S, a);
 }
 # Fn `fi`'s `: *T` struct (`_fn_rpsid`), else 0.
 fn _hl_fn_psid(fi): i64 {

@@ -17,6 +17,7 @@
 # through `q: *S8` repoints q. The SIZE rows (1..7 B, u8 / u16 / u32 compositions) copy into a value global
 # with a guard global packed right after it, and into a local: no byte past the object is written.
 # A `*U` of another struct is refused by name (the gate's CQ rows); the end-of-mapping row is the gate's (PQ).
+# (ops-6) Pointer arithmetic on a `*T` — `p + 1`, `(p + 1)`, `1 + p`, `GQ + 1`, `q - 1` — is such a source too.
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R9 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -209,6 +210,97 @@ fn r_p_h() {
     return a * 100 + b;
 }
 
+# ── pointer arithmetic on a `*T` (ops-6): `l = p + 1`, `l = (p + 1)`, `l = 1 + p`, `l = GQ + 1`, `G = q - 1`
+# copy the struct the result points at; they stored the pointer word into the first field at every size ──
+var AR8[2];
+var ARH[4];
+var GQ8: *S8 = &AR8;
+var GQH: *H = &ARH;
+fn arm(): i64 {
+    var p8: *S8 = &AR8;
+    p8.v = 1;
+    var e8: *S8 = p8 + 1;
+    e8.v = 5;
+    var ph: *H = &ARH;
+    ph.v = 1;
+    ph.w = 1;
+    var eh: *H = ph + 1;
+    eh.v = 5;
+    eh.w = 8;
+    return 0;
+}
+fn apoke(): i64 { var e8: *S8 = GQ8 + 1; e8.v = 6; var eh: *H = GQH + 1; eh.v = 6; return 0; }
+fn c_ar_8() {
+    arm();
+    var p: *S8 = &AR8;
+    var a: S8 = S8 { 1 };
+    var b: S8 = S8 { 1 };
+    var c: S8 = S8 { 1 };
+    var d: S8 = S8 { 1 };
+    a = p + 1;
+    b = (p + 1);
+    c = 1 + p;
+    d = GQ8 + 1;
+    apoke();
+    var r = ((rd8(a) * 100 + rd8(b)) * 100 + rd8(c)) * 100 + rd8(d);
+    arm();
+    return r;
+}
+fn c_ar_h() {
+    arm();
+    var p: *H = &ARH;
+    var a: H = H { 1, 0 };
+    var b: H = H { 1, 0 };
+    var c: H = H { 1, 0 };
+    var d: H = H { 1, 0 };
+    a = p + 1;
+    b = (p + 1);
+    c = 1 + p;
+    d = GQH + 1;
+    apoke();
+    var r = ((rdh(a) * 100 + rdh(b)) * 100 + rdh(c)) * 100 + rdh(d);
+    arm();
+    return r;
+}
+fn c_arg_8() { arm(); var q: *S8 = GQ8 + 2; G8.v = 1; G8 = q - 1; apoke(); var r = rd8(G8); arm(); return r; }
+fn c_arg_h() { arm(); var q: *H = GQH + 2; GH.v = 1; GH.w = 0; GH = q - 1; apoke(); var r = rdh(GH); arm(); return r; }
+# a `*T` or handle destination still rebinds: q = p + 1 through a `*S` local, h = p + 1 into a handle -> 1919
+fn r_ar_8() {
+    arm();
+    var p: *S8 = &AR8;
+    var q: *S8 = p;
+    q = p + 1;
+    q.v = 9;
+    var a = p.v * 10 + load64(GQ8 + 1);
+    arm();
+    var h: S8 = alloc(8);
+    h.v = 1;
+    var hh = h;
+    h = p + 1;
+    h.v = 9;
+    var b = load64(hh) * 10 + load64(GQ8 + 1);
+    arm();
+    return a * 100 + b;
+}
+fn r_ar_h() {
+    arm();
+    var p: *H = &ARH;
+    var q: *H = p;
+    q = p + 1;
+    q.v = 9;
+    var e: *H = GQH + 1;
+    var a = p.v * 10 + e.v;
+    arm();
+    var h: H = alloc(16);
+    h.v = 1;
+    var hh = h;
+    h = p + 1;
+    h.v = 9;
+    var b = load64(hh) * 10 + e.v;
+    arm();
+    return a * 100 + b;
+}
+
 # ── sizes 1..7 B: a value global with a guard global packed right after it, and a local ──
 struct Z1 { a: u8; }
 struct Z2 { a: u16; }
@@ -305,6 +397,17 @@ fn s7() {
     return k;
 }
 
+fn s7a() {
+    D7.a = 0;
+    D7 = P7 + 0;
+    var l: Z7;
+    l = 0 + P7;
+    var k = 0;
+    if (D7.a == 7) { if (D7.b == 5) { if (D7.c == 3) { if (l.c == 3) { k = k + 1; } } } }
+    if (D7g == 9) { k = k + 2; }
+    return k;
+}
+
 # ── top level: G = GP, G = gp(), G = W.p as statements ──
 alloc_init();
 var TT = S8 { 0 };
@@ -320,6 +423,13 @@ TU = GWH.p;
 XH.v = 7;
 var TC = rdh(TU);
 unpoke();
+arm();
+TT = GQ8 + 1;
+TU = (GQH + 1);
+apoke();
+var TD = rd8(TT);
+var TE = rdh(TU);
+arm();
 
 assert_eq(c_lgp_8(), 58, "l = GP (a *S global): a copy");
 assert_eq(c_lgp_8(), c_lgp_h(), "  = its 16 B twin");
@@ -349,6 +459,12 @@ assert_eq(r_q_8(), 19, "q = GP through q: *S rebinds (unchanged)");
 assert_eq(r_q_8(), r_q_h(), "  = its 16 B twin");
 assert_eq(r_p_8(), 1919, "p = gp() into a *S local and h = GP into a handle rebind (unchanged)");
 assert_eq(r_p_8(), r_p_h(), "  = its 16 B twin");
+assert_eq(c_ar_8(), 58585858, "l = p + 1, (p + 1), 1 + p, GQ + 1: pointer arithmetic on a *S (ops-6)");
+assert_eq(c_ar_8(), c_ar_h(), "  = its 16 B twin");
+assert_eq(c_arg_8(), 58, "G = q - 1 into a value global");
+assert_eq(c_arg_8(), c_arg_h(), "  = its 16 B twin");
+assert_eq(r_ar_8(), 1919, "q = p + 1 into a *S local and h = p + 1 into a handle rebind (unchanged)");
+assert_eq(r_ar_8(), r_ar_h(), "  = its 16 B twin");
 assert_eq(s1(), 3, "1 B: G = P, l = P; the guard kept");
 assert_eq(s2(), 3, "2 B: G = P, l = P; the guard kept");
 assert_eq(s3(), 3, "3 B: G = P, l = P; the guard kept");
@@ -356,7 +472,10 @@ assert_eq(s4(), 3, "4 B: G = P, l = P; the guard kept");
 assert_eq(s5(), 3, "5 B: G = P, l = P; the guard kept");
 assert_eq(s6(), 3, "6 B: G = P, l = P; the guard kept");
 assert_eq(s7(), 3, "7 B: G = q7(), l = P; the guard kept");
+assert_eq(s7a(), 3, "7 B: G = P + 0, l = 0 + P; the guard kept");
 assert_eq(TA, 58, "top level: G = GP");
 assert_eq(TB, 58, "top level: G = gp() (16 B)");
 assert_eq(TC, 58, "top level: G = GW.p (16 B)");
+assert_eq(TD, 58, "top level: G = GQ + 1");
+assert_eq(TE, 58, "top level: G = (GQ + 1) (16 B)");
 var r = assert_summary();

@@ -128,11 +128,17 @@
 # the POINTER word into the first field. A `*T` or handle destination still rebinds. Its runtime half is
 # tests/tcyr/crossos/struct_pointer_source_copy.tcyr (every shape against its 16 B twin, the rebinds, sizes
 # 1..7 B with a guard global, top level):
-#   R9 that file on the same legs as R1, N derived from it (floor 38)
+#   R9 that file on the same legs as R1, N derived from it (floor 47)
 #   CQ compile rows (x86): a `*U` of another struct is refused by name, as `l = pu` is — `l = GU`, `l = gu()`,
-#      `l = w.pu`, and `G = GU` at 16 B; a `*i64` global into a struct value stays its word (exit 1)
+#      `l = w.pu`, and `G = GU` at 16 B; a `*i64` global into a struct value stays its word (exit 1);
+#      (ops-6) CQ6 pointer arithmetic on a `*U` — `l = pu + 1`, `l = pu + k` — refused naming the pointer;
+#      CQ7 arithmetic on a `*i64` into a struct value stays its word (exit 1)
 #   PQ (Linux x86_64 + aarch64) a `*S7` global / `: *S7` call / `*S7` field onto the LAST 7 bytes of a mapping:
-#      `l = GP`, `G = GP`, `l = gp()`, `l = w.p`, at top level `G = GP` — exit 0, no byte past the object read
+#      `l = GP`, `G = GP`, `l = gp()`, `l = w.p`, (ops-6) `l = GP + 0`, at top level `G = GP` — exit 0, no byte
+#      past the object read
+# (ops-6) POINTER ARITHMETIC ON A `*T` is such a source too: `l = p + 1`, `l = (p + 1)`, `l = 1 + p`, `l = GQ + 1`,
+# `G = q - 1` copy the struct the result points at (R9's rows); they stored the pointer word at every size. A
+# `*T` or handle destination still rebinds (`q = p + 1`, `p = p + 1` — R9's `r_ar` rows).
 #
 # 6.7.10 (decision 6, ops-5) — A WHOLE DEREFERENCE OF A `*S` AS AN ADDRESS-PASSED ARGUMENT OR RIGHT OPERAND
 # PASSES THE STRUCT IT POINTS AT: `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into a by-value
@@ -324,6 +330,10 @@
 #        `_hl_psrc`'s token typing and the parse's step disagree
 #   MQ7  `_hl_psrc` without its `*T` test (`_hl_cp`)  -> GREEN: defensive — every struct-VALUE source reaching the
 #        assignment takes its own copy path first (a field `_fla_take`, a call / method / operator its record)
+#   (ops-6, 2026-10-13) the ops-5 tree (cf537b6e, no pointer-arithmetic source) -> RED 11: R9 7 of 47 rows x7
+#                                                      (the pointer word stored), CQ6 x2 (compiled), PQ x2 (exit 6)
+#   MQ8  `_hl_psrc` without its pointer-arithmetic arm -> RED 11: as the ops-5 tree
+#   MQ9  `_hl_pnm` naming the last name (no `_hl_psid` side) -> RED 1: CQ6 `l = pu + k` (names 'k')
 # OPS-5 MUTATION LEDGER (2026-10-13, the same method):
 #   the ops-4 tree (3faadc9e, no whole-dereference operand) -> RED 11: R10 x7 (SIGSEGV x86 x4 / aarch64, a PE
 #                                                      crash, cxvm "guest address out of range: 5"), D1 x2 / D2 x2
@@ -582,7 +592,7 @@ done
 TS=tests/tcyr/crossos/struct_pointer_source_copy.tcyr
 [ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
 NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
-SFLOOR=38
+SFLOOR=47
 if [ "$NS" -lt "$SFLOOR" ]; then echo "FAIL: $G: only $NS rows in $TS (floor $SFLOOR) — rows were lost"; exit 1; fi
 echo "R9. $TS ($NS rows: a struct copy through a *T global, a : *T call or a *T field)"
 for leg in $XLEGS $OTHER; do
@@ -724,6 +734,12 @@ crow "CQ4 G = GU at 16 B (GU: *UH) refused" "refuse:cannot copy 'GU' into a vari
   'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nvar GU: *UH = &XU;\nvar G = H { 0, 0 };\nfn f() { G = GU; return G.v; }\nsyscall(60, f());\n'
 crow "CQ5 l = GI (GI: *i64) into a struct value stays its word" 1 \
   'struct S8 { v; }\nvar XI = 4;\nvar GI: *i64 = &XI;\nfn f() { var l: S8; l.v = 1; l = GI; return l.v == load64(&GI); }\nsyscall(60, f());\n'
+crow "CQ6 l = pu + 1 (pointer arithmetic on a *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn f() { var pu: *U8 = &XU; var l: S8; l.v = 1; l = pu + 1; return l.v; }\nsyscall(60, f());\n'
+crow "CQ6 l = pu + k (16 B) refused naming the pointer" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nfn f() { var k = 0; var pu: *UH = &XU; var l: H; l.v = 1; l = pu + k; return l.v; }\nsyscall(60, f());\n'
+crow "CQ7 l = pi + 0 (pi: *i64) into a struct value stays its word" 1 \
+  'struct S8 { v; }\nvar XI = 4;\nfn f() { var pi: *i64 = &XI; var l: S8; l.v = 1; l = pi + 0; return l.v == pi; }\nsyscall(60, f());\n'
 
 echo "B. an untyped binding of an operator result (x86)"
 crow "B1 the C4 case: var c = A + B; c.g = 1; c + c" 111 \
@@ -798,6 +814,9 @@ fn run(): i64 {
     var j: S7;
     j = w.p;
     if (take7(j) != 123) { return 4; }
+    var ma: S7;
+    ma = GP + 0;
+    if (take7(ma) != 123) { return 6; }
     return 0;
 }
 var e = run();
