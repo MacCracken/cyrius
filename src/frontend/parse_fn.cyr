@@ -1673,7 +1673,8 @@ fn _dro_take(S, b): i64 {
     return _opd_span(S, _dlo_beg, _dlo_end, b);
 }
 # The taken dereference as parameter `k` of fn `fi`: its struct checked (named by the operand's last name,
-# `*gp()` -> `gp`), the pointer reloaded into rax (`_dro_rax`) by the caller.
+# `*gp()` -> `gp`). The caller then reloads the pointer from `_dlo_h` (`_HTLOAD`; the right operand's
+# through `_opd_operand`).
 fn _dro_check(S, fi, k): i64 {
     var nm = 0;
     var i = _dlo_end - 1;
