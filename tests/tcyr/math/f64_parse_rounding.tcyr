@@ -11,11 +11,15 @@
 #     verbatim to tests/data/f64parse/ — `<hexbits> <decimal text>` per line, bits from a
 #     strtod-class oracle. The legacy parser got 6,285 of f64parse.vec and 253 of f64.vec
 #     wrong; this file asserts 0.
-#   * the 10,000 two-decimal literals are checked against bayan_f64_parse in the SAME
-#     binary — a separate copy of the algorithm under different names (_d_* vs _f64p_*).
-#     Including lib/bayan.cyr beside lib/math.cyr also pins that the two copies coexist:
-#     shared names would compile with only a `duplicate fn` warning and the last-included
-#     copy's bodies would silently replace the other's.
+#   * the 10,000 two-decimal literals "dd.dd" are checked against IEEE division: the literal
+#     IS n / 100 exactly, n and 100 are exact doubles, and one IEEE divide is correctly
+#     rounded, so f64_div(f64_from(n), 100.0) is the correctly rounded value whatever path
+#     the parser takes. (Until 6.7.10 the oracle was bayan_f64_parse, a separate copy of
+#     the algorithm; bayan 1.5.14 delegates to f64_parse_n, so that check compared the
+#     stdlib with itself — CHANGELOG [6.7.10].)
+#   * bayan_f64_parse is still run beside the stdlib on every corpus vector and row: since
+#     bayan 1.5.14 it is bayan's lenient front over f64_parse_n, and those rows pin that the
+#     delegation answers as the stdlib does (and that lib/bayan.cyr and lib/math.cyr coexist).
 #   * the filed repro's rows and the front-matter cases carry hard-coded bits.
 # 6.7.9: every vector also runs through the public length-bounded f64_parse_n (issue
 # 2026-10-08) with its explicit length and two more digits written right after the span
@@ -118,7 +122,7 @@ _fpr_corpus("tests/data/f64parse/f64.vec", 328);
 assert_eq(_fpr_ok_mismatch, 0, "f64_parse_ok returns 1 and the f64_parse bits for every vector");
 assert_eq(_fpr_n_wrong, 0, "corpus vectors f64_parse_n(span, len) gets wrong with digits after the span");
 
-test_group("the 10,000 literals 0.00 .. 99.99 against bayan_f64_parse");
+test_group("the 10,000 literals 0.00 .. 99.99 against IEEE division (n / 100)");
 fn _fpr_two_decimals() {
     var tb = alloc(16);
     var bad = 0;
@@ -134,8 +138,12 @@ fn _fpr_two_decimals() {
         store8(tb + w, 48 + fp % 10); w = w + 1;
         store8(tb + w, 0);
         var got = f64_parse(tb);
-        if (got != bayan_f64_parse(tb, w)) {
+        if (got != f64_div(f64_from(n), f64_from(100))) {
             if (bad < 3) { _fpr_out("  WRONG "); _fpr_out(tb); _fpr_out("\n"); }
+            bad = bad + 1;
+        }
+        if (bayan_f64_parse(tb, w) != got) {
+            if (bad < 3) { _fpr_out("  bayan_f64_parse disagrees "); _fpr_out(tb); _fpr_out("\n"); }
             bad = bad + 1;
         }
         store8(tb + w, 55); store8(tb + w + 1, 0);     # "12.347": the span is 5 bytes
@@ -145,7 +153,7 @@ fn _fpr_two_decimals() {
         }
         n = n + 1;
     }
-    assert_eq(bad, 0, "two-decimal literals that differ from bayan_f64_parse (or f64_parse_n)");
+    assert_eq(bad, 0, "two-decimal literals that differ from n / 100 (or where f64_parse_n / bayan_f64_parse disagree)");
     assert_eq(n, 10000, "two-decimal literal count");
     return 0;
 }
