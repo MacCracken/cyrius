@@ -15,6 +15,12 @@ cross-reference the CHANGELOG entry that closed them.
 
 | File | Brief | Resolved in |
 |------|-------|-------------|
+| [`2026-10-11-sigil-static-read-buffer-warns-on-every-build.md`](./2026-10-11-sigil-static-read-buffer-warns-on-every-build.md) | Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer. (sigil 3.13.12 refolded (`cf03996`); CHANGELOG [6.7.10]) | **v6.7.10** |
+| [`2026-10-11-sakshi-fold-has-no-cx-arm.md`](./2026-10-11-sakshi-fold-has-no-cx-arm.md) | `lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx. (sakshi 2.5.9 refolded (`243ae06`); CHANGELOG [6.7.10]) | **v6.7.10** |
+| [`2026-10-08-struct-field-left-operand-never-dispatches.md`](./2026-10-08-struct-field-left-operand-never-dispatches.md) | A struct-typed FIELD as an operator's LEFT operand never dispatches. (ops-1; CHANGELOG [6.7.10]) | **v6.7.10** |
+| [`2026-10-11-typed-pointer-into-small-byvalue-struct-param.md`](./2026-10-11-typed-pointer-into-small-byvalue-struct-param.md) | A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields. (B7-1b; CHANGELOG [6.7.10]) | **v6.7.10** |
+| [`2026-10-08-derive-serialize-cstring-fields.md`](./2026-10-08-derive-serialize-cstring-fields.md) | `#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil). (B7-4; CHANGELOG [6.7.10]) | **v6.7.10** |
+| [`2026-10-08-small-struct-local-from-address-is-value-not-handle.md`](./2026-10-08-small-struct-local-from-address-is-value-not-handle.md) | An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle. (B7-1 / B7-1g (the user's decision, 2026-10-12); CHANGELOG [6.7.10]) | **v6.7.10** |
 | [`2026-10-08-api-surface-multiline-string-desync.md`](./2026-10-08-api-surface-multiline-string-desync.md) | api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns. (the quick lane's bite 19; CHANGELOG [6.7.9]) `_scan_file` carries one lexical state | **v6.7.9** |
 | [`2026-10-08-bench-fuzz-exit-zero-on-empty-corpus.md`](./2026-10-08-bench-fuzz-exit-zero-on-empty-corpus.md) | Bare `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing to run. (the quick lane's bite 14; CHANGELOG [6.7.9]) The bare verbs fail on an empty corpus, as | **v6.7.9** |
 | [`2026-10-08-ci-sh-fresh-home-links-no-lib.md`](./2026-10-08-ci-sh-fresh-home-links-no-lib.md) | `scripts/ci.sh` never links `$CYRIUS_HOME/lib` on a fresh home. (the quick lane's bite 11; CHANGELOG [6.7.9]) ci.sh points `$CYRIUS_HOME/lib` at | **v6.7.9** |
@@ -141,6 +147,12 @@ wrongly; the file is the source, and live code beats the file.
 
 | File | Title | Resolved (extracted) |
 |------|-------|----------------------|
+| [`2026-10-11-sigil-static-read-buffer-warns-on-every-build.md`](./2026-10-11-sigil-static-read-buffer-warns-on-every-build.md) | Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer | v6.7.10 |
+| [`2026-10-11-sakshi-fold-has-no-cx-arm.md`](./2026-10-11-sakshi-fold-has-no-cx-arm.md) | `lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx | v6.7.10 |
+| [`2026-10-08-struct-field-left-operand-never-dispatches.md`](./2026-10-08-struct-field-left-operand-never-dispatches.md) | A struct-typed FIELD as an operator's LEFT operand never dispatches | v6.7.10 |
+| [`2026-10-11-typed-pointer-into-small-byvalue-struct-param.md`](./2026-10-11-typed-pointer-into-small-byvalue-struct-param.md) | A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields | v6.7.10 |
+| [`2026-10-08-derive-serialize-cstring-fields.md`](./2026-10-08-derive-serialize-cstring-fields.md) | `#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil) | v6.7.10 |
+| [`2026-10-08-small-struct-local-from-address-is-value-not-handle.md`](./2026-10-08-small-struct-local-from-address-is-value-not-handle.md) | An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle | v6.7.10 |
 | [`2026-04-18-cc5-macho-sigill.md`](./2026-04-18-cc5-macho-sigill.md) | Round 2 — post-fix test (v5.3.13+gate) | v5.3.13 |
 | [`2026-04-26-cbt-modules-substring-false-positive.md`](./2026-04-26-cbt-modules-substring-false-positive.md) | 2026-04-26 — cbt manifest parser substring-matches modules inside [build] comments | v5.5.26 |
 | [`2026-04-26-cc5-18-arg-fn-scrambles-params.md`](./2026-04-26-cc5-18-arg-fn-scrambles-params.md) | 2026-04-26 — cc5 5.7.10: 18-arg fn call scrambles register/stack params | v6.0.57 |

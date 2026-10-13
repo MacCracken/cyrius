@@ -1,6 +1,8 @@
-# Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer — OPEN
+# Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer — RESOLVED
 
-**Status:** 🟡 **OPEN** — reported in passing by the 6.7.9 quick lane (bite 9, in every yantra build). Verified
+> ✅ **RESOLVED in v6.7.10** (sigil 3.13.12 refolded (`cf03996`): `hash_file_into`'s read buffer and digest are per-call stack locals. `tls_sigil_include_warning_free.sh` pins zero warnings for `include` of sigil / tls / tls_native (3.13.11 back → RED); sigil's static data 367,664 → 105,520 B. CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — reported in passing by the 6.7.9 quick lane (bite 9, in every yantra build). Verified
 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B): `include "lib/sigil.cyr"` alone, and
 `include "lib/tls.cyr"` alone, each compile with rc 0 and print the two warnings below. Not covered by any open issue
 (the 2026-06-30 stack-arrays filing recorded this buffer as the sole `note:` case; 6.6.5 made that note a warning).

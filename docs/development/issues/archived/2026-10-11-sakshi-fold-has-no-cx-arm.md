@@ -1,6 +1,8 @@
-# `lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx — OPEN
+# `lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx — RESOLVED
 
-**Status:** 🟡 **OPEN** — reported by the 6.7.9 quick lane (bite 1, seen while sweeping `tests/tcyr/crossos/` for cx).
+> ✅ **RESOLVED in v6.7.10** (sakshi 2.5.9 refolded (`243ae06`): the `CYRIUS_TARGET_CX` arm. `cx_crossos_rows_run.sh` R18 runs a sakshi program on cxvm (2.5.8 back → RED). The issue's second acceptance item, `yukti_statfs_and_stdlib_constants.tcyr` compiling for cx, now gets past sakshi and stops at cx's fixed 512 KiB code buffer — a separate defect, filed as issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md (6.7.12). CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — reported by the 6.7.9 quick lane (bite 1, seen while sweeping `tests/tcyr/crossos/` for cx).
 Verified 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B, and the `cycc_cx` it builds
 from `src/main_cx.cyr`): a two-line program that includes `lib/sakshi.cyr` stops with 10 "undefined variable" errors
 on cx and builds on every native target. Every installed `lib/sakshi.cyr` from 6.6.0 to 6.7.9 has no

@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.10** (2026-10-12) — the repair batch · cycc **2,057,736 B** · `.text` **1,845,440** · `cycc-native-aarch64` **1,881,280 B** · **562** `.tcyr`, **267** in `crossos/` · **106** `lib/*.cyr` · **467** shell gates under `tests/gates/<bucket>/` · api-surface **5,835** · **101** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.10** (2026-10-13, release gate GREEN) — B7 packed narrow fields + the handle line + size-independent struct copies, P5-B execution coverage, the 6.7.9 fold wave refolded · cycc **2,114,376 B** · `.text` **1,900,296** · `cycc-native-aarch64` **1,950,240 B** · **573** `.tcyr`, **276** in `crossos/` · **106** `lib/*.cyr` · **474** shell gates under `tests/gates/<bucket>/` · api-surface **5,838** · **137** open issues · **0** open proposals · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -47,8 +47,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.9 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) |
-| 6.7.10 | features: **B7** packed narrow fields + **P5-B** execution coverage (on C2's flag plumbing) |
+| 6.7.0 – 6.7.10 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) |
 | 6.7.11 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |
 | 6.7.12 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
 | 6.7.13 | Break 2, repair 3: global initialisers · the IR arena (a heap-layout change) · diagnostics · u128 / asm / pointer-call stores · TLS conformance · plus whatever 6.7.8–6.7.12 file |
@@ -72,75 +71,19 @@ taken; it reuses C2's flag plumbing. A third feature release is needed only if a
 - typed fn pointers too big for the dyn lane;
 - u128 carriage inside 6.7.x. That needs the aarch64 register fix (6.7.7), so it would come after the repairs.
 
-## Spec — the remaining feature
+## Spec — the remaining features
 
-Shipped this minor (their specs and the user's decisions are in their CHANGELOG entries): traits, C3 bounds, `const`
-/ `const fn`, `bool`, the if-expression, `loop` / `do`, `OP=` on every lvalue, B4 tuples and B6 default / named
-arguments (6.7.7), checked `dyn` and the C2 bounds-checked mode (6.7.8).
+Every feature of the v6.7.x plan has shipped (its spec and the user's decisions are in its CHANGELOG entry): traits,
+C3 bounds, `const` / `const fn`, `bool`, the if-expression, `loop` / `do`, `OP=` on every lvalue, B4 tuples and B6
+default / named arguments (6.7.7), checked `dyn` and the C2 bounds-checked mode (6.7.8), B7 packed narrow fields with
+the handle line and size-independent struct copies, and P5-B execution coverage (6.7.10). What remains is repair
+(6.7.11 – 6.7.13), the audit and review (6.7.14) and the closeout.
 
 ⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`).
 
-- **B7 — narrow unsigned and `f32` struct fields — layout DECIDED (user, 2026-10-08): packed.** `u8` / `u16` /
-  `u32` become 1 / 2 / 4 bytes and zero-extend on read, `f32` 4 bytes, with no padding — the rule `i8` / `i16` / `i32`
-  fields follow today (`struct { a: i8; b: i64; }` is 9 bytes). Only structs declaring one of them move — an ABI
-  change: `lib/` declares none; cyrius's own tcyr files (23 fields) change in the release. It ships with its
-  migration written up in the CHANGELOG and [ecosystem-migration.md](ecosystem-migration.md) — never silently.
 ## The releases after 6.7.8 (placed 2026-10-09; shifted one 2026-10-11)
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09; sizes and the full lane maps: `~/.cache/c6/plan678_712.json`). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
-
-### 6.7.10 — B7 + P5-B (features)
-
-**Content.**
-- **B7** packed narrow fields, bites 0–6.
-  - It rides the derive bite: [`#derive(Serialize)` and `: cstring` fields](issues/2026-10-08-derive-serialize-cstring-fields.md)
-    (asked by sigil).
-  - It closes here whatever the answer: [an 8 B struct local from an address is a value](issues/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
-    B7 moves structs across that line.
-- **P5-B**, the per-fn hit after `EFNPRO`, the fn map and `cyrius coverage` running the corpus. Closes
-  [P5](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md).
-- **The 6.7.9 fold wave**, prepared in the fold repos 2026-10-11 (user: "do the stdlib updates so they can be folded
-  into 6.7.10"), each re-vendored byte-identical from its tag with its `docs/ecosystem.md` row. sakshi 2.5.9,
-  sigil 3.13.12, bayan 1.5.14 and yantra 1.0.11 are tagged; yukti 2.3.17 is ready at `be504f5` (it keeps sakshi
-  2.5.8, the tag cyrius 6.7.9 bundles, by yukti's lockstep rule). ⛔ 6.7.10 does not tag with a refold pending.
-  - sakshi 2.5.9 — the cx arm: [sakshi has no cx arm](issues/2026-10-11-sakshi-fold-has-no-cx-arm.md) (a cx row in
-    `cx_crossos_rows_run.sh`; `yukti_statfs_and_stdlib_constants.tcyr` compiles for cx).
-  - sigil 3.13.12 — `hash_file_into`'s per-call buffer: [sigil's static read buffer warns on every build](issues/2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
-    (a gate: `include "lib/tls.cyr"` compiles with no warning).
-  - bayan 1.5.14 — `bayan_f64_parse` delegates to `f64_parse_n`, its parser copy dropped. Its bundle's Requires block
-    includes `lib/math.cyr` itself, so no consumer include changes. With the refold: `f64_parse_rounding.tcyr`'s
-    10,000-literal check is re-aimed at IEEE division (it compared the stdlib with itself); `lib/math.cyr`'s comment on
-    bayan's `_d_` copy.
-  - yantra 1.0.11 — `_cdp_set_nodelay` is `sock_set_nodelay` (TCP_NODELAY is now set on Windows).
-  - yukti 2.3.17 — `sys_ppoll` replaces `_yk_ppoll` (and `sys_ioctl` its `_yk_ioctl`).
-
-**Lanes.** B7 (`src/`: parse_types.cyr, parse_decl.cyr, lex_pp.cyr's derive, util.cyr, lib/str.cyr; it commits
-`build/cycc`) · P5-B (`src/` + cbt: the `EFNPRO` sites, the three backend EFNPROs, the forks, the coverage verb) ·
-the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row and the sigil no-warning gate).
-
-**Decided at the open (user, 2026-10-12; `~/.cache/c6/6710_decisions.md`).**
-- **The handle line:** a struct local of 8 B or less initialised from anything that is not a struct value of its type
-  is a HANDLE, as over 8 B; a struct literal or value still copies — one rule for every size (a behaviour change:
-  CHANGELOG + `ecosystem-migration.md`).
-- **The cstring wire shape:** a NULL `: cstring` field ↔ JSON `null`; non-NULL ↔ an escaped JSON string, decoded as a
-  fresh NUL-terminated copy.
-- **P5-B depth:** per-fn hit counters set after each prologue, dumped when the program exits (lost on a crash or
-  kill); every target, no new OS route. Flag off ⇒ byte-identical output.
-- **P5-B CLI:** a new `cyrius coverage --exec` / `[coverage] exec` — `[coverage] programs` keeps meaning text coverage;
-  `.tcyr` files are executed too; a nonzero exit fails the run by name; Linux, macOS and Windows.
-
-**Decided at planning (user, 2026-10-12; the plans: `~/.cache/c6/b76710_plan.md`, `p5b6710_plan.md`).**
-- The handle line covers struct **globals** too — one rule for locals and globals at every size.
-- **Struct copies are size-independent:** `*p` is a struct value (`var q: S = *p` copies at every size), and
-  `l = p` / `G = p` / `q = r` copy the struct at every size, as over 8 B today.
-- **`&c` into a by-value struct parameter copies through the pointer** at every size — closes
-  [a pointer into a by-value struct parameter of 8 B or less](issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
-  here (moved from 6.7.11), before the layout bite.
-- An `f32` field in `#derive(Serialize)` is written widened to f64; the lossy `Str` field decode is fixed with B7-4's
-  unescape helper (the pairs form returns a fresh copy).
-- `[coverage] exec` is a list of program globs; `--exec=<glob>` overrides it; `[coverage] programs` stays text-only.
-
-**Hosts.** B7's all-sizes crossos file on all four. P5-B on the hosts its decision names. `cyrius pulsar`.
 
 ### 6.7.11 — repair 1: the 6.7.7 follow-ons
 
@@ -153,7 +96,7 @@ the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row a
   - [an integer into an f64 parameter](issues/2026-10-09-int-argument-to-f64-param-silent.md);
 - Struct operators, on the merge of the two lanes above:
   - [six struct-operator defects](issues/2026-10-08-struct-operator-results.md);
-  - [a struct field as the left operand](issues/2026-10-08-struct-field-left-operand-never-dispatches.md);
+  - [a struct field as the left operand](issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md);
   - [an int + f64 mix warns twice](issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md).
 - [The preprocessor's per-byte `PP_LEXST_AT` layer](issues/2026-10-08-self-compile-attribute-line-rule-cost.md),
   early, so later benches carry the win.
@@ -179,6 +122,21 @@ the refolds (`lib/` for the five folds, `docs/ecosystem.md`, the sakshi cx row a
   - [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](issues/2026-10-12-sandhi-include-prints-large-static-advisory.md);
   - [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](issues/2026-10-12-struct-result-through-fn-pointer-faults.md);
   - [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](issues/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md);
+
+- Filed 2026-10-12 / 13 (the 6.7.10 lanes and their reviews):
+  - [The `#derive` scanner `T_from_json_str` skips a nested `#derive`d struct field's object to its first inner `,`: the nested field stays 0, every field after it is lost, and the nested object's own keys land in the outer struct](issues/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md);
+  - [Under `CYRIUS_IR=3`, LASE drops the reload of a just-stored local across an unrecorded `EFLADDR` (`lea rax, [rbp+d]`): a method's argument, a by-value struct argument or a struct-returning call's argument receives the struct's ADDRESS](issues/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md);
+  - [A pointer into a by-value struct parameter of 8 B or less is still passed as the pointer word when the pointer typing calls it no pointer: an if-expression of two different steps, an integer on the LEFT of the pointer](issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md);
+  - [A dereference `*p` of a struct under 8 bytes is read as a whole word: a global initialised or assigned from it, a local assigned from it, a by-value argument and a `return *p` read past the object (SIGSEGV when it ends a mapping); only a local declaration copies byte-exact](issues/2026-10-12-small-struct-dereference-reads-past-the-object.md);
+  - [A fn returning a struct of 8 B or less returns a local of ANOTHER struct type (its word) with no refusal, and a `*T` local or a `*U` parameter as its ADDRESS](issues/2026-10-12-small-struct-return-takes-another-structs-value.md);
+  - [A struct global over 8 B initialised from a field reached through a `*T` (`var G: S16 = P.s;`, `= gp().s;`, `= VV.p.s;`) holds the field's first word and SIGSEGVs at the first use](issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md);
+  - [An ASSIGNMENT from a struct dereference (`l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S`) stores one word at every size, with a false "assigning non-pointer to typed pointer" warning](issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md);
+  - [`take8(*pu)` with `pu: *U8` (a pointer to ANOTHER struct) into a by-value `S8` parameter compiles and passes U8's bytes; `take8(u)` with `u: U8` and the 16 B `take(*pu)` are refused by name](issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md);
+  - [A generic call declared `: *T` (`fn gpg<T>(): *T`) is no struct source: `l = gpg<S>()` stores the pointer's word, `*gpg<S>()` as a value SIGSEGVs (a declaration, an argument, either operand), `gpg<S>().v` is refused](issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md);
+  - [`return GP;` (a `*S` global) and `return gp();` (a `: *S` call) from a fn returning a struct of 8 B or less return the POINTER's word; over 8 B both are refused by name](issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md);
+  - [A struct-typed FIELD destination from a `*S` global, a `: *S` call or a `*S` field (`o.s = GP`, `o.s = gp()`, `o.s = w.p`) stores the pointer's word at every size](issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md);
+  - [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee](issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md);
+  - [An untyped binding takes a struct-returning OPERATOR's type at every size (decision 12), but not a method chain or an if-expression of 8 B or less, nor a parenthesised 9–16 B operator / method result](issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md);
 
 **Lanes.**
 - Wave 1: multi-value receives (`src/`, owns the destructure drains; the aarch64 register fix ships in 6.7.7) · call arguments (`src/`,
@@ -360,6 +318,10 @@ cannot pack filed.
   file `src/` includes must stay compilable by cybs (no new syntax there); a public symbol's removal or semantic change
   is the user's call (`removed_symbol_census.sh`); a fold's improvement lands in its SOURCE repo and is re-vendored.
 
+- Filed 2026-10-12 / 13 (the 6.7.10 lanes and their reviews):
+  - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](issues/2026-10-13-self-compile-prints-large-static-advisory.md);
+
+
 ### 6.7.15 → — what the reviews produce, then the closeout (number open)
 
 The 6.7.14 reviews' findings that did not pack into 6.7.14 ship next, in as many releases as they take — sized and
@@ -397,7 +359,7 @@ language's own stdlib. A fix lands in the fold's SOURCE repo and is released the
 list (W2 left there: public `const` / `bool` sweeps in each repo's own minor, traits for hand-rolled dispatch after
 checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-resumption test). Filed here:
 
-- [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](issues/2026-10-08-derive-serialize-cstring-fields.md)
+- [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](issues/archived/2026-10-08-derive-serialize-cstring-fields.md)
 - [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/archived/2026-10-08-f64-parse-no-public-length-bounded-form.md)
 - [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](issues/2026-10-08-lib-public-constants-const-migration.md)
 - [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/archived/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
@@ -405,8 +367,8 @@ checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-res
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md)
 - [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/archived/2026-10-08-yantra-tests-miss-security-include.md)
 - [sigil has no runtime logging: none of its `src/` files calls sakshi](issues/2026-10-12-sigil-has-no-runtime-logging.md) — unplaced (the user, 2026-10-12: "leave it for later")
-- **Adoptions 6.7.9 opened** — prepared 2026-10-11 as fold patches pinned to cyrius 6.7.9, refolded in 6.7.10 (§ 6.7.10
-  above, with the sakshi and sigil fixes): yukti → `sys_ppoll`; bayan → `f64_parse_n`; yantra → `sock_set_nodelay`.
+- **Adoptions 6.7.9 opened** — prepared 2026-10-11 as fold patches pinned to cyrius 6.7.9, refolded in 6.7.10
+  (CHANGELOG [6.7.10], with the sakshi and sigil fixes): yukti → `sys_ppoll`; bayan → `f64_parse_n`; yantra → `sock_set_nodelay`.
 - **Constraints on any fold release**: never change the fold API cyrius's own `lib/` calls (sigil's 73 fns, 8 of them
   private `_x509_*` / `_ecdsa_*` used by `tls_native_hs12` / `hs13` / `tls.cyr`; sakshi's 6 in `log.cyr`; bayan
   `base64_encode` in `ws` / `ws_server`; sandhi `sandhi_server_find_header` in `ws_server`). cyrius must not make the

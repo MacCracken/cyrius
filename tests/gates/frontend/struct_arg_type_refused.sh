@@ -79,7 +79,7 @@
 # 6.7.10 (B7-1b) — A POINTER INTO A BY-VALUE STRUCT PARAMETER OF 8 B OR LESS PASSES THE STRUCT IT POINTS
 # AT (the user's decision 7, 2026-10-12), as over 8 B, where that parameter is address-passed: the
 # accepted `&p` / `*T` argument was pushed AS the struct's one word, so the callee read the pointer's
-# bits (issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md, exit 0 where 111 is right).
+# bits (issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md, exit 0 where 111 is right).
 # B1 is that repro verbatim, B2-B4 the forms it names (a `*S1` local, `&s`, a `*S1` parameter, a call
 # returning one, a generic instance, another struct's `*T1`); B5 pins the boundary (an untyped value is
 # the word). The type check is unchanged — no new refusal. Every other form, consumer, size and target:
@@ -432,7 +432,7 @@ syscall(60, go());" \
     "${T}fn go(): i64 { return 9 + 1; } syscall(60, go());"
 
 echo "=== 6.7.10 (B7-1b): a pointer into a by-value struct of 8 B or less passes the struct it points at ==="
-# The filed repro, verbatim (docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md):
+# The filed repro, verbatim (docs/development/issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md):
 # exit 0 through 6.7.9 — each callee read the pointer's bits as its struct. The control passes the structs.
 RPB='include "lib/syscalls.cyr"
 struct S1 { u; }

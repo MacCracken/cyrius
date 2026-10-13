@@ -71,7 +71,7 @@
 # `&c` into a by-value struct parameter copies through the pointer at every size): a typed pointer or
 # an address passes the struct it points at, as over 8 B (that parameter is address-passed). Through
 # 6.7.9 the pointer was pushed as the struct's one word and the callee read the address's bits as its
-# fields. Filed: docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md
+# fields. Filed: docs/development/issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md
 # (its repro: 0 measured, 111 right). Its runtime half is tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 # (every pointer form and consumer against its 16 B twin, the untyped boundary, sizes 1..8 B, top level):
 #   R3 that file on the same legs as R1, N derived from it (floor 69)
@@ -99,7 +99,7 @@
 # DISPATCHES `S_add` (`S_sub`, `S_mul`, `S_div`) as a struct variable does, at every size, and the result is
 # a struct value. Through 6.7.9 (and 6.7.10 before it) only a variable or a struct result typed the left
 # operand: a field or a dereference loaded its first word and the integer arm ran — no operator fn, silently
-# (issues/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9). Its
+# (issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9). Its
 # runtime half is tests/tcyr/crossos/struct_field_left_operand.tcyr (every base shape against its 16 B twin,
 # 24 B, sizes 1..8 B with a guard byte, top level):
 #   R6 that file on the same legs as R1, N derived from it (floor 88)
@@ -391,7 +391,7 @@ NQ=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TQ")
 QFLOOR=67
 if [ "$NQ" -lt "$QFLOOR" ]; then echo "FAIL: $G: only $NQ rows in $TQ (floor $QFLOOR) — rows were lost"; exit 1; fi
 
-# The filed repro, verbatim (docs/development/issues/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
+# The filed repro, verbatim (docs/development/issues/archived/2026-10-08-small-struct-local-from-address-is-value-not-handle.md).
 cat > "$D/repro.cyr" <<'EOF'
 include "lib/alloc.cyr"
 struct S8 { v; }
@@ -491,7 +491,7 @@ for leg in $XLEGS $OTHER; do
     else bad "R3 $leg: exit $RC, '$LAST' (want '$NP passed, 0 failed ($NP total)') $(grep -m3 'FAIL' "$D/pa_$n.out" | tr '\n' ' ')"; fi
 done
 
-# The filed repro, verbatim (docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md).
+# The filed repro, verbatim (docs/development/issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md).
 cat > "$D/repro_b.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct S1 { u; }
@@ -549,7 +549,7 @@ for leg in $XLEGS $OTHER; do
     else bad "R6 $leg: exit $RC, '$LAST' (want '$NF passed, 0 failed ($NF total)') $(grep -m3 'FAIL' "$D/fl_$n.out" | tr '\n' ' ')"; fi
 done
 
-# The filed repro, verbatim (docs/development/issues/2026-10-08-struct-field-left-operand-never-dispatches.md).
+# The filed repro, verbatim (docs/development/issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md).
 cat > "$D/repro_f.cyr" <<'EOF'
 struct P2 { x; y; }
 struct H { n; p: P2; }

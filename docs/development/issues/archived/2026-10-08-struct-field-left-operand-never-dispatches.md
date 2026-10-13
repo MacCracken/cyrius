@@ -1,6 +1,8 @@
-# A struct-typed FIELD as an operator's LEFT operand never dispatches — OPEN
+# A struct-typed FIELD as an operator's LEFT operand never dispatches — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `h.p - s` (and `+`, `*`)
+> ✅ **RESOLVED in v6.7.10** (ops-1: a struct-typed field or a `*T` dereference as an operator's left operand dispatches `S_add` / `S_sub` / `S_mul` / `S_div` as a struct variable does, at every size; the result is a struct value (the user's decision, 2026-10-12, pulled forward from 6.7.11). Its repro gives 139. Row: `crossos/struct_field_left_operand.tcyr`. CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `h.p - s` (and `+`, `*`)
 with `p: P2` is an INTEGER op on the field's first word, the operator fn is never called; the right-operand form
 `s - h.p` dispatches correctly. ⚠ The roadmap's symptom ("passes the containing struct's address, `h.p - s` → -8, want
 -6") does **not** reproduce at HEAD in any shape tried: the -6 it called right is the integer subtraction of first words

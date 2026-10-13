@@ -1,6 +1,8 @@
-# A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields — OPEN
+# A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields — RESOLVED
 
-**Status:** 🟡 **OPEN** — found 2026-10-11 while fixing
+> ✅ **RESOLVED in v6.7.10** (B7-1b: a `*T` / `&s` argument into a by-value struct parameter of 8 B or less passes the struct it points at, at every size (the user's decision, 2026-10-12). The repro gives 111. Rows: `struct_arg_type_refused.sh` B1–B5, `crossos/small_struct_pointer_arg.tcyr`. The untyped-pointer edges it leaves are filed (issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md). CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — found 2026-10-11 while fixing
 [`2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.md`](2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.md)
 (6.7.9, the critical lane's bite 11) and reproduced on that lane's tip with the tree's compiler and its aarch64 / cx
 cross compilers, and with the installed 6.6.0, 6.6.4, 6.6.5, 6.6.10, 6.6.20, 6.7.2, 6.7.3 and 6.7.7 compilers. Not

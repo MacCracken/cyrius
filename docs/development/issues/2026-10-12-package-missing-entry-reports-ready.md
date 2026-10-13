@@ -8,6 +8,7 @@ fails by name (`error: no such file: src/nope.cyr`, rc 1). With no manifest and 
 `version: unknown`, `package ready: build/main`, rc 0, an empty `build/`. `cyrius --help` lists
 `package — create .ark distributable`; no `.ark` writer exists anywhere in the tree (`programs/ark.cyr` has no
 create / pack verb; `docs/architecture/package-format.md` § *`cyrius package`* says so).
+**6.7.10:** the `package` help row now reads "compile the [build] entry to build/<output>" (the `.ark` claim removed, a stale-comment bite); the missing-entry "package ready" placeholder below is still open.
 **Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (reported in its tools findings; the sweep rewrote
 `docs/architecture/package-format.md` to what `package` does — "no `.ark` writer exists"); re-verified and filed by

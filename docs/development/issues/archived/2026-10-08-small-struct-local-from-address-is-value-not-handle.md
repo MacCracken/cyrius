@@ -1,6 +1,8 @@
-# An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle — OPEN
+# An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (x86_64). ⚠ The
+> ✅ **RESOLVED in v6.7.10** (B7-1 / B7-1g (the user's decision, 2026-10-12): a struct local or global of any size initialised from anything that is not a struct value of its type is a handle, as over 8 B; a struct literal or value copies. The repro exits 237. Rows: `small_struct_handle_line.sh`, `crossos/small_struct_handle_line.tcyr` and `small_struct_global_handle_line.tcyr`. CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (x86_64). ⚠ The
 roadmap framed this as a closure-capture inconsistency (`_CL_CAP_BASE_RA`); the live compiler shows the capture is
 consistent with the declaration — the asymmetry is at the DECLARATION, closure or not.
 **Placement:** 6.7.10 — features: B7 + P5-B (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.

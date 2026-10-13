@@ -1,6 +1,8 @@
-# `#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil) — OPEN
+# `#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil) — RESOLVED
 
-**Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: `#derive(Serialize) struct Cert { name:
+> ✅ **RESOLVED in v6.7.10** (B7-4: `#derive(Serialize)` takes a `: cstring` field — NULL ↔ `null`, non-NULL an escaped JSON string, decoded as a fresh NUL-terminated copy (the user's wire shape, 2026-10-12). The repro builds and prints its object. Rows: `derive_cstring_field.sh`, `derive/derive_serialize_cstring.tcyr`. CHANGELOG [6.7.10])
+
+**Status:** ✅ **RESOLVED in v6.7.10** (see the banner). Was: 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: `#derive(Serialize) struct Cert { name:
 cstring; bits: i64; }` with a `Cert_to_json` call is refused (`undefined function 'cstring_to_json'` — reachable —
 and `'cstring_from_json'`); the same struct with `name: Str` builds and prints `{"name":"example.org","bits":256}`.
 sigil still hand-rolls the codec for exactly this reason (`lib/sigil.cyr:1248-1271`).

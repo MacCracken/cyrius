@@ -32,6 +32,318 @@ does or builds; never a per-repo worklist.*
 
 ## 6.7.x — the language minor
 
+### 6.7.10
+**B7-0 — a baked f32 struct field**
+- A declaration-zone struct literal with an `f32` field (`var KS = KP { 1.5, 7 };` with `x: f32`) now puts the
+  field's binary32 bits in the image, as the replayed store writes them. Only an x86 `kernel;` image read the
+  difference (its replay runs after the program: the field read 0.0); a hosted program behaves as before. Code that
+  read such a field with `load64` / as binary64 bits in a kernel image now reads binary32 bits — read it as the field
+  (`KS.x`) or with `load32`.
+
+**B7-1 — the handle line**
+- A struct local of 8 B or less initialised from anything that is not a struct value of its type is now a HANDLE,
+  as one over 8 B always was: `var q: S8 = alloc(8);`, `= &s`, `= gp()` with `fn gp(): *S8`, `= x` (an untyped
+  value) hold the address, and `q.v = 5` writes the object. Through 6.7.9 such a local was an inline S8 whose field
+  held the address, and its writes stayed in the frame. Code that relied on that (reading `q.v` to get the address
+  back, or writing the fields as a scratch copy) changes behaviour: read the address with `load64(&q)` or keep it in
+  an untyped local; for a scratch copy initialise from a struct value (`var q: S8 = *p;` with `p: *S8`, or
+  `var q: S8;` then `q = r` from another inline S8).
+- An integer initialiser is a handle too: `var a: Num = 1;` is a handle to address 1 (`a + b` is pointer arithmetic,
+  no `Num_add` dispatch), and `var q: S8 = 0;` is a NULL handle (`q.v = 5` faults). For a zeroed inline struct write
+  `var q: S8;` or a literal `S8 { 0 }`; for an operator operand initialise from a struct value (`var a: Num =
+  mkn(1);`).
+- ⚠ The common UNTYPED carriers of a small struct's word are untyped values, so a struct declared from one is now a
+  handle to the address that word spells: `var q: S8 = vec_get(v, 0);` (after `vec_push(v, s)` pushed s's one word),
+  `= load64(p)`, `= map_get(m, k)`, `= fncall1(f, x)` / a closure's result, a `?` / pair / `Result` / `Option`
+  payload (`var q: S8 = mk()?;`), `= *x` with `x` untyped. Through 6.7.9 each was an inline S8 holding the word —
+  the struct itself, so `q.v` read 4 and `q.v = q.v + 5` gave 9; now `q.v` reads memory at address 4 and faults
+  (measured: 9 on 6.7.9, SIGSEGV on 6.7.10). Keep such a word untyped, or type the carrier as a pointer and
+  dereference it — `var p: *S8 = vec_get(v, 0); var q: S8 = *p;` when the vector holds addresses — or store the
+  struct's address in the container (`vec_push(v, &s)`) and declare `var q: *S8 = vec_get(v, 0);`.
+- A declaration from a handle binds (`var c: S8 = h;` aliases h's object), as over 8 B; a declaration from a struct
+  value still copies (a literal, a field, another inline local, a by-value parameter, a value global, a call /
+  method / operator / if-expression result).
+- ⚠ An operator whose LEFT operand is a struct-typed FIELD or a DEREFERENCE does not dispatch — it never did, at
+  any size: `w.s + a` and `*p + a` add the first words (only a struct variable or a struct result types the left
+  operand). Its result is an integer, so `var q: S8 = w.s + a;` / `= *p + a` is now a handle holding that sum and
+  faults at its first field access (through 6.7.9, at 8 B or less, an inline q whose field was the sum — at 16 B
+  it faulted already). Name the operand first for the `S8_add` dispatch: `var l: S8 = w.s; var q: S8 = l + a;`.
+  (Whether a field / dereference operand should dispatch is open — the user's call.)
+- `var q: S = *p;` with `p: *S` now copies at every size (over 8 B it was a handle holding the first field), and so
+  does every other dereference of a `*S` — `(*p)`, `*(p + 1)`, `*(n + p)`, `*h.p` (a `*S` field), `*gp()` (`fn gp():
+  *S`), `*w.mp()`, `(*self)` (a review fix: B7-1 first took only `* IDENT`); `var q: S8 = *pu;` with `pu: *U8`
+  (another struct) is refused by name at every spelling (`(*pu)`, `*gu()`, `*w.pu`), as `var q: S8 = pu;` is. A
+  dereference of an UNTYPED value (`var x = &s; var q: S8 = *x;`) is no struct value: q is a handle holding the
+  word `*x` reads (decision 1; through 6.7.9 an inline copy of that word) — type the pointer (`var x: *S8 = &s;`).
+- Every by-value use of a small handle (an argument, `return`, an operator's right operand, an if-expression branch,
+  `q = a`, `a = q`, `a = mk()`) takes the struct it points at, as over 8 B; `a = h` between two handles rebinds.
+- Struct GLOBALS of 8 B or less are unchanged by this bite (B7-1g applies the same line to them).
+
+**B7-1g — the handle line for globals**
+- A struct GLOBAL of 8 B or less initialised from anything that is not a struct value of its type is now a HANDLE,
+  as one over 8 B always was (and as a local is since B7-1): `var G: S8 = alloc(8);`, `= &buf`, `= gp()` with
+  `fn gp(): *S8`, `= ga()` (untyped), `= gu` (an untyped global) hold the address, and `G.v = 5` writes the object.
+  Through 6.7.9 such a global was an inline S8 whose field held the address, and its writes stayed in the global.
+  Code that relied on that (reading `G.v` to get the address back, or using the global as a scratch copy) changes
+  behaviour: read the address with `load64(&G)` or keep it in an untyped global; for an inline value initialise from
+  a struct value (a literal `S8 { .. }`, another inline global, `*p`, a field — through a `*T` too: `P.s`,
+  `gp().s` —, a call / method / operator returning S8, a method through a `*T`: `P.dbl()`, `gp().dbl()`).
+- An integer initialiser is a handle too: `var ga: Num = 1;` is a handle to address 1 — `ga + gb` is pointer
+  arithmetic, no `Num_add` dispatch — and `var G: S8 = 0;` is a NULL handle (`G.v = 5` faults until it is rebound).
+  For an operator operand or a zeroed inline global write a literal (`var ga = Num { 1 };`, `var G = S8 { 0 };`).
+- A global declared from another handle global binds (`var G2: S8 = G1;` aliases G1's object), as over 8 B.
+- Every by-value use of such a global — an argument, `return G`, an operator's right operand, an if-expression
+  branch, `q = G`, `G = q`, `G = V`, `V = G`, `G = mk()` — takes the struct it points at, in a fn and at top level;
+  `G = G2` between two handles rebinds.
+- `var G: S = *P;` with `P: *S` now copies at every size (over 8 B it was a handle holding the word `*P` read),
+  and so does every other dereference of a `*S` — `(*P)`, `*(P + 0)`, `*gp()`, `*GW.p` (the review fix);
+  `var G: S = *PU;` with `PU: *U` of another struct is refused by name at every spelling. Over 8 B, P must be
+  declared ABOVE G (else `cannot copy-init 'G' from a global declared below it`), as a whole source global always
+  had to be, and so must a `: *S` fn it calls (`cannot copy-init 'G' from a dereference of a global or fn declared
+  below it`); at 8 B or less a fn declared below is fine.
+- A global declared twice in the declaration zone, once as a value and once as a handle, is refused by name
+  (`redeclared with a different type or size`).
+- Not changed (awaiting the user): a struct global declared from a `*T` global's NAME (`var G: S8 = P;`) keeps
+  today's layout at every size (8 B or less: inline, holding the pointer word; over 8 B: a handle bound to P's
+  object).
+
+**B7-1b — a pointer into a by-value struct parameter of 8 B or less**
+- A typed pointer or an address passed to a by-value struct parameter of 8 B or less now passes the STRUCT it points
+  at, as one over 8 B always did: `fn bs1(b: S1)` called as `bs1(sp)` (`sp: *S1`), `bs1(&s)`, `bs1(gp())` with
+  `fn gp(): *S1`, `bs1(h.p)` with `p: *S1`, `bs1(sp + i)`, `gw(wp)` into `w: W1<T>`, and an operator's right operand
+  (`o + sp`, `o + &s` with `fn S1_add(a: S1, b: S1)`). Through 6.7.9 the pointer was passed as the struct's one word,
+  so the callee read the ADDRESS as its fields (`b.u` was the pointer). Code that relied on that (reading the pointer
+  back out of the parameter) now gets the pointee's fields: pass the pointer to a `p: *S1` parameter, or an untyped
+  value, if the address is what the callee wants.
+- A `*U` of another struct (or a `*i64`) still converts, as over 8 B, and is read with the parameter's layout.
+- An UNTYPED value is unchanged — still the struct's word: an untyped local holding an address (`var u = &s;
+  bs1(u)`), an integer, an i8 / i16 / i32 local or expression. The callee's write to its parameter never reaches the
+  pointee (a copy, as over 8 B).
+
+**B7-1c — struct copies through a `*T` of 8 B or less**
+- `l = p` and `G = p` with `p: *S` (a local or a parameter, S of 8 B or less) now COPY the struct p points at, as
+  over 8 B: through 6.7.9 they stored the POINTER into the first field (`l.v` read the address). `q = r` through a
+  `q: *S` parameter (or a `*S` local, or `self: *S`) now copies r INTO the pointee, as over 8 B: through 6.7.9 it
+  rebound q to r's one word, so the caller's struct never changed and the next `q.v` read through r's field as an
+  address. Likewise `p = mk()`, `p = s.m()`, `p = a + b`, `p = if (c) { a } else { b }` and `p = w.s` copy the struct
+  result into the pointee (they stored the struct's word as the pointer). Code that used `l = p` to get the address
+  back, or `q = r` to repoint q at r's bits, changes behaviour: keep the address in a `*S` (`p2 = p` still rebinds),
+  or write the field (`q.v = r.v`) / take the address (`q = &r`) explicitly.
+- Unchanged: `*S` <- `*S`, `*S` <- a handle and a handle <- `*S` rebind at any pair of struct types; a `*i64` or an
+  untyped address into a struct stores its word, as over 8 B.
+- Newly refused, as over 8 B: a struct copy between two different struct types through a `*T` of 8 B or less —
+  `l = pu`, `pu = l`, `G = pu`, `q = G` (`q: *U8`), `p = mku(1)` (`cannot copy 'pu' into a variable of a different
+  struct/vector type: 'l'`). Each compiled and stored a word. Use the matching struct type, or `store64` for a raw word.
+- Not changed (a pre-existing defect at every size, 16 B included, reported for placement): a `*T` GLOBAL, a `: *T`
+  call and a `*T` field as a copy source or destination (`l = GP`, `GP = l`, `G = GP`, `l = gp()`, `l = w.p`) still
+  store the word.
+
+**B7-2 — u8 / u16 / u32 and f32 struct fields are their widths (packed)**
+- A struct (or union) that declares a `u8` / `u16` / `u32` / `f32` field changes layout: those fields take 1 / 2 /
+  4 / 4 bytes, with no padding (the rule i8 / i16 / i32 fields always followed); through 6.7.9 each took 8. So
+  `sizeof` and every later field's offset shrink: `struct C4 { r: u8; g: u8; b: u8; a: u8; }` 32 → 4,
+  `struct { a: u8; b: i64; }` 16 → 9 (`b` at offset 1), `struct { x: f32; y: f32; }` 16 → 8,
+  `union { a: u8; b: u32; c: f32; }` 8 → 4; `*C4` steps 4 and `var a: C4[2]` is 8 bytes. `u64` and `i8`..`i64` /
+  `f64` / `bool` / `cstring` / enum / `Str` / `Vec` / `*T` fields are unchanged. Code that read or wrote such a
+  struct with hand-computed offsets (`load64(p + 8)` for the second field), wrote it to a file / socket / device
+  with `sizeof`, or allocated it with a literal size must be re-checked: use the fields (`p.b`), `sizeof`, or the
+  `#derive(accessors)` functions, which follow the layout.
+- A u8 / u16 / u32 field now reads ZERO-extended at its width and a write stores only its bytes: `c.r = 250;
+  c.r += 10;` gives 4 (it gave 260), `c.r = 0x1FF` stores 0xFF, a u32 field's `0 - 1` reads 4294967295, `c.r >>= 1`
+  and `c.r /= 2` take the unsigned value. Code that kept a wider value in such a field (it fit in 8 bytes) must use
+  `i64` / `u64` (or an untyped field). `load64(&s.f)` of a narrow field now reads the next fields too — read the
+  field (`s.f`) or `load8` / `load16` / `load32`.
+- An f32 field holds its binary32 bits in 4 bytes (it was the low half of an 8-byte slot): `p.x` is unchanged; a
+  `load64(&p.x)` now reads the next field in its high half — use `load32`.
+- The by-value class follows the new size: a struct that shrinks to 8 B or less is passed and returned in one
+  register, held inline when initialised from a struct value and a HANDLE when initialised from an address (the
+  handle line, B7-1: `var c: C4 = alloc(4);` holds the address and `c.r = 5` writes the heap); 9..16 B and over
+  16 B take the classes their size has always picked. A caller that passed such a struct to a
+  `fncallN` / fn pointer by its address because it was over 8 B (`fncall1(&f, &c)` for `fn f(c: C4)`) must pass it
+  as the callee's class now expects (a 4-byte C4 arrives in a register: pass the value, or declare the parameter
+  `c: *C4`).
+- Packed means unaligned: a `u32` / `f32` after a `u8` sits at offset 1. Plain loads and stores are fine on every
+  target cyrius ships (x86_64, aarch64 Linux / macOS, cx); an atomic or a futex word needs its natural alignment —
+  put such a field first, or pad explicitly (`_pad: u8; _pad2: u16;`). cyrius passes no struct by value to C, so
+  there is no FFI struct classification to match.
+- Diagnostics that follow from the size: `dyn Tr` from a struct whose method takes `self: T` by value is refused
+  once the struct is 8 B or less (dyn decision 2, 6.7.8): `dyn Show` from `C4` with `self: C4` (it formed one at
+  32 B) — declare `self` untyped or `self: *C4`. A struct redefined with another narrow kind warns as before
+  (`i8` vs `u8`, `i32` vs `f32`) and now also for `u8` vs `u16`, `u32` vs `f32`.
+- `#derive(accessors)` follows the layout: a u8 / u16 / u32 getter zero-extends (255, not -1), an f32 getter
+  returns the binary32 bits, a setter writes only its bytes. `#derive(Serialize)` of these types arrives in B7-3.
+- An operator on a struct VALUE GLOBAL under 8 bytes now dispatches its `T_op`, as on a local or an 8 B global (a
+  review fix, B7-2r): `A + B` with `var A = C4 { .. };` calls `C4_add`. Through 6.7.9 a value global of a struct
+  of i8 / i16 / i32 fields under 8 B (`struct I4 { a: i32; }`) was read as an i8..i32 scalar, so `A + B` silently
+  integer-added the two words (30 where `I4_add` gives 40) — code that relied on that sum now gets the operator's
+  result; spell the integer add on the fields (`A.a + B.a`).
+
+**B7-3 — `#derive(Serialize)` on u8 / u16 / u32 / f32 fields**
+- Additive: a `#derive(Serialize)` / `#derive(Deserialize)` struct may now declare `u8` / `u16` / `u32` / `f32`
+  fields (through 6.7.9 the build was refused: `undefined function 'u8_to_json'`), so nothing that built changes.
+  The wire shapes, for a consumer that hand-rolled these codecs and wants to switch:
+  - u8 / u16 / u32: a bare JSON number, the field read zero-extended (a u32 4000000000 is `4000000000`). Decoding
+    stores at the field's width, so an out-of-range number truncates as any narrow store does (300 into a u8 is 44;
+    there is no range check, as for i8..i32).
+  - f32: the value WIDENED to f64 and printed by bayan's f64 printer (the user's decision, 2026-10-12): 0.1f is
+    written `0.10000000149011612`, 1.5f `1.5`, the smallest subnormal `1.401298464324817e-45`. Decoding parses an
+    f64 and rounds it to the nearest f32 (`f32_from`), so every written value comes back bit for bit, and a
+    hand-written `0.1` decodes to 0.1f. A peer expecting the shortest f32 text (`0.1`) reads a longer number with the
+    same value.
+  - `u64` fields stay outside the codecs (`u64_to_json` undefined, as through 6.7.9).
+
+**B7-4 — `#derive(Serialize)` on `: cstring` fields**
+- Additive: a `#derive(Serialize)` / `#derive(Deserialize)` struct may now declare `: cstring` fields (through 6.7.9
+  the build was refused: `undefined function 'cstring_to_json'`), so nothing that built changes. The wire shape (the
+  user's decision, 2026-10-12) is the one sigil's hand-rolled `agnosys_json_emit_cstr_or_null` writes, byte for byte:
+  a NULL pointer is `null`, any other the bytes as an escaped JSON string. Decoding gives NULL for `null` and
+  otherwise a FRESH NUL-terminated copy (allocated with `alloc`; the field never points into the parsed text): a
+  JSON string unescaped (`\uHHHH` as UTF-8, a surrogate pair joined, a lone surrogate U+FFFD), any other value its
+  text (`42` → "42"). A decoded `\u0000` ends the C string there. A quoted `"null"` is the 4-byte string `null` in
+  both decoders, never NULL.
+- lib/str.cyr gains two public fns: `str_builder_add_json_cstr(sb, p)` and `str_json_unescape_cstr(p, n)`. A program
+  that defines a fn of either name now meets the stdlib's (the duplicate-fn rule: the later definition wins, with a
+  warning) — rename it.
+- Every binary that includes lib/str.cyr changes bytes (its new fns are emitted, as every lib fn is, DCE or not); no
+  program's behaviour changes.
+- ⚠ The derive's cstring codec calls lib/str.cyr's `str_builder_add_json_cstr` / `str_json_unescape_cstr`, new in
+  6.7.10's lib/str.cyr: a 6.7.10 compiler building against an OLDER vendored lib/str.cyr (a stale `lib/` copy, a
+  pinned dep that vendors its own) fails such a struct with `undefined function 'str_json_unescape_cstr'`. Refresh
+  `lib/` (`cyrius deps`) with the 6.7.10 stdlib.
+
+**B7-4b — a `Str` field's JSON escapes are decoded**
+- Changes what a program does (the user's decision, 2026-10-12: the derive's lossy `Str` decode is fixed). Through
+  6.7.9 the two decoders of a `#derive(Serialize)` struct mangled a `Str` field's escapes differently:
+  - the scanner (`T_from_json_str`) decoded only `\n` `\t` `\r` and kept the LETTER of every other escape, so
+    `"\u0001\b"` read `u0001b` and `"é"` read `u00e9` (`\"` `\\` `\/` were right);
+  - the pairs form (`T_from_json(bayan_json_parse(..))`) stored bayan's value itself, so EVERY escape stayed raw
+    (`\\u0001\\b\\\"` came back, and re-encoding doubled each backslash).
+  Both now decode every RFC 8259 escape (`\" \\ \/ \b \f \n \r \t`, `\uHHHH` as UTF-8, a surrogate pair one 4-byte
+  code point, a lone surrogate U+FFFD; any other escaped byte stands for itself), so what `T_to_json` writes reads
+  back as the same bytes. A decoded `\u0000` stays in the Str (its length counts it). A string with no escapes
+  decodes as before.
+- The pairs form's `Str` field is now a FRESH copy (its own buffer, NUL-terminated after the bytes), no longer a
+  `Str` header pointing INTO the parsed document: changing or freeing the document after the decode no longer
+  changes the field, and `str_data(field)` is no longer an address inside it. A program that relied on the
+  borrow (rare) keeps its own reference to the document's bytes.
+- A non-string value for a `Str` field is unchanged: the scanner leaves the field 0, the pairs form a Str of the
+  value's text (now a copy).
+- lib/str.cyr gains `str_json_unescape(p, n)` (the Str form of `str_json_unescape_cstr`) — the same duplicate-fn
+  note as B7-4.
+- ⚠ Both decoders now call lib/str.cyr's `str_json_unescape` (new in 6.7.10): a 6.7.10 compiler against an OLDER
+  vendored lib/str.cyr fails EVERY `#derive(Serialize)` struct with a `Str` field (`undefined function
+  'str_json_unescape'`) — including ones that built on 6.7.9 (measured: derive_str_deserialize,
+  derive_str_field_global_init, derive_vec_primitive, derive_vec_struct and lang/regression against the slot-open
+  lib/str.cyr). Refresh `lib/` (`cyrius deps`) with the 6.7.10 stdlib — compiler and stdlib move together.
+
+**B7-5 — additions for ecosystem-migration § 6.7.10 (measured on the B7-4b compiler vs the installed 6.7.9 cycc)**
+- Refusals that keyed on a struct being over 8 bytes stop applying to a struct that SHRINKS to 8 bytes or less
+  with the packed layout (B7-2), so code that was refused now builds (nothing that built changes):
+  - an if-expression branch of the struct (`var z: C4 = if (k) { a } else { b };` — 6.7.9: "an if expression branch
+    cannot be a struct value over 8 bytes: struct 'C4'");
+  - an `async fn` by-value parameter (`async fn af(c: C4)` — 6.7.9: "async fn parameter 'c' is a struct passed by
+    value ... pass a pointer to it");
+  - a top-level struct call result, as a global's initialiser (`var G: C4 = mk4(9);`) or a top-level argument
+    (`var r = h(mk4(5));`) — 6.7.9: "'mk4' returns a struct by value, and a struct result needs storage in a fn's
+    frame". A struct that shrinks from over 16 B into 9–16 B (`{ f32 x4 }` 32 → 16) is still refused there.
+  And the one that newly applies: `dyn Tr` from a struct that shrinks to 8 B or less whose method takes `self: T`
+  (B7-2's note).
+
+**OPS-1 — a struct-typed field or a `*T` dereference as an operator's left operand dispatches**
+- An operator whose LEFT operand is a struct-typed field (`w.s + a`, `p.s - a` through a `*W`, `mk(1).s * a`,
+  `self.s / a`, `(w.s) + a`) or a dereference of a `*S` (`*p + a`, `(*p) + a`, `*gp() + a`) now calls `S_add` /
+  `S_sub` / `S_mul` / `S_div`, as a struct variable in that place always did; its result is a struct value. Through
+  6.7.9 it added (subtracted, ...) the field's FIRST WORD and the right operand's value, with no operator call and no
+  diagnostic. Code that relied on that integer arithmetic changes value — and, when the struct has no such operator
+  fn, stops compiling (*refusing to emit binary with 1 reachable undefined function(s)*, naming `S_add`), as `s + 1`
+  on a struct variable always did. Read the word you meant explicitly: `w.s.v + 1` (the field's own field); for a
+  dereference, `p.v + 1` or `load64(p) + 1`.
+- A `*T` field (`w.p + 1` steps the pointer), a `Str` field and a negated operand (`-w.s + a`) are unchanged.
+- `var q: S = w.s + a;` / `= *p + a` is now a copy of the operator's result (in 6.7.10 before this change, under the
+  handle line, a handle holding the integer sum: its first field access faulted).
+
+**OPS-2 — an untyped binding of a struct-returning operator takes the struct type at every size**
+- `var c = a + b;` (untyped, in a fn) whose operator fn returns a struct of 8 B or less now declares `c` an inline
+  struct of the operator's RETURN type, as over 8 B: `c.f` works and `c + c` / `c - x` dispatch. Through 6.7.9 `c` was
+  an untyped word holding the struct's bytes. Code that did `+ - * /` (or `+% -% *%`) arithmetic on that word
+  (`c + 1`, `c * 2`) now dispatches `S_add` / `S_sub` / `S_mul` / `S_div` (or is refused when the struct has none) —
+  read the field (`c.v + 1`) or `load64(&c)`; the other operators (`c & 0xFF`, `c | m`, `c << 1`, `c % n`) still
+  act on the word, unchanged. A
+  binding from a leading call of another struct (`var c = mk8(4) * b;` with `S8_mul` returning `U8`) is now the
+  operator's type (it was typed from the call). An integer-returning operator and a top-level untyped global are
+  unchanged.
+- Restores `var c = A + B; c.g = 1;` for a struct that 6.7.10's packed fields shrank to 8 B or less (refused since
+  the layout change).
+
+**OPS-3 — a struct copy through a `*T` global, a `: *T` call or a `*T` field copies the struct**
+- `l = GP` / `G = GP` (`GP: *S` a global), `l = gp()` (`fn gp(): *S`, or a method declared `: *S`) and `l = w.p`
+  (`p: *S` a field, at the end of any chain) into a struct VALUE now copy the struct the pointer points at, at every
+  size — as `l = p` through a `*T` local does. Through 6.7.9 (over 8 B too) each stored the POINTER into the first
+  field. Code that used such an assignment to carry the address in a struct's first word changes behaviour: keep the
+  address in a `*S` (`var p: *S = GP;`) or an untyped local, or store it explicitly (`store64(&l, GP)`).
+- Into a `*T` or a handle these still rebind (`q = GP` through `q: *S` repoints q).
+- Newly refused: a `*U` of another struct into a struct value (`l = GU`, `l = gu()`, `l = w.pu`) — each compiled
+  and stored a word. Use the matching struct type, or `store64` for a raw word.
+- Not changed (see the guide): `GP = l` with GP a `*T` global (still a word store into GP); a struct-typed FIELD
+  destination from these sources (`o.s = GP`, still the pointer word); an assignment from a dereference
+  (`l = *p`, still one word — `var l2: S = *p;` copies).
+
+**OPS-4 — a dereference-led operator result as a by-value argument over 8 B**
+- `take(*p + a)` (and a method's or a named argument, `*gp() + a`, chained) with a struct parameter over 8 B now
+  passes the operator's result; it pushed the result's first word as its address and crashed. At top level a
+  9-16 B result (`var R = takeh(*GP + A);`) is refused by name, as `takeh(GW.s + A)` always was — compute it
+  inside a fn.
+
+**OPS-5 — a whole dereference of a `*S` as an address-passed argument or right operand**
+- `take(*p)` (by-value struct parameter over 8 B, or a `*S` parameter of any size) and `a - *p` (the same
+  for an operator fn's parameter) now pass the struct `p` points at — the pointer, as `take(p)` does; they
+  passed the word the dereference read as the struct's address and crashed. Into a `*S` parameter the callee
+  now writes the pointee.
+- Newly refused: a dereference of a `*U` of ANOTHER struct into such a parameter (`takeh(*pu)`, `a - *pu`) —
+  as a struct variable of another type always was. Use the matching struct type. An untyped `*x` is unchanged.
+
+**OPS-6 — pointer arithmetic on a `*T` as a struct copy source**
+- `l = p + 1` / `l = (p + 1)` / `l = 1 + GP` / `G = q - 1` with a `*S` operand and a struct VALUE destination now
+  copy the struct the result points at; they stored the pointer into the first field. Keep an address in a
+  `*S` (`var q: *S = p + 1;`) if that is what was meant. Into a `*T` or a handle the assignment still rebinds
+  (`p = p + 1` steps the pointer, unchanged).
+- Newly refused: pointer arithmetic on a `*U` of another struct into a struct value (`l = pu + 1`), as `l = pu`
+  always was.
+
+**P5B-6 — `cyrius coverage --exec` / `[coverage] exec`**
+
+- **New, opt-in:** `cyrius coverage --exec[=<glob>]` or `[coverage] exec = ["programs/*_test.cyr"]` measures what
+  RUNS: every `tests/**/*.tcyr` and every named program is built instrumented and run, and the report adds
+  `Functions executed: E/T`. `[coverage] programs` and every text-mode figure are unchanged (6.7.9's stdout byte for
+  byte). With the mode on, `--min` gates the executed %, and a failing run (an exit, a signal, a timeout, or no
+  coverage record) fails `cyrius coverage` by name.
+
+**P5B-1..8 — the execution-coverage mode (`CYRIUS_COVERAGE`)**
+
+- **A new opt-in mode; no existing program, number or manifest changes.** `CYRIUS_COVERAGE=1` with
+  `CYRIUS_COVERAGE_FILE=<absolute path>` builds a program that counts its fn entries and appends them to that file
+  when it exits (the guide's *The execution-coverage mode*). Unset, `0` or empty, it changes nothing — not a byte of
+  any compile's output.
+- **One environment edge:** the variable is new, and like `CYRIUS_BOUNDS` it accepts only `0` / `1`. A build
+  environment that happens to export `CYRIUS_COVERAGE` with any other value now has every compile refused by name
+  (`CYRIUS_COVERAGE must be 0 or 1 (or unset): <v>`). One that exports `CYRIUS_COVERAGE=1` without a
+  `CYRIUS_COVERAGE_FILE` is refused too. Unset it in such scripts, as this repo's own self-build scripts do.
+- **Reserved names:** the dump's fns (`__cyrius_cov_cp` / `_num` / `_w` / `_dump`) join the compiler's `__cyrius_`
+  prefix. They exist only under the mode.
+
+**The folds (refolded byte-identical)**
+- **bayan 1.5.14** — `bayan_f64_parse` / `bayan_f64_from_json` answer bit-identically; the bundle now pulls
+  `lib/math.cyr` through its Requires block, so `include "lib/bayan.cyr"` alone still compiles (no include change).
+  The private `_d_*` parser tiers are gone (nothing public).
+- **yukti 2.3.17** — yukti no longer declares `SYS_PPOLL`. Linux x86_64 / Intel macOS get the stdlib's same 271; a
+  Windows build that named yukti's `SYS_PPOLL` calls `sys_ppoll` instead.
+- **yantra 1.0.11** — the CDP socket gets TCP_NODELAY on Windows; the bundle's Requires block drops `syscalls`
+  (still reached through net / alloc / chrono / ws / sigil).
+- **sakshi 2.5.9** — programs that include sakshi now compile and run on cx; native output unchanged.
+- **sigil 3.13.12** — no API change; `include "lib/sigil.cyr"` / `"lib/tls.cyr"` stop printing two warnings; static
+  data −256 KB.
+
+
 ### 6.7.9
 - **`lib/yantra.cyr` (yantra 1.0.10) no longer pulls `lib/ws_server.cyr`** into scope: a program that called a
   `ws_server` fn and got it only through including yantra now includes `lib/ws_server.cyr` itself. `yantra_version()`

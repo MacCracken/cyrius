@@ -6,7 +6,7 @@
 # ⛔ THROUGH 6.7.9 (and 6.7.10 before this fix) only a struct VARIABLE or a struct result typed an
 # operator's left operand: a field or a dereference loaded its first word and the integer arm combined
 # it with the right operand's — no operator fn was called, at every size, silently
-# (issues/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9, where
+# (issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9, where
 # `P2_sub` gives 139). Under the handle line (B7-1) `var q: S8 = w.s + a;` was then a handle holding
 # that integer, and `q.v` SIGSEGV'd.
 #

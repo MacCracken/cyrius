@@ -6,7 +6,7 @@
 # `takeh(&h)` handed the callee the address it reads through. A struct of 8 B or less travels BY VALUE
 # in one word, and the same pointer argument was pushed AS that word: `take8(sp)` and `take8(&s)` read
 # the address's bits as the struct's fields, silently, on every target. The filed repro exited 0 where
-# 111 is right (docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md;
+# 111 is right (docs/development/issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md;
 # its verbatim run is tests/gates/codegen/small_struct_handle_line.sh R4).
 #
 # THE RULE, every `_8` row against its `_h` twin over 8 B (both must give the row's constant): an

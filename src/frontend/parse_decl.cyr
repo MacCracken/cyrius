@@ -1956,7 +1956,7 @@ fn _fld_leaf_load(S, beg, idx, sid): i64 {
 # 2026-10-12): `w.s + a`, `p.s + a` through a `*T`, `f().s + a`, `(w.s) + a`, `self.s * a`, at every size,
 # exactly as a struct variable does. Only a variable or a struct result typed the left operand, so the
 # field's first word was combined with the right operand's and no operator fn was called — silently, at
-# every size, since operators existed (issues/2026-10-08-struct-field-left-operand-never-dispatches.md:
+# every size, since operators existed (issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md:
 # `h.p - s` gave 250, 3 - 9, where `P2_sub` gives 139). The whole field just loaded — chain start `beg`,
 # its base (`idx`, `sid`) and its offset (`_rlf_off`, the leaf `_resolve_leaf_field` published) — is
 # stamped with the code pointer after its load; `_op_lst` takes it when it is the whole left operand
@@ -7439,7 +7439,7 @@ fn _hl_byval(S, fi, k): i64 {
 # `bs1(sp)` (`sp: *S1`), `bs1(&s)`, a `*S1` parameter, a `: *S1` call, method or field, a `*S1`
 # global or capture, `gw(wp)` into `w: W1<T>`, `bs1(sp + i)` and `s + sp` into an operator fn pushed
 # the ADDRESS as that word — the callee read the pointer's bits as its fields, on every target, from
-# 6.6.0 (issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md: 0 where 111 is right).
+# 6.6.0 (issues/archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md: 0 where 111 is right).
 # An untyped value is not a pointer here: it is the struct's word, as before. `_hl_byval_arg` is the
 # by-value argument's tail (`_sarg_byval_small`, `_op_rhs`), after the parse: a handle's struct
 # (B7-1), else a pointer's. 1 = rax replaced. CHANGELOG [6.7.10]

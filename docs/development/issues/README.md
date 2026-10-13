@@ -240,15 +240,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.9 — repair batch: the quick fixes + the critical / high (user, 2026-10-11)** (0)
 
 
-**6.7.10 — features: B7 + P5-B** (5)
+**6.7.10 — features: B7 + P5-B** (0)
 
-- [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
-- [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
-- [`lib/sakshi.cyr` (the sakshi fold) has no cx arm: any program that includes it does not compile for cx](2026-10-11-sakshi-fold-has-no-cx-arm.md)
-- [Every build that includes `lib/sigil.cyr` (so every `lib/tls.cyr` program) prints two warnings for sigil's deliberately static 256 KB `hash_file_into` buffer](2026-10-11-sigil-static-read-buffer-warns-on-every-build.md)
-- [A pointer passed to a by-value struct parameter of 8 B or less is the struct's VALUE — the callee reads the address as its fields](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md)
 
-**6.7.11 — Break 2, repair 1** (48)
+**6.7.11 — Break 2, repair 1** (60)
 
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
 - [cybs reports a bare "syntax error" (or "undefined variable") with no file, line or construct](2026-10-08-cybs-bare-syntax-error-no-location.md)
@@ -261,7 +256,6 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A parenthesised argument to a ≤ 8 B by-value struct parameter skips the struct type check](2026-10-08-paren-arg-small-byval-struct-skips-type-check.md)
 - [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
 - [self_compile pays ~4 % for the preprocessor's per-byte `PP_LEXST_AT` call layer (the 6.6.20 attribute-line rule)](2026-10-08-self-compile-attribute-line-rule-cost.md)
-- [A struct-typed FIELD as an operator's LEFT operand never dispatches](2026-10-08-struct-field-left-operand-never-dispatches.md)
 - [Struct-operator results: six typing / return-shape defects around struct operands](2026-10-08-struct-operator-results.md)
 - [A const context calls another file's `private` const fn with no visibility check (and no `#deprecated` warning)](2026-10-09-const-context-calls-private-const-fn.md)
 - [A const context counts a `Pair<i64, i64>` parameter as two — `pick(0, 7)` is refused, `pick(0, 1, 7)` builds](2026-10-09-const-fn-generic-param-comma-miscounted.md)
@@ -294,10 +288,23 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [Under `--allow-undef`, an undefined `_str` / `_int` sibling still takes its base's call: `pr(s)` reaches the undefined `pr_str` and traps (rc 132) instead of calling the defined `pr` — OPEN (a decision)](2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md)
 - [`+| +? -| -?` on a typed pointer add an unscaled count, then hand the result the pointer's step: with `q: *i32`, `(q +| 1) + 1` is `q + 5` — OPEN (a decision)](2026-10-11-saturating-op-keeps-left-pointer-step-decision.md)
 - [BENCHMARKS.md prints the cycc size rows (byte counts) as milliseconds — `cc5_bytes | 1ms | 2ms | 2ms` — and the file-size row is still named `size/cc5_bytes`](2026-10-12-benchmarks-md-size-rows-formatted-as-time.md)
+- [The `#derive` scanner `T_from_json_str` skips a nested `#derive`d struct field's object to its first inner `,`: the nested field stays 0, every field after it is lost, and the nested object's own keys land in the outer struct](2026-10-12-derive-scanner-loses-fields-after-nested-struct.md)
+- [Under `CYRIUS_IR=3`, LASE drops the reload of a just-stored local across an unrecorded `EFLADDR` (`lea rax, [rbp+d]`): a method's argument, a by-value struct argument or a struct-returning call's argument receives the struct's ADDRESS](2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md)
+- [A pointer into a by-value struct parameter of 8 B or less is still passed as the pointer word when the pointer typing calls it no pointer: an if-expression of two different steps, an integer on the LEFT of the pointer](2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md)
 - [The "cannot be a fn return type" note lists an incomplete return-type set: `bool`, a multi-value `(T1, T2)`, `dyn Tr` and a generic's `T` are accepted but not named](2026-10-12-return-type-refusal-note-incomplete.md)
 - [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](2026-10-12-sandhi-include-prints-large-static-advisory.md)
+- [A dereference `*p` of a struct under 8 bytes is read as a whole word: a global initialised or assigned from it, a local assigned from it, a by-value argument and a `return *p` read past the object (SIGSEGV when it ends a mapping); only a local declaration copies byte-exact](2026-10-12-small-struct-dereference-reads-past-the-object.md)
+- [A fn returning a struct of 8 B or less returns a local of ANOTHER struct type (its word) with no refusal, and a `*T` local or a `*U` parameter as its ADDRESS](2026-10-12-small-struct-return-takes-another-structs-value.md)
+- [A struct global over 8 B initialised from a field reached through a `*T` (`var G: S16 = P.s;`, `= gp().s;`, `= VV.p.s;`) holds the field's first word and SIGSEGVs at the first use](2026-10-12-struct-global-init-from-field-through-pointer-faults.md)
 - [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](2026-10-12-struct-result-through-fn-pointer-faults.md)
 - [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md)
+- [An ASSIGNMENT from a struct dereference (`l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S`) stores one word at every size, with a false "assigning non-pointer to typed pointer" warning](2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
+- [`take8(*pu)` with `pu: *U8` (a pointer to ANOTHER struct) into a by-value `S8` parameter compiles and passes U8's bytes; `take8(u)` with `u: U8` and the 16 B `take(*pu)` are refused by name — OPEN (a decision)](2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md)
+- [A generic call declared `: *T` (`fn gpg<T>(): *T`) is no struct source: `l = gpg<S>()` stores the pointer's word, `*gpg<S>()` as a value SIGSEGVs (a declaration, an argument, either operand), `gpg<S>().v` is refused](2026-10-13-generic-pointer-returning-call-as-struct-source.md)
+- [`return GP;` (a `*S` global) and `return gp();` (a `: *S` call) from a fn returning a struct of 8 B or less return the POINTER's word; over 8 B both are refused by name — OPEN (a decision)](2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md)
+- [A struct-typed FIELD destination from a `*S` global, a `: *S` call or a `*S` field (`o.s = GP`, `o.s = gp()`, `o.s = w.p`) stores the pointer's word at every size](2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md)
+- [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee — OPEN (a decision)](2026-10-13-struct-value-into-pointer-global-destination-decision.md)
+- [An untyped binding takes a struct-returning OPERATOR's type at every size (decision 12), but not a method chain or an if-expression of 8 B or less, nor a parenthesised 9–16 B operator / method result — OPEN (a decision)](2026-10-13-untyped-struct-binding-beyond-operators-decision.md)
 
 **6.7.12 — Break 2, repair 2 (the platform release)** (25)
 
@@ -363,9 +370,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - ["assigning non-pointer to typed pointer" is missing for a declaration-zone `*T` global and for an assignment to a local or parameter `*T` of a scalar `T`](2026-10-12-typed-pointer-non-pointer-warning-gaps.md)
 - [`programs/wc.cyr` (a demo): counts of 8 or more digits run together with no separator, and VT / FF do not separate words](2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md)
 
-**6.7.14 — the full security audit + the refactor / optimization review** (1)
+**6.7.14 — the full security audit + the refactor / optimization review** (2)
 
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
+- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
 
 **Open by design — placed arcs, not bugs** (6)
 

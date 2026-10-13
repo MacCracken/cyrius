@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests/gates/frontend/derive_cstring_field.sh — 6.7.10 (B7-4)
 #
-# `#derive(Serialize)` TAKES A `: cstring` FIELD (issues/2026-10-08-derive-serialize-cstring-fields.md,
+# `#derive(Serialize)` TAKES A `: cstring` FIELD (issues/archived/2026-10-08-derive-serialize-cstring-fields.md,
 # asked by sigil). Through 6.7.9 the codecs' field dispatch had no cstring arm, so the type name fell
 # into the nested-struct arm and the build was refused (`undefined function 'cstring_to_json'` /
 # `'cstring_from_json'`); sigil hand-rolls its cert / dm-verity codecs because of it. The wire shape
@@ -111,7 +111,7 @@ LEGS="x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1"
 [ -n "$A64" ] && LEGS="$LEGS a64"
 [ "$WINE" = 1 ] && LEGS="$LEGS pe"
 
-# The issue's reproduction, verbatim (docs/development/issues/2026-10-08-derive-serialize-cstring-fields.md).
+# The issue's reproduction, verbatim (docs/development/issues/archived/2026-10-08-derive-serialize-cstring-fields.md).
 cat > "$D/cert.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
