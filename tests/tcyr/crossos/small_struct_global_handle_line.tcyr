@@ -13,7 +13,8 @@
 # and is refused there, and a fn cannot `return` a global over 8 B, so those rows are 8 B only):
 #   * a COPY (the global is inline): a literal, an inline global `(name)` / `name`, a field chain, `*p`
 #     with `p: *T` (6.7.10: copied at EVERY size — over 8 B the global was a handle holding the word
-#     `*p` read, and its first field write SIGSEGV'd), a whole free / wrapped / generic call, a method,
+#     `*p` read, and its first field write SIGSEGV'd) and every other dereference of a `*T` (the review
+#     fix: `(*p)`, `*(p + 0)`, `*gp()`, `*W.p`), a whole free / wrapped / generic call, a method,
 #     an operator, an if-expression — declared before the first top-level statement (the declaration
 #     zone, judged from its tokens once every fn is registered, so a fn declared BELOW counts) or after
 #     it (judged as a local is);
@@ -103,6 +104,12 @@ fn wsinit() { WS8.s.v = 5; WSH.s.v = 5; return 0; }
 var _ws = wsinit();                  # the replay runs in declaration order: WS8.s is 5 below
 var PS8: *S8 = &SRC8;
 var PSH: *H = &SRCH;
+struct PW8 { p: *S8; }
+struct PWH { p: *H; }
+var PWG8 = PW8 { &SRC8 };
+var PWGH = PWH { &SRCH };
+fn gs8(): *S8 { return &SRC8; }
+fn gsh(): *H { return &SRCH; }
 var GU8 = &UB8;
 var GUH = &UBH;
 var RV8 = R8 { 1 };
@@ -116,6 +123,15 @@ var IF8: S8 = WS8.s;
 var IFH: H = WSH.s;
 var ID8: S8 = *PS8;
 var IDH: H = *PSH;
+var IDP8: S8 = (*PS8);               # the review fix: a dereference at any spelling copies
+var IDPH: H = (*PSH);
+var IDA8: S8 = *(PS8 + 0);
+var IDAH: H = *(PSH + 0);
+var IDC8: S8 = *gs8();
+var IDCH: H = *gsh();
+var IDF8: S8 = *PWG8.p;
+var IDFH: H = *PWGH.p;
+var IDB8: S8 = *gsb8();              # a `: *S8` fn declared below the global (judged by the sweep)
 var IC8: S8 = mk8(5);
 var ICW8: S8 = (mk8(5));
 var ICB8: S8 = mkb8(5);              # a fn declared below the global
@@ -149,6 +165,7 @@ var HOH: H = RVH + RVH;
 var HB8: S8 = HA8;
 var HBH: H = HAH;
 fn mkb8(n): S8 { var r: S8; r.v = n; return r; }
+fn gsb8(): *S8 { return &SRC8; }
 
 # A copy row: the global read (`b`), then written; the source is unchanged.
 fn i_n_8() { var b = IN8.v; IN8.v = 9; return SRC8.v * 100 + b * 10 + IN8.v; }
@@ -159,6 +176,15 @@ fn i_f_8() { var b = IF8.v; IF8.v = 9; return WS8.s.v * 100 + b * 10 + IF8.v; }
 fn i_f_h() { var b = IFH.v; IFH.v = 9; return WSH.s.v * 100 + b * 10 + IFH.v; }
 fn i_d_8() { var b = ID8.v; ID8.v = 9; return SRC8.v * 100 + b * 10 + ID8.v; }
 fn i_d_h() { var b = IDH.v; IDH.v = 9; return SRCH.v * 100 + b * 10 + IDH.v; }
+fn i_dp_8() { var b = IDP8.v; IDP8.v = 9; return SRC8.v * 100 + b * 10 + IDP8.v; }
+fn i_dp_h() { var b = IDPH.v; IDPH.v = 9; return SRCH.v * 100 + b * 10 + IDPH.v; }
+fn i_da_8() { var b = IDA8.v; IDA8.v = 9; return SRC8.v * 100 + b * 10 + IDA8.v; }
+fn i_da_h() { var b = IDAH.v; IDAH.v = 9; return SRCH.v * 100 + b * 10 + IDAH.v; }
+fn i_dc_8() { var b = IDC8.v; IDC8.v = 9; return SRC8.v * 100 + b * 10 + IDC8.v; }
+fn i_dc_h() { var b = IDCH.v; IDCH.v = 9; return SRCH.v * 100 + b * 10 + IDCH.v; }
+fn i_df_8() { var b = IDF8.v; IDF8.v = 9; return SRC8.v * 100 + b * 10 + IDF8.v; }
+fn i_df_h() { var b = IDFH.v; IDFH.v = 9; return SRCH.v * 100 + b * 10 + IDFH.v; }
+fn i_db_8() { var b = IDB8.v; IDB8.v = 9; return SRC8.v * 100 + b * 10 + IDB8.v; }
 fn i_c_8() { var b = IC8.v; IC8.v = 9; return b * 10 + IC8.v; }
 fn i_cw_8() { var b = ICW8.v; ICW8.v = 9; return b * 10 + ICW8.v; }
 fn i_cb_8() { var b = ICB8.v; ICB8.v = 9; return b * 10 + ICB8.v; }
@@ -697,6 +723,12 @@ var LN8: S8 = SRC8;
 var LNH: H = SRCH;
 var LD8: S8 = *PS8;
 var LDH: H = *PSH;
+var LDP8: S8 = (*PS8);
+var LDPH: H = (*PSH);
+var LDC8: S8 = *gs8();
+var LDCH: H = *gsh();
+var LDF8: S8 = *PWG8.p;
+var LDFH: H = *PWGH.p;
 var LC8: S8 = mk8(5);
 var LM8: S8 = SRC8.dbl();
 var LO8: S8 = SRC8 + SRC8;
@@ -713,6 +745,12 @@ fn l_n_8() { var b = LN8.v; LN8.v = 9; return SRC8.v * 100 + b * 10 + LN8.v; }
 fn l_n_h() { var b = LNH.v; LNH.v = 9; return SRCH.v * 100 + b * 10 + LNH.v; }
 fn l_d_8() { var b = LD8.v; LD8.v = 9; return SRC8.v * 100 + b * 10 + LD8.v; }
 fn l_d_h() { var b = LDH.v; LDH.v = 9; return SRCH.v * 100 + b * 10 + LDH.v; }
+fn l_dp_8() { var b = LDP8.v; LDP8.v = 9; return SRC8.v * 100 + b * 10 + LDP8.v; }
+fn l_dp_h() { var b = LDPH.v; LDPH.v = 9; return SRCH.v * 100 + b * 10 + LDPH.v; }
+fn l_dc_8() { var b = LDC8.v; LDC8.v = 9; return SRC8.v * 100 + b * 10 + LDC8.v; }
+fn l_dc_h() { var b = LDCH.v; LDCH.v = 9; return SRCH.v * 100 + b * 10 + LDCH.v; }
+fn l_df_8() { var b = LDF8.v; LDF8.v = 9; return SRC8.v * 100 + b * 10 + LDF8.v; }
+fn l_df_h() { var b = LDFH.v; LDFH.v = 9; return SRCH.v * 100 + b * 10 + LDFH.v; }
 fn l_c_8() { var b = LC8.v; LC8.v = 9; return b * 10 + LC8.v; }
 fn l_m_8() { var b = LM8.v; LM8.v = 9; return SRC8.v * 1000 + b * 10 + LM8.v; }
 fn l_o_8() { var b = LO8.v; LO8.v = 9; return SRC8.v * 1000 + b * 10 + LO8.v; }
@@ -737,6 +775,15 @@ assert_eq(i_f_8(), 559, "8 B: a field chain");
 assert_eq(i_f_h(), 559, "16 B: a field chain");
 assert_eq(i_d_8(), 559, "8 B: *p");
 assert_eq(i_d_h(), 559, "16 B: *p (6.7.10: a copy; a handle holding the first word before)");
+assert_eq(i_dp_8(), 559, "8 B: (*p) (the review fix: a dereference at any spelling)");
+assert_eq(i_dp_h(), 559, "16 B: (*p)");
+assert_eq(i_da_8(), 559, "8 B: *(p + 0)");
+assert_eq(i_da_h(), 559, "16 B: *(p + 0)");
+assert_eq(i_dc_8(), 559, "8 B: *gp() (a : *T fn)");
+assert_eq(i_dc_h(), 559, "16 B: *gp()");
+assert_eq(i_df_8(), 559, "8 B: *W.p (a *T field)");
+assert_eq(i_df_h(), 559, "16 B: *W.p");
+assert_eq(i_db_8(), 559, "8 B: *gp() of a fn declared below the global");
 assert_eq(i_c_8(), 59, "8 B: a call");
 assert_eq(i_cw_8(), 59, "8 B: (a call)");
 assert_eq(i_cb_8(), 59, "8 B: a call of a fn declared below the global");
@@ -775,6 +822,12 @@ assert_eq(l_n_8(), 559, "8 B: an inline global, copied");
 assert_eq(l_n_h(), 559, "16 B: an inline global, copied");
 assert_eq(l_d_8(), 559, "8 B: *p, copied");
 assert_eq(l_d_h(), 559, "16 B: *p, copied (6.7.10)");
+assert_eq(l_dp_8(), 559, "8 B: (*p), copied (the review fix)");
+assert_eq(l_dp_h(), 559, "16 B: (*p), copied");
+assert_eq(l_dc_8(), 559, "8 B: *gp(), copied");
+assert_eq(l_dc_h(), 559, "16 B: *gp(), copied");
+assert_eq(l_df_8(), 559, "8 B: *W.p, copied");
+assert_eq(l_df_h(), 559, "16 B: *W.p, copied");
 assert_eq(l_c_8(), 59, "8 B: a call, copied");
 assert_eq(l_m_8(), 5109, "8 B: a method, copied");
 assert_eq(l_o_8(), 5109, "8 B: an operator, copied");

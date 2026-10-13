@@ -8,7 +8,9 @@
 # initialiser, so `var q: S8 = alloc(8);` held the ADDRESS as `q.v` and `q.v = 5` never reached the
 # heap. Filed: docs/development/issues/2026-10-08-small-struct-local-from-address-is-value-not-
 # handle.md (its repro: 17 measured, 237 right). With it (the user's planning decision 6): `var q:
-# S = *p;` with `p: *S` COPIES at every size — over 8 B it was a handle holding the word `*p` read.
+# S = *p;` with `p: *S` COPIES at every size — over 8 B it was a handle holding the word `*p` read —
+# and so does every other dereference of a `*S` (the review fix: `(*p)`, `*(p + 1)`, `*h.p`, `*gp()`,
+# `*w.mp()`, `(*self)`, locals and globals; B7-1 / B7-1g first took only `* IDENT ;`).
 #
 # The runtime half is tests/tcyr/crossos/small_struct_handle_line.tcyr (its header carries the
 # rule, initialiser by initialiser and consumer by consumer, every 8 B row against its 16 B twin,
@@ -25,6 +27,9 @@
 #      8 and 16 B; C5 `return (a, 1)` with a handle compiles and the element is the handle's word,
 #      as at 16 B; C6 a handle of another struct returned from an 8 B struct fn returns its struct
 #      (3, the value it gave when it was inline), not its address
+#      C7 (the review fix) a dereference of a `*U8` / `*UH` at any other spelling — `(*pu)`, `*gu()`,
+#      `*w.pu` — is refused by name, as `*pu` is; C8 `(*x)` with x UNTYPED is no struct value: a handle
+#      holding the word `*x` reads (decision 1)
 #   P  (Linux x86_64 + aarch64) a 7 B handle onto the LAST 7 bytes of a 2-page anonymous mapping
 #      whose second page is unmapped: passed by value, returned, an operator's right operand, an
 #      if-expression branch, a closure capture's argument and `c = a` — exit 0, no fault (no byte
@@ -32,6 +37,8 @@
 #   PS (Linux x86_64 + aarch64; the review fix) a method's by-value `self: S7` / `self: S3` whose
 #      receiver ends a mapping — a `*S7` local, a handle, a handle global, a `*S7` global, at top level
 #      too: exit 0. The receiver was loaded rounded up to 4 / 8 bytes (`_self_value_ra`, 6.6.11)
+#   PD (Linux x86_64 + aarch64; the review fix) a local declared from a dereference of a `*S7` ending a
+#      mapping — `(*p)`, `*(p + 0)`, `*gp()`, `*w.p` — copies byte-exact: exit 0
 #   AS (x86_64, CYRIUS_ASYNC=1 — a mid-body suspend is x86-only so far) an `async fn` body: a
 #      handle, a bind, a by-value argument, a copy into the object and a returned handle across two
 #      awaits — exit 0
@@ -42,10 +49,12 @@
 # tests/tcyr/crossos/small_struct_global_handle_line.tcyr (the declaration zone — judged from its
 # tokens at the end of pass 1, a fn declared below included — and after the first statement; every
 # consumer in a fn and at top level; every size 1..8 B):
-#   R2 that file on the same legs as R1, N derived from it (floor 243)
+#   R2 that file on the same legs as R1, N derived from it (floor 258)
 #   GC compile rows (x86): GC1 `var ga: Num = 1;` is a handle global — `ga + gb` is pointer
 #      arithmetic (3, no `Num_add`), as at 16 B; a struct value global still dispatches (102); GC2
 #      `var G: S8 = *GU;` with `GU: *U8` refused by name in the zone and after it, at 8 and 16 B;
+#      GC6 (the review fix) `(*GU)` / `*gu()` of another struct refused by name in the zone and after it;
+#      GC7 `var G: H = *gp();` with gp declared below G refused by name (pass 1 sizes G);
 #      GC3 `var G: H = *P;` with P declared below G refused by name (pass 1 could not register G
 #      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
 #      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
@@ -189,6 +198,20 @@
 # REVIEW-FIX MUTATION LEDGER (2026-10-12, the same method):
 #   MR1 `_self_value_ra` loading a 3 / 5 / 6 / 7 B receiver rounded up to 4 / 8 bytes (the 6.6.11 code)
 #                                                   -> RED 2: PS x86 and PS aarch64 exit 139
+#   MR2 `_sci_dexpr` answering 0 (a local's `(*p)`, `*gp()`, .. to the scalar init: a handle holding the
+#       word the dereference read — the B7-1 code) -> RED 13: R1 x7 (SIGSEGV; cxvm out of range; PE a
+#                                                      crash), C7 x4 (compiled), PD x2
+#   MR3 `_gz_star` without its `_hl_dstar` arm (a global's) -> RED 7: R2 x7 (`var IDPH: H = (*PSH);` not
+#                                                      inline in pass 1: refused as "declared below")
+#   MR4 `_gci_dx_top` keeping over 8 B to the value store -> RED 7: R2 x7 (`LDPH` a garbage handle: SIGSEGV)
+#   MR5 `_hl_dstar` without the paren peel           -> RED 20: R1 x7, R2 x7, C7 x2, GC6 x2, PD x2
+#   MR6 `_hl_psid` without the pointer-arithmetic arm -> RED 16: R1 x7, R2 x7 (`*(p + 0)`, `*(0 + p)`),
+#                                                      PD x2
+#   MR7 `_hl_pchain` without the `*T` field step     -> RED 17: R1 x7, R2 x7, C7 (`*w.pu` compiled), PD x2
+#   MR7b `_hl_pchain` without the `: *T` method step -> RED 7: R1 x7 (`*w.mp()`)
+#   MR8 `_sci_dexpr` without the type check          -> RED 4: C7 x4 (a `*U` of another struct compiled)
+#   MR9 `_sci_dexpr` copying the slot-rounded size (8 bytes for a 7 B struct) -> RED 2: PD x86 and PD
+#                                                      aarch64 exit 139
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -219,12 +242,12 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/small_struct_handle_line.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=220
+FLOOR=247
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 TG=tests/tcyr/crossos/small_struct_global_handle_line.tcyr
 [ -f "$TG" ] || { echo "FAIL: $G: $TG is missing"; exit 1; }
 NG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TG")
-GFLOOR=243
+GFLOOR=258
 if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GFLOOR) — rows were lost"; exit 1; fi
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
@@ -409,6 +432,16 @@ crow "C4 var q: H = *pu (pu: *UH) refused" "refuse:cannot copy 'pu' into a varia
   'struct H { v; w; }\nstruct UH { u; x; }\nfn f() { var u: UH; u.u = 4; var pu: *UH = &u; var q: H = *pu; return q.v; }\nsyscall(60, f());\n'
 crow "C4 var q: S8 = *GU (GU: *U8) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GU: *U8 = 0;\nfn f() { var u: U8; u.u = 4; GU = &u; var q: S8 = *GU; return q.v; }\nsyscall(60, f());\n'
+crow "C7 var q: S8 = (*pu) (pu: *U8) refused (any dereference)" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var q: S8 = (*pu); return q.v; }\nsyscall(60, f());\n'
+crow "C7 var q: H = (*pu) (pu: *UH) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn f() { var u: UH; u.u = 4; var pu: *UH = &u; var q: H = (*pu); return q.v; }\nsyscall(60, f());\n'
+crow "C7 var q: S8 = *gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'q'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nfn gu(): *U8 { return &GV; }\nfn f() { var q: S8 = *gu(); return q.v; }\nsyscall(60, f());\n'
+crow "C7 var q: S8 = *w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nfn f() { var u: U8; u.u = 4; var w = WU { &u }; var q: S8 = *w.pu; return q.v; }\nsyscall(60, f());\n'
+crow "C8 var q: S8 = (*x) with x untyped: a handle (decision 1), holding the word *x reads" 7 \
+  'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn f() { var o = alloc(8); store64(o, 0); var cell = alloc(8); store64(cell, o); var x = cell; var q: S8 = (*x); q.v = 7; return load64(o); }\nalloc_init();\nsyscall(60, f());\n'
 crow "C5 return (a, 1) with a handle: the element is its word" 3 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn f(): (i64, i64) { var a: S8 = alloc(8); a.v = 3; return (a, 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
 crow "C5 its 16 B twin" 3 \
@@ -429,6 +462,16 @@ crow "GC2 var G: H = *GU (GU: *UH) refused in the declaration zone" "refuse:cann
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar G: H = *GU;\nsyscall(60, G.v);\n'
 crow "GC2 var G: S8 = *GU refused after the first statement" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar k = 0;\nk = 1;\nvar G: S8 = *GU;\nsyscall(60, G.v);\n'
+crow "GC6 var G: S8 = (*GU) (GU: *U8) refused in the declaration zone (any dereference)" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar G: S8 = (*GU);\nsyscall(60, G.v);\n'
+crow "GC6 var G: H = *gu() (a : *UH fn) refused in the declaration zone" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'G'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nfn gu(): *UH { return &GV; }\nvar G: H = *gu();\nsyscall(60, G.v);\n'
+crow "GC6 var G: S8 = *gu() refused after the first statement" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'G'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nfn gu(): *U8 { return &GV; }\nvar k = 0;\nk = 1;\nvar G: S8 = *gu();\nsyscall(60, G.v);\n'
+crow "GC6 var G: H = (*GU) refused after the first statement" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar k = 0;\nk = 1;\nvar G: H = (*GU);\nsyscall(60, G.v);\n'
+crow "GC7 var G: H = *gp() with gp declared below it refused by name (over 8 B pass 1 sizes G)" "refuse:from a dereference of a global or fn declared below it" \
+  'struct H { v; w; }\nvar A = H { 4, 0 };\nvar G: H = *gp();\nfn gp(): *H { return &A; }\nsyscall(60, G.v);\n'
 crow "GC3 var G: H = *P with P declared below it refused by name" "refuse:from a global declared below it" \
   'struct H { v; w; }\nvar G: H = *P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
 crow "GC4 a global declared a value and then a handle is refused" "refuse:redeclared with a different type or size" \
@@ -684,6 +727,44 @@ for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
     else bad "PS $leg: exit $RC, want 0 (139 = a read past the receiver)"; fi
 done
 
+cat > "$D/pd.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+struct PW7 { p: *S7; }
+fn take7(s: S7): i64 { return s.a + s.b + s.c; }
+var GP7: *S7 = 0;
+fn gp7(): *S7 { return GP7; }
+fn run(): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (m <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, m + 4096, 4096) != 0) { return 91; }
+    var pp: *S7 = 0;
+    pp = m + 4096 - 7;
+    pp.a = 100;
+    pp.b = 20;
+    pp.c = 3;
+    GP7 = pp;
+    var q: S7 = (*pp);
+    if (take7(q) != 123) { return 1; }
+    var r: S7 = *(pp + 0);
+    if (take7(r) != 123) { return 2; }
+    var s: S7 = *gp7();
+    if (take7(s) != 123) { return 3; }
+    var w = PW7 { pp };
+    var t: S7 = *w.p;
+    if (take7(t) != 123) { return 4; }
+    return 0;
+}
+syscall(60, run());
+EOF
+echo "PD. a dereference initialiser of a *S7 ending a mapping — (*p), *(p + 0), *gp(), *w.p: no byte past it is read"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/pd.cyr" "$D/pd_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PD $leg: did not build: $(grep '^error' "$D/pd_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "PD $leg: exit 0"
+    else bad "PD $leg: exit $RC, want 0 (139 = a read past the object)"; fi
+done
+
 cat > "$D/as.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -742,4 +823,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM)"

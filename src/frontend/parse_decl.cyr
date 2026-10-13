@@ -5721,6 +5721,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     var ss = _gci_src(S, GTI(S) + 1);
     var pg = 0 - 1;   # 6.7.10 (B7-1g): `var G: T = *p;` — p's slot (`*p` is a struct value)
     if (ss == 0) {
+        if (_sci_star(S, GTI(S) + 1) == 0) { return _gci_dx_top(S, noff, pscale); }   # 6.7.10 (review)
         pg = _gz_star_src(S, GTI(S) + 1, pscale, noff);
         if (pg < 0) { return 0; }
         ss = sid;
@@ -5731,6 +5732,17 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     var took = 2;
     if (pg < 0) { took = _gci_take(S, sid); }
     else { STI(S, GTI(S) + 2); }   # `* IDENT`, the cursor on `;`
+    var vcnt = _gci_reg_inline(S, noff, sid);
+    if (took == 1) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 2, 0 - 1, STRUCTSZ(S, sid - 1)); }
+    if (took == 2) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 1, 0 - 1000 - pg, STRUCTSZ(S, sid - 1)); }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
+# The inline struct global `noff` of struct `sid` (STRUCTSZ bytes, SVPM 2), registered after its source
+# was taken, in PARSE_VAR's own order. Returns its slot.
+fn _gci_reg_inline(S, noff, sid): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
@@ -5740,8 +5752,22 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     SGFI(S, vcnt, 0);
     _GVAR_VIS(S, vcnt, GTI(S));
     SVCNT(S, vcnt + 1);
-    if (took == 1) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 2, 0 - 1, STRUCTSZ(S, sid - 1)); }
-    if (took == 2) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 1, 0 - 1000 - pg, STRUCTSZ(S, sid - 1)); }
+    return vcnt;
+}
+# 6.7.10 (B7 review) — `_gci_toplevel`'s `var G: T = <* E>;` for any dereference of a `*T` (`_hl_dstar`,
+# `_sci_dexpr`'s global twin): over 8 B, E is evaluated into a hidden global and the struct copied through
+# it into the inline G registered after it (1, `;` consumed); 8 B or less, the arm's value store copies the
+# word (`_gz_late` judges it a value), 0. A `*U` of another struct is refused by name.
+fn _gci_dx_top(S, noff, pscale): i64 {
+    var ps = _hl_dstar(S, GTI(S) + 1);
+    if (ps <= 0) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    var sid = 0 - pscale;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    STI(S, GTI(S) + 1);   # consume '='
+    var h = _hl_dx_src(S);
+    var vcnt = _gci_reg_inline(S, noff, sid);
+    _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, sid - 1));
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
@@ -5756,7 +5782,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
     if (ci_pk < 0) {
         ci_dr = _sci_star(S, GTI(S) + 1);
-        if (ci_dr == 0) { return 0; }
+        if (ci_dr == 0) { return _sci_dexpr(S, noff, pscale); }   # 6.7.10 (review): any `*E`
         ci_pk = 0;
     }
     var ci_ti = GTI(S) + 1 + ci_pk + ci_dr;
@@ -5845,27 +5871,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         var aligned = (sz + 7) & (0 - 8);
         nslots = aligned / 8;
     }
-    var existing = FINDLOCAL(S, noff);
-    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
-    # Reserve filler slots (sentinel name -1), then the named slot (SLTYPE = -sid).
-    var k = 0;
-    while (k < nslots - 1) {
-        var fill = GFLC(S);
-        S64(S + 0x5D9D000 + fill * 8, 0 - 1);
-        SLDEP(S, fill, GSDEP(S));
-        SLTYPE(S, fill, 0);
-        SFLC(S, fill + 1);
-        k = k + 1;
-    }
-    var named = GFLC(S);
-    S64(S + 0x5D9D000 + named * 8, noff);
-    SLDEP(S, named, GSDEP(S));
-    SLAGG(S, named, nslots);   # 6.6.5: copy-init allocates the destination INLINE
-    # Keep the declared type verbatim: for a struct that is `0 - sid` (== pscale), for a vector
-    # it is the descriptor itself. Recomputing it from a `dst_sid` that only exists on the
-    # struct branch would retype every vector as struct-id 2121.
-    SLTYPE(S, named, pscale);
-    SFLC(S, named + 1);
+    var named = _sci_slots(S, noff, pscale, nslots);
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
@@ -5890,6 +5896,54 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     STI(S, GTI(S) + 1);   # consume IDENT
     STI(S, GTI(S) + 1);   # consume ';'
     STI(S, GTI(S) + 2 * ci_pk + ci_dr);   # 6.7.6: and the wrap's `(` / `)`; 6.7.10: the `*`
+    return 1;
+}
+# The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then
+# the named slot, SLTYPE = the declared type), after the duplicate-name check. Returns the named slot.
+fn _sci_slots(S, noff, pscale, nslots): i64 {
+    var existing = FINDLOCAL(S, noff);
+    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+    # Reserve filler slots (sentinel name -1), then the named slot (SLTYPE = -sid).
+    var k = 0;
+    while (k < nslots - 1) {
+        var fill = GFLC(S);
+        S64(S + 0x5D9D000 + fill * 8, 0 - 1);
+        SLDEP(S, fill, GSDEP(S));
+        SLTYPE(S, fill, 0);
+        SFLC(S, fill + 1);
+        k = k + 1;
+    }
+    var named = GFLC(S);
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, nslots);   # 6.6.5: copy-init allocates the destination INLINE
+    # Keep the declared type verbatim: for a struct that is `0 - sid` (== pscale), for a vector
+    # it is the descriptor itself. Recomputing it from a `dst_sid` that only exists on the
+    # struct branch would retype every vector as struct-id 2121.
+    SLTYPE(S, named, pscale);
+    SFLC(S, named + 1);
+    return named;
+}
+# ⛔ 6.7.10 (B7 review) — `var q: T = <* E>;` in a fn for ANY dereference whose operand E is typed `*T`
+# (`_hl_dstar`): `(*p)`, `*(p + i)`, `*h.p`, `*gp()`, `*w.m().p`, `(*self)`. `*p` is a struct VALUE at every
+# size (the user's decision 6, 2026-10-12), and only `* IDENT ;` was recognised: every other spelling
+# fell to the scalar init, so at 8 B or less q became a HANDLE holding the word the dereference read
+# (inline through 6.7.9) and its first `q.v = 9` SIGSEGV'd; over 8 B it was that garbage handle on 6.7.9
+# too. E is evaluated once into a hidden temp and the struct is copied through it byte-exact into an
+# inline q, as `* IDENT` copies. A `*U` of another struct is refused by name, as `*pu` is; an untyped
+# operand (`*x`) is no struct value (decision 1: a handle). 1 = declared (`;` consumed). CHANGELOG [6.7.10]
+fn _sci_dexpr(S, noff, pscale): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    var ps = _hl_dstar(S, GTI(S) + 1);
+    if (ps <= 0) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    STI(S, GTI(S) + 1);   # consume '='
+    var h = _hl_dx_src(S);
+    var sz = STRUCTSZ(S, ps - 1);
+    var named = _sci_slots(S, noff, pscale, (sz + 7) / 8);
+    _agc_copy_bytes(S, named, 0 - 1, _AGC_DREF(h), 0 - 1, sz);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
     return 1;
 }
 # ⛔ 6.7.6 — the name source of `var v: K = <src>;` at token `ti`: 0 for `IDENT ;`, `k` for the
@@ -7535,9 +7589,13 @@ fn _gz_inst_of(S, c, g): i64 {
     if (L64(_sinst + (c - 1) * 24) != g) { return 0; }
     return 1;
 }
-# `* IDENT ;` at token `b`, IDENT a global `*sid`: 1.
+# `* IDENT ;` at token `b`, IDENT a global `*sid`: 1. 6.7.10 (review): or any other dereference of a
+# `*sid` up to the `;` (`_hl_dstar`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
 fn _gz_star(S, b, sid): i64 {
-    if (_sci_star(S, b) == 0) { return 0; }
+    if (_sci_star(S, b) == 0) {
+        if (_hl_dstar(S, b) == sid) { return 1; }
+        return 0;
+    }
     if (_gz_pg(S, b) != sid) { return 0; }
     return 1;
 }
@@ -7903,6 +7961,7 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var b = GTI(S);
+    if (_sci_star(S, b) == 0) { return _gz_dx_init(S, dgv, gps, dnoff); }   # 6.7.10 (review): any `*E`
     var pg = _gz_star_src(S, b, gps, dnoff);
     if (pg < 0) { return 0; }
     var sid = 0 - gps;
@@ -7912,6 +7971,197 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
     STI(S, b + 2);
     _agc_copy_bytes(S, 0 - 1, dgv, 0 - 1, 0 - 1000 - pg, STRUCTSZ(S, sid - 1));
+    _gv_slvar(S, dgv);
+    return 1;
+}
+# ⛔ 6.7.10 (B7 review) — THE DEREFERENCE AS A STRUCT VALUE, AT ANY SPELLING (the user's decision 6,
+# 2026-10-12: `*p` is a struct value, copied at every size). B7-1 / B7-1g recognised only `* IDENT ;`, so
+# `var q: S8 = (*p);`, `= *(p + 0)`, `= *h.p`, `= *gp()`, `(*self)` — local or global, in the declaration
+# zone and after it — became handles holding the word the dereference read, and the first write SIGSEGV'd
+# (inline copies through 6.7.9). The declaration initialiser at token `ti`, up to its `;`, is ONE
+# dereference `* E` (inside any balanced parentheses — `(*p)` — and nothing after it: `*p + a` is an
+# operator's operand), with E typed `*T` by the compiler's own typing (`_hl_psid`): T's struct, else 0.
+# `_hl_dk` = the parentheses around it; `_hl_dnm` = the operand's last name, for a refusal.
+var _hl_dk = 0;
+var _hl_dnm = 0;
+fn _hl_dstar(S, ti): i64 {
+    _hl_dk = 0;
+    var e = _gz_end(S, ti);
+    if (TOKTYP(S, e) != 5) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    var ps = _hl_psid(S, a + 1, pe);
+    if (ps <= 0) { return 0; }
+    _hl_dk = a - ti;
+    _hl_dnm = TOKVAL(S, a + 1);
+    var i = pe - 1;
+    while (i > a) {
+        if (TOKTYP(S, i) == 2) { _hl_dnm = TOKVAL(S, i); i = a; }
+        i = i - 1;
+    }
+    return ps;
+}
+# The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
+# the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
+# hidden global at top level), the wrap closed, the cursor left on the `;`. Returns the temp (`_HTEMP`).
+fn _hl_dx_src(S): i64 {
+    var k = _hl_dk;
+    STI(S, GTI(S) + k + 1);   # the wrap's `(`s and the `*`
+    PARSE_FACTOR(S);
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    _pw_close(S, k);
+    return h;
+}
+# The struct a `*T`-typed expression [a, e) points at — a `*T` local, parameter, closure capture or global,
+# a call or a method declared `: *T`, a `*T` field, at the end of any chain of fields and methods, inside
+# balanced parentheses, or pointer arithmetic on one (`p + n`, `n + p`, `p - n`) — else 0: an untyped
+# value, a `*i64`, a struct value, `&x`, an index, a generic call, or a shape this reader does not type.
+fn _hl_psid(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    if (a >= e) { return 0; }
+    var k = _hl_addop(S, a, e);
+    if (k > a) {
+        var r = _hl_psid(S, k + 1, e);
+        if (TOKTYP(S, k) == 6 || TOKTYP(S, k) == 113) {
+            var l = _hl_psid(S, a, k);
+            if (l > 0) { return l; }
+            return r;
+        }
+        if (r > 0) { return 0; }   # `p - q` is a distance, no pointer
+        return _hl_psid(S, a, k);
+    }
+    if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    var t = _hl_pchain(S, a, e);
+    if (_hl_cp != 1) { return 0; }
+    return t;
+}
+# The chain [b, e) — a name or a call `f(..)`, then `.field` / `.method(..)` steps — read from its tokens:
+# the struct at its end, `_hl_cp` 1 when that is a `*T` (a `*T` name, a `: *T` call or method, a `*T`
+# field) and 0 when it is a struct value. A `*T` receiver continues the chain through its struct, as the
+# parser's field and method access does. 0 = no struct. Names resolve as the parser's do at this point:
+# a local or a closure capture in a fn, else a global.
+var _hl_cp = 0;
+fn _hl_pchain(S, b, e): i64 {
+    _hl_cp = 0;
+    if (TOKTYP(S, b) != 2) { return 0; }
+    var t = 0;
+    var p = 0;
+    var i = b + 1;
+    var o = _gcall_open(S, b);
+    if (o >= 0) {
+        if (o != b + 1) { return 0; }   # `g<..>(`: a generic's instance is not read here
+        var c = _call_close(S, o);
+        if (c >= e) { return 0; }
+        var fi = FINDFN(S, TOKVAL(S, b));
+        if (fi < 0) { return 0; }
+        if (GFTP(S, fi) != 0) { return 0; }
+        t = _hl_fn_psid(fi);
+        if (t > 0) { p = 1; } else { t = GFRS(S, fi); }
+        i = c + 1;
+    } else {
+        t = _hl_name_ty(S, TOKVAL(S, b));
+        p = _hl_cp;
+    }
+    while (i < e) {
+        if (t <= 0) { return 0; }
+        if (t >= 2048) { return 0; }
+        if (TOKTYP(S, i) != 41) { return 0; }
+        if (TOKTYP(S, i + 1) != 2) { return 0; }
+        p = 0;
+        if (TOKTYP(S, i + 2) == 10) {
+            var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
+            if (mf < 0) { return 0; }
+            var mc = _call_close(S, i + 2);
+            if (mc >= e) { return 0; }
+            t = _hl_fn_psid(mf);
+            if (t > 0) { p = 1; } else { t = GFRS(S, mf); }
+            i = mc + 1;
+        } else {
+            var fi2 = FINDFIELD(S, t - 1, TOKVAL(S, i + 1));
+            if (fi2 < 0) { return 0; }
+            var fp = _fld_ptr_sid(S, t - 1, fi2);
+            if (fp > 0) {
+                t = fp;
+                p = 1;
+            } else {
+                t = GETFTYPE(S, t - 1, fi2);
+                if (IS_STR_FIELD(S, t) == 1) { return 0; }
+            }
+            i = i + 2;
+        }
+    }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    _hl_cp = p;
+    return t;
+}
+# Fn `fi`'s `: *T` struct (`_fn_rpsid`), else 0.
+fn _hl_fn_psid(fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    return L64(_fn_rpsid + fi * 8);
+}
+# The struct name `noff` holds (`_hl_cp` 1: a `*T`, T returned), else 0: a local or a closure capture in a
+# fn (a struct-typed slot, inline, a handle or a `*T`), else a global (a `*T` one, or a struct global).
+fn _hl_name_ty(S, noff): i64 {
+    _hl_cp = 0;
+    var t = 0;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            t = GLTYPE(S, li);
+            if (t >= 0) { return 0; }
+            if (t <= 0 - 2048) { return 0; }
+            _hl_cp = GLPTRP(S, li);
+            return 0 - t;
+        }
+        if (_hl_capn(S, noff) == 1) {
+            var esl = _cl_snap_find(S, noff);
+            t = _cl_snap_type(esl);
+            if (t >= 0) { return 0; }
+            if (t <= 0 - 2048) { return 0; }
+            _hl_cp = _cl_snap_ptrp(esl);
+            return 0 - t;
+        }
+    }
+    var gvi = _findvar_core(S, noff);
+    if (gvi < 0) { return 0; }
+    var ps = _gv_ptr_sid(S, gvi);
+    if (ps > 0) {
+        _hl_cp = 1;
+        return ps;
+    }
+    if (GVPM(S, gvi) == 0) { return 0; }
+    t = GVTYPE(S, gvi);
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    return t;
+}
+# The replay of a declaration-zone `var G: T = <* E>;` other than `* IDENT` (`_gz_star_init`'s general
+# arm), cursor on the initialiser: over 8 B copied through E into the inline G pass 1 registered
+# (`_gci_inline` asked `_gz_star`), the cursor on the `;` (1); 8 B or less, the value store copies its word
+# (0). A `*U` of another struct is refused by name; a dereference pass 1 could not type (a `*T` global or
+# fn declared below G) is refused by name, as a whole source declared below is (`_gci_below`).
+fn _gz_dx_init(S, dgv, gps, dnoff): i64 {
+    var ps = _hl_dstar(S, GTI(S));
+    if (ps <= 0) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, gps, 0 - ps, dnoff, _hl_dnm) == 1) { return 0; }
+    var sid = 0 - gps;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (dgv < 0) { return 0; }
+    if (GVPM(S, dgv) != 2) {
+        ERR_IDENT(S, "cannot copy-init ", dnoff,
+          " from a dereference of a global or fn declared below it (declare it first): ", _hl_dnm);
+        while (PEEKT(S) != 5) { STI(S, GTI(S) + 1); }
+        return 1;
+    }
+    var h = _hl_dx_src(S);
+    _agc_copy_bytes(S, 0 - 1, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, sid - 1));
     _gv_slvar(S, dgv);
     return 1;
 }

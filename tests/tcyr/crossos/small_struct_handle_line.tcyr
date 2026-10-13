@@ -14,7 +14,9 @@
 # over 8 B and both must give the row's constant, except where a 16 B twin cannot exist):
 #   * a COPY (the local is inline): a literal, a field, a local / `(local)`, a by-value parameter, a
 #     value global, a capture of a struct's words, a `*T` name, `*p` (6.7.10: copied at EVERY size —
-#     over 8 B `var q: H = *p` was a handle holding the word `*p` read, and `q.v = 9` SIGSEGV'd), a
+#     over 8 B `var q: H = *p` was a handle holding the word `*p` read, and `q.v = 9` SIGSEGV'd) and
+#     every other dereference of a `*T` (the review fix: `(*p)`, `*(p + 1)`, `*(0 + p)`, `*w.p`,
+#     `*gp()`, `*w.mp()`, `(*self)`, a captured or global `*T`, at sizes 1 / 3 / 4 / 7 / 8 B), a
 #     whole free / generic / wrapped call, a method, an operator, an if-expression, an inferred
 #     `var q = mk8(5)`;
 #   * a HANDLE: an untyped value, `alloc(..)`, `&x`, a `*T` call, an untyped call, an integer
@@ -540,6 +542,178 @@ fn x_addr_h() { var x = alloc(16); var a: H = x; return load64(&a) - x; }
 fn x_opeq_8() { var x = alloc(8); var a: S8 = x; a.v = 5; a.v += 3; return load64(x); }
 fn x_opeq_h() { var x = alloc(16); var a: H = x; a.v = 5; a.v += 3; return load64(x); }
 
+# ── review fix: a dereference at ANY spelling is a struct value and copies (decision 6) — only
+# `* IDENT ;` was taken, so `(*p)`, `*(p + 0)`, `*w.p`, `*gp()`, `*w.mp()`, `(*self)` made a handle
+# holding the word the dereference read (inline copies through 6.7.9; garbage handles over 8 B) ──
+struct PW8 { p: *S8; }
+struct PWH { p: *H; }
+fn PW8_mp(self: *PW8): *S8 { return self.p; }
+fn PWH_mp(self: *PWH): *H { return self.p; }
+var DGA8 = S8 { 5 };
+var DGAH = H { 5, 0 };
+fn dgp8(): *S8 { return &DGA8; }
+fn dgph(): *H { return &DGAH; }
+fn d_par_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = (*p);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_par_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = (*p);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_par2_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = ((*p));
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_par2_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = ((*p));
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_ar_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = *(p + 0);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_ar_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = *(p + 0);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_ar1_8() {
+    var a: S8[2];
+    var p: *S8 = &a;
+    p.v = 1;
+    var p1: *S8 = p + 1;
+    p1.v = 5;
+    var q: S8 = *(p + 1);
+    var b = q.v;
+    q.v = 9;
+    return p1.v * 100 + b * 10 + q.v;
+}
+fn d_ar1_h() {
+    var a: H[2];
+    var p: *H = &a;
+    p.v = 1;
+    var p1: *H = p + 1;
+    p1.v = 5;
+    var q: H = *(p + 1);
+    var b = q.v;
+    q.v = 9;
+    return p1.v * 100 + b * 10 + q.v;
+}
+fn d_npl_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var q: S8 = *(0 + p);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_npl_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var q: H = *(0 + p);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_fld_8() {
+    var a: S8;
+    a.v = 5;
+    var w = PW8 { &a };
+    var q: S8 = *w.p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_fld_h() {
+    var a: H;
+    a.v = 5;
+    var w = PWH { &a };
+    var q: H = *w.p;
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_call_8() { var q: S8 = *dgp8(); var b = q.v; q.v = 9; return DGA8.v * 100 + b * 10 + q.v; }
+fn d_call_h() { var q: H = *dgph(); var b = q.v; q.v = 9; return DGAH.v * 100 + b * 10 + q.v; }
+fn d_meth_8() {
+    var a: S8;
+    a.v = 5;
+    var w = PW8 { &a };
+    var q: S8 = *w.mp();
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_meth_h() {
+    var a: H;
+    a.v = 5;
+    var w = PWH { &a };
+    var q: H = *w.mp();
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_selfp_8(self: *S8) { var q: S8 = (*self); var b = q.v; q.v = 9; return self.v * 100 + b * 10 + q.v; }
+fn d_selfp_h(self: *H) { var q: H = (*self); var b = q.v; q.v = 9; return self.v * 100 + b * 10 + q.v; }
+fn d_self_8() { var a: S8; a.v = 5; return d_selfp_8(&a); }
+fn d_self_h() { var a: H; a.v = 5; return d_selfp_h(&a); }
+fn d_cap_8() {
+    var a: S8;
+    a.v = 5;
+    var p: *S8 = &a;
+    var f = |d| { var q: S8 = (*p); var b = q.v; q.v = 9 + d; return p.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn d_cap_h() {
+    var a: H;
+    a.v = 5;
+    var p: *H = &a;
+    var f = |d| { var q: H = (*p); var b = q.v; q.v = 9 + d; return p.v * 100 + b * 10 + q.v; };
+    return callptr(f, 0);
+}
+fn d_gpar_8() {
+    var a: S8;
+    a.v = 5;
+    GP8 = &a;
+    var q: S8 = (*GP8);
+    var b = q.v;
+    q.v = 9;
+    return a.v * 100 + b * 10 + q.v;
+}
+fn d_gpar_h() { var a: H; a.v = 5; GPH = &a; var q: H = (*GPH); var b = q.v; q.v = 9; return a.v * 100 + b * 10 + q.v; }
+
 struct T1 { a: i8; }
 struct T2 { a: i16; }
 struct T3 { a: i16; b: i8; }
@@ -548,6 +722,88 @@ struct T5 { a: i32; b: i8; }
 struct T6 { a: i32; b: i16; }
 struct T7 { a: i32; b: i16; c: i8; }
 struct T8 { a: i32; b: i32; }
+
+# the review fix's size rows: `(*p)` / `*(p + 0)` of a 1 / 3 / 4 / 7 / 8 B struct, a guard byte after the source
+fn d_sz1() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var p: *T1 = x;
+    zset1(p);
+    var q: T1 = (*p);
+    var r: T1 = *(p + 0);
+    var c = zs1(q);
+    if (zs1(r) != c) { return 1; }
+    zzero1(&q);
+    zzero1(&r);
+    if (load8(x + 1) != 0x5A) { return 2; }
+    if (zs1(p) != c) { return 3; }
+    return c;
+}
+fn d_sz3() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var p: *T3 = x;
+    zset3(p);
+    var q: T3 = (*p);
+    var r: T3 = *(p + 0);
+    var c = zs3(q);
+    if (zs3(r) != c) { return 1; }
+    zzero3(&q);
+    zzero3(&r);
+    if (load8(x + 3) != 0x5A) { return 2; }
+    if (zs3(p) != c) { return 3; }
+    return c;
+}
+fn d_sz4() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var p: *T4 = x;
+    zset4(p);
+    var q: T4 = (*p);
+    var r: T4 = *(p + 0);
+    var c = zs4(q);
+    if (zs4(r) != c) { return 1; }
+    zzero4(&q);
+    zzero4(&r);
+    if (load8(x + 4) != 0x5A) { return 2; }
+    if (zs4(p) != c) { return 3; }
+    return c;
+}
+fn d_sz7() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var p: *T7 = x;
+    zset7(p);
+    var q: T7 = (*p);
+    var r: T7 = *(p + 0);
+    var c = zs7(q);
+    if (zs7(r) != c) { return 1; }
+    zzero7(&q);
+    zzero7(&r);
+    if (load8(x + 7) != 0x5A) { return 2; }
+    if (zs7(p) != c) { return 3; }
+    return c;
+}
+fn d_sz8() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    var p: *T8 = x;
+    zset8(p);
+    var q: T8 = (*p);
+    var r: T8 = *(p + 0);
+    var c = zs8(q);
+    if (zs8(r) != c) { return 1; }
+    zzero8(&q);
+    zzero8(&r);
+    if (load8(x + 8) != 0x5A) { return 2; }
+    if (zs8(p) != c) { return 3; }
+    return c;
+}
 
 # 1 B: a: i8
 fn zs1(s: T1) { return s.a; }
@@ -917,6 +1173,33 @@ assert_eq(i_cap_8(), 559, "init: a capture of the struct's words copies");
 assert_eq(i_cap_8(), i_cap_h(), "  = its 16 B twin");
 assert_eq(i_pname_8(), 559, "init: a *T name copies");
 assert_eq(i_pname_8(), i_pname_h(), "  = its 16 B twin");
+assert_eq(d_par_8(), 559, "init: (*p) copies (6.7.10 review: a dereference at any spelling)");
+assert_eq(d_par_8(), d_par_h(), "  = its 16 B twin");
+assert_eq(d_par2_8(), 559, "init: ((*p)) copies");
+assert_eq(d_par2_8(), d_par2_h(), "  = its 16 B twin");
+assert_eq(d_ar_8(), 559, "init: *(p + 0) copies");
+assert_eq(d_ar_8(), d_ar_h(), "  = its 16 B twin");
+assert_eq(d_ar1_8(), 559, "init: *(p + 1) copies the second element");
+assert_eq(d_ar1_8(), d_ar1_h(), "  = its 16 B twin");
+assert_eq(d_npl_8(), 559, "init: *(0 + p) copies");
+assert_eq(d_npl_8(), d_npl_h(), "  = its 16 B twin");
+assert_eq(d_fld_8(), 559, "init: *w.p (a *T field) copies");
+assert_eq(d_fld_8(), d_fld_h(), "  = its 16 B twin");
+assert_eq(d_call_8(), 559, "init: *gp() (a : *T call) copies");
+assert_eq(d_call_8(), d_call_h(), "  = its 16 B twin");
+assert_eq(d_meth_8(), 559, "init: *w.mp() (a : *T method) copies");
+assert_eq(d_meth_8(), d_meth_h(), "  = its 16 B twin");
+assert_eq(d_self_8(), 559, "init: (*self) (a self: *T) copies");
+assert_eq(d_self_8(), d_self_h(), "  = its 16 B twin");
+assert_eq(d_cap_8(), 559, "init: (*p) of a captured *T copies");
+assert_eq(d_cap_8(), d_cap_h(), "  = its 16 B twin");
+assert_eq(d_gpar_8(), 559, "init: (*G) (a *T global) copies");
+assert_eq(d_gpar_8(), d_gpar_h(), "  = its 16 B twin");
+assert_eq(d_sz1(), -3, "1 B: (*p) and *(p + 0) copy, the guard byte after the source kept");
+assert_eq(d_sz3(), -30000004, "3 B: (*p) and *(p + 0) copy byte-exact, the guard kept");
+assert_eq(d_sz4(), -70000, "4 B: (*p) and *(p + 0) copy, the guard kept");
+assert_eq(d_sz7(), -70000030000004, "7 B: (*p) and *(p + 0) copy byte-exact, the guard kept");
+assert_eq(d_sz8(), -7000080000, "8 B: (*p) and *(p + 0) copy, the guard kept");
 assert_eq(i_deref_8(), 559, "init: *p copies (over 8 B too, 6.7.10)");
 assert_eq(i_deref_8(), i_deref_h(), "  = its 16 B twin");
 assert_eq(i_derefg_8(), 559, "init: *G (a *T global) copies");

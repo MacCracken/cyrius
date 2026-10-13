@@ -1256,15 +1256,17 @@ variable declared from a struct VALUE of its type holds its own bytes (it is *in
 from anything else it is a *handle*, whose slot holds the address of the struct it reads and
 writes. A struct value is a literal; another inline struct of the type — a local, a by-value
 parameter, a global, a closure's captured copy of one, parenthesised or not; a struct-typed field
-(`b.v`); a `*T` name or `*p` with `p: *T` (copied through the pointer); and a call, method,
-operator or if-expression that returns the struct (a generic or a parenthesised call too).
-Everything else is a handle: `alloc(..)`, `&x`, an untyped value, a call returning a `*T` or an
-untyped value, an integer — `var q: S8 = 0;` is a NULL handle, and `var a: Num = 1;` a handle to
-address 1, so `a + b` is pointer arithmetic with no `Num_add` dispatch (declare it from a struct
-value, `Num { 1 }` or `mkn(1)`, for the operator) — and another handle, a captured one included,
-which **binds**: the new name is a second handle to the same object. A struct value of ANOTHER
-type is refused by name, `*pu` with `pu: *U` included (`cannot copy 'pu' into a variable of a
-different struct/vector type: 'q'`).
+(`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
+`*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
+pointer); and a call, method, operator or if-expression that returns the struct (a generic or a
+parenthesised call too). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
+dereference of one, `*x`, included), a call returning a `*T` or an untyped value, an integer —
+`var q: S8 = 0;` is a NULL handle, and `var a: Num = 1;` a handle to address 1, so `a + b` is
+pointer arithmetic with no `Num_add` dispatch (declare it from a struct value, `Num { 1 }` or
+`mkn(1)`, for the operator) — and another handle, a captured one included, which **binds**: the
+new name is a second handle to the same object. A struct value of ANOTHER
+type is refused by name, a dereference of a `*U` included — `*pu`, `(*pu)`, `*gu()`, `*w.pu`
+(`cannot copy 'pu' into a variable of a different struct/vector type: 'q'`).
 
 ```cyrius
 struct S8 { v; }
@@ -1290,13 +1292,9 @@ a fn declared `: S8`, an operator's right operand, an if-expression branch, and 
 copy (below), in a fn and at top level. A closure captures the handle and reads through it. As
 an operator's LEFT operand a handle is pointer arithmetic (no dispatch), and `&q` is its slot.
 
-⚠ Known defect (6.7.10): only `*name` is taken for a struct value. Any other dereference of a
-`*T` as the initialiser — `(*p)`, `*(p + 1)`, `*h.p`, `*gp()`, of a local or a global — makes a
-handle holding the word it reads, and the first field write crashes, at every size (through
-6.7.9, at 8 bytes or less, each was a copy). Dereference a `*T` name:
-`var t: *S8 = h.p; var q: S8 = *t;`. Not yet settled: a global declared from a `*T` GLOBAL's name
-(`var G: S8 = P;`) keeps its 6.7.9 layout — inline, holding the pointer word, at 8 bytes or less;
-a handle bound to `P`'s object over 8.
+⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
+layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
+over 8.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
