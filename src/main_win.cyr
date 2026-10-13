@@ -4,8 +4,8 @@
 # Same language as cc.cyr, split into modules using include.
 # Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
-# Self-host: cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b
+# Build: cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win
+# (cycc_win is the PE32+ compiler; scripts/install.sh rebuilds it the same way).
 # ================================================================
 # HEAP MAP — none here: src/main.cyr carries the ONE heap map, and this fork
 # uses that layout (every `S + 0x…` offset lives in the shared modules).

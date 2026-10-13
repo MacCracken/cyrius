@@ -171,7 +171,7 @@ fn _help_project(): i64 {
       "vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
     _help_row("distlib [--all|--check] [--modular] [profile]",
       "bundle src/ into dist/ (--all = base + every [lib.X]; --check = verify, don't write)");
-    _help_row("package", "create .ark distributable");
+    _help_row("package", "compile the [build] entry to build/<output>");
     _help_row("publish", "distlib + lock deps + git tag v<version> (prints the push step)");
     _help_row("install", "no package registry yet: prints the install-from-source steps");
     return 0;

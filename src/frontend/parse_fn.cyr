@@ -245,9 +245,10 @@ fn _OVERLOAD_SUFFIX(S, noff): i64 {
 # Grow the fn-table family 2x: realloc + copy all 16 parallel 8 B/slot tables,
 # realloc the start-hash (rebuilt each fixup, so no copy needed), then rebuild
 # the name-hash at the new size and re-insert every live entry. Old buffers leak
-# (cycc is short-lived). Ceiling 32768 — the 2 B hash slots store fi+1 (so the
-# index must stay < 65536) and the live[] DCE bitmap is fixed at live[4096] =
-# 32768 bits. v6.2.0 Phase 0 / AR-03. See util.cyr for the gvar family.
+# (cycc is short-lived). Ceiling 131072 since v6.5.40 (it was 32768 while the
+# hash slots were 2 B: they store fi+1, so the index had to stay < 65536); the
+# slots are 4 B now (the note below). v6.2.0 Phase 0 / AR-03. See util.cyr for the
+# gvar family.
 fn _fnt_grow(S): i64 {
     var nc = _fnt_cap * 2;
     if (nc > 131072) {

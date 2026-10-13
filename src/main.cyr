@@ -1143,8 +1143,8 @@ if (_pe_env_early != 0) {
 }
 # v6.1.6: CYRIUS_PIE=1 env mirrors the --pie cmdline flag (parsed above from
 # /proc/self/cmdline). The cyrius-build wrapper + cross/test harnesses set the
-# env; either path sets _pie_mode → position-independent kernel codegen.
-# Effective only with `kernel;` (kmode==1); a no-op for userland/shared/object.
+# env; either path sets _pie_mode: position-independent kernel codegen under
+# `kernel;`, and in a userland build an ET_DYN PIE executable (as --pie gives).
 var _pie_env_early = _read_env("CYRIUS_PIE");
 if (_pie_env_early != 0) {
     if (load8(_pie_env_early) == 49 && load8(_pie_env_early + 1) == 0) {
