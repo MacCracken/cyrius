@@ -568,13 +568,15 @@ fi
 # derived from src (`_FINDFN_CSTR` / `EMIT_OVF_CALL` literals) plus the four the compiler spells
 # byte by byte; each must be defined in lib/, and no definition may hold a depth-1 `=`. 6.7.8 (C2-8):
 # the bounds-checked mode's checker (`__cyrius_*`) is the compiler's own text, appended to the unit
-# by lex_pp.cyr `_bnd_finish` — its string literals, unescaped, are scanned as one more file.
+# by lex_pp.cyr `_bnd_finish` — its string literals, unescaped, are scanned as one more file; 6.7.10
+# (P5B-2): so is the execution-coverage mode's dump, appended by parse_cov.cyr `_cov_finish`.
 R5N=$( (grep -rhoE '(_FINDFN_CSTR\(S, |EMIT_OVF_CALL\(S, )"[A-Za-z_0-9]+"' "$ROOT/src" | sed 's/.*"\([^"]*\)"/\1/'; printf 'vec_len\nvec_get\nalloc\nstr_from\n') | sort -u | tr '\n' ' ')
 R5C=$(echo "$R5N" | wc -w | tr -d ' ')
 if [ "$R5C" -lt 20 ]; then bad "S-R5: only $R5C compiler-called helper names derived from src (floor 20)"
 else
     find "$ROOT/lib" -name '*.cyr' | sort > "$T/st/r5.files"
-    sed -n '/^fn _bnd_finish(S)/,/^}/p' "$ROOT/src/frontend/lex_pp.cyr" | grep '_bnd_ln(out, op, "' \
+    { sed -n '/^fn _bnd_finish(S)/,/^}/p' "$ROOT/src/frontend/lex_pp.cyr"
+      sed -n '/^fn _cov_finish(S)/,/^}/p' "$ROOT/src/frontend/parse_cov.cyr"; } | grep '_bnd_ln(out, op, "' \
         | sed 's/.*_bnd_ln(out, op, "//; s/");[^"]*$//' | while IFS= read -r l; do printf '%b\n' "$l"; done > "$T/st/r5_injected.cyr"
     echo "$T/st/r5_injected.cyr" >> "$T/st/r5.files"
     awk -v NAMES="$R5N" -v Q="'" '

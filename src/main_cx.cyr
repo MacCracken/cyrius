@@ -358,6 +358,7 @@ if (_cx_mode_refused(S) == 1) { syscall(SYS_EXIT, 1); }
 # Exit epilogue — load last var
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+_cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
 EEXIT(S);
 
 # Fixup: resolve string/var/fn addresses in bytecode

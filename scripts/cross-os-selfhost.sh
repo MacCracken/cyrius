@@ -35,7 +35,9 @@ set -e
 # 6.7.9 — the self-host it runs rebuilds cycc and the cx compiler from src/ here: an inherited
 # CYRIUS_BOUNDS / CYRIUS_POISON would self-host a bounds-checked / poison-mode compiler
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install> [tcyr-subdir]}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -233,6 +235,117 @@ else
   tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr
 fi
 
+# ── 6.7.10 (P5-B): EXECUTION COVERAGE ON THE HARDWARE ─────────────────────────────────────────
+# `cyrius coverage --exec` builds every .tcyr and every exec program with CYRIUS_COVERAGE=1, runs
+# each, and reads the dump the program appends when it exits. Linux runs it locally, and so does the
+# Windows arm under wine (tests/gates/toolchain/coverage_exec_cli.sh). Only these legs RUN what the
+# hardware alone has:
+#   - the Darwin open flags (0x209) and arm64 Mach-O's 2->5 / 1->4 / 3->6 rows;
+#   - the `_cov_tail` line in the two Mach-O forks, which do not run on Linux;
+#   - real-ARM aarch64;
+#   - Windows' CreateFileW with FILE_APPEND_DATA on NTFS.
+# Each leg runs the host's NATIVE CLI and native cycc from a staged home (bin/ + lib/; the fixture's
+# [deps] stdlib resolves from that lib/). It uses two copies of tests/fixtures/coverage_exec, with
+# its t.tcyr.in renamed t.tcyr:
+#   X1  `coverage --exec=programs/ok_test.cyr -v` -> rc 0 and `Functions executed: 5/7 (71%)`, with
+#       sh_d and `shapes` the only misses. sh_c counts only through t.tcyr, which leaves by falling
+#       off its top level (the fork's `_cov_tail`). ok_test leaves by `syscall(SYS_EXIT, …)` inside
+#       a fn (the exit hook).
+#   X2  `[coverage] exec` alone, no flag -> rc 1, `FAIL: programs/bad_test.cyr (exit 1)` named, the
+#       report still printed.
+# The per-run temp dir must be empty afterwards.
+# pi runs X2 over `programs/*_test.cyr`. asm_test.cyr's `svc #0` exit_group(94) is an aarch64-LINUX
+# exit, so there it must read "exited 0 but left no coverage record". ecb, ach and cass name
+# ok_test and bad_test only. asm_test's asm carries Linux syscall numbers: on arm64 macOS the call
+# number is whatever x16 holds, on x86_64 macOS 231 has no syscall class, and on Windows `syscall`
+# is NT system call 0xE7 with whatever the argument registers hold. None of that is run on the
+# hardware.
+# A miss fails the leg by name (SELFHOST_FAIL: <host> — coverage --exec). CHANGELOG [6.7.10]
+
+# _co_cov_stage <exec list> — $CO_TMP/_co_cov.tgz: _cov1/ (the fixture) and _cov2/ (the fixture with
+# `[coverage] exec = <exec list>` appended).
+_co_cov_stage() {
+  rm -rf "$CO_TMP/_cov1" "$CO_TMP/_cov2" "$CO_TMP/_co_cov.tgz"
+  for _cd in _cov1 _cov2; do
+    cp -R tests/fixtures/coverage_exec "$CO_TMP/$_cd" \
+      && mv "$CO_TMP/$_cd/tests/tcyr/t.tcyr.in" "$CO_TMP/$_cd/tests/tcyr/t.tcyr" || return 1
+  done
+  printf '\n[coverage]\nexec = %s\n' "$1" >> "$CO_TMP/_cov2/cyrius.cyml" \
+    && (cd "$CO_TMP" && tar czf _co_cov.tgz _cov1 _cov2)
+}
+
+# _co_cov_posix <host> <cli> <cc> [<cc's other name>…] — X1 and X2 on ecb / ach / pi. The home is
+# ~/$RD/_covh: bin/cyrius (<cli>), bin/cycc (<cc>, plus a copy under each other name; arm64 macOS's
+# CLI asks for cycc_aarch64) and lib/. TMPDIR is a fresh ~/$RD/_covt. Each run is its own ssh, so
+# a wrong exit code never hides the output: _COV_RC1 / _COV_RC2 hold the two exit codes,
+# _COV_LEFT what the temp dir still holds, and the outputs come back to $CO_TMP for
+# _co_cov_check. Fails only when the staging fails.
+_co_cov_posix() {
+  _ch=$1; _ccli=$2; _ccc=$3; shift 3
+  _cextra=""
+  for _cn in "$@"; do _cextra="$_cextra && cp $_ccc _covh/bin/$_cn"; done
+  _crun='D=$(cd .. && pwd) && TMPDIR="$D/_covt" CYRIUS_HOME="$D/_covh" CYRIUS_RESOLVED=1 "$D/_covh/bin/cyrius" coverage'
+  scp -q $SSHO "$CO_TMP"/_co_cov.tgz "$_ch:~/$RD/" \
+    && ssh $SSHO "$_ch" "cd ~/$RD && rm -rf _covh _covt _cov1 _cov2 && mkdir -p _covh/bin _covt && cp $_ccli _covh/bin/cyrius && cp $_ccc _covh/bin/cycc$_cextra && cp -R lib _covh/lib && tar xzf _co_cov.tgz" \
+    || { echo "  coverage: the home or the fixture could not be staged on $_ch"; return 1; }
+  _COV_RC1=0; ssh $SSHO "$_ch" "cd ~/$RD/_cov1 && $_crun"' --exec=programs/ok_test.cyr -v > ../_cov1.out 2> ../_cov1.err' || _COV_RC1=$?
+  _COV_RC2=0; ssh $SSHO "$_ch" "cd ~/$RD/_cov2 && $_crun"' > ../_cov2.out 2> ../_cov2.err' || _COV_RC2=$?
+  _COV_LEFT=$(ssh $SSHO "$_ch" "cd ~/$RD && ls -A _covt") || _COV_LEFT="(the temp dir could not be listed)"
+  rm -f "$CO_TMP"/_cov1.out "$CO_TMP"/_cov1.err "$CO_TMP"/_cov2.out "$CO_TMP"/_cov2.err
+  scp -q $SSHO "$_ch:~/$RD/_cov1.out" "$_ch:~/$RD/_cov1.err" "$_ch:~/$RD/_cov2.out" "$_ch:~/$RD/_cov2.err" "$CO_TMP/" 2>/dev/null || true
+  return 0
+}
+
+# _co_cov_check <host> <X2's `Corpus runs:` tail> [<a second X2 FAIL line, as a prefix>] — grades
+# the X1 / X2 runs that _co_cov_posix or the cass leg made: their exit codes (_COV_RC1 must be 0,
+# _COV_RC2 1), the temp dir left empty (_COV_LEFT), and their output, pulled back to $CO_TMP (CRs
+# dropped for cass). It names each miss and, on any miss, shows the outputs.
+_co_cov_check() {
+  _cbad=0
+  for _cf in _cov1.out _cov1.err _cov2.out _cov2.err; do
+    if [ -f "$CO_TMP/$_cf" ]; then tr -d '\r' < "$CO_TMP/$_cf" > "$CO_TMP/$_cf.u"
+    else echo "  coverage: $1 left no $_cf"; : > "$CO_TMP/$_cf.u"; _cbad=1; fi
+  done
+  [ "$_COV_RC1" = 0 ] || { echo "  coverage X1: exit $_COV_RC1 (want 0)"; _cbad=1; }
+  [ "$_COV_RC2" = 1 ] || { echo "  coverage X2: exit $_COV_RC2 (want 1)"; _cbad=1; }
+  [ -z "$_COV_LEFT" ] || { echo "  coverage: the runs left temp files behind: $(printf '%s' "$_COV_LEFT" | tr '\n' ' ')"; _cbad=1; }
+  grep -qxF '  Functions executed: 5/7 (71%)  [execution coverage — entered at least once by a corpus run]' "$CO_TMP/_cov1.out.u" \
+    || { echo "  coverage X1: no 'Functions executed: 5/7 (71%)' (sh_a sh_b sh_inl sh_gen from ok_test, sh_c from t.tcyr)"; _cbad=1; }
+  grep -qxF '  Corpus runs: 2 (1 .tcyr, 1 program(s)), 0 failed' "$CO_TMP/_cov1.out.u" \
+    || { echo "  coverage X1: no 'Corpus runs: 2 (1 .tcyr, 1 program(s)), 0 failed'"; _cbad=1; }
+  _cun=$(sed -n '/^-- Unexecuted (/,$p' "$CO_TMP/_cov1.out.u" | grep '^  src/' | tr '\n' ';')
+  [ "$_cun" = '  src/shapes.cyr: sh_d;  src/shapes.cyr: shapes;' ] \
+    || { echo "  coverage X1: -v must list exactly sh_d and shapes as unexecuted, got '$_cun'"; _cbad=1; }
+  grep -qxF '  FAIL: programs/bad_test.cyr (exit 1)' "$CO_TMP/_cov2.err.u" \
+    || { echo "  coverage X2: bad_test.cyr's exit 1 is not named ('  FAIL: programs/bad_test.cyr (exit 1)')"; _cbad=1; }
+  if [ -n "${3:-}" ]; then
+    grep -qF "$3" "$CO_TMP/_cov2.err.u" || { echo "  coverage X2: no '$3'"; _cbad=1; }
+  fi
+  grep -qxF "  Corpus runs: $2" "$CO_TMP/_cov2.out.u" && grep -q '^  Functions executed: 5/7 (71%)' "$CO_TMP/_cov2.out.u" \
+    || { echo "  coverage X2: the report was not printed in full (want 'Corpus runs: $2' and 5/7 executed)"; _cbad=1; }
+  grep -q '^error: coverage --exec: [0-9]* of [0-9]* corpus run(s) failed' "$CO_TMP/_cov2.err.u" \
+    || { echo "  coverage X2: no closing error naming the failed runs"; _cbad=1; }
+  if [ "$_cbad" != 0 ]; then
+    echo "  -- X1 ($1) --"; grep -E '^  (FAIL|Functions|Corpus|exec:)|^error' "$CO_TMP/_cov1.out.u" "$CO_TMP/_cov1.err.u" | sed 's/^[^:]*://; s/^/      /' | head -12
+    echo "  -- X2 ($1) --"; grep -E '^  (FAIL|Functions|Corpus|exec:)|^error' "$CO_TMP/_cov2.out.u" "$CO_TMP/_cov2.err.u" | sed 's/^[^:]*://; s/^/      /' | head -12
+  else
+    echo "  coverage --exec on $1: X1 5/7 executed (rc 0); X2 rc 1, bad_test's exit 1 named, Corpus runs: $2"
+  fi
+  return "$_cbad"
+}
+
+# _co_cass_defender — on a failed cass coverage step, what Windows Defender holds against this run's
+# directory. The instrumented runs build unsigned PE binaries under wcov (covx_bin.exe, test_bin.exe),
+# and Defender's ML engine quarantines such files: that reads as a 0-byte file or "cannot execute",
+# which looks like a compiler bug and is not one (CLAUDE.md, cass). Best-effort and diagnostic only —
+# it prints, and never changes the verdict. CHANGELOG [6.7.10]
+_co_cass_defender() {
+  echo "  coverage: Windows Defender's threats naming $RD (Get-MpThreat; none listed = nothing of this run's held):"
+  { ssh $SSHO cass "Get-MpThreat | Where-Object { (\$_.Resources -join ' ') -like '*$RD*' } | Select-Object -Property ThreatName,Resources | Format-List" 2>&1 \
+      | tr -d '\r' | sed '/^ *$/d; s/^/      /' | head -20; } || true
+  return 0
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -289,6 +402,12 @@ case "$HOST" in
       && CYRIUS_MACHO_ARM=1 CYRIUS_SYMS="$L" ./r1r < _ec.cyr > /dev/null 2> _el.err \
       && grep -q "ignoring CYRIUS_SYMS: its value is longer than 255 bytes" _el.err && [ "$(cat "$P")" = keep ] && [ ! -e "$L" ]' \
       || { echo "ENVLONG_FAIL: ecb — a 270-byte CYRIUS_SYMS was not refused by name, or its 255-byte prefix was written (~/$RD/_el.err)"; exit 1; }
+    # 6.7.10 (P5-B) — execution coverage on arm64 macOS: the native CLI with r1r (main_aarch64_macho)
+    # as cycc and cycc_aarch64 (see _co_cov_stage). The CLI signs every binary it runs.
+    _co_cov_stage '["programs/ok_test.cyr", "programs/bad_test.cyr"]' \
+      && _co_cov_posix ecb cyrius_native r1r cycc_aarch64 \
+      && _co_cov_check ecb '3 (1 .tcyr, 2 program(s)), 1 failed' \
+      || { echo "SELFHOST_FAIL: ecb — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -344,6 +463,12 @@ case "$HOST" in
       && CYRIUS_SYMS="$L" ./r1 < _ec.cyr > /dev/null 2> _el.err \
       && grep -q "ignoring CYRIUS_SYMS: its value is longer than 255 bytes" _el.err && [ "$(cat "$P")" = keep ] && [ ! -e "$L" ]' \
       || { echo "ENVLONG_FAIL: ach — a 270-byte CYRIUS_SYMS was not refused by name, or its 255-byte prefix was written (~/$RD/_el.err)"; exit 1; }
+    # 6.7.10 (P5-B) — execution coverage on x86_64 macOS: the native CLI with r1 (main_x86_macho) as
+    # cycc (see _co_cov_stage).
+    _co_cov_stage '["programs/ok_test.cyr", "programs/bad_test.cyr"]' \
+      && _co_cov_posix ach cyrius_native r1 \
+      && _co_cov_check ach '3 (1 .tcyr, 2 program(s)), 1 failed' \
+      || { echo "SELFHOST_FAIL: ach — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
@@ -408,6 +533,13 @@ case "$HOST" in
       && printf "var x = 1;\n" > _k.cyr && CYRIUS_KERNEL=1 ./n1 < _k.cyr > _k1 && CYRIUS_KERNEL=1 ./r1 < _k.cyr > _k2 \
       && cmp -s _k1 _k2 && [ "$(od -An -j24 -N8 -tx8 _k1 | tr -d " \n")" = 0000000040000078 ]' \
       || { echo "FLAG_FAIL: pi — the native compiler mishandled --syntax-only / --pie / CYRIUS_PIE / CYRIUS_MACHO_ARM / CYRIUS_KERNEL (~/$RD/_so.err, _pie1, _pie2, _mo.err, _k1)"; exit 1; }
+    # 6.7.10 (P5-B) — execution coverage on real ARM: the native CLI with n1 (main_aarch64_native, the
+    # fork ARM users install) as cycc. X2 runs programs/*_test.cyr, so asm_test.cyr's aarch64-Linux
+    # exit_group must be named as leaving no record (see _co_cov_stage).
+    _co_cov_stage '["programs/*_test.cyr"]' \
+      && _co_cov_posix pi cyrius_native n1 \
+      && _co_cov_check pi '4 (1 .tcyr, 3 program(s)), 2 failed' '  FAIL: programs/asm_test.cyr (exited 0 but left no coverage record' \
+      || { echo "SELFHOST_FAIL: pi — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 and asm_test's missing record named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
@@ -541,6 +673,30 @@ case "$HOST" in
     # returned -ENOSYS (cass exit=-38, no output). The arity-correct dispatch
     # (write/read/open/lseek→argc4, close/exit→argc2) makes the PE buckets route
     # to EWRITE_PE/etc. Must exit 42 (guest write must return its 9-byte count).
+    #
+    # 6.7.10 (P5-B) — execution coverage on Windows (see _co_cov_stage). It uses the wh\bin pair the
+    # CLI spawn rows above use: cyrius.exe (main_win) and cycc.exe. wh\lib is the stdlib the
+    # fixture's [deps] resolves from. TEMP is a fresh wcov under the Defender-excluded root, where the
+    # instrumented binaries and their dumps land. After the runs, `rmdir wcov` (it refuses a
+    # non-empty directory) is the no-leftovers row. The exit codes are graded here with the proven
+    # `if !errorlevel!` form (PowerShell, cass's ssh shell, hands back 0 or 1, never the code itself),
+    # and the outputs are read back, so no cmd.exe / PowerShell quoting meets the em dash or the
+    # brackets of the expected lines.
+    _CV='set CYRIUS_HOME=C:\cyrius-tests\'"$RD"'\wh&& set TEMP=C:\cyrius-tests\'"$RD"'\wcov&& set TMP=C:\cyrius-tests\'"$RD"'\wcov&& set CYRIUS_RESOLVED=1&& C:\cyrius-tests\'"$RD"'\wh\bin\cyrius.exe coverage'
+    _co_cov_stage '["programs/ok_test.cyr", "programs/bad_test.cyr"]' \
+      && scp -q $SSHO "$CO_TMP"/_co_cov.tgz "cass:$WRDS"/_co_cov.tgz \
+      && ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && tar xzf _co_cov.tgz && xcopy lib wh\lib /E /I /Q /Y > nul && mkdir wcov"' \
+      || { echo "SELFHOST_FAIL: cass — coverage --exec: the home or the fixture could not be staged. NOT SELFHOST_OK."; exit 1; }
+    _COV_RC1=0; _COV_RC2=1; _COV_LEFT=""
+    ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD\\_cov1 && $_CV --exec=programs/ok_test.cyr -v > ..\\_cov1.out 2> ..\\_cov1.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _COV_RC1="non-zero"
+    ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD\\_cov2 && $_CV > ..\\_cov2.out 2> ..\\_cov2.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" || _COV_RC2="other than 1"
+    ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && rmdir wcov"' || _COV_LEFT="(wcov is not empty)"
+    rm -f "$CO_TMP"/_cov1.out "$CO_TMP"/_cov1.err "$CO_TMP"/_cov2.out "$CO_TMP"/_cov2.err
+    scp -q $SSHO "cass:$WRDS/_cov1.out" "cass:$WRDS/_cov1.err" "cass:$WRDS/_cov2.out" "cass:$WRDS/_cov2.err" "$CO_TMP/" 2>/dev/null || true
+    # A miss also prints what Defender holds against this run (_co_cass_defender, Get-MpThreat), so a
+    # quarantined instrumented binary reads as one, not as a compiler bug.
+    _co_cov_check cass '3 (1 .tcyr, 2 program(s)), 1 failed' \
+      || { _co_cass_defender; echo "SELFHOST_FAIL: cass — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; wcov left empty) FAILED. Remote output: $WRD\\_cov1.*, _cov2.*. NOT SELFHOST_OK."; exit 1; }
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same

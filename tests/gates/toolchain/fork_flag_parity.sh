@@ -35,6 +35,10 @@
 #              env through their envp walk, which cannot run here: the same rows (and a misplaced
 #              `#bounds` refused) were measured by hand at C2-7 on ecb (Mach-O arm64), ach (Mach-O
 #              x86_64), pi (native aarch64) and cass (cycc.exe), cross-built from this tree.
+#   coverage — (6.7.10, P5B-1) every runnable fork decides the execution-coverage mode the same way
+#              (the shared PREPROCESS's `_cov_setup`), observed as the bounds rows observe theirs:
+#              unset off; CYRIUS_COVERAGE=1 + CYRIUS_COVERAGE_FILE on; =0 off; empty off; =1 with no
+#              FILE refused by name; =2 refused by name. The Mach-O drivers' rows run on ecb / ach.
 #
 # MUTATION LEDGER (6.6.20, scratch copies of src/, never the repo):
 #   real tree                                          -> GREEN
@@ -46,6 +50,7 @@
 #   the CYRIUS_KERNEL / _BASE reads deleted from the native fork
 #                                                      -> RED "kernel native_qemu default" + "kernel native_qemu 0x40200000"
 #   (6.7.8) `_bnd_setup` not called from PREPROCESS   -> RED "bounds <every fork> env1 / line / env2"
+#   (6.7.10) `_cov_setup` not called from PREPROCESS  -> RED "coverage <every fork> env1 / nofile / env2"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_flag_parity: cannot cd to $ROOT"; exit 1; }
@@ -222,9 +227,35 @@ printf '%s\n' "$FORKS" | while IFS='|' read -r l c; do
     done
 done
 
+# ── coverage: CYRIUS_COVERAGE (+ CYRIUS_COVERAGE_FILE) on every runnable fork ───────────────
+printf '#ifdef CYRIUS_COVERAGE\nvar r = cov_mode_marker_xq;\n#endif\nvar x = 1;\n' > "$T/co.cyr"
+printf '%s\n' "$FORKS" | while IFS='|' read -r l c; do
+    for how in unset env1 env0 empty nofile env2; do
+        rc=0
+        case $how in
+            unset)  env -u CYRIUS_COVERAGE -u CYRIUS_COVERAGE_FILE $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+            env1)   env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE=cov.out $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+            env0)   env CYRIUS_COVERAGE=0 CYRIUS_COVERAGE_FILE=cov.out $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+            empty)  env CYRIUS_COVERAGE= CYRIUS_COVERAGE_FILE=cov.out $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+            nofile) env -u CYRIUS_COVERAGE_FILE CYRIUS_COVERAGE=1 $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+            env2)   env CYRIUS_COVERAGE=2 CYRIUS_COVERAGE_FILE=cov.out $c < "$T/co.cyr" > "$T/cm" 2> "$T/cm.err" || rc=$? ;;
+        esac
+        echo x >> "$T/nrows"
+        case $how in
+            unset|env0|empty) [ "$rc" = 0 ] || { echo "  FAIL: fork_flag_parity coverage $l $how: rc $rc (want 0: the mode off): $(grep -m1 error "$T/cm.err")"; echo x >> "$T/red"; } ;;
+            env1) { [ "$rc" != 0 ] && grep -q cov_mode_marker_xq "$T/cm.err"; } \
+                || { echo "  FAIL: fork_flag_parity coverage $l env1: rc $rc (want 1 naming the marker: the CYRIUS_COVERAGE predefine visible)"; echo x >> "$T/red"; } ;;
+            nofile) { [ "$rc" != 0 ] && grep -q 'CYRIUS_COVERAGE=1 needs CYRIUS_COVERAGE_FILE=<path>' "$T/cm.err"; } \
+                || { echo "  FAIL: fork_flag_parity coverage $l nofile: rc $rc (want CYRIUS_COVERAGE=1 with no FILE refused by name)"; echo x >> "$T/red"; } ;;
+            env2) { [ "$rc" != 0 ] && grep -q 'CYRIUS_COVERAGE must be 0 or 1 (or unset): 2' "$T/cm.err"; } \
+                || { echo "  FAIL: fork_flag_parity coverage $l env2: rc $rc (want CYRIUS_COVERAGE=2 refused by name)"; echo x >> "$T/red"; } ;;
+        esac
+    done
+done
+
 [ -f "$T/nrows" ] && rows=$((rows + $(wc -l < "$T/nrows")))
 [ -f "$T/red" ] && fail=$((fail + $(wc -l < "$T/red")))
 
 if [ "$fail" -ne 0 ]; then echo "FAIL fork_flag_parity: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE / CYRIUS_KERNEL(_BASE); native refuses CYRIUS_MACHO_ARM; CYRIUS_BOUNDS / #bounds decided alike on every runnable fork"
+echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE / CYRIUS_KERNEL(_BASE); native refuses CYRIUS_MACHO_ARM; CYRIUS_BOUNDS / #bounds and CYRIUS_COVERAGE decided alike on every runnable fork"
 exit 0

@@ -10,7 +10,9 @@ set -e
 # 6.7.8 (C2-7) — the bounds-checked mode belongs to the CALLER's shell, never to a self-build: an
 # inherited CYRIUS_BOUNDS=1 would switch it on for every compile below. A gate that tests the mode
 # sets it itself.
-unset CYRIUS_BOUNDS
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_COVERAGE
 # 6.7.8 — so does the allocator poison mode: the compiler includes lib/alloc.cyr, which reads
 # CYRIUS_POISON (any value, an empty one included). cybs and asm read no environment, so nothing
 # below sees it today; unset here like every self-build script, so a compile added later cannot.

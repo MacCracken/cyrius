@@ -11,6 +11,8 @@
 
 # v5.5.38: control-flow fns (if/while/for + cond helpers) extracted.
 include "src/frontend/parse_ctrl.cyr"
+# 6.7.10 (P5-B): the execution-coverage mode — its switch, the per-fn counters, the map and the dump.
+include "src/frontend/parse_cov.cyr"
 
 # ================================================================
 # FUNCTION TABLE + CODEGEN
@@ -6075,7 +6077,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var _cfrs = GFRS(S, fi);
                     if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
                     STI(S, GFBS(S, fi));
-                    PARSE_PROG(S);
+                    _cov_body(S, fi, 0 - 1);   # 6.7.10 (P5-B): the replay bumps the callee's counter, then PARSE_PROG
                     _cur_fn_ret_scalar = _rs_saved;
                     SSDEP(S, _sdep_saved);
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
@@ -12921,6 +12923,7 @@ fn _tl_assert(S, arm): i64 {
 # passes since 6.6.10; cx has no liveness pass and passes 0, so it skips the hint.
 # CHANGELOG [6.6.9] [6.6.10]
 fn _warn_large_static(totvar, dvb, dcn): i64 {
+    totvar = totvar - _cov_bytes;   # 6.7.10: the execution-coverage band and map are the mode's, not the program's
     if (totvar <= 131072) { return 0; }
     syscall(SYS_WRITE, 2, "warning: large static data (", 28);
     PRNUM(totvar);
@@ -13237,6 +13240,7 @@ fn _tl_pass1(S, objok): i64 {
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
     _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
+    _cov_pass1(S);    # 6.7.10 (P5B-1): the execution-coverage mode, likewise (parse_cov.cyr)
     _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
     return 0;
 }
@@ -15335,7 +15339,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
         EMOVI(S, 0);                                  # dead stub: rax = 0
     } else {
-        PARSE_PROG(S);
+        _cov_body(S, fi, _defstart_ti);   # 6.7.10 (P5-B): the coverage hit, then PARSE_PROG
     }
     # v6.5.69 — THE RESUME DISPATCH, emitted at fn END where every landing pad is already a
     # known code position, so only the single forward jump from the fn top needs patching.

@@ -1,0 +1,18 @@
+# The library the fixture measures: seven public fns. Executed by the corpus: sh_a, sh_b, sh_inl and
+# sh_gen (programs/ok_test.cyr), sh_c (tests/tcyr/t.tcyr). Never executed: sh_d (named only in a
+# branch ok_test.cyr never takes) and `shapes` (named like this file).
+
+fn sh_a(x): i64 { return x + 1; }
+
+fn sh_b(x): i64 { return x * 2; }
+
+fn sh_c(x): i64 { return x - 1; }
+
+fn sh_d(x): i64 { return x * x; }
+
+#inline
+fn sh_inl(x): i64 { return x + 7; }
+
+fn sh_gen<T>(x: T): T { return x; }
+
+fn shapes(): i64 { return 0; }

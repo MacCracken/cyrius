@@ -19,7 +19,9 @@ set -e
 # whose output is INSTALLED: an inherited CYRIUS_BOUNDS / CYRIUS_POISON would install a
 # bounds-checked / poison-mode toolchain
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 # 6.6.17: whether CYRIUS_HOME was DEFAULTED — then it is the user's store by definition, and
 # the --refresh-only released-slot guard treats it as live whether or not it resolves.

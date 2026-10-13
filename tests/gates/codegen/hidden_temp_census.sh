@@ -52,7 +52,9 @@ fail=0
 # The legal sites are `_HTEMP`'s own top-level arm in src/frontend/parse.cyr, which marks the slot
 # dead so FINDVAR skips it, and (6.7.8, the checked dyn) `_dyn_vt_reg` in parse_types.cyr — a trait
 # object's VTABLE, marked dead the same way and program-wide by design: every forming site, in every
-# call, thread and file, stores the same fn addresses into it. Anything else is a hidden global
+# call, thread and file, stores the same fn addresses into it. And (6.7.10, P5-B) `_cov_greg` in
+# parse_cov.cyr — the execution-coverage mode's counter band and fn map, marked dead the same way and
+# program-wide by design (one counter per fn for the whole process). Anything else is a hidden global
 # with a real name.
 scanned=$(grep -rn 'S64(_varn_base' $SRC | wc -l)
 if [ "$scanned" -lt 10 ]; then
@@ -64,7 +66,7 @@ fi
 # nothing enforces cyrfmt over — walked straight past it and the gate printed ok. Found by
 # review round 2. `0 - 0` is covered too; an arbitrary zero-valued EXPRESSION is not
 # grep-detectable and axis 3 is what pins the behaviour.
-bad1=$(grep -rEn 'S64\(_varn_base \+ [A-Za-z_][A-Za-z0-9_]*[[:space:]]*\*[[:space:]]*8,[[:space:]]*0[[:space:]]*(-[[:space:]]*0[[:space:]]*)?\);' $SRC | grep -vE '(_hvi|_dvt)[[:space:]]*\*[[:space:]]*8,[[:space:]]*0' || true)
+bad1=$(grep -rEn 'S64\(_varn_base \+ [A-Za-z_][A-Za-z0-9_]*[[:space:]]*\*[[:space:]]*8,[[:space:]]*0[[:space:]]*(-[[:space:]]*0[[:space:]]*)?\);' $SRC | grep -vE '(_hvi|_dvt|_cvi)[[:space:]]*\*[[:space:]]*8,[[:space:]]*0' || true)
 if [ -n "$bad1" ]; then
     echo "FAIL hidden_temp_census axis 1: a global slot is registered under NAME OFFSET 0 (= the first lexed word of the program):"
     echo "$bad1" | sed 's/^/    /'
@@ -183,7 +185,12 @@ fi
 # the dyn is built (so recursion, threads and files share nothing a writer could disagree on), and it
 # is named nothing and SVDEAD, so FINDVAR never answers with it (axis 1 exempts it by its `_dvt`).
 # The second in-fn arm, after PARSE_ARRAY's.
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1 _tup_greg:1 _dyn_vt_reg:1"
+#
+# 6.7.10 (P5-B): `_cov_greg` (parse_cov.cyr) registers the execution-coverage mode's two hidden
+# globals — the counter band and the fn map — from `_cov_pass1` at the end of pass 1, mode on only:
+# top level, never inside a fn. Named nothing and SVDEAD (axis 1 exempts it by its `_cvi`), and
+# program-wide by design: one counter per fn for the whole process.
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1 _tup_greg:1 _dyn_vt_reg:1 _cov_greg:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

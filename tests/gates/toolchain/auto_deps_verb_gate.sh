@@ -275,11 +275,14 @@ done
 
 # ── AXIS 4 — the analyser is not degenerate. Known-true and known-false rows: an
 # analyser that answered "yes" for everything would satisfy axis 2 by accident.
+# 6.7.10 (P5-B): `coverage` reaches compile() now — its exec mode (`--exec` / `[coverage] exec`)
+# builds every corpus entry — and sits in the list as a CONDITIONAL entry (`streq(cmd, "coverage")
+# == 1 && _covx_wanted() == 1`), so its text mode still resolves nothing (coverage_exec_cli.sh X3 / X7).
 echo "axis 4 — known-true / known-false rows (catches an analyser stuck at all-yes or all-no):"
-for v in build run test tests bench fuzz check audit capacity distlib doctest publish package lsp pulsar; do
+for v in build run test tests bench fuzz check audit capacity distlib doctest publish package lsp pulsar coverage; do
     check "'$v' reaches compile()" 1 "$(has COMPILES "$v")"
 done
-for v in which help version clean deps init update port header fmt doc vet deny coverage repl self hooks install; do
+for v in which help version clean deps init update port header fmt doc vet deny repl self hooks install; do
     check "'$v' does NOT reach compile()" 0 "$(has COMPILES "$v")"
 done
 

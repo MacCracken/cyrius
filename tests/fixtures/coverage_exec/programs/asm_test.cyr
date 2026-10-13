@@ -1,0 +1,20 @@
+# Leaves through an `asm` exit_group, which the coverage dump never sees: it exits 0 with no
+# coverage record, and `cyrius coverage --exec` fails it by name rather than read its fns as never
+# entered.
+include "src/shapes.cyr"
+
+fn leave(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    # mov x8, #94 (exit_group); mov x0, #0; svc #0
+    asm { 0xC8; 0x0B; 0x80; 0xD2; 0x00; 0x00; 0x80; 0xD2; 0x01; 0x00; 0x00; 0xD4; }
+    #endif
+    #ifndef CYRIUS_ARCH_AARCH64
+    # mov eax, 231 (exit_group); xor rdi, rdi; syscall
+    asm { 0xB8; 0xE7; 0x00; 0x00; 0x00; 0x48; 0x31; 0xFF; 0x0F; 0x05; }
+    #endif
+    return 0;
+}
+
+var a = sh_b(4);
+leave();
+syscall(SYS_EXIT, 3);

@@ -272,6 +272,7 @@ if (_epi_km_pre == 0) {
     }
 }
 
+_cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
 EEXIT(S);
 
 # Fixup + emit (EMITELF dispatches to Mach-O on _TARGET_MACHO==1) + write

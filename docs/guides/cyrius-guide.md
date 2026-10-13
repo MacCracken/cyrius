@@ -1809,6 +1809,150 @@ program when the mode is on (the `__cyrius_bounds_*` names are the compiler's); 
 index costs nothing. Fns the program never reaches are counted by the `N unreachable fns` note and
 dropped by `CYRIUS_DCE=1`. Measure a hot loop under the mode before shipping it on.
 
+## The execution-coverage mode (6.7.10)
+
+Off by default, the **execution-coverage mode** gives every fn body a hit counter and, when the
+program exits, appends the fns it entered — and how many times — to a file. It answers what a
+reference count cannot: whether a fn a test names was ever actually run. `cyrius coverage --exec`
+(*Build Tool & Dependencies*, below) builds and runs a project's tests and programs this way and
+reports the executed figure; the mode itself is a compiler switch, so any compile can use it. A
+program built without it carries not a byte of it.
+
+```
+fn sq(x): i64 { return x * x; }
+fn never(): i64 { return 9; }
+#naked
+fn nk() { asm { 0xC3; } }
+fn main(): i64 {
+    var inc = |a| a + 1;
+    var t = 0;
+    for (var i = 0; i < 3; i = i + 1) { t = t + sq(i) + callptr(inc, i); }
+    return t;
+}
+```
+
+```sh
+CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE=$PWD/build/demo.cov cyrius build demo.cyr build/demo
+./build/demo; echo $?         # 11, as without the mode
+cat build/demo.cov
+```
+
+```text
+# cyrius-coverage 1
+3 <source>:1 sq
+- <source>:4 nk
+1 <source>:5 main
+3 <source>:6 __cl00008
+```
+
+`never` was not entered, so it has no line; `nk` is `#naked`, so it is listed but not counted.
+
+**Switching it on.** Two environment variables, read by every compile — `cycc` itself, and so every
+`cyrius` verb that compiles:
+
+| Variable | Value | Effect |
+|---|---|---|
+| `CYRIUS_COVERAGE` | `1` | the mode on |
+| | `0`, unset or empty | off |
+| | anything else | refused by name: `CYRIUS_COVERAGE must be 0 or 1 (or unset): <v>` |
+| `CYRIUS_COVERAGE_FILE` | a path | **required** with the mode: the file the program appends to when it exits |
+
+There is no default file: a predictable name would let an instrumented program run in a shared
+directory append into whatever a planted symlink there names. A missing or empty
+`CYRIUS_COVERAGE_FILE` is refused by name (`CYRIUS_COVERAGE=1 needs CYRIUS_COVERAGE_FILE=<path> …`),
+and so is one over 255 bytes (`ignoring CYRIUS_COVERAGE_FILE: its value is longer than 255 bytes`,
+then the same refusal). The path is fixed into the binary when it is compiled, and the program opens
+it when it exits — a relative path against its working directory at that moment — so give an
+absolute one. The file is created (mode 0644) when missing and opened for append, so each run adds a
+block. The compiler never writes it.
+
+There is no source spelling and no `--coverage` flag on `build` / `run` / `test`:
+`cyrius coverage --exec` sets both variables for each entry it builds, with a file of its own. With
+the mode on the compiler predefines `CYRIUS_COVERAGE` for `#ifdef`; a plain `#define
+CYRIUS_COVERAGE` is an ordinary define and switches nothing. The mode is refused by name for a kernel
+or EFI image (`kernel;`, `CYRIUS_KERNEL=1`, `CYRIUS_TARGET_EFI=1`: no process exit to dump at) and for a
+`shared;` / `object;` build (no process exit of its own; the counters and the dump would be defined in
+every object). It combines with the [bounds-checked mode](#the-bounds-checked-mode-678). Every hosted
+target carries it: x86-64 and aarch64 Linux, macOS (arm64, x86-64), Windows, agnos and cx.
+
+**The dump.** Each process that dumps appends one block of whole lines:
+
+```text
+# cyrius-coverage 1
+<count> <file>:<line> <name>          <- a fn entered <count> times (count >= 1)
+- <file>:<line> <name>                <- a #naked fn: not instrumented, ran or not
+```
+
+A fn never entered has no line. `<file>` is named as every compiler diagnostic names it — an included
+file by its include path as written (`lib/assert.cyr`, `src/parse.cyr`), `<source>` for the entry
+file (through `cyrius build` / `run` too). `<line>` is the line of the `fn` keyword; a closure's is its
+closing `|` (or its `||`); a fn a `#derive` writes has no `fn` of its own and is named at its struct's closing `}`.
+`<name>` is the name the compiler registers: `P_sum` for a method,
+`gen$i32` for `gen<i32>` (an `i64` instance is `gen` itself), `f$impl` for an `async fn f`'s body,
+`__clNNNNN` for a closure (the number is an index, so it moves as fns are added). The counts are
+this process's. A dump that cannot open its file — an open the program's own sandbox denies, a path
+that cannot be created — writes nothing and says nothing.
+
+**What is counted.** Every fn body the program compiles: fns, methods, generic instances, the fns a
+`#derive` writes, closures, and an `async fn`'s body — once per future, when it first runs, never per
+resume. An `#inline` fn's body is copied into each caller with no call, so each copy counts as an
+entry. Every entry counts, a self tail call's included. Not counted: the async and enum-variant
+constructors (no source fn to name), the compiler's own `__cyrius_` fns, and `#naked` fns — they have
+no frame and a raw-`asm` body, so they get no counter and are listed with `-`. A fn's counter is
+bumped at the first byte of its body: after the frame, the parameters and the by-value struct copies,
+before its first statement.
+
+**When it dumps.**
+
+- the program falls off the end of its top level, or the `main` it defines returns (the auto-call);
+- the program makes an exit syscall whose NUMBER is a compile-time constant — a literal, a `const` or
+  an `enum` value: `sys_exit`, `sys_exit_group`, `panic`, the stdlib's aborts, a bounds violation's
+  exit 134, `syscall(SYS_EXIT, main())`. The dump runs after the syscall's arguments are evaluated, so
+  `syscall(60, f())` counts `f`.
+
+The exit numbers are the target's own:
+
+| Target | Exit numbers |
+|---|---|
+| x86-64 Linux, x86-64 macOS, cx | 60, 231 |
+| aarch64 Linux, arm64 macOS | 60, 93, 94 — a raw 231 is `munlockall` on aarch64 Linux, not an exit |
+| Windows | 60 — a raw 231 is not rerouted there (it returns -38 and the program goes on); `sys_exit_group` issues 60 |
+| agnos | 0 |
+
+**What it cannot see.** These end a run without writing a block: an exit through `asm`, an exit
+syscall whose number is a run-time value (`var n = 60; syscall(n, 0);`), an exit inside a `#naked` fn
+(no call can be made there), a successful `execve`, a signal, a crash and a kill.
+`cyrius coverage --exec` fails such a run by name: it `exited 0 but left no coverage record`.
+
+**Threads and fork.** The counters belong to the process. `lib/thread.cyr` workers leave through raw
+`asm`, so the process's own exit writes one block that holds every worker's entries. The increment is
+not atomic: two threads entering one fn at once can lose a count, but an entered fn never reads 0. A
+thread that ends itself with `sys_exit` (on Linux, the exit of that thread alone) writes a block of its
+own. A forked child starts with its parent's counts and appends its own block when it exits, so the
+counts from before the fork appear in both; the file is opened for append, so neither block
+overwrites the other. Only whether a fn was entered is stable from run to run, and that is all
+`cyrius coverage --exec` reads.
+
+**Per target.** The dump opens its file through the routes every target already has — no new OS
+call: `O_WRONLY | O_CREAT | O_APPEND` on Linux, Windows and cx, the Darwin flags (0x209) on macOS, and
+on agnos `AO_WRONLY | AO_CREAT | AO_APPEND` followed by a seek to the end (its kernel does not honour
+`AO_APPEND` yet). cx takes no `#naked`, so such a fn is an ordinary counted one there, and cx does not
+auto-call `main`: a cx program whose only call is the implicit one exits 0 with a header-only block
+(call it from the top level — `var r = main();`). `cyrius coverage --exec` runs host binaries only,
+so it never runs cx bytecode.
+
+**Reserved names.** The dump is four fns the compiler appends to the program —
+`__cyrius_cov_cp`, `__cyrius_cov_num`, `__cyrius_cov_w` and `__cyrius_cov_dump`; the `__cyrius_`
+prefix is the compiler's, as for the bounds checker. Under the mode a program's own fn whose name
+starts `__cyrius_` gets no counter and no line, and one that reuses a `__cyrius_cov_` name is replaced
+by the compiler's (the `duplicate fn` warning names it).
+
+**Cost.** Each fn body gains its counter bump (30 bytes of code on x86-64) and the image 8 bytes of
+counter per fn plus the fn map — the dump path and one `<file>:<line> <name>` line per fn, which the
+dump reads at exit. The counters and the map are left out of the `large static data` warning. Built
+under the mode, `cycc` itself is about 13 % larger and compiles itself about 12 % slower (measured at
+6.7.10).
+
 ## Traits and impl blocks (6.7.0)
 
 A **trait** declares a method set; an **impl** gives a type those methods. Dispatch is static — a
@@ -3280,6 +3424,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |
 | `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
 | `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
+| `[coverage]` | `exec` | read | — | — | `--exec` | cyrius coverage --exec: RUN programs built instrumented and run; the fns they enter are counted (globs) |
 | `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
 | `[embed]` | `*` | read | — | — | — | every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry |
 | `[test]` | `files` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list) first, then tests/ ([build] test is the older spelling) |
@@ -3522,6 +3667,7 @@ cyrius distlib --all                     # regenerate the base bundle AND every 
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
 cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
 cyrius coverage --programs 'programs/*_test.cyr' --per-entry   # RUN programs join the corpus (6.6.17); which entry references which fn
+cyrius coverage --exec='programs/*_test.cyr' [--min <pct>]     # EXECUTION coverage (6.7.10): every .tcyr + these programs built instrumented and run; --min gates the executed %
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -3572,9 +3718,27 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > `programs/sub/`); a glob that matches nothing, or a program that does not exist, is a named
 > failure; a corpus program is a test, so it is never counted as measured surface. `--per-entry`
 > lists, for every corpus entry, the public fns it references. ⚠ This is TEXT coverage — a
-> reference count, the same measure `.tcyr` corpora get — not execution coverage: building and
-> running instrumented programs (P5-B) is a later 6.7.x item.
+> reference count, the same measure `.tcyr` corpora get — not execution coverage, which is
+> `--exec` (below). `[coverage] programs` stays text in both modes.
 > Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
+>
+> ⚠ **`coverage --exec` measures what RUNS** (6.7.10). `cyrius coverage --exec[=<glob>]`
+> (repeatable), or `[coverage] exec = ["programs/*_test.cyr"]` in cyrius.cyml (which alone turns
+> the mode on; `--exec=<glob>` replaces its list), builds every `tests/**/*.tcyr` — exactly as
+> `cyrius test` builds and grades it — and every program the globs name (as `cyrius run` builds
+> it) with the [execution-coverage mode](#the-execution-coverage-mode-6710) on (`CYRIUS_COVERAGE=1`,
+> a dump file of its own), runs each one, and counts a public fn as executed once a run's dump
+> records entering it. The report
+> keeps every reference figure as text mode prints it and adds `E/T executed` per file and
+> `Functions executed: E/T (p%)`; `--min` gates the executed percentage, and `-v` (or a failed
+> `--min`) lists the unexecuted fns (`#naked` ones say they are not instrumented). The count is
+> by NAME, as the reference count is: a record's path, the entry file's own fns (`<source>`) and
+> a generic instance's `$` suffix never mark a different fn executed. A run that fails — a
+> nonzero exit, a signal, a timeout, or an exit 0 that left no coverage record (an `asm` exit,
+> a runtime-variable exit number, an exec) — is named (`FAIL: <path> (exit N)`); every entry
+> still runs, the report is still printed, and the run exits 1. A dump path over 255 bytes (a
+> very long `TMPDIR`) is refused by name before anything is built. Pinned by
+> `tests/gates/toolchain/coverage_exec_cli.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
 > The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows, macOS

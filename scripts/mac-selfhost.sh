@@ -11,7 +11,9 @@ set -e
 # 6.7.9 — the self-host it runs is cycc_macho compiling its own source: an inherited
 # CYRIUS_BOUNDS / CYRIUS_POISON would self-host a bounds-checked / poison-mode compiler
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 CC5=${1:-./cycc_macho}
 SRC=${2:-}

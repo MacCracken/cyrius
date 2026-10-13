@@ -2,7 +2,7 @@
 # coverage_run_programs.sh — 6.6.17 (P5-A). `cyrius coverage` takes RUN programs as a corpus:
 # `[coverage] programs = ["programs/*_test.cyr"]` in cyrius.cyml, or `--programs <glob>` (which
 # wins), each matched file counted exactly as a .tcyr is — TEXT coverage (whole-identifier
-# references in code, comments and strings blanked), not execution coverage (P5-B, v6.7.x). Plus
+# references in code, comments and strings blanked), not execution coverage (`--exec`, coverage_exec_cli.sh). Plus
 # `--per-entry`: which corpus entry references which public fn.
 #
 # WHY: rekha tests with 25 programs/*_test.cyr RUN programs (~13,000 lines of checks) and has no

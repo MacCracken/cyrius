@@ -1,0 +1,415 @@
+# PARSER — the execution-coverage mode (6.7.10, P5-B).
+# ================================================================
+# THE SWITCH. `CYRIUS_COVERAGE=1` turns the mode on for one compile, and `CYRIUS_COVERAGE_FILE`
+# names the file the program appends its coverage to when it exits. The mode is decided once, in
+# the shared PREPROCESS right after the bounds-checked mode's `_bnd_setup` (so every fork reads it
+# the same way): `1` on; `0`, unset or empty off; any other value refused by name (lex_pp.cyr
+# `_pp_env_rung`, the rung CYRIUS_BOUNDS uses). On, it predefines CYRIUS_COVERAGE for `#ifdef`.
+# There is no source spelling: a plain `#define CYRIUS_COVERAGE` is an ordinary define and
+# switches nothing, and `cyrius coverage --exec` is the CLI's only switch.
+#
+# CYRIUS_COVERAGE_FILE is REQUIRED, with no default: a predictable relative name would let an
+# instrumented binary run in a shared directory append into whatever a planted symlink names.
+# Missing, empty, or over `_read_env`'s 255 bytes (which `_read_env` warns of and reads as unset),
+# the mode is refused by name. The compiler never writes the file — the program does.
+#
+# The mode needs a process exit to dump at, so a kernel / EFI image and a `shared;` / `object;`
+# build are refused by name after pass 1 (`_cov_pass1`), as the bounds-checked mode is.
+# The `__cyrius_` names stay the compiler's (lex_pp.cyr, C2's reservation). CHANGELOG [6.7.10]
+
+var _cov_mode = 0;   # 1 when the execution-coverage mode is on for this compile
+var _cov_path = 0;   # CYRIUS_COVERAGE_FILE, copied out of _read_env's shared scratch (mode on only)
+
+# PREPROCESS, right after `_bnd_setup`, before the first `#ifdef` is evaluated.
+fn _cov_setup(S): i64 {
+    _cov_mode = 0;
+    _cov_path = 0;
+    if (_pp_env_rung(S, "CYRIUS_COVERAGE") != 1) { return 0; }
+    var e = _read_env("CYRIUS_COVERAGE_FILE");
+    var n = 0;
+    if (e != 0) {
+        while (load8(e + n) != 0) { n = n + 1; }
+    }
+    if (n == 0) {
+        _pp_err_head(S, 0, 0);
+        PRSTR("CYRIUS_COVERAGE=1 needs CYRIUS_COVERAGE_FILE=<path> ");
+        PRSTR("(the file the program appends its coverage to at exit)");
+        syscall(SYS_WRITE, 2, "\n", 1);
+        _had_error = 1;
+        return 0;
+    }
+    # _read_env hands back one shared 256 B scratch, which the next read overwrites.
+    _cov_path = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        store8(_cov_path + i, load8(e + i));
+        i = i + 1;
+    }
+    store8(_cov_path + n, 0);
+    PP_PREDEFINE(S, "CYRIUS_COVERAGE");
+    _cov_mode = 1;
+    return 0;
+}
+
+# The end of `_tl_pass1`, once the source's own `kernel;` / `shared;` / `object;` is read
+# (CYRIUS_KERNEL=1 and CYRIUS_TARGET_EFI=1 are set before it). Fatal at once, for C2's reason:
+# pass 2 would compile the dump for a target it cannot serve.
+fn _cov_pass1(S): i64 {
+    if (_cov_mode == 0) { return 0; }
+    var km = L64(S + 0x18FCA0);
+    var why = 0;
+    var why2 = "";
+    if (km == 1 || _TARGET_EFI_APPLICATION == 1) {
+        why = "a kernel / EFI image (it has no process exit to dump at)";
+    } elif (km == 2 || km == 3) {
+        why = "a shared; or object; build (no process exit of its own; ";
+        why2 = "the counters and the dump would be defined in every object)";
+    }
+    if (why != 0) {
+        _pp_err_head(S, 0, 0);
+        PRSTR("the execution-coverage mode is not available for ");
+        PRSTR(why);
+        PRSTR(why2);
+        syscall(SYS_WRITE, 2, "\n", 1);
+        syscall(SYS_EXIT, 1);
+    }
+    _cov_hv = _cov_greg(S);
+    _cov_mv = _cov_greg(S);
+    return 0;
+}
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# THE COUNTERS, THE MAP AND THE DUMP. Every fn body bumps its own 8-byte counter at its FIRST byte:
+# after the frame, the parameter homing, the by-value struct copies, the defer-init jump and the
+# coroutine state-0 landing, before the first statement (`_cov_body`, which `_PARSE_FN_DEF_IMPL`
+# calls in place of its PARSE_PROG); each `#inline` replay bumps its callee's (`_cov_body` again,
+# in `PARSE_FNCALL`), and a closure bumps its own once its frame is open (`_cl_frame_open`). A
+# `#naked` fn is not instrumented: its line is dumped as `- <file>:<line> <name>`, never as a
+# count. Generic instances, methods, derive-made fns and an `async fn`'s `f$impl` (at its state-0
+# landing: once per future, never per resume) are ordinary bodies; the async and enum
+# constructors (no source fn) and a generic base's dead stub have none. Not inside EFNPRO: the
+# arguments are still live in registers there, EFNPRO does not know the fn index, and it also
+# opens things that are not fns (the top-level micro-frame, `_cyrius_init`, the constructors). At
+# the body start every register is dead, so the hit is the ordinary accumulator emitters every
+# backend has (no backend changes).
+# The address stays on the stack, not in a register: cx's EADDRA_IMM clobbers r1.
+#
+# The counters are ONE hidden global (`_cov_hv`), registered in pass 1 the way `_dyn_vt_reg`
+# registers a vtable (named nothing, SVDEAD, program-wide by design) and sized to the final fn
+# count in `_cov_tail`, after the top level is parsed and before any layout reader runs. The fn map
+# is a second (`_cov_mv`): an image blob (6.6.16 C1's SVGAI, which every writer bakes) holding
+# `<the dump path>\0`, then one line per fn index — `<file>:<line> <name>`, `!` first for a fn the
+# mode does not instrument, empty for an index with no counted body — then `\0`.
+#
+# The dump is plain cyrius appended to the finished unit (`_cov_finish`, the bounds checker's
+# shape), so every target lowers it through the open / write / close it already has. It appends
+# one block to CYRIUS_COVERAGE_FILE: `# cyrius-coverage 1`, then `<count> <file>:<line> <name>` for
+# each fn entered and `- <file>:<line> <name>` for each one not instrumented. `_cov_tail` calls it
+# just before the top level's exit in each of the seven forks, and the syscall builtin before every
+# exit syscall whose number is a constant (`_sc_args_done`, below). CHANGELOG [6.7.10]
+var _cov_hv = 0 - 1;    # the counter band's hidden global (8 B per fn index)
+var _cov_mv = 0 - 1;    # the fn map's hidden global
+var _cov_def = 0;       # per fn index: 0 = no counted body; else its `fn` token + 1 (negated: not instrumented)
+var _cov_dfi = 0 - 2;   # __cyrius_cov_dump's fn index (-2: not looked up yet)
+var _cov_bytes = 0;     # the band and the map, which the large-static advisory leaves out (not their alignment)
+
+# One 8-byte hidden global (`_dyn_vt_reg`'s four lines): named nothing and SVDEAD, so FINDVAR never
+# answers with it; addressed by its index only.
+fn _cov_greg(S): i64 {
+    var _cvi = GVCNT(S);
+    S64(_varn_base + _cvi * 8, 0);
+    S64(_vars_base + _cvi * 8, 8);
+    SVDEAD(S, _cvi, 1);
+    SVCNT(S, _cvi + 1);
+    return _cvi;
+}
+
+# 1 when fn `fi` is the compiler's own (the `__cyrius_` prefix: the bounds checker, the dump).
+fn _cov_own(S, fi): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var w = "__cyrius_";
+    var i = 0;
+    while (i < 9) {
+        if (load8(p + i) != load8(w + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Records fn `fi`'s map line: its `fn` token `ti`; `nk` 1 = not instrumented.
+fn _cov_mark(S, fi, ti, nk): i64 {
+    if (_cov_def == 0) { _cov_def = alloc(131072 * 8); }   # the fn table's hard cap (_fnt_grow)
+    var v = ti + 1;
+    if (nk == 1) { v = 0 - v; }
+    store64(_cov_def + fi * 8, v);
+    return 0;
+}
+
+# The hit: `counter[fi] += 1`, every register dead (the body start). IR-recorded but the two `add`s
+# (raw bytes on x86, marked as the slice read marks its frame base).
+fn _cov_hit(S, fi): i64 {
+    EVADDR(S, _cov_hv);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EADDRA_IMM(S, fi * 8);
+    EPUSHR(S);
+    ELOAD64(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EADDRA_IMM(S, 1);
+    EPOPC(S);
+    ESTOC(S);
+    _flags_reflect_rax = 0;
+    _cfo = 0;   # a constant folder armed before the body must not rewind past the hit
+    return 0;
+}
+
+# A body's start, then its PARSE_PROG: `_PARSE_FN_DEF_IMPL`'s (`ti` its `fn` token) and the
+# `#inline` replay's in `PARSE_FNCALL` (`ti` -1: the callee's body re-parsed inside the CALLER, so
+# every replay bumps the callee's counter) — each that fn's one PARSE_PROG, swapped 1-for-1.
+# Nothing when the mode is off or the fn is the compiler's own. A `#naked` fn has no frame and a
+# raw-asm body: no hit, and its line is recorded as not instrumented (`- ` in the dump). A replay
+# inside a `#naked` CALLER gets no hit either (it would push and clobber inside the raw body).
+fn _cov_body(S, fi, ti): i64 {
+    if (_cov_mode == 1) {
+        if (_cov_own(S, fi) == 0) {
+            if (_cur_fn_naked == 1) {
+                if (ti >= 0) { _cov_mark(S, fi, ti, 1); }
+            } else {
+                _cov_hit(S, fi);
+                if (ti < 0) { ti = _cov_rti(S, fi); }
+                if (ti >= 0) { _cov_mark(S, fi, ti, 0); }
+            }
+        }
+    }
+    PARSE_PROG(S);
+    return 0;
+}
+
+# A replay's line: -1 when the callee's is recorded already (its definition is parsed before any
+# replay of it, so this is the usual answer — kept as the rule, not assumed); else its `fn` token
+# (GFDS holds it + 1, 0 = unrecorded), else its body's first token.
+fn _cov_rti(S, fi): i64 {
+    if (_cov_def != 0) {
+        if (load64(_cov_def + fi * 8) != 0) { return 0 - 1; }
+    }
+    var t = GFDS(S, fi) - 1;
+    if (t < 0) { t = GFBS(S, fi); }
+    return t;
+}
+
+# A closure's frame: `_PARSE_FACTOR_IMPL`'s one ESUBRSP, swapped 1-for-1 (that fn is at cybs's
+# per-fn reference ceiling). ESUBRSP, then the hit: after every parameter and the environment are
+# homed, before the defer-init jump, for both body forms (`{ .. }` and a single expression).
+# Returns ESUBRSP's patch handle. The line is the closure's closing bar's (`|`, or the `||` of a
+# zero-parameter closure: the token just consumed). `_fnst_save` has cleared `_cur_fn_naked` — the
+# closure is its own fn with its own frame, even inside a `#naked` one. CHANGELOG [6.7.10]
+fn _cl_frame_open(S, clfi): i64 {
+    var p = ESUBRSP(S);
+    if (_cov_mode == 1) {
+        _cov_hit(S, clfi);
+        _cov_mark(S, clfi, GTI(S) - 1, 0);
+    }
+    return p;
+}
+
+# A call of `__cyrius_cov_dump(&band, &map)` (`_bck_site`'s pattern: ECALLPOPS / ECALLCLEAN give
+# Win64's shadow space and the SysV / aarch64 alignment). Clobbers the accumulator.
+fn _cov_call_dump(S): i64 {
+    if (_cov_dfi == 0 - 2) { _cov_dfi = _FINDFN_CSTR(S, "__cyrius_cov_dump", 17); }
+    if (_cov_dfi < 0) {
+        ERR_MSG(S, "the execution-coverage mode's dump is missing (an internal error)", 65);
+        return 0;
+    }
+    EVADDR(S, _cov_hv);
+    EPUSHR(S);
+    EVADDR(S, _cov_mv);
+    EPUSHR(S);
+    ECALLPOPS(S, 2);
+    ECALLFIX(S, _cov_dfi);
+    ECALLCLEAN(S, 2);
+    _cfo = 0;
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
+# THE EXIT ROUTES. A program that leaves through an exit syscall never reaches the top level's
+# `_cov_tail`, so the syscall builtin hooks every exit whose NUMBER is a compile-time constant
+# (literal, const, enum — what the arm already folds into `sc_num`): `sys_exit`, `sys_exit_group`,
+# `panic`, the lib aborts, the bounds checker's 134, a forked child's exit. The hook runs once the
+# arguments are evaluated and pushed (so `syscall(60, f())` counts `f`) and before every target
+# lowering (the PE / Mach-O reroutes, ESCPOPS); the dump call leaves the pushed arguments where
+# they are. Not seen ("lost on a crash or kill"): an `asm` exit, a runtime-variable number, an exit
+# inside a `#naked` fn (it has no frame to call from), an exec, a signal.
+# `_PARSE_FACTOR_IMPL` calls this in place of `_macho_warn_unrouted` (a 1-for-1 swap: that fn is
+# at cybs's per-fn reference ceiling). CHANGELOG [6.7.10]
+fn _sc_args_done(S, sc_num, argc): i64 {
+    _macho_warn_unrouted(sc_num, argc);
+    if (_cov_mode == 0) { return 0; }
+    if (_cur_fn_naked == 1) { return 0; }
+    if (_cov_is_exit(sc_num) == 1) { _cov_call_dump(S); }
+    return 0;
+}
+
+# 1 when syscall number `n` ends the process on this target, measured per backend: raw 231 is
+# munlockall on ELF-aarch64 (and has no arm64 Mach-O row) and is not rerouted on PE (-38, the
+# program goes on — `sys_exit_group` issues 60 there), so it is an exit on x86 ELF / x86 Mach-O /
+# cx only; aarch64's own 93 / 94 and the 60 ESYSXLAT maps; agnos #0 (no exit_group).
+fn _cov_is_exit(n): i64 {
+    if (_TARGET_AGNOS == 1) {
+        if (n == 0) { return 1; }
+        return 0;
+    }
+    if (_TARGET_PE == 1) {
+        if (n == 60) { return 1; }
+        return 0;
+    }
+    if (n == 60) { return 1; }
+    if (_AARCH64_BACKEND == 1) {
+        if (n == 93) { return 1; }
+        if (n == 94) { return 1; }
+        return 0;
+    }
+    if (n == 231) { return 1; }
+    return 0;
+}
+
+# The map's text, into `d` (0: measured only). Each returns the offset after what it wrote.
+fn _cov_put(d, k, s): i64 {
+    var j = 0;
+    while (load8(s + j) != 0) {
+        if (d != 0) { store8(d + k, load8(s + j)); }
+        k = k + 1;
+        j = j + 1;
+    }
+    return k;
+}
+fn _cov_ch(d, k, c): i64 {
+    if (d != 0) { store8(d + k, c); }
+    return k + 1;
+}
+fn _cov_num(d, k, v): i64 {
+    if (v >= 10) { k = _cov_num(d, k, v / 10); }
+    return _cov_ch(d, k, 48 + v % 10);
+}
+fn _cov_map(S, d, nf): i64 {
+    var k = _cov_put(d, 0, _cov_path);
+    k = _cov_ch(d, k, 0);
+    var fi = 0;
+    while (fi < nf) {
+        var v = 0;
+        if (_cov_def != 0) { v = load64(_cov_def + fi * 8); }
+        if (v != 0) {
+            if (v < 0) {
+                k = _cov_ch(d, k, 33);   # '!' — not instrumented
+                v = 0 - v;
+            }
+            var foff = FM_SITE(S, GTLINE(S, v - 1));
+            var nm = "<source>";
+            if (foff >= 0) { nm = S + 0x721000 + foff; }
+            k = _cov_put(d, k, nm);
+            k = _cov_ch(d, k, 58);
+            k = _cov_num(d, k, _fm_site_line);
+            k = _cov_ch(d, k, 32);
+            k = _cov_put(d, k, S + 0xEC00000 + L64(_fnt_names + fi * 8));
+        }
+        k = _cov_ch(d, k, 10);
+        fi = fi + 1;
+    }
+    return _cov_ch(d, k, 0);
+}
+
+# One line before EEXIT in each of the seven forks, after the top level and the `main` auto-call:
+# the dump is called with the exit value kept, then the band is sized to the final fn count (every
+# body that counts has been emitted) and the map is built and baked. Every layout reader runs later.
+fn _cov_tail(S): i64 {
+    if (_cov_mode == 0) { return 0; }
+    EPUSHR(S);
+    _cov_call_dump(S);
+    EPOPR(S);
+    var nf = GFNC(S);
+    S64(_vars_base + _cov_hv * 8, nf * 8 + 8);
+    var n = _cov_map(S, 0, nf);
+    var b = alloc(n + 24);
+    store64(b, n);
+    store64(b + 8, 1 | (2 << 8));   # the GAI header: 1-byte elements, a bare byte list
+    _cov_map(S, b + 16, nf);
+    SVGAI(S, _cov_mv, b);
+    n = (n + 7) & (0 - 8);
+    S64(_vars_base + _cov_mv * 8, n);
+    _cov_bytes = nf * 8 + 8 + n;
+    return 0;
+}
+
+# PREPROCESS, right after `_bnd_finish`: the dump, appended to the finished unit (after the macro
+# pass), as the bounds checker is. No subscripts (so the bounds-checked mode adds no check to it),
+# no includes, no library call, no top-level `var` (the exit value stays the program's), no exit.
+# The open by target, read from the flag table (`_TARGET_AGNOS` is not set until after PREPROCESS):
+# agnos #7 (name, length, AO_WRONLY | AO_CREAT | AO_APPEND = 0x501), then #58 to SEEK_END — its
+# kernel does not honour AO_APPEND yet (lib/io.cyr `file_append_locked`) —, the 4-argument write #1
+# and close #6; Darwin O_WRONLY | O_CREAT | O_APPEND = 0x209 (2 / 1 / 3 reach open / write / close
+# through the Mach-O routes); every other target (x86 / aarch64 Linux, PE, cx) 1089, mode 0644. An
+# open that fails returns quietly: the CLI names a run that left no record.
+fn _cov_finish(S): i64 {
+    if (_cov_mode == 0) { return 0; }
+    var out = S + 0x459D000;
+    var op = GBL(S);
+    if (op + 8192 > 25165824) {
+        PRSTR("error: the execution-coverage mode's dump does not fit the 24MB preprocess buffer\n");
+        syscall(SYS_EXIT, 1);
+    }
+    var ag = 0;
+    if (PP_FLAG_SLOT(S, PP_HASH_CSTR("CYRIUS_TARGET_AGNOS")) >= 0) { ag = 1; }
+    var mac = 0;
+    if (PP_FLAG_SLOT(S, PP_HASH_CSTR("CYRIUS_TARGET_MACOS")) >= 0) { mac = 1; }
+    op = PP_REANCHOR(S, out, op, "<coverage>", 1);
+    op = _bnd_ln(out, op, "fn __cyrius_cov_cp(b, k, s, n): i64 {\n    var j = 0;");
+    op = _bnd_ln(out, op, "    while (j < n) {\n        store8(b + k, load8(s + j));");
+    op = _bnd_ln(out, op, "        k = k + 1;\n        j = j + 1;\n    }");
+    op = _bnd_ln(out, op, "    return k;\n}");
+    # the digits of a NEGATIVE value (`48 - v % 10`), as __cyrius_bounds_num
+    op = _bnd_ln(out, op, "fn __cyrius_cov_num(b, k, v): i64 {\n    var d[24];\n    var m = 0;");
+    op = _bnd_ln(out, op, "    if (v > 0) { v = 0 - v; }");
+    op = _bnd_ln(out, op, "    if (v == 0) { store8(&d, 48); m = 1; }");
+    op = _bnd_ln(out, op, "    while (v != 0) { store8(&d + m, 48 - v % 10); v = v / 10; m = m + 1; }");
+    op = _bnd_ln(out, op, "    while (m > 0) {\n        m = m - 1;\n        store8(b + k, load8(&d + m));");
+    op = _bnd_ln(out, op, "        k = k + 1;\n    }\n    return k;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_cov_w(fd, p, n): i64 {\n    var r = 0;\n    while (n > 0) {");
+    if (ag == 1) { op = _bnd_ln(out, op, "        r = syscall(1, fd, p, n, 0);"); }
+    else { op = _bnd_ln(out, op, "        r = syscall(1, fd, p, n);"); }
+    op = _bnd_ln(out, op, "        if (r <= 0) { return 0; }\n        p = p + r;\n        n = n - r;");
+    op = _bnd_ln(out, op, "    }\n    return 0;\n}");
+    op = _bnd_ln(out, op, "fn __cyrius_cov_dump(h, m): i64 {\n    var b[1024];\n    var n = 0;");
+    op = _bnd_ln(out, op, "    while (load8(m + n) != 0) { n = n + 1; }");
+    if (ag == 1) {
+        op = _bnd_ln(out, op, "    var fd = syscall(7, m, n, 1281);\n    if (fd < 0) { return 0; }");
+        op = _bnd_ln(out, op, "    syscall(58, fd, 0, 2);");
+    } elif (mac == 1) {
+        op = _bnd_ln(out, op, "    var fd = syscall(2, m, 521, 420);\n    if (fd < 0) { return 0; }");
+    } else {
+        op = _bnd_ln(out, op, "    var fd = syscall(2, m, 1089, 420);\n    if (fd < 0) { return 0; }");
+    }
+    op = _bnd_ln(out, op, "    var k = __cyrius_cov_cp(&b, 0, \"# cyrius-coverage 1\", 19);");
+    op = _bnd_ln(out, op, "    store8(&b + k, 10);\n    k = k + 1;\n    var q = m + n + 1;");
+    op = _bnd_ln(out, op, "    var i = 0;\n    var e = 0;\n    var c = 0;\n    var s = 0;");
+    op = _bnd_ln(out, op, "    while (load8(q) != 0) {\n        e = q;\n        while (load8(e) != 10) { e = e + 1; }");
+    op = _bnd_ln(out, op, "        n = e - q;\n        c = load64(h + i * 8);\n        s = 0;");
+    op = _bnd_ln(out, op, "        if (n > 0) {\n            if (load8(q) == 33) { s = 1; }");
+    op = _bnd_ln(out, op, "            elif (c != 0) { s = 2; }\n        }");
+    op = _bnd_ln(out, op, "        if (s != 0) {");
+    op = _bnd_ln(out, op, "            if (k + n + 32 > 1024) { __cyrius_cov_w(fd, &b, k); k = 0; }");
+    op = _bnd_ln(out, op, "            if (s == 1) {\n                k = __cyrius_cov_cp(&b, k, \"- \", 2);");
+    op = _bnd_ln(out, op, "                q = q + 1;\n                n = n - 1;\n            } else {");
+    op = _bnd_ln(out, op, "                k = __cyrius_cov_num(&b, k, c);\n                store8(&b + k, 32);");
+    op = _bnd_ln(out, op, "                k = k + 1;\n            }");
+    # a line over 992 B goes straight out (the buffer is flushed on whole lines otherwise)
+    op = _bnd_ln(out, op, "            if (n > 992) {\n                __cyrius_cov_w(fd, &b, k);");
+    op = _bnd_ln(out, op, "                __cyrius_cov_w(fd, q, n);\n                k = 0;");
+    op = _bnd_ln(out, op, "            } else { k = __cyrius_cov_cp(&b, k, q, n); }");
+    op = _bnd_ln(out, op, "            store8(&b + k, 10);\n            k = k + 1;\n        }");
+    op = _bnd_ln(out, op, "        i = i + 1;\n        q = e + 1;\n    }");
+    op = _bnd_ln(out, op, "    if (k > 0) { __cyrius_cov_w(fd, &b, k); }");
+    if (ag == 1) { op = _bnd_ln(out, op, "    syscall(6, fd);"); }
+    else { op = _bnd_ln(out, op, "    syscall(3, fd);"); }
+    op = _bnd_ln(out, op, "    return 0;\n}");
+    SBL(S, op);
+    return 0;
+}

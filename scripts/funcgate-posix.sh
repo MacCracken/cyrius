@@ -26,7 +26,9 @@ set -e
 # 6.7.9 — a gate, so its verdict is the DEFAULT build's: an inherited CYRIUS_BOUNDS /
 # CYRIUS_POISON would build every program in it bounds-checked / poison-mode
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 CY="${1:?usage: funcgate-posix.sh <cyrius-bin> <scratch> <CYRIUS_HOME>}"
 WORK="${2:?scratch dir}"

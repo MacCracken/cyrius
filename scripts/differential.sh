@@ -48,7 +48,9 @@ cd "$(dirname "$0")/.." || exit 2
 # 6.7.9 — it proves the DEFAULT build logic-preserving (its corpus holds src/main.cyr): an
 # inherited CYRIUS_BOUNDS / CYRIUS_POISON would compare bounds-checked / poison-mode builds
 # (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). CHANGELOG [6.7.9]
-unset CYRIUS_BOUNDS CYRIUS_POISON
+# 6.7.10 — CYRIUS_COVERAGE too: an inherited execution-coverage mode would instrument (or, with no
+# CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
+unset CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE
 
 QUICK=0
 SMOKE=0

@@ -42,7 +42,7 @@ var _dep_vis_path = 0;      # ... the working tree it resolved from (0 = a clone
 var _dep_vis_by = 0;        # ... the dep whose manifest named it (0 = the root)
 var _dep_vis_desc = 0;      # ... where it came from, as `deps -v` prints it
 var _dep_locked_diff = 0;   # --locked: differences found during the resolve (named as found)
-var _dep_wt_err = 0;        # the last _dep_wt_run's stderr capture (quoted by `cyrius update`)
+var _dep_wt_why = 0;        # the first line of the last _dep_wt_run's stderr, or 0 (quoted by `cyrius update`)
 # A [deps.NAME] section's keys as `_dep_sec_read` returns them (byte offsets into the record).
 var _DS_PATH = 0;           # `path` joined onto the manifest's directory
 var _DS_RAW = 8;            # `path` as written
@@ -2302,11 +2302,14 @@ fn _dep_rm_tree(p): i64 {
 
 # Run `git [-C dir] -c … a1 a2 a3 a4` for a READ-ONLY question about a working tree, a cache or a
 # remote (`rev-parse`, `rev-list`, `status`, `check-ignore`, `ls-remote`). stdout goes to `outf`
-# (0 = discarded), stderr to the per-process capture (`_dep_wt_err`). With `dir`, discovery stops
+# (0 = discarded), stderr to a capture whose first line is kept in `_dep_wt_why` before it is removed
+# (6.7.10: it was kept for the process's life, and the CLI's private temp dir — rmdir'd, never swept —
+# was left behind holding it after every local-mode resolve). With `dir`, discovery stops
 # at its parent (GIT_CEILING_DIRECTORIES), so a directory that is not a checkout never answers for
 # an enclosing repository; `--no-optional-locks` keeps `status` from rewriting the sibling's index.
 # Returns git's exit status, or -1 when git could not be run (no fork on this platform included).
 fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
+    _dep_wt_why = 0;
     if (_git_exec_available() == 0) { return 0 - 1; }
     var ceil = 0;
     if (dir != 0) {
@@ -2320,13 +2323,12 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
         store8(par + pe, 0);
         ceil = _cat2("GIT_CEILING_DIRECTORIES=", par);
     }
-    if (_dep_wt_err == 0) { _dep_wt_err = _cbt_tmpfile("wt_err"); }
+    var errf = _cbt_tmpfile("wt_err");
     var cfd = 0 - 1;
     if (outf != 0) {
         cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (cfd < 0) { return 0 - 1; }
     }
-    var errf = _dep_wt_err;
     var pid = sys_fork();
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
@@ -2357,7 +2359,10 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     if (cfd >= 0) { sys_close(cfd); }
     var wst[8];
     store64(&wst, 0);
-    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
+    var wr = sys_waitpid(pid, &wst, 0);
+    _dep_wt_why = _git_first_line_of(errf);
+    sys_unlink(errf);
+    if (wr < 0) { return 0 - 1; }
     var st = load64(&wst);
     if ((st & 127) != 0) { return 0 - 1; }
     return (st >> 8) & 255;
@@ -4673,8 +4678,7 @@ fn _dep_report_newer_tags(buf, n): i64 {
         if (rc != 0) {
             sys_unlink(tf);
             sys_write(STDOUT_FD, " pinned; the remote's tags could not be listed", 46);
-            var why = 0;
-            if (_dep_wt_err != 0) { why = _git_first_line_of(_dep_wt_err); }
+            var why = _dep_wt_why;
             if (why != 0) { sys_write(STDOUT_FD, " (", 2); var sw = _shown(why); sys_write(STDOUT_FD, sw, strlen(sw)); sys_write(STDOUT_FD, ")", 1); }
             sys_write(STDOUT_FD, "\n", 1);
             continue;
