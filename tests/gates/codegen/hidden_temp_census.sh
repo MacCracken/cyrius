@@ -128,7 +128,10 @@ fi
 # 6.7.10 (B7 review): _hl_dx_src — a declaration from a dereference `* E` of a `*T` (`(*p)`, `*gp()`, `*w.p`)
 # parks E's pointer while the struct is copied through it byte-exact (a frame slot in a fn, a dead global
 # for a global's initialiser — the zone replay, or after the first statement; parse_decl.cyr).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1"
+# 6.7.10 (decision 11): _dlo_park — a dereference `* E` of a `*S` followed by `+ - * /` parks E's pointer, so
+# an operator whose LEFT operand it is takes the struct's address (or its struct, read byte-exact) from it
+# (a frame slot in a fn, a dead global at top level; parse_expr.cyr).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

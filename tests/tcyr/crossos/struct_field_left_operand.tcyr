@@ -1,0 +1,577 @@
+# struct_field_left_operand.tcyr — 6.7.10. A STRUCT-TYPED FIELD OR A `*T` DEREFERENCE AS AN
+# OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11, 2026-10-12): `w.s + a`, `p.s + a`
+# through a `*T`, `*p + a`, `(*p) + a`, `f().s + a` call `S_add` (and `S_sub` / `S_mul` / `S_div`)
+# exactly as a struct variable does, at every size, and the result is a struct value.
+#
+# ⛔ THROUGH 6.7.9 (and 6.7.10 before this fix) only a struct VARIABLE or a struct result typed an
+# operator's left operand: a field or a dereference loaded its first word and the integer arm combined
+# it with the right operand's — no operator fn was called, at every size, silently
+# (issues/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9, where
+# `P2_sub` gives 139). Under the handle line (B7-1) `var q: S8 = w.s + a;` was then a handle holding
+# that integer, and `q.v` SIGSEGV'd.
+#
+# THE RULE, every `_8` row against its `_h` twin over 8 B (both give the row's constant; the 24 B
+# rows take the retptr class): the left operand is a struct-typed field — of an inline local, an
+# untyped one, a by-value or `*W` parameter, `self`, a global, a `*W` local, a call result, a nested
+# field, a closure capture, wrapped in parentheses — or a dereference of a `*S` — a local, a
+# parameter, a `: *S` call, a `*S` field, wrapped. It passes what a struct variable passes: its
+# ADDRESS into a `*S` parameter or over 8 B (a write through it reaches the field — the `_mul` rows),
+# else its value. The result is a struct value: a declaration copies it, an assignment copies it into
+# a value, a handle or a `*S`'s pointee, an argument takes it, `return` returns it, and it chains
+# (`w.s + a + a`, `w.s / a + a`). The right-operand control (`a + w.s`) dispatched before.
+# The SIZE rows (1..8 B: u8 / u16 / u32 compositions — a SIGNED narrow field read through a `*S` is the
+# open CYRIUS_IR=3 defect, issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) run `w.s + a` (by
+# value), `w.s - a` (through `*S` parameters) and `*p + a` on each size, a guard byte after the field kept.
+# Refusals (a missing operator fn, a parameter of another struct, a 9-16 B result at top level) and the
+# declaration zone's agreement: tests/gates/codegen/small_struct_handle_line.sh (rows F, GC8).
+#
+# CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R6 runs this file on x86_64 (plain,
+# CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release
+# gate's cross-OS leg on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+struct S8 { v; }                      # 8 B
+struct H { v; w; }                    # 16 B — the twin (rax:rdx)
+struct T3 { x; y; z; }                # 24 B (a retptr result)
+struct W8 { n; s: S8; g; }
+struct WH { n; s: H; g; }
+struct W3 { n; s: T3; g; }
+struct O8 { k; w: W8; }
+struct OH { k; w: WH; }
+struct PW8 { ps: *S8; }
+struct PWH { ps: *H; }
+
+fn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v * 3 + b.v; return r; }
+fn H_add(a: H, b: H): H { var r: H; r.v = a.v * 3 + b.v; r.w = a.w + b.w; return r; }
+fn T3_add(a: T3, b: T3): T3 { var r: T3; r.x = a.x * 3 + b.x; r.y = a.y + b.y; r.z = a.z + b.z; return r; }
+fn S8_sub(a: S8, b: S8): i64 { return a.v * 5 - b.v; }
+fn H_sub(a: H, b: H): i64 { return a.v * 5 - b.v; }
+fn T3_sub(a: *T3, b: *T3): i64 { return a.x * 5 - b.x; }
+fn S8_mul(a: *S8, b: *S8): i64 { a.v = a.v + 1; return a.v * 7 + b.v; }
+fn H_mul(a: *H, b: *H): i64 { a.v = a.v + 1; return a.v * 7 + b.v; }
+fn S8_div(a: S8, b: S8): S8 { var r: S8; r.v = a.v / b.v + 100; return r; }
+fn H_div(a: H, b: H): H { var r: H; r.v = a.v / b.v + 100; r.w = a.w + b.w; return r; }
+
+fn mkw8(n): W8 { var w: W8 = W8 { 1, n, 9 }; return w; }
+fn mkwh(n): WH { var w: WH = WH { 1, n, 1, 9 }; return w; }
+var GX8 = S8 { 70 };
+var GXH = H { 70, 1 };
+fn gp8(): *S8 { return &GX8; }
+fn gph(): *H { return &GXH; }
+fn take8(s: S8): i64 { return s.v; }
+fn takeh(s: H): i64 { return s.v + (s.w - 3) * 1000; }
+fn rt8(w: *W8, a: S8): S8 { return w.s + a; }
+fn rth(w: *WH, a: H): H { return w.s + a; }
+fn rt3(w: *W3, a: T3): T3 { return w.s + a; }
+fn rd8(p: *S8, a: S8): S8 { return *p + a; }
+fn rdh(p: *H, a: H): H { return *p + a; }
+impl W8 { fn opv(self: W8, a: S8): i64 { var q: S8 = self.s + a; return q.v; } }
+impl WH { fn opv(self: *WH, a: H): i64 { var q: H = self.s + a; return q.v + (q.w - 3) * 1000; } }
+
+# ── the shapes: s = 70 (H: 70, 1), a = 4 (H: 4, 2); `+` gives 214 (H: w 3), `-` 346, `*` 501 (and
+# writes 71 into the field it was given), `/` 117 ──
+fn f_loc_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = w.s + a; return q.v + (w.g - 9); }
+fn f_loc_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = w.s + a;
+    return q.v + (q.w - 3) * 1000 + (w.g - 9);
+}
+fn f_asg_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = S8 { 0 }; q = w.s + a; return q.v; }
+fn f_asg_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = H { 0, 0 };
+    q = w.s + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_hdl_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = alloc(8); q = w.s + a; return q.v; }
+fn f_hdl_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = alloc(16);
+    q = w.s + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_ptr_8() {
+    var w: W8 = W8 { 1, 70, 9 };
+    var a: S8 = S8 { 4 };
+    var y: S8 = S8 { 0 };
+    var p: *S8 = &y;
+    p = w.s + a;
+    return y.v;
+}
+fn f_ptr_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var y: H = H { 0, 0 };
+    var p: *H = &y;
+    p = w.s + a;
+    return y.v + (y.w - 3) * 1000;
+}
+fn f_sub_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; return w.s - a; }
+fn f_sub_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; return w.s - a; }
+fn f_mul_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var r = w.s * a; return r * 1000 + w.s.v; }
+fn f_mul_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; var r = w.s * a; return r * 1000 + w.s.v; }
+fn f_div_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = w.s / a; return q.v; }
+fn f_div_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = w.s / a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_chain_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = w.s + a + a; return q.v; }
+fn f_chain_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = w.s + a + a;
+    return q.v + (q.w - 5) * 1000;
+}
+fn f_divadd_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = w.s / a + a; return q.v; }
+fn f_divadd_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = w.s / a + a;
+    return q.v + (q.w - 5) * 1000;
+}
+fn f_pw_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var pw: *W8 = &w; var q: S8 = pw.s + a; return q.v; }
+fn f_pw_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var pw: *WH = &w;
+    var q: H = pw.s + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_pwmul_8() {
+    var w: W8 = W8 { 1, 70, 9 };
+    var a: S8 = S8 { 4 };
+    var pw: *W8 = &w;
+    var r = pw.s * a;
+    return r * 1000 + w.s.v;
+}
+fn f_pwmul_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var pw: *WH = &w;
+    var r = pw.s * a;
+    return r * 1000 + w.s.v;
+}
+fn f_deref_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var ps: *S8 = &x; var q: S8 = *ps + a; return q.v; }
+fn f_deref_h() {
+    var x: H = H { 70, 1 };
+    var a: H = H { 4, 2 };
+    var ps: *H = &x;
+    var q: H = *ps + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_dparen_8() {
+    var x: S8 = S8 { 70 };
+    var a: S8 = S8 { 4 };
+    var ps: *S8 = &x;
+    var q: S8 = (*ps) + a;
+    return q.v * 1000 + (((*ps)) - a);
+}
+fn f_dparen_h() {
+    var x: H = H { 70, 1 };
+    var a: H = H { 4, 2 };
+    var ps: *H = &x;
+    var q: H = (*ps) + a;
+    return (q.v + (q.w - 3) * 1000) * 1000 + (((*ps)) - a);
+}
+fn f_dmul_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var ps: *S8 = &x; var r = *ps * a; return r * 1000 + x.v; }
+fn f_dmul_h() {
+    var x: H = H { 70, 1 };
+    var a: H = H { 4, 2 };
+    var ps: *H = &x;
+    var r = *ps * a;
+    return r * 1000 + x.v;
+}
+fn f_call_8() { var a: S8 = S8 { 4 }; var q: S8 = mkw8(70).s + a; return q.v; }
+fn f_call_h() { var a: H = H { 4, 2 }; var q: H = mkwh(70).s + a; return q.v + (q.w - 3) * 1000; }
+var GW8 = W8 { 1, 70, 9 };
+var GWH = WH { 1, 70, 1, 9 };
+fn f_glob_8() { var a: S8 = S8 { 4 }; var q: S8 = GW8.s + a; return q.v * 1000 + (GW8.s - a); }
+fn f_glob_h() {
+    var a: H = H { 4, 2 };
+    var q: H = GWH.s + a;
+    return (q.v + (q.w - 3) * 1000) * 1000 + (GWH.s - a);
+}
+fn f_paren_8() {
+    var w: W8 = W8 { 1, 70, 9 };
+    var a: S8 = S8 { 4 };
+    var q: S8 = (w.s) + a;
+    return q.v * 1000 + (((w.s)) - a);
+}
+fn f_paren_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = (w.s) + a;
+    return (q.v + (q.w - 3) * 1000) * 1000 + (((w.s)) - a);
+}
+fn f_self_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; return w.opv(a); }
+fn f_self_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; return w.opv(a); }
+fn pv8(h: W8, a: S8): i64 { var q: S8 = h.s + a; return q.v; }
+fn pp8(h: *W8, a: S8): i64 { var q: S8 = h.s + a; return q.v; }
+fn pvh(h: WH, a: H): i64 { var q: H = h.s + a; return q.v + (q.w - 3) * 1000; }
+fn pph(h: *WH, a: H): i64 { var q: H = h.s + a; return q.v + (q.w - 3) * 1000; }
+fn f_parm_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; return pv8(w, a) * 1000 + pp8(&w, a); }
+fn f_parm_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; return pvh(w, a) * 1000 + pph(&w, a); }
+fn f_nest_8() { var o: O8 = O8 { 5, 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = o.w.s + a; return q.v; }
+fn f_nest_h() {
+    var o: OH = OH { 5, 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = o.w.s + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_clos_8() {
+    var w: W8 = W8 { 1, 70, 9 };
+    var a: S8 = S8 { 4 };
+    var f = |d| { var q: S8 = w.s + a; return q.v + d; };
+    return callptr(f, 0);
+}
+fn f_clos_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var f = |d| { var q: H = w.s + a; return q.v + (q.w - 3) * 1000 + d; };
+    return callptr(f, 0);
+}
+fn f_untyped_8() {
+    var w = mkw8(70);
+    var v = W8 { 1, 70, 9 };
+    var a: S8 = S8 { 4 };
+    var q: S8 = w.s + a;
+    var q2: S8 = v.s + a;
+    return q.v * 1000 + q2.v;
+}
+fn f_untyped_h() {
+    var w = mkwh(70);
+    var v = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = w.s + a;
+    var q2: H = v.s + a;
+    return (q.v + (q.w - 3) * 1000) * 1000 + q2.v + (q2.w - 3) * 1000;
+}
+fn f_dcall_8() { var a: S8 = S8 { 4 }; var q: S8 = *gp8() + a; return q.v; }
+fn f_dcall_h() { var a: H = H { 4, 2 }; var q: H = *gph() + a; return q.v + (q.w - 3) * 1000; }
+fn f_dfld_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var pw = PW8 { &x }; var q: S8 = *pw.ps + a; return q.v; }
+fn f_dfld_h() {
+    var x: H = H { 70, 1 };
+    var a: H = H { 4, 2 };
+    var pw = PWH { &x };
+    var q: H = *pw.ps + a;
+    return q.v + (q.w - 3) * 1000;
+}
+fn dq8(q: *S8, a: S8): i64 { var r: S8 = *q + a; return r.v; }
+fn dqh(q: *H, a: H): i64 { var r: H = *q + a; return r.v + (r.w - 3) * 1000; }
+fn f_dparm_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; return dq8(&x, a); }
+fn f_dparm_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; return dqh(&x, a); }
+fn f_arg_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; return take8(w.s + a); }
+fn f_arg_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; return takeh(w.s + a); }
+fn f_ret_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = rt8(&w, a); return q.v; }
+fn f_ret_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = rth(&w, a);
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_dret_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var q: S8 = rd8(&x, a); return q.v; }
+fn f_dret_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; var q: H = rdh(&x, a); return q.v + (q.w - 3) * 1000; }
+fn f_rhs_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = a + w.s; return q.v; }
+fn f_rhs_h() {
+    var w: WH = WH { 1, 70, 1, 9 };
+    var a: H = H { 4, 2 };
+    var q: H = a + w.s;
+    return q.v + (q.w - 3) * 1000;
+}
+fn f_both_8() { var w: W8 = W8 { 1, 70, 9 }; var q: S8 = w.s + w.s; return q.v; }
+fn f_both_h() { var w: WH = WH { 1, 70, 1, 9 }; var q: H = w.s + w.s; return q.v + (q.w - 2) * 1000; }
+
+# ── 24 B (a retptr result, `*T3` parameters for `-`) ──
+fn f_t3_add() {
+    var w: W3 = W3 { 1, 70, 1, 2, 9 };
+    var c: T3 = T3 { 4, 2, 3 };
+    var q: T3 = w.s + c;
+    return q.x + (q.y - 3) * 1000 + (q.z - 5) * 100000 + (w.g - 9);
+}
+fn f_t3_sub() { var w: W3 = W3 { 1, 70, 1, 2, 9 }; var c: T3 = T3 { 4, 2, 3 }; return w.s - c; }
+fn f_t3_deref() {
+    var x: T3 = T3 { 70, 1, 2 };
+    var c: T3 = T3 { 4, 2, 3 };
+    var p: *T3 = &x;
+    var q: T3 = *p + c;
+    return q.x + (q.y - 3) * 1000 + (q.z - 5) * 100000;
+}
+fn f_t3_ret() {
+    var w: W3 = W3 { 1, 70, 1, 2, 9 };
+    var c: T3 = T3 { 4, 2, 3 };
+    var q: T3 = rt3(&w, c);
+    return q.x + (q.z - 5) * 1000;
+}
+
+# ── sizes 1..8 B: s = (7, 5, 3), a = (2, 1, 1); `+` = (23, 6, 4) by value, `-` = 33 through `*S` ──
+struct S1 { a: u8; }
+struct S2 { a: u16; }
+struct S3 { a: u8; b: u16; }
+struct S4 { a: u32; }
+struct S5 { a: u32; b: u8; }
+struct S6 { a: u32; b: u16; }
+struct S7 { a: u32; b: u16; c: u8; }
+struct Z8 { a: u32; b: u16; c: u8; d: u8; }
+struct V1 { s: S1; g: i8; }
+struct V2 { s: S2; g: i8; }
+struct V3 { s: S3; g: i8; }
+struct V4 { s: S4; g: i8; }
+struct V5 { s: S5; g: i8; }
+struct V6 { s: S6; g: i8; }
+struct V7 { s: S7; g: i8; }
+struct V8 { s: Z8; g: i8; }
+fn S1_add(l: S1, r: S1): S1 { var t: S1; t.a = l.a * 3 + r.a; return t; }
+fn S2_add(l: S2, r: S2): S2 { var t: S2; t.a = l.a * 3 + r.a; return t; }
+fn S3_add(l: S3, r: S3): S3 { var t: S3; t.a = l.a * 3 + r.a; t.b = l.b + r.b; return t; }
+fn S4_add(l: S4, r: S4): S4 { var t: S4; t.a = l.a * 3 + r.a; return t; }
+fn S5_add(l: S5, r: S5): S5 { var t: S5; t.a = l.a * 3 + r.a; t.b = l.b + r.b; return t; }
+fn S6_add(l: S6, r: S6): S6 { var t: S6; t.a = l.a * 3 + r.a; t.b = l.b + r.b; return t; }
+fn S7_add(l: S7, r: S7): S7 { var t: S7; t.a = l.a * 3 + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn Z8_add(l: Z8, r: Z8): Z8 {
+    var t: Z8;
+    t.a = l.a * 3 + r.a;
+    t.b = l.b + r.b;
+    t.c = l.c + r.c;
+    t.d = l.d + r.d;
+    return t;
+}
+fn S1_sub(l: *S1, r: *S1): i64 { return l.a * 5 - r.a; }
+fn S2_sub(l: *S2, r: *S2): i64 { return l.a * 5 - r.a; }
+fn S3_sub(l: *S3, r: *S3): i64 { return l.a * 5 - r.a; }
+fn S4_sub(l: *S4, r: *S4): i64 { return l.a * 5 - r.a; }
+fn S5_sub(l: *S5, r: *S5): i64 { return l.a * 5 - r.a; }
+fn S6_sub(l: *S6, r: *S6): i64 { return l.a * 5 - r.a; }
+fn S7_sub(l: *S7, r: *S7): i64 { return l.a * 5 - r.a; }
+fn Z8_sub(l: *Z8, r: *Z8): i64 { return l.a * 5 - r.a; }
+# Each returns 6: `w.s + a`, `w.s - a`, `*p + a` and the guard byte (9) after the field.
+fn z1() {
+    var w: V1; w.s.a = 7; w.g = 9;
+    var a: S1; a.a = 2;
+    var x: S1; x.a = 7;
+    var p: *S1 = &x;
+    var q: S1 = w.s + a;
+    var r = w.s - a;
+    var d: S1 = *p + a;
+    var k = 0;
+    if (q.a == 23) { k = k + 1; }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { k = k + 1; }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.a == 7) { k = k + 2; }
+    return k;
+}
+fn z2() {
+    var w: V2; w.s.a = 7; w.g = 9;
+    var a: S2; a.a = 2;
+    var x: S2; x.a = 7;
+    var p: *S2 = &x;
+    var q: S2 = w.s + a;
+    var r = w.s - a;
+    var d: S2 = *p + a;
+    var k = 0;
+    if (q.a == 23) { k = k + 1; }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { k = k + 1; }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.a == 7) { k = k + 2; }
+    return k;
+}
+fn z3() {
+    var w: V3; w.s.a = 7; w.s.b = 5; w.g = 9;
+    var a: S3; a.a = 2; a.b = 1;
+    var x: S3; x.a = 7; x.b = 5;
+    var p: *S3 = &x;
+    var q: S3 = w.s + a;
+    var r = w.s - a;
+    var d: S3 = *p + a;
+    var k = 0;
+    if (q.a == 23) { if (q.b == 6) { k = k + 1; } }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { if (d.b == 6) { k = k + 1; } }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.b == 5) { k = k + 2; }
+    return k;
+}
+fn z4() {
+    var w: V4; w.s.a = 7; w.g = 9;
+    var a: S4; a.a = 2;
+    var x: S4; x.a = 7;
+    var p: *S4 = &x;
+    var q: S4 = w.s + a;
+    var r = w.s - a;
+    var d: S4 = *p + a;
+    var k = 0;
+    if (q.a == 23) { k = k + 1; }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { k = k + 1; }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.a == 7) { k = k + 2; }
+    return k;
+}
+fn z5() {
+    var w: V5; w.s.a = 7; w.s.b = 5; w.g = 9;
+    var a: S5; a.a = 2; a.b = 1;
+    var x: S5; x.a = 7; x.b = 5;
+    var p: *S5 = &x;
+    var q: S5 = w.s + a;
+    var r = w.s - a;
+    var d: S5 = *p + a;
+    var k = 0;
+    if (q.a == 23) { if (q.b == 6) { k = k + 1; } }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { if (d.b == 6) { k = k + 1; } }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.b == 5) { k = k + 2; }
+    return k;
+}
+fn z6() {
+    var w: V6; w.s.a = 7; w.s.b = 5; w.g = 9;
+    var a: S6; a.a = 2; a.b = 1;
+    var x: S6; x.a = 7; x.b = 5;
+    var p: *S6 = &x;
+    var q: S6 = w.s + a;
+    var r = w.s - a;
+    var d: S6 = *p + a;
+    var k = 0;
+    if (q.a == 23) { if (q.b == 6) { k = k + 1; } }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { if (d.b == 6) { k = k + 1; } }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.b == 5) { k = k + 2; }
+    return k;
+}
+fn z7() {
+    var w: V7; w.s.a = 7; w.s.b = 5; w.s.c = 3; w.g = 9;
+    var a: S7; a.a = 2; a.b = 1; a.c = 1;
+    var x: S7; x.a = 7; x.b = 5; x.c = 3;
+    var p: *S7 = &x;
+    var q: S7 = w.s + a;
+    var r = w.s - a;
+    var d: S7 = *p + a;
+    var k = 0;
+    if (q.a == 23) { if (q.b == 6) { if (q.c == 4) { k = k + 1; } } }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { if (d.b == 6) { if (d.c == 4) { k = k + 1; } } }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.c == 3) { k = k + 2; }
+    return k;
+}
+fn z8() {
+    var w: V8; w.s.a = 7; w.s.b = 5; w.s.c = 3; w.s.d = 2; w.g = 9;
+    var a: Z8; a.a = 2; a.b = 1; a.c = 1; a.d = 1;
+    var x: Z8; x.a = 7; x.b = 5; x.c = 3; x.d = 2;
+    var p: *Z8 = &x;
+    var q: Z8 = w.s + a;
+    var r = w.s - a;
+    var d: Z8 = *p + a;
+    var k = 0;
+    if (q.a == 23) { if (q.b == 6) { if (q.c == 4) { if (q.d == 3) { k = k + 1; } } } }
+    if (r == 33) { k = k + 1; }
+    if (d.a == 23) { if (d.b == 6) { if (d.c == 4) { if (d.d == 3) { k = k + 1; } } } }
+    if (w.g == 9) { k = k + 1; }
+    if (w.s.d == 2) { k = k + 2; }
+    return k;
+}
+
+# ── top level: a field and a dereference of globals, in the declaration zone and after it ──
+var GA8 = S8 { 4 };
+var GAH = H { 4, 2 };
+var GZW8 = W8 { 1, 70, 9 };
+var GZWH = WH { 1, 70, 1, 9 };
+var GZP8: *S8 = &GX8;
+var TQ8: S8 = GZW8.s + GA8;           # the zone: a struct value (the operator's), copied
+var TD8: S8 = *GZP8 + GA8;
+var TS8 = GZW8.s - GA8;
+var TSH = GZWH.s - GAH;              # a 16 B field by address at top level: no frame needed
+alloc_init();
+var TQ8b: S8 = GZW8.s + GA8;          # after the first statement
+var TD8b: S8 = (*GZP8) + GA8;
+var TM8 = GZW8.s * GA8;               # `*S` parameters: the field's own address — it becomes 71
+
+assert_eq(f_loc_8(), 214, "var q: S8 = w.s + a (an inline local's field): S8_add, a struct value");
+assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
+assert_eq(f_asg_8(), 214, "q = w.s + a into a value");
+assert_eq(f_asg_8(), f_asg_h(), "  = its 16 B twin");
+assert_eq(f_hdl_8(), 214, "q = w.s + a into a handle: copied into the object");
+assert_eq(f_hdl_8(), f_hdl_h(), "  = its 16 B twin");
+assert_eq(f_ptr_8(), 214, "p = w.s + a into a *S: copied into the pointee");
+assert_eq(f_ptr_8(), f_ptr_h(), "  = its 16 B twin");
+assert_eq(f_sub_8(), 346, "w.s - a: S8_sub (an integer result)");
+assert_eq(f_sub_8(), f_sub_h(), "  = its 16 B twin");
+assert_eq(f_mul_8(), 501071, "w.s * a into *S parameters: the field's own address (the write reaches it)");
+assert_eq(f_mul_8(), f_mul_h(), "  = its 16 B twin");
+assert_eq(f_div_8(), 117, "w.s / a: S8_div");
+assert_eq(f_div_8(), f_div_h(), "  = its 16 B twin");
+assert_eq(f_chain_8(), 646, "w.s + a + a: the result dispatches again");
+assert_eq(f_chain_8(), f_chain_h(), "  = its 16 B twin");
+assert_eq(f_divadd_8(), 355, "w.s / a + a: `/` then `+`");
+assert_eq(f_divadd_8(), f_divadd_h(), "  = its 16 B twin");
+assert_eq(f_pw_8(), 214, "pw.s + a through a *W local");
+assert_eq(f_pw_8(), f_pw_h(), "  = its 16 B twin");
+assert_eq(f_pwmul_8(), 501071, "pw.s * a: the field's address through the *W");
+assert_eq(f_pwmul_8(), f_pwmul_h(), "  = its 16 B twin");
+assert_eq(f_deref_8(), 214, "*ps + a: a dereference of a *S local");
+assert_eq(f_deref_8(), f_deref_h(), "  = its 16 B twin");
+assert_eq(f_dparen_8(), 214346, "(*ps) + a, ((*ps)) - a");
+assert_eq(f_dparen_8(), f_dparen_h(), "  = its 16 B twin");
+assert_eq(f_dmul_8(), 501071, "*ps * a into *S parameters: the pointer itself (the write reaches the pointee)");
+assert_eq(f_dmul_8(), f_dmul_h(), "  = its 16 B twin");
+assert_eq(f_call_8(), 214, "mkw(70).s + a: a call result's field");
+assert_eq(f_call_8(), f_call_h(), "  = its 16 B twin");
+assert_eq(f_glob_8(), 214346, "GW.s + a, GW.s - a: a global's field");
+assert_eq(f_glob_8(), f_glob_h(), "  = its 16 B twin");
+assert_eq(f_paren_8(), 214346, "(w.s) + a, ((w.s)) - a");
+assert_eq(f_paren_8(), f_paren_h(), "  = its 16 B twin");
+assert_eq(f_self_8(), 214, "self.s + a in a method (by-value self; *self for the twin)");
+assert_eq(f_self_8(), f_self_h(), "  = its 16 B twin");
+assert_eq(f_parm_8(), 214214, "h.s + a with h: W and h: *W parameters");
+assert_eq(f_parm_8(), f_parm_h(), "  = its 16 B twin");
+assert_eq(f_nest_8(), 214, "o.w.s + a: a nested field");
+assert_eq(f_nest_8(), f_nest_h(), "  = its 16 B twin");
+assert_eq(f_clos_8(), 214, "w.s + a in a closure, w captured");
+assert_eq(f_clos_8(), f_clos_h(), "  = its 16 B twin");
+assert_eq(f_untyped_8(), 214214, "w.s + a with w untyped (from a call, from a literal)");
+assert_eq(f_untyped_8(), f_untyped_h(), "  = its 16 B twin");
+assert_eq(f_dcall_8(), 214, "*gp() + a: a dereference of a : *S call");
+assert_eq(f_dcall_8(), f_dcall_h(), "  = its 16 B twin");
+assert_eq(f_dfld_8(), 214, "*pw.ps + a: a dereference of a *S field");
+assert_eq(f_dfld_8(), f_dfld_h(), "  = its 16 B twin");
+assert_eq(f_dparm_8(), 214, "*q + a with q: *S a parameter");
+assert_eq(f_dparm_8(), f_dparm_h(), "  = its 16 B twin");
+assert_eq(f_arg_8(), 214, "take(w.s + a): the result as a by-value argument");
+assert_eq(f_arg_8(), f_arg_h(), "  = its 16 B twin");
+assert_eq(f_ret_8(), 214, "return w.s + a; from a struct fn");
+assert_eq(f_ret_8(), f_ret_h(), "  = its 16 B twin");
+assert_eq(f_dret_8(), 214, "return *p + a; from a struct fn");
+assert_eq(f_dret_8(), f_dret_h(), "  = its 16 B twin");
+assert_eq(f_rhs_8(), 82, "control: a + w.s (the right operand dispatched before)");
+assert_eq(f_rhs_8(), f_rhs_h(), "  = its 16 B twin");
+assert_eq(f_both_8(), 280, "w.s + w.s");
+assert_eq(f_both_8(), f_both_h(), "  = its 16 B twin");
+assert_eq(f_t3_add(), 214, "24 B: w.s + c (a retptr result)");
+assert_eq(f_t3_sub(), 346, "24 B: w.s - c into *T3 parameters");
+assert_eq(f_t3_deref(), 214, "24 B: *p + c");
+assert_eq(f_t3_ret(), 214, "24 B: return w.s + c;");
+assert_eq(z1(), 6, "1 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z2(), 6, "2 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z3(), 6, "3 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z4(), 6, "4 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z5(), 6, "5 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z6(), 6, "6 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z7(), 6, "7 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(z8(), 6, "8 B: w.s + a, w.s - a, *p + a; the guard byte kept");
+assert_eq(TQ8.v, 214, "top level, the declaration zone: var G: S8 = GW.s + A (a value)");
+assert_eq(TD8.v, 214, "top level, the declaration zone: var G: S8 = *GP + A");
+assert_eq(TS8, 346, "top level: GW.s - A");
+assert_eq(TSH, 346, "top level: GWH.s - AH (16 B, by address)");
+assert_eq(TQ8b.v, 214, "top level, after the first statement: GW.s + A");
+assert_eq(TD8b.v, 214, "top level, after the first statement: (*GP) + A");
+assert_eq(TM8 * 1000 + GZW8.s.v, 501071, "top level: GW.s * A into *S parameters (the field written)");
+var r = assert_summary();

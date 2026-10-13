@@ -1911,7 +1911,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     _rlf_emit_hop(S, hop);   # 6.6.17: `h.name.len` — through the Str field's pointer
-    return _fld_leaf_load(S);   # 6.7.10: the leaf at its width and signedness, typed
+    return _fld_leaf_load(S, pfl_beg, idx, sid);   # 6.7.10: the leaf at its width and signedness, typed
 }
 
 # The leaf field `_resolve_leaf_field` published (`_rlf_si` / `_rlf_fi`), its address in x1: loaded
@@ -1919,9 +1919,47 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 # i32 field, zero-extended for u8 / u16 / u32 / f32 (`_fld_lw`; through 6.7.9 a negative ftype was
 # always signed) — then typed (`_field_load_type`). Out of `_field_load_on`, a giant at cybs's per-fn
 # reference ceiling. CHANGELOG [6.7.10]
-fn _fld_leaf_load(S): i64 {
+fn _fld_leaf_load(S, beg, idx, sid): i64 {
     EFIELD_LOAD_W(S, _fld_lw(S, _rlf_si, _rlf_fi));
     _field_load_type(S, _rlf_si, _rlf_fi);
+    _flo_note(S, beg, idx, sid);   # 6.7.10: an operator's left operand, maybe
+    return 0;
+}
+# ⛔ 6.7.10 — A STRUCT-TYPED FIELD AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
+# 2026-10-12): `w.s + a`, `p.s + a` through a `*T`, `f().s + a`, `(w.s) + a`, `self.s * a`, at every size,
+# exactly as a struct variable does. Only a variable or a struct result typed the left operand, so the
+# field's first word was combined with the right operand's and no operator fn was called — silently, at
+# every size, since operators existed (issues/2026-10-08-struct-field-left-operand-never-dispatches.md:
+# `h.p - s` gave 250, 3 - 9, where `P2_sub` gives 139). The whole field just loaded — chain start `beg`,
+# its base (`idx`, `sid`) and its offset (`_rlf_off`, the leaf `_resolve_leaf_field` published) — is
+# stamped with the code pointer after its load; `_op_lst` takes it when it is the whole left operand
+# and nothing was emitted since. A `Str` field is a handle, a tuple or dyn field is refused as a value,
+# and a `*T` field is a pointer: none is stamped. CHANGELOG [6.7.10]
+fn _flo_note(S, beg, idx, sid): i64 {
+    if (_rlf_hop >= 0) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (_tup_is(S, ft) == 1) { return 0; }
+    if (_dyn_is(S, ft) == 1) { return 0; }
+    _flo_beg = beg;
+    _flo_end = GTI(S);
+    _flo_cp = GCP(S);
+    _flo_sid = ft;
+    _flo_idx = idx;
+    _flo_bsid = sid;
+    _flo_off = _rlf_off;
+    return 0;
+}
+# rax = the address of the field `_flo_note` stamped, as operand 0 of operator fn `fi` (`_fld_addr_ra`,
+# the `OP=` path's — its base is raw bytes to CYRIUS_IR=3): an inline aggregate's field in this frame is
+# an address in it, which the operator fn may keep (`_sarg_escapes`).
+fn _flo_addr_ra(S, fi): i64 {
+    if (_flo_idx < 0 - 1) { if (_flo_idx > 0 - 1000000) {
+            if (_local_struct_is_ptr(S, 0 - 2 - _flo_idx, 0 - _flo_bsid) == 0) { _sarg_escapes(fi, 0, 0); }
+        } }
+    _fld_addr_ra(S, _flo_idx, _flo_bsid, _flo_off, 0 - 1);
     return 0;
 }
 
@@ -7479,8 +7517,9 @@ fn _hl_pval_ra(S, sid): i64 {
 var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, initialiser token) pairs
 # `_gz_ty`'s kind of value: 1 a call / method / operator / if-expression result, 2 an inline global, 3 a
 # handle global, 4 an operand an operator dispatches on that is no value (`-g`), 5 a struct-typed field (a
-# struct value, but no operator's left operand dispatches on a field — the parser types only a variable or
-# a struct result there, B7 review), 6 a `*T` (the struct it points at; a receiver, never a value).
+# struct value; 6.7.10: an operator's left operand dispatches on it, decision 11), 6 a `*T` (the struct it
+# points at; a receiver, never a value), 7 a dereference `*E` of a `*T` (6.7.10: an operator's left
+# operand dispatches on it; a declaration from it is `_gz_star`'s).
 var _gz_k = 0;
 var _gz_gb = 0;  # the generic struct a whole generic call's `: G<T>` return names (its instance is the call's)
 # PARSE_GVAR_REG, the slot known (`gvi`; `ti` the initialiser's first token): a struct global of 8 B or
@@ -7730,11 +7769,12 @@ fn _gz_op(S, b, p): i64 {
     return r;
 }
 # The struct an operator's left operand [b, p) dispatches on (`_op_lst`): a struct result, an inline
-# global, a field, `-g`; a handle sets no expression type (pointer arithmetic), nor does a `Str`.
+# global, a field, a dereference, `-g`; a handle sets no expression type (pointer arithmetic), nor does a
+# `Str` or a `*T` itself. 6.7.10: a field (5) and a dereference (7) dispatch (the user's decision 11).
 fn _gz_lty(S, b, p): i64 {
     var t = _gz_ty(S, b, p);
     if (_gz_k == 3) { return 0; }
-    if (_gz_k >= 5) { return 0; }   # 6.7.10 (review): a field or a `*T` dispatches nothing
+    if (_gz_k == 6) { return 0; }
     if (t >= 2048) { return 0; }
     if (t == _STR_SID(S)) { return 0; }
     return t;
@@ -7758,8 +7798,18 @@ fn _gz_unary(S, b, e): i64 {
         return 0;
     }
     _gz_k = 0;
+    if (t == 8) { return _gz_deref(S, b, e); }   # 6.7.10: `*p` — an operator dispatches on it
     if (t != 2) { return 0; }
     return _gz_chain(S, b, e);
+}
+# `* E` with E typed `*S` (`_hl_psid`, as `_dlo_park` reads it): S, kind 7 — an operator's left operand
+# dispatches on it (decision 11); a declaration from it is `_gz_star`'s. Else 0.
+fn _gz_deref(S, b, e): i64 {
+    var r = _hl_psid(S, b + 1, e);
+    if (r <= 0) { return 0; }
+    if (r == _STR_SID(S)) { return 0; }
+    _gz_k = 7;
+    return r;
 }
 # `name`, `f(..)`, `g<..>(..)`, then `.field` / `.method(..)` steps up to `e`: the struct at its end.
 # ⛔ 6.7.10 (B7 review) — a `*T` is a RECEIVER too, as the parser's field and method access takes it: a

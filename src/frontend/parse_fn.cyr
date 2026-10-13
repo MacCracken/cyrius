@@ -5173,16 +5173,44 @@ fn _ret_expr_head(S): i64 {
         _pwrap_k(S, GTI(S));
         return _is_op_dispatch_tok(TOKTYP(S, _pw_end));
     }
+    if (PEEKT(S) == 8) { return _ret_lopd(S, GTI(S)); }   # 6.7.10: `*p OP`
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     if (nx == 41) {
         if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
-        return 0;
+        return _ret_lopd(S, GTI(S));   # 6.7.10: `w.s OP`
     }
     if (_is_op_dispatch_tok(nx) == 1) { return 1; }
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
+}
+# ⛔ 6.7.10 — `return w.s + a;` / `return *p - a;` in a struct-returning fn: a struct-typed field or a
+# `*T` dereference as the left operand dispatches (decision 11), as `return s + a;` with a struct
+# variable does, so its result takes the operator receive. 1 = the operand at token `b` — a name or
+# call, then `.field` / `.method(..)` steps, ending in a struct-typed field (`_hl_pchain`: a value, no
+# `*T`); or `*` and a `*T`-typed name, chain or parenthesised operand (`_hl_psid`) — is followed by an
+# operator that dispatches. Anything else keeps its own return path (and its own refusal).
+fn _ret_lopd(S, b): i64 {
+    var i = b;
+    if (TOKTYP(S, b) == 8) { i = b + 1; }
+    if (TOKTYP(S, i) == 10) { i = _call_close(S, i) + 1; }
+    elif (TOKTYP(S, i) == 2) {
+        var o = _gcall_open(S, i);
+        if (o >= 0) { i = _call_close(S, o) + 1; } else { i = i + 1; }
+        while (TOKTYP(S, i) == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            if (TOKTYP(S, i + 2) == 10) { i = _call_close(S, i + 2) + 1; } else { i = i + 2; }
+        }
+    } else { return 0; }
+    if (_is_op_dispatch_tok(TOKTYP(S, i)) == 0) { return 0; }
+    if (TOKTYP(S, b) == 8) {
+        if (_hl_psid(S, b + 1, i) > 0) { return 1; }
+        return 0;
+    }
+    if (_hl_pchain(S, b, i) <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return 1;
 }
 # Name what is actually there, so the diagnostic points at the construct and not just the fn.
 fn _pair_ret_offender(S): i64 {

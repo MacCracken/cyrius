@@ -3741,12 +3741,57 @@ fn _deref_ed(S): i64 {
 # (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), else load64 — an
 # untyped word. 6.7.8 (C2-5): before, every `*p` read 8 bytes. CHANGELOG [6.7.8]
 fn _deref_read(S): i64 {
+    var d = GTI(S);
     STI(S, GTI(S) + 1);
     PARSE_FACTOR(S);
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
+    var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     ELOAD64(S);
     SPSC(S, 0);
+    if (pk == 1) { _dlo_note(S, d); }
+    return 0;
+}
+# ⛔ 6.7.10 — A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
+# 2026-10-12): `*p + a`, `(*p) + a`, `*gp() * a`, `*w.p - a` with a `*S` operand dispatch `S_add` (etc.)
+# at every size, as a struct variable does — `*p` is a struct value (decision 6). It added the first
+# word, silently. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
+# typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size) and an overloadable
+# operator follows (past the parentheses wrapping the dereference), the pointer is parked in a hidden
+# temp — the left operand's address, or its struct, is read from it (`_opd_lhs_sv`). 1 = parked. A
+# dereference no operator follows is untouched. CHANGELOG [6.7.10]
+fn _dlo_park(S, d): i64 {
+    if (_dlo_opnext(S, d) == 0) { return 0; }
+    var sid = _hl_psid(S, d + 1, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, sid - 1)) { return 0; }
+    _dlo_sid = sid;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# 1 = `+ - * /` (or a wrapping form) follows the dereference at `d`, past the `)`s closing the `(`s
+# right before it — the token test only: `_op_lst` decides whether it is the whole left operand.
+fn _dlo_opnext(S, d): i64 {
+    var e = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, e + k) == 11) {
+        if (d - 1 - k < 0) { break; }
+        if (TOKTYP(S, d - 1 - k) != 10) { break; }
+        k = k + 1;
+    }
+    var t = TOKTYP(S, e + k);
+    if (t == 6 || t == 7 || t == 8 || t == 9) { return 1; }
+    if (t == 113 || t == 116 || t == 119) { return 1; }
+    return 0;
+}
+fn _dlo_note(S, d): i64 {
+    _dlo_beg = d;
+    _dlo_end = GTI(S);
+    _dlo_cp = GCP(S);
     return 0;
 }
 
@@ -6937,6 +6982,7 @@ fn _op_operand_local(S, li, ofi, ord): i64 {
 # `svar <= -2` is the LOCAL encoding `-2 - li` (the same one PARSE_FIELD_LOAD uses), added so
 # a multi-word struct LOCAL can be passed by address exactly as a global already was.
 fn _OP_OPERAND_ADDR(S, svar, ofi, ord): i64 {
+    if (svar == _OPD_SV) { return _opd_operand(S, ofi); }   # 6.7.10: a field / a dereference (`_opd_lhs_sv`)
     # 6.6.5 — the CAPTURE band (`-1000000 - capi`) is tested FIRST: it is also `<= -2`, so the
     # local arm below would read it as a nonsense slot index. `_CL_CAP_OPTYPE` only ever puts a
     # MULTI-WORD capture here, and those words ARE the aggregate, so `&env[woff]` is its
@@ -6978,6 +7024,7 @@ fn _op_operand_sv(S, fi, k, svar, bare, sval): i64 {
 # It dispatched, so its recorded type is the struct: a name, or a value such as `-s`.
 fn _op_lhs_sv(S, fi, beg, opti): i64 {
     if (_lsc_hit == 1) { _lsc_hit = 0; return _op_lhs_call_sv(S, fi); }   # 6.7.6
+    if (_flo_hit + _dlo_hit > 0) { return _opd_lhs_sv(S, fi); }   # 6.7.10: a field / a dereference
     var bare = _op_bare(S, beg, opti);
     return _op_operand_sv(S, fi, 0, GESVAR(S), bare, _op_is_sval(S, beg, opti));
 }
@@ -6994,26 +7041,74 @@ fn _op_lhs_sv(S, fi, beg, opti): i64 {
 # operand's struct for the `+ - * /` arms, else `_FBR_ST` as before. CHANGELOG [6.7.6]
 fn _op_lst(S, beg): i64 {
     _lsc_hit = 0;
+    _flo_hit = 0;
+    _dlo_hit = 0;
     if (_lsc_cp == GCP(S)) {
-        if (_lsc_span(S, beg) == 1) {
+        if (_opd_span(S, _lsc_beg, _lsc_end, beg) == 1) {
             _lsc_hit = 1;
             return _lsc_sid;
         }
     }
+    var ot = _opd_lst(S, beg);   # 6.7.10: a struct-typed field, a `*T` dereference
+    if (ot > 0) { return ot; }
     return _FBR_ST(S);
 }
-# 1 = the stamped result spans `[beg, cursor)`, inside `k` parentheses that wrap the whole of it.
-fn _lsc_span(S, beg): i64 {
-    if (_lsc_beg < beg) { return 0; }
-    var k = _lsc_beg - beg;
-    if (_lsc_end + k != GTI(S)) { return 0; }
+# 1 = the stamped value `[b0, e0)` spans `[beg, cursor)`, inside `k` parentheses that wrap the whole of it.
+fn _opd_span(S, b0, e0, beg): i64 {
+    if (b0 < beg) { return 0; }
+    var k = b0 - beg;
+    if (e0 + k != GTI(S)) { return 0; }
     var i = 0;
     while (i < k) {
         if (TOKTYP(S, beg + i) != 10) { return 0; }
-        if (TOKTYP(S, _lsc_end + i) != 11) { return 0; }
+        if (TOKTYP(S, e0 + i) != 11) { return 0; }
         i = i + 1;
     }
     return 1;
+}
+# ⛔ 6.7.10 — the left operand [beg, cursor) is the whole field `_flo_note` stamped, or the whole
+# dereference `_dlo_park` parked, nothing emitted since (inside any wrapping parentheses): its struct
+# (`_flo_hit` / `_dlo_hit` set), else 0. CHANGELOG [6.7.10]
+fn _opd_lst(S, beg): i64 {
+    if (_flo_cp == GCP(S)) { if (_opd_span(S, _flo_beg, _flo_end, beg) == 1) {
+            _flo_hit = 1;
+            return _flo_sid;
+        } }
+    if (_dlo_cp == GCP(S)) { if (_opd_span(S, _dlo_beg, _dlo_end, beg) == 1) {
+            _dlo_hit = 1;
+            return _dlo_sid;
+        } }
+    return 0;
+}
+# The matched field or dereference as operand 0 of operator fn `fi`: its encoding for
+# `_OP_OPERAND_ADDR`, as a struct variable's: over 8 B, or into a `*S` parameter of 8 B or less, its
+# ADDRESS (the field's, `_flo_addr_ra`; the parked pointer); else its VALUE — the field's load is the
+# struct's word (-1, rax pushed as it is), a dereference's struct is read through the pointer
+# byte-exact (`_hl_pval_ra`: the load before it read a word). The address and the dereference are
+# emitted by `_OP_OPERAND_ADDR` (`_OPD_SV`, `_opd_k`), where a struct variable's address is — after a
+# >16 B result's retptr push, so rax is never parked across it (`_op_park_lhs`).
+var _OPD_SV = 0 - 999999;   # the encoding: below every frame slot, above the capture band
+var _opd_k = 0;             # 1 = the field's address, 2 = the dereference's pointer, 3 = its struct
+fn _opd_lhs_sv(S, fi): i64 {
+    var sid = _flo_sid;
+    if (_dlo_hit == 1) { sid = _dlo_sid; }
+    var adr = _op_small_ptr(S, fi, 0);
+    if (STRUCTSZ(S, sid - 1) > 8) { adr = 1; }
+    if (_dlo_hit == 1) {
+        _dlo_hit = 0;
+        _opd_k = 3 - adr;
+        return _OPD_SV;
+    }
+    _flo_hit = 0;
+    if (adr == 0) { return 0 - 1; }
+    _opd_k = 1;
+    return _OPD_SV;
+}
+fn _opd_operand(S, fi): i64 {
+    if (_opd_k == 1) { return _flo_addr_ra(S, fi); }
+    _HTLOAD(S, _dlo_h);
+    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid); }
+    return 0;
 }
 # Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).
 # A `Str` is a heap handle, a pointer word: never an operand that dispatches.
