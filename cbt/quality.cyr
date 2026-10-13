@@ -826,26 +826,129 @@ fn _covx_fail(path, why): i64 {
     return 1;
 }
 
+# The exec run's two refusals before anything is built, for a run of `total` entries: nothing to
+# run, and a dump path longer than the compiler reads (CYRIUS_COVERAGE_FILE goes through a 255-byte
+# buffer, and a longer value is refused there; the longest path is the last entry's). Asked by
+# `_covx_preflight`, ahead of the resolve, and by `_covx_run`. 0, or 1 after naming it.
+fn _covx_total_ok(total): i64 {
+    if (total == 0) {
+        var nm = "coverage --exec: nothing to run — no tests/**/*.tcyr and no --exec / [coverage] exec program;";
+        _err(_cat2(nm, " nothing was executed, so this is not a pass"));
+        return 1;
+    }
+    var lp = _covx_dump_path(total);
+    if (strlen(lp) > 255) {
+        var lm = "coverage --exec: the coverage dump path is over 255 bytes, more than the compiler reads from";
+        _err_ctx(_cat2(lm, " CYRIUS_COVERAGE_FILE; set TMPDIR to a shorter directory"), lp);
+        return 1;
+    }
+    return 0;
+}
+
+# How many tests/**/*.tcyr the exec run will build: the files cmd_coverage's walk collects.
+fn _covx_tcyr_count(): i64 {
+    if (is_dir(str_from("tests")) != 1) { return 0; }
+    var tests = vec_new();
+    var tfail = vec_new();
+    dir_walk_checked(str_from("tests"), tests, tfail);
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(tests)) {
+        if (str_ends_with(vec_get(tests, i), ".tcyr") == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ── the coverage verb's arguments ─────────────────────────────────────────────────────────────
+# Read and checked ONCE, by whichever asks first: the coverage branch (cbt/cyrius.cyr), or, in the
+# exec mode, `_covx_preflight` ahead of the resolve. So each refusal and each [coverage] warning
+# is printed once, whichever path reached it. CHANGELOG [6.7.10]
+var _cov_a_state = 0 - 1;   # -1 not read yet; else `_cov_args`' answer
+var _cov_a_min = 0 - 1;     # --min's percentage; -1 = no gate
+var _cov_a_progs = 0;       # the TEXT corpus's program globs (a vec), or 0
+var _cov_a_x = 0;           # the exec mode's program globs (`_covx_resolve`); 0 = the text mode
+
+# 0, or 1 after naming the refusal.
+fn _cov_args(): i64 {
+    if (_cov_a_state < 0) { _cov_a_state = _cov_args_read(); }
+    return _cov_a_state;
+}
+
+fn _cov_args_read(): i64 {
+    if (_cli_operands_ok("coverage", 0, 1) == 0) { return 1; }
+    if (_cli_has("--min") == 1) {
+        _cov_a_min = _cli_int(_cli_val("--min"));
+        # 0..100 only. v6.6.5 (round-3 review): a negative value is the "no gate"
+        # sentinel inside cmd_coverage, so `--min -1` (or a typo'd `--min -5`)
+        # switched the gate OFF and exited 0 — the typo-passes-a-gate class
+        # _cli_int was added to close. 6.6.4's atoi behaved the same.
+        if (_cli_int_ok == 0 || _cov_a_min < 0 || _cov_a_min > 100) {
+            _err_ctx("coverage: --min needs a percentage from 0 to 100", _cli_val("--min"));
+            return 1;
+        }
+    }
+    # 6.6.17 (P5-A): RUN programs join the corpus — `--programs <glob>` (repeatable) beats
+    # `[coverage] programs` in ./cyrius.cyml, the one precedence every key follows.
+    _cov_a_progs = _cli_values("--programs");
+    if (vec_len(_cov_a_progs) == 0) {
+        if (_mf_load() < 0) { return 1; }
+        _cfg_warn_section("coverage");
+        _cov_a_progs = _mf_strs("coverage", "programs");
+        if (_toml_bad == 1) {
+            _cfg_bad("coverage", "programs", "a glob or an array of globs");
+            return 1;
+        }
+    }
+    # 6.7.10 (P5-B): EXECUTION coverage — `--exec[=<glob>]` (repeatable) beats `[coverage] exec`;
+    # 0 = the text mode, untouched. The exec mode builds the .tcyr in the test scope (cmd_test),
+    # as `cyrius test` does; its programs build in the build scope (_covx_prog).
+    _cov_a_x = _covx_resolve();
+    if (_cov_a_x < 0) { return 1; }
+    if (_cov_a_x != 0) {
+        if (_tc_setup("test") != 0) { return 1; }
+    }
+    return 0;
+}
+
+# 6.7.10 — THE EXEC MODE'S REFUSALS COME BEFORE THE RESOLVE. In its exec mode `coverage` joins the
+# AUTO_DEPS chain, so main() vendors lib/ and writes cyrius.lock before the coverage branch runs; a
+# glob that matched nothing was named only after both were written (6.7.6's rule R closed that for
+# run / build / test). `_cli_preflight` asks this first: the arguments (`_cov_args`: the operand
+# count, --min, [coverage], [test]), then the operand (a directory), both program lists' globs,
+# nothing to run and the dump path's length — every refusal cmd_coverage would name before its
+# first build. Each answers the same when cmd_coverage repeats it, silently. 0, or 1 after naming.
+fn _covx_preflight(): i64 {
+    if (_cov_args() != 0) { return 1; }
+    if (_cov_a_x == 0) { return 0; }
+    var ra = _cli_pos_at(0);
+    if (ra != 0) {
+        if (is_dir(str_from(ra)) != 1) {
+            _err_ctx("not a directory", ra);
+            return 1;
+        }
+    }
+    if (_cov_a_progs != 0) {
+        if (vec_len(_cov_a_progs) > 0) {
+            if (_cov_expand_programs(_cov_a_progs, "programs") == 0) { return 1; }
+        }
+    }
+    var nx = 0;
+    if (vec_len(_cov_a_x) > 0) {
+        var xf = _cov_expand_programs(_cov_a_x, "exec");
+        if (xf == 0) { return 1; }
+        nx = vec_len(xf);
+    }
+    return _covx_total_ok(_covx_tcyr_count() + nx);
+}
+
 # Build and run every corpus entry instrumented — each .tcyr, then each exec program — and gather
 # the fns their dumps record. Every entry runs whatever the others did. Answers the number of
 # failed runs (each named as it happened), or -1 after naming why nothing could run.
 fn _covx_run(tests, progs): i64 {
     _covx_xsb = str_builder_new();
     _covx_ksb = str_builder_new();
-    var total = vec_len(tests) + vec_len(progs);
-    if (total == 0) {
-        var nm = "coverage --exec: nothing to run — no tests/**/*.tcyr and no --exec / [coverage] exec program;";
-        _err(_cat2(nm, " nothing was executed, so this is not a pass"));
-        return 0 - 1;
-    }
-    # The longest dump path, checked before anything is built: the compiler reads
-    # CYRIUS_COVERAGE_FILE through a 255-byte buffer, and a longer value is refused there.
-    var lp = _covx_dump_path(total);
-    if (strlen(lp) > 255) {
-        var lm = "coverage --exec: the coverage dump path is over 255 bytes, more than the compiler reads from";
-        _err_ctx(_cat2(lm, " CYRIUS_COVERAGE_FILE; set TMPDIR to a shorter directory"), lp);
-        return 0 - 1;
-    }
+    if (_covx_total_ok(vec_len(tests) + vec_len(progs)) != 0) { return 0 - 1; }
     var failed = 0;
     var n = 0;
     var i = 0;

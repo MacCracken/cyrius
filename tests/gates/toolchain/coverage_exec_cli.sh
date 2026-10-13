@@ -24,7 +24,8 @@
 #   X2  `[coverage] exec = ["programs/*_test.cyr"]`, no flag: the mode is on; rc 1; bad_test (exit 1)
 #       and asm_test (no record) named in `cyrius test`'s FAIL wording; the report still printed,
 #       `Corpus runs: 4 (1 .tcyr, 3 program(s)), 2 failed`. X2b: an exec glob that matches nothing
-#       and a missing exec program are named failures
+#       and a missing exec program are named failures, refused BEFORE the resolve (no lib/, no
+#       cyrius.lock — the exec mode joins the AUTO_DEPS chain, so a refusal after it left both)
 #   X3  no --exec, no key: stdout byte-identical to the 6.7.9 CLI's (two goldens: a plain run, and
 #       -v --per-entry --programs --min 50); nothing resolved (no lib/, no cyrius.lock)
 #   X4  .tcyr are executed: sh_c is entered only by t.tcyr — executed with it, unexecuted (4/7)
@@ -40,10 +41,16 @@
 #       path is that spelling): its sh_d counts (6/7, `shapes` the one miss)
 #   X10 `[coverage] exec = 3` refused by name, nothing built
 #   X11 a TMPDIR long enough that the dump path is over 255 bytes: refused by name, nothing built
+#       or resolved
 #   X12 no temp leftovers in the private TMPDIR after the runs
 #   X13 `cyrius help manifest` lists `[coverage] exec read - - --exec`; `build --print-config` shows
 #       coverage.exec with its origin (manifest / default)
-#   X14 nothing to run (no .tcyr, bare --exec, no exec list): a named failure, not a 0% pass
+#   X14 nothing to run (no .tcyr, bare --exec, no exec list): a named failure, not a 0% pass,
+#       nothing resolved
+#   X15 every other exec-mode refusal comes before the resolve too (`_covx_preflight`): a FILE
+#       operand (`--exec programs/ok_test.cyr`, the space form — the glob is the root operand),
+#       `--min abc`, a `--programs` glob that matches nothing, a refused `[test] timeout` — each rc
+#       1, named, no lib/ and no cyrius.lock; anti-over-reach: X1's good run does resolve (the lock)
 #   W1  (wine) the Windows arm: cyrius.exe hands cycc.exe both variables (the program is
 #       instrumented and its dump read: 1/2 executed), and the program run next sees neither
 #       (it exits 1 / 2 / 3 when GetEnvironmentVariableA finds one)
@@ -65,6 +72,8 @@
 #   N10 no Windows delete after the compile                        W1 (the program exits 3)
 #   N11 the AUTO_DEPS conditional removed                          X1 (undefined stdlib fns) X2 X4 X6
 #       X8 X9; auto_deps_verb_gate.sh axis 2
+#   N12 `_cli_preflight`'s coverage arm removed (the 6.7.10 review's shape: every refusal after the
+#       resolve)                                                    X2b X11 X14 X15
 #   NH1 the ach leg's coverage step deleted                        XH (stage, check, SELFHOST_FAIL, run)
 #   NH2 the cass leg's X1 run deleted                              XH
 #   NH3 _co_cov_check's 5/7 weakened to a prefix                   XH
@@ -117,6 +126,8 @@ dump() {
     ( cd "$W/p" && env -u CYRIUS_TEST_TIMEOUT CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$W/dump" TMPDIR="$W/tmp" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 "$W/cyrius" run "$1" ) > /dev/null 2>&1 || true
 }
 line() { grep -F "$1" "$W/out" | head -1; }
+# nores — nothing was resolved in $W/p: no lib/ and no cyrius.lock (the fixture's [deps] stdlib)
+nores() { [ ! -e "$W/p/lib" ] && [ ! -e "$W/p/cyrius.lock" ]; }
 
 # ── X3: the text mode, byte-identical to 6.7.9 (goldens taken from the 6.7.9 CLI) ─────────────
 cat > "$W/golden1" <<'EOF'
@@ -173,6 +184,7 @@ x=$FAIL
 fx
 cov --exec=programs/ok_test.cyr -v
 cp "$W/out" "$W/x1out"
+[ -e "$W/p/cyrius.lock" ] || fail "X15 anti-over-reach: X1's exec run resolved nothing (no cyrius.lock)"
 if [ "$RC" = 0 ] && grep -qx '  Functions executed: 5/7 (71%)  \[execution coverage — entered at least once by a corpus run\]' "$W/out"; then :
 else fail "X1: rc $RC, want 0 and 'Functions executed: 5/7 (71%)':"; show; fi
 grep -qx '  shapes.cyr                        1/7 fns, 5/7 executed' "$W/out" || fail "X1: no '1/7 fns, 5/7 executed' per-file line"
@@ -220,9 +232,11 @@ x=$FAIL
 fx
 cov --exec='programs/nope_*.cyr'
 [ "$RC" -ne 0 ] && grep -q 'coverage: this exec glob matches no file: programs/nope_\*.cyr' "$W/err" || { fail "X2b: an exec glob matching nothing was not a named failure (rc $RC)"; show; }
+nores || fail "X2b: the exec glob matching nothing was refused only after the resolve (lib/ or cyrius.lock written)"
 cov --exec=programs/missing_test.cyr
 [ "$RC" -ne 0 ] && grep -q 'no such program (--exec / \[coverage\] exec): programs/missing_test.cyr' "$W/err" || { fail "X2b: a missing exec program was not a named failure (rc $RC)"; show; }
-[ "$FAIL" = "$x" ] && echo "  ok X2b: an exec glob that matches nothing and a missing exec program are named failures"
+nores || fail "X2b: the missing exec program was refused only after the resolve (lib/ or cyrius.lock written)"
+[ "$FAIL" = "$x" ] && echo "  ok X2b: an exec glob that matches nothing and a missing exec program are named failures, before the resolve"
 
 # ── X6: the asm exit leaves no record ─────────────────────────────────────────────────────────
 x=$FAIL
@@ -276,6 +290,7 @@ mkdir -p "$LT"
 COV_TMP=$LT cov --exec=programs/ok_test.cyr
 [ "$RC" -ne 0 ] && grep -q 'the coverage dump path is over 255 bytes' "$W/err" || { fail "X11: a dump path past 255 bytes was not refused by name (rc $RC)"; show; }
 grep -q 'Functions executed' "$W/out" && fail "X11: the over-long dump path still ran the corpus"
+nores || fail "X11: the over-long dump path was refused only after the resolve (lib/ or cyrius.lock written)"
 rm -rf "$W/tmp"/L*
 [ "$FAIL" = "$x" ] && echo "  ok X11: a TMPDIR that puts the dump path past 255 bytes is refused by name before any build"
 x=$FAIL
@@ -283,7 +298,28 @@ fx
 rm -rf "$W/p/tests"
 cov --exec
 [ "$RC" -ne 0 ] && grep -q 'coverage --exec: nothing to run' "$W/err" || { fail "X14: an exec run with nothing to run was not a named failure (rc $RC)"; show; }
+nores || fail "X14: nothing to run was refused only after the resolve (lib/ or cyrius.lock written)"
 [ "$FAIL" = "$x" ] && echo "  ok X14: an exec run with no .tcyr and no program is a named failure, not a 0% pass"
+
+# ── X15: every exec-mode refusal comes before the resolve (`_covx_preflight`) ───────────────────
+x=$FAIL
+fx
+cov --exec programs/ok_test.cyr
+[ "$RC" = 1 ] && grep -qxF 'error: not a directory: programs/ok_test.cyr' "$W/err" && nores \
+    || { fail "X15: a file operand under --exec (rc $RC) was not refused before the resolve"; show; }
+fx
+cov --exec --min abc
+[ "$RC" = 1 ] && grep -qxF 'error: coverage: --min needs a percentage from 0 to 100: abc' "$W/err" && nores \
+    || { fail "X15: --exec --min abc (rc $RC) was not refused before the resolve"; show; }
+fx
+cov --exec=programs/ok_test.cyr --programs='programs/zz_*.cyr'
+[ "$RC" = 1 ] && grep -qF 'error: coverage: this programs glob matches no file: programs/zz_*.cyr' "$W/err" && nores \
+    || { fail "X15: a --programs glob matching nothing under --exec (rc $RC) was not refused before the resolve"; show; }
+fx '\n[test]\ntimeout = "abc"\n'
+cov --exec=programs/ok_test.cyr
+[ "$RC" = 1 ] && grep -qF '[test] timeout must be a whole number of seconds' "$W/err" && nores \
+    || { fail "X15: a refused [test] timeout under --exec (rc $RC) was not refused before the resolve"; show; }
+[ "$FAIL" = "$x" ] && echo "  ok X15: a file operand, --min abc, a --programs glob matching nothing and a refused [test] timeout are each named before the resolve (no lib/, no cyrius.lock); X1's good run resolves"
 
 # ── X13: the vocabulary and --print-config ────────────────────────────────────────────────────
 x=$FAIL

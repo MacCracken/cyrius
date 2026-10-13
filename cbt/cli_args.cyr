@@ -657,8 +657,9 @@ fn _cli_operands_ok(verb, min, max): i64 {
 # resolved before refusing the extra operand. The counts are the branches' own (each branch still
 # checks; this runs first), and a FILE operand must exist — `cyrius test`'s every operand (a file or
 # a directory) and the deprecated `cyrius tests`' directory too: `cyrius test missing.tcyr` cloned,
-# vendored and wrote cyrius.lock before saying "no such file" (6.7.6 review). 0, or 1 after naming
-# the problem.
+# vendored and wrote cyrius.lock before saying "no such file" (6.7.6 review). `coverage` reaches here
+# only in its exec mode (6.7.10), and checks its own (`_covx_preflight`, cbt/quality.cyr). 0, or 1
+# after naming the problem.
 fn _cli_preflight(verb): i64 {
     var mn = 0 - 1;
     var mx = 0 - 1;
@@ -680,6 +681,7 @@ fn _cli_preflight(verb): i64 {
     elif (streq(verb, "doctest") == 1) { mn = 1; mx = 1; files = 1; }
     elif (streq(verb, "publish") == 1) { mn = 0; mx = 0; }
     elif (streq(verb, "package") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "coverage") == 1) { return _covx_preflight(); }   # 6.7.10: its exec mode resolves
     else { return 0; }
     if (_cli_operands_ok(verb, mn, mx) == 0) { return 1; }
     if (files == 0 || _cli_npos() == 0) { return 0; }

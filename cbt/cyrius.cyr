@@ -1203,40 +1203,12 @@ fn main(): i64 {
 
     # --- Testing commands ---
     if (streq(cmd, "coverage") == 1) {
-        if (_cli_operands_ok("coverage", 0, 1) == 0) { return 1; }
-        var cov_min = 0 - 1;
-        if (_cli_has("--min") == 1) {
-            cov_min = _cli_int(_cli_val("--min"));
-            # 0..100 only. v6.6.5 (round-3 review): a negative value is the "no gate"
-            # sentinel inside cmd_coverage, so `--min -1` (or a typo'd `--min -5`)
-            # switched the gate OFF and exited 0 — the typo-passes-a-gate class
-            # _cli_int was added to close. 6.6.4's atoi behaved the same.
-            if (_cli_int_ok == 0 || cov_min < 0 || cov_min > 100) {
-                _err_ctx("coverage: --min needs a percentage from 0 to 100", _cli_val("--min"));
-                return 1;
-            }
-        }
-        # 6.6.17 (P5-A): RUN programs join the corpus — `--programs <glob>` (repeatable) beats
-        # `[coverage] programs` in ./cyrius.cyml, the one precedence every key follows.
-        var cov_progs = _cli_values("--programs");
-        if (vec_len(cov_progs) == 0) {
-            if (_mf_load() < 0) { return 1; }
-            _cfg_warn_section("coverage");
-            cov_progs = _mf_strs("coverage", "programs");
-            if (_toml_bad == 1) {
-                _cfg_bad("coverage", "programs", "a glob or an array of globs");
-                return 1;
-            }
-        }
-        # 6.7.10 (P5-B): EXECUTION coverage — `--exec[=<glob>]` (repeatable) beats `[coverage] exec`;
-        # 0 = the text mode, untouched. The exec mode builds the .tcyr in the test scope (cmd_test),
-        # as `cyrius test` does; its programs build in the build scope (_covx_prog).
-        var cov_x = _covx_resolve();
-        if (cov_x < 0) { return 1; }
-        if (cov_x != 0) {
-            if (_tc_setup("test") != 0) { return 1; }
-        }
-        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0), cov_progs, _cli_has("--per-entry"), cov_x);
+        # The operand count, --min, the TEXT programs (6.6.17), the exec mode (6.7.10) and its [test]:
+        # read and checked once (`_cov_args`, cbt/quality.cyr) — in the exec mode already, ahead of
+        # the resolve (`_covx_preflight`). CHANGELOG [6.7.10]
+        if (_cov_args() != 0) { return 1; }
+        return cmd_coverage(_cli_has("--full"), _cov_a_min, _cli_pos_at(0), _cov_a_progs,
+          _cli_has("--per-entry"), _cov_a_x);
     }
 
     if (streq(cmd, "doctest") == 1) {
