@@ -197,7 +197,7 @@ Build & run:             build [--aarch64|--win|--agnos] [--no-deps] [--pie] [--
                          run [--bounds] <src.cyr> [args...], check, clean
 Test:                    test [--bounds] [file.tcyr|dir]... (a dir is walked recursively; none: the whole suite),
                          bench, fuzz, doctest, smoke, soak [N],
-                         coverage [--full] [--min <pct>] [--programs <glob>] [--per-entry]
+                         coverage [--full] [--min <pct>] [--programs <glob>] [--per-entry] [--exec[=<glob>]]
                          (`tests [dir]` is a deprecated alias of `test <dir>`)
 Code quality & API:      fmt, lint, doc, vet, deny, audit [--internal[=platform-check]], api-surface, header
 Project & dependencies:  init, port, update, package, publish, install

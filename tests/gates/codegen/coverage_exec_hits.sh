@@ -124,6 +124,20 @@
 #   P5B-2 / P5B-3 wrote that these shapes reach: A4 (`capt`'s closure), E10a (`- <source>:2 nk`), E13
 #   (`die`, the `#inline` exit), M3 / E8' (a `-` record is a well-formed line)
 #
+# GROUP G — THE GUIDE (P5B-8). docs/guides/cyrius-guide.md § "The execution-coverage mode (6.7.10)"
+# is the mode's user documentation; these rows hold what it shows to the compiler (bounds_mode_checked
+# TL4's shape), on x86:
+#   G1  its example (the section's first unlabeled fence) exits the value its ```sh fence states and
+#       dumps EXACTLY its first ```text fence (a closure's `__clNNNNN` compared as `__cl#`, as the
+#       guide says the number moves); G1' the same exit with the mode off
+#   G2  the texts it quotes are the compiler's: the `0 or 1` refusal (for `=2`), the missing-FILE
+#       refusal, the over-255-byte warning
+#   G3  the dump fns it names as reserved are exactly the `fn __cyrius_cov_*` that `_cov_finish`
+#       (src/frontend/parse_cov.cyr) appends
+#   G4  its reserved-name claims: a program's own `__cyrius_` fn gets no line, and one that reuses
+#       `__cyrius_cov_dump` is replaced by the compiler's — the `duplicate fn` warning names it, and
+#       the block is still written
+#
 # MUTATION LEDGER (P5B-1; scratch copies of the tree, each its 2-stage mutant cycc, this gate and the
 # named gates run as CYCC=<mutant>; 2026-10-12):
 #   MS1  `_cov_setup`'s PP_PREDEFINE dropped                     -> RED S2a S2b S5d
@@ -174,6 +188,11 @@
 #   MO   the `__cyrius_` skip dropped (`_cov_own`)                -> RED 109 of 243: F7a / F7b (the dump's own
 #        fns, `__cyrius_bounds_chk`) and every whole-dump row (H1-H4 H8, A2, B1, L1-L5, group F); H7 (8 hits,
 #        not 4). The `<source>`-filtered rows (A4, group E) stay green, as they must
+# MUTATION LEDGER (P5B-8; scratch copies of the tree; "N of 250"):
+#   MG1  the guide's dump block altered (`3 <source>:1 sq` -> `2 …`)  -> RED 1 of 250: G1
+#   MG2  the guide's quoted `0 or 1` refusal altered                 -> RED 1 of 250: G2
+#   MG3  a fifth dump fn in `_cov_finish` (its 2-stage cycc)         -> RED 1 of 250: G3
+#   MG4  the guide's stated exit altered (`# 11` -> `# 12`)           -> RED 2 of 250: G1 G1'
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -981,6 +1000,67 @@ if [ -x "$T/cc_cx" ]; then
     F6W="$T/f6.want"; F6N=""
 else bad "F cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# GROUP G — THE GUIDE (P5B-8): what § "The execution-coverage mode (6.7.10)" shows is what the
+# compiler does.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+GUIDE=docs/guides/cyrius-guide.md
+awk '/^## The execution-coverage mode \(6\.7\.10\)$/ { s = 1; next } s && /^## / { exit } s' "$GUIDE" > "$T/g.sec"
+# the example is the section's first fence (unlabeled); its dump the first ```text fence; its exit
+# the `echo $?  # N` of the ```sh fence
+awk '/^```$/ && !inb { inb = 1; next } inb && /^```/ { exit } inb { print }' "$T/g.sec" > "$T/g_ex.cyr"
+awk '/^```text$/ { t = 1; next } t && /^```/ { exit } t' "$T/g.sec" | tr -d '\r' | sed 's/__cl[0-9][0-9]*/__cl#/' > "$T/g_ex.want"
+GX=$(awk '/^```sh$/ { t = 1; next } t && /^```/ { exit } t' "$T/g.sec" | sed -n 's/.*echo \$?[ ]*# \([0-9][0-9]*\).*/\1/p' | head -1)
+if [ "$(grep -c . "$T/g.sec")" -lt 60 ] || ! grep -q '^#naked$' "$T/g_ex.cyr" || ! grep -q '^# cyrius-coverage 1$' "$T/g_ex.want" || [ -z "$GX" ]; then
+    bad "G1 the guide's execution-coverage section, its example, its dump or its stated exit was not found (section $(grep -c . "$T/g.sec") lines)"
+else
+    rm -f "$T/g.cov"
+    cc g1 g_ex.cyr CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/g.cov"
+    if [ "$RC" != 0 ]; then bad "G1 the guide's example does not compile under the mode: $(grep -m1 '^error' "$T/g1.err")"
+    else
+        chmod +x "$T/g1.bin"; got=0; "$T/g1.bin" > /dev/null 2>&1 || got=$?
+        { tr -d '\r' < "$T/g.cov" | sed 's/__cl[0-9][0-9]*/__cl#/'; } > "$T/g1.got" 2> /dev/null
+        if [ "$got" = "$GX" ] && cmp -s "$T/g1.got" "$T/g_ex.want"; then
+            ok "G1 the guide's example exits $GX under the mode and dumps exactly the block the guide shows ($(grep -c . "$T/g1.got") lines)"
+        else bad "G1 the guide's example: exit $got (the guide: $GX); dump $(tr '\n' '|' < "$T/g1.got") — the guide shows $(tr '\n' '|' < "$T/g_ex.want")"; fi
+    fi
+    cc g1p g_ex.cyr
+    got=0
+    if [ "$RC" = 0 ]; then chmod +x "$T/g1p.bin"; "$T/g1p.bin" > /dev/null 2>&1 || got=$?; fi
+    if [ "$RC" = 0 ] && [ "$got" = "$GX" ]; then ok "G1' ... and exits $GX without the mode, as the guide says"
+    else bad "G1' the guide's example without the mode: rc $RC, exit $got (the guide: $GX)"; fi
+fi
+# G2 — the texts the guide quotes are the compiler's
+GQ1=$(grep -o '`CYRIUS_COVERAGE must be 0 or 1 (or unset): <v>`' "$T/g.sec" | head -1 | sed 's/^`//; s/ <v>`$//')
+GQ2=$(grep -o '`CYRIUS_COVERAGE=1 needs CYRIUS_COVERAGE_FILE=<path> …`' "$T/g.sec" | head -1 | sed 's/^`//; s/ …`$//')
+GQ3=$(grep -o '`ignoring CYRIUS_COVERAGE_FILE: its value is longer than 255 bytes`' "$T/g.sec" | head -1 | tr -d '`')
+cc g2a s.cyr CYRIUS_COVERAGE=2 CYRIUS_COVERAGE_FILE="$F"
+if [ -n "$GQ1" ] && [ "$RC" = 1 ] && grep '^error' "$T/g2a.err" | grep -qF -- "$GQ1 2"; then ok "G2a the guide's '$GQ1 <v>' is the compiler's refusal"
+else bad "G2a the guide quotes '${GQ1:-(not found in the guide)} <v>'; CYRIUS_COVERAGE=2 gives rc $RC: $(head -1 "$T/g2a.err")"; fi
+cc g2b s.cyr CYRIUS_COVERAGE=1
+if [ -n "$GQ2" ] && [ "$RC" = 1 ] && grep '^error' "$T/g2b.err" | grep -qF -- "$GQ2"; then ok "G2b the guide's '$GQ2 …' is the compiler's refusal"
+else bad "G2b the guide quotes '${GQ2:-(not found in the guide)} …'; no CYRIUS_COVERAGE_FILE gives rc $RC: $(head -1 "$T/g2b.err")"; fi
+cc g2c s.cyr CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$L256"
+if [ -n "$GQ3" ] && [ "$RC" = 1 ] && grep '^warning' "$T/g2c.err" | grep -qF -- "$GQ3"; then ok "G2c the guide's '$GQ3' is the compiler's warning"
+else bad "G2c the guide quotes '${GQ3:-(not found in the guide)}'; a ${#L256} B CYRIUS_COVERAGE_FILE gives rc $RC: $(head -1 "$T/g2c.err")"; fi
+# G3 — the reserved dump fns the guide names are exactly the ones the compiler appends
+grep -o 'fn __cyrius_cov_[a-z_]*' src/frontend/parse_cov.cyr | sed 's/^fn //' | LC_ALL=C sort -u > "$T/g3.src"
+grep -o '`__cyrius_cov_[a-z_]*`' "$T/g.sec" | tr -d '`' | grep -vx '__cyrius_cov_' | LC_ALL=C sort -u > "$T/g3.doc"
+if [ "$(grep -c . "$T/g3.src")" -lt 4 ]; then bad "G3 found $(grep -c . "$T/g3.src") dump fns in parse_cov.cyr (floor 4) — the reader is blind"
+elif cmp -s "$T/g3.src" "$T/g3.doc"; then ok "G3 the guide names exactly the dump's fns: $(tr '\n' ' ' < "$T/g3.src")"
+else bad "G3 the compiler appends: $(tr '\n' ' ' < "$T/g3.src")— the guide names: $(tr '\n' ' ' < "$T/g3.doc")"; fi
+# G4 — the reserved prefix: a program's own `__cyrius_` fn gets no line; its `__cyrius_cov_dump`
+# is replaced by the compiler's (named by the duplicate-fn warning) and the block is still written
+printf 'fn __cyrius_mine(): i64 { return 2; }\nfn b(): i64 { return __cyrius_mine(); }\nfn __cyrius_cov_dump(h, m): i64 { return 0; }\nvar r = b();\n' > "$T/g4.cyr"
+printf '# cyrius-coverage 1\n1 <source>:2 b\n' > "$T/g4.want"
+rm -f "$T/g4.cov"
+cc g4 g4.cyr CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/g4.cov"
+got=0
+if [ "$RC" = 0 ]; then chmod +x "$T/g4.bin"; "$T/g4.bin" > /dev/null 2>&1 || got=$?; fi
+if [ "$RC" = 0 ] && [ "$got" = 2 ] && grep -q "^warning.*duplicate fn '__cyrius_cov_dump'" "$T/g4.err" && cmp -s "$T/g4.cov" "$T/g4.want"; then
+    ok "G4 a program's own __cyrius_ fn gets no line; its __cyrius_cov_dump is replaced, named by the duplicate-fn warning (exit 2, the block written)"
+else bad "G4 rc $RC, exit $got; warning: $(grep -m1 'duplicate fn' "$T/g4.err"); dump: $(tr '\n' '|' < "$T/g4.cov" 2> /dev/null)"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL $G: $fails of $rows row(s) red"; exit 1; fi
-echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural); every fn shape (#inline replays, closures, generics, methods, async bodies, #naked as not instrumented, no __cyrius_ record, defer, tail calls, the top-level micro-frame)"
+echo "PASS $G: $rows rows — CYRIUS_COVERAGE 1 / 0 / empty / other refused; CYRIUS_COVERAGE_FILE required (255 B edge); the predefine in the entry and an include; kernel / EFI / shared / object refused; no source spelling; flag-table headroom; mode off byte-identical; the per-fn counters, the map and the exit dump exact on x86 (every codegen mode), aarch64, the native fork, PE (main.cyr and main_win) and cx; every exit route (the constant-numbered exit syscalls per target, panic, the bounds checker, fork, threads; #naked / runtime-variable residuals; agnos and Darwin structural); every fn shape (#inline replays, closures, generics, methods, async bodies, #naked as not instrumented, no __cyrius_ record, defer, tail calls, the top-level micro-frame); the guide's example, quoted texts and reserved names held to the compiler"
 exit 0
