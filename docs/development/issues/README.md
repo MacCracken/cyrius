@@ -376,9 +376,18 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
 - [agnos — `CYRIUS_DCE=1` cannot shrink a `kernel;` image: compaction miscompiles through 6.6.19 and is declined from 6.6.20 on](2026-10-10-agnos-kernel-dce-compaction-moves-data.md)
 
-**Unplaced** (1)
+**Unplaced** (10)
 
+- [agnos: a negative fd is taken for a tagged socket — `sys_write(-1, …)` sends on socket slot 7's connection, and `sys_close(-1)` returns 0 after freeing slot 7](2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md)
+- [`cyrfmt --check` exits 0 on a file that `cyrfmt` itself reformats (a call's continuation-line indent)](2026-10-12-cyrfmt-check-passes-a-file-cyrfmt-would-reformat.md)
+- [`CYRIUS_DCE=1` keeps the callees of a redefined function's losing body alive](2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md)
+- [`cyrius deps` keeps a stdlib leaf removed from `[deps].stdlib` vendored and locked, and nothing reports it](2026-10-12-deps-keeps-a-removed-stdlib-leaf-vendored-and-locked.md)
+- [After a `[deps.NAME]` tag changes, `cyrius.lock` keeps the old tag's `commit` row beside the new one, and `deps --locked` accepts it](2026-10-12-deps-keeps-a-stale-commit-row-after-a-tag-change.md)
+- [`cyrius distlib` records a named dep's transitive stdlib leaf as the bundle's own: a pure module's sidecar gets `boxed`](2026-10-12-distlib-records-a-named-deps-transitive-leaf-as-the-bundles-own.md)
+- [A generic instantiated at `f64` and at a struct named `i` share one instance (`gen$i`) — the second call runs the first's body — OPEN (a decision)](2026-10-12-generic-f64-instance-name-collides-with-struct-i.md)
 - [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
+- [The stdlib builds an `epoll_event` per arch (`epoll_event_new`) but offers nothing to read one back, so consumers hand-gate the data offset](2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md)
+- [`lib/syscalls_linux_common.cyr`'s `sys_ioctl` comment says ELF aarch64 has no 16 → 29 row; the backend has had one since v6.5.38](2026-10-12-sys-ioctl-comment-says-aarch64-has-no-16-to-29-row.md)
 
 ## Recommended security floor
 
