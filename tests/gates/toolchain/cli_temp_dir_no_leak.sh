@@ -50,6 +50,9 @@
 #     (unlink every entry, then rmdir) -> axis 4 RED (the planted file is gone); axes 2
 #     and 3 stay green, which is the point: axis 4 is the only one that sees it.
 #   * real tree, unmutated -> all axes GREEN.
+#   * (6.7.10) `_dep_wt_run` keeping its stderr capture for the process's life again (the pre-fix
+#     `_dep_wt_err` CLI) -> axis 6 RED on all three git rows (1 directory left each, holding wt_err);
+#     its anti-vacuous rows stay GREEN (the queries ran).
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -311,6 +314,52 @@ check "  ⭐ ANTI-VACUOUS: an exit AFTER the child block is flagged" 1 \
     "$(grep -c 'fn=after_the_child PARENT' "$T/ax5/out" || true)"
 check "  ⭐ ANTI-VACUOUS: a fork-free exit is flagged" 1 \
     "$(grep -c 'fn=no_fork_at_all PARENT' "$T/ax5/out" || true)"
+
+# ── AXIS 6 — THE GIT QUERIES (6.7.10). `_dep_wt_run` (cbt/deps.cyr) captured git's stderr in
+# `<tmp>/wt_err` and kept it for the process's life, so the rmdir at exit failed and every local-mode
+# resolve (the checkout's state line, `check-ignore`) and `cyrius update`'s newer-tags listing left its
+# temp dir behind holding it — 17 of them after one check.sh run. Anti-vacuous: each row must show it
+# ran the git query — the `local:` line naming the checkout's state; `update` naming the newest tag,
+# then quoting git's own error once the origin is gone (the quote now comes from `_dep_wt_why`).
+echo "axis 6 — the git queries (a --local build, update) leave no temp directory:"
+if ! command -v git > /dev/null 2>&1; then
+    echo "  SKIP (named): axis 6 — git is not installed; the git-query rows did not run"
+else
+    G6="$T/g6"
+    mkdir -p "$G6/o/sib/dist" "$G6/ws"
+    # a versioned throwaway home: `cyrius update` finds its stdlib only at versions/<v>/lib
+    V6=$(tr -d '[:space:]' < "$ROOT/VERSION")
+    H6="$G6/home"
+    mkdir -p "$H6/versions/$V6/bin" "$H6/deps" && cp "$ROOT/build/cycc" "$H6/versions/$V6/bin/cycc" \
+        && cp -r "$ROOT/lib" "$H6/versions/$V6/lib" && printf '%s\n' "$V6" > "$H6/current"
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$G6/gitconfig" GIT_ALLOW_PROTOCOL=file
+    printf '[user]\n\tname = gate\n\temail = gate@example.invalid\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' > "$G6/gitconfig"
+    printf 'fn sib_v(): i64 { return 1; }\n' > "$G6/o/sib/dist/sib.cyr"
+    ( cd "$G6/o/sib" && git init -q . && git add -A && git commit -qm v1 && git tag v1.0.0 ) > /dev/null 2>&1
+    git clone -q "$G6/o/sib" "$G6/ws/sib" > /dev/null 2>&1
+    printf 'fn sib_v(): i64 { return 2; }\n' > "$G6/ws/sib/dist/sib.cyr"
+    P6="$G6/ws/app"
+    mkdir -p "$P6/src"
+    printf '[package]\nname = "app"\nversion = "0.1.0"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/app"\n\n[deps]\nstdlib = ["syscalls"]\n\n[deps.sib]\ngit = "file://%s/o/sib"\ntag = "v1.0.0"\npath = "../sib"\nmodules = ["dist/sib.cyr"]\n' "$G6" > "$P6/cyrius.cyml"
+    printf 'build/\n' > "$P6/.gitignore"
+    printf 'fn main(): i64 { return sib_v(); }\nvar r = main();\nsyscall(SYS_EXIT, r);\n' > "$P6/src/main.cyr"
+    ( cd "$P6" && export HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 && run_cli "$T/p6a" build --local > "$T/o6a" 2>&1 ) || true
+    check "a --local build ran its git queries (the checkout's state line)" yes \
+        "$(grep -q '^local: sib <- ../sib @[0-9a-f]*, at v1.0.0, dirty' "$T/o6a" && echo yes || echo no)"
+    check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p6a")"
+    sweep_for "$T/p6a"
+    ( cd "$P6" && export HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 && run_cli "$T/p6b" update > "$T/o6b" 2>&1 ) || true
+    check "update listed the origin's tags through git" yes \
+        "$(grep -q 'sib: v1.0.0 pinned; it is the newest version tag' "$T/o6b" && echo yes || echo no)"
+    check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p6b")"
+    sweep_for "$T/p6b"
+    mv "$G6/o/sib" "$G6/o/gone"
+    ( cd "$P6" && export HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 && run_cli "$T/p6c" update > "$T/o6c" 2>&1 ) || true
+    check "update on a gone origin quotes git's own error" yes \
+        "$(grep -q "sib: v1.0.0 pinned; the remote's tags could not be listed (fatal: " "$T/o6c" && echo yes || echo no)"
+    check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p6c")"
+    sweep_for "$T/p6c"
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then
