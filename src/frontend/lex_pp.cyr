@@ -2805,17 +2805,19 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                         # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
                         # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
                         # storing a garbage Str → a Str field round-tripped to `"�"` (the
-                        # working serialize half masked it). A Str field is an 8-byte Str
-                        # ptr, so store `v` as-is (same borrow semantics the int path's
-                        # str_to_int(v) already relies on). NOTE: the issue's speculated
+                        # working serialize half masked it). NOTE: the issue's speculated
                         # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
                         # this pairs-based parser doesn't produce — v_is_str(v) would read
                         # a JTAG from a Str header and always fail, leaving the field 0 →
                         # a NULL Str crashes re-serialize.
                         # See issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+                        # 6.7.10 (the user's decision): `v` holds the value's source bytes with its
+                        # escapes as written, so storing `v` itself (6.3.24..6.7.9, a borrow) kept
+                        # `\"` / `\n` / `\u0001` raw; the field is now a FRESH Str of the unescaped
+                        # bytes (str_json_unescape, as the scanner). CHANGELOG [6.7.10]
                         op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                         op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                        op = op + PP_EMIT_STR(out, op, ", v); }\n");
+                        op = op + PP_EMIT_STR(out, op, ", str_json_unescape(str_data(v), str_len(v))); }\n");
                     } else { if (fj_prim > 0) {
                             op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
                             op = op + PP_EMIT_INT(out, op, fj_prim);
@@ -3006,48 +3008,14 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             } else { if (fjf > 0) {
                     op = PP_DFLT_SCAN(out, op, fjf, load64(S + 0x200000 + fi * 8));
                 } else { if (fjs == 1) {
-                        # String value: read until closing quote
-                        # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan
-                        # `while (load8 != 34)` stopped at the FIRST quote — even an escaped \" —
-                        # truncating the value and leaving escapes literal. Now: walk escape-aware
-                        # to the real closing quote, un-escaping \n \t \r and \<c> → <c> (covers
-                        # \" \\ \/), building the Str via str_builder_add_byte. Fi-suffixed temps so
-                        # multiple Str fields don't redeclare. Fixes ALL #derive Str decode.
-                        op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1;\nvar _sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = str_builder_new();\nwhile (load8(json + _p) != 34 && load8(json + _p) != 0) {\nvar _sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 92) {\n_p = _p + 1;\nvar _esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " != 0) {\nif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 110) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 10); }\nelif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 116) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 9); }\nelif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 114) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 13); }\nelse { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", _esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, "); }\n_p = _p + 1;\n}\n} else {\nstr_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", _sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ");\n_p = _p + 1;\n}\n}\nstore64(ptr + ");
-                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                        op = op + PP_EMIT_STR(out, op, ", str_builder_build(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, "));\nif (load8(json + _p) == 34) { _p = _p + 1; }\n}\n");
+                        # A quoted value, walked escape-aware to its real closing quote (v6.4.x R3,
+                        # BUG-3: the first `"` ended it, even a `\"`), decoded into a FRESH Str
+                        # through lib/str.cyr's str_json_unescape — every RFC 8259 escape, `\uHHHH`
+                        # as UTF-8 (6.7.10, the user's decision: through 6.7.9 only `\n \t \r` were
+                        # decoded and any other escape kept its letter, so `\u0001\b` read
+                        # `u0001b`). Any other value leaves the field 0, as before. CHANGELOG [6.7.10]
+                        op = PP_DQSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8), "str_json_unescape");
+                        op = op + PP_EMIT_STR(out, op, "\n");
                     } else { if (fjp > 0) {
                             # Primitive integer: parse decimal + width-correct store.
                             op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");

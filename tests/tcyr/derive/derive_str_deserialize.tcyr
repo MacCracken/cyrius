@@ -13,6 +13,13 @@
 # this test guards BOTH paths so they can't diverge again.
 #
 # Closes issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+#
+# 6.7.10 (B7-4b, the user's decision 2026-10-12) — both decoders UNESCAPE a Str field (lib/str.cyr
+# str_json_unescape: every RFC 8259 escape, `\uHHHH` as UTF-8, a surrogate pair one 4-byte code
+# point, a lone surrogate U+FFFD), and the pairs form returns a FRESH copy, not a borrow of the parsed
+# text. Through 6.7.9 the scanner decoded only `\n \t \r` (`\u0001\b` read `u0001b`) and the pairs
+# form kept every escape raw (`\\u0001\\b\\\"`). The rows below each run both ways; a Str keeps a
+# decoded U+0000 (its length counts it).
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -28,6 +35,48 @@ include "lib/assert.cyr"
 
 #derive(Serialize)
 struct Meta { title: Str; artist: Str; }
+
+# A Str between two other fields: the scan resumes right after an escaped value.
+#derive(Serialize)
+struct R { n; s: Str; m; }
+
+fn r_json(p) {
+    var sb = str_builder_new();
+    R_to_json(p, sb);
+    return str_builder_build(sb);
+}
+# A decoded R: `s` is the `len` bytes at `b`, n / m as given.
+fn chk_r(r, b, len, n, m, tag): i64 {
+    assert_eq(load64(r), n, tag);
+    assert_eq(load64(r + 16), m, tag);
+    var v = load64(r + 8);
+    assert_nonnull(v, tag);
+    if (v != 0) {
+        assert_eq(str_len(v), len, tag);
+        assert_eq(memeq(str_data(v), b, len), 1, tag);
+        assert_eq(load8(str_data(v) + len), 0, tag);
+    }
+    return 0;
+}
+# The document `js` decoded both ways.
+fn dec_r(js, b, len, n, m, tag): i64 {
+    chk_r(R_from_json_str(str_data(js)), b, len, n, m, tag);
+    chk_r(R_from_json(bayan_json_parse(js)), b, len, n, m, tag);
+    return 0;
+}
+# The `len` bytes at `b` written and decoded both ways, and written again identically.
+fn round_r(b, len, want, tag): i64 {
+    var r = alloc(24);
+    store64(r, 5);
+    store64(r + 8, str_new(b, len));
+    store64(r + 16, 6);
+    var js = r_json(r);
+    if (want != 0) { assert_eq(str_eq_cstr(js, want), 1, tag); }
+    dec_r(js, b, len, 5, 6, tag);
+    assert_eq(str_eq(r_json(R_from_json_str(str_data(js))), js), 1, tag);
+    assert_eq(str_eq(r_json(R_from_json(bayan_json_parse(js))), js), 1, tag);
+    return 0;
+}
 
 fn main(): i64 {
     alloc_init();
@@ -51,6 +100,31 @@ fn main(): i64 {
     Meta_to_json(rec, sb2);
     var js2 = str_builder_build(sb2);
     assert_eq(str_eq(js, js2), 1, "Meta roundtrip (to_json → from_json → to_json) is stable");
+
+    # --- 6.7.10: the escapes survive both decoders ---
+    var b6[4];
+    store8(&b6, 1); store8(&b6 + 1, 8); store8(&b6 + 2, 34);
+    round_r(&b6, 3, "{\"n\":5,\"s\":\"\\u0001\\b\\\"\",\"m\":6}", "\\u0001 \\b \\\" (the filed shape)");
+    var be[16];
+    store8(&be, 34); store8(&be + 1, 92); store8(&be + 2, 47); store8(&be + 3, 8); store8(&be + 4, 12);
+    store8(&be + 5, 10); store8(&be + 6, 13); store8(&be + 7, 9); store8(&be + 8, 0); store8(&be + 9, 31);
+    store8(&be + 10, 0xC3); store8(&be + 11, 0xA9); store8(&be + 12, 122);
+    round_r(&be, 13, "{\"n\":5,\"s\":\"\\\"\\\\/\\b\\f\\n\\r\\t\\u0000\\u001f\xC3\xA9z\",\"m\":6}",
+      "every escape, a U+0000 kept, UTF-8");
+    round_r("", 0, "{\"n\":5,\"s\":\"\",\"m\":6}", "the empty Str");
+    var bu[16];
+    store8(&bu, 47); store8(&bu + 1, 0xC3); store8(&bu + 2, 0xA9); store8(&bu + 3, 0xF0); store8(&bu + 4, 0x9F);
+    store8(&bu + 5, 0x98); store8(&bu + 6, 0x80); store8(&bu + 7, 0xEF); store8(&bu + 8, 0xBF); store8(&bu + 9, 0xBD);
+    store8(&bu + 10, 113);
+    dec_r(str_from("{\"n\":1,\"s\":\"\\/\\u00E9\\ud83d\\ude00\\udc00\\q\",\"m\":2}"), &bu, 11, 1, 2,
+      "hand-written: \\/ \\u00E9, a surrogate pair, a lone low surrogate, \\q");
+
+    # --- the pairs form returns a FRESH copy: changing the parsed text after it leaves the field ---
+    var src = alloc(32);
+    memcpy(src, "{\"n\":1,\"s\":\"abc\",\"m\":2}", 24);
+    var pr = R_from_json(bayan_json_parse(str_new(src, 23)));
+    store8(src + 12, 88);
+    chk_r(pr, "abc", 3, 1, 2, "pairs: a fresh copy, not a borrow");
 
     return assert_summary();
 }

@@ -19,6 +19,13 @@
 #      the fields after it decoded, missing keys, each decode a fresh copy, #derive(Deserialize)
 #      alone) — every leg the x86 run's total (floor 167; its checks run per decoder in helper fns,
 #      so the RUN total is the count)
+#   S  (B7-4b, the user's decision 2026-10-12) a `Str` field decodes through the same unescape, in BOTH
+#      decoders, and the pairs form gives a fresh copy: S1 a Str holding the bytes 01 08 22 is written
+#      {"s":"\u0001\b\"","n":7} and the scanner and the pairs form each decode it back so that it is
+#      written the same again (through 6.7.9 they wrote {"s":"u0001b\"","n":7} and
+#      {"s":"\\u0001\\b\\\"","n":7}); S2 tests/tcyr/derive/derive_str_deserialize.tcyr (every escape,
+#      a U+0000 kept, UTF-8, a surrogate pair, the fresh copy) — both on the legs above, S2 every leg
+#      the x86 run's total (floor 68)
 # No cx leg: the cx compiler's code buffer overflows on lib/bayan.cyr (a filed cx issue), which
 # every Serialize codec includes.
 #
@@ -34,6 +41,11 @@
 #   M29 the encoder passes `t`, not `&t`                           -> RED 12: R x6 and T x6 (SIGSEGV: the
 #                                                                 cell's first word read as a Str header)
 #   M30 the scanner's `null` arm dropped (null copied as its text)   -> RED 6: T x6 (9 checks)
+# B7-4b (the same method):
+#   M31 the scanner's Str arm back to its 6.7.9 decode (`\n \t \r` only) -> RED 12: S1 x6 (scanned
+#                                                                 {"s":"u0001b\"","n":7}) and S2 x6 (11 checks)
+#   M32 the pairs form's Str arm back to the borrow (`v` stored)       -> RED 12: S1 x6 (paired
+#                                                                 {"s":"\\u0001\\b\\\"","n":7}) and S2 x6 (14 checks)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -147,6 +159,63 @@ for leg in $LEGS; do
     else ok "T $leg: $LAST"; fi
 done
 
+echo "S. a Str field's escapes survive both decoders (B7-4b)"
+cat > "$D/s6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+
+#derive(Serialize)
+struct R { s: Str; n; }
+
+fn show(r) {
+    var sb = str_builder_new();
+    R_to_json(r, sb);
+    var o = str_builder_build(sb);
+    syscall(SYS_WRITE, 1, str_data(o), str_len(o));
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return o;
+}
+alloc_init();
+var b = alloc(4);
+store8(b, 1); store8(b + 1, 8); store8(b + 2, 34);
+var r = alloc(16);
+store64(r, str_new(b, 3));
+store64(r + 8, 7);
+var j = show(r);
+show(R_from_json_str(str_data(j)));
+show(R_from_json(bayan_json_parse(j)));
+syscall(SYS_EXIT, 0);
+EOF
+SW='{"s":"\u0001\b\"","n":7}'
+SWANT=$(printf '%s\n%s\n%s' "$SW" "$SW" "$SW")
+for leg in $LEGS; do
+    n=$(printf 's_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/s6.cyr" "$D/$n"
+    if [ "$RC" -eq -1 ]; then bad "S1 $leg: refused: $(grep '^error\|undefined' "$D/$n.err" | head -1)"
+    elif [ "$RC" -ne 0 ] || [ "$OUT" != "$SWANT" ]; then bad "S1 $leg: exit $RC, printed '$(printf '%s' "$OUT" | tr '\n' '|')' (want $SW three times)"
+    else ok "S1 $leg: $SW, written, scanned, paired"; fi
+done
+SC=tests/tcyr/derive/derive_str_deserialize.tcyr
+SFLOOR=68
+ST=""
+for leg in $LEGS; do
+    n=$(printf 's2_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$SC" "$D/$n"
+    t=$(printf '%s' "$LAST" | sed -n 's/^\([0-9][0-9]*\) passed, 0 failed (\1 total)$/\1/p')
+    [ -z "$ST" ] && [ -n "$t" ] && [ "$leg" = x86 ] && ST=$t
+    if [ "$RC" -eq -1 ]; then bad "S2 $leg: $SC did not build: $(grep '^error\|undefined' "$D/$n.err" | head -1)"
+    elif [ "$RC" -ne 0 ] || [ -z "$t" ]; then bad "S2 $leg: exit $RC, '$LAST' $(grep -m3 'FAIL' "$D/$n.out" | tr '\n' ' ')"
+    elif [ "$t" -lt "$SFLOOR" ]; then bad "S2 $leg: only $t checks ran (floor $SFLOOR) — rows were lost"
+    elif [ "$t" != "$ST" ]; then bad "S2 $leg: $t checks ran, x86 ran ${ST:-none}"
+    else ok "S2 $leg: $LAST"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`: cstring\` field in #derive(Serialize): the issue's repro (R) and the codec rows (T) on x86_64 / IR / DCE / aarch64 / PE"
+echo "PASS: $G — a \`: cstring\` field in #derive(Serialize): the issue's repro (R) and the codec rows (T), and a Str field's escapes in both decoders (S), on x86_64 / IR / DCE / aarch64 / PE"

@@ -280,6 +280,17 @@ fn str_json_unescape_cstr(p, n): i64 {
     return d;
 }
 
+# 6.7.10 — str_json_unescape_cstr's decode as a FRESH Str: its length is the decoded length, so a
+# decoded U+0000 stays in it (the buffer is NUL-terminated after it too). 0 when an allocation is
+# refused. `#derive(Serialize)` decodes a `Str` field through it. CHANGELOG [6.7.10]
+fn str_json_unescape(p, n): Str {
+    var d = alloc(n + 1);
+    if (d == 0) { return 0; }
+    var dn = _str_json_unesc_into(d, p, n);
+    store8(d + dn, 0);
+    return str_new(d, dn);
+}
+
 # Compare two Strs
 fn str_eq(a: Str, b: Str): i64 {
     var la = load64(a + 8);
