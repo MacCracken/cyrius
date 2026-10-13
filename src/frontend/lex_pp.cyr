@@ -2510,6 +2510,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         var _vek = _pp_vec_elem(S, S + 0x1FE000 + _vqi * 32);
         if (_vek == 200) { _needf = 1; }
         if (_vek == 300) { _needsk = 1; }
+        if (PP_DFIELD_CSTR(S, _vqi) == 1) { _needsk = 1; }   # 6.7.10: a cstring's scan
         if (_vek >= 8) { if (_vek <= 64) { _needi = 1; } }
         # v6.4.x R3 — Vec<Str> (kind 201) is the only remaining unsupported element (R2
         # added int/f64; R3 added Vec<#derive-struct> = kind 300). Reject it up front with
@@ -2720,6 +2721,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, ");\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             # Nested struct: use composable 2-arg form.
                             # v5.9.31: matched the renamed top-level fn
@@ -2821,6 +2824,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
                             op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
@@ -3055,6 +3060,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, ", _iv);\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             # Nested struct: skip value (fall through to json_get path)
                             # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
@@ -3307,6 +3314,58 @@ fn PP_DBOOL_SCAN(out, op, off): i64 {
     op = op + PP_EMIT_STR(out, op, ", 1); _p = _p + 4; } else { store64(ptr + ");
     op = op + PP_EMIT_INT(out, op, off);
     op = op + PP_EMIT_STR(out, op, ", 0); while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
+    return op;
+}
+# 6.7.10 (B7-4) — a `: cstring` field (its type-name cell holds "cstring\0" — one load64; a
+# cstring is no builtin scalar to `_tn_scalar`, so without this arm it fell to the nested-struct
+# one: `undefined function 'cstring_to_json'`). The wire shape is the user's (2026-10-12; sigil's
+# hand-rolled one): a NULL pointer is JSON `null`, any other an escaped JSON string; decoding gives
+# NULL for `null` and otherwise a FRESH NUL-terminated copy (lib/str.cyr's
+# str_json_unescape_cstr: a JSON string unescaped, any other value its text; a decoded U+0000
+# ends it). A missing key leaves the field as every other field type does. CHANGELOG [6.7.10]
+fn PP_DFIELD_CSTR(S, fi): i64 {
+    if (load64(S + 0x1FE000 + fi * 32) == 0x00676E6972747363) { return 1; }
+    return 0;
+}
+fn PP_DCSTR_SER(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "str_builder_add_json_cstr(sb, load64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, "));\n");
+    return op;
+}
+# The pairs form: `v` is bayan's Str over the value's source bytes, a quoted value WITHOUT its
+# quotes — so `null` and `"null"` are both the four bytes `null` there, told apart by the byte
+# before them (a quoted value's is its opening `"`, a bare one's the `:` or whitespace). The peek
+# is made only for a 4-byte `null` text.
+fn PP_DCSTR_PAIRS(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (v != 0) { if (str_eq_cstr(v, \"null\") == 1 && load8(str_data(v) - 1) != 34) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 0); } else { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", str_json_unescape_cstr(str_data(v), str_len(v))); } }\n");
+    return op;
+}
+# The scanner at a quoted value: `_p` past its closing `"` (escape-aware: a `\"` does not end it),
+# the field `store64(ptr + off, <fname>(json + _vs, <its body's length>))`.
+fn PP_DQSTR_SCAN(out, op, off, fname): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1; _vs = _p; while (load8(json + _p) != 34 && load8(json + _p) != 0) { if (load8(json + _p) == 92 && load8(json + _p + 1) != 0) { _p = _p + 1; } _p = _p + 1; } store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", ");
+    op = op + PP_EMIT_STR(out, op, fname);
+    op = op + PP_EMIT_STR(out, op, "(json + _vs, _p - _vs)); if (load8(json + _p) == 34) { _p = _p + 1; } }");
+    return op;
+}
+# Any other value is walked with the shared `_cy_json_skipval` (string- and depth-aware: an object
+# or array value does not end at its first inner `,` / `}`) and its trailing whitespace trimmed
+# (`_iv`, the scanner's integer scratch, holds its end): a bare `null` is NULL, anything else a
+# copy of its text, an empty value leaves the field NULL.
+fn PP_DCSTR_SCAN(out, op, off): i64 {
+    op = PP_DQSTR_SCAN(out, op, off, "str_json_unescape_cstr");
+    op = op + PP_EMIT_STR(out, op, " else { _vs = _p; _p = _cy_json_skipval(json, _p); _iv = _p; while (_iv > _vs && load8(json + _iv - 1) <= 32) { _iv = _iv - 1; } if (_iv - _vs == 4 && memeq(json + _vs, \"null\", 4) == 1) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 0); } elif (_iv > _vs) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", str_json_unescape_cstr(json + _vs, _iv - _vs)); } }\n");
     return op;
 }
 fn PP_DGETTER_EXPR(out, op, fbits, off, zx): i64 {

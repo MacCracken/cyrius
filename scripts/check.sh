@@ -2447,6 +2447,10 @@ _chk_gate "$ROOT/tests/gates/codegen/small_struct_handle_line.sh"
 # redefinition warnings, the dyn / top-level refusals that follow the size, the derive's layout,
 # x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/narrow_fields_checked.sh"
+# 6.7.10 (B7-4) — `#derive(Serialize)` takes a `: cstring` field (NULL <-> null, a fresh unescaped
+# copy on decode): the issue's repro verbatim and 167 codec checks, x86 / IR / DCE / aarch64 / PE.
+# Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/derive_cstring_field.sh"
 _chk_gate "$ROOT/tests/gates/codegen/by_value_arg_copy.sh"   # 6.7.7 (call arguments)
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"

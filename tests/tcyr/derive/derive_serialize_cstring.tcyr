@@ -1,0 +1,212 @@
+# derive_serialize_cstring.tcyr — 6.7.10 (B7-4): `#derive(Serialize)` on `: cstring` fields.
+#
+# Through 6.7.9 a `: cstring` field fell into the codecs' nested-struct arm and the build was refused
+# (`undefined function 'cstring_to_json'`); sigil hand-rolls its codecs for exactly that. The wire
+# shape is the user's (2026-10-12; sigil's own `agnosys_json_emit_cstr_or_null`):
+#   - encode: a NULL pointer is JSON `null`; any other an escaped JSON string (lib/str.cyr's
+#     str_builder_add_json_cstr — the `Str` field escaper: `" \` and U+0000..U+001F escaped,
+#     every other byte verbatim);
+#   - decode: `null` is NULL; any other value a FRESH NUL-terminated copy (str_json_unescape_cstr:
+#     a JSON string unescaped — `\" \\ \/ \b \f \n \r \t \uHHHH`, UTF-8 out, a surrogate pair one
+#     4-byte code point, a lone surrogate U+FFFD — any other value its text); a decoded U+0000
+#     ends the C string; a missing key leaves the field as every other field type does.
+# Each row goes through `_to_json`, `_from_json_str` (the scanner) and `_from_json(bayan_json_parse(..))`
+# (the pairs form), which tells a quoted "null" from a bare null by the byte before bayan's value.
+# The cross legs (aarch64, PE; not cx — its codebuf overflows on lib/bayan.cyr) and the IR / DCE
+# modes are tests/gates/frontend/derive_cstring_field.sh.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct C { name: cstring; bits: i64; note: cstring; }
+
+# A cstring alone, Deserialize-only.
+#derive(Deserialize)
+struct D1 { s: cstring; }
+
+fn json_of(p) {
+    var sb = str_builder_new();
+    C_to_json(p, sb);
+    return str_builder_build(sb);
+}
+fn same(s, lit): i64 {
+    var n = strlen(lit);
+    if (str_len(s) != n) { return 0; }
+    return memeq(str_data(s), lit, n);
+}
+# A NUL-terminated copy of the `n` bytes at `b`.
+fn bytes(b, n) {
+    var p = alloc(n + 1);
+    memcpy(p, b, n);
+    store8(p + n, 0);
+    return p;
+}
+# 1 when `a` is a non-NULL C string equal to `b`.
+fn cs_is(a, b): i64 {
+    if (a == 0) { return 0; }
+    return streq(a, b);
+}
+fn by_scan(s) { return C_from_json_str(str_data(s)); }
+fn by_pairs(s) { return C_from_json(bayan_json_parse(s)); }
+
+# One decoded copy of the document `js` written from `c`: every field back, each cstring a fresh
+# copy, and it writes the same document again.
+fn chk_rt(r: *C, c: *C, js, tag): i64 {
+    assert_nonnull(r, tag);
+    if (c.name == 0) { assert_eq(r.name, 0, tag); }
+    else { assert_eq(cs_is(r.name, c.name), 1, tag); assert_neq(r.name, c.name, tag); }
+    assert_eq(r.bits, c.bits, tag);
+    if (c.note == 0) { assert_eq(r.note, 0, tag); }
+    else { assert_eq(cs_is(r.note, c.note), 1, tag); assert_neq(r.note, c.note, tag); }
+    assert_eq(str_eq(json_of(r), js), 1, tag);
+    return 0;
+}
+# `c` written as exactly `want`, then decoded both ways.
+fn round(c: *C, want, tag): i64 {
+    var js = json_of(c);
+    assert_eq(same(js, want), 1, tag);
+    chk_rt(by_scan(js), c, js, tag);
+    chk_rt(by_pairs(js), c, js, tag);
+    return 0;
+}
+
+# A decoded hand-written document: name / bits / note as expected (`wn` / `wt` 0 = NULL).
+fn chk_dec(r: *C, wn, wb, wt, tag): i64 {
+    assert_nonnull(r, tag);
+    if (wn == 0) { assert_eq(r.name, 0, tag); } else { assert_eq(cs_is(r.name, wn), 1, tag); }
+    assert_eq(r.bits, wb, tag);
+    if (wt == 0) { assert_eq(r.note, 0, tag); } else { assert_eq(cs_is(r.note, wt), 1, tag); }
+    return 0;
+}
+fn dec(doc, wn, wb, wt, tag): i64 {
+    var js = str_from(doc);
+    chk_dec(by_scan(js), wn, wb, wt, tag);
+    chk_dec(by_pairs(js), wn, wb, wt, tag);
+    return 0;
+}
+
+# As dec, the name compared as the `n` bytes at `b` (and its NUL).
+fn chk_bytes(r: *C, b, n, tag): i64 {
+    assert_nonnull(r.name, tag);
+    if (r.name != 0) {
+        assert_eq(strlen(r.name), n, tag);
+        assert_eq(memeq(r.name, b, n), 1, tag);
+    }
+    return 0;
+}
+fn dec_bytes(doc, b, n, tag): i64 {
+    var js = str_from(doc);
+    chk_bytes(by_scan(js), b, n, tag);
+    chk_bytes(by_pairs(js), b, n, tag);
+    return 0;
+}
+fn name_of(r: *C) { return r.name; }
+fn s_of(d: *D1) { return d.s; }
+
+fn main(): i64 {
+    alloc_init();
+
+    # --- the issue's shape, and NULL <-> null ---
+    var c = C { "example.org", 256, 0 };
+    round(&c, "{\"name\":\"example.org\",\"bits\":256,\"note\":null}", "issue shape + a NULL note");
+    var c0 = C { 0, 0 - 7, 0 };
+    round(&c0, "{\"name\":null,\"bits\":-7,\"note\":null}", "both NULL");
+
+    # --- every escape the encoder writes: " \ / \b \f \n \r \t \u0001 \u001f, UTF-8 verbatim ---
+    var eb[16];
+    store8(&eb, 34); store8(&eb + 1, 92); store8(&eb + 2, 47); store8(&eb + 3, 8);
+    store8(&eb + 4, 12); store8(&eb + 5, 10); store8(&eb + 6, 13); store8(&eb + 7, 9);
+    store8(&eb + 8, 1); store8(&eb + 9, 31); store8(&eb + 10, 0xC3); store8(&eb + 11, 0xA9);
+    var esc = bytes(&eb, 12);
+    var ce = C { esc, 1, "x\"y" };
+    round(&ce, "{\"name\":\"\\\"\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\xC3\xA9\",\"bits\":1,\"note\":\"x\\\"y\"}",
+      "every escape + UTF-8, a quote in the field after");
+    # The encoder is sigil's hand-rolled shape: str_builder_add_json_str over the same bytes.
+    var sa = str_builder_new();
+    str_builder_add_json_cstr(sa, esc);
+    var sg = str_builder_new();
+    str_builder_add_json_str(sg, str_from(esc));
+    assert_eq(str_eq(str_builder_build(sa), str_builder_build(sg)), 1, "encoder == add_json_str(str_from(c))");
+    var sn = str_builder_new();
+    str_builder_add_json_cstr(sn, 0);
+    assert_eq(same(str_builder_build(sn), "null"), 1, "encoder: NULL is null");
+
+    # --- the empty string is a string, not NULL ---
+    var cz = C { "", 2, "" };
+    round(&cz, "{\"name\":\"\",\"bits\":2,\"note\":\"\"}", "empty strings");
+
+    # --- the text null: a quoted "null" stays a string in BOTH decoders ---
+    var cn = C { "null", 3, 0 };
+    round(&cn, "{\"name\":\"null\",\"bits\":3,\"note\":null}", "\"null\" vs null");
+    dec("{\"name\":\"null\",\"bits\":4,\"note\":null}", "null", 4, 0, "hand \"null\" / null");
+    dec("{\"name\": null ,\"bits\": 5 ,\"note\": \"n\" }", 0, 5, "n", "null between spaces");
+    dec("{\"name\":\"nul\",\"bits\":6,\"note\":\"nulls\"}", "nul", 6, "nulls", "near-null texts");
+
+    # --- decoding: \/ (never written), upper / lower hex, a surrogate pair, the escapes ---
+    var u1[16];
+    store8(&u1, 97); store8(&u1 + 1, 47); store8(&u1 + 2, 98); store8(&u1 + 3, 0xC3); store8(&u1 + 4, 0xA9);
+    store8(&u1 + 5, 0xF0); store8(&u1 + 6, 0x9F); store8(&u1 + 7, 0x98); store8(&u1 + 8, 0x80);
+    store8(&u1 + 9, 0xC3); store8(&u1 + 10, 0xA9); store8(&u1 + 11, 122);
+    dec_bytes("{\"name\":\"a\\/b\\u00e9\\ud83d\\ude00\\u00E9z\",\"bits\":7}", &u1, 12,
+      "\\/ \\u00e9 \\ud83d\\ude00 (4 bytes) \\u00E9");
+    var u2[8];
+    store8(&u2, 1); store8(&u2 + 1, 8); store8(&u2 + 2, 12); store8(&u2 + 3, 10); store8(&u2 + 4, 13);
+    store8(&u2 + 5, 9); store8(&u2 + 6, 0xDF); store8(&u2 + 7, 0xBF);
+    dec_bytes("{\"name\":\"\\u0001\\b\\f\\n\\r\\t\\u07ff\"}", &u2, 8, "\\u0001 \\b \\f \\n \\r \\t \\u07ff (2 bytes)");
+    var u3[8];
+    store8(&u3, 0xE2); store8(&u3 + 1, 0x82); store8(&u3 + 2, 0xAC); store8(&u3 + 3, 0xEF); store8(&u3 + 4, 0xBF);
+    store8(&u3 + 5, 0xBD); store8(&u3 + 6, 120);
+    dec_bytes("{\"name\":\"\\u20ac\\ud800x\"}", &u3, 7, "\\u20ac (3 bytes), a lone surrogate is U+FFFD");
+    dec("{\"name\":\"\\uZZ12\\q\",\"bits\":8}", "uZZ12q", 8, 0,
+      "\\u without four hex digits, an unknown escape: the byte");
+    dec("{\"name\":\"ab\\u0000cd\",\"bits\":9}", "ab", 9, 0, "a decoded U+0000 ends the C string");
+
+    # --- any other value: a copy of its text; an object or array value is skipped whole ---
+    dec("{\"name\":42,\"bits\":10,\"note\":true}", "42", 10, "true", "bare tokens: their text");
+    dec("{\"name\": -1.5e3 ,\"bits\":11}", "-1.5e3", 11, 0, "a bare number between spaces");
+    dec("{\"name\":{\"a\":1,\"b\":[2,3]},\"bits\":12,\"note\":\"after\"}", "{\"a\":1,\"b\":[2,3]}", 12, "after",
+      "an object value: its text, the fields after it decoded");
+
+    # --- a missing key leaves the field NULL ---
+    dec("{\"bits\":13}", 0, 13, 0, "missing keys");
+
+    # --- each decode is a FRESH copy: changing the source after it leaves the field ---
+    var src = bytes("{\"name\":\"abc\",\"bits\":1}", 24);
+    var js = str_new(src, 24);
+    var n1 = name_of(C_from_json_str(src));
+    var n2 = name_of(C_from_json(bayan_json_parse(js)));
+    store8(src + 9, 88);
+    assert_eq(cs_is(n1, "abc"), 1, "scanner: a fresh copy");
+    assert_eq(cs_is(n2, "abc"), 1, "pairs: a fresh copy");
+    var own = bytes("own", 3);
+    var co = C { own, 1, 0 };
+    var n3 = name_of(by_pairs(json_of(&co)));
+    store8(own, 88);
+    assert_eq(cs_is(n3, "own"), 1, "the decoded copy is not the encoded pointer");
+
+    # --- Deserialize alone; the library helpers directly ---
+    assert_eq(cs_is(s_of(D1_from_json_str("{\"s\":\"q\\n\"}")), "q\n"), 1, "#derive(Deserialize) alone: scanner");
+    assert_eq(s_of(D1_from_json(bayan_json_parse(str_from("{\"s\":null}")))), 0,
+      "#derive(Deserialize) alone: pairs null");
+    var lz = str_json_unescape_cstr("x", 0);
+    assert_nonnull(lz, "str_json_unescape_cstr of nothing: a fresh empty string");
+    assert_eq(load8(lz), 0, "str_json_unescape_cstr of nothing: empty");
+    assert_eq(cs_is(str_json_unescape_cstr("a\\\\b\\", 5), "a\\b\\"), 1, "a trailing lone backslash is kept");
+
+    return assert_summary();
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
