@@ -5,7 +5,8 @@
 # every field lvalue — a local, a global, a top-level statement, a `*T` parameter, `self`, a chain
 # (`o.i.b`), a `*T` field hop (`a.next.v`), a `Str` hop (`h.name.len`), a slice's `.len` / `.ptr`,
 # a union, a generic instance, a closure capture, a `*T` global, a pointer-mode local — at the
-# field's width (i8 / i16 / i32 signed, as a read of it), as float arithmetic on an f64 / f32 field
+# field's width (i8 / i16 / i32 signed, u8 / u16 / u32 zero-extended, as a read of it — 6.7.10: a u8
+# field is 1 byte), as float arithmetic on an f64 / f32 field
 # and stepping sizeof(T) on a `*T` field. The field's ADDRESS is computed once, BEFORE the right-hand
 # side, as `a[i] OP= v` does; a plain `x.f = e` evaluates `e` first (row O1 against O2). `>>>=`,
 # the arithmetic shift, is the eleventh compound operator on every form, a const fn's too (A rows).
@@ -150,7 +151,7 @@ fn ops(): i64 {
 fn widths(): i64 {
     var w = W { 250, 0x7FFFFFFF, 127, 32767, 9 };
     w.a += 10;
-    assert_eq(w.a, 260, "D1: a u8 field is a word (250 + 10)");
+    assert_eq(w.a, 4, "D1: a u8 field wraps at its width (250 + 10 = 4; a word through 6.7.9)");
     w.b += 1;
     assert_eq(w.b, 0 - 2147483648, "D2: an i32 field wraps (signed)");
     w.c += 1;

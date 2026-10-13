@@ -18,7 +18,8 @@
 #   F  `i8x` (a scalar-name prefix)            -> refused by name
 #   G  two bad fields in two structs           -> BOTH reported
 #   H  control: every accepted spelling builds, with its documented width — i8..i64,
-#      u8/u16/u32/u64 and f32 (8 bytes each), f64, cstring, Result/Option/Tagged, an enum
+#      u8/u16/u32/u64 (1 / 2 / 4 / 8 since 6.7.10; 8 each before), f32 (4; 8 before), f64,
+#      cstring, Result/Option/Tagged, an enum
 #      declared above or below, a generic's own `T` (default and CYRIUS_MONOMORPH=0),
 #      Vec / Vec<i32> / Vec<P>, a struct declared above
 #   I  `s: Str` without lib/str.cyr is refused; with it, the field builds (8 bytes)
@@ -96,7 +97,7 @@ struct V { a: Vec; b: Vec<i32>; c: Vec<P>; p: P; }
 enum Late { A; B; }
 syscall(60, sizeof(Y) + sizeof(Z) + sizeof(Box) + sizeof(V));
 EOF
-exits h 167 "H: control: every accepted spelling (47 + 64 + 16 + 40: u8..u64 and f32 are 8 bytes each)"
+exits h 146 "H: control: every accepted spelling (30 + 60 + 16 + 40: u8..u32 and f32 are their widths)"
 cp "$T/h.cyr" "$T/h0.cyr"
 rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/h0.cyr" > "$T/h0.bin" 2> "$T/h0.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "H: control under CYRIUS_MONOMORPH=0: rc $rc: $(grep '^error' "$T/h0.err" | head -1)"

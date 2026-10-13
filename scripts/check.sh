@@ -2442,6 +2442,11 @@ _chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
 # filed repro, 220 rows against their 16 B twins, the compile rows, a 7 B handle ending a mapping and an
 # async body, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/small_struct_handle_line.sh"
+# 6.7.10 (B7-2) — u8 / u16 / u32 / f32 struct fields are their widths (packed): 199 rows (sizeof /
+# offsets, zero-extension and wrap, the by-value class sweep at every size 1..17 and 20), the
+# redefinition warnings, the dyn / top-level refusals that follow the size, the derive's layout,
+# x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/narrow_fields_checked.sh"
 _chk_gate "$ROOT/tests/gates/codegen/by_value_arg_copy.sh"   # 6.7.7 (call arguments)
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"

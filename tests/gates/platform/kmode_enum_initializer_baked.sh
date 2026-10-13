@@ -142,28 +142,33 @@ fi
 # what the replayed store writes (it rounds, _f32_init_round). It baked the literal's binary64 bits,
 # so a kernel read 1.5 as 0 (the low half of 0x3FF8000000000000). Rounded to nearest (0.1 is
 # 0x3DCCCCCD), negated, nested, beside an f64 field (still binary64). An integer leaf keeps its bits,
-# as the replayed store does (KI: 3, with the warning a host build gives). The high-half row applies
-# while an f32 field is 8 bytes.
+# as the replayed store does (KI: 3, with the warning a host build gives). Since B7-2 (6.7.10) an f32
+# field is 4 bytes (packed): the next field starts right after it (checks 3, 13, 15), and a u8 / u16
+# after an f32 bakes at offsets 4 / 5 (KU, checks 16-19).
 cat > "$T/rf.cyr" <<'EOF'
 kernel;
 enum RE { RA = 0x37; }
 struct KP { g: f32; n; }
 struct KM { d: f64; g: f32; n; }
 struct KO { a; p: KP; }
+struct KU { f: f32; n: u8; m: u16; }
 var KS = KP { 1.5, 7 };
 var KN = KP { -2.25, 9 };
 var KT = KP { 0.1, RA };
 var KD = KM { 1.5, 1.5, 5 };
 var KQ = KO { 3, 0.1, 4 };
 var KI = KP { 3, 6 };
+var KV = KU { 1.5, RA, 0xBEEF };
 fn ck(got, want, k): i64 { if (got != want) { syscall(60, k); } return 0; }
 ck(load32(&KS), 0x3FC00000, 1); ck(KS.n, 7, 2);
-if (sizeof(KP) == 16) { ck(load32(&KS + 4), 0, 3); }
+ck(load64(&KS + 4), 7, 3);
 ck(load32(&KN), 0xC0100000, 4); ck(KN.n, 9, 5);
 ck(load32(&KT), 0x3DCCCCCD, 6); ck(KT.n, 0x37, 7);
 ck(load64(&KD), 0x3FF8000000000000, 8); ck(load32(&KD + 8), 0x3FC00000, 9); ck(KD.n, 5, 10);
-ck(KQ.a, 3, 11); ck(load32(&KQ + 8), 0x3DCCCCCD, 12); ck(KQ.p.n, 4, 13);
-ck(load64(&KI), 3, 14); ck(KI.n, 6, 15);
+ck(KQ.a, 3, 11); ck(load32(&KQ + 8), 0x3DCCCCCD, 12); ck(load64(&KQ + 12), 4, 13);
+ck(load32(&KI), 3, 14); ck(load64(&KI + 4), 6, 15);
+ck(load32(&KV), 0x3FC00000, 16); ck(load8(&KV + 4), 0x37, 17); ck(load16(&KV + 5), 0xBEEF, 18);
+ck(sizeof(KU), 7, 19);
 syscall(60, 100);
 EOF
 rows=$((rows + 1))
@@ -171,7 +176,7 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rf.cyr" > "$T/rf.bin" 2> "$T/rf.err" && [ -
     chmod +x "$T/rf.bin"
     rc=0
     "$T/rf.bin" > /dev/null 2>&1 || rc=$?
-    [ "$rc" = 100 ] || bad "RF: the kernel program read a wrong f32 field at check $rc (1-7 an f32 field's binary32 bits; 8-10 beside an f64 field; 11-13 nested; 14-15 an integer leaf)"
+    [ "$rc" = 100 ] || bad "RF: the kernel program read a wrong f32 field at check $rc (1-7 an f32 field's binary32 bits; 8-10 beside an f64 field; 11-13 nested; 14-15 an integer leaf; 16-19 a packed { f32; u8; u16 })"
     [ "$(nwarn "$T/rf.err")" = 0 ] || bad "RF: an f32 struct literal is left to the late replay ($(nwarn "$T/rf.err") warnings, want 0)"
 else
     bad "RF: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rf.err")"
@@ -232,6 +237,12 @@ row KF '' \
     "kernel;\n$PRE""struct KG { g: f32; n; }\nvar KF1 = KG { 1.5, KE.KL };\nvar KF2 = KG { -2.25, KE.KJ };\n$ASM" \
     "kernel;\n$PRE""struct KG { g: f32; n; }\n$ASM""var KF1 = KG { 1.5, KE.KL };\nvar KF2 = KG { -2.25, KE.KJ };\n" \
     1 ' 00 00 c0 3f ' 1 ' 00 00 10 c0 ' 0 ' 00 00 00 00 00 00 f8 3f ' 0 ' 00 00 00 00 00 00 02 c0 '
+# KU (6.7.10, B7-2): a packed { f32; u8; u16 } bakes as its 7 contiguous bytes — 1.5's binary32 bits,
+# the u8, the u16 — once more than the control (through 6.7.9 each field took an 8-byte slot).
+row KU '' \
+    "kernel;\n$PRE""struct KZ { f: f32; n: u8; m: u16; }\nvar KU1 = KZ { 1.5, 0x37, 0xBEEF };\n$ASM" \
+    "kernel;\n$PRE""struct KZ { f: f32; n: u8; m: u16; }\n$ASM""var KU1 = KZ { 1.5, 0x37, 0xBEEF };\n" \
+    1 ' 00 00 c0 3f 37 ef be '
 # EFI (gnoboot's build shape: `kernel;` + CYRIUS_TARGET_EFI=1 + efi_main): baked the same way.
 row E 'CYRIUS_TARGET_EFI=1' \
     "kernel;\n$PRE""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\n$ASM""fn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
@@ -305,7 +316,7 @@ else
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
-[ "$rows" -ge 13 ] || bad "only $rows rows ran (floor 13)"
+[ "$rows" -ge 14 ] || bad "only $rows rows ran (floor 14)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: kmode_enum_initializer_baked ($fail checks failed over $rows rows)"
     exit 1

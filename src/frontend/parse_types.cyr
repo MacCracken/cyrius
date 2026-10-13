@@ -3178,8 +3178,9 @@ fn ADDFIELDFK(S, si, fnoff, k): i64 {
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
-    if (k == 0) { if (_fld_bool == 0) { return 0; } }
+    if (k == 0) { if (_fld_bool == 0) { if (_fld_uns == 0) { return 0; } } }
     if (L64(S + 0x1AC018) == top) { return 0; }
+    SFUNS(S, ent, 0);   # 6.7.10 (B7): not an unsigned narrow field (_add_narrow_field marks those)
     if (k == 3) { SFBOOL(S, ent, 1); return 0; }   # 6.7.3: a bool field (not a float kind)
     SFBOOL(S, ent, 0);
     if (k == 0) { return 0; }
@@ -3315,6 +3316,10 @@ fn AGG_NSLOTS(S, t): i64 {
 # is what lets cx answer it the same way as x86 and aarch64. Before this, cx skipped the
 # rule entirely, so two `var b: B1;` single-field locals both dereferenced their own
 # uninitialised slot and ALIASED each other (measured 2 where 43 is right).
+# 6.7.10: a local is marked only when it holds a struct VALUE of its type (the handle line,
+# `_mark_small_init`; parameters at their binding), and the size is the packed one — u8..u32 /
+# f32 fields count their own bytes, so `struct C4 { r: u8; g: u8; b: u8; a: u8; }` (4 B) is held
+# here, where through 6.7.9 it was 32 B. CHANGELOG [6.7.10]
 fn MARK_SMALL_STRUCT(S, li, t): i64 {
     if (t >= 0) { return 0; }
     if (t <= 0 - 2048) { return 0; }        # SIMD descriptor band — not a struct sid
@@ -3688,6 +3693,11 @@ fn _struct_same_layout(S, a, b): i64 {
     while (i < n) {
         if (STREQ(S, GETFNAME(S, a, i), GETFNAME(S, b, i)) == 0) { return 0; }
         if (GETFTYPE(S, a, i) != GETFTYPE(S, b, i)) { return 0; }
+        # 6.7.10 (B7): i8 / u8 and i32 / u32 / f32 share a width — the kind tells them apart.
+        if (GETFTYPE(S, a, i) < 0) {
+            if (GFUNS(S, a, i) != GFUNS(S, b, i)) { return 0; }
+            if (GFFK(S, a, i) != GFFK(S, b, i)) { return 0; }
+        }
         i = i + 1;
     }
     return 1;
@@ -3730,13 +3740,13 @@ fn _skip_refused_body(S): i64 {
 # a struct declared BELOW its use gave its user a different layout than the same text declared
 # above (sizeof(A) = 16 vs 24 for `struct A { b: B; x; }`, and `a.b` loaded 8 bytes with no
 # diagnostic), and `f64` / `f32` — never in the ladder — lost their float type.
-# A field type is now one of: a struct or union declared ABOVE it; i8/i16/i32/i64 (their
-# widths); u8/u16/u32/u64, cstring, Result/Option/Tagged or an enum (8 bytes); f64 / f32
-# (8 bytes, typed — see SFFK); Vec<T> or a bare Vec; or a type parameter of the struct being
+# A field type is now one of: a struct or union declared ABOVE it; i8/i16/i32/i64 and
+# u8/u16/u32/u64 (their widths); cstring, Result/Option/Tagged or an enum (8 bytes); f64 (8 bytes)
+# / f32 (4 bytes), typed — see SFFK; Vec<T> or a bare Vec; or a type parameter of the struct being
 # declared. An enum may be declared on either side (its values are i64, so its position
-# changes nothing).
-# ⚠ u8/u16/u32 and f32 fields occupy 8 BYTES — the layout (and ABI) is unchanged, and the guide
-# says so. Anything else is refused by name. CHANGELOG [6.6.10]
+# changes nothing). Anything else is refused by name. CHANGELOG [6.6.10]
+# 6.7.10 (B7): u8/u16/u32 and f32 fields are their widths (they were 8-byte slots through 6.7.9;
+# `_add_narrow_field`). CHANGELOG [6.7.10]
 var _sdef_tp_ti = 0;   # the token after the declaring struct's name (its `<` when generic)
 
 # The float kind of an accepted non-struct field type name (0 = plain 8 bytes, 1 = f64, 2 = f32),
@@ -3758,7 +3768,7 @@ fn _field_name_kind(S, tnoff): i64 {
     }
     if (k == 5) { return 0 - 1; }            # a vector: _refuse_field_type names it
     if (_tn_bool(c) == 1) { return 3; }      # 6.7.3: bool (an 8-byte word, writes checked)
-    return 0;   # u8..u64 (8 bytes), cstring, Result, Option, Tagged, an enum (either side)
+    return 0;   # u8..u64 (u8..u32 their widths: _add_narrow_field), cstring, Result, Option, Tagged, an enum
 }
 
 # Is `noff` one of the type parameters of the struct being declared (`struct Box<T> { v: T; }`)?
@@ -3838,7 +3848,27 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
         _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));
         k = 0;
     }
+    var nw = _ek_w(_ek_of_code(_tn_scalar(L64(S + 0xEC00000 + tnoff))));
+    if (nw > 0) { if (nw < 8) { return _add_narrow_field(S, si, fnoff, nw, k); } }
     ADDFIELDFK(S, si, fnoff, k);
+    return 0;
+}
+
+# ⛔ 6.7.10 (B7) — u8 / u16 / u32 / f32 FIELDS ARE THEIR WIDTHS (the user's decision, 2026-10-08:
+# packed, no padding — the rule i8 / i16 / i32 fields follow). A u8..u32 field is `0 - width`
+# (the i8..i32 encoding, so FIELDSZ / FIELDOFF / STRUCTSZ / every store take the width) plus the
+# unsigned mark (SFUNS: read zero-extended, `_fld_lw`); an f32 is `0 - 4` plus float kind 2
+# (SFFK: its binary32 bits, zero-extended, typed F32_TYID). Through 6.7.9 each was an 8-byte slot.
+# The entry is computed the way ADDFIELDTYPED computes it, and marked only when it stored (a
+# refused field leaves the pool top where it was), as ADDFIELDFK does. CHANGELOG [6.7.10]
+fn _add_narrow_field(S, si, fnoff, nw, k): i64 {
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
+    var top = L64(S + 0x1AC018);
+    ADDFIELDTYPED(S, si, fnoff, 0 - nw);
+    if (L64(S + 0x1AC018) == top) { return 0; }
+    SFBOOL(S, ent, 0);
+    if (k == 2) { SFUNS(S, ent, 0); SFFK(S, ent, 2); return 0; }
+    SFUNS(S, ent, 1);
     return 0;
 }
 

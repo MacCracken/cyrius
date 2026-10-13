@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (52, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (56, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -84,6 +84,11 @@
 #       twin: native and cxvm each print `<N> passed, 0 failed`, N derived from the source (67, floor
 #       67), the whole file (its own gate rows, small_struct_handle_line.sh R5, run it on x86 / IR /
 #       DCE / aarch64 / cx / PE too).
+#   R17 (6.7.10, B7-2) tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr — u8 / u16 / u32 / f32 struct
+#       fields are their widths (packed, zero-extended): sizeof / offsets, wrap, unaligned `*T` access,
+#       f32, literals, the by-value class sweep at every size 1..17 and 20: native and cxvm each print
+#       `<N> passed, 0 failed`, N derived from the source (199, floor 199), the whole file (its own
+#       gate, narrow_fields_checked.sh A, runs it on x86 / IR / DCE / aarch64 / cx / PE too).
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -527,8 +532,12 @@ echo "R16 — small_struct_pointer_copy.tcyr (6.7.10 B7-1c: struct copies throug
 tcyr_native tests/tcyr/crossos/small_struct_pointer_copy.tcyr 67
 tcyr_cx     tests/tcyr/crossos/small_struct_pointer_copy.tcyr 67
 
-WANT=54
+echo "R17 — narrow_unsigned_f32_fields.tcyr (6.7.10 B7-2: u8 / u16 / u32 / f32 fields are their widths), native then cxvm:"
+tcyr_native tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr 199
+tcyr_cx     tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr 199
+
+WANT=56
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), and a struct copy through a small *T copies the struct (small_struct_pointer_copy)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), and u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields)"
 exit 0

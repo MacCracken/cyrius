@@ -2169,16 +2169,10 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
             # Default 8 bytes for typed fields; refine for known
             # primitive widths and nested derive structs below.
             var fsz = 8;
-            # Primitive integer detection (mirrors the
-            # PP_DERIVE_SERIALIZE prim_load block — i8/i16/i32/i64
-            # all distinct on (+1) byte: '8'/'1'/'3'/'6').
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var pb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (pb1 == 56) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fsz = 1; } }
-                if (pb1 == 49) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 2; } } }
-                if (pb1 == 51) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 4; } } }
-                if (pb1 == 54) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 8; } } }
-            }
+            # The builtin scalars at their widths — i8 / i16 / i32 and (6.7.10, packed) u8 / u16 /
+            # u32 / f32 — the parser's own vocabulary (PP_DFIELD_EK), so the two layouts agree.
+            var dew = _ek_w(PP_DFIELD_EK(S, fi));
+            if (dew > 0) { if (dew < 8) { fsz = dew; } }
             # Nested-struct override (matched against derive-name
             # table at _pp_derive_names; its size lives at _pp_derive_sizes).
             var di = 0;
@@ -2768,7 +2762,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             # bare loadW zero-extends, so an i8 -1 was written as 255 and the
                             # JSON did not round-trip. CHANGELOG [6.6.8]
                             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
-                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8));
+                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8), 0);
                             op = op + PP_EMIT_STR(out, op, ");\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
@@ -3307,25 +3301,38 @@ fn ISDERIVE_ACC(S, pos, bl): i64 {
     return 1;
 }
 
-# 6.6.7 — the access width of field `fi`: 8 / 16 / 32 for an `i8` / `i16` / `i32` field, else
-# 64 (i64, untyped, Str, Vec, f64, nested struct — all 8-byte slots). Same exact-name match as
-# the offset table in PP_PARSE_STRUCT_DEF and Serialize's `prim_load`. CHANGELOG [6.6.7]
+# 6.7.10 (B7) — field `fi`'s builtin scalar type as an element descriptor (`_ek_of_code`: the
+# width in the low bits, 0x40 signed narrow, 0x20 float, 0x68 bool), 0 for anything else (a
+# struct, Str, Vec, cstring, an enum, untyped). Its type-name cell is NUL-terminated, and
+# `_tn_scalar` matches the WHOLE name (the NUL is in its masks) — the parser's vocabulary, so the
+# derive's offsets and widths cannot drift from FIELDSZ again. CHANGELOG [6.7.10]
+fn PP_DFIELD_EK(S, fi): i64 {
+    return _ek_of_code(_tn_scalar(load64(S + 0x1FE000 + fi * 32)));
+}
+# 6.6.7 — the access width of field `fi`: 8 / 16 / 32 for an `i8` / `i16` / `i32` field — and
+# (6.7.10, packed) a `u8` / `u16` / `u32` / `f32` one — else 64 (i64, u64, untyped, Str, Vec, f64,
+# nested struct — all 8-byte slots). Through PP_DFIELD_EK, as the offset table in
+# PP_PARSE_STRUCT_DEF. CHANGELOG [6.6.7] [6.7.10]
 fn PP_DFIELD_BITS(S, fi): i64 {
-    var t = S + 0x1FE000 + fi * 32;
-    if (load8(t) != 105) { return 64; }
-    var b1 = load8(t + 1);
-    if (b1 == 56) { if (load8(t + 2) == 0) { return 8; } }
-    if (b1 == 49) { if (load8(t + 2) == 54) { if (load8(t + 3) == 0) { return 16; } } }
-    if (b1 == 51) { if (load8(t + 2) == 50) { if (load8(t + 3) == 0) { return 32; } } }
+    var w = _ek_w(PP_DFIELD_EK(S, fi));
+    if (w > 0) { if (w < 8) { return w * 8; } }
     return 64;
+}
+# 1 when field `fi` is read ZERO-extended: u8 / u16 / u32 and f32 (its binary32 bits). An i8 / i16 /
+# i32 field is signed (`_ek_lw` negative), as `p.x` reads it; a 64-bit field has no extension
+# either way. CHANGELOG [6.7.10]
+fn PP_DFIELD_ZX(S, fi): i64 {
+    if (_ek_lw(PP_DFIELD_EK(S, fi)) < 0) { return 0; }
+    return 1;
 }
 
 # 6.6.7 — the getter's value expression for a field of width `fbits` at `off`. A 64-bit field is
-# the plain `load64(p + off)`. A narrow field is loaded at its width and SIGN-extended —
+# the plain `load64(p + off)`. A narrow i8/i16/i32 field is loaded at its width and SIGN-extended —
 # `(loadW(p + off) << S) >>> S`, S = 64 - W (`>>>` is the arithmetic shift) — because the
 # language reads an i8/i16/i32 field signed (`p.x` is movsx), and loadW zero-extends: without
 # the shift pair a stored -1 in an i8 reads back as 255 through `P_x(p)` while `p.x` says -1.
-# CHANGELOG [6.6.7]
+# A u8/u16/u32/f32 field (6.7.10) is the bare `loadW`, zero-extended as `p.x` reads it.
+# CHANGELOG [6.6.7] [6.7.10]
 # 6.7.3 (B2) — a `bool` field (its type-name slot holds "bool\0"). Serialize writes JSON `true` /
 # `false`; Deserialize stores 1 for `true` and 0 for any other value (the codecs' lenient
 # precedent: an integer field takes str_to_int of whatever is there), a missing key leaving the
@@ -3359,16 +3366,20 @@ fn PP_DBOOL_SCAN(out, op, off): i64 {
     op = op + PP_EMIT_STR(out, op, ", 0); while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
     return op;
 }
-fn PP_DGETTER_EXPR(out, op, fbits, off): i64 {
+fn PP_DGETTER_EXPR(out, op, fbits, off, zx): i64 {
     op = op + PP_EMIT_STR(out, op, "return ");
-    op = PP_DLOAD_EXPR(out, op, "p", fbits, off);
+    op = PP_DLOAD_EXPR(out, op, "p", fbits, off, zx);
     return op;
 }
 
 # The value expression for a field of width `fbits` at `pname + off` (see PP_DGETTER_EXPR),
 # shared by the getter and Serialize so the two cannot disagree on signedness. CHANGELOG [6.6.8]
-fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
-    if (fbits < 64) { op = op + PP_EMIT_STR(out, op, "("); }
+# 6.7.10 (B7): `zx` 1 = a u8 / u16 / u32 / f32 field, read zero-extended — the bare `loadW`, which
+# zero-extends (`p.x` reads it so: `_fld_lw`). CHANGELOG [6.7.10]
+fn PP_DLOAD_EXPR(out, op, pname, fbits, off, zx): i64 {
+    var sx = 0;   # the shift pair: a narrow SIGNED field
+    if (fbits < 64) { if (zx == 0) { sx = 1; } }
+    if (sx == 1) { op = op + PP_EMIT_STR(out, op, "("); }
     op = op + PP_EMIT_STR(out, op, "load");
     op = op + PP_EMIT_INT(out, op, fbits);
     op = op + PP_EMIT_STR(out, op, "(");
@@ -3376,7 +3387,7 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
     op = op + PP_EMIT_STR(out, op, " + ");
     op = op + PP_EMIT_INT(out, op, off);
     op = op + PP_EMIT_STR(out, op, ")");
-    if (fbits < 64) {
+    if (sx == 1) {
         op = op + PP_EMIT_STR(out, op, " << ");
         op = op + PP_EMIT_INT(out, op, 64 - fbits);
         op = op + PP_EMIT_STR(out, op, ") >>> ");
@@ -3408,8 +3419,8 @@ fn PP_DERIVE_ACC_ENUM(S): i64 {
 
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
 # (PP_DFIELD_BITS):
-#   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64)
-#   fn Name_field(p) { return (loadW(p + OFFSET) << S) >>> S; }   (W < 64, S = 64 - W: signed)
+#   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64; 6.7.10: u8..u32 / f32, zero-extended)
+#   fn Name_field(p) { return (loadW(p + OFFSET) << S) >>> S; }   (i8..i32, S = 64 - W: signed)
 #   fn Name_set_field(p, v) { storeW(p + OFFSET, v); return 0; }
 # ⛔ 6.6.7 — W was 64 for EVERY field, so on an `i8` / `i16` / `i32` field the setter wrote 8
 # bytes: `struct P { x: i8; y: i8; }` has sizeof 2, and `P_set_y` stored bytes 1..8 — into the
@@ -3447,7 +3458,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         if (fbool == 1) { op = op + PP_EMIT_STR(out, op, "(p): bool { "); }
         else { op = op + PP_EMIT_STR(out, op, "(p) { "); }
         op = PP_DERIVE_EMIT_CHK(S, out, op);
-        op = PP_DGETTER_EXPR(out, op, fbits, off);
+        op = PP_DGETTER_EXPR(out, op, fbits, off, PP_DFIELD_ZX(S, fi));   # 6.7.10: u8..u32 / f32 zero-extend
         if (fbool == 1) { op = op + PP_EMIT_STR(out, op, " != 0"); }
         op = op + PP_EMIT_STR(out, op, "; }\n");
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
