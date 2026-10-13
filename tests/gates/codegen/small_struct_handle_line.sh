@@ -121,6 +121,18 @@
 #   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
 #      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
 #
+# 6.7.10 (decision 6 completed) — A STRUCT COPY THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD COPIES THE
+# STRUCT, at every size: `l = GP`, `G = GP`, `l = gp()`, `l = w.p` (any chain, wrapped) into a struct value
+# copy the pointee, as `l = p` through a `*T` local does (B7-1c). Through 6.7.9 — over 8 B too — each stored
+# the POINTER word into the first field. A `*T` or handle destination still rebinds. Its runtime half is
+# tests/tcyr/crossos/struct_pointer_source_copy.tcyr (every shape against its 16 B twin, the rebinds, sizes
+# 1..7 B with a guard global, top level):
+#   R9 that file on the same legs as R1, N derived from it (floor 38)
+#   CQ compile rows (x86): a `*U` of another struct is refused by name, as `l = pu` is — `l = GU`, `l = gu()`,
+#      `l = w.pu`, and `G = GU` at 16 B; a `*i64` global into a struct value stays its word (exit 1)
+#   PQ (Linux x86_64 + aarch64) a `*S7` global / `: *S7` call / `*S7` field onto the LAST 7 bytes of a mapping:
+#      `l = GP`, `G = GP`, `l = gp()`, `l = w.p`, at top level `G = GP` — exit 0, no byte past the object read
+#
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
 #   real tree                                         -> GREEN
@@ -282,6 +294,19 @@
 #   MB4  `_sc_op_whole` typing ANY whole result of 8 B or less (a method chain, an if-expression too, not only
 #        an operator's) -> GREEN: no row pins that a method chain's or an if-expression's untyped binding stays
 #        untyped — decision 12 names operators; whether those take their type too is the user's question
+# DECISION-6 (completed) MUTATION LEDGER (2026-10-12, the same method):
+#   the ops-2 tree (no *T global / call / field operand) -> RED 13: R9 34 of 38 rows x7 (the pointer word stored:
+#                                                      62938168 where 58), CQ1-CQ4 (compiled), PQ x2 (exit 1)
+#   MQ1  `_hl_psrc_copy` answering 0                  -> RED 13: as the ops-2 tree
+#   MQ3  the copy rounded up to whole words          -> RED 9: R9 the 7 size rows x7 (the guard global after a
+#                                                      1..7 B value global overwritten), PQ x2 (exit 139: read past)
+#   MQ4  no rebind for a handle / `*T` destination   -> RED 7: R9 2 rows x7 (`q = GP` through `q: *S` copied into
+#                                                      the caller's struct: 95 where 19)
+#   MQ5  no type check                                -> RED 4: CQ1-CQ4 (a `*U` of another struct copied)
+#   MQ6  no step cross-check (`_ps_step(GPSC)` against the size) -> GREEN: defensive — no source is known where
+#        `_hl_psrc`'s token typing and the parse's step disagree
+#   MQ7  `_hl_psrc` without its `*T` test (`_hl_cp`)  -> GREEN: defensive — every struct-VALUE source reaching the
+#        assignment takes its own copy path first (a field `_fla_take`, a call / method / operator its record)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -522,6 +547,20 @@ for leg in $XLEGS $OTHER; do
     else bad "R8 $leg: exit $RC, '$LAST' (want '$NB passed, 0 failed ($NB total)') $(grep -m3 'FAIL' "$D/ob_$n.out" | tr '\n' ' ')"; fi
 done
 
+TS=tests/tcyr/crossos/struct_pointer_source_copy.tcyr
+[ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
+NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
+SFLOOR=38
+if [ "$NS" -lt "$SFLOOR" ]; then echo "FAIL: $G: only $NS rows in $TS (floor $SFLOOR) — rows were lost"; exit 1; fi
+echo "R9. $TS ($NS rows: a struct copy through a *T global, a : *T call or a *T field)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TS" "$D/ps_$n"
+    if [ "$RC" -eq -1 ]; then bad "R9 $leg: the values file did not build: $(grep '^error' "$D/ps_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NS passed, 0 failed ($NS total)" ]; then ok "R9 $leg: $LAST"
+    else bad "R9 $leg: exit $RC, '$LAST' (want '$NS passed, 0 failed ($NS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
+done
+
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -633,6 +672,18 @@ crow "CP5 its 16 B twin" "refuse:cannot copy 'mku' into a variable of a differen
 crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var a: S8; a.v = 1; var u: U8; u.u = 2; var p: *S8 = &a; var pu: *U8 = &u; p = pu; p.v = 7; return a.v * 10 + u.u; }\nsyscall(60, f());\n'
 
+echo "CQ. a struct copy through a *T global / : *T call / *T field: another struct type refused by name (x86)"
+crow "CQ1 l = GU (GU: *U8 a global) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nvar GU: *U8 = &XU;\nfn f() { var l: S8; l.v = 1; l = GU; return l.v; }\nsyscall(60, f());\n'
+crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn gu(): *U8 { return &XU; }\nfn f() { var l: S8; l.v = 1; l = gu(); return l.v; }\nsyscall(60, f());\n'
+crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nvar XU = U8 { 4 };\nfn f() { var w = WU { &XU }; var l: S8; l.v = 1; l = w.pu; return l.v; }\nsyscall(60, f());\n'
+crow "CQ4 G = GU at 16 B (GU: *UH) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nvar GU: *UH = &XU;\nvar G = H { 0, 0 };\nfn f() { G = GU; return G.v; }\nsyscall(60, f());\n'
+crow "CQ5 l = GI (GI: *i64) into a struct value stays its word" 1 \
+  'struct S8 { v; }\nvar XI = 4;\nvar GI: *i64 = &XI;\nfn f() { var l: S8; l.v = 1; l = GI; return l.v == load64(&GI); }\nsyscall(60, f());\n'
+
 echo "B. an untyped binding of an operator result (x86)"
 crow "B1 the C4 case: var c = A + B; c.g = 1; c + c" 111 \
   'struct C4 { r: u8; g: u8; b: u8; a: u8; }\nfn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }\nfn f() { var A = C4 { 1, 2, 3, 4 }; var B = C4 { 10, 20, 30, 40 }; var c = A + B; c.g = 1; var d = c + c; var k = 0; if (c.r == 11) { if (c.g == 1) { if (c.b == 33) { if (c.a == 44) { k = k + 1; } } } } if (d.g == 2) { if (d.a == 88) { k = k + 10; } } if (A.g == 2) { k = k + 100; } return k; }\nsyscall(60, f());\n'
@@ -656,6 +707,51 @@ crow "F3 var G: H = GW.s + A in the zone refused (a 9-16 B result needs a frame)
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
 crow "F3 ... after the first statement" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
+
+cat > "$D/pq.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct S7 { a: i32; b: i16; c: i8; }
+struct W7 { n; p: *S7; }
+var GP: *S7 = 0;
+var G = S7 { 0, 0, 0 };
+fn take7(s: S7): i64 { return s.a + s.b + s.c; }
+fn gp(): *S7 { return GP; }
+fn run(): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    if (m <= 0) { return 90; }
+    if (syscall(SYS_MUNMAP, m + 4096, 4096) != 0) { return 91; }
+    GP = m + 4096 - 7;
+    GP.a = 100;
+    GP.b = 20;
+    GP.c = 3;
+    var l: S7;
+    l = GP;
+    if (take7(l) != 123) { return 1; }
+    G = GP;
+    if (take7(G) != 123) { return 2; }
+    var k: S7;
+    k = gp();
+    if (take7(k) != 123) { return 3; }
+    var w: W7;
+    w.n = 0;
+    w.p = GP;
+    var j: S7;
+    j = w.p;
+    if (take7(j) != 123) { return 4; }
+    return 0;
+}
+var e = run();
+var T = S7 { 0, 0, 0 };
+if (e == 0) { T = GP; if (take7(T) != 123) { e = 5; } }
+syscall(60, e);
+EOF
+echo "PQ. a *S7 global / : *S7 call / *S7 field onto the last 7 bytes of a mapping: l = GP, G = GP, l = gp(), l = w.p, top level — no byte past it"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/pq.cyr" "$D/pq_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PQ $leg: did not build: $(grep '^error' "$D/pq_$leg.err" | head -1)"
+    elif [ "$RC" -eq 0 ]; then ok "PQ $leg: exit 0"
+    else bad "PQ $leg: exit $RC, want 0 (139 = a byte past the object read)"; fi
+done
 
 cat > "$D/gp.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -977,4 +1073,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ)"

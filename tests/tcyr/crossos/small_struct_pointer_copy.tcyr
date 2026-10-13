@@ -29,8 +29,9 @@
 #     struct value stores its word.
 # A copy is told from an alias by a WRITE after it. A struct value of ANOTHER type is refused by name,
 # as over 8 B (`l = pu`, `pu = l`, `G = pu`, `q = G`, `p = mku(1)`: the gate's CP rows).
-# Not here: a `*T` GLOBAL (`l = GP`, `GP = l`), a `: *T` call (`l = gp()`) and a `*T` field (`l = w.p`)
-# store the word at EVERY size (over 8 B too) — a separate, pre-existing defect.
+# Not here: a `*T` GLOBAL, a `: *T` call and a `*T` field as the source (`l = GP`, `l = gp()`, `l = w.p`)
+# copy at every size since 6.7.10's decision-6 completion — struct_pointer_source_copy.tcyr; `GP = l`
+# (a `*T` global destination) still stores the word (not settled).
 # The SIZE rows (1..8 B: i8 / i16 / i32 compositions, signed values) run the six shapes on each size
 # with a guard byte right after the object (a field of the enclosing struct, a global declared after
 # the value global): no byte past the object is written. The end-of-mapping row is the gate's (PM).

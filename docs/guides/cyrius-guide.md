@@ -1326,10 +1326,17 @@ less was outside the rule: no struct variable of that size was a handle (the han
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
 into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct
 never changed) — each silently; a copy between two different struct types through such a `*T`
-(`l = pu`) compiled and stored a word, and is refused now, as over 8 bytes. ⚠ Known defect
-(6.7.10), at every size: a `*T` GLOBAL, a call declared `: *T` and a `*T` field are no copy
-operands yet — `l = GP`, `l = gp()` and `l = w.p` store the pointer word into `l`'s first field.
-Copy through a `*T` local (`var p: *S8 = GP; l = p;`).
+(`l = pu`) compiled and stored a word, and is refused now, as over 8 bytes. A `*T` GLOBAL, a call
+or method declared `: *T` and a `*T` field were no copy operands at ANY size until 6.7.10: `l =
+GP`, `G = GP`, `l = gp()` and `l = w.p` stored the pointer word into the first field, over 8 bytes
+too. They copy the struct into a struct value now, as a `*T` local does (a `*U` of another struct
+refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`).
+⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
+first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
+⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s
+= GP`, `o.s = gp()`, `o.s = w.p`), and an ASSIGNMENT from a dereference stores one word (`l = *p`,
+`G = *p`, `o.s = *p`; the declaration `var l2: S = *p;` copies): copy through a `*T` local (`var p2:
+*S = GP; o.s = p2;`, `l = p`).
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
 class from its source: from a pointer-mode local or global it declares `q` as a second pointer to

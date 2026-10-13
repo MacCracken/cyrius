@@ -3008,6 +3008,40 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     STI(S, GTI(S) + 2);   # src ;
     return 1;
 }
+# ⛔ 6.7.10 — STRUCT COPIES THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD (the user's decision 6,
+# 2026-10-12: struct copies are size-independent, and a copy through a `*T` copies the struct). B7-1c made a
+# `*T` LOCAL or PARAMETER a copy operand at every size; a `*T` global's name, a call or method declared
+# `: *T` and a `*T` field were no operand at ANY size, 16 B included: `l = GP`, `G = GP`, `l = gp()`,
+# `l = w.p` stored the POINTER word into the first field — silently (6.6.17 – 6.7.10 measured). The source
+# [st, cursor) just parsed — rax holds the pointer — read by the compiler's own typing (`_hl_psrc`): into a
+# struct VALUE (an inline local, a value global, a by-value parameter) the pointer is parked and the struct it
+# points at copied byte-exact (no byte past it read); into a handle or a `*T` it stays the one-word store (a
+# rebind, as `*T` <- `*T` is); a `*U` of another struct is refused by name. 1 = copied (`term` consumed).
+# CHANGELOG [6.7.10]
+fn _hl_psrc_copy(S, noff, st, term): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (n == 0) { return 0; }
+    if (_agc_hdl() == 1) { return 0; }
+    var dt = _agc_t;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ps - 1)) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, dt, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
 # 6.7.10 (B7-1) — a struct of 8 B or less in rax (a method / operator / if-expression result, a free
 # call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
 # into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
@@ -3532,7 +3566,10 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (dx == 1) { return 0; }
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+    if (t == 0 - 2) {
+        if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
+        _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0;   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+    }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
