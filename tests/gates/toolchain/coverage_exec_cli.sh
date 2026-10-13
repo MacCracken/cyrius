@@ -47,6 +47,10 @@
 #   W1  (wine) the Windows arm: cyrius.exe hands cycc.exe both variables (the program is
 #       instrumented and its dump read: 1/2 executed), and the program run next sees neither
 #       (it exits 1 / 2 / 3 when GetEnvironmentVariableA finds one)
+#   XH  (static) every host scripts/release-gate.sh's step 4 walks has a leg in
+#       scripts/cross-os-selfhost.sh that runs X1 and X2 on the hardware (_co_cov_stage, its X1 run,
+#       `_co_cov_check <host>`) and fails as `SELFHOST_FAIL: <host> — coverage --exec`; the checker
+#       still grades X1's exit 0 and exact 5/7, and X2's exit 1 and named bad_test failure
 #
 # MUTANTS (each measured RED in a scratch copy, 2026-10-12; the rows each turned RED):
 #   N1  the coverage entries not injected (_cc_flag_inject)       X1 X2 X4 X8 X9 W1 (no record)
@@ -61,6 +65,11 @@
 #   N10 no Windows delete after the compile                        W1 (the program exits 3)
 #   N11 the AUTO_DEPS conditional removed                          X1 (undefined stdlib fns) X2 X4 X6
 #       X8 X9; auto_deps_verb_gate.sh axis 2
+#   NH1 the ach leg's coverage step deleted                        XH (stage, check, SELFHOST_FAIL, run)
+#   NH2 the cass leg's X1 run deleted                              XH
+#   NH3 _co_cov_check's 5/7 weakened to a prefix                   XH
+#   NH4 a fifth host added to release-gate.sh's loop, no leg       XH
+#   NH5 _co_cov_check's X2 exit-code grade deleted                 XH
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -330,6 +339,41 @@ CYR
     fi
     [ "$FAIL" = "$x" ] && echo "  ok W1: (wine) cyrius.exe hands cycc.exe the coverage mode (1/2 executed) and the program run next sees neither variable"
 fi
+
+# ── XH: every hardware leg runs X1 and X2 (static: this reads scripts/cross-os-selfhost.sh) ──────
+# The hardware legs (release-gate step 4) are the only RUN of the Darwin open, arm64 Mach-O's rows,
+# the two Mach-O forks' `_cov_tail` line and Windows' append open. A leg that drops the coverage step
+# reads green on exactly the host that lacks it (the one-host-missed shape cross_os_legs_cx_parity.sh
+# guards for cx). Each host release-gate.sh walks must stage the fixture, check X1 / X2's output
+# under its own name and fail as `SELFHOST_FAIL: <host> — coverage --exec`. The checker must still
+# grade X1's exit 0 and exact 5/7 and X2's exit 1 and named bad_test failure, and the X1 run must
+# still be `--exec=programs/ok_test.cyr -v` in both the POSIX runner and the cass leg.
+x=$FAIL
+CO="$ROOT/scripts/cross-os-selfhost.sh"
+HOSTS=$(sed -n 's/^for H in \([a-z0-9 ]*\); do$/\1/p' "$ROOT/scripts/release-gate.sh" | head -1)
+coleg() { awk -v h="  $1)" '$0 == h { on = 1; next } on && /^    ;;$/ { exit } on { print }' "$CO"; }
+cofn() { awk -v f="$1() {" '$0 == f { on = 1 } on { print } on && /^}$/ { exit }' "$CO"; }
+nh=0
+for h in $HOSTS; do
+    L=$(coleg "$h")
+    [ -n "$L" ] || { fail "XH: $CO has no '  $h)' leg"; continue; }
+    printf '%s\n' "$L" | grep -q '^ *_co_cov_stage ' || fail "XH: the $h leg stages no coverage fixture (_co_cov_stage)"
+    printf '%s\n' "$L" | grep -q "_co_cov_check $h '" || fail "XH: the $h leg does not check X1 / X2's output (_co_cov_check $h)"
+    printf '%s\n' "$L" | grep -qF "SELFHOST_FAIL: $h — coverage --exec" || fail "XH: the $h leg's coverage failure is not named 'SELFHOST_FAIL: $h — coverage --exec'"
+    if [ "$h" = cass ]; then
+        printf '%s\n' "$L" | grep -qF -- '--exec=programs/ok_test.cyr -v' || fail "XH: the cass leg does not run X1 (--exec=programs/ok_test.cyr -v)"
+    else
+        printf '%s\n' "$L" | grep -q "_co_cov_posix $h " || fail "XH: the $h leg does not run X1 / X2 (_co_cov_posix $h)"
+    fi
+    nh=$((nh + 1))
+done
+[ "$nh" -ge 4 ] || fail "XH: only $nh host leg(s) read from release-gate.sh's step 4 ($HOSTS) — expected at least ecb ach cass pi"
+cofn _co_cov_posix | grep -qF -- "' --exec=programs/ok_test.cyr -v" || fail "XH: _co_cov_posix does not run X1 (--exec=programs/ok_test.cyr -v)"
+CK=$(cofn _co_cov_check)
+printf '%s\n' "$CK" | grep -qF '[ "$_COV_RC1" = 0 ]' && printf '%s\n' "$CK" | grep -qF '[ "$_COV_RC2" = 1 ]' || fail "XH: _co_cov_check no longer grades X1's exit 0 and X2's exit 1"
+printf '%s\n' "$CK" | grep -qF "'  Functions executed: 5/7 (71%)  [execution coverage" || fail "XH: _co_cov_check no longer holds X1's exact 'Functions executed: 5/7 (71%)'"
+printf '%s\n' "$CK" | grep -qF "'  FAIL: programs/bad_test.cyr (exit 1)'" || fail "XH: _co_cov_check no longer holds X2's named 'FAIL: programs/bad_test.cyr (exit 1)'"
+[ "$FAIL" = "$x" ] && echo "  ok XH: all $nh hardware legs ($HOSTS) run X1 + X2 and fail as 'SELFHOST_FAIL: <host> — coverage --exec'; the checker grades both exit codes, 5/7 and bad_test's exit 1"
 
 [ "$FAIL" = 0 ] || { echo "FAIL: coverage_exec_cli — $FAIL row(s)"; exit 1; }
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: coverage_exec_cli — every row that ran passed; W1 could not run (exit 77: a SKIP, not a PASS)"; exit 77; fi
