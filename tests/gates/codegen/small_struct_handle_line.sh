@@ -102,14 +102,15 @@
 # (issues/2026-10-08-struct-field-left-operand-never-dispatches.md: `h.p - s` gave 250, 3 - 9). Its
 # runtime half is tests/tcyr/crossos/struct_field_left_operand.tcyr (every base shape against its 16 B twin,
 # 24 B, sizes 1..8 B with a guard byte, top level):
-#   R6 that file on the same legs as R1, N derived from it (floor 79)
+#   R6 that file on the same legs as R1, N derived from it (floor 88)
 #   R7 the filed repro, VERBATIM: exit 139 (`P2_sub(&h.p, &s)` = 100 + 3·10 + 9) on the same legs — and,
 #      since 139 is SIGSEGV's code natively, R7d its twin returning `(h.p - s) - 100` (exit 39) beside it
 #      (250 / 150 = the integer 3 - 9 the field gave)
 #   F  compile rows (x86), each refused exactly as its struct-variable twin: F1 `w.s + 1` / `*p + 1` with no
 #      `S8_add` ("undefined function 'S8_add'"); F2 `fn S8_add(a: U8, ..)` — the field passed to a parameter
 #      of another struct, by name; F3 `var G: H = GW.s + A;` at top level (a 9-16 B result needs a frame),
-#      in the declaration zone and after it
+#      in the declaration zone and after it; F4 `var R = takeh(*GP + A);` at top level — a dereference-led
+#      result as a by-value argument over 8 B — refused as `takeh(GW.s + A)` is (it compiled and SIGSEGV'd)
 #
 # 6.7.10 (the user's decision 12) — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES THE
 # STRUCT TYPE AT EVERY SIZE, as over 8 B (where the result's temporary becomes `c`): `c.g` works and `c + c`
@@ -284,6 +285,10 @@
 #                                                      the integer, SIGSEGV; cxvm 3 rows)
 #   MO10 `_flo_addr_ra` without the field's offset    -> RED 21: R6 27 rows x7, R7 119 / R7d 19 x14
 #   MO11 `_OP_OPERAND_ADDR` without the `_OPD_SV` arm  -> RED 21: R6 x7 (SIGSEGV; cxvm out of range), R7 / R7d x14
+#   MO12 (ops-4) `_try_push_struct_addr_arg` without its `*` arm (a dereference-led argument to the value push)
+#                                                   -> RED 9: R6 x7 (`takeh(*ps + a)`: the result's first word pushed
+#                                                      as its address — SIGSEGV x86 x4 / aarch64, a PE crash, cxvm 5 rows),
+#                                                      F4 x2 (compiled)
 # DECISION-12 MUTATION LEDGER (2026-10-12, the same method):
 #   the ops-1 tree (no untyped binding typed)        -> RED 8: R8 does not build x7 (`c.g`: "no struct type in
 #                                                      scope for 'c'"), B1
@@ -496,7 +501,7 @@ done
 TF=tests/tcyr/crossos/struct_field_left_operand.tcyr
 [ -f "$TF" ] || { echo "FAIL: $G: $TF is missing"; exit 1; }
 NF=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TF")
-FFLOOR=79
+FFLOOR=88
 if [ "$NF" -lt "$FFLOOR" ]; then echo "FAIL: $G: only $NF rows in $TF (floor $FFLOOR) — rows were lost"; exit 1; fi
 echo "R6. $TF ($NF rows: a struct-typed field or a *T dereference as an operator's left operand)"
 for leg in $XLEGS $OTHER; do
@@ -707,6 +712,13 @@ crow "F3 var G: H = GW.s + A in the zone refused (a 9-16 B result needs a frame)
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
 crow "F3 ... after the first statement" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar G: H = GW.s + A;\nsyscall(60, G.v);\n'
+
+crow "F4 var R = takeh(*GP + A) at top level refused (a dereference-led 9-16 B result as an argument needs a frame)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar X = H { 5, 0 };\nvar GP: *H = &X;\nvar A = H { 4, 0 };\nvar R = takeh(*GP + A);\nsyscall(60, R);\n'
+crow "F4 ... after the first statement" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar X = H { 5, 0 };\nvar GP: *H = &X;\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(*GP + A);\nsyscall(60, R);\n'
+crow "F4 its field twin, takeh(GW.s + A)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
+  'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(GW.s + A);\nsyscall(60, R);\n'
 
 cat > "$D/pq.cyr" <<'EOF'
 include "lib/syscalls.cyr"

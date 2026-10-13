@@ -1573,6 +1573,9 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
+    # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
+    # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
+    if (PEEKT(S) == 8) { return _push_struct_expr_arg(S, fi, argc, tail); }
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.

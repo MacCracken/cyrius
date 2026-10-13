@@ -18,7 +18,9 @@
 # ADDRESS into a `*S` parameter or over 8 B (a write through it reaches the field — the `_mul` rows),
 # else its value. The result is a struct value: a declaration copies it, an assignment copies it into
 # a value, a handle or a `*S`'s pointee, an argument takes it, `return` returns it, and it chains
-# (`w.s + a + a`, `w.s / a + a`). The right-operand control (`a + w.s`) dispatched before.
+# (`w.s + a + a`, `w.s / a + a`) — as an argument too when it starts with the `*` (`take(*p + a)`, a method's,
+# a named one, `*gp() + a`; over 8 B it pushed the first word as the address until the ops-4 fix). The
+# right-operand control (`a + w.s`) dispatched before.
 # The SIZE rows (1..8 B: u8 / u16 / u32 compositions — a SIGNED narrow field read through a `*S` is the
 # open CYRIUS_IR=3 defect, issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) run `w.s + a` (by
 # value), `w.s - a` (through `*S` parameters) and `*p + a` on each size, a guard byte after the field kept.
@@ -69,6 +71,11 @@ fn rd8(p: *S8, a: S8): S8 { return *p + a; }
 fn rdh(p: *H, a: H): H { return *p + a; }
 impl W8 { fn opv(self: W8, a: S8): i64 { var q: S8 = self.s + a; return q.v; } }
 impl WH { fn opv(self: *WH, a: H): i64 { var q: H = self.s + a; return q.v + (q.w - 3) * 1000; } }
+impl S8 { fn tk(self: *S8, s: S8): i64 { return s.v; } }
+impl H { fn tk(self: *H, s: H): i64 { return s.v + (s.w - 3) * 1000; } }
+fn tk2_8(n, s: S8): i64 { return s.v + n; }
+fn tk2_h(n, s: H): i64 { return s.v + n + (s.w - 3) * 1000; }
+fn tk3(s: T3): i64 { return s.x + (s.y - 3) * 1000 + (s.z - 5) * 100000; }
 
 # ── the shapes: s = 70 (H: 70, 1), a = 4 (H: 4, 2); `+` gives 214 (H: w 3), `-` 346, `*` 501 (and
 # writes 71 into the field it was given), `/` 117 ──
@@ -269,6 +276,16 @@ fn f_dparm_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; return dq8(&x, a);
 fn f_dparm_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; return dqh(&x, a); }
 fn f_arg_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; return take8(w.s + a); }
 fn f_arg_h() { var w: WH = WH { 1, 70, 1, 9 }; var a: H = H { 4, 2 }; return takeh(w.s + a); }
+# A dereference-led result as a by-value argument (`take(*p + a)`): over 8 B it is address-passed, and
+# its first word was pushed as the address (SIGSEGV on every leg) — the argument starts with `*`.
+fn f_darg_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var ps: *S8 = &x; return take8(*ps + a); }
+fn f_darg_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; var ps: *H = &x; return takeh(*ps + a); }
+fn f_dmarg_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var ps: *S8 = &x; return x.tk(*ps + a); }
+fn f_dmarg_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; var ps: *H = &x; return x.tk(*ps + a); }
+fn f_dnarg_8() { var x: S8 = S8 { 70 }; var a: S8 = S8 { 4 }; var ps: *S8 = &x; return take8(s: *ps + a); }
+fn f_dnarg_h() { var x: H = H { 70, 1 }; var a: H = H { 4, 2 }; var ps: *H = &x; return takeh(s: *ps + a); }
+fn f_dcarg_8() { var a: S8 = S8 { 4 }; return take8(*gp8() + a) * 1000 + tk2_8(1, *gp8() + a); }
+fn f_dcarg_h() { var a: H = H { 4, 2 }; return takeh(*gph() + a) * 1000 + tk2_h(1, *gph() + a); }
 fn f_ret_8() { var w: W8 = W8 { 1, 70, 9 }; var a: S8 = S8 { 4 }; var q: S8 = rt8(&w, a); return q.v; }
 fn f_ret_h() {
     var w: WH = WH { 1, 70, 1, 9 };
@@ -302,6 +319,12 @@ fn f_t3_deref() {
     var p: *T3 = &x;
     var q: T3 = *p + c;
     return q.x + (q.y - 3) * 1000 + (q.z - 5) * 100000;
+}
+fn f_t3_darg() {
+    var x: T3 = T3 { 70, 1, 2 };
+    var c: T3 = T3 { 4, 2, 3 };
+    var p: *T3 = &x;
+    return tk3(*p + c) * 1000 + tk3(s: *p + c);
 }
 fn f_t3_ret() {
     var w: W3 = W3 { 1, 70, 1, 2, 9 };
@@ -547,6 +570,14 @@ assert_eq(f_dparm_8(), 214, "*q + a with q: *S a parameter");
 assert_eq(f_dparm_8(), f_dparm_h(), "  = its 16 B twin");
 assert_eq(f_arg_8(), 214, "take(w.s + a): the result as a by-value argument");
 assert_eq(f_arg_8(), f_arg_h(), "  = its 16 B twin");
+assert_eq(f_darg_8(), 214, "take(*p + a): a dereference-led result as a by-value argument");
+assert_eq(f_darg_8(), f_darg_h(), "  = its 16 B twin");
+assert_eq(f_dmarg_8(), 214, "x.tk(*p + a): ... as a method's argument");
+assert_eq(f_dmarg_8(), f_dmarg_h(), "  = its 16 B twin");
+assert_eq(f_dnarg_8(), 214, "take(s: *p + a): ... as a named argument");
+assert_eq(f_dnarg_8(), f_dnarg_h(), "  = its 16 B twin");
+assert_eq(f_dcarg_8(), 214215, "take(*gp() + a), tk2(1, *gp() + a): a : *S call's, the second argument");
+assert_eq(f_dcarg_8(), f_dcarg_h(), "  = its 16 B twin");
 assert_eq(f_ret_8(), 214, "return w.s + a; from a struct fn");
 assert_eq(f_ret_8(), f_ret_h(), "  = its 16 B twin");
 assert_eq(f_dret_8(), 214, "return *p + a; from a struct fn");
@@ -558,6 +589,7 @@ assert_eq(f_both_8(), f_both_h(), "  = its 16 B twin");
 assert_eq(f_t3_add(), 214, "24 B: w.s + c (a retptr result)");
 assert_eq(f_t3_sub(), 346, "24 B: w.s - c into *T3 parameters");
 assert_eq(f_t3_deref(), 214, "24 B: *p + c");
+assert_eq(f_t3_darg(), 214214, "24 B: take(*p + c), take(s: *p + c)");
 assert_eq(f_t3_ret(), 214, "24 B: return w.s + c;");
 assert_eq(z1(), 6, "1 B: w.s + a, w.s - a, *p + a; the guard byte kept");
 assert_eq(z2(), 6, "2 B: w.s + a, w.s - a, *p + a; the guard byte kept");
