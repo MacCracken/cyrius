@@ -2580,19 +2580,14 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, "_to_json(ptr, sb) {\n");
     op = PP_DERIVE_EMIT_CHK(S, out, op);
     # v6.3.40 — pre-scan for any f64 field; if present, declare a shared 80-byte
-    # format scratch the per-field f64 branch fills via fmt_float_buf (lib/fmt.cyr,
-    # always in scope for a derive consumer). Only emitted when needed → structs with
-    # no f64 field are byte-identical to pre-v6.3.40.
+    # format scratch the per-field f64 branch fills via bayan_f64_to_json (v6.4.69; it
+    # was fmt_float_buf). Only emitted when needed → structs with
+    # no f64 field are byte-identical to pre-v6.3.40. An f32 field (6.7.10) prints through the
+    # same scratch (widened to f64), so it counts.
     var _has_f64 = 0;
     var _hf = 0;
     while (_hf < field_count) {
-        if (load8(S + 0x1FE000 + _hf * 32) == 102) {
-            if (load8(S + 0x1FE000 + _hf * 32 + 1) == 54) {
-                if (load8(S + 0x1FE000 + _hf * 32 + 2) == 52) {
-                    if (load8(S + 0x1FE000 + _hf * 32 + 3) == 0) { _has_f64 = 1; }
-                }
-            }
-        }
+        if (PP_DFIELD_FLT(S, _hf) > 0) { _has_f64 = 1; }
         if (_pp_vec_elem(S, S + 0x1FE000 + _hf * 32) == 200) { _has_f64 = 1; }
         _hf = _hf + 1;
     }
@@ -2633,53 +2628,13 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     }
                 }
             }
-            # v6.3.40 — f64 field: "f64\0" (0x66 0x36 0x34 0x00). Serialized as a bare
-            # JSON number via fmt_float_buf into the shared _dfb scratch (declared above).
-            var is_f64 = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { is_f64 = 1; }
-                    }
-                }
-            }
-            # v5.9.30: detect primitive integer types by name match.
-            # Field-type entries are 32-byte cstring slots; first byte
-            # = 'i' (0x69) flags the family.
-            # v5.9.36: full i8 / i16 / i32 / i64 detection, with
-            # per-width outer-byte gates ('8'/'1'/'3'/'6'). Pre-fix
-            # (v5.9.35) i64 only. The v5.9.30 attempt had the wrong
-            # outer gate for i32 (`(+1) == 49` matches i16's "i1..."
-            # not i32's "i3...") AND landed before the parser-side
-            # struct-size mismatch was identified. Both fixes land
-            # together this slot via FIELDSZ → 8-per-field-layout
-            # split with FIELDWIDTH for codegen access width.
-            var prim_load = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var b1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                # i8\0
-                if (b1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { prim_load = 8; }
-                }
-                # i16\0
-                if (b1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 16; }
-                    }
-                }
-                # i32\0
-                if (b1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 32; }
-                    }
-                }
-                # i64\0
-                if (b1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 64; }
-                    }
-                }
-            }
+            # v6.3.40 — an f64 field: a bare JSON number through bayan_f64_to_json into the
+            # shared _dfb scratch (declared above); 6.7.10 an f32 one too, widened (PP_DFLT_SER).
+            var is_f64 = PP_DFIELD_FLT(S, fi);
+            # A builtin integer field (i8..i64, 6.7.10 u8..u32): its access width in bits, through
+            # the parser's vocabulary (PP_DFIELD_INT — one classifier for the three codecs; it was
+            # an i-only byte ladder in each, v5.9.30..v5.9.36).
+            var prim_load = PP_DFIELD_INT(S, fi);
             var _vk = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk) == 1) {
                 # v6.4.x R2 — Vec<int/f64> field: emit a JSON array. Null-handle guard
@@ -2732,12 +2687,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 op = op + PP_EMIT_STR(out, op, " = _vi");
                 op = op + PP_EMIT_INT(out, op, fi);
                 op = op + PP_EMIT_STR(out, op, " + 1;\n}\n}\nstr_builder_add_cstr(sb, \"]\");\n");
-            } else { if (is_f64 == 1) {
-                    # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
-                    # + returns its length; null-terminate + append as a bare JSON number.
-                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(load64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+            } else { if (is_f64 > 0) {
+                    op = PP_DFLT_SER(out, op, is_f64, load64(S + 0x200000 + fi * 8));
                 } else { if (is_str == 1) {
                         # v5.10.8 — Str field: emit RFC 8259-compliant
                         # quoted JSON string via the `str_builder_add_json_str`
@@ -2760,9 +2711,12 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             # types.
                             # ⛔ 6.6.8 — SIGN-extended through PP_DLOAD_EXPR, as the getter is: a
                             # bare loadW zero-extends, so an i8 -1 was written as 255 and the
-                            # JSON did not round-trip. CHANGELOG [6.6.8]
+                            # JSON did not round-trip. A u8 / u16 / u32 field (6.7.10) is read
+                            # ZERO-extended, as `p.x` reads it (a u32 4000000000 is written so, not
+                            # -294967296). CHANGELOG [6.6.8] [6.7.10]
                             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
-                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8), 0);
+                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8),
+                              PP_DFIELD_ZX(S, fi));
                             op = op + PP_EMIT_STR(out, op, ");\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
@@ -2810,49 +2764,13 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             # Typed field: Str / primitive integer / nested struct.
             var fj_str = 0;
             if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_str = 1; } } } }
-            # v5.9.35: primitive integer detection (mirrors the
-            # Serialize-side `prim_load` block at line 558-580).
-            # Pre-fix the deserializer treated every non-Str typed
-            # field as a nested struct and emitted `<type>_from_json(...)`,
-            # producing `i64_from_json` / `i32_from_json` / etc which
-            # don't exist in stdlib — surfaced as `undefined function`
-            # warnings in the agnosys 1.1.12 re-file. Now: i8/i16/i32/i64
-            # take the str_to_int + storeN path with width-correct store.
-            # v5.9.36: full i8/i16/i32/i64 detection (was i64 only at
-            # v5.9.35; narrow widths deferred until the parser-side
-            # struct-size mismatch was paired with this codegen fix).
-            var fj_prim = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var fjb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (fjb1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fj_prim = 8; }
-                }
-                if (fjb1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 16; }
-                    }
-                }
-                if (fjb1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 32; }
-                    }
-                }
-                if (fjb1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 64; }
-                    }
-                }
-            }
-            # v6.3.40 — f64 field ("f64\0"). `v` is a Str (bayan_json_get); f64_parse
-            # (lib/math.cyr) reads a byte pointer, so parse str_data(v) → f64 bits.
-            var fj_f64 = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_f64 = 1; }
-                    }
-                }
-            }
+            # v5.9.35: a builtin integer field takes the str_to_int + storeW path (before, every
+            # non-Str typed field was taken for a nested struct: `i64_from_json` undefined). The
+            # store truncates to the field's width. PP_DFIELD_INT, as Serialize (6.7.10: u8..u32).
+            var fj_prim = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): `v` is a Str (bayan_json_get),
+            # parsed from str_data(v) (PP_DFLT_PAIRS).
+            var fj_f64 = PP_DFIELD_FLT(S, fi);
             var _vk_p = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk_p) == 1) {
                 if (_vk_p == 300) {
@@ -2876,10 +2794,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                     op = op + PP_EMIT_STR(out, op, ", vec_new()); }\n");
                 }
-            } else { if (fj_f64 == 1) {
-                    op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(str_data(v))); }\n");
+            } else { if (fj_f64 > 0) {
+                    op = PP_DFLT_PAIRS(out, op, fj_f64, load64(S + 0x200000 + fi * 8));
                 } else { if (fj_str == 1) {
                         # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
                         # directly** (bayan_json_parse builds a vec of key→val pairs where
@@ -3007,39 +2923,11 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         if (load8(S + 0x1FE000 + fi * 32) != 0) {
             var fjs = 0;
             if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjs = 1; } } } }
-            # v5.9.36: full i8/i16/i32/i64 detection.
-            var fjp = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var fjpb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (fjpb1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fjp = 8; }
-                }
-                if (fjpb1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 16; }
-                    }
-                }
-                if (fjpb1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 32; }
-                    }
-                }
-                if (fjpb1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 64; }
-                    }
-                }
-            }
-            # v6.3.40 — f64 field ("f64\0") in the single-pass scanner: capture the
-            # numeric token substring and parse via f64_parse (lib/math.cyr).
-            var fjf = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjf = 1; }
-                    }
-                }
-            }
+            # v5.9.36: a builtin integer field (PP_DFIELD_INT, as Serialize; 6.7.10 u8..u32).
+            var fjp = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): capture the numeric token
+            # and parse it (PP_DFLT_SCAN).
+            var fjf = PP_DFIELD_FLT(S, fi);
             var _vk_s = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk_s) == 1) {
                 if (_vk_s == 300) {
@@ -3110,12 +2998,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     if (_vk_s == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
                     op = op + PP_EMIT_STR(out, op, "(json + _p));\nwhile (load8(json + _p) != 93 && load8(json + _p) != 0) { _p = _p + 1; }\nif (load8(json + _p) == 93) { _p = _p + 1; }\n");
                 }
-            } else { if (fjf == 1) {
-                    # Capture the numeric token (digits/sign/./exponent) then f64_parse it.
-                    op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
-                    op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(json + _vs));\n");
+            } else { if (fjf > 0) {
+                    op = PP_DFLT_SCAN(out, op, fjf, load64(S + 0x200000 + fi * 8));
                 } else { if (fjs == 1) {
                         # String value: read until closing quote
                         # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan
@@ -3324,6 +3208,65 @@ fn PP_DFIELD_BITS(S, fi): i64 {
 fn PP_DFIELD_ZX(S, fi): i64 {
     if (_ek_lw(PP_DFIELD_EK(S, fi)) < 0) { return 0; }
     return 1;
+}
+# 6.7.10 (B7-3) — the JSON codecs' classes, one classifier for the three (Serialize, the pairs
+# decoder, the single-pass scanner), through the parser's vocabulary as the offset table is; each
+# was an i-only / f64-only byte ladder. PP_DFIELD_INT: a builtin integer field's access width in
+# bits — 8 / 16 / 32 / 64 for i8..i64 and u8 / u16 / u32 — else 0 (f32 / f64 / bool have their own
+# arms; a struct, Str, Vec, cstring, enum or untyped field is no builtin integer). A `u64` is 0: it
+# stays outside the codecs as through 6.7.9 (`u64_to_json` undefined) — `str_builder_add_int`
+# would write 2^63 and over as negative. CHANGELOG [6.7.10]
+fn PP_DFIELD_INT(S, fi): i64 {
+    var c = _tn_scalar(load64(S + 0x1FE000 + fi * 32));
+    var ek = _ek_of_code(c);
+    if ((ek & 0x20) != 0) { return 0; }
+    var w = _ek_w(ek);
+    if (w == 8) { if (_tn_class(c) == 2) { return 0; } }
+    return w * 8;
+}
+# The float kind of field `fi`: 1 f64, 2 f32, else 0 (a bool is not a float here).
+fn PP_DFIELD_FLT(S, fi): i64 {
+    var k = _ek_fk(PP_DFIELD_EK(S, fi));
+    if (k > 2) { return 0; }
+    return k;
+}
+# An f64 / f32 field (`fk` 1 / 2) in the three codecs. An f32 is written WIDENED to f64 (the user's
+# decision, 2026-10-12: `f32_to` is exact, so 0.1f is written 0.10000000149011612, through bayan's
+# f64 printer — no new printer) and read back narrowed (`f32_from` of the parsed f64, nearest-even:
+# every written value round-trips). An f64 field's text is 6.7.9's, byte for byte. CHANGELOG [6.7.10]
+fn PP_DFLT_SER(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(");
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, "f32_to(load32(ptr + "); }
+    else { op = op + PP_EMIT_STR(out, op, "load64(ptr + "); }
+    op = op + PP_EMIT_INT(out, op, off);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ")"); }
+    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+    return op;
+}
+# `storeW(ptr + off, <src>);` — `src` an expression giving f64 bits: store64, or store32 of its f32.
+fn PP_DFLT_STORE(out, op, fk, off, src): i64 {
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, "store32(ptr + "); }
+    else { op = op + PP_EMIT_STR(out, op, "store64(ptr + "); }
+    op = op + PP_EMIT_INT(out, op, off);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ", f32_from("); }
+    else { op = op + PP_EMIT_STR(out, op, ", "); }
+    op = op + PP_EMIT_STR(out, op, src);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ")"); }
+    op = op + PP_EMIT_STR(out, op, ");");
+    return op;
+}
+fn PP_DFLT_PAIRS(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (v != 0) { ");
+    op = PP_DFLT_STORE(out, op, fk, off, "bayan_f64_from_json(str_data(v))");
+    op = op + PP_EMIT_STR(out, op, " }\n");
+    return op;
+}
+# The scanner captures the numeric token (digits, sign, '.', exponent) at _p, then parses it.
+fn PP_DFLT_SCAN(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
+    op = PP_DFLT_STORE(out, op, fk, off, "bayan_f64_from_json(json + _vs)");
+    op = op + PP_EMIT_STR(out, op, "\n");
+    return op;
 }
 
 # 6.6.7 — the getter's value expression for a field of width `fbits` at `off`. A 64-bit field is

@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/narrow_fields_checked.sh — 6.7.10 (B7-2)
+# tests/gates/frontend/narrow_fields_checked.sh — 6.7.10 (B7-2, B7-3)
 #
 # u8 / u16 / u32 AND f32 STRUCT FIELDS ARE THEIR WIDTHS (the user's decision, 2026-10-08: packed, no
 # padding — the rule i8 / i16 / i32 fields have always followed). A u8..u32 field takes 1 / 2 / 4
@@ -27,6 +27,17 @@
 #   V  a `#derive(accessors)` struct with u8 / u16 / u32 / f32 / i8 fields builds — the derive's
 #      `#assert sizeof` backstop holds (13 bytes) — and its getters read zero-extended (255, 65535,
 #      4294967295, the f32 bits) and signed (an i8 -1), its setters write only their bytes (exit 0)
+#   S  (6.7.10 B7-3) `#derive(Serialize)` takes u8 / u16 / u32 / f32 fields (through 6.7.9 the build
+#      was refused: `undefined function 'u8_to_json'`): S1 tests/tcyr/derive/derive_serialize_narrow.tcyr
+#      (u8..u32 written zero-extended — a u32 4000000000 is not -294967296 — and decoded truncating at
+#      the width; f32 written widened to f64, the user's decision 2026-10-12 — 0.1f is
+#      0.10000000149011612 — and decoded narrowed, bit for bit: subnormals, the largest finite, -0.0;
+#      f32 beside f64, a nested derived struct, accessors stacked, `#derive(Deserialize)`; each
+#      through `_to_json`, `_from_json_str` and the pairs form) on x86_64 (default, IR=1, IR=3, DCE=1),
+#      aarch64 and PE — no cx leg: the cx compiler's code buffer overflows on lib/bayan.cyr (a filed cx
+#      issue) — every leg the x86 run's total (floor 113); S2 a `u64` field stays outside the codecs,
+#      as through 6.7.9 (refused: u64_to_json / u64_from_json undefined, nothing else); S3 the same
+#      program with a u32 builds and round-trips (exit 29)
 #
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler built
 # from that copy, this gate run from the copy with CYCC=<that compiler>):
@@ -56,6 +67,14 @@
 #   M21 `PP_DFIELD_ZX` answering 0 (every narrow getter signed) -> RED 1: V1 (exit 2: 255 read -1); and
 #                                                      derive_accessor_widths (7 rows)
 #   M22 `_struct_same_layout` without the kind compare -> RED 3: W1, W2, W4 (silent)
+# B7-3 (2026-10-12, the same method; each RED only on its S rows, every other section green):
+#   M23 Serialize's integer load ignoring PP_DFIELD_ZX (u8..u32 sign-extended) -> RED 6: S1 x6 (6 checks:
+#                                                      255 / 65535 / 4294967295 / 4000000000 written negative)
+#   M24 PP_DFIELD_FLT not answering f32 (the f32 arm dropped) -> RED 6: S1 x6 (undefined f32_to_json)
+#   M25 the `_dfb` pre-scan counting f64 only        -> RED 6: S1 x6 (undefined variable '_dfb': a struct
+#                                                      whose only float is an f32)
+#   M23u PP_DFIELD_INT without the u64 exclusion     -> RED 1: S2 (a u64 field builds, written signed)
+#   M23d the decoders' f32 store without f32_from (store32 of the f64 bits) -> RED 6: S1 x6 (35 checks)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -229,6 +248,47 @@ else chmod +x "$D/v1.bin"; got=0; timeout 10 "$D/v1.bin" || got=$?
     else bad "V1: exit $got (the row that failed; 0 = all)"; fi
 fi
 
+echo "S. #derive(Serialize) on u8 / u16 / u32 / f32 fields (B7-3)"
+SC=tests/tcyr/derive/derive_serialize_narrow.tcyr
+# Its checks run in helper fns called per decoder, so the RUN total is the count; the x86 run's is
+# the reference every other leg must print (floor 113). No cx leg: the cx compiler's code buffer
+# overflows on lib/bayan.cyr (a filed cx issue), which every Serialize codec includes.
+SFLOOR=113
+ST=""
+if [ ! -f "$SC" ]; then bad "S1: $SC is missing"
+else
+    for leg in $XLEGS $OTHER; do
+        [ "$leg" = cx ] && continue
+        n=$(printf 's_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$SC" "$D/$n"
+        t=$(printf '%s' "$LAST" | sed -n 's/^\([0-9][0-9]*\) passed, 0 failed (\1 total)$/\1/p')
+        [ -z "$ST" ] && [ -n "$t" ] && [ "$leg" = x86 ] && ST=$t
+        if [ "$RC" -eq -1 ]; then bad "S1 $leg: the codecs file did not build: $(grep '^error\|undefined' "$D/$n.err" | head -1)"
+        elif [ "$RC" -ne 0 ] || [ -z "$t" ]; then bad "S1 $leg: exit $RC, '$LAST' $(grep -m3 'FAIL' "$D/$n.out" | tr '\n' ' ')"
+        elif [ "$t" -lt "$SFLOOR" ]; then bad "S1 $leg: only $t checks ran (floor $SFLOOR) — rows were lost"
+        elif [ "$t" != "$ST" ]; then bad "S1 $leg: $t checks ran, x86 ran ${ST:-none}"
+        else ok "S1 $leg: $LAST"; fi
+    done
+fi
+# S2: a u64 field stays outside the codecs, as through 6.7.9 — no unsigned 64-bit printer, and
+# `str_builder_add_int` would write 2^63 and over as negative. Refused by the undefined-function
+# check, naming u64_to_json / u64_from_json and nothing else. S3 is the same program with u32: it builds.
+SHDR='include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/str.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/hashmap.cyr"\ninclude "lib/result.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/io.cyr"\ninclude "lib/math.cyr"\ninclude "lib/bayan.cyr"\n'
+SBODY='fn main(): i64 { alloc_init(); var w = W { 7, 9 }; var sb = str_builder_new(); W_to_json(&w, sb); var s = str_builder_build(sb); var r = W_from_json_str(str_data(s)); return load32(r) + load64(r + sizeof(W) - 8) + str_len(s); }\nsyscall(60, main());\n'
+printf "${SHDR}"'#derive(Serialize)\nstruct W { a: u64; n; }\n'"${SBODY}" > "$D/s2.cyr"
+build s2
+und=$( (grep -o "undefined function '[A-Za-z0-9_]*'" "$D/s2.err" || true) | sort -u | tr '\n' ' ')
+if [ "$rc" -eq 0 ]; then bad "S2: a u64 field in #derive(Serialize) BUILT (it would print 2^63 and over negative)"
+elif [ "$und" != "undefined function 'u64_from_json' undefined function 'u64_to_json' " ]; then bad "S2: refused, but not as expected: [$und] $(grep '^error' "$D/s2.err" | head -1)"
+else ok "S2 a u64 field: refused, u64_to_json / u64_from_json undefined (as through 6.7.9)"; fi
+printf "${SHDR}"'#derive(Serialize)\nstruct W { a: u32; n; }\n'"${SBODY}" > "$D/s3.cyr"
+build s3
+if [ "$rc" -ne 0 ]; then bad "S3: the u32 control did not build: $(grep '^error\|undefined' "$D/s3.err" | head -1)"
+else chmod +x "$D/s3.bin"; got=0; timeout 10 "$D/s3.bin" || got=$?
+    if [ "$got" -eq 29 ]; then ok "S3 the same struct with a u32: builds and round-trips (exit 29 = 7 + 9 + the 13 bytes of {\"a\":7,\"n\":9})"
+    else bad "S3: exit $got, want 29"; fi
+fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — u8 / u16 / u32 / f32 fields are their widths: the values file on x86_64 / IR / DCE / aarch64 / cx / PE (A), the redefinition warnings (W), the dyn and top-level refusals that follow the size (D, T), the derive's layout and accessors (V)"
+echo "PASS: $G — u8 / u16 / u32 / f32 fields are their widths: the values file on x86_64 / IR / DCE / aarch64 / cx / PE (A), the redefinition warnings (W), the dyn and top-level refusals that follow the size (D, T), the derive's layout and accessors (V), the derive's JSON codecs (S)"
