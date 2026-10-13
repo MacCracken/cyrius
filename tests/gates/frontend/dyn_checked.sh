@@ -102,7 +102,10 @@
 #   S   (D6) what a prototype is not: S4 `object;` — one unreferenced UND symbol `dyn Show.show`, and GNU
 #       ld links the object; S5 `shared;` exports none; S6 no CYRIUS_SYMS line; S7 no unreachable-fn note
 #   CG  (D6) what the call is: CG1 x86 `call [rbp+disp32]` (ff 95) per call; CG2 PE the same, and none of
-#       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`)
+#       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`). The anchor count's
+#       `grep -o` matches NOTHING when CG2 passes, so it is `|| true`'d: under `bash -eo pipefail` (GitHub's
+#       shell semantics) the failing grep failed the pipeline and `set -e` ended the gate right after CG1,
+#       exit 1 (6.7.10 review; `bash -eo pipefail` on this file: exit 0, and 1 with the `|| true` dropped)
 #   IX  (6.7.8 integration) where the checked dyn meets C2's subscripts, `*p` width, slices and the
 #       bounds-checked mode: IX1 tests/tcyr/crossos/dyn_subscripts.tcyr (a dyn method's `self.p[i]` read /
 #       `=` / `+=` and its typed array local; a dyn call's `*T` result subscripted, `o.ptr()[i]`, and a
@@ -667,7 +670,7 @@ else
 fi
 if CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/x5.cyr" > "$T/x5.exe" 2> "$T/x5.werr" && [ -s "$T/x5.exe" ]; then
     ff=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk 'p == "ff" && $1 == "95" { n++ } { p = $1 } END { print n + 0 }')
-    an=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk '{ w = w " " $1 } END { print w }' | grep -o ' 53 48 89 e3 48 83 e4 f0' | wc -l)
+    an=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk '{ w = w " " $1 } END { print w }' | { grep -o ' 53 48 89 e3 48 83 e4 f0' || true; } | wc -l)
     if [ "$ff" -eq 3 ] && [ "$an" -eq 0 ]; then ok "CG2: PE — the frame-slot \`call [rbp+disp32]\` (3), never ECALLPTR_PE's forced alignment (0 anchors)"
     else bad "CG2: PE holds $ff \`ff 95\` (want 3) and $an ECALLPTR_PE anchors (want 0)"; fi
 else bad "CG2: the PE build failed: $(grep -m1 '^error' "$T/x5.werr")"; fi
