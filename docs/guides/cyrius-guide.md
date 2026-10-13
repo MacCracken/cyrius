@@ -1662,6 +1662,16 @@ bytes, and a whole field of 3, 5, 6 or 7 bytes, is still loaded as an 8-byte wor
 every value use of one — an argument, a right operand): an object ending exactly at the end of a
 mapping faults.
 
+**A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
+`take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass
+the struct `p` points at exactly as a struct variable in that place does — to a by-value parameter over
+8 bytes (or an operator's) the pointer, which the callee copies, so its writes stay in its copy; to a
+`*S` parameter of any size the pointee itself, so a write reaches it. A dereference-led operator result
+is an argument like any other (`take(*p + a)`; at top level a 9-16 byte one is refused by name, as
+`take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass 'pu' to a parameter of a
+different struct type*); an untyped `*x` is still the word it reads. Through 6.7.9 the word the
+dereference read was passed as the struct's address — a crash on every target.
+
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
 the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads
 and writes it, `c + c` dispatches again, `take(c)` passes it — whatever the left operand is (a

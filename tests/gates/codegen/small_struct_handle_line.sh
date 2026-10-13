@@ -134,6 +134,18 @@
 #   PQ (Linux x86_64 + aarch64) a `*S7` global / `: *S7` call / `*S7` field onto the LAST 7 bytes of a mapping:
 #      `l = GP`, `G = GP`, `l = gp()`, `l = w.p`, at top level `G = GP` — exit 0, no byte past the object read
 #
+# 6.7.10 (decision 6, ops-5) — A WHOLE DEREFERENCE OF A `*S` AS AN ADDRESS-PASSED ARGUMENT OR RIGHT OPERAND
+# PASSES THE STRUCT IT POINTS AT: `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into a by-value
+# parameter over 8 B or a `*S` parameter of any size, and `a - *p` into such an operator parameter, pass the
+# pointer, as `take(p)` / `a - p` do. Through 6.7.9 the WORD the dereference read was pushed as the struct's
+# address (SIGSEGV; PE an access violation; cx a guest error). Its runtime half is
+# tests/tcyr/crossos/struct_deref_whole_operand.tcyr (every shape against its 16 B twin, 24 B, `*S` parameters
+# of 1 / 3 / 7 / 8 B, top level):
+#   R10 that file on the same legs as R1, N derived from it (floor 58)
+#   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
+#      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
+#      word it reads (exit 5: the word is the struct's address, as before)
+#
 # MUTATION LEDGER (2026-10-12; each a scratch copy of the tree with the one change, its compiler
 # built from that copy, this gate run from the copy with CYCC=<that compiler>):
 #   real tree                                         -> GREEN
@@ -312,6 +324,15 @@
 #        `_hl_psrc`'s token typing and the parse's step disagree
 #   MQ7  `_hl_psrc` without its `*T` test (`_hl_cp`)  -> GREEN: defensive — every struct-VALUE source reaching the
 #        assignment takes its own copy path first (a field `_fla_take`, a call / method / operator its record)
+# OPS-5 MUTATION LEDGER (2026-10-13, the same method):
+#   the ops-4 tree (3faadc9e, no whole-dereference operand) -> RED 11: R10 x7 (SIGSEGV x86 x4 / aarch64, a PE
+#                                                      crash, cxvm "guest address out of range: 5"), D1 x2 / D2 x2
+#                                                      (compiled)
+#   MD1  `_dlo_park` without the `_dro_want` arm      -> RED 11: as the ops-4 tree
+#   MD2  `_push_struct_expr_arg` without its `_dro_take` arm -> RED 9: R10 x7, D1 x2 (compiled)
+#   MD3  `_op_rhs` without its `_dro_take` arm        -> RED 9: R10 x7, D2 x2 (compiled)
+#   MD4  `_dro_check` answering 0 (no type check)     -> RED 4: D1 x2 / D2 x2 (compiled)
+#   MD5  `_op_rhs`'s want without the wrap (`_dro_want = rb`) -> RED 7: R10 x7 (`a - (*p)`, `a * (*q)`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -498,6 +519,12 @@ for leg in $XLEGS $OTHER; do
     else bad "R5 $leg: exit $RC, '$LAST' (want '$NQ passed, 0 failed ($NQ total)') $(grep -m3 'FAIL' "$D/pq_$n.out" | tr '\n' ' ')"; fi
 done
 
+TD=tests/tcyr/crossos/struct_deref_whole_operand.tcyr
+[ -f "$TD" ] || { echo "FAIL: $G: $TD is missing"; exit 1; }
+ND=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TD")
+DFLOOR=58
+if [ "$ND" -lt "$DFLOOR" ]; then echo "FAIL: $G: only $ND rows in $TD (floor $DFLOOR) — rows were lost"; exit 1; fi
+
 TF=tests/tcyr/crossos/struct_field_left_operand.tcyr
 [ -f "$TF" ] || { echo "FAIL: $G: $TF is missing"; exit 1; }
 NF=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TF")
@@ -564,6 +591,15 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R9 $leg: the values file did not build: $(grep '^error' "$D/ps_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NS passed, 0 failed ($NS total)" ]; then ok "R9 $leg: $LAST"
     else bad "R9 $leg: exit $RC, '$LAST' (want '$NS passed, 0 failed ($NS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
+done
+
+echo "R10. $TD ($ND rows: a whole dereference of a *S as an address-passed argument or right operand)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TD" "$D/dw_$n"
+    if [ "$RC" -eq -1 ]; then bad "R10 $leg: the values file did not build: $(grep '^error' "$D/dw_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$ND passed, 0 failed ($ND total)" ]; then ok "R10 $leg: $LAST"
+    else bad "R10 $leg: exit $RC, '$LAST' (want '$ND passed, 0 failed ($ND total)') $(grep -m3 'FAIL' "$D/dw_$n.out" | tr '\n' ' ')"; fi
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -719,6 +755,18 @@ crow "F4 ... after the first statement" "refuse:'H_add' returns a struct by valu
   'struct H { v; w; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar X = H { 5, 0 };\nvar GP: *H = &X;\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(*GP + A);\nsyscall(60, R);\n'
 crow "F4 its field twin, takeh(GW.s + A)" "refuse:'H_add' returns a struct by value, and a struct result needs storage in a fn's frame" \
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(GW.s + A);\nsyscall(60, R);\n'
+
+echo "D. a whole dereference as an address-passed argument or right operand: another struct refused by name (x86)"
+crow "D1 takeh(*pu) (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'takeh'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var y = UH { 5, 0 }; var pu: *UH = &y; return takeh(*pu); }\nsyscall(60, f());\n'
+crow "D1 rd8(*pu) into a *S8 parameter (pu: *U8) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'rd8'" \
+  'struct S8 { v; }\nstruct U8 { u; }\nfn rd8(p: *S8): i64 { return p.v; }\nfn f() { var y = U8 { 5 }; var pu: *U8 = &y; return rd8(*pu); }\nsyscall(60, f());\n'
+crow "D2 a - *pu (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'H_sub'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; var y = UH { 5, 0 }; var pu: *UH = &y; return a - *pu; }\nsyscall(60, f());\n'
+crow "D2 a - *gu() (a : *UH fn) refused" "refuse:cannot pass 'gu' to a parameter of a different struct type in a call to 'H_sub'" \
+  'struct H { v; w; }\nstruct UH { u; x; }\nvar GY = UH { 5, 0 };\nfn gu(): *UH { return &GY; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; return a - *gu(); }\nsyscall(60, f());\n'
+crow "D3 takeh(*y) with y untyped keeps the word it reads (the struct's address here)" 5 \
+  'struct H { v; w; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var x = H { 5, 0 }; var cell = &x; var y = &cell; return takeh(*y); }\nsyscall(60, f());\n'
 
 cat > "$D/pq.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -1085,4 +1133,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D)"

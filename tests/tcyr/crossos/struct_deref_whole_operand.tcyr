@@ -1,0 +1,240 @@
+# struct_deref_whole_operand.tcyr — 6.7.10. A WHOLE DEREFERENCE OF A `*S` AS AN ADDRESS-PASSED ARGUMENT OR
+# RIGHT OPERAND PASSES THE STRUCT IT POINTS AT (the user's decision 6, 2026-10-12: `*p` is a struct value at
+# every size).
+#
+# ⛔ THROUGH 6.7.9 (and 6.7.10 before this fix) `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into a
+# by-value struct parameter over 8 B — which takes the struct's ADDRESS — and into a `*S` parameter of any size,
+# and `a - *p` into such an operator parameter, pushed the WORD the dereference read as that address: SIGSEGV
+# on x86_64 and aarch64, an access violation on PE, a guest error on cx, while `take(p)` / `a - p` passed the
+# pointer and the 8 B by-value twins were right.
+#
+# THE RULE, every `_8` row against its `_h` twin over 8 B (both give the row's constant; the twin's second
+# word is checked) and a 24 B row: the dereference passes what its struct value passes — by value (the
+# callee's copy: a write through the parameter does not reach the pointee, and a later argument that writes
+# the pointee is not seen), or, into a `*S` parameter, the pointee itself (a write reaches it), as a struct
+# variable in that place does. Its operand is a `*S` local, a parameter, a `: *S` call, a `*S` field, pointer
+# arithmetic on one, a closure capture, in parentheses; the argument a free call's, a method's, a named one, a
+# later one, a tail call's; the right operand of an operator returning an integer or a struct, also inside an
+# argument; and at top level. The `*S` SIZE rows (1, 3, 7 B — u8 / u16 / u32 — and 8 B) write through.
+# A `*U` of another struct is refused by name, and an untyped `*x` keeps its word (the gate's D rows).
+#
+# CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R10 runs this file on x86_64 (plain,
+# CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
+# cross-OS leg on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+struct S8 { v; }
+struct H { v; w; }                    # 16 B — the twin (address-passed by value)
+struct T3 { x; y; z; }                # 24 B
+struct W8 { n; ps: *S8; }
+struct WH { n; ps: *H; }
+struct W3 { n; ps: *T3; }
+
+# by value: s = 5 (H: 5, 7; T3: 5, 7, 9) gives 5
+fn take8(s: S8): i64 { return s.v; }
+fn takeh(s: H): i64 { return s.v + (s.w - 7) * 1000; }
+fn take3(s: T3): i64 { return s.x + (s.y - 7) * 1000 + (s.z - 9) * 100000; }
+fn tk2_8(n, s: S8): i64 { return s.v * 10 + n; }
+fn tk2_h(n, s: H): i64 { return s.v * 10 + n + (s.w - 7) * 1000; }
+fn wr8(s: S8): i64 { s.v = 99; return s.v; }
+fn wrh(s: H): i64 { s.v = 99; s.w = 99; return s.v; }
+fn ord8(s: S8, k): i64 { return s.v; }
+fn ordh(s: H, k): i64 { return s.v + (s.w - 7) * 1000; }
+fn set8(p: *S8, n): i64 { p.v = n; return 1; }
+fn seth(p: *H, n): i64 { p.v = n; return 1; }
+impl S8 { fn tk(self: *S8, s: S8): i64 { return s.v; } }
+impl H { fn tk(self: *H, s: H): i64 { return s.v + (s.w - 7) * 1000; } }
+
+var GX8 = S8 { 5 };
+var GXH = H { 5, 7 };
+var GX3 = T3 { 5, 7, 9 };
+fn gp8(): *S8 { return &GX8; }
+fn gph(): *H { return &GXH; }
+fn gp3(): *T3 { return &GX3; }
+
+# ── an argument (by value) ──
+fn f_loc_8() { var x = S8 { 5 }; var p: *S8 = &x; return take8(*p); }
+fn f_loc_h() { var x = H { 5, 7 }; var p: *H = &x; return takeh(*p); }
+fn f_loc_3() { var x = T3 { 5, 7, 9 }; var p: *T3 = &x; return take3(*p); }
+fn f_par_8() { var x = S8 { 5 }; var p: *S8 = &x; return take8((*p)) * 10 + take8(((*p))); }
+fn f_par_h() { var x = H { 5, 7 }; var p: *H = &x; return takeh((*p)) * 10 + takeh(((*p))); }
+fn f_call_8() { return take8(*gp8()); }
+fn f_call_h() { return takeh(*gph()); }
+fn f_call_3() { return take3(*gp3()); }
+fn f_fld_8() { var x = S8 { 5 }; var w = W8 { 0, &x }; var pw: *W8 = &w; return take8(*w.ps) * 10 + take8(*pw.ps); }
+fn f_fld_h() { var x = H { 5, 7 }; var w = WH { 0, &x }; var pw: *WH = &w; return takeh(*w.ps) * 10 + takeh(*pw.ps); }
+fn f_fld_3() { var x = T3 { 5, 7, 9 }; var w = W3 { 0, &x }; return take3(*w.ps); }
+var BUF8[2];
+var BUFH[4];
+fn f_arith_8() {
+    var p: *S8 = &BUF8;
+    p.v = 1;
+    var p1: *S8 = p + 1;
+    p1.v = 5;
+    return take8(*(p + 1));
+}
+fn f_arith_h() {
+    var p: *H = &BUFH;
+    p.v = 1; p.w = 1;
+    var p1: *H = p + 1;
+    p1.v = 5; p1.w = 7;
+    return takeh(*(p + 1));
+}
+fn qp8(q: *S8): i64 { return take8(*q); }
+fn qph(q: *H): i64 { return takeh(*q); }
+fn f_parm_8() { var x = S8 { 5 }; return qp8(&x); }
+fn f_parm_h() { var x = H { 5, 7 }; return qph(&x); }
+fn f_meth_8() { var x = S8 { 5 }; var p: *S8 = &x; return x.tk(*p) * 100 + take8(s: *p) * 10 + tk2_8(1, *p) - 51; }
+fn f_meth_h() { var x = H { 5, 7 }; var p: *H = &x; return x.tk(*p) * 100 + takeh(s: *p) * 10 + tk2_h(1, *p) - 51; }
+# the callee's copy: its write does not reach the pointee
+fn f_copy_8() { var x = S8 { 5 }; var p: *S8 = &x; var r = wr8(*p); return r * 10 + x.v; }
+fn f_copy_h() { var x = H { 5, 7 }; var p: *H = &x; var r = wrh(*p); return r * 10 + x.v + (x.w - 7) * 1000; }
+# a later argument writes the pointee: the value where the argument is written is passed (6.7.7)
+fn f_later_8() { var x = S8 { 5 }; var p: *S8 = &x; return ord8(*p, set8(p, 9)) * 10 + x.v; }
+fn f_later_h() { var x = H { 5, 7 }; var p: *H = &x; return ordh(*p, seth(p, 9)) * 10 + x.v; }
+fn tc8(p: *S8): i64 { return take8(*p); }
+fn tch(p: *H): i64 { return takeh(*p); }
+fn f_tail_8() { var x = S8 { 5 }; return tc8(&x); }
+fn f_tail_h() { var x = H { 5, 7 }; return tch(&x); }
+fn f_clos_8() { var x = S8 { 5 }; var p: *S8 = &x; var c = || take8(*p); return callptr(c); }
+fn f_clos_h() { var x = H { 5, 7 }; var p: *H = &x; var c = || takeh(*p); return callptr(c); }
+
+# ── a `*S` parameter: the pointee itself (a write reaches it), at every size ──
+struct S1 { a: u8; }
+struct S3 { a: u8; b: u16; }
+struct S7 { a: u32; b: u16; c: u8; }
+fn bp1(p: *S1): i64 { p.a = p.a + 1; return p.a; }
+fn bp3(p: *S3): i64 { p.b = p.b + 1; return p.b; }
+fn bp7(p: *S7): i64 { p.c = p.c + 1; return p.c; }
+fn bp8(p: *S8): i64 { p.v = p.v + 1; return p.v; }
+fn bph(p: *H): i64 { p.v = p.v + 1; return p.v + (p.w - 7) * 1000; }
+fn bp3w(p: *T3): i64 { p.x = p.x + 1; return p.x + (p.z - 9) * 1000; }
+fn f_sp_1() { var y: S1; y.a = 5; var q: *S1 = &y; var r = bp1(*q); return r * 10 + y.a; }
+fn f_sp_3() { var y: S3; y.a = 1; y.b = 5; var q: *S3 = &y; var r = bp3(*q); return r * 10 + y.b; }
+fn f_sp_7() { var y: S7; y.a = 1; y.b = 2; y.c = 5; var q: *S7 = &y; var r = bp7(*q); return r * 10 + y.c; }
+fn f_sp_8() { var y = S8 { 5 }; var q: *S8 = &y; var r = bp8(*q); return r * 10 + y.v; }
+fn f_sp_h() { var y = H { 5, 7 }; var q: *H = &y; var r = bph(*q); return r * 10 + y.v; }
+fn f_sp_3w() { var y = T3 { 5, 7, 9 }; var q: *T3 = &y; var r = bp3w((*q)); return r * 10 + y.x; }
+fn f_sp_call() { var r = bph(*gph()); var k = r * 10 + GXH.v; GXH.v = 5; return k; }
+
+# ── the right operand of an operator ──
+fn S8_sub(a: S8, b: S8): i64 { return a.v * 10 - b.v; }
+fn H_sub(a: H, b: H): i64 { return a.v * 10 - b.v - (b.w - 7) * 1000; }
+fn T3_sub(a: T3, b: T3): i64 { return a.x * 10 - b.x - (b.z - 9) * 1000; }
+fn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v * 3 + b.v; return r; }
+fn H_add(a: H, b: H): H { var r: H; r.v = a.v * 3 + b.v; r.w = a.w + b.w; return r; }
+fn T3_add(a: T3, b: T3): T3 { var r: T3; r.x = a.x * 3 + b.x; r.y = a.y + b.y; r.z = a.z + b.z; return r; }
+fn S8_mul(a: *S8, b: *S8): i64 { b.v = b.v + 1; return a.v * 10 + b.v; }
+fn H_mul(a: *H, b: *H): i64 { b.v = b.v + 1; return a.v * 10 + b.v + (b.w - 7) * 1000; }
+fn S1_mul(a: *S1, b: *S1): i64 { b.a = b.a + 1; return a.a * 10 + b.a; }
+fn S7_mul(a: *S7, b: *S7): i64 { b.c = b.c + 1; return a.a * 10 + b.c; }
+# a = 9 (H: 9, 0): `a - *p` = 85
+fn f_rsub_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; return a - *p; }
+fn f_rsub_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; return a - *p; }
+fn f_rsub_3() { var a = T3 { 9, 0, 0 }; var x = T3 { 5, 7, 9 }; var p: *T3 = &x; return a - *p; }
+fn f_rpar_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; return (a - (*p)) * 1000 + (a - ((*p))); }
+fn f_rpar_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; return (a - (*p)) * 1000 + (a - ((*p))); }
+fn f_rcall_8() { var a = S8 { 9 }; var x = S8 { 5 }; var w = W8 { 0, &x }; return (a - *gp8()) * 1000 + (a - *w.ps); }
+fn f_rcall_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var w = WH { 0, &x }; return (a - *gph()) * 1000 + (a - *w.ps); }
+# a struct result: `a + *p` = 32 (H: w 7)
+fn f_radd_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; var q: S8 = a + *p; return q.v; }
+fn f_radd_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; var q: H = a + *p; return q.v + (q.w - 7) * 1000; }
+fn f_radd_3() {
+    var a = T3 { 9, 0, 0 };
+    var x = T3 { 5, 7, 9 };
+    var p: *T3 = &x;
+    var q: T3 = a + *p;
+    return q.x + (q.y - 7) * 1000 + (q.z - 9) * 100000;
+}
+fn f_rarg_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; return take8(a + *p); }
+fn f_rarg_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; return takeh(a + *p); }
+fn f_rchain_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; var q: S8 = a + *p + *p; return q.v; }
+fn f_rchain_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; var q: H = a + *p + *p; return q.v + (q.w - 14) * 1000; }
+# `*S` operator parameters: the pointee itself — `a * *p` writes it (a = 9: 96, then x = 6)
+fn f_rmul_8() { var a = S8 { 9 }; var x = S8 { 5 }; var p: *S8 = &x; var r = a * *p; return r * 10 + x.v; }
+fn f_rmul_h() { var a = H { 9, 0 }; var x = H { 5, 7 }; var p: *H = &x; var r = a * *p; return r * 10 + x.v; }
+fn f_rmul_1() { var a: S1; a.a = 9; var y: S1; y.a = 5; var q: *S1 = &y; var r = a * *q; return r * 10 + y.a; }
+fn f_rmul_7() {
+    var a: S7; a.a = 9; a.b = 0; a.c = 0;
+    var y: S7; y.a = 0; y.b = 0; y.c = 5;
+    var q: *S7 = &y;
+    var r = a * (*q);
+    return r * 10 + y.c;
+}
+
+# ── top level: in the declaration zone and after the first statement ──
+var GA8 = S8 { 9 };
+var GAH = H { 9, 0 };
+var GP8: *S8 = &GX8;
+var GPH: *H = &GXH;
+var TA8 = take8(*GP8);
+var TAH = takeh(*GPH);
+var TS8 = GA8 - *GP8;
+var TSH = GAH - *GPH;
+alloc_init();
+var TB8 = take8((*GP8));
+var TBH = takeh((*GPH));
+var TU8 = GA8 - (*GP8);
+var TUH = GAH - *gph();
+
+assert_eq(f_loc_8(), 5, "take(*p): a *S local's struct, by value");
+assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
+assert_eq(f_loc_3(), 5, "  24 B");
+assert_eq(f_par_8(), 55, "take((*p)), take(((*p)))");
+assert_eq(f_par_8(), f_par_h(), "  = its 16 B twin");
+assert_eq(f_call_8(), 5, "take(*gp()): a : *S call's");
+assert_eq(f_call_8(), f_call_h(), "  = its 16 B twin");
+assert_eq(f_call_3(), 5, "  24 B");
+assert_eq(f_fld_8(), 55, "take(*w.ps), take(*pw.ps): a *S field's");
+assert_eq(f_fld_8(), f_fld_h(), "  = its 16 B twin");
+assert_eq(f_fld_3(), 5, "  24 B");
+assert_eq(f_arith_8(), 5, "take(*(p + 1)): pointer arithmetic");
+assert_eq(f_arith_8(), f_arith_h(), "  = its 16 B twin");
+assert_eq(f_parm_8(), 5, "take(*q) with q: *S a parameter");
+assert_eq(f_parm_8(), f_parm_h(), "  = its 16 B twin");
+assert_eq(f_meth_8(), 550, "x.tk(*p), take(s: *p), tk2(1, *p): a method's, a named, a second argument");
+assert_eq(f_meth_8(), f_meth_h(), "  = its 16 B twin");
+assert_eq(f_copy_8(), 995, "wr(*p): the callee's copy — its write does not reach the pointee");
+assert_eq(f_copy_8(), f_copy_h(), "  = its 16 B twin");
+assert_eq(f_later_8(), 59, "ord(*p, set(p, 9)): the value where the argument is written");
+assert_eq(f_later_8(), f_later_h(), "  = its 16 B twin");
+assert_eq(f_tail_8(), 5, "return take(*p); (a tail call)");
+assert_eq(f_tail_8(), f_tail_h(), "  = its 16 B twin");
+assert_eq(f_clos_8(), 5, "|| take(*p): p captured");
+assert_eq(f_clos_8(), f_clos_h(), "  = its 16 B twin");
+assert_eq(f_sp_1(), 66, "1 B: bp(*q) into a *S1 parameter — the pointee written");
+assert_eq(f_sp_3(), 66, "3 B: bp(*q) into a *S3 parameter");
+assert_eq(f_sp_7(), 66, "7 B: bp(*q) into a *S7 parameter");
+assert_eq(f_sp_8(), 66, "8 B: bp(*q) into a *S8 parameter");
+assert_eq(f_sp_8(), f_sp_h(), "  = its 16 B twin");
+assert_eq(f_sp_3w(), 66, "24 B: bp((*q)) into a *T3 parameter");
+assert_eq(f_sp_call(), 66, "bp(*gp()) into a *H parameter: the global written");
+assert_eq(f_rsub_8(), 85, "a - *p: the right operand, by value (an integer result)");
+assert_eq(f_rsub_8(), f_rsub_h(), "  = its 16 B twin");
+assert_eq(f_rsub_3(), 85, "  24 B");
+assert_eq(f_rpar_8(), 85085, "a - (*p), a - ((*p))");
+assert_eq(f_rpar_8(), f_rpar_h(), "  = its 16 B twin");
+assert_eq(f_rcall_8(), 85085, "a - *gp(), a - *w.ps");
+assert_eq(f_rcall_8(), f_rcall_h(), "  = its 16 B twin");
+assert_eq(f_radd_8(), 32, "var q: S = a + *p: a struct result");
+assert_eq(f_radd_8(), f_radd_h(), "  = its 16 B twin");
+assert_eq(f_radd_3(), 32, "  24 B (a retptr result)");
+assert_eq(f_rarg_8(), 32, "take(a + *p): inside an argument");
+assert_eq(f_rarg_8(), f_rarg_h(), "  = its 16 B twin");
+assert_eq(f_rchain_8(), 101, "a + *p + *p: chained");
+assert_eq(f_rchain_8(), f_rchain_h(), "  = its 16 B twin");
+assert_eq(f_rmul_8(), 966, "a * *p into *S parameters: the pointee itself (written)");
+assert_eq(f_rmul_8(), f_rmul_h(), "  = its 16 B twin");
+assert_eq(f_rmul_1(), 966, "1 B: a * *q into *S1 parameters");
+assert_eq(f_rmul_7(), 966, "7 B: a * (*q) into *S7 parameters");
+assert_eq(TA8, 5, "top level, the declaration zone: take(*GP)");
+assert_eq(TA8, TAH, "  = its 16 B twin");
+assert_eq(TS8, 85, "top level, the declaration zone: A - *GP");
+assert_eq(TS8, TSH, "  = its 16 B twin");
+assert_eq(TB8, 5, "top level, after the first statement: take((*GP))");
+assert_eq(TB8, TBH, "  = its 16 B twin");
+assert_eq(TU8, 85, "top level, after the first statement: A - (*GP), A - *gp()");
+assert_eq(TU8, TUH, "  = its 16 B twin");
+var r = assert_summary();

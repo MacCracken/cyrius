@@ -3759,9 +3759,10 @@ fn _deref_read(S): i64 {
 # typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size) and an overloadable
 # operator follows (past the parentheses wrapping the dereference), the pointer is parked in a hidden
 # temp — the left operand's address, or its struct, is read from it (`_opd_lhs_sv`). 1 = parked. A
-# dereference no operator follows is untouched. CHANGELOG [6.7.10]
+# dereference no operator follows is untouched, unless it starts an address-passed argument or right
+# operand (`_dro_want`, ops-5: its pointer is passed when it is the whole of it). CHANGELOG [6.7.10]
 fn _dlo_park(S, d): i64 {
-    if (_dlo_opnext(S, d) == 0) { return 0; }
+    if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
     var sid = _hl_psid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
