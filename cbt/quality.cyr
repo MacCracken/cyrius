@@ -776,10 +776,11 @@ var _covx_ksb = 0;    # the #naked fns' names: reported "not instrumented", neve
 # 1 when this `cyrius coverage` runs in the exec mode: `--exec` (with or without a glob), or a
 # non-empty `[coverage] exec`. Asked by the AUTO_DEPS chain (cbt/cyrius.cyr) so an exec run gets
 # the [deps] prepend its builds need, and a text run resolves nothing, as before. A malformed
-# manifest or `[coverage] exec` answers 0 here; the coverage branch names it before anything runs.
+# manifest or `[coverage] exec` answers 0 here, naming nothing (`_mf_probe`); the coverage branch
+# names either where it reads it, as 6.7.9 did.
 fn _covx_wanted(): i64 {
     if (_cli_has("--exec") == 1) { return 1; }
-    if (_mf_load() != 1) { return 0; }
+    if (_mf_probe() != 1) { return 0; }
     var mx = _mf_strs("coverage", "exec");
     if (_toml_bad == 1) {
         _toml_bad = 0;
@@ -794,9 +795,17 @@ fn _covx_wanted(): i64 {
 # precedence every key follows. Answers 0 for the text mode (no `--exec`, no `[coverage] exec`), a
 # vec (empty for a bare `--exec` with no manifest list: the .tcyr corpus alone), or -1 after naming
 # a manifest that cannot be read or an `exec` that is not a glob or a list of globs.
+# ⚠ With no `--exec`, a manifest that cannot be read is the TEXT mode, named nothing: the only way
+# here without one is `--programs` (the coverage branch reads the manifest first otherwise, and
+# names it), and 6.7.9 read no manifest there — `cyrius coverage --programs <glob>` printed its
+# report on a broken cyrius.cyml, and the user's decision keeps the text mode as it was. The exec
+# mode, which resolves [deps] from the manifest, still names it. CHANGELOG [6.7.10]
 fn _covx_resolve(): i64 {
     var xv = _cli_values("--exec");
     if (vec_len(xv) > 0) { return xv; }
+    if (_cli_has("--exec") == 0) {
+        if (_mf_probe() < 0) { return 0; }
+    }
     if (_mf_load() < 0) { return 0 - 1; }
     var mx = _mf_strs("coverage", "exec");
     if (_toml_bad == 1) {

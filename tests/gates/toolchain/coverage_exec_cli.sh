@@ -28,6 +28,11 @@
 #       cyrius.lock — the exec mode joins the AUTO_DEPS chain, so a refusal after it left both)
 #   X3  no --exec, no key: stdout byte-identical to the 6.7.9 CLI's (two goldens: a plain run, and
 #       -v --per-entry --programs --min 50); nothing resolved (no lib/, no cyrius.lock)
+#   X3b a cyrius.cyml whose value never closes (`[coverage] programs = [...` unclosed), as 6.7.9 read
+#       it: `--programs=programs/ok_test.cyr` prints 6.7.9's report (a golden) with nothing on stderr,
+#       rc 0 — the exec-mode question is asked through `_mf_probe`, which names nothing, and 6.7.9
+#       read no manifest there; the bare run names the manifest's line, rc 1 (6.7.9's text); and
+#       `--exec=...` names it too, rc 1, before any resolve (the exec mode needs the manifest)
 #   X4  .tcyr are executed: sh_c is entered only by t.tcyr — executed with it, unexecuted (4/7)
 #       without tests/
 #   X5  `shapes` — a component of every record's path (src/shapes.cyr), and ok_test's OWN `shapes`
@@ -74,6 +79,12 @@
 #       X8 X9; auto_deps_verb_gate.sh axis 2
 #   N12 `_cli_preflight`'s coverage arm removed (the 6.7.10 review's shape: every refusal after the
 #       resolve)                                                    X2b X11 X14 X15
+#   N13 `_covx_resolve` reads the manifest with `_mf_load` (the P5B-6 shape: the text run on a broken
+#       manifest exits 1, no report)                                X3b
+#   N14 `_covx_wanted` reads it with `_mf_load` (the error is printed on a text run that then passes)
+#                                                                   X3b
+#   N15 `_mf_probe` keeps a failed read (`_mf_state` not reset): the bare run fails naming nothing
+#                                                                   X3b
 #   NH1 the ach leg's coverage step deleted                        XH (stage, check, SELFHOST_FAIL, run)
 #   NH2 the cass leg's X1 run deleted                              XH
 #   NH3 _co_cov_check's 5/7 weakened to a prefix                   XH
@@ -178,6 +189,31 @@ cov -v --per-entry --programs 'programs/*_test.cyr' --min 50
 [ "$RC" = 0 ] && cmp -s "$W/out" "$W/golden2" || { fail "X3: a -v --per-entry --programs --min run (rc $RC) is not 6.7.9's stdout:"; diff "$W/golden2" "$W/out" | head -8; }
 [ -e "$W/p/lib" ] || [ -e "$W/p/cyrius.lock" ] && fail "X3: the text mode resolved dependencies (lib/ or cyrius.lock written)"
 [ "$FAIL" = "$x" ] && echo "  ok X3: the text mode prints 6.7.9's stdout byte for byte (2 goldens) and resolves nothing"
+# X3b — a manifest whose value never closes, read as 6.7.9 read it (golden3 from the 6.7.9 CLI)
+cat > "$W/golden3" <<'EOF'
+=== Coverage Report ===
+  mode: local repo sources (src/, recursive); reference coverage
+  corpus: tests/**/*.tcyr + 1 RUN program(s), as text (references, not execution)
+
+  shapes.cyr                        7/7 fns
+
+-- Summary --
+  Files referenced:   1/1
+  Functions referenced: 7/7 (100%)  [reference coverage — a floor, not a correctness proof]
+EOF
+UNCL='error: cyrius.cyml:13: [coverage] programs opens a value that never closes (an array, inline table or '
+x=$FAIL
+fx '\n[coverage]\nprograms = ["programs/ok_test.cyr"\n'
+cov --programs=programs/ok_test.cyr
+[ "$RC" = 0 ] && cmp -s "$W/out" "$W/golden3" && [ ! -s "$W/err" ] \
+    || { fail "X3b: --programs on a manifest whose value never closes (rc $RC) is not 6.7.9's report with nothing on stderr:"; show; }
+cov
+[ "$RC" = 1 ] && [ "$(grep -c '^error' "$W/err")" = 1 ] && grep -qF "$UNCL" "$W/err" && [ ! -s "$W/out" ] \
+    || { fail "X3b: the bare run (rc $RC) does not name the unclosed value once, as 6.7.9 did"; show; }
+cov --exec=programs/ok_test.cyr
+[ "$RC" = 1 ] && [ "$(grep -c '^error' "$W/err")" = 1 ] && grep -qF "$UNCL" "$W/err" && nores \
+    || { fail "X3b: --exec (rc $RC) does not name the unclosed value once, before the resolve"; show; }
+[ "$FAIL" = "$x" ] && echo "  ok X3b: a manifest whose value never closes — --programs prints 6.7.9's report (rc 0, stderr empty), the bare run and --exec name it once (rc 1), nothing resolved"
 
 # ── X1 + X4 + X5 + X12: one program executed ──────────────────────────────────────────────────
 x=$FAIL

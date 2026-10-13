@@ -203,6 +203,7 @@ var _mf_buf = 0;          # the manifest's TOML header (a CYML body after a `---
 var _mf_len = 0;
 var _mf_state = 0;        # 0 = not read yet, 1 = loaded, 2 = no manifest, 3 = refused
 var _mf_path = 0;
+var _mf_quiet = 0;        # 1 inside `_mf_probe`: a manifest that cannot be read is not named
 var _toml_bad = 0;        # set by a getter: the key is PRESENT but its value is malformed / mistyped
 var _toml_unclosed = 0;   # set by a skip that ran off the end: a `"""` / `'''` string, array or inline table
 
@@ -582,7 +583,7 @@ fn _mf_unclosed(): i64 {
                 str_builder_add_cstr(sb, "a quoted key opens a string that never closes");
             }
             str_builder_add_cstr(sb, " (an array, inline table or \"\"\"/''' string with no end): every line after it would be read as part of it; close it");
-            _err(str_data(str_builder_build(sb)));
+            if (_mf_quiet == 0) { _err(str_data(str_builder_build(sb))); }
             return 1;
         }
     }
@@ -608,6 +609,7 @@ fn _mf_load(): i64 {
     var b = file_read_whole_max(path, _MF_MAX, &n);
     if (b == 0) {
         _mf_state = 3;
+        if (_mf_quiet == 1) { return 0 - 1; }
         if (n == 0 - 27) { _err_ctx("the manifest is larger than 16 MiB; refusing to read it", path); }
         else { _err_ctx("cannot read the manifest", path); }
         return 0 - 1;
@@ -624,6 +626,20 @@ fn _mf_load(): i64 {
     }
     _mf_state = 1;
     return 1;
+}
+
+# `_mf_load` for a question that HAS an answer without the manifest: 1 / 0 as `_mf_load` answers,
+# or -1 — nothing printed — when the manifest exists and cannot be read. That failure is then
+# forgotten (`_mf_state` back to 0), so the next `_mf_load` reads the file again and names it. The
+# coverage verb asks it to learn whether `[coverage] exec` turns its exec mode on: with `--programs`
+# and no `--exec`, 6.7.9 read no manifest at all, and a text run must not start failing for one
+# (the user's decision: `[coverage] programs` keeps meaning TEXT coverage). CHANGELOG [6.7.10]
+fn _mf_probe(): i64 {
+    _mf_quiet = 1;
+    var r = _mf_load();
+    _mf_quiet = 0;
+    if (r < 0) { _mf_state = 0; }
+    return r;
 }
 
 # `[section] key` as a fresh cstr, or 0 when absent (or no manifest). A present key whose value is
