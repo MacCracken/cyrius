@@ -76,6 +76,18 @@
 #   the fix reverted (the 6.7.9 tree before it)        -> RED R18e (4) R18g (156) R18h (128)
 #   real tree                                          -> GREEN (42 refusal rows, 17 acceptance rows)
 #
+# 6.7.10 (B7-1b) — A POINTER INTO A BY-VALUE STRUCT PARAMETER OF 8 B OR LESS PASSES THE STRUCT IT POINTS
+# AT (the user's decision 7, 2026-10-12), as over 8 B, where that parameter is address-passed: the
+# accepted `&p` / `*T` argument was pushed AS the struct's one word, so the callee read the pointer's
+# bits (issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md, exit 0 where 111 is right).
+# B1 is that repro verbatim, B2-B4 the forms it names (a `*S1` local, `&s`, a `*S1` parameter, a call
+# returning one, a generic instance, another struct's `*T1`); B5 pins the boundary (an untyped value is
+# the word). The type check is unchanged — no new refusal. Every other form, consumer, size and target:
+# tests/tcyr/crossos/small_struct_pointer_arg.tcyr, run by tests/gates/codegen/small_struct_handle_line.sh
+# R3 / R4 / PP (its mutation ledger MB1..MB9).
+#   the B7-1g compiler (f72166c0)                     -> RED B1 (0) B2 B3 B4 (the pointers' bits)
+#   real tree                                          -> GREEN (42 refusal rows, 22 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -418,6 +430,54 @@ fn rf(p: T1): i64 { return p.w + 1; }
 syscall(60, go());" \
     10 \
     "${T}fn go(): i64 { return 9 + 1; } syscall(60, go());"
+
+echo "=== 6.7.10 (B7-1b): a pointer into a by-value struct of 8 B or less passes the struct it points at ==="
+# The filed repro, verbatim (docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md):
+# exit 0 through 6.7.9 — each callee read the pointer's bits as its struct. The control passes the structs.
+RPB='include "lib/syscalls.cyr"
+struct S1 { u; }
+struct S4 { a: i32; }
+fn bs1(b: S1): i64 { return b.u; }
+fn bs4(b: S4): i64 { return b.a; }
+fn go(): i64 {
+    var s: S1; s.u = 5;
+    var t: S4; t.a = 6;
+    var sp: *S1 = &s;
+    var tp: *S4 = &t;
+    var r = 0;
+    if (bs1(sp) == 5) { r = r + 1; }      # a `*S1` local into `b: S1` (8 B, passed by value)
+    if (bs4(tp) == 6) { r = r + 10; }     # a `*S4` local into `b: S4` (4 B)
+    if (bs1(&s) == 5) { r = r + 100; }    # `&s` into `b: S1`
+    return r;
+}
+syscall(60, go());
+'
+accept "B1 the filed repro, verbatim (was 0)" "$RPB" 111 \
+    "$(printf '%s' "$RPB" | sed 's/bs1(sp)/bs1(s)/; s/bs4(tp)/bs4(t)/; s/bs1(&s)/bs1(s)/')"
+# The rows the filing asks for: a `*S1` local, `&s`, a `*S1` parameter, a call returning one, a
+# generic instance — each the struct it points at (the control copies through the receive path).
+accept "B2 a *S1 local, &s, a *S1 parameter, a *S1-returning call (was 0)" \
+    "${T}fn sid(u: *S1): *S1 { return u; } fn vp(u: *S1): i64 { var r = bs1(u); return r; }
+fn go(): i64 { var s: S1; s.u = 5; var sp: *S1 = &s; return bs1(sp) * 1000 + bs1(&s) * 100 + vp(&s) * 10 + bs1(sid(&s)); } syscall(60, go() - 5400);" \
+    155 \
+    "${T}fn go(): i64 { var s: S1; s.u = 5; var sp: *S1 = &s; var c: S1 = sp; return bs1(c) * 1000 + bs1(c) * 100 + bs1(c) * 10 + bs1(c); } syscall(60, go() - 5400);"
+accept "B3 a generic instance: gw(wp), gw<i32>(wp) into w: W1<T> (was 0)" \
+    "struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
+fn go(): i64 { var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w; return gw(wp) * 10 + gw<i32>(wp); } syscall(60, go());" \
+    66 \
+    "struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
+fn go(): i64 { var w: W1<i32>; w.v = 6; return gw(w) * 10 + gw<i32>(w); } syscall(60, go());"
+# A typed pointer of ANOTHER struct converts, as over 8 B (6.7.3, the user's decision of 2026-10-08):
+# its bytes are read with the parameter's layout.
+accept "B4 a *T1 into b: S1 is read as an S1, as over 8 B" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(tp) * 10 + bs1(&t); } syscall(60, go());" \
+    99 \
+    "${T}fn go(): i64 { var s: S1; s.u = 9; return bs1(s) * 10 + bs1(s); } syscall(60, go());"
+# An UNTYPED value is still the struct's word — only a typed pointer or `&x` is copied through.
+accept "B5 the untyped boundary: an untyped local holding &s is its word" \
+    "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; if (bs1(u) == u) { return 7; } return 1; } syscall(60, go());" \
+    7 \
+    "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; var c: S1; c.u = u; if (bs1(c) == u) { return 7; } return 1; } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

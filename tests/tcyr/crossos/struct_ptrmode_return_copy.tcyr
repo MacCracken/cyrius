@@ -6,8 +6,10 @@
 # handle's slot holds the struct's ADDRESS. So `q.x` read a heap address and the other fields read
 # neighbouring frame words: `mk2(10)` gave {140448913948680, 10} where {10, 11} is right, on x86,
 # aarch64, PE and (>16 B) cx alike. 6.6.16 (C2) made `q = a` copy through a handle; the `return`
-# path was missed. A `*T` parameter (already copied through, 6.6.6) and an 8 B struct (held by
-# value) are the controls: they were right before and must stay right.
+# path was missed. A `*T` parameter (already copied through, 6.6.6) is the control: it was right
+# before and must stay right. An 8 B struct local initialised from an address is a handle too since
+# 6.7.10 (the handle line) and returns its struct the same way (through 6.7.9 it was an inline value
+# holding the address, which the same rows read back by luck).
 #
 # Each subject is checked against hand-computed constants, and a copy is told from an alias by a
 # WRITE to the heap object after the return (the returned value must not move).
@@ -18,7 +20,7 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/assert.cyr"
 
-struct P1 { x; }                     # 8 B — held by value (control)
+struct P1 { x; }                     # 8 B — a handle since 6.7.10, returned in rax
 struct P2 { x; y; }                  # 16 B — the rax:rdx pair class
 struct O12 { a: i64; b: i32; }       # 12 B — pair class, odd tail
 struct P3 { x; y; z; }               # 24 B — the retptr class
@@ -26,7 +28,7 @@ struct O20 { a; b; c: i32; }         # 20 B — retptr class, odd tail
 
 var GHP = 0;                         # the last handle a maker allocated (for the alias rows)
 
-fn mk1(n): P1 { var p: P1 = alloc(8); p.x = n; return p; }
+fn mk1(n): P1 { var p: P1 = alloc(8); p.x = n; GHP = p; return p; }
 fn mk2(n): P2 { var p: P2 = alloc(16); p.x = n; p.y = n + 1; GHP = p; return p; }
 fn mk12(n): O12 { var p: O12 = alloc(16); p.a = n; p.b = n + 1; return p; }
 fn mk3(n): P3 { var p: P3 = alloc(24); p.x = n; p.y = n + 1; p.z = n + 2; GHP = p; return p; }
@@ -49,6 +51,7 @@ fn fw4(p: *B4): B4 { return p; }
 fn fw6(p: *B6): B6 { return p; }
 
 fn t_p1() { var a: P1 = mk1(7); return a.x; }
+fn t_p1_noalias() { var a: P1 = mk1(7); store64(GHP, 55); return a.x; }
 fn t_p2() { var b: P2 = mk2(10); return b.x * 100 + b.y; }
 fn t_p2_noalias() { var b: P2 = mk2(10); store64(GHP, 55); return b.x; }
 fn t_p2_assign() { var b: P2; b.x = 1; b.y = 1; b = mk2(30); return b.x * 100 + b.y; }
@@ -67,7 +70,8 @@ fn t_fw4() { var s: B4; s.a = 0 - 7; var c: B4 = fw4(&s); s.a = 0; return c.a; }
 fn t_fw6() { var s: B6; s.a = 300; s.b = 0 - 2; var c: B6 = fw6(&s); s.a = 0; return c.a * 10 + c.b; }
 
 alloc_init();
-assert_eq(t_p1(), 7, "8 B handle-shaped local returns its value (control)");
+assert_eq(t_p1(), 7, "8 B handle returned by value: its struct (6.7.10)");
+assert_eq(t_p1_noalias(), 7, "8 B: the returned value is a copy, not the heap object");
 assert_eq(t_p2(), 1011, "16 B handle returned by value: {10, 11}");
 assert_eq(t_p2_noalias(), 10, "16 B: the returned value is a copy, not the heap object");
 assert_eq(t_p2_assign(), 3031, "16 B: `b = mk2(..)` assignment receive");

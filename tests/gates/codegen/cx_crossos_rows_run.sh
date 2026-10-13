@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (50, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (60, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -62,7 +62,34 @@
 #       INT_MIN since 6.6.20) ran cxvm's idiv and died SIGFPE (136): native and cxvm each print
 #       `<N> passed, 0 failed`, N derived from the source (13, floor 13), the whole file (the
 #       critical lane's hand-off; its own rows are cx_forward_read_constant_global.sh G-J).
-#   R13 (6.7.10) the sakshi fold on cx (sakshi 2.5.9's CYRIUS_TARGET_CX arm — before it every program
+#   R13 (6.7.10, B7-1) tests/tcyr/crossos/small_struct_handle_line.tcyr — the handle line: a struct
+#       local of 8 B or less initialised from a non-struct-value is a handle, every initialiser,
+#       consumer and size 1..8 B against its 16 B twin: native and cxvm each print `<N> passed,
+#       0 failed`, N derived from the source (220, floor 220), the whole file (its own gate,
+#       small_struct_handle_line.sh, runs it on x86 / IR / DCE / aarch64 / cx / PE too).
+#   R14 (6.7.10, B7-1g) tests/tcyr/crossos/small_struct_global_handle_line.tcyr — the handle line for
+#       globals: a struct global of 8 B or less initialised from a non-struct-value is a handle,
+#       every initialiser (the declaration zone and after the first statement), consumer (in a fn and
+#       at top level) and size 1..8 B against its 16 B twin: native and cxvm each print `<N> passed,
+#       0 failed`, N derived from the source (243, floor 243), the whole file (its own gate rows,
+#       small_struct_handle_line.sh R2, run it on x86 / IR / DCE / aarch64 / cx / PE too).
+#   R15 (6.7.10, B7-1b) tests/tcyr/crossos/small_struct_pointer_arg.tcyr — a typed pointer or `&s` into a
+#       by-value struct parameter of 8 B or less passes the struct it points at, every form, consumer
+#       and size 1..8 B against its 16 B twin: native and cxvm each print `<N> passed, 0 failed`, N
+#       derived from the source (69, floor 69), the whole file (its own gate rows,
+#       small_struct_handle_line.sh R3, run it on x86 / IR / DCE / aarch64 / cx / PE too).
+#   R16 (6.7.10, B7-1c) tests/tcyr/crossos/small_struct_pointer_copy.tcyr — struct copies are
+#       size-independent: `l = p` / `G = p` (`p: *S`) copy the struct p points at and `q = r` through
+#       `q: *S` copies into the pointee at every size, every shape and size 1..8 B against its 16 B
+#       twin: native and cxvm each print `<N> passed, 0 failed`, N derived from the source (67, floor
+#       67), the whole file (its own gate rows, small_struct_handle_line.sh R5, run it on x86 / IR /
+#       DCE / aarch64 / cx / PE too).
+#   R17 (6.7.10, B7-2) tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr — u8 / u16 / u32 / f32 struct
+#       fields are their widths (packed, zero-extended): sizeof / offsets, wrap, unaligned `*T` access,
+#       f32, literals, the by-value class sweep at every size 1..17 and 20: native and cxvm each print
+#       `<N> passed, 0 failed`, N derived from the source (199, floor 199), the whole file (its own
+#       gate, narrow_fields_checked.sh A, runs it on x86 / IR / DCE / aarch64 / cx / PE too).
+#   R18 (6.7.10) the sakshi fold on cx (sakshi 2.5.9's CYRIUS_TARGET_CX arm — before it every program
 #       that included lib/sakshi.cyr stopped on cx with 10 "undefined variable '_SK_SYS_*'" errors): a
 #       log line, a span and, on cx only, sakshi_output_udp's refusal (-1) — native and cxvm each exit 0
 #       with the `cx-rows sakshi ok` marker, and each leg's stderr carries the `[INFO] cx-sakshi log
@@ -106,8 +133,8 @@
 #   g. (R12) the critical lane's bite 18 reverted in parse_decl.cyr (cx keeps the deferred replay of
 #      a folded global), that tree's cycc_cx passed as CYCC_CX -> R12 cxvm RED (exit 136, SIGFPE),
 #      45 green.
-#   h. (R13, 6.7.10, measured in the refold worktree; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the
-#      6.7.9 fold, no cx arm) -> R13 cxvm RED twice ("undefined variable '_SK_SYS_WRITE'" at
+#   h. (R18 — R13 in the refold worktree, measured there; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the
+#      6.7.9 fold, no cx arm) -> R18 cxvm RED twice ("undefined variable '_SK_SYS_WRITE'" at
 #      lib/sakshi.cyr:248; no log line), both native legs green, 48 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
@@ -497,7 +524,27 @@ echo "R12 — const_fold_int_min_div.tcyr (6.6.20 RPD-06; cx replayed the folded
 tcyr_native tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
 tcyr_cx     tests/tcyr/crossos/const_fold_int_min_div.tcyr 13
 
-# ── R13 — the sakshi fold on cx (6.7.10) ──
+echo "R13 — small_struct_handle_line.tcyr (6.7.10 B7-1: the handle line), native then cxvm:"
+tcyr_native tests/tcyr/crossos/small_struct_handle_line.tcyr 220
+tcyr_cx     tests/tcyr/crossos/small_struct_handle_line.tcyr 220
+
+echo "R14 — small_struct_global_handle_line.tcyr (6.7.10 B7-1g: the handle line for globals), native then cxvm:"
+tcyr_native tests/tcyr/crossos/small_struct_global_handle_line.tcyr 243
+tcyr_cx     tests/tcyr/crossos/small_struct_global_handle_line.tcyr 243
+
+echo "R15 — small_struct_pointer_arg.tcyr (6.7.10 B7-1b: a pointer into a by-value struct of 8 B or less), native then cxvm:"
+tcyr_native tests/tcyr/crossos/small_struct_pointer_arg.tcyr 69
+tcyr_cx     tests/tcyr/crossos/small_struct_pointer_arg.tcyr 69
+
+echo "R16 — small_struct_pointer_copy.tcyr (6.7.10 B7-1c: struct copies through a *T of 8 B or less), native then cxvm:"
+tcyr_native tests/tcyr/crossos/small_struct_pointer_copy.tcyr 67
+tcyr_cx     tests/tcyr/crossos/small_struct_pointer_copy.tcyr 67
+
+echo "R17 — narrow_unsigned_f32_fields.tcyr (6.7.10 B7-2: u8 / u16 / u32 / f32 fields are their widths), native then cxvm:"
+tcyr_native tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr 199
+tcyr_cx     tests/tcyr/crossos/narrow_unsigned_f32_fields.tcyr 199
+
+# ── R18 — the sakshi fold on cx (6.7.10) ──
 cat > "$T/sk.cyr" <<'EOF'
 # R13: the sakshi fold on cx (sakshi 2.5.9's cx arm): a log line to stderr, a span, the UDP refusal.
 include "lib/syscalls.cyr"
@@ -520,15 +567,15 @@ if (_b == 0) { syscall(1, 1, "cx-rows sakshi ok\n", 18); }
 syscall(60, _b);
 EOF
 
-echo "R13 — the sakshi fold on cx (6.7.10: sakshi 2.5.9's cx arm), native then cxvm:"
-inline "R13 a log line, a span and the cx UDP refusal" "$T/sk.cyr" 0 "cx-rows sakshi ok"
+echo "R18 — the sakshi fold on cx (6.7.10: sakshi 2.5.9's cx arm), native then cxvm:"
+inline "R18 a log line, a span and the cx UDP refusal" "$T/sk.cyr" 0 "cx-rows sakshi ok"
 for _leg in native:no cxvm:co; do
-    if grep -q '\[INFO\] cx-sakshi log line$' "$T/${_leg#*:}"; then ok "R13 ${_leg%%:*}: the log line reached stderr"
-    else bad "R13 ${_leg%%:*}: no '[INFO] cx-sakshi log line' in its output"; fi
+    if grep -q '\[INFO\] cx-sakshi log line$' "$T/${_leg#*:}"; then ok "R18 ${_leg%%:*}: the log line reached stderr"
+    else bad "R18 ${_leg%%:*}: no '[INFO] cx-sakshi log line' in its output"; fi
 done
 
-WANT=50
+WANT=60
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, and the sakshi fold logs and spans on cx"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), and the sakshi fold logs and spans on cx"
 exit 0

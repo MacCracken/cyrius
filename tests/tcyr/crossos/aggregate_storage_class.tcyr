@@ -188,10 +188,23 @@ fn g_narrow_ctl() { var n: N3; n.a = 1; n.b = 2; n.c = 3; return n.a * 100 + n.b
 # annotated local and a top-level global. Before 6.6.5 only the first and the last dispatched.
 fn op_lit_small() { var a = Num { 1 }; var b = Num { 2 }; return a + b; }
 fn op_typed_small() { var a: Num; a.v = 1; var b: Num; b.v = 2; return a + b; }
+# ⛔ 6.7.10 (the handle line): `var a: Num = 1;` initialises an 8 B struct from an integer, so it is
+# a HANDLE (to address 1), as `var a: V2 = 1;` is at 16 B: it does not dispatch, `+` is pointer
+# arithmetic (1 + 2). Through 6.7.9 it was an inline Num with `v == 1` and dispatched (102). The
+# annotated local that dispatches is one initialised from a struct value (`mkn`).
+fn mkn(n): Num { var r: Num; r.v = n; return r; }
 fn op_annot_small() { var a: Num = 1; var b: Num = 2; return a + b; }
+fn op_annot_wide() { var a: V2 = 1; var b: V2 = 2; return a + b; }
+fn op_value_small() { var a: Num = mkn(1); var b: Num = mkn(2); return a + b; }
+# ⛔ 6.7.10 (B7-1g, the handle line for globals): `var ga: Num = 1;` is a handle global to address 1,
+# as `var a: Num = 1;` is a handle local, so `ga + gb` is pointer arithmetic (1 + 2). Through 6.7.9 it
+# was an inline Num with `v == 1` and dispatched (102). The global that dispatches is a struct value.
 var ga: Num = 1;
 var gb: Num = 2;
 fn op_global_small() { return ga + gb; }
+var gva = Num { 1 };
+var gvb: Num = mkn(2);
+fn op_gvalue_small() { return gva + gvb; }
 fn op_lit_wide() { var a = V2 { 3, 4 }; var b = V2 { 5, 6 }; return a + b; }
 fn op_typed_wide() { var a: V2; a.ax = 3; a.ay = 4; var b: V2; b.ax = 5; b.ay = 6; return a + b; }
 
@@ -263,8 +276,12 @@ assert_eq(gn_guard, 4242, "nor into the i64 after it");
 test_group("operator dispatch agrees wherever the operand lives");
 assert_eq(op_lit_small(), 102, "literal local dispatches Num_add");
 assert_eq(op_typed_small(), 102, "typed local dispatches Num_add");
-assert_eq(op_annot_small(), 102, "`var a: Num = 1` dispatches Num_add");
-assert_eq(op_global_small(), 102, "top-level global dispatches Num_add");
+assert_eq(op_annot_small(), 3, "`var a: Num = 1` is a handle (6.7.10): pointer arithmetic, no dispatch");
+assert_eq(op_annot_small(), op_annot_wide(), "as `var a: V2 = 1` is at 16 B");
+assert_eq(op_value_small(), 102, "`var a: Num = mkn(1)` (a struct value) dispatches Num_add");
+assert_eq(op_global_small(), 3, "`var ga: Num = 1` is a handle global (6.7.10): pointer arithmetic, no dispatch");
+assert_eq(op_global_small(), op_annot_small(), "as the handle local is");
+assert_eq(op_gvalue_small(), 102, "a global struct value (a literal, a call) dispatches Num_add");
 assert_eq(op_lit_wide(), 3006, "a >8 B literal local passes its address to V2_add");
 assert_eq(op_lit_wide(), op_typed_wide(), "wide literal and wide typed local agree");
 

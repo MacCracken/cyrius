@@ -102,7 +102,10 @@
 #   S   (D6) what a prototype is not: S4 `object;` — one unreferenced UND symbol `dyn Show.show`, and GNU
 #       ld links the object; S5 `shared;` exports none; S6 no CYRIUS_SYMS line; S7 no unreachable-fn note
 #   CG  (D6) what the call is: CG1 x86 `call [rbp+disp32]` (ff 95) per call; CG2 PE the same, and none of
-#       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`)
+#       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`). The anchor count's
+#       `grep -o` matches NOTHING when CG2 passes, so it is `|| true`'d: under `bash -eo pipefail` (GitHub's
+#       shell semantics) the failing grep failed the pipeline and `set -e` ended the gate right after CG1,
+#       exit 1 (6.7.10 review; `bash -eo pipefail` on this file: exit 0, and 1 with the `|| true` dropped)
 #   IX  (6.7.8 integration) where the checked dyn meets C2's subscripts, `*p` width, slices and the
 #       bounds-checked mode: IX1 tests/tcyr/crossos/dyn_subscripts.tcyr (a dyn method's `self.p[i]` read /
 #       `=` / `+=` and its typed array local; a dyn call's `*T` result subscripted, `o.ptr()[i]`, and a
@@ -250,12 +253,14 @@
 #   MR3  the value-class check (F8 code 10) gone                   -> F8i, F8j (BUILT)
 #   MR4  `_dyn_slot_pair` without the body scan (flag only)        -> F8j (BUILT: the impl below the site)
 #   MR5  `_enum_decl_pair` answering 0 (no member is a pair)       -> C11a-f, CW, A dyn_objects
-#   MR7  `_pcmpe_struct_assign` without `_dyn_dst_chk`             -> V4h-V4m, V4u (BUILT)
+#   MR7  `_pcmpe_struct_assign` without `_dyn_dst_chk`             -> V4h-V4m, V4u (BUILT) (6.7.10 B7-1c: V4h-V4l,
+#        V4u — V4m is refused by the copy's type check first, as its 16 B twin V4m2 always was)
 #   MR8  `_sc_var_receive` without `_scv_dyn_chk`                  -> V4q, V4r (BUILT)
 #   MR9  `_sc_global_receive` without its dyn arm                  -> V4s, V4t (BUILT)
 #   MR10 `_dyn_var` without `_dyn_var_ann`                         -> V4n, V4o, V4p (BUILT)
 #   MR11 the tail call not diverted for a dyn callee               -> V4v-V4z (BUILT)
-#   MR12 V4's exemption not recorded (`_dyn_xb`)                   -> V4h-V4m, V4q-V4u (BUILT)
+#   MR12 V4's exemption not recorded (`_dyn_xb`)                   -> V4h-V4m, V4q-V4u (BUILT) (6.7.10 B7-1c: V4m
+#        and V4m2 keep the type check's refusal)
 #   (MR6, `_gsc_chain` gone: tests/tcyr/crossos/generic_struct_inference.tcyr G9 — the file does not build,
 #   and the value rows read 4 for 8.)
 # INTEGRATION (2026-10-10, the 6.7.8 merge of the C2 and dyn lanes; the real tree green on every row):
@@ -459,7 +464,12 @@ refused v04i "$RD" "V4i: \`x = pass(o);\` into an \`i64\` local" "${HP}${FO}var 
 refused v04j "$RD" "V4j: \`GU = pass(o);\` into an untyped global" "${HP}var GU = 0;\n${FO}GU = pass(o); return GU;${FE}"
 refused v04k "$RD" "V4k: a classic-for step \`x = pass(o)\`" "${HP}${FO}var x = 0; for (var i = 0; i < 1; x = pass(o)) { i = 1; } return x;${FE}"
 refused v04l "$RD" "V4l: \`x = q.mk(o);\`, a method result" "${HP}${QM}${FO}var q = Q { 1, 2 }; var x = 0; x = q.mk(o); return x;${FE}"
-refused v04m "$RD" "V4m: \`sp = pass(o);\` into a \`*S1\` local (S1 of 8 bytes)" "${HP}struct S1 { a; }\n${FO}var s = S1 { 1 }; var sp: *S1 = &s; sp = pass(o); return 0;${FE}"
+# 6.7.10 (B7-1c): a `*S1` of 8 bytes is a struct operand of `=`, as over 8 B (the user's decision 6: struct
+# copies are size-independent), so the dyn result is refused as a struct of ANOTHER type, by the copy's
+# type check ahead of the dyn check — the message its 16 B twin always gave. Still refused once, at the call.
+RX="cannot copy 'pass' into a variable of a different struct/vector type: 'sp'"
+refused v04m "$RX" "V4m: \`sp = pass(o);\` into a \`*S1\` local (S1 of 8 bytes)" "${HP}struct S1 { a; }\n${FO}var s = S1 { 1 }; var sp: *S1 = &s; sp = pass(o); return 0;${FE}"
+refused v04m2 "$RX" "V4m: its 16 B twin, into a \`*S2\` local" "${HP}struct S2 { a; b; }\n${FO}var s = S2 { 1, 2 }; var sp: *S2 = &s; sp = pass(o); return 0;${FE}"
 refused v04n "$RD" "V4n: \`var y: i64 = pass(o);\` (y became the dyn its annotation says it is not)" "${HP}${FO}var y: i64 = pass(o); return 0;${FE}"
 refused v04o "$RD" "V4o: \`var y: u8 = pass(o);\`" "${HP}${FO}var y: u8 = pass(o); return 0;${FE}"
 refused v04p "$RD" "V4p: \`var y: f64 = pass(o);\`" "${HP}${FO}var y: f64 = pass(o); return 0;${FE}"
@@ -660,7 +670,7 @@ else
 fi
 if CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/x5.cyr" > "$T/x5.exe" 2> "$T/x5.werr" && [ -s "$T/x5.exe" ]; then
     ff=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk 'p == "ff" && $1 == "95" { n++ } { p = $1 } END { print n + 0 }')
-    an=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk '{ w = w " " $1 } END { print w }' | grep -o ' 53 48 89 e3 48 83 e4 f0' | wc -l)
+    an=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk '{ w = w " " $1 } END { print w }' | { grep -o ' 53 48 89 e3 48 83 e4 f0' || true; } | wc -l)
     if [ "$ff" -eq 3 ] && [ "$an" -eq 0 ]; then ok "CG2: PE — the frame-slot \`call [rbp+disp32]\` (3), never ECALLPTR_PE's forced alignment (0 anchors)"
     else bad "CG2: PE holds $ff \`ff 95\` (want 3) and $an ECALLPTR_PE anchors (want 0)"; fi
 else bad "CG2: the PE build failed: $(grep -m1 '^error' "$T/x5.werr")"; fi

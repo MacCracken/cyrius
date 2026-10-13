@@ -1,0 +1,264 @@
+# derive_serialize_narrow.tcyr — 6.7.10 (B7-3): `#derive(Serialize)` on u8 / u16 / u32 / f32 fields.
+#
+# Through 6.7.9 these four types were 8-byte fields and the codecs knew only i8..i64, f64, Str, bool
+# and Vec: a u8..u32 / f32 field fell into the nested-struct arm and the build was refused
+# (`undefined function 'u8_to_json'`). 6.7.10 packs them (1 / 2 / 4 / 4 bytes, B7-2) and the codecs
+# take them, through one classifier for the three emitted fns (PP_DFIELD_INT / PP_DFIELD_FLT,
+# src/frontend/lex_pp.cyr):
+#   - u8 / u16 / u32: a bare JSON number, read ZERO-extended (a u32 4000000000 is written so, not
+#     -294967296); decoded with a store at the field's width (it truncates: 300 into a u8 is 44).
+#   - f32: written WIDENED to f64 (the user's decision, 2026-10-12): 0.1f is 0.10000000149011612,
+#     through bayan's f64 printer; decoded narrowed (`f32_from`, nearest-even), so every written
+#     value round-trips bit for bit — subnormals and the largest finite included.
+#   - `u64` stays outside the codecs, as through 6.7.9 (tests/gates/frontend/narrow_fields_checked.sh
+#     row S2 pins its refusal).
+# Each row goes through `_to_json`, `_from_json_str` (the scanner) and `_from_json(bayan_json_parse(..))`
+# (the pairs form). The cross legs (aarch64, PE; not cx — its codebuf overflows on lib/bayan.cyr)
+# and the IR / DCE modes are narrow_fields_checked.sh's S row.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+# Every width, the i8 / i32 / i64 controls, and an f32 with no f64 in the struct (the shared
+# number scratch is declared for an f32 alone).
+#derive(Serialize)
+struct U { a: u8; b: u16; c: u32; d: f32; e: i8; g: i32; h: i64; }
+
+#derive(Serialize)
+struct F4 { x: f32; y: f32; z: f32; w: f32; }
+
+#derive(Serialize)
+struct FM { a: f64; b: f32; c: f64; }
+
+#derive(Serialize)
+struct Inr { x: u8; y: f32; }
+
+# The nested struct last: the scanner skips a nested object's value, and only the pairs form
+# decodes it (as for every nested `#derive`d field).
+#derive(Serialize)
+struct Out { k: u16; z: u32; inn: Inr; }
+
+#derive(accessors)
+#derive(Serialize)
+struct AS { a: u8; f: f32; s: i16; }
+
+#derive(Deserialize)
+struct DZ { w: u16; q: u32; }
+
+var GU = U { 7, 8, 9, 0.5, 0 - 1, 0 - 2, 3 };
+
+fn json_of_u(p) {
+    var sb = str_builder_new();
+    U_to_json(p, sb);
+    return str_builder_build(sb);
+}
+fn same(s, lit): i64 {
+    var n = strlen(lit);
+    if (str_len(s) != n) { return 0; }
+    return memeq(str_data(s), lit, n);
+}
+fn pairs(s) { return bayan_json_parse(s); }
+
+fn check_u(r: *U, a, b, c, d, e, g, h, tag): i64 {
+    assert_eq(r.a, a, tag);
+    assert_eq(r.b, b, tag);
+    assert_eq(r.c, c, tag);
+    assert_eq(r.d, d, tag);
+    assert_eq(r.e, e, tag);
+    assert_eq(r.g, g, tag);
+    assert_eq(r.h, h, tag);
+    return 0;
+}
+
+fn rows_u(): i64 {
+    assert_eq(sizeof(U), 24, "U { u8 u16 u32 f32 i8 i32 i64 } is 24 bytes (packed)");
+    var u = U { 255, 65535, 4294967295, 1.5, 0 - 3, 0 - 100000, 9876543210 };
+    var s = json_of_u(&u);
+    assert_eq(same(s, "{\"a\":255,\"b\":65535,\"c\":4294967295,\"d\":1.5,\"e\":-3,\"g\":-100000,\"h\":9876543210}"), 1,
+      "U _to_json: u8..u32 zero-extended, f32 widened, i8 / i32 signed");
+    check_u(U_from_json_str(str_data(s)), 255, 65535, 4294967295, 0x3FC00000, 0 - 3, 0 - 100000, 9876543210,
+      "U _from_json_str round trip");
+    check_u(U_from_json(pairs(s)), 255, 65535, 4294967295, 0x3FC00000, 0 - 3, 0 - 100000, 9876543210,
+      "U _from_json round trip");
+
+    # A u32 above 2^31 (the sign bit of its 4 bytes) is written as itself.
+    u.c = 4000000000;
+    u.a = 128;
+    u.b = 32768;
+    s = json_of_u(&u);
+    assert_eq(same(s, "{\"a\":128,\"b\":32768,\"c\":4000000000,\"d\":1.5,\"e\":-3,\"g\":-100000,\"h\":9876543210}"), 1,
+      "U _to_json: 128 / 32768 / 4000000000 written unsigned");
+    check_u(U_from_json_str(str_data(s)), 128, 32768, 4000000000, 0x3FC00000, 0 - 3, 0 - 100000, 9876543210,
+      "U 2^31 _from_json_str");
+    check_u(U_from_json(pairs(s)), 128, 32768, 4000000000, 0x3FC00000, 0 - 3, 0 - 100000, 9876543210,
+      "U 2^31 _from_json");
+
+    # Zero.
+    var z = U { 0, 0, 0, 0.0, 0, 0, 0 };
+    s = json_of_u(&z);
+    assert_eq(same(s, "{\"a\":0,\"b\":0,\"c\":0,\"d\":0.0,\"e\":0,\"g\":0,\"h\":0}"), 1, "U _to_json all zero");
+    check_u(U_from_json_str(str_data(s)), 0, 0, 0, 0, 0, 0, 0, "U zero _from_json_str");
+
+    # A decoded value is stored at the field's width: it truncates, as any narrow store does.
+    var wide = "{\"a\":300,\"b\":65537,\"c\":4294967298,\"d\":3,\"e\":-129,\"g\":1,\"h\":2}";
+    check_u(U_from_json_str(wide), 44, 1, 2, 0x40400000, 127, 1, 2,
+      "U _from_json_str truncates at the width (and an integer into f32 is 3.0)");
+    check_u(U_from_json(bayan_json_parse(str_from(wide))), 44, 1, 2, 0x40400000, 127, 1, 2,
+      "U _from_json truncates at the width (and an integer into f32 is 3.0)");
+
+    # The global, initialised in the declaration zone.
+    s = json_of_u(&GU);
+    assert_eq(same(s, "{\"a\":7,\"b\":8,\"c\":9,\"d\":0.5,\"e\":-1,\"g\":-2,\"h\":3}"), 1, "global U _to_json");
+    return 0;
+}
+
+fn check_f4(r, x, y, z, w, tag): i64 {
+    assert_eq(load32(r), x, tag);
+    assert_eq(load32(r + 4), y, tag);
+    assert_eq(load32(r + 8), z, tag);
+    assert_eq(load32(r + 12), w, tag);
+    return 0;
+}
+
+fn check_fm(r: *FM, tag): i64 {
+    assert_eq(r.a, 0x3FE0000000000000, tag);
+    assert_eq(r.b, 0x3E800000, tag);
+    assert_eq(r.c, 0x4000000000000000, tag);
+    return 0;
+}
+
+fn rows_f32(): i64 {
+    assert_eq(sizeof(F4), 16, "F4 { f32 x4 } is 16 bytes");
+    var f = F4 { 0.1, 0.0 - 2.25, 0.0, 0.0 };
+    store32(&f + 8, 1);              # the smallest subnormal, 2^-149
+    store32(&f + 12, 0x007FFFFF);    # the largest subnormal
+    assert_eq(load32(&f), 0x3DCCCCCD, "0.1 rounds to the f32 0x3DCCCCCD");
+    var sb = str_builder_new();
+    F4_to_json(&f, sb);
+    var s = str_builder_build(sb);
+    var want = "{\"x\":0.10000000149011612,\"y\":-2.25,\"z\":1.401298464324817e-45,\"w\":1.1754942106924411e-38}";
+    assert_eq(same(s, want), 1,
+      "F4 _to_json: each f32 widened to f64 exactly");
+    check_f4(F4_from_json_str(str_data(s)), 0x3DCCCCCD, 0xC0100000, 1, 0x007FFFFF,
+      "F4 _from_json_str round trip, bit for bit");
+    check_f4(F4_from_json(pairs(s)), 0x3DCCCCCD, 0xC0100000, 1, 0x007FFFFF, "F4 _from_json round trip, bit for bit");
+
+    # The largest finite f32, the smallest normal, -0.0.
+    store32(&f, 0x7F7FFFFF);
+    store32(&f + 4, 0x00800000);
+    store32(&f + 8, 0x80000000);
+    store32(&f + 12, 0x3F800000);
+    sb = str_builder_new();
+    F4_to_json(&f, sb);
+    s = str_builder_build(sb);
+    assert_eq(same(s, "{\"x\":3.4028234663852886e+38,\"y\":1.1754943508222875e-38,\"z\":-0.0,\"w\":1.0}"), 1,
+      "F4 _to_json: the largest finite, the smallest normal, -0.0, 1.0");
+    check_f4(F4_from_json_str(str_data(s)), 0x7F7FFFFF, 0x00800000, 0x80000000, 0x3F800000,
+      "F4 extremes _from_json_str");
+    check_f4(F4_from_json(pairs(s)), 0x7F7FFFFF, 0x00800000, 0x80000000, 0x3F800000, "F4 extremes _from_json");
+
+    # A hand-written document: the shortest f64 text decodes to the nearest f32.
+    var doc = "{\"x\":0.1,\"y\":-2.25e0,\"z\":1e-45,\"w\":16777217}";
+    check_f4(F4_from_json_str(doc), 0x3DCCCCCD, 0xC0100000, 1, 0x4B800000,
+      "F4 _from_json_str of shortest texts (16777217 rounds to 2^24)");
+    check_f4(F4_from_json(bayan_json_parse(str_from(doc))), 0x3DCCCCCD, 0xC0100000, 1, 0x4B800000,
+      "F4 _from_json of shortest texts");
+
+    # f32 between f64 fields: each keeps its own width.
+    var m = FM { 0.5, 0.25, 2.0 };
+    assert_eq(sizeof(FM), 20, "FM { f64 f32 f64 } is 20 bytes");
+    sb = str_builder_new();
+    FM_to_json(&m, sb);
+    s = str_builder_build(sb);
+    assert_eq(same(s, "{\"a\":0.5,\"b\":0.25,\"c\":2.0}"), 1, "FM _to_json");
+    check_fm(FM_from_json_str(str_data(s)), "FM _from_json_str: f64, f32, f64");
+    check_fm(FM_from_json(pairs(s)), "FM _from_json: f64, f32, f64");
+    return 0;
+}
+
+# The scanner skips a nested object (`nested` 0); the pairs form decodes it.
+fn check_out(q: *Out, nested, tag): i64 {
+    assert_eq(q.k, 7, tag);
+    assert_eq(q.z, 4000000000, tag);
+    if (nested == 1) {
+        assert_eq(q.inn.x, 200, tag);
+        assert_eq(q.inn.y, 0x3F000000, tag);
+    }
+    return 0;
+}
+
+fn rows_nested(): i64 {
+    assert_eq(sizeof(Inr), 5, "Inr { u8 f32 } is 5 bytes");
+    assert_eq(sizeof(Out), 11, "Out { u16 u32 Inr } is 11 bytes");
+    var i = Inr { 200, 0.5 };
+    var o = Out { 7, 4000000000, i };
+    var sb = str_builder_new();
+    Out_to_json(&o, sb);
+    var s = str_builder_build(sb);
+    assert_eq(same(s, "{\"k\":7,\"z\":4000000000,\"inn\":{\"x\":200,\"y\":0.5}}"), 1, "Out _to_json with a nested Inr");
+    check_out(Out_from_json(pairs(s)), 1, "Out _from_json: k, z and the nested u8 / f32");
+    check_out(Out_from_json_str(str_data(s)), 0, "Out _from_json_str: k, z");
+    return 0;
+}
+
+fn check_dz(e: *DZ, tag): i64 {
+    assert_eq(e.w, 65535, tag);
+    assert_eq(e.q, 4294967295, tag);
+    return 0;
+}
+
+fn rows_stacked(): i64 {
+    assert_eq(sizeof(AS), 7, "AS { u8 f32 i16 } is 7 bytes");
+    var a = AS { 250, 1.5, 0 - 5 };
+    var sb = str_builder_new();
+    AS_to_json(&a, sb);
+    var s = str_builder_build(sb);
+    assert_eq(same(s, "{\"a\":250,\"f\":1.5,\"s\":-5}"), 1, "AS _to_json (accessors stacked)");
+    var r = AS_from_json_str(str_data(s));
+    assert_eq(AS_a(r), 250, "AS_a after _from_json_str: zero-extended");
+    assert_eq(AS_f(r), 0x3FC00000, "AS_f after _from_json_str: the f32 bits");
+    assert_eq(AS_s(r), 0 - 5, "AS_s after _from_json_str: sign-extended");
+    AS_set_a(r, 255);
+    AS_set_f(r, 0x3DCCCCCD);
+    sb = str_builder_new();
+    AS_to_json(r, sb);
+    s = str_builder_build(sb);
+    assert_eq(same(s, "{\"a\":255,\"f\":0.10000000149011612,\"s\":-5}"), 1, "AS _to_json after the setters");
+    var q = AS_from_json(pairs(s));
+    assert_eq(AS_a(q), 255, "AS_a after _from_json");
+    assert_eq(AS_f(q), 0x3DCCCCCD, "AS_f after _from_json");
+    assert_eq(AS_s(q), 0 - 5, "AS_s after _from_json");
+
+    # `#derive(Deserialize)` emits the same codecs.
+    var d = DZ { 65535, 4294967295 };
+    sb = str_builder_new();
+    DZ_to_json(&d, sb);
+    s = str_builder_build(sb);
+    assert_eq(same(s, "{\"w\":65535,\"q\":4294967295}"), 1, "DZ _to_json (#derive(Deserialize))");
+    check_dz(DZ_from_json_str(str_data(s)), "DZ _from_json_str");
+    check_dz(DZ_from_json(pairs(s)), "DZ _from_json");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    rows_u();
+    rows_f32();
+    rows_nested();
+    rows_stacked();
+    return assert_summary();
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

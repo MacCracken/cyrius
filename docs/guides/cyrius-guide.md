@@ -233,8 +233,9 @@ a top-level `Pt[2]` 16 of its 32, and a write inside the declared bounds ran
 over the next variable, silently). A struct element's stride is
 `sizeof(T)`, which is **unpadded**: `struct G { d: f64; c: i8; }` is 9 bytes,
 so `G[3]` is 27 (rounded up to 32) and its elements are not 8-aligned. An
-`f32` array element is 4 bytes while an `f32` struct FIELD (and an `f32`
-scalar) still occupies 8.
+`f32` array element is 4 bytes, and so is an `f32` struct FIELD since 6.7.10
+(it took 8 before — see [Field types](#field-types-v6610)); an `f32` scalar
+variable still occupies an 8-byte slot.
 
 An element type that names nothing is refused by name — `unknown array
 element type 'Nope'` — and so is a struct or union used as the element of a
@@ -1049,6 +1050,9 @@ A `*Struct` variable — a local, a global or a parameter — takes **dot syntax
 the pointer (it never copies the struct). So does the result of a fn declared `: *Struct`
 (`first(h).next.val`, `first(h).m(..)`). Before 6.6.17 only a parameter did; a `*Node` local
 or global was "no struct type in scope", and such a call's result "does not return a struct".
+A struct VALUE assigned to a `*Struct` local or parameter copies INTO the pointee (`p = l`,
+`p = mk(..)`), and `l = p` copies the pointee into the struct value `l`, at every size (6.7.10 —
+see [Where a struct lives](#where-a-struct-lives-v665)).
 
 A field chain goes **through** a pointer field to a struct the way `p.val` does: `a.next.val`, `a.next.next.val = 3`, `a.next.twice()`, from a local, a global, a
 parameter, a closure capture, a call result (`mk().first.next.val`) or a longer chain, in a fn
@@ -1165,9 +1169,10 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 |-----|-------|-------|
 | `i8` / `i16` / `i32` | 1 / 2 / 4 | Narrow and **signed**: `p.x` sign-extends. |
 | `i64` | 8 | The same as no annotation. |
-| `u8` / `u16` / `u32` / `u64` | **8 each** | ⚠ Not narrow. The name is accepted but the field is a full word, so `struct { a: u8; b: u8; }` is 16 bytes, not 2. For a binary layout, use `i8` / `i16` / `i32` and mask the value. |
+| `u8` / `u16` / `u32` | 1 / 2 / 4 | Narrow and **unsigned** (6.7.10): `p.x` zero-extends, and a write or an `OP=` stores only the field's bytes, so it wraps there (`c.r = 250; c.r += 10;` gives 4). |
+| `u64` | 8 | |
 | `f64` | 8 | **Typed** — `p.x + p.y`, `p.x * 2.0`, `-p.x` and `p.x < p.y` are float operations. |
-| `f32` | **8** | Typed (single-precision arithmetic), stored in the low 32 bits of a full word. |
+| `f32` | 4 | Typed (single-precision arithmetic): its binary32 bits (6.7.10). |
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
@@ -1176,8 +1181,33 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `dyn Tr` | 16 | Two opaque words, stored inline; formed or copied whole (`h.o = &p;`) and called through (`h.o.m()`). A struct local holding one is declared with its value. Not in a generic struct, a union or a `#derive`d struct. Since 6.7.8 — see [Trait objects](#trait-objects-dyn-678). |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
 
-⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
-v6.6.10 documents that rather than changing it.
+⚠ **The field widths are layout (and ABI), and they are packed** — every field sits right after
+the one before it, with no padding, the rule `i8` / `i16` / `i32` fields have always followed
+(`struct { a: i8; b: i64; }` is 9 bytes). Since 6.7.10 `u8` / `u16` / `u32` and `f32` follow it
+too; through 6.7.9 each took 8 bytes (an `f32` in the low half), so a struct that declares one
+changed size and field offsets:
+
+```cyrius
+struct C4 { r: u8; g: u8; b: u8; a: u8; }    # 4 bytes (32 through 6.7.9)
+struct UB { a: u8; b: i64; }                 # 9 bytes, b at offset 1 (16, b at 8)
+struct F2 { x: f32; y: f32; }                # 8 bytes (16)
+union  UU { a: u8; b: u32; c: f32; }         # 4 bytes (8)
+```
+
+Everything that keys on a struct's size follows the new one: `sizeof`, a `*C4` steps 4, `C4[2]`
+is 8 bytes, and the by-value class (a struct of 8 bytes or less is passed and returned in one
+register, one of 9-16 in two) with what keys on it — `dyn`'s `self: T` refusal now meets a
+struct that shrinks to 8 bytes or less (see [Trait objects](#trait-objects-dyn-678)), and the
+refusals that key on a size over 8 bytes stop applying to it: an if-expression branch, an
+`async fn`'s by-value parameter, a top-level call result (`var G: C4 = mk4(9);`). Code that
+reached such a struct by hand — `load64(p + 8)` for the second field, a literal size,
+`load64(&s.f)` on a narrow field (it now reads the next fields too), a file or wire format
+written with `sizeof` — must be re-checked; the fields, `sizeof` and the `#derive(accessors)`
+functions follow the layout. **Packed means unaligned:** a `u32` / `f32` after a `u8` sits at
+offset 1. A plain field read or write is fine on every target, but an atomic or a futex word
+needs its natural alignment — declare it first, or pad explicitly (`_pad: u8; _pad2: u16;`). A
+struct redefined with another narrow kind of the same width (`i8` vs `u8`, `i32` vs `f32`)
+warns, as one with another layout does.
 
 Anything else is a **compile error that names the type**. Before v6.6.10 an unknown name was
 silently an 8-byte i64, and three cases were silent miscompiles:
@@ -1221,10 +1251,62 @@ than out of the frame. The compiler records which of the two a variable is at it
 before v6.6.5 it guessed from the shape of the neighbouring stack slot and got it wrong for any
 pointer-mode struct declared after a closed `{ ... }` block.
 
+⚠ **The handle line: one rule at every size, for locals and globals (6.7.10).** A struct
+variable declared from a struct VALUE of its type holds its own bytes (it is *inline*); declared
+from anything else it is a *handle*, whose slot holds the address of the struct it reads and
+writes. A struct value is a literal; another inline struct of the type — a local, a by-value
+parameter, a global, a closure's captured copy of one, parenthesised or not; a struct-typed field
+(`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
+`*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
+pointer); and a call, method, operator or if-expression that returns the struct (a generic or a
+parenthesised call too). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
+dereference of one, `*x`, included), a call returning a `*T` or an untyped value, an integer —
+`var q: S8 = 0;` is a NULL handle, and `var a: Num = 1;` a handle to address 1, so `a + b` is
+pointer arithmetic with no `Num_add` dispatch (declare it from a struct value, `Num { 1 }` or
+`mkn(1)`, for the operator) — and another handle, a captured one included, which **binds**: the
+new name is a second handle to the same object. A struct value of ANOTHER
+type is refused by name, a dereference of a `*U` included — `*pu`, `(*pu)`, `*gu()`, `*w.pu`
+(`cannot copy 'pu' into a variable of a different struct/vector type: 'q'`).
+
+```cyrius
+struct S8 { v; }
+fn demo(): i64 {
+    var h = alloc(8);
+    store64(h, 7);
+    var q: S8 = h;           # a handle: q.v reads h's word
+    q.v = q.v + 30;          # writes the heap object
+    var c: S8 = q;           # binds: c is a second handle to it
+    var l: S8 = S8 { 1 };    # inline (a literal)
+    l = q;                   # copies the struct q points at
+    return load64(h) + c.v + l.v;   # 37 + 37 + 37 = 111
+}
+```
+
+Through 6.7.9 the line held only over 8 bytes: a struct local or global of 8 bytes or less was
+inline whatever its initialiser, so `var q: S8 = h;` (or `= alloc(8)`, `= &s`, `= gp()` with
+`fn gp(): *S8`, `= 1`) held the ADDRESS as `q.v`, and `q.v = 5` never reached the object —
+silently (`demo` read the address back as `q.v`). And over 8 bytes `var q: P3 = *p;` was a
+handle holding the word `*p` read, so its first field write crashed. **A handle used as a value
+is the struct it points at**, at every size: passed to a by-value struct parameter, returned from
+a fn declared `: S8`, an operator's right operand, an if-expression branch, and either side of a
+copy (below), in a fn and at top level. A closure captures the handle and reads through it. As
+an operator's LEFT operand a handle is pointer arithmetic (no dispatch), and `&q` is its slot.
+
+⚠ An operator whose LEFT operand is a struct-typed FIELD or a DEREFERENCE does not dispatch
+(`w.s + a`, `*p + a` add the first words — as through 6.7.9, at every size): only a struct
+variable or a struct result types the left operand. Its result is an integer, so
+`var q: S8 = w.s + a;` is a handle holding that sum (through 6.7.9, at 8 bytes or less, an inline
+`q` whose field was the sum). Name the operand first — `var l: S8 = w.s; var q: S8 = l + a;` —
+for the `S8_add` dispatch.
+
+⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
+layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
+over 8.
+
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
-a pointer-mode global (`var G: P3 = 0;` then `G = alloc(24);`), or a `p: *P3` parameter. For a
-plain struct over 8 bytes:
+a pointer-mode global (`var G: P3 = 0;` then `G = alloc(24);`), or a `*P3` local or parameter.
+For a struct of any size (6.7.10; through 6.7.9 only over 8 bytes):
 
 * `q = a` — a struct VALUE (an inline local or global, a by-value parameter) assigned from a
   handle — copies the struct `a` points at into `q`.
@@ -1241,7 +1323,15 @@ A struct value of a different type assigned into a handle is refused
 struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address in `q.x` and left
 `q.y` stale, `a = q` put `q.x`'s value in `a`'s slot so the next `a.x` crashed, and `a = q` from a
 by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
-`Option` and `Tagged` (heap handles by name) and structs of 8 bytes or less are unchanged.
+`Option` and `Tagged` (heap handles by name) are unchanged. Through 6.7.9 a struct of 8 bytes or
+less was outside the rule: no struct variable of that size was a handle (the handle line above),
+and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
+into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct
+never changed) — each silently; a copy between two different struct types through such a `*T`
+(`l = pu`) compiled and stored a word, and is refused now, as over 8 bytes. ⚠ Known defect
+(6.7.10), at every size: a `*T` GLOBAL, a call declared `: *T` and a `*T` field are no copy
+operands yet — `l = GP`, `l = gp()` and `l = w.p` store the pointer word into `l`'s first field.
+Copy through a `*T` local (`var p: *S8 = GP; l = p;`).
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
 class from its source: from a pointer-mode local or global it declares `q` as a second pointer to
@@ -1385,6 +1475,16 @@ address-passed parameter was checked: every other mismatch compiled clean and th
 argument with its own layout — `bq(p)` read past the 16-byte `Pt` (0), `bs(mk1(p))` returned `b.v.y`
 where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
 
+**A pointer into a BY-VALUE struct parameter passes the struct it points at, at every size
+(6.7.10).** `bs1(&s)`, `bs1(sp)` with `sp: *S1`, `bs1(gp())` with `fn gp(): *S1`, `bs1(h.p)` with a
+`*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:
+S1)` a copy of the struct — a `*T` local, parameter, global or capture, in a fn and at top level;
+the callee's writes never reach the pointee. A `*U` of another struct converts, as it always did,
+and is read with the parameter's layout. Over 8 bytes this is what the address-passed parameter
+always did; through 6.7.9 a struct of 8 bytes or less got the POINTER as its one word, and the
+callee read the address as its fields, silently. An UNTYPED value is still the struct's word: an
+untyped local holding an address (`var u = &s; bs1(u)`), an integer, an `i8` / `i16` / `i32` value.
+
 ⚠ **A by-value struct PARAMETER is a COPY, at every width (v6.6.16).** A `q: P3` parameter over
 8 bytes still TRAVELS by address — the caller passes its struct's address, so the calling
 convention is unchanged — but the callee copies the struct into its own frame on entry, before
@@ -1425,7 +1525,8 @@ holding the pointer and returned 0. Both were silent, exit 0.
 
 ⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
 whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
-`p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
+`p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot — at every size
+since 6.7.10 (the handle line: `var a: Num = 1; a + b` too). Only a
 `p: *T` parameter denotes the caller's struct (`p.z` reads it) — and its `&p` is its slot too, as
 for any pointer (6.7.9; see [Pointers](#pointers)).
 
@@ -2117,7 +2218,10 @@ method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the 
 that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
 feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by
 address and copied on entry). **A `self: T` of 8 bytes or less is refused**, naming the method: it
-arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. For a
+arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. (A
+struct with `u8` / `u16` / `u32` / `f32` fields can shrink into it: since 6.7.10 `struct C4 { r:
+u8; g: u8; b: u8; a: u8; }` is 4 bytes, so `dyn Show` from a `C4` whose `show` takes `self: C4` is
+refused, where at 32 bytes it formed one — see [Field types](#field-types-v6610).) For a
 scalar `T`, `self` is untyped or `self: T`; `self: *T` is refused. A `#naked` method cannot fill a
 slot. A pair is reported once; a pair never formed keeps the parameter-count check of
 *Traits and impl blocks* — nothing about static traits changes. Every forming site also applies the
@@ -2541,13 +2645,17 @@ Stacked derives emit the same fns in **any order**: `#derive(accessors)` above o
 call to `X_from_json_str` failed as an undefined function).
 
 An accessor reads and writes at the field's own width: an `i8` / `i16` / `i32` field gets
-`load8/16/32` and `store8/16/32`, everything else (untyped, `i64`, `Str`, `Vec<T>`, `f64`, a
-nested `#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
-`store64`, so a narrow field's setter wrote into its neighbours). A narrow getter
-**sign-extends**, exactly as `p.field` reads an `i8` / `i16` / `i32`: after `P_set_x(p, -1)` on
-an `i8` field, both `P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255). Every `#derive`
-reads the body the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields
-and `,`-separated enum members are all fine — and the build FAILS if its field offsets disagree
+`load8/16/32` and `store8/16/32`, and so (6.7.10) does a `u8` / `u16` / `u32` field and an `f32`
+one (4 bytes); everything else (untyped, `i64`, `u64`, `Str`, `Vec<T>`, `f64`, a nested
+`#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
+`store64`, so a narrow field's setter wrote into its neighbours). An `i8` / `i16` / `i32` getter
+**sign-extends**, exactly as `p.field` reads one: after `P_set_x(p, -1)` on an `i8` field, both
+`P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255). A `u8` / `u16` / `u32` getter
+**zero-extends**, as `p.field` reads one: after `P_set_a(p, -1)` on a `u8` field, `P_a(p)` is
+255. An `f32` getter returns the field's binary32 bits, untyped, as an `f64` getter returns
+binary64 bits (see *f64 fields are typed* above). Every `#derive` reads the body the way the
+parser does — comments, blank lines, `a : T` spacing, `;`-less fields and `,`-separated enum
+members are all fine — and the build FAILS if its field offsets disagree
 with the struct's real layout, which today means a field typed with a struct that is not itself
 `#derive`d: derive the inner struct too. A struct NAME `#derive`d twice is checked too
 (v6.6.11): the parser keeps the FIRST layout, so a second definition whose field names, order or
@@ -2566,6 +2674,69 @@ parser compiles; put the conditional around the whole `#derive` + declaration in
 comment in the body is fine. `#derive(Serialize)` writes a negative `i8` / `i16` / `i32`
 field as the negative number it holds (v6.6.8; it was zero-extended — `-1` in an `i8` wrote
 `255`).
+
+## Derive Serialize on a struct
+
+`#derive(Serialize)` (or `#derive(Deserialize)`: either one gives both directions) on a struct
+generates `T_to_json(p, sb)`, which appends the struct at `p` to a `str_builder` as a JSON object,
+and two decoders that each return a newly `alloc`'d `T` filled from a document: the scanner
+`T_from_json_str(text)` over the JSON text (it zeroes the struct first, so a key the document
+lacks leaves its field 0), and the pairs form `T_from_json(pairs)` over `bayan_json_parse(..)`'s
+result (a missing key leaves the field as allocated). It needs `lib/bayan.cyr` in scope.
+
+```cyrius
+include "lib/bayan.cyr"
+
+#derive(Serialize)
+struct Px { r: u8; n: u32; w: f32; host: cstring; note: cstring; s: Str; }
+
+fn demo(): i64 {
+    var p: Px;
+    p.r = 255; p.n = 4000000000; p.w = 0.1;
+    p.host = "a\"b"; p.note = 0; p.s = str_from("x\ty");
+    var sb = str_builder_new();
+    Px_to_json(&p, sb);
+    var js = str_builder_build(sb);
+    # {"r":255,"n":4000000000,"w":0.10000000149011612,"host":"a\"b","note":null,"s":"x\ty"}
+    var q = Px_from_json_str(str_data(js));       # the scanner
+    var r = Px_from_json(bayan_json_parse(js));   # the pairs form
+    return load8(q) + load8(r);                   # 510: each gives every field back
+}
+```
+
+A field is untyped or `i8`..`i64` (a JSON number; an `i8` / `i16` / `i32` written sign-extended),
+`u8` / `u16` / `u32`, `f64`, `f32`, `bool` (`true` / `false`), `Str`, `cstring`, `Vec<T>` of
+integers, `f64` or a `#derive`d struct (a JSON array), or a nested `#derive`d struct (an object).
+A `u64` field is not supported (the build fails naming `u64_to_json`), nor is `Vec<Str>`. Since
+6.7.10 (through 6.7.9 each of these four was refused as an undefined `u8_to_json` /
+`cstring_to_json` / …):
+
+- **`u8` / `u16` / `u32`** are a JSON number read zero-extended (`4000000000`, never negative).
+  Decoding stores at the field's width, so an out-of-range number truncates, as any narrow store
+  does (`300` into a `u8` is 44) — no range check, as for `i8`..`i32`.
+- **`f32`** is written widened to f64, through bayan's f64 printer: 0.1f is `0.10000000149011612`,
+  1.5f `1.5`. Decoding parses an f64 and rounds it to the nearest f32, so every value written comes
+  back bit for bit, and a hand-written `0.1` decodes to 0.1f.
+- **`cstring`** is `null` for a NULL pointer and otherwise an escaped JSON string — the `Str`
+  escaper's bytes (`"`, `\` and U+0000..U+001F escaped, every other byte as is). Decoding gives NULL
+  for `null` and otherwise a FRESH NUL-terminated copy (`alloc`'d; the field never points into the
+  document): a JSON string unescaped per RFC 8259 — `\uHHHH` written as UTF-8, a surrogate pair
+  joined into one 4-byte code point, a lone surrogate U+FFFD — and any other value its text (`42`
+  gives `"42"`). A quoted `"null"` is the four-byte string `null` in both decoders, never NULL. A
+  decoded `\u0000` ends the C string there.
+- **`Str`** decodes every escape the same way in both decoders, into a fresh `Str` whose length
+  counts a decoded U+0000. Through 6.7.9 the scanner decoded only `\n` `\t` `\r` and kept the letter
+  of every other escape (`"\u0001\b"` read `u0001b`), and the pairs form stored bayan's value
+  itself — every escape raw, and a borrow into the parsed document rather than a copy.
+
+⚠ Known defect (6.7.10, and 6.7.9): the scanner `T_from_json_str` does not decode a nested
+`#derive`d struct field, and loses every field after it (left 0); the pairs form decodes all of
+them — use `T_from_json(bayan_json_parse(..))` for a struct that nests one.
+
+The escaper and the decoders are public in `lib/str.cyr`: `str_builder_add_json_str(sb, s)`,
+`str_builder_add_json_cstr(sb, p)` (`null` for a NULL `p`), `str_json_unescape(p, n)` (a fresh
+`Str`) and `str_json_unescape_cstr(p, n)` (a fresh C string), the last two over the `n` bytes
+between a JSON string's quotes.
 
 ## Derive Serialize on an enum (v6.5.31)
 
@@ -5478,7 +5649,9 @@ constants are known, the enum declared above or below — is baked into the imag
 `var x = 42;`. The name resolves exactly as a read of it does: if a later global hides the
 enum constant (`enum E { A = 3; } var x = A; var A = 9;`), `x` is 9. So is a struct literal
 whose every field is a constant (`var p = Pt { A, 0x66 };`, nested struct fields included, a
-float literal in a float field); a field that is a call, a name, a string or a `Str` leaves
+float literal in a float field — in an `f32` field its binary32 bits since 6.7.10; through 6.7.9
+the image held its binary64 bits, which a `kernel;` build, whose replay runs after the program,
+read as 0.0); a field that is a call, a name, a string or a `Str` leaves
 the whole literal to the startup store. The startup store still runs (the code does not
 change), so the visible difference is the value before it: an initializer that runs earlier —
 `var y = g();` above `var x = A;`, `g` reading `x` — now sees it, as it already saw a literal.

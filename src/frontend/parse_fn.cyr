@@ -1782,11 +1782,16 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # a whole method / operator result (`_sc_post`'s record); a whole struct-typed field (the passive
 # `_fpk` record, parse_decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
 # other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
+# 6.7.10 (B7-1): a HANDLE of 8 B or less (`take(a)`, `take((a))`) passes the struct it points at, as
+# one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
+# POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
+    var ps = GPSC(S);
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
+    if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     EPUSHR(S);
     return 1;
 }
@@ -1932,9 +1937,9 @@ fn _addr_is_slot_content(S, li): i64 {
 # that HOLDS the struct's address handed back the pointer: an address-passed parameter (above) and
 # a HANDLE — a pointer-mode local (`var p: Pt = alloc(16); .. return p;`), which 6.6.16 C2 made
 # copy on `=` but not on `return` (the caller's `q.x` read a heap address, on every backend).
-# Either is copied through its address into an inline temp. A struct of 8 B or less is held by
-# value, and `Str` / `Result` / `Option` / `Tagged` slots are handles by convention
-# (`_agc_plain_big`): both untouched. CHANGELOG [6.6.17]
+# Either is copied through its address into an inline temp. A struct of 8 B or less returns in rax
+# (`_ret_small_ptrp` copies a handle's, 6.7.10), and `Str` / `Result` / `Option` / `Tagged` slots are
+# handles by convention (`_agc_plain_big`): both untouched. CHANGELOG [6.6.17]
 fn _ret_local_inline(S, li): i64 {
     if (_local_is_sptr_param(S, li) == 1) { return _sptr_param_temp(S, li, _cur_fn_ret_sid); }
     if (GLAGG(S, li) != 0) { return li; }
@@ -2131,24 +2136,45 @@ fn _ret_struct_pair(S): i64 {
 # cx alike); the 9-16 B and retptr classes already went through `_ret_local_inline`. The pointee
 # is copied byte-exact into an inline temp (no read past a 3/5/6/7-byte struct) and its slot is
 # the value. Consumes `IDENT ;` and jumps to the epilogue; 0 leaves the cursor alone.
+# ⛔ 6.7.10 (B7-1) — and a HANDLE of 8 B or less (the handle line: `var p: B8 = alloc(8); .. return p;`),
+# which returns the struct it points at as a handle over 8 B does (`_ret_local_inline`); and either
+# inside parentheses (`return (p);`, transparent since 6.7.6), which handed back the address. A
+# handle of ANOTHER struct returns its own struct's bytes, as an inline local of another struct
+# returns its word (this class never compared the type) — not the address.
 fn _ret_small_ptrp(S): i64 {
     if (_cur_fn_ret_sid <= 0) { return 0; }
     if (_cur_fn_ret_stash > 0) { return 0; }
     if (_cur_fn_ret_pair == 1) { return 0; }
     if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 0; }
     if (GINFN(S) != 1) { return 0; }
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 5) { return 0; }
-    var li = FINDLOCAL(S, PEEKV(S));
-    if (li < 0) { return 0; }
-    if (_is_ptr_param(S, li) == 0) { return 0; }
-    if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { return 0; }
-    STI(S, GTI(S) + 2);                   # IDENT ;
-    var t = _sptr_param_temp(S, li, _cur_fn_ret_sid);
+    var k = _hl_ret_k(S);
+    if (k < 0) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, GTI(S) + k));
+    if (li < 0) { return _ret_small_gh(S, k); }   # 6.7.10 (B7-1g): a handle global
+    var hl = _small_hdl(S, li);
+    if (_is_ptr_param(S, li) == 0) { if (hl == 0) { return 0; } }
+    if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { if (hl == 0) { return 0; } }
+    STI(S, GTI(S) + 2 + 2 * k);           # IDENT ; and the wrap
+    var t = _sptr_param_temp(S, li, 0 - GLTYPE(S, li));
     EFLLOAD(S, t);
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
     return 1;
+}
+# 6.7.10 (B7-1) — `return IDENT;` inside `k` balanced parentheses (`return ((p));`): k, or -1 for any
+# other shape. Read in one linear pass, as `_ret_tuple_var` reads it (a `_pwrap_k` peel is quadratic).
+fn _hl_ret_k(S): i64 {
+    var st = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    if (TOKTYP(S, st + k) != 2) { return 0 - 1; }
+    var j = 1;
+    while (j <= k) {
+        if (TOKTYP(S, st + k + j) != 11) { return 0 - 1; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, st + k + j) != 5) { return 0 - 1; }
+    return k;
 }
 # `return IDENT;` forms after the struct classes, one call in PARSE_RETURN (cybs's per-fn ceiling).
 fn _ret_var_forms(S): i64 {
@@ -5016,6 +5042,7 @@ fn _op_rhs(S, fi): i64 {
         else { big = _op_big_arm(S, rb); }   # 6.7.6: a struct over 8 B
     }
     PARSE_TERM(S);
+    var rps = GPSC(S);   # 6.7.10 (B7-1b): the operand's pointer step, for `_hl_byval_arg`
     if (big >= 0) { _op_big_disarm(big); }
     _bx_op_rhs(S, fi, rb);   # 6.7.3: an operator fn's bool parameter 1
     if (arm == 1) {
@@ -5028,6 +5055,9 @@ fn _op_rhs(S, fi): i64 {
     var sv = 1;
     if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
     _op_arg_check(S, fi, rb);   # 6.7.3
+    # 6.7.10 (B7-1): a HANDLE of 8 B or less into a by-value parameter passes its struct (`b + a`);
+    # (B7-1b) a typed pointer or `&s` passes the struct it points at (`b + sp`, `b + &s`).
+    if (_hl_byval(S, fi, 1) == 1) { if (_hl_byval_arg(S, fi, 1, rb, rps) == 1) { return 0 - 1; } }
     return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
 }
 # ⛔ 6.7.3 — the right operand [rb, cursor) of operator fn `fi`, already parsed, is ARGUMENT 1 of
@@ -13174,6 +13204,7 @@ fn _prescan_tail(S): i64 {
     _pre_dep_pending = 0;                # the end of pass 1: nothing may carry into pass 2
     SMOD(S, svmod);
     STI(S, sv);
+    _gz_sweep(S);   # 6.7.10 (B7-1g): every fn is registered — the zone's small struct globals judged
     return 0;
 }
 

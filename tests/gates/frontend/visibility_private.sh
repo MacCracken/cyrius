@@ -75,7 +75,7 @@ fn OpVis_add(a, b) { return 3000 + b; }
 EOF
 cat > m.cyr <<'EOF'
 include "lib/ops.cyr"
-var opv: OpVis = 5;
+var opv = OpVis { 5 };
 var opr = opv + 3;
 fn main(): i64 { return opr; }
 EOF

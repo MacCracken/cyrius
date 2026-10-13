@@ -1,0 +1,1108 @@
+# small_struct_global_handle_line.tcyr — 6.7.10 (B7-1g). THE HANDLE LINE FOR GLOBALS: a struct global
+# of 8 B or less initialised from anything that is not a struct value of its type is a HANDLE, as one
+# over 8 B is (the user's decision 5, 2026-10-12: one rule for locals and globals at every size). The
+# local half is small_struct_handle_line.tcyr (B7-1).
+#
+# ⛔ THE ASYMMETRY, 6.6.5 through 6.7.9. `var GH: H = alloc(16);` (16 B) declared a handle global — its
+# slot held the address and `GH.v = 7` wrote the heap object — while `var G8: S8 = alloc(8);` (8 B), or
+# `= &buf`, `= gp()` with `fn gp(): *S8`, `= 9`, declared an INLINE S8 whose one field was the address:
+# `G8.v` read the address back and `G8.v = 5` never reached the object, with no diagnostic.
+#
+# THE RULE, measured against the 16 B behaviour (every `_8` row has an `_h` twin over 8 B where one can
+# exist — a struct call, method, operator or if-expression result over 8 B has no storage at top level
+# and is refused there, and a fn cannot `return` a global over 8 B, so those rows are 8 B only):
+#   * a COPY (the global is inline): a literal, an inline global `(name)` / `name`, a field chain, `*p`
+#     with `p: *T` (6.7.10: copied at EVERY size — over 8 B the global was a handle holding the word
+#     `*p` read, and its first field write SIGSEGV'd) and every other dereference of a `*T` (the review
+#     fix: `(*p)`, `*(p + 0)`, `*gp()`, `*W.p`), a field or a method reached through a `*T` global, a
+#     `: *T` call or a `*T` field (the review fix: `P.s`, `gp().s`, `P.dbl()`, `W.p.dbl()` — B7-1g made the
+#     fields handles and refused the methods as a zone misread), a whole free / wrapped / generic call, a method,
+#     an operator, an if-expression — declared before the first top-level statement (the declaration
+#     zone, judged from its tokens once every fn is registered, so a fn declared BELOW counts) or after
+#     it (judged as a local is);
+#   * a HANDLE: `alloc(..)`, `&x`, a `*T` call, an untyped call, an untyped global, an integer (`= 9` a
+#     handle to address 9: `+` on it is pointer arithmetic, no operator dispatch; `= 0` a NULL handle),
+#     a method or operator whose fn returns no struct;
+#   * a BIND (a second handle to the same object): another handle global, as at 16 B.
+#   ⚠ NOT CHANGED, awaiting the user: a global initialised from a `*T` global's NAME (`var G: S8 = P;`)
+#     keeps the layout it had (8 B or less an inline value holding the pointer word; over 8 B a handle
+#     bound to P's object) — a local copies there (6.7.0), a global over 8 B binds; no row pins either.
+#   A handle global's consumers take its STRUCT, as a handle local's do: a by-value argument (`f(G)`,
+#   `f((G))`, a method's, a generic's), `return G` / `return (G)`, an operator's right operand, an
+#   if-expression branch, `q = G` / `G = q` / `G = V` / `V = G` (copied through the address; handle <-
+#   handle REBINDS, at any type), `G = mk()` / `G = b.dbl()` / `G = b + b` / `G = if ..` / `G = w.s`
+#   (copied into the object), `w.s = G`, a nested literal element — inside a fn and at top level, where
+#   a 3 / 5 / 6 / 7-byte struct goes through a hidden global (there is no frame). A handle into a `*T`
+#   parameter, an untyped parameter, a `self: *T` receiver or a dyn passes its address, `&G` is its
+#   slot, `G + n` is pointer arithmetic and `var q: S8 = G;` binds, as at 16 B.
+#   A copy is told from an alias by a WRITE after it: `src.v * 100 + before * 10 + after`.
+#
+# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (the G rows), which runs this file
+# on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+
+struct S8 { v; }                     # 8 B
+struct H { v; w; }                   # 16 B — the twin
+struct U8 { u; }                     # 8 B, another type
+struct UH { u; x; }                  # 16 B, another type
+struct W8 { s: S8; n; }
+struct WH { s: H; n; }
+struct Q8 { v; }
+struct QH { v; w; }
+struct R8 { v; }                     # an operator returning no struct
+struct RH { v; w; }
+
+trait Show { fn show(self): i64; }
+impl Show for Q8 { fn show(self: *Q8): i64 { return self.v + 500; } }
+impl Show for QH { fn show(self: *QH): i64 { return self.v + 500; } }
+struct DW { o: dyn Show; }
+fn dk0(o: dyn Show): i64 {
+    var w: DW = DW { o };
+    return callptr(load64(load64(&w + 8)), load64(&w));
+}
+
+var BUF8[8];
+var BUFH[16];
+var PB8[8];
+var PBH[16];
+var UB8[8];
+var UBH[16];
+
+fn mk8(n): S8 { var r: S8; r.v = n; return r; }
+fn mkh(n): H { var r: H; r.v = n; r.w = 0; return r; }
+fn gp8(): *S8 { return &PB8; }
+fn gph(): *H { return &PBH; }
+fn ga8() { return &UB8; }
+fn gah() { return &UBH; }
+fn S8_dbl(self: S8): S8 { var r: S8; r.v = self.v * 2; return r; }
+fn H_dbl(self: H): H { var r: H; r.v = self.v * 2; r.w = 0; return r; }
+fn S8_pp(self: *S8): *S8 { return self; }
+fn H_pp(self: *H): *H { return self; }
+fn S8_add(l: S8, r: S8): S8 { var t: S8; t.v = l.v + r.v; return t; }
+fn H_add(l: H, r: H): H { var t: H; t.v = l.v + r.v; t.w = 0; return t; }
+fn S8_mul(l: S8, k): S8 { var t: S8; t.v = l.v * k; return t; }
+fn S8_with(self: S8, o: S8) { return self.v * 10 + o.v; }
+fn H_with(self: H, o: H) { return self.v * 10 + o.v; }
+fn S8_pm(self: *S8) { return self.v + 100; }
+fn H_pm(self: *H) { return self.v + 100; }
+fn R8_add(l, r) { return &BUF8; }
+fn RH_add(l, r) { return &BUFH; }
+fn take8(s: S8) { return s.v; }
+fn takeh(s: H) { return s.v; }
+fn rp8(p: *S8) { return p.v; }
+fn rph(p: *H) { return p.v; }
+fn tu(x) { return load64(x); }
+fn idg<T>(x: T): T { return x; }
+fn tg8<T>(k: T, s: S8) { return k + s.v; }
+fn tgh<T>(k: T, s: H) { return k + s.v; }
+
+# ── the initialiser matrix, in the declaration zone (before the first top-level statement) ──
+var SRC8 = S8 { 5 };
+var SRCH = H { 5, 0 };
+var WS8 = W8 { 0, 0 };
+var WSH = WH { 0, 0, 0 };
+fn wsinit() { WS8.s.v = 5; WSH.s.v = 5; return 0; }
+var _ws = wsinit();                  # the replay runs in declaration order: WS8.s is 5 below
+var PS8: *S8 = &SRC8;
+var PSH: *H = &SRCH;
+struct PW8 { p: *S8; }
+struct PWH { p: *H; }
+var PWG8 = PW8 { &SRC8 };
+var PWGH = PWH { &SRCH };
+fn gs8(): *S8 { return &SRC8; }
+fn gsh(): *H { return &SRCH; }
+var PW8S: *W8 = &WS8;
+fn gw8(): *W8 { return &WS8; }
+var GU8 = &UB8;
+var GUH = &UBH;
+var RV8 = R8 { 1 };
+var RVH = RH { 1, 0 };
+# COPIES
+var IN8: S8 = SRC8;
+var INH: H = SRCH;
+var IP8: S8 = (SRC8);
+var IPH: H = (SRCH);
+var IF8: S8 = WS8.s;
+var IFH: H = WSH.s;
+var ID8: S8 = *PS8;
+var IDH: H = *PSH;
+var IDP8: S8 = (*PS8);               # the review fix: a dereference at any spelling copies
+var IDPH: H = (*PSH);
+var IDA8: S8 = *(PS8 + 0);
+var IDAH: H = *(PSH + 0);
+var IDC8: S8 = *gs8();
+var IDCH: H = *gsh();
+var IDF8: S8 = *PWG8.p;
+var IDFH: H = *PWGH.p;
+var IDB8: S8 = *gsb8();              # a `: *S8` fn declared below the global (judged by the sweep)
+var IPM8: S8 = PS8.dbl();            # the review fix: a `*T` receiver — a method through a `*S8` global,
+var IGM8: S8 = gs8().dbl();          #   a `: *S8` call, a `*S8` field — is a struct result (the sweep
+var IWM8: S8 = PWG8.p.dbl();         #   misread these as handles, the replay refused the program)
+var IPF8: S8 = PW8S.s;               # a field through a `*W8` global, a `: *W8` call, in parentheses:
+var IGF8: S8 = gw8().s;              #   a struct value (B7-1g made them handles holding the field's word)
+var IWF8: S8 = (PW8S.s);
+var IC8: S8 = mk8(5);
+var ICW8: S8 = (mk8(5));
+var ICB8: S8 = mkb8(5);              # a fn declared below the global
+var IG8: S8 = idg<S8>(SRC8);
+var IGI8: S8 = idg(SRC8);
+var IM8: S8 = SRC8.dbl();
+var IO8: S8 = SRC8 + SRC8;
+var IOM8: S8 = SRC8 * 2 + SRC8;
+var IOP8: S8 = (SRC8 + SRC8) + SRC8;
+var IE8: S8 = if (SRC8.v == 5) { SRC8 } else { IN8 };
+# HANDLES
+var HA8: S8 = alloc(8);
+var HAH: H = alloc(16);
+var HR8: S8 = &BUF8;
+var HRH: H = &BUFH;
+var HP8: S8 = gp8();
+var HPH: H = gph();
+var HU8: S8 = ga8();
+var HUH: H = gah();
+var HX8: S8 = GU8;
+var HXH: H = GUH;
+var HN8: S8 = 9;
+var HNH: H = 9;
+var HZ8: S8 = 0;
+var HZH: H = 0;
+var HM8: S8 = SRC8.pp();
+var HMH: H = SRCH.pp();
+var HO8: S8 = RV8 + RV8;
+var HOH: H = RVH + RVH;
+# BINDS
+var HB8: S8 = HA8;
+var HBH: H = HAH;
+fn mkb8(n): S8 { var r: S8; r.v = n; return r; }
+fn gsb8(): *S8 { return &SRC8; }
+
+# A copy row: the global read (`b`), then written; the source is unchanged.
+fn i_n_8() { var b = IN8.v; IN8.v = 9; return SRC8.v * 100 + b * 10 + IN8.v; }
+fn i_n_h() { var b = INH.v; INH.v = 9; return SRCH.v * 100 + b * 10 + INH.v; }
+fn i_p_8() { var b = IP8.v; IP8.v = 9; return SRC8.v * 100 + b * 10 + IP8.v; }
+fn i_p_h() { var b = IPH.v; IPH.v = 9; return SRCH.v * 100 + b * 10 + IPH.v; }
+fn i_f_8() { var b = IF8.v; IF8.v = 9; return WS8.s.v * 100 + b * 10 + IF8.v; }
+fn i_f_h() { var b = IFH.v; IFH.v = 9; return WSH.s.v * 100 + b * 10 + IFH.v; }
+fn i_d_8() { var b = ID8.v; ID8.v = 9; return SRC8.v * 100 + b * 10 + ID8.v; }
+fn i_d_h() { var b = IDH.v; IDH.v = 9; return SRCH.v * 100 + b * 10 + IDH.v; }
+fn i_dp_8() { var b = IDP8.v; IDP8.v = 9; return SRC8.v * 100 + b * 10 + IDP8.v; }
+fn i_dp_h() { var b = IDPH.v; IDPH.v = 9; return SRCH.v * 100 + b * 10 + IDPH.v; }
+fn i_da_8() { var b = IDA8.v; IDA8.v = 9; return SRC8.v * 100 + b * 10 + IDA8.v; }
+fn i_da_h() { var b = IDAH.v; IDAH.v = 9; return SRCH.v * 100 + b * 10 + IDAH.v; }
+fn i_dc_8() { var b = IDC8.v; IDC8.v = 9; return SRC8.v * 100 + b * 10 + IDC8.v; }
+fn i_dc_h() { var b = IDCH.v; IDCH.v = 9; return SRCH.v * 100 + b * 10 + IDCH.v; }
+fn i_df_8() { var b = IDF8.v; IDF8.v = 9; return SRC8.v * 100 + b * 10 + IDF8.v; }
+fn i_df_h() { var b = IDFH.v; IDFH.v = 9; return SRCH.v * 100 + b * 10 + IDFH.v; }
+fn i_db_8() { var b = IDB8.v; IDB8.v = 9; return SRC8.v * 100 + b * 10 + IDB8.v; }
+fn i_pm_8() { var b = IPM8.v; IPM8.v = 9; return SRC8.v * 1000 + b * 10 + IPM8.v; }
+fn i_gm_8() { var b = IGM8.v; IGM8.v = 9; return SRC8.v * 1000 + b * 10 + IGM8.v; }
+fn i_wm_8() { var b = IWM8.v; IWM8.v = 9; return SRC8.v * 1000 + b * 10 + IWM8.v; }
+fn i_pf_8() { var b = IPF8.v; IPF8.v = 9; return WS8.s.v * 100 + b * 10 + IPF8.v; }
+fn i_gf_8() { var b = IGF8.v; IGF8.v = 9; return WS8.s.v * 100 + b * 10 + IGF8.v; }
+fn i_wf_8() { var b = IWF8.v; IWF8.v = 9; return WS8.s.v * 100 + b * 10 + IWF8.v; }
+fn i_c_8() { var b = IC8.v; IC8.v = 9; return b * 10 + IC8.v; }
+fn i_cw_8() { var b = ICW8.v; ICW8.v = 9; return b * 10 + ICW8.v; }
+fn i_cb_8() { var b = ICB8.v; ICB8.v = 9; return b * 10 + ICB8.v; }
+fn i_g_8() { var b = IG8.v; IG8.v = 9; return SRC8.v * 100 + b * 10 + IG8.v; }
+fn i_gi_8() { var b = IGI8.v; IGI8.v = 9; return SRC8.v * 100 + b * 10 + IGI8.v; }
+fn i_m_8() { var b = IM8.v; IM8.v = 9; return SRC8.v * 1000 + b * 10 + IM8.v; }
+fn i_o_8() { var b = IO8.v; IO8.v = 9; return SRC8.v * 1000 + b * 10 + IO8.v; }
+fn i_om_8() { var b = IOM8.v; IOM8.v = 9; return SRC8.v * 1000 + b * 10 + IOM8.v; }
+fn i_op_8() { var b = IOP8.v; IOP8.v = 9; return SRC8.v * 1000 + b * 10 + IOP8.v; }
+fn i_e_8() { var b = IE8.v; IE8.v = 9; return SRC8.v * 100 + b * 10 + IE8.v; }
+
+# A handle row: a write through the global reaches its object.
+fn h_a_8() { HA8.v = 9; return load64(load64(&HA8)); }
+fn h_a_h() { HAH.v = 9; return load64(load64(&HAH)); }
+fn h_r_8() { HR8.v = 9; return load64(&BUF8); }
+fn h_r_h() { HRH.v = 9; return load64(&BUFH); }
+fn h_p_8() { HP8.v = 9; return load64(&PB8); }
+fn h_p_h() { HPH.v = 9; return load64(&PBH); }
+fn h_u_8() { HU8.v = 9; return load64(&UB8); }
+fn h_u_h() { HUH.v = 9; return load64(&UBH); }
+fn h_x_8() { HX8.v = 8; return load64(GU8); }
+fn h_x_h() { HXH.v = 8; return load64(GUH); }
+fn h_n_8() { return HN8 + 0; }
+fn h_n_h() { return HNH + 0; }
+fn h_z_8() { HZ8 = HA8; HZ8.v = 4; return HA8.v; }
+fn h_z_h() { HZH = HAH; HZH.v = 4; return HAH.v; }
+fn h_m_8() { HM8.v = 9; var b = SRC8.v; SRC8.v = 5; return b; }
+fn h_m_h() { HMH.v = 9; var b = SRCH.v; SRCH.v = 5; return b; }
+fn h_o_8() { HO8.v = 7; return load64(&BUF8); }
+fn h_o_h() { HOH.v = 7; return load64(&BUFH); }
+fn b_a_8() { HB8.v = 7; return HA8.v; }
+fn b_a_h() { HBH.v = 7; return HAH.v; }
+
+# ── the consumer matrix: a handle global `A` (its object's v = 5) ──
+var A8: S8 = alloc(8);
+var AH: H = alloc(16);
+var B8: S8 = alloc(8);
+var BH: H = alloc(16);
+var X8: S8 = alloc(8);
+var XH: H = alloc(16);
+var AU8: U8 = alloc(8);
+var AUH: UH = alloc(16);
+var V8 = S8 { 3 };
+var VH = H { 3, 0 };
+var QG8: Q8 = alloc(8);
+var QGH: QH = alloc(16);
+
+fn c_rw_8() { A8.v = 5; return load64(load64(&A8)); }
+fn c_rw_h() { AH.v = 5; return load64(load64(&AH)); }
+fn c_arg_8() { A8.v = 5; return take8(A8); }
+fn c_arg_h() { AH.v = 5; return takeh(AH); }
+fn c_argp_8() { A8.v = 5; return take8((A8)); }
+fn c_argp_h() { AH.v = 5; return takeh((AH)); }
+fn c_argm_8() { A8.v = 5; var b: S8; b.v = 1; return b.with(A8); }
+fn c_argm_h() { AH.v = 5; var b: H; b.v = 1; return b.with(AH); }
+fn c_argg_8() { A8.v = 5; return tg8(1, A8); }
+fn c_argg_h() { AH.v = 5; return tgh(1, AH); }
+fn c_gen_8() { A8.v = 5; var q: S8 = idg(A8); var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
+fn c_gen_h() { AH.v = 5; var q: H = idg(AH); var b = q.v; q.v = 9; return AH.v * 100 + b * 10 + q.v; }
+fn c_recv_8() { A8.v = 5; var b: S8; b.v = 1; return A8.with(b); }
+fn c_recv_h() { AH.v = 5; var b: H; b.v = 1; return AH.with(b); }
+fn c_recvd_8() { A8.v = 5; var q: S8 = A8.dbl(); return q.v; }
+fn c_recvd_h() { AH.v = 5; var q: H = AH.dbl(); return q.v; }
+fn c_pm_8() { A8.v = 5; return A8.pm(); }
+fn c_pm_h() { AH.v = 5; return AH.pm(); }
+fn c_ret_8f(): S8 { A8.v = 5; return A8; }
+fn c_ret_8() { var q: S8 = c_ret_8f(); var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
+fn c_retp_8f(): S8 { A8.v = 5; return (A8); }
+fn c_retp_8() { var q: S8 = c_retp_8f(); var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
+fn c_reto_8f(): S8 { AU8.u = 6; return AU8; }   # a handle of another struct: its own bytes
+fn c_reto_8() { var q: S8 = c_reto_8f(); return q.v; }
+fn c_opr_8() { A8.v = 5; var b: S8; b.v = 1; var q: S8 = b + A8; return q.v; }
+fn c_opr_h() { AH.v = 5; var b: H; b.v = 1; var q: H = b + AH; return q.v; }
+fn c_opl_8() { return (A8 + 8) - load64(&A8); }
+fn c_opl_h() { return (AH + 8) - load64(&AH); }
+fn c_ie_8(k) {
+    A8.v = 5;
+    var c: S8;
+    c.v = 2;
+    var q: S8 = if (k == 1) { A8 } else { c };
+    var b = q.v;
+    q.v = 9;
+    return A8.v * 100 + b * 10 + q.v;
+}
+fn c_ain_8() { A8.v = 5; var q: S8; q.v = 1; q = A8; var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
+fn c_ain_h() { AH.v = 5; var q: H; q.v = 1; q = AH; var b = q.v; q.v = 9; return AH.v * 100 + b * 10 + q.v; }
+fn c_aout_8() { var x = load64(&B8); B8.v = 5; var q: S8; q.v = 7; B8 = q; q.v = 1; return load64(x); }
+fn c_aout_h() { var x = load64(&BH); BH.v = 5; var q: H; q.v = 7; BH = q; q.v = 1; return load64(x); }
+fn c_vin_8() { A8.v = 5; V8 = A8; A8.v = 1; var b = V8.v; V8.v = 3; return b; }
+fn c_vin_h() { AH.v = 5; VH = AH; AH.v = 1; var b = VH.v; VH.v = 3; return b; }
+fn c_vout_8() { var x = load64(&B8); V8.v = 4; B8 = V8; V8.v = 3; return load64(x); }
+fn c_vout_h() { var x = load64(&BH); VH.v = 4; BH = VH; VH.v = 3; return load64(x); }
+fn c_rb_8() {
+    var x = load64(&X8);
+    X8.v = 5;
+    var y = load64(&B8);
+    B8.v = 3;
+    X8 = B8;
+    X8.v = 8;
+    var r = load64(x) * 10 + B8.v;
+    store64(&X8, x);
+    store64(&B8, y);
+    return r;
+}
+fn c_rb_h() {
+    var x = load64(&XH);
+    XH.v = 5;
+    var y = load64(&BH);
+    BH.v = 3;
+    XH = BH;
+    XH.v = 8;
+    var r = load64(x) * 10 + BH.v;
+    store64(&XH, x);
+    store64(&BH, y);
+    return r;
+}
+fn c_rbt_8() { var x = load64(&X8); AU8.u = 2; X8 = AU8; X8.v = 4; var r = AU8.u; store64(&X8, x); return r; }
+fn c_rbt_h() { var x = load64(&XH); AUH.u = 2; XH = AUH; XH.v = 4; var r = AUH.u; store64(&XH, x); return r; }
+fn c_decl_8() { A8.v = 5; var c: S8 = A8; c.v = 9; return A8.v; }
+fn c_decl_h() { AH.v = 5; var c: H = AH; c.v = 9; return AH.v; }
+fn c_call_8() { var x = load64(&X8); X8 = mk8(6); return load64(x); }
+fn c_call_h() { var x = load64(&XH); XH = mkh(6); return load64(x); }
+fn c_callw_8() { var x = load64(&X8); X8 = (mk8(7)); return load64(x); }
+fn c_meth_8() { var x = load64(&X8); var b: S8; b.v = 4; X8 = b.dbl(); return load64(x); }
+fn c_meth_h() { var x = load64(&XH); var b: H; b.v = 4; XH = b.dbl(); return load64(x); }
+fn c_op_8() { var x = load64(&X8); var b: S8; b.v = 4; X8 = b + b; return load64(x); }
+fn c_op_h() { var x = load64(&XH); var b: H; b.v = 4; XH = b + b; return load64(x); }
+fn c_ief_8(k) { var x = load64(&X8); var b: S8; b.v = 4; X8 = if (k == 1) { b } else { b }; return load64(x); }
+fn c_fld_8() { var x = load64(&X8); var w: W8; w.s.v = 3; w.n = 0; X8 = w.s; return load64(x); }
+fn c_fld_h() { var x = load64(&XH); var w: WH; w.s.v = 3; w.n = 0; XH = w.s; return load64(x); }
+fn c_wfs_8() { A8.v = 5; var w: W8; w.n = 0; w.s = A8; A8.v = 1; return w.s.v; }
+fn c_wfs_h() { AH.v = 5; var w: WH; w.n = 0; w.s = AH; AH.v = 1; return w.s.v; }
+fn c_nest_8() { A8.v = 5; var w = W8 { A8, 3 }; A8.v = 1; return w.s.v * 10 + w.n; }
+fn c_nest_h() { AH.v = 5; var w = WH { AH, 3 }; AH.v = 1; return w.s.v * 10 + w.n; }
+fn c_rp_8() { A8.v = 5; return rp8(A8); }
+fn c_rp_h() { AH.v = 5; return rph(AH); }
+fn c_tu_8() { A8.v = 5; return tu(A8); }
+fn c_tu_h() { AH.v = 5; return tu(AH); }
+fn c_clo_8() { A8.v = 5; var f = |d| { return A8.v + d; }; return callptr(f, 1); }
+fn c_clo_h() { AH.v = 5; var f = |d| { return AH.v + d; }; return callptr(f, 1); }
+fn c_cloa_8() { A8.v = 5; var f = |d| { return take8(A8) + d; }; return callptr(f, 1); }
+fn c_cloa_h() { AH.v = 5; var f = |d| { return takeh(AH) + d; }; return callptr(f, 1); }
+# A closure's CAPTURE named like a handle global is the capture, never the global (`_hl_capn`).
+fn c_capn_8() { var A8: S8; A8.v = 2; var f = |d| { return take8(A8) + d; }; return callptr(f, 0); }
+fn c_capn_h() { var AH: H; AH.v = 2; AH.w = 0; var f = |d| { return takeh(AH) + d; }; return callptr(f, 0); }
+fn c_dyn_8() { QG8.v = 7; var o: dyn Show = QG8; return dk0(o); }
+fn c_dyn_h() { QGH.v = 7; var o: dyn Show = QGH; return dk0(o); }
+fn c_addr_8() { var x = load64(&A8); A8.v = 5; return load64(x); }
+fn c_addr_h() { var x = load64(&AH); AH.v = 5; return load64(x); }
+fn c_opeq_8() { A8.v = 5; A8.v += 3; return load64(load64(&A8)); }
+fn c_opeq_h() { AH.v = 5; AH.v += 3; return load64(load64(&AH)); }
+
+# ── the SIZE rows (1..8 B: i8 / i16 / i32 compositions, signed values): a handle global of each size ──
+# through every by-value consumer; `h = q` and `h = mk()` land on a buffer with a guard byte right after
+# the object (no byte past it is written). 3 / 5 / 6 / 7 B go through a temp, in a fn and at top level.
+# 1 B
+struct T1 { a: i8; }
+var ZG1: T1 = alloc(16);   # a handle global
+var ZO1: T1 = 0;           # a handle global rebound onto a guarded buffer
+var ZT1: T1 = alloc(16);   # read and written at top level
+fn zs1(s: T1) { return s.a; }
+fn zset1(p: *T1) { p.a = 0 - 3; return 0; }
+fn zzero1(p: *T1) { p.a = 0; return 0; }
+fn zmk1(): T1 { var r: T1; zset1(&r); return r; }
+fn T1_add(l: T1, r: T1): T1 { var t: T1; t.a = l.a + r.a; return t; }
+fn zobj1(x) { var h: T1 = x; return zs1(h); }
+fn zgrt1(): T1 { zset1(ZG1); return ZG1; }
+fn zgrp1(): T1 { zset1(ZG1); return (ZG1); }
+fn zguard1() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO1 = x;
+    return x;
+}
+fn zg1_arg() { zset1(ZG1); return zs1(ZG1); }
+fn zg1_argp() { zset1(ZG1); return zs1((ZG1)); }
+fn zg1_ret() { var q: T1 = zgrt1(); return zs1(q); }
+fn zg1_retp() { var q: T1 = zgrp1(); return zs1(q); }
+fn zg1_in() { zset1(ZG1); var q: T1; zzero1(&q); q = ZG1; zzero1(ZG1); return zs1(q); }
+fn zg1_out() {
+    var x = zguard1();
+    var q: T1;
+    zset1(&q);
+    ZO1 = q;
+    zzero1(&q);
+    if (load8(x + 1) != 0x5A) { return 1; } return zobj1(x);
+}
+fn zg1_call() {
+    var x = zguard1();
+    ZO1 = zmk1();
+    if (load8(x + 1) != 0x5A) { return 1; } return zobj1(x);
+}
+fn zg1_opr() { zset1(ZG1); var z: T1; zzero1(&z); var q: T1 = z + ZG1; return zs1(q); }
+fn zg1_ie(k) {
+    zset1(ZG1);
+    var z: T1;
+    zzero1(&z);
+    var q: T1 = if (k == 1) { ZG1 } else { z };
+    return zs1(q);
+}
+
+# 2 B
+struct T2 { a: i16; }
+var ZG2: T2 = alloc(16);   # a handle global
+var ZO2: T2 = 0;           # a handle global rebound onto a guarded buffer
+var ZT2: T2 = alloc(16);   # read and written at top level
+fn zs2(s: T2) { return s.a; }
+fn zset2(p: *T2) { p.a = 0 - 300; return 0; }
+fn zzero2(p: *T2) { p.a = 0; return 0; }
+fn zmk2(): T2 { var r: T2; zset2(&r); return r; }
+fn T2_add(l: T2, r: T2): T2 { var t: T2; t.a = l.a + r.a; return t; }
+fn zobj2(x) { var h: T2 = x; return zs2(h); }
+fn zgrt2(): T2 { zset2(ZG2); return ZG2; }
+fn zgrp2(): T2 { zset2(ZG2); return (ZG2); }
+fn zguard2() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO2 = x;
+    return x;
+}
+fn zg2_arg() { zset2(ZG2); return zs2(ZG2); }
+fn zg2_argp() { zset2(ZG2); return zs2((ZG2)); }
+fn zg2_ret() { var q: T2 = zgrt2(); return zs2(q); }
+fn zg2_retp() { var q: T2 = zgrp2(); return zs2(q); }
+fn zg2_in() { zset2(ZG2); var q: T2; zzero2(&q); q = ZG2; zzero2(ZG2); return zs2(q); }
+fn zg2_out() {
+    var x = zguard2();
+    var q: T2;
+    zset2(&q);
+    ZO2 = q;
+    zzero2(&q);
+    if (load8(x + 2) != 0x5A) { return 1; } return zobj2(x);
+}
+fn zg2_call() {
+    var x = zguard2();
+    ZO2 = zmk2();
+    if (load8(x + 2) != 0x5A) { return 1; } return zobj2(x);
+}
+fn zg2_opr() { zset2(ZG2); var z: T2; zzero2(&z); var q: T2 = z + ZG2; return zs2(q); }
+fn zg2_ie(k) {
+    zset2(ZG2);
+    var z: T2;
+    zzero2(&z);
+    var q: T2 = if (k == 1) { ZG2 } else { z };
+    return zs2(q);
+}
+
+# 3 B
+struct T3 { a: i16; b: i8; }
+var ZG3: T3 = alloc(16);   # a handle global
+var ZO3: T3 = 0;           # a handle global rebound onto a guarded buffer
+var ZT3: T3 = alloc(16);   # read and written at top level
+fn zs3(s: T3) { return s.a * 100000 + s.b; }
+fn zset3(p: *T3) { p.a = 0 - 300; p.b = 0 - 4; return 0; }
+fn zzero3(p: *T3) { p.a = 0; p.b = 0; return 0; }
+fn zmk3(): T3 { var r: T3; zset3(&r); return r; }
+fn T3_add(l: T3, r: T3): T3 { var t: T3; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj3(x) { var h: T3 = x; return zs3(h); }
+fn zgrt3(): T3 { zset3(ZG3); return ZG3; }
+fn zgrp3(): T3 { zset3(ZG3); return (ZG3); }
+fn zguard3() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO3 = x;
+    return x;
+}
+fn zg3_arg() { zset3(ZG3); return zs3(ZG3); }
+fn zg3_argp() { zset3(ZG3); return zs3((ZG3)); }
+fn zg3_ret() { var q: T3 = zgrt3(); return zs3(q); }
+fn zg3_retp() { var q: T3 = zgrp3(); return zs3(q); }
+fn zg3_in() { zset3(ZG3); var q: T3; zzero3(&q); q = ZG3; zzero3(ZG3); return zs3(q); }
+fn zg3_out() {
+    var x = zguard3();
+    var q: T3;
+    zset3(&q);
+    ZO3 = q;
+    zzero3(&q);
+    if (load8(x + 3) != 0x5A) { return 1; } return zobj3(x);
+}
+fn zg3_call() {
+    var x = zguard3();
+    ZO3 = zmk3();
+    if (load8(x + 3) != 0x5A) { return 1; } return zobj3(x);
+}
+fn zg3_opr() { zset3(ZG3); var z: T3; zzero3(&z); var q: T3 = z + ZG3; return zs3(q); }
+fn zg3_ie(k) {
+    zset3(ZG3);
+    var z: T3;
+    zzero3(&z);
+    var q: T3 = if (k == 1) { ZG3 } else { z };
+    return zs3(q);
+}
+
+# 4 B
+struct T4 { a: i32; }
+var ZG4: T4 = alloc(16);   # a handle global
+var ZO4: T4 = 0;           # a handle global rebound onto a guarded buffer
+var ZT4: T4 = alloc(16);   # read and written at top level
+fn zs4(s: T4) { return s.a; }
+fn zset4(p: *T4) { p.a = 0 - 70000; return 0; }
+fn zzero4(p: *T4) { p.a = 0; return 0; }
+fn zmk4(): T4 { var r: T4; zset4(&r); return r; }
+fn T4_add(l: T4, r: T4): T4 { var t: T4; t.a = l.a + r.a; return t; }
+fn zobj4(x) { var h: T4 = x; return zs4(h); }
+fn zgrt4(): T4 { zset4(ZG4); return ZG4; }
+fn zgrp4(): T4 { zset4(ZG4); return (ZG4); }
+fn zguard4() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO4 = x;
+    return x;
+}
+fn zg4_arg() { zset4(ZG4); return zs4(ZG4); }
+fn zg4_argp() { zset4(ZG4); return zs4((ZG4)); }
+fn zg4_ret() { var q: T4 = zgrt4(); return zs4(q); }
+fn zg4_retp() { var q: T4 = zgrp4(); return zs4(q); }
+fn zg4_in() { zset4(ZG4); var q: T4; zzero4(&q); q = ZG4; zzero4(ZG4); return zs4(q); }
+fn zg4_out() {
+    var x = zguard4();
+    var q: T4;
+    zset4(&q);
+    ZO4 = q;
+    zzero4(&q);
+    if (load8(x + 4) != 0x5A) { return 1; } return zobj4(x);
+}
+fn zg4_call() {
+    var x = zguard4();
+    ZO4 = zmk4();
+    if (load8(x + 4) != 0x5A) { return 1; } return zobj4(x);
+}
+fn zg4_opr() { zset4(ZG4); var z: T4; zzero4(&z); var q: T4 = z + ZG4; return zs4(q); }
+fn zg4_ie(k) {
+    zset4(ZG4);
+    var z: T4;
+    zzero4(&z);
+    var q: T4 = if (k == 1) { ZG4 } else { z };
+    return zs4(q);
+}
+
+# 5 B
+struct T5 { a: i32; b: i8; }
+var ZG5: T5 = alloc(16);   # a handle global
+var ZO5: T5 = 0;           # a handle global rebound onto a guarded buffer
+var ZT5: T5 = alloc(16);   # read and written at top level
+fn zs5(s: T5) { return s.a * 100000 + s.b; }
+fn zset5(p: *T5) { p.a = 0 - 70000; p.b = 0 - 4; return 0; }
+fn zzero5(p: *T5) { p.a = 0; p.b = 0; return 0; }
+fn zmk5(): T5 { var r: T5; zset5(&r); return r; }
+fn T5_add(l: T5, r: T5): T5 { var t: T5; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj5(x) { var h: T5 = x; return zs5(h); }
+fn zgrt5(): T5 { zset5(ZG5); return ZG5; }
+fn zgrp5(): T5 { zset5(ZG5); return (ZG5); }
+fn zguard5() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO5 = x;
+    return x;
+}
+fn zg5_arg() { zset5(ZG5); return zs5(ZG5); }
+fn zg5_argp() { zset5(ZG5); return zs5((ZG5)); }
+fn zg5_ret() { var q: T5 = zgrt5(); return zs5(q); }
+fn zg5_retp() { var q: T5 = zgrp5(); return zs5(q); }
+fn zg5_in() { zset5(ZG5); var q: T5; zzero5(&q); q = ZG5; zzero5(ZG5); return zs5(q); }
+fn zg5_out() {
+    var x = zguard5();
+    var q: T5;
+    zset5(&q);
+    ZO5 = q;
+    zzero5(&q);
+    if (load8(x + 5) != 0x5A) { return 1; } return zobj5(x);
+}
+fn zg5_call() {
+    var x = zguard5();
+    ZO5 = zmk5();
+    if (load8(x + 5) != 0x5A) { return 1; } return zobj5(x);
+}
+fn zg5_opr() { zset5(ZG5); var z: T5; zzero5(&z); var q: T5 = z + ZG5; return zs5(q); }
+fn zg5_ie(k) {
+    zset5(ZG5);
+    var z: T5;
+    zzero5(&z);
+    var q: T5 = if (k == 1) { ZG5 } else { z };
+    return zs5(q);
+}
+
+# 6 B
+struct T6 { a: i32; b: i16; }
+var ZG6: T6 = alloc(16);   # a handle global
+var ZO6: T6 = 0;           # a handle global rebound onto a guarded buffer
+var ZT6: T6 = alloc(16);   # read and written at top level
+fn zs6(s: T6) { return s.a * 100000 + s.b; }
+fn zset6(p: *T6) { p.a = 0 - 70000; p.b = 0 - 300; return 0; }
+fn zzero6(p: *T6) { p.a = 0; p.b = 0; return 0; }
+fn zmk6(): T6 { var r: T6; zset6(&r); return r; }
+fn T6_add(l: T6, r: T6): T6 { var t: T6; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj6(x) { var h: T6 = x; return zs6(h); }
+fn zgrt6(): T6 { zset6(ZG6); return ZG6; }
+fn zgrp6(): T6 { zset6(ZG6); return (ZG6); }
+fn zguard6() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO6 = x;
+    return x;
+}
+fn zg6_arg() { zset6(ZG6); return zs6(ZG6); }
+fn zg6_argp() { zset6(ZG6); return zs6((ZG6)); }
+fn zg6_ret() { var q: T6 = zgrt6(); return zs6(q); }
+fn zg6_retp() { var q: T6 = zgrp6(); return zs6(q); }
+fn zg6_in() { zset6(ZG6); var q: T6; zzero6(&q); q = ZG6; zzero6(ZG6); return zs6(q); }
+fn zg6_out() {
+    var x = zguard6();
+    var q: T6;
+    zset6(&q);
+    ZO6 = q;
+    zzero6(&q);
+    if (load8(x + 6) != 0x5A) { return 1; } return zobj6(x);
+}
+fn zg6_call() {
+    var x = zguard6();
+    ZO6 = zmk6();
+    if (load8(x + 6) != 0x5A) { return 1; } return zobj6(x);
+}
+fn zg6_opr() { zset6(ZG6); var z: T6; zzero6(&z); var q: T6 = z + ZG6; return zs6(q); }
+fn zg6_ie(k) {
+    zset6(ZG6);
+    var z: T6;
+    zzero6(&z);
+    var q: T6 = if (k == 1) { ZG6 } else { z };
+    return zs6(q);
+}
+
+# 7 B
+struct T7 { a: i32; b: i16; c: i8; }
+var ZG7: T7 = alloc(16);   # a handle global
+var ZO7: T7 = 0;           # a handle global rebound onto a guarded buffer
+var ZT7: T7 = alloc(16);   # read and written at top level
+fn zs7(s: T7) { return s.a * 1000000000 + s.b * 100000 + s.c; }
+fn zset7(p: *T7) { p.a = 0 - 70000; p.b = 0 - 300; p.c = 0 - 4; return 0; }
+fn zzero7(p: *T7) { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn zmk7(): T7 { var r: T7; zset7(&r); return r; }
+fn T7_add(l: T7, r: T7): T7 { var t: T7; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn zobj7(x) { var h: T7 = x; return zs7(h); }
+fn zgrt7(): T7 { zset7(ZG7); return ZG7; }
+fn zgrp7(): T7 { zset7(ZG7); return (ZG7); }
+fn zguard7() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO7 = x;
+    return x;
+}
+fn zg7_arg() { zset7(ZG7); return zs7(ZG7); }
+fn zg7_argp() { zset7(ZG7); return zs7((ZG7)); }
+fn zg7_ret() { var q: T7 = zgrt7(); return zs7(q); }
+fn zg7_retp() { var q: T7 = zgrp7(); return zs7(q); }
+fn zg7_in() { zset7(ZG7); var q: T7; zzero7(&q); q = ZG7; zzero7(ZG7); return zs7(q); }
+fn zg7_out() {
+    var x = zguard7();
+    var q: T7;
+    zset7(&q);
+    ZO7 = q;
+    zzero7(&q);
+    if (load8(x + 7) != 0x5A) { return 1; } return zobj7(x);
+}
+fn zg7_call() {
+    var x = zguard7();
+    ZO7 = zmk7();
+    if (load8(x + 7) != 0x5A) { return 1; } return zobj7(x);
+}
+fn zg7_opr() { zset7(ZG7); var z: T7; zzero7(&z); var q: T7 = z + ZG7; return zs7(q); }
+fn zg7_ie(k) {
+    zset7(ZG7);
+    var z: T7;
+    zzero7(&z);
+    var q: T7 = if (k == 1) { ZG7 } else { z };
+    return zs7(q);
+}
+
+# 8 B
+struct T8 { a: i32; b: i32; }
+var ZG8: T8 = alloc(16);   # a handle global
+var ZO8: T8 = 0;           # a handle global rebound onto a guarded buffer
+var ZT8: T8 = alloc(16);   # read and written at top level
+fn zs8(s: T8) { return s.a * 100000 + s.b; }
+fn zset8(p: *T8) { p.a = 0 - 70000; p.b = 0 - 80000; return 0; }
+fn zzero8(p: *T8) { p.a = 0; p.b = 0; return 0; }
+fn zmk8(): T8 { var r: T8; zset8(&r); return r; }
+fn T8_add(l: T8, r: T8): T8 { var t: T8; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn zobj8(x) { var h: T8 = x; return zs8(h); }
+fn zgrt8(): T8 { zset8(ZG8); return ZG8; }
+fn zgrp8(): T8 { zset8(ZG8); return (ZG8); }
+fn zguard8() {
+    var x = alloc(16);
+    store64(x, 0x5A5A5A5A5A5A5A5A);
+    store64(x + 8, 0x5A5A5A5A5A5A5A5A);
+    ZO8 = x;
+    return x;
+}
+fn zg8_arg() { zset8(ZG8); return zs8(ZG8); }
+fn zg8_argp() { zset8(ZG8); return zs8((ZG8)); }
+fn zg8_ret() { var q: T8 = zgrt8(); return zs8(q); }
+fn zg8_retp() { var q: T8 = zgrp8(); return zs8(q); }
+fn zg8_in() { zset8(ZG8); var q: T8; zzero8(&q); q = ZG8; zzero8(ZG8); return zs8(q); }
+fn zg8_out() {
+    var x = zguard8();
+    var q: T8;
+    zset8(&q);
+    ZO8 = q;
+    zzero8(&q);
+    if (load8(x + 8) != 0x5A) { return 1; } return zobj8(x);
+}
+fn zg8_call() {
+    var x = zguard8();
+    ZO8 = zmk8();
+    if (load8(x + 8) != 0x5A) { return 1; } return zobj8(x);
+}
+fn zg8_opr() { zset8(ZG8); var z: T8; zzero8(&z); var q: T8 = z + ZG8; return zs8(q); }
+fn zg8_ie(k) {
+    zset8(ZG8);
+    var z: T8;
+    zzero8(&z);
+    var q: T8 = if (k == 1) { ZG8 } else { z };
+    return zs8(q);
+}
+
+# ── after the first top-level statement: each global is judged as its initialiser is parsed ──
+var _late = 0;
+_late = 1;
+var LN8: S8 = SRC8;
+var LNH: H = SRCH;
+var LD8: S8 = *PS8;
+var LDH: H = *PSH;
+var LDP8: S8 = (*PS8);
+var LDPH: H = (*PSH);
+var LDC8: S8 = *gs8();
+var LDCH: H = *gsh();
+var LDF8: S8 = *PWG8.p;
+var LDFH: H = *PWGH.p;
+var LPM8: S8 = PS8.dbl();
+var LPF8: S8 = PW8S.s;
+var LGF8: S8 = gw8().s;
+var LC8: S8 = mk8(5);
+var LM8: S8 = SRC8.dbl();
+var LO8: S8 = SRC8 + SRC8;
+var LE8: S8 = if (_late == 1) { SRC8 } else { IN8 };
+var LA8: S8 = alloc(8);
+var LAH: H = alloc(16);
+var LR8: S8 = &BUF8;
+var LRH: H = &BUFH;
+var LI8: S8 = 9;
+var LIH: H = 9;
+var LB8: S8 = LA8;
+var LBH: H = LAH;
+fn l_n_8() { var b = LN8.v; LN8.v = 9; return SRC8.v * 100 + b * 10 + LN8.v; }
+fn l_n_h() { var b = LNH.v; LNH.v = 9; return SRCH.v * 100 + b * 10 + LNH.v; }
+fn l_d_8() { var b = LD8.v; LD8.v = 9; return SRC8.v * 100 + b * 10 + LD8.v; }
+fn l_d_h() { var b = LDH.v; LDH.v = 9; return SRCH.v * 100 + b * 10 + LDH.v; }
+fn l_dp_8() { var b = LDP8.v; LDP8.v = 9; return SRC8.v * 100 + b * 10 + LDP8.v; }
+fn l_dp_h() { var b = LDPH.v; LDPH.v = 9; return SRCH.v * 100 + b * 10 + LDPH.v; }
+fn l_dc_8() { var b = LDC8.v; LDC8.v = 9; return SRC8.v * 100 + b * 10 + LDC8.v; }
+fn l_dc_h() { var b = LDCH.v; LDCH.v = 9; return SRCH.v * 100 + b * 10 + LDCH.v; }
+fn l_df_8() { var b = LDF8.v; LDF8.v = 9; return SRC8.v * 100 + b * 10 + LDF8.v; }
+fn l_df_h() { var b = LDFH.v; LDFH.v = 9; return SRCH.v * 100 + b * 10 + LDFH.v; }
+fn l_pm_8() { var b = LPM8.v; LPM8.v = 9; return SRC8.v * 1000 + b * 10 + LPM8.v; }
+fn l_pf_8() { var b = LPF8.v; LPF8.v = 9; return WS8.s.v * 100 + b * 10 + LPF8.v; }
+fn l_gf_8() { var b = LGF8.v; LGF8.v = 9; return WS8.s.v * 100 + b * 10 + LGF8.v; }
+fn l_c_8() { var b = LC8.v; LC8.v = 9; return b * 10 + LC8.v; }
+fn l_m_8() { var b = LM8.v; LM8.v = 9; return SRC8.v * 1000 + b * 10 + LM8.v; }
+fn l_o_8() { var b = LO8.v; LO8.v = 9; return SRC8.v * 1000 + b * 10 + LO8.v; }
+fn l_e_8() { var b = LE8.v; LE8.v = 9; return SRC8.v * 100 + b * 10 + LE8.v; }
+fn l_a_8() { LA8.v = 9; return load64(load64(&LA8)); }
+fn l_a_h() { LAH.v = 9; return load64(load64(&LAH)); }
+fn l_r_8() { LR8.v = 6; return load64(&BUF8); }
+fn l_r_h() { LRH.v = 6; return load64(&BUFH); }
+fn l_i_8() { return LI8 + 0; }
+fn l_i_h() { return LIH + 0; }
+fn l_b_8() { LB8.v = 7; return LA8.v; }
+fn l_b_h() { LBH.v = 7; return LAH.v; }
+fn l_arg_8() { LA8.v = 5; return take8(LA8); }
+fn l_arg_h() { LAH.v = 5; return takeh(LAH); }
+
+test_group("the declaration zone: a struct value is copied (the source unchanged)");
+assert_eq(i_n_8(), 559, "8 B: an inline global");
+assert_eq(i_n_h(), 559, "16 B: an inline global");
+assert_eq(i_p_8(), 559, "8 B: (an inline global)");
+assert_eq(i_p_h(), 559, "16 B: (an inline global)");
+assert_eq(i_f_8(), 559, "8 B: a field chain");
+assert_eq(i_f_h(), 559, "16 B: a field chain");
+assert_eq(i_d_8(), 559, "8 B: *p");
+assert_eq(i_d_h(), 559, "16 B: *p (6.7.10: a copy; a handle holding the first word before)");
+assert_eq(i_dp_8(), 559, "8 B: (*p) (the review fix: a dereference at any spelling)");
+assert_eq(i_dp_h(), 559, "16 B: (*p)");
+assert_eq(i_da_8(), 559, "8 B: *(p + 0)");
+assert_eq(i_da_h(), 559, "16 B: *(p + 0)");
+assert_eq(i_dc_8(), 559, "8 B: *gp() (a : *T fn)");
+assert_eq(i_dc_h(), 559, "16 B: *gp()");
+assert_eq(i_df_8(), 559, "8 B: *W.p (a *T field)");
+assert_eq(i_df_h(), 559, "16 B: *W.p");
+assert_eq(i_db_8(), 559, "8 B: *gp() of a fn declared below the global");
+assert_eq(i_pm_8(), 5109, "8 B: P.dbl() through a *S8 global (the review fix: a *T receiver)");
+assert_eq(i_gm_8(), 5109, "8 B: gp().dbl() through a : *S8 call");
+assert_eq(i_wm_8(), 5109, "8 B: W.p.dbl() through a *S8 field");
+assert_eq(i_pf_8(), 559, "8 B: P.s, a field through a *W8 global, copied");
+assert_eq(i_gf_8(), 559, "8 B: gp().s, a field through a : *W8 call, copied");
+assert_eq(i_wf_8(), 559, "8 B: (P.s), copied");
+assert_eq(i_c_8(), 59, "8 B: a call");
+assert_eq(i_cw_8(), 59, "8 B: (a call)");
+assert_eq(i_cb_8(), 59, "8 B: a call of a fn declared below the global");
+assert_eq(i_g_8(), 559, "8 B: an explicit generic call");
+assert_eq(i_gi_8(), 559, "8 B: an inferred generic call");
+assert_eq(i_m_8(), 5109, "8 B: a method");
+assert_eq(i_o_8(), 5109, "8 B: an operator");
+assert_eq(i_om_8(), 5159, "8 B: `s * 2 + s` (two dispatches)");
+assert_eq(i_op_8(), 5159, "8 B: `(s + s) + s`");
+assert_eq(i_e_8(), 559, "8 B: an if-expression");
+
+test_group("the declaration zone: anything else is a handle (a write reaches the object)");
+assert_eq(h_a_8(), 9, "8 B: alloc");
+assert_eq(h_a_h(), 9, "16 B: alloc");
+assert_eq(h_r_8(), 9, "8 B: &x");
+assert_eq(h_r_h(), 9, "16 B: &x");
+assert_eq(h_p_8(), 9, "8 B: a `*T` call");
+assert_eq(h_p_h(), 9, "16 B: a `*T` call");
+assert_eq(h_u_8(), 9, "8 B: an untyped call");
+assert_eq(h_u_h(), 9, "16 B: an untyped call");
+assert_eq(h_x_8(), 8, "8 B: an untyped global");
+assert_eq(h_x_h(), 8, "16 B: an untyped global");
+assert_eq(h_n_8(), 9, "8 B: `= 9` is a handle to address 9: `+` is pointer arithmetic, no dispatch");
+assert_eq(h_n_h(), 9, "16 B: `= 9`");
+assert_eq(h_z_8(), 4, "8 B: `= 0` is a NULL handle, then rebound");
+assert_eq(h_z_h(), 4, "16 B: `= 0`");
+assert_eq(h_m_8(), 9, "8 B: a method returning `*T`");
+assert_eq(h_m_h(), 9, "16 B: a method returning `*T`");
+assert_eq(h_o_8(), 7, "8 B: an operator returning no struct");
+assert_eq(h_o_h(), 7, "16 B: an operator returning no struct");
+assert_eq(b_a_8(), 7, "8 B: from another handle global: binds");
+assert_eq(b_a_h(), 7, "16 B: from another handle global: binds");
+
+test_group("after the first statement: the same line");
+assert_eq(l_n_8(), 559, "8 B: an inline global, copied");
+assert_eq(l_n_h(), 559, "16 B: an inline global, copied");
+assert_eq(l_d_8(), 559, "8 B: *p, copied");
+assert_eq(l_d_h(), 559, "16 B: *p, copied (6.7.10)");
+assert_eq(l_dp_8(), 559, "8 B: (*p), copied (the review fix)");
+assert_eq(l_dp_h(), 559, "16 B: (*p), copied");
+assert_eq(l_dc_8(), 559, "8 B: *gp(), copied");
+assert_eq(l_dc_h(), 559, "16 B: *gp(), copied");
+assert_eq(l_df_8(), 559, "8 B: *W.p, copied");
+assert_eq(l_df_h(), 559, "16 B: *W.p, copied");
+assert_eq(l_pm_8(), 5109, "8 B: P.dbl() through a *S8 global, copied");
+assert_eq(l_pf_8(), 559, "8 B: P.s through a *W8 global, copied");
+assert_eq(l_gf_8(), 559, "8 B: gp().s through a : *W8 call, copied");
+assert_eq(l_c_8(), 59, "8 B: a call, copied");
+assert_eq(l_m_8(), 5109, "8 B: a method, copied");
+assert_eq(l_o_8(), 5109, "8 B: an operator, copied");
+assert_eq(l_e_8(), 559, "8 B: an if-expression, copied");
+assert_eq(l_a_8(), 9, "8 B: alloc, a handle");
+assert_eq(l_a_h(), 9, "16 B: alloc, a handle");
+assert_eq(l_r_8(), 6, "8 B: &x, a handle");
+assert_eq(l_r_h(), 6, "16 B: &x, a handle");
+assert_eq(l_i_8(), 9, "8 B: `= 9`, pointer arithmetic");
+assert_eq(l_i_h(), 9, "16 B: `= 9`, pointer arithmetic");
+assert_eq(l_b_8(), 7, "8 B: from a handle, binds");
+assert_eq(l_b_h(), 7, "16 B: from a handle, binds");
+assert_eq(l_arg_8(), 5, "8 B: a by-value argument takes the struct");
+assert_eq(l_arg_h(), 5, "16 B: a by-value argument takes the struct");
+
+test_group("a handle global's consumers take its struct");
+assert_eq(c_rw_8(), 5, "8 B: a field write reaches the object");
+assert_eq(c_rw_h(), 5, "16 B: a field write reaches the object");
+assert_eq(c_arg_8(), 5, "8 B: argument");
+assert_eq(c_arg_h(), 5, "16 B: argument");
+assert_eq(c_argp_8(), 5, "8 B: (argument)");
+assert_eq(c_argp_h(), 5, "16 B: (argument)");
+assert_eq(c_argm_8(), 15, "8 B: a method's argument");
+assert_eq(c_argm_h(), 15, "16 B: a method's argument");
+assert_eq(c_argg_8(), 6, "8 B: a generic's argument");
+assert_eq(c_argg_h(), 6, "16 B: a generic's argument");
+assert_eq(c_gen_8(), 559, "8 B: idg(G) is a copy");
+assert_eq(c_gen_h(), 559, "16 B: idg(G) is a copy");
+assert_eq(c_recv_8(), 51, "8 B: a by-value receiver");
+assert_eq(c_recv_h(), 51, "16 B: a by-value receiver");
+assert_eq(c_recvd_8(), 10, "8 B: a by-value receiver's struct result");
+assert_eq(c_recvd_h(), 10, "16 B: a by-value receiver's struct result");
+assert_eq(c_pm_8(), 105, "8 B: a `self: *T` receiver");
+assert_eq(c_pm_h(), 105, "16 B: a `self: *T` receiver");
+assert_eq(c_ret_8(), 559, "8 B: return G (a copy; a fn returns no global over 8 B)");
+assert_eq(c_retp_8(), 559, "8 B: return (G)");
+assert_eq(c_reto_8(), 6, "8 B: return G of another struct gives its bytes, not its address");
+assert_eq(c_opr_8(), 6, "8 B: an operator's right operand");
+assert_eq(c_opr_h(), 6, "16 B: an operator's right operand");
+assert_eq(c_opl_8(), 8, "8 B: an operator's left operand is pointer arithmetic");
+assert_eq(c_opl_h(), 8, "16 B: an operator's left operand is pointer arithmetic");
+assert_eq(c_ie_8(1), 559, "8 B: an if-expression branch (over 8 B one is refused)");
+assert_eq(c_ain_8(), 559, "8 B: q = G copies");
+assert_eq(c_ain_h(), 559, "16 B: q = G copies");
+assert_eq(c_aout_8(), 7, "8 B: G = q copies into the object");
+assert_eq(c_aout_h(), 7, "16 B: G = q copies into the object");
+assert_eq(c_vin_8(), 5, "8 B: V = G (a value global) copies");
+assert_eq(c_vin_h(), 5, "16 B: V = G (a value global) copies");
+assert_eq(c_vout_8(), 4, "8 B: G = V copies into the object");
+assert_eq(c_vout_h(), 4, "16 B: G = V copies into the object");
+assert_eq(c_rb_8(), 58, "8 B: G = G2 between handles rebinds");
+assert_eq(c_rb_h(), 58, "16 B: G = G2 between handles rebinds");
+assert_eq(c_rbt_8(), 4, "8 B: a handle of another struct rebinds too");
+assert_eq(c_rbt_h(), 4, "16 B: a handle of another struct rebinds too");
+assert_eq(c_decl_8(), 9, "8 B: `var c: S8 = G;` binds");
+assert_eq(c_decl_h(), 9, "16 B: `var c: H = G;` binds");
+assert_eq(c_call_8(), 6, "8 B: G = mk() copies into the object");
+assert_eq(c_call_h(), 6, "16 B: G = mk() copies into the object");
+assert_eq(c_callw_8(), 7, "8 B: G = (mk()) copies into the object");
+assert_eq(c_meth_8(), 8, "8 B: G = b.dbl() copies into the object");
+assert_eq(c_meth_h(), 8, "16 B: G = b.dbl() copies into the object");
+assert_eq(c_op_8(), 8, "8 B: G = b + b copies into the object");
+assert_eq(c_op_h(), 8, "16 B: G = b + b copies into the object");
+assert_eq(c_ief_8(1), 4, "8 B: G = if .. copies into the object");
+assert_eq(c_fld_8(), 3, "8 B: G = w.s copies into the object");
+assert_eq(c_fld_h(), 3, "16 B: G = w.s copies into the object");
+assert_eq(c_wfs_8(), 5, "8 B: w.s = G copies");
+assert_eq(c_wfs_h(), 5, "16 B: w.s = G copies");
+assert_eq(c_nest_8(), 53, "8 B: a nested literal element copies");
+assert_eq(c_nest_h(), 53, "16 B: a nested literal element copies");
+assert_eq(c_rp_8(), 5, "8 B: into a `*T` parameter, the address");
+assert_eq(c_rp_h(), 5, "16 B: into a `*T` parameter, the address");
+assert_eq(c_tu_8(), 5, "8 B: into an untyped parameter, the address");
+assert_eq(c_tu_h(), 5, "16 B: into an untyped parameter, the address");
+assert_eq(c_clo_8(), 6, "8 B: read inside a closure");
+assert_eq(c_clo_h(), 6, "16 B: read inside a closure");
+assert_eq(c_cloa_8(), 6, "8 B: an argument inside a closure");
+assert_eq(c_cloa_h(), 6, "16 B: an argument inside a closure");
+assert_eq(c_capn_8(), 2, "8 B: a capture named like a handle global is the capture");
+assert_eq(c_capn_h(), 2, "16 B: a capture named like a handle global is the capture");
+assert_eq(c_dyn_8(), 507, "8 B: a dyn from a handle global holds its address");
+assert_eq(c_dyn_h(), 507, "16 B: a dyn from a handle global holds its address");
+assert_eq(c_addr_8(), 5, "8 B: &G is the slot holding the address");
+assert_eq(c_addr_h(), 5, "16 B: &G is the slot holding the address");
+assert_eq(c_opeq_8(), 8, "8 B: G.v += 3 writes the object");
+assert_eq(c_opeq_h(), 8, "16 B: G.v += 3 writes the object");
+
+test_group("at top level (no frame)");
+A8.v = 5;
+AH.v = 5;
+assert_eq(take8(A8), 5, "8 B: argument");
+assert_eq(takeh(AH), 5, "16 B: argument");
+assert_eq(take8((A8)), 5, "8 B: (argument)");
+var tq8: S8 = V8 + A8;
+assert_eq(tq8.v, 8, "8 B: an operator's right operand");
+var tie8: S8 = if (_late == 1) { A8 } else { V8 };
+assert_eq(tie8.v, 5, "8 B: an if-expression branch");
+var tx8 = load64(&X8);
+var txh = load64(&XH);
+X8 = mk8(6);
+assert_eq(load64(tx8), 6, "8 B: G = mk() copies into the object");
+X8 = V8.dbl();
+assert_eq(load64(tx8), 6, "8 B: G = V.dbl() copies into the object");
+V8 = A8;
+assert_eq(V8.v, 5, "8 B: V = G copies");
+V8.v = 3;
+assert_eq(A8.v, 5, "8 B: ... and the object is not aliased");
+X8 = V8;
+assert_eq(load64(tx8), 3, "8 B: G = V copies into the object");
+XH = VH;
+assert_eq(load64(txh), 3, "16 B: G = V copies into the object");
+assert_eq(A8 + 0, load64(&A8), "8 B: G + 0 is the address");
+assert_eq(AH + 0, load64(&AH), "16 B: G + 0 is the address");
+
+test_group("sizes 1..8 B: a handle global of each size, every consumer");
+assert_eq(zg1_arg(), -3, "1 B: arg");
+assert_eq(zg1_argp(), -3, "1 B: argp");
+assert_eq(zg1_ret(), -3, "1 B: ret");
+assert_eq(zg1_retp(), -3, "1 B: retp");
+assert_eq(zg1_in(), -3, "1 B: in");
+assert_eq(zg1_out(), -3, "1 B: out");
+assert_eq(zg1_call(), -3, "1 B: call");
+assert_eq(zg1_opr(), -3, "1 B: opr");
+assert_eq(zg1_ie(1), -3, "1 B: if-expression branch");
+assert_eq(zg2_arg(), -300, "2 B: arg");
+assert_eq(zg2_argp(), -300, "2 B: argp");
+assert_eq(zg2_ret(), -300, "2 B: ret");
+assert_eq(zg2_retp(), -300, "2 B: retp");
+assert_eq(zg2_in(), -300, "2 B: in");
+assert_eq(zg2_out(), -300, "2 B: out");
+assert_eq(zg2_call(), -300, "2 B: call");
+assert_eq(zg2_opr(), -300, "2 B: opr");
+assert_eq(zg2_ie(1), -300, "2 B: if-expression branch");
+assert_eq(zg3_arg(), -30000004, "3 B: arg");
+assert_eq(zg3_argp(), -30000004, "3 B: argp");
+assert_eq(zg3_ret(), -30000004, "3 B: ret");
+assert_eq(zg3_retp(), -30000004, "3 B: retp");
+assert_eq(zg3_in(), -30000004, "3 B: in");
+assert_eq(zg3_out(), -30000004, "3 B: out");
+assert_eq(zg3_call(), -30000004, "3 B: call");
+assert_eq(zg3_opr(), -30000004, "3 B: opr");
+assert_eq(zg3_ie(1), -30000004, "3 B: if-expression branch");
+assert_eq(zg4_arg(), -70000, "4 B: arg");
+assert_eq(zg4_argp(), -70000, "4 B: argp");
+assert_eq(zg4_ret(), -70000, "4 B: ret");
+assert_eq(zg4_retp(), -70000, "4 B: retp");
+assert_eq(zg4_in(), -70000, "4 B: in");
+assert_eq(zg4_out(), -70000, "4 B: out");
+assert_eq(zg4_call(), -70000, "4 B: call");
+assert_eq(zg4_opr(), -70000, "4 B: opr");
+assert_eq(zg4_ie(1), -70000, "4 B: if-expression branch");
+assert_eq(zg5_arg(), -7000000004, "5 B: arg");
+assert_eq(zg5_argp(), -7000000004, "5 B: argp");
+assert_eq(zg5_ret(), -7000000004, "5 B: ret");
+assert_eq(zg5_retp(), -7000000004, "5 B: retp");
+assert_eq(zg5_in(), -7000000004, "5 B: in");
+assert_eq(zg5_out(), -7000000004, "5 B: out");
+assert_eq(zg5_call(), -7000000004, "5 B: call");
+assert_eq(zg5_opr(), -7000000004, "5 B: opr");
+assert_eq(zg5_ie(1), -7000000004, "5 B: if-expression branch");
+assert_eq(zg6_arg(), -7000000300, "6 B: arg");
+assert_eq(zg6_argp(), -7000000300, "6 B: argp");
+assert_eq(zg6_ret(), -7000000300, "6 B: ret");
+assert_eq(zg6_retp(), -7000000300, "6 B: retp");
+assert_eq(zg6_in(), -7000000300, "6 B: in");
+assert_eq(zg6_out(), -7000000300, "6 B: out");
+assert_eq(zg6_call(), -7000000300, "6 B: call");
+assert_eq(zg6_opr(), -7000000300, "6 B: opr");
+assert_eq(zg6_ie(1), -7000000300, "6 B: if-expression branch");
+assert_eq(zg7_arg(), -70000030000004, "7 B: arg");
+assert_eq(zg7_argp(), -70000030000004, "7 B: argp");
+assert_eq(zg7_ret(), -70000030000004, "7 B: ret");
+assert_eq(zg7_retp(), -70000030000004, "7 B: retp");
+assert_eq(zg7_in(), -70000030000004, "7 B: in");
+assert_eq(zg7_out(), -70000030000004, "7 B: out");
+assert_eq(zg7_call(), -70000030000004, "7 B: call");
+assert_eq(zg7_opr(), -70000030000004, "7 B: opr");
+assert_eq(zg7_ie(1), -70000030000004, "7 B: if-expression branch");
+assert_eq(zg8_arg(), -7000080000, "8 B: arg");
+assert_eq(zg8_argp(), -7000080000, "8 B: argp");
+assert_eq(zg8_ret(), -7000080000, "8 B: ret");
+assert_eq(zg8_retp(), -7000080000, "8 B: retp");
+assert_eq(zg8_in(), -7000080000, "8 B: in");
+assert_eq(zg8_out(), -7000080000, "8 B: out");
+assert_eq(zg8_call(), -7000080000, "8 B: call");
+assert_eq(zg8_opr(), -7000080000, "8 B: opr");
+assert_eq(zg8_ie(1), -7000080000, "8 B: if-expression branch");
+
+test_group("sizes 1..8 B at top level (a hidden global, no frame)");
+zset1(ZT1);
+assert_eq(zs1(ZT1), -3, "1 B at top level: arg");
+assert_eq(zs1((ZT1)), -3, "1 B at top level: (arg)");
+var zx1 = zguard1();
+ZO1 = zmk1();
+assert_eq(load8(zx1 + 1), 0x5A, "1 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj1(zx1), -3, "1 B at top level: `h = mk()` copies into the object");
+zset2(ZT2);
+assert_eq(zs2(ZT2), -300, "2 B at top level: arg");
+assert_eq(zs2((ZT2)), -300, "2 B at top level: (arg)");
+var zx2 = zguard2();
+ZO2 = zmk2();
+assert_eq(load8(zx2 + 2), 0x5A, "2 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj2(zx2), -300, "2 B at top level: `h = mk()` copies into the object");
+zset3(ZT3);
+assert_eq(zs3(ZT3), -30000004, "3 B at top level: arg");
+assert_eq(zs3((ZT3)), -30000004, "3 B at top level: (arg)");
+var zx3 = zguard3();
+ZO3 = zmk3();
+assert_eq(load8(zx3 + 3), 0x5A, "3 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj3(zx3), -30000004, "3 B at top level: `h = mk()` copies into the object");
+zset4(ZT4);
+assert_eq(zs4(ZT4), -70000, "4 B at top level: arg");
+assert_eq(zs4((ZT4)), -70000, "4 B at top level: (arg)");
+var zx4 = zguard4();
+ZO4 = zmk4();
+assert_eq(load8(zx4 + 4), 0x5A, "4 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj4(zx4), -70000, "4 B at top level: `h = mk()` copies into the object");
+zset5(ZT5);
+assert_eq(zs5(ZT5), -7000000004, "5 B at top level: arg");
+assert_eq(zs5((ZT5)), -7000000004, "5 B at top level: (arg)");
+var zx5 = zguard5();
+ZO5 = zmk5();
+assert_eq(load8(zx5 + 5), 0x5A, "5 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj5(zx5), -7000000004, "5 B at top level: `h = mk()` copies into the object");
+zset6(ZT6);
+assert_eq(zs6(ZT6), -7000000300, "6 B at top level: arg");
+assert_eq(zs6((ZT6)), -7000000300, "6 B at top level: (arg)");
+var zx6 = zguard6();
+ZO6 = zmk6();
+assert_eq(load8(zx6 + 6), 0x5A, "6 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj6(zx6), -7000000300, "6 B at top level: `h = mk()` copies into the object");
+zset7(ZT7);
+assert_eq(zs7(ZT7), -70000030000004, "7 B at top level: arg");
+assert_eq(zs7((ZT7)), -70000030000004, "7 B at top level: (arg)");
+var zx7 = zguard7();
+ZO7 = zmk7();
+assert_eq(load8(zx7 + 7), 0x5A, "7 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj7(zx7), -70000030000004, "7 B at top level: `h = mk()` copies into the object");
+zset8(ZT8);
+assert_eq(zs8(ZT8), -7000080000, "8 B at top level: arg");
+assert_eq(zs8((ZT8)), -7000080000, "8 B at top level: (arg)");
+var zx8 = zguard8();
+ZO8 = zmk8();
+assert_eq(load8(zx8 + 8), 0x5A, "8 B at top level: `h = mk()` writes no byte past the object");
+assert_eq(zobj8(zx8), -7000080000, "8 B at top level: `h = mk()` copies into the object");
+
+var r = assert_summary();

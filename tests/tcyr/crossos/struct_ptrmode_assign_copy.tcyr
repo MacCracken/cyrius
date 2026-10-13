@@ -1,10 +1,11 @@
 # struct_ptrmode_assign_copy.tcyr — 6.6.16 (C2). A STRUCT ASSIGNMENT BETWEEN A HANDLE AND A
 # VALUE COPIES THE STRUCT; handle <- handle STAYS A POINTER REBIND.
 #
-# A HANDLE is one slot holding the ADDRESS of a plain struct over 8 B: a pointer-mode local
+# A HANDLE is one slot holding the ADDRESS of a plain struct: a pointer-mode local
 # (`var a: Pt = alloc(16);`), a pointer-mode global (`var GP: Pt = 0; GP = alloc(16);`) or a `*T`
-# parameter. A VALUE is an inline local or global, a by-value struct parameter, a closure capture,
-# a struct field, or a call / method / operator result.
+# parameter — over 8 B through 6.7.9, at every size since 6.7.10 for a local (the handle line:
+# `var a: B1 = alloc(8);` is a handle too). A VALUE is an inline local or global, a by-value struct
+# parameter, a closure capture, a struct field, or a call / method / operator result.
 #
 # ⛔ THE DEFECT, every release before 6.6.16. `_agc_operand` (src/frontend/parse.cyr) reported a
 # handle as "not an aggregate", so every assignment arm fell to the one-word store:
@@ -29,8 +30,8 @@
 # parameter, a pointer-mode global, two different struct types); the DECLARATION `var q: Pt = a;`
 # stays the documented alias (it takes its storage class from the source, an assignment cannot
 # change the destination's); `Str` is a heap handle whose rebind the stdlib relies on; a <= 8 B
-# struct is held by value. A fix keyed on "pointer-mode struct" without the handle <- handle rule
-# turns every heap-handle rebind into a copy and reddens that group.
+# handle copies both ways as a wide one does (6.7.10). A fix keyed on "pointer-mode struct" without
+# the handle <- handle rule turns every heap-handle rebind into a copy and reddens that group.
 #
 # Mutations that redden this file (each applied to the 6.6.16 tree, rebuilt, measured on x86):
 #   * `_agc_operand` without its handle rungs (the pre-6.6.16 compiler) -> 16 rows red, the first
@@ -66,7 +67,7 @@ struct P3 { x; y; z; }               # 24 B — the retptr class
 struct Q3 { a; b; c; }               # 24 B, a different type
 struct Box { v: Pt; n; }
 struct O12 { a: i64; b: i32; }       # 12 B — an odd tail (copied 8 + 4)
-struct B1 { val; }                   # 8 B — held by value, never a handle
+struct B1 { val; }                   # 8 B — a handle when initialised from an address (6.7.10)
 
 fn mk(a, b): Pt { var p: Pt; p.x = a; p.y = b; return p; }
 fn mk3(a, b, c): P3 { var p: P3; p.x = a; p.y = b; p.z = c; return p; }
@@ -491,9 +492,14 @@ fn decl_alias() {
 # The inline Str pun: `var t: Str; t = a;` keeps the handle, so str_len(t) reads a's string.
 fn str_inline_pun() { var a = str_from("abcde"); var t: Str; t = a; return str_len(t); }
 fn str_rebind() { var a: Str = str_from("abcde"); var b: Str = str_from("xy"); b = a; return str_len(b); }
-# A <= 8 B struct is held by value: both directions copy, as they did.
-fn small_inl_from_ptr() { var a: B1 = alloc(8); a.val = 5; var q: B1; q.val = 9; q = a; return q.val; }
-fn small_ptr_from_inl() { var a: B1 = alloc(8); a.val = 0; var q: B1; q.val = 5; a = q; return a.val; }
+# ⛔ 6.7.10 (the handle line): a <= 8 B struct local initialised from an address is a HANDLE, as a
+# wide one is, and both directions copy through it — the writes after the copy show it is no alias,
+# and the second row reads the heap object the handle points at. (Through 6.7.9 `a` was an inline
+# B1 holding the address as `a.val`; both rows gave 5 as two inline copies.)
+fn small_inl_from_ptr() { var a: B1 = alloc(8); a.val = 5; var q: B1; q.val = 9; q = a; a.val = 1; return q.val; }
+fn small_ptr_from_inl() {
+    var x = alloc(8); var a: B1 = x; a.val = 0; var q: B1; q.val = 5; a = q; q.val = 1; return load64(x);
+}
 # A struct FIELD from a handle (6.6.10) still copies.
 fn field_from_handle() {
     var a: Pt = alloc(16); a.x = 1; a.y = 2;
@@ -559,8 +565,8 @@ assert_eq(handle_from_str_call(), 4, "a handle <- a Str-returning call binds");
 assert_eq(decl_alias(), 16, "the declaration var q: Pt = a; is an alias");
 assert_eq(str_inline_pun(), 5, "the inline Str pun keeps the handle");
 assert_eq(str_rebind(), 5, "Str <- Str is a rebind");
-assert_eq(small_inl_from_ptr(), 5, "<= 8 B struct, inline <- pointer-mode");
-assert_eq(small_ptr_from_inl(), 5, "<= 8 B struct, pointer-mode <- inline");
+assert_eq(small_inl_from_ptr(), 5, "<= 8 B struct, inline <- handle: a copy (6.7.10)");
+assert_eq(small_ptr_from_inl(), 5, "<= 8 B struct, handle <- inline: copied into the heap object (6.7.10)");
 assert_eq(field_from_handle(), 127, "b.v = a: a field from a handle copies (6.6.10)");
 
 # --------------------------------------------- (4) at TOP LEVEL: no frame, global addressing ----

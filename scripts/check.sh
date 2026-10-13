@@ -2458,6 +2458,20 @@ _chk_gate "$ROOT/tests/gates/frontend/address_of_pointer_param.sh"
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
+# 6.7.10 (B7-1) — the handle line: a struct local of 8 B or less initialised from anything that is not
+# a struct value of its type is a handle, as over 8 B (and `var q: S = *p` copies at every size). The
+# filed repro, 220 rows against their 16 B twins, the compile rows, a 7 B handle ending a mapping and an
+# async body, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/small_struct_handle_line.sh"
+# 6.7.10 (B7-2) — u8 / u16 / u32 / f32 struct fields are their widths (packed): 199 rows (sizeof /
+# offsets, zero-extension and wrap, the by-value class sweep at every size 1..17 and 20), the
+# redefinition warnings, the dyn / top-level refusals that follow the size, the derive's layout,
+# x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/narrow_fields_checked.sh"
+# 6.7.10 (B7-4) — `#derive(Serialize)` takes a `: cstring` field (NULL <-> null, a fresh unescaped
+# copy on decode): the issue's repro verbatim and 167 codec checks; (B7-4b) a `Str` field unescapes in
+# both decoders — x86 / IR / DCE / aarch64 / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/derive_cstring_field.sh"
 _chk_gate "$ROOT/tests/gates/codegen/by_value_arg_copy.sh"   # 6.7.7 (call arguments)
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"

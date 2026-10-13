@@ -185,15 +185,15 @@ fn early() {
 #deprecated("mk3 old")
 fn old_mk3(x): P3 { var r: P3; r.a = x; r.b = x; r.c = x; return r; }
 #deprecated("V_add old")
-fn V_add(a, b) { return load64(a) + load64(b); }
+fn V_add(a, b) { return a + b; }
 #deprecated("W3_add old")
 fn W3_add(a, b): W3 { var r: W3; r.a = load64(a) + load64(b); r.b = 0; r.c = 0; return r; }
 fn main() {
     var q: P3 = old_mk3(1);   #W
-    var v1: V = alloc(8);
-    var v2: V = alloc(8);
-    store64(v1, 1);
-    store64(v2, 2);
+    var v1: V;   # 6.7.10: a struct value — `= alloc(8)` is a handle (pointer arithmetic, no dispatch)
+    var v2: V;
+    v1.x = 1;
+    v2.x = 2;
     var s = v1 + v2;   #W
     var w1: W3;
     w1.a = 1; w1.b = 0; w1.c = 0;

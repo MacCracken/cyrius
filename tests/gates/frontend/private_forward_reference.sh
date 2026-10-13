@@ -206,7 +206,7 @@ row operator OpV_add \
 'private
 impl OpV { fn add(a, b) { return 39 + b; } }' \
 'struct OpV { v; }
-var opv: OpV = 5;
+var opv = OpV { 5 };
 fn main(): i64 { var r = opv + 3; return r; }'
 
 row modscope mm_secret_m \

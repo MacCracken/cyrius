@@ -190,9 +190,9 @@ runs v_param   "${PRE}${par}syscall(60, 0);\n" 0
 # u128 16 + i8..u64 30 + f32 4 + f64 8 + seven 8-byte names (Vec among them) 56 + Pt and u8pair
 # 32 + the vectors 224 (eight of 16, two of 16 and two of 32 among the float ones) = 370
 runs v_sizeof  "${PRE}fn f(): i64 {\n    var k = sizeof(u128);\n${szs}    return k - 370;\n}\nsyscall(60, f());\n" 0
-# i8..i64 15 + u8..u64 32 (a full word each) + f32, f64 16 + bool, cstring, Result, Option, Tagged,
-# Vec, Color 56 + Pt, u8pair 32 = 151
-runs v_field   "${PRE}struct All {\n${fld}}\nsyscall(60, sizeof(All) - 151);\n" 0
+# i8..i64 15 + u8..u64 15 (their widths since 6.7.10; a full word each before) + f32, f64 12 + bool,
+# cstring, Result, Option, Tagged, Vec, Color 56 + Pt, u8pair 32 = 130
+runs v_field   "${PRE}struct All {\n${fld}}\nsyscall(60, sizeof(All) - 130);\n" 0
 runs v_mret    "${PRE}${mret}var a, b = mr1();\nsyscall(60, a + b);\n" 3
 runs v_returns "${PRE}fn r1(): i8 { return 1; }\nfn r2(): i16 { return 2; }\nfn r3(): i32 { return 3; }\nfn r4(): i64 { return 4; }\nfn r5(): cstring { return 0; }\nfn r6(): f64 { return 0; }\nsyscall(60, r1() + r2() + r3() + r4());\n" 10
 runs str_param 'fn f(s: Str): i64 { return 4; }\nsyscall(60, f(0));\n' 4

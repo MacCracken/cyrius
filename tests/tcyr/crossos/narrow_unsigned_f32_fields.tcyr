@@ -1,0 +1,1482 @@
+# narrow_unsigned_f32_fields.tcyr — 6.7.10 (B7-2). u8 / u16 / u32 AND f32 STRUCT FIELDS ARE THEIR
+# WIDTHS (the user's decision, 2026-10-08: packed, no padding — the rule i8 / i16 / i32 fields have
+# always followed): u8 / u16 / u32 take 1 / 2 / 4 bytes and read ZERO-extended, f32 takes 4 (its
+# binary32 bits, typed). Through 6.7.9 each was an 8-byte slot: `struct C4 { r: u8; g: u8; b: u8;
+# a: u8; }` was 32 bytes, `struct { a: u8; b: i64; }` 16, and `c.r = 250; c.r += 10;` read 260.
+#
+# The rows:
+#   * sizeof and offsets — structs, a union, nesting, a mix with i8..i32; u64 stays 8;
+#   * zero-extension at every width (255 / 0xFFFF / 0xFFFFFFFF, never -1) and the field's own width
+#     on a write and an `OP=` (250 + 10 is 4, 255 + 1 is 0, a u32 0 - 1 is 0xFFFFFFFF), the
+#     neighbours kept;
+#   * a `*T` onto unaligned heap bytes reads and writes only its field's bytes (guards each side);
+#   * f32: the binary32 bits at 4 bytes, a sum, `*=`, compares, 0.1's rounding, a negative;
+#   * positional, named and nested literals in a fn, in the declaration zone and after it;
+#   * THE CLASS SWEEP — every size 1..17 and 20 built from u8 / u16 / u32 / f32 fields (the by-value
+#     class follows the size: one register to 8 B, a pair to 16 B, an address over 16), each through
+#     a by-value argument (the callee's write stays in the callee), a struct return, `q = a`, a store
+#     into a value global with a u8 global declared right after it, a store into a field with a u8
+#     guard field on each side, and a closure capture — u values with their high bits set, so a
+#     sign-extending read or a wider store is red;
+#   * operators (`C4_add` wraps per channel, `F2_add`), a by-value and an untyped `self`; an operator
+#     on value GLOBALS under 8 B (`C4`, `C3`, `{ u16; u16 }`, `{ f32 }`, `{ i32 }`) dispatches, in a fn,
+#     at top level and in a declaration-zone global, beside its local / 8 B twin;
+#   * `*C4` steps 4 bytes and `C4[2]` is 8 (the u8 global after it kept);
+#   * a shrunk struct at the handle line: `var c: C4 = alloc(4); c.r = 5;` reaches the heap (B7-1).
+# The refusals, the redefinition warnings and the mutation ledger are
+# tests/gates/frontend/narrow_fields_checked.sh, which runs this file on x86_64 (default, CYRIUS_IR=1,
+# CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); cx_crossos_rows_run.sh runs it
+# natively and on cxvm.
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi — a u32 after a u8 sits
+# at offset 1, an unaligned access on every target.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+
+struct A9 { a: u8; b: i64; }
+struct B10 { a: u16; b: u32; c: f32; }
+struct C4 { r: u8; g: u8; b: u8; a: u8; }
+union U4 { a: u8; b: u32; c: f32; }
+struct NC { c: C4; x: u16; y: u32; }
+struct M9 { a: u64; b: u8; }
+struct MX { a: i8; b: u8; c: i16; d: u16; e: i32; f: u32; g: f32; }
+struct F2 { x: f32; y: f32; }
+struct WD { a: u8; b: i32; c: i8; e: i16; d; }
+
+var GD = C4 { 1, 2, 3, 4 };
+var GDN = NC { 5, 6, 7, 8, 0xBEEF, 0xFFFFFFFF };
+var GDF = B10 { 0xFFFF, 0xFFFFFFFE, 1.5 };
+var GA: C4[2];
+var GAG: u8 = 0x5A;
+
+fn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }
+fn F2_add(a: F2, b: F2): F2 { var r: F2; r.x = a.x + b.x; r.y = a.y + b.y; return r; }
+impl C4 { fn lum(self: C4): i64 { return self.r + self.g + self.b + self.a; } }
+impl C4 { fn first(self) { return self.r; } }
+impl F2 { fn sum4(self: F2): i64 { return f64_to(f32_to(self.x + self.y) * 4.0); } }
+
+# ── the class sweep: one struct per size, its checksum read by value (zs) and through a *T (zp) ──
+# 1 B { u8 }
+struct Z1 { f0: u8; }
+struct W1 { h: u8; z: Z1; g: u8; }
+var GZ1 = Z1 { 0 };
+var GG1: u8 = 0x5A;
+fn zs1(z: Z1): i64 {
+    var k = z.f0 * 1;
+    return k;
+}
+fn zp1(p: *Z1): i64 {
+    var k = p.f0 * 1;
+    return k;
+}
+fn mk1(): Z1 {
+    var r: Z1;
+    r.f0 = 0xF1;
+    return r;
+}
+fn zw1(z: Z1): i64 { z.f0 = 1; return zs1(z); }
+fn za1(): i64 {
+    var a = mk1();
+    var k = zw1(a);
+    if (k == zs1(a)) { return 0 - 1; }
+    return zs1(a);
+}
+fn zr1(): i64 { var r: Z1 = mk1(); return zp1(&r); }
+fn zq1(): i64 { var a = mk1(); var q: Z1; q = a; a.f0 = 1; return zp1(&q); }
+fn zg1(): i64 {
+    var a = mk1();
+    GZ1 = a;
+    a.f0 = 1;
+    if (GG1 != 0x5A) { return 0 - 1; }
+    return zp1(&GZ1);
+}
+fn zf1(): i64 {
+    var a = mk1();
+    var w: W1;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z1 = w.z;
+    return zp1(&q);
+}
+fn zc1(): i64 { var a = mk1(); var f = |d| { return zs1(a) + d; }; return callptr(f, 0); }
+
+# 2 B { u16 }
+struct Z2 { f0: u16; }
+struct W2 { h: u8; z: Z2; g: u8; }
+var GZ2 = Z2 { 0 };
+var GG2: u8 = 0x5A;
+fn zs2(z: Z2): i64 {
+    var k = z.f0 * 1;
+    return k;
+}
+fn zp2(p: *Z2): i64 {
+    var k = p.f0 * 1;
+    return k;
+}
+fn mk2(): Z2 {
+    var r: Z2;
+    r.f0 = 0xFF02;
+    return r;
+}
+fn zw2(z: Z2): i64 { z.f0 = 1; return zs2(z); }
+fn za2(): i64 {
+    var a = mk2();
+    var k = zw2(a);
+    if (k == zs2(a)) { return 0 - 1; }
+    return zs2(a);
+}
+fn zr2(): i64 { var r: Z2 = mk2(); return zp2(&r); }
+fn zq2(): i64 { var a = mk2(); var q: Z2; q = a; a.f0 = 1; return zp2(&q); }
+fn zg2(): i64 {
+    var a = mk2();
+    GZ2 = a;
+    a.f0 = 1;
+    if (GG2 != 0x5A) { return 0 - 1; }
+    return zp2(&GZ2);
+}
+fn zf2(): i64 {
+    var a = mk2();
+    var w: W2;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z2 = w.z;
+    return zp2(&q);
+}
+fn zc2(): i64 { var a = mk2(); var f = |d| { return zs2(a) + d; }; return callptr(f, 0); }
+
+# 3 B { u16; u8 }
+struct Z3 { f0: u16; f1: u8; }
+struct W3 { h: u8; z: Z3; g: u8; }
+var GZ3 = Z3 { 0, 0 };
+var GG3: u8 = 0x5A;
+fn zs3(z: Z3): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    return k;
+}
+fn zp3(p: *Z3): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    return k;
+}
+fn mk3(): Z3 {
+    var r: Z3;
+    r.f0 = 0xFF03;
+    r.f1 = 0xF4;
+    return r;
+}
+fn zw3(z: Z3): i64 { z.f0 = 1; return zs3(z); }
+fn za3(): i64 {
+    var a = mk3();
+    var k = zw3(a);
+    if (k == zs3(a)) { return 0 - 1; }
+    return zs3(a);
+}
+fn zr3(): i64 { var r: Z3 = mk3(); return zp3(&r); }
+fn zq3(): i64 { var a = mk3(); var q: Z3; q = a; a.f0 = 1; return zp3(&q); }
+fn zg3(): i64 {
+    var a = mk3();
+    GZ3 = a;
+    a.f0 = 1;
+    if (GG3 != 0x5A) { return 0 - 1; }
+    return zp3(&GZ3);
+}
+fn zf3(): i64 {
+    var a = mk3();
+    var w: W3;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z3 = w.z;
+    return zp3(&q);
+}
+fn zc3(): i64 { var a = mk3(); var f = |d| { return zs3(a) + d; }; return callptr(f, 0); }
+
+# 4 B { f32 }
+struct Z4 { f0: f32; }
+struct W4 { h: u8; z: Z4; g: u8; }
+var GZ4 = Z4 { 0.0 };
+var GG4: u8 = 0x5A;
+fn zs4(z: Z4): i64 {
+    var k = f64_to(f32_to(z.f0) * 2.0) * 1;
+    return k;
+}
+fn zp4(p: *Z4): i64 {
+    var k = f64_to(f32_to(p.f0) * 2.0) * 1;
+    return k;
+}
+fn mk4(): Z4 {
+    var r: Z4;
+    r.f0 = 5.5;
+    return r;
+}
+fn zw4(z: Z4): i64 { z.f0 = 1.0; return zs4(z); }
+fn za4(): i64 {
+    var a = mk4();
+    var k = zw4(a);
+    if (k == zs4(a)) { return 0 - 1; }
+    return zs4(a);
+}
+fn zr4(): i64 { var r: Z4 = mk4(); return zp4(&r); }
+fn zq4(): i64 { var a = mk4(); var q: Z4; q = a; a.f0 = 1.0; return zp4(&q); }
+fn zg4(): i64 {
+    var a = mk4();
+    GZ4 = a;
+    a.f0 = 1.0;
+    if (GG4 != 0x5A) { return 0 - 1; }
+    return zp4(&GZ4);
+}
+fn zf4(): i64 {
+    var a = mk4();
+    var w: W4;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1.0;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z4 = w.z;
+    return zp4(&q);
+}
+fn zc4(): i64 { var a = mk4(); var f = |d| { return zs4(a) + d; }; return callptr(f, 0); }
+
+# 5 B { f32; u8 }
+struct Z5 { f0: f32; f1: u8; }
+struct W5 { h: u8; z: Z5; g: u8; }
+var GZ5 = Z5 { 0.0, 0 };
+var GG5: u8 = 0x5A;
+fn zs5(z: Z5): i64 {
+    var k = f64_to(f32_to(z.f0) * 2.0) * 1;
+    k = k + z.f1 * 2;
+    return k;
+}
+fn zp5(p: *Z5): i64 {
+    var k = f64_to(f32_to(p.f0) * 2.0) * 1;
+    k = k + p.f1 * 2;
+    return k;
+}
+fn mk5(): Z5 {
+    var r: Z5;
+    r.f0 = 6.5;
+    r.f1 = 0xF6;
+    return r;
+}
+fn zw5(z: Z5): i64 { z.f0 = 1.0; return zs5(z); }
+fn za5(): i64 {
+    var a = mk5();
+    var k = zw5(a);
+    if (k == zs5(a)) { return 0 - 1; }
+    return zs5(a);
+}
+fn zr5(): i64 { var r: Z5 = mk5(); return zp5(&r); }
+fn zq5(): i64 { var a = mk5(); var q: Z5; q = a; a.f0 = 1.0; return zp5(&q); }
+fn zg5(): i64 {
+    var a = mk5();
+    GZ5 = a;
+    a.f0 = 1.0;
+    if (GG5 != 0x5A) { return 0 - 1; }
+    return zp5(&GZ5);
+}
+fn zf5(): i64 {
+    var a = mk5();
+    var w: W5;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1.0;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z5 = w.z;
+    return zp5(&q);
+}
+fn zc5(): i64 { var a = mk5(); var f = |d| { return zs5(a) + d; }; return callptr(f, 0); }
+
+# 6 B { u16; f32 }
+struct Z6 { f0: u16; f1: f32; }
+struct W6 { h: u8; z: Z6; g: u8; }
+var GZ6 = Z6 { 0, 0.0 };
+var GG6: u8 = 0x5A;
+fn zs6(z: Z6): i64 {
+    var k = z.f0 * 1;
+    k = k + f64_to(f32_to(z.f1) * 2.0) * 2;
+    return k;
+}
+fn zp6(p: *Z6): i64 {
+    var k = p.f0 * 1;
+    k = k + f64_to(f32_to(p.f1) * 2.0) * 2;
+    return k;
+}
+fn mk6(): Z6 {
+    var r: Z6;
+    r.f0 = 0xFF06;
+    r.f1 = 8.5;
+    return r;
+}
+fn zw6(z: Z6): i64 { z.f0 = 1; return zs6(z); }
+fn za6(): i64 {
+    var a = mk6();
+    var k = zw6(a);
+    if (k == zs6(a)) { return 0 - 1; }
+    return zs6(a);
+}
+fn zr6(): i64 { var r: Z6 = mk6(); return zp6(&r); }
+fn zq6(): i64 { var a = mk6(); var q: Z6; q = a; a.f0 = 1; return zp6(&q); }
+fn zg6(): i64 {
+    var a = mk6();
+    GZ6 = a;
+    a.f0 = 1;
+    if (GG6 != 0x5A) { return 0 - 1; }
+    return zp6(&GZ6);
+}
+fn zf6(): i64 {
+    var a = mk6();
+    var w: W6;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z6 = w.z;
+    return zp6(&q);
+}
+fn zc6(): i64 { var a = mk6(); var f = |d| { return zs6(a) + d; }; return callptr(f, 0); }
+
+# 7 B { u8; u16; u32 }
+struct Z7 { f0: u8; f1: u16; f2: u32; }
+struct W7 { h: u8; z: Z7; g: u8; }
+var GZ7 = Z7 { 0, 0, 0 };
+var GG7: u8 = 0x5A;
+fn zs7(z: Z7): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + z.f2 * 3;
+    return k;
+}
+fn zp7(p: *Z7): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + p.f2 * 3;
+    return k;
+}
+fn mk7(): Z7 {
+    var r: Z7;
+    r.f0 = 0xF7;
+    r.f1 = 0xFF17;
+    r.f2 = 0xFFFFFF27;
+    return r;
+}
+fn zw7(z: Z7): i64 { z.f0 = 1; return zs7(z); }
+fn za7(): i64 {
+    var a = mk7();
+    var k = zw7(a);
+    if (k == zs7(a)) { return 0 - 1; }
+    return zs7(a);
+}
+fn zr7(): i64 { var r: Z7 = mk7(); return zp7(&r); }
+fn zq7(): i64 { var a = mk7(); var q: Z7; q = a; a.f0 = 1; return zp7(&q); }
+fn zg7(): i64 {
+    var a = mk7();
+    GZ7 = a;
+    a.f0 = 1;
+    if (GG7 != 0x5A) { return 0 - 1; }
+    return zp7(&GZ7);
+}
+fn zf7(): i64 {
+    var a = mk7();
+    var w: W7;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z7 = w.z;
+    return zp7(&q);
+}
+fn zc7(): i64 { var a = mk7(); var f = |d| { return zs7(a) + d; }; return callptr(f, 0); }
+
+# 8 B { f32; u32 }
+struct Z8 { f0: f32; f1: u32; }
+struct W8 { h: u8; z: Z8; g: u8; }
+var GZ8 = Z8 { 0.0, 0 };
+var GG8: u8 = 0x5A;
+fn zs8(z: Z8): i64 {
+    var k = f64_to(f32_to(z.f0) * 2.0) * 1;
+    k = k + z.f1 * 2;
+    return k;
+}
+fn zp8(p: *Z8): i64 {
+    var k = f64_to(f32_to(p.f0) * 2.0) * 1;
+    k = k + p.f1 * 2;
+    return k;
+}
+fn mk8(): Z8 {
+    var r: Z8;
+    r.f0 = 9.5;
+    r.f1 = 0xFFFFFF18;
+    return r;
+}
+fn zw8(z: Z8): i64 { z.f0 = 1.0; return zs8(z); }
+fn za8(): i64 {
+    var a = mk8();
+    var k = zw8(a);
+    if (k == zs8(a)) { return 0 - 1; }
+    return zs8(a);
+}
+fn zr8(): i64 { var r: Z8 = mk8(); return zp8(&r); }
+fn zq8(): i64 { var a = mk8(); var q: Z8; q = a; a.f0 = 1.0; return zp8(&q); }
+fn zg8(): i64 {
+    var a = mk8();
+    GZ8 = a;
+    a.f0 = 1.0;
+    if (GG8 != 0x5A) { return 0 - 1; }
+    return zp8(&GZ8);
+}
+fn zf8(): i64 {
+    var a = mk8();
+    var w: W8;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1.0;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z8 = w.z;
+    return zp8(&q);
+}
+fn zc8(): i64 { var a = mk8(); var f = |d| { return zs8(a) + d; }; return callptr(f, 0); }
+
+# 9 B { u8; f32; u32 }
+struct Z9 { f0: u8; f1: f32; f2: u32; }
+struct W9 { h: u8; z: Z9; g: u8; }
+var GZ9 = Z9 { 0, 0.0, 0 };
+var GG9: u8 = 0x5A;
+fn zs9(z: Z9): i64 {
+    var k = z.f0 * 1;
+    k = k + f64_to(f32_to(z.f1) * 2.0) * 2;
+    k = k + z.f2 * 3;
+    return k;
+}
+fn zp9(p: *Z9): i64 {
+    var k = p.f0 * 1;
+    k = k + f64_to(f32_to(p.f1) * 2.0) * 2;
+    k = k + p.f2 * 3;
+    return k;
+}
+fn mk9(): Z9 {
+    var r: Z9;
+    r.f0 = 0xF1;
+    r.f1 = 11.5;
+    r.f2 = 0xFFFFFF29;
+    return r;
+}
+fn zw9(z: Z9): i64 { z.f0 = 1; return zs9(z); }
+fn za9(): i64 {
+    var a = mk9();
+    var k = zw9(a);
+    if (k == zs9(a)) { return 0 - 1; }
+    return zs9(a);
+}
+fn zr9(): i64 { var r: Z9 = mk9(); return zp9(&r); }
+fn zq9(): i64 { var a = mk9(); var q: Z9; q = a; a.f0 = 1; return zp9(&q); }
+fn zg9(): i64 {
+    var a = mk9();
+    GZ9 = a;
+    a.f0 = 1;
+    if (GG9 != 0x5A) { return 0 - 1; }
+    return zp9(&GZ9);
+}
+fn zf9(): i64 {
+    var a = mk9();
+    var w: W9;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z9 = w.z;
+    return zp9(&q);
+}
+fn zc9(): i64 { var a = mk9(); var f = |d| { return zs9(a) + d; }; return callptr(f, 0); }
+
+# 10 B { u16; u32; f32 }
+struct Z10 { f0: u16; f1: u32; f2: f32; }
+struct W10 { h: u8; z: Z10; g: u8; }
+var GZ10 = Z10 { 0, 0, 0.0 };
+var GG10: u8 = 0x5A;
+fn zs10(z: Z10): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + f64_to(f32_to(z.f2) * 2.0) * 3;
+    return k;
+}
+fn zp10(p: *Z10): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + f64_to(f32_to(p.f2) * 2.0) * 3;
+    return k;
+}
+fn mk10(): Z10 {
+    var r: Z10;
+    r.f0 = 0xFF0A;
+    r.f1 = 0xFFFFFF1A;
+    r.f2 = 13.5;
+    return r;
+}
+fn zw10(z: Z10): i64 { z.f0 = 1; return zs10(z); }
+fn za10(): i64 {
+    var a = mk10();
+    var k = zw10(a);
+    if (k == zs10(a)) { return 0 - 1; }
+    return zs10(a);
+}
+fn zr10(): i64 { var r: Z10 = mk10(); return zp10(&r); }
+fn zq10(): i64 { var a = mk10(); var q: Z10; q = a; a.f0 = 1; return zp10(&q); }
+fn zg10(): i64 {
+    var a = mk10();
+    GZ10 = a;
+    a.f0 = 1;
+    if (GG10 != 0x5A) { return 0 - 1; }
+    return zp10(&GZ10);
+}
+fn zf10(): i64 {
+    var a = mk10();
+    var w: W10;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z10 = w.z;
+    return zp10(&q);
+}
+fn zc10(): i64 { var a = mk10(); var f = |d| { return zs10(a) + d; }; return callptr(f, 0); }
+
+# 11 B { u8; u16; u32; f32 }
+struct Z11 { f0: u8; f1: u16; f2: u32; f3: f32; }
+struct W11 { h: u8; z: Z11; g: u8; }
+var GZ11 = Z11 { 0, 0, 0, 0.0 };
+var GG11: u8 = 0x5A;
+fn zs11(z: Z11): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + z.f2 * 3;
+    k = k + f64_to(f32_to(z.f3) * 2.0) * 4;
+    return k;
+}
+fn zp11(p: *Z11): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + p.f2 * 3;
+    k = k + f64_to(f32_to(p.f3) * 2.0) * 4;
+    return k;
+}
+fn mk11(): Z11 {
+    var r: Z11;
+    r.f0 = 0xF3;
+    r.f1 = 0xFF1B;
+    r.f2 = 0xFFFFFF2B;
+    r.f3 = 15.5;
+    return r;
+}
+fn zw11(z: Z11): i64 { z.f0 = 1; return zs11(z); }
+fn za11(): i64 {
+    var a = mk11();
+    var k = zw11(a);
+    if (k == zs11(a)) { return 0 - 1; }
+    return zs11(a);
+}
+fn zr11(): i64 { var r: Z11 = mk11(); return zp11(&r); }
+fn zq11(): i64 { var a = mk11(); var q: Z11; q = a; a.f0 = 1; return zp11(&q); }
+fn zg11(): i64 {
+    var a = mk11();
+    GZ11 = a;
+    a.f0 = 1;
+    if (GG11 != 0x5A) { return 0 - 1; }
+    return zp11(&GZ11);
+}
+fn zf11(): i64 {
+    var a = mk11();
+    var w: W11;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z11 = w.z;
+    return zp11(&q);
+}
+fn zc11(): i64 { var a = mk11(); var f = |d| { return zs11(a) + d; }; return callptr(f, 0); }
+
+# 12 B { f32; f32; f32 }
+struct Z12 { f0: f32; f1: f32; f2: f32; }
+struct W12 { h: u8; z: Z12; g: u8; }
+var GZ12 = Z12 { 0.0, 0.0, 0.0 };
+var GG12: u8 = 0x5A;
+fn zs12(z: Z12): i64 {
+    var k = f64_to(f32_to(z.f0) * 2.0) * 1;
+    k = k + f64_to(f32_to(z.f1) * 2.0) * 2;
+    k = k + f64_to(f32_to(z.f2) * 2.0) * 3;
+    return k;
+}
+fn zp12(p: *Z12): i64 {
+    var k = f64_to(f32_to(p.f0) * 2.0) * 1;
+    k = k + f64_to(f32_to(p.f1) * 2.0) * 2;
+    k = k + f64_to(f32_to(p.f2) * 2.0) * 3;
+    return k;
+}
+fn mk12(): Z12 {
+    var r: Z12;
+    r.f0 = 13.5;
+    r.f1 = 14.5;
+    r.f2 = 15.5;
+    return r;
+}
+fn zw12(z: Z12): i64 { z.f0 = 1.0; return zs12(z); }
+fn za12(): i64 {
+    var a = mk12();
+    var k = zw12(a);
+    if (k == zs12(a)) { return 0 - 1; }
+    return zs12(a);
+}
+fn zr12(): i64 { var r: Z12 = mk12(); return zp12(&r); }
+fn zq12(): i64 { var a = mk12(); var q: Z12; q = a; a.f0 = 1.0; return zp12(&q); }
+fn zg12(): i64 {
+    var a = mk12();
+    GZ12 = a;
+    a.f0 = 1.0;
+    if (GG12 != 0x5A) { return 0 - 1; }
+    return zp12(&GZ12);
+}
+fn zf12(): i64 {
+    var a = mk12();
+    var w: W12;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1.0;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z12 = w.z;
+    return zp12(&q);
+}
+fn zc12(): i64 { var a = mk12(); var f = |d| { return zs12(a) + d; }; return callptr(f, 0); }
+
+# 13 B { u8; u32; u32; f32 }
+struct Z13 { f0: u8; f1: u32; f2: u32; f3: f32; }
+struct W13 { h: u8; z: Z13; g: u8; }
+var GZ13 = Z13 { 0, 0, 0, 0.0 };
+var GG13: u8 = 0x5A;
+fn zs13(z: Z13): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + z.f2 * 3;
+    k = k + f64_to(f32_to(z.f3) * 2.0) * 4;
+    return k;
+}
+fn zp13(p: *Z13): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + p.f2 * 3;
+    k = k + f64_to(f32_to(p.f3) * 2.0) * 4;
+    return k;
+}
+fn mk13(): Z13 {
+    var r: Z13;
+    r.f0 = 0xF5;
+    r.f1 = 0xFFFFFF1D;
+    r.f2 = 0xFFFFFF2D;
+    r.f3 = 17.5;
+    return r;
+}
+fn zw13(z: Z13): i64 { z.f0 = 1; return zs13(z); }
+fn za13(): i64 {
+    var a = mk13();
+    var k = zw13(a);
+    if (k == zs13(a)) { return 0 - 1; }
+    return zs13(a);
+}
+fn zr13(): i64 { var r: Z13 = mk13(); return zp13(&r); }
+fn zq13(): i64 { var a = mk13(); var q: Z13; q = a; a.f0 = 1; return zp13(&q); }
+fn zg13(): i64 {
+    var a = mk13();
+    GZ13 = a;
+    a.f0 = 1;
+    if (GG13 != 0x5A) { return 0 - 1; }
+    return zp13(&GZ13);
+}
+fn zf13(): i64 {
+    var a = mk13();
+    var w: W13;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z13 = w.z;
+    return zp13(&q);
+}
+fn zc13(): i64 { var a = mk13(); var f = |d| { return zs13(a) + d; }; return callptr(f, 0); }
+
+# 14 B { u16; u32; f32; u32 }
+struct Z14 { f0: u16; f1: u32; f2: f32; f3: u32; }
+struct W14 { h: u8; z: Z14; g: u8; }
+var GZ14 = Z14 { 0, 0, 0.0, 0 };
+var GG14: u8 = 0x5A;
+fn zs14(z: Z14): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + f64_to(f32_to(z.f2) * 2.0) * 3;
+    k = k + z.f3 * 4;
+    return k;
+}
+fn zp14(p: *Z14): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + f64_to(f32_to(p.f2) * 2.0) * 3;
+    k = k + p.f3 * 4;
+    return k;
+}
+fn mk14(): Z14 {
+    var r: Z14;
+    r.f0 = 0xFF0E;
+    r.f1 = 0xFFFFFF1E;
+    r.f2 = 17.5;
+    r.f3 = 0xFFFFFF3E;
+    return r;
+}
+fn zw14(z: Z14): i64 { z.f0 = 1; return zs14(z); }
+fn za14(): i64 {
+    var a = mk14();
+    var k = zw14(a);
+    if (k == zs14(a)) { return 0 - 1; }
+    return zs14(a);
+}
+fn zr14(): i64 { var r: Z14 = mk14(); return zp14(&r); }
+fn zq14(): i64 { var a = mk14(); var q: Z14; q = a; a.f0 = 1; return zp14(&q); }
+fn zg14(): i64 {
+    var a = mk14();
+    GZ14 = a;
+    a.f0 = 1;
+    if (GG14 != 0x5A) { return 0 - 1; }
+    return zp14(&GZ14);
+}
+fn zf14(): i64 {
+    var a = mk14();
+    var w: W14;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z14 = w.z;
+    return zp14(&q);
+}
+fn zc14(): i64 { var a = mk14(); var f = |d| { return zs14(a) + d; }; return callptr(f, 0); }
+
+# 15 B { u8; u16; u32; u32; f32 }
+struct Z15 { f0: u8; f1: u16; f2: u32; f3: u32; f4: f32; }
+struct W15 { h: u8; z: Z15; g: u8; }
+var GZ15 = Z15 { 0, 0, 0, 0, 0.0 };
+var GG15: u8 = 0x5A;
+fn zs15(z: Z15): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + z.f2 * 3;
+    k = k + z.f3 * 4;
+    k = k + f64_to(f32_to(z.f4) * 2.0) * 5;
+    return k;
+}
+fn zp15(p: *Z15): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + p.f2 * 3;
+    k = k + p.f3 * 4;
+    k = k + f64_to(f32_to(p.f4) * 2.0) * 5;
+    return k;
+}
+fn mk15(): Z15 {
+    var r: Z15;
+    r.f0 = 0xF7;
+    r.f1 = 0xFF1F;
+    r.f2 = 0xFFFFFF2F;
+    r.f3 = 0xFFFFFF3F;
+    r.f4 = 20.5;
+    return r;
+}
+fn zw15(z: Z15): i64 { z.f0 = 1; return zs15(z); }
+fn za15(): i64 {
+    var a = mk15();
+    var k = zw15(a);
+    if (k == zs15(a)) { return 0 - 1; }
+    return zs15(a);
+}
+fn zr15(): i64 { var r: Z15 = mk15(); return zp15(&r); }
+fn zq15(): i64 { var a = mk15(); var q: Z15; q = a; a.f0 = 1; return zp15(&q); }
+fn zg15(): i64 {
+    var a = mk15();
+    GZ15 = a;
+    a.f0 = 1;
+    if (GG15 != 0x5A) { return 0 - 1; }
+    return zp15(&GZ15);
+}
+fn zf15(): i64 {
+    var a = mk15();
+    var w: W15;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z15 = w.z;
+    return zp15(&q);
+}
+fn zc15(): i64 { var a = mk15(); var f = |d| { return zs15(a) + d; }; return callptr(f, 0); }
+
+# 16 B { u32; f32; u32; u32 }
+struct Z16 { f0: u32; f1: f32; f2: u32; f3: u32; }
+struct W16 { h: u8; z: Z16; g: u8; }
+var GZ16 = Z16 { 0, 0.0, 0, 0 };
+var GG16: u8 = 0x5A;
+fn zs16(z: Z16): i64 {
+    var k = z.f0 * 1;
+    k = k + f64_to(f32_to(z.f1) * 2.0) * 2;
+    k = k + z.f2 * 3;
+    k = k + z.f3 * 4;
+    return k;
+}
+fn zp16(p: *Z16): i64 {
+    var k = p.f0 * 1;
+    k = k + f64_to(f32_to(p.f1) * 2.0) * 2;
+    k = k + p.f2 * 3;
+    k = k + p.f3 * 4;
+    return k;
+}
+fn mk16(): Z16 {
+    var r: Z16;
+    r.f0 = 0xFFFFFF10;
+    r.f1 = 18.5;
+    r.f2 = 0xFFFFFF30;
+    r.f3 = 0xFFFFFF40;
+    return r;
+}
+fn zw16(z: Z16): i64 { z.f0 = 1; return zs16(z); }
+fn za16(): i64 {
+    var a = mk16();
+    var k = zw16(a);
+    if (k == zs16(a)) { return 0 - 1; }
+    return zs16(a);
+}
+fn zr16(): i64 { var r: Z16 = mk16(); return zp16(&r); }
+fn zq16(): i64 { var a = mk16(); var q: Z16; q = a; a.f0 = 1; return zp16(&q); }
+fn zg16(): i64 {
+    var a = mk16();
+    GZ16 = a;
+    a.f0 = 1;
+    if (GG16 != 0x5A) { return 0 - 1; }
+    return zp16(&GZ16);
+}
+fn zf16(): i64 {
+    var a = mk16();
+    var w: W16;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z16 = w.z;
+    return zp16(&q);
+}
+fn zc16(): i64 { var a = mk16(); var f = |d| { return zs16(a) + d; }; return callptr(f, 0); }
+
+# 17 B { u8; u32; u32; f32; u32 }
+struct Z17 { f0: u8; f1: u32; f2: u32; f3: f32; f4: u32; }
+struct W17 { h: u8; z: Z17; g: u8; }
+var GZ17 = Z17 { 0, 0, 0, 0.0, 0 };
+var GG17: u8 = 0x5A;
+fn zs17(z: Z17): i64 {
+    var k = z.f0 * 1;
+    k = k + z.f1 * 2;
+    k = k + z.f2 * 3;
+    k = k + f64_to(f32_to(z.f3) * 2.0) * 4;
+    k = k + z.f4 * 5;
+    return k;
+}
+fn zp17(p: *Z17): i64 {
+    var k = p.f0 * 1;
+    k = k + p.f1 * 2;
+    k = k + p.f2 * 3;
+    k = k + f64_to(f32_to(p.f3) * 2.0) * 4;
+    k = k + p.f4 * 5;
+    return k;
+}
+fn mk17(): Z17 {
+    var r: Z17;
+    r.f0 = 0xF1;
+    r.f1 = 0xFFFFFF21;
+    r.f2 = 0xFFFFFF31;
+    r.f3 = 21.5;
+    r.f4 = 0xFFFFFF51;
+    return r;
+}
+fn zw17(z: Z17): i64 { z.f0 = 1; return zs17(z); }
+fn za17(): i64 {
+    var a = mk17();
+    var k = zw17(a);
+    if (k == zs17(a)) { return 0 - 1; }
+    return zs17(a);
+}
+fn zr17(): i64 { var r: Z17 = mk17(); return zp17(&r); }
+fn zq17(): i64 { var a = mk17(); var q: Z17; q = a; a.f0 = 1; return zp17(&q); }
+fn zg17(): i64 {
+    var a = mk17();
+    GZ17 = a;
+    a.f0 = 1;
+    if (GG17 != 0x5A) { return 0 - 1; }
+    return zp17(&GZ17);
+}
+fn zf17(): i64 {
+    var a = mk17();
+    var w: W17;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z17 = w.z;
+    return zp17(&q);
+}
+fn zc17(): i64 { var a = mk17(); var f = |d| { return zs17(a) + d; }; return callptr(f, 0); }
+
+# 20 B { f32; f32; u32; u32; u32 }
+struct Z20 { f0: f32; f1: f32; f2: u32; f3: u32; f4: u32; }
+struct W20 { h: u8; z: Z20; g: u8; }
+var GZ20 = Z20 { 0.0, 0.0, 0, 0, 0 };
+var GG20: u8 = 0x5A;
+fn zs20(z: Z20): i64 {
+    var k = f64_to(f32_to(z.f0) * 2.0) * 1;
+    k = k + f64_to(f32_to(z.f1) * 2.0) * 2;
+    k = k + z.f2 * 3;
+    k = k + z.f3 * 4;
+    k = k + z.f4 * 5;
+    return k;
+}
+fn zp20(p: *Z20): i64 {
+    var k = f64_to(f32_to(p.f0) * 2.0) * 1;
+    k = k + f64_to(f32_to(p.f1) * 2.0) * 2;
+    k = k + p.f2 * 3;
+    k = k + p.f3 * 4;
+    k = k + p.f4 * 5;
+    return k;
+}
+fn mk20(): Z20 {
+    var r: Z20;
+    r.f0 = 21.5;
+    r.f1 = 22.5;
+    r.f2 = 0xFFFFFF34;
+    r.f3 = 0xFFFFFF44;
+    r.f4 = 0xFFFFFF54;
+    return r;
+}
+fn zw20(z: Z20): i64 { z.f0 = 1.0; return zs20(z); }
+fn za20(): i64 {
+    var a = mk20();
+    var k = zw20(a);
+    if (k == zs20(a)) { return 0 - 1; }
+    return zs20(a);
+}
+fn zr20(): i64 { var r: Z20 = mk20(); return zp20(&r); }
+fn zq20(): i64 { var a = mk20(); var q: Z20; q = a; a.f0 = 1.0; return zp20(&q); }
+fn zg20(): i64 {
+    var a = mk20();
+    GZ20 = a;
+    a.f0 = 1.0;
+    if (GG20 != 0x5A) { return 0 - 1; }
+    return zp20(&GZ20);
+}
+fn zf20(): i64 {
+    var a = mk20();
+    var w: W20;
+    w.h = 0x5A;
+    w.g = 0x5A;
+    w.z = a;
+    a.f0 = 1.0;
+    if (w.h != 0x5A) { return 0 - 1; }
+    if (w.g != 0x5A) { return 0 - 2; }
+    var q: Z20 = w.z;
+    return zp20(&q);
+}
+fn zc20(): i64 { var a = mk20(); var f = |d| { return zs20(a) + d; }; return callptr(f, 0); }
+
+# ── offsets: a field written through a *T over a filled heap block lands at its packed offset ──
+fn at_b10(m, k): *B10 { return m + k; }
+fn at_nc(m, k): *NC { return m + k; }
+fn at_mx(m, k): *MX { return m + k; }
+fn at_u4(m, k): *U4 { return m + k; }
+fn at_m9(m, k): *M9 { return m + k; }
+fn fill(m, n, b) { var i = 0; while (i < n) { store8(m + i, b); i = i + 1; } return 0; }
+fn off_b10(): i64 {
+    var m = alloc(16);
+    fill(m, 16, 0);
+    var p: *B10 = at_b10(m, 0);
+    p.a = 0x1122;
+    p.b = 0x33445566;
+    p.c = 1.5;
+    if (load16(m) != 0x1122) { return 1; }
+    if (load32(m + 2) != 0x33445566) { return 2; }
+    if (load32(m + 6) != 0x3FC00000) { return 3; }
+    if (load8(m + 10) != 0) { return 4; }
+    return 0;
+}
+fn off_nc(): i64 {
+    var m = alloc(16);
+    fill(m, 16, 0);
+    var p: *NC = at_nc(m, 0);
+    p.c.b = 0x77;
+    p.x = 0xBEEF;
+    p.y = 0xCAFEF00D;
+    if (load8(m + 2) != 0x77) { return 1; }
+    if (load16(m + 4) != 0xBEEF) { return 2; }
+    if (load32(m + 6) != 0xCAFEF00D) { return 3; }
+    if (load8(m + 10) != 0) { return 4; }
+    return 0;
+}
+fn off_mx(): i64 {
+    var m = alloc(24);
+    fill(m, 24, 0);
+    var p: *MX = at_mx(m, 0);
+    p.b = 0xAB;
+    p.d = 0xCDEF;
+    p.f = 0x89ABCDEF;
+    p.g = 2.5;
+    if (load8(m + 1) != 0xAB) { return 1; }
+    if (load16(m + 4) != 0xCDEF) { return 2; }
+    if (load32(m + 10) != 0x89ABCDEF) { return 3; }
+    if (load32(m + 14) != 0x40200000) { return 4; }
+    if (load8(m + 18) != 0) { return 5; }
+    return 0;
+}
+fn off_u4(): i64 {
+    var m = alloc(8);
+    fill(m, 8, 0xEE);
+    var p: *U4 = at_u4(m, 0);
+    p.b = 0x01020304;
+    if (p.a != 4) { return 1; }
+    p.a = 0xFF;
+    if (p.b != 0x010203FF) { return 2; }
+    p.c = 1.5;
+    if (p.b != 0x3FC00000) { return 3; }
+    if (load8(m + 4) != 0xEE) { return 4; }
+    return 0;
+}
+fn off_m9(): i64 {
+    var m = alloc(16);
+    fill(m, 16, 0);
+    var p: *M9 = at_m9(m, 0);
+    p.a = 0 - 1;
+    p.b = 7;
+    if (load8(m + 8) != 7) { return 1; }
+    if (p.a != 0 - 1) { return 2; }
+    return 0;
+}
+
+# ── zero-extension and the field's width ──
+fn zx_u8(): i64 { var c = C4 { 255, 254, 253, 252 }; return c.r * 1000 + c.a; }
+fn zx_u16(): i64 { var b = B10 { 0xFFFF, 0, 0.0 }; return b.a; }
+fn zx_u32(): i64 { var b = B10 { 0, 0xFFFFFFFF, 0.0 }; return b.b; }
+fn zx_cmp(): i64 { var c = C4 { 200, 0, 0, 0 }; if (c.r > 100) { return 1; } return 0; }
+fn zx_shr(): i64 { var c = C4 { 200, 0, 0, 0 }; c.r >>= 1; return c.r; }
+fn zx_div(): i64 {
+    var c = C4 { 200, 0, 0, 0 };
+    var b = B10 { 0xFFFE, 0xFFFFFFFC, 1.5 };
+    c.r /= 2;
+    b.a /= 2;
+    b.b /= 4;
+    return c.r * 100000000000 + b.a * 10000000 + b.b - 0x3FFFFFFF;
+}
+fn wr_inc(): i64 { var c = C4 { 255, 254, 253, 252 }; c.r += 1; return c.r * 1000 + c.g; }
+fn wr_add(): i64 { var w = WD { 250, 7, 0 - 3, 9, 11 }; w.a += 10; return w.a * 1000 + w.b * 100 + w.c * 10 + w.d; }
+fn wr_mul(): i64 { var c = C4 { 1, 254, 9, 4 }; c.g *= 2; return c.g * 10000 + c.b * 100 + c.a; }
+fn wr_u32m(): i64 { var b = B10 { 7, 0, 1.5 }; b.b -= 1; if (b.a != 7) { return 0 - 1; } return b.b; }
+fn wr_u16i(): i64 { var b = B10 { 0xFFFF, 9, 1.5 }; b.a += 1; return b.a * 100 + b.b; }
+fn wr_store(): i64 { var c = C4 { 1, 2, 3, 4 }; c.g = 0x1FF; return c.r * 10000 + c.g * 10 + c.b; }
+fn wr_store32(): i64 { var b = B10 { 3, 0, 1.5 }; b.b = 0x123456789; if (b.a != 3) { return 0 - 1; } return b.b; }
+
+# ── a *T over unaligned heap bytes: only its field's bytes ──
+fn ptr_rw(): i64 {
+    var m = alloc(16);
+    fill(m, 16, 0xEE);
+    var p: *B10 = at_b10(m, 3);
+    p.b = 0x01020304;
+    if (load16(m + 3) != 0xEEEE) { return 1; }
+    if (load32(m + 5) != 0x01020304) { return 2; }
+    if (load8(m + 9) != 0xEE) { return 3; }
+    p.a = 0xABCD;
+    if (load8(m + 2) != 0xEE) { return 4; }
+    if (load32(m + 5) != 0x01020304) { return 5; }
+    p.c = 2.5;
+    if (load32(m + 9) != 0x40200000) { return 6; }
+    if (load8(m + 13) != 0xEE) { return 7; }
+    if (p.a != 0xABCD) { return 8; }
+    p.b = 0xFFFFFFFF;
+    if (p.b != 0xFFFFFFFF) { return 9; }
+    if (f64_to(f32_to(p.c) * 2.0) != 5) { return 10; }
+    return 0;
+}
+
+# ── f32 fields ──
+fn f_bits(): i64 { var f = F2 { 1.5, 2.25 }; return load32(&f) * 100 + (load32(&f + 4) - 0x40100000); }
+fn f_sum(): i64 { var f = F2 { 1.5, 2.25 }; return f64_to(f32_to(f.x + f.y) * 4.0); }
+fn f_mul(): i64 { var f = F2 { 1.5, 2.25 }; f.x *= f32_from(2.0); return f64_to(f32_to(f.x) * 2.0); }
+fn f_cmp(): i64 {
+    var f = F2 { 3.0, 2.25 };
+    var k = 0;
+    if (f.x > f.y) { k = k + 1; }
+    f.x = 0.0 - 2.25;
+    if (f.x < f.y) { k = k + 10; }
+    if (load32(&f) == 0xC0100000) { k = k + 100; }
+    return k;
+}
+fn f_round(): i64 { var f = F2 { 0.0, 0.0 }; f.y = 0.1; return load32(&f + 4); }
+fn f_local(): i64 { var s: f32 = 1.25; var f = F2 { 0.0, 7.0 }; f.x = s; return load32(&f) * 10 + f64_to(f32_to(f.y)); }
+
+# ── literals ──
+fn lit_pos(): i64 { var c = C4 { 1, 2, 3, 4 }; return load32(&c); }
+fn lit_named(): i64 { var c = C4 { a: 4, r: 1, b: 3, g: 2 }; return load32(&c); }
+fn lit_nested(): i64 {
+    var n = NC { 5, 6, 7, 8, 0xBEEF, 0xFFFFFFFF };
+    if (n.c.r != 5) { return 1; }
+    if (n.c.a != 8) { return 2; }
+    if (n.x != 0xBEEF) { return 3; }
+    if (n.y != 0xFFFFFFFF) { return 4; }
+    if (load16(&n + 4) != 0xBEEF) { return 5; }
+    return 0;
+}
+fn lit_nested_val(): i64 { var c = C4 { 9, 8, 7, 6 }; var n = NC { c, 1, 2 }; return n.c.b * 100 + n.x * 10 + n.y; }
+fn lit_f(): i64 {
+    var b = B10 { 0xFFFF, 0xFFFFFFFE, 1.5 };
+    return load32(&b + 6) - 0x3FC00000 + b.a - 0xFFFF + b.b - 0xFFFFFFFE;
+}
+
+# ── operators and self ──
+fn op_c4(): i64 {
+    var x = C4 { 250, 1, 2, 3 };
+    var y = C4 { 10, 2, 3, 4 };
+    var z: C4 = x + y;
+    return z.r * 1000 + z.g * 100 + z.b * 10 + z.a;
+}
+fn op_f2(): i64 {
+    var u = F2 { 1.5, 2.0 };
+    var v = F2 { 0.25, 0.5 };
+    var s: F2 = u + v;
+    return f64_to(f32_to(s.x) * 4.0) * 100 + f64_to(f32_to(s.y) * 4.0);
+}
+fn self_val(): i64 { var x = C4 { 250, 1, 2, 3 }; return x.lum(); }
+fn self_untyped(): i64 { var x = C4 { 250, 1, 2, 3 }; return x.first(); }
+fn self_f2(): i64 { var u = F2 { 1.5, 2.0 }; return u.sum4(); }
+
+# ── *C4 steps 4; C4[2] is 8 bytes ──
+fn arr_step(): i64 {
+    var p: *C4 = &GA;
+    var p1: *C4 = p + 1;
+    p1.a = 0xFF;
+    p1.r = 0x11;
+    if (load8(&GA + 7) != 0xFF) { return 1; }
+    if (load8(&GA + 4) != 0x11) { return 2; }
+    if (GAG != 0x5A) { return 3; }
+    var la: C4[2];
+    var lp: *C4 = &la;
+    lp = lp + 1;
+    lp.g = 9;
+    if (load8(&la + 5) != 9) { return 4; }
+    return 0;
+}
+
+# ── a shrunk struct at the handle line (B7-1): from an address it is a handle ──
+fn hl_alloc(): i64 {
+    var c: C4 = alloc(4);
+    c.r = 5;
+    c.a = 0xFE;
+    var m = load64(&c);
+    return load8(m) * 1000 + load8(m + 3);
+}
+fn hl_addr(): i64 {
+    var m = alloc(8);
+    store64(m, 0);
+    var c: C4 = m;
+    c.g = 7;
+    c.a = 9;
+    if (load8(m + 4) != 0) { return 0 - 1; }
+    return load32(m);
+}
+
+# ── an operator on a value GLOBAL under 8 B dispatches (B7-2 review): the global's read keyed on its
+# slot size (under 8: an i8 / i16 / i32 global), so `OGA + OGB` set no struct type and integer-added
+# the words (`c4v(OGA + OGB)` 30-style garbage, `var z: C4 = OGA + OGB` SIGSEGV) while a local or an
+# 8 B global dispatched. Every row has its local or 8 B twin. ──
+struct C3 { r: u8; g: u8; b: u8; }
+struct U22 { a: u16; b: u16; }
+struct F1 { x: f32; }
+struct I4 { a: i32; }
+fn C3_add(a: C3, b: C3): C3 { var r: C3; r.r = a.r * 2 + b.r; r.g = a.g + b.g; r.b = a.b + b.b; return r; }
+fn U22_add(a: U22, b: U22): U22 { var r: U22; r.a = a.a * 2 + b.a; r.b = a.b + b.b; return r; }
+fn F1_add(a: F1, b: F1): F1 { var r: F1; r.x = a.x * f32_from(2.0) + b.x; return r; }
+fn I4_add(a: I4, b: I4): I4 { var r: I4; r.a = a.a * 2 + b.a; return r; }
+var OGA = C4 { 250, 1, 2, 3 };
+var OGB = C4 { 10, 2, 3, 4 };
+var OG3A = C3 { 10, 1, 2 };
+var OG3B = C3 { 20, 3, 4 };
+var OGUA = U22 { 1000, 7 };
+var OGUB = U22 { 2000, 8 };
+var OGFA = F1 { 1.5 };
+var OGFB = F1 { 0.25 };
+var OGIA = I4 { 10 };
+var OGIB = I4 { 20 };
+var OGF2A = F2 { 1.5, 2.0 };
+var OGF2B = F2 { 0.25, 0.5 };
+var OGC: C4 = OGA + OGB;
+fn c4v(c: C4): i64 { return c.r * 1000 + c.g * 100 + c.b * 10 + c.a; }
+fn og_arg(): i64 { return c4v(OGA + OGB); }
+fn og_asg(): i64 { var z: C4; z = OGA + OGB; return c4v(z); }
+fn og_decl(): i64 { var z: C4 = OGA + OGB; z.a = 9; return c4v(z) * 10 + OGA.a; }
+fn og_c3(): i64 { var z: C3 = OG3A + OG3B; return z.r * 10000 + z.g * 100 + z.b; }
+fn og_c3l(): i64 { var a = C3 { 10, 1, 2 }; var z: C3 = a + OG3B; return z.r * 10000 + z.g * 100 + z.b; }
+fn og_u22(): i64 { var z: U22; z = OGUA + OGUB; return z.a * 100 + z.b; }
+fn og_f1(): i64 { var z: F1 = OGFA + OGFB; return f64_to(f32_to(z.x) * 4.0); }
+fn og_i4(): i64 { var z: I4 = OGIA + OGIB; return z.a; }
+fn og_f2(): i64 { var s: F2 = OGF2A + OGF2B; return f64_to(f32_to(s.x) * 4.0) * 100 + f64_to(f32_to(s.y) * 4.0); }
+
+alloc_init();
+var GL = B10 { c: 2.5, a: 0x1234, b: 0x89ABCDEF };
+assert_eq(sizeof(A9), 9, "sizeof { u8; i64 } is 9 (was 16)");
+assert_eq(sizeof(B10), 10, "sizeof { u16; u32; f32 } is 10 (was 24)");
+assert_eq(sizeof(C4), 4, "sizeof { u8 x4 } is 4 (was 32)");
+assert_eq(sizeof(U4), 4, "sizeof union { u8; u32; f32 } is 4 (was 8)");
+assert_eq(sizeof(NC), 10, "sizeof { C4; u16; u32 } is 10 (nested)");
+assert_eq(sizeof(M9), 9, "sizeof { u64; u8 } is 9: u64 stays 8 bytes");
+assert_eq(sizeof(MX), 18, "sizeof { i8; u8; i16; u16; i32; u32; f32 } is 18");
+assert_eq(sizeof(F2), 8, "sizeof { f32; f32 } is 8 (was 16)");
+assert_eq(sizeof(WD), 16, "sizeof { u8; i32; i8; i16; i64 } is 16");
+assert_eq(off_b10(), 0, "offsets { u16; u32; f32 }: 0 / 2 / 6, nothing at 10");
+assert_eq(off_nc(), 0, "offsets { C4; u16; u32 }: c.b at 2, x at 4, y at 6");
+assert_eq(off_mx(), 0, "offsets { i8; u8; i16; u16; i32; u32; f32 }: 1 / 4 / 10 / 14");
+assert_eq(off_u4(), 0, "union { u8; u32; f32 }: every field at 0, 4 bytes");
+assert_eq(off_m9(), 0, "{ u64; u8 }: b at 8, a full 64-bit a");
+assert_eq(zx_u8(), 255252, "u8 255 / 252 read zero-extended (not -1 / -4)");
+assert_eq(zx_u16(), 65535, "u16 0xFFFF reads 65535");
+assert_eq(zx_u32(), 4294967295, "u32 0xFFFFFFFF reads 4294967295");
+assert_eq(zx_cmp(), 1, "u8 200 > 100 (an unsigned read)");
+assert_eq(zx_shr(), 100, "u8 200 >>= 1 is 100");
+assert_eq(zx_div(), 10327670000000, "u8 200 /= 2, u16 0xFFFE /= 2, u32 0xFFFFFFFC /= 4: unsigned dividends");
+assert_eq(wr_inc(), 254, "u8 255 += 1 wraps to 0, its neighbour kept");
+assert_eq(wr_add(), 4681, "u8 250 += 10 is 4 (it was 260); the i32 / i8 / i64 after it kept");
+assert_eq(wr_mul(), 2520904, "u8 254 *= 2 is 252, the neighbours kept");
+assert_eq(wr_u32m(), 4294967295, "u32 0 -= 1 is 0xFFFFFFFF, the u16 before it kept");
+assert_eq(wr_u16i(), 9, "u16 0xFFFF += 1 wraps to 0, the u32 after it kept");
+assert_eq(wr_store(), 12553, "u8 = 0x1FF stores its byte (255), the neighbours kept");
+assert_eq(wr_store32(), 591751049, "u32 = 0x123456789 stores its 4 bytes");
+assert_eq(ptr_rw(), 0, "*B10 at an unaligned heap address: each field's bytes only, read back zero-extended");
+assert_eq(f_bits(), 106954752000, "f32 fields hold binary32 bits at offsets 0 and 4");
+assert_eq(f_sum(), 15, "f.x + f.y (f32) is 3.75");
+assert_eq(f_mul(), 6, "f.x *= 2.0f");
+assert_eq(f_cmp(), 111, "f32 field compares; a negative's bits");
+assert_eq(f_round(), 1036831949, "0.1 into an f32 field rounds to binary32 (0x3DCCCCCD)");
+assert_eq(f_local(), 10674503687, "an f32 local into an f32 field: its 4 bytes");
+assert_eq(lit_pos(), 67305985, "a positional C4 literal in a fn: 01 02 03 04");
+assert_eq(lit_named(), 67305985, "a named C4 literal in a fn");
+assert_eq(lit_nested(), 0, "a nested literal { C4 { .. }, u16, u32 } in a fn");
+assert_eq(lit_nested_val(), 712, "a nested literal taking a C4 value");
+assert_eq(lit_f(), 0, "a { u16; u32; f32 } literal in a fn");
+assert_eq(load32(&GD), 67305985, "a declaration-zone C4 literal: 01 02 03 04");
+assert_eq(GDN.c.r * 100 + GDN.c.a, 508, "a declaration-zone nested literal: c");
+assert_eq(GDN.x, 0xBEEF, "a declaration-zone nested literal: the u16 after the C4");
+assert_eq(GDN.y, 4294967295, "a declaration-zone nested literal: the u32, zero-extended");
+assert_eq(load16(&GDN + 4), 0xBEEF, "a declaration-zone nested literal: x at offset 4");
+assert_eq(GDF.a * 10 + GDF.b - 0xFFFFFFFE, 655350, "a declaration-zone { u16; u32; f32 } literal");
+assert_eq(load32(&GDF + 6), 0x3FC00000, "a declaration-zone f32 field: 1.5's binary32 bits at offset 6");
+var GLK = load16(&GL) + load32(&GL + 2) - 0x89ABCDEF + load32(&GL + 6) - 0x40200000;
+assert_eq(GLK, 0x1234, "a named { u16; u32; f32 } literal after the first statement: 0 / 2 / 6");
+assert_eq(op_c4(), 4357, "C4_add: the u8 channels wrap (250 + 10 = 4)");
+assert_eq(op_f2(), 710, "F2_add: f32 field sums");
+assert_eq(self_val(), 256, "a by-value self: C4 (4 B)");
+assert_eq(self_untyped(), 250, "an untyped self on a C4");
+assert_eq(self_f2(), 14, "a by-value self: F2 (8 B)");
+assert_eq(arr_step(), 0, "*C4 + 1 steps 4 bytes; C4[2] is 8 (the u8 global after it kept)");
+assert_eq(og_arg(), 4357, "C4_add on two value GLOBALS (4 B), a by-value argument: dispatched");
+assert_eq(og_asg(), 4357, "C4_add on two value globals, z = OGA + OGB");
+assert_eq(og_decl(), 43593, "C4_add on two value globals, var z: C4 = OGA + OGB: a copy (OGA kept)");
+assert_eq(c4v(OGC), 4357, "C4_add on two value globals: a declaration-zone global from the operator");
+var OGT = c4v(OGA + OGB);
+assert_eq(OGT, 4357, "C4_add on two value globals at top level (a 4 B result needs no frame)");
+assert_eq(og_c3(), 400406, "C3_add on two 3 B value globals");
+assert_eq(og_c3l(), 400406, "C3_add, its local twin (a local left operand)");
+assert_eq(og_u22(), 400015, "U22_add on two { u16; u16 } value globals");
+assert_eq(og_f1(), 13, "F1_add on two { f32 } value globals");
+assert_eq(og_i4(), 40, "I4_add on two { i32 } value globals (4 B before 6.7.10 too)");
+assert_eq(og_f2(), 710, "F2_add on two 8 B value globals: the twin");
+assert_eq(hl_alloc(), 5254, "var c: C4 = alloc(4) is a handle: c.r = 5 reaches the heap");
+assert_eq(hl_addr(), 150996736, "var c: C4 = m (an address) is a handle: its 4 bytes, nothing past them");
+assert_eq(sizeof(Z1), 1, "1 B { u8 }: sizeof");
+assert_eq(sizeof(W1), 3, "1 B { u8 }: a field between two u8 guards");
+assert_eq(za1(), 241, "1 B { u8 }: by-value argument (callee write stays local)");
+assert_eq(zr1(), 241, "1 B { u8 }: a struct return");
+assert_eq(zq1(), 241, "1 B { u8 }: q = a (a copy, not an alias)");
+assert_eq(zg1(), 241, "1 B { u8 }: a value global store, the u8 global after it kept");
+assert_eq(zf1(), 241, "1 B { u8 }: a field store, the guard fields kept");
+assert_eq(zc1(), 241, "1 B { u8 }: a closure capture");
+assert_eq(sizeof(Z2), 2, "2 B { u16 }: sizeof");
+assert_eq(sizeof(W2), 4, "2 B { u16 }: a field between two u8 guards");
+assert_eq(za2(), 65282, "2 B { u16 }: by-value argument (callee write stays local)");
+assert_eq(zr2(), 65282, "2 B { u16 }: a struct return");
+assert_eq(zq2(), 65282, "2 B { u16 }: q = a (a copy, not an alias)");
+assert_eq(zg2(), 65282, "2 B { u16 }: a value global store, the u8 global after it kept");
+assert_eq(zf2(), 65282, "2 B { u16 }: a field store, the guard fields kept");
+assert_eq(zc2(), 65282, "2 B { u16 }: a closure capture");
+assert_eq(sizeof(Z3), 3, "3 B { u16; u8 }: sizeof");
+assert_eq(sizeof(W3), 5, "3 B { u16; u8 }: a field between two u8 guards");
+assert_eq(za3(), 65771, "3 B { u16; u8 }: by-value argument (callee write stays local)");
+assert_eq(zr3(), 65771, "3 B { u16; u8 }: a struct return");
+assert_eq(zq3(), 65771, "3 B { u16; u8 }: q = a (a copy, not an alias)");
+assert_eq(zg3(), 65771, "3 B { u16; u8 }: a value global store, the u8 global after it kept");
+assert_eq(zf3(), 65771, "3 B { u16; u8 }: a field store, the guard fields kept");
+assert_eq(zc3(), 65771, "3 B { u16; u8 }: a closure capture");
+assert_eq(sizeof(Z4), 4, "4 B { f32 }: sizeof");
+assert_eq(sizeof(W4), 6, "4 B { f32 }: a field between two u8 guards");
+assert_eq(za4(), 11, "4 B { f32 }: by-value argument (callee write stays local)");
+assert_eq(zr4(), 11, "4 B { f32 }: a struct return");
+assert_eq(zq4(), 11, "4 B { f32 }: q = a (a copy, not an alias)");
+assert_eq(zg4(), 11, "4 B { f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf4(), 11, "4 B { f32 }: a field store, the guard fields kept");
+assert_eq(zc4(), 11, "4 B { f32 }: a closure capture");
+assert_eq(sizeof(Z5), 5, "5 B { f32; u8 }: sizeof");
+assert_eq(sizeof(W5), 7, "5 B { f32; u8 }: a field between two u8 guards");
+assert_eq(za5(), 505, "5 B { f32; u8 }: by-value argument (callee write stays local)");
+assert_eq(zr5(), 505, "5 B { f32; u8 }: a struct return");
+assert_eq(zq5(), 505, "5 B { f32; u8 }: q = a (a copy, not an alias)");
+assert_eq(zg5(), 505, "5 B { f32; u8 }: a value global store, the u8 global after it kept");
+assert_eq(zf5(), 505, "5 B { f32; u8 }: a field store, the guard fields kept");
+assert_eq(zc5(), 505, "5 B { f32; u8 }: a closure capture");
+assert_eq(sizeof(Z6), 6, "6 B { u16; f32 }: sizeof");
+assert_eq(sizeof(W6), 8, "6 B { u16; f32 }: a field between two u8 guards");
+assert_eq(za6(), 65320, "6 B { u16; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr6(), 65320, "6 B { u16; f32 }: a struct return");
+assert_eq(zq6(), 65320, "6 B { u16; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg6(), 65320, "6 B { u16; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf6(), 65320, "6 B { u16; f32 }: a field store, the guard fields kept");
+assert_eq(zc6(), 65320, "6 B { u16; f32 }: a closure capture");
+assert_eq(sizeof(Z7), 7, "7 B { u8; u16; u32 }: sizeof");
+assert_eq(sizeof(W7), 9, "7 B { u8; u16; u32 }: a field between two u8 guards");
+assert_eq(za7(), 12885032090, "7 B { u8; u16; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr7(), 12885032090, "7 B { u8; u16; u32 }: a struct return");
+assert_eq(zq7(), 12885032090, "7 B { u8; u16; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg7(), 12885032090, "7 B { u8; u16; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf7(), 12885032090, "7 B { u8; u16; u32 }: a field store, the guard fields kept");
+assert_eq(zc7(), 12885032090, "7 B { u8; u16; u32 }: a closure capture");
+assert_eq(sizeof(Z8), 8, "8 B { f32; u32 }: sizeof");
+assert_eq(sizeof(W8), 10, "8 B { f32; u32 }: a field between two u8 guards");
+assert_eq(za8(), 8589934147, "8 B { f32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr8(), 8589934147, "8 B { f32; u32 }: a struct return");
+assert_eq(zq8(), 8589934147, "8 B { f32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg8(), 8589934147, "8 B { f32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf8(), 8589934147, "8 B { f32; u32 }: a field store, the guard fields kept");
+assert_eq(zc8(), 8589934147, "8 B { f32; u32 }: a closure capture");
+assert_eq(sizeof(Z9), 9, "9 B { u8; f32; u32 }: sizeof");
+assert_eq(sizeof(W9), 11, "9 B { u8; f32; u32 }: a field between two u8 guards");
+assert_eq(za9(), 12884901530, "9 B { u8; f32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr9(), 12884901530, "9 B { u8; f32; u32 }: a struct return");
+assert_eq(zq9(), 12884901530, "9 B { u8; f32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg9(), 12884901530, "9 B { u8; f32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf9(), 12884901530, "9 B { u8; f32; u32 }: a field store, the guard fields kept");
+assert_eq(zc9(), 12884901530, "9 B { u8; f32; u32 }: a closure capture");
+assert_eq(sizeof(Z10), 10, "10 B { u16; u32; f32 }: sizeof");
+assert_eq(sizeof(W10), 12, "10 B { u16; u32; f32 }: a field between two u8 guards");
+assert_eq(za10(), 8589999503, "10 B { u16; u32; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr10(), 8589999503, "10 B { u16; u32; f32 }: a struct return");
+assert_eq(zq10(), 8589999503, "10 B { u16; u32; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg10(), 8589999503, "10 B { u16; u32; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf10(), 8589999503, "10 B { u16; u32; f32 }: a field store, the guard fields kept");
+assert_eq(zc10(), 8589999503, "10 B { u16; u32; f32 }: a closure capture");
+assert_eq(sizeof(Z11), 11, "11 B { u8; u16; u32; f32 }: sizeof");
+assert_eq(sizeof(W11), 13, "11 B { u8; u16; u32; f32 }: a field between two u8 guards");
+assert_eq(za11(), 12885032230, "11 B { u8; u16; u32; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr11(), 12885032230, "11 B { u8; u16; u32; f32 }: a struct return");
+assert_eq(zq11(), 12885032230, "11 B { u8; u16; u32; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg11(), 12885032230, "11 B { u8; u16; u32; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf11(), 12885032230, "11 B { u8; u16; u32; f32 }: a field store, the guard fields kept");
+assert_eq(zc11(), 12885032230, "11 B { u8; u16; u32; f32 }: a closure capture");
+assert_eq(sizeof(Z12), 12, "12 B { f32; f32; f32 }: sizeof");
+assert_eq(sizeof(W12), 14, "12 B { f32; f32; f32 }: a field between two u8 guards");
+assert_eq(za12(), 178, "12 B { f32; f32; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr12(), 178, "12 B { f32; f32; f32 }: a struct return");
+assert_eq(zq12(), 178, "12 B { f32; f32; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg12(), 178, "12 B { f32; f32; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf12(), 178, "12 B { f32; f32; f32 }: a field store, the guard fields kept");
+assert_eq(zc12(), 178, "12 B { f32; f32; f32 }: a closure capture");
+assert_eq(sizeof(Z13), 13, "13 B { u8; u32; u32; f32 }: sizeof");
+assert_eq(sizeof(W13), 15, "13 B { u8; u32; u32; f32 }: a field between two u8 guards");
+assert_eq(za13(), 21474835778, "13 B { u8; u32; u32; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr13(), 21474835778, "13 B { u8; u32; u32; f32 }: a struct return");
+assert_eq(zq13(), 21474835778, "13 B { u8; u32; u32; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg13(), 21474835778, "13 B { u8; u32; u32; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf13(), 21474835778, "13 B { u8; u32; u32; f32 }: a field store, the guard fields kept");
+assert_eq(zc13(), 21474835778, "13 B { u8; u32; u32; f32 }: a closure capture");
+assert_eq(sizeof(Z14), 14, "14 B { u16; u32; f32; u32 }: sizeof");
+assert_eq(sizeof(W14), 16, "14 B { u16; u32; f32; u32 }: a field between two u8 guards");
+assert_eq(za14(), 25769867947, "14 B { u16; u32; f32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr14(), 25769867947, "14 B { u16; u32; f32; u32 }: a struct return");
+assert_eq(zq14(), 25769867947, "14 B { u16; u32; f32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg14(), 25769867947, "14 B { u16; u32; f32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf14(), 25769867947, "14 B { u16; u32; f32; u32 }: a field store, the guard fields kept");
+assert_eq(zc14(), 25769867947, "14 B { u16; u32; f32; u32 }: a closure capture");
+assert_eq(sizeof(Z15), 15, "15 B { u8; u16; u32; u32; f32 }: sizeof");
+assert_eq(sizeof(W15), 17, "15 B { u8; u16; u32; u32; f32 }: a field between two u8 guards");
+assert_eq(za15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: by-value argument (callee write stays local)");
+assert_eq(zr15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: a struct return");
+assert_eq(zq15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: q = a (a copy, not an alias)");
+assert_eq(zg15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: a value global store, the u8 global after it kept");
+assert_eq(zf15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: a field store, the guard fields kept");
+assert_eq(zc15(), 30064900747, "15 B { u8; u16; u32; u32; f32 }: a closure capture");
+assert_eq(sizeof(Z16), 16, "16 B { u32; f32; u32; u32 }: sizeof");
+assert_eq(sizeof(W16), 18, "16 B { u32; f32; u32; u32 }: a field between two u8 guards");
+assert_eq(za16(), 34359736810, "16 B { u32; f32; u32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr16(), 34359736810, "16 B { u32; f32; u32; u32 }: a struct return");
+assert_eq(zq16(), 34359736810, "16 B { u32; f32; u32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg16(), 34359736810, "16 B { u32; f32; u32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf16(), 34359736810, "16 B { u32; f32; u32; u32 }: a field store, the guard fields kept");
+assert_eq(zc16(), 34359736810, "16 B { u32; f32; u32; u32 }: a closure capture");
+assert_eq(sizeof(Z17), 17, "17 B { u8; u32; u32; f32; u32 }: sizeof");
+assert_eq(sizeof(W17), 19, "17 B { u8; u32; u32; f32; u32 }: a field between two u8 guards");
+assert_eq(za17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: a struct return");
+assert_eq(zq17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: a field store, the guard fields kept");
+assert_eq(zc17(), 42949671431, "17 B { u8; u32; u32; f32; u32 }: a closure capture");
+assert_eq(sizeof(Z20), 20, "20 B { f32; f32; u32; u32; u32 }: sizeof");
+assert_eq(sizeof(W20), 22, "20 B { f32; f32; u32; u32; u32 }: a field between two u8 guards");
+assert_eq(za20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: by-value argument (callee write stays local)");
+assert_eq(zr20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: a struct return");
+assert_eq(zq20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: q = a (a copy, not an alias)");
+assert_eq(zg20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: a value global store, the u8 global after it kept");
+assert_eq(zf20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: a field store, the guard fields kept");
+assert_eq(zc20(), 51539605461, "20 B { f32; f32; u32; u32; u32 }: a closure capture");
+var r = assert_summary();

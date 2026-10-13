@@ -1,0 +1,350 @@
+# small_struct_pointer_arg.tcyr — 6.7.10 (B7-1b). A POINTER INTO A BY-VALUE STRUCT PARAMETER OF 8 B OR
+# LESS passes the struct it points at, as one over 8 B always did (the user's decision 7, 2026-10-12:
+# `&c` into a by-value struct parameter copies through the pointer at every size).
+#
+# ⛔ THE DEFECT, 6.6.0 through 6.7.9. A struct parameter over 8 B is address-passed, so `takeh(hp)` and
+# `takeh(&h)` handed the callee the address it reads through. A struct of 8 B or less travels BY VALUE
+# in one word, and the same pointer argument was pushed AS that word: `take8(sp)` and `take8(&s)` read
+# the address's bits as the struct's fields, silently, on every target. The filed repro exited 0 where
+# 111 is right (docs/development/issues/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md;
+# its verbatim run is tests/gates/codegen/small_struct_handle_line.sh R4).
+#
+# THE RULE, every `_8` row against its `_h` twin over 8 B (both must give the row's constant): an
+# argument that is a typed pointer or an address — by the compiler's own pointer typing — passes the
+# struct it points at: a `*T` local, parameter, global or capture; `&s` of a local, a global or a
+# capture; a call, method or field declared `*T` (through a `*T` chain too); parenthesised; pointer
+# arithmetic on one (`pa + 1`, `pa + i` with `i: i32`); an if-expression whose branches are pointers of
+# one step. Into a free call (not a tail call, and a tail call), a method's argument, a generic
+# (`gw(wp)` into `w: W1<T>`, inferred and explicit), a dyn call, an operator's right operand
+# (`o + sp`, `o + &s`), a closure body, and at top level (the declaration zone and after it). A `*U` of
+# another struct, or a `*i64`, converts as it does over 8 B (6.7.3: a typed pointer converts freely)
+# and is read with the parameter's layout. The callee gets a COPY: its write never reaches the pointee.
+# THE BOUNDARY (no 16 B twin — over 8 B each of these is an address): an UNTYPED value stays the
+# struct's word, as before — an untyped local holding an address, an integer, an i8 / i16 / i32 local
+# or expression of one (their reads carry step 1 for `n + 2`, v6.3.34), an if-expression of them;
+# while `&c8` of an i8 local is an address, and a field `xb.p` is its own type whatever local shares
+# its name.
+# SIZES 1..8 (i8 / i16 / i32 compositions, signed values): 1 / 2 / 4 / 8 B are one load; 3 / 5 / 6 /
+# 7 B are copied byte-exact through a temp — a frame temp in a fn, a hidden global at top level (no
+# byte past the object is read: the gate's PP row puts one at the end of a mapping).
+#
+# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (MB1 .. MB9), which runs this file
+# on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+
+struct S8 { v; }                     # 8 B
+struct H { v; w; }                   # 16 B — the twin
+struct U8 { u; }                     # 8 B, another type
+struct UH { u; x; }                  # 16 B, another type
+struct XP { p: *S8; q: *H; }
+struct Two8 { a: S8; b: S8; }
+struct TwoH { a: H; b: H; }
+struct W1<T> { v: T; }
+struct WH<T> { v: T; w; }
+struct Z { z; }
+struct B1 { a: i8; }
+struct B2 { a: i16; }
+struct B3 { a: i8; b: i8; c: i8; }
+struct B4 { a: i32; }
+struct B5 { a: i32; b: i8; }
+struct B6 { a: i32; b: i16; }
+struct B7 { a: i32; b: i16; c: i8; }
+struct XB1 { p: *B1; }
+struct Three1 { a: B1; b: B1; c: B1; }
+
+fn take8(s: S8) { return s.v; }
+fn takeh(s: H) { return s.v; }
+fn wr8(s: S8) { s.v = s.v + 4; return s.v; }
+fn wrh(s: H) { s.v = s.v + 4; return s.v; }
+fn gw<T>(w: W1<T>): i64 { return w.v; }
+fn gwh<T>(w: WH<T>): i64 { return w.v; }
+fn tg8<T>(k: T, s: S8) { return k + s.v; }
+fn tgh<T>(k: T, s: H) { return k + s.v; }
+impl S8 { fn me(self: *S8): *S8 { return self; } }
+impl H { fn me(self: *H): *H { return self; } }
+impl S8 { fn with(self: *S8, o: S8): i64 { return self.v * 10 + o.v; } }
+impl H { fn with(self: *H, o: H): i64 { return self.v * 10 + o.v; } }
+fn S8_add(l: S8, r: S8): i64 { return l.v * 10 + r.v; }
+fn H_add(l: H, r: H): i64 { return l.v * 10 + r.v; }
+trait Tk { fn tk(self, b: S8): i64; }
+trait TkH { fn tkh(self, b: H): i64; }
+impl Tk for Z { fn tk(self: *Z, b: S8): i64 { return self.z + b.v; } }
+impl TkH for Z { fn tkh(self: *Z, b: H): i64 { return self.z + b.v; } }
+fn dk8(o: dyn Tk, sp: *S8): i64 { return o.tk(sp); }
+fn dkh(o: dyn TkH, sp: *H): i64 { return o.tkh(sp); }
+fn t1(b: B1): i64 { return b.a; }
+fn t2(b: B2): i64 { return b.a; }
+fn t3(b: B3): i64 { return b.a * 10000 + b.b * 100 + b.c; }
+fn t4(b: B4): i64 { return b.a; }
+fn t5(b: B5): i64 { return b.a * 1000 + b.b; }
+fn t6(b: B6): i64 { return b.a * 100000 + b.b; }
+fn t7(b: B7): i64 { return b.a * 10000000 + b.b * 1000 + b.c; }
+fn B3_add(l: B3, r: B3): i64 { return t3(l) + t3(r); }
+fn B7_add(l: B7, r: B7): i64 { return t7(l) + t7(r); }
+fn mk3(): B3 { var r: B3; r.a = 1; r.b = 0 - 2; r.c = 3; return r; }
+fn mk7(): B7 { var r: B7; r.a = 0 - 7; r.b = 300; r.c = 0 - 4; return r; }
+
+var G8 = S8 { 5 };
+var GH = H { 5, 0 };
+var GP8: *S8 = &G8;
+var GPH: *H = &GH;
+var GQ8: *S8 = 0;
+var GQH: *H = 0;
+var GB1 = B1 { 0 - 7 };
+var GB2 = B2 { 0 - 300 };
+var GB3 = B3 { 1, 0 - 2, 3 };
+var GB4 = B4 { 0 - 70000 };
+var GB5 = B5 { 0 - 7000, 4 };
+var GB6 = B6 { 0 - 7000, 0 - 300 };
+var GB7 = B7 { 0 - 7, 300, 0 - 4 };
+var GP1: *B1 = &GB1;
+var GP3: *B3 = &GB3;
+var GP5: *B5 = &GB5;
+var GP7: *B7 = &GB7;
+# The declaration zone: replayed at start, no frame (an odd size takes a hidden global temp).
+var TZ8 = take8(GP8) * 10 + take8(&G8);
+var TZH = takeh(GPH) * 10 + takeh(&GH);
+var TZ7 = t7(GP7) + t7(&GB7);
+var TZ3 = t3(GP3) + t3(&GB3) + (mk3() + GP3);
+
+fn gq8(): *S8 { return GQ8; }
+fn gqh(): *H { return GQH; }
+
+# ── the pointer forms (5 = the struct's v read through the pointer) ──
+fn a_local_8() { var s: S8; s.v = 5; var sp: *S8 = &s; return take8(sp); }
+fn a_local_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; return takeh(sp); }
+fn a_amp_8() { var s: S8; s.v = 5; return take8(&s); }
+fn a_amp_h() { var s: H; s.v = 5; s.w = 0; return takeh(&s); }
+fn a_parp_8(p: *S8) { var r = take8(p); return r; }
+fn a_parp_h(p: *H) { var r = takeh(p); return r; }
+fn a_par_8() { var s: S8; s.v = 5; return a_parp_8(&s); }
+fn a_par_h() { var s: H; s.v = 5; s.w = 0; return a_parp_h(&s); }
+fn a_tailp_8(p: *S8) { return take8(p); }
+fn a_tailp_h(p: *H) { return takeh(p); }
+fn a_tail_8() { var s: S8; s.v = 5; var r = a_tailp_8(&s); return r; }
+fn a_tail_h() { var s: H; s.v = 5; s.w = 0; var r = a_tailp_h(&s); return r; }
+fn a_glob_8() { return take8(GP8); }
+fn a_glob_h() { return takeh(GPH); }
+fn a_gamp_8() { return take8(&G8); }
+fn a_gamp_h() { return takeh(&GH); }
+fn a_call_8() { var s: S8; s.v = 5; GQ8 = &s; var r = take8(gq8()); return r; }
+fn a_call_h() { var s: H; s.v = 5; s.w = 0; GQH = &s; var r = takeh(gqh()); return r; }
+fn a_field_8() { var s: S8; s.v = 5; var x: XP; x.p = &s; return take8(x.p); }
+fn a_field_h() { var s: H; s.v = 5; s.w = 0; var x: XP; x.q = &s; return takeh(x.q); }
+fn a_chain_8() { var s: S8; s.v = 5; var x: XP; x.p = &s; var xp: *XP = &x; return take8(xp.p); }
+fn a_chain_h() { var s: H; s.v = 5; s.w = 0; var x: XP; x.q = &s; var xp: *XP = &x; return takeh(xp.q); }
+fn a_meth_8() { var s: S8; s.v = 5; return take8(s.me()); }
+fn a_meth_h() { var s: H; s.v = 5; s.w = 0; return takeh(s.me()); }
+fn a_wrap_8() { var s: S8; s.v = 5; var sp: *S8 = &s; return take8((sp)) * 10 + take8(((&s))); }
+fn a_wrap_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; return takeh((sp)) * 10 + takeh(((&s))); }
+# (`sp` is not stored right before the call: under CYRIUS_IR=3 a method argument that reloads the slot
+# just stored reads the receiver's address — a pre-existing LASE defect of the unrecorded-emit class,
+# issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, not this rule's.)
+fn a_marg_8() { var s: S8; s.v = 5; var sp: *S8 = &s; var o: S8; o.v = 3; return o.with(sp) * 100 + o.with(&s); }
+fn a_marg_h() {
+    var s: H; s.v = 5; s.w = 0;
+    var sp: *H = &s;
+    var o: H; o.v = 3; o.w = 0;
+    return o.with(sp) * 100 + o.with(&s);
+}
+fn a_gen_8() { var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w; return gw(wp) * 10 + gw<i32>(wp); }
+fn a_gen_h() { var w: WH<i32>; w.v = 6; w.w = 0; var wp: *WH<i32> = &w; return gwh(wp) * 10 + gwh<i32>(wp); }
+fn a_gens_8() { var s: S8; s.v = 5; var sp: *S8 = &s; return tg8(1, sp) * 10 + tg8<i64>(2, &s); }
+fn a_gens_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; return tgh(1, sp) * 10 + tgh<i64>(2, &s); }
+fn a_cap_8() { var s: S8; s.v = 5; var sp: *S8 = &s; var f = |d| take8(sp) + d; return callptr(f, 0); }
+fn a_cap_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; var f = |d| takeh(sp) + d; return callptr(f, 0); }
+fn a_capamp_8() { var s: S8; s.v = 5; var f = |d| take8(&s) + d; return callptr(f, 0); }
+fn a_capamp_h() { var s: H; s.v = 5; s.w = 0; var f = |d| takeh(&s) + d; return callptr(f, 0); }
+fn a_arith_8() {
+    var t: Two8; t.a.v = 4; t.b.v = 5;
+    var pa: *S8 = &t;
+    var i: i32 = 1;
+    return take8(pa + 1) * 10 + take8(pa + i);
+}
+fn a_arith_h() {
+    var t: TwoH; t.a.v = 4; t.a.w = 0; t.b.v = 5; t.b.w = 0;
+    var pa: *H = &t;
+    var i: i32 = 1;
+    return takeh(pa + 1) * 10 + takeh(pa + i);
+}
+fn a_ie_8(c) {
+    var s: S8; s.v = 5; var q: S8; q.v = 7;
+    var sp: *S8 = &s; var sq: *S8 = &q;
+    return take8(if (c == 1) { sp } else { sq });
+}
+fn a_ie_h(c) {
+    var s: H; s.v = 5; s.w = 0; var q: H; q.v = 7; q.w = 0;
+    var sp: *H = &s; var sq: *H = &q;
+    return takeh(if (c == 1) { sp } else { sq });
+}
+fn a_op_8() { var s: S8; s.v = 5; var o: S8; o.v = 3; var sp: *S8 = &s; return (o + sp) * 100 + (o + &s); }
+fn a_op_h() {
+    var s: H; s.v = 5; s.w = 0; var o: H; o.v = 3; o.w = 0;
+    var sp: *H = &s;
+    return (o + sp) * 100 + (o + &s);
+}
+fn a_dyn_8() { var z: Z; z.z = 100; var s: S8; s.v = 5; return dk8(&z, &s); }
+fn a_dyn_h() { var z: Z; z.z = 100; var s: H; s.v = 5; s.w = 0; return dkh(&z, &s); }
+fn a_other_8() { var u: U8; u.u = 5; var up: *U8 = &u; return take8(up); }
+fn a_other_h() { var u: UH; u.u = 5; u.x = 0; var up: *UH = &u; return takeh(up); }
+fn a_scal_8() { var x: S8; x.v = 5; var ip: *i64 = &x; return take8(ip); }
+fn a_scal_h() { var x: H; x.v = 5; x.w = 0; var ip: *i64 = &x; return takeh(ip); }
+# A COPY: the callee writes its parameter (5 + 4); the pointee keeps 5.
+fn a_copy_8() { var s: S8; s.v = 5; var sp: *S8 = &s; var r = wr8(sp) * 10 + wr8(&s); return s.v * 1000 + r; }
+fn a_copy_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; var r = wrh(sp) * 10 + wrh(&s); return s.v * 1000 + r; }
+fn a_copyp_8(p: *S8) { var r = wr8(p); return p.v * 100 + r; }
+fn a_copyp_h(p: *H) { var r = wrh(p); return p.v * 100 + r; }
+fn a_copyq_8() { var s: S8; s.v = 5; return a_copyp_8(&s); }
+fn a_copyq_h() { var s: H; s.v = 5; s.w = 0; return a_copyp_h(&s); }
+
+# ── the boundary: an untyped value is the struct's word (no 16 B twin) ──
+fn b_int() { return take8(5) * 10 + t4(6); }
+fn b_untyped() { var s: S8; s.v = 5; var u = &s; return take8(u) - u; }
+fn b_narrow() {
+    var n: i32 = 0 - 6;
+    var k: i16 = 300;
+    var c8: i8 = 0 - 3;
+    var m: i32 = 2;
+    var r = 0;
+    if (t4(n) == 0 - 6) { r = r + 1; }
+    if (t4(n + 1) == 0 - 5) { r = r + 10; }
+    if (t4((n)) == 0 - 6) { r = r + 100; }
+    if (t2(k) == 300) { r = r + 1000; }
+    if (t1(c8) == 0 - 3) { r = r + 10000; }
+    if (t4(if (m == 2) { n } else { m }) == 0 - 6) { r = r + 100000; }
+    if (t4(m + n) == 0 - 4) { r = r + 1000000; }
+    return r;
+}
+# `&c8` of an i8 local IS an address (its byte read as B1); a field `xb.p` (`*B1`, step 1) is a pointer
+# whatever local is named `p`; `pa + i` with `i: i32` steps `pa` (its leftmost term is the pointer).
+fn b_amp_narrow() {
+    var c8: i8 = 0 - 3;
+    var b: B1;
+    b.a = 9;
+    var p: i32 = 77;
+    var xb: XB1;
+    xb.p = &b;
+    var t: Three1;
+    t.a.a = 1;
+    t.b.a = 2;
+    t.c.a = 3;
+    var pa: *B1 = &t;
+    var i: i32 = 1;
+    return t1(&c8) * 100000 + t1(xb.p) * 10000 + t1(pa + i) * 100 + t1(pa + 2) * 10 + p - 77;
+}
+
+# ── SIZES 1..8: `&b`, a `*B` local, a `*B` parameter, a `*B` global, a closure, an operand ──
+fn z1p(p: *B1) { var r = t1(p); return r; }
+fn z1() { var b: B1; b.a = 0 - 7; var p: *B1 = &b; return t1(&b) + t1(p) + z1p(&b) + t1(GP1); }
+fn z2p(p: *B2) { var r = t2(p); return r; }
+fn z2() { var b: B2; b.a = 0 - 300; var p: *B2 = &b; return t2(&b) + t2(p) + z2p(&b) + t2(&GB2); }
+fn z3p(p: *B3) { var r = t3(p); return r; }
+fn z3() {
+    var b: B3; b.a = 1; b.b = 0 - 2; b.c = 3;
+    var p: *B3 = &b;
+    var f = |d| t3(p) + d;
+    return t3(&b) + t3(p) + z3p(&b) + t3(GP3) + callptr(f, 0) + (b + p) - t3(b);
+}
+fn z4p(p: *B4) { var r = t4(p); return r; }
+fn z4() { var b: B4; b.a = 0 - 70000; var p: *B4 = &b; return t4(&b) + t4(p) + z4p(&b) + t4(&GB4); }
+fn z5p(p: *B5) { var r = t5(p); return r; }
+fn z5() {
+    var b: B5; b.a = 0 - 7000; b.b = 4;
+    var p: *B5 = &b;
+    var f = |d| t5(p) + d;
+    return t5(&b) + t5(p) + z5p(&b) + t5(GP5) + callptr(f, 0);
+}
+fn z6p(p: *B6) { var r = t6(p); return r; }
+fn z6() {
+    var b: B6; b.a = 0 - 7000; b.b = 0 - 300;
+    var p: *B6 = &b;
+    var f = |d| t6(&b) + d;
+    return t6(&b) + t6(p) + z6p(&b) + t6(&GB6) + callptr(f, 0);
+}
+fn z7p(p: *B7) { var r = t7(p); return r; }
+fn z7() {
+    var b: B7; b.a = 0 - 7; b.b = 300; b.c = 0 - 4;
+    var p: *B7 = &b;
+    var f = |d| t7(p) + d;
+    return t7(&b) + t7(p) + z7p(&b) + t7(GP7) + callptr(f, 0) + (b + p) - t7(b);
+}
+fn z8p(p: *S8) { var r = take8(p); return r; }
+fn z8() { var b: S8; b.v = 0 - 7000000000; var p: *S8 = &b; return take8(&b) + take8(p) + z8p(&b); }
+
+assert_eq(a_local_8(), 5, "a *T local passes its struct");
+assert_eq(a_local_8(), a_local_h(), "  = its 16 B twin");
+assert_eq(a_amp_8(), 5, "&s passes the struct");
+assert_eq(a_amp_8(), a_amp_h(), "  = its 16 B twin");
+assert_eq(a_par_8(), 5, "a *T parameter (not a tail call)");
+assert_eq(a_par_8(), a_par_h(), "  = its 16 B twin");
+assert_eq(a_tail_8(), 5, "a *T parameter in a tail call");
+assert_eq(a_tail_8(), a_tail_h(), "  = its 16 B twin");
+assert_eq(a_glob_8(), 5, "a *T global");
+assert_eq(a_glob_8(), a_glob_h(), "  = its 16 B twin");
+assert_eq(a_gamp_8(), 5, "&G of a global");
+assert_eq(a_gamp_8(), a_gamp_h(), "  = its 16 B twin");
+assert_eq(a_call_8(), 5, "a call declared *T");
+assert_eq(a_call_8(), a_call_h(), "  = its 16 B twin");
+assert_eq(a_field_8(), 5, "a field declared *T");
+assert_eq(a_field_8(), a_field_h(), "  = its 16 B twin");
+assert_eq(a_chain_8(), 5, "a *T field through a *T chain");
+assert_eq(a_chain_8(), a_chain_h(), "  = its 16 B twin");
+assert_eq(a_meth_8(), 5, "a method declared *T");
+assert_eq(a_meth_8(), a_meth_h(), "  = its 16 B twin");
+assert_eq(a_wrap_8(), 55, "(sp) and ((&s))");
+assert_eq(a_wrap_8(), a_wrap_h(), "  = its 16 B twin");
+assert_eq(a_marg_8(), 3535, "a method's argument: o.with(sp), o.with(&s)");
+assert_eq(a_marg_8(), a_marg_h(), "  = its 16 B twin");
+assert_eq(a_gen_8(), 66, "a generic: gw(wp) and gw<i32>(wp) into w: W1<T>");
+assert_eq(a_gen_8(), a_gen_h(), "  = its 16 B twin");
+assert_eq(a_gens_8(), 67, "a generic's struct parameter: tg8(1, sp), tg8<i64>(2, &s)");
+assert_eq(a_gens_8(), a_gens_h(), "  = its 16 B twin");
+assert_eq(a_cap_8(), 5, "a captured *T in a closure body");
+assert_eq(a_cap_8(), a_cap_h(), "  = its 16 B twin");
+assert_eq(a_capamp_8(), 5, "&s of a capture in a closure body");
+assert_eq(a_capamp_8(), a_capamp_h(), "  = its 16 B twin");
+assert_eq(a_arith_8(), 55, "pointer arithmetic: pa + 1, pa + i (i: i32)");
+assert_eq(a_arith_8(), a_arith_h(), "  = its 16 B twin");
+assert_eq(a_ie_8(1), 5, "an if-expression of two *T (then)");
+assert_eq(a_ie_8(0), 7, "an if-expression of two *T (else)");
+assert_eq(a_ie_8(1) * 10 + a_ie_8(0), a_ie_h(1) * 10 + a_ie_h(0), "  = its 16 B twin");
+assert_eq(a_op_8(), 3535, "an operator's right operand: o + sp, o + &s");
+assert_eq(a_op_8(), a_op_h(), "  = its 16 B twin");
+assert_eq(a_dyn_8(), 105, "a dyn call's argument");
+assert_eq(a_dyn_8(), a_dyn_h(), "  = its 16 B twin");
+assert_eq(a_other_8(), 5, "a *U of another struct converts (read with the parameter's layout)");
+assert_eq(a_other_8(), a_other_h(), "  = its 16 B twin");
+assert_eq(a_scal_8(), 5, "a *i64 converts");
+assert_eq(a_scal_8(), a_scal_h(), "  = its 16 B twin");
+assert_eq(a_copy_8(), 5099, "a copy: the callee's write never reaches the pointee");
+assert_eq(a_copy_8(), a_copy_h(), "  = its 16 B twin");
+assert_eq(a_copyq_8(), 509, "a copy through a *T parameter");
+assert_eq(a_copyq_8(), a_copyq_h(), "  = its 16 B twin");
+assert_eq(TZ8, 55, "top level, the declaration zone: GP8 and &G8");
+assert_eq(TZ8, TZH, "  = its 16 B twin");
+assert_eq(TZ7, 2 * (0 - 69700004), "top level, the declaration zone: a 7 B *T global and &G (a hidden temp)");
+assert_eq(TZ3, 4 * 9803, "top level, the declaration zone: 3 B, an operand too");
+var TA8 = take8(GP8) * 10 + take8(&G8);
+var TAH = takeh(GPH) * 10 + takeh(&GH);
+assert_eq(TA8, 55, "top level after a statement: GP8 and &G8");
+assert_eq(TA8, TAH, "  = its 16 B twin");
+var TA5 = t5(GP5) + t5(&GB5);
+assert_eq(TA5, 2 * (0 - 6999996), "top level after a statement: a 5 B *T global and &G");
+var TA7 = t7(GP7) + (mk7() + &GB7);
+assert_eq(TA7, 3 * (0 - 69700004), "top level after a statement: 7 B, an operand too");
+
+assert_eq(b_int(), 56, "boundary: an integer is the struct's word");
+assert_eq(b_untyped(), 0, "boundary: an untyped local holding an address is its word");
+assert_eq(b_narrow(), 1111111, "boundary: an i8 / i16 / i32 local or expression is the struct's word");
+assert_eq(b_amp_narrow(), 0 - 300000 + 90000 + 200 + 30, "&c8 an address; xb.p a pointer; pa + i steps pa");
+
+assert_eq(z1(), 4 * (0 - 7), "1 B: &b, *B local, *B parameter, *B global");
+assert_eq(z2(), 4 * (0 - 300), "2 B: &b, *B local, *B parameter, &G");
+assert_eq(z3(), 6 * 9803, "3 B: &b, *B local, *B parameter, *B global, closure, operand");
+assert_eq(z4(), 4 * (0 - 70000), "4 B: &b, *B local, *B parameter, &G");
+assert_eq(z5(), 5 * (0 - 6999996), "5 B: &b, *B local, *B parameter, *B global, closure");
+assert_eq(z6(), 5 * (0 - 700000300), "6 B: &b, *B local, *B parameter, &G, closure");
+assert_eq(z7(), 6 * (0 - 69700004), "7 B: &b, *B local, *B parameter, *B global, closure, operand");
+assert_eq(z8(), 3 * (0 - 7000000000), "8 B: &b, *B local, *B parameter");
+var r = assert_summary();

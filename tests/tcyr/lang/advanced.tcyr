@@ -48,8 +48,10 @@ c.inc(); c.inc(); c.inc();
 assert_eq(c.get(), 3, "method counter");
 
 test_group("operator overloading");
-var a: Num = 20;
-var b: Num = 22;
+# 6.7.10: struct values — `var a: Num = 20;` is a handle to address 20 (the handle line covers
+# globals), where `a + b` is pointer arithmetic and never reaches Num_add.
+var a = Num { 20 };
+var b = Num { 22 };
 assert_eq(a + b, 42, "operator add");
 
 test_group("for-in collection");

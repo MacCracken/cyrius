@@ -2169,16 +2169,10 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
             # Default 8 bytes for typed fields; refine for known
             # primitive widths and nested derive structs below.
             var fsz = 8;
-            # Primitive integer detection (mirrors the
-            # PP_DERIVE_SERIALIZE prim_load block — i8/i16/i32/i64
-            # all distinct on (+1) byte: '8'/'1'/'3'/'6').
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var pb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (pb1 == 56) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fsz = 1; } }
-                if (pb1 == 49) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 2; } } }
-                if (pb1 == 51) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 4; } } }
-                if (pb1 == 54) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 8; } } }
-            }
+            # The builtin scalars at their widths — i8 / i16 / i32 and (6.7.10, packed) u8 / u16 /
+            # u32 / f32 — the parser's own vocabulary (PP_DFIELD_EK), so the two layouts agree.
+            var dew = _ek_w(PP_DFIELD_EK(S, fi));
+            if (dew > 0) { if (dew < 8) { fsz = dew; } }
             # Nested-struct override (matched against derive-name
             # table at _pp_derive_names; its size lives at _pp_derive_sizes).
             var di = 0;
@@ -2516,6 +2510,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         var _vek = _pp_vec_elem(S, S + 0x1FE000 + _vqi * 32);
         if (_vek == 200) { _needf = 1; }
         if (_vek == 300) { _needsk = 1; }
+        if (PP_DFIELD_CSTR(S, _vqi) == 1) { _needsk = 1; }   # 6.7.10: a cstring's scan
         if (_vek >= 8) { if (_vek <= 64) { _needi = 1; } }
         # v6.4.x R3 — Vec<Str> (kind 201) is the only remaining unsupported element (R2
         # added int/f64; R3 added Vec<#derive-struct> = kind 300). Reject it up front with
@@ -2586,19 +2581,14 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, "_to_json(ptr, sb) {\n");
     op = PP_DERIVE_EMIT_CHK(S, out, op);
     # v6.3.40 — pre-scan for any f64 field; if present, declare a shared 80-byte
-    # format scratch the per-field f64 branch fills via fmt_float_buf (lib/fmt.cyr,
-    # always in scope for a derive consumer). Only emitted when needed → structs with
-    # no f64 field are byte-identical to pre-v6.3.40.
+    # format scratch the per-field f64 branch fills via bayan_f64_to_json (v6.4.69; it
+    # was fmt_float_buf). Only emitted when needed → structs with
+    # no f64 field are byte-identical to pre-v6.3.40. An f32 field (6.7.10) prints through the
+    # same scratch (widened to f64), so it counts.
     var _has_f64 = 0;
     var _hf = 0;
     while (_hf < field_count) {
-        if (load8(S + 0x1FE000 + _hf * 32) == 102) {
-            if (load8(S + 0x1FE000 + _hf * 32 + 1) == 54) {
-                if (load8(S + 0x1FE000 + _hf * 32 + 2) == 52) {
-                    if (load8(S + 0x1FE000 + _hf * 32 + 3) == 0) { _has_f64 = 1; }
-                }
-            }
-        }
+        if (PP_DFIELD_FLT(S, _hf) > 0) { _has_f64 = 1; }
         if (_pp_vec_elem(S, S + 0x1FE000 + _hf * 32) == 200) { _has_f64 = 1; }
         _hf = _hf + 1;
     }
@@ -2639,53 +2629,13 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     }
                 }
             }
-            # v6.3.40 — f64 field: "f64\0" (0x66 0x36 0x34 0x00). Serialized as a bare
-            # JSON number via fmt_float_buf into the shared _dfb scratch (declared above).
-            var is_f64 = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { is_f64 = 1; }
-                    }
-                }
-            }
-            # v5.9.30: detect primitive integer types by name match.
-            # Field-type entries are 32-byte cstring slots; first byte
-            # = 'i' (0x69) flags the family.
-            # v5.9.36: full i8 / i16 / i32 / i64 detection, with
-            # per-width outer-byte gates ('8'/'1'/'3'/'6'). Pre-fix
-            # (v5.9.35) i64 only. The v5.9.30 attempt had the wrong
-            # outer gate for i32 (`(+1) == 49` matches i16's "i1..."
-            # not i32's "i3...") AND landed before the parser-side
-            # struct-size mismatch was identified. Both fixes land
-            # together this slot via FIELDSZ → 8-per-field-layout
-            # split with FIELDWIDTH for codegen access width.
-            var prim_load = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var b1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                # i8\0
-                if (b1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { prim_load = 8; }
-                }
-                # i16\0
-                if (b1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 16; }
-                    }
-                }
-                # i32\0
-                if (b1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 32; }
-                    }
-                }
-                # i64\0
-                if (b1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { prim_load = 64; }
-                    }
-                }
-            }
+            # v6.3.40 — an f64 field: a bare JSON number through bayan_f64_to_json into the
+            # shared _dfb scratch (declared above); 6.7.10 an f32 one too, widened (PP_DFLT_SER).
+            var is_f64 = PP_DFIELD_FLT(S, fi);
+            # A builtin integer field (i8..i64, 6.7.10 u8..u32): its access width in bits, through
+            # the parser's vocabulary (PP_DFIELD_INT — one classifier for the three codecs; it was
+            # an i-only byte ladder in each, v5.9.30..v5.9.36).
+            var prim_load = PP_DFIELD_INT(S, fi);
             var _vk = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk) == 1) {
                 # v6.4.x R2 — Vec<int/f64> field: emit a JSON array. Null-handle guard
@@ -2738,12 +2688,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 op = op + PP_EMIT_STR(out, op, " = _vi");
                 op = op + PP_EMIT_INT(out, op, fi);
                 op = op + PP_EMIT_STR(out, op, " + 1;\n}\n}\nstr_builder_add_cstr(sb, \"]\");\n");
-            } else { if (is_f64 == 1) {
-                    # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
-                    # + returns its length; null-terminate + append as a bare JSON number.
-                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(load64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+            } else { if (is_f64 > 0) {
+                    op = PP_DFLT_SER(out, op, is_f64, load64(S + 0x200000 + fi * 8));
                 } else { if (is_str == 1) {
                         # v5.10.8 — Str field: emit RFC 8259-compliant
                         # quoted JSON string via the `str_builder_add_json_str`
@@ -2766,12 +2712,17 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             # types.
                             # ⛔ 6.6.8 — SIGN-extended through PP_DLOAD_EXPR, as the getter is: a
                             # bare loadW zero-extends, so an i8 -1 was written as 255 and the
-                            # JSON did not round-trip. CHANGELOG [6.6.8]
+                            # JSON did not round-trip. A u8 / u16 / u32 field (6.7.10) is read
+                            # ZERO-extended, as `p.x` reads it (a u32 4000000000 is written so, not
+                            # -294967296). CHANGELOG [6.6.8] [6.7.10]
                             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
-                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8));
+                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8),
+                              PP_DFIELD_ZX(S, fi));
                             op = op + PP_EMIT_STR(out, op, ");\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             # Nested struct: use composable 2-arg form.
                             # v5.9.31: matched the renamed top-level fn
@@ -2816,49 +2767,13 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             # Typed field: Str / primitive integer / nested struct.
             var fj_str = 0;
             if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_str = 1; } } } }
-            # v5.9.35: primitive integer detection (mirrors the
-            # Serialize-side `prim_load` block at line 558-580).
-            # Pre-fix the deserializer treated every non-Str typed
-            # field as a nested struct and emitted `<type>_from_json(...)`,
-            # producing `i64_from_json` / `i32_from_json` / etc which
-            # don't exist in stdlib — surfaced as `undefined function`
-            # warnings in the agnosys 1.1.12 re-file. Now: i8/i16/i32/i64
-            # take the str_to_int + storeN path with width-correct store.
-            # v5.9.36: full i8/i16/i32/i64 detection (was i64 only at
-            # v5.9.35; narrow widths deferred until the parser-side
-            # struct-size mismatch was paired with this codegen fix).
-            var fj_prim = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var fjb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (fjb1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fj_prim = 8; }
-                }
-                if (fjb1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 16; }
-                    }
-                }
-                if (fjb1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 32; }
-                    }
-                }
-                if (fjb1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_prim = 64; }
-                    }
-                }
-            }
-            # v6.3.40 — f64 field ("f64\0"). `v` is a Str (bayan_json_get); f64_parse
-            # (lib/math.cyr) reads a byte pointer, so parse str_data(v) → f64 bits.
-            var fj_f64 = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_f64 = 1; }
-                    }
-                }
-            }
+            # v5.9.35: a builtin integer field takes the str_to_int + storeW path (before, every
+            # non-Str typed field was taken for a nested struct: `i64_from_json` undefined). The
+            # store truncates to the field's width. PP_DFIELD_INT, as Serialize (6.7.10: u8..u32).
+            var fj_prim = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): `v` is a Str (bayan_json_get),
+            # parsed from str_data(v) (PP_DFLT_PAIRS).
+            var fj_f64 = PP_DFIELD_FLT(S, fi);
             var _vk_p = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk_p) == 1) {
                 if (_vk_p == 300) {
@@ -2882,27 +2797,27 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                     op = op + PP_EMIT_STR(out, op, ", vec_new()); }\n");
                 }
-            } else { if (fj_f64 == 1) {
-                    op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(str_data(v))); }\n");
+            } else { if (fj_f64 > 0) {
+                    op = PP_DFLT_PAIRS(out, op, fj_f64, load64(S + 0x200000 + fi * 8));
                 } else { if (fj_str == 1) {
                         # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
                         # directly** (bayan_json_parse builds a vec of key→val pairs where
                         # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
                         # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
                         # storing a garbage Str → a Str field round-tripped to `"�"` (the
-                        # working serialize half masked it). A Str field is an 8-byte Str
-                        # ptr, so store `v` as-is (same borrow semantics the int path's
-                        # str_to_int(v) already relies on). NOTE: the issue's speculated
+                        # working serialize half masked it). NOTE: the issue's speculated
                         # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
                         # this pairs-based parser doesn't produce — v_is_str(v) would read
                         # a JTAG from a Str header and always fail, leaving the field 0 →
                         # a NULL Str crashes re-serialize.
                         # See issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+                        # 6.7.10 (the user's decision): `v` holds the value's source bytes with its
+                        # escapes as written, so storing `v` itself (6.3.24..6.7.9, a borrow) kept
+                        # `\"` / `\n` / `\u0001` raw; the field is now a FRESH Str of the unescaped
+                        # bytes (str_json_unescape, as the scanner). CHANGELOG [6.7.10]
                         op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                         op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                        op = op + PP_EMIT_STR(out, op, ", v); }\n");
+                        op = op + PP_EMIT_STR(out, op, ", str_json_unescape(str_data(v), str_len(v))); }\n");
                     } else { if (fj_prim > 0) {
                             op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
                             op = op + PP_EMIT_INT(out, op, fj_prim);
@@ -2911,6 +2826,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
                             op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
@@ -3013,39 +2930,11 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         if (load8(S + 0x1FE000 + fi * 32) != 0) {
             var fjs = 0;
             if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjs = 1; } } } }
-            # v5.9.36: full i8/i16/i32/i64 detection.
-            var fjp = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 105) {
-                var fjpb1 = load8(S + 0x1FE000 + fi * 32 + 1);
-                if (fjpb1 == 56) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 0) { fjp = 8; }
-                }
-                if (fjpb1 == 49) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 16; }
-                    }
-                }
-                if (fjpb1 == 51) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 32; }
-                    }
-                }
-                if (fjpb1 == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjp = 64; }
-                    }
-                }
-            }
-            # v6.3.40 — f64 field ("f64\0") in the single-pass scanner: capture the
-            # numeric token substring and parse via f64_parse (lib/math.cyr).
-            var fjf = 0;
-            if (load8(S + 0x1FE000 + fi * 32) == 102) {
-                if (load8(S + 0x1FE000 + fi * 32 + 1) == 54) {
-                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) {
-                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjf = 1; }
-                    }
-                }
-            }
+            # v5.9.36: a builtin integer field (PP_DFIELD_INT, as Serialize; 6.7.10 u8..u32).
+            var fjp = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): capture the numeric token
+            # and parse it (PP_DFLT_SCAN).
+            var fjf = PP_DFIELD_FLT(S, fi);
             var _vk_s = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk_s) == 1) {
                 if (_vk_s == 300) {
@@ -3116,55 +3005,17 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     if (_vk_s == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
                     op = op + PP_EMIT_STR(out, op, "(json + _p));\nwhile (load8(json + _p) != 93 && load8(json + _p) != 0) { _p = _p + 1; }\nif (load8(json + _p) == 93) { _p = _p + 1; }\n");
                 }
-            } else { if (fjf == 1) {
-                    # Capture the numeric token (digits/sign/./exponent) then f64_parse it.
-                    op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
-                    op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
-                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(json + _vs));\n");
+            } else { if (fjf > 0) {
+                    op = PP_DFLT_SCAN(out, op, fjf, load64(S + 0x200000 + fi * 8));
                 } else { if (fjs == 1) {
-                        # String value: read until closing quote
-                        # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan
-                        # `while (load8 != 34)` stopped at the FIRST quote — even an escaped \" —
-                        # truncating the value and leaving escapes literal. Now: walk escape-aware
-                        # to the real closing quote, un-escaping \n \t \r and \<c> → <c> (covers
-                        # \" \\ \/), building the Str via str_builder_add_byte. Fi-suffixed temps so
-                        # multiple Str fields don't redeclare. Fixes ALL #derive Str decode.
-                        op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1;\nvar _sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = str_builder_new();\nwhile (load8(json + _p) != 34 && load8(json + _p) != 0) {\nvar _sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 92) {\n_p = _p + 1;\nvar _esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " != 0) {\nif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 110) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 10); }\nelif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 116) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 9); }\nelif (_esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, " == 114) { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", 13); }\nelse { str_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", _esc");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, "); }\n_p = _p + 1;\n}\n} else {\nstr_builder_add_byte(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ", _sch");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, ");\n_p = _p + 1;\n}\n}\nstore64(ptr + ");
-                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                        op = op + PP_EMIT_STR(out, op, ", str_builder_build(_sbld");
-                        op = op + PP_EMIT_INT(out, op, fi);
-                        op = op + PP_EMIT_STR(out, op, "));\nif (load8(json + _p) == 34) { _p = _p + 1; }\n}\n");
+                        # A quoted value, walked escape-aware to its real closing quote (v6.4.x R3,
+                        # BUG-3: the first `"` ended it, even a `\"`), decoded into a FRESH Str
+                        # through lib/str.cyr's str_json_unescape — every RFC 8259 escape, `\uHHHH`
+                        # as UTF-8 (6.7.10, the user's decision: through 6.7.9 only `\n \t \r` were
+                        # decoded and any other escape kept its letter, so `\u0001\b` read
+                        # `u0001b`). Any other value leaves the field 0, as before. CHANGELOG [6.7.10]
+                        op = PP_DQSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8), "str_json_unescape");
+                        op = op + PP_EMIT_STR(out, op, "\n");
                     } else { if (fjp > 0) {
                             # Primitive integer: parse decimal + width-correct store.
                             op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
@@ -3177,6 +3028,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, ", _iv);\n");
                         } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
                             op = PP_DBOOL_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
                         } else {
                             # Nested struct: skip value (fall through to json_get path)
                             # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
@@ -3307,25 +3160,97 @@ fn ISDERIVE_ACC(S, pos, bl): i64 {
     return 1;
 }
 
-# 6.6.7 — the access width of field `fi`: 8 / 16 / 32 for an `i8` / `i16` / `i32` field, else
-# 64 (i64, untyped, Str, Vec, f64, nested struct — all 8-byte slots). Same exact-name match as
-# the offset table in PP_PARSE_STRUCT_DEF and Serialize's `prim_load`. CHANGELOG [6.6.7]
+# 6.7.10 (B7) — field `fi`'s builtin scalar type as an element descriptor (`_ek_of_code`: the
+# width in the low bits, 0x40 signed narrow, 0x20 float, 0x68 bool), 0 for anything else (a
+# struct, Str, Vec, cstring, an enum, untyped). Its type-name cell is NUL-terminated, and
+# `_tn_scalar` matches the WHOLE name (the NUL is in its masks) — the parser's vocabulary, so the
+# derive's offsets and widths cannot drift from FIELDSZ again. CHANGELOG [6.7.10]
+fn PP_DFIELD_EK(S, fi): i64 {
+    return _ek_of_code(_tn_scalar(load64(S + 0x1FE000 + fi * 32)));
+}
+# 6.6.7 — the access width of field `fi`: 8 / 16 / 32 for an `i8` / `i16` / `i32` field — and
+# (6.7.10, packed) a `u8` / `u16` / `u32` / `f32` one — else 64 (i64, u64, untyped, Str, Vec, f64,
+# nested struct — all 8-byte slots). Through PP_DFIELD_EK, as the offset table in
+# PP_PARSE_STRUCT_DEF. CHANGELOG [6.6.7] [6.7.10]
 fn PP_DFIELD_BITS(S, fi): i64 {
-    var t = S + 0x1FE000 + fi * 32;
-    if (load8(t) != 105) { return 64; }
-    var b1 = load8(t + 1);
-    if (b1 == 56) { if (load8(t + 2) == 0) { return 8; } }
-    if (b1 == 49) { if (load8(t + 2) == 54) { if (load8(t + 3) == 0) { return 16; } } }
-    if (b1 == 51) { if (load8(t + 2) == 50) { if (load8(t + 3) == 0) { return 32; } } }
+    var w = _ek_w(PP_DFIELD_EK(S, fi));
+    if (w > 0) { if (w < 8) { return w * 8; } }
     return 64;
+}
+# 1 when field `fi` is read ZERO-extended: u8 / u16 / u32 and f32 (its binary32 bits). An i8 / i16 /
+# i32 field is signed (`_ek_lw` negative), as `p.x` reads it; a 64-bit field has no extension
+# either way. CHANGELOG [6.7.10]
+fn PP_DFIELD_ZX(S, fi): i64 {
+    if (_ek_lw(PP_DFIELD_EK(S, fi)) < 0) { return 0; }
+    return 1;
+}
+# 6.7.10 (B7-3) — the JSON codecs' classes, one classifier for the three (Serialize, the pairs
+# decoder, the single-pass scanner), through the parser's vocabulary as the offset table is; each
+# was an i-only / f64-only byte ladder. PP_DFIELD_INT: a builtin integer field's access width in
+# bits — 8 / 16 / 32 / 64 for i8..i64 and u8 / u16 / u32 — else 0 (f32 / f64 / bool have their own
+# arms; a struct, Str, Vec, cstring, enum or untyped field is no builtin integer). A `u64` is 0: it
+# stays outside the codecs as through 6.7.9 (`u64_to_json` undefined) — `str_builder_add_int`
+# would write 2^63 and over as negative. CHANGELOG [6.7.10]
+fn PP_DFIELD_INT(S, fi): i64 {
+    var c = _tn_scalar(load64(S + 0x1FE000 + fi * 32));
+    var ek = _ek_of_code(c);
+    if ((ek & 0x20) != 0) { return 0; }
+    var w = _ek_w(ek);
+    if (w == 8) { if (_tn_class(c) == 2) { return 0; } }
+    return w * 8;
+}
+# The float kind of field `fi`: 1 f64, 2 f32, else 0 (a bool is not a float here).
+fn PP_DFIELD_FLT(S, fi): i64 {
+    var k = _ek_fk(PP_DFIELD_EK(S, fi));
+    if (k > 2) { return 0; }
+    return k;
+}
+# An f64 / f32 field (`fk` 1 / 2) in the three codecs. An f32 is written WIDENED to f64 (the user's
+# decision, 2026-10-12: `f32_to` is exact, so 0.1f is written 0.10000000149011612, through bayan's
+# f64 printer — no new printer) and read back narrowed (`f32_from` of the parsed f64, nearest-even:
+# every written value round-trips). An f64 field's text is 6.7.9's, byte for byte. CHANGELOG [6.7.10]
+fn PP_DFLT_SER(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(");
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, "f32_to(load32(ptr + "); }
+    else { op = op + PP_EMIT_STR(out, op, "load64(ptr + "); }
+    op = op + PP_EMIT_INT(out, op, off);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ")"); }
+    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+    return op;
+}
+# `storeW(ptr + off, <src>);` — `src` an expression giving f64 bits: store64, or store32 of its f32.
+fn PP_DFLT_STORE(out, op, fk, off, src): i64 {
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, "store32(ptr + "); }
+    else { op = op + PP_EMIT_STR(out, op, "store64(ptr + "); }
+    op = op + PP_EMIT_INT(out, op, off);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ", f32_from("); }
+    else { op = op + PP_EMIT_STR(out, op, ", "); }
+    op = op + PP_EMIT_STR(out, op, src);
+    if (fk == 2) { op = op + PP_EMIT_STR(out, op, ")"); }
+    op = op + PP_EMIT_STR(out, op, ");");
+    return op;
+}
+fn PP_DFLT_PAIRS(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (v != 0) { ");
+    op = PP_DFLT_STORE(out, op, fk, off, "bayan_f64_from_json(str_data(v))");
+    op = op + PP_EMIT_STR(out, op, " }\n");
+    return op;
+}
+# The scanner captures the numeric token (digits, sign, '.', exponent) at _p, then parses it.
+fn PP_DFLT_SCAN(out, op, fk, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
+    op = PP_DFLT_STORE(out, op, fk, off, "bayan_f64_from_json(json + _vs)");
+    op = op + PP_EMIT_STR(out, op, "\n");
+    return op;
 }
 
 # 6.6.7 — the getter's value expression for a field of width `fbits` at `off`. A 64-bit field is
-# the plain `load64(p + off)`. A narrow field is loaded at its width and SIGN-extended —
+# the plain `load64(p + off)`. A narrow i8/i16/i32 field is loaded at its width and SIGN-extended —
 # `(loadW(p + off) << S) >>> S`, S = 64 - W (`>>>` is the arithmetic shift) — because the
 # language reads an i8/i16/i32 field signed (`p.x` is movsx), and loadW zero-extends: without
 # the shift pair a stored -1 in an i8 reads back as 255 through `P_x(p)` while `p.x` says -1.
-# CHANGELOG [6.6.7]
+# A u8/u16/u32/f32 field (6.7.10) is the bare `loadW`, zero-extended as `p.x` reads it.
+# CHANGELOG [6.6.7] [6.7.10]
 # 6.7.3 (B2) — a `bool` field (its type-name slot holds "bool\0"). Serialize writes JSON `true` /
 # `false`; Deserialize stores 1 for `true` and 0 for any other value (the codecs' lenient
 # precedent: an integer field takes str_to_int of whatever is there), a missing key leaving the
@@ -3359,16 +3284,72 @@ fn PP_DBOOL_SCAN(out, op, off): i64 {
     op = op + PP_EMIT_STR(out, op, ", 0); while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
     return op;
 }
-fn PP_DGETTER_EXPR(out, op, fbits, off): i64 {
+# 6.7.10 (B7-4) — a `: cstring` field (its type-name cell holds "cstring\0" — one load64; a
+# cstring is no builtin scalar to `_tn_scalar`, so without this arm it fell to the nested-struct
+# one: `undefined function 'cstring_to_json'`). The wire shape is the user's (2026-10-12; sigil's
+# hand-rolled one): a NULL pointer is JSON `null`, any other an escaped JSON string; decoding gives
+# NULL for `null` and otherwise a FRESH NUL-terminated copy (lib/str.cyr's
+# str_json_unescape_cstr: a JSON string unescaped, any other value its text; a decoded U+0000
+# ends it). A missing key leaves the field as every other field type does. CHANGELOG [6.7.10]
+fn PP_DFIELD_CSTR(S, fi): i64 {
+    if (load64(S + 0x1FE000 + fi * 32) == 0x00676E6972747363) { return 1; }
+    return 0;
+}
+fn PP_DCSTR_SER(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "str_builder_add_json_cstr(sb, load64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, "));\n");
+    return op;
+}
+# The pairs form: `v` is bayan's Str over the value's source bytes, a quoted value WITHOUT its
+# quotes — so `null` and `"null"` are both the four bytes `null` there, told apart by the byte
+# before them (a quoted value's is its opening `"`, a bare one's the `:` or whitespace). The peek
+# is made only for a 4-byte `null` text.
+fn PP_DCSTR_PAIRS(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (v != 0) { if (str_eq_cstr(v, \"null\") == 1 && load8(str_data(v) - 1) != 34) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 0); } else { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", str_json_unescape_cstr(str_data(v), str_len(v))); } }\n");
+    return op;
+}
+# The scanner at a quoted value: `_p` past its closing `"` (escape-aware: a `\"` does not end it),
+# the field `store64(ptr + off, <fname>(json + _vs, <its body's length>))`.
+fn PP_DQSTR_SCAN(out, op, off, fname): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1; _vs = _p; while (load8(json + _p) != 34 && load8(json + _p) != 0) { if (load8(json + _p) == 92 && load8(json + _p + 1) != 0) { _p = _p + 1; } _p = _p + 1; } store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", ");
+    op = op + PP_EMIT_STR(out, op, fname);
+    op = op + PP_EMIT_STR(out, op, "(json + _vs, _p - _vs)); if (load8(json + _p) == 34) { _p = _p + 1; } }");
+    return op;
+}
+# Any other value is walked with the shared `_cy_json_skipval` (string- and depth-aware: an object
+# or array value does not end at its first inner `,` / `}`) and its trailing whitespace trimmed
+# (`_iv`, the scanner's integer scratch, holds its end): a bare `null` is NULL, anything else a
+# copy of its text, an empty value leaves the field NULL.
+fn PP_DCSTR_SCAN(out, op, off): i64 {
+    op = PP_DQSTR_SCAN(out, op, off, "str_json_unescape_cstr");
+    op = op + PP_EMIT_STR(out, op, " else { _vs = _p; _p = _cy_json_skipval(json, _p); _iv = _p; while (_iv > _vs && load8(json + _iv - 1) <= 32) { _iv = _iv - 1; } if (_iv - _vs == 4 && memeq(json + _vs, \"null\", 4) == 1) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 0); } elif (_iv > _vs) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", str_json_unescape_cstr(json + _vs, _iv - _vs)); } }\n");
+    return op;
+}
+fn PP_DGETTER_EXPR(out, op, fbits, off, zx): i64 {
     op = op + PP_EMIT_STR(out, op, "return ");
-    op = PP_DLOAD_EXPR(out, op, "p", fbits, off);
+    op = PP_DLOAD_EXPR(out, op, "p", fbits, off, zx);
     return op;
 }
 
 # The value expression for a field of width `fbits` at `pname + off` (see PP_DGETTER_EXPR),
 # shared by the getter and Serialize so the two cannot disagree on signedness. CHANGELOG [6.6.8]
-fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
-    if (fbits < 64) { op = op + PP_EMIT_STR(out, op, "("); }
+# 6.7.10 (B7): `zx` 1 = a u8 / u16 / u32 / f32 field, read zero-extended — the bare `loadW`, which
+# zero-extends (`p.x` reads it so: `_fld_lw`). CHANGELOG [6.7.10]
+fn PP_DLOAD_EXPR(out, op, pname, fbits, off, zx): i64 {
+    var sx = 0;   # the shift pair: a narrow SIGNED field
+    if (fbits < 64) { if (zx == 0) { sx = 1; } }
+    if (sx == 1) { op = op + PP_EMIT_STR(out, op, "("); }
     op = op + PP_EMIT_STR(out, op, "load");
     op = op + PP_EMIT_INT(out, op, fbits);
     op = op + PP_EMIT_STR(out, op, "(");
@@ -3376,7 +3357,7 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
     op = op + PP_EMIT_STR(out, op, " + ");
     op = op + PP_EMIT_INT(out, op, off);
     op = op + PP_EMIT_STR(out, op, ")");
-    if (fbits < 64) {
+    if (sx == 1) {
         op = op + PP_EMIT_STR(out, op, " << ");
         op = op + PP_EMIT_INT(out, op, 64 - fbits);
         op = op + PP_EMIT_STR(out, op, ") >>> ");
@@ -3408,8 +3389,8 @@ fn PP_DERIVE_ACC_ENUM(S): i64 {
 
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
 # (PP_DFIELD_BITS):
-#   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64)
-#   fn Name_field(p) { return (loadW(p + OFFSET) << S) >>> S; }   (W < 64, S = 64 - W: signed)
+#   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64; 6.7.10: u8..u32 / f32, zero-extended)
+#   fn Name_field(p) { return (loadW(p + OFFSET) << S) >>> S; }   (i8..i32, S = 64 - W: signed)
 #   fn Name_set_field(p, v) { storeW(p + OFFSET, v); return 0; }
 # ⛔ 6.6.7 — W was 64 for EVERY field, so on an `i8` / `i16` / `i32` field the setter wrote 8
 # bytes: `struct P { x: i8; y: i8; }` has sizeof 2, and `P_set_y` stored bytes 1..8 — into the
@@ -3447,7 +3428,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         if (fbool == 1) { op = op + PP_EMIT_STR(out, op, "(p): bool { "); }
         else { op = op + PP_EMIT_STR(out, op, "(p) { "); }
         op = PP_DERIVE_EMIT_CHK(S, out, op);
-        op = PP_DGETTER_EXPR(out, op, fbits, off);
+        op = PP_DGETTER_EXPR(out, op, fbits, off, PP_DFIELD_ZX(S, fi));   # 6.7.10: u8..u32 / f32 zero-extend
         if (fbool == 1) { op = op + PP_EMIT_STR(out, op, " != 0"); }
         op = op + PP_EMIT_STR(out, op, "; }\n");
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
