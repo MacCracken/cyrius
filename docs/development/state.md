@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.10 — in flight** (slot open 2026-10-12; 6.7.9 shipped 2026-10-11, tag `6.7.9` @ `8bb8df56`, the store slot refreshed from the tag): **B7** packed narrow fields + the handle line + the cstring derive, **P5-B** execution coverage, the 6.7.9 fold wave refolded. |
-| **cycc** | x86 **2,057,736 B** (`.text` **1,845,440**) at 6.7.9, +4,200 B over 6.7.8's 2,053,536 B. `build/cycc-native-aarch64` **1,881,280 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,114,376 B** (`.text` **1,900,296**) at 6.7.10, +56,640 B over 6.7.9's 2,057,736 B. `build/cycc-native-aarch64` **1,950,240 B**. Dead-code floor: recorded at the 6.7.10 gate. |
 | **Bootstrap / cross-OS** | 6.7.9: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on REAL hardware through `scripts/release-gate.sh` (on `fbcbc512`). seed **29,024 B** → cybs → cycc byte-identical; `build/cycc-native-aarch64` in lockstep (step 1b). |
 | **Gates** | 6.7.9 `release-gate.sh` GREEN on the first run (2026-10-11, 10 min 16 s): check.sh 471 of 471 shell gates, 0 failed, the driver 131 of 131, the 2 named agnos-parity SKIPs. Bench: self_compile 1,437 ms; same-box A/B vs 6.7.8 −0.4 % on 6.7.8's source. |
 | **Corpus** | **562** `.tcyr` (**267** in `crossos/`; `tests/tcyr/CORPUS_FLOOR` 503) · **106** `lib/*.cyr` · **85** `programs/*.cyr` · **467** shell gates under `tests/gates/<bucket>/` · api-surface **5,835** (DERIVED 2026-10-11) |
