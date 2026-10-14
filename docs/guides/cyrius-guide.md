@@ -4647,13 +4647,19 @@ h.n = f();               # ✗ a field, any field type   (6.7.7)
 a[i] = f();              # ✗ an element                (6.7.7)
 *p = f();                # ✗ through a pointer         (6.7.7)
 x += f();                # ✗ any compound `OP=`        (6.7.7)
+var p = P { f(), 3 };    # ✗ a struct-literal element  (6.7.11) — named, a global's, a nested leaf too
 
 var t, v = f();          # ✓ bind both halves
 t, v = f();              # ✓ re-assign both halves     (6.7.7)
 var v = f()?;            # ✓ `?` consumes the pair and yields one value
-h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`
+h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`, `P { f()?, 3 }`
 return f();              # ✓ forwarding the pair onward
+is_ok(f());              # ✓ a single ARGUMENT receives the tag (above) — and so does an operand
 ```
+
+A store is judged by the call it starts with, so `h.n = f() + 1;` and `P { f() + 1, 3 }` are refused
+too; an argument (`g(f())`) and an operand anywhere else (`f() == 0`, `return f() + 1;`) read the tag,
+by the single-argument rule above (the user's decision, 2026-10-13).
 
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too.

@@ -2278,6 +2278,10 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     _sfw_fk = 0;
     if (_sfw_have == 1) { _sfw_have = 0; }
     else {
+        # An element is a one-slot store: a `: stack` pair here kept the tag and dropped the payload
+        # (`P { f(7), 3 }`, named, a global's), so it is refused as every other store is; `f(7)?`
+        # consumes the pair. Right before the PCMPE, as T5b's sites. CHANGELOG [6.7.11]
+        _refuse_lossy_pair(S);
         var t0 = GTI(S);
         PCMPE(S);
         _ifs_bx(S, fk, t0, _sfw_fn);
@@ -2495,6 +2499,7 @@ fn _spi_expr(S, ft): i64 {
     _fla_hit = 0;
     _sc_rbeg = 0 - 1;
     var w = _sc_arm(S);
+    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too. CHANGELOG [6.7.11]
     PCMPE(S);
     var bx = _BX_IS(S);   # 6.7.3: the stamp, before anything below can move the cursor
     _sc_want = w;
