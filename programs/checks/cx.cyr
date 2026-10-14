@@ -243,7 +243,7 @@ fn _cx_syscall_literal_gate(): i64 {
     }
 
     # Sub-check 4: loop V ∈ {0, 7, 99, 200}, expect cxvm exit == V.
-    var vals[5];
+    var vals: i64[4];
     store64(&vals,      0);
     store64(&vals + 8,  7);
     store64(&vals + 16, 99);

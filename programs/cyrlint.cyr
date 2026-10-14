@@ -1080,6 +1080,464 @@ fn _lint_cols(buf, pos, eol): i64 {
     return n;
 }
 
+# === Rules: a bare local array's constant-offset overrun, and a write whose length is not its
+# literal's (6.7.11) ===
+# A bare `var a[N]` in a fn is N BYTES (rounded up to 8), not N slots, and the compiler refuses
+# `a[i]` on it (6.6.12), so the overrun left is the explicit offset: `var a[16]; store64(&a + 16,
+# 3);` writes past the array and nothing said so. Each local `var` of a fn body is recorded and
+# scoped to its block — a bare one with a literal N by its byte size, any other (typed, scalar,
+# a non-literal N) as unknown, so it shadows an outer array of the same name — and a
+# `load8/16/32/64(&a + K)` or `store8/16/32/64(&a + K, ..)` (K an integer literal, or no `+ K`)
+# warns when K + width runs past the bytes. An intended offset carries `# lint: offset-ok` on
+# the line of the call's name. And `syscall(SYS_WRITE|1, fd, "lit", N)`, `sys_write(fd, "lit",
+# N)` and `_aw_write(fd, "lit", N)` with a literal N warn when N is not the literal's byte
+# length: a raw byte is one byte, never decoded (an em dash is 3; decoding first, as a
+# unicode-escape round trip does, gave 23 false hits at v6.5.33), and an escape counts what the
+# lexer stores for it (`\n` 1, `\xHH` 1, `\u` its code point's UTF-8 length). The walk is
+# lexical like the other rules, across lines. CHANGELOG [6.7.11]
+var _ov_tab = 0;    # the open fn body's locals, 40 bytes each: name off, name len, size, N, depth
+var _ov_cap = 0;
+var _ov_n = 0;
+var _ov_val = 0;    # the value _ov_int read
+var _ov_mb = 0;     # the warning text being built
+var _ov_ml = 0;
+
+# Record a local: its name buf[off, off+len), its bytes (-1 unknown), the N it declared and the
+# brace depth it was declared at. Grow-only, like the deferral arrays.
+fn _ov_push(off, len, size, n, dep): i64 {
+    if (_ov_n >= _ov_cap) {
+        var c = _ov_cap * 2 + 64;
+        var t = alloc(c * 40);
+        if (t == 0) { return _dp_oom(); }
+        if (_ov_n > 0) { memcpy(t, _ov_tab, _ov_n * 40); }
+        _ov_tab = t;
+        _ov_cap = c;
+    }
+    var rec = _ov_tab + _ov_n * 40;
+    store64(rec, off);
+    store64(rec + 8, len);
+    store64(rec + 16, size);
+    store64(rec + 24, n);
+    store64(rec + 32, dep);
+    _ov_n = _ov_n + 1;
+    return 0;
+}
+
+# A `}` brought the depth to `depth`: the locals of the block it closed are gone.
+fn _ov_pop(depth): i64 {
+    while (_ov_n > 0) {
+        if (load64(_ov_tab + (_ov_n - 1) * 40 + 32) <= depth) { return 0; }
+        _ov_n = _ov_n - 1;
+    }
+    return 0;
+}
+
+# The innermost local in scope named buf[off, off+len), or -1.
+fn _ov_find(buf, off, len): i64 {
+    var i = _ov_n - 1;
+    while (i >= 0) {
+        var rec = _ov_tab + i * 40;
+        if (_eq_substr(buf, load64(rec), load64(rec + 8), off, len) == 1) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+# From p, step over spaces, tabs, CRs, newlines and comments (not an attribute token); the next
+# significant offset, or lim.
+fn _ov_ws(buf, p, lim): i64 {
+    while (p < lim) {
+        var c = load8(buf + p);
+        if (_dp_ws(c) == 1 || c == 10) { p = p + 1; }
+        elif (c == 35) {
+            if (_lx_attr_len(buf, p, lim) > 0) { return p; }
+            p = _find_eol(buf, p, lim);
+        }
+        else { return p; }
+    }
+    return lim;
+}
+
+fn _ov_hexval(c): i64 {
+    if (_is_digit(c) == 1) { return c - 48; }
+    var l = c | 32;
+    if (l >= 97) { if (l <= 102) { return l - 87; } }
+    return 0 - 1;
+}
+
+# An integer literal at p — decimal or 0x hex, at most 15 digits — that no identifier byte
+# follows: its value in _ov_val and the offset past it, or -1.
+fn _ov_int(buf, p, lim): i64 {
+    if (p >= lim) { return 0 - 1; }
+    if (_is_digit(load8(buf + p)) == 0) { return 0 - 1; }
+    var v = 0;
+    var nd = 0;
+    if (p + 2 < lim && load8(buf + p) == 48 && (load8(buf + p + 1) | 32) == 120) {
+        p = p + 2;
+        while (p < lim) {
+            var h = _ov_hexval(load8(buf + p));
+            if (h < 0) { break; }
+            v = v * 16 + h;
+            nd = nd + 1;
+            p = p + 1;
+        }
+    } else {
+        while (p < lim) {
+            var c = load8(buf + p);
+            if (_is_digit(c) == 0) { break; }
+            v = v * 10 + c - 48;
+            nd = nd + 1;
+            p = p + 1;
+        }
+    }
+    if (nd == 0 || nd > 15) { return 0 - 1; }
+    if (p < lim) { if (_is_id_cont(load8(buf + p)) == 1) { return 0 - 1; } }
+    _ov_val = v;
+    return p;
+}
+
+# 1 when the line starting at ls carries `#skip-lint`, or (offset == 1) the overrun rule's
+# `# lint: offset-ok`.
+fn _ov_exempt(buf, ls, total, offset): i64 {
+    var le = _find_eol(buf, ls, total);
+    if (_line_has(buf, ls, le, "#skip-lint") == 1) { return 1; }
+    if (offset == 1) { if (_line_has(buf, ls, le, "# lint: offset-ok") == 1) { return 1; } }
+    return 0;
+}
+
+# The warning text: _ov_m0 starts it, _ov_mput / _ov_ms / _ov_mn append (NUL-terminated, capped).
+fn _ov_m0(): i64 {
+    if (_ov_mb == 0) {
+        _ov_mb = alloc(1024);
+        if (_ov_mb == 0) { return _dp_oom(); }
+    }
+    _ov_ml = 0;
+    store8(_ov_mb, 0);
+    return 0;
+}
+fn _ov_mput(src, n): i64 {
+    if (_ov_ml + n > 1000) { n = 1000 - _ov_ml; }
+    if (n > 0) {
+        memcpy(_ov_mb + _ov_ml, src, n);
+        _ov_ml = _ov_ml + n;
+    }
+    store8(_ov_mb + _ov_ml, 0);
+    return 0;
+}
+fn _ov_ms(s): i64 { return _ov_mput(s, strlen(s)); }
+fn _ov_mn(v): i64 {
+    var nb[24];
+    var nl = fmt_int_buf(v, &nb);
+    return _ov_mput(&nb, nl);
+}
+
+# The width of the `load*` / `store*` builtin named buf[p, p+wl), or 0.
+fn _ov_width(buf, p, wl): i64 {
+    var s = 0;
+    if (wl >= 5 && memeq(buf + p, "load", 4) == 1) { s = p + 4; }
+    elif (wl >= 6 && memeq(buf + p, "store", 5) == 1) { s = p + 5; }
+    else { return 0; }
+    var tl = p + wl - s;
+    if (tl == 1) { if (load8(buf + s) == 56) { return 1; } }
+    if (tl == 2) {
+        if (memeq(buf + s, "16", 2) == 1) { return 2; }
+        if (memeq(buf + s, "32", 2) == 1) { return 4; }
+        if (memeq(buf + s, "64", 2) == 1) { return 8; }
+    }
+    return 0;
+}
+
+# p is just past a `var` keyword in a fn body: record the local it declares at `depth`.
+fn _ov_decl(buf, p, total, depth): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var q = _ov_ws(buf, p, lim);
+    if (q >= lim) { return 0; }
+    if (_is_id_start(load8(buf + q)) == 0) { return 0; }
+    var ne = _scan_id_end(buf, q, lim);
+    var size = 0 - 1;
+    var n = 0;
+    var r = _ov_ws(buf, ne, lim);
+    if (r < lim) {
+        if (load8(buf + r) == 91) {
+            var s = _ov_int(buf, _ov_ws(buf, r + 1, lim), lim);
+            if (s >= 0) {
+                s = _ov_ws(buf, s, lim);
+                if (s < lim && load8(buf + s) == 93 && _ov_val > 0) {
+                    n = _ov_val;
+                    size = (n + 7) & (0 - 8);
+                }
+            }
+        }
+    }
+    return _ov_push(q, ne - q, size, n, depth);
+}
+
+# buf[p, e) is a `load<W>` / `store<W>` name of width w, on the line starting at ls. When the
+# call's first argument is `&a` or `&a + K` (K an integer literal) for a bare local array `a`,
+# warn if K + w runs past its bytes.
+fn _ov_access(buf, p, e, total, w, lineno, ls): i64 {
+    var lp = _call_paren(buf, e, total);
+    if (lp < 0) { return 0; }
+    var lim = lp + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var q = _ov_ws(buf, lp + 1, lim);
+    if (q >= lim) { return 0; }
+    if (load8(buf + q) != 38) { return 0; }
+    q = _ov_ws(buf, q + 1, lim);
+    if (q >= lim) { return 0; }
+    if (_is_id_start(load8(buf + q)) == 0) { return 0; }
+    var ne = _scan_id_end(buf, q, lim);
+    var i = _ov_find(buf, q, ne - q);
+    if (i < 0) { return 0; }
+    var rec = _ov_tab + i * 40;
+    var size = load64(rec + 16);
+    if (size < 0) { return 0; }
+    var r = _ov_ws(buf, ne, lim);
+    var k = 0;
+    if (r < lim) {
+        if (load8(buf + r) == 43) {
+            r = _ov_int(buf, _ov_ws(buf, r + 1, lim), lim);
+            if (r < 0) { return 0; }
+            k = _ov_val;
+            r = _ov_ws(buf, r, lim);
+        }
+    }
+    if (r >= lim) { return 0; }
+    var c = load8(buf + r);
+    if (c != 44 && c != 41) { return 0; }
+    if (k + w <= size) { return 0; }
+    if (_ov_exempt(buf, ls, total, 1) == 1) { return 0; }
+    var nl = ne - q;
+    if (nl > 64) { nl = 64; }
+    _ov_m0();
+    _ov_mput(buf + p, e - p);
+    _ov_ms("(&");
+    _ov_mput(buf + q, nl);
+    _ov_ms(" + ");
+    _ov_mn(k);
+    _ov_ms(") reaches bytes ");
+    _ov_mn(k);
+    _ov_ms("..");
+    _ov_mn(k + w - 1);
+    _ov_ms(" of local `var ");
+    _ov_mput(buf + q, nl);
+    _ov_ms("[");
+    _ov_mn(load64(rec + 24));
+    _ov_ms("]`, which is ");
+    _ov_mn(size);
+    _ov_ms(" bytes (a bare array in a fn is N BYTES, not N slots: `var a: i64[N]` holds slots;");
+    _ov_ms(" an intended offset takes `# lint: offset-ok`)");
+    return warn(lineno, _ov_mb);
+}
+
+# The byte length the lexer stores for the string literal body buf[a, b) (between the quotes):
+# a raw byte is one byte, never decoded, so a UTF-8 em dash is 3; `\xHH` is one byte, `\u####`
+# and `\u{...}` the code point's UTF-8 length, and every other `\X` one byte (`\<LF>` keeps its
+# LF) — src/frontend/lex.cyr's string arm.
+fn _wl_lit_len(buf, a, b): i64 {
+    var n = 0;
+    var i = a;
+    while (i < b) {
+        if (load8(buf + i) == 92 && i + 1 < b) {
+            var ec = load8(buf + i + 1);
+            if (ec == 120) { n = n + 1; i = i + 4; }
+            elif (ec == 117) {
+                var cp = 0;
+                var j = i + 2;
+                if (j < b && load8(buf + j) == 123) {
+                    j = j + 1;
+                    while (j < b && load8(buf + j) != 125) {
+                        cp = cp * 16 + _ov_hexval(load8(buf + j));
+                        j = j + 1;
+                    }
+                    i = j + 1;
+                } else {
+                    var k = 0;
+                    while (k < 4 && j < b) {
+                        cp = cp * 16 + _ov_hexval(load8(buf + j));
+                        j = j + 1;
+                        k = k + 1;
+                    }
+                    i = j;
+                }
+                if (cp < 128) { n = n + 1; }
+                elif (cp < 2048) { n = n + 2; }
+                elif (cp < 65536) { n = n + 3; }
+                else { n = n + 4; }
+            }
+            else { n = n + 1; i = i + 2; }
+        } else {
+            n = n + 1;
+            i = i + 1;
+        }
+    }
+    return n;
+}
+
+# p starts a call argument: the offset of the `,` that ends it at depth 0, or -1 (the call's `)`
+# came first, or a `;` / `{` / `}`, or lim).
+fn _wl_skip_arg(buf, p, lim): i64 {
+    var d = 0;
+    while (p < lim) {
+        var q = _lx_skip(buf, p, lim);
+        if (q != p) { p = q; }
+        else {
+            var c = load8(buf + p);
+            if (c == 40 || c == 91) { d = d + 1; }
+            elif (c == 41 || c == 93) {
+                d = d - 1;
+                if (d < 0) { return 0 - 1; }
+            }
+            elif (c == 44) { if (d == 0) { return p; } }
+            elif (c == 59 || c == 123 || c == 125) { return 0 - 1; }
+            p = p + 1;
+        }
+    }
+    return 0 - 1;
+}
+
+# e is just past a `syscall` (kind 0: its first argument must be SYS_WRITE or 1) or a
+# `sys_write` / `_aw_write` (kind 1) name on the line starting at ls. When the call writes a
+# string literal with an integer-literal length, warn if the length is not the literal's bytes.
+fn _wl_call(buf, e, total, kind, lineno, ls): i64 {
+    var lp = _call_paren(buf, e, total);
+    if (lp < 0) { return 0; }
+    var lim = lp + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var q = _ov_ws(buf, lp + 1, lim);
+    if (kind == 0) {
+        if (q + 9 <= lim && memeq(buf + q, "SYS_WRITE", 9) == 1) { q = q + 9; }
+        elif (q < lim && load8(buf + q) == 49) { q = q + 1; }
+        else { return 0; }
+        if (q < lim) { if (_is_id_cont(load8(buf + q)) == 1) { return 0; } }
+        q = _ov_ws(buf, q, lim);
+        if (q >= lim) { return 0; }
+        if (load8(buf + q) != 44) { return 0; }
+        q = q + 1;
+    }
+    q = _wl_skip_arg(buf, q, lim);
+    if (q < 0) { return 0; }
+    q = _ov_ws(buf, q + 1, lim);
+    if (q >= lim) { return 0; }
+    if (load8(buf + q) != 34) { return 0; }
+    var se = _lx_skip_str(buf, q + 1, lim);
+    if (se < 0) { return 0; }
+    var blen = _wl_lit_len(buf, q + 1, se - 1);
+    q = _ov_ws(buf, se, lim);
+    if (q >= lim) { return 0; }
+    if (load8(buf + q) != 44) { return 0; }
+    q = _ov_int(buf, _ov_ws(buf, q + 1, lim), lim);
+    if (q < 0) { return 0; }
+    var n = _ov_val;
+    q = _ov_ws(buf, q, lim);
+    if (q >= lim) { return 0; }
+    if (load8(buf + q) != 41) { return 0; }
+    if (n == blen) { return 0; }
+    if (_ov_exempt(buf, ls, total, 0) == 1) { return 0; }
+    _ov_m0();
+    _ov_ms("write length ");
+    _ov_mn(n);
+    _ov_ms(", but its literal is ");
+    _ov_mn(blen);
+    if (n < blen) {
+        _ov_ms(" bytes (the write drops the last ");
+        _ov_mn(blen - n);
+        _ov_ms(")");
+    } else {
+        _ov_ms(" bytes (the write reads ");
+        _ov_mn(n - blen);
+        _ov_ms(" past it)");
+    }
+    return warn(lineno, _ov_mb);
+}
+
+fn lint_mem_rules(buf, total): i64 {
+    var p = 0;
+    var lineno = 1;
+    var ls = 0;          # where the line being walked starts
+    var depth = 0;
+    var fst = 0;         # 0 outside a fn; 1 a `fn` header read, its body not open; 2 in the body
+    var fdep = 0;        # the depth the body's `{` opened at
+    _ov_n = 0;
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 10) {
+            lineno = lineno + 1;
+            p = p + 1;
+            ls = p;
+        }
+        elif (c == 34) {
+            var sq = _lx_skip_str(buf, p + 1, total);
+            if (sq < 0) { sq = total; }
+            while (p < sq) {
+                if (load8(buf + p) == 10) {
+                    lineno = lineno + 1;
+                    ls = p + 1;
+                }
+                p = p + 1;
+            }
+        }
+        elif (c == 39) { p = _lx_skip_char(buf, p, total); }
+        elif (c == 35) {
+            var al = _lx_attr_len(buf, p, total);
+            if (al > 0) { p = p + al; }
+            else { p = _find_eol(buf, p, total); }
+        }
+        elif (c == 123) {
+            if (fst == 1) {
+                fst = 2;
+                fdep = depth;
+                _ov_n = 0;
+            }
+            depth = depth + 1;
+            p = p + 1;
+        }
+        elif (c == 125) {
+            depth = depth - 1;
+            if (fst == 1) { fst = 0; }
+            if (fst == 2) {
+                if (depth <= fdep) {
+                    fst = 0;
+                    _ov_n = 0;
+                } else { _ov_pop(depth); }
+            }
+            p = p + 1;
+        }
+        elif (c == 59) {
+            if (fst == 1) { fst = 0; }
+            p = p + 1;
+        }
+        elif (_is_id_start(c) == 1) {
+            var e = _scan_id_end(buf, p, total);
+            var wl = e - p;
+            var dot = 0;
+            if (p > 0) { if (load8(buf + p - 1) == 46) { dot = 1; } }
+            if (dot == 0) {
+                if (wl == 2 && memeq(buf + p, "fn", 2) == 1) { if (fst == 0) { fst = 1; } }
+                elif (fst == 2 && wl == 3 && memeq(buf + p, "var", 3) == 1) { _ov_decl(buf, e, total, depth); }
+                elif (wl == 7 && memeq(buf + p, "syscall", 7) == 1) { _wl_call(buf, e, total, 0, lineno, ls); }
+                elif (wl == 9 && memeq(buf + p, "sys_write", 9) == 1) { _wl_call(buf, e, total, 1, lineno, ls); }
+                elif (wl == 9 && memeq(buf + p, "_aw_write", 9) == 1) { _wl_call(buf, e, total, 1, lineno, ls); }
+                elif (fst == 2) {
+                    var w = _ov_width(buf, p, wl);
+                    if (w > 0) { _ov_access(buf, p, e, total, w, lineno, ls); }
+                }
+            }
+            p = e;
+        }
+        elif (_is_digit(c) == 1) {
+            p = p + 1;
+            while (p < total) {
+                if (_is_id_cont(load8(buf + p)) == 0) { break; }
+                p = p + 1;
+            }
+        }
+        else { p = p + 1; }
+    }
+    return 0;
+}
+
 fn lint_file(buf, total): i64 {
     var lineno = 1;
     var pos = 0;
@@ -1391,6 +1849,9 @@ fn lint_file(buf, total): i64 {
     if (brace_depth > 0) {
         warn(lineno, "unclosed braces at end of file");
     }
+
+    # === Rules: bare-local-array overrun; write length vs its literal (a walk of its own) ===
+    lint_mem_rules(buf, total);
 
     return 0;
 }

@@ -261,7 +261,9 @@ is best reserved for byte buffers:
 > **Footgun (fixed by the explicit form):** writing a *function-local*
 > `var a[4]` with the slot idiom `store64(&a + i*8, …)` runs off its 8-byte
 > backing — the array only holds 1 slot, not 4. Declare slot arrays as
-> `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
+> `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1]. Since 6.7.11 `cyrius lint` warns
+> on the constant-offset form — `store64(&a + 8, …)` on a local `var a[4]` — see
+> [Linter](#linter).
 
 `N` is any integer **const expression** (6.7.2 — [Constants and `const fn`](#constants-and-const-fn-672)):
 a literal, a `const`, an enum constant bare or qualified, `sizeof(T)`, a `const fn` call,
@@ -4341,6 +4343,22 @@ skips strings and comments. Identifier scanning is also string-
 literal-aware as of v5.7.36 — `var MSG = "FLAG_LATER not yet
 defined"; var FLAG_LATER = 1;` does NOT trigger the forward-ref
 rule because `FLAG_LATER` is inside a `"..."` literal.
+
+**Bare-array overruns and write lengths (6.7.11).** A bare `var a[N]` in a function is N
+**bytes**, rounded up to 8 ([Arrays: byte vs slot sizing](#arrays-byte-vs-slot-sizing-v621)),
+and the compiler refuses `a[i]` on it, so the overrun left to make is the explicit offset.
+`cyrlint` records each local of a fn body, scoped to its block, and warns on a
+`load8/16/32/64(&a + K)` or `store8/16/32/64(&a + K, ..)` — K an integer literal, or no `+ K` at
+all — whose K plus the access width runs past those bytes: `var a[16]; store64(&a + 16, 3);`
+draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. A typed
+local (`var a: i64[4]`), a scalar or a size that is not a literal shadows the name and is not
+checked. An intended offset is marked with `# lint: offset-ok` on the line of the call's name.
+And a write of a string literal with a literal length — `syscall(SYS_WRITE, fd, "…", N)` (or
+`syscall(1, …)`), `sys_write(fd, "…", N)`, `_aw_write(fd, "…", N)` — warns when N is not the
+literal's byte length (`write length 5, but its literal is 6 bytes …`): a raw byte counts once,
+so an em dash `—` is 3, and an escape counts what the lexer stores (`\n` 1, `\xHH` 1, `\u…` its
+UTF-8 length). `#skip-lint` exempts a line from both rules; `# lint: offset-ok` does not
+silence a write.
 
 **Rules see across line breaks (v6.6.5).** A cyrius string may hold a raw newline, and the
 brace counter carries "inside a string" from one line to the next (it used to reset, which
