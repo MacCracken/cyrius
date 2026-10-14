@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.11] — 2026-10-13
+
 ## [6.7.10] — 2026-10-13
 
 **B7 — packed narrow struct fields, the handle line and size-independent struct copies; P5-B — execution coverage

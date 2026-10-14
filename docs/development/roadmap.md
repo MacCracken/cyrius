@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.10** (2026-10-13, release gate GREEN) — B7 packed narrow fields + the handle line + size-independent struct copies, P5-B execution coverage, the 6.7.9 fold wave refolded · cycc **2,114,376 B** · `.text` **1,900,296** · `cycc-native-aarch64` **1,950,240 B** · **573** `.tcyr`, **276** in `crossos/` · **106** `lib/*.cyr` · **474** shell gates under `tests/gates/<bucket>/` · api-surface **5,838** · **137** open issues · **0** open proposals · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.11** (2026-10-13) — B7 packed narrow fields + the handle line + size-independent struct copies, P5-B execution coverage, the 6.7.9 fold wave refolded · cycc **2,114,376 B** · `.text` **1,900,296** · `cycc-native-aarch64` **1,950,240 B** · **573** `.tcyr`, **276** in `crossos/` · **106** `lib/*.cyr` · **474** shell gates under `tests/gates/<bucket>/` · api-surface **5,838** · **137** open issues · **0** open proposals · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
