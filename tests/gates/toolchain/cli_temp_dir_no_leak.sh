@@ -53,6 +53,18 @@
 #   * (6.7.10) `_dep_wt_run` keeping its stderr capture for the process's life again (the pre-fix
 #     `_dep_wt_err` CLI) -> axis 6 RED on all three git rows (1 directory left each, holding wt_err);
 #     its anti-vacuous rows stay GREEN (the queries ran).
+#   * (6.7.11, axis 7) compile() keeping `cpp_<pid>` on a failed compile -> 4 RED (axis 3's compile
+#     error, 7's check on a compile error and on an undefined fn, the compiler killed); distlib's
+#     collect keeping `dlverifyerr<t>` -> 1 RED (7's distlib row); `_cbt_tmpbase` ignoring
+#     $TMPDIR -> 5 RED (axis 1's squeeze, axis 4, and 7's three kill rows); `cc_err` dropped from
+#     check.sh's scratch vocabulary -> 1 RED (7's last row: the kill leaves a name the reaper keeps).
+#
+# AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
+# an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
+# mid-round, the compiler killed by a signal), and a CLI SIGTERM'd mid-compile leaves its dir under
+# an absolute $TMPDIR holding only names check.sh's reaper removes (`_chk_cli_scratch`, read out of
+# scripts/check.sh). Measured before writing it: every one of those failure paths already unlinked
+# its scratch (6.5.19 / 6.6.6 / 6.6.20); the leftovers on this box were all kills mid-compile.
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -360,6 +372,92 @@ else
     check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p6c")"
     sweep_for "$T/p6c"
 fi
+
+# ── AXIS 7 — COMPILE FAILURES leave no scratch, and a KILL leaves only scratch (6.7.11). A dead
+# pid's dir is removed by check.sh only when every entry is compile scratch (the reaper,
+# scripts/check.sh `_chk_cli_scratch`, user decision 2026-10-13). So: every way a compile FAILS
+# with the CLI still alive unlinks its `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (the dir is then
+# empty and goes at exit); and a CLI killed mid-compile leaves exactly names the reaper's
+# vocabulary accepts, under an ABSOLUTE $TMPDIR (trailing slash dropped), never /tmp.
+echo "axis 7 — compile failures leave no scratch; a SIGTERM'd compile leaves only reapable scratch under \$TMPDIR:"
+printf 'include "helper.cyr"\nfn main(): i64 { return nope_undefined_fn(); }\nvar r = main();\n' > "$T/proj/src/undef.cyr"
+mkdir -p "$T/proj/outdir"
+rc7=0; ( cd "$T/proj" && run_cli "$T/p7a" check src/bad.cyr > "$T/o7a" 2>&1 ) || rc7=$?
+check "check on a compile error fails" yes "$([ "$rc7" != 0 ] && echo yes || echo no)"
+check "  …and leaves 0 temp dirs (no cpp_ / cc_err / check_<pid>.tmp)" 0 "$(dirs_for "$T/p7a")"
+sweep_for "$T/p7a"
+rc7=0; ( cd "$T/proj" && run_cli "$T/p7b" check src/undef.cyr > "$T/o7b" 2>&1 ) || rc7=$?
+check "check on an undefined fn fails, naming it" yes "$([ "$rc7" != 0 ] && grep -q nope_undefined_fn "$T/o7b" && echo yes || echo no)"
+check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p7b")"
+sweep_for "$T/p7b"
+rc7=0; ( cd "$T/proj" && run_cli "$T/p7c" build src/ok.cyr outdir > "$T/o7c" 2>&1 ) || rc7=$?
+check "build onto an existing DIRECTORY fails (the rename)" yes "$([ "$rc7" != 0 ] && echo yes || echo no)"
+check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p7c")"
+check "  …and no outdir.tmp.<pid> beside it" 0 "$(ls -d "$T/proj"/outdir.tmp.* 2>/dev/null | wc -l | tr -d ' ')"
+sweep_for "$T/p7c"
+# A distlib verify that REFUSES mid-round (two stdlib leaves declare the name every target
+# lacks): its six per-target children wrote dlverifyerr<t> / dlverifyout<t> and cpp_<child pid>.
+D7="$T/d7"
+mkdir -p "$D7/bin" "$D7/home/versions/$(tr -d '[:space:]' < "$ROOT/VERSION")" "$D7/p/src"
+V7=$(tr -d '[:space:]' < "$ROOT/VERSION")
+cp "$CYRIUS" "$D7/bin/cyrius" && cp "$ROOT/build/cycc" "$D7/bin/cycc" && chmod +x "$D7/bin/cyrius" "$D7/bin/cycc"
+if ( cd "$ROOT" && "$ROOT/build/cycc" < src/main_aarch64.cyr > "$D7/bin/cycc_aarch64" 2>/dev/null ) && chmod +x "$D7/bin/cycc_aarch64"; then
+    cp -R "$ROOT/lib" "$D7/home/versions/$V7/lib"
+    printf 'fn d7tie(): i64 { return 1; }\n' > "$D7/home/versions/$V7/lib/d7_one.cyr"
+    printf 'fn d7tie(): i64 { return 2; }\n' > "$D7/home/versions/$V7/lib/d7_two.cyr"
+    printf '[package]\nname = "d7"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' "$V7" > "$D7/p/cyrius.cyml"
+    printf 'fn d7_a(): i64 { return d7tie(); }\n' > "$D7/p/src/lib.cyr"
+    rc7=0; ( cd "$D7/p" && CYRIUS_HOME="$D7/home" CYRIUS_RESOLVED=1 timeout 300 sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7e" "$D7/bin/cyrius" distlib > "$T/o7e" 2>&1 ) || rc7=$?
+    check "a distlib verify refused mid-round (a tie) fails" yes "$([ "$rc7" != 0 ] && grep -q "more than one stdlib leaf could own it" "$T/o7e" && echo yes || echo no)"
+    check "  …and leaves 0 temp dirs (no dlverify* / cpp_)" 0 "$(dirs_for "$T/p7e")"
+    check "  …and no dist/.dlverify-<pid> mirror" 0 "$(ls -d "$D7/p/dist"/.dlverify-* 2>/dev/null | wc -l | tr -d ' ')"
+    sweep_for "$T/p7e"
+else
+    echo "  SKIP (named): axis 7 distlib row — cycc_aarch64 did not build from src/main_aarch64.cyr"
+fi
+# Stand-in compilers beside a private copy of the CLI (the CLI runs the cycc beside it).
+mkdir -p "$T/k1" "$T/k2"
+cp "$CYRIUS" "$T/k1/cyrius" && cp "$CYRIUS" "$T/k2/cyrius" && chmod +x "$T/k1/cyrius" "$T/k2/cyrius"
+printf '#!/bin/sh\ncat > /dev/null\necho partial\nkill -9 $$\n' > "$T/k1/cycc"
+printf '#!/bin/sh\necho $$ > "%s/k2.cc"\ncat > /dev/null\necho partial\nexec sleep 60\n' "$T" > "$T/k2/cycc"
+chmod +x "$T/k1/cycc" "$T/k2/cycc"
+rc7=0; ( cd "$T/proj" && timeout 120 sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7d" "$T/k1/cyrius" check src/ok.cyr > "$T/o7d" 2>&1 ) || rc7=$?
+check "the COMPILER killed by a signal fails the check" yes "$([ "$rc7" != 0 ] && echo yes || echo no)"
+check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p7d")"
+sweep_for "$T/p7d"
+# The kill shape, under an absolute TMPDIR with a trailing slash.
+TB="$T/tbase"
+mkdir -p "$TB"
+rm -f "$T/k2.cc"
+# (the subshell outlives the CLI it runs, so the TERM is reported to its /dev/null, not here)
+( cd "$T/proj" && TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7f" "$T/k2/cyrius" check src/ok.cyr > "$T/o7f" 2>&1; true ) 2>/dev/null &
+bg7=$!
+w=0
+while [ ! -s "$T/k2.cc" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
+p7f=$(cat "$T/p7f" 2>/dev/null || true)
+[ -n "$p7f" ] && kill -TERM "$p7f" 2>/dev/null
+{ wait "$bg7"; } 2>/dev/null || true
+cc7=$(cat "$T/k2.cc" 2>/dev/null || true)
+[ -n "$cc7" ] && kill -KILL "$cc7" 2>/dev/null
+K7=""
+for d in "$TB/cyrius-$p7f" "$TB/cyrius-$p7f"-*; do [ -d "$d" ] && K7="$d"; done
+check "an absolute \$TMPDIR (trailing slash) is the CLI's temp base: the killed run's dir is under it" yes "$([ -n "$K7" ] && echo yes || echo no)"
+check "  …and nothing of that pid under /tmp" 0 "$(ls -d /tmp/cyrius-"$p7f" /tmp/cyrius-"$p7f"-* 2>/dev/null | wc -l | tr -d ' ')"
+# the reaper's own matcher, read out of scripts/check.sh (never a copy of it)
+sed -n '/^_CHK_CLI_SCRATCH=/,/^_chk_reap_scratch_dir() {/p' "$ROOT/scripts/check.sh" | sed '$d' > "$T/scratch.sh"
+# shellcheck disable=SC1090
+. "$T/scratch.sh"
+nleft=0; nbad=0; bad=""
+if [ -n "$K7" ]; then
+    for f in "$K7"/* "$K7"/.[!.]*; do
+        [ -e "$f" ] || continue
+        nleft=$((nleft + 1))
+        if [ -f "$f" ] && _chk_cli_scratch "${f##*/}"; then :; else nbad=$((nbad + 1)); bad="$bad ${f##*/}"; fi
+    done
+fi
+check "  …it holds the in-flight compile's files (anti-vacuous: $nleft)" yes "$([ "$nleft" -ge 2 ] && echo yes || echo no)"
+check "  …every one of them is scratch check.sh's reaper removes ($(ls -A "$K7" 2>/dev/null | tr '\n' ' '))" 0 "$nbad"
+[ -n "$K7" ] && rm -rf "$K7"
 
 echo ""
 if [ "$fails" = "0" ]; then
