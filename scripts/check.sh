@@ -1240,6 +1240,11 @@ _chk_gate "$ROOT/tests/gates/frontend/array_subscript_forms.sh"
 # path takes `return f(..);` before the vector branch sees it. Legs: host, cx, qemu-aarch64,
 # wine-PE (emulation is NOT hardware — the ecb/ach/cass/pi gate is).
 _chk_gate "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
+# 6.7.11 — a pointer-to-vector parameter (`p: *f64v2`) is a pointer, not a value-form vector: `rd(&b)`
+# compiles, `rd(b)` passes b's address (the user's decision, 2026-10-13: it faulted), a vector of
+# another type is refused by name. The two filed repros, the decision row, 10 refusals and 27 rows,
+# x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/simd_pointer_param.sh"
 
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here

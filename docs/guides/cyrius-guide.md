@@ -3017,6 +3017,18 @@ through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes 
 `g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
 local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
 
+**A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
+`p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and
+is passed `&b`, a `*f64v2`, or a vector **local** `b` itself, whose address is passed, as a struct
+passed to a `*T` parameter is (6.6.20; the user's decision, 2026-10-13). A vector local of another
+type is refused by name — `cannot pass 'f' to a parameter of a different vector type in a call to
+'rd'` — as a struct of another type is (6.7.3), the same-size ones too (`i64v2` into `*i32v4`). ⚠
+Before 6.7.11 the `*` was dropped and the parameter was a value-form vector: `rd(&b)` was refused
+(`value-form SIMD arg must be a local IDENT`), and `rd(b)` compiled and faulted (the body
+dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is called through
+`fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
+registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
+
 ### Packed-op builtins
 
 The raw builtins take **pointer arguments** (a destination and the operand

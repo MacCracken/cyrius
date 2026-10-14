@@ -1640,7 +1640,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     # `STRUCTSZ` has no entry, so it must skip the test entirely rather than answer it wrong.
     # CHANGELOG [6.6.5]
     var _sa_ptr = 0;
-    if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
+    if (_is_simd_any(S, lt) == 1) { if (_sarg_vec_ptr(S, fi, argc, lt) == 0) { return 0; } }   # 6.7.11
     else {
         if (GLPTRP(S, li) == 0) { _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S)); }   # 6.7.3 (a `*T` converts: _sarg_name_sid)
         _sa_ptr = _local_struct_is_ptr(S, li, lt);
@@ -1651,6 +1651,33 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
+}
+
+# ⛔ 6.7.11 — A VECTOR PASSED TO A `*V` PARAMETER PASSES ITS ADDRESS, as a struct passed to a `*T`
+# parameter does (6.6.20); a vector of ANOTHER type is refused by name, as a struct of another type is
+# (6.7.3). The user's decision, 2026-10-13: (a). Vector local (SLTYPE `lt`, the cursor on its name)
+# as argument `argc` of `fi`: 1 = push its address (the caller's arm), 0 = the value push. A
+# value-form vector parameter is not this rule: SysV / aarch64 / cx never reach here (the SIMD
+# mask routes it), Win64 takes the address the arm pushes. (A `*V` local's SLTYPE is 0: its value.)
+fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
+    var pv = _pvec_param(S, fi, argc);
+    if (pv == 0) { return _TARGET_PE; }
+    if (pv != 0 - lt) {
+        ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
+          L64(_fnt_names + fi * 8));
+    }
+    return 1;
+}
+# The vector type (its descriptor sid) parameter `k` of fn `fi` points at when it is declared `*V`,
+# read from the definition's tokens (a call above the definition has them too); 0 = not a `*V`.
+fn _pvec_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 8) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    return _ptc_vec_sid(_classify_param_type(S, TOKVAL(S, i + 1)));
 }
 
 # ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
@@ -12224,12 +12251,45 @@ fn _prescan_skip_fn(S): i64 {
 # and the callee dereferenced it (SIGSEGV, or a silent read / write through whatever s held),
 # while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
 fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
-    if (_classify_param_type(S, tnoff) != 0) { return 0; }
+    var c = _classify_param_type(S, tnoff);
+    if (c != 0) {
+        if (isptr == 1) { return _ptc_is_vec(c); }   # 6.7.11: `p: *V` takes an address, as `*S` does
+        return 0;
+    }
     var sid = FINDSTRUCT(S, tnoff);
     if (sid <= 0) { return 0; }
     if (isptr == 1) { return 1; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     return 1;
+}
+# ⛔ 6.7.11 — A POINTER TO A VECTOR IS A POINTER PARAMETER. Both scans consumed the `*` of `p: *f64v2`
+# and then classified the bare name, so the parameter became a VALUE-form vector (two or four slots
+# filled from XMM / V registers, a by-pointer copy-in on Win64) and every caller routed it as one:
+# `rd(&b)` was "value-form SIMD arg must be a local IDENT", and `rd(b)` compiled and handed the body a
+# vector it dereferenced as an address (SIGSEGV). Behind a `*` a vector class is class 9 here, which
+# no mask arm takes: the parameter is one integer word whose step is the vector's size
+# (`_mark_ptr_param`), address-passed like `p: *S` (`_param_wants_struct_ptr`), and a vector passed to
+# it passes its address (`_sarg_vec_ptr`, the user's decision, 2026-10-13: (a)). The cursor is on the
+# type's name in both scans, so the token before it says whether a `*` precedes it. CHANGELOG [6.7.11]
+fn _param_class(S, tnoff): i64 {
+    var c = _classify_param_type(S, tnoff);
+    if (TOKTYP(S, GTI(S) - 1) != 8) { return c; }
+    if (_ptc_is_vec(c) == 1) { return 9; }
+    return c;
+}
+# 1 = `_classify_param_type`'s class `c` is a vector (f64v2 / f64v4 / f32v4, an integer 128-bit one).
+fn _ptc_is_vec(c): i64 {
+    if (c >= 6) { if (c <= 8) { return 1; } }
+    if (c <= 0 - 2048) { return 1; }
+    return 0;
+}
+# ... and its descriptor sid (the SLTYPE a vector local of that type carries, negated), or 0.
+fn _ptc_vec_sid(c): i64 {
+    if (c == 6) { return 2093; }
+    if (c == 7) { return 2125; }
+    if (c == 8) { return 2121; }
+    if (c <= 0 - 2048) { return 0 - c; }
+    return 0;
 }
 # 1 = the parameter being parsed was declared `name: *T` (`_mark_ptr_param` marked the slot it
 # takes next; `_param_record` clears the mark).
@@ -12744,7 +12804,7 @@ fn _prescan_params_scan(S, fi): i64 {
                         struct_mask = _tup_pscan(S, fi, pc, struct_mask, _pptr);
                         bvcp = _tup_bvcp(bvcp, pc);
                     } elif (PEEKT(S) == 2) {
-                        var c = _classify_param_type(S, PEEKV(S));
+                        var c = _param_class(S, PEEKV(S));   # 6.7.11: a `*V` is a pointer
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
                         elif (c == 2) { cstring_mask = _pmw(cstring_mask, pc, 4); }
                         elif (c == 3) { result_mask = _pmw(result_mask, pc, 8); }
@@ -15165,7 +15225,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # own per-fn bitmask in a parallel heap region (0x93A000+);
                     # PARSE_FNCALL consults the masks for call-site type checks
                     # and value-form SIMD-arg routing.
-                    var _ptc = _classify_param_type(S, tnoff);
+                    var _ptc = _param_class(S, tnoff);   # 6.7.11: a `*V` is a pointer (class 9)
                     # v6.4.57 (Gap A) — scalar f64/f32 param (exact "f64\0" / "f32\0").
                     # Only when _ptc == 0 so the SIMD f*v* vectors (which share the
                     # "f64"/"f32" prefix) are already caught by the classifier; the

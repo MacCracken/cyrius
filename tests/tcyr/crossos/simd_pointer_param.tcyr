@@ -1,0 +1,107 @@
+# simd_pointer_param.tcyr — 6.7.11: a pointer-to-vector PARAMETER (`p: *f64v2`) is a pointer: one
+# integer word whose step is the vector's size, as a `*f64v2` local is. A vector passed to it passes its
+# ADDRESS, as a struct passed to a `*T` parameter does (6.6.20) — the user's decision, 2026-10-13: (a).
+#
+# ⛔ THE DEFECT, 6.6.10 - 6.7.10. Both parameter scans consumed the `*` and classified the bare vector
+# name, so the parameter was a VALUE-form vector (XMM / V registers; on Win64 a by-pointer copy-in) and
+# every caller routed it as one: `rd(&b)` was refused "value-form SIMD arg must be a local IDENT", and
+# `rd(b)` compiled and the body dereferenced lane 0's bits as an address (SIGSEGV; cx "guest address
+# out of range"). A vector of another type into `*V` is refused by name (param_type_grammar's sibling
+# gate, tests/gates/codegen/simd_pointer_param.sh).
+# Filed: docs/development/issues/2026-10-10-pointer-to-vector-parameter-is-value-form.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/codegen/simd_pointer_param.sh, on the
+# four hardware hosts by the release gate's cross-OS leg — Win64 routed this through its by-pointer
+# value-form path, so cass is the leg that matters most.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+
+struct Sv { k; }
+
+# --- reads through `*V`, each vector type ----------------------------------------------------------
+fn sp_lo(p: *f64v2): i64 { return load64(p); }
+fn sp_hi(p: *f64v2): i64 { var q = p; return load64(q + 8); }   # an untyped copy steps bytes
+fn sp_w3(p: *f64v4): i64 { var q = p; return load64(q + 24); }
+fn sp_f4(p: *f32v4): i64 { var q = p; return load32(q + 12); }
+fn sp_i4(p: *i32v4): i64 { var q = p; return load32(q + 8); }
+fn sp_i64v2(p: *i64v2): i64 { var q = p; return load64(q + 8); }
+# --- the step: `p + 1` is one whole vector -----------------------------------------------------------
+fn sp_step2(p: *f64v2): i64 { var a = p + 1; var b = p; return a - b; }
+fn sp_step4(p: *f64v4): i64 { var a = p + 1; var b = p; return a - b; }
+fn sp_next(p: *f64v2): i64 { return load64(p + 1); }        # the second vector's lane 0
+fn sp_next4(p: *f64v4): i64 { return load64(p + 1); }
+# --- writes reach the caller's vector -----------------------------------------------------------------
+fn sp_wr(p: *f64v2, v): i64 { store64(p, v); return 0; }
+# --- mixed signatures: the XMM / V ordinals count only the value-form vectors -----------------------
+fn sp_mix(v: f64v2, p: *f64v2): i64 { return load64(&v + 8) * 100 + load64(p); }
+fn sp_mix2(p: *f64v2, v: f64v2, k): i64 { return load64(p) * 100 + load64(&v) + k; }
+fn sp_mix3(a: f64v4, p: *f32v4, b: f64v2): i64 {
+    var q = p;
+    return load64(&a + 24) * 10000 + load32(q) * 100 + load64(&b + 8);
+}
+fn sp_seventh(a, b, c, d, e, f, p: *f64v2): i64 { return load64(p) + a; }   # stack-passed on SysV / Win64
+# --- a method, a generic, a call handed on, a tail position -------------------------------------------
+impl Sv {
+    fn rdm(self, p: *f64v2): i64 { return load64(p) + self.k; }
+}
+fn sp_gen<T>(p: *f64v2, x: T): i64 { return load64(p) + x; }
+fn sp_pass(p: *f64v2): i64 { return sp_lo(p); }
+fn sp_vparam(v: f64v2): i64 { return sp_hi(v); }             # a value-form parameter handed to `*V`
+fn sp_tail(b: f64v2): i64 { return sp_hi(b); }
+fn sp_tail2(): i64 { var c: f64v2 = f64v2_make(5, 6); return sp_hi(c); }   # its frame outlives the call
+
+fn sp_rows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var w: f64v4 = f64v4_make(1, 2, 3, 44);
+    var f: f32v4 = f32v4_make(5, 6, 7, 88);
+    var iv: i32v4 = i32v4_make(9, 10, 77, 12);
+    var lv: i64v2;
+    store64(&lv, 13);
+    store64(&lv + 8, 66);
+    # the filed shapes: `rd(&b)` and `rd(b)` both pass b's address
+    assert_eq(sp_lo(&b), 11, "*f64v2: rd(&b) reads lane 0");
+    assert_eq(sp_lo(b), 11, "*f64v2: rd(b) passes b's address (lane 0)");
+    assert_eq(sp_hi(b), 22, "*f64v2: rd(b), lane 1");
+    var pl: *f64v2 = &b;
+    assert_eq(sp_lo(pl), 11, "*f64v2: a *f64v2 local passes its value");
+    var up = &b;
+    assert_eq(sp_hi(up), 22, "*f64v2: an untyped pointer");
+    assert_eq(sp_w3(w), 44, "*f64v4: rd(w), lane 3");
+    assert_eq(sp_w3(&w), 44, "*f64v4: rd(&w), lane 3");
+    assert_eq(sp_f4(f), 88, "*f32v4: rd(f), lane 3");
+    assert_eq(sp_i4(iv), 77, "*i32v4: rd(iv), lane 2");
+    assert_eq(sp_i64v2(lv), 66, "*i64v2: rd(lv), lane 1");
+    assert_eq(sp_step2(&b), 16, "*f64v2: p + 1 steps 16");
+    assert_eq(sp_step4(&w), 32, "*f64v4: p + 1 steps 32");
+    var two: f64v2[2];
+    store64(&two + 16, 31);
+    assert_eq(sp_next(&two), 31, "*f64v2: load64(p + 1) is the next vector");
+    var two4: f64v4[2];
+    store64(&two4 + 32, 41);
+    assert_eq(sp_next4(&two4), 41, "*f64v4: load64(p + 1) is the next vector");
+    sp_wr(b, 99);
+    assert_eq(load64(&b), 99, "*f64v2: a write through p reaches b");
+    store64(&b, 11);
+    var m: f64v2 = f64v2_make(3, 4);
+    assert_eq(sp_mix(m, b), 411, "(v: f64v2, p: *f64v2)");
+    assert_eq(sp_mix2(b, m, 5), 1108, "(p: *f64v2, v: f64v2, k)");
+    assert_eq(sp_mix3(w, f, m), 440504, "(a: f64v4, p: *f32v4, b: f64v2)");
+    assert_eq(sp_seventh(1, 2, 3, 4, 5, 6, b), 12, "*f64v2 as the seventh (stack) parameter");
+    var s: Sv;
+    s.k = 100;
+    assert_eq(s.rdm(b), 111, "*f64v2 on an impl method");
+    assert_eq(sp_gen(b, 1000), 1011, "*f64v2 on a generic");
+    assert_eq(sp_pass(&b), 11, "*f64v2 handed on as a pointer");
+    assert_eq(sp_vparam(m), 4, "a value-form parameter passed to *f64v2");
+    assert_eq(sp_tail(b), 22, "a value-form parameter passed in a tail position");
+    assert_eq(sp_tail2(), 6, "a local passed in a tail position");
+    assert_eq(sp_lo((b)), 11, "*f64v2: rd((b)) — the parentheses are transparent");
+    assert_eq(sp_fwd(b), 22, "*f64v2 on a fn defined below (pass 1)");
+    assert_eq(fncall1(&sp_lo, &b), 11, "fncall1(&rd, &b): the pointer in an integer register");
+    assert_eq(callptr(&sp_hi, &b), 22, "callptr(&rd, &b)");
+    return 0;
+}
+fn sp_fwd(p: *f64v2): i64 { var q = p; return load64(q + 8); }
+
+sp_rows();
+var r = assert_summary();
