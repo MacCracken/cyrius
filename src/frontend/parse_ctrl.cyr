@@ -222,9 +222,9 @@ fn PARSE_IF(S): i64 {
 # Per-expression state (nesting-safe), 8 words: [0] class (0 none yet, 1 integer, 2 f64, 3 f32,
 # 4 a small struct), [8] its sid, [16] every branch boolean, [24] any f64 / f32 TYPED (not only
 # flagged), [32] the common float-builtin flag (-1 unset), [40] the common pointer scale (-1 unset),
-# [48] the widest SEXW, [56] the expression's first token.
+# [48] the widest SEXW, [56] the expression's first token, [64] every branch a pointer (6.7.11).
 fn PARSE_IF_EXPR(S): i64 {
-    var st = alloc(64);
+    var st = alloc(72);
     S64(st, 0);
     S64(st + 8, 0);
     S64(st + 16, 1);
@@ -233,6 +233,7 @@ fn PARSE_IF_EXPR(S): i64 {
     S64(st + 40, 0 - 1);
     S64(st + 48, 0);
     S64(st + 56, GTI(S));
+    S64(st + 64, 1);
     _ie_arm(S, st);
     _ie_finish(S, st);
     return 1;
@@ -436,6 +437,7 @@ fn _ie_kind(S, st, bti): i64 {
     var fbk = _FBR_KIND(S);
     var et = GESTYPE(S);
     var ps = _pk_word(S);   # 6.7.8 (C2-5): the branch's element kind only when its own
+    var pw = GPSC(S);       # 6.7.11: the word a by-value argument judges (`_hl_parg`)
     var xw = GEXW(S);
     var cl = 1;
     var sid = 0;
@@ -469,6 +471,7 @@ fn _ie_kind(S, st, bti): i64 {
     # 6.7.8 (C2-3a): the pointer step words merge by step (`_ps_merge`) — two kinds of one step keep it.
     if (L64(st + 40) == 0 - 1) { S64(st + 40, ps); } else { S64(st + 40, _ps_merge(L64(st + 40), ps)); }
     if (xw > L64(st + 48)) { S64(st + 48, xw); }
+    if (_hl_parg(S, bti, GTI(S), pw) == 0) { S64(st + 64, 0); }   # 6.7.11: a value branch
     return 0;
 }
 # Merge one branch (class `cl`, struct `sid`; `fl` packs typed | bool << 1 | float-builtin flag << 2).
@@ -577,6 +580,12 @@ fn _ie_finish(S, st): i64 {
     if (cl == 1) { if (fbk == 3) { _FBR_MARK(S, 3); } }
     if (cl == 4) { _ie_struct_result(S, st); }
     if (cl == 1) { if (L64(st + 16) == 1) { _BX_MARK(S); } }
+    _iep_cp = 0 - 1;   # 6.7.11: every branch a pointer (`_hl_ie_ptr`, parse_decl.cyr)
+    if (L64(st + 64) == 1) {
+        _iep_beg = L64(st + 56);
+        _iep_end = GTI(S);
+        _iep_cp = GCP(S);
+    }
     return 0;
 }
 # A small-struct result keeps its type: the estype operator dispatch reads, and a `-3` struct-call

@@ -28,6 +28,9 @@
 # 7 B are copied byte-exact through a temp — a frame temp in a fn, a hidden global at top level (no
 # byte past the object is read: the gate's PP row puts one at the end of a mapping).
 #
+# 6.7.11 (the e_ rows): the two edges B7-1b left — an if-expression whose every branch is a pointer, of
+# any steps, and an integer on the left of a one-byte struct pointer (decision 1(b) extended, the user's
+# decision 2026-10-13) — pass the struct too; a pointer beside a value in an if-expression stays a value.
 # Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (MB1 .. MB9), which runs this file
 # on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
 # CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
@@ -272,6 +275,79 @@ fn z7() {
 fn z8p(p: *S8) { var r = take8(p); return r; }
 fn z8() { var b: S8; b.v = 0 - 7000000000; var p: *S8 = &b; return take8(&b) + take8(p) + z8p(&b); }
 
+# ── 6.7.11: the two edges B7-1b left (issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md) ──
+# (1) An if-expression whose branches are all pointers, of DIFFERENT steps (`py` step 7 beside `&s2` step
+# 1, `pz` step 4) merged to no step and passed the address as the struct (168 / 56 / 152 / 136 where 5 is
+# right); one whose branches share step 1 under a narrow condition (`n == 1`, `n: i32`) read the
+# condition as the narrow term. (2) An integer on the LEFT of a one-byte struct pointer (`m + pb`, `0 +
+# pb`, `n + pb` with `n: i32` / `u8`) or a narrow local left of a wider one (`n + pb2`) passed the address
+# too (80 / 96 / 16 / 208 / 112). The user's decision, 2026-10-13: "(a) Yes, extend 1(b)" — `n + pb` is
+# that pointer everywhere. A mixed pointer / value if-expression stays a value (the boundary).
+fn e_ie7(c) {
+    var s: B7; s.a = 5; s.b = 0; s.c = 0;
+    var s2: B7; s2.a = 6; s2.b = 0; s2.c = 0;
+    var x = 9;
+    var py: *B7 = &s;
+    var py2: *B7 = &s2;
+    var pz: *B4 = &s2;
+    var r = 0;
+    if (t7(if (c == 1) { py } else { &s2 }) == 50000000 + (1 - c) * 10000000) { r = r + 1; }
+    if (t7(if (c == 1) { &s } else { py2 }) == 50000000 + (1 - c) * 10000000) { r = r + 10; }
+    if (t7(if (c == 1) { py } else { &x }) == 50000000 + (1 - c) * 40000000) { r = r + 100; }
+    if (t7(if (c == 1) { py } else { pz }) == 50000000 + (1 - c) * 10000000) { r = r + 1000; }
+    if ((s + (if (c == 1) { py } else { &s2 })) == 100000000 + (1 - c) * 10000000) { r = r + 10000; }
+    return r;
+}
+fn e_ie_narrow(n: i32) {
+    var t: Three1; t.a.a = 1; t.b.a = 2; t.c.a = 3;
+    var pa: *B1 = &t;
+    var b3: B1; b3.a = 3;
+    var s: B7; s.a = 5; s.b = 0; s.c = 0;
+    var py: *B7 = &s;
+    return t1(if (n == 1) { pa } else { &b3 }) * 10 + t7(if (n == 1) { py } else { &s }) / 10000000;
+}
+fn e_ie_8(c) {
+    var s: S8; s.v = 5;
+    var x = 9;
+    var sp: *S8 = &s;
+    return take8(if (c == 1) { sp } else { &x });
+}
+fn e_ie_mixed(c) {
+    var s: B7; s.a = 5; s.b = 0; s.c = 0;
+    var py: *B7 = &s;
+    return t7(if (c == 1) { py } else { 5 });
+}
+fn e_left_1() {
+    var t: Three1; t.a.a = 1; t.b.a = 2; t.c.a = 3;
+    var pb: *B1 = &t;
+    var m = 1;
+    var z = 0;
+    var n: i32 = 2;
+    var u: u8 = 0;
+    return t1(m + pb) * 10000 + t1(0 + pb) * 1000 + t1(n + pb) * 100 + t1(u + pb) * 10 + t1(z + pb);
+}
+# A chain: the LAST `+` carries the pointer (`(n - 2) + pb`, `(m + 1) + pb`).
+fn e_left_chain() {
+    var t: Three1; t.a.a = 1; t.b.a = 2; t.c.a = 3;
+    var pb: *B1 = &t;
+    var n: i32 = 2;
+    var m = 1;
+    return t1(n - 2 + pb) * 10 + t1(m + 1 + pb);
+}
+fn e_left_2() {
+    var b: B2; b.a = 0 - 300;
+    var pb2: *B2 = &b;
+    var m = 0;
+    var n: i32 = 0;
+    return t2(m + pb2) + t2(n + pb2);
+}
+fn e_left_8() {
+    var s: S8; s.v = 5;
+    var sp: *S8 = &s;
+    var n: i32 = 0;
+    return take8(n + sp);
+}
+
 assert_eq(a_local_8(), 5, "a *T local passes its struct");
 assert_eq(a_local_8(), a_local_h(), "  = its 16 B twin");
 assert_eq(a_amp_8(), 5, "&s passes the struct");
@@ -347,4 +423,14 @@ assert_eq(z5(), 5 * (0 - 6999996), "5 B: &b, *B local, *B parameter, *B global, 
 assert_eq(z6(), 5 * (0 - 700000300), "6 B: &b, *B local, *B parameter, &G, closure");
 assert_eq(z7(), 6 * (0 - 69700004), "7 B: &b, *B local, *B parameter, *B global, closure, operand");
 assert_eq(z8(), 3 * (0 - 7000000000), "8 B: &b, *B local, *B parameter");
+assert_eq(e_ie7(1), 11111, "6.7.11 an if-expression of pointers of different steps (then): 4 forms, an operand");
+assert_eq(e_ie7(0), 11111, "6.7.11 an if-expression of pointers of different steps (else)");
+assert_eq(e_ie_narrow(1), 15, "6.7.11 an if-expression of pointers under a narrow i32 condition (then)");
+assert_eq(e_ie_narrow(0), 35, "6.7.11 an if-expression of pointers under a narrow i32 condition (else)");
+assert_eq(e_ie_8(1) * 10 + e_ie_8(0), 59, "6.7.11 8 B: an if-expression of a *S8 and &x");
+assert_eq(e_ie_mixed(0), 50000000, "6.7.11 boundary: a pointer beside a value stays a value (5 is B7's word)");
+assert_eq(e_left_1(), 21311, "6.7.11 an integer left of a *B1: m + pb, 0 + pb, n + pb (i32), u + pb (u8)");
+assert_eq(e_left_chain(), 13, "6.7.11 a chain: n - 2 + pb (n: i32), m + 1 + pb");
+assert_eq(e_left_2(), 2 * (0 - 300), "6.7.11 m + pb2 and n + pb2 (n: i32) into a 2 B struct");
+assert_eq(e_left_8(), 5, "6.7.11 8 B: n + sp (n: i32)");
 var r = assert_summary();

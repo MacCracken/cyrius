@@ -217,6 +217,12 @@
 #       element count; DXn a narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) -
 #       q32` is `n - p`; DXR the issue's repro VERBATIM: d1, d2, d3 refused, r silent. The value file's
 #       onebyte_rows (in typed_pointer_step.tcyr, the PL legs) pin every value, which no row changes.
+#   DXs `n + pb` with `pb: *B1` IS that pointer too (6.7.11; the user's decision 2026-10-13: "(a) Yes,
+#       extend 1(b)"; issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md): DXs1 `(1 + src)
+#       - q32` from each `*B1` source and `(m + pb) - q32` refused (each compiled, a byte difference);
+#       DXs2 the control; DXs3 the declaration / assignment / global store silent (they warned); DXs4 one
+#       element size an element count; DXs5 an if-expression of `py` and `&s` keeps no step (its warning,
+#       and `(if ..) - q32` a plain subtraction) — the argument side is small_struct_pointer_arg.tcyr.
 #
 # MUTATION LEDGER (C2-5, scratch trees, each its 2-stage mutant cycc, this gate + the value file as
 # CYCC=<mutant>; 2026-10-10):
@@ -238,6 +244,11 @@
 #         word: the dereference reads the word now), DX DXr DXc1 (6) DXc2 DXc3 DXR PL0
 #   MOB2  `_add_word` writes any step-1 word (no element-kind test) -> RED DXn, PL0 PL0s PLa-PLg (the value
 #         file's `(1 + w) - q` with `w: u8` refused as a pointer difference)
+#   (6.7.11, decision 1(b) extended to a one-byte struct pointer — `_add_rb1`; scratch trees, 2026-10-14):
+#   the fix reverted (A3's f64 tree, 4b05d52a) -> RED DXs1 (6: compiled, a byte difference) DXs3 (warned)
+#   MOB3  `_ptr_add` without `_add_rb1`             -> RED DXs1 (6) DXs3
+#   MOB4  `_add_rb1` keeping any step-1 word (no `_hl_psid` typing) -> RED DXn, PL0 PL0s PLa PLb PLf PLg PLe
+#         (the value file's `(1 + w) - q` with `w: u8` refused as a pointer difference)
 #   The compiler before this bite -> RED DXc1 (6) DXc2 DXc3 DXR PL0 (its two warnings); the values all pass
 #   (235 of 235: a step of 1 scales nothing). The dereference-only stamp's removal is proven by a corpus
 #   differential: 1098 tree sources compile byte-identically, diagnostics included, with and without it.
@@ -956,6 +967,35 @@ exits dxc5 1 "DXc5: (1 + p8) - p8 and (1 + i8) - p8 stay legal (one element size
     'var B: i64[2];\nfn f(): i64 { var p8: *u8 = &B; var i8: *i8 = &B; return (1 + p8) - p8 + ((1 + i8) - p8) - 1; }\nsyscall(60, f());\n'
 exits dxn 6 "DXn: (1 + w) - q32 with w: u8 (a narrow scalar, no *T) is still n - p" \
     'var B: i64[2];\nfn f(): i64 { var w: u8 = 5; var q32: *u32 = &B; var qa: i64 = q32; return (1 + w) - q32 + qa; }\nsyscall(60, f());\n'
+# DXs: 6.7.11 — decision 1(b) EXTENDED TO A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a)
+# Yes, extend 1(b) in `_add_word`"; issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md):
+# `n + pb` with `pb: *B1` is that pointer, as `n + p8` is. A one-byte struct's word carries no element
+# kind, so `_add_word` wrote no step: `(1 + pb) - q32` was a byte difference (exit 1, no diagnostic) and
+# `var r: *B1 = 1 + pb;` warned. DXs1 each `*B1` source (a local, a parameter, a global, a field, a call)
+# and an i64 local on the left refused as DXc1 is; DXs2 the control `(pb + 1) - q32`; DXs3 the
+# declaration and assignment silent; DXs4 one element size stays an element count; DXs5 an if-expression
+# of `py` / `&s` keeps its merged word (no step): the `*B7` declaration still warns and `(if ..) - q32`
+# stays a plain subtraction (the argument side is small_struct_pointer_arg.tcyr's).
+DXS='var B: i64[2];\nstruct B1 { a: u8; }\nstruct B7 { a: u32; b: u16; c: u8; }\nvar GB: *B1 = 0;\nstruct HB { n; pb: *B1; }\nfn mkb(): *B1 { return &B; }\n'
+for src in pb ab GB h.pb 'mkb()'; do
+    refused "dxs1_$(printf '%s' "$src" | tr -dc 'a-z0-9')" "pointer difference of pointers with different element sizes" \
+        "DXs1: (1 + $src) - q32 with a *B1 is the different-sizes error (it was a byte difference)" \
+        "${DXS}fn f(ab: *B1): i64 { var pb: *B1 = &B; var h: HB; h.pb = &B; GB = &B; var q32: *u32 = &B; return (1 + $src) - q32; }\nsyscall(60, f(&B));\n"
+done
+refused dxs1m "pointer difference of pointers with different element sizes" "DXs1m: (m + pb) - q32 with m an i64 local" \
+    "${DXS}fn f(): i64 { var pb: *B1 = &B; var m = 1; var q32: *u32 = &B; return (m + pb) - q32; }\nsyscall(60, f());\n"
+refused dxs2 "pointer difference of pointers with different element sizes" "DXs2: (pb + 1) - q32 is still the different-sizes error" \
+    "${DXS}fn f(): i64 { var pb: *B1 = &B; var q32: *u32 = &B; return (pb + 1) - q32; }\nsyscall(60, f());\n"
+printf '%b' "${DXS}fn f(): i64 {\n    var pb: *B1 = &B;\n    var m = 3;\n    var r: *B1 = 1 + pb;\n    var g: *B1 = pb;\n    g = m + pb;\n    GB = 2 + pb;\n    return 0;\n}\nsyscall(60, f());\n" > "$T/dxs3.cyr"
+rc=0; timeout 60 "$CC" < "$T/dxs3.cyr" > "$T/dxs3.bin" 2> "$T/dxs3.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/dxs3.err"; then ok "DXs3: 1 + pb, m + pb, 2 + pb into a *B1 declaration, local and global warn nothing"
+else bad "DXs3: rc $rc: $(grep '^warning\|^error' "$T/dxs3.err" | head -2 | tr '\n' '|')"; fi
+exits dxs4 1 "DXs4: (1 + pb) - pb stays legal (one element size): an element count" \
+    "${DXS}fn f(): i64 { var pb: *B1 = &B; return (1 + pb) - pb; }\nsyscall(60, f());\n"
+warns dxs5 "assigning non-pointer to typed pointer" "DXs5: var r: *B7 = if (c == 1) { py } else { &s }; still warns (its merged word is no step)" \
+    "${DXS}fn f(c): i64 { var s: B7; var py: *B7 = &s; var r: *B7 = if (c == 1) { py } else { &s }; return 0; }\nsyscall(60, f(1));\n"
+exits dxs5b 0 "DXs5b: (if (c == 1) { py } else { &s }) - q32 stays a plain subtraction" \
+    "${DXS}fn f(c): i64 { var s: B7; var py: *B7 = &B; var q32: *u32 = &B; var d = (if (c == 1) { py } else { &s }) - q32; return d * 0; }\nsyscall(60, f(1));\n"
 # DXR: the issue's repro VERBATIM: exactly its three differences refused (lines 9, 10, 11 — d2 was
 # silent), and no warning at r (line 8).
 DXRP=docs/development/issues/repros/2026-10-10-int-plus-byte-pointer-drops-step.cyr
@@ -1017,4 +1057,4 @@ refused pldc "pointer difference of pointers with different element sizes" "PLDc
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"

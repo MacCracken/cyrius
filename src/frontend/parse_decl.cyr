@@ -7646,24 +7646,65 @@ fn _hl_byval_arg(S, fi, k, b, ps): i64 {
 # declared `*T`, pointer arithmetic on one — by the compiler's own typing. Step 1 is ambiguous: an i8 /
 # i16 / i32 local also reads with step 1 (`n + 2` adds 2, v6.3.34), so it is decided by `_hl_p1`.
 fn _hl_parg(S, b, e, ps): i64 {
+    if (_hl_ie_ptr(S, b, e) == 1) { return 1; }   # 6.7.11: an if-expression of pointers
     if (ps <= 0) { return 0; }
     if (ps > 1) { return 1; }
     if (GINFN(S) != 1) { return 1; }
     return _hl_p1(S, b, e);
 }
-# Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the leftmost term of a
-# top-level `+` / `-` chain carried it; a primary that reads an i8 / i16 / i32 local (a bare name, an
-# if-expression's branch) is a value, any other (`&s`, `pb`, `mk1p()`, `h.p` of a `*T` step 1) an address.
+# ⛔ 6.7.11 — AN IF-EXPRESSION WHOSE EVERY BRANCH IS A POINTER, by this same typing (`_hl_parg` on each
+# branch, `_ie_kind`), is one as a by-value argument or right operand: its merged step word is 0 when the
+# branches' steps differ (`_ps_merge`: `py` step 7 beside `&s` step 1, or `pz` step 4), so `t7(if (c == 1)
+# { py } else { &s })` passed the address as the B7 (168 where 5 is right), and with one step 1 the whole
+# range's narrow condition (`c: i32`) read it as a value. The merge word itself is unchanged (the
+# `var r: *B7 = if ..` warning, `(if ..) - q`). `_ie_finish` records the if-expression that ended at this
+# code pointer; [b, e), inside any parentheses, must be exactly it. Branches mixing a pointer and a value
+# stay a value. CHANGELOG [6.7.11]
+var _iep_beg = 0 - 1;   # the recorded if-expression's `if` token,
+var _iep_end = 0 - 1;   #   the token after it,
+var _iep_cp = 0 - 1;    #   and the code pointer at its end (-1: none)
+fn _hl_ie_ptr(S, b, e): i64 {
+    if (_iep_cp != GCP(S)) { return 0; }
+    var a = _ie_unparen(S, b, e);
+    if (a != _iep_beg) { return 0; }
+    if (_ie_pe != _iep_end) { return 0; }
+    return 1;
+}
+# Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the left side of the
+# chain's last `+` / `-` carried it — but a `*T` struct pointer on the RIGHT of a `+` carries it (6.7.11,
+# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is); a primary that reads an
+# i8 / i16 / i32 local (a bare name, an if-expression's branch) is a value, any other (`&s`, `pb`,
+# `mk1p()`, `h.p` of a `*T` step 1) an address.
 fn _hl_p1(S, a, e): i64 {
     a = _ie_unparen(S, a, e);
     e = _ie_pe;
     var k = _hl_addop(S, a, e);
-    if (k > a) { return _hl_p1(S, a, k); }
+    if (k > a) {
+        k = _hl_lastop(S, k, e);
+        if (_hl_rcarry(S, k, e) == 1) { return 1; }
+        return _hl_p1(S, a, k);
+    }
     while (a < e) {
         if (_hl_narrow_at(S, a) == 1) { return 0; }
         a = a + 1;
     }
     return 1;
+}
+# The last top-level `+` / `-` of [k, e), `k` the first (`_hl_addop`): the one applied last.
+fn _hl_lastop(S, k, e): i64 {
+    var n = _hl_addop(S, k + 1, e);
+    while (n > k) {
+        k = n;
+        n = _hl_addop(S, k + 1, e);
+    }
+    return k;
+}
+# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`).
+fn _hl_rcarry(S, k, e): i64 {
+    var t = TOKTYP(S, k);
+    if (t != 6) { if (t != 113) { return 0; } }
+    if (_hl_psid(S, k + 1, e) > 0) { return 1; }
+    return 0;
 }
 # The first `+` / `-` (`+%` / `-%` too) of [a, e) outside any bracket, past its first token, else -1.
 fn _hl_addop(S, a, e): i64 {

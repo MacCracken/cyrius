@@ -1011,7 +1011,10 @@ bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped f
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
 `var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
 at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
-the difference was a byte count). `load8` / `store16` / … stay valid for an
+the difference was a byte count). A pointer to a one-byte STRUCT (`pb: *B1`) is such a pointer too
+(6.7.11, the user's decision of 2026-10-13): `m + pb` and `0 + pb` are that pointer, `var r: *B1 = 1 +
+pb;` is silent and `(1 + pb) - q32` is refused as `(pb + 1) - q32` is (through 6.7.10 the
+difference was a byte count and the declaration warned). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
@@ -1533,7 +1536,11 @@ where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
 `*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:
 S1)` a copy of the struct — a `*T` local, parameter, global or capture, in a fn and at top level;
 the callee's writes never reach the pointee. A `*U` of another struct converts, as it always did,
-and is read with the parameter's layout. Over 8 bytes this is what the address-passed parameter
+and is read with the parameter's layout. Since 6.7.11 so do an if-expression whose every branch is a
+pointer, whatever their steps (`t7(if (c == 1) { py } else { &s })`, `py` beside a `*B4`), and an
+integer on the LEFT of a struct pointer (`t1(m + pb)`, `t1(n + pb)` with `n: i32`, `bs1(n + sp)`) —
+through 6.7.10 those passed the address as the struct; an if-expression of a pointer and a value is
+still the value's word. Over 8 bytes this is what the address-passed parameter
 always did; through 6.7.9 a struct of 8 bytes or less got the POINTER as its one word, and the
 callee read the address as its fields, silently. An UNTYPED value is still the struct's word: an
 untyped local holding an address (`var u = &s; bs1(u)`), an integer, an `i8` / `i16` / `i32` value.

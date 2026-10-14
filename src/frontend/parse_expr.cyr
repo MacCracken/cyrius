@@ -1574,9 +1574,13 @@ fn _FBR_ST(S): i64 {
 }
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
 fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
-# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does.
+# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does; `_rhs_b` its first
+# token, set after the parse (a nested `+` inside it has finished), for `_add_rb1` (6.7.11).
+var _rhs_b = 0 - 1;
 fn _RHS_T(S): i64 {
+    var b = GTI(S);
     PARSE_TERM(S);
+    _rhs_b = b;
     _fbr_rhs = _FBR_KIND(S);
     return 0;
 }
@@ -6940,7 +6944,9 @@ fn _ptr_add(S, ps): i64 {
     EMOVCA(S);
     EUNSPILL(S);
     EADDR(S);
-    return _pk_set(S, _add_word(ps, rs));
+    var w = _add_word(ps, rs);
+    if (w == 0) { if (ps == 0) { w = _add_rb1(S, rs); } }   # 6.7.11: `n + pb`, `pb: *B1`
+    return _pk_set(S, w);
 }
 # `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
 # user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
@@ -6951,6 +6957,21 @@ fn _add_word(ps, rs): i64 {
     if (ps != 0) { return ps; }
     if (_ps_step(rs) != 1) { return 0; }
     if (((rs >> 40) & 0xFF) == 0) { return 0; }
+    return rs;
+}
+# ⛔ 6.7.11 — DECISION 1(b) FOR A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a) Yes, extend
+# 1(b)"): `m + pb` / `0 + pb` with `pb: *B1` are that pointer, as `n + p8` is. A one-byte struct's word
+# carries no element kind (a struct is no subscript element), so `_add_word` could not tell it from `&x`
+# or a narrow local's step 1 and wrote no step: `t1(m + pb)` passed the address's low byte as the B1, and
+# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. The right term [`_rhs_b`,
+# cursor) is typed by its tokens (`_hl_psid`, parse_decl.cyr): a `*T` of a one-byte struct keeps `rs`.
+# CHANGELOG [6.7.11]
+fn _add_rb1(S, rs): i64 {
+    if (_ps_step(rs) != 1) { return 0; }
+    if (_rhs_b < 0) { return 0; }
+    var t = _hl_psid(S, _rhs_b, GTI(S));
+    if (t <= 0) { return 0; }
+    if (STRUCTSZ(S, t - 1) != 1) { return 0; }
     return rs;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's

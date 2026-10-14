@@ -344,6 +344,20 @@
 #   MD3  `_op_rhs` without its `_dro_take` arm        -> RED 9: R10 x7, D2 x2 (compiled)
 #   MD4  `_dro_check` answering 0 (no type check)     -> RED 4: D1 x2 / D2 x2 (compiled)
 #   MD5  `_op_rhs`'s want without the wrap (`_dro_want = rb`) -> RED 7: R10 x7 (`a - (*p)`, `a * (*q)`)
+# 6.7.11 POINTER-EDGES MUTATION LEDGER (2026-10-14, the same method; R3's `e_` rows,
+# issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md; the user's decision 2026-10-13: (a)):
+#   the A3 f64 tree (4b05d52a, before the fix)      -> RED R3 x7: 9 rows (the if-expressions of different
+#                                                      steps / under a narrow condition, `m + pb`, `n + pb`,
+#                                                      the chain, `n + pb2`, `n + sp`); R4 exit 111 (it was 0
+#                                                      before B7-1b, still green)
+#   ME1  `_hl_parg` without `_hl_ie_ptr`              -> RED R3: the 5 if-expression rows
+#   ME2  `_ie_kind` never clearing the all-pointer flag -> RED R3: SIGSEGV (`e_ie_mixed`: the value 5 copied
+#                                                      through as an address)
+#   ME3  `_ptr_add` without `_add_rb1`                -> RED R3: `m + pb` / `0 + pb`, the chain's `m + 1 + pb`
+#                                                      (and pointer_subscript_checked DXs1 x6, DXs3)
+#   ME4  `_hl_rcarry` answering 0                     -> RED R3: `n + pb` (i32 / u8), the chain, `n + pb2`, `n + sp`
+#   ME5  `_hl_p1` on the FIRST `+` / `-` (no `_hl_lastop`) -> RED R3: the chain (`n - 2 + pb`)
+#   (`_add_rb1` without its one-byte size test is an equivalent mutant: a step-1 `*T` struct is one byte.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
