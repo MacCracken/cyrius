@@ -29,8 +29,13 @@ regression bisection is grep-then-checkout.
 sh scripts/bench-history.sh           # all 3 tiers (~45s)
 sh scripts/bench-history.sh --tier1   # stdlib only (~5s)
 sh scripts/bench-history.sh --tier2   # + data structures (~10s)
+sh scripts/bench-history.sh --report  # BENCHMARKS.md from the CSV only: no run, no row
 BENCH_ITERS=1000 sh scripts/bench-history.sh   # override iter count
 ```
+
+The `size/*` rows (`size/cycc_bytes`, `size/cycc_text_bytes`) are byte counts and print in
+bytes (`2,114,376 B`); every other row is a time. (Before 6.7.11 the file-size row was named
+`size/cc5_bytes` and both printed as milliseconds — `2ms` for 2,114,376 bytes.)
 
 Run on **every `.NN` release**, not just at closeout — it is step 5 of
 `scripts/release-gate.sh`, run before `version-bump.sh`, and the headline

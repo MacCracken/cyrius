@@ -29,8 +29,10 @@ Created v6.5.19, from the agnosai filing
   The correction is 0.6 % for `keccak/shake256/4KB` (254,019 ns) and 40 % for
   `vec/push_100` (3,566 → ~2,146).
 - **Regime 2's clamped rows** — discard. `1000` there is a formatting artefact.
-- **`compiler/*` and `size/*` rows — CLEAN in every regime.** They are timed by
-  `date +%s%N` inside `bench_cmd()` (`scripts/bench-history.sh`) and never touch
+- **`compiler/*` and `size/*` rows — CLEAN in every regime.** `compiler/*` rows are timed
+  by `date +%s%N` inside `bench_cmd()` (`scripts/bench-history.sh`; the `phase_*` rows by
+  the compiler's `CYRIUS_PROF`), and `size/*` rows are byte counts (`size/cycc_bytes`,
+  `size/cycc_text_bytes` — `BENCHMARKS.md` prints them in bytes since 6.7.11); neither touches
   `lib/bench.cyr`. **The release-gate headline (`self_compile` ms, `cycc` size) is
   unaffected by any of this** — the growth-tax series is intact.
 
@@ -82,8 +84,8 @@ What moves between regime 4 and regime 5:
 - **macOS arm64 gains resolution.** The Darwin clock id moved 6 → 4; id 6 is
   `gettimeofday - boottime` with microsecond resolution, which was the 1,000 ns tick
   measured on ecb.
-- **`compiler/*` and `size/*` rows are unaffected**, as in every regime — they are timed
-  by `date +%s%N` in `bench_cmd()` and never touch `lib/bench.cyr`.
+- **`compiler/*` and `size/*` rows are unaffected**, as in every regime — they never touch
+  `lib/bench.cyr`.
 
 ⛔ **Regime 5 still reports 0 in one case, and it is a statement about the instrument.**
 When a row's windows do not in total outlast the clock reads that bracketed them
