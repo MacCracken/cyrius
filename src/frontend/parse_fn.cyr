@@ -905,9 +905,130 @@ fn _mret_land(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.11 — A FN DECLARED `: (T1, T2[, T3])` RETURNS ITS VALUES (the user's decision, 2026-10-13).
+# Three spellings write every return register: `return (a, b[, c]);` of the declared arity, `return
+# t;` of a tuple (its arm judges the arity and classes, `_ret_tup_ok`), and a whole call — parentheses
+# around it transparent — whose callee returns as many values (declared, or recorded in pass 1,
+# `_fn_ret_arity`) or cannot be judged (a fn pointer, a callee that may forward a pair). Anything else
+# set rax alone and the caller's `b` / `c` read whatever an earlier call left in rdx / r3, silently:
+# `return 5;`, `return p;` of a struct local (its first word), a bare `return;`, a literal of another
+# arity, a call to a provably one-value, struct, vector or dyn callee or to one of another arity.
+# Refused by name at the expression (token `st`), on every target, the tail-call arm included. Judged
+# before the arms parse it and reported after them (PARSE_RETURN), so a refusal of their own — `return
+# h.p;`'s tuple field, an undefined name — speaks first; in a file that has already failed it is
+# reported up front, where the panic latch keeps the statement to one error. An #inline replay parses
+# the callee's body in the caller's context: its definition checked itself. Under --syntax-only a
+# sibling file's tuple or callee is unknown: silent. 1 = refused, to report after the arms.
+# CHANGELOG [6.7.11]
+fn _mret_ret_check(S, st): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, st);
+    var ok = _mret_ret_ok(S, GFRN(S, _cur_fn_ix));
+    STI(S, sv);
+    if (ok == 1) { return 0; }
+    if (_had_error == 0) { return 1; }
+    _mret_ret_err(S, st);
+    return 0;
+}
+# "'f' returns 2 values - return (a, b)" at token `st`, the cursor kept.
+fn _mret_ret_err(S, st): i64 {
+    var tail = " returns 2 values - return (a, b)";
+    if (GFRN(S, _cur_fn_ix) == 3) { tail = " returns 3 values - return (a, b, c)"; }
+    var sv = GTI(S);
+    STI(S, st);
+    ERR_IDENT(S, "", L64(_fnt_names + _cur_fn_ix * 8), tail, 0 - 1);
+    STI(S, sv);
+    return 0;
+}
+# ... after the arms: reported unless one of them refused something of its own. The statement is
+# whole, so the panic latch is cleared (nothing to resync — the next statement is reported too).
+fn _mret_ret_late(S, st, he): i64 {
+    if (he != 0) { return 0; }
+    if (_had_error != 0) { return 0; }
+    _mret_ret_err(S, st);
+    _panic = 0;
+    return 0;
+}
+# 1 = the return expression at the cursor writes `want` values (or, a tuple, its own arm judges it).
+fn _mret_ret_ok(S, want): i64 {
+    var st = GTI(S);
+    if (TOKTYP(S, st) == 10) {
+        var c = _tup_commas(S, st);
+        if (c > 0) {   # the multi-value arm's literal
+            if (c + 1 == want) { return 1; }
+            return 0;
+        }
+    }
+    var h = _hl_ret_k(S);
+    if (h >= 0) {
+        if (_ret_tup_idx(S, TOKVAL(S, st + h)) != 0 - 1) { return 1; }
+    }
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    return _mret_call_ok(S, st, k, want);
+}
+# ... a whole call `g(..)`, `g<..>(..)`, `x.m(..)` or `callptr(..)` (its callee unknown) inside the
+# `k` parentheses at `st`, then `;`: 1 = its callee returns `want` values or cannot be judged; 0 = no
+# such call, or another count.
+fn _mret_call_ok(S, st, k, want): i64 {
+    STI(S, st + k);
+    var o = 0 - 1;
+    var fi = 0 - 1;
+    if (PEEKT(S) == 137) {
+        if (TOKTYP(S, st + k + 1) == 10) { o = st + k + 1; }
+    } else {
+        o = _dt_call_open(S);
+        if (o >= 0) { fi = _dt_call_fn(S); }
+    }
+    STI(S, st);
+    if (o < 0) { return 0; }
+    var e = _call_close(S, o) + 1;
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, e + k) != 5) { return 0; }
+    return _mret_fwd_ok(S, fi, want);
+}
+# A forwarded callee `fi` (-1: unresolved): 1 = it returns `want` values, or its count is unknown.
+fn _mret_fwd_ok(S, fi, want): i64 {
+    if (fi < 0) { return 1; }
+    var rs = GFRS(S, fi);
+    if (_dyn_is(S, rs) == 1) { return 0; }
+    if (rs == MULTIRET_SID) {
+        if (GFRN(S, fi) == want) { return 1; }
+        return 0;
+    }
+    if (rs > 0) { return 0; }
+    if (rs <= 0 - 2048) { return 0; }
+    var ar = _fn_ret_arity(S, fi);
+    if (ar != 0) {
+        if (ar == want) { return 1; }
+        return 0;
+    }
+    if (_tup_cap_single(S, fi) == 1) { return 0; }
+    return 1;
+}
+
 # Parse return expr ;  (uses PCMPE so return a == b; works)
-# Tail call optimization: return fn(args); → epilogue + jmp fn
+# 6.7.11: a fn declared `: (T1, T2[, T3])` returns its values — judged before the arms
+# (`_mret_ret_check`), reported after them.
 fn PARSE_RETURN(S): i64 {
+    var st = GTI(S) + 1;
+    var bad = _mret_ret_check(S, st);
+    var he = _had_error;
+    _PARSE_RETURN_ARMS(S);
+    if (bad == 1) { _mret_ret_late(S, st, he); }
+    return 0;
+}
+# The return's arms, each a spelling it emits and leaves by (the 6.6.6 note below).
+# Tail call optimization: return fn(args); → epilogue + jmp fn
+fn _PARSE_RETURN_ARMS(S): i64 {
     # v6.2.27 (review P2): a #naked fn emits no epilogue, so a `return` would jump
     # to a non-existent epilogue and fall through into the next fn. A naked ISR
     # must self-terminate in asm (iretq/eret) — reject `return` in its body.

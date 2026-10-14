@@ -242,6 +242,9 @@
 #   MRL `_body_ends_in_loop` returns 0 -> R16x BUILDS (a callee ending in `loop { return x; }` captured a stale rdx)
 #   MRA `_prescan_ret_arity` records nothing -> R16y-R16ab BUILD; MRC `_tup_cap_class` without its count arm ->
 #       R16y-R16ab BUILD
+#   MRP `_mret_ret_check` answering 0 -> R16ad BUILDS; MRL2 its late report not yielding to the arms' own refusal ->
+#       R9n, R9s, R9t, R14n give two errors; MRT its tuple-local arm dropped -> A1-A4, A7 (tuple_values.tcyr's
+#       `return t;` refused)
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -759,6 +762,9 @@ refused r16z "${CAP}h3' into tuple (i64, i64) - it returns 3 values" "R16z: 2 fr
 refused r16aa "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16aa: a declaration-zone capture" "${DMU}var G: (i64, i64, i64) = dm(17, 5);\nsyscall(60, 0);\n"
 refused r16ab "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16ab: \`t = dm(..);\` into an existing tuple" "${DMU}${F5}    var t: (i64, i64, i64);\n    t = dm(17, 5);${E5}"
 exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) still captures" "${DMU}fn f(): i64 {\n    var t: (i64, i64) = dm(17, 5);\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
+# R16ad (6.7.11) — the triage's capture of a declared \`: (i64, i64)\` fn that returns ONE value: its \`u.1\` was
+# a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
+refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base

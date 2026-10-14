@@ -28,6 +28,15 @@
 #           to whatever r8 held) — fn scope, both top-level zones, a forward callee, a method, a
 #           generic, a loop-ending body, `q, r, z = dm(..)`. The matching counts, a fn mixing
 #           arities and a fn that can fall off its end stay silent.
+#   axis 5  6.7.11 — THE PRODUCER: a fn declared `: (T1, T2[, T3])` returns its values. Only `return
+#           (a, b[, c]);` of the declared arity, `return t;` of a tuple and a whole forwarded call whose
+#           callee returns as many values (or cannot be judged) write every return register; anything
+#           else — `return 5;` (d4), `return p;` of a struct local (v1), a bare `return;`, a literal of
+#           another arity, a call to a one-value / struct / other-arity callee, the tail-call arm
+#           included — is refused at the fn, so the caller's `b` cannot read a stale rdx (77 seeded, on
+#           every target). The controls compile and run: a forwarded call of the same arity (56), a
+#           wrapped one, an undeclared callee of that arity, a recursive one, a method and a generic,
+#           a tuple local, a closure's and an #inline callee's own returns inside the fn.
 #
 # MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
 # while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
@@ -42,6 +51,15 @@
 # cnt_mixed refused; the `_body_ends_in_return` test dropped from the arity proof -> cnt_falls_off
 # refused; a generic instance not inheriting the base's record (`_gen_inst_record`) -> cnt_generic
 # builds (`g<i32>` mints `g$i32`).
+# Axis 5: `_mret_ret_check` answering 0 -> every ret_ refusal builds; `_mret_fwd_ok` answering 1 ->
+# ret_tail_one, ret_tail_fwd, ret_fwd_arity3, ret_fwd_undecl3, ret_fwd_struct, ret_fwd_struct_tup
+# build; its struct arm dropped -> ret_fwd_struct_tup builds; its one-value arm dropped ->
+# ret_tail_one, ret_tail_fwd build; the literal's count not compared -> ret_lit3, ret_lit2 build;
+# the call not looked for inside parentheses -> ret_fwd_wrap refused; `callptr` not taken for a call
+# of an unknown callee -> ret_fwd_callptr refused; the #inline-replay guard
+# dropped -> ret_inline_one, ret_inline_two refused; the tuple-local arm dropped -> ret_tuple
+# refused (and tuple_checked.sh's A rows); the late report not yielding to the arms' own refusal ->
+# tuple_checked.sh R9n, R9s, R9t, R14n give two errors.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: destructure_one_value_refused: cannot cd to $ROOT"; exit 1; }
@@ -145,7 +163,43 @@ runs cnt_top      "${DM}var q, r = dm(17, 5);\nsyscall(60, q * 10 + r);\n" 32
 runs cnt_mixed    "fn mix(a) { if (a > 0) { return (a, 1); } return (a, 2, 3); }\nfn f(): i64 {\n    var q, r = mix(4);\n    return q * 10 + r;\n}\nsyscall(60, f());\n" 41
 runs cnt_falls_off "${H3}fn w(x) { if (x > 5) { return (x, 1); } h3(x); }\nfn f(): i64 {\n    var q, r, s = w(1);\n    return q * 100 + r * 10 + s;\n}\nsyscall(60, f());\n" 123
 
-if [ "$rows" -lt 45 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 45)"; exit 1; fi
+echo "axis 5 - a fn declared with its values returns them:"
+R2="'f' returns 2 values - return (a, b)"
+G56='fn g(x): (i64, i64) { return (x, x + 1); }\n'
+SEED='fn h(): (i64, i64, i64) { return (1, 77, 88); }\n'
+# d4 and v1 verbatim (the 6.7.7 B4 planners' probes), then the seeded shapes 2 and 3 verbatim.
+refused ret_d4     'fn f(): (i64, i64) { return 5; }\nfn main(): i64 { var a, b = f(); return a; }\nvar r = main(); syscall(60, r);\n' "$R2"
+refused ret_v1     'struct P { a; b; }\nfn f(): (i64, i64) { var p = P { 3, 4 }; return p; }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' "$R2"
+refused ret_s2     "${SEED}fn f(): (i64, i64) { return 5; }\nfn main(): i64 { var x, y, w = h(); var a, b = f(); return b; }\nvar r = main(); syscall(60, r);\n" "$R2"
+refused ret_s3     "struct P { a; b; }\n${SEED}fn f(): (i64, i64) { var p = P { 3, 4 }; return p; }\nfn main(): i64 { var x, y, w = h(); var a, b = f(); return b; }\nvar r = main(); syscall(60, r);\n" "$R2"
+refused ret_top_decl 'fn f(): (i64, i64) { return 5; }\nvar a, b = f();\nsyscall(60, a + b);\n' "$R2"
+refused ret_top_late 'struct P { a; b; }\nfn f(): (i64, i64) { var p = P { 3, 4 }; return p; }\nsyscall(39);\nvar a, b = f();\nsyscall(60, a + b);\n' "$R2"
+refused ret_bare   'fn f(): (i64, i64) { return; }\nvar a, b = f();\nsyscall(60, a);\n' "$R2"
+refused ret_paren  'fn f(): (i64, i64) { return (5); }\nvar a, b = f();\nsyscall(60, a);\n' "$R2"
+refused ret_lit3   'fn f(): (i64, i64) { return (1, 2, 3); }\nvar a, b = f();\nsyscall(60, a);\n' "$R2"
+refused ret_lit2   'fn f(): (i64, i64, i64) { return (1, 2); }\nvar a, b, c = f();\nsyscall(60, a);\n' "'f' returns 3 values - return (a, b, c)"
+refused ret_tail_one "fn one(x) { return x + 1; }\nfn f(x): (i64, i64) { return one(x); }\nfn main(): i64 { var a, b = f(3); return b; }\nsyscall(60, main());\n" "$R2"
+refused ret_tail_fwd "fn f(x): (i64, i64) { return later(x); }\nfn main(): i64 { var a, b = f(3); return b; }\nsyscall(60, main());\nfn later(x) { var y = x * 2; return y; }\n" "$R2"
+refused ret_fwd_arity3 "fn g3(x): (i64, i64, i64) { return (x, 1, 2); }\nfn f(x): (i64, i64) { return g3(x); }\nvar a, b = f(3);\nsyscall(60, a);\n" "$R2"
+refused ret_fwd_undecl3 "fn h3(a) { return (a, a + 1, a + 2); }\nfn f(): (i64, i64) { return h3(1); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
+refused ret_fwd_struct "struct P { a; b; }\nfn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
+# A struct callee is no multiple values (the B4 rule) even when its own `return (1, 2);` fills rax:rdx.
+refused ret_fwd_struct_tup "struct P { a; b; }\nfn mk(): P { return (1, 2); }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
+refused ret_method 'struct P { a; }\nimpl P { fn m(self): (i64, i64) { return self.a; } }\nfn main(): i64 { var p = P { 4 }; var a, b = p.m(); return a; }\nsyscall(60, main());\n' "'P_m' returns 2 values - return (a, b)"
+runs ret_fwd      "${G56}fn f(x): (i64, i64) { return g(x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
+runs ret_fwd_callptr "${G56}fn f(x): (i64, i64) { var fp = &g; return callptr(fp, x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
+runs ret_fwd_wrap "${G56}fn f(x): (i64, i64) { return (g(x)); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
+runs ret_fwd_undecl "${DM}fn f(): (i64, i64) { return dm(17, 5); }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 32
+runs ret_fwd_mixed "fn mix(a) { if (a > 0) { return (a, 1); } return (a, 2, 3); }\nfn f(): (i64, i64) { return mix(4); }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 41
+runs ret_recursive 'fn f(x): (i64, i64) { if (x == 0) { return (1, 2); } return f(x - 1); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 12
+runs ret_fwd_method 'struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, self.v); } }\nfn f(x): (i64, i64) { var b = B { 7 }; return b.mk(x); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 37
+runs ret_fwd_generic 'fn g2<T>(a: T): (i64, i64) { return (a, a + 1); }\nfn f(x): (i64, i64) { return g2<i64>(x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 56
+runs ret_tuple    'fn f(): (i64, i64) { var t = (3, 4); return t; }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 34
+runs ret_closure  'include "lib/alloc.cyr"\nfn f(x): (i64, i64) { alloc_init(); var c = |y| { return y + 1; }; return (fncall1(c, x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
+runs ret_inline_one '#inline\nfn one(x) { return x + 1; }\nfn f(x): (i64, i64) { return (one(x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
+runs ret_inline_two '#inline\nfn two(x) { return (x, 1); }\nfn f(x): (i64, i64, i64) { var a, b = two(x); return (a, b, 3); }\nfn main(): i64 { var a, b, c = f(2); return a * 100 + b * 10 + c; }\nvar r = main(); syscall(60, r);\n' 213
+
+if [ "$rows" -lt 74 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 74)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

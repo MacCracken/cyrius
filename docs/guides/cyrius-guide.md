@@ -2438,6 +2438,19 @@ var hi, lo, bexp = dd_pow10(k);
 # arity and type the bindings. An undeclared `return (a, b);` still works and
 # leaves the bindings untyped.
 
+# A fn declared `: (T1, T2[, T3])` returns its values (6.7.11). Every `return` is one of:
+#   return (a, b);                    # a literal of the declared arity
+#   return t;                         # a tuple of the declared values (see Tuples)
+#   return g(x);                      # a call returning as many values, forwarded — `(g(x))`,
+#                                     # an undeclared `g` whose returns are `(a, b)`, a method —
+#                                     # or one whose callee is unknown (`callptr(fp, ..)`)
+# Anything else is refused — `'f' returns 2 values - return (a, b)` — because it fills only
+# the first return register and the caller's `b` read whatever an earlier call left:
+#   return 5;   return p;   return;   # one value; a struct local (its first word); bare
+#   return (a, b, c);                 # another arity
+#   return one(x);   return mk();     # a one-value callee; a struct callee (a struct is
+#                                     # not multiple values)
+
 # The destructure requires a CALL as the whole right-hand side (v6.5.21).
 # These are rejected rather than silently reading whatever rdx held:
 #   var q, r = 42;                    # not a call
@@ -2658,6 +2671,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
+| `return 5;`, `return p;` (a struct), `return one(x);` from a fn declared `: (i64, i64)` (6.7.11) | `'f' returns 2 values - return (a, b)` |
 | `h.x, b = f();`, `a[i], b`, `*p, q` | ``a multi-value assignment `a, b = f();` re-assigns plain variables - a field is not one`` (…) |
 | `a, b = 5;`, `a, b = t;` | `multi-value destructure needs a call on the right-hand side` |
 | `first(t)` (`first` is generic) | `a tuple cannot bind a type parameter: 'first' is generic …` |
