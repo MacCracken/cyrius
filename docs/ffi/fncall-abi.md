@@ -147,8 +147,11 @@ depends on the cyrius parameter it lands in:
   receive of it binds that word as a handle — right for a callee returning `*P3`, unsupported
   for one returning a struct by value (no result pointer is passed; it faults). Through a
   variable, receive a 9–16 byte struct's two words (`var a, b = fncall1(fp, 5);`), or give the
-  callee an out-pointer (`fn mk3o(a, out: *P3)`, `callptr(fp, 5, &p)`) at any size; so does a
-  vector result (see *Returning a struct by value* in
+  callee an out-pointer (`fn mk3o(a, out: *P3)`, `callptr(fp, 5, &p)`) at any size. A vector
+  result follows the same line (6.7.11): a known `&f` callee's vector is received whole into a
+  value-form vector local (`var v: f64v2 = callptr(&mkv, 41, 7);`, the Win64 hidden pointer
+  included), and through a variable the receive is refused by name — give the callee an
+  out-pointer (see *Returning a struct by value* in
   [`cyrius-guide.md`](../guides/cyrius-guide.md#returning-a-struct-by-value-v666)).
 
 This is not the C convention: SysV passes a 9–16 byte struct in two registers and a larger

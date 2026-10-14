@@ -840,6 +840,12 @@ fn _icall_sfn(S, cfi): i64 {
 # (an argument, `return`); what the parse finds (`_icall_callee`, which sees a local or global that
 # shadows `f`) is the record they read.
 fn _icall_sid_at(S, ti): i64 {
+    var r = _icall_rs_at(S, ti);
+    if (r <= 0) { return 0; }
+    return r;
+}
+# ... the declared return (GFRS: a struct, a vector's descriptor, a scalar's sentinel) of that `&f`, or 0.
+fn _icall_rs_at(S, ti): i64 {
     var o = _icall_open_at(S, ti);
     if (o < 0) { return 0; }
     if (TOKTYP(S, o + 1) != 27) { return 0; }
@@ -847,7 +853,7 @@ fn _icall_sid_at(S, ti): i64 {
     var nx = TOKTYP(S, o + 3);
     if (nx != 31) { if (nx != 11) { return 0; } }
     var fi = FINDFN(S, TOKVAL(S, o + 2));
-    if (_icall_sfn(S, fi) == 0) { return 0; }
+    if (fi < 0) { return 0; }
     return GFRS(S, fi);
 }
 # The `(` of a call through fncallN / callptr at token `ti` (PARSE_FACTOR's gates), or -1.
@@ -863,8 +869,23 @@ fn _icall_open_at(S, ti): i64 {
 # address was pushed as int arg 0.
 fn _icall_sret(S, cfi, beg): i64 {
     _sc_n0 = 0;
+    if (beg == _icall_vbeg) { return _icall_vret(S); }
     if (_icall_sfn(S, cfi) == 0) { return 0 - 1; }
     return _sc_pre(S, cfi, _bx_fname(S, cfi), beg);
+}
+# 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
+# parse_decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
+# from `f(..)`, so the call whose name is token `_icall_vbeg` (one-shot) passes the destination's
+# address, slot `_icall_vdst`. Elsewhere the result is in the vector registers and the receive
+# stores them. -1 (no struct temp).
+var _icall_vbeg = 0 - 1;
+var _icall_vdst = 0;
+fn _icall_vret(S): i64 {
+    _icall_vbeg = 0 - 1;
+    EFLADDR(S, _icall_vdst);
+    EPUSHR(S);
+    _sc_n0 = 1;
+    return 0 - 1;
 }
 fn _PINDIRECT_CALL_IN(S): i64 {
     var cst = _icall_mark(S);

@@ -1,0 +1,147 @@
+# simd_indirect_receive.tcyr — 6.7.11 (repair 1, the call-arguments lane): a value-form vector local
+# receives its whole vector from every source that IS that vector, on every target.
+#
+# A vector local gets its 16 / 32 bytes — the register pair the callee returns in, or on Win64 the
+# hidden result pointer the caller passes — only when the receive knows the source is the vector.
+# Through 6.7.10 that was exactly `var v: T = f(..);` / `v = f(..);` by name: `callptr(&f, ..)`,
+# `fncallN(&f, ..)` and a parenthesised `(f(..))` were stored as ONE word (the high lanes stale,
+# wrong values on x86_64 / aarch64 / cx) and on PE the callee wrote through its first argument
+# (a page fault). They are received now; a source that is no vector (a fn pointer in a variable,
+# a word) is refused by name (the user's decision, 2026-10-13: tests/gates/codegen/
+# simd_return_shapes.sh rows Y). docs/development/issues/2026-10-12-vector-receive-from-callptr-
+# reads-wrong-lanes.md. Every lane is read back through a value-form parameter, each weighted, so
+# a lost, stale or swapped lane changes the value. In this directory so the release gate runs it
+# on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkf(a, b, c, d): f32v4 {
+    var v: f32v4;
+    store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d);
+    return v;
+}
+fn mki(a, b, c, d): i32v4 {
+    var v: i32v4;
+    store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d);
+    return v;
+}
+fn mkd(a, b, c, d): f64v4 {
+    var v: f64v4;
+    store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d);
+    return v;
+}
+# Six arguments: on Win64 the hidden result pointer puts the last ones on the stack.
+fn mkd6(a, b, c, d, e, f): f64v4 {
+    var v: f64v4;
+    store64(&v, a * 10 + b); store64(&v + 8, c); store64(&v + 16, d * 10 + e); store64(&v + 24, f);
+    return v;
+}
+
+fn l2(x: f64v2): i64 { return load64(&x) * 100 + load64(&x + 8); }
+fn lf(x: f32v4): i64 { return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12); }
+fn li(x: i32v4): i64 { return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12); }
+fn ld(x: f64v4): i64 { return load64(&x) * 1000000 + load64(&x + 8) * 10000 + load64(&x + 16) * 100 + load64(&x + 24); }
+
+# f64v2: the declaration and the assignment, every accepted source.
+fn rows_f64v2() {
+    var c: f64v2 = mk2(41, 7);
+    assert_eq(l2(c), 4107, "F1: var v: f64v2 = mk2(41, 7) (by name, the control)");
+    var p: f64v2 = callptr(&mk2, 41, 7);
+    assert_eq(l2(p), 4107, "F2: var v: f64v2 = callptr(&mk2, 41, 7) (6.7.10: 181 / 180 / 45, PE fault)");
+    var q: f64v2 = fncall2(&mk2, 12, 34);
+    assert_eq(l2(q), 1234, "F3: var v: f64v2 = fncall2(&mk2, 12, 34)");
+    var w: f64v2 = (mk2(56, 78));
+    assert_eq(l2(w), 5678, "F4: var v: f64v2 = (mk2(56, 78)), parenthesised");
+    var ww: f64v2 = ((callptr(&mk2, 9, 8)));
+    assert_eq(l2(ww), 908, "F5: var v: f64v2 = ((callptr(&mk2, 9, 8)))");
+    var a: f64v2 = mk2(0, 0);
+    a = callptr(&mk2, 13, 24);
+    assert_eq(l2(a), 1324, "F6: v = callptr(&mk2, 13, 24) (6.7.10: 0 / 0 / 154, PE fault)");
+    a = fncall2(&mk2, 35, 46);
+    assert_eq(l2(a), 3546, "F7: v = fncall2(&mk2, 35, 46)");
+    a = (mk2(57, 68));
+    assert_eq(l2(a), 5768, "F8: v = (mk2(57, 68))");
+    var i = 0;
+    for (i = 0; i < 1; a = callptr(&mk2, 79, 80)) { i = i + 1; }
+    assert_eq(l2(a), 7980, "F9: a for step, a = callptr(&mk2, 79, 80)");
+    return 0;
+}
+
+fn rows_f32v4() {
+    var c: f32v4 = mkf(1, 2, 3, 4);
+    assert_eq(lf(c), 1020304, "S1: var v: f32v4 = mkf(1, 2, 3, 4) (by name)");
+    var p: f32v4 = callptr(&mkf, 5, 6, 7, 8);
+    assert_eq(lf(p), 5060708, "S2: var v: f32v4 = callptr(&mkf, 5..8)");
+    var q: f32v4 = fncall4(&mkf, 9, 10, 11, 12);
+    assert_eq(lf(q), 9101112, "S3: var v: f32v4 = fncall4(&mkf, 9..12)");
+    var w: f32v4 = (mkf(13, 14, 15, 16));
+    assert_eq(lf(w), 13141516, "S4: var v: f32v4 = (mkf(13..16))");
+    var a: f32v4 = mkf(0, 0, 0, 0);
+    a = callptr(&mkf, 17, 18, 19, 20);
+    assert_eq(lf(a), 17181920, "S5: v = callptr(&mkf, 17..20)");
+    a = (fncall4(&mkf, 21, 22, 23, 24));
+    assert_eq(lf(a), 21222324, "S6: v = (fncall4(&mkf, 21..24))");
+    return 0;
+}
+
+fn rows_i32v4() {
+    var p: i32v4 = callptr(&mki, 1, 2, 3, 4);
+    assert_eq(li(p), 1020304, "I1: var v: i32v4 = callptr(&mki, 1..4)");
+    var q: i32v4 = fncall4(&mki, 5, 6, 7, 8);
+    assert_eq(li(q), 5060708, "I2: var v: i32v4 = fncall4(&mki, 5..8)");
+    var w: i32v4 = (mki(9, 10, 11, 12));
+    assert_eq(li(w), 9101112, "I3: var v: i32v4 = (mki(9..12))");
+    var a: i32v4 = mki(0, 0, 0, 0);
+    a = fncall4(&mki, 13, 14, 15, 16);
+    assert_eq(li(a), 13141516, "I4: v = fncall4(&mki, 13..16)");
+    a = (mki(17, 18, 19, 20));
+    assert_eq(li(a), 17181920, "I5: v = (mki(17..20))");
+    return 0;
+}
+
+fn rows_f64v4() {
+    var c: f64v4 = mkd(1, 2, 3, 4);
+    assert_eq(ld(c), 1020304, "D1: var v: f64v4 = mkd(1, 2, 3, 4) (by name)");
+    var p: f64v4 = callptr(&mkd, 5, 6, 7, 8);
+    assert_eq(ld(p), 5060708, "D2: var v: f64v4 = callptr(&mkd, 5..8) (6.7.10: 106 / 28 / 17, PE fault)");
+    var q: f64v4 = fncall4(&mkd, 9, 10, 11, 12);
+    assert_eq(ld(q), 9101112, "D3: var v: f64v4 = fncall4(&mkd, 9..12)");
+    var w: f64v4 = (mkd(13, 14, 15, 16));
+    assert_eq(ld(w), 13141516, "D4: var v: f64v4 = (mkd(13..16))");
+    var a: f64v4 = mkd(0, 0, 0, 0);
+    a = callptr(&mkd, 17, 18, 19, 20);
+    assert_eq(ld(a), 17181920, "D5: v = callptr(&mkd, 17..20)");
+    a = (mkd(21, 22, 23, 24));
+    assert_eq(ld(a), 21222324, "D6: v = (mkd(21..24))");
+    var s: f64v4 = callptr(&mkd6, 1, 2, 3, 4, 5, 6);
+    assert_eq(ld(s), 12034506, "D7: var v: f64v4 = callptr(&mkd6, 1..6): the result pointer and stack arguments");
+    a = fncall6(&mkd6, 6, 5, 4, 3, 2, 1);
+    assert_eq(ld(a), 65043201, "D8: v = fncall6(&mkd6, 6..1)");
+    return 0;
+}
+
+# The guide's workarounds for a callee held in a variable: the by-name receive and an out-pointer.
+fn mk2o(out, a, b): i64 { store64(out, a); store64(out + 8, b); return 0; }
+fn rows_workarounds() {
+    var fp = &mk2o;
+    var v: f64v2 = mk2(0, 0);
+    var ig = callptr(fp, &v, 41, 7);
+    assert_eq(l2(v), 4107, "W1: an out-pointer through a variable: callptr(fp, &v, 41, 7)");
+    var u: f64v2 = mk2(41, 7);
+    var t: f64v2 = u;
+    assert_eq(l2(t), 4107, "W2: a vector local of the type: var t: f64v2 = u");
+    return 0;
+}
+
+fn rows() {
+    rows_f64v2();
+    rows_f32v4();
+    rows_i32v4();
+    rows_f64v4();
+    rows_workarounds();
+    return 0;
+}
+var r0 = rows();
+var r = assert_summary();

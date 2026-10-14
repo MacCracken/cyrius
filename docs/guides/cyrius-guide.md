@@ -1421,14 +1421,19 @@ look reasonable:
   store the lanes into a local and return the local.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
-  wrong lane on Windows. ⚠ There is **no** working spelling for a vector-returning `callptr`
-  today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too — it still compiles with no
-  diagnostic at 6.7.9 and reads wrong lanes on x86_64 (measured at 6.6.5, 6.6.6 and 6.7.9).
-  Two spellings that DO work, both verified: call the function by name into a
-  vector local (`var v: f64v2 = mkv(41, 7);`), or, when the target really must be indirect,
-  give it an out-pointer and have it store the lanes —
-  `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
-  correctly.
+  wrong lane on Windows.
+
+⚠ **A value-form vector LOCAL takes a vector, or nothing (6.7.11).** `var v: f64v2 = <src>;` and
+`v = <src>;` take their 16 / 32 bytes only from a source that IS that vector: a local of the type,
+or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`), or
+through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (on Windows the call
+then passes the local's address as its hidden result pointer, as `mkv(..)` does). Every other
+source is refused by name (`a value-form vector local is initialised only from a local of its
+type or a call declared to return it .. - got `callptr``): a callee held in a variable
+(`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`), a word (`5`, `load64(&w)`, `&w`, a scalar local or
+call), a method call, `*p`. Through a fn pointer held in a variable, give the target an
+out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
+7);` — which carries every lane on every target.
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
