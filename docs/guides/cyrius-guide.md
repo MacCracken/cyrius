@@ -4313,6 +4313,13 @@ allocators into poisoning ones (6.6.18, P6):
 - **NOT covered:** a read that jumps a whole redzone into a live neighbour, a read past a logical
   bound inside one allocation, stack and static memory, agnos and cx. There are no guard pages.
 
+The switch underneath is the environment variable `CYRIUS_POISON`, read by every compile (`cycc`
+included, on every target) the way `CYRIUS_BOUNDS` and `CYRIUS_COVERAGE` are: `1` on; `0`, empty or
+unset off; any other value refused by name (`CYRIUS_POISON must be 0 or 1 (or unset): <v>`), rc 1,
+nothing written. On, the compiler predefines `CYRIUS_POISON` for `#ifdef`. `--poison` hands the
+compiler `CYRIUS_POISON=1` ahead of whatever the shell exported, so it wins over an inherited `0`.
+(Before 6.7.11 any set value — `0` and an empty one included — turned the mode on.)
+
 **Routing your own allocator through it.** A hook-style seam points at `poison_alloc` (the
 `fn(n): ptr` shape — `sd_alloc_set(&poison_alloc)` for sadish's); an `_a` API takes
 `poison_allocator()` (`vec_new_a(poison_allocator())`); an existing Allocator is wrapped with

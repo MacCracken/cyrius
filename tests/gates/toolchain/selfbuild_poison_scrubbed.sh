@@ -2,8 +2,9 @@
 # selfbuild_poison_scrubbed.sh — 6.7.8. An inherited CYRIUS_POISON never reaches a SELF-BUILD,
 # and still reaches the tests of a `CYRIUS_POISON=1 sh scripts/check.sh` run.
 #
-# WHY: the compiler includes lib/alloc.cyr, which reads CYRIUS_POISON at compile time (any value
-# — an EMPTY one included — switches the allocator poison mode on), so a CYRIUS_POISON exported
+# WHY: the compiler includes lib/alloc.cyr, which reads CYRIUS_POISON at compile time (until
+# 6.7.11 any value — an EMPTY one included — switched the allocator poison mode on; since 6.7.11
+# `1` is on, `0` or empty off, and any other value is refused by name), so a CYRIUS_POISON exported
 # in the caller's shell built a poison-mode compiler wherever a script compiled src/: measured,
 # `CYRIUS_POISON=1 sh scripts/seed-derive-cycc.sh` FAILED ("seed-derived cycc != committed
 # build/cycc" — cybs reads no environment, gen1 does), and the release gate's step-1 fixpoint
@@ -12,9 +13,12 @@
 # the variable (a poison run of the whole suite is a workflow), only its own two self-builds (the
 # staged toolchain refresh, the check driver) run through `_chk_selfbuild`, which unsets it.
 #
-#   P0  (premise, anti-vacuous) cycc compiling src/main.cyr with CYRIUS_POISON=1, and with
-#       CYRIUS_POISON= (EMPTY), writes a compiler that differs from the one it writes with the
-#       variable unset — so the scrub matters, and it must UNSET, not blank.
+#   P0  (premise, anti-vacuous) cycc compiling src/main.cyr with CYRIUS_POISON=1 writes a
+#       compiler that differs from the one it writes with the variable unset, and with
+#       CYRIUS_POISON=no writes nothing (refused by name, 6.7.11) — so the scrub matters: an
+#       inherited value builds a different compiler or stops the build. It UNSETS (P3b). (Until
+#       6.7.11 an EMPTY value built the poisoned compiler too; it is off now — the rule itself is
+#       tests/gates/platform/poison_env_rung.sh's.)
 #   P1  scripts/seed-derive-cycc.sh, release-gate.sh, version-bump.sh and bootstrap/bootstrap.sh
 #       unset CYRIUS_POISON before their first line that builds src/main.cyr. (6.7.9: every OTHER
 #       self-build script — DERIVED, both variables — is E4's in bounds_mode_checked.sh.)
@@ -31,7 +35,8 @@
 #   MP2 release-gate.sh's removed                                      -> RED P1
 #   MP3 version-bump.sh's removed                                      -> RED P1
 #   MP4 bootstrap/bootstrap.sh's removed                               -> RED P1
-#   MP5 seed-derive's unset replaced by `CYRIUS_POISON=` (blanked)     -> RED P1, P2
+#   MP5 seed-derive's unset replaced by `CYRIUS_POISON=` (blanked)     -> RED P1, P2 (6.7.8);
+#       RED P1 since 6.7.11 (a blank is off now, so seed-derive under =1 stays green)
 #   MP6 check.sh unsets CYRIUS_POISON at top level                     -> RED P3a
 #   MP7 `_chk_selfbuild` blanks the variable instead of unsetting it   -> RED P3b
 #   MP8 check.sh's staging refresh not routed through _chk_selfbuild   -> RED P3c
@@ -49,13 +54,16 @@ fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 x=$FAIL
 ( unset CYRIUS_POISON; "$CC" < src/main.cyr > "$T/c.off" 2> /dev/null ) || fail "P0: cycc could not compile src/main.cyr (variable unset)"
 ( CYRIUS_POISON=1; export CYRIUS_POISON; "$CC" < src/main.cyr > "$T/c.on" 2> /dev/null ) || fail "P0: cycc could not compile src/main.cyr under CYRIUS_POISON=1"
-( CYRIUS_POISON=; export CYRIUS_POISON; "$CC" < src/main.cyr > "$T/c.empty" 2> /dev/null ) || fail "P0: cycc could not compile src/main.cyr under CYRIUS_POISON= (empty)"
+no_rc=0
+( CYRIUS_POISON=no; export CYRIUS_POISON; "$CC" < src/main.cyr > "$T/c.no" 2> "$T/c.no.err" ) || no_rc=$?
 if [ "$FAIL" = "$x" ]; then
     cmp -s "$T/c.off" "$T/c.on" && fail "P0: CYRIUS_POISON=1 does not change a self-build — the premise of this gate is gone (re-derive it)"
-    cmp -s "$T/c.off" "$T/c.empty" && fail "P0: an EMPTY CYRIUS_POISON does not change a self-build — 'unset, not blanked' no longer holds (re-derive P3b)"
+    if [ "$no_rc" = 0 ] || [ -s "$T/c.no" ] || ! grep -q 'CYRIUS_POISON must be 0 or 1 (or unset): no' "$T/c.no.err"; then
+        fail "P0: CYRIUS_POISON=no is not refused by name (rc $no_rc, $(wc -c < "$T/c.no" | tr -d ' ') B written) — re-derive the premise (6.7.11)"
+    fi
 fi
-[ "$FAIL" = "$x" ] && echo "  ok P0: CYRIUS_POISON=1 and an EMPTY CYRIUS_POISON each change cycc(src) ($(wc -c < "$T/c.off") B unset, $(wc -c < "$T/c.on") B poisoned)"
-rm -f "$T/c.off" "$T/c.on" "$T/c.empty"
+[ "$FAIL" = "$x" ] && echo "  ok P0: CYRIUS_POISON=1 changes cycc(src) ($(wc -c < "$T/c.off") B unset, $(wc -c < "$T/c.on") B poisoned) and CYRIUS_POISON=no stops it (refused by name)"
+rm -f "$T/c.off" "$T/c.on" "$T/c.no" "$T/c.no.err"
 
 # ── P1 — the four self-build scripts unset it before they build ───────────────────────────────
 x=$FAIL

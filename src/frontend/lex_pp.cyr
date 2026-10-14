@@ -5452,7 +5452,8 @@ fn _bnd_scan(S): i64 {
 }
 
 # An environment rung: 1 / 0, or -1 when the variable `name` is unset or empty (and after
-# refusing any other value by name). Shared by CYRIUS_BOUNDS and CYRIUS_COVERAGE (parse_cov.cyr).
+# refusing any other value by name). Shared by CYRIUS_BOUNDS, CYRIUS_COVERAGE and CYRIUS_POISON
+# (parse_cov.cyr).
 fn _pp_env_rung(S, name): i64 {
     var e = _read_env(name);
     if (e == 0) { return 0 - 1; }
@@ -5603,6 +5604,8 @@ fn PREPROCESS(S): i64 {
     _bnd_setup(S);
     # 6.7.10 (P5B-1): the execution-coverage mode (src/frontend/parse_cov.cyr), likewise.
     _cov_setup(S);
+    # 6.7.11: the allocator poison mode's switch (parse_cov.cyr `_poison_setup`), likewise.
+    _poison_setup(S);
     PP_PASS(S);
     # Pass 2: evaluate #ifdef/#define in included content
     PP_IFDEF_PASS(S);

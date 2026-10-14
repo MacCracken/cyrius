@@ -51,6 +51,19 @@ fn _cov_setup(S): i64 {
     return 0;
 }
 
+# THE ALLOCATOR POISON MODE'S SWITCH (6.5.29: redzones, poison fill, quarantine-on-free, so an
+# out-of-bounds read or a use-after-free is observable to `cyrius fuzz --poison`). A compile-time
+# predefine, not a runtime read: lib/freelist.cyr / lib/alloc.cyr read `#ifdef CYRIUS_POISON`, and
+# an allocator should not parse the environment. Decided here, in the shared PREPROCESS beside
+# coverage's switch, so every fork reads it alike: `1` on; `0`, unset or empty off; any other value
+# refused by name (`_pp_env_rung`, the CYRIUS_BOUNDS / CYRIUS_COVERAGE rule — user, 2026-10-13).
+# Each of the seven forks read it itself and tested only "is it set", so `CYRIUS_POISON=0` built a
+# poisoned binary. CHANGELOG [6.7.11]
+fn _poison_setup(S): i64 {
+    if (_pp_env_rung(S, "CYRIUS_POISON") == 1) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
+    return 0;
+}
+
 # The end of `_tl_pass1`, once the source's own `kernel;` / `shared;` / `object;` is read
 # (CYRIUS_KERNEL=1 and CYRIUS_TARGET_EFI=1 are set before it). Fatal at once, for C2's reason:
 # pass 2 would compile the dump for a target it cannot serve.

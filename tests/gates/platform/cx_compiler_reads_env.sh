@@ -23,7 +23,7 @@
 #   parse.cyr     CYRIUS_ASYNC                  unset: rc 1 + the gate message; set: a plain async
 #                                               fn compiles and `await` yields its value under cxvm;
 #                                               a coroutine reaches the cx refusal by name (dead before)
-#   main_cx.cyr   CYRIUS_POISON                 predefines the CYRIUS_POISON macro: set, an #ifdef
+#   parse_cov.cyr CYRIUS_POISON                 predefines the CYRIUS_POISON macro: set, an #ifdef
 #                                               arm is taken (exit 11); unset, it is not (exit 22)
 # plus a source pin: no `fn _read_env` in the cx backend, and main_cx.cyr includes env.cyr.
 #
@@ -95,7 +95,7 @@ EOF
 run CYRIUS_ASYNC=1 "$ROOT" "$T/co.cyr"
 if [ "$rc" -ne 1 ] || ! grep -q 'mid-body suspend is x86-only' "$T/e"; then _bad "coroutine, CYRIUS_ASYNC=1: rc $rc — expected 1 with the cx coroutine refusal"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'; else pass=$((pass + 1)); fi
 
-# ── main_cx.cyr: CYRIUS_POISON (a predefine, so the program can see it) ────────────────────
+# ── parse_cov.cyr (main_cx.cyr until 6.7.11): CYRIUS_POISON (a predefine, so the program can see it)
 cat > "$T/po.cyr" <<'EOF'
 #ifdef CYRIUS_POISON
 syscall(60, 11);
@@ -114,5 +114,5 @@ if grep -q '^fn _read_env' src/backend/cx/emit.cyr; then _bad "src/backend/cx/em
 if grep -q '^include "src/backend/common/env.cyr"' src/main_cx.cyr; then pass=$((pass + 1)); else _bad "src/main_cx.cyr no longer includes src/backend/common/env.cyr"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL cx_compiler_reads_env: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS cx_compiler_reads_env: $pass rows — CYRIUS_ALLOW_PARENT_INCLUDES (lex), CYRIUS_ASYNC (parse), CYRIUS_POISON (main_cx) each honoured by cycc_cx and inert when unset; no stub"
+echo "PASS cx_compiler_reads_env: $pass rows — CYRIUS_ALLOW_PARENT_INCLUDES (lex), CYRIUS_ASYNC (parse), CYRIUS_POISON (parse_cov) each honoured by cycc_cx and inert when unset; no stub"
 exit 0
