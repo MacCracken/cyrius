@@ -2746,6 +2746,10 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
+    # 6.7.11: 2 = the instance's bound was refused (-4) and reported at the type the call binds: the
+    # base call below only consumes the arguments, and is not judged against the base (`gb<f64>(h)`
+    # also said "needs `impl Show for i64`"). CHANGELOG [6.7.11]
+    if (_spec == 0 - 4) { _ta_explicit = 2; }
     if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
     else { PARSE_FNCALL(S, noff); }
     return 0;

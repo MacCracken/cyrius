@@ -25,6 +25,15 @@
 #   B  x86_64, compile only: a bound is met at the type the call binds - `gb(h)` and `p.bm(h)` with only
 #      `impl Show for i64` are refused, each note naming `impl Show for f64`, as `gb<f64>(h)` always was
 #      (before: they compiled and ran the i64 impl on the double's bits); `gb(7)` is not refused
+#   F  6.7.11 — a bound with NO `impl … for i64` (only `impl Show for f64`): `gb(h)` (F1), `gb<f64>(h)` (F2)
+#      and the method `p.bm(h)` (F3) exit 5, and with both impls `gb(h) * 10 + gb(3)` is 56 (F4), on
+#      x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine) — a by-value bounded call is
+#      a trait use, never a struct use, so the base is not the dead stub (F1 / F2 were refused naming
+#      i64, F3 ran the stub: 0); x86_64 compile only: with a struct impl alone `gb<f64>(h)` is refused
+#      with ONE note, naming `impl Show for f64` (F5; it named i64), `gb(3)` with the f64 impl alone is
+#      refused naming i64 (F6), and an explicit struct argument without its impl, `gb<R>(r)`, gets one
+#      note naming R (F7; the refused instance's base call added an i64 note).
+#      Filed: docs/development/issues/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
 #   T  tests/tcyr/crossos/generic_f64_result.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -54,6 +63,12 @@
 #   M10 no f64-global inference                    -> RED T `gf_gid(GF_G)` on every leg
 #   M11 PARSE_VAR without `_var_rhs_mchain` (the  -> RED T `var wf = gw.v.id(h);` and `var wc = p.me().id(h);`
 #       6.7.9 review: a longer receiver's binding)    on every leg, aarch64 / cx included (45 of 47)
+# 6.7.11 (2026-10-14, the same method):
+#   M12 `_gs_use` counts a bounded site a struct  -> RED F1 / F2 (refused, naming i64) and F3 (exit 0: the
+#       use unless i64 implements its trait (the     stub ran) on every leg; F5 (its one note names i64);
+#       fix reverted)                                 T: the file does not build on any leg
+#   M13 `_explicit_generic_call` without its       -> RED F5 (two notes: f64, then i64) and F7 (two notes:
+#       `_ta_explicit = 2` (the base re-judged)       R, then i64); every run row green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -85,7 +100,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-call-f64-result-untyped.cyr
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=47
+FLOOR=56
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -219,6 +234,93 @@ sed 's/    var a = gb(h);/    var a = gb<f64>(h);/; /p.bm(h)/d' "$D/bnd.cyr" > "
 if grep -q 'needs `impl Show for f64`' "$D/bnd2.err"; then ok "B control: gb<f64>(h) is refused the same way"
 else bad "B control: gb<f64>(h) not refused for f64: $(tr '\n' ' ' < "$D/bnd2.err")"; fi
 
+echo "F. a bound with no impl for i64 is met at f64 (6.7.11): the base is not judged for a call that binds f64"
+cat > "$D/fa.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+fn gb<T: Show>(x: T): i64 { return x.show(); }
+fn main(): i64 { var h: f64 = 1.5; return gb(h); }
+syscall(60, main());
+XEOF
+sed 's/return gb(h);/return gb<f64>(h);/' "$D/fa.cyr" > "$D/fb.cyr"
+cat > "$D/fm.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct P { v; }
+impl P { fn bm<V: Show>(self, w: V): i64 { return w.show(); } }
+fn main(): i64 {
+    var h: f64 = 1.5;
+    var p = P { 1 };
+    return p.bm(h);
+}
+syscall(60, main());
+XEOF
+cat > "$D/fe.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+impl Show for i64 { fn show(self): i64 { return 6; } }
+fn gb<T: Show>(x: T): i64 { return x.show(); }
+fn main(): i64 { var h: f64 = 1.5; return gb(h) * 10 + gb(3); }
+syscall(60, main());
+XEOF
+# xf <id> <src> <want> <what>: the exit on every leg
+xf() {
+    for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+        n=$(printf '%s_%s' "$1" "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$2" "$D/f_$n"
+        if [ "$RC" -eq -1 ]; then bad "$1 $leg: $4 did not build: $(grep -m1 'note: the bound' "$D/f_$n.err")"
+        elif [ "$RC" -eq "$3" ]; then ok "$1 $leg: $4 exits $3"
+        else bad "$1 $leg: $4 exits $RC, want $3"; fi
+    done
+}
+xf F1 "$D/fa.cyr" 5 "gb(h), only impl Show for f64"
+xf F2 "$D/fb.cyr" 5 "gb<f64>(h), only impl Show for f64"
+xf F3 "$D/fm.cyr" 5 "p.bm(h), only impl Show for f64"
+xf F4 "$D/fe.cyr" 56 "gb(h) * 10 + gb(3), both impls"
+# frow <id> <src> <line> <want> <what>: refused at <line>, with exactly one note, naming impl Show for <want>
+frow() {
+    frc=0; "$CC" < "$2" > "$D/fr_$1" 2> "$D/fr_$1.err" || frc=$?
+    nn=$(grep -c 'note: the bound' "$D/fr_$1.err" || true)
+    if [ "$frc" -eq 0 ]; then bad "$1: $5 compiled (want it refused)"
+    elif ! grep -q "^error:<source>:$3:.*does not implement trait 'Show'" "$D/fr_$1.err"; then bad "$1: $5: no bound refusal at line $3: $(tr '\n' ' ' < "$D/fr_$1.err")"
+    elif [ "$nn" -ne 1 ]; then bad "$1: $5: $nn notes, want 1: $(grep 'note: the bound' "$D/fr_$1.err" | tr '\n' ' ')"
+    elif grep -q "needs \`impl Show for $4\`" "$D/fr_$1.err"; then ok "$1: $5 is refused, its one note naming impl Show for $4"
+    else bad "$1: $5: the note does not name impl Show for $4: $(grep 'note: the bound' "$D/fr_$1.err")"; fi
+}
+cat > "$D/fc.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Q { a; }
+impl Show for Q { fn show(self): i64 { return 7; } }
+fn gb<T: Show>(x: T): i64 { return x.show(); }
+fn main(): i64 { var h: f64 = 1.5; return gb<f64>(h); }
+syscall(60, main());
+XEOF
+cat > "$D/ff.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+fn gb<T: Show>(x: T): i64 { return x.show(); }
+fn main(): i64 { return gb(3); }
+syscall(60, main());
+XEOF
+cat > "$D/fr.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Q { a; }
+struct R { a; }
+impl Show for Q { fn show(self): i64 { return 7; } }
+fn gb<T: Show>(x: T): i64 { return x.show(); }
+fn main(): i64 { var r = R { 1 }; return gb<R>(r); }
+syscall(60, main());
+XEOF
+frow F5 "$D/fc.cyr" 6 f64 "gb<f64>(h) with only impl Show for Q"
+frow F6 "$D/ff.cyr" 5 i64 "gb(3) with only impl Show for f64"
+frow F7 "$D/fr.cyr" 7 R "gb<R>(r) with only impl Show for Q"
+
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -230,4 +332,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic call whose T = f64 is inferred or names T only in its return is an f64: the filed repro (R1) on x86_64 / IR / aarch64 / cx / PE, the warnings (W) and the bound (B) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic call whose T = f64 is inferred or names T only in its return is an f64: the filed repro (R1) on x86_64 / IR / aarch64 / cx / PE, the warnings (W) and the bound (B) on x86_64, a bound with no i64 impl met at f64 (F) on x86_64 / IR / aarch64 / cx / PE, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

@@ -5583,8 +5583,9 @@ argument, so `g(f)` with `f: f32` infers `i64`. A generic method binds an `f64`
 type parameter from its arguments the same way (`p.id(h)` calls the `f64`
 instance, as `P_id(&p, h)` does). A bound is then met at `f64`: `gb(h)` with
 `fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
-`gb<f64>(h)` is. Any other argument infers `i64`, or the width a scalar-returning
-call declares.
+`gb<f64>(h)` is — and it needs no `impl Show for i64` (6.7.11: without one, `gb(h)`,
+`gb<f64>(h)` and `p.bm(h)` were refused naming `i64`, or ran the dead stub). Any other
+argument infers `i64`, or the width a scalar-returning call declares.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
@@ -5757,10 +5758,12 @@ describe<i32>(7);   # needs impl Show for i32
   takes no type arguments, and goes on one of the first two type parameters (at most two are
   recorded); up to 8 per parameter.
 - **Every instantiation is checked**, and is refused when its type has no impl — naming the trait
-  and the `impl` it needs: an inferred or explicit type argument, the **i64 base** a scalar call
-  reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is the dead stub and
-  every scalar path — a call, a tail call, `&describe` — is refused), and a generic struct's instance,
-  its i64 base included (a bare `Shown`, a written `Shown<i64>`).
+  and the `impl` it needs: an inferred or explicit type argument, the **i64 base** an i64 call
+  reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is not emitted and
+  every path to it — a call, a tail call, `&describe` — is refused), and a generic struct's instance,
+  its i64 base included (a bare `Shown`, a written `Shown<i64>`). An instance is judged at its own type
+  alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
+  instance's one note names the type the call binds (6.7.11).
 - **Any type satisfies a bound through its impl**, a scalar too: `impl Show for i64` defines
   `i64_show`, a bounded call on an i64 `T` calls it with the value, and a trait default instantiated
   for a scalar calls `self.show()` (6.7.1; before it, `self.m()` in a scalar impl was "no struct type

@@ -2528,7 +2528,9 @@ _chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
 # 6.7.9 — a generic call whose T = f64 is inferred, or names T only in its return, is an f64: `gid(h)`
 # ran the i64 base and `gid(h) * 2.0` / `gg<f64>(&h) * 2.0` multiplied bits; the f64 instance runs and
 # its result is typed f64 on every spelling, a generic method's included, and a bound is met at f64.
-# The filed repro, the warnings, the bound, and 44 rows, x86 / IR / DCE / aarch64 / cx / PE.
+# 6.7.11: a bound with no `impl … for i64` is met at f64 too (`gb(h)` / `gb<f64>(h)` / `p.bm(h)` were
+# refused naming i64, or ran the dead stub), and a refused explicit instance gets one note, its type's.
+# The filed repros, the warnings, the bounds, and 56 rows, x86 / IR / DCE / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # 6.7.11 — no two type arguments share a generic instance: f64's fragment was a bare `i`, so
 # `gen<f64>` and `gen<i>` (a `struct i`) shared `gen$i` and the second call ran the first's body. f64

@@ -7975,13 +7975,6 @@ fn _meth_fn_at(S, sid, mnoff, mti): i64 {
     }
     return FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, mnoff));
 }
-# 1 iff bounded site `bsi` is a valid call in the i64 base: a by-value receiver whose trait i64 implements.
-fn _bs_i64ok(S, bsi): i64 {
-    if (L64(_bs_tab + bsi * 32 + 8) < 0) { return 0; }
-    if (L64(_bs_tab + bsi * 32 + 24) != 0) { return 0; }
-    if (_bnd_impl(S, L64(_bs_tab + bsi * 32 + 8), 0 - 8) < 0) { return 0; }
-    return 1;
-}
 
 # ── the i64 base ────────────────────────────────────────────────────────────────────────────────
 # A generic's base is its i64 instance, emitted eagerly. It is not a valid one — and is the dead
@@ -11215,10 +11208,14 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (mode == 0) {
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
-        # 6.7.1 (C3): a bounded method call is a TRAIT use, valid in the i64 base when i64 implements it.
+        # 6.7.1 (C3): a by-value bounded method call is a TRAIT use, never a struct use — whatever i64
+        # implements. Whether the i64 base is valid is `_bnd_base_bad`'s judgment (the base skipped, a
+        # scalar call refused naming i64); counting the site a struct use made the base the dead stub,
+        # which has no scalar instance, so `gb(h)` / `gb<f64>(h)` with only `impl Show for f64` were
+        # refused naming i64. CHANGELOG [6.7.11]
         if (_bs_n > 0) { if (TOKTYP(S, i + 3) == 10) {
                 var bsi = _bs_find(S, i + 2);
-                if (bsi >= 0) { if (_bs_i64ok(S, bsi) == 1) { return 0; } }
+                if (bsi >= 0) { if (L64(_bs_tab + bsi * 32 + 8) >= 0) { if (L64(_bs_tab + bsi * 32 + 24) == 0) { return 0; } } }
             } }
         return _gsn_has(TOKVAL(S, i));
     }
@@ -11610,6 +11607,7 @@ fn _gen_call_head(S, fi, noff): i64 {
     _ta_explicit = 0;
     if (_MONOMORPH_OK == 0) { return fi; }
     if (GFTP(S, fi) == 0) { return fi; }
+    if (ex == 2) { return fi; }   # 6.7.11: an explicit call whose instance's bound was refused
     if (ex == 0) {
         var open = GTI(S) - 1;
         _gi_sc = 0;

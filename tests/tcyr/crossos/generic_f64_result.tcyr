@@ -57,6 +57,17 @@ impl GfP {
 }
 struct GfW { v: GfP; n; }
 
+# 6.7.11: a bound with NO `impl … for i64` — met at f64 and at a struct, never judged at the i64
+# base (`gf_tg(h)` was refused: "needs `impl GfTag for i64`"). Filed:
+# docs/development/issues/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
+trait GfTag { fn tag(self): i64; }
+impl GfTag for f64 { fn tag(self): i64 { return 5; } }
+impl GfTag for GfW { fn tag(self): i64 { return self.n + 10; } }
+fn gf_tg<T: GfTag>(x: T): i64 { return x.tag(); }
+fn gf_tg3<T: GfTag>(x: T, a, b): i64 { var r = x.tag(); return r + a + b; }   # never inlined
+struct GfB { v; }
+impl GfB { fn bt<V: GfTag>(self, w: V): i64 { return w.tag() + self.v; } }
+
 var GF_G: f64 = 1.5;
 
 fn main(): i64 {
@@ -113,6 +124,21 @@ fn main(): i64 {
     assert_eq(gf_bnd(h), 5, "gf_bnd(h) calls the f64 impl (was the i64 impl, on the bits)");
     assert_eq(gf_bnd<f64>(h), 5, "gf_bnd<f64>(h) (the explicit control)");
     assert_eq(gf_bnd(7), 3, "gf_bnd(7) calls the i64 impl");
+
+    test_group("a bound with no i64 impl is met at f64 (6.7.11)");
+    assert_eq(gf_tg(h), 5, "gf_tg(h): only impl GfTag for f64 (was refused naming i64)");
+    assert_eq(gf_tg<f64>(h), 5, "gf_tg<f64>(h) (explicit; was refused naming i64)");
+    assert_eq(gf_tg(1.5), 5, "gf_tg(1.5): a float literal");
+    assert_eq(gf_tg(GF_G), 5, "gf_tg(GF_G): an f64 global");
+    assert_eq(gf_tg3(h, 1, 2), 8, "gf_tg3(h, 1, 2): an ordinary call");
+    assert_eq(gf_tg3<f64>(h, 1, 2), 8, "gf_tg3<f64>(h, 1, 2) (explicit)");
+    var gt: GfW;
+    gt.v.v = 1;
+    gt.n = 4;
+    assert_eq(gf_tg(gt), 14, "gf_tg(gt): the struct impl, beside the f64 one");
+    var bb = GfB { 2 };
+    assert_eq(bb.bt(h), 7, "bb.bt(h): a bounded generic method at f64 (was 0: the dead stub ran)");
+    assert_eq(GfB_bt(&bb, h), 7, "GfB_bt(&bb, h) (the free spelling)");
 
     test_group("a generic method binds an f64 V");
     var p = GfP { 5 };
