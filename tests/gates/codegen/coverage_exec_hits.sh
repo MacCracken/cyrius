@@ -107,7 +107,8 @@
 #   F1  `#inline inl` replayed twice directly and once inside a replayed `#inline inl2` -> 3; inl2 1
 #   F2  closures: an expression closure x2, a block closure, a bar list over two lines (named at its
 #       closing bar's line), a `||` closure, one inside a fn called twice — each at its line
-#   F3  `gen<f64>` (minted `gen$i`) and the base called at i64 both count; an uncalled generic absent
+#   F3  `gen<f64>` (minted `gen$f64`; `gen$i` before 6.7.11) and the base called at i64 both count;
+#       an uncalled generic absent
 #   F4  a method (`P_sum`); its uncalled sibling absent
 #   F5  CYRIUS_ASYNC=1: `outer$impl` once across four forces (it suspends twice mid-body), `job$impl`
 #       2, no constructor record (x86 and PE: aarch64 refuses a mid-body await by name, cx too)
@@ -561,7 +562,7 @@ fi
 # ── B1: the band covers the highest fn index — generic instances minted at their call sites in
 # pass 2 (after the dump's own fns) and a closure registered after them ─────────────────────────
 printf 'fn a(): i64 { return 1; }\nfn gen<T>(x: T): i64 { return 2; }\nfn b(): i64 { return 3; }\nvar r = a();\nvar s = gen<f64>(1.5);\nvar t = gen<i32>(7);\nvar u = gen(4);\nvar cl = || 3;\nvar z = r + s + t + u + b();\n' > "$T/b1.cyr"
-printf '%s\n1 <source>:1 a\n1 <source>:2 gen\n1 <source>:3 b\n1 <source>:2 gen$i\n1 <source>:2 gen$i32\n' "$HDR" > "$T/b1.want"
+printf '%s\n1 <source>:1 a\n1 <source>:2 gen\n1 <source>:3 b\n1 <source>:2 gen$f64\n1 <source>:2 gen$i32\n' "$HDR" > "$T/b1.want"
 hx "B1 the highest indexes (instances minted in pass 2) count exactly" "$T/b1.cyr" "$T" x86 "$T/b1.want" "$CC"
 
 # ── M3: a large program (tests/tcyr/compiler/large_source.tcyr, ~6,000 fns through its includes)
@@ -890,7 +891,7 @@ var r = callptr(add, 1, 2) + callptr(add, 3, 4) + callptr(g, 2, 3) + callptr(h, 
 EOF
 printf '%s\n2 <source>:1 __cl#\n1 <source>:2 __cl#\n1 <source>:6 __cl#\n1 <source>:7 __cl#\n1 <source>:8 mk\n2 <source>:8 __cl#\n' "$HDR" > "$T/f2.want"
 printf 'fn gen<T>(x: T): i64 { return 2; }\nfn gnever<T>(x: T): i64 { return 3; }\nvar g = gen<f64>(1.5) + gen(4);\n' > "$T/f3.cyr"
-printf '%s\n1 <source>:1 gen\n1 <source>:1 gen$i\n' "$HDR" > "$T/f3.want"
+printf '%s\n1 <source>:1 gen\n1 <source>:1 gen$f64\n' "$HDR" > "$T/f3.want"
 cat > "$T/f4.cyr" << 'EOF'
 struct P { a; b; }
 impl P {
@@ -946,7 +947,7 @@ fleg() {
     fx "F1 $leg: #inline replays (two direct, one nested in a replayed #inline) bump the callee" "$T/f1.cyr" "$runr" "$T/f1.want" 11 "$comp" "$@"
     fx "F2 $leg: closures — expression x2, block, a bar list over two lines (its closing bar's line), ||, one in a fn x2" "$T/f2.cyr" "$runr" "$T/f2.want" 38 "$comp" "$@"
     fx "F4 $leg: a method (P_sum; the uncalled method absent)" "$T/f4.cyr" "$runr" "$T/f4.want" 7 "$comp" "$@"
-    fx "F3 $leg: gen<f64> (minted gen\$i) and the base called at i64 both count; the uncalled generic is absent" "$T/f3.cyr" "$runr" "$T/f3.want" 4 "$comp" "$@"
+    fx "F3 $leg: gen<f64> (minted gen\$f64) and the base called at i64 both count; the uncalled generic is absent" "$T/f3.cyr" "$runr" "$T/f3.want" 4 "$comp" "$@"
     fx "F6 $leg: a #naked fn is a '-' record (not instrumented), never a count$F6N" "$T/f6.cyr" "$runr" "$F6W" 1 "$comp" "$@"
     fx "F7a $leg: no __cyrius_ record (the dump's own fns)" "$T/f7.cyr" "$runr" "$T/f7.want" 5 "$comp" "$@"
     fx "F7b $leg: no __cyrius_ record under CYRIUS_BOUNDS=1 (the checker's fns entered on every subscript)" "$T/f7.cyr" "$runr" "$T/f7.want" 5 "$comp" "$@" CYRIUS_BOUNDS=1

@@ -2116,7 +2116,9 @@ file by its include path as written (`lib/assert.cyr`, `src/parse.cyr`), `<sourc
 file (through `cyrius build` / `run` too). `<line>` is the line of the `fn` keyword; a closure's is its
 closing `|` (or its `||`); a fn a `#derive` writes has no `fn` of its own and is named at its struct's closing `}`.
 `<name>` is the name the compiler registers: `P_sum` for a method,
-`gen$i32` for `gen<i32>` (an `i64` instance is `gen` itself), `f$impl` for an `async fn f`'s body,
+`gen$i32` for `gen<i32>` and `gen$f64` for `gen<f64>` (an `i64` instance is `gen` itself; a struct
+type argument is its name, `gen$Pt`, and one named exactly like a scalar is marked, `gen$.f64` for a
+`struct f64`), `f$impl` for an `async fn f`'s body,
 `__clNNNNN` for a closure (the number is an index, so it moves as fns are added). The counts are
 this process's. A dump that cannot open its file — an open the program's own sandbox denies, a path
 that cannot be created — writes nothing and says nothing.
@@ -5625,7 +5627,12 @@ definition's base *is* its i64 instantiation: the body is emitted once with
 argument (`add<i32>`, `Box<Point>`) is **monomorphized on demand**: the
 specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
-dispatch — `T` is resolved entirely at compile time.
+dispatch — `T` is resolved entirely at compile time. An instance is named by its
+type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own name
+for a struct — and a struct named exactly like a scalar (`struct f64`, which
+`add<f64>` then binds) is marked `.f64`, so no two type arguments share an
+instance (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i` too, and the
+second call ran the first's body).
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local — is used as a struct (`p.y`), there is

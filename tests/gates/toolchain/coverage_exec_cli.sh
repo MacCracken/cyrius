@@ -18,7 +18,7 @@
 #
 # ROWS
 #   X1  --exec=programs/ok_test.cyr -v: rc 0; `Functions executed: 5/7 (71%)` (sh_a, sh_b, sh_inl
-#       (an #inline replay), sh_gen (a generic instance, `sh_gen$i`) from ok_test; sh_c from t.tcyr);
+#       (an #inline replay), sh_gen (a generic instance, `sh_gen$f64`) from ok_test; sh_c from t.tcyr);
 #       the mode / files / reference lines byte-identical to the text run's; -v lists exactly sh_d
 #       and shapes as unexecuted; `1/7 fns, 5/7 executed` per file
 #   X2  `[coverage] exec = ["programs/*_test.cyr"]`, no flag: the mode is on; rc 1; bad_test (exit 1)
