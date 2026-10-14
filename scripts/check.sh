@@ -1373,6 +1373,11 @@ _chk_gate "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 # `async fn` with no mid-body await must compile to BIT-IDENTICAL bytes, which is why the
 # transform is selected by the body rather than by the keyword.
 _chk_gate "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
+# 6.7.11 (returns) — an `async fn` returning several values (declared `: (T1, T2[, T3])`, or
+# `return (a, b)` / `ret2` in its body) is refused by name: a Future carries one i64, and the second
+# value was dropped (`rethi()` after a memoised force read a stale register). Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/frontend/async_multi_value_return_refused.sh"
 
 # v6.5.71: `#derive(accessors)` getters/setters reach the inline-replay path — a measured 3.45x
 # on the accessor shape, for generated code nobody hand-tunes. ⛔ Axis 2 is the load-bearing
@@ -2442,6 +2447,16 @@ _chk_gate "$ROOT/tests/gates/toolchain/selfbuild_poison_scrubbed.sh"
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
 _chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
+# 6.7.11 (returns) — a multi-value call where a named struct is expected (an argument, a method
+# argument, a declaration, a field, an assignment; every size) is refused by name, R17's wording: its
+# first value was taken as the struct's address (SIGSEGV) or as one field. x86 / aarch64 / cx / PE;
+# the crossing, `*P`, `Str` and scalar controls run. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/multi_value_into_named_struct.sh"
+# 6.7.11 (returns) — a local's struct receive from a call: `var x = (mk());` receives the struct as
+# `var x = mk();` does (it held the first word: SIGSEGV through a by-value parameter), and an
+# annotation naming no struct (`var x: i64 = mkp();`, u8, f64, bool, ..) is refused by name (it took
+# the struct over the annotation). x86 / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/struct_receive_inference_checked.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"

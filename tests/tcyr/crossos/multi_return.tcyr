@@ -59,6 +59,21 @@ fn mr_ret2(a, b) { ret2(a / b, a % b); }
 # that mutation-proves the type-propagation fix rather than merely exercising it.
 fn mr_f64one(a, b): f64 { return f64_mul(a, b); }
 
+# --- 6.7.11: a fn declared `: (T1, T2[, T3])` returns its values. Every return that is not one of
+# these is refused at the fn (tests/gates/diagnostics/destructure_one_value_refused.sh axis 5); the
+# ones that stay valid must carry EVERY value on every target: a forwarded call of the same arity (a
+# tail call: the callee's registers pass straight through), the same call in parentheses (no tail
+# call), an undeclared callee of that arity, arity 3, a method, a tuple local.
+fn mr_fwd_pair(a, b): (i64, i64) { return mr_pair(a, b); }
+fn mr_fwd_wrapped(a, b): (i64, i64) { return (mr_pair(a, b)); }
+fn mr_fwd_divmod(a, b): (i64, i64) { return mr_divmod(a, b); }
+fn mr_fwd_triple(a): (i64, i64, i64) { return mr_triple(a); }
+fn mr_ret_tuple(a, b): (i64, i64) { var t = (b, a); return t; }
+struct MrBox { v; }
+impl MrBox { fn pair(self, a): (i64, i64) { return (a, self.v); } }
+fn mr_fwd_method(a): (i64, i64) { var bx = MrBox { 9 }; return bx.pair(a); }
+fn mr_fwd_callptr(a, b): (i64, i64) { var fp = &mr_pair; return callptr(fp, a, b); }
+
 fn main(): i64 {
     # 1. undeclared arity 2 — order-sensitive
     var q, r = mr_divmod(10, 3);
@@ -104,6 +119,39 @@ fn main(): i64 {
     var lr = rethi();
     assert_eq(lq, 3, "ret2: rax value");
     assert_eq(lr, 1, "rethi: second value (cx returned 3 pre-6.5.21)");
+
+    # 7. 6.7.11 — the forwards that stay valid, SEEDED: a three-value call first leaves 77 / 78 in
+    # the second and third return registers, so a value a forward lost reads as one of those.
+    var s1, s2, s3 = mr_triple(76);
+    assert_eq(s1 + s2 + s3, 231, "seed: 76, 77, 78");
+    var fa, fb = mr_fwd_pair(5, 9);
+    assert_eq(fa, 5, "forwarded (tail call): first value");
+    assert_eq(fb, 9, "forwarded (tail call): second value");
+    s1, s2, s3 = mr_triple(76);
+    var wa, wb = mr_fwd_wrapped(6, 8);
+    assert_eq(wa, 6, "forwarded in parentheses: first value");
+    assert_eq(wb, 8, "forwarded in parentheses: second value");
+    s1, s2, s3 = mr_triple(76);
+    var dq, dr = mr_fwd_divmod(17, 5);
+    assert_eq(dq, 3, "forwarded undeclared callee: first value");
+    assert_eq(dr, 2, "forwarded undeclared callee: second value");
+    s1, s2, s3 = mr_triple(10);
+    var u1, u2, u3 = mr_fwd_triple(40);
+    assert_eq(u1, 40, "forwarded arity 3: first value");
+    assert_eq(u2, 41, "forwarded arity 3: second value");
+    assert_eq(u3, 42, "forwarded arity 3: third value");
+    s1, s2, s3 = mr_triple(76);
+    var ta, tb = mr_ret_tuple(3, 4);
+    assert_eq(ta, 4, "return t;: first value");
+    assert_eq(tb, 3, "return t;: second value");
+    s1, s2, s3 = mr_triple(76);
+    var ma, mb = mr_fwd_method(2);
+    assert_eq(ma, 2, "forwarded method: first value");
+    assert_eq(mb, 9, "forwarded method: second value");
+    s1, s2, s3 = mr_triple(76);
+    var ca, cb = mr_fwd_callptr(7, 4);
+    assert_eq(ca, 7, "forwarded callptr (callee unknown): first value");
+    assert_eq(cb, 4, "forwarded callptr (callee unknown): second value");
 
     var r2 = assert_summary();
     return r2;

@@ -21,6 +21,10 @@
 # a file with includes cannot place, and the mutation ledger). cx (6.7.8: its struct pair is r0:r4,
 # the multi-value registers themselves) runs it under cxvm in that gate's cx leg.
 #
+# 6.7.11: `var a, b, c = pr_loc(5);` (three names from the 16 B struct's two words) is refused by name
+# (issues/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md), so its row left this
+# file for the gate's refused rows.
+#
 # ⭐ Every value is (x, x * 10 + 3) for x = 5, read back as a * 100 + b = 553: the two words differ
 # from each other and from every argument register (a two-argument `mk(a, b)` would leave b in x1
 # and hide the defect), and the arithmetic tells which slot each landed in.
@@ -109,7 +113,6 @@ fn into_struct_defer_tup(): i64 { var p: Pr = pr_defer_tup(5); return p.a * 100 
 fn into_struct_gen(): i64 { var p: Pr = pr_gen<i64>(5); return p.a * 100 + p.b; }
 fn into_struct_loc(): i64 { var p: Pr = pr_loc(5); return p.a * 100 + p.b; }
 fn dt_loc(): i64 { var a, b = pr_loc(5); return a * 100 + b; }
-fn dt_loc3(): i64 { var a, b, c = pr_loc(5); return a * 100 + b; }
 fn dt_pass(): i64 { var a, b = pr_pass(5); return a * 100 + b; }
 fn dt_fwd(): i64 { var a, b = pr_fwd(5); return a * 100 + b; }
 fn dt_method_loc(): i64 { var z: Pr; z.a = 0; z.b = 0; var a, b = z.m_loc(5); return a * 100 + b; }
@@ -139,7 +142,6 @@ assert_eq(into_struct_loc(), 553, "control: return p; into var p: Pr");
 
 test_group("a 9-16 B struct return, destructured (repro B)");
 assert_eq(dt_loc(), 553, "var a, b = f(); f returns a Pr local");
-assert_eq(dt_loc3(), 553, "var a, b, c = f(); the first two");
 assert_eq(dt_pass(), 553, "return g(x); forwarding a Pr local");
 assert_eq(dt_fwd(), 553, "an untyped fn forwarding a Pr call");
 assert_eq(dt_method_loc(), 553, "a method returning a Pr local");

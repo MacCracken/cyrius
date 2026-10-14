@@ -879,5 +879,455 @@ if [ "$rc" -ne 0 ] || grep -q '^error' "$T/x.err"; then
   exit 1
 fi
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7)'
+# ── axis 16 — 6.7.11: A PAIR METHOD USED ABOVE ITS `impl` ────────────────────────────────────
+# ⛔ The pair prescan walked depth-0 `fn`s only, so a method returning a `: stack` pair was flagged
+# when pass 2 parsed its body, and every caller ABOVE its `impl` read it as one value: `p.div(d)?`
+# took the boxed lowering and dereferenced the tag (rc 139 on x86 and aarch64, 1 on cx, 5 on PE —
+# the issue's repro, 16a, verbatim) and `var q = p.div(d);` kept the tag in silence (exit 1), where
+# the impl above it was refused "bind both". Each impl method is now scanned as a top-level fn is,
+# resolved to the entry its definition owns (`_impl_method_entry`: `T_m`, or `T_Tr_m` on a
+# collision, by name AND definition start — never registered: 16h counts the warnings). The single
+# bind is refused whatever the order (the user's decision, 2026-10-13, D23). An untyped `self` in
+# the scanned method is its impl's struct (`_tok_iself`), so a forwarding `return self.div(d);` is
+# flagged even when another struct's `div` returns one value (16d).
+# Mutations (scratch tree, measured red): M30a `_pair_prescan`'s `_pair_prescan_impls` call dropped
+# -> 16a 16b 16c 16d 16e 16e2 16i 16j; M30b `_tok_ret_callee` without `_tok_iself` -> 16d;
+# M30c `_impl_method_entry` without its collision-prefix arm -> 16i; M30d `_pair_scan_method`
+# registering the method (FINDFN-or-REGFN of a bare `m`) -> 16h (the minted `m`'s warning) and every
+# row M30a fails (the flag lands on the minted entry, not the method's).
+accept "the issue's repro: p.div(d)? above the impl" axis16a 11 <<'EOF'
+# `p.div(d)?` above the impl that defines the `: stack` pair-returning method.
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn usediv(p: Pt, d): i64 {
+    var q = p.div(d)?;                   # the impl is BELOW: `?` treats the result as a box -> SIGSEGV
+    return Ok(q + 1);
+}
+impl Pt { fn div(self, d): i64 { if (d == 0) { return Err(9); } return Ok(self.x / d); } }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    return t * 100 + v;                  # want 11 (Ok(11)); the impl moved above usediv gives 11
+}
+var rc = main();
+syscall(60, rc);
+EOF
+M16='include "lib/syscalls.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+struct Qt { x; }
+'
+# Ok(11) and Err(9) folded: t * 100 + v + t2 * 50 + v2 = 11 + 59.
+accept "? on an impl Tr for Pt method above it, Ok and Err" axis16b 70 <<EOF
+${M16}trait Dv { fn tdiv(self, d): i64; }
+fn usediv(p: Pt, d): i64 { var q = p.tdiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Dv for Pt { fn tdiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? on a generic method above its impl" axis16c 70 <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.gdiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Pt { fn gdiv<T>(self, d: T): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? on a method forwarding return self.div(d), another struct's div one value" axis16d 70 <<EOF
+${M16}fn usefwd(p: Pt, d): i64 { var q = p.fwd(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usefwd(p, 4);
+    var t2, v2 = usefwd(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Qt { fn div(self, d): i64 { return self.x / d; } }
+impl Pt {
+    fn fwd(self, d): i64 { return self.div(d); }
+    fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); }
+}
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "the single bind var q = p.div(d); above the impl" axis16e "= p.div(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.div(d); return q + 1; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "x = p.div(d); above the impl" axis16e2 "p.div(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var x = 0; x = p.div(d); return x; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+# The impl ABOVE its callers, unchanged: the single bind refused, `?` and the destructure right.
+refuse_at "the single bind with the impl above (unchanged)" axis16f "= p.div(d);" <<EOF
+${M16}impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.div(d); return q + 1; }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? and the destructure with the impl above (unchanged)" axis16f2 79 <<EOF
+${M16}impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.div(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    var a, b = p.div(5);
+    return t * 100 + v + t2 * 50 + v2 + a * 1000 + b + 1;
+}
+var rc = main();
+syscall(60, rc);
+EOF
+# ANTI-OVER-REACH: a one-value method below its use binds to one variable; a closure in a method that
+# returns a pair does not make the method one (its returns are its own).
+accept "a plain i64 method below its use, and a closure's pair inside a method" axis16g 45 <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+fn useone(p: Pt): i64 { var q = p.one(); var r = p.clo(); return q + r + 1; }
+impl Pt {
+    fn one(self): i64 { return self.x; }
+    fn clo(self): i64 { var g = |z| { return MOk(z); }; var t, v = fncall1(g, 3); return v + t; }
+}
+fn main(): i64 { var p = Pt { 41, 2 }; return useone(p); }
+var rc = main();
+syscall(60, rc);
+EOF
+# The scan resolves a method's entry and never registers one: two impls, a trait collision, methods
+# calling each other above and below — and NOT ONE warning.
+cat > "$T/w16.cyr" <<EOF
+${M16}trait A { fn m(self, d): i64; }
+trait B { fn m(self, d): i64; }
+fn use_a(p: Pt, d): i64 { var q = Pt_A_m(p, d)?; return MOk(q + p.k(1)); }
+fn use_b(p: Pt, d): i64 { return Pt_B_m(p, d) + 2; }
+impl A for Pt { fn m(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl B for Pt { fn m(self, d): i64 { return self.x / d; } }
+impl Pt { fn k(self, n): i64 { return n + self.j(); } fn j(self): i64 { return 0; } }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = use_a(p, 4);
+    return t * 100 + v + use_b(p, 4);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+"$CC" < "$T/w16.cyr" > "$T/w16" 2>"$T/w16.err" || {
+  echo "FAIL stack_enum_lossy_context axis16h: the impl-method program did not build:"
+  grep -E '^error' "$T/w16.err" | head -3 | sed 's/^/    /'; exit 1; }
+if grep -q "^warning" "$T/w16.err"; then
+  echo "FAIL stack_enum_lossy_context axis16h: the impl-method prescan produced warnings (a minted entry?):"
+  grep "^warning" "$T/w16.err" | head -3 | sed 's/^/    /'; exit 1
+fi
+chmod +x "$T/w16"; "$T/w16"; got=$?
+# 16i: Pt_A_m(p, 4)? above the impls (the T_Tr_m prefix) is Ok(10) -> 11; Pt_B_m(p, 4) + 2 = 12.
+[ "$got" -eq 23 ] || { echo "FAIL stack_enum_lossy_context axis16i: the trait-collision method gave ${got}, expected 23"; exit 1; }
+refuse_at "store64(&s, p.div(d)) above the impl" axis16j "p.div(d));" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var s: i64[2]; store64(&s, p.div(d)); return s[0]; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+
+# ── axis 17 — 6.7.11: A STRUCT-LITERAL ELEMENT; AN ARGUMENT KEEPS THE TAG ─────────────────────
+# ⛔ A struct-literal element is a one-slot store, and it kept the TAG of a `: stack` pair and dropped
+# the payload in silence: `var p = P { mk(7), 3 };`, `P { a: mk(7), b: 3 }` and `var G = P { mk(7), 3 };`
+# each stored 0 (the issue's repro, 17a verbatim, exited 30 on x86, aarch64, cx and PE). Refused now,
+# at the callee, with the "bind both" text and nothing else (the user's decision, 2026-10-13, D22):
+# positional, named, a global in either zone, a leaf a nested struct field is carried into (17f, 17g),
+# the method / generic / stdlib / forward spellings, a narrow or `Result`-typed field, a method above
+# its impl, `--syntax-only`. The element is judged as `h.n = mk(7) + 1;` is: by its first call (17m).
+# `?` consumes the pair at every one of them (17q: 14). A plain ARGUMENT keeps the documented
+# single-argument rule — `g(mk(7))` / `is_ok(f())` receive the tag (17r) — and so does an operand: the
+# user withdrew the argument half of the 2026-10-09 decision (2026-10-13). A boxed enum, a nullary
+# variant and a one-value call stay legal elements (17s).
+# Mutations (scratch tree, measured red): M31a EMIT_STRUCT_FIELD_W's call dropped -> 17a-17e 17g-17p;
+# M31b `_spi_expr`'s dropped -> 17f (a nested field's first leaf is carried; its next leaves are plain);
+# M31c `_refuse_lossy_pair` without `_call_is_propagated` -> 17q (and axis 15's `?` rows).
+P17='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { if (x < 0) { return SErr(0 - x); } return SOk(x); }
+fn g(v): i64 { return v; }
+fn gg<T>(v: T) { if (v == 0) { return SErr(1); } return SOk(v); }   # two returns: a one-`return` generic is replayed inline, which flags its caller (filed, 6.7.11)
+struct P { a; b; }
+struct H { p: P; n; }
+struct N { a: i32; b: i8; c; }
+struct B { z; }
+impl B { fn pm(self, v) { return SOk(v); } fn m(self, v): i64 { return v; } }
+'
+# 17a: the issue's repro, verbatim — one error per element (the two fns' literals and the global's),
+# none for its two argument rows (a single argument receives the tag), and no binary.
+R17=docs/development/issues/repros/2026-10-09-stack-pair-struct-literal-element-and-argument.cyr
+[ -f "$R17" ] || { echo "FAIL stack_enum_lossy_context axis17a: the repro $R17 is missing"; exit 1; }
+rm -f "$T/r17"
+if "$CC" < "$R17" > "$T/r17" 2>"$T/r17.err"; then
+  echo "FAIL stack_enum_lossy_context axis17a: the issue's repro COMPILED — its struct-literal elements keep the tag."; exit 1
+fi
+_n=$(grep -c '^error' "$T/r17.err")
+for _l in "fn lit_positional" "fn lit_named" "var G = P"; do
+  _w=$(awk -v l="$_l" 'index($0, l) == 1 { print NR ":" index($0, "f(7)"); exit }' "$R17")
+  grep -q "^error:<source>:$_w: .*bind both" "$T/r17.err" || {
+    echo "FAIL stack_enum_lossy_context axis17a: the repro — no 'bind both' error at $_w ($_l; $_n errors):"
+    grep -E '^error' "$T/r17.err" | head -4 | sed 's/^/    /'; exit 1; }
+done
+[ "$_n" -eq 3 ] || { echo "FAIL stack_enum_lossy_context axis17a: the repro — want 3 errors (the elements), got $_n:"
+  grep -E '^error' "$T/r17.err" | head -5 | sed 's/^/    /'; exit 1; }
+refuse_at "P { mk(7), 3 }, a positional element" axis17b "mk(7), 3" <<EOF
+${P17}fn main(): i64 { var p = P { mk(7), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "P { a: 3, b: mk(7) }, a named element" axis17c "mk(7) }" <<EOF
+${P17}fn main(): i64 { var p = P { a: 3, b: mk(7) }; return p.b; }
+var e = main();
+EOF
+refuse_at "var G = P { mk(7), 3 }, the declaration zone" axis17d "mk(7), 3" <<EOF
+${P17}var G = P { mk(7), 3 };
+syscall(60, G.a);
+EOF
+refuse_at "var G = P { 3, mk(7) }, after the first statement" axis17e "mk(7) }" <<EOF
+${P17}var z = 1;
+z = 2;
+var G = P { 3, mk(7) };
+syscall(60, G.b);
+EOF
+refuse_at "H { mk(7), 3, 5 }, carried into a nested struct's first leaf" axis17f "mk(7), 3" <<EOF
+${P17}fn main(): i64 { var h = H { mk(7), 3, 5 }; return h.p.a; }
+var e = main();
+EOF
+refuse_at "H { 4, mk(7), 5 }, a nested struct's second leaf" axis17g "mk(7), 5" <<EOF
+${P17}fn main(): i64 { var h = H { 4, mk(7), 5 }; return h.p.b; }
+var e = main();
+EOF
+refuse_at "P { b.pm(7), 3 }, the method" axis17h "b.pm(7)" <<EOF
+${P17}fn main(): i64 { var b = B { 0 }; var p = P { b.pm(7), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "P { gg<i64>(7), 3 }, the explicit generic" axis17i "gg<i64>(7)" <<EOF
+${P17}fn main(): i64 { var p = P { gg<i64>(7), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "P { Ok(9), 3 }, the stdlib Result" axis17j "Ok(9)" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+struct P { a; b; }
+fn main(): i64 { var p = P { Ok(9), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "N { 1, mk(7), 3 }, a narrow (i8) field" axis17k "mk(7), 3" <<EOF
+${P17}fn main(): i64 { var n = N { 1, mk(7), 3 }; return n.b; }
+var e = main();
+EOF
+refuse_at "R { fr(7), 5 }, a Result-typed field" axis17l "fr(7)" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+fn fr(x): Result { return Ok(x); }
+struct R { r: Result; n; }
+fn main(): i64 { var h = R { fr(7), 5 }; return h.n; }
+var e = main();
+EOF
+refuse_at "P { mk(7) + 1, 3 }, judged as h.n = mk(7) + 1 is" axis17m "mk(7) + 1" <<EOF
+${P17}fn main(): i64 { var p = P { mk(7) + 1, 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "P { late(7), 3 }, a forward callee" axis17n "late(7)" <<EOF
+${P17}fn main(): i64 { var p = P { late(7), 3 }; return p.a; }
+fn late(x) { return mk(x); }
+var e = main();
+EOF
+synonly_refuse axis17o "mk(7), 3" <<EOF
+${P17}fn k(): i64 { var p = P { mk(7), 3 }; return p.a; }
+EOF
+refuse_at "P { c.cdiv(7), 3 }, a method above its impl" axis17p "c.cdiv(7)" <<EOF
+${P17}struct C { x; }
+fn main(): i64 { var c = C { 14 }; var p = P { c.cdiv(7), 3 }; return p.a; }
+impl C { fn cdiv(self, d) { if (d == 0) { return SErr(9); } return SOk(self.x / d); } }
+var e = main();
+EOF
+# 17q: `?` consumes the pair at each element: Ok(7) gives 7 in each of seven elements and one argument
+# (7 * 7 - 42 + 7 = 14), and the Err path returns both halves (Err(9)).
+accept "? at a positional, named, nested, method, generic, narrow element and an argument" axis17q 14 <<EOF
+${P17}fn t(x): i64 {
+    var b = B { 0 };
+    var p = P { mk(x)?, 3 };
+    var q = P { a: 1, b: mk(x)? };
+    var h = H { mk(x)?, 0, 0 };
+    var h2 = H { 0, mk(x)?, 0 };
+    var r = P { b.pm(x)?, gg<i64>(x)? };
+    var n = N { 0, mk(x)?, 0 };
+    return SOk(p.a + q.b + h.p.a + h2.p.b + r.a + r.b + n.b - 6 * x + g(mk(x)?));
+}
+fn main(): i64 {
+    var t1, v1 = t(7);
+    var t2, v2 = t(0 - 9);
+    if (t2 != 1) { return 99; }
+    if (v2 != 9) { return 98; }
+    return v1 + t1 * 100;
+}
+var e = main();
+syscall(60, e);
+EOF
+# 17r: a single ARGUMENT receives the tag — the guide's documented rule, kept — and so does an operand:
+# Ok's tag 0 / Err's tag 1 at a free call, a method, top level, the stdlib predicates and `+` / `==`.
+accept "a plain argument and an operand read the tag (the documented rule)" axis17r 79 <<EOF
+${P17}include "lib/result.cyr"
+fn arg_free(): i64 { return g(mk(7)); }
+fn arg_err(): i64 { return g(mk(0 - 7)); }
+fn arg_method(): i64 { var b = B { 0 }; return b.m(mk(0 - 7)); }
+fn op_plus(): i64 { return mk(0 - 7) + 1; }
+fn op_cmp(): i64 { if (mk(7) == 0) { return 4; } return 0; }
+fn preds(): i64 { return is_ok(Ok(1)) + is_err_result(Err(2)) * 2 + is_ok(Err(3)) * 4; }
+syscall(60, arg_free() + arg_err() * 10 + arg_method() * 20 + op_plus() + op_cmp() + g(mk(0 - 3)) * 40 + preds());
+EOF
+# 17s: ANTI-OVER-REACH — a boxed enum (its pointer), a nullary variant (its tag is the whole value) and a
+# one-value call are elements as before.
+accept "a boxed, a nullary and a one-value element" axis17s 8 <<EOF
+${P17}include "lib/alloc.cyr"
+enum BX { BOk(v); BErr(e); }
+enum NV: stack { NNone(); NSome(v); }
+fn one(x): i64 { return x + 1; }
+fn main(): i64 { alloc_init(); var p = P { one(4), NNone() }; var q = P { BOk(3), 0 }; return p.a + p.b + load64(q.a + 8); }
+var e = main();
+syscall(60, e);
+EOF
+
+# Axis 18 (6.7.11, the returns lane) — A REFUSAL HERE IS THE STATEMENT'S ALONE (issues/2026-10-09-refusal-cascades-
+# tuples-pairs-u128-d19.md, shapes 5 and 6, the filed repros verbatim). The refusal is made in sync, but it set the panic
+# latch and PARSE_STMT's resync then consumed the NEXT statement through its `;`, its own error and all (line 8's
+# `nosuch`; a second refusal on the next line). The latch now ends with the statement (`_stmt_resync`) — it still
+# silences what the same statement would add about the same value (a bool destination, 18e). A refused u128 `OP=`
+# skips its right-hand side: a pair there was refused a second time ("bind both").
+# Mutations (scratch copies of src/, CYCC= each; measured red): M18a `_stmt_resync` always skipping -> 18a (18b-18d,
+# 18f the same way); M18b the refusal clearing the latch at once (the filed issue's proposal) -> 18e (a second error,
+# "not a bool", for the same value); M18c `_w128_cop` parsing the right-hand side on -> 18g.
+# exact <label> <axis> <n> <needle|fragment>..: exactly <n> error lines, one at each needle's line and column derived
+# from the source (its first byte; it occurs once) with the fragment after it — `needle||fragment` checks the line
+# only (an "undefined variable" caret sits after the name).
+exact() {
+  _l=$1; _a=$2; _w=$3; shift 3
+  cat > "$T/p.cyr"
+  if "$CC" < "$T/p.cyr" > "$T/p" 2>"$T/p.err"; then echo "FAIL stack_enum_lossy_context $_a: $_l COMPILED"; exit 1; fi
+  _n=$(grep -c '^error' "$T/p.err" || true)
+  if [ "$_n" -ne "$_w" ]; then
+    echo "FAIL stack_enum_lossy_context $_a: $_l — want $_w error lines, got $_n:"
+    grep -E '^error' "$T/p.err" | head -4 | sed 's/^/    /'
+    exit 1
+  fi
+  for _x in "$@"; do
+    _nd=${_x%%|*}; _fr=${_x#*|}
+    _at=$(awk -v n="$_nd" 'index($0, n) { print NR ":" index($0, n) ":"; exit }' "$T/p.cyr")
+    case $_fr in "|"*) _fr=${_fr#|}; _at=${_at%%:*}: ;; esac
+    if ! grep -qF "error:<source>:$_at" "$T/p.err" || ! grep "error:<source>:$_at" "$T/p.err" | grep -qF "$_fr"; then
+      echo "FAIL stack_enum_lossy_context $_a: $_l — no '$_fr' error at $_at ('$_nd'):"
+      grep -E '^error' "$T/p.err" | head -4 | sed 's/^/    /'
+      exit 1
+    fi
+  done
+}
+BB='bind both'
+exact "a field store's refusal, then \`x = nosuch;\`, then another (the filed repro)" axis18a 3 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" "mk(8);|$BB" <<EOF
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { return SOk(x); }
+struct H { n; m; }
+fn main(): i64 {
+    var h: H;
+    var x = 0;
+    h.n = mk(7);
+    x = nosuch;
+    h.m = mk(8);
+    return h.n;
+}
+syscall(60, main());
+EOF
+exact "\`x = mk(7);\` then \`y = nosuch;\` (6.6.0's shape)" axis18b 2 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    var y = 0;
+    x = mk(7);
+    y = nosuch;
+    return x;
+}
+var e = main();
+EOF
+exact "two refusals on consecutive lines" axis18c 2 "mk(7);|$BB" "mk(8);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    x = mk(7);
+    x = mk(8);
+    return x;
+}
+var e = main();
+EOF
+exact "an element store, then \`a[1] = nosuch;\`" axis18d 2 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var a: i64[2];
+    a[0] = mk(7);
+    a[1] = nosuch;
+    return 0;
+}
+var e = main();
+EOF
+exact "a bool destination: the pair refusal alone (the statement's latch holds)" axis18e 1 "mk(7);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var b: bool = false;
+    b = mk(7);
+    return 0;
+}
+var e = main();
+EOF
+exact "a for step's refusal, then \`x = nosuch;\` after the loop" axis18f 2 "mk(7)) {|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    for (var i = 0; i < 2; x = mk(7)) { i = i + 1; }
+    x = nosuch;
+    return 0;
+}
+var e = main();
+EOF
+exact "a refused u128 \`*=\` of a pair (the filed repro): the u128 refusal alone" axis18g 1 "*= mk|compound assignment \`*=\` to u128 'b' is refused" <<EOF
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { return SOk(x); }
+fn main(): i64 {
+    var b: u128 = 0;
+    b *= mk(7);
+    return 0;
+}
+syscall(60, main());
+EOF
+exact "\`/=\` of a pair, then \`<<=\`: one refusal each" axis18h 2 "/= mk|compound assignment \`/=\` to u128 'b'" "<<= 2|compound assignment \`<<=\` to u128 'b'" <<EOF
+${PRE}fn main(): i64 {
+    var b: u128 = 0;
+    b /= mk(7);
+    b <<= 2;
+    return 0;
+}
+var e = main();
+EOF
+exact "\`+=\` of a pair (implemented for u128): the pair refusal alone, as before" axis18i 1 "mk(7);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var b: u128 = 0;
+    b += mk(7);
+    return 0;
+}
+var e = main();
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
 exit 0

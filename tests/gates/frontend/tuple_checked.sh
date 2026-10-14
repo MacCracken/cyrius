@@ -65,6 +65,7 @@
 #      R5e-R5h a const fn's tuple parameter (used, unused, called in a const, after a `Pair<i64, i64>` one), refused
 #         once at its definition; R5i the other const fn parameters untouched
 #      CL1-CL2 re-assigning a whole captured tuple is "undefined variable", as any captured assignment is
+#   CS (6.7.11) — one mistake, one error, at its place (the cascade issue's shapes 1-4 and 8, its repros verbatim)
 #   T7 — the tools that read a signature by hand (rows T1 / T2; the CLI and the LSP built from this tree with $CC):
 #      T1 `cyrius header` (cbt/quality.cyr cmd_header) cut the parameter list at its FIRST `)` and skipped a type to
 #         its first `,`: `fn g(t: (i64, i64), x)` printed `cyr_val g(cyr_val t, cyr_val i64);`. A tuple parameter is
@@ -238,6 +239,22 @@
 # 6.7.8 REPAIR (the dyn lane; a scratch copy, its compiler rebuilt, this gate run with CYCC= the mutant):
 #   MR4 `_tok_enclosing_fn` (extracted from `_tup_gen_chk`) without its `;` / `}` stop -> R4s, R4t ("a tuple
 #       type in a generic fn": the scan ran past a bodyless generic trait member to the next `{`)
+# 6.7.11 REPAIR 1 (the returns lane; the same recipe):
+#   MRL `_body_ends_in_loop` returns 0 -> R16x BUILDS (a callee ending in `loop { return x; }` captured a stale rdx)
+#   MRA `_prescan_ret_arity` records nothing -> R16y-R16ab BUILD; MRC `_tup_cap_class` without its count arm ->
+#       R16y-R16ab BUILD
+#   MRP `_mret_ret_check` answering 0 -> R16ad BUILDS; MRL2 its late report not yielding to the arms' own refusal ->
+#       R9n, R9s, R9t, R14n give two errors; MRT its tuple-local arm dropped -> A1-A4, A7 (tuple_values.tcyr's
+#       `return t;` refused)
+#   (the cascades, CS; each mutant built from a scratch copy of src/, this gate run with CYCC= it)
+#   MCS1 `_tup_rv_chain` answering 0 -> CS1, CS1b, CS1c (a report per operand)
+#   MCS2 `_asg_capture_refused` answering 0 -> CS2 (`u` "used as a value" too, the caret on the `;`), CS2b (the caret)
+#   MCS3a `_tup_asg_chk` not marking its refusal -> CS3 (the typed-pointer warning on `t = 5;`); MCS3b `_ptr_annot` not
+#       marking a refused `*( .. )` -> CS3, CS3b (the warning on `= 0`)
+#   MCS4a `_tup_var_refd` declaring nothing -> CS4, CS4b, CS4c, CS4d ("undefined variable" / "no struct type" at each
+#       use); MCS4b `_tup_gci_in` registering no tuple over 256 -> CS4e (the use's error printed before the refusal)
+#   MCS8 `_tup_svtype_p1` reporting in pass 1 -> CS8, CS8c (R12 first, then the real cause); MCS8b `_gvi_tup_late`
+#       saying nothing -> CS8b BUILDS (the replay's report is what refuses a scalar declared below)
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -714,7 +731,9 @@ refused r14q "cannot return tuple 't' (i64, i64, i64, i64)$R4V" "R14q: a 4-eleme
 refused r14r "cannot return tuple 't' (i64, i64, i64, i64, i64)$R4V" "R14r: ... a 5-element one from a scalar fn" "fn g(): i64 {\n    var t = (1, 2, 3, 4, 5);\n    return t;\n}\nsyscall(60, 0);\n"
 printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s" "$@"\n' "$CC" > "$T/acc5"; chmod +x "$T/acc5"
 CC_SV=$CC; CC="$T/acc5"
-refused r14m "$RT from an \`async fn\` - it returns one value" "R14m: an \`async fn\` declared \`: (i64, i64)\` (its Future carries one i64)" "include \"lib/alloc.cyr\"\nasync fn g(): (i64, i64) {\n${TL5}syscall(60, 0);\n"
+# R14m: 6.7.11 — a declared multi-value `async fn` is refused at its declaration, once (its `return t;`
+# agrees with it), tests/gates/frontend/async_multi_value_return_refused.sh
+refused r14m "\`async fn g\` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding them" "R14m: an \`async fn\` declared \`: (i64, i64)\` (its Future carries one i64)" "include \"lib/alloc.cyr\"\nasync fn g(): (i64, i64) {\n${TL5}syscall(60, 0);\n"
 refused r14p "$RT from an \`async fn\` - it returns one value" "R14p: an undeclared \`async fn\`" "include \"lib/alloc.cyr\"\nasync fn g() {\n${TL5}syscall(60, 0);\n"
 CC=$CC_SV
 # R15 — `f().N` on a multi-value call: today's refusal plus how to read the values.
@@ -748,6 +767,21 @@ refused r16t "${CAP}mk' into tuple (i64, i64, i64) - it returns 2 values, (i64, 
 refused r16u "$A12 'G'" "R16u: \`G = mk(2) + 1;\` at top level (R12)" "${MK}var G: (i64, i64) = mk(1);\nG = mk(2) + 1;\nsyscall(60, 0);\n"
 refused r16v "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16v: a method's declared values" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\n${F5}    var b: B;\n    var t: (i64, i64) = b.mk(1);${E5}"
 refused r16w "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16w: a classic-for step \`t = mk(i)\`" "${MF}fn mk(a): (i64, f64) { return (a, 0.5); }\n${F5}    var t: (i64, i64);\n    for (var i = 0; i < 2; t = mk(i)) { i = i + 1; }${E5}"
+# R16x (6.7.11) — a callee whose body ends in an infinite loop no \`break\` leaves is provably one value too
+# (\`_body_ends_in_loop\`): the R12 refusal, where it captured a stale second register.
+refused r16x "$I12 't' with a value that is not a tuple" "R16x: a callee ending in \`loop { return x; }\` (6.7.11: one value, R12)" "fn one(x) { loop { return x; } }\n${F5}    var t: (i64, i64) = one(1);${E5}"
+# R16y-R16ab (6.7.11) — an UNDECLARED callee whose every \`return\` is \`(..)\` of one arity returns that many
+# values (pass 1, \`_prescan_ret_arity\`): a capture of another count is refused as a declared one is (it took
+# a stale r8 / dropped one); the matching count still captures.
+DMU='fn dm(a, b) { return (a / b, a % b); }\n'
+refused r16y "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16y: 3 from an undeclared 2 (6.7.11)" "${DMU}${F5}    var t: (i64, i64, i64) = dm(17, 5);${E5}"
+refused r16z "${CAP}h3' into tuple (i64, i64) - it returns 3 values" "R16z: 2 from an undeclared 3" "fn h3(a) { return (a, a + 1, a + 2); }\n${F5}    var t: (i64, i64) = h3(1);${E5}"
+refused r16aa "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16aa: a declaration-zone capture" "${DMU}var G: (i64, i64, i64) = dm(17, 5);\nsyscall(60, 0);\n"
+refused r16ab "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16ab: \`t = dm(..);\` into an existing tuple" "${DMU}${F5}    var t: (i64, i64, i64);\n    t = dm(17, 5);${E5}"
+exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) still captures" "${DMU}fn f(): i64 {\n    var t: (i64, i64) = dm(17, 5);\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
+# R16ad (6.7.11) — the triage's capture of a declared \`: (i64, i64)\` fn that returns ONE value: its \`u.1\` was
+# a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
+refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base
@@ -833,6 +867,47 @@ refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchan
 # variable" — the literal and the capture forms too (an element write is the closure's copy).
 refused cl1 "undefined variable 't'" "CL1: \`t = (3, 4);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = (3, 4); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
 refused cl2 "undefined variable 't'" "CL2: \`t = m2(5);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn m2(x): (i64, i64) { return (x, 1); }\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = m2(5); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
+# CS (6.7.11, the returns lane) — ONE MISTAKE, ONE ERROR, at its place (the filed repros of
+# issues/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md verbatim, shapes 1-4 and 8): EXACTLY the errors
+# named, and no warning. CS1 `t == u` reports the left operand alone (a chain too; two arguments are two
+# mistakes); CS2 a captured tuple's `t = u;` is the captured-assignment error alone, its caret on `t` (the struct
+# form's caret too); CS3 no "assigning non-pointer to typed pointer" after the tuple store's refusal nor about a
+# refused `*( .. )`; CS4 a literal refused for its shape still declares its name — a local, a global after the
+# first statement (annotated or not) — and a > 256 zone literal registers at the cap; CS8 a zone tuple copied
+# from a tuple declared below it is `_gci_below`'s error alone, a scalar below is R12 alone.
+cascade() {   # <name> <errors> <what> <source> <want>..: exactly <errors> error lines, no warning; each <want> is one
+    _cn=$1; _ce=$2; _cw=$3
+    printf '%b' "$4" > "$T/$_cn.cyr"
+    shift 4
+    build "$_cn"
+    _ne=$(grep -c '^error' "$T/$_cn.err" || true)
+    _nw=$(grep -c '^warning' "$T/$_cn.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$_cw: BUILT (rc 0)"; return; fi
+    if [ "$_ne" -ne "$_ce" ] || [ "$_nw" -ne 0 ]; then bad "$_cw: $_ne error / $_nw warning lines (want $_ce / 0): $(grep '^error\|^warning' "$T/$_cn.err" | head -4 | tr '\n' '|')"; return; fi
+    for _cx in "$@"; do
+        if ! grep -qF "error:<source>:$_cx" "$T/$_cn.err"; then bad "$_cw: no error '$_cx': $(grep '^error' "$T/$_cn.err" | head -3 | tr '\n' '|')"; return; fi
+    done
+    ok "$_cw: $_ce error(s), each at its place"
+}
+TUV="tuple 't' used as a value"
+cascade cs1 1 "CS1: \`t == u\` (the filed repro): one error, the left operand" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    if (t == u) { return 1; }\n    return 0;\n}\nsyscall(60, main());\n' "4:9: $TUV"
+cascade cs1b 1 "CS1b: \`t + u + v\`: one error" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    var v = (5, 6);\n    var k = t + u + v;\n    return k;\n}\nsyscall(60, main());\n' "5:13: $TUV"
+cascade cs1c 2 "CS1c: \`(t == u) && (u == t)\`: one per comparison" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    if ((t == u) && (u == t)) { return 1; }\n    return 0;\n}\nsyscall(60, main());\n' "4:10: $TUV" "4:22: tuple 'u' used as a value"
+cascade cs1d 2 "CS1d: \`g(t, u)\`: two arguments, two errors (unchanged)" 'fn g(a, b): i64 { return a; }\nfn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    return g(t, u);\n}\nsyscall(60, main());\n' "5:14: $TUV" "5:17: tuple 'u' used as a value"
+cascade cs2 1 "CS2: \`t = u;\` in a closure, both captured tuples (the filed repro): the captured-assignment error at \`t\`" 'include "lib/alloc.cyr"\nfn main(): i64 {\n    alloc_init();\n    var t = (1, 2);\n    var u = (3, 4);\n    var f = || { t = u; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "6:18: undefined variable 't'"
+cascade cs2b 1 "CS2b: the struct form \`s = q;\`: the same error, at \`s\`" 'include "lib/alloc.cyr"\nstruct P2 { a; b; }\nfn main(): i64 {\n    alloc_init();\n    var s = P2 { 1, 2 };\n    var q = P2 { 3, 4 };\n    var f = || { s = q; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "7:18: undefined variable 's'"
+cascade cs3 2 "CS3: \`t = 5;\` then \`var p: *(i64, i64) = 0;\` (the filed repro): the two refusals, no warning" 'fn main(): i64 {\n    var t = (1, 2);\n    t = 5;\n    var p: *(i64, i64) = 0;\n    return 0;\n}\nsyscall(60, main());\n' "3:9: cannot assign a value that is not a tuple to tuple 't'" "4:13: a tuple type cannot be a pointer target"
+cascade cs3b 1 "CS3b: a refused \`*( .. )\` local read into a \`*i64\`: no warning there either" 'fn main(): i64 {\n    var p: *(i64, i64) = 0;\n    var q: *i64 = p;\n    return 0;\n}\nsyscall(60, main());\n' "2:13: a tuple type cannot be a pointer target"
+cascade cs3c 1 "CS3c: a \`*( .. )\` return type, its call into a \`*i64\`" 'fn f(): *(i64, i64) { return 0; }\nfn main(): i64 { var q: *i64 = f(); return 0; }\nsyscall(60, main());\n' "1:10: a tuple type cannot be a pointer target"
+cascade cs4 1 "CS4: \`var t = (1, 2, );\` then \`t.0\` (the filed repro): the trailing comma alone" 'fn main(): i64 {\n    var t = (1, 2, );\n    var k = t.0;\n    return k;\n}\nsyscall(60, main());\n' "2:18: a trailing comma in a tuple literal"
+cascade cs4b 1 "CS4b: an empty element, then \`t.1 + t.2\`" 'fn main(): i64 {\n    var t = (1, , 2);\n    var k = t.1 + t.2;\n    return k;\n}\nsyscall(60, main());\n' "2:17: an empty element in a tuple literal"
+cascade cs4c 1 "CS4c: a global after the first statement, a trailing comma, then \`G.0\`" 'syscall(1, 1, 0, 0);\nvar G = (1, 2, );\nvar k = G.0;\nsyscall(60, k);\n' "2:14: a trailing comma in a tuple literal"
+cascade cs4d 1 "CS4d: ... annotated, the wrong arity, then \`G.0\`" 'syscall(1, 1, 0, 0);\nvar G: (i64, i64) = (1, 2, 3);\nvar k = G.0;\nsyscall(60, k);\n' "2:21: tuple (i64, i64) has 2 elements - this literal has 3"
+CS4E=$(i=1; while [ $i -le 257 ]; do printf '%s' "$i"; [ $i -lt 257 ] && printf ', '; i=$((i + 1)); done)
+cascade cs4e 1 "CS4e: a zone literal of 257 elements, then \`G.0\` (the filed repro): the refusal alone" "var G = ($CS4E);\nfn main(): i64 { return G.0; }\nsyscall(60, main());\n" "1:9: a tuple literal has at most 256 elements"
+cascade cs8 1 "CS8: \`var A: (i64, i64) = B;\` above \`var B = (1, 2);\` (the filed repro): the real cause alone" 'var A: (i64, i64) = B;\nvar B = (1, 2);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy-init 'A' from a global declared below it (declare the source first): 'B'"
+cascade cs8b 1 "CS8b: ... a scalar \`B\` below: R12 alone" 'var A: (i64, i64) = B;\nvar B = 5;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:8: cannot initialize tuple 'A' with a value that is not a tuple"
+cascade cs8c 1 "CS8c: ... a 3-tuple \`B\` below: the type mismatch alone" 'var A: (i64, i64) = B;\nvar B = (1, 2, 3);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).
@@ -1013,4 +1088,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); one error per mistake after a tuple refusal (CS); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

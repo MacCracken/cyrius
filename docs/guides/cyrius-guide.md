@@ -649,7 +649,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.
   ⚠ **Before 6.7.7 a default in a trait's required signature** (`fn sh(self, n = 1): i64;`)
   **compiled and was ignored**; it is now refused (user decision, 2026-10-09). An operator fn
-  (`V2_add`) declares no default: an operator passes exactly its two operands.
+  (`V2_add`) declares no default: an operator passes exactly its two operands — reported once, at
+  the default, when an operator reaches the fn (6.7.11: it was once per use, at the use, and again
+  after an `impl Trait for T` method's own refusal). A direct call `V2_add(a, b)` fills it as usual.
 - **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
   whose default names a sibling's const. The grammar refusals (a positional argument after a
   named one, a name through `fncallN`) still fire there.
@@ -867,7 +869,8 @@ slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field
 closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
 change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
-the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'`. It works in a statement, at
+the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'` (6.7.11: `x = v` is reported at
+`x`, before `v` is parsed — a whole tuple `v` was refused a second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
@@ -923,7 +926,8 @@ a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) a
 array** (`var b[N]` — local, global or in static storage — and `stack var b[N]`: `b += 8` added to
 its first word; it has no element type, so write the word, `store64(&b, load64(&b) + 8)`). On a
 `u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits; every
-other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
+other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)), and its right-hand side
+is not parsed (6.7.11: a `: stack` pair there was refused a second time).
 
 A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
 a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
@@ -1398,6 +1402,22 @@ fn f(): i64 {
     return z + p.z + mk(3);           # as a plain value, a struct is its FIRST word (3), as a local's is
 }
 ```
+
+An untyped `var x = mk(9);` takes the struct's type from the call, and so does `var x = (mk(9));`
+or `((mk(9)))`: parentheses around the whole call are transparent (6.7.11; before, `x` held the
+struct's first word, `x.z` was refused and `take(x)` passed that word as the struct's address —
+a crash). An annotation that names no struct is never replaced by the callee's struct:
+`var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
+returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
+
+```
+error: cannot initialise 'x: i64' from 'mk', which returns the struct 'P3' - declare 'x: P3' or bind a field
+```
+
+Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y` compiled, and a
+`u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
+(`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
+keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, or a method or
@@ -2493,14 +2513,39 @@ var hi, lo, bexp = dd_pow10(k);
 # arity and type the bindings. An undeclared `return (a, b);` still works and
 # leaves the bindings untyped.
 
+# A fn declared `: (T1, T2[, T3])` returns its values (6.7.11). Every `return` is one of:
+#   return (a, b);                    # a literal of the declared arity
+#   return t;                         # a tuple of the declared values (see Tuples)
+#   return g(x);                      # a call returning as many values, forwarded — `(g(x))`,
+#                                     # an undeclared `g` whose returns are `(a, b)`, a method —
+#                                     # or one whose callee is unknown (`callptr(fp, ..)`)
+# Anything else is refused — `'f' returns 2 values - return (a, b)` — because it fills only
+# the first return register and the caller's `b` read whatever an earlier call left:
+#   return 5;   return p;   return;   # one value; a struct local (its first word); bare
+#   return (a, b, c);                 # another arity
+#   return one(x);   return mk();     # a one-value callee; a struct callee (a struct is
+#                                     # not multiple values)
+
 # The destructure requires a CALL as the whole right-hand side (v6.5.21).
 # These are rejected rather than silently reading whatever rdx held:
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
+#                                     # body is left only through them: it returns 2 values, and
+#                                     # the count is checked as a declared one is (6.7.11)
 #   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
 #                                     # single value and the body ends in one — at fn scope and
-#                                     # at top level, a forward-declared `one` included
+#                                     # at top level, a forward-declared `one` included. A body
+#                                     # ending in `loop { }`, `while (1) { }` or
+#                                     # `do { } while (1);` that no `break` leaves ends in its
+#                                     # returns too (6.7.11)
+#   var a, b = mk(5);                 # `mk` returns a struct over 16 B: it comes back through a
+#                                     # hidden pointer, not registers, so there is no second word —
+#                                     # `cannot destructure 'mk' - it returns struct 'Q', which is
+#                                     # not in registers` (6.7.11). A 9-16 B struct's two words ARE
+#                                     # its return registers: `var a, b = mk(5);` binds them, and a
+#                                     # third name is refused; an 8 B struct is one value
 # (Before 6.6.17 the top-level destructure above the first statement checked none of these.)
 
 # Legacy builtins still work
@@ -2511,6 +2556,18 @@ var r2 = rethi();                # r2 = 1 (rdx)
 
 To keep a multi-value result whole, capture it in a tuple — `var t: (i64, i64) = divmod(10, 3);`,
 then `t.0` / `t.1` — see [Tuples](#tuples).
+
+**A multi-value call is not a struct value** (6.7.11). Where a named struct is expected — a by-value
+struct argument (`take(mk(3))`, `take(b.mk(3))`, a named argument), a struct-typed declaration (`var p:
+P = mk(3);`, at fn scope and at top level), a struct field (`h.p = mk(3);`) or an assignment to a struct
+variable (`p = mk(3);`, a classic-`for` step too) — a call returning several values is refused by name at
+every struct size, parentheses around it transparent: ``a multi-value call 'mk' is not a struct 'P'
+argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize struct 'P'`, `is not stored
+into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
+struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
+var p = P { a, b }; take(p);`. A callee declared `: P` that says `return (x, y);` returns a `P` and is accepted
+everywhere a `P` is. A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
+does — and are not refused.
 
 ## Tuples
 
@@ -2700,12 +2757,16 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
+| `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
+| `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` into a tuple parameter | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
+| `return 5;`, `return p;` (a struct), `return one(x);` from a fn declared `: (i64, i64)` (6.7.11) | `'f' returns 2 values - return (a, b)` |
 | `h.x, b = f();`, `a[i], b`, `*p, q` | ``a multi-value assignment `a, b = f();` re-assigns plain variables - a field is not one`` (…) |
 | `a, b = 5;`, `a, b = t;` | `multi-value destructure needs a call on the right-hand side` |
 | `first(t)` (`first` is generic) | `a tuple cannot bind a type parameter: 'first' is generic …` |
@@ -4682,20 +4743,31 @@ h.n = f();               # ✗ a field, any field type   (6.7.7)
 a[i] = f();              # ✗ an element                (6.7.7)
 *p = f();                # ✗ through a pointer         (6.7.7)
 x += f();                # ✗ any compound `OP=`        (6.7.7)
+var p = P { f(), 3 };    # ✗ a struct-literal element  (6.7.11) — named, a global's, a nested leaf too
 
 var t, v = f();          # ✓ bind both halves
 t, v = f();              # ✓ re-assign both halves     (6.7.7)
 var v = f()?;            # ✓ `?` consumes the pair and yields one value
-h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`
+h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`, `P { f()?, 3 }`
 return f();              # ✓ forwarding the pair onward
+is_ok(f());              # ✓ a single ARGUMENT receives the tag (above) — and so does an operand
 ```
+
+A store is judged by the call it starts with, so `h.n = f() + 1;` and `P { f() + 1, 3 }` are refused
+too; an argument (`g(f())`) and an operand anywhere else (`f() == 0`, `return f() + 1;`) read the tag,
+by the single-argument rule above (the user's decision, 2026-10-13).
 
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too.
 
 `f` is any call spelling: an explicit generic `g<T>(..)` and a method `p.m(..)` are refused,
 destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
-crashed and a single bind dropped the payload silently).
+crashed and a single bind dropped the payload silently). The method's `impl` may sit above or below
+the call (6.7.11 — with the `impl` below its caller, `p.m(..)?` crashed and `var v = p.m(..);`
+kept the tag in silence).
+⚠ Known defect (6.7.11): a method the impl INHERITS from its trait's default body is not covered
+yet — `p.m(..)?` above the trait and impl crashes and `var v = p.m(..);` keeps the tag; keep that
+trait and impl above the caller (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md).
 
 The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
 before the first top-level statement or after it — kept the tag and dropped the payload, silently
@@ -5756,7 +5828,13 @@ Win64, never in rax — so it too yielded 0 with no diagnostic before v6.6.6. Ev
 16-byte and 32-byte class is covered, `f64v2`/`f32v4`/`f64v4`/`i32v4` alike;
 return a pointer to the vector. A **tuple** parameter (6.7.7: pass its elements as separate
 parameters) and a tuple return (`return t;` from an `async fn`) are refused by name, and so is
-any `dyn` type in an `async fn` (6.7.8).
+any `dyn` type in an `async fn` (6.7.8). A **multi-value return** is refused for the same
+reason (6.7.11): `async fn g(): (i64, i64)` at its declaration, and `return (a, b);`,
+`return (a, b, c);` or `ret2(a, b)` in an `async fn` declared with no return type —
+"`` `async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct
+holding them ``". Before 6.7.11 it compiled, `await g()` gave the first value, and the second
+was gone: `rethi()` after the `await` read it only on the force that ran the body, and a
+memoised (`await f` again) or reactor-driven force read whatever the last call left there.
 
 ## Global Initializers
 

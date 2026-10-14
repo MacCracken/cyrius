@@ -2082,6 +2082,16 @@ fn _w128_rchk(S, ti0): i64 {
     if (t == 8 || t == 27) { if (_tok_ends_operand(S, ti0 - 2) == 0) { return 0; } }
     return _w128_refuse_at(S, ti0 - 1, t, 0);
 }
+# One report per binary expression: a whole tuple right after a binary operator whose left operand
+# was a whole tuple refused here (it ended at that operator) is the same mistake — `t == u`,
+# `t + u + v` report `t` alone. `_tup_rv_e` is the token after the last one. 1 = say nothing.
+# CHANGELOG [6.7.11]
+var _tup_rv_e = 0 - 1;
+fn _tup_rv_chain(S, ti0): i64 {
+    if (ti0 < 1) { return 0; }
+    if (_tup_rv_e != ti0 - 1) { return 0; }
+    return _cex_binop(TOKTYP(S, ti0 - 1));
+}
 # ⛔ 6.7.7 (B4) — A TUPLE IS NOT A NUMBER (R11). A factor that is exactly one name (`GTI == ti0 + 1`)
 # whose load stamped a tuple's sid — every inline-aggregate load stamps it: a local, an
 # address-passed parameter, a closure capture, a global; `_PARSE_FACTOR_IMPL` resets it at entry —
@@ -2096,7 +2106,10 @@ fn _tup_rchk(S, ti0): i64 {
     if (GTI(S) != ti0 + 1) { return 0; }
     if (TOKTYP(S, ti0) != 2) { return 0; }
     if (_tup_is(S, GESTYPE(S)) == 0) { return 0; }
-    _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
+    if (_tup_rv_chain(S, ti0) == 0) {
+        _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
+    }
+    _tup_rv_e = GTI(S);
     SESTYPE(S, 0);
     return 0;
 }
@@ -2337,12 +2350,15 @@ fn _w128_refuse_at(S, ti, typ, cop): i64 {
 }
 # `b OP= e` on the u128 place the stamp names (_asg_compound_load marked it; the cursor is past the
 # `=`): `+=` / `-=` are `b = b + e` / `b = b - e` (1), all 128 bits — the store takes the
-# temporary; any other operator is refused by name and parsed on as before (0).
+# temporary; any other operator is refused by name and its right-hand side skipped to the
+# statement's end (1): parsed on, a `: stack` pair there was refused a second time ("bind both").
+# CHANGELOG [6.7.11]
 fn _w128_cop(S, cop): i64 {
     if (cop == 6) { _w128_binop(S, 0, 1); return 1; }
     if (cop == 7) { _w128_binop(S, 1, 1); return 1; }
     _w128_refuse_at(S, GTI(S) - 2, cop, 1);
-    return 0;
+    _masg_skip(S);
+    return 1;
 }
 # The u128 place `(pk, pv)` = the value just parsed, all 16 bytes: a u128 (the stamp) copied, an
 # integer zero-extended. A declaration's store (_w16_local_init, _w16_global_init, _gvi_store).
@@ -6174,6 +6190,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
     }
     # ret2(a, b) — return two values in rax:rdx
     if (ptyp == 97) {
+        _refuse_async_mv_body(S, GTI(S), 2);   # 6.7.11: a Future carries one i64
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);

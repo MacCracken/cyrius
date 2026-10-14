@@ -19,6 +19,8 @@
 #      premise ("a fn inside a top-level block is not prescanned") is false since 6.6.17 —
 #      `_prescan_block_fn` records it — so such a fn takes defaults like any other; D17 stays in
 #      `_pd_late` as a backstop for a definition pass 1 did not record.
+#      R19b-R19g (6.7.11): D19 once, at the operator fn's default, nothing more after the definition's own
+#      refusal; R9s1-R9s5 (6.7.11): a parameter whose type is refused keeps its default (one error per input)
 #   K  the count: C1 a call outside min..max ("'f' expects 1 to 3 arguments, got 4"), backward and
 #      forward; C15 a call through a fn pointer short of a defaulted fn's parameters; R23 a fn
 #      without defaults keeps the v6.5.1 text; R24 (F2) the forward-call issue's verbatim repros
@@ -248,7 +250,34 @@ exits r17 56 "R17: a fn inside a top-level block takes defaults (pass 1 records 
 refused r18 "a closure's parameters take no defaults" "R18: a closure parameter default" "fn main(): i64 { var c = |a, b = 1| a + b; return 0; }\nsyscall(60, main());\n" "1:32"
 refused r20 "a parameter default is one constant expression, ending at ',' or ')'" "R20: a default that is not one expression" "fn f(a, b = 1 2): i64 { return a + b; }$E" "1:15"
 refused r16 "the default of parameter 'b' of 'cf' is defined in terms of itself" "R16: a default defined in terms of itself (a const fn filling its own default)" "const fn cf(a, b = cf(1)): i64 { return a + b; }$E" "1:20"
-refused r19 "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19: an operator fn that declares a default (an operator passes exactly two operands)" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 { var a = V2 { 1, 2 }; var b = V2 { 3, 4 }; var c = a + b; return c; }\nsyscall(60, main());\n" "3"
+refused r19 "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19: an operator fn that declares a default (an operator passes exactly two operands)" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 { var a = V2 { 1, 2 }; var b = V2 { 3, 4 }; var c = a + b; return c; }\nsyscall(60, main());\n" "2:19"
+# R19b-R19e (6.7.11, the returns lane; issues/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md, shape 7): D19 is
+# reported ONCE, at the operator fn's first default (with its column) — it was one line per use, at the use, with no
+# column, and again after the definition's own refusal. R19b the filed repro verbatim (a method of `impl Add for V2`):
+# the D13 refusal alone — no D19 per use, and no "different number of parameters" for the parameter it names;
+# R19c three uses on two lines; R19d the operator fn defined below its uses; R19e a direct call keeps compiling;
+# R19g a fn whose defaults another refusal named (D1) says nothing more at its operator use; R19f below.
+# R9s1-R9s5 below. Mutations (scratch copies of src/, CYCC= each; measured red): MD19 `_pd_arity_mode` mode 4 back
+# to the per-use line -> R19, R19b, R19c, R19d; MD19r `_pd_d19` without the refused-row test -> R19g; MD13
+# `_tr_dflt_extra` answering 0 -> R19b ("a different number of parameters"); MD9 `_pd_type_refused` answering 0 ->
+# R9s1-R9s5 (an arity error at each call).
+refused r19b "'add' implements trait 'Add': its parameters take no defaults (the trait's signature is the contract)" "R19b: the filed repro — \`impl Add for V2 { fn add(self, b, k = 1) }\` used twice: one error, at the default" "struct V2 { x; y; }\ntrait Add { fn add(self, b); }\nimpl Add for V2 { fn add(self, b, k = 1): i64 { return k; } }\nfn main(): i64 {\n    var a = V2 { 1, 2 };\n    var b = V2 { 3, 4 };\n    var c = a + b;\n    var d = a + b;\n    return c + d;\n}\nsyscall(60, main());\n" "3:37"
+refused r19c "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19c: three uses on two lines: one error, at the definition" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 {\n    var a = V2 { 1, 2 };\n    var b = V2 { 3, 4 };\n    var c = a + b;\n    var d = a + b + (a + b);\n    return c + d;\n}\nsyscall(60, main());\n" "2:19"
+refused r19d "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19d: the operator fn defined below its use: at the definition" "struct V2 { x; y; }\nfn main(): i64 {\n    var a = V2 { 1, 2 };\n    var b = V2 { 3, 4 };\n    var c = a + b;\n    return c;\n}\nfn V2_add(a, b, k = 1): i64 { return k; }\nsyscall(60, main());\n" "8:19"
+exits r19e 1 "R19e: \`V2_add(a, b)\` called directly fills its default (no operator use, nothing refused)" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 {\n    var a = V2 { 1, 2 };\n    var b = V2 { 3, 4 };\n    return V2_add(a, b);\n}\nsyscall(60, main());\n"
+refused r19g "parameter 'c' of 'V2_add' needs a default: it follows one that has a default" "R19g: an operator fn whose defaults were refused at the definition (D1): that error alone" "struct V2 { x; y; }\nfn V2_add(a, b = 1, c): i64 { return c; }\nfn main(): i64 {\n    var a = V2 { 1, 2 };\n    var b = V2 { 3, 4 };\n    var c = a + b;\n    return c;\n}\nsyscall(60, main());\n" "2:21"
+# R19f: an impl method whose parameters differ from the trait's by more than its defaults keeps both errors.
+printf '%b' "struct V2 { x; y; }\ntrait Add { fn add(self, b); }\nimpl Add for V2 { fn add(self, b, c, k = 1): i64 { return k; } }\nfn main(): i64 { return 0; }\nsyscall(60, main());\n" > "$T/r19f.cyr"
+build r19f
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/r19f.err")" -eq 2 ] && grep -qF "<source>:3:40: 'add' implements trait 'Add'" "$T/r19f.err" && grep -qF "<source>:3:19: method 'add' takes a different number of parameters than its declaration in trait 'Add'" "$T/r19f.err"; then ok "R19f: \`fn add(self, b, c, k = 1)\` against \`add(self, b)\`: the default refused, and the extra \`c\` still named"
+else bad "R19f: rc $rc: $(grep '^error' "$T/r19f.err" | head -3 | tr '\n' '|')"; fi
+# R9s1-R9s5 (6.7.11; the same issue, shape 9): a parameter whose TYPE is refused keeps its default (and the defaults
+# after it), so its calls are not each refused as well — one error per input, the filed repros verbatim.
+refused r9s1 "a slice cannot be a parameter" "R9s1: \`fn f(s: [u8] = 0)\` called \`f()\`: the slice refusal alone" "fn f(s: [u8] = 0): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:9"
+refused r9s2 "unknown type 'Nonexist' for parameter 's'" "R9s2: \`fn f(s: Nonexist = 0)\` called \`f()\`: the unknown type alone" "fn f(s: Nonexist = 0): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:9"
+refused r9s3 "unknown type 'Nonexist' for parameter 's'" "R9s3: \`fn f(a, s: Nonexist = 0, b = 3)\` called \`f(1)\`: the unknown type alone" "fn f(a, s: Nonexist = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n" "1:12"
+refused r9s4 "unknown type 'Nonexist' for parameter 's'" "R9s4: ... a forward call" "fn main(): i64 { return f(); }\nfn f(s: Nonexist = 0): i64 { return 7; }\nsyscall(60, main());\n" "2:9"
+refused r9s5 "a slice cannot be a parameter" "R9s5: \`s: slice<u8> = 0\`, two calls short" "fn f(a, s: slice<u8> = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1, 0); }\nsyscall(60, main());\n" "1:12"
 # The grammar refusals are reported under --syntax-only (what `cyrius lint` runs) too.
 refused x0a "needs a default: it follows one that has a default" "X0a: R1 under --syntax-only" "fn f(a, b = 1, c): i64 { return a + b + c; }$E" "1:16" "--syntax-only"
 refused x0b "a parameter default cannot hold a block" "X0b: R4 under --syntax-only" "fn f(a, b = if (a > 1) { 2 } else { 3 }): i64 { return a + b; }$E" "1:13" "--syntax-only"

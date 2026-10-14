@@ -32,6 +32,13 @@
 #   C  (6.7.8) the X rows and the values file on cx (cxvm): cx's struct pair is r0:r4, the
 #      multi-value registers themselves, so nothing differs there — the leg pins that it stays so
 #      (it had no 16 B struct pair at all before 6.7.8: issues/archived/2026-10-08-cx-16b-struct-return-refused.md)
+#   D  (6.7.11) a destructure binds a struct callee's REGISTER words only (the user's decision,
+#      2026-10-13; issues/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md):
+#      over 16 B (a retptr: `var a, b = mk(5);` read a stale rdx, 50 where 56 is meant, on every
+#      target) and three names from a 9-16 B struct's two words are refused by name, on the x86_64,
+#      aarch64 and cx compilers, once each — at fn scope, in both top-level zones, as a method, from a
+#      generic instance and from a `: Q` fn's `return (..)` arms; an 8 B struct is one value. X4-X6
+#      (two names from 16 B) still run.
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change, the gate run from
 # that copy as CYCC=<mutant>; 2026-10-09):
@@ -44,6 +51,11 @@
 #   M4 aarch64 ESTRUCT_PAIR_HI_SYNC emitting nothing                      -> RED X1-X3 X9 a64, N x1, T2 (8)
 #   M5 `ret2` landing through EJMP0 / rp_vec again (not `_mret_land`)     -> RED X2 a64, T2 (1)
 #   M6 the arity-3 arm landing through EJMP0 / rp_vec again              -> RED X9 a64, T2 (1)
+# (6.7.11, 2026-10-13, the same way)
+#   M7 `_dt_struct_check` accepting a retptr struct (over 16 B)          -> RED D1-D4 D7 D9 (every leg)
+#   M8 `_dt_struct_check` accepting three names from 9-16 B             -> RED D5 D6 D8 (every leg)
+#   M9 `_dt_zone_check` clearing the latch before the right-hand side   -> RED D2 (two errors, every leg)
+#   M10 `_dt_struct_check` accepting an 8 B struct                      -> RED D10 (every leg)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -105,6 +117,21 @@ refused_a64() {
     elif [ "$n" -ne 1 ]; then bad "$3 (aarch64): $n error lines (want 1)"
     else ok "$3 (aarch64): refused once"; fi
 }
+# refused <name> <fragment> <what> <source>: the x86_64, aarch64 (qemu) and cx compilers each refuse it, once
+refused() {
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in x86_64 aarch64 cx; do
+        c="$CC"
+        if [ "$leg" = aarch64 ]; then [ "$QEMU" -eq 1 ] || continue; c="$A64"; fi
+        if [ "$leg" = cx ]; then [ "$CX" -eq 1 ] || continue; c="$CXC"; fi
+        rc=0; timeout 60 "$c" < "$T/$1.cyr" > "$T/$1.$leg.bin" 2> "$T/$1.$leg.err" || rc=$?
+        n=$(grep -c '^error' "$T/$1.$leg.err" || true)
+        if [ "$rc" -eq 0 ]; then bad "$3 ($leg): BUILT (rc 0)"
+        elif ! grep -qF "$2" "$T/$1.$leg.err"; then bad "$3 ($leg): refused, but not as expected: $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
+        elif [ "$n" -ne 1 ]; then bad "$3 ($leg): $n error lines (want 1)"
+        else ok "$3 ($leg): refused once"; fi
+    done
+}
 
 P='struct P { a; b; }\n'
 MT='fn mk(x): P { return (x, x + 1); }\n'
@@ -119,6 +146,21 @@ exits x6 56 "X6: B at top level, after the first statement" "${P}${ML}var z = 0;
 exits x7 6 "X7: \`mk(5); var b = rethi();\` after a P local" "${P}${ML}fn main(): i64 { mk(5); var b = rethi(); return b; }\n$E"
 exits x8 6 "X8: \`mk(5); var b = rethi();\` after \`return (x, x + 1);\` (control)" "${P}${MT}fn main(): i64 { mk(5); var b = rethi(); return b; }\n$E"
 exits x9 56 "X9: A with \`return (x, x + 1, 9);\`" "${P}fn mk(x): P { return (x, x + 1, 9); }\nfn main(): i64 { var p: P = mk(5); return p.a * 10 + p.b; }\n$E"
+
+Q='struct Q { a; b; c; }\n'
+QL='fn mk(x): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; return q; }\n'
+NR="it returns struct 'Q', which is not in registers - bind it to one name: \`var x = mk(..);\`"
+N3="into 3 names - it returns struct 'P', whose 2 words are its return registers - bind 2 names"
+refused d1 "cannot destructure 'mk' - $NR" "D1: the issue's repro — \`var a, b = mk(5);\` from a 24 B \`: Q\` fn" "${Q}${QL}fn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
+refused d2 "cannot destructure 'mk' - $NR" "D2: 24 B at top level, in the declaration zone" "${Q}${QL}var a, b = mk(5);\nsyscall(60, a * 10 + b);\n"
+refused d3 "cannot destructure 'mk' - $NR" "D3: 24 B at top level, after the first statement" "${Q}${QL}var z = 0;\nz = 1;\nvar a, b = mk(5);\nsyscall(60, a * 10 + b);\n"
+refused d4 "cannot destructure 'mk' - $NR" "D4: 24 B from a method" "${Q}impl Q { fn mk(self, x): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; return q; } }\nfn main(): i64 { var z: Q; z.a = 0; var a, b = z.mk(5); return a * 10 + b; }\n$E"
+refused d5 "cannot destructure 'mk' $N3" "D5: \`var a, b, c = mk(5);\` from a 16 B \`: P\` fn" "${P}${ML}fn main(): i64 { var a, b, c = mk(5); return a * 10 + b; }\n$E"
+refused d6 "cannot destructure 'mk' $N3" "D6: three names from 16 B at top level, in the declaration zone" "${P}${ML}var a, b, c = mk(5);\nsyscall(60, a * 10 + b);\n"
+refused d7 "cannot destructure 'mk' - $NR" "D7: 24 B with the if / else body pass 1 cannot prove" "${Q}fn mk(x): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; if (x > 3) { return q; } else { return q; } }\nfn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
+refused d8 "cannot destructure 'mk' $N3" "D8: three names from a 16 B \`: P\` fn's \`return (x, x + 1, 9);\`" "${P}fn mk(x): P { return (x, x + 1, 9); }\nfn main(): i64 { var a, b, c = mk(5); return a * 10 + b + c; }\n$E"
+refused d9 "cannot destructure 'mk' - $NR" "D9: 24 B from a generic instance" "${Q}fn mk<T>(x: T): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; return q; }\nfn main(): i64 { var a, b = mk<i64>(5); return a * 10 + b; }\n$E"
+refused d10 "but 'mk' returns 1 value - bind it to one name" "D10: an 8 B struct is one value, whatever its body" "struct P1 { a; }\nfn mk(x): P1 { var q: P1; q.a = x; if (x > 3) { return q; } else { return q; } }\nfn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
 
 if [ "$QEMU" -eq 1 ]; then
     NAT="$T/cc_nat"
@@ -153,4 +195,4 @@ refused_a64 r2 "cannot re-assign from 'mk' - it returns struct 'P', not multiple
 if [ "$QEMU" -eq 0 ]; then echo "  SKIP: the aarch64 legs (qemu-aarch64 not installed; the crossos tcyr covers pi / ecb)"; skips=$((skips + 1)); fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — the aarch64 legs could not run; the x86_64 rows passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a 9-16 B struct return and a multi-value return agree in both directions on x86_64, aarch64 (cross + native fork) and cx, rethi() included"
+echo "PASS: $G — a 9-16 B struct return and a multi-value return agree in both directions on x86_64, aarch64 (cross + native fork) and cx, rethi() included; a destructure past a struct's register words is refused"
