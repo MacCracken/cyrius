@@ -4689,6 +4689,9 @@ destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before th
 crashed and a single bind dropped the payload silently). The method's `impl` may sit above or below
 the call (6.7.11 — with the `impl` below its caller, `p.m(..)?` crashed and `var v = p.m(..);`
 kept the tag in silence).
+⚠ Known defect (6.7.11): a method the impl INHERITS from its trait's default body is not covered
+yet — `p.m(..)?` above the trait and impl crashes and `var v = p.m(..);` keeps the tag; keep that
+trait and impl above the caller (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md).
 
 The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
 before the first top-level statement or after it — kept the tag and dropped the payload, silently
