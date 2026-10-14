@@ -19,6 +19,8 @@
 #       value store that disagreement fell back to still put the first word in the slot (139).
 #
 # 6.6.20 (RPD-04): R12-R16 — the same refusals for the STEP of a classic `for`, which compiled clean.
+# 6.7.11: R17-R23 — an ASSIGNMENT from a dereference of a `*U` (a local, a field, a `*S`'s pointee, top level,
+# a for step) refused by name; A4 / A5 — `l = *p` and `q = *p` of the declared type compile with no warning.
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
@@ -37,6 +39,10 @@
 #   6.6.20: `_for_step_assign` without `_for_step_aggregate` (the 6.6.19 step)
 #                                                   -> RED R12 R13 R14 R15 R16 (compiled clean)
 #   real tree                                       -> GREEN
+# 6.7.11 (issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md), the same method:
+#   the 6.7.11 tree before it (cf5838db)            -> RED 9: R17-R23 compiled (a warning at most), A4 A5 warned
+#   `_asg_dstar` answering 0 (no name arm)          -> RED 7: R17 R19 R20 R21 R22 compiled, A4 A5 warned
+#   `_fsc_dstar` answering 0 (no field arm)         -> RED 2: R18 R23 compiled
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -173,6 +179,49 @@ refuse "R15 step G = GQ, a global of another type" "$MV" \
     "${T}${SQ}fn go(): i64 { var i = 0; for (i = 0; i < 1; G = GQ) { i = i + 1; } return G.x; } syscall(60, go());"
 refuse "R16 step v = mk4(), another vector width" "vector return type does not match the assigned variable" \
     "${T}${SQ}fn go(): i64 { var v: f64v2; var i = 0; for (i = 0; i < 1; v = mk4()) { i = i + 1; } return 0; } syscall(60, go());"
+
+echo "=== an assignment from a dereference of a *U of another struct type (6.7.11) ==="
+# issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md: `l = *p` / `o.s = *p` copy the
+# struct now (tests/tcyr/crossos/struct_deref_assign_copy.tcyr); a `*U` of another struct is refused by name,
+# as the declaration `var l: Pt = *pu;` is. Through 6.7.10 each row compiled (a warning at most) and stored
+# U's first word.
+SU='var GQ = Q { 1, 2, 3 }; var PU: *Q = &GQ; fn gu(): *Q { return PU; }
+'
+refuse "R17 l = *pu, a local" "cannot copy 'pu' $MV: 'l'" \
+    "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var pu: *Q = &q; var l = Pt { 0, 0 }; l = *pu; return l.x; } syscall(60, go());"
+refuse "R18 o.s = *pu, a struct-typed field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+    "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var pu: *Q = &q; var r: RB; r.v = *pu; return r.v.x; } syscall(60, go());"
+refuse "R19 G = (*PU) at top level" "cannot copy 'PU' $MV: 'G'" \
+    "${T}${SU}var G = Pt { 0, 0 }; G = (*PU); syscall(60, G.x);"
+refuse "R20 l = *gu(), a : *Q call" "cannot copy 'gu' $MV: 'l'" \
+    "${T}${SU}fn go(): i64 { var l = Pt { 0, 0 }; l = *gu(); return l.x; } syscall(60, go());"
+refuse "R21 q = *pu into a *Pt's pointee" "cannot copy 'pu' $MV: 'q'" \
+    "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var t = Pt { 0, 0 }; var q: *Pt = &t; q = *pu; return t.x; } syscall(60, go());"
+refuse "R22 step a = *pu, 8 B" "cannot copy 'pu' $MV: 'a'" \
+    "${T}fn go(): i64 { var u = Q8 { 1, 2 }; var pu: *Q8 = &u; var a = P8 { 0, 0 }; var i = 0; for (i = 0; i < 1; a = *pu) { i = i + 1; } return a.x; } syscall(60, go());"
+refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+    "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
+
+# ... and the same type compiles with NO warning (6.7.11: `l = *p` and `q = *p` warned "assigning non-pointer
+# to typed pointer", the dereference's pointer step being 0) and runs the copy.
+quiet() {  # $1 label  $2 source  $3 expected exit — no 'warning' line, the exit right
+    naccept=$((naccept+1))
+    printf '%s' "$2" > "$D/q.cyr"
+    got=$(_run "$D/q.cyr")
+    if grep -q 'warning' "$D/a.err" 2>/dev/null; then
+        printf '  FAIL: %-44s warned: %s\n' "$1" "$(grep 'warning' "$D/a.err" | head -1)"; fail=$((fail+1))
+    elif [ "$got" != "$3" ]; then
+        printf '  FAIL: %-44s exit=%s, want %s\n' "$1" "$got" "$3"; fail=$((fail+1))
+    else
+        printf '  ok(quiet): %-40s exit=%s\n' "$1" "$got"; pass=$((pass+1))
+    fi
+}
+quiet "A4 l = *p, no warning" \
+    "${T}fn go(): i64 { var s = Pt { 5, 8 }; var p: *Pt = &s; var l = Pt { 0, 0 }; l = *p; return l.x * 10 + l.y; } syscall(60, go());" \
+    58
+quiet "A5 q = *p (q: *Pt), no warning" \
+    "${T}fn go(): i64 { var s = Pt { 5, 8 }; var p: *Pt = &s; var t = Pt { 0, 0 }; var q: *Pt = &t; q = *p; return t.x * 10 + t.y; } syscall(60, go());" \
+    58
 
 echo "=== the same shapes with the declared type (no false refusal) ==="
 accept "A1 take(r.v), gen<Pt>(r.v), p.plus(r.v)" \

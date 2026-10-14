@@ -156,6 +156,11 @@
 # of 1 / 3 / 7 / 8 B, top level):
 #   R10 that file on the same legs as R1, N derived from it (floor 78; 6.7.11: the `z` rows — a dereference
 #      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0)
+#   R11 (6.7.11, issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
+#      tests/tcyr/crossos/struct_deref_assign_copy.tcyr on the same legs (floor 76): an ASSIGNMENT from a
+#      dereference — `l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S` / a handle's pointee, wrapped, `*(p +
+#      0)`, `*gp()`, `*w.p`, through a `*O`, a for step, top level — copies the struct at 3 / 8 / 16 / 24 B
+#      (through 6.7.10 one word; the refusals are struct_copy_source_type_refused.sh's R17-R23)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -372,6 +377,13 @@
 #                                                      78 rows x7 (the padding 'D'..'H', every `z` row)
 #   MX2  `_hl_pval_ra` never zeroing its frame temp (`z` ignored) -> RED 7: R10 8 of 78 rows x7 (in a fn, a by-value
 #                                                      argument's and a return's padding 0xFF from the frame)
+# 6.7.11 ASSIGNMENT-FROM-DEREFERENCE MUTATION LEDGER (2026-10-14, the same method; R11,
+# issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md):
+#   the tree before it (cf5838db)                   -> RED 7: R11 42 of 76 rows x7 (one word stored; `q = *p`
+#                                                      rebound q)
+#   MA1  `_asg_dstar` answering 0 (no name arm)       -> RED 7: R11 36 of 76 rows x7
+#   MA2  `_fsc_dstar` answering 0 (no field arm)      -> RED 7: R11 8 of 76 rows x7 (`o.s = *p`, `po.s = *p`, the
+#                                                      for step, `GO.s = *gp()` at 16 / 24 B)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -639,6 +651,20 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R10 $leg: the values file did not build: $(grep '^error' "$D/dw_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$ND passed, 0 failed ($ND total)" ]; then ok "R10 $leg: $LAST"
     else bad "R10 $leg: exit $RC, '$LAST' (want '$ND passed, 0 failed ($ND total)') $(grep -m3 'FAIL' "$D/dw_$n.out" | tr '\n' ' ')"; fi
+done
+
+TA=tests/tcyr/crossos/struct_deref_assign_copy.tcyr
+[ -f "$TA" ] || { echo "FAIL: $G: $TA is missing"; exit 1; }
+NA=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TA")
+AFLOOR=76
+if [ "$NA" -lt "$AFLOOR" ]; then echo "FAIL: $G: only $NA rows in $TA (floor $AFLOOR) — rows were lost"; exit 1; fi
+echo "R11. $TA ($NA rows: an assignment from a dereference of a *S copies the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TA" "$D/da_$n"
+    if [ "$RC" -eq -1 ]; then bad "R11 $leg: the values file did not build: $(grep '^error' "$D/da_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NA passed, 0 failed ($NA total)" ]; then ok "R11 $leg: $LAST"
+    else bad "R11 $leg: exit $RC, '$LAST' (want '$NA passed, 0 failed ($NA total)') $(grep -m3 'FAIL' "$D/da_$n.out" | tr '\n' ' ')"; fi
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -1271,4 +1297,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11)"

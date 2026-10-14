@@ -1,0 +1,529 @@
+# struct_deref_assign_copy.tcyr — 6.7.11. AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT
+# (issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md; 6.7.10 decision 6: `*p` is a struct
+# value at every size, and the declaration `var d: S = *p;` copies it).
+#
+# ⛔ THROUGH 6.7.10 the assignment forms parsed `*p` as an expression and stored its FIRST WORD: `l = *p`,
+# `G = *p` and `o.s = *p` left the rest of the struct stale (50 where 58 is right, {5, 0, 0} at 24 B), and
+# `q = *p` with `q: *S` REBOUND q to that word (its pointee untouched; the next `q.a` read through it), with
+# a false "assigning non-pointer to typed pointer" warning on `l = *p` / `q = *p`. Every target.
+#
+# THE RULE, each row at 3, 8, 16 and 24 B (the source {5, 8, 9}, written after the copy to tell a copy from
+# an alias): a dereference of a `*S` — `*p`, `(*p)`, `*(p + 0)`, `*gp()`, `*w.p` — assigned to a struct
+# value (an inline local, a value global, a by-value parameter, a struct-typed field, through a `*O` too)
+# copies STRUCTSZ bytes, a guard byte after the object kept; to a `*S` local or parameter, or to a handle,
+# it copies into the POINTEE, as `q = l` does; in a classic-for step too; at top level (a value global, a
+# field of one, a handle global). The declaration and `q = l` are the controls. A `*U` of another struct is
+# refused by name and `l = *p` / `q = *p` compile without a warning (the gate's rows,
+# tests/gates/frontend/struct_copy_source_type_refused.sh).
+#
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi; tests/gates/codegen/
+# small_struct_handle_line.sh R11 on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
+# cx (cxvm) and PE (wine).
+include "lib/assert.cyr"
+
+# ── 3 B ──
+struct D3 { a: i8; b: i8; c: i8; }
+struct O3 { s: D3; g: i8; }
+struct W3 { k; p: *D3; }
+var GD3 = D3 { 0, 0, 0 };
+var ZD3: i8 = 99;
+var GP3: *D3 = 0;
+fn gp3(): *D3 { return GP3; }
+fn s3_l(): i64 { var x = D3 { 5, 8, 9 }; var p: *D3 = &x; var l = D3 { 0, 0, 0 }; l = *p; x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn s3_g(): i64 { var x = D3 { 5, 8, 9 }; var p: *D3 = &x; GD3 = *p; x.a = 1; return GD3.a * 100 + GD3.b * 10 + GD3.c + (ZD3 - 99) * 1000; }
+fn s3_o(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var o: O3;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    o.s = *p;
+    x.a = 1;
+    return o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000;
+}
+fn s3_q(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var t = D3 { 0, 0, 0 };
+    var q: *D3 = &t;
+    q = *p;
+    x.a = 1;
+    return t.a * 100 + t.b * 10 + t.c + (q != &t) * 1000;
+}
+fn s3_ql(): i64 {
+    var t = D3 { 0, 0, 0 };
+    var q: *D3 = &t;
+    var l = D3 { 5, 8, 9 };
+    q = l;
+    l.a = 1;
+    return t.a * 100 + t.b * 10 + t.c;
+}
+fn s3_d(): i64 { var x = D3 { 5, 8, 9 }; var p: *D3 = &x; var d: D3 = *p; x.a = 1; return d.a * 100 + d.b * 10 + d.c; }
+fn s3_par(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var l = D3 { 0, 0, 0 };
+    l = (*p);
+    var m = D3 { 0, 0, 0 };
+    m = ((*p));
+    x.a = 1;
+    return (l.a * 100 + l.b * 10 + l.c) * 1000 + m.a * 100 + m.b * 10 + m.c;
+}
+fn s3_ar(): i64 { var x = D3 { 5, 8, 9 }; var p: *D3 = &x; var l = D3 { 0, 0, 0 }; l = *(p + 0); x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn s3_call(): i64 { var x = D3 { 5, 8, 9 }; GP3 = &x; var l = D3 { 0, 0, 0 }; l = *gp3(); x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn s3_fld(): i64 { var x = D3 { 5, 8, 9 }; var w = W3 { 0, &x }; var l = D3 { 0, 0, 0 }; l = *w.p; x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn s3_po(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var o: O3;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    var po: *O3 = &o;
+    po.s = *p;
+    x.a = 1;
+    return o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000;
+}
+fn s3_for(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var l = D3 { 0, 0, 0 };
+    var o: O3;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    var i = 0;
+    for (i = 0; i < 1; l = *p) { i = i + 1; }
+    for (i = 0; i < 1; o.s = (*p)) { i = i + 1; }
+    x.a = 1;
+    return (l.a * 100 + l.b * 10 + l.c) * 1000 + o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000000;
+}
+fn s3_h(): i64 {
+    var x = D3 { 5, 8, 9 };
+    var p: *D3 = &x;
+    var t = D3 { 0, 0, 0 };
+    var h: D3 = &t;
+    h = *p;
+    x.a = 1;
+    return t.a * 100 + t.b * 10 + t.c;
+}
+fn s3_pq(q: *D3, p: *D3): i64 { q = *p; return 0; }
+fn s3_pp(): i64 { var x = D3 { 5, 8, 9 }; var t = D3 { 0, 0, 0 }; s3_pq(&t, &x); x.a = 1; return t.a * 100 + t.b * 10 + t.c; }
+fn s3_bv(l: D3, p: *D3): i64 { l = *p; return l.a * 100 + l.b * 10 + l.c; }
+fn s3_byv(): i64 { var x = D3 { 5, 8, 9 }; var z = D3 { 0, 0, 0 }; var r = s3_bv(z, &x); return r + (z.a * 100 + z.b * 10 + z.c) * 1000; }
+
+# ── 8 B ──
+struct D8 { a: i32; b: i32; }
+struct O8 { s: D8; g: i8; }
+struct W8 { k; p: *D8; }
+var GD8 = D8 { 0, 0 };
+var ZD8: i8 = 99;
+var GP8: *D8 = 0;
+fn gp8(): *D8 { return GP8; }
+fn s8_l(): i64 { var x = D8 { 5, 8 }; var p: *D8 = &x; var l = D8 { 0, 0 }; l = *p; x.a = 1; return l.a * 10 + l.b; }
+fn s8_g(): i64 { var x = D8 { 5, 8 }; var p: *D8 = &x; GD8 = *p; x.a = 1; return GD8.a * 10 + GD8.b + (ZD8 - 99) * 1000; }
+fn s8_o(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var o: O8;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    o.s = *p;
+    x.a = 1;
+    return o.s.a * 10 + o.s.b + (o.g - 99) * 1000;
+}
+fn s8_q(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var t = D8 { 0, 0 };
+    var q: *D8 = &t;
+    q = *p;
+    x.a = 1;
+    return t.a * 10 + t.b + (q != &t) * 1000;
+}
+fn s8_ql(): i64 {
+    var t = D8 { 0, 0 };
+    var q: *D8 = &t;
+    var l = D8 { 5, 8 };
+    q = l;
+    l.a = 1;
+    return t.a * 10 + t.b;
+}
+fn s8_d(): i64 { var x = D8 { 5, 8 }; var p: *D8 = &x; var d: D8 = *p; x.a = 1; return d.a * 10 + d.b; }
+fn s8_par(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var l = D8 { 0, 0 };
+    l = (*p);
+    var m = D8 { 0, 0 };
+    m = ((*p));
+    x.a = 1;
+    return (l.a * 10 + l.b) * 1000 + m.a * 10 + m.b;
+}
+fn s8_ar(): i64 { var x = D8 { 5, 8 }; var p: *D8 = &x; var l = D8 { 0, 0 }; l = *(p + 0); x.a = 1; return l.a * 10 + l.b; }
+fn s8_call(): i64 { var x = D8 { 5, 8 }; GP8 = &x; var l = D8 { 0, 0 }; l = *gp8(); x.a = 1; return l.a * 10 + l.b; }
+fn s8_fld(): i64 { var x = D8 { 5, 8 }; var w = W8 { 0, &x }; var l = D8 { 0, 0 }; l = *w.p; x.a = 1; return l.a * 10 + l.b; }
+fn s8_po(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var o: O8;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    var po: *O8 = &o;
+    po.s = *p;
+    x.a = 1;
+    return o.s.a * 10 + o.s.b + (o.g - 99) * 1000;
+}
+fn s8_for(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var l = D8 { 0, 0 };
+    var o: O8;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    var i = 0;
+    for (i = 0; i < 1; l = *p) { i = i + 1; }
+    for (i = 0; i < 1; o.s = (*p)) { i = i + 1; }
+    x.a = 1;
+    return (l.a * 10 + l.b) * 1000 + o.s.a * 10 + o.s.b + (o.g - 99) * 1000000;
+}
+fn s8_h(): i64 {
+    var x = D8 { 5, 8 };
+    var p: *D8 = &x;
+    var t = D8 { 0, 0 };
+    var h: D8 = &t;
+    h = *p;
+    x.a = 1;
+    return t.a * 10 + t.b;
+}
+fn s8_pq(q: *D8, p: *D8): i64 { q = *p; return 0; }
+fn s8_pp(): i64 { var x = D8 { 5, 8 }; var t = D8 { 0, 0 }; s8_pq(&t, &x); x.a = 1; return t.a * 10 + t.b; }
+fn s8_bv(l: D8, p: *D8): i64 { l = *p; return l.a * 10 + l.b; }
+fn s8_byv(): i64 { var x = D8 { 5, 8 }; var z = D8 { 0, 0 }; var r = s8_bv(z, &x); return r + (z.a * 10 + z.b) * 1000; }
+
+# ── 16 B ──
+struct DH { a; b; }
+struct OH { s: DH; g: i8; }
+struct WH { k; p: *DH; }
+var GDH = DH { 0, 0 };
+var ZDH: i8 = 99;
+var GPH: *DH = 0;
+fn gpH(): *DH { return GPH; }
+fn sH_l(): i64 { var x = DH { 5, 8 }; var p: *DH = &x; var l = DH { 0, 0 }; l = *p; x.a = 1; return l.a * 10 + l.b; }
+fn sH_g(): i64 { var x = DH { 5, 8 }; var p: *DH = &x; GDH = *p; x.a = 1; return GDH.a * 10 + GDH.b + (ZDH - 99) * 1000; }
+fn sH_o(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var o: OH;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    o.s = *p;
+    x.a = 1;
+    return o.s.a * 10 + o.s.b + (o.g - 99) * 1000;
+}
+fn sH_q(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var t = DH { 0, 0 };
+    var q: *DH = &t;
+    q = *p;
+    x.a = 1;
+    return t.a * 10 + t.b + (q != &t) * 1000;
+}
+fn sH_ql(): i64 {
+    var t = DH { 0, 0 };
+    var q: *DH = &t;
+    var l = DH { 5, 8 };
+    q = l;
+    l.a = 1;
+    return t.a * 10 + t.b;
+}
+fn sH_d(): i64 { var x = DH { 5, 8 }; var p: *DH = &x; var d: DH = *p; x.a = 1; return d.a * 10 + d.b; }
+fn sH_par(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var l = DH { 0, 0 };
+    l = (*p);
+    var m = DH { 0, 0 };
+    m = ((*p));
+    x.a = 1;
+    return (l.a * 10 + l.b) * 1000 + m.a * 10 + m.b;
+}
+fn sH_ar(): i64 { var x = DH { 5, 8 }; var p: *DH = &x; var l = DH { 0, 0 }; l = *(p + 0); x.a = 1; return l.a * 10 + l.b; }
+fn sH_call(): i64 { var x = DH { 5, 8 }; GPH = &x; var l = DH { 0, 0 }; l = *gpH(); x.a = 1; return l.a * 10 + l.b; }
+fn sH_fld(): i64 { var x = DH { 5, 8 }; var w = WH { 0, &x }; var l = DH { 0, 0 }; l = *w.p; x.a = 1; return l.a * 10 + l.b; }
+fn sH_po(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var o: OH;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    var po: *OH = &o;
+    po.s = *p;
+    x.a = 1;
+    return o.s.a * 10 + o.s.b + (o.g - 99) * 1000;
+}
+fn sH_for(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var l = DH { 0, 0 };
+    var o: OH;
+    o.s.a = 0; o.s.b = 0;
+    o.g = 99;
+    var i = 0;
+    for (i = 0; i < 1; l = *p) { i = i + 1; }
+    for (i = 0; i < 1; o.s = (*p)) { i = i + 1; }
+    x.a = 1;
+    return (l.a * 10 + l.b) * 1000 + o.s.a * 10 + o.s.b + (o.g - 99) * 1000000;
+}
+fn sH_h(): i64 {
+    var x = DH { 5, 8 };
+    var p: *DH = &x;
+    var t = DH { 0, 0 };
+    var h: DH = &t;
+    h = *p;
+    x.a = 1;
+    return t.a * 10 + t.b;
+}
+fn sH_pq(q: *DH, p: *DH): i64 { q = *p; return 0; }
+fn sH_pp(): i64 { var x = DH { 5, 8 }; var t = DH { 0, 0 }; sH_pq(&t, &x); x.a = 1; return t.a * 10 + t.b; }
+fn sH_bv(l: DH, p: *DH): i64 { l = *p; return l.a * 10 + l.b; }
+fn sH_byv(): i64 { var x = DH { 5, 8 }; var z = DH { 0, 0 }; var r = sH_bv(z, &x); return r + (z.a * 10 + z.b) * 1000; }
+
+# ── 24 B ──
+struct DT { a; b; c; }
+struct OT { s: DT; g: i8; }
+struct WT { k; p: *DT; }
+var GDT = DT { 0, 0, 0 };
+var ZDT: i8 = 99;
+var GPT: *DT = 0;
+fn gpT(): *DT { return GPT; }
+fn sT_l(): i64 { var x = DT { 5, 8, 9 }; var p: *DT = &x; var l = DT { 0, 0, 0 }; l = *p; x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn sT_g(): i64 { var x = DT { 5, 8, 9 }; var p: *DT = &x; GDT = *p; x.a = 1; return GDT.a * 100 + GDT.b * 10 + GDT.c + (ZDT - 99) * 1000; }
+fn sT_o(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var o: OT;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    o.s = *p;
+    x.a = 1;
+    return o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000;
+}
+fn sT_q(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var t = DT { 0, 0, 0 };
+    var q: *DT = &t;
+    q = *p;
+    x.a = 1;
+    return t.a * 100 + t.b * 10 + t.c + (q != &t) * 1000;
+}
+fn sT_ql(): i64 {
+    var t = DT { 0, 0, 0 };
+    var q: *DT = &t;
+    var l = DT { 5, 8, 9 };
+    q = l;
+    l.a = 1;
+    return t.a * 100 + t.b * 10 + t.c;
+}
+fn sT_d(): i64 { var x = DT { 5, 8, 9 }; var p: *DT = &x; var d: DT = *p; x.a = 1; return d.a * 100 + d.b * 10 + d.c; }
+fn sT_par(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var l = DT { 0, 0, 0 };
+    l = (*p);
+    var m = DT { 0, 0, 0 };
+    m = ((*p));
+    x.a = 1;
+    return (l.a * 100 + l.b * 10 + l.c) * 1000 + m.a * 100 + m.b * 10 + m.c;
+}
+fn sT_ar(): i64 { var x = DT { 5, 8, 9 }; var p: *DT = &x; var l = DT { 0, 0, 0 }; l = *(p + 0); x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn sT_call(): i64 { var x = DT { 5, 8, 9 }; GPT = &x; var l = DT { 0, 0, 0 }; l = *gpT(); x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn sT_fld(): i64 { var x = DT { 5, 8, 9 }; var w = WT { 0, &x }; var l = DT { 0, 0, 0 }; l = *w.p; x.a = 1; return l.a * 100 + l.b * 10 + l.c; }
+fn sT_po(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var o: OT;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    var po: *OT = &o;
+    po.s = *p;
+    x.a = 1;
+    return o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000;
+}
+fn sT_for(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var l = DT { 0, 0, 0 };
+    var o: OT;
+    o.s.a = 0; o.s.b = 0; o.s.c = 0;
+    o.g = 99;
+    var i = 0;
+    for (i = 0; i < 1; l = *p) { i = i + 1; }
+    for (i = 0; i < 1; o.s = (*p)) { i = i + 1; }
+    x.a = 1;
+    return (l.a * 100 + l.b * 10 + l.c) * 1000 + o.s.a * 100 + o.s.b * 10 + o.s.c + (o.g - 99) * 1000000;
+}
+fn sT_h(): i64 {
+    var x = DT { 5, 8, 9 };
+    var p: *DT = &x;
+    var t = DT { 0, 0, 0 };
+    var h: DT = &t;
+    h = *p;
+    x.a = 1;
+    return t.a * 100 + t.b * 10 + t.c;
+}
+fn sT_pq(q: *DT, p: *DT): i64 { q = *p; return 0; }
+fn sT_pp(): i64 { var x = DT { 5, 8, 9 }; var t = DT { 0, 0, 0 }; sT_pq(&t, &x); x.a = 1; return t.a * 100 + t.b * 10 + t.c; }
+fn sT_bv(l: DT, p: *DT): i64 { l = *p; return l.a * 100 + l.b * 10 + l.c; }
+fn sT_byv(): i64 { var x = DT { 5, 8, 9 }; var z = DT { 0, 0, 0 }; var r = sT_bv(z, &x); return r + (z.a * 100 + z.b * 10 + z.c) * 1000; }
+
+# ── top level: a value global, a field of one, a handle global (after the first statement) ──
+var TX3 = D3 { 5, 8, 9 };
+var TP3: *D3 = &TX3;
+var TG3 = D3 { 0, 0, 0 };
+var TZ3: i8 = 99;
+var TO3 = O3 { 0, 0, 0, 99 };
+var TT3 = D3 { 0, 0, 0 };
+var TH3: D3 = &TT3;
+var TX8 = D8 { 5, 8 };
+var TP8: *D8 = &TX8;
+var TG8 = D8 { 0, 0 };
+var TZ8: i8 = 99;
+var TO8 = O8 { 0, 0, 99 };
+var TT8 = D8 { 0, 0 };
+var TH8: D8 = &TT8;
+var TXH = DH { 5, 8 };
+var TPH: *DH = &TXH;
+var TGH = DH { 0, 0 };
+var TZH: i8 = 99;
+var TOH = OH { 0, 0, 99 };
+var TTH = DH { 0, 0 };
+var THH: DH = &TTH;
+var TXT = DT { 5, 8, 9 };
+var TPT: *DT = &TXT;
+var TGT = DT { 0, 0, 0 };
+var TZT: i8 = 99;
+var TOT = OT { 0, 0, 0, 99 };
+var TTT = DT { 0, 0, 0 };
+var THT: DT = &TTT;
+var e = 0;
+TG3 = *TP3;
+var R3a = TG3.a * 100 + TG3.b * 10 + TG3.c + (TZ3 - 99) * 1000;
+TG3.a = 0; TG3.b = 0; TG3.c = 0;
+TG8 = *TP8;
+var R8a = TG8.a * 10 + TG8.b + (TZ8 - 99) * 1000;
+TG8.a = 0; TG8.b = 0;
+TGH = *TPH;
+var RHa = TGH.a * 10 + TGH.b + (TZH - 99) * 1000;
+TGH.a = 0; TGH.b = 0;
+TGT = *TPT;
+var RTa = TGT.a * 100 + TGT.b * 10 + TGT.c + (TZT - 99) * 1000;
+TGT.a = 0; TGT.b = 0; TGT.c = 0;
+TG3 = (*TP3);
+var R3b = TG3.a * 100 + TG3.b * 10 + TG3.c;
+GP3 = TP3;
+TO3.s = *gp3();
+var R3c = TO3.s.a * 100 + TO3.s.b * 10 + TO3.s.c + (TO3.g - 99) * 1000;
+TH3 = *TP3;
+var R3d = TT3.a * 100 + TT3.b * 10 + TT3.c;
+TG8 = (*TP8);
+var R8b = TG8.a * 10 + TG8.b;
+GP8 = TP8;
+TO8.s = *gp8();
+var R8c = TO8.s.a * 10 + TO8.s.b + (TO8.g - 99) * 1000;
+TH8 = *TP8;
+var R8d = TT8.a * 10 + TT8.b;
+TGH = (*TPH);
+var RHb = TGH.a * 10 + TGH.b;
+GPH = TPH;
+TOH.s = *gpH();
+var RHc = TOH.s.a * 10 + TOH.s.b + (TOH.g - 99) * 1000;
+THH = *TPH;
+var RHd = TTH.a * 10 + TTH.b;
+TGT = (*TPT);
+var RTb = TGT.a * 100 + TGT.b * 10 + TGT.c;
+GPT = TPT;
+TOT.s = *gpT();
+var RTc = TOT.s.a * 100 + TOT.s.b * 10 + TOT.s.c + (TOT.g - 99) * 1000;
+THT = *TPT;
+var RTd = TTT.a * 100 + TTT.b * 10 + TTT.c;
+TX3.a = 1;
+TXH.a = 1;
+
+assert_eq(s3_l(), 589, "3 B: l = *p");
+assert_eq(s3_g(), 589, "3 B: G = *p (the guard global after G kept)");
+assert_eq(s3_o(), 589, "3 B: o.s = *p (the guard field after it kept)");
+assert_eq(s3_q(), 589, "3 B: q = *p with q: *S, into the pointee (q not rebound)");
+assert_eq(s3_ql(), 589, "3 B: control q = l");
+assert_eq(s3_d(), 589, "3 B: control var d: S = *p");
+assert_eq(s3_par(), 589589, "3 B: l = (*p), m = ((*p))");
+assert_eq(s3_ar(), 589, "3 B: l = *(p + 0)");
+assert_eq(s3_call(), 589, "3 B: l = *gp()");
+assert_eq(s3_fld(), 589, "3 B: l = *w.p");
+assert_eq(s3_po(), 589, "3 B: po.s = *p, the field reached through a *O");
+assert_eq(s3_for(), 589589, "3 B: a for step, l = *p and o.s = (*p)");
+assert_eq(s3_h(), 589, "3 B: h = *p into a handle's object");
+assert_eq(s3_pp(), 589, "3 B: q = *p with q a *S parameter");
+assert_eq(s3_byv(), 589, "3 B: l = *p into a by-value parameter (the caller's copy untouched)");
+assert_eq(R3a, 589, "3 B: top level, G = *P (the guard global kept)");
+assert_eq(R3b, 589, "3 B: top level, G = (*P)");
+assert_eq(R3c, 589, "3 B: top level, GO.s = *gp() (the guard field kept)");
+assert_eq(R3d, 589, "3 B: top level, H = *P into a handle global's object");
+assert_eq(s8_l(), 58, "8 B: l = *p");
+assert_eq(s8_g(), 58, "8 B: G = *p (the guard global after G kept)");
+assert_eq(s8_o(), 58, "8 B: o.s = *p (the guard field after it kept)");
+assert_eq(s8_q(), 58, "8 B: q = *p with q: *S, into the pointee (q not rebound)");
+assert_eq(s8_ql(), 58, "8 B: control q = l");
+assert_eq(s8_d(), 58, "8 B: control var d: S = *p");
+assert_eq(s8_par(), 58058, "8 B: l = (*p), m = ((*p))");
+assert_eq(s8_ar(), 58, "8 B: l = *(p + 0)");
+assert_eq(s8_call(), 58, "8 B: l = *gp()");
+assert_eq(s8_fld(), 58, "8 B: l = *w.p");
+assert_eq(s8_po(), 58, "8 B: po.s = *p, the field reached through a *O");
+assert_eq(s8_for(), 58058, "8 B: a for step, l = *p and o.s = (*p)");
+assert_eq(s8_h(), 58, "8 B: h = *p into a handle's object");
+assert_eq(s8_pp(), 58, "8 B: q = *p with q a *S parameter");
+assert_eq(s8_byv(), 58, "8 B: l = *p into a by-value parameter (the caller's copy untouched)");
+assert_eq(R8a, 58, "8 B: top level, G = *P (the guard global kept)");
+assert_eq(R8b, 58, "8 B: top level, G = (*P)");
+assert_eq(R8c, 58, "8 B: top level, GO.s = *gp() (the guard field kept)");
+assert_eq(R8d, 58, "8 B: top level, H = *P into a handle global's object");
+assert_eq(sH_l(), 58, "16 B: l = *p");
+assert_eq(sH_g(), 58, "16 B: G = *p (the guard global after G kept)");
+assert_eq(sH_o(), 58, "16 B: o.s = *p (the guard field after it kept)");
+assert_eq(sH_q(), 58, "16 B: q = *p with q: *S, into the pointee (q not rebound)");
+assert_eq(sH_ql(), 58, "16 B: control q = l");
+assert_eq(sH_d(), 58, "16 B: control var d: S = *p");
+assert_eq(sH_par(), 58058, "16 B: l = (*p), m = ((*p))");
+assert_eq(sH_ar(), 58, "16 B: l = *(p + 0)");
+assert_eq(sH_call(), 58, "16 B: l = *gp()");
+assert_eq(sH_fld(), 58, "16 B: l = *w.p");
+assert_eq(sH_po(), 58, "16 B: po.s = *p, the field reached through a *O");
+assert_eq(sH_for(), 58058, "16 B: a for step, l = *p and o.s = (*p)");
+assert_eq(sH_h(), 58, "16 B: h = *p into a handle's object");
+assert_eq(sH_pp(), 58, "16 B: q = *p with q a *S parameter");
+assert_eq(sH_byv(), 58, "16 B: l = *p into a by-value parameter (the caller's copy untouched)");
+assert_eq(RHa, 58, "16 B: top level, G = *P (the guard global kept)");
+assert_eq(RHb, 58, "16 B: top level, G = (*P)");
+assert_eq(RHc, 58, "16 B: top level, GO.s = *gp() (the guard field kept)");
+assert_eq(RHd, 58, "16 B: top level, H = *P into a handle global's object");
+assert_eq(sT_l(), 589, "24 B: l = *p");
+assert_eq(sT_g(), 589, "24 B: G = *p (the guard global after G kept)");
+assert_eq(sT_o(), 589, "24 B: o.s = *p (the guard field after it kept)");
+assert_eq(sT_q(), 589, "24 B: q = *p with q: *S, into the pointee (q not rebound)");
+assert_eq(sT_ql(), 589, "24 B: control q = l");
+assert_eq(sT_d(), 589, "24 B: control var d: S = *p");
+assert_eq(sT_par(), 589589, "24 B: l = (*p), m = ((*p))");
+assert_eq(sT_ar(), 589, "24 B: l = *(p + 0)");
+assert_eq(sT_call(), 589, "24 B: l = *gp()");
+assert_eq(sT_fld(), 589, "24 B: l = *w.p");
+assert_eq(sT_po(), 589, "24 B: po.s = *p, the field reached through a *O");
+assert_eq(sT_for(), 589589, "24 B: a for step, l = *p and o.s = (*p)");
+assert_eq(sT_h(), 589, "24 B: h = *p into a handle's object");
+assert_eq(sT_pp(), 589, "24 B: q = *p with q a *S parameter");
+assert_eq(sT_byv(), 589, "24 B: l = *p into a by-value parameter (the caller's copy untouched)");
+assert_eq(RTa, 589, "24 B: top level, G = *P (the guard global kept)");
+assert_eq(RTb, 589, "24 B: top level, G = (*P)");
+assert_eq(RTc, 589, "24 B: top level, GO.s = *gp() (the guard field kept)");
+assert_eq(RTd, 589, "24 B: top level, H = *P into a handle global's object");
+var r = assert_summary();

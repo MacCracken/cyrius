@@ -3175,6 +3175,38 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
+# ⛔ 6.7.11 — AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT (6.7.10 decision 6: `*p` is a struct
+# value, and the declaration `var d: S = *p;` copies it). `l = *p`, `G = *p` and `q = *p` (q a `*S` or a
+# handle) parsed `*p` as an expression and stored its first word — `l.b` / `G.b` stale, q REBOUND to that word
+# — at every size, silently but for a false "assigning non-pointer to typed pointer" warning (issues/
+# 2026-10-13-assignment-from-struct-dereference-copies-one-word.md). The source up to `term` (`;`, or the `)`
+# of a for step or of the parentheses wrapping it) is ONE dereference whose operand `_hl_dstar_t` types `*S`,
+# and `noff` a struct operand: the pointer is parked in a hidden temp (a frame slot; a hidden global at top
+# level) and STRUCTSZ bytes are copied through it into a value (an inline local, a value global), or into
+# the pointee of a `*S` or a handle, as `q = l` copies. A `*U` of another struct is refused by name, as the
+# declaration refuses it. A `*S` GLOBAL destination is no operand here (unchanged). 1 = copied (`term`
+# consumed); 0 = untouched. CHANGELOG [6.7.11]
+fn _asg_dstar(S, noff, term): i64 {
+    var ps = _hl_dstar_t(S, GTI(S), term);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (_agc_operand(S, noff) == 0) { return 0; }
+    var dt = _agc_t;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    if (_dx_plain(S, 0 - dt) == 0) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, dt, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    var h = _hl_dx_src(S);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
 # 6.7.10 (B7-1) — a struct of 8 B or less in rax (a method / operator / if-expression result, a free
 # call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
 # into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
@@ -3889,6 +3921,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     if (_dyn_asg(S, noff, term) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
+    if (PEEKT(S) == 8) { return _asg_dstar(S, noff, term); }   # 6.7.11: a dereference `*E`
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }
     # ⛔ 6.6.5 — THIS USED TO OPEN `if (GINFN(S) != 1) return 0;` AND THEN `FINDLOCAL` BOTH

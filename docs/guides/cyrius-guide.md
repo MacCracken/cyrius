@@ -1365,9 +1365,12 @@ size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and
 ⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
 first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
 ⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s
-= GP`, `o.s = gp()`, `o.s = w.p`), and an ASSIGNMENT from a dereference stores one word (`l = *p`,
-`G = *p`, `o.s = *p`; the declaration `var l2: S = *p;` copies): copy through a `*T` local (`var p2:
-*S = GP; o.s = p2;`, `l = p`).
+= GP`, `o.s = gp()`, `o.s = w.p`): copy through a `*T` local (`var p2: *S = GP; o.s = p2;`).
+An ASSIGNMENT from a dereference copies the struct, as the declaration `var l2: S = *p;` does (6.7.11):
+`l = *p`, `G = *p`, `o.s = *p` (through a `*O` too), and `q = *p` into the pointee of a `*S` or a handle
+(as `q = l`), in any spelling — `(*p)`, `*(p + 1)`, `*gp()`, `*w.p` — at top level and in a for step; a
+`*U` of another struct is refused by name. Through 6.7.10 it stored the first word (`q = *p` rebound `q`
+to it), with a false "assigning non-pointer to typed pointer" warning.
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
 class from its source: from a pointer-mode local or global it declares `q` as a second pointer to

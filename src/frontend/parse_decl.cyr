@@ -1097,6 +1097,41 @@ fn _fsc_call(S, ft, fnoff, term): i64 {
     return 1;
 }
 
+# ⛔ 6.7.11 — `o.s = *p;` (a struct-typed field from a dereference of a `*S`) COPIES THE STRUCT, as `o.s = l`
+# does and as the declaration `var l: S = *p;` copies it (6.7.10 decision 6: `*p` is a struct value). It was
+# an expression whose first word the field store kept — `o.s.b` stale, silently (issues/2026-10-13-assignment-
+# from-struct-dereference-copies-one-word.md). The source up to `term` is ONE dereference whose operand
+# `_hl_dstar_t` types `*S`: its pointer is parked in a hidden temp and recorded as the copy's source (1); a
+# `*U` of another struct is refused by name (0, as `_fsc_name` refuses a U); anything else is 0 (untouched).
+fn _fsc_dstar(S, ft, fnoff, term): i64 {
+    var ps = _hl_dstar_t(S, GTI(S), term);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    _fsc_hsrc(_hl_dx_src(S));
+    return 1;
+}
+# Record as the copy's source the struct whose ADDRESS hidden temp `h` (`_HTEMP`) holds: a frame slot
+# (the deref band), or at top level a hidden global (pointer-mode).
+fn _fsc_hsrc(h): i64 {
+    _fsc_reset();
+    if (h >= 0) {
+        _fsc_li = _AGC_DREF(h);
+        return 0;
+    }
+    _fsc_gv = 0 - 2 - h;
+    _fsc_gdr = 1;
+    return 0;
+}
+# 1 = struct `sid` is one a dereference copies as a struct value: not a `Str` (a heap handle), a tuple or
+# a dyn, which keep their own paths.
+fn _dx_plain(S, sid): i64 {
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    return 1;
+}
+
 # Any other right-hand side: parse it with the two destination arms armed. A method / operator
 # call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
 # otherwise its value is in rax (2) for the ordinary store.
@@ -1161,6 +1196,7 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
     }
+    if (PEEKT(S) == 8) { if (_fsc_dstar(S, ft, fnoff, term) == 1) { return 1; } }   # 6.7.11: `o.s = *p`
     if (PEEKT(S) == 2) {
         _tup_fsc_call(S, ft, term);   # 6.7.7 (B4, T5): R17, a multi-value call into a tuple field
         _mv_fsc_call(S, ft, term);    # 6.7.11: ... into a named-struct field
@@ -8550,10 +8586,13 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
 # `_hl_dk` = the parentheses around it; `_hl_dnm` = the operand's last name, for a refusal.
 var _hl_dk = 0;
 var _hl_dnm = 0;
-fn _hl_dstar(S, ti): i64 {
+fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
+# ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
+# step or of the parentheses wrapping it, `_hl_dx_end`).
+fn _hl_dstar_t(S, ti, term): i64 {
     _hl_dk = 0;
-    var e = _gz_end(S, ti);
-    if (TOKTYP(S, e) != 5) { return 0; }
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
     var a = _ie_unparen(S, ti, e);
     var pe = _ie_pe;
     if (pe - a < 2) { return 0; }
@@ -8569,6 +8608,32 @@ fn _hl_dstar(S, ti): i64 {
         i = i - 1;
     }
     return ps;
+}
+# The end of a source at token `ti` that ends at `term`: its `;` (`_gz_end`), or for a `)` the first `)`
+# no bracket after `ti` opened; -1 when it ends at anything else. CHANGELOG [6.7.11]
+fn _hl_dx_end(S, ti, term): i64 {
+    if (term == 5) {
+        var e = _gz_end(S, ti);
+        if (TOKTYP(S, e) != 5) { return 0 - 1; }
+        return e;
+    }
+    var d = 0;
+    var i = ti;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) {
+            if (d == 0) {
+                if (t == 11) { return i; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        }
+        elif (t == 5) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 # The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
 # the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
