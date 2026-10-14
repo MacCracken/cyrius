@@ -6,7 +6,7 @@
 # ⛔ THROUGH 6.7.10 the global was no copy destination: the one-word store made `GP` the word `l.a` (the filed
 # repro: GP == 5, its struct untouched), silently, and the next `GP.a` dereferenced it.
 #
-# THE RULE, each row at 3, 8, 16 and 24 B (the source {5, 8, 9}, written after the copy to tell a copy from an
+# THE RULE, each row at 0, 3, 8, 16 and 24 B (0 B: nothing copied, the neighbour intact) (the source {5, 8, 9}, written after the copy to tell a copy from an
 # alias; `GP` checked to still point at its struct, +1000; the guard global after that struct kept, +10000): a
 # struct VALUE — a local, a value global, a by-value parameter, a call result, a field `w.s`, a dereference `*p`,
 # a method result, an operator result, wrapped, in a for step — into a `*S` GLOBAL, a `*S` local and a `*S`
@@ -19,6 +19,17 @@
 # small_struct_handle_line.sh R14 on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 # cx (cxvm) and PE (wine).
 include "lib/assert.cyr"
+
+# ── 0 B: a zero-size struct — nothing copied, the pointer kept, the neighbour after the struct intact ──
+struct V0 { }
+var GT0: V0 = V0 { };
+var GZ0: i8 = 99;
+var GP0: *V0 = &GT0;
+fn mk0(): V0 { var r: V0; return r; }
+fn g0_chk(): i64 { return (GP0 != &GT0) * 1000 + (GZ0 - 99) * 10000; }
+fn g0_l(): i64 { GP0 = &GT0; var l: V0; GP0 = l; return g0_chk(); }
+fn g0_call(): i64 { GP0 = &GT0; GP0 = mk0(); return g0_chk(); }
+fn l0_l(): i64 { var t: V0; var q: *V0 = &t; var l: V0; q = l; return (q != &t) * 1000; }
 
 # ── 3 B ──
 struct V3 { a: u8; b: u8; c: u8; }
@@ -265,6 +276,10 @@ fn pT_run(k): i64 {
 }
 
 # ── top level (after the first statement): a `*S` global destination ──
+var TT0: V0 = V0 { };
+var TZ0: i8 = 99;
+var TL0: V0 = V0 { };
+var TP0: *V0 = &TT0;
 var TT3 = V3 { 0, 0, 0 };
 var TZ3: i8 = 99;
 var TL3 = V3 { 5, 8, 9 };
@@ -294,6 +309,11 @@ var TPT: *VT = &TTT;
 var TQT: *VT = &TLT;
 var TWT = WT { 0, 5, 8, 9, 7 };
 var e = 0;
+TP0 = mk0();
+var R0a = (TP0 != &TT0) * 1000 + (TZ0 - 99) * 10000;
+TP0 = &TT0;
+TP0 = TL0;
+var R0b = (TP0 != &TT0) * 1000 + (TZ0 - 99) * 10000;
 TP3 = TL3;
 TL3.a = 1;
 var R3a = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
@@ -417,6 +437,11 @@ TPT = &TLT;
 var RTs = (TPT == &TLT) * 1000 + valT(&TTT);
 TPT = &TTT;
 
+assert_eq(g0_l(), 0, "0 B: GP = l copies nothing (GP still points there, the neighbour kept)");
+assert_eq(g0_call(), 0, "0 B: GP = mk() copies nothing");
+assert_eq(l0_l(), 0, "0 B: control, q = l through a *S local");
+assert_eq(R0a, 0, "0 B: top level, GP = mk() copies nothing");
+assert_eq(R0b, 0, "0 B: top level, GP = G copies nothing");
 assert_eq(g3_l(), 589, "3 B: GP = l copies into *GP (GP still points there, the guard kept)");
 assert_eq(g3_call(), 589, "3 B: GP = mk() (a call result)");
 assert_eq(g3_fld(), 589, "3 B: GP = w.s (a struct-typed field)");

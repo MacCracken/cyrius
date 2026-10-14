@@ -3025,6 +3025,13 @@ fn _agc_handle_global(S, gvi): i64 {
 # `_hl_psrc_copy`'s path. A plain struct (no `Str` / tuple / dyn; over 8 B, no heap handle by name), its step
 # the struct's. CHANGELOG [6.7.11]
 var _agc_src = 0;
+# 1 = pointer step `st` is that of a `*T` to a struct of `sz` bytes: `sz`, or 8 for a zero-size one (`_tn_ptr_step`
+# steps a T of no bytes by 8).
+fn _ps_is_sz(st, sz): i64 {
+    if (st == sz) { return 1; }
+    if (sz == 0) { if (st == 8) { return 1; } }
+    return 0;
+}
 fn _agc_ptr_global(S, gvi): i64 {
     if (_agc_src == 1) { return 0; }
     var ps = _gv_ptr_sid(S, gvi);
@@ -3033,7 +3040,7 @@ fn _agc_ptr_global(S, gvi): i64 {
     if (_dx_plain(S, ps) == 0) { return 0; }
     var sz = STRUCTSZ(S, ps - 1);
     if (sz > 8) { if (_agc_plain_big(S, 0 - ps) == 0) { return 0; } }
-    if (_ps_step(_gv_ptr_word(S, gvi)) != sz) { return 0; }
+    if (_ps_is_sz(_ps_step(_gv_ptr_word(S, gvi)), sz) == 0) { return 0; }
     _agc_gvi = 0 - 1000 - gvi;
     _agc_t = 0 - ps;
     return AGG_NSLOTS(S, 0 - ps);

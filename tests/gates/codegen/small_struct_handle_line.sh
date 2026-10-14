@@ -183,9 +183,9 @@
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
 #   R14 (6.7.11, issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
-#      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 138): a
+#      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 143): a
 #      struct VALUE into a typed `*S` GLOBAL — a local, a value global, a by-value parameter, a call, a field
-#      `w.s`, `*p`, a method, an operator, wrapped, a for step — copies into its pointee at 3 / 8 / 16 / 24 B, in
+#      `w.s`, `*p`, a method, an operator, wrapped, a for step — copies into its pointee at 0 / 3 / 8 / 16 / 24 B, in
 #      a fn and at top level, as into a `*S` local or parameter (the controls); `GP = q`, `GP = &x`, `GP = GP2`,
 #      `GP = gq()` rebind (through 6.7.10 `GP` became the value's first word); the refusals are
 #      tests/gates/frontend/struct_copy_type_checked.sh's R10-R15
@@ -433,9 +433,11 @@
 #   MT5  `_ret_ptr_src` without its dereference arm -> R13 does not build (x86 measured: `return *GP16;` refused)
 # 6.7.11 `*S` GLOBAL DESTINATION MUTATION LEDGER (2026-10-14, the same method; R14,
 # issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
-#   the tree before it (299e6e60)                   -> RED 7: R14 72 of 138 rows x7 (`GP` became the value's first
+#   the tree before it (299e6e60)                   -> RED 7: R14 74 of 143 rows x7 (`GP` became the value's first
 #                                                      word; the rebinds and the `*S` local / parameter controls green)
-#   M5a `_agc_ptr_global` answering 0                -> RED 7: R14 72 of 138 rows x7
+#   M5a `_agc_ptr_global` answering 0                -> RED 7: R14 74 of 143 rows x7
+#   M5c `_ps_is_sz` without the zero-size arm         -> RED 7: R14 140 of 143 rows x7 (a `*E` global's step is 8:
+#                                                      `GP = l` rebound it, the 0 B rows)
 # 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
 # issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
@@ -754,7 +756,7 @@ done
 TVG=tests/tcyr/crossos/struct_value_into_ptr_global.tcyr
 [ -f "$TVG" ] || { echo "FAIL: $G: $TVG is missing"; exit 1; }
 NVG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TVG")
-VGFLOOR=138
+VGFLOOR=143
 if [ "$NVG" -lt "$VGFLOOR" ]; then echo "FAIL: $G: only $NVG rows in $TVG (floor $VGFLOOR) — rows were lost"; exit 1; fi
 echo "R14. $TVG ($NVG rows: a struct value into a *S global copies into its pointee)"
 for leg in $XLEGS $OTHER; do
