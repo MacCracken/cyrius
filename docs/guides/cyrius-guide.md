@@ -4501,6 +4501,15 @@ kernel;                          # Emit bare-metal ELF (multiboot1)
 # Boot: qemu-system-x86_64 -kernel build/kernel -serial stdio
 ```
 
+`CYRIUS_DCE=1` removes the unreachable fns from an x86 kernel image (ELF32 multiboot1 and
+`CYRIUS_ELF64_KERNEL=1`) as it does from a host executable (6.7.11; 6.6.20 through 6.7.10 only
+NOP-filled them); a `--pie` kernel still declines (its data is reached through rip-relative
+displacements) and NOP-fills. The image's `.bss` and `.rodata` follow the code, so they move down
+with it, and every data address in the code moves with them; the move is a multiple of 16, so an
+array keeps its 16-byte alignment. A dead fn the compiler keeps because it cannot size one of its
+instructions (an `out dx, al` in an `asm` block) keeps its body, and its calls into removed fns
+become `ud2`. `CYRIUS_WX=0` executables, whose data also follows the code, compact the same way.
+
 ## Enums
 
 ```

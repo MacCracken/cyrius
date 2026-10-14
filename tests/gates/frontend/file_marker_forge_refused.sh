@@ -68,8 +68,9 @@
 #      called `;` + LF + ...; it must name <source>
 #   25 over-correction guard for 24: the key is FM_BUILD's 8-byte `#@file "`, so data
 #      lines starting `#@filex` / `#@file x` keep their bytes
-#   26 census: no PP walk on the bare PP_LEXST, and PP_LEXST_AT and LEX share ONE
-#      attribute list (LEXATTRWORD)
+#   26 census: every PP walk is guarded — a `#` goes through PP_LEXST_AT, every other byte
+#      through the bare PP_LEXST (6.7.11) — none outside a guard; PP_LEXST_AT and LEX share
+#      ONE attribute list (LEXATTRWORD); self-checked on two one-site mutants
 #
 # MUTATION LEDGER (2026-09-19, cycc 1,310,856 B, measured). Each mutation is
 # applied to the working tree, a compiler built from it with the good cycc, and
@@ -104,6 +105,16 @@
 #   M9 M7 + M8 together → 14 FAIL: axes 11-24 (11-21 COMPILED and exited 42 with
 #      `private` defeated, as e696746d's compiler does).
 #   e696746d's compiler (cycc 1,586,184 B) → 14 FAIL: axes 11-24.
+#   real tree → 41/41 green
+#
+# 6.7.11 ADDENDUM (the per-byte PP_LEXST_AT call layer; cycc 2,118,472 B, measured the same
+# way — each tree mutant built with the good cycc and the gate run from that tree):
+#   M10 the fix reverted (6.7.10's lex_pp.cyr: ten bare PP_LEXST_AT walks) → 1 FAIL: axis 26
+#       (0 guarded sites; its in-gate mutants report not-applied)
+#   M11 PP_NEUT_FMARK's walk unguarded to a bare PP_LEXST → 1 FAIL: axis 26. Every behaviour
+#       axis stays GREEN — PP_NEUT_BOLMARK catches the forge — which is why 26 is a census.
+#   M12 the same walk back to a bare PP_LEXST_AT (the call layer, correct but slow) → 1 FAIL:
+#       axis 26
 #   real tree → 41/41 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -477,19 +488,50 @@ else
 fi
 rm -f "$D/25.bin"
 
-# ── axis 26 — census, from the source: every preprocessor walk goes through PP_LEXST_AT
-#    (the bare PP_LEXST appears only at its definition and inside PP_LEXST_AT), and PP_LEXST_AT
-#    and LEX both ask LEXATTRWORD — one attribute list, so the two cannot drift.
-nbare=$(grep -c 'PP_LEXST(' src/frontend/lex_pp.cyr || true)
-nat=$(grep -c 'PP_LEXST_AT(' src/frontend/lex_pp.cyr || true)
-nlw=$(grep -c 'LEXATTRWORD(base, i, n)' src/frontend/lex_pp.cyr || true)
-nlx=$(grep -c 'LEXATTRWORD(S + 0x459D000, p, bl)' src/frontend/lex.cyr || true)
-if [ "$nbare" = 2 ] && [ "$nat" -ge 9 ] && [ "$nlw" = 1 ] && [ "$nlx" = 1 ]; then
-    printf '  ok: axis 26 — every PP walk is on PP_LEXST_AT, none on the bare machine; PP and LEX share one attribute list\n'
+# ── axis 26 — census, from the source: every preprocessor walk advances its PP_LEXST state on
+#    ONE guarded line, `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); } else
+#    { X = PP_LEXST(X, load8(B + I)); }` — the same B / I / X in both arms — so a `#` always
+#    reaches the attribute rule and no other byte pays the call into it (CHANGELOG [6.7.11]).
+#    Counted in occurrences over the code lines (a comment may name either fn): the bare
+#    PP_LEXST( is its definition, PP_LEXST_AT's tail and one else-arm per guard; PP_LEXST_AT( is
+#    its definition and one then-arm per guard, so no walk sits outside a guard; >= 9 guards.
+#    PP_LEXST_AT and LEX both ask LEXATTRWORD — one attribute list, so the two cannot drift.
+#    ⭐ SELF-CHECKED: the census must ALSO go RED on two copies of the source with the first
+#    guard mutated — to a bare `X = PP_LEXST(X, load8(B + I));` (the attribute rule skipped,
+#    the forge reopened) and to a bare `X = PP_LEXST_AT(B, I, N, X);` (the 6.6.20 shape, the
+#    per-byte call back) — so a census that matches nothing cannot read green.
+census26() {
+    grep -v '^[[:space:]]*#' "$1" > "$D/26.code"
+    c_guard=$(grep -c '^ *if (load8(\(.*\) + \([a-z_]*\)) == 35) { \([a-z_]*\) = PP_LEXST_AT(\1, \2, [a-z_]*, \3); } else { \3 = PP_LEXST(\3, load8(\1 + \2)); }$' "$D/26.code" || true)
+    c_at=$(grep -o 'PP_LEXST_AT(' "$D/26.code" | wc -l | tr -d ' ')
+    c_bare=$(grep -o 'PP_LEXST(' "$D/26.code" | wc -l | tr -d ' ')
+    c_def=$(grep -c '^fn PP_LEXST(st, c): i64 {$' "$D/26.code" || true)
+    c_tail=$(grep -c '^    return PP_LEXST(st, c);$' "$D/26.code" || true)
+    c_lw=$(grep -c 'LEXATTRWORD(base, i, n)' "$D/26.code" || true)
+    c_lx=$(grep -c 'LEXATTRWORD(S + 0x459D000, p, bl)' src/frontend/lex.cyr || true)
+    c_why="guarded sites $c_guard (want >=9), PP_LEXST_AT( $c_at (want guards+1), PP_LEXST( $c_bare (want guards+2), definition $c_def / tail $c_tail (want 1 / 1), LEXATTRWORD in PP $c_lw / LEX $c_lx (want 1 / 1)"
+    [ "$c_guard" -ge 9 ] && [ "$c_at" = $((c_guard+1)) ] && [ "$c_bare" = $((c_guard+2)) ] \
+        && [ "$c_def" = 1 ] && [ "$c_tail" = 1 ] && [ "$c_lw" = 1 ] && [ "$c_lx" = 1 ]
+}
+LPP=src/frontend/lex_pp.cyr
+# M-bare: the first guard -> `X = PP_LEXST(X, load8(B + I));`
+awk '!d && /^ *if \(load8\(.* == 35\) \{ [a-z_]+ = PP_LEXST_AT\(/ {
+    sub(/if \(load8\([^=]*\) == 35\) \{ [^}]*\} else \{ /, ""); sub(/ \}$/, ""); d=1 } { print }' "$LPP" > "$D/26m1.cyr"
+# M-at: the first guard -> `X = PP_LEXST_AT(B, I, N, X);`
+awk '!d && /^ *if \(load8\(.* == 35\) \{ [a-z_]+ = PP_LEXST_AT\(/ {
+    sub(/if \(load8\([^=]*\) == 35\) \{ /, ""); sub(/ \} else \{.*$/, ""); d=1 } { print }' "$LPP" > "$D/26m2.cyr"
+m26=""
+for m in 26m1 26m2; do
+    if cmp -s "$LPP" "$D/$m.cyr"; then m26="$m26 $m:not-applied"
+    elif census26 "$D/$m.cyr"; then m26="$m26 $m:GREEN"
+    fi
+done
+if census26 "$LPP" && [ -z "$m26" ]; then
+    printf '  ok: axis 26 — %s PP walks guarded (`#` -> PP_LEXST_AT, else the bare machine), none outside a guard; PP and LEX share one attribute list; both one-site mutants RED\n' "$c_guard"
     pass=$((pass+1))
 else
-    printf '  FAIL: axis 26 — census: PP_LEXST( %s (want 2), PP_LEXST_AT( %s (want >=9), LEXATTRWORD in PP %s / LEX %s (want 1 / 1)\n' \
-        "$nbare" "$nat" "$nlw" "$nlx"
+    census26 "$LPP" || true
+    printf '  FAIL: axis 26 — census: %s; mutants that failed to go RED:%s\n' "$c_why" "${m26:- none}"
     fail=$((fail+1))
 fi
 

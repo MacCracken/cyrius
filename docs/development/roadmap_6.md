@@ -142,13 +142,13 @@ nothing (raw 160 on the aarch64 fork is silent). Already shipped and no longer l
 ## A seed-rotation minor — only if a new seed is needed at all (user, 2026-10-09)
 
 **Not scheduled — a consideration.** The seed (`bootstrap/asm`, 29,024 B, `bootstrap/SHA256SUMS`) assembles exactly one
-input, `bootstrap/cybs.cyr`, and today that input is inside all three of the seed's unchecked caps (input 112,175 /
-131,072 B · labels 501 / 512 · code 21,660 / 65,536 B — [issue](issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md)).
-So nothing forces a new seed: v6.7.x only guards the one input (gate row S of `cybs_call_arity_named.sh` gains the
-code-cap row it lacks). **The trigger** is cybs.cyr outgrowing a cap — the label table is the tight one (11 left), and
-the two open cybs fixes ([the silent statement call](issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md),
-[the locationless syntax error](issues/2026-10-08-cybs-bare-syntax-error-no-location.md)) are sized against that
-headroom first — or a deliberate decision to rotate.
+input, `bootstrap/cybs.cyr`, and that input is inside all three of the seed's unchecked caps (6.7.11: input 115,974 /
+131,072 B · labels 506 / 512 · code 22,200 / 65,536 B — [issue](issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md)).
+So nothing forces a new seed: v6.7.x only guards the one input (gate row S of `cybs_call_arity_named.sh` checks all
+three caps since 6.7.11). **The trigger** is cybs.cyr outgrowing a cap — the label table is the tight one (6 left after
+6.7.11's two cybs fixes, [the silent statement call](issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md)
+and [the locationless syntax error](issues/2026-10-08-cybs-bare-syntax-error-no-location.md), sized against it) — or
+a deliberate decision to rotate.
 
 **If it happens, it is its own MINOR** (the user): a new seed is a new trusted root, so it never rides a patch and it
 is never a reason to open 7.x — it opens a 6.x minor (a minor break). While the seed is open, everything about it is
@@ -165,7 +165,9 @@ done once:
    together; the closure step (`cybs(asm.cyr) == bootstrap/asm`) and `scripts/seed-derive-cycc.sh` stay byte-exact; the
    release signature, install / CI hash checks and the trust-story docs are updated in the same release; the
    CHANGELOG and ecosystem-migration.md say what changed in the root and why.
-5. **cybs work that needs more than the old headroom** rides with it.
+5. **cybs work that needs more than the old headroom** rides with it — filed:
+   [per-construct refusals and `file:line`](issues/2026-10-13-cybs-per-construct-refusal-and-file-line.md), the part
+   of the bare-`syntax error` fix that did not fit (the user's option A, 2026-10-13, shipped the rest in 6.7.11).
 
 ---
 

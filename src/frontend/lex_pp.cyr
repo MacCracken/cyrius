@@ -196,11 +196,14 @@ fn PP_LEXST_INSTR(st): i64 {
 # ⛔ 6.6.20 (the attribute-line desync bug) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
 # with the one rule a byte-at-a-time machine cannot see: in code, a `#` that spells one of
 # the lexer's ten ATTRIBUTE words does not open a comment, because LEX keeps lexing that
-# line as code. EVERY pass walks its buffer through this, never through PP_LEXST directly.
-# Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of step with the
-# lexer for the whole next line — a forged `#@file` there defeated `private`, and a real
-# `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own (src/frontend/lex.cyr),
-# so the two cannot drift. CHANGELOG [6.6.20]
+# line as code. Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of
+# step with the lexer for the whole next line — a forged `#@file` there defeated `private`,
+# and a real `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own
+# (src/frontend/lex.cyr), so the two cannot drift. CHANGELOG [6.6.20]
+# EVERY walk site guards it inline — `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); }
+# else { X = PP_LEXST(X, load8(B + I)); }` — never a bare PP_LEXST: this differs from PP_LEXST
+# only on a `#`, and the per-byte call into it cost ~3 % of self_compile (#inline refuses a
+# 4-parameter fn). file_marker_forge_refused.sh axis 26 is the census. CHANGELOG [6.7.11]
 fn PP_LEXST_AT(base, i, n, st): i64 {
     var c = load8(base + i);
     if (st == 0) {
@@ -258,7 +261,7 @@ fn PP_NEUT_FMARK(base, n): i64 {
                 if (PP_NEUT_BOLMARK(base, i, n) == 1) { store8(base + i + 1, 32); }
             }
         }
-        st = PP_LEXST_AT(base, i, n, st);
+        if (load8(base + i) == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, load8(base + i)); }
         i = i + 1;
     }
     return 0;
@@ -427,7 +430,7 @@ fn PP_A64_NATIVE_AT(S, off): i64 {
             if (m == 1) { dep = dep + 1; }
             if (m == 2) { if (dep > 0) { dep = dep - 1; } }
         }
-        st = PP_LEXST_AT(base, i, n, st);
+        if (load8(base + i) == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, load8(base + i)); }
         if (c == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
     }
@@ -843,7 +846,7 @@ fn PP_IS_HOST_ONLY(buf, n): i64 {
             }
         }
         var hc = load8(buf + i);
-        lst = PP_LEXST_AT(buf, i, n, lst);
+        if (load8(buf + i) == 35) { lst = PP_LEXST_AT(buf, i, n, lst); } else { lst = PP_LEXST(lst, load8(buf + i)); }
         in_string = PP_LEXST_INSTR(lst);
         if (hc == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
@@ -2135,7 +2138,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
             if (ch == 123) { depth = depth + 1; if (body_open < 0) { body_open = cp; } }
             if (ch == 125) { depth = depth - 1; if (depth == 0) { body_close = cp; cp = cp + 1; break; } }
         }
-        lst = PP_LEXST_AT(src_base, cp, bl, lst);
+        if (load8(src_base + cp) == 35) { lst = PP_LEXST_AT(src_base, cp, bl, lst); } else { lst = PP_LEXST(lst, load8(src_base + cp)); }
         cp = cp + 1;
     }
     # The field table is built by a separate walk over the body, token by token — see
@@ -4697,7 +4700,7 @@ fn PP_PASS(S): i64 {
             # reset-at-every-newline, are gone; PP_LEXST is the one copy and its
             # string state CROSSES lines. See PP_LEXST for the full rationale.
             # CHANGELOG [6.6.6]
-            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
             in_string = PP_LEXST_INSTR(lst);
             ip = ip + 1;
             if (c == 10) { bol = 1; } else { bol = 0; }
@@ -4765,7 +4768,7 @@ fn PP_MACRO_PASS(S): i64 {
         if (expanded == 0) {
             store8(out + op, c);
             op = op + 1;
-            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
             ip = ip + 1;
         }
     }
@@ -5058,7 +5061,7 @@ fn PP_IFDEF_PASS(S): i64 {
                 # v5.8.40 — string-literal state machine; mirrors PP_PASS.
                 # v6.6.6 — both copies are now PP_LEXST, and the string state is
                 # no longer reset at every newline. CHANGELOG [6.6.6]
-                lst = PP_LEXST_AT(tmp, ip, bl, lst);
+                if (load8(tmp + ip) == 35) { lst = PP_LEXST_AT(tmp, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(tmp + ip)); }
                 in_string = PP_LEXST_INSTR(lst);
                 ip = ip + 1;
                 if (c == 10) { bol = 1; } else { bol = 0; }
@@ -5173,7 +5176,7 @@ fn PP_REF_PASS(S): i64 {
         if (_rhandled == 0) {
             store8(out + op, _refc);
             op = op + 1;
-            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
             ip = ip + 1;
             in_string = PP_LEXST_INSTR(lst);
             if (_refc == 10) { bol = 1; } else { bol = 0; }
@@ -5344,7 +5347,7 @@ fn _bnd_entry_start(base, n): i64 {
             if (p >= n) { go = 0; }
             else {
                 var c = load8(base + p);
-                st = PP_LEXST_AT(base, p, n, st);
+                if (load8(base + p) == 35) { st = PP_LEXST_AT(base, p, n, st); } else { st = PP_LEXST(st, load8(base + p)); }
                 p = p + 1;
                 if (c == 10) { go = 0; }
             }
@@ -5442,7 +5445,7 @@ fn _bnd_scan(S): i64 {
             if (p >= n) { go = 0; }
             else {
                 var c = load8(base + p);
-                st = PP_LEXST_AT(base, p, n, st);
+                if (load8(base + p) == 35) { st = PP_LEXST_AT(base, p, n, st); } else { st = PP_LEXST(st, load8(base + p)); }
                 p = p + 1;
                 if (c == 10) { go = 0; }
             }

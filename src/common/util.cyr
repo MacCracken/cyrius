@@ -422,6 +422,7 @@ fn _pp_inl_has(p): i64 {
 }
 var _pending_coro = 0;      # this fn's body awaits: reserve slot 0 before params
 var _wp_post_patch = 0;     # v6.5.72: this compaction runs AFTER FIXUP resolved its sites
+var _wp_data_follows = 0;   # data right after the code (kernel; / CYRIUS_WX=0) moves with it. CHANGELOG [6.7.11]
 var _coro_was = 0;          # the body just emitted was a coroutine
 var _coro_flc = 0;          # that body's local-slot count (its frame size)
 var _async_gate_init = 0;

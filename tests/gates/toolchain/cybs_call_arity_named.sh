@@ -1,5 +1,6 @@
 #!/bin/sh
-# tests/gates/toolchain/cybs_call_arity_named.sh — 6.7.0, stack arguments 6.7.6, variable callees 6.7.6 BX
+# tests/gates/toolchain/cybs_call_arity_named.sh — 6.7.0, stack arguments 6.7.6, variable callees 6.7.6 BX,
+# the seed's CODE cap 6.7.11
 #
 # cybs (the hand-assembly bootstrap compiler the seed assembles) passed only the six register
 # arguments: `emit_fn_call_pops` handled 0..6 and `emit_store_param` stored parameters 0..5. A
@@ -17,8 +18,9 @@
 # seed-derive.
 #
 #   A  closure: the seed assembles cybs, and cybs reproduces the seed
-#   S  bootstrap/cybs.cyr fits the seed's caps (input < 131072 B — past it the seed drops the rest
-#      silently — and at most 512 labels)
+#   S  bootstrap/cybs.cyr fits the seed's three unchecked caps: input < 131072 B (past it the seed
+#      drops the rest silently), at most 512 labels, and cybs's code < 65536 B (6.7.11: past it the
+#      seed overwrites its own label tables and output, silently)
 #   B  a 7- and a 9-argument call return the right values — as statements, inside an expression
 #      with a value pending (`k + f9(..)`), with a 7-argument call as an argument, and through
 #      lib/fnptr.cyr's fncall7 / fncall8 (their 7+ parameters stored, their stack arguments read by
@@ -42,6 +44,11 @@
 #   emit_fn_call_clean emits nothing                        (`k + f9(..)` pops a stale word)
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
+#   (6.7.11: emit_sp_done is a comment in cybs.cyr now, sparing a seed label; restore the label
+#   to re-run the first mutation.)
+# 6.7.11 (the CODE row; a scratch copy of the gate, because an honest over-cap cybs.cyr cannot be
+# built inside the input cap — the seed has no fill directive, so cybs is ~0.19 code B per input B):
+#   CODE_CAP lowered to 21000, below cybs's 21,660 B of code          -> S RED (code), A..D green
 # D3 (cycc's order; each a scratch copy of the tree with the one change, 2026-10-08):
 #   lane B's cybs.cyr (the SysV order) under the restored f8      -> B exits 47 (fncall8, bit 16)
 #   emit_store_param reads [rbp + 16 + (i-6)*8] again (SysV slot) -> B exits 1
@@ -62,18 +69,28 @@ trap 'rm -rf "$D"' EXIT
 fail=0
 bad() { echo "  FAIL: cybs_call_arity_named $1"; fail=$((fail + 1)); }
 
-# S — the seed (bootstrap/asm, from bootstrap/asm.cyr) reads at most 131072 input bytes and DROPS the
-# rest with exit 0 (probed 6.7.6: 3 bytes over assembled a cybs 1 byte short, silently), and its
-# label table holds 512 entries. cybs.cyr must stay inside both; the seed itself is the trust root.
-sz=$(wc -c < bootstrap/cybs.cyr)
-nl=$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:' bootstrap/cybs.cyr)
-if [ "$sz" -ge 131072 ]; then bad "S: bootstrap/cybs.cyr is $sz B — the seed reads 131072 and silently drops the rest"
-elif [ "$nl" -gt 512 ]; then bad "S: bootstrap/cybs.cyr defines $nl labels — the seed's label table holds 512"
-else echo "  ok   S: bootstrap/cybs.cyr fits the seed: $sz / 131072 B, $nl / 512 labels"; fi
-
 cat bootstrap/cybs.cyr | bootstrap/asm > "$D/cybs" 2>/dev/null || true
 chmod +x "$D/cybs" 2>/dev/null || true
 [ -s "$D/cybs" ] || { echo "FAIL: cybs_call_arity_named: the seed could not assemble bootstrap/cybs.cyr"; exit 1; }
+
+# S — the seed (bootstrap/asm, from bootstrap/asm.cyr) checks none of its three fixed caps, so
+# cybs.cyr, the one input it assembles, must stay inside each; the seed itself is the trust root
+# (issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md):
+#   input  131072 B — past it the read stops and the rest is DROPPED with exit 0 (probed 6.7.6: 3
+#          bytes over assembled a cybs 1 byte short, silently);
+#   labels 512 — ADDL writes entry 512+k over the next table (a false `label not found`, or worse);
+#   code   65536 B — EB stores past CODE into the label tables and then into OUT, and EELF copies
+#          back bytes it has already overwritten: the emitted tail is earlier output, silently. The
+#          assembled cybs is EELF's 120 B header + the code (fsz = 120 + cp). CHANGELOG [6.7.11]
+CODE_CAP=65536
+sz=$(wc -c < bootstrap/cybs.cyr)
+nl=$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:' bootstrap/cybs.cyr)
+code=$(( $(wc -c < "$D/cybs") - 120 ))
+if [ "$sz" -ge 131072 ]; then bad "S: bootstrap/cybs.cyr is $sz B — the seed reads 131072 and silently drops the rest"
+elif [ "$nl" -gt 512 ]; then bad "S: bootstrap/cybs.cyr defines $nl labels — the seed's label table holds 512"
+elif [ "$code" -ge "$CODE_CAP" ]; then bad "S: cybs's code is $code B — the seed's CODE buffer holds $CODE_CAP and past it overwrites its label tables and output, silently"
+else echo "  ok   S: bootstrap/cybs.cyr fits the seed: $sz / 131072 B input, $nl / 512 labels, $code / $CODE_CAP B code"; fi
+
 cat bootstrap/asm.cyr | "$D/cybs" > "$D/asm2" 2>/dev/null || true
 cmp -s "$D/asm2" bootstrap/asm && echo "  ok   A: closure — cybs reproduces the seed" || bad "A: closure — cybs no longer reproduces the seed"
 
@@ -172,4 +189,4 @@ if [ "$rc" -ne 0 ] || [ ! -s "$D/gen1" ]; then bad "D: cybs could not compile sr
 else echo "  ok   D: cybs compiles src/main.cyr"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: cybs_call_arity_named — $fail row(s) red"; exit 1; fi
-echo "PASS: cybs_call_arity_named — cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, a call through a function-pointer variable keeps argument 4, and cybs compiles src/main.cyr (closure intact)"
+echo "PASS: cybs_call_arity_named — cybs.cyr fits the seed (input, labels, code), cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, a call through a function-pointer variable keeps argument 4, and cybs compiles src/main.cyr (closure intact)"

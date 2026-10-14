@@ -1,4 +1,5 @@
-_start:
+# The entry is the first byte of the code (EELF's e_entry, 0x400078), so it carries no label: each
+# of the seed's 512 label slots is spent where a jump needs one. CHANGELOG [6.7.11]
     call sys_init
     call read_input
     call preprocess
@@ -93,15 +94,6 @@ emit_mov_rax_imm64:
     push rbx
     mov rbx, rax         # save value
     mov rax, 0xB848       # 48 B8
-    call emit_2bytes
-    mov rax, rbx
-    call emit_8bytes
-    pop rbx
-    ret
-emit_mov_rcx_imm64:
-    push rbx
-    mov rbx, rax
-    mov rax, 0xB948       # 48 B9
     call emit_2bytes
     mov rax, rbx
     call emit_8bytes
@@ -828,7 +820,7 @@ emit_sp_write:
     or rax, rdx
     mov [rsi], rax
     add r13, 4
-emit_sp_done:
+# emit_sp_done: (a fall-through no jump targets; a comment, to spare a seed label. 6.7.11)
     pop rdx
     pop rcx
     pop rsi
@@ -1250,7 +1242,7 @@ lexer_not_letter:
     je lexer_comment
 # Any other byte outside a string or a comment is refused, naming it. 6.7.6 - it was dropped,
 # so `g()?` lexed as `g()` and an identifier lost its UTF-8 bytes (no cybs input has one today).
-lexer_char_err:
+# lexer_char_err: (a fall-through no jump targets; a comment, to spare a seed label. 6.7.11)
     mov rax, 1
     mov rdi, 2
     mov rsi, err_char
@@ -1574,6 +1566,10 @@ lexer_str_done:
     add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rax        # tok_values[r10] = (offset << 16) | length
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rcx
+    mov [rsi], r8         # tok_pos[r10] = the cursor, in or just past the token (6.7.11)
     inc r10
     mov rsi, r15
     add rsi, 0x5C00000
@@ -1601,6 +1597,10 @@ lexer_emit_simple:
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rcx
+    mov [rsi], r8         # tok_pos[r10] = the cursor, in or just past the token (6.7.11)
     inc r10
     ret
 lexer_skip:
@@ -1690,6 +1690,10 @@ lexer_num_done:
     add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rbx
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rcx
+    mov [rsi], r8         # tok_pos[r10] = the cursor, in or just past the token (6.7.11)
     inc r10
     jmp lexer_loop
 lexer_ident:
@@ -1931,6 +1935,10 @@ lexer_id_end:
     add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rbx
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rcx
+    mov [rsi], r8         # tok_pos[r10] = the cursor, in or just past the token (6.7.11)
     inc r10
     jmp lexer_loop
 lexer_id_is_var:
@@ -2031,6 +2039,10 @@ lexer_emit_kw:
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rcx
+    mov [rsi], r8         # tok_pos[r10] = the cursor, in or just past the token (6.7.11)
     inc r10
     ret
 lexer_eof:
@@ -2674,39 +2686,6 @@ parse_var_stmt_semi:
     cmp rax, 5
     jne parse_err
     inc r11
-    pop r9
-    pop r8
-    ret
-parse_array_decl:
-    inc r11              # consume [
-    call peek_tok_type
-    cmp rax, 1
-    jne parse_err
-    call peek_tok_value
-    mov r9, rax          # r9 = array size in bytes
-    inc r11
-    call peek_tok_type
-    cmp rax, 29          # RBRACKET
-    jne parse_err
-    inc r11
-    call peek_tok_type
-    cmp rax, 5           # SEMI
-    jne parse_err
-    inc r11
-    mov rcx, r14
-    shl rcx, 3
-    mov rsi, r15
-    add rsi, 0x6000000
-    add rsi, rcx
-    mov [rsi], r8
-    mov rax, r9
-    add rax, 7
-    and rax, -8
-    mov rsi, r15
-    add rsi, 0x6100000
-    add rsi, rcx
-    mov [rsi], rax
-    inc r14
     pop r9
     pop r8
     ret
@@ -4554,21 +4533,82 @@ find_var_found:
     pop r9
     pop r8
     ret
+# A refusal names what it can and prints the line of the expanded stream (r15 + 0, the includes
+# spliced in) that holds its token: tokens carry no file or line, but the line's text greps straight
+# to its src/ file. The kernel's syscall clobbers rcx and r11, so the token index rides in rbx.
+# 6.7.11 - both were a bare "undefined variable" / "syntax error". CHANGELOG [6.7.11]
 find_var_undef:
+    mov rbx, r11
+    dec rbx              # the last token taken: the name, or its statement's
     mov rax, 1
     mov rdi, 2
     mov rsi, err_undef
-    mov rdx, 19
+    mov rdx, 58
     syscall
-    pop rcx
-    pop r9
-    pop r8
-    jmp sys_exit_err
+    mov rax, r8          # the name, a pool offset
+    mov rcx, 44          # ',' after it
+    call cybs_write_name
+    jmp cybs_write_line
 parse_err:
+    mov rbx, r11         # the token the parser stopped at
+    call peek_tok_type
+    cmp rax, 12          # the end of the input: the last token's line instead
+    jne parse_err_at
+    dec rbx
+parse_err_at:
     mov rax, 1
     mov rdi, 2
     mov rsi, err_syntax
-    mov rdx, 13
+    mov rdx, 140
+    syscall
+# rbx = a token: writes " at: " and then its line to stderr, and exits 1. Back from the token's
+# position to the LF before it (or the stream's start), forward to the LF after it (or r12, the
+# stream's end); that LF is written as the message's own (the stream is dead: cybs exits).
+cybs_write_line:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_at
+    mov rdx, 5
+    syscall
+    shl rbx, 3
+    mov rsi, r15
+    add rsi, 0xA000000
+    add rsi, rbx
+    mov rsi, [rsi]
+    add rsi, r15         # rsi = the token's byte in the stream
+    mov rdx, rsi
+    mov rdi, r15
+    add rdi, r12         # rdi = the stream's end
+cwl_back:
+    cmp rdx, r15
+    jle cwl_fwd
+    dec rdx
+    mov rax, [rdx]
+    and rax, 0xFF
+    cmp rax, 10
+    jne cwl_back
+    inc rdx              # rdx = the line's first byte
+cwl_fwd:
+    cmp rsi, rdi
+    jge cwl_out
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 10
+    je cwl_out
+    inc rsi
+    jmp cwl_fwd
+cwl_out:
+    mov rax, [rsi]
+    and rax, -256
+    or rax, 10
+    mov [rsi], rax       # the line's LF (or one past the stream's end)
+    inc rsi
+    sub rsi, rdx         # the line's length + 1
+    mov rax, rsi
+    mov rsi, rdx
+    mov rdx, rax
+    mov rax, 1
+    mov rdi, 2
     syscall
     jmp sys_exit_err
 peek_tok_type:
@@ -4713,6 +4753,8 @@ fixup_fn_call:
     add rsi, 0x7300000
     add rsi, rax
     mov rax, [rsi]       # rax = fn entry codebuf offset
+    cmp rax, -1          # never defined: a statement call registered the name (6.7.11 - it was
+    je fixup_fn_undef    # patched to code - 1, a silent SIGSEGV)
     pop rcx
     pop rbx
     push rdx
@@ -4734,6 +4776,46 @@ fixup_fn_call:
     pop rcx
     inc rbx
     jmp fixup_loop
+# A call to a fn that was never defined is refused, naming it: a statement-position call registers
+# an unknown name (so a later definition can fill it in), and `fp(5);` on a fn-pointer variable
+# takes the same arm. cycc refuses both ("undefined function"). CHANGELOG [6.7.11]
+fixup_fn_undef:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_undef_fn
+    mov rdx, 26
+    syscall
+    shl rbx, 3
+    mov rsi, r15
+    add rsi, 0x7200000
+    add rsi, rbx
+    mov rax, [rsi]       # the fn's name, a pool offset
+    mov rcx, 10
+    call cybs_write_name
+    jmp sys_exit_err
+# Writes the name at pool offset rax (r15 + 0x3400000, NUL-terminated) to stderr with the byte in
+# rcx in place of its NUL. Only an exiting error path calls it: the pool is dead. CHANGELOG [6.7.11]
+cybs_write_name:
+    mov rsi, r15
+    add rsi, 0x3400000
+    add rsi, rax
+    mov rdx, rsi
+cwn_scan:
+    mov rax, [rdx]
+    and rax, 0xFF
+    inc rdx
+    cmp rax, 0
+    jne cwn_scan
+    dec rdx              # rdx = the NUL
+    mov rax, [rdx]
+    or rax, rcx
+    mov [rdx], rax
+    inc rdx
+    sub rdx, rsi         # the name's length + 1
+    mov rax, 1
+    mov rdi, 2
+    syscall
+    ret
 fixup_fn_addr:
     push rbx
     mov rbx, rax
@@ -5517,9 +5599,13 @@ elf_template:
     dq 0x0000000000000090
     dq 0x0000000000001000
 err_syntax:
-    db "syntax error\n"
+    db "cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while, an if-expression, unary minus, >>>, >>=),"
+err_at:
+    db " at: "
 err_undef:
-    db "undefined variable\n"
+    db "cybs: undefined variable or function (cybs has no const): "
+err_undef_fn:
+    db "cybs: undefined function: "
 err_bang:
     db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
 err_char:
