@@ -3627,6 +3627,7 @@ fn _asg_compound_op(S, cop, lt): i64 {
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `x += f();` combined the tag, every OP= place
     PCMPE(S);
     var rt = _FBR_ST(S);
+    if (_ifm_at(S) == 1) { rt = 0; }   # 6.7.11: `x += x + 1.5` — that mix warned already (_INT_F64_MIX)
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
     var fop = _asg_float_fop(cop, lt);
     if (fop >= 0) { return _asg_compound_float(S, fop, lt); }

@@ -1573,7 +1573,7 @@ fn _FBR_ST(S): i64 {
     return 0;
 }
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
-fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); _ifm_rhs = _ifm_at(S); return 0; }
 # The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does; `_rhs_b` its first
 # token, set after the parse (a nested `+` inside it has finished), for `_add_rb1` (6.7.11).
 var _rhs_b = 0 - 1;
@@ -1582,6 +1582,20 @@ fn _RHS_T(S): i64 {
     PARSE_TERM(S);
     _rhs_b = b;
     _fbr_rhs = _FBR_KIND(S);
+    _ifm_rhs = _ifm_at(S);
+    return 0;
+}
+# ⛔ 6.7.11 — ONE INTEGER + F64 MIX WARNS ONCE. Kind 2 leaves the result's type as it was (an f64 right
+# operand's), so an enclosing integer operator saw an f64 right operand and warned again for the same
+# mix: `x = x + (x + 1.5)` and `2 * (x + 1.5)` twice, `x += x + 1.5` twice at one column, `x - (x * (x +
+# 1.5))` three times. The mix that warned stamps the code pointer it ended at (`_ifm_cp`); a right operand
+# that ends there IS that mix's result (`_ifm_at`, captured by `_RHS_F` / `_RHS_T` and the compound
+# assignment before anything more is emitted), already reported. Typing and code are unchanged (the
+# user's decision, 2026-10-13: the roadmap's default, kind 2's 6.6.8 design). CHANGELOG [6.7.11]
+var _ifm_cp = 0 - 1;
+var _ifm_rhs = 0;
+fn _ifm_at(S): i64 {
+    if (_ifm_cp == GCP(S)) { return 1; }
     return 0;
 }
 
@@ -7779,11 +7793,19 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
 # the type, so it cannot fire. CHANGELOG [6.6.8]
 # 6.6.10: a float builtin's result on the right (`2 * f64_sqrt(u)`) is an f64 operand too; its
 # flag was captured by _RHS_F / _RHS_T before the integer op was emitted, and is consumed here.
+# 6.7.11: once per mix — a right operand that is an earlier mix's result (`_ifm_rhs`) was reported there.
 fn _INT_F64_MIX(S): i64 {
     var fr = _fbr_rhs;
     _fbr_rhs = 0;
-    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); return 0; }
-    if (fr == 1) { _FLT_TYPE_WARN(S, 2); }
+    if (GESTYPE(S) == F64_TYID) { fr = 1; }
+    if (fr == 1) { _ifm_warn(S); }
+    _ifm_rhs = 0;
+    return 0;
+}
+# The result carries the mix on (`x - (x * (x + 1.5))`): re-stamped where it ends, reported or not.
+fn _ifm_warn(S): i64 {
+    if (_ifm_rhs == 0) { _FLT_TYPE_WARN(S, 2); }
+    _ifm_cp = GCP(S);
     return 0;
 }
 

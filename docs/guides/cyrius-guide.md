@@ -139,7 +139,11 @@ operand`). An **f32** left takes the LOW 32 BITS of its right operand, so an `f6
 or an integer there is reinterpreted, not converted — with `x: f32`, `x * 2.0` is 0 and
 `x + 1.0` is `x`. Since 6.6.11 it warns too (`f32 arithmetic with a non-f32 right operand`);
 write `x * f32_from(2.0)`. They are warnings, not errors (ADR-002: the untyped `i64`-boxed
-float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them. One integer + f64 mix warns once,
+however far its result is carried (6.7.11): `x = x + (x + 1.5)`, `2 * (x + 1.5)` and `x += x + 1.5`
+warned twice, `x - (x * (x + 1.5))` three times — the mix's result keeps the f64 type, so each
+enclosing integer operator saw an f64 right operand again. Two mixes still warn twice, and `x + 1.5
++ 2` still warns kind 1 for the `+ 2`.
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
