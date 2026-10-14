@@ -1714,7 +1714,10 @@ the struct `p` points at exactly as a struct variable in that place does — to 
 `*S` parameter of any size the pointee itself, so a write reaches it. A dereference-led operator result
 is an argument like any other (`take(*p + a)`; at top level a 9-16 byte one is refused by name, as
 `take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass 'pu' to a parameter of a
-different struct type*); an untyped `*x` is still the word it reads. Through 6.7.9 the word the
+different struct type*) at every size and into a `Str` parameter — since 6.7.11 a by-value parameter of 8
+bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` in another struct's impl:
+through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. An untyped `*x`
+is still the word it reads. Through 6.7.9 the word the
 dereference read was passed as the struct's address — a crash on every target.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,

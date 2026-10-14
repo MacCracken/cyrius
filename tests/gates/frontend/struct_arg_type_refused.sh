@@ -104,6 +104,21 @@
 #   the wrapped name also taken before a `,`           -> RED W13 (a second error naming 't')
 #   real tree                                          -> GREEN (53 refusal rows, 24 acceptance rows)
 #
+# 6.7.11 — A WHOLE DEREFERENCE OF ANOTHER STRUCT'S POINTER INTO A BY-VALUE STRUCT OF 8 B OR LESS IS REFUSED
+# BY NAME (`_ess_deref`, the user's decision 2026-10-13: refuse by name; `*p` is a struct value at every
+# size, 6.7.10 decision 6): `take8(*pu)` with `pu: *U8` into `s: S8` compiled and exited 7 through 6.7.10,
+# where `take8(u)`, the 16 B `take(*pu)` and `var l: S8 = *pu;` were refused
+# (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md). D1 is the filed
+# repro verbatim; D2-D9 wrapped, a `: *T` call (named by its last name, as `_dro_check` names it over 8 B),
+# a `*T` field, pointer arithmetic, a tail call, `*self`, a `Str` parameter (139 before) and a generic
+# carrier (T is not bound through `*wp`, as `gx(*bp)` over 8 B); D10 the same struct (no false refusal);
+# D11 the pointer itself and an untyped `*x`; D12 an operator on the dereference is not one. Mutations:
+#   the fix reverted (the paren commit's compiler)     -> RED D1-D9 D3b (each compiled)
+#   no unwrap (`_ie_unparen`)                          -> RED D2
+#   the operand's last name not scanned                -> RED D3 D4 D5 (named 'gt' / 'hp' / a stray token)
+#   no whole-dereference test (`_gz_split`)            -> RED D12 (`*tp + 1` refused as `tp`)
+#   real tree                                          -> GREEN (63 refusal rows, 27 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -538,6 +553,62 @@ refuse "W12 bs1((mkt1(), 3)): the tuple literal's refusal only" "a tuple \`( .. 
     "${T}fn go(): i64 { return bs1((mkt1(), 3)); } syscall(60, go());"
 refuse "W13 bs1((t, 3)): the tuple literal's refusal only" "a tuple \`( .. )\` is a value only" \
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1((t, 3)); } syscall(60, go());"
+
+echo "=== 6.7.11: a whole dereference of another struct's pointer into a by-value struct of 8 B or less ==="
+# The filed repro, verbatim (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md):
+# it compiled and exited 7 (U8's `u` read as an S8) through 6.7.10, where `take8(u)`, the 16 B `take(*pu)`
+# and `var l: S8 = *pu;` were refused by name.
+refuse "D1 the filed repro, verbatim: take8(*pu)" "cannot pass 'pu' $MA 'take8'" \
+    'struct S8 { v; }
+struct U8 { u; }
+fn take8(s: S8): i64 { return s.v; }
+fn main(): i64 { var u: U8; u.u = 7; var pu: *U8 = &u; return take8(*pu); }
+syscall(60, main());
+'
+DH='struct HP { pt: *T1; ps: *S1; }
+fn gt(t: *T1): *T1 { return t; }
+fn gs(s: *S1): *S1 { return s; }
+'
+refuse "D2 bs1((*tp))" "cannot pass 'tp' $MA 'bs1'" \
+    "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1((*tp)); } syscall(60, go());"
+refuse "D3 bs1(*gt(&t)), a : *T1 call" "cannot pass 't' $MA 'bs1'" \
+    "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; return bs1(*gt(&t)); } syscall(60, go());"
+refuse "D3b bs1(*gtg()), a : *T1 call with no argument" "cannot pass 'gtg' $MA 'bs1'" \
+    "${T}${DH}var GTP: *T1 = 0; fn gtg(): *T1 { return GTP; } fn go(): i64 { var t: T1; t.w = 9; GTP = &t; return bs1(*gtg()); } syscall(60, go());"
+refuse "D4 bs1(*hp.pt), a *T1 field" "cannot pass 'pt' $MA 'bs1'" \
+    "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var hp: HP; hp.pt = &t; return bs1(*hp.pt); } syscall(60, go());"
+refuse "D5 bs1(*(tp + 0)), pointer arithmetic" "cannot pass 'tp' $MA 'bs1'" \
+    "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*(tp + 0)); } syscall(60, go());"
+refuse "D6 a tail call, bs1(*tp) with tp: *T1 a parameter" "cannot pass 'tp' $MA 'bs1'" \
+    "${T}${DH}fn f(tp: *T1): i64 { return bs1(*tp); } fn go(): i64 { var t: T1; t.w = 9; return f(&t); } syscall(60, go());"
+refuse "D7 bs1(*self) in an impl of T1" "cannot pass 'self' $MA 'bs1'" \
+    "${T}${DH}impl T1 { fn tk(self): i64 { return bs1(*self); } } fn go(): i64 { var t: T1; t.w = 9; return t.tk(); } syscall(60, go());"
+# Into a `Str` handle parameter (any size of the pointee): it SIGSEGV'd (139) through 6.7.10, as `sl(p)` did before 6.7.3.
+refuse "D8 sl(*tp) into s: Str" "cannot pass 'tp' $MA 'sl'" \
+    "${TS}${T}${DH}fn sl(s: Str): i64 { return str_len(s); } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return sl(*tp); } syscall(60, go());"
+# A generic carrier: `*wp` binds no T (as over 8 B, where `gx(*bp)` is refused the same way), so the
+# base `w: W1` meets a W1<i32> — the explicit instance takes it.
+refuse "D9 gw(*wp), T not bound through a dereference (as gx(*bp) over 8 B)" "cannot pass 'wp' $MA 'gw'" \
+    "struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
+fn go(): i64 { var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w; return gw(*wp); } syscall(60, go());"
+accept "D10 the same struct: *sp, (*sp), *gs(&s), *hp.ps, *self, gw<i32>(*wp)" \
+    "${T}${DH}struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
+impl S1 { fn tk(self): i64 { return bs1(*self); } }
+fn go(): i64 { var s: S1; s.u = 2; var sp: *S1 = &s; var hp: HP; hp.ps = &s; var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w;
+  return bs1(*sp) + bs1((*sp)) + bs1(*gs(&s)) + bs1(*hp.ps) + s.tk() + gw<i32>(*wp); }
+syscall(60, go());" \
+    16 \
+    "${T}fn go(): i64 { return 2 + 2 + 2 + 2 + 2 + 6; } syscall(60, go());"
+# The pointer itself still converts (the user's decision, 2026-10-08); an untyped `*x` is the word it reads.
+accept "D11 bs1(tp) with tp: *T1 converts; bs1(*x) with x untyped is its word" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; var x = &t; return bs1(tp) * 10 + bs1(*x); } syscall(60, go());" \
+    99 \
+    "${T}fn go(): i64 { var s: S1; s.u = 9; return bs1(s) * 10 + bs1(s); } syscall(60, go());"
+# Not one whole dereference: an operator on it is its operator fn's result (6.7.10, decision 11), an i64 here.
+accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
+    "${T}fn T1_add(a: T1, b): i64 { return a.w + b; } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*tp + 1); } syscall(60, go());" \
+    10 \
+    "${T}fn go(): i64 { var s: S1; s.u = 10; return bs1(s); } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
