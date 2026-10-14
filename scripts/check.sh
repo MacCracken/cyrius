@@ -2538,6 +2538,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR / DCE /
 # aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
+# 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
+# struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
+# refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
+# `p.pick(9)` returned 0). The filed repro, a chain and a trait member, the refusals, and 31 rows,
+# x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # 6.7.9 — `&q` of a `q: *P` parameter is its slot: for P over 8 B it was the pointee (6.6.6's by-value
 # arm also fired for a `*P`), so `load64(&q)` read q's first field and `store64(&q, o)` wrote the
 # caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /

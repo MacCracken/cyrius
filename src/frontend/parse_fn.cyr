@@ -11220,14 +11220,54 @@ fn _gs_use(S, fi, i, mode): i64 {
         return _gsn_has(TOKVAL(S, i));
     }
     if (nx != 19 && nx != 10) { return 0; }
+    if (nx == 10) { if (_gs_mfwd(S, fi, i) == 1) { return 1; } }   # 6.7.11: `p.pick(t)`
     var cfi = FINDFN(S, TOKVAL(S, i));
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
     if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }   # 6.7.1: a bounded one too
     if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
     var m = GFGM(S, cfi);
-    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255) == 1) { return 1; }
-    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 0) == 1) { return 1; }
+    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 0);
+}
+# ⛔ 6.7.11 — mode 1 at a METHOD call `x.m(..)` (token i the method's name, x one name): a body that
+# forwards a T-typed name into a stub generic METHOD (`p.pick(t)`, `self.pick(w)`) has a stub base too,
+# as the free spelling `P_pick(p, t)` makes it. The method arm now refuses a scalar binding of a stub
+# (`_mcall_gen`), so the forwarding generic's i64 base — emitted eagerly — was refused at its definition,
+# however it was called. The callee is the parser's (`_meth_fn_at`) for x's struct, typed by scope from
+# the tokens (`_tok_name_sid`; an untyped impl `self` by pass 1's GFISELF). CHANGELOG [6.7.11]
+fn _gs_mfwd(S, fi, i): i64 {
+    var cfi = _gs_mcallee(S, fi, i);
+    if (cfi < 0 || cfi == fi) { return 0; }
+    if (GFTP(S, cfi) == 0) { return 0; }
+    if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }
+    var m = GFGM(S, cfi);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 1) == 1) { return 1; }
+    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 1);
+}
+# The fn a method call `x.m(` reaches, its name at token i and x a single name, or -1.
+fn _gs_mcallee(S, fi, i): i64 {
+    if (TOKTYP(S, i - 1) != 41) { return 0 - 1; }
+    var r = i - 2;
+    if (TOKTYP(S, r) != 2) { return 0 - 1; }
+    if (TOKTYP(S, r - 1) == 41) { return 0 - 1; }
+    var a = GFDS(S, fi) - 1;
+    if (a < 0) { return 0 - 1; }
+    var sid = _tok_name_sid(S, a, r, TOKVAL(S, r));
+    if (sid == 0) { sid = _gs_iself(S, fi, a, r); }
+    if (sid <= 0) { return 0 - 1; }
+    return _meth_fn_at(S, sid, TOKVAL(S, i), i);
+}
+# An untyped impl `self` (the first parameter, no annotation) at token r: its impl's struct.
+fn _gs_iself(S, fi, a, r): i64 {
+    if (_noff_is(S, TOKVAL(S, r), "self", 4) == 0) { return 0; }
+    var d = _tok_name_decl(S, a, r, TOKVAL(S, r));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d - 1) != 10) { return 0; }
+    if (TOKTYP(S, d + 1) == 49) { return 0; }
+    var t = GFISELF(S, fi);
+    if (t == 0) { return 0; }
+    return FINDSTRUCT(S, t - 1);
 }
 # `callee<...>(`: 1 iff a type argument names one of fi's own type parameters.
 fn _gs_targs_fwd(S, fi, j): i64 {
@@ -11247,10 +11287,11 @@ fn _gs_targs_fwd(S, fi, j): i64 {
     return 0;
 }
 # 1 iff the argument for parameter k-1 (k is 1-based; 0 = none) of the call to cfi whose `(` is at
-# `open` is a bare T-typed name (6.7.7: by name too, `_call_arg_for`).
-fn _gs_arg_named(S, cfi, open, k): i64 {
-    if (k == 0) { return 0; }
-    var a = _call_arg_for(S, cfi, open, k - 1);
+# `open` is a bare T-typed name (6.7.7: by name too, `_call_arg_for`). `mth` 1: a method call, whose
+# list starts at parameter 1 (6.7.11).
+fn _gs_arg_named(S, cfi, open, k, mth): i64 {
+    if (k <= mth) { return 0; }
+    var a = _call_arg_pk(S, cfi, open, k - 1, k - 1 - mth);
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
@@ -11369,7 +11410,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var m = GFGM(S, fi);
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
-    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF); }   # 6.7.8
+    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF, 0); }   # 6.7.8
     var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
@@ -11387,11 +11428,11 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
 # `b: Box<Pt>` binds Pt and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64
 # — today's base, and its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the
 # call instantiates `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout).
-# CHANGELOG [6.7.8]
-fn _gen_infer_sc(S, fi, open, f): i64 {
+# `mth` 1: a method call, whose list starts at parameter 1 (`_mcall_infer`, 6.7.11). CHANGELOG [6.7.8]
+fn _gen_infer_sc(S, fi, open, f, mth): i64 {
     var k = f & 255;
-    if (k == 0) { return 0 - 8; }
-    var a = _call_arg_for(S, fi, open, k - 1);
+    if (k <= mth) { return 0 - 8; }
+    var a = _call_arg_pk(S, fi, open, k - 1, k - 1 - mth);
     if (a < 0) { return 0 - 8; }
     var c = _gsc_arg(S, a);
     var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
@@ -11622,32 +11663,48 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return fi;
 }
-# ⛔ 6.7.9 — A GENERIC METHOD'S f64 TYPE PARAMETER. `p.id(h)` with `fn id<V>(self, w: V): V` and
-# `h: f64` called the i64 base: its result was an untyped word (`p.id(h) * 2.0` an integer
-# multiply) and `p.dbl(h)` added the double's bits — the free spelling `P_id(&p, h)` now calls the
-# f64 instance (`_gen_infer_tp`), and so does this arm, before `self` and the arguments, with the
-# `(` at `open`. Only an f64 binding is taken here: a struct one stays the base's, as before
-# (docs/development/issues/2026-10-10-generic-method-call-runs-i64-base.md). CHANGELOG [6.7.9]
-fn _mcall_gen(S, fi, open): i64 {
+# ⛔ 6.7.11 — A GENERIC METHOD CALL `p.m(..)` REACHES THE INSTANCE ITS ARGUMENTS BIND, as the free
+# spelling `P_m(p, ..)` does (`_gen_call_head`), before `self` and the arguments, with the `(` at
+# `open`. 6.7.9 took only an f64 binding: a struct one called the i64 base, the dead stub when the
+# body uses the type parameter as a struct — `p.pick(q)` returned 0 where `P_pick(p, q)` read q.b.
+# A scalar binding of a stub (or of a base whose bound i64 fails) is refused naming the method's fn,
+# as the free call is (the user's decision A, 2026-10-13): `p.pick(9)` returned 0 in silence. Only
+# the emitting call reports (`emit`); a lookahead (`_var_rhs_msid`) resolves quietly. `_gi_sc` is
+# the free call's and is put back. `rsid` is the receiver's struct, which a type parameter on `self`
+# binds (`fn me<V>(self: V)`: `p.me()` calls `P_me$P`, as `P_me(p)` does). CHANGELOG [6.7.11]
+fn _mcall_gen(S, fi, open, rsid, emit): i64 {
     if (_MONOMORPH_OK == 0) { return fi; }
     if (fi < 0) { return fi; }
     if (GFTP(S, fi) == 0) { return fi; }
     if (TOKTYP(S, open) != 10) { return fi; }
-    if (_gen_stub(S, fi) != 0) { return fi; }   # (and GFGM is recorded)
-    var c0 = _mcall_infer(S, fi, open, 0);
+    _gen_stub(S, fi);   # records GFGM
+    var sv = _gi_sc;
+    _gi_sc = 0;
+    var c0 = _mcall_infer(S, fi, open, 0, rsid);
     var c1 = 0;
-    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, fi, open, 1); }
-    if (c0 > 0 || c1 > 0) { return fi; }
-    if (c0 != 0 - 9) { if (c1 != 0 - 9) { return fi; } }
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, fi, open, 1, rsid); }
+    var sc = _gen_sc_inst(S, fi);
+    _gi_sc = sv;
+    if (c0 > 0 || c1 > 0 || sc == 1) { return _mcall_inst(S, fi, c0, c1, emit); }
+    if (emit == 0) { return fi; }
+    var noff = L64(_fnt_names + fi * 8);
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    return fi;
+}
+fn _mcall_inst(S, fi, c0, c1, emit): i64 {
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
     if (spec >= 0) { return spec; }
+    if (emit == 1) { _refuse_gen_inst(S, L64(_fnt_names + fi * 8), spec); }
     return fi;
 }
 # `_gen_infer_tp` for a method call: type parameter `which`'s carrying parameter k is passed at
-# position k - 1. A struct carrier or `self` itself carrying it (k < 2) infers i64 here.
-fn _mcall_infer(S, fi, open, which): i64 {
-    var k = (GFGM(S, fi) >> (8 + which * 8)) & 255;
-    if (k < 2) { return 0 - 8; }
+# position k - 1; `self` carrying it (k == 1) binds the receiver's struct `rsid` (none: i64).
+fn _mcall_infer(S, fi, open, which, rsid): i64 {
+    var m = GFGM(S, fi);
+    var k = (m >> (8 + which * 8)) & 255;
+    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF, 1); }
+    if (k == 1) { if (rsid > 0) { return rsid; } return 0 - 8; }
     var a = _call_arg_pk(S, fi, open, k - 1, k - 2);
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
@@ -11655,6 +11712,7 @@ fn _mcall_infer(S, fi, open, which): i64 {
     STI(S, a);
     var c = _infer_conc_at_cursor(S);
     STI(S, sv);
+    if (c == 0 - 9) { _gi_sc = 1; }
     return c;
 }
 fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
@@ -12838,11 +12896,25 @@ fn _selfbv_bit(S, lp): i64 {
     if (TOKTYP(S, lp + 3) != 2) { return 0; }
     if (TOKTYP(S, lp + 4) == 19) { return 0; }
     var tnoff = TOKVAL(S, lp + 3);
-    if (_classify_param_type(S, tnoff) != 0) { return 0; }
-    var sid = FINDSTRUCT(S, tnoff);
+    var sid = _selfbv_tp(S, tnoff);
+    if (sid == 0) {
+        if (_classify_param_type(S, tnoff) != 0) { return 0; }
+        sid = FINDSTRUCT(S, tnoff);
+    }
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     return 1 << 62;
+}
+# An instance's `self: V` (V a type parameter): the type V is bound to, read before PARSE_FN_DEF binds
+# it — `p.me()` calls `P_me$P` (`_mcall_gen`), and a <= 8 B P is passed by value. 0 elsewhere.
+# CHANGELOG [6.7.11]
+fn _selfbv_tp(S, tnoff): i64 {
+    if (_inst_conc0 == 0) { if (_inst_conc1 == 0) { return 0; } }
+    if (_inst_base_fi < 0) { return 0; }
+    var tp = GFTP(S, _inst_base_fi);
+    if (tnoff == (tp & 0xFFFFFFFF) - 1) { return _inst_conc0; }
+    if (tnoff == ((tp >> 32) & 0xFFFFFFFF) - 1) { return _inst_conc1; }
+    return 0;
 }
 # 6.6.17 (a10): nonzero when ANY parameter is address-passed, an overflow-row one included.
 fn _smask_args(fi): i64 {
