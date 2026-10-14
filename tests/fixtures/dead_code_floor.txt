@@ -66,9 +66,15 @@ _parse_hex_env a64m win x86m
 _prof_clock_ns a64 a64m a64n win x86m
 _prov_kill a64 a64m a64n cx
 _prov_read a64 a64m a64n cx
+_wp_data_end a64 a64m a64n cx
+_wp_data_fix a64 a64m a64n cx
+_wp_dead_xfer a64 a64m a64n cx
 _wp_inside a64 a64m a64n cx
+_wp_pad_to a64 a64m a64n cx
+_wp_removed_at a64 a64m a64n cx
 _wp_shift a64 a64m a64n cx
 _wp_sort_prefix a64 a64m a64n cx
+_wp_ud2 a64 a64m a64n cx
 _wpjs_add a64 a64m a64n cx
 _wpjs_add_raw a64 a64m a64n cx
 _wpjs_grow a64 a64m a64n cx

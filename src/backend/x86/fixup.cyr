@@ -108,8 +108,9 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 # above already describes. p_vaddr = p_offset (mod 0x1000) still holds: dbase is
 # 2 MB-aligned and data_foff is 4 KB-aligned, so both are 0 mod 0x1000.
 # ⚠ The freeze covers the W^X layout only. A kernel image and CYRIUS_WX=0 place data right after
-# the code, with no gap to freeze into, so `_dce_compact_why` (runtime.cyr) declines compaction
-# for both. CHANGELOG [6.6.20]
+# the code, with no gap to freeze into, so the data moves down with the code instead: wp_compact
+# (ir.cyr) subtracts the move from every data address patched below, and keeps it a multiple
+# of 16 so the m128 padding computed against `dbase` still holds. CHANGELOG [6.7.11]
 var _wx_dbase_frozen = 0;
 
 fn FIXUP(S): i64 {
@@ -885,8 +886,12 @@ fn FIXUP(S): i64 {
     # inside wp_compact that the predicate does not know about.
     if (dce_enabled == 1 && _wp_why == 0) {
         _wp_post_patch = 1;
+        # A kernel image and CYRIUS_WX=0 place the data right after the code, so it moves down
+        # with the code: wp_compact re-points the data addresses patched above. CHANGELOG [6.7.11]
+        if (kmode == 1 || _wx_active(S) == 0) { _wp_data_follows = 1; }
         var _wpd2 = wp_compact(S);
         _wp_post_patch = 0;
+        _wp_data_follows = 0;
         _dce_drift_check(S, _wpd2);
         if (_wpd2 > 0) {
             var _cp2 = GCP(S);

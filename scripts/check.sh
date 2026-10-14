@@ -1289,6 +1289,10 @@ _chk_gate "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 # nothing gives "with=100 without=100" and axis 1 fires.
 _chk_gate "$ROOT/tests/gates/codegen/inline_directive.sh"
 _chk_gate "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
+# 6.7.11: CYRIUS_DCE=1 compacts a `kernel;` image (agnos-filed): a kept dead body's call into removed
+# code becomes ud2, never a live address; the compacted kernel BOOTS under QEMU (exit 77 without it).
+_chk_gate "$ROOT/tests/gates/codegen/dce_kept_dead_calls.sh"
+_chk_gate "$ROOT/tests/gates/codegen/dce_kernel_compaction_boots.sh"
 
 # v6.6.3: a directive must reach EVERY per-target fork, and must not be INERT on any of them.
 # cyrius has seven forks of the entry point and each carries its OWN copy of the top-level

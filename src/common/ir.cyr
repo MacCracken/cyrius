@@ -1601,6 +1601,88 @@ fn _wp_inside(S, p): i64 {
     return 0;
 }
 
+# Is p a REMOVED byte — inside a deleted run, its first byte included? `_wp_inside` leaves the
+# start out because a position there still has an image (whatever follows the run); a call AIMED
+# at the start of a removed fn has no target at all. Same sorted-table precondition.
+fn _wp_removed_at(S, p): i64 {
+    var lo = 0;
+    var hi = _wpnr_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (L64(S + 0xC0000 + mid * 24) <= p) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo == 0) { return 0; }
+    var idx = lo - 1;
+    if (p < L64(S + 0xC0000 + idx * 24) + L64(S + 0xC0000 + idx * 24 + 8)) { return 1; }
+    return 0;
+}
+
+# `ud2; ud2; nop` over the 5-byte call/jmp whose opcode is at code offset op — FIXUP's sentinel
+# for a call that has no target.
+fn _wp_ud2(op): i64 {
+    var pu = _codebuf_base + op;
+    store8(pu + 0, 0x0F);
+    store8(pu + 1, 0x0B);
+    store8(pu + 2, 0x0F);
+    store8(pu + 3, 0x0B);
+    store8(pu + 4, 0x90);
+    return 0;
+}
+
+# 6.7.11 — the post-patch pass removes only FIXUP's dead fns, and a live caller keeps its callee,
+# so a rel32 that SURVIVES while its target is REMOVED sits in a dead body kept for a byte the
+# length decoder cannot size (`out dx, al`). Shifting it like any other lands it on whatever
+# moved into the hole — an unrelated live fn, or the kept body itself. A call / jmp becomes the
+# ud2 sentinel; any other opcode is refused (no repair is known for it). 1 = handled here.
+fn _wp_dead_xfer(S, src, tgt): i64 {
+    if (_wp_post_patch != 1) { return 0; }
+    if (_wp_removed_at(S, src) == 1) { return 0; }
+    if (_wp_removed_at(S, tgt) == 0) { return 0; }
+    var op = load8(_codebuf_base + src - 1);
+    if (op == 0xE8 || op == 0xE9) { _wp_ud2(src - 1); return 1; }
+    syscall(SYS_WRITE, 2, "error: dead-code elimination: the rel32 at code offset ", 55);
+    PRNUM(src);
+    syscall(SYS_WRITE, 2, " (opcode byte ", 14);
+    PRNUM(op);
+    PRSTR(") survives but aims into removed code, and only a call or jmp can be neutralised;");
+    PRSTR(" refusing to emit\n");
+    _had_error = 1;
+    return 1;
+}
+
+# Where the data follows the code (`_wp_data_follows`), the new code end: 8-aligned like FIXUP's,
+# and moved down by a multiple of 16 so every array FIXUP padded to 16 against the old data base
+# keeps its alignment (8 bytes of zero pad when the plain move would be 8 mod 16). GCP is still
+# FIXUP's aligned code end, which is the old data base's offset (these layouts have no W^X pad).
+fn _wp_data_end(S): i64 {
+    var old = GCP(S);
+    var ncp = (old - _wp_deleted + 7) & (0 - 8);
+    if (((old - ncp) & 15) != 0) { ncp = ncp + 8; }
+    return ncp;
+}
+
+# A data address FIXUP patched as an imm64 (a string, ftype 1, or a global, ftype 0 below the
+# variable count — the only ftype-0 sites it patches) moves down by the data's move.
+fn _wp_data_fix(S, pcoff, praw, dshift): i64 {
+    var pft = praw >> 56;
+    if (pft == 0) {
+        if ((praw & 0x00FFFFFFFFFFFFFF) >= GVCNT(S)) { return 0; }
+    } else {
+        if (pft != 1) { return 0; }
+    }
+    S64(_codebuf_base + pcoff, L64(_codebuf_base + pcoff) - dshift);
+    return 0;
+}
+
+# Zero the gap between the moved code's end and the new code end, then set it.
+fn _wp_pad_to(S, wp, ncp): i64 {
+    var z = wp;
+    while (z < ncp) { store8(_codebuf_base + z, 0); z = z + 1; }
+    SCP(S, ncp);
+    return 0;
+}
+
 fn wp_compact(S): i64 {
     # x86 family only. ⚠ `_AARCH64_BACKEND == 0` ALONE IS NOT AN X86 TEST — the cx bytecode
     # backend also sets it to 0, which is the trap v6.5.64 records. aarch64 has no position
@@ -1621,6 +1703,13 @@ fn wp_compact(S): i64 {
     if (_wpjs_ovf == 1) { return 0; }
     if (_wpsw_ovf == 1) { return 0; }
     _wp_sort_prefix(S);
+    # 6.7.11 — a kernel image and CYRIUS_WX=0 put the data right after the code, so in the
+    # post-patch pass it moves down by `dshift` and every data address FIXUP patched moves with
+    # it (stage 1b); the new code end is `ncp`, set after stage 6. Under W^X the data segment is
+    # frozen where it was (`_wx_dbase_frozen`) and nothing here runs.
+    var dshift = 0;
+    var ncp = 0;
+    if (_wp_post_patch == 1) { if (_wp_data_follows == 1) { ncp = _wp_data_end(S); dshift = GCP(S) - ncp; } }
     # Stage 0 — VOID every fixup whose CP lands strictly inside a run about to vanish. A dead
     # function's calls are still in the fixup table; shifting such a CP yields a plausible
     # address INSIDE LIVE CODE that the re-patch would then write a rel32 over — a miscompile
@@ -1643,11 +1732,13 @@ fn wp_compact(S): i64 {
         var disp = load8(da) | (load8(da + 1) << 8) | (load8(da + 2) << 16) | (load8(da + 3) << 24);
         if (disp >= 0x80000000) { disp = disp - 0x100000000; }
         var tgt = src + 4 + disp;
-        var nd = disp - _wp_shift(S, tgt) + _wp_shift(S, src);
-        store8(da + 0, nd & 0xFF);
-        store8(da + 1, (nd >> 8) & 0xFF);
-        store8(da + 2, (nd >> 16) & 0xFF);
-        store8(da + 3, (nd >> 24) & 0xFF);
+        if (_wp_dead_xfer(S, src, tgt) == 0) {
+            var nd = disp - _wp_shift(S, tgt) + _wp_shift(S, src);
+            store8(da + 0, nd & 0xFF);
+            store8(da + 1, (nd >> 8) & 0xFF);
+            store8(da + 2, (nd >> 16) & 0xFF);
+            store8(da + 3, (nd >> 24) & 0xFF);
+        }
         ji = ji + 1;
     }
     # Stage 1b — v6.5.72: repair the FIXUP-MEDIATED sites, but only once FIXUP has resolved
@@ -1662,10 +1753,14 @@ fn wp_compact(S): i64 {
     #                          does for recorded jumps. Disjoint from WPJS, which holds
     #                          EJCC/EJMP/EJMP0/ECALLTO while this holds ECALLFIX.
     #   ftype 3 (fn address)  — an ABSOLUTE fn VA: rewrite it from the shifted `_fnt_offsets`.
-    #   everything else       — absolute DATA addresses, and data does not move when code shrinks
-    #                          UNDER W^X only (`_wx_dbase_frozen` pins the data segment). A kernel
-    #                          image and CYRIUS_WX=0 put data right after the code, so the x86
-    #                          FIXUP declines compaction there (runtime.cyr _dce_compact_why).
+    #   ftype 0 / 1 (data)    — absolute DATA addresses. Under W^X the data does not move
+    #                          (`_wx_dbase_frozen` pins its segment); a kernel image and
+    #                          CYRIUS_WX=0 put it right after the code, so there it moves down by
+    #                          `dshift` and each address moves with it (_wp_data_fix). CHANGELOG [6.7.11]
+    #   A call (ftype 2) or `&fn` (ftype 3) aimed at a REMOVED fn sits in a kept dead body; it
+    #   becomes the ud2 sentinel / 0 rather than an address in whatever moved there (_wp_dead_xfer).
+    #   An ftype-2 site whose callee was never defined already holds FIXUP's ud2 sentinel — left
+    #   alone, not read back as a rel32.
     #
     # ⛔ IT MUST RUN HERE, BEFORE STAGE 2. It reads a fixup CP and writes four bytes AT that CP
     # in the code buffer — so it needs PRE-compaction coordinates, exactly like stage 1. Placed
@@ -1691,21 +1786,31 @@ fn wp_compact(S): i64 {
                     # (`_fnt_offsets` is still pre-compaction at this stage; stage 3 shifts it.)
                     var poff3 = L64(_fnt_offsets + (praw & 0x00FFFFFFFFFFFFFF) * 8);
                     if (poff3 >= 0) {
-                        var pcur = L64(_codebuf_base + pcoff);
-                        S64(_codebuf_base + pcoff, pcur - _wp_shift(S, poff3));
+                        if (_wp_removed_at(S, poff3) == 1) { S64(_codebuf_base + pcoff, 0); }
+                        else {
+                            var pcur = L64(_codebuf_base + pcoff);
+                            S64(_codebuf_base + pcoff, pcur - _wp_shift(S, poff3));
+                        }
                     }
                 }
                 if (pft == 2) {
-                    var pa2 = _codebuf_base + pcoff;
-                    var prel = load8(pa2) | (load8(pa2 + 1) << 8) | (load8(pa2 + 2) << 16) | (load8(pa2 + 3) << 24);
-                    if (prel >= 0x80000000) { prel = prel - 0x100000000; }
-                    var ptgt = pcoff + 4 + prel;
-                    var pnew = prel - _wp_shift(S, ptgt) + _wp_shift(S, pcoff);
-                    store8(pa2 + 0, pnew & 0xFF);
-                    store8(pa2 + 1, (pnew >> 8) & 0xFF);
-                    store8(pa2 + 2, (pnew >> 16) & 0xFF);
-                    store8(pa2 + 3, (pnew >> 24) & 0xFF);
+                    var poff2 = L64(_fnt_offsets + (praw & 0x00FFFFFFFFFFFFFF) * 8);
+                    if (poff2 >= 0) {
+                        if (_wp_dead_xfer(S, pcoff, poff2) == 0) {
+                            var pa2 = _codebuf_base + pcoff;
+                            var prel = load8(pa2) | (load8(pa2 + 1) << 8);
+                            prel = prel | (load8(pa2 + 2) << 16) | (load8(pa2 + 3) << 24);
+                            if (prel >= 0x80000000) { prel = prel - 0x100000000; }
+                            var ptgt = pcoff + 4 + prel;
+                            var pnew = prel - _wp_shift(S, ptgt) + _wp_shift(S, pcoff);
+                            store8(pa2 + 0, pnew & 0xFF);
+                            store8(pa2 + 1, (pnew >> 8) & 0xFF);
+                            store8(pa2 + 2, (pnew >> 16) & 0xFF);
+                            store8(pa2 + 3, (pnew >> 24) & 0xFF);
+                        }
+                    }
                 }
+                if (dshift != 0) { _wp_data_fix(S, pcoff, praw, dshift); }
             }
             pfi = pfi + 1;
         }
@@ -1799,6 +1904,8 @@ fn wp_compact(S): i64 {
         }
     }
     SCP(S, wp);
+    # The data follows the code: end the code where stage 1b moved the data to. CHANGELOG [6.7.11]
+    if (ncp > 0) { _wp_pad_to(S, wp, ncp); }
     # RE-ENTRANCY. A second compaction follows when `CYRIUS_DCE=1` fills dead bodies AFTER
     # this pass has already moved the buffer, so leave the registries describing the NEW
     # layout and clear the run table — otherwise the second pass re-shifts positions by the
