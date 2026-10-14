@@ -81,6 +81,29 @@
 #                                              minus A7's two skipped legs, see a_legs —
 #                                              across host + cx + qemu-aarch64 + wine-PE)
 # Mutants were measured on a host-only copy of this file; the other legs share the frontend.
+#
+# ⛔ 6.7.11 (the call-arguments lane) — THE RECEIVE SIDE: a value-form vector LOCAL (`var v: T = <src>;`,
+# `v = <src>;`). It got its 16 / 32 bytes only from `f(..)` by name: `callptr(&f, ..)`, `fncallN(&f,
+# ..)` and `(f(..))` were stored as one word (wrong lanes on x86_64 / aarch64 / cx; on PE no hidden
+# result pointer, so the callee wrote through its first argument), and so was every source that is no
+# vector — a callee held in a variable (`callptr(fp, ..)`: 181 / 180 / 45 where 48 is right, a page
+# fault at 0x29 on PE), `5`, `load64(..)`, `&w`. The receive now takes every source that IS the vector
+# — a local of its type, a by-name call declared to return it, inside parentheses too, and
+# `fncallN(&f, ..)` / `callptr(&f, ..)` with `f` declared to return it — and refuses every other one by
+# name, at the declaration and the assignment (the user's decision, 2026-10-13: the 6.6.6 return
+# rule's sources, at the receive). Rows V (accepted, each lane read back through a value-form
+# parameter; f64v2 / f32v4 / i32v4 / f64v4, declaration and assignment, and the guide's out-pointer
+# workaround) and Y (refused once, by name, no artifact — Y1 is the filed repro verbatim) on all four
+# legs; tests/tcyr/crossos/simd_indirect_receive.tcyr is the same table for the release gate's hosts.
+# MUTATION LEDGER (6.7.11 — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>):
+#   MV1 `_vrcv_decl` never declaring                       -> RED V1 V3 V5 V7 on all four legs (refused: the declaration
+#                                                          fell to the scalar path)
+#   MV2 `_vrcv_asg` always deferring (-1)                  -> RED Y5-Y8 Y11 (not refused) and V2 V4 V6 V8 (1; PE 5)
+#                                                          on all four legs
+#   MV3 `_var_rhs_post` without `_vrcv_decl_err`           -> RED Y1-Y4 Y9 Y10 (not refused) on all four legs
+#   MV4 `_icall_sret` without its `_icall_vbeg` arm (PE)   -> RED win64 V1-V8 only (5: the callee wrote through its
+#                                                          first argument) — the hidden pointer is PE's alone
+#   MV5 `_vrcv_emit` without the register-pair store       -> RED V1-V8 on host / cx / aarch64 (1); win64 green (no pair)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -232,6 +255,87 @@ var r = main(); syscall(60, r);
     esac
 }
 ACCEPT_ROWS="A1 A2 A3 A4 A5 A6 A7 A8 A9"
+
+# ---- 6.7.11: the receive (rows V accepted, Y refused) ----------------------------------------
+MSGV="a value-form vector local is"
+VH='include "lib/fnptr.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkf(a, b, c, d): f32v4 { var v: f32v4; store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d); return v; }
+fn mki(a, b, c, d): i32v4 { var v: i32v4; store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d); return v; }
+fn mkd(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn l2(x: f64v2): i64 { return load64(&x) * 100 + load64(&x + 8); }
+fn lf(x: f32v4): i64 { return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12); }
+fn li(x: i32v4): i64 { return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12); }
+fn ld(x: f64v4): i64 { return load64(&x) * 1000000 + load64(&x + 8) * 10000 + load64(&x + 16) * 100 + load64(&x + 24); }
+'
+VE='var r = main(); syscall(60, r);
+'
+v_src() {  # $1 row id -> source on stdout; each returns 42 when every lane is right, else the shape that is not
+    case "$1" in
+    V1) printf '%s' "$VH"'fn main(): i64 { var a: f64v2 = callptr(&mk2, 41, 7); var b: f64v2 = fncall2(&mk2, 12, 34); var c: f64v2 = (mk2(56, 78));
+  if (l2(a) != 4107) { return 1; } if (l2(b) != 1234) { return 2; } if (l2(c) != 5678) { return 3; } return 42; }
+'"$VE" ;;
+    V2) printf '%s' "$VH"'fn main(): i64 { var a: f64v2 = mk2(0, 0); a = callptr(&mk2, 41, 7); if (l2(a) != 4107) { return 1; }
+  a = fncall2(&mk2, 12, 34); if (l2(a) != 1234) { return 2; } a = (mk2(56, 78)); if (l2(a) != 5678) { return 3; } return 42; }
+'"$VE" ;;
+    V3) printf '%s' "$VH"'fn main(): i64 { var a: f32v4 = callptr(&mkf, 1, 2, 3, 4); var b: f32v4 = fncall4(&mkf, 5, 6, 7, 8); var c: f32v4 = (mkf(9, 10, 11, 12));
+  if (lf(a) != 1020304) { return 1; } if (lf(b) != 5060708) { return 2; } if (lf(c) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V4) printf '%s' "$VH"'fn main(): i64 { var a: f32v4 = mkf(0, 0, 0, 0); a = callptr(&mkf, 1, 2, 3, 4); if (lf(a) != 1020304) { return 1; }
+  a = fncall4(&mkf, 5, 6, 7, 8); if (lf(a) != 5060708) { return 2; } a = (mkf(9, 10, 11, 12)); if (lf(a) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V5) printf '%s' "$VH"'fn main(): i64 { var a: i32v4 = callptr(&mki, 1, 2, 3, 4); var b: i32v4 = fncall4(&mki, 5, 6, 7, 8); var c: i32v4 = (mki(9, 10, 11, 12));
+  if (li(a) != 1020304) { return 1; } if (li(b) != 5060708) { return 2; } if (li(c) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V6) printf '%s' "$VH"'fn main(): i64 { var a: i32v4 = mki(0, 0, 0, 0); a = callptr(&mki, 1, 2, 3, 4); if (li(a) != 1020304) { return 1; }
+  a = fncall4(&mki, 5, 6, 7, 8); if (li(a) != 5060708) { return 2; } a = (mki(9, 10, 11, 12)); if (li(a) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V7) printf '%s' "$VH"'fn main(): i64 { var a: f64v4 = callptr(&mkd, 1, 2, 3, 4); var b: f64v4 = fncall4(&mkd, 5, 6, 7, 8); var c: f64v4 = (mkd(9, 10, 11, 12));
+  if (ld(a) != 1020304) { return 1; } if (ld(b) != 5060708) { return 2; } if (ld(c) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V8) printf '%s' "$VH"'fn main(): i64 { var a: f64v4 = mkd(0, 0, 0, 0); a = callptr(&mkd, 1, 2, 3, 4); if (ld(a) != 1020304) { return 1; }
+  a = fncall4(&mkd, 5, 6, 7, 8); if (ld(a) != 5060708) { return 2; } a = (mkd(9, 10, 11, 12)); if (ld(a) != 9101112) { return 3; } return 42; }
+'"$VE" ;;
+    V9) printf '%s' "$VH"'fn mko(out, a, b): i64 { store64(out, a); store64(out + 8, b); return 0; }
+fn main(): i64 { var fp = &mko; var v: f64v2 = mk2(0, 0); var ig = callptr(fp, &v, 41, 7); var u: f64v2 = mk2(41, 7);
+  if (l2(v) != 4107) { return 1; } if (l2(u) != 4107) { return 2; } return 42; }
+'"$VE" ;;
+    esac
+}
+V_ROWS="V1 V2 V3 V4 V5 V6 V7 V8 V9"
+y_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    Y1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn run(): i64 {
+    var fp = &mkv;
+    var v: f64v2 = callptr(fp, 41, 7);
+    return load64(&v) + load64(&v + 8);
+}
+syscall(60, run());
+' ;;
+    Y2) printf '%s' "$VH"'fn main(): i64 { var v: f64v2 = 5; return l2(v); }
+'"$VE" ;;
+    Y3) printf '%s' "$VH"'fn main(): i64 { var w = 3; var v: f64v2 = load64(&w); return l2(v); }
+'"$VE" ;;
+    Y4) printf '%s' "$VH"'fn main(): i64 { var w = 3; var v: f64v2 = &w; return l2(v); }
+'"$VE" ;;
+    Y5) printf '%s' "$VH"'fn main(): i64 { var fp = &mk2; var v: f64v2 = mk2(0, 0); v = callptr(fp, 41, 7); return l2(v); }
+'"$VE" ;;
+    Y6) printf '%s' "$VH"'fn main(): i64 { var v: f64v2 = mk2(0, 0); v = 5; return l2(v); }
+'"$VE" ;;
+    Y7) printf '%s' "$VH"'fn main(): i64 { var w = 3; var v: f64v2 = mk2(0, 0); v = load64(&w); return l2(v); }
+'"$VE" ;;
+    Y8) printf '%s' "$VH"'fn main(): i64 { var w = 3; var v: f64v2 = mk2(0, 0); v = &w; return l2(v); }
+'"$VE" ;;
+    Y9) printf '%s' "$VH"'fn main(): i64 { var fp = &mkd; var v: f64v4 = callptr(fp, 1, 2, 3, 4); return ld(v); }
+'"$VE" ;;
+    Y10) printf '%s' "$VH"'fn main(): i64 { var fp = &mkf; var v: f32v4 = fncall4(fp, 1, 2, 3, 4); return lf(v); }
+'"$VE" ;;
+    Y11) printf '%s' "$VH"'fn main(): i64 { var v: i32v4 = mki(1, 2, 3, 4); var i = 0; for (i = 0; i < 1; v = 5) { i = i + 1; } return li(v); }
+'"$VE" ;;
+    esac
+}
+Y_ROWS="Y1 Y2 Y3 Y4 Y5 Y6 Y7 Y8 Y9 Y10 Y11"
 # Which legs an acceptance row RUNS on: every row on all four. A7's int-class 16-byte pair return
 # is a per-target ABI the tuple guard has nothing to do with, and it was kept off two legs until
 # each target carried it:
@@ -288,10 +392,45 @@ accept_all() {  # $1 leg label  $2 compiler  $3 runner fn name
     done
 }
 
+# 6.7.11: the receive rows — each Y refused ONCE (one `error` line), by name, with no artifact.
+refuse_v_all() {  # $1 leg label  $2 compiler
+    for row in $Y_ROWS; do
+        y_src "$row" > "$W/y.cyr"
+        rc=0
+        cat "$W/y.cyr" | "$2" > "$W/y.out" 2>"$W/y.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        ne=$(grep -c '^error' "$W/y.err" 2>/dev/null || true)
+        if ! grep -q "$MSGV" "$W/y.err" 2>/dev/null; then
+            bad "$1 $row: not refused (rc=$rc, first line: $(head -1 "$W/y.err" 2>/dev/null))"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1)"
+        elif [ -s "$W/y.out" ]; then
+            bad "$1 $row: reported but still emitted an artifact"
+        else
+            good "$1 $row refused once"
+        fi
+    done
+}
+accept_v_all() {  # $1 leg label  $2 compiler  $3 runner fn name
+    for row in $V_ROWS; do
+        v_src "$row" > "$W/v.cyr"
+        rc=0
+        cat "$W/v.cyr" | "$2" > "$W/v.out" 2>"$W/v.err" || rc=$?
+        naccept=$((naccept+1))
+        if ! [ -s "$W/v.out" ]; then bad "$1 $row: produced no artifact (rc=$rc: $(grep -m1 '^error' "$W/v.err" 2>/dev/null))"; continue; fi
+        chmod +x "$W/v.out"
+        got=0
+        ( ulimit -c 0; "$3" "$W/v.out" ) >/dev/null 2>&1 || got=$?
+        if [ "$got" = 42 ]; then good "$1 $row = 42"; else bad "$1 $row = $got, want 42"; fi
+    done
+}
+
 hostr() { timeout 60 "$1"; }
 echo "host x86_64:"
 refuse_all host "$CC"
 accept_all host "$CC" hostr
+refuse_v_all host "$CC"
+accept_v_all host "$CC" hostr
 
 echo "cx (cxvm):"
 if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ] \
@@ -300,6 +439,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     cxr() { timeout 60 "$W/cxvm" < "$1"; }
     refuse_all cx "$W/cycc_cx"
     accept_all cx "$W/cycc_cx" cxr
+    refuse_v_all cx "$W/cycc_cx"
+    accept_v_all cx "$W/cycc_cx" cxr
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -311,6 +452,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         a64r() { timeout 120 qemu-aarch64 "$1"; }
         refuse_all aarch64 "$W/cycc_a64"
         accept_all aarch64 "$W/cycc_a64" a64r
+        refuse_v_all aarch64 "$W/cycc_a64"
+        accept_v_all aarch64 "$W/cycc_a64" a64r
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -327,6 +470,8 @@ if command -v wine > /dev/null 2>&1; then
         wr_() { cp "$1" "$1.exe"; timeout 180 wine "$1.exe"; }
         refuse_all win64 "$W/cycc_win"
         accept_all win64 "$W/cycc_win" wr_
+        refuse_v_all win64 "$W/cycc_win"
+        accept_v_all win64 "$W/cycc_win" wr_
     else
         bad "win64 leg: could not build src/main_win.cyr"
     fi
@@ -338,7 +483,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS; echo $#)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS; echo $#)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -349,15 +494,18 @@ for row in $ACCEPT_ROWS; do
         case " $(a_legs "$row") " in *" $leg "*) na_floor=$((na_floor + 1));; esac
     done
 done
-[ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx)"
+na_floor=$((na_floor + $(set -- $V_ROWS; echo $#) * 2))   # 6.7.11: every V row on host + cx
+[ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row")" = "" ]; then bad "row $row has no source in either table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_fn.cyr no longer spells '$MSG' — reworded?"
+n=$(grep -c "$MSGV" src/frontend/parse_decl.cyr || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$MSGV' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.

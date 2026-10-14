@@ -856,6 +856,7 @@ fn _var_rhs_msid(S, ti): i64 {
 # struct result of 8 B or less (`_sc_op_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
 fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
+    if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
     var os = _sc_op_whole(S, start);
@@ -6045,6 +6046,8 @@ fn _sci_pname(S, ti): i64 {
 # rather than a pair being stored after the call.
 fn _try_vector_call_assign(S, noff, term): i64 {
     if (GINFN(S) != 1) { return 0; }
+    var vo = _vrcv_asg(S, noff, term);   # 6.7.11
+    if (vo >= 0) { return vo; }
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
     var dst_li = FINDLOCAL(S, noff);
@@ -6085,6 +6088,194 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
+}
+
+# ⛔ 6.7.11 — A VALUE-FORM VECTOR LOCAL TAKES A VECTOR, OR NOTHING. A vector local gets its 16 / 32 bytes
+# — the register pair stored, or on PE the callee's hidden result pointer passed — only from a source
+# that IS that vector: a local of its type (`_try_struct_copy_init`, `_try_aggregate_copy_assign`), a
+# by-name call declared to return it, that call inside parentheses, and `fncallN(&f, ..)` /
+# `callptr(&f, ..)` with `f` declared to return it (`_icall_vret` on PE). Any other source was stored
+# as ONE word with the high lanes stale, and on PE a call returning the vector wrote through its first
+# argument: refused by name, in the declaration and the assignment (the user's decision, 2026-10-13),
+# as the same sources are as a vector RETURN (6.6.6). CHANGELOG [6.7.11]
+var _vrcv_k = 0;    # the parentheses `_vrcv_src` found around the source
+# 1 = local type `ty` is a value-form vector of 16 / 32 bytes.
+fn _vrcv_vec(S, ty): i64 {
+    if (ty > 0 - 2048) { return 0; }
+    if (_vec_desc(S, ty) != 1) { return 0; }
+    if (GVEC_NSLOTS(S) <= 1) { return 0; }
+    return 1;
+}
+# The source at token `ti` of a vector of type `ty`, ended by `term`, when it is that vector: 1 = a
+# by-name call to a fn declared `: ty`, 2 = `fncallN(&f, ..)` / `callptr(&f, ..)` with `f` declared
+# `: ty` — inside `_vrcv_k` parentheses, the call alone in them; 0 = any other source.
+fn _vrcv_src(S, ti, ty, term): i64 {
+    _vrcv_k = 0;
+    var c = ti;
+    if (TOKTYP(S, ti) == 10) {
+        _vrcv_k = _pwrap_k(S, ti);
+        if (TOKTYP(S, _pw_end) != term) { return 0; }
+        c = ti + _vrcv_k;
+    }
+    var r = 0;
+    if (_icall_rs_at(S, c) == ty) { r = 2; }
+    elif (_vrcv_byname(S, c, ty) == 1) {
+        if (_vrcv_k == 0) { return 1; }   # the receives below, as ever
+        r = 1;
+    }
+    if (r == 0) { return 0; }
+    var x = _call_close(S, c + 1) + 1;   # the token after the call
+    if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { return 0; } }
+    elif (TOKTYP(S, x) != term) { return 0; }
+    return r;
+}
+fn _vrcv_byname(S, c, ty): i64 {
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (TOKTYP(S, c + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, c));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != ty) { return 0; }
+    return 1;
+}
+# 1 = token `ti` starts a by-name call to a fn declared to return a vector — any: the receives check
+# its type (a different vector is refused there, before the parse).
+fn _vrcv_vcall(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    return 1;
+}
+# The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
+# `ty`: inside its parentheses, the call — on PE passing `dst`'s address as its hidden result pointer,
+# elsewhere storing the vector registers it returns in — then the parentheses' `)`.
+fn _vrcv_emit(S, dst, ty, k): i64 {
+    var w = _vrcv_k;
+    STI(S, GTI(S) + w);
+    if (_TARGET_PE == 1) {
+        if (k == 1) { _vrcv_pe_call(S, dst); }
+        else {
+            _icall_vbeg = GTI(S);
+            _icall_vdst = dst;
+            PCMPE(S);
+        }
+    } else {
+        PCMPE(S);
+        _vec_desc(S, ty);
+        if (GVEC_NSLOTS(S) == 4) { EFLSTORE_F64V4_PAIR(S, dst); }
+        else { EFLSTORE_F64V2_PAIR(S, dst); }
+    }
+    _pw_close(S, w);
+    return 0;
+}
+# PE: the by-name call `f(..)` at the cursor with `dst`'s address its hidden result pointer (int arg
+# 0), as the receives' own Win64 arm emits it.
+fn _vrcv_pe_call(S, dst): i64 {
+    var fnoff = PEEKV(S);
+    var fi = FINDFN(S, fnoff);
+    _callee_site_checks_here(S, fi, fnoff, 0);
+    STI(S, GTI(S) + 2);   # the callee's name and `(`
+    EFLADDR(S, dst);
+    EPUSHR(S);
+    var n = _owncall_args(S, fi, fnoff, 1);
+    var t = L64(_fnt_offsets + fi * 8);
+    if (t >= 0) { ECALLTO(S, t); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, n);
+    return 0;
+}
+# PARSE_VAR, cursor on `=`: `var v: <vector> = <src>;` in a fn for an accepted source the receives
+# there do not take — inside parentheses, or through fncallN / callptr. 1 = declared.
+fn _vrcv_decl(S, noff, pscale): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    if (_vrcv_vec(S, pscale) == 0) { return 0; }
+    var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
+    if (k == 0) { return 0; }
+    if (_vrcv_k == 0) { if (k == 1) { return 0; } }
+    _vec_desc(S, pscale);
+    var named = _sci_slots(S, noff, pscale, GVEC_NSLOTS(S));
+    STI(S, GTI(S) + 1);   # `=`
+    _vrcv_emit(S, named, pscale, k);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
+# scalar path, so not a source the receives take: refused by name, once — not after the initialiser
+# refused itself (`_scv_err`; `_panic` in `_vrcv_err`), nor for a by-name call declared to return
+# another vector (refused before the parse).
+fn _vrcv_decl_err(S, pscale, start): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (_vrcv_vec(S, pscale) == 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    if (_vrcv_vcall(S, start) == 1) { return 0; }
+    return _vrcv_err(S, start, "initialised");
+}
+# `v = <src>` with `v` a local (cursor on the source, `term` ending it): into a value-form vector, an
+# accepted source the by-name path below does not take, emitted (1), or any source that is no
+# vector, parsed and refused by name (1); -1 = the path below decides (the unwrapped by-name call,
+# a mismatched one included, or a destination that is no vector).
+fn _vrcv_asg(S, noff, term): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li < 0) { return 0 - 1; }
+    var lt = GLTYPE(S, li);
+    if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
+    var k = _vrcv_src(S, GTI(S), lt, term);
+    if (k == 0) { return _vrcv_other(S, term); }
+    if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }
+    _vrcv_emit(S, li, lt, k);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# The assigned source that is no vector: a by-name call declared to return one is the path below's
+# (-1); anything else is parsed and refused by name — once: not when its own parse reported (a
+# vector global's read, `_vecg_refuse`) — and the statement consumed (1).
+fn _vrcv_other(S, term): i64 {
+    var ti = GTI(S);
+    if (_vrcv_vcall(S, ti) == 1) { return 0 - 1; }
+    var he = _had_error;
+    PCMPE(S);
+    if (he == 0) { if (_had_error == 1) { he = 2; } }
+    if (he != 2) { _vrcv_err(S, ti, "assigned"); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+fn _vrcv_err(S, ti, verb): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a value-form vector local is ");
+    PRSTR(verb);
+    PRSTR(" only from a local of its type or a call declared to return it (by name, or fncallN / callptr with the callee written `&f`) - got `");
+    _vrcv_offender(S, ti);
+    PRSTR("`; through a fn pointer held in a variable, give the target an out-pointer\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# The refused source at token `ti`, as written: a name, a builtin (`callptr`, `load64`), a number,
+# `&x` / `*x`, `(...)`.
+fn _vrcv_offender(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (IS_KEYWORD_TOK(t) == 1) { PRSTR(TOKNAME(t)); return 0; }
+    if (t == 1) { PRNUM(TOKVAL(S, ti)); return 0; }
+    if (t == 10) { PRSTR("(...)"); return 0; }
+    if (t == 27 || t == 8) {
+        if (t == 27) { PRSTR("&"); } else { PRSTR("*"); }
+        if (TOKTYP(S, ti + 1) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 1)); }
+        else { PRSTR("..."); }
+        return 0;
+    }
+    if (t == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti)); return 0; }
+    PRSTR("this expression");
+    return 0;
 }
 
 # The right-hand side at token `ti` is a call — `IDENT (` or a generic `IDENT < .. > (` — whose
@@ -6560,6 +6751,7 @@ fn PARSE_VAR(S): i64 {
     # callee writes through the retptr. No post-call store needed
     # (the local is already populated). Mirror of the existing
     # big-struct asv path at line ~1063.
+    if (_vrcv_decl(S, noff, pscale) == 1) { return 0; }   # 6.7.11: wrapped, or through fncallN / callptr
     if ((_is_simd128(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # any 16B/1-XMM vector receive
         var _f2c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f2c_look_ti) == 2) {
@@ -7454,24 +7646,65 @@ fn _hl_byval_arg(S, fi, k, b, ps): i64 {
 # declared `*T`, pointer arithmetic on one — by the compiler's own typing. Step 1 is ambiguous: an i8 /
 # i16 / i32 local also reads with step 1 (`n + 2` adds 2, v6.3.34), so it is decided by `_hl_p1`.
 fn _hl_parg(S, b, e, ps): i64 {
+    if (_hl_ie_ptr(S, b, e) == 1) { return 1; }   # 6.7.11: an if-expression of pointers
     if (ps <= 0) { return 0; }
     if (ps > 1) { return 1; }
     if (GINFN(S) != 1) { return 1; }
     return _hl_p1(S, b, e);
 }
-# Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the leftmost term of a
-# top-level `+` / `-` chain carried it; a primary that reads an i8 / i16 / i32 local (a bare name, an
-# if-expression's branch) is a value, any other (`&s`, `pb`, `mk1p()`, `h.p` of a `*T` step 1) an address.
+# ⛔ 6.7.11 — AN IF-EXPRESSION WHOSE EVERY BRANCH IS A POINTER, by this same typing (`_hl_parg` on each
+# branch, `_ie_kind`), is one as a by-value argument or right operand: its merged step word is 0 when the
+# branches' steps differ (`_ps_merge`: `py` step 7 beside `&s` step 1, or `pz` step 4), so `t7(if (c == 1)
+# { py } else { &s })` passed the address as the B7 (168 where 5 is right), and with one step 1 the whole
+# range's narrow condition (`c: i32`) read it as a value. The merge word itself is unchanged (the
+# `var r: *B7 = if ..` warning, `(if ..) - q`). `_ie_finish` records the if-expression that ended at this
+# code pointer; [b, e), inside any parentheses, must be exactly it. Branches mixing a pointer and a value
+# stay a value. CHANGELOG [6.7.11]
+var _iep_beg = 0 - 1;   # the recorded if-expression's `if` token,
+var _iep_end = 0 - 1;   #   the token after it,
+var _iep_cp = 0 - 1;    #   and the code pointer at its end (-1: none)
+fn _hl_ie_ptr(S, b, e): i64 {
+    if (_iep_cp != GCP(S)) { return 0; }
+    var a = _ie_unparen(S, b, e);
+    if (a != _iep_beg) { return 0; }
+    if (_ie_pe != _iep_end) { return 0; }
+    return 1;
+}
+# Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the left side of the
+# chain's last `+` / `-` carried it — but a `*T` struct pointer on the RIGHT of a `+` carries it (6.7.11,
+# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is); a primary that reads an
+# i8 / i16 / i32 local (a bare name, an if-expression's branch) is a value, any other (`&s`, `pb`,
+# `mk1p()`, `h.p` of a `*T` step 1) an address.
 fn _hl_p1(S, a, e): i64 {
     a = _ie_unparen(S, a, e);
     e = _ie_pe;
     var k = _hl_addop(S, a, e);
-    if (k > a) { return _hl_p1(S, a, k); }
+    if (k > a) {
+        k = _hl_lastop(S, k, e);
+        if (_hl_rcarry(S, k, e) == 1) { return 1; }
+        return _hl_p1(S, a, k);
+    }
     while (a < e) {
         if (_hl_narrow_at(S, a) == 1) { return 0; }
         a = a + 1;
     }
     return 1;
+}
+# The last top-level `+` / `-` of [k, e), `k` the first (`_hl_addop`): the one applied last.
+fn _hl_lastop(S, k, e): i64 {
+    var n = _hl_addop(S, k + 1, e);
+    while (n > k) {
+        k = n;
+        n = _hl_addop(S, k + 1, e);
+    }
+    return k;
+}
+# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`).
+fn _hl_rcarry(S, k, e): i64 {
+    var t = TOKTYP(S, k);
+    if (t != 6) { if (t != 113) { return 0; } }
+    if (_hl_psid(S, k + 1, e) > 0) { return 1; }
+    return 0;
 }
 # The first `+` / `-` (`+%` / `-%` too) of [a, e) outside any bracket, past its first token, else -1.
 fn _hl_addop(S, a, e): i64 {
@@ -7824,8 +8057,16 @@ fn _gz_unary(S, b, e): i64 {
     }
     _gz_k = 0;
     if (t == 8) { return _gz_deref(S, b, e); }   # 6.7.10: `*p` — an operator dispatches on it
+    if (_icall_sid_at(S, b) > 0) { return _gz_icall(S, b, e); }   # 6.7.11
     if (t != 2) { return 0; }
     return _gz_chain(S, b, e);
+}
+# 6.7.11 — `fncallN(&f, ..)` / `callptr(&f, ..)` spanning [b, e), `f` returning a struct: that struct, a
+# call result (kind 1), as the parse records it (`_icall_result`). Else 0.
+fn _gz_icall(S, b, e): i64 {
+    if (_gz_close(S, b + 1, e) != e - 1) { return 0; }
+    _gz_k = 1;
+    return _icall_sid_at(S, b);
 }
 # `* E` with E typed `*S` (`_hl_psid`, as `_dlo_park` reads it): S, kind 7 — an operator's left operand
 # dispatches on it (decision 11); a declaration from it is `_gz_star`'s. Else 0.

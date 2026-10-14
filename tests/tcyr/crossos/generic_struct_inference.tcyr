@@ -136,7 +136,11 @@
 # by-value parameter, by name, a body not inlined, a stub base (was refused), a `: T` return,
 # `Box<i32>` and `Pr<T, U>` through a pointer, and the pair scans (`?` above its wrapper through
 # `unbox(bp)` / `unbox(&b)`). What stays refused (`Box<Pair<T>>`, an `x: T` binding i64 against a
-# Box<Pt>) is struct_arg_type_refused.sh R18b-R18d; R18e-R18h pin the by-value pointer at 8.
+# Box<Pt>) is struct_arg_type_refused.sh R18b-R18d; R18e-R18h pin the by-value pointer at 8. G11
+# (6.7.11) parentheses wrapping the whole argument and a whole dereference bind T as the plain
+# spelling does — `gx((b))`, `gx(*bp)`, `gx((*bp))`, `gpx((b))`, `gsz((bi))`, `unbox((b))`,
+# `unbox(*bp)` and the pair scans (`?` above a wrapper typed through each); they reached the base and
+# were refused (struct_arg_type_refused.sh D9 / G1-G5 hold the 8 B carrier and the refusals).
 # MUTATIONS (scratch tree, measured), each RED here:
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
@@ -151,6 +155,10 @@
 #       (4 for 8, 44 / 45 for 88, a stray word for `gsz(&bi)` / `g22(&q2)`)
 #   MG10 (6.7.9) the pair scans' `&` (`_tok_gen_sc_sid`) or `*G<..>` (`_tok_sc_ann`) left on the
 #       `*G<T>` carrier only                              -> rc 139 (G10's `?` above its wrapper)
+#   MG11 (6.7.11) `_gsc_arg` without its `(` arm, or its `*` arm -> the file does not build (G11:
+#       "cannot pass 'b' / 'bp' to a parameter of a different struct type in a call to 'unbox'")
+#   MG12 (6.7.11) the pair scans' wrap arm (`_pwrap_in` in `_tok_gen_sc_sid`), or its `*name` arm
+#       (`_tok_sc_deref`), dropped                       -> rc 139 (G11's `?` above its wrapper)
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -609,6 +617,17 @@ fn sc_qp(n, d) { var v = sc_unbp(n, d)?; return Ok(v + 22000); }
 fn sc_unbp(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var bp: *Box<Pt> = &b; var p = unbox(bp); return p.hbx(d); }
 fn sc_qa(n, d) { var v = sc_unba(n, d)?; return Ok(v + 33000); }
 fn sc_unba(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var p = unbox(&b); return p.hbx(d); }
+# G11 (6.7.11): a whole-argument wrap and a whole dereference bind T as the plain spelling does; the
+# `?` callers sit ABOVE their wrappers, so the pair scans must read both spellings too.
+fn sc_qw(n, d) { var v = sc_unbw(n, d)?; return Ok(v + 44000); }
+fn sc_unbw(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var p = unbox((b)); return p.hbx(d); }
+fn sc_qd(n, d) { var v = sc_unbd(n, d)?; return Ok(v + 55000); }
+fn sc_unbd(n, d) {
+    var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var bp: *Box<Pt> = &b;
+    var p = unbox(*bp);
+    return p.hbx(d);
+}
+fn sc_dp(bp: *Box<Pt>): i64 { return gx(*bp); }
 
 fn run_struct_carrier(): i64 {
     test_group("T inferred through a generic struct parameter (6.7.8)");
@@ -694,6 +713,23 @@ fn run_struct_carrier(): i64 {
     var s3, w3 = sc_qa(6, 3);
     assert_eq(s3 * 100000 + w3, 33002, "G10: ... and `var p = unbox(&b);`");
     assert_eq(gx<Pt>(&b) + gx<Pt>(bp) * 10, 88, "control: the explicit `gx<Pt>(&b)` / `gx<Pt>(bp)`");
+    test_group("a whole-argument wrap and a whole dereference bind T as the plain spelling (6.7.11)");
+    assert_eq(gx((b)) + gx(((b))) * 10, 88, "G11: `gx((b))` / `gx(((b)))` call gx$Pt (was refused: the Box base)");
+    assert_eq(gx(*bp) + gx((*bp)) * 10, 88, "G11: `gx(*bp)` / `gx((*bp))` (was refused)");
+    assert_eq(sc_dp(&b), 8, "G11: `gx(*bp)` through a `*Box<Pt>` parameter, tail position (was refused)");
+    assert_eq(gx((mkp(p))), 5, "G11: a wrapped call returning Box<Pt> (was refused)");
+    assert_eq(gpx((b)) + gpx((&b)) * 10, 88, "G11: the `*Box<T>` carrier, `gpx((b))` / `gpx((&b))` (was refused)");
+    var bip: *Box<i32> = &bi;
+    assert_eq(gsz((bi)) + gsz(*bip), 816, "G11: Box<i32> instantiates gsz$i32 wrapped and dereferenced (was refused)");
+    var u11 = unbox((b));
+    assert_eq(u11.x * 10 + u11.y, 34, "G11: `var u = unbox((b));` receives the Pt (a `: T` return; was refused)");
+    assert_eq(unbox(*bp).y, 4, "G11: `unbox(*bp).y` (was refused)");
+    var s4, w4 = sc_qw(6, 2);
+    var s5, w5 = sc_qw(6, 0);
+    assert_eq(s4 * 100000 + w4 + s5 * 1000000 + w5 * 10, 1000990 + 44003,
+        "G11: `w(..)?` above its wrapper `var p = unbox((b)); return p.hbx(d);` (the pair scans type p)");
+    var s6, w6 = sc_qd(6, 3);
+    assert_eq(s6 * 100000 + w6, 55002, "G11: ... and `var p = unbox(*bp);`");
     return 0;
 }
 

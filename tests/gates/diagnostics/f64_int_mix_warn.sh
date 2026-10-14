@@ -66,6 +66,16 @@
 # axis 13 fails (the SLTYPE stamp itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
 # (6.7.7) with _asg_compound_op's `_FLT_TYPE_WARN(S, 2)` removed axis 14 reads 0 and fails; with its
 # `rt` read moved after EPTR_SCALE the `q += f64_sqrt(u)` row is missed and axis 14 fails.
+#   axis 15 (6.7.11) kind 4 for an ARGUMENT: an integer constant passed to an `f64` / `f32` parameter
+#           warns once at its line — a call, a tail call, an f32 parameter, a method, the #inline
+#           replay, a forward call (pass 1's parameter class), an operator fn's right operand (+ and
+#           -), a negated literal, an enum constant, a named argument; 0, a hex IEEE pattern, a float
+#           literal, a runtime value, `(3)`, `3 + 1` and an untyped parameter do not; the filed repro
+#           (issues/2026-10-09-int-argument-to-f64-param-silent.md) warns at lines 11 15 16 17 and
+#           still exits 15. Mutations (measured): the fix reverted -> axis 15 reads 0 warnings and
+#           fails; pass 1 without the f64 class (`_bx_pscan`) -> line 18 (the forward call) missed;
+#           `_bx_op_rhs` without the f64 check -> line 19 reads 4; the f32 argument arm without
+#           `_IFS_CHECK` -> line 15 and the repro's line 16 missed.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -488,5 +498,64 @@ n=$(count "$K1"); [ "$n" = 0 ] || { bad "axis 14: $n kind-1 warning(s); the f64 
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a14.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 14: CYRIUS_TYPE_CHECK=0 still printed $n kind-2 warning(s)"
 
+# --- axis 15 (6.7.11): kind 4 for an ARGUMENT into an f64 / f32 parameter ---
+# The filed repro, verbatim (issues/2026-10-09-int-argument-to-f64-param-silent.md): no warning through
+# 6.7.10; four now — the tail call (line 11), a call (15), an f32 parameter (16), a method (17) — and the
+# exit code stays 15 (ADR-002: the integer's bits are passed, a warning, not a conversion).
+RP15="docs/development/issues/repros/2026-10-09-int-argument-to-f64-param-silent.cyr"
+"$CC" < "$RP15" > "$W/rp15" 2> "$W/e" || true
+n=$(count "$K4"); [ "$n" = 4 ] || { bad "axis 15: the filed repro: kind-4 warning count $n, want 4 (lines 11 15 16 17)"; sed -n 1,6p "$W/e"; }
+for want in 11 15 16 17; do
+    grep "$K4" "$W/e" | grep -q ">:$want:" || bad "axis 15: the filed repro: no kind-4 warning at line $want"
+done
+if [ -s "$W/rp15" ]; then
+    chmod +x "$W/rp15"; rc=0; "$W/rp15" || rc=$?
+    [ "$rc" = 15 ] || bad "axis 15: the filed repro exits $rc, want 15 (the value is unchanged)"
+else bad "axis 15: the filed repro did not build: $(grep '^error' "$W/e" | head -1)"; fi
+# Every argument path, one warning each at its line (11, 14-19); none on lines 20-27: 0, an IEEE pattern
+# in hex, a float literal, a runtime value, a parenthesised or computed constant, an untyped parameter.
+cat > "$W/a15.cyr" <<'EOF'
+struct P { x; }
+enum E { THREE = 3 }
+fn f(x: f64): i64 { return f64_to(x * 2.0); }
+fn g(x: f32): i64 { var d: f64 = f32_to(x); return f64_to(d * 2.0); }
+fn u(x): i64 { return x; }
+#inline
+fn fi(x: f64): i64 { return f64_to(x * 2.0); }
+impl P { fn m(self, x: f64): i64 { return f64_to(x * 2.0); } }
+fn P_add(a: P, b: f64): i64 { return f64_to(b * 2.0); }
+fn P_sub(a: P, b: f32): i64 { var d: f64 = f32_to(b); return f64_to(d * 2.0); }
+fn t(): i64 { return f(3); }
+fn go(n): i64 {
+    var p = P { 1 };
+    var e = f(3);
+    e = e + g(3);
+    e = e + p.m(3);
+    e = e + fi(3);
+    e = e + fwd(3);
+    e = e + (p + 3) + (p - 3) + f(-3) + f(THREE) + f(x: 3);
+    e = e + f(0);
+    e = e + f(0x3FF0000000000000);
+    e = e + f(3.0);
+    e = e + g(1.5);
+    e = e + f(n);
+    e = e + f((3));
+    e = e + f(3 + 1);
+    e = e + u(3) + t();
+    return e;
+}
+fn fwd(x: f64): i64 { return f64_to(x * 2.0); }
+syscall(60, go(2) & 255);
+EOF
+build "$W/a15.cyr"
+n=$(count "$K4"); [ "$n" = 11 ] || { bad "axis 15: kind-4 warning count $n, want 11 (lines 11 14-19: a tail call, a call, f32, a method, #inline, a forward call, + / - operands, -3, an enum constant, a named argument)"; sed -n 1,14p "$W/e"; }
+for want in 11 14 15 16 17 18 19; do
+    grep "$K4" "$W/e" | grep -q ">:$want:" || bad "axis 15: no kind-4 warning at line $want"
+done
+n=$(grep "$K4" "$W/e" | grep -c ">:19:" || true); [ "$n" = 5 ] || bad "axis 15: line 19 (p + 3, p - 3, f(-3), f(THREE), f(x: 3)) has $n kind-4 warnings, want 5"
+if grep "$K4" "$W/e" | grep -q ">:2[0-7]:"; then bad "axis 15: kind 4 fired on a no-warning row (lines 20-27)"; fi
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a15.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 15: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument)"

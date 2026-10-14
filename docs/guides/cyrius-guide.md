@@ -107,7 +107,10 @@ ulp distance of two results goes through an untyped variable first:
 
 An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
 1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
-since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`.
+since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`. An
+ARGUMENT for an `f64` / `f32` parameter is such a slot too (6.7.11): `f(3)`, `p.m(3)`, `return
+f(3);`, a call to a fn defined below, an `#inline` fn and an operator fn's right operand (`p + 3`
+into `fn P_add(a: P, b: f64)`) warn the same way, and still pass `0x3` (through 6.7.10 silently).
 Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are 0.0), and
 so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
 untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
@@ -205,6 +208,18 @@ by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`,
 multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `dyn Tr` (6.7.8)
 — `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
 type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+
+**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
+plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
+`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
+`**T` is a pointer whose step is a pointer's 8, as a `**T` local's is; `*fn( .. )` is one word, its
+names are checked, and a call does not check the fn it is given against them. Anything else is refused
+by name, once, with no cascade — `fn f(a: 5)` is `expected a type for parameter 'a', got number 5`,
+and so are an operator, `;`, a string, a keyword, a missing type (`a:`), a lone `*` and `fn( .. )`
+with no `*` (a grammar refusal: `cyrius lint` reports it). ⚠ Before 6.7.11 both of the compiler's
+passes read ONE token after at most one `*`: `fn f(p: **i64)` was `expected ')', got identifier
+'i64'`, `cb: *fn(i64): i64` was `expected ')', got '('`, and `fn f(a: 5)` / `(a: +)` / `(a: "s")`
+compiled with the token skipped.
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -996,7 +1011,10 @@ bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped f
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
 `var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
 at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
-the difference was a byte count). `load8` / `store16` / … stay valid for an
+the difference was a byte count). A pointer to a one-byte STRUCT (`pb: *B1`) is such a pointer too
+(6.7.11, the user's decision of 2026-10-13): `m + pb` and `0 + pb` are that pointer, `var r: *B1 = 1 +
+pb;` is silent and `(1 + pb) - q32` is refused as `(pb + 1) - q32` is (through 6.7.10 the
+difference was a byte count and the declaration warned). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
@@ -1259,8 +1277,10 @@ parameter, a global, a closure's captured copy of one, parenthesised or not; a s
 (`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
 `*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
 pointer); and a call, method, operator or if-expression that returns the struct (a generic or a
-parenthesised call too). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
-dereference of one, `*x`, included), a call returning a `*T` or an untyped value, an integer —
+parenthesised call too, and since 6.7.11 a call through `fncallN(&f, ..)` / `callptr(&f, ..)` whose
+callee `f` returns it). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
+dereference of one, `*x`, included), a call returning a `*T` or an untyped value (a call through a
+fn pointer held in a variable included: see *Returning a struct by value*), an integer —
 `var q: S8 = 0;` is a NULL handle, and `var a: Num = 1;` a handle to address 1, so `a + b` is
 pointer arithmetic with no `Num_add` dispatch (declare it from a struct value, `Num { 1 }` or
 `mkn(1)`, for the operator) — and another handle, a captured one included, which **binds**: the
@@ -1386,6 +1406,23 @@ integer, a field, a bare `return;` — is a compile error since v6.6.6 naming wh
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
 
+⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
+know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
+the register pair at 9-16 — so the result goes wherever `mk(5)` goes: `var p: P3 = fncall1(&mk, 5);`
+(`var x = callptr(&mk, 5);` infers `P3`), `p = callptr(&mk, 5);`, `take(fncall1(&mk, 7))`, `b.v =
+fncall1(&mk, 1)`, `return callptr(&mk, a);` from a fn returning `P3`, and its struct is checked
+against the destination's as `mk(5)`'s is. At top level a result over 8 bytes is refused by name, as
+`mk(5)`'s is (there is no frame to put it in). Before 6.7.11 a call through a pointer carried no
+struct result at all: over 16 bytes the callee wrote the struct through its FIRST ARGUMENT (a
+SIGSEGV on every target), 9-16 bytes lost the second register, and from 6.7.10 an 8-byte result
+was a handle holding the struct's value. **A callee held in a variable** (`var fp = &mk;
+callptr(fp, 5)`) is unknown at the call: its result is one word, and `var p: P3 = callptr(fp, 5);`
+binds it as a handle (the handle line above). That is right for a callee returning a pointer (`fn
+gp(a): *P3`, whose `p` reads and writes the object) and is NOT supported for a callee returning a
+struct by value, which faults. Through a variable, receive a 9-16 byte struct's two words (`var a,
+b = fncall1(fp, 5);`), or, at any size, give the target an out-pointer and have it store the fields
+(`fn mko(a, out: *P3)`, then `var p: P3 = P3 { 0, 0, 0 }; var ig = callptr(fp, 5, &p);`).
+
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
@@ -1402,14 +1439,19 @@ look reasonable:
   store the lanes into a local and return the local.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
-  wrong lane on Windows. ⚠ There is **no** working spelling for a vector-returning `callptr`
-  today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too — it still compiles with no
-  diagnostic at 6.7.9 and reads wrong lanes on x86_64 (measured at 6.6.5, 6.6.6 and 6.7.9).
-  Two spellings that DO work, both verified: call the function by name into a
-  vector local (`var v: f64v2 = mkv(41, 7);`), or, when the target really must be indirect,
-  give it an out-pointer and have it store the lanes —
-  `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
-  correctly.
+  wrong lane on Windows.
+
+⚠ **A value-form vector LOCAL takes a vector, or nothing (6.7.11).** `var v: f64v2 = <src>;` and
+`v = <src>;` take their 16 / 32 bytes only from a source that IS that vector: a local of the type,
+or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`), or
+through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (on Windows the call
+then passes the local's address as its hidden result pointer, as `mkv(..)` does). Every other
+source is refused by name (`a value-form vector local is initialised only from a local of its
+type or a call declared to return it .. - got `callptr``): a callee held in a variable
+(`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`), a word (`5`, `load64(&w)`, `&w`, a scalar local or
+call), a method call, `*p`. Through a fn pointer held in a variable, give the target an
+out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
+7);` — which carries every lane on every target.
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
@@ -1478,7 +1520,11 @@ a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE
 a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse. (`gx(b)` for
 `fn gx<T>(b: Box<T>)` was refused here from 6.7.3 to 6.7.7: `T` was not inferred through `Box<T>`,
 so the call reached the `Box` base. Since 6.7.8 it infers `T = Pt` and calls `gx$Pt` — see
-[Generic Functions](#generic-functions).) An argument with NO struct type stays accepted: `&p` (an address, as
+[Generic Functions](#generic-functions).) Parentheses around the WHOLE argument change nothing: `bs1((t))`,
+`bs1(((t)))`, `bs1((mk(7)))` and `bs1((w.t))` are refused as `bs1(t)` is, at every size (6.7.11 — through
+6.7.10 a by-value struct of 8 bytes or less took the wrapped spelling unchecked and read the other
+struct's word; `(t.w)` and `(x) + 1` are values, as without the parentheses). A tuple literal's element
+is read the same way: `((p), 1)` is refused as `(p, 1)` is. An argument with NO struct type stays accepted: `&p` (an address, as
 `var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
@@ -1490,7 +1536,11 @@ where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
 `*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:
 S1)` a copy of the struct — a `*T` local, parameter, global or capture, in a fn and at top level;
 the callee's writes never reach the pointee. A `*U` of another struct converts, as it always did,
-and is read with the parameter's layout. Over 8 bytes this is what the address-passed parameter
+and is read with the parameter's layout. Since 6.7.11 so do an if-expression whose every branch is a
+pointer, whatever their steps (`t7(if (c == 1) { py } else { &s })`, `py` beside a `*B4`), and an
+integer on the LEFT of a struct pointer (`t1(m + pb)`, `t1(n + pb)` with `n: i32`, `bs1(n + sp)`) —
+through 6.7.10 those passed the address as the struct; an if-expression of a pointer and a value is
+still the value's word. Over 8 bytes this is what the address-passed parameter
 always did; through 6.7.9 a struct of 8 bytes or less got the POINTER as its one word, and the
 callee read the address as its fields, silently. An UNTYPED value is still the struct's word: an
 untyped local holding an address (`var u = &s; bs1(u)`), an integer, an `i8` / `i16` / `i32` value.
@@ -1674,7 +1724,10 @@ the struct `p` points at exactly as a struct variable in that place does — to 
 `*S` parameter of any size the pointee itself, so a write reaches it. A dereference-led operator result
 is an argument like any other (`take(*p + a)`; at top level a 9-16 byte one is refused by name, as
 `take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass 'pu' to a parameter of a
-different struct type*); an untyped `*x` is still the word it reads. Through 6.7.9 the word the
+different struct type*) at every size and into a `Str` parameter — since 6.7.11 a by-value parameter of 8
+bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` in another struct's impl:
+through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. An untyped `*x`
+is still the word it reads. Through 6.7.9 the word the
 dereference read was passed as the struct's address — a crash on every target.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
@@ -1704,7 +1757,9 @@ untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a str
 where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
 and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
 it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
-is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
+is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`. Since 6.7.11
+an `&f` callee that returns a struct by value makes the result that struct, as `f(..)`'s is (see
+*Returning a struct by value*).
 
 ## Strings
 
@@ -2978,6 +3033,18 @@ through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes 
 `f64v2_add_ptr`). A value-form read or write of it (`g = f(..)`, `var v: f64v2 = g;`,
 `g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
 local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
+
+**A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
+`p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and
+is passed `&b`, a `*f64v2`, or a vector **local** `b` itself, whose address is passed, as a struct
+passed to a `*T` parameter is (6.6.20; the user's decision, 2026-10-13). A vector local of another
+type is refused by name — `cannot pass 'f' to a parameter of a different vector type in a call to
+'rd'` — as a struct of another type is (6.7.3), the same-size ones too (`i64v2` into `*i32v4`). ⚠
+Before 6.7.11 the `*` was dropped and the parameter was a value-form vector: `rd(&b)` was refused
+(`value-form SIMD arg must be a local IDENT`), and `rd(b)` compiled and faulted (the body
+dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is called through
+`fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
+registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
 
 ### Packed-op builtins
 
@@ -5025,7 +5092,13 @@ call its own micro-frame, so `callptr` works there too.
 A call through a pointer passes exactly the arguments written: parameter defaults and named
 arguments belong to direct calls (6.7.7, see *Default and named arguments*). So
 `callptr(&f, 1)` or `fncall1(&f, 1)` with fewer arguments than `f`'s parameters is refused by
-name when `f` declares defaults, and so is a `name:` argument.
+name when `f` declares defaults, and so is a `name:` argument. A struct result comes back only
+when the callee is written `&f` (6.7.11): a callee held in a variable returns one word (see
+*Returning a struct by value*).
+
+A parameter that holds a fn pointer can say so (6.7.11): `fn ap(cb: *fn(i64): i64, x: i64)`, or a
+bare `cb: *fn`. It is one word; `fncall1(cb, x)` / `callptr(cb, x)` call through it, and the
+signature is not checked against the fn a caller passes (see *Type names*).
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:
@@ -5392,7 +5465,12 @@ passes its address), and through a by-value `b: Box<T>` — address-passed when 
 instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
 `gx<Pt>(&b)` does. Before
 6.7.8 (6.7.9 for the by-value parameter) these pointer calls compiled, ran the `i64`
-base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. A plain `p: *T` keeps
+base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. Parentheses around the
+WHOLE argument and a whole dereference of such a pointer bind `T` as the plain spelling
+does (6.7.11): `gx((b))`, a wrapped call returning the instance, `gx(*bp)` and `gx((*bp))` call `gx$Pt`, and
+`gw((w))` / `gw(*wp)` with `w: W1<i32>` call `gw$i32` — they reached the base, refused
+as a different struct type (through 6.7.10 a carrier of 8 bytes or less compiled there and
+read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` keeps
 the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
 (`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
 write `gx<Pt>(..)`.

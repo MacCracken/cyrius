@@ -368,7 +368,8 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
 # f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
 # exists yet when the pair scans run, so a name is read from its DECLARATION's annotation (`b: G<..,
 # X, ..>` or `b: *G<..>`, X a plain struct name; `_tok_sc_ann`), a global or a whole call from its
-# instance, `&name` as name — for either carrier (6.7.9: the by-value one too, as `_gsc_arg`).
+# instance, `&name` as name — for either carrier (6.7.9: the by-value one too, as `_gsc_arg`). 6.7.11:
+# inside a whole-argument wrap, and `*name` of a `: *G<..>` name (`_tok_sc_deref`), as `_gsc_arg`.
 # Anything else answers 0 — a missed flag, never a false one.
 fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if ((f & 255) == 0) { return 0; }
@@ -376,6 +377,9 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if (at < 0) { return 0; }
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
+    at = _pwrap_in(S, at);   # 6.7.11: `gw((w))`, as `_gsc_wrap`
+    if (at < 0) { return 0; }
+    if (TOKTYP(S, at) == 8) { return _tok_sc_deref(S, a, i, at + 1, g, f); }   # 6.7.11: `gw(*wp)`
     if (TOKTYP(S, at) == 27) {
         at = at + 1;
         if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
@@ -390,6 +394,20 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     }
     if (r > 0) { if (GSTP(S, r - 1) == 0) { return r; } }
     return 0;
+}
+# 6.7.11 — `*name` (token `at` on the name) as a whole argument: the X of its declaration's `: *G<..,
+# X, ..>` annotation, as `_gsc_deref` binds T through the pointer's pointee. A value's `*b`, a global, a
+# call or a chain answers 0 — a missed flag, never a false one. CHANGELOG [6.7.11]
+fn _tok_sc_deref(S, a, i, at, g, f): i64 {
+    if (_gsc_name_end(S, at) == 0) { return 0; }
+    var d = _tok_name_decl(S, a, i, TOKVAL(S, at));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    if (TOKTYP(S, d + 2) != 8) { return 0; }
+    var r = _tok_sc_ann(S, d, g, f);
+    if (r <= 0) { return 0; }
+    if (GSTP(S, r - 1) != 0) { return 0; }
+    return r;
 }
 # The name at token at (scope as `_tok_name_sid`, from the declaration being typed at token i): a
 # local or parameter by its annotation, an untyped `var b = f(..)` by its initializer's instance, a
@@ -1358,6 +1376,20 @@ fn _pwrap_k(S, st): i64 {
         k = k + 1;
     }
     return k;
+}
+# 6.7.11 — the first token inside parentheses that wrap the WHOLE argument at token `a` (up to its `,`
+# / `)`, any depth), `a` itself when it opens none, or -1: `(x) + 1` and a tuple literal `(x, 3)` wrap
+# nothing. Reads tokens only; `_pw_end` is kept. For the struct-carrier inference (`_gsc_wrap`) and its
+# token mirror (`_tok_gen_sc_sid`). CHANGELOG [6.7.11]
+fn _pwrap_in(S, a): i64 {
+    if (TOKTYP(S, a) != 10) { return a; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, a);
+    var e = TOKTYP(S, _pw_end);
+    _pw_end = pe;
+    if (e != 31) { if (e != 11) { return 0 - 1; } }
+    if (_tup_commas(S, a + k - 1) != 0) { return 0 - 1; }
+    return a + k;
 }
 # Consume the `k` closing parentheses of a wrap whose inside was just parsed.
 fn _pw_close(S, k): i64 {

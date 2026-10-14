@@ -5264,7 +5264,11 @@ fn EFLADDR_X1(S, lli): i64 {
 # caller-side of a struct-returning call to push the retbuf address
 # as the hidden first arg (RDI on SysV, RCX on Win64 — both filled
 # by ECALLPOPS + EPOPARG from the stack).
+# The `lea` writes rax, so it is recorded (IR-opaque, as ELOAD_LOCAL_ADDR's): unrecorded, CYRIUS_IR=3's
+# LASE kept a store's rax image across it and dropped the reload after it — `o.with2(x)`, `bs(h, x)` and
+# `mk(x)` passed the aggregate's address as x. Records nothing with IR off. CHANGELOG [6.7.11]
 fn EFLADDR(S, lli): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(lli);
     if (_ECORO_LEA(S, lli, 0) == 1) { return 0; }

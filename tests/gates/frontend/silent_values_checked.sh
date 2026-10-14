@@ -192,7 +192,9 @@ OS='struct P { x; y; }\nvar GA: i64[4];\n'
 OV="compound assignment to vector"
 OA="compound assignment to array"
 OL="compound assignment to slice"
-refused o01 "$OV 'v' is refused - a vector value is not an integer or a float" "O1: \`v += 1\` on an i64v2 local" "${OS}fn main(): i64 { var v: i64v2 = 0; v += 1; return 0; }\nsyscall(60, main());\n"
+# O1's local is declared bare: since 6.7.11 a vector local initialised from a word (`= 0`) is itself
+# refused (simd_return_shapes.sh rows Y), and this row counts one error — the `+=`'s.
+refused o01 "$OV 'v' is refused - a vector value is not an integer or a float" "O1: \`v += 1\` on an i64v2 local" "${OS}fn main(): i64 { var v: i64v2; v += 1; return 0; }\nsyscall(60, main());\n"
 refused o02 "$OV 'v'" "O2: ... on an f64v2 parameter" "${OS}fn f(v: f64v2): i64 { v -= 1.0; return 0; }\nsyscall(60, 0);\n"
 refused o03 "$OA 'a' is refused - an array is not an integer or a float (index an element: \`a[i] += b\`)" "O3: \`a += 8\` on a \`var a: i64[4]\` local" "${OS}fn main(): i64 { var a: i64[4]; a += 8; return 0; }\nsyscall(60, main());\n"
 refused o04 "$OA 'fa'" "O4: ... an f64[2] local" "${OS}fn main(): i64 { var fa: f64[2]; fa += 1.5; return 0; }\nsyscall(60, main());\n"

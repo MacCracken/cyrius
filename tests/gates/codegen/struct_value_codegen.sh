@@ -62,6 +62,24 @@
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
 #      (the release gate's hosts) and cx_backend_parity.tcyr's &fncall8 row, cx-only until now
+#   FP (6.7.11, the call-arguments lane) a struct result through `fncallN(&f, ..)` / `callptr(&f, ..)`
+#      had no struct-result ABI: over 16 B no hidden result pointer (the callee wrote through its first
+#      argument: SIGSEGV x86 / aarch64, a guest error on cx, a write fault at 0x5 on PE), 9-16 B no pair
+#      receive, and 8 B — right through 6.7.9 — a handle since 6.7.10's handle line (the result was an
+#      untyped word). A known callee now takes the struct-call hooks (`_icall_sret` / `_sc_x8` /
+#      `_icall_result`'s `_sc_post`), so the declaration, assignment, argument, field store and `return`
+#      see a struct value; a callee in a variable stays a word, its struct-typed receive a handle (the
+#      user's decision, 2026-10-13: FP6). The runtime half is tests/tcyr/crossos/fncall_struct_result.tcyr,
+#      run as B1-B7 on x86_64 / IR=1 / IR=3 / DCE / aarch64 (qemu) / cx (cxvm) / PE (wine, a private
+#      prefix), each requiring "N passed, 0 failed (N total)" with N derived from the file (one row per
+#      `assert_eq(`, floor 48). PE has code of its own (`_icall_sret` runs after its callee push, and the
+#      result pointer is counted into ECALLPTR_PE's argc), so FPw1 / FPw2 run FP1 / FP2 there too
+#   EV (6.7.11, the call-arguments lane) under CYRIUS_IR=3, LASE kept a just-stored local's rax image
+#      across EFLADDR's `lea rax, [rbp+d]`, which recorded no IR node, and dropped the reload after it:
+#      `o.with2(x)` / `bs(h, x)` / `var b: B = mk(x)` right after `var x = 5;` passed the aggregate's
+#      ADDRESS as x (an ASLR-dependent exit). EFLADDR records IR_RAW_EMIT, as ELOAD_LOCAL_ADDR does. EV1-EV4
+#      are the filed repros verbatim, built under CYRIUS_IR=3; tcyr E1-E5 run them on every leg (A3 is the
+#      one that was wrong)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -152,13 +170,42 @@
 #   M-I4 `_icall_result` ignoring the last argument's type        -> RED A1-A6 (tcyr I13)
 #   M-I5 `_icall_result` ignoring the callee (`cfi` / `: f64`)    -> RED A1-A6 (tcyr I12)
 #   M-I6 `_lfa_load` not recording `_lfa_end` (no static callee)   -> RED I3, A1-A6 (tcyr I8-I11 I14)
+#   (6.7.11, the call-arguments lane, the same procedure)
+#   M-FP1 `_icall_sret` never reserving (-1)                     -> RED FP1 FP3 (139), FP4 FP5 (refused), FP8 FP9 (BUILT),
+#       B1-B6 (the values file refused)
+#   M-FP2 `_icall_result` without its `_sc_post` arm              -> RED FP2 FP3 (139), FP4 (98), FP5 FP7 (refused), FP9
+#       (BUILT), B1-B6 (refused)
+#   M-FP3 `_PINDIRECT_CALL_IN` without `_sc_x8`                   -> RED B5 only (aarch64: 139) — X8 is aarch64's alone
+#   M-FP4 `_PINDIRECT_CALL_IN` not counting the result pointer    -> RED FP1 FP4 FP5 (139), B1-B4 (139), B6 (cx: 1); B5
+#       green (aarch64 pushes no result pointer)
+#   M-FP5 `_icall_ret` never 1 (`return fncall1(&f, ..)`)         -> RED FP5 (refused), B1-B6 (refused)
+#   M-FP6 `_try_push_struct_addr_arg` without its `_icall_sid_at` arm -> RED FP4 (139), B1-B5 (139), B6 (cx: 1)
+#   M-FP7 `_gz_unary` without its `_gz_icall` arm (the zone)      -> RED FP7, B1-B6 ("the declaration zone misread ..")
+#   M-FP8 `_icall_sret` called BEFORE the `if (_TARGET_PE == 1)` callee push (PE-only: elsewhere that
+#       block emits nothing) -> RED FPw1 (exit 5: the result pointer popped as the callee) and B7 (exit 5)
+#       only; FPw2 green (8 B pushes no result pointer), every other row and leg green (2026-10-14)
+#   M-FPF one `assert_eq(` row deleted from fncall_struct_result.tcyr -> RED "only 47 rows (floor 48)";
+#       B1-B7 then read "47 passed" (each requires the derived N exactly)
+#   M-EV1 x86 EFLADDR without its `_IR_REC0(S, IR_RAW_EMIT)` (= the A3 compiler) -> RED EV1-EV4 (exit 30 +
+#       the low byte of the address / 1), A3 (tcyr E1-E5); A1 A2 A4-A6 and B1-B6 green (only IR=3 applies LASE)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=struct_value_codegen
 [ -x "$CC" ] || { echo "FAIL: $G: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: $G: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T (never ~/.wine), torn down with its server dir on exit — the
+# defer_every_return_path.sh helper (6.7.11: the PE legs B7 / FPw).
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT"
 ulimit -c 0 2>/dev/null
 fails=0
@@ -183,8 +230,21 @@ exits() {   # <name> <want> <what> <source>
     chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
-# tcyr <what> <compiler> <runner> [ENV=V]: build the values file, run it, require "0 failed".
+exits_ir3() {   # <name> <want> <what> <source>: built under CYRIUS_IR=3
+    printf '%b' "$4" > "$T/$1.cyr"
+    rc=0; CYRIUS_IR=3 timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
+}
+# tcyr <what> <compiler> <runner> [ENV=V]: build the values file, run it, require "0 failed" — with TN
+# set, exactly "TN passed, 0 failed (TN total)" (the B rows: a gutted or truncated file is RED).
 TC=tests/tcyr/crossos/struct_value_codegen.tcyr
+TN=""
+_tc_ok() {
+    if [ -n "$TN" ]; then tr -d '\r' < "$1" | grep -qx "$TN passed, 0 failed ($TN total)"
+    else grep -q ' 0 failed' "$1"; fi
+}
 tcyr() {
     n=$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_')
     rc=0
@@ -195,8 +255,21 @@ tcyr() {
     got=0
     if [ -n "$3" ]; then timeout 120 $3 "$T/tc_$n" > "$T/tc_$n.out" 2>&1 || got=$?
     else timeout 60 "$T/tc_$n" > "$T/tc_$n.out" 2>&1 || got=$?; fi
-    if [ "$got" -eq 0 ] && grep -q ' 0 failed' "$T/tc_$n.out"; then ok "$1: $(grep ' 0 failed' "$T/tc_$n.out")"
+    if [ "$got" -eq 0 ] && _tc_ok "$T/tc_$n.out"; then ok "$1: $(tr -d '\r' < "$T/tc_$n.out" | grep ' 0 failed')"
+    elif [ -n "$TN" ]; then bad "$1: exit $got, want '$TN passed, 0 failed ($TN total)': $(tr -d '\r' < "$T/tc_$n.out" | grep -E 'FAIL|failed' | head -4 | tr '\n' '|')"
     else bad "$1: exit $got: $(grep -E 'FAIL|failed' "$T/tc_$n.out" | head -4 | tr '\n' '|')"; fi
+}
+# The PE legs (6.7.11): a cyrius PE run under wine in the private prefix; the exit code passes through.
+_wine() {
+    (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+        WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$1")
+}
+exits_pe() {   # <name> <want> <what> <source>: built with CYRIUS_TARGET_WIN=1, run under wine
+    printf '%b' "$4" > "$T/$1.cyr"
+    rc=0; CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.exe" 2> "$T/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/$1.exe" ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    got=0; _wine "$T/$1.exe" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 E='\nsyscall(60, main());\n'
 
@@ -282,23 +355,68 @@ refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` pa
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
+# FP (6.7.11) — a struct result through fncallN / callptr with a known callee.
+FPH='include "lib/fnptr.cyr"\nstruct P1 { a; }\nstruct P2 { a; b; }\nstruct P3 { a; b; c; }\nfn mk1(a): P1 { var r: P1 = P1 { a + 3 }; return r; }\nfn mk2(a): P2 { var r: P2 = P2 { a, a + 1 }; return r; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\n'
+exits fp1 18 "FP1: var p: P3 = fncall1(&mk3, 5); (the filed repro, verbatim: SIGSEGV)" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main() {\n    var p: P3 = fncall1(&mk3, 5);\n    return p.a + p.b + p.c;\n}\nvar r = main();\nsyscall(60, r);\n"
+exits fp2 8 "FP2: var p: P1 = fncall1(&mk1, 5); (8 B: right through 6.7.9, a handle reading address 8 in 6.7.10)" "${FPH}fn main() { var p: P1 = fncall1(&mk1, 5); return p.a; }$E"
+exits fp3 11 "FP3: var p: P2 = callptr(&mk2, 5); (16 B: the first word as an address)" "${FPH}fn main() { var p: P2 = callptr(&mk2, 5); return p.a + p.b; }$E"
+exits fp4 36 "FP4: p = callptr(&mk3, 5); and sz(fncall1(&mk3, 5)) (24 B: SIGSEGV)" "${FPH}fn sz(q: P3): i64 { return q.a + q.b + q.c; }\nfn main() { var p: P3 = P3 { 0, 0, 0 }; p = callptr(&mk3, 5); return p.a + p.b + p.c + sz(fncall1(&mk3, 5)); }$E"
+exits fp5 29 "FP5: return fncall1(&mk3, a); / return callptr(&mk2, a); (refused through 6.7.10)" "${FPH}fn r3(a): P3 { return fncall1(&mk3, a); }\nfn r2(a): P2 { return callptr(&mk2, a); }\nfn main() { var p: P3 = r3(5); var q: P2 = r2(5); return p.a + p.b + p.c + q.a + q.b; }$E"
+exits fp6 26 "FP6: var p: P3 = callptr(fp, 5) through a variable is a handle (decided): fn gp(a): *P3" "${FPH}var G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn main() { var fp = &gp; var p: P3 = callptr(fp, 5); p.a = p.a + 0; return G.a + G.b + G.c; }$E"
+exits fp7 61 "FP7: var a, b = fncall1(&mk2, 5) keeps its two words; var g: P1 = fncall1(&mk1, 2) in the zone" "${FPH}var g: P1 = fncall1(&mk1, 2);\nfn main() { var a, b = fncall1(&mk2, 5); return a + b + g.a * 10; }$E"
+refused fp8 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP8: var g: P3 = fncall1(&mk3, 5); at top level, refused by name" "${FPH}var g: P3 = fncall1(&mk3, 5);\nsyscall(60, g.a);\n"
+refused fp9 "fn return struct-id differs from declared var type" "FP9: var q: Q3 = fncall1(&mk3, 5); (another struct: SIGSEGV)" "${FPH}struct Q3 { a; b; c; }\nfn main() { var q: Q3 = fncall1(&mk3, 5); return q.a; }$E"
+
+# EV (6.7.11) — the filed repros verbatim, under CYRIUS_IR=3: a just-stored local after an EFLADDR `lea`.
+exits_ir3 ev1 35 "EV1: o.with2(x) after var x = 5; under CYRIUS_IR=3 (the filed repro: 30 + the low byte of &o)" "struct S8 { v; }\nimpl S8 { fn with2(self: *S8, n): i64 { return self.v * 10 + n; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.with2(x); }\nsyscall(60, a2());\n"
+exits_ir3 ev2 0 "EV2: o.same(x), the identity probe, under CYRIUS_IR=3 (the filed repro: 1, n == self)" "struct S8 { v; }\nimpl S8 { fn same(self: *S8, n): i64 { if (n == self) { return 1; } return 0; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.same(x); }\nsyscall(60, a2());\n"
+exits_ir3 ev3 35 "EV3: bs(h, x), a 16 B by-value struct, under CYRIUS_IR=3 (the filed repro: varies)" "struct H { a; b; }\nfn bs(h: H, n): i64 { return h.a * 10 + n; }\nfn g(): i64 { var h: H; h.a = 3; h.b = 0; var x = 5; return bs(h, x); }\nsyscall(60, g());\n"
+exits_ir3 ev4 5 "EV4: var b: B = mk(x), a 24 B result, under CYRIUS_IR=3 (the filed repro: varies)" "struct B { a; b; c; }\nfn mk(n): B { var k: B; k.a = n; k.b = 0; k.c = 0; return k; }\nfn g(): i64 { var x = 5; var b: B = mk(x); return b.a; }\nsyscall(60, g());\n"
+
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
 tcyr "A4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
+TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
+TCB=tests/tcyr/crossos/fncall_struct_result.tcyr   # 6.7.11: rows B
+# One B row per `assert_eq(` call (the file defines none); the floor keeps a gutted file from passing.
+NB=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCB")
+FLOORB=48
+if [ "$NB" -lt "$FLOORB" ]; then bad "B: only $NB rows in $TCB (floor $FLOORB) — rows were lost"; fi
+TC=$TCB; TN=$NB
+tcyr "B1: fncall_struct_result.tcyr (x86_64)" "$CC" ""
+tcyr "B2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
+tcyr "B3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
+tcyr "B4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/cc_a64.err" && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
+        TC=$TCA; TN=""
         tcyr "A5: aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
-    else bad "A5: src/main_aarch64.cyr did not build"; fi
-else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+        TC=$TCB; TN=$NB
+        tcyr "B5: fncall_struct_result.tcyr, aarch64 (qemu): X8" "$T/cc_a64" qemu-aarch64
+    else bad "A5 / B5: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: aarch64 legs A5 / B5 (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
 if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     printf '#!/bin/sh\nexec "%s" < "$1"\n' "$T/cxvm" > "$T/cxrun"; chmod +x "$T/cxrun"
+    TC=$TCA; TN=""
     tcyr "A6: cx (cxvm)" "$T/cc_cx" "$T/cxrun"
-else bad "A6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+    TC=$TCB; TN=$NB
+    tcyr "B6: fncall_struct_result.tcyr, cx (cxvm)" "$T/cc_cx" "$T/cxrun"
+else bad "A6 / B6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+# 6.7.11 — PE (wine): the result pointer rides after PE's stack-pushed callee and is counted into
+# ECALLPTR_PE's argc, code no other leg runs. The filed repro and the 8 B row, then the values file.
+if command -v wine > /dev/null 2>&1; then
+    exits_pe fpw1 18 "FPw1: FP1 (the filed repro, verbatim) on PE (wine)" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main() {\n    var p: P3 = fncall1(&mk3, 5);\n    return p.a + p.b + p.c;\n}\nvar r = main();\nsyscall(60, r);\n"
+    exits_pe fpw2 8 "FPw2: FP2 (8 B: var p: P1 = fncall1(&mk1, 5);) on PE (wine)" "${FPH}fn main() { var p: P1 = fncall1(&mk1, 5); return p.a; }$E"
+    printf '#!/bin/sh\ncp "$1" "$1.exe" || exit 1\ncd "%s" && WINEPREFIX="%s" HOME="%s" XDG_CACHE_HOME="%s/.cache" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1.exe"\n' \
+        "$T" "$WP" "$WHM" "$WHM" > "$T/winrun"; chmod +x "$T/winrun"
+    TC=$TCB; TN=$NB
+    tcyr "B7: fncall_struct_result.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
+else echo "  SKIP: PE legs FPw1 / FPw2 / B7 (wine not installed)"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L): values on x86_64 / IR / DCE / aarch64 / cx (A)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, B) and PE (B7, $NB rows)"

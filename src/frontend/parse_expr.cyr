@@ -808,15 +808,84 @@ fn _icall_callee(S, cst): i64 {
     return _lfa_fi;
 }
 # The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word, or an
-# f64 under the rule above.
-fn _icall_result(S, cfi): i64 {
+# f64 under the rule above — or (6.7.11) a known callee's struct, recorded as a direct call's is
+# (`_sc_post`, `t` the temp `_icall_sret` gave it; `beg` the fncallN / callptr name).
+fn _icall_result(S, cfi, t, beg): i64 {
     var lt = GESTYPE(S);   # what 6.7.5 typed the result as: the last argument's type
     _icall_untyped(S);
+    if (_icall_sfn(S, cfi) == 1) { return _sc_post(S, cfi, _bx_fname(S, cfi), beg, t); }
     if (lt != F64_TYID) { return 0; }
     if (cfi < 0) { return 0; }
     if (GFRS(S, cfi) != 0 - 9) { return 0; }
     SESTYPE(S, F64_TYID);
     return 0;
+}
+# ⛔ 6.7.11 — A KNOWN CALLEE'S STRUCT RESULT. A call through a fn pointer must give a struct-returning
+# callee the convention a direct call gives it — the hidden result pointer over 16 B (x86 / cx / Win64
+# int arg 0, pushed before the user arguments and after PE's callee push, which ECALLPTR_PE pops last;
+# aarch64 X8), the register pair at 9-16 B — and hand every destination a struct value; without it the
+# callee wrote through its first argument. Where the callee is written `&f` (`_icall_callee`) the call
+# takes the struct-call hooks a method call takes (`_sc_pre` / `_sc_x8` / `_sc_post`). A callee held in
+# a variable is unknown: its result is a word, and a struct-typed receive of it is a handle (the
+# user's decision, 2026-10-13). CHANGELOG [6.7.11]
+# 1 = fn `cfi` (-1: not known) returns a struct by value.
+fn _icall_sfn(S, cfi): i64 {
+    if (cfi < 0) { return 0; }
+    if (GFRS(S, cfi) <= 0) { return 0; }
+    return 1;
+}
+# The struct the callee of a call through fncallN / callptr at token `ti` returns, read from the
+# tokens: `callptr (` or a lowered fncallN name `(`, then `&f` alone as the first argument, `f` a fn
+# returning a struct. 0 otherwise. A route for the destinations that must decide before the parse
+# (an argument, `return`); what the parse finds (`_icall_callee`, which sees a local or global that
+# shadows `f`) is the record they read.
+fn _icall_sid_at(S, ti): i64 {
+    var r = _icall_rs_at(S, ti);
+    if (r <= 0) { return 0; }
+    return r;
+}
+# ... the declared return (GFRS: a struct, a vector's descriptor, a scalar's sentinel) of that `&f`, or 0.
+fn _icall_rs_at(S, ti): i64 {
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o + 1) != 27) { return 0; }
+    if (TOKTYP(S, o + 2) != 2) { return 0; }
+    var nx = TOKTYP(S, o + 3);
+    if (nx != 31) { if (nx != 11) { return 0; } }
+    var fi = FINDFN(S, TOKVAL(S, o + 2));
+    if (fi < 0) { return 0; }
+    return GFRS(S, fi);
+}
+# The `(` of a call through fncallN / callptr at token `ti` (PARSE_FACTOR's gates), or -1.
+fn _icall_open_at(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 10) { return 0 - 1; }
+    if (TOKTYP(S, ti) == 137) { return ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (_IS_FNCALL_NAME(S, TOKVAL(S, ti)) == 0) { return 0 - 1; }
+    if (FINDFN(S, TOKVAL(S, ti)) < 0) { return 0 - 1; }
+    return ti + 1;
+}
+# Before the first argument (cursor past the callee): the result's temp, or -1; `_sc_n0` = 1 when its
+# address was pushed as int arg 0.
+fn _icall_sret(S, cfi, beg): i64 {
+    _sc_n0 = 0;
+    if (beg == _icall_vbeg) { return _icall_vret(S); }
+    if (_icall_sfn(S, cfi) == 0) { return 0 - 1; }
+    return _sc_pre(S, cfi, _bx_fname(S, cfi), beg);
+}
+# 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
+# parse_decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
+# from `f(..)`, so the call whose name is token `_icall_vbeg` (one-shot) passes the destination's
+# address, slot `_icall_vdst`. Elsewhere the result is in the vector registers and the receive
+# stores them. -1 (no struct temp).
+var _icall_vbeg = 0 - 1;
+var _icall_vdst = 0;
+fn _icall_vret(S): i64 {
+    _icall_vbeg = 0 - 1;
+    EFLADDR(S, _icall_vdst);
+    EPUSHR(S);
+    _sc_n0 = 1;
+    return 0 - 1;
 }
 fn _PINDIRECT_CALL_IN(S): i64 {
     var cst = _icall_mark(S);
@@ -838,6 +907,8 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         ECLNORM(S, cp_v);                   # rax = real code address
         EPUSHR(S);                          # push callee (consumed by ECALLPTR_PE)
     }
+    var cp_t = _icall_sret(S, cfi, cst - 2);   # 6.7.11: a known callee's struct result
+    var cp_n0 = _sc_n0;
     while (PEEKT(S) == 31) {                # ',' → another arg
         STI(S, GTI(S) + 1);                 # consume ','
         if (_pd_label_at(S, GTI(S)) == 1) { _pd_icall_named(S, cst); }   # 6.7.7 (B6): C7
@@ -864,6 +935,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         }
     }
     _pd_icall_short(S, cfi, cp_argc, cst);   # 6.7.7 (B6): C15 — defaults fill only a direct call
+    cp_argc = cp_argc + cp_n0;              # 6.7.11: + the result's address (int arg 0)
     # The env rides in an argument REGISTER or not at all. Under SysV the caller
     # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
     # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
@@ -902,11 +974,12 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         SFLC(S, cp_idx + 1);
         EFLSTORE(S, cp_idx);                # spill callee → [rbp-disp(cp_idx)]
         ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
+        _sc_x8(S, cfi, cp_t);               # 6.7.11: aarch64's result pointer
         ECALLIND(S, cp_idx);                # load callee from the slot + call/blr
         ECALLCLEAN(S, cp_argc);             # unwind the arg frame
     }
     _cfo = 0;
-    _icall_result(S, cfi);   # 6.7.6: the result is not its last argument's struct (an f64: FE)
+    _icall_result(S, cfi, cp_t, cst - 2);   # 6.7.6: the result is not its last argument's struct (an f64: FE)
     return 0;
 }
 
@@ -1501,9 +1574,13 @@ fn _FBR_ST(S): i64 {
 }
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
 fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
-# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does.
+# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does; `_rhs_b` its first
+# token, set after the parse (a nested `+` inside it has finished), for `_add_rb1` (6.7.11).
+var _rhs_b = 0 - 1;
 fn _RHS_T(S): i64 {
+    var b = GTI(S);
     PARSE_TERM(S);
+    _rhs_b = b;
     _fbr_rhs = _FBR_KIND(S);
     return 0;
 }
@@ -1618,6 +1695,7 @@ fn _bx_mret_note(S, fi, n, ti): i64 {
 fn _bx_pscan(S, fi, pc): i64 {
     if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
     elif (_is_f32_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 3); }   # 6.7.6 (D2): a forward call rounds too
+    elif (_is_f64_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 4); }   # 6.7.11: a forward call warns too
     return 0;
 }
 # The type name `f32`, whole (not `f32v4`).
@@ -1625,13 +1703,20 @@ fn _is_f32_name(S, noff): i64 {
     if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00323366) { return 1; }
     return 0;
 }
+# The type name `f64`, whole (not `f64v2`).
+fn _is_f64_name(S, noff): i64 {
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00343666) { return 1; }
+    return 0;
+}
 # Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)? 1 a bool; 6.7.6: 2 an
 # integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route); 3
-# an `f32` (D2: an f64 argument rounds, _bx_pcmpe_arg).
+# an `f32` (D2: an f64 argument rounds, _bx_pcmpe_arg); 6.7.11: 4 an `f64` (an integer constant
+# argument warns, _bx_pcmpe_arg).
 fn _bx_ptype(S, tnoff): i64 {
     if (_ptrp_now(S) != 0) { return 0; }
     if (_bx_is_bool_name(S, tnoff) == 1) { return 1; }
     if (_is_f32_name(S, tnoff) == 1) { return 3; }
+    if (_is_f64_name(S, tnoff) == 1) { return 4; }
     if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
     if (_tn_iw(_tn_scalar(L64(S + 0xEC00000 + tnoff))) > 0) { return 2; }
     return 0;
@@ -1686,11 +1771,16 @@ fn _bx_pname(S, fi, ord): i64 {
 # An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check. ⛔ 6.7.6 (Break
 # 1, D2): an f64 value passed to an `f32` parameter ROUNDS to f32 (_f32_init_round, the user's
 # decision: every write into an f32) — the callee read the low 32 bits of its f64 pattern.
+# ⛔ 6.7.11 — AN INTEGER CONSTANT PASSED TO AN `f64` / `f32` PARAMETER WARNS, as one stored into any
+# other f64 / f32 slot has since 6.6.10 (kind 4, `_IFS_CHECK`): `f(3)` passed 0x3, a subnormal, with no
+# warning — a call, a method, a tail call, a forward call, the #inline replay. Warn only (ADR-002: the
+# value keeps its bits; `0`, a hex IEEE pattern and a runtime value are exempt). CHANGELOG [6.7.11]
 fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
     var pk = _pbool_get(fi, ord);
-    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk == 4) { _IFS_CHECK(S, 1, t); return 0; }
+    if (pk == 3) { _IFS_CHECK(S, 2, t); _f32_init_round(S, F32_TYID); return 0; }
     if (pk != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, ord);
@@ -1748,7 +1838,8 @@ fn _bx_falloff_fi(S, fi): i64 {
 # The operand is still in rax: `_op_rhs` calls this right after PARSE_TERM.
 fn _bx_op_rhs(S, fi, rb): i64 {
     var pk = _pbool_get(fi, 1);
-    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk == 4) { _IFS_CHECK(S, 1, rb); return 0; }   # 6.7.11: `p + 3` into `b: f64` warns, as `p.add(3)`
+    if (pk == 3) { _IFS_CHECK(S, 2, rb); _f32_init_round(S, F32_TYID); return 0; }
     if (pk != 1) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, 1);
@@ -6853,7 +6944,9 @@ fn _ptr_add(S, ps): i64 {
     EMOVCA(S);
     EUNSPILL(S);
     EADDR(S);
-    return _pk_set(S, _add_word(ps, rs));
+    var w = _add_word(ps, rs);
+    if (w == 0) { if (ps == 0) { w = _add_rb1(S, rs); } }   # 6.7.11: `n + pb`, `pb: *B1`
+    return _pk_set(S, w);
 }
 # `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
 # user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
@@ -6864,6 +6957,21 @@ fn _add_word(ps, rs): i64 {
     if (ps != 0) { return ps; }
     if (_ps_step(rs) != 1) { return 0; }
     if (((rs >> 40) & 0xFF) == 0) { return 0; }
+    return rs;
+}
+# ⛔ 6.7.11 — DECISION 1(b) FOR A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a) Yes, extend
+# 1(b)"): `m + pb` / `0 + pb` with `pb: *B1` are that pointer, as `n + p8` is. A one-byte struct's word
+# carries no element kind (a struct is no subscript element), so `_add_word` could not tell it from `&x`
+# or a narrow local's step 1 and wrote no step: `t1(m + pb)` passed the address's low byte as the B1, and
+# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. The right term [`_rhs_b`,
+# cursor) is typed by its tokens (`_hl_psid`, parse_decl.cyr): a `*T` of a one-byte struct keeps `rs`.
+# CHANGELOG [6.7.11]
+fn _add_rb1(S, rs): i64 {
+    if (_ps_step(rs) != 1) { return 0; }
+    if (_rhs_b < 0) { return 0; }
+    var t = _hl_psid(S, _rhs_b, GTI(S));
+    if (t <= 0) { return 0; }
+    if (STRUCTSZ(S, t - 1) != 1) { return 0; }
     return rs;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's

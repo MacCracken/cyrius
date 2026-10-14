@@ -1578,6 +1578,8 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
     # (ops-5) A whole dereference `take(*p)` passes its pointer (`_sarg_deref`).
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
+    # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
+    if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -1638,7 +1640,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     # `STRUCTSZ` has no entry, so it must skip the test entirely rather than answer it wrong.
     # CHANGELOG [6.6.5]
     var _sa_ptr = 0;
-    if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
+    if (_is_simd_any(S, lt) == 1) { if (_sarg_vec_ptr(S, fi, argc, lt) == 0) { return 0; } }   # 6.7.11
     else {
         if (GLPTRP(S, li) == 0) { _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S)); }   # 6.7.3 (a `*T` converts: _sarg_name_sid)
         _sa_ptr = _local_struct_is_ptr(S, li, lt);
@@ -1649,6 +1651,33 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
+}
+
+# ⛔ 6.7.11 — A VECTOR PASSED TO A `*V` PARAMETER PASSES ITS ADDRESS, as a struct passed to a `*T`
+# parameter does (6.6.20); a vector of ANOTHER type is refused by name, as a struct of another type is
+# (6.7.3). The user's decision, 2026-10-13: (a). Vector local (SLTYPE `lt`, the cursor on its name)
+# as argument `argc` of `fi`: 1 = push its address (the caller's arm), 0 = the value push. A
+# value-form vector parameter is not this rule: SysV / aarch64 / cx never reach here (the SIMD
+# mask routes it), Win64 takes the address the arm pushes. (A `*V` local's SLTYPE is 0: its value.)
+fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
+    var pv = _pvec_param(S, fi, argc);
+    if (pv == 0) { return _TARGET_PE; }
+    if (pv != 0 - lt) {
+        ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
+          L64(_fnt_names + fi * 8));
+    }
+    return 1;
+}
+# The vector type (its descriptor sid) parameter `k` of fn `fi` points at when it is declared `*V`,
+# read from the definition's tokens (a call above the definition has them too); 0 = not a `*V`.
+fn _pvec_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 8) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    return _ptc_vec_sid(_classify_param_type(S, TOKVAL(S, i + 1)));
 }
 
 # ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
@@ -1830,6 +1859,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
     var ps = GPSC(S);
+    if (asid == 0) { asid = _ess_deref(S, st); }   # 6.7.11: `take8(*pu)`
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     EPUSHR(S);
@@ -1840,31 +1870,91 @@ fn _sarg_byval_small(S, fi, argc): i64 {
 # struct-typed field; a whole `Str` field — returning that struct (0 = untyped / scalar / unknown),
 # `_ess_nm` the name a refusal names. Extracted from `_sarg_byval_small` (6.7.7) for the tuple
 # literal's elements (`_tup_elem_val`), which are refused when they are struct values.
+# ⛔ 6.7.11 — parentheses wrapping the WHOLE expression (`_pwrap_k`, any depth) are transparent here
+# too, as 6.7.6 made them for an address-passed parameter (`_sarg_paren`): `bs1((t))`, `bs1(((t)))`,
+# `bs1((mk(7)))` and `bs1((w.t))` into a by-value struct of 8 B or less read the name, call or field
+# they wrap — they compiled with another struct's word, where `bs1(t)` was refused by name (the user's
+# decision, 2026-10-13: refuse by name). The parse and its emission are unchanged. CHANGELOG [6.7.11]
 var _ess_nm = 0;
 fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
     var call = 0;
-    if (PEEKT(S) == 2) {
-        nm = PEEKV(S);
-        var nx = TOKTYP(S, st + 1);
-        if (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
+    var ist = _ess_wrap(S, st);
+    var k = _ess_k;
+    if (TOKTYP(S, ist) == 2) {
+        nm = TOKVAL(S, ist);
+        var nx = TOKTYP(S, ist + 1);
+        if (k > 0) {
+            if (ist + 1 == _ess_ie) { asid = _sarg_name_sid(S, ist); }
+            elif (nx == 10 || nx == 19) { call = 1; }
+        }
+        elif (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
         elif (nx == 10 || nx == 19) { call = 1; }
     }
     var fk = _fpk_want;
-    _fpk_want = st;
+    _fpk_want = ist;
     _fpk_ft = 0;
     _sc_beg = 0 - 1;                   # only this argument's own record may match
     PCMPE(S);
     _fpk_want = fk;
-    if (call == 1) { asid = _sarg_call_sid(S, st); }
+    if (call == 1) { asid = _ess_call(S, ist, k); }
     if (asid == 0) {
         if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
-        elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
     _ess_nm = nm;
     return asid;
+}
+# The first token inside the parentheses that wrap the whole expression at `st` up to its `,` / `)`
+# (`_ess_k` of them, `_ess_ie` the innermost `)`), else `st` with `_ess_k` 0. Moves nothing.
+var _ess_k = 0;
+var _ess_ie = 0 - 1;
+fn _ess_wrap(S, st): i64 {
+    _ess_k = 0;
+    _ess_ie = 0 - 1;
+    if (TOKTYP(S, st) != 10) { return st; }
+    var k = _pwrap_k(S, st);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return st; } }
+    _ess_k = k;
+    _ess_ie = _pw_end - k;
+    return st + k;
+}
+# ⛔ 6.7.11 — A WHOLE DEREFERENCE INTO A BY-VALUE STRUCT OF 8 B OR LESS IS CHECKED BY ITS STRUCT, as
+# over 8 B (`_dro_check`) and in a declaration (`_hl_dstar`): `*p` is a struct VALUE at every size (6.7.10,
+# decision 6), so `take8(*pu)` with `pu: *U8` into `s: S8` is refused by name, as `take8(u)` is — it
+# compiled and passed U8's bytes (the user's decision, 2026-10-13: refuse by name; `take8(pu)` keeps the
+# 2026-10-08 pointer rule). After the argument's parse, [st, cursor) is one `* E` inside any balanced
+# parentheses, nothing after it (`*pu + a` is an operator's operand), E typed `*U` by the compiler's own
+# typing (`_hl_psid`): U, `_ess_nm` the operand's last name (`*gp()` -> `gp`, `*w.pu` -> `pu`); else 0.
+# Reads tokens only: the emission is unchanged. CHANGELOG [6.7.11]
+fn _ess_deref(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    var u = _hl_psid(S, a + 1, pe);
+    if (u <= 0) { return 0; }
+    _ess_nm = TOKVAL(S, a + 1);
+    var i = pe - 1;
+    while (i > a) {
+        if (TOKTYP(S, i) == 2) { _ess_nm = TOKVAL(S, i); i = a; }
+        i = i - 1;
+    }
+    return u;
+}
+# The struct a whole free call at `ti` returns (`_sarg_call_sid`), after the parse; inside `k`
+# wrapping parentheses it must end at the innermost `)` (`(mk(7) + a)`, `(mk(7), a)` are not it).
+fn _ess_call(S, ti, k): i64 {
+    if (k > 0) {
+        var o = _gcall_open(S, ti);
+        if (o < 0) { return 0; }
+        if (_call_close(S, o) + 1 + k != GTI(S)) { return 0; }
+    }
+    return _sarg_call_sid(S, ti);
 }
 
 # ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
@@ -5238,6 +5328,7 @@ fn _pair_ret_expr_shape(S): i64 {
 # parenthesised operand that is an operator's LEFT operand, `f(..) OP`, `(x) OP` — a call's result
 # now dispatches (`_op_lst`); a wrap around the WHOLE value was peeled first (`_ret_peel`).
 fn _ret_expr_head(S): i64 {
+    if (_icall_ret(S) == 1) { return 1; }   # 6.7.11
     if (PEEKT(S) == 10) {
         _pwrap_k(S, GTI(S));
         return _is_op_dispatch_tok(TOKTYP(S, _pw_end));
@@ -5253,6 +5344,15 @@ fn _ret_expr_head(S): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
+}
+# 6.7.11 — 1 = the return value is one whole call through fncallN / callptr whose callee `&f` returns
+# this fn's struct (`_icall_sid_at`): the struct-call hooks give it a temp, as a method call's.
+fn _icall_ret(S): i64 {
+    var sid = _icall_sid_at(S, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid != _cur_fn_ret_sid) { return 0; }
+    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != _ret_term) { return 0; }
+    return 1;
 }
 # ⛔ 6.7.10 — `return w.s + a;` / `return *p - a;` in a struct-returning fn: a struct-typed field or a
 # `*T` dereference as the left operand dispatches (decision 11), as `return s + a;` with a struct
@@ -10102,25 +10202,209 @@ fn _sl_param_refuse(S, ti): i64 {
     return _sl_err(S, ti, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
       " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
 }
-# Pass 1's (quiet): one token and its `<..>`, or a slice's whole `[ .. ]`.
-fn _param_type_step_q(S): i64 {
-    if (PEEKT(S) == 28) {
-        _sl_ann_skip(S);
-        return 0;
-    }
+# ⛔ 6.7.11 — A PARAMETER'S TYPE IS READ WHOLE, BY ONE GRAMMAR IN BOTH PASSES: the trait-signature
+# reader's (`_trs_type`, 6.7.8) — any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional
+# `: T`, a bare `*fn` (accepted since 6.7.7), or a name with its `<..>`; anything else is refused by
+# name, once (the user's decision, 2026-10-13: (b)). Both passes stepped ONE token after at most one
+# `*`, so `fn f(p: **i64)` met "expected ')'", and `fn f(a: 5)` / `(a: +)` / `(a: "s")` compiled with
+# the token skipped. Pass 2 keeps its arms for a name, a tuple and a slice behind one `*`; the reader
+# takes the rest (`_param_type_step`), and pass 1 the same span quietly (`_param_type_step_q`), so the
+# two count the same parameters (`_pd_pc_check`). CHANGELOG [6.7.11]
+var _pty_ts = 0;    # pass 2: the parameter type's first token (just past its `:`)
+var _pty_bad = 0;   # the type being read has reported (it reports nothing more)
+# Pass 2, cursor just past a parameter's `:`: the type's start recorded, and a first `*` consumed and
+# marked on the slot to come (`_mark_ptr_param`; a second `*` makes the step 8).
+fn _param_ptr_head(S): i64 {
+    _pty_ts = GTI(S);
+    if (PEEKT(S) != 8) { return 0; }
     STI(S, GTI(S) + 1);
-    SKIP_GENERICS(S);
+    _mark_ptr_param(S);
     return 0;
 }
-# The parameter loop's "consume type", cursor on the type's token: one step, or a slice's whole
-# `[ .. ]`, refused by name.
+# Pass 1's (quiet), cursor on a type token its arms do not take (a `*` after the first, `fn`, `u128`,
+# a slice, or no type at all): the cursor left past the type, as pass 2 leaves it.
+fn _param_type_step_q(S): i64 {
+    _pty_bad = 0;
+    STI(S, _pty_end(S, GTI(S), 0, 0));
+    return 0;
+}
+# The parameter loop's "consume type" (pass 2): a name its type-name arm took is stepped (the loop's
+# SKIP_GENERICS takes the `<..>`); anything else is read from the type's start, and refused by name
+# when it is not a type (a slice `[T]` by its own text, 6.7.8 C2-6a).
 fn _param_type_step(S): i64 {
-    if (PEEKT(S) != 28) {
+    if (PEEKT(S) == 2) {
         STI(S, GTI(S) + 1);
         return 0;
     }
-    _sl_param_refuse(S, GTI(S));
+    _pty_bad = 0;
+    STI(S, _pty_end(S, _pty_ts, 1, 0));
+    return 0;
+}
+# The token after the type that starts at token `i` — a function of the tokens alone, so the passes
+# agree even on a refused type. `loud` 1 (pass 2) reports, the first problem of each type once;
+# `inner` 1 inside a `*fn( .. )`, whose names no other arm checks. At the top level pass 2's arms took
+# a name, a tuple and a `slice<T>` behind at most one `*`, so the reader checks those only behind two.
+fn _pty_end(S, i, loud, inner): i64 {
+    var n = 0;
+    while (TOKTYP(S, i) == 8) {
+        i = i + 1;
+        n = n + 1;
+    }
+    var own = loud;
+    if (inner == 0) { if (n < 2) { own = 0; } }
+    if (_sl_ann_at(S, i) == 1) {
+        if (TOKTYP(S, i) == 28) { own = loud; }
+        return _pty_slice(S, i, own, inner);
+    }
+    var t = TOKTYP(S, i);
+    if (t == 105) { return i + 1; }   # u128
+    if (t == 10) { return _pty_tuple(S, i, own, loud); }
+    if (t == 32) { return _pty_fn(S, i, loud, n); }
+    if (t == 2) {
+        if (own == 1) { _pty_name(S, i); }
+        return _pty_gen_end(S, i + 1);
+    }
+    _pty_err(S, i, loud);
+    return _pty_skip(S, i);
+}
+# Past a refused token `i`, to the parameter's (or the list element's) end: the next `,` / `)` /
+# `=` at its depth, so `a: -1` / `a: 5 + 3` report once. A token that ends a parameter, and a
+# brace, `;` or the end of file after it, are not crossed.
+fn _pty_skip(S, i): i64 {
+    var t = TOKTYP(S, i);
+    if (t == 11 || t == 31 || t == 4 || t == 12 || t == 13 || t == 14) { return i; }
+    i = i + 1;
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        t = TOKTYP(S, i);
+        if (t == 12 || t == 13 || t == 14 || t == 5) { return i; }
+        if (d == 0) { if (t == 11 || t == 31 || t == 4) { return i; } }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        i = i + 1;
+    }
+    return i;
+}
+# A slice at token `i`, consumed whole; refused by name when `rep` (behind a `*`: its own text).
+fn _pty_slice(S, i, rep, inner): i64 {
+    if (rep == 1) {
+        if (inner == 0) { _sl_param_refuse(S, i); }
+        elif (TOKTYP(S, i - 1) == 8) { _sl_err_ptr(S, i); }
+        else {
+            _sl_err(S, i, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
+              " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
+        }
+    }
+    var sv = GTI(S);
+    STI(S, i);
     _sl_ann_skip(S);
+    var e = GTI(S);
+    STI(S, sv);
+    return e;
+}
+# A tuple at token `i` (its `(`): the token after its `)`. Behind one `*` or none, pass 2's
+# `_tup_param` took it; behind two it is a pointer target, refused as `*( .. )` is. Inside a
+# `*fn( .. )` its elements are types.
+fn _pty_tuple(S, i, own, loud): i64 {
+    var c = _call_close(S, i);
+    if (own == 0) { return c + 1; }
+    if (TOKTYP(S, i - 1) != 8) {
+        _pty_list(S, i + 1, loud);
+        return c + 1;
+    }
+    if (_pty_bad == 0) {
+        var sv = GTI(S);
+        STI(S, i);
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+        STI(S, sv);
+    }
+    _pty_bad = 1;
+    return c + 1;
+}
+# `fn` at token `i` (`n` the `*`s before it): `fn( .. )` with an optional `: T`, or a bare `fn`
+# (6.7.7). A type only behind a `*`.
+fn _pty_fn(S, i, loud, n): i64 {
+    if (n == 0) { _pty_err(S, i, loud); }
+    i = i + 1;
+    if (TOKTYP(S, i) != 10) { return i; }
+    i = _pty_list(S, i + 1, loud);
+    if (TOKTYP(S, i) == 49) { i = _pty_end(S, i + 1, loud, 1); }
+    return i;
+}
+# The types of a `( .. )` from token `i` (just past its `(`), comma-separated: the token after its
+# `)`, or the token a `)` was expected at.
+fn _pty_list(S, i, loud): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    var go = 1;
+    while (go == 1) {
+        var j = _pty_end(S, i, loud, 1);
+        if (j == i) { go = 0; }
+        elif (TOKTYP(S, j) == 31) { j = j + 1; }
+        else { go = 0; }
+        i = j;
+    }
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    _pty_bad = 1;   # the parameter loop reports the `)` it expects here
+    return i;
+}
+# A name at token `i` no other arm checks: refused by name unless it is a type (the type-name arm's
+# set, `_tn_param_check`: a by-name handle or vector, a resolved type, the fn's own type parameter).
+fn _pty_name(S, i): i64 {
+    var nm = TOKVAL(S, i);
+    if (_classify_param_type(S, nm) != 0) { return 0; }
+    if (_tn_resolve_at(S, i) != 0) { return 0; }
+    if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
+    _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    return 0;
+}
+# Token `i` past a name: past its `<..>` when one follows.
+fn _pty_gen_end(S, i): i64 {
+    if (TOKTYP(S, i) != 19) { return i; }
+    var sv = GTI(S);
+    STI(S, i);
+    SKIP_GENERICS(S);
+    var e = GTI(S);
+    STI(S, sv);
+    return e;
+}
+# The parameter's name (the token before its `:`), or -1.
+fn _pty_pnoff(S): i64 {
+    if (TOKTYP(S, _pty_ts - 2) != 2) { return 0 - 1; }
+    if (TOKTYP(S, _pty_ts - 1) != 49) { return 0 - 1; }
+    return TOKVAL(S, _pty_ts - 2);
+}
+# "expected a type for parameter 'a', got '+'" at token `ti` (`loud`), the type's first problem only,
+# once per token (a generic's instances re-read the signature); not a panic, so the list reads on.
+fn _pty_err(S, ti, loud): i64 {
+    var b = _pty_bad;
+    _pty_bad = 1;
+    if (loud == 0) { return 0; }
+    if (b == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": expected a type");
+    var pn = _pty_pnoff(S);
+    if (pn >= 0) {
+        PRSTR(" for parameter '");
+        PRSTR(S + 0xEC00000 + pn);
+        PRSTR("'");
+    }
+    PRSTR(", got ");
+    var t = TOKTYP(S, ti);
+    PRSTR(TOKNAME(t));
+    if (t == 1) {
+        PRSTR(" ");
+        PRNUM(TOKVAL(S, ti));
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
     return 0;
 }
 # A return annotation the type-name path does not read (cursor on it): `: *T` (6.6.17) and, refused
@@ -10727,6 +11011,8 @@ fn _gsc_g(S, fi, off): i64 {
 # 4 for 8). CHANGELOG [6.7.8], [6.7.9]
 fn _gsc_arg(S, a): i64 {
     var t = TOKTYP(S, a);
+    if (t == 10) { return _gsc_wrap(S, a); }    # 6.7.11: `gw((w))`
+    if (t == 8) { return _gsc_deref(S, a); }    # 6.7.11: `gw(*wp)`
     if (t == 27) {
         if (_gsc_name_end(S, a + 1) == 0) { return 0; }
         return _gsc_addr_of(S, TOKVAL(S, a + 1));
@@ -10736,6 +11022,24 @@ fn _gsc_arg(S, a): i64 {
     if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); }
     if (_gsc_name_end(S, a) == 0) { return 0; }
     return _gsc_name(S, TOKVAL(S, a));
+}
+# ⛔ 6.7.11 — the two spellings the by-value struct check reads THROUGH bind T as their plain ones do:
+# parentheses wrapping the WHOLE argument (`_ess_wrap`) carry what they wrap — `gw((w))`, `gw((mkw(6)))`
+# — and a whole dereference (`_ess_deref`) what its pointer points at, as `gw(wp)` binds it — `gw(*wp)`.
+# Both reached the base, whose `W1` the instance `W1<i32>` is not: refused "a different struct type"
+# (through 6.7.10 at 8 B or less they compiled and read the struct with the base's layout). A tuple
+# literal (`gw((w, 3))`) and an operator's operand (`gw(*wp + 1)`) bind nothing. The pair scans read
+# both alike (`_tok_gen_sc_sid`), or a `?` above a wrapper typed through them misses its pair.
+# CHANGELOG [6.7.11]
+fn _gsc_wrap(S, a): i64 {
+    var p = _pwrap_in(S, a);
+    if (p < 0) { return 0; }
+    return _gsc_arg(S, p);
+}
+fn _gsc_deref(S, a): i64 {
+    var e = _arg_next(S, a);
+    if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    return _hl_psid(S, a + 1, e);
 }
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
@@ -12028,12 +12332,45 @@ fn _prescan_skip_fn(S): i64 {
 # and the callee dereferenced it (SIGSEGV, or a silent read / write through whatever s held),
 # while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
 fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
-    if (_classify_param_type(S, tnoff) != 0) { return 0; }
+    var c = _classify_param_type(S, tnoff);
+    if (c != 0) {
+        if (isptr == 1) { return _ptc_is_vec(c); }   # 6.7.11: `p: *V` takes an address, as `*S` does
+        return 0;
+    }
     var sid = FINDSTRUCT(S, tnoff);
     if (sid <= 0) { return 0; }
     if (isptr == 1) { return 1; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     return 1;
+}
+# ⛔ 6.7.11 — A POINTER TO A VECTOR IS A POINTER PARAMETER. Both scans consumed the `*` of `p: *f64v2`
+# and then classified the bare name, so the parameter became a VALUE-form vector (two or four slots
+# filled from XMM / V registers, a by-pointer copy-in on Win64) and every caller routed it as one:
+# `rd(&b)` was "value-form SIMD arg must be a local IDENT", and `rd(b)` compiled and handed the body a
+# vector it dereferenced as an address (SIGSEGV). Behind a `*` a vector class is class 9 here, which
+# no mask arm takes: the parameter is one integer word whose step is the vector's size
+# (`_mark_ptr_param`), address-passed like `p: *S` (`_param_wants_struct_ptr`), and a vector passed to
+# it passes its address (`_sarg_vec_ptr`, the user's decision, 2026-10-13: (a)). The cursor is on the
+# type's name in both scans, so the token before it says whether a `*` precedes it. CHANGELOG [6.7.11]
+fn _param_class(S, tnoff): i64 {
+    var c = _classify_param_type(S, tnoff);
+    if (TOKTYP(S, GTI(S) - 1) != 8) { return c; }
+    if (_ptc_is_vec(c) == 1) { return 9; }
+    return c;
+}
+# 1 = `_classify_param_type`'s class `c` is a vector (f64v2 / f64v4 / f32v4, an integer 128-bit one).
+fn _ptc_is_vec(c): i64 {
+    if (c >= 6) { if (c <= 8) { return 1; } }
+    if (c <= 0 - 2048) { return 1; }
+    return 0;
+}
+# ... and its descriptor sid (the SLTYPE a vector local of that type carries, negated), or 0.
+fn _ptc_vec_sid(c): i64 {
+    if (c == 6) { return 2093; }
+    if (c == 7) { return 2125; }
+    if (c == 8) { return 2121; }
+    if (c <= 0 - 2048) { return 0 - c; }
+    return 0;
 }
 # 1 = the parameter being parsed was declared `name: *T` (`_mark_ptr_param` marked the slot it
 # takes next; `_param_record` clears the mark).
@@ -12548,7 +12885,7 @@ fn _prescan_params_scan(S, fi): i64 {
                         struct_mask = _tup_pscan(S, fi, pc, struct_mask, _pptr);
                         bvcp = _tup_bvcp(bvcp, pc);
                     } elif (PEEKT(S) == 2) {
-                        var c = _classify_param_type(S, PEEKV(S));
+                        var c = _param_class(S, PEEKV(S));   # 6.7.11: a `*V` is a pointer
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
                         elif (c == 2) { cstring_mask = _pmw(cstring_mask, pc, 4); }
                         elif (c == 3) { result_mask = _pmw(result_mask, pc, 8); }
@@ -12577,6 +12914,7 @@ fn _prescan_params_scan(S, fi): i64 {
                         # as pass 2 takes it — stopping here counted the list short. A tuple type is
                         # stepped whole above (the token after it is the list's own). CHANGELOG [6.7.7]
                         # 6.7.8 (C2-6a): and a slice's whole `[ .. ]` (pass 2 refuses it by name).
+                        # 6.7.11: the whole type, by pass 2's reader (`**T`, `*fn( .. ): T`, a refused token).
                         _param_type_step_q(S);
                     }
                 }
@@ -14953,7 +15291,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 } }
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
-                if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types
+                _param_ptr_head(S);   # the type's start, and a first `*` (6.7.11: `_param_type_step` reads the rest)
                 if (PEEKT(S) == 10) { struct_mask = _tup_param(S, pc, struct_mask); pt_sid = _tup_pt; }   # 6.7.7 (B4)
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
@@ -14968,7 +15306,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # own per-fn bitmask in a parallel heap region (0x93A000+);
                     # PARSE_FNCALL consults the masks for call-site type checks
                     # and value-form SIMD-arg routing.
-                    var _ptc = _classify_param_type(S, tnoff);
+                    var _ptc = _param_class(S, tnoff);   # 6.7.11: a `*V` is a pointer (class 9)
                     # v6.4.57 (Gap A) — scalar f64/f32 param (exact "f64\0" / "f32\0").
                     # Only when _ptc == 0 so the SIMD f*v* vectors (which share the
                     # "f64"/"f32" prefix) are already caught by the classifier; the
