@@ -2967,7 +2967,11 @@ var _agc_li = 0 - 1;
 var _agc_gvi = 0 - 1;
 var _agc_t = 0;
 var _agc_pp = 0;
+var _agc_src = 0;   # 6.7.11: 1 while `_agc_src_operand` resolves a SOURCE (`_agc_ptr_global`, `_agc_ovr_is`)
+# 6.7.11: `_agc_pp` 1 is a VALUE reached through its address, never a handle — the `*p = v` destination
+# (`_agc_ovr_ans`) included, whose top-level pointer sits in a hidden global answered in the deref band.
 fn _agc_hdl(): i64 {
+    if (_agc_pp == 1) { return 0; }
     if (_agc_pp == 2) { return 1; }
     if (_agc_gvi <= 0 - 1000) { return 1; }
     return 0;
@@ -3024,7 +3028,6 @@ fn _agc_handle_global(S, gvi): i64 {
 # `GP = alloc(..)`) keeps the store. A DESTINATION only: as a source (`_agc_src`) the global keeps
 # `_hl_psrc_copy`'s path. A plain struct (no `Str` / tuple / dyn; over 8 B, no heap handle by name), its step
 # the struct's. CHANGELOG [6.7.11]
-var _agc_src = 0;
 # 1 = pointer step `st` is that of a `*T` to a struct of `sz` bytes: `sz`, or 8 for a zero-size one (`_tn_ptr_step`
 # steps a T of no bytes by 8).
 fn _ps_is_sz(st, sz): i64 {
@@ -3045,11 +3048,35 @@ fn _agc_ptr_global(S, gvi): i64 {
     _agc_t = 0 - ps;
     return AGG_NSLOTS(S, 0 - ps);
 }
+# ⛔ 6.7.11 — THE `*p = v` DESTINATION (`_dst_struct`): while the assignment arms run for a dereference store
+# through a `*S`, the destination they resolve by the name `_agc_ovr_nm` is the struct the parked pointer `_agc_ovr_h`
+# points at — a VALUE reached through one indirection (`_agc_pp` 1, as an address-passed parameter), so a `*T` or
+# handle source copies instead of rebinding. A frame slot in a fn; at top level a hidden global, answered in the
+# deref band with `_agc_pp` 1 (`_agc_hdl` 0). Never for a source (`_agc_src`), and never inside a statement nested
+# in the source (PARSE_STMT clears it). CHANGELOG [6.7.11]
+var _agc_ovr = 0;
+var _agc_ovr_nm = 0;
+var _agc_ovr_h = 0;
+var _agc_ovr_t = 0;
+fn _agc_ovr_is(onoff): i64 {
+    if (_agc_ovr != 1) { return 0; }
+    if (_agc_src == 1) { return 0; }
+    if (onoff != _agc_ovr_nm) { return 0; }
+    return 1;
+}
+fn _agc_ovr_ans(S): i64 {
+    var h = _agc_ovr_h;
+    if (h >= 0) { _agc_li = h; } else { _agc_gvi = 0 - 1000 - (0 - 2 - h); }
+    _agc_pp = 1;
+    _agc_t = _agc_ovr_t;
+    return AGG_NSLOTS(S, _agc_t);
+}
 fn _agc_operand(S, onoff): i64 {
     _agc_li = 0 - 1;
     _agc_gvi = 0 - 1;
     _agc_t = 0;
     _agc_pp = 0;
+    if (_agc_ovr_is(onoff) == 1) { return _agc_ovr_ans(S); }
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, onoff);
         if (li >= 0) {
@@ -3621,6 +3648,96 @@ fn _asg_compound_op(S, cop, lt): i64 {
     return 0;
 }
 
+# ⛔ 6.7.11 — `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a), 2026-10-13; issues/2026-10-11-
+# deref-store-through-struct-pointer-decision.md). Decision 6 makes `*p` a struct value at every size, and since
+# 6.7.10 `p = l` copies `l` INTO `*p`; the store wrote the 8-byte word whatever S: a zero-size or 3..7 B struct
+# overran into its neighbour, one over 8 B kept only its first 8 bytes, `*p = q` stored the pointer, and `*p += a`
+# added to the first word. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
+# typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size; not `Str` / tuple / dyn),
+# `*p OP= v` is refused by name as `l += a` is (the statement parses on: 0), and for `=` the pointer is parked in a
+# hidden temp and the statement's assignment arms run with that temp as their destination (`_agc_ovr`), so
+# `*p = v` copies exactly what `G = v` copies — a local, parameter, global, field, call, method or operator result,
+# a handle or a `*T` (copied, never rebound), `*q` — `sizeof(S)` bytes (none for a zero-size struct), another
+# struct refused by name; any other value (untyped, an integer) is stored as the struct's word at `sizeof(S)` bytes,
+# at most 8, never past the object (`_dst_word`). 1 = done (`term` consumed); 0 = not this shape (cursor untouched).
+fn _dst_struct(S, term, d): i64 {
+    var sid = _hl_psid(S, d + 1, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    if (PEEKT(S) != 4) {
+        if (_asg_pair_at(S) == 1) {
+            _err_in_sync(S, "compound assignment to the struct ", nm,
+              " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
+        }
+        return 0;
+    }
+    STI(S, GTI(S) + 1);   # `=`
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (_dst_arms(S, term, sid, h, nm) == 1) { return 1; }
+    _dst_word(S, h, STRUCTSZ(S, sid - 1));
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# The statement's assignment arms (`_PARSE_STMT_IMPL`'s order) with the parked pointer `h` as their destination
+# `nm` (`_agc_ovr`). 1 = a copy (`term` consumed); 0 = the value is in rax, the cursor on `term`.
+fn _dst_arms(S, term, sid, h, nm): i64 {
+    var sv = _agc_ovr;
+    var svn = _agc_ovr_nm;
+    var svh = _agc_ovr_h;
+    var svt = _agc_ovr_t;
+    _agc_ovr = 1;
+    _agc_ovr_nm = nm;
+    _agc_ovr_h = h;
+    _agc_ovr_t = 0 - sid;
+    var r = _try_aggregate_copy_assign(S, nm, term);
+    if (r == 0) { r = _try_struct_call_assign(S, nm, term); }
+    if (r == 0) {
+        _refuse_lossy_pair(S);   # 6.7.7 (T5b), as the word store refused it
+        r = _pcmpe_struct_assign(S, nm, term);
+    }
+    _agc_ovr = sv;
+    _agc_ovr_nm = svn;
+    _agc_ovr_h = svh;
+    _agc_ovr_t = svt;
+    return r;
+}
+# rax = a value that is no struct of `*p`'s type: stored as the struct's word through the parked pointer `h` at
+# `sz` bytes, at most 8 — 8 / 4 / 2 / 1-byte chunks, each shifted down into place (the `_fst_odd` shape) — so a
+# struct under 8 B is never written past (a zero-size one not at all).
+fn _dst_word(S, h, sz): i64 {
+    var dli = 0 - 1;
+    var dgv = 0 - 1;
+    if (h >= 0) { dli = _AGC_DREF(h); } else { dgv = 0 - 1000 - (0 - 2 - h); }
+    var nb = sz;
+    if (nb > 8) { nb = 8; }
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = 8;
+        if (nb - o < 8) { w = 4; }
+        if (nb - o < 4) { w = 2; }
+        if (nb - o < 2) { w = 1; }
+        if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+        EPOPR(S);
+        EPUSHR(S);
+        if (o > 0) { ESHRCL(S); }
+        EPUSHR(S);
+        _agc_addr_x1(S, dli, dgv, o);
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
+}
+
 # `*expr = v` / `*expr OP= v` (cursor on the `*`), ending at `term` — `;` for a statement, `)` for
 # a classic-for step: the address once, before the value, then the store. 6.7.5 (B8): the compound
 # form — it was "expected '=', got '+'" — loads, `_asg_compound_op`s it and stores it back. Out of
@@ -3631,9 +3748,12 @@ fn _asg_compound_op(S, cop, lt): i64 {
 # zero-extended; an f32 combines as an f32), a wider integer warns "narrowing". Every other operand
 # keeps the WORD store (`_asg_store_w` at width 0 is EPOPC + ESTORE64). Before, `*q = 5` through a
 # `*i32` zeroed the next element. CHANGELOG [6.7.8]
+# 6.7.11: through a `*S` (a struct), `*p = v` copies the struct and `*p OP= v` is refused (`_dst_struct`).
 fn _deref_store(S, term): i64 {
+    var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
     PARSE_FACTOR(S);
+    if (_dst_struct(S, term, d) == 1) { return 0; }
     var ed = _deref_ed(S);   # before the push: the operand's own kind
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
@@ -3934,6 +4054,7 @@ fn _tup_asg_call(S, noff, term): i64 {
 # decides by itself, then an inline global. (A closure's capture is no destination: the store's
 # "undefined variable".)
 fn _tup_dst_sid(S, noff): i64 {
+    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: the `*p = v` destination is no tuple
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {
@@ -4661,7 +4782,10 @@ fn PARSE_STMT(S): i64 {
     # 6.6.5: and for the same reason, the natural home for the expression-stack check — a
     # statement must leave the machine stack exactly as it found it. See `_xd_check`.
     var _xd0 = _xdepth;
+    var ov = _agc_ovr;   # 6.7.11: a statement nested in a `*p = v` source is no `*p` destination (`_dst_arms`)
+    _agc_ovr = 0;
     _PARSE_STMT_IMPL(S);
+    _agc_ovr = ov;
     _rd_exit();
     _xd_check(S, _xd0, "statement");
     if (_panic == 1) { _stmt_resync(S, before); }   # 6.7.11: an in-sync pair refusal resyncs here

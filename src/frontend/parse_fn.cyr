@@ -2055,6 +2055,7 @@ fn _mv_decl_src(S, pscale, start): i64 {
 # The struct of an assignment's destination name `noff` when it is a named struct VALUE or handle — a
 # local, a by-value parameter, a global — and not a `*P` (a pointer rebinds to any word); else 0.
 fn _mv_dst_sid(S, noff): i64 {
+    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: `*p = v`'s destination has no name (`_dst_arms`)
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {

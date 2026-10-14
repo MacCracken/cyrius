@@ -1014,6 +1014,8 @@ address, read and written 8 bytes as before**: an untyped name (`var w = p;` is 
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
+Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
+(6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
 `var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
 at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
@@ -1812,6 +1814,21 @@ the declaration zone or after it), a by-value argument, `return *p`, an operator
 word's padding is 0 (6.7.11): through 6.7.10 it loaded the whole word at `p`, so the bytes after the
 object filled the padding (`load8(&G + 3)` of a 3-byte `G` read the next byte) and an object ending
 a mapping faulted.
+
+**A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
+`p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,
+`*gp()`, `*w.p` — copies exactly `sizeof(S)` bytes (none for a zero-size struct) from any `S` value
+`G = v` takes: a local, a by-value parameter, a global, a field `w.s`, a call, a method or operator
+result, a handle or a `*S` (`*p = q` copies the struct `q` points at; `q` is not rebound), `*q` — in a
+fn, at top level and in a for step, so `*p = l`, `p = l` and `G = l` (with `p = &G`) agree. A struct of another type is refused by name
+(*cannot copy 'u' into a variable of a different struct/vector type: 'p'*), and `*p OP= v` as `l += a`
+is (*compound assignment to the struct 'p' points at is refused*; write `*p = *p + b`). Any other value
+— an untyped one, an integer — is stored as the struct's word at `sizeof(S)` bytes, at most 8, never
+past the object (`*p = 0` clears a 3-byte struct's 3 bytes, a 16-byte struct's first 8). At top level a
+call, method or operator result over 8 bytes has no frame to land in and is refused, as into a struct
+global. Through 6.7.10 the store was the 8-byte word whatever the struct: a zero-size struct took 8
+bytes over the next global, one of 3 to 7 bytes overran the object, one over 8 bytes kept only its first
+8 (a 16-byte one's second field stale), `*p = q` stored the pointer, and `*p += a` added to the first word.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
 the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads

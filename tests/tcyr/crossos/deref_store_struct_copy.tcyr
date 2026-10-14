@@ -1,0 +1,1271 @@
+# deref_store_struct_copy.tcyr — 6.7.11. `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a),
+# 2026-10-13; issues/2026-10-11-deref-store-through-struct-pointer-decision.md): exactly `sizeof(S)` bytes (none for
+# a zero-size struct) from any `S` value `G = v` takes — a local, a by-value parameter, a global, a field, a call, a
+# method or operator result, a handle or a `*S` (copied, never rebound), `*q` — as `p = l` and `G = l` (with
+# `p = &G`) copy it; an untyped value is stored as the struct's word at `sizeof(S)` bytes, at most 8, never past
+# the object.
+#
+# ⛔ THROUGH 6.7.10 the store was neither: a zero-size struct took 8 bytes over the next global, a 3 B one the whole
+# 8-byte word (past the object), a 4 B one its first field, a 16 B one its first 8 bytes (42 where 90 is right), a
+# 24 B one its first word.
+#
+# THE RULES, at 0, 3, 4, 5, 6, 7, 8, 9, 16 and 24 B (unsigned narrow fields; the source's fields 1, 2, 3 ..., read
+# back as the digits 123...): every source above into `*p` (p a `*S` local pointing at a global; the guard byte
+# packed right after that global kept, +1000000000), into a struct inside a larger local (its next field kept),
+# through `*P` (a `*S` global), `*(p + 0)`, `*gp()`, `*w.p`, a `*S` parameter, `*self` in an impl method (an
+# untyped `self` too) and a for step; a copy, not an alias (the source written after the store); an untyped value
+# byte-exact (`ub`: its low bytes in place, the bytes past 8 untouched, nothing past the object); at top level too
+# (a call / method / operator result over 8 B has no frame there, as `G = v`); a statement nested in the source (a
+# closure body's own `p = m`) is its own assignment. Another struct and `*p OP= v` are refused by name
+# (tests/gates/frontend/struct_copy_type_checked.sh).
+#
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi; tests/gates/codegen/
+# small_struct_handle_line.sh R15 on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm)
+# and PE (wine).
+include "lib/assert.cyr"
+
+# 1 = the `sz` bytes at `p` are the word 0x0807060504030201's low bytes (at most 8) and 0xEE past them, and the
+# byte after them is `g` — an untyped value stored as the struct's word, nothing past the object.
+fn ub(p, sz, g): i64 {
+    var k = 0;
+    while (k < sz) {
+        var want = 0xEE;
+        if (k < 8) { want = k + 1; }
+        if (load8(p + k) != want) { return 0; }
+        k = k + 1;
+    }
+    if (load8(p + sz) != g) { return 0; }
+    return 1;
+}
+fn fillee(p, sz): i64 { var k = 0; while (k < sz) { store8(p + k, 0xEE); k = k + 1; } return 0; }
+var UW = 0x0807060504030201;
+
+# ── 0 B ──
+struct S0 {  }
+struct W0 { k; s: S0; g: u8; p: *S0; }
+struct O0 { s: S0; g: u8; }
+var GT0 = S0 { };
+var GZ0: u8 = 99;
+var GL0 = S0 { };
+var GP0: *S0 = &GT0;
+var GQ0: *S0 = &GL0;
+fn set0(p: *S0): i64 {  return 0; }
+fn zero0(p: *S0): i64 {  return 0; }
+fn val0(p: *S0): i64 { return 0; }
+fn mk0(): S0 { var r: S0; set0(&r); return r; }
+fn gp0(): *S0 { return GP0; }
+fn gq0(): *S0 { return GQ0; }
+impl S0 {
+    fn dup(self: *S0): S0 { return mk0(); }
+    fn put(self, l: S0): i64 { *self = l; return 0; }
+    fn putp(self: *S0, l: S0): i64 { *self = l; return 0; }
+}
+fn S0_add(l: S0, r: S0): S0 { var t: S0;  return t; }
+fn c0(): i64 { var r = val0(&GT0) + (GZ0 != 99) * 1000000000; zero0(&GT0); return r; }
+fn d0_l(): i64 { var p: *S0 = &GT0; var l = S0 { }; *p = l; zero0(&l); return c0(); }
+fn d0_byv(l: S0): i64 { var p: *S0 = &GT0; *p = l; zero0(&l); return c0(); }
+fn d0_glob(): i64 { var p: *S0 = &GT0; *p = GL0; zero0(&GL0); var r = c0(); set0(&GL0); return r; }
+fn d0_fld(): i64 { var p: *S0 = &GT0; var w = W0 { 0, 7, 0 }; *p = w.s;  return c0() + (w.g != 7) * 1000000000; }
+fn d0_call(): i64 { var p: *S0 = &GT0; *p = mk0(); return c0(); }
+fn d0_meth(): i64 { var p: *S0 = &GT0; var l = S0 { }; *p = l.dup(); return c0(); }
+fn d0_op(): i64 { var p: *S0 = &GT0; var z = S0 { }; var l = S0 { }; *p = z + l; zero0(&l); return c0(); }
+fn d0_dq(): i64 { var p: *S0 = &GT0; var x = S0 { }; var q: *S0 = &x; *p = *q; zero0(&x); return c0(); }
+fn d0_q(): i64 { var p: *S0 = &GT0; var x = S0 { }; var q: *S0 = &x; *p = q; zero0(&x); return c0() + (q != &x) * 1000000000; }
+fn d0_h(): i64 { var p: *S0 = &GT0; var x = S0 { }; var h: S0 = &x; *p = h; zero0(&x); return c0(); }
+fn d0_gq(): i64 { var p: *S0 = &GT0; *p = GQ0; zero0(&GL0); var r = c0(); set0(&GL0); return r; }
+fn d0_cq(): i64 { var p: *S0 = &GT0; *p = gq0(); zero0(&GL0); var r = c0(); set0(&GL0); return r; }
+fn d0_ut(): i64 { var p: *S0 = &GT0; fillee(&GT0, 0); var x = UW; *p = x; var r = ub(&GT0, 0, 99); zero0(&GT0); return r; }
+fn d0_loc(): i64 { var o = O0 { 99 }; var p: *S0 = &o; var l = S0 { }; *p = l; zero0(&l); return val0(p) + (o.g != 99) * 1000000000; }
+fn d0_locc(): i64 { var o = O0 { 99 }; var p: *S0 = &o; *p = mk0(); return val0(p) + (o.g != 99) * 1000000000; }
+fn d0_locd(): i64 { var o = O0 { 99 }; var p: *S0 = &o; var x = S0 { }; var q: *S0 = &x; *p = *q; zero0(&x); return val0(p) + (o.g != 99) * 1000000000; }
+fn d0_locu(): i64 { var o = O0 { 99 }; var p: *S0 = &o; fillee(p, 0); var x = UW; *p = x; return ub(p, 0, 99); }
+fn d0_P(): i64 { var l = S0 { }; *GP0 = l; zero0(&l); return c0(); }
+fn d0_ar(): i64 { var p: *S0 = &GT0; var l = S0 { }; *(p + 0) = l; zero0(&l); return c0(); }
+fn d0_cl(): i64 { var l = S0 { }; *gp0() = l; zero0(&l); return c0(); }
+fn d0_wp(): i64 { var w = W0 { 0, 7, 0 }; w.p = &GT0; var l = S0 { }; *w.p = l; zero0(&l); return c0(); }
+fn d0_self(): i64 { var l = S0 { }; GT0.put(l); return c0(); }
+fn d0_selfp(): i64 { var l = S0 { }; GT0.putp(l); return c0(); }
+fn d0_pp(q: *S0): i64 { var l = S0 { }; *q = l; zero0(&l); return c0(); }
+fn d0_for(): i64 {
+    var p: *S0 = &GT0;
+    var l = S0 { };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero0(&l);
+    return c0();
+}
+
+# ── 3 B ──
+struct S3 { a: u8; b: u8; c: u8; }
+struct W3 { k; s: S3; g: u8; p: *S3; }
+struct O3 { s: S3; g: u8; }
+var GT3 = S3 { 0, 0, 0 };
+var GZ3: u8 = 99;
+var GL3 = S3 { 1, 2, 3 };
+var GP3: *S3 = &GT3;
+var GQ3: *S3 = &GL3;
+fn set3(p: *S3): i64 { p.a = 1; p.b = 2; p.c = 3; return 0; }
+fn zero3(p: *S3): i64 { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn val3(p: *S3): i64 { return (((0) * 10 + p.a) * 10 + p.b) * 10 + p.c; }
+fn mk3(): S3 { var r: S3; set3(&r); return r; }
+fn gp3(): *S3 { return GP3; }
+fn gq3(): *S3 { return GQ3; }
+impl S3 {
+    fn dup(self: *S3): S3 { return mk3(); }
+    fn put(self, l: S3): i64 { *self = l; return 0; }
+    fn putp(self: *S3, l: S3): i64 { *self = l; return 0; }
+}
+fn S3_add(l: S3, r: S3): S3 { var t: S3; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn c3(): i64 { var r = val3(&GT3) + (GZ3 != 99) * 1000000000; zero3(&GT3); return r; }
+fn d3_l(): i64 { var p: *S3 = &GT3; var l = S3 { 1, 2, 3 }; *p = l; zero3(&l); return c3(); }
+fn d3_byv(l: S3): i64 { var p: *S3 = &GT3; *p = l; zero3(&l); return c3(); }
+fn d3_glob(): i64 { var p: *S3 = &GT3; *p = GL3; zero3(&GL3); var r = c3(); set3(&GL3); return r; }
+fn d3_fld(): i64 { var p: *S3 = &GT3; var w = W3 { 0, 1, 2, 3, 7, 0 }; *p = w.s; w.s.a = 0; return c3() + (w.g != 7) * 1000000000; }
+fn d3_call(): i64 { var p: *S3 = &GT3; *p = mk3(); return c3(); }
+fn d3_meth(): i64 { var p: *S3 = &GT3; var l = S3 { 0, 0, 0 }; *p = l.dup(); return c3(); }
+fn d3_op(): i64 { var p: *S3 = &GT3; var z = S3 { 0, 0, 0 }; var l = S3 { 1, 2, 3 }; *p = z + l; zero3(&l); return c3(); }
+fn d3_dq(): i64 { var p: *S3 = &GT3; var x = S3 { 1, 2, 3 }; var q: *S3 = &x; *p = *q; zero3(&x); return c3(); }
+fn d3_q(): i64 { var p: *S3 = &GT3; var x = S3 { 1, 2, 3 }; var q: *S3 = &x; *p = q; zero3(&x); return c3() + (q != &x) * 1000000000; }
+fn d3_h(): i64 { var p: *S3 = &GT3; var x = S3 { 1, 2, 3 }; var h: S3 = &x; *p = h; zero3(&x); return c3(); }
+fn d3_gq(): i64 { var p: *S3 = &GT3; *p = GQ3; zero3(&GL3); var r = c3(); set3(&GL3); return r; }
+fn d3_cq(): i64 { var p: *S3 = &GT3; *p = gq3(); zero3(&GL3); var r = c3(); set3(&GL3); return r; }
+fn d3_ut(): i64 { var p: *S3 = &GT3; fillee(&GT3, 3); var x = UW; *p = x; var r = ub(&GT3, 3, 99); zero3(&GT3); return r; }
+fn d3_loc(): i64 { var o = O3 { 0, 0, 0, 99 }; var p: *S3 = &o; var l = S3 { 1, 2, 3 }; *p = l; zero3(&l); return val3(p) + (o.g != 99) * 1000000000; }
+fn d3_locc(): i64 { var o = O3 { 0, 0, 0, 99 }; var p: *S3 = &o; *p = mk3(); return val3(p) + (o.g != 99) * 1000000000; }
+fn d3_locd(): i64 { var o = O3 { 0, 0, 0, 99 }; var p: *S3 = &o; var x = S3 { 1, 2, 3 }; var q: *S3 = &x; *p = *q; zero3(&x); return val3(p) + (o.g != 99) * 1000000000; }
+fn d3_locu(): i64 { var o = O3 { 0, 0, 0, 99 }; var p: *S3 = &o; fillee(p, 3); var x = UW; *p = x; return ub(p, 3, 99); }
+fn d3_P(): i64 { var l = S3 { 1, 2, 3 }; *GP3 = l; zero3(&l); return c3(); }
+fn d3_ar(): i64 { var p: *S3 = &GT3; var l = S3 { 1, 2, 3 }; *(p + 0) = l; zero3(&l); return c3(); }
+fn d3_cl(): i64 { var l = S3 { 1, 2, 3 }; *gp3() = l; zero3(&l); return c3(); }
+fn d3_wp(): i64 { var w = W3 { 0, 1, 2, 3, 7, 0 }; w.p = &GT3; var l = S3 { 1, 2, 3 }; *w.p = l; zero3(&l); return c3(); }
+fn d3_self(): i64 { var l = S3 { 1, 2, 3 }; GT3.put(l); return c3(); }
+fn d3_selfp(): i64 { var l = S3 { 1, 2, 3 }; GT3.putp(l); return c3(); }
+fn d3_pp(q: *S3): i64 { var l = S3 { 1, 2, 3 }; *q = l; zero3(&l); return c3(); }
+fn d3_for(): i64 {
+    var p: *S3 = &GT3;
+    var l = S3 { 1, 2, 3 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero3(&l);
+    return c3();
+}
+# A statement nested in the source (a closure body's `p = m`, its own `*S3` named p) is its own assignment:
+# it copies m into ITS p's struct and never into the outer store's.
+var GK3 = 0;
+fn pick3(f, l: S3): S3 { GK3 = callptr(f, 0); return l; }
+fn d3_nest(): i64 {
+    var p: *S3 = &GT3;
+    var l = S3 { 1, 2, 3 };
+    *p = pick3(|d| { var t = S3 { 7, 7, 7 }; var p: *S3 = &t; var m = S3 { 9, 8, 7 }; p = m; return val3(&t); }, l);
+    return c3() * 1000 + GK3;
+}
+
+# ── 4 B ──
+struct S4 { a: u16; b: u16; }
+struct W4 { k; s: S4; g: u8; p: *S4; }
+struct O4 { s: S4; g: u8; }
+var GT4 = S4 { 0, 0 };
+var GZ4: u8 = 99;
+var GL4 = S4 { 1, 2 };
+var GP4: *S4 = &GT4;
+var GQ4: *S4 = &GL4;
+fn set4(p: *S4): i64 { p.a = 1; p.b = 2; return 0; }
+fn zero4(p: *S4): i64 { p.a = 0; p.b = 0; return 0; }
+fn val4(p: *S4): i64 { return ((0) * 10 + p.a) * 10 + p.b; }
+fn mk4(): S4 { var r: S4; set4(&r); return r; }
+fn gp4(): *S4 { return GP4; }
+fn gq4(): *S4 { return GQ4; }
+impl S4 {
+    fn dup(self: *S4): S4 { return mk4(); }
+    fn put(self, l: S4): i64 { *self = l; return 0; }
+    fn putp(self: *S4, l: S4): i64 { *self = l; return 0; }
+}
+fn S4_add(l: S4, r: S4): S4 { var t: S4; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn c4(): i64 { var r = val4(&GT4) + (GZ4 != 99) * 1000000000; zero4(&GT4); return r; }
+fn d4_l(): i64 { var p: *S4 = &GT4; var l = S4 { 1, 2 }; *p = l; zero4(&l); return c4(); }
+fn d4_byv(l: S4): i64 { var p: *S4 = &GT4; *p = l; zero4(&l); return c4(); }
+fn d4_glob(): i64 { var p: *S4 = &GT4; *p = GL4; zero4(&GL4); var r = c4(); set4(&GL4); return r; }
+fn d4_fld(): i64 { var p: *S4 = &GT4; var w = W4 { 0, 1, 2, 7, 0 }; *p = w.s; w.s.a = 0; return c4() + (w.g != 7) * 1000000000; }
+fn d4_call(): i64 { var p: *S4 = &GT4; *p = mk4(); return c4(); }
+fn d4_meth(): i64 { var p: *S4 = &GT4; var l = S4 { 0, 0 }; *p = l.dup(); return c4(); }
+fn d4_op(): i64 { var p: *S4 = &GT4; var z = S4 { 0, 0 }; var l = S4 { 1, 2 }; *p = z + l; zero4(&l); return c4(); }
+fn d4_dq(): i64 { var p: *S4 = &GT4; var x = S4 { 1, 2 }; var q: *S4 = &x; *p = *q; zero4(&x); return c4(); }
+fn d4_q(): i64 { var p: *S4 = &GT4; var x = S4 { 1, 2 }; var q: *S4 = &x; *p = q; zero4(&x); return c4() + (q != &x) * 1000000000; }
+fn d4_h(): i64 { var p: *S4 = &GT4; var x = S4 { 1, 2 }; var h: S4 = &x; *p = h; zero4(&x); return c4(); }
+fn d4_gq(): i64 { var p: *S4 = &GT4; *p = GQ4; zero4(&GL4); var r = c4(); set4(&GL4); return r; }
+fn d4_cq(): i64 { var p: *S4 = &GT4; *p = gq4(); zero4(&GL4); var r = c4(); set4(&GL4); return r; }
+fn d4_ut(): i64 { var p: *S4 = &GT4; fillee(&GT4, 4); var x = UW; *p = x; var r = ub(&GT4, 4, 99); zero4(&GT4); return r; }
+fn d4_loc(): i64 { var o = O4 { 0, 0, 99 }; var p: *S4 = &o; var l = S4 { 1, 2 }; *p = l; zero4(&l); return val4(p) + (o.g != 99) * 1000000000; }
+fn d4_locc(): i64 { var o = O4 { 0, 0, 99 }; var p: *S4 = &o; *p = mk4(); return val4(p) + (o.g != 99) * 1000000000; }
+fn d4_locd(): i64 { var o = O4 { 0, 0, 99 }; var p: *S4 = &o; var x = S4 { 1, 2 }; var q: *S4 = &x; *p = *q; zero4(&x); return val4(p) + (o.g != 99) * 1000000000; }
+fn d4_locu(): i64 { var o = O4 { 0, 0, 99 }; var p: *S4 = &o; fillee(p, 4); var x = UW; *p = x; return ub(p, 4, 99); }
+fn d4_P(): i64 { var l = S4 { 1, 2 }; *GP4 = l; zero4(&l); return c4(); }
+fn d4_ar(): i64 { var p: *S4 = &GT4; var l = S4 { 1, 2 }; *(p + 0) = l; zero4(&l); return c4(); }
+fn d4_cl(): i64 { var l = S4 { 1, 2 }; *gp4() = l; zero4(&l); return c4(); }
+fn d4_wp(): i64 { var w = W4 { 0, 1, 2, 7, 0 }; w.p = &GT4; var l = S4 { 1, 2 }; *w.p = l; zero4(&l); return c4(); }
+fn d4_self(): i64 { var l = S4 { 1, 2 }; GT4.put(l); return c4(); }
+fn d4_selfp(): i64 { var l = S4 { 1, 2 }; GT4.putp(l); return c4(); }
+fn d4_pp(q: *S4): i64 { var l = S4 { 1, 2 }; *q = l; zero4(&l); return c4(); }
+fn d4_for(): i64 {
+    var p: *S4 = &GT4;
+    var l = S4 { 1, 2 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero4(&l);
+    return c4();
+}
+
+# ── 5 B ──
+struct S5 { a: u8; b: u8; c: u8; d: u8; e: u8; }
+struct W5 { k; s: S5; g: u8; p: *S5; }
+struct O5 { s: S5; g: u8; }
+var GT5 = S5 { 0, 0, 0, 0, 0 };
+var GZ5: u8 = 99;
+var GL5 = S5 { 1, 2, 3, 4, 5 };
+var GP5: *S5 = &GT5;
+var GQ5: *S5 = &GL5;
+fn set5(p: *S5): i64 { p.a = 1; p.b = 2; p.c = 3; p.d = 4; p.e = 5; return 0; }
+fn zero5(p: *S5): i64 { p.a = 0; p.b = 0; p.c = 0; p.d = 0; p.e = 0; return 0; }
+fn val5(p: *S5): i64 { return (((((0) * 10 + p.a) * 10 + p.b) * 10 + p.c) * 10 + p.d) * 10 + p.e; }
+fn mk5(): S5 { var r: S5; set5(&r); return r; }
+fn gp5(): *S5 { return GP5; }
+fn gq5(): *S5 { return GQ5; }
+impl S5 {
+    fn dup(self: *S5): S5 { return mk5(); }
+    fn put(self, l: S5): i64 { *self = l; return 0; }
+    fn putp(self: *S5, l: S5): i64 { *self = l; return 0; }
+}
+fn S5_add(l: S5, r: S5): S5 { var t: S5; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; t.d = l.d + r.d; t.e = l.e + r.e; return t; }
+fn c5(): i64 { var r = val5(&GT5) + (GZ5 != 99) * 1000000000; zero5(&GT5); return r; }
+fn d5_l(): i64 { var p: *S5 = &GT5; var l = S5 { 1, 2, 3, 4, 5 }; *p = l; zero5(&l); return c5(); }
+fn d5_byv(l: S5): i64 { var p: *S5 = &GT5; *p = l; zero5(&l); return c5(); }
+fn d5_glob(): i64 { var p: *S5 = &GT5; *p = GL5; zero5(&GL5); var r = c5(); set5(&GL5); return r; }
+fn d5_fld(): i64 { var p: *S5 = &GT5; var w = W5 { 0, 1, 2, 3, 4, 5, 7, 0 }; *p = w.s; w.s.a = 0; return c5() + (w.g != 7) * 1000000000; }
+fn d5_call(): i64 { var p: *S5 = &GT5; *p = mk5(); return c5(); }
+fn d5_meth(): i64 { var p: *S5 = &GT5; var l = S5 { 0, 0, 0, 0, 0 }; *p = l.dup(); return c5(); }
+fn d5_op(): i64 { var p: *S5 = &GT5; var z = S5 { 0, 0, 0, 0, 0 }; var l = S5 { 1, 2, 3, 4, 5 }; *p = z + l; zero5(&l); return c5(); }
+fn d5_dq(): i64 { var p: *S5 = &GT5; var x = S5 { 1, 2, 3, 4, 5 }; var q: *S5 = &x; *p = *q; zero5(&x); return c5(); }
+fn d5_q(): i64 { var p: *S5 = &GT5; var x = S5 { 1, 2, 3, 4, 5 }; var q: *S5 = &x; *p = q; zero5(&x); return c5() + (q != &x) * 1000000000; }
+fn d5_h(): i64 { var p: *S5 = &GT5; var x = S5 { 1, 2, 3, 4, 5 }; var h: S5 = &x; *p = h; zero5(&x); return c5(); }
+fn d5_gq(): i64 { var p: *S5 = &GT5; *p = GQ5; zero5(&GL5); var r = c5(); set5(&GL5); return r; }
+fn d5_cq(): i64 { var p: *S5 = &GT5; *p = gq5(); zero5(&GL5); var r = c5(); set5(&GL5); return r; }
+fn d5_ut(): i64 { var p: *S5 = &GT5; fillee(&GT5, 5); var x = UW; *p = x; var r = ub(&GT5, 5, 99); zero5(&GT5); return r; }
+fn d5_loc(): i64 { var o = O5 { 0, 0, 0, 0, 0, 99 }; var p: *S5 = &o; var l = S5 { 1, 2, 3, 4, 5 }; *p = l; zero5(&l); return val5(p) + (o.g != 99) * 1000000000; }
+fn d5_locc(): i64 { var o = O5 { 0, 0, 0, 0, 0, 99 }; var p: *S5 = &o; *p = mk5(); return val5(p) + (o.g != 99) * 1000000000; }
+fn d5_locd(): i64 { var o = O5 { 0, 0, 0, 0, 0, 99 }; var p: *S5 = &o; var x = S5 { 1, 2, 3, 4, 5 }; var q: *S5 = &x; *p = *q; zero5(&x); return val5(p) + (o.g != 99) * 1000000000; }
+fn d5_locu(): i64 { var o = O5 { 0, 0, 0, 0, 0, 99 }; var p: *S5 = &o; fillee(p, 5); var x = UW; *p = x; return ub(p, 5, 99); }
+fn d5_P(): i64 { var l = S5 { 1, 2, 3, 4, 5 }; *GP5 = l; zero5(&l); return c5(); }
+fn d5_ar(): i64 { var p: *S5 = &GT5; var l = S5 { 1, 2, 3, 4, 5 }; *(p + 0) = l; zero5(&l); return c5(); }
+fn d5_cl(): i64 { var l = S5 { 1, 2, 3, 4, 5 }; *gp5() = l; zero5(&l); return c5(); }
+fn d5_wp(): i64 { var w = W5 { 0, 1, 2, 3, 4, 5, 7, 0 }; w.p = &GT5; var l = S5 { 1, 2, 3, 4, 5 }; *w.p = l; zero5(&l); return c5(); }
+fn d5_self(): i64 { var l = S5 { 1, 2, 3, 4, 5 }; GT5.put(l); return c5(); }
+fn d5_selfp(): i64 { var l = S5 { 1, 2, 3, 4, 5 }; GT5.putp(l); return c5(); }
+fn d5_pp(q: *S5): i64 { var l = S5 { 1, 2, 3, 4, 5 }; *q = l; zero5(&l); return c5(); }
+fn d5_for(): i64 {
+    var p: *S5 = &GT5;
+    var l = S5 { 1, 2, 3, 4, 5 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero5(&l);
+    return c5();
+}
+
+# ── 6 B ──
+struct S6 { a: u16; b: u16; c: u16; }
+struct W6 { k; s: S6; g: u8; p: *S6; }
+struct O6 { s: S6; g: u8; }
+var GT6 = S6 { 0, 0, 0 };
+var GZ6: u8 = 99;
+var GL6 = S6 { 1, 2, 3 };
+var GP6: *S6 = &GT6;
+var GQ6: *S6 = &GL6;
+fn set6(p: *S6): i64 { p.a = 1; p.b = 2; p.c = 3; return 0; }
+fn zero6(p: *S6): i64 { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn val6(p: *S6): i64 { return (((0) * 10 + p.a) * 10 + p.b) * 10 + p.c; }
+fn mk6(): S6 { var r: S6; set6(&r); return r; }
+fn gp6(): *S6 { return GP6; }
+fn gq6(): *S6 { return GQ6; }
+impl S6 {
+    fn dup(self: *S6): S6 { return mk6(); }
+    fn put(self, l: S6): i64 { *self = l; return 0; }
+    fn putp(self: *S6, l: S6): i64 { *self = l; return 0; }
+}
+fn S6_add(l: S6, r: S6): S6 { var t: S6; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn c6(): i64 { var r = val6(&GT6) + (GZ6 != 99) * 1000000000; zero6(&GT6); return r; }
+fn d6_l(): i64 { var p: *S6 = &GT6; var l = S6 { 1, 2, 3 }; *p = l; zero6(&l); return c6(); }
+fn d6_byv(l: S6): i64 { var p: *S6 = &GT6; *p = l; zero6(&l); return c6(); }
+fn d6_glob(): i64 { var p: *S6 = &GT6; *p = GL6; zero6(&GL6); var r = c6(); set6(&GL6); return r; }
+fn d6_fld(): i64 { var p: *S6 = &GT6; var w = W6 { 0, 1, 2, 3, 7, 0 }; *p = w.s; w.s.a = 0; return c6() + (w.g != 7) * 1000000000; }
+fn d6_call(): i64 { var p: *S6 = &GT6; *p = mk6(); return c6(); }
+fn d6_meth(): i64 { var p: *S6 = &GT6; var l = S6 { 0, 0, 0 }; *p = l.dup(); return c6(); }
+fn d6_op(): i64 { var p: *S6 = &GT6; var z = S6 { 0, 0, 0 }; var l = S6 { 1, 2, 3 }; *p = z + l; zero6(&l); return c6(); }
+fn d6_dq(): i64 { var p: *S6 = &GT6; var x = S6 { 1, 2, 3 }; var q: *S6 = &x; *p = *q; zero6(&x); return c6(); }
+fn d6_q(): i64 { var p: *S6 = &GT6; var x = S6 { 1, 2, 3 }; var q: *S6 = &x; *p = q; zero6(&x); return c6() + (q != &x) * 1000000000; }
+fn d6_h(): i64 { var p: *S6 = &GT6; var x = S6 { 1, 2, 3 }; var h: S6 = &x; *p = h; zero6(&x); return c6(); }
+fn d6_gq(): i64 { var p: *S6 = &GT6; *p = GQ6; zero6(&GL6); var r = c6(); set6(&GL6); return r; }
+fn d6_cq(): i64 { var p: *S6 = &GT6; *p = gq6(); zero6(&GL6); var r = c6(); set6(&GL6); return r; }
+fn d6_ut(): i64 { var p: *S6 = &GT6; fillee(&GT6, 6); var x = UW; *p = x; var r = ub(&GT6, 6, 99); zero6(&GT6); return r; }
+fn d6_loc(): i64 { var o = O6 { 0, 0, 0, 99 }; var p: *S6 = &o; var l = S6 { 1, 2, 3 }; *p = l; zero6(&l); return val6(p) + (o.g != 99) * 1000000000; }
+fn d6_locc(): i64 { var o = O6 { 0, 0, 0, 99 }; var p: *S6 = &o; *p = mk6(); return val6(p) + (o.g != 99) * 1000000000; }
+fn d6_locd(): i64 { var o = O6 { 0, 0, 0, 99 }; var p: *S6 = &o; var x = S6 { 1, 2, 3 }; var q: *S6 = &x; *p = *q; zero6(&x); return val6(p) + (o.g != 99) * 1000000000; }
+fn d6_locu(): i64 { var o = O6 { 0, 0, 0, 99 }; var p: *S6 = &o; fillee(p, 6); var x = UW; *p = x; return ub(p, 6, 99); }
+fn d6_P(): i64 { var l = S6 { 1, 2, 3 }; *GP6 = l; zero6(&l); return c6(); }
+fn d6_ar(): i64 { var p: *S6 = &GT6; var l = S6 { 1, 2, 3 }; *(p + 0) = l; zero6(&l); return c6(); }
+fn d6_cl(): i64 { var l = S6 { 1, 2, 3 }; *gp6() = l; zero6(&l); return c6(); }
+fn d6_wp(): i64 { var w = W6 { 0, 1, 2, 3, 7, 0 }; w.p = &GT6; var l = S6 { 1, 2, 3 }; *w.p = l; zero6(&l); return c6(); }
+fn d6_self(): i64 { var l = S6 { 1, 2, 3 }; GT6.put(l); return c6(); }
+fn d6_selfp(): i64 { var l = S6 { 1, 2, 3 }; GT6.putp(l); return c6(); }
+fn d6_pp(q: *S6): i64 { var l = S6 { 1, 2, 3 }; *q = l; zero6(&l); return c6(); }
+fn d6_for(): i64 {
+    var p: *S6 = &GT6;
+    var l = S6 { 1, 2, 3 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero6(&l);
+    return c6();
+}
+
+# ── 7 B ──
+struct S7 { a: u8; b: u8; c: u8; d: u8; e: u8; f: u8; g: u8; }
+struct W7 { k; s: S7; g: u8; p: *S7; }
+struct O7 { s: S7; g: u8; }
+var GT7 = S7 { 0, 0, 0, 0, 0, 0, 0 };
+var GZ7: u8 = 99;
+var GL7 = S7 { 1, 2, 3, 4, 5, 6, 7 };
+var GP7: *S7 = &GT7;
+var GQ7: *S7 = &GL7;
+fn set7(p: *S7): i64 { p.a = 1; p.b = 2; p.c = 3; p.d = 4; p.e = 5; p.f = 6; p.g = 7; return 0; }
+fn zero7(p: *S7): i64 { p.a = 0; p.b = 0; p.c = 0; p.d = 0; p.e = 0; p.f = 0; p.g = 0; return 0; }
+fn val7(p: *S7): i64 { return (((((((0) * 10 + p.a) * 10 + p.b) * 10 + p.c) * 10 + p.d) * 10 + p.e) * 10 + p.f) * 10 + p.g; }
+fn mk7(): S7 { var r: S7; set7(&r); return r; }
+fn gp7(): *S7 { return GP7; }
+fn gq7(): *S7 { return GQ7; }
+impl S7 {
+    fn dup(self: *S7): S7 { return mk7(); }
+    fn put(self, l: S7): i64 { *self = l; return 0; }
+    fn putp(self: *S7, l: S7): i64 { *self = l; return 0; }
+}
+fn S7_add(l: S7, r: S7): S7 { var t: S7; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; t.d = l.d + r.d; t.e = l.e + r.e; t.f = l.f + r.f; t.g = l.g + r.g; return t; }
+fn c7(): i64 { var r = val7(&GT7) + (GZ7 != 99) * 1000000000; zero7(&GT7); return r; }
+fn d7_l(): i64 { var p: *S7 = &GT7; var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *p = l; zero7(&l); return c7(); }
+fn d7_byv(l: S7): i64 { var p: *S7 = &GT7; *p = l; zero7(&l); return c7(); }
+fn d7_glob(): i64 { var p: *S7 = &GT7; *p = GL7; zero7(&GL7); var r = c7(); set7(&GL7); return r; }
+fn d7_fld(): i64 { var p: *S7 = &GT7; var w = W7 { 0, 1, 2, 3, 4, 5, 6, 7, 7, 0 }; *p = w.s; w.s.a = 0; return c7() + (w.g != 7) * 1000000000; }
+fn d7_call(): i64 { var p: *S7 = &GT7; *p = mk7(); return c7(); }
+fn d7_meth(): i64 { var p: *S7 = &GT7; var l = S7 { 0, 0, 0, 0, 0, 0, 0 }; *p = l.dup(); return c7(); }
+fn d7_op(): i64 { var p: *S7 = &GT7; var z = S7 { 0, 0, 0, 0, 0, 0, 0 }; var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *p = z + l; zero7(&l); return c7(); }
+fn d7_dq(): i64 { var p: *S7 = &GT7; var x = S7 { 1, 2, 3, 4, 5, 6, 7 }; var q: *S7 = &x; *p = *q; zero7(&x); return c7(); }
+fn d7_q(): i64 { var p: *S7 = &GT7; var x = S7 { 1, 2, 3, 4, 5, 6, 7 }; var q: *S7 = &x; *p = q; zero7(&x); return c7() + (q != &x) * 1000000000; }
+fn d7_h(): i64 { var p: *S7 = &GT7; var x = S7 { 1, 2, 3, 4, 5, 6, 7 }; var h: S7 = &x; *p = h; zero7(&x); return c7(); }
+fn d7_gq(): i64 { var p: *S7 = &GT7; *p = GQ7; zero7(&GL7); var r = c7(); set7(&GL7); return r; }
+fn d7_cq(): i64 { var p: *S7 = &GT7; *p = gq7(); zero7(&GL7); var r = c7(); set7(&GL7); return r; }
+fn d7_ut(): i64 { var p: *S7 = &GT7; fillee(&GT7, 7); var x = UW; *p = x; var r = ub(&GT7, 7, 99); zero7(&GT7); return r; }
+fn d7_loc(): i64 { var o = O7 { 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S7 = &o; var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *p = l; zero7(&l); return val7(p) + (o.g != 99) * 1000000000; }
+fn d7_locc(): i64 { var o = O7 { 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S7 = &o; *p = mk7(); return val7(p) + (o.g != 99) * 1000000000; }
+fn d7_locd(): i64 { var o = O7 { 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S7 = &o; var x = S7 { 1, 2, 3, 4, 5, 6, 7 }; var q: *S7 = &x; *p = *q; zero7(&x); return val7(p) + (o.g != 99) * 1000000000; }
+fn d7_locu(): i64 { var o = O7 { 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S7 = &o; fillee(p, 7); var x = UW; *p = x; return ub(p, 7, 99); }
+fn d7_P(): i64 { var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *GP7 = l; zero7(&l); return c7(); }
+fn d7_ar(): i64 { var p: *S7 = &GT7; var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *(p + 0) = l; zero7(&l); return c7(); }
+fn d7_cl(): i64 { var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *gp7() = l; zero7(&l); return c7(); }
+fn d7_wp(): i64 { var w = W7 { 0, 1, 2, 3, 4, 5, 6, 7, 7, 0 }; w.p = &GT7; var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *w.p = l; zero7(&l); return c7(); }
+fn d7_self(): i64 { var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; GT7.put(l); return c7(); }
+fn d7_selfp(): i64 { var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; GT7.putp(l); return c7(); }
+fn d7_pp(q: *S7): i64 { var l = S7 { 1, 2, 3, 4, 5, 6, 7 }; *q = l; zero7(&l); return c7(); }
+fn d7_for(): i64 {
+    var p: *S7 = &GT7;
+    var l = S7 { 1, 2, 3, 4, 5, 6, 7 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero7(&l);
+    return c7();
+}
+
+# ── 8 B ──
+struct S8 { a: u32; b: u32; }
+struct W8 { k; s: S8; g: u8; p: *S8; }
+struct O8 { s: S8; g: u8; }
+var GT8 = S8 { 0, 0 };
+var GZ8: u8 = 99;
+var GL8 = S8 { 1, 2 };
+var GP8: *S8 = &GT8;
+var GQ8: *S8 = &GL8;
+fn set8(p: *S8): i64 { p.a = 1; p.b = 2; return 0; }
+fn zero8(p: *S8): i64 { p.a = 0; p.b = 0; return 0; }
+fn val8(p: *S8): i64 { return ((0) * 10 + p.a) * 10 + p.b; }
+fn mk8(): S8 { var r: S8; set8(&r); return r; }
+fn gp8(): *S8 { return GP8; }
+fn gq8(): *S8 { return GQ8; }
+impl S8 {
+    fn dup(self: *S8): S8 { return mk8(); }
+    fn put(self, l: S8): i64 { *self = l; return 0; }
+    fn putp(self: *S8, l: S8): i64 { *self = l; return 0; }
+}
+fn S8_add(l: S8, r: S8): S8 { var t: S8; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn c8(): i64 { var r = val8(&GT8) + (GZ8 != 99) * 1000000000; zero8(&GT8); return r; }
+fn d8_l(): i64 { var p: *S8 = &GT8; var l = S8 { 1, 2 }; *p = l; zero8(&l); return c8(); }
+fn d8_byv(l: S8): i64 { var p: *S8 = &GT8; *p = l; zero8(&l); return c8(); }
+fn d8_glob(): i64 { var p: *S8 = &GT8; *p = GL8; zero8(&GL8); var r = c8(); set8(&GL8); return r; }
+fn d8_fld(): i64 { var p: *S8 = &GT8; var w = W8 { 0, 1, 2, 7, 0 }; *p = w.s; w.s.a = 0; return c8() + (w.g != 7) * 1000000000; }
+fn d8_call(): i64 { var p: *S8 = &GT8; *p = mk8(); return c8(); }
+fn d8_meth(): i64 { var p: *S8 = &GT8; var l = S8 { 0, 0 }; *p = l.dup(); return c8(); }
+fn d8_op(): i64 { var p: *S8 = &GT8; var z = S8 { 0, 0 }; var l = S8 { 1, 2 }; *p = z + l; zero8(&l); return c8(); }
+fn d8_dq(): i64 { var p: *S8 = &GT8; var x = S8 { 1, 2 }; var q: *S8 = &x; *p = *q; zero8(&x); return c8(); }
+fn d8_q(): i64 { var p: *S8 = &GT8; var x = S8 { 1, 2 }; var q: *S8 = &x; *p = q; zero8(&x); return c8() + (q != &x) * 1000000000; }
+fn d8_h(): i64 { var p: *S8 = &GT8; var x = S8 { 1, 2 }; var h: S8 = &x; *p = h; zero8(&x); return c8(); }
+fn d8_gq(): i64 { var p: *S8 = &GT8; *p = GQ8; zero8(&GL8); var r = c8(); set8(&GL8); return r; }
+fn d8_cq(): i64 { var p: *S8 = &GT8; *p = gq8(); zero8(&GL8); var r = c8(); set8(&GL8); return r; }
+fn d8_ut(): i64 { var p: *S8 = &GT8; fillee(&GT8, 8); var x = UW; *p = x; var r = ub(&GT8, 8, 99); zero8(&GT8); return r; }
+fn d8_loc(): i64 { var o = O8 { 0, 0, 99 }; var p: *S8 = &o; var l = S8 { 1, 2 }; *p = l; zero8(&l); return val8(p) + (o.g != 99) * 1000000000; }
+fn d8_locc(): i64 { var o = O8 { 0, 0, 99 }; var p: *S8 = &o; *p = mk8(); return val8(p) + (o.g != 99) * 1000000000; }
+fn d8_locd(): i64 { var o = O8 { 0, 0, 99 }; var p: *S8 = &o; var x = S8 { 1, 2 }; var q: *S8 = &x; *p = *q; zero8(&x); return val8(p) + (o.g != 99) * 1000000000; }
+fn d8_locu(): i64 { var o = O8 { 0, 0, 99 }; var p: *S8 = &o; fillee(p, 8); var x = UW; *p = x; return ub(p, 8, 99); }
+fn d8_P(): i64 { var l = S8 { 1, 2 }; *GP8 = l; zero8(&l); return c8(); }
+fn d8_ar(): i64 { var p: *S8 = &GT8; var l = S8 { 1, 2 }; *(p + 0) = l; zero8(&l); return c8(); }
+fn d8_cl(): i64 { var l = S8 { 1, 2 }; *gp8() = l; zero8(&l); return c8(); }
+fn d8_wp(): i64 { var w = W8 { 0, 1, 2, 7, 0 }; w.p = &GT8; var l = S8 { 1, 2 }; *w.p = l; zero8(&l); return c8(); }
+fn d8_self(): i64 { var l = S8 { 1, 2 }; GT8.put(l); return c8(); }
+fn d8_selfp(): i64 { var l = S8 { 1, 2 }; GT8.putp(l); return c8(); }
+fn d8_pp(q: *S8): i64 { var l = S8 { 1, 2 }; *q = l; zero8(&l); return c8(); }
+fn d8_for(): i64 {
+    var p: *S8 = &GT8;
+    var l = S8 { 1, 2 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero8(&l);
+    return c8();
+}
+
+# ── 9 B ──
+struct S9 { a: u8; b: u8; c: u8; d: u8; e: u8; f: u8; g: u8; h: u8; i: u8; }
+struct W9 { k; s: S9; g: u8; p: *S9; }
+struct O9 { s: S9; g: u8; }
+var GT9 = S9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var GZ9: u8 = 99;
+var GL9 = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+var GP9: *S9 = &GT9;
+var GQ9: *S9 = &GL9;
+fn set9(p: *S9): i64 { p.a = 1; p.b = 2; p.c = 3; p.d = 4; p.e = 5; p.f = 6; p.g = 7; p.h = 8; p.i = 9; return 0; }
+fn zero9(p: *S9): i64 { p.a = 0; p.b = 0; p.c = 0; p.d = 0; p.e = 0; p.f = 0; p.g = 0; p.h = 0; p.i = 0; return 0; }
+fn val9(p: *S9): i64 { return (((((((((0) * 10 + p.a) * 10 + p.b) * 10 + p.c) * 10 + p.d) * 10 + p.e) * 10 + p.f) * 10 + p.g) * 10 + p.h) * 10 + p.i; }
+fn mk9(): S9 { var r: S9; set9(&r); return r; }
+fn gp9(): *S9 { return GP9; }
+fn gq9(): *S9 { return GQ9; }
+impl S9 {
+    fn dup(self: *S9): S9 { return mk9(); }
+    fn put(self, l: S9): i64 { *self = l; return 0; }
+    fn putp(self: *S9, l: S9): i64 { *self = l; return 0; }
+}
+fn S9_add(l: S9, r: S9): S9 { var t: S9; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; t.d = l.d + r.d; t.e = l.e + r.e; t.f = l.f + r.f; t.g = l.g + r.g; t.h = l.h + r.h; t.i = l.i + r.i; return t; }
+fn c9(): i64 { var r = val9(&GT9) + (GZ9 != 99) * 1000000000; zero9(&GT9); return r; }
+fn d9_l(): i64 { var p: *S9 = &GT9; var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *p = l; zero9(&l); return c9(); }
+fn d9_byv(l: S9): i64 { var p: *S9 = &GT9; *p = l; zero9(&l); return c9(); }
+fn d9_glob(): i64 { var p: *S9 = &GT9; *p = GL9; zero9(&GL9); var r = c9(); set9(&GL9); return r; }
+fn d9_fld(): i64 { var p: *S9 = &GT9; var w = W9 { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 0 }; *p = w.s; w.s.a = 0; return c9() + (w.g != 7) * 1000000000; }
+fn d9_call(): i64 { var p: *S9 = &GT9; *p = mk9(); return c9(); }
+fn d9_meth(): i64 { var p: *S9 = &GT9; var l = S9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 }; *p = l.dup(); return c9(); }
+fn d9_op(): i64 { var p: *S9 = &GT9; var z = S9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 }; var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *p = z + l; zero9(&l); return c9(); }
+fn d9_dq(): i64 { var p: *S9 = &GT9; var x = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; var q: *S9 = &x; *p = *q; zero9(&x); return c9(); }
+fn d9_q(): i64 { var p: *S9 = &GT9; var x = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; var q: *S9 = &x; *p = q; zero9(&x); return c9() + (q != &x) * 1000000000; }
+fn d9_h(): i64 { var p: *S9 = &GT9; var x = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; var h: S9 = &x; *p = h; zero9(&x); return c9(); }
+fn d9_gq(): i64 { var p: *S9 = &GT9; *p = GQ9; zero9(&GL9); var r = c9(); set9(&GL9); return r; }
+fn d9_cq(): i64 { var p: *S9 = &GT9; *p = gq9(); zero9(&GL9); var r = c9(); set9(&GL9); return r; }
+fn d9_ut(): i64 { var p: *S9 = &GT9; fillee(&GT9, 9); var x = UW; *p = x; var r = ub(&GT9, 9, 99); zero9(&GT9); return r; }
+fn d9_loc(): i64 { var o = O9 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S9 = &o; var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *p = l; zero9(&l); return val9(p) + (o.g != 99) * 1000000000; }
+fn d9_locc(): i64 { var o = O9 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S9 = &o; *p = mk9(); return val9(p) + (o.g != 99) * 1000000000; }
+fn d9_locd(): i64 { var o = O9 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S9 = &o; var x = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; var q: *S9 = &x; *p = *q; zero9(&x); return val9(p) + (o.g != 99) * 1000000000; }
+fn d9_locu(): i64 { var o = O9 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 99 }; var p: *S9 = &o; fillee(p, 9); var x = UW; *p = x; return ub(p, 9, 99); }
+fn d9_P(): i64 { var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *GP9 = l; zero9(&l); return c9(); }
+fn d9_ar(): i64 { var p: *S9 = &GT9; var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *(p + 0) = l; zero9(&l); return c9(); }
+fn d9_cl(): i64 { var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *gp9() = l; zero9(&l); return c9(); }
+fn d9_wp(): i64 { var w = W9 { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 0 }; w.p = &GT9; var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *w.p = l; zero9(&l); return c9(); }
+fn d9_self(): i64 { var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; GT9.put(l); return c9(); }
+fn d9_selfp(): i64 { var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; GT9.putp(l); return c9(); }
+fn d9_pp(q: *S9): i64 { var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 }; *q = l; zero9(&l); return c9(); }
+fn d9_for(): i64 {
+    var p: *S9 = &GT9;
+    var l = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zero9(&l);
+    return c9();
+}
+
+# ── 16 B ──
+struct SH { a: i64; b: i64; }
+struct WH { k; s: SH; g: u8; p: *SH; }
+struct OH { s: SH; g: u8; }
+var GTH = SH { 0, 0 };
+var GZH: u8 = 99;
+var GLH = SH { 1, 2 };
+var GPH: *SH = &GTH;
+var GQH: *SH = &GLH;
+fn setH(p: *SH): i64 { p.a = 1; p.b = 2; return 0; }
+fn zeroH(p: *SH): i64 { p.a = 0; p.b = 0; return 0; }
+fn valH(p: *SH): i64 { return ((0) * 10 + p.a) * 10 + p.b; }
+fn mkH(): SH { var r: SH; setH(&r); return r; }
+fn gpH(): *SH { return GPH; }
+fn gqH(): *SH { return GQH; }
+impl SH {
+    fn dup(self: *SH): SH { return mkH(); }
+    fn put(self, l: SH): i64 { *self = l; return 0; }
+    fn putp(self: *SH, l: SH): i64 { *self = l; return 0; }
+}
+fn SH_add(l: SH, r: SH): SH { var t: SH; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn cH(): i64 { var r = valH(&GTH) + (GZH != 99) * 1000000000; zeroH(&GTH); return r; }
+fn dH_l(): i64 { var p: *SH = &GTH; var l = SH { 1, 2 }; *p = l; zeroH(&l); return cH(); }
+fn dH_byv(l: SH): i64 { var p: *SH = &GTH; *p = l; zeroH(&l); return cH(); }
+fn dH_glob(): i64 { var p: *SH = &GTH; *p = GLH; zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
+fn dH_fld(): i64 { var p: *SH = &GTH; var w = WH { 0, 1, 2, 7, 0 }; *p = w.s; w.s.a = 0; return cH() + (w.g != 7) * 1000000000; }
+fn dH_call(): i64 { var p: *SH = &GTH; *p = mkH(); return cH(); }
+fn dH_meth(): i64 { var p: *SH = &GTH; var l = SH { 0, 0 }; *p = l.dup(); return cH(); }
+fn dH_op(): i64 { var p: *SH = &GTH; var z = SH { 0, 0 }; var l = SH { 1, 2 }; *p = z + l; zeroH(&l); return cH(); }
+fn dH_dq(): i64 { var p: *SH = &GTH; var x = SH { 1, 2 }; var q: *SH = &x; *p = *q; zeroH(&x); return cH(); }
+fn dH_q(): i64 { var p: *SH = &GTH; var x = SH { 1, 2 }; var q: *SH = &x; *p = q; zeroH(&x); return cH() + (q != &x) * 1000000000; }
+fn dH_h(): i64 { var p: *SH = &GTH; var x = SH { 1, 2 }; var h: SH = &x; *p = h; zeroH(&x); return cH(); }
+fn dH_gq(): i64 { var p: *SH = &GTH; *p = GQH; zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
+fn dH_cq(): i64 { var p: *SH = &GTH; *p = gqH(); zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
+fn dH_ut(): i64 { var p: *SH = &GTH; fillee(&GTH, 16); var x = UW; *p = x; var r = ub(&GTH, 16, 99); zeroH(&GTH); return r; }
+fn dH_loc(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; var l = SH { 1, 2 }; *p = l; zeroH(&l); return valH(p) + (o.g != 99) * 1000000000; }
+fn dH_locc(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; *p = mkH(); return valH(p) + (o.g != 99) * 1000000000; }
+fn dH_locd(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; var x = SH { 1, 2 }; var q: *SH = &x; *p = *q; zeroH(&x); return valH(p) + (o.g != 99) * 1000000000; }
+fn dH_locu(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; fillee(p, 16); var x = UW; *p = x; return ub(p, 16, 99); }
+fn dH_P(): i64 { var l = SH { 1, 2 }; *GPH = l; zeroH(&l); return cH(); }
+fn dH_ar(): i64 { var p: *SH = &GTH; var l = SH { 1, 2 }; *(p + 0) = l; zeroH(&l); return cH(); }
+fn dH_cl(): i64 { var l = SH { 1, 2 }; *gpH() = l; zeroH(&l); return cH(); }
+fn dH_wp(): i64 { var w = WH { 0, 1, 2, 7, 0 }; w.p = &GTH; var l = SH { 1, 2 }; *w.p = l; zeroH(&l); return cH(); }
+fn dH_self(): i64 { var l = SH { 1, 2 }; GTH.put(l); return cH(); }
+fn dH_selfp(): i64 { var l = SH { 1, 2 }; GTH.putp(l); return cH(); }
+fn dH_pp(q: *SH): i64 { var l = SH { 1, 2 }; *q = l; zeroH(&l); return cH(); }
+fn dH_for(): i64 {
+    var p: *SH = &GTH;
+    var l = SH { 1, 2 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zeroH(&l);
+    return cH();
+}
+
+# ── 24 B ──
+struct ST { a: i64; b: i64; c: i64; }
+struct WT { k; s: ST; g: u8; p: *ST; }
+struct OT { s: ST; g: u8; }
+var GTT = ST { 0, 0, 0 };
+var GZT: u8 = 99;
+var GLT = ST { 1, 2, 3 };
+var GPT: *ST = &GTT;
+var GQT: *ST = &GLT;
+fn setT(p: *ST): i64 { p.a = 1; p.b = 2; p.c = 3; return 0; }
+fn zeroT(p: *ST): i64 { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn valT(p: *ST): i64 { return (((0) * 10 + p.a) * 10 + p.b) * 10 + p.c; }
+fn mkT(): ST { var r: ST; setT(&r); return r; }
+fn gpT(): *ST { return GPT; }
+fn gqT(): *ST { return GQT; }
+impl ST {
+    fn dup(self: *ST): ST { return mkT(); }
+    fn put(self, l: ST): i64 { *self = l; return 0; }
+    fn putp(self: *ST, l: ST): i64 { *self = l; return 0; }
+}
+fn ST_add(l: ST, r: ST): ST { var t: ST; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn cT(): i64 { var r = valT(&GTT) + (GZT != 99) * 1000000000; zeroT(&GTT); return r; }
+fn dT_l(): i64 { var p: *ST = &GTT; var l = ST { 1, 2, 3 }; *p = l; zeroT(&l); return cT(); }
+fn dT_byv(l: ST): i64 { var p: *ST = &GTT; *p = l; zeroT(&l); return cT(); }
+fn dT_glob(): i64 { var p: *ST = &GTT; *p = GLT; zeroT(&GLT); var r = cT(); setT(&GLT); return r; }
+fn dT_fld(): i64 { var p: *ST = &GTT; var w = WT { 0, 1, 2, 3, 7, 0 }; *p = w.s; w.s.a = 0; return cT() + (w.g != 7) * 1000000000; }
+fn dT_call(): i64 { var p: *ST = &GTT; *p = mkT(); return cT(); }
+fn dT_meth(): i64 { var p: *ST = &GTT; var l = ST { 0, 0, 0 }; *p = l.dup(); return cT(); }
+fn dT_op(): i64 { var p: *ST = &GTT; var z = ST { 0, 0, 0 }; var l = ST { 1, 2, 3 }; *p = z + l; zeroT(&l); return cT(); }
+fn dT_dq(): i64 { var p: *ST = &GTT; var x = ST { 1, 2, 3 }; var q: *ST = &x; *p = *q; zeroT(&x); return cT(); }
+fn dT_q(): i64 { var p: *ST = &GTT; var x = ST { 1, 2, 3 }; var q: *ST = &x; *p = q; zeroT(&x); return cT() + (q != &x) * 1000000000; }
+fn dT_h(): i64 { var p: *ST = &GTT; var x = ST { 1, 2, 3 }; var h: ST = &x; *p = h; zeroT(&x); return cT(); }
+fn dT_gq(): i64 { var p: *ST = &GTT; *p = GQT; zeroT(&GLT); var r = cT(); setT(&GLT); return r; }
+fn dT_cq(): i64 { var p: *ST = &GTT; *p = gqT(); zeroT(&GLT); var r = cT(); setT(&GLT); return r; }
+fn dT_ut(): i64 { var p: *ST = &GTT; fillee(&GTT, 24); var x = UW; *p = x; var r = ub(&GTT, 24, 99); zeroT(&GTT); return r; }
+fn dT_loc(): i64 { var o = OT { 0, 0, 0, 99 }; var p: *ST = &o; var l = ST { 1, 2, 3 }; *p = l; zeroT(&l); return valT(p) + (o.g != 99) * 1000000000; }
+fn dT_locc(): i64 { var o = OT { 0, 0, 0, 99 }; var p: *ST = &o; *p = mkT(); return valT(p) + (o.g != 99) * 1000000000; }
+fn dT_locd(): i64 { var o = OT { 0, 0, 0, 99 }; var p: *ST = &o; var x = ST { 1, 2, 3 }; var q: *ST = &x; *p = *q; zeroT(&x); return valT(p) + (o.g != 99) * 1000000000; }
+fn dT_locu(): i64 { var o = OT { 0, 0, 0, 99 }; var p: *ST = &o; fillee(p, 24); var x = UW; *p = x; return ub(p, 24, 99); }
+fn dT_P(): i64 { var l = ST { 1, 2, 3 }; *GPT = l; zeroT(&l); return cT(); }
+fn dT_ar(): i64 { var p: *ST = &GTT; var l = ST { 1, 2, 3 }; *(p + 0) = l; zeroT(&l); return cT(); }
+fn dT_cl(): i64 { var l = ST { 1, 2, 3 }; *gpT() = l; zeroT(&l); return cT(); }
+fn dT_wp(): i64 { var w = WT { 0, 1, 2, 3, 7, 0 }; w.p = &GTT; var l = ST { 1, 2, 3 }; *w.p = l; zeroT(&l); return cT(); }
+fn dT_self(): i64 { var l = ST { 1, 2, 3 }; GTT.put(l); return cT(); }
+fn dT_selfp(): i64 { var l = ST { 1, 2, 3 }; GTT.putp(l); return cT(); }
+fn dT_pp(q: *ST): i64 { var l = ST { 1, 2, 3 }; *q = l; zeroT(&l); return cT(); }
+fn dT_for(): i64 {
+    var p: *ST = &GTT;
+    var l = ST { 1, 2, 3 };
+    for (var i = 0; i < 1; *p = l) { i = 1; }
+    zeroT(&l);
+    return cT();
+}
+
+# ── top level (after the first statement): through a `*S` global ──
+var TT0 = S0 { };
+var TZ0: u8 = 99;
+var TL0 = S0 { };
+var TV0 = S0 { };
+var TP0: *S0 = &TT0;
+var TQ0: *S0 = &TL0;
+var TW0 = W0 { 0, 7, 0 };
+var TT3 = S3 { 0, 0, 0 };
+var TZ3: u8 = 99;
+var TL3 = S3 { 1, 2, 3 };
+var TV3 = S3 { 0, 0, 0 };
+var TP3: *S3 = &TT3;
+var TQ3: *S3 = &TL3;
+var TW3 = W3 { 0, 1, 2, 3, 7, 0 };
+var TT4 = S4 { 0, 0 };
+var TZ4: u8 = 99;
+var TL4 = S4 { 1, 2 };
+var TV4 = S4 { 0, 0 };
+var TP4: *S4 = &TT4;
+var TQ4: *S4 = &TL4;
+var TW4 = W4 { 0, 1, 2, 7, 0 };
+var TT5 = S5 { 0, 0, 0, 0, 0 };
+var TZ5: u8 = 99;
+var TL5 = S5 { 1, 2, 3, 4, 5 };
+var TV5 = S5 { 0, 0, 0, 0, 0 };
+var TP5: *S5 = &TT5;
+var TQ5: *S5 = &TL5;
+var TW5 = W5 { 0, 1, 2, 3, 4, 5, 7, 0 };
+var TT6 = S6 { 0, 0, 0 };
+var TZ6: u8 = 99;
+var TL6 = S6 { 1, 2, 3 };
+var TV6 = S6 { 0, 0, 0 };
+var TP6: *S6 = &TT6;
+var TQ6: *S6 = &TL6;
+var TW6 = W6 { 0, 1, 2, 3, 7, 0 };
+var TT7 = S7 { 0, 0, 0, 0, 0, 0, 0 };
+var TZ7: u8 = 99;
+var TL7 = S7 { 1, 2, 3, 4, 5, 6, 7 };
+var TV7 = S7 { 0, 0, 0, 0, 0, 0, 0 };
+var TP7: *S7 = &TT7;
+var TQ7: *S7 = &TL7;
+var TW7 = W7 { 0, 1, 2, 3, 4, 5, 6, 7, 7, 0 };
+var TT8 = S8 { 0, 0 };
+var TZ8: u8 = 99;
+var TL8 = S8 { 1, 2 };
+var TV8 = S8 { 0, 0 };
+var TP8: *S8 = &TT8;
+var TQ8: *S8 = &TL8;
+var TW8 = W8 { 0, 1, 2, 7, 0 };
+var TT9 = S9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TZ9: u8 = 99;
+var TL9 = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+var TV9 = S9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TP9: *S9 = &TT9;
+var TQ9: *S9 = &TL9;
+var TW9 = W9 { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 0 };
+var TTH = SH { 0, 0 };
+var TZH: u8 = 99;
+var TLH = SH { 1, 2 };
+var TVH = SH { 0, 0 };
+var TPH: *SH = &TTH;
+var TQH: *SH = &TLH;
+var TWH = WH { 0, 1, 2, 7, 0 };
+var TTT = ST { 0, 0, 0 };
+var TZT: u8 = 99;
+var TLT = ST { 1, 2, 3 };
+var TVT = ST { 0, 0, 0 };
+var TPT: *ST = &TTT;
+var TQT: *ST = &TLT;
+var TWT = WT { 0, 1, 2, 3, 7, 0 };
+var e = 0;
+*TP0 = TL0;
+zero0(&TL0);
+var R0a = val0(&TT0) + (TZ0 != 99) * 1000000000;
+set0(&TL0);
+zero0(&TT0);
+*TP0 = TW0.s;
+var R0b = val0(&TT0) + (TZ0 != 99) * 1000000000 + (TW0.g != 7) * 1000000000;
+zero0(&TT0);
+*TP0 = *TQ0;
+zero0(&TL0);
+var R0c = val0(&TT0) + (TZ0 != 99) * 1000000000;
+set0(&TL0);
+zero0(&TT0);
+*TP0 = TQ0;
+var R0d = val0(&TT0) + (TZ0 != 99) * 1000000000 + (TP0 != &TT0) * 1000000000;
+zero0(&TT0);
+fillee(&TT0, 0);
+var tx0 = UW;
+*TP0 = tx0;
+var R0u = ub(&TT0, 0, 99);
+zero0(&TT0);
+*TP0 = mk0();
+var R0e = val0(&TT0) + (TZ0 != 99) * 1000000000;
+zero0(&TT0);
+*TP0 = TV0.dup();
+var R0f = val0(&TT0) + (TZ0 != 99) * 1000000000;
+zero0(&TT0);
+*TP0 = TV0 + TL0;
+var R0g = val0(&TT0) + (TZ0 != 99) * 1000000000;
+zero0(&TT0);
+*TP3 = TL3;
+zero3(&TL3);
+var R3a = val3(&TT3) + (TZ3 != 99) * 1000000000;
+set3(&TL3);
+zero3(&TT3);
+*TP3 = TW3.s;
+var R3b = val3(&TT3) + (TZ3 != 99) * 1000000000 + (TW3.g != 7) * 1000000000;
+zero3(&TT3);
+*TP3 = *TQ3;
+zero3(&TL3);
+var R3c = val3(&TT3) + (TZ3 != 99) * 1000000000;
+set3(&TL3);
+zero3(&TT3);
+*TP3 = TQ3;
+var R3d = val3(&TT3) + (TZ3 != 99) * 1000000000 + (TP3 != &TT3) * 1000000000;
+zero3(&TT3);
+fillee(&TT3, 3);
+var tx3 = UW;
+*TP3 = tx3;
+var R3u = ub(&TT3, 3, 99);
+zero3(&TT3);
+*TP3 = mk3();
+var R3e = val3(&TT3) + (TZ3 != 99) * 1000000000;
+zero3(&TT3);
+*TP3 = TV3.dup();
+var R3f = val3(&TT3) + (TZ3 != 99) * 1000000000;
+zero3(&TT3);
+*TP3 = TV3 + TL3;
+var R3g = val3(&TT3) + (TZ3 != 99) * 1000000000;
+zero3(&TT3);
+*TP4 = TL4;
+zero4(&TL4);
+var R4a = val4(&TT4) + (TZ4 != 99) * 1000000000;
+set4(&TL4);
+zero4(&TT4);
+*TP4 = TW4.s;
+var R4b = val4(&TT4) + (TZ4 != 99) * 1000000000 + (TW4.g != 7) * 1000000000;
+zero4(&TT4);
+*TP4 = *TQ4;
+zero4(&TL4);
+var R4c = val4(&TT4) + (TZ4 != 99) * 1000000000;
+set4(&TL4);
+zero4(&TT4);
+*TP4 = TQ4;
+var R4d = val4(&TT4) + (TZ4 != 99) * 1000000000 + (TP4 != &TT4) * 1000000000;
+zero4(&TT4);
+fillee(&TT4, 4);
+var tx4 = UW;
+*TP4 = tx4;
+var R4u = ub(&TT4, 4, 99);
+zero4(&TT4);
+*TP4 = mk4();
+var R4e = val4(&TT4) + (TZ4 != 99) * 1000000000;
+zero4(&TT4);
+*TP4 = TV4.dup();
+var R4f = val4(&TT4) + (TZ4 != 99) * 1000000000;
+zero4(&TT4);
+*TP4 = TV4 + TL4;
+var R4g = val4(&TT4) + (TZ4 != 99) * 1000000000;
+zero4(&TT4);
+*TP5 = TL5;
+zero5(&TL5);
+var R5a = val5(&TT5) + (TZ5 != 99) * 1000000000;
+set5(&TL5);
+zero5(&TT5);
+*TP5 = TW5.s;
+var R5b = val5(&TT5) + (TZ5 != 99) * 1000000000 + (TW5.g != 7) * 1000000000;
+zero5(&TT5);
+*TP5 = *TQ5;
+zero5(&TL5);
+var R5c = val5(&TT5) + (TZ5 != 99) * 1000000000;
+set5(&TL5);
+zero5(&TT5);
+*TP5 = TQ5;
+var R5d = val5(&TT5) + (TZ5 != 99) * 1000000000 + (TP5 != &TT5) * 1000000000;
+zero5(&TT5);
+fillee(&TT5, 5);
+var tx5 = UW;
+*TP5 = tx5;
+var R5u = ub(&TT5, 5, 99);
+zero5(&TT5);
+*TP5 = mk5();
+var R5e = val5(&TT5) + (TZ5 != 99) * 1000000000;
+zero5(&TT5);
+*TP5 = TV5.dup();
+var R5f = val5(&TT5) + (TZ5 != 99) * 1000000000;
+zero5(&TT5);
+*TP5 = TV5 + TL5;
+var R5g = val5(&TT5) + (TZ5 != 99) * 1000000000;
+zero5(&TT5);
+*TP6 = TL6;
+zero6(&TL6);
+var R6a = val6(&TT6) + (TZ6 != 99) * 1000000000;
+set6(&TL6);
+zero6(&TT6);
+*TP6 = TW6.s;
+var R6b = val6(&TT6) + (TZ6 != 99) * 1000000000 + (TW6.g != 7) * 1000000000;
+zero6(&TT6);
+*TP6 = *TQ6;
+zero6(&TL6);
+var R6c = val6(&TT6) + (TZ6 != 99) * 1000000000;
+set6(&TL6);
+zero6(&TT6);
+*TP6 = TQ6;
+var R6d = val6(&TT6) + (TZ6 != 99) * 1000000000 + (TP6 != &TT6) * 1000000000;
+zero6(&TT6);
+fillee(&TT6, 6);
+var tx6 = UW;
+*TP6 = tx6;
+var R6u = ub(&TT6, 6, 99);
+zero6(&TT6);
+*TP6 = mk6();
+var R6e = val6(&TT6) + (TZ6 != 99) * 1000000000;
+zero6(&TT6);
+*TP6 = TV6.dup();
+var R6f = val6(&TT6) + (TZ6 != 99) * 1000000000;
+zero6(&TT6);
+*TP6 = TV6 + TL6;
+var R6g = val6(&TT6) + (TZ6 != 99) * 1000000000;
+zero6(&TT6);
+*TP7 = TL7;
+zero7(&TL7);
+var R7a = val7(&TT7) + (TZ7 != 99) * 1000000000;
+set7(&TL7);
+zero7(&TT7);
+*TP7 = TW7.s;
+var R7b = val7(&TT7) + (TZ7 != 99) * 1000000000 + (TW7.g != 7) * 1000000000;
+zero7(&TT7);
+*TP7 = *TQ7;
+zero7(&TL7);
+var R7c = val7(&TT7) + (TZ7 != 99) * 1000000000;
+set7(&TL7);
+zero7(&TT7);
+*TP7 = TQ7;
+var R7d = val7(&TT7) + (TZ7 != 99) * 1000000000 + (TP7 != &TT7) * 1000000000;
+zero7(&TT7);
+fillee(&TT7, 7);
+var tx7 = UW;
+*TP7 = tx7;
+var R7u = ub(&TT7, 7, 99);
+zero7(&TT7);
+*TP7 = mk7();
+var R7e = val7(&TT7) + (TZ7 != 99) * 1000000000;
+zero7(&TT7);
+*TP7 = TV7.dup();
+var R7f = val7(&TT7) + (TZ7 != 99) * 1000000000;
+zero7(&TT7);
+*TP7 = TV7 + TL7;
+var R7g = val7(&TT7) + (TZ7 != 99) * 1000000000;
+zero7(&TT7);
+*TP8 = TL8;
+zero8(&TL8);
+var R8a = val8(&TT8) + (TZ8 != 99) * 1000000000;
+set8(&TL8);
+zero8(&TT8);
+*TP8 = TW8.s;
+var R8b = val8(&TT8) + (TZ8 != 99) * 1000000000 + (TW8.g != 7) * 1000000000;
+zero8(&TT8);
+*TP8 = *TQ8;
+zero8(&TL8);
+var R8c = val8(&TT8) + (TZ8 != 99) * 1000000000;
+set8(&TL8);
+zero8(&TT8);
+*TP8 = TQ8;
+var R8d = val8(&TT8) + (TZ8 != 99) * 1000000000 + (TP8 != &TT8) * 1000000000;
+zero8(&TT8);
+fillee(&TT8, 8);
+var tx8 = UW;
+*TP8 = tx8;
+var R8u = ub(&TT8, 8, 99);
+zero8(&TT8);
+*TP8 = mk8();
+var R8e = val8(&TT8) + (TZ8 != 99) * 1000000000;
+zero8(&TT8);
+*TP8 = TV8.dup();
+var R8f = val8(&TT8) + (TZ8 != 99) * 1000000000;
+zero8(&TT8);
+*TP8 = TV8 + TL8;
+var R8g = val8(&TT8) + (TZ8 != 99) * 1000000000;
+zero8(&TT8);
+*TP9 = TL9;
+zero9(&TL9);
+var R9a = val9(&TT9) + (TZ9 != 99) * 1000000000;
+set9(&TL9);
+zero9(&TT9);
+*TP9 = TW9.s;
+var R9b = val9(&TT9) + (TZ9 != 99) * 1000000000 + (TW9.g != 7) * 1000000000;
+zero9(&TT9);
+*TP9 = *TQ9;
+zero9(&TL9);
+var R9c = val9(&TT9) + (TZ9 != 99) * 1000000000;
+set9(&TL9);
+zero9(&TT9);
+*TP9 = TQ9;
+var R9d = val9(&TT9) + (TZ9 != 99) * 1000000000 + (TP9 != &TT9) * 1000000000;
+zero9(&TT9);
+fillee(&TT9, 9);
+var tx9 = UW;
+*TP9 = tx9;
+var R9u = ub(&TT9, 9, 99);
+zero9(&TT9);
+*TPH = TLH;
+zeroH(&TLH);
+var RHa = valH(&TTH) + (TZH != 99) * 1000000000;
+setH(&TLH);
+zeroH(&TTH);
+*TPH = TWH.s;
+var RHb = valH(&TTH) + (TZH != 99) * 1000000000 + (TWH.g != 7) * 1000000000;
+zeroH(&TTH);
+*TPH = *TQH;
+zeroH(&TLH);
+var RHc = valH(&TTH) + (TZH != 99) * 1000000000;
+setH(&TLH);
+zeroH(&TTH);
+*TPH = TQH;
+var RHd = valH(&TTH) + (TZH != 99) * 1000000000 + (TPH != &TTH) * 1000000000;
+zeroH(&TTH);
+fillee(&TTH, 16);
+var txH = UW;
+*TPH = txH;
+var RHu = ub(&TTH, 16, 99);
+zeroH(&TTH);
+*TPT = TLT;
+zeroT(&TLT);
+var RTa = valT(&TTT) + (TZT != 99) * 1000000000;
+setT(&TLT);
+zeroT(&TTT);
+*TPT = TWT.s;
+var RTb = valT(&TTT) + (TZT != 99) * 1000000000 + (TWT.g != 7) * 1000000000;
+zeroT(&TTT);
+*TPT = *TQT;
+zeroT(&TLT);
+var RTc = valT(&TTT) + (TZT != 99) * 1000000000;
+setT(&TLT);
+zeroT(&TTT);
+*TPT = TQT;
+var RTd = valT(&TTT) + (TZT != 99) * 1000000000 + (TPT != &TTT) * 1000000000;
+zeroT(&TTT);
+fillee(&TTT, 24);
+var txT = UW;
+*TPT = txT;
+var RTu = ub(&TTT, 24, 99);
+zeroT(&TTT);
+
+var v0 = S0 { };
+assert_eq(d0_l(), 0, "0 B: *p = l (the guard after the struct kept)");
+assert_eq(d0_byv(v0), 0, "0 B: *p = l from a by-value parameter");
+assert_eq(d0_glob(), 0, "0 B: *p = G (a value global)");
+assert_eq(d0_fld(), 0, "0 B: *p = w.s (a struct-typed field)");
+assert_eq(d0_call(), 0, "0 B: *p = mk() (a call result)");
+assert_eq(d0_meth(), 0, "0 B: *p = l.dup() (a method result)");
+assert_eq(d0_op(), 0, "0 B: *p = z + l (an operator result)");
+assert_eq(d0_dq(), 0, "0 B: *p = *q");
+assert_eq(d0_q(), 0, "0 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d0_h(), 0, "0 B: *p = h (a handle: its struct copied)");
+assert_eq(d0_gq(), 0, "0 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d0_cq(), 0, "0 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d0_ut(), 1, "0 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d0_loc(), 0, "0 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d0_locc(), 0, "0 B: *p = mk() into a struct inside a local");
+assert_eq(d0_locd(), 0, "0 B: *p = *q into a struct inside a local");
+assert_eq(d0_locu(), 1, "0 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d0_P(), 0, "0 B: *GP = l (a *S global operand)");
+assert_eq(d0_ar(), 0, "0 B: *(p + 0) = l");
+assert_eq(d0_cl(), 0, "0 B: *gp() = l");
+assert_eq(d0_wp(), 0, "0 B: *w.p = l");
+assert_eq(d0_pp(&GT0), 0, "0 B: *q = l through a *S parameter");
+assert_eq(d0_self(), 0, "0 B: *self = l in an impl method (an untyped self)");
+assert_eq(d0_selfp(), 0, "0 B: *self = l in an impl method (self: *S)");
+assert_eq(d0_for(), 0, "0 B: *p = l as a for step");
+assert_eq(R0a, 0, "0 B: top level, *P = G");
+assert_eq(R0b, 0, "0 B: top level, *P = W.s");
+assert_eq(R0c, 0, "0 B: top level, *P = *Q");
+assert_eq(R0d, 0, "0 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R0u, 1, "0 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R0e, 0, "0 B: top level, *P = mk()");
+assert_eq(R0f, 0, "0 B: top level, *P = V.dup()");
+assert_eq(R0g, 0, "0 B: top level, *P = V + L");
+var v3 = S3 { 1, 2, 3 };
+assert_eq(d3_l(), 123, "3 B: *p = l (the guard after the struct kept)");
+assert_eq(d3_byv(v3), 123, "3 B: *p = l from a by-value parameter");
+assert_eq(d3_glob(), 123, "3 B: *p = G (a value global)");
+assert_eq(d3_fld(), 123, "3 B: *p = w.s (a struct-typed field)");
+assert_eq(d3_call(), 123, "3 B: *p = mk() (a call result)");
+assert_eq(d3_meth(), 123, "3 B: *p = l.dup() (a method result)");
+assert_eq(d3_op(), 123, "3 B: *p = z + l (an operator result)");
+assert_eq(d3_dq(), 123, "3 B: *p = *q");
+assert_eq(d3_q(), 123, "3 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d3_h(), 123, "3 B: *p = h (a handle: its struct copied)");
+assert_eq(d3_gq(), 123, "3 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d3_cq(), 123, "3 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d3_ut(), 1, "3 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d3_loc(), 123, "3 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d3_locc(), 123, "3 B: *p = mk() into a struct inside a local");
+assert_eq(d3_locd(), 123, "3 B: *p = *q into a struct inside a local");
+assert_eq(d3_locu(), 1, "3 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d3_P(), 123, "3 B: *GP = l (a *S global operand)");
+assert_eq(d3_ar(), 123, "3 B: *(p + 0) = l");
+assert_eq(d3_cl(), 123, "3 B: *gp() = l");
+assert_eq(d3_wp(), 123, "3 B: *w.p = l");
+assert_eq(d3_pp(&GT3), 123, "3 B: *q = l through a *S parameter");
+assert_eq(d3_self(), 123, "3 B: *self = l in an impl method (an untyped self)");
+assert_eq(d3_selfp(), 123, "3 B: *self = l in an impl method (self: *S)");
+assert_eq(d3_for(), 123, "3 B: *p = l as a for step");
+assert_eq(R3a, 123, "3 B: top level, *P = G");
+assert_eq(R3b, 123, "3 B: top level, *P = W.s");
+assert_eq(R3c, 123, "3 B: top level, *P = *Q");
+assert_eq(R3d, 123, "3 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R3u, 1, "3 B: top level, *P = x (untyped), byte-exact");
+assert_eq(d3_nest(), 123987, "3 B: *p = pick(|d| { .. p = m; .. }, l): the closure's own p = m copies into its struct");
+assert_eq(R3e, 123, "3 B: top level, *P = mk()");
+assert_eq(R3f, 123, "3 B: top level, *P = V.dup()");
+assert_eq(R3g, 123, "3 B: top level, *P = V + L");
+var v4 = S4 { 1, 2 };
+assert_eq(d4_l(), 12, "4 B: *p = l (the guard after the struct kept)");
+assert_eq(d4_byv(v4), 12, "4 B: *p = l from a by-value parameter");
+assert_eq(d4_glob(), 12, "4 B: *p = G (a value global)");
+assert_eq(d4_fld(), 12, "4 B: *p = w.s (a struct-typed field)");
+assert_eq(d4_call(), 12, "4 B: *p = mk() (a call result)");
+assert_eq(d4_meth(), 12, "4 B: *p = l.dup() (a method result)");
+assert_eq(d4_op(), 12, "4 B: *p = z + l (an operator result)");
+assert_eq(d4_dq(), 12, "4 B: *p = *q");
+assert_eq(d4_q(), 12, "4 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d4_h(), 12, "4 B: *p = h (a handle: its struct copied)");
+assert_eq(d4_gq(), 12, "4 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d4_cq(), 12, "4 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d4_ut(), 1, "4 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d4_loc(), 12, "4 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d4_locc(), 12, "4 B: *p = mk() into a struct inside a local");
+assert_eq(d4_locd(), 12, "4 B: *p = *q into a struct inside a local");
+assert_eq(d4_locu(), 1, "4 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d4_P(), 12, "4 B: *GP = l (a *S global operand)");
+assert_eq(d4_ar(), 12, "4 B: *(p + 0) = l");
+assert_eq(d4_cl(), 12, "4 B: *gp() = l");
+assert_eq(d4_wp(), 12, "4 B: *w.p = l");
+assert_eq(d4_pp(&GT4), 12, "4 B: *q = l through a *S parameter");
+assert_eq(d4_self(), 12, "4 B: *self = l in an impl method (an untyped self)");
+assert_eq(d4_selfp(), 12, "4 B: *self = l in an impl method (self: *S)");
+assert_eq(d4_for(), 12, "4 B: *p = l as a for step");
+assert_eq(R4a, 12, "4 B: top level, *P = G");
+assert_eq(R4b, 12, "4 B: top level, *P = W.s");
+assert_eq(R4c, 12, "4 B: top level, *P = *Q");
+assert_eq(R4d, 12, "4 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R4u, 1, "4 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R4e, 12, "4 B: top level, *P = mk()");
+assert_eq(R4f, 12, "4 B: top level, *P = V.dup()");
+assert_eq(R4g, 12, "4 B: top level, *P = V + L");
+var v5 = S5 { 1, 2, 3, 4, 5 };
+assert_eq(d5_l(), 12345, "5 B: *p = l (the guard after the struct kept)");
+assert_eq(d5_byv(v5), 12345, "5 B: *p = l from a by-value parameter");
+assert_eq(d5_glob(), 12345, "5 B: *p = G (a value global)");
+assert_eq(d5_fld(), 12345, "5 B: *p = w.s (a struct-typed field)");
+assert_eq(d5_call(), 12345, "5 B: *p = mk() (a call result)");
+assert_eq(d5_meth(), 12345, "5 B: *p = l.dup() (a method result)");
+assert_eq(d5_op(), 12345, "5 B: *p = z + l (an operator result)");
+assert_eq(d5_dq(), 12345, "5 B: *p = *q");
+assert_eq(d5_q(), 12345, "5 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d5_h(), 12345, "5 B: *p = h (a handle: its struct copied)");
+assert_eq(d5_gq(), 12345, "5 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d5_cq(), 12345, "5 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d5_ut(), 1, "5 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d5_loc(), 12345, "5 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d5_locc(), 12345, "5 B: *p = mk() into a struct inside a local");
+assert_eq(d5_locd(), 12345, "5 B: *p = *q into a struct inside a local");
+assert_eq(d5_locu(), 1, "5 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d5_P(), 12345, "5 B: *GP = l (a *S global operand)");
+assert_eq(d5_ar(), 12345, "5 B: *(p + 0) = l");
+assert_eq(d5_cl(), 12345, "5 B: *gp() = l");
+assert_eq(d5_wp(), 12345, "5 B: *w.p = l");
+assert_eq(d5_pp(&GT5), 12345, "5 B: *q = l through a *S parameter");
+assert_eq(d5_self(), 12345, "5 B: *self = l in an impl method (an untyped self)");
+assert_eq(d5_selfp(), 12345, "5 B: *self = l in an impl method (self: *S)");
+assert_eq(d5_for(), 12345, "5 B: *p = l as a for step");
+assert_eq(R5a, 12345, "5 B: top level, *P = G");
+assert_eq(R5b, 12345, "5 B: top level, *P = W.s");
+assert_eq(R5c, 12345, "5 B: top level, *P = *Q");
+assert_eq(R5d, 12345, "5 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R5u, 1, "5 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R5e, 12345, "5 B: top level, *P = mk()");
+assert_eq(R5f, 12345, "5 B: top level, *P = V.dup()");
+assert_eq(R5g, 12345, "5 B: top level, *P = V + L");
+var v6 = S6 { 1, 2, 3 };
+assert_eq(d6_l(), 123, "6 B: *p = l (the guard after the struct kept)");
+assert_eq(d6_byv(v6), 123, "6 B: *p = l from a by-value parameter");
+assert_eq(d6_glob(), 123, "6 B: *p = G (a value global)");
+assert_eq(d6_fld(), 123, "6 B: *p = w.s (a struct-typed field)");
+assert_eq(d6_call(), 123, "6 B: *p = mk() (a call result)");
+assert_eq(d6_meth(), 123, "6 B: *p = l.dup() (a method result)");
+assert_eq(d6_op(), 123, "6 B: *p = z + l (an operator result)");
+assert_eq(d6_dq(), 123, "6 B: *p = *q");
+assert_eq(d6_q(), 123, "6 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d6_h(), 123, "6 B: *p = h (a handle: its struct copied)");
+assert_eq(d6_gq(), 123, "6 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d6_cq(), 123, "6 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d6_ut(), 1, "6 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d6_loc(), 123, "6 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d6_locc(), 123, "6 B: *p = mk() into a struct inside a local");
+assert_eq(d6_locd(), 123, "6 B: *p = *q into a struct inside a local");
+assert_eq(d6_locu(), 1, "6 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d6_P(), 123, "6 B: *GP = l (a *S global operand)");
+assert_eq(d6_ar(), 123, "6 B: *(p + 0) = l");
+assert_eq(d6_cl(), 123, "6 B: *gp() = l");
+assert_eq(d6_wp(), 123, "6 B: *w.p = l");
+assert_eq(d6_pp(&GT6), 123, "6 B: *q = l through a *S parameter");
+assert_eq(d6_self(), 123, "6 B: *self = l in an impl method (an untyped self)");
+assert_eq(d6_selfp(), 123, "6 B: *self = l in an impl method (self: *S)");
+assert_eq(d6_for(), 123, "6 B: *p = l as a for step");
+assert_eq(R6a, 123, "6 B: top level, *P = G");
+assert_eq(R6b, 123, "6 B: top level, *P = W.s");
+assert_eq(R6c, 123, "6 B: top level, *P = *Q");
+assert_eq(R6d, 123, "6 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R6u, 1, "6 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R6e, 123, "6 B: top level, *P = mk()");
+assert_eq(R6f, 123, "6 B: top level, *P = V.dup()");
+assert_eq(R6g, 123, "6 B: top level, *P = V + L");
+var v7 = S7 { 1, 2, 3, 4, 5, 6, 7 };
+assert_eq(d7_l(), 1234567, "7 B: *p = l (the guard after the struct kept)");
+assert_eq(d7_byv(v7), 1234567, "7 B: *p = l from a by-value parameter");
+assert_eq(d7_glob(), 1234567, "7 B: *p = G (a value global)");
+assert_eq(d7_fld(), 1234567, "7 B: *p = w.s (a struct-typed field)");
+assert_eq(d7_call(), 1234567, "7 B: *p = mk() (a call result)");
+assert_eq(d7_meth(), 1234567, "7 B: *p = l.dup() (a method result)");
+assert_eq(d7_op(), 1234567, "7 B: *p = z + l (an operator result)");
+assert_eq(d7_dq(), 1234567, "7 B: *p = *q");
+assert_eq(d7_q(), 1234567, "7 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d7_h(), 1234567, "7 B: *p = h (a handle: its struct copied)");
+assert_eq(d7_gq(), 1234567, "7 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d7_cq(), 1234567, "7 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d7_ut(), 1, "7 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d7_loc(), 1234567, "7 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d7_locc(), 1234567, "7 B: *p = mk() into a struct inside a local");
+assert_eq(d7_locd(), 1234567, "7 B: *p = *q into a struct inside a local");
+assert_eq(d7_locu(), 1, "7 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d7_P(), 1234567, "7 B: *GP = l (a *S global operand)");
+assert_eq(d7_ar(), 1234567, "7 B: *(p + 0) = l");
+assert_eq(d7_cl(), 1234567, "7 B: *gp() = l");
+assert_eq(d7_wp(), 1234567, "7 B: *w.p = l");
+assert_eq(d7_pp(&GT7), 1234567, "7 B: *q = l through a *S parameter");
+assert_eq(d7_self(), 1234567, "7 B: *self = l in an impl method (an untyped self)");
+assert_eq(d7_selfp(), 1234567, "7 B: *self = l in an impl method (self: *S)");
+assert_eq(d7_for(), 1234567, "7 B: *p = l as a for step");
+assert_eq(R7a, 1234567, "7 B: top level, *P = G");
+assert_eq(R7b, 1234567, "7 B: top level, *P = W.s");
+assert_eq(R7c, 1234567, "7 B: top level, *P = *Q");
+assert_eq(R7d, 1234567, "7 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R7u, 1, "7 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R7e, 1234567, "7 B: top level, *P = mk()");
+assert_eq(R7f, 1234567, "7 B: top level, *P = V.dup()");
+assert_eq(R7g, 1234567, "7 B: top level, *P = V + L");
+var v8 = S8 { 1, 2 };
+assert_eq(d8_l(), 12, "8 B: *p = l (the guard after the struct kept)");
+assert_eq(d8_byv(v8), 12, "8 B: *p = l from a by-value parameter");
+assert_eq(d8_glob(), 12, "8 B: *p = G (a value global)");
+assert_eq(d8_fld(), 12, "8 B: *p = w.s (a struct-typed field)");
+assert_eq(d8_call(), 12, "8 B: *p = mk() (a call result)");
+assert_eq(d8_meth(), 12, "8 B: *p = l.dup() (a method result)");
+assert_eq(d8_op(), 12, "8 B: *p = z + l (an operator result)");
+assert_eq(d8_dq(), 12, "8 B: *p = *q");
+assert_eq(d8_q(), 12, "8 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d8_h(), 12, "8 B: *p = h (a handle: its struct copied)");
+assert_eq(d8_gq(), 12, "8 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d8_cq(), 12, "8 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d8_ut(), 1, "8 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d8_loc(), 12, "8 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d8_locc(), 12, "8 B: *p = mk() into a struct inside a local");
+assert_eq(d8_locd(), 12, "8 B: *p = *q into a struct inside a local");
+assert_eq(d8_locu(), 1, "8 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d8_P(), 12, "8 B: *GP = l (a *S global operand)");
+assert_eq(d8_ar(), 12, "8 B: *(p + 0) = l");
+assert_eq(d8_cl(), 12, "8 B: *gp() = l");
+assert_eq(d8_wp(), 12, "8 B: *w.p = l");
+assert_eq(d8_pp(&GT8), 12, "8 B: *q = l through a *S parameter");
+assert_eq(d8_self(), 12, "8 B: *self = l in an impl method (an untyped self)");
+assert_eq(d8_selfp(), 12, "8 B: *self = l in an impl method (self: *S)");
+assert_eq(d8_for(), 12, "8 B: *p = l as a for step");
+assert_eq(R8a, 12, "8 B: top level, *P = G");
+assert_eq(R8b, 12, "8 B: top level, *P = W.s");
+assert_eq(R8c, 12, "8 B: top level, *P = *Q");
+assert_eq(R8d, 12, "8 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R8u, 1, "8 B: top level, *P = x (untyped), byte-exact");
+assert_eq(R8e, 12, "8 B: top level, *P = mk()");
+assert_eq(R8f, 12, "8 B: top level, *P = V.dup()");
+assert_eq(R8g, 12, "8 B: top level, *P = V + L");
+var v9 = S9 { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+assert_eq(d9_l(), 123456789, "9 B: *p = l (the guard after the struct kept)");
+assert_eq(d9_byv(v9), 123456789, "9 B: *p = l from a by-value parameter");
+assert_eq(d9_glob(), 123456789, "9 B: *p = G (a value global)");
+assert_eq(d9_fld(), 123456789, "9 B: *p = w.s (a struct-typed field)");
+assert_eq(d9_call(), 123456789, "9 B: *p = mk() (a call result)");
+assert_eq(d9_meth(), 123456789, "9 B: *p = l.dup() (a method result)");
+assert_eq(d9_op(), 123456789, "9 B: *p = z + l (an operator result)");
+assert_eq(d9_dq(), 123456789, "9 B: *p = *q");
+assert_eq(d9_q(), 123456789, "9 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(d9_h(), 123456789, "9 B: *p = h (a handle: its struct copied)");
+assert_eq(d9_gq(), 123456789, "9 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(d9_cq(), 123456789, "9 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(d9_ut(), 1, "9 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(d9_loc(), 123456789, "9 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(d9_locc(), 123456789, "9 B: *p = mk() into a struct inside a local");
+assert_eq(d9_locd(), 123456789, "9 B: *p = *q into a struct inside a local");
+assert_eq(d9_locu(), 1, "9 B: *p = x (untyped) into a struct inside a local");
+assert_eq(d9_P(), 123456789, "9 B: *GP = l (a *S global operand)");
+assert_eq(d9_ar(), 123456789, "9 B: *(p + 0) = l");
+assert_eq(d9_cl(), 123456789, "9 B: *gp() = l");
+assert_eq(d9_wp(), 123456789, "9 B: *w.p = l");
+assert_eq(d9_pp(&GT9), 123456789, "9 B: *q = l through a *S parameter");
+assert_eq(d9_self(), 123456789, "9 B: *self = l in an impl method (an untyped self)");
+assert_eq(d9_selfp(), 123456789, "9 B: *self = l in an impl method (self: *S)");
+assert_eq(d9_for(), 123456789, "9 B: *p = l as a for step");
+assert_eq(R9a, 123456789, "9 B: top level, *P = G");
+assert_eq(R9b, 123456789, "9 B: top level, *P = W.s");
+assert_eq(R9c, 123456789, "9 B: top level, *P = *Q");
+assert_eq(R9d, 123456789, "9 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(R9u, 1, "9 B: top level, *P = x (untyped), byte-exact");
+var vH = SH { 1, 2 };
+assert_eq(dH_l(), 12, "16 B: *p = l (the guard after the struct kept)");
+assert_eq(dH_byv(vH), 12, "16 B: *p = l from a by-value parameter");
+assert_eq(dH_glob(), 12, "16 B: *p = G (a value global)");
+assert_eq(dH_fld(), 12, "16 B: *p = w.s (a struct-typed field)");
+assert_eq(dH_call(), 12, "16 B: *p = mk() (a call result)");
+assert_eq(dH_meth(), 12, "16 B: *p = l.dup() (a method result)");
+assert_eq(dH_op(), 12, "16 B: *p = z + l (an operator result)");
+assert_eq(dH_dq(), 12, "16 B: *p = *q");
+assert_eq(dH_q(), 12, "16 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(dH_h(), 12, "16 B: *p = h (a handle: its struct copied)");
+assert_eq(dH_gq(), 12, "16 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(dH_cq(), 12, "16 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(dH_ut(), 1, "16 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(dH_loc(), 12, "16 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(dH_locc(), 12, "16 B: *p = mk() into a struct inside a local");
+assert_eq(dH_locd(), 12, "16 B: *p = *q into a struct inside a local");
+assert_eq(dH_locu(), 1, "16 B: *p = x (untyped) into a struct inside a local");
+assert_eq(dH_P(), 12, "16 B: *GP = l (a *S global operand)");
+assert_eq(dH_ar(), 12, "16 B: *(p + 0) = l");
+assert_eq(dH_cl(), 12, "16 B: *gp() = l");
+assert_eq(dH_wp(), 12, "16 B: *w.p = l");
+assert_eq(dH_pp(&GTH), 12, "16 B: *q = l through a *S parameter");
+assert_eq(dH_self(), 12, "16 B: *self = l in an impl method (an untyped self)");
+assert_eq(dH_selfp(), 12, "16 B: *self = l in an impl method (self: *S)");
+assert_eq(dH_for(), 12, "16 B: *p = l as a for step");
+assert_eq(RHa, 12, "16 B: top level, *P = G");
+assert_eq(RHb, 12, "16 B: top level, *P = W.s");
+assert_eq(RHc, 12, "16 B: top level, *P = *Q");
+assert_eq(RHd, 12, "16 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(RHu, 1, "16 B: top level, *P = x (untyped), byte-exact");
+var vT = ST { 1, 2, 3 };
+assert_eq(dT_l(), 123, "24 B: *p = l (the guard after the struct kept)");
+assert_eq(dT_byv(vT), 123, "24 B: *p = l from a by-value parameter");
+assert_eq(dT_glob(), 123, "24 B: *p = G (a value global)");
+assert_eq(dT_fld(), 123, "24 B: *p = w.s (a struct-typed field)");
+assert_eq(dT_call(), 123, "24 B: *p = mk() (a call result)");
+assert_eq(dT_meth(), 123, "24 B: *p = l.dup() (a method result)");
+assert_eq(dT_op(), 123, "24 B: *p = z + l (an operator result)");
+assert_eq(dT_dq(), 123, "24 B: *p = *q");
+assert_eq(dT_q(), 123, "24 B: *p = q (a *S local: its struct copied, q not rebound)");
+assert_eq(dT_h(), 123, "24 B: *p = h (a handle: its struct copied)");
+assert_eq(dT_gq(), 123, "24 B: *p = GQ (a *S global: its struct copied)");
+assert_eq(dT_cq(), 123, "24 B: *p = gq() (a : *S call: its struct copied)");
+assert_eq(dT_ut(), 1, "24 B: *p = x (untyped): the word's low bytes, at most 8, nothing past the object");
+assert_eq(dT_loc(), 123, "24 B: *p = l into a struct inside a local (its next field kept)");
+assert_eq(dT_locc(), 123, "24 B: *p = mk() into a struct inside a local");
+assert_eq(dT_locd(), 123, "24 B: *p = *q into a struct inside a local");
+assert_eq(dT_locu(), 1, "24 B: *p = x (untyped) into a struct inside a local");
+assert_eq(dT_P(), 123, "24 B: *GP = l (a *S global operand)");
+assert_eq(dT_ar(), 123, "24 B: *(p + 0) = l");
+assert_eq(dT_cl(), 123, "24 B: *gp() = l");
+assert_eq(dT_wp(), 123, "24 B: *w.p = l");
+assert_eq(dT_pp(&GTT), 123, "24 B: *q = l through a *S parameter");
+assert_eq(dT_self(), 123, "24 B: *self = l in an impl method (an untyped self)");
+assert_eq(dT_selfp(), 123, "24 B: *self = l in an impl method (self: *S)");
+assert_eq(dT_for(), 123, "24 B: *p = l as a for step");
+assert_eq(RTa, 123, "24 B: top level, *P = G");
+assert_eq(RTb, 123, "24 B: top level, *P = W.s");
+assert_eq(RTc, 123, "24 B: top level, *P = *Q");
+assert_eq(RTd, 123, "24 B: top level, *P = Q (a *S global: copied, P kept)");
+assert_eq(RTu, 1, "24 B: top level, *P = x (untyped), byte-exact");
+var r = assert_summary();

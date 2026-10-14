@@ -188,7 +188,16 @@
 #      `w.s`, `*p`, a method, an operator, wrapped, a for step — copies into its pointee at 0 / 3 / 8 / 16 / 24 B, in
 #      a fn and at top level, as into a `*S` local or parameter (the controls); `GP = q`, `GP = &x`, `GP = GP2`,
 #      `GP = gq()` rebind (through 6.7.10 `GP` became the value's first word); the refusals are
-#      tests/gates/frontend/struct_copy_type_checked.sh's R10-R15
+#      tests/gates/frontend/struct_copy_type_checked.sh's R10-R16
+#   R15 (6.7.11, issues/2026-10-11-deref-store-through-struct-pointer-decision.md, the user's decision (a) of
+#      2026-10-13) tests/tcyr/crossos/deref_store_struct_copy.tcyr on the same legs (floor 322): `*p = v` through a
+#      `*S` copies exactly sizeof(S) bytes at 0 / 3 / 4 / 5 / 6 / 7 / 8 / 9 / 16 / 24 B — from a local, a by-value
+#      parameter, a global, a field, a call, a method, an operator, `*q`, a `*S` local (copied, not rebound), a
+#      handle, a `*S` global, a `: *S` call — into a global (the guard byte after it kept) and into a struct inside
+#      a local (its next field kept), through `*GP`, `*(p + 0)`, `*gp()`, `*w.p`, a `*S` parameter, `*self`, a for
+#      step and at top level; an untyped value is the struct's word at sizeof(S) bytes, at most 8 (through 6.7.10
+#      always the 8-byte word: a zero-size or 3..7 B struct overrun, 9..24 B only the first 8 bytes); the
+#      refusals (another struct, `*p OP= v`) are struct_copy_type_checked.sh's R17-R25 / C1-C4
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -438,6 +447,12 @@
 #   M5a `_agc_ptr_global` answering 0                -> RED 7: R14 74 of 143 rows x7
 #   M5c `_ps_is_sz` without the zero-size arm         -> RED 7: R14 140 of 143 rows x7 (a `*E` global's step is 8:
 #                                                      `GP = l` rebound it, the 0 B rows)
+# 6.7.11 `*p = v` THROUGH A `*S` MUTATION LEDGER (2026-10-14, the same method; R15,
+# issues/2026-10-11-deref-store-through-struct-pointer-decision.md):
+#   the tree before it (ac419c94)                   -> RED 7: R15 38 of 322 rows x7 (the 8-byte word, whatever S)
+#   M9a `_dst_struct` answering 0                    -> RED 7: R15 38 of 322 rows x7
+#   M9c PARSE_STMT without clearing `_agc_ovr`       -> RED 7: R15 321 of 322 rows x7 (a closure body's own `p = m`
+#                                                      in the source taken for the outer store's destination)
 # 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
 # issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
@@ -765,6 +780,20 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R14 $leg: the values file did not build: $(grep '^error' "$D/vg_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NVG passed, 0 failed ($NVG total)" ]; then ok "R14 $leg: $LAST"
     else bad "R14 $leg: exit $RC, '$LAST' (want '$NVG passed, 0 failed ($NVG total)') $(grep -m3 'FAIL' "$D/vg_$n.out" | tr '\n' ' ')"; fi
+done
+
+TDS=tests/tcyr/crossos/deref_store_struct_copy.tcyr
+[ -f "$TDS" ] || { echo "FAIL: $G: $TDS is missing"; exit 1; }
+NDS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TDS")
+DSFLOOR=322
+if [ "$NDS" -lt "$DSFLOOR" ]; then echo "FAIL: $G: only $NDS rows in $TDS (floor $DSFLOOR) — rows were lost"; exit 1; fi
+echo "R15. $TDS ($NDS rows: *p = v through a *S copies the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TDS" "$D/ds_$n"
+    if [ "$RC" -eq -1 ]; then bad "R15 $leg: the values file did not build: $(grep '^error' "$D/ds_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NDS passed, 0 failed ($NDS total)" ]; then ok "R15 $leg: $LAST"
+    else bad "R15 $leg: exit $RC, '$LAST' (want '$NDS passed, 0 failed ($NDS total)') $(grep -m3 'FAIL' "$D/ds_$n.out" | tr '\n' ' ')"; fi
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -1397,4 +1426,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13); a struct value into a *S global copies into its pointee (R14)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
