@@ -6625,7 +6625,7 @@ entries. On Linux, it calls `getdents64`. The consumer code is identical.
 ## Targeting AGNOS (ring-3 userspace) (v6.0.48)
 
 AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace
-execution. Cyrius can cross-compile to AGNOS from any host (Linux, macOS, Windows),
+execution. Cyrius cross-compiles to AGNOS from a Linux host (x86_64 or aarch64),
 producing x86_64 ELF64 binaries that run as agnos ring-3 processes. Unlike hosted targets
 (Linux, macOS, Windows), agnos uses a distinct syscall ABI, explicit-length path arguments
 (no NUL-termination), and agnos-native open flags; the `#ifdef CYRIUS_TARGET_AGNOS`
@@ -6634,12 +6634,24 @@ preprocessor guard exposes port-specific code paths in `lib/`.
 ### Building for AGNOS
 
 ```sh
-# Cross-compile to agnos from any host
+# Cross-compile to agnos (from a Linux host)
 cyrius build --agnos src/main.cyr build/myapp
 
 # Equivalent: set the environment variable directly
 CYRIUS_TARGET_AGNOS=1 cycc < ...
 ```
+
+The Windows and macOS CLIs **refuse** `--agnos` and both bare-metal targets
+(`--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf`) by name, rc 1, before
+anything compiles: their compilers emit PE or Mach-O only.
+
+```
+error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)
+error: --agnos is not available from the macOS CLI: cycc emits Mach-O only (build agnos / bare-metal images on Linux)
+```
+
+⚠ Before 6.7.11 they accepted the flag, built the host format, printed `OK` and exited 0
+(a bare-metal build also printed a `kernel: entry …` line for an ELF that was never written).
 
 The `--agnos` flag sets the `CYRIUS_TARGET_AGNOS` predefine, which gates the
 compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `exit`,

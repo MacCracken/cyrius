@@ -208,6 +208,9 @@ fn cmd_build(source, output): i64 {
         # v6.3.3 #5: the base may be overridden by `[sections] base` — print the REAL
         # entry/base (canonical literal when unset) so the D6 report never drifts from
         # the emitted e_entry. entry = base + 0xA8 (x86 ELF64) / base + 0x78 (aarch64).
+        # Linux hosts only: the Windows and macOS CLIs refuse a bare-metal --target before
+        # compiling (`_cli_foreign_target`) — this line once described a PE / Mach-O there.
+        # CHANGELOG [6.7.11]
         if (_baremetal_target == 1) {
             if (_baremetal_aa == 1) {
                 var ab = _section_base_val;
