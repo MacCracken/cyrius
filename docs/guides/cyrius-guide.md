@@ -1366,7 +1366,7 @@ inferred from its arguments: `l = gp<S>()`, `var q: S = *gp<S>()`, `take(*gp<S>(
 `gp<S>().v` read the `S` it points at, as `fn gp(): *S` does; a `*U` instance is refused by name (naming
 the call). Through 6.7.10 the instance recorded T's step but not its struct: the pointer word was stored,
 the dereferences faulted, and `gp<S>().v` was refused.
-A `*T` GLOBAL is such a destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
+A `*T` GLOBAL is a copy destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
 struct value `l` — a variable, a by-value parameter, a call, a field `w.s`, `*p`, a method, an operator
 result — into the struct `GP` points at, as `q = l` does through a `*T` local or parameter, in a fn, at top
 level and in a for step; `GP` still points where it did. `GP = q` from another `*T` (a local, a global, a
