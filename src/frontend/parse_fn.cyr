@@ -10465,7 +10465,7 @@ fn _infer_conc_at_cursor(S): i64 {
     if (PEEKT(S) == 61) { return _ic_flit(S); }
     if (PEEKT(S) == 2) {
         var _ic_noff = PEEKV(S);
-        if (TOKTYP(S, GTI(S) + 1) == 10) {
+        if (_ic_is_call(S) == 1) {   # 6.7.11: + an explicit generic call `mk1<Pt>(p)`
             var _ic_fi = FINDFN(S, _ic_noff);
             if (_ic_fi >= 0) {
                 var _ic_ret = _ic_call_rs(S, _ic_fi);   # 6.7.9: + a generic's f64 instance
@@ -10869,19 +10869,47 @@ fn _param_float(S, li, pc, flt, pack): i64 {
     if (pc == 1) { return pack | (f << 16); }
     return pack;
 }
-# The return of the call `IDENT(` at the cursor to fi: FINDFN's entry's, or for a generic whose
-# call there reaches an f64 instance (`gid(gid(h))`) that instance's f64 — what the call is typed
-# as (`_gcall_ret_f64`). A peek: the inner resolve's own `_gi_sc` is not this inference's.
+# The return of the call `IDENT(` / `IDENT<..>(` at the cursor to fi: FINDFN's entry's, or for a
+# generic the INSTANCE's the call reaches — an f64 (`gid(gid(h))`, 6.7.9) or a struct (6.7.11:
+# `g(mk1(p))` bound T to `mk1`'s base return, the generic `Box`, and was refused against the real
+# `Box<Pt>`; `g(id(p))` bound i64). Asked of the instance whatever the base records, as `_gsc_call`
+# does: a base parsed below the call has no `: T` return yet (0). A narrow scalar instance keeps i64.
 fn _ic_call_rs(S, fi): i64 {
     var r = GFRS(S, fi);
-    if (r != 0 - 8) { return r; }
     if (_MONOMORPH_OK == 0) { return r; }
     if (GFTP(S, fi) == 0) { return r; }
-    var sv = _gi_sc;
-    var ifi = _pair_gen_inst(S, GTI(S));
-    _gi_sc = sv;
-    if (ifi >= 0) { if (GFRS(S, ifi) == 0 - 9) { return 0 - 9; } }
+    if (r < 0) { if (r != 0 - 8) { return r; } }   # a declared scalar / vector return: the instance's too
+    var ifi = _gen_call_inst(S, GTI(S));
+    if (ifi < 0) { return r; }
+    var ir = GFRS(S, ifi);
+    if (ir == 0 - 9) { return ir; }
+    if (ir > 0) { return ir; }
     return r;
+}
+# The fn the call at token ti (`name(` / `name<..>(`) reaches — a generic's instance (`_pair_gen_inst`,
+# instantiating it), else FINDFN's entry. A peek inside another call's inference: the inner resolve's
+# own `_gi_sc` is not that inference's, and is put back; the cursor sits on the inner call meanwhile,
+# so a refusal its instantiation reports (a bound) names that call, not the outer one. CHANGELOG [6.7.11]
+fn _gen_call_inst(S, ti): i64 {
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return fi; }
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    var sv = _gi_sc;
+    var st = GTI(S);
+    STI(S, ti);
+    var ifi = _pair_gen_inst(S, ti);
+    STI(S, st);
+    _gi_sc = sv;
+    return ifi;
+}
+# 1 = the IDENT at the cursor opens a call: `name(`, or a generic's resolvable `name<..>(` (`_gcall_open`).
+fn _ic_is_call(S): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt == 10) { return 1; }
+    if (nt != 19) { return 0; }
+    if (_gcall_open(S, GTI(S)) < 0) { return 0; }
+    return 1;
 }
 # A float literal at the cursor: f64 when it is the whole argument (a `,` or the `)` follows).
 fn _ic_flit(S): i64 {
@@ -11597,7 +11625,8 @@ fn _gsc_g(S, fi, off): i64 {
 # address (6.6.20), and `b: G<T>` an address-passed G<X>'s pointer as the struct (a typed pointer
 # converts, 6.7.3) — so `gx(&b)` / `gx(bp)` call `gx$Pt`, as `gx<Pt>(&b)` does. 6.7.8 bound nothing
 # for the by-value carrier's pointer: the i64 base ran on `Box<i64>`'s layout (b.n read as b.v.y,
-# 4 for 8). CHANGELOG [6.7.8], [6.7.9]
+# 4 for 8). A GENERIC call is typed by the instance it reaches (`_gsc_call`), explicit or inferred.
+# CHANGELOG [6.7.8], [6.7.9]
 fn _gsc_arg(S, a): i64 {
     var t = TOKTYP(S, a);
     if (t == 10) { return _gsc_wrap(S, a); }    # 6.7.11: `gw((w))`
@@ -11607,8 +11636,9 @@ fn _gsc_arg(S, a): i64 {
         return _gsc_addr_of(S, TOKVAL(S, a + 1));
     }
     if (t != 2) { return 0; }
-    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a); }
-    if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 10 || nt == 19) { return _gsc_call(S, a); }   # 6.7.11: + `gx(mk1<Pt>(p))`
+    if (nt == 41) { return _gsc_chain(S, a); }
     if (_gsc_name_end(S, a) == 0) { return 0; }
     return _gsc_name(S, TOKVAL(S, a));
 }
@@ -11666,9 +11696,16 @@ fn _gsc_name_end(S, a): i64 {
     if (nt == 31 || nt == 11) { return 1; }
     return 0;
 }
+# ⛔ 6.7.11 — a whole call `f(..)` / `f<..>(..)`: the struct its callee returns, or points at. A GENERIC
+# callee is the INSTANCE the call reaches (`_gen_call_inst`): `gx(mk1(p))` read `mk1`'s BASE return, the
+# generic `Box`, which is no instance, so T inferred i64 and the base was refused "a different struct
+# type" against the real `Box<Pt>` — now it calls `gx$Pt`, as `gx<Pt>(mk1(p))` does (the user's decision
+# A, 2026-10-13). CHANGELOG [6.7.11]
 fn _gsc_call(S, a): i64 {
-    if (_call_is_whole_arg(S, a) == 0) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, a));
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var fi = _gen_call_inst(S, a);
     if (fi < 0) { return 0; }
     if (_fn_rpsid != 0) {
         var ps = L64(_fn_rpsid + fi * 8);
@@ -11758,12 +11795,16 @@ fn _gen_tup_bind(S, fi, a, c): i64 {
 # token `,` / `)`) or one whole call. The first cut read the argument's first token, so `f(p.y)`,
 # `f(p.x + p.y)` and `f(p + 1)` all bound T to `Pt` and instantiated `f$Pt`, whose `v + 1` then
 # needed an undefined `Pt_add` — programs 6.6.9 compiled and ran. Anything else infers i64.
+# 6.7.11: and an explicit generic call `g(mk1<Pt>(p))`, whose instance's return binds as `mk1(p)`'s does.
 fn _gen_arg_whole(S, a): i64 {
     if (TOKTYP(S, a) != 2) { return 1; }
     var nt = TOKTYP(S, a + 1);
     if (nt == 31 || nt == 11) { return 1; }
     if (nt == 10) { return _call_is_whole_arg(S, a); }
-    return 0;
+    if (nt != 19) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    return _call_is_whole_arg(S, o - 1);
 }
 # ⛔ 6.6.10 — PARSE_FNCALL's head, for a call to a GENERIC (cursor just past its `(`). Struct
 # inference used to exist only inside the inline replay, positionally, where `_inl_bind_param`

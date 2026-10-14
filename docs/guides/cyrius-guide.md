@@ -5564,7 +5564,8 @@ The type parameter `T` may appear in parameter types (`x: T`), the return type
 the concrete type is **inferred** from the argument in the parameter `T` types —
 the first such parameter, wherever it sits (`fn g<T>(n, p: T)` infers `T` from
 `g(2, p)`'s `p`). A struct argument — a struct local or by-value struct
-parameter, a struct global, a call returning a struct — binds `T` to that struct
+parameter, a struct global, a call returning a struct (a generic call at the instance
+it reaches, 6.7.11: `g(id(p))`, `g(mk1(p))` bind `Pt` and `Box<Pt>`) — binds `T` to that struct
 on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
@@ -5615,9 +5616,13 @@ does (6.7.11): `gx((b))`, a wrapped call returning the instance, `gx(*bp)` and `
 `gw((w))` / `gw(*wp)` with `w: W1<i32>` call `gw$i32` — they reached the base, refused
 as a different struct type (through 6.7.10 a carrier of 8 bytes or less compiled there and
 read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` keeps
-the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
-(`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
-write `gx<Pt>(..)`.
+the rule above. A **generic** call's own result binds `T` as the instance that call
+reaches (6.7.11): `gx(mk1(p))` with `fn mk1<T>(x: T): Box<T>` calls `gx$Pt`, as
+`gx<Pt>(mk1(p))` does — inferred or explicit (`gx(mk1<Pt>(p))`), nested
+(`gx(mk1(mk1(p)))`), and through a `: T` generic (`gx(id(b))`); before 6.7.11 the call
+was typed by `mk1`'s base return, the generic `Box`, and refused as a different struct
+type. An `x: T` parameter wins over a struct one; `T` nested deeper (`Box<Pair<T>>`)
+is not inferred — write `gx<Pt>(..)`.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type

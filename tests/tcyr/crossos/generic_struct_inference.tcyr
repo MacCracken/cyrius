@@ -145,7 +145,16 @@
 # instance, as `t.y` on a `t: T` has not: its base is the stub and the definition compiles — it failed
 # ("expected ';', got '.'"), called or not, because the stub scan saw only T-typed names. Inferred and
 # explicit, a `*Box<T>` carrier, a struct declared below the generic, a `var x: Box<T>` local carrier
-# and `Pr<i64, T>` (slot 1); the scalar refusals are generic_type_arg_unknown_refused.sh CF1-CF6.
+# and `Pr<i64, T>` (slot 1); the scalar refusals are generic_type_arg_unknown_refused.sh CF1-CF6. G13
+# (6.7.11, the user's decision A, 2026-10-13) a GENERIC call's own result binds T — the instance the call
+# reaches, not its base: `gx(mk1(p))` (the filed repro) was refused "a different struct type" against the
+# `Box` base, the direct carrier `g(mk1(p))` named `g$Box`, `g(id(p))` met the stub (or, not a stub, ran the
+# base: `gcr_sz(gcr_id(p))` 8 for 16). Nested, explicit inner (both carriers), a scalar inner call (i64,
+# unchanged), Pt / i32 / f64 instances, generics defined below the call, every path (var, assignment, tail,
+# argument, by name, not inlined, a `*Box<T>` carrier, a generic method, a struct receive, `unbox(..).y`),
+# `Pr<T, U>`, an outer `_gi_sc` kept across U's inner resolve, and the pair scans (`?` above a wrapper typed
+# through `unbox(mk1(p))`, `unbox(mk1<Pt>(p))`, `unbox(id(b))`, `id(id<Pt>(p))`). The filed repro and the
+# refusals that stay are struct_arg_type_refused.sh R18i-R18l.
 # MUTATIONS (scratch tree, measured), each RED here:
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
@@ -168,6 +177,17 @@
 #       got '.'" at each G12 generic's `c.v.y` / `b.v.y`)
 #   MG14 (6.7.11) `_gs_var` records no carrier         -> the file does not build (G12's `var x: Box<T>`)
 #   MG15 (6.7.11) `_gs_gdef` without its token search  -> the file does not build (G12's struct below)
+#   MG16 (6.7.11) `_gsc_call` reads FINDFN's base (no `_gen_call_inst`) -> the file does not build (G13:
+#       "cannot pass 'mk1' to a parameter of a different struct type in a call to 'gx'")
+#   MG17 (6.7.11) `_ic_call_rs` without the instance's struct return -> the file does not build (naming
+#       `gcr_n$Box`)
+#   MG18 (6.7.11) `_gsc_arg` / `_gen_arg_whole` without the `name<..>(` arm -> the file does not build
+#   MG19 (6.7.11) `_ic_call_rs` asking the instance only when the base records i64 (not 0) -> the file
+#       does not build (the generics defined below the call: `gcr_y` refused as the stub)
+#   MG20 (6.7.11) `_gen_call_inst` not putting `_gi_sc` back -> the file does not build (`gcr_2s(bi, ..)`
+#       reached the base: "cannot pass 'bi' ...")
+#   MG21 (6.7.11) the pair scans' `_tok_sc_call` reading only the callee's recorded return, or without
+#       `_tok_sc_fwd`, or `_tok_gen_tp_sid` without the `<` arm -> rc 139 (G13's `?` above its wrapper)
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -761,6 +781,80 @@ fn run_struct_carrier(): i64 {
     return 0;
 }
 
+# G13 (6.7.11): a GENERIC call's own result binds T — the instance the call reaches, not its base.
+fn gcr_n<T>(p: T): i64 { return p.n; }            # a direct carrier whose base is the stub (`p.n` on T)
+fn gcr_y<T>(p: T): i64 { return p.y; }
+fn gcr_id<T>(x: T): T { return x; }
+fn gcr_sz<T>(x: T): i64 { return sizeof(T); }     # NOT a stub: `gcr_sz(gcr_id(p))` compiled at T = i64
+fn gcr_bf<T>(b: Box<T>): T { return b.v; }
+fn gcr_mkpr<A, B>(a: A, b: B): Pr<A, B> { var r: Pr<A, B>; r.a = a; r.b = b; r.n = 8; return r; }
+fn gcr_2s<T, U>(b: Box<T>, u: U): i64 { return sizeof(T) * 10 + sizeof(U); }
+struct H13 { k; }
+fn H13_cm<T>(self: H13, b: Box<T>): i64 { return b.v.y * self.k; }
+fn H13_dm<T>(self: H13, x: T): i64 { return x.y + self.k; }
+fn sc13_tail(p: Pt): i64 { return gx(mk1(p)); }
+# The `?` callers sit ABOVE their wrappers, whose `u` is typed only through a generic call's result —
+# `hbx` is a pair on Pt, one value on Qc — so the pair scans must read it as the parser binds it.
+fn sc13_qa(n, d) { var v = sc13_unba(n, d)?; return Ok(v + 22000); }
+fn sc13_unba(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(mk1(p)); return u.hbx(d); }
+fn sc13_qb(n, d) { var v = sc13_unbb(n, d)?; return Ok(v + 33000); }
+fn sc13_unbb(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(mk1<Pt>(p)); return u.hbx(d); }
+fn sc13_qc(n, d) { var v = sc13_unbc(n, d)?; return Ok(v + 44000); }
+fn sc13_unbc(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var u = unbox(gcr_id(b)); return u.hbx(d); }
+fn sc13_qd(n, d) { var v = sc13_unbd(n, d)?; return Ok(v + 55000); }
+fn sc13_unbd(n, d) { var p: Pt; p.x = n; p.y = 0; var u = gcr_id(gcr_id<Pt>(p)); return u.hbx(d); }
+
+fn run_call_result_carrier(): i64 {
+    test_group("a generic call's own result binds T (6.7.11)");
+    var p: Pt; p.x = 3; p.y = 4;
+    assert_eq(gx(mk1(p)), 8, "G13: `gx(mk1(p))`, the filed repro (was refused: a different struct type)");
+    assert_eq(gcr_n(mk1(p)), 8, "G13: the direct carrier `g(mk1(p))` (was refused naming `g$Box`)");
+    assert_eq(gx(mk1(mk1(p))), 8, "G13: nested, `gx(mk1(mk1(p)))`");
+    assert_eq(gx(mk1<Pt>(p)), 8, "G13: an explicit inner call, `gx(mk1<Pt>(p))`");
+    assert_eq(gcr_n(mk1<Pt>(p)), 8, "G13: ... into the direct carrier (was refused: the stub)");
+    assert_eq(gx(mk1(5)), 8, "G13: a scalar inner call binds i64 (the base, unchanged)");
+    assert_eq(gsz(mk1(p)) * 10000 + gsz(mk1<i32>(5)), 16080408, "G13: `gsz(mk1(p))` at Pt, `gsz(mk1<i32>(5))` at i32");
+    var h: f64 = 1.5;
+    assert_eq(gcr_bf(mk1(h)) * 2.0, 3.0, "G13: `gcr_bf(mk1(h))` at f64: its `: T` result is an f64");
+    assert_eq(gcr_y(gcr_id(p)), 4, "G13: a `: T` generic's struct instance, `g(id(p))` (was refused: the stub)");
+    assert_eq(gcr_sz(gcr_id(p)), 16, "G13: ... into a generic that is not a stub calls its instance (was 8: the base)");
+    assert_eq(gcr_y(gcr_idlater(p)) * 10 + gx(gcr_mklater(p)), 48, "G13: generics defined below the call");
+    assert_eq(gcr_id(gcr_idlater(h)) * 2.0, 3.0, "G13: ... at f64 too (6.7.9 read a base that had no `: T` yet: an i64)");
+    var b: Box<Pt> = mk1(p);
+    assert_eq(gx(gcr_id(b)), 8, "G13: a carrier through a `: T` generic, `gx(id(b))`");
+    var r = gx(mk1(p));
+    r = r * 10 + gx(mk1(p));
+    assert_eq(r, 88, "G13: `var r = gx(mk1(p));` / `r = .. gx(mk1(p));`");
+    assert_eq(sc13_tail(p), 8, "G13: tail position, `return gx(mk1(p));`");
+    assert_eq(plus1(gx(mk1(p))), 9, "G13: as an argument");
+    assert_eq(gx(b: mk1(p)), 8, "G13: by name");
+    assert_eq(gxl(mk1(p)), 16, "G13: a body that is not inlined");
+    assert_eq(gpx(mk1(p)), 8, "G13: into a `*Box<T>` carrier (the value's address)");
+    var h13: H13; h13.k = 2;
+    assert_eq(h13.cm(mk1(p)) * 10 + h13.dm(gcr_id(p)), 86, "G13: a generic method, `h.cm(mk1(p))` / `h.dm(id(p))`");
+    var w: Box<Pt> = gcr_id(mk1(p));
+    assert_eq(w.v.x * 10 + w.n, 38, "G13: `var w: Box<Pt> = id(mk1(p));`");
+    var u = unbox(mk1(p));
+    assert_eq(u.x * 10 + u.y, 34, "G13: `var u = unbox(mk1(p));` receives the Pt");
+    assert_eq(unbox(mk1(p)).y, 4, "G13: `unbox(mk1(p)).y`");
+    assert_eq(g22(gcr_mkpr<Pt, i32>(p, 4)), 5608, "G13: `Pr<T, U>` binds both from a generic call's result");
+    var bi: Box<i32>; bi.v = 7; bi.n = 8;
+    assert_eq(gcr_2s(bi, gcr_id(5)), 48, "G13: `Box<i32>` binds T while U's inner call resolves (its `_gi_sc` is put back)");
+    var t1, v1 = sc13_qa(6, 2);
+    var t2, v2 = sc13_qa(6, 0);
+    assert_eq(t1 * 100000 + v1 + t2 * 1000000 + v2 * 10, 1000990 + 22003,
+        "G13: `w(..)?` above its wrapper `var u = unbox(mk1(p)); return u.hbx(d);` (the pair scans type u)");
+    var t3, v3 = sc13_qb(6, 3);
+    assert_eq(t3 * 100000 + v3, 33002, "G13: ... `unbox(mk1<Pt>(p))`");
+    var t4, v4 = sc13_qc(6, 3);
+    assert_eq(t4 * 100000 + v4, 44002, "G13: ... `unbox(id(b))`");
+    var t5, v5 = sc13_qd(6, 3);
+    assert_eq(t5 * 100000 + v5, 55002, "G13: ... `id(id<Pt>(p))`");
+    return 0;
+}
+fn gcr_idlater<T>(x: T): T { return x; }
+fn gcr_mklater<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+
 fn main(): i64 {
     alloc_init();
     run_globals();
@@ -775,6 +869,7 @@ fn main(): i64 {
     run_call_fields_pair();
     run_stmt_generics_pair();
     run_struct_carrier();
+    run_call_result_carrier();
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
     # Off on cx: its backend emits no tail call for ANY fn (a plain 20M-deep `c(n - 1, ..)` dies

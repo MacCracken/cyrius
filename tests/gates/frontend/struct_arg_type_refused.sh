@@ -140,6 +140,18 @@
 #                                                          `*wp + 1` from being read as `*(wp + 1)`
 #   real tree                                          -> GREEN (65 refusal rows, 30 acceptance rows)
 #
+# 6.7.11 — A GENERIC CALL'S OWN RESULT BINDS T (`_gsc_call` / `_ic_call_rs` ask the instance the inner call
+# reaches, `_gen_call_inst`; the user's decision A, 2026-10-13): R18i (the filed repro, verbatim) and R18j
+# (the direct carrier, an explicit inner call, nested) were refused "a different struct type" — against the
+# `Box` base, or naming `g$Box`. R18k / R18l: the instance's return is still checked, by name. Every call
+# path, the f64 / i32 / `: T` instances and the pair scans: generic_struct_inference.tcyr G13 (its MG16-MG21).
+# Mutations (each a one-change copy of the fixed src built by the fixed compiler; measured 2026-10-14):
+#   the fix reverted (G2's compiler, ed9456c1)         -> RED R18i R18j (refused: a different struct type)
+#   `_gsc_call` reads FINDFN's base (no `_gen_call_inst`) -> RED R18i R18j
+#   `_ic_call_rs` without the instance's struct return -> RED R18j (refused naming `g$Box`)
+#   `_gsc_arg` / `_gen_arg_whole` without the `<` arm  -> RED R18j (refused: the struct type / the stub)
+#   real tree                                          -> GREEN (67 refusal rows, 32 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -371,6 +383,23 @@ accept "R18f the filed repro, verbatim" "$(cat "$RP")" 8 "$(sed 's/gx(b)/gx<Pt>(
 # `gx(&b)`, a `*Box<Pt>` local and a `*Box<Pt>` parameter — 128 before (each read 4).
 RP2="docs/development/issues/repros/2026-10-10-pointer-into-byvalue-generic-carrier-runs-base.cyr"
 accept "R18h the 6.7.9 filed repro, verbatim (was 128)" "$(cat "$RP2")" 248 "$(sed 's/ gx(/ gx<Pt>(/g' "$RP2")"
+# A GENERIC call's own result binds T as the instance it reaches (6.7.11, the user's decision A): it was
+# typed by the callee BASE's return, the generic `Box`, so `gx(mk1(p))` reached gx's base and was refused
+# against the real Box<Pt>, and the direct carrier `g(mk1(p))` minted `g$Box` (issues/2026-10-10-generic-
+# call-result-as-carrier-argument-refused.md; R18i is its repro, verbatim).
+RP3="docs/development/issues/repros/2026-10-10-generic-call-result-as-carrier-argument-refused.cyr"
+accept "R18i gx(mk1(p)), the 6.7.11 filed repro, verbatim" "$(cat "$RP3")" 8 "$(sed 's/gx(mk1(p))/gx<Pt>(mk1(p))/' "$RP3")"
+accept "R18j g(mk1(p)), g(mk1<Pt>(p)), gx(mk1(mk1(p))), gx(mk1<Pt>(p))" \
+    "${T}fn g<T>(p: T): i64 { return p.n; }
+fn go(): i64 { ${PQ} return g(mk1(p)) + g(mk1<Pt>(p)) * 2 + gx(mk1(mk1(p))) * 4 + gx(mk1<Pt>(p)) * 8; } syscall(60, go());" \
+    120 \
+    "${T}fn g<T>(p: T): i64 { return p.n; }
+fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); var bb: Box<Box<Pt>> = mk1(b); return g(b) + g(b) * 2 + gx(bb) * 4 + gx(b) * 8; } syscall(60, go());"
+# What the instance returns is still checked against the parameter: another type is refused by name.
+refuse "R18k bi(mk1(q)), a Box<Q> from a generic call into b: Box<Pt>" "cannot pass 'mk1' $MA 'bi'" \
+    "${T}fn go(): i64 { ${PQ} return bi(mk1(q)); } syscall(60, go());"
+refuse "R18l gx<Pt>(mk1(q)): the explicit outer keeps its instance" "cannot pass 'mk1' $MA 'gx\$Pt'" \
+    "${T}fn go(): i64 { ${PQ} return gx<Pt>(mk1(q)); } syscall(60, go());"
 refuse "R19 a Box<Pt> local into b: Box" "cannot pass 'b' $MA 'bs'" \
     "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return bs(b); } syscall(60, go());"
 refuse "R20 a Box local into b: Box<Pt>" "cannot pass 'b' $MA 'bi'" \

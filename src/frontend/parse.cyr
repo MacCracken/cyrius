@@ -341,6 +341,12 @@ fn _gen_ret_tp(S, fi): i64 {
 fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     var w = _gen_ret_tp(S, fi);
     if (w < 0) { return 0; }
+    return _tok_gen_tp_sid(S, a, i, j, fi, w);
+}
+# ... the struct type parameter `w` of the generic fi binds at the call at token j (`_tok_gen_ret_sid`'s
+# rule). 6.7.11: a whole argument that is an explicit generic call `g(mk1<Pt>(p))` too, as the parser
+# binds it (`_gen_arg_whole`).
+fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var r = 0;
     if (TOKTYP(S, j + 1) == 19) {
         var k = j + 2;
@@ -361,8 +367,14 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
     if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
-    elif (nt == 10) { if (_call_is_whole_arg(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
+    elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
     return r;
+}
+# 1 = the call `name(..)` / `name<..>(..)` at token at is the whole argument (a `,` or `)` follows it).
+fn _tok_call_whole(S, at): i64 {
+    var o = _pair_ret_open(S, at);
+    if (o < 0) { return 0; }
+    return _call_is_whole_arg(S, o - 1);
 }
 # 6.7.8 — the same when T is carried by a generic struct parameter (`_gs_carrier`, field
 # f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
@@ -377,23 +389,77 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if (at < 0) { return 0; }
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
+    return _tok_sc_arg(S, a, i, at, g, f);
+}
+# ... the X the whole argument at token at holds in the slot of G (the generic struct g) — as
+# `_gsc_arg` reads it.
+fn _tok_sc_arg(S, a, i, at, g, f): i64 {
     at = _pwrap_in(S, at);   # 6.7.11: `gw((w))`, as `_gsc_wrap`
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) == 8) { return _tok_sc_deref(S, a, i, at + 1, g, f); }   # 6.7.11: `gw(*wp)`
     if (TOKTYP(S, at) == 27) {
         at = at + 1;
         if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
+        if (TOKTYP(S, at + 1) == 19) { return 0; }   # `&f<..>(..)` (6.7.11: the call arm takes `<`)
         f = f | (1 << 20);
     }
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
     var r = 0;
     if (nt == 31 || nt == 11) { r = _tok_sc_name(S, a, i, at, g, f); }
-    elif (nt == 10) {
-        if (_call_is_whole_arg(S, at) == 1) { r = _sinst_conc(S, _tok_init_sid(S, a, i, at), g, (f >> 8) & 1); }
-    }
+    elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_sc_call(S, a, i, at, g, f); } }
     if (r > 0) { if (GSTP(S, r - 1) == 0) { return r; } }
     return 0;
+}
+# ⛔ 6.7.11 — a whole call `f(..)` / `f<..>(..)` (token at): the X in T's slot of the instance it returns,
+# as `_gsc_call` binds it. A GENERIC callee is read through its own type parameters: declared `: G<..,
+# U, ..>` with U in that slot, what U binds at this call (`_tok_gen_tp_sid`: `unbox(mk1(p))`,
+# `unbox(mk1<Pt>(p))`); declared `: U` with U carried by a `U` parameter, the X of the argument there
+# (`unbox(idb(b))`). The parser now calls `unbox$Pt` in each, so a `?` above a wrapper typed through it
+# needs its pair. U carried through a struct (`unbox(unbox(bb))`, a G<G<X>>) is deeper: 0.
+fn _tok_sc_call(S, a, i, at, g, f): i64 {
+    var slot = (f >> 8) & 1;
+    var r = _sinst_conc(S, _tok_init_sid(S, a, i, at), g, slot);
+    if (r != 0) { return r; }
+    var fi = FINDFN(S, TOKVAL(S, at));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    var w = _gen_ret_targ_tp(S, fi, g, slot);
+    if (w >= 0) { return _tok_gen_tp_sid(S, a, i, at, fi, w); }
+    return _tok_sc_fwd(S, a, i, at, fi, g, f);
+}
+fn _tok_sc_fwd(S, a, i, at, fi, g, f): i64 {
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return 0; }
+    var arg = _call_arg_for(S, fi, _pair_ret_open(S, at), pk - 1);
+    if (arg < 0) { return 0; }
+    return _tok_sc_arg(S, a, i, arg, g, f);
+}
+# Which type parameter (0 / 1) of the generic fi sits as the WHOLE type argument in `slot` of its
+# `: G<..>` return, G the generic struct g, or -1 (another return, or a nested / concrete argument).
+fn _gen_ret_targ_tp(S, fi, g, slot): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 2) { return 0 - 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, c + 2)) != g) { return 0 - 1; }
+    if (TOKTYP(S, c + 3) != 19) { return 0 - 1; }
+    var k = c + 4;
+    if (slot == 1) { if (TOKTYP(S, k + 1) != 31) { return 0 - 1; } k = k + 2; }
+    if (TOKTYP(S, k) != 2) { return 0 - 1; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31 && kt != 39 && kt != 152) { return 0 - 1; }
+    var rn = TOKVAL(S, k) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
 }
 # 6.7.11 — `*name` (token `at` on the name) as a whole argument: the X of its declaration's `: *G<..,
 # X, ..>` annotation, as `_gsc_deref` binds T through the pointer's pointee. A value's `*b`, a global, a
