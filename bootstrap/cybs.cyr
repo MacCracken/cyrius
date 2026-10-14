@@ -4713,6 +4713,8 @@ fixup_fn_call:
     add rsi, 0x7300000
     add rsi, rax
     mov rax, [rsi]       # rax = fn entry codebuf offset
+    cmp rax, -1          # never defined: a statement call registered the name (6.7.11 - it was
+    je fixup_fn_undef    # patched to code - 1, a silent SIGSEGV)
     pop rcx
     pop rbx
     push rdx
@@ -4734,6 +4736,46 @@ fixup_fn_call:
     pop rcx
     inc rbx
     jmp fixup_loop
+# A call to a fn that was never defined is refused, naming it: a statement-position call registers
+# an unknown name (so a later definition can fill it in), and `fp(5);` on a fn-pointer variable
+# takes the same arm. cycc refuses both ("undefined function"). CHANGELOG [6.7.11]
+fixup_fn_undef:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_undef_fn
+    mov rdx, 26
+    syscall
+    shl rbx, 3
+    mov rsi, r15
+    add rsi, 0x7200000
+    add rsi, rbx
+    mov rax, [rsi]       # the fn's name, a pool offset
+    mov rcx, 10
+    call cybs_write_name
+    jmp sys_exit_err
+# Writes the name at pool offset rax (r15 + 0x3400000, NUL-terminated) to stderr with the byte in
+# rcx in place of its NUL. Only an exiting error path calls it: the pool is dead. CHANGELOG [6.7.11]
+cybs_write_name:
+    mov rsi, r15
+    add rsi, 0x3400000
+    add rsi, rax
+    mov rdx, rsi
+cwn_scan:
+    mov rax, [rdx]
+    and rax, 0xFF
+    inc rdx
+    cmp rax, 0
+    jne cwn_scan
+    dec rdx              # rdx = the NUL
+    mov rax, [rdx]
+    or rax, rcx
+    mov [rdx], rax
+    inc rdx
+    sub rdx, rsi         # the name's length + 1
+    mov rax, 1
+    mov rdi, 2
+    syscall
+    ret
 fixup_fn_addr:
     push rbx
     mov rbx, rax
@@ -5520,6 +5562,8 @@ err_syntax:
     db "syntax error\n"
 err_undef:
     db "undefined variable\n"
+err_undef_fn:
+    db "cybs: undefined function: "
 err_bang:
     db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
 err_char:
