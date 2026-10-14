@@ -71,6 +71,12 @@
 #      see a struct value; a callee in a variable stays a word, its struct-typed receive a handle (the
 #      user's decision, 2026-10-13: FP6). The runtime half is tests/tcyr/crossos/fncall_struct_result.tcyr,
 #      run as B1-B6 on x86_64 / IR=1 / IR=3 / DCE / aarch64 (qemu) / cx (cxvm)
+#   EV (6.7.11, the call-arguments lane) under CYRIUS_IR=3, LASE kept a just-stored local's rax image
+#      across EFLADDR's `lea rax, [rbp+d]`, which recorded no IR node, and dropped the reload after it:
+#      `o.with2(x)` / `bs(h, x)` / `var b: B = mk(x)` right after `var x = 5;` passed the aggregate's
+#      ADDRESS as x (an ASLR-dependent exit). EFLADDR records IR_RAW_EMIT, as ELOAD_LOCAL_ADDR does. EV1-EV4
+#      are the filed repros verbatim, built under CYRIUS_IR=3; tcyr E1-E5 run them on every leg (A3 is the
+#      one that was wrong)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -172,6 +178,8 @@
 #   M-FP5 `_icall_ret` never 1 (`return fncall1(&f, ..)`)         -> RED FP5 (refused), B1-B6 (refused)
 #   M-FP6 `_try_push_struct_addr_arg` without its `_icall_sid_at` arm -> RED FP4 (139), B1-B5 (139), B6 (cx: 1)
 #   M-FP7 `_gz_unary` without its `_gz_icall` arm (the zone)      -> RED FP7, B1-B6 ("the declaration zone misread ..")
+#   M-EV1 x86 EFLADDR without its `_IR_REC0(S, IR_RAW_EMIT)` (= the A3 compiler) -> RED EV1-EV4 (exit 30 +
+#       the low byte of the address / 1), A3 (tcyr E1-E5); A1 A2 A4-A6 and B1-B6 green (only IR=3 applies LASE)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -199,6 +207,13 @@ refused() {   # <name> <message fragment> <what> <source>
 exits() {   # <name> <want> <what> <source>
     printf '%b' "$4" > "$T/$1.cyr"
     build "$1"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
+}
+exits_ir3() {   # <name> <want> <what> <source>: built under CYRIUS_IR=3
+    printf '%b' "$4" > "$T/$1.cyr"
+    rc=0; CYRIUS_IR=3 timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
     chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
@@ -314,6 +329,12 @@ exits fp7 61 "FP7: var a, b = fncall1(&mk2, 5) keeps its two words; var g: P1 = 
 refused fp8 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP8: var g: P3 = fncall1(&mk3, 5); at top level, refused by name" "${FPH}var g: P3 = fncall1(&mk3, 5);\nsyscall(60, g.a);\n"
 refused fp9 "fn return struct-id differs from declared var type" "FP9: var q: Q3 = fncall1(&mk3, 5); (another struct: SIGSEGV)" "${FPH}struct Q3 { a; b; c; }\nfn main() { var q: Q3 = fncall1(&mk3, 5); return q.a; }$E"
 
+# EV (6.7.11) — the filed repros verbatim, under CYRIUS_IR=3: a just-stored local after an EFLADDR `lea`.
+exits_ir3 ev1 35 "EV1: o.with2(x) after var x = 5; under CYRIUS_IR=3 (the filed repro: 30 + the low byte of &o)" "struct S8 { v; }\nimpl S8 { fn with2(self: *S8, n): i64 { return self.v * 10 + n; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.with2(x); }\nsyscall(60, a2());\n"
+exits_ir3 ev2 0 "EV2: o.same(x), the identity probe, under CYRIUS_IR=3 (the filed repro: 1, n == self)" "struct S8 { v; }\nimpl S8 { fn same(self: *S8, n): i64 { if (n == self) { return 1; } return 0; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.same(x); }\nsyscall(60, a2());\n"
+exits_ir3 ev3 35 "EV3: bs(h, x), a 16 B by-value struct, under CYRIUS_IR=3 (the filed repro: varies)" "struct H { a; b; }\nfn bs(h: H, n): i64 { return h.a * 10 + n; }\nfn g(): i64 { var h: H; h.a = 3; h.b = 0; var x = 5; return bs(h, x); }\nsyscall(60, g());\n"
+exits_ir3 ev4 5 "EV4: var b: B = mk(x), a 24 B result, under CYRIUS_IR=3 (the filed repro: varies)" "struct B { a; b; c; }\nfn mk(n): B { var k: B; k.a = n; k.b = 0; k.c = 0; return k; }\nfn g(): i64 { var x = 5; var b: B = mk(x); return b.a; }\nsyscall(60, g());\n"
+
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
@@ -344,4 +365,4 @@ else bad "A6 / B6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP): values on x86_64 / IR / DCE / aarch64 / cx (A, B)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, B)"

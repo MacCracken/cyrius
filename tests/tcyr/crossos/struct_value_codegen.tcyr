@@ -38,6 +38,12 @@
 #   R  (6.7.6 follow-up, E2) parentheses around a struct fn's WHOLE return value are transparent:
 #      `return (j);`, `return (mk3(v));`, `return ((j));`, `return (a + b);` were refused ("return must
 #      be a bare local identifier ..." / "... got `(...)`"), and `return (a) + b;` with them.
+#   E  (6.7.11) under CYRIUS_IR=3 (the gate's A3 leg), LASE kept a just-stored local's rax image
+#      across EFLADDR's unrecorded `lea rax, [rbp+d]` and dropped the reload after it, so the
+#      aggregate's ADDRESS went out as the local: a method on an inline struct local (`o.with2(x)`:
+#      exit 30 + the low byte of `&o` where 35 is right; `o.same(x)` saw n == self), a by-value 16 B
+#      struct argument (`bs(h, x)`) and a struct-returning call's argument (`mk(x)`). Every other
+#      leg was right. Each shape is its own fn: the store, the `lea` and the reload must be adjacent.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -554,9 +560,34 @@ fn strs(): i64 {
     return 0;
 }
 
+# E — a just-stored local passed after an EFLADDR `lea` (the receiver, a by-value struct, a result buffer).
+struct EA8 { v; }
+impl EA8 {
+    fn with2(self: *EA8, n): i64 { return self.v * 10 + n; }
+    fn same(self: *EA8, n): i64 { if (n == self) { return 1; } return 0; }
+}
+struct EAH { a; b; }
+struct EAB { a; b; c; }
+fn e_bs(h: EAH, n): i64 { return h.a * 10 + n; }
+fn e_mk(n): EAB { var k: EAB; k.a = n; k.b = 0; k.c = 0; return k; }
+fn e_m1(): i64 { var o: EA8; o.v = 3; var x = 5; return o.with2(x); }
+fn e_m2(): i64 { var o: EA8; o.v = 3; var x = 5; return o.same(x); }
+fn e_m3(): i64 { var o: EA8; o.v = 3; var x = 5; return o.with2(x + 0); }
+fn e_b1(): i64 { var h: EAH; h.a = 3; h.b = 0; var x = 5; return e_bs(h, x); }
+fn e_r1(): i64 { var x = 5; var b: EAB = e_mk(x); return b.a; }
+fn eladdr(): i64 {
+    assert_eq(e_m1(), 35, "E1: o.with2(x) right after var x = 5; (IR=3: 30 + &o)");
+    assert_eq(e_m2(), 0, "E2: o.same(x): the argument is not the receiver (IR=3: 1)");
+    assert_eq(e_m3(), 35, "E3: o.with2(x + 0): the + reads the reload (IR=3: 30 + &o)");
+    assert_eq(e_b1(), 35, "E4: e_bs(h, x), a 16 B by-value struct then the local (IR=3: 30 + &h)");
+    assert_eq(e_r1(), 5, "E5: var b: EAB = e_mk(x), the result buffer then the local (IR=3: &b)");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
     strs();
+    eladdr();
     flags();
     intrinsics();
     assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");
