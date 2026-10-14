@@ -734,7 +734,9 @@ fn _cli_features_all(): i64 {
 # `--agnos` and both bare-metal `--target` values silently built the HOST format, printed OK and
 # exited 0 — on Windows (wine), ecb and ach alike (measured) — plus a "kernel: entry …" line for an
 # ELF that was never written. A dropped flag that changes the artifact is the 6.6.5 one-argument
-# rule's defect. What the host emits, or 0 where the selectors are honoured (Linux).
+# rule's defect. What the host emits, or 0 on Linux: x86_64 Linux honours the selectors (src/main.cyr
+# reads them); the aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64
+# bare-metal target (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
 # CHANGELOG [6.7.11]
 fn _cli_host_emits_only(): i64 {
     #ifdef CYRIUS_TARGET_WIN

@@ -16,13 +16,15 @@
 # 2026-10-14 on ecb (arm64) and ach (x86_64), all three wrote a Mach-O at rc 0 (ach's aarch64 one
 # failed only because no cycc_aarch64 ships there). The fix: cbt/cli_args.cyr `_cli_foreign_target`,
 # the first block of `_cli_apply_target`, asks `_cli_host_emits_only()` (`#ifdef CYRIUS_TARGET_WIN` /
-# `CYRIUS_TARGET_MACOS`; 0 on Linux, where the forks honour the selectors).
+# `CYRIUS_TARGET_MACOS`; 0 on Linux: x86_64 Linux, where src/main.cyr honours the selectors — the
+# aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64 bare-metal target,
+# issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
 #
 # THE ROWS.
 #   S  (always) the CLI built for each host carries exactly its own refusal: the PE build the
 #      Windows text, the x86_64 and arm64 Mach-O builds the macOS text, the Linux build neither.
 #      (A Mach-O cannot run here; ecb / ach ran it by hand — see the CHANGELOG.)
-#   L  (always) the Linux CLI keeps all three selectors: `--agnos` and the x86_64 bare-metal target
+#   L  (always) the x86_64 Linux CLI keeps all three selectors: `--agnos` and the x86_64 bare-metal target
 #      write an ELF (rc 0; the kernel line printed), the aarch64 bare-metal one an aarch64 ELF.
 #   W  (wine) cyrius.exe + cycc.exe built from this tree: the three selectors each rc 1, the exact
 #      named error on stderr, no output file, a pre-existing output left byte-for-byte; `run --agnos`

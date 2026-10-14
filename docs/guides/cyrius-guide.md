@@ -6639,7 +6639,7 @@ entries. On Linux, it calls `getdents64`. The consumer code is identical.
 ## Targeting AGNOS (ring-3 userspace) (v6.0.48)
 
 AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace
-execution. Cyrius cross-compiles to AGNOS from a Linux host (x86_64 or aarch64),
+execution. Cyrius cross-compiles to AGNOS from an x86_64 Linux host,
 producing x86_64 ELF64 binaries that run as agnos ring-3 processes. Unlike hosted targets
 (Linux, macOS, Windows), agnos uses a distinct syscall ABI, explicit-length path arguments
 (no NUL-termination), and agnos-native open flags; the `#ifdef CYRIUS_TARGET_AGNOS`
@@ -6648,7 +6648,7 @@ preprocessor guard exposes port-specific code paths in `lib/`.
 ### Building for AGNOS
 
 ```sh
-# Cross-compile to agnos (from a Linux host)
+# Cross-compile to agnos (from an x86_64 Linux host)
 cyrius build --agnos src/main.cyr build/myapp
 
 # Equivalent: set the environment variable directly
@@ -6657,7 +6657,9 @@ CYRIUS_TARGET_AGNOS=1 cycc < ...
 
 The Windows and macOS CLIs **refuse** `--agnos` and both bare-metal targets
 (`--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf`) by name, rc 1, before
-anything compiles: their compilers emit PE or Mach-O only.
+anything compiles: their compilers emit PE or Mach-O only. ⚠ The aarch64 Linux CLI does not
+honour `--agnos` or `--target=x86_64-bare-metal-elf` yet: its compiler reads `CYRIUS_KERNEL`
+alone, so it writes an aarch64 binary at rc 0 (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
 
 ```
 error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)
