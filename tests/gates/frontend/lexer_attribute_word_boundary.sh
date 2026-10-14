@@ -68,6 +68,13 @@
 #           the names in them are not references
 #   C7      over-correction guard for the cbt CLI: a real `#inline` / `#deprecated(`
 #           stays code, so the call after it still counts
+#   C0      (6.7.11) census: the six source-scanning tools (cyrlint, cyrfmt, cyrdoc,
+#           cbt/srcscan.cyr, cyrius_api_surface, cyaudit) each include
+#           src/frontend/lex_attr.cyr and none carries a hand row of a word derived from
+#           LEXATTRWORD's rows
+#   C8..C12 (6.7.11) every derived word, as `#<w> q`, `#<w>(q)` and `#<w>x q`, reads as the
+#           lexer reads it in cyrlint (C8), cyrfmt (C9), cyrdoc (C10), the cbt CLI's
+#           `cyrius coverage` (C11) and cyaudit vet (C12); F9 the same for api-surface
 #   E1..E6  the three probes left unbounded in the same file after D (bite 5h):
 #           ISENDIF, ISENDPLAT, ISSRCLINE. ISELSE already carried the boundary
 #           inline, which is why these three stood out. `#endifoo note` — a
@@ -151,6 +158,18 @@
 #   6.7.3 (F8/F8b; real tree → 51/51):
 #   M19 the 6.7.2 tool (_asf_body_close walks with _asf_lexst: every `#` a comment)
 #       → 1 FAIL: F8 (it lists `ghost`)
+#   6.7.11 (C0, C8..C12, F9; real tree → 58/58). The six tools now INCLUDE
+#   src/frontend/lex_attr.cyr, so the per-tool `_*_attr_bound` copies that M5, M6 and M11..M16
+#   forced are gone; a mirror defect now means a hand row coming back, or a tool not
+#   including the list. Each mutant is a scratch copy of the tree, its compiler built from it:
+#   M20 a hand row restored in one tool (cyrlint: `"#io"` read as a comment)
+#       → 2 FAIL: C0 (programs/cyrlint.cyr:<line>(#io)), C8 ([#io q] want code, got comment)
+#   M21 an eleventh word (`packed`, ap 0) added to LEXATTRWORD only
+#       → 1 FAIL: B0 (11 LEXATTRWORD rows, set difference `packed`); the six tools read it
+#         as the lexer does, because they include the list
+#   M22 M21 with the six tools' 6.7.10 hand copies restored
+#       → 8 FAIL: B0, C0 (no include + every hand row), and C8, C9, C10, C11, C12, F9 each
+#         on `[#packed q] want code, got comment` — the drift this release removes
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -220,16 +239,19 @@ for row in 'ioctl numbers' 'allocator notes' 'inlined by hand' 'assertion holds'
 done
 
 # ── Axis B0 — census. Three independent counts of "how many attributes are there".
-#    (a) the token table above LEXATTRWORD in lex.cyr (`token NNN = HASH_*`)
+#    (a) the token table above LEXATTRWORD (`token NNN = HASH_*`)
 #    (b) the `_lex_attr_is` rows in LEXATTRWORD — each one a word AND its boundary
 #        check, so a row is a word the lexer arms (6.6.20: one list, shared by LEX and
 #        the preprocessor's PP_LEXST_AT; it was ten inline byte chains, one
 #        LEXATTRBOUND call site each)
 #    (c) the probe table below
-grep -oE 'token [0-9]+ = HASH_[A-Z_]+' src/frontend/lex.cyr \
+#    6.7.11: both (a) and (b) live in src/frontend/lex_attr.cyr, the pure file lex.cyr and the
+#    six source-scanning tools include (axis C0).
+LEXATTR=src/frontend/lex_attr.cyr
+grep -oE 'token [0-9]+ = HASH_[A-Z_]+' "$LEXATTR" \
     | sed 's/.*HASH_//' | tr 'A-Z' 'a-z' | sort -u > "$D/census.txt"
 ncensus=$(grep -c . "$D/census.txt" || true)
-grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+"' src/frontend/lex.cyr \
+grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+"' "$LEXATTR" \
     | sed 's/.*"\([a-z_]*\)"/\1/' | sort > "$D/rows.txt"
 nbound=$(grep -c . "$D/rows.txt" || true)
 PROBED='alloc assert deprecated inline io must_use naked pe_import pure regalloc'
@@ -237,11 +259,11 @@ for a in $PROBED; do printf '%s\n' "$a"; done | sort > "$D/probed.txt"
 nprobed=$(grep -c . "$D/probed.txt" || true)
 missing="$(comm -3 "$D/probed.txt" "$D/census.txt" | tr -d '\t' | tr '\n' ' ')$(comm -3 "$D/probed.txt" "$D/rows.txt" | tr -d '\t' | tr '\n' ' ')"
 if [ "$ncensus" = "$nbound" ] && [ "$ncensus" = "$nprobed" ] && [ -z "$(printf '%s' "$missing" | tr -d ' ')" ]; then
-    printf '  ok: axis B0 — %s attributes in lex.cyr, %s LEXATTRWORD rows, %s probed\n' \
+    printf '  ok: axis B0 — %s attributes in lex_attr.cyr, %s LEXATTRWORD rows, %s probed\n' \
         "$ncensus" "$nbound" "$nprobed"
     pass=$((pass+1))
 else
-    printf '  FAIL: axis B0 — census mismatch: lex.cyr lists %s, %s LEXATTRWORD rows, %s probed; set difference: %s\n' \
+    printf '  FAIL: axis B0 — census mismatch: lex_attr.cyr lists %s, %s LEXATTRWORD rows, %s probed; set difference: %s\n' \
         "$ncensus" "$nbound" "$nprobed" "$missing"
     fail=$((fail+1))
 fi
@@ -317,8 +339,9 @@ arm B11 '#assert failed' \
 '#assert( stays a LOUD error rather than becoming a silent comment' \
 '#assert(8 == 9)\nvar A = 42;\nsyscall(60, A);\n'
 
-# ── Group C — the four mirror readers must take the same boundary as the lexer,
-#    or a tool disagrees with the compiler about which `#` lines are comments.
+# ── Group C — the tools that scan cyrius source must take the same boundary as the lexer,
+#    or a tool disagrees with the compiler about which `#` lines are comments. Since 6.7.11
+#    they include the lexer's own list (src/frontend/lex_attr.cyr; C0 below).
 build_tool() {
     "$CC" < "programs/$1.cyr" > "$D/$1" 2> "$D/$1.buildlog" || {
         printf '  FAIL: could not build %s\n' "$1"; fail=$((fail+1)); return 1; }
@@ -437,6 +460,136 @@ else
             pass=$((pass+1))
         fi
     fi
+fi
+
+# ── C0 + C8..C12 (6.7.11) — ONE LIST, NOT SIX COPIES. The six tools that scan cyrius source
+#    (cyrlint, cyrfmt, cyrdoc, cbt/srcscan.cyr — the CLI and cyrius-lsp —, cyrius_api_surface
+#    and cyaudit) each carried a hand-copied ten-row table of the lexer's attribute words, and
+#    only cyaudit's was held to LEXATTRWORD; a word added to the lexer would have left five of
+#    them reading its line as a comment. They now INCLUDE src/frontend/lex_attr.cyr.
+#    C0 is the census: each of the six includes it (a column-0 directive) and none carries a
+#    hand row of its own — a `"#<word>"` literal (the memeq form) or a `"<word>", 0|1)` row
+#    (the _attr_is form) for any word DERIVED from LEXATTRWORD's rows.
+#    C8..C12 (and F9 for api-surface) probe EVERY derived word through each tool in three
+#    forms: `#<w> q` (an attribute: code), `#<w>(q)` (code only where the row passes ap=1 —
+#    `(` ends only #assert, #deprecated and #pe_import) and `#<w>x q` (a comment). The
+#    expected reading is derived from the row, never from the tool.
+TOOLS6='programs/cyrlint.cyr programs/cyrfmt.cyr programs/cyrdoc.cyr cbt/srcscan.cyr programs/cyrius_api_surface.cyr programs/cyaudit.cyr'
+grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+", [01]\)' "$LEXATTR" \
+    | sed 's/.*"\([a-z_]*\)", \([01]\))/\1 \2/' > "$D/wordap.txt"
+nwords=$(grep -c . "$D/wordap.txt" || true)
+c0bad=""
+for t in $TOOLS6; do
+    grep -qE '^include "src/frontend/lex_attr\.cyr"' "$t" || c0bad="$c0bad $t:no-include"
+    while read -r w ap; do
+        hits=$(grep -nE "\"#$w\"|\"$w\", [01]\\)" "$t" | cut -d: -f1 | paste -sd, - || true)
+        [ -z "$hits" ] || c0bad="$c0bad $t:$hits(#$w)"
+    done < "$D/wordap.txt"
+done
+if [ "$nwords" -lt 10 ]; then
+    printf '  FAIL: axis C0 — only %s rows derived from LEXATTRWORD (want >= 10): the derivation is broken\n' "$nwords"
+    fail=$((fail+1))
+elif [ -z "$c0bad" ]; then
+    printf '  ok: axis C0 — the six tools include src/frontend/lex_attr.cyr and carry no hand row of the %s words\n' "$nwords"
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis C0 — a tool holds its own attribute list or lacks the include:%s\n' "$c0bad"
+    fail=$((fail+1))
+fi
+
+# The probe forms: `fhead <word> <form>` prints the line head; `fwant <ap> <form>` the reading
+# the lexer gives it (code / comment).
+fhead() {
+    case "$2" in
+        s) printf '#%s q' "$1" ;;
+        p) printf '#%s(q)' "$1" ;;
+        x) printf '#%sx q' "$1" ;;
+    esac
+}
+fwant() {
+    case "$2" in
+        s) echo code ;;
+        p) if [ "$1" = 1 ]; then echo code; else echo comment; fi ;;
+        x) echo comment ;;
+    esac
+}
+# dprobe <axis> <label> <fn>: run `<fn> <word> <form>` (prints code / comment / anything else)
+# for every derived word and form; the axis fails listing each probe that disagrees.
+dprobe() {
+    dax=$1; dlabel=$2; dfn=$3
+    dbad=""; dn=0
+    while read -r w ap; do
+        for fm in s p x; do
+            dn=$((dn+1))
+            dgot=$("$dfn" "$w" "$fm")
+            dexp=$(fwant "$ap" "$fm")
+            [ "$dgot" = "$dexp" ] || dbad="$dbad [$(fhead "$w" "$fm")] want $dexp, got $dgot;"
+        done
+    done < "$D/wordap.txt"
+    if [ "$dn" -lt 30 ]; then
+        printf '  FAIL: axis %s — %s: only %s probes ran (want 3 per word, >= 30)\n' "$dax" "$dlabel" "$dn"
+        fail=$((fail+1))
+    elif [ -z "$dbad" ]; then
+        printf '  ok: axis %s — %s: all %s derived probes read as the lexer reads them\n' "$dax" "$dlabel" "$dn"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis %s — %s:%s\n' "$dax" "$dlabel" "$dbad"
+        fail=$((fail+1))
+    fi
+}
+mkdir -p "$D/dp"
+# cyrlint: the `{` after the head is counted only on a code line, so the `}` two lines down
+# is unmatched (a warning) exactly when the head reads as a comment.
+dp_lint() {
+    printf '%s {\n    x;\n}\n' "$(fhead "$1" "$2")" > "$D/dp/l.cyr"
+    if timeout 10 "$D/cyrlint" "$D/dp/l.cyr" < /dev/null 2>&1 | grep -q '^0 warnings'; then echo code; else echo comment; fi
+}
+# cyrfmt --check: on a code line the `{` indents the next line, so `    x;` is canonical
+# (rc 0); on a comment line it is not (rc 1).
+dp_fmt() {
+    printf '%s {\n    x;\n}\n' "$(fhead "$1" "$2")" > "$D/dp/f.cyr"
+    drc=0; timeout 10 "$D/cyrfmt" --check "$D/dp/f.cyr" < /dev/null > /dev/null 2>&1 || drc=$?
+    case "$drc" in 0) echo code ;; 1) echo comment ;; *) echo "rc=$drc" ;; esac
+}
+# cyrdoc --check: a comment line above a fn documents it (rc 0); an attribute does not (rc 1).
+dp_doc() {
+    printf '%s\nfn dd(): i64 { return 1; }\n' "$(fhead "$1" "$2")" > "$D/dp/d.cyr"
+    drc=0; timeout 10 "$D/cyrdoc" --check "$D/dp/d.cyr" < /dev/null > /dev/null 2>&1 || drc=$?
+    case "$drc" in 0) echo comment ;; 1) echo code ;; *) echo "rc=$drc" ;; esac
+}
+# cyaudit vet: on a code line the string opened after the head closes on the next line, so the
+# include below it is a directive (MISSING); on a comment line the next line's quote opens a
+# string that swallows the include (no dependencies).
+dp_audit() {
+    printf '%s 1 == 1, "x\ny"\ninclude "lib/missing_mod.cyr"\n' "$(fhead "$1" "$2")" > "$D/dp/a.cyr"
+    ( cd "$D/dp" && timeout 10 "$D/cyaudit" vet a.cyr ) < /dev/null > "$D/dp/a.out" 2>&1 || true
+    if grep -qE 'MISSING +lib/missing_mod.cyr' "$D/dp/a.out"; then echo code
+    elif grep -q 'no dependencies' "$D/dp/a.out"; then echo comment
+    else echo "other: $(head -1 "$D/dp/a.out" | cut -c1-40)"; fi
+}
+[ -x "$D/cyrlint" ] && dprobe C8 'cyrlint (_lx_attr_len)' dp_lint
+[ -x "$D/cyrfmt" ] && dprobe C9 'cyrfmt --check (_cf_attr_len)' dp_fmt
+[ -x "$D/cyrdoc" ] && dprobe C10 'cyrdoc --check (_doc_attr_len)' dp_doc
+if build_tool cyaudit; then dprobe C12 'cyaudit vet (_au_attr_len)' dp_audit; fi
+# C11 — srcscan, through `cyrius coverage`: a name on a code line is a reference, a name on a
+# comment line is not. One project, one fn per probe; the probe's `q` is that fn's name.
+if [ "$cbt_ok" -eq 1 ]; then
+    rm -rf "$D/dcov"; mkdir -p "$D/dcov/src" "$D/dcov/tests"
+    : > "$D/dcov/src/m.cyr"; : > "$D/dcov/tests/t.tcyr"
+    while read -r w ap; do
+        for fm in s p x; do
+            printf 'fn c_%s_%s(): i64 { return 1; }\n' "$w" "$fm" >> "$D/dcov/src/m.cyr"
+            fhead "$w" "$fm" | sed "s/q/c_${w}_${fm}/" >> "$D/dcov/tests/t.tcyr"
+            printf ' notes\n' >> "$D/dcov/tests/t.tcyr"
+        done
+    done < "$D/wordap.txt"
+    ( cd "$D/dcov" && "$D/cyrius" -v coverage ) < /dev/null > "$D/dcov.out" 2>&1 || true
+    dp_cov() {
+        if ! grep -q 'Functions referenced: ' "$D/dcov.out"; then echo "no-measure"
+        elif grep -qx "  src/m.cyr: c_$1_$2" "$D/dcov.out"; then echo comment
+        else echo code; fi
+    }
+    dprobe C11 'cyrius coverage (srcscan _src_attr_len)' dp_cov
 fi
 
 # ── Group D — THE SAME ROOT CAUSE IN THE PREPROCESSOR (v6.6.6, review round).
@@ -725,6 +878,24 @@ if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
     F8E=$(femit F8 "$F8")
     faxis F8 'an attribute line in a #derive body is code: the body closes where the compiler closes it' "$F8E" "$(fsnap F8 "$F8")"
     faxis F8b 'ANTI-VACUOUS: the compiler emits the accessors and after_two, and no ghost' "after_two gh_a gh_set_a" "$F8E"
+    # F9 (6.7.11) — every word DERIVED from LEXATTRWORD's rows, in the three probe forms of
+    # C8..C12, through the brace scan: a code line's `{` hides the fn after it (depth 1), a
+    # comment line's does not. One module per probe, so a file's depth cannot leak into the next.
+    rm -rf "$D/apid"; mkdir -p "$D/apid/src" "$D/apid/lib"
+    while read -r w ap; do
+        for fm in s p x; do
+            printf 'fn f_before() { return 0; }\n%s {\nfn f_after() { return 2; }\n' "$(fhead "$w" "$fm")" \
+                > "$D/apid/src/p_${w}_${fm}.cyr"
+        done
+    done < "$D/wordap.txt"
+    ( cd "$D/apid" && "$D/cyrius_api_surface" --update --scope=project --snapshot="$D/F9.snap" ) \
+        < /dev/null > "$D/F9.out" 2>&1 || true
+    dp_asf() {
+        if ! grep -qx "p_$1_$2::f_before/0" "$D/F9.snap" 2>/dev/null; then echo "unscanned"
+        elif grep -qx "p_$1_$2::f_after/0" "$D/F9.snap"; then echo comment
+        else echo code; fi
+    }
+    dprobe F9 'api-surface brace scan (_asf_attr_len)' dp_asf
     # F6/F7 — a source the scan cannot see WHOLE is an error by name, never a short snapshot.
     rm -rf "$D/apir"; mkdir -p "$D/apir/src" "$D/apir/lib"
     printf 'fn f_x() { return 0; }\n' > "$D/apir/src/x.cyr"
