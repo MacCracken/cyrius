@@ -238,6 +238,8 @@
 # 6.7.8 REPAIR (the dyn lane; a scratch copy, its compiler rebuilt, this gate run with CYCC= the mutant):
 #   MR4 `_tok_enclosing_fn` (extracted from `_tup_gen_chk`) without its `;` / `}` stop -> R4s, R4t ("a tuple
 #       type in a generic fn": the scan ran past a bodyless generic trait member to the next `{`)
+# 6.7.11 REPAIR 1 (the returns lane; the same recipe):
+#   MRL `_body_ends_in_loop` returns 0 -> R16x BUILDS (a callee ending in `loop { return x; }` captured a stale rdx)
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -743,6 +745,9 @@ refused r16t "${CAP}mk' into tuple (i64, i64, i64) - it returns 2 values, (i64, 
 refused r16u "$A12 'G'" "R16u: \`G = mk(2) + 1;\` at top level (R12)" "${MK}var G: (i64, i64) = mk(1);\nG = mk(2) + 1;\nsyscall(60, 0);\n"
 refused r16v "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16v: a method's declared values" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\n${F5}    var b: B;\n    var t: (i64, i64) = b.mk(1);${E5}"
 refused r16w "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16w: a classic-for step \`t = mk(i)\`" "${MF}fn mk(a): (i64, f64) { return (a, 0.5); }\n${F5}    var t: (i64, i64);\n    for (var i = 0; i < 2; t = mk(i)) { i = i + 1; }${E5}"
+# R16x (6.7.11) — a callee whose body ends in an infinite loop no \`break\` leaves is provably one value too
+# (\`_body_ends_in_loop\`): the R12 refusal, where it captured a stale second register.
+refused r16x "$I12 't' with a value that is not a tuple" "R16x: a callee ending in \`loop { return x; }\` (6.7.11: one value, R12)" "fn one(x) { loop { return x; } }\n${F5}    var t: (i64, i64) = one(1);${E5}"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base

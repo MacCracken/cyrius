@@ -2445,7 +2445,10 @@ var hi, lo, bexp = dd_pow10(k);
 #   var x, y, z = f();                # count disagrees with f's declared arity
 #   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
 #                                     # single value and the body ends in one — at fn scope and
-#                                     # at top level, a forward-declared `one` included
+#                                     # at top level, a forward-declared `one` included. A body
+#                                     # ending in `loop { }`, `while (1) { }` or
+#                                     # `do { } while (1);` that no `break` leaves ends in its
+#                                     # returns too (6.7.11)
 # (Before 6.6.17 the top-level destructure above the first statement checked none of these.)
 
 # Legacy builtins still work

@@ -17,6 +17,19 @@
 #   axis 2  ANTI-VACUOUS: every shape that CAN carry a second value still compiles and runs right —
 #           a tuple return, `ret2`, a declared `: (i64, i64)`, a forwarding wrapper, a Result value
 #           form, a `: stack` enum, a 16 B struct, a body that falls off its end after a pair call.
+#   axis 3  6.7.11 — a body that ENDS in an infinite loop leaves only through its `return`s: `loop { }`,
+#           `while (1) { }` and `do { } while (1);` are proved one value as a final `return` is, at fn
+#           scope and at top level; a `break` only in a nested loop / switch, or a closure's `return`,
+#           does not unprove it. A loop a `break` can leave stays silent (the body falls off its end),
+#           and so does a non-literal-1 condition.
+#
+# MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
+# while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
+# -> loop_end, loop_top, loop_nested_brk build; its `while (1) {` arm dropped -> while1_end,
+# loop_switch_brk build; its do-tail arm dropped -> dowhile1_end builds; `_brk_inner_end` returning
+# -1 (no nested construct stepped) -> loop_nested_brk, loop_switch_brk build; `_loop_exits_by_return`
+# blind to `break` -> loop_brk, do_brk, while_do_brk refused; `_brk_inner_end` not stopping at a `;`
+# (a do-while's tail `while (c);` taken to own the next block) -> while_do_brk refused.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: destructure_one_value_refused: cannot cd to $ROOT"; exit 1; }
@@ -83,7 +96,22 @@ runs stack_enum 'enum E: stack { A(v); B(v); }\nfn mk(x) { return A(x); }\nfn f(
 runs falls_off 'fn two(x) { return (x, x + 5); }\nfn w(x) { var k = x; two(k); }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n' 27
 runs pair_struct 'struct Q { a; b; }\nfn mq(x): Q { var q: Q; q.a = x; q.b = x + 1; return q; }\nfn f(): i64 {\n    var a, b = mq(3);\n    return a * 10 + b;\n}\nsyscall(60, f());\n' 34
 
-if [ "$rows" -lt 20 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 20)"; exit 1; fi
+echo "axis 3 - a body ending in an infinite loop is proved one value:"
+refused loop_end   "fn one(x) { loop { return x + 1; } }\nfn f(): i64 {\n    var a, b = one(1);\n    return b;\n}\nsyscall(60, f());\n" "$M2"
+refused while1_end "fn one(x) { while (1) { return x + 1; } }\nfn f(): i64 {\n    var a, b = one(1);\n    return b;\n}\nsyscall(60, f());\n" "$M2"
+refused dowhile1_end "fn one(x) { var i = 0; do { i = i + 1; if (i > x) { return i; } } while (1); }\nfn f(): i64 {\n    var a, b = one(1);\n    return b;\n}\nsyscall(60, f());\n" "$M2"
+refused loop_top   "fn one(x) { loop { if (x > 2) { return x; } x = x + 1; } }\nvar a, b = one(1);\nsyscall(60, a + b);\n" "$M2"
+refused loop_nested_brk "fn one(x) { var i = 0; loop { while (i < 3) { i = i + 1; if (i == 2) { break; } } for (var k = 0; k < 3; k = k + 1) { if (k == 1) { break; } } return i + x; } }\nfn f(): i64 {\n    var a, b = one(1);\n    return b;\n}\nsyscall(60, f());\n" "$M2"
+refused loop_switch_brk "fn one(x) { var i = 0; while (1) { switch (x) { case 1: break; default: i = 1; } return i; } }\nfn f(): i64 {\n    var a, b = one(1);\n    return b;\n}\nsyscall(60, f());\n" "$M2"
+TWO5='fn two(x) { return (x, x + 5); }\n'
+# A loop a `break` leaves, as the body's last statement: the body falls off its end with the pair
+# two() left (each loop also holds a `return`, so only the break keeps it unproved).
+runs loop_brk  "${TWO5}fn w(x) { loop { if (x > 0) { two(x); break; } return x; } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
+runs do_brk    "${TWO5}fn w(x) { var i = 0; do { i = i + 1; if (i > 50) { return i; } if (i > 2) { two(x); break; } } while (1); }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
+runs while_do_brk "${TWO5}fn w(x) { var i = 0; while (1) { do { i = i + 1; } while (i < 3); if (i > x) { two(x); break; } return i; } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n"  27
+runs loop_fwd  "${TWO5}fn w(x) { loop { return two(x); } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
+
+if [ "$rows" -lt 30 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 30)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0
