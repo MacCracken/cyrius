@@ -108,7 +108,8 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # (6.7.6 1,806,240 -> 6.7.7 1,920,400 -> the 6.7.8 integration 2,053,536, the C2 and
             # dyn lanes merged); raised after `sh scripts/seed-derive-cycc.sh` was GREEN on that
             # tree, as above. 3 MB stays far below a runaway emit. build/cycc-native-aarch64
-            # keeps its own 2M band below (the lost-fold backstop). CHANGELOG [6.7.8]
+            # keeps its own band below (the lost-fold backstop; relative to this one since 6.7.11).
+            # CHANGELOG [6.7.8]
             if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
                 _fail "build/cycc size ${size}B outside the expected 700K–3M range — likely contaminated/truncated; refusing commit"
                 status=1
@@ -148,8 +149,24 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # check of the fold is tests/gates/platform/esysxlat_fold.sh axis 1; this band is
             # the backstop. Pinned by tests/gates/toolchain/precommit_arm_size_band.sh.
             # CHANGELOG [6.6.18]
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 2000000 ]; then
-                _fail "$bin size ${size}B outside the expected 700K–2M range (an un-folded ESYSXLAT build is ~2.04 MB) — refusing commit"
+            # 6.7.11: the 2M ceiling is RELATIVE now. The language minor grew both compilers past it
+            # (the wave-1 merge: x86 2,168,800 B, ARM 2,016,960 B), so a fixed band blocked a good,
+            # seed-derived regeneration — and a fixed band has to keep moving with the compiler, which
+            # is the staleness trap above. What separates a folded ARM build from an un-folded one is
+            # its size AGAINST x86 cycc: folded it runs ~0.84-0.93x (6.6.18 1,323,072 / 1,582,088;
+            # 6.7.11 2,016,960 / 2,168,800), un-folded it ran 1.29x (6.6.17 2,042,184 / 1,582,088).
+            # So: at most 1.10x the build/cycc this commit records (the index's blob), under
+            # build/cycc's own 700K-3M band; with no build/cycc in the index, the old fixed 2M.
+            # Pinned by tests/gates/toolchain/precommit_arm_size_band.sh. CHANGELOG [6.7.11]
+            ref=$(git cat-file -s ":build/cycc" 2>/dev/null || echo 0)
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–3M range — likely contaminated/truncated; refusing commit"
+                status=1
+            elif [ "$ref" -gt 0 ] && [ "$size" -gt $((ref * 11 / 10)) ]; then
+                _fail "$bin size ${size}B is over 1.10x build/cycc (${ref}B) — a folded ARM compiler runs below x86 cycc, an un-folded ESYSXLAT build ~1.29x; refusing commit"
+                status=1
+            elif [ "$ref" -le 0 ] && [ "$size" -gt 2000000 ]; then
+                _fail "$bin size ${size}B over 2M with no build/cycc in the index to compare against — refusing commit"
                 status=1
             fi
             ;;

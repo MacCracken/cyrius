@@ -2633,8 +2633,8 @@ _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 # SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
 _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
 
-# 6.6.18 (XLAT-4) — the pre-commit hook's build/cycc-native-aarch64 band is 700K–2M: a COPY of
-# scripts/hooks/pre-commit in a throwaway `git init` refuses an un-folded 2,042,184 B build.
+# 6.6.18 (XLAT-4) — the pre-commit hook refuses an un-folded build/cycc-native-aarch64: a COPY of
+# scripts/hooks/pre-commit in a throwaway `git init` (6.7.11: the bound is 1.10x build/cycc, under 700K–3M).
 _chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"
 
 # 6.7.0: a parallel run executes everything queued above, then reports (_chk_par_drain).
