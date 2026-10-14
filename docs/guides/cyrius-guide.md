@@ -1364,8 +1364,10 @@ size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and
 (the instance records T's step but not its struct): bind it to a `*S` first (`var p: *S = gp<S>();`).
 ⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
 first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
-⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s
-= GP`, `o.s = gp()`, `o.s = w.p`): copy through a `*T` local (`var p2: *S = GP; o.s = p2;`).
+Into a struct-typed FIELD these sources copy too (6.7.11): `o.s = GP`, `o.s = gp()`, `o.s = w.p`,
+`o.s = GP + 0`, `o.s = (gp())`, through a `*O` (`po.s = GP`), at top level and in a for step; a `*U` of
+another struct is refused by name (`cannot copy 'GU' into a struct field of a different struct type`).
+Through 6.7.10 the field kept the pointer word, silently.
 An ASSIGNMENT from a dereference copies the struct, as the declaration `var l2: S = *p;` does (6.7.11):
 `l = *p`, `G = *p`, `o.s = *p` (through a `*O` too), and `q = *p` into the pointee of a `*S` or a handle
 (as `q = l`), in any spelling — `(*p)`, `*(p + 1)`, `*gp()`, `*w.p` — at top level and in a for step; a
@@ -1482,7 +1484,9 @@ out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = 
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
 pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
-field (`b.v = o.b.v`). A struct of a different type is a compile error naming it, at every
+field (`b.v = o.b.v`) — and since 6.7.11 a `*P3` global, a call or method declared `: *P3`, a `*P3`
+field and pointer arithmetic on one (`b.v = GP`, `b.v = gp()`, `b.v = w.p`, `b.v = GP + 1`: the
+struct it points at; through 6.7.10 the field kept the pointer word). A struct of a different type is a compile error naming it, at every
 size — a method or operator result of 8 bytes or less included (v6.6.11). Before v6.6.10
 every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
 word was the parameter's address. A source that is not a struct (an integer, an untyped

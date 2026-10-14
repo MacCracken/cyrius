@@ -21,6 +21,8 @@
 # 6.6.20 (RPD-04): R12-R16 — the same refusals for the STEP of a classic `for`, which compiled clean.
 # 6.7.11: R17-R23 — an ASSIGNMENT from a dereference of a `*U` (a local, a field, a `*S`'s pointee, top level,
 # a for step) refused by name; A4 / A5 — `l = *p` and `q = *p` of the declared type compile with no warning.
+# 6.7.11: R24-R29 — a struct-typed FIELD from a `*U` global, a `: *U` call, a `*U` field, pointer arithmetic on
+# one, at top level and in a for step, refused by name; A6 — the declared type copies with no warning.
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
@@ -43,6 +45,9 @@
 #   the 6.7.11 tree before it (cf5838db)            -> RED 9: R17-R23 compiled (a warning at most), A4 A5 warned
 #   `_asg_dstar` answering 0 (no name arm)          -> RED 7: R17 R19 R20 R21 R22 compiled, A4 A5 warned
 #   `_fsc_dstar` answering 0 (no field arm)         -> RED 2: R18 R23 compiled
+# 6.7.11 (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md), the same method:
+#   `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R24-R29 compiled clean, A6 exit 0 (the
+#                                                      pointer word in the field)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -202,6 +207,25 @@ refuse "R22 step a = *pu, 8 B" "cannot copy 'pu' $MV: 'a'" \
 refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
 
+echo "=== a struct-typed FIELD from a *U global, a : *U call, a *U field (6.7.11) ==="
+# issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md: `o.s = GP` / `gp()` / `w.p`
+# copy the struct now (tests/tcyr/crossos/struct_pointer_source_copy.tcyr); a `*U` of another struct is refused
+# by name, as `o.s = u` and `l = GU` are. Through 6.7.10 each row compiled clean and stored the pointer word.
+SW='struct WU { n; pu: *Q; }
+'
+refuse "R24 r.v = PU, a *Q global" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}fn go(): i64 { var r: RB; r.v = PU; return r.v.x; } syscall(60, go());"
+refuse "R25 r.v = gu(), a : *Q call" "cannot copy 'gu' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}fn go(): i64 { var r: RB; r.v = gu(); return r.v.x; } syscall(60, go());"
+refuse "R26 r.v = w.pu, a *Q field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}${SW}fn go(): i64 { var w = WU { 0, PU }; var r: RB; r.v = w.pu; return r.v.x; } syscall(60, go());"
+refuse "R27 r.v = (PU + 0), pointer arithmetic" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}fn go(): i64 { var r: RB; r.v = (PU + 0); return r.v.x; } syscall(60, go());"
+refuse "R28 GR.v = PU at top level" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}var GR = RB { 1, 2, 3, 4, 5, 6 }; GR.v = PU; syscall(60, GR.v.x);"
+refuse "R29 step r.v = gu()" "cannot copy 'gu' into a struct field of a different struct type: 'v'" \
+    "${T}${SU}fn go(): i64 { var r: RB; var i = 0; for (i = 0; i < 1; r.v = gu()) { i = i + 1; } return 0; } syscall(60, go());"
+
 # ... and the same type compiles with NO warning (6.7.11: `l = *p` and `q = *p` warned "assigning non-pointer
 # to typed pointer", the dereference's pointer step being 0) and runs the copy.
 quiet() {  # $1 label  $2 source  $3 expected exit — no 'warning' line, the exit right
@@ -222,6 +246,11 @@ quiet "A4 l = *p, no warning" \
 quiet "A5 q = *p (q: *Pt), no warning" \
     "${T}fn go(): i64 { var s = Pt { 5, 8 }; var p: *Pt = &s; var t = Pt { 0, 0 }; var q: *Pt = &t; q = *p; return t.x * 10 + t.y; } syscall(60, go());" \
     58
+
+quiet "A6 r.v = GP / gp() / w.p (the declared type), no warning" \
+    "${T}var GS = Pt { 5, 8 }; var GP: *Pt = &GS; fn gp(): *Pt { return GP; } struct WP { n; p: *Pt; }
+fn go(): i64 { var w = WP { 0, GP }; var r: RB; var o: RB; var u: RB; r.v = GP; o.v = gp(); u.v = w.p; GS.x = 0; return r.v.x * 10 + o.v.y + u.v.x * 20; } syscall(60, go());" \
+    158
 
 echo "=== the same shapes with the declared type (no false refusal) ==="
 accept "A1 take(r.v), gen<Pt>(r.v), p.plus(r.v)" \

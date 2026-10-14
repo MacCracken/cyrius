@@ -1111,6 +1111,30 @@ fn _fsc_dstar(S, ft, fnoff, term): i64 {
     _fsc_hsrc(_hl_dx_src(S));
     return 1;
 }
+# ⛔ 6.7.11 — `o.s = GP;`, `o.s = gp();`, `o.s = w.p;` (a struct-typed field from a `*S` global, a call or
+# method declared `: *S`, a `*S` field, or pointer arithmetic on a `*S`, wrapped or not) COPIES THE STRUCT,
+# as the name destination does since 6.7.10 (decision 6, `_hl_psrc_copy`). The field kept the POINTER's word
+# at every size, silently (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# The source up to `term`, typed by `_hl_psrc` (a `*S` local, parameter or capture is `_fsc_name`'s), is
+# parsed, its pointer parked in a hidden temp and recorded as the copy's source (1); a `*U` of another struct
+# is refused by name (0); 2 = parsed but the parser's pointer step is not the struct's (the value store, as
+# `_hl_psrc_copy` falls back); anything else is 0 (untouched).
+fn _fsc_psrc(S, ft, fnoff, term): i64 {
+    var ti = GTI(S);
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    PCMPE(S);
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ft - 1)) { return 2; }
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    _fsc_hsrc(h);
+    return 1;
+}
 # Record as the copy's source the struct whose ADDRESS hidden temp `h` (`_HTEMP`) holds: a frame slot
 # (the deref band), or at top level a hidden global (pointer-mode).
 fn _fsc_hsrc(h): i64 {
@@ -1192,6 +1216,8 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
         if (dr != 0) { return dr; }
     }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    var pr = _fsc_psrc(S, ft, fnoff, term);   # 6.7.11: `o.s = GP` / `gp()` / `w.p` / `GP + n`
+    if (pr != 0) { return pr; }
     if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }

@@ -408,6 +408,166 @@ fn s7a() {
     return k;
 }
 
+# ── 6.7.11: a struct-typed FIELD destination (issues/2026-10-13-struct-field-destination-from-pointer-global-
+# call-or-field.md): `o.s = GP`, `o.s = gp()`, `o.s = w.p`, `o.s = GP + 0`, `o.s = (gp())` copy the struct, at
+# 8, 16 and 24 B, the field reached directly and through a `*O`, in a fn, a for step and at top level. Through
+# 6.7.10 each stored the POINTER word into the field's first word (100 in the filed repro), silently. A guard
+# field after `s` stays 9: no byte past the struct is written. Each source read after the pointee was written
+# 6: 58 (8 B: `v * 10 + 8`), 58 (16 B), 583 (24 B) = a copy. ──
+struct T24 { v; w; x; }
+struct WT { n; p: *T24; }
+struct F8 { k; s: S8; g; }
+struct FH { k; s: H; g; }
+struct FT { k; s: T24; g; }
+var XT = T24 { 5, 8, 3 };
+var GPT: *T24 = &XT;
+fn gpt(): *T24 { return &XT; }
+fn rdt(l: T24): i64 { return l.v * 100 + l.w * 10 + l.x; }
+fn fpoke(): i64 { X8.v = 6; XH.v = 6; XT.v = 6; return 0; }
+fn funpoke(): i64 { X8.v = 5; XH.v = 5; XT.v = 5; return 0; }
+fn fz8(o: *F8): i64 { o.k = 9; o.s.v = 1; o.g = 9; return 0; }
+fn fzh(o: *FH): i64 { o.k = 9; o.s.v = 1; o.s.w = 0; o.g = 9; return 0; }
+fn fzt(o: *FT): i64 { o.k = 9; o.s.v = 1; o.s.w = 0; o.s.x = 0; o.g = 9; return 0; }
+# the guards: 1 when every k and g is still 9
+fn fg8(a: *F8, b: *F8, c: *F8, d: *F8, e: *F8): i64 {
+    var k = a.k + a.g + b.k + b.g + c.k + c.g + d.k + d.g + e.k + e.g;
+    return k == 90;
+}
+fn fgh(a: *FH, b: *FH, c: *FH, d: *FH, e: *FH): i64 {
+    var k = a.k + a.g + b.k + b.g + c.k + c.g + d.k + d.g + e.k + e.g;
+    return k == 90;
+}
+fn fgt(a: *FT, b: *FT, c: *FT, d: *FT, e: *FT): i64 {
+    var k = a.k + a.g + b.k + b.g + c.k + c.g + d.k + d.g + e.k + e.g;
+    return k == 90;
+}
+# the field reached directly: a.s = GP, b.s = gp(), c.s = w.p, d.s = GP + 0, e.s = (gp()) -> 5858585858
+fn fd_8() {
+    var w = W8 { 0, &X8 };
+    var a: F8; var b: F8; var c: F8; var d: F8; var e: F8;
+    fz8(&a); fz8(&b); fz8(&c); fz8(&d); fz8(&e);
+    a.s = GP8;
+    b.s = gp8();
+    c.s = w.p;
+    d.s = GP8 + 0;
+    e.s = (gp8());
+    fpoke();
+    var r = (((rd8(a.s) * 100 + rd8(b.s)) * 100 + rd8(c.s)) * 100 + rd8(d.s)) * 100 + rd8(e.s);
+    funpoke();
+    if (fg8(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+fn fd_h() {
+    var w = WH { 0, &XH };
+    var a: FH; var b: FH; var c: FH; var d: FH; var e: FH;
+    fzh(&a); fzh(&b); fzh(&c); fzh(&d); fzh(&e);
+    a.s = GPH;
+    b.s = gph();
+    c.s = w.p;
+    d.s = GPH + 0;
+    e.s = (gph());
+    fpoke();
+    var r = (((rdh(a.s) * 100 + rdh(b.s)) * 100 + rdh(c.s)) * 100 + rdh(d.s)) * 100 + rdh(e.s);
+    funpoke();
+    if (fgh(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+fn fd_t() {
+    var w = WT { 0, &XT };
+    var a: FT; var b: FT; var c: FT; var d: FT; var e: FT;
+    fzt(&a); fzt(&b); fzt(&c); fzt(&d); fzt(&e);
+    a.s = GPT;
+    b.s = gpt();
+    c.s = w.p;
+    d.s = GPT + 0;
+    e.s = (gpt());
+    fpoke();
+    var r = (((rdt(a.s) * 1000 + rdt(b.s)) * 1000 + rdt(c.s)) * 1000 + rdt(d.s)) * 1000 + rdt(e.s);
+    funpoke();
+    if (fgt(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+# through a `*O`: pa.s = GP, ... (the same five sources) -> the same
+fn fp_8() {
+    var w = W8 { 0, &X8 };
+    var a: F8; var b: F8; var c: F8; var d: F8; var e: F8;
+    fz8(&a); fz8(&b); fz8(&c); fz8(&d); fz8(&e);
+    var pa: *F8 = &a; var pb: *F8 = &b; var pc: *F8 = &c; var pd: *F8 = &d; var pe: *F8 = &e;
+    pa.s = GP8;
+    pb.s = gp8();
+    pc.s = w.p;
+    pd.s = GP8 + 0;
+    pe.s = (gp8());
+    fpoke();
+    var r = (((rd8(a.s) * 100 + rd8(b.s)) * 100 + rd8(c.s)) * 100 + rd8(d.s)) * 100 + rd8(e.s);
+    funpoke();
+    if (fg8(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+fn fp_h() {
+    var w = WH { 0, &XH };
+    var a: FH; var b: FH; var c: FH; var d: FH; var e: FH;
+    fzh(&a); fzh(&b); fzh(&c); fzh(&d); fzh(&e);
+    var pa: *FH = &a; var pb: *FH = &b; var pc: *FH = &c; var pd: *FH = &d; var pe: *FH = &e;
+    pa.s = GPH;
+    pb.s = gph();
+    pc.s = w.p;
+    pd.s = GPH + 0;
+    pe.s = (gph());
+    fpoke();
+    var r = (((rdh(a.s) * 100 + rdh(b.s)) * 100 + rdh(c.s)) * 100 + rdh(d.s)) * 100 + rdh(e.s);
+    funpoke();
+    if (fgh(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+fn fp_t() {
+    var w = WT { 0, &XT };
+    var a: FT; var b: FT; var c: FT; var d: FT; var e: FT;
+    fzt(&a); fzt(&b); fzt(&c); fzt(&d); fzt(&e);
+    var pa: *FT = &a; var pb: *FT = &b; var pc: *FT = &c; var pd: *FT = &d; var pe: *FT = &e;
+    pa.s = GPT;
+    pb.s = gpt();
+    pc.s = w.p;
+    pd.s = GPT + 0;
+    pe.s = (gpt());
+    fpoke();
+    var r = (((rdt(a.s) * 1000 + rdt(b.s)) * 1000 + rdt(c.s)) * 1000 + rdt(d.s)) * 1000 + rdt(e.s);
+    funpoke();
+    if (fgt(&a, &b, &c, &d, &e) == 0) { return 0 - 1; }
+    return r;
+}
+# a classic-for step `o.s = GP` (the source ends at the for's `)`) -> 58 / 58 / 583
+fn ff_8() {
+    var o: F8;
+    fz8(&o);
+    var i = 0;
+    for (i = 0; i < 1; o.s = GP8) { i = i + 1; }
+    fpoke();
+    var r = rd8(o.s);
+    funpoke();
+    return r;
+}
+fn ff_h() {
+    var o: FH;
+    fzh(&o);
+    var i = 0;
+    for (i = 0; i < 1; o.s = (gph())) { i = i + 1; }
+    fpoke();
+    var r = rdh(o.s);
+    funpoke();
+    return r;
+}
+fn ff_t() {
+    var o: FT;
+    fzt(&o);
+    var i = 0;
+    for (i = 0; i < 1; o.s = GPT + 0) { i = i + 1; }
+    fpoke();
+    var r = rdt(o.s);
+    funpoke();
+    return r;
+}
+
 # ── top level: G = GP, G = gp(), G = W.p as statements ──
 alloc_init();
 var TT = S8 { 0 };
@@ -430,6 +590,53 @@ apoke();
 var TD = rd8(TT);
 var TE = rdh(TU);
 arm();
+# top level, 6.7.11: a struct-typed field destination from the five sources, direct and through a `*O`
+var TW8 = W8 { 0, &X8 };
+var TWH = WH { 0, &XH };
+var TWT = WT { 0, &XT };
+var TFA = F8 { 9, 1, 9 };
+var TFB = F8 { 9, 1, 9 };
+var TFC = F8 { 9, 1, 9 };
+var TFD = F8 { 9, 1, 9 };
+var TFE = F8 { 9, 1, 9 };
+var THA = FH { 9, 1, 0, 9 };
+var THB = FH { 9, 1, 0, 9 };
+var THC = FH { 9, 1, 0, 9 };
+var THD = FH { 9, 1, 0, 9 };
+var THE = FH { 9, 1, 0, 9 };
+var TTA = FT { 9, 1, 0, 0, 9 };
+var TTB = FT { 9, 1, 0, 0, 9 };
+var TTC = FT { 9, 1, 0, 0, 9 };
+var TTD = FT { 9, 1, 0, 0, 9 };
+var TTE = FT { 9, 1, 0, 0, 9 };
+var TPA: *F8 = &TFA;
+var TPB: *FH = &THB;
+var TPC: *FT = &TTC;
+TPA.s = GP8;
+TFB.s = gp8();
+TFC.s = TW8.p;
+TFD.s = GP8 + 0;
+TFE.s = (gp8());
+THA.s = GPH;
+TPB.s = gph();
+THC.s = TWH.p;
+THD.s = GPH + 0;
+THE.s = (gph());
+TTA.s = GPT;
+TTB.s = gpt();
+TPC.s = TWT.p;
+TTD.s = GPT + 0;
+TTE.s = (gpt());
+fpoke();
+var TF8 = ((rd8(TFA.s) * 100 + rd8(TFB.s)) * 100 + rd8(TFC.s)) * 100;
+TF8 = (TF8 + rd8(TFD.s)) * 100 + rd8(TFE.s);
+var TFH = ((rdh(THA.s) * 100 + rdh(THB.s)) * 100 + rdh(THC.s)) * 100;
+TFH = (TFH + rdh(THD.s)) * 100 + rdh(THE.s);
+var TFT = ((rdt(TTA.s) * 1000 + rdt(TTB.s)) * 1000 + rdt(TTC.s)) * 1000;
+TFT = (TFT + rdt(TTD.s)) * 1000 + rdt(TTE.s);
+funpoke();
+var TFG = fg8(&TFA, &TFB, &TFC, &TFD, &TFE) + fgh(&THA, &THB, &THC, &THD, &THE);
+TFG = TFG + fgt(&TTA, &TTB, &TTC, &TTD, &TTE);
 
 assert_eq(c_lgp_8(), 58, "l = GP (a *S global): a copy");
 assert_eq(c_lgp_8(), c_lgp_h(), "  = its 16 B twin");
@@ -478,4 +685,17 @@ assert_eq(TB, 58, "top level: G = gp() (16 B)");
 assert_eq(TC, 58, "top level: G = GW.p (16 B)");
 assert_eq(TD, 58, "top level: G = GQ + 1");
 assert_eq(TE, 58, "top level: G = (GQ + 1) (16 B)");
+assert_eq(fd_8(), 5858585858, "o.s = GP, gp(), w.p, GP + 0, (gp()) into a struct-typed field (8 B)");
+assert_eq(fd_h(), 5858585858, "  the same at 16 B");
+assert_eq(fd_t(), 583583583583583, "  the same at 24 B");
+assert_eq(fp_8(), 5858585858, "po.s = the five sources through a *O (8 B)");
+assert_eq(fp_h(), 5858585858, "  the same at 16 B");
+assert_eq(fp_t(), 583583583583583, "  the same at 24 B");
+assert_eq(ff_8(), 58, "o.s = GP as a classic-for step (8 B)");
+assert_eq(ff_h(), 58, "o.s = (gp()) as a classic-for step (16 B)");
+assert_eq(ff_t(), 583, "o.s = GP + 0 as a classic-for step (24 B)");
+assert_eq(TF8, 5858585858, "top level: the five sources into a field, one through a *O (8 B)");
+assert_eq(TFH, 5858585858, "  the same at 16 B");
+assert_eq(TFT, 583583583583583, "  the same at 24 B");
+assert_eq(TFG, 3, "top level: every guard field kept (no byte past the struct)");
 var r = assert_summary();

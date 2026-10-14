@@ -135,7 +135,11 @@
 # the POINTER word into the first field. A `*T` or handle destination still rebinds. Its runtime half is
 # tests/tcyr/crossos/struct_pointer_source_copy.tcyr (every shape against its 16 B twin, the rebinds, sizes
 # 1..7 B with a guard global, top level):
-#   R9 that file on the same legs as R1, N derived from it (floor 47)
+#   R9 that file on the same legs as R1, N derived from it (floor 60; 6.7.11, issues/2026-10-13-struct-field-
+#      destination-from-pointer-global-call-or-field.md: a struct-typed FIELD destination — `o.s = GP`, `gp()`,
+#      `w.p`, `GP + 0`, `(gp())` at 8 / 16 / 24 B, direct and through a `*O`, a for step, top level, a guard
+#      field after `s` — copies too; through 6.7.10 it kept the pointer word; the refusals are
+#      struct_copy_source_type_refused.sh's R24-R29)
 #   CQ compile rows (x86): a `*U` of another struct is refused by name, as `l = pu` is — `l = GU`, `l = gu()`,
 #      `l = w.pu`, and `G = GU` at 16 B; a `*i64` global into a struct value stays its word (exit 1);
 #      (ops-6) CQ6 pointer arithmetic on a `*U` — `l = pu + 1`, `l = pu + k` — refused naming the pointer;
@@ -384,6 +388,10 @@
 #   MA1  `_asg_dstar` answering 0 (no name arm)       -> RED 7: R11 36 of 76 rows x7
 #   MA2  `_fsc_dstar` answering 0 (no field arm)      -> RED 7: R11 8 of 76 rows x7 (`o.s = *p`, `po.s = *p`, the
 #                                                      for step, `GO.s = *gp()` at 16 / 24 B)
+# 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
+# issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
+#   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
+#                                                      stored into the field; the guard row stays green)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -633,7 +641,7 @@ done
 TS=tests/tcyr/crossos/struct_pointer_source_copy.tcyr
 [ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
 NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
-SFLOOR=47
+SFLOOR=60
 if [ "$NS" -lt "$SFLOOR" ]; then echo "FAIL: $G: only $NS rows in $TS (floor $SFLOOR) — rows were lost"; exit 1; fi
 echo "R9. $TS ($NS rows: a struct copy through a *T global, a : *T call or a *T field)"
 for leg in $XLEGS $OTHER; do
