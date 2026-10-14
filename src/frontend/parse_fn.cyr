@@ -1705,6 +1705,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (nx == 10 || nx == 19) {
         _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S));
         if (_tup_arg_call(S, fi, argc) == 1) { return 0; }   # 6.7.7 (B4): `g(f())`, f multi-value
+        if (_mv_arg_call(S, fi, argc) == 1) { return 0; }    # 6.7.11: ... into a named struct
     }
     # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
     # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
@@ -1833,15 +1834,18 @@ fn _tup_arg_call(S, fi, argc): i64 {
 var _mrc_beg = 0 - 1;   # its first token
 var _mrc_end = 0 - 1;   # the token after it
 var _mrc_fn = 0;        # its name
-fn _mrc_note(S, noff, beg): i64 {
+var _mrc_fi = 0 - 1;    # 6.7.11: its fn (declared multi-value, or undeclared with a counted return)
+fn _mrc_note(S, fi, noff, beg): i64 {
     _mrc_beg = beg;
     _mrc_end = GTI(S);
     _mrc_fn = noff;
+    _mrc_fi = fi;
     return 0;
 }
 fn _tup_arg_mrc(S, fi, argc, st): i64 {
     if (_mrc_beg != st) { return 0; }
     if (_mrc_end != GTI(S)) { return 0; }
+    if (GFRS(S, _mrc_fi) != MULTIRET_SID) { return 0; }   # R17's own callee: a declared one
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
     return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
@@ -1873,6 +1877,182 @@ fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
     _had_error = 1;
     STI(S, sv);
     return 1;
+}
+
+# ⛔ 6.7.11 — A MULTI-VALUE CALL WHERE A NAMED STRUCT IS EXPECTED (the user's decision, 2026-10-13:
+# refused by name, R17's wording, at every struct size). A call returning several values leaves them
+# in the return registers; a named struct is a VALUE — a by-value parameter, a local, a global, a field.
+# No destination recognised the call (each keyed on the callee's struct, and a multi-value one has
+# none), so its FIRST value became the struct: its address over 8 B — `take(mk(3))`, `take(b.mk(3))`,
+# `var p: P = mk(3);` SIGSEGV'd on x86 and aarch64, an access violation on PE, a guest error on cx — or
+# its first word (`h.p = mk(3);`, `p = mk(3);`: p.a = 3, p.b stale, silently). R17 (6.7.7) refuses
+# this call into a TUPLE parameter or field; a named struct is refused the same way: bind the values
+# first. A `*P` (parameter, variable) and a `Str` / `Result` / `Option` / `Tagged` handle take a word —
+# the call's first value, as `var x = mk(3);` does — and are not refused. CHANGELOG [6.7.11]
+#
+# 1 = fn `fi` returns several values: declared `: (T1, T2[, T3])`, or undeclared with a count pass 1
+# proved (`_fn_ret_arity`). Keyed on the DECLARED return: a `: P` fn's `return (x, y)` arms (the 6.7.7
+# crossing) return a P.
+fn _mv_callee(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == MULTIRET_SID) { return 1; }
+    if (rs != 0) { return 0; }
+    if (_fn_ret_arity(S, fi) != 0) { return 1; }
+    return 0;
+}
+# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle.
+fn _mv_named(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
+}
+# The report at token `ti`: struct `sid`, the call named `noff` (fn `fi`, its count in the hint); `kind`
+# 0 an argument, 1 a field, 2 a declaration, 3 an assignment; `free` spells the hint: 1 `noff(..)`, 2
+# `x.noff(..)` (a method on the name at `ti`), 0 `...`. Once per token (a generic body is parsed per instance); the parse goes on and
+# `_had_error` withholds the binary, as R17's. 1 = refused.
+fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a multi-value call '");
+    PRSTR(S + 0xEC00000 + noff);
+    if (kind == 1) { PRSTR("' is not stored into a struct '"); }
+    elif (kind == 2) { PRSTR("' does not initialize struct '"); }
+    elif (kind == 3) { PRSTR("' is not assigned to struct '"); }
+    else { PRSTR("' is not a struct '"); }
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    if (kind == 0) { PRSTR("' argument"); }
+    elif (kind == 1) { PRSTR("' field"); }
+    else { PRSTR("'"); }
+    PRSTR(" - bind it first: `var a, b");
+    if (_mv_count(S, fi) == 3) { PRSTR(", c"); }
+    PRSTR(" = ");
+    if (free == 0) { PRSTR("..."); }
+    else {
+        if (free == 2) {
+            PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+            PRSTR(".");
+        }
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR("(..)");
+    }
+    PRSTR(";`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+fn _mv_count(S, fi): i64 {
+    if (GFRS(S, fi) == MULTIRET_SID) { return GFRN(S, fi); }
+    return _fn_ret_arity(S, fi);
+}
+# The source [a, b) just parsed, wrapping parentheses peeled: a whole method call (`_mrc_note`'s record)
+# or a whole free call `name(..)` / `name<..>(..)` to a multi-value fn — reported as `kind` into struct
+# `sid`. 1 = refused.
+fn _mv_span(S, a, b, sid, kind): i64 {
+    a = _ie_unparen(S, a, b);
+    b = _ie_pe;
+    if (_mrc_beg == a) { if (_mrc_end == b) { if (_mv_callee(S, _mrc_fi) == 1) {
+                if (_tok_method_open(S, a) == 1) { return _mv_struct_err(S, a, sid, TOKVAL(S, a + 2), _mrc_fi, kind, 2); }
+                return _mv_struct_err(S, a, sid, _mrc_fn, _mrc_fi, kind, 0);   # a longer chain: the method's fn
+            } } }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != b) { return 0; }
+    var cfi = _gen_resolve_call(S, a);
+    if (_mv_callee(S, cfi) == 0) { return 0; }
+    return _mv_struct_err(S, a, sid, TOKVAL(S, a), cfi, kind, 1);
+}
+# The argument at the cursor into parameter `argc` of `fi`, a named struct passed BY VALUE: a whole free
+# call to a multi-value fn (cursor on its name, before its parse). An address-passed parameter the callee
+# does not copy in (`_pm_copies`) is a `*P`, which takes the first value as a pointer.
+fn _mv_arg_call(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { return 0; }
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var cfi = _gen_resolve_call(S, ti);
+    if (_mv_callee(S, cfi) == 0) { return 0; }
+    return _mv_struct_err(S, ti, ps, TOKVAL(S, ti), cfi, 0, 1);
+}
+# ... a whole method (or wrapped) call, judged after the argument's parse from `st` (`_push_struct_expr_arg`).
+fn _mv_arg_mrc(S, fi, argc, st): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { return 0; }
+    return _mv_span(S, st, GTI(S), ps, 0);
+}
+# ... and a by-value parameter of 8 B or less (`_sarg_byval_small`: one word, never address-passed).
+fn _mv_small_arg(S, fi, argc, st): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0) { return 0; }
+    return _mv_span(S, st, GTI(S), ps, 0);
+}
+# A struct-typed declaration (`pscale` = `0 - sid`; a local or a global in either zone) whose initialiser
+# [start, cursor), just parsed, is a whole multi-value call (PARSE_VAR's `_var_rhs_post`, the zone's
+# `_gvi_expr`): the pointer-mode handle took the first value as the struct's address. A generic callee
+# keeps the declared struct for this (`_gen_decl_check`).
+fn _mv_decl_src(S, pscale, start): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (_mv_named(S, 0 - pscale) == 0) { return 0; }
+    return _mv_span(S, start, GTI(S), 0 - pscale, 2);
+}
+# The struct of an assignment's destination name `noff` when it is a named struct VALUE or handle — a
+# local, a by-value parameter, a global — and not a `*P` (a pointer rebinds to any word); else 0.
+fn _mv_dst_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLPTRP(S, li) == 1) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (_mv_named(S, 0 - lt) == 0) { return 0; }
+            return 0 - lt;
+        }
+    }
+    var gvi = FINDVAR(S, noff);
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 0) { return 0; }
+    if (_gv_ptr_sid(S, gvi) > 0) { return 0; }
+    var gt = GVTYPE(S, gvi);
+    if (_mv_named(S, gt) == 0) { return 0; }
+    return gt;
+}
+# `x = f(..);` / `x = b.m(..);`, the source [st, cursor) just parsed (`_pcmpe_struct_assign`, which the
+# statement and a classic-for step reach once `_try_struct_call_assign` has passed the call by — it takes
+# a struct-returning callee only): a refused source is typed as the destination's struct, so the
+# statement does not also warn "assigning non-pointer to typed pointer".
+fn _mv_asg_src(S, noff, st): i64 {
+    if (TOKTYP(S, GTI(S) - 1) != 11) { return 0; }   # a call (or a wrap) ends the source
+    var sid = _mv_dst_sid(S, noff);
+    if (sid == 0) { return 0; }
+    if (_mv_span(S, st, GTI(S), sid, 3) == 1) { _asg_ret_sid = sid; }
+    return 0;
+}
+# `h.p = f(..);` / `h.p = x.m(..);` into a field of named struct `ft`, cursor on the source (`_fsc_src`,
+# beside R17's `_tup_fsc_call`): a whole call ending at `term`, by its tokens. 1 = refused.
+fn _mv_fsc_call(S, ft, term): i64 {
+    if (_mv_named(S, ft) == 0) { return 0; }
+    var o = _dt_call_open(S);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
+    var fi = _dt_call_fn(S);
+    if (_mv_callee(S, fi) == 0) { return 0; }
+    if (_tok_method_open(S, GTI(S)) == 1) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, GTI(S) + 2), fi, 1, 2); }
+    return _mv_struct_err(S, GTI(S), ft, PEEKV(S), fi, 1, 1);
 }
 
 # ⛔ 6.7.6 — A PARENTHESISED ARGUMENT TO AN ADDRESS-PASSED PARAMETER WAS PUSHED AS ITS VALUE:
@@ -1951,6 +2131,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
     var ps = GPSC(S);
+    _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     EPUSHR(S);
@@ -4798,7 +4979,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
-    if (sid == MULTIRET_SID) { return _mrc_note(S, noff, beg); }   # 6.7.7 (B4)
+    if (_mv_callee(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     _sc_beg = beg;
@@ -5084,6 +5265,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
             return 1;
         } }
     _tup_arg_mrc(S, fi, argc, st);   # 6.7.7 (B4): `g(x.f())`, f multi-value
+    _mv_arg_mrc(S, fi, argc, st);    # 6.7.11: ... into a named struct
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
     if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6

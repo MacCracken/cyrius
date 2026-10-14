@@ -2422,6 +2422,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/selfbuild_poison_scrubbed.sh"
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
 _chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
+# 6.7.11 (returns) — a multi-value call where a named struct is expected (an argument, a method
+# argument, a declaration, a field, an assignment; every size) is refused by name, R17's wording: its
+# first value was taken as the struct's address (SIGSEGV) or as one field. x86 / aarch64 / cx / PE;
+# the crossing, `*P`, `Str` and scalar controls run. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/multi_value_into_named_struct.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"

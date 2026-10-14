@@ -856,6 +856,7 @@ fn _var_rhs_msid(S, ti): i64 {
 # struct result of 8 B or less (`_sc_op_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
 fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
+    _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
     var os = _sc_op_whole(S, start);
@@ -1161,6 +1162,7 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
     }
     if (PEEKT(S) == 2) {
         _tup_fsc_call(S, ft, term);   # 6.7.7 (B4, T5): R17, a multi-value call into a tuple field
+        _mv_fsc_call(S, ft, term);    # 6.7.11: ... into a named-struct field
         var r = _fsc_call(S, ft, fnoff, term);
         if (r != 0) { return r; }
     }
@@ -5372,6 +5374,7 @@ fn _gvi_expr(S, gps): i64 {
     var w = _scv_arm(S, gps);
     PCMPE(S);
     _scv_disarm(S, w);
+    _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
     _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
     return 0;
 }
@@ -5613,6 +5616,7 @@ fn _sci_gsrc_type(S, snoff): i64 {
 fn _gen_decl_check(S, pscale, fi): i64 {
     if (_grc_err < 0) { return 0; }
     if (_gen_stub(S, fi) != 0) { return 0; }
+    if (_mv_callee(S, fi) == 1) { return 1; }   # 6.7.11: kept, for `_mv_decl_src` to refuse the call
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     return _sc_decl_mismatch(S, pscale, rs);

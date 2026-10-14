@@ -2482,6 +2482,18 @@ var r2 = rethi();                # r2 = 1 (rdx)
 To keep a multi-value result whole, capture it in a tuple — `var t: (i64, i64) = divmod(10, 3);`,
 then `t.0` / `t.1` — see [Tuples](#tuples).
 
+**A multi-value call is not a struct value** (6.7.11). Where a named struct is expected — a by-value
+struct argument (`take(mk(3))`, `take(b.mk(3))`, a named argument), a struct-typed declaration (`var p:
+P = mk(3);`, at fn scope and at top level), a struct field (`h.p = mk(3);`) or an assignment to a struct
+variable (`p = mk(3);`, a classic-`for` step too) — a call returning several values is refused by name at
+every struct size, parentheses around it transparent: ``a multi-value call 'mk' is not a struct 'P'
+argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize struct 'P'`, `is not stored
+into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
+struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
+var p = P { a, b }; take(p);`. A callee declared `: P` that says `return (x, y);` returns a `P` and is accepted
+everywhere a `P` is. A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
+does — and are not refused.
+
 ## Tuples
 
 A tuple is a fixed group of values, each in its own 8-byte slot (6.7.7). `(a, b)` builds one,
@@ -2675,6 +2687,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` into a tuple parameter | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |

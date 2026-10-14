@@ -3558,6 +3558,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
     PCMPE(S);
+    _mv_asg_src(S, noff, st);   # 6.7.11: a multi-value call into a named struct
     var dx = _dyn_dst_chk(S, st, dt);   # 6.7.8: a whole dyn result goes only into that dyn
     if (dx == 0) { _bx_asg(S, noff, st); }   # 6.7.3 (B2): a write into a bool takes a boolean value
     _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
