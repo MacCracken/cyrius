@@ -3515,7 +3515,7 @@ fn _pd_fits(c, v): i64 {
 # (`_ic_val_ok`, the `var x: f64 = n` rule); cstring: a string or 0; `*T`: an integer. 1 = taken.
 fn _pd_kind_ok(S, fi, en, k, v): i64 {
     var c = _pd_pclass(S, fi, L64(en + 8), L64(_pd_row(fi) + 16));
-    if (c == 0 - 12) { return 0; }
+    if (c == 0 - 12) { return _pd_type_refused(S, L64(en + 8)); }   # 6.7.11
     if (c < 0) { return _pd_d9(S, fi, en, c); }
     if (c == 0) {
         if (k != 1) { return 1; }
@@ -3547,6 +3547,17 @@ fn _pd_kind_ok(S, fi, en, k, v): i64 {
         return _pd_d8(S, fi, en, v);
     }
     return _pd_d7(S, fi, en, "an integer");
+}
+# A parameter type nothing resolves (class -12) at token `tt`: 1 when PARSE_FN_DEF refuses it by name
+# (`_tn_param_check`: a slice, or a name no type, handle or type parameter answers) — its default is
+# then kept unjudged, so the fn's calls are not each refused as well for the argument it fills (the
+# type's refusal stops the build). 0 keeps it dropped, as before, for any other token. CHANGELOG [6.7.11]
+fn _pd_type_refused(S, tt): i64 {
+    if (_sl_ann_at(S, tt) == 1) { return 1; }
+    if (TOKTYP(S, tt) != 2) { return 0; }
+    if (_classify_param_type(S, TOKVAL(S, tt)) != 0) { return 0; }
+    if (_tn_resolve_at(S, tt) != 0) { return 0; }
+    return 1;
 }
 # The type at token tt, as written (`*T`, a name, u128).
 fn _pd_tname(S, tt): i64 {
@@ -3665,15 +3676,30 @@ fn _pd_call_fills(S, fi, open): i64 {
 }
 # `_CHECK_ARITY` for a callee that declares defaults, modes 3 and 4 (1 = reported). Mode 3, the
 # tail arm, short of max but in range: `_tc_args_divert` missed a call that fills — an internal
-# error, never a `jmp` with a parameter unset. Mode 4, an operator dispatch: D19.
+# error, never a `jmp` with a parameter unset. Mode 4, an operator dispatch: D19 (`_pd_d19`).
 fn _pd_arity_mode(S, line, noff, fi, argc, mode): i64 {
-    if (mode == 4) {
-        return _pd_line_err(S, line, "operator fn ", noff, " declares a parameter default: an operator passes exactly its two operands");
-    }
+    if (mode == 4) { return _pd_d19(S, noff, fi); }
     if (mode != 3) { return 0; }
     if (argc < _pd_min(fi)) { return 0; }
     if (argc >= L64(_fnt_params + fi * 8)) { return 0; }
     return _pd_line_err(S, line, "internal: tail call to ", noff, " reached the tail arm short of its defaults");
+}
+# D19, an operator dispatch reaching a fn that declares a default: reported ONCE, at the fn's first
+# default (the mistake's place, with its column) — it was one line per use, at the use, and again
+# after the definition's own refusal. A row refused already (a method of `impl Trait for T`, D13,
+# or any shape refusal) says nothing more. Always 1: the dispatch's count is not judged.
+# CHANGELOG [6.7.11]
+fn _pd_d19(S, noff, fi): i64 {
+    var row = _pd_row(fi);
+    if ((L64(row + 24) & 4) != 0) { return 1; }
+    var ft = _pd_first_eq(S, L64(row + 16));
+    if (ft < 0) { ft = L64(row + 16); }
+    if (_pd_eo(S, ft) == 0) { return 1; }
+    PRSTR("operator fn ");
+    _pd_q(S, noff);
+    PRSTR(" declares a parameter default: an operator passes exactly its two operands");
+    _pd_ec(S, ft);
+    return 1;
 }
 # "error:<file>:<line>: <a>'<name>'<b>", the arity check's form. Returns 1.
 fn _pd_line_err(S, line, a, noff, b): i64 {
@@ -7131,6 +7157,32 @@ fn _tr_defaults(S, ii, mode): i64 {
     STI(S, sv);
     return 0;
 }
+# 1 when impl method `k`'s parameters beyond the trait's `want` are exactly its defaulted ones: the
+# count differs only by the parameters the definition's refusal already named ("its parameters take
+# no defaults", D13) — one `k = 1` is one error, not a second "different number of parameters".
+# CHANGELOG [6.7.11]
+fn _tr_dflt_extra(S, k, want): i64 {
+    var op = _tr_paren(S, L64(_tim_tab + k * 24 + 8));
+    if (op < 0) { return 0; }
+    if (_pd_first_eq(S, op) < 0) { return 0; }
+    if (_pd_req_n(S, op) == want) { return 1; }
+    return 0;
+}
+# The parameters of the list whose `(` is token `op` before its first default.
+fn _pd_req_n(S, op): i64 {
+    var q = op + 1;
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var k = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pl_eq(S, q) >= 0) { return k; }
+        k = k + 1;
+        q = _pl_next(S, q);
+        if (TOKTYP(S, q) != 31) { return k; }
+        q = q + 1;
+    }
+    return k;
+}
 # Pass 2: impl `ii` against its trait. Every error names the trait.
 fn _tr_check_impl(S, ii): i64 {
     if (ii < 0) { return 0; }
@@ -7150,10 +7202,10 @@ fn _tr_check_impl(S, ii): i64 {
             ERR_IDENT(S, "method ", m, " is not declared in trait ", trn);
             return 0;
         }
-        if (L64(_tim_tab + k * 24 + 16) != L64(_trm_tab + tk * 32 + 8)) {
-            ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
-            return 0;
-        }
+        if (L64(_tim_tab + k * 24 + 16) != L64(_trm_tab + tk * 32 + 8)) { if (_tr_dflt_extra(S, k, L64(_trm_tab + tk * 32 + 8)) == 0) {
+                ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
+                return 0;
+            } }
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);

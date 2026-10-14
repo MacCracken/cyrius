@@ -2373,6 +2373,34 @@ fn _tup_ptr_refuse(S, sid, ti, noff): i64 {
     if (TOKTYP(S, _call_close(S, ti) + 1) != 4) { return 0; }
     return _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
 }
+# Pass 1's (PARSE_GVAR_REG): a tuple annotation over a lone name, or its field chain, that is no
+# global yet is left to the replay, which sees every global — a whole tuple declared below is
+# `_gci_below`'s refusal (the real cause; pass 1's generic "not a tuple" came first, a second error),
+# anything else the replay's R12 (`_gvi_tup_late`). CHANGELOG [6.7.11]
+fn _tup_svtype_p1(S, vi, sid, noff, ti): i64 {
+    if (_tup_is(S, sid) == 1) { if (_tup_src_later(S, _call_close(S, ti) + 1) == 1) {
+            SVTYPE(S, vi, sid);
+            return 0;
+        } }
+    return _tup_svtype(S, vi, sid, noff, ti);
+}
+# 1 when token `eq` is the `=` of `= NAME ;` / `= NAME.f ..;` (parenthesised or not) and NAME is no
+# global yet.
+fn _tup_src_later(S, eq): i64 {
+    if (TOKTYP(S, eq) != 4) { return 0; }
+    var ti = eq + 1;
+    var tt = 5;
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        ti = ti + k;
+        tt = 11;
+    }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != tt) { if (TOKTYP(S, ti + 1) != 41) { return 0; } }
+    if (_findvar_core(S, TOKVAL(S, ti)) >= 0) { return 0; }
+    return 1;
+}
 # A global's struct type, the pointer-mode test above first (one call where SVTYPE was).
 fn _tup_svtype(S, vi, sid, noff, ti): i64 {
     _tup_ptr_refuse(S, sid, ti, noff);
@@ -2626,7 +2654,12 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
 # T and any `<..>` after it, and returns the step of `p + n` on the value — sizeof(T), 8 for a
 # pointer to a pointer — which a field load / a call result carries as its pointer scale, so
 # `var q: *T = h.p;` / `= f();` is not "assigning non-pointer to typed pointer". CHANGELOG [6.6.17]
+# The first `*` of the last `*( .. )` refused here: a declaration annotated so is not warned about its
+# value as well ("assigning non-pointer to typed pointer" about a type its line refused). The step
+# stays, so the variable's uses say nothing more. CHANGELOG [6.7.11]
+var _ptr_refd_ti = 0 - 1;
 fn _ptr_annot(S, vnoff, quiet): i64 {
+    var ti0 = GTI(S);
     var n = 0;
     while (PEEKT(S) == 8) {
         STI(S, GTI(S) + 1);
@@ -2643,7 +2676,7 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
         STI(S, GTI(S) + 1);
         SKIP_GENERICS(S);
     } elif (PEEKT(S) == 10) {
-        if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); }   # 6.7.7 (R3)
+        if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
         else { STI(S, _call_close(S, GTI(S)) + 1); }
     } elif (quiet == 0) { ERR_EXPECT(S, 2); }
     return ps;

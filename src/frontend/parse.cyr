@@ -1009,8 +1009,29 @@ fn _call_is_propagated(S, ti): i64 {
 fn _refuse_lossy_pair(S): i64 {
     if (_callee_returns_pair(S) == 0) { return 0; }
     if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    return _pair_refuse_in_sync(S);
+}
+# The two refusals' report. It is made IN SYNC — the statement parses on to its own end — so the
+# panic latch it sets (silencing what the same statement would add about the same value: a bool
+# destination's "not a bool") is the statement's alone: `_pair_sync_ti` records where, and
+# PARSE_STMT's resync (`_stmt_resync`) clears it there instead of skipping the NEXT statement, its
+# own error and all. 1. CHANGELOG [6.7.11]
+var _pair_sync_ti = 0 - 1;
+fn _pair_refuse_in_sync(S): i64 {
+    if (_panic == 0) { _pair_sync_ti = GTI(S); }
     ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
     return 1;
+}
+# PARSE_STMT's end with the latch set (the statement's first token `before`): skipped to the next
+# recovery point — unless the latch is an in-sync pair refusal made inside this statement, which
+# ended at its own `;` / `}`: then only the latch is cleared.
+fn _stmt_resync(S, before): i64 {
+    if (_pair_sync_ti >= before) { if (_pair_sync_ti < GTI(S)) {
+            var t = TOKTYP(S, GTI(S) - 1);
+            if (t == 5 || t == 14) { _panic = 0; return 0; }
+        } }
+    _sync_skip(S);
+    return 0;
 }
 
 # v6.5.67 — `var v = f();` with `f` returning a `: stack` pair (cursor on the `=`): one variable
@@ -1028,8 +1049,7 @@ fn _refuse_single_pair_bind(S): i64 {
     if (PEEKT(S) != 4) { return 0; }
     if (_callee_returns_pair_at(S, GTI(S) + 1) == 0) { return 0; }
     if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
-    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
-    return 1;
+    return _pair_refuse_in_sync(S);
 }
 
 fn _callee_returns_pair(S): i64 {
@@ -3425,6 +3445,24 @@ fn _asg_undef_report(S, noff): i64 {
     _had_error = 1;
     return 0;
 }
+# `x = v;` in a closure whose `x` is a CAPTURE (cursor on the `=`, `ti` the name): a capture is not
+# assigned in its closure, so this is the statement's "undefined variable 'x'" — reported at the
+# name, before the value is parsed, and the value skipped as a refused lvalue's is. Parsed as a
+# value first, a whole tuple `u` in `t = u;` was refused too, and the caret sat on the `;`.
+# 1 = refused. CHANGELOG [6.7.11]
+fn _asg_capture_refused(S, noff, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (GINFN(S) == 0) { return 0; }
+    if (FINDLOCAL(S, noff) >= 0) { return 0; }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    if (_cl_snap_find(S, noff) < 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _asg_undef_report(S, noff);
+    STI(S, sv);
+    _cst_skip_decl(S);
+    return 1;
+}
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
 fn _asg_float_fop(cop, lt): i64 {
     if (lt != F64_TYID) { if (lt != F32_TYID) { return 0 - 1; } }
@@ -3617,12 +3655,16 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 # value (no struct record — a whole tuple or tuple field took its copy path before), and the store
 # would write one word of the tuple (the struct first-word rule), silently. Refused by name at the
 # source (`st`). 1 = refused. CHANGELOG [6.7.7]
+# 1 after that refusal, for the statement: its typed-pointer warning is not given about the tuple
+# (its slot type is `0 - sid`, the pointer form). Cleared by each statement assignment. CHANGELOG [6.7.11]
+var _asg_tup_refd = 0;
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
     if (_agc_t >= 0) { return 0; }
-    if (_dyn_is(S, 0 - _agc_t) == 1) { _dyn_err(S, st, "cannot assign a value that is not a dyn to ", 0 - _agc_t, noff, 0); return 1; }   # 6.7.8
+    if (_dyn_is(S, 0 - _agc_t) == 1) { _dyn_err(S, st, "cannot assign a value that is not a dyn to ", 0 - _agc_t, noff, 0); _asg_tup_refd = 1; return 1; }   # 6.7.8
     if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
     _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
+    _asg_tup_refd = 1;
     return 1;
 }
 fn _pcmpe_struct_assign(S, noff, term): i64 {
@@ -4519,7 +4561,7 @@ fn PARSE_STMT(S): i64 {
     _PARSE_STMT_IMPL(S);
     _rd_exit();
     _xd_check(S, _xd0, "statement");
-    if (_panic == 1) { _sync_skip(S); }
+    if (_panic == 1) { _stmt_resync(S, before); }   # 6.7.11: an in-sync pair refusal resyncs here
     if (GTI(S) == before) {
         if (GTI(S) < GTCNT(S)) { STI(S, GTI(S) + 1); }
     }
@@ -4984,7 +5026,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
         _asg_ufv = 0 - 1;
+        _asg_tup_refd = 0;
         if (compound_op == 0) {
+            if (PEEKT(S) == 4) { if (_asg_capture_refused(S, noff, GTI(S) - 1) == 1) { return 0; } }   # 6.7.11
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
@@ -5046,7 +5090,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # initializer `var t = str_new(..)` was accepted — the two paths disagreeing
                 # about the same expression.
                 if (lt < 0 && _asg_ret_sid <= 0) {
-                    if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
+                    if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
                 }
             }
         }
@@ -5076,7 +5120,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
-                if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
+                if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
             }
             _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11

@@ -1208,5 +1208,126 @@ var e = main();
 syscall(60, e);
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11)'
+# Axis 18 (6.7.11, the returns lane) — A REFUSAL HERE IS THE STATEMENT'S ALONE (issues/2026-10-09-refusal-cascades-
+# tuples-pairs-u128-d19.md, shapes 5 and 6, the filed repros verbatim). The refusal is made in sync, but it set the panic
+# latch and PARSE_STMT's resync then consumed the NEXT statement through its `;`, its own error and all (line 8's
+# `nosuch`; a second refusal on the next line). The latch now ends with the statement (`_stmt_resync`) — it still
+# silences what the same statement would add about the same value (a bool destination, 18e). A refused u128 `OP=`
+# skips its right-hand side: a pair there was refused a second time ("bind both").
+# Mutations (scratch copies of src/, CYCC= each; measured red): M18a `_stmt_resync` always skipping -> 18a (18b-18d,
+# 18f the same way); M18b the refusal clearing the latch at once (the filed issue's proposal) -> 18e (a second error,
+# "not a bool", for the same value); M18c `_w128_cop` parsing the right-hand side on -> 18g.
+# exact <label> <axis> <n> <needle|fragment>..: exactly <n> error lines, one at each needle's line and column derived
+# from the source (its first byte; it occurs once) with the fragment after it — `needle||fragment` checks the line
+# only (an "undefined variable" caret sits after the name).
+exact() {
+  _l=$1; _a=$2; _w=$3; shift 3
+  cat > "$T/p.cyr"
+  if "$CC" < "$T/p.cyr" > "$T/p" 2>"$T/p.err"; then echo "FAIL stack_enum_lossy_context $_a: $_l COMPILED"; exit 1; fi
+  _n=$(grep -c '^error' "$T/p.err" || true)
+  if [ "$_n" -ne "$_w" ]; then
+    echo "FAIL stack_enum_lossy_context $_a: $_l — want $_w error lines, got $_n:"
+    grep -E '^error' "$T/p.err" | head -4 | sed 's/^/    /'
+    exit 1
+  fi
+  for _x in "$@"; do
+    _nd=${_x%%|*}; _fr=${_x#*|}
+    _at=$(awk -v n="$_nd" 'index($0, n) { print NR ":" index($0, n) ":"; exit }' "$T/p.cyr")
+    case $_fr in "|"*) _fr=${_fr#|}; _at=${_at%%:*}: ;; esac
+    if ! grep -qF "error:<source>:$_at" "$T/p.err" || ! grep "error:<source>:$_at" "$T/p.err" | grep -qF "$_fr"; then
+      echo "FAIL stack_enum_lossy_context $_a: $_l — no '$_fr' error at $_at ('$_nd'):"
+      grep -E '^error' "$T/p.err" | head -4 | sed 's/^/    /'
+      exit 1
+    fi
+  done
+}
+BB='bind both'
+exact "a field store's refusal, then \`x = nosuch;\`, then another (the filed repro)" axis18a 3 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" "mk(8);|$BB" <<EOF
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { return SOk(x); }
+struct H { n; m; }
+fn main(): i64 {
+    var h: H;
+    var x = 0;
+    h.n = mk(7);
+    x = nosuch;
+    h.m = mk(8);
+    return h.n;
+}
+syscall(60, main());
+EOF
+exact "\`x = mk(7);\` then \`y = nosuch;\` (6.6.0's shape)" axis18b 2 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    var y = 0;
+    x = mk(7);
+    y = nosuch;
+    return x;
+}
+var e = main();
+EOF
+exact "two refusals on consecutive lines" axis18c 2 "mk(7);|$BB" "mk(8);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    x = mk(7);
+    x = mk(8);
+    return x;
+}
+var e = main();
+EOF
+exact "an element store, then \`a[1] = nosuch;\`" axis18d 2 "mk(7);|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var a: i64[2];
+    a[0] = mk(7);
+    a[1] = nosuch;
+    return 0;
+}
+var e = main();
+EOF
+exact "a bool destination: the pair refusal alone (the statement's latch holds)" axis18e 1 "mk(7);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var b: bool = false;
+    b = mk(7);
+    return 0;
+}
+var e = main();
+EOF
+exact "a for step's refusal, then \`x = nosuch;\` after the loop" axis18f 2 "mk(7)) {|$BB" "nosuch;||undefined variable 'nosuch'" <<EOF
+${PRE}fn main(): i64 {
+    var x = 0;
+    for (var i = 0; i < 2; x = mk(7)) { i = i + 1; }
+    x = nosuch;
+    return 0;
+}
+var e = main();
+EOF
+exact "a refused u128 \`*=\` of a pair (the filed repro): the u128 refusal alone" axis18g 1 "*= mk|compound assignment \`*=\` to u128 'b' is refused" <<EOF
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { return SOk(x); }
+fn main(): i64 {
+    var b: u128 = 0;
+    b *= mk(7);
+    return 0;
+}
+syscall(60, main());
+EOF
+exact "\`/=\` of a pair, then \`<<=\`: one refusal each" axis18h 2 "/= mk|compound assignment \`/=\` to u128 'b'" "<<= 2|compound assignment \`<<=\` to u128 'b'" <<EOF
+${PRE}fn main(): i64 {
+    var b: u128 = 0;
+    b /= mk(7);
+    b <<= 2;
+    return 0;
+}
+var e = main();
+EOF
+exact "\`+=\` of a pair (implemented for u128): the pair refusal alone, as before" axis18i 1 "mk(7);|$BB" <<EOF
+${PRE}fn main(): i64 {
+    var b: u128 = 0;
+    b += mk(7);
+    return 0;
+}
+var e = main();
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
 exit 0

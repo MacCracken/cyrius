@@ -3040,6 +3040,27 @@ fn _tup_var(S, noff, pscale, ann): i64 {
     _refuse_single_pair_bind(S);
     return 0;
 }
+# A literal refused for its SHAPE (an empty element, a trailing comma, more than 256 elements, the
+# wrong arity) still declares its name, so its later uses do not cascade ("undefined variable",
+# "no struct type in scope"): as the annotation's tuple `sid`, else as the `(i64 x n)` its commas
+# give (at most 256) — in a fn a local (its block reserved, nothing stored), at top level an inline
+# global. A tuple-annotated local is PARSE_VAR's (`var t: T;`). CHANGELOG [6.7.11]
+fn _tup_var_refd(S, noff, sid, lp, st): i64 {
+    if (sid <= 0) {
+        var n = _tup_commas(S, lp) + 1;
+        if (n > 256) { n = 256; }
+        sid = _tup_ints(S, n);
+    }
+    if (GINFN(S) == 1) {
+        var named = _tup_lres(S, noff, GETFCOUNT(S, sid - 1));
+        if (named >= 0) { _tup_lname(S, named, noff, sid); }
+        return 0;
+    }
+    var vcnt = _tup_greg(S, noff, sid);
+    _GVAR_VIS(S, vcnt, st);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
 fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
     var st = GTI(S) + 1;
     var sid = 0;
@@ -3055,6 +3076,7 @@ fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
     var n = _tup_lit_shape(S, lp, sid);
     if (n == 0) {
         if (infer == 0) { if (GINFN(S) == 1) { _tup_lit_skip(S, st, 0); return 0; } }
+        _tup_var_refd(S, noff, sid, lp, st);   # 6.7.11: declared all the same
         return _tup_lit_skip(S, st, 5);
     }
     if (infer == 1) {
@@ -4988,7 +5010,7 @@ fn PARSE_GVAR_REG(S): i64 {
             # was emitted as `lea &G` — reading the pointer's own bytes as field 0 (measured 0
             # where 22 is right). Record which one this is. CHANGELOG [6.6.5]
             if (ann_sid > 0) {
-                _tup_svtype(S, vcnt, ann_sid, noff, ann_ti);   # 6.7.7: SVTYPE, never a pointer-mode tuple
+                _tup_svtype_p1(S, vcnt, ann_sid, noff, ann_ti);   # 6.7.7: SVTYPE, never a pointer-mode tuple
                 if (STRUCTSZ(S, ann_sid - 1) > 8) { SVPM(S, vcnt, 1); } else { SVPM(S, vcnt, 2); }
             }
             elif (psc > 0) { _gv_ptr_type(S, vcnt, psc, ann_ti); }   # 6.6.17: + T
@@ -5350,11 +5372,23 @@ fn _gvi_tup_slot(S, idx, sid, gps, noff, lp): i64 {
     _tup_err(S, lp, "the declaration zone reads a `<` comparison in the tuple literal of ", noff, " as an explicit generic call (`name<A, B>(..)`) - parenthesize the comparison");
     return 0;
 }
+# A POINTER-MODE tuple global — pass 1 found no whole tuple: its R12 refusal, or a lone name it left
+# to the replay (`_tup_svtype_p1`). A whole same-type source is `_gci_init`'s (one declared below:
+# `_gci_below`, the real cause); anything else is R12 at the annotation's `(` (once, so not again
+# after pass 1's) and the value path parses on. 0. CHANGELOG [6.7.11]
+fn _gvi_tup_late(S, idx, gps, sti, noff): i64 {
+    if (gps >= 0) { return 0; }
+    if (_tup_is(S, GVTYPE(S, idx)) == 0) { return 0; }
+    if (_gci_src(S, GTI(S)) != 0) { return 0; }
+    _tup_err(S, sti + 3, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+    return 0;
+}
 # A global pass 1 registered INLINE as a tuple whose initializer, read with every fn declared, is no
 # literal, no capture and no whole tuple source (`_gci_init` copies one): refused by name, the `;`
 # consumed (1); else 0 (the replay goes on).
 fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
     if (idx < 0) { return 0; }
+    if (GVPM(S, idx) == 1) { return _gvi_tup_late(S, idx, gps, sti, noff); }   # 6.7.11
     if (GVPM(S, idx) != 2) { return 0; }
     if (_tup_is(S, GVTYPE(S, idx)) == 0) { return 0; }
     if (gps < 0) { if (_gci_src(S, GTI(S)) != 0) { return 0; } }
@@ -5722,7 +5756,7 @@ fn _tup_gci_in(S, sid, ann): i64 {
     }
     if (ann != 0) { return 0; }   # `var G: i64 = ( .. );` is no tuple (the replay refuses its literal)
     var n = _tup_commas(S, lp) + 1;
-    if (n > 256) { return 0; }
+    if (n > 256) { n = 256; }   # 6.7.11: the replay refuses it; registered at the cap, its uses stay quiet
     return _tup_ints(S, n);
 }
 # ... and (6.7.7, T5) a TUPLE annotation over ONE whole call up to the `;` — a capture, registered
@@ -7209,7 +7243,7 @@ fn PARSE_VAR(S): i64 {
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
-        if (expr_ps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
+        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { WARN(S, "assigning non-pointer to typed pointer", 38); } }   # 6.7.11
     }
     # Check if inside function → local variable
     if (GINFN(S) == 1) {

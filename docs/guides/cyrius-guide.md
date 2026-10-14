@@ -634,7 +634,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.
   ⚠ **Before 6.7.7 a default in a trait's required signature** (`fn sh(self, n = 1): i64;`)
   **compiled and was ignored**; it is now refused (user decision, 2026-10-09). An operator fn
-  (`V2_add`) declares no default: an operator passes exactly its two operands.
+  (`V2_add`) declares no default: an operator passes exactly its two operands — reported once, at
+  the default, when an operator reaches the fn (6.7.11: it was once per use, at the use, and again
+  after an `impl Trait for T` method's own refusal). A direct call `V2_add(a, b)` fills it as usual.
 - **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
   whose default names a sibling's const. The grammar refusals (a positional argument after a
   named one, a name through `fncallN`) still fire there.
@@ -852,7 +854,8 @@ slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field
 closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
 change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
-the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'`. It works in a statement, at
+the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'` (6.7.11: `x = v` is reported at
+`x`, before `v` is parsed — a whole tuple `v` was refused a second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
@@ -908,7 +911,8 @@ a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) a
 array** (`var b[N]` — local, global or in static storage — and `stack var b[N]`: `b += 8` added to
 its first word; it has no element type, so write the word, `store64(&b, load64(&b) + 8)`). On a
 `u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits; every
-other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
+other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)), and its right-hand side
+is not parsed (6.7.11: a `: stack` pair there was refused a second time).
 
 A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
 a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
