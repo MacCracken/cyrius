@@ -1820,6 +1820,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # uid): an ABSENT directory stays an empty scope, not an error. Proven red on the 6.6.9 tree.
 _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 
+# 6.7.11 — dir_list / dir_list_checked / dir_list_into open with O_DIRECTORY: a FIFO (a file, a
+# dangling link) at the path fails at the open (-ENOTDIR), where O_RDONLY alone blocked in
+# open(2) for good. x86 + qemu-aarch64 under `timeout`; a built-in O_RDONLY mutant must block.
+# Hardware: tests/tcyr/crossos/fs_dirlist.tcyr's FIFO rows (Linux + macOS hosts).
+_chk_gate "$ROOT/tests/gates/platform/dir_list_fifo_refused.sh"
+
 # 6.6.10 (bite 15) — cyrius-lsp indexes every declaration spelling through cbt/srcscan.cyr's
 # `_src_decls` (the reader coverage and distlib use): pub/public, attributes, indentation,
 # fn<TAB>, generics, pub/secret var, destructures, enums + members, structs — and nothing in a

@@ -6574,6 +6574,12 @@ On Windows PE, `dir_list("tests\\tcyr")` internally converts the path to
 UTF-16LE, calls `FindFirstFileW` and `FindNextFileW`, and returns UTF-8 Str
 entries. On Linux, it calls `getdents64`. The consumer code is identical.
 
+On Linux and macOS the listers open the path with `O_DIRECTORY` (6.7.11), so a path that is not
+a directory fails at the open: `dir_list_checked` returns -20 (`-ENOTDIR`) for a regular file or a
+FIFO and -2 for a dangling link, `dir_list_into` returns -1, and `dir_list` an empty vec. Before
+6.7.11 they opened with `O_RDONLY` alone, and a FIFO at the path blocked the call in `open(2)`
+until a writer came — for good, in a server. A regular file read -20 on Linux and -22 on macOS.
+
 ## Targeting AGNOS (ring-3 userspace) (v6.0.48)
 
 AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace

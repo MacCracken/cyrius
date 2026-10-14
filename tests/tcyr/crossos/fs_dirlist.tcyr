@@ -23,6 +23,15 @@
 # GetLastError (0xF04B) is routed — `_dir_list_into_vec` reads it after FindNextFileW returns 0 to
 # tell the end (ERROR_NO_MORE_FILES) from a failure part-way, which used to end the listing as if
 # it were complete; the Windows rows check the reroute returns the real last error. CHANGELOG [6.6.12]
+#
+# 6.7.11 — a path that is NOT a directory fails at the open (O_DIRECTORY): with O_RDONLY alone a
+# FIFO there blocked dir_list / dir_list_checked / dir_list_into in open(2) until a writer came, so
+# the listing never returned (agora's store scan froze its poll server). The FIFO rows run on
+# Linux and macOS; the listers run in a forked child the parent waits 5 s for, so a regression
+# reads RED here rather than hanging the leg. Linux makes the FIFO with sys_mknodat; Darwin's
+# declines (-78), so /usr/bin/mkfifo does there. Windows has no FIFO; agnos opens with AO_DIRECTORY
+# already and has no mknodat (-38), so neither runs the group. A regular file is -ENOTDIR
+# on every POSIX host now (Darwin's getdirentries answered -22, EINVAL). CHANGELOG [6.7.11]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -32,6 +41,10 @@ include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 include "lib/fs.cyr"
+include "lib/chrono.cyr"
+#ifdef CYRIUS_TARGET_MACOS
+include "lib/process.cyr"
+#endif
 
 # "<stem><pid><tail>", NUL-terminated.
 fn _name(stem, tail): i64 {
@@ -41,6 +54,58 @@ fn _name(stem, tail): i64 {
     str_builder_add_cstr(sb, tail);
     return str_data(str_builder_build(sb));
 }
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# A FIFO at `path`: mknodat(S_IFIFO|0600) on Linux, /usr/bin/mkfifo on macOS. 0 = made.
+fn _mkfifo(path): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var a = vec_new();
+    vec_push(a, "/usr/bin/mkfifo");
+    vec_push(a, path);
+    return exec_vec(a);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return sys_mknodat(AT_FDCWD, path, 4096 | 384, 0);
+    #endif
+}
+
+# The three listers on `path`, in a forked child. The child exits with bit 0 set unless
+# dir_list_into answered -1, bit 1 unless dir_list_checked answered -20 (-ENOTDIR), bit 2 unless
+# dir_list returned an empty vec. Returns that code; -1 when the child was still blocked after
+# 5 s (killed), -2 no fork, -3 it died.
+fn _listers_in_child(path): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 2; }
+    if (pid == 0) {
+        var scr[4096];
+        var nm[256];
+        var ofs: i64[16];
+        var code = 0;
+        if (dir_list_into(str_from(path), &scr, 4096, &nm, 256, &ofs, 16) != 0 - 1) { code = code | 1; }
+        var v = vec_new();
+        if (dir_list_checked(str_from(path), v) != 0 - 20) { code = code | 2; }
+        var dv = dir_list(str_from(path));
+        if (dv == 0 || vec_len(dv) != 0) { code = code | 4; }
+        sys_exit(code);
+    }
+    var st[8];
+    store64(&st, 0);
+    var waited = 0;
+    while (waited < 5000) {
+        if (sys_waitpid(pid, &st, 1) == pid) {      # 1 = WNOHANG
+            if (WIFEXITED(load32(&st)) == 1) { return WEXITSTATUS(load32(&st)); }
+            return 0 - 3;
+        }
+        sleep_ms(10);
+        waited = waited + 10;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, &st, 0);
+    return 0 - 1;
+}
+#endif
+#endif
 
 fn main(): i64 {
     alloc_init();
@@ -110,6 +175,24 @@ fn main(): i64 {
       "names buffer too small for member.txt: -3, not a short count");
     assert_eq(dir_list_into(str_from(dir), &scr, 4096, &nm, 256, &ofs, 0), 0 - 4,
       "no room in offs: -4");
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("a path that is not a directory fails at the open (O_DIRECTORY, 6.7.11)");
+    var fv = vec_new();
+    assert_eq(dir_list_checked(str_from(file), fv), 0 - 20,
+      "dir_list_checked of a regular file: -20, -ENOTDIR at the open (Darwin's getdirentries said -22)");
+    assert_eq(dir_list_into(str_from(file), &scr, 4096, &nm, 256, &ofs, 16), 0 - 1,
+      "dir_list_into of a regular file: -1");
+    var fifo = _name("cyrius_fsdl_", "_fifo");
+    xunlink(fifo);                                     # a killed earlier run cannot poison this one
+    assert_eq(_mkfifo(fifo), 0, "premise: a FIFO was made (mknodat on Linux, /usr/bin/mkfifo on macOS)");
+    var lc = _listers_in_child(fifo);
+    assert_neq(lc, 0 - 1, "the listers RETURN on a FIFO (with O_RDONLY alone open(2) blocked until the 5 s kill)");
+    assert_eq(lc, 0, "on the FIFO dir_list_into is -1, dir_list_checked -20 (-ENOTDIR), dir_list an empty vec");
+    assert_eq(xunlink(fifo), 0, "the FIFO unlinks");
+    #endif
+    #endif
 
     test_group("an EMPTY path names nothing (not the drive root)");
     var ev = vec_new();
