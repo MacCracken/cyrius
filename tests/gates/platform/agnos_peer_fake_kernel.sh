@@ -22,7 +22,9 @@
 # console_mode#110 + SIGWINCH (mutants measured RED: the wrapper's set / clear swapped -> 3 FAIL;
 # its answer dropped -> 1 FAIL); axis 11 fd_kind#111 (the filing's raw one-liner, which asks the
 # kernel about a tagged socket fd -> 5 FAIL; _agnos_is_sock_fd back to a bit test -> sys_fd_kind(-1)
-# and AGNOS_SOCK_TAG + 8 never reach #111: 2 FAIL in this axis).
+# and AGNOS_SOCK_TAG + 8 never reach #111: 2 FAIL in this axis); axis 12 sock_send_dl#109's raw
+# wrapper (its a4 dropped -> both ceilings read 0, the zero a short call's r10 gets — i.e. "no
+# ceiling": 2 FAIL).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -587,6 +589,31 @@ check "a closed tagged socket fd is -1, with no #111" "-1 0" "$(mark 177) $(betw
 check "AGNOS_SOCK_TAG + 8 is no tagged fd: it goes to the kernel (-1)" "1073741832 -1" \
     "$(after 177 111 | awk '{ print $1 }') $(mark 178)"
 check "FDK_CONSOLE..FDK_DEVICE are 1..10" "1234567900" "$(mark 179)"
+
+# ── axis 12 — sock_send_dl#109 (agnos 1.57.13; 6.7.11) ─────────────────────────────────────────
+# The raw wrapper hands all four registers over as given — a4 (r10) IS the ceiling, so a wrapper
+# that dropped it would hand every caller 0, #109's "no ceiling". The deadline loop that uses it is
+# agnos_sock_send_deadline.sh.
+echo "axis 12 — sys_sock_send_dl hands #109 (conn, buf, len, timeout_us) as given (6.7.11):"
+cat > "$T/a12.cyr" <<'EOF'
+fn f7(a, b, c, d, e, f, g): i64 { return a + g; }
+var b[16];
+syscall(999, 180, &b);
+f7(1, 2, 3, 4, 5, 6, 5);
+syscall(999, 181, sys_sock_send_dl(2, &b, 7, 1500000));
+syscall(999, 182, 0);
+f7(1, 2, 3, 4, 5, 6, 5);
+sys_sock_send_dl(3, &b, 16, 0 - 1);
+syscall(999, 183, 0);
+sys_sock_send_dl(3, &b, 0, 0);
+sys_exit(0);
+EOF
+run "$T/a12.cyr" plain
+check "sys_sock_send_dl(2, b, 7, 1500000) is #109(2, b, 7, 1500000)" "2 $(mark 180) 7 1500000" "$(after 180 109)"
+check "  and returns the kernel's answer (here -1: the plain fake has no #109)" "-1" "$(mark 181)"
+check "a negative ceiling (no wait) reaches a4 as -1, after a 7-arg call left r10 = 5" "3 16 -1" \
+    "$(after 182 109 | awk '{ print $1, $3, $4 }')"
+check "the probe shape (conn, buf, 0, 0) reaches the kernel as 0 / 0" "3 0 0" "$(after 183 109 | awk '{ print $1, $3, $4 }')"
 
 echo ""
 if [ "$fails" = "0" ]; then

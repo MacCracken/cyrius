@@ -12,12 +12,20 @@
 # _agnos_sock_send_dl(conn, …, rem_us, rearm 0) for a write — a bound on the WHOLE transfer. Only
 # a run against a kernel shows which call the TLS layer actually makes and when it stops, and
 # there is no agnos host, so this gate is the agnos leg of tests/tcyr/crossos/tls_native_deadline_ccs.tcyr.
+# 6.7.11: on a kernel with sock_send_dl#109 (agnos 1.57.13) each send call is handed the time left
+# as its own ceiling, so a write no longer overshoots the deadline by one sock_send#48 stall (~8 s,
+# the overshoot CYRIUS-2026-0017 recorded as "not covered"); a kernel without #109 keeps the #48
+# path and its overshoot. Axes 3-4 run both: `send0` / `send3` answer #109 with -1 (an older
+# kernel), `dl0` / `dl3` have it. ⚠ Still the FAKE kernel only — cyrius has no agnos host or
+# harness, so no real-kernel leg runs here; agnos's scripts/smoke/sock-send-dl-smoke.sh is the
+# kernel side of #109.
 #
 # Every axis runs an agnos probe against the scripted fake kernel (tests/fixtures/agnos_sctrace.cyr,
 # a PTRACE_SYSEMU tracer: nothing executes, every answer is scripted). In `us`, `send0` and `send3`
 # uptime_us#95 advances 0.25 s per read, so a deadline of +1 s set at the first read (0.25 s) is
 # 1.25 s; sock_recv#49 answers 0 (nothing yet) in `us`, -1 (closed) in `eof`; sock_send#48 answers
-# 0 (no progress) in `send0` and min(3, len) in `send3`.
+# 0 (no progress) in `send0` and min(3, len) in `send3`; sock_send_dl#109 likewise in `dl0` / `dl3`
+# (and its len-0 probe 0), and -1 everywhere else.
 #
 # MUTATION LEDGER (each on the working tree, gate re-run, restored; all RED, 6.6.13):
 #   1. _tn_io_read_full never takes the agnos tagged-fd path (the between-calls clock check only)
@@ -27,6 +35,8 @@
 #   4. _tn_io_write_all drops its expired-deadline check            -> FAIL axis 3: 3 sock_send#48 calls
 #      (axis 4 stays green: _tn_agnos_write_all's own time-left check also refuses an expired one)
 #   5. _tn_agnos_read_full maps EOF (0) to TLS_ERR_TIMEOUT          -> FAIL axis 2: -22, not -12
+#   6. (6.7.11) _agnos_sock_send_dl back to its #48-only loop        -> FAIL axis 3's three #109
+#      rows: no #109 send, the ceilings empty, the #48 stall back (3 FAIL)
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_tls_deadline: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -76,6 +86,8 @@ trace() { "$T/sct" "$T/p.bin" "$1" > "$T/run.log" 2>&1 || true; }
 mark() { awk -v t="$1" '$1 == "sc" && $2 == 999 && $3 == t { print $4; exit }' "$T/run.log"; }
 # calls of syscall <nr> between marker 0 and marker 1
 count() { awk -v n="$1" '$1 == "sc" && $2 == 999 && $3 == 0 { on = 1; next } on && $1 == "sc" && $2 == 999 { exit } on && $1 == "sc" && $2 == n { c++ } END { print c + 0 }' "$T/run.log"; }
+# the ceiling (a4) of each DATA sock_send_dl#109 (len > 0) between marker 0 and marker 1
+ceil109() { awk '$1 == "sc" && $2 == 999 && $3 == 0 { on = 1; next } on && $1 == "sc" && $2 == 999 { exit } on && $1 == "sc" && $2 == 109 && $5 > 0 { printf "%s%s", s, $6; s = " " }' "$T/run.log"; }
 
 
 DL1="tls_native_set_deadline(&cx, clock_now_ns() + 1000000000);"
@@ -116,6 +128,21 @@ probe "sock_set_send_timeout(fd, 1, 0); var r = _tn_io_write_all(&cx, fd, &big, 
 trace send3
 check "with NO deadline the write is sys_write's 6.6.7 stall bound, unchanged: all 100 bytes" "100" "$(mark 1)"
 check "  …in 34 sock_send#48 calls (33 x 3 + 1)" "34" "$(count 48)"
+# The same three on a kernel with sock_send_dl#109: the send is armed at the 4th read (1.0 s) with
+# the 0.5 s the TLS deadline had left, so its two calls get ceilings 0.5 s and 0.25 s — the time
+# left, never 0 — and no call outlasts the deadline.
+probe "$DL1 var r = _tn_io_write_all(&cx, fd, &big, 100);"
+trace dl0
+check "#109 kernel, no progress: TLS_ERR_TIMEOUT (-22), 2 #109 sends with ceilings 0.5 s and 0.25 s, no #48" \
+    "-22 500000 250000 0" "$(mark 1) $(ceil109) $(count 48)"
+probe "$DL1 var r = _tn_io_write_all(&cx, fd, &big, 100);"
+trace dl3
+check "#109 kernel, a trickle: TLS_ERR_TIMEOUT (-22), 2 #109 sends with ceilings 0.5 s and 0.25 s, no #48" \
+    "-22 500000 250000 0" "$(mark 1) $(ceil109) $(count 48)"
+probe "sock_set_send_timeout(fd, 1, 0); var r = _tn_io_write_all(&cx, fd, &big, 100);"
+trace dl3
+check "#109 kernel, NO deadline: sys_write's stall bound, all 100 bytes in 34 #109 sends, each with the 1 s window" \
+    "100 34 1000000" "$(mark 1) $(ceil109 | wc -w | tr -d ' ') $(ceil109 | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 
 # ── axis 4 — an expired deadline does no I/O at all ──────────────────────────────────────────
 echo "axis 4 — an expired deadline fails before any socket call:"
@@ -123,6 +150,10 @@ probe "tls_native_set_deadline(&cx, 1); var r = _tn_io_write_all(&cx, fd, &big, 
 trace send3
 check "a write: TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …with no sock_send#48 call" "0" "$(count 48)"
+probe "tls_native_set_deadline(&cx, 1); var r = _tn_io_write_all(&cx, fd, &big, 100);"
+trace dl3
+check "a write on a #109 kernel: TLS_ERR_TIMEOUT (-22) with no #109 (not even the probe) and no #48" "-22 0 0" \
+    "$(mark 1) $(count 109) $(count 48)"
 probe "tls_native_set_deadline(&cx, 1); var r = _tn_io_read_full(&cx, fd, &big, 16);"
 trace us
 check "a read: TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"

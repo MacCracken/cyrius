@@ -24,6 +24,12 @@
 #   eof    — sock_recv#49 answers -1 (the peer closed).
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
 #   send3  — like `us`, and #48 answers min(3, len) bytes per call.
+#   dl0    — send0 on a kernel WITH sock_send_dl#109 (agnos 1.57.13): #109 with len 0 (the probe)
+#            answers 0, and with len > 0 answers 0 (no progress); #48 answers 0. (6.7.11)
+#   dl3    — send3 with #109: the probe answers 0, a send min(3, len); #48 answers min(3, len).
+#   dl3dead — dl3, but conn 1 is dead: #109 and #48 on a1 = 1 answer -1 (the probe included).
+# In every other mode #109 answers -1 — a kernel before 1.57.13, where the number is unknown — so
+# the send axes written for #48 keep pinning the #48 path.
 #   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
 #   noacc  — sock_accept#57 answers -1 (nothing pending). (6.6.17)
 #   noconn — sock_connect#47 answers -1 (refused / timed out). (6.6.17)
@@ -155,6 +161,7 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
     if (_st_mode_is(mode, "us") == 1) { clk = 1; }
     if (_st_mode_is(mode, "send0") == 1) { clk = 1; }
     if (_st_mode_is(mode, "send3") == 1) { clk = 1; }
+    if (_st_is_dl(mode) == 1) { clk = 1; }
     if (nr == 95) {
         if (clk == 1) { return 250000 * (k + 1); }
         if (_st_mode_is(mode, "plain") == 1) { return 0; }
@@ -198,14 +205,35 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "exclnone") == 1) { return 0 - 1; }
         return 0;
     }
+    if (nr == 109) {
+        if (_st_is_dl(mode) == 0) { return 0 - 1; }       # a kernel before 1.57.13
+        if (_st_mode_is(mode, "dl3dead") == 1) { if (a1 == 1) { return 0 - 1; } }
+        if (a3 <= 0) { return 0; }                        # the probe, on a live conn
+        if (_st_mode_is(mode, "dl0") == 1) { return 0; }
+        if (a3 < 3) { return a3; }
+        return 3;
+    }
     if (_st_is_proc(mode) == 1) { return _st_proc_answer(mode, nr, k, a1, a3); }
     if (nr == 48) {
-        if (_st_mode_is(mode, "send3") == 1) {
+        if (_st_mode_is(mode, "dl3dead") == 1) { if (a1 == 1) { return 0 - 1; } }
+        var tri = 0;
+        if (_st_mode_is(mode, "send3") == 1) { tri = 1; }
+        if (_st_mode_is(mode, "dl3") == 1) { tri = 1; }
+        if (_st_mode_is(mode, "dl3dead") == 1) { tri = 1; }
+        if (tri == 1) {
             if (a3 < 3) { return a3; }
             return 3;
         }
         return 0;
     }
+    return 0;
+}
+
+# 1 iff `mode` is one of the dl* modes (a kernel with sock_send_dl#109). (6.7.11)
+fn _st_is_dl(mode): i64 {
+    if (_st_mode_is(mode, "dl0") == 1) { return 1; }
+    if (_st_mode_is(mode, "dl3") == 1) { return 1; }
+    if (_st_mode_is(mode, "dl3dead") == 1) { return 1; }
     return 0;
 }
 
@@ -440,6 +468,7 @@ fn _st_rg_answer(pid, mode, nr, k, regs): i64 {
         return 0 - 1;
     }
     if (nr == 46) { return 0; }
+    if (nr == 109) { return 0 - 1; }       # no sock_send_dl#109 (a kernel before 1.57.13)
     if (nr == 2) {
         if (_st_mode_is(mode, "rgtree") == 1) { return 1; }
         return 0;

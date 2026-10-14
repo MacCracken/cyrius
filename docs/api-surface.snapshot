@@ -4993,6 +4993,7 @@ syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_peer/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
+syscalls_x86_64_agnos::sys_sock_send_dl/4
 syscalls_x86_64_agnos::sys_socket/3
 syscalls_x86_64_agnos::sys_socketpair/4
 syscalls_x86_64_agnos::sys_spawn/2

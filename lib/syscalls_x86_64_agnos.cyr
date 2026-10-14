@@ -568,6 +568,10 @@ enum SysNrAgnosNet {
     #   8=net_tx_packets 9=net_rx_packets 10=net_tx_bytes 11=net_rx_bytes  (agnos 1.56.59)
     SYS_NET_CONFIG = 61;
     SYS_SOCK_PEER = 106;   # sock_peer(conn_id) → (peer_ip<<16)|peer_port / -1; caller-owned conns (1.57.7)
+    SYS_SOCK_SEND_DL = 109; # sock_send_dl(conn_id, buf, len, timeout_us) → committed count (≤ len, maybe 0)
+    #   / -1 (agnos 1.57.13): #48 with a caller ceiling, measured ONCE from entry and never re-armed
+    #   by ACK progress. timeout_us 0 = NO ceiling (exactly #48), < 0 = no wait. A new number, not an
+    #   a4 on #48: a4 is a stale register in every shipped 3-arg #48 caller. CHANGELOG [6.7.11]
 }
 
 # ================================================================
@@ -2040,6 +2044,23 @@ fn sys_sock_connect(dst_ip, dst_port, src_port): i64 {
 # is not the caller's conn). ⚠ Ignoring the count truncates. sys_write retries 0 under the recv
 # deadline; this raw form does not.
 fn sys_sock_send(conn_id, buf, len): i64 { return syscall(SYS_SOCK_SEND, conn_id, buf, len); }
+# sock_send_dl(conn_id, buf, len, timeout_us) — #109, agnos 1.57.13: sock_send#48 with a CALLER
+# ceiling. Same validation, ownership and one-segment-in-flight behaviour as #48; -1 for a conn
+# that is not the caller's (checked first, even when len <= 0), a bad range, or a conn neither
+# ESTABLISHED nor CLOSE_WAIT at entry. `timeout_us` bounds the call's WAITING, measured once from
+# entry and never re-armed by ACK progress (as Linux tcp_sendmsg keeps one timeo); when it fires the
+# call returns the committed count, possibly 0 — "no progress yet", not fatal. A chunk that can go
+# out without waiting still goes, so the call may commit one chunk after its ceiling and return at
+# once. It expires at the first timer tick at or after the ceiling (≤ ~10 ms late plus wake
+# latency); values above 2^40 are clamped.
+# ⚠ timeout_us = 0 is NOT "time's up": it means NO ceiling — exactly #48, its ~8 s progress window.
+# A caller whose time left is ≤ 0 passes a negative value (no wait at all) or does not call.
+# Probe: #109(conn, buf, 0, 0) on a conn you own answers 0 on a supporting kernel and -1 before
+# 1.57.13, where the number is unknown (_agnos_sock_send_dl probes and falls back to #48 itself).
+# CHANGELOG [6.7.11]
+fn sys_sock_send_dl(conn_id, buf, len, timeout_us): i64 {
+    return syscall(SYS_SOCK_SEND_DL, conn_id, buf, len, timeout_us);
+}
 # Non-blocking drain from a conn (#49): bytes drained, 0 = WOULD_BLOCK,
 # -1 = EOF / bad arg (the inverted-from-Linux sense the recv loop honors).
 fn sys_sock_recv(conn_id, buf, maxlen): i64 { return syscall(SYS_SOCK_RECV, conn_id, buf, maxlen); }
@@ -2674,29 +2695,75 @@ fn _agnos_sock_send_all(conn_id, buf, n, tmo_us): i64 {
 #                after a call that moved bytes too, so a peer that keeps ACKing a trickle cannot
 #                stretch it (a caller's absolute deadline — tls_native's, with tmo_us = the time left).
 # Same returns: `n`, the partial count at the deadline or when the conn dies, -1 if nothing was
-# sent. ⚠ One sock_send#48 call is not interruptible: it can itself block ~8 s before answering 0
-# (agnos 1.57.7), so a rearm=0 deadline can overshoot by that much. CHANGELOG [6.6.13]
+# sent. CHANGELOG [6.6.13]
+# 6.7.11: each call is handed the TIME LEFT as its own ceiling — sock_send_dl#109 on a kernel that
+# has it (agnos 1.57.13) — so one call no longer runs past the deadline: a sock_send#48 call is
+# not interruptible and could block ~8 s before answering 0, which is how a rearm=0 deadline
+# overshot by that much. The time left after a call is the next call's ceiling (the clock is read
+# where it always was; right after an arm it is the whole `tmo_us`), and once it has passed the
+# loop ends: time's up is never passed as 0, which #109 reads as NO ceiling (0 goes over only
+# while no clock can time the deadline — tier 3, or an RTC not yet armed — where #48's own window
+# is all there is). On a kernel without #109 the calls are #48 as before, overshoot included.
+# CHANGELOG [6.7.11]
 fn _agnos_sock_send_dl(conn_id, buf, n, tmo_us, rearm): i64 {
     var dl[32];
     _agnos_dl_start(&dl, tmo_us);
+    var left = _agnos_dl_whole_us(tmo_us);
     var sent = 0;
     while (sent < n) {
-        var r = syscall(SYS_SOCK_SEND, conn_id, buf + sent, n - sent);
+        var r = _agnos_sock_send_left(conn_id, buf + sent, n - sent, left);
         if (r < 0) { break; }               # conn gone / not ours
         if (r > 0) {
             sent = sent + r;
             if (rearm != 0) {
                 _agnos_dl_start(&dl, tmo_us);   # progress: the stall bound starts again
+                left = _agnos_dl_whole_us(tmo_us);
             } elif (sent < n) {
-                if (_agnos_dl_over(&dl) == 1) { break; }
+                left = _agnos_dl_left_us(&dl);
+                if (left < 0) { break; }
             }
         } else {
-            if (_agnos_dl_over(&dl) == 1) { break; }
+            left = _agnos_dl_left_us(&dl);
+            if (left < 0) { break; }
         }
     }
     if (sent > 0) { return sent; }
     if (n <= 0) { return 0; }
     return 0 - 1;
+}
+
+# Whether this kernel has sock_send_dl#109: 0 not known yet, 1 yes, 2 no (a kernel before agnos
+# 1.57.13). Set by _agnos_sock_send_left's probe. CHANGELOG [6.7.11]
+var _agnos_sdl_ok = 0;
+
+# The ceiling for the first call after a deadline is armed from `tmo_us`: all of it — or, for a
+# timeout that is already spent (≤ 0), -1: #109's "no wait", never 0 (its "no ceiling").
+fn _agnos_dl_whole_us(tmo_us): i64 {
+    if (tmo_us > 0) { return tmo_us; }
+    return 0 - 1;
+}
+
+# ONE send of up to `len` bytes on `conn_id`, bounded by `left` µs (> 0 a ceiling, 0 none — #48's
+# own window, < 0 no wait): sock_send_dl#109 where the kernel has it, else sock_send#48 (which
+# cannot be bounded). Returns what that call returned. Whether #109 exists is probed on first use —
+# #109(conn, buf, 0, 0) answers 0 on a supporting kernel and -1 before agnos 1.57.13 — and cached in
+# _agnos_sdl_ok. ⚠ A -1 probe is not proof: #109 also answers -1 for a dead or foreign conn, so the
+# send then goes to #48, and "no #109" is cached ONLY when #48 answers >= 0 (the conn was good, so
+# it was the NUMBER that was unknown). Caching it on a dead conn would cost every later write its
+# deadline on a kernel that has #109; never probing would cost an older kernel every write.
+# CHANGELOG [6.7.11]
+fn _agnos_sock_send_left(conn_id, buf, len, left): i64 {
+    if (_agnos_sdl_ok == 1) { return syscall(SYS_SOCK_SEND_DL, conn_id, buf, len, left); }
+    if (_agnos_sdl_ok == 0) {
+        if (syscall(SYS_SOCK_SEND_DL, conn_id, buf, 0, 0) == 0) {
+            _agnos_sdl_ok = 1;
+            return syscall(SYS_SOCK_SEND_DL, conn_id, buf, len, left);
+        }
+        var r = syscall(SYS_SOCK_SEND, conn_id, buf, len);
+        if (r >= 0) { _agnos_sdl_ok = 2; }
+        return r;
+    }
+    return syscall(SYS_SOCK_SEND, conn_id, buf, len);
 }
 
 # The per-socket timeout (µs) for tagged `fd` from `tbl`, or the AGNOS_SOCK_RECV_TIMEOUT_S default.
@@ -2751,14 +2818,23 @@ fn _agnos_dl_start(dl, tmo_us): i64 {
 
 # 1 once the deadline in `dl` has passed, else 0. Each call is one poll of the clock.
 fn _agnos_dl_over(dl): i64 {
+    if (_agnos_dl_left_us(dl) < 0) { return 1; }
+    return 0;
+}
+
+# The time left before the deadline in `dl`, in µs: > 0; or 0 while no clock can time it (tier 3,
+# or an RTC that has not armed yet) — what sock_send_dl#109 reads as NO ceiling, #48's own window;
+# or -1 once it has passed. Each call is one poll of the clock (_agnos_dl_over is `< 0` of it).
+# Tier 2 answers in whole RTC seconds. CHANGELOG [6.7.11]
+fn _agnos_dl_left_us(dl): i64 {
     if (load64(dl) == 1) {
         # #95 answered at _agnos_dl_start, but it answers -1 whenever calibration is refused, and
         # an unchecked -1 is below every deadline: a wait that never ends. Drop to tier 2 (the RTC
         # re-arms the full timeout from its first read) rather than trust it. CHANGELOG [6.6.7]
         var t = syscall(SYS_UPTIME_US);
         if (t >= 0) {
-            if (t >= load64(dl + 8)) { return 1; }
-            return 0;
+            if (t >= load64(dl + 8)) { return 0 - 1; }
+            return load64(dl + 8) - t;
         }
         store64(dl, 2);
         store64(dl + 8, 0);
@@ -2766,14 +2842,14 @@ fn _agnos_dl_over(dl): i64 {
     var now = sys_time_unix();
     if (now != 0) {
         if (load64(dl + 8) == 0) { store64(dl + 8, now + load64(dl + 24) + 1); }
-        if (now >= load64(dl + 8)) { return 1; }
-        return 0;
+        if (now >= load64(dl + 8)) { return 0 - 1; }
+        return (load64(dl + 8) - now) * 1000000;
     }
     # Unreadable NOW: count it, armed or not. An RTC that armed the deadline and then reads 0 for
     # good must not leave the wait unbounded — only a clock that READS may overrule the spins.
     var spins = load64(dl + 16) + 1;
     store64(dl + 16, spins);
-    if (spins > AGNOS_SOCK_RECV_MAX_SPINS) { return 1; }
+    if (spins > AGNOS_SOCK_RECV_MAX_SPINS) { return 0 - 1; }
     return 0;
 }
 
