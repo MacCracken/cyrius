@@ -1734,10 +1734,10 @@ as is an operator fn whose first parameter is another struct, and, at top level,
 (`var G: H = GW.s + A;`). Through 6.7.9 only a variable or a struct result typed the left operand:
 `h.p - s` subtracted the first words (250 where `P2_sub` gives 139), silently, at every size. A
 `*T` field itself is a pointer (`w.p + 1` steps it), a `Str` field a handle, and `-w.s + a`
-negates a word first (no dispatch). ⚠ Known defect (6.7.10): a dereference of a `*S` of 1 to 7
-bytes, and a whole field of 3, 5, 6 or 7 bytes, is still loaded as an 8-byte word on the way (as in
-every value use of one — an argument, a right operand): an object ending exactly at the end of a
-mapping faults.
+negates a word first (no dispatch). ⚠ Known defect (6.7.10): a whole field of 3, 5, 6 or 7 bytes is
+still loaded as an 8-byte word on the way (as in every value use of one — an argument, a right
+operand): an object ending exactly at the end of a mapping faults. (A dereference of a `*S` of 1 to 7
+bytes reads exactly its struct since 6.7.11 — see below.)
 
 **A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
 `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass
@@ -1750,7 +1750,12 @@ different struct type*) at every size and into a `Str` parameter — since 6.7.1
 bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` in another struct's impl:
 through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. An untyped `*x`
 is still the word it reads. Through 6.7.9 the word the
-dereference read was passed as the struct's address — a crash on every target.
+dereference read was passed as the struct's address — a crash on every target. Under 8 bytes a
+dereference reads exactly the struct's bytes wherever it is a value — a global declared from it (in
+the declaration zone or after it), a by-value argument, `return *p`, an operator's operand — and its
+word's padding is 0 (6.7.11): through 6.7.10 it loaded the whole word at `p`, so the bytes after the
+object filled the padding (`load8(&G + 3)` of a 3-byte `G` read the next byte) and an object ending
+a mapping faulted.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
 the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads

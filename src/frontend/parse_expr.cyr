@@ -3845,8 +3845,9 @@ fn _deref_ed(S): i64 {
     return ed;
 }
 # `*expr` — the dereference: the operand's element at its width when it is a narrow `*T`
-# (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), else load64 — an
-# untyped word. 6.7.8 (C2-5): before, every `*p` read 8 bytes. CHANGELOG [6.7.8]
+# (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), a struct under 8 B byte-exact
+# (`_deref_small`, 6.7.11), else load64 — an untyped word. 6.7.8 (C2-5): before, every `*p` read 8
+# bytes. CHANGELOG [6.7.8]
 fn _deref_read(S): i64 {
     var d = GTI(S);
     STI(S, GTI(S) + 1);
@@ -3854,10 +3855,30 @@ fn _deref_read(S): i64 {
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
-    ELOAD64(S);
+    if (_deref_small(S, d) == 0) { ELOAD64(S); }
     SPSC(S, 0);
     if (pk == 1) { _dlo_note(S, d); }
     return 0;
+}
+# ⛔ 6.7.11 — A DEREFERENCE OF A STRUCT UNDER 8 BYTES READS THE STRUCT, NOT A WORD (`*p` is a struct
+# value, 6.7.10 decision 6). Its load read 8 bytes from `p` whatever the struct's size, so a global
+# initialised or assigned from `*p`, a local assigned from it, `f(*p)`, `return *p` and `*p + a` read up
+# to 7 bytes past the object — SIGSEGV when it ends a mapping, else foreign bytes in the word's padding.
+# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_psid`), T a
+# struct of 1..7 bytes (its step): rax becomes T read byte-exact, its padding 0 (`_hl_pval_ra`), 1; else
+# 0 (the word load). CHANGELOG [6.7.11]
+fn _deref_small(S, d): i64 {
+    var st = _ps_step(GPSC(S));
+    if (st < 1) { return 0; }
+    if (st > 7) { return 0; }
+    var sid = _hl_psid(S, d + 1, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (STRUCTSZ(S, sid - 1) != st) { return 0; }
+    _hl_pval_ra(S, sid, 1);
+    return 1;
 }
 # ⛔ 6.7.10 — A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
 # 2026-10-12): `*p + a`, `(*p) + a`, `*gp() * a`, `*w.p - a` with a `*S` operand dispatch `S_add` (etc.)
@@ -7233,7 +7254,7 @@ fn _opd_lhs_sv(S, fi): i64 {
 fn _opd_operand(S, fi): i64 {
     if (_opd_k == 1) { return _flo_addr_ra(S, fi); }
     _HTLOAD(S, _dlo_h);
-    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid); }
+    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid, 1); }   # 6.7.11: its padding 0, as `_deref_small`'s
     return 0;
 }
 # Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).
