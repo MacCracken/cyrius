@@ -33,7 +33,8 @@
 # Linux -errno).
 #
 # ⚠ #96 / #97 (agnos, assigned by operator ruling 2026-08-05). Both are MINTED; the kernel's
-# highest arm is #108 (sched_yield_to, agnos 1.57.9), so the next free number is #109.
+# highest arm is #111 (fd_kind, agnos 1.57.13; #109 sock_send_dl and #110 console_mode came
+# with it), so the next free number is #112.
 #   #97 = chan_op — MINTED at cyrius 6.5.8. The kernel arm shipped in agnos 1.56.40
 #                   (`kernel/core/syscall.cyr`, `if (num == 97)`), with all five
 #                   ops CAPS/MINT/SEND/RECV/CLOSE dispatching and `CH_OP_SUPPORTED`
@@ -2684,7 +2685,9 @@ fn _agnos_sock_recv_block(conn_id, buf, n, tmo_us): i64 {
 # `n`, the partial count at the deadline or when the conn dies, or -1 if nothing was sent.
 # ⚠ Before v6.6.7 the 0 went straight back to the caller, and tls_native's _tn_sock_write_all
 # aborts on `w <= 0`, so a live connection that merely stalled for 8 s was torn down.
-# This is _agnos_sock_send_dl's rearm=1 form — the sys_write route, unchanged since 6.6.7.
+# This is _agnos_sock_send_dl's rearm=1 form — the sys_write route (6.6.7); since 6.7.11 each
+# call carries the stall window left as its sock_send_dl#109 ceiling on an agnos 1.57.13+
+# kernel. CHANGELOG [6.7.11]
 fn _agnos_sock_send_all(conn_id, buf, n, tmo_us): i64 {
     return _agnos_sock_send_dl(conn_id, buf, n, tmo_us, 1);
 }
