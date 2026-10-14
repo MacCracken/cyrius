@@ -26,6 +26,8 @@
 #   lexer_bang's `je` NEQ path dropped (every `!` refused)      -> N RED
 #   the dispatch's last line back to `jmp lexer_skip`           -> C RED
 #   the comment arm (`je lexer_comment`) to lexer_char_err      -> K RED
+#   (6.7.11: lexer_char_err is a comment in cybs.cyr now, sparing a seed label; restore the label
+#   to re-run the last mutation.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_lexer_drops_nothing: cannot cd to $ROOT"; exit 1; }

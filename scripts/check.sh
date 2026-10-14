@@ -2488,6 +2488,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_cyml_per_directory.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/test_exit_code_contract.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_undefined_fn_named.sh"   # 6.7.11 (infra)
+_chk_gate "$ROOT/tests/gates/toolchain/cybs_diagnostics_named.sh"   # 6.7.11 (infra)
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
 

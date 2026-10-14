@@ -44,6 +44,8 @@
 #   emit_fn_call_clean emits nothing                        (`k + f9(..)` pops a stale word)
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
+#   (6.7.11: emit_sp_done is a comment in cybs.cyr now, sparing a seed label; restore the label
+#   to re-run the first mutation.)
 # 6.7.11 (the CODE row; a scratch copy of the gate, because an honest over-cap cybs.cyr cannot be
 # built inside the input cap — the seed has no fill directive, so cybs is ~0.19 code B per input B):
 #   CODE_CAP lowered to 21000, below cybs's 21,660 B of code          -> S RED (code), A..D green
