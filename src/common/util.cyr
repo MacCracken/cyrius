@@ -1058,7 +1058,8 @@ fn SFIC(S, fi, c0, c1): i64 {
     return 0;
 }
 # 6.7.3 (B2) — per fn, a row [capacity][one byte per parameter ordinal]: 1 = the parameter is
-# declared `: bool`, so an argument for it is checked. Allocated on the first such parameter and
+# declared `: bool`, so an argument for it is checked (6.7.6: 2 an integer, 3 `: f32`; 6.7.11: 4
+# `: f64` — `_bx_ptype`, parse_expr.cyr; every reader tests an exact value). Allocated on the first such parameter and
 # grown on demand (no ordinal cap); the table is lazy at the max fn cap like _fnt_pmhi, so the brk
 # layout does not move. Pass 1 (_prescan_params_scan) records it for forward calls; pass 2
 # re-records each definition.

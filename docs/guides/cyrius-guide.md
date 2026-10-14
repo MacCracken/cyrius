@@ -107,7 +107,10 @@ ulp distance of two results goes through an untyped variable first:
 
 An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
 1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
-since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`.
+since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`. An
+ARGUMENT for an `f64` / `f32` parameter is such a slot too (6.7.11): `f(3)`, `p.m(3)`, `return
+f(3);`, a call to a fn defined below, an `#inline` fn and an operator fn's right operand (`p + 3`
+into `fn P_add(a: P, b: f64)`) warn the same way, and still pass `0x3` (through 6.7.10 silently).
 Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are 0.0), and
 so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
 untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
