@@ -3921,6 +3921,14 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > problem that is about the verb; it now refuses by name, before printing any progress, and
 > names the fork this host's compiler IS built from. Pinned by
 > `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh`.
+>
+> ⚠ **The CLI's self-builds ignore the compile-mode switches** (6.7.11). `pulsar` (every stage,
+> the tool builds and the install step) and the cx arc's on-demand `build/cycc_cx` / `build/cxvm`
+> builds run without `CYRIUS_POISON`, `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` and
+> `CYRIUS_COVERAGE_FILE`, as the self-build scripts do: an exported `CYRIUS_POISON=1` used to make
+> `pulsar` rebuild — and install — a poison-mode `build/cycc`. Your own compiles still see them
+> (`cyrius build --target=cx x.cyr` hands them to `cycc_cx` for `x.cyr`). Pinned by
+> `tests/gates/toolchain/cbt_self_builds_scrub_env.sh`.
 
 > ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
 > fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own

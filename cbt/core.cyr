@@ -609,6 +609,61 @@ fn load_environ(): i64 {
     return 0;
 }
 
+# 6.7.11 — THE ENVIRONMENT OF A SELF-BUILD: the compile-MODE switches a compiler or tool the CLI
+# builds from the checkout and keeps must never inherit, by index (0 past the last). `cyrius pulsar`
+# rebuilds the tracked build/cycc (then the store) and the cx arc builds build/cycc_cx / build/cxvm
+# on first use; each passed the CLI's whole environment, so an inherited CYRIUS_POISON=1 built a
+# poison-mode compiler whose two stages agreed — pulsar installed it — and an inherited
+# CYRIUS_COVERAGE=1 refused (or instrumented) every one of them. The self-build SCRIPTS unset the
+# same four (6.7.9 / 6.7.10). A user's own compile keeps `_envp`: there `--poison` / `--bounds`
+# inject them on purpose. CHANGELOG [6.7.11]
+fn _env_mode_switch(i): i64 {
+    if (i == 0) { return "CYRIUS_POISON"; }
+    if (i == 1) { return "CYRIUS_BOUNDS"; }
+    if (i == 2) { return "CYRIUS_COVERAGE"; }
+    if (i == 3) { return "CYRIUS_COVERAGE_FILE"; }
+    return 0;
+}
+
+# 1 when the env entry `e` ("NAME=value") sets one of the `_env_mode_switch` names.
+fn _env_is_mode_switch(e): i64 {
+    var i = 0;
+    while (_env_mode_switch(i) != 0) {
+        var nm = _env_mode_switch(i);
+        var k = strlen(nm);
+        if (strlen(e) > k) {
+            if (load8(e + k) == 61) {
+                if (memeq(e, nm, k) == 1) { return 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# `_envp` without the `_env_mode_switch` entries: a fresh NULL-terminated array (`_envp` is not
+# changed). The POSIX half; the Windows spawn has no envp and clears them on the process instead
+# (`_win_mode_switches_clear`, cbt/build.cyr). CHANGELOG [6.7.11]
+fn _envp_self_build(): i64 {
+    var n = 0;
+    if (_envp != 0) {
+        while (load64(_envp + n * 8) != 0) { n = n + 1; }
+    }
+    var out = alloc((n + 1) * 8);
+    var o = 0;
+    var i = 0;
+    while (i < n) {
+        var e = load64(_envp + i * 8);
+        if (_env_is_mode_switch(e) == 0) {
+            store64(out + o * 8, e);
+            o = o + 1;
+        }
+        i = i + 1;
+    }
+    store64(out + o * 8, 0);
+    return out;
+}
+
 # ================================================================
 # Tool discovery
 # ================================================================
