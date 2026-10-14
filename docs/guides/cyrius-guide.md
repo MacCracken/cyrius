@@ -4372,7 +4372,14 @@ the forward-ref rule, which compares declaration ORDER, so `var A = B; var B = g
 line warns too; `sys_open (p, 0, 0)` and `syscall` followed by `(` on the next
 line are calls to the sys_open/getdents notes; `pub fn`, `public fn` and `#inline fn` names get
 the snake_case check (it used to see only a line-initial `fn `), and `cyrdoc --check` counts
-them too (it also used to read only the first 64 KB of a file). Whitespace at the end of a
+them too (it also used to read only the first 64 KB of a file) — and, since 6.7.11, a
+`const fn`, an `async fn` and a `#deprecated("…") fn`: cyrdoc and `cyrius type-audit` read a
+declaration with the same reader as `cyrius header`, `coverage` and the LSP
+(`cbt/srcscan.cyr`), so an undocumented public `const fn` now fails `cyrdoc --check`.
+`cyrius header`, `cyrius api-surface` and the LSP balance a generic type's `<` `>` in a
+parameter (`p: Pair<i64, i64>` is one parameter; after the parameter's `=` a `<` is the
+operator), and `cyrius header` writes a variadic tail as C's `...` and a fully variadic
+`fn f(...)` as `f(void)`. Whitespace at the end of a
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.
 

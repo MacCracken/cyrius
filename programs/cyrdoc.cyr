@@ -14,6 +14,7 @@ include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/args.cyr"
 include "src/frontend/lex_attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
+include "cbt/srcscan.cyr"             # _src_decl_at — the declaration reader the CLI and the LSP share
 
 var _undocumented = 0;
 var _documented = 0;
@@ -72,25 +73,23 @@ fn _doc_attr_len(line, si, len): i64 {
     return (w & 15) + 1;
 }
 
-# Offset of the `fn ` a line's code opens with, or -1 — after indentation, an optional
-# attribute token and an optional `pub` / `public`. v6.6.5, review round 3: only a
-# line-initial `fn ` counted, so `pub fn` / `public fn` / `#inline fn` definitions were
-# never seen — lib/regex.cyr's eleven `public fn`s, 28,652 `pub fn` lines across the
-# ecosystem — and `--check` passed files whose whole public API was undocumented.
+# Offset of the `fn` keyword of the declaration a line's code opens, or -1. The prefix rule is
+# cbt/srcscan.cyr's _src_decl_at — every spelling the compiler accepts: indentation, `private;`,
+# any attribute tokens with their `(...)`, `pub` / `public`, `async`, `const`, and `fn` followed
+# by spaces or tabs. v6.6.5, review round 3: only a line-initial `fn ` counted, so `pub fn` /
+# `public fn` / `#inline fn` definitions were never seen — and `--check` passed files whose whole
+# public API was undocumented. 6.7.11: this reader still missed `const fn`, `async fn` and a
+# `#deprecated("x") fn`, so it now asks the one the CLI and the LSP share. CHANGELOG [6.7.11]
 fn _doc_fn_at(line, len): i64 {
-    var si = _doc_skip_sp(line, 0, len);
-    if (si < len) {
-        if (load8(line + si) == 35) {
-            var al = _doc_attr_len(line, si, len);
-            if (al == 0) { return 0 - 1; }
-            si = _doc_skip_sp(line, si + al, len);
-        }
+    var ns = _src_decl_at(line, 0, len);
+    if (ns < 0) { return 0 - 1; }
+    var k = ns;
+    while (k > 0) {
+        var c = load8(line + k - 1);
+        if (c != 32 && c != 9) { break; }
+        k = k - 1;
     }
-    if (si + 4 <= len) { if (memeq(line + si, "pub ", 4) == 1) { si = _doc_skip_sp(line, si + 4, len); } }
-    if (si + 7 <= len) { if (memeq(line + si, "public ", 7) == 1) { si = _doc_skip_sp(line, si + 7, len); } }
-    if (si + 3 > len) { return 0 - 1; }
-    if (memeq(line + si, "fn ", 3) == 1) { return si; }
-    return 0 - 1;
+    return k - 2;
 }
 
 fn is_fn_line(line, len): i64 {
@@ -122,34 +121,6 @@ fn is_attr_line(line, len): i64 {
     return 1;
 }
 
-fn extract_fn_name(line, len, buf): i64 {
-    # Find "fn " then extract name until (
-    var si = 0;
-    while (si < len - 2) {
-        if (load8(line + si) == 102) {
-            if (load8(line + si + 1) == 110) {
-                if (load8(line + si + 2) == 32) {
-                    var ns = si + 3;
-                    var ne = ns;
-                    while (ne < len) {
-                        var c = load8(line + ne);
-                        if (c == 40) { break; }
-                        if (c == 60) { break; }
-                        ne += 1;
-                    }
-                    var nlen = ne - ns;
-                    memcpy(buf, line + ns, nlen);
-                    store8(buf + nlen, 0);
-                    return nlen;
-                }
-            }
-        }
-        si += 1;
-    }
-    store8(buf, 0);
-    return 0;
-}
-
 # The offset just past the string or char literal whose opening quote is at line[p] (a `\`
 # escapes the next byte), else len.
 fn _doc_lit_end(line, p, len): i64 {
@@ -164,38 +135,26 @@ fn _doc_lit_end(line, p, len): i64 {
     return len;
 }
 
-fn extract_fn_sig(line, len, buf) {
-    # Extract from "fn" to end of line (trimmed)
-    var si = 0;
-    while (si < len - 2) {
-        if (load8(line + si) == 102) {
-            if (load8(line + si + 1) == 110) {
-                if (load8(line + si + 2) == 32) {
-                    # Find the body's { — not one inside a string or char literal: since 6.7.7
-                    # a parameter default can be `s = "{x}"`. CHANGELOG [6.7.7]
-                    var se = si;
-                    while (se < len) {
-                        var c = load8(line + se);
-                        if (c == 123) { break; }
-                        if (c == 34 || c == 39) { se = _doc_lit_end(line, se, len); }
-                        else { se += 1; }
-                    }
-                    # Trim trailing spaces
-                    while (se > si) {
-                        var tc = load8(line + se - 1);
-                        if (tc != 32) { if (tc != 123) { break; } }
-                        se -= 1;
-                    }
-                    var slen = se - si;
-                    memcpy(buf, line + si, slen);
-                    store8(buf + slen, 0);
-                    return slen;
-                }
-            }
-        }
-        si += 1;
+# The end of the signature that starts at line[si] (its `fn` keyword): the body's `{` — not one
+# inside a string or char literal (since 6.7.7 a parameter default can be `s = "{x}"`,
+# CHANGELOG [6.7.7]) — with trailing blanks trimmed. The signature is printed straight from the
+# source line, as the name is: 6.7.11 dropped the copies into a fixed `alloc(128)` name buffer and
+# `alloc(256)` signature buffer, which an 80-parameter line or a 200-byte name ran past with no
+# bound (memory corruption; silent only because nothing was allocated after them). CHANGELOG [6.7.11]
+fn _doc_sig_end(line, si, len): i64 {
+    var se = si;
+    while (se < len) {
+        var c = load8(line + se);
+        if (c == 123) { break; }
+        if (c == 34 || c == 39) { se = _doc_lit_end(line, se, len); }
+        else { se += 1; }
     }
-    return 0;
+    while (se > si) {
+        var tc = load8(line + se - 1);
+        if (tc != 32) { if (tc != 123) { break; } }
+        se -= 1;
+    }
+    return se;
 }
 
 # The errno of the last read `process_file` could not do (for main's "cannot read" line).
@@ -235,9 +194,6 @@ fn process_file(filepath, check_mode) {
     }
 
     var num_lines = vec_len(lines);
-    var namebuf = alloc(128);
-    var sigbuf = alloc(256);
-    if (namebuf == 0 || sigbuf == 0) { return 1; }
 
     if (check_mode == 0) {
         # Generate mode — output markdown
@@ -275,15 +231,22 @@ fn process_file(filepath, check_mode) {
                 }
             }
 
-            # name and signature from the `fn` on — never from an earlier "fn " inside
-            # an attribute's string argument
-            extract_fn_name(buf + lstart + fo, llen - fo, namebuf);
-            var nlen = strlen(namebuf);
+            # The name and the signature are printed straight from the source line — the `fn`
+            # keyword on (never an earlier "fn " inside an attribute's string argument), the
+            # name the identifier after it. No copy, so no bound to run past. CHANGELOG [6.7.11]
+            var line = buf + lstart;
+            var ns = fo + 2;
+            while (ns < llen) {
+                var nc = load8(line + ns);
+                if (nc != 32 && nc != 9) { break; }
+                ns += 1;
+            }
+            var nlen = _src_ident_end(line, ns, llen) - ns;
 
             # Skip private functions (start with _)
             var is_private = 0;
             if (nlen > 0) {
-                if (load8(namebuf) == 95) { is_private = 1; }
+                if (load8(line + ns) == 95) { is_private = 1; }
             }
 
             if (is_private == 0) {
@@ -291,16 +254,16 @@ fn process_file(filepath, check_mode) {
                     if (has_doc == 0) {
                         _undocumented += 1;
                         syscall(1, 2, "  undocumented: ", 16);
-                        syscall(1, 2, namebuf, nlen);
+                        syscall(1, 2, line + ns, nlen);
                         syscall(1, 2, "\n", 1);
                     } else {
                         _documented += 1;
                     }
                 } else {
                     # Generate markdown entry
-                    extract_fn_sig(buf + lstart + fo, llen - fo, sigbuf);
+                    var se = _doc_sig_end(line, fo, llen);
                     syscall(1, 1, "### `", 5);
-                    syscall(1, 1, sigbuf, strlen(sigbuf));
+                    syscall(1, 1, line + fo, se - fo);
                     syscall(1, 1, "`\n", 2);
                     if (has_doc == 1) {
                         # Print doc comment (strip leading # )

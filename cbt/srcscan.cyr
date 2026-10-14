@@ -1,7 +1,8 @@
 # cbt/srcscan.cyr — the lexer-faithful source reader the reference tools share.
 #
 # Included by cbt/core.cyr (the CLI: `cyrius coverage`, `cyrius header`, `cyrius distlib`)
-# and by programs/cyrius-lsp.cyr, so there is ONE answer to "which bytes of a cyrius source
+# and by programs/cyrius-lsp.cyr (since 6.7.11 also programs/cyrdoc.cyr and
+# programs/cyrius_type_audit.cyr), so there is ONE answer to "which bytes of a cyrius source
 # are code, where does a top-level declaration start, and is this identifier referenced".
 # ⛔ 6.6.10 — it was a section of cbt/core.cyr, and the tools outside the CLI could not reach
 # it: distlib's attribution and prune scans and the LSP's indexer each kept a column-0
@@ -154,10 +155,13 @@ var _src_decl_pub = 0;
 # compiler does: indentation, `private;` closing the file marker on the same line, any number
 # of attribute tokens and `pub` / `public` in either order (an attribute's `(...)` argument
 # list skipped, with or without a space before it: `#deprecated ("x") fn`), an optional
-# `async`, and `fn` followed by any spaces or tabs. Run it on a _src_blank_noncode'd buffer
-# so a comment or a string cannot declare anything. It does NOT know brace depth — a caller
-# only asks it about lines at depth 0 (_src_brace_delta), so an `impl` method is not read as
-# a top-level fn. Sets _src_decl_pub. Modelled on cyrdoc's _doc_fn_at. CHANGELOG [6.6.8]
+# `async` or `const`, and `fn` followed by any spaces or tabs. Run it on a _src_blank_noncode'd
+# buffer so a comment or a string cannot declare anything. It does NOT know brace depth — a
+# caller only asks it about lines at depth 0 (_src_brace_delta), so an `impl` method is not read
+# as a top-level fn. Sets _src_decl_pub. CHANGELOG [6.6.8]
+# 6.7.11 — `const fn` (6.7.2) was not stepped over, so a const fn was invisible to header,
+# coverage, the LSP index, distlib, [embed] — and to cyrdoc and type-audit, which now ask this
+# same reader instead of keeping their own prefix rules. CHANGELOG [6.7.11]
 fn _src_decl_at(buf, ls, le): i64 {
     _src_decl_pub = 0;
     var si = _src_skip_ws(buf, ls, le);
@@ -180,6 +184,7 @@ fn _src_decl_at(buf, ls, le): i64 {
         si = _src_skip_ws(buf, si, le);
     }
     if (_src_word_at(buf, si, le, "async", 5) == 1) { si = _src_skip_ws(buf, si + 5, le); }
+    elif (_src_word_at(buf, si, le, "const", 5) == 1) { si = _src_skip_ws(buf, si + 5, le); }
     if (si + 3 > le) { return 0 - 1; }
     if (memeq(buf + si, "fn", 2) == 0) { return 0 - 1; }
     var k = load8(buf + si + 2);

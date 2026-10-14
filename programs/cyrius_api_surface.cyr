@@ -304,8 +304,9 @@ fn _asf_attr_skip(b, p, al, lim): i64 {
 }
 
 # Step over everything that may precede `fn` on a declaration line: `public` / `pub`
-# (setting `_asf_saw_public`), `async`, and attribute tokens, in any order. Returns the
-# first byte after them (blanks skipped).
+# (setting `_asf_saw_public`), `async`, `const`, and attribute tokens, in any order. Returns
+# the first byte after them (blanks skipped). 6.7.11 — `const fn` (6.7.2) was not stepped
+# over, so no const fn was ever public surface. CHANGELOG [6.7.11]
 fn _asf_decl_prefix(b, p, eol): i64 {
     var go = 1;
     while (go == 1) {
@@ -316,6 +317,7 @@ fn _asf_decl_prefix(b, p, eol): i64 {
         elif (_asf_kw(b, p, eol + 1, "public", 6) == 1) { p = p + 7; _asf_saw_public = 1; }
         elif (_asf_kw(b, p, eol + 1, "pub", 3) == 1) { p = p + 4; _asf_saw_public = 1; }
         elif (_asf_kw(b, p, eol + 1, "async", 5) == 1) { p = p + 6; }
+        elif (_asf_kw(b, p, eol + 1, "const", 5) == 1) { p = p + 6; }
         else { go = 0; }
     }
     return p;
@@ -525,6 +527,10 @@ fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
 # `s = "a,b#"` counted its comma and read its `#` as a comment. _asf_amin is set to the
 # parameters before the first default (defaults are trailing) — the arity when none has one —
 # and the entry reads `name/MIN-MAX` then. CHANGELOG [6.7.7]
+# 6.7.11 — a generic type's `<` `>` are balanced in a parameter's TYPE (`p: Pair<i64, i64>` is one
+# parameter; `>>` / `>>>` close two / three, a byte each), as the compiler's _pl_next / _pl_tdepth
+# do; after the parameter's depth-1 `=` (a default) `<` and `>` are operators again
+# (`c = 1 < 2`). The list's comma inside `<..>` made `pp/3` of a two-parameter fn. CHANGELOG [6.7.11]
 var _asf_amin = 0;
 fn _asf_arity(b, paren, n): i64 {
     var p = paren + 1;
@@ -532,6 +538,7 @@ fn _asf_arity(b, paren, n): i64 {
     var commas = 0;
     var has_arg = 0;
     var dflt = 0 - 1;    # the ordinal of the first parameter with a depth-1 `=`
+    var indf = 0;        # 1 inside this parameter's default (after its depth-1 `=`)
     var st = 0;
     while (p < n) {
         var c = load8(b + p);
@@ -546,8 +553,15 @@ fn _asf_arity(b, paren, n): i64 {
                     return commas + 1;
                 }
             }
-            if (c == 44 && depth == 1) { commas = commas + 1; }
-            if (c == 61 && depth == 1 && dflt < 0) { dflt = commas; }
+            if (c == 44 && depth == 1) { commas = commas + 1; indf = 0; }
+            if (c == 61 && depth == 1) {
+                indf = 1;
+                if (dflt < 0) { dflt = commas; }
+            }
+            if (indf == 0) {
+                if (c == 60) { depth = depth + 1; }
+                if (c == 62 && depth > 1) { depth = depth - 1; }
+            }
             if (_asf_blank(c) == 0 && c != 10 && c != 13 && c != 35) { has_arg = 1; }
         }
         st = _asf_lexst(st, c);

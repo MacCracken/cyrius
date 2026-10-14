@@ -34,6 +34,7 @@ include "lib/str.cyr"
 include "lib/fs.cyr"
 include "lib/syscalls.cyr"
 include "lib/args.cyr"
+include "cbt/srcscan.cyr"    # _src_decl_at — the declaration reader the CLI and the LSP share
 
 var TOTAL_PUBLIC = 0;
 var TOTAL_ANNOTATED = 0;
@@ -97,28 +98,15 @@ fn _ta_lit_end(buf, p, eol): i64 {
 
 # Match `fn NAME(args)`. Returns 1 if line at `bp` opens a fn decl,
 # else 0. On match, writes name_off / name_len / has_ann / private
-# back via the four `_out` store64 addresses. Skips leading whitespace.
+# back via the four `_out` store64 addresses.
+# 6.7.11 — the declaration prefix is cbt/srcscan.cyr's _src_decl_at, the reader the CLI and the
+# LSP share: indentation, `private;`, attribute tokens (with their `(...)`), `pub` / `public`,
+# `async`, `const`. Only a line-initial `fn ` counted here, so `pub fn`, `public fn`, `async fn`,
+# `#inline fn` and `const fn` were never public fns to the audit (2 of 7 spellings).
+# CHANGELOG [6.7.11]
 fn _match_fn_decl(buf, bp, eol, name_off_out, name_len_out, has_ann_out, private_out): i64 {
-    var p = bp;
-    while (p < eol) {
-        var c = load8(buf + p);
-        if (c != 32 && c != 9) { break; }
-        p = p + 1;
-    }
-    # `fn ` prefix — must be exactly 3 bytes "f", "n", " " or "\t"
-    if (p + 3 > eol) { return 0; }
-    if (load8(buf + p)     != 102) { return 0; }   # 'f'
-    if (load8(buf + p + 1) != 110) { return 0; }   # 'n'
-    var c3 = load8(buf + p + 2);
-    if (c3 != 32 && c3 != 9) { return 0; }
-    p = p + 3;
-    # Skip more whitespace before name
-    while (p < eol) {
-        var c4 = load8(buf + p);
-        if (c4 != 32 && c4 != 9) { break; }
-        p = p + 1;
-    }
-    if (p >= eol) { return 0; }
+    var p = _src_decl_at(buf, bp, eol);
+    if (p < 0) { return 0; }
     if (_is_idstart(load8(buf + p)) == 0) { return 0; }
     var name_start = p;
     while (p < eol) {

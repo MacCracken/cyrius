@@ -1345,8 +1345,14 @@ fn cmd_doctest(arg): i64 {
 # 6.7.7 a parameter may carry a default, and `fn f(a, b = g(1, 2))` cut at the first `)` / `,`
 # lost parameters and printed `cyr_val b = 2` (not C). Strings are blanked by then, so
 # `s = ",)"` is one parameter too. CHANGELOG [6.7.7]
+# 6.7.11 — a parameter's TYPE balances `<` `>` too (`>>` / `>>>` close two / three, a byte
+# each), as the compiler's _pl_next / _pl_tdepth do: `p: Pair<i64, i64>` was cut at its comma
+# and printed `cyr_val i64>` (not C). After the parameter's depth-0 `=` (its default) `<` and
+# `>` are operators again (`c = 1 < 2`), and a depth-0 `,` starts the next parameter's type.
+# CHANGELOG [6.7.11]
 fn _hdr_close(b, p, lim, comma): i64 {
     var d = 0;
+    var indf = 0;    # 1 inside the current parameter's default (after its depth-0 `=`)
     while (p < lim) {
         var c = load8(b + p);
         if (c == 40 || c == 91 || c == 123) { d = d + 1; }
@@ -1354,10 +1360,42 @@ fn _hdr_close(b, p, lim, comma): i64 {
             if (d == 0) { if (c == 41) { return p; } }
             else { d = d - 1; }
         }
-        elif (c == 44) { if (d == 0 && comma == 1) { return p; } }
+        elif (c == 44) {
+            if (d == 0) {
+                if (comma == 1) { return p; }
+                indf = 0;
+            }
+        }
+        elif (c == 61) { if (d == 0) { indf = 1; } }
+        elif (indf == 0) {
+            if (c == 60) { d = d + 1; }
+            elif (c == 62) { if (d > 0) { d = d - 1; } }
+        }
         p = p + 1;
     }
     return lim;
+}
+
+# 1 iff b[s, e) is exactly `...` — a variadic tail's parameter name (cmd_header). CHANGELOG [6.7.11]
+fn _hdr_is_ellipsis(b, s, e): i64 {
+    if (e - s != 3) { return 0; }
+    return memeq(b + s, "...", 3);
+}
+
+# 1 iff the parameter list b[s, e) is only `...` (blanks around it) — a fully variadic fn,
+# whose C prototype is `(void)` (cmd_header). CHANGELOG [6.7.11]
+fn _hdr_only_ellipsis(b, s, e): i64 {
+    while (s < e) {
+        var c = load8(b + s);
+        if (c != 32 && c != 9) { break; }
+        s = s + 1;
+    }
+    while (e > s) {
+        var c2 = load8(b + e - 1);
+        if (c2 != 32 && c2 != 9) { break; }
+        e = e - 1;
+    }
+    return _hdr_is_ellipsis(b, s, e);
 }
 
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
@@ -1430,7 +1468,11 @@ fn cmd_header(arg): i64 {
         sys_write(STDOUT_FD, "cyr_val ", 8);
         sys_write(STDOUT_FD, hbuf + fname_start, fname_len);
         sys_write(STDOUT_FD, "(", 1);
-        if (pe == ps) {
+        # 6.7.11 — a fully variadic `fn f(...)` is `(void)` in C: pre-C23 C refuses a bare
+        # `(...)`, and the callee reads no argument (a cyrius variadic tail is never read:
+        # tests/tcyr/lang/varargs.tcyr), so C passing none is the whole contract. CHANGELOG [6.7.11]
+        var allva = _hdr_only_ellipsis(hbuf, ps, pe);
+        if (pe == ps || allva == 1) {
             sys_write(STDOUT_FD, "void", 4);
         } else {
             # Count and emit params: the name, then its type and default skipped whole. A
@@ -1461,7 +1503,9 @@ fn cmd_header(arg): i64 {
                 pi = _hdr_close(hbuf, pi, pe, 1);
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }
-                    sys_write(STDOUT_FD, "cyr_val ", 8);
+                    # 6.7.11 — a variadic tail is C's `...` alone (it printed `cyr_val ...`, not
+                    # C). The extras C passes are never read by the callee. CHANGELOG [6.7.11]
+                    if (_hdr_is_ellipsis(hbuf, pns, pne) == 0) { sys_write(STDOUT_FD, "cyr_val ", 8); }
                     sys_write(STDOUT_FD, hbuf + pns, pne - pns);
                     first = 0;
                 }
@@ -1469,7 +1513,8 @@ fn cmd_header(arg): i64 {
                 if (pi < pe) { if (load8(hbuf + pi) == 44) { pi = pi + 1; } }
             }
         }
-        println(");");
+        if (allva == 1) { println("); /* variadic in cyrius: it reads no argument */"); }
+        else { println(");"); }
     }
 
     println("");
