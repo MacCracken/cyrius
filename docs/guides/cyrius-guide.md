@@ -206,6 +206,18 @@ multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `
 — `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
 type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
 
+**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
+plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
+`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
+`**T` is a pointer whose step is a pointer's 8, as a `**T` local's is; `*fn( .. )` is one word, its
+names are checked, and a call does not check the fn it is given against them. Anything else is refused
+by name, once, with no cascade — `fn f(a: 5)` is `expected a type for parameter 'a', got number 5`,
+and so are an operator, `;`, a string, a keyword, a missing type (`a:`), a lone `*` and `fn( .. )`
+with no `*` (a grammar refusal: `cyrius lint` reports it). ⚠ Before 6.7.11 both of the compiler's
+passes read ONE token after at most one `*`: `fn f(p: **i64)` was `expected ')', got identifier
+'i64'`, `cb: *fn(i64): i64` was `expected ')', got '('`, and `fn f(a: 5)` / `(a: +)` / `(a: "s")`
+compiled with the token skipped.
+
 ### Arrays: byte vs slot sizing (v6.2.1)
 
 `var a: T[N]` declares a fixed array of **N elements of type T** — the
@@ -5045,6 +5057,10 @@ arguments belong to direct calls (6.7.7, see *Default and named arguments*). So
 name when `f` declares defaults, and so is a `name:` argument. A struct result comes back only
 when the callee is written `&f` (6.7.11): a callee held in a variable returns one word (see
 *Returning a struct by value*).
+
+A parameter that holds a fn pointer can say so (6.7.11): `fn ap(cb: *fn(i64): i64, x: i64)`, or a
+bare `cb: *fn`. It is one word; `fncall1(cb, x)` / `callptr(cb, x)` call through it, and the
+signature is not checked against the fn a caller passes (see *Type names*).
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:

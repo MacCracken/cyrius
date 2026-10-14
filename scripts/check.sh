@@ -2454,6 +2454,11 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /
 # aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/address_of_pointer_param.sh"
+# 6.7.11 — a fn parameter's type is read whole, by the trait-signature grammar plus a bare `*fn` (the
+# user's decision, 2026-10-13): `**T` / `***T` / `*fn( .. ): T` parameters compile, and a non-type
+# (`a: 5`, `a: +`, `a: ;`, a string) is refused by name, once. The two filed repros, 21 refusals, the
+# pass agreement and 23 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/param_type_grammar.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

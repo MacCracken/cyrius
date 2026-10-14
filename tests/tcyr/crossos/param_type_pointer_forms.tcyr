@@ -1,0 +1,95 @@
+# param_type_pointer_forms.tcyr — 6.7.11: a parameter's type is read whole, by the trait-signature
+# grammar (`_trs_type`, 6.7.8) plus a bare `*fn`: any number of `*`, then `u128`, a tuple,
+# `*fn( .. )` with an optional `: T`, a bare `*fn`, or a name with its `<..>` (the user's decision,
+# 2026-10-13: (b)).
+#
+# ⛔ THE DEFECT, 6.7.4 - 6.7.10. Both parameter scans stepped ONE token after at most one `*`, so
+# `fn f(p: **i64)` was "expected ')', got identifier 'i64'" (and `*fn(i64): i64` "expected ')', got
+# '('"), while a `**i64` local and field compiled; and `fn f(a: 5)` compiled, the token skipped (the
+# refusals are tests/gates/frontend/param_type_grammar.sh's).
+# Filed: docs/development/issues/2026-10-10-param-type-annotation-reads-one-token.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/param_type_grammar.sh, on the
+# four hardware hosts by the release gate's cross-OS leg.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+struct Pf { x; y; }
+
+# --- `**T` / `***T`: a pointer parameter whose step is a pointer's 8 -----------------------------
+fn pf_dd(p: **i64): i64 { return **p; }
+fn pf_ddd(p: ***i64): i64 { return ***p; }
+fn pf_d1(p: **i64): i64 { var q = *p; return *q; }
+fn pf_second(p: **i64): i64 { return **(p + 1); }         # `p + 1` steps one pointer
+fn pf_step(p: **i64): i64 { var a = p + 1; return a - p; }
+fn pf_write(p: **i64, v): i64 { **p = v; return 0; }
+fn pf_rebind(p: **i64, q: *i64): i64 { *p = q; return 0; }
+fn pf_ds(pp: **Pf): i64 { var q = *pp; return load64(q + 8); }
+fn pf_seventh(a, b, c, d, e, f, p: **i64): i64 { return **p + a; }   # stack-passed on SysV / Win64
+fn pf_mixed(k: i64, p: **i64, q: *i64): i64 { return **p + *q + k; }
+impl Pf {
+    fn pm(self, pp: **i64): i64 { return **pp + self.x; }
+}
+fn pf_gen<T>(p: **T): i64 { return **p; }
+# --- `*fn( .. )` with its signature, and the bare `*fn` (6.7.7) -----------------------------------
+fn pf_inc(x: i64): i64 { return x + 1; }
+fn pf_add(a, b): i64 { return a + b; }
+fn pf_k(): i64 { return 9; }
+fn pf_ap(cb: *fn(i64): i64, x: i64): i64 { return fncall1(cb, x); }
+fn pf_ap2(cb: *fn(i64, i64), x): i64 { return fncall2(cb, x, 1); }
+fn pf_ap0(cb: *fn(): i64): i64 { return fncall0(cb); }
+fn pf_bare(cb: *fn, x): i64 { return fncall1(cb, x); }
+fn pf_gap<T>(cb: *fn(T): T, x: T): T { return fncall1(cb, x); }
+fn pf_fnp(cb: *fn(*fn(i64): i64, i64): i64): i64 { return fncall2(cb, &pf_inc, 5); }
+# --- the forms that compiled before, unchanged --------------------------------------------------
+fn pf_wide(a: u128, b: (i64, i64)): i64 { return b.1; }
+fn pf_ptr(p: *Pf): i64 { return p.y; }
+
+fn pf_rows(): i64 {
+    var x = 42;
+    var y = 7;
+    var px: *i64 = &x;
+    var ppx: **i64 = &px;
+    var pppx: ***i64 = &ppx;
+    var two: i64[2];
+    store64(&two, &x);
+    store64(&two + 8, &y);
+    assert_eq(pf_dd(ppx), 42, "**i64: **p");
+    assert_eq(pf_ddd(pppx), 42, "***i64: ***p");
+    assert_eq(pf_d1(ppx), 42, "**i64: *p, then *q");
+    assert_eq(pf_second(&two), 7, "**i64: p + 1 steps 8");
+    assert_eq(pf_step(ppx), 8, "**i64: (p + 1) - p");
+    pf_write(ppx, 43);
+    assert_eq(x, 43, "**i64: **p = v writes the target");
+    var px2: *i64 = &y;
+    pf_rebind(ppx, &y);
+    assert_eq(*px, 7, "**i64: *p = q rebinds the caller's pointer");
+    px = &x;
+    var s: Pf;
+    s.x = 3;
+    s.y = 4;
+    var ps: *Pf = &s;
+    assert_eq(pf_ds(&ps), 4, "**Pf: the struct through two pointers");
+    assert_eq(pf_seventh(1, 2, 3, 4, 5, 6, ppx), 44, "**i64 as the seventh (stack) parameter");
+    assert_eq(pf_mixed(1, ppx, px2), 51, "**i64 between an i64 and a *i64");
+    assert_eq(s.pm(ppx), 46, "**i64 on an impl method");
+    assert_eq(pf_gen(ppx), 43, "**T on a generic (T = i64)");
+    assert_eq(pf_fwd(ppx), 43, "**i64 on a fn defined below (pass 1 counts it)");
+    assert_eq(pf_fwd3(pppx), 43, "***i64 with a default, defined below: the default fills");
+    assert_eq(pf_fwd3(pppx, 2), 86, "***i64 with a default, defined below: given");
+    assert_eq(pf_ap(&pf_inc, 41), 42, "*fn(i64): i64");
+    assert_eq(pf_ap2(&pf_add, 41), 42, "*fn(i64, i64)");
+    assert_eq(pf_ap0(&pf_k), 9, "*fn(): i64");
+    assert_eq(pf_bare(&pf_inc, 41), 42, "bare *fn (6.7.7)");
+    assert_eq(pf_gap(&pf_inc, 41), 42, "*fn(T): T on a generic");
+    assert_eq(pf_fnp(&pf_ap), 6, "*fn(*fn(i64): i64, i64): i64");
+    var t: (i64, i64) = (5, 6);
+    var w: u128 = 0;
+    assert_eq(pf_wide(w, t), 6, "u128 and a tuple (unchanged)");
+    assert_eq(pf_ptr(&s), 4, "*Pf (unchanged)");
+    return 0;
+}
+fn pf_fwd(p: **i64): i64 { return **p; }
+fn pf_fwd3(p: ***i64, k = 1): i64 { return ***p * k; }
+
+pf_rows();
+var r = assert_summary();

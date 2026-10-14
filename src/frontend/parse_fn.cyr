@@ -10114,25 +10114,209 @@ fn _sl_param_refuse(S, ti): i64 {
     return _sl_err(S, ti, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
       " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
 }
-# Pass 1's (quiet): one token and its `<..>`, or a slice's whole `[ .. ]`.
-fn _param_type_step_q(S): i64 {
-    if (PEEKT(S) == 28) {
-        _sl_ann_skip(S);
-        return 0;
-    }
+# ⛔ 6.7.11 — A PARAMETER'S TYPE IS READ WHOLE, BY ONE GRAMMAR IN BOTH PASSES: the trait-signature
+# reader's (`_trs_type`, 6.7.8) — any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional
+# `: T`, a bare `*fn` (accepted since 6.7.7), or a name with its `<..>`; anything else is refused by
+# name, once (the user's decision, 2026-10-13: (b)). Both passes stepped ONE token after at most one
+# `*`, so `fn f(p: **i64)` met "expected ')'", and `fn f(a: 5)` / `(a: +)` / `(a: "s")` compiled with
+# the token skipped. Pass 2 keeps its arms for a name, a tuple and a slice behind one `*`; the reader
+# takes the rest (`_param_type_step`), and pass 1 the same span quietly (`_param_type_step_q`), so the
+# two count the same parameters (`_pd_pc_check`). CHANGELOG [6.7.11]
+var _pty_ts = 0;    # pass 2: the parameter type's first token (just past its `:`)
+var _pty_bad = 0;   # the type being read has reported (it reports nothing more)
+# Pass 2, cursor just past a parameter's `:`: the type's start recorded, and a first `*` consumed and
+# marked on the slot to come (`_mark_ptr_param`; a second `*` makes the step 8).
+fn _param_ptr_head(S): i64 {
+    _pty_ts = GTI(S);
+    if (PEEKT(S) != 8) { return 0; }
     STI(S, GTI(S) + 1);
-    SKIP_GENERICS(S);
+    _mark_ptr_param(S);
     return 0;
 }
-# The parameter loop's "consume type", cursor on the type's token: one step, or a slice's whole
-# `[ .. ]`, refused by name.
+# Pass 1's (quiet), cursor on a type token its arms do not take (a `*` after the first, `fn`, `u128`,
+# a slice, or no type at all): the cursor left past the type, as pass 2 leaves it.
+fn _param_type_step_q(S): i64 {
+    _pty_bad = 0;
+    STI(S, _pty_end(S, GTI(S), 0, 0));
+    return 0;
+}
+# The parameter loop's "consume type" (pass 2): a name its type-name arm took is stepped (the loop's
+# SKIP_GENERICS takes the `<..>`); anything else is read from the type's start, and refused by name
+# when it is not a type (a slice `[T]` by its own text, 6.7.8 C2-6a).
 fn _param_type_step(S): i64 {
-    if (PEEKT(S) != 28) {
+    if (PEEKT(S) == 2) {
         STI(S, GTI(S) + 1);
         return 0;
     }
-    _sl_param_refuse(S, GTI(S));
+    _pty_bad = 0;
+    STI(S, _pty_end(S, _pty_ts, 1, 0));
+    return 0;
+}
+# The token after the type that starts at token `i` — a function of the tokens alone, so the passes
+# agree even on a refused type. `loud` 1 (pass 2) reports, the first problem of each type once;
+# `inner` 1 inside a `*fn( .. )`, whose names no other arm checks. At the top level pass 2's arms took
+# a name, a tuple and a `slice<T>` behind at most one `*`, so the reader checks those only behind two.
+fn _pty_end(S, i, loud, inner): i64 {
+    var n = 0;
+    while (TOKTYP(S, i) == 8) {
+        i = i + 1;
+        n = n + 1;
+    }
+    var own = loud;
+    if (inner == 0) { if (n < 2) { own = 0; } }
+    if (_sl_ann_at(S, i) == 1) {
+        if (TOKTYP(S, i) == 28) { own = loud; }
+        return _pty_slice(S, i, own, inner);
+    }
+    var t = TOKTYP(S, i);
+    if (t == 105) { return i + 1; }   # u128
+    if (t == 10) { return _pty_tuple(S, i, own, loud); }
+    if (t == 32) { return _pty_fn(S, i, loud, n); }
+    if (t == 2) {
+        if (own == 1) { _pty_name(S, i); }
+        return _pty_gen_end(S, i + 1);
+    }
+    _pty_err(S, i, loud);
+    return _pty_skip(S, i);
+}
+# Past a refused token `i`, to the parameter's (or the list element's) end: the next `,` / `)` /
+# `=` at its depth, so `a: -1` / `a: 5 + 3` report once. A token that ends a parameter, and a
+# brace, `;` or the end of file after it, are not crossed.
+fn _pty_skip(S, i): i64 {
+    var t = TOKTYP(S, i);
+    if (t == 11 || t == 31 || t == 4 || t == 12 || t == 13 || t == 14) { return i; }
+    i = i + 1;
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        t = TOKTYP(S, i);
+        if (t == 12 || t == 13 || t == 14 || t == 5) { return i; }
+        if (d == 0) { if (t == 11 || t == 31 || t == 4) { return i; } }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        i = i + 1;
+    }
+    return i;
+}
+# A slice at token `i`, consumed whole; refused by name when `rep` (behind a `*`: its own text).
+fn _pty_slice(S, i, rep, inner): i64 {
+    if (rep == 1) {
+        if (inner == 0) { _sl_param_refuse(S, i); }
+        elif (TOKTYP(S, i - 1) == 8) { _sl_err_ptr(S, i); }
+        else {
+            _sl_err(S, i, "a slice cannot be a parameter (6.7.8: slices are fn-locals)",
+              " - pass &s and read slice_ptr / slice_len, or the pointer and the length");
+        }
+    }
+    var sv = GTI(S);
+    STI(S, i);
     _sl_ann_skip(S);
+    var e = GTI(S);
+    STI(S, sv);
+    return e;
+}
+# A tuple at token `i` (its `(`): the token after its `)`. Behind one `*` or none, pass 2's
+# `_tup_param` took it; behind two it is a pointer target, refused as `*( .. )` is. Inside a
+# `*fn( .. )` its elements are types.
+fn _pty_tuple(S, i, own, loud): i64 {
+    var c = _call_close(S, i);
+    if (own == 0) { return c + 1; }
+    if (TOKTYP(S, i - 1) != 8) {
+        _pty_list(S, i + 1, loud);
+        return c + 1;
+    }
+    if (_pty_bad == 0) {
+        var sv = GTI(S);
+        STI(S, i);
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+        STI(S, sv);
+    }
+    _pty_bad = 1;
+    return c + 1;
+}
+# `fn` at token `i` (`n` the `*`s before it): `fn( .. )` with an optional `: T`, or a bare `fn`
+# (6.7.7). A type only behind a `*`.
+fn _pty_fn(S, i, loud, n): i64 {
+    if (n == 0) { _pty_err(S, i, loud); }
+    i = i + 1;
+    if (TOKTYP(S, i) != 10) { return i; }
+    i = _pty_list(S, i + 1, loud);
+    if (TOKTYP(S, i) == 49) { i = _pty_end(S, i + 1, loud, 1); }
+    return i;
+}
+# The types of a `( .. )` from token `i` (just past its `(`), comma-separated: the token after its
+# `)`, or the token a `)` was expected at.
+fn _pty_list(S, i, loud): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    var go = 1;
+    while (go == 1) {
+        var j = _pty_end(S, i, loud, 1);
+        if (j == i) { go = 0; }
+        elif (TOKTYP(S, j) == 31) { j = j + 1; }
+        else { go = 0; }
+        i = j;
+    }
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    _pty_bad = 1;   # the parameter loop reports the `)` it expects here
+    return i;
+}
+# A name at token `i` no other arm checks: refused by name unless it is a type (the type-name arm's
+# set, `_tn_param_check`: a by-name handle or vector, a resolved type, the fn's own type parameter).
+fn _pty_name(S, i): i64 {
+    var nm = TOKVAL(S, i);
+    if (_classify_param_type(S, nm) != 0) { return 0; }
+    if (_tn_resolve_at(S, i) != 0) { return 0; }
+    if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
+    _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    return 0;
+}
+# Token `i` past a name: past its `<..>` when one follows.
+fn _pty_gen_end(S, i): i64 {
+    if (TOKTYP(S, i) != 19) { return i; }
+    var sv = GTI(S);
+    STI(S, i);
+    SKIP_GENERICS(S);
+    var e = GTI(S);
+    STI(S, sv);
+    return e;
+}
+# The parameter's name (the token before its `:`), or -1.
+fn _pty_pnoff(S): i64 {
+    if (TOKTYP(S, _pty_ts - 2) != 2) { return 0 - 1; }
+    if (TOKTYP(S, _pty_ts - 1) != 49) { return 0 - 1; }
+    return TOKVAL(S, _pty_ts - 2);
+}
+# "expected a type for parameter 'a', got '+'" at token `ti` (`loud`), the type's first problem only,
+# once per token (a generic's instances re-read the signature); not a panic, so the list reads on.
+fn _pty_err(S, ti, loud): i64 {
+    var b = _pty_bad;
+    _pty_bad = 1;
+    if (loud == 0) { return 0; }
+    if (b == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": expected a type");
+    var pn = _pty_pnoff(S);
+    if (pn >= 0) {
+        PRSTR(" for parameter '");
+        PRSTR(S + 0xEC00000 + pn);
+        PRSTR("'");
+    }
+    PRSTR(", got ");
+    var t = TOKTYP(S, ti);
+    PRSTR(TOKNAME(t));
+    if (t == 1) {
+        PRSTR(" ");
+        PRNUM(TOKVAL(S, ti));
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
     return 0;
 }
 # A return annotation the type-name path does not read (cursor on it): `: *T` (6.6.17) and, refused
@@ -12589,6 +12773,7 @@ fn _prescan_params_scan(S, fi): i64 {
                         # as pass 2 takes it — stopping here counted the list short. A tuple type is
                         # stepped whole above (the token after it is the list's own). CHANGELOG [6.7.7]
                         # 6.7.8 (C2-6a): and a slice's whole `[ .. ]` (pass 2 refuses it by name).
+                        # 6.7.11: the whole type, by pass 2's reader (`**T`, `*fn( .. ): T`, a refused token).
                         _param_type_step_q(S);
                     }
                 }
@@ -14965,7 +15150,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 } }
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
-                if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types
+                _param_ptr_head(S);   # the type's start, and a first `*` (6.7.11: `_param_type_step` reads the rest)
                 if (PEEKT(S) == 10) { struct_mask = _tup_param(S, pc, struct_mask); pt_sid = _tup_pt; }   # 6.7.7 (B4)
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
