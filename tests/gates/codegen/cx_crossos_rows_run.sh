@@ -428,7 +428,7 @@ tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 203
 echo "R8 — the crossos files cx's 16 B pair refusal kept off cxvm (6.7.8), native then cxvm:"
 for _r8 in aggregate_storage_class:46 for_step_struct_assign:14 generic_two_param_struct:25 \
            impl_inherent:4 method_chain:18 pair_return_shapes:6 struct_arg_type_accepted:38 \
-           struct_param_byvalue_copy:32 struct_ptrmode_assign_copy:59 struct_ptrmode_return_copy:24 \
+           struct_param_byvalue_copy:32 struct_ptrmode_assign_copy:59 struct_ptrmode_return_copy:75 \
            struct_valued_call_sites:57; do
     tcyr_native "tests/tcyr/crossos/${_r8%%:*}.tcyr" "${_r8##*:}"
     tcyr_cx     "tests/tcyr/crossos/${_r8%%:*}.tcyr" "${_r8##*:}"

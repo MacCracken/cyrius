@@ -173,11 +173,15 @@
 #      `gpg<S>()`, `gpi(p)` and `gpv(G)`, the 6.7.11 copy arms (`o.s = gpg<S>()`, `l = *gpg<S>()`), wrapped,
 #      `+ 0`, two type parameters, inside another instance, top level (through 6.7.10 the pointer word
 #      stored, SIGSEGVs, the field form refused; the compile rows are generic_struct_field.sh's P)
-#   R13 (6.7.11, issues/2026-10-12-small-struct-return-takes-another-structs-value.md)
-#      tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr on the same legs (floor 24): a `*T` LOCAL returned
+#   R13 (6.7.11, issues/2026-10-12-small-struct-return-takes-another-structs-value.md and
+#      issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md)
+#      tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr on the same legs (floor 75): a `*T` LOCAL returned
 #      from a fn of 8 B or less is the struct it points at, as a `*T` parameter is (6.6.17) — wrapped, 3 / 4 /
-#      6 / 8 B, a copy (not an alias), its word's padding 0 (through 6.7.10 the ADDRESS); the refusals are
-#      tests/gates/frontend/small_struct_return_type_refused.sh
+#      6 / 8 B, a copy (not an alias), its word's padding 0 (through 6.7.10 the ADDRESS); and `return E;` with E
+#      a `*S` global, a `: *S` call (the tail-call shape), a `*S` field, a `*S` local, `GP + 0`, a `: *S` method,
+#      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
+#      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
+#      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -413,6 +417,13 @@
 #   the tree before it (3fc1dbbb)                   -> RED 8: R13 18 of 24 rows x7 (the `*T` local's address), C6
 #                                                      (compiled, exit 3: U8's bytes as the S8)
 #   MS2  `_ret_small_ptr` answering 0                -> RED 7: R13 18 of 24 rows x7
+#   (issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md, R13 at 75 rows:)
+#   the tree before it (the 8 B refusal commit)     -> RED 7: R13 does not build x7 (`return GP16;` refused)
+#   MT3  `_ret_small_ptr` a bare local only (as before) -> RED 7: R13 16 of 75 rows x7 (3 / 8 B: the pointer's word)
+#   MT2  `_ret_ptr_src` answering -1                 -> R13 does not build (x86 measured: the 16 B rows refused)
+#   MT4  `_tc_small_sret_divert` without `: *X`     -> R13 2 of 75 rows (x86 measured: `return gp3();` /
+#                                                      `return gp8();` kept the `jmp`, the pointer's word)
+#   MT5  `_ret_ptr_src` without its dereference arm -> R13 does not build (x86 measured: `return *GP16;` refused)
 # 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
 # issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
@@ -717,7 +728,7 @@ done
 TRC=tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr
 [ -f "$TRC" ] || { echo "FAIL: $G: $TRC is missing"; exit 1; }
 NRC=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TRC")
-RCFLOOR=24
+RCFLOOR=75
 if [ "$NRC" -lt "$RCFLOOR" ]; then echo "FAIL: $G: only $NRC rows in $TRC (floor $RCFLOOR) — rows were lost"; exit 1; fi
 echo "R13. $TRC ($NRC rows: a *T returned by value from a struct fn is the struct it points at)"
 for leg in $XLEGS $OTHER; do

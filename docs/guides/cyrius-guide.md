@@ -1429,8 +1429,8 @@ Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y
 keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
-can carry**: a local of that struct, a call to a fn returning the same struct, or a method or
-overloaded operator returning it. Anything else — a call returning a *different* struct, an
+can carry**: a local of that struct, a call to a fn returning the same struct, a method or
+overloaded operator returning it, or (6.7.11) a pointer to that struct (below). Anything else — a call returning a *different* struct, an
 integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
@@ -1446,9 +1446,30 @@ error: a fn returning the struct `S8` takes a value of that struct, or a pointer
 ```
 
 Through 6.7.10 each compiled and handed back the other struct's word (a `*U`: its address) as the
-`S8`, silently. A `*S8` LOCAL of the fn's own struct returns the struct it points at, as a `p: *S8`
-parameter has since 6.6.17 — before 6.7.11 it returned the address. An untyped value (`var x = 3;
-return x;`) is still the struct's one word.
+`S8`, silently. A pointer to the fn's own struct returns the struct it points at (below). An untyped
+value (`var x = 3; return x;`) is still the struct's one word.
+
+⚠ **`return E;` with `E` a pointer to the struct returns the struct it points at, at every size
+(6.7.11).** In a fn declared `: S`, `E` a `*S` — a local or a parameter, a global, a call or method
+declared `: *S` (a generic one too), a `*S` field, pointer arithmetic on one, inside parentheses or not
+— or a dereference `*E` of one returns a copy of the struct `E` points at, as `l = GP` copies it (struct
+copies are size-independent):
+
+```cyrius
+struct S8 { v; }
+var GS = S8 { 9 };
+var GP: *S8 = &GS;
+fn gp(): *S8 { return GP; }
+fn f(): S8 { return GP; }        # GS's struct: f().v is 9
+fn g(): S8 { return gp(); }      # the same (not taken as a tail call)
+```
+
+Before 6.7.11 a fn of 8 bytes or less returned the POINTER as the struct's word, silently (`f().v` was
+`&GS`; only a `p: *S8` parameter copied, since 6.6.17), and over 8 bytes every form but a `*S` local or
+parameter was a compile error (*… got `GP`*, *identifier is not a local*). A `*U` of another struct is
+refused by name at every size (*… takes a value of that struct, or a pointer to one — got `GU` (a
+`*U`)*). `&s` is not one of these: it is an untyped address (a fn of 8 bytes or less returns it as the
+word).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
