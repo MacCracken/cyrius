@@ -3545,7 +3545,7 @@ fn _distlib_leaf_is_stdlib(leaf): i64 {
 # ⭐ 6.6.9 — THE UNIT IS WHAT A CONSUMER'S BUILD HAS IN SCOPE: the leaves, the leaves the named
 # deps bring, the NAMED DEPS' own modules, then the bundle. It used to be the leaves and the
 # bundle only, so every symbol the bundle takes from a named dep read as undefined,
-# `_distlib_leaf_defining` credited it to the first stdlib file declaring that name — for libro's
+# the owner lookup credited it to the first stdlib file declaring that name — for libro's
 # thin sigil surface, the sigil MONOLITH — and the next round recorded the monolith's own needs
 # (`sys`) as libro's. `cyrius deps` records the module paths and the leaves it pulled for named
 # deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr): the modules enter the unit, and a
@@ -4147,11 +4147,14 @@ fn _distlib_add_targets(sb, mask): i64 {
     return 0;
 }
 
-# ⚖️ OWNER OF A SYMBOL ONLY SOME TARGETS LACK. Crediting the first snapshot file that declares
-# it (what a host-only verify did) is wrong once the union is taken: mihi's EINTR is undefined
-# on PE only (syscalls_windows lacks it), and `sigil.cyr` sorts before every syscalls peer, so
-# the first declarer would put the sigil monolith in mihi's sidecar on EVERY host. So, over
-# every declarer, each mapped to its dispatcher:
+# ⚖️ THE OWNER OF AN UNDEFINED SYMBOL — ONE RULE, whether every target or only some left it
+# undefined. Crediting the first snapshot file that declares it (what a host-only verify did) is
+# wrong once the union is taken: mihi's EINTR is undefined on PE only (syscalls_windows lacks
+# it), and `sigil.cyr` sorts before every syscalls peer, so the first declarer would put the sigil
+# monolith in mihi's sidecar on EVERY host. ⛔ The every-target path kept "the first non-fold
+# declarer in byte order" until 6.7.11: a tie between two leaves was settled by their names, and
+# an in-unit declarer first in byte order added nothing (the name fell to D2's warning). It asks
+# this helper too now (user, 2026-10-13). So, over every declarer, each mapped to its dispatcher:
 #   - one ALREADY IN THIS ROUND'S UNIT (a leaf it was built from, the scope it was built with,
 #     or a named dep) is SKIPPED: the target still left the name undefined, so that declarer
 #     demonstrably does not define it there. ⛔ 6.6.18 (D3): this answered "the target's own
@@ -4166,10 +4169,13 @@ fn _distlib_add_targets(sb, mask): i64 {
 #     never the answer when the name has a real home — and the declarers that are a
 #     dispatcher's PEER name that target's canonical definer: exactly one dispatcher => it;
 #   - else exactly one non-peer declarer => it;
-#   - else (two or more candidates either way) it is a named refusal: answers -1.
+#   - else (two or more candidates either way) it is a named refusal: answers -1, and the
+#     sidecar is not written. CHANGELOG [6.7.11]
 # Answers 0 when no out-of-unit declarer exists (the name is then reported by D2's warning),
-# 1 with `_dl_own_raw` / `_dl_own_owner` set otherwise. `unit_n` / `scope0`: the leaves and the
-# scope this round's unit was built from (leaves only ever grow, so its first `unit_n`).
+# 1 with `_dl_own_raw` / `_dl_own_owner` set otherwise. `mask` / `all_mask`: the targets that
+# left it undefined, and every target this round compiled (the refusal names which). `unit_n` /
+# `scope0`: the leaves and the scope this round's unit was built from (leaves only ever grow, so
+# its first `unit_n`).
 var _dl_own_raw = 0;
 var _dl_own_owner = 0;
 
@@ -4213,7 +4219,28 @@ fn _distlib_drop_folds(a, b, flags, nonfold): i64 {
     return w;
 }
 
-fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope, unit_n, scope0): i64 {
+# The dispatcher snapshot leaf `i` resolves to, and whether it is a fold bundle — each read once
+# per snapshot: every undefined name asks this for every declarer, and the allocator never
+# frees (the v6.6.3 OOM: resolving reads dispatcher files whole).
+fn _distlib_snap_owner(root, i): i64 {
+    var o = vec_get(_dl_snap_own, i);
+    if (o == 0) {
+        o = _distlib_resolve_dispatcher(root, vec_get(_dl_snap_names, i));
+        vec_set(_dl_snap_own, i, o);
+    }
+    return o;
+}
+
+fn _distlib_snap_fold(root, i): i64 {
+    var f = vec_get(_dl_snap_fold, i);
+    if (f < 0) {
+        f = _distlib_is_fold(root, vec_get(_dl_snap_names, i));
+        vec_set(_dl_snap_fold, i, f);
+    }
+    return f;
+}
+
+fn _distlib_symbol_owner(root, nm, mask, all_mask, leaves, named_deps, scope, unit_n, scope0): i64 {
     _dl_own_raw = 0;
     _dl_own_owner = 0;
     var nlen = strlen(nm);
@@ -4227,11 +4254,12 @@ fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope, unit_n, sco
     while (i < vec_len(_dl_snap_names)) {
         var set = vec_get(_dl_snap_sets, i);
         var raw = vec_get(_dl_snap_names, i);
+        var si = i;
         i = i + 1;
         if (_src_ids_has(set, nm, nlen) == 0) { continue; }
-        var fold = _distlib_is_fold(root, raw);
+        var fold = _distlib_snap_fold(root, si);
         if (fold == 0) { nonfold = 1; }
-        var owner = _distlib_resolve_dispatcher(root, raw);
+        var owner = _distlib_snap_owner(root, si);
         # In this round's unit already, and the name is still undefined there: not its definer.
         if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
         if (_distlib_vec_has_n(leaves, unit_n, owner) == 1 || _distlib_vec_has_n(leaves, unit_n, raw) == 1) { continue; }
@@ -4268,9 +4296,13 @@ fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope, unit_n, sco
     var rsb = str_builder_new();
     str_builder_add_cstr(rsb, "distlib: sidecar verify: '");
     str_builder_add_cstr(rsb, nm);
-    str_builder_add_cstr(rsb, "' is undefined only on ");
-    _distlib_add_targets(rsb, mask);
-    str_builder_add_cstr(rsb, ", and more than one stdlib leaf could own it there (");
+    if (mask == all_mask) {
+        str_builder_add_cstr(rsb, "' is undefined on every target, and more than one stdlib leaf could own it (");
+    } else {
+        str_builder_add_cstr(rsb, "' is undefined only on ");
+        _distlib_add_targets(rsb, mask);
+        str_builder_add_cstr(rsb, ", and more than one stdlib leaf could own it there (");
+    }
     var k = 0;
     while (k < vec_len(cands)) {
         if (k > 0) { str_builder_add_cstr(rsb, ", "); }
@@ -4358,19 +4390,12 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             var nm = vec_get(names, ni);
             var nmask = vec_get(masks, ni);
             ni = ni + 1;
-            var raw = 0;
-            var owner = 0;
-            if (nmask == all_mask) {
-                raw = _distlib_leaf_defining(root, nm);
-                if (raw != 0) { owner = _distlib_resolve_dispatcher(root, raw); }
-            } else {
-                # Undefined on SOME targets only: see _distlib_partial_owner.
-                var po = _distlib_partial_owner(root, nm, nmask, leaves, named_deps, scope, unit_n, scope0);
-                if (po < 0) { return 0 - 1; }
-                if (po == 1 && _dl_own_raw == 0) { continue; }   # already in the unit
-                raw = _dl_own_raw;
-                owner = _dl_own_owner;
-            }
+            # On every target or only some: one owner rule (_distlib_symbol_owner).
+            var po = _distlib_symbol_owner(root, nm, nmask, all_mask, leaves, named_deps, scope, unit_n, scope0);
+            if (po < 0) { return 0 - 1; }
+            if (po == 1 && _dl_own_raw == 0) { continue; }   # already in the unit
+            var raw = _dl_own_raw;
+            var owner = _dl_own_owner;
             if (raw == 0) {
                 # Not a stdlib symbol — the consumer's problem — UNLESS the snapshot does declare
                 # it somewhere the depth-0 reader could not place (6.6.10). That used to be this
@@ -4754,9 +4779,9 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
     return leaf;
 }
 
-# Which stdlib leaf DECLARES `name` at top level — a fn, a var or an enum member, in any
-# spelling the compiler accepts? Returns the leaf name, or 0.
-# v6.6.3 — SNAPSHOT CACHE. `_distlib_leaf_defining` used to `dir_list` the whole stdlib
+# Which stdlib leaves DECLARE a name at top level — a fn, a var or an enum member, in any
+# spelling the compiler accepts? The index the owner rule (_distlib_symbol_owner) walks.
+# v6.6.3 — SNAPSHOT CACHE. The owner lookup used to `dir_list` the whole stdlib
 # snapshot and `alloc` + read EVERY `.cyr` file on EVERY call, and the verify loop calls it
 # ONCE PER UNDEFINED SYMBOL. cyrius's allocator is an arena that never frees, so the cost
 # was O(symbols x snapshot bytes) in RETAINED memory:
@@ -4775,9 +4800,9 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # and its own `core` profile — the same repo, fewer leaves — finishes inside 2 GB.
 #
 # The cache reads each file ONCE per root, in BYTE ORDER of the entry names (`_dep_name_cmp`, the
-# order `cyrius deps` expands a family in). ⛔ NEVER `dir_list` order: every owner rule below
-# that takes the first match (the every-target declarer, the partial rule's in-unit / scope
-# hits, a refusal's candidate list, an [embed] collision's named leaf) then answered by the
+# order `cyrius deps` expands a family in). ⛔ NEVER `dir_list` order: every rule that takes
+# the first match (the owner rule's in-unit / scope hits, a refusal's candidate list, an
+# [embed] collision's named leaf) then answered by the
 # FILESYSTEM — tmpfs lists newest-first, ext4 by a per-filesystem name hash — so one producer's
 # sidecar differed by host and by TMPDIR. CHANGELOG [6.7.7]
 #
@@ -4793,6 +4818,8 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 var _dl_snap_root = 0;
 var _dl_snap_names = 0;   # vec of cstr: the LEAF each entry answers for (`alloc`, `unicode`), byte order
 var _dl_snap_sets = 0;    # vec of i64: each leaf's _src_ids set of declared names
+var _dl_snap_own = 0;     # vec of cstr: each leaf's dispatcher, 0 until asked (_distlib_snap_owner)
+var _dl_snap_fold = 0;    # vec of i64: 1 a fold bundle, 0 not, -1 until asked (_distlib_snap_fold)
 var _dl_snap_lost = 0;    # _src_ids set: `fn X` / `var X` names in files whose braces do not balance
 var _dl_snap_lostf = 0;   # vec of cstr: those files, for the error
 var _dl_snap_lostb = 0;   # vec of i64: their (blanked) buffers
@@ -4810,6 +4837,8 @@ fn _distlib_snap_cache(root): i64 {
     vec_sort_by(ents, &_dep_name_cmp);
     _dl_snap_names = vec_new();
     _dl_snap_sets = vec_new();
+    _dl_snap_own = vec_new();
+    _dl_snap_fold = vec_new();
     _dl_snap_lost = _src_ids_new(4096);
     _dl_snap_lostf = vec_new();
     _dl_snap_lostb = vec_new();
@@ -4837,6 +4866,8 @@ fn _distlib_snap_cache(root): i64 {
                 if (fset > 0) {
                     vec_push(_dl_snap_names, ed);
                     vec_push(_dl_snap_sets, fset);
+                    vec_push(_dl_snap_own, 0);
+                    vec_push(_dl_snap_fold, 0 - 1);
                 }
             }
             continue;
@@ -4855,6 +4886,8 @@ fn _distlib_snap_cache(root): i64 {
         store8(lname + el - 4, 0);
         vec_push(_dl_snap_names, lname);
         vec_push(_dl_snap_sets, set);
+        vec_push(_dl_snap_own, 0);
+        vec_push(_dl_snap_fold, 0 - 1);
     }
     _dl_snap_root = root;
     return 0;
@@ -4931,28 +4964,6 @@ fn _distlib_snap_lost_decl(name): i64 {
         i = i + 1;
     }
     return 0;
-}
-
-# The owner of a name EVERY target left undefined: the first declarer in byte order that is not
-# a fold BUNDLE, else the first fold. ⛔ The fold rule holds here too, not only in
-# _distlib_partial_owner: since 6.6.18's fixpoint seeds nothing, round 1 sees even a PE-only
-# name (mihi's EINTR) undefined on EVERY target, so this path picks its owner — and the first
-# declarer was whichever file the filesystem listed first (in byte order it is the sigil fold,
-# which sorts before every syscalls peer). CHANGELOG [6.7.7]
-fn _distlib_leaf_defining(root, name): i64 {
-    if (_distlib_snap_cache(root) != 0) { return 0; }
-    var nlen = strlen(name);
-    var fold1 = 0;
-    var i = 0;
-    while (i < vec_len(_dl_snap_names)) {
-        var lname = vec_get(_dl_snap_names, i);
-        var set = vec_get(_dl_snap_sets, i);
-        i = i + 1;
-        if (_src_ids_has(set, name, nlen) == 0) { continue; }
-        if (_distlib_is_fold(root, lname) == 0) { return lname; }
-        if (fold1 == 0) { fold1 = lname; }
-    }
-    return fold1;
 }
 
 # ── [embed] NAME collisions (6.6.19) ───────────────────────────────────────────────────────────

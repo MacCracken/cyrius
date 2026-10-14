@@ -4011,6 +4011,14 @@ stdlib`, out of the production prepend too) do not reach it — from v6.5.10 to
 consumer and hid real gaps behind a declaration. `[deps] stdlib` still drives auto-prepend and
 `cyrius deps` for the package's OWN builds. A family directory (`lib/unicode/`) is one leaf, named
 by the family; a profile's sidecar is verified the same way as the base bundle's.
+The leaf a round adds for an undefined name follows one rule whether every target or only some
+left it undefined (since 6.7.11; the every-target path took the first declarer by file name
+before): a declarer already in the unit is skipped (it demonstrably does not define the name
+there); a fold bundle counts only when nothing else declares the name; then the one dispatcher
+whose peer declares it (`syscalls` for `O_RDWR`, never a per-arch peer); else the one other
+declarer. Two or more candidates is a refusal that names them all — `'X' is undefined on every
+target, and more than one stdlib leaf could own it (a, b)` — and no sidecar is written: `include`
+the right leaf from a bundled module.
 
 The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
 (`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include

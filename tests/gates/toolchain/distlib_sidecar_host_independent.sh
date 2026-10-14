@@ -40,8 +40,9 @@
 #   7. …but only a PRIVATE one: a `sysz_`-prefixed leaf that a peer AND another leaf include is
 #      its own owner (thread_local's shape — crediting it to `thread` dropped it from majra's,
 #      prakash's, szal's and sigil's sidecars).
-#   8. only NON-fold leaves declare a name every target lacks: the owner is the first of them in
-#      BYTE order, never the first the filesystem lists.
+#   8. only NON-fold leaves declare a name every target lacks: a named refusal (6.7.11 — it was
+#      the first of them in byte order; one owner rule for both paths, user 2026-10-13), whose
+#      candidate list is in BYTE order, never in the order the filesystem lists them.
 #
 # ⛔ NOTHING HERE MAY PASS BY THE FILESYSTEM'S LISTING ORDER (6.7.7). The owner rule took the
 # first declarer in `dir_list` order, and tmpfs lists newest-first while ext4 lists by a
@@ -49,11 +50,12 @@
 # ext4 by hash luck (~3 in 5), which is how a release gate read GREEN over the bug. The CLI now
 # reads the snapshot in byte order, and the two halves of the fix are each caught on ANY
 # filesystem: axis 3's monoliths SORT first (`aaa_mono`), so a dropped fold rule fails it; axis
-# 8's right owner sorts first but is ARRANGED never to list first — the gate reads the
+# 8's first candidate sorts first but is ARRANGED never to list first — the gate reads the
 # snapshot's own order (`ls -f`, the getdents order the CLI reads) and retries with a fresh
-# right name until a wrong one leads (a wrong leaf is created before it for a creation-order
+# first name until a later one leads (a later leaf is created before it for a creation-order
 # lister and after it for tmpfs; a hash-order lister puts a fresh name first among n declarers
-# with odds 1/n) — so a snapshot read in listing order fails it. A fixture that cannot be
+# with odds 1/n) — so a snapshot read in listing order lists the refusal's candidates out of
+# byte order and fails it. A fixture that cannot be
 # arranged is a FAIL by name, never a vacuous pass. Axis 3's monoliths are also created around
 # the peers (`aaa_mono` before, the rest after), so a creation-order lister and tmpfs list one
 # first there too.
@@ -151,9 +153,9 @@ printf 'var SYSZ_READ = 0;\n' > "$L/sysz_windows.cyr"
 # genuine ambiguity). After the peers: tmpfs lists newest-first.
 mkmono mmm_mono
 mkmono zzz_mono
-# Axis 8: TIEZ, declared only by non-fold leaves. The right owner `tiez_a<k>` sorts before every
-# wrong one (`tiez_w…`) and must not list first (the header): each try makes a wrong leaf, a
-# fresh right one, another wrong one, and keeps the wrong ones.
+# Axis 8: TIEZ, declared only by non-fold leaves. `tiez_a<k>` sorts before every other
+# (`tiez_w…`) and must not list first (the header): each try makes a later leaf, a fresh
+# `tiez_a<k>`, another later one, and keeps the later ones.
 TIE_R=""
 TIES=""
 k=0
@@ -276,11 +278,12 @@ O7=$(run_distlib "$P7" || true)
 grep -qx 'sysz_pub' "$P7/dist/hprobe.deps" \
     || fail "axis 7: [$(leaves "$P7")] — SYSZ_PUB_Y is missing on every target but macOS, and its leaf sysz_pub was not recorded (credited to the dispatcher sysz instead)"
 
-# ── axis 8: a non-fold tie on every target goes to the first in BYTE order ──────────────────
+# ── axis 8: a non-fold tie on every target is refused, its candidates in BYTE order ─────────
 P8=$(mkproj p8 'fn hp_t(x): i64 { return x + TIEZ; }' '')
-O8=$(run_distlib "$P8" || true)
-[ -f "$P8/dist/hprobe.deps" ] || fail "axis 8: no sidecar written: $(echo "$O8" | grep -i error | head -3)"
-[ "$(grep -c '^tiez_' "$P8/dist/hprobe.deps")" = 1 ] && grep -qx "$TIE_R" "$P8/dist/hprobe.deps" \
-    || fail "axis 8: [$(leaves "$P8")] — TIEZ's owner is not $TIE_R, the first of its declarers in byte order (first listed: $(first_listed "$TIE_R" $TIES)): the snapshot was read in the filesystem's order"
+if O8=$(run_distlib "$P8"); then fail "axis 8: distlib exited 0 though TIEZ has $(echo $TIE_R $TIES | wc -w) non-fold owners on every target: [$(leaves "$P8")]"; fi
+[ -f "$P8/dist/hprobe.deps" ] && fail "axis 8: a sidecar was written: [$(leaves "$P8")]"
+WANT8=$(printf '%s\n' "$TIE_R" $TIES | LC_ALL=C sort | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+echo "$O8" | grep -qF "'TIEZ' is undefined on every target, and more than one stdlib leaf could own it ($WANT8)" \
+    || fail "axis 8: the refusal does not list TIEZ's declarers in byte order ($WANT8; first listed: $(first_listed "$TIE_R" $TIES)) — the snapshot was read in the filesystem's order: $(echo "$O8" | grep -i error | head -2)"
 
-echo "PASS: distlib_sidecar_host_independent (the union over six targets, identical under any target env, owner = the recorded/peer definer, a private peer of a peer is its dispatcher, ambiguity refused, the owner independent of the snapshot's listing order)"
+echo "PASS: distlib_sidecar_host_independent (the union over six targets, identical under any target env, owner = the recorded/peer definer, a private peer of a peer is its dispatcher, ambiguity refused on some targets or all, independent of the snapshot's listing order)"
