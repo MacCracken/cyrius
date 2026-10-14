@@ -1359,9 +1359,11 @@ too. They copy the struct into a struct value now, as a `*T` local does (a `*U` 
 refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`). So
 does pointer arithmetic on a `*T` (`l = p + 1`, `l = (p + 1)`, `l = 1 + GP`, `G = q - 1`: the struct
 the result points at), which stored the pointer word too; `q = q + 1` through a `*T` still steps it.
-⚠ Known defect (6.7.10): a GENERIC call declared `: *T` (`fn gp<T>(): *T`) is no struct source at any
-size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and `gp<S>().v` is refused
-(the instance records T's step but not its struct): bind it to a `*S` first (`var p: *S = gp<S>();`).
+A GENERIC call declared `: *T` is such a source too (6.7.11), with T bound by its type arguments or
+inferred from its arguments: `l = gp<S>()`, `var q: S = *gp<S>()`, `take(*gp<S>())`, `a - *gp<S>()` and
+`gp<S>().v` read the `S` it points at, as `fn gp(): *S` does; a `*U` instance is refused by name (naming
+the call). Through 6.7.10 the instance recorded T's step but not its struct: the pointer word was stored,
+the dereferences faulted, and `gp<S>().v` was refused.
 ⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
 first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
 Into a struct-typed FIELD these sources copy too (6.7.11): `o.s = GP`, `o.s = gp()`, `o.s = w.p`,

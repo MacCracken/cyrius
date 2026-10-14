@@ -1829,12 +1829,7 @@ fn _dro_take(S, b): i64 {
 # `*gp()` -> `gp`). The caller then reloads the pointer from `_dlo_h` (`_HTLOAD`; the right operand's
 # through `_opd_operand`).
 fn _dro_check(S, fi, k): i64 {
-    var nm = 0;
-    var i = _dlo_end - 1;
-    while (i > _dlo_beg) {
-        if (TOKTYP(S, i) == 2) { nm = TOKVAL(S, i); i = _dlo_beg; }
-        i = i - 1;
-    }
+    var nm = _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0);   # 6.7.11: `*gu<U>()` names `gu`
     return _sarg_type_err(S, fi, k, _dlo_sid, nm);
 }
 
@@ -2241,12 +2236,7 @@ fn _ess_deref(S, st): i64 {
     if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
     var u = _hl_psid(S, a + 1, pe);
     if (u <= 0) { return 0; }
-    _ess_nm = TOKVAL(S, a + 1);
-    var i = pe - 1;
-    while (i > a) {
-        if (TOKTYP(S, i) == 2) { _ess_nm = TOKVAL(S, i); i = a; }
-        i = i - 1;
-    }
+    _ess_nm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));   # 6.7.11: `*gu<U>()` names `gu`
     return u;
 }
 # The struct a whole free call at `ti` returns (`_sarg_call_sid`), after the parse; inside `k`

@@ -1791,15 +1791,23 @@ fn _load_hop(S, noff, beg, idx, sid, off): i64 {
 # 6.6.17 — `f().val`, `f().next.val`, `f().m(..)` for `fn f(): *T`, T a struct: the call's result
 # is a pointer, so it is parked as a pointer-mode receiver and the chain continues from it, as for
 # a `*T` local. (It was "cannot take a field of the result of 'f': it does not return a struct".)
-# Cursor just past the callee name at `ti`; 1 = consumed. A generic callee is left to the refusal.
+# Cursor just past the callee name at `ti`; 1 = consumed. 6.7.11: a generic callee too — `fi` is the
+# instance the call reaches (its `: *T` recorded under its binding, `_ret_ptr_record`), and an explicit
+# `g<S>(..).val` is parsed as the factor parses it (`gpg<S>().v` was refused: issues/2026-10-13-generic-
+# pointer-returning-call-as-struct-source.md).
 fn _call_ptr_field(S, ti, fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     var psid = L64(_fn_rpsid + fi * 8);
     if (psid <= 0) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    STI(S, ti + 1);
-    PARSE_FNCALL(S, TOKVAL(S, ti));
+    if (TOKTYP(S, ti + 1) == 19) {
+        STI(S, ti + 1);
+        _explicit_generic_call(S, TOKVAL(S, ti), FINDFN(S, TOKVAL(S, ti)));
+    } else {
+        if (TOKTYP(S, ti + 1) != 10) { return 0; }
+        STI(S, ti + 1);
+        PARSE_FNCALL(S, TOKVAL(S, ti));
+    }
     var h = _ptr_park(S, psid);
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
@@ -8627,13 +8635,23 @@ fn _hl_dstar_t(S, ti, term): i64 {
     var ps = _hl_psid(S, a + 1, pe);
     if (ps <= 0) { return 0; }
     _hl_dk = a - ti;
-    _hl_dnm = TOKVAL(S, a + 1);
-    var i = pe - 1;
-    while (i > a) {
-        if (TOKTYP(S, i) == 2) { _hl_dnm = TOKVAL(S, i); i = a; }
-        i = i - 1;
-    }
+    _hl_dnm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));
     return ps;
+}
+# The last name in [a, e) — the one a refusal quotes (`*w.pu` -> `pu`, `*gu()` -> `gu`) — `dflt` when there is
+# none. A generic call's type-argument list is no name of the operand: `*gpg<U>()` names `gpg`. CHANGELOG [6.7.11]
+fn _hl_lastnm(S, a, e, dflt): i64 {
+    var nm = dflt;
+    var i = a;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) {
+            nm = TOKVAL(S, i);
+            var o = _gcall_open(S, i);
+            if (o > i + 1) { i = o; }   # past `<..>`
+        }
+        i = i + 1;
+    }
+    return nm;
 }
 # The end of a source at token `ti` that ends at `term`: its `;` (`_gz_end`), or for a `)` the first `)`
 # no bracket after `ti` opened; -1 when it ends at anything else. CHANGELOG [6.7.11]
@@ -8711,14 +8729,18 @@ fn _hl_pchain(S, b, e): i64 {
     var i = b + 1;
     var o = _gcall_open(S, b);
     if (o >= 0) {
-        if (o != b + 1) { return 0; }   # `g<..>(`: a generic's instance is not read here
         var c = _call_close(S, o);
         if (c >= e) { return 0; }
         var fi = FINDFN(S, TOKVAL(S, b));
         if (fi < 0) { return 0; }
-        if (GFTP(S, fi) != 0) { return 0; }
-        t = _hl_fn_psid(fi);
-        if (t > 0) { p = 1; } else { t = GFRS(S, fi); }
+        if (GFTP(S, fi) != 0) {   # 6.7.11: `g<..>(` / `g(` declared `: *T` — its instance's T
+            t = _gen_call_psid(S, b, o, fi);
+            if (t <= 0) { return 0; }
+            p = 1;
+        } else {
+            t = _hl_fn_psid(fi);
+            if (t > 0) { p = 1; } else { t = GFRS(S, fi); }
+        }
         i = c + 1;
     } else {
         t = _hl_name_ty(S, TOKVAL(S, b));
@@ -8790,18 +8812,64 @@ fn _hl_pnm(S, a, e): i64 {
         if (_hl_psid(S, a, k) > 0) { return _hl_pnm(S, a, k); }
         return _hl_pnm(S, k + 1, e);
     }
-    var i = e - 1;
-    while (i > a) {
-        if (TOKTYP(S, i) == 2) { return TOKVAL(S, i); }
-        i = i - 1;
-    }
-    return TOKVAL(S, a);
+    return _hl_lastnm(S, a, e, TOKVAL(S, a));
 }
 # Fn `fi`'s `: *T` struct (`_fn_rpsid`), else 0.
 fn _hl_fn_psid(fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     return L64(_fn_rpsid + fi * 8);
+}
+# ⛔ 6.7.11 — A GENERIC CALL DECLARED `: *T` IS A STRUCT SOURCE, as `fn gp(): *S` is (6.7.10): `l = gpg<S>()`
+# stored the pointer word, `*gpg<S>()` as a value faulted and `gpg<S>().v` was refused, because the chain
+# typer skipped a generic call and its instance recorded T's step but not its struct (issues/2026-10-13-
+# generic-pointer-returning-call-as-struct-source.md). The struct the call at token `b` (`g<..>(` or `g(`,
+# its `(` at `o`, `fi` the base) points at: the base's return annotation read under the binding the call
+# instantiates with — its explicit type arguments, or those its arguments infer, as `_gen_resolve_call`
+# computes them — WITHOUT instantiating (a typer runs before the call is parsed, and in pass 1); the
+# instance records the same struct (`_ret_ptr_record`). 0 = none: a scalar binding, a return that is no
+# `*T`. CHANGELOG [6.7.11]
+fn _gen_call_psid(S, b, o, fi): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var ann = _gen_ret_ann(S, fi);
+    if (ann < 0) { return 0; }
+    var c0 = 0 - 8;
+    var c1 = 0;
+    if (o != b + 1) {
+        var sv = GTI(S);
+        var sv_gt = _ta_pending_gt;
+        _ta_pending_gt = 0;
+        STI(S, b + 2);
+        c0 = _parse_one_type_arg(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        _ta_pending_gt = sv_gt;
+        STI(S, sv);
+    } else {
+        var sg = _gi_sc;
+        _gi_sc = 0;
+        c0 = _gen_infer_tp(S, fi, o, 0);
+        c1 = _gen_infer_tp(S, fi, o, 1);
+        _gi_sc = sg;
+    }
+    return _gen_ann_bound(S, fi, ann, c0, c1);
+}
+# The struct the `*T` annotation at `ann` names with fn `fi`'s type parameters bound to `c0` / `c1` (the
+# binding in force put back after).
+fn _gen_ann_bound(S, fi, ann, c0, c1): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _bind_generic_call(S, fi, c0, c1);
+    var sid = _ptr_ann_sid_tp(S, ann);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return sid;
+}
+# The `*` of generic fn `fi`'s `): *T` return annotation, else -1.
+fn _gen_ret_ann(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 8) { return 0 - 1; }
+    return c + 2;
 }
 # The struct name `noff` holds (`_hl_cp` 1: a `*T`, T returned), else 0: a local or a closure capture in a
 # fn (a struct-typed slot, inline, a handle or a `*T`), else a global (a `*T` one, or a struct global).
