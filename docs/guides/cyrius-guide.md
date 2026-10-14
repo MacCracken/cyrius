@@ -5734,7 +5734,13 @@ Win64, never in rax — so it too yielded 0 with no diagnostic before v6.6.6. Ev
 16-byte and 32-byte class is covered, `f64v2`/`f32v4`/`f64v4`/`i32v4` alike;
 return a pointer to the vector. A **tuple** parameter (6.7.7: pass its elements as separate
 parameters) and a tuple return (`return t;` from an `async fn`) are refused by name, and so is
-any `dyn` type in an `async fn` (6.7.8).
+any `dyn` type in an `async fn` (6.7.8). A **multi-value return** is refused for the same
+reason (6.7.11): `async fn g(): (i64, i64)` at its declaration, and `return (a, b);`,
+`return (a, b, c);` or `ret2(a, b)` in an `async fn` declared with no return type —
+"`` `async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct
+holding them ``". Before 6.7.11 it compiled, `await g()` gave the first value, and the second
+was gone: `rethi()` after the `await` read it only on the force that ran the body, and a
+memoised (`await f` again) or reactor-driven force read whatever the last call left there.
 
 ## Global Initializers
 

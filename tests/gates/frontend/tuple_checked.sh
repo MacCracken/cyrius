@@ -716,7 +716,9 @@ refused r14q "cannot return tuple 't' (i64, i64, i64, i64)$R4V" "R14q: a 4-eleme
 refused r14r "cannot return tuple 't' (i64, i64, i64, i64, i64)$R4V" "R14r: ... a 5-element one from a scalar fn" "fn g(): i64 {\n    var t = (1, 2, 3, 4, 5);\n    return t;\n}\nsyscall(60, 0);\n"
 printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s" "$@"\n' "$CC" > "$T/acc5"; chmod +x "$T/acc5"
 CC_SV=$CC; CC="$T/acc5"
-refused r14m "$RT from an \`async fn\` - it returns one value" "R14m: an \`async fn\` declared \`: (i64, i64)\` (its Future carries one i64)" "include \"lib/alloc.cyr\"\nasync fn g(): (i64, i64) {\n${TL5}syscall(60, 0);\n"
+# R14m: 6.7.11 — a declared multi-value `async fn` is refused at its declaration, once (its `return t;`
+# agrees with it), tests/gates/frontend/async_multi_value_return_refused.sh
+refused r14m "\`async fn g\` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding them" "R14m: an \`async fn\` declared \`: (i64, i64)\` (its Future carries one i64)" "include \"lib/alloc.cyr\"\nasync fn g(): (i64, i64) {\n${TL5}syscall(60, 0);\n"
 refused r14p "$RT from an \`async fn\` - it returns one value" "R14p: an undeclared \`async fn\`" "include \"lib/alloc.cyr\"\nasync fn g() {\n${TL5}syscall(60, 0);\n"
 CC=$CC_SV
 # R15 — `f().N` on a multi-value call: today's refusal plus how to read the values.

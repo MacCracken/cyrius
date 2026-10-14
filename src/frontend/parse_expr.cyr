@@ -6083,6 +6083,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
     }
     # ret2(a, b) — return two values in rax:rdx
     if (ptyp == 97) {
+        _refuse_async_mv_body(S, GTI(S), 2);   # 6.7.11: a Future carries one i64
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);

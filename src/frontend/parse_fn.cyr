@@ -1020,6 +1020,7 @@ fn _mret_fwd_ok(S, fi, want): i64 {
 # (`_mret_ret_check`), reported after them.
 fn PARSE_RETURN(S): i64 {
     var st = GTI(S) + 1;
+    _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
     _PARSE_RETURN_ARMS(S);
@@ -2605,7 +2606,10 @@ fn _ret_tup_ok(S, ti, sid): i64 {
     if (_cur_fn_ret_pair == 1) { return 0; }   # a 9-16 B struct fn: its class refused `t` (`_ret_struct_pair`)
     var fi = _cur_fn_ix;
     if (fi < 0) { return _ret_tup_err(S, ti, sid, 1); }
-    if (_cur_fn_coro == 1 || _fn_async_impl(S, fi) == 1) { return _ret_tup_err(S, ti, sid, 2); }
+    if (_cur_fn_coro == 1 || _fn_async_impl(S, fi) == 1) {
+        if (GFRS(S, fi) == MULTIRET_SID) { return 0; }   # 6.7.11: refused at its declaration, once
+        return _ret_tup_err(S, ti, sid, 2);
+    }
     if (GFRS(S, fi) != MULTIRET_SID) { return _ret_tup_err(S, ti, sid, 1); }
     var n = GETFCOUNT(S, sid - 1);
     if (GFRN(S, fi) != n) { return _ret_tup_err(S, ti, sid, 3); }
@@ -5756,6 +5760,64 @@ fn _refuse_async_vec_return(S, fnoff, fi): i64 {
     syscall(SYS_WRITE, 2, ": `async fn ", 12);
     PRSTR(S + 0xEC00000 + fnoff);
     syscall(SYS_WRITE, 2, "` returns a value-form vector, which an `async fn` does not capture yet — return a pointer to it\n", 99);
+    _had_error = 1;
+    return 0;
+}
+
+# ⛔ 6.7.11 — THE SAME LIMIT FOR SEVERAL VALUES. A multi-value return travels in rax:rdx[:r3] and a
+# Future memoises ONE word (`future_force` returns rax): `async fn g(): (i64, i64) { return (1, 2); }`
+# compiled clean, `await g()` yielded 1, and the documented `rethi()` read got 2 only on the force
+# that ran the body — a memoised `await f` or a reactor-driven one read whatever the last call left
+# in rdx (19 where 12 is right, on every target). Neither refusal above saw it: `GFRS` holds
+# MULTIRET_SID, no struct and no vector. Refused by name (the user's decision, 2026-10-13): at the
+# declaration (`: (T1, T2[, T3])`), and in an undeclared body at `return (a, b[, c]);` (PARSE_RETURN)
+# and `ret2(a, b)` (PARSE_SIMD_EXT) — a declared fn's body was reported at its declaration.
+# CHANGELOG [6.7.11]
+fn _refuse_async_multi_return(S, fnoff, fi): i64 {
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    if (_panic == 1) { return 0; }
+    _async_mv_say(S, fnoff, 0, GFRN(S, fi));
+    return 0;
+}
+# ... in the body: the multi-value spelling at token `ti` writes `n` values. The body of an async fn,
+# a coroutine's included, is its `$impl`; a closure in it is its own fn. An #inline replay parses its
+# callee's body here (its own definition was judged).
+fn _refuse_async_mv_body(S, ti, n): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return 0; }
+    if (_fn_async_impl(S, fi) == 0) { return 0; }
+    if (GFRS(S, fi) == MULTIRET_SID) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _async_mv_say(S, L64(_fnt_names + fi * 8), 5, n);
+    STI(S, sv);
+    return 0;
+}
+# `return (a, b[, c]);` at token `st` (PARSE_RETURN, before its arms): the multi-value arm's literal.
+fn _async_mv_ret(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var c = _tup_commas(S, st);
+    if (c <= 0) { return 0; }
+    return _refuse_async_mv_body(S, st, c + 1);
+}
+# "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
+# them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).
+fn _async_mv_say(S, noff, cut, n): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": `async fn ");
+    var nm = S + 0xEC00000 + noff;
+    var len = 0;
+    while (load8(nm + len) != 0) { len = len + 1; }
+    syscall(SYS_WRITE, 2, nm, len - cut);
+    PRSTR("` returns ");
+    PRNUM(n);
+    PRSTR(" values, and a Future carries one i64 - return a pointer to a struct holding them\n");
+    _err_excerpt(S);
     _had_error = 1;
     return 0;
 }
@@ -15809,6 +15871,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # word as a descriptor — one predicate cannot answer both). CHANGELOG [6.6.6]
     if (_is_async == 1) { _refuse_async_struct_return(S, _async_noff_f, fi); }
     if (_is_async == 1) { _refuse_async_vec_return(S, _async_noff_f, fi); }
+    if (_is_async == 1) { _refuse_async_multi_return(S, _async_noff_f, fi); }   # 6.7.11
     # Record first param name offset for inlining (stored in fn_inline later)
     # Emit the stack param stores the loop deferred, now that the int-class TOTAL is known.
     # `_pl_shift` mirrors the in-loop `_pp_shift`: an x86 retptr (SysV rdi / Win64 rcx) is

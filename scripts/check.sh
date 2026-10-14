@@ -1364,6 +1364,11 @@ _chk_gate "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 # `async fn` with no mid-body await must compile to BIT-IDENTICAL bytes, which is why the
 # transform is selected by the body rather than by the keyword.
 _chk_gate "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
+# 6.7.11 (returns) — an `async fn` returning several values (declared `: (T1, T2[, T3])`, or
+# `return (a, b)` / `ret2` in its body) is refused by name: a Future carries one i64, and the second
+# value was dropped (`rethi()` after a memoised force read a stale register). Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/frontend/async_multi_value_return_refused.sh"
 
 # v6.5.71: `#derive(accessors)` getters/setters reach the inline-replay path — a measured 3.45x
 # on the accessor shape, for generated code nobody hand-tunes. ⛔ Axis 2 is the load-bearing
