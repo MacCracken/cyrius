@@ -968,7 +968,10 @@ fn sys_read_nb(fd, buf, count): i64 {
 
 # Close `fd`. Returns 0, or -1. v6.2.3: a TAGGED socket fd closes its
 # conn (#50) and frees the table slot (even if never connected).
+# A negative fd (a failed open's -1) is -1 here, agnos's own answer for an fd that does not
+# exist, and touches no socket slot. CHANGELOG [6.7.11]
 fn sys_close(fd): i64 {
+    if (fd < 0) { return 0 - 1; }
     if (_agnos_is_sock_fd(fd) == 1) {
         var slot = fd & 7;
         # v6.2.22: free ALL server-socket state for the slot uniformly, then
@@ -2389,9 +2392,12 @@ fn _agnos_conn_init(): i64 {
     return 0;
 }
 
-# True (1) if `fd` is a tagged agnos socket fd (not a real file/stdio fd).
+# True (1) if `fd` is a tagged agnos socket fd (not a real file/stdio fd): exactly the values
+# _agnos_sock_open hands out, AGNOS_SOCK_TAG + 0..7. A bit test took every NEGATIVE fd (the -1 of
+# a failed open) for slot `fd & 7`, so sys_write(-1, …) sent to slot 7's peer and sys_close(-1)
+# tore its connection down and returned 0. CHANGELOG [6.7.11]
 fn _agnos_is_sock_fd(fd): i64 {
-    if ((fd & AGNOS_SOCK_TAG) != 0) { return 1; }
+    if (fd >= AGNOS_SOCK_TAG && fd <= AGNOS_SOCK_TAG + 7) { return 1; }
     return 0;
 }
 
@@ -2455,8 +2461,10 @@ fn _agnos_listen_slot_of(lid): i64 {
 }
 
 # Resolve a tagged socket fd to its kernel conn_id, or -1 if the slot is
-# free / reserved-but-unconnected.
+# free / reserved-but-unconnected, or `fd` is not a tagged socket fd at all (it used to index
+# the table by `fd & 7` whatever `fd` was: -1 resolved to slot 7's conn). CHANGELOG [6.7.11]
 fn _agnos_fd_conn(fd): i64 {
+    if (_agnos_is_sock_fd(fd) == 0) { return 0 - 1; }
     _agnos_conn_init();
     var slot = fd & 7;
     var v = load64(&_agnos_conn_tbl + slot * 8);

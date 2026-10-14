@@ -1773,6 +1773,11 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
 # arity against the Linux-common wrappers, and the agnos build of the CLI (cbt/cyrius.cyr).
 _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
 
+# 6.7.11 — on agnos a NEGATIVE fd is not a tagged socket fd: the filed repro (an agnos ELF run on
+# the x86_64 host) prints 0 0 -1 -1 12345 — no socket, no conn, sys_close(-1) = -1, slot 7
+# untouched. Built-in mutants put each of the three fix lines back alone and must go RED.
+_chk_gate "$ROOT/tests/gates/platform/agnos_negative_fd_not_socket.sh"
+
 # 6.6.7 bite 4 — an agnos socket read waits for its deadline on a REAL clock (#95, then the RTC
 # armed on its first non-zero read, then — only with no clock — the pause count) and a timeout
 # is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.

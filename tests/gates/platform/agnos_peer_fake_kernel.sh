@@ -469,6 +469,55 @@ run "$T/a8u.cyr" rcvlate
 check "  and a conn closed with a byte still stashed takes it with it: the reused conn id reads 'QQ' only" \
     "2 20817" "$(mark 146) $(mark 147)"
 
+# ── axis 9 — a negative fd is not socket slot 7 (6.7.11) ───────────────────────────────────────
+# _agnos_is_sock_fd tested only `fd & AGNOS_SOCK_TAG`, which every negative i64 passes, so the -1
+# of a failed open was slot 7: sys_write(-1) sent to slot 7's peer (#48), sys_close(-1) sent its
+# FIN (#50) and answered 0. Slot 7 is LIVE here (eight sockets, the eighth connected), so a
+# regression shows as a #48 / #49 / #50. The filed repro itself is agnos_negative_fd_not_socket.sh.
+echo "axis 9 — a negative fd (a failed open's -1) is never taken for socket slot 7 (6.7.11):"
+cat > "$T/a9.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+var s0_t, s0 = tcp_socket();
+var s1_t, s1 = tcp_socket();
+var s2_t, s2 = tcp_socket();
+var s3_t, s3 = tcp_socket();
+var s4_t, s4 = tcp_socket();
+var s5_t, s5 = tcp_socket();
+var s6_t, s6 = tcp_socket();
+var s7_t, s7 = tcp_socket();
+sock_connect(s7, INADDR_LOOPBACK(), 8080);
+var b[8];
+syscall(999, 150, s7 - AGNOS_SOCK_TAG);
+sys_write(0 - 1, "abc", 3);
+syscall(999, 151, 0);
+sys_read(0 - 1, &b, 1);
+syscall(999, 152, 0);
+var rc = sys_close(0 - 1);
+syscall(999, 153, rc);
+syscall(999, 154, _agnos_fd_conn(s7) * 10 + _agnos_fd_conn(0 - 1));
+syscall(999, 155, _agnos_is_sock_fd(AGNOS_SOCK_TAG + 8) * 1000 + _agnos_is_sock_fd(AGNOS_SOCK_TAG - 1) * 100 + _agnos_is_sock_fd(AGNOS_SOCK_TAG) * 10 + _agnos_is_sock_fd(AGNOS_SOCK_TAG + 7));
+sys_write(AGNOS_SOCK_TAG + 8, "abc", 3);
+syscall(999, 156, 0);
+sys_write(s7, "abc", 3);
+syscall(999, 157, 0);
+sys_exit(0);
+EOF
+run "$T/a9.cyr" plain
+check "the probe's eighth socket is slot 7 and is connected (conn 0)" "7" "$(mark 150)"
+check "sys_write(-1) is write#1 with a1 = -1, a4 = 0, and no sock_send#48" "-1 0 0" \
+    "$(after 150 1 | awk '{ print $1, $4 }') $(between 150 48)"
+check "sys_read(-1) is read#5 with a1 = -1, and no sock_recv#49" "-1 0" "$(after 151 5 | awk '{ print $1 }') $(between 151 49)"
+check "sys_close(-1) answers -1 and issues nothing: no sock_close#50, no close#6" "-1 0 0" \
+    "$(mark 153) $(between 152 50) $(between 152 6)"
+check "  slot 7 is still live after it (conn 0), and _agnos_fd_conn(-1) is -1" "-1" "$(mark 154)"
+check "the socket range is exactly AGNOS_SOCK_TAG + 0..7: +8 no, -1 no, +0 yes, +7 yes" "11" "$(mark 155)"
+check "sys_write(AGNOS_SOCK_TAG + 8) is a plain write#1 on that fd, no #48" "1073741832 0" \
+    "$(after 155 1 | awk '{ print $1 }') $(between 155 48)"
+check "  while sys_write on slot 7's own fd still sends on its conn: #48(0, …, 3)" "0 3" \
+    "$(after 156 48 | awk '{ print $1, $3 }')"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: agnos_peer_fake_kernel — the agnos peer hands the kernel exactly the registers it decodes"
