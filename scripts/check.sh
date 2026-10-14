@@ -1987,6 +1987,9 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_async_process.sh"
 # `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
 # `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).
 # Spellings, the private rule and a >64 KiB file; mutation-proven in the gate header.
+# 6.7.11 — and the RETURN TYPE: a struct over 8 bytes and a dyn (cyr_val2 under #ifndef _WIN64,
+# cyr_valN by value), a two-value return (x86_64 SysV only), sizes held to cycc's sizeof, refusals
+# by name, a C caller linked.
 _chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
 
 # 6.6.8 (bite 10) — `cyrius vet` / `deny` (cyaudit) see exactly the compiler's includes: column 0,

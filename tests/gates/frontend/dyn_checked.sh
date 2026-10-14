@@ -808,16 +808,18 @@ if [ "$rc" -ne 0 ] || [ "$got" -ne 41 ] || grep -q 'warning' "$T/tt/w/ds.err"; t
 else
     # TT4: `cyrius header` — a dyn parameter is ONE `cyr_val` (it travels by address, as every struct
     # over 8 bytes does); its type, with the space in it, is skipped whole to the parameter's `,`. A
-    # trait member and an impl method are not FFI surface (brace depth), nor is `main`.
+    # trait member and an impl method are not FFI surface (brace depth), nor is `main`. A dyn RETURN
+    # is the {data, vtable} pair, `cyr_val2` (6.7.11: it printed `cyr_val as_area(..)`, the vtable
+    # lost — issues/2026-10-10-cyrius-header-ignores-struct-returns.md).
     if ttool cyrius cbt/cyrius.cyr; then
         rc=0; ( cd "$T/tt/w" && CYRIUS_HOME="$T/tt/hh" HOME="$T/tt/hh" timeout 60 "$T/tt/cyrius" header ds.cyr > "$T/tt/hdr.out" 2>&1 ) || rc=$?
         miss=""
-        for l in 'cyr_val total(cyr_val a, cyr_val b);' 'cyr_val as_area(cyr_val q);' 'cyr_val f(cyr_val o, cyr_val k);'; do
+        for l in 'cyr_val total(cyr_val a, cyr_val b);' 'cyr_val2 as_area(cyr_val q);   /* returns dyn Area, 16 B */' 'cyr_val f(cyr_val o, cyr_val k);'; do
             grep -qxF "$l" "$T/tt/hdr.out" || miss="$miss [$l]"
         done
-        n=$(grep -c '^cyr_val ' "$T/tt/hdr.out" || true)
-        if [ "$rc" -eq 0 ] && [ -z "$miss" ] && [ "$n" -eq 3 ]; then ok "TT4: cyrius header: \`fn f(o: dyn Area, k)\` is \`cyr_val f(cyr_val o, cyr_val k);\` (3 prototypes, no trait member / impl method)"
-        else bad "TT4: cyrius header rc $rc, $n prototype(s); missing:$miss; got: $(grep '^cyr_val ' "$T/tt/hdr.out" | tr '\n' '|')"; fi
+        n=$(grep -cE '^cyr_val2? ' "$T/tt/hdr.out" || true)
+        if [ "$rc" -eq 0 ] && [ -z "$miss" ] && [ "$n" -eq 3 ]; then ok "TT4: cyrius header: \`fn f(o: dyn Area, k)\` is \`cyr_val f(cyr_val o, cyr_val k);\`, \`as_area(..): dyn Area\` the pair \`cyr_val2\` (3 prototypes, no trait member / impl method)"
+        else bad "TT4: cyrius header rc $rc, $n prototype(s); missing:$miss; got: $(grep -E '^cyr_val2? ' "$T/tt/hdr.out" | tr '\n' '|')"; fi
     fi
     # TT5: cyrfmt has no type rule — the sample and the crossos dyn file are canonical as written.
     if ttool cyrfmt programs/cyrfmt.cyr; then

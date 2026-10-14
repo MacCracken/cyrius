@@ -4420,7 +4420,19 @@ declaration with the same reader as `cyrius header`, `coverage` and the LSP
 `cyrius header`, `cyrius api-surface` and the LSP balance a generic type's `<` `>` in a
 parameter (`p: Pair<i64, i64>` is one parameter; after the parameter's `=` a `<` is the
 operator), and `cyrius header` writes a variadic tail as C's `...` and a fully variadic
-`fn f(...)` as `f(void)`. Whitespace at the end of a
+`fn f(...)` as `f(void)`. Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
+`cyr_val f(..)` for every fn): a scalar, a pointer, `Str` and a struct of 8 bytes or less stay
+`cyr_val`; a struct of 9-16 bytes and a `dyn Tr` are `cyr_val2` (two int64 words, as cycc returns
+them in rax:rdx / AAPCS64 x0:x1) under `#ifndef _WIN64` — Win64 C returns 16 bytes through a hidden
+pointer, so there the fn gets a comment and no prototype; a two-value return `(T1, T2)` is
+`cyr_val2` on x86_64 SysV only (`#if defined(__x86_64__) && !defined(_WIN64)`: cycc lands the
+second value in x0:x2 on aarch64, where C reads x0:x1); a struct over 16 bytes is `cyr_valN` (N
+words, the size rounded up: the callee writes whole words), returned by value through the hidden
+result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the tool cannot size
+from the file itself — another file's struct, a generic instance, a struct holding one, a struct
+declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
+on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+Whitespace at the end of a
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.
 
