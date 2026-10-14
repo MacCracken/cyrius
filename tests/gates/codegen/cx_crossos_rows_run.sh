@@ -27,7 +27,9 @@
 #       (163, floor 163 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
 #       CF group and, since 6.7.8, the 16 B pair-return rows and the SC rows (T inferred through a
 #       generic struct parameter) run there.
-#   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native and cxvm in full (96, floor 96).
+#   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native and cxvm in full (111, floor 111; 6.7.11 +15:
+#       a top-level copy-init from a field reached through a pointer — `P.v`, `(P.v)`, `gp().v`, `VV.p.v`,
+#       24 and 12 B — in the leading block and after a statement: through 6.7.10 a cxvm guest fault).
 #       Until 6.7.8 cx refused it (`mkpt`/`twice` return a 16 B Pt, "cx: int-class 16B struct
 #       pair-return ABI not supported") and the row pinned that refusal by name; cx now has the
 #       r0:r4 struct pair, so the file must compile and pass in full there.
@@ -136,6 +138,10 @@
 #   h. (R18 — R13 in the refold worktree, measured there; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the
 #      6.7.9 fold, no cx arm) -> R18 cxvm RED twice ("undefined variable '_SK_SYS_WRITE'" at
 #      lib/sakshi.cyr:248; no log line), both native legs green, 48 green.
+#   i. (6.7.11, R6; issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md) the tree before it
+#      (dce13af1) -> R6 RED on both legs (native SIGSEGV; cxvm "guest address out of range"); `_gci_src` without
+#      its `*T` global arm (MG1), `_gci_chain` without its `*T` field hop (MG2), `_gci_call` answering 0 (MG3)
+#      -> each R6 RED on both legs.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -412,8 +418,8 @@ tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 164
 tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 163
 
 echo "R6 — struct_field_value_copy.tcyr, native then cxvm in full (cx refused it until 6.7.8):"
-tcyr_native tests/tcyr/crossos/struct_field_value_copy.tcyr 96
-tcyr_cx     tests/tcyr/crossos/struct_field_value_copy.tcyr 96
+tcyr_native tests/tcyr/crossos/struct_field_value_copy.tcyr 111
+tcyr_cx     tests/tcyr/crossos/struct_field_value_copy.tcyr 111
 
 echo "R7 — tuple_values.tcyr (6.7.7, B4), native then cxvm, the count derived from the source:"
 tcyr_native tests/tcyr/crossos/tuple_values.tcyr 203

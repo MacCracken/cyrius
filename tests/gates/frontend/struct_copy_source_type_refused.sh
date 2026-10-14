@@ -23,6 +23,9 @@
 # a for step) refused by name; A4 / A5 — `l = *p` and `q = *p` of the declared type compile with no warning.
 # 6.7.11: R24-R29 — a struct-typed FIELD from a `*U` global, a `: *U` call, a `*U` field, pointer arithmetic on
 # one, at top level and in a for step, refused by name; A6 — the declared type copies with no warning.
+# 6.7.11: R30-R34 — a top-level copy-init from a field reached through a pointer: a leaf of another struct type
+# refused by name (both zones), a `*T` global / holder / fn declared below G refused by name; A7 — the same
+# sources of the declared type copy in both zones.
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
@@ -48,6 +51,13 @@
 # 6.7.11 (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md), the same method:
 #   `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R24-R29 compiled clean, A6 exit 0 (the
 #                                                      pointer word in the field)
+# 6.7.11 (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md), the same method:
+#   the tree before it (dce13af1)                   -> RED 6: R30-R34 compiled clean (the value store), A7 SIGSEGV
+#   MG1 `_gci_src` without the `*T` global arm     -> RED 4: R30 R31 R33 compiled, A7 SIGSEGV
+#   MG2 `_gci_chain` without the `*T` field hop    -> RED 2: R34 compiled, A7 SIGSEGV
+#   MG3 `_gci_call` answering 0 (no call base)     -> RED 2: R32 compiled, A7 SIGSEGV
+#   MG4 `_gci_below` without the call's message    -> RED 1: R32 refused as "a global declared below it"
+#   (struct_field_value_copy.tcyr: MG1-MG3 SIGSEGV at its first through-pointer row, x86 and cxvm)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -166,6 +176,27 @@ refuse "R10 a named global declared below" "cannot copy-init 'B' $MB (declare th
 refuse "R11 a field of a global declared below" "cannot copy-init 'G' $MB (declare the source first): 'BX'" \
     "${T}var G: Pt = BX.v; var BX = RB { 3, 4, 9, 0, 0, 0 }; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
 
+echo "=== a top-level copy-init from a field reached through a POINTER (6.7.11) ==="
+# issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md: `var G: Pt = PW.v;`, `= gw().v;`,
+# `= VW.p.v;` copy now (tests/tcyr/crossos/struct_field_value_copy.tcyr); a leaf of another struct type is
+# refused by name, as from an inline base (R6 / R8), and a source pass 1 cannot type — a `*T` global, a holder
+# or a fn declared BELOW G in the leading block — is refused by name, as R10 / R11 are (never the value
+# store: through 6.7.10 each row compiled clean, G held the field's first word, and `G.x` SIGSEGV'd).
+SP='var GR = RB { 1, 2, 3, 4, 5, 6 };
+var PW: *RB = &GR;
+struct VW { p: *RB; }
+'
+refuse "R30 leading block, PW.q (a Q leaf) into a Pt" "cannot copy 'q' $MV: 'G'" \
+    "${T}${SP}var G: Pt = PW.q; syscall(60, G.x);"
+refuse "R31 after a statement, PW.q into a Pt" "cannot copy 'q' $MV: 'G'" \
+    "${T}${SP}syscall(1, 1, \"\", 0); var G: Pt = PW.q; syscall(60, G.x);"
+refuse "R32 leading block, gw().v with gw declared below" "cannot copy-init 'G' from a field of a call to a fn declared below it (declare the fn first): 'gw'" \
+    "${T}${SP}var G: Pt = gw().v; fn gw(): *RB { return &GR; } fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
+refuse "R33 leading block, PB.v with the *RB global declared below" "cannot copy-init 'G' $MB (declare the source first): 'PB'" \
+    "${T}${SP}var G: Pt = PB.v; var PB: *RB = &GR; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
+refuse "R34 leading block, VB.p.v with the holder declared below" "cannot copy-init 'G' $MB (declare the source first): 'VB'" \
+    "${T}${SP}var G: Pt = VB.p.v; var VB = VW { &GR }; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
+
 echo "=== a classic-for STEP refuses what the statement refuses (6.6.20, RPD-04) ==="
 # The step `for (..; ..; a = q)` skipped the statement's whole-aggregate dispatch and stored ONE
 # word: every row below compiled clean (rc 0, no diagnostic) where the statement form is refused.
@@ -266,6 +297,12 @@ accept "A3 take65(.., r.v), the declared type at ordinal 65" \
     "${T}fn take65(${P62}, b0, b1, b2, p: Pt): i64 { return p.x * 10 + p.y; } fn go(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return take65(${A62}, 0, 0, 0, r.v); } syscall(60, go());" \
     34 \
     "${T}fn go(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return r.v.x * 10 + r.v.y; } syscall(60, go());"
+
+accept "A7 var G: Pt = PW.v / gw().v / VW.p.v, both zones" \
+    "${T}${SP}fn gw(): *RB { return &GR; }
+var VV = VW { &GR }; var G1: Pt = PW.v; var G2: Pt = gw().v; var G3: Pt = VV.p.v; syscall(1, 1, \"\", 0); var G4: Pt = (PW.v); var G5: Pt = gw().v; var G6: Pt = VV.p.v; GR.v.x = 0; syscall(60, G1.x * 10 + G1.y + G2.x + G3.y + G4.x * 10 + G4.y + G5.x + G6.y);" \
+    30 \
+    "syscall(60, 12 + 1 + 2 + 12 + 1 + 2);"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

@@ -1533,11 +1533,16 @@ different struct type in a call to 'take'`). Before v6.6.12 the field's first wo
 address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
 global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
-8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A pointer-mode source
+8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A field reached through a POINTER is
+such a source too (6.7.11): `var G: P3 = P.v;` with `P` a `*Box` global, `= (P.v)`, `= gp().v` with
+`fn gp(): *Box`, `= VV.p.v` through a `p: *Box` field — through 6.7.10 `G` held the field's first
+word and `G.x` SIGSEGV'd (a guest fault on cx), while the same line in a fn copied. A pointer-mode source
 (`var p: P3 = mk();`, or a global initialised that way) still binds a second pointer to the same
 struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: P3 = A;` before
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
-globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
+globals are initialised in declaration order and `A` has not been initialised when `B` copies it;
+so is a call's field whose fn is declared below the copy in the leading block (`cannot copy-init 'G'
+from a field of a call to a fn declared below it`).
 
 ⚠ **A struct ARGUMENT is checked against its parameter (v6.7.3).** An argument whose static struct
 type differs from the parameter's is refused by name, as the same copy into a variable is

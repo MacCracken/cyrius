@@ -5760,13 +5760,17 @@ fn _gci_src(S, ti): i64 {
         _gci_tt = 11;
     }
     if (TOKTYP(S, ti) != 2) { return 0; }
+    var cs = _gci_call(S, ti);   # 6.7.11: `gp().s`
+    if (cs != 0) { return cs; }
     var gv = _findvar_core(S, TOKVAL(S, ti));
     if (gv < 0) { return 0; }
+    _gci_nm = TOKVAL(S, ti);
+    var ps = _gv_ptr_sid(S, gv);   # 6.7.11: `P.s` through a `*T` global (a bare `P` stays as it was)
+    if (ps > 0) { if (TOKTYP(S, ti + 1) == 41) { return _gci_chain(S, ti + 1, ps); } }
     var gt = GVTYPE(S, gv);
     if (gt <= 0) { return 0; }
     var pm = GVPM(S, gv);
     if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
-    _gci_nm = TOKVAL(S, ti);
     if (TOKTYP(S, ti + 1) == _gci_tt) {
         if (pm != 2) { return 0; }
         return gt;
@@ -5774,6 +5778,14 @@ fn _gci_src(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 41) { return 0; }
     return _gci_chain(S, ti + 1, gt);
 }
+# ⛔ 6.7.11 — A FIELD CHAIN THROUGH A POINTER WAS NO WHOLE SOURCE. `var G: S16 = P.s;` (P a `*W` global),
+# `= gp().s;` (`fn gp(): *W`) and `= VV.p.s;` (`p: *W`) left G a one-slot pointer-mode global holding the
+# field's FIRST WORD, and the first `G.v` read or wrote through it: SIGSEGV on x86 / aarch64, a cxvm guest
+# fault — while in a fn, as an assignment, and from an inline base the same declaration copies
+# (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md). The chain now starts from a
+# `*T` global's T or a `: *T` call's T (`_gci_call`), and a `*T` field hop steps into its T when `.` follows:
+# pass 1 registers G inline and both init paths copy (`_gci_take_in`'s field record follows the hops). A
+# source pass 1 could not type (a global or fn declared below G) is refused by name (`_gci_below`).
 fn _gci_chain(S, ti, sid): i64 {
     var ft = sid;
     while (TOKTYP(S, ti) == 41) {
@@ -5782,13 +5794,33 @@ fn _gci_chain(S, ti, sid): i64 {
         var fi = FINDFIELD(S, ft - 1, TOKVAL(S, ti + 1));
         if (fi < 0) { return 0; }
         _gci_nm = TOKVAL(S, ti + 1);
-        ft = GETFTYPE(S, ft - 1, fi);
+        var fp = 0;
+        if (TOKTYP(S, ti + 2) == 41) { fp = _fld_ptr_sid(S, ft - 1, fi); }   # 6.7.11: a `*T` field hop
+        if (fp > 0) { ft = fp; }
+        else { ft = GETFTYPE(S, ft - 1, fi); }
         ti = ti + 2;
     }
     if (TOKTYP(S, ti) != _gci_tt) { return 0; }
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return ft;
+}
+# `f(..) .` / `g<..>(..) .` at token `ti`, the callee declared `: *T` (T a struct; a generic's instance's T,
+# `_gen_call_psid`): the field chain after its `)` from T, else 0. A callee not declared yet (pass 1, a fn
+# declared below the global) is 0 — the replay types it and refuses the disagreement. CHANGELOG [6.7.11]
+fn _gci_call(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0; }
+    var ps = 0;
+    if (GFTP(S, fi) != 0) { ps = _gen_call_psid(S, ti, o, fi); }
+    else { ps = _hl_fn_psid(fi); }
+    if (ps <= 0) { return 0; }
+    _gci_nm = TOKVAL(S, ti);
+    return _gci_chain(S, c + 1, ps);
 }
 # Pass 1 (PARSE_GVAR_REG), cursor on the RHS: 1 when `var G: T = <src>;` is registered inline —
 # `sid` the declared struct, over 8 B (one that fits keeps its 8-byte value slot), and the source
@@ -5896,7 +5928,16 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
 # The replay's refusal for a source pass 1 could not see (declared below), cursor on the RHS —
 # `_gci_src` vetted it as `IDENT [. IDENT ..] ;`, so the cursor is left on that `;`. 1.
 fn _gci_below(S, dnoff): i64 {
-    ERR_IDENT(S, "cannot copy-init ", dnoff, " from a global declared below it (declare the source first): ", TOKVAL(S, GTI(S)));
+    var k = 0;
+    if (PEEKT(S) == 10) { k = _pwrap_k(S, GTI(S)); }
+    var ti = GTI(S) + k;
+    if (_gcall_open(S, ti) >= 0) {   # 6.7.11: `gp().s` with gp declared below
+        ERR_IDENT(S, "cannot copy-init ", dnoff,
+          " from a field of a call to a fn declared below it (declare the fn first): ", TOKVAL(S, ti));
+    } else {
+        ERR_IDENT(S, "cannot copy-init ", dnoff,
+          " from a global declared below it (declare the source first): ", TOKVAL(S, ti));
+    }
     while (PEEKT(S) != 5) { STI(S, GTI(S) + 1); }
     return 1;
 }
