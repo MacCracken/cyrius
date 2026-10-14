@@ -96,8 +96,10 @@
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
-# console_mode#110 answers 1 in every mode (the flags before the call: CM_NOECHO set), so a wrapper
-# that drops the kernel's answer reads 0, not 1. (6.7.11)
+# Outside the rg* / as* modes (whose table answers them 0): console_mode#110 answers 1 (the flags
+# before the call: CM_NOECHO set), so a wrapper that drops the kernel's answer reads 0, not 1; and
+# fd_kind#111 answers as agnos 1.57.13 does — -1 for fd < 0 or fd >= 32, FDK_CONSOLE (1) for fds
+# 0..2, FDK_FILE (2) for any other fd. (6.7.11)
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -139,6 +141,12 @@ fn _st_mode_is(mode, want): i64 {
 fn _st_answer(mode, nr, k, a1, a3): i64 {
     if (nr == 106) { return (0x7F000001 << 16) | 8080; }
     if (nr == 110) { return 1; }
+    if (nr == 111) {
+        if (a1 < 0) { return 0 - 1; }
+        if (a1 >= 32) { return 0 - 1; }
+        if (a1 <= 2) { return 1; }
+        return 2;
+    }
     if (nr == 61) {
         if (a1 == 0) { return 0x0A00020F; }
         return 0;

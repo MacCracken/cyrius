@@ -20,7 +20,9 @@
 # 6.7.11: axis 9 a negative fd is not socket slot 7 (on the 6.7.10 peer sys_write(-1) loops on
 # #48 until the tracer's call limit and every later row reads empty: 7 FAIL); axis 10
 # console_mode#110 + SIGWINCH (mutants measured RED: the wrapper's set / clear swapped -> 3 FAIL;
-# its answer dropped -> 1 FAIL).
+# its answer dropped -> 1 FAIL); axis 11 fd_kind#111 (the filing's raw one-liner, which asks the
+# kernel about a tagged socket fd -> 5 FAIL; _agnos_is_sock_fd back to a bit test -> sys_fd_kind(-1)
+# and AGNOS_SOCK_TAG + 8 never reach #111: 2 FAIL in this axis).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -542,6 +544,49 @@ check "sys_console_mode(0, CM_NOECHO) is #110(0, 1) — echo back on" "0 1" "$(a
 check "sys_console_mode(0, 0) is #110(0, 0) — the query / probe" "0 0" "$(after 162 110 | cut -d' ' -f1-2)"
 check "  and the kernel's answer (the flags before the call) is returned as is: the fake's 1" "1" "$(mark 163)"
 check "CM_NOECHO = 1, CM_FLUSH = 2, SIGWINCH = 28" "1228" "$(mark 164)"
+
+# ── axis 11 — fd_kind#111 (agnos 1.57.13; 6.7.11) ─────────────────────────────────────────────
+# The kernel answers -1 for this adapter's tagged socket fds (a userland handle, not a kernel fd),
+# so sys_fd_kind answers them itself, with NO #111: FDK_SOCKET while the slot is open (reserved,
+# connected or listening), -1 once it is free. The fake kernel's #111 answers like 1.57.13: -1
+# for fd < 0 or >= 32, 1 (CONSOLE) for 0..2, 2 (FILE) otherwise.
+echo "axis 11 — sys_fd_kind: real fds go to #111; tagged socket fds are answered by the adapter (6.7.11):"
+cat > "$T/a11.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+syscall(999, 170, sys_fd_kind(5));
+syscall(999, 171, sys_fd_kind(0));
+syscall(999, 172, sys_fd_kind(0 - 1));
+var c_t, c = tcp_socket();
+syscall(999, 173, sys_fd_kind(c));
+sock_connect(c, INADDR_LOOPBACK(), 8080);
+syscall(999, 174, sys_fd_kind(c));
+var l_t, l = tcp_socket();
+sock_bind(l, INADDR_LOOPBACK(), 8080);
+sock_listen(l, 4);
+syscall(999, 175, sys_fd_kind(l));
+sys_close(c);
+syscall(999, 176, 0);
+syscall(999, 177, sys_fd_kind(c));
+syscall(999, 178, sys_fd_kind(AGNOS_SOCK_TAG + 8));
+syscall(999, 179, FDK_CONSOLE * 1000000000 + FDK_FILE * 100000000 + FDK_DIR * 10000000 + FDK_PIPE * 1000000 + FDK_CHAN * 100000 + FDK_SOCKET * 10000 + FDK_SIGNALFD * 1000 + FDK_EPOLL * 100 + FDK_TIMERFD * 10 + FDK_DEVICE);
+sys_exit(0);
+EOF
+run "$T/a11.cyr" plain
+check "sys_fd_kind(5) is #111(5), a4 = 0, and returns the kernel's answer (FILE)" "5 0 2" \
+    "$(awk '$1 == "sc" && $2 == 111 { print $3, $6; exit }' "$T/run.log") $(mark 170)"
+check "sys_fd_kind(0) — the support probe — is #111(0): CONSOLE" "0 1" "$(after 170 111 | awk '{ print $1 }') $(mark 171)"
+check "sys_fd_kind(-1) goes to the kernel (#111(-1) -> -1), never FDK_SOCKET" "-1 -1" \
+    "$(after 171 111 | awk '{ print $1 }') $(mark 172)"
+check "a reserved (unconnected) tagged socket fd is FDK_SOCKET" "6" "$(mark 173)"
+check "a connected tagged socket fd is FDK_SOCKET" "6" "$(mark 174)"
+check "a listening tagged socket fd is FDK_SOCKET" "6" "$(mark 175)"
+check "  …and none of those three issued a #111" "0" "$(awk '$1 == "sc" && $2 == 999 && $3 == 172 { on = 1; next } $1 == "sc" && $2 == 999 && $3 == 176 { exit } on && $1 == "sc" && $2 == 111 { n++ } END { print n + 0 }' "$T/run.log")"
+check "a closed tagged socket fd is -1, with no #111" "-1 0" "$(mark 177) $(between 176 111)"
+check "AGNOS_SOCK_TAG + 8 is no tagged fd: it goes to the kernel (-1)" "1073741832 -1" \
+    "$(after 177 111 | awk '{ print $1 }') $(mark 178)"
+check "FDK_CONSOLE..FDK_DEVICE are 1..10" "1234567900" "$(mark 179)"
 
 echo ""
 if [ "$fails" = "0" ]; then

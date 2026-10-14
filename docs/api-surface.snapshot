@@ -4872,6 +4872,7 @@ syscalls_x86_64_agnos::sys_fchmod/2
 syscalls_x86_64_agnos::sys_fchown/3
 syscalls_x86_64_agnos::sys_fchownat/5
 syscalls_x86_64_agnos::sys_fcntl/3
+syscalls_x86_64_agnos::sys_fd_kind/1
 syscalls_x86_64_agnos::sys_fdatasync/1
 syscalls_x86_64_agnos::sys_fgetxattr/4
 syscalls_x86_64_agnos::sys_flistxattr/3
