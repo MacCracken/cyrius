@@ -1,7 +1,7 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_fd_kind`#111 peer
 
 **Status:** 🟡 **OPEN** — filed by agnos (2026-10-13). agnos has assigned and built the number in its 1.57.13 cut, where it is reviewed and gated. Do not mint it here before agnos's `1.57.13` tag.
-**Placement:** `lib/syscalls_x86_64_agnos.cyr`. Put the `SysNrAgnos` constant and an `FdKind` enum next to `SYS_LSTAT = 102` (:97). Put `sys_fd_kind()` next to `sys_lstat()` (:1301).
+**Placement:** 6.7.11 — repair 1, the stdlib lane — an agnos filing (pulled in at the open: user, 2026-10-13) — never 7.x. Was: `lib/syscalls_x86_64_agnos.cyr`. Put the `SysNrAgnos` constant and an `FdKind` enum next to `SYS_LSTAT = 102` (:97). Put `sys_fd_kind()` next to `sys_lstat()` (:1301).
 **Filed:** 2026-10-13, by agnos. agnos minted and built the number; cyrius owns the peer.
 **Affects:** cyrius **6.7.10**. `#111` exists from agnos **1.57.13**.
 **Severity:** **Low as a defect, blocking for the consumer.** darshana's agnos `tty_isatty(fd)` can only answer for the console, not for the fd. So `prog > file` and `prog | other` get terminal escapes.

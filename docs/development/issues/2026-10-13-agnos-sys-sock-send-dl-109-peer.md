@@ -1,7 +1,7 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_sock_send_dl`#109 peer
 
 **Status:** 🟡 **OPEN** — filed by agnos (2026-10-13). agnos has assigned and built the number in its 1.57.13 cut, where it is reviewed and gated. Do not mint it here before agnos's `1.57.13` tag.
-**Placement:** `lib/syscalls_x86_64_agnos.cyr`. The constant goes in the `SysNrAgnos` enum next to `SYS_SOCK_SEND = 48` (:522). The wrapper `sys_sock_send_dl()` goes next to `sys_sock_send()` (:1985). Then `_agnos_sock_send_dl` passes it the time left.
+**Placement:** 6.7.11 — repair 1, the stdlib lane — an agnos filing (pulled in at the open: user, 2026-10-13) — never 7.x. Was: `lib/syscalls_x86_64_agnos.cyr`. The constant goes in the `SysNrAgnos` enum next to `SYS_SOCK_SEND = 48` (:522). The wrapper `sys_sock_send_dl()` goes next to `sys_sock_send()` (:1985). Then `_agnos_sock_send_dl` passes it the time left.
 **Filed:** 2026-10-13, by agnos. agnos minted and built the number; cyrius owns the peer.
 **Affects:** cyrius **6.7.10**. `#109` exists from agnos **1.57.13**.
 **Severity:** **Low as a defect, blocking for the consumer.** Until the peer lands, cyrius's agnos TLS write cannot honour its caller deadline (CVE-61's *Not covered*: a write overshoots the deadline by up to ~8 s). Ring 3 can call `#109` by raw number today.

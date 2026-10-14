@@ -1,7 +1,7 @@
 # `dir_list` / `dir_list_into` open the directory with a plain `O_RDONLY` — a FIFO there blocks forever — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 against 6.7.9 (agora's pin) and read unchanged at 6.7.10 (`7c97af24`).
-**Placement:** unplaced.
+**Placement:** 6.7.11 — repair 1, the stdlib lane — a lib/ defect, high priority by the standing rule (pulled in at the open: user, 2026-10-13) — never 7.x. Was: unplaced.
 **Discovered:** agora 1.9.1 (its `docs/examples/32-store-hardening.py`, section B; agora ADR 0025's directory half).
 **Severity:** Medium for a server — anyone who can create a FIFO where a program will list a directory freezes that
 program (under a single-process server, every client). Low for a CLI.

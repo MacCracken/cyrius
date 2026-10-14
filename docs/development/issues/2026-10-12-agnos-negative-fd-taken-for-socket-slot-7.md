@@ -1,7 +1,7 @@
 # agnos: a negative fd is taken for a tagged socket — `sys_write(-1, …)` sends on socket slot 7's connection, and `sys_close(-1)` returns 0 after freeing slot 7 — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (`~/.cyrius/versions/6.7.9/lib/syscalls_x86_64_agnos.cyr`), by the run below and by reading the four call paths.
-**Placement:** Unplaced — filed from darshana 1.3.0 (2026-10-12). Only the user places it.
+**Placement:** 6.7.11 — repair 1, the stdlib lane — an agnos-adapter fix (pulled in at the open: user, 2026-10-13) — never 7.x. Was: Unplaced — filed from darshana 1.3.0 (2026-10-12). Only the user places it.
 **Discovered:** 2026-10-12, darshana's 1.1.4 audit: its AGNOS `tty_close_signalfd(-1, …)` (the teardown after a failed `tty_open_signalfd`) freed socket slot 7. darshana has guarded since; this is the stdlib half.
 **Severity:** Medium — a caller's bug (an unchecked `-1` from a failed open) turns into bytes sent to an unrelated network peer, or into a live connection silently torn down, with a success return. Not Critical only because it needs that caller bug to trigger.
 **Affects:** 6.7.9, verified. The adapter dates from the `v6.2.3` notes in `sys_read` / `sys_close`; earlier releases were not checked.

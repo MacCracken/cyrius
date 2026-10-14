@@ -7,7 +7,7 @@ which is why it looked like a working top-level return. That exit is an accident
 the same one-line program never exits: an infinite loop at the `return` (killed by `timeout`, exit 124). On x86_64
 and PE (wine), `return 6; syscall(60, 9);` exits 9: the `return` is passed over. The installed 6.6.0, 6.6.20, 6.7.0
 and 6.7.9 compilers and `build/cc5` (5.11.69) all exit 9 on x86_64.
-**Placement:** 6.7.13 — repair 3, the decisions (roadmap.md § *6.7.13*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.11 — repair 1, the frontend lane — a newly filed High, from 6.7.13 (pulled in at the open: user, 2026-10-13) — never 7.x. Was: 6.7.13 — repair 3, the decisions (roadmap.md § *6.7.13*) — placed 2026-10-12 — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (the FAQ re-verification: `docs/guides/faq.md` listed "`return`
 outside a function body" as a syntax error; 6.7.9 compiles it, so the line was removed and `docs/doc-health.md`
 records that the meaning is the user's call).

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — filed by agnos (2026-10-10, agnos 1.57.12). 6.6.20's
 REVBE-01 stopped the miscompile by declining compaction on `kernel;`. That also took away the size reduction, and
 agnos now needs it.
-**Placement:** open by design — a capability gap placed in roadmap_6.md § *The DCE compaction arc* (kernel layouts join it: the miscompile is closed by 6.6.20's decline, what is missing is the shrink) — placed 2026-10-11 — never 7.x. Consumer-reported by agnos with real image-room pressure: the user may promote it into a repair release.
+**Placement:** 6.7.11 — repair 1, the infra lane — agnos-filed, High: the DCE compaction arc's kernel bite (roadmap_6.md) plus the kept-dead-body call retarget (pulled in at the open: user, 2026-10-13) — never 7.x. Was: open by design — a capability gap placed in roadmap_6.md § *The DCE compaction arc* (kernel layouts join it: the miscompile is closed by 6.6.20's decline, what is missing is the shrink) — placed 2026-10-11 — never 7.x. Consumer-reported by agnos with real image-room pressure: the user may promote it into a repair release.
 **Discovered:** 2026-10-09/10. The agnos operator ruled to make room with `CYRIUS_DCE=1`, and the DCE kernel died
 before its banner.
 **Severity:** High. Through 6.6.19 the kernel image is wrong: every string/gvar address points at the pre-compaction place. On agnos it is LOUD, not silent — ~18 serial lines whose strings are all NUL bytes, then death ~0.11 s in, before the banner; a smaller kernel could boot further on garbage.

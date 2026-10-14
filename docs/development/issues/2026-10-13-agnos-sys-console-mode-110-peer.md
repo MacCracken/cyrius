@@ -1,7 +1,7 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_console_mode`#110 peer
 
 **Status:** 🟡 **OPEN** — filed by agnos (2026-10-13). agnos has assigned and built the number in its 1.57.13 cut, where it is reviewed and gated. Do not mint it here before agnos's `1.57.13` tag.
-**Placement:** `lib/syscalls_x86_64_agnos.cyr`. Put the constant and the two mode bits next to `SYS_WINSIZE = 60` (:118), and the wrapper `sys_console_mode()` next to `sys_winsize()` (:2301).
+**Placement:** 6.7.11 — repair 1, the stdlib lane — an agnos filing (pulled in at the open: user, 2026-10-13) — never 7.x. Was: `lib/syscalls_x86_64_agnos.cyr`. Put the constant and the two mode bits next to `SYS_WINSIZE = 60` (:118), and the wrapper `sys_console_mode()` next to `sys_winsize()` (:2301).
 **Filed:** 2026-10-13, by agnos. agnos minted and built the number; cyrius owns the peer.
 **Affects:** cyrius **6.7.10**. `#110` exists from agnos **1.57.13**.
 **Severity:** **Low as a defect, blocking for the consumer.** darshana 1.3.0's `tty_echo_off` and `tty_flush_input` return -1 on agnos today, deliberately, because no call reaches the console mode.

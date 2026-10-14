@@ -138,23 +138,52 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
   - [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee](issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md);
   - [An untyped binding takes a struct-returning OPERATOR's type at every size (decision 12), but not a method chain or an if-expression of 8 B or less, nor a parenthesised 9–16 B operator / method result](issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md);
 
-**Lanes.**
-- Wave 1: multi-value receives (`src/`, owns the destructure drains; the aarch64 register fix ships in 6.7.7) · call arguments (`src/`,
-  owns the B6 marshaller and the argument scanners).
-- Wave 2: struct operators (`src/`, commits `build/cycc`) · the preprocessor walk (`src/`, lex_pp.cyr only).
-- Alongside: cybs (`bootstrap/`) · install · scanners · CLI · stdlib + folds.
+**Pulled in at the open (user, 2026-10-13).**
+- The agnos filings: the `#109` `sys_sock_send_dl` / `#110` `sys_console_mode` / `#111` `sys_fd_kind` peers (agnos
+  1.57.13 is tagged), [the negative fd taken for socket slot 7](issues/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md),
+  and [the kernel DCE compaction](issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md) (roadmap_6.md's arc,
+  its kernel bite only).
+- The newly filed Highs: [the f64 / `struct i` instance collision](issues/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md),
+  [the top-level `return`](issues/2026-10-12-top-level-return-decision.md) and
+  [the async multi-value return](issues/2026-10-09-async-fn-multi-value-return-loses-second-value.md) (from 6.7.13),
+  [the poison env](issues/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md),
+  [`cyrius header`'s struct returns](issues/2026-10-10-cyrius-header-ignores-struct-returns.md),
+  [the Windows target selectors](issues/2026-10-10-windows-cli-drops-target-selectors.md) and
+  [cbt's self-builds](issues/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md) (from 6.7.12).
+- [`dir_list` without `O_DIRECTORY`](issues/2026-10-13-dir-list-opens-directory-without-o-directory.md) (a `lib/` defect).
+- The folds: sankoch **2.8.6** refolded; sakshi **2.5.10** (the two 4 KiB rings declared as 4096 slots — the cause of
+  the sandhi large-static advisory). ⛔ 6.7.11 cannot tag before the user tags sakshi 2.5.10 and it is refolded.
 
-**Decisions at the open.**
-- The stale-receive shapes and the loop-ending refusal, as one question (shape 3: refused, or `(p.a, p.b)`).
-- `bs1((t))` refused.
-- An un-annotated f64 method's value change.
-- Struct operators, items 1–6.
-- Fields as left operands dispatch.
-- The int + f64 chain: "already reported" (default) or retype.
-- distlib ties refused by name.
-- Reap a dead-pid dir by its contents.
-- `fhm_set` never rebuilds on a present key.
-- The indirect call's (b), if it was picked at 6.7.8.
+**Lanes** (triage 2026-10-13: all 79 items reproduce on the slot-open compiler; at most two parser lanes at a time).
+- Wave 1: multi-value receives · call arguments (parser) — alongside: infra (the preprocessor fast path, cybs + the
+  seed's code-cap row, the kernel DCE compaction) · tools (scanners, cyrlint, distlib, the temp-dir reaper, the bench
+  report, the CLI Highs) · stdlib + folds.
+- Wave 2, on wave 1's merge: struct copies + struct operators (one lane) · generics, then the frontend remainder (one
+  lane).
+
+**Decisions at the open** (user, 2026-10-13 — asked once, all answered as recommended; recorded in each bite's
+CHANGELOG line). Every one applies an existing rule to a shape it missed, except two forks:
+- **D22:** a `: stack` pair as a struct-literal element is refused by name; a pair as a plain argument keeps the
+  documented single-argument tag rule (`is_ok(f())`) — the 2026-10-09 argument half is withdrawn.
+- **D11:** a top-level `return` is refused by name ("return outside a fn body").
+- The rest, by lane: multi-value — the stale-register shapes, loop-ending one-value callees, a >16 B struct callee
+  in a destructure, a multi-value call into a named struct, a scalar annotation from a struct call and an
+  `async fn (T1, T2)` refused by name; a pair method above its impl refused for a single bind. Call arguments — an
+  unknown fn-pointer callee's struct result stays a handle (a known `&f` callee is fixed); a vector receive from an
+  unknown callee or a word refused; `rd(b)` into `p: *V` passes the address; parameter types take the trait-signature
+  grammar plus bare `*fn`; `bs1((t))` and `take8(*pu)` refused; `n + pb` is that pointer. Struct copies — a `*S`
+  return source returns the pointee; `GP = l` copies into `*GP`; a ≤8 B return of another struct refused; `*p = v`
+  copies the whole struct. Struct operators — unary minus is word negation; `return (a, b)` in a struct fn and a
+  non-dispatching operator after a pair call refused; the int + f64 chain warns once; decision 12 extends to a
+  ≤8 B method chain / if-expression and a parenthesised 9–16 B result; `h.get().b` and a wrapped call as a nested
+  literal element accepted. Generics — `gen$f64` with marked struct fragments; a scalar into a struct-typed generic
+  method refused; a generic call's result infers T; an undefined overload sibling never takes a call; `Vec<T>`
+  annotations checked; a declared `struct slice` wins in locals. Frontend — const arity = run-time arity; a
+  closure reads a captured slice's `.len` / `.ptr`; saturating ops on a pointer give an integer; `n + &x` is a byte
+  pointer; cx auto-calls `fn main`. Tools — distlib ties refused; the reaper removes scratch-only dead-pid dirs;
+  `CYRIUS_POISON` takes the `CYRIUS_BOUNDS` rule; `cyrius header` models the struct-return ABI; the Windows CLI
+  refuses `--agnos` / bare-metal targets. cybs — the line text plus the unsupported-construct list (per-construct
+  refusals and file:line filed to the seed-rotation minor).
 
 **Hosts.** qemu-aarch64, then pi and ecb for the multi-value receive rows; `cyrius pulsar`. wine, then cass, for the
 Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
@@ -252,7 +281,6 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
   - [A declaration after the first top-level statement: `fn` / `const` are taken, `struct` / `enum` / `trait` / `impl` / `union` / `mod` / `use` / `public` / `async fn` are refused, `impl` with a cascade, `async fn` and `union` by a misleading message](issues/2026-10-12-declarations-after-first-statement-decision.md);
   - [cyrius-lsp diagnostics: the column lands in the message, an included file's error lands on the open file, and `.tcyr` / `.bcyr` / `.fcyr` / `.scyr` / `.smcyr` get nothing](issues/2026-10-12-lsp-diagnostics-column-file-and-extensions.md);
-  - [A top-level `return` compiles with no diagnostic and does not return: execution continues past it on x86_64 / PE and it hangs on aarch64 / cx](issues/2026-10-12-top-level-return-decision.md);
   - ["assigning non-pointer to typed pointer" is missing for a declaration-zone `*T` global and for an assignment to a local or parameter `*T` of a scalar `T`](issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md);
   - [`programs/wc.cyr` (a demo): counts of 8 or more digits run together with no separator, and VT / FF do not separate words](issues/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md);
 

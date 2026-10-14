@@ -1,7 +1,7 @@
 # A generic instantiated at `f64` and at a struct named `i` share one instance (`gen$i`) — the second call runs the first's body — OPEN (a decision)
 
 **Status:** 🟡 **OPEN** — the fix needs a one-line decision on the f64 instance's spelling (below).
-**Placement:** unplaced — for the user to place (found by the 6.7.10 P5-B review, lane p5b; pre-existing).
+**Placement:** 6.7.11 — repair 1, the generics lane — a newly filed High (pulled in at the open: user, 2026-10-13) — never 7.x. Was: unplaced — for the user to place (found by the 6.7.10 P5-B review, lane p5b; pre-existing).
 **Discovered:** 2026-10-12 during the 6.7.10 P5-B review (execution coverage prints instance names, `gen$i`)
 **Severity:** High — a silent miscompile; the trigger is narrow (a struct named `i`, or one named like a scalar)
 **Affects:** cycc since generic instances were minted per concrete type (v6.3.33's `_mint_generic_name`) through 6.7.10
