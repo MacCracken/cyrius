@@ -1364,8 +1364,14 @@ inferred from its arguments: `l = gp<S>()`, `var q: S = *gp<S>()`, `take(*gp<S>(
 `gp<S>().v` read the `S` it points at, as `fn gp(): *S` does; a `*U` instance is refused by name (naming
 the call). Through 6.7.10 the instance recorded T's step but not its struct: the pointer word was stored,
 the dereferences faulted, and `gp<S>().v` was refused.
-⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
-first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
+A `*T` GLOBAL is such a destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
+struct value `l` — a variable, a by-value parameter, a call, a field `w.s`, `*p`, a method, an operator
+result — into the struct `GP` points at, as `q = l` does through a `*T` local or parameter, in a fn, at top
+level and in a for step; `GP` still points where it did. `GP = q` from another `*T` (a local, a global, a
+`: *T` call, a field) or a handle, and `GP = &x` / `GP = alloc(..)` / `GP = 0`, rebind it; a struct of
+another type is refused by name; at top level a call, method or operator result over 8 bytes has no frame
+to land in and is refused, as into a struct global. Through 6.7.10 `GP = l` stored `l`'s first word into
+`GP` itself — a wild pointer, silently.
 Into a struct-typed FIELD these sources copy too (6.7.11): `o.s = GP`, `o.s = gp()`, `o.s = w.p`,
 `o.s = GP + 0`, `o.s = (gp())`, through a `*O` (`po.s = GP`), at top level and in a for step; a `*U` of
 another struct is refused by name (`cannot copy 'GU' into a struct field of a different struct type`).

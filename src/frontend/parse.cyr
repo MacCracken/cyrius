@@ -3003,9 +3003,10 @@ fn _agc_handle_local(S, li): i64 {
     return n;
 }
 # A pointer-mode global (GVPM 1) of a plain struct over 8 B: a handle, in the deref band. 6.7.10
-# (B7-1g): and one of 8 B or less (the handle line), one slot (`_hl_small_copy`).
+# (B7-1g): and one of 8 B or less (the handle line), one slot (`_hl_small_copy`). 6.7.11: as a
+# DESTINATION, a typed `*S` global too (`_agc_ptr_global`).
 fn _agc_handle_global(S, gvi): i64 {
-    if (GVPM(S, gvi) != 1) { return 0; }
+    if (GVPM(S, gvi) != 1) { return _agc_ptr_global(S, gvi); }
     var t = 0 - GVTYPE(S, gvi);
     if (_small_ghdl(S, gvi) == 1) { _agc_gvi = 0 - 1000 - gvi; _agc_t = t; return 1; }   # 6.7.10 (B7-1g)
     if (_agc_plain_big(S, t) == 0) { return 0; }
@@ -3013,6 +3014,29 @@ fn _agc_handle_global(S, gvi): i64 {
     _agc_t = t;
     var n = AGG_NSLOTS(S, t);
     return n;
+}
+# ⛔ 6.7.11 — A TYPED `*S` GLOBAL IS A HANDLE AS A DESTINATION (the user's decision (a), 2026-10-13): `GP = l`
+# copies the struct value `l` into `*GP`, as `q = l` does through a `*S` local or parameter (`_agc_handle_local`)
+# — one rule for locals and globals at every size. Through 6.7.10 the global was no operand, and the one-word
+# store made `GP` the word `l.a`: a wild pointer, silently (issues/2026-10-13-struct-value-into-pointer-global-
+# destination-decision.md). Answered in the deref band, so a `*S` / handle source stays a REBIND (`GP = q`,
+# `GP = GP2`), another struct is refused by name, and a source that is no struct (`GP = &x`, `GP = 0`,
+# `GP = alloc(..)`) keeps the store. A DESTINATION only: as a source (`_agc_src`) the global keeps
+# `_hl_psrc_copy`'s path. A plain struct (no `Str` / tuple / dyn; over 8 B, no heap handle by name), its step
+# the struct's. CHANGELOG [6.7.11]
+var _agc_src = 0;
+fn _agc_ptr_global(S, gvi): i64 {
+    if (_agc_src == 1) { return 0; }
+    var ps = _gv_ptr_sid(S, gvi);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    var sz = STRUCTSZ(S, ps - 1);
+    if (sz > 8) { if (_agc_plain_big(S, 0 - ps) == 0) { return 0; } }
+    if (_ps_step(_gv_ptr_word(S, gvi)) != sz) { return 0; }
+    _agc_gvi = 0 - 1000 - gvi;
+    _agc_t = 0 - ps;
+    return AGG_NSLOTS(S, 0 - ps);
 }
 fn _agc_operand(S, onoff): i64 {
     _agc_li = 0 - 1;
@@ -3060,7 +3084,14 @@ fn _agc_operand(S, onoff): i64 {
 # inside a closure stored the capture's address as one word. A capture is recorded for
 # `_fsc_src_x1` (see `_fsc_cap_src`) and answered as the `-2` source. Never asked for the
 # DESTINATION, which must not touch that record. CHANGELOG [6.6.13]
+# 6.7.11: `_agc_src` is up across it, so `_agc_operand` answers a SOURCE (`_agc_ptr_global`).
 fn _agc_src_operand(S, onoff): i64 {
+    _agc_src = 1;
+    var n = _agc_src_rung(S, onoff);
+    _agc_src = 0;
+    return n;
+}
+fn _agc_src_rung(S, onoff): i64 {
     if (GINFN(S) == 1) { if (FINDLOCAL(S, onoff) >= 0) { return _agc_operand(S, onoff); } }
     var t = _fsc_cap_src(S, onoff);
     if (t == 0) { return _agc_operand(S, onoff); }

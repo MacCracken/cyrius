@@ -182,6 +182,13 @@
 #      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
+#   R14 (6.7.11, issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
+#      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 138): a
+#      struct VALUE into a typed `*S` GLOBAL — a local, a value global, a by-value parameter, a call, a field
+#      `w.s`, `*p`, a method, an operator, wrapped, a for step — copies into its pointee at 3 / 8 / 16 / 24 B, in
+#      a fn and at top level, as into a `*S` local or parameter (the controls); `GP = q`, `GP = &x`, `GP = GP2`,
+#      `GP = gq()` rebind (through 6.7.10 `GP` became the value's first word); the refusals are
+#      tests/gates/frontend/struct_copy_type_checked.sh's R10-R15
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -424,6 +431,11 @@
 #   MT4  `_tc_small_sret_divert` without `: *X`     -> R13 2 of 75 rows (x86 measured: `return gp3();` /
 #                                                      `return gp8();` kept the `jmp`, the pointer's word)
 #   MT5  `_ret_ptr_src` without its dereference arm -> R13 does not build (x86 measured: `return *GP16;` refused)
+# 6.7.11 `*S` GLOBAL DESTINATION MUTATION LEDGER (2026-10-14, the same method; R14,
+# issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
+#   the tree before it (299e6e60)                   -> RED 7: R14 72 of 138 rows x7 (`GP` became the value's first
+#                                                      word; the rebinds and the `*S` local / parameter controls green)
+#   M5a `_agc_ptr_global` answering 0                -> RED 7: R14 72 of 138 rows x7
 # 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
 # issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
@@ -737,6 +749,20 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R13 $leg: the values file did not build: $(grep '^error' "$D/rc_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NRC passed, 0 failed ($NRC total)" ]; then ok "R13 $leg: $LAST"
     else bad "R13 $leg: exit $RC, '$LAST' (want '$NRC passed, 0 failed ($NRC total)') $(grep -m3 'FAIL' "$D/rc_$n.out" | tr '\n' ' ')"; fi
+done
+
+TVG=tests/tcyr/crossos/struct_value_into_ptr_global.tcyr
+[ -f "$TVG" ] || { echo "FAIL: $G: $TVG is missing"; exit 1; }
+NVG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TVG")
+VGFLOOR=138
+if [ "$NVG" -lt "$VGFLOOR" ]; then echo "FAIL: $G: only $NVG rows in $TVG (floor $VGFLOOR) — rows were lost"; exit 1; fi
+echo "R14. $TVG ($NVG rows: a struct value into a *S global copies into its pointee)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TVG" "$D/vg_$n"
+    if [ "$RC" -eq -1 ]; then bad "R14 $leg: the values file did not build: $(grep '^error' "$D/vg_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NVG passed, 0 failed ($NVG total)" ]; then ok "R14 $leg: $LAST"
+    else bad "R14 $leg: exit $RC, '$LAST' (want '$NVG passed, 0 failed ($NVG total)') $(grep -m3 'FAIL' "$D/vg_$n.out" | tr '\n' ' ')"; fi
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -1369,4 +1395,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13); a struct value into a *S global copies into its pointee (R14)"
