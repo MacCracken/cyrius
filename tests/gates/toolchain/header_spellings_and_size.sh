@@ -66,6 +66,8 @@
 #   cyr_valN of floor(size / 8) words (17 B -> 2)                     → H8, H10, H11b FAIL
 #   a union's fields summed                                           → H8 FAIL (the shapes row)
 #   `Str` a word before the file's own struct Str is sized             → H8 FAIL (the str3 row)
+#   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
+#   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -265,6 +267,18 @@ check "a SIMD vector return keeps its pre-6.7.11 word (issues/2026-10-14-cyrius-
 printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }' > str3.cyr
 "$CY" header str3.cyr > o8c 2>&1 || :
 check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"
+# A bare `Vec` field is the file's own `struct Vec` when one is declared ABOVE the field (the
+# compiler's FINDSTRUCT), else the 8-byte handle: both orders held to cycc's sizeof.
+printf '%s\n' 'struct VB { v: Vec; p1; p2; }' 'struct Vec { a; b; c; }' 'struct VA { v: Vec; p1; p2; }' > vo.cyr
+{ cat vo.cyr
+  echo 'fn pz(n): i64 { var d[24]; var i = 22; store8(&d + 23, 10); if (n == 0) { store8(&d + i, 48); i = i - 1; } while (n > 0) { store8(&d + i, 48 + n % 10); n = n / 10; i = i - 1; } syscall(1, 1, &d + i + 1, 23 - i); return 0; }'
+  echo 'pz(sizeof(VA)); pz(sizeof(VB)); syscall(60, 0);'; } > vop.cyr
+{ (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> /dev/null) && chmod +x vop && ./vop > vo.cc 2> /dev/null; } || :
+check "cycc's sizeof: struct Vec above the field 40 B, below it 24 B" "40 24" "$(paste -sd' ' vo.cc 2> /dev/null)"
+printf '%s\n' 'fn rva(): VA { var z: VA; return z; }' 'fn rvb(): VB { var z: VB; return z; }' >> vo.cyr
+"$CY" header vo.cyr > o8d 2>&1 || :
+check "a bare Vec field with the file's own struct Vec declared above: that struct (40 B, cyr_val5)" 1 "$(has o8d 'cyr_val5 rva(void);   /* returns VA, 40 B */')"
+check "... declared below the field: the 8-byte handle (24 B, cyr_val3)" 1 "$(has o8d 'cyr_val3 rvb(void);   /* returns VB, 24 B */')"
 check "each typedef once (cyr_val2, cyr_val3, cyr_val4)" "1 1 1" \
     "$(grep -c 'cyr_val2;$' o8b) $(grep -c '} cyr_val3;$' o8b) $(grep -c '} cyr_val4;$' o8b)"
 

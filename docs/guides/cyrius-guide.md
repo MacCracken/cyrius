@@ -4432,6 +4432,8 @@ result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the
 from the file itself — another file's struct, a generic instance, a struct holding one, a struct
 declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
 on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
+one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
 Whitespace at the end of a
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.
