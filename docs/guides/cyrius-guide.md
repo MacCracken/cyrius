@@ -5643,13 +5643,19 @@ instance (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i` too, and 
 second call ran the first's body).
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
-value — a parameter or a `var q: T` local — is used as a struct (`p.y`), there is
+value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`
+with `b: Box<T>` / `b: *Box<T>` or a `var x: Box<T>` local, where `Box` declares
+`v: T`; 6.7.11, before it such a definition failed to parse, called or not) — is
+used as a struct (`p.y`), there is
 no valid i64 form, so the base is a dead stub, and any use that would reach it is
 a compile error naming the fn: a scalar call (`g(5)`, `g<i64>(5)`, `g<i32>(5)`,
 in any position, tail included), `&g`, and a generic that FORWARDS its own `T` to
 such a generic (`fn outer<T>(p: T) { return g(p); }` makes `outer(5)` an error
 too, whichever order the two are defined in). Call it with a struct argument or a
 struct type argument (6.6.10; before that each of these compiled and returned 0).
+The carrier rule looks one field deep: a field typed `Box<T>` inside another carrier
+(`o.inner.v.y` with `o: Out<T>`) is not followed — bind the value to a `T`-typed
+local first (`var t: T = o.inner.v; return t.y;`), which makes the base the stub.
 A generic method's scalar call is refused the same way, naming the method's fn:
 `p.pick(9)` and `p.pick(h)` (an `f64`) are refused as `P_pick(p, 9)` is (6.7.11;
 before it they compiled and returned 0), and a generic that forwards a `T`-typed

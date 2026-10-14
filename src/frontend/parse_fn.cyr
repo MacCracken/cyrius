@@ -11065,11 +11065,137 @@ fn _gsn_has(noff): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.11 — THE STRUCT CARRIERS of the fn being scanned: a parameter or a `var x` typed `G<.., T, ..>` /
+# `*G<.., T, ..>` (T one of the fn's type parameters, a WHOLE argument at depth 1), one entry per slot
+# T takes: (name, G's name, slot). `fn gy<T>(b: Box<T>) { return b.v.y; }` reads `b.v` — Box's `v: T` —
+# as a struct, so it has no i64 instance; the scan saw only T-typed NAMES, so its base was parsed with
+# `b.v` an i64 and the definition failed ("expected ';', got '.'"), called or not (`_gs_cfield`).
+var _gcr = 0;
+var _gcr_n = 0;
+fn _gcr_add(noff, gnoff, slot): i64 {
+    if (_gcr == 0) { _gcr = alloc(64 * 24); }
+    if (_gcr_n >= 64) { return 0; }
+    store64(_gcr + _gcr_n * 24, noff);
+    store64(_gcr + _gcr_n * 24 + 8, gnoff);
+    store64(_gcr + _gcr_n * 24 + 16, slot);
+    _gcr_n = _gcr_n + 1;
+    return 0;
+}
+# A carrier `name: [*]G<..>` (token ti on G's name): its entries, one per slot a type parameter of fi
+# takes whole.
+fn _gcr_note(S, fi, noff, ti): i64 {
+    var j = ti + 2;
+    var slot = 0;
+    var d = 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return 0; }
+        if (d == 1) { if (_gs_targ_whole(S, j) == 1) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) {
+                    _gcr_add(noff, TOKVAL(S, ti), slot);
+                } } }
+        if (t == 31) { if (d == 1) { slot = slot + 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# Mode 0 at `x.f.g` (token i on x): 1 when x is a carrier and G's field f is declared with G's own type
+# parameter in a slot the carrier gives T (`f: T` / `f: *T`) — a struct use of T, as `t.g` on a `t: T`
+# is. One hop: `b.inner.v.y` through a field typed `Box<T>` is not followed (bind `var t: T = b.inner.v;`).
+fn _gs_cfield(S, i): i64 {
+    if (_gcr_n == 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 2) { return 0; }
+    if (TOKTYP(S, i + 3) != 41) { return 0; }
+    if (TOKTYP(S, i + 4) != 2) { return 0; }
+    var noff = TOKVAL(S, i);
+    var e = 0;
+    while (e < _gcr_n) {
+        if (load64(_gcr + e * 24) == noff) {
+            if (_gs_gfield_tp(S, load64(_gcr + e * 24 + 8), load64(_gcr + e * 24 + 16), TOKVAL(S, i + 2)) == 1) { return 1; }
+        }
+        e = e + 1;
+    }
+    return 0;
+}
+# 1 = generic struct G's field `fnoff` is declared `fnoff: P` / `fnoff: *P`, P G's type parameter in
+# `slot`. G's definition is read from the tokens: pass 1 records a generic before a struct declared
+# below it is registered (`_gs_gdef`).
+fn _gs_gfield_tp(S, gnoff, slot, fnoff): i64 {
+    var lt = _gs_gdef(S, gnoff);
+    if (lt < 0) { return 0; }
+    var tpn = _gs_gtp(S, lt, slot);
+    if (tpn < 0) { return 0; }
+    var n = GTCNT(S);
+    var j = lt;
+    while (j < n) {
+        var t0 = TOKTYP(S, j);
+        if (t0 == 13) { break; }
+        if (t0 == 5 || t0 == 12) { return 0; }
+        j = j + 1;
+    }
+    var d = 0;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12) { return 0; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { return 0; } }
+        if (d == 1) { if (t == 2) { if (TOKTYP(S, j + 1) == 49) { if (STREQ(S, TOKVAL(S, j), fnoff) == 1) {
+                        return _gs_tok_names(S, j + 2, tpn);
+                    } } } }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 = the type at token a (past a `*`) is the bare name tpn.
+fn _gs_tok_names(S, a, tpn): i64 {
+    if (TOKTYP(S, a) == 8) { a = a + 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) == 19) { return 0; }
+    return STREQ(S, TOKVAL(S, a), tpn);
+}
+# The `<` of generic struct G's definition (`struct G<`), or -1: its recorded def-start when pass 1
+# has registered it, else found in the tokens.
+fn _gs_gdef(S, gnoff): i64 {
+    var g = FINDSTRUCT(S, gnoff);
+    if (g > 0) {
+        var ds = GSDS(S, g - 1);
+        if (ds > 0) { if (TOKTYP(S, ds + 1) == 19) { return ds + 1; } }
+    }
+    var n = GTCNT(S);
+    var j = 0;
+    while (j < n) {
+        if (TOKTYP(S, j) == 40) { if (TOKTYP(S, j + 1) == 2) { if (TOKTYP(S, j + 2) == 19) {
+                    if (STREQ(S, TOKVAL(S, j + 1), gnoff) == 1) { return j + 2; }
+                } } }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+# The name of the type parameter in `slot` of the list whose `<` is token lt, or -1.
+fn _gs_gtp(S, lt, slot): i64 {
+    var j = lt + 1;
+    var k = 0;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 2) { if (k == slot) { if (TOKTYP(S, j - 1) == 19 || TOKTYP(S, j - 1) == 31) { return TOKVAL(S, j); } } }
+        if (t == 31) { k = k + 1; }
+        if (t == 20 || t == 39 || t == 152 || t == 13 || t == 12 || t == 5) { return 0 - 1; }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
 
 # The parameter list at token `open` (its `(`): collect the T-typed parameter names and return the
 # 1-based index of the first parameter carrying each type parameter, packed as GFGM bits 8-23.
 fn _gs_params(S, fi, open): i64 {
     _gsn_n = 0;
+    _gcr_n = 0;
     _gs_open = open;
     var i = open + 1;
     var n = GTCNT(S);
@@ -11112,7 +11238,10 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         _gsn_add(TOKVAL(S, i));
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
-    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk); }   # 6.7.8: `G<..T..>`
+    if (TOKTYP(S, ti + 1) == 19) {
+        _gcr_note(S, fi, TOKVAL(S, i), ti);   # 6.7.11: `b.v.y` (`_gs_cfield`)
+        pk = _gs_carrier(S, fi, ti, pc, pk);   # 6.7.8: `G<..T..>`
+    }
     return pk;
 }
 # ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
@@ -11193,7 +11322,8 @@ fn _gs_scan(S, fi, i, mode): i64 {
     }
     return 0;
 }
-# `var x: T` / `var x: *T` at token i: x is T-typed from here on.
+# `var x: T` / `var x: *T` at token i: x is T-typed from here on. 6.7.11: `var x: [*]G<..T..>` is a
+# carrier (`_gcr_note`).
 fn _gs_var(S, fi, i): i64 {
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     if (TOKTYP(S, i + 2) != 49) { return 0; }
@@ -11201,6 +11331,7 @@ fn _gs_var(S, fi, i): i64 {
     if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { _gsn_add(TOKVAL(S, i + 1)); }
+    if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, i + 1), ti); }
     return 0;
 }
 fn _gs_use(S, fi, i, mode): i64 {
@@ -11217,7 +11348,8 @@ fn _gs_use(S, fi, i, mode): i64 {
                 var bsi = _bs_find(S, i + 2);
                 if (bsi >= 0) { if (L64(_bs_tab + bsi * 32 + 8) >= 0) { if (L64(_bs_tab + bsi * 32 + 24) == 0) { return 0; } } }
             } }
-        return _gsn_has(TOKVAL(S, i));
+        if (_gsn_has(TOKVAL(S, i)) == 1) { return 1; }
+        return _gs_cfield(S, i);   # 6.7.11: `b.v.y` through a struct carrier
     }
     if (nx != 19 && nx != 10) { return 0; }
     if (nx == 10) { if (_gs_mfwd(S, fi, i) == 1) { return 1; } }   # 6.7.11: `p.pick(t)`

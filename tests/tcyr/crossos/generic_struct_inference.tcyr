@@ -140,7 +140,12 @@
 # (6.7.11) parentheses wrapping the whole argument and a whole dereference bind T as the plain
 # spelling does — `gx((b))`, `gx(*bp)`, `gx((*bp))`, `gpx((b))`, `gsz((bi))`, `unbox((b))`,
 # `unbox(*bp)` and the pair scans (`?` above a wrapper typed through each); they reached the base and
-# were refused (struct_arg_type_refused.sh D9 / G1-G5 hold the 8 B carrier and the refusals).
+# were refused (struct_arg_type_refused.sh D9 / G1-G5 hold the 8 B carrier and the refusals). G12
+# (6.7.11) a generic that reads its carrier's T field AS A STRUCT (`b.v.y`, `b: Box<T>`) has no i64
+# instance, as `t.y` on a `t: T` has not: its base is the stub and the definition compiles — it failed
+# ("expected ';', got '.'"), called or not, because the stub scan saw only T-typed names. Inferred and
+# explicit, a `*Box<T>` carrier, a struct declared below the generic, a `var x: Box<T>` local carrier
+# and `Pr<i64, T>` (slot 1); the scalar refusals are generic_type_arg_unknown_refused.sh CF1-CF6.
 # MUTATIONS (scratch tree, measured), each RED here:
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
@@ -159,6 +164,10 @@
 #       "cannot pass 'b' / 'bp' to a parameter of a different struct type in a call to 'unbox'")
 #   MG12 (6.7.11) the pair scans' wrap arm (`_pwrap_in` in `_tok_gen_sc_sid`), or its `*name` arm
 #       (`_tok_sc_deref`), dropped                       -> rc 139 (G11's `?` above its wrapper)
+#   MG13 (6.7.11) `_gs_use` mode 0 without `_gs_cfield` -> the file does not build (G12: "expected ';',
+#       got '.'" at each G12 generic's `c.v.y` / `b.v.y`)
+#   MG14 (6.7.11) `_gs_var` records no carrier         -> the file does not build (G12's `var x: Box<T>`)
+#   MG15 (6.7.11) `_gs_gdef` without its token search  -> the file does not build (G12's struct below)
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -591,7 +600,18 @@ fn sc_tail(b: Box<i32>): i64 { return gsz(b); }
 fn sc_above(): i64 { var b: Box<Pt>; b.v.y = 4; b.n = 8; return gbelow(b); }
 fn gbelow<T>(b: Box<T>): i64 { return b.n; }
 fn glater<T>(c: Later<T>): i64 { return c.n; }
+fn gylater<T>(c: Later<T>): i64 { return c.v.y; }   # G12: a carrier field read as a struct, struct below
 struct Later<T> { v: T; n; }    # declared BELOW the generic that names it
+# G12 (6.7.11): a carrier's T field read as a struct.
+fn gyv<T>(b: Box<T>): i64 { return b.v.y; }
+fn gyp<T>(b: *Box<T>): i64 { return b.v.y * 10 + b.n; }
+fn gyloc<T>(p: T): i64 {
+    var x: Box<T>;
+    x.v = p;
+    x.n = 1;
+    return x.v.y * 2 + x.n;
+}
+fn gy2<T>(q: Pr<i64, T>): i64 { return q.b.y + q.a; }
 fn gpx<T>(b: *Box<T>): i64 { return b.n; }
 fn sc_pp(bp: *Box<Pt>): i64 { return gpx(bp); }
 fn sc_pa(b: Box<Pt>): i64 { return gpx(&b); }
@@ -730,6 +750,14 @@ fn run_struct_carrier(): i64 {
         "G11: `w(..)?` above its wrapper `var p = unbox((b)); return p.hbx(d);` (the pair scans type p)");
     var s6, w6 = sc_qd(6, 3);
     assert_eq(s6 * 100000 + w6, 55002, "G11: ... and `var p = unbox(*bp);`");
+    test_group("a carrier's T field read as a struct (6.7.11)");
+    assert_eq(gyv(b), 4, "G12: `b.v.y` with `b: Box<T>`, gyv(b) (the definition did not compile)");
+    assert_eq(gyv<Pt>(b), 4, "G12: the explicit `gyv<Pt>(b)`");
+    assert_eq(gyp(&b) + gyp(bp) * 100, 4848, "G12: a `*Box<T>` carrier, `gyp(&b)` / `gyp(bp)`");
+    assert_eq(gylater(lt), 4, "G12: a generic struct declared below the generic");
+    assert_eq(gyloc(p), 9, "G12: a `var x: Box<T>` local carrier");
+    var q12: Pr<i64, Pt>; q12.a = 2; q12.b.x = 1; q12.b.y = 5; q12.n = 0;
+    assert_eq(gy2(q12), 7, "G12: `Pr<i64, T>`, T in slot 1, `q.b.y`");
     return 0;
 }
 

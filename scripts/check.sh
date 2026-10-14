@@ -1921,7 +1921,9 @@ _chk_gate "$ROOT/tests/gates/frontend/derive_directive_refused.sh"
 
 # 6.6.8 (bite 1b) — a forwarded type parameter (`inner<T>(p)` in a generic body) resolves to its
 # binding; it read as "no type" and silently hit the i64 base (outer<Pt> returned 2, want 16). A
-# type-arg naming no type is refused by name. Mutation-proven in the header.
+# type-arg naming no type is refused by name. Mutation-proven in the header. 6.7.11 (CF): a generic that
+# reads its struct carrier's T field as a struct (`b.v.y`, `b: Box<T>`) has a stub base — the definition
+# failed to parse, called or not; a scalar binding of it is refused by name.
 _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"
 
 # 6.6.8 (bite 1b) — inside a coroutine `async fn`: fncallN / callptr / a closure call through the
