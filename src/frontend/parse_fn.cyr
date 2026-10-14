@@ -11011,6 +11011,8 @@ fn _gsc_g(S, fi, off): i64 {
 # 4 for 8). CHANGELOG [6.7.8], [6.7.9]
 fn _gsc_arg(S, a): i64 {
     var t = TOKTYP(S, a);
+    if (t == 10) { return _gsc_wrap(S, a); }    # 6.7.11: `gw((w))`
+    if (t == 8) { return _gsc_deref(S, a); }    # 6.7.11: `gw(*wp)`
     if (t == 27) {
         if (_gsc_name_end(S, a + 1) == 0) { return 0; }
         return _gsc_addr_of(S, TOKVAL(S, a + 1));
@@ -11020,6 +11022,24 @@ fn _gsc_arg(S, a): i64 {
     if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); }
     if (_gsc_name_end(S, a) == 0) { return 0; }
     return _gsc_name(S, TOKVAL(S, a));
+}
+# ⛔ 6.7.11 — the two spellings the by-value struct check reads THROUGH bind T as their plain ones do:
+# parentheses wrapping the WHOLE argument (`_ess_wrap`) carry what they wrap — `gw((w))`, `gw((mkw(6)))`
+# — and a whole dereference (`_ess_deref`) what its pointer points at, as `gw(wp)` binds it — `gw(*wp)`.
+# Both reached the base, whose `W1` the instance `W1<i32>` is not: refused "a different struct type"
+# (through 6.7.10 at 8 B or less they compiled and read the struct with the base's layout). A tuple
+# literal (`gw((w, 3))`) and an operator's operand (`gw(*wp + 1)`) bind nothing. The pair scans read
+# both alike (`_tok_gen_sc_sid`), or a `?` above a wrapper typed through them misses its pair.
+# CHANGELOG [6.7.11]
+fn _gsc_wrap(S, a): i64 {
+    var p = _pwrap_in(S, a);
+    if (p < 0) { return 0; }
+    return _gsc_arg(S, p);
+}
+fn _gsc_deref(S, a): i64 {
+    var e = _arg_next(S, a);
+    if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    return _hl_psid(S, a + 1, e);
 }
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field

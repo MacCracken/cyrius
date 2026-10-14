@@ -110,14 +110,35 @@
 # where `take8(u)`, the 16 B `take(*pu)` and `var l: S8 = *pu;` were refused
 # (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md). D1 is the filed
 # repro verbatim; D2-D9 wrapped, a `: *T` call (named by its last name, as `_dro_check` names it over 8 B),
-# a `*T` field, pointer arithmetic, a tail call, `*self`, a `Str` parameter (139 before) and a generic
-# carrier (T is not bound through `*wp`, as `gx(*bp)` over 8 B); D10 the same struct (no false refusal);
-# D11 the pointer itself and an untyped `*x`; D12 an operator on the dereference is not one. Mutations:
-#   the fix reverted (the paren commit's compiler)     -> RED D1-D9 D3b (each compiled)
+# a `*T` field, pointer arithmetic, a tail call, `*self` and a `Str` parameter (139 before); D9 a generic
+# carrier of the SAME instance binds T through the dereference (the review fix below); D10 the same struct
+# (no false refusal); D11 the pointer itself and an untyped `*x`; D12 an operator on the dereference is not
+# one. Mutations:
+#   the fix reverted (the paren commit's compiler)     -> RED D1-D8 D3b (each compiled)
 #   no unwrap (`_ie_unparen`)                          -> RED D2
 #   the operand's last name not scanned                -> RED D3 D4 D5 (named 'gt' / 'hp' / a stray token)
 #   no whole-dereference test (`_gz_split`)            -> RED D12 (`*tp + 1` refused as `tp`)
 #   real tree                                          -> GREEN (63 refusal rows, 27 acceptance rows)
+#
+# 6.7.11 (the lane's review) — THE TWO SPELLINGS ABOVE BIND A GENERIC CARRIER'S T AS THEIR PLAIN ONES DO
+# (`_gsc_wrap` / `_gsc_deref`, out of `_gsc_arg`): the struct-carrier inference read neither a whole-argument
+# wrap nor `* E`, so `gw((w))`, `gw((mkw(6)))` and `gw(*wp)` with `fn gw<T>(w: W1<T>)`, `w: W1<i32>` reached
+# the BASE (`w: W1`) — refused "a different struct type" by the two bites above (through 6.7.10 at 8 B or less
+# they compiled and read W1<i32> with the base's layout: `w.v = -6` tested >= 0), and over 8 B `gx((b))` /
+# `gx(*bp)` were refused so since 6.7.6 / 6.7.10 — where `gw(w)`, `gw(mkw(6))` and `gw(wp)` call `gw$i32`.
+# D9 (flipped from a refusal) and G1-G2 accept with the instance's layout (a negative i32 tested < 0); G3 / G4
+# a wrapped / dereferenced struct of ANOTHER type stays refused; G5 a tuple literal binds nothing (the
+# refusal names the base). The pair scans' half (`_tok_gen_sc_sid`: a `?` above a wrapper typed through
+# either spelling) is tests/tcyr/crossos/generic_struct_inference.tcyr G11 (MG12 there: rc 139).
+# Mutations (each a one-change copy of the fixed src built by the fixed compiler; measured 2026-10-14):
+#   `_gsc_arg` without its `(` arm (`_gsc_wrap`)       -> RED D9 G1 G2 (refused: a different struct type)
+#   `_gsc_arg` without its `*` arm (`_gsc_deref`)      -> RED D9 G2 (refused: a different struct type)
+#   `_pwrap_in` without its tuple test                 -> RED G5 (the refusal names 'gx$Pt')
+#   `_gsc_deref` without its `_gz_split` test          -> no row: an operator on a generic instance's value
+#                                                          dispatches `W1$i32_add`, which no source defines, so
+#                                                          `gw(*wp + 1)` is refused either way; the test keeps
+#                                                          `*wp + 1` from being read as `*(wp + 1)`
+#   real tree                                          -> GREEN (65 refusal rows, 30 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -555,6 +576,10 @@ refuse "W13 bs1((t, 3)): the tuple literal's refusal only" "a tuple \`( .. )\` i
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1((t, 3)); } syscall(60, go());"
 
 echo "=== 6.7.11: a whole dereference of another struct's pointer into a by-value struct of 8 B or less ==="
+GW='struct W1<T> { v: T; }
+fn gw<T>(w: W1<T>): i64 { if (w.v < 0) { return 1; } return 2; }
+fn mkw(a): W1<i32> { var r: W1<i32>; r.v = a; return r; }
+'
 # The filed repro, verbatim (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md):
 # it compiled and exited 7 (U8's `u` read as an S8) through 6.7.10, where `take8(u)`, the 16 B `take(*pu)`
 # and `var l: S8 = *pu;` were refused by name.
@@ -586,11 +611,12 @@ refuse "D7 bs1(*self) in an impl of T1" "cannot pass 'self' $MA 'bs1'" \
 # Into a `Str` handle parameter (any size of the pointee): it SIGSEGV'd (139) through 6.7.10, as `sl(p)` did before 6.7.3.
 refuse "D8 sl(*tp) into s: Str" "cannot pass 'tp' $MA 'sl'" \
     "${TS}${T}${DH}fn sl(s: Str): i64 { return str_len(s); } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return sl(*tp); } syscall(60, go());"
-# A generic carrier: `*wp` binds no T (as over 8 B, where `gx(*bp)` is refused the same way), so the
-# base `w: W1` meets a W1<i32> — the explicit instance takes it.
-refuse "D9 gw(*wp), T not bound through a dereference (as gx(*bp) over 8 B)" "cannot pass 'wp' $MA 'gw'" \
-    "struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
-fn go(): i64 { var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w; return gw(*wp); } syscall(60, go());"
+# A generic carrier of the same instance: `*wp` binds T as `wp` does (the lane's review), so `gw$i32` reads
+# the i32 -6 as negative — the base read W1<i32>'s word with W1<i64>'s layout (>= 0: 2, through 6.7.10).
+accept "D9 gw(*wp) / gw((*wp)) bind T = i32 through the dereference, as gw(wp) does" \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; var wp: *W1<i32> = &w; return gw(*wp) * 10 + gw((*wp)); } syscall(60, go());" \
+    11 \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; var wp: *W1<i32> = &w; return gw(wp) * 10 + gw(w); } syscall(60, go());"
 accept "D10 the same struct: *sp, (*sp), *gs(&s), *hp.ps, *self, gw<i32>(*wp)" \
     "${T}${DH}struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
 impl S1 { fn tk(self): i64 { return bs1(*self); } }
@@ -609,6 +635,32 @@ accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
     "${T}fn T1_add(a: T1, b): i64 { return a.w + b; } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*tp + 1); } syscall(60, go());" \
     10 \
     "${T}fn go(): i64 { var s: S1; s.u = 10; return bs1(s); } syscall(60, go());"
+
+echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
+# `gw((w))` and `gw((mkw(-6)))` call `gw$i32`, as `gw(w)` / `gw(mkw(-6))` do: the i32 -6 tests negative.
+accept "G1 gw((w)), gw(((w))), gw((mkw(-6))), gw((GW)) bind T = i32" \
+    "${GW}var GW: W1<i32> = W1<i32> { 0 };
+fn go(): i64 { GW.v = 0 - 6; var w: W1<i32>; w.v = 0 - 6; return gw((w)) + gw(((w))) * 10 + gw((mkw(0 - 6))) * 100 + gw((GW)) * 1000 - 1000; } syscall(60, go());" \
+    111 \
+    "${GW}var GW: W1<i32> = W1<i32> { 0 };
+fn go(): i64 { GW.v = 0 - 6; var w: W1<i32>; w.v = 0 - 6; return gw(w) + gw(w) * 10 + gw(mkw(0 - 6)) * 100 + gw(GW) * 1000 - 1000; } syscall(60, go());"
+GB='var GB: Box<Pt> = Box<Pt> { 0, 0, 0 };
+fn gpb(): *Box<Pt> { return &GB; }
+fn gxp<T>(b: *Box<T>): i64 { return b.n; }
+'
+# Over 8 B (an address-passed carrier): refused through the base since 6.7.6 (wrapped) / 6.7.10 (`*bp`).
+accept "G2 gx((b)), gx(*bp), gx((*bp)), gx(*gpb()), gxp((b)) bind T = Pt" \
+    "${T}${GB}fn go(): i64 { GB.n = 8; var b: Box<Pt>; b.n = 8; var bp: *Box<Pt> = &b; return gx((b)) + gx(*bp) + gx((*bp)) + gx(*gpb()) + gxp((b)); } syscall(60, go());" \
+    40 \
+    "${T}${GB}fn go(): i64 { GB.n = 8; var b: Box<Pt>; b.n = 8; var bp: *Box<Pt> = &b; return gx(b) + gx(bp) + gx(&b) + gx(gpb()) + gxp(&b); } syscall(60, go());"
+# Another struct, wrapped or dereferenced, binds nothing: the base meets it and refuses it by name.
+refuse "G3 gw((t)) with t: T1" "cannot pass 't' $MA 'gw'" \
+    "${T}${GW}fn go(): i64 { var t: T1; t.w = 7; return gw((t)); } syscall(60, go());"
+refuse "G4 gw(*tp) with tp: *T1" "cannot pass 'tp' $MA 'gw'" \
+    "${T}${GW}fn go(): i64 { var t: T1; t.w = 7; var tp: *T1 = &t; return gw(*tp); } syscall(60, go());"
+# A tuple literal is not a wrap of its first element: no T from `b`, the literal's refusal names the base.
+refuse "G5 gx((b, 3)): the tuple literal's refusal, naming the base" "this parameter of 'gx' is not a tuple" \
+    "${T}fn go(): i64 { var b: Box<Pt>; b.n = 8; return gx((b, 3)); } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

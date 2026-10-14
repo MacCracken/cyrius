@@ -5456,7 +5456,12 @@ passes its address), and through a by-value `b: Box<T>` — address-passed when 
 instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
 `gx<Pt>(&b)` does. Before
 6.7.8 (6.7.9 for the by-value parameter) these pointer calls compiled, ran the `i64`
-base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. A plain `p: *T` keeps
+base and read `b.n` at `Box<i64>`'s offset — `b.v.y`, silently. Parentheses around the
+WHOLE argument and a whole dereference of such a pointer bind `T` as the plain spelling
+does (6.7.11): `gx((b))`, a wrapped call returning the instance, `gx(*bp)` and `gx((*bp))` call `gx$Pt`, and
+`gw((w))` / `gw(*wp)` with `w: W1<i32>` call `gw$i32` — they reached the base, refused
+as a different struct type (through 6.7.10 a carrier of 8 bytes or less compiled there and
+read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` keeps
 the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
 (`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
 write `gx<Pt>(..)`.
