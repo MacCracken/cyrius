@@ -52,7 +52,7 @@ test_group("lib/pam.cyr — unix_chkpwd availability");
 # it may not be — skip assertions if unavailable rather than fail.
 var avail = pam_unix_available();
 if (avail == 0) {
-    syscall(SYS_WRITE, 1, "  SKIP: unix_chkpwd not installed — skipping auth tests\n", 56);
+    syscall(SYS_WRITE, 1, "  SKIP: unix_chkpwd not installed — skipping auth tests\n", 58);
 } else {
     assert_eq(avail, 1, "pam_unix_available detects the helper");
 

@@ -169,9 +169,17 @@ fn _cx_jit_build(cc, src, out, what): i64 {
     #ifdef CYRIUS_TARGET_WIN
     # cmd's `> "tmp"` is the open here; the unlink above cleared the name. MoveFileExW below
     # replaces a reparse point at `out`; it does not write through it.
+    # 6.7.11 — a self-build: the compile-mode switches are cleared on this process around the
+    # spawn and put back after (`_win_mode_switches_clear`). CHANGELOG [6.7.11]
+    var saved = _win_mode_switches_clear();
     if (_win_compile_spawn(cc, src, tmp) == 0) { built = 1; }
+    _win_mode_switches_restore(saved);
     #endif
     #ifndef CYRIUS_TARGET_WIN
+    # 6.7.11 — a self-build: the child's environment drops the compile-mode switches
+    # (cbt/core.cyr `_envp_self_build`); `_emit_cx`, the user's own compile, keeps `_envp`.
+    # CHANGELOG [6.7.11]
+    var self_envp = _envp_self_build();
     var pid = sys_fork();
     if (pid < 0) { _cbt_fork_failed(what, pid); return 1; }   # 6.6.20
     if (pid == 0) {
@@ -186,7 +194,7 @@ fn _cx_jit_build(cc, src, out, what): i64 {
         var argv[16];   # N BYTES: cc + NUL = 2 slots. Was [8] = ONE slot, NUL overflowed (CHANGELOG [6.6.5])
         store64(&argv, cc);
         store64(&argv + 8, 0);
-        sys_execve(cc, &argv, _envp);
+        sys_execve(cc, &argv, self_envp);
         sys_exit(127);
     }
     var status = _cbt_wait_status(pid, what);   # 6.6.20
@@ -202,6 +210,36 @@ fn _cx_jit_build(cc, src, out, what): i64 {
     xunlink(tmp);
     return 1;
 }
+
+# 6.7.11 — the Windows half of `_envp_self_build` (cbt/core.cyr). The cmd.exe that runs the
+# compiler inherits THIS process's environment (there is no envp to hand CreateProcessW), so each
+# `_env_mode_switch` is saved (GetEnvironmentVariableA), deleted for the spawn, and put back by
+# `_win_mode_switches_restore` — a value inherited from the shell and one compile()'s own Windows
+# arm set earlier in this process (`_cc_win_env_apply`) alike. An EMPTY value reads as unset here
+# and is not put back: empty is off for all four. Returns the saved values (0 = was unset).
+# CHANGELOG [6.7.11]
+#ifdef CYRIUS_TARGET_WIN
+fn _win_mode_switches_clear(): i64 {
+    var saved = alloc(64);
+    var i = 0;
+    while (_env_mode_switch(i) != 0) {
+        store64(saved + i * 8, _win_getenv_alloc(_env_mode_switch(i)));
+        _win_setenv(_env_mode_switch(i), 0);
+        i = i + 1;
+    }
+    return saved;
+}
+
+fn _win_mode_switches_restore(saved): i64 {
+    var i = 0;
+    while (_env_mode_switch(i) != 0) {
+        var v = load64(saved + i * 8);
+        if (v != 0) { _win_setenv(_env_mode_switch(i), v); }
+        i = i + 1;
+    }
+    return 0;
+}
+#endif
 
 # cx arc: ensure the cx bytecode compiler (cycc_cx) exists, JIT-building it from
 # src/main_cx.cyr with the host cycc if absent (the cross_bins "rebuilt on demand"

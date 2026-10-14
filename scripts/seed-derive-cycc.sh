@@ -38,8 +38,9 @@ cd "$ROOT"
 # CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
 unset CYRIUS_BOUNDS CYRIUS_COVERAGE
 # 6.7.8 — so does the allocator poison mode: the compiler includes lib/alloc.cyr, which reads
-# CYRIUS_POISON (any value, an empty one included), so an inherited one builds a poison-mode compiler
-# that is not build/cycc. Unset, not blanked. Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh
+# CYRIUS_POISON (`1` on; `0` or empty off; any other value refused — 6.7.11), so an inherited `1`
+# builds a poison-mode compiler that is not build/cycc, and any other non-0 value stops the build.
+# Unset, not blanked. Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh
 unset CYRIUS_POISON
 
 SEED="bootstrap/asm"

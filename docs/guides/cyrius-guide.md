@@ -276,7 +276,9 @@ is best reserved for byte buffers:
 > **Footgun (fixed by the explicit form):** writing a *function-local*
 > `var a[4]` with the slot idiom `store64(&a + i*8, …)` runs off its 8-byte
 > backing — the array only holds 1 slot, not 4. Declare slot arrays as
-> `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
+> `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1]. Since 6.7.11 `cyrius lint` warns
+> on the constant-offset form — `store64(&a + 8, …)` on a local `var a[4]` — see
+> [Linter](#linter).
 
 `N` is any integer **const expression** (6.7.2 — [Constants and `const fn`](#constants-and-const-fn-672)):
 a literal, a `const`, an enum constant bare or qualified, `sizeof(T)`, a `const fn` call,
@@ -4047,6 +4049,14 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > problem that is about the verb; it now refuses by name, before printing any progress, and
 > names the fork this host's compiler IS built from. Pinned by
 > `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh`.
+>
+> ⚠ **The CLI's self-builds ignore the compile-mode switches** (6.7.11). `pulsar` (every stage,
+> the tool builds and the install step) and the cx arc's on-demand `build/cycc_cx` / `build/cxvm`
+> builds run without `CYRIUS_POISON`, `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` and
+> `CYRIUS_COVERAGE_FILE`, as the self-build scripts do: an exported `CYRIUS_POISON=1` used to make
+> `pulsar` rebuild — and install — a poison-mode `build/cycc`. Your own compiles still see them
+> (`cyrius build --target=cx x.cyr` hands them to `cycc_cx` for `x.cyr`). Pinned by
+> `tests/gates/toolchain/cbt_self_builds_scrub_env.sh`.
 
 > ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
 > fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own
@@ -4137,6 +4147,14 @@ stdlib`, out of the production prepend too) do not reach it — from v6.5.10 to
 consumer and hid real gaps behind a declaration. `[deps] stdlib` still drives auto-prepend and
 `cyrius deps` for the package's OWN builds. A family directory (`lib/unicode/`) is one leaf, named
 by the family; a profile's sidecar is verified the same way as the base bundle's.
+The leaf a round adds for an undefined name follows one rule whether every target or only some
+left it undefined (since 6.7.11; the every-target path took the first declarer by file name
+before): a declarer already in the unit is skipped (it demonstrably does not define the name
+there); a fold bundle counts only when nothing else declares the name; then the one dispatcher
+whose peer declares it (`syscalls` for `O_RDWR`, never a per-arch peer); else the one other
+declarer. Two or more candidates is a refusal that names them all — `'X' is undefined on every
+target, and more than one stdlib leaf could own it (a, b)` — and no sidecar is written: `include`
+the right leaf from a bundled module.
 
 The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
 (`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include
@@ -4431,6 +4449,13 @@ allocators into poisoning ones (6.6.18, P6):
 - **NOT covered:** a read that jumps a whole redzone into a live neighbour, a read past a logical
   bound inside one allocation, stack and static memory, agnos and cx. There are no guard pages.
 
+The switch underneath is the environment variable `CYRIUS_POISON`, read by every compile (`cycc`
+included, on every target) the way `CYRIUS_BOUNDS` and `CYRIUS_COVERAGE` are: `1` on; `0`, empty or
+unset off; any other value refused by name (`CYRIUS_POISON must be 0 or 1 (or unset): <v>`), rc 1,
+nothing written. On, the compiler predefines `CYRIUS_POISON` for `#ifdef`. `--poison` hands the
+compiler `CYRIUS_POISON=1` ahead of whatever the shell exported, so it wins over an inherited `0`.
+(Before 6.7.11 any set value — `0` and an empty one included — turned the mode on.)
+
 **Routing your own allocator through it.** A hook-style seam points at `poison_alloc` (the
 `fn(n): ptr` shape — `sd_alloc_set(&poison_alloc)` for sadish's); an `_a` API takes
 `poison_allocator()` (`vec_new_a(poison_allocator())`); an existing Allocator is wrapped with
@@ -4470,6 +4495,22 @@ literal-aware as of v5.7.36 — `var MSG = "FLAG_LATER not yet
 defined"; var FLAG_LATER = 1;` does NOT trigger the forward-ref
 rule because `FLAG_LATER` is inside a `"..."` literal.
 
+**Bare-array overruns and write lengths (6.7.11).** A bare `var a[N]` in a function is N
+**bytes**, rounded up to 8 ([Arrays: byte vs slot sizing](#arrays-byte-vs-slot-sizing-v621)),
+and the compiler refuses `a[i]` on it, so the overrun left to make is the explicit offset.
+`cyrlint` records each local of a fn body, scoped to its block, and warns on a
+`load8/16/32/64(&a + K)` or `store8/16/32/64(&a + K, ..)` — K an integer literal, or no `+ K` at
+all — whose K plus the access width runs past those bytes: `var a[16]; store64(&a + 16, 3);`
+draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. A typed
+local (`var a: i64[4]`), a scalar or a size that is not a literal shadows the name and is not
+checked. An intended offset is marked with `# lint: offset-ok` on the line of the call's name.
+And a write of a string literal with a literal length — `syscall(SYS_WRITE, fd, "…", N)` (or
+`syscall(1, …)`), `sys_write(fd, "…", N)`, `_aw_write(fd, "…", N)` — warns when N is not the
+literal's byte length (`write length 5, but its literal is 6 bytes …`): a raw byte counts once,
+so an em dash `—` is 3, and an escape counts what the lexer stores (`\n` 1, `\xHH` 1, `\u…` its
+UTF-8 length). `#skip-lint` exempts a line from both rules; `# lint: offset-ok` does not
+silence a write.
+
 **Rules see across line breaks (v6.6.5).** A cyrius string may hold a raw newline, and the
 brace counter carries "inside a string" from one line to the next (it used to reset, which
 gave every `src/main*.cyr` a false `unclosed braces`). The forward-ref rule scans the whole
@@ -4500,7 +4541,28 @@ the forward-ref rule, which compares declaration ORDER, so `var A = B; var B = g
 line warns too; `sys_open (p, 0, 0)` and `syscall` followed by `(` on the next
 line are calls to the sys_open/getdents notes; `pub fn`, `public fn` and `#inline fn` names get
 the snake_case check (it used to see only a line-initial `fn `), and `cyrdoc --check` counts
-them too (it also used to read only the first 64 KB of a file). Whitespace at the end of a
+them too (it also used to read only the first 64 KB of a file) — and, since 6.7.11, a
+`const fn`, an `async fn` and a `#deprecated("…") fn`: cyrdoc and `cyrius type-audit` read a
+declaration with the same reader as `cyrius header`, `coverage` and the LSP
+(`cbt/srcscan.cyr`), so an undocumented public `const fn` now fails `cyrdoc --check`.
+`cyrius header`, `cyrius api-surface` and the LSP balance a generic type's `<` `>` in a
+parameter (`p: Pair<i64, i64>` is one parameter; after the parameter's `=` a `<` is the
+operator), and `cyrius header` writes a variadic tail as C's `...` and a fully variadic
+`fn f(...)` as `f(void)`. Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
+`cyr_val f(..)` for every fn): a scalar, a pointer, `Str` and a struct of 8 bytes or less stay
+`cyr_val`; a struct of 9-16 bytes and a `dyn Tr` are `cyr_val2` (two int64 words, as cycc returns
+them in rax:rdx / AAPCS64 x0:x1) under `#ifndef _WIN64` — Win64 C returns 16 bytes through a hidden
+pointer, so there the fn gets a comment and no prototype; a two-value return `(T1, T2)` is
+`cyr_val2` on x86_64 SysV only (`#if defined(__x86_64__) && !defined(_WIN64)`: cycc lands the
+second value in x0:x2 on aarch64, where C reads x0:x1); a struct over 16 bytes is `cyr_valN` (N
+words, the size rounded up: the callee writes whole words), returned by value through the hidden
+result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the tool cannot size
+from the file itself — another file's struct, a generic instance, a struct holding one, a struct
+declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
+on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
+one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
+Whitespace at the end of a
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.
 
@@ -6748,7 +6810,7 @@ until a writer came — for good, in a server. A regular file read -20 on Linux 
 ## Targeting AGNOS (ring-3 userspace) (v6.0.48)
 
 AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace
-execution. Cyrius can cross-compile to AGNOS from any host (Linux, macOS, Windows),
+execution. Cyrius cross-compiles to AGNOS from an x86_64 Linux host,
 producing x86_64 ELF64 binaries that run as agnos ring-3 processes. Unlike hosted targets
 (Linux, macOS, Windows), agnos uses a distinct syscall ABI, explicit-length path arguments
 (no NUL-termination), and agnos-native open flags; the `#ifdef CYRIUS_TARGET_AGNOS`
@@ -6757,12 +6819,26 @@ preprocessor guard exposes port-specific code paths in `lib/`.
 ### Building for AGNOS
 
 ```sh
-# Cross-compile to agnos from any host
+# Cross-compile to agnos (from an x86_64 Linux host)
 cyrius build --agnos src/main.cyr build/myapp
 
 # Equivalent: set the environment variable directly
 CYRIUS_TARGET_AGNOS=1 cycc < ...
 ```
+
+The Windows and macOS CLIs **refuse** `--agnos` and both bare-metal targets
+(`--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf`) by name, rc 1, before
+anything compiles: their compilers emit PE or Mach-O only. ⚠ The aarch64 Linux CLI does not
+honour `--agnos` or `--target=x86_64-bare-metal-elf` yet: its compiler reads `CYRIUS_KERNEL`
+alone, so it writes an aarch64 binary at rc 0 (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
+
+```
+error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)
+error: --agnos is not available from the macOS CLI: cycc emits Mach-O only (build agnos / bare-metal images on Linux)
+```
+
+⚠ Before 6.7.11 they accepted the flag, built the host format, printed `OK` and exited 0
+(a bare-metal build also printed a `kernel: entry …` line for an ELF that was never written).
 
 The `--agnos` flag sets the `CYRIUS_TARGET_AGNOS` predefine, which gates the
 compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `exit`,

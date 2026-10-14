@@ -14,8 +14,9 @@ set -e
 # CYRIUS_COVERAGE_FILE, refuse) every compile below. CHANGELOG [6.7.10]
 unset CYRIUS_BOUNDS CYRIUS_COVERAGE
 # 6.7.8 — so does the allocator poison mode: the compiler includes lib/alloc.cyr, which reads
-# CYRIUS_POISON (any value, an empty one included). cybs and asm read no environment, so nothing
-# below sees it today; unset here like every self-build script, so a compile added later cannot.
+# CYRIUS_POISON (`1` on; `0` or empty off; any other value refused — 6.7.11). cybs and asm read no
+# environment, so nothing below sees it today; unset here like every self-build script, so a
+# compile added later cannot.
 # Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh
 unset CYRIUS_POISON
 DIR="$(cd "$(dirname "$0")" && pwd)"

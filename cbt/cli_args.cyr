@@ -728,7 +728,58 @@ fn _cli_features_all(): i64 {
     return out;
 }
 
+# 6.7.11 — A TARGET THE HOST'S COMPILER CANNOT EMIT IS REFUSED BY NAME (user, 2026-10-13). The
+# PE-hosted compiler (src/main_win.cyr) and the two Mach-O ones read none of CYRIUS_TARGET_AGNOS /
+# CYRIUS_KERNEL / CYRIUS_ELF64_KERNEL, and compile()'s Windows arm never even passes them, so
+# `--agnos` and both bare-metal `--target` values silently built the HOST format, printed OK and
+# exited 0 — on Windows (wine), ecb and ach alike (measured) — plus a "kernel: entry …" line for an
+# ELF that was never written. A dropped flag that changes the artifact is the 6.6.5 one-argument
+# rule's defect. What the host emits, or 0 on Linux: x86_64 Linux honours the selectors (src/main.cyr
+# reads them); the aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64
+# bare-metal target (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
+# CHANGELOG [6.7.11]
+fn _cli_host_emits_only(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return "the Windows CLI: cycc.exe emits PE only";
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return "the macOS CLI: cycc emits Mach-O only";
+    #endif
+    return 0;
+}
+
+# 1 (after naming it on stderr) when `flag` selects a target this host's compiler cannot emit.
+fn _cli_host_refuses(flag): i64 {
+    var why = _cli_host_emits_only();
+    if (why == 0) { return 0; }
+    sys_write(STDERR_FD, "error: ", 7);
+    sys_write(STDERR_FD, flag, strlen(flag));
+    sys_write(STDERR_FD, " is not available from ", 23);
+    sys_write(STDERR_FD, why, strlen(why));
+    var tail = " (build agnos / bare-metal images on Linux)\n";
+    sys_write(STDERR_FD, tail, strlen(tail));
+    return 1;
+}
+
+# The early block: before any selector is applied, so nothing compiles and nothing is written.
+# Kept apart from the selector chain below (6.7.12's combined-target-flags issue reworks that).
+fn _cli_foreign_target(): i64 {
+    if (_cli_has("--agnos") == 1) {
+        if (_cli_host_refuses("--agnos") == 1) { return 1; }
+    }
+    var tgt = _cli_val("--target");
+    if (tgt == 0) { return 0; }
+    if (streq(tgt, "x86_64-bare-metal-elf") == 1) {
+        return _cli_host_refuses("--target=x86_64-bare-metal-elf");
+    }
+    if (streq(tgt, "aarch64-bare-metal-elf") == 1) {
+        return _cli_host_refuses("--target=aarch64-bare-metal-elf");
+    }
+    return 0;
+}
+
 fn _cli_apply_target(verb): i64 {
+    if (_cli_foreign_target() != 0) { return 1; }
     if (_cli_has("--aarch64") == 1) { set_arch(ARCH_AARCH64); }
     if (_cli_has("--win") == 1) { _win_target = 1; }
     if (_cli_has("--agnos") == 1) { _agnos_target = 1; }

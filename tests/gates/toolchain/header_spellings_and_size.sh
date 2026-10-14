@@ -40,12 +40,41 @@
 #   `pub` / `public` must follow every attribute         → H1 FAIL
 #   `private;` + an item on the same line rejected       → H2 FAIL
 #   real tree → every assertion green
+#
+# 6.7.11 — THE RETURN TYPE (H7-H11; issues/2026-10-10-cyrius-header-ignores-struct-returns.md,
+# decision A, user 2026-10-13). The verb never read past the parameter list's `)`: a 9-16 B struct,
+# a dyn and a two-value return (rax:rdx / x0:x1) and a >16 B struct (a hidden result pointer) all
+# printed `cyr_val f(..)`. H7 the filed repro verbatim (and the `_WIN64` guard as cc -E reads it);
+# H8 31 field shapes sized against `sizeof` compiled by build/cycc, then the class boundaries
+# (3 / 8 B a word, 9 / 16 B the pair, 17 B three words) and a two-value return — cycc lands it in
+# rax:rdx on x86_64 but x0:x2 on aarch64, so its cyr_val2 prototype is x86_64 SysV only (the
+# guard read by cc -E and clang's aarch64 / Windows targets); H9 every refusal by name, rc 1; H10
+# cc (and -D_WIN64) and clang's aarch64 / Windows / macOS targets read the headers; H11 a C caller
+# links against the repro (`object;`) through the header, and the callee leaves the result
+# pointer in rax; H11b a two-value return and a 17 B struct (the callee writes 3 whole words)
+# read by a linked C caller. No cc: H7's guard rows, H10 and H11 SKIP by name (exit 77).
+# MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
+#   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
+#   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
+#   u8 / u16 / u32 / f32 fields 8 bytes (the pre-6.7.10 layout)        → H8 FAIL
+#   the pair prototype without its #ifndef _WIN64 arm                 → H7, H8, H10 FAIL
+#   two values under the pair's #ifndef _WIN64 (aarch64 kept)          → H8 FAIL (the guard rows)
+#   a type not declared in this file read as a word (fail-open)       → H9 FAIL
+#   three values printed as the pair                                  → H9 FAIL
+#   a struct body's #ifdef arms summed (the conditional not refused)   → H9 FAIL
+#   newlines not skipped before the return's `:`                      → H8 FAIL (the ml row)
+#   cyr_valN of floor(size / 8) words (17 B -> 2)                     → H8, H10, H11b FAIL
+#   a union's fields summed                                           → H8 FAIL (the shapes row)
+#   `Str` a word before the file's own struct Str is sized             → H8 FAIL (the str3 row)
+#   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
+#   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: header_spellings_and_size: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
+skips=0
 
 check() {
     if [ "$2" = "$3" ]; then echo "  ok: $1 ($3)"
@@ -138,10 +167,253 @@ check "no method prototype" 0 "$(grep -c ' new(' o6 || true)"
 "$CY" header "$ROOT/tests/tcyr/frontend/method_dispatch.tcyr" > o6b 2>&1
 check "method_dispatch.tcyr: no bare 'new' prototype" 0 "$(grep -c ' new(' o6b || true)"
 
+# ── H7-H11 (6.7.11): THE RETURN TYPE. cmd_header never read past the parameter list's `)`, so a
+# fn returning a struct printed `cyr_val f(..)` like a word: a 9-16 B struct, a dyn and a
+# two-value return come back in rax:rdx (C read rax alone: a dyn lost its vtable), and over 16 B
+# through a hidden result pointer (the prototype's first `cyr_val` landed in the callee's
+# result slot). The user's decision (2026-10-13): model the ABI — the pair is `cyr_val2` under
+# `#ifndef _WIN64` (Win64 C returns 16 B through a hidden pointer: a named comment there, no
+# prototype), over 16 B a `cyr_valN` of N words returned by value; refuse by name (stderr, rc 1)
+# what the scanner cannot size. docs/development/issues/2026-10-10-cyrius-header-ignores-struct-returns.md
+REPRO="$ROOT/docs/development/issues/repros/2026-10-10-cyrius-header-ignores-struct-returns.cyr"
+echo "H7 — the filed repro, verbatim:"
+rc7=0; "$CY" header "$REPRO" > o7 2> e7 || rc7=$?
+check "exit 0" 0 "$rc7"
+check "mkq (16 B) is cyr_val2" 1 "$(has o7 'cyr_val2 mkq(cyr_val a, cyr_val b);   /* returns Q, 16 B */')"
+check "mkr (24 B) is cyr_val3, returned by value" 1 "$(has o7 'cyr_val3 mkr(cyr_val a);   /* returns R, 24 B */')"
+check "mkd (a dyn) is cyr_val2" 1 "$(has o7 'cyr_val2 mkd(cyr_val p);   /* returns dyn Show, 16 B */')"
+check "plain unchanged" 1 "$(has o7 'cyr_val plain(cyr_val a);')"
+check "the cyr_val2 typedef, once" 1 "$(has o7 'typedef struct { int64_t w0, w1; } cyr_val2;')"
+check "the cyr_val3 typedef, once" 1 "$(has o7 'typedef struct { int64_t w[3]; } cyr_val3;')"
+check "a named Win64 comment for mkq and for mkd" 2 "$(grep -cE '^/\* (mkq|mkd): no prototype on Win64 -- cycc returns its (Q|dyn Show) in rax:rdx' o7 || true)"
+check "nothing on stderr" 0 "$(wc -c < e7 | tr -d ' ')"
+# The guard, as a C preprocessor reads it (cc when present; the SKIP is named in H10).
+if command -v cc > /dev/null 2>&1; then
+    protos() { cc -E -P -x c "$@" o7 2> /dev/null | grep -oE '(mkq|mkr|mkd|plain)\(' | tr -d '(' | sort | paste -sd' ' -; }
+    check "SysV / AAPCS64 (no _WIN64): all four prototypes" "mkd mkq mkr plain" "$(protos)"
+    check "Win64 (-D_WIN64): no mkq / mkd, the by-value mkr and plain kept" "mkr plain" "$(protos -D_WIN64)"
+fi
+
+# ── H8: the scanner's struct sizes ARE the compiler's. Every field shape is padded with two
+# untyped fields (so each struct is over 16 B and its header line names its size) and the size
+# the header prints is compared with `sizeof` compiled by build/cycc. Then the class boundaries.
+echo "H8 — every field shape sized as the compiler sizes it; the class boundaries:"
+SHAPES='f;|f: i8;|f: u8;|f: i16;|f: u16;|f: i32;|f: u32;|f: f32;|f: i64;|f: u64;|f: f64;|f: bool;|f: cstring;|f: Str;|f: Option;|f: Result;|f: Tagged;|f: *Q3;|f: **u8;|f: *Box<i64>;|f: Vec<i64>;|f: Vec;|f: E;|f: Q3;|f: R24;|f: UU;|f: (i64, i64);|f: (i64, f64, bool);|f: dyn Show;|a: u8 b: u16 c: u32 d: f32|x: Q3; y: C2;'
+{ echo 'include "lib/str.cyr"'
+  echo 'include "lib/vec.cyr"'
+  echo 'struct Q3 { a: u8; b: u8; c: u8; }'
+  echo 'struct R24 { a; b; c; }'
+  echo 'struct C2 { a: i8; b: u8; }'
+  echo 'union UU { a: u8; b: u32; c: f32; }'
+  echo 'struct Box<T> { v: T; }'
+  echo 'trait Show { fn show(self): i64; }'
+  k=0; IFS='|'; for sh in $SHAPES; do k=$((k + 1)); echo "struct Z$k { $sh p1; p2; }"; done; unset IFS
+  echo 'enum E { EA; EB; }'; } > sz.cyr
+nshapes=$(echo "$SHAPES" | tr '|' '\n' | wc -l | tr -d ' ')
+cp sz.cyr szh.cyr
+k=0; while [ "$k" -lt "$nshapes" ]; do k=$((k + 1)); echo "fn rz$k(): Z$k { var z: Z$k; return z; }" >> szh.cyr; done
+# The compiler's sizes: one probe printing sizeof(Zk) per line.
+{ cat sz.cyr
+  echo 'fn pz(n): i64 { var d[24]; var i = 22; store8(&d + 23, 10); if (n == 0) { store8(&d + i, 48); i = i - 1; } while (n > 0) { store8(&d + i, 48 + n % 10); n = n / 10; i = i - 1; } syscall(1, 1, &d + i + 1, 23 - i); return 0; }'
+  k=0; while [ "$k" -lt "$nshapes" ]; do k=$((k + 1)); echo "pz(sizeof(Z$k));"; done
+  echo 'syscall(60, 0);'; } > szp.cyr
+{ (cd "$ROOT" && "$ROOT/build/cycc" < "$D/szp.cyr" > "$D/szp" 2> "$D/szp.err") && chmod +x szp && ./szp > sz.cc 2> /dev/null; } || :
+check "the compiler sized every shape (the probe compiled and ran)" "$nshapes" "$(grep -c . sz.cc 2> /dev/null || echo 0)"
+rc8=0; "$CY" header szh.cyr > o8 2> e8 || rc8=$?
+check "exit 0 (every shape sizable)" 0 "$rc8"
+k=0; bad=""; while [ "$k" -lt "$nshapes" ]; do
+    k=$((k + 1))
+    want=$(sed -n "${k}p" sz.cc)
+    got=$({ grep -oE "rz$k\\(void\\);   /\\* returns Z$k, [0-9]+ B" o8 || :; } | { grep -oE '[0-9]+ B$' || :; } | tr -d ' B')
+    [ "$got" = "$want" ] || bad="$bad Z$k[$(echo "$SHAPES" | cut -d'|' -f$k)]:header=${got:-none},cycc=$want"
+done
+check "each of the $nshapes shapes: the header's size == cycc's sizeof" "" "$bad"
+printf '%s\n' 'struct C3 { r: u8; g: u8; b: u8; }' 'struct B8 { a: u8; b: u8; c: u8; d: u8; e: u32; }' \
+  'struct B9 { a: u8; b: i64; }' 'struct B16 { a; b; }' 'struct B17 { a: u8; b; c; }' 'union UU { a: u8; b: u32; }' \
+  'fn rc3(): C3 { var z = C3 { 1, 2, 3 }; return z; }' 'fn rb8(): B8 { var z: B8; return z; }' \
+  'fn rb9(): B9 { var z: B9; return z; }' 'fn rb16(): B16 { var z: B16; return z; }' \
+  'fn rb17(): B17 { var z: B17; return z; }' 'fn ruu(): UU { var z: UU; return z; }' \
+  'fn rs(): Str { return 0; }' 'fn rp(): *B17 { return 0; }' 'fn ri(): i32 { return 1; }' 'fn rf(): f64 { return 0; }' \
+  'fn rt(): (i64, f64) { return (1, 2); }' 'fn rfw(): FW { var z: FW; return z; }' \
+  'fn ml(a)' '    : B16 { var z: B16; return z; }' 'fn rv(): f64v2 { var v: f64v2; return v; }' \
+  'struct FW { a; b; c; d; }' > cls.cyr
+rc8b=0; "$CY" header cls.cyr > o8b 2> e8b || rc8b=$?
+check "boundaries: exit 0" 0 "$rc8b"
+check "a packed 3 B u8 struct stays cyr_val" 1 "$(has o8b 'cyr_val rc3(void);')"
+check "8 B stays cyr_val" 1 "$(has o8b 'cyr_val rb8(void);')"
+check "9 B (packed u8 + i64) is cyr_val2" 1 "$(has o8b 'cyr_val2 rb9(void);   /* returns B9, 9 B */')"
+check "16 B is cyr_val2" 1 "$(has o8b 'cyr_val2 rb16(void);   /* returns B16, 16 B */')"
+check "17 B is cyr_val3 — the callee writes three whole words" 1 "$(has o8b 'cyr_val3 rb17(void);   /* returns B17, 17 B, the callee writes 3 words */')"
+check "a 4 B union stays cyr_val" 1 "$(has o8b 'cyr_val ruu(void);')"
+check "Str (a 16-byte handle) stays cyr_val" 1 "$(has o8b 'cyr_val rs(void);')"
+check "a pointer, an i32 and an f64 stay cyr_val" 3 "$(grep -cxE 'cyr_val (rp|ri|rf)\(void\);' o8b || true)"
+check "a two-value return is cyr_val2" 1 "$(has o8b 'cyr_val2 rt(void);   /* returns (i64, f64), 16 B */')"
+check "... under the x86_64 SysV guard (aarch64 lands it in x0:x2)" 1 "$(grep -B1 -xF 'cyr_val2 rt(void);   /* returns (i64, f64), 16 B */' o8b | grep -cxF '#if defined(__x86_64__) && !defined(_WIN64)' || true)"
+check "... and a named comment in its other arm" 1 "$(grep -cF '/* rt: no prototype here -- cycc returns its (i64, f64) in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64' o8b || true)"
+# The guards as each target's preprocessor reads them: the pair (rb16) everywhere but Win64, the
+# two values (rt) on x86_64 SysV alone. cc is the host (x86_64 here); clang names the others.
+if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+    p8() { "$@" -E -P -x c o8b 2> /dev/null | grep -oE ' (rb16|rt)\(' | tr -d ' (' | sort | paste -sd' ' -; }
+    check "x86_64 SysV (cc): rb16 and rt" "rb16 rt" "$(p8 cc)"
+    if command -v clang > /dev/null 2>&1; then
+        check "aarch64 (clang): rb16 alone" "rb16" "$(p8 clang --target=aarch64-linux-gnu -ffreestanding)"
+        check "aarch64 macOS (clang): rb16 alone" "rb16" "$(p8 clang --target=aarch64-apple-darwin -ffreestanding)"
+        check "Win64 (clang): neither" "" "$(p8 clang --target=x86_64-w64-windows-gnu -ffreestanding)"
+    fi
+fi
+check "a struct declared after the fn is sized (the whole file is read)" 1 "$(has o8b 'cyr_val4 rfw(void);   /* returns FW, 32 B */')"
+check "a return annotation on the line after the list's ')'" 1 "$(has o8b 'cyr_val2 ml(cyr_val a);   /* returns B16, 16 B */')"
+check "a SIMD vector return keeps its pre-6.7.11 word (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md)" 1 "$(has o8b 'cyr_val rv(void);')"
+printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }' > str3.cyr
+"$CY" header str3.cyr > o8c 2>&1 || :
+check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"
+# A bare `Vec` field is the file's own `struct Vec` when one is declared ABOVE the field (the
+# compiler's FINDSTRUCT), else the 8-byte handle: both orders held to cycc's sizeof.
+printf '%s\n' 'struct VB { v: Vec; p1; p2; }' 'struct Vec { a; b; c; }' 'struct VA { v: Vec; p1; p2; }' > vo.cyr
+{ cat vo.cyr
+  echo 'fn pz(n): i64 { var d[24]; var i = 22; store8(&d + 23, 10); if (n == 0) { store8(&d + i, 48); i = i - 1; } while (n > 0) { store8(&d + i, 48 + n % 10); n = n / 10; i = i - 1; } syscall(1, 1, &d + i + 1, 23 - i); return 0; }'
+  echo 'pz(sizeof(VA)); pz(sizeof(VB)); syscall(60, 0);'; } > vop.cyr
+{ (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> /dev/null) && chmod +x vop && ./vop > vo.cc 2> /dev/null; } || :
+check "cycc's sizeof: struct Vec above the field 40 B, below it 24 B" "40 24" "$(paste -sd' ' vo.cc 2> /dev/null)"
+printf '%s\n' 'fn rva(): VA { var z: VA; return z; }' 'fn rvb(): VB { var z: VB; return z; }' >> vo.cyr
+"$CY" header vo.cyr > o8d 2>&1 || :
+check "a bare Vec field with the file's own struct Vec declared above: that struct (40 B, cyr_val5)" 1 "$(has o8d 'cyr_val5 rva(void);   /* returns VA, 40 B */')"
+check "... declared below the field: the 8-byte handle (24 B, cyr_val3)" 1 "$(has o8d 'cyr_val3 rvb(void);   /* returns VB, 24 B */')"
+check "each typedef once (cyr_val2, cyr_val3, cyr_val4)" "1 1 1" \
+    "$(grep -c 'cyr_val2;$' o8b) $(grep -c '} cyr_val3;$' o8b) $(grep -c '} cyr_val4;$' o8b)"
+
+# ── H9: what the scanner cannot size is REFUSED by name — never guessed.
+echo "H9 — refused by name, rc 1, no prototype; the rest still written:"
+printf '%s\n' 'struct Box<T> { v: T; }' 'struct WB { b: Box<i64>; x; }' 'struct WX { e: Ext; f; }' \
+  '#ifdef SOMEWHERE' 'struct D { a; b; c; }' '#else' 'struct D { a; }' '#endif' \
+  'fn gb(): Box<i64> { var z: Box<i64>; return z; }' 'fn gbb(): Box { return 0; }' 'fn ext(a): Ext { return a; }' \
+  'fn wb(): WB { var z: WB; return z; }' 'fn wx(): WX { var z: WX; return z; }' \
+  'fn t3(): (i64, i64, i64) { return (1, 2, 3); }' 'fn rd(): D { var z: D; return z; }' 'fn fine(a): i64 { return a; }' \
+  'struct CB {' '    a;' '#ifdef CYRIUS_TARGET_WIN' '    b; c;' '#else' '    b;' '#endif' '}' 'fn rcb(): CB { var z: CB; return z; }' > rf.cyr
+rc9=0; "$CY" header rf.cyr > o9 2> e9 || rc9=$?
+check "exit 1" 1 "$rc9"
+check "a generic struct instance" 1 "$(grep -cxF "error: cyrius header: 'gb' returns 'Box<i64>': a generic struct instance, which this scanner cannot size; no prototype written" e9 || true)"
+check "a generic struct" 1 "$(grep -cxF "error: cyrius header: 'gbb' returns 'Box': a generic struct, which this scanner cannot size; no prototype written" e9 || true)"
+check "a struct not declared in this file" 1 "$(grep -cxF "error: cyrius header: 'ext' returns 'Ext': a type not declared in this file, which this scanner cannot size; no prototype written" e9 || true)"
+check "a struct holding a generic instance names the field type" 1 "$(grep -cxF "error: cyrius header: 'wb' returns 'WB': its field type 'Box<i64>' is a generic struct instance, which this scanner cannot size; no prototype written" e9 || true)"
+check "a struct holding another file's type names it" 1 "$(grep -cxF "error: cyrius header: 'wx' returns 'WX': its field type 'Ext' is a type not declared in this file, which this scanner cannot size; no prototype written" e9 || true)"
+check "three values (rax:rdx:r8)" 1 "$(grep -cxF "error: cyrius header: 't3' returns '(i64, i64, i64)': three values, returned in rax:rdx:r8 (aarch64 x0:x2:x3), which no C return type carries; no prototype written" e9 || true)"
+check "a struct declared twice (two #ifdef arms)" 1 "$(grep -cxF "error: cyrius header: 'rd' returns 'D': declared more than once in this file, which this scanner cannot size; no prototype written" e9 || true)"
+check "a struct whose fields sit under #ifdef" 1 "$(grep -cxF "error: cyrius header: 'rcb' returns 'CB': a struct whose fields sit under a preprocessor conditional, which this scanner cannot size; no prototype written" e9 || true)"
+check "exactly those 8 refusals" 8 "$(grep -c '^error: ' e9 || true)"
+check "no prototype for a refused fn" 0 "$(grep -cE '(gb|gbb|ext|wb|wx|t3|rd|rcb)\(' o9 || true)"
+check "the rest is written and the header closes" "1 1" "$(has o9 'cyr_val fine(cyr_val a);') $(has o9 '#endif /* CYRIUS_FFI_H */')"
+
+# ── H10: the headers are C. cc (the host), the Win64 arm (-D_WIN64), and — when clang is here —
+# the aarch64 Linux / Windows / macOS targets (freestanding: <stdint.h> only).
+echo "H10 — the generated headers compile as C:"
+if command -v cc > /dev/null 2>&1; then
+    for f in o7 o8 o8b o9; do
+        check "$f: cc -std=c11 -pedantic-errors" 0 "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c "$f" > /dev/null 2>&1; echo $?)"
+        check "$f: the same with -D_WIN64" 0 "$(cc -std=c11 -pedantic-errors -fsyntax-only -D_WIN64 -x c "$f" > /dev/null 2>&1; echo $?)"
+    done
+else
+    echo "  SKIP (named): H7's guard rows, H10 and H11 — no C compiler (cc) on this host"; skips=$((skips + 1))
+fi
+if command -v clang > /dev/null 2>&1; then
+    for tg in aarch64-linux-gnu x86_64-w64-windows-gnu aarch64-apple-darwin; do
+        check "o7 + o8b: clang --target=$tg" 0 "$(clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o7 > /dev/null 2>&1 && clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o8b > /dev/null 2>&1; echo $?)"
+    done
+else
+    echo "  SKIP (named): H10's cross-target rows — no clang on this host"
+fi
+
+# ── H11: a real C caller, through the header, on x86_64 Linux (the one target whose cycc emits a
+# linkable object: `object;`). The repro is compiled verbatim behind `object;`, a C main calls it
+# through the generated header, and an asm probe checks the SysV rule the by-value large return
+# rests on: the callee leaves the result pointer in rax.
+echo "H11 — a C caller links against the repro and reads every value:"
+if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+    cp o7 ffi.h
+    { echo 'object;'; cat "$REPRO"; } > lib.cyr
+    (cd "$ROOT" && "$ROOT/build/cycc" < "$D/lib.cyr" > "$D/lib.o" 2> /dev/null) || :
+    cat > caller.c <<'CEOF'
+#include <stdio.h>
+#include "ffi.h"
+extern void _cyrius_init(void);
+__attribute__((noinline)) static long mkr_rax(void *buf, long a) {
+    long rax;
+    __asm__ volatile("call mkr" : "=a"(rax), "+D"(buf), "+S"(a)
+                     : : "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
+    return rax;
+}
+int main(void) {
+    _cyrius_init();
+    int64_t q[2] = {5, 6};
+    cyr_val2 a = mkq(11, 22);
+    cyr_val3 r = mkr(33);
+    cyr_val2 d = mkd((cyr_val)q);
+    cyr_val (*show)(cyr_val) = (cyr_val (*)(cyr_val))(*(int64_t *)d.w1);
+    cyr_val3 r2;
+    long rax = mkr_rax(&r2, 9);
+    printf("%ld %ld|%ld %ld %ld|%d %ld|%ld|%d %ld\n", (long)a.w0, (long)a.w1, (long)r.w[0], (long)r.w[1],
+           (long)r.w[2], d.w0 == (cyr_val)q, (long)show(d.w0), (long)plain(44), rax == (long)&r2, (long)r2.w[2]);
+    return 0;
+}
+CEOF
+    if cc -std=c11 -O1 -mno-red-zone caller.c lib.o -I. -o caller > cc11.err 2>&1; then
+        check "mkq 11 22 | mkr 33 x3 | mkd's data word and its vtable's show() | plain | rax = the result pointer" \
+            "11 22|33 33 33|1 5|44|1 9" "$(./caller 2>&1)"
+    else
+        check "the C caller compiles and links against the repro object" 0 1; sed 's/^/    /' cc11.err | head -5
+    fi
+    # H11b — the two-value return (x86_64 SysV's pair) and a 17 B struct: the callee writes three
+    # whole words through the result pointer (bytes 17-23 overwritten), so C's cyr_val3 (24 B) is
+    # the buffer it needs — a 17-byte one would be overrun; the word past 24 B is untouched.
+    printf '%s\n' 'object;' 'struct B17 { a: u8; b; c; }' \
+      'fn rt(a): (i64, i64) { return (a + 1, a + 2); }' 'fn rtf(a): (f64, i64) { return (f64_from(a), a); }' \
+      'fn rb17(x): B17 { var z: B17; z.a = 7; z.b = x; z.c = x + 1; return z; }' > lib2.cyr
+    (cd "$ROOT" && "$ROOT/build/cycc" < "$D/lib2.cyr" > "$D/lib2.o" 2> /dev/null) || :
+    "$CY" header lib2.cyr > ffi2.h 2> /dev/null || :
+    cat > caller2.c <<'CEOF'
+#include <stdio.h>
+#include <string.h>
+#include "ffi2.h"
+extern void _cyrius_init(void);
+/* The result pointer handed over explicitly (C may pass a temporary): what the callee writes. */
+__attribute__((noinline)) static void rb17_into(void *buf, long x) {
+    __asm__ volatile("call rb17" : "+D"(buf), "+S"(x)
+                     : : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
+}
+int main(void) {
+    _cyrius_init();
+    cyr_val2 t = rt(40);
+    cyr_val2 tf = rtf(3);
+    double d; memcpy(&d, &tf.w0, 8);
+    cyr_val3 r = rb17(100);
+    unsigned char *b = (unsigned char *)&r;
+    int64_t w1, w2; memcpy(&w1, b + 1, 8); memcpy(&w2, b + 9, 8);
+    struct { cyr_val3 r; int64_t guard; } g;
+    memset(&g, 0x5a, sizeof g);
+    rb17_into(&g.r, 9);
+    unsigned char *gb = (unsigned char *)&g.r;
+    /* bytes 17-23 hold the callee's last word's tail (frame bytes, not the 0x5a fill) */
+    int tail = 0; for (int i = 17; i < 24; i++) { if (gb[i] != 0x5a) tail = 1; }
+    printf("%ld %ld|%g %ld|%d %ld %ld|%d %d\n", (long)t.w0, (long)t.w1, d, (long)tf.w1,
+           b[0], (long)w1, (long)w2, tail, g.guard == 0x5a5a5a5a5a5a5a5aLL);
+    return 0;
+}
+CEOF
+    if cc -std=c11 -O1 -mno-red-zone caller2.c lib2.o -I. -o caller2 > cc11b.err 2>&1; then
+        check "H11b: rt 41 42 | rtf 3.0 (rax's f64 bits) 3 | rb17's fields | bytes 17-23 written, the word past 24 untouched" \
+            "41 42|3 3|7 100 101|1 1" "$(./caller2 2>&1)"
+    else
+        check "H11b: the C caller compiles and links against lib2's object" 0 1; sed 's/^/    /' cc11b.err | head -5
+    fi
+fi
 cd "$ROOT" || exit 2
 echo ""
+if [ "$fails" = "0" ] && [ "$skips" -gt 0 ]; then
+    echo "SKIP: header-spellings-and-size — every check that ran passed; $skips leg(s) could not run here (named above; exit 77: a SKIP, not a PASS)"
+    exit 77
+fi
 if [ "$fails" = "0" ]; then
-    echo "PASS: header-spellings-and-size — every public spelling, the private rule, whole-file read"
+    echo "PASS: header-spellings-and-size — every public spelling, the private rule, whole-file read, the return type"
     exit 0
 fi
 echo "FAIL: header-spellings-and-size — $fails assertion(s) failed"

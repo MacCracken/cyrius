@@ -435,8 +435,9 @@ unset CYRIUS_BOUNDS CYRIUS_COVERAGE
 # 6.7.8 — the allocator poison mode is the other way round: an inherited CYRIUS_POISON STAYS for
 # the suite (`CYRIUS_POISON=1 sh scripts/check.sh` compiles every test in the poison mode), but
 # never reaches a SELF-BUILD. The compiler and the toolchain include lib/alloc.cyr, which reads it
-# (any value, an empty one included), so the staged toolchain refresh and the check driver would
-# be built in the poison mode — different binaries, written into build/ and kept for the next run.
+# (`1` on; `0` or empty off; any other value refused — 6.7.11), so the staged toolchain refresh and
+# the check driver would be built in the poison mode — different binaries, written into build/ and
+# kept for the next run — or, under any other non-0 value, not built at all.
 # Every self-build below runs through `_chk_selfbuild <cmd> <args...>` (the cyrius check driver's
 # own self-host rows already spawn the compiler with an empty environment).
 # Gate: tests/gates/toolchain/selfbuild_poison_scrubbed.sh. CHANGELOG [6.7.8]
@@ -477,10 +478,46 @@ _chk_reap_stale_homes
 # installed 6.6.0–6.6.5 CLIs never cleaned up at all, so the dirs pile up by the hundred.
 # The same rule as the homes above: by AGE ($CYRIUS_CHECK_REAP_MINS) and by OWNERSHIP (the
 # pid in the NAME is dead to both `kill -0` and `ps -p` — a pid we cannot signal is not
-# dead), never by count; only names of exactly that shape, only dirs this user owns. And
-# `rmdir` ONLY: a NON-empty leftover is the CLI's post-mortem contract (a SIGKILLed test's
-# binary; the `cyrius lsp` build it tells the user to copy out), so it is never deleted
-# here. Best-effort: a reap that fails never fails the run. CHANGELOG [6.6.20]
+# dead), never by count; only names of exactly that shape, only dirs this user owns.
+# Best-effort: a reap that fails never fails the run. CHANGELOG [6.6.20]
+# ⛔ AND BY CONTENTS (6.7.11, user 2026-10-13). This was `rmdir` only, so a run killed mid-compile
+# kept its dir for ever: the in-flight compile's `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (on
+# 2026-10-13, 485 dead-pid dirs in /tmp held only such names; 3 held test_bin + test_out — the
+# CLI's failure paths already unlink, so these are kills). A dir is removed WHOLE when every entry is a
+# regular file named in the CLI's scratch vocabulary below; anything else — `test_bin` (a
+# SIGKILLed test's post-mortem) and `test_out` with it, the `cyrius lsp` build it tells the user
+# to copy out, a directory, a link, a name not listed — keeps the dir and all of it.
+# The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the two
+# directories (`deps`, `locked-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
+# it from cbt/ and fails when this list and the source part. `_N` names take a number
+# (`cpp_<pid>`, `dlverifyerr<t>`); any listed name may carry compile()'s `.tmp.<pid>` (its output
+# before the rename).
+_CHK_CLI_SCRATCH="cap_err cap_out cc_err covx_out dep_verify_conv dep_verify_index dep_verify_out dep_verify_paths distlib_err dt_src fuzz_err fuzz_errb fuzz_outa fuzz_outb git_err git_rev_out lint_err lint_out ls_remote pulsar_a pulsar_b pulsar_c self_b sha_out soak_b wprobe wt_err wt_out"
+_CHK_CLI_SCRATCH_N="check_ cov_ cpp_ distchk_ dlverifyerr dlverifyout"
+_chk_cli_scratch() {  # $1 = an entry's name: 0 when it is the CLI's compile scratch
+    _cs=${1%.tmp.*}
+    if [ "$_cs" != "$1" ]; then
+        case ${1#"$_cs".tmp.} in ''|*[!0-9]*) return 1 ;; esac
+    fi
+    for _cw in $_CHK_CLI_SCRATCH; do [ "$_cs" = "$_cw" ] && return 0; done
+    for _cw in $_CHK_CLI_SCRATCH_N; do
+        case $_cs in
+            "$_cw"*) case ${_cs#"$_cw"} in ''|*[!0-9]*) ;; *) return 0 ;; esac ;;
+        esac
+    done
+    return 1
+}
+# 0 (and every entry removed) when dir $1 holds only scratch files; 1, untouched, otherwise.
+_chk_reap_scratch_dir() {
+    for _cf in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [ -e "$_cf" ] || [ -L "$_cf" ] || continue
+        [ -f "$_cf" ] && [ ! -L "$_cf" ] && _chk_cli_scratch "${_cf##*/}" || return 1
+    done
+    for _cf in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [ -f "$_cf" ] && rm -f "$_cf"
+    done
+    rmdir "$1" 2>/dev/null
+}
 _chk_pid_alive() {
     kill -0 "$1" 2>/dev/null && return 0
     ps -p "$1" > /dev/null 2>&1
@@ -489,6 +526,7 @@ _chk_reap_dead_cli_tmpdirs() {
     _rtmp="${TMPDIR:-/tmp}"
     [ -d "$_rtmp" ] || return 0
     _reaped=0
+    _reaped_s=0
     for _d in "$_rtmp"/cyrius-[0-9]*; do
         [ -d "$_d" ] && [ ! -L "$_d" ] && [ -O "$_d" ] || continue
         _r=${_d##*/}
@@ -501,11 +539,16 @@ _chk_reap_dead_cli_tmpdirs() {
             [ -n "$(find "$_d" -maxdepth 0 -type d -mmin +"$_CHK_REAP_MINS" 2>/dev/null)" ] || continue
         fi
         _chk_pid_alive "$_pid" && continue
-        rmdir "$_d" 2>/dev/null && _reaped=$((_reaped + 1))
+        if rmdir "$_d" 2>/dev/null; then _reaped=$((_reaped + 1)); continue; fi
+        _chk_reap_scratch_dir "$_d" && _reaped_s=$((_reaped_s + 1))
     done
     if [ "$_reaped" -gt 0 ]; then
         printf "check: reaped %s empty cyrius-<pid> temp dir(s) in %s (their process is gone, older than %s min)\n" \
             "$_reaped" "$_rtmp" "$_CHK_REAP_MINS"
+    fi
+    if [ "$_reaped_s" -gt 0 ]; then
+        printf "check: reaped %s cyrius-<pid> temp dir(s) holding only compile scratch in %s (their process is gone, older than %s min)\n" \
+            "$_reaped_s" "$_rtmp" "$_CHK_REAP_MINS"
     fi
     return 0
 }
@@ -1969,6 +2012,9 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_async_process.sh"
 # `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
 # `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).
 # Spellings, the private rule and a >64 KiB file; mutation-proven in the gate header.
+# 6.7.11 — and the RETURN TYPE: a struct over 8 bytes and a dyn (cyr_val2 under #ifndef _WIN64,
+# cyr_valN by value), a two-value return (x86_64 SysV only), sizes held to cycc's sizeof, refusals
+# by name, a C caller linked.
 _chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
 
 # 6.6.8 (bite 10) — `cyrius vet` / `deny` (cyaudit) see exactly the compiler's includes: column 0,
@@ -1976,7 +2022,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
 # a path judged by COMPONENT (`lib/../../x` was trusted by vet and passed deny). The compiler is
 # the oracle for what an include is; mutation-proven in the header. 6.7.3 axis 7: an ATTRIBUTE
 # line is code (PP_LEXST_AT), so its multi-line string no longer hides the next include from
-# vet / deny; cyaudit's word list is held to LEXATTRWORD's.
+# vet / deny; cyaudit's word list is held to LEXATTRWORD's (6.7.11: it includes src/frontend/lex_attr.cyr).
 _chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"
 
 # 6.6.8 (bite 10) — `cyrius api-surface` lists exactly what the COMPILER emits: the `#derive`
@@ -2385,7 +2431,7 @@ _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
 _chk_gate "$ROOT/tests/gates/frontend/if_expr_checked.sh"   # 6.7.4 (B3)
 _chk_gate "$ROOT/tests/gates/frontend/loop_do_checked.sh"   # 6.7.5 (B5)
-_chk_gate "$ROOT/tests/gates/frontend/default_named_args_checked.sh"   # 6.7.7 (B6)
+_chk_gate "$ROOT/tests/gates/frontend/default_named_args_checked.sh"   # 6.7.7 (B6); 6.7.11 SC rows (the source scanners)
 _chk_gate "$ROOT/tests/gates/frontend/field_compound_checked.sh"   # 6.7.5 (B8)
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_lexer_drops_nothing.sh"   # 6.7.6 (Break 1 lane B)
 _chk_gate "$ROOT/tests/gates/codegen/cx_backend_parity.sh"   # 6.7.6 (Break 1 lane F)

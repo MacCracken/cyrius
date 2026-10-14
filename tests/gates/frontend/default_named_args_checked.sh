@@ -48,6 +48,16 @@
 #      type-audit (a `)` in a literal default does not close the list); S-fmt cyrfmt accepts the
 #      crossos tcyr; S-R5 no helper the compiler calls with a FIXED argument count declares a
 #      default (the names derived from src; each must be defined in lib/)
+#   SC (6.7.11, docs/development/issues/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md;
+#      its repro verbatim plus a shapes fixture, each compiling first): SC-hdr `cyrius header` — the
+#      const fn, `p: Pair<i64, i64>` / `>>` / `>>>` one parameter, `c = 1 < 2` and `u2: i64 = 1 < 2`
+#      one parameter (after the `=` a `<` is an operator), `cyr_val va(cyr_val n, ...)`, `zv(void)`;
+#      SC-cc that header under `cc -std=c11 -pedantic-errors -fsyntax-only`; SC-asf cf/1, pp/2, mp/2,
+#      n2/2, n3/2, lt/1-3, lu/1-3; SC-doc a documented const fn listed and counted; SC-dbuf an
+#      80-parameter signature and a 200-byte name printed whole, SC-dpz the same through a
+#      CYRIUS_POISON=1 cyrdoc (a redzone overwrite exits 86); SC-lsp no `i64` a parameter, lu's `u3`
+#      one, and documentSymbol lists cf; SC-ta all seven declaration spellings counted (7/7).
+#      S-ta reads 5/6 since: its fixture's `const fn sq2` is a public fn now.
 #   W  `#inline` on a defaulted fn is ignored by name, and both calls — full and filled — stay calls
 #      (objdump)
 #   N  named arguments: R21 the call-side refusals, once each, at the label (C2 an unknown name, C3
@@ -171,6 +181,24 @@
 #       no lookup) instead of `_tup_gopen`                 Str), GC8 (exit 242: not routed); AC refused on
 #                                                          every leg (gc_cmp_infer: "generic 'gx2'
 #                                                          has no i64 ... instance")
+#   (6.7.11, the scanners issue — each a one-edit scratch copy of the tree, this gate run from it)
+#   MS1 `const` dropped from srcscan's _src_decl_at       -> S-ta (4/5), SC-hdr (no cf / pcf), SC-doc
+#                                                          (1 documented), SC-lsp (no cf symbol), SC-ta
+#                                                          (6 of 7)
+#   MS2 `const` dropped from api-surface's prefix         -> SC-asf (no cf/1, pcf/1)
+#   MS3 `<` not counted in the header's _hdr_close        -> SC-hdr, SC-cc (`cyr_val i64>`, the
+#                                                          filing's cc error)
+#   MS4 the header's `=` no longer ends the type          -> S-hdr (hw), SC-hdr (lt)
+#   MS5 the header's `...` arm dropped                    -> SC-hdr, SC-cc (`cyr_val ...`)
+#   MS5b the fully variadic `(void)` dropped              -> SC-hdr, SC-cc (`zv(...)`, pre-C23)
+#   MS6 `<` not counted in _asf_arity                     -> SC-asf (pp/3 mp/3 n2/4 n3/5)
+#   MS6b _asf_arity's `=` no longer ends the type         -> S-asf (no alt), SC-asf (lt/1-4, no lu)
+#   MS7 `<` not counted in the LSP collector              -> SC-lsp (23 `i64` parameter tokens)
+#   MS7b the LSP's `sig_dflt` never set                   -> SC-lsp (lu: no u3)
+#   MS8 cyrdoc copies the name / signature into           -> SC-dpz (exit 86: a 256-byte block's
+#       alloc(128) / alloc(256) again                      trailing redzone overwritten)
+#   MS9 the 6.7.10 type-audit                             -> S-ta (4/5), SC-ta (2 of 7)
+#   MS10 the 6.7.10 cyrdoc                                -> SC-doc, SC-dpz (exit 86)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -583,8 +611,155 @@ printf 'const fn sq2(x, y): i64 { return x * y; }\nfn ta_s(a, s = ")"): i64 { re
 if tool tau programs/cyrius_type_audit.cyr && premise "S-ta" "$T/st/ta/lib/ta.cyr"; then
     rc=0; ( cd "$T/st/ta" && timeout 20 "$T/st/tau" --module=ta > "$T/st/ta.out" 2> "$T/st/ta.err" ) || rc=$?
     un=$(grep '^  ta::' "$T/st/ta.out" | tr -d ' ' | tr '\n' ' ')
-    if [ "$un" = "ta::ta_bare " ] && grep -q '^  ta: 4/5 annotated' "$T/st/ta.err"; then ok "S-ta: type-audit: only the fn with no return type is unannotated (4/5)"
+    if [ "$un" = "ta::ta_bare " ] && grep -q '^  ta: 5/6 annotated' "$T/st/ta.err"; then ok "S-ta: type-audit: only the fn with no return type is unannotated (5/6 — the const fn sq2 counts since 6.7.11)"
     else bad "S-ta: rc $rc: unannotated '$un'; $(grep 'ta:' "$T/st/ta.err" | head -1)"; fi
+fi
+# ── SC (6.7.11): the scanners issue (docs/development/issues/2026-10-09-source-scanners-miss-
+# const-fn-and-generic-commas.md). Its repro is used VERBATIM ($ROOT/docs/development/issues/repros/
+# …commas.cyr): `const fn cf` was invisible to every scanner, `p: Pair<i64, i64>` split in two at
+# its comma, `cyrius header` printed `cyr_val ...` for a variadic tail, and cyrdoc copied a name and
+# a signature into fixed alloc(128) / alloc(256) buffers with no bound. The shapes fixture adds `>>`
+# and `>>>` closing a nested generic, a default `c = 1 < 2` (still one parameter: after the
+# parameter's `=` a `<` is an operator), `d = 4 >> 1`, a fully variadic fn and `pub const fn`.
+SCR="$ROOT/docs/development/issues/repros/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.cyr"
+mkdir -p "$T/st/sc/ap/src" "$T/st/sc/lw" "$T/st/sc/dc" "$T/st/sc/ta/lib" "$T/st/sc/tap"
+cp "$SCR" "$T/st/sc/scan.cyr"
+cp "$SCR" "$T/st/sc/ap/src/scan.cyr"
+cat > "$T/st/sc/shp.cyr" <<'SCEOF'
+struct Pair<A, B> { a: A; b: B; }
+fn n2(v: Pair<i64, Pair<i64, i64>>, b): i64 { return b; }
+fn n3(v: Pair<i64, Pair<i64, Pair<i64, i64>>>, b): i64 { return b; }
+fn lt(a, c = 1 < 2, d = 3): i64 { return a + c + d; }
+fn gt(a, c = 2 > 1, d = 4 >> 1, e = 1): i64 { return a + c + d + e; }
+fn zv(...): i64 { return 7; }
+pub const fn pcf(a): i64 { return a; }
+fn lu(u1, u2: i64 = 1 < 2, u3 = 3): i64 { return u1 + u2 + u3; }
+syscall(60, lt(1) + gt(1) + zv(1, 2) + pcf(1) + lu(1));
+SCEOF
+cp "$T/st/sc/shp.cyr" "$T/st/sc/ap/src/shp.cyr"
+if [ -x "$T/st/cyrius" ] && premise "SC-hdr" "$T/st/sc/scan.cyr" && premise "SC-hdr" "$T/st/sc/shp.cyr"; then
+    miss=""
+    for f in scan shp; do
+        rc=0; ( cd "$T/st/sc" && CYRIUS_HOME="$T/st/hh" HOME="$T/st/hh" timeout 60 "$T/st/cyrius" header "$f.cyr" > "$T/st/sc/$f.h" 2>&1 ) || rc=$?
+        [ "$rc" -eq 0 ] || miss="$miss [$f: rc $rc]"
+    done
+    for l in 'cyr_val cf(cyr_val a);' 'cyr_val pp(cyr_val p, cyr_val b);' 'cyr_val mp(cyr_val m, cyr_val b);' 'cyr_val va(cyr_val n, ...);' 'cyr_val plain(cyr_val a, cyr_val b);'; do
+        grep -qxF "$l" "$T/st/sc/scan.h" || miss="$miss [$l]"
+    done
+    for l in 'cyr_val n2(cyr_val v, cyr_val b);' 'cyr_val n3(cyr_val v, cyr_val b);' 'cyr_val lt(cyr_val a, cyr_val c, cyr_val d);' 'cyr_val gt(cyr_val a, cyr_val c, cyr_val d, cyr_val e);' 'cyr_val zv(void); /* variadic in cyrius: it reads no argument */' 'cyr_val pcf(cyr_val a);' 'cyr_val lu(cyr_val u1, cyr_val u2, cyr_val u3);'; do
+        grep -qxF "$l" "$T/st/sc/shp.h" || miss="$miss [$l]"
+    done
+    n=$(cat "$T/st/sc/scan.h" "$T/st/sc/shp.h" | grep -c '^cyr_val ' || true)
+    if [ -z "$miss" ] && [ "$n" -eq 12 ]; then ok "SC-hdr: cyrius header: const fn cf / pub const fn pcf seen, Pair<i64, i64> / >> / >>> one parameter, c = 1 < 2 and u2: i64 = 1 < 2 one parameter, va(cyr_val n, ...), zv(void) (12 prototypes)"
+    else bad "SC-hdr: $n prototype(s); missing:$miss; got: $(cat "$T/st/sc/scan.h" "$T/st/sc/shp.h" | grep '^cyr_val' | tr '\n' '|')"; fi
+    # The header is C: the issue's lines were `expected ';', ',' or ')' before '>' token` / `'...'`.
+    if command -v cc > /dev/null 2>&1; then
+        rc=0; cc -std=c11 -pedantic-errors -fsyntax-only -x c "$T/st/sc/scan.h" > "$T/st/sc/cc.out" 2>&1 || rc=$?
+        rc2=0; cc -std=c11 -pedantic-errors -fsyntax-only -x c "$T/st/sc/shp.h" >> "$T/st/sc/cc.out" 2>&1 || rc2=$?
+        if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ]; then ok "SC-cc: both headers pass cc -std=c11 -pedantic-errors -fsyntax-only (pre-C23 C refuses a bare (...), so zv is (void))"
+        else bad "SC-cc: cc -std=c11 -pedantic-errors -fsyntax-only rc $rc / $rc2: $(head -2 "$T/st/sc/cc.out" | tr '\n' ' ')"; fi
+    else echo "  SKIP SC-cc: no cc on PATH (the header's C is not compiled)"; skips=$((skips + 1)); fi
+fi
+if [ -x "$T/st/api" ]; then
+    rc=0; ( cd "$T/st/sc/ap" && timeout 20 "$T/st/api" --update --scope=project --snapshot="$T/st/sc/A.snap" ) > "$T/st/sc/api.out" 2>&1 || rc=$?
+    # (va / zv: a variadic fn's arity is not this issue's; their lines are left out)
+    got=$(grep -v '::va/\|::zv/' "$T/st/sc/A.snap" | tr '\n' ' ')
+    want='scan::cf/1 scan::mp/2 scan::plain/2 scan::pp/2 shp::gt/1-4 shp::lt/1-3 shp::lu/1-3 shp::n2/2 shp::n3/2 shp::pcf/1 '
+    if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "SC-asf: api-surface: cf/1 and pcf/1 listed, pp/2 mp/2 n2/2 n3/2, lt/1-3 lu/1-3 gt/1-4"
+    else bad "SC-asf: rc $rc: got '$got', want '$want'"; fi
+fi
+# SC-doc: a documented const fn is documented (it was not a fn at all to cyrdoc).
+printf '# doc for cf\nconst fn cf(a: i64): i64 { return a; }\n# doc for pf\nfn pf(a): i64 { return a; }\n# doc for pcf\npub const fn pcf(a): i64 { return a; }\nsyscall(60, cf(1) + pf(1) + pcf(1));\n' > "$T/st/sc/dc/c.cyr"
+if [ -x "$T/st/cyrdoc" ] && premise "SC-doc" "$T/st/sc/dc/c.cyr"; then
+    rc=0; ( cd "$T/st/sc/dc" && timeout 20 "$T/st/cyrdoc" c.cyr ) > "$T/st/sc/doc.out" 2>&1 || rc=$?
+    rcc=0; ( cd "$T/st/sc/dc" && timeout 20 "$T/st/cyrdoc" --check c.cyr ) > "$T/st/sc/docc.out" 2>&1 || rcc=$?
+    miss=""
+    for l in '### `fn cf(a: i64): i64`' '### `fn pf(a): i64`' '### `fn pcf(a): i64`'; do
+        grep -qxF "$l" "$T/st/sc/doc.out" || miss="$miss [$l]"
+    done
+    if [ "$rc" -eq 0 ] && [ "$rcc" -eq 0 ] && [ -z "$miss" ] && grep -qF '3 documented, 0 undocumented (3 total)' "$T/st/sc/docc.out"; then ok "SC-doc: cyrdoc: const fn cf and pub const fn pcf documented and counted (3/3)"
+    else bad "SC-doc: rc $rc / --check rc $rcc; missing:$miss; $(tail -1 "$T/st/sc/docc.out")"; fi
+fi
+# SC-dbuf: cyrdoc prints the name and the signature from the source line. An 80-parameter
+# documented line (~820 B) and a 200-byte name ran past alloc(256) / alloc(128) with rc 0 and the
+# right output, so the row also runs a CYRIUS_POISON=1 build of cyrdoc (redzones on every alloc
+# block; a changed redzone is reported and exits 86) over both plus filler modules whose
+# allocations reach the check.
+if [ -x "$T/st/cyrdoc" ]; then
+    { printf '# doc\nfn many('; i=1; while [ "$i" -le 80 ]; do printf 'p%d: i64, ' "$i"; i=$((i + 1)); done; printf 'z): i64 { return z; }\n'; } > "$T/st/sc/dc/many.cyr"
+    lname=$(printf 'n%0199d' 0)
+    printf 'fn %s(a): i64 { return a; }\n' "$lname" > "$T/st/sc/dc/longname.cyr"
+    i=0; while [ "$i" -lt 16 ]; do printf '# d\nfn f%d(): i64 { return 0; }\n' "$i" > "$T/st/sc/dc/fill$i.cyr"; i=$((i + 1)); done
+    wsig=$(sed -n '2s/ *{.*//p' "$T/st/sc/dc/many.cyr")
+    rc=0; ( cd "$T/st/sc/dc" && timeout 20 "$T/st/cyrdoc" many.cyr ) > "$T/st/sc/many.out" 2>&1 || rc=$?
+    rcc=0; ( cd "$T/st/sc/dc" && timeout 20 "$T/st/cyrdoc" --check longname.cyr ) > "$T/st/sc/long.out" 2>&1 || rcc=$?
+    if [ "$rc" -eq 0 ] && grep -qxF "### \`$wsig\`" "$T/st/sc/many.out" && [ "$rcc" -eq 1 ] && grep -qxF "  undocumented: $lname" "$T/st/sc/long.out"; then
+        ok "SC-dbuf: cyrdoc prints the ${#wsig}-byte signature and the 200-byte name whole"
+    else bad "SC-dbuf: rc $rc / --check rc $rcc; signature line $(grep -c '^### ' "$T/st/sc/many.out"), name line $(grep -c 'undocumented: n0' "$T/st/sc/long.out")"; fi
+    rc=0; ( cd "$ROOT" && CYRIUS_POISON=1 "$CC" < programs/cyrdoc.cyr > "$T/st/cyrdoc_pz" 2> "$T/st/cyrdoc_pz.err" ) || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/st/cyrdoc_pz" ]; then bad "SC-dpz: a CYRIUS_POISON=1 cyrdoc does not build: $(grep '^error' "$T/st/cyrdoc_pz.err" | head -1)"
+    else
+        chmod +x "$T/st/cyrdoc_pz"
+        rg=0; ( cd "$T/st/sc/dc" && timeout 60 "$T/st/cyrdoc_pz" many.cyr longname.cyr fill*.cyr ) > "$T/st/sc/pz.out" 2> "$T/st/sc/pz.err" || rg=$?
+        rk=0; ( cd "$T/st/sc/dc" && timeout 60 "$T/st/cyrdoc_pz" --check many.cyr longname.cyr fill*.cyr ) > "$T/st/sc/pzc.out" 2> "$T/st/sc/pzc.err" || rk=$?
+        if [ "$rg" -eq 0 ] && [ "$rk" -eq 1 ] && ! grep -q '^poison' "$T/st/sc/pz.err" "$T/st/sc/pzc.err"; then
+            ok "SC-dpz: a poison-mode cyrdoc over the long signature, the long name and 16 fillers: no redzone touched (rc 0 / --check rc 1)"
+        else bad "SC-dpz: rc $rg / --check rc $rk (86 = a redzone overwrite): $(grep -h '^poison' "$T/st/sc/pz.err" "$T/st/sc/pzc.err" | head -1)"; fi
+    fi
+fi
+# SC-lsp: the repro's semantic tokens — no `i64` is a parameter (the comma in `Pair<i64, i64>`
+# made the type after it one, and the file-wide table colored EVERY `i64`); pp's and mp's
+# parameters are `p b` / `m b`; lt's are `a c d`, a default `c = 1 < 2` included; and the symbol
+# index (documentSymbol) lists the const fn cf.
+if [ "$(uname -s)" != Linux ]; then echo "  SKIP SC-lsp: cyrius-lsp is driven here on Linux only"; skips=$((skips + 1))
+elif [ -x "$T/st/lsp" ]; then
+    cp "$SCR" "$T/st/sc/lw/doc.cyr"
+    cp "$T/st/sc/shp.cyr" "$T/st/sc/lw/shp.cyr"
+    lmsg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
+    sclsp() {   # <file> → $T/st/sc/<base>.tok (line:name=type) and .sym (documentSymbol names)
+        D="$T/st/sc/lw/$1.cyr"
+        { lmsg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+          lmsg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$D"'","languageId":"cyrius","version":1,"text":""}}}'
+          lmsg '{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"file://'"$D"'"}}}'
+          lmsg '{"jsonrpc":"2.0","id":4,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file://'"$D"'"}}}'
+          lmsg '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'; } | \
+          ( cd "$T/st/lw/cwd" && env -i HOME="$T/st/lw/home" PATH=/usr/bin:/bin timeout 60 "$T/st/lsp" 2> /dev/null ) | tr '\r' '\n' > "$T/st/sc/$1.lsp"
+        data=$(grep -o '"id":2,"result":{"data":\[[0-9,]*\]' "$T/st/sc/$1.lsp" | sed 's/.*\[//; s/\]//')
+        awk -v DATA="$data" 'NR == FNR { L[NR - 1] = $0; next }
+            END { n = split(DATA, a, ","); ln = 0; col = 0
+                  for (i = 1; i + 4 <= n; i += 5) {
+                      if (a[i] > 0) { ln += a[i]; col = a[i + 1] } else { col += a[i + 1] }
+                      print ln ":" substr(L[ln], col + 1, a[i + 2]) "=" a[i + 3] } }' "$D" /dev/null > "$T/st/sc/$1.tok"
+        grep -o '"id":4,"result":\[.*' "$T/st/sc/$1.lsp" | grep -o '"name":"[A-Za-z_0-9]*"' | sed 's/"name":"//; s/"$//' | tr '\n' ' ' > "$T/st/sc/$1.sym"
+    }
+    sclsp doc
+    sclsp shp
+    pl() { grep "^$2:.*=6\$" "$T/st/sc/$1.tok" | sed "s/^$2://; s/=6\$//" | tr '\n' ' '; }
+    ni=$(grep -c '^[0-9]*:i64=6$' "$T/st/sc/doc.tok" "$T/st/sc/shp.tok" | awk -F: '{ s += $2 } END { print s + 0 }')
+    ntok=$(cat "$T/st/sc/doc.tok" | grep -c . || true)
+    if [ "$ntok" -gt 20 ] && [ "$ni" -eq 0 ] && [ "$(pl doc 6)" = "p b b " ] && [ "$(pl doc 7)" = "m b b " ] \
+       && [ "$(pl shp 1)" = "v b b " ] && [ "$(pl shp 2)" = "v b b " ] && [ "$(pl shp 3)" = "a c d a c d " ] && [ "$(pl shp 7)" = "u1 u2 u3 u1 u2 u3 " ]; then
+        ok "SC-lsp: cyrius-lsp: no i64 is a parameter; pp 'p b', mp 'm b', n2 / n3 'v b', lt 'a c d', lu 'u1 u2 u3' (c = 1 < 2 and u2: i64 = 1 < 2 one parameter)"
+    else bad "SC-lsp: $ntok tokens, $ni i64 parameter token(s); pp '$(pl doc 6)', mp '$(pl doc 7)', n2 '$(pl shp 1)', n3 '$(pl shp 2)', lt '$(pl shp 3)', lu '$(pl shp 7)'"; fi
+    case " $(cat "$T/st/sc/doc.sym")" in
+        *" cf "*) ok "SC-lsp: documentSymbol lists the const fn cf ($(cat "$T/st/sc/doc.sym"))" ;;
+        *) bad "SC-lsp: documentSymbol has no cf: '$(cat "$T/st/sc/doc.sym")'" ;;
+    esac
+fi
+# SC-ta: type-audit — every declaration spelling is a public fn: `fn`, `pub fn`, `public fn`,
+# `async fn`, `#inline` above `fn`, `#inline fn`, `const fn` (it counted 2 of the 7).
+printf 'fn t_plain(a): i64 { return a; }\npub fn t_pub(a): i64 { return a; }\npublic fn t_public(a): i64 { return a; }\nasync fn t_async(a): i64 { return a; }\n#inline\nfn t_inl_own(a): i64 { return a; }\n#inline fn t_inl_same(a): i64 { return a; }\nconst fn t_const(a): i64 { return a; }\n' > "$T/st/sc/ta/lib/m.cyr"
+if [ -x "$T/st/tau" ]; then
+    # premise: the module compiles (async needs CYRIUS_ASYNC=1 and lib/alloc.cyr — the tree's)
+    ln -sfn "$ROOT/lib" "$T/st/sc/tap/lib"
+    { printf 'include "lib/alloc.cyr"\n'; cat "$T/st/sc/ta/lib/m.cyr"; printf 'syscall(60, t_plain(0));\n'; } > "$T/st/sc/tap/m.cyr"
+    rc=0; ( cd "$T/st/sc/tap" && CYRIUS_ASYNC=1 timeout 60 "$CC" < m.cyr > m.bin 2> m.err ) || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "SC-ta: the fixture does not compile: $(grep '^error' "$T/st/sc/tap/m.err" | head -1)"
+    else
+        rc=0; ( cd "$T/st/sc/ta" && timeout 20 "$T/st/tau" --module=m > "$T/st/sc/ta.out" 2> "$T/st/sc/ta.err" ) || rc=$?
+        if [ "$rc" -eq 0 ] && grep -q '^  m: 7/7 annotated' "$T/st/sc/ta.err" "$T/st/sc/ta.out"; then ok "SC-ta: type-audit: all seven declaration spellings are public fns (7/7)"
+        else bad "SC-ta: rc $rc: $(grep -h 'm:\|total public' "$T/st/sc/ta.err" "$T/st/sc/ta.out" | head -2 | tr '\n' ' ')"; fi
+    fi
 fi
 # S-fmt: cyrfmt has no parameter rule — it accepts every B6 shape in the crossos tcyr.
 if tool cyrfmt programs/cyrfmt.cyr; then

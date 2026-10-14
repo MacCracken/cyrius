@@ -36,6 +36,22 @@
 #      `_chk_reap_dead_cli_tmpdirs` call removed -> axes 7 and 9b RED; `rmdir` -> `rm -rf`
 #      -> axis 8 RED; the liveness check removed -> axis 9 RED; the name-shape filter
 #      removed -> axis 11 RED.
+#   12-16 (6.7.11, user decision 2026-10-13) — BY CONTENTS: a dead, old dir whose every entry is a
+#      regular file in the CLI's scratch vocabulary is removed whole, in each shape this box's
+#      /tmp held (cpp_<n>; the killed `cyrius check`'s cc_err + check_<n>.tmp.<n> + cpp_<n>;
+#      wt_err; distlib's dlverify* + four cpp_; sha_out) and counted on its own line (12);
+#      test_bin (with scratch beside it), test_out, the lsp build, an unknown name, a
+#      subdirectory, a symlink, the no-home `deps/` cache and seven look-alike names each keep
+#      their dir (13); the age gate (14) and a LIVE pid (15) still protect scratch; and the
+#      vocabulary is DERIVED from cbt/ — every `_cbt_tmpfile("…")` literal and the computed names
+#      (`_fuzz_leg`'s captures, the numbered str_builder names), the six computed call sites pinned
+#      — and equals check.sh's two lists but the four named exclusions (16). Mutations (measured,
+#      in a scratch copy of check.sh): reap anything -> 10 RED (axis 8's test_bin, axis 12's
+#      count, every axis-13 row); rmdir-only again -> 7 RED (axis 12 six times, 15b); the
+#      regular-file test dropped -> 3 RED (axis 12's count, the subdirectory and symlink rows);
+#      the number check loosened to a prefix -> 4 RED (axis 12's count, look-alikes cpp_12x,
+#      check_.tmp.5, cpp_); test_out added to the list -> 3 RED (axes 12, 13, 16); sha_out
+#      dropped -> 3 RED (axis 12 twice, 16).
 #   6  a NON-NUMERIC $CYRIUS_CHECK_REAP_MINS does not silently turn the age gate OFF. As
 #      first written the threshold went straight into `[ "$n" -gt 0 ]`, so `=4h` made that
 #      test error (`[: 4h: integer expected`, rc 2 -> false), the `-mmin` filter was skipped
@@ -246,9 +262,105 @@ _run 0 alpha
 [ -d "$C_FRESH" ] && _fail "axis 9 (anti-vacuous): with the age gate off the fresh dead-pid dir survived — nothing was eligible"
 rm -rf "$C_DEAD_FULL" "$C_LIVE" "$C_OTHER1" "$C_OTHER2" "$C_OTHER3"
 
+echo "axis 12-16 (6.7.11): a dead pid's dir holding ONLY compile scratch is reaped whole; anything else keeps it"
+# A run killed mid-compile leaves the in-flight compile's temporaries — measured on this box
+# 2026-10-13: 485 dead-pid dirs in /tmp held only these names (cpp_<n>, cc_err,
+# check_<n>.tmp.<n>, wt_err, dlverify*, sha_out), 3 held test_bin + test_out. check.sh removes a
+# dir whose every entry is a regular file named in the CLI's scratch vocabulary (user decision
+# 2026-10-13); a post-mortem (test_bin / test_out / the lsp build), a directory, a link or any
+# name not listed keeps the dir and everything in it.
+_mkcli2() {  # $1 = name under the harness TMPDIR, $2 = age in minutes, rest = files to put inside
+    _c="$W/tmp/$1"; _a=$2; shift 2
+    mkdir -p "$_c"
+    for _f in "$@"; do echo x > "$_c/$_f"; done
+    [ "$_a" != "0" ] && touch -d "$_a minutes ago" "$_c"
+    echo "$_c"
+}
+S_CPP=$(_mkcli2 "cyrius-$DEAD_PID-21" 300 "cpp_4242")
+S_KILL=$(_mkcli2 "cyrius-$DEAD_PID-22" 300 cc_err "check_4242.tmp.4242" cpp_4242)
+S_WT=$(_mkcli2 "cyrius-$DEAD_PID-t77-23" 300 wt_err)
+S_DL=$(_mkcli2 "cyrius-$DEAD_PID-24" 300 dlverifyerr0 dlverifyerr5 "dlverifyout2.tmp.4243" cpp_4244 cpp_4245 cpp_4246 cpp_4247)
+S_SHA=$(_mkcli2 "cyrius-$DEAD_PID-25" 300 sha_out)
+K_TEST=$(_mkcli2 "cyrius-$DEAD_PID-31" 300 test_bin test_out cpp_4242)
+K_TOUT=$(_mkcli2 "cyrius-$DEAD_PID-32" 300 test_out)
+K_LSP=$(_mkcli2 "cyrius-$DEAD_PID-33" 300 lsp)
+K_UNK=$(_mkcli2 "cyrius-$DEAD_PID-34" 300 cpp_4242 cc_err gate_keepme)
+K_DIR=$(_mkcli2 "cyrius-$DEAD_PID-35" 300 cc_err)
+mkdir -p "$K_DIR/cpp_9" && echo x > "$K_DIR/cpp_9/inner" && touch -d '300 minutes ago' "$K_DIR"
+K_LNK=$(_mkcli2 "cyrius-$DEAD_PID-36" 300 wt_err)
+echo keep > "$W/lnk_target" && ln -s "$W/lnk_target" "$K_LNK/cc_err" && touch -h -d '300 minutes ago' "$K_LNK" 2>/dev/null; touch -d '300 minutes ago' "$K_LNK"
+# look-alikes, one per dir (one non-scratch name keeps a whole dir, so they cannot share one)
+K_LIKE=""
+_i=40
+for _n in cpp_12x "check_.tmp.5" "cc_err.tmp." "cc_err.tmp.5x" cpp_ cc_err2 "xcpp_12"; do
+    _i=$((_i + 1))
+    K_LIKE="$K_LIKE $(_mkcli2 "cyrius-$DEAD_PID-$_i" 300 "$_n")"
+done
+K_DEPS=$(_mkcli2 "cyrius-$DEAD_PID-38" 300 sha_out)
+mkdir -p "$K_DEPS/deps/sib" && echo x > "$K_DEPS/deps/sib/f" && touch -d '300 minutes ago' "$K_DEPS"
+S_LIVE=$(_mkcli2 "cyrius-$LIVE_PID-39" 300 cc_err cpp_4242)
+S_YOUNG=$(_mkcli2 "cyrius-$DEAD_PID-50" 0 cc_err cpp_4242)
+_run 240 alpha
+# axis 12: scratch only + old + dead -> reaped whole, in every shape the census found
+for _s in "$S_CPP" "$S_KILL" "$S_WT" "$S_DL" "$S_SHA"; do
+    [ -d "$_s" ] && _fail "axis 12: a dead pid's dir holding only scratch ($(ls -A "$_s" | tr '\n' ' ')) was NOT reaped"
+done
+grep -q 'reaped 5 cyrius-<pid> temp dir(s) holding only compile scratch' "$W/out" \
+    || _fail "axis 12: check.sh did not report the 5 scratch dirs separately: $(grep reaped "$W/out" || true)"
+# axis 13: a post-mortem, an unknown name, a directory, a link, a look-alike -> kept, contents intact
+[ -f "$K_TEST/test_bin" ] && [ -f "$K_TEST/cpp_4242" ] || _fail "axis 13: a dir holding test_bin (with scratch beside it) was touched — the post-mortem contract"
+[ -f "$K_TOUT/test_out" ] || _fail "axis 13: a dir holding test_out was reaped"
+[ -f "$K_LSP/lsp" ] || _fail "axis 13: a dir holding the lsp build was reaped"
+[ -f "$K_UNK/gate_keepme" ] && [ -f "$K_UNK/cpp_4242" ] || _fail "axis 13: a dir holding an unknown name lost files — all or nothing"
+[ -f "$K_DIR/cpp_9/inner" ] && [ -f "$K_DIR/cc_err" ] || _fail "axis 13: a dir holding a SUBDIRECTORY was reaped"
+[ -L "$K_LNK/cc_err" ] && [ -f "$W/lnk_target" ] || _fail "axis 13: a dir holding a SYMLINK named like scratch was reaped (or its target)"
+for _k in $K_LIKE; do
+    [ -d "$_k" ] || _fail "axis 13: a dir holding only a look-alike of a scratch name was reaped (${_k##*/})"
+done
+[ -f "$K_DEPS/deps/sib/f" ] || _fail "axis 13: a dir holding the no-home dep cache (deps/) was reaped"
+# axis 14: the age gate holds for scratch too
+[ -f "$S_YOUNG/cc_err" ] || _fail "axis 14: a scratch dir created seconds ago was reaped at the default threshold"
+# axis 15: with the age gate OFF, a LIVE pid's scratch survives (a running compile's temporaries)
+_run 0 alpha
+[ -f "$S_LIVE/cpp_4242" ] || _fail "axis 15: a LIVE pid's in-flight compile scratch was reaped"
+[ -d "$S_YOUNG" ] && _fail "axis 15 (anti-vacuous): with the age gate off the young dead-pid scratch dir survived — nothing was eligible"
+# axis 16: the vocabulary is the CLI's, derived from cbt/ — never a hand list that drifts
+#   literal  `_cbt_tmpfile("X")`: X scratch, X ending in `_` a numbered prefix, unless excluded;
+#   computed (pinned site count): `_fuzz_leg(…, "X")` captures; a `str_builder_add_cstr(…, "X")`
+#   followed by `str_builder_add_int(` in a fn that passes a built name to `_cbt_tmpfile` (numbered).
+#   EXCLUDED, by name and why: test_out (beside test_bin, the post-mortem), lsp (the build `cyrius
+#   lsp` tells the user to copy), deps / locked-deps (directories: a no-home dep cache, a vendored tree).
+EXCL="test_out lsp deps locked-deps"
+grep -ho '_cbt_tmpfile("[^"]*")' "$ROOT"/cbt/*.cyr | sed 's/^_cbt_tmpfile("//; s/")$//' | sort -u > "$D/lit"
+NLIT=$(wc -l < "$D/lit" | tr -d ' ')
+[ "$NLIT" -ge 25 ] || _fail "axis 16: only $NLIT _cbt_tmpfile(\"…\") literals found in cbt/ — the reader is not reading (floor 25)"
+NCOMP=$(grep -h '_cbt_tmpfile(' "$ROOT"/cbt/*.cyr | grep -v '_cbt_tmpfile("' | grep -vc '^fn _cbt_tmpfile' || true)
+[ "$NCOMP" = 6 ] || _fail "axis 16: cbt/ has $NCOMP computed _cbt_tmpfile( names (6 classified: _cbt_tmpexe's two, _fuzz_cap_new, _covx_dump_path, dlverifyerr/out) — classify the new one here and in check.sh"
+grep -ho '_fuzz_leg([^,]*, "[^"]*")' "$ROOT"/cbt/*.cyr | sed 's/.*"\([^"]*\)")$/\1/' | sort -u > "$D/comp"
+for f in "$ROOT"/cbt/*.cyr; do
+    awk '/^fn / { if (inb) for (k in c) print k; inb = 0; split("", c); prev = "" }
+         /_cbt_tmpfile\(str_data\(str_builder_build/ { inb = 1 }
+         { if (prev != "" && $0 ~ /str_builder_add_int\(/) c[prev] = 1; prev = "" }
+         match($0, /str_builder_add_cstr\([a-z_]+, "[^"]*"\);/) { t = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", t); sub(/".*/, "", t); prev = t }
+         END { if (inb) for (k in c) print k }' "$f"
+done | sort -u > "$D/compn"
+for w in fuzz_outa fuzz_outb; do grep -qx "$w" "$D/comp" || _fail "axis 16: the derivation lost computed name $w"; done
+for w in cov_ dlverifyerr dlverifyout; do grep -qx "$w" "$D/compn" || _fail "axis 16: the derivation lost computed numbered name $w"; done
+{ grep -v '_$' "$D/lit"; cat "$D/comp"; } | sort -u > "$D/want_plain"
+{ grep '_$' "$D/lit"; cat "$D/compn"; } | sort -u > "$D/want_n"
+for x in $EXCL; do grep -vx "$x" "$D/want_plain" > "$D/w2" || true; mv "$D/w2" "$D/want_plain"; done
+VOC=$(sed -n 's/^_CHK_CLI_SCRATCH="\(.*\)"$/\1/p' "$ROOT/scripts/check.sh")
+VOCN=$(sed -n 's/^_CHK_CLI_SCRATCH_N="\(.*\)"$/\1/p' "$ROOT/scripts/check.sh")
+[ -n "$VOC" ] && [ -n "$VOCN" ] || _fail "axis 16: scripts/check.sh carries no _CHK_CLI_SCRATCH / _CHK_CLI_SCRATCH_N list"
+printf '%s\n' $VOC | sort -u > "$D/have_plain"
+printf '%s\n' $VOCN | sort -u > "$D/have_n"
+cmp -s "$D/want_plain" "$D/have_plain" || _fail "axis 16: check.sh's scratch names differ from cbt/'s: missing [$(comm -23 "$D/want_plain" "$D/have_plain" | tr '\n' ' ')] extra [$(comm -13 "$D/want_plain" "$D/have_plain" | tr '\n' ' ')]"
+cmp -s "$D/want_n" "$D/have_n" || _fail "axis 16: check.sh's numbered scratch names differ from cbt/'s: missing [$(comm -23 "$D/want_n" "$D/have_n" | tr '\n' ' ')] extra [$(comm -13 "$D/want_n" "$D/have_n" | tr '\n' ' ')]"
+rm -rf "$K_TEST" "$K_TOUT" "$K_LSP" "$K_UNK" "$K_DIR" "$K_LNK" $K_LIKE "$K_DEPS" "$S_LIVE" "$S_YOUNG"
+
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: stale staged CYRIUS_HOMEs and dead CLIs' empty temp dirs are reaped; live ones are not"
+    echo "PASS: stale staged CYRIUS_HOMEs and dead CLIs' empty or scratch-only temp dirs are reaped; live ones and post-mortems are not"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"

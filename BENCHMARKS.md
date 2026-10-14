@@ -8,8 +8,9 @@
 > rows sat on a ~1,320-1,720 ns floor on this box. v6.5.19 measures and
 > subtracts that floor, which produces a one-off drop of one to three orders of
 > magnitude in those rows -- expected, not a perf win, and not comparable across
-> the boundary. `compiler/*` and `size/*` are timed by `bench_cmd` and are
-> unaffected in every regime. See `docs/development/benchmark-regimes.md`.
+> the boundary. `compiler/*` rows are timed by `bench_cmd` (the `phase_*` ones by the
+> compiler's `CYRIUS_PROF`) and `size/*` rows are byte counts: neither touches
+> `lib/bench.cyr`, so both are unaffected in every regime. See `docs/development/benchmark-regimes.md`.
 
 ## Run History
 
@@ -156,8 +157,8 @@
 
 | Benchmark | `b50fcf60` | `fbcbc512` | `5eb7fb3c` | Delta |
 |---|---|---|---|---|
-| cc5_bytes | 2ms | 2ms | 2ms | +3.0% |
-| cycc_text_bytes | 1ms | 1ms | 1ms | +3.3% |
+| cycc_bytes | 2,053,536 B | 2,057,736 B | 2,114,376 B | +3.0% |
+| cycc_text_bytes | 1,840,016 B | 1,845,440 B | 1,900,296 B | +3.3% |
 
 ## str
 

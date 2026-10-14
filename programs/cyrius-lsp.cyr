@@ -1901,6 +1901,10 @@ fn _lsp_brace_next(buf, p, total): i64 {
 # registered as a parameter and its `)` ended the signature, dropping
 # the parameters after it. The `=` itself needs no state: only a
 # depth-0 `,` (or the list's `(`) leads to param-name. CHANGELOG [6.7.7]
+# 6.7.11: a generic type's `<` `>` nest too (`p: Pair<i64, i64>`), in the TYPE only — as the
+# compiler's _pl_next / _pl_tdepth — so after the parameter's depth-0 `=` (`sig_dflt`) a `<` is an
+# operator again (`c = 1 < 2`). The comma inside `<..>` registered `i64` as a parameter, and the
+# file-wide table then colored every `i64` in the file a parameter. CHANGELOG [6.7.11]
 # Scope is intentionally NOT tracked: a `var x` in one fn and a
 # different `var x` in another both get colored as `variable` —
 # the visual outcome is identical so the simplification is free.
@@ -1911,6 +1915,7 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
     # 3=expect param name, 4=after param name,
     # 5=type annotation (a default stays in 4 / 5)
     var sig_depth = 0;     # brackets open inside the parameter list
+    var sig_dflt = 0;      # 1 after this parameter's depth-0 `=` (in its default)
     var var_pending = 0;   # 1 = just saw `var`, next ident is local
     while (p < ftotal) {
         var c = load8(fb + p);
@@ -1949,6 +1954,7 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
             } elif (is_fn_kw == 1) {
                 sig_state = 1;
                 sig_depth = 0;
+                sig_dflt = 0;
                 var_pending = 0;
             } else {
                 if (var_pending == 1) {
@@ -1991,11 +1997,18 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
                 # on every `)`).
                 sig_state = 0;
                 sig_depth = 0;
+            } elif (c == 60 || c == 62) {             # `<` `>` — in a parameter's TYPE only
+                if (sig_state == 5 && sig_dflt == 0) {
+                    if (c == 60) { sig_depth = sig_depth + 1; }
+                    elif (sig_depth > 0) { sig_depth = sig_depth - 1; }
+                }
             } elif (sig_depth == 0) {                 # not inside a default's brackets
                 if (c == 58) {                        # `:`
                     if (sig_state == 4) { sig_state = 5; }
                 } elif (c == 44) {                    # `,`
-                    if (sig_state >= 3) { sig_state = 3; }
+                    if (sig_state >= 3) { sig_state = 3; sig_dflt = 0; }
+                } elif (c == 61) {                    # `=` — the parameter's default
+                    if (sig_state >= 3) { sig_dflt = 1; }
                 }
             }
             p = p + 1;

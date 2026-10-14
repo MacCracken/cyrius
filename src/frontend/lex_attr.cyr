@@ -1,0 +1,127 @@
+# src/frontend/lex_attr.cyr — THE ONE LIST of the lexer's `#` attribute words (LEXATTRWORD) with
+# its word boundary (LEXATTRBOUND) and row matcher (_lex_attr_is).
+#
+# WHY A FILE OF ITS OWN: it is included by src/frontend/lex.cyr (the lexer's `#` branch, and the
+# preprocessor's PP_LEXST_AT through it) AND by every tool that scans cyrius source — cyrlint,
+# cyrfmt, cyrdoc, cbt/srcscan.cyr (the CLI and cyrius-lsp), cyrius_api_surface and cyaudit. Each
+# tool kept a hand-copied ten-row table until 6.7.11, and only cyaudit's was held to this list,
+# so a word added here would have left five tools reading its line as a comment, one quote out
+# of step with the compiler. PURE: it reads only the buffer it is handed (load8), defines no
+# globals and includes nothing, so a tool can include it whatever else it carries. The tools
+# build from the repository root (`cat programs/<tool>.cyr | cycc`), where this path resolves.
+# Gate: tests/gates/frontend/lexer_attribute_word_boundary.sh (the census and the derived
+# probes). CHANGELOG [6.7.11]
+
+# WORD BOUNDARY after an attribute name in the `#` branch of LEX.
+#
+# WHY: every attribute test there (`#assert`, `#regalloc`, `#deprecated`,
+# `#must_use`, `#pure`, `#io`, `#alloc`, `#naked`, `#inline`, `#pe_import`)
+# compared a byte PREFIX and then kept lexing the SAME line, with no check that
+# the name actually ENDED. So a comment whose first word merely starts with an
+# attribute name was parsed as code: `#ioctl numbers` lexed as `#io` + the
+# identifier `ctl`, and the diagnostic pointed at the comment's second word.
+# The set of words that broke a comment was invisible to the author.
+#
+# Only whitespace, end of input, or `(` can legitimately follow an attribute
+# name, so anything else means this `#` opens an ordinary comment. Strictly more
+# permissive: no program that compiles today can contain `#io` followed by a
+# non-boundary byte, because today the tail is parsed as code and fails.
+#
+# `ap` — ALLOW PAREN, and only three of the ten sites pass 1. The first cut took
+# `(` as a boundary everywhere, which left the filed defect standing for a
+# narrower input class: `#io(fd) reads a byte` still died with `unexpected '('`,
+# and so did `#naked(truth)`, `#pure(ly)`, `#alloc(16)`, `#inline(always)`,
+# `#must_use(result)` and `#regalloc(2)`. For those seven the `(` form is not
+# syntax, so the line is a comment. `#deprecated(` and `#pe_import(` ARE syntax.
+# ⚠ `#assert(` passes 1 as well although it is not syntax either: it is the one
+# attribute whose parenthesised form the compiler already REJECTS OUT LOUD
+# (`#assert: expected constant expression`), and turning that into a comment
+# would silently DROP a compile-time assertion the author wrote. A loud error on
+# a rare prose comment beats a silent hole in an assertion. CHANGELOG [6.6.6]
+#
+# 6.6.20 — reads `base + q` (bounded by `n`) rather than the lexer's own buffer, so the
+# preprocessor can ask the same question of whichever buffer it is walking (LEXATTRWORD).
+fn LEXATTRBOUND(base, q, n, ap): i64 {
+    if (q >= n) { return 1; }
+    var b = load8(base + q);
+    if (b == 32) { return 1; }
+    if (b == 9) { return 1; }
+    if (b == 10) { return 1; }
+    if (b == 13) { return 1; }
+    if (b == 40) { if (ap == 1) { return 1; } }
+    return 0;
+}
+
+# The length of attribute word `w` (a NUL-terminated name, no `#`) when it follows the `#`
+# at `base + q` and ends on an attribute boundary (LEXATTRBOUND, `ap` as there); else 0.
+fn _lex_attr_is(base, q, n, w, ap): i64 {
+    var k = 0;
+    while (load8(w + k) != 0) {
+        if (q + 1 + k >= n) { return 0; }
+        if (load8(base + q + 1 + k) != load8(w + k)) { return 0; }
+        k = k + 1;
+    }
+    if (LEXATTRBOUND(base, q + 1 + k, n, ap) == 0) { return 0; }
+    return k;
+}
+
+# ⛔ 6.6.20 (the attribute-line desync bug) — THE ONE LIST of `#` attributes: the `#` at `base + q` (bounded by
+# `n`) spells one of them, packed `token * 16 + name length`, else 0 (the `#` opens a
+# comment). LEX emits the token and keeps lexing the SAME LINE as code.
+#
+# WHY ONE LIST, SHARED. The preprocessor decides "is this line a directive / is this byte in
+# a string" with its own lexical state machine (PP_LEXST). Until 6.6.20 that machine read
+# EVERY `#` in code as a comment opener, while this lexer lexes an attribute's line as code
+# — string literals included, and a literal may hold a raw LF. So after
+# `#assert 1 == 1, "x<LF>"` the two disagreed for as long as the next line ran: the PP
+# read the literal's CLOSING quote as an opening one and stayed "in a string" while the
+# lexer was in code. A `#@file "secret.cyr" 1` line there was skipped by the neutraliser
+# (PP_NEUT_FMARK leaves string bytes alone) and minted by FM_BUILD, and a `private` fn of
+# secret.cyr was CALLED (built, exit 42; the same call without the forged line is refused).
+# The same desync made the PP skip a real `#ifdef CYRIUS_TARGET_WIN` line (the lexer then
+# read it as a comment and compiled the Windows-only arm on Linux), and execute a
+# `#define` it should have kept as string data. 6.6.6 declined to teach the PP the list
+# for fear the two copies would drift; with ONE list there is nothing to drift, and the PP
+# asks this function (PP_LEXST_AT). No line-start rule: LEX has none either.
+#
+#   #assert      token 107 = HASH_ASSERT       ap   (v4.x)
+#   #regalloc    token 109 = HASH_REGALLOC          (4.8.4) opt-in register allocation
+#   #deprecated  token 124 = HASH_DEPRECATED   ap   (v5.6.4) warns at every call site
+#   #must_use    token 122 = HASH_MUST_USE          (v5.6.3) a dropped result warns
+#   #pure        token 125 = HASH_PURE              (v5.8.20)
+#   #io          token 126 = HASH_IO                (v5.8.20)
+#   #alloc       token 127 = HASH_ALLOC             (v5.8.20)
+#   #naked       token 133 = HASH_NAKED             (v6.2.27) no prologue/epilogue (an ISR)
+#   #inline      token 163 = HASH_INLINE            (v6.5.63) admits the fn to inline replay
+#   #pe_import   token 110 = HASH_PE_IMPORT    ap   (v5.4.6) PE32+ import registration
+# (`ap` = `(` may follow: the three whose parenthesised form is syntax — see LEXATTRBOUND.)
+# tests/gates/frontend/lexer_attribute_word_boundary.sh derives its census from this table
+# and from the `_lex_attr_is` rows below, and fails if they and its probe table disagree.
+# CHANGELOG [6.6.20]
+fn LEXATTRWORD(base, q, n): i64 {
+    if (q + 2 >= n) { return 0; }
+    var c1 = load8(base + q + 1);
+    if (c1 < 97) { return 0; }
+    if (c1 > 122) { return 0; }
+    var k = _lex_attr_is(base, q, n, "assert", 1);
+    if (k > 0) { return 107 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "regalloc", 0);
+    if (k > 0) { return 109 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "deprecated", 1);
+    if (k > 0) { return 124 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "must_use", 0);
+    if (k > 0) { return 122 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "pure", 0);
+    if (k > 0) { return 125 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "io", 0);
+    if (k > 0) { return 126 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "alloc", 0);
+    if (k > 0) { return 127 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "naked", 0);
+    if (k > 0) { return 133 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "inline", 0);
+    if (k > 0) { return 163 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "pe_import", 1);
+    if (k > 0) { return 110 * 16 + k; }
+    return 0;
+}

@@ -157,6 +157,12 @@ fn cmd_pulsar(): i64 {
     # The host check runs BEFORE the progress line, so the refusal is not spliced into it
     # (bite 24d's lesson, applied at the site that would otherwise repeat it).
     if (_pulsar_host_is_x86_linux() == 0) { return _pulsar_refuse_host(); }
+    # 6.7.11 — every child below builds (or installs) the default toolchain: the raw compiles,
+    # compile()'s tool builds (its child env is made from `_envp`) and the install step. An
+    # inherited CYRIUS_POISON / CYRIUS_BOUNDS / CYRIUS_COVERAGE(_FILE) built the tracked
+    # build/cycc in that mode, its stages agreed, and it was installed (cbt/core.cyr
+    # `_envp_self_build`). CHANGELOG [6.7.11]
+    _envp = _envp_self_build();
     _status("pulsar: rebuilding from source...");
     if (file_exists("src/main.cyr") == 0) {
         _err("not in a cyrius repo (no src/main.cyr)");

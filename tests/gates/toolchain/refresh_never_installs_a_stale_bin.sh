@@ -180,6 +180,8 @@ cp "$ROOT/scripts/install.sh" "$L/scripts/"
 cp -RL "$ROOT/lib" "$ROOT/cbt" "$L/"
 cp "$ROOT/programs/cyrius-lsp.cyr" "$ROOT/programs/ark.cyr" "$ROOT/programs/nous_stub.cyr" "$L/programs/"
 cp "$ROOT/src/version_str.cyr" "$L/src/"
+# 6.7.11: cbt/srcscan.cyr includes the lexer's attribute list (src/frontend/lex_attr.cyr).
+mkdir -p "$L/src/frontend"; cp "$ROOT/src/frontend/lex_attr.cyr" "$L/src/frontend/"
 cp "$CC" "$L/build/cycc"; chmod +x "$L/build/cycc"
 printf '9.9.9\n' > "$L/VERSION"
 printf '[release]\nbins = ["cycc", "cyrius", "cyrius-lsp", "ark"]\ncross_bins = []\nscripts = []\n' > "$L/cyrius.cyml"
@@ -221,7 +223,7 @@ rc=$(_lrefresh a6)
 if [ "$rc" -eq 0 ] && ! grep -qE 'rebuilt (cyrius|cyrius-lsp|ark) from' "$W/a6.out"; then
     ok "nothing newer than the bins: nothing is rebuilt (anti-vacuous — the union does not rebuild every time)"
 else bad "axis 6 (rc=$rc): a no-op refresh rebuilt: $(grep -E 'rebuilt' "$W/a6.out" | tr '\n' ' ')"; fi
-_edit_axis 7 cyrius-lsp programs/cyrius-lsp.cyr cbt/srcscan.cyr 's/"#io"/"#iq"/' "an edit to cbt/srcscan.cyr (included by programs/cyrius-lsp.cyr)"
+_edit_axis 7 cyrius-lsp programs/cyrius-lsp.cyr cbt/srcscan.cyr 's/"#define "/"#definf "/' "an edit to cbt/srcscan.cyr (included by programs/cyrius-lsp.cyr)"
 _edit_axis 8 ark programs/ark.cyr programs/nous_stub.cyr '0,/return 0;/s//return 7;/' "an edit to programs/nous_stub.cyr (included by programs/ark.cyr)"
 _edit_axis 9 cyrius cbt/cyrius.cyr src/version_str.cyr 's/^\(var _VERSION_TOOLCHAIN *= *\)"[^"]*"/\1"9.9.9-probe"/' "an edit to src/version_str.cyr (included by cbt/cyrius.cyr)"
 touch -t 202201010000 "$L/build/cycc"

@@ -1345,8 +1345,14 @@ fn cmd_doctest(arg): i64 {
 # 6.7.7 a parameter may carry a default, and `fn f(a, b = g(1, 2))` cut at the first `)` / `,`
 # lost parameters and printed `cyr_val b = 2` (not C). Strings are blanked by then, so
 # `s = ",)"` is one parameter too. CHANGELOG [6.7.7]
+# 6.7.11 — a parameter's TYPE balances `<` `>` too (`>>` / `>>>` close two / three, a byte
+# each), as the compiler's _pl_next / _pl_tdepth do: `p: Pair<i64, i64>` was cut at its comma
+# and printed `cyr_val i64>` (not C). After the parameter's depth-0 `=` (its default) `<` and
+# `>` are operators again (`c = 1 < 2`), and a depth-0 `,` starts the next parameter's type.
+# CHANGELOG [6.7.11]
 fn _hdr_close(b, p, lim, comma): i64 {
     var d = 0;
+    var indf = 0;    # 1 inside the current parameter's default (after its depth-0 `=`)
     while (p < lim) {
         var c = load8(b + p);
         if (c == 40 || c == 91 || c == 123) { d = d + 1; }
@@ -1354,10 +1360,549 @@ fn _hdr_close(b, p, lim, comma): i64 {
             if (d == 0) { if (c == 41) { return p; } }
             else { d = d - 1; }
         }
-        elif (c == 44) { if (d == 0 && comma == 1) { return p; } }
+        elif (c == 44) {
+            if (d == 0) {
+                if (comma == 1) { return p; }
+                indf = 0;
+            }
+        }
+        elif (c == 61) { if (d == 0) { indf = 1; } }
+        elif (indf == 0) {
+            if (c == 60) { d = d + 1; }
+            elif (c == 62) { if (d > 0) { d = d - 1; } }
+        }
         p = p + 1;
     }
     return lim;
+}
+
+# 1 iff b[s, e) is exactly `...` — a variadic tail's parameter name (cmd_header). CHANGELOG [6.7.11]
+fn _hdr_is_ellipsis(b, s, e): i64 {
+    if (e - s != 3) { return 0; }
+    return memeq(b + s, "...", 3);
+}
+
+# 1 iff the parameter list b[s, e) is only `...` (blanks around it) — a fully variadic fn,
+# whose C prototype is `(void)` (cmd_header). CHANGELOG [6.7.11]
+fn _hdr_only_ellipsis(b, s, e): i64 {
+    while (s < e) {
+        var c = load8(b + s);
+        if (c != 32 && c != 9) { break; }
+        s = s + 1;
+    }
+    while (e > s) {
+        var c2 = load8(b + e - 1);
+        if (c2 != 32 && c2 != 9) { break; }
+        e = e - 1;
+    }
+    return _hdr_is_ellipsis(b, s, e);
+}
+
+# ================================================================
+# 6.7.11 — THE RETURN TYPE. cmd_header never read past the parameter list's `)`, so every
+# prototype said `cyr_val f(..)` whatever the fn returned. cycc returns a value five ways
+# (`_ret_agg_class`, src/frontend/parse_fn.cyr; the multi-value landing, `_mret_land`):
+#   8 bytes or less; a 9-16 B `Str`        rax / x0: a word (a Str is a handle), `cyr_val`
+#   9-16 bytes, and a `dyn Tr`             rax:rdx / x0:x1: `cyr_val2`, the two-int64-word struct
+#                                          SysV and AAPCS64 C return in the same registers; Win64 C
+#                                          returns it through a hidden pointer, so `#ifndef _WIN64`
+#                                          (a named comment there, no prototype — user, 2026-10-13)
+#   over 16 bytes                          the hidden result pointer, integer argument 0 (SysV rdi,
+#                                          Win64 rcx) / AAPCS64 x8, left in rax / x0, N whole words
+#                                          written: `cyr_valN` returned by value, as C does
+#   two values `(T1, T2)`                  rax:rdx / aarch64 x0:x2 — C's pair only on x86_64 SysV:
+#                                          `cyr_val2` under `__x86_64__ && !_WIN64`, else a comment
+#   three values                           rax:rdx:r8 / x0:x2:x3 — no C return type: refused
+# A type this scanner cannot size — another file's, a generic instance, a struct holding one, a
+# struct declared twice or whose fields sit under a preprocessor conditional — is refused by name
+# on stderr: no prototype, rc 1 (never guessed). Field widths are the compiler's (FIELDSZ /
+# STRUCTSZ, src/frontend/parse_types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
+# per element, a dyn 16, a nested struct its size, a union its widest field, every other field 8
+# (a `Str` / `Vec` FIELD is its 8-byte handle). header_spellings_and_size.sh H8 holds them to
+# `sizeof` compiled by cycc, H11 the x86_64 registers to a linked C caller. CHANGELOG [6.7.11]
+# ================================================================
+# The file's depth-0 struct / union / enum names: a vec of records, `_HDR_REC` words each —
+#   +0 name offset, +8 name length, +16 kind (1 struct, 2 union, 3 enum), +24 the body's `{` (-1
+#   none), +32 1 = generic (`struct B<T>`), +40 the size memo (-1 unsized, -2 being sized, -3
+#   unsizable), +48 how many times the name is declared, +56 why it is unsizable, +64 / +72 the
+#   offending type text.
+var _HDR_REC = 80;
+var _hdr_decls = 0;
+var _hdr_why = 0;        # why the last sizing failed, and the type text it failed at
+var _hdr_why_s = 0;
+var _hdr_why_e = 0;
+var _hdr_tend = 0;       # the end of the type just read by _hdr_type_size
+var _hdr_rsz = 0;        # the size of the return just classified, and its type text
+var _hdr_rts = 0;
+var _hdr_rte = 0;
+var _hdr_pair_done = 0;  # the cyr_val2 typedef is written
+var _hdr_words_done = 0; # vec: each N whose cyr_valN typedef is written
+var _hdr_raw = 0;        # the file before _src_blank_noncode: its `#ifdef` lines are still there
+
+# First offset in [p, lim) that is not a space, tab, CR or newline.
+fn _hdr_ws_nl(b, p, lim): i64 {
+    while (p < lim) {
+        var c = load8(b + p);
+        if (c != 32 && c != 9 && c != 10 && c != 13) { break; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# 1 iff buf[p, p+n) is the word `w` (wn bytes).
+fn _hdr_is(b, p, n, w, wn): i64 {
+    if (n != wn) { return 0; }
+    return memeq(b + p, w, wn);
+}
+
+# Offset just past the `<..>` opening at buf[p] (each `<` / `>` byte one level, as `>>` is two).
+fn _hdr_skip_targs(b, p, lim): i64 {
+    var d = 0;
+    while (p < lim) {
+        var c = load8(b + p);
+        if (c == 60) { d = d + 1; }
+        elif (c == 62) { d = d - 1; if (d == 0) { return p + 1; } }
+        elif (c == 59 || c == 123 || c == 125) { return p; }
+        p = p + 1;
+    }
+    return lim;
+}
+
+# The number of elements of the tuple type whose `(` is at buf[p]; _hdr_tend = past its `)`.
+fn _hdr_tuple_n(b, p, lim): i64 {
+    var d = 0;
+    var k = 1;
+    while (p < lim) {
+        var c = load8(b + p);
+        if (c == 40 || c == 60 || c == 91) { d = d + 1; }
+        elif (c == 41 || c == 62 || c == 93) {
+            d = d - 1;
+            if (d == 0) { _hdr_tend = p + 1; return k; }
+        }
+        elif (c == 44 && d == 1) { k = k + 1; }
+        p = p + 1;
+    }
+    _hdr_tend = lim;
+    return k;
+}
+
+# The record of the depth-0 struct / union / enum named buf[p, p+n), or 0.
+fn _hdr_decl_find(b, p, n): i64 {
+    var i = 0;
+    while (i < vec_len(_hdr_decls)) {
+        var r = vec_get(_hdr_decls, i);
+        if (load64(r + 8) == n) { if (memeq(b + load64(r), b + p, n) == 1) { return r; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Record the declaration on the depth-0 line buf[ls, le) of keyword `kw` (kind `kind`), if any.
+fn _hdr_decl_line(b, len, ls, le, kw, klen, kind): i64 {
+    var ns = _src_kw_decl_at(b, ls, le, kw, klen);
+    if (ns < 0) { return 0; }
+    var ne = _src_ident_end(b, ns, le);
+    var old = _hdr_decl_find(b, ns, ne - ns);
+    if (old != 0) { store64(old + 48, load64(old + 48) + 1); return 1; }
+    var r = alloc(_HDR_REC);
+    store64(r, ns);
+    store64(r + 8, ne - ns);
+    store64(r + 16, kind);
+    store64(r + 24, 0 - 1);
+    store64(r + 32, 0);
+    store64(r + 40, 0 - 1);
+    store64(r + 48, 1);
+    store64(r + 56, 0);
+    var q = _hdr_ws_nl(b, ne, len);
+    if (q < len && load8(b + q) == 60) {
+        store64(r + 32, 1);
+        q = _hdr_ws_nl(b, _hdr_skip_targs(b, q, len), len);
+    }
+    if (q < len && load8(b + q) == 123) { store64(r + 24, q); }
+    vec_push(_hdr_decls, r);
+    return 1;
+}
+
+# Pre-scan: every struct, union and enum the (blanked) file declares at brace depth 0.
+fn _hdr_scan_decls(b, len): i64 {
+    _hdr_decls = vec_new();
+    var pos = 0;
+    var depth = 0;
+    while (pos < len) {
+        var le = pos;
+        while (le < len) { if (load8(b + le) == 10) { break; } le = le + 1; }
+        if (depth == 0) {
+            if (_hdr_decl_line(b, len, pos, le, "struct", 6, 1) == 0) {
+                if (_hdr_decl_line(b, len, pos, le, "union", 5, 2) == 0) {
+                    _hdr_decl_line(b, len, pos, le, "enum", 4, 3);
+                }
+            }
+        }
+        depth = depth + _src_brace_delta(b, pos, le);
+        if (depth < 0) { depth = 0; }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# A sizing failure: `why` about the type text buf[s, e). Returns -1.
+fn _hdr_fail(why, s, e): i64 {
+    _hdr_why = why;
+    _hdr_why_s = s;
+    _hdr_why_e = e;
+    return 0 - 1;
+}
+# ... recorded on the struct record `r` too, so a later ask answers the same. Returns -1.
+fn _hdr_rec_fail(r): i64 {
+    store64(r + 40, 0 - 3);
+    store64(r + 56, _hdr_why);
+    store64(r + 64, _hdr_why_s);
+    store64(r + 72, _hdr_why_e);
+    return 0 - 1;
+}
+
+# The width of the scalar / handle type name buf[p, p+n) as a FIELD (the compiler's
+# `_tn_scalar` / `_field_name_kind`), or 0 when it is none of them.
+fn _hdr_name_w(b, p, n): i64 {
+    if (_hdr_is(b, p, n, "u8", 2) == 1) { return 1; }
+    if (_hdr_is(b, p, n, "u16", 3) == 1) { return 2; }
+    if (_hdr_is(b, p, n, "u32", 3) == 1) { return 4; }
+    if (_hdr_is(b, p, n, "f32", 3) == 1) { return 4; }
+    if (_hdr_is(b, p, n, "u64", 3) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "f64", 3) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "bool", 4) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "cstring", 7) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "Result", 6) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "Option", 6) == 1) { return 8; }
+    if (_hdr_is(b, p, n, "Tagged", 6) == 1) { return 8; }
+    return 0;
+}
+# i8 / i16 / i32 / i64, which the compiler reads before any struct of that name.
+fn _hdr_int_w(b, p, n): i64 {
+    if (_hdr_is(b, p, n, "i8", 2) == 1) { return 1; }
+    if (_hdr_is(b, p, n, "i16", 3) == 1) { return 2; }
+    if (_hdr_is(b, p, n, "i32", 3) == 1) { return 4; }
+    if (_hdr_is(b, p, n, "i64", 3) == 1) { return 8; }
+    return 0;
+}
+
+# 1 iff buf[p, p+n) names a SIMD vector type. A vector return is not modelled here (it travels in
+# vector registers, or a PE result pointer, by width and target): it keeps the pre-6.7.11 word —
+# issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md.
+fn _hdr_vec_name(b, p, n): i64 {
+    if (n != 5) { return 0; }
+    var v = "f64v2f64v4f32v4f32v8i32v4u32v4i16v8u16v8i64v2u64v2i8v16u8v16";
+    var i = 0;
+    while (i < 60) {
+        if (memeq(b + p, v + i, 5) == 1) { return 1; }
+        i = i + 5;
+    }
+    return 0;
+}
+
+# The byte size of the field type at buf[p] (after its `:`), the compiler's FIELDSZ; -1 when this
+# scanner cannot size it (_hdr_fail). _hdr_tend = the end of the type.
+fn _hdr_type_size(b, len, p, depth): i64 {
+    p = _hdr_ws_nl(b, p, len);
+    _hdr_tend = p;
+    if (p >= len) { return _hdr_fail("a field type this scanner cannot read", p, p); }
+    var c = load8(b + p);
+    if (c == 42) {                           # `*T`: a pointer, 8
+        while (p < len && load8(b + p) == 42) { p = p + 1; }
+        p = _src_ident_end(b, _hdr_ws_nl(b, p, len), len);
+        var pq = _hdr_ws_nl(b, p, len);
+        if (pq < len && load8(b + pq) == 60) { p = _hdr_skip_targs(b, pq, len); }
+        _hdr_tend = p;
+        return 8;
+    }
+    if (c == 40) { return _hdr_tuple_n(b, p, len) * 8; }   # a tuple: 8 per element
+    var ie = _src_ident_end(b, p, len);
+    if (ie == p) { return _hdr_fail("a field type this scanner cannot read", p, p + 1); }
+    var n = ie - p;
+    _hdr_tend = ie;
+    if (_hdr_is(b, p, n, "dyn", 3) == 1) {   # a trait object: two words
+        _hdr_tend = _src_ident_end(b, _hdr_ws_nl(b, ie, len), len);
+        return 16;
+    }
+    var w = _hdr_int_w(b, p, n);
+    if (w > 0) { return w; }
+    var q = _hdr_ws_nl(b, ie, len);
+    var targs = 0;
+    if (q < len && load8(b + q) == 60) { targs = 1; _hdr_tend = _hdr_skip_targs(b, q, len); }
+    # `Vec<T>` is its 8-byte handle; a bare `Vec` is the file's own `struct Vec` when one is declared
+    # ABOVE the field (the compiler's FINDSTRUCT there), else the handle. CHANGELOG [6.7.11]
+    if (_hdr_is(b, p, n, "Vec", 3) == 1) {
+        if (targs == 1) { return 8; }
+        var rv = _hdr_decl_find(b, p, n);
+        if (rv == 0) { return 8; }
+        if (load64(rv) > p) { return 8; }
+    }
+    if (_hdr_is(b, p, n, "Str", 3) == 1) { return 8; }   # a Str FIELD is its handle
+    if (targs == 1) { return _hdr_fail("a generic struct instance, which this scanner cannot size", p, _hdr_tend); }
+    var r = _hdr_decl_find(b, p, n);
+    if (r != 0) {
+        if (load64(r + 16) == 3) { return 8; }             # an enum
+        var te = _hdr_tend;
+        var sz = _hdr_rec_size(b, len, r, depth + 1);
+        _hdr_tend = te;
+        return sz;
+    }
+    w = _hdr_name_w(b, p, n);
+    if (w > 0) { return w; }
+    return _hdr_fail("a type not declared in this file, which this scanner cannot size", p, ie);
+}
+
+# 1 iff the raw line at _hdr_raw[p] (its first non-blank byte) is a conditional directive: `#if`,
+# `#ifdef`, `#ifndef`, `#ifplat`, `#elif`, `#elseif`, `#else`, `#endif` or `#endplat`, a word.
+fn _hdr_cond_line(p, lim): i64 {
+    p = _src_skip_ws(_hdr_raw, p, lim);
+    if (p >= lim || load8(_hdr_raw + p) != 35) { return 0; }
+    var ws = p + 1;
+    var we = _src_ident_end(_hdr_raw, ws, lim);
+    var n = we - ws;
+    var w = "if     ifdef  ifndef ifplat elif   elseif else   endif  endplat";
+    var i = 0;
+    while (i < 63) {
+        var k = 0;
+        while (k < 7 && load8(w + i + k) != 32) { k = k + 1; }
+        if (k == n) { if (memeq(_hdr_raw + ws, w + i, n) == 1) { return 1; } }
+        i = i + 7;
+    }
+    return 0;
+}
+
+# 1 iff a line inside the struct body whose `{` is at b[open] holds a conditional directive: the
+# preprocessor keeps one arm, the scanner (reading comments blanked) would sum both.
+fn _hdr_body_cond(b, len, open): i64 {
+    var close = open;
+    while (close < len && load8(b + close) != 125) { close = close + 1; }
+    var p = open;
+    while (p < close) {
+        if (load8(_hdr_raw + p) == 10) {
+            var le = p + 1;
+            while (le < len && load8(_hdr_raw + le) != 10) { le = le + 1; }
+            if (_hdr_cond_line(p + 1, le) == 1) { return 1; }
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# The packed size of the struct / union record `r`, or -1 (_hdr_fail; recorded on `r`).
+fn _hdr_rec_size(b, len, r, depth): i64 {
+    var memo = load64(r + 40);
+    if (memo >= 0) { return memo; }
+    if (memo == 0 - 3) {
+        _hdr_fail(load64(r + 56), load64(r + 64), load64(r + 72));
+        return 0 - 1;
+    }
+    var ns = load64(r);
+    var ne = ns + load64(r + 8);
+    if (memo == 0 - 2 || depth > 64) { _hdr_fail("a struct that contains itself", ns, ne); return _hdr_rec_fail(r); }
+    if (load64(r + 48) > 1) {
+        _hdr_fail("declared more than once in this file, which this scanner cannot size", ns, ne);
+        return _hdr_rec_fail(r);
+    }
+    if (load64(r + 32) == 1) {
+        _hdr_fail("a generic struct, which this scanner cannot size", ns, ne);
+        return _hdr_rec_fail(r);
+    }
+    var p = load64(r + 24);
+    if (p < 0) { _hdr_fail("a struct whose body this scanner cannot find", ns, ne); return _hdr_rec_fail(r); }
+    if (_hdr_body_cond(b, len, p) == 1) {
+        _hdr_fail("a struct whose fields sit under a preprocessor conditional, which this scanner cannot size", ns, ne);
+        return _hdr_rec_fail(r);
+    }
+    store64(r + 40, 0 - 2);
+    var uni = 0;
+    if (load64(r + 16) == 2) { uni = 1; }
+    var sz = 0;
+    p = p + 1;
+    while (1 == 1) {
+        p = _hdr_ws_nl(b, p, len);
+        if (p >= len) { _hdr_fail("a struct whose body does not close", ns, ne); return _hdr_rec_fail(r); }
+        var c = load8(b + p);
+        if (c == 125) { break; }
+        if (c == 59) { p = p + 1; continue; }
+        var fe = _src_ident_end(b, p, len);
+        if (fe == p) { _hdr_fail("a struct whose fields this scanner cannot read", ns, ne); return _hdr_rec_fail(r); }
+        p = _hdr_ws_nl(b, fe, len);
+        var fsz = 8;                          # an untyped field
+        if (p < len && load8(b + p) == 58) {
+            fsz = _hdr_type_size(b, len, p + 1, depth);
+            if (fsz < 0) { return _hdr_rec_fail(r); }
+            p = _hdr_tend;
+        }
+        if (uni == 1) { if (fsz > sz) { sz = fsz; } }
+        else { sz = sz + fsz; }
+    }
+    store64(r + 40, sz);
+    return sz;
+}
+
+# The return class of the type at buf[p] (just past the return's `:`), as `_ret_agg_class`:
+# 0 a word, 1 the rax:rdx / x0:x1 pair, 2 through the hidden pointer (`_hdr_rsz` its size), 3 two
+# values (rax:rdx / x0:x2), -1 refused (_hdr_why). Sets _hdr_rts / _hdr_rte to the type's text.
+fn _hdr_ret_class(b, len, p): i64 {
+    p = _hdr_ws_nl(b, p, len);
+    _hdr_rts = p;
+    _hdr_rte = p;
+    _hdr_rsz = 8;
+    if (p >= len) { return 0; }
+    var c = load8(b + p);
+    if (c == 42) { _hdr_rte = _src_ident_end(b, _hdr_ws_nl(b, p + 1, len), len); return 0; }   # `*T`
+    if (c == 40) {                           # a multi-value return: each value a word
+        var k = _hdr_tuple_n(b, p, len);
+        _hdr_rte = _hdr_tend;
+        _hdr_rsz = k * 8;
+        if (k == 2) { return 3; }
+        if (k == 3) {
+            var w3 = "three values, returned in rax:rdx:r8 (aarch64 x0:x2:x3), which no C return type carries";
+            return _hdr_fail(w3, p, _hdr_rte);
+        }
+        return _hdr_fail("a multi-value return of other than two values, which no C return type carries", p, _hdr_rte);
+    }
+    var ie = _src_ident_end(b, p, len);
+    _hdr_rte = ie;
+    if (ie == p) { return _hdr_fail("a return type this scanner cannot read", p, p + 1); }
+    var n = ie - p;
+    if (_hdr_is(b, p, n, "dyn", 3) == 1) {   # a trait object: {data, vtable}
+        _hdr_rte = _src_ident_end(b, _hdr_ws_nl(b, ie, len), len);
+        _hdr_rsz = 16;
+        return 1;
+    }
+    var q = _hdr_ws_nl(b, ie, len);
+    if (q < len && load8(b + q) == 60) {
+        _hdr_rte = _hdr_skip_targs(b, q, len);
+        return _hdr_fail("a generic struct instance, which this scanner cannot size", p, _hdr_rte);
+    }
+    var str = _hdr_is(b, p, n, "Str", 3);
+    var r = _hdr_decl_find(b, p, n);
+    if (r != 0) {
+        if (load64(r + 16) == 3) { return 0; }             # an enum: a word
+        var sz = _hdr_rec_size(b, len, r, 0);
+        if (sz < 0) { return 0 - 1; }
+        _hdr_rsz = sz;
+        if (sz > 16) { return 2; }
+        if (sz > 8 && str == 0) { return 1; }              # `Str` alone of 9-16 B is a word
+        return 0;
+    }
+    if (str == 1) { return 0; }                            # lib/str.cyr's: a 16-byte handle, a word
+    if (_hdr_int_w(b, p, n) > 0) { return 0; }
+    if (_hdr_name_w(b, p, n) > 0) { return 0; }
+    if (_hdr_vec_name(b, p, n) == 1) { return 0; }
+    return _hdr_fail("a type not declared in this file, which this scanner cannot size", p, ie);
+}
+
+# The return class of the fn whose parameter list starts at buf[ps] (just past its `(`): the
+# annotation after the list's own `)`, which may sit on a later line. 0 when there is none.
+fn _hdr_ret_of(b, len, ps): i64 {
+    var rc = _hdr_close(b, ps, len, 0);
+    if (rc >= len) { return 0; }
+    var q = _hdr_ws_nl(b, rc + 1, len);
+    if (q >= len) { return 0; }
+    if (load8(b + q) != 58) { return 0; }
+    return _hdr_ret_class(b, len, q + 1);
+}
+
+# Name the refused fn on stderr: its return type and why. 1.
+fn _hdr_refuse(b, ns, nl): i64 {
+    sys_write(STDERR_FD, "error: cyrius header: '", 23);
+    sys_write(STDERR_FD, b + ns, nl);
+    sys_write(STDERR_FD, "' returns '", 11);
+    sys_write(STDERR_FD, b + _hdr_rts, _hdr_rte - _hdr_rts);
+    sys_write(STDERR_FD, "': ", 3);
+    # A failure inside the struct (a field's type) names that type; the struct itself is the return.
+    var rl = _hdr_rte - _hdr_rts;
+    var same = 0;
+    if (_hdr_why_e - _hdr_why_s == rl) { same = memeq(b + _hdr_why_s, b + _hdr_rts, rl); }
+    if (same == 0) {
+        sys_write(STDERR_FD, "its field type '", 16);
+        sys_write(STDERR_FD, b + _hdr_why_s, _hdr_why_e - _hdr_why_s);
+        sys_write(STDERR_FD, "' is ", 5);
+    }
+    sys_write(STDERR_FD, _hdr_why, strlen(_hdr_why));
+    var t = "; no prototype written\n";
+    sys_write(STDERR_FD, t, strlen(t));
+    return 1;
+}
+
+# The cyr_val2 typedef, once, before its first use.
+fn _hdr_pair_typedef(): i64 {
+    if (_hdr_pair_done == 1) { return 0; }
+    _hdr_pair_done = 1;
+    println("#ifndef _WIN64");
+    println("/* A struct of 9-16 bytes and a `dyn Tr` come back in TWO registers, rax:rdx (SysV) /");
+    println("   x0:x1 (AAPCS64), as C returns a struct of two int64 words; Win64 C returns one through");
+    println("   a hidden pointer, so those fns have no prototype there. A two-value return is rax:rdx");
+    println("   on x86_64 but x0:x2 on aarch64: its prototype is x86_64 SysV only. */");
+    println("typedef struct { int64_t w0, w1; } cyr_val2;");
+    println("#endif");
+    return 0;
+}
+
+# The guard a two-register prototype sits under: the pair (rk 1) everywhere but Win64, two values
+# (rk 3) on x86_64 SysV alone (aarch64 lands them in x0:x2).
+fn _hdr_guard_open(rk): i64 {
+    if (rk == 3) { println("#if defined(__x86_64__) && !defined(_WIN64)"); }
+    else { println("#ifndef _WIN64"); }
+    return 0;
+}
+
+# The cyr_valN typedef (N words), once per N, before its first use.
+fn _hdr_words_typedef(nw): i64 {
+    if (_hdr_words_done == 0) {
+        _hdr_words_done = vec_new();
+        println("/* A struct over 16 bytes comes back through a hidden result pointer (SysV rdi,");
+        println("   AAPCS64 x8, Win64 rcx), as C returns a struct of that size: cyr_valN is N words. */");
+    }
+    var i = 0;
+    while (i < vec_len(_hdr_words_done)) {
+        if (vec_get(_hdr_words_done, i) == nw) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_hdr_words_done, nw);
+    sys_write(STDOUT_FD, "typedef struct { int64_t w[", 27);
+    fmt_int(nw);
+    sys_write(STDOUT_FD, "]; } cyr_val", 12);
+    fmt_int(nw);
+    sys_write(STDOUT_FD, ";\n", 2);
+    return 0;
+}
+
+# The trailing comment of a pair / hidden-pointer prototype: `/* returns T, N B */`.
+fn _hdr_ret_note(b, rk): i64 {
+    sys_write(STDOUT_FD, "   /* returns ", 14);
+    sys_write(STDOUT_FD, b + _hdr_rts, _hdr_rte - _hdr_rts);
+    sys_write(STDOUT_FD, ", ", 2);
+    fmt_int(_hdr_rsz);
+    sys_write(STDOUT_FD, " B", 2);
+    if (rk == 2 && (_hdr_rsz & 7) != 0) {
+        sys_write(STDOUT_FD, ", the callee writes ", 20);
+        fmt_int((_hdr_rsz + 7) / 8);
+        sys_write(STDOUT_FD, " words", 6);
+    }
+    sys_write(STDOUT_FD, " */", 3);
+    return 0;
+}
+
+# The other arm of a two-register prototype's guard: a named comment, no prototype.
+fn _hdr_guard_else(b, ns, nl, rk): i64 {
+    println("#else");
+    sys_write(STDOUT_FD, "/* ", 3);
+    sys_write(STDOUT_FD, b + ns, nl);
+    var t = ": no prototype on Win64 -- cycc returns its ";
+    if (rk == 3) { t = ": no prototype here -- cycc returns its "; }
+    sys_write(STDOUT_FD, t, strlen(t));
+    sys_write(STDOUT_FD, b + _hdr_rts, _hdr_rte - _hdr_rts);
+    t = " in rax:rdx, where a Win64 C caller passes a hidden result pointer */";
+    if (rk == 3) {
+        t = " in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64 (C passes a hidden result pointer) */";
+    }
+    sys_write(STDOUT_FD, t, strlen(t));
+    sys_write(STDOUT_FD, "\n", 1);
+    println("#endif");
+    return 0;
 }
 
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
@@ -1381,9 +1926,15 @@ fn cmd_header(arg): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
+    _hdr_raw = alloc(hn + 1);                # 6.7.11: a struct body's `#ifdef` lines (_hdr_body_cond)
+    memcpy(_hdr_raw, hbuf, hn);
     # Declarations come from CODE only — a fn named in a comment or string is not one.
     _src_blank_noncode(hbuf, hn);
     var fpriv = _src_file_private(hbuf, hn);
+    _hdr_scan_decls(hbuf, hn);               # 6.7.11: the structs a return type may name
+    _hdr_pair_done = 0;
+    _hdr_words_done = 0;
+    var refused = 0;
 
     println("/* Auto-generated by cyrius header -- do not edit */");
     println("#ifndef CYRIUS_FFI_H");
@@ -1427,10 +1978,32 @@ fn cmd_header(arg): i64 {
         var ps = ne + 1;
         var pe = _hdr_close(hbuf, ps, le, 0);
 
-        sys_write(STDOUT_FD, "cyr_val ", 8);
+        # 6.7.11 — the return type decides the prototype's (see _hdr_ret_class). CHANGELOG [6.7.11]
+        var rk = _hdr_ret_of(hbuf, hn, ps);
+        if (rk < 0) {
+            refused = refused + _hdr_refuse(hbuf, fname_start, fname_len);
+            continue;
+        }
+        if (rk == 1 || rk == 3) {
+            _hdr_pair_typedef();
+            _hdr_guard_open(rk);
+            sys_write(STDOUT_FD, "cyr_val2 ", 9);
+        } elif (rk == 2) {
+            var nw = (_hdr_rsz + 7) / 8;
+            _hdr_words_typedef(nw);
+            sys_write(STDOUT_FD, "cyr_val", 7);
+            fmt_int(nw);
+            sys_write(STDOUT_FD, " ", 1);
+        } else {
+            sys_write(STDOUT_FD, "cyr_val ", 8);
+        }
         sys_write(STDOUT_FD, hbuf + fname_start, fname_len);
         sys_write(STDOUT_FD, "(", 1);
-        if (pe == ps) {
+        # 6.7.11 — a fully variadic `fn f(...)` is `(void)` in C: pre-C23 C refuses a bare
+        # `(...)`, and the callee reads no argument (a cyrius variadic tail is never read:
+        # tests/tcyr/lang/varargs.tcyr), so C passing none is the whole contract. CHANGELOG [6.7.11]
+        var allva = _hdr_only_ellipsis(hbuf, ps, pe);
+        if (pe == ps || allva == 1) {
             sys_write(STDOUT_FD, "void", 4);
         } else {
             # Count and emit params: the name, then its type and default skipped whole. A
@@ -1461,7 +2034,9 @@ fn cmd_header(arg): i64 {
                 pi = _hdr_close(hbuf, pi, pe, 1);
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }
-                    sys_write(STDOUT_FD, "cyr_val ", 8);
+                    # 6.7.11 — a variadic tail is C's `...` alone (it printed `cyr_val ...`, not
+                    # C). The extras C passes are never read by the callee. CHANGELOG [6.7.11]
+                    if (_hdr_is_ellipsis(hbuf, pns, pne) == 0) { sys_write(STDOUT_FD, "cyr_val ", 8); }
                     sys_write(STDOUT_FD, hbuf + pns, pne - pns);
                     first = 0;
                 }
@@ -1469,11 +2044,16 @@ fn cmd_header(arg): i64 {
                 if (pi < pe) { if (load8(hbuf + pi) == 44) { pi = pi + 1; } }
             }
         }
-        println(");");
+        if (allva == 1) { sys_write(STDOUT_FD, "); /* variadic in cyrius: it reads no argument */", 49); }
+        else { sys_write(STDOUT_FD, ");", 2); }
+        if (rk > 0) { _hdr_ret_note(hbuf, rk); }
+        sys_write(STDOUT_FD, "\n", 1);
+        if (rk == 1 || rk == 3) { _hdr_guard_else(hbuf, fname_start, fname_len, rk); }
     }
 
     println("");
     println("#endif /* CYRIUS_FFI_H */");
+    if (refused > 0) { return 1; }   # each one named on stderr above (6.7.11)
     return 0;
 }
 

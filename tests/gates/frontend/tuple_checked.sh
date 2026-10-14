@@ -967,8 +967,10 @@ tool_build() {   # <out> <source> -> 0 when built
 printf 'fn g(t: (i64, i64), x): i64 { return t.0 + x; }\npub fn h(a, w: (f64, i64, bool), z): (i64, i64) { return (a, z); }\nfn k(): (i64, i64) { return (1, 2); }\nfn m(p: (i64, i64)): i64 { return p.1; }\nfn n(a, b: i64): i64 { return a + b; }\n' > "$T/tl/tup.cyr"
 if tool_build "$T/tl/cyrius" cbt/cyrius.cyr; then
     rc=0; (cd "$T/tl" && HOME="$T/tl/home" CYRIUS_HOME="$T/tl/ch" timeout 30 ./cyrius header tup.cyr > hdr.out 2> hdr.err) || rc=$?
-    got=$(grep '^cyr_val ' "$T/tl/hdr.out" | tr '\n' '|')
-    want='cyr_val g(cyr_val t, cyr_val x);|cyr_val h(cyr_val a, cyr_val w, cyr_val z);|cyr_val k(void);|cyr_val m(cyr_val p);|cyr_val n(cyr_val a, cyr_val b);|'
+    # 6.7.11: a two-value RETURN (`h`, `k`) is `cyr_val2` on x86_64 SysV (rax:rdx), with its note — it
+    # printed `cyr_val`, the second value lost (issues/2026-10-10-cyrius-header-ignores-struct-returns.md).
+    got=$(grep -E '^cyr_val2? ' "$T/tl/hdr.out" | tr '\n' '|')
+    want='cyr_val g(cyr_val t, cyr_val x);|cyr_val2 h(cyr_val a, cyr_val w, cyr_val z);   /* returns (i64, i64), 16 B */|cyr_val2 k(void);   /* returns (i64, i64), 16 B */|cyr_val m(cyr_val p);|cyr_val n(cyr_val a, cyr_val b);|'
     if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "T1: \`cyrius header\`: a tuple parameter is one \`cyr_val\`, the parameters after it kept (5 prototypes)"
     else bad "T1: \`cyrius header\` rc $rc: got [$got]"; fi
     # T1b: the list now runs past the first `)`, so a `)` the name scan stops at inside it (malformed source,

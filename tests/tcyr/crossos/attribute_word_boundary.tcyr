@@ -4,7 +4,7 @@
 # kept lexing the SAME line, so a comment whose first word merely STARTS with an
 # attribute name was parsed as code. `#ioctl numbers` lexed as `#io` + the
 # identifier `ctl`; the diagnostic pointed at the comment's second word. Fixed by
-# LEXATTRBOUND (src/frontend/lex.cyr): an attribute name must be followed by
+# LEXATTRBOUND (src/frontend/lex_attr.cyr): an attribute name must be followed by
 # whitespace, end of input or `(`.
 #
 # ⚠ THIS FILE'S REAL ASSERTIONS ARE THE COMMENTS THEMSELVES. Every `#` line below

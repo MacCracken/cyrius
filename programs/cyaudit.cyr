@@ -7,6 +7,7 @@ include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/vec.cyr"
 include "lib/args.cyr"
+include "src/frontend/lex_attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
 
 # 1 iff the include path has a `..` COMPONENT anywhere — split on `/` and `\`. The trust
 # test and the traversal test below were both PREFIX tests, so `lib/../../etc/x.cyr` was
@@ -68,57 +69,24 @@ fn _au_lexst(st, c): i64 {
     return 0;
 }
 
-# ⛔ 6.7.3 — the SIXTH mirror of the lexer's attribute table (LEXATTRBOUND, _lex_attr_is and
-# LEXATTRWORD in src/frontend/lex.cyr; the other five are cyrlint, cyrfmt, cyrdoc, cbt's
-# srcscan and api-surface). A `#` that spells one of these ten words does not open a comment:
+# ⛔ 6.7.3 — a `#` that spells one of the lexer's attribute words does not open a comment:
 # LEX keeps lexing that line as code, strings included, and since 6.6.20 PP_PASS does too
-# (PP_LEXST_AT). This copy read every `#` as a comment, so after `#assert 1 == 1, "x<LF>y"`
+# (PP_LEXST_AT). This tool read every `#` as a comment, so after `#assert 1 == 1, "x<LF>y"`
 # it stayed one quote out of step with the compiler: vet printed `no dependencies` and deny
 # `0 violations` (rc 0) for an include the compiler opens, and vet reported a false MISSING
 # (rc 1) on a valid program whose attribute string holds a line beginning `include "`.
-# A copy, not a shared include, so the tool builds from anywhere. tests/gates/toolchain/
-# cyaudit_include_directives.sh axis 7 derives the word list from lex.cyr, checks these rows
-# (word and `(` rule) against it, and probes every word. CHANGELOG [6.7.3]
-
-# 1 iff the byte at b[q] ENDS an attribute name: whitespace, end of input, or — when `ap` is
-# 1 — `(` (LEXATTRBOUND; `ap` is 1 only for `#assert`, `#deprecated` and `#pe_import`).
-fn _au_attr_bound(b, q, n, ap): i64 {
-    if (q >= n) { return 1; }
-    var c = load8(b + q);
-    if (c == 32 || c == 9 || c == 10 || c == 13) { return 1; }
-    if (c == 40) { if (ap == 1) { return 1; } }
-    return 0;
-}
-
-# The length of word `w` when it follows the `#` at b[p] and ends on an attribute boundary,
-# else 0 (_lex_attr_is).
-fn _au_attr_is(b, p, n, w, ap): i64 {
-    var k = 0;
-    while (load8(w + k) != 0) {
-        if (p + 1 + k >= n) { return 0; }
-        if (load8(b + p + 1 + k) != load8(w + k)) { return 0; }
-        k = k + 1;
-    }
-    if (_au_attr_bound(b, p + 1 + k, n, ap) == 0) { return 0; }
-    return k;
-}
+# CHANGELOG [6.7.3]. The list and its word boundary are the lexer's OWN — LEXATTRWORD,
+# included from src/frontend/lex_attr.cyr. Until 6.7.11 this was a hand copy (the sixth),
+# kept "so the tool builds from anywhere"; it builds from the repository root like every
+# other tool, and tests/gates/toolchain/cyaudit_include_directives.sh axis 7 now checks the
+# include and probes every word derived from LEXATTRWORD. CHANGELOG [6.7.11]
 
 # The length of the `#`-attribute token at b[p] (`#` included), or 0: the `#` opens a
-# comment (LEXATTRWORD — the same ten rows, the same `(` rule).
+# comment.
 fn _au_attr_len(b, p, n): i64 {
-    if (p + 2 >= n) { return 0; }
-    var k = _au_attr_is(b, p, n, "assert", 1);
-    if (k == 0) { k = _au_attr_is(b, p, n, "regalloc", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "deprecated", 1); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "must_use", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "pure", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "io", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "alloc", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "naked", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "inline", 0); }
-    if (k == 0) { k = _au_attr_is(b, p, n, "pe_import", 1); }
-    if (k == 0) { return 0; }
-    return k + 1;
+    var w = LEXATTRWORD(b, p, n);
+    if (w == 0) { return 0; }
+    return (w & 15) + 1;
 }
 
 # _au_lexst for the byte at b[i] (`n` = the buffer's length) — PP_LEXST_AT: in code, a `#`
