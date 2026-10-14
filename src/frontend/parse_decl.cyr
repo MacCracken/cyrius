@@ -5442,7 +5442,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
-            _dt_zone_check(S, egn);   # 6.6.17 (a5)
+            var edz = _dt_zone_check(S, egn);   # 6.6.17 (a5)
             var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
@@ -5457,6 +5457,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
             _gvk_dst(S, sti, ei1, ei2, ei3);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            if (edz == 1) { _panic = 0; }   # the zone check's report: latched through its statement
             STI(S, GTI(S) + 1);
             gi = gi + 1;
             continue;
@@ -6139,23 +6140,26 @@ fn _dt_rhs_check_t(S, term): i64 {
 # statement) is replayed by EMIT_GVAR_INITS, which PCMPE'd the right-hand side with NO contract:
 # `var a, b = 42;`, a call followed by arithmetic, a declared-arity mismatch and a one-value `f`
 # all compiled silently. The same checks as PARSE_VAR's, from here. `n` = names bound.
-# The replay has no statement resync, so each report clears the panic latch it set (as `_gai_err`
-# does) and every bad declaration of a file is reported; an error already holding it is left alone.
+# The replay has no statement resync, so each report's panic latch is cleared after its own
+# statement (as `_gai_err` does) and every bad declaration of a file is reported; an error already
+# holding it is left alone. 1 = this check latched it: the replay clears it once the right-hand side
+# is parsed, so the call's own cascade (6.7.11: a 24 B callee's "needs storage in a fn's frame") is
+# not a second report.
 fn _dt_zone_check(S, n): i64 {
     if (_panic == 1) { return 0; }
     _dt_rhs_check(S);
     var fi = _dt_call_fn(S);
     if (fi >= 0) { _dt_arity_check(S, fi, n); }
-    _panic = 0;
-    return 0;
+    return _panic;
 }
 # ⛔ 6.6.17 (a5) — THE DESTRUCTURE'S ARITY, against the fn the call reaches. A declared
 # `: (T1, T2[, T3])` must match exactly (v6.5.21), and (6.7.11) so must an undeclared fn's provable
 # count (`_fn_ret_arity`: every `return` a tuple of one arity). A fn whose body provably returns ONE value
 # (pass 1, `_prescan_ret_single`, GFLG bit 1024) is refused by name: `var a, b = one(1);` bound b
-# to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). Not refused:
-# a `: stack` pair (bit 256), Result / Option / Tagged, a vector, a struct over 8 B (rax:rdx or a
-# retptr) — any of which can carry a second word. CHANGELOG [6.6.17]
+# to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). A struct callee
+# is judged by its register words (`_dt_struct_check`) — its DECLARED return, ahead of a recorded
+# `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256),
+# Result / Option / Tagged, a vector — any of which can carry a second word. CHANGELOG [6.6.17]
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
     if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
@@ -6167,22 +6171,63 @@ fn _dt_arity_check(S, fi, n): i64 {
         }
         return 0;
     }
+    var fl = GFLG(S, fi);
+    if ((fl & 256) == 0) { if (rs > 0) { if (rs < 2048) { return _dt_struct_check(S, fi, n); } } }
     var ar = _fn_ret_arity(S, fi);   # 6.7.11: an undeclared fn's provable count
     if (ar != 0) {
         if (ar != n) { _dt_count_err(S, fi, n, ar); }
         return 0;
     }
-    var fl = GFLG(S, fi);
     if ((fl & 1024) == 0) { return 0; }
     if ((fl & 256) != 0) { return 0; }
     if (rs <= 0 - 16) { if (rs >= 0 - 18) { return 0; } }
     if (rs <= 0 - 2048) { return 0; }
-    if (rs > 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } }
+    return _dt_one_err(S, fi, n);
+}
+fn _dt_one_err(S, fi, n): i64 {
     if (n == 3) {
         ERR_IDENT(S, "multi-value destructure binds 3 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
     } else {
         ERR_IDENT(S, "multi-value destructure binds 2 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
     }
+    return 0;
+}
+# ⛔ 6.7.11 — A STRUCT CALLEE'S WORDS ARE ITS RETURN REGISTERS (the user's decision, 2026-10-13: refuse
+# over 16 B, and where the names outnumber the register words). A 9-16 B struct comes back in rax:rdx
+# (x0:x1 + x2 on aarch64, 6.7.7) and `var a, b = mk(..);` binds its two words — pinned since 6.7.7. Over
+# 16 B it comes back through a retptr, and `var a, b = mk(5);` bound b to whatever rdx held (50 where 56
+# is meant, on every target); a third name read a register no struct return writes; an 8 B struct (or a
+# `Str` handle) is one word, refused as one value even where pass 1 could not prove the body. The
+# class is `_ret_agg_class`'s, the one caller and callee share. CHANGELOG [6.7.11]
+fn _dt_struct_check(S, fi, n): i64 {
+    var c = _ret_agg_class(S, fi);
+    if (c == 2) { return _dt_struct_err(S, fi, 0); }
+    if (c == 1) {
+        if (n == 3) { return _dt_struct_err(S, fi, 2); }
+        return 0;
+    }
+    return _dt_one_err(S, fi, n);
+}
+# The report, cursor on the call (`name(`, `name<..>(` or `x.m(`): `w` 0 = not in registers (a
+# retptr), 2 = its 2 words are, and 3 names were bound.
+fn _dt_struct_err(S, fi, w): i64 {
+    if (_panic == 1) { return 0; }
+    var ct = GTI(S);
+    if (_tok_method_open(S, ct) == 1) { ct = ct + 2; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot destructure '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    if (w == 0) { PRSTR("' - it returns struct '"); }
+    else { PRSTR("' into 3 names - it returns struct '"); }
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRS(S, fi) - 1) * 8));
+    if (w == 0) { PRSTR("', which is not in registers - bind it to one name: `var x = "); }
+    else { PRSTR("', whose 2 words are its return registers - bind 2 names: `var a, b = "); }
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    PRSTR("(..);`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
     return 0;
 }
 # ⛔ 6.7.11 — `n` names bound from undeclared fn `fi`, which returns `ar` values (pass 1,

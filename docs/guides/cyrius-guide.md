@@ -2465,6 +2465,12 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # ending in `loop { }`, `while (1) { }` or
 #                                     # `do { } while (1);` that no `break` leaves ends in its
 #                                     # returns too (6.7.11)
+#   var a, b = mk(5);                 # `mk` returns a struct over 16 B: it comes back through a
+#                                     # hidden pointer, not registers, so there is no second word —
+#                                     # `cannot destructure 'mk' - it returns struct 'Q', which is
+#                                     # not in registers` (6.7.11). A 9-16 B struct's two words ARE
+#                                     # its return registers: `var a, b = mk(5);` binds them, and a
+#                                     # third name is refused; an 8 B struct is one value
 # (Before 6.6.17 the top-level destructure above the first statement checked none of these.)
 
 # Legacy builtins still work
@@ -2664,6 +2670,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
+| `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
