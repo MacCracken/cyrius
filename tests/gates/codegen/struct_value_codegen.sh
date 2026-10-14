@@ -3,8 +3,8 @@
 #
 # STRUCT VALUES AND STRUCT FIELDS AS OPERANDS — crashes and silent wrong values on valid code. The
 # runtime half is tests/tcyr/crossos/struct_value_codegen.tcyr, which this gate builds and runs on
-# x86_64 (default pipeline, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu) and cx (cxvm),
-# compilers built from this tree (rows A); the release gate runs it on the four real hosts.
+# x86_64 (default pipeline, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and (6.7.11)
+# PE (wine), compilers built from this tree (rows A); the release gate runs it on the four real hosts.
 #
 #   F  x86: `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field branched on the flags of the
 #      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`).
@@ -51,6 +51,14 @@
 #      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
 #      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
 #      operator receive (rows L12-L15)
+#   K  (6.7.11, issues/2026-10-08-struct-operator-results.md #2) an INTEGER operator's result kept its right
+#      operand's struct type and slot, so the next `+ - * /` dispatched on it: `n - s + 10` called `P3_add(&s,
+#      10)` and discarded `n - s` (the filed repro: SIGSEGV), for every integer arm (`+ - * / % << >> >>>`,
+#      `& | ^`, a comparison, `&&` / `||`, `+| +? -| -? *| *?`, `~`). Each clears a struct expression type
+#      (`_int_st`, `_int_res`). K1 the filed repro, verbatim (8); K2 / K3 the same with no `P3_add` compile
+#      (refused 'undefined function' through 6.7.10); the values file's K rows (every arm, 24 B and 8 B, the
+#      dispatching twins, an f64 right operand's type kept) run on A1-A7 — A7 (new) is the values file on PE
+#      (wine)
 #      L16 / L17 (6.7.11): a leading call's struct types an untyped declaration only when the call ENDS it
 #      (`_var_rhs_csid`): `var r = mk3(4) - s; r.x` (the filed repro, verbatim) and `var r = mk2(1) == p; return
 #      r;` in a fn returning Pt took the call's struct (SIGSEGV each); refused by name now
@@ -194,6 +202,16 @@
 #   (6.7.11, the struct lane, issues/2026-10-08-struct-operator-results.md, the same procedure, 2026-10-14)
 #   M-V1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED L16 L17 (BUILT); the
 #       values files green (an untyped value and a mistyped one read alike: only `.f` / a pair return differ)
+#   the tree before #2 (39f62ebb)                          -> RED K1 (139), K2 K3 (undefined P3_add), A1-A7
+#       (K1-K23: 1, the dispatch)
+#   M-K1 `_INT_F64_MIX` without `_int_st` (`+ - * /`)        -> RED K1 K2, A1-A7 (K1 K2 K20; `* /` are also
+#       cleared by the term tail)
+#   M-K2 PARSE_TERM's tail SPSC only (`% << >> >>>`)          -> RED A1-A7 (K5-K8)
+#   M-K3 `_pexpr_bit_ps` SPSC only (`& | ^`)                  -> RED A1-A7 (K9-K11)
+#   M-K4 `_PLOGIC_ATOM`'s compare tail SPSC only               -> RED K3, A1-A7 (K12 K13 K22)
+#   M-K5 `_PLOGIC_AND` / PCMPE's `||` SPSC only                -> RED A1-A7 (K14 K15)
+#   M-K6 EMIT_OVF_CALL without `_int_st` (`+| +? -| -?`)       -> RED A1-A7 (K17 K18)
+#   M-K7 `_bnot_int` SPSC only (`~`)                           -> RED A1-A7 (K16 K23)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -237,6 +255,13 @@ refused_file() {   # <name> <message fragment> <what> <file>: a filed repro, ver
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
     else ok "$3: refused once"; fi
+}
+exits_file() {   # <name> <want> <what> <file>: a filed repro, verbatim
+    cp "$4" "$T/$1.cyr"
+    build "$1"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 exits() {   # <name> <want> <what> <source>
     printf '%b' "$4" > "$T/$1.cyr"
@@ -364,6 +389,11 @@ refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt 
 ROPR=docs/development/issues/repros/2026-10-08-struct-operator-results
 refused_file l16 "no struct type in scope for 'r'" "L16: var r = mk3(4) - s; r.x (the filed repro, verbatim: SIGSEGV)" "$ROPR-1-untyped-var-typed-from-leading-call.cyr"
 refused l17 'got `r`' "L17: var r = mk2(1) == p; return r; from a fn returning Pt (SIGSEGV: a 16 B return from an 8 B slot)" "struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn g(p: Pt): Pt { var r = mk2(1) == p; return r; }\nfn main(): i64 { var p: Pt = Pt { 1, 1 }; var q: Pt = g(p); return q.x; }$E"
+# K (6.7.11) — an integer operator's result is an integer: the next `+ - * /` never dispatches on the struct
+# its right operand left (the values file's K rows: every integer arm, 24 B and 8 B, the twins).
+exits_file k01 8 "K1: n - s + 10 (the filed repro, verbatim: SIGSEGV in P3_add(&s, 10))" "$ROPR-2-integer-op-keeps-right-struct-type.cyr"
+exits k02 8 "K2: n - s + 10 with no P3_add compiles (refused 'undefined function P3_add' through 6.7.10)" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return n - s + 10; }$E"
+exits k03 11 "K3: (n < s) + 10 and (~s) + 10 with no P3_add compile" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return (n < s) + 10 + (~s) + 6; }$E"
 # R (6.7.6 E2) — parentheses around a struct fn's whole return value; the top-level operand wording.
 exits r01 6 "R1: return (j); from a fn returning a 24-byte P3 (the filed repro: refused)" "struct P3 { x; y; z; }\nfn cp(j: P3): P3 { return (j); }\nfn main(): i64 { var j = P3 { 1, 2, 3 }; var q: P3 = cp(j); return q.x + q.y + q.z; }$E"
 exits r02 6 "R2: return (mk3(v)); (the filed repro: refused)" "struct P3 { x; y; z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\nfn cp(v): P3 { return (mk3(v)); }\nfn main(): i64 { var q: P3 = cp(2); return q.x + q.y + q.z; }$E"
@@ -435,7 +465,9 @@ if command -v wine > /dev/null 2>&1; then
         "$T" "$WP" "$WHM" "$WHM" > "$T/winrun"; chmod +x "$T/winrun"
     TC=$TCB; TN=$NB
     tcyr "B7: fncall_struct_result.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
-else echo "  SKIP: PE legs FPw1 / FPw2 / B7 (wine not installed)"; skips=$((skips + 1)); fi
+    TC=$TCA; TN=""
+    tcyr "A7: the values file, PE (wine) (6.7.11: the K rows)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
+else echo "  SKIP: PE legs FPw1 / FPw2 / B7 / A7 (wine not installed)"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

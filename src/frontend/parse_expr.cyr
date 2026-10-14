@@ -1493,11 +1493,32 @@ fn _neg_int(S): i64 {
 }
 # Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
 # adds 1; see _pexpr_bit_ps), and no armed constant fold either (`~5 * 2` folded `5 * 2`; see
-# _neg_int). CHANGELOG [6.7.9]
+# _neg_int). CHANGELOG [6.7.9] 6.7.11: nor a struct type — `(~s) + 10` dispatched (_int_res).
 fn _bnot_int(S): i64 {
     _cfo = 0;
     ENOTR(S);
+    _int_res(S);
+    return 0;
+}
+# ⛔ 6.7.11 — AN INTEGER OPERATOR'S RESULT IS AN INTEGER. The expression type is the LAST operand's, and an
+# integer operator never wrote its result's, so after `n - s` (s a struct) the result kept s's struct type
+# and slot: the next `+ - * /` dispatched on it — `n - s + 10` called `P3_add(&s, 10)`, `n - s` discarded
+# (the filed repro: SIGSEGV), and so after `* / % << >> >>>`, `& | ^`, a comparison, `&&` / `||`, `+| +?
+# -| -? *| *?` and `~` (`!` always cleared it). Each clears a STRUCT expression type and the struct slot
+# that goes with it (`_int_st`), where 6.7.9 clears the pointer step (`_int_res`): `n - s` is first-word
+# arithmetic with an integer result. An f64 / f32 type is kept (kind 2's design: the result type is left
+# as it was, ADR-002). issues/2026-10-08-struct-operator-results.md #2. CHANGELOG [6.7.11]
+fn _int_st(S): i64 {
+    var t = GESTYPE(S);
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    SESTYPE(S, 0);
+    SESVAR(S, 0 - 1);
+    return 0;
+}
+fn _int_res(S): i64 {
     SPSC(S, 0);
+    _int_st(S);
     return 0;
 }
 
@@ -6972,7 +6993,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     }
                                     else { go = 0; }
                                 } } } } } } }
-        if (go == 1) { SPSC(S, 0); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps)
+        if (go == 1) { _int_res(S); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct
     }
     return 0;
 }
@@ -7331,7 +7352,8 @@ fn _op_lhs_check(S, fi, stype, beg): i64 {
     return _sarg_type_err(S, fi, 0, stype, nm);
 }
 # 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name
-# under `-` / `~` / parentheses, `k * s`), or it is one whole method / operator result of 8 B or
+# under `-` / parentheses; 6.7.11: `~s` and `k * s` are integers, `_int_st`), or it is one whole
+# method / operator result of 8 B or
 # less (`_sc_post_small`'s record, -3: the value is in rax), bare or in parentheses. `&s`, a `*S`
 # variable, a call returning a pointer or an integer and a literal record no struct type.
 fn _op_is_sval(S, b, e): i64 {
@@ -7524,6 +7546,7 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     if (foff >= 0) { ECALLTO(S, foff); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);
+    _int_st(S);   # 6.7.11: `n +| s + 10` — the helper's result is an integer
     return 0;
 }
 
@@ -7555,9 +7578,9 @@ fn PEXPR(S): i64 {
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
 fn _pexpr_bit_ps(S, typ, ps): i64 {
-    if (typ == 27) { SPSC(S, 0); return 0; }
-    if (typ == 35) { SPSC(S, 0); return 0; }
-    if (typ == 36) { SPSC(S, 0); return 0; }
+    if (typ == 27) { _int_res(S); return 0; }   # 6.7.11: and no struct type (_int_st)
+    if (typ == 35) { _int_res(S); return 0; }
+    if (typ == 36) { _int_res(S); return 0; }
     return ps;
 }
 
@@ -7800,6 +7823,7 @@ fn _INT_F64_MIX(S): i64 {
     if (GESTYPE(S) == F64_TYID) { fr = 1; }
     if (fr == 1) { _ifm_warn(S); }
     _ifm_rhs = 0;
+    _int_st(S);   # 6.7.11: the `+ - * /` integer arms' result is no struct (`n - s + 10`)
     return 0;
 }
 # The result carries the mix on (`x - (x * (x + 1.5))`): re-stamped where it ends, reported or not.
@@ -7856,7 +7880,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 }
             }
             _cfo = 0;
-            SPSC(S, 0);    # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps)
+            _int_res(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
         }
     }
@@ -7895,7 +7919,7 @@ fn _PLOGIC_AND(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 0);                 # short-circuited (left false) → result 0
         EPATCH(S, p_end);
-        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
+        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
         _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
         lop = PEEKT(S);
     }
@@ -7935,7 +7959,7 @@ fn PCMPE(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 1);                 # short-circuited (left true) → result 1
         EPATCH(S, p_end);
-        SPSC(S, 0);                  # 6.7.9: no pointer step (see _pexpr_bit_ps)
+        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
         _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
         lop = PEEKT(S);
     }

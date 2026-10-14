@@ -38,6 +38,12 @@
 #   R  (6.7.6 follow-up, E2) parentheses around a struct fn's WHOLE return value are transparent:
 #      `return (j);`, `return (mk3(v));`, `return ((j));`, `return (a + b);` were refused ("return must
 #      be a bare local identifier ..." / "... got `(...)`"), and `return (a) + b;` with them.
+#   K  (6.7.11) an INTEGER operator's result is an integer: after `n - s` (s a struct) the result kept s's
+#      struct type and slot, so the next `+ - * /` dispatched on it — `n - s + 10` called `S_add(&s, 10)`
+#      and discarded `n - s`. For every integer arm (`+ - * / % << >> >>>`, `& | ^`, a comparison, `&&`,
+#      `||`, `+| -| *| +? -? *?`, `~`) at 24 B and 8 B; `KN_add` returns 1 when it is called with 10, so a
+#      wrong dispatch reads 1. The twins dispatch as before: `s + t`, `s + 10`, `w.s + a` (decision 11);
+#      an f64 right operand's type is kept (kind 2: `(0 - x) + 1.0` is an f64 add, with its warning).
 #   E  (6.7.11) under CYRIUS_IR=3 (the gate's A3 leg), LASE kept a just-stored local's rax image
 #      across EFLADDR's unrecorded `lea rax, [rbp+d]` and dropped the reload after it, so the
 #      aggregate's ADDRESS went out as the local: a method on an inline struct local (`o.with2(x)`:
@@ -584,8 +590,74 @@ fn eladdr(): i64 {
     return 0;
 }
 
+# K — an integer operator's result is an integer (no dispatch on its right operand's struct).
+include "lib/overflow.cyr"
+struct KN { x; y; z; }
+struct K8 { v; }
+struct KW { n; s: KN; }
+fn KN_add(a, b): i64 { if (b == 10) { return 1; } return 50; }
+fn K8_add(a, b): i64 { if (b == 10) { return 1; } return 50; }
+fn k_sub(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n - s + 10; }
+fn k_add(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n + s + 10; }
+fn k_mul(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n * s + 10; }
+fn k_div(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n / s + 10; }
+fn k_mod(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n % s + 10; }
+fn k_shl(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n << s + 10; }
+fn k_shr(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 96; return n >> s + 10; }
+fn k_sar(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 0 - 96; return n >>> s + 10; }
+fn k_and(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n & s) + 10; }
+fn k_or(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n | s) + 10; }
+fn k_xor(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n ^ s) + 10; }
+fn k_lt(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n < s) + 10; }
+fn k_eq(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n == s) + 10; }
+fn k_land(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n && s) + 10; }
+fn k_lor(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 0; return (n || s) + 10; }
+fn k_bnot(): i64 { var s: KN = KN { 5, 6, 7 }; return (~s) + 10; }
+fn k_sat(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n +| s + 10) * 1000 + (n -| s + 10) * 100 + (n *| s + 10); }
+fn k_chk(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n +? s + 10) * 1000 + (n -? s + 10) * 100 + (n *? s + 10); }
+fn k_chain(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n - 2 * s + 10; }
+fn k8_sub(): i64 { var s: K8 = K8 { 5 }; var n = 3; return n - s + 10; }
+fn k8_mul(): i64 { var s: K8 = K8 { 5 }; var n = 3; return n * s + 10; }
+fn k8_lt(): i64 { var s: K8 = K8 { 5 }; var n = 3; return (n < s) + 10; }
+fn k8_bnot(): i64 { var s: K8 = K8 { 5 }; return (~s) + 10; }
+fn k_twin(): i64 { var s: KN = KN { 5, 6, 7 }; var t: KN = KN { 1, 1, 1 }; return s + t + 10; }
+fn k_twin10(): i64 { var s: KN = KN { 5, 6, 7 }; return s + 10; }
+fn k_twinf(): i64 { var w: KW = KW { 0, 5, 6, 7 }; var a: KN = KN { 1, 1, 1 }; return w.s + a; }
+fn k_f64(): i64 { var x: f64 = 2.0; var y = (0 - x) + 1.0; return f64_to(y); }
+fn k_rows(): i64 {
+    assert_eq(k_sub(), 8, "K1: n - s + 10 is (3 - 5) + 10 (dispatched KN_add(&s, 10): 1; the filed repro SIGSEGV)");
+    assert_eq(k_add(), 18, "K2: n + s + 10");
+    assert_eq(k_mul(), 25, "K3: n * s + 10");
+    assert_eq(k_div(), 10, "K4: n / s + 10");
+    assert_eq(k_mod(), 13, "K5: n % s + 10");
+    assert_eq(k_shl(), 106, "K6: n << s + 10");
+    assert_eq(k_shr(), 13, "K7: n >> s + 10");
+    assert_eq(k_sar(), 7, "K8: n >>> s + 10");
+    assert_eq(k_and(), 11, "K9: (n & s) + 10");
+    assert_eq(k_or(), 17, "K10: (n | s) + 10");
+    assert_eq(k_xor(), 16, "K11: (n ^ s) + 10");
+    assert_eq(k_lt(), 11, "K12: (n < s) + 10");
+    assert_eq(k_eq(), 10, "K13: (n == s) + 10");
+    assert_eq(k_land(), 11, "K14: (n && s) + 10");
+    assert_eq(k_lor(), 11, "K15: (n || s) + 10");
+    assert_eq(k_bnot(), 4, "K16: (~s) + 10");
+    assert_eq(k_sat(), 18825, "K17: n +| s + 10, n -| s + 10, n *| s + 10");
+    assert_eq(k_chk(), 18825, "K18: n +? s + 10, n -? s + 10, n *? s + 10");
+    assert_eq(k_chain(), 3, "K19: n - 2 * s + 10 (the * leg's integer result on the right)");
+    assert_eq(k8_sub(), 8, "K20: 8 B: n - s + 10");
+    assert_eq(k8_mul(), 25, "K21: 8 B: n * s + 10");
+    assert_eq(k8_lt(), 11, "K22: 8 B: (n < s) + 10");
+    assert_eq(k8_bnot(), 4, "K23: 8 B: (~s) + 10");
+    assert_eq(k_twin(), 60, "K24: s + t + 10 dispatches KN_add(s, t), then an integer + 10 (unchanged)");
+    assert_eq(k_twin10(), 1, "K25: s + 10 dispatches KN_add(s, 10) (unchanged)");
+    assert_eq(k_twinf(), 50, "K26: w.s + a dispatches from the field (decision 11, unchanged)");
+    assert_eq(k_f64(), 0 - 1, "K27: (0 - x) + 1.0 with x: f64 keeps the f64 type (kind 2: -2.0 + 1.0)");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
+    k_rows();
     strs();
     eladdr();
     flags();

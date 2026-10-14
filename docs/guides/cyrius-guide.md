@@ -1801,6 +1801,14 @@ still loaded as an 8-byte word on the way (as in every value use of one — an a
 operand): an object ending exactly at the end of a mapping faults. (A dereference of a `*S` of 1 to 7
 bytes reads exactly its struct since 6.7.11 — see below.)
 
+**An integer operator's result is an integer** (6.7.11): with an integer left operand, `n - s` on a
+struct `s` is arithmetic on the struct's first word (its word, at 8 bytes or less), and the result is an
+integer whatever the operator — `+ - * / % << >> >>>`, `& | ^`, a comparison, `&&` / `||`, `+| +? -| -?
+*| *?` and `~s` — so `n - s + 10` is `(n - s) + 10`. Through 6.7.10 the result kept the right operand's
+struct type, and the next `+ - * /` dispatched on it: `n - s + 10` called `S_add(&s, 10)` and discarded
+`n - s` (a crash when `S_add` read its right operand as a struct), `(n < s) + 1` and `(~s) + 1` likewise,
+and with no `S_add` each was refused as an undefined function. (`!s` was always an integer.)
+
 **A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
 `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass
 the struct `p` points at exactly as a struct variable in that place does — to a by-value parameter over
