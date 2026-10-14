@@ -1379,6 +1379,22 @@ fn f(): i64 {
 }
 ```
 
+An untyped `var x = mk(9);` takes the struct's type from the call, and so does `var x = (mk(9));`
+or `((mk(9)))`: parentheses around the whole call are transparent (6.7.11; before, `x` held the
+struct's first word, `x.z` was refused and `take(x)` passed that word as the struct's address —
+a crash). An annotation that names no struct is never replaced by the callee's struct:
+`var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
+returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
+
+```
+error: cannot initialise 'x: i64' from 'mk', which returns the struct 'P3' - declare 'x: P3' or bind a field
+```
+
+Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y` compiled, and a
+`u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
+(`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
+keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
+
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, or a method or
 overloaded operator returning it. Anything else — a call returning a *different* struct, an

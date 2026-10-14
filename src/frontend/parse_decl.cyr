@@ -6121,6 +6121,100 @@ fn _var_rhs_call(S, ti): i64 {
     return c;
 }
 
+# ⛔ 6.7.11 — PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so `var x = (mk());`
+# with `mk` returning a struct over 8 B inferred nothing: x held the FIRST word, and `dq(x)` into a
+# by-value struct parameter passed it as the struct's address (SIGSEGV; cx / PE a guest error). The
+# number of parentheses that wrap the whole untyped initialiser at `ti` (`_pwrap_k`, up to the `;`),
+# 0 for none: the receive then judges the call inside, and the typed path takes it through
+# `_scv_peel`, exactly as for `var x: Q = (mk());`. A struct annotation peels for itself; a tuple
+# literal is no wrap; a dyn result keeps its own refusals (6.7.8 V4d). CHANGELOG [6.7.11]
+fn _rcv_peel(S, ti, pscale): i64 {
+    if (pscale != 0) { return 0; }
+    if (TOKTYP(S, ti) != 10) { return 0; }
+    if (_tup_lit_at(S, ti) >= 0) { return 0; }
+    var k = _pwrap_k(S, ti);
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    if (TOKTYP(S, ti + k) != 2) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti + k));
+    if (fi >= 0) { if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; } }
+    return k;
+}
+# The call at `ti` is the whole initialiser: followed by the `;`, or by the wrap's `)` (`pk` > 0).
+fn _rcv_iscall(S, ti, pk): i64 {
+    if (_var_rhs_call(S, ti) == 0) { return 0; }
+    if (pk > 0) { return _call_ends_at(S, ti, 11); }
+    return _call_ends_at(S, ti, 5);
+}
+# ⛔ 6.7.11 — `var x: i64 = mkp();` (`: u8`, `: f64`, `: bool`, any annotation that names no struct)
+# with `mkp` returning a struct over 8 B: the receive inferred the struct OVER the annotation, so x
+# became a P2 (`x.b` compiled) and a `u8` held 333 — or, for a bool, the bool check refused it as
+# "not a bool". Refused by name at the call (the user's decision, 2026-10-13: refuse); 1 = refused,
+# and the variable parses on as its annotation says, with no struct receive (a bool's own check is
+# dropped: it would refuse the same initialiser twice). A struct of 8 B or less and a `Str` handle
+# are one word, which the scalar keeps; a dyn's is `_dyn_var_ann`'s. `ann` is the annotation's first
+# token, the cursor its `=`. CHANGELOG [6.7.11]
+fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
+    if (pscale != 0) { return 0; }
+    if (ann <= 0) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz <= 8) { return 0; }
+    if (sz <= 16) { if (sid == _STR_SID(S)) { return 0; } }
+    if (_rcv_tp_base(S, ann) == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var eq = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot initialise '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    _rcv_ann_pr(S, ann, eq);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    PRSTR("', which returns the struct '");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' - declare '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' or bind a field\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, eq);
+    return 1;
+}
+# The annotation is the enclosing generic fn's type parameter, in its BASE parse (`_inst_name` 0, T
+# the i64 base): each instance judges its own binding — `var x: T = mkp();` is `x: P2` in `f<P2>`.
+fn _rcv_tp_base(S, ann): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    var noff = TOKVAL(S, ann);
+    if (_tp_resolve(S, noff) != 0) { return 1; }
+    return _tn_tparam(S, ann, noff);
+}
+# The annotation as written: the source bytes from token `ann` up to the `=` at `eq`, trailing
+# blanks trimmed; its name when the tokens carry no source offsets.
+fn _rcv_ann_pr(S, ann, eq): i64 {
+    var a = GTOFF(S, ann);
+    var e = GTOFF(S, eq);
+    while (e > a) {
+        var c = load8(S + 0x459D000 + e - 1);
+        if (c != 32) { if (c != 9) { if (c != 10) { break; } } }
+        e = e - 1;
+    }
+    if (a > 0) { if (e > a) { if (e - a < 128) {
+                syscall(SYS_WRITE, 2, S + 0x459D000 + a, e - a);
+                return 0;
+            } } }
+    if (TOKTYP(S, ann) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ann)); return 0; }
+    PRSTR(TOKNAME(TOKTYP(S, ann)));
+    return 0;
+}
+
 # The right-hand side of a destructure (cursor on it) must be ONE whole call: `f(`, `g<..>(` or
 # `x.m(`, with `;` right after its `)`. `dm(17, 5) + (k / 9) - 11` opens with the same tokens and
 # used to compile with the arithmetic's leftovers in rdx landing in the second target (an idiv
@@ -6771,15 +6865,16 @@ fn PARSE_VAR(S): i64 {
     var asv_pair = 0;
     var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
-        var _look_ti = GTI(S) + 1;
+        var _look_pk = _rcv_peel(S, GTI(S) + 1, pscale);   # 6.7.11: `var x = (mk());`
+        var _look_ti = GTI(S) + 1 + _look_pk;
         if (TOKTYP(S, _look_ti) == 2) {
             # v6.3.37 (B1 half-B / B2): recognize a struct-returning call in BOTH the
             # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
             # RHS-consume path (parse_expr.cyr:375) already handles the generic call;
             # only this LHS receive-type inference needed the `<`-token widening.
             # 6.6.12: `_var_rhs_call` — and not a call followed by `.field` (`mkp(3).y`).
-            var _look_iscall = _var_rhs_call(S, _look_ti);
-            if (_look_iscall == 1) { _look_iscall = _call_ends_at(S, _look_ti, 5); }   # 6.7.6: the WHOLE initialiser
+            # 6.7.6: the WHOLE initialiser (6.7.11: or the whole inside of its wrap).
+            var _look_iscall = _rcv_iscall(S, _look_ti, _look_pk);
             if (_look_iscall == 1) {
                 # ⛔ 6.6.10: the callee the call REACHES — a generic's instance for explicit
                 # type args or an inferred struct argument — not the base FINDFN names. The
@@ -6790,6 +6885,8 @@ fn PARSE_VAR(S): i64 {
                 _rcv_fi = _look_fi;
                 if (_look_fi >= 0) {
                     var _look_sid = GFRS(S, _look_fi);
+                    # 6.7.11: an annotation naming no struct is refused; the variable keeps it (no receive).
+                    if (_rcv_scalar_ann(S, _look_ti, _look_sid, pscale, ann_ti, noff) == 1) { lbool = 0; _look_sid = 0; }
                     # v6.3.39 (B-explicit): an EXPLICIT specialized-instance receiver of a
                     # generic call — `var m: M<i32> = mk<i32>(...)` — annotated pscale as the
                     # packed instance sid (M$i32), but the generic callee returns the BASE
@@ -6839,7 +6936,8 @@ fn PARSE_VAR(S): i64 {
                     # composite return ABI). Str (its own 16B
                     # struct, special-cased by sid) stays on the
                     # scalar-rax single-slot pointer-mode path.
-                    if (_look_sid > 0 && lbool == 0) {   # 6.7.3: a bool never receives a struct
+                    # 6.7.3: a bool never receives a struct; 6.7.11: a wrapped call is `_scv_peel`'s.
+                    if (_look_sid > 0 && lbool == 0 && _look_pk == 0) {
                         var _look_sz = STRUCTSZ(S, _look_sid - 1);
                         if (_look_sz > 16) {
                             asv_try = 1;

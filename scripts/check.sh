@@ -2427,6 +2427,11 @@ _chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
 # first value was taken as the struct's address (SIGSEGV) or as one field. x86 / aarch64 / cx / PE;
 # the crossing, `*P`, `Str` and scalar controls run. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/multi_value_into_named_struct.sh"
+# 6.7.11 (returns) — a local's struct receive from a call: `var x = (mk());` receives the struct as
+# `var x = mk();` does (it held the first word: SIGSEGV through a by-value parameter), and an
+# annotation naming no struct (`var x: i64 = mkp();`, u8, f64, bool, ..) is refused by name (it took
+# the struct over the annotation). x86 / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/struct_receive_inference_checked.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"

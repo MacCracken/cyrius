@@ -67,7 +67,9 @@ refused w09 "$DI" "W9: = 0 + ok"                   "$M var ok: bool = true; var 
 refused w10 "$DI" "W10: = ~ok"                     "$M var ok: bool = true; var b: bool = ~ok; return b; }$E"
 refused w11 "$DI" "W11: an untyped var holding a comparison" "$M var x = 3 < 4; var b: bool = x; return b; }$E"
 refused w12 "$DI" "W12: = 1.5"                     "$M var b: bool = 1.5; return 0; }$E"
-refused w13 "$DI" "W13: = a 24-byte struct call"   'struct Pt { x; y; z; }\nfn mk(): Pt { var p: Pt; p.x = 1; p.y = 2; p.z = 3; return p; }\nfn main(): i64 { var b: bool = mk(); return 0; }\nsyscall(60, main());\n'
+# W13: 6.7.11 — a struct over 8 B into ANY annotation that names no struct is refused by that name
+# (the user's decision, 2026-10-13; tests/gates/frontend/struct_receive_inference_checked.sh).
+refused w13 "cannot initialise 'b: bool' from 'mk', which returns the struct 'Pt' - declare 'b: Pt' or bind a field" "W13: = a 24-byte struct call"   'struct Pt { x; y; z; }\nfn mk(): Pt { var p: Pt; p.x = 1; p.y = 2; p.z = 3; return p; }\nfn main(): i64 { var b: bool = mk(); return 0; }\nsyscall(60, main());\n'
 refused w14 "$DI" "W14: = an 8-byte struct call"   'struct Q { a; }\nfn mq(): Q { var q: Q; q.a = 1; return q; }\nfn main(): i64 { var b: bool = mq(); return 0; }\nsyscall(60, main());\n'
 refused w15 "$AS" "W15: b = 1"                     "$M var b: bool = true; b = 1; return b; }$E"
 refused w16 "$AS" "W16: b = !b + 1"                "$M var b: bool = false; b = !b + 1; return 0; }$E"
