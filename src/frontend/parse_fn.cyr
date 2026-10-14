@@ -646,6 +646,7 @@ fn _tc_frame_divert(S, cfi): i64 {
     # `_refuse_pair_return` / `_refuse_simd_return` see the shape.
     if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { return 1; } }
     if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { return 1; } }
+    if (_tc_small_sret_divert(S, cfi) == 1) { return 1; }   # 6.7.11: the struct class of 8 B or less
     if (_tc_f64_ret_divert(S, cfi) == 1) { return 1; }   # 6.6.20: the scalar f64 class
     # v6.4.31 — a SIMD-returning fn on Win64 returns through a hidden retptr in RCX, which the tail
     # path's argument marshalling overwrites (`return f32v4_make(...)` SIGSEGV'd).
@@ -654,6 +655,19 @@ fn _tc_frame_divert(S, cfi): i64 {
             if (_cur_fn_returns_vector(S) == 1) { return 1; }
         }
     }
+    return 0;
+}
+# 6.7.11 — the struct class of 8 B or less, the same rule as the pair line above: a `jmp` hands our
+# caller the callee's rax as this fn's struct, right only when the callee returns this same struct
+# (or an untyped word). `return mk();` with `fn mk(): U8` from a `: S8` fn returned U8's bytes as an
+# S8, unchecked — the normal path is where `_ret_small_val` refuses it by name. CHANGELOG [6.7.11]
+fn _tc_small_sret_divert(S, cfi): i64 {
+    if (cfi < 0) { return 0; }
+    if (_ret_small_cls(S) == 0) { return 0; }
+    var rs = GFRS(S, cfi);
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    if (rs != _cur_fn_ret_sid) { return 1; }
     return 0;
 }
 # 6.6.20 — the SCALAR f64 class, the same rule as the pair / vector lines above. On the x86
@@ -2562,8 +2576,8 @@ fn _ret_struct_pair(S): i64 {
 # ⛔ 6.7.10 (B7-1) — and a HANDLE of 8 B or less (the handle line: `var p: B8 = alloc(8); .. return p;`),
 # which returns the struct it points at as a handle over 8 B does (`_ret_local_inline`); and either
 # inside parentheses (`return (p);`, transparent since 6.7.6), which handed back the address. A
-# handle of ANOTHER struct returns its own struct's bytes, as an inline local of another struct
-# returns its word (this class never compared the type) — not the address.
+# handle or a `*U` of ANOTHER struct is left to the scalar tail, which refuses it by name
+# (`_ret_small_val`, 6.7.11).
 fn _ret_small_ptrp(S): i64 {
     if (_cur_fn_ret_sid <= 0) { return 0; }
     if (_cur_fn_ret_stash > 0) { return 0; }
@@ -2576,7 +2590,7 @@ fn _ret_small_ptrp(S): i64 {
     if (li < 0) { return _ret_small_gh(S, k); }   # 6.7.10 (B7-1g): a handle global
     var hl = _small_hdl(S, li);
     if (_is_ptr_param(S, li) == 0) { if (hl == 0) { return 0; } }
-    if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { if (hl == 0) { return 0; } }
+    if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { return 0; }
     STI(S, GTI(S) + 2 + 2 * k);           # IDENT ; and the wrap
     var t = _sptr_param_temp(S, li, 0 - GLTYPE(S, li));
     EFLLOAD(S, t);
@@ -2598,6 +2612,111 @@ fn _hl_ret_k(S): i64 {
     }
     if (TOKTYP(S, st + k + j) != 5) { return 0 - 1; }
     return k;
+}
+# ⛔ 6.7.11 — THE VALUE A FN RETURNING A STRUCT OF 8 B OR LESS RETURNS IS CHECKED BY ITS STRUCT, as the
+# 9-16 B (`_refuse_pair_return`) and > 16 B ("identifier type != fn ret_sid") classes check theirs (6.7.10
+# decision 6: struct rules are size-independent). This class returns one word in rax, and its scalar
+# tail loaded whatever word the expression had: another struct's local, by-value parameter, global,
+# parenthesised name, call, field, method or operator result, a handle of another struct or a dereference
+# of a `*U` handed back U's bytes as S's (`return u;` exit 3, no diagnostic), and a `*S` LOCAL handed
+# back the ADDRESS (an address byte where 8 was right), while a `p: *S` parameter copied (6.6.17)
+# (issues/2026-10-12-small-struct-return-takes-another-structs-value.md). The user's decision
+# (2026-10-13): every other-struct shape is refused by name. The expression at `st` is parsed with the
+# argument check's records armed (`_ret_expr_sid`, `_ess_deref`: the parse and its emission are
+# unchanged): a value of another struct is refused; a `*S` local or parameter — the bare name, inside
+# any parentheses (`_ret_small_ptr`) — is the struct it points at, read byte-exact with its padding 0
+# (`_hl_pval_ra`); a `*U` is refused. An untyped value stays the struct's word. CHANGELOG [6.7.11]
+# Not inside an inline replay (GIDEP): a replayed `return` is the CALLEE's (a generic straight-line body),
+# whose class is not the enclosing fn's (staged: the inline replay judges it by the caller's class).
+fn _ret_small_cls(S): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (_cur_fn_ret_stash > 0) { return 0; }
+    if (_cur_fn_ret_pair == 1) { return 0; }
+    if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    return _dx_plain(S, _cur_fn_ret_sid);
+}
+fn _ret_small_val(S, st): i64 {
+    var asid = _ret_expr_sid(S, st);
+    var kind = 0;
+    if (asid == 0) {
+        asid = _ess_deref(S, st);
+        kind = 2;
+    }
+    if (asid > 0) {
+        if (asid >= 2048) { return 0; }
+        if (_dyn_is(S, asid) == 1) { return 0; }   # refused at its own site (6.7.8 V4), once
+        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, asid, kind); }
+        return 0;
+    }
+    return _ret_small_ptr(S, st);
+}
+# `_expr_struct_sid` for a value that ends at the return's `;` (an argument's ends at `,` / `)`): the
+# expression at `st` parsed (PCMPE) with the static-struct records armed — a bare name, a whole free
+# call (resolved after the parse), a whole method / operator result, a whole struct-typed or `Str`
+# field, inside any parentheses — its struct, `_ess_nm` the name a refusal names; 0 = untyped /
+# scalar / unknown.
+fn _ret_expr_sid(S, st): i64 {
+    var k = 0;
+    if (TOKTYP(S, st) == 10) {
+        k = _pwrap_k(S, st);
+        if (TOKTYP(S, _pw_end) != 5) { k = 0; }
+    }
+    var ist = st + k;
+    var fk = _fpk_want;
+    _fpk_want = ist;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;                   # only this value's own record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    var asid = 0;
+    var nm = 0;
+    if (TOKTYP(S, ist) == 2) {
+        nm = TOKVAL(S, ist);
+        var ie = GTI(S) - k;
+        var o = _gcall_open(S, ist);
+        if (ie == ist + 1) { asid = _sarg_name_sid(S, ist); }
+        elif (o > ist) { if (_call_close(S, o) + 1 == ie) { asid = _sarg_call_rs(S, ist); } }
+    }
+    if (asid == 0) {
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
+        elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }
+    }
+    _ess_nm = nm;
+    return asid;
+}
+# The pointer arm: [st, cursor), inside any parentheses, a `*T` local or parameter name.
+fn _ret_small_ptr(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var pe = _ie_pe;
+    if (pe != a + 1) { return 0; }
+    if (FINDLOCAL(S, TOKVAL(S, a)) < 0) { return 0; }
+    var ps = _hl_psid(S, a, pe);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, TOKVAL(S, a), ps, 1); }
+    _hl_pval_ra(S, ps, 1);
+    return 0;
+}
+# A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
+# `*U8`)), 2 a dereference (`*pu` (a `U8`)). Reported at token `ti`; the parse goes on (no cascade).
+fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": a fn returning the struct `");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    PRSTR("` takes a value of that struct, or a pointer to one — got `");
+    if (kind == 2) { PRSTR("*"); }
+    PRSTR(S + 0xEC00000 + nm);
+    PRSTR("` (a `");
+    if (kind == 1) { PRSTR("*"); }
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
+    PRSTR("`)\n");
+    _had_error = 1;
+    return 0;
 }
 # `return IDENT;` forms after the struct classes, one call in PARSE_RETURN (cybs's per-fn ceiling).
 fn _ret_var_forms(S): i64 {

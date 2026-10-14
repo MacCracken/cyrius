@@ -8611,6 +8611,7 @@ fn _ret_small_gh(S, k): i64 {
     if (_hl_capn(S, nm) == 1) { return 0; }
     var gvi = _findvar_core(S, nm);
     if (_small_ghdl(S, gvi) == 0) { return 0; }
+    if (GVTYPE(S, gvi) != _cur_fn_ret_sid) { return 0; }   # 6.7.11: refused by name (`_ret_small_val`)
     STI(S, GTI(S) + 2 + 2 * k);           # IDENT ; and the wrap
     _hg_val_ra(S, gvi, GVTYPE(S, gvi));
     var rp = EJMP0(S);

@@ -68,6 +68,32 @@ fn t_fw3() { var s: P3; s.x = 1; s.y = 2; s.z = 3; var c: P3 = fw3(&s); s.y = 0;
 fn t_fw8() { var s: B8; s.v = 5; var c: B8 = fw8(&s); s.v = 0; return c.v; }
 fn t_fw4() { var s: B4; s.a = 0 - 7; var c: B4 = fw4(&s); s.a = 0; return c.a; }
 fn t_fw6() { var s: B6; s.a = 300; s.b = 0 - 2; var c: B6 = fw6(&s); s.a = 0; return c.a * 10 + c.b; }
+# ⛔ 6.7.11 — a `*T` LOCAL returned from a fn of 8 B or less is the struct it points at, as a `*T`
+# parameter is (above) and as a `*T` local is over 8 B: it returned the ADDRESS — an address byte where
+# 8 is right, on every target (issues/2026-10-12-small-struct-return-takes-another-structs-value.md,
+# the user's decision 2026-10-13). A copy, not an alias: the pointee is written after the return. The
+# struct is read byte-exact, its word's padding 0 (Z3: a frame of 0xFF words first).
+struct Z3 { a: i8; b: i8; c: i8; }
+var GL8 = B8 { 0 };
+var ZL[2];
+fn rl8(n): B8 { var s: B8; s.v = n; var p: *B8 = &s; return p; }
+fn rl8w(n): B8 { var s: B8; s.v = n; var p: *B8 = &s; return ((p)); }
+fn rl4(n): B4 { var s: B4; s.a = n; var p: *B4 = &s; return p; }
+fn rl6(): B6 { var s: B6; s.a = 300; s.b = 0 - 2; var p: *B6 = &s; return (p); }
+fn rlg8(): B8 { var p: *B8 = &GL8; return p; }
+fn rlz3(): Z3 { store64(&ZL, 0x4847464544434241); var p: *Z3 = &ZL; return p; }
+fn zdirty(): i64 {
+    var a: i64[16];
+    var i = 0;
+    while (i < 16) { a[i] = 0 - 1; i = i + 1; }
+    return a[15];
+}
+fn t_rl8() { var c: B8 = rl8(8); return c.v; }
+fn t_rl8w() { var c: B8 = rl8w(9); return c.v; }
+fn t_rl4() { var c: B4 = rl4(0 - 7); return c.a; }
+fn t_rl6() { var c: B6 = rl6(); return c.a * 10 + c.b; }
+fn t_rlg8() { GL8.v = 21; var c: B8 = rlg8(); GL8.v = 0; return c.v; }
+fn t_rlz3() { zdirty(); var l: Z3 = rlz3(); return load8(&l + 3) * 100000 + l.c; }
 
 alloc_init();
 assert_eq(t_p1(), 7, "8 B handle returned by value: its struct (6.7.10)");
@@ -88,4 +114,10 @@ assert_eq(t_fw3(), 10203, "control: a 24 B `*T` parameter returned by value");
 assert_eq(t_fw8(), 5, "an 8 B `*T` parameter returned by value is its struct, not its address");
 assert_eq(t_fw4(), 0 - 7, "a 4 B `*T` parameter returned by value (signed i32 field)");
 assert_eq(t_fw6(), 2998, "a 6 B `*T` parameter returned by value: {300, -2}");
+assert_eq(t_rl8(), 8, "6.7.11: an 8 B `*T` LOCAL returned by value is its struct, not its address");
+assert_eq(t_rl8w(), 9, "6.7.11: `return ((p));`, p an 8 B `*T` local");
+assert_eq(t_rl4(), 0 - 7, "6.7.11: a 4 B `*T` local returned by value (signed i32 field)");
+assert_eq(t_rl6(), 2998, "6.7.11: `return (p);`, p a 6 B `*T` local: {300, -2}");
+assert_eq(t_rlg8(), 21, "6.7.11: a `*T` local returned is a copy, not an alias of its pointee");
+assert_eq(t_rlz3(), 67, "6.7.11: a 3 B `*T` local returned: 'C', no byte past it, the word's padding 0");
 var r = assert_summary();

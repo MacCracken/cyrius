@@ -1787,10 +1787,12 @@ fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
     return _bx_refuse(S, t, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", noff);
 }
-# `return e;` in the fn being parsed.
+# `return e;` in the fn being parsed. 6.7.11: in a fn returning a struct of 8 B or less, the value is
+# checked by its struct (`_ret_small_val`).
 fn _bx_pcmpe_ret(S): i64 {
     var t = GTI(S);
-    PCMPE(S);
+    if (_ret_small_cls(S) == 1) { _ret_small_val(S, t); }
+    else { PCMPE(S); }
     if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);

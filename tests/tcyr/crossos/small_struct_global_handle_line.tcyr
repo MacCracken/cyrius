@@ -270,8 +270,6 @@ fn c_ret_8f(): S8 { A8.v = 5; return A8; }
 fn c_ret_8() { var q: S8 = c_ret_8f(); var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
 fn c_retp_8f(): S8 { A8.v = 5; return (A8); }
 fn c_retp_8() { var q: S8 = c_retp_8f(); var b = q.v; q.v = 9; return A8.v * 100 + b * 10 + q.v; }
-fn c_reto_8f(): S8 { AU8.u = 6; return AU8; }   # a handle of another struct: its own bytes
-fn c_reto_8() { var q: S8 = c_reto_8f(); return q.v; }
 fn c_opr_8() { A8.v = 5; var b: S8; b.v = 1; var q: S8 = b + A8; return q.v; }
 fn c_opr_h() { AH.v = 5; var b: H; b.v = 1; var q: H = b + AH; return q.v; }
 fn c_opl_8() { return (A8 + 8) - load64(&A8); }
@@ -895,7 +893,6 @@ assert_eq(c_pm_8(), 105, "8 B: a `self: *T` receiver");
 assert_eq(c_pm_h(), 105, "16 B: a `self: *T` receiver");
 assert_eq(c_ret_8(), 559, "8 B: return G (a copy; a fn returns no global over 8 B)");
 assert_eq(c_retp_8(), 559, "8 B: return (G)");
-assert_eq(c_reto_8(), 6, "8 B: return G of another struct gives its bytes, not its address");
 assert_eq(c_opr_8(), 6, "8 B: an operator's right operand");
 assert_eq(c_opr_h(), 6, "16 B: an operator's right operand");
 assert_eq(c_opl_8(), 8, "8 B: an operator's left operand is pointer arithmetic");

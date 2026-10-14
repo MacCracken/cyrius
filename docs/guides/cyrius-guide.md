@@ -1435,6 +1435,21 @@ integer, a field, a bare `return;` — is a compile error since v6.6.6 naming wh
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
 
+⚠ **A fn returning a struct of 8 bytes or less returns a value of that struct (6.7.11).** The struct
+travels in one register, and its `return` is checked as the two wider classes check theirs: a value
+of ANOTHER struct — a local, a by-value parameter, a global, `(u)`, a call (`return mk();` too), a
+field, a method or operator result, a dereference `*pu` of a `*U` — a `*U` local or parameter, and a
+handle of another struct (a local or a global) are each a compile error naming it:
+
+```
+error: a fn returning the struct `S8` takes a value of that struct, or a pointer to one — got `u` (a `U8`)
+```
+
+Through 6.7.10 each compiled and handed back the other struct's word (a `*U`: its address) as the
+`S8`, silently. A `*S8` LOCAL of the fn's own struct returns the struct it points at, as a `p: *S8`
+parameter has since 6.6.17 — before 6.7.11 it returned the address. An untyped value (`var x = 3;
+return x;`) is still the struct's one word.
+
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
 the register pair at 9-16 — so the result goes wherever `mk(5)` goes: `var p: P3 = fncall1(&mk, 5);`
