@@ -6302,15 +6302,19 @@ fn _CALL_ARGC_PEEK(S): i64 {
 # drift. The count is the target's min..max (6.7.7: a sibling that declares defaults fills the
 # rest), judged alike for a sibling defined above or BELOW the call: pass 1 records every
 # definition's count, variadic flag and defaults row (GFDS != 0) before pass 2 parses a call —
-# the facts `_CHECK_ARITY` judges a forward call by. Permissive only where nothing is known:
-#   - target no definition recorded (offset < 0, GFDS 0): routed as before 6.5.1, into the
-#     undefined-function diagnostic.
-#   - target is VARIADIC: arity is unconstrained by construction.
+# the facts `_CHECK_ARITY` judges a forward call by. A VARIADIC target is unconstrained by
+# construction.
 # 6.7.9: a forward sibling was let through unjudged, so `pr(s)` reached a 2-parameter `pr_str`
 # defined below it — garbage for the second parameter, refused naming `pr_str` since 6.7.7 —
-# where the same sibling above the call was judged and `pr` ran. CHANGELOG [6.5.1] [6.7.9]
+# where the same sibling above the call was judged and `pr` ran.
+# ⛔ 6.7.11 — a target with NO definition (offset < 0, GFDS 0: a name only called somewhere) never
+# takes the call (the user's decision (b), 2026-10-13). It was routed "into the undefined-function
+# diagnostic": `pr(s)`, written to the DEFINED `pr`, reached the undefined `pr_str` — under
+# --allow-undef a trap (rc 132), by default a refusal only because the route made the name
+# reachable. In an `object;` unit a sibling defined in another object is such a name too.
+# CHANGELOG [6.5.1] [6.7.9] [6.7.11]
 fn _OV_ARITY_OK(S, fi, argc): i64 {
-    if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 1; } }
+    if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 0; } }
     if (GFVA(S, fi) != 0) { return 1; }
     if (argc > L64(_fnt_params + fi * 8)) { return 0; }
     if (argc >= _pd_min(fi)) { return 1; }
