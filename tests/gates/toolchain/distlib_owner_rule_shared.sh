@@ -47,6 +47,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
 CYRIUS=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 VER=$(cat "$ROOT/VERSION")
