@@ -3082,6 +3082,9 @@ sankoch::br_init/2
 sankoch::br_read/2
 sankoch::br_read_bit/1
 sankoch::br_remaining/1
+sankoch::brotli_compress/4
+sankoch::brotli_compress_bound/1
+sankoch::brotli_compress_level/5
 sankoch::brotli_decompress/4
 sankoch::brotli_decompress_capped/5
 sankoch::bw_align/1
