@@ -6583,6 +6583,12 @@ On Windows PE, `dir_list("tests\\tcyr")` internally converts the path to
 UTF-16LE, calls `FindFirstFileW` and `FindNextFileW`, and returns UTF-8 Str
 entries. On Linux, it calls `getdents64`. The consumer code is identical.
 
+On Linux and macOS the listers open the path with `O_DIRECTORY` (6.7.11), so a path that is not
+a directory fails at the open: `dir_list_checked` returns -20 (`-ENOTDIR`) for a regular file or a
+FIFO and -2 for a dangling link, `dir_list_into` returns -1, and `dir_list` an empty vec. Before
+6.7.11 they opened with `O_RDONLY` alone, and a FIFO at the path blocked the call in `open(2)`
+until a writer came — for good, in a server. A regular file read -20 on Linux and -22 on macOS.
+
 ## Targeting AGNOS (ring-3 userspace) (v6.0.48)
 
 AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace
@@ -6609,12 +6615,13 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines an append-only syscall surface: **#0–#104 and #106–#108**
+agnos defines an append-only syscall surface: **#0–#104 and #106–#111**
 (`lib/syscalls_x86_64_agnos.cyr`; #105 was withdrawn and is never re-added). Beyond the
 GPU-compute band #82–#91 it carries `gpu_shader_op` (#92), `gpu_modeset_op` (#93),
 `gpu_recover_op` (#94), `uptime_us` (#95), **`fork` (#96, minted at v6.5.37 / agnos 1.56.55 —
 its arm is in the ring-3 entry stub)**, the local-IPC **channel band** `chan_op` (#97, v6.5.8),
-and on up to `sched_yield_to` (#108, agnos 1.57.9); the next free number is #109. ⚠ A number
+and on up to `sched_yield_to` (#108, agnos 1.57.9), then `sock_send_dl` (#109), `console_mode` (#110) and
+`fd_kind` (#111) (agnos 1.57.13; peers since v6.7.11); the next free number is #112. ⚠ A number
 is minted only once its kernel arm exists — on agnos an unknown number falls *through* the
 dispatch chain and the caller reads the fall-through value as data, so a
 minted-but-unimplemented constant is strictly worse than an absent one. The register
@@ -6622,7 +6629,7 @@ convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
 result ≥0 on success, -1 on error). Key differences from Linux:
 
 ```
-# agnos syscall numbers — append-only, #0–#104 + #106–#108 (lib/syscalls_x86_64_agnos.cyr)
+# agnos syscall numbers — append-only, #0–#104 + #106–#111 (lib/syscalls_x86_64_agnos.cyr)
 SYS_EXIT = 0       (not Linux 60)
 SYS_WRITE = 1
 SYS_READ = 5
@@ -6671,7 +6678,7 @@ lib/process.cyr           → lib/process_agnos.cyr
 lib/io.cyr (getenv)       → delegates to lib/args_agnos.cyr::_agnos_getenv
 ```
 
-**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (#0–#104 + #106–#108),
+**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (#0–#104 + #106–#111),
 with wrappers (`sys_write`, `sys_read`, `sys_open`, `sys_spawn`, `sys_waitpid`,
 `sys_mmap`, `sys_stat`, the socket/UDP/ICMP networking band, framebuffer/blit/keyboard,
 the GPU-compute band `sys_gpu_dispatch`..`sys_gpu_blit_bb` (#82–#91), the
@@ -6863,7 +6870,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 ### Capabilities and Limitations
 
 **Works on agnos**:
-- Syscall wrappers (all of #0–#104 and #106–#108; #105 was withdrawn)
+- Syscall wrappers (all of #0–#104 and #106–#111; #105 was withdrawn)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
 - Process spawn, wait and capture from disk (`sys_spawn_argv` / #43, WAIT_BLOCK, #62 redirects),
@@ -6918,7 +6925,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - The `cyrius` CLI: built for agnos (6.6.17) it answers `version` and `help` only — its verbs
   run cycc as a child process through fork / execve / waitpid. Compile with `cycc` directly
 
-The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 (#108 since agnos 1.57.9; #105 withdrawn)**. The
+The agnos syscall surface is **append-only, currently #0–#104 + #106–#111 (#109–#111 since agnos 1.57.13; #105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —
 as canonical: any number / signature / struct-layout change there must land in this guide and
 `lib/syscalls_x86_64_agnos.cyr` in the same change. `agnos/docs/development/agnos-userland-abi.md`

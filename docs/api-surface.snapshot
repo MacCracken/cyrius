@@ -3082,6 +3082,9 @@ sankoch::br_init/2
 sankoch::br_read/2
 sankoch::br_read_bit/1
 sankoch::br_remaining/1
+sankoch::brotli_compress/4
+sankoch::brotli_compress_bound/1
+sankoch::brotli_compress_level/5
 sankoch::brotli_decompress/4
 sankoch::brotli_decompress_capped/5
 sankoch::bw_align/1
@@ -4853,6 +4856,7 @@ syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_chroot/1
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_connect/3
+syscalls_x86_64_agnos::sys_console_mode/2
 syscalls_x86_64_agnos::sys_dup/1
 syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
@@ -4868,6 +4872,7 @@ syscalls_x86_64_agnos::sys_fchmod/2
 syscalls_x86_64_agnos::sys_fchown/3
 syscalls_x86_64_agnos::sys_fchownat/5
 syscalls_x86_64_agnos::sys_fcntl/3
+syscalls_x86_64_agnos::sys_fd_kind/1
 syscalls_x86_64_agnos::sys_fdatasync/1
 syscalls_x86_64_agnos::sys_fgetxattr/4
 syscalls_x86_64_agnos::sys_flistxattr/3
@@ -4988,6 +4993,7 @@ syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_peer/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
+syscalls_x86_64_agnos::sys_sock_send_dl/4
 syscalls_x86_64_agnos::sys_socket/3
 syscalls_x86_64_agnos::sys_socketpair/4
 syscalls_x86_64_agnos::sys_spawn/2

@@ -17,6 +17,14 @@
 # lacked, axis 6 their arity against the Linux-common wrappers, axis 7 the agnos build of the CLI
 # (cbt/cyrius.cyr), which stopped at ~110 arity errors. Measured on the 4a37046b peer: axis 5's
 # probes do not build (5 undefined fns), axis 6 reads 0 for all five, axis 7 does not compile.
+# 6.7.11: axis 9 a negative fd is not socket slot 7 (on the 6.7.10 peer sys_write(-1) loops on
+# #48 until the tracer's call limit and every later row reads empty: 7 FAIL); axis 10
+# console_mode#110 + SIGWINCH (mutants measured RED: the wrapper's set / clear swapped -> 3 FAIL;
+# its answer dropped -> 1 FAIL); axis 11 fd_kind#111 (the filing's raw one-liner, which asks the
+# kernel about a tagged socket fd -> 5 FAIL; _agnos_is_sock_fd back to a bit test -> sys_fd_kind(-1)
+# and AGNOS_SOCK_TAG + 8 never reach #111: 2 FAIL in this axis); axis 12 sock_send_dl#109's raw
+# wrapper (its a4 dropped -> both ceilings read 0, the zero a short call's r10 gets — i.e. "no
+# ceiling": 2 FAIL).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -468,6 +476,144 @@ check "  so does _agnos_sock_recv_block read by conn id (tls_native's _tn_agnos_
 run "$T/a8u.cyr" rcvlate
 check "  and a conn closed with a byte still stashed takes it with it: the reused conn id reads 'QQ' only" \
     "2 20817" "$(mark 146) $(mark 147)"
+
+# ── axis 9 — a negative fd is not socket slot 7 (6.7.11) ───────────────────────────────────────
+# _agnos_is_sock_fd tested only `fd & AGNOS_SOCK_TAG`, which every negative i64 passes, so the -1
+# of a failed open was slot 7: sys_write(-1) sent to slot 7's peer (#48), sys_close(-1) sent its
+# FIN (#50) and answered 0. Slot 7 is LIVE here (eight sockets, the eighth connected), so a
+# regression shows as a #48 / #49 / #50. The filed repro itself is agnos_negative_fd_not_socket.sh.
+echo "axis 9 — a negative fd (a failed open's -1) is never taken for socket slot 7 (6.7.11):"
+cat > "$T/a9.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+var s0_t, s0 = tcp_socket();
+var s1_t, s1 = tcp_socket();
+var s2_t, s2 = tcp_socket();
+var s3_t, s3 = tcp_socket();
+var s4_t, s4 = tcp_socket();
+var s5_t, s5 = tcp_socket();
+var s6_t, s6 = tcp_socket();
+var s7_t, s7 = tcp_socket();
+sock_connect(s7, INADDR_LOOPBACK(), 8080);
+var b[8];
+syscall(999, 150, s7 - AGNOS_SOCK_TAG);
+sys_write(0 - 1, "abc", 3);
+syscall(999, 151, 0);
+sys_read(0 - 1, &b, 1);
+syscall(999, 152, 0);
+var rc = sys_close(0 - 1);
+syscall(999, 153, rc);
+syscall(999, 154, _agnos_fd_conn(s7) * 10 + _agnos_fd_conn(0 - 1));
+syscall(999, 155, _agnos_is_sock_fd(AGNOS_SOCK_TAG + 8) * 1000 + _agnos_is_sock_fd(AGNOS_SOCK_TAG - 1) * 100 + _agnos_is_sock_fd(AGNOS_SOCK_TAG) * 10 + _agnos_is_sock_fd(AGNOS_SOCK_TAG + 7));
+sys_write(AGNOS_SOCK_TAG + 8, "abc", 3);
+syscall(999, 156, 0);
+sys_write(s7, "abc", 3);
+syscall(999, 157, 0);
+sys_exit(0);
+EOF
+run "$T/a9.cyr" plain
+check "the probe's eighth socket is slot 7 and is connected (conn 0)" "7" "$(mark 150)"
+check "sys_write(-1) is write#1 with a1 = -1, a4 = 0, and no sock_send#48" "-1 0 0" \
+    "$(after 150 1 | awk '{ print $1, $4 }') $(between 150 48)"
+check "sys_read(-1) is read#5 with a1 = -1, and no sock_recv#49" "-1 0" "$(after 151 5 | awk '{ print $1 }') $(between 151 49)"
+check "sys_close(-1) answers -1 and issues nothing: no sock_close#50, no close#6" "-1 0 0" \
+    "$(mark 153) $(between 152 50) $(between 152 6)"
+check "  slot 7 is still live after it (conn 0), and _agnos_fd_conn(-1) is -1" "-1" "$(mark 154)"
+check "the socket range is exactly AGNOS_SOCK_TAG + 0..7: +8 no, -1 no, +0 yes, +7 yes" "11" "$(mark 155)"
+check "sys_write(AGNOS_SOCK_TAG + 8) is a plain write#1 on that fd, no #48" "1073741832 0" \
+    "$(after 155 1 | awk '{ print $1 }') $(between 155 48)"
+check "  while sys_write on slot 7's own fd still sends on its conn: #48(0, …, 3)" "0 3" \
+    "$(after 156 48 | awk '{ print $1, $3 }')"
+
+# ── axis 10 — console_mode#110 and SIGWINCH (agnos 1.57.13; 6.7.11) ───────────────────────────
+# The darshana mapping on agnos: tty_echo_off = (CM_NOECHO | CM_FLUSH, 0), tty_flush_input =
+# (CM_FLUSH, 0), restore = (0, CM_NOECHO); (0, 0) is the query and the support probe.
+echo "axis 10 — sys_console_mode hands #110 (set, clear) as given; CM_* and SIGWINCH match the contract:"
+cat > "$T/a10.cyr" <<'EOF'
+syscall(999, 160, sys_console_mode(CM_NOECHO | CM_FLUSH, 0));
+syscall(999, 161, sys_console_mode(CM_FLUSH, 0));
+syscall(999, 162, sys_console_mode(0, CM_NOECHO));
+syscall(999, 163, sys_console_mode(0, 0));
+syscall(999, 164, CM_NOECHO * 1000 + CM_FLUSH * 100 + SIGWINCH);
+sys_exit(0);
+EOF
+run "$T/a10.cyr" plain
+check "sys_console_mode(CM_NOECHO | CM_FLUSH, 0) is #110(3, 0), a4 = 0" "3 0 0" \
+    "$(awk '$1 == "sc" && $2 == 110 { print $3, $4, $6; exit }' "$T/run.log")"
+check "sys_console_mode(CM_FLUSH, 0) is #110(2, 0)" "2 0" "$(after 160 110 | cut -d' ' -f1-2)"
+check "sys_console_mode(0, CM_NOECHO) is #110(0, 1) — echo back on" "0 1" "$(after 161 110 | cut -d' ' -f1-2)"
+check "sys_console_mode(0, 0) is #110(0, 0) — the query / probe" "0 0" "$(after 162 110 | cut -d' ' -f1-2)"
+check "  and the kernel's answer (the flags before the call) is returned as is: the fake's 1" "1" "$(mark 163)"
+check "CM_NOECHO = 1, CM_FLUSH = 2, SIGWINCH = 28" "1228" "$(mark 164)"
+
+# ── axis 11 — fd_kind#111 (agnos 1.57.13; 6.7.11) ─────────────────────────────────────────────
+# The kernel answers -1 for this adapter's tagged socket fds (a userland handle, not a kernel fd),
+# so sys_fd_kind answers them itself, with NO #111: FDK_SOCKET while the slot is open (reserved,
+# connected or listening), -1 once it is free. The fake kernel's #111 answers like 1.57.13: -1
+# for fd < 0 or >= 32, 1 (CONSOLE) for 0..2, 2 (FILE) otherwise.
+echo "axis 11 — sys_fd_kind: real fds go to #111; tagged socket fds are answered by the adapter (6.7.11):"
+cat > "$T/a11.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+syscall(999, 170, sys_fd_kind(5));
+syscall(999, 171, sys_fd_kind(0));
+syscall(999, 172, sys_fd_kind(0 - 1));
+var c_t, c = tcp_socket();
+syscall(999, 173, sys_fd_kind(c));
+sock_connect(c, INADDR_LOOPBACK(), 8080);
+syscall(999, 174, sys_fd_kind(c));
+var l_t, l = tcp_socket();
+sock_bind(l, INADDR_LOOPBACK(), 8080);
+sock_listen(l, 4);
+syscall(999, 175, sys_fd_kind(l));
+sys_close(c);
+syscall(999, 176, 0);
+syscall(999, 177, sys_fd_kind(c));
+syscall(999, 178, sys_fd_kind(AGNOS_SOCK_TAG + 8));
+syscall(999, 179, FDK_CONSOLE * 1000000000 + FDK_FILE * 100000000 + FDK_DIR * 10000000 + FDK_PIPE * 1000000 + FDK_CHAN * 100000 + FDK_SOCKET * 10000 + FDK_SIGNALFD * 1000 + FDK_EPOLL * 100 + FDK_TIMERFD * 10 + FDK_DEVICE);
+sys_exit(0);
+EOF
+run "$T/a11.cyr" plain
+check "sys_fd_kind(5) is #111(5), a4 = 0, and returns the kernel's answer (FILE)" "5 0 2" \
+    "$(awk '$1 == "sc" && $2 == 111 { print $3, $6; exit }' "$T/run.log") $(mark 170)"
+check "sys_fd_kind(0) — the support probe — is #111(0): CONSOLE" "0 1" "$(after 170 111 | awk '{ print $1 }') $(mark 171)"
+check "sys_fd_kind(-1) goes to the kernel (#111(-1) -> -1), never FDK_SOCKET" "-1 -1" \
+    "$(after 171 111 | awk '{ print $1 }') $(mark 172)"
+check "a reserved (unconnected) tagged socket fd is FDK_SOCKET" "6" "$(mark 173)"
+check "a connected tagged socket fd is FDK_SOCKET" "6" "$(mark 174)"
+check "a listening tagged socket fd is FDK_SOCKET" "6" "$(mark 175)"
+check "  …and none of those three issued a #111" "0" "$(awk '$1 == "sc" && $2 == 999 && $3 == 172 { on = 1; next } $1 == "sc" && $2 == 999 && $3 == 176 { exit } on && $1 == "sc" && $2 == 111 { n++ } END { print n + 0 }' "$T/run.log")"
+check "a closed tagged socket fd is -1, with no #111" "-1 0" "$(mark 177) $(between 176 111)"
+check "AGNOS_SOCK_TAG + 8 is no tagged fd: it goes to the kernel (-1)" "1073741832 -1" \
+    "$(after 177 111 | awk '{ print $1 }') $(mark 178)"
+check "FDK_CONSOLE..FDK_DEVICE are 1..10" "1234567900" "$(mark 179)"
+
+# ── axis 12 — sock_send_dl#109 (agnos 1.57.13; 6.7.11) ─────────────────────────────────────────
+# The raw wrapper hands all four registers over as given — a4 (r10) IS the ceiling, so a wrapper
+# that dropped it would hand every caller 0, #109's "no ceiling". The deadline loop that uses it is
+# agnos_sock_send_deadline.sh.
+echo "axis 12 — sys_sock_send_dl hands #109 (conn, buf, len, timeout_us) as given (6.7.11):"
+cat > "$T/a12.cyr" <<'EOF'
+fn f7(a, b, c, d, e, f, g): i64 { return a + g; }
+var b[16];
+syscall(999, 180, &b);
+f7(1, 2, 3, 4, 5, 6, 5);
+syscall(999, 181, sys_sock_send_dl(2, &b, 7, 1500000));
+syscall(999, 182, 0);
+f7(1, 2, 3, 4, 5, 6, 5);
+sys_sock_send_dl(3, &b, 16, 0 - 1);
+syscall(999, 183, 0);
+sys_sock_send_dl(3, &b, 0, 0);
+sys_exit(0);
+EOF
+run "$T/a12.cyr" plain
+check "sys_sock_send_dl(2, b, 7, 1500000) is #109(2, b, 7, 1500000)" "2 $(mark 180) 7 1500000" "$(after 180 109)"
+check "  and returns the kernel's answer (here -1: the plain fake has no #109)" "-1" "$(mark 181)"
+check "a negative ceiling (no wait) reaches a4 as -1, after a 7-arg call left r10 = 5" "3 16 -1" \
+    "$(after 182 109 | awk '{ print $1, $3, $4 }')"
+check "the probe shape (conn, buf, 0, 0) reaches the kernel as 0 / 0" "3 0 0" "$(after 183 109 | awk '{ print $1, $3, $4 }')"
 
 echo ""
 if [ "$fails" = "0" ]; then
