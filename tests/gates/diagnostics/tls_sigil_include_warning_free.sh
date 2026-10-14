@@ -13,14 +13,23 @@
 # Two warnings on every TLS / crypto consumer's build: the noise that teaches a reader to skip
 # warnings. Fixed at the SOURCE in sigil 3.13.12 (a 4 KB per-call stack buffer), refolded here.
 #
+# 6.7.11 — widened to sakshi, sandhi and yantra (issue 2026-10-12-sandhi-include-prints-large-static-
+# advisory): every sandhi / yantra build printed `warning: large static data (185200 bytes)`. The
+# cause was sakshi, not sandhi: four private buffers declared as a bare `var x[N]` (N SLOTS, 8N
+# bytes) — two 4 KiB rings reserving 32,768 B each. Fixed at the SOURCE in sakshi 2.5.10 (`u8[N]`),
+# refolded here; sakshi's static data 69,232 -> 9,088 B, sandhi's headroom under the 131,072 B line
+# ~6 KB -> ~66 KB.
+#
 # No .tcyr can see a warning (it does not change the exit code) — hence a gate.
-#   axis 1  each of the three bare includes: rc 0, zero `warning` lines, the binary exits 0
+#   axis 1  each of the six bare includes: rc 0, zero `warning` lines, the binary exits 0
 #   axis 2  ANTI-VACUOUS: the same harness counts the two warnings on a probe that has the old
 #           shape (an over-budget fn-local array, 262144 B) — the grep is not blind
 #
 # MUTATION LEDGER (6.7.10, measured in the refold worktree)
 #   a. lib/sigil.cyr back to 3.13.11 (the 6.7.9 fold) -> axis 1 RED on all three includes (2
 #      warnings each: the STATIC-storage warning and the large-static advisory)
+#   b. (6.7.11) lib/sakshi.cyr back to 2.5.9 (the 6.7.10 fold) -> axis 1 RED on sandhi and yantra
+#      (`large static data (185200 bytes)` / 185,656 B); sakshi alone stays under the line
 # The tree -> PASS.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -36,7 +45,7 @@ bad() { echo "  FAIL: $1"; fail=1; }
 
 # axis 1
 n=0
-for m in sigil tls tls_native; do
+for m in sigil tls tls_native sakshi sandhi yantra; do
     printf 'include "lib/%s.cyr"\nsyscall(60, 0);\n' "$m" > "$T/$m.cyr"
     rc=0; "$CC" < "$T/$m.cyr" > "$T/$m" 2> "$T/$m.err" || rc=$?
     w=$(grep -c '^warning' "$T/$m.err")
@@ -61,6 +70,6 @@ else
     bad "axis 2: the old shape printed $wo warning(s), want the STATIC-storage warning and the large-static advisory"
 fi
 
-[ "$fail" -eq 0 ] && [ "$n" -eq 3 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (include \"lib/sigil.cyr\", \"lib/tls.cyr\" and \"lib/tls_native.cyr\" each compile with no warning and run; the harness sees the old shape's two warnings)"
+[ "$fail" -eq 0 ] && [ "$n" -eq 6 ] || { echo "FAIL: $NAME"; exit 1; }
+echo "PASS: $NAME (include \"lib/sigil.cyr\", \"lib/tls.cyr\", \"lib/tls_native.cyr\", \"lib/sakshi.cyr\", \"lib/sandhi.cyr\" and \"lib/yantra.cyr\" each compile with no warning and run; the harness sees the old shape's two warnings)"
 exit 0
