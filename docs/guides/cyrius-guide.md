@@ -1259,8 +1259,10 @@ parameter, a global, a closure's captured copy of one, parenthesised or not; a s
 (`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
 `*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
 pointer); and a call, method, operator or if-expression that returns the struct (a generic or a
-parenthesised call too). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
-dereference of one, `*x`, included), a call returning a `*T` or an untyped value, an integer —
+parenthesised call too, and since 6.7.11 a call through `fncallN(&f, ..)` / `callptr(&f, ..)` whose
+callee `f` returns it). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
+dereference of one, `*x`, included), a call returning a `*T` or an untyped value (a call through a
+fn pointer held in a variable included: see *Returning a struct by value*), an integer —
 `var q: S8 = 0;` is a NULL handle, and `var a: Num = 1;` a handle to address 1, so `a + b` is
 pointer arithmetic with no `Num_add` dispatch (declare it from a struct value, `Num { 1 }` or
 `mkn(1)`, for the operator) — and another handle, a captured one included, which **binds**: the
@@ -1385,6 +1387,23 @@ overloaded operator returning it. Anything else — a call returning a *differen
 integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+
+⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
+know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
+the register pair at 9-16 — so the result goes wherever `mk(5)` goes: `var p: P3 = fncall1(&mk, 5);`
+(`var x = callptr(&mk, 5);` infers `P3`), `p = callptr(&mk, 5);`, `take(fncall1(&mk, 7))`, `b.v =
+fncall1(&mk, 1)`, `return callptr(&mk, a);` from a fn returning `P3`, and its struct is checked
+against the destination's as `mk(5)`'s is. At top level a result over 8 bytes is refused by name, as
+`mk(5)`'s is (there is no frame to put it in). Before 6.7.11 a call through a pointer carried no
+struct result at all: over 16 bytes the callee wrote the struct through its FIRST ARGUMENT (a
+SIGSEGV on every target), 9-16 bytes lost the second register, and from 6.7.10 an 8-byte result
+was a handle holding the struct's value. **A callee held in a variable** (`var fp = &mk;
+callptr(fp, 5)`) is unknown at the call: its result is one word, and `var p: P3 = callptr(fp, 5);`
+binds it as a handle (the handle line above). That is right for a callee returning a pointer (`fn
+gp(a): *P3`, whose `p` reads and writes the object) and is NOT supported for a callee returning a
+struct by value, which faults. Through a variable, receive a 9-16 byte struct's two words (`var a,
+b = fncall1(fp, 5);`), or, at any size, give the target an out-pointer and have it store the fields
+(`fn mko(a, out: *P3)`, then `var p: P3 = P3 { 0, 0, 0 }; var ig = callptr(fp, 5, &p);`).
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
@@ -1704,7 +1723,9 @@ untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a str
 where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
 and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
 it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
-is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
+is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`. Since 6.7.11
+an `&f` callee that returns a struct by value makes the result that struct, as `f(..)`'s is (see
+*Returning a struct by value*).
 
 ## Strings
 
@@ -5016,7 +5037,9 @@ call its own micro-frame, so `callptr` works there too.
 A call through a pointer passes exactly the arguments written: parameter defaults and named
 arguments belong to direct calls (6.7.7, see *Default and named arguments*). So
 `callptr(&f, 1)` or `fncall1(&f, 1)` with fewer arguments than `f`'s parameters is refused by
-name when `f` declares defaults, and so is a `name:` argument.
+name when `f` declares defaults, and so is a `name:` argument. A struct result comes back only
+when the callee is written `&f` (6.7.11): a callee held in a variable returns one word (see
+*Returning a struct by value*).
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:

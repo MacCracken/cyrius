@@ -7824,8 +7824,16 @@ fn _gz_unary(S, b, e): i64 {
     }
     _gz_k = 0;
     if (t == 8) { return _gz_deref(S, b, e); }   # 6.7.10: `*p` — an operator dispatches on it
+    if (_icall_sid_at(S, b) > 0) { return _gz_icall(S, b, e); }   # 6.7.11
     if (t != 2) { return 0; }
     return _gz_chain(S, b, e);
+}
+# 6.7.11 — `fncallN(&f, ..)` / `callptr(&f, ..)` spanning [b, e), `f` returning a struct: that struct, a
+# call result (kind 1), as the parse records it (`_icall_result`). Else 0.
+fn _gz_icall(S, b, e): i64 {
+    if (_gz_close(S, b + 1, e) != e - 1) { return 0; }
+    _gz_k = 1;
+    return _icall_sid_at(S, b);
 }
 # `* E` with E typed `*S` (`_hl_psid`, as `_dlo_park` reads it): S, kind 7 — an operator's left operand
 # dispatches on it (decision 11); a declaration from it is `_gz_star`'s. Else 0.

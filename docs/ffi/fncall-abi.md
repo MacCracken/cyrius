@@ -137,13 +137,19 @@ depends on the cyrius parameter it lands in:
   (defaults fill only direct calls)`).
 - **Results.** One word comes back in `rax` / `x0` / `r0`. A two-value result (`return (a,
   b)`) is the pair `rax:rdx` / `x0:x1` / `r0:r4`, and `var a, b = fncallN(..)` receives it on
-  every target (on cx since 6.7.9). A 9–16 byte struct result comes back in that register
-  pair, so `var a, b = fncallN(..)` receives its two words. A larger one is written through a
-  hidden pointer that only a direct call supplies, so it needs a direct call (`var p: P3 =
-  fncall1(&mk3, 1)` for `fn mk3(a): P3` compiles and faults); so does a vector result (see
-  *Returning a struct by value* in
-  [`cyrius-guide.md`](../guides/cyrius-guide.md#returning-a-struct-by-value-v666) for the
-  out-pointer spelling).
+  every target (on cx since 6.7.9). **A struct result** (6.7.11) depends on whether the call
+  knows its callee. Written `&f` (`fncall1(&mk3, 5)` or `callptr(&mk3, 5)` for `fn mk3(a): P3`),
+  the call carries `f`'s struct-result convention as a direct call does — the hidden result
+  pointer over 16 bytes (int arg 0 on x86_64 / cx / Win64, X8 on aarch64), the register pair at
+  9–16 — and the result is a struct value wherever it goes (`var p: P3 = fncall1(&mk3, 5);`, an
+  assignment, an argument, a field store, `return`). A callee held in a variable (`var fp =
+  &mk3; callptr(fp, 5)`) is unknown at the call: its result is one word, and a struct-typed
+  receive of it binds that word as a handle — right for a callee returning `*P3`, unsupported
+  for one returning a struct by value (no result pointer is passed; it faults). Through a
+  variable, receive a 9–16 byte struct's two words (`var a, b = fncall1(fp, 5);`), or give the
+  callee an out-pointer (`fn mk3o(a, out: *P3)`, `callptr(fp, 5, &p)`) at any size; so does a
+  vector result (see *Returning a struct by value* in
+  [`cyrius-guide.md`](../guides/cyrius-guide.md#returning-a-struct-by-value-v666)).
 
 This is not the C convention: SysV passes a 9–16 byte struct in two registers and a larger
 one in stack memory, and AAPCS64 has its own composite rules — which is why a C callee that

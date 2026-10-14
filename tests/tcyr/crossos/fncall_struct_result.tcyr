@@ -1,0 +1,208 @@
+# fncall_struct_result.tcyr — 6.7.11 (repair 1, the call-arguments lane): a struct result through
+# `fncallN(&f, ..)` / `callptr(&f, ..)`, the callee KNOWN (written `&f`), reaches every destination as
+# a direct call's does.
+#
+# Through 6.7.10 a call through a fn pointer carried no struct-result ABI at all: no hidden result
+# pointer for a struct over 16 B (x86 / cx / Win64 int arg 0, aarch64 X8) — the callee wrote the struct
+# through its FIRST ARGUMENT, so `var p: P3 = fncall1(&mk3, 5);` SIGSEGV'd on x86_64 and aarch64, was a
+# guest error on cx and a write fault at 0x5 on PE — and no rax:rdx pair receive for 9-16 B. 6.7.10's
+# handle line then flipped the 8 B row, which had worked: the result was an untyped word, so
+# `var p: P1 = fncall1(&mk1, 5);` bound a handle holding the value 8 and `p.a` read address 8. The
+# known callee now takes the struct-call hooks a method call takes (docs/development/issues/
+# 2026-10-12-struct-result-through-fn-pointer-faults.md). A callee held in a VARIABLE stays unknown:
+# its result is a word, and a struct-typed receive of it is a handle (the user's decision, 2026-10-13)
+# — rows K. In this directory so the release gate runs it on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P1 { a; }
+struct P2 { a; b; }
+struct P3 { a; b; c; }
+struct P4 { a; b; c; d; }
+struct O { n; i: P2; j: P3; k: P4; m: P1; }
+
+fn mk1(a): P1 { var r: P1 = P1 { a + 3 }; return r; }
+fn mk2(a): P2 { var r: P2 = P2 { a, a * 10 }; return r; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a * 10, a * 100 }; return r; }
+fn mk4(a): P4 { var r: P4 = P4 { a, a * 10, a * 100, a * 1000 }; return r; }
+# Every position weighted, so a dropped, swapped or stale argument (or the retptr in its place) shows.
+fn mk3x6(a, b, c, d, e, f): P3 { var r: P3 = P3 { a * 10 + b, c * 10 + d, e * 10 + f }; return r; }
+fn mk3x8(a, b, c, d, e, f, g, h): P3 {
+    var r: P3 = P3 { a * 10 + b, c * 100 + d * 10 + e, f * 100 + g * 10 + h };
+    return r;
+}
+fn mk2x5(a, b, c, d, e): P2 { var r: P2 = P2 { a * 100 + b * 10 + c, d * 10 + e }; return r; }
+
+fn w1(p: P1): i64 { return p.a; }
+fn w2(p: P2): i64 { return p.a + p.b * 3; }
+fn w3(p: P3): i64 { return p.a + p.b * 3 + p.c * 7; }
+fn w4(p: P4): i64 { return p.a + p.b * 3 + p.c * 7 + p.d * 11; }
+fn r1(p: *P1): i64 { return p.a; }
+fn r2(p: *P2): i64 { return p.a + p.b * 3; }
+fn r3(p: *P3): i64 { return p.a + p.b * 3 + p.c * 7; }
+
+# return: a fn returning the struct passes the indirect call's result on (refused through 6.7.10).
+fn rv1(a): P1 { return fncall1(&mk1, a); }
+fn rv2(a): P2 { return callptr(&mk2, a); }
+fn rv3(a): P3 { return fncall1(&mk3, a); }
+fn rv4(a): P4 { return callptr(&mk4, a); }
+fn rv3p(a): P3 { return (callptr(&mk3, a)); }
+
+# The declaration (16 / 24 / 32 B, and the 8 B row 6.7.10 regressed), both spellings.
+fn decl() {
+    var p1: P1 = fncall1(&mk1, 5);
+    assert_eq(p1.a, 8, "D1: var p: P1 = fncall1(&mk1, 5) (6.7.10: a handle, read address 8)");
+    var q1: P1 = callptr(&mk1, 6);
+    assert_eq(q1.a, 9, "D2: var p: P1 = callptr(&mk1, 6)");
+    var p2: P2 = fncall1(&mk2, 5);
+    assert_eq(w2(p2), 155, "D3: var p: P2 = fncall1(&mk2, 5) (16 B: the rax:rdx pair)");
+    var q2: P2 = callptr(&mk2, 2);
+    assert_eq(w2(q2), 62, "D4: var p: P2 = callptr(&mk2, 2)");
+    var p3: P3 = fncall1(&mk3, 5);
+    assert_eq(p3.a + p3.b + p3.c, 555, "D5: var p: P3 = fncall1(&mk3, 5) (the filed repro's shape: SIGSEGV)");
+    var q3: P3 = callptr(&mk3, 2);
+    assert_eq(w3(q3), 1462, "D6: var p: P3 = callptr(&mk3, 2) (24 B: the hidden result pointer)");
+    var p4: P4 = fncall1(&mk4, 1);
+    assert_eq(w4(p4), 11731, "D7: var p: P4 = fncall1(&mk4, 1) (32 B)");
+    var q4: P4 = callptr(&mk4, 2);
+    assert_eq(w4(q4), 23462, "D8: var p: P4 = callptr(&mk4, 2)");
+    var x = fncall1(&mk3, 3);
+    assert_eq(x.a + x.b + x.c, 333, "D9: var x = fncall1(&mk3, 3) infers P3 (6.7.10: SIGSEGV)");
+    var y = callptr(&mk2, 4);
+    assert_eq(y.a + y.b, 44, "D10: var y = callptr(&mk2, 4) infers P2");
+    var pw: P2 = (fncall1(&mk2, 7));
+    assert_eq(w2(pw), 217, "D11: var p: P2 = (fncall1(&mk2, 7)), wrapped");
+    var qw: P3 = (callptr(&mk3, 1));
+    assert_eq(w3(qw), 731, "D12: var p: P3 = (callptr(&mk3, 1)), wrapped");
+    return 0;
+}
+
+# The assignment into an existing struct local.
+fn assign() {
+    var p1: P1 = P1 { 0 };
+    p1 = callptr(&mk1, 4);
+    assert_eq(p1.a, 7, "A1: p = callptr(&mk1, 4) (8 B)");
+    var p2: P2 = P2 { 0, 0 };
+    p2 = fncall1(&mk2, 3);
+    assert_eq(w2(p2), 93, "A2: p = fncall1(&mk2, 3) (16 B)");
+    var p3: P3 = P3 { 0, 0, 0 };
+    p3 = callptr(&mk3, 3);
+    assert_eq(w3(p3), 2193, "A3: p = callptr(&mk3, 3) (24 B)");
+    var p4: P4 = P4 { 0, 0, 0, 0 };
+    p4 = fncall1(&mk4, 3);
+    assert_eq(w4(p4), 35193, "A4: p = fncall1(&mk4, 3) (32 B)");
+    p3 = (fncall1(&mk3, 2));
+    assert_eq(w3(p3), 1462, "A5: p = (fncall1(&mk3, 2)), wrapped");
+    return 0;
+}
+
+# An argument: by value (8 B in a register; over 8 B by address) and to a `*S` parameter.
+fn args() {
+    assert_eq(w1(fncall1(&mk1, 2)), 5, "G1: w1(fncall1(&mk1, 2)), by value, 8 B");
+    assert_eq(r1(callptr(&mk1, 3)), 6, "G2: r1(callptr(&mk1, 3)), a *P1 parameter");
+    assert_eq(w2(fncall1(&mk2, 4)), 124, "G3: w2(fncall1(&mk2, 4)), by value, 16 B");
+    assert_eq(r2(callptr(&mk2, 5)), 155, "G4: r2(callptr(&mk2, 5)), a *P2 parameter");
+    assert_eq(w3(fncall1(&mk3, 1)), 731, "G5: w3(fncall1(&mk3, 1)), by value, 24 B");
+    assert_eq(r3(callptr(&mk3, 2)), 1462, "G6: r3(callptr(&mk3, 2)), a *P3 parameter");
+    assert_eq(w4(callptr(&mk4, 1)), 11731, "G7: w4(callptr(&mk4, 1)), by value, 32 B");
+    assert_eq(w3(fncall1(&mk3, 1)) + w3(callptr(&mk3, 2)), 2193, "G8: two in one expression");
+    return 0;
+}
+
+# A store into a struct-typed field.
+fn fields() {
+    var o: O = O { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    o.i = callptr(&mk2, 2);
+    o.j = fncall1(&mk3, 3);
+    o.k = callptr(&mk4, 1);
+    o.m = fncall1(&mk1, 6);
+    assert_eq(o.n, 1, "F1: o.n untouched by the field stores");
+    assert_eq(o.i.a + o.i.b, 22, "F2: o.i = callptr(&mk2, 2)");
+    assert_eq(o.j.a + o.j.b + o.j.c, 333, "F3: o.j = fncall1(&mk3, 3)");
+    assert_eq(o.k.a + o.k.b + o.k.c + o.k.d, 1111, "F4: o.k = callptr(&mk4, 1)");
+    assert_eq(o.m.a, 9, "F5: o.m = fncall1(&mk1, 6)");
+    return 0;
+}
+
+# `return` from a fn returning that struct, and the result as a statement (discarded).
+fn returns() {
+    var a: P1 = rv1(4);
+    assert_eq(a.a, 7, "R1: return fncall1(&mk1, a); from a P1 fn");
+    var b: P2 = rv2(3);
+    assert_eq(w2(b), 93, "R2: return callptr(&mk2, a); from a P2 fn (refused through 6.7.10)");
+    var c: P3 = rv3(2);
+    assert_eq(w3(c), 1462, "R3: return fncall1(&mk3, a); from a P3 fn (refused through 6.7.10)");
+    var d: P4 = rv4(1);
+    assert_eq(w4(d), 11731, "R4: return callptr(&mk4, a); from a P4 fn");
+    var e: P3 = rv3p(1);
+    assert_eq(w3(e), 731, "R5: return (callptr(&mk3, a)); wrapped");
+    fncall1(&mk3, 5);
+    callptr(&mk4, 5);
+    fncall1(&mk2, 5);
+    var after = 42;
+    assert_eq(after, 42, "R6: fncall1(&mk3, 5); as a statement writes its own temp, not through 5");
+    return 0;
+}
+
+# The hidden pointer and the arguments together: register and stack arguments, every target's split.
+fn many() {
+    var p: P3 = callptr(&mk3x6, 1, 2, 3, 4, 5, 6);
+    assert_eq(p.a * 10000 + p.b * 100 + p.c, 123456, "M1: callptr(&mk3x6, 1..6): the result pointer + 6");
+    var q: P3 = fncall8(&mk3x8, 1, 2, 3, 4, 5, 6, 7, 8);
+    assert_eq(q.a * 1000000 + q.b * 1000 + q.c, 12345678, "M2: fncall8(&mk3x8, 1..8): stack arguments");
+    var s: P2 = fncall5(&mk2x5, 1, 2, 3, 4, 5);
+    assert_eq(s.a * 100 + s.b, 12345, "M3: fncall5(&mk2x5, 1..5): a pair result, no hidden pointer");
+    var n: P3 = fncall1(&mk3, fncall1(&mk1, 1));
+    assert_eq(w3(n), 2924, "M4: fncall1(&mk3, fncall1(&mk1, 1)), nested");
+    return 0;
+}
+
+# The documented two-word receive keeps its values, and the unknown callee (a fn pointer in a
+# variable) is a word: a struct-typed receive binds it as a HANDLE (the user's decision, 2026-10-13),
+# right for a callee returning a pointer, and the workarounds for a struct-returning one.
+var GK: P3 = P3 { 0, 0, 0 };
+var GK1: P1 = P1 { 0 };
+fn gp3(a): *P3 { GK.a = a; GK.b = a + 1; GK.c = a + 15; return &GK; }
+fn gp1(a): *P1 { GK1.a = a + 21; return &GK1; }
+fn mk3o(a, out: *P3): i64 { out.a = a; out.b = a * 10; out.c = a * 100; return 0; }
+fn known() {
+    var a, b = fncall1(&mk2, 5);
+    assert_eq(a + b, 55, "K1: var a, b = fncall1(&mk2, 5) (the two-word receive)");
+    var fp = &gp3;
+    var h: P3 = callptr(fp, 5);
+    assert_eq(h.a + h.b + h.c, 31, "K2: var h: P3 = callptr(fp, 5) with fn gp3(a): *P3 reads the object");
+    h.a = 100;
+    assert_eq(GK.a, 100, "K3: ... and h is a handle: h.a = 100 writes it");
+    var f1 = &gp1;
+    var h1: P1 = callptr(f1, 5);
+    assert_eq(h1.a, 26, "K4: var h: P1 = callptr(fp, 5) with fn gp1(a): *P1 (8 B, a handle)");
+    var f2 = &mk2;
+    var c, d = fncall1(f2, 3);
+    assert_eq(c + d, 33, "K5: a struct-returning callee in a variable, 16 B: the two-word receive");
+    var fo = &mk3o;
+    var o: P3 = P3 { 0, 0, 0 };
+    var ig = callptr(fo, 4, &o);
+    assert_eq(w3(o), 2924, "K6: ... any size: an out-pointer callee");
+    return 0;
+}
+
+# A struct global of 8 B or less, in the declaration zone and after the first statement: a value.
+var ZG: P1 = fncall1(&mk1, 2);
+fn rows() {
+    decl();
+    assign();
+    args();
+    fields();
+    returns();
+    many();
+    known();
+    return 0;
+}
+var r0 = rows();
+var LG: P1 = callptr(&mk1, 7);
+LG.a = LG.a + 1;
+assert_eq(ZG.a, 5, "Z1: var ZG: P1 = fncall1(&mk1, 2) in the declaration zone (a value)");
+assert_eq(LG.a, 11, "Z2: var LG: P1 = callptr(&mk1, 7) after the first statement (a value)");
+var r = assert_summary();

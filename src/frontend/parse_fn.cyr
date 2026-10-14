@@ -1578,6 +1578,8 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
     # (ops-5) A whole dereference `take(*p)` passes its pointer (`_sarg_deref`).
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
+    # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
+    if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -5238,6 +5240,7 @@ fn _pair_ret_expr_shape(S): i64 {
 # parenthesised operand that is an operator's LEFT operand, `f(..) OP`, `(x) OP` — a call's result
 # now dispatches (`_op_lst`); a wrap around the WHOLE value was peeled first (`_ret_peel`).
 fn _ret_expr_head(S): i64 {
+    if (_icall_ret(S) == 1) { return 1; }   # 6.7.11
     if (PEEKT(S) == 10) {
         _pwrap_k(S, GTI(S));
         return _is_op_dispatch_tok(TOKTYP(S, _pw_end));
@@ -5253,6 +5256,15 @@ fn _ret_expr_head(S): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
+}
+# 6.7.11 — 1 = the return value is one whole call through fncallN / callptr whose callee `&f` returns
+# this fn's struct (`_icall_sid_at`): the struct-call hooks give it a temp, as a method call's.
+fn _icall_ret(S): i64 {
+    var sid = _icall_sid_at(S, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid != _cur_fn_ret_sid) { return 0; }
+    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != _ret_term) { return 0; }
+    return 1;
 }
 # ⛔ 6.7.10 — `return w.s + a;` / `return *p - a;` in a struct-returning fn: a struct-typed field or a
 # `*T` dereference as the left operand dispatches (decision 11), as `return s + a;` with a struct

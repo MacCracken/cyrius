@@ -62,6 +62,15 @@
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
 #      (the release gate's hosts) and cx_backend_parity.tcyr's &fncall8 row, cx-only until now
+#   FP (6.7.11, the call-arguments lane) a struct result through `fncallN(&f, ..)` / `callptr(&f, ..)`
+#      had no struct-result ABI: over 16 B no hidden result pointer (the callee wrote through its first
+#      argument: SIGSEGV x86 / aarch64, a guest error on cx, a write fault at 0x5 on PE), 9-16 B no pair
+#      receive, and 8 B — right through 6.7.9 — a handle since 6.7.10's handle line (the result was an
+#      untyped word). A known callee now takes the struct-call hooks (`_icall_sret` / `_sc_x8` /
+#      `_icall_result`'s `_sc_post`), so the declaration, assignment, argument, field store and `return`
+#      see a struct value; a callee in a variable stays a word, its struct-typed receive a handle (the
+#      user's decision, 2026-10-13: FP6). The runtime half is tests/tcyr/crossos/fncall_struct_result.tcyr,
+#      run as B1-B6 on x86_64 / IR=1 / IR=3 / DCE / aarch64 (qemu) / cx (cxvm)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -152,6 +161,17 @@
 #   M-I4 `_icall_result` ignoring the last argument's type        -> RED A1-A6 (tcyr I13)
 #   M-I5 `_icall_result` ignoring the callee (`cfi` / `: f64`)    -> RED A1-A6 (tcyr I12)
 #   M-I6 `_lfa_load` not recording `_lfa_end` (no static callee)   -> RED I3, A1-A6 (tcyr I8-I11 I14)
+#   (6.7.11, the call-arguments lane, the same procedure)
+#   M-FP1 `_icall_sret` never reserving (-1)                     -> RED FP1 FP3 (139), FP4 FP5 (refused), FP8 FP9 (BUILT),
+#       B1-B6 (the values file refused)
+#   M-FP2 `_icall_result` without its `_sc_post` arm              -> RED FP2 FP3 (139), FP4 (98), FP5 FP7 (refused), FP9
+#       (BUILT), B1-B6 (refused)
+#   M-FP3 `_PINDIRECT_CALL_IN` without `_sc_x8`                   -> RED B5 only (aarch64: 139) — X8 is aarch64's alone
+#   M-FP4 `_PINDIRECT_CALL_IN` not counting the result pointer    -> RED FP1 FP4 FP5 (139), B1-B4 (139), B6 (cx: 1); B5
+#       green (aarch64 pushes no result pointer)
+#   M-FP5 `_icall_ret` never 1 (`return fncall1(&f, ..)`)         -> RED FP5 (refused), B1-B6 (refused)
+#   M-FP6 `_try_push_struct_addr_arg` without its `_icall_sid_at` arm -> RED FP4 (139), B1-B5 (139), B6 (cx: 1)
+#   M-FP7 `_gz_unary` without its `_gz_icall` arm (the zone)      -> RED FP7, B1-B6 ("the declaration zone misread ..")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -282,23 +302,46 @@ refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` pa
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
+# FP (6.7.11) — a struct result through fncallN / callptr with a known callee.
+FPH='include "lib/fnptr.cyr"\nstruct P1 { a; }\nstruct P2 { a; b; }\nstruct P3 { a; b; c; }\nfn mk1(a): P1 { var r: P1 = P1 { a + 3 }; return r; }\nfn mk2(a): P2 { var r: P2 = P2 { a, a + 1 }; return r; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\n'
+exits fp1 18 "FP1: var p: P3 = fncall1(&mk3, 5); (the filed repro, verbatim: SIGSEGV)" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main() {\n    var p: P3 = fncall1(&mk3, 5);\n    return p.a + p.b + p.c;\n}\nvar r = main();\nsyscall(60, r);\n"
+exits fp2 8 "FP2: var p: P1 = fncall1(&mk1, 5); (8 B: right through 6.7.9, a handle reading address 8 in 6.7.10)" "${FPH}fn main() { var p: P1 = fncall1(&mk1, 5); return p.a; }$E"
+exits fp3 11 "FP3: var p: P2 = callptr(&mk2, 5); (16 B: the first word as an address)" "${FPH}fn main() { var p: P2 = callptr(&mk2, 5); return p.a + p.b; }$E"
+exits fp4 36 "FP4: p = callptr(&mk3, 5); and sz(fncall1(&mk3, 5)) (24 B: SIGSEGV)" "${FPH}fn sz(q: P3): i64 { return q.a + q.b + q.c; }\nfn main() { var p: P3 = P3 { 0, 0, 0 }; p = callptr(&mk3, 5); return p.a + p.b + p.c + sz(fncall1(&mk3, 5)); }$E"
+exits fp5 29 "FP5: return fncall1(&mk3, a); / return callptr(&mk2, a); (refused through 6.7.10)" "${FPH}fn r3(a): P3 { return fncall1(&mk3, a); }\nfn r2(a): P2 { return callptr(&mk2, a); }\nfn main() { var p: P3 = r3(5); var q: P2 = r2(5); return p.a + p.b + p.c + q.a + q.b; }$E"
+exits fp6 26 "FP6: var p: P3 = callptr(fp, 5) through a variable is a handle (decided): fn gp(a): *P3" "${FPH}var G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn main() { var fp = &gp; var p: P3 = callptr(fp, 5); p.a = p.a + 0; return G.a + G.b + G.c; }$E"
+exits fp7 61 "FP7: var a, b = fncall1(&mk2, 5) keeps its two words; var g: P1 = fncall1(&mk1, 2) in the zone" "${FPH}var g: P1 = fncall1(&mk1, 2);\nfn main() { var a, b = fncall1(&mk2, 5); return a + b + g.a * 10; }$E"
+refused fp8 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP8: var g: P3 = fncall1(&mk3, 5); at top level, refused by name" "${FPH}var g: P3 = fncall1(&mk3, 5);\nsyscall(60, g.a);\n"
+refused fp9 "fn return struct-id differs from declared var type" "FP9: var q: Q3 = fncall1(&mk3, 5); (another struct: SIGSEGV)" "${FPH}struct Q3 { a; b; c; }\nfn main() { var q: Q3 = fncall1(&mk3, 5); return q.a; }$E"
+
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
 tcyr "A4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
+TC=tests/tcyr/crossos/fncall_struct_result.tcyr   # 6.7.11: rows B
+tcyr "B1: fncall_struct_result.tcyr (x86_64)" "$CC" ""
+tcyr "B2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
+tcyr "B3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
+tcyr "B4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/cc_a64.err" && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
+        TC=tests/tcyr/crossos/struct_value_codegen.tcyr
         tcyr "A5: aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
-    else bad "A5: src/main_aarch64.cyr did not build"; fi
-else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+        TC=tests/tcyr/crossos/fncall_struct_result.tcyr
+        tcyr "B5: fncall_struct_result.tcyr, aarch64 (qemu): X8" "$T/cc_a64" qemu-aarch64
+    else bad "A5 / B5: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: aarch64 legs A5 / B5 (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
 if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     printf '#!/bin/sh\nexec "%s" < "$1"\n' "$T/cxvm" > "$T/cxrun"; chmod +x "$T/cxrun"
+    TC=tests/tcyr/crossos/struct_value_codegen.tcyr
     tcyr "A6: cx (cxvm)" "$T/cc_cx" "$T/cxrun"
-else bad "A6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+    TC=tests/tcyr/crossos/fncall_struct_result.tcyr
+    tcyr "B6: fncall_struct_result.tcyr, cx (cxvm)" "$T/cc_cx" "$T/cxrun"
+else bad "A6 / B6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L): values on x86_64 / IR / DCE / aarch64 / cx (A)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP): values on x86_64 / IR / DCE / aarch64 / cx (A, B)"
