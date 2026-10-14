@@ -590,6 +590,11 @@ refused r08c "$E8 u128" "R8c: a u128" "${TL}    var w: u128 = 5;\n    var q = (w
 refused r08d "$E8 a vector" "R8d: an f64v2" "${TL}    var v: f64v2;\n    var q = (v, 1);${TE}"
 refused r08e "$E8 a slice" "R8e: a slice" "${TL}    var s: [u8] = 0;\n    var q = (s, 1);${TE}"
 refused r08f "$E8 struct 'P'" "R8f: a struct-valued call \`(mk(), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (mk(), 1);${TE}"
+# 6.7.11: parentheses wrapping a whole element are transparent, as around a by-value struct argument
+# (`_expr_struct_sid`, issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): `((p), 1)`
+# and `((mk()), 1)` compiled through 6.7.10, storing the struct's first word.
+refused r08q "$E8 struct 'P'" "R8q: a wrapped struct local \`((p), 1)\`" "${P}${TL}    var p: P;\n    var q = ((p), 1);${TE}"
+refused r08r "$E8 struct 'P'" "R8r: a wrapped struct-valued call \`(((mk())), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (((mk())), 1);${TE}"
 refused r08g "a tuple \`( .. )\` is a value only" "R8g: a nested literal \`((1, 2), 3)\`" "${TL}    var q = ((1, 2), 3);${TE}"
 refused r08h "cannot store a value that is not a bool into bool field '1'" "R8h: a non-bool into a bool element" "${TL}    var q: (i64, bool) = (1, 5);${TE}"
 exits r08i 7 "R8i: a \`Str\` handle and a \`*T\` are pointers — i64 elements" "include \"lib/str.cyr\"\n${P}fn f(): i64 {\n    alloc_init();\n    var p: P;\n    p.a = 4;\n    var pp: *P = &p;\n    var s = str_from(\"abc\");\n    var q = (s, pp);\n    return str_len(q.0) + load64(q.1);\n}\nsyscall(60, f());\n"

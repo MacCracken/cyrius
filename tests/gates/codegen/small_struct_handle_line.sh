@@ -21,8 +21,9 @@
 #   R1 the crossos file on the same legs: "N passed, 0 failed (N total)", N derived from the file
 #   C  compile rows (x86): C1 a handle <- handle of ANOTHER struct type compiles and rebinds (exit
 #      58), as over 8 B; C2 a struct value of another type is still refused by name — `var q: S8 =
-#      mku(1);` and, into a handle, `q = mku(1);`; C3 `bs1((t))` with `t: T1` into `p: S1` still
-#      compiles (the paren-argument issue's decision, 6.7.11 — the paren peel added no refusal); C4
+#      mku(1);` and, into a handle, `q = mku(1);`; C3 `bs1((t))` with `t: T1` into `p: S1` is
+#      refused by name, as `bs1(t)` is (6.7.11: issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md,
+#      the user's decision 2026-10-13 — it compiled, exit 7, through 6.7.10); C4
 #      `var q: S8 = *pu;` with `pu: *U8` (a local or a global) is refused by name, as `= pu` is, at
 #      8 and 16 B; C5 `return (a, 1)` with a handle compiles and the element is the handle's word,
 #      as at 16 B; C6 a handle of another struct returned from an 8 B struct fn returns its struct
@@ -638,7 +639,7 @@ crow "C2 var q: S8 = mku(1) (a U8 value) refused" "refuse:fn return struct-id di
   'struct S8 { v; }\nstruct U8 { u; }\nfn mku(n): U8 { var r: U8; r.u = n; return r; }\nfn f() { var q: S8 = mku(1); return q.v; }\nsyscall(60, f());\n'
 crow "C2 q = mku(1) into an S8 handle refused" "refuse:cannot copy 'mku' into a variable of a different struct/vector type: 'q'" \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nstruct U8 { u; }\nfn mku(n): U8 { var r: U8; r.u = n; return r; }\nfn f() { var q: S8 = alloc(8); q = mku(1); return q.v; }\nalloc_init();\nsyscall(60, f());\n'
-crow "C3 bs1((t)) with t: T1 into p: S1 still compiles (6.7.11 owns it)" 7 \
+crow "C3 bs1((t)) with t: T1 into p: S1 refused by name (6.7.11, the user's decision 2026-10-13)" "refuse:cannot pass 't' to a parameter of a different struct type in a call to 'bs1'" \
   'struct S1 { a: i8; }\nstruct T1 { b: i8; }\nfn bs1(p: S1) { return p.a; }\nfn f() { var t: T1; t.b = 7; return bs1((t)); }\nsyscall(60, f());\n'
 crow "C4 var q: S8 = *pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var q: S8 = *pu; return q.v; }\nsyscall(60, f());\n'

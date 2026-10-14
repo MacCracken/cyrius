@@ -1514,7 +1514,11 @@ a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE
 a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse. (`gx(b)` for
 `fn gx<T>(b: Box<T>)` was refused here from 6.7.3 to 6.7.7: `T` was not inferred through `Box<T>`,
 so the call reached the `Box` base. Since 6.7.8 it infers `T = Pt` and calls `gx$Pt` — see
-[Generic Functions](#generic-functions).) An argument with NO struct type stays accepted: `&p` (an address, as
+[Generic Functions](#generic-functions).) Parentheses around the WHOLE argument change nothing: `bs1((t))`,
+`bs1(((t)))`, `bs1((mk(7)))` and `bs1((w.t))` are refused as `bs1(t)` is, at every size (6.7.11 — through
+6.7.10 a by-value struct of 8 bytes or less took the wrapped spelling unchecked and read the other
+struct's word; `(t.w)` and `(x) + 1` are values, as without the parentheses). A tuple literal's element
+is read the same way: `((p), 1)` is refused as `(p, 1)` is. An argument with NO struct type stays accepted: `&p` (an address, as
 `var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the

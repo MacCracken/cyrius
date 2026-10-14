@@ -1869,31 +1869,67 @@ fn _sarg_byval_small(S, fi, argc): i64 {
 # struct-typed field; a whole `Str` field — returning that struct (0 = untyped / scalar / unknown),
 # `_ess_nm` the name a refusal names. Extracted from `_sarg_byval_small` (6.7.7) for the tuple
 # literal's elements (`_tup_elem_val`), which are refused when they are struct values.
+# ⛔ 6.7.11 — parentheses wrapping the WHOLE expression (`_pwrap_k`, any depth) are transparent here
+# too, as 6.7.6 made them for an address-passed parameter (`_sarg_paren`): `bs1((t))`, `bs1(((t)))`,
+# `bs1((mk(7)))` and `bs1((w.t))` into a by-value struct of 8 B or less read the name, call or field
+# they wrap — they compiled with another struct's word, where `bs1(t)` was refused by name (the user's
+# decision, 2026-10-13: refuse by name). The parse and its emission are unchanged. CHANGELOG [6.7.11]
 var _ess_nm = 0;
 fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
     var call = 0;
-    if (PEEKT(S) == 2) {
-        nm = PEEKV(S);
-        var nx = TOKTYP(S, st + 1);
-        if (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
+    var ist = _ess_wrap(S, st);
+    var k = _ess_k;
+    if (TOKTYP(S, ist) == 2) {
+        nm = TOKVAL(S, ist);
+        var nx = TOKTYP(S, ist + 1);
+        if (k > 0) {
+            if (ist + 1 == _ess_ie) { asid = _sarg_name_sid(S, ist); }
+            elif (nx == 10 || nx == 19) { call = 1; }
+        }
+        elif (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
         elif (nx == 10 || nx == 19) { call = 1; }
     }
     var fk = _fpk_want;
-    _fpk_want = st;
+    _fpk_want = ist;
     _fpk_ft = 0;
     _sc_beg = 0 - 1;                   # only this argument's own record may match
     PCMPE(S);
     _fpk_want = fk;
-    if (call == 1) { asid = _sarg_call_sid(S, st); }
+    if (call == 1) { asid = _ess_call(S, ist, k); }
     if (asid == 0) {
         if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
-        elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
     _ess_nm = nm;
     return asid;
+}
+# The first token inside the parentheses that wrap the whole expression at `st` up to its `,` / `)`
+# (`_ess_k` of them, `_ess_ie` the innermost `)`), else `st` with `_ess_k` 0. Moves nothing.
+var _ess_k = 0;
+var _ess_ie = 0 - 1;
+fn _ess_wrap(S, st): i64 {
+    _ess_k = 0;
+    _ess_ie = 0 - 1;
+    if (TOKTYP(S, st) != 10) { return st; }
+    var k = _pwrap_k(S, st);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return st; } }
+    _ess_k = k;
+    _ess_ie = _pw_end - k;
+    return st + k;
+}
+# The struct a whole free call at `ti` returns (`_sarg_call_sid`), after the parse; inside `k`
+# wrapping parentheses it must end at the innermost `)` (`(mk(7) + a)`, `(mk(7), a)` are not it).
+fn _ess_call(S, ti, k): i64 {
+    if (k > 0) {
+        var o = _gcall_open(S, ti);
+        if (o < 0) { return 0; }
+        if (_call_close(S, o) + 1 + k != GTI(S)) { return 0; }
+    }
+    return _sarg_call_sid(S, ti);
 }
 
 # ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding

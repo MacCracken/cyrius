@@ -88,6 +88,22 @@
 #   the B7-1g compiler (f72166c0)                     -> RED B1 (0) B2 B3 B4 (the pointers' bits)
 #   real tree                                          -> GREEN (42 refusal rows, 22 acceptance rows)
 #
+# 6.7.11 — PARENTHESES WRAPPING A WHOLE ARGUMENT INTO A BY-VALUE STRUCT OF 8 B OR LESS ARE TRANSPARENT
+# to the type check (`_expr_struct_sid` / `_ess_wrap`, the user's decision 2026-10-13: refuse by name):
+# `bs1((t))` compiled and exited 7 (T1's word read as an S1) through 6.7.10, where `bs1(t)` and every
+# wrapped spelling over 8 B were refused (issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md).
+# W1 is the filed repro verbatim; W2-W9 the wrapped name / call / field / global / tail / method-argument
+# spellings; W10 the declared type wrapped (no false refusal); W11 an expression in parentheses stays a
+# value; W12 / W13 a tuple literal is not a wrap of its first element. Mutations (each a one-change
+# copy of the fixed src built by the fixed compiler; measured):
+#   the fix reverted (A2's compiler)                   -> RED W1-W9 (each compiled, exit 7 / 9)
+#   `_fpk_want` armed at the wrap, not inside it       -> RED W5 W6
+#   the wrapped-name arm dropped                       -> RED W1 W2 W7 W8 W9
+#   the wrapped-call arm dropped                       -> RED W3 W4
+#   `_ess_call` without the innermost-`)` span check   -> RED W12 (a second error naming 'mkt1')
+#   the wrapped name also taken before a `,`           -> RED W13 (a second error naming 't')
+#   real tree                                          -> GREEN (53 refusal rows, 24 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -478,6 +494,50 @@ accept "B5 the untyped boundary: an untyped local holding &s is its word" \
     "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; if (bs1(u) == u) { return 7; } return 1; } syscall(60, go());" \
     7 \
     "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; var c: S1; c.u = u; if (bs1(c) == u) { return 7; } return 1; } syscall(60, go());"
+
+echo "=== 6.7.11: parentheses wrapping a whole argument into a by-value struct of 8 B or less ==="
+# The filed repro, verbatim (issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): it
+# compiled and exited 7 (T1's word read as an S1) through 6.7.10, where `bs1(t)` was refused.
+refuse "W1 the filed repro, verbatim: bs1((t))" "cannot pass 't' $MA 'bs1'" \
+    'struct S1 { v; }
+struct T1 { w; }
+fn bs1(p: S1): i64 { return p.v; }
+fn main(): i64 { var t: T1 = T1 { 7 }; return bs1((t)); }
+syscall(60, main());
+'
+refuse "W2 bs1(((t)))" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(((t))); } syscall(60, go());"
+refuse "W3 bs1((mkt1()))" "cannot pass 'mkt1' $MA 'bs1'" \
+    "${T}fn go(): i64 { return bs1((mkt1())); } syscall(60, go());"
+refuse "W4 bs1(((mkt1())))" "cannot pass 'mkt1' $MA 'bs1'" \
+    "${T}fn go(): i64 { return bs1(((mkt1()))); } syscall(60, go());"
+refuse "W5 bs1((h.t)), an 8 B field" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn go(): i64 { var h: H; h.t.w = 9; return bs1((h.t)); } syscall(60, go());"
+refuse "W6 bs1(((h.t)))" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn go(): i64 { var h: H; h.t.w = 9; return bs1(((h.t))); } syscall(60, go());"
+refuse "W7 a T1 global, wrapped, at top level" "cannot pass 'GT' $MA 'bs1'" \
+    "${T}var GT = T1 { 9 }; var rr = bs1((GT)); syscall(60, rr);"
+refuse "W8 a tail call, wrapped" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn f(t: T1): i64 { return bs1((t)); } fn go(): i64 { var t: T1; t.w = 9; return f(t); } syscall(60, go());"
+refuse "W9 a method's argument, wrapped" "cannot pass 't' $MA 'Pt_sk'" \
+    "${T}impl Pt { fn sk(self, b: S1): i64 { return b.u; } } fn go(): i64 { ${PQ} var t: T1; t.w = 9; return p.sk((t)); } syscall(60, go());"
+accept "W10 the declared type, wrapped: a local, a call, a field, a method result" \
+    "${T}fn go(): i64 { ${PQ} var s: S1; s.u = 2; var h: H; h.s.u = 4;
+  return bs1((s)) + bs1(((s))) + bs1((mks1())) + bs1(((mks1()))) + bs1((h.s)) + bs1((p.s1())); }
+syscall(60, go());" \
+    21 \
+    "${T}fn go(): i64 { return 2 + 2 + 5 + 5 + 4 + 3; } syscall(60, go());"
+# Not a wrap of the whole argument: an expression, as without the parentheses (an untyped word).
+accept "W11 (t.w), (mkt1().w), (x) + 1: values, not wrapped struct sources" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var x = 1; return bs1((t.w)) + bs1((mkt1().w)) + bs1((x) + 1); }
+syscall(60, go());" \
+    20 \
+    "${T}fn go(): i64 { return 9 + 9 + 2; } syscall(60, go());"
+# A tuple literal is not a wrap of its first element: the literal's own refusal, once, nothing more.
+refuse "W12 bs1((mkt1(), 3)): the tuple literal's refusal only" "a tuple \`( .. )\` is a value only" \
+    "${T}fn go(): i64 { return bs1((mkt1(), 3)); } syscall(60, go());"
+refuse "W13 bs1((t, 3)): the tuple literal's refusal only" "a tuple \`( .. )\` is a value only" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1((t, 3)); } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
