@@ -51,6 +51,9 @@
 #      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
 #      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
 #      operator receive (rows L12-L15)
+#      L16 / L17 (6.7.11): a leading call's struct types an untyped declaration only when the call ENDS it
+#      (`_var_rhs_csid`): `var r = mk3(4) - s; r.x` (the filed repro, verbatim) and `var r = mk2(1) == p; return
+#      r;` in a fn returning Pt took the call's struct (SIGSEGV each); refused by name now
 #   R  (lane E2) parentheses around a struct fn's WHOLE return value: `return (j);`, `return
 #      (mk3(v));`, `return (a + b);` were refused ("return must be a bare local identifier ..." for
 #      the retptr class, "... got `(...)`" for rax:rdx); `_ret_peel` steps inside them for both
@@ -188,6 +191,9 @@
 #       B1-B7 then read "47 passed" (each requires the derived N exactly)
 #   M-EV1 x86 EFLADDR without its `_IR_REC0(S, IR_RAW_EMIT)` (= the A3 compiler) -> RED EV1-EV4 (exit 30 +
 #       the low byte of the address / 1), A3 (tcyr E1-E5); A1 A2 A4-A6 and B1-B6 green (only IR=3 applies LASE)
+#   (6.7.11, the struct lane, issues/2026-10-08-struct-operator-results.md, the same procedure, 2026-10-14)
+#   M-V1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED L16 L17 (BUILT); the
+#       values files green (an untyped value and a mistyped one read alike: only `.f` / a pair return differ)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -219,6 +225,15 @@ refused() {   # <name> <message fragment> <what> <source>
     n=$(grep -c '^error' "$T/$1.err")
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$rc" -eq 124 ]; then bad "$3: the compiler did not finish (timeout)"
+    elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
+    elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused once"; fi
+}
+refused_file() {   # <name> <message fragment> <what> <file>: a filed repro, verbatim
+    cp "$4" "$T/$1.cyr"
+    build "$1"
+    n=$(grep -c '^error' "$T/$1.err")
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
     else ok "$3: refused once"; fi
@@ -344,6 +359,11 @@ exits l12 5 "L12: var r = mk3(4) - s; in a fn (the filed repro: expected ';', go
 exits l13 5 "L13: return mk2(1) + a; from a fn returning Pt (expected ';')" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn rp(a: Pt): Pt { return mk2(1) + a; }\nfn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = rp(p); return q.x + q.y; }$E"
 refused l14 "struct-return fn: return must be a bare local identifier" "L14: return mk3(1) + a; whose + returns an integer" "${P3S}fn P3_add(a: P3, b: P3): i64 { return a.x + b.x; }\nfn rp(a: P3): P3 { return mk3(1) + a; }\nfn main(): i64 { var p: P3 = P3 { 1, 2, 3 }; var q: P3 = rp(p); return q.x; }$E"
 refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt = mk2(3) + H; at top level, refused once" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nvar H: Pt = Pt { 1, 2 };\nvar G: Pt = mk2(3) + H;\nsyscall(60, G.x);\n"
+# L16 / L17 (6.7.11) — a leading call's struct types an untyped declaration only when the call ends it
+# (`_var_rhs_csid`): after an integer-returning operator or a comparison the binding is untyped.
+ROPR=docs/development/issues/repros/2026-10-08-struct-operator-results
+refused_file l16 "no struct type in scope for 'r'" "L16: var r = mk3(4) - s; r.x (the filed repro, verbatim: SIGSEGV)" "$ROPR-1-untyped-var-typed-from-leading-call.cyr"
+refused l17 'got `r`' "L17: var r = mk2(1) == p; return r; from a fn returning Pt (SIGSEGV: a 16 B return from an 8 B slot)" "struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn g(p: Pt): Pt { var r = mk2(1) == p; return r; }\nfn main(): i64 { var p: Pt = Pt { 1, 1 }; var q: Pt = g(p); return q.x; }$E"
 # R (6.7.6 E2) — parentheses around a struct fn's whole return value; the top-level operand wording.
 exits r01 6 "R1: return (j); from a fn returning a 24-byte P3 (the filed repro: refused)" "struct P3 { x; y; z; }\nfn cp(j: P3): P3 { return (j); }\nfn main(): i64 { var j = P3 { 1, 2, 3 }; var q: P3 = cp(j); return q.x + q.y + q.z; }$E"
 exits r02 6 "R2: return (mk3(v)); (the filed repro: refused)" "struct P3 { x; y; z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\nfn cp(v): P3 { return (mk3(v)); }\nfn main(): i64 { var q: P3 = cp(2); return q.x + q.y + q.z; }$E"

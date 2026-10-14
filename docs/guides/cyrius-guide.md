@@ -1839,7 +1839,11 @@ temporary becomes `c`. Through 6.7.9 a result of 8 bytes or less was an untyped 
 struct type in scope for 'c'* and `c + c` added integers — and 6.7.10's packed fields moved `struct
 C4 { r: u8; g: u8; b: u8; a: u8; }` from 32 bytes to 4, so `var c = A + B; c.g = 1;` stopped
 compiling until this. An operator returning an integer leaves the binding untyped, and an untyped
-global keeps the result's word at every size. ⚠ A 9-16 byte result in parentheses (`var c = (a +
+global keeps the result's word at every size. So does a comparison, and so does either one after a
+LEADING CALL (6.7.11): a call's struct types the binding only when the call is the whole initialiser —
+through 6.7.10 `var r = mk3(4) - s;` with an integer `P3_sub` took `mk3`'s `P3`, so `r.x` dereferenced
+the integer, and `var r = mk2(1) == p; return r;` returned a 16-byte struct from an 8-byte slot; both
+are refused now (*no struct type in scope for 'r'*, *... got `r`*). ⚠ A 9-16 byte result in parentheses (`var c = (a +
 b);`) is still an untyped word (it has no temporary to name): write `var c: T = (a + b);` or drop
 the parentheses.
 

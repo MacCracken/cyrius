@@ -129,6 +129,21 @@ fn b_clos_h() {
 # an integer-returning operator leaves the binding untyped: `r + 1` is an integer add
 fn b_int_8() { var a: S8 = S8 { 70 }; var b: S8 = S8 { 4 }; var r = a - b; return r + 1; }
 fn b_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = a - b; return r + 1; }
+# 6.7.11 — and after a LEADING CALL: a call's struct types the binding only when the call is the whole
+# initialiser, so `var r = mk8(10) - b;` with an integer-returning `-` is an untyped integer, as is a
+# comparison after a leading call (through 6.7.10 r took mk8's S8, so `r.v` dereferenced the integer —
+# refused now: tests/gates/codegen/struct_value_codegen.sh L16 / L17,
+# small_struct_handle_line.sh B2); a struct-returning operator still
+# types the binding; a `: f64` call keeps its f64
+fn T3_sub(a: *T3, b: *T3): i64 { return a.z - b.z; }
+fn mkt(n): T3 { var r: T3; r.x = n; r.y = n; r.z = n; return r; }
+fn fdbl(): f64 { return 1.5; }
+fn b_lint_8() { var b: S8 = S8 { 3 }; var r = mk8(10) - b; return r + 1; }
+fn b_lint_h() { var b: H = H { 3, 0 }; var r = mkh(10) - b; return r + 1; }
+fn b_lint_t() { var b: T3 = T3 { 9, 9, 9 }; var r = mkt(4) - b; return r + 10; }
+fn b_lcmp_8() { var b: S8 = S8 { 1 }; var r = mk8(1) == b; return r + 1; }
+fn b_lop_t() { var b: T3 = T3 { 5, 6, 7 }; var r = mkt(4) + b; return r.x + r.y + r.z; }
+fn b_lf64() { var x = fdbl() * 2.0; var y = x + x; return f64_to(y); }
 
 # ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
 struct Z1 { a: u8; }
@@ -210,6 +225,12 @@ assert_eq(b_clos_8(), 82, "var c = a + b in a closure body");
 assert_eq(b_clos_8(), b_clos_h(), "  = its 16 B twin");
 assert_eq(b_int_8(), 67, "an integer-returning operator: the binding stays untyped");
 assert_eq(b_int_8(), b_int_h(), "  = its 16 B twin");
+assert_eq(b_lint_8(), 8, "var r = mk8(10) - b; an integer-returning operator after a leading call: untyped");
+assert_eq(b_lint_8(), b_lint_h(), "  = its 16 B twin");
+assert_eq(b_lint_t(), 5, "  24 B: var r = mkt(4) - b; r + 10");
+assert_eq(b_lcmp_8(), 2, "var r = mk8(1) == b; a comparison after a leading call: untyped");
+assert_eq(b_lop_t(), 38, "var r = mkt(4) + b; a struct-returning operator after a leading call types it");
+assert_eq(b_lf64(), 6, "var x = f() * 2.0; a : f64 leading call keeps the f64 binding");
 assert_eq(z1(), 28, "1 B: c.a written, c + c");
 assert_eq(z2(), 28, "2 B: c.a written, c + c");
 assert_eq(z3(), 1028, "3 B: c.a written, c + c");

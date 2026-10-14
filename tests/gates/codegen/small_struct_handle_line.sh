@@ -127,9 +127,11 @@
 # g: u8; b: u8; a: u8; }` from 32 B to 4, so `var c = A + B; c.g = 1;` was refused. Its runtime half is
 # tests/tcyr/crossos/struct_operator_result_binding.tcyr (the C4 case, every shape against its 16 B twin,
 # the operator's own return type, sizes 1..7 B, top level):
-#   R8 that file on the same legs as R1, N derived from it (floor 33)
+#   R8 that file on the same legs as R1, N derived from it (floor 39; 6.7.11: the leading-call rows)
 #   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
 #      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
+#      — and (6.7.11, issues/2026-10-08-struct-operator-results.md #1) after a LEADING CALL: `var d = mk8(10)
+#      - s; d.v` took mk8's S8 and dereferenced the integer (SIGSEGV through 6.7.10), at 8 and 16 B
 #
 # 6.7.10 (decision 6 completed) — A STRUCT COPY THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD COPIES THE
 # STRUCT, at every size: `l = GP`, `G = GP`, `l = gp()`, `l = w.p` (any chain, wrapped) into a struct value
@@ -457,6 +459,10 @@
 # issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
 #                                                      stored into the field; the guard row stays green)
+# 6.7.11 LEADING-CALL BINDING MUTATION LEDGER (2026-10-14, the same method; B2's leading-call rows,
+# issues/2026-10-08-struct-operator-results.md #1):
+#   MV1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED 2: B2 8 B and 16 B (compiled:
+#                                                      d took mk8's / mkh's struct); R8 green (an untyped value reads alike)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -692,7 +698,7 @@ done
 TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
 [ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
 NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
-BFLOOR=33
+BFLOOR=39
 if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
 echo "R8. $TB ($NB rows: an untyped binding of a struct-returning operator takes the struct type)"
 for leg in $XLEGS $OTHER; do
@@ -932,6 +938,10 @@ crow "B2 var r = a - b with S8_sub returning i64: r untyped" "refuse:no struct t
   'struct S8 { v; }\nfn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }\nfn f() { var a = S8 { 7 }; var b = S8 { 4 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
 crow "B2 its 16 B twin" "refuse:no struct type in scope for 'r'" \
   'struct H { v; w; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 7, 0 }; var b = H { 4, 0 }; var r = a - b; return r.v; }\nsyscall(60, f());\n'
+crow "B2 var d = mk8(10) - s, a LEADING CALL, S8_sub returning i64: d untyped (6.7.11; SIGSEGV through 6.7.10)" "refuse:no struct type in scope for 'd'" \
+  'struct S8 { v; }\nfn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }\nfn mk8(n): S8 { var r: S8; r.v = n; return r; }\nfn f() { var s = S8 { 3 }; var d = mk8(10) - s; return d.v; }\nsyscall(60, f());\n'
+crow "B2 its 16 B twin" "refuse:no struct type in scope for 'd'" \
+  'struct H { v; w; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn mkh(n): H { var r: H; r.v = n; r.w = 0; return r; }\nfn f() { var s = H { 3, 0 }; var d = mkh(10) - s; return d.v; }\nsyscall(60, f());\n'
 
 echo "F. a field / dereference left operand refused exactly as a struct variable is (x86)"
 crow "F1 w.s + 1 with no S8_add refused" "refuse:undefined function 'S8_add'" \

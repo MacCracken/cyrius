@@ -6456,6 +6456,21 @@ fn _var_rhs_call(S, ti): i64 {
     if (c == 1) { if (_call_dotted(S, ti) == 1) { c = 0; } }
     return c;
 }
+# ⛔ 6.7.11 — THE TYPE AN UNTYPED `var x = f(..) ...;` TAKES FROM ITS LEADING CALL `f` at `ti` (6.6.10:
+# the instance the call reaches): its return annotation's GFRS. A STRUCT only when the call ENDS the
+# initialiser (`_call_ends_at`, as the receive asks): `var r = mk3(4) - s;` with an integer-returning
+# `P3_sub` was typed P3, so `r.x` dereferenced -5 and `var r = mk2(1) == p; return r;` returned a 16-byte
+# struct from an 8-byte slot (SIGSEGV, 6.7.6 - 6.7.10). An operator's struct result types the binding
+# after the parse (`_var_rhs_post`); any other value leaves it untyped. A `: f64` call keeps its f64 (-9):
+# its operator result is the f64 arithmetic the leading call drives. CHANGELOG [6.7.11]
+fn _var_rhs_csid(S, ti): i64 {
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return rs; }
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }
+    return rs;
+}
 
 # ⛔ 6.7.11 — PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so `var x = (mk());`
 # with `mk` returning a struct over 8 B inferred nothing: x held the FIRST word, and `dq(x)` into a
@@ -7506,13 +7521,9 @@ fn PARSE_VAR(S): i64 {
                 # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
                 # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
                 # 6.6.12: `var s = mkp(3).y + 1;` typed `s` as Pt (and dispatched `+` to Pt_add).
-                var _ti_iscall = _var_rhs_call(S, GTI(S));
-                if (_ti_iscall == 1) {
-                    var _ti_fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: the instance's return
-                    if (_ti_fi >= 0) {
-                        _ti_inferred_sid = GFRS(S, _ti_fi);
-                    }
-                } else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
+                # 6.7.11: a struct only from a call that ENDS the initialiser (`_var_rhs_csid`).
+                if (_var_rhs_call(S, GTI(S)) == 1) { _ti_inferred_sid = _var_rhs_csid(S, GTI(S)); }
+                else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
             }
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
