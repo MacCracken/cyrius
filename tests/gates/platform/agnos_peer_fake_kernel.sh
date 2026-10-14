@@ -17,6 +17,10 @@
 # lacked, axis 6 their arity against the Linux-common wrappers, axis 7 the agnos build of the CLI
 # (cbt/cyrius.cyr), which stopped at ~110 arity errors. Measured on the 4a37046b peer: axis 5's
 # probes do not build (5 undefined fns), axis 6 reads 0 for all five, axis 7 does not compile.
+# 6.7.11: axis 9 a negative fd is not socket slot 7 (on the 6.7.10 peer sys_write(-1) loops on
+# #48 until the tracer's call limit and every later row reads empty: 7 FAIL); axis 10
+# console_mode#110 + SIGWINCH (mutants measured RED: the wrapper's set / clear swapped -> 3 FAIL;
+# its answer dropped -> 1 FAIL).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -517,6 +521,27 @@ check "sys_write(AGNOS_SOCK_TAG + 8) is a plain write#1 on that fd, no #48" "107
     "$(after 155 1 | awk '{ print $1 }') $(between 155 48)"
 check "  while sys_write on slot 7's own fd still sends on its conn: #48(0, …, 3)" "0 3" \
     "$(after 156 48 | awk '{ print $1, $3 }')"
+
+# ── axis 10 — console_mode#110 and SIGWINCH (agnos 1.57.13; 6.7.11) ───────────────────────────
+# The darshana mapping on agnos: tty_echo_off = (CM_NOECHO | CM_FLUSH, 0), tty_flush_input =
+# (CM_FLUSH, 0), restore = (0, CM_NOECHO); (0, 0) is the query and the support probe.
+echo "axis 10 — sys_console_mode hands #110 (set, clear) as given; CM_* and SIGWINCH match the contract:"
+cat > "$T/a10.cyr" <<'EOF'
+syscall(999, 160, sys_console_mode(CM_NOECHO | CM_FLUSH, 0));
+syscall(999, 161, sys_console_mode(CM_FLUSH, 0));
+syscall(999, 162, sys_console_mode(0, CM_NOECHO));
+syscall(999, 163, sys_console_mode(0, 0));
+syscall(999, 164, CM_NOECHO * 1000 + CM_FLUSH * 100 + SIGWINCH);
+sys_exit(0);
+EOF
+run "$T/a10.cyr" plain
+check "sys_console_mode(CM_NOECHO | CM_FLUSH, 0) is #110(3, 0), a4 = 0" "3 0 0" \
+    "$(awk '$1 == "sc" && $2 == 110 { print $3, $4, $6; exit }' "$T/run.log")"
+check "sys_console_mode(CM_FLUSH, 0) is #110(2, 0)" "2 0" "$(after 160 110 | cut -d' ' -f1-2)"
+check "sys_console_mode(0, CM_NOECHO) is #110(0, 1) — echo back on" "0 1" "$(after 161 110 | cut -d' ' -f1-2)"
+check "sys_console_mode(0, 0) is #110(0, 0) — the query / probe" "0 0" "$(after 162 110 | cut -d' ' -f1-2)"
+check "  and the kernel's answer (the flags before the call) is returned as is: the fake's 1" "1" "$(mark 163)"
+check "CM_NOECHO = 1, CM_FLUSH = 2, SIGWINCH = 28" "1228" "$(mark 164)"
 
 echo ""
 if [ "$fails" = "0" ]; then

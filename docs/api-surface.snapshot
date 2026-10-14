@@ -4856,6 +4856,7 @@ syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_chroot/1
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_connect/3
+syscalls_x86_64_agnos::sys_console_mode/2
 syscalls_x86_64_agnos::sys_dup/1
 syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
