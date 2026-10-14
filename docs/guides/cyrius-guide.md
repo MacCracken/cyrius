@@ -4660,7 +4660,9 @@ binding it one-wide there is caught too.
 
 `f` is any call spelling: an explicit generic `g<T>(..)` and a method `p.m(..)` are refused,
 destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
-crashed and a single bind dropped the payload silently).
+crashed and a single bind dropped the payload silently). The method's `impl` may sit above or below
+the call (6.7.11 — with the `impl` below its caller, `p.m(..)?` crashed and `var v = p.m(..);`
+kept the tag in silence).
 
 The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
 before the first top-level statement or after it — kept the tag and dropped the payload, silently

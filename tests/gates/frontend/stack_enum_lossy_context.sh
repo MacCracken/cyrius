@@ -879,5 +879,173 @@ if [ "$rc" -ne 0 ] || grep -q '^error' "$T/x.err"; then
   exit 1
 fi
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7)'
+# ── axis 16 — 6.7.11: A PAIR METHOD USED ABOVE ITS `impl` ────────────────────────────────────
+# ⛔ The pair prescan walked depth-0 `fn`s only, so a method returning a `: stack` pair was flagged
+# when pass 2 parsed its body, and every caller ABOVE its `impl` read it as one value: `p.div(d)?`
+# took the boxed lowering and dereferenced the tag (rc 139 on x86 and aarch64, 1 on cx, 5 on PE —
+# the issue's repro, 16a, verbatim) and `var q = p.div(d);` kept the tag in silence (exit 1), where
+# the impl above it was refused "bind both". Each impl method is now scanned as a top-level fn is,
+# resolved to the entry its definition owns (`_impl_method_entry`: `T_m`, or `T_Tr_m` on a
+# collision, by name AND definition start — never registered: 16h counts the warnings). The single
+# bind is refused whatever the order (the user's decision, 2026-10-13, D23). An untyped `self` in
+# the scanned method is its impl's struct (`_tok_iself`), so a forwarding `return self.div(d);` is
+# flagged even when another struct's `div` returns one value (16d).
+# Mutations (scratch tree, measured red): M30a `_pair_prescan`'s `_pair_prescan_impls` call dropped
+# -> 16a 16b 16c 16d 16e 16e2 16i 16j; M30b `_tok_ret_callee` without `_tok_iself` -> 16d;
+# M30c `_impl_method_entry` without its collision-prefix arm -> 16i; M30d `_pair_scan_method`
+# registering the method (FINDFN-or-REGFN of a bare `m`) -> 16h (the minted `m`'s warning) and every
+# row M30a fails (the flag lands on the minted entry, not the method's).
+accept "the issue's repro: p.div(d)? above the impl" axis16a 11 <<'EOF'
+# `p.div(d)?` above the impl that defines the `: stack` pair-returning method.
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn usediv(p: Pt, d): i64 {
+    var q = p.div(d)?;                   # the impl is BELOW: `?` treats the result as a box -> SIGSEGV
+    return Ok(q + 1);
+}
+impl Pt { fn div(self, d): i64 { if (d == 0) { return Err(9); } return Ok(self.x / d); } }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    return t * 100 + v;                  # want 11 (Ok(11)); the impl moved above usediv gives 11
+}
+var rc = main();
+syscall(60, rc);
+EOF
+M16='include "lib/syscalls.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+struct Qt { x; }
+'
+# Ok(11) and Err(9) folded: t * 100 + v + t2 * 50 + v2 = 11 + 59.
+accept "? on an impl Tr for Pt method above it, Ok and Err" axis16b 70 <<EOF
+${M16}trait Dv { fn tdiv(self, d): i64; }
+fn usediv(p: Pt, d): i64 { var q = p.tdiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Dv for Pt { fn tdiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? on a generic method above its impl" axis16c 70 <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.gdiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Pt { fn gdiv<T>(self, d: T): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? on a method forwarding return self.div(d), another struct's div one value" axis16d 70 <<EOF
+${M16}fn usefwd(p: Pt, d): i64 { var q = p.fwd(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usefwd(p, 4);
+    var t2, v2 = usefwd(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Qt { fn div(self, d): i64 { return self.x / d; } }
+impl Pt {
+    fn fwd(self, d): i64 { return self.div(d); }
+    fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); }
+}
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "the single bind var q = p.div(d); above the impl" axis16e "= p.div(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.div(d); return q + 1; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "x = p.div(d); above the impl" axis16e2 "p.div(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var x = 0; x = p.div(d); return x; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+# The impl ABOVE its callers, unchanged: the single bind refused, `?` and the destructure right.
+refuse_at "the single bind with the impl above (unchanged)" axis16f "= p.div(d);" <<EOF
+${M16}impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.div(d); return q + 1; }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "? and the destructure with the impl above (unchanged)" axis16f2 79 <<EOF
+${M16}impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.div(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    var a, b = p.div(5);
+    return t * 100 + v + t2 * 50 + v2 + a * 1000 + b + 1;
+}
+var rc = main();
+syscall(60, rc);
+EOF
+# ANTI-OVER-REACH: a one-value method below its use binds to one variable; a closure in a method that
+# returns a pair does not make the method one (its returns are its own).
+accept "a plain i64 method below its use, and a closure's pair inside a method" axis16g 45 <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+fn useone(p: Pt): i64 { var q = p.one(); var r = p.clo(); return q + r + 1; }
+impl Pt {
+    fn one(self): i64 { return self.x; }
+    fn clo(self): i64 { var g = |z| { return MOk(z); }; var t, v = fncall1(g, 3); return v + t; }
+}
+fn main(): i64 { var p = Pt { 41, 2 }; return useone(p); }
+var rc = main();
+syscall(60, rc);
+EOF
+# The scan resolves a method's entry and never registers one: two impls, a trait collision, methods
+# calling each other above and below — and NOT ONE warning.
+cat > "$T/w16.cyr" <<EOF
+${M16}trait A { fn m(self, d): i64; }
+trait B { fn m(self, d): i64; }
+fn use_a(p: Pt, d): i64 { var q = Pt_A_m(p, d)?; return MOk(q + p.k(1)); }
+fn use_b(p: Pt, d): i64 { return Pt_B_m(p, d) + 2; }
+impl A for Pt { fn m(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl B for Pt { fn m(self, d): i64 { return self.x / d; } }
+impl Pt { fn k(self, n): i64 { return n + self.j(); } fn j(self): i64 { return 0; } }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = use_a(p, 4);
+    return t * 100 + v + use_b(p, 4);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+"$CC" < "$T/w16.cyr" > "$T/w16" 2>"$T/w16.err" || {
+  echo "FAIL stack_enum_lossy_context axis16h: the impl-method program did not build:"
+  grep -E '^error' "$T/w16.err" | head -3 | sed 's/^/    /'; exit 1; }
+if grep -q "^warning" "$T/w16.err"; then
+  echo "FAIL stack_enum_lossy_context axis16h: the impl-method prescan produced warnings (a minted entry?):"
+  grep "^warning" "$T/w16.err" | head -3 | sed 's/^/    /'; exit 1
+fi
+chmod +x "$T/w16"; "$T/w16"; got=$?
+# 16i: Pt_A_m(p, 4)? above the impls (the T_Tr_m prefix) is Ok(10) -> 11; Pt_B_m(p, 4) + 2 = 12.
+[ "$got" -eq 23 ] || { echo "FAIL stack_enum_lossy_context axis16i: the trait-collision method gave ${got}, expected 23"; exit 1; }
+refuse_at "store64(&s, p.div(d)) above the impl" axis16j "p.div(d));" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var s: i64[2]; store64(&s, p.div(d)); return s[0]; }
+impl Pt { fn div(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+var rc = main();
+syscall(60, rc);
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11)'
 exit 0

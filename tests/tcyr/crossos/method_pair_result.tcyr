@@ -33,6 +33,15 @@
 # a closed block -> rc 139 (`mw_scope`); `_tok_ret_callee` without `_tok_method_any` -> rc 139
 # (`mw_tparam`).
 #
+# 6.7.11 — AN `impl` METHOD USED ABOVE ITS IMPL (the `mi_*` rows). The pair prescan walked depth-0
+# `fn`s only, so a method's flag was set when pass 2 parsed its body and every caller above the
+# `impl` took `r.rdiv(d)?` as boxed: rc 139 on x86 and aarch64, 1 on cx, 5 on PE (the `?` lowering
+# differs per backend, hence a cross-host row). Each impl method is scanned as a top-level fn now —
+# inherent, trait, generic, and a forwarding `return self.rdiv(d);` whose `self` is typed as its impl's
+# struct although another struct's `rdiv` returns one value. MUTATION: `_pair_prescan` without its
+# `_pair_prescan_impls` call -> rc 139 (the first `mi_` row); `_tok_ret_callee` without `_tok_iself`
+# -> rc 139 (`mi_fwd`). The impl sits below its callers, before `alloc_init();`.
+#
 # CROSS-HOST because the pair is the per-target two-register return (rax:rdx / x0:x1 / the cx
 # pair), `self` is passed by address from five receiver storages, and a propagated Err
 # re-emits both halves through each backend's epilogue.
@@ -118,6 +127,18 @@ fn mw_tparam<T>(p: T, d) { return p.div(d); }
 fn mw_lit(n, d) { var p = Pt { n, 0 }; return p.half(d); }
 fn mw_scope(n, d) { var p: Pt; p.x = n; p.y = 0; if (n == 99) { var p: Qt; p.x = 1; } return p.half(d); }
 fn qt_scope(n, d): i64 { var p: Qt; p.x = n; p.y = 0; if (n == 99) { var p: Pt; p.x = 1; } return p.half(d); }
+
+# 6.7.11: callers ABOVE the impl block that defines their pair-returning methods (it is the last
+# declaration before `alloc_init();`).
+struct Rt { x; y; }
+struct Wt { x; }
+trait Rd { fn tdiv(self, d); }
+fn mi_inh(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.rdiv(d)?; return Ok(v + 22000); }
+fn mi_trait(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.tdiv(d)?; return Ok(v + 23000); }
+fn mi_gen(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.gdv(d)?; return Ok(v + 24000); }
+fn mi_fwd(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.rfwd(d)?; return Ok(v + 25000); }
+fn mi_destr(n, d): i64 { var r: Rt; r.x = n; r.y = 0; var a, b = r.rdiv(d); return a * 1000 + b; }
+fn mi_one(n): i64 { var r: Rt; r.x = n; r.y = 0; var v = r.rone(); return v; }
 
 # Ok and Err of a `(tag, payload)` wrapper folded into one number: the Ok row's payload (its tag 0)
 # plus the Err row's tag * 1000000 and payload * 10 — so (1, 99) reads 1000990.
@@ -208,8 +229,32 @@ fn run_method_q(): i64 {
     assert_eq(okerr(g7, h7, g8, h8), 1000990 + 18003,
         "MQ: the same, `p: Pt` with a `var p: Qt` in a block closed before the call");
     assert_eq(qt_scope(6, 2), 77, "control: the mirror, a `Qt` receiver, binds its one value");
+    test_group("6.7.11: a pair method called ABOVE its impl");
+    var i1, j1 = mi_inh(6, 2);
+    var i2, j2 = mi_inh(6, 0);
+    assert_eq(okerr(i1, j1, i2, j2), 1000990 + 22003, "MI: `r.rdiv(d)?` above `impl Rt` (was rc 139 / cx 1 / PE 5)");
+    var i3, j3 = mi_trait(6, 2);
+    var i4, j4 = mi_trait(6, 0);
+    assert_eq(okerr(i3, j3, i4, j4), 1000990 + 23003, "MI: the same, `impl Rd for Rt`");
+    var i5, j5 = mi_gen(6, 2);
+    var i6, j6 = mi_gen(6, 0);
+    assert_eq(okerr(i5, j5, i6, j6), 1000990 + 24003, "MI: the same, a generic method `gdv<T>`");
+    var i7, j7 = mi_fwd(6, 2);
+    var i8, j8 = mi_fwd(6, 0);
+    assert_eq(okerr(i7, j7, i8, j8), 1000990 + 25003,
+        "MI: the same, `rfwd` forwarding `return self.rdiv(d);` (Wt's `rdiv` is one value)");
+    assert_eq(mi_destr(6, 0), 1099, "MI: `var a, b = r.rdiv(d);` above the impl binds (1, 99)");
+    assert_eq(mi_one(7), 7, "control: a ONE-value method above its impl binds to one variable");
     return 0;
 }
+impl Wt { fn rdiv(self, d): i64 { return self.x / d; } }
+impl Rt {
+    fn rfwd(self, d) { return self.rdiv(d); }
+    fn rdiv(self, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+    fn gdv<T>(self, d: T) { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+    fn rone(self): i64 { return self.x; }
+}
+impl Rd for Rt { fn tdiv(self, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); } }
 
 alloc_init();
 gp = alloc(16);

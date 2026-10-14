@@ -454,10 +454,27 @@ fn _tok_ret_callee(S, a, t): i64 {
     if (_tok_method_open(S, t) == 0) { return 0 - 1; }
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m(`: not a single name
     var sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
+    if (sid == 0) { sid = _tok_iself(S, a, t); }   # 6.7.11
     var mf = 0 - 1;
     if (sid > 0) { mf = _meth_fn_at(S, sid, TOKVAL(S, t + 2), t + 2); }
     else { mf = _tok_method_any(S, TOKVAL(S, t + 2)); }
     return mf;
+}
+
+# 6.7.11 — the receiver `self` at token t, in the unit starting at token a, when that unit is the
+# impl method `_pair_scan_method` is scanning and `self` is its untyped first parameter: the impl's
+# struct (`_pbs_iself`; pass 1's GFISELF — a `*T` since 6.7.0, as `_recv_sid` types it in pass 2).
+# Without it `return self.div(d)` fell back to `_tok_method_any`, -1 once another struct also
+# defines a `div`. 0 otherwise.
+var _pbs_iself = 0;
+fn _tok_iself(S, a, t): i64 {
+    if (_pbs_iself <= 0) { return 0; }
+    if (_noff_is(S, TOKVAL(S, t), "self", 4) == 0) { return 0; }
+    var d = _tok_name_decl(S, a, t, TOKVAL(S, t));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d - 1) != 10) { return 0; }   # not the first parameter
+    if (TOKTYP(S, d + 1) == 49) { return 0; }   # annotated: `_tok_decl_sid` has answered
+    return _pbs_iself;
 }
 
 fn _pair_prescan(S): i64 {
@@ -515,9 +532,72 @@ fn _pair_prescan(S): i64 {
             }
             i = i + 1;
         }
+        if (_pair_prescan_impls(S) == 1) { changed = 1; }   # 6.7.11: the impl methods
         if (changed == 0) { round = 6; } else { round = round + 1; }
     }
     return 0;
+}
+# ⛔ 6.7.11 — AN impl METHOD IS A DEFINITION THIS PASS VISITS. The walk above looks at depth 0 only,
+# so a pair-returning method was flagged only when pass 2 parsed its body: a caller ABOVE its impl
+# took `p.div(d)?` as boxed (rc 139 — the tag dereferenced) and `var v = p.div(d);` kept the tag in
+# silence, where the impl above it was refused "bind both". Every method `_tr_prepass` recorded is
+# resolved to the entry ITS definition owns (`_impl_method_entry`) and scanned as a top-level fn's
+# body is, in the same rounds. Returns 1 when a flag was set. CHANGELOG [6.7.11]
+fn _pair_prescan_impls(S): i64 {
+    var ch = 0;
+    var ii = 0;
+    while (ii < _ti_n) {
+        var k = L64(_ti_tab + ii * 64 + 16);
+        var e = k + L64(_ti_tab + ii * 64 + 24);
+        while (k < e) {
+            if (_pair_scan_method(S, ii, k) == 1) { ch = 1; }
+            k = k + 1;
+        }
+        ii = ii + 1;
+    }
+    return ch;
+}
+# Impl `ii`'s method record k: 1 when its entry is newly flagged 256.
+fn _pair_scan_method(S, ii, k): i64 {
+    var p = L64(_tim_tab + k * 24 + 8);   # its `fn` token
+    var fi = _impl_method_entry(S, ii, L64(_tim_tab + k * 24), p);
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 256) != 0) { return 0; }
+    var o = _tr_paren(S, p);
+    if (o < 0) { return 0; }
+    var j = _tok_body_open(S, _call_close(S, o) + 1);
+    if (j < 0) { return 0; }
+    _pbs_iself = 0;
+    var isf = GFISELF(S, fi);
+    if (isf > 0) { _pbs_iself = FINDSTRUCT(S, isf - 1); }
+    var r = _pair_body_scan(S, p, j);
+    _pbs_iself = 0;
+    if (r == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | 256);
+    return 1;
+}
+# The fn-table entry that impl `ii`'s method `m` (its `fn` token p) defines — `T_m`, or `T_Trait_m`
+# on a collision (`_tr_prefix`'s cached prefix) — matched on its name AND its definition's start
+# (`_fn_by_defti`), so a same-named entry of another definition is never taken. Read only: the name
+# is scratch, nothing is interned or registered (the axis-13 rule above). -1 when pass 1 has not
+# registered it.
+fn _impl_method_entry(S, ii, m, p): i64 {
+    var fi = _fn_by_defti(S, _tr_scratch(S, L64(_ti_tab + ii * 64 + 8), m, 4096), p);
+    if (fi >= 0) { return fi; }
+    var pf = L64(_ti_tab + ii * 64 + 40);
+    if (pf == 0) { return 0 - 1; }
+    return _fn_by_defti(S, _tr_scratch(S, pf, m, 4096), p);
+}
+# The body `{` at or after token i — before any `;` (a bodiless declaration) — or -1.
+fn _tok_body_open(S, i): i64 {
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { return i; }
+        if (t == 5 || t == 12) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 # 1 = the body whose `{` is token j (of the fn whose `fn` token is a — the unit `_tok_ret_callee`
 # resolves names in) has a `return f(..)` / `return g<..>(..)` / `return x.m(..)` whose callee is
