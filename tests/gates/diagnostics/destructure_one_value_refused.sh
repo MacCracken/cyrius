@@ -22,6 +22,12 @@
 #           scope and at top level; a `break` only in a nested loop / switch, or a closure's `return`,
 #           does not unprove it. A loop a `break` can leave stays silent (the body falls off its end),
 #           and so does a non-literal-1 condition.
+#   axis 4  6.7.11 — an UNDECLARED fn whose every `return` is `(..)` of one arity, and whose body is
+#           left only through them, returns that many values (pass 1, `_prescan_ret_arity`): a
+#           destructure binding another count is refused by name (`var q, r, z = dm(17, 5);` bound z
+#           to whatever r8 held) — fn scope, both top-level zones, a forward callee, a method, a
+#           generic, a loop-ending body, `q, r, z = dm(..)`. The matching counts, a fn mixing
+#           arities and a fn that can fall off its end stay silent.
 #
 # MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
 # while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
@@ -30,6 +36,12 @@
 # -1 (no nested construct stepped) -> loop_nested_brk, loop_switch_brk build; `_loop_exits_by_return`
 # blind to `break` -> loop_brk, do_brk, while_do_brk refused; `_brk_inner_end` not stopping at a `;`
 # (a do-while's tail `while (c);` taken to own the next block) -> while_do_brk refused.
+# Axis 4: `_prescan_ret_arity` recording nothing -> every cnt_ refusal builds; `_dt_arity_check`
+# without its count arm -> the same; `_ret_stmt_arity` answering 2 for any tuple -> cnt_two_of_three
+# builds, cnt_three refused; the mixed-arity guard dropped (the last return's count kept) ->
+# cnt_mixed refused; the `_body_ends_in_return` test dropped from the arity proof -> cnt_falls_off
+# refused; a generic instance not inheriting the base's record (`_gen_inst_record`) -> cnt_generic
+# builds (`g<i32>` mints `g$i32`).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: destructure_one_value_refused: cannot cd to $ROOT"; exit 1; }
@@ -111,7 +123,29 @@ runs do_brk    "${TWO5}fn w(x) { var i = 0; do { i = i + 1; if (i > 50) { return
 runs while_do_brk "${TWO5}fn w(x) { var i = 0; while (1) { do { i = i + 1; } while (i < 3); if (i > x) { two(x); break; } return i; } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n"  27
 runs loop_fwd  "${TWO5}fn w(x) { loop { return two(x); } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
 
-if [ "$rows" -lt 30 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 30)"; exit 1; fi
+echo "axis 4 - an undeclared fn's provable count is checked as a declared one:"
+DM='fn dm(a, b) { return (a / b, a % b); }\n'
+H3='fn h3(a) { return (a, a + 1, a + 2); }\n'
+C32="binds 3 names, but 'dm' returns 2 values"
+# t7 verbatim (the 6.7.7 B4 planners' probe), then seeded: an earlier 3-value call leaves 88 in r8.
+refused cnt_t7     "${DM}fn main(): i64 { var q, r, z = dm(17, 5); return q * 10 + r; }\nvar r = main(); syscall(60, r);\n" "$C32"
+refused cnt_seeded "fn h(): (i64, i64, i64) { return (1, 77, 88); }\n${DM}fn main(): i64 { var x, y, w = h(); var q, r, z = dm(17, 5); return z; }\nvar r = main(); syscall(60, r);\n" "$C32"
+refused cnt_two_of_three "${H3}fn f(): i64 {\n    var q, r = h3(1);\n    return q * 10 + r;\n}\nsyscall(60, f());\n" "binds 2 names, but 'h3' returns 3 values"
+refused cnt_top_decl "${DM}var q, r, z = dm(17, 5);\nsyscall(60, q);\n" "$C32"
+refused cnt_top_late "${DM}syscall(39);\nvar q, r, z = dm(17, 5);\nsyscall(60, q);\n" "$C32"
+refused cnt_forward "fn f(): i64 {\n    var q, r, z = later(17, 5);\n    return q;\n}\nsyscall(60, f());\nfn later(a, b) { return (a / b, a % b); }\n" "binds 3 names, but 'later' returns 2 values"
+refused cnt_method 'struct P { x; }\nimpl P { fn dm(self, b) { return (self.x / b, self.x % b); } }\nfn f(): i64 {\n    var p = P { 17 };\n    var q, r, z = p.dm(5);\n    return q;\n}\nsyscall(60, f());\n' "binds 3 names, but 'P_dm' returns 2 values"
+refused cnt_generic 'fn g<T>(a: T) { return (a, a + 1); }\nfn f(): i64 {\n    var q, r, z = g<i32>(5);\n    return q;\n}\nsyscall(60, f());\n' "binds 3 names, but 'g\$i32' returns 2 values"
+refused cnt_loop   "fn dm(a, b) { loop { if (b > 0) { return (a / b, a % b); } b = b + 1; } }\nfn f(): i64 {\n    var q, r, z = dm(17, 5);\n    return q;\n}\nsyscall(60, f());\n" "$C32"
+refused cnt_reassign "${DM}fn f(): i64 {\n    var q = 0;\n    var r = 0;\n    var z = 0;\n    q, r, z = dm(17, 5);\n    return q;\n}\nsyscall(60, f());\n" "$C32"
+runs cnt_two      "${DM}fn f(): i64 {\n    var q, r = dm(17, 5);\n    return q * 10 + r;\n}\nsyscall(60, f());\n" 32
+runs cnt_three    "${H3}fn f(): i64 {\n    var q, r, s = h3(1);\n    return q * 100 + r * 10 + s;\n}\nsyscall(60, f());\n" 123
+runs cnt_top      "${DM}var q, r = dm(17, 5);\nsyscall(60, q * 10 + r);\n" 32
+# Mixed arities and a body that can fall off its end (here with h3's three values) record nothing.
+runs cnt_mixed    "fn mix(a) { if (a > 0) { return (a, 1); } return (a, 2, 3); }\nfn f(): i64 {\n    var q, r = mix(4);\n    return q * 10 + r;\n}\nsyscall(60, f());\n" 41
+runs cnt_falls_off "${H3}fn w(x) { if (x > 5) { return (x, 1); } h3(x); }\nfn f(): i64 {\n    var q, r, s = w(1);\n    return q * 100 + r * 10 + s;\n}\nsyscall(60, f());\n" 123
+
+if [ "$rows" -lt 45 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 45)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

@@ -240,6 +240,8 @@
 #       type in a generic fn": the scan ran past a bodyless generic trait member to the next `{`)
 # 6.7.11 REPAIR 1 (the returns lane; the same recipe):
 #   MRL `_body_ends_in_loop` returns 0 -> R16x BUILDS (a callee ending in `loop { return x; }` captured a stale rdx)
+#   MRA `_prescan_ret_arity` records nothing -> R16y-R16ab BUILD; MRC `_tup_cap_class` without its count arm ->
+#       R16y-R16ab BUILD
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -748,6 +750,15 @@ refused r16w "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)"
 # R16x (6.7.11) — a callee whose body ends in an infinite loop no \`break\` leaves is provably one value too
 # (\`_body_ends_in_loop\`): the R12 refusal, where it captured a stale second register.
 refused r16x "$I12 't' with a value that is not a tuple" "R16x: a callee ending in \`loop { return x; }\` (6.7.11: one value, R12)" "fn one(x) { loop { return x; } }\n${F5}    var t: (i64, i64) = one(1);${E5}"
+# R16y-R16ab (6.7.11) — an UNDECLARED callee whose every \`return\` is \`(..)\` of one arity returns that many
+# values (pass 1, \`_prescan_ret_arity\`): a capture of another count is refused as a declared one is (it took
+# a stale r8 / dropped one); the matching count still captures.
+DMU='fn dm(a, b) { return (a / b, a % b); }\n'
+refused r16y "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16y: 3 from an undeclared 2 (6.7.11)" "${DMU}${F5}    var t: (i64, i64, i64) = dm(17, 5);${E5}"
+refused r16z "${CAP}h3' into tuple (i64, i64) - it returns 3 values" "R16z: 2 from an undeclared 3" "fn h3(a) { return (a, a + 1, a + 2); }\n${F5}    var t: (i64, i64) = h3(1);${E5}"
+refused r16aa "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16aa: a declaration-zone capture" "${DMU}var G: (i64, i64, i64) = dm(17, 5);\nsyscall(60, 0);\n"
+refused r16ab "${CAP}dm' into tuple (i64, i64, i64) - it returns 2 values" "R16ab: \`t = dm(..);\` into an existing tuple" "${DMU}${F5}    var t: (i64, i64, i64);\n    t = dm(17, 5);${E5}"
+exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) still captures" "${DMU}fn f(): i64 {\n    var t: (i64, i64) = dm(17, 5);\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base

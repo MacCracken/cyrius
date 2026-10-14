@@ -347,6 +347,12 @@
 #                                        bit11 (2048) REDEFINED: a later definition of
 #                                                   this name exists (6.6.20, pass 1;
 #                                                   no inline replay, instances from it)
+#                                        bit12 (4096) declared `: bool` (6.7.3)
+#                                        bits13-15 (8192 << k) element k of a declared
+#                                                   multi-value return is bool (6.7.3)
+#                                        bit16 (65536) / bit17 (131072) an UNDECLARED fn
+#                                                   provably returns 2 / 3 values (6.7.11,
+#                                                   _prescan_ret_arity)
 #   0x1EC000 gvar_initval  [65536]       8192 × 8B — per-gvar static-init
 #                                        literal value (v5.11.64). Written
 #                                        by PARSE_GVAR_REG when RHS matches

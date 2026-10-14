@@ -2443,6 +2443,9 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
+#                                     # body is left only through them: it returns 2 values, and
+#                                     # the count is checked as a declared one is (6.7.11)
 #   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
 #                                     # single value and the body ends in one — at fn scope and
 #                                     # at top level, a forward-declared `one` included. A body
@@ -2649,6 +2652,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
+| `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` into a tuple parameter | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |

@@ -5563,11 +5563,13 @@ fn _dep_seen(ti, fi): i64 {
 # it never received the bit, and only the i64 spellings (which ARE the base) warned.
 # 6.6.17 — what an instance must know of itself that the base's pass-1 record holds: its type
 # arguments (a3, `_bind_inl_generic`) and the base's "returns one value" bit 1024 (a5,
-# `_prescan_ret_single` — the instance's body IS the base's tokens).
+# `_prescan_ret_single` — the instance's body IS the base's tokens); 6.7.11, its value count
+# (`_prescan_ret_arity`).
 fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
     if (spec < 0) { return 0; }
     SFIC(S, spec, c0, c1);
     if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
+    SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 196608));   # 6.7.11: its arity record
     return 0;
 }
 fn _gen_inherit_dep(S, spec, base_fi): i64 {
@@ -12690,6 +12692,7 @@ fn _prescan_fn_sig(S): i64 {
         if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
         _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
+        _prescan_ret_arity(S, fi);    # 6.7.11
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
@@ -12729,14 +12732,8 @@ fn _prescan_ret_type(S, fi): i64 {
 fn _prescan_ret_single(S, fi): i64 {
     SFLG(S, fi, GFLG(S, fi) & (0 - 1025));
     var n = GTCNT(S);
-    var i = GTI(S);
-    while (i < n) {
-        var t = TOKTYP(S, i);
-        if (t == 13) { break; }
-        if (t == 5 || t == 12) { return 0; }
-        i = i + 1;
-    }
-    if (i >= n) { return 0; }
+    var i = _pre_body_open(S);
+    if (i < 0) { return 0; }
     var e = _tok_skip_block(S, i, n);
     var j = i + 1;
     while (j < e) {
@@ -12751,6 +12748,76 @@ fn _prescan_ret_single(S, fi): i64 {
     }
     if (_body_ends_in_return(S, i, e) == 0) { return 0; }
     SFLG(S, fi, GFLG(S, fi) | 1024);
+    return 0;
+}
+# Pass 1, the cursor past a fn's signature: its body's `{`, or -1 (a bodiless `fn x(..);`, EOF).
+fn _pre_body_open(S): i64 {
+    var n = GTCNT(S);
+    var i = GTI(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { return i; }
+        if (t == 5 || t == 12) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# ⛔ 6.7.11 — PASS 1: how many values an UNDECLARED fn returns, when it is provable: every `return`
+# is `return (..);` of one arity (2 or 3), there is no `ret2` / `asm` / `?`, and the body is left
+# only through its returns (`_body_ends_in_return`). GFLG bit 65536 = 2 values, 131072 = 3
+# (`_fn_ret_arity`), so a forward call knows it. A declared `: (T1, T2[, T3])` is GFRN's (GFRS
+# MULTIRET_SID; `_dsg_save` / `_dsg_check` read GFRN as the DECLARED arity, so this is no GFRN).
+# `var q, r, z = dm(17, 5);` with `dm` returning `(a / b, a % b)` bound z to whatever r8 held, and
+# the tuple capture likewise — the destructure (`_dt_arity_check`) and the capture
+# (`_tup_cap_class`) refuse a different count by name. Conservative: any other return leaves it
+# unrecorded. Cursor: not moved. CHANGELOG [6.7.11]
+fn _prescan_ret_arity(S, fi): i64 {
+    SFLG(S, fi, GFLG(S, fi) & (0 - 196609));
+    if (GFRS(S, fi) == MULTIRET_SID) { return 0; }
+    var i = _pre_body_open(S);
+    if (i < 0) { return 0; }
+    var e = _tok_skip_block(S, i, GTCNT(S));
+    var ar = 0;
+    var j = i + 1;
+    while (j < e) {
+        var u = TOKTYP(S, j);
+        if (u == 13 || u == 32) {
+            var sk = _skip_nested_body(S, j);
+            if (sk >= 0) { j = sk; }
+        }
+        elif (u == 97 || u == 48 || u == 124) { return 0; }   # ret2, asm, `?`
+        elif (u == 33) {
+            var a = _ret_stmt_arity(S, j);
+            if (a == 0) { return 0; }
+            if (ar != 0 && a != ar) { return 0; }
+            ar = a;
+        }
+        j = j + 1;
+    }
+    if (ar == 0) { return 0; }
+    if (_body_ends_in_return(S, i, e) == 0) { return 0; }
+    if (ar == 2) { SFLG(S, fi, GFLG(S, fi) | 65536); }
+    else { SFLG(S, fi, GFLG(S, fi) | 131072); }
+    return 0;
+}
+# The values `return (a, b[, c]);` at token k returns, 2 or 3; else 0. Its commas are counted as
+# PARSE_RETURN's multi-value arm counts them, read by shape (`_tup_p1`: pass 1 has not declared a
+# generic named below).
+fn _ret_stmt_arity(S, k): i64 {
+    if (TOKTYP(S, k + 1) != 10) { return 0; }
+    var sv = _tup_p1;
+    _tup_p1 = 1;
+    var c = _tup_commas(S, k + 1);
+    _tup_p1 = sv;
+    if (c < 1 || c > 2) { return 0; }
+    if (TOKTYP(S, _call_close(S, k + 1) + 1) != 5) { return 0; }
+    return c + 1;
+}
+# The values pass 1 recorded for an undeclared fn `fi` (`_prescan_ret_arity`): 2, 3, or 0 = unknown.
+fn _fn_ret_arity(S, fi): i64 {
+    var fl = GFLG(S, fi);
+    if ((fl & 65536) != 0) { return 2; }
+    if ((fl & 131072) != 0) { return 3; }
     return 0;
 }
 # 1 = the body `{` at `o` .. `}` at `e` can be left only through a `return`: its LAST statement is a
