@@ -68,6 +68,172 @@ fn t_fw3() { var s: P3; s.x = 1; s.y = 2; s.z = 3; var c: P3 = fw3(&s); s.y = 0;
 fn t_fw8() { var s: B8; s.v = 5; var c: B8 = fw8(&s); s.v = 0; return c.v; }
 fn t_fw4() { var s: B4; s.a = 0 - 7; var c: B4 = fw4(&s); s.a = 0; return c.a; }
 fn t_fw6() { var s: B6; s.a = 300; s.b = 0 - 2; var c: B6 = fw6(&s); s.a = 0; return c.a * 10 + c.b; }
+# ⛔ 6.7.11 — a `*T` LOCAL returned from a fn of 8 B or less is the struct it points at, as a `*T`
+# parameter is (above) and as a `*T` local is over 8 B: it returned the ADDRESS — an address byte where
+# 8 is right, on every target (issues/2026-10-12-small-struct-return-takes-another-structs-value.md,
+# the user's decision 2026-10-13). A copy, not an alias: the pointee is written after the return. The
+# struct is read byte-exact, its word's padding 0 (Z3: a frame of 0xFF words first).
+struct Z3 { a: i8; b: i8; c: i8; }
+var GL8 = B8 { 0 };
+var ZL[2];
+fn rl8(n): B8 { var s: B8; s.v = n; var p: *B8 = &s; return p; }
+fn rl8w(n): B8 { var s: B8; s.v = n; var p: *B8 = &s; return ((p)); }
+fn rl4(n): B4 { var s: B4; s.a = n; var p: *B4 = &s; return p; }
+fn rl6(): B6 { var s: B6; s.a = 300; s.b = 0 - 2; var p: *B6 = &s; return (p); }
+fn rlg8(): B8 { var p: *B8 = &GL8; return p; }
+fn rlz3(): Z3 { store64(&ZL, 0x4847464544434241); var p: *Z3 = &ZL; return p; }
+fn zdirty(): i64 {
+    var a: i64[16];
+    var i = 0;
+    while (i < 16) { a[i] = 0 - 1; i = i + 1; }
+    return a[15];
+}
+fn t_rl8() { var c: B8 = rl8(8); return c.v; }
+fn t_rl8w() { var c: B8 = rl8w(9); return c.v; }
+fn t_rl4() { var c: B4 = rl4(0 - 7); return c.a; }
+fn t_rl6() { var c: B6 = rl6(); return c.a * 10 + c.b; }
+fn t_rlg8() { GL8.v = 21; var c: B8 = rlg8(); GL8.v = 0; return c.v; }
+fn t_rlz3() { zdirty(); var l: Z3 = rlz3(); return load8(&l + 3) * 100000 + l.c; }
+# ⛔ 6.7.11 — `return E;` with E a `*S` — a global, a call or method declared `: *S`, a `*S` field, a `*S`
+# local, pointer arithmetic, any of them wrapped — or a dereference of one, from a fn returning S, is the
+# struct E points at, at 3 / 8 / 16 / 24 B (the user's decision 2026-10-13, (a): decision 6's rule on the
+# `return` side; issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md). Through
+# 6.7.10 at 8 B or less `return GP;`, `return gp();` (a tail call), `return w.p;` handed back the POINTER, and
+# over 8 B every non-local form was refused. Each row writes the pointee after the call: a copy, not an alias.
+var GS3 = Z3 { 0, 0, 0 };
+var GS8 = B8 { 0 };
+var GS16 = P2 { 0, 0 };
+var GS24 = P3 { 0, 0, 0 };
+var GP3: *Z3 = 0;
+fn gp3(): *Z3 { return GP3; }
+struct W3 { p: *Z3; }
+var WH3 = W3 { 0 };
+impl W3 { fn mp(self): *Z3 { return self.p; } }
+fn s3(): i64 { GS3.a = 1; GS3.b = 2; GS3.c = 3; GP3 = &GS3; WH3.p = &GS3; return 0; }
+var GP8: *B8 = 0;
+fn gp8(): *B8 { return GP8; }
+struct W8 { p: *B8; }
+var WH8 = W8 { 0 };
+impl W8 { fn mp(self): *B8 { return self.p; } }
+fn s8(): i64 { GS8.v = 41; GP8 = &GS8; WH8.p = &GS8; return 0; }
+var GP16: *P2 = 0;
+fn gp16(): *P2 { return GP16; }
+struct W16 { p: *P2; }
+var WH16 = W16 { 0 };
+impl W16 { fn mp(self): *P2 { return self.p; } }
+fn s16(): i64 { GS16.x = 5; GS16.y = 6; GP16 = &GS16; WH16.p = &GS16; return 0; }
+var GP24: *P3 = 0;
+fn gp24(): *P3 { return GP24; }
+struct W24 { p: *P3; }
+var WH24 = W24 { 0 };
+impl W24 { fn mp(self): *P3 { return self.p; } }
+fn s24(): i64 { GS24.x = 7; GS24.y = 8; GS24.z = 9; GP24 = &GS24; WH24.p = &GS24; return 0; }
+fn r3a(): Z3 { return GP3; }
+fn r3b(): Z3 { return gp3(); }
+fn r3c(): Z3 { return WH3.p; }
+fn r3d(): Z3 { return *GP3; }
+fn r3e(): Z3 { return *gp3(); }
+fn r3f(): Z3 { return (GP3); }
+fn r3g(): Z3 { var p: *Z3 = GP3; return p; }
+fn r3h(): Z3 { return (gp3()); }
+fn r3i(): Z3 { return *WH3.p; }
+fn r3j(): Z3 { return GP3 + 0; }
+fn r3k(): Z3 { return WH3.mp(); }
+fn r3l(): Z3 { return (*GP3); }
+fn r8a(): B8 { return GP8; }
+fn r8b(): B8 { return gp8(); }
+fn r8c(): B8 { return WH8.p; }
+fn r8d(): B8 { return *GP8; }
+fn r8e(): B8 { return *gp8(); }
+fn r8f(): B8 { return (GP8); }
+fn r8g(): B8 { var p: *B8 = GP8; return p; }
+fn r8h(): B8 { return (gp8()); }
+fn r8i(): B8 { return *WH8.p; }
+fn r8j(): B8 { return GP8 + 0; }
+fn r8k(): B8 { return WH8.mp(); }
+fn r8l(): B8 { return (*GP8); }
+fn r16a(): P2 { return GP16; }
+fn r16b(): P2 { return gp16(); }
+fn r16c(): P2 { return WH16.p; }
+fn r16d(): P2 { return *GP16; }
+fn r16e(): P2 { return *gp16(); }
+fn r16f(): P2 { return (GP16); }
+fn r16g(): P2 { var p: *P2 = GP16; return p; }
+fn r16h(): P2 { return (gp16()); }
+fn r16i(): P2 { return *WH16.p; }
+fn r16j(): P2 { return GP16 + 0; }
+fn r16k(): P2 { return WH16.mp(); }
+fn r16l(): P2 { return (*GP16); }
+fn r24a(): P3 { return GP24; }
+fn r24b(): P3 { return gp24(); }
+fn r24c(): P3 { return WH24.p; }
+fn r24d(): P3 { return *GP24; }
+fn r24e(): P3 { return *gp24(); }
+fn r24f(): P3 { return (GP24); }
+fn r24g(): P3 { var p: *P3 = GP24; return p; }
+fn r24h(): P3 { return (gp24()); }
+fn r24i(): P3 { return *WH24.p; }
+fn r24j(): P3 { return GP24 + 0; }
+fn r24k(): P3 { return WH24.mp(); }
+fn r24l(): P3 { return (*GP24); }
+fn t3a() { s3(); var c: Z3 = r3a(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3b() { s3(); var c: Z3 = r3b(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3c() { s3(); var c: Z3 = r3c(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3d() { s3(); var c: Z3 = r3d(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3e() { s3(); var c: Z3 = r3e(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3f() { s3(); var c: Z3 = r3f(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3g() { s3(); var c: Z3 = r3g(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3h() { s3(); var c: Z3 = r3h(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3i() { s3(); var c: Z3 = r3i(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3j() { s3(); var c: Z3 = r3j(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3k() { s3(); var c: Z3 = r3k(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t3l() { s3(); var c: Z3 = r3l(); GS3.a = 9; GS3.c = 9; return c.a * 100 + c.b * 10 + c.c; }
+fn t8a() { s8(); var c: B8 = r8a(); GS8.v = 0; return c.v; }
+fn t8b() { s8(); var c: B8 = r8b(); GS8.v = 0; return c.v; }
+fn t8c() { s8(); var c: B8 = r8c(); GS8.v = 0; return c.v; }
+fn t8d() { s8(); var c: B8 = r8d(); GS8.v = 0; return c.v; }
+fn t8e() { s8(); var c: B8 = r8e(); GS8.v = 0; return c.v; }
+fn t8f() { s8(); var c: B8 = r8f(); GS8.v = 0; return c.v; }
+fn t8g() { s8(); var c: B8 = r8g(); GS8.v = 0; return c.v; }
+fn t8h() { s8(); var c: B8 = r8h(); GS8.v = 0; return c.v; }
+fn t8i() { s8(); var c: B8 = r8i(); GS8.v = 0; return c.v; }
+fn t8j() { s8(); var c: B8 = r8j(); GS8.v = 0; return c.v; }
+fn t8k() { s8(); var c: B8 = r8k(); GS8.v = 0; return c.v; }
+fn t8l() { s8(); var c: B8 = r8l(); GS8.v = 0; return c.v; }
+fn t16a() { s16(); var c: P2 = r16a(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16b() { s16(); var c: P2 = r16b(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16c() { s16(); var c: P2 = r16c(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16d() { s16(); var c: P2 = r16d(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16e() { s16(); var c: P2 = r16e(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16f() { s16(); var c: P2 = r16f(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16g() { s16(); var c: P2 = r16g(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16h() { s16(); var c: P2 = r16h(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16i() { s16(); var c: P2 = r16i(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16j() { s16(); var c: P2 = r16j(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16k() { s16(); var c: P2 = r16k(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t16l() { s16(); var c: P2 = r16l(); GS16.x = 0; GS16.y = 0; return c.x * 10 + c.y; }
+fn t24a() { s24(); var c: P3 = r24a(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24b() { s24(); var c: P3 = r24b(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24c() { s24(); var c: P3 = r24c(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24d() { s24(); var c: P3 = r24d(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24e() { s24(); var c: P3 = r24e(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24f() { s24(); var c: P3 = r24f(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24g() { s24(); var c: P3 = r24g(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24h() { s24(); var c: P3 = r24h(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24i() { s24(); var c: P3 = r24i(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24j() { s24(); var c: P3 = r24j(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24k() { s24(); var c: P3 = r24k(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+fn t24l() { s24(); var c: P3 = r24l(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
+# a generic call declared `: *T` (6.7.11: a struct source) at 8 / 16 B, and the 3 B padding through a global.
+# (`gpg`'s `var` keeps it off the inline replay, whose `return` is judged by the CALLER's struct class —
+# staged from this lane: 2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md.)
+var GPA = 0;
+fn gpg<T>(): *T { var r = GPA; return r; }
+fn r8gen(): B8 { return gpg<B8>(); }
+fn r16gen(): P2 { return (gpg<P2>()); }
+fn t8gen() { s8(); GPA = &GS8; var c: B8 = r8gen(); GS8.v = 0; return c.v; }
+fn t16gen() { s16(); GPA = &GS16; var c: P2 = r16gen(); GS16.x = 0; return c.x * 10 + c.y; }
+fn tz3g() { store64(&ZL, 0x4847464544434241); GP3 = &ZL; zdirty(); var l: Z3 = r3a(); return load8(&l + 3) * 100000 + l.c; }
 
 alloc_init();
 assert_eq(t_p1(), 7, "8 B handle returned by value: its struct (6.7.10)");
@@ -88,4 +254,61 @@ assert_eq(t_fw3(), 10203, "control: a 24 B `*T` parameter returned by value");
 assert_eq(t_fw8(), 5, "an 8 B `*T` parameter returned by value is its struct, not its address");
 assert_eq(t_fw4(), 0 - 7, "a 4 B `*T` parameter returned by value (signed i32 field)");
 assert_eq(t_fw6(), 2998, "a 6 B `*T` parameter returned by value: {300, -2}");
+assert_eq(t_rl8(), 8, "6.7.11: an 8 B `*T` LOCAL returned by value is its struct, not its address");
+assert_eq(t_rl8w(), 9, "6.7.11: `return ((p));`, p an 8 B `*T` local");
+assert_eq(t_rl4(), 0 - 7, "6.7.11: a 4 B `*T` local returned by value (signed i32 field)");
+assert_eq(t_rl6(), 2998, "6.7.11: `return (p);`, p a 6 B `*T` local: {300, -2}");
+assert_eq(t_rlg8(), 21, "6.7.11: a `*T` local returned is a copy, not an alias of its pointee");
+assert_eq(t_rlz3(), 67, "6.7.11: a 3 B `*T` local returned: 'C', no byte past it, the word's padding 0");
+assert_eq(t3a(), 123, "6.7.11: 3 B `return GP3;` (a `*S` global): the struct it points at, a copy");
+assert_eq(t3b(), 123, "6.7.11: 3 B `return gp3();` (a `: *S` call (the tail-call shape)): the struct it points at, a copy");
+assert_eq(t3c(), 123, "6.7.11: 3 B `return WH3.p;` (a `*S` field): the struct it points at, a copy");
+assert_eq(t3d(), 123, "6.7.11: 3 B `return *GP3;` (a dereference of a `*S` global): the struct it points at, a copy");
+assert_eq(t3e(), 123, "6.7.11: 3 B `return *gp3();` (a dereference of a `: *S` call): the struct it points at, a copy");
+assert_eq(t3f(), 123, "6.7.11: 3 B `return (GP3);` (a `*S` global, wrapped): the struct it points at, a copy");
+assert_eq(t3g(), 123, "6.7.11: 3 B `return p;` (a `*S` local): the struct it points at, a copy");
+assert_eq(t3h(), 123, "6.7.11: 3 B `return (gp3());` (a `: *S` call, wrapped): the struct it points at, a copy");
+assert_eq(t3i(), 123, "6.7.11: 3 B `return *WH3.p;` (a dereference of a `*S` field): the struct it points at, a copy");
+assert_eq(t3j(), 123, "6.7.11: 3 B `return GP3 + 0;` (pointer arithmetic on a `*S` global): the struct it points at, a copy");
+assert_eq(t3k(), 123, "6.7.11: 3 B `return WH3.mp();` (a method declared `: *S`): the struct it points at, a copy");
+assert_eq(t3l(), 123, "6.7.11: 3 B `return (*GP3);` (a dereference, wrapped): the struct it points at, a copy");
+assert_eq(t8a(), 41, "6.7.11: 8 B `return GP8;` (a `*S` global): the struct it points at, a copy");
+assert_eq(t8b(), 41, "6.7.11: 8 B `return gp8();` (a `: *S` call (the tail-call shape)): the struct it points at, a copy");
+assert_eq(t8c(), 41, "6.7.11: 8 B `return WH8.p;` (a `*S` field): the struct it points at, a copy");
+assert_eq(t8d(), 41, "6.7.11: 8 B `return *GP8;` (a dereference of a `*S` global): the struct it points at, a copy");
+assert_eq(t8e(), 41, "6.7.11: 8 B `return *gp8();` (a dereference of a `: *S` call): the struct it points at, a copy");
+assert_eq(t8f(), 41, "6.7.11: 8 B `return (GP8);` (a `*S` global, wrapped): the struct it points at, a copy");
+assert_eq(t8g(), 41, "6.7.11: 8 B `return p;` (a `*S` local): the struct it points at, a copy");
+assert_eq(t8h(), 41, "6.7.11: 8 B `return (gp8());` (a `: *S` call, wrapped): the struct it points at, a copy");
+assert_eq(t8i(), 41, "6.7.11: 8 B `return *WH8.p;` (a dereference of a `*S` field): the struct it points at, a copy");
+assert_eq(t8j(), 41, "6.7.11: 8 B `return GP8 + 0;` (pointer arithmetic on a `*S` global): the struct it points at, a copy");
+assert_eq(t8k(), 41, "6.7.11: 8 B `return WH8.mp();` (a method declared `: *S`): the struct it points at, a copy");
+assert_eq(t8l(), 41, "6.7.11: 8 B `return (*GP8);` (a dereference, wrapped): the struct it points at, a copy");
+assert_eq(t16a(), 56, "6.7.11: 16 B `return GP16;` (a `*S` global): the struct it points at, a copy");
+assert_eq(t16b(), 56, "6.7.11: 16 B `return gp16();` (a `: *S` call (the tail-call shape)): the struct it points at, a copy");
+assert_eq(t16c(), 56, "6.7.11: 16 B `return WH16.p;` (a `*S` field): the struct it points at, a copy");
+assert_eq(t16d(), 56, "6.7.11: 16 B `return *GP16;` (a dereference of a `*S` global): the struct it points at, a copy");
+assert_eq(t16e(), 56, "6.7.11: 16 B `return *gp16();` (a dereference of a `: *S` call): the struct it points at, a copy");
+assert_eq(t16f(), 56, "6.7.11: 16 B `return (GP16);` (a `*S` global, wrapped): the struct it points at, a copy");
+assert_eq(t16g(), 56, "6.7.11: 16 B `return p;` (a `*S` local): the struct it points at, a copy");
+assert_eq(t16h(), 56, "6.7.11: 16 B `return (gp16());` (a `: *S` call, wrapped): the struct it points at, a copy");
+assert_eq(t16i(), 56, "6.7.11: 16 B `return *WH16.p;` (a dereference of a `*S` field): the struct it points at, a copy");
+assert_eq(t16j(), 56, "6.7.11: 16 B `return GP16 + 0;` (pointer arithmetic on a `*S` global): the struct it points at, a copy");
+assert_eq(t16k(), 56, "6.7.11: 16 B `return WH16.mp();` (a method declared `: *S`): the struct it points at, a copy");
+assert_eq(t16l(), 56, "6.7.11: 16 B `return (*GP16);` (a dereference, wrapped): the struct it points at, a copy");
+assert_eq(t24a(), 789, "6.7.11: 24 B `return GP24;` (a `*S` global): the struct it points at, a copy");
+assert_eq(t24b(), 789, "6.7.11: 24 B `return gp24();` (a `: *S` call (the tail-call shape)): the struct it points at, a copy");
+assert_eq(t24c(), 789, "6.7.11: 24 B `return WH24.p;` (a `*S` field): the struct it points at, a copy");
+assert_eq(t24d(), 789, "6.7.11: 24 B `return *GP24;` (a dereference of a `*S` global): the struct it points at, a copy");
+assert_eq(t24e(), 789, "6.7.11: 24 B `return *gp24();` (a dereference of a `: *S` call): the struct it points at, a copy");
+assert_eq(t24f(), 789, "6.7.11: 24 B `return (GP24);` (a `*S` global, wrapped): the struct it points at, a copy");
+assert_eq(t24g(), 789, "6.7.11: 24 B `return p;` (a `*S` local): the struct it points at, a copy");
+assert_eq(t24h(), 789, "6.7.11: 24 B `return (gp24());` (a `: *S` call, wrapped): the struct it points at, a copy");
+assert_eq(t24i(), 789, "6.7.11: 24 B `return *WH24.p;` (a dereference of a `*S` field): the struct it points at, a copy");
+assert_eq(t24j(), 789, "6.7.11: 24 B `return GP24 + 0;` (pointer arithmetic on a `*S` global): the struct it points at, a copy");
+assert_eq(t24k(), 789, "6.7.11: 24 B `return WH24.mp();` (a method declared `: *S`): the struct it points at, a copy");
+assert_eq(t24l(), 789, "6.7.11: 24 B `return (*GP24);` (a dereference, wrapped): the struct it points at, a copy");
+assert_eq(t8gen(), 41, "6.7.11: 8 B `return gpg<B8>();` (a generic `: *T` call): its struct");
+assert_eq(t16gen(), 56, "6.7.11: 16 B `return (gpg<P2>());`: its struct");
+assert_eq(tz3g(), 67, "6.7.11: 3 B `return GP3;`: 'C', no byte past it, the word's padding 0");
 var r = assert_summary();

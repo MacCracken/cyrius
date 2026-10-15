@@ -16,6 +16,14 @@
 # add). At top level an untyped global keeps the struct's word, untyped, at every size (over 8 B a
 # global's operator result has no temporary to name).
 #
+# 6.7.11 (the user's decision (a), 2026-10-13; issues/2026-10-13-untyped-struct-binding-beyond-operators-
+# decision.md) — the rule reaches EVERY whole struct result: a method chain of 8 B or less (`var c =
+# a.d().d();`), an if-expression of struct branches (8 B or less, the only size a branch can be), and a
+# 9-16 B operator / method result in parentheses (`var c = (a + b);`, `(a.m())`) bind an inline struct, as
+# the annotated form does; through 6.7.10 each was an untyped word (`c.v` refused, `c + 1` added to it,
+# `takeh(c)` passed the 16 B one's first word as its address). The `m` / `i` / `p` rows below, each at
+# 1..8 B and against its 16 / 24 B twin; an integer-ending chain, a scalar annotation and a global keep the word.
+#
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R8 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
 # cross-OS leg on ecb / ach / cass / pi.
@@ -107,9 +115,10 @@ fn b_field_h() {
 fn b_deref_8() { var x: S8 = S8 { 4 }; var p: *S8 = &x; var b: S8 = S8 { 70 }; var c = *p + b; return c.v; }
 fn b_deref_h() { var x: H = H { 4, 1 }; var p: *H = &x; var b: H = H { 70, 2 }; var c = *p + b; return c.v; }
 fn b_paren_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = (a + b); return c.v; }
-# the twin is 24 B: a 9-16 B result in parentheses has no temporary for an untyped binding to name (a
-# pre-existing gap of the 6.7.6 wrap rule, reported), while a retptr result's temporary is named
 fn b_paren_t() { var a: T3 = T3 { 4, 1, 1 }; var b: T3 = T3 { 70, 2, 2 }; var c = (a + b); return c.x; }
+# 6.7.11: and its 16 B twin — through 6.7.10 a 9-16 B result in parentheses had no temporary for an untyped
+# binding to name (`c.v` refused)
+fn b_paren_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); return c.v; }
 fn b_chain_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a + b + a; return c.v; }
 fn b_chain_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = a + b + a; return c.v; }
 fn b_arg_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = a + b; return take8(c); }
@@ -129,6 +138,21 @@ fn b_clos_h() {
 # an integer-returning operator leaves the binding untyped: `r + 1` is an integer add
 fn b_int_8() { var a: S8 = S8 { 70 }; var b: S8 = S8 { 4 }; var r = a - b; return r + 1; }
 fn b_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = a - b; return r + 1; }
+# 6.7.11 — and after a LEADING CALL: a call's struct types the binding only when the call is the whole
+# initialiser, so `var r = mk8(10) - b;` with an integer-returning `-` is an untyped integer, as is a
+# comparison after a leading call (through 6.7.10 r took mk8's S8, so `r.v` dereferenced the integer —
+# refused now: tests/gates/codegen/struct_value_codegen.sh L16 / L17,
+# small_struct_handle_line.sh B2); a struct-returning operator still
+# types the binding; a `: f64` call keeps its f64
+fn T3_sub(a: *T3, b: *T3): i64 { return a.z - b.z; }
+fn mkt(n): T3 { var r: T3; r.x = n; r.y = n; r.z = n; return r; }
+fn fdbl(): f64 { return 1.5; }
+fn b_lint_8() { var b: S8 = S8 { 3 }; var r = mk8(10) - b; return r + 1; }
+fn b_lint_h() { var b: H = H { 3, 0 }; var r = mkh(10) - b; return r + 1; }
+fn b_lint_t() { var b: T3 = T3 { 9, 9, 9 }; var r = mkt(4) - b; return r + 10; }
+fn b_lcmp_8() { var b: S8 = S8 { 1 }; var r = mk8(1) == b; return r + 1; }
+fn b_lop_t() { var b: T3 = T3 { 5, 6, 7 }; var r = mkt(4) + b; return r.x + r.y + r.z; }
+fn b_lf64() { var x = fdbl() * 2.0; var y = x + x; return f64_to(y); }
 
 # ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
 struct Z1 { a: u8; }
@@ -179,10 +203,77 @@ fn z7() {
     return d.a + d.b * 100 + d.c * 10000;
 }
 
+# ── 6.7.11: a METHOD CHAIN (m), an IF-EXPRESSION (i), a PARENTHESISED 9-16 B result (p) ──
+# Methods: `d` doubles every field (a fresh struct), `n` returns an integer. Every chain starts from v = 5.
+fn S8_d(self: *S8): S8 { var r: S8; r.v = self.v * 2; return r; }
+fn S8_n(self: *S8): i64 { return self.v; }
+fn H_d(self: *H): H { var r: H; r.v = self.v * 2; r.w = self.w * 2; return r; }
+fn H_m(self: *H): H { var r: H; r.v = self.v + 1; r.w = 2; return r; }
+fn T3_d(self: *T3): T3 { var r: T3; r.x = self.x * 2; r.y = self.y * 2; r.z = self.z * 2; return r; }
+fn C4_d(self: *C4): C4 { var r: C4; r.r = self.r * 2; r.g = self.g * 2; r.b = self.b * 2; r.a = self.a * 2; return r; }
+fn Z1_d(self: *Z1): Z1 { var r: Z1; r.a = self.a * 2; return r; }
+fn Z6_d(self: *Z6): Z6 { var r: Z6; r.a = self.a * 2; r.b = self.b * 2; return r; }
+fn S8_m(self: *S8): S8 { var r: S8; r.v = self.v + 1; return r; }
+fn T3_m(self: *T3): T3 { var r: T3; r.x = self.x + 1; r.y = 2; r.z = 3; return r; }
+fn mkc4(n): C4 { var r: C4; r.r = n; r.g = n + 1; r.b = n + 2; r.a = n + 3; return r; }
+fn mkz1(n): Z1 { var r: Z1; r.a = n; return r; }
+# the issue's three repros (u1 20, u2 7, u3 41)
+fn u1() { var a: S8; a.v = 5; var c = a.d().d(); return c.v; }
+fn u2() { var k = 1; var c = if (k == 1) { mk8(7) } else { mk8(9) }; return c.v; }
+struct S16 { v; w; }
+fn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }
+fn S16_m(self: *S16): S16 { var r: S16; r.v = self.v + 1; r.w = 2; return r; }
+fn u3() {
+    var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20;
+    var c = (a + b); var e = (a.m()); return c.v + c.w + e.v;
+}
+# m: the chain binds the struct: c.f written (a copy: a kept), c + c dispatches, take(c) by value
+fn m_var_8() { var a: S8 = S8 { 5 }; var c = a.d().d(); c.v = c.v + 1; return c.v * 100 + a.v; }
+fn m_var_h() { var a: H = H { 5, 1 }; var c = a.d().d(); c.v = c.v + 1; return c.v * 100 + a.v + (c.w - 4) * 100000; }
+fn m_var_t() { var a: T3 = T3 { 5, 1, 1 }; var c = a.d().d(); c.x = c.x + 1; return c.x * 100 + a.x + (c.z - 4) * 100000; }
+fn m_again_8() { var a: S8 = S8 { 5 }; var c = a.d().d(); var d = c + c; return d.v; }
+fn m_again_h() { var a: H = H { 5, 1 }; var c = a.d().d(); var d = c + c; return d.v; }
+fn m_arg_8() { var a: S8 = S8 { 5 }; var c = a.d().d(); return take8(c); }
+fn m_arg_h() { var a: H = H { 5, 1 }; var c = a.d().d(); return takeh(c); }
+fn m_three_8() { var a: S8 = S8 { 5 }; var c = a.d().d().d(); return c.v; }
+fn m_call_8() { var c = mk8(5).d().d(); return c.v; }
+fn m_call_h() { var c = mkh(5).d().d(); return c.v; }
+fn m_wrap_8() { var a: S8 = S8 { 5 }; var c = (a.d().d()); return c.v; }
+fn m_c4() { var a: C4 = mkc4(1); var c = a.d().d(); c.g = c.g + 1; var d = c + c; return d.r * 1000 + d.g * 10 + c.a; }
+fn m_z1() { var a: Z1 = mkz1(5); var c = a.d().d(); c.a = c.a + 1; var d = c + c; return d.a; }
+fn m_z6() { var a: Z6; a.a = 5; a.b = 7; var c = a.d().d(); c.a = c.a + 1; return c.a * 1000 + c.b; }
+# a chain ENDING in an integer method is an integer: c + 1 adds
+fn m_int_8() { var a: S8 = S8 { 5 }; var c = a.d().n(); return c + 1; }
+# i: an if-expression of struct branches (8 B or less)
+fn i_var_8() { var k = 1; var c = if (k == 1) { mk8(7) } else { mk8(9) }; c.v = c.v + 1; return c.v; }
+fn i_else_8() { var k = 2; var c = if (k == 1) { mk8(7) } else { mk8(9) }; return c.v; }
+fn i_again_8() { var k = 1; var c = if (k == 1) { mk8(7) } else { mk8(9) }; var d = c + c; return d.v; }
+fn i_arg_8() { var k = 1; var c = if (k == 1) { mk8(7) } else { mk8(9) }; return take8(c); }
+fn i_elif_8() { var k = 2; var c = if (k == 1) { mk8(7) } elif (k == 2) { mk8(8) } else { mk8(9) }; return c.v; }
+fn i_wrap_8() { var k = 1; var c = (if (k == 1) { mk8(7) } else { mk8(9) }); return c.v; }
+fn i_var_name() { var k = 1; var x: S8 = S8 { 7 }; var y: S8 = S8 { 9 }; var c = if (k == 1) { x } else { y }; c.v = c.v + 1; return c.v * 10 + x.v; }
+fn i_c4() { var k = 1; var c = if (k == 1) { mkc4(1) } else { mkc4(5) }; c.g = 9; var d = c + c; return d.r * 100 + d.g; }
+fn i_z1() { var k = 1; var c = if (k == 1) { mkz1(3) } else { mkz1(4) }; c.a = c.a + 10; var d = c + c; return d.a; }
+# p: a parenthesised operator / method result, the 16 B one new (its 8 and 24 B twins typed before)
+fn p_op_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); c.v = c.v + 1; return c.v * 100 + a.v + (c.w - 3) * 100000; }
+fn p_op_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c = (a + b); c.v = c.v + 1; return c.v * 100 + a.v; }
+fn p_meth_h() { var a: H = H { 5, 1 }; var e = (a.m()); e.w = e.w + 1; return e.v * 10 + e.w; }
+fn p_meth_8() { var a: S8 = S8 { 5 }; var e = (a.m()); return e.v * 10 + 3; }
+fn p_meth_t() { var a: T3 = T3 { 5, 1, 1 }; var e = (a.m()); return e.x * 10 + e.y + e.z - 2; }
+fn p_again_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); var d = c + c; return d.v; }
+fn p_arg_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); return takeh(c); }
+fn p_arg_m() { var a: H = H { 5, 1 }; var e = (a.m()); return takeh(e); }
+fn p_deep_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (((a + b))); return c.v + c.w; }
+fn p_mchain_h() { var a: H = H { 5, 1 }; var c = (a.d().d()); return c.v + c.w; }
+# a scalar annotation keeps the first word; parentheses around an integer stay an integer
+fn p_scalar_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c: i64 = (a + b); return c; }
+fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); return r + 1; }
+
 # ── top level: an untyped global keeps the operator result's word, untyped, as over 8 B ──
 var GA = S8 { 4 };
 var GB = S8 { 70 };
 var TG = GA + GB;
+var TI = if (GA.v == 4) { mk8(7) } else { mk8(9) };   # 6.7.11: an if-expression's word, untyped (7)
 
 assert_eq(c4_case(), 111, "the filed C4 case: var c = A + B; c.g = 1; c + c (A and B kept)");
 assert_eq(c4_wrap(), 422, "C4: the u8 channel wraps in the operator (250 + 10 = 4)");
@@ -202,6 +293,7 @@ assert_eq(b_deref_8(), 82, "var c = *p + b: a dereference left operand");
 assert_eq(b_deref_8(), b_deref_h(), "  = its 16 B twin");
 assert_eq(b_paren_8(), 82, "var c = (a + b)");
 assert_eq(b_paren_8(), b_paren_t(), "  = its 24 B twin");
+assert_eq(b_paren_8(), b_paren_h(), "  = its 16 B twin (6.7.11: an untyped word through 6.7.10)");
 assert_eq(b_chain_8(), 250, "var c = a + b + a");
 assert_eq(b_chain_8(), b_chain_h(), "  = its 16 B twin");
 assert_eq(b_arg_8(), 82, "take(c): c passed by value");
@@ -210,6 +302,12 @@ assert_eq(b_clos_8(), 82, "var c = a + b in a closure body");
 assert_eq(b_clos_8(), b_clos_h(), "  = its 16 B twin");
 assert_eq(b_int_8(), 67, "an integer-returning operator: the binding stays untyped");
 assert_eq(b_int_8(), b_int_h(), "  = its 16 B twin");
+assert_eq(b_lint_8(), 8, "var r = mk8(10) - b; an integer-returning operator after a leading call: untyped");
+assert_eq(b_lint_8(), b_lint_h(), "  = its 16 B twin");
+assert_eq(b_lint_t(), 5, "  24 B: var r = mkt(4) - b; r + 10");
+assert_eq(b_lcmp_8(), 2, "var r = mk8(1) == b; a comparison after a leading call: untyped");
+assert_eq(b_lop_t(), 38, "var r = mkt(4) + b; a struct-returning operator after a leading call types it");
+assert_eq(b_lf64(), 6, "var x = f() * 2.0; a : f64 leading call keeps the f64 binding");
 assert_eq(z1(), 28, "1 B: c.a written, c + c");
 assert_eq(z2(), 28, "2 B: c.a written, c + c");
 assert_eq(z3(), 1028, "3 B: c.a written, c + c");
@@ -217,4 +315,44 @@ assert_eq(z5(), 1028, "5 B: c.a written, c + c");
 assert_eq(z6(), 1028, "6 B: c.a written, c + c");
 assert_eq(z7(), 121028, "7 B: c.a written, c + c");
 assert_eq(TG, 82, "top level: an untyped global keeps the result's word");
+assert_eq(u1(), 20, "6.7.11 u1: var c = a.d().d(); c.v (the issue's repro: refused)");
+assert_eq(u2(), 7, "u2: var c = if (..) { mk(7) } else { mk(9) }; c.v (refused)");
+assert_eq(u3(), 41, "u3: var c = (a + b); var e = (a.m()); at 16 B (refused)");
+assert_eq(m_var_8(), 2105, "m: var c = a.d().d(): an inline S8, a copy (a kept)");
+assert_eq(m_var_8(), m_var_h(), "  = its 16 B twin");
+assert_eq(m_var_8(), m_var_t(), "  = its 24 B twin");
+assert_eq(m_again_8(), 80, "m: c + c dispatches S8_add");
+assert_eq(m_again_8(), m_again_h(), "  = its 16 B twin");
+assert_eq(m_arg_8(), 20, "m: take8(c): c passed by value");
+assert_eq(m_arg_8(), m_arg_h(), "  = its 16 B twin");
+assert_eq(m_three_8(), 40, "m: three links");
+assert_eq(m_call_8(), 20, "m: a chain on a call, mk8(5).d().d()");
+assert_eq(m_call_8(), m_call_h(), "  = its 16 B twin");
+assert_eq(m_wrap_8(), 20, "m: var c = (a.d().d());");
+assert_eq(m_c4(), 8196, "m: 4 B packed C4: c.g written, c + c");
+assert_eq(m_z1(), 42, "m: 1 B Z1: c.a written, c + c");
+assert_eq(m_z6(), 21028, "m: 6 B Z6: c.a written");
+assert_eq(m_int_8(), 11, "m: a chain ending in an integer method stays an integer");
+assert_eq(i_var_8(), 8, "i: var c = if (k) { mk8(7) } else { mk8(9) }: an inline S8");
+assert_eq(i_else_8(), 9, "i: the else branch");
+assert_eq(i_again_8(), 28, "i: c + c dispatches S8_add");
+assert_eq(i_arg_8(), 7, "i: take8(c)");
+assert_eq(i_elif_8(), 8, "i: an elif branch");
+assert_eq(i_wrap_8(), 7, "i: in parentheses");
+assert_eq(i_var_name(), 87, "i: branches naming S8 locals: a copy (x kept)");
+assert_eq(i_c4(), 218, "i: 4 B packed C4: c.g written, c + c");
+assert_eq(i_z1(), 26, "i: 1 B Z1: c.a written, c + c");
+assert_eq(p_op_h(), 8304, "p: var c = (a + b) at 16 B: an inline H, a copy (a kept)");
+assert_eq(p_op_h(), p_op_8(), "  = its 8 B twin");
+assert_eq(p_meth_h(), 63, "p: var e = (a.m()) at 16 B");
+assert_eq(p_meth_h(), p_meth_8(), "  = its 8 B twin");
+assert_eq(p_meth_h(), p_meth_t(), "  = its 24 B twin");
+assert_eq(p_again_h(), 328, "p: c + c dispatches H_add");
+assert_eq(p_arg_h(), 82, "p: takeh(c): c passed by value (its first word as its address through 6.7.10)");
+assert_eq(p_arg_m(), 6, "p: takeh(e) of (a.m())");
+assert_eq(p_deep_h(), 85, "p: (((a + b)))");
+assert_eq(p_mchain_h(), 24, "p: (a.d().d()) at 16 B");
+assert_eq(p_scalar_h(), 82, "p: var c: i64 = (a + b): a scalar annotation keeps the first word");
+assert_eq(p_int_h(), 67, "p: (a - b) returning an integer stays an integer");
+assert_eq(TI, 7, "top level: an if-expression's untyped global keeps the word");
 var r = assert_summary();

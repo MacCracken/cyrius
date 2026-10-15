@@ -64,7 +64,8 @@
 #         refused once; R4r a struct, an element and a scalar still bind T
 #      R5e-R5h a const fn's tuple parameter (used, unused, called in a const, after a `Pair<i64, i64>` one), refused
 #         once at its definition; R5i the other const fn parameters untouched
-#      CL1-CL2 re-assigning a whole captured tuple is "undefined variable", as any captured assignment is
+#      CL1-CL2 re-assigning a whole captured tuple is refused, as any captured assignment is (6.7.11: naming the
+#      capture, `'t' is captured by value; ..`, not "undefined variable": issues/2026-10-08-struct-operator-results.md #6)
 #   CS (6.7.11) — one mistake, one error, at its place (the cascade issue's shapes 1-4 and 8, its repros verbatim)
 #   T7 — the tools that read a signature by hand (rows T1 / T2; the CLI and the LSP built from this tree with $CC):
 #      T1 `cyrius header` (cbt/quality.cyr cmd_header) cut the parameter list at its FIRST `)` and skipped a type to
@@ -833,7 +834,7 @@ refused r18s "cannot re-assign f32 'x'$TGT" "R18s: an f32 target" "${MK}${F5V}  
 refused r18t "cannot assign a value that is not a bool to bool 'k' - the call does not declare that value bool" "R18t: a bool target from a declared i64 value" "${MK}${F5V}    var k: bool = false;\n    k, b = mk(1);${E5}"
 refused r18u "cannot assign a value that is not a bool to bool 'k' - the call does not declare that value bool" "R18u: a bool target from an undeclared callee" "fn dm(a, b) { return (a / b, a % b); }\n${F5V}    var k: bool = false;\n    k, b = dm(1, 2);${E5}"
 refused r18v "undefined variable 'zz'" "R18v: an undefined target (as \`x = ..\` reports it)" "${MK}${F5V}    zz, b = mk(1);${E5}"
-refused r18w "undefined variable 'a'" "R18w: a closure's captured target (as \`x = ..\` inside a closure)" "include \"lib/alloc.cyr\"\n${MK}${F5V}    var c = fncall0(|| { var z = 0; a, z = mk(1); return z; });${E5}"
+refused r18w "'a' is captured by value; a captured name is not assignable in a closure" "R18w: a closure's captured target (as \`x = ..\` inside a closure)" "include \"lib/alloc.cyr\"\n${MK}${F5V}    var c = fncall0(|| { var z = 0; a, z = mk(1); return z; });${E5}"
 refused r18x "cannot re-assign tuple 'GV' from a multi-value call" "R18x: a global tuple target" "${MK}var GV = (1, 2);\n${F5V}    GV, b = mk(1);${E5}"
 # R19 — a right-hand side that is not one whole call: the destructure's own texts.
 R19="multi-value destructure needs a call on the right-hand side"
@@ -865,8 +866,8 @@ refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchan
 # CL (T6) — a closure captures a tuple as it captures a struct: a by-value copy (tuple_values.tcyr's
 # `closures`). Re-assigning the WHOLE captured tuple is what any captured assignment is: "undefined
 # variable" — the literal and the capture forms too (an element write is the closure's copy).
-refused cl1 "undefined variable 't'" "CL1: \`t = (3, 4);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = (3, 4); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
-refused cl2 "undefined variable 't'" "CL2: \`t = m2(5);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn m2(x): (i64, i64) { return (x, 1); }\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = m2(5); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
+refused cl1 "'t' is captured by value; a captured name is not assignable in a closure" "CL1: \`t = (3, 4);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = (3, 4); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
+refused cl2 "'t' is captured by value; a captured name is not assignable in a closure" "CL2: \`t = m2(5);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn m2(x): (i64, i64) { return (x, 1); }\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = m2(5); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
 # CS (6.7.11, the returns lane) — ONE MISTAKE, ONE ERROR, at its place (the filed repros of
 # issues/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md verbatim, shapes 1-4 and 8): EXACTLY the errors
 # named, and no warning. CS1 `t == u` reports the left operand alone (a chain too; two arguments are two
@@ -894,8 +895,8 @@ cascade cs1 1 "CS1: \`t == u\` (the filed repro): one error, the left operand" '
 cascade cs1b 1 "CS1b: \`t + u + v\`: one error" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    var v = (5, 6);\n    var k = t + u + v;\n    return k;\n}\nsyscall(60, main());\n' "5:13: $TUV"
 cascade cs1c 2 "CS1c: \`(t == u) && (u == t)\`: one per comparison" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    if ((t == u) && (u == t)) { return 1; }\n    return 0;\n}\nsyscall(60, main());\n' "4:10: $TUV" "4:22: tuple 'u' used as a value"
 cascade cs1d 2 "CS1d: \`g(t, u)\`: two arguments, two errors (unchanged)" 'fn g(a, b): i64 { return a; }\nfn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    return g(t, u);\n}\nsyscall(60, main());\n' "5:14: $TUV" "5:17: tuple 'u' used as a value"
-cascade cs2 1 "CS2: \`t = u;\` in a closure, both captured tuples (the filed repro): the captured-assignment error at \`t\`" 'include "lib/alloc.cyr"\nfn main(): i64 {\n    alloc_init();\n    var t = (1, 2);\n    var u = (3, 4);\n    var f = || { t = u; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "6:18: undefined variable 't'"
-cascade cs2b 1 "CS2b: the struct form \`s = q;\`: the same error, at \`s\`" 'include "lib/alloc.cyr"\nstruct P2 { a; b; }\nfn main(): i64 {\n    alloc_init();\n    var s = P2 { 1, 2 };\n    var q = P2 { 3, 4 };\n    var f = || { s = q; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "7:18: undefined variable 's'"
+cascade cs2 1 "CS2: \`t = u;\` in a closure, both captured tuples (the filed repro): the captured-assignment error at \`t\`" 'include "lib/alloc.cyr"\nfn main(): i64 {\n    alloc_init();\n    var t = (1, 2);\n    var u = (3, 4);\n    var f = || { t = u; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "6:18: 't' is captured by value; a captured name is not assignable in a closure"
+cascade cs2b 1 "CS2b: the struct form \`s = q;\`: the same error, at \`s\`" 'include "lib/alloc.cyr"\nstruct P2 { a; b; }\nfn main(): i64 {\n    alloc_init();\n    var s = P2 { 1, 2 };\n    var q = P2 { 3, 4 };\n    var f = || { s = q; return 0; };\n    return 0;\n}\nsyscall(60, main());\n' "7:18: 's' is captured by value; a captured name is not assignable in a closure"
 cascade cs3 2 "CS3: \`t = 5;\` then \`var p: *(i64, i64) = 0;\` (the filed repro): the two refusals, no warning" 'fn main(): i64 {\n    var t = (1, 2);\n    t = 5;\n    var p: *(i64, i64) = 0;\n    return 0;\n}\nsyscall(60, main());\n' "3:9: cannot assign a value that is not a tuple to tuple 't'" "4:13: a tuple type cannot be a pointer target"
 cascade cs3b 1 "CS3b: a refused \`*( .. )\` local read into a \`*i64\`: no warning there either" 'fn main(): i64 {\n    var p: *(i64, i64) = 0;\n    var q: *i64 = p;\n    return 0;\n}\nsyscall(60, main());\n' "2:13: a tuple type cannot be a pointer target"
 cascade cs3c 1 "CS3c: a \`*( .. )\` return type, its call into a \`*i64\`" 'fn f(): *(i64, i64) { return 0; }\nfn main(): i64 { var q: *i64 = f(); return 0; }\nsyscall(60, main());\n' "1:10: a tuple type cannot be a pointer target"

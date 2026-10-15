@@ -2449,6 +2449,20 @@ fn _ptr_ann_sid(S, ann): i64 {
     if (TOKTYP(S, ann) != 8) { return 0; }
     return _ptr_tok_sid(S, ann + 1);
 }
+# ⛔ 6.7.11 — ... and a type parameter T bound to a struct (`_tp_resolve`): a generic instance's `: *T` return
+# is read under the instance's binding (`_ret_ptr_annot`), where `FINDSTRUCT('T')` finds nothing — so the
+# instance recorded T's step but not its struct, and `gpg<S>()` was no `*S` (issues/2026-10-13-generic-
+# pointer-returning-call-as-struct-source.md). A scalar binding is no struct. Only the return reads it.
+fn _ptr_ann_sid_tp(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) == 2) {
+        var b = _tp_resolve(S, TOKVAL(S, ann + 1));
+        if (b > 0) { return b; }
+        if (b < 0) { return 0; }
+    }
+    return _ptr_tok_sid(S, ann + 1);
+}
 fn _ptr_tok_sid(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0; }
     var sid = FINDSTRUCT(S, TOKVAL(S, ti));
@@ -2815,7 +2829,7 @@ fn _ret_ptr_annot(S, fi, quiet): i64 {
     return 0;
 }
 fn _ret_ptr_record(S, fi, quiet): i64 {
-    var psid = _ptr_ann_sid(S, GTI(S));
+    var psid = _ptr_ann_sid_tp(S, GTI(S));   # 6.7.11: T bound to a struct too
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
         S64(_fn_rpsid + fi * 8, psid);

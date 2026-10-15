@@ -3,8 +3,8 @@
 #
 # STRUCT VALUES AND STRUCT FIELDS AS OPERANDS — crashes and silent wrong values on valid code. The
 # runtime half is tests/tcyr/crossos/struct_value_codegen.tcyr, which this gate builds and runs on
-# x86_64 (default pipeline, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu) and cx (cxvm),
-# compilers built from this tree (rows A); the release gate runs it on the four real hosts.
+# x86_64 (default pipeline, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and (6.7.11)
+# PE (wine), compilers built from this tree (rows A); the release gate runs it on the four real hosts.
 #
 #   F  x86: `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field branched on the flags of the
 #      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`).
@@ -51,6 +51,23 @@
 #      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
 #      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
 #      operator receive (rows L12-L15)
+#   K  (6.7.11, issues/2026-10-08-struct-operator-results.md #2) an INTEGER operator's result kept its right
+#      operand's struct type and slot, so the next `+ - * /` dispatched on it: `n - s + 10` called `P3_add(&s,
+#      10)` and discarded `n - s` (the filed repro: SIGSEGV), for every integer arm (`+ - * / % << >> >>>`,
+#      `& | ^`, a comparison, `&&` / `||`, `+| +? -| -? *| *?`, `~`). Each clears a struct expression type
+#      (`_int_st`, `_int_res`). K1 the filed repro, verbatim (8); K2 / K3 the same with no `P3_add` compile
+#      (refused 'undefined function' through 6.7.10); the values file's K rows (every arm, 24 B and 8 B, the
+#      dispatching twins, an f64 right operand's type kept) run on A1-A7 — A7 (new) is the values file on PE
+#      (wine)
+#   U  (6.7.11, issues/2026-10-08-struct-operator-results.md #3; the user's decision (a), 2026-10-13) `-s` on a
+#      struct is integer negation of its word with no struct type (`_neg_int` -> `_int_res`; the declaration
+#      zone's typer `_gz_unary` agrees): `-s + t` dispatched `S_add` — over 8 B from s's slot, the minus
+#      dropped (the filed repro: 6), at 8 B on the negated word (13) — where `-w.s + t` added (252). U1 the
+#      repro, verbatim (252); U2 / U3 `var X: S8 = -G + H;` in the zone and after it (252); the values file's
+#      U rows (every size against the field form, the right operand, `-(s + t)`, f64, u128) on A1-A7
+#      L16 / L17 (6.7.11): a leading call's struct types an untyped declaration only when the call ENDS it
+#      (`_var_rhs_csid`): `var r = mk3(4) - s; r.x` (the filed repro, verbatim) and `var r = mk2(1) == p; return
+#      r;` in a fn returning Pt took the call's struct (SIGSEGV each); refused by name now
 #   R  (lane E2) parentheses around a struct fn's WHOLE return value: `return (j);`, `return
 #      (mk3(v));`, `return (a + b);` were refused ("return must be a bare local identifier ..." for
 #      the retptr class, "... got `(...)`" for rax:rdx); `_ret_peel` steps inside them for both
@@ -58,6 +75,14 @@
 #      a passed-through pair call keeps its wrap (`_ret_unpeel`); `return (a) + b;` is an operator
 #      receive (`_ret_expr_head`). The top-level operand refusal says "(a struct over 8 bytes)" for
 #      a by-value or untyped operator parameter, "(a `*` parameter)" only for a `*S` one
+#   MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13)
+#      a METHOD's `*T` result takes `.field`, `.m(..)` and a deeper chain (`h.get().b`), in a fn and at top
+#      level, as a free call's `*T` result has since 6.6.17; it was refused "it does not return a struct".
+#      `_method_chain` parks the pointer (`_mchain_ptr`, `_ptr_park`); `h.get().b = 5` stays refused
+#   PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+#      (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element (`H { 7, (mkq(4,
+#      9)), 8 }`) was a scalar for the nested struct's first leaf: "unexpected '}'" at 16 / 24 B and 8 B with two
+#      leaves. It is the element the unwrapped call is (`_spi_pcall`), its refusals the unwrapped call's
 #   N  (lane E2) lib/fnptr.cyr's x86_64 SysV fncall8 (Linux, macOS, agnos arms) stored argument 7 at
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
@@ -188,6 +213,33 @@
 #       B1-B7 then read "47 passed" (each requires the derived N exactly)
 #   M-EV1 x86 EFLADDR without its `_IR_REC0(S, IR_RAW_EMIT)` (= the A3 compiler) -> RED EV1-EV4 (exit 30 +
 #       the low byte of the address / 1), A3 (tcyr E1-E5); A1 A2 A4-A6 and B1-B6 green (only IR=3 applies LASE)
+#   (6.7.11, the struct lane, issues/2026-10-08-struct-operator-results.md, the same procedure, 2026-10-14)
+#   M-V1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED L16 L17 (BUILT); the
+#       values files green (an untyped value and a mistyped one read alike: only `.f` / a pair return differ)
+#   the tree before #2 (39f62ebb)                          -> RED K1 (139), K2 K3 (undefined P3_add), A1-A7
+#       (K1-K23: 1, the dispatch)
+#   M-K1 `_INT_F64_MIX` without `_int_st` (`+ - * /`)        -> RED K1 K2, A1-A7 (K1 K2 K20; `* /` are also
+#       cleared by the term tail)
+#   M-K2 PARSE_TERM's tail SPSC only (`% << >> >>>`)          -> RED A1-A7 (K5-K8)
+#   M-K3 `_pexpr_bit_ps` SPSC only (`& | ^`)                  -> RED A1-A7 (K9-K11)
+#   M-K4 `_PLOGIC_ATOM`'s compare tail SPSC only               -> RED K3, A1-A7 (K12 K13 K22)
+#   M-K5 `_PLOGIC_AND` / PCMPE's `||` SPSC only                -> RED A1-A7 (K14 K15)
+#   M-K6 EMIT_OVF_CALL without `_int_st` (`+| +? -| -?`)       -> RED A1-A7 (K17 K18)
+#   M-K7 `_bnot_int` SPSC only (`~`)                           -> RED A1-A7 (K16 K23)
+#   the tree before #3 (0d1c660c)                          -> RED U1 (6) U2 U3 (13), A1-A7 (U1-U8 U11 U12)
+#   M-U1 `_neg_int` SPSC only (no `_int_res`)                  -> RED U1 (6), U2 (the zone's typer now disagrees:
+#       "the declaration zone misread .."), U3 (13), A1-A7 (U1-U8 U11 U12)
+#   M-U2 `_gz_unary` keeping `-g`'s struct (kind 4)            -> RED U2 ("the declaration zone misread ..")
+#   M-R1 `_refuse_struct_tuple_return` answering 0             -> RED R8-R11 (BUILT); R12-R15 green
+#   M-R3 `_refuse_struct_tuple_return` without its GIDEP guard  -> RED R27 R28 (refused: the inline replay judged by
+#       the caller's class); R8-R15 green
+#   M-R2 `_pair_ret_call_ok` without its `_call_ends_at` test   -> RED R16-R22 (BUILT); R23-R26 green
+#   M-MP1 `_method_chain` without its `_mchain_ptr` arm (= the tree before) -> RED MP1 MP2 (refused 'it does not
+#       return a struct'), MP3 (refused, but as 'it does not return a struct'), A1-A7 (the values file does not build:
+#       tcyr MP1-MP16); MP4 MP5 green
+#   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
+#       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
+#       does not build: tcyr Q31-Q41)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -222,6 +274,22 @@ refused() {   # <name> <message fragment> <what> <source>
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
     else ok "$3: refused once"; fi
+}
+refused_file() {   # <name> <message fragment> <what> <file>: a filed repro, verbatim
+    cp "$4" "$T/$1.cyr"
+    build "$1"
+    n=$(grep -c '^error' "$T/$1.err")
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
+    elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused once"; fi
+}
+exits_file() {   # <name> <want> <what> <file>: a filed repro, verbatim
+    cp "$4" "$T/$1.cyr"
+    build "$1"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 exits() {   # <name> <want> <what> <source>
     printf '%b' "$4" > "$T/$1.cyr"
@@ -344,6 +412,22 @@ exits l12 5 "L12: var r = mk3(4) - s; in a fn (the filed repro: expected ';', go
 exits l13 5 "L13: return mk2(1) + a; from a fn returning Pt (expected ';')" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn rp(a: Pt): Pt { return mk2(1) + a; }\nfn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = rp(p); return q.x + q.y; }$E"
 refused l14 "struct-return fn: return must be a bare local identifier" "L14: return mk3(1) + a; whose + returns an integer" "${P3S}fn P3_add(a: P3, b: P3): i64 { return a.x + b.x; }\nfn rp(a: P3): P3 { return mk3(1) + a; }\nfn main(): i64 { var p: P3 = P3 { 1, 2, 3 }; var q: P3 = rp(p); return q.x; }$E"
 refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt = mk2(3) + H; at top level, refused once" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nvar H: Pt = Pt { 1, 2 };\nvar G: Pt = mk2(3) + H;\nsyscall(60, G.x);\n"
+# L16 / L17 (6.7.11) — a leading call's struct types an untyped declaration only when the call ends it
+# (`_var_rhs_csid`): after an integer-returning operator or a comparison the binding is untyped.
+ROPR=docs/development/issues/repros/2026-10-08-struct-operator-results
+refused_file l16 "no struct type in scope for 'r'" "L16: var r = mk3(4) - s; r.x (the filed repro, verbatim: SIGSEGV)" "$ROPR-1-untyped-var-typed-from-leading-call.cyr"
+refused l17 'got `r`' "L17: var r = mk2(1) == p; return r; from a fn returning Pt (SIGSEGV: a 16 B return from an 8 B slot)" "struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn g(p: Pt): Pt { var r = mk2(1) == p; return r; }\nfn main(): i64 { var p: Pt = Pt { 1, 1 }; var q: Pt = g(p); return q.x; }$E"
+# K (6.7.11) — an integer operator's result is an integer: the next `+ - * /` never dispatches on the struct
+# its right operand left (the values file's K rows: every integer arm, 24 B and 8 B, the twins).
+exits_file k01 8 "K1: n - s + 10 (the filed repro, verbatim: SIGSEGV in P3_add(&s, 10))" "$ROPR-2-integer-op-keeps-right-struct-type.cyr"
+exits k02 8 "K2: n - s + 10 with no P3_add compiles (refused 'undefined function P3_add' through 6.7.10)" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return n - s + 10; }$E"
+exits k03 11 "K3: (n < s) + 10 and (~s) + 10 with no P3_add compile" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return (n < s) + 10 + (~s) + 6; }$E"
+# U (6.7.11, the user's decision (a), 2026-10-13) — `-s` on a struct is integer negation of its word, with no
+# struct type: `-s + t` is an integer add at every size, as `-w.s + t` is (the values file's U rows).
+exits_file u01 252 "U1: -s + t (the filed repro, verbatim: 6, the minus dropped)" "$ROPR-3-unary-minus-on-struct-dropped.cyr"
+US8='struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v * 100 + b.v; return r; }\nvar G = S8 { 5 };\nvar H = S8 { 1 };\n'
+exits u02 252 "U2: var X: S8 = -G + H; in the declaration zone (13: the dispatch; the zone's typer agrees)" "${US8}var X: S8 = -G + H;\nsyscall(60, load64(&X));\n"
+exits u03 252 "U3: ... after the first statement (13)" "${US8}var k = 0;\nk = 1;\nvar X: S8 = -G + H;\nsyscall(60, load64(&X));\n"
 # R (6.7.6 E2) — parentheses around a struct fn's whole return value; the top-level operand wording.
 exits r01 6 "R1: return (j); from a fn returning a 24-byte P3 (the filed repro: refused)" "struct P3 { x; y; z; }\nfn cp(j: P3): P3 { return (j); }\nfn main(): i64 { var j = P3 { 1, 2, 3 }; var q: P3 = cp(j); return q.x + q.y + q.z; }$E"
 exits r02 6 "R2: return (mk3(v)); (the filed repro: refused)" "struct P3 { x; y; z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\nfn cp(v): P3 { return (mk3(v)); }\nfn main(): i64 { var q: P3 = cp(2); return q.x + q.y + q.z; }$E"
@@ -352,6 +436,69 @@ refused r04 'got `5`' "R4: return (5); from a Pt fn, refused once naming 5" "str
 refused r05 'struct-return: identifier type != fn ret_sid' "R5: return (q); with q: Q from a P3 fn, refused as return q; is" "struct Q { x; y; z; }\nstruct P3 { x; y; z; }\nfn f(q: Q): P3 { return (q); }\nfn main(): i64 { var a: Q = Q { 1, 2, 3 }; var r: P3 = f(a); return r.x; }$E"
 refused r06 "the left operand of 'Pt_add' is passed by address (a struct over 8 bytes)" "R6: a by-value 16-byte operand at top level is not called a * parameter" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
 refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` parameter)' "R7: a *LW operand at top level keeps its wording" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
+# R8-R15 (6.7.11, issues/2026-10-08-struct-operator-results.md #4; the user's decision (a), 2026-10-13) a tuple
+# literal `return (a, b[, c]);` in a fn declared to return a named struct took the multi-value path: over 16 B
+# the result pointer was never written (the filed repro: 0), at 8 B or less the second value was dropped (1),
+# at 9-16 B it worked by ABI coincidence (12). Refused by name in every class, once; a fn declared `: (T1, T2)`,
+# an undeclared one and `return ((a, b));`'s own refusal are unchanged.
+RTUP='returns that struct — `(a, b)` is a tuple, another type'
+refused_file r08 "a fn returning the struct \`P3\` $RTUP" "R8: return (a, b); from a fn returning a 24 B P3 (the filed repro, verbatim: 0)" "$ROPR-4-tuple-return-in-struct-fn.cyr"
+refused r09 "a fn returning the struct \`S8\` $RTUP" "R9: ... from an 8 B S8 (1: b dropped)" "struct S8 { v; }\nfn f(a, b): S8 { return (a, b); }\nfn main(): i64 { var q: S8 = f(1, 2); return q.v; }$E"
+refused r10 "a fn returning the struct \`Pt\` $RTUP" "R10: ... from a 16 B Pt (12: rax:rdx by coincidence)" "struct Pt { x; y; }\nfn f(a, b): Pt { return (a, b); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x * 10 + q.y; }$E"
+refused r11 'a fn returning the struct `P3` returns that struct — `(a, b, c)` is a tuple, another type' "R11: return (a, b, 7); from a 24 B P3 (0)" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return (a, b, 7); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
+exits r12 12 "R12: fn f(): (i64, i64) { return (1, 2); } still builds" "fn f(): (i64, i64) { return (1, 2); }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }$E"
+exits r13 12 "R13: an undeclared fn's return (a, b); still builds" "fn f(a, b) { return (a, b); }\nfn main(): i64 { var a, b = f(1, 2); return a * 10 + b; }$E"
+refused r14 'a multi-value return is written `return (a, b);` - drop the extra parentheses' "R14: return ((a, b)); from a Pt fn keeps its own refusal" "struct Pt { x; y; }\nfn f(a, b): Pt { return ((a, b)); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x; }$E"
+refused r15 'struct-return fn: return must be a bare local identifier' "R15: return ((a, b)); from a P3 fn keeps its own refusal" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return ((a, b)); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x; }$E"
+# R27 / R28 — the refusal judges the fn the `return` belongs to: an `#inline` or generic callee's `return (a, b);`
+# replayed inside a fn returning P3 (GIDEP) is the callee's, and builds.
+exits r27 127 "R27: an #inline fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\n#inline\nfn two(a, b) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
+exits r28 127 "R28: a generic fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\nfn two<T>(a: T, b: T) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
+# R16-R26 (6.7.11, issues/2026-10-08-struct-operator-results.md #5; the user's decision (a), 2026-10-13) in a fn
+# returning a 9-16 B struct, `return mk2(1) OP x;` with an operator that does not dispatch passed the pair-call
+# check (`_pair_ret_call_ok` asked only that a same-struct call START the value): rax the operator's result, rdx
+# mk2's stale second word (the filed repro: 41). The call must END the value (`_call_ends_at`): refused by name,
+# once ('got `mk2`'), as `return mk2(1).x;` is. `return mk2(1);` (the tail call), its wrap and a dispatching
+# `mk2(1) + p` are unchanged.
+RPR='a fn returning the 9-16 byte struct `Pt` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `mk2`'
+RPH='struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v + 40 }; return t; }\n'
+RPM="fn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = g(p); return q.x * 100 + q.y; }$E"
+refused_file r16 "$RPR" "R16: return mk2(1) == p; from a Pt fn (the filed repro, verbatim: 41, q.y = mk2's y)" "$ROPR-5-pair-return-leading-call-operator.cyr"
+refused r17 "$RPR" "R17: return mk2(1) < 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) < 3; }\n${RPM}"
+refused r18 "$RPR" "R18: return mk2(1) & 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) & 3; }\n${RPM}"
+refused r19 "$RPR" "R19: return mk2(1) << 3; (73)" "${RPH}fn g(p: Pt): Pt { return mk2(1) << 3; }\n${RPM}"
+refused r20 "$RPR" "R20: return mk2(1) && 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) && 3; }\n${RPM}"
+refused r21 "$RPR" "R21: return mk2(1) % 3; (101: the idiv remainder in rdx)" "${RPH}fn g(p: Pt): Pt { return mk2(1) % 3; }\n${RPM}"
+refused r22 "$RPR" "R22: return (mk2(1) == p); inside a wrap (141)" "${RPH}fn g(p: Pt): Pt { return (mk2(1) == p); }\n${RPM}"
+exits r23 141 "R23: return mk2(1); (the tail call) still builds" "${RPH}fn g(p: Pt): Pt { return mk2(1); }\n${RPM}"
+exits r24 141 "R24: return (mk2(1)); still builds" "${RPH}fn g(p: Pt): Pt { return (mk2(1)); }\n${RPM}"
+exits r25 243 "R25: return mk2(1) + p; (a dispatch) still builds" "${RPH}fn Pt_add(a: Pt, b: Pt): Pt { var r: Pt = Pt { a.x + b.x, a.y + b.y }; return r; }\nfn g(p: Pt): Pt { return mk2(1) + p; }\n${RPM}"
+exits r26 141 "R26: var k = p.x; return mk2(k); (a tail call after a statement) still builds" "${RPH}fn g(p: Pt): Pt { var k = p.x; return mk2(k); }\n${RPM}"
+# MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13) a
+# METHOD's `*T` result takes `.field` / `.m(..)` / a deeper chain, as a free call's has since 6.6.17 — it was "cannot
+# take a field of the result of 'H_get': it does not return a struct" (`_mchain_ptr`; the values file's MP rows, in
+# a fn, at top level, through a dyn and a generic method, on A1-A7). The store through it stays refused, now as the
+# free call's is (the 6.7.12 store issue); a method returning no struct and no `*T` keeps its refusal.
+MPH='struct P { a; b; }\nstruct H { p: *P; }\n'
+exits_file mp1 44 "MP1: var y = h.get().b; (the filed repro, verbatim: refused)" docs/development/issues/repros/2026-10-10-field-of-method-pointer-result-refused.cyr
+exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.get().b * 10 + h.get().a; }\nimpl H { fn get(self): *P { return self.p; } }$E"
+refused mp3 'cannot assign to a field of a call result: the result is a temporary' "MP3: h.get().b = 5; stays refused, as get2(&h).b = 5; is (6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
+refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
+refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
+# PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+# (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element is the element the
+# unwrapped call is (`_spi_pcall`): it was parsed as a scalar for the first leaf, so 16 B, 24 B and 8 B with two
+# leaves were "unexpected '}'". The values file's Q31-Q41 run it on A1-A7; here the repro, the top-level refusals
+# (by name, once, as the unwrapped call's) and another struct refused by name — as the unwrapped call is; at 8 B
+# with one leaf it compiled, the word carried into the leaf unchecked.
+PEH='struct Q { a; b; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\n'
+PEM="'mkq' returns a struct by value, and a struct result needs storage in a fn's frame"
+exits_file pe1 64 "PE1: H { 7, (mkq(4, 9)), 8 } (the filed repro, verbatim: unexpected '}')" docs/development/issues/repros/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.cyr
+refused pe2 "$PEM" "PE2: at top level, 16 B: refused by name once (unexpected '}')" "${PEH}var G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x);\n"
+refused pe3 "$PEM" "PE3: at top level, 24 B: refused once (+ unexpected '}')" "struct Q { a; b; c; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b, 1 }; return q; }\nvar G = H { 7, ((mkq(4, 9))), 8 };\nsyscall(60, G.x);\n"
+refused pe4 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE4: (mko(5)) of another 8 B struct, refused as mko(5) is (compiled: 65)" "struct Q { a; }\nstruct O { a; }\nstruct H { x; q: Q; z; }\nfn mko(a): O { var o = O { a }; return o; }\nfn main(): i64 { var h = H { 7, (mko(5)), 8 }; return h.x + h.q.a * 10 + h.z; }$E"
+refused pe5 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE5: (mko(4, 9)) of another 16 B struct, refused by name (unexpected '}')" "${PEH}struct O { a; b; }\nfn mko(a, b): O { var q = O { a, b }; return q; }\nfn main(): i64 { var h = H { 7, (mko(4, 9)), 8 }; return h.x; }$E"
+exits pe6 64 "PE6: H { 7, (mkq(4, 9)), 8 } at top level of an 8 B two-u32 Q (unexpected '}')" "struct Q { a: u32; b: u32; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\nvar G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
@@ -415,7 +562,9 @@ if command -v wine > /dev/null 2>&1; then
         "$T" "$WP" "$WHM" "$WHM" > "$T/winrun"; chmod +x "$T/winrun"
     TC=$TCB; TN=$NB
     tcyr "B7: fncall_struct_result.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
-else echo "  SKIP: PE legs FPw1 / FPw2 / B7 (wine not installed)"; skips=$((skips + 1)); fi
+    TC=$TCA; TN=""
+    tcyr "A7: the values file, PE (wine) (6.7.11: the K rows)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
+else echo "  SKIP: PE legs FPw1 / FPw2 / B7 / A7 (wine not installed)"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

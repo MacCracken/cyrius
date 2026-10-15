@@ -1252,6 +1252,15 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_copy_source_type_refused.sh"
 # runtime half is tests/tcyr/crossos/struct_arg_type_accepted.tcyr (crossos).
 _chk_gate "$ROOT/tests/gates/frontend/struct_arg_type_refused.sh"
 
+# 6.7.11 (the struct lane, the user's decision 2026-10-13): the value a fn returning a struct of 8 B
+# or less returns is checked by its struct, as the 9-16 B and > 16 B classes check theirs: another
+# struct's local, by-value parameter, global, `(u)`, call (a tail-call shape too), field, method,
+# `*pu`, a `*U` local or parameter and a handle of another struct (local, global) are refused by
+# name; a `*S` LOCAL of the fn's own struct is the struct it points at (it returned the address).
+# Refusals on the MESSAGE (each the only error), acceptances against field-by-field controls,
+# mutation-proven (ledger in header). The runtime half: struct_ptrmode_return_copy.tcyr (crossos).
+_chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
+
 # 6.6.12 (B04, R3): a `.field` on a CALL RESULT is refused by name wherever it cannot compile — at
 # top level for every return class (no frame to hold the result; each the only error, including
 # the leading declaration block and a struct-typed initialiser), on a callee that returns no
@@ -2114,6 +2123,11 @@ _chk_gate "$ROOT/tests/gates/platform/kmode_enum_initializer_baked.sh"
 # the compile-time half: a captured struct or vector of ANOTHER type is refused by name in the field
 # store, struct literal, assignment and declaration, as the local form is, and emits no binary.
 _chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh"
+
+# 6.7.11 (issues/2026-10-08-struct-operator-results.md #6) — a write to a captured NAME in a closure (`x += d`,
+# `x = x + d`, a for init or step, `a, x = f()`) is refused naming the capture, not "undefined variable 'x'";
+# a name declared nowhere stays undefined, a captured struct's field and a read still build.
+_chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_name_write_named.sh"
 
 # 6.6.9 (bite 3) — `return None();` (any nullary `: stack` variant) beside `return Some(v);` is
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.

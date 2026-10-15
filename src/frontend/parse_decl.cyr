@@ -852,15 +852,15 @@ fn _var_rhs_msid(S, ti): i64 {
     return rs;
 }
 # The untyped declaration's type, judged once its initialiser at `start` is parsed (`sid0` the type the
-# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): an OPERATOR's
-# struct result of 8 B or less (`_sc_op_whole`, which wins over a leading call's type, as over 8 B), else
+# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
+# result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
 fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
-    var os = _sc_op_whole(S, start);
+    var os = _sc_small_whole(S, start);
     if (os > 0) { return os; }
     if (sid0 != 0) { return sid0; }
     return _var_rhs_mchain(S, start, GTI(S));
@@ -869,15 +869,17 @@ fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
 # user's decision 12, 2026-10-12), as over 8 B, where the result's temporary BECOMES `c` (`_sc_var_receive`).
 # Of 8 B or less the result is a value in rax with no temporary, so `c` was an untyped word: `c.g` was "no
 # struct type in scope for 'c'" and `c + c` added integers — and 6.7.10's packed fields moved `C4 { r: u8;
-# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. The struct of
-# the whole initialiser [start, cursor) when it is one operator dispatch's result of 8 B or less (inside any
-# wrap; `_sc_post_op` noted it), else 0. A method's or an if-expression's result is not an operator's. A
-# global does not read it (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over
-# 8 B. CHANGELOG [6.7.10]
-fn _sc_op_whole(S, start): i64 {
+# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. CHANGELOG [6.7.10]
+# ⛔ 6.7.11 — AND ANY WHOLE STRUCT RESULT OF 8 B OR LESS, not only an operator's (the user's decision (a),
+# 2026-10-13: decision 12 extended): a method chain `var c = a.d().d();` and an if-expression of struct
+# branches `var c = if (k) { mk(7) } else { mk(9) };` bound an untyped word (`c.v` refused, `c + 1` added to
+# it), where a single method (6.7.0 A5) and the same chain over 8 B were typed
+# (issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). The struct of the whole
+# initialiser [start, cursor) when it is one recorded result of 8 B or less in rax (`_sc_whole` -3: an
+# operator dispatch, a method, an if-expression; inside any wrap), else 0. A global does not read it
+# (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over 8 B.
+fn _sc_small_whole(S, start): i64 {
     if (_sc_whole(S, start) != 0 - 3) { return 0; }
-    if (_sc_beg != _sc_opb) { return 0; }
-    if (_sc_end != _sc_ope) { return 0; }
     return _sc_sid;
 }
 # 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
@@ -1097,6 +1099,65 @@ fn _fsc_call(S, ft, fnoff, term): i64 {
     return 1;
 }
 
+# ⛔ 6.7.11 — `o.s = *p;` (a struct-typed field from a dereference of a `*S`) COPIES THE STRUCT, as `o.s = l`
+# does and as the declaration `var l: S = *p;` copies it (6.7.10 decision 6: `*p` is a struct value). It was
+# an expression whose first word the field store kept — `o.s.b` stale, silently (issues/2026-10-13-assignment-
+# from-struct-dereference-copies-one-word.md). The source up to `term` is ONE dereference whose operand
+# `_hl_dstar_t` types `*S`: its pointer is parked in a hidden temp and recorded as the copy's source (1); a
+# `*U` of another struct is refused by name (0, as `_fsc_name` refuses a U); anything else is 0 (untouched).
+fn _fsc_dstar(S, ft, fnoff, term): i64 {
+    var ps = _hl_dstar_t(S, GTI(S), term);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    _fsc_hsrc(_hl_dx_src(S));
+    return 1;
+}
+# ⛔ 6.7.11 — `o.s = GP;`, `o.s = gp();`, `o.s = w.p;` (a struct-typed field from a `*S` global, a call or
+# method declared `: *S`, a `*S` field, or pointer arithmetic on a `*S`, wrapped or not) COPIES THE STRUCT,
+# as the name destination does since 6.7.10 (decision 6, `_hl_psrc_copy`). The field kept the POINTER's word
+# at every size, silently (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# The source up to `term`, typed by `_hl_psrc` (a `*S` local, parameter or capture is `_fsc_name`'s), is
+# parsed, its pointer parked in a hidden temp and recorded as the copy's source (1); a `*U` of another struct
+# is refused by name (0); 2 = parsed but the parser's pointer step is not the struct's (the value store, as
+# `_hl_psrc_copy` falls back); anything else is 0 (untouched).
+fn _fsc_psrc(S, ft, fnoff, term): i64 {
+    var ti = GTI(S);
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    PCMPE(S);
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ft - 1)) { return 2; }
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    _fsc_hsrc(h);
+    return 1;
+}
+# Record as the copy's source the struct whose ADDRESS hidden temp `h` (`_HTEMP`) holds: a frame slot
+# (the deref band), or at top level a hidden global (pointer-mode).
+fn _fsc_hsrc(h): i64 {
+    _fsc_reset();
+    if (h >= 0) {
+        _fsc_li = _AGC_DREF(h);
+        return 0;
+    }
+    _fsc_gv = 0 - 2 - h;
+    _fsc_gdr = 1;
+    return 0;
+}
+# 1 = struct `sid` is one a dereference copies as a struct value: not a `Str` (a heap handle), a tuple or
+# a dyn, which keep their own paths.
+fn _dx_plain(S, sid): i64 {
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    return 1;
+}
+
 # Any other right-hand side: parse it with the two destination arms armed. A method / operator
 # call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
 # otherwise its value is in rax (2) for the ordinary store.
@@ -1157,10 +1218,13 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
         if (dr != 0) { return dr; }
     }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    var pr = _fsc_psrc(S, ft, fnoff, term);   # 6.7.11: `o.s = GP` / `gp()` / `w.p` / `GP + n`
+    if (pr != 0) { return pr; }
     if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
     }
+    if (PEEKT(S) == 8) { if (_fsc_dstar(S, ft, fnoff, term) == 1) { return 1; } }   # 6.7.11: `o.s = *p`
     if (PEEKT(S) == 2) {
         _tup_fsc_call(S, ft, term);   # 6.7.7 (B4, T5): R17, a multi-value call into a tuple field
         _mv_fsc_call(S, ft, term);    # 6.7.11: ... into a named-struct field
@@ -1433,7 +1497,7 @@ fn _self_value_ra(S, idx, sid): i64 {
     var sz = STRUCTSZ(S, sid - 1);
     if (_hl_wpow(sz) == 0) {
         _fld_addr_ra(S, idx, sid, 0, 0 - 1);
-        _hl_pval_ra(S, sid);
+        _hl_pval_ra(S, sid, 0);
         return 0;
     }
     _resolve_field_base_addr(S, idx, sid);
@@ -1587,7 +1651,8 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
 # `_call_field` puts a call's: a > 16 B struct in the temp `_sc_pre` gave it, a 9-16 B one in a
 # temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
 # handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
-# depth. A result that is no struct, and a chain at top level (no frame), are refused by name.
+# depth. A result that is no struct (nor a `*T`: `_mchain_ptr`), and a struct chain at top level (no
+# frame), are refused by name.
 # The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
 # what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
 var _mcall_last = 0 - 1;
@@ -1614,6 +1679,7 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) {
+        if (_hl_fn_psid(fi) > 0) { return _mchain_ptr(S, noff, beg, _hl_fn_psid(fi)); }
         if (_syntax_only == 0) { _call_fld_err(S, fi, noff); }   # 6.7.7 (T5): + a multi-value one's hint
         _mchain_skip(S);
         return 1;
@@ -1628,6 +1694,19 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # consume the field / method name
     _field_load_on(S, noff, fnoff, beg, 0 - 2 - t, sid);
+    _cfo = 0;
+    return 1;
+}
+# A method declared `: *T`, T a struct (`psid`): its result (rax) is parked as a pointer receiver and
+# the chain continues through it — a field, a method, a deeper chain — in a fn and at top level, as a
+# free call's `*T` result does (`_call_ptr_field`). It was refused with "it does not return a struct"
+# (issues/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
+fn _mchain_ptr(S, noff, beg, psid): i64 {
+    var h = _ptr_park(S, psid);
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field / method name
+    _field_load_on(S, noff, fnoff, beg, h, psid);
     _cfo = 0;
     return 1;
 }
@@ -1729,15 +1808,23 @@ fn _load_hop(S, noff, beg, idx, sid, off): i64 {
 # 6.6.17 — `f().val`, `f().next.val`, `f().m(..)` for `fn f(): *T`, T a struct: the call's result
 # is a pointer, so it is parked as a pointer-mode receiver and the chain continues from it, as for
 # a `*T` local. (It was "cannot take a field of the result of 'f': it does not return a struct".)
-# Cursor just past the callee name at `ti`; 1 = consumed. A generic callee is left to the refusal.
+# Cursor just past the callee name at `ti`; 1 = consumed. 6.7.11: a generic callee too — `fi` is the
+# instance the call reaches (its `: *T` recorded under its binding, `_ret_ptr_record`), and an explicit
+# `g<S>(..).val` is parsed as the factor parses it (`gpg<S>().v` was refused: issues/2026-10-13-generic-
+# pointer-returning-call-as-struct-source.md).
 fn _call_ptr_field(S, ti, fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     var psid = L64(_fn_rpsid + fi * 8);
     if (psid <= 0) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    STI(S, ti + 1);
-    PARSE_FNCALL(S, TOKVAL(S, ti));
+    if (TOKTYP(S, ti + 1) == 19) {
+        STI(S, ti + 1);
+        _explicit_generic_call(S, TOKVAL(S, ti), FINDFN(S, TOKVAL(S, ti)));
+    } else {
+        if (TOKTYP(S, ti + 1) != 10) { return 0; }
+        STI(S, ti + 1);
+        PARSE_FNCALL(S, TOKVAL(S, ti));
+    }
     var h = _ptr_park(S, psid);
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
@@ -2437,8 +2524,12 @@ fn _spi_src(S, ft): i64 {
     if (PEEKT(S) == 2) {
         var nx = TOKTYP(S, GTI(S) + 1);
         if (nx == 31 || nx == 14) { return _spi_name(S); }
-        var r = _spi_call(S);
+        var r = _spi_call(S, 0);
         if (r != 0) { return r; }
+    }
+    if (PEEKT(S) == 10) {
+        var rp = _spi_pcall(S);
+        if (rp != 0) { return rp; }
     }
     return _spi_expr(S, ft);
 }
@@ -2455,20 +2546,22 @@ fn _spi_name(S): i64 {
     return 1;
 }
 
-# `f(..)` / `f<..>(..)` followed by `,` or `}`, `f` returning a struct: > 8 B into a temp (1),
-# <= 8 B in rax (3). 0 = not that shape (cursor untouched). At top level there is no frame for
-# a > 8 B result: refused by name (here for rax:rdx, by the call itself for a retptr one) and
-# taken as the whole field (4), so that refusal is the only error.
-fn _spi_call(S): i64 {
+# `f(..)` / `f<..>(..)` followed by `,` or `}` (`pk` > 0: by the `)` of the wrap `_spi_pcall` stepped
+# into), `f` returning a struct: > 8 B into a temp (1), <= 8 B in rax (3). 0 = not that shape (cursor
+# untouched). At top level there is no frame for a > 8 B result: refused by name (here for rax:rdx,
+# by the call itself for a retptr one) and taken as the whole field (4), so that refusal is the only
+# error.
+fn _spi_call(S, pk): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
-    var nx = _call_follow(S, o - 1);
-    if (nx != 31 && nx != 14) { return 0; }
+    if (_spi_follow(S, o, pk) == 0) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (rs == _STR_SID(S)) { return 0; }
+    # A wrapped dyn result keeps 6.7.8's path (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md).
+    if (pk > 0) { if (_dyn_is(S, rs) == 1) { return 0; } }
     var noff = PEEKV(S);
     var k = 1;
     if (STRUCTSZ(S, rs - 1) <= 8) { PCMPE(S); k = 3; }
@@ -2485,6 +2578,43 @@ fn _spi_call(S): i64 {
     _spi_ps = rs;
     _spi_pn = noff;
     return k;
+}
+
+# The call whose `(` is token `o` ends the element: `,` / `}`, or the wrap's `)` (`pk` > 0).
+fn _spi_follow(S, o, pk): i64 {
+    var nx = _call_follow(S, o - 1);
+    if (pk > 0) {
+        if (nx == 11) { return 1; }
+        return 0;
+    }
+    if (nx == 31) { return 1; }
+    if (nx == 14) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.11 — A FREE STRUCT CALL IN PARENTHESES THAT WRAP THE WHOLE ELEMENT (`H { 7, (mkq(4, 9)), 8 }`,
+# `((mk<Pt>(1)))`) is the element the unwrapped call is — 6.7.6's transparency, which a wrapped method or
+# operator result has at 24 B and 8 B (`_sc_pwrap`; at 9-16 B not yet: issues/2026-10-14-paren-wrapped-
+# pair-method-or-operator-as-nested-literal-element-refused.md). It was an expression whose rax went into
+# the nested struct's
+# first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
+# leaves, a one-leaf struct's word unchecked (issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-
+# element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
+# call (its refusals — another struct, no frame at top level — the unwrapped call's), and the wrap is
+# closed. 0 = not that shape (cursor untouched). CHANGELOG [6.7.11]
+fn _spi_pcall(S): i64 {
+    var st = GTI(S);
+    var k = _pwrap_name(S, st);
+    if (k == 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 14) { return 0; } }
+    STI(S, st + k);
+    var r = _spi_call(S, k);
+    if (r == 0) {
+        STI(S, st);
+        return 0;
+    }
+    _pw_close(S, k);
+    return r;
 }
 
 # Any other initialiser, parsed with the struct-source arms up (a struct-typed field, a
@@ -5411,7 +5541,7 @@ fn _gvi_expr(S, gps): i64 {
     if (gps == 0) { PCMPE(S); return 0; }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
-    var w = _scv_arm(S, gps);
+    var w = _scv_arm(S, gps, 0);
     PCMPE(S);
     _scv_disarm(S, w);
     _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
@@ -5690,13 +5820,17 @@ fn _gci_src(S, ti): i64 {
         _gci_tt = 11;
     }
     if (TOKTYP(S, ti) != 2) { return 0; }
+    var cs = _gci_call(S, ti);   # 6.7.11: `gp().s`
+    if (cs != 0) { return cs; }
     var gv = _findvar_core(S, TOKVAL(S, ti));
     if (gv < 0) { return 0; }
+    _gci_nm = TOKVAL(S, ti);
+    var ps = _gv_ptr_sid(S, gv);   # 6.7.11: `P.s` through a `*T` global (a bare `P` stays as it was)
+    if (ps > 0) { if (TOKTYP(S, ti + 1) == 41) { return _gci_chain(S, ti + 1, ps); } }
     var gt = GVTYPE(S, gv);
     if (gt <= 0) { return 0; }
     var pm = GVPM(S, gv);
     if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
-    _gci_nm = TOKVAL(S, ti);
     if (TOKTYP(S, ti + 1) == _gci_tt) {
         if (pm != 2) { return 0; }
         return gt;
@@ -5704,6 +5838,14 @@ fn _gci_src(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 41) { return 0; }
     return _gci_chain(S, ti + 1, gt);
 }
+# ⛔ 6.7.11 — A FIELD CHAIN THROUGH A POINTER WAS NO WHOLE SOURCE. `var G: S16 = P.s;` (P a `*W` global),
+# `= gp().s;` (`fn gp(): *W`) and `= VV.p.s;` (`p: *W`) left G a one-slot pointer-mode global holding the
+# field's FIRST WORD, and the first `G.v` read or wrote through it: SIGSEGV on x86 / aarch64, a cxvm guest
+# fault — while in a fn, as an assignment, and from an inline base the same declaration copies
+# (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md). The chain now starts from a
+# `*T` global's T or a `: *T` call's T (`_gci_call`), and a `*T` field hop steps into its T when `.` follows:
+# pass 1 registers G inline and both init paths copy (`_gci_take_in`'s field record follows the hops). A
+# source pass 1 could not type (a global or fn declared below G) is refused by name (`_gci_below`).
 fn _gci_chain(S, ti, sid): i64 {
     var ft = sid;
     while (TOKTYP(S, ti) == 41) {
@@ -5712,13 +5854,33 @@ fn _gci_chain(S, ti, sid): i64 {
         var fi = FINDFIELD(S, ft - 1, TOKVAL(S, ti + 1));
         if (fi < 0) { return 0; }
         _gci_nm = TOKVAL(S, ti + 1);
-        ft = GETFTYPE(S, ft - 1, fi);
+        var fp = 0;
+        if (TOKTYP(S, ti + 2) == 41) { fp = _fld_ptr_sid(S, ft - 1, fi); }   # 6.7.11: a `*T` field hop
+        if (fp > 0) { ft = fp; }
+        else { ft = GETFTYPE(S, ft - 1, fi); }
         ti = ti + 2;
     }
     if (TOKTYP(S, ti) != _gci_tt) { return 0; }
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return ft;
+}
+# `f(..) .` / `g<..>(..) .` at token `ti`, the callee declared `: *T` (T a struct; a generic's instance's T,
+# `_gen_call_psid`): the field chain after its `)` from T, else 0. A callee not declared yet (pass 1, a fn
+# declared below the global) is 0 — the replay types it and refuses the disagreement. CHANGELOG [6.7.11]
+fn _gci_call(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0; }
+    var ps = 0;
+    if (GFTP(S, fi) != 0) { ps = _gen_call_psid(S, ti, o, fi); }
+    else { ps = _hl_fn_psid(fi); }
+    if (ps <= 0) { return 0; }
+    _gci_nm = TOKVAL(S, ti);
+    return _gci_chain(S, c + 1, ps);
 }
 # Pass 1 (PARSE_GVAR_REG), cursor on the RHS: 1 when `var G: T = <src>;` is registered inline —
 # `sid` the declared struct, over 8 B (one that fits keeps its 8-byte value slot), and the source
@@ -5826,7 +5988,16 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
 # The replay's refusal for a source pass 1 could not see (declared below), cursor on the RHS —
 # `_gci_src` vetted it as `IDENT [. IDENT ..] ;`, so the cursor is left on that `;`. 1.
 fn _gci_below(S, dnoff): i64 {
-    ERR_IDENT(S, "cannot copy-init ", dnoff, " from a global declared below it (declare the source first): ", TOKVAL(S, GTI(S)));
+    var k = 0;
+    if (PEEKT(S) == 10) { k = _pwrap_k(S, GTI(S)); }
+    var ti = GTI(S) + k;
+    if (_gcall_open(S, ti) >= 0) {   # 6.7.11: `gp().s` with gp declared below
+        ERR_IDENT(S, "cannot copy-init ", dnoff,
+          " from a field of a call to a fn declared below it (declare the fn first): ", TOKVAL(S, ti));
+    } else {
+        ERR_IDENT(S, "cannot copy-init ", dnoff,
+          " from a global declared below it (declare the source first): ", TOKVAL(S, ti));
+    }
     while (PEEKT(S) != 5) { STI(S, GTI(S) + 1); }
     return 1;
 }
@@ -6345,6 +6516,21 @@ fn _var_rhs_call(S, ti): i64 {
     if (c == 1) { if (_call_dotted(S, ti) == 1) { c = 0; } }
     return c;
 }
+# ⛔ 6.7.11 — THE TYPE AN UNTYPED `var x = f(..) ...;` TAKES FROM ITS LEADING CALL `f` at `ti` (6.6.10:
+# the instance the call reaches): its return annotation's GFRS. A STRUCT only when the call ENDS the
+# initialiser (`_call_ends_at`, as the receive asks): `var r = mk3(4) - s;` with an integer-returning
+# `P3_sub` was typed P3, so `r.x` dereferenced -5 and `var r = mk2(1) == p; return r;` returned a 16-byte
+# struct from an 8-byte slot (SIGSEGV, 6.7.6 - 6.7.10). An operator's struct result types the binding
+# after the parse (`_var_rhs_post`); any other value leaves it untyped. A `: f64` call keeps its f64 (-9):
+# its operator result is the f64 arithmetic the leading call drives. CHANGELOG [6.7.11]
+fn _var_rhs_csid(S, ti): i64 {
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return rs; }
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }
+    return rs;
+}
 
 # ⛔ 6.7.11 — PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so `var x = (mk());`
 # with `mk` returning a struct over 8 B inferred nothing: x held the FIRST word, and `dq(x)` into a
@@ -6355,13 +6541,22 @@ fn _var_rhs_call(S, ti): i64 {
 # literal is no wrap; a dyn result keeps its own refusals (6.7.8 V4d). CHANGELOG [6.7.11]
 fn _rcv_peel(S, ti, pscale): i64 {
     if (pscale != 0) { return 0; }
+    var k = _pwrap_name(S, ti);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti + k));
+    if (fi >= 0) { if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; } }
+    return k;
+}
+# The parentheses at token `ti` that wrap one whole value whose inside starts with a name (`(mk())`,
+# `((g<P>(1)))`): their count, with `_pw_end` the token after the outermost `)` for the caller's
+# terminator; 0 for none. A tuple literal is no wrap. The peel of the receive above and of a struct
+# literal's element (`_spi_pcall`), each then judging the call inside. CHANGELOG [6.7.11]
+fn _pwrap_name(S, ti): i64 {
     if (TOKTYP(S, ti) != 10) { return 0; }
     if (_tup_lit_at(S, ti) >= 0) { return 0; }
     var k = _pwrap_k(S, ti);
-    if (TOKTYP(S, _pw_end) != 5) { return 0; }
     if (TOKTYP(S, ti + k) != 2) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, ti + k));
-    if (fi >= 0) { if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; } }
     return k;
 }
 # The call at `ti` is the whole initialiser: followed by the `;`, or by the wrap's `)` (`pk` > 0).
@@ -7395,13 +7590,9 @@ fn PARSE_VAR(S): i64 {
                 # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
                 # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
                 # 6.6.12: `var s = mkp(3).y + 1;` typed `s` as Pt (and dispatched `+` to Pt_add).
-                var _ti_iscall = _var_rhs_call(S, GTI(S));
-                if (_ti_iscall == 1) {
-                    var _ti_fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: the instance's return
-                    if (_ti_fi >= 0) {
-                        _ti_inferred_sid = GFRS(S, _ti_fi);
-                    }
-                } else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
+                # 6.7.11: a struct only from a call that ENDS the initialiser (`_var_rhs_csid`).
+                if (_var_rhs_call(S, GTI(S)) == 1) { _ti_inferred_sid = _var_rhs_csid(S, GTI(S)); }
+                else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
             }
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
@@ -7417,7 +7608,7 @@ fn PARSE_VAR(S): i64 {
     # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
-    var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
+    var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
     PCMPE(S);
     _scv_disarm(S, scv_prev);
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
@@ -7849,7 +8040,7 @@ fn _hl_byval(S, fi, k): i64 {
 fn _hl_byval_arg(S, fi, k, b, ps): i64 {
     if (_hl_bare_val(S, b, GTI(S)) == 1) { return 1; }
     if (_hl_parg(S, b, GTI(S), ps) == 0) { return 0; }
-    _hl_pval_ra(S, GFPSID(S, fi, k));
+    _hl_pval_ra(S, GFPSID(S, fi, k), 0);
     return 1;
 }
 # 1 = the argument [b, e) just parsed, its pointer step `ps` (GPSC after its parse), is a typed pointer
@@ -7946,8 +8137,10 @@ fn _hl_narrow_at(S, i): i64 {
 }
 # rax (an address) becomes the struct `sid` (8 B or less) it points at, as a by-value consumer takes
 # it: one load of 1 / 2 / 4 / 8 bytes, else (3, 5, 6, 7) a byte-exact copy into a temp — a frame temp
-# in a fn, a hidden global at top level — whose word is loaded: no byte past the object is read.
-fn _hl_pval_ra(S, sid): i64 {
+# in a fn, a hidden global at top level — whose word is loaded: no byte past the object is read. `z` 1
+# zeroes the frame temp first, so the word's padding is 0 as a hidden global's is (a dereference's
+# value, `_deref_small`, 6.7.11); 0 leaves it as before.
+fn _hl_pval_ra(S, sid, z): i64 {
     var sz = STRUCTSZ(S, sid - 1);
     if (_hl_wpow(sz) == 1) {
         EMOVCA(S);
@@ -7958,6 +8151,7 @@ fn _hl_pval_ra(S, sid): i64 {
     _HTSTORE(S, h);
     if (h >= 0) {
         var t = _agg_temp(S, sid);
+        if (z == 1) { EMOVI(S, 0); EFLSTORE(S, t); }
         _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(h), 0 - 1, sz);
         EFLLOAD(S, t);
         return 0;
@@ -7985,7 +8179,7 @@ fn _hl_pval_ra(S, sid): i64 {
 # as over 8 B. CHANGELOG [6.7.10]
 var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, initialiser token) pairs
 # `_gz_ty`'s kind of value: 1 a call / method / operator / if-expression result, 2 an inline global, 3 a
-# handle global, 4 an operand an operator dispatches on that is no value (`-g`), 5 a struct-typed field (a
+# handle global, 4 (retired in 6.7.11: `-g` is an integer), 5 a struct-typed field (a
 # struct value; 6.7.10: an operator's left operand dispatches on it, decision 11), 6 a `*T` (the struct it
 # points at; a receiver, never a value), 7 a dereference `*E` of a `*T` (6.7.10: an operator's left
 # operand dispatches on it; a declaration from it is `_gz_star`'s).
@@ -8256,17 +8450,13 @@ fn _gz_opfn(S, sid, op): i64 {
     SNPOS(S, np);
     return fi;
 }
-# No binary operator: `-x` keeps x's struct for an operator (`_neg_int` leaves the expression type) and
-# is no struct value; a name or call chain (`_gz_chain`); anything else gives no struct.
+# No binary operator: a name or call chain (`_gz_chain`); anything else gives no struct — `-x` too, an
+# integer (6.7.11, the user's decision (a): `_neg_int` clears the struct type, so `-G + H` never
+# dispatches; it kept G's struct for an operator, kind 4).
 fn _gz_unary(S, b, e): i64 {
     var t = TOKTYP(S, b);
-    if (t == 7) {
-        var r = _gz_ty(S, b + 1, e);
-        if (_gz_k == 2) { _gz_k = 4; return r; }
-        _gz_k = 0;
-        return 0;
-    }
     _gz_k = 0;
+    if (t == 7) { return 0; }
     if (t == 8) { return _gz_deref(S, b, e); }   # 6.7.10: `*p` — an operator dispatches on it
     if (_icall_sid_at(S, b) > 0) { return _gz_icall(S, b, e); }   # 6.7.11
     if (t != 2) { return 0; }
@@ -8497,6 +8687,7 @@ fn _ret_small_gh(S, k): i64 {
     if (_hl_capn(S, nm) == 1) { return 0; }
     var gvi = _findvar_core(S, nm);
     if (_small_ghdl(S, gvi) == 0) { return 0; }
+    if (GVTYPE(S, gvi) != _cur_fn_ret_sid) { return 0; }   # 6.7.11: refused by name (`_ret_small_val`)
     STI(S, GTI(S) + 2 + 2 * k);           # IDENT ; and the wrap
     _hg_val_ra(S, gvi, GVTYPE(S, gvi));
     var rp = EJMP0(S);
@@ -8547,10 +8738,13 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
 # `_hl_dk` = the parentheses around it; `_hl_dnm` = the operand's last name, for a refusal.
 var _hl_dk = 0;
 var _hl_dnm = 0;
-fn _hl_dstar(S, ti): i64 {
+fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
+# ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
+# step or of the parentheses wrapping it, `_hl_dx_end`).
+fn _hl_dstar_t(S, ti, term): i64 {
     _hl_dk = 0;
-    var e = _gz_end(S, ti);
-    if (TOKTYP(S, e) != 5) { return 0; }
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
     var a = _ie_unparen(S, ti, e);
     var pe = _ie_pe;
     if (pe - a < 2) { return 0; }
@@ -8559,13 +8753,49 @@ fn _hl_dstar(S, ti): i64 {
     var ps = _hl_psid(S, a + 1, pe);
     if (ps <= 0) { return 0; }
     _hl_dk = a - ti;
-    _hl_dnm = TOKVAL(S, a + 1);
-    var i = pe - 1;
-    while (i > a) {
-        if (TOKTYP(S, i) == 2) { _hl_dnm = TOKVAL(S, i); i = a; }
-        i = i - 1;
-    }
+    _hl_dnm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));
     return ps;
+}
+# The last name in [a, e) — the one a refusal quotes (`*w.pu` -> `pu`, `*gu()` -> `gu`) — `dflt` when there is
+# none. A generic call's type-argument list is no name of the operand: `*gpg<U>()` names `gpg`. CHANGELOG [6.7.11]
+fn _hl_lastnm(S, a, e, dflt): i64 {
+    var nm = dflt;
+    var i = a;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) {
+            nm = TOKVAL(S, i);
+            var o = _gcall_open(S, i);
+            if (o > i + 1) { i = o; }   # past `<..>`
+        }
+        i = i + 1;
+    }
+    return nm;
+}
+# The end of a source at token `ti` that ends at `term`: its `;` (`_gz_end`), or for a `)` the first `)`
+# no bracket after `ti` opened; -1 when it ends at anything else. CHANGELOG [6.7.11]
+fn _hl_dx_end(S, ti, term): i64 {
+    if (term == 5) {
+        var e = _gz_end(S, ti);
+        if (TOKTYP(S, e) != 5) { return 0 - 1; }
+        return e;
+    }
+    var d = 0;
+    var i = ti;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) {
+            if (d == 0) {
+                if (t == 11) { return i; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        }
+        elif (t == 5) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 # The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
 # the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
@@ -8617,14 +8847,18 @@ fn _hl_pchain(S, b, e): i64 {
     var i = b + 1;
     var o = _gcall_open(S, b);
     if (o >= 0) {
-        if (o != b + 1) { return 0; }   # `g<..>(`: a generic's instance is not read here
         var c = _call_close(S, o);
         if (c >= e) { return 0; }
         var fi = FINDFN(S, TOKVAL(S, b));
         if (fi < 0) { return 0; }
-        if (GFTP(S, fi) != 0) { return 0; }
-        t = _hl_fn_psid(fi);
-        if (t > 0) { p = 1; } else { t = GFRS(S, fi); }
+        if (GFTP(S, fi) != 0) {   # 6.7.11: `g<..>(` / `g(` declared `: *T` — its instance's T
+            t = _gen_call_psid(S, b, o, fi);
+            if (t <= 0) { return 0; }
+            p = 1;
+        } else {
+            t = _hl_fn_psid(fi);
+            if (t > 0) { p = 1; } else { t = GFRS(S, fi); }
+        }
         i = c + 1;
     } else {
         t = _hl_name_ty(S, TOKVAL(S, b));
@@ -8696,18 +8930,64 @@ fn _hl_pnm(S, a, e): i64 {
         if (_hl_psid(S, a, k) > 0) { return _hl_pnm(S, a, k); }
         return _hl_pnm(S, k + 1, e);
     }
-    var i = e - 1;
-    while (i > a) {
-        if (TOKTYP(S, i) == 2) { return TOKVAL(S, i); }
-        i = i - 1;
-    }
-    return TOKVAL(S, a);
+    return _hl_lastnm(S, a, e, TOKVAL(S, a));
 }
 # Fn `fi`'s `: *T` struct (`_fn_rpsid`), else 0.
 fn _hl_fn_psid(fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     return L64(_fn_rpsid + fi * 8);
+}
+# ⛔ 6.7.11 — A GENERIC CALL DECLARED `: *T` IS A STRUCT SOURCE, as `fn gp(): *S` is (6.7.10): `l = gpg<S>()`
+# stored the pointer word, `*gpg<S>()` as a value faulted and `gpg<S>().v` was refused, because the chain
+# typer skipped a generic call and its instance recorded T's step but not its struct (issues/2026-10-13-
+# generic-pointer-returning-call-as-struct-source.md). The struct the call at token `b` (`g<..>(` or `g(`,
+# its `(` at `o`, `fi` the base) points at: the base's return annotation read under the binding the call
+# instantiates with — its explicit type arguments, or those its arguments infer, as `_gen_resolve_call`
+# computes them — WITHOUT instantiating (a typer runs before the call is parsed, and in pass 1); the
+# instance records the same struct (`_ret_ptr_record`). 0 = none: a scalar binding, a return that is no
+# `*T`. CHANGELOG [6.7.11]
+fn _gen_call_psid(S, b, o, fi): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var ann = _gen_ret_ann(S, fi);
+    if (ann < 0) { return 0; }
+    var c0 = 0 - 8;
+    var c1 = 0;
+    if (o != b + 1) {
+        var sv = GTI(S);
+        var sv_gt = _ta_pending_gt;
+        _ta_pending_gt = 0;
+        STI(S, b + 2);
+        c0 = _parse_one_type_arg(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        _ta_pending_gt = sv_gt;
+        STI(S, sv);
+    } else {
+        var sg = _gi_sc;
+        _gi_sc = 0;
+        c0 = _gen_infer_tp(S, fi, o, 0);
+        c1 = _gen_infer_tp(S, fi, o, 1);
+        _gi_sc = sg;
+    }
+    return _gen_ann_bound(S, fi, ann, c0, c1);
+}
+# The struct the `*T` annotation at `ann` names with fn `fi`'s type parameters bound to `c0` / `c1` (the
+# binding in force put back after).
+fn _gen_ann_bound(S, fi, ann, c0, c1): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _bind_generic_call(S, fi, c0, c1);
+    var sid = _ptr_ann_sid_tp(S, ann);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return sid;
+}
+# The `*` of generic fn `fi`'s `): *T` return annotation, else -1.
+fn _gen_ret_ann(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 8) { return 0 - 1; }
+    return c + 2;
 }
 # The struct name `noff` holds (`_hl_cp` 1: a `*T`, T returned), else 0: a local or a closure capture in a
 # fn (a struct-typed slot, inline, a handle or a `*T`), else a global (a `*T` one, or a struct global).

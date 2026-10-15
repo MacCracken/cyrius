@@ -153,7 +153,7 @@ refused u02 "undefined variable 'zz'" "U2: zz = 1" 'fn main() {\n    var n = 0;\
 refused u03 "undefined variable 'yy'" "U3: a compound step, yy += 1" 'fn main() {\n    var n = 0;\n    var c = 0;\n    for (n = 0; n < 3; yy += 1) { c = c + 1; if (c > 9) { return 99; } }\n    return c;\n}\n'"$E"
 refused u04 "undefined variable 'j'" "U4: a top-level step, j = i + 1" 'var i = 0;\nvar s = 0;\nfor (i = 0; i < 3; j = i + 1) { s = s + 1; i = i + 1; }\nsyscall(60, s);\n'
 refused u05 "undefined variable 'g'" "U5: a fn's name, g = 1 (as the statement)" 'fn g(): i64 { return 1; }\nfn main() {\n    var i = 0;\n    for (i = 0; i < 3; g = 1) { i = i + 1; }\n    return i;\n}\n'"$E"
-refused u06 "undefined variable 't'" "U6: a captured name in a closure's step, t += 1 (as the statement)" 'include "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn main() {\n    alloc_init();\n    var t = 0;\n    var f = |n| { var k = 0; for (k = 0; k < n; t += 1) { k = k + 1; } return k * 10 + t; };\n    return fncall1(f, 4);\n}\n'"$E"
+refused u06 "'t' is captured by value; a captured name is not assignable in a closure" "U6: a captured name in a closure's step, t += 1 (as the statement; 6.7.11: the capture named)" 'include "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn main() {\n    alloc_init();\n    var t = 0;\n    var f = |n| { var k = 0; for (k = 0; k < n; t += 1) { k = k + 1; } return k * 10 + t; };\n    return fncall1(f, 4);\n}\n'"$E"
 
 # ── X: --syntax-only ──────────────────────────────────────────────────────────────────────────
 synonly x01 "X1: a step on a global the file cannot see (G_SIB += 1)" 'fn k(n): i64 {\n    var i = 0;\n    for (i = 0; i < n; G_SIB += 1) { i = i + 1; }\n    return i;\n}\n'

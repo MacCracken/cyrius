@@ -21,6 +21,8 @@
 #      SIGSEGV), in a fn, at top level and in a for step — every source shape. Q28-Q30 (6.7.6
 #      follow-up, FE): with a closure that declares a `var` inside the wrap (refused: the inner
 #      declaration reset the outer one's state).
+#      Q31-Q41 (6.7.11, the user's decision (a), 2026-10-13): a free struct call in parentheses as a
+#      nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`: "unexpected '}'") at 16 / 24 B and 8 B.
 #   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
 #      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
 #      pushed its first word and SIGSEGV'd. O12-O14 (FE): the call's argument holds a closure that
@@ -38,12 +40,29 @@
 #   R  (6.7.6 follow-up, E2) parentheses around a struct fn's WHOLE return value are transparent:
 #      `return (j);`, `return (mk3(v));`, `return ((j));`, `return (a + b);` were refused ("return must
 #      be a bare local identifier ..." / "... got `(...)`"), and `return (a) + b;` with them.
+#   K  (6.7.11) an INTEGER operator's result is an integer: after `n - s` (s a struct) the result kept s's
+#      struct type and slot, so the next `+ - * /` dispatched on it — `n - s + 10` called `S_add(&s, 10)`
+#      and discarded `n - s`. For every integer arm (`+ - * / % << >> >>>`, `& | ^`, a comparison, `&&`,
+#      `||`, `+| -| *| +? -? *?`, `~`) at 24 B and 8 B; `KN_add` returns 1 when it is called with 10, so a
+#      wrong dispatch reads 1. The twins dispatch as before: `s + t`, `s + 10`, `w.s + a` (decision 11);
+#      an f64 right operand's type is kept (kind 2: `(0 - x) + 1.0` is an f64 add, with its warning).
+#   U  (6.7.11, the user's decision (a), 2026-10-13) `-s` on a struct is integer negation of its word, with
+#      no struct type: `-s + t` is an integer add at every size, as the field form `-w.s + t` always was
+#      (252). It dispatched `S_add`: over 8 B from s's slot, the minus dropped (`s + t`: 51 here; the filed
+#      repro 6), at 8 B with the negated word as the struct (13). As a right operand `t + -s` passes the
+#      negated word, as `t + -w.s` does (into an untyped parameter: -5; over 8 B it passed s itself). The
+#      negation of a struct result (`-(s + t)`), `-x` on an f64 and on a u128 are unchanged.
 #   E  (6.7.11) under CYRIUS_IR=3 (the gate's A3 leg), LASE kept a just-stored local's rax image
 #      across EFLADDR's unrecorded `lea rax, [rbp+d]` and dropped the reload after it, so the
 #      aggregate's ADDRESS went out as the local: a method on an inline struct local (`o.with2(x)`:
 #      exit 30 + the low byte of `&o` where 35 is right; `o.same(x)` saw n == self), a by-value 16 B
 #      struct argument (`bs(h, x)`) and a struct-returning call's argument (`mk(x)`). Every other
 #      leg was right. Each shape is its own fn: the store, the `lea` and the reload must be adjacent.
+#   MP (6.7.11, the user's decision (a), 2026-10-13) a METHOD's `*T` result takes `.field`, `.m(..)` and a
+#      deeper chain, as a free call's `*T` result has since 6.6.17: `h.get().b` was refused ("cannot take a
+#      field of the result of 'H_get': it does not return a struct"). The pointer is parked as a receiver
+#      (`_mchain_ptr`), in a fn and at top level, through a dyn and a generic method too; the store
+#      `h.get().b = 5` stays refused (the gate's MP rows).
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -325,6 +344,55 @@ fn q_pairs(): i64 {
     return 0;
 }
 
+# Q31+ (6.7.11) — a free struct call in parentheses as a NESTED-STRUCT LITERAL ELEMENT is the element the
+# unwrapped call is: `H { 7, (mkq(4, 9)), 8 }` was "unexpected '}'" (16 B, 24 B, 8 B with two leaves).
+struct QE { a; b; }
+struct QE3 { a; b; c; }
+struct QE8 { a: u32; b: u32; }
+struct QE1 { a; }
+struct HE { x; q: QE; z; }
+struct HE3 { x; q: QE3; z; }
+struct HE8 { x; q: QE8; z; }
+struct HE1 { x; q: QE1; z; }
+struct HEF { q: QE; z; }
+struct HEL { x; q: QE; }
+fn mkqe(a, b): QE { var q = QE { a, b }; return q; }
+fn mkqe3(a, b): QE3 { var q = QE3 { a, b, a + b }; return q; }
+fn mkqe8(a, b): QE8 { var q = QE8 { a, b }; return q; }
+fn mkqe1(a): QE1 { var q = QE1 { a }; return q; }
+fn gqe<T>(a: T, b: T): QE { var q = QE { a, b }; return q; }
+fn idqe<T>(q: T): T { return q; }
+impl QE3 { fn dupe3(self): QE3 { var q = QE3 { self.a, self.b, self.c }; return q; } }
+fn he(h: *HE): i64 { return h.x + h.q.a * 10 + h.q.b + h.z; }
+var GHE8 = HE8 { 7, (mkqe8(4, 9)), 8 };
+var GHE1 = HE1 { 7, ((mkqe1(4))), 8 };
+fn q_elems(): i64 {
+    var h = HE { 7, (mkqe(4, 9)), 8 };
+    assert_eq(he(&h), 64, "Q31: H { 7, (mkq(4, 9)), 8 }, a 16 B element (the filed repro: unexpected '}')");
+    var h3 = HE3 { 7, (mkqe3(4, 9)), 8 };
+    assert_eq(h3.x + h3.q.a * 10 + h3.q.b + h3.q.c * 100 + h3.z, 1364, "Q32: a 24 B element (unexpected '}')");
+    var h8 = HE8 { 7, (mkqe8(4, 9)), 8 };
+    assert_eq(h8.x + h8.q.a * 10 + h8.q.b + h8.z, 64, "Q33: an 8 B element with two u32 leaves (unexpected '}')");
+    var h1 = HE1 { 7, (mkqe1(4)), 8 };
+    assert_eq(h1.x + h1.q.a * 10 + h1.z, 55, "Q34: an 8 B element with one leaf (unchanged)");
+    var g1 = HE { 7, (gqe<i64>(4, 9)), 8 };
+    assert_eq(he(&g1), 64, "Q35: (gqe<i64>(4, 9)), an explicit generic call");
+    var q0 = QE { 4, 9 };
+    var g2 = HE { 7, (idqe(q0)), 8 };
+    assert_eq(he(&g2), 64, "Q36: (idqe(q)), a generic call whose T binds the struct");
+    var d = HE { 7, ((mkqe(4, 9))), 8 };
+    assert_eq(he(&d), 64, "Q37: ((mkq(4, 9))), double parentheses");
+    var q3 = QE3 { 4, 9, 13 };
+    var m = HE3 { 7, (q3.dupe3()), 8 };
+    assert_eq(m.x + m.q.a * 10 + m.q.b + m.q.c * 100 + m.z, 1364, "Q38: (q.dupe3()), a wrapped 24 B method element (unchanged)");
+    var f = HEF { (mkqe(4, 9)), 8 };
+    assert_eq(f.q.a * 10 + f.q.b + f.z, 57, "Q39: the wrapped call as the FIRST element");
+    var l = HEL { 7, (mkqe(4, 9)) };
+    assert_eq(l.x + l.q.a * 10 + l.q.b, 56, "Q40: ... as the LAST element");
+    assert_eq(GHE8.x + GHE8.q.a * 10 + GHE8.q.b + GHE8.z + GHE1.q.a * 1000, 4064, "Q41: at top level, an 8 B element (two leaves; one leaf, double-wrapped)");
+    return 0;
+}
+
 # O — a struct result over 8 B as the RIGHT operand of an operator whose parameter takes it by
 # address (`*S`, or a by-value struct over 8 B): its temp's address, not its first word (SIGSEGV).
 struct V3 { x; y; z; }
@@ -584,8 +652,188 @@ fn eladdr(): i64 {
     return 0;
 }
 
+# K — an integer operator's result is an integer (no dispatch on its right operand's struct).
+include "lib/overflow.cyr"
+struct KN { x; y; z; }
+struct K8 { v; }
+struct KW { n; s: KN; }
+fn KN_add(a, b): i64 { if (b == 10) { return 1; } return 50; }
+fn K8_add(a, b): i64 { if (b == 10) { return 1; } return 50; }
+fn k_sub(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n - s + 10; }
+fn k_add(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n + s + 10; }
+fn k_mul(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n * s + 10; }
+fn k_div(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n / s + 10; }
+fn k_mod(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n % s + 10; }
+fn k_shl(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n << s + 10; }
+fn k_shr(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 96; return n >> s + 10; }
+fn k_sar(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 0 - 96; return n >>> s + 10; }
+fn k_and(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n & s) + 10; }
+fn k_or(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n | s) + 10; }
+fn k_xor(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n ^ s) + 10; }
+fn k_lt(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n < s) + 10; }
+fn k_eq(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n == s) + 10; }
+fn k_land(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n && s) + 10; }
+fn k_lor(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 0; return (n || s) + 10; }
+fn k_bnot(): i64 { var s: KN = KN { 5, 6, 7 }; return (~s) + 10; }
+fn k_sat(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n +| s + 10) * 1000 + (n -| s + 10) * 100 + (n *| s + 10); }
+fn k_chk(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return (n +? s + 10) * 1000 + (n -? s + 10) * 100 + (n *? s + 10); }
+fn k_chain(): i64 { var s: KN = KN { 5, 6, 7 }; var n = 3; return n - 2 * s + 10; }
+fn k8_sub(): i64 { var s: K8 = K8 { 5 }; var n = 3; return n - s + 10; }
+fn k8_mul(): i64 { var s: K8 = K8 { 5 }; var n = 3; return n * s + 10; }
+fn k8_lt(): i64 { var s: K8 = K8 { 5 }; var n = 3; return (n < s) + 10; }
+fn k8_bnot(): i64 { var s: K8 = K8 { 5 }; return (~s) + 10; }
+fn k_twin(): i64 { var s: KN = KN { 5, 6, 7 }; var t: KN = KN { 1, 1, 1 }; return s + t + 10; }
+fn k_twin10(): i64 { var s: KN = KN { 5, 6, 7 }; return s + 10; }
+fn k_twinf(): i64 { var w: KW = KW { 0, 5, 6, 7 }; var a: KN = KN { 1, 1, 1 }; return w.s + a; }
+fn k_f64(): i64 { var x: f64 = 2.0; var y = (0 - x) + 1.0; return f64_to(y); }
+fn k_rows(): i64 {
+    assert_eq(k_sub(), 8, "K1: n - s + 10 is (3 - 5) + 10 (dispatched KN_add(&s, 10): 1; the filed repro SIGSEGV)");
+    assert_eq(k_add(), 18, "K2: n + s + 10");
+    assert_eq(k_mul(), 25, "K3: n * s + 10");
+    assert_eq(k_div(), 10, "K4: n / s + 10");
+    assert_eq(k_mod(), 13, "K5: n % s + 10");
+    assert_eq(k_shl(), 106, "K6: n << s + 10");
+    assert_eq(k_shr(), 13, "K7: n >> s + 10");
+    assert_eq(k_sar(), 7, "K8: n >>> s + 10");
+    assert_eq(k_and(), 11, "K9: (n & s) + 10");
+    assert_eq(k_or(), 17, "K10: (n | s) + 10");
+    assert_eq(k_xor(), 16, "K11: (n ^ s) + 10");
+    assert_eq(k_lt(), 11, "K12: (n < s) + 10");
+    assert_eq(k_eq(), 10, "K13: (n == s) + 10");
+    assert_eq(k_land(), 11, "K14: (n && s) + 10");
+    assert_eq(k_lor(), 11, "K15: (n || s) + 10");
+    assert_eq(k_bnot(), 4, "K16: (~s) + 10");
+    assert_eq(k_sat(), 18825, "K17: n +| s + 10, n -| s + 10, n *| s + 10");
+    assert_eq(k_chk(), 18825, "K18: n +? s + 10, n -? s + 10, n *? s + 10");
+    assert_eq(k_chain(), 3, "K19: n - 2 * s + 10 (the * leg's integer result on the right)");
+    assert_eq(k8_sub(), 8, "K20: 8 B: n - s + 10");
+    assert_eq(k8_mul(), 25, "K21: 8 B: n * s + 10");
+    assert_eq(k8_lt(), 11, "K22: 8 B: (n < s) + 10");
+    assert_eq(k8_bnot(), 4, "K23: 8 B: (~s) + 10");
+    assert_eq(k_twin(), 60, "K24: s + t + 10 dispatches KN_add(s, t), then an integer + 10 (unchanged)");
+    assert_eq(k_twin10(), 1, "K25: s + 10 dispatches KN_add(s, 10) (unchanged)");
+    assert_eq(k_twinf(), 50, "K26: w.s + a dispatches from the field (decision 11, unchanged)");
+    assert_eq(k_f64(), 0 - 1, "K27: (0 - x) + 1.0 with x: f64 keeps the f64 type (kind 2: -2.0 + 1.0)");
+    return 0;
+}
+
+# U — unary minus on a struct is integer negation of its word, with no struct type (decision (a)).
+struct UP3 { x; y; z; }
+struct UPt { x; y; }
+struct US8 { v; }
+struct UN { x; y; z; }
+struct UR { v; }
+struct UW3 { n; s: UP3; }
+struct UW2 { n; s: UPt; }
+struct UW8 { n; s: US8; }
+struct UWN { n; s: UN; }
+fn UP3_add(a: *UP3, b: *UP3): i64 { return a.x * 10 + b.x; }
+fn UPt_add(a: *UPt, b: *UPt): i64 { return a.x * 10 + b.x; }
+fn US8_add(a: US8, b: US8): i64 { return a.v * 100 + b.v; }
+fn UN_add(a, b): i64 { return b; }
+fn UR_add(a: UR, b: UR): UR { var r: UR; r.v = a.v * 100 + b.v; return r; }
+fn u_24(): i64 { var s: UP3 = UP3 { 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return -s + t; }
+fn u_24f(): i64 { var w: UW3 = UW3 { 0, 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return -w.s + t; }
+fn u_16(): i64 { var s: UPt = UPt { 5, 6 }; var t: UPt = UPt { 1, 1 }; return -s + t; }
+fn u_16f(): i64 { var w: UW2 = UW2 { 0, 5, 6 }; var t: UPt = UPt { 1, 1 }; return -w.s + t; }
+fn u_8(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; return -s + t; }
+fn u_8f(): i64 { var w: UW8 = UW8 { 0, 5 }; var t: US8 = US8 { 1 }; return -w.s + t; }
+fn u_paren(): i64 { var s: UP3 = UP3 { 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return (-s) + t; }
+fn u_decl(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; var c = -s + t; return c; }
+fn u_8r(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; return t + -s; }
+fn u_8rf(): i64 { var w: UW8 = UW8 { 0, 5 }; var t: US8 = US8 { 1 }; return t + -w.s; }
+fn u_rn(): i64 { var s: UN = UN { 5, 6, 7 }; var t: UN = UN { 1, 1, 1 }; return t + -s; }
+fn u_rnf(): i64 { var w: UWN = UWN { 0, 5, 6, 7 }; var t: UN = UN { 1, 1, 1 }; return t + -w.s; }
+fn u_res(): i64 { var s: UR = UR { 5 }; var t: UR = UR { 1 }; return -(s + t) + 1; }
+fn u_f64(): i64 { var x: f64 = 2.5; var y: f64 = -x * 2.0; return f64_to(y); }
+fn u_u128(): i64 {
+    var u: u128 = 5;
+    var w: u128 = -u;
+    if (load64(&w) != 0 - 5) { return 0; }
+    if (load64(&w + 8) != 0 - 1) { return 0; }
+    return 1;
+}
+fn u_rows(): i64 {
+    assert_eq(u_24(), 0 - 4, "U1: -s + t, 24 B: an integer add (dispatched UP3_add(&s, &t): 51)");
+    assert_eq(u_24(), u_24f(), "U2:   = -w.s + t at 24 B");
+    assert_eq(u_16(), 0 - 4, "U3: -s + t, 16 B (51)");
+    assert_eq(u_16(), u_16f(), "U4:   = -w.s + t at 16 B");
+    assert_eq(u_8(), 0 - 4, "U5: -s + t, 8 B (dispatched US8_add with the negated word: -499)");
+    assert_eq(u_8(), u_8f(), "U6:   = -w.s + t at 8 B");
+    assert_eq(u_paren(), 0 - 4, "U7: (-s) + t");
+    assert_eq(u_decl(), 0 - 4, "U8: var c = -s + t; an integer binding");
+    assert_eq(u_8r(), 95, "U9: t + -s, 8 B: the negated word into the by-value operand");
+    assert_eq(u_8r(), u_8rf(), "U10:   = t + -w.s");
+    assert_eq(u_rn(), 0 - 5, "U11: t + -s into an untyped operand over 8 B: the negated word (it passed &s)");
+    assert_eq(u_rn(), u_rnf(), "U12:   = t + -w.s");
+    assert_eq(u_res(), 0 - 500, "U13: -(s + t) + 1: the negation of a struct result (unchanged)");
+    assert_eq(u_f64(), 0 - 5, "U14: -x on an f64 is a float negation (unchanged)");
+    assert_eq(u_u128(), 1, "U15: -u on a u128 is the u128 0 - u (unchanged)");
+    return 0;
+}
+
+# MP — a method's `*T` result: `.field`, `.m(..)`, deeper chains (6.7.11).
+struct MQ { a; b; }
+struct MS8 { v: u32; w: u32; }
+struct MP { a; b; q: MQ; nx: *MP; k: i32; f: f64; s8: *MS8; }
+struct MH { p: *MP; }
+impl MP {
+    fn sum(self): i64 { return self.a * 10 + self.b; }
+    fn me(self): *MP { return self; }
+    fn bump(self): i64 { self.a = self.a + 1; return self.a; }
+}
+impl MH {
+    fn get(self): *MP { return self.p; }
+    fn gp<T>(self, x: T): *MP { return self.p; }
+    fn s8(self): *MS8 { return self.p.s8; }
+}
+trait MTr { fn mme(self): *MP; }
+impl MTr for MP { fn mme(self): *MP { return self; } }
+var GMS8 = MS8 { 3, 9 };
+fn mp_mk(p: *MP, a, b, nx: *MP): i64 {
+    p.a = a; p.b = b; p.q.a = a + 2; p.q.b = b + 2; p.nx = nx; p.k = 0 - 7; p.f = 2.5; p.s8 = &GMS8;
+    return 0;
+}
+var GMQ = MQ { 0, 0 };
+var GMT = MP { 0, 0, GMQ, 0, 0, 0.0, 0 };
+var GMH = MH { &GMT };
+var GMO: dyn MTr = &GMT;
+var GMI = mp_mk(&GMT, 9, 8, &GMT);
+var GMV = GMH.get().b * 100 + GMH.get().q.b * 10 + GMH.get().sum() % 10;
+var GMD = GMO.mme().a * 10 + GMH.get().nx.nx.k;
+fn mp_rows(): i64 {
+    var y: MP;
+    var x: MP;
+    mp_mk(&y, 50, 60, 0);
+    mp_mk(&x, 3, 4, &y);
+    var h = MH { &x };
+    assert_eq(h.get().b, 4, "MP1: h.get().b (refused: 'it does not return a struct')");
+    assert_eq(h.get().q.b, 6, "MP2: h.get().q.b, an inline struct field of the pointee");
+    assert_eq(h.get().sum(), 34, "MP3: h.get().sum(), a method on the pointee");
+    assert_eq(h.get().nx.b, 60, "MP4: h.get().nx.b, through the pointee's *T field");
+    assert_eq(h.get().me().me().a, 3, "MP5: h.get().me().me().a, a chain of *T methods");
+    assert_eq(h.get().nx.sum(), 560, "MP6: h.get().nx.sum()");
+    assert_eq(h.get().k, 0 - 7, "MP7: h.get().k, an i32 field, sign-extended");
+    assert_eq(f64_to(h.get().f * 2.0), 5, "MP8: h.get().f * 2.0, an f64 field is an f64");
+    assert_eq(h.s8().v * 10 + h.s8().w, 39, "MP9: h.s8().v / .w, a *T to an 8 B struct (u32 fields)");
+    var t = h.get().a + h.get().nx.a * 2;
+    assert_eq(t, 103, "MP10: h.get().a + h.get().nx.a * 2, operands of one expression");
+    h.get().bump();
+    assert_eq(x.a, 4, "MP11: h.get().bump(); as a statement writes the pointee (no copy)");
+    assert_eq(h.gp(1).b * 10 + h.gp(1.5).b, 44, "MP12: a generic method's *T result: its i64 base and its f64 instance");
+    var o: dyn MTr = &x;
+    assert_eq(o.mme().b * 10 + o.mme().q.a, 45, "MP13: o.mme().b / .q.a through a dyn");
+    assert_eq(o.mme().me().sum(), 44, "MP14: o.mme().me().sum(), a dyn link then a method link");
+    assert_eq(GMV, 908, "MP15: at top level: G.get().b, G.get().q.b, G.get().sum()");
+    assert_eq(GMD, 83, "MP16: at top level: a dyn's o.mme().a, G.get().nx.nx.k");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
+    k_rows();
+    u_rows();
+    mp_rows();
     strs();
     eladdr();
     flags();
@@ -597,6 +845,7 @@ fn rows(): i64 {
     q_vars();
     q_decls();
     q_pairs();
+    q_elems();
     operand_pairs();
     operands();
     lefts();

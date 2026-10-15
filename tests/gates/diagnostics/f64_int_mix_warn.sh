@@ -76,6 +76,15 @@
 #           fails; pass 1 without the f64 class (`_bx_pscan`) -> line 18 (the forward call) missed;
 #           `_bx_op_rhs` without the f64 check -> line 19 reads 4; the f32 argument arm without
 #           `_IFS_CHECK` -> line 15 and the repro's line 16 missed.
+#   axis 16 (6.7.11) ONE integer + f64 mix warns ONCE: kind 2 leaves the result f64-typed (ADR-002), so an
+#           enclosing integer operator warned again for the same mix — `x = x + (x + 1.5)` (the filed repro,
+#           issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md) and `2 * (x + 1.5)` twice, `x += x + 1.5`
+#           twice at one column, `x - (x * (x + 1.5))` three times. Now once each; two mixes still warn twice
+#           (`(x + 1.5) + (x + 2.5)`), and `x + 1.5 + 2` still adds its kind 1 for the `+ 2`. The binary is
+#           byte-identical to the CYRIUS_TYPE_CHECK=0 one (diagnostic only). Mutations (2026-10-14): never
+#           stamping `_ifm_cp` -> every one-mix row reads 2 or 3 (RED); `_ifm_warn` stamping only when it
+#           warns -> `k` and `cc` read 2 (RED); `_asg_compound_op` without its `_ifm_at` test -> `c` and `cc`
+#           read 2 (RED).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -557,5 +566,34 @@ if grep "$K4" "$W/e" | grep -q ">:2[0-7]:"; then bad "axis 15: kind 4 fired on a
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a15.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 15: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
 
+# --- axis 16 (6.7.11): ONE integer + f64 mix warns ONCE, however far its result is carried ---
+# The filed repro (issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md), verbatim in a fn: two kind-2
+# warnings through 6.7.10 (the enclosing `+` saw the inner mix's f64 type); one now. Each row is one
+# statement in its own program: <id>|<statement>|<kind-2 count>|<kind-1 count>.
+for spec in 'r|var x = 1; x = x + (x + 1.5);|1|0' 'c|var x = 1; x += x + 1.5;|1|0' \
+            'm|var x = 1; var y = 2 * (x + 1.5);|1|0' 'k|var x = 1; var y = x - (x * (x + 1.5));|1|0' \
+            'p|var x = 1; var y = x + ((x + 1.5));|1|0' 'b|var u = 1.5; var y = 1 + 2 * f64_add(u, 1.5);|1|0' \
+            'cc|var x = 1; x += x - (x * (x + 1.5));|1|0' 't|var x = 1; x = (x + 1.5) + (x + 2.5);|2|0' \
+            'k1|var x = 1; var y = x + 1.5 + 2;|1|1'; do
+    id=${spec%%|*}; rest=${spec#*|}; stmt=${rest%%|*}; rest=${rest#*|}; w2=${rest%%|*}; w1=${rest#*|}
+    printf 'fn main(): i64 {\n    %s\n    return 0;\n}\nsyscall(60, main());\n' "$stmt" > "$W/a16_$id.cyr"
+    build "$W/a16_$id.cyr"
+    n=$(count "$K2"); [ "$n" = "$w2" ] || { bad "axis 16 ($id: '$stmt'): kind-2 warning count $n, want $w2"; sed -n 1,4p "$W/e"; }
+    n=$(count "$K1"); [ "$n" = "$w1" ] || bad "axis 16 ($id: '$stmt'): kind-1 warning count $n, want $w1"
+done
+# Diagnostic only: the binary is the one CYRIUS_TYPE_CHECK=0 (no warning at all) builds, byte for byte.
+cat "$W"/a16_*.cyr | grep -v '^syscall' | sed 's/fn main()/fn m_/' > "$W/a16_all.cyr"
+i=0; : > "$W/a16_all2.cyr"
+while IFS= read -r line; do
+    case "$line" in 'fn m_'*) i=$((i + 1)); echo "fn m$i(): i64 {" >> "$W/a16_all2.cyr" ;; *) echo "$line" >> "$W/a16_all2.cyr" ;; esac
+done < "$W/a16_all.cyr"
+echo 'syscall(60, m1() + m2());' >> "$W/a16_all2.cyr"
+"$CC" < "$W/a16_all2.cyr" > "$W/a16_on" 2> "$W/e" || true
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a16_all2.cyr" > "$W/a16_off" 2> "$W/e0" || true
+n=$(count "$K2")
+if [ ! -s "$W/a16_on" ]; then bad "axis 16: the combined program did not build: $(grep '^error' "$W/e" | head -1)"
+elif ! cmp -s "$W/a16_on" "$W/a16_off"; then bad "axis 16: the warned binary differs from the CYRIUS_TYPE_CHECK=0 one"
+elif [ "$n" != 10 ]; then bad "axis 16: the combined program draws $n kind-2 warnings, want 10"; fi
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix)"

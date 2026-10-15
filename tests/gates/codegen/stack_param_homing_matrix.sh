@@ -541,12 +541,15 @@ refuse_all toplevel-small-ptr-arg "$T/rt8.cyr" "returns a struct by value" 5
 # ptr_param_bare_struct.tcyr, `operators`); at top level there is no frame, and the operand's VALUE
 # was pushed, which the operator fn dereferenced — SIGSEGV. Refused: a call result, the same call
 # in parentheses (`Gs - (mk(1))`, which compiled clean and crashed until the integration review),
-# an operator result (to S1_mul's `b: *S1`), a left operand that is a value, not a name
-# (`-Gs`), and (6.7.6 E2) `(Gs - Gt) - Gt`: an operator result as the LEFT operand dispatches its
-# operator fn since 6.7.6 (the user's decision, 2026-10-08), here S1_sub's `a: *S1` — until then
-# the outer `-` was an integer subtract of the result's word (5 by accident of the one field).
-# Not refused, so the count is exact: global operands (`Gs - Gt`, `(Gs) - Gt`), by-value operands
-# (`Gs / mk(2)`, `Gs + mk(3)`), and
+# an operator result (to S1_mul's `b: *S1`), and (6.7.6 E2) `(Gs - Gt) - Gt`: an operator result
+# as the LEFT operand dispatches its operator fn since 6.7.6 (the user's decision, 2026-10-08), here
+# S1_sub's `a: *S1` — until then the outer `-` was an integer subtract of the result's word (5 by
+# accident of the one field). Through 6.7.10 `-Gs - Gt` was refused too (a left operand that is a
+# value, not a name); since 6.7.11 `-Gs` is integer negation of the struct's word with no struct type
+# (the user's decision (a), 2026-10-13; issues/2026-10-08-struct-operator-results.md #3), so it is an
+# integer subtraction, dispatches nothing and is not refused (5 refusals -> 4).
+# Not refused, so the count is exact: `-Gs - Gt` (6.7.11), global operands (`Gs - Gt`, `(Gs) - Gt`),
+# by-value operands (`Gs / mk(2)`, `Gs + mk(3)`), and
 # operands that already ARE an address and need no frame (`Gs * &Gt`, `Gs - &Gt` — review round 2
 # refused those too). Mutations (measured on the integrated tree): `_op_operand_sv` without its
 # top-level refusal -> RED ("COMPILED — it must be refused ... x4"); without its pass-through of a
@@ -574,7 +577,7 @@ var j: S1 = Gs * &Gt;
 var k: S1 = Gs - &Gt;
 syscall(60, a.v + x.v + c.v + d.v + e.v + f.v + g.v + h.v + i.v + j.v + k.v);
 EOF
-refuse_all toplevel-small-ptr-operand "$T/rt9.cyr" "operand of .* is passed by address" 5
+refuse_all toplevel-small-ptr-operand "$T/rt9.cyr" "operand of .* is passed by address" 4
 # 6.6.6 bite 16c — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY RETURN EXPRESSION. The pair
 # branch in PARSE_RETURN handled `return IDENT;` for a matching local and fell through to the
 # SCALAR path for everything else, so a call returning a DIFFERENT struct (`s2` returns a 24 B P3

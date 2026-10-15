@@ -18,6 +18,13 @@
 # argument; and at top level. The `*S` SIZE rows (1, 3, 7 B — u8 / u16 / u32 — and 8 B) write through.
 # A `*U` of another struct is refused by name, and an untyped `*x` keeps its word (the gate's D rows).
 #
+# ⛔ 6.7.11 — A DEREFERENCE OF A STRUCT UNDER 8 BYTES READS THE STRUCT, NO BYTE PAST IT
+# (issues/2026-10-12-small-struct-dereference-reads-past-the-object.md). Through 6.7.10 a `*p` of a 1..7 B
+# struct loaded the whole WORD at p wherever it was a value — a global declared from it (the declaration zone
+# and after it), a by-value argument, `return *p` — so the bytes after the object landed in the value's
+# padding (and a SIGSEGV when the object ended a mapping: the gate's PX rows). The `z` rows, at 3 / 5 / 6 / 7 B
+# over a source whose following bytes are 'D'..'H': the padding is 0 and the last field is the struct's.
+#
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R10 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
 # cross-OS leg on ecb / ach / cass / pi.
@@ -173,11 +180,58 @@ var TA8 = take8(*GP8);
 var TAH = takeh(*GPH);
 var TS8 = GA8 - *GP8;
 var TSH = GAH - *GPH;
+# ── 6.7.11: a dereference of a struct under 8 B, no byte past it (the source: 'A'..'H') ──
+struct Z3 { a: i8; b: i8; c: i8; }
+struct Z5 { a: i32; b: i8; }
+struct Z6 { a: i16; b: i16; c: i16; }
+struct Z7 { a: i32; b: i16; c: i8; }
+var ZB[2];
+fn zsrc(): i64 { store64(&ZB, 0x4847464544434241); return &ZB; }
+var PZ3: *Z3 = zsrc();
+var PZ5: *Z5 = &ZB;
+var PZ6: *Z6 = &ZB;
+var PZ7: *Z7 = &ZB;
+# the byte after the object * 100000 + the last field
+fn zp3(s: Z3): i64 { return load8(&s + 3) * 100000 + s.c; }
+fn zp5(s: Z5): i64 { return load8(&s + 5) * 100000 + s.b; }
+fn zp6(s: Z6): i64 { return load8(&s + 6) * 100000 + s.c; }
+fn zp7(s: Z7): i64 { return load8(&s + 7) * 100000 + s.c; }
+fn zr3(): Z3 { return *PZ3; }
+fn zr5(): Z5 { return (*PZ5); }
+fn zr6(): Z6 { return *(PZ6 + 0); }
+fn zr7(): Z7 { return *PZ7; }
+# a frame of 0xFF words where the next call's frame will be: a temp's padding left as found shows
+fn zdirty(): i64 {
+    var a: i64[16];
+    var i = 0;
+    while (i < 16) { a[i] = 0 - 1; i = i + 1; }
+    return a[15];
+}
+fn zret3(): i64 { zdirty(); var l: Z3 = zr3(); return load8(&l + 3) * 100000 + l.c; }
+fn zret5(): i64 { zdirty(); var l: Z5 = zr5(); return load8(&l + 5) * 100000 + l.b; }
+fn zret6(): i64 { zdirty(); var l: Z6 = zr6(); return load8(&l + 6) * 100000 + l.c; }
+fn zret7(): i64 { zdirty(); var l: Z7 = zr7(); return load8(&l + 7) * 100000 + l.c; }
+fn zarg3(): i64 { return zp3(*PZ3); }
+fn zarg5(): i64 { return zp5((*PZ5)); }
+fn zarg6(): i64 { return zp6(*PZ6); }
+fn zarg7(): i64 { return zp7(*(PZ7 + 0)); }
+var GZ3: Z3 = *PZ3;
+var GZ5: Z5 = (*PZ5);
+var GZ6: Z6 = *(PZ6 + 0);
+var GZ7: Z7 = *PZ7;
+var TZ3 = zp3(*PZ3);
+var TZ7 = zp7((*PZ7));
 alloc_init();
 var TB8 = take8((*GP8));
 var TBH = takeh((*GPH));
 var TU8 = GA8 - (*GP8);
 var TUH = GAH - *gph();
+var LZ3: Z3 = (*PZ3);
+var LZ5: Z5 = *PZ5;
+var LZ6: Z6 = *PZ6;
+var LZ7: Z7 = *(PZ7 + 0);
+var UZ3 = zp3((*PZ3));
+var UZ7 = zp7(*PZ7);
 
 assert_eq(f_loc_8(), 5, "take(*p): a *S local's struct, by value");
 assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
@@ -237,4 +291,28 @@ assert_eq(TB8, 5, "top level, after the first statement: take((*GP))");
 assert_eq(TB8, TBH, "  = its 16 B twin");
 assert_eq(TU8, 85, "top level, after the first statement: A - (*GP), A - *gp()");
 assert_eq(TU8, TUH, "  = its 16 B twin");
+assert_eq(load8(&GZ3 + 3) * 100000 + GZ3.c, 67, "3 B: var G: Z3 = *p in the declaration zone: no byte past it");
+assert_eq(load8(&GZ5 + 5) * 100000 + GZ5.b, 69, "5 B: = (*p) in the declaration zone");
+assert_eq(load8(&GZ6 + 6) * 100000 + GZ6.c, 17989, "6 B: = *(p + 0) in the declaration zone");
+assert_eq(load8(&GZ7 + 7) * 100000 + GZ7.c, 71, "7 B: = *p in the declaration zone");
+assert_eq(load8(&LZ3 + 3) * 100000 + LZ3.c, 67, "3 B: var G: Z3 = (*p) after the first statement");
+assert_eq(load8(&LZ5 + 5) * 100000 + LZ5.b, 69, "5 B: = *p after the first statement");
+assert_eq(load8(&LZ6 + 6) * 100000 + LZ6.c, 17989, "6 B: = *p after the first statement");
+assert_eq(load8(&LZ7 + 7) * 100000 + LZ7.c, 71, "7 B: = *(p + 0) after the first statement");
+zdirty();
+assert_eq(zarg3(), 67, "3 B: f(*p) into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zarg5(), 69, "5 B: f((*p))");
+zdirty();
+assert_eq(zarg6(), 17989, "6 B: f(*p)");
+zdirty();
+assert_eq(zarg7(), 71, "7 B: f(*(p + 0))");
+assert_eq(TZ3, 67, "3 B: f(*p) at top level, the declaration zone");
+assert_eq(TZ7, 71, "7 B: f((*p)) at top level, the declaration zone");
+assert_eq(UZ3, 67, "3 B: f((*p)) at top level, after the first statement");
+assert_eq(UZ7, 71, "7 B: f(*p) at top level, after the first statement");
+assert_eq(zret3(), 67, "3 B: return *p, received");
+assert_eq(zret5(), 69, "5 B: return (*p)");
+assert_eq(zret6(), 17989, "6 B: return *(p + 0)");
+assert_eq(zret7(), 71, "7 B: return *p");
 var r = assert_summary();

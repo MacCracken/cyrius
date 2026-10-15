@@ -22,7 +22,9 @@
 #        LEFT operand (`mk(9, 7) - s`)                           P5b ... as its RIGHT operand
 #   P6   a destructure `var a, b = mk(4, 2);` of a `: P2` fn returning a P2 local (r4 read as the
 #        multi-value slot)                                       P7  `mk(7, 42); var b = rethi();`
-#   P8   a `: P2` fn's `return (x, 2);` received as `var p: P2 = mt(4);`     P8b the same with `ret2`
+#   P8   a `: P2` fn's `return (x, 2);` — refused since 6.7.11 (a tuple is not the struct: the user's
+#        decision, issues/2026-10-08-struct-operator-results.md #4), on cx as natively, once
+#                                                                P8b `ret2(x, 2);` received as `var p: P2 = mr(4);`
 #   P9   a 13-argument callee returning a pair (arguments 11 and 12 ride r14 / r15, the emitters'
 #        temps)                                                  P10 a pair call as the 13th argument
 #   P11  a field of a call result `mk(4, 2).y`                   P12 a callee whose `defer` makes a
@@ -133,8 +135,8 @@ row p5 42 "P5: a call result as an operator's left operand \`mk(9, 7) - s\`" "${
 row p5b 42 "P5b: ... as its right operand \`s - mk(1, 3)\`" "${P}fn P2_sub(a: P2, b: P2): i64 { return (a.x - b.x) * 10 + (a.y - b.y); }\nfn main(): i64 { var s: P2 = mk(5, 5); return s - mk(1, 3); }\n$E"
 row p6 42 "P6: \`var a, b = mk1(4);\` (the high word read as the multi-value slot)" "${P1}fn main(): i64 { var a, b = mk1(4); if (a != 4) { return 1; } return b; }\n$E"
 row p7 42 "P7: \`mk1(4); var b = rethi();\`" "${P1}fn main(): i64 { mk1(4); var b = rethi(); return b; }\n$E"
-row p8 42 "P8: a \`: P2\` fn's \`return (x, 2);\` received as the struct" "struct P2 { x; y; }\nfn mt(x): P2 { return (x, 2); }\nfn main(): i64 { var p: P2 = mt(4); return p.x * 10 + p.y; }\n$E"
-row p8b 42 "P8b: the same with \`ret2(x, 2);\`" "struct P2 { x; y; }\nfn mr(x): P2 { ret2(x, 2); }\nfn main(): i64 { var p: P2 = mr(4); return p.x * 10 + p.y; }\n$E"
+refused p8 "returns that struct — \`(a, b)\` is a tuple, another type" "P8: a \`: P2\` fn's \`return (x, 2);\` is refused (6.7.11)" "struct P2 { x; y; }\nfn mt(x): P2 { return (x, 2); }\nfn main(): i64 { var p: P2 = mt(4); return p.x * 10 + p.y; }\n$E"
+row p8b 42 "P8b: a \`: P2\` fn's \`ret2(x, 2);\` received as the struct" "struct P2 { x; y; }\nfn mr(x): P2 { ret2(x, 2); }\nfn main(): i64 { var p: P2 = mr(4); return p.x * 10 + p.y; }\n$E"
 row p9 42 "P9: a 13-argument callee returning a pair (args 11 / 12 in r14 / r15)" "struct P2 { x; y; }\nfn m13(a, b, c, d, e, f, g, h, i, j, k, l, m): P2 { var p: P2; p.x = a + b + c + d + e + f + g + h + i + j + k; p.y = l * 100 + m; return p; }\nfn main(): i64 { var q: P2 = m13(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13); if (q.x != 66) { return 1; } if (q.y != 1213) { return 2; } return 42; }\n$E"
 row p10 42 "P10: a pair call as the 13th argument (a by-value P2)" "${P}fn t13(a, b, c, d, e, f, g, h, i, j, k, l, p: P2): i64 { if (a + b + c + d + e + f + g + h + i + j + k + l != 78) { return 1; } return p.x * 10 + p.y; }\nfn main(): i64 { return t13(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, mk(4, 2)); }\n$E"
 row p11 42 "P11: a field of a call result \`mk(4, 2).x\`" "${P}fn main(): i64 { return mk(4, 2).x * 10 + mk(4, 2).y; }\n$E"

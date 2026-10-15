@@ -1,0 +1,645 @@
+# generic_ptr_struct_source.tcyr — 6.7.11. A GENERIC CALL DECLARED `: *T` IS A STRUCT SOURCE, as `fn gp(): *S` is
+# (6.7.10, decision 6) — issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md.
+#
+# ⛔ THROUGH 6.7.10 the chain typer skipped a generic call (`_hl_pchain`), and the instance recorded T's pointer
+# STEP but not its struct (`_ret_ptr_record` read `*T` with `FINDSTRUCT('T')`): `l = gpg<S>()` stored the
+# POINTER word into the first field, `var q: S = *gpg<S>();` bound a handle to the word the dereference read,
+# `take(*gpg<S>())`, `a - *gpg<S>()` and `*gpg<S>() + a` passed that word as the struct's address (SIGSEGV on
+# every one), and `gpg<S>().v` was refused "it does not return a struct" — while binding the call first
+# (`var p: *S = gpg<S>();`) worked. The filed repro (16 B): 102, 139, 139, 139, 139, refused, 58.
+#
+# THE RULE (every row's value is what the non-generic `fn gp(): *S` gives): the seven filed positions at 8,
+# 16 and 24 B, for an EXPLICIT `gpg<S>()` and two INFERRED forms — `gpi(p)` (`fn gpi<T>(x: *T): *T`, p a
+# `*S` local: T binds S) and `gpv(G)` (`fn gpv<T>(x: T): *T`, a by-value struct argument). A copy reads the
+# struct at the time of the copy: each copy row writes the pointee afterwards (6 into its first field) and
+# reads the copy back (8 B: `v * 10 + 8`; 16 B: `v * 10 + w`; 24 B: `v * 100 + w * 10 + x` = 58 / 58 / 583).
+# Then the same call in the 6.7.11 copy arms — a struct-typed FIELD destination (`o.s = gpg<S>()`), an
+# assignment from its dereference (`l = *gpg<S>()`, `o.s = *gpg<S>()`) — wrapped, as pointer arithmetic,
+# through a two-parameter generic, from inside another generic's instance (`gpg<T>()` with T bound), and at
+# top level (a declaration-zone `var Z: S = *gpg<S>();`, statements, a field of the call).
+# (`gpi(&G)` is not here: `&G` infers T = i64 for a `*T` parameter, so it runs the i64 base — no `*S`.)
+#
+# CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R12 runs this file on x86_64 (plain,
+# CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
+# cross-OS leg on ecb / ach / cass / pi. The filed repro verbatim and the refusals are
+# tests/gates/frontend/generic_struct_field.sh's P rows.
+include "lib/assert.cyr"
+
+struct S8 { v; }
+struct S16 { v; w; }
+struct S24 { v; w; x; }
+struct O8 { k; s: S8; g; }
+struct O16 { k; s: S16; g; }
+struct O24 { k; s: S24; g; }
+var G8 = S8 { 5 };
+var G16 = S16 { 5, 8 };
+var G24 = S24 { 5, 8, 3 };
+
+# the global a `*T` of each size points at (sizeof(T) picks it in the instance)
+fn gsel(n: i64): i64 {
+    if (n == 8) { return &G8; }
+    if (n == 16) { return &G16; }
+    return &G24;
+}
+fn gpg<T>(): *T { return gsel(sizeof(T)); }
+fn gpi<T>(x: *T): *T { return x; }
+fn gpv<T>(x: T): *T { return gsel(sizeof(T)); }
+fn gp2<T, U>(u: U): *T { return gsel(sizeof(T)); }
+fn poke(): i64 { G8.v = 6; G16.v = 6; G24.v = 6; return 0; }
+fn unpoke(): i64 { G8.v = 5; G16.v = 5; G24.v = 5; return 0; }
+
+fn rd8(r: S8): i64 { return r.v * 10 + 8; }
+fn take8(s: S8): i64 { return rd8(s); }
+fn S8_sub(a: *S8, b: *S8): S8 {
+    var r: S8;
+    r.v = a.v - b.v;
+    return r;
+}
+fn S8_add(a: *S8, b: *S8): S8 {
+    var r: S8;
+    r.v = a.v + b.v;
+    return r;
+}
+fn mk8(k: i64): S8 { var r: S8; r.v = k; return r; }
+fn rd16(r: S16): i64 { return r.v * 10 + r.w; }
+fn take16(s: S16): i64 { return rd16(s); }
+fn S16_sub(a: *S16, b: *S16): S16 {
+    var r: S16;
+    r.v = a.v - b.v;
+    r.w = a.w - b.w;
+    return r;
+}
+fn S16_add(a: *S16, b: *S16): S16 {
+    var r: S16;
+    r.v = a.v + b.v;
+    r.w = a.w + b.w;
+    return r;
+}
+fn mk16(k: i64): S16 { var r: S16; r.v = k; r.w = k; return r; }
+fn rd24(r: S24): i64 { return r.v * 100 + r.w * 10 + r.x; }
+fn take24(s: S24): i64 { return rd24(s); }
+fn S24_sub(a: *S24, b: *S24): S24 {
+    var r: S24;
+    r.v = a.v - b.v;
+    r.w = a.w - b.w;
+    r.x = a.x - b.x;
+    return r;
+}
+fn S24_add(a: *S24, b: *S24): S24 {
+    var r: S24;
+    r.v = a.v + b.v;
+    r.w = a.w + b.w;
+    r.x = a.x + b.x;
+    return r;
+}
+fn mk24(k: i64): S24 { var r: S24; r.v = k; r.w = k; r.x = k; return r; }
+
+fn a1_e_8(): i64 {
+    var l = mk8(1);
+    l = gpg<S8>();
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a2_e_8(): i64 {
+    var q: S8 = *gpg<S8>();
+    poke();
+    var r = rd8(q);
+    unpoke();
+    return r;
+}
+fn a3_e_8(): i64 {
+    return take8(*gpg<S8>());
+}
+fn a4_e_8(): i64 {
+    var a = mk8(9);
+    var c: S8 = a - *gpg<S8>();
+    return rd8(c);
+}
+fn a5_e_8(): i64 {
+    var a = mk8(1);
+    var c: S8 = *gpg<S8>() + a;
+    return rd8(c);
+}
+fn a6_e_8(): i64 {
+    return gpg<S8>().v;
+}
+fn a7_e_8(): i64 {
+    var pq: *S8 = gpg<S8>();
+    var l: S8 = pq;
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a1_i_8(): i64 {
+    var p: *S8 = &G8;
+    var l = mk8(1);
+    l = gpi(p);
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a2_i_8(): i64 {
+    var p: *S8 = &G8;
+    var q: S8 = *gpi(p);
+    poke();
+    var r = rd8(q);
+    unpoke();
+    return r;
+}
+fn a3_i_8(): i64 {
+    var p: *S8 = &G8;
+    return take8(*gpi(p));
+}
+fn a4_i_8(): i64 {
+    var p: *S8 = &G8;
+    var a = mk8(9);
+    var c: S8 = a - *gpi(p);
+    return rd8(c);
+}
+fn a5_i_8(): i64 {
+    var p: *S8 = &G8;
+    var a = mk8(1);
+    var c: S8 = *gpi(p) + a;
+    return rd8(c);
+}
+fn a6_i_8(): i64 {
+    var p: *S8 = &G8;
+    return gpi(p).v;
+}
+fn a7_i_8(): i64 {
+    var p: *S8 = &G8;
+    var pq: *S8 = gpi(p);
+    var l: S8 = pq;
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a1_v_8(): i64 {
+    var l = mk8(1);
+    l = gpv(G8);
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a2_v_8(): i64 {
+    var q: S8 = *gpv(G8);
+    poke();
+    var r = rd8(q);
+    unpoke();
+    return r;
+}
+fn a3_v_8(): i64 {
+    return take8(*gpv(G8));
+}
+fn a4_v_8(): i64 {
+    var a = mk8(9);
+    var c: S8 = a - *gpv(G8);
+    return rd8(c);
+}
+fn a5_v_8(): i64 {
+    var a = mk8(1);
+    var c: S8 = *gpv(G8) + a;
+    return rd8(c);
+}
+fn a6_v_8(): i64 {
+    return gpv(G8).v;
+}
+fn a7_v_8(): i64 {
+    var pq: *S8 = gpv(G8);
+    var l: S8 = pq;
+    poke();
+    var r = rd8(l);
+    unpoke();
+    return r;
+}
+fn a1_e_16(): i64 {
+    var l = mk16(1);
+    l = gpg<S16>();
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a2_e_16(): i64 {
+    var q: S16 = *gpg<S16>();
+    poke();
+    var r = rd16(q);
+    unpoke();
+    return r;
+}
+fn a3_e_16(): i64 {
+    return take16(*gpg<S16>());
+}
+fn a4_e_16(): i64 {
+    var a = mk16(9);
+    var c: S16 = a - *gpg<S16>();
+    return rd16(c);
+}
+fn a5_e_16(): i64 {
+    var a = mk16(1);
+    var c: S16 = *gpg<S16>() + a;
+    return rd16(c);
+}
+fn a6_e_16(): i64 {
+    return gpg<S16>().v;
+}
+fn a7_e_16(): i64 {
+    var pq: *S16 = gpg<S16>();
+    var l: S16 = pq;
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a1_i_16(): i64 {
+    var p: *S16 = &G16;
+    var l = mk16(1);
+    l = gpi(p);
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a2_i_16(): i64 {
+    var p: *S16 = &G16;
+    var q: S16 = *gpi(p);
+    poke();
+    var r = rd16(q);
+    unpoke();
+    return r;
+}
+fn a3_i_16(): i64 {
+    var p: *S16 = &G16;
+    return take16(*gpi(p));
+}
+fn a4_i_16(): i64 {
+    var p: *S16 = &G16;
+    var a = mk16(9);
+    var c: S16 = a - *gpi(p);
+    return rd16(c);
+}
+fn a5_i_16(): i64 {
+    var p: *S16 = &G16;
+    var a = mk16(1);
+    var c: S16 = *gpi(p) + a;
+    return rd16(c);
+}
+fn a6_i_16(): i64 {
+    var p: *S16 = &G16;
+    return gpi(p).v;
+}
+fn a7_i_16(): i64 {
+    var p: *S16 = &G16;
+    var pq: *S16 = gpi(p);
+    var l: S16 = pq;
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a1_v_16(): i64 {
+    var l = mk16(1);
+    l = gpv(G16);
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a2_v_16(): i64 {
+    var q: S16 = *gpv(G16);
+    poke();
+    var r = rd16(q);
+    unpoke();
+    return r;
+}
+fn a3_v_16(): i64 {
+    return take16(*gpv(G16));
+}
+fn a4_v_16(): i64 {
+    var a = mk16(9);
+    var c: S16 = a - *gpv(G16);
+    return rd16(c);
+}
+fn a5_v_16(): i64 {
+    var a = mk16(1);
+    var c: S16 = *gpv(G16) + a;
+    return rd16(c);
+}
+fn a6_v_16(): i64 {
+    return gpv(G16).v;
+}
+fn a7_v_16(): i64 {
+    var pq: *S16 = gpv(G16);
+    var l: S16 = pq;
+    poke();
+    var r = rd16(l);
+    unpoke();
+    return r;
+}
+fn a1_e_24(): i64 {
+    var l = mk24(1);
+    l = gpg<S24>();
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+fn a2_e_24(): i64 {
+    var q: S24 = *gpg<S24>();
+    poke();
+    var r = rd24(q);
+    unpoke();
+    return r;
+}
+fn a3_e_24(): i64 {
+    return take24(*gpg<S24>());
+}
+fn a4_e_24(): i64 {
+    var a = mk24(9);
+    var c: S24 = a - *gpg<S24>();
+    return rd24(c);
+}
+fn a5_e_24(): i64 {
+    var a = mk24(1);
+    var c: S24 = *gpg<S24>() + a;
+    return rd24(c);
+}
+fn a6_e_24(): i64 {
+    return gpg<S24>().v;
+}
+fn a7_e_24(): i64 {
+    var pq: *S24 = gpg<S24>();
+    var l: S24 = pq;
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+fn a1_i_24(): i64 {
+    var p: *S24 = &G24;
+    var l = mk24(1);
+    l = gpi(p);
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+fn a2_i_24(): i64 {
+    var p: *S24 = &G24;
+    var q: S24 = *gpi(p);
+    poke();
+    var r = rd24(q);
+    unpoke();
+    return r;
+}
+fn a3_i_24(): i64 {
+    var p: *S24 = &G24;
+    return take24(*gpi(p));
+}
+fn a4_i_24(): i64 {
+    var p: *S24 = &G24;
+    var a = mk24(9);
+    var c: S24 = a - *gpi(p);
+    return rd24(c);
+}
+fn a5_i_24(): i64 {
+    var p: *S24 = &G24;
+    var a = mk24(1);
+    var c: S24 = *gpi(p) + a;
+    return rd24(c);
+}
+fn a6_i_24(): i64 {
+    var p: *S24 = &G24;
+    return gpi(p).v;
+}
+fn a7_i_24(): i64 {
+    var p: *S24 = &G24;
+    var pq: *S24 = gpi(p);
+    var l: S24 = pq;
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+fn a1_v_24(): i64 {
+    var l = mk24(1);
+    l = gpv(G24);
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+fn a2_v_24(): i64 {
+    var q: S24 = *gpv(G24);
+    poke();
+    var r = rd24(q);
+    unpoke();
+    return r;
+}
+fn a3_v_24(): i64 {
+    return take24(*gpv(G24));
+}
+fn a4_v_24(): i64 {
+    var a = mk24(9);
+    var c: S24 = a - *gpv(G24);
+    return rd24(c);
+}
+fn a5_v_24(): i64 {
+    var a = mk24(1);
+    var c: S24 = *gpv(G24) + a;
+    return rd24(c);
+}
+fn a6_v_24(): i64 {
+    return gpv(G24).v;
+}
+fn a7_v_24(): i64 {
+    var pq: *S24 = gpv(G24);
+    var l: S24 = pq;
+    poke();
+    var r = rd24(l);
+    unpoke();
+    return r;
+}
+# S8: o.s = gpg<S>(), l = *gpg<S>(), o.s = *gpg<S>(), l = (gpg<S>()), l = gpg<S>() + 0, l = gp2<S, i64>(3),
+# l = (*gpg<S>()); a guard field after `s` kept
+fn b_8(): i64 {
+    var o1: O8; var o2: O8;
+    o1.g = 9; o2.g = 9;
+    o1.s = gpg<S8>();
+    o2.s = *gpg<S8>();
+    var l1 = mk8(1); var l2 = mk8(1); var l3 = mk8(1); var l4 = mk8(1); var l5 = mk8(1);
+    l1 = *gpg<S8>();
+    l2 = (gpg<S8>());
+    l3 = gpg<S8>() + 0;
+    l4 = gp2<S8, i64>(3);
+    l5 = (*gpg<S8>());
+    poke();
+    var k = 0;
+    if (rd8(o1.s) == 58) { k = k + 1; }
+    if (rd8(o2.s) == 58) { k = k + 2; }
+    if (rd8(l1) == 58) { k = k + 4; }
+    if (rd8(l2) == 58) { k = k + 8; }
+    if (rd8(l3) == 58) { k = k + 16; }
+    if (rd8(l4) == 58) { k = k + 32; }
+    if (rd8(l5) == 58) { k = k + 64; }
+    if (o1.g + o2.g == 18) { k = k + 128; }
+    unpoke();
+    return k;
+}
+# S16: o.s = gpg<S>(), l = *gpg<S>(), o.s = *gpg<S>(), l = (gpg<S>()), l = gpg<S>() + 0, l = gp2<S, i64>(3),
+# l = (*gpg<S>()); a guard field after `s` kept
+fn b_16(): i64 {
+    var o1: O16; var o2: O16;
+    o1.g = 9; o2.g = 9;
+    o1.s = gpg<S16>();
+    o2.s = *gpg<S16>();
+    var l1 = mk16(1); var l2 = mk16(1); var l3 = mk16(1); var l4 = mk16(1); var l5 = mk16(1);
+    l1 = *gpg<S16>();
+    l2 = (gpg<S16>());
+    l3 = gpg<S16>() + 0;
+    l4 = gp2<S16, i64>(3);
+    l5 = (*gpg<S16>());
+    poke();
+    var k = 0;
+    if (rd16(o1.s) == 58) { k = k + 1; }
+    if (rd16(o2.s) == 58) { k = k + 2; }
+    if (rd16(l1) == 58) { k = k + 4; }
+    if (rd16(l2) == 58) { k = k + 8; }
+    if (rd16(l3) == 58) { k = k + 16; }
+    if (rd16(l4) == 58) { k = k + 32; }
+    if (rd16(l5) == 58) { k = k + 64; }
+    if (o1.g + o2.g == 18) { k = k + 128; }
+    unpoke();
+    return k;
+}
+# S24: o.s = gpg<S>(), l = *gpg<S>(), o.s = *gpg<S>(), l = (gpg<S>()), l = gpg<S>() + 0, l = gp2<S, i64>(3),
+# l = (*gpg<S>()); a guard field after `s` kept
+fn b_24(): i64 {
+    var o1: O24; var o2: O24;
+    o1.g = 9; o2.g = 9;
+    o1.s = gpg<S24>();
+    o2.s = *gpg<S24>();
+    var l1 = mk24(1); var l2 = mk24(1); var l3 = mk24(1); var l4 = mk24(1); var l5 = mk24(1);
+    l1 = *gpg<S24>();
+    l2 = (gpg<S24>());
+    l3 = gpg<S24>() + 0;
+    l4 = gp2<S24, i64>(3);
+    l5 = (*gpg<S24>());
+    poke();
+    var k = 0;
+    if (rd24(o1.s) == 583) { k = k + 1; }
+    if (rd24(o2.s) == 583) { k = k + 2; }
+    if (rd24(l1) == 583) { k = k + 4; }
+    if (rd24(l2) == 583) { k = k + 8; }
+    if (rd24(l3) == 583) { k = k + 16; }
+    if (rd24(l4) == 583) { k = k + 32; }
+    if (rd24(l5) == 583) { k = k + 64; }
+    if (o1.g + o2.g == 18) { k = k + 128; }
+    unpoke();
+    return k;
+}
+# from inside a generic instance: `gpg<T>()` with T bound to the struct
+fn outer<T>(): i64 {
+    var l: T;
+    l = gpg<T>();
+    poke();
+    var q: T = *gpg<T>();
+    var r = l.v * 10 + q.v;
+    unpoke();
+    return r;
+}
+# ── top level: a declaration-zone `var Z: S = *gpg<S>();`, then statements ──
+var Z16: S16 = *gpg<S16>();
+var Z24: S24 = *gpg<S24>();
+var T16 = S16 { 1, 1 };
+var T24 = S24 { 1, 1, 1 };
+var TO = O24 { 9, 0, 0, 0, 9 };
+T16 = gpg<S16>();
+T24 = *gpg<S24>();
+TO.s = gpg<S24>();
+var TV = gpg<S16>().w * 10 + gpg<S24>().x;
+poke();
+var TZ = rd16(Z16) * 1000 + rd24(Z24);
+var TT = rd16(T16) * 1000 + rd24(T24);
+var TS = rd24(TO.s) + (TO.g == 9) * 1000;
+unpoke();
+
+assert_eq(a1_e_8(), 58, "l = F copies the struct (explicit gpg<S>(), 8 B)");
+assert_eq(a2_e_8(), 58, "var q: S = *F copies (explicit gpg<S>(), 8 B)");
+assert_eq(a3_e_8(), 58, "take(*F) passes the struct (explicit gpg<S>(), 8 B)");
+assert_eq(a4_e_8(), 48, "a - *F dispatches S_sub (explicit gpg<S>(), 8 B)");
+assert_eq(a5_e_8(), 68, "*F + a dispatches S_add (explicit gpg<S>(), 8 B)");
+assert_eq(a6_e_8(), 5, "F.v reads through the pointer (explicit gpg<S>(), 8 B)");
+assert_eq(a7_e_8(), 58, "control: var p: *S = F; var l: S = p (explicit gpg<S>(), 8 B)");
+assert_eq(a1_i_8(), 58, "l = F copies the struct (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a2_i_8(), 58, "var q: S = *F copies (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a3_i_8(), 58, "take(*F) passes the struct (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a4_i_8(), 48, "a - *F dispatches S_sub (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a5_i_8(), 68, "*F + a dispatches S_add (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a6_i_8(), 5, "F.v reads through the pointer (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a7_i_8(), 58, "control: var p: *S = F; var l: S = p (inferred gpi(p), p: *S, 8 B)");
+assert_eq(a1_v_8(), 58, "l = F copies the struct (inferred gpv(G), by value, 8 B)");
+assert_eq(a2_v_8(), 58, "var q: S = *F copies (inferred gpv(G), by value, 8 B)");
+assert_eq(a3_v_8(), 58, "take(*F) passes the struct (inferred gpv(G), by value, 8 B)");
+assert_eq(a4_v_8(), 48, "a - *F dispatches S_sub (inferred gpv(G), by value, 8 B)");
+assert_eq(a5_v_8(), 68, "*F + a dispatches S_add (inferred gpv(G), by value, 8 B)");
+assert_eq(a6_v_8(), 5, "F.v reads through the pointer (inferred gpv(G), by value, 8 B)");
+assert_eq(a7_v_8(), 58, "control: var p: *S = F; var l: S = p (inferred gpv(G), by value, 8 B)");
+assert_eq(a1_e_16(), 58, "l = F copies the struct (explicit gpg<S>(), 16 B)");
+assert_eq(a2_e_16(), 58, "var q: S = *F copies (explicit gpg<S>(), 16 B)");
+assert_eq(a3_e_16(), 58, "take(*F) passes the struct (explicit gpg<S>(), 16 B)");
+assert_eq(a4_e_16(), 41, "a - *F dispatches S_sub (explicit gpg<S>(), 16 B)");
+assert_eq(a5_e_16(), 69, "*F + a dispatches S_add (explicit gpg<S>(), 16 B)");
+assert_eq(a6_e_16(), 5, "F.v reads through the pointer (explicit gpg<S>(), 16 B)");
+assert_eq(a7_e_16(), 58, "control: var p: *S = F; var l: S = p (explicit gpg<S>(), 16 B)");
+assert_eq(a1_i_16(), 58, "l = F copies the struct (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a2_i_16(), 58, "var q: S = *F copies (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a3_i_16(), 58, "take(*F) passes the struct (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a4_i_16(), 41, "a - *F dispatches S_sub (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a5_i_16(), 69, "*F + a dispatches S_add (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a6_i_16(), 5, "F.v reads through the pointer (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a7_i_16(), 58, "control: var p: *S = F; var l: S = p (inferred gpi(p), p: *S, 16 B)");
+assert_eq(a1_v_16(), 58, "l = F copies the struct (inferred gpv(G), by value, 16 B)");
+assert_eq(a2_v_16(), 58, "var q: S = *F copies (inferred gpv(G), by value, 16 B)");
+assert_eq(a3_v_16(), 58, "take(*F) passes the struct (inferred gpv(G), by value, 16 B)");
+assert_eq(a4_v_16(), 41, "a - *F dispatches S_sub (inferred gpv(G), by value, 16 B)");
+assert_eq(a5_v_16(), 69, "*F + a dispatches S_add (inferred gpv(G), by value, 16 B)");
+assert_eq(a6_v_16(), 5, "F.v reads through the pointer (inferred gpv(G), by value, 16 B)");
+assert_eq(a7_v_16(), 58, "control: var p: *S = F; var l: S = p (inferred gpv(G), by value, 16 B)");
+assert_eq(a1_e_24(), 583, "l = F copies the struct (explicit gpg<S>(), 24 B)");
+assert_eq(a2_e_24(), 583, "var q: S = *F copies (explicit gpg<S>(), 24 B)");
+assert_eq(a3_e_24(), 583, "take(*F) passes the struct (explicit gpg<S>(), 24 B)");
+assert_eq(a4_e_24(), 416, "a - *F dispatches S_sub (explicit gpg<S>(), 24 B)");
+assert_eq(a5_e_24(), 694, "*F + a dispatches S_add (explicit gpg<S>(), 24 B)");
+assert_eq(a6_e_24(), 5, "F.v reads through the pointer (explicit gpg<S>(), 24 B)");
+assert_eq(a7_e_24(), 583, "control: var p: *S = F; var l: S = p (explicit gpg<S>(), 24 B)");
+assert_eq(a1_i_24(), 583, "l = F copies the struct (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a2_i_24(), 583, "var q: S = *F copies (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a3_i_24(), 583, "take(*F) passes the struct (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a4_i_24(), 416, "a - *F dispatches S_sub (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a5_i_24(), 694, "*F + a dispatches S_add (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a6_i_24(), 5, "F.v reads through the pointer (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a7_i_24(), 583, "control: var p: *S = F; var l: S = p (inferred gpi(p), p: *S, 24 B)");
+assert_eq(a1_v_24(), 583, "l = F copies the struct (inferred gpv(G), by value, 24 B)");
+assert_eq(a2_v_24(), 583, "var q: S = *F copies (inferred gpv(G), by value, 24 B)");
+assert_eq(a3_v_24(), 583, "take(*F) passes the struct (inferred gpv(G), by value, 24 B)");
+assert_eq(a4_v_24(), 416, "a - *F dispatches S_sub (inferred gpv(G), by value, 24 B)");
+assert_eq(a5_v_24(), 694, "*F + a dispatches S_add (inferred gpv(G), by value, 24 B)");
+assert_eq(a6_v_24(), 5, "F.v reads through the pointer (inferred gpv(G), by value, 24 B)");
+assert_eq(a7_v_24(), 583, "control: var p: *S = F; var l: S = p (inferred gpv(G), by value, 24 B)");
+assert_eq(b_8(), 255, "S8: o.s = gpg<S>(), *gpg<S>() into l / o.s, wrapped, + 0, gp2<S, i64>(), the guard kept");
+assert_eq(b_16(), 255, "S16: o.s = gpg<S>(), *gpg<S>() into l / o.s, wrapped, + 0, gp2<S, i64>(), the guard kept");
+assert_eq(b_24(), 255, "S24: o.s = gpg<S>(), *gpg<S>() into l / o.s, wrapped, + 0, gp2<S, i64>(), the guard kept");
+assert_eq(outer<S16>(), 56, "inside outer<S16>: l = gpg<T>() copies (5), var q: T = *gpg<T>() after the poke (6)");
+assert_eq(outer<S24>(), 56, "  the same at 24 B");
+assert_eq(TZ, 58583, "top level: var Z: S = *gpg<S>() in the declaration zone copies (16 / 24 B)");
+assert_eq(TT, 58583, "top level: G = gpg<S16>(), G = *gpg<S24>() copy");
+assert_eq(TS, 1583, "top level: o.s = gpg<S24>() into a field copies; the guard kept");
+assert_eq(TV, 83, "top level: gpg<S16>().w, gpg<S24>().x");
+var r = assert_summary();

@@ -34,6 +34,33 @@
 #   m3 declaration local-source site only (parse_decl.cyr) -> RED rows R2 R6 R8
 #   m4 declaration global-source site only                 -> RED row R4
 #   real tree                                              -> GREEN (9 refusals, 7 acceptances)
+#
+# 6.7.11 — A TYPED `*S` GLOBAL AS THE DESTINATION OF A STRUCT VALUE (the user's decision (a), 2026-10-13;
+# issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md): `GP = l` copies `l` into `*GP`, as
+# through a `*S` local or parameter, so a struct of ANOTHER type into it is refused by name, as into the local:
+# R10-R15 (a local, 1-slot, a top-level global, a call, `*pu`, an operator result), R16 (a call over 8 B at top
+# level: no frame for its result, as into a value global); A8 the filed repro verbatim (11 = 1 + 2 + 8; 13 when
+# `GP = l` made GP the word 5), A9 `GP = &x` still rebinds. Mutation ledger (2026-10-14, a scratch tree copy with
+# the one change, its compiler built by the fixed one, this gate run with CYCC=that compiler):
+#   the tree before it (299e6e60)                          -> RED 8: R10-R16 not refused (each stored a word), A8 13
+#   M5a `_agc_ptr_global` answering 0                      -> RED 8 (the same rows)
+#   M5b `_agc_ptr_global` without the `_agc_src` test      -> GREEN, and struct_value_into_ptr_global.tcyr 138/138:
+#                                                             an EQUIVALENT mutant — a `*S` global SOURCE then copies
+#                                                             through `_try_aggregate_copy_assign` instead of
+#                                                             `_hl_psrc_copy`, the same bytes copied (the corpus
+#                                                             differential's one change, struct_pointer_source_copy
+#                                                             .tcyr's binary, 60/60 either way); the test keeps every
+#                                                             source's code byte-identical
+#
+# 6.7.11 — `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a), 2026-10-13; issues/2026-10-11-deref-
+# store-through-struct-pointer-decision.md), so a struct of ANOTHER type is refused by name, as into `G`: R17-R25 (a
+# local, a global, a call, `*pu`, an operator, a method, a field, a `*U` local; R24 at top level; R25 1-slot); and
+# `*p OP= v` is refused as `l += a` is: C1-C4 (`*p += 1`, `*p += a`, top level `*GP -= 1`, a for step). A10 / A11
+# the filed repros verbatim (90 = the whole 16 B struct, 42 through 6.7.10; 77 = nothing stored for a zero-size
+# struct, 0 through 6.7.10). Mutation ledger (2026-10-14, the same method):
+#   the tree before it (ac419c94)                          -> RED 15: R17-R25 and C1-C4 not refused, A10 42, A11 0
+#   M9a `_dst_struct` answering 0                          -> RED 15 (the same rows)
+#   M9b `_dst_struct` without the compound refusal         -> RED 4: C1-C4
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -135,6 +162,128 @@ fn main(): i64 { var p: P3 = P3{1,2,3}; var v: f64v2; p = v; return p.x; }
 var r = main(); syscall(60, r);
 '
 
+# 6.7.11: into a typed `*S` GLOBAL, which copies into its pointee (see the header).
+PS='struct P3{x;y;z;} struct Q3{a;b;c;}
+var GT = P3{0,0,0};
+var GP: *P3 = &GT;
+'
+refuse "R10 GP = q  (a *P3 global, local src)" "$PS"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; GP = q; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R11 GP = q  (1-slot structs)" 'struct S1{x;} struct T1{a;}
+var GT = S1{0};
+var GP: *S1 = &GT;
+fn main(): i64 { var q: T1 = T1{7}; GP = q; return GT.x; }
+var r = main(); syscall(60, r);
+'
+refuse "R12 GP = B  (top level, a global src)" "$PS"'var B = Q3{7,8,9};
+GP = B;
+syscall(60, GT.z);
+'
+refuse "R13 GP = mkq()  (a call result)" "$PS$MK"'fn main(): i64 { GP = mkq(7,8,9); return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R14 GP = *pu  (a dereference)" "$PS"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pu: *Q3 = &q; GP = *pu; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R15 GP = a + b  (an operator result)" "$PS"'fn Q3_add(l: Q3, r: Q3): Q3 { var t: Q3; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn main(): i64 { var a: Q3 = Q3{7,8,9}; var b: Q3 = Q3{0,0,0}; GP = a + b; return GT.z; }
+var r = main(); syscall(60, r);
+'
+# R16 — a 16 B call (rax:rdx) at TOP LEVEL into a `*S` global: no frame for its result, refused as into a value
+# global (through 6.7.10 it compiled and made `GP` the result's first word, 7).
+printf '%s' 'struct P2{x;y;}
+fn mk2(x,y): P2 { var p: P2; p.x=x; p.y=y; return p; }
+var GT2 = P2{0,0};
+var GP2: *P2 = &GT2;
+var e = 0;
+GP2 = mk2(7,8);
+syscall(60, GT2.y);
+' > "$D/r16.cyr"
+nrefuse=$((nrefuse+1))
+if cat "$D/r16.cyr" | "$CC" > "$D/r16.bin" 2>"$D/r16.err"; then
+    printf '  FAIL: %-38s compiled\n' "R16 GP = mk2() at top level"; fail=$((fail+1))
+elif grep -q "needs storage in a fn's frame" "$D/r16.err" && [ ! -s "$D/r16.bin" ]; then
+    printf '  ok(refused): %-31s\n' "R16 GP = mk2() at top level"; pass=$((pass+1))
+else
+    printf '  FAIL: %-38s %s\n' "R16 GP = mk2() at top level" "$(head -1 "$D/r16.err")"; fail=$((fail+1))
+fi
+
+# 6.7.11: through a `*S`, `*p = v` copies the struct (see the header).
+refuse "R17 *p = u  (a local)" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var u: Q3 = Q3{7,8,9}; var p: *P3 = &GT; *p = u; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R18 *p = GU  (a global)" "$P3Q3"'var GT = P3{0,0,0};
+var GU = Q3{7,8,9};
+fn main(): i64 { var p: *P3 = &GT; *p = GU; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R19 *p = mkq()  (a call)" "$P3Q3$MK"'var GT = P3{0,0,0};
+fn main(): i64 { var p: *P3 = &GT; *p = mkq(7,8,9); return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R20 *p = *pu  (a dereference)" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var u: Q3 = Q3{7,8,9}; var pu: *Q3 = &u; var p: *P3 = &GT; *p = *pu; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R21 *p = a + b  (an operator)" "$P3Q3"'fn Q3_add(l: Q3, r: Q3): Q3 { var t: Q3; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+var GT = P3{0,0,0};
+fn main(): i64 { var a: Q3 = Q3{7,8,9}; var b: Q3 = Q3{0,0,0}; var p: *P3 = &GT; *p = a + b; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R22 *p = w.u  (a field)" "$P3Q3"'struct WQ { k; u: Q3; }
+var GT = P3{0,0,0};
+fn main(): i64 { var w: WQ = WQ{0,7,8,9}; var p: *P3 = &GT; *p = w.u; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R23 *p = pu  (a *U local)" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var u: Q3 = Q3{7,8,9}; var pu: *Q3 = &u; var p: *P3 = &GT; *p = pu; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R24 *GP = GU  (top level)" "$P3Q3"'var GT = P3{0,0,0};
+var GP: *P3 = &GT;
+var GU = Q3{7,8,9};
+var e = 0;
+*GP = GU;
+syscall(60, GT.z);
+'
+refuse "R25 *p = q  (1-slot structs)" 'struct S1{x;} struct T1{a;}
+var GT = S1{0};
+fn main(): i64 { var q: T1 = T1{7}; var p: *S1 = &GT; *p = q; return GT.x; }
+var r = main(); syscall(60, r);
+'
+# C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
+CMSG="compound assignment to the struct"
+crefuse() {  # $1 label  $2 source
+    printf '%s' "$2" > "$D/c.cyr"
+    nrefuse=$((nrefuse+1))
+    cat "$D/c.cyr" | "$CC" > "$D/c.bin" 2>"$D/c.err" || true
+    if grep -q "$CMSG" "$D/c.err" 2>/dev/null && [ ! -s "$D/c.bin" ]; then
+        printf '  ok(refused): %-31s\n' "$1"; pass=$((pass+1))
+    else
+        printf '  FAIL: %-38s not refused (first line: %s)\n' "$1" "$(head -1 "$D/c.err" 2>/dev/null)"; fail=$((fail+1))
+    fi
+}
+crefuse "C1 *p += 1" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var p: *P3 = &GT; *p += 1; return GT.x; }
+var r = main(); syscall(60, r);
+'
+crefuse "C2 *p += a  (a struct)" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var a: P3 = P3{1,2,3}; var p: *P3 = &GT; *p += a; return GT.x; }
+var r = main(); syscall(60, r);
+'
+crefuse "C3 *GP -= 1  (top level)" "$P3Q3"'var GT = P3{5,0,0};
+var GP: *P3 = &GT;
+var e = 0;
+*GP -= 1;
+syscall(60, GT.x);
+'
+crefuse "C4 *p += 1  (a for step)" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var p: *P3 = &GT; for (var i = 0; i < 1; *p += 1) { i = 1; } return GT.x; }
+var r = main(); syscall(60, r);
+'
+
 echo "acceptances — these must stay legal, with the right VALUE:"
 accept "A1 p = q  (same struct type)" 'struct P3{x;y;z;}
 fn main(): i64 { var p: P3 = P3{1,2,3}; var q: P3 = P3{7,8,9}; p = q; return p.z; }
@@ -186,6 +335,66 @@ fn take(p: P3): i64 { return p.z; }
 fn main(): i64 { var a: P3 = P3{1,2,3}; return take(a); }
 var r = main(); syscall(60, r);
 '
+# A8 — the filed repro, verbatim (issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
+# 11 = 1 (the local copies) + 2 (`GP = l` copied into GS) + 8 (the parameter copies); 13 through 6.7.10.
+accept "A8 GP = l copies into *GP (filed)" 'struct S { a; b; }
+var GS = S { 0, 0 };
+var GP: *S = 0;
+fn viap(q: *S, l: S): i64 { q = l; return 0; }
+fn main(): i64 {
+    GP = &GS;
+    var t: S; t.a = 0; t.b = 0;
+    var lp: *S = &t;
+    var l: S; l.a = 5; l.b = 8;
+    lp = l;
+    var r = (t.a == 5 && t.b == 8);
+    GP = l;
+    r = r + (GS.a == 5) * 2 + (GP == 5) * 4;
+    var u: S; u.a = 0; u.b = 0; viap(&u, l); return r + (u.a == 5 && u.b == 8) * 8;
+}
+syscall(60, main());
+' 11 'struct S { a; b; }
+var GS = S { 0, 0 };
+var GP: *S = 0;
+fn main(): i64 {
+    GP = &GS;
+    var l: S; l.a = 5; l.b = 8;
+    GP.a = l.a; GP.b = l.b;
+    return 1 + (GS.a == 5) * 2 + (GP == 5) * 4 + 8;
+}
+syscall(60, main());
+'
+accept "A9 GP = &x still rebinds" "$PS"'fn main(): i64 { var x: P3 = P3{7,8,9}; GP = &x; return GP.z + GT.z; }
+var r = main(); syscall(60, r);
+' 9 "$PS"'fn main(): i64 { var x: P3 = P3{7,8,9}; var q = &x; return load64(q + 16) + GT.z; }
+var r = main(); syscall(60, r);
+'
+# A10 / A11 — issues/2026-10-11-deref-store-through-struct-pointer-decision.md's repros, verbatim: 90 (the whole
+# 16 B struct; 42 through 6.7.10, only x copied) and 77 (a zero-size struct stores nothing; 0 through 6.7.10).
+accept "A10 *p = l copies 16 B (filed)" 'struct P2 { x; y; }
+var G: P2 = P2 { 1, 2 };
+fn run(): i64 { var l: P2 = P2 { 40, 50 }; var p: *P2 = &G; *p = l; return 0; }
+var rr = run();
+syscall(60, G.x + G.y);   # actual 42 (only x copied) · 90 for a whole-struct copy · 3 if nothing is stored
+' 90 'struct P2 { x; y; }
+var G: P2 = P2 { 1, 2 };
+fn run(): i64 { var l: P2 = P2 { 40, 50 }; var p: *P2 = &G; p.x = l.x; p.y = l.y; return 0; }
+var rr = run();
+syscall(60, G.x + G.y);
+'
+accept "A11 *p = l, zero-size (filed)" 'struct E { }
+var G: E = E { };
+var N1: i8 = 77;
+fn run(): i64 { var l: E; var p: *E = &G; *p = l; return 0; }
+var rr = run();
+syscall(60, N1);          # actual 0 · 77 if nothing (or the zero bytes of E) is stored
+' 77 'struct E { }
+var G: E = E { };
+var N1: i8 = 77;
+fn run(): i64 { var l: E; var p: *E = &G; return 0; }
+var rr = run();
+syscall(60, N1);
+'
 # A7 — a SCALAR source is a different rule (a warning, since before 6.6.6) and must not have
 # been swept into the new error. Checked directly rather than through accept(): the point is
 # the absence of the refusal, and the value it stores is the pre-existing behaviour.
@@ -206,8 +415,8 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 9 ]  || { echo "FAIL: only $nrefuse refusal rows ran (floor 9)"; fail=$((fail+1)); }
-[ "$naccept" -ge 7 ]  || { echo "FAIL: only $naccept acceptance rows ran (floor 7)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 29 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 29)"; fail=$((fail+1)); }
+[ "$naccept" -ge 11 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 11)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
 # and every refusal row would report "not refused", which is loud; this says why.

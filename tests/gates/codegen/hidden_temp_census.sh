@@ -134,7 +134,16 @@ fi
 # 6.7.10 (decision 6): _hl_psrc_copy — `l = GP` / `l = gp()` / `l = w.p` into a struct value parks the `*T`
 # source's pointer while the struct is copied through it byte-exact (a frame slot in a fn, a dead global at
 # top level; parse.cyr).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1"
+# 6.7.11: _fsc_psrc — `o.s = GP` / `o.s = gp()` / `o.s = w.p` into a struct-typed FIELD parks the `*T` source's
+# pointer while the struct is copied through it into the field (a frame slot in a fn, a dead global at top
+# level; parse_decl.cyr — issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# 6.7.11: _ret_ptr_src — `return GP;` / `return gp();` / `return w.p;` from a fn returning a struct over 8 B parks the
+# `*S` value's pointer while the struct is copied through it into a frame temp (parse_fn.cyr —
+# issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
+# 6.7.11: _dst_struct — `*p = v` through a `*S` parks p while the assignment arms copy the struct into what it points
+# at (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-11-deref-store-through-struct-
+# pointer-decision.md).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _dst_struct:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

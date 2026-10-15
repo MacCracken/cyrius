@@ -1,0 +1,587 @@
+# struct_value_into_ptr_global.tcyr — 6.7.11. A STRUCT VALUE ASSIGNED TO A TYPED `*S` GLOBAL COPIES INTO ITS
+# POINTEE (the user's decision (a), 2026-10-13; issues/2026-10-13-struct-value-into-pointer-global-destination-
+# decision.md): `GP = l` copies `l` into `*GP`, as `q = l` does through a `*S` local or parameter (6.7.10, the
+# handle line) — one rule for locals and globals at every size.
+#
+# ⛔ THROUGH 6.7.10 the global was no copy destination: the one-word store made `GP` the word `l.a` (the filed
+# repro: GP == 5, its struct untouched), silently, and the next `GP.a` dereferenced it.
+#
+# THE RULE, each row at 0, 3, 8, 16 and 24 B (0 B: nothing copied, the neighbour intact) (the source {5, 8, 9}, written after the copy to tell a copy from an
+# alias; `GP` checked to still point at its struct, +1000; the guard global after that struct kept, +10000): a
+# struct VALUE — a local, a value global, a by-value parameter, a call result, a field `w.s`, a dereference `*p`,
+# a method result, an operator result, wrapped, in a for step — into a `*S` GLOBAL, a `*S` local and a `*S`
+# parameter copies into the pointee; at top level too (a call / method / operator result over 8 B has no frame
+# there and is refused, as into a value global). A `*S` or untyped source REBINDS the global (`GP = q`,
+# `GP = &x`, `GP = GP2`, `GP = gq()`). A struct of another type is refused by name (tests/gates/frontend/
+# struct_copy_type_checked.sh).
+#
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi; tests/gates/codegen/
+# small_struct_handle_line.sh R14 on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
+# cx (cxvm) and PE (wine).
+include "lib/assert.cyr"
+
+# ── 0 B: a zero-size struct — nothing copied, the pointer kept, the neighbour after the struct intact ──
+struct V0 { }
+var GT0: V0 = V0 { };
+var GZ0: i8 = 99;
+var GP0: *V0 = &GT0;
+fn mk0(): V0 { var r: V0; return r; }
+fn g0_chk(): i64 { return (GP0 != &GT0) * 1000 + (GZ0 - 99) * 10000; }
+fn g0_l(): i64 { GP0 = &GT0; var l: V0; GP0 = l; return g0_chk(); }
+fn g0_call(): i64 { GP0 = &GT0; GP0 = mk0(); return g0_chk(); }
+fn l0_l(): i64 { var t: V0; var q: *V0 = &t; var l: V0; q = l; return (q != &t) * 1000; }
+
+# ── 3 B ──
+struct V3 { a: u8; b: u8; c: u8; }
+struct W3 { k; s: V3; g: i8; }
+var GT3 = V3 { 0, 0, 0 };
+var GZ3: i8 = 99;
+var GL3 = V3 { 5, 8, 9 };
+var GP3: *V3 = &GT3;
+var GQ3: *V3 = &GL3;
+fn set3(p: *V3): i64 { p.a = 5; p.b = 8; p.c = 9; return 0; }
+fn zero3(p: *V3): i64 { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn val3(p: *V3): i64 { return p.a * 100 + p.b * 10 + p.c; }
+fn mk3(): V3 { var r: V3; set3(&r); return r; }
+fn gq3(): *V3 { return GQ3; }
+impl V3 { fn dup(self: *V3): V3 { return mk3(); } }
+fn V3_add(l: V3, r: V3): V3 { var t: V3; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn g3_chk(): i64 { return val3(&GT3) + (GP3 != &GT3) * 1000 + (GZ3 - 99) * 10000; }
+fn g3_l(): i64 { zero3(&GT3); GP3 = &GT3; var l = V3 { 5, 8, 9 }; GP3 = l; l.a = 1; return g3_chk(); }
+fn g3_call(): i64 { zero3(&GT3); GP3 = &GT3; GP3 = mk3(); return g3_chk(); }
+fn g3_fld(): i64 { zero3(&GT3); GP3 = &GT3; var w = W3 { 0, 5, 8, 9, 7 }; GP3 = w.s; w.s.a = 1; return g3_chk() + (w.g - 7) * 100000; }
+fn g3_dref(): i64 { zero3(&GT3); GP3 = &GT3; var x = V3 { 5, 8, 9 }; var p: *V3 = &x; GP3 = *p; x.a = 1; return g3_chk(); }
+fn g3_meth(): i64 { zero3(&GT3); GP3 = &GT3; var l = V3 { 0, 0, 0 }; GP3 = l.dup(); return g3_chk(); }
+fn g3_op(): i64 { zero3(&GT3); GP3 = &GT3; var z = V3 { 0, 0, 0 }; var l = V3 { 5, 8, 9 }; GP3 = z + l; l.a = 1; return g3_chk(); }
+fn g3_glob(): i64 { zero3(&GT3); GP3 = &GT3; GP3 = GL3; GL3.a = 1; var r = g3_chk(); GL3.a = 5; return r; }
+fn g3_par(): i64 { zero3(&GT3); GP3 = &GT3; var l = V3 { 5, 8, 9 }; GP3 = (l); l.a = 1; return g3_chk(); }
+fn g3_pcall(): i64 { zero3(&GT3); GP3 = &GT3; GP3 = (mk3()); return g3_chk(); }
+fn g3_for(): i64 {
+    zero3(&GT3);
+    GP3 = &GT3;
+    var l = V3 { 5, 8, 9 };
+    for (var i = 0; i < 1; GP3 = l) { i = 1; }
+    l.a = 1;
+    return g3_chk();
+}
+fn g3_byv(l: V3): i64 { zero3(&GT3); GP3 = &GT3; GP3 = l; l.a = 1; return g3_chk(); }
+fn g3_rq(): i64 { zero3(&GT3); var x = V3 { 5, 8, 9 }; var q: *V3 = &x; GP3 = q; var r = (GP3 == &x) * 1000 + val3(&GT3); GP3 = &GT3; return r; }
+fn g3_ra(): i64 { zero3(&GT3); var x = V3 { 5, 8, 9 }; GP3 = &x; var r = (GP3 == &x) * 1000 + val3(&GT3); GP3 = &GT3; return r; }
+fn g3_rg(): i64 { zero3(&GT3); GP3 = GQ3; var r = (GP3 == &GL3) * 1000 + val3(&GT3); GP3 = &GT3; return r; }
+fn g3_rc(): i64 { zero3(&GT3); GP3 = gq3(); var r = (GP3 == &GL3) * 1000 + val3(&GT3); GP3 = &GT3; return r; }
+fn l3_l(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; var l = V3 { 5, 8, 9 }; q = l; l.a = 1; return val3(&t) + (q != &t) * 1000; }
+fn l3_call(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; q = mk3(); return val3(&t) + (q != &t) * 1000; }
+fn l3_fld(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; var w = W3 { 0, 5, 8, 9, 7 }; q = w.s; w.s.a = 1; return val3(&t) + (q != &t) * 1000; }
+fn l3_dref(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; var x = V3 { 5, 8, 9 }; var p: *V3 = &x; q = *p; x.a = 1; return val3(&t) + (q != &t) * 1000; }
+fn l3_meth(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; var l = V3 { 0, 0, 0 }; q = l.dup(); return val3(&t) + (q != &t) * 1000; }
+fn l3_op(): i64 { var t = V3 { 0, 0, 0 }; var q: *V3 = &t; var z = V3 { 0, 0, 0 }; var l = V3 { 5, 8, 9 }; q = z + l; l.a = 1; return val3(&t) + (q != &t) * 1000; }
+fn p3_l(q: *V3): i64 { var l = V3 { 5, 8, 9 }; q = l; l.a = 1; return 0; }
+fn p3_call(q: *V3): i64 { q = mk3(); return 0; }
+fn p3_fld(q: *V3): i64 { var w = W3 { 0, 5, 8, 9, 7 }; q = w.s; w.s.a = 1; return 0; }
+fn p3_dref(q: *V3): i64 { var x = V3 { 5, 8, 9 }; var p: *V3 = &x; q = *p; x.a = 1; return 0; }
+fn p3_meth(q: *V3): i64 { var l = V3 { 0, 0, 0 }; q = l.dup(); return 0; }
+fn p3_op(q: *V3): i64 { var z = V3 { 0, 0, 0 }; var l = V3 { 5, 8, 9 }; q = z + l; l.a = 1; return 0; }
+fn p3_run(k): i64 {
+    var t = V3 { 0, 0, 0 };
+    if (k == 0) { p3_l(&t); }
+    elif (k == 1) { p3_call(&t); }
+    elif (k == 2) { p3_fld(&t); }
+    elif (k == 3) { p3_dref(&t); }
+    elif (k == 4) { p3_meth(&t); }
+    else { p3_op(&t); }
+    return val3(&t);
+}
+
+# ── 8 B ──
+struct V8 { a: u32; b: u32; }
+struct W8 { k; s: V8; g: i8; }
+var GT8 = V8 { 0, 0 };
+var GZ8: i8 = 99;
+var GL8 = V8 { 5, 8 };
+var GP8: *V8 = &GT8;
+var GQ8: *V8 = &GL8;
+fn set8(p: *V8): i64 { p.a = 5; p.b = 8; return 0; }
+fn zero8(p: *V8): i64 { p.a = 0; p.b = 0; return 0; }
+fn val8(p: *V8): i64 { return p.a * 10 + p.b; }
+fn mk8(): V8 { var r: V8; set8(&r); return r; }
+fn gq8(): *V8 { return GQ8; }
+impl V8 { fn dup(self: *V8): V8 { return mk8(); } }
+fn V8_add(l: V8, r: V8): V8 { var t: V8; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn g8_chk(): i64 { return val8(&GT8) + (GP8 != &GT8) * 1000 + (GZ8 - 99) * 10000; }
+fn g8_l(): i64 { zero8(&GT8); GP8 = &GT8; var l = V8 { 5, 8 }; GP8 = l; l.a = 1; return g8_chk(); }
+fn g8_call(): i64 { zero8(&GT8); GP8 = &GT8; GP8 = mk8(); return g8_chk(); }
+fn g8_fld(): i64 { zero8(&GT8); GP8 = &GT8; var w = W8 { 0, 5, 8, 7 }; GP8 = w.s; w.s.a = 1; return g8_chk() + (w.g - 7) * 100000; }
+fn g8_dref(): i64 { zero8(&GT8); GP8 = &GT8; var x = V8 { 5, 8 }; var p: *V8 = &x; GP8 = *p; x.a = 1; return g8_chk(); }
+fn g8_meth(): i64 { zero8(&GT8); GP8 = &GT8; var l = V8 { 0, 0 }; GP8 = l.dup(); return g8_chk(); }
+fn g8_op(): i64 { zero8(&GT8); GP8 = &GT8; var z = V8 { 0, 0 }; var l = V8 { 5, 8 }; GP8 = z + l; l.a = 1; return g8_chk(); }
+fn g8_glob(): i64 { zero8(&GT8); GP8 = &GT8; GP8 = GL8; GL8.a = 1; var r = g8_chk(); GL8.a = 5; return r; }
+fn g8_par(): i64 { zero8(&GT8); GP8 = &GT8; var l = V8 { 5, 8 }; GP8 = (l); l.a = 1; return g8_chk(); }
+fn g8_pcall(): i64 { zero8(&GT8); GP8 = &GT8; GP8 = (mk8()); return g8_chk(); }
+fn g8_for(): i64 {
+    zero8(&GT8);
+    GP8 = &GT8;
+    var l = V8 { 5, 8 };
+    for (var i = 0; i < 1; GP8 = l) { i = 1; }
+    l.a = 1;
+    return g8_chk();
+}
+fn g8_byv(l: V8): i64 { zero8(&GT8); GP8 = &GT8; GP8 = l; l.a = 1; return g8_chk(); }
+fn g8_rq(): i64 { zero8(&GT8); var x = V8 { 5, 8 }; var q: *V8 = &x; GP8 = q; var r = (GP8 == &x) * 1000 + val8(&GT8); GP8 = &GT8; return r; }
+fn g8_ra(): i64 { zero8(&GT8); var x = V8 { 5, 8 }; GP8 = &x; var r = (GP8 == &x) * 1000 + val8(&GT8); GP8 = &GT8; return r; }
+fn g8_rg(): i64 { zero8(&GT8); GP8 = GQ8; var r = (GP8 == &GL8) * 1000 + val8(&GT8); GP8 = &GT8; return r; }
+fn g8_rc(): i64 { zero8(&GT8); GP8 = gq8(); var r = (GP8 == &GL8) * 1000 + val8(&GT8); GP8 = &GT8; return r; }
+fn l8_l(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; var l = V8 { 5, 8 }; q = l; l.a = 1; return val8(&t) + (q != &t) * 1000; }
+fn l8_call(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; q = mk8(); return val8(&t) + (q != &t) * 1000; }
+fn l8_fld(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; var w = W8 { 0, 5, 8, 7 }; q = w.s; w.s.a = 1; return val8(&t) + (q != &t) * 1000; }
+fn l8_dref(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; var x = V8 { 5, 8 }; var p: *V8 = &x; q = *p; x.a = 1; return val8(&t) + (q != &t) * 1000; }
+fn l8_meth(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; var l = V8 { 0, 0 }; q = l.dup(); return val8(&t) + (q != &t) * 1000; }
+fn l8_op(): i64 { var t = V8 { 0, 0 }; var q: *V8 = &t; var z = V8 { 0, 0 }; var l = V8 { 5, 8 }; q = z + l; l.a = 1; return val8(&t) + (q != &t) * 1000; }
+fn p8_l(q: *V8): i64 { var l = V8 { 5, 8 }; q = l; l.a = 1; return 0; }
+fn p8_call(q: *V8): i64 { q = mk8(); return 0; }
+fn p8_fld(q: *V8): i64 { var w = W8 { 0, 5, 8, 7 }; q = w.s; w.s.a = 1; return 0; }
+fn p8_dref(q: *V8): i64 { var x = V8 { 5, 8 }; var p: *V8 = &x; q = *p; x.a = 1; return 0; }
+fn p8_meth(q: *V8): i64 { var l = V8 { 0, 0 }; q = l.dup(); return 0; }
+fn p8_op(q: *V8): i64 { var z = V8 { 0, 0 }; var l = V8 { 5, 8 }; q = z + l; l.a = 1; return 0; }
+fn p8_run(k): i64 {
+    var t = V8 { 0, 0 };
+    if (k == 0) { p8_l(&t); }
+    elif (k == 1) { p8_call(&t); }
+    elif (k == 2) { p8_fld(&t); }
+    elif (k == 3) { p8_dref(&t); }
+    elif (k == 4) { p8_meth(&t); }
+    else { p8_op(&t); }
+    return val8(&t);
+}
+
+# ── 16 B ──
+struct VH { a; b; }
+struct WH { k; s: VH; g: i8; }
+var GTH = VH { 0, 0 };
+var GZH: i8 = 99;
+var GLH = VH { 5, 8 };
+var GPH: *VH = &GTH;
+var GQH: *VH = &GLH;
+fn setH(p: *VH): i64 { p.a = 5; p.b = 8; return 0; }
+fn zeroH(p: *VH): i64 { p.a = 0; p.b = 0; return 0; }
+fn valH(p: *VH): i64 { return p.a * 10 + p.b; }
+fn mkH(): VH { var r: VH; setH(&r); return r; }
+fn gqH(): *VH { return GQH; }
+impl VH { fn dup(self: *VH): VH { return mkH(); } }
+fn VH_add(l: VH, r: VH): VH { var t: VH; t.a = l.a + r.a; t.b = l.b + r.b; return t; }
+fn gH_chk(): i64 { return valH(&GTH) + (GPH != &GTH) * 1000 + (GZH - 99) * 10000; }
+fn gH_l(): i64 { zeroH(&GTH); GPH = &GTH; var l = VH { 5, 8 }; GPH = l; l.a = 1; return gH_chk(); }
+fn gH_call(): i64 { zeroH(&GTH); GPH = &GTH; GPH = mkH(); return gH_chk(); }
+fn gH_fld(): i64 { zeroH(&GTH); GPH = &GTH; var w = WH { 0, 5, 8, 7 }; GPH = w.s; w.s.a = 1; return gH_chk() + (w.g - 7) * 100000; }
+fn gH_dref(): i64 { zeroH(&GTH); GPH = &GTH; var x = VH { 5, 8 }; var p: *VH = &x; GPH = *p; x.a = 1; return gH_chk(); }
+fn gH_meth(): i64 { zeroH(&GTH); GPH = &GTH; var l = VH { 0, 0 }; GPH = l.dup(); return gH_chk(); }
+fn gH_op(): i64 { zeroH(&GTH); GPH = &GTH; var z = VH { 0, 0 }; var l = VH { 5, 8 }; GPH = z + l; l.a = 1; return gH_chk(); }
+fn gH_glob(): i64 { zeroH(&GTH); GPH = &GTH; GPH = GLH; GLH.a = 1; var r = gH_chk(); GLH.a = 5; return r; }
+fn gH_par(): i64 { zeroH(&GTH); GPH = &GTH; var l = VH { 5, 8 }; GPH = (l); l.a = 1; return gH_chk(); }
+fn gH_pcall(): i64 { zeroH(&GTH); GPH = &GTH; GPH = (mkH()); return gH_chk(); }
+fn gH_for(): i64 {
+    zeroH(&GTH);
+    GPH = &GTH;
+    var l = VH { 5, 8 };
+    for (var i = 0; i < 1; GPH = l) { i = 1; }
+    l.a = 1;
+    return gH_chk();
+}
+fn gH_byv(l: VH): i64 { zeroH(&GTH); GPH = &GTH; GPH = l; l.a = 1; return gH_chk(); }
+fn gH_rq(): i64 { zeroH(&GTH); var x = VH { 5, 8 }; var q: *VH = &x; GPH = q; var r = (GPH == &x) * 1000 + valH(&GTH); GPH = &GTH; return r; }
+fn gH_ra(): i64 { zeroH(&GTH); var x = VH { 5, 8 }; GPH = &x; var r = (GPH == &x) * 1000 + valH(&GTH); GPH = &GTH; return r; }
+fn gH_rg(): i64 { zeroH(&GTH); GPH = GQH; var r = (GPH == &GLH) * 1000 + valH(&GTH); GPH = &GTH; return r; }
+fn gH_rc(): i64 { zeroH(&GTH); GPH = gqH(); var r = (GPH == &GLH) * 1000 + valH(&GTH); GPH = &GTH; return r; }
+fn lH_l(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; var l = VH { 5, 8 }; q = l; l.a = 1; return valH(&t) + (q != &t) * 1000; }
+fn lH_call(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; q = mkH(); return valH(&t) + (q != &t) * 1000; }
+fn lH_fld(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; var w = WH { 0, 5, 8, 7 }; q = w.s; w.s.a = 1; return valH(&t) + (q != &t) * 1000; }
+fn lH_dref(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; var x = VH { 5, 8 }; var p: *VH = &x; q = *p; x.a = 1; return valH(&t) + (q != &t) * 1000; }
+fn lH_meth(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; var l = VH { 0, 0 }; q = l.dup(); return valH(&t) + (q != &t) * 1000; }
+fn lH_op(): i64 { var t = VH { 0, 0 }; var q: *VH = &t; var z = VH { 0, 0 }; var l = VH { 5, 8 }; q = z + l; l.a = 1; return valH(&t) + (q != &t) * 1000; }
+fn pH_l(q: *VH): i64 { var l = VH { 5, 8 }; q = l; l.a = 1; return 0; }
+fn pH_call(q: *VH): i64 { q = mkH(); return 0; }
+fn pH_fld(q: *VH): i64 { var w = WH { 0, 5, 8, 7 }; q = w.s; w.s.a = 1; return 0; }
+fn pH_dref(q: *VH): i64 { var x = VH { 5, 8 }; var p: *VH = &x; q = *p; x.a = 1; return 0; }
+fn pH_meth(q: *VH): i64 { var l = VH { 0, 0 }; q = l.dup(); return 0; }
+fn pH_op(q: *VH): i64 { var z = VH { 0, 0 }; var l = VH { 5, 8 }; q = z + l; l.a = 1; return 0; }
+fn pH_run(k): i64 {
+    var t = VH { 0, 0 };
+    if (k == 0) { pH_l(&t); }
+    elif (k == 1) { pH_call(&t); }
+    elif (k == 2) { pH_fld(&t); }
+    elif (k == 3) { pH_dref(&t); }
+    elif (k == 4) { pH_meth(&t); }
+    else { pH_op(&t); }
+    return valH(&t);
+}
+
+# ── 24 B ──
+struct VT { a; b; c; }
+struct WT { k; s: VT; g: i8; }
+var GTT = VT { 0, 0, 0 };
+var GZT: i8 = 99;
+var GLT = VT { 5, 8, 9 };
+var GPT: *VT = &GTT;
+var GQT: *VT = &GLT;
+fn setT(p: *VT): i64 { p.a = 5; p.b = 8; p.c = 9; return 0; }
+fn zeroT(p: *VT): i64 { p.a = 0; p.b = 0; p.c = 0; return 0; }
+fn valT(p: *VT): i64 { return p.a * 100 + p.b * 10 + p.c; }
+fn mkT(): VT { var r: VT; setT(&r); return r; }
+fn gqT(): *VT { return GQT; }
+impl VT { fn dup(self: *VT): VT { return mkT(); } }
+fn VT_add(l: VT, r: VT): VT { var t: VT; t.a = l.a + r.a; t.b = l.b + r.b; t.c = l.c + r.c; return t; }
+fn gT_chk(): i64 { return valT(&GTT) + (GPT != &GTT) * 1000 + (GZT - 99) * 10000; }
+fn gT_l(): i64 { zeroT(&GTT); GPT = &GTT; var l = VT { 5, 8, 9 }; GPT = l; l.a = 1; return gT_chk(); }
+fn gT_call(): i64 { zeroT(&GTT); GPT = &GTT; GPT = mkT(); return gT_chk(); }
+fn gT_fld(): i64 { zeroT(&GTT); GPT = &GTT; var w = WT { 0, 5, 8, 9, 7 }; GPT = w.s; w.s.a = 1; return gT_chk() + (w.g - 7) * 100000; }
+fn gT_dref(): i64 { zeroT(&GTT); GPT = &GTT; var x = VT { 5, 8, 9 }; var p: *VT = &x; GPT = *p; x.a = 1; return gT_chk(); }
+fn gT_meth(): i64 { zeroT(&GTT); GPT = &GTT; var l = VT { 0, 0, 0 }; GPT = l.dup(); return gT_chk(); }
+fn gT_op(): i64 { zeroT(&GTT); GPT = &GTT; var z = VT { 0, 0, 0 }; var l = VT { 5, 8, 9 }; GPT = z + l; l.a = 1; return gT_chk(); }
+fn gT_glob(): i64 { zeroT(&GTT); GPT = &GTT; GPT = GLT; GLT.a = 1; var r = gT_chk(); GLT.a = 5; return r; }
+fn gT_par(): i64 { zeroT(&GTT); GPT = &GTT; var l = VT { 5, 8, 9 }; GPT = (l); l.a = 1; return gT_chk(); }
+fn gT_pcall(): i64 { zeroT(&GTT); GPT = &GTT; GPT = (mkT()); return gT_chk(); }
+fn gT_for(): i64 {
+    zeroT(&GTT);
+    GPT = &GTT;
+    var l = VT { 5, 8, 9 };
+    for (var i = 0; i < 1; GPT = l) { i = 1; }
+    l.a = 1;
+    return gT_chk();
+}
+fn gT_byv(l: VT): i64 { zeroT(&GTT); GPT = &GTT; GPT = l; l.a = 1; return gT_chk(); }
+fn gT_rq(): i64 { zeroT(&GTT); var x = VT { 5, 8, 9 }; var q: *VT = &x; GPT = q; var r = (GPT == &x) * 1000 + valT(&GTT); GPT = &GTT; return r; }
+fn gT_ra(): i64 { zeroT(&GTT); var x = VT { 5, 8, 9 }; GPT = &x; var r = (GPT == &x) * 1000 + valT(&GTT); GPT = &GTT; return r; }
+fn gT_rg(): i64 { zeroT(&GTT); GPT = GQT; var r = (GPT == &GLT) * 1000 + valT(&GTT); GPT = &GTT; return r; }
+fn gT_rc(): i64 { zeroT(&GTT); GPT = gqT(); var r = (GPT == &GLT) * 1000 + valT(&GTT); GPT = &GTT; return r; }
+fn lT_l(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; var l = VT { 5, 8, 9 }; q = l; l.a = 1; return valT(&t) + (q != &t) * 1000; }
+fn lT_call(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; q = mkT(); return valT(&t) + (q != &t) * 1000; }
+fn lT_fld(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; var w = WT { 0, 5, 8, 9, 7 }; q = w.s; w.s.a = 1; return valT(&t) + (q != &t) * 1000; }
+fn lT_dref(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; var x = VT { 5, 8, 9 }; var p: *VT = &x; q = *p; x.a = 1; return valT(&t) + (q != &t) * 1000; }
+fn lT_meth(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; var l = VT { 0, 0, 0 }; q = l.dup(); return valT(&t) + (q != &t) * 1000; }
+fn lT_op(): i64 { var t = VT { 0, 0, 0 }; var q: *VT = &t; var z = VT { 0, 0, 0 }; var l = VT { 5, 8, 9 }; q = z + l; l.a = 1; return valT(&t) + (q != &t) * 1000; }
+fn pT_l(q: *VT): i64 { var l = VT { 5, 8, 9 }; q = l; l.a = 1; return 0; }
+fn pT_call(q: *VT): i64 { q = mkT(); return 0; }
+fn pT_fld(q: *VT): i64 { var w = WT { 0, 5, 8, 9, 7 }; q = w.s; w.s.a = 1; return 0; }
+fn pT_dref(q: *VT): i64 { var x = VT { 5, 8, 9 }; var p: *VT = &x; q = *p; x.a = 1; return 0; }
+fn pT_meth(q: *VT): i64 { var l = VT { 0, 0, 0 }; q = l.dup(); return 0; }
+fn pT_op(q: *VT): i64 { var z = VT { 0, 0, 0 }; var l = VT { 5, 8, 9 }; q = z + l; l.a = 1; return 0; }
+fn pT_run(k): i64 {
+    var t = VT { 0, 0, 0 };
+    if (k == 0) { pT_l(&t); }
+    elif (k == 1) { pT_call(&t); }
+    elif (k == 2) { pT_fld(&t); }
+    elif (k == 3) { pT_dref(&t); }
+    elif (k == 4) { pT_meth(&t); }
+    else { pT_op(&t); }
+    return valT(&t);
+}
+
+# ── top level (after the first statement): a `*S` global destination ──
+var TT0: V0 = V0 { };
+var TZ0: i8 = 99;
+var TL0: V0 = V0 { };
+var TP0: *V0 = &TT0;
+var TT3 = V3 { 0, 0, 0 };
+var TZ3: i8 = 99;
+var TL3 = V3 { 5, 8, 9 };
+var TV3 = V3 { 0, 0, 0 };
+var TP3: *V3 = &TT3;
+var TQ3: *V3 = &TL3;
+var TW3 = W3 { 0, 5, 8, 9, 7 };
+var TT8 = V8 { 0, 0 };
+var TZ8: i8 = 99;
+var TL8 = V8 { 5, 8 };
+var TV8 = V8 { 0, 0 };
+var TP8: *V8 = &TT8;
+var TQ8: *V8 = &TL8;
+var TW8 = W8 { 0, 5, 8, 7 };
+var TTH = VH { 0, 0 };
+var TZH: i8 = 99;
+var TLH = VH { 5, 8 };
+var TVH = VH { 0, 0 };
+var TPH: *VH = &TTH;
+var TQH: *VH = &TLH;
+var TWH = WH { 0, 5, 8, 7 };
+var TTT = VT { 0, 0, 0 };
+var TZT: i8 = 99;
+var TLT = VT { 5, 8, 9 };
+var TVT = VT { 0, 0, 0 };
+var TPT: *VT = &TTT;
+var TQT: *VT = &TLT;
+var TWT = WT { 0, 5, 8, 9, 7 };
+var e = 0;
+TP0 = mk0();
+var R0a = (TP0 != &TT0) * 1000 + (TZ0 - 99) * 10000;
+TP0 = &TT0;
+TP0 = TL0;
+var R0b = (TP0 != &TT0) * 1000 + (TZ0 - 99) * 10000;
+TP3 = TL3;
+TL3.a = 1;
+var R3a = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+TL3.a = 5;
+zero3(&TT3);
+TP3 = TW3.s;
+TW3.s.a = 1;
+var R3b = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000 + (TW3.g - 7) * 100000;
+TW3.s.a = 5;
+zero3(&TT3);
+TP3 = *TQ3;
+TL3.a = 1;
+var R3c = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+TL3.a = 5;
+zero3(&TT3);
+TP3 = (TL3);
+TL3.a = 1;
+var R3d = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+TL3.a = 5;
+zero3(&TT3);
+TP3 = mk3();
+var R3e = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+zero3(&TT3);
+TP3 = TV3.dup();
+var R3f = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+zero3(&TT3);
+TP3 = TV3 + TL3;
+var R3g = val3(&TT3) + (TP3 != &TT3) * 1000 + (TZ3 - 99) * 10000;
+zero3(&TT3);
+TP3 = TQ3;
+var R3r = (TP3 == &TL3) * 1000 + val3(&TT3);
+TP3 = &TT3;
+TP3 = &TL3;
+var R3s = (TP3 == &TL3) * 1000 + val3(&TT3);
+TP3 = &TT3;
+TP8 = TL8;
+TL8.a = 1;
+var R8a = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+TL8.a = 5;
+zero8(&TT8);
+TP8 = TW8.s;
+TW8.s.a = 1;
+var R8b = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000 + (TW8.g - 7) * 100000;
+TW8.s.a = 5;
+zero8(&TT8);
+TP8 = *TQ8;
+TL8.a = 1;
+var R8c = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+TL8.a = 5;
+zero8(&TT8);
+TP8 = (TL8);
+TL8.a = 1;
+var R8d = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+TL8.a = 5;
+zero8(&TT8);
+TP8 = mk8();
+var R8e = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+zero8(&TT8);
+TP8 = TV8.dup();
+var R8f = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+zero8(&TT8);
+TP8 = TV8 + TL8;
+var R8g = val8(&TT8) + (TP8 != &TT8) * 1000 + (TZ8 - 99) * 10000;
+zero8(&TT8);
+TP8 = TQ8;
+var R8r = (TP8 == &TL8) * 1000 + val8(&TT8);
+TP8 = &TT8;
+TP8 = &TL8;
+var R8s = (TP8 == &TL8) * 1000 + val8(&TT8);
+TP8 = &TT8;
+TPH = TLH;
+TLH.a = 1;
+var RHa = valH(&TTH) + (TPH != &TTH) * 1000 + (TZH - 99) * 10000;
+TLH.a = 5;
+zeroH(&TTH);
+TPH = TWH.s;
+TWH.s.a = 1;
+var RHb = valH(&TTH) + (TPH != &TTH) * 1000 + (TZH - 99) * 10000 + (TWH.g - 7) * 100000;
+TWH.s.a = 5;
+zeroH(&TTH);
+TPH = *TQH;
+TLH.a = 1;
+var RHc = valH(&TTH) + (TPH != &TTH) * 1000 + (TZH - 99) * 10000;
+TLH.a = 5;
+zeroH(&TTH);
+TPH = (TLH);
+TLH.a = 1;
+var RHd = valH(&TTH) + (TPH != &TTH) * 1000 + (TZH - 99) * 10000;
+TLH.a = 5;
+zeroH(&TTH);
+TPH = TQH;
+var RHr = (TPH == &TLH) * 1000 + valH(&TTH);
+TPH = &TTH;
+TPH = &TLH;
+var RHs = (TPH == &TLH) * 1000 + valH(&TTH);
+TPH = &TTH;
+TPT = TLT;
+TLT.a = 1;
+var RTa = valT(&TTT) + (TPT != &TTT) * 1000 + (TZT - 99) * 10000;
+TLT.a = 5;
+zeroT(&TTT);
+TPT = TWT.s;
+TWT.s.a = 1;
+var RTb = valT(&TTT) + (TPT != &TTT) * 1000 + (TZT - 99) * 10000 + (TWT.g - 7) * 100000;
+TWT.s.a = 5;
+zeroT(&TTT);
+TPT = *TQT;
+TLT.a = 1;
+var RTc = valT(&TTT) + (TPT != &TTT) * 1000 + (TZT - 99) * 10000;
+TLT.a = 5;
+zeroT(&TTT);
+TPT = (TLT);
+TLT.a = 1;
+var RTd = valT(&TTT) + (TPT != &TTT) * 1000 + (TZT - 99) * 10000;
+TLT.a = 5;
+zeroT(&TTT);
+TPT = TQT;
+var RTr = (TPT == &TLT) * 1000 + valT(&TTT);
+TPT = &TTT;
+TPT = &TLT;
+var RTs = (TPT == &TLT) * 1000 + valT(&TTT);
+TPT = &TTT;
+
+assert_eq(g0_l(), 0, "0 B: GP = l copies nothing (GP still points there, the neighbour kept)");
+assert_eq(g0_call(), 0, "0 B: GP = mk() copies nothing");
+assert_eq(l0_l(), 0, "0 B: control, q = l through a *S local");
+assert_eq(R0a, 0, "0 B: top level, GP = mk() copies nothing");
+assert_eq(R0b, 0, "0 B: top level, GP = G copies nothing");
+assert_eq(g3_l(), 589, "3 B: GP = l copies into *GP (GP still points there, the guard kept)");
+assert_eq(g3_call(), 589, "3 B: GP = mk() (a call result)");
+assert_eq(g3_fld(), 589, "3 B: GP = w.s (a struct-typed field)");
+assert_eq(g3_dref(), 589, "3 B: GP = *p (a dereference)");
+assert_eq(g3_meth(), 589, "3 B: GP = l.dup() (a method result)");
+assert_eq(g3_op(), 589, "3 B: GP = z + l (an operator result)");
+assert_eq(g3_glob(), 589, "3 B: GP = G (a value global)");
+assert_eq(g3_par(), 589, "3 B: GP = (l)");
+assert_eq(g3_pcall(), 589, "3 B: GP = (mk())");
+assert_eq(g3_for(), 589, "3 B: GP = l as a for step");
+var v3 = V3 { 5, 8, 9 };
+assert_eq(g3_byv(v3), 589, "3 B: GP = l from a by-value parameter");
+assert_eq(g3_rq(), 1000, "3 B: GP = q (a *S local) rebinds, its old struct untouched");
+assert_eq(g3_ra(), 1000, "3 B: GP = &x rebinds");
+assert_eq(g3_rg(), 1000, "3 B: GP = GP2 (another *S global) rebinds");
+assert_eq(g3_rc(), 1000, "3 B: GP = gq() (a : *S call) rebinds");
+assert_eq(l3_l(), 589, "3 B: control, q = l through a *S local");
+assert_eq(l3_call(), 589, "3 B: control, q = mk() through a *S local");
+assert_eq(l3_fld(), 589, "3 B: control, q = w.s through a *S local");
+assert_eq(l3_dref(), 589, "3 B: control, q = *p through a *S local");
+assert_eq(l3_meth(), 589, "3 B: control, q = l.dup() through a *S local");
+assert_eq(l3_op(), 589, "3 B: control, q = z + l through a *S local");
+assert_eq(p3_run(0), 589, "3 B: control, q = l through a *S parameter");
+assert_eq(p3_run(1), 589, "3 B: control, q = mk() through a *S parameter");
+assert_eq(p3_run(2), 589, "3 B: control, q = w.s through a *S parameter");
+assert_eq(p3_run(3), 589, "3 B: control, q = *p through a *S parameter");
+assert_eq(p3_run(4), 589, "3 B: control, q = l.dup() through a *S parameter");
+assert_eq(p3_run(5), 589, "3 B: control, q = z + l through a *S parameter");
+assert_eq(R3a, 589, "3 B: top level, GP = G (a value global)");
+assert_eq(R3b, 589, "3 B: top level, GP = GW.s");
+assert_eq(R3c, 589, "3 B: top level, GP = *GQ");
+assert_eq(R3d, 589, "3 B: top level, GP = (G)");
+assert_eq(R3e, 589, "3 B: top level, GP = mk()");
+assert_eq(R3f, 589, "3 B: top level, GP = G.dup()");
+assert_eq(R3g, 589, "3 B: top level, GP = Z + G");
+assert_eq(R3r, 1000, "3 B: top level, GP = GQ rebinds");
+assert_eq(R3s, 1000, "3 B: top level, GP = &G rebinds");
+assert_eq(g8_l(), 58, "8 B: GP = l copies into *GP (GP still points there, the guard kept)");
+assert_eq(g8_call(), 58, "8 B: GP = mk() (a call result)");
+assert_eq(g8_fld(), 58, "8 B: GP = w.s (a struct-typed field)");
+assert_eq(g8_dref(), 58, "8 B: GP = *p (a dereference)");
+assert_eq(g8_meth(), 58, "8 B: GP = l.dup() (a method result)");
+assert_eq(g8_op(), 58, "8 B: GP = z + l (an operator result)");
+assert_eq(g8_glob(), 58, "8 B: GP = G (a value global)");
+assert_eq(g8_par(), 58, "8 B: GP = (l)");
+assert_eq(g8_pcall(), 58, "8 B: GP = (mk())");
+assert_eq(g8_for(), 58, "8 B: GP = l as a for step");
+var v8 = V8 { 5, 8 };
+assert_eq(g8_byv(v8), 58, "8 B: GP = l from a by-value parameter");
+assert_eq(g8_rq(), 1000, "8 B: GP = q (a *S local) rebinds, its old struct untouched");
+assert_eq(g8_ra(), 1000, "8 B: GP = &x rebinds");
+assert_eq(g8_rg(), 1000, "8 B: GP = GP2 (another *S global) rebinds");
+assert_eq(g8_rc(), 1000, "8 B: GP = gq() (a : *S call) rebinds");
+assert_eq(l8_l(), 58, "8 B: control, q = l through a *S local");
+assert_eq(l8_call(), 58, "8 B: control, q = mk() through a *S local");
+assert_eq(l8_fld(), 58, "8 B: control, q = w.s through a *S local");
+assert_eq(l8_dref(), 58, "8 B: control, q = *p through a *S local");
+assert_eq(l8_meth(), 58, "8 B: control, q = l.dup() through a *S local");
+assert_eq(l8_op(), 58, "8 B: control, q = z + l through a *S local");
+assert_eq(p8_run(0), 58, "8 B: control, q = l through a *S parameter");
+assert_eq(p8_run(1), 58, "8 B: control, q = mk() through a *S parameter");
+assert_eq(p8_run(2), 58, "8 B: control, q = w.s through a *S parameter");
+assert_eq(p8_run(3), 58, "8 B: control, q = *p through a *S parameter");
+assert_eq(p8_run(4), 58, "8 B: control, q = l.dup() through a *S parameter");
+assert_eq(p8_run(5), 58, "8 B: control, q = z + l through a *S parameter");
+assert_eq(R8a, 58, "8 B: top level, GP = G (a value global)");
+assert_eq(R8b, 58, "8 B: top level, GP = GW.s");
+assert_eq(R8c, 58, "8 B: top level, GP = *GQ");
+assert_eq(R8d, 58, "8 B: top level, GP = (G)");
+assert_eq(R8e, 58, "8 B: top level, GP = mk()");
+assert_eq(R8f, 58, "8 B: top level, GP = G.dup()");
+assert_eq(R8g, 58, "8 B: top level, GP = Z + G");
+assert_eq(R8r, 1000, "8 B: top level, GP = GQ rebinds");
+assert_eq(R8s, 1000, "8 B: top level, GP = &G rebinds");
+assert_eq(gH_l(), 58, "16 B: GP = l copies into *GP (GP still points there, the guard kept)");
+assert_eq(gH_call(), 58, "16 B: GP = mk() (a call result)");
+assert_eq(gH_fld(), 58, "16 B: GP = w.s (a struct-typed field)");
+assert_eq(gH_dref(), 58, "16 B: GP = *p (a dereference)");
+assert_eq(gH_meth(), 58, "16 B: GP = l.dup() (a method result)");
+assert_eq(gH_op(), 58, "16 B: GP = z + l (an operator result)");
+assert_eq(gH_glob(), 58, "16 B: GP = G (a value global)");
+assert_eq(gH_par(), 58, "16 B: GP = (l)");
+assert_eq(gH_pcall(), 58, "16 B: GP = (mk())");
+assert_eq(gH_for(), 58, "16 B: GP = l as a for step");
+var vH = VH { 5, 8 };
+assert_eq(gH_byv(vH), 58, "16 B: GP = l from a by-value parameter");
+assert_eq(gH_rq(), 1000, "16 B: GP = q (a *S local) rebinds, its old struct untouched");
+assert_eq(gH_ra(), 1000, "16 B: GP = &x rebinds");
+assert_eq(gH_rg(), 1000, "16 B: GP = GP2 (another *S global) rebinds");
+assert_eq(gH_rc(), 1000, "16 B: GP = gq() (a : *S call) rebinds");
+assert_eq(lH_l(), 58, "16 B: control, q = l through a *S local");
+assert_eq(lH_call(), 58, "16 B: control, q = mk() through a *S local");
+assert_eq(lH_fld(), 58, "16 B: control, q = w.s through a *S local");
+assert_eq(lH_dref(), 58, "16 B: control, q = *p through a *S local");
+assert_eq(lH_meth(), 58, "16 B: control, q = l.dup() through a *S local");
+assert_eq(lH_op(), 58, "16 B: control, q = z + l through a *S local");
+assert_eq(pH_run(0), 58, "16 B: control, q = l through a *S parameter");
+assert_eq(pH_run(1), 58, "16 B: control, q = mk() through a *S parameter");
+assert_eq(pH_run(2), 58, "16 B: control, q = w.s through a *S parameter");
+assert_eq(pH_run(3), 58, "16 B: control, q = *p through a *S parameter");
+assert_eq(pH_run(4), 58, "16 B: control, q = l.dup() through a *S parameter");
+assert_eq(pH_run(5), 58, "16 B: control, q = z + l through a *S parameter");
+assert_eq(RHa, 58, "16 B: top level, GP = G (a value global)");
+assert_eq(RHb, 58, "16 B: top level, GP = GW.s");
+assert_eq(RHc, 58, "16 B: top level, GP = *GQ");
+assert_eq(RHd, 58, "16 B: top level, GP = (G)");
+assert_eq(RHr, 1000, "16 B: top level, GP = GQ rebinds");
+assert_eq(RHs, 1000, "16 B: top level, GP = &G rebinds");
+assert_eq(gT_l(), 589, "24 B: GP = l copies into *GP (GP still points there, the guard kept)");
+assert_eq(gT_call(), 589, "24 B: GP = mk() (a call result)");
+assert_eq(gT_fld(), 589, "24 B: GP = w.s (a struct-typed field)");
+assert_eq(gT_dref(), 589, "24 B: GP = *p (a dereference)");
+assert_eq(gT_meth(), 589, "24 B: GP = l.dup() (a method result)");
+assert_eq(gT_op(), 589, "24 B: GP = z + l (an operator result)");
+assert_eq(gT_glob(), 589, "24 B: GP = G (a value global)");
+assert_eq(gT_par(), 589, "24 B: GP = (l)");
+assert_eq(gT_pcall(), 589, "24 B: GP = (mk())");
+assert_eq(gT_for(), 589, "24 B: GP = l as a for step");
+var vT = VT { 5, 8, 9 };
+assert_eq(gT_byv(vT), 589, "24 B: GP = l from a by-value parameter");
+assert_eq(gT_rq(), 1000, "24 B: GP = q (a *S local) rebinds, its old struct untouched");
+assert_eq(gT_ra(), 1000, "24 B: GP = &x rebinds");
+assert_eq(gT_rg(), 1000, "24 B: GP = GP2 (another *S global) rebinds");
+assert_eq(gT_rc(), 1000, "24 B: GP = gq() (a : *S call) rebinds");
+assert_eq(lT_l(), 589, "24 B: control, q = l through a *S local");
+assert_eq(lT_call(), 589, "24 B: control, q = mk() through a *S local");
+assert_eq(lT_fld(), 589, "24 B: control, q = w.s through a *S local");
+assert_eq(lT_dref(), 589, "24 B: control, q = *p through a *S local");
+assert_eq(lT_meth(), 589, "24 B: control, q = l.dup() through a *S local");
+assert_eq(lT_op(), 589, "24 B: control, q = z + l through a *S local");
+assert_eq(pT_run(0), 589, "24 B: control, q = l through a *S parameter");
+assert_eq(pT_run(1), 589, "24 B: control, q = mk() through a *S parameter");
+assert_eq(pT_run(2), 589, "24 B: control, q = w.s through a *S parameter");
+assert_eq(pT_run(3), 589, "24 B: control, q = *p through a *S parameter");
+assert_eq(pT_run(4), 589, "24 B: control, q = l.dup() through a *S parameter");
+assert_eq(pT_run(5), 589, "24 B: control, q = z + l through a *S parameter");
+assert_eq(RTa, 589, "24 B: top level, GP = G (a value global)");
+assert_eq(RTb, 589, "24 B: top level, GP = GW.s");
+assert_eq(RTc, 589, "24 B: top level, GP = *GQ");
+assert_eq(RTd, 589, "24 B: top level, GP = (G)");
+assert_eq(RTr, 1000, "24 B: top level, GP = GQ rebinds");
+assert_eq(RTs, 1000, "24 B: top level, GP = &G rebinds");
+var r = assert_summary();

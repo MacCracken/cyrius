@@ -44,8 +44,8 @@ struct FM { a: f64; b: f32; c: f64; }
 #derive(Serialize)
 struct Inr { x: u8; y: f32; }
 
-# The nested struct last: the scanner skips a nested object's value, and only the pairs form
-# decodes it (as for every nested `#derive`d field).
+# The nested struct last (6.7.11: both decoders decode it — the scanner skipped it until then,
+# derive_nested_scanner.tcyr).
 #derive(Serialize)
 struct Out { k: u16; z: u32; inn: Inr; }
 
@@ -187,7 +187,7 @@ fn rows_f32(): i64 {
     return 0;
 }
 
-# The scanner skips a nested object (`nested` 0); the pairs form decodes it.
+# `nested` 1: the nested Inr decoded too (both decoders since 6.7.11).
 fn check_out(q: *Out, nested, tag): i64 {
     assert_eq(q.k, 7, tag);
     assert_eq(q.z, 4000000000, tag);
@@ -208,7 +208,7 @@ fn rows_nested(): i64 {
     var s = str_builder_build(sb);
     assert_eq(same(s, "{\"k\":7,\"z\":4000000000,\"inn\":{\"x\":200,\"y\":0.5}}"), 1, "Out _to_json with a nested Inr");
     check_out(Out_from_json(pairs(s)), 1, "Out _from_json: k, z and the nested u8 / f32");
-    check_out(Out_from_json_str(str_data(s)), 0, "Out _from_json_str: k, z");
+    check_out(Out_from_json_str(str_data(s)), 1, "Out _from_json_str: k, z and the nested u8 / f32 (6.7.11)");
     return 0;
 }
 

@@ -249,6 +249,24 @@ var GCT12: T12 = GCT.t;
 # +16 and a 16-byte over-copy would land in padding. The i32 guard packs at +12, directly after.
 var GCT12_G: i32 = 0x5A5A5A5A;
 var GCT12_C = 0x5A5A5A5A5A5A5A5A;
+# 6.7.11 (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md): a copy-init from a
+# field reached through a POINTER — a `*T` global's field, wrapped, a `: *T` call's field, a field through a
+# `*T` field, 24 and 12 B. Each held the field's FIRST WORD in one pointer-mode slot and SIGSEGV'd at the
+# first `G.x` (139; cxvm "guest address out of range").
+struct VB { p: *Box; }
+var GZP: *Box = &GFA;
+var GZR: *RQ = &GFQ;
+var GZT: *HT12 = &GCT;
+var GZV = VB { &GFA };
+fn gzb(): *Box { return &GFA; }
+var GXP: Pt = GZP.v;
+var GXW: Pt = (GZP.v);
+var GXC: Pt = gzb().v;
+var GXV: Pt = GZV.p.v;
+var GXQ: Q = GZR.q;
+var GXT: T12 = GZT.t;
+var GXT_G: i32 = 0x5A5A5A5A;
+var GXT_C = 0x5A5A5A5A5A5A5A5A;
 
 test_group("a struct-typed field passed as a by-value struct argument (6.6.12)");
 assert_eq(fa_local(), 34, "from a local's field (was SIGSEGV)");
@@ -386,4 +404,34 @@ assert_eq(lv_whole2(), 4321, "a whole two-level value");
 assert_eq(lv_chain_field(), 4321, "a first-field-type value from a field");
 assert_eq(lv_chain_call(), 4321, "a first-field-type value from a call");
 
+test_group("a top-level struct copy-init through a pointer is a copy (6.7.11)");
+# the leading block's copies (read now: the sources were written since, so a handle would show it)
+assert_eq(GXP.x * 10 + GXP.y, 34, "var G: Pt = P.v; P a *Box global (was SIGSEGV)");
+assert_eq(GXW.x * 10 + GXW.y, 34, "var G: Pt = (P.v);");
+assert_eq(GXC.x * 10 + GXC.y, 34, "var G: Pt = gp().v; a : *Box call");
+assert_eq(GXV.x * 10 + GXV.y, 34, "var G: Pt = VV.p.v; through a *Box field");
+assert_eq(GXQ.a + GXQ.b * 10 + GXQ.c * 100, 321, "var G: Q = R.q; 24 B through a *RQ global");
+assert_eq(GXT.a + GXT.b * 10 + GXT.c * 100, 321, "var G: T12 = T.t; 12 B through a *HT12 global");
+assert_eq(&GXT_G - &GXT, 12, "... the i32 guard sits directly after the 12-byte global");
+assert_eq(GXT_G, 0x5A5A5A5A, "... copied byte-exact: the global after it is untouched");
+assert_eq(GXT_C, 0x5A5A5A5A5A5A5A5A, "... and the i64 after that");
+GXP.x = 0;
+assert_eq(GFA.v.x, 3, "GXP owns its bytes: a write to it does not reach the source");
+# after the first statement (PARSE_VAR's top-level arm)
+GFA.v.x = 5; GFA.v.y = 6;
+GFQ.q.a = 4; GFQ.q.b = 5; GFQ.q.c = 6;
+GCT.t.a = 7; GCT.t.b = 8; GCT.t.c = 9;
+var GLP: Pt = GZP.v;
+var GLW: Pt = (GZP.v);
+var GLC: Pt = gzb().v;
+var GLV: Pt = GZV.p.v;
+var GLQ: Q = GZR.q;
+var GLT: T12 = GZT.t;
+var GLT_G: i32 = 0x5A5A5A5A;
+GFA.v.x = 1; GFQ.q.a = 1; GCT.t.a = 1;
+assert_eq(GLP.x * 10 + GLP.y + GLW.x * 1000 + GLW.y * 100, 5656, "after the first statement: P.v, (P.v)");
+assert_eq(GLC.x * 10 + GLC.y + GLV.x * 1000 + GLV.y * 100, 5656, "after the first statement: gp().v, VV.p.v");
+assert_eq(GLQ.a + GLQ.b * 10 + GLQ.c * 100, 654, "after the first statement: 24 B through a *RQ global");
+assert_eq(GLT.a + GLT.b * 10 + GLT.c * 100, 987, "after the first statement: 12 B through a *HT12 global");
+assert_eq(GLT_G, 0x5A5A5A5A, "... the global after it untouched");
 var r = assert_summary();

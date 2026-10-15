@@ -139,7 +139,11 @@ operand`). An **f32** left takes the LOW 32 BITS of its right operand, so an `f6
 or an integer there is reinterpreted, not converted — with `x: f32`, `x * 2.0` is 0 and
 `x + 1.0` is `x`. Since 6.6.11 it warns too (`f32 arithmetic with a non-f32 right operand`);
 write `x * f32_from(2.0)`. They are warnings, not errors (ADR-002: the untyped `i64`-boxed
-float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them. One integer + f64 mix warns once,
+however far its result is carried (6.7.11): `x = x + (x + 1.5)`, `2 * (x + 1.5)` and `x += x + 1.5`
+warned twice, `x - (x * (x + 1.5))` three times — the mix's result keeps the f64 type, so each
+enclosing integer operator saw an f64 right operand again. Two mixes still warn twice, and `x + 1.5
++ 2` still warns kind 1 for the `+ 2`.
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
@@ -871,8 +875,11 @@ slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field
 closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
 change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
-the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'` (6.7.11: `x = v` is reported at
-`x`, before `v` is parsed — a whole tuple `v` was refused a second time). It works in a statement, at
+the closure: `x += d`, like `x = x + d`, a `for` init or step and `a, x = f()`, is refused naming the
+capture — ``'x' is captured by value; a captured name is not assignable in a closure — copy it into a
+local (`var y = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
+body). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
+second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
@@ -1014,6 +1021,8 @@ address, read and written 8 bytes as before**: an untyped name (`var w = p;` is 
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
+Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
+(6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
 `var q: *u8 = 1 + p;` is silent and `(1 + p) - q` is a pointer difference, refused when `q` points
 at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that declaration warned and
@@ -1072,8 +1081,10 @@ size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
 the pointer (it never copies the struct). So does the result of a fn declared `: *Struct`
-(`first(h).next.val`, `first(h).m(..)`). Before 6.6.17 only a parameter did; a `*Node` local
-or global was "no struct type in scope", and such a call's result "does not return a struct".
+(`first(h).next.val`, `first(h).m(..)`), and since 6.7.11 that of a METHOD declared `: *Struct`
+(`h.get().b`, `h.get().m(..)`, through a `dyn` too). Before 6.6.17 only a parameter did; a `*Node`
+local or global was "no struct type in scope", and such a call's result "does not return a struct"
+(a method's until 6.7.11).
 A struct VALUE assigned to a `*Struct` local or parameter copies INTO the pointee (`p = l`,
 `p = mk(..)`), and `l = p` copies the pointee into the struct value `l`, at every size (6.7.10 —
 see [Where a struct lives](#where-a-struct-lives-v665)).
@@ -1180,10 +1191,13 @@ All of these were loud: nothing compiled wrong.
 A **method's** result takes `.field` and `.method(..)` the same way, chained to any depth, as a
 value or as a bare statement (since 6.6.17): `var u: Str = s.clone().cat(t);`,
 `p.bump().bump().sum()`, `p.big().c`. Each link's result is held like a call's (a frame
-temporary), so the receiver is untouched. At top level a chain on a struct-returning method is
-refused by name, as a call result's field is, and a chain on a method that returns no struct is
-`cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17 the `.`
-after a method call was `expected ';', got '.'` in every position.
+temporary), so the receiver is untouched. A method declared `: *Struct` is a pointer, as a free
+call's `*Struct` result is: `h.get().b`, `h.get().q.b`, `h.get().m(..)` read and call through it, in
+a fn and at top level (6.7.11; it was refused, "it does not return a struct"), and `h.get().b = 5;`
+is refused as `get2(&h).b = 5;` is. At top level a chain on a struct-returning method is refused by
+name, as a call result's field is, and a chain on a method that returns neither a struct nor a
+`*Struct` is `cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17
+the `.` after a method call was `expected ';', got '.'` in every position.
 
 ### Field types (v6.6.10)
 
@@ -1359,15 +1373,28 @@ too. They copy the struct into a struct value now, as a `*T` local does (a `*U` 
 refused by name); into a handle or a `*T` they rebind (`q = GP` through `q: *S` repoints `q`). So
 does pointer arithmetic on a `*T` (`l = p + 1`, `l = (p + 1)`, `l = 1 + GP`, `G = q - 1`: the struct
 the result points at), which stored the pointer word too; `q = q + 1` through a `*T` still steps it.
-⚠ Known defect (6.7.10): a GENERIC call declared `: *T` (`fn gp<T>(): *T`) is no struct source at any
-size — `l = gp<S>()` stores the pointer word, `*gp<S>()` as a value faults and `gp<S>().v` is refused
-(the instance records T's step but not its struct): bind it to a `*S` first (`var p: *S = gp<S>();`).
-⚠ Not settled: `GP = l` — a `*T` GLOBAL as the destination of a struct value — still stores `l`'s
-first word into `GP` (the pointer), where a `*T` local or parameter copies `l` into its pointee.
-⚠ Known defect (6.7.10): into a struct-typed FIELD these sources still store the pointer word (`o.s
-= GP`, `o.s = gp()`, `o.s = w.p`), and an ASSIGNMENT from a dereference stores one word (`l = *p`,
-`G = *p`, `o.s = *p`; the declaration `var l2: S = *p;` copies): copy through a `*T` local (`var p2:
-*S = GP; o.s = p2;`, `l = p`).
+A GENERIC call declared `: *T` is such a source too (6.7.11), with T bound by its type arguments or
+inferred from its arguments: `l = gp<S>()`, `var q: S = *gp<S>()`, `take(*gp<S>())`, `a - *gp<S>()` and
+`gp<S>().v` read the `S` it points at, as `fn gp(): *S` does; a `*U` instance is refused by name (naming
+the call). Through 6.7.10 the instance recorded T's step but not its struct: the pointer word was stored,
+the dereferences faulted, and `gp<S>().v` was refused.
+A `*T` GLOBAL is a copy destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
+struct value `l` — a variable, a by-value parameter, a call, a field `w.s`, `*p`, a method, an operator
+result — into the struct `GP` points at, as `q = l` does through a `*T` local or parameter, in a fn, at top
+level and in a for step; `GP` still points where it did. `GP = q` from another `*T` (a local, a global, a
+`: *T` call, a field) or a handle, and `GP = &x` / `GP = alloc(..)` / `GP = 0`, rebind it; a struct of
+another type is refused by name; at top level a call, method or operator result over 8 bytes has no frame
+to land in and is refused, as into a struct global. Through 6.7.10 `GP = l` stored `l`'s first word into
+`GP` itself — a wild pointer, silently.
+Into a struct-typed FIELD these sources copy too (6.7.11): `o.s = GP`, `o.s = gp()`, `o.s = w.p`,
+`o.s = GP + 0`, `o.s = (gp())`, through a `*O` (`po.s = GP`), at top level and in a for step; a `*U` of
+another struct is refused by name (`cannot copy 'GU' into a struct field of a different struct type`).
+Through 6.7.10 the field kept the pointer word, silently.
+An ASSIGNMENT from a dereference copies the struct, as the declaration `var l2: S = *p;` does (6.7.11):
+`l = *p`, `G = *p`, `o.s = *p` (through a `*O` too), and `q = *p` into the pointee of a `*S` or a handle
+(as `q = l`), in any spelling — `(*p)`, `*(p + 1)`, `*gp()`, `*w.p` — at top level and in a for step; a
+`*U` of another struct is refused by name. Through 6.7.10 it stored the first word (`q = *p` rebound `q`
+to it), with a false "assigning non-pointer to typed pointer" warning.
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
 class from its source: from a pointer-mode local or global it declares `q` as a second pointer to
@@ -1422,11 +1449,64 @@ Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y
 keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
-can carry**: a local of that struct, a call to a fn returning the same struct, or a method or
-overloaded operator returning it. Anything else — a call returning a *different* struct, an
+can carry**: a local of that struct, a call to a fn returning the same struct, a method or
+overloaded operator returning it, or (6.7.11) a pointer to that struct (below). Anything else — a call returning a *different* struct, an
 integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
-was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+was never written. Since 6.7.11 that includes a call that only STARTS the value: `return mk2(1) ==
+p;` (any operator that does not dispatch — a comparison, `& | ^ % << >>`, `&& ||`) is refused *… got
+`mk2`*, where it returned the comparison in the first register and mk2's stale second word;
+`return mk2(1);`, `return (mk2(1));` and a dispatching `return mk2(1) + p;` are unchanged. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+
+⚠ **A tuple literal is not the struct (6.7.11).** `return (a, b);` or `return (a, b, c);` in a fn
+declared `: P` is a compile error at every size — a tuple is an anonymous struct, another type
+([Tuples](#tuples)), as `var t = (a, b); return t;` already was:
+
+```
+error: a fn returning the struct `P3` returns that struct — `(a, b)` is a tuple, another type
+```
+
+Through 6.7.10 it took the multi-value path: over 16 bytes the caller's result was never written
+(it read 0, 0, 0), at 8 bytes or less the second value was dropped, and at 9-16 bytes it gave the
+two words only because that class's registers are the multi-value ones. Build the struct and return
+it: `var p: P3 = P3 { a, b, 0 }; return p;`. A fn declared `: (T1, T2)`, or with no return type,
+returns `(a, b)` as before.
+
+⚠ **A fn returning a struct of 8 bytes or less returns a value of that struct (6.7.11).** The struct
+travels in one register, and its `return` is checked as the two wider classes check theirs: a value
+of ANOTHER struct — a local, a by-value parameter, a global, `(u)`, a call (`return mk();` too), a
+field, a method or operator result, a dereference `*pu` of a `*U` — a `*U` local or parameter, and a
+handle of another struct (a local or a global) are each a compile error naming it:
+
+```
+error: a fn returning the struct `S8` takes a value of that struct, or a pointer to one — got `u` (a `U8`)
+```
+
+Through 6.7.10 each compiled and handed back the other struct's word (a `*U`: its address) as the
+`S8`, silently. A pointer to the fn's own struct returns the struct it points at (below). An untyped
+value (`var x = 3; return x;`) is still the struct's one word.
+
+⚠ **`return E;` with `E` a pointer to the struct returns the struct it points at, at every size
+(6.7.11).** In a fn declared `: S`, `E` a `*S` — a local or a parameter, a global, a call or method
+declared `: *S` (a generic one too), a `*S` field, pointer arithmetic on one, inside parentheses or not
+— or a dereference `*E` of one returns a copy of the struct `E` points at, as `l = GP` copies it (struct
+copies are size-independent):
+
+```cyrius
+struct S8 { v; }
+var GS = S8 { 9 };
+var GP: *S8 = &GS;
+fn gp(): *S8 { return GP; }
+fn f(): S8 { return GP; }        # GS's struct: f().v is 9
+fn g(): S8 { return gp(); }      # the same (not taken as a tail call)
+```
+
+Before 6.7.11 a fn of 8 bytes or less returned the POINTER as the struct's word, silently (`f().v` was
+`&GS`; only a `p: *S8` parameter copied, since 6.6.17), and over 8 bytes every form but a `*S` local or
+parameter was a compile error (*… got `GP`*, *identifier is not a local*). A `*U` of another struct is
+refused by name at every size (*… takes a value of that struct, or a pointer to one — got `GU` (a
+`*U`)*). `&s` is not one of these: it is an untyped address (a fn of 8 bytes or less returns it as the
+word).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
@@ -1456,8 +1536,9 @@ global read a stale register rather than `G`. The two that are worth spelling ou
 look reasonable:
 
 * `return (a, b);` is the **ret2 int-register** convention (rax:rdx), which is the ABI of a
-  9-16 byte *struct*, not of a vector. It stays legal for a struct return and for the scalar
-  multi-value `var a, b = f();` form — only the vector classes refuse it. To build a vector,
+  9-16 byte *struct*, not of a vector. It stays legal for the scalar multi-value `var a, b =
+  f();` form; a fn returning a named struct refuses it too since 6.7.11 (a tuple is another
+  type — [Returning a struct by value](#returning-a-struct-by-value-v666)). To build a vector,
   store the lanes into a local and return the local.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
@@ -1479,7 +1560,9 @@ out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = 
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
 pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
-field (`b.v = o.b.v`). A struct of a different type is a compile error naming it, at every
+field (`b.v = o.b.v`) — and since 6.7.11 a `*P3` global, a call or method declared `: *P3`, a `*P3`
+field and pointer arithmetic on one (`b.v = GP`, `b.v = gp()`, `b.v = w.p`, `b.v = GP + 1`: the
+struct it points at; through 6.7.10 the field kept the pointer word). A struct of a different type is a compile error naming it, at every
 size — a method or operator result of 8 bytes or less included (v6.6.11). Before v6.6.10
 every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
 word was the parameter's address. A source that is not a struct (an integer, an untyped
@@ -1524,11 +1607,16 @@ different struct type in a call to 'take'`). Before v6.6.12 the field's first wo
 address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
 global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
-8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A pointer-mode source
+8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A field reached through a POINTER is
+such a source too (6.7.11): `var G: P3 = P.v;` with `P` a `*Box` global, `= (P.v)`, `= gp().v` with
+`fn gp(): *Box`, `= VV.p.v` through a `p: *Box` field — through 6.7.10 `G` held the field's first
+word and `G.x` SIGSEGV'd (a guest fault on cx), while the same line in a fn copied. A pointer-mode source
 (`var p: P3 = mk();`, or a global initialised that way) still binds a second pointer to the same
 struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: P3 = A;` before
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
-globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
+globals are initialised in declaration order and `A` has not been initialised when `B` copies it;
+so is a call's field whose fn is declared below the copy in the leading block (`cannot copy-init 'G'
+from a field of a call to a fn declared below it`).
 
 ⚠ **A struct ARGUMENT is checked against its parameter (v6.7.3).** An argument whose static struct
 type differs from the parameter's is refused by name, as the same copy into a variable is
@@ -1673,10 +1761,17 @@ struct-returning operator is still two parameters: the hidden return pointer is 
 **Parentheses around a whole struct source are transparent**, at every depth and for every source
 shape — a name, a field, a call, a method or an operator result — into every struct destination:
 an argument (`rd3((a))`), a struct-typed field (`o.i = (z.k)`), a struct variable (`w = (j)`), a
-declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), and a for step.
+declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), a for step, and
+(6.7.11) a nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`).
 Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
 Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
-declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently.
+declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently. Until 6.7.11
+a free call in parentheses as a literal element was a scalar for the nested struct's first leaf:
+*unexpected '}'* at 16 and 24 bytes and at 8 bytes with two leaves, and a one-leaf struct took the
+call's word even from another struct (refused by name now, as the unwrapped call is).
+⚠ Known defect (filed for 6.7.12): a 9-16 byte METHOD or OPERATOR result in parentheses as a nested
+literal element (`H { 7, (q.dup()), 8 }`, `(q + r)`) is still *unexpected '}'* — drop the parentheses;
+at 8 and 24 bytes, and as every other destination, it is taken.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
@@ -1734,10 +1829,27 @@ as is an operator fn whose first parameter is another struct, and, at top level,
 (`var G: H = GW.s + A;`). Through 6.7.9 only a variable or a struct result typed the left operand:
 `h.p - s` subtracted the first words (250 where `P2_sub` gives 139), silently, at every size. A
 `*T` field itself is a pointer (`w.p + 1` steps it), a `Str` field a handle, and `-w.s + a`
-negates a word first (no dispatch). ⚠ Known defect (6.7.10): a dereference of a `*S` of 1 to 7
-bytes, and a whole field of 3, 5, 6 or 7 bytes, is still loaded as an 8-byte word on the way (as in
-every value use of one — an argument, a right operand): an object ending exactly at the end of a
-mapping faults.
+negates a word first (no dispatch) — as `-s + a` does since 6.7.11 (see below). ⚠ Known defect (6.7.10): a whole field of 3, 5, 6 or 7 bytes is
+still loaded as an 8-byte word on the way (as in every value use of one — an argument, a right
+operand): an object ending exactly at the end of a mapping faults. (A dereference of a `*S` of 1 to 7
+bytes reads exactly its struct since 6.7.11 — see below.)
+
+**An integer operator's result is an integer** (6.7.11): with an integer left operand, `n - s` on a
+struct `s` is arithmetic on the struct's first word (its word, at 8 bytes or less), and the result is an
+integer whatever the operator — `+ - * / % << >> >>>`, `& | ^`, a comparison, `&&` / `||`, `+| +? -| -?
+*| *?` and `~s` — so `n - s + 10` is `(n - s) + 10`. Through 6.7.10 the result kept the right operand's
+struct type, and the next `+ - * /` dispatched on it: `n - s + 10` called `S_add(&s, 10)` and discarded
+`n - s` (a crash when `S_add` read its right operand as a struct), `(n < s) + 1` and `(~s) + 1` likewise,
+and with no `S_add` each was refused as an undefined function. (`!s` was always an integer.)
+
+**Unary minus on a struct is integer negation of its word** (6.7.11, the user's decision of
+2026-10-13): `-s` negates the struct's first word (its word, at 8 bytes or less) and the result has
+no struct type, exactly as `-w.s` on a struct-typed field — so `-s + t` is an integer add at every
+size, never `S_add`, and as a right operand `t + -s` passes the negated word, as `t + -w.s` does.
+Through 6.7.10 the negation kept `s`'s struct type and slot: `-s + t` over 8 bytes called `S_add(&s,
+&t)` with the minus dropped (`s + t`'s value), at 8 bytes `S_add` with the negated word as the
+struct, and `t + -s` over 8 bytes passed `s` itself. Nothing is refused. `-` on an f64 / f32 is a
+float negation, and on a `u128` the 128-bit `0 - x`, as before.
 
 **A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
 `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass
@@ -1750,7 +1862,27 @@ different struct type*) at every size and into a `Str` parameter — since 6.7.1
 bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` in another struct's impl:
 through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. An untyped `*x`
 is still the word it reads. Through 6.7.9 the word the
-dereference read was passed as the struct's address — a crash on every target.
+dereference read was passed as the struct's address — a crash on every target. Under 8 bytes a
+dereference reads exactly the struct's bytes wherever it is a value — a global declared from it (in
+the declaration zone or after it), a by-value argument, `return *p`, an operator's operand — and its
+word's padding is 0 (6.7.11): through 6.7.10 it loaded the whole word at `p`, so the bytes after the
+object filled the padding (`load8(&G + 3)` of a 3-byte `G` read the next byte) and an object ending
+a mapping faulted.
+
+**A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
+`p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,
+`*gp()`, `*w.p` — copies exactly `sizeof(S)` bytes (none for a zero-size struct) from any `S` value
+`G = v` takes: a local, a by-value parameter, a global, a field `w.s`, a call, a method or operator
+result, a handle or a `*S` (`*p = q` copies the struct `q` points at; `q` is not rebound), `*q` — in a
+fn, at top level and in a for step, so `*p = l`, `p = l` and `G = l` (with `p = &G`) agree. A struct of another type is refused by name
+(*cannot copy 'u' into a variable of a different struct/vector type: 'p'*), and `*p OP= v` as `l += a`
+is (*compound assignment to the struct 'p' points at is refused*; write `*p = *p + b`). Any other value
+— an untyped one, an integer — is stored as the struct's word at `sizeof(S)` bytes, at most 8, never
+past the object (`*p = 0` clears a 3-byte struct's 3 bytes, a 16-byte struct's first 8). At top level a
+call, method or operator result over 8 bytes has no frame to land in and is refused, as into a struct
+global. Through 6.7.10 the store was the 8-byte word whatever the struct: a zero-size struct took 8
+bytes over the next global, one of 3 to 7 bytes overran the object, one over 8 bytes kept only its first
+8 (a 16-byte one's second field stale), `*p = q` stored the pointer, and `*p += a` added to the first word.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
 the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads
@@ -1761,9 +1893,21 @@ temporary becomes `c`. Through 6.7.9 a result of 8 bytes or less was an untyped 
 struct type in scope for 'c'* and `c + c` added integers — and 6.7.10's packed fields moved `struct
 C4 { r: u8; g: u8; b: u8; a: u8; }` from 32 bytes to 4, so `var c = A + B; c.g = 1;` stopped
 compiling until this. An operator returning an integer leaves the binding untyped, and an untyped
-global keeps the result's word at every size. ⚠ A 9-16 byte result in parentheses (`var c = (a +
-b);`) is still an untyped word (it has no temporary to name): write `var c: T = (a + b);` or drop
-the parentheses.
+global keeps the result's word at every size. So does a comparison, and so does either one after a
+LEADING CALL (6.7.11): a call's struct types the binding only when the call is the whole initialiser —
+through 6.7.10 `var r = mk3(4) - s;` with an integer `P3_sub` took `mk3`'s `P3`, so `r.x` dereferenced
+the integer, and `var r = mk2(1) == p; return r;` returned a 16-byte struct from an 8-byte slot; both
+are refused now (*no struct type in scope for 'r'*, *... got `r`*).
+
+The same rule holds for **every whole struct result** (6.7.11, the user's decision of 2026-10-13): a
+method chain of 8 bytes or less (`var c = a.d().d();`), an if-expression whose branches are a struct of 8
+bytes or less (`var c = if (k == 1) { mk(7) } else { mk(9) };`) and a 9-16 byte operator or method result
+in parentheses (`var c = (a + b);`, `var e = (a.m());`) each declare `c` the struct, as the annotated
+form does and as a single method and the same chain over 8 bytes always did. Through 6.7.10 each was an
+untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the word (now it dispatches
+`S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
+first word as its address. A method chain ending in an integer method stays untyped; a scalar
+annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
@@ -2567,8 +2711,8 @@ every struct size, parentheses around it transparent: ``a multi-value call 'mk' 
 argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize struct 'P'`, `is not stored
 into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
 struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
-var p = P { a, b }; take(p);`. A callee declared `: P` that says `return (x, y);` returns a `P` and is accepted
-everywhere a `P` is. A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
+var p = P { a, b }; take(p);`. A callee declared `: P` returns a `P` and is accepted everywhere a `P` is (its
+`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
 does — and are not refused.
 
 ## Tuples
@@ -2651,7 +2795,8 @@ whole run of letters and digits. `p.0` on a named struct is an unknown field too
 a store into a tuple field (`h.p = (..);`), a tuple argument (`width((3, 10))`) and `return (a,
 b);`. In the var, assignment, field and argument positions, parentheses around the whole literal
 are transparent (`((1, 2))`); a multi-value return keeps its exact spelling, `return (a, b);`
-(`return ((a, b));` is refused). Anywhere else — an operand, an untyped or `callptr` argument, an
+(`return ((a, b));` is refused), and only in a fn declared `: (T1, T2[, T3])` or with no return
+type — a fn returning a named struct refuses it (6.7.11). Anywhere else — an operand, an untyped or `callptr` argument, an
 if-expression branch, `(1, 2).0`, a struct literal's element — it is refused by name. At top level
 only the declaration works: `G = (3, 4);` and `take((1, 2))` build the literal in a frame temporary
 first, so they need a fn.
@@ -2755,6 +2900,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var p = (1, 2.5);` | `a float element needs the tuple's type declared …` |
 | `(1, 2) + 3`, `g((1, 2))` (untyped `g`) | ``a tuple `( .. )` is a value only as a `var` initializer, …`` |
 | `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
+| `return (a, b);` from a fn declared `: P` (a named struct, any size; 6.7.11) | ``a fn returning the struct `P` returns that struct — `(a, b)` is a tuple, another type`` |
 | `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
@@ -2897,9 +3043,16 @@ A `u64` field is not supported (the build fails naming `u64_to_json`), nor is `V
   of every other escape (`"\u0001\b"` read `u0001b`), and the pairs form stored bayan's value
   itself — every escape raw, and a borrow into the parsed document rather than a copy.
 
-⚠ Known defect (6.7.10, and 6.7.9): the scanner `T_from_json_str` does not decode a nested
-`#derive`d struct field, and loses every field after it (left 0); the pairs form decodes all of
-them — use `T_from_json(bayan_json_parse(..))` for a struct that nests one.
+A **nested `#derive`d struct** decodes in both decoders: the scanner decodes the object through
+the inner struct's own `T_from_json_str` and copies it in place, as the pairs form does. A nested
+value that is not an object (`null`, a number, a string) leaves the field 0, and a field typed with
+a struct no `#derive(Serialize)` / `#derive(Deserialize)` above it registered (an accessors-only
+struct among them) is skipped. The scanner walks every value it does not
+take — that one, an unknown key's — WHOLE, string- and depth-aware, so an object, an array or a
+string holding `,` / `}` never derails it. Through 6.7.10 both skipped to the first `,` or `}` at
+any depth: the nested field stayed 0, the inner object's keys were read as the outer struct's (an
+outer field of the same name took the inner value) and its `}` ended the scan, so every field after
+it was lost; an unknown key holding an object fed its keys to the outer struct.
 
 The escaper and the decoders are public in `lib/str.cyr`: `str_builder_add_json_str(sb, s)`,
 `str_builder_add_json_cstr(sb, p)` (`null` for a NULL `p`), `str_json_unescape(p, n)` (a fresh
@@ -6326,8 +6479,9 @@ offsets past the params.
 - A classic `for` step is ONE assignment — any assignment a statement takes, `=` or a compound
   operator (6.7.5) — ending at its `)` (6.7.8): not a call, not `i++`, not a comma list. Its
   destination resolves as the statement's does: `for (i = 0; i < 5; j = i + 1)` with `j` declared
-  nowhere (or a fn's name, or a closure's captured name) is `undefined variable 'j'` — before
-  6.7.9 it compiled and stored nothing, so the loop never advanced
+  nowhere (or a fn's name) is `undefined variable 'j'`, and a closure's captured name is the
+  capture refusal (`'j' is captured by value; ...`, 6.7.11) — before 6.7.9 it compiled and stored
+  nothing, so the loop never advanced
 - Exit codes truncated to 0-255 (Linux limitation)
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
