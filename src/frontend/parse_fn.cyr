@@ -10650,6 +10650,7 @@ fn _param_type_step_q(S): i64 {
 fn _param_type_step(S): i64 {
     if (PEEKT(S) == 2) {
         STI(S, GTI(S) + 1);
+        _vec_ann_chk(S, GTI(S) - 1, _pty_pnoff(S));   # 6.7.11: `v: Vec<T>` / `v: *Vec<T>` read T
         return 0;
     }
     _pty_bad = 0;
@@ -10767,6 +10768,7 @@ fn _pty_list(S, i, loud): i64 {
 # A name at token `i` no other arm checks: refused by name unless it is a type (the type-name arm's
 # set, `_tn_param_check`: a by-name handle or vector, a resolved type, the fn's own type parameter).
 fn _pty_name(S, i): i64 {
+    _vec_ann_chk(S, i, _pty_pnoff(S));   # 6.7.11: `p: **Vec<T>`, a `*fn(Vec<T>)` parameter
     var nm = TOKVAL(S, i);
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }

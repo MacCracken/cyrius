@@ -178,7 +178,7 @@ matches the **whole** name:
 | `u128` | 16 | |
 | `f32` / `f64` | 4 / 8 | |
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | an enum may be declared on either side |
-| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it |
+| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it; `T` is read (6.7.11, below) |
 | a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
 | a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
@@ -208,6 +208,18 @@ by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`,
 multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `dyn Tr` (6.7.8)
 — `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
 type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+
+**A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
+local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
+`**Vec<T>`, a `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)`. `T` is a struct or union, an integer or
+float, `bool`, `cstring`, `Result` / `Option` / `Tagged`, an enum, `Vec` (a nested `Vec<..>` is read
+the same way) or a type parameter in scope; any other element's own `<..>` is not read
+(`Vec<Box<i64>>`). Everything else is refused by name, once: a tuple (`a tuple type cannot be a Vec
+element`), an unknown name (`unknown type 'Nope' as the Vec element of 'v'`), a vector type, a slice,
+`u128`, a token that is no type (`expected a Vec element type for 'v', got number 1`) or a second
+argument (`Vec<i64, i64>`). The handle is unchanged: `Vec<T>` declares the 8-byte word it always did.
+Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i64)>`,
+`Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13).
 
 **A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
 plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare

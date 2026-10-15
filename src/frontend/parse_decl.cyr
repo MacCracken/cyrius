@@ -4656,6 +4656,7 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
+    if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
     if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
     if (sid <= 0) { SKIP_GENERICS(S); return sid; }
     if (PEEKT(S) != 19) {

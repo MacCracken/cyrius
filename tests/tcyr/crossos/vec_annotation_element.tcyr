@@ -1,0 +1,111 @@
+# vec_annotation_element.tcyr — 6.7.11 — a `Vec<T>` annotation reads its T as a struct field
+# `items: Vec<T>` does (the user's decision (a), 2026-10-13), and every element it accepts declares
+# what a Vec annotation always declared: an 8-byte vec_new() handle.
+#
+# ⛔ THE DEFECT, through 6.7.10. A local, a global (either zone), a parameter, `*Vec<T>` and
+# `sizeof(Vec<T>)` skipped their `<..>` unread, so `Vec<(i64, i64)>`, `Vec<nosuchtype>` and
+# `Vec<1 + 2>` compiled where the field form refused each by name. They are refused now
+# (tests/gates/frontend/tuple_checked.sh R3q-R3z, struct_field_type_unknown_refused.sh V). This file
+# pins the other half on every fork: each element the field vocabulary takes — a struct (declared
+# above or, in a fn, below), a generic instance, an enum, an integer, a float, bool, cstring, Result,
+# a nested `Vec<..>` (spaced or folded `>>` / `>>>`), a bare `Vec`, a type parameter in scope — in
+# each position, still compiles and runs as the handle it was.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct Box<T> { v: T; }
+struct Pt { x; y; }
+enum Col { RED, GREEN }
+
+var GZ: Vec<Pt> = 0;                   # the declaration zone
+var GZN: Vec<Vec<i64>> = 0;
+var GZP: *Vec<i64> = 0;
+
+fn vlen(v: Vec<i64>): i64 { return vec_len(v); }
+fn vlen_box(v: Vec<Box<i64>>): i64 { return vec_len(v); }
+fn vlen_p(p: *Vec<i64>): i64 { return vec_len(load64(p)); }
+fn vlen_pp(pp: **Vec<Pt>): i64 { return vec_len(load64(load64(pp))); }
+fn vlen_cb(cb: *fn(Vec<i64>): i64, v: Vec<i64>): i64 { return fncall1(cb, v); }
+fn vlen_nest(v: Vec<Vec<i64>>): i64 { return vec_len(vec_get(v, 0)); }
+fn vg<T>(v: Vec<T>): i64 {
+    var w: Vec<T> = v;
+    var n: Vec<Vec<T>> = 0;
+    var pw: *Vec<T> = &w;
+    return vec_len(load64(pw)) + sizeof(Vec<T>) + n;
+}
+fn vlater(): i64 {
+    var l: Vec<Later> = vec_new();       # a struct declared below the fn
+    vec_push(l, 1);
+    vec_push(l, 2);
+    return vec_len(l);
+}
+
+fn locals(): i64 {
+    var a: Vec<i64> = vec_new();
+    vec_push(a, 5);
+    vec_push(a, 6);
+    var b: Vec<Box<i64>> = vec_new();
+    vec_push(b, 7);
+    var c: Vec<Col> = vec_new();
+    vec_push(c, GREEN);
+    var d: Vec<f64> = vec_new();
+    var e: Vec<u8> = vec_new();
+    var f: Vec<bool> = vec_new();
+    var g: Vec<cstring> = vec_new();
+    var h: Vec<Vec<Vec<i64>>> = vec_new();
+    var k: Vec< Vec<i64> > = vec_new();
+    var m: Vec = vec_new();
+    var r: Vec<Result> = vec_new();
+    vec_push(k, a);
+    assert_eq(vec_len(a), 2, "var a: Vec<i64>");
+    assert_eq(vec_get(b, 0), 7, "var b: Vec<Box<i64>>");
+    assert_eq(vec_get(c, 0), GREEN, "var c: Vec<Col> (an enum)");
+    assert_eq(vec_len(d) + vec_len(e) + vec_len(f) + vec_len(g) + vec_len(h) + vec_len(m) + vec_len(r), 0,
+      "Vec<f64> / Vec<u8> / Vec<bool> / Vec<cstring> / Vec<Vec<Vec<i64>>> / Vec / Vec<Result>");
+    assert_eq(vec_len(vec_get(k, 0)), 2, "var k: Vec< Vec<i64> > (spaced)");
+    var pa: *Vec<i64> = &a;
+    assert_eq(vec_len(load64(pa)), 2, "var pa: *Vec<i64>");
+    assert_eq(vlen(a), 2, "a parameter v: Vec<i64>");
+    assert_eq(vlen_box(b), 1, "a parameter v: Vec<Box<i64>>");
+    assert_eq(vlen_p(&a), 2, "a parameter p: *Vec<i64>");
+    var q: Vec<Pt> = vec_new();
+    vec_push(q, 0);
+    vec_push(q, 0);
+    vec_push(q, 0);
+    var pq: *Vec<Pt> = &q;
+    assert_eq(vlen_pp(&pq), 3, "a parameter pp: **Vec<Pt>");
+    assert_eq(vlen_cb(&vlen, a), 2, "a parameter cb: *fn(Vec<i64>): i64");
+    assert_eq(vlen_nest(k), 2, "a parameter v: Vec<Vec<i64>>");
+    assert_eq(vg<i64>(a), 10, "vg<i64>: Vec<T> / *Vec<T> / Vec<Vec<T>> locals, sizeof(Vec<T>)");
+    assert_eq(vg<Pt>(q), 11, "vg<Pt>: the same at a struct T");
+    assert_eq(vlater(), 2, "var l: Vec<Later>, Later declared below the fn");
+    return 0;
+}
+
+fn vmain(): i64 {
+    assert_eq(sizeof(Vec<i64>), 8, "sizeof(Vec<i64>)");
+    assert_eq(sizeof(Vec<Vec<Pt>>), 8, "sizeof(Vec<Vec<Pt>>)");
+    assert_eq(sizeof(Box<Vec<i64>>), 8, "sizeof(Box<Vec<i64>>)");
+    GZ = vec_new();
+    vec_push(GZ, 1);
+    GZN = vec_new();
+    vec_push(GZN, GZ);
+    var a: Vec<i64> = vec_new();
+    vec_push(a, 4);
+    GZP = &a;
+    assert_eq(vec_len(GZ) + vec_len(GZN) + vec_len(load64(GZP)), 3,
+      "declaration-zone Vec<Pt> / Vec<Vec<i64>> / *Vec<i64>");
+    return locals();
+}
+
+struct Later { a; b; }
+
+vmain();
+var GP: Vec<Pt> = vec_new();           # after the first statement
+var GPN: Vec<Vec<Box<i64>>> = 0;
+vec_push(GP, 9);
+assert_eq(vec_get(GP, 0) + GPN, 9, "post-statement globals Vec<Pt> / Vec<Vec<Box<i64>>>");
+var r = assert_summary();
