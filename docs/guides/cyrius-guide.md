@@ -1048,7 +1048,10 @@ at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that decl
 the difference was a byte count). A pointer to a one-byte STRUCT (`pb: *B1`) is such a pointer too
 (6.7.11, the user's decision of 2026-10-13): `m + pb` and `0 + pb` are that pointer, `var r: *B1 = 1 +
 pb;` is silent and `(1 + pb) - q32` is refused as `(pb + 1) - q32` is (through 6.7.10 the
-difference was a byte count and the declaration warned). `load8` / `store16` / … stay valid for an
+difference was a byte count and the declaration warned). So is `&x`, a byte address, on either side
+of `+` (6.7.11, the user's decision of 2026-10-13): `n + &x` is the pointer `&x + n` is, so
+`var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32` is refused (through 6.7.10 the first warned
+and the second was a byte difference). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
@@ -1060,7 +1063,11 @@ closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, 
 is a pointer, not a `T`: `p + 1` on a `p: *f32` parameter is address arithmetic (not a
 float add), and on a `p: *Pt` parameter it is not `Pt`'s `+` overload — `p.x` still reads
 through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q = p;`).
-`n + p` steps like `p + n`. `q - p` of two pointers with the same element size is the number
+`n + p` steps like `p + n`. A narrow scalar — a `u8` / `i8` / … / `i32` local, global or parameter —
+is an integer, never a pointer: `w - q` is `n - p`, `w + q` steps `q`'s `sizeof(T)`, and
+`var r: *u32 = w;` warns. (Through 6.7.10 a narrow LOCAL was a one-byte pointer to these rules:
+`w - q32` was refused as a pointer difference, `var r: *u32 = w;` was silent, and with `q: *i32`
+`w + q` added `w` unscaled — `q` + 1 for `w = 1`.) `q - p` of two pointers with the same element size is the number
 of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
 different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer

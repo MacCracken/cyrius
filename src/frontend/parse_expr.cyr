@@ -4245,14 +4245,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 _lt_spsc(S, li, lt);   # SPSC(S, lt); 6.7.8: a step-8 `*T` local's step word
                 # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
                 # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
-                # a pointer — its scale for `+`/`-` arithmetic must be 1, not its byte
-                # width. The SPSC(S, lt) above sets scale=lt, which is only correct for a
-                # pointer-to-lt element; a plain `var a: i32` then made `a + 2` add
-                # 2*sizeof(i32). Reset to 1 for lt < 8 ONLY: SLTYPE 8 is a `*i64` typed
-                # pointer (scalar i64 is SLTYPE 0), which genuinely needs scale 8 for
-                # `p + i`. No sub-i64 typed pointers exist, so 1/2/4 are always scalars.
+                # a pointer — the SPSC(S, lt) above sets a step of lt, which would make
+                # `a + 2` on a plain `var a: i32` add 2*sizeof(i32). Reset for lt < 8 ONLY:
+                # SLTYPE 8 is a `*i64` typed pointer (scalar i64 is SLTYPE 0), which needs
+                # its step for `p + i`. 6.7.11: reset to 0, an integer's — it was 1, which
+                # scales nothing but answers "a pointer" to every `> 0` test, so `w - q32`
+                # was refused as a pointer difference and `var r: *u32 = w;` did not warn,
+                # where an i64 local, a narrow global and a narrow parameter are integers.
+                # CHANGELOG [6.7.11]
                 if (lt > 0) { if (lt <= 8) {
-                        if (lt < 8) { SPSC(S, 1); }
+                        if (lt < 8) { SPSC(S, 0); }
                         SEXW(S, lt);
                         # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
                         # sentinel) loads via movsx (negative width); unsigned stays movzx.
@@ -7041,34 +7043,44 @@ fn _ptr_add(S, ps): i64 {
     EUNSPILL(S);
     EADDR(S);
     var w = _add_word(ps, rs);
-    if (w == 0) { if (ps == 0) { w = _add_rb1(S, rs); } }   # 6.7.11: `n + pb`, `pb: *B1`
+    if (ps == 0) { if (_rhs_mwcap(S) == 1) { w = 0; } }   # 6.7.11: `n + cap`, no pointer
     return _pk_set(S, w);
 }
-# `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
+# `+`'s result word: the left operand's (`p + n`), else a one-byte pointer's on the right (`n + p`, the
 # user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
 # `*u8` where `p8 + 1` is one: `(1 + p8) - q32` built a byte difference and `var r: *u8 = 1 + p8;`
-# warned. A step 1 with no element kind (`&x`, a narrow scalar local) is no `*T`: not written.
-# CHANGELOG [6.7.9]
+# warned. CHANGELOG [6.7.9] 6.7.11: a step 1 with no element kind too — `&x` (v6.5.29: "`&x` IS a
+# pointer", byte-addressed) and a `*B1` (a one-byte struct's): `n + &x` is the byte pointer `&x + n`
+# is (the user's decision (a), 2026-10-13), so `var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32`
+# refused. The kind test kept a narrow scalar local's step 1 out; that local now loads 0.
+# CHANGELOG [6.7.11]
 fn _add_word(ps, rs): i64 {
     if (ps != 0) { return ps; }
     if (_ps_step(rs) != 1) { return 0; }
-    if (((rs >> 40) & 0xFF) == 0) { return 0; }
     return rs;
 }
 # ⛔ 6.7.11 — DECISION 1(b) FOR A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a) Yes, extend
 # 1(b)"): `m + pb` / `0 + pb` with `pb: *B1` are that pointer, as `n + p8` is. A one-byte struct's word
 # carries no element kind (a struct is no subscript element), so `_add_word` could not tell it from `&x`
 # or a narrow local's step 1 and wrote no step: `t1(m + pb)` passed the address's low byte as the B1, and
-# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. The right term [`_rhs_b`,
-# cursor) is typed by its tokens (`_hl_psid`, parse_decl.cyr): a `*T` of a one-byte struct keeps `rs`.
-# CHANGELOG [6.7.11]
-fn _add_rb1(S, rs): i64 {
-    if (_ps_step(rs) != 1) { return 0; }
+# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. 6.7.11 (`n + &x`): a narrow
+# local loads no step now, and `&x` commutes too, so `_add_word` writes every step-1 word — but one: a
+# MULTI-WORD closure capture's value is its env words' address, step 1 with no kind, and the struct it
+# holds is no pointer the source wrote (`m + s` on the frame's own `s: Pt` is an integer). 1 when the
+# right term [`_rhs_b`, cursor) is such a capture's bare (parenthesised) name. CHANGELOG [6.7.11]
+fn _rhs_mwcap(S): i64 {
+    if (_cl_capturing != 1) { return 0; }
     if (_rhs_b < 0) { return 0; }
-    var t = _hl_psid(S, _rhs_b, GTI(S));
-    if (t <= 0) { return 0; }
-    if (STRUCTSZ(S, t - 1) != 1) { return 0; }
-    return rs;
+    var a = _ie_unparen(S, _rhs_b, GTI(S));
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0; }
+    var esl = _cl_snap_find(S, TOKVAL(S, a));
+    if (esl < 0) { return 0; }
+    var c = _cl_cap_find(esl);
+    if (c < 0) { return 0; }
+    if (L64(&_cl_cap_w + c * 8) > 1) { return 1; }
+    return 0;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
 # step word (6.7.8): the multiplier is its step, and the result keeps the word.
