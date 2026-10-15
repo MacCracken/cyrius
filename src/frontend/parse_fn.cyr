@@ -1716,6 +1716,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
+    if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }   # 6.7.12 (D27): `rd(mkv(..))` into `*V`
     # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
     # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
     # (ops-5) A whole dereference `take(*p)` passes its pointer (`_sarg_deref`).
@@ -1804,7 +1805,10 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
 # mask routes it), Win64 takes the address the arm pushes. (A `*V` local's SLTYPE is 0: its value.)
 fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
     var pv = _pvec_param(S, fi, argc);
-    if (pv == 0) { return _TARGET_PE; }
+    if (pv == 0) {
+        if (_pptr_param(S, fi, argc) == 1) { return _vec_kind_err(S, PEEKV(S), fi); }   # 6.7.12 (D27)
+        return _TARGET_PE;
+    }
     if (pv != 0 - lt) {
         ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
           L64(_fnt_names + fi * 8));
@@ -1820,7 +1824,122 @@ fn _pvec_param(S, fi, k): i64 {
     var i = _dps_ts;
     if (TOKTYP(S, i) != 8) { return 0; }
     if (TOKTYP(S, i + 1) != 2) { return 0; }
-    return _ptc_vec_sid(_classify_param_type(S, TOKVAL(S, i + 1)));
+    var tn = TOKVAL(S, i + 1);
+    return _ptc_vec_sid(_ptr_vclass(S, tn, _classify_param_type(S, tn)));
+}
+# 1 = parameter `k` of fn `fi` is declared a pointer (`p: *T`, `**T`, `*fn(..)`), read as `_pvec_param` reads it.
+fn _pptr_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    if (TOKTYP(S, _dps_ts) != 8) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.12 — A VECTOR LOCAL INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (D27, the user, 2026-10-15: B —
+# "another pointer kind refused by name"). `rp(b)` with `p: *Pt` and `ri(b)` with `p: *i64` pushed the
+# vector's lane 0 as the address (139 on x86_64 and aarch64, a cx guest fault, exit 5 on PE; PE's `rp(b)`
+# pushed `&b` by accident, 42): a vector is no `*Pt`, as a struct of another type is no `*S` (6.7.3). The
+# name `noff` as an argument of `fi`; 0 (the value push keeps the parse in step, no binary is written).
+fn _vec_kind_err(S, noff, fi): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' to a parameter that is not a pointer to its vector type in a call to '");
+    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR("' - pass &");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(" for its address\n");
+    _err_excerpt(S);
+    _had_error = 1;   # no `_panic`: the parse is in step, so one compile reports every such argument
+    return 0;
+}
+# The same for a whole vector LOCAL argument (the cursor on it, inside any parentheses that wrap all of it)
+# to parameter `argc` of `fi` that is not address-passed — a `*i64`, `*u8`, `**T` (`_sarg_byval_small`).
+# Nothing is consumed.
+fn _sarg_vec_other(S, fi, argc): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        var e = TOKTYP(S, _pw_end);
+        if (e != 31) { if (e != 11) { return 0; } }
+        ti = ti + k;
+        if (TOKTYP(S, ti + 1) != 11) { return 0; }
+    } else {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx != 31) { if (nx != 11) { return 0; } }
+    }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, ti));
+    if (li < 0) { return 0; }
+    if (_is_simd_any(S, GLTYPE(S, li)) == 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _vec_kind_err(S, TOKVAL(S, ti), fi);
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.12 — A VECTOR CALL RESULT INTO A `*V` PARAMETER PASSES A TEMP'S ADDRESS (D27, the user, 2026-10-15: B).
+# `rd(mkv(42, 7))` with `p: *f64v2` pushed the call's value — lane 0 — as the address: 139 on x86_64 and
+# aarch64, a cx guest fault, exit 5 on PE (x86_64 refused it through 6.7.10 by the value-form path's text; the
+# 6.7.11 `*V` parameter made it compile). A vector is the guide's other value-form aggregate, and a struct
+# call result into `*S` is received into a frame temp whose address is passed (6.6.20): the same here. The
+# whole argument at the cursor (`_sarg_paren` peels a wrap) is a call declared to return a vector — by name, or
+# `fncallN(&f, ..)` / `callptr(&f, ..)` — and parameter `argc` of `fi` is a `*V`: the call is received into
+# anonymous slots as a vector local is (`_vrcv_emit`: the register pair stored, on PE the slots' address its
+# hidden result pointer), whose address is pushed (`_sarg_escapes`: a tail call diverts). A vector of another
+# type is refused with A2's words; at top level there is no frame (a value-form vector is a local): refused by
+# name, as a struct result is there. 1 = pushed; 0 = not this arm, or refused (the value push follows).
+var _svc_k = 0;    # `_svc_rs`'s source kind for `_vrcv_emit`: 1 by name, 2 through `&f`
+var _svc_nm = 0;   # ... and the callee's name
+fn _sarg_vec_call(S, fi, argc, tail): i64 {
+    var pv = _pvec_param(S, fi, argc);
+    if (pv == 0) { return 0; }
+    var rs = _svc_rs(S, GTI(S));
+    if (rs == 0) { return 0; }
+    if (0 - rs != pv) {
+        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ",
+          L64(_fnt_names + fi * 8));
+        return 0;
+    }
+    if (GINFN(S) != 1) { return _svc_toplevel_err(S); }
+    _vec_desc(S, rs);
+    var t = _agg_temp_t(S, GVEC_NSLOTS(S), rs);
+    _vrcv_k = 0;
+    _vrcv_emit(S, t, rs, _svc_k);
+    _sarg_escapes(fi, argc, tail);
+    EFLADDR(S, t);
+    EPUSHR(S);
+    return 1;
+}
+# The vector (its descriptor, negative) the WHOLE argument at token `ti` returns when it is a call declared
+# to return one — by name (`_vrcv_vcall`), or `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`); else 0.
+fn _svc_rs(S, ti): i64 {
+    var rs = _icall_rs_at(S, ti);
+    if (rs <= 0 - 2048) {
+        _svc_k = 2;
+        _svc_nm = TOKVAL(S, _icall_open_at(S, ti) + 2);
+    } elif (_vrcv_vcall(S, ti) == 1) {
+        _svc_k = 1;
+        _svc_nm = TOKVAL(S, ti);
+        rs = GFRS(S, FINDFN(S, _svc_nm));
+    } else { return 0; }
+    if (_call_is_whole_arg(S, ti) == 0) { return 0; }
+    return rs;
+}
+fn _svc_toplevel_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _svc_nm);
+    PRSTR("' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
 }
 
 # ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
@@ -1834,10 +1953,24 @@ fn _pvec_param(S, fi, k): i64 {
 # refused by name, as a variable is). Anything else is `_push_struct_expr_arg`'s, as before. CHANGELOG [6.7.10]
 fn _sarg_deref(S, fi, argc, tail): i64 {
     var dw = _dro_want;
+    var dv = _dro_vt;
     _dro_want = GTI(S);
+    _dro_vt = _dro_vt_for(S, fi, argc);   # 6.7.12 (D27): a `*V` parameter takes a vector's pointer
     var r = _push_struct_expr_arg(S, fi, argc, tail);
     _dro_want = dw;
+    _dro_vt = dv;
     return r;
+}
+# ⛔ 6.7.12 — A VECTOR DEREFERENCE INTO A `*V` PARAMETER PASSES ITS POINTER (D27, the user, 2026-10-15: B). `rd(*pb)`
+# with `pb: *f64v2` and `p: *f64v2` pushed lane 0 — the word the dereference read — as the address (139 on
+# x86_64 and aarch64, a cx guest fault, exit 5 on PE), as `take(*p)` did for a struct before 6.7.10's decision
+# 6. The `*` that starts the argument is parked as a struct's is when parameter `argc` of `fi` is a `*V`
+# (`_dlo_vec`, parse_expr.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
+# pushed (`_push_struct_expr_arg`); a `*` of another vector type is refused with A2's words (`_dro_check`).
+# The `*` token for `_dlo_vec`, -1 when the parameter is no `*V`.
+fn _dro_vt_for(S, fi, argc): i64 {
+    if (_pvec_param(S, fi, argc) == 0) { return 0 - 1; }
+    return GTI(S);
 }
 # 1 = the dereference `_dlo_park` parked spans [b, cursor) — inside any parentheses wrapping the whole of
 # it — and nothing was emitted since its load: the pointer is in `_dlo_h`.
@@ -1850,7 +1983,13 @@ fn _dro_take(S, b): i64 {
 # through `_opd_operand`).
 fn _dro_check(S, fi, k): i64 {
     var nm = _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0);   # 6.7.11: `*gu<U>()` names `gu`
+    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k, nm); }   # 6.7.12: a vector's (`_dlo_vec`)
     return _sarg_type_err(S, fi, k, _dlo_sid, nm);
+}
+fn _dro_vcheck(S, fi, k, nm): i64 {
+    if (_pvec_param(S, fi, k) == _dlo_sid) { return 0; }
+    ERR_IDENT(S, "cannot pass ", nm, " to a parameter of a different vector type in a call to ", L64(_fnt_names + fi * 8));
+    return 1;
 }
 
 # ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`).
@@ -2173,6 +2312,7 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
 # POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
+    _sarg_vec_other(S, fi, argc);   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
@@ -10746,7 +10886,7 @@ fn _mark_ptr_param(S): i64 {
         ps = _ptr_step_peek(S, 0 - 1, 1);
         ed = _ek_at(S, GTI(S));
     }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_word(ps, ed));
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1)));   # 6.7.12: a `*V`'s vector
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
@@ -13322,6 +13462,7 @@ fn _prescan_skip_fn(S): i64 {
 # while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
 fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
     var c = _classify_param_type(S, tnoff);
+    if (isptr == 1) { c = _ptr_vclass(S, tnoff, c); }   # 6.7.12: `*f32v8`
     if (c != 0) {
         if (isptr == 1) { return _ptc_is_vec(c); }   # 6.7.11: `p: *V` takes an address, as `*S` does
         return 0;
@@ -13344,8 +13485,18 @@ fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
 fn _param_class(S, tnoff): i64 {
     var c = _classify_param_type(S, tnoff);
     if (TOKTYP(S, GTI(S) - 1) != 8) { return c; }
-    if (_ptc_is_vec(c) == 1) { return 9; }
+    if (_ptc_is_vec(_ptr_vclass(S, tnoff, c)) == 1) { return 9; }
     return c;
+}
+# ⛔ 6.7.12 — `*f32v8` IS A `*V` (D27's `*f32v8` row, D33's rule): `_classify_param_type` has no class for f32v8,
+# so a `p: *f32v8` parameter was an untyped pointer and `r8(e)` pushed lane 0 as the address (139 on x86_64 and
+# aarch64, cx 1, PE 5), where `*f32v4` took `&e`. Behind a `*` only, class `c` of type name `tnoff` becomes
+# f32v8's descriptor (-2153), which the `*V` rules take (`_ptc_is_vec`, `_ptc_vec_sid`). A value-form
+# `v: f32v8` parameter keeps its class. CHANGELOG [6.7.12]
+fn _ptr_vclass(S, tnoff, c): i64 {
+    if (c != 0) { return c; }
+    if (_classify_return_type(S, tnoff) == 0 - 2153) { return 0 - 2153; }
+    return 0;
 }
 # 1 = `_classify_param_type`'s class `c` is a vector (f64v2 / f64v4 / f32v4, an integer 128-bit one).
 fn _ptc_is_vec(c): i64 {

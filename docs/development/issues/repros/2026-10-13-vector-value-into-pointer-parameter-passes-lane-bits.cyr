@@ -1,0 +1,13 @@
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn mkv(a, b): f64v2 { return f64v2_make(a, b); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    var pb: *f64v2 = &b;
+    var r1 = rd(mkv(42, 7));   # a vector call result: want 42 (or a refusal)
+    var r2 = rd(*pb);          # a vector dereference: want 42 (or a refusal)
+    return r1 + r2 - 42;
+}
+var rc = main();
+syscall(60, rc);

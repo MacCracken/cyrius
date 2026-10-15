@@ -132,7 +132,9 @@ depends on the cyrius parameter it lands in:
   XMM on SysV, V on aarch64, the `r235..` band on cx (by address on Win64) — which `fncallN`
   never loads: give the callee a pointer parameter and pass `&v` instead. A `p: *f64v2`
   parameter is that pointer since 6.7.11 (one integer word, the C ABI's pointer); before, the
-  `*` was dropped and it was a value-form vector too.
+  `*` was dropped and it was a value-form vector too. A direct call passes it a vector local's,
+  a vector call result's (a caller temporary, 6.7.12) or `*pv`'s address; through `fncallN` the
+  argument is a plain word, so pass `&v` or `pv` yourself.
 - **Default and named arguments** are filled only at a direct call (6.7.7): through `fncallN`
   or `callptr` every argument is passed by position, and a call short of a defaulted fn's
   parameters is refused (`a call through a fn pointer passes every argument: 'f' takes 2

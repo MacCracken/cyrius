@@ -3315,6 +3315,22 @@ dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is
 `fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
 registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
 
+**A vector value that is not a named local passes an address too (6.7.12; the user's decision
+D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
+`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))` — is received into a frame temporary whose
+address is passed (on Win64 the temporary is the call's hidden result pointer), as a struct call
+result into `*T` is (6.6.20); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
+a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)` passes a struct's
+pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
+top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
+a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)` passes `&e`; a
+value-form `v: f32v8` parameter is a separate matter). A vector **local** passed to a pointer of
+another kind — `p: *Pt`, `p: *i64`, `p: *u8`, `p: **T` — is refused by name: `cannot pass 'b' to a
+parameter that is not a pointer to its vector type in a call to 'rp' - pass &b for its address`
+(as a struct of another type is). ⚠ Through 6.7.11 every one of these passed lane 0's bits as the
+address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win64; x86_64 refused
+the `*V` call result and dereference through 6.7.10 by the value-form path's text).
+
 ### Packed-op builtins
 
 The raw builtins take **pointer arguments** (a destination and the operand

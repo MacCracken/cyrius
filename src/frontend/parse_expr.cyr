@@ -3947,7 +3947,7 @@ fn _pk_word(S): i64 {
 fn _pk_post(S, ti0): i64 {
     var w = GPSC(S);
     if (_ps_step(w) <= 0) { return 0; }
-    if (((w >> 40) & 0xFF) == 0) { return 0; }   # no element kind: nothing to vouch for
+    if ((w >> 40) == 0) { return 0; }   # no element kind (6.7.12: nor vector, `_ps_vdesc`): nothing to vouch for
     if (GTI(S) == ti0 + 1) { if (TOKTYP(S, ti0) == 2) { return _PK_MARK(S, w); } }
     var h = _sub_how(S, ti0);
     if (h == 0) { return 0; }
@@ -4019,6 +4019,7 @@ fn _deref_small(S, d): i64 {
 # operand (`_dro_want`, ops-5: its pointer is passed when it is the whole of it). CHANGELOG [6.7.10]
 fn _dlo_park(S, d): i64 {
     if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
+    if (d == _dro_vt) { if (_dlo_vec(S, d) == 1) { return 1; } }   # 6.7.12 (D27)
     var sid = _hl_psid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
@@ -4026,6 +4027,20 @@ fn _dlo_park(S, d): i64 {
     if (_dyn_is(S, sid) == 1) { return 0; }
     if (_ps_step(GPSC(S)) != STRUCTSZ(S, sid - 1)) { return 0; }
     _dlo_sid = sid;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`, parse_fn.cyr),
+# its operand typed `*V` (the step word's vector, `_ps_vdesc`) and ending the argument (`,` or `)` next — no
+# operator: a parked vector is no left operand `_opd_lst` may dispatch): the pointer parked as a struct's is,
+# `_dlo_sid` the vector's descriptor (>= 2048, so `_dro_check` compares vector types). 1 = parked.
+fn _dlo_vec(S, d): i64 {
+    var t = TOKTYP(S, GTI(S));
+    if (t != 31) { if (t != 11) { return 0; } }
+    var vd = _ps_vdesc(_pk_word(S));
+    if (vd == 0) { return 0; }
+    _dlo_sid = vd;
     _dlo_h = _HTEMP(S);
     _HTSTORE(S, _dlo_h);
     return 1;

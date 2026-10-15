@@ -1,0 +1,13 @@
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Pt { x; y; }
+fn rp(p: *Pt): i64 { return p.x; }
+fn ri(p: *i64): i64 { return *p; }
+fn r8(p: *f32v8): i64 { return load32(p); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    var e: f32v8 = f32v8_make(42, 2, 3, 4, 5, 6, 7, 8);
+    return rp(b) + ri(b) + r8(e) - 84;   # want 42, or refusals
+}
+var rc = main();
+syscall(60, rc);
