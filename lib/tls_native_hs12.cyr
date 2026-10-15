@@ -145,8 +145,10 @@ fn tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out
 
 var TLS12_MASTER_SECRET_LEN = 48;       # RFC 5246 §8.1 (fixed 48 bytes)
 const _TLS12_VERIFY_DATA_LEN = 12;      # RFC 5246 §7.4.9 (default 12)
+# Read-only mirror of `_TLS12_VERIFY_DATA_LEN`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS12_VERIFY_DATA_LEN   = _TLS12_VERIFY_DATA_LEN;
 const _TLS12_RANDOM_LEN     = 32;       # client/server Random (RFC 5246 §7.4.1.2)
+# Read-only mirror of `_TLS12_RANDOM_LEN`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS12_RANDOM_LEN        = _TLS12_RANDOM_LEN;
 const _TLS12_SEED_LEN       = 2 * _TLS12_RANDOM_LEN;   # the PRF seed: one Random after the other
 

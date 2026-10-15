@@ -176,6 +176,8 @@ var TLS_ERR_KEY_UNSUPPORTED = 0 - 21;
 # (ContentType = TLS_CT_HANDSHAKE) and may span multiple records.
 
 const _TLS_HANDSHAKE_HEADER_LEN = 4;
+# Read-only mirror of `_TLS_HANDSHAKE_HEADER_LEN`: lib/ reads the const; a write changes nothing (D16).
+# CHANGELOG [6.7.12]
 var TLS_HANDSHAKE_HEADER_LEN = _TLS_HANDSHAKE_HEADER_LEN;
 
 # Write a 4-byte handshake message header into `buf`. Returns
@@ -228,6 +230,7 @@ var TLS_HASH_SHA384_LEN = 48;
 var TLS_TRANSCRIPT_STATE_LEN = 16;
 var TLS_SHA256_CTX_LEN = 144;
 const _TLS_SHA384_CTX_LEN = 208;
+# Read-only mirror of `_TLS_SHA384_CTX_LEN`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS_SHA384_CTX_LEN = _TLS_SHA384_CTX_LEN;
 
 # Initialize a transcript-hash accumulator. `hash_algo` is one of

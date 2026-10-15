@@ -627,8 +627,10 @@ enum AgnosRedirOp {
 }
 var SPAWN_LINE_MAX = 127;    # #43 line form (flags == 0) and #37: payload bytes
 const _SPAWN_ARGV_MAX = 1024;   # #43 SPAWN_F_ARGV blob: total bytes, NULs included (min 2)
+# Read-only mirror of `_SPAWN_ARGV_MAX`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var SPAWN_ARGV_MAX = _SPAWN_ARGV_MAX;   # the const sizes every argv blob buffer (6.7.6)
 const _SPAWN_ENV_MAX = 1024;    # #43 env blob (a3 / a4): total bytes, NULs included — the kernel's limit
+# Read-only mirror of `_SPAWN_ENV_MAX`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var SPAWN_ENV_MAX = _SPAWN_ENV_MAX;     # the const sizes every env blob buffer (6.7.9)
 # ⚠ SPAWN_ARGV_MAX and SPAWN_ENV_MAX tell a caller the kernel's limits; every buffer, cap and check
 # in the peer reads the CONST, so writing either var changes nothing here (before 6.7.9 a raised
