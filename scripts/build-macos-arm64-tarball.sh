@@ -34,11 +34,16 @@ trap 'rm -rf "$WORK"' EXIT
 
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }
 
+mkdir -p "$WORK/$STAGE/bin" "$WORK/$STAGE/lib"
+
+# Every cyrius.cyml [release] scripts entry, read from the manifest: a hand-copied subset left
+# cyrius-watch.sh out of every macOS tarball (the user's decision D4, 2026-10-15: ship every
+# entry). First, so an entry with no file fails the build before anything compiles. CHANGELOG [6.7.12]
+sh scripts/release-scripts.sh "$WORK/$STAGE/bin"
+
 # Build the aarch64-emitting cross-compiler (Linux ELF; emits arm64).
 cat src/main.cyr          | ./build/cycc > "$WORK/cc_l"  && chmod +x "$WORK/cc_l"
 cat src/main_aarch64.cyr  | "$WORK/cc_l" > "$WORK/cc_x"  && chmod +x "$WORK/cc_x"
-
-mkdir -p "$WORK/$STAGE/bin" "$WORK/$STAGE/lib"
 
 # The compiler that RUNS on macOS (native Mach-O, from the macho driver —
 # carries the v6.0.37 auto-call-main fix). `cycc` and `cycc_aarch64` are
@@ -61,12 +66,8 @@ for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_su
 done
 # cycc_cx source is src/main_cx.cyr (a fork), not programs/cycc_cx.cyr — own line.
 cat src/main_cx.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cycc_cx"
-# Version manager + prompt helper + repl shim. v6.2.40: `cyrius init` and
-# `cyrius port` are the native cyrius-init binary (built above), so the
-# cyrius-init.sh / cyrius-port.sh shims are gone — only cyrius-repl.sh
-# remains as a shell shim.
-cp scripts/cyriusly scripts/cyrius-prompt-info "$WORK/$STAGE/bin/"
-cp scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
+# The version manager, as the shell script (the [release] scripts were staged above).
+cp scripts/cyriusly "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
 # 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
 # the one layout every POSIX slot has and scripts/verify-store.sh judges

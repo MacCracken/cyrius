@@ -39,6 +39,13 @@
 #           `movz x8,#4002` at its svc, carry both rows in the shared stub, and, under
 #           `qemu-aarch64 -strace`, make the same call as its `var` twin. The qemu leg is skipped
 #           BY NAME when qemu-aarch64 is absent.
+#   axis 8  XLAT-3 (6.7.12, fails on the old code): at an arm64 Mach-O LITERAL site the folded x16
+#           is a compile-time fact, so ESYSCALL's run-time pipe / fork fixups go where they cannot
+#           fire. Axis 3's all-literal probe carries ZERO `cmp x16,#42` (f100aa1f) and ZERO
+#           `cmp x16,#2` (f1000a1f) words (old: 18 and 9); a clone 220 site keeps only the fork
+#           half (one cmp x16,#2, right after its csneg); a pipe2 59 site at argc 2 keeps only the
+#           pipe halves (the stash before its svc, the store right after its csneg). Axis 6's
+#           variable-number sites and a `#naked` inline chain keep both (x16 is a run-time value).
 #
 # MUTATION LEDGER (measured 6.6.18, outside the gate; (c) re-measured 6.7.9):
 #   (a) bypass the fold (ESYSXLAT without _esx_fold for a literal)  -> axis 1 FAILS (1,804 cmp x8 words)
@@ -59,6 +66,13 @@
 #   (e) drop the `#naked` carve-out in _esx_stub_site                 -> axis 5 FAILS (82 cmp x8 words,
 #                                                                         want 164)
 #   (f) per-site chains (XLAT-2 reverted)                             -> axis 4 FAILS (1,804 for 22 sites)
+#   (g) the fold never records x16 (_esx_lit_x16 stays -1; measured 6.7.12) -> axis 8 FAILS (18 cmp
+#                                                                         x16,#42 words in axis 3's probe)
+#   (h) ESCPOPS never resets x16 (neither before the fold nor after
+#       its ESYSCALL; measured 6.7.12)                                -> axis 8 FAILS: the variable and
+#                                                                         #naked sites after a literal
+#                                                                         inherit its x16 and lose their
+#                                                                         fixups (0 and 0, want 4 and 2)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -282,4 +296,34 @@ else
     echo "  axis 7: synthetic rows 4000 -> 4001 -> 4002: the literal folds to movz x8,#4002 (the qemu twin SKIPPED: qemu-aarch64 absent)"
 fi
 
-echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O and match their runtime twins; a chained row folds through both renumbers; variable numbers share one stub per class; #naked keeps its inline chain)"
+# ── axis 8: XLAT-3 — a literal Mach-O site carries only the fixups its folded x16 can need ──
+_n42() { _words "$1" | grep -c '^f100aa1f$' || true; }
+_n2() { _words "$1" | grep -c '^f1000a1f$' || true; }
+# the word right after each `csneg x0,x0,x0,cc` (da803400), space-separated
+_aftercs() { _words "$1" | awk 'p == "da803400" {printf "%s ", $0} {p = $0}'; }
+A42=$(_n42 "$T/mo.bin"); A2=$(_n2 "$T/mo.bin")
+[ "$A42" = 0 ] && [ "$A2" = 0 ] || fail "axis 8: the 9-site all-literal Mach-O probe (no 220, no 59 at argc >= 2) carries $A42 cmp x16,#42 and $A2 cmp x16,#2 words — want 0 and 0: a folded x16 that is neither 42 nor 2 needs no pipe / fork fixup"
+printf 'syscall(220, 17, 0, 0, 0, 0);\nsyscall(39);\n' > "$T/mf.cyr"
+rc=0; CYRIUS_MACHO_ARM=1 "$T/cca" < "$T/mf.cyr" > "$T/mf.bin" 2> "$T/mf.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/mf.bin" ] || fail "axis 8: the clone-220 probe did not compile (rc $rc): $(head -3 "$T/mf.err")"
+[ "$(_n2 "$T/mf.bin")" = 1 ] && [ "$(_n42 "$T/mf.bin")" = 0 ] || fail "axis 8: a literal clone 220 (-> fork 2) site plus a getpid site carry $(_n2 "$T/mf.bin") cmp x16,#2 and $(_n42 "$T/mf.bin") cmp x16,#42 — want 1 and 0 (the fork half only)"
+case "$(_aftercs "$T/mf.bin")" in "f1000a1f "*) ;; *) fail "axis 8: the fork half does not follow the clone-220 site's csneg (words after each csneg: $(_aftercs "$T/mf.bin"))" ;; esac
+printf 'var _fb[16];\nsyscall(59, &_fb, 0);\nsyscall(39);\n' > "$T/mp.cyr"
+rc=0; CYRIUS_MACHO_ARM=1 "$T/cca" < "$T/mp.cyr" > "$T/mp.bin" 2> "$T/mp.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/mp.bin" ] || fail "axis 8: the pipe2-59 probe did not compile (rc $rc): $(head -3 "$T/mp.err")"
+[ "$(_n42 "$T/mp.bin")" = 2 ] && [ "$(_n2 "$T/mp.bin")" = 0 ] || fail "axis 8: a literal pipe2 59 (-> pipe 42, argc 2) site plus a getpid site carry $(_n42 "$T/mp.bin") cmp x16,#42 and $(_n2 "$T/mp.bin") cmp x16,#2 — want 2 and 0 (the pipe stash and store only)"
+_words "$T/mp.bin" | awk 'p2 == "f100aa1f" && p1 == "54000041" && $0 == "f81f0fe0" {f = 1} {p2 = p1; p1 = $0} END {exit !f}' \
+    || fail "axis 8: the pipe2-59 site lost its pre-svc stash (cmp x16,#42 / b.ne / str x0,[sp,#-16]!)"
+case "$(_aftercs "$T/mp.bin")" in "f100aa1f "*) ;; *) fail "axis 8: the pipe store does not follow the pipe2-59 site's csneg (words after each csneg: $(_aftercs "$T/mp.bin"))" ;; esac
+V42=$(_n42 "$T/mv.bin"); V2=$(_n2 "$T/mv.bin")
+[ "$V42" = 8 ] && [ "$V2" = 4 ] || fail "axis 8: axis 6's 4 variable-number Mach-O sites carry $V42 cmp x16,#42 and $V2 cmp x16,#2 — want 8 and 4 (x16 is a run-time value there: both fixups at every site)"
+# a literal site, then a variable site and a #naked inline-chain site emitted AFTER it: the
+# literal's x16 must not leak into either
+printf '%s\n' 'var _fn = 0;' 'syscall(39);' '_fn = 20;' 'syscall(_fn);' '#naked' 'fn _nk_call() {' '    syscall(_fn);' \
+    '    asm { 0xC0; 0x03; 0x5F; 0xD6; }' '}' '_nk_call();' > "$T/mn.cyr"
+rc=0; CYRIUS_MACHO_ARM=1 "$T/cca" < "$T/mn.cyr" > "$T/mn.bin" 2> "$T/mn.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/mn.bin" ] || fail "axis 8: the Mach-O #naked probe did not compile (rc $rc): $(head -3 "$T/mn.err")"
+[ "$(_n42 "$T/mn.bin")" = 4 ] && [ "$(_n2 "$T/mn.bin")" = 2 ] || fail "axis 8: a variable site and a #naked inline-chain site after a literal site carry $(_n42 "$T/mn.bin") cmp x16,#42 and $(_n2 "$T/mn.bin") cmp x16,#2 — want 4 and 2 (both fixups at each; the literal's x16 must not leak into them)"
+echo "  axis 8: Mach-O literal sites keep only the fixups their folded x16 needs (0 in axis 3's probe; fork half at 220, pipe halves at 59/argc 2); variable and #naked sites keep both"
+
+echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O and match their runtime twins; a chained row folds through both renumbers; variable numbers share one stub per class; #naked keeps its inline chain; a literal Mach-O site carries only the pipe / fork fixups its x16 can need)"

@@ -1,7 +1,7 @@
 # exec_child_signal_state.tcyr — CROSS-HOST: every child lib/process.cyr's exec family starts
 # (run, run_capture, spawn, exec_vec, exec_capture_status, exec_capture, exec_env, exec_vec_str,
 # exec_capture_str, exec_env_str, exec_cmd) begins with a fresh program's signal state, NOT its
-# parent's: SIGPIPE and SIGXFSZ at SIG_DFL and, on Linux, an empty signal mask. Every other
+# parent's: SIGPIPE and SIGXFSZ at SIG_DFL and an empty signal mask (on macOS since 6.7.12). Every other
 # ignore is KEPT — a SIGHUP that `nohup` ignored is the operator's choice. Runs on ecb (macOS
 # arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg; Windows has no
 # fork and agnos no signal delivery, so there the file only reports its summary.
@@ -64,15 +64,13 @@ fn _disp(sig): i64 {
     return load64(&old);
 }
 
-# This thread's blocked mask (Linux); 0 where the floor declines sigprocmask (macOS).
+# This thread's blocked mask. 6.7.12: macOS too — sys_sigprocmask is Darwin's 48 through a shim
+# there (it returned -78, so a mask the launcher blocked passed through to every child unseen).
 fn _mask(): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
     var cur[8];
     store64(&cur, 0);
     if (sys_sigprocmask(SIG_BLOCK, 0, &cur) < 0) { return 0 - 1; }
     return load64(&cur);
-    #endif
-    return 0;
 }
 
 # What the "sig" child found inherited: bit 0 SIGPIPE not at SIG_DFL, bit 1 SIGXFSZ not at
@@ -145,12 +143,10 @@ fn _parent(): i64 {
     assert_eq(_disp(SIGPIPE), 1, "the parent ignores SIGPIPE");
     assert_eq(_disp(SIG_XFSZ), 1, "the parent ignores SIGXFSZ");
     assert_eq(_disp(SIG_HUP), 1, "the parent ignores SIGHUP");
-    #ifdef CYRIUS_TARGET_LINUX
     var set[8];
-    store64(&set, 2);              # bit 1 = SIGINT (signal 2): what a signalfd reader blocks
-    sys_sigprocmask(SIG_BLOCK, &set, 0);
-    assert_eq(_mask() & 2, 2, "the parent blocks SIGINT (Linux)");
-    #endif
+    store64(&set, 2);              # bit 1 = SIGINT (signal 2 on Linux and Darwin): what a signalfd reader blocks
+    assert_eq(sys_sigprocmask(SIG_BLOCK, &set, 0), 0, "sys_sigprocmask(SIG_BLOCK) == 0 (macOS: -78 before 6.7.12)");
+    assert_eq(_mask() & 2, 2, "the parent blocks SIGINT");
 
     test_group("every exec-family child starts at SIG_DFL with an empty mask, SIGHUP kept");
     var buf = alloc(64);
@@ -207,9 +203,7 @@ fn _parent(): i64 {
     signal_default(SIGPIPE);
     signal_default(SIG_XFSZ);
     signal_default(SIG_HUP);
-    #ifdef CYRIUS_TARGET_LINUX
     sys_sigprocmask(SIG_UNBLOCK, &set, 0);
-    #endif
     return 0;
 }
 #endif

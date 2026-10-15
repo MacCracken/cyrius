@@ -4065,7 +4065,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
 | `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
-| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh |
+| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh, scripts/release-scripts.sh |
 
 ## Embedding data files: `[embed]`
 
@@ -7494,7 +7494,15 @@ The rules, in order:
 3. **Never write the aarch64-native number under an `#ifdef CYRIUS_ARCH_AARCH64`.** It looks
    like the careful thing to do and it is the fragile one: a compat row matches a NUMBER and
    cannot tell your native number from the x86 number it is chasing, so a routing row added
-   later silently steals it. ⚠ This applies to a **variable** syscall number too — the chain
+   later silently steals it. Since 6.7.12 a **raw literal** in such a region that a compat row
+   renumbers is warned at compile time — `raw syscall 9 inside a native-aarch64 region is
+   renumbered → 222 (mmap); write 1009 for native lgetxattr`, or `no 1000+N alias exists for
+   native …` when the private band (below) has no row for it. The number is still translated
+   (the user's decision, 2026-10-15: warn only — no program changes behaviour). The warning
+   judges a number written as one integer literal, inside a region opened in the call's own
+   file: a `SYS_*` or `enum` constant is not judged (the stdlib's renumber by design), and
+   neither is a file `include`d from inside a region (the stdlib's shared syscall files sit in
+   `lib/syscalls.cyr`'s aarch64 region and deliberately write x86 numbers). ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
    exactly as a literal would be. ⚠ It also applies to a `SYS_*` you declare in your OWN
    `enum` — measured at v6.6.5, `lib/yukti.cyr` declares `SYS_STATFS = 43` under exactly this
@@ -7566,6 +7574,14 @@ The rules, in order:
    threads) the number alone. Any other arity is reported by name (`syscall 228 not routed
    at this arity`). Portable code calls `clock_now_ns()` / `sleep_ms()` /
    `thread_create()` / `sys_fork()` instead.
+   ⭐ 6.7.12: `sys_sigprocmask(how, set, oldset)` is real on both Macs (it returned -78, so code
+   that relied on that now gets 0). It is Darwin's sigprocmask (48) through the private alias
+   1048, a shim rather than a renumber: Darwin's set is 32 bits, so it reads the low half of the
+   8-byte set and the shim writes 0 over `oldset`'s upper word. `how` is the peer's own
+   `SIG_BLOCK` / `SIG_UNBLOCK` / `SIG_SETMASK` (1 / 2 / 3 on Darwin). On macOS the change
+   applies to every thread of the process: Darwin's sigprocmask (48) is process-wide (measured
+   on ach and ecb, 6.7.12); Linux changes the calling thread only. The exec family
+   (`run`, `exec_vec`, …) now empties a mask inherited from a launcher on macOS too.
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
    and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL

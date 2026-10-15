@@ -1676,6 +1676,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
 # `[ -f ]`-guarded a copy of a README that never existed, so it silently shipped none.
 _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
 
+# 6.7.12 — both macOS tarballs ship every cyrius.cyml [release] scripts entry: the builders
+# hand-copied two of the three and left cyrius-watch.sh out. They now stage the list through
+# scripts/release-scripts.sh, which fails on a listed entry it cannot find (the user's D4).
+_chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
+
 # 6.6.20 — two selectors started in ONE worktree both rebuild build/cyrius_check without
 # colliding: the driver compiles into a per-run side file (`.new.<pid>`), not one fixed name.
 _chk_gate "$ROOT/tests/gates/toolchain/check_concurrent_selectors_one_tree.sh"
@@ -2785,6 +2790,21 @@ _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 # `cmp x8` word left on ELF or arm64 Mach-O; qemu -strace twins against the runtime chain, named
 # SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
 _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
+
+# 6.7.12 (D1) — a raw syscall literal inside a native-aarch64 region that a compat row renumbers
+# is warned (the number it becomes, what that runs, and the 1000+N spelling or none) and still
+# translated: the filed repro verbatim (qemu exit stays 22), the 1009 control, 39 → 1039, no-row
+# and outside-region silence, enum constants / included files / the stdlib silent, and the
+# repro's binary byte-identical to its region-free twin. qemu legs SKIP by name.
+_chk_gate "$ROOT/tests/gates/platform/native_region_literal_warns.sh"
+
+# 6.7.12 (D2) — the x86 Mach-O twin of esysxlat_fold: a literal syscall number folds its
+# EMACHO_SYSXLAT chain to its row's classed number (read from the emitter) with only the fork / pipe
+# fixup half it needs; run-time numbers share one stub per arity class, patched through the disp32
+# registry after the per-fn compaction / wp_compact move code; every x86 driver emits the stubs and
+# FIXUP refuses a driver that did not; CYRIUS_IR=1 builds byte-identical; the x86-macOS compiler
+# carries at most one chain per class (733 inline at the slot open).
+_chk_gate "$ROOT/tests/gates/platform/emacho_sysxlat_fold.sh"
 
 # 6.6.18 (XLAT-4) — the pre-commit hook refuses an un-folded build/cycc-native-aarch64: a COPY of
 # scripts/hooks/pre-commit in a throwaway `git init` (6.7.11: the bound is 1.10x build/cycc, under 700K–3M).

@@ -196,3 +196,116 @@ fn _SYSX_ACTUALLY(n): i64 {
     if (n == 268) { return "setns"; }
     return 0;
 }
+
+# The aarch64 kernel name of `n`, for the numbers ESYSXLAT's ELF-aarch64 arm compares against
+# (below the private band) or renumbers to — the two ends of a folded renumber. 0 when the
+# number is unassigned on aarch64. Rows come from tests/data/syscalls/aarch64.tbl.
+fn _SYSX_A64(n): i64 {
+    if (n == 0) { return "io_setup"; }
+    if (n == 1) { return "io_destroy"; }
+    if (n == 2) { return "io_submit"; }
+    if (n == 3) { return "io_cancel"; }
+    if (n == 4) { return "io_getevents"; }
+    if (n == 5) { return "setxattr"; }
+    if (n == 6) { return "lsetxattr"; }
+    if (n == 7) { return "fsetxattr"; }
+    if (n == 8) { return "getxattr"; }
+    if (n == 9) { return "lgetxattr"; }
+    if (n == 10) { return "fgetxattr"; }
+    if (n == 11) { return "listxattr"; }
+    if (n == 12) { return "llistxattr"; }
+    if (n == 13) { return "flistxattr"; }
+    if (n == 14) { return "removexattr"; }
+    if (n == 15) { return "lremovexattr"; }
+    if (n == 16) { return "fremovexattr"; }
+    if (n == 17) { return "getcwd"; }
+    if (n == 22) { return "epoll_pwait"; }
+    if (n == 24) { return "dup3"; }
+    if (n == 25) { return "fcntl"; }
+    if (n == 29) { return "ioctl"; }
+    if (n == 32) { return "flock"; }
+    if (n == 33) { return "mknodat"; }
+    if (n == 34) { return "mkdirat"; }
+    if (n == 35) { return "unlinkat"; }
+    if (n == 36) { return "symlinkat"; }
+    if (n == 38) { return "renameat"; }
+    if (n == 39) { return "umount2"; }
+    if (n == 41) { return "pivot_root"; }
+    if (n == 42) { return "nfsservctl"; }
+    if (n == 43) { return "statfs"; }
+    if (n == 44) { return "fstatfs"; }
+    if (n == 45) { return "truncate"; }
+    if (n == 46) { return "ftruncate"; }
+    if (n == 47) { return "fallocate"; }
+    if (n == 48) { return "faccessat"; }
+    if (n == 49) { return "chdir"; }
+    if (n == 50) { return "fchdir"; }
+    if (n == 51) { return "chroot"; }
+    if (n == 54) { return "fchownat"; }
+    if (n == 55) { return "fchown"; }
+    if (n == 56) { return "openat"; }
+    if (n == 57) { return "close"; }
+    if (n == 59) { return "pipe2"; }
+    if (n == 60) { return "quotactl"; }
+    if (n == 61) { return "getdents64"; }
+    if (n == 63) { return "read"; }
+    if (n == 64) { return "write"; }
+    if (n == 72) { return "pselect6"; }
+    if (n == 73) { return "ppoll"; }
+    if (n == 74) { return "signalfd4"; }
+    if (n == 75) { return "vmsplice"; }
+    if (n == 76) { return "splice"; }
+    if (n == 77) { return "tee"; }
+    if (n == 78) { return "readlinkat"; }
+    if (n == 79) { return "newfstatat"; }
+    if (n == 80) { return "fstat"; }
+    if (n == 82) { return "fsync"; }
+    if (n == 83) { return "fdatasync"; }
+    if (n == 84) { return "sync_file_range"; }
+    if (n == 87) { return "timerfd_gettime"; }
+    if (n == 88) { return "utimensat"; }
+    if (n == 89) { return "acct"; }
+    if (n == 90) { return "capget"; }
+    if (n == 91) { return "capset"; }
+    if (n == 93) { return "exit"; }
+    if (n == 97) { return "unshare"; }
+    if (n == 101) { return "nanosleep"; }
+    if (n == 113) { return "clock_gettime"; }
+    if (n == 125) { return "sched_get_priority_max"; }
+    if (n == 126) { return "sched_get_priority_min"; }
+    if (n == 137) { return "rt_sigtimedwait"; }
+    if (n == 138) { return "rt_sigqueueinfo"; }
+    if (n == 155) { return "getpgid"; }
+    if (n == 161) { return "sethostname"; }
+    if (n == 172) { return "getpid"; }
+    if (n == 198) { return "socket"; }
+    if (n == 200) { return "bind"; }
+    if (n == 201) { return "listen"; }
+    if (n == 202) { return "accept"; }
+    if (n == 203) { return "connect"; }
+    if (n == 204) { return "getsockname"; }
+    if (n == 206) { return "sendto"; }
+    if (n == 207) { return "recvfrom"; }
+    if (n == 208) { return "setsockopt"; }
+    if (n == 209) { return "getsockopt"; }
+    if (n == 210) { return "shutdown"; }
+    if (n == 211) { return "sendmsg"; }
+    if (n == 212) { return "recvmsg"; }
+    if (n == 214) { return "brk"; }
+    if (n == 215) { return "munmap"; }
+    if (n == 217) { return "add_key"; }
+    if (n == 222) { return "mmap"; }
+    if (n == 226) { return "mprotect"; }
+    if (n == 228) { return "mlock"; }
+    if (n == 232) { return "mincore"; }
+    if (n == 262) { return "fanotify_init"; }
+    if (n == 263) { return "fanotify_mark"; }
+    if (n == 269) { return "sendmmsg"; }
+    if (n == 270) { return "process_vm_readv"; }
+    if (n == 271) { return "process_vm_writev"; }
+    if (n == 272) { return "kcmp"; }
+    if (n == 279) { return "memfd_create"; }
+    if (n == 280) { return "bpf"; }
+    if (n == 291) { return "statx"; }
+    return 0;
+}

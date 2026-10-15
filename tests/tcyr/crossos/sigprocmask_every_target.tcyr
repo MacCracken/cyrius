@@ -1,0 +1,75 @@
+# sigprocmask_every_target.tcyr — CROSS-HOST: `sys_sigprocmask` blocks, unblocks and sets the
+# mask (the calling thread's on Linux, every thread's on macOS), and reports the old one, on
+# every POSIX target — x86_64 and aarch64 Linux, Intel macOS (ach) and Apple-silicon macOS (ecb).
+# Windows has no POSIX signal mask and agnos's sigprocmask takes its own `how` values (0 = BLOCK,
+# 1 = UNBLOCK), so there the file only reports its summary.
+#
+# ⛔ WHY (6.7.12). On macOS sys_sigprocmask returned -78 (no Mach-O route), so the exec family
+# could not empty a mask inherited from a launcher (issues/2026-10-11-macos-exec-child-keeps-
+# launcher-signal-mask.md, the user's decision D3: a public shim). It is now Darwin's
+# sigprocmask (48) through the private alias 1048 — not a renumber of rt_sigprocmask: Darwin
+# reads a 32-bit set (the low half of our 8-byte one) and writes 4 bytes of old mask, so the shim
+# zeroes the upper word. The row that pins that: the old mask is read into a buffer poisoned with
+# all ones, and its upper word must come back 0 (Linux writes all 8 bytes; Darwin would leave
+# the poison). SIGINT (2) and SIGTERM (15) have the same numbers on Linux and Darwin, so the
+# expected bits are the same everywhere: 1 << 1 and 1 << 14. CHANGELOG [6.7.12]
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+var _SM_INT = 2;        # 1 << (SIGINT - 1)
+var _SM_TERM = 16384;   # 1 << (SIGTERM - 1)
+
+# The current mask, read into a buffer poisoned with all ones (so an unwritten upper word shows).
+fn _cur(): i64 {
+    var m[8];
+    store64(&m, 0 - 1);
+    if (sys_sigprocmask(SIG_BLOCK, 0, &m) != 0) { return 0 - 2; }
+    return load64(&m);
+}
+#endif
+#endif
+
+fn main(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("sys_sigprocmask round-trips the mask (the calling thread's on Linux, every thread's on macOS)");
+    var saved[8];
+    store64(&saved, 0 - 1);
+    var set[8];
+    store64(&set, 0);
+    assert_eq(sys_sigprocmask(SIG_SETMASK, &set, &saved), 0, "SETMASK to empty == 0 (macOS: was -78)");
+    assert_eq(_cur(), 0, "the mask reads back empty, upper word included (written, not the poison)");
+
+    store64(&set, _SM_INT | _SM_TERM);
+    assert_eq(sys_sigprocmask(SIG_BLOCK, &set, 0), 0, "BLOCK SIGINT + SIGTERM == 0");
+    assert_eq(_cur(), _SM_INT | _SM_TERM, "both are blocked, nothing else, upper word 0");
+
+    store64(&set, _SM_INT);
+    var old[8];
+    store64(&old, 0 - 1);
+    assert_eq(sys_sigprocmask(SIG_UNBLOCK, &set, &old), 0, "UNBLOCK SIGINT == 0");
+    assert_eq(load64(&old), _SM_INT | _SM_TERM, "the old mask it reports is the one before the call");
+    assert_eq(_cur(), _SM_TERM, "only SIGTERM stays blocked");
+
+    store64(&set, _SM_INT);
+    assert_eq(sys_sigprocmask(SIG_SETMASK, &set, 0), 0, "SETMASK to SIGINT == 0");
+    assert_eq(_cur(), _SM_INT, "SETMASK replaced the mask (SIGTERM is no longer blocked)");
+
+    assert_eq(sys_sigprocmask(SIG_SETMASK, &saved, 0), 0, "the saved mask is restored");
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: no POSIX signal mask");
+    assert_eq(1, 1, "nothing to assert");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("agnos: sigprocmask takes its own how values (ABI), not asserted here");
+    assert_eq(1, 1, "nothing to assert");
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
