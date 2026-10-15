@@ -4010,7 +4010,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
 | `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
-| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh |
+| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh, scripts/release-scripts.sh |
 
 ## Embedding data files: `[embed]`
 

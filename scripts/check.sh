@@ -1667,6 +1667,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
 # `[ -f ]`-guarded a copy of a README that never existed, so it silently shipped none.
 _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
 
+# 6.7.12 — both macOS tarballs ship every cyrius.cyml [release] scripts entry: the builders
+# hand-copied two of the three and left cyrius-watch.sh out. They now stage the list through
+# scripts/release-scripts.sh, which fails on a listed entry it cannot find (the user's D4).
+_chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
+
 # 6.6.20 — two selectors started in ONE worktree both rebuild build/cyrius_check without
 # colliding: the driver compiles into a per-run side file (`.new.<pid>`), not one fixed name.
 _chk_gate "$ROOT/tests/gates/toolchain/check_concurrent_selectors_one_tree.sh"
