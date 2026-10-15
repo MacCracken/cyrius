@@ -1,0 +1,138 @@
+# audit_walk_fifo.tcyr — 6.7.12: the audit walkers (lib/audit_walk.cyr — `cyrius audit`'s and the
+# check driver's fmt / lint / doc walks) report a path that is not a directory as an unlistable
+# directory AT ONCE. The Linux lister opened it with O_RDONLY alone, so a FIFO handed to
+# audit_fmt_walk blocked in open(2) until a writer came and the walk never returned
+# (issues/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md); it opens with
+# O_RDONLY | O_DIRECTORY | O_CLOEXEC now, and macOS routes through dir_list_checked, which does
+# the same since 6.7.11. The FIFO rows run on Linux and macOS, in a forked child the parent waits
+# 5 s for, so a regression reads RED here rather than hanging the leg (Linux makes the FIFO with
+# sys_mknodat; Darwin's declines, so /usr/bin/mkfifo does). Windows has no FIFO and agnos no
+# mknodat: there the file and directory rows run. The gate twin (x86 + qemu, an O_RDONLY mutant
+# that must block) is tests/gates/platform/audit_walk_fifo_refused.sh. CHANGELOG [6.7.12]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+
+# "<stem><pid><tail>", NUL-terminated.
+fn _name(stem, tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stem);
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, tail);
+    return str_data(str_builder_build(sb));
+}
+
+# 1 iff `note` (a Str) ends with the C string `tail`.
+fn _ends_with(note, tail): i64 {
+    var n = str_len(note);
+    var t = strlen(tail);
+    if (n < t) { return 0; }
+    return memeq(str_data(note) + n - t, tail, t);
+}
+
+# The fmt and lint walkers over the one path `p`: 0 when each recorded exactly one error, an
+# unlistable-directory note ending "error 20" (ENOTDIR — refused at the open); else bits:
+# 1 fmt's count, 2 fmt's note, 4 lint's count, 8 lint's note. The tools are never reached (the
+# path is not listed), so a missing build/cyrfmt cannot add an error.
+fn _walk_codes(p): i64 {
+    var code = 0;
+    var d1 = vec_new();
+    vec_push(d1, str_from(p));
+    audit_fmt_walk("build/cyrfmt", d1);
+    if (AW_FMT_ERRORS != 1) { code = code | 1; }
+    elif (_ends_with(vec_get(AW_FMT_ERROR_FILES, 0), "cannot list directory (subtree NOT checked), error 20") == 0) {
+        code = code | 2;
+    }
+    var d2 = vec_new();
+    vec_push(d2, str_from(p));
+    audit_lint_walk("build/cyrlint", d2);
+    if (AW_LINT_ERRORS != 1) { code = code | 4; }
+    elif (_ends_with(vec_get(AW_LINT_ERROR_FILES, 0), "cannot list directory (subtree NOT checked), error 20") == 0) {
+        code = code | 8;
+    }
+    return code;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# A FIFO at `path`: mknodat(S_IFIFO|0600) on Linux, /usr/bin/mkfifo on macOS. 0 = made.
+fn _mkfifo(path): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var a = vec_new();
+    vec_push(a, "/usr/bin/mkfifo");
+    vec_push(a, path);
+    return exec_vec(a);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return sys_mknodat(AT_FDCWD, path, 4096 | 384, 0);
+    #endif
+}
+
+# _walk_codes(path) in a forked child: its code; -1 when the child was still blocked after 5 s
+# (killed), -2 no fork, -3 it died.
+fn _walk_in_child(path): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 2; }
+    if (pid == 0) { sys_exit(_walk_codes(path)); }
+    var st[8];
+    store64(&st, 0);
+    var waited = 0;
+    while (waited < 5000) {
+        if (sys_waitpid(pid, &st, 1) == pid) {      # 1 = WNOHANG
+            if (WIFEXITED(load32(&st)) == 1) { return WEXITSTATUS(load32(&st)); }
+            return 0 - 3;
+        }
+        sleep_ms(10);
+        waited = waited + 10;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, &st, 0);
+    return 0 - 1;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    var dir = _name("cyrius_awf_", "_dir");
+    var member = _name("cyrius_awf_", "_dir/member.txt");
+    assert_eq(xmkdir(dir, 493), 0, "premise: the fixture directory was created");
+    assert_eq(file_write_all(member, "x\n", 2), 2, "premise: a non-source file was created inside it");
+
+    test_group("a directory still walks");
+    var dv = vec_new();
+    vec_push(dv, str_from(dir));
+    audit_fmt_walk("build/cyrfmt", dv);
+    assert_eq(AW_FMT_ERRORS, 0, "audit_fmt_walk over a directory holding no source file: no error");
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("a regular file is an unlistable directory (ENOTDIR)");
+    assert_eq(_walk_in_child(member), 0, "fmt and lint walkers over a file: one error each, its note 'error 20'");
+
+    test_group("a FIFO is refused at the open, not waited on (6.7.12)");
+    var fifo = _name("cyrius_awf_", "_fifo");
+    xunlink(fifo);                                     # a killed earlier run cannot poison this one
+    assert_eq(_mkfifo(fifo), 0, "premise: a FIFO was made (mknodat on Linux, /usr/bin/mkfifo on macOS)");
+    var fc = _walk_in_child(fifo);
+    assert_neq(fc, 0 - 1, "the walkers RETURN on a FIFO (with O_RDONLY alone open(2) blocked until the 5 s kill)");
+    assert_eq(fc, 0, "fmt and lint walkers over the FIFO: one error each, its note 'error 20'");
+    assert_eq(xunlink(fifo), 0, "the FIFO unlinks");
+    #endif
+    #endif
+
+    xunlink(member);
+    xrmdir(dir);
+    return assert_summary();
+}
+var r = main();
+syscall(SYS_EXIT, r);
