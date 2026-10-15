@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.12] — 2026-10-15
+
 ## [6.7.11] — 2026-10-14
 
 **Break 2, repair 1 — the open queue's 6.7.11 placements (73 issues, the struct-operator issue six items) repaired
