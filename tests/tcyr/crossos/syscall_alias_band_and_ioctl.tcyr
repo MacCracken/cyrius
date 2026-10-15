@@ -116,6 +116,30 @@ assert_eq(ioctl_dispatched(), 0, "sys_ioctl reaches a driver, never ENOSYS (errn
 #endif
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 6.7.12 — inside a native-aarch64 region the native call is spelled 1000+N: the aarch64
+# peer's SYS_LGETXATTR is 1009 and SYS_UMOUNT2 1039. A raw 9 / 39 there is renumbered by the
+# compat rows (mmap / getpid) and, since 6.7.12, WARNED at compile time with this spelling
+# (D1, the user, 2026-10-15: warn only). These rows RUN the spellings the warning recommends,
+# through the peer's names (in-tree an arch-guarded number is a SYS_* name —
+# aarch64_syscall_shadow.sh axis 3): each answer is one only the native call gives.
+# ELF-aarch64 only — the band's rows are the ELF arm's.
+# ─────────────────────────────────────────────────────────────────────────────
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_AARCH64
+test_group("6.7.12 — the 1009 / 1039 aliases in a native-aarch64 region reach lgetxattr / umount2");
+assert_eq(SYS_LGETXATTR, 1009, "premise: the aarch64 peer spells lgetxattr as the private alias 1009");
+assert_eq(SYS_UMOUNT2, 1039, "premise: the aarch64 peer spells umount2 as the private alias 1039");
+# lgetxattr on a missing path: -ENOENT (-2). The renumbered 9 (mmap with these args) is -EINVAL.
+fn lgx_native(): i64 { return syscall(SYS_LGETXATTR, "/nonexistent-cyrius-6712", "user.x", 0, 0); }
+assert_eq(lgx_native(), 0 - 2, "the 1009 alias in a native region runs lgetxattr (-ENOENT), not mmap");
+# umount2 on a missing path: -ENOENT (-2) (the path is resolved before the privilege check).
+# The renumbered 39 (getpid) returns a positive PID.
+fn umount_native(): i64 { return syscall(SYS_UMOUNT2, "/nonexistent-cyrius-6712", 0); }
+assert_eq(umount_native(), 0 - 2, "the 1039 alias in a native region runs umount2 (-ENOENT), not getpid");
+#endif
+#endif
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Where a capability is absent, SAY SO. A silent skip is indistinguishable from
 # a test that ran and asserted nothing — which is the failure mode the whole
 # crossos/ set exists to prevent.

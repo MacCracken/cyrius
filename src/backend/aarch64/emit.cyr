@@ -1936,31 +1936,193 @@ fn _esx_fold(S, st, lit): i64 {
         if (why != 0) { _esx_fold_die(st, q, src, why); }
         q = q + 4 + k * 4;
     }
-    var cur = lit;
-    var out = st;
+    # ELF: the native-region renumber warning reads the chain BEFORE the fold compacts it.
+    if (_TARGET_MACHO == 0) { _esx_native_warn(S, p, en, lit); }
+    var cur = _esx_walk(cb, p, en, lit, st);
+    var out = _esx_wout;
+    # Mach-O: every body ends in movz x16 (checked above), so the head matters only on a miss.
+    if (_TARGET_MACHO == 2) { if (_esx_whit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; } }
+    SCP(S, out);
+    return cur;
+}
+
+# The chain's ONE decode loop, shared by the fold and by the native-region warning's queries.
+# Runs the (already validated) rows [p, en) in emission order with x8 = n: a row whose
+# `cmp x8,#src` equals the running value is kept, and a final `movz x8,#d` makes d the running
+# value. out >= 0 copies each kept body down to `out` (the fold — never past the read cursor,
+# since only kept words are written); out < 0 writes nothing (a query). Returns the final x8;
+# leaves the end of the copied words in _esx_wout and whether any row matched in _esx_whit.
+var _esx_wout = 0;
+var _esx_whit = 0;
+fn _esx_walk(cb, p, en, n, out): i64 {
+    var cur = n;
     var hit = 0;
-    q = p;
+    var q = p;
     while (q < en) {
-        var src2 = (load32(cb + q) >> 10) & 0xFFF;
-        var e2 = q + 4 + ((load32(cb + q + 4) >> 5) & 0x7FFFF) * 4;
-        if (src2 == cur) {
+        var src = (load32(cb + q) >> 10) & 0xFFF;
+        var e = q + 4 + ((load32(cb + q + 4) >> 5) & 0x7FFFF) * 4;
+        if (src == cur) {
             hit = 1;
-            var r = q + 8;
-            while (r < e2) {
-                var bw = load32(cb + r);
-                store32(cb + out, bw);
-                out = out + 4;
-                r = r + 4;
+            if (out >= 0) {
+                var r = q + 8;
+                while (r < e) {
+                    store32(cb + out, load32(cb + r));
+                    out = out + 4;
+                    r = r + 4;
+                }
             }
-            var lw = load32(cb + e2 - 4);
+            var lw = load32(cb + e - 4);
             if ((lw & 0xFFE0001F) == 0xD2800008) { cur = (lw >> 5) & 0xFFFF; }
         }
-        q = e2;
+        q = e;
     }
-    # Mach-O: every body ends in movz x16 (checked above), so the head matters only on a miss.
-    if (_TARGET_MACHO == 2) { if (hit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; } }
-    SCP(S, out);
+    _esx_wout = out;
+    _esx_whit = hit;
+    return cur;
+}
+
+# ⛔ 6.7.12 — A RAW LITERAL INSIDE A NATIVE-AARCH64 REGION THAT A COMPAT ROW RENUMBERS IS WARNED.
+# In a region compiled only for aarch64 a raw number reads as the native one (6.6.12 silences the
+# "this is x86 <name>" warning there for that reason), but the chain matches NUMBERS: when the
+# native number is also an x86-compat row SOURCE it is renumbered, so `syscall(9, ..)` meant as
+# lgetxattr ran mmap with no diagnostic. The literal is STILL translated — the user's decision
+# (D1, 2026-10-15): warn only, so no program changes behaviour — and the warning names both ends
+# and the spelling that reaches the native call: the private alias 1000+N when the band has a
+# row for it, derived by running the same chain with 1000+N (never a parallel list).
+# Judged: a single integer-literal token as the number (a `SYS_*` constant is the stdlib's or the
+# author's chosen spelling, and the stdlib's renumber by design) inside a region opened in the
+# call's OWN file (`_esx_region_here` — the stdlib's shared syscall files sit inside
+# lib/syscalls.cyr's aarch64 region and deliberately write x86 numbers, the frame rule
+# tests/gates/platform/raw_syscall_literals_routed.sh applies). Numbers >= 1000 are the band itself.
+# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12]
+fn _esx_native_warn(S, p, en, lit): i64 {
+    if (lit >= 1000) { return 0; }
+    var cb = _codebuf_base;
+    var cur = _esx_walk(cb, p, en, lit, 0 - 1);
+    if (cur == lit) { return 0; }
+    var kw = _esx_raw_lit_call(S);
+    if (kw < 0) { return 0; }
+    if (_esx_region_here(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
+    var al = 1000 + lit;
+    var hasal = 0;
+    if (_esx_walk(cb, p, en, al, 0 - 1) == lit) { hasal = 1; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, kw);
+    PRSTR(": raw syscall ");
+    PRNUM(lit);
+    PRSTR(" inside a native-aarch64 region is renumbered → ");
+    PRNUM(cur);
+    var cn = _SYSX_A64(cur);
+    if (cn != 0) { PRSTR(" ("); PRSTR(cn); PRSTR(")"); }
+    var ln = _SYSX_A64(lit);
+    if (hasal == 1) { PRSTR("; write "); PRNUM(al); PRSTR(" for native "); }
+    else { PRSTR("; no 1000+N alias exists for native "); }
+    if (ln != 0) { PRSTR(ln); } else { PRNUM(lit); PRSTR(", which aarch64 leaves unassigned"); }
+    if (hasal == 0) { PRSTR(" (the chain has no "); PRNUM(al); PRSTR(" row)"); }
+    PRSTR("\n");
     return 0;
+}
+
+# The token index of `syscall` when the call that just closed (the cursor is one past its `)`)
+# passes its number as ONE integer-literal token; -1 for anything else.
+fn _esx_raw_lit_call(S): i64 {
+    var ti = GTI(S) - 1;
+    if (ti < 2) { return 0 - 1; }
+    if (TOKTYP(S, ti) != 11) { return 0 - 1; }
+    var dp = 0;
+    while (ti >= 0) {
+        var tt = TOKTYP(S, ti);
+        if (tt == 11) { dp = dp + 1; }
+        if (tt == 10) {
+            dp = dp - 1;
+            if (dp == 0) { break; }
+        }
+        ti = ti - 1;
+    }
+    if (ti < 1) { return 0 - 1; }
+    if (TOKTYP(S, ti - 1) != 24) { return 0 - 1; }   # `syscall`
+    if (TOKTYP(S, ti + 1) != 1) { return 0 - 1; }    # an integer literal
+    var nx = TOKTYP(S, ti + 2);
+    if (nx == 31) { return ti - 1; }                 # `,`
+    if (nx == 11) { return ti - 1; }                 # `)`
+    return 0 - 1;
+}
+
+# 1 iff expanded-source offset `off` sits inside a native-aarch64 region (`#@a+` / `#@a-`, the
+# marks PP_A64_NATIVE_AT reads) opened in the SAME file as `off`: the region depth there minus
+# the depth at that file's `#@file` entry marker. A re-anchor of the current file changes
+# nothing, a marker naming the includer is a RESUME (pop), any other name is an ENTRY (push).
+# Incremental: syscall sites arrive in source order, so the scan resumes where the last call
+# stopped (PP_A64_NATIVE_AT rescans from 0, linear per call — fine for a rare warning, quadratic
+# for a test made at every renumbered literal). A backward offset restarts from 0. An include
+# nesting past 64 levels answers 0 for the rest of the compile (silence, never a false warning).
+var _esx_rg_i = 0;
+var _esx_rg_st = 0;
+var _esx_rg_bol = 1;
+var _esx_rg_dep = 0;
+var _esx_rg_sp = 0;
+var _esx_rg_ovf = 0;
+var _esx_rg_stk = 0;     # alloc()'d {name offset, name length, entry depth}, 24 B each, 64 deep
+fn _esx_region_here(S, off): i64 {
+    var base = S + 0x459D000;
+    var n = GBL(S);
+    if (off > n) { off = n; }
+    if (_esx_rg_stk == 0) {
+        _esx_rg_stk = alloc(64 * 24);
+        if (_esx_rg_stk == 0) { return 0; }
+    }
+    if (off < _esx_rg_i) {
+        _esx_rg_i = 0; _esx_rg_st = 0; _esx_rg_bol = 1;
+        _esx_rg_dep = 0; _esx_rg_sp = 0; _esx_rg_ovf = 0;
+    }
+    var i = _esx_rg_i;
+    var st = _esx_rg_st;
+    var bol = _esx_rg_bol;
+    while (i < off) {
+        var c = load8(base + i);
+        if (bol == 1 && c == 35) {
+            if (PP_LEXST_INSTR(st) == 0) {
+                var m = PP_A64_MARK(base, i, n);
+                if (m == 1) { _esx_rg_dep = _esx_rg_dep + 1; }
+                if (m == 2) { if (_esx_rg_dep > 0) { _esx_rg_dep = _esx_rg_dep - 1; } }
+            }
+            if (PP_NEUT_BOLMARK(base, i, n) == 1) { _esx_rg_file(base, i + 8, n); }
+        }
+        if (c == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, c); }
+        if (c == 10) { bol = 1; } else { bol = 0; }
+        i = i + 1;
+    }
+    _esx_rg_i = i; _esx_rg_st = st; _esx_rg_bol = bol;
+    if (_esx_rg_ovf == 1) { return 0; }
+    var d0 = 0;
+    if (_esx_rg_sp > 0) { d0 = load64(_esx_rg_stk + (_esx_rg_sp - 1) * 24 + 16); }
+    if (_esx_rg_dep > d0) { return 1; }
+    return 0;
+}
+# A `#@file "<name>"` marker whose name starts at `base + ns`: re-anchor, resume or entry.
+fn _esx_rg_file(base, ns, n): i64 {
+    var ne = ns;
+    while (ne < n && load8(base + ne) != 34 && load8(base + ne) != 10) { ne = ne + 1; }
+    var sp = _esx_rg_sp;
+    if (sp > 0) { if (_esx_rg_same(base, sp - 1, ns, ne) == 1) { return 0; } }
+    if (sp > 1) { if (_esx_rg_same(base, sp - 2, ns, ne) == 1) { _esx_rg_sp = sp - 1; return 0; } }
+    if (sp >= 64) { _esx_rg_ovf = 1; return 0; }
+    store64(_esx_rg_stk + sp * 24, ns);
+    store64(_esx_rg_stk + sp * 24 + 8, ne - ns);
+    store64(_esx_rg_stk + sp * 24 + 16, _esx_rg_dep);
+    _esx_rg_sp = sp + 1;
+    return 0;
+}
+fn _esx_rg_same(base, k, ns, ne): i64 {
+    var o = load64(_esx_rg_stk + k * 24);
+    var l = load64(_esx_rg_stk + k * 24 + 8);
+    if (l != ne - ns) { return 0; }
+    var j = 0;
+    while (j < l) {
+        if (load8(base + o + j) != load8(base + ns + j)) { return 0; }
+        j = j + 1;
+    }
+    return 1;
 }
 
 # 6.6.18 — a NON-literal number calls ONE shared translation stub per class instead of inlining

@@ -225,7 +225,15 @@ fn parse_table(buf, blen, names, nums, pool, pool_pos_p): i64 {
 # x86 numbers (main_aarch64.cyr: SYS_WRITE = 1) precisely because the chain rewrites them.
 # Warning on those flags the compiler's own correct code: measured 510 warnings on
 # cycc's aarch64 source and 15 on a stdlib hello-world before this exclusion, and 0 after.
-fn collect_routed(buf, blen, out): i64 {
+fn collect_routed(buf, blen, out): i64 { return collect_chain_words(buf, blen, out, 0); }
+
+# 6.7.12 — the same decode for the PRODUCTS: every `movz x8, #imm` word (0xD2800008 | imm << 5)
+# in ESYSXLAT's ELF arm is a number a row renumbers TO. With the sources, these are the only
+# numbers a folded literal can start from or end on, which is what `_SYSX_A64` names.
+fn collect_products(buf, blen, out): i64 { return collect_chain_words(buf, blen, out, 1); }
+
+# kind 0: the `cmp x8, #imm` sources; kind 1: the `movz x8, #imm` products.
+fn collect_chain_words(buf, blen, out, kind): i64 {
     var n = 0;
     var i = 0;
     # bound the scan to ESYSXLAT so unrelated `cmp` encodings elsewhere cannot over-exclude
@@ -261,11 +269,16 @@ fn collect_routed(buf, blen, out): i64 {
             }
             if (okhex == 1) {
                 # cmp x8, #imm  ->  top byte 0xF1
-                if (v / 16777216 == 241) {
-                    var imm = (v / 1024) & 4095;
-                    store64(out + n * 8, imm);
-                    n = n + 1;
-                }
+                if (kind == 0) { if (v / 16777216 == 241) {
+                        var imm = (v / 1024) & 4095;
+                        store64(out + n * 8, imm);
+                        n = n + 1;
+                    } }
+                # movz x8, #imm  ->  (v & 0xFFE0001F) == 0xD2800008
+                if (kind == 1) { if ((v & 0xFFE0001F) == 0xD2800008) {
+                        store64(out + n * 8, (v / 32) & 65535);
+                        n = n + 1;
+                    } }
             }
         }
         i = i + 1;
@@ -554,6 +567,43 @@ fn main(): i64 {
         }
         i = i + 1;
     }
+    emit(out, oo, "    return 0;\n}\n\n");
+
+    # --- 6.7.12: the aarch64 kernel name of every number ESYSXLAT's ELF arm starts from or ends on ---
+    # The native-region renumber warning (src/backend/aarch64/emit.cyr `_esx_native_warn`) names
+    # both ends of a renumber: what the literal is natively, and what the folded number runs.
+    # `_SYSX_ACTUALLY` cannot: it is restricted to `_SYSX_MEANT` numbers, which by construction
+    # are NOT routed. Restricted the same way to what can reach it — the chain's sources below
+    # the private band and its products — so every row is reachable. CHANGELOG [6.7.12]
+    var prods = alloc(MAXSYS * 8);
+    var prods_n = collect_products(eb, elen, prods);
+    if (prods_n < 40) {
+        println("gen_syscall_xlat: under 40 movz-x8 products decoded from ESYSXLAT — the decoder moved");
+        return 1;
+    }
+    emit(out, oo, "# The aarch64 kernel name of `n`, for the numbers ESYSXLAT's ELF-aarch64 arm compares against\n");
+    emit(out, oo, "# (below the private band) or renumbers to — the two ends of a folded renumber. 0 when the\n");
+    emit(out, oo, "# number is unassigned on aarch64. Rows come from tests/data/syscalls/aarch64.tbl.\n");
+    emit(out, oo, "fn _SYSX_A64(n): i64 {\n");
+    var na64 = 0;
+    var v = 0;
+    while (v < ALIAS_BASE) {
+        var want = 0;
+        if (is_in(routed, routed_n, v) == 1) { want = 1; }
+        if (is_in(prods, prods_n, v) == 1) { want = 1; }
+        if (want == 1) {
+            var kname4 = kernel_name_of(kpool, kn, kv, kc, v);
+            if (kname4 != 0) {
+                emit(out, oo, "    if (n == ");
+                emit_num(out, oo, v);
+                emit(out, oo, ") { return \"");
+                emit(out, oo, kname4);
+                emit(out, oo, "\"; }\n");
+                na64 = na64 + 1;
+            }
+        }
+        v = v + 1;
+    }
     emit(out, oo, "    return 0;\n}\n");
 
     # file_write_atomic: temp + fsync + rename, and it loops until every byte lands — so a
@@ -576,7 +626,9 @@ fn main(): i64 {
     print_num(rows);
     syscall(SYS_WRITE, 1, ", kernel-named ", 15);
     print_num(nact);
-    syscall(SYS_WRITE, 1, " of them\n", 9);
+    syscall(SYS_WRITE, 1, " of them, renumber ends named ", 30);
+    print_num(na64);
+    syscall(SYS_WRITE, 1, "\n", 1);
     return 0;
 }
 
