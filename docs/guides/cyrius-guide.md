@@ -4664,7 +4664,9 @@ unchecked: the check could not write its temp files, so the cache was NOT judged
 temp base is an **absolute** `$TMPDIR` when one is set, else `/tmp` (`%TEMP%` on Windows); a
 relative `TMPDIR` is ignored, and one that does not exist or cannot be written is an error
 that names it (`TMPDIR=… does not exist or is not writable`). The hashes behind `cyrius.lock`
-come from `sha256sum`, or `shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
+are computed by the CLI itself (6.7.12) — SHA-256, byte for byte what `sha256sum` prints — so no
+external hasher runs, a full temp dir cannot touch the lock, and the lock is written on every host,
+wine included (through 6.7.11 they came from `sha256sum`, `shasum -a 256` or `certutil`).
 
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with

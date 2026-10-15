@@ -32,8 +32,10 @@
 #   axis 2  (wine) `cyrius.exe test` (the `_win_cmdline_cap` run) and `cyrius.exe capacity`
 #           (`_win_capacity_spawn`) with the same plant: the plant never ran.
 #   axis 3  (wine) `cyrius.exe deps --lock` with a planted certutil.exe beside cyrius.exe that
-#           prints a forged digest: the forged digest is never written. (Wine has no certutil.exe,
-#           so the fixed CLI refuses the hash instead; real Windows hashes — measured on cass.)
+#           prints a forged digest: the forged digest is never written. Since 6.7.12 the lock's
+#           hash is IN PROCESS (no certutil at all), so the lock IS written under wine and its row
+#           is lib/x.cyr's true SHA-256 (until 6.7.12: wine has no certutil.exe, so the fixed CLI
+#           refused the hash; real Windows hashed — measured on cass).
 #   axis 4  (wine) the stdlib's own spawns, from a probe with a cmd.exe planted beside it:
 #           `exec_cmd("exit /b 3")` is 3, its command sees NoDefaultCurrentDirectoryInExePath,
 #           and `_win_compile_spawn` returns the compiler's own exit code (9).
@@ -46,6 +48,7 @@
 #   M5 cbt _win_cmdline_cap back to a bare "cmd"           → axis 0 + axis 2 (test exit 42)
 #   M6 cbt _win_capacity_spawn back to a bare "cmd"        → axis 0 + axis 2 (capacity rc 1, PLANTED)
 #   M7 cbt deps certutil back to a bare "certutil"         → axis 0 + axis 3 (the forged digest written)
+#      (retired 6.7.12 with the certutil spawn; 6.7.11's spawn back → axis 3: no lock written)
 # The first M2 run PASSED: the shell it ran from exported NoDefaultCurrentDirectoryInExePath=1, so
 # the gate now unsets it and the .tcyr clears it from its own environment before its rows.
 set -eu
@@ -150,11 +153,15 @@ printf '[package]\nname = "lp"\nversion = "0.1.0"\ncyrius = "%s"\n' "$VER" > "$L
 printf 'fn lp_one(): i64 { return 1; }\n' > "$L/lib/x.cyr"
 L3=0; ( cd "$L" && CYRIUS_HOME="$HW" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" deps --lock > "$W/l3.log" 2>&1 ) || L3=$?
 rm -f "$W/home/bin/certutil.exe"
+XH=$(sha256sum "$L/lib/x.cyr" | cut -d' ' -f1)
 if grep -q deadbeef "$L/cyrius.lock" 2>/dev/null; then
     echo "  FAIL axis 3: cyrius.exe deps --lock wrote the planted certutil.exe's forged digest:"
     sed 's/^/    /' "$L/cyrius.lock"; fail=1
+elif [ "$L3" = 0 ] && grep -qx "$XH  lib/x.cyr" "$L/cyrius.lock" 2>/dev/null; then
+    echo "  ok axis 3: the planted certutil.exe's digest was never written; the lock carries lib/x.cyr's true SHA-256 (hashed in process, 6.7.12)"
 else
-    echo "  ok axis 3: the planted certutil.exe's digest was never written (rc $L3; wine has no System32 certutil)"
+    echo "  FAIL axis 3: cyrius.exe deps --lock (rc $L3) did not write lib/x.cyr's true SHA-256 ($XH):"
+    sed 's/^/    /' "$W/l3.log" | head -3; [ -f "$L/cyrius.lock" ] && sed 's/^/    /' "$L/cyrius.lock"; fail=1
 fi
 
 # ── axis 4: the stdlib's spawns (exec_cmd, _win_compile_spawn) ────────────────────────────

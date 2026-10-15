@@ -25,6 +25,10 @@
 #           stdlib = ["string", "alloc"]), whatever the manifest declared or pinned. D18 (the user,
 #           2026-10-15): it writes what `lib sync` writes — the declared set at the manifest's pin,
 #           `--full` for the whole snapshot.
+#   item 8  The lock's digests came from a spawned `sha256sum` / `shasum` (certutil.exe on PE):
+#           under wine, which has no certutil, `cyrius deps` printed `warning: cyrius.lock NOT
+#           written — cannot hash lib/alloc.cyr (and 15 more)` and wrote no lock. The SHA-256 is
+#           computed in process now, byte-identical to sha256sum (no existing lock churns).
 #
 # ROWS
 #   R3   a path dep `../mono/libs/foo` whose module is missing: the error names the local path
@@ -46,6 +50,11 @@
 #   R6b  `cyrius update --full`: lib/ holds every .cyr of the snapshot
 #   R6c  `current` names another installed version whose string.cyr differs: update copies the
 #        PIN's string.cyr, writes the pin into .cyrius-toolchain, and `deps --verify` passes
+#   R8a  the lock-hash row: lib/ = the whole lib/ corpus plus files of 0, 1, 55-57, 63-65,
+#        119-121, 127-129, 32767-32769 and 100001 random bytes (the padding and read-chunk
+#        edges): `deps --lock` writes one row per file, every row sha256sum's
+#   R8b  no hasher on PATH at all: a stdlib-only `deps` writes its first lock, rows sha256sum's
+#   W8   (wine, named SKIP without it) the PE CLI's `deps` writes cyrius.lock, rows sha256sum's
 #
 # Mutations (measured, one at a time; CYRIUS_BIN=<a CLI built from the mutated cbt/> runs this gate
 # on it): `_abs_path` without `_abs_drop_dot` → R3 RED; `_process_named_deps` returning the old
@@ -56,7 +65,10 @@
 # ceiling → R7a R7b RED; `_git_run`'s → R7c RED; 6.7.11's cmd_update (the whole snapshot of
 # `current`) → R6a R6b R6c RED (R6b: `--full` refused as unknown); the `--full` switch not set for
 # update → R6b RED (6 of 113 files);
-# .cyrius-toolchain written from `current` → R6c RED.
+# .cyrius-toolchain written from `current` → R6c RED; the second padding block taken at tl > 56
+# (not >= 56) → R8a RED (the 56-byte tails); the length bits written little-endian → R8a R8b RED;
+# 6.7.11's sha256sum spawn → R8b RED (no lock, `neither sha256sum nor shasum`) and W8 RED (no
+# lock: wine has no certutil).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_path_reporting_leftovers
@@ -227,6 +239,64 @@ if [ "$rc" -eq 0 ] && cmp -s "$P/lib/string.cyr" lib/string.cyr && [ "$(cat "$P/
     ok "R6c current = $O: update copies the pin's ($V) string.cyr, .cyrius-toolchain = $V, deps --verify passes"
 else bad "R6c (rc=$rc, verify rc=$v, .cyrius-toolchain '$(cat "$P/.cyrius-toolchain")'): string.cyr $(cmp -s "$P/lib/string.cyr" lib/string.cyr && echo "is the pin's" || echo "is NOT the pin's"); $(grep -m1 -E 'synced|updated|error' "$W/r6c.out")"; fi
 printf '%s\n' "$V" > "$H/current"
+
+# ── R8: the lock's SHA-256 is in process and equals sha256sum's ──────────────────────────────
+if command -v sha256sum > /dev/null 2>&1; then
+    rm -rf "$P"; mkdir -p "$P/lib/edge"
+    printf '[package]\nname = "hashes"\nversion = "0.0.1"\nlanguage = "cyrius"\n' > "$P/cyrius.cyml"
+    cp -r lib/. "$P/lib/"
+    for n in 0 1 55 56 57 63 64 65 119 120 121 127 128 129 32767 32768 32769 100001; do
+        head -c "$n" /dev/urandom > "$P/lib/edge/e$n.cyr"
+    done
+    rc=0; _cy deps --lock > "$W/r8a.out" 2>&1 || rc=$?
+    nf=$(cd "$P" && find lib -name '*.cyr' | wc -l | tr -d ' ')
+    nr=$(grep -c '^[0-9a-f]\{64\}  ' "$P/cyrius.lock" 2>/dev/null); nr=${nr:-0}
+    nbad=$( cd "$P" && grep '^[0-9a-f]\{64\}  ' cyrius.lock 2>/dev/null | sha256sum -c 2>/dev/null | grep -vc ': OK$' )
+    if [ "$rc" -eq 0 ] && [ "$nr" -eq "$nf" ] && [ "$nf" -gt 100 ] && [ "$nbad" -eq 0 ]; then
+        ok "R8a deps --lock over the lib/ corpus + 18 edge sizes: $nr rows, every one sha256sum's"
+    else bad "R8a (rc=$rc): $nr rows for $nf files, $nbad differ from sha256sum; $(head -2 "$W/r8a.out")"; fi
+    _mkp '"syscalls", "string"'
+    mkdir -p "$W/nohash"
+    rc=0; ( cd "$P" && PATH="$W/nohash" HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 \
+      exec "$CLI" deps ) > "$W/r8b.out" 2>&1 || rc=$?
+    nf=$(cd "$P" && find lib -name '*.cyr' | wc -l | tr -d ' ')
+    nr=$(grep -c '^[0-9a-f]\{64\}  ' "$P/cyrius.lock" 2>/dev/null); nr=${nr:-0}
+    if [ "$rc" -eq 0 ] && [ "$nr" -eq "$nf" ] && [ "$nf" -gt 0 ] && ( cd "$P" && grep '^[0-9a-f]\{64\}  ' cyrius.lock | sha256sum -c --quiet ) > /dev/null 2>&1; then
+        ok "R8b no hasher on PATH: deps writes the first lock ($nr rows, sha256sum's)"
+    else bad "R8b (rc=$rc): $nr rows for $nf files; $(grep -m1 -E 'warning|error' "$W/r8b.out")"; fi
+else
+    echo "  SKIP: R8a R8b — no sha256sum to compare the in-process digest with"
+fi
+
+# ── W: the PE CLI under wine ─────────────────────────────────────────────────────────────────
+if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; then
+    WP="$W/wine"; WHM="$W/whome"
+    _wine_down() {
+        [ -d "$WP" ] || return 0
+        _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+        WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
+        WINEPREFIX="$WP" wineserver -w > /dev/null 2>&1 || true
+        rm -rf "$_ws" || true
+    }
+    trap '_wine_down; rm -rf "$W"' EXIT
+    "$CC" < src/main_win.cyr > "$W/cc_win" 2> /dev/null && chmod +x "$W/cc_win" \
+      && "$W/cc_win" < cbt/cyrius.cyr > "$W/cyrius.exe" 2> "$W/pe.err" && [ -s "$W/cyrius.exe" ] \
+      || { bad "W setup: the PE CLI does not cross-build: $(grep -m1 -E 'error' "$W/pe.err")"; }
+    _wcy() {   # run the PE CLI in $P with the throwaway home (as a Windows path)
+        ( cd "$P" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+          WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' CYRIUS_HOME="$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$H" 2>/dev/null)" \
+          CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/cyrius.exe" "$@" )
+    }
+    _mkp '"string"'
+    rc=0; _wcy deps > "$W/w8.out" 2>&1 || rc=$?
+    nf=$(cd "$P" && find lib -name '*.cyr' 2> /dev/null | wc -l | tr -d ' ')
+    nr=$(grep -c '^[0-9a-f]\{64\}  ' "$P/cyrius.lock" 2>/dev/null); nr=${nr:-0}
+    if [ "$rc" -eq 0 ] && [ "$nr" -eq "$nf" ] && [ "$nf" -gt 0 ] && ( cd "$P" && grep '^[0-9a-f]\{64\}  ' cyrius.lock | sha256sum -c --quiet ) > /dev/null 2>&1; then
+        ok "W8 wine: cyrius.exe deps writes cyrius.lock ($nr rows, each sha256sum's)"
+    else bad "W8 wine (rc=$rc): $nr rows for $nf files; $(grep -m1 -E 'warning|error' "$W/w8.out" | tr -d '\r')"; fi
+else
+    echo "  SKIP: W8 — wine (or sha256sum) not found; the PE leg runs where wine is installed, and on cass"
+fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

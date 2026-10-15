@@ -102,8 +102,9 @@ var _dep_lock_new_leaf = 0;
 var _dep_lock_active = 0;
 # 6.6.9: 1 while cmd_deps writes a lock ONLY because of `_dep_lock_new_leaf`. A lock that cannot
 # be HASHED then is a named warning, not a failed resolve: before 6.6.9 no lock was attempted
-# at all in that case, and a host with no working hasher (wine has no certutil) must not
-# lose every stdlib-only build to it. `deps --verify` still names each uncovered file.
+# at all in that case, and a file that cannot be read (in 6.6.9, also a host with no working
+# hasher: wine has no certutil) must not lose every stdlib-only build to it. `deps --verify`
+# still names each uncovered file.
 var _dep_lock_soft = 0;
 # 6.6.17 — when non-zero, the vec of lib/ paths `cyrius lib sync` wrote: cmd_deps_lock then
 # re-hashes only those and keeps every other file's loaded row byte for byte.

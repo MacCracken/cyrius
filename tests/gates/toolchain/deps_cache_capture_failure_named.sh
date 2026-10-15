@@ -23,7 +23,9 @@
 # STILL IN PLACE — is reason 10, which names the temp dir and errno, says the cache was NOT judged, and prints
 # no restore recipe and no `rm -rf`. The hasher and the lint pre-pass report the temp dir the
 # same way. An absolute $TMPDIR is the temp base (trailing slashes dropped); a relative one is
-# ignored. The hasher also falls back to `shasum -a 256` (macOS 13 has no sha256sum).
+# ignored. (6.7.12: the lock's hasher is IN PROCESS — no sha256sum / shasum / certutil, no
+# capture — so a starved temp dir cannot touch cyrius.lock at all: axes 3, 6, 7 and 9 say so.
+# issues/2026-10-08-cli-path-and-reporting-leftovers.md item 8.)
 #
 # AXES (N = a private tmpfs's nr_inodes, mounted over /tmp in a user+mount namespace — the
 # filing's own recipe; the fixture is bind-mounted OUTSIDE /tmp so the mount cannot hide it)
@@ -37,10 +39,10 @@
 #      proving the probe is sized to the index (a fixed 64 KB probe passed at 128-320 KB).
 #   2. $TMPDIR routes around it: N=2 on /tmp with TMPDIR at a roomy dir resolves rc 0; a
 #      RELATIVE TMPDIR is ignored (the refusal names /tmp).
-#   3. The hasher: `deps --verify` / `deps --lock` at N=2 name the hash capture, never
-#      "sha256sum missing" / "neither sha256sum nor shasum"; the lock is left as it was. And
-#      with the tmpfs FULL (the capture opens, the hasher's write fails — EDQUOT's shape),
-#      `--verify`, `--lock` and plain `deps` name the capture, never "could not read it".
+#   3. The hasher needs no temp dir (6.7.12): `deps --verify` / `deps --lock` at N=2 AND with
+#      the tmpfs FULL verify every row and re-lock byte-identically, rc 0, with no word of a
+#      capture or a hasher. (6.6.9-6.7.11: they had to NAME the capture, the shape of a hasher
+#      that spawned sha256sum into a temp file.)
 #   4. `cyrius lint` on a file that does not parse, at N=3 and 2: rc 1, "could not run its
 #      syntax pre-pass" (N=64: "does not parse").
 #   5. (no namespace needed) TMPDIR is READ: a squeeze of all 16 candidates under
@@ -48,14 +50,14 @@
 #      dropped); a relative TMPDIR does not become the base; a TMPDIR that does not exist
 #      (errno 2) or cannot be written (errno 13, skipped as root) is named as that, never as
 #      "16 candidates were taken".
-#   6. The hasher's shasum fallback: with ONLY shasum on PATH, `deps --lock` writes hashes
-#      equal to sha256sum's; with neither, the error says so.
-#   7. STATIC: `_git_run` and `_sha_run` open the capture BEFORE `sys_fork()` and the child
-#      never opens it.
+#   6. No hasher on PATH at all (6.7.12): `deps --lock` writes every row equal to sha256sum's
+#      and `--verify` passes. (6.6.9-6.7.11: shasum stood in for sha256sum, and with neither
+#      the error said so.)
+#   7. STATIC: `_git_run` opens the capture BEFORE `sys_fork()` and the child never opens it.
 #   8. A git on PATH whose `update-index` exits 128: reported as git failing (reason 3),
 #      never as "a tracked file's content ... differs" (reason 4).
 #   9. STATIC: `_git_cache_verify_raw` never cleans its temps (the wrapper judges, THEN
-#      cleans); `_sha256sum_file` un-memoises a tool probe that never ran the tool.
+#      cleans); `_sha256sum_file` starts no process (6.7.12).
 # Axes 0-4 SKIP, named, where unprivileged user namespaces are unavailable; 5-9 always run.
 #
 # MUTATION LEDGER (measured 6.6.9, each a copy of the tree with ONE edit, CLI rebuilt):
@@ -70,22 +72,22 @@
 #                                                       parent's file makes it harmless today)
 #   pre-fix tree (the 6.6.9 slot-open commit bd6dad5f) -> axes 1-9 and 1b FAIL, axis 0 passes
 #   c. `_cbt_tmpbase` back to the literal "/tmp"     -> axes 2, 5 FAIL
-#   d. `_sha_finish` without its capture arm (fail 3 read as "could not read it")
-#                                                    -> axis 3 FAIL
+#   d. (retired 6.7.12 with `_sha_finish`: the hasher has no capture)
 #   e. the lint pre-pass's empty-capture arm back to `return 0`
 #                                                    -> axis 4 FAIL (0 warnings, rc 0)
-#   f. no shasum fallback (`_sha_tool = 2` never set) -> axis 6 FAIL
+#   f. (retired 6.7.12 with the shasum fallback)
+#   f'. (6.7.12) `_sha256sum_file` back on 6.7.11's sha256sum / shasum spawn
+#                                                    -> axes 3, 6, 9 FAIL
 #   g. trailing slashes kept on TMPDIR               -> axis 5 FAIL
 # Added with the review fixes (each against the fixed tree, one edit):
 #   the bite's first cut (9d2f2c8a)                  -> axes 1 (N=5, 4 and 8 KB free),
 #                                                       1b, 3, 5, 8, 9 FAIL
 #   h. judge AFTER the cleanup                       -> axes 1 (N=5), 1b, 9 FAIL
 #   i. update-index status ignored again             -> axis 8 FAIL
-#   j. `_sha_finish` without its temp-dir probe      -> axis 3 FAIL (full tmpfs: "could not
-#                                                       read it", all three verbs)
+#   j. (retired 6.7.12 with `_sha_finish`)
 #   k. mkdir's errno ignored (every failure looped)  -> axis 5 FAIL (both halves)
 #   l. judge probe fixed at 64 KB (not index-sized)  -> axis 1b FAIL (128-320 KB free)
-#   m. no `pr < 0` reset of the tool memo            -> axis 9 FAIL
+#   m. (retired 6.7.12 with the tool memo)
 #   n. the probe's 64 KB floor removed (the resolver's HEAD judge passes want 0 and then
 #      probed nothing)                               -> axes 1 (0 KB free, reason 1 "its .git
 #                                                       is missing"), 1b FAIL
@@ -240,29 +242,25 @@ if [ "$NS" = 1 ]; then
       || { fail "axis 2: a RELATIVE TMPDIR became the temp base (rc=$rc):"; sed 's/^/      /' "$W/a2b.out" | head -3; x=1; }
     [ "$x" = 0 ] && echo "  ok: axis 2: an absolute TMPDIR routes around a starved /tmp; a relative one is ignored"
 
-    # ── axis 3: the hasher ──
+    # ── axis 3: the hasher needs no temp dir (6.7.12: in process) ──
     x=0
     cp "$W/s/cyrius.lock" "$W/a3.lock"
+    nrow=$(grep -c '^[0-9a-f]\{64\}  ' "$W/a3.lock")
     rc=0; _ns 2 "$W/a3a.out" s - deps --verify || rc=$?
-    [ "$rc" -ne 0 ] || { fail "axis 3: deps --verify with no way to hash verified rc 0"; x=1; }
-    grep -q 'could not write the hash capture under /tmp/cyrius-' "$W/a3a.out" || { fail "axis 3: --verify does not name the hash capture:"; sed 's/^/      /' "$W/a3a.out" | head -2; x=1; }
+    { [ "$rc" -eq 0 ] && grep -q "^$nrow verified, 0 failed$" "$W/a3a.out"; } \
+      || { fail "axis 3: deps --verify with /tmp out of inodes (rc=$rc):"; sed 's/^/      /' "$W/a3a.out" | head -2; x=1; }
     rc=0; _ns 2 "$W/a3b.out" s - deps --lock || rc=$?
-    [ "$rc" -ne 0 ] || { fail "axis 3: deps --lock with no way to hash exited 0"; x=1; }
-    grep -q 'could not write the hash capture' "$W/a3b.out" || { fail "axis 3: --lock does not name the hash capture:"; sed 's/^/      /' "$W/a3b.out" | head -2; x=1; }
-    cmp -s "$W/s/cyrius.lock" "$W/a3.lock" || { fail "axis 3: a lock that could not hash anything REWROTE cyrius.lock"; x=1; }
-    grep -qE 'sha256sum missing|neither sha256sum nor shasum' "$W/a3a.out" "$W/a3b.out" && { fail "axis 3: a full temp dir was blamed on a missing hasher"; x=1; }
-    # A FULL (not inode-starved) tmpfs: the capture opens, the hasher's WRITE fails (the
-    # EDQUOT/ENOSPC a usrquota tmpfs gives), and it exits 1 — which used to read as "the
-    # hasher could not read it", blaming the dependency file.
-    for v in "deps --verify" "deps --lock" "deps"; do
+    [ "$rc" -eq 0 ] || { fail "axis 3: deps --lock with /tmp out of inodes failed (rc=$rc):"; sed 's/^/      /' "$W/a3b.out" | head -2; x=1; }
+    cmp -s "$W/s/cyrius.lock" "$W/a3.lock" || { fail "axis 3: deps --lock with /tmp out of inodes did not re-lock byte-identically"; x=1; }
+    # A FULL (not inode-starved) tmpfs — the EDQUOT / ENOSPC a usrquota tmpfs gives.
+    for v in "deps --verify" "deps --lock"; do
         f="$W/a3_$(echo "$v" | tr -dc 'a-z').out"
         rc=0; _nsx size=64k 0 "$f" s - $v || rc=$?
-        [ "$rc" -ne 0 ] || { fail "axis 3: \`$v\` with a FULL /tmp exited 0"; x=1; }
-        grep -q 'could not write the hash capture under /tmp/cyrius-' "$f" || { fail "axis 3: \`$v\` with a FULL /tmp does not name the hash capture:"; sed 's/^/      /' "$f" | head -2; x=1; }
-        grep -q 'could not read it' "$f" && { fail "axis 3: \`$v\` with a FULL /tmp blamed the file (\"could not read it\")"; x=1; }
+        [ "$rc" -eq 0 ] || { fail "axis 3: \`$v\` with a FULL /tmp failed (rc=$rc):"; sed 's/^/      /' "$f" | head -2; x=1; }
     done
-    cmp -s "$W/s/cyrius.lock" "$W/a3.lock" || { fail "axis 3: a lock run with a FULL /tmp REWROTE cyrius.lock"; x=1; }
-    [ "$x" = 0 ] && echo "  ok: axis 3: --verify, --lock and deps name the hash capture (not the hasher, not the file) with /tmp out of inodes AND full; the lock is left as it was"
+    cmp -s "$W/s/cyrius.lock" "$W/a3.lock" || { fail "axis 3: deps --lock with a FULL /tmp did not re-lock byte-identically"; x=1; }
+    grep -qE 'hash capture|sha256sum|shasum|the hasher' "$W/a3a.out" "$W/a3b.out" "$W"/a3_*.out && { fail "axis 3: a run that hashed in process spoke of a capture or a hasher"; x=1; }
+    [ "$x" = 0 ] && echo "  ok: axis 3: --verify and --lock need no temp dir — every row verified and re-locked byte-identically with /tmp out of inodes AND full"
 
     # ── axis 4: lint's syntax pre-pass ──
     x=0
@@ -284,60 +282,56 @@ else
 fi
 
 # ── axis 5: TMPDIR is read, trailing slashes dropped, a relative value ignored ──────────
+# The verb is `lint` (its syntax pre-pass writes into the private temp dir): `deps --lock`
+# needed one only for the hasher's capture, which is gone since 6.7.12.
 x=0
+printf 'fn lint_ok(): i64 { return 0; }\n' > "$W/s/lint_ok.cyr"
 mkdir -p "$W/roomy"
 ( cd "$W/s" && TMPDIR="$W/roomy/" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 sh -c '
     for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do mkdir -p "$0/cyrius-$$$s" || exit 90; done
-    exec "$1" deps --lock' "$W/roomy" "$W/bin/cyrius" ) > "$W/a5a.out" 2>&1 || true
+    exec "$1" lint lint_ok.cyr' "$W/roomy" "$W/bin/cyrius" ) > "$W/a5a.out" 2>&1 || true
 grep -q "cannot create a private temp directory under $W/roomy (fail-closed)" "$W/a5a.out" \
   || { fail "axis 5: with TMPDIR=\"$W/roomy/\" and its 16 candidates taken, the CLI did not fail closed naming $W/roomy (TMPDIR not read, or its trailing slash kept):"; sed 's/^/      /' "$W/a5a.out" | head -3; x=1; }
 rm -rf "$W/roomy"/cyrius-*
-rc=0; ( cd "$W/s" && TMPDIR="relative/dir" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --lock ) > "$W/a5b.out" 2>&1 || rc=$?
+rc=0; ( cd "$W/s" && TMPDIR="relative/dir" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" lint lint_ok.cyr ) > "$W/a5b.out" 2>&1 || rc=$?
 { [ "$rc" -eq 0 ] && ! grep -q 'relative/dir' "$W/a5b.out"; } \
   || { fail "axis 5: a RELATIVE TMPDIR was used as the temp base (rc=$rc):"; sed 's/^/      /' "$W/a5b.out" | head -3; x=1; }
 # A TMPDIR that does not exist (or cannot be written) is named as THAT, with its errno —
 # never as "16 candidates were taken", which sent the user hunting stale dirs.
-rc=0; ( cd "$W/s" && TMPDIR="$W/nonexistent/dir" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --lock ) > "$W/a5c.out" 2>&1 || rc=$?
+rc=0; ( cd "$W/s" && TMPDIR="$W/nonexistent/dir" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" lint lint_ok.cyr ) > "$W/a5c.out" 2>&1 || rc=$?
 { [ "$rc" -ne 0 ] && grep -q "under $W/nonexistent/dir (errno 2" "$W/a5c.out" && grep -q "TMPDIR=$W/nonexistent/dir does not exist or is not writable" "$W/a5c.out" && ! grep -q 'candidates were taken' "$W/a5c.out"; } \
   || { fail "axis 5: a nonexistent TMPDIR is not named as that (rc=$rc):"; sed 's/^/      /' "$W/a5c.out" | head -3; x=1; }
 if [ "$(id -u)" != 0 ]; then
     mkdir -p "$W/ro" && chmod 555 "$W/ro"
-    rc=0; ( cd "$W/s" && TMPDIR="$W/ro" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --lock ) > "$W/a5d.out" 2>&1 || rc=$?
+    rc=0; ( cd "$W/s" && TMPDIR="$W/ro" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" lint lint_ok.cyr ) > "$W/a5d.out" 2>&1 || rc=$?
     chmod 755 "$W/ro"
     { [ "$rc" -ne 0 ] && grep -q "under $W/ro (errno 13" "$W/a5d.out" && ! grep -q 'candidates were taken' "$W/a5d.out"; } \
       || { fail "axis 5: an unwritable TMPDIR is not named as that (rc=$rc):"; sed 's/^/      /' "$W/a5d.out" | head -3; x=1; }
 fi
 [ "$x" = 0 ] && echo "  ok: axis 5: an absolute TMPDIR is the temp base (trailing slash dropped); a relative one is ignored; a missing/unwritable one is named with its errno"
 
-# ── axis 6: the shasum fallback, and the no-hasher message ──────────────────────────────
+# ── axis 6: no hasher on PATH at all (6.7.12: in process) ───────────────────────────────
 x=0
-SHA=$(command -v shasum 2>/dev/null || true)
-[ -z "$SHA" ] && [ -x /usr/bin/core_perl/shasum ] && SHA=/usr/bin/core_perl/shasum
-if [ -n "$SHA" ]; then
-    mkdir -p "$W/onlyshasum" && ln -sf "$SHA" "$W/onlyshasum/shasum"
-    rm -f "$W/s/cyrius.lock"
-    rc=0; ( cd "$W/s" && PATH="$W/onlyshasum" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --lock ) > "$W/a6a.out" 2>&1 || rc=$?
-    [ "$rc" -eq 0 ] || { fail "axis 6: with only shasum on PATH, deps --lock failed (rc=$rc):"; sed 's/^/      /' "$W/a6a.out" | head -3; x=1; }
-    nl=$(grep -c '^[0-9a-f]\{64\}  ' "$W/s/cyrius.lock" 2>/dev/null); nl=${nl:-0}
-    [ "$nl" -ge 2 ] || { fail "axis 6: the shasum-built lock has $nl hash lines"; x=1; }
-    grep '^[0-9a-f]\{64\}  ' "$W/s/cyrius.lock" 2>/dev/null | while read -r h p; do
-        real=$( cd "$W/s" && sha256sum "$p" | cut -d' ' -f1 )
-        [ "$real" = "$h" ] || echo "$p"
-    done > "$W/a6.bad"
-    [ -s "$W/a6.bad" ] && { fail "axis 6: shasum-built hashes differ from sha256sum's for: $(tr '\n' ' ' < "$W/a6.bad")"; x=1; }
-else
-    echo "  note: axis 6: no shasum on this host — the fallback half is exercised on macOS (ach) only"
-fi
 mkdir -p "$W/nohash"
+rm -f "$W/s/cyrius.lock"
+rc=0; ( cd "$W/s" && PATH="$W/nohash" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --lock ) > "$W/a6a.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 6: with no hasher on PATH, deps --lock failed (rc=$rc):"; sed 's/^/      /' "$W/a6a.out" | head -3; x=1; }
+nl=$(grep -c '^[0-9a-f]\{64\}  ' "$W/s/cyrius.lock" 2>/dev/null); nl=${nl:-0}
+[ "$nl" -ge 2 ] || { fail "axis 6: the lock written with no hasher on PATH has $nl hash lines"; x=1; }
+grep '^[0-9a-f]\{64\}  ' "$W/s/cyrius.lock" 2>/dev/null | while read -r h p; do
+    real=$( cd "$W/s" && sha256sum "$p" | cut -d' ' -f1 )
+    [ "$real" = "$h" ] || echo "$p"
+done > "$W/a6.bad"
+[ -s "$W/a6.bad" ] && { fail "axis 6: in-process hashes differ from sha256sum's for: $(tr '\n' ' ' < "$W/a6.bad")"; x=1; }
 rc=0; ( cd "$W/s" && PATH="$W/nohash" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$W/bin/cyrius" deps --verify ) > "$W/a6b.out" 2>&1 || rc=$?
-{ [ "$rc" -ne 0 ] && grep -q 'neither sha256sum nor shasum is on PATH' "$W/a6b.out"; } \
-  || { fail "axis 6: with no hasher on PATH, --verify does not say so (rc=$rc):"; sed 's/^/      /' "$W/a6b.out" | head -2; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 6: shasum stands in for a missing sha256sum (same hashes); with neither, the error says so"
+{ [ "$rc" -eq 0 ] && grep -q "^$nl verified, 0 failed$" "$W/a6b.out"; } \
+  || { fail "axis 6: with no hasher on PATH, --verify (rc=$rc):"; sed 's/^/      /' "$W/a6b.out" | head -2; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 6: with no hasher on PATH the lock is written ($nl rows, each sha256sum's) and verifies"
 
 # ── axis 7: STATIC — the capture is opened by the parent ────────────────────────────────
 _fn_body() { awk -v want="$2" '$0 ~ "^fn " want "\\(" { inb = 1 } inb && /^}/ { print; inb = 0 } inb { print }' "$1"; }
 x=0
-for f in _git_run _sha_run; do
+for f in _git_run; do
     _fn_body cbt/deps.cyr "$f" > "$W/$f.body"
     [ -s "$W/$f.body" ] || { fail "axis 7: $f not found in cbt/deps.cyr"; x=1; continue; }
     ol=$(grep -n 'cfd = sys_open(' "$W/$f.body" | head -1 | cut -d: -f1)
@@ -346,7 +340,7 @@ for f in _git_run _sha_run; do
     n=$(grep -cE 'sys_open\((outf|tmpf),' "$W/$f.body"); n=${n:-0}
     [ "$n" -le 1 ] || { fail "axis 7: $f opens its capture $n times — the child opens it again"; x=1; }
 done
-[ "$x" = 0 ] && echo "  ok: axis 7: _git_run and _sha_run create their capture in the parent, before the fork, and only there"
+[ "$x" = 0 ] && echo "  ok: axis 7: _git_run creates its capture in the parent, before the fork, and only there"
 
 # ── axis 8: an update-index that FAILS is git failing, never "a file differs" ─────────
 # A git on PATH that answers `update-index` with 128 (what "cannot create index.lock" exits)
@@ -373,8 +367,9 @@ jl=$(grep -n '_git_cap_judge(' "$W/cv.body" | head -1 | cut -d: -f1)
 cl=$(grep -n '_git_verify_cleanup(' "$W/cv.body" | tail -1 | cut -d: -f1)
 { [ -n "$jl" ] && [ -n "$cl" ] && [ "$jl" -lt "$cl" ]; } || { fail "axis 9: _git_cache_verify does not judge BEFORE its final cleanup (judge line ${jl:-none}, cleanup line ${cl:-none})"; x=1; }
 _fn_body cbt/deps.cyr _sha256sum_file > "$W/sf.body"
-grep -q 'if (pr < 0) { _sha_tool = 0; }' "$W/sf.body" || { fail "axis 9: _sha256sum_file memoises its tool from a probe that never ran it (no pr < 0 reset)"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 9: the cache verdict is judged before the verify's temps are removed; the hasher is re-probed after a run that never started"
+[ -s "$W/sf.body" ] || { fail "axis 9: _sha256sum_file not found"; x=1; }
+grep -qE 'sys_fork|sys_execve|exec_capture|_cbt_tmpfile' "$W/sf.body" && { fail "axis 9: _sha256sum_file starts a process or opens a capture again"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 9: the cache verdict is judged before the verify's temps are removed; the lock's hasher starts no process"
 
 [ "$FAIL" = 0 ] || exit 1
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
