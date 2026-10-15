@@ -195,7 +195,6 @@ cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private tem
 cbt/commands.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
 cbt/commands.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
-cbt/deps.cyr|tmpf|a _cbt_tmpfile capture of sha256sum'"'"'s stdout
 cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
 cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
 cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)

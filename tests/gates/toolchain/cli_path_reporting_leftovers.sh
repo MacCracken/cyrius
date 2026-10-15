@@ -184,7 +184,7 @@ for d in proj other; do
 done
 _ct() {   # $1 = the working directory as the shell spells it, $2 = the unit; prints the rc
     ( cd "$1" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 \
-      exec "$CLI" test "$2" ) > "$W/r2.out" 2>&1
+      "$CLI" test "$2" ) > "$W/r2.out" 2>&1
     echo $?
 }
 r=$(_ct "$T/link" "$T/link/tests/sub/x.tcyr")
@@ -206,7 +206,7 @@ _r7() {   # $1 = foo's path; leaves the `local:` line in r7.out and the git log 
     printf '[package]\nname = "p7"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "%s"\n\n[deps]\nstdlib = ["string"]\n%s\n' "$V" "$(_foo "$1")" > "$W/p7l/cyrius.cyml"
     : > "$W/git.log"
     ( cd "$W/p7l" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 PATH="$W/fakegit:$PATH" \
-      exec "$CLI" deps --local ) > "$W/r7.out" 2>&1
+      "$CLI" deps --local ) > "$W/r7.out" 2>&1
 }
 _r7 links/foo;        la=$(grep -m1 '^local: foo' "$W/r7.out"); ca=$(grep -m1 -- ' -C ' "$W/git.log" | sed 's/^CEIL=\([^ ]*\) .*/\1/')
 _r7 ../mono/libs/foo; lb=$(grep -m1 '^local: foo' "$W/r7.out"); cb=$(grep -m1 -- ' -C ' "$W/git.log" | sed 's/^CEIL=\([^ ]*\) .*/\1/')
@@ -224,7 +224,7 @@ mkdir -p "$W/elsewhere" && mv "$H/deps/foo/1.0.0" "$W/elsewhere/" && ln -s "$W/e
   || bad "R7c setup: cannot move the cache behind a symlink"
 rm -rf "$P/lib" "$P/cyrius.lock"; : > "$W/git.log"
 rc=0; ( cd "$P" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 PATH="$W/fakegit:$PATH" \
-  exec "$CLI" deps ) > "$W/r7c.out" 2>&1 || rc=$?
+  "$CLI" deps ) > "$W/r7c.out" 2>&1 || rc=$?
 ceils=$(grep -- '--no-replace-objects' "$W/git.log" | sed 's/^CEIL=\([^ ]*\) .*/\1/' | sort -u)
 if [ "$rc" -eq 0 ] && [ "$ceils" = "$W/elsewhere" ]; then ok "R7c the cache behind a symlink: every cache git run's ceiling is the physical parent"
 else bad "R7c (rc $rc) ceilings: $(echo "$ceils" | tr '\n' ' ')"; fi
@@ -272,7 +272,7 @@ if command -v sha256sum > /dev/null 2>&1; then
     _mkp '"syscalls", "string"'
     mkdir -p "$W/nohash"
     rc=0; ( cd "$P" && PATH="$W/nohash" HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 \
-      exec "$CLI" deps ) > "$W/r8b.out" 2>&1 || rc=$?
+      "$CLI" deps ) > "$W/r8b.out" 2>&1 || rc=$?
     nf=$(cd "$P" && find lib -name '*.cyr' | wc -l | tr -d ' ')
     nr=$(grep -c '^[0-9a-f]\{64\}  ' "$P/cyrius.lock" 2>/dev/null); nr=${nr:-0}
     if [ "$rc" -eq 0 ] && [ "$nr" -eq "$nf" ] && [ "$nf" -gt 0 ] && ( cd "$P" && grep '^[0-9a-f]\{64\}  ' cyrius.lock | sha256sum -c --quiet ) > /dev/null 2>&1; then
@@ -284,7 +284,10 @@ fi
 
 # ── W: the PE CLI under wine ─────────────────────────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; then
+    # A PRIVATE prefix under $W (never ~/.wine), its HOME and cache with it; torn down on exit.
     WP="$W/wine"; WHM="$W/whome"
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    HW=$(winepath -w "$H" 2> /dev/null)
     _wine_down() {
         [ -d "$WP" ] || return 0
         _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -297,9 +300,7 @@ if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; th
       && "$W/cc_win" < cbt/cyrius.cyr > "$W/cyrius.exe" 2> "$W/pe.err" && [ -s "$W/cyrius.exe" ] \
       || { bad "W setup: the PE CLI does not cross-build: $(grep -m1 -E 'error' "$W/pe.err")"; }
     _wcy() {   # run the PE CLI in $P with the throwaway home (as a Windows path)
-        ( cd "$P" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-          WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' CYRIUS_HOME="$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$H" 2>/dev/null)" \
-          CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/cyrius.exe" "$@" )
+        ( cd "$P" && CYRIUS_HOME="$HW" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/cyrius.exe" "$@" )
     }
     _mkp '"string"'
     rc=0; _wcy deps > "$W/w8.out" 2>&1 || rc=$?
@@ -317,11 +318,10 @@ if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; th
     printf '[test]\ndefines = ["FOO"]\n' > "$P/tests/sub/test.cyml"
     printf '#ifdef FOO\nsyscall(SYS_EXIT, 0);\n#endif\nsyscall(SYS_EXIT, 1);\n' > "$P/tests/sub/x.tcyr"
     printf 'alloc_init();\nvar f = getenv("CYRIUS_TEST_FILE");\nvar d = getenv("CYRIUS_TEST_DIR");\nif (f != 0) { syscall(1, 1, "FILE=", 5); syscall(1, 1, f, strlen(f)); syscall(1, 1, "\\n", 1); }\nif (d != 0) { syscall(1, 1, "DIR=", 4); syscall(1, 1, d, strlen(d)); syscall(1, 1, "\\n", 1); }\nsyscall(60, 0);\n' > "$P/tests/sub/e.tcyr"
-    PW=$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$P" 2> /dev/null)
+    PW=$(winepath -w "$P" 2> /dev/null)
     _wt() {   # $1 = the unit as cyrius.exe is given it; prints the rc, output in w1.out
-        ( cd "$P" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-          WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' CYRIUS_HOME="$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$H" 2>/dev/null)" \
-          CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/wbin/cyrius.exe" test "$1" ) > "$W/w1.out" 2>&1
+        ( cd "$P" && CYRIUS_HOME="$HW" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/wbin/cyrius.exe" test "$1" ) \
+          > "$W/w1.out" 2>&1
         echo $?
     }
     r=$(_wt "$PW\\tests\\sub\\x.tcyr")
