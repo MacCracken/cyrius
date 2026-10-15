@@ -1606,9 +1606,11 @@ fn _hdr_int_w(b, p, n): i64 {
     return 0;
 }
 
-# 1 iff buf[p, p+n) names a SIMD vector type. A vector return is not modelled here (it travels in
-# vector registers, or a PE result pointer, by width and target): it keeps the pre-6.7.11 word —
-# issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md.
+# 1 iff buf[p, p+n) names a SIMD vector type (the twelve: 128-bit and 256-bit). A vector return is
+# refused by name (6.7.12, D24): no C11 return type carries one — a C vector type is a compiler
+# extension or an intrinsics header, which the header's own -std=c11 -pedantic-errors rows refuse
+# — and cycc's convention differs from C's by width and target (a PE result pointer; two registers
+# for a 32-byte vector). It printed `cyr_val`, which C reads from rax / x0. CHANGELOG [6.7.12]
 fn _hdr_vec_name(b, p, n): i64 {
     if (n != 5) { return 0; }
     var v = "f64v2f64v4f32v4f32v8i32v4u32v4i16v8u16v8i64v2u64v2i8v16u8v16";
@@ -1815,7 +1817,9 @@ fn _hdr_ret_class(b, len, p): i64 {
     if (_hdr_int_w(b, p, n) > 0) { return 0; }
     if (_hdr_stack_name(b, p, n) == 1) { _hdr_rsz = 16; return 4; }   # 6.7.12: the stdlib's pair
     if (_hdr_name_w(b, p, n) > 0) { return 0; }
-    if (_hdr_vec_name(b, p, n) == 1) { return 0; }
+    if (_hdr_vec_name(b, p, n) == 1) {
+        return _hdr_fail("a SIMD vector return, which no C11 return type carries", p, ie);
+    }
     return _hdr_fail("a type not declared in this file, which this scanner cannot size", p, ie);
 }
 

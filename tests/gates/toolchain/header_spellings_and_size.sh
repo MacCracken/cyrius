@@ -89,6 +89,7 @@
 #   `Str` a word before the file's own struct Str is sized             → H8 FAIL (the str3 row)
 #   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
 #   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
+# 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -262,7 +263,7 @@ printf '%s\n' 'struct C3 { r: u8; g: u8; b: u8; }' 'struct B8 { a: u8; b: u8; c:
   'fn rb17(): B17 { var z: B17; return z; }' 'fn ruu(): UU { var z: UU; return z; }' \
   'fn rs(): Str { return 0; }' 'fn rp(): *B17 { return 0; }' 'fn ri(): i32 { return 1; }' 'fn rf(): f64 { return 0; }' \
   'fn rt(): (i64, f64) { return (1, 2); }' 'fn rfw(): FW { var z: FW; return z; }' \
-  'fn ml(a)' '    : B16 { var z: B16; return z; }' 'fn rv(): f64v2 { var v: f64v2; return v; }' \
+  'fn ml(a)' '    : B16 { var z: B16; return z; }' \
   'struct FW { a; b; c; d; }' > cls.cyr
 rc8b=0; "$CY" header cls.cyr > o8b 2> e8b || rc8b=$?
 check "boundaries: exit 0" 0 "$rc8b"
@@ -292,7 +293,24 @@ else
 fi
 check "a struct declared after the fn is sized (the whole file is read)" 1 "$(has o8b 'cyr_val4 rfw(void);   /* returns FW, 32 B */')"
 check "a return annotation on the line after the list's ')'" 1 "$(has o8b 'cyr_val2 ml(cyr_val a);   /* returns B16, 16 B */')"
-check "a SIMD vector return keeps its pre-6.7.11 word (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md)" 1 "$(has o8b 'cyr_val rv(void);')"
+# 6.7.12 (D24, the user 2026-10-15): a SIMD vector return is REFUSED by name — it printed `cyr_val`
+# (C reads rax / x0; cycc returns a vector elsewhere, by width and target), and no C11 return type
+# carries one. The filed repro verbatim (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md),
+# then every one of the twelve vector names. Mutation: the 6.7.11 word restored → these rows RED.
+printf '%s\n' 'fn rv2(a): f64v2 { var v: f64v2; return v; }' 'fn rv4(): f64v4 { var v: f64v4; return v; }' \
+  'fn ri4(): i32v4 { var v: i32v4; return v; }' > vec.cyr
+(cd "$ROOT" && "$ROOT/build/cycc" < "$D/vec.cyr" > "$D/vec.bin" 2> /dev/null) && vrc=0 || vrc=$?
+check "the filed vec.cyr builds with cycc" 0 "$vrc"
+rcv=0; "$CY" header vec.cyr > o8v 2> e8v || rcv=$?
+check "vector returns: exit 1" 1 "$rcv"
+for vt in rv2:f64v2 rv4:f64v4 ri4:i32v4; do
+    check "'${vt%%:*}' (${vt#*:}) refused by name" 1 "$(grep -cxF "error: cyrius header: '${vt%%:*}' returns '${vt#*:}': a SIMD vector return, which no C11 return type carries; no prototype written" e8v || true)"
+done
+check "no prototype for a vector return, the header still closes" "0 1" "$(grep -cE '(rv2|rv4|ri4)\(' o8v || true) $(has o8v '#endif /* CYRIUS_FFI_H */')"
+: > v12.cyr; for vt in f64v2 f64v4 f32v4 f32v8 i32v4 u32v4 i16v8 u16v8 i64v2 u64v2 i8v16 u8v16; do echo "fn r_$vt(): $vt { var v: $vt; return v; }" >> v12.cyr; done
+echo 'fn keep(a): i64 { return a; }' >> v12.cyr
+rcv12=0; "$CY" header v12.cyr > o8w 2> e8w || rcv12=$?
+check "all twelve vector types refused, a scalar fn beside them kept, exit 1" "12 1 1" "$(grep -c "returns '[a-z0-9]*': a SIMD vector return, which no C11 return type carries; no prototype written" e8w || true) $(has o8w 'cyr_val keep(cyr_val a);') $rcv12"
 printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }' > str3.cyr
 "$CY" header str3.cyr > o8c 2>&1 || :
 check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"

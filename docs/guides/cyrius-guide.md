@@ -4845,7 +4845,10 @@ words, the size rounded up: the callee writes whole words), returned by value th
 result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the tool cannot size
 from the file itself — another file's struct, a generic instance, a struct holding one, a struct
 declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
-on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+on stderr with no prototype, and the verb exits 1. Since 6.7.12 so is a SIMD vector return (D24:
+``'rv2' returns 'f64v2': a SIMD vector return, which no C11 return type carries``) — it printed
+`cyr_val`, which C reads from rax / x0, and a C vector type is a compiler extension; make such a fn
+private, or return its lanes another way, to generate a header for the rest of the file.
 Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
 (and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
 x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden
