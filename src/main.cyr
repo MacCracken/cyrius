@@ -473,13 +473,13 @@
 #                                        drivers take `_codebuf_base = alloc(8388608)` off-heap, so for four
 #                                        minors this line mapped 3 MB that only cx touched. History: 1 MB
 #                                        pre-v5.7.27, 3 MB after; pulled down to abut str_data at v5.11.68.)
-#   0x41A000 cx_brk_shadow [524296]     (cx only) main_cx.cyr sets `_codebuf_base = S + 0x41A000`, so the
-#                                        shared break/continue chain (parse.cyr _PARSE_BREAK, parse_ctrl.cyr)
-#                                        keeps its rel32 links here, indexed by the cx code offset. cx's EB
-#                                        refuses cp >= 524288, and a link is an 8-byte read-modify-write,
-#                                        hence 524288 + 8. cx's real bytecode is at 0x54A000.
-#   0x54A000 cx_codebuf    [524288]     (cx only) the cx driver's bytecode buffer (backend/cx/emit.cyr EB,
-#                                        which refuses cp >= 524288; never grows). Ends 0x5CA000.
+#   0x41A000  (FREED 6.7.12 on the cx driver too — was cx_brk_shadow [524296], the shared break/continue
+#                                        chain's link shadow, and 0x54A000 cx_codebuf [524288], cx's fixed
+#                                        512 KiB bytecode buffer; a ~900 KB program overflowed it with a bare
+#                                        "codebuf overflow". Both are off-heap allocs in main_cx.cyr now:
+#                                        `_cx_code_base` (backend/cx/emit.cyr _CX_CODE_CAP, 4 MiB, EB refuses
+#                                        past it by name) and `_codebuf_base` (_CX_CODE_CAP + 8). The band
+#                                        0x41A000-0x5CA000 is free on every driver.)
 #   0x7400000 input_buf     [25165824]   24MB raw stdin + preprocessor WORKING buffer.
 #                                        v6.5.39: RELOCATED here (arena top) from 0x4D9D000, and
 #                                        grown 16 -> 24 MB. It sat directly ON TOP of

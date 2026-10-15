@@ -255,6 +255,8 @@
 #      vector, at top level) — on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE: "N passed, 0 failed (N total)".
 #      On Win64 no hidden result pointer was passed, so the callee wrote through its first argument (exit 5;
 #      `s.mv(..)` overwrote self). VDw1-VDw3: the filed repros verbatim on PE (exit 3)
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): the accepted rows R12 R13 R23-R28 run on ecb / ach / cass / pi as
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr, K2 K3 U2 U3 MP2 as tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

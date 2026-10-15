@@ -14,8 +14,11 @@ include "lib/args.cyr"
 
 fn main(): i64 {
     alloc_init();
-    args_init();
+    var ar = args_init();
     test_group("argv capture executes and is self-consistent (smoke)");
+    # 6.7.12 (D7): a failure to read the command line is a NEGATIVE errno on every host, so a
+    # successful capture is >= 0 everywhere (bytes read on Linux / Windows, 0 on macOS / agnos).
+    assert_eq(ar >= 0, 1, "args_init succeeded: a non-negative return (a failure is a negative errno)");
     var n = argc();
     assert_eq(n >= 0, 1, "argc() returned a non-negative count (capture did not fault)");
     if (n >= 1) {

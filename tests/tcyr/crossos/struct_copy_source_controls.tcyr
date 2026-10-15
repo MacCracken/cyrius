@@ -1,0 +1,105 @@
+# struct_copy_source_controls.tcyr — 6.7.12. THE DECLARED-TYPE CONTROLS OF THE STRUCT COPY-SOURCE CHECKS, ON THE HOSTS
+# (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
+#
+# tests/gates/frontend/struct_copy_source_type_refused.sh refuses a struct copy whose SOURCE is of another struct
+# type — a struct-typed field as a by-value argument (6.6.12 V3), a top-level copy-init from a global or a field
+# (V4), an assignment from a dereference of a `*U` (6.7.11), a struct-typed field from a `*U` global / `: *U` call /
+# `*U` field (6.7.11) and a top-level copy-init from a field reached through a pointer (6.7.11). The refusals are
+# host-independent and stay in the gate. Its acceptance rows A1-A7 — the same shapes with the DECLARED type, which
+# must copy the struct — run there on x86_64 only. Each is an assertion here, its expected value the gate's exit
+# code, and each carries the gate's field-by-field control (the same arithmetic on the source's own fields):
+#   A1  take(r.v), gen<Pt>(r.v), p.plus(r.v) — a struct-typed field as a by-value argument          102
+#   A2  var G: Pt = A; / = GR.v; in the declaration zone and after the first statement             180
+#   A3  take65(.., r.v) — the declared type at parameter ordinal 65                                34
+#   A4  l = *p                                                                                     58
+#   A5  q = *p with q: *Pt (the copy lands in q's pointee)                                         58
+#   A6  r.v = GP / gp() / w.p — a field from a *Pt global, a : *Pt call, a *Pt field                158
+#   A7  var G: Pt = PW.v / gw().v / VV.p.v — through a pointer, both zones                          30
+# The gate also requires A4-A6 to compile with no warning; that half is a compile-time check and stays there. The
+# copy layouts are pinned further by crossos/struct_field_value_copy.tcyr, struct_deref_assign_copy.tcyr and
+# struct_pointer_source_copy.tcyr. Globals carry a per-row prefix (A2's and A7's `GR` hold different values).
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Q { a; b; c; }
+struct RB { v: Pt; n; q: Q; }
+fn take(p: Pt): i64 { return p.x * 10 + p.y; }
+fn gen<T>(p: T): i64 { return p.x * 10 + p.y; }
+impl Pt { fn plus(self, q: Pt): i64 { return q.x * 10 + q.y; } }
+
+# ---- A2's and A7's declaration-zone copies (before the first statement) ----
+var A2A = Pt { 3, 4 };
+var A2GR = RB { 5, 6, 0, 0, 0, 0 };
+var A2G: Pt = A2A;
+var A2H: Pt = A2GR.v;
+var A7GR = RB { 1, 2, 3, 4, 5, 6 };
+var A7PW: *RB = &A7GR;
+struct VW { p: *RB; }
+fn a7_gw(): *RB { return &A7GR; }
+var A7VV = VW { &A7GR };
+var A7G1: Pt = A7PW.v;
+var A7G2: Pt = a7_gw().v;
+var A7G3: Pt = A7VV.p.v;
+
+# ---- A1 ----
+fn a1(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; var p: Pt; return take(r.v) + gen<Pt>(r.v) + p.plus(r.v); }
+fn a1_ctl(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return r.v.x * 30 + r.v.y * 3; }
+
+# ---- A3: parameter ordinal 65 ----
+fn take65(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21,
+  a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42,
+  a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, b0, b1, b2,
+  p: Pt): i64 { return p.x * 10 + p.y; }
+fn a3(): i64 {
+    var r: RB; r.v.x = 3; r.v.y = 4;
+    return take65(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+      27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+      52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 0, 0, 0, r.v);
+}
+fn a3_ctl(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return r.v.x * 10 + r.v.y; }
+
+# ---- A4 / A5: an assignment from a dereference of the declared type ----
+fn a4(): i64 { var s = Pt { 5, 8 }; var p: *Pt = &s; var l = Pt { 0, 0 }; l = *p; return l.x * 10 + l.y; }
+fn a5(): i64 {
+    var s = Pt { 5, 8 }; var p: *Pt = &s; var t = Pt { 0, 0 }; var q: *Pt = &t; q = *p; return t.x * 10 + t.y;
+}
+
+# ---- A6: a struct-typed field from a *Pt global, a : *Pt call and a *Pt field; the source zeroed after ----
+var A6GS = Pt { 5, 8 };
+var A6GP: *Pt = &A6GS;
+fn a6_gp(): *Pt { return A6GP; }
+struct WP { n; p: *Pt; }
+fn a6(): i64 {
+    var w = WP { 0, A6GP }; var r: RB; var o: RB; var u: RB;
+    r.v = A6GP; o.v = a6_gp(); u.v = w.p; A6GS.x = 0;
+    return r.v.x * 10 + o.v.y + u.v.x * 20;
+}
+
+# ---- the first top-level statement ----
+var steps = 0;
+steps = steps + 1;
+
+# ---- A2's and A7's copies after it ----
+var A2J: Pt = A2A;
+var A2K: Pt = A2GR.v;
+var A7G4: Pt = (A7PW.v);
+var A7G5: Pt = a7_gw().v;
+var A7G6: Pt = A7VV.p.v;
+A7GR.v.x = 0;
+
+assert_eq(a1(), 102, "A1: take(r.v) + gen<Pt>(r.v) + p.plus(r.v)");
+assert_eq(a1(), a1_ctl(), "A1: = its field-by-field control");
+assert_eq(A2G.x * 10 + A2G.y + A2H.x * 10 + A2H.y + A2J.x * 10 + A2J.y + A2K.x * 10 + A2K.y, 180,
+  "A2: var G: Pt = A; / = GR.v; in both zones");
+assert_eq((A2A.x * 10 + A2A.y + A2GR.v.x * 10 + A2GR.v.y) * 2, 180, "A2: its control (the sources' own fields)");
+assert_eq(a3(), 34, "A3: take65(.., r.v), the declared type at ordinal 65");
+assert_eq(a3(), a3_ctl(), "A3: = its field-by-field control");
+assert_eq(a4(), 58, "A4: l = *p copies the struct");
+assert_eq(a5(), 58, "A5: q = *p (q: *Pt) copies into the pointee");
+assert_eq(a6(), 158, "A6: r.v = GP / gp() / w.p copy the struct (the source zeroed after)");
+assert_eq(A7G1.x * 10 + A7G1.y + A7G2.x + A7G3.y + A7G4.x * 10 + A7G4.y + A7G5.x + A7G6.y, 30,
+  "A7: var G: Pt = PW.v / gw().v / VV.p.v, both zones, copies (the source's x zeroed after)");
+assert_eq(A7GR.v.x, 0, "A7: the source was zeroed (the copies kept 1)");
+assert_eq(steps, 1, "the top-level statements ran");
+
+var r = assert_summary();

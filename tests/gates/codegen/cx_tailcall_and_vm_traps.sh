@@ -32,9 +32,10 @@
 #      globals and heap; hand-made images hit the call-stack and data-stack overflow traps and both
 #      underflow traps.
 #   C. an unknown opcode traps and names itself and its pc: "cxvm: unknown opcode 0xF0 at pc 4".
-#   D. guest memory: a store to 0 traps (native: SIGSEGV), a store/load reaching past 1 MB traps, a
-#      negative address traps, the last in-range byte works, a syscall buffer past 1 MB answers
-#      -EFAULT without reaching the host, and a negative pc traps.
+#   D. guest memory: a store to 0 traps (native: SIGSEGV), a store/load reaching past the segment
+#      traps, a negative address traps, the last in-range byte works, a syscall buffer past the
+#      segment answers -EFAULT without reaching the host, and a negative pc traps. The segment is
+#      8 MiB since 6.7.12 (1 MB before; D5b: a byte at the old boundary is ordinary memory now).
 #   E. cx narrow stores: B01's row shapes (handoff B01-cx-rows.cyr, inlined) and statement-arm rows
 #      on packed narrow globals and a narrow local seen through its address; each equals native.
 #      ⚠ The B01 rows need F's B01 frontend fix too (the for step / compound load) — on a tree
@@ -64,6 +65,15 @@
 #                                                       the frontend is shared, so `both` stops there)
 #   (6.7.3) the loop's end never decides              -> A4 RED (native 139: the whole fn's flag
 #           (`_tcp_loop_end` returns at once)              diverted the call, the stack overflowed)
+#   (6.7.12, the 8 MiB segment; each in a scratch copy of the tree)
+#   _CX_MEM_SIZE back to 1048576                      -> D5b + D7 RED ("out of range: 1048576" /
+#                                                       "8388607"); D3-D5, D8, D9 hold (past 8 MiB
+#                                                       is past 1 MB too)
+#   _CX_MEM_SIZE 16777216                             -> D3 / D4 / D5 RED (exit 9, no trap), D8 (156)
+#                                                       + D9 (0) RED: the host was asked
+#   _CX_STACK_ENTRIES back to 65536 (8 MiB segment)    -> B2 RED (the call-stack trap fires before the
+#                                                       guest stack: the segment is no longer the
+#                                                       binding limit), B3 + B4 RED (depth 65536)
 #   (the narrow LOADS are width-correct too, but a wide masked load gives the same value except at
 #   the very end of the data segment, which no compiled row can place a global at — not a row.)
 set -u
@@ -207,9 +217,9 @@ fn nt(n): i64 { if (n == 0) { return G; } var x = nt(n - 1); return x + 1; }
 syscall(60, nt(10000000));
 ' '^cxvm: guest stack overflow, sp [0-9]* at pc [0-9]*$'
 #               call +0 (0x60 00 00 00) forever: the call stack overflows, nothing touches guest memory
-trap_img "B3 call-stack overflow" '60000000' '^cxvm: call stack overflow, depth 65536 at pc 0$'
+trap_img "B3 call-stack overflow" '60000000' '^cxvm: call stack overflow, depth 524288 at pc 0$'
 #               push r0; jmp -1
-trap_img "B4 data-stack overflow" '80000000 50ffffff' '^cxvm: data stack overflow, depth 65536 at pc 0$'
+trap_img "B4 data-stack overflow" '80000000 50ffffff' '^cxvm: data stack overflow, depth 524288 at pc 0$'
 trap_img "B5 call-stack underflow (ret on an empty stack)" '61000000' '^cxvm: call stack underflow, depth 0 at pc 0$'
 trap_img "B6 data-stack underflow (pop on an empty stack)" '81000000' '^cxvm: data stack underflow, depth 0 at pc 0$'
 
@@ -231,30 +241,36 @@ syscall(60, 9);
 trap_src "D2 load8 from guest 7 traps (the null page is [0, 8))" 'var v = load8(7);
 syscall(60, 9);
 ' '^cxvm: guest address out of range: 7 at pc'
-trap_src "D3 store64 reaching past 1 MB traps" 'store64(1048572, 5);
+# 6.7.12: the guest data segment is 8 MiB (cxvm _CX_MEM_SIZE; it was 1 MB), so D3-D5 and D7-D9 sit at
+# 8388608. D5b pins the growth from the inside: the old boundary is an ordinary guest byte now.
+trap_src "D3 store64 reaching past 8 MiB traps" 'store64(8388604, 5);
 syscall(60, 9);
-' '^cxvm: guest address out of range: 1048572 at pc'
-trap_src "D4 load64 reaching past 1 MB traps" 'var v = load64(1048569);
+' '^cxvm: guest address out of range: 8388604 at pc'
+trap_src "D4 load64 reaching past 8 MiB traps" 'var v = load64(8388601);
 syscall(60, 9);
-' '^cxvm: guest address out of range: 1048569 at pc'
-trap_src "D5 store8 at 1 MB traps" 'store8(1048576, 1);
+' '^cxvm: guest address out of range: 8388601 at pc'
+trap_src "D5 store8 at 8 MiB traps" 'store8(8388608, 1);
 syscall(60, 9);
-' '^cxvm: guest address out of range: 1048576 at pc'
+' '^cxvm: guest address out of range: 8388608 at pc'
+cx_run 'store8(1048576, 9);
+syscall(60, load8(1048576));
+'
+if [ "$CXRC" = 9 ]; then ok "D5b a store and load at 1 MB, the old boundary, work (6.7.12)"; else bad "D5b store8 / load8 at 1048576 exited $CXRC ($CXERR), want 9"; fi
 trap_src "D6 a negative guest address traps" 'store64(0 - 8, 1);
 syscall(60, 9);
 ' '^cxvm: guest address out of range: -8 at pc'
-cx_run 'var v = load8(1048575) + load64(1048568);
+cx_run 'var v = load8(8388607) + load64(8388600);
 syscall(60, 9);
 '
-if [ "$CXRC" = 9 ]; then ok "D7 the last in-range byte and qword load"; else bad "D7 in-range loads at the top of 1 MB exited $CXRC ($CXERR), want 9"; fi
-cx_run 'var r = syscall(1, 1, 1048570, 100);
+if [ "$CXRC" = 9 ]; then ok "D7 the last in-range byte and qword load"; else bad "D7 in-range loads at the top of 8 MiB exited $CXRC ($CXERR), want 9"; fi
+cx_run 'var r = syscall(1, 1, 8388602, 100);
 syscall(60, 0 - r);
 '
-if [ "$CXRC" = 14 ]; then ok "D8 write() from a buffer reaching past 1 MB answers -EFAULT"; else bad "D8 write() past 1 MB exited $CXRC ($CXERR), want 14 (-EFAULT)"; fi
-cx_run 'var r = syscall(0, 0, 1048570, 100);
+if [ "$CXRC" = 14 ]; then ok "D8 write() from a buffer reaching past 8 MiB answers -EFAULT"; else bad "D8 write() past 8 MiB exited $CXRC ($CXERR), want 14 (-EFAULT)"; fi
+cx_run 'var r = syscall(0, 0, 8388602, 100);
 syscall(60, 0 - r);
 '
-if [ "$CXRC" = 14 ]; then ok "D9 read() into a buffer reaching past 1 MB answers -EFAULT"; else bad "D9 read() past 1 MB exited $CXRC ($CXERR), want 14 (-EFAULT)"; fi
+if [ "$CXRC" = 14 ]; then ok "D9 read() into a buffer reaching past 8 MiB answers -EFAULT"; else bad "D9 read() past 8 MiB exited $CXRC ($CXERR), want 14 (-EFAULT)"; fi
 #               jmp -2 at pc 0 -> pc -8
 trap_img "D10 a jump to a negative pc traps" '50feffff' '^cxvm: jump to a negative code offset: -8 at pc 0$'
 

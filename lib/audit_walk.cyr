@@ -236,7 +236,13 @@ fn _aw_dir_list_typed(path, out_names, out_dtypes): i64 {
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_MACOS
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = sys_open(str_data(path), O_RDONLY, 0);
+    # Exactly the Str's bytes, NUL-terminated (lib/fs.cyr's listers' _fs_cpath), and
+    # O_DIRECTORY: the kernel refuses a non-directory at path resolution (-ENOTDIR, which the
+    # walkers report as an unlistable directory). With O_RDONLY alone a FIFO at `path` blocked
+    # in open(2) until a writer came, so the walk never returned. CHANGELOG [6.7.12]
+    var cpath[4096];
+    if (_fs_cpath(path, &cpath, 4096) < 0) { return 0 - 36; }   # ENAMETOOLONG / an embedded NUL
+    var fd = sys_open(&cpath, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
     if (fd < 0) { return fd; }
     var sbuf[4096];                 # STACK (6.6.10): was an unchecked alloc per directory
     var buf = &sbuf;

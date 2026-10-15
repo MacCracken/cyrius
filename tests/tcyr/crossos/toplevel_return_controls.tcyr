@@ -1,0 +1,65 @@
+# toplevel_return_controls.tcyr — 6.7.12. A `return` IN A FN BODY RETURNS FROM THAT BODY WHEREVER THE FN SITS:
+# a top-level closure, a closure in a top-level block, an `#inline` fn called at top level, a fn defined in a
+# top-level block and a fn defined after top-level code.
+#
+# 6.7.11 refused a `return` OUTSIDE a fn body by name (`return outside a fn body`; the user's decision (a),
+# 2026-10-13, issues/archived/2026-10-12-top-level-return-decision.md). Before it, a top-level `return` recorded a
+# jump that only a fn's end patches, so it kept displacement 0: `jmp +0` on x86_64 / PE, a branch to itself on
+# aarch64 / cx. The refusal must not reach a return that IS in a fn body — which is what the five controls C1-C5
+# of tests/gates/frontend/toplevel_return_checked.sh pin. That gate runs them on x86_64, qemu-aarch64, cxvm and
+# wine only; the refusal is host-independent, but the accepted controls never ran on pi / cass / the Macs.
+#
+# ⭐ WHY THIS FILE IS IN crossos/: the release gate's cross-OS leg runs only this directory on ecb / ach / cass / pi
+# (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 1). Each row is the gate's C program as an
+# assertion, the gate's exit code its expected value: C1 5, C2 5, C3 4, C4 3, C5 10.
+#
+# Under a regression that refuses an in-fn return (the gate's mutant MG) this file does not compile; under one
+# that leaves an in-fn return unpatched (a self-jump) it hangs, and the corpus runners count both as a failure
+# (`[ -s _lt ] || ok=0`, the 90 s bound in scripts/cross-os-libtest-runner.sh).
+include "lib/assert.cyr"
+include "lib/fnptr.cyr"
+
+# ---- the declaration zone: C1's closure is a `var` registered by pass 1, as in the gate's C1 program ----
+var c1_f = |x| { return x + 2; };
+var steps = 0;
+
+# C3: an #inline fn — its return is replayed at the call site
+#inline
+fn c3_four(): i64 { return 4; }
+
+# ---- the first top-level statement ----
+steps = steps + 1;
+assert_eq(fncall1(c1_f, 3), 5, "C1: a return in a top-level closure body (exit 5)");
+
+# C2: a closure declared in a top-level block; the code after it in the block and after the block runs
+var c2_a = 1;
+var c2_got = 0;
+if (c2_a == 1) {
+    var c2_f = |x| { return x + 2; };
+    c2_got = fncall1(c2_f, 3);
+    steps = steps + 1;
+}
+assert_eq(c2_got, 5, "C2: a return in a closure in a top-level block (exit 5)");
+
+steps = steps + 1;
+assert_eq(c3_four(), 4, "C3: a return in an #inline fn called at top level (exit 4)");
+
+# C4: a fn defined in a top-level block, called after the block
+var c4_on = 1;
+if (c4_on == 1) { fn c4_g(): i64 { return 3; } }
+steps = steps + 1;
+assert_eq(c4_g(), 3, "C4: a return in a fn defined in a top-level block (exit 3)");
+
+# C5: early returns in a fn defined after top-level code
+var c5_a = 1;
+while (c5_a < 5) { c5_a = c5_a + 1; }
+fn c5_h(n): i64 { if (n > 2) { return n * 2; } return 0; }
+steps = steps + 1;
+assert_eq(c5_h(c5_a), 10, "C5: the early return in a fn defined after top-level code (exit 10)");
+assert_eq(c5_h(1), 0, "C5: ... and its fall-through return");
+
+# Four `steps = steps + 1;` at top level plus the one inside C2's block: every statement after a return in a fn
+# body ran (a return that jumped out of the program would leave this short, or never reach it).
+assert_eq(steps, 5, "every top-level statement after the five fn-body returns ran");
+
+var r = assert_summary();

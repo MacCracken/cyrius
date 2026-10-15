@@ -571,8 +571,8 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 }
 
 # Phase 0 (v6.2.0): growable codebuf. The generated machine code lived in a FIXED
-# 3 MB region at S+0x41A000 (the cx bytecode backend keeps its own separate 512 KB
-# region at 0x54A000), hard-capped — cyrius-ts test compiles hit 94 %. EB appends
+# 3 MB region at S+0x41A000 (the cx bytecode backend keeps its own fixed 4 MiB buffer,
+# backend/cx/emit.cyr _cx_code_base), hard-capped — cyrius-ts test compiles hit 94 %. EB appends
 # bytes here; the disp32 patch sites do an 8 B read-modify-write at cp (4 B past the
 # 4 B slot) and the DSE/LASE peephole passes read+patch already-emitted code in
 # place — all reach codebuf through `_codebuf_base`, re-derived fresh each access,
@@ -704,7 +704,7 @@ var _codebuf_cap = 0;
 var _output_base = 0;
 # The output buffer's real capacity, set per-driver: 1 GiB on every platform since
 # v6.4.52, and the six native-code drivers refuse to start when that alloc fails (cx
-# writes its bytecode straight from 0x54A000 and never sets it). (Until then macOS and
+# writes its bytecode straight from `_cx_code_base` and never sets it). (Until then macOS and
 # Windows fell back to the fixed 16 MiB S+0x4D9D000 region, retired since.)
 # `_check_output_cap` keys on this so the cap always matches the actual buffer.
 var _output_cap = 0;
@@ -731,7 +731,7 @@ fn _codebuf_grow(S): i64 {
 # print full stats already showed the numbers). `codebuf_cap` is this target's
 # code-region ceiling and `codebuf_growable` its message form: the 6 native
 # forks pass (67108864, 1) — the 64 MiB growable off-heap buffer; cx passes
-# (524288, 0) — its fixed 512 KiB region at 0x54A000, which never grows.
+# (_CX_CODE_CAP, 0) — its fixed 4 MiB off-heap code region (backend/cx/emit.cyr), which never grows.
 # Fork-agnostic by construction: every metric is read through its accessor
 # (GFNC/GNPOS/GVCNT/GFCNT/GSPOS/GCP), no hardcoded S+offset. CHANGELOG [6.4.50].
 fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
@@ -785,7 +785,10 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
                 syscall(SYS_WRITE, 2, "% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
                 syscall(SYS_WRITE, 2, " bytes, +8 MiB/grow)\n", 21);
             } else {
-                syscall(SYS_WRITE, 2, "% of the 512 KiB cx region (", 28); PRNUM(GCP(S));
+                # The fixed cx code region: the cap is main_cx.cyr's, never a size named here
+                # (this read "512 KiB" after the region moved). CHANGELOG [6.7.12]
+                syscall(SYS_WRITE, 2, "% of the cx code region (", 25); PRNUM(GCP(S));
+                syscall(SYS_WRITE, 2, "/", 1); PRNUM(codebuf_cap);
                 syscall(SYS_WRITE, 2, " bytes)\n", 8);
             }
         }

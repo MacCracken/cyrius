@@ -1,8 +1,8 @@
 # ws_client_short_write.tcyr — v6.6.8: lib/ws.cyr's client frame sender reports a short write
 # instead of returning the full length with the frame cut short.
 #
-# The client twin of sock_send_all_short_write.tcyr (a separate file because lib/ws.cyr and
-# lib/ws_server.cyr both define the WS_OP_* names). `_ws_send_frame` wrote the header and the
+# The client twin of sock_send_all_short_write.tcyr (a separate file: lib/ws.cyr and
+# lib/ws_server.cyr each declared the WS_OP_* names until 6.7.12). `_ws_send_frame` wrote the header and the
 # masked payload with bare sys_write calls and dropped both counts, so under SO_SNDTIMEO (or a
 # signal) the peer got a truncated frame while ws_send_binary returned `len`. It now goes through
 # lib/net.cyr's sock_send_all and returns -1; ws_connect's handshake request likewise marks the

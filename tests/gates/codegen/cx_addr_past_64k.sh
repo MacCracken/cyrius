@@ -85,7 +85,7 @@ echo "axis 3 — a global past 0xFFFF of data (bare top-level array = N x 8 byte
 } > "$D/a3.cyr"
 run_case "global read/write/&addr past 0xFFFF" "$D/a3.cyr" 47
 
-echo "axis 4 — a fn pointer whose CODE offset is past 0xFFFF (cx codebuf is 512 KiB):"
+echo "axis 4 — a fn pointer whose CODE offset is past 0xFFFF (the cx code region is 4 MiB since 6.7.12):"
 {
     printf 'fn filler(): i64 { var x = 0;\n'
     i=0

@@ -1,0 +1,113 @@
+# tls13_sh_unoffered_ext.tcyr — 6.7.12: the TLS 1.3 client walks EVERY ServerHello extension.
+#
+# issues/2026-10-08-tls-native-conformance-bite.md item 3. tls_native_client_parse_server_hello
+# looked up supported_versions and key_share and never read the rest of the block, so a ServerHello
+# carrying an extension the client never offered parsed TLS_OK (RFC 8446 §4.2: unsupported_extension).
+# Now _tn_client_ext_walk (the HelloRetryRequest walk's rule) refuses one we did not offer with
+# unsupported_extension and one we offered that a ServerHello may not carry with illegal_parameter,
+# the alert recorded for the driver to send. Row R is the filed repro verbatim (exit 0 = refused).
+# In-memory, no socket. On the lib before the fix: 12 of 14 rows fail (R, U1-U3, F1, D1 — TLS_OK,
+# no alert); C1 is the control.
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+var leaf_cert = hex_decode("308201993082013fa00302010202143a4b051073c53e3a443145eb11485caef9f09adc300a06082a8648ce3d040302301d311b301906035504030c12536967696c205465737420526f6f74204341301e170d3236303532323030333730365a170d3237303532323030333730365a301a3118301606035504030c0f536967696c2054657374204c6561663059301306072a8648ce3d020106082a8648ce3d03010703420004665d76a0781a7263dab8c5d88d2f7d2ed1028eaa116020b7602a71d9957a182f0513bbfdaca9bda7df5571dc08a24a6d974f71962bfd7b979509a4c48044dbaca360305e300c0603551d130101ff04023000300e0603551d0f0101ff040403020780301d0603551d0e04160414c0bd5bc3cf47d2b8869ab999263e9b5aae0b7842301f0603551d23041830168014c97b20ae5ba585c6752e0a9ba7200be5a658d768300a06082a8648ce3d040302034800304502202ee70f3665b4dd8c6cb9aadea0082dca0442c5304e72a08469248d5506e7bf45022100d0691fa7bcd1782f60d50346fc8a3730a200298dcd28319eff454205e593e728", 826);
+var ed_key = hex_decode("302e020100300506032b657004220420399843cd6b8ea5ba0309fe5b38fe4dd271ee65f20f39a48efc7d7503c0775f12", 96);
+
+# R — the filed repro (docs/development/issues/repros/2026-10-08-tls-native-conformance-1-sh-unoffered-ext.cyr),
+# its `main` verbatim under another name.
+fn repro_main(): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_client_build_hello(cl, &ch, 512);
+    var srv = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+    tls_native_server_load_creds(srv);
+    var sh[320];
+    var shn = tls_native_server_respond_hello(srv, &ch, chn, &sh, 256);
+    if (shn <= 0) { println("setup: server did not answer"); return 2; }
+    # Append extension { type 0x1234, length 0 } and fix the handshake and extensions lengths.
+    var p = &sh;
+    store8(p + shn, 0x12); store8(p + shn + 1, 0x34); store8(p + shn + 2, 0); store8(p + shn + 3, 0);
+    var blen = shn - 4 + 4;
+    store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+    var eo = 4 + 2 + 32 + 1 + (load8(p + 4 + 34) & 0xFF) + 2 + 1;   # ext_total offset
+    var et = ((load8(p + eo) & 0xFF) << 8) | (load8(p + eo + 1) & 0xFF);
+    et = et + 4;
+    store8(p + eo, (et >> 8) & 0xFF); store8(p + eo + 1, et & 0xFF);
+    var rc = tls_native_client_parse_server_hello(cl, &sh, shn + 4);
+    if (rc == TLS_OK) { println("ACCEPTED: ServerHello with unoffered extension 0x1234 parsed TLS_OK"); return 1; }
+    println("refused (correct)");
+    return 0;
+}
+
+# A fresh client + server; the server's ServerHello with extension { `et`, `el` bytes of 0 } appended
+# when `et` >= 0 (the repro's splice), its length field saying `claim`. Parses it on the client;
+# returns the result, the client in G_CL.
+var G_CL = 0;
+fn _sh_claim(et, el, claim): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    G_CL = cl;
+    var ch[512];
+    var chn = tls_native_client_build_hello(cl, &ch, 512);
+    var srv = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+    tls_native_server_load_creds(srv);
+    var sh[512];
+    var shn = tls_native_server_respond_hello(srv, &ch, chn, &sh, 256);
+    if (shn <= 0) { return 0 - 999; }
+    var p = &sh;
+    var n = shn;
+    if (et >= 0) {
+        store8(p + shn, (et >> 8) & 0xFF); store8(p + shn + 1, et & 0xFF);
+        store8(p + shn + 2, (claim >> 8) & 0xFF); store8(p + shn + 3, claim & 0xFF);
+        memset(p + shn + 4, 0, el);
+        n = shn + 4 + el;
+        var blen = n - 4;
+        store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+        var eo = 4 + 2 + 32 + 1 + (load8(p + 4 + 34) & 0xFF) + 2 + 1;
+        var t = ((load8(p + eo) & 0xFF) << 8) | (load8(p + eo + 1) & 0xFF);
+        t = t + 4 + el;
+        store8(p + eo, (t >> 8) & 0xFF); store8(p + eo + 1, t & 0xFF);
+    }
+    return tls_native_client_parse_server_hello(cl, &sh, n);
+}
+fn _sh_with(et, el): i64 { return _sh_claim(et, el, el); }
+
+fn main(): i64 {
+    alloc_init();
+    test_group("R: the filed repro — a ServerHello with an unoffered extension is refused");
+    assert_eq(repro_main(), 0, "R: the repro exits 0 (refused)");
+
+    test_group("control: the unmodified ServerHello still parses");
+    assert_eq(_sh_with(0 - 1, 0), TLS_OK, "C1: no extension added -> TLS_OK");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), 0, "C1: no alert recorded");
+
+    test_group("an extension we did not offer: unsupported_extension");
+    assert_eq(_sh_with(0x1234, 0), TLS_ERR_HANDSHAKE_FAILED, "U1: 0x1234 (empty) refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_UNSUPPORTED_EXTENSION,
+      "U1: the alert is unsupported_extension");
+    assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "U1: the ctx failed");
+    assert_eq(_sh_with(41, 2), TLS_ERR_HANDSHAKE_FAILED, "U2: pre_shared_key — the client offers none — refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_UNSUPPORTED_EXTENSION, "U2: unsupported_extension");
+    assert_eq(_sh_with(TLS_EXT_ALPN, 5), TLS_ERR_HANDSHAKE_FAILED,
+      "U3: ALPN, not offered (no tls_native_set_alpn) — refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_UNSUPPORTED_EXTENSION, "U3: unsupported_extension");
+
+    test_group("an extension we offered that a ServerHello may not carry: illegal_parameter");
+    assert_eq(_sh_with(TLS_EXT_SUPPORTED_GROUPS, 4), TLS_ERR_HANDSHAKE_FAILED,
+      "F1: supported_groups (offered; EE-only) refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_ILLEGAL_PARAMETER, "F1: the alert is illegal_parameter");
+
+    test_group("a block that does not frame: decode_error");
+    assert_eq(_sh_claim(0x1234, 0, 10), TLS_ERR_BAD_HANDSHAKE,
+      "D1: a last extension claiming 10 bytes past the block refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_DECODE_ERROR, "D1: decode_error");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(SYS_EXIT, ec);

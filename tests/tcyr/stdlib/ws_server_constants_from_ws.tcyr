@@ -1,0 +1,34 @@
+# ws_server_constants_from_ws.tcyr — 6.7.12 (D11, the user 2026-10-15): lib/ws_server.cyr takes
+# the WebSocket opcodes and states from lib/ws.cyr, which it includes, instead of declaring its
+# own copies. This file includes ONLY lib/ws_server.cyr: every WS_* name still resolves, with
+# RFC 6455's values, and ws.cyr's WS_CONNECTING / WS_RECV_MAX_PAYLOAD arrive with it. Its twin
+# ws_and_ws_server_constants_agree.tcyr includes both files. The tie this ends:
+# issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md. CHANGELOG [6.7.12]
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("ws_server alone: the opcodes (RFC 6455 § 5.2)");
+    assert_eq(WS_OP_CONTINUATION, 0, "WS_OP_CONTINUATION");
+    assert_eq(WS_OP_TEXT, 1, "WS_OP_TEXT");
+    assert_eq(WS_OP_BINARY, 2, "WS_OP_BINARY");
+    assert_eq(WS_OP_CLOSE, 8, "WS_OP_CLOSE");
+    assert_eq(WS_OP_PING, 9, "WS_OP_PING");
+    assert_eq(WS_OP_PONG, 10, "WS_OP_PONG");
+    test_group("ws_server alone: the states");
+    assert_eq(WS_OPEN, 1, "WS_OPEN");
+    assert_eq(WS_CLOSING, 2, "WS_CLOSING");
+    assert_eq(WS_CLOSED, 3, "WS_CLOSED");
+    assert_eq(WS_CONNECTING, 0, "WS_CONNECTING (ws.cyr's, now in scope)");
+    test_group("ws_server alone: the two payload caps keep their names and values");
+    assert_eq(WS_MAX_PAYLOAD, 1048576, "WS_MAX_PAYLOAD (ws_server's)");
+    assert_eq(WS_RECV_MAX_PAYLOAD, 16777216, "WS_RECV_MAX_PAYLOAD (ws.cyr's)");
+    test_group("ws_server alone: a new server handle starts WS_OPEN");
+    var ws = ws_server_new(0 - 1);
+    assert_nonnull(ws, "ws_server_new");
+    assert_eq(ws_server_state(ws), WS_OPEN, "ws_server_state == WS_OPEN");
+    return assert_summary();
+}
+var r = main();
+syscall(SYS_EXIT, r);

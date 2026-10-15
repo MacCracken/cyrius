@@ -39,8 +39,9 @@
 #   5  anti-vacuous floor: the rows above matched >= 40 declarations
 #   6  (6.7.9) a public var with a const twin is never READ in cyrius's own lib/ — every loop,
 #      cap, stride and allocation reads the const; the var only tells a caller the value. The
-#      twin set is DERIVED (every `var X = _X;`); a twin declared in the TLS stack
-#      (lib/tls_native*.cyr) that IS read is exempt only while its filing is open
+#      twin set is DERIVED (every `var X = _X;`). 6.7.12: the TLS stack's twins are held too —
+#      their exemption ended with their fix (issues/2026-10-11-tls-public-bound-vars-drive-const-
+#      storage.md: every read in lib/tls_native*.cyr and lib/tls.cyr reads `_X`)
 #   7  (6.7.9) no literal left beside a named bound: no literal-sized agnos env blob, no literal
 #      ctx offset at or past the kill state in the async kill tasks
 #
@@ -66,6 +67,10 @@
 #   async.cyr `_proc_kill_finish(ctx, ctx + 40)`                               -> axis 7
 #   async_macos.cyr `alloc_via(load64(rt + 32), 72)`                           -> axes 1 + 7
 #   syscalls_x86_64_agnos.cyr sys_spawn_argv's check back to `> SPAWN_ARGV_MAX`  -> axis 6
+# MUTATION LEDGER (6.7.12, the TLS twins, each in the tree, each RED naming its site):
+#   tls_native_hs12.cyr one seed copy back to `memcpy(&seed, client_random, TLS12_RANDOM_LEN)` -> axis 6
+#   tls_native_lowlevel.cyr the clone copy back to `TLS_SHA384_CTX_LEN`                        -> axis 6
+#   tls.cyr tls_write's clamp back to `TLS_RECORD_MAX_PLAINTEXT`                                -> axis 6
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -162,10 +167,10 @@ if [ "$MATCHED" -ge 40 ]; then _ok "$MATCHED declarations matched (floor 40)"
 else _fail "only $MATCHED declarations matched (floor 40) — the rows are reading nothing"; fi
 
 echo "axis 6 — a public bound's var is never read in cyrius's own lib/ (the const bounds everything):"
-# The TLS stack's twins are read throughout it (~190 sites, among them TLS12_RANDOM_LEN as the PRF
-# seed's memcpy length over the const-sized seed — a raised var smashes the stack) and one of them,
-# TLS_RECORD_MAX_PLAINTEXT, may be a tunable the user decides on; they are filed whole.
-TLS_TWINS_FILING=docs/development/issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md
+# 6.7.12: no exemption. The TLS stack read its twins at ~190 sites until then (TLS12_RANDOM_LEN as the
+# PRF seed's memcpy length over the const-sized seed — a raised var smashed the stack); every read is
+# the const now, and TLS_RECORD_MAX_PLAINTEXT is the protocol constant (the user's decision D17,
+# 2026-10-15). CHANGELOG [6.7.12]
 # "file twin" for every `var X = _X;` in cyrius's own lib/
 TWINS=$(grep -oE '^var [A-Za-z0-9_]+ *= *_[A-Za-z0-9_]+;' $OWN | sed -E 's/^([^:]+):var ([A-Za-z0-9_]+) *= *_([A-Za-z0-9_]+);/\1 \2 \3/' | awk '$2 == $3 { print $1 ":" $2 }' | sort -u)
 NTW=0; NCHK=0
@@ -174,18 +179,12 @@ for row in $TWINS; do
     NTW=$((NTW + 1))
     # every line naming the var, comments stripped, that is not its own `var X = _X;` declaration
     READS=$(grep -nwE "$v" $OWN | sed -E 's/^([^:]+:[0-9]+:)([^#]*).*/\1\2/' | grep -wE "$v" | grep -vE "^[^:]+:[0-9]+:var $v *= *_$v;" || true)
-    if [ -z "$READS" ]; then NCHK=$((NCHK + 1)); _ok "$v: read nowhere in lib/ but its declaration"; continue; fi
-    case $f in
-        lib/tls_native*.cyr)
-            if [ -f "$TLS_TWINS_FILING" ]; then
-                _ok "$v ($f): read $(echo "$READS" | wc -l | tr -d ' ') time(s) — exempt while $TLS_TWINS_FILING is open"; continue
-            fi ;;
-    esac
     NCHK=$((NCHK + 1))
+    if [ -z "$READS" ]; then _ok "$v: read nowhere in lib/ but its declaration"; continue; fi
     _fail "$v: read inside lib/ — a write to the public var then drives storage the const sized; read _$v: $(echo "$READS" | tr '\n' ' ')"
 done
-if [ "$NTW" -ge 14 ] && [ "$NCHK" -ge 7 ]; then _ok "$NTW twins derived, $NCHK held to the rule (floors 14 / 7)"
-else _fail "only $NTW twins derived / $NCHK held to the rule (floors 14 / 7) — the derivation is reading nothing"; fi
+if [ "$NTW" -ge 14 ] && [ "$NCHK" -eq "$NTW" ]; then _ok "$NTW twins derived, all $NCHK held to the rule (floor 14)"
+else _fail "only $NTW twins derived / $NCHK held to the rule (floor 14, every twin held) — the derivation is reading nothing"; fi
 
 echo "axis 7 — no literal left beside a named bound:"
 LITENV=$(grep -nE 'var e\[[0-9]+\];|_blob_ptrs\([^,]+, 0, [0-9]+, envp|_put_elem\(b, off, [0-9]+, ' lib/process_agnos.cyr lib/regression_agnos.cyr lib/async_agnos.cyr || true)

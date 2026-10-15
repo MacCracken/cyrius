@@ -1,0 +1,281 @@
+# tls13_ee_cv_conformance.tcyr — 6.7.12: the TLS 1.3 client's EncryptedExtensions walk, its ALPN
+# check, and its CertificateVerify scheme / curve and length checks.
+#
+# issues/2026-10-08-tls-native-conformance-bite.md items 1, 2 (the 1.3 half) and 3 (the
+# EncryptedExtensions half, with the filing's to-verify ALPN item):
+#   E/A/M  tls_native_client_recv_flight searched EncryptedExtensions for ALPN alone, "lenient on
+#          malformed exts": an extension we never offered, one a 1.3 EE may not carry, a block that
+#          does not frame and an ALPN protocol we did not offer all passed. Now every extension is
+#          walked (_tn_client_ext_walk: unsupported_extension / illegal_parameter / decode_error)
+#          and the selected protocol must be one we offered (RFC 7301 §3.2, illegal_parameter).
+#   V1     an ECDSA scheme names its curve in 1.3 (RFC 8446 §4.2.3): ecdsa_secp384r1_sha384 on a
+#          P-256 leaf is refused before any verify (illegal_parameter / TLS_ERR_AUTHN); it was
+#          handed to the P-384 verifier with the P-256 key read at P-384 width (AUTHN, no alert).
+#   V2     `4 + sig_len > ml` let a byte after the signature through; it is `!=` (decode_error).
+#   W1     the alerts reach the wire: the 1.3 client driver sends the alert a flight refusal
+#          recorded (_tn_send_hs_alert after recv_flight), sealed under its handshake key — a real
+#          tls_native_connect over a socketpair, the server's records pre-written (the entropy hook
+#          makes the client's ClientHello the one the server answered). Linux / macOS; a named
+#          SKIP where socketpair is refused.
+# Each row builds a fresh client + server and hands the client a flight sealed in memory, with the
+# EncryptedExtensions replaced and the CertificateVerify edited as the row needs. On the lib before
+# the fix: E1 E2 A2 A3 M1 M2 V1 V2 W1 fail.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+var CERT23 = "3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729";
+var KEY23 = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275";
+# A P-384 self-signed certificate (tests/tcyr/crossos/tls12_client_ecdhe.tcyr's CERT384).
+var CERT384 = "308201973082011da003020102020107300a06082a8648ce3d040302300c310a300806035504030c0173301e170d3236313030333035333832385a170d3336303933303035333832385a300c310a300806035504030c01733076301006072a8648ce3d020106052b8104002203620004665a31f9782e4c809c4bac9eb99631009d9003a586977347ec70e27b42d3bbf5758ec35aab3ff6bba648a9f8e890015e8880aa5f900faad71b58ad95b639b5650f267636f0b97ced0664ca7691dd1d23f1cfa658e326ee6dc05f8416c1adb122a3533051301d0603551d0e04160414935d4d4eb66f6225cad97c6d397f5581df31f0b4301f0603551d23041830168014935d4d4eb66f6225cad97c6d397f5581df31f0b4300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203680030650230683e7b0591c3bc97c9b7c84f60e8e6b4d84d4aaad2dd18433bf13e85ce13234c3e03de379182d3adffcff1a12c5fd3bb023100b69224d81f0d10a9a6271c886f48e23a5133b7c05a7708bb4e55a5499bcd53199659038fb59b94df8d0c83a3f256bb99";
+var ALPN_OFFER = "\x02h2\x08http/1.1";   # 12 bytes: what the ALPN rows' client offers
+
+fn _h(s): i64 { return hex_decode(s, strlen(s)); }
+fn _hn(s): i64 { return strlen(s) / 2; }
+
+var G_CL = 0;    # the client of the last row
+var G_SRV = 0;   # its server
+var G_ALPN = 0;  # 1: the next pair's client offers ALPN_OFFER
+var G_SH = 0;    # the pair's ServerHello message (W1 writes it to the wire)
+var G_SHN = 0;
+
+# A client and server through the ServerHello, both holding the handshake keys. Fills G_CL / G_SRV.
+fn _pair(): i64 {
+    var srv = tls_native_new_server(_h(CERT23), _hn(CERT23), _h(KEY23), _hn(KEY23));
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 0 - 1; }
+    var cl = tls_native_new_client("localhost", 9);
+    if (G_ALPN == 1) { tls_native_set_alpn(cl, ALPN_OFFER, 12); }
+    var ch = alloc(1024);
+    var chn = tls_native_client_build_hello(cl, ch, 1024);
+    var sh = alloc(512);
+    var shn = tls_native_server_respond_hello(srv, ch, chn, sh, 512);
+    if (shn <= 0) { return 0 - 2; }
+    if (tls_native_client_parse_server_hello(cl, sh, shn) != TLS_OK) { return 0 - 3; }
+    G_SH = sh;
+    G_SHN = shn;
+    tls_native_server_derive_handshake(srv);
+    tls_native_server_install_handshake_keys(srv);
+    G_CL = cl;
+    G_SRV = srv;
+    return 0;
+}
+
+# An EncryptedExtensions message into `out` whose body is `body_hex` exactly (its ext_total
+# included); returns its length.
+fn _ee_raw(body_hex, out): i64 {
+    var bl = _hn(body_hex);
+    tls_native_handshake_write_header(out, TLS_HS_ENCRYPTED_EXTENSIONS, bl);
+    if (bl > 0) { memcpy(out + 4, _h(body_hex), bl); }
+    return 4 + bl;
+}
+
+# An EncryptedExtensions message carrying the extension block `exts_hex`.
+fn _ee(exts_hex, out): i64 {
+    var el = _hn(exts_hex);
+    tls_native_handshake_write_header(out, TLS_HS_ENCRYPTED_EXTENSIONS, 2 + el);
+    _tn_be16_w(out + 4, el);
+    if (el > 0) { memcpy(out + 6, _h(exts_hex), el); }
+    return 6 + el;
+}
+
+# G_SRV's flight with `ee` (`ee_n` bytes) as its EncryptedExtensions; its CertificateVerify's scheme
+# replaced by `cv_scheme` (0 = keep) and `cv_extra` (0 or 1) trailing byte added. Fed through the
+# server's transcript and sealed into `rec`; returns the record length.
+fn _flight(ee, ee_n, cv_scheme, cv_extra, rec, rec_max): i64 {
+    var srv = G_SRV;
+    var ts = load64(srv + TLS_CTX_OFF_TRANSCRIPT);
+    var fl = alloc(8192);
+    var p = fl;
+    memcpy(p, ee, ee_n);
+    tls_native_transcript_update(ts, p, ee_n);
+    p = p + ee_n;
+    var n = _tn_build_certificate(srv, p, 4096);
+    if (n <= 0) { return 0 - 1; }
+    tls_native_transcript_update(ts, p, n);
+    p = p + n;
+    n = _tn_build_cert_verify(srv, p, 1024, "TLS 1.3, server CertificateVerify", 33);
+    if (n <= 0) { return 0 - 2; }
+    if (cv_scheme != 0) { _tn_be16_w(p + 4, cv_scheme); }
+    if (cv_extra == 1) {
+        store8(p + n, 0xEE);
+        n = n + 1;
+        _tn_be24_w(p + 1, n - 4);
+    }
+    tls_native_transcript_update(ts, p, n);
+    p = p + n;
+    n = _tn_build_finished(srv, p, 1024);
+    if (n <= 0) { return 0 - 3; }
+    tls_native_transcript_update(ts, p, n);
+    p = p + n;
+    return tls_native_server_seal_handshake(srv, fl, p - fl, rec, rec_max);
+}
+
+# One row: a fresh pair, the flight built from `ee` / `cv_scheme` / `cv_extra`, received by the
+# client. Returns recv_flight's result (-900 - n when the setup failed).
+fn _row(ee, ee_n, cv_scheme, cv_extra): i64 {
+    var pr = _pair();
+    if (pr != 0) { return 0 - 900 + pr; }
+    var rec = alloc(8192);
+    var rn = _flight(ee, ee_n, cv_scheme, cv_extra, rec, 8192);
+    if (rn <= 0) { return 0 - 950 + rn; }
+    return tls_native_client_recv_flight(G_CL, rec, rn);
+}
+fn _alert(): i64 { return load64(G_CL + TLS_CTX_OFF_HS_ALERT); }
+
+# The leaf of a DER certificate, parsed through the 1.2 Certificate parser into a scratch client.
+fn _leaf(hex): i64 {
+    var c = tls_native_new_client(0, 0);
+    var cl = _hn(hex);
+    var body = alloc(6 + cl);
+    _tn_be24_w(body, 3 + cl);
+    _tn_be24_w(body + 3, cl);
+    memcpy(body + 6, _h(hex), cl);
+    if (_tn_parse_certificate_12(c, body, 6 + cl) != TLS_OK) { return 0; }
+    return load64(c + TLS_CTX_OFF_SERVER_CERT);
+}
+
+# W1's entropy: the same bytes for the same request, so two clients build one ClientHello.
+fn _fixed_rand(buf, n, flags): i64 {
+    var i = 0;
+    while (i < n) {
+        store8(buf + i, (i * 37 + 11) & 0xFF);
+        i = i + 1;
+    }
+    return n;
+}
+
+# Read exactly `n` bytes of `fd` into `buf`; the count read (short at EOF / error).
+fn _read_n(fd, buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var r = sys_read(fd, buf + got, n - got);
+        if (r <= 0) { return got; }
+        got = got + r;
+    }
+    return got;
+}
+
+# W1: a real tls_native_connect over a socketpair. The server's ServerHello and a flight whose
+# EncryptedExtensions carries 0x1234 are written to the server end first; the client (whose
+# ClientHello the server already answered, through the fixed entropy) refuses the flight. Returns
+# connect's result; the alert the client sent after its ClientHello, opened by the server, in G_W1.
+var G_W1 = 0;
+fn _w1(): i64 {
+    G_W1 = 0 - 1;
+    var fds: i64[1];
+    if (sys_socketpair(1, 1, 0, &fds) < 0) { return 0 - 999; }
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    tls_native_set_entropy(&_fixed_rand);
+    var pr = _pair();
+    if (pr != 0) { tls_native_set_entropy(0); return 0 - 900 + pr; }
+    var srv2 = G_SRV;
+    var ee = alloc(64);
+    var een = _ee("12340000", ee);
+    var rec = alloc(8192);
+    var rn = _flight(ee, een, 0, 0, rec, 8192);
+    if (rn <= 0) { tls_native_set_entropy(0); return 0 - 950 + rn; }
+    var shrec = alloc(600);
+    tls_native_record_write_header(shrec, TLS_CT_HANDSHAKE, 0x0303, G_SHN);
+    memcpy(shrec + 5, G_SH, G_SHN);
+    sys_write(sfd, shrec, 5 + G_SHN);
+    sys_write(sfd, rec, rn);
+    var cl = tls_native_new_client("localhost", 9);
+    tls_native_set_deadline(cl, clock_now_ns() + 10000000000);
+    var rc = tls_native_connect(cl, cfd);
+    tls_native_set_entropy(0);
+    sys_close(cfd);
+    # The client's ClientHello record, then the alert record.
+    var hdr = alloc(8);
+    if (_read_n(sfd, hdr, 5) != 5) { sys_close(sfd); return rc; }
+    var skip = alloc(4096);
+    _read_n(sfd, skip, ((load8(hdr + 3) & 0xFF) << 8) | (load8(hdr + 4) & 0xFF));
+    var arec = alloc(512);
+    if (_read_n(sfd, arec, 5) != 5) { sys_close(sfd); G_W1 = 0 - 2; return rc; }
+    var al = ((load8(arec + 3) & 0xFF) << 8) | (load8(arec + 4) & 0xFF);
+    if (_read_n(sfd, arec + 5, al) != al) { sys_close(sfd); G_W1 = 0 - 3; return rc; }
+    sys_close(sfd);
+    var pt = alloc(64);
+    var ct = 0;
+    var pn = tls_native_server_open_handshake(srv2, arec, 5 + al, pt, 64, &ct);
+    if (pn != 2) { G_W1 = 0 - 4; return rc; }
+    if (ct != TLS_CT_ALERT) { G_W1 = 0 - 5; return rc; }
+    G_W1 = ((load8(pt) & 0xFF) << 8) | (load8(pt + 1) & 0xFF);
+    return rc;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var ee = alloc(256);
+
+    test_group("control: the server's own flight shape, every extension offered and allowed");
+    assert_eq(_row(ee, _ee("", ee), 0, 0), TLS_OK, "E0: an empty EncryptedExtensions -> TLS_OK");
+    assert_eq(_row(ee, _ee("000a00040002001d", ee), 0, 0), TLS_OK,
+      "E3: supported_groups (offered, EE-legal) -> TLS_OK");
+    assert_eq(_row(ee, _ee("00000000", ee), 0, 0), TLS_OK, "E4: an empty server_name (offered: a DNS host) -> TLS_OK");
+    assert_eq(_alert(), 0, "E4: no alert recorded");
+
+    test_group("EncryptedExtensions: every extension walked");
+    assert_eq(_row(ee, _ee("12340000", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED, "E1: 0x1234, never offered, refused");
+    assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "E1: unsupported_extension");
+    assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "E1: the ctx failed");
+    assert_eq(_row(ee, _ee("00330000", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
+      "E2: key_share (offered; not an EE extension) refused");
+    assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "E2: illegal_parameter");
+    assert_eq(_row(ee, _ee_raw("00", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "M1: a 1-byte body (no extensions length) refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "M1: decode_error");
+    assert_eq(_row(ee, _ee_raw("000812340000", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "M2: an extensions length past the body refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "M2: decode_error");
+
+    test_group("ALPN: the selected protocol must be one we offered (RFC 7301 §3.2)");
+    G_ALPN = 1;
+    assert_eq(_row(ee, _ee("001000050003026832", ee), 0, 0), TLS_OK, "A1: h2 (offered) -> TLS_OK");
+    var sel = alloc(16);
+    assert_eq(tls_native_get_alpn_selected(G_CL, sel, 16), 2, "A1: h2 selected");
+    assert_eq(_row(ee, _ee("00100009000706737064792f33", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
+      "A2: spdy/3 (not offered) refused");
+    assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "A2: illegal_parameter");
+    assert_eq(tls_native_get_alpn_selected(G_CL, sel, 16), 0, "A2: nothing selected");
+    G_ALPN = 0;
+    assert_eq(_row(ee, _ee("001000050003026832", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
+      "A3: ALPN when the client offered none refused");
+    assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "A3: unsupported_extension");
+
+    test_group("CertificateVerify: the scheme's curve, the exact length");
+    assert_eq(_row(ee, _ee("", ee), 0, 0), TLS_OK, "V0: the server's own CertificateVerify -> TLS_OK");
+    assert_eq(_row(ee, _ee("", ee), TLS_SIG_ECDSA_SECP384R1_SHA384, 0), TLS_ERR_AUTHN,
+      "V1: ecdsa_secp384r1_sha384 on a P-256 leaf refused");
+    assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "V1: illegal_parameter (refused before any verify)");
+    assert_eq(_row(ee, _ee("", ee), 0, 1), TLS_ERR_BAD_HANDSHAKE, "V2: one byte after the signature refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "V2: decode_error");
+    var p256 = _leaf(CERT23);
+    var p384 = _leaf(CERT384);
+    assert_neq(p384, 0, "a P-384 leaf parses");
+    assert_eq(_tn_13_scheme_curve_ok(TLS_SIG_ECDSA_SECP256R1_SHA256, p256), 1, "K1: 0x0403 on P-256");
+    assert_eq(_tn_13_scheme_curve_ok(TLS_SIG_ECDSA_SECP384R1_SHA384, p384), 1, "K2: 0x0503 on P-384");
+    assert_eq(_tn_13_scheme_curve_ok(TLS_SIG_ECDSA_SECP384R1_SHA384, p256), 0, "K3: 0x0503 on P-256 refused");
+    assert_eq(_tn_13_scheme_curve_ok(TLS_SIG_ECDSA_SECP256R1_SHA256, p384), 0, "K4: 0x0403 on P-384 refused");
+    assert_eq(_tn_13_scheme_curve_ok(TLS_SIG_RSA_PSS_RSAE_SHA256, p256), 1, "K5: a non-ECDSA scheme is not bound here");
+
+    test_group("W1: the refusal's alert reaches the wire (the connect driver)");
+    var w = _w1();
+    if (w == 0 - 999) {
+        assert_eq(1, 1, "W1: SKIP — socketpair refused on this target");
+    } else {
+        assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W1: connect refuses the flight");
+        assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_UNSUPPORTED_EXTENSION,
+          "W1: the client sent a fatal unsupported_extension, sealed under its handshake key");
+    }
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(SYS_EXIT, ec);

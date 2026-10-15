@@ -1,0 +1,82 @@
+# tls12_server_sid33.tcyr — 6.7.12: the TLS 1.2 server refuses a legacy_session_id over 32 bytes.
+#
+# issues/2026-10-08-tls-native-conformance-bite.md item 5. RFC 5246 §7.4.1.2: SessionID<0..32>.
+# _tn_12_parse_client_hello read the length and skipped it, so a 33-byte id negotiated a suite
+# (the 1.3 parser refuses `sid_len > 32`). Now it is decode_error, the alert recorded for the
+# driver to send (_tn_hs_fail). Row R is the filed repro verbatim (exit 0 = refused); the
+# control is the same ClientHello with a 32-byte id. On the lib before the fix R and S1-S2 fail.
+include "lib/tls_native.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/assert.cyr"
+
+var cert23 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key23 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# R — the filed repro (docs/development/issues/repros/2026-10-08-tls-native-conformance-2-12-server-sid33.cyr),
+# its `main` verbatim under another name.
+fn repro_main(): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_12_build_client_hello(cl, &ch, 512);
+    if (chn <= 0) { println("setup: no ClientHello"); return 2; }
+    # Re-emit it with a 33-byte legacy_session_id (the built one is empty).
+    var m[600];
+    var p = &m;
+    memcpy(p, &ch, 4 + 2 + 32);
+    store8(p + 38, 33);
+    var i = 0;
+    while (i < 33) { store8(p + 39 + i, 0x5A); i = i + 1; }
+    memcpy(p + 39 + 33, &ch + 39, chn - 39);
+    var n = chn + 33;
+    var blen = n - 4;
+    store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+    var srv = tls_native_new_server(cert23, 385, key23, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { println("setup: creds"); return 2; }
+    var chosen = _tn_12_parse_client_hello(srv, p + 4, blen);
+    if (chosen > 0) { println("ACCEPTED: 1.2 server negotiated a suite for a 33-byte legacy_session_id"); return 1; }
+    println("refused (correct)");
+    return 0;
+}
+
+# The repro's ClientHello with a `sid`-byte legacy_session_id, parsed by a fresh 1.2 server.
+# Returns the parse result; the server in G_SRV.
+var G_SRV = 0;
+fn _ch_sid(sid): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_12_build_client_hello(cl, &ch, 512);
+    if (chn <= 0) { return 0 - 999; }
+    var m[800];
+    var p = &m;
+    memcpy(p, &ch, 4 + 2 + 32);
+    store8(p + 38, sid);
+    memset(p + 39, 0x5A, sid);
+    memcpy(p + 39 + sid, &ch + 39, chn - 39);
+    var n = chn + sid;
+    var blen = n - 4;
+    store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+    var srv = tls_native_new_server(cert23, 385, key23, 138);
+    G_SRV = srv;
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 0 - 998; }
+    return _tn_12_parse_client_hello(srv, p + 4, blen);
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("R: the filed repro — a 33-byte legacy_session_id is refused");
+    assert_eq(repro_main(), 0, "R: the repro exits 0 (refused)");
+
+    test_group("SessionID<0..32>");
+    assert_gt(_ch_sid(32), 0, "C1: a 32-byte id still negotiates a suite (the control)");
+    assert_gt(_ch_sid(0), 0, "C2: an empty id negotiates a suite");
+    assert_eq(_ch_sid(33), TLS_ERR_BAD_HANDSHAKE, "S1: 33 bytes -> BAD_HANDSHAKE");
+    assert_eq(load64(G_SRV + TLS_CTX_OFF_HS_ALERT), TLS_AD_DECODE_ERROR, "S1: the alert is decode_error");
+    assert_eq(_ch_sid(255), TLS_ERR_BAD_HANDSHAKE, "S2: 255 bytes -> BAD_HANDSHAKE");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(SYS_EXIT, ec);

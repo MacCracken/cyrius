@@ -82,6 +82,17 @@ fn main(): i64 {
     _armed = 1;
 #endif
 
+#ifdef CYRIUS_TARGET_CX
+    # 6.7.12 (D13): cx predefines only CYRIUS_TARGET_CX, so no arm above ran and the guard below
+    # fired. A .cyx guest carries the x86_64-Linux peer (lib/syscalls.cyr's cx arm): its values are
+    # Linux's, whatever host cxvm runs on. CHANGELOG [6.7.12]
+    assert_eq(EAGAIN, 11, "cx (x86_64-Linux peer) EAGAIN is 11");
+    assert_eq(SIGCHLD, 17, "cx (x86_64-Linux peer) SIGCHLD is 17");
+    assert_eq(SIG_BLOCK, 0, "cx (x86_64-Linux peer) SIG_BLOCK is 0");
+    assert_eq(MAP_ANONYMOUS, 32, "cx (x86_64-Linux peer) MAP_ANONYMOUS is 32");
+    _armed = 1;
+#endif
+
 #ifdef CYRIUS_TARGET_AGNOS
     # agnos uses POSIX/Linux signal numbering but ships no EAGAIN / MAP_STACK.
     assert_eq(SIGCHLD, 17, "agnos SIGCHLD is 17 (Linux numbering)");

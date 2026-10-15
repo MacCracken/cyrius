@@ -1,0 +1,109 @@
+# epoll_event_readers.tcyr — 6.7.12: the stdlib reads an epoll_event back the way it writes one.
+# epoll_event_new already encoded the per-arch layout (x86_64 packs it — data @4, 12 bytes;
+# aarch64 does not — data @8, 16 bytes), but nothing read one back, so every caller of
+# sys_epoll_wait hand-gated the offset and the stride, and one read x86_64's +4 on aarch64
+# (issues/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md). The peers now offer
+# epoll_event_events / epoll_event_data and EPOLL_EVENT_SIZE, and lib/async.cyr's reactor reads
+# through them — its stride was 16 on every arch, so on x86_64 the 2nd..8th event of one wait
+# were read off by 4, 8, … bytes. Rows: the round trip everywhere epoll_event_new exists (Linux,
+# both macOS peers); on Linux a real epoll_wait over two ready pipes read at EPOLL_EVENT_SIZE
+# stride, and the reactor waking BOTH waiters from ONE wait. Windows and agnos have no epoll
+# layer (their async reactors are IOCP and the agnos adapter). CHANGELOG [6.7.12]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/async.cyr"
+
+#ifdef CYRIUS_TARGET_LINUX
+var _ra[2];             # pipe A (two i32 fds: load32 @0 read end, @4 write end)
+var _rb[2];             # pipe B
+var _pa = 0;
+var _pb = 0;
+
+# A waiter that parks on pipe A's read end, then counts its wake.
+fn _wait_a(rt): i64 {
+    if (_pa == 0) {
+        _pa = 1;
+        if (async_wait_fd(rt, load32(&_ra)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 1;
+}
+
+# The same on pipe B.
+fn _wait_b(rt): i64 {
+    if (_pb == 0) {
+        _pb = 1;
+        if (async_wait_fd(rt, load32(&_rb)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 2;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: no epoll layer");
+    var wfds[16];
+    assert_eq(sys_pipe(&wfds), 0 - 1, "premise: PE has no anonymous pipe and no epoll (its reactor is IOCP) — nothing to read back");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("epoll_event_new round trip through the readers");
+    var ev = epoll_event_new(EPOLLIN | EPOLLOUT, 0x1122334455667788);
+    assert(ev != 0, "epoll_event_new allocated");
+    assert_eq(epoll_event_events(ev), EPOLLIN | EPOLLOUT, "epoll_event_events reads the mask back");
+    assert_eq(epoll_event_data(ev), 0x1122334455667788, "epoll_event_data reads all 64 data bits back");
+    #ifdef CYRIUS_ARCH_AARCH64
+    assert_eq(EPOLL_EVENT_SIZE, 16, "EPOLL_EVENT_SIZE is 16 on aarch64 (unpacked: data @8)");
+    assert_eq(load64(ev + 8), 0x1122334455667788, "the data is at +8, where the aarch64 kernel reads it");
+    #endif
+    #ifndef CYRIUS_ARCH_AARCH64
+    assert_eq(EPOLL_EVENT_SIZE, 12, "EPOLL_EVENT_SIZE is 12 on x86_64 (EPOLL_PACKED: data @4)");
+    assert_eq(load64(ev + 4), 0x1122334455667788, "the data is at +4, where the x86_64 kernel reads it");
+    #endif
+    #endif
+    #endif
+
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("a real epoll_wait array, read at EPOLL_EVENT_SIZE stride");
+    assert_eq(sys_pipe(&_ra), 0, "pipe A");
+    assert_eq(sys_pipe(&_rb), 0, "pipe B");
+    var ep = syscall(SYS_EPOLL_CREATE1, 0);
+    assert(ep >= 0, "epoll_create1");
+    assert_eq(syscall(SYS_EPOLL_CTL, ep, 1, load32(&_ra), epoll_event_new(EPOLLIN, 111)), 0, "EPOLL_CTL_ADD pipe A, data 111");
+    assert_eq(syscall(SYS_EPOLL_CTL, ep, 1, load32(&_rb), epoll_event_new(EPOLLIN, 222)), 0, "EPOLL_CTL_ADD pipe B, data 222");
+    sys_write(load32(&_ra + 4), "a", 1);
+    sys_write(load32(&_rb + 4), "b", 1);
+    var buf[128];
+    var n = sys_epoll_wait(ep, &buf, 8, 1000);
+    assert_eq(n, 2, "both pipes are reported by ONE epoll_wait");
+    var d0 = epoll_event_data(&buf);
+    var d1 = epoll_event_data(&buf + EPOLL_EVENT_SIZE);
+    assert_eq(d0 + d1, 333, "the two data words are 111 and 222 (read at the peer's stride)");
+    assert_eq(d0 * d1, 24642, "  …each exactly once");
+    assert_eq(epoll_event_events(&buf + EPOLL_EVENT_SIZE) & EPOLLIN, EPOLLIN, "the second event's mask has EPOLLIN");
+    syscall(SYS_CLOSE, ep);
+
+    test_group("the async reactor wakes every waiter one wait reports (x86_64: the 16-byte stride)");
+    var rt = async_new();
+    assert(rt != 0, "runtime created");
+    var ha = async_spawn(rt, &_wait_a, rt);
+    var hb = async_spawn(rt, &_wait_b, rt);
+    assert(ha != 0 && hb != 0, "two waiters spawned");
+    _async_step(rt);                                   # both run once and park on their fds
+    assert_eq(load64(ha + 16) * 10 + load64(hb + 16), 11, "both are parked (TASK_WAITING)");
+    assert_eq(_async_poll(rt, 0), 2, "ONE reactor wait takes both events (the pipes still hold 'a' and 'b')");
+    assert_eq(load64(ha + 16) * 10 + load64(hb + 16), 0,
+      "  …and wakes BOTH waiters from it (6.7.11 on x86_64: the second event was read 4 bytes off)");
+    async_run(rt);
+    assert_eq(task_join(rt, ha) * 10 + task_join(rt, hb), 12, "both finish with their own results");
+    #endif
+
+    return assert_summary();
+}
+var r = main();
+syscall(SYS_EXIT, r);

@@ -57,3 +57,32 @@ fold releases sequenced around it (a fold may only declare `const X` once cyrius
 `removed_symbol_census.sh` / api-surface accounting, CHANGELOG + `ecosystem-migration.md` entries, vidya. Names
 that are both a `var` and an enum member (the `O_*` family) and genuinely written globals are a separate decision per
 name.
+
+## Census addition: the 14 public bound vars (`var X = _X;`) — added 2026-10-15
+
+The census regex above takes literal initialisers only, so it misses the 14 public bounds that 6.7.6 split into a
+`const _X` (which sizes the storage) and a public `var X = _X;` (derived with
+`grep -nE '^var [A-Z][A-Z0-9_]* *(: *[a-z0-9]+)? *= *_[A-Z][A-Z0-9_]*;' lib/*.cyr`, the folds excluded):
+
+| name | file | const value |
+|---|---|---|
+| `KEV_SIZE` | lib/async_macos.cyr | 32 |
+| `SPAWN_ARGV_MAX` | lib/syscalls_x86_64_agnos.cyr | 1024 |
+| `SPAWN_ENV_MAX` | lib/syscalls_x86_64_agnos.cyr | 1024 |
+| `TLOCAL_MAX_SLOTS` | lib/thread_local.cyr | 128 |
+| `TLS_REG_MAX` | lib/thread_local.cyr (aarch64) | 64 |
+| `TLS_RECORD_MAX_PLAINTEXT` | lib/tls_native.cyr | 16384 |
+| `TLS_AEAD_NONCE_LEN` | lib/tls_native.cyr | 12 |
+| `TLS12_VERIFY_DATA_LEN` | lib/tls_native_hs12.cyr | 12 |
+| `TLS12_RANDOM_LEN` | lib/tls_native_hs12.cyr | 32 |
+| `TLS_RANDOM_LEN` | lib/tls_native_hs13.cyr | 32 |
+| `TLS_HKDF_LABEL_BUF_LEN` | lib/tls_native_keysched.cyr | 514 |
+| `TLS_MAX_DIGEST_LEN` | lib/tls_native_keysched.cyr | 48 |
+| `TLS_HANDSHAKE_HEADER_LEN` | lib/tls_native_lowlevel.cyr | 4 |
+| `TLS_SHA384_CTX_LEN` | lib/tls_native_lowlevel.cyr | 208 |
+
+The user's decision D16 (2026-10-15, issues/2026-10-11-tls-public-bound-vars-api-decision.md): until this arc they stay
+writable vars, each commented as a read-only mirror of its `_X`, and since 6.7.12 nothing in lib/ reads any of them
+(`lib_buffers_sized_by_const.sh` axis 6 holds all 14), so a write is inert. The arc converts them with the rest: `const
+X = <value>;`, the `_X` twin dropped or kept as an alias, and the same accounting (a consumer that assigns one, takes
+`&X` or declares its own `var X` stops compiling at its pin bump).

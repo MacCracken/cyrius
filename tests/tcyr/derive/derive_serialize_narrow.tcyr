@@ -45,7 +45,7 @@ struct FM { a: f64; b: f32; c: f64; }
 struct Inr { x: u8; y: f32; }
 
 # The nested struct last (6.7.11: both decoders decode it — the scanner skipped it until then,
-# derive_nested_scanner.tcyr).
+# crossos/derive_nested_scanner.tcyr).
 #derive(Serialize)
 struct Out { k: u16; z: u32; inn: Inr; }
 

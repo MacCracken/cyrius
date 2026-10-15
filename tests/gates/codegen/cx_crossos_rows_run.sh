@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (60, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (66, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -96,6 +96,15 @@
 #       log line, a span and, on cx only, sakshi_output_udp's refusal (-1) — native and cxvm each exit 0
 #       with the `cx-rows sakshi ok` marker, and each leg's stderr carries the `[INFO] cx-sakshi log
 #       line` the program logged (4 rows).
+#   R19 (6.7.12, D12) tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr — ~900 KB of cx
+#       bytecode, which stopped at "codebuf overflow" against the old 512 KiB region (and needs more
+#       than cxvm's old 1 MB code / guest caps): native and cxvm each print `<N> passed, 0 failed`, N
+#       derived per target from the source's #ifdef arms (n_tgt: 9 on x86_64 Linux, 2 on cx — statfs
+#       fails cleanly there, the file's cx arm).
+#   R20 (6.7.12) a generated program past the 4 MiB cx code region: cycc_cx exits 1 with no .cyx and
+#       the refusal names the limit (4194304 B), the bytes emitted and the fn that reached it.
+#   R21 (6.7.12) a generated ~4.1 MB .cyx under the cap: native and cxvm each exit 241, and the .cyx
+#       must stay over 3 MiB (3 rows) — the region, cxvm's code cap and its guest memory all hold it.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -142,6 +151,13 @@
 #      (dce13af1) -> R6 RED on both legs (native SIGSEGV; cxvm "guest address out of range"); `_gci_src` without
 #      its `*T` global arm (MG1), `_gci_chain` without its `*T` field hop (MG2), `_gci_call` answering 0 (MG3)
 #      -> each R6 RED on both legs.
+#   j. (6.7.12, R19-R21; the real tree 66/66) _CX_CODE_CAP back to 524288 (backend/cx/emit.cyr), that
+#      cycc_cx as CYCC_CX -> R19 cxvm, R20 (the refusal reads "(524288 B)" at fn 'f5'), R21 cxvm and
+#      R21's size row RED, 62 green.
+#   k. cxvm's _CX_MEM_SIZE back to 1048576 (so its .cyx cap too), as CXVM -> R19 cxvm ("error: .cyx
+#      exceeds cxvm's ... guest memory") and R21 cxvm (exit 1) RED, 64 green.
+#   l. the slot-open cycc_cx and cxvm (7f57e532's main_cx.cyr / cxvm.cyr) -> R19 cxvm, R20, R21 cxvm and
+#      R21's size row RED ("error: codebuf overflow" each), 62 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -580,8 +596,66 @@ for _leg in native:no cxvm:co; do
     else bad "R18 ${_leg%%:*}: no '[INFO] cx-sakshi log line' in its output"; fi
 done
 
-WANT=60
+# ── R19-R21 — cx's code region (6.7.12, D12: grow) ──
+# The assertion lines one target compiles: `#ifdef` / `#ifndef CYRIUS_TARGET_<X>` nest (`#else` flips
+# the innermost), any other macro reads as undefined. n_tgt FILE TARGET — LINUX for the x86_64 native
+# leg, CX for cxvm. yukti_statfs_and_stdlib_constants.tcyr has per-target arms, so n_all / n_cx miss.
+n_tgt() {
+    awk -v t="CYRIUS_TARGET_$2" '
+        /^[[:space:]]*#ifdef[[:space:]]/  { d++; on[d] = ($2 == t); next }
+        /^[[:space:]]*#ifndef[[:space:]]/ { d++; on[d] = ($2 != t); next }
+        /^[[:space:]]*#else/  { on[d] = !on[d]; next }
+        /^[[:space:]]*#endif/ { d--; next }
+        /^[[:space:]]*assert(_[a-z]+)?\(/ { a = 1; for (i = 1; i <= d; i++) if (!on[i]) a = 0; if (a) n++ }
+        END { print n + 0 }' "$1"
+}
+YK=tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr
+echo "R19 — $YK (~900 KB of cx bytecode: 'codebuf overflow' against the 512 KiB region until 6.7.12), native then cxvm:"
+w=$(n_tgt "$YK" LINUX)
+if [ "$w" -lt 9 ]; then bad "R19 native: only $w x86_64-Linux assertions in $YK (floor 9)"
+elif "$CC" < "$YK" > "$T/n" 2> "$T/ne"; then
+    chmod +x "$T/n"; rc=0; (cd "$T" && timeout 120 ./n > "$T/no" 2>&1) || rc=$?
+    summary "R19 $YK native" "$T/no" "$rc" "$w"
+else bad "R19 native: does not compile: $(grep -m1 '^error' "$T/ne")"; fi
+w=$(n_tgt "$YK" CX)
+if [ "$w" -lt 2 ]; then bad "R19 cxvm: only $w cx assertions in $YK (floor 2)"
+elif "$CX" < "$YK" > "$T/c.cyx" 2> "$T/ce"; then
+    rc=0; timeout 120 "$VM" < "$T/c.cyx" > "$T/co" 2>&1 || rc=$?
+    summary "R19 $YK cxvm ($(wc -c < "$T/c.cyx" | tr -d ' ') B .cyx)" "$T/co" "$rc" "$w"
+else bad "R19 cxvm: cycc_cx does not compile it: $(grep -m1 '^error' "$T/ce")"; fi
+
+# Generated programs of N fns x 1000 statements, ~100 B of cx bytecode a statement: 48 fns pass the
+# 4 MiB cap (a 41-fn one ends ~4.1 MB, past the old 512 KiB region AND cxvm's old 1 MB code / guest
+# caps). gen_big N FILE — main calls every fn and exits with the sum mod 251.
+gen_big() {
+    awk -v nf="$1" 'BEGIN {
+        print "var g = 1;"
+        for (f = 0; f < nf; f++) {
+            printf "fn f%d(a): i64 {\n    var x = a;\n", f
+            for (i = 0; i < 1000; i++) print "    x = x + g * 3 - 1;"
+            print "    return x;\n}"
+        }
+        print "var s = 0;"
+        for (f = 0; f < nf; f++) printf "s = s + f%d(%d);\n", f, f
+        print "syscall(60, s % 251);"
+    }' > "$2"
+}
+echo "R20 — a program past the 4 MiB cx code region is refused by name, with the limit, the size and the fn (6.7.12):"
+gen_big 48 "$T/big.cyr"
+rc=0; "$CX" < "$T/big.cyr" > "$T/big.cyx" 2> "$T/bige" || rc=$?
+if [ "$rc" = 1 ] && [ ! -s "$T/big.cyx" ] \
+   && grep -qE "^error: cx bytecode exceeds the cx code region \(4194304 B\): 4194304 B emitted when fn 'f[0-9]+' \(its code starts at byte [0-9]+\) reached it — build this program for a native target$" "$T/bige"; then
+    ok "R20 cycc_cx: rc 1, no .cyx, $(grep -m1 -oE "fn 'f[0-9]+'" "$T/bige") named"
+else bad "R20 cycc_cx: rc $rc, .cyx $(wc -c < "$T/big.cyx" | tr -d ' ') B, stderr: $(grep -v '^note' "$T/bige" | head -1)"; fi
+echo "R21 — a ~4 MB program (under the cap) compiles for cx and runs under cxvm with native's value (6.7.12):"
+gen_big 41 "$T/near.cyr"
+rc_both "R21 41 fns x 1000 statements" "$T/near.cyr" 241
+nb=$(wc -c < "$T/c.cyx" | tr -d ' ')
+if [ "$nb" -gt 3145728 ]; then ok "R21 the .cyx is $nb B (over 3 MiB: past the old region and cxvm's old caps)"
+else bad "R21 the .cyx is $nb B — the program no longer exercises the grown region (want > 3145728)"; fi
+
+WANT=66
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), and the sakshi fold logs and spans on cx"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, and cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21)"
 exit 0

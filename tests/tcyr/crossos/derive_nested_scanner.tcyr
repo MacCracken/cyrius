@@ -14,6 +14,11 @@
 # `#derive(Deserialize)` registered (an accessors-only one among them) is skipped whole, as is one typed with
 # a derived enum. The scanner and the pairs form agree on every row.
 #
+# ⭐ WHY THIS FILE IS IN crossos/ (6.7.12; it was tests/tcyr/derive/): the scanner is code the preprocessor emits
+# into the program, the same on every target, but what it runs on — bayan's parse, the Str and byte walks — ran
+# only on the Linux corpus. The release gate's cross-OS leg runs this directory on ecb / ach / cass / pi
+# (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4: the derive bite's rows on the hosts).
+#
 # Mutations (2026-10-14; a scratch copy of the tree, rebuilt with the one change): PP_DNEST_SCAN back to the
 # depth-blind skip with no decode (= the tree before, for the nested arm) RED rows 1, 2, the positions, the
 # Str row (and derive_serialize_narrow.tcyr's scanner `Out`); without its `{` guard RED the null and number

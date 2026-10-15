@@ -45,9 +45,9 @@
 #             bundles carried their own requires blocks, each module includes its fold and axis 1
 #             holds all three like any other first-party module — no tier excuses anything now.
 #   CX_OUT_OF_SCOPE  modules the cx target refuses BY NAME (6.6.11): tls, tls_native and the
-#             sigil fold compile to several MB of cx bytecode against a 512 KiB .cyx, and cx
-#             is declared not to carry them rather than grown to (src/main_cx.cyr,
-#             _cx_scope_refused). Axis 7 holds the refusal; axis 4's cx leg leaves them out.
+#             sigil fold compile to several MB of cx bytecode, and cx is declared not to carry
+#             them (src/backend/cx/emit.cyr, _cx_scope_refused) — kept when 6.7.12 grew the cx
+#             code region to 4 MiB. Axis 7 holds the refusal; axis 4's cx leg leaves them out.
 #
 # AXES
 #   0. SELF-TEST, per target compiler: a fixture calling a function nothing defines MUST be

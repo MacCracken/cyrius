@@ -60,8 +60,8 @@ fn alloc(size): i64 {
 fn _fi_arm(k): i64 { _fi_at = k; _fi_seen = 0; return 0; }
 CYR
 
-# The row helpers, shared by every probe (the ws client and server stdlibs declare the same
-# WS_* names, so they cannot share one translation unit).
+# The row helpers, shared by every probe (the ws client and server probes are separate
+# translation units: the two stdlibs each declared the WS_* names until 6.7.12).
 cat > "$W/fi/rows.cyr" <<'CYR'
 var _rows = 0;
 

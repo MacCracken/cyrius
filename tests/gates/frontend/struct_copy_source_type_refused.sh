@@ -30,6 +30,7 @@
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
 # The layout / copy half is pinned by tests/tcyr/crossos/struct_field_value_copy.tcyr.
+# A1-A7 run on ecb / ach / cass / pi as tests/tcyr/crossos/struct_copy_source_controls.tcyr (6.7.12).
 #
 # MUTATION LEDGER (6.6.12, each mutant rebuilt from the fixed tree with the one change):
 #   base 6.6.11 build/cycc                          -> RED, every refusal row (compiled clean);

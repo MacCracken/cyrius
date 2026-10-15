@@ -32,6 +32,94 @@ does or builds; never a per-repo worklist.*
 
 ## 6.7.x — the language minor
 
+### 6.7.12
+
+#### The standard library
+
+**`lib/ws_server.cyr` includes `lib/ws.cyr` (D11, the user 2026-10-15)**
+- `lib/ws_server.cyr` no longer declares its own `WS_OP_CONTINUATION` / `WS_OP_TEXT` / `WS_OP_BINARY` / `WS_OP_CLOSE` /
+  `WS_OP_PING` / `WS_OP_PONG` / `WS_OPEN` / `WS_CLOSING` / `WS_CLOSED` vars: it includes `lib/ws.cyr`, and the nine
+  are ws.cyr's enum constants (same values). `include "lib/ws_server.cyr"` now also brings ws.cyr's client fns (DCE
+  drops the unused ones), `WS_CONNECTING` and `WS_RECV_MAX_PAYLOAD`. With ws_server alone, a write to one of the nine
+  (`WS_OPEN = 5;`: "cannot assign to enum constant 'WS_OPEN'") or its address (`&WS_OPEN`) stops compiling;
+  reading them is unchanged. A program that defines its own `WS_CONNECTING` or a `ws_*` fn beside ws_server now
+  gets the duplicate-definition warning (its own, the last definition, still wins).
+- `cyrius distlib` records `ws` for a bundle that reads a `WS_*` name with neither leaf in its unit (6.7.11 refused it
+  as a tie, "more than one stdlib leaf could own it (ws, ws_server)") — yantra's distlib converges again, its bundle
+  byte-identical.
+
+**agnos: the net arms take only a tagged socket fd**
+- On agnos, `sock_bind` / `sock_listen` / `sock_accept` / `sock_connect` on an fd that is not one `tcp_socket()`
+  handed out (a failed open's `-1`, a file or stdio fd, `AGNOS_SOCK_TAG + 8` and up) now return `Err(9)` (EBADF) for a
+  negative fd and `Err(88)` (ENOTSOCK) for any other, and `net_connect_nb` returns `_NET_CONN_NB_ERR` — with no
+  table write and no kernel call. They used to act on socket slot `fd & 7` (a `-1` bound, listened, accepted and
+  connected on slot 7) and could answer `Ok`. Linux already answered these errnos; a program that passed only
+  sockets sees no change.
+
+**epoll_event readers: `epoll_event_events` / `epoll_event_data` / `const EPOLL_EVENT_SIZE`**
+- New beside `epoll_event_new` in the x86_64 Linux, aarch64 and x86-macOS peers: read one element of a
+  `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and step by `EPOLL_EVENT_SIZE` (12 on
+  x86_64 and x86-macOS, 16 on aarch64). A hand-gated `load64(ev + 4)` / `load64(ev + 8)` per arch can become
+  `epoll_event_data(ev)`. ⚠ A program that declares its own `EPOLL_EVENT_SIZE` after including `lib/syscalls.cyr`
+  now stops compiling ("'EPOLL_EVENT_SIZE' is already declared as a top-level const") — drop the copy; one that
+  defines its own `epoll_event_data` / `epoll_event_events` gets the duplicate-fn warning (its own, the last, wins).
+  ⚠ A build that includes a second syscall peer beside the one `lib/syscalls.cyr` picks (`lib/syscalls_macos.cyr`
+  in a Linux build, say) stops compiling too ("const 'EPOLL_EVENT_SIZE' is declared twice"; the peers' same-name vars
+  only warned) — include `lib/syscalls.cyr` alone, which selects one peer per target.
+- `lib/async.cyr`'s epoll reactor reads each event at the peer's stride. It read every arch at 16, so on x86_64 the
+  2nd..8th event of one wait were read off by 4, 8, … bytes — a stale or garbage fd (the real one re-reported by the
+  next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
+  unchanged.
+
+**The native TLS stack's public bound vars are inert (D16, D17, the user 2026-10-15)**
+- `TLS_HANDSHAKE_HEADER_LEN`, `TLS_MAX_DIGEST_LEN`, `TLS_RANDOM_LEN`, `TLS_RECORD_MAX_PLAINTEXT`,
+  `TLS12_VERIFY_DATA_LEN`, `TLS12_RANDOM_LEN` and `TLS_SHA384_CTX_LEN` no longer steer the stack: every read in
+  lib/tls_native*.cyr and lib/tls.cyr reads the `_X` const that sizes the storage. They are still writable vars holding
+  the same values (read them freely); a write now changes nothing. Before, a write drove copies, indexes and
+  allocations over const-sized storage — `TLS12_RANDOM_LEN = 256` smashed the PRF seed (SIGSEGV),
+  `TLS12_VERIFY_DATA_LEN` / `TLS_SHA384_CTX_LEN` raised overran the stack.
+- ⚠ `TLS_RECORD_MAX_PLAINTEXT` is the protocol's 2^14, not a knob (D17). A program that LOWERED it no longer gets
+  smaller outgoing fragments (`tls_write`, the handshake-record fragmenter, `tls_native_record_fragment_count`), and
+  no longer refuses a peer's full 2^14-byte records; one that RAISED it no longer seals over-length records (2^14 + 1
+  is `TLS_ERR_RECORD_OVERFLOW`). A real max_fragment_length (RFC 6066) is a feature, not this var.
+
+**`args_init()`: a failure is a negative errno on Linux and Windows (D7, the user 2026-10-15)**
+- `args_init()`'s failure return is a negative errno on Linux and Windows (was 0). Code that treated
+  `args_init() == 0` as "could not read the command line" must test `< 0`; 0 is success on macOS / agnos.
+- A consumer that refused a 2,097,152-byte `_args_len` as "may be truncated" (cmdit 1.3.2's workaround) can drop that
+  check: a longer command line is now read whole.
+
+**The native TLS client is stricter with non-conformant peers**
+- A 1.3 server that sends an extension the client did not offer (or one its message may not carry), an ALPN protocol
+  outside the client's list, an ECDSA CertificateVerify on the other curve, or a byte after a signature now fails the
+  handshake (`TLS_ERR_HANDSHAKE_FAILED` / `TLS_ERR_AUTHN` / `TLS_ERR_BAD_HANDSHAKE`, the alert sent). A 1.2
+  ServerKeyExchange with a byte after its signature is refused too (`TLS_ERR_BAD_HANDSHAKE`; the 1.2 client sends no
+  alert).
+- A 1.2 client restricted with `tls_native_set_groups` refuses a server whose ECDSA certificate is on an unlisted
+  curve (`TLS_ERR_HANDSHAKE_FAILED`; list the certificate's curve, as OpenSSL requires too).
+- A native 1.2 server refuses a ClientHello with a session id over 32 bytes (`TLS_ERR_BAD_HANDSHAKE`, decode_error).
+- Conformant peers (OpenSSL's 68 interop rows) are unaffected.
+
+#### The cx target
+
+**cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**
+- `cycc_cx` holds 4 MiB of bytecode (it stopped at 512 KiB with a bare `error: codebuf overflow`); past it, it refuses
+  by name: `error: cx bytecode exceeds the cx code region (4194304 B): <n> B emitted when fn '<name>' (its code starts
+  at byte <off>) reached it — build this program for a native target`. cxvm's guest memory is 8 MiB (it was 1 MB) and
+  it reads a `.cyx` up to that plus its 8-byte header (`error: .cyx exceeds cxvm's guest memory (8388608 B of code and
+  data)` past it); a `.cyx` an older cycc_cx wrote runs unchanged. Guest addresses from 1 MB to 8 MiB are now ordinary
+  memory (they trapped as "guest address out of range"), and the guest stack starts at 8 MiB, so recursion runs about
+  eight times deeper before "guest stack overflow" (the VM stacks hold 524288 entries, so a runaway recursion still
+  meets the guest-stack trap first). `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` stay refused by name;
+  the message no longer cites a 512 KiB `.cyx`.
+
+**cx: honest refusals from four wrappers (D13, the user 2026-10-15)**
+- On cx, `cyr_mmap` returns -1, so `mmap_anon` returns 0 — it returned a HOST address the guest could not use (a
+  non-zero pointer; the first access trapped). `sys_pipe` (its buffer left as it was), `sys_fstat` and `sys_unlink`
+  return -38 (-ENOSYS) where they returned -14 (-EFAULT); `sys_unlink` never removed the file on cx and still does
+  not. A cx program that tested `< 0` or `== 0` sees the same branch; one that compared against -14 must read -38.
+  Native targets are unchanged (the arms are `CYRIUS_TARGET_CX` only).
+
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).

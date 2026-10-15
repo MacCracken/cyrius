@@ -6468,6 +6468,16 @@ half-fixes that stopped at the first symptom. If you add a wrapper, add a test f
 that DIRECTORY (the old `vr01_` filename prefix was retired at v6.5.11; a file named that way
 anywhere else is not run on the other hosts).
 
+**The recorded exception — the agnos-only wrappers** (6.7.12; the user's decision, 2026-10-15). Three
+wrappers exist only in the agnos peer (`lib/syscalls_x86_64_agnos.cyr`, 6.7.11): `sys_console_mode`
+(#110), `sys_fd_kind` (#111) and `sys_sock_send_dl` (#109). No cross-OS host runs agnos, so a
+`tests/tcyr/crossos/` file could only compile them under `CYRIUS_TARGET_AGNOS` and skip on all four
+hosts, a pass that covers nothing. They have no crossos file. Their companion is
+`tests/gates/platform/agnos_peer_fake_kernel.sh` axes 10–12, which run each wrapper against the fake
+kernel (`tests/fixtures/agnos_sctrace.cyr`) and check the syscall it hands the kernel and the answer it
+returns. #109's real-kernel leg (`sys_sock_send_dl`'s deadline on a live agnos kernel) **cannot run: no
+agnos host**. That leg is named as not run; it is not counted as coverage.
+
 ## Allocators & Arenas
 
 `lib/alloc.cyr` ships three layers: the process-wide bump allocator (`alloc`), independent
@@ -6772,7 +6782,8 @@ blocks exactly as on Linux (`CHAN_BLOCKING = 1`): `chan_recv` waits for a value 
 small process-wide pool (no kernel handle is held per channel).
 
 **Command-Line Arguments & Environment**
-- `args_init()` — parse GetCommandLineW via the real CommandLineToArgvW
+- `args_init()` — parse GetCommandLineW via the real CommandLineToArgvW; the blob's
+  length, or -5 / -12 when the command line cannot be read (6.7.12)
 - `argc()`, `argv(n)` — access parsed arguments (byte-identical to POSIX form)
 - Environment variables (`getenv`) read the parent's block on entry
 
@@ -7073,6 +7084,13 @@ Compiling with `cyrius build --win main.cyr main.exe` on Linux produces a
 Windows PE that calls `GetCommandLineW` and `CommandLineToArgvW`, parsing the
 full Windows quoting rules (`\"`, backslash escaping, etc.) and converting back
 to UTF-8 to match the POSIX API exactly. Same binary on Unix calls `/proc/self/cmdline`.
+
+`args_init()` returns the bytes it read on Linux and Windows (0 on macOS and agnos, which read
+the entry stack), and a **negative errno** when the command line cannot be read: the open's or
+the read's on Linux, -12 when a buffer cannot be allocated, -5 / -12 on Windows. Test `< 0`,
+never `== 0` — 0 is macOS's success (6.7.12, D7). Linux reads `/proc/self/cmdline` to its end:
+ARG_MAX follows `ulimit -s` (up to 6 MiB), and a command line past 2 MiB is read whole (it was
+cut at 2,097,152 bytes with no error before 6.7.12).
 
 ### Example: Directory Listing and File I/O
 

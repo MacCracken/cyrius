@@ -49,6 +49,8 @@
 #   N10 `_mv_arg_call` without the `_pm_copies` test     -> RED C3 (a `*P` parameter refused)
 #   N11 `_mv_dst_sid` without the `*P` (GLPTRP) test     -> RED C3 (a `*P` variable refused)
 #   N12 `_mv_asg_src` not typing the refused source      -> RED S5 S8 MA W4 (the warning after the error)
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): C2 runs on ecb / ach / cass / pi in
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

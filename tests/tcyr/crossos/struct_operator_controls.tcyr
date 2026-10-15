@@ -1,0 +1,66 @@
+# struct_operator_controls.tcyr — 6.7.12. THE ACCEPTED SHAPES OF 6.7.11'S STRUCT-OPERATOR AND STRUCT-BINDING BITES
+# THAT RAN ONLY IN SHELL GATES, ON THE HOSTS (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
+#
+# 6.7.11's struct lane changed what an operator next to a struct means (issues/archived/2026-10-08-struct-operator-
+# results.md, issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md,
+# issues/archived/2026-10-10-field-of-method-pointer-result-refused.md):
+#   #2  an INTEGER operator's result is an integer, never its right operand's struct: `n - s + 10` is (n - s) + 10
+#       — it called P3_add(&s, 10) and SIGSEGV'd — and so needs no `P3_add` to compile (it was "undefined function");
+#   #3  unary minus on a struct is integer negation of its word, with no struct type (the user's decision (a),
+#       2026-10-13): `var X: S8 = -G + H;` is the integer -G + H's word, in the declaration zone and after it;
+#       an untyped binding of a whole struct result takes the struct (decision (a), 2026-10-13): `var c =
+#       a.d().d();` is an S8, so `c + 1` dispatches the operator fn declared for (S8, i64);
+#   h.get().b — `.field` of a method's `*T` result — compiles, the method declared above or BELOW its use.
+# Most of those bites' rows were written into crossos files at the time (crossos/struct_value_codegen.tcyr K1-K27,
+# U1-U15, MP1-MP16, Q31-Q41; crossos/struct_operator_result_binding.tcyr u1-u3, m / i / p rows). The rows below are
+# the accepted controls that lived ONLY in a shell gate (x86_64), each as an assertion, its expected value the
+# gate's exit code (the full value where the gate saw it mod 256):
+#   K2 K3 U2 U3 MP2   tests/gates/codegen/struct_value_codegen.sh k02 k03 u02 u03 mp2 (commits 0d1c660c, cb2d7406,
+#                     7e449392)
+#   B3                tests/gates/codegen/small_struct_handle_line.sh's B3 `S8_add(a: S8, b: i64)` row (d09f6364)
+# Already carried by a crossos row of the same shape, so not repeated here: k01 (= struct_value_codegen.tcyr K1),
+# u01 (U1), mp1 (MP1), pe1 / pe6 (Q31 / Q41), B3's u1 u2 u3 (struct_operator_result_binding.tcyr u1 u2 u3), its
+# `take(c)` row (p_arg_h) and its scalar-annotation row (p_scalar_h). Struct and fn names carry a per-row prefix;
+# the shapes and values are the gate's.
+include "lib/assert.cyr"
+
+# ---- U2: `var X: S8 = -G + H;` in the declaration zone — -G is the integer -5, plus H's word: -4 ----
+struct US8 { v; }
+fn US8_add(a: US8, b: US8): US8 { var r: US8; r.v = a.v * 100 + b.v; return r; }
+var UG = US8 { 5 };
+var UH = US8 { 1 };
+var UX: US8 = -UG + UH;
+
+# ---- K2 / K3: an integer operator before a 24 B struct with no KQ3_add compiles (an integer result) ----
+struct KQ3 { x; y; z; }
+fn k2(): i64 { var s: KQ3 = KQ3 { 5, 6, 7 }; var n = 3; return n - s + 10; }
+fn k3(): i64 { var s: KQ3 = KQ3 { 5, 6, 7 }; var n = 3; return (n < s) + 10 + (~s) + 6; }
+
+# ---- MP2: h.get().b with the method defined BELOW its use (pass 1's record) ----
+struct MPP { a; b; }
+struct MPH { p: *MPP; }
+fn mp2(): i64 { var p = MPP { 3, 4 }; var h = MPH { &p }; return h.get().b * 10 + h.get().a; }
+impl MPH { fn get(self): *MPP { return self.p; } }
+
+# ---- B3: var c = a.d().d(); c + 1 dispatches BS8_add(a: BS8, b: i64) ----
+struct BS8 { v; }
+fn BS8_d(self: *BS8): BS8 { var r: BS8; r.v = self.v * 2; return r; }
+fn BS8_add(a: BS8, b: i64): i64 { return a.v * 100 + b; }
+fn b3() { var a: BS8; a.v = 5; var c = a.d().d(); return c + 1; }
+
+# ---- the first top-level statement ----
+var steps = 0;
+steps = steps + 1;
+assert_eq(load64(&UX), 0 - 4, "U2: var X: S8 = -G + H; in the declaration zone (exit 252)");
+
+# ---- U3: the same after the first statement ----
+var UY: US8 = -UG + UH;
+assert_eq(load64(&UY), 0 - 4, "U3: var X: S8 = -G + H; after the first statement (exit 252)");
+
+assert_eq(k2(), 8, "K2: n - s + 10 with no KQ3_add compiles: (3 - 5) + 10");
+assert_eq(k3(), 11, "K3: (n < s) + 10 and (~s) + 10 with no KQ3_add compile");
+assert_eq(mp2(), 43, "MP2: h.get().b * 10 + h.get().a, the method defined below its use");
+assert_eq(b3(), 2001, "B3: c + 1 dispatches BS8_add(a: BS8, b: i64) — 20 * 100 + 1 (exit 209)");
+assert_eq(steps, 1, "the top-level statements ran");
+
+var r = assert_summary();

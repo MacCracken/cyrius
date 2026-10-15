@@ -157,7 +157,13 @@ fn sys_write(fd, buf, count): i64 {
 # x86_64 has a bare SYS_FSTAT (5); aarch64's bare SYS_FSTAT (80)
 # also exists — only sys_stat needs the at-family detour on aarch64
 # (kept in the per-arch peer).
+# cx (the x86_64 peer is the .cyx guest's table): -ENOSYS. cxvm passes the stat buffer to the
+# host untranslated (a guest offset: -EFAULT), and a host's struct stat is not the x86_64-Linux
+# layout the guest reads STAT_* from. CHANGELOG [6.7.12]
 fn sys_fstat(fd, buf): i64 {
+    #ifdef CYRIUS_TARGET_CX
+    return 0 - 38;
+    #endif
     return syscall(SYS_FSTAT, fd, buf);
 }
 

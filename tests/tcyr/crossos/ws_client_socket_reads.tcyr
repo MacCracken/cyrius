@@ -10,7 +10,7 @@
 #
 # The peer is a plain loopback socket in this process: every write it makes lands in the kernel
 # buffer before the client reads, so no thread or child is needed. (A separate file from the
-# server's twin because lib/ws.cyr and lib/ws_server.cyr both define the WS_OP_* names.)
+# server's twin: lib/ws.cyr and lib/ws_server.cyr each declared the WS_OP_* names until 6.7.12.)
 #
 # MUTATION (6.6.11): either read back to sys_read fails the handshake / frame rows on cass and
 # under wine. CHANGELOG [6.6.11]

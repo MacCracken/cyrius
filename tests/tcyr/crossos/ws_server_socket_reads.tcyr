@@ -9,7 +9,7 @@
 #
 # The client is a plain loopback socket in this process: its writes land in the kernel buffer
 # before the server reads, so no thread or child is needed. (A separate file from the client's
-# twin because lib/ws.cyr and lib/ws_server.cyr both define the WS_OP_* names.)
+# twin: lib/ws.cyr and lib/ws_server.cyr each declared the WS_OP_* names until 6.7.12.)
 #
 # MUTATION (6.6.11): _wss_recv_exact back to sys_read fails the frame rows on cass and under wine.
 # CHANGELOG [6.6.11]

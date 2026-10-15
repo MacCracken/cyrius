@@ -1916,6 +1916,18 @@ _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 # Hardware: tests/tcyr/crossos/fs_dirlist.tcyr's FIFO rows (Linux + macOS hosts).
 _chk_gate "$ROOT/tests/gates/platform/dir_list_fifo_refused.sh"
 
+# 6.7.12 — lib/audit_walk.cyr's Linux lister (behind audit_fmt_walk / audit_lint_walk /
+# audit_doc_walk) opens with O_DIRECTORY too: a FIFO or a file handed to a walker is reported as
+# an unlistable directory (ENOTDIR) at once, where O_RDONLY alone blocked the walk for good. x86 +
+# qemu-aarch64 under `timeout`; a built-in O_RDONLY mutant must block.
+_chk_gate "$ROOT/tests/gates/platform/audit_walk_fifo_refused.sh"
+
+# 6.7.12 — lib/args.cyr's Linux args_init reads /proc/self/cmdline to EOF: a command line past
+# 2 MiB (ARG_MAX follows `ulimit -s`, up to 6 MiB) is read whole, where one read of a 2 MiB
+# buffer returned its prefix with no error; a failed open is the open's -errno, not 0 (D7). The
+# filed repro under a raised stack limit, x86 + qemu-aarch64; built-in one-line mutants.
+_chk_gate "$ROOT/tests/gates/platform/args_init_long_cmdline.sh"
+
 # 6.6.10 (bite 15) — cyrius-lsp indexes every declaration spelling through cbt/srcscan.cyr's
 # `_src_decls` (the reader coverage and distlib use): pub/public, attributes, indentation,
 # fn<TAB>, generics, pub/secret var, destructures, enums + members, structs — and nothing in a
