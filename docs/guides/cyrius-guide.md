@@ -1761,10 +1761,14 @@ struct-returning operator is still two parameters: the hidden return pointer is 
 **Parentheses around a whole struct source are transparent**, at every depth and for every source
 shape — a name, a field, a call, a method or an operator result — into every struct destination:
 an argument (`rd3((a))`), a struct-typed field (`o.i = (z.k)`), a struct variable (`w = (j)`), a
-declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), and a for step.
+declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), a for step, and
+(6.7.11) a nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`).
 Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
 Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
-declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently.
+declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently. Until 6.7.11
+a free call in parentheses as a literal element was a scalar for the nested struct's first leaf:
+*unexpected '}'* at 16 and 24 bytes and at 8 bytes with two leaves, and a one-leaf struct took the
+call's word even from another struct (refused by name now, as the unwrapped call is).
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they

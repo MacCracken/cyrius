@@ -21,6 +21,8 @@
 #      SIGSEGV), in a fn, at top level and in a for step — every source shape. Q28-Q30 (6.7.6
 #      follow-up, FE): with a closure that declares a `var` inside the wrap (refused: the inner
 #      declaration reset the outer one's state).
+#      Q31-Q41 (6.7.11, the user's decision (a), 2026-10-13): a free struct call in parentheses as a
+#      nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`: "unexpected '}'") at 16 / 24 B and 8 B.
 #   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
 #      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
 #      pushed its first word and SIGSEGV'd. O12-O14 (FE): the call's argument holds a closure that
@@ -339,6 +341,55 @@ fn q_pairs(): i64 {
     assert_eq(u.x * 10 + u.y, 45, "Q25: var u: P2 = (p.dup2())");
     w = (p.dup2());
     assert_eq(w.x * 10 + w.y, 45, "Q26: w = (p.dup2())");
+    return 0;
+}
+
+# Q31+ (6.7.11) — a free struct call in parentheses as a NESTED-STRUCT LITERAL ELEMENT is the element the
+# unwrapped call is: `H { 7, (mkq(4, 9)), 8 }` was "unexpected '}'" (16 B, 24 B, 8 B with two leaves).
+struct QE { a; b; }
+struct QE3 { a; b; c; }
+struct QE8 { a: u32; b: u32; }
+struct QE1 { a; }
+struct HE { x; q: QE; z; }
+struct HE3 { x; q: QE3; z; }
+struct HE8 { x; q: QE8; z; }
+struct HE1 { x; q: QE1; z; }
+struct HEF { q: QE; z; }
+struct HEL { x; q: QE; }
+fn mkqe(a, b): QE { var q = QE { a, b }; return q; }
+fn mkqe3(a, b): QE3 { var q = QE3 { a, b, a + b }; return q; }
+fn mkqe8(a, b): QE8 { var q = QE8 { a, b }; return q; }
+fn mkqe1(a): QE1 { var q = QE1 { a }; return q; }
+fn gqe<T>(a: T, b: T): QE { var q = QE { a, b }; return q; }
+fn idqe<T>(q: T): T { return q; }
+impl QE3 { fn dupe3(self): QE3 { var q = QE3 { self.a, self.b, self.c }; return q; } }
+fn he(h: *HE): i64 { return h.x + h.q.a * 10 + h.q.b + h.z; }
+var GHE8 = HE8 { 7, (mkqe8(4, 9)), 8 };
+var GHE1 = HE1 { 7, ((mkqe1(4))), 8 };
+fn q_elems(): i64 {
+    var h = HE { 7, (mkqe(4, 9)), 8 };
+    assert_eq(he(&h), 64, "Q31: H { 7, (mkq(4, 9)), 8 }, a 16 B element (the filed repro: unexpected '}')");
+    var h3 = HE3 { 7, (mkqe3(4, 9)), 8 };
+    assert_eq(h3.x + h3.q.a * 10 + h3.q.b + h3.q.c * 100 + h3.z, 1364, "Q32: a 24 B element (unexpected '}')");
+    var h8 = HE8 { 7, (mkqe8(4, 9)), 8 };
+    assert_eq(h8.x + h8.q.a * 10 + h8.q.b + h8.z, 64, "Q33: an 8 B element with two u32 leaves (unexpected '}')");
+    var h1 = HE1 { 7, (mkqe1(4)), 8 };
+    assert_eq(h1.x + h1.q.a * 10 + h1.z, 55, "Q34: an 8 B element with one leaf (unchanged)");
+    var g1 = HE { 7, (gqe<i64>(4, 9)), 8 };
+    assert_eq(he(&g1), 64, "Q35: (gqe<i64>(4, 9)), an explicit generic call");
+    var q0 = QE { 4, 9 };
+    var g2 = HE { 7, (idqe(q0)), 8 };
+    assert_eq(he(&g2), 64, "Q36: (idqe(q)), a generic call whose T binds the struct");
+    var d = HE { 7, ((mkqe(4, 9))), 8 };
+    assert_eq(he(&d), 64, "Q37: ((mkq(4, 9))), double parentheses");
+    var q3 = QE3 { 4, 9, 13 };
+    var m = HE3 { 7, (q3.dupe3()), 8 };
+    assert_eq(m.x + m.q.a * 10 + m.q.b + m.q.c * 100 + m.z, 1364, "Q38: (q.dupe3()), a wrapped 24 B method element (unchanged)");
+    var f = HEF { (mkqe(4, 9)), 8 };
+    assert_eq(f.q.a * 10 + f.q.b + f.z, 57, "Q39: the wrapped call as the FIRST element");
+    var l = HEL { 7, (mkqe(4, 9)) };
+    assert_eq(l.x + l.q.a * 10 + l.q.b, 56, "Q40: ... as the LAST element");
+    assert_eq(GHE8.x + GHE8.q.a * 10 + GHE8.q.b + GHE8.z + GHE1.q.a * 1000, 4064, "Q41: at top level, an 8 B element (two leaves; one leaf, double-wrapped)");
     return 0;
 }
 
@@ -794,6 +845,7 @@ fn rows(): i64 {
     q_vars();
     q_decls();
     q_pairs();
+    q_elems();
     operand_pairs();
     operands();
     lefts();

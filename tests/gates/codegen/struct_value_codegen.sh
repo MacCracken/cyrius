@@ -79,6 +79,10 @@
 #      a METHOD's `*T` result takes `.field`, `.m(..)` and a deeper chain (`h.get().b`), in a fn and at top
 #      level, as a free call's `*T` result has since 6.6.17; it was refused "it does not return a struct".
 #      `_method_chain` parks the pointer (`_mchain_ptr`, `_ptr_park`); `h.get().b = 5` stays refused
+#   PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+#      (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element (`H { 7, (mkq(4,
+#      9)), 8 }`) was a scalar for the nested struct's first leaf: "unexpected '}'" at 16 / 24 B and 8 B with two
+#      leaves. It is the element the unwrapped call is (`_spi_pcall`), its refusals the unwrapped call's
 #   N  (lane E2) lib/fnptr.cyr's x86_64 SysV fncall8 (Linux, macOS, agnos arms) stored argument 7 at
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
@@ -233,6 +237,9 @@
 #   M-MP1 `_method_chain` without its `_mchain_ptr` arm (= the tree before) -> RED MP1 MP2 (refused 'it does not
 #       return a struct'), MP3 (refused, but as 'it does not return a struct'), A1-A7 (the values file does not build:
 #       tcyr MP1-MP16); MP4 MP5 green
+#   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
+#       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
+#       does not build: tcyr Q31-Q41)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -478,6 +485,20 @@ exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn m
 refused mp3 'cannot assign to a field of a call result: the result is a temporary' "MP3: h.get().b = 5; stays refused, as get2(&h).b = 5; is (6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
 refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
 refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
+# PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+# (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element is the element the
+# unwrapped call is (`_spi_pcall`): it was parsed as a scalar for the first leaf, so 16 B, 24 B and 8 B with two
+# leaves were "unexpected '}'". The values file's Q31-Q41 run it on A1-A7; here the repro, the top-level refusals
+# (by name, once, as the unwrapped call's) and another struct refused by name — as the unwrapped call is; at 8 B
+# with one leaf it compiled, the word carried into the leaf unchecked.
+PEH='struct Q { a; b; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\n'
+PEM="'mkq' returns a struct by value, and a struct result needs storage in a fn's frame"
+exits_file pe1 64 "PE1: H { 7, (mkq(4, 9)), 8 } (the filed repro, verbatim: unexpected '}')" docs/development/issues/repros/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.cyr
+refused pe2 "$PEM" "PE2: at top level, 16 B: refused by name once (unexpected '}')" "${PEH}var G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x);\n"
+refused pe3 "$PEM" "PE3: at top level, 24 B: refused once (+ unexpected '}')" "struct Q { a; b; c; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b, 1 }; return q; }\nvar G = H { 7, ((mkq(4, 9))), 8 };\nsyscall(60, G.x);\n"
+refused pe4 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE4: (mko(5)) of another 8 B struct, refused as mko(5) is (compiled: 65)" "struct Q { a; }\nstruct O { a; }\nstruct H { x; q: Q; z; }\nfn mko(a): O { var o = O { a }; return o; }\nfn main(): i64 { var h = H { 7, (mko(5)), 8 }; return h.x + h.q.a * 10 + h.z; }$E"
+refused pe5 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE5: (mko(4, 9)) of another 16 B struct, refused by name (unexpected '}')" "${PEH}struct O { a; b; }\nfn mko(a, b): O { var q = O { a, b }; return q; }\nfn main(): i64 { var h = H { 7, (mko(4, 9)), 8 }; return h.x; }$E"
+exits pe6 64 "PE6: H { 7, (mkq(4, 9)), 8 } at top level of an 8 B two-u32 Q (unexpected '}')" "struct Q { a: u32; b: u32; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\nvar G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
