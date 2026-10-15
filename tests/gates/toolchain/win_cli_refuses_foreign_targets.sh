@@ -32,6 +32,12 @@
 #      `MZ`); `--target=cx` and `--target=js` reach their own arms (their dry-run lines). wine is not
 #      hardware: the release gate's cass leg (and the .bat probe in the CHANGELOG) is the real
 #      Windows.
+#   6.7.12 (D5, issues/2026-10-10-strict-pin-and-pie-inert-off-linux.md): `--pie` from the Windows CLI
+#      (cycc.exe has no PIE mode; it wrote the same image as a plain build, rc 0): S4 only the PE CLI
+#      carries the refusal; W11 `build --pie` rc 1, the exact error, no output, nothing compiled;
+#      W12 an existing output untouched. Mutation: the `--pie` test dropped from
+#      `_cli_foreign_target` -> W11 W12 RED; `_cli_host_refuses_pie` answering on every host -> S2
+#      S3 S4 RED (and every Linux / macOS `--pie` build refused).
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -70,6 +76,8 @@ check() {
 WINWHY="the Windows CLI: cycc.exe emits PE only"
 MACWHY="the macOS CLI: cycc emits Mach-O only"
 TAIL="(build agnos / bare-metal images on Linux)"
+PIEWHY="error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no"
+PIEFULL="$PIEWHY --pie mode (a position-independent executable is a Linux ELF)"
 # has FILE TEXT -> yes / no (a fixed-string search of the binary)
 has() { if grep -aqF "$2" "$1" 2> /dev/null; then echo yes; else echo no; fi; }
 magic() { if [ -f "$1" ]; then od -An -tx1 -N4 "$1" | tr -d ' \n'; else echo none; fi; }
@@ -98,6 +106,9 @@ check "S1 the PE CLI names the Windows refusal" "yes yes no" \
 check "S2 the Mach-O CLIs (x86_64, arm64) name the macOS refusal" "yes yes no no" \
     "$(has "$T/cyrius_macho_x86" "$MACWHY") $(has "$T/cyrius_macho_arm" "$MACWHY") $(has "$T/cyrius_macho_x86" "$WINWHY") $(has "$T/cyrius_macho_arm" "$WINWHY")"
 check "S3 the Linux CLI carries neither" "no no" "$(has "$T/lin/cyrius" "$WINWHY") $(has "$T/lin/cyrius" "$MACWHY")"
+# 6.7.12 (D5): `--pie` is refused by the Windows CLI only — cycc.exe has no PIE mode
+check "S4 only the PE CLI carries the --pie refusal" "yes no no no" \
+    "$(has "$T/cyrius.exe" "$PIEWHY") $(has "$T/lin/cyrius" "$PIEWHY") $(has "$T/cyrius_macho_x86" "$PIEWHY") $(has "$T/cyrius_macho_arm" "$PIEWHY")"
 
 printf 'fn main(): i64 { return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/proj/hello.cyr"
 
@@ -176,6 +187,15 @@ else
     check "W9 --target=cx reaches its own arm (dry-run: emit-cx)" "0 1" "$rc $(grep -c '^dry-run: emit-cx hello.cyr' "$T/w.out")"
     rc=$(wrun build --dry-run --target=js hello.cyr out.js)
     check "W10 --target=js reaches its own arm (dry-run: emit-js)" "0 1" "$rc $(grep -c '^dry-run: emit-js hello.cyr' "$T/w.out")"
+    # 6.7.12 (D5): `--pie` built the same image as a plain build at rc 0 (cycc.exe reads no CYRIUS_PIE)
+    rc=$(wrun build --pie hello.cyr pie.exe)
+    check "W11 build --pie: rc 1, the named error, no output, nothing compiled" "1 1 none 0" \
+        "$rc $(grep -cxF "$PIEFULL" "$T/w.err" || :) $(magic "$T/w/proj/pie.exe") $(grep -c 'compile' "$T/w.out")"
+    printf 'old\n' > "$T/w/proj/keep.exe"
+    rc=$(wrun build --pie hello.cyr keep.exe)
+    kept=changed
+    [ "$(cat "$T/w/proj/keep.exe" 2> /dev/null)" = old ] && kept=untouched
+    check "W12 build --pie over an existing output: rc 1, the file untouched" "1 untouched" "$rc $kept"
     _wine_down
 fi
 

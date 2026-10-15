@@ -318,7 +318,8 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "build") == 1) {
         println("");
         println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
-        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1)");
+        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1; Linux ELF —");
+        println("                     the Windows CLI refuses it)");
         println("  --dce              dead-code elimination for this build (CYRIUS_DCE=1; [build] dce)");
         println("  --bounds           the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds; a #bounds");
         println("                     line in the entry file's leading block is the lowest rung)");
@@ -761,9 +762,27 @@ fn _cli_host_refuses(flag): i64 {
     return 1;
 }
 
+# 6.7.12 (D5, the user 2026-10-15) — `--pie` from the Windows CLI: cycc.exe reads no CYRIUS_PIE
+# (PE has no position-independent mode here; DYNAMIC_BASE would need a .reloc section cycc does not
+# emit), so `cyrius build --pie` wrote the same image as a plain build at rc 0. Refused by name, as
+# a target the host cannot emit is (6.7.11). 1 after naming it, else 0. CHANGELOG [6.7.12]
+fn _cli_host_refuses_pie(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var msg = "error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no";
+    sys_write(STDERR_FD, msg, strlen(msg));
+    msg = " --pie mode (a position-independent executable is a Linux ELF)\n";
+    sys_write(STDERR_FD, msg, strlen(msg));
+    return 1;
+    #endif
+    return 0;
+}
+
 # The early block: before any selector is applied, so nothing compiles and nothing is written.
 # Kept apart from the selector chain below, which ends in _cli_targets_exclusive (6.7.12).
 fn _cli_foreign_target(): i64 {
+    if (_cli_has("--pie") == 1) {
+        if (_cli_host_refuses_pie() == 1) { return 1; }
+    }
     if (_cli_has("--agnos") == 1) {
         if (_cli_host_refuses("--agnos") == 1) { return 1; }
     }

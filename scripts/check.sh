@@ -2315,6 +2315,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
 # (it was a bare `hash mismatch`, and --locked said "run `cyrius deps`", which re-locks the CRLF
 # bytes); `cyrius init` / `port` ship that .gitattributes. Wine leg named SKIP without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_verify_crlf_checkout.sh"
+# 6.7.12 (D5) — the toolchain-pin drift check (warn; fail under CYRIUS_STRICT_PIN / --strict-pin) runs
+# in EVERY host's compiler: it was `#ifdef CYRIUS_TARGET_LINUX`, so cycc.exe and both Mach-O compilers
+# built a drifted pin silently, rc 0. The Linux rows unchanged; the PE / Mach-O compilers carry and
+# call it; cycc.exe and cyrius.exe under wine (named SKIP without wine).
+_chk_gate "$ROOT/tests/gates/toolchain/strict_pin_every_host.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

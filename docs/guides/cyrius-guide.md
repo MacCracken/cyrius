@@ -3947,6 +3947,14 @@ by name instead of being silently inert; a declared synonym (`src`) is not unkno
 — so there is nothing for the key to switch. `cyrius build --strict` is still accepted and passed
 through, for scripts that spell it; it changes nothing.
 
+**The toolchain pin.** cycc compares `[package] cyrius = "X.Y.Z"` in the working directory's
+`cyrius.cyml` with its own version on every compile: a drifted pin warns (`warning: cyrius.cyml
+pins 0.0.1 but cycc is 6.7.12 — toolchain drift …`; `CYRIUS_NO_WARN_PIN_DRIFT=1` silences it), and
+`cyrius build --strict-pin` (`CYRIUS_STRICT_PIN=1`) makes it an error — rc 1, nothing written — so
+a CI build fails on drift. Since 6.7.12 that holds for every host's compiler: through 6.7.11 the
+check was Linux-only, so cycc.exe and both macOS compilers built a drifted pin with no message and
+`--strict-pin` passed there.
+
 `cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
 value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
 
@@ -7573,6 +7581,10 @@ cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64
 # or
 CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
 ```
+
+PIE is a Linux ELF mode. The Windows CLI refuses `--pie` by name — `error: --pie is not available
+from the Windows CLI: cycc.exe emits PE only, which has no --pie mode …`, rc 1, nothing written —
+since 6.7.12; before, cycc.exe ignored it and wrote the same image as a plain build.
 
 Non-PIE output is **byte-identical** across all corpus inputs — the feature
 is fully opt-in and inert when disabled (v6.1.5 vs v6.1.6 differential = zero

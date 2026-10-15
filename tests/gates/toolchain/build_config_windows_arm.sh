@@ -34,6 +34,10 @@
 #           set only CYRIUS_DCE and CYRIUS_BOUNDS, so the other three never reached cycc.exe (the user's
 #           decision, 2026-10-10: fix it). Axis 2 asserts all three unset on a plain build. The arm's
 #           source is read by compile_flag_list.sh axes 4-6, which need no wine.
+#           6.7.12 (D5, the user 2026-10-15): cycc.exe has no PIE mode, so `--pie` is now REFUSED by
+#           name on the Windows CLI before anything compiles (axis 7b: rc 1, the error, the stub never
+#           runs); axis 7 carries --strict-pin + --bounds. The arm still injects CYRIUS_PIE from the
+#           shared list — unreachable from the Windows CLI.
 #   axis 5  (6.6.20, CBTB-08) an environment rung longer than 512 bytes is READ on cyrius.exe: a
 #           719-byte CYRIUS_DEFINES beats `[build] defines = ["A"]` in `--print-config`, as on
 #           POSIX. _cfg_env's PE arm read through a fixed 512-byte buffer, and a longer value was
@@ -163,17 +167,28 @@ if run 'bounds = false\n' build; then
 fi
 [ "$FAIL" = "$x" ] && echo "  ok axis 6: --bounds reaches cycc.exe as CYRIUS_BOUNDS=1, [build] bounds = false as CYRIUS_BOUNDS=0"
 # axis 7 (6.7.8): every compiler flag the POSIX arm injects crosses the PE arm — several at once.
+# 6.7.12 (D5): `--pie` is refused by the Windows CLI before anything compiles (axis 7b), so the
+# set is --strict-pin + --bounds; CYRIUS_PIE stays unset.
 x=$FAIL
-if run '' build --strict-pin --pie --bounds; then
-    for v in strict_pin pie bounds; do
-        grep -qx "$v=1" "$W/stub.log" || fail "axis 7: cyrius build --strict-pin --pie --bounds: $v did not reach cycc.exe as 1: $(grep "^$v=" "$W/stub.log")"
+if run '' build --strict-pin --bounds; then
+    for v in strict_pin bounds; do
+        grep -qx "$v=1" "$W/stub.log" || fail "axis 7: cyrius build --strict-pin --bounds: $v did not reach cycc.exe as 1: $(grep "^$v=" "$W/stub.log")"
     done
+    grep -qx 'pie=unset' "$W/stub.log" || fail "axis 7: CYRIUS_PIE reached cycc.exe from a build without --pie"
     grep -qx 'poison=unset' "$W/stub.log" || fail "axis 7: CYRIUS_POISON reached cycc.exe from a build without --poison"
 fi
 if run '' fuzz --poison fuzz/h.fcyr; then
     grep -qx 'poison=1' "$W/stub.log" || fail "axis 7: cyrius fuzz --poison did not reach cycc.exe as CYRIUS_POISON=1: $(grep '^poison=' "$W/stub.log")"
 fi
-[ "$FAIL" = "$x" ] && echo "  ok axis 7: --strict-pin, --pie and --bounds reach cycc.exe together (CYRIUS_STRICT_PIN=1, CYRIUS_PIE=1, CYRIUS_BOUNDS=1), fuzz --poison as CYRIUS_POISON=1"
+[ "$FAIL" = "$x" ] && echo "  ok axis 7: --strict-pin and --bounds reach cycc.exe together (CYRIUS_STRICT_PIN=1, CYRIUS_BOUNDS=1), fuzz --poison as CYRIUS_POISON=1"
+x=$FAIL
+printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n' > "$W/p/cyrius.cyml"
+rm -f "$W/stub.log"
+p7rc=0; ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_BOUNDS -u CYRIUS_STRICT_PIN -u CYRIUS_PIE -u CYRIUS_POISON CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" build --strict-pin --pie --bounds ) > "$W/out" 2>&1 || p7rc=$?
+[ "$p7rc" -eq 1 ] || fail "axis 7b: cyrius.exe build --strict-pin --pie --bounds exited $p7rc, not 1"
+grep -qF 'error: --pie is not available from the Windows CLI: cycc.exe emits PE only' "$W/out" || fail "axis 7b: --pie was not refused by name: $(head -3 "$W/out" | tr '\n' ' ')"
+[ -f "$W/stub.log" ] && fail "axis 7b: the compiler ran for a refused --pie"
+[ "$FAIL" = "$x" ] && echo "  ok axis 7b: --pie is refused by name on cyrius.exe (rc 1) before the compiler runs (6.7.12, D5)"
 x=$FAIL
 if run '' lint src/main.cyr; then
     has_flag --allow-undef || fail "axis 3: lint's pre-pass did not hand cycc.exe --allow-undef: $(head -1 "$W/stub.log")"
@@ -205,4 +220,4 @@ grep -qF '"D059_xxxxxx"]  (environment: CYRIUS_DEFINES)' "$W/pc" \
 [ "$FAIL" = "$x" ] && echo "  ok axis 5: a ${#LONG}-byte CYRIUS_DEFINES beats [build] defines on cyrius.exe (a short one is the control)"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_windows_arm (dce, bounds, --strict-pin, --pie, --poison, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm; an environment rung past 512 bytes is read; under wine)"
+echo "PASS: build_config_windows_arm (dce, bounds, --strict-pin, --poison, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm; --pie is refused by name; an environment rung past 512 bytes is read; under wine)"
