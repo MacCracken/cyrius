@@ -6402,7 +6402,11 @@ primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xrea
 Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
 miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
 (`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, `FlushFileBuffers` for `xfsync`
-since v6.6.7, …) behind the same names. `cyrlint` flags a raw `sys_open`
+since v6.6.7, `LockFileEx` / `UnlockFileEx` for `xflock` since 6.7.12, …) behind the same names.
+`xflock` on Windows locks ONE sentinel byte at offset 2^63 − 1, never the file's data: Windows
+byte locks are mandatory, so it excludes other lockers and leaves every handle's reads and writes
+alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35), where it used
+to answer -1 for every lock. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,

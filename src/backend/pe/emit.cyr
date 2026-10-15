@@ -806,6 +806,29 @@ fn _pe_ensure_getlasterr(S): i64 {
 }
 fn _pe_getlasterr_get(): i64 { return _pe_getlasterr_idx; }
 
+# 6.7.12 — kernel32!LockFileEx / UnlockFileEx → BOOL, for `syscall(0xF04C)` / `syscall(0xF04D)`
+# (ELOCKFILEEX_PE / EUNLOCKFILEEX_PE): xflock's Windows arm (lib/io.cyr) — it answered -1 for
+# every lock, so patra's open-time WAL recovery never ran on Windows. CHANGELOG [6.7.12]
+var _pe_lockfileex_ready = 0;
+var _pe_lockfileex_idx   = 0;
+fn _pe_ensure_lockfileex(S): i64 {
+    if (_pe_lockfileex_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_lockfileex_idx, "LockFileEx");
+    _pe_lockfileex_ready = 1;
+    return 0;
+}
+fn _pe_lockfileex_get(): i64 { return _pe_lockfileex_idx; }
+
+var _pe_unlockfileex_ready = 0;
+var _pe_unlockfileex_idx   = 0;
+fn _pe_ensure_unlockfileex(S): i64 {
+    if (_pe_unlockfileex_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_unlockfileex_idx, "UnlockFileEx");
+    _pe_unlockfileex_ready = 1;
+    return 0;
+}
+fn _pe_unlockfileex_get(): i64 { return _pe_unlockfileex_idx; }
+
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--syntax-only on Windows.
 # kernel32!GetCommandLineW() takes no args, returns the process's

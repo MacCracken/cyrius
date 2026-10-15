@@ -2666,6 +2666,15 @@ _chk_gate "$ROOT/tests/gates/platform/pe_socket_reroutes_routed.sh"
 # wine. Hardware: the same .tcyr + pe_path_utf8_long.tcyr on cass. Whole-gate SKIP is exit 77.
 _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 
+# 6.7.12 (windows lane) — kernel32!LockFileEx / UnlockFileEx are routed on PE (0xF04C / 0xF04D)
+# and xflock's Windows arm emulates flock with them; it was `return -1`, so patra's open-time WAL
+# recovery never ran on Windows. Axes: routed at argc 7 / 6 and warned one short, named in the
+# routed-number note (printed whole — it pins the note's end now), imported; xflock's PE arm
+# calls _xflock_win, which locks ONE sentinel byte at 2^63 - 1 (Windows byte locks are mandatory);
+# the filed repro exits 11 and xflock_two_handle.tcyr passes under wine. Hardware: the same .tcyr
+# on cass (wine does not enforce a byte lock on another handle's I/O). Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
+
 # 6.6.16 (net-3, N5) — every WSAGetLastError (0xF024) and every int-returning ws2_32 result in
 # lib/ is read masked to 32 bits: their PE emitters define only eax. Static (no compiler, no wine;
 # the defect is ABI-latent — cass zero-extends today), with a built-in clean-fixture + per-rule

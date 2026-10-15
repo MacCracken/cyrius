@@ -2126,6 +2126,23 @@ fn EGETLASTERR_PE(S): i64 {
     return 0;
 }
 
+# 6.7.12 — syscall(0xF04C, h, flags, 0, lenLo, lenHi, &ov) → kernel32!LockFileEx (argc 7) and
+# syscall(0xF04D, h, 0, lenLo, lenHi, &ov) → kernel32!UnlockFileEx (argc 6); each a BOOL,
+# zero-extended. xflock's Windows arm (lib/io.cyr) — it answered -1 for every lock, so patra's
+# open-time WAL recovery never ran on Windows. CHANGELOG [6.7.12]
+fn ELOCKFILEEX_PE(S): i64 {
+    _pe_ensure_lockfileex(S);
+    _pe_call_6arg_aligned(S, _pe_lockfileex_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn EUNLOCKFILEEX_PE(S): i64 {
+    _pe_ensure_unlockfileex(S);
+    _pe_call_5arg_aligned(S, _pe_unlockfileex_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
 # 1/2-arg callers above). Stack on entry (top→bottom): [a3][a2][a1][sc_nr].
 # a1→rcx, a2→rdx, a3→r8 (Win64 integer arg order), then carve the 32 B shadow.
