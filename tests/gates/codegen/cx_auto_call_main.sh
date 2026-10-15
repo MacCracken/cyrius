@@ -31,10 +31,12 @@
 #   X1-X2  tests/tcyr/crossos/mmap_anon_flag.tcyr and crossos/uid_identity.tcyr: native prints
 #       `<N> passed, 0 failed` (N derived, floors 5 / 13); on cxvm their `main` now runs and stops at
 #       the cx guest contract — mmap_anon hands back a HOST address (a cxvm trap on the first store)
-#       and sys_fstat's buffer is not translated (-EFAULT: 11 passed, 2 failed). Filed, not fixed here
-#       (a cxvm syscall-translation / guest-mmap design): 2026-10-14-cx-main-running-tcyr-fail-at-
-#       guest-contract-limits.md (6.7.12). Each cx leg pins that exact failure, so a fix turns the row
-#       RED as an XPASS ("promote it to a T row") and any other failure is RED too.
+#       and sys_fstat's buffer is not translated (-EFAULT: 11 passed, 2 failed; 12 / 1 as root, the
+#       zeroed buffer's uid then matching euid 0 — the pin takes both, keyed on the fstat line).
+#       Filed, not fixed here (a cxvm syscall-translation / guest-mmap design): 2026-10-14-cx-main-
+#       running-tcyr-fail-at-guest-contract-limits.md (6.7.12). Each cx leg pins that exact failure,
+#       so a fix turns the row RED as an XPASS ("promote it to a T row") and any other failure is RED
+#       too.
 # Anti-vacuous: the native leg of every row is its control, each .tcyr count is derived from its
 # source and held to a floor, and the row count is checked.
 #
@@ -137,8 +139,8 @@ tcyr() {
 
 ISSUE=2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md
 # xfail ID FILE FLOOR WANT_RC WANT_LAST WANT_LINE — the native leg is a full pass; the cx leg runs
-# `main` (WANT_LINE, a line only `main` prints, is there) and stops exactly as filed: exit WANT_RC and
-# the last line WANT_LAST. A full pass on cx is an XPASS: RED, so the row is promoted.
+# `main` (WANT_LINE, a line only `main` prints, is there) and stops exactly as filed: an exit WANT_RC
+# matches (an ERE) and the last line WANT_LAST. A full pass on cx is an XPASS: RED, so the row is promoted.
 xfail() {
     w=$(n_lin "$2")
     [ "$w" -ge "$3" ] || { bad "$1 $2: only $w assertions in the source (floor $3)"; return; }
@@ -148,7 +150,7 @@ xfail() {
     build_run cx "$2" "$T/x.cx.out"
     if [ "$RC" = 0 ] && tail -1 "$T/x.cx.out" | grep -q "^$w passed, 0 failed"; then
         bad "$1 $2 (cx): XPASS — $w passed, 0 failed under cxvm; the filed limit ($ISSUE) is gone: make this a T row"
-    elif [ "$RC" = "$4" ] && grep -qxF "$6" "$T/x.cx.out" && tail -1 "$T/x.cx.out" | grep -qE "$5"; then
+    elif printf '%s\n' "$RC" | grep -qxE "$4" && grep -qxF "$6" "$T/x.cx.out" && tail -1 "$T/x.cx.out" | grep -qE "$5"; then
         ok "$1 $2 (cx): main ran ('$6') and stops at the filed guest-contract limit — exit $RC, '$(tail -1 "$T/x.cx.out" | cut -c1-60)' (XFAIL: $ISSUE)"
     else bad "$1 $2 (cx): the failure moved — exit $RC (want $4), last line '$(tail -1 "$T/x.cx.out")' (want /$5/), '$6' $(grep -cxF "$6" "$T/x.cx.out")x"; fi
 }
@@ -170,7 +172,10 @@ tcyr T2 tests/tcyr/crossos/multi_return.tcyr 31
 tcyr T3 tests/tcyr/math/float_nan_compare.tcyr 41
 
 xfail X1 tests/tcyr/crossos/mmap_anon_flag.tcyr 5 1 '^cxvm: guest address out of range: [0-9]+ at pc [0-9]+$' '=== mmap_anon returns memory that is actually writable ==='
-xfail X2 tests/tcyr/crossos/uid_identity.tcyr 13 2 '^11 passed, 2 failed \(13 total\)$' '  FAIL: sys_fstat on the probe file succeeded (got 1, expected 0)'
+# The exit and the last line take either count: the second failure ('owned by sys_geteuid()')
+# compares the untranslated buffer's 0 with the euid, so it passes under root (12 passed, 1 failed,
+# exit 1); the fstat line is the deterministic pin.
+xfail X2 tests/tcyr/crossos/uid_identity.tcyr 13 '[12]' '^1[12] passed, [12] failed \(13 total\)$' '  FAIL: sys_fstat on the probe file succeeded (got 1, expected 0)'
 
 WANT=24
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
