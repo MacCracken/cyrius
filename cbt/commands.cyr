@@ -1889,7 +1889,10 @@ fn _libsync_guard(ps, pd): i64 {
     _ew("  The installed snapshot of the pin cyrius.lock records changed under it — reinstall that\n");
     _ew("  version; do not `--relock`. Only a lock re-stamped at a pin move without these files\n");
     _ew("  re-vendored (by `deps`/`build` before 6.7.12, `deps --lock`, or a scoped `lib sync`)\n");
-    _ew("  holds the previous pin's rows: `cyrius lib sync --full --relock` then.\n");
+    # The scoped `--relock` first: a closure-only project re-locked by `deps --lock` gets back
+    # its declared files with it, where `--full` would vendor the whole snapshot. CHANGELOG [6.7.12]
+    _ew("  holds the previous pin's rows: `cyrius lib sync --relock` then (`cyrius lib sync --full --relock`\n");
+    _ew("  in a project that vendors the whole snapshot).\n");
     return 1;
 }
 

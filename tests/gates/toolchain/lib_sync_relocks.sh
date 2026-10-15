@@ -31,7 +31,10 @@
 #      names `lib sync --full --relock`, which then verifies. 2d: a closure-only project whose pin
 #      moves re-locks silently (rc 0, trailer 6.6.7, string's row the new hash, no refusal).
 #      2e: under an UNCHANGED pin an out-of-closure file off the snapshot is not refused
-#      (`deps --relock` re-locks it, as before).
+#      (`deps --relock` re-locks it, as before). 2f: a closure-only lock `deps --lock` re-stamped
+#      at the move: `lib sync` refuses lib/string.cyr and its summary names the SCOPED
+#      `cyrius lib sync --relock` (not only `--full`, which vendors the whole snapshot), which then
+#      verifies with lib/ the same file count.
 #   3. Same pin, moved snapshot: `lib sync` (and `--dry-run`) refuse, lock and lib/ unchanged,
 #      and `cyrius deps` still refuses.
 #   4. A locked file the sync does not write, edited locally: its row is kept and
@@ -44,7 +47,7 @@
 # 6.6.7 over chrono's 6.6.6 row); `_dep_pin_move_refused` returning 0 (the check dropped) FAILS axis
 # 2; refusing every out-of-closure file (no byte compare, no snapshot test) FAILS axis 2 (111 named);
 # the snapshot test alone dropped FAILS axis 2 (lib/mine.cyr named); the unchanged pin not exempt
-# FAILS axis 2e.
+# FAILS axis 2e; the summary naming only `--full --relock` (the review's catch) FAILS axis 2f.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lib_sync_relocks
@@ -180,6 +183,30 @@ rc=0; _cy deps --relock > "$W/a2f.out" 2>&1 || rc=$?
 { [ "$rc" -eq 0 ] && ! grep -q 'not re-locked' "$W/a2f.out" && [ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t6.6.6')" ]; } \
   || { fail "axis 2e: deps --relock under the unchanged pin (rc=$rc): $(head -2 "$W/a2f.out")"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 2e: an unchanged pin re-locks (deps --relock) with an out-of-closure file off the snapshot"
+
+# ── axis 2f: a closure-only lock `deps --lock` re-stamped: the remedy is the SCOPED relock ──
+#    `--full` there would vendor the whole snapshot into a project that declared two leaves.
+x=0
+_mkp 6.6.6
+_cy deps > /dev/null 2>&1 || { fail "axis 2f setup: deps at 6.6.6 failed"; x=1; }
+n0=$(find "$P/lib" -name '*.cyr' | wc -l | tr -d ' ')
+_pin 6.6.7
+_cy deps --lock > /dev/null 2>&1
+[ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t6.6.7')" ] || { fail "axis 2f setup: deps --lock did not re-stamp the trailer"; x=1; }
+cp "$P/cyrius.lock" "$W/a2g.lock"
+rc=0; _cy lib sync > "$W/a2g.out" 2>&1 || rc=$?
+{ [ "$rc" -ne 0 ] && grep -q 'lib/string.cyr: cyrius.lock and the pinned stdlib snapshot DISAGREE' "$W/a2g.out" \
+  && grep -q '`cyrius lib sync --relock` then' "$W/a2g.out"; } \
+  || { fail "axis 2f: lib sync did not name the scoped \`cyrius lib sync --relock\` (rc=$rc):"; tail -2 "$W/a2g.out" | sed 's/^/      /'; x=1; }
+cmp -s "$W/a2g.lock" "$P/cyrius.lock" || { fail "axis 2f: the refused sync rewrote cyrius.lock"; x=1; }
+rc=0; _cy lib sync --relock > "$W/a2h.out" 2>&1 || rc=$?
+rc2=0; _cy deps --verify > "$W/a2hv.out" 2>&1 || rc2=$?
+n1=$(find "$P/lib" -name '*.cyr' | wc -l | tr -d ' ')
+{ [ "$rc$rc2" = "00" ] && [ "$n1" = "$n0" ] && grep -q "^$n0 verified, 0 failed" "$W/a2hv.out" \
+  && cmp -s "$P/lib/string.cyr" "$H/versions/6.6.7/lib/string.cyr"; } \
+  || { fail "axis 2f: lib sync --relock (rc=$rc) then deps --verify (rc=$rc2): lib/ $n0 -> $n1 files, $(tail -1 "$W/a2hv.out")"; x=1; }
+why=$(_hashes_true) || { fail "axis 2f: $why"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 2f: a closure-only lock re-stamped by deps --lock: lib sync names the scoped --relock, which verifies $n1 files (lib/ unchanged in size)"
 
 # ── axis 3: same pin, moved snapshot ─────────────────────────────────────────────────────
 x=0
