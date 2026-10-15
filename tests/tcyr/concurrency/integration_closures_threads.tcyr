@@ -41,6 +41,14 @@ fn worker(a): i64 {
 
 fn main(): i64 {
     alloc_init();
+    # 6.7.12 (D13): a target with no concurrent threads (cx — a single-threaded VM, lib/thread.cyr's
+    # 6.6.11 arm) refuses thread_create with 0, so the rows below cannot run there. CHANGELOG [6.7.12]
+    if (THREADS_CONCURRENT == 0) {
+        test_group("integration: no concurrent threads on this target");
+        println("SKIP: THREADS_CONCURRENT is 0 - thread_create returns 0; the worker rows need threads");
+        assert_eq(thread_create(&worker, 1), 0, "thread_create refuses with 0 where THREADS_CONCURRENT is 0");
+        return assert_summary();
+    }
     test_group("integration: capturing closures across concurrent workers");
     g_m = mutex_new();
     assert_eq(g_m != 0, 1, "mutex allocated (single-owner sync.cyr backend)");

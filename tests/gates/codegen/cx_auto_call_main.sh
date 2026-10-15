@@ -28,17 +28,30 @@
 #       math/float_nan_compare.tcyr leave `main` to the epilogue: native and cxvm each print
 #       `<N> passed, 0 failed`, N derived from the source (floors 20 / 31 / 41) and exit 0. Before the
 #       fix cxvm printed nothing and exited 0.
-#   X1-X2  tests/tcyr/crossos/mmap_anon_flag.tcyr and crossos/uid_identity.tcyr: native prints
-#       `<N> passed, 0 failed` (N derived, floors 5 / 13); on cxvm their `main` now runs and stops at
-#       the cx guest contract — mmap_anon hands back a HOST address (a cxvm trap on the first store)
-#       and sys_fstat's buffer is not translated (-EFAULT: 11 passed, 2 failed; 12 / 1 as root, the
-#       zeroed buffer's uid then matching euid 0 — the pin takes both, keyed on the fstat line).
-#       Filed, not fixed here (a cxvm syscall-translation / guest-mmap design): 2026-10-14-cx-main-
-#       running-tcyr-fail-at-guest-contract-limits.md (6.7.12). Each cx leg pins that exact failure,
-#       so a fix turns the row RED as an XPASS ("promote it to a T row") and any other failure is RED
-#       too.
+#   T4-T10 (6.7.12, D13 — the user, 2026-10-15: honest cx arms; issues/2026-10-14-cx-main-running-
+#       tcyr-fail-at-guest-contract-limits.md) the seven files whose `main` stopped at the cx guest
+#       contract once it ran: mmap_anon_flag (T4, was X1), uid_identity (T5, was X2),
+#       mmap_include_order, sys_pipe_every_target, concurrency/async_relay_once_no_deadlock,
+#       crossos/signal_errno_peer_values, concurrency/integration_closures_threads. cyr_mmap answers -1
+#       on cx (mmap_anon 0), sys_pipe / sys_fstat / sys_unlink -38; each file's cx arm asserts that
+#       refusal and names its SKIP. Native and cxvm each print `<N> passed, 0 failed`, N derived per
+#       leg (n_tgt per target; n_span for an early-return skip block), floors today's counts; the cx
+#       leg must print its SKIP line (not signal_errno, whose cx arm asserts the x86_64-Linux values
+#       a .cyx carries). T5 also: no probe file is left in the cx leg's cwd.
+#   W1-W3 (6.7.12) the issue's wrapper repro verbatim: native exit 0 (the probe file unlinked); cx
+#       traps the store at guest 0 — mmap_anon answered 0 — never at a host address (W1). Its own
+#       variant (the store replaced by `syscall(60, bad)`): native 0, cx 15 (it was 7) (W2). Each
+#       refusal exactly: -38 three times, the pipe buffer untouched, cyr_mmap -1, mmap_anon 0 (W3).
+#       ⚠ The repro's open(2) is translated and creates `_cx_probe.bin`; unlink refuses on cx (D13), so
+#       the file stays — cxvm runs it in $T.
 # Anti-vacuous: the native leg of every row is its control, each .tcyr count is derived from its
 # source and held to a floor, and the row count is checked.
+# MUTATION LEDGER (6.7.12, D13; the real tree green 40/40) — each against the tree's lib/ copy:
+#   MD1 the slot-open lib/ (no cx arms) -> RED 9: T4-T7 cx (cyr_mmap / mmap_anon a host address, -14 from
+#       pipe / fstat / unlink), W1 cx (the trap at a host address), W2 cx (exit 7), W3 cx (61), T8 both
+#       legs (that lib/ predates this lane's EPOLL_EVENT_SIZE, a build error — not this row's signal)
+#   MD2 sys_pipe's cx arm alone removed -> RED 3: T7 cx and T8 cx (-14), W3 cx (bit 1)
+#   MD3 cyr_mmap's cx arm alone removed -> RED 2: T4 cx (cyr_mmap answered 0, not -1), W3 cx (bit 16)
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and — unless CYCC_CX is set — the cx
 # compiler from THIS tree's src/main_cx.cyr, and cxvm from programs/cxvm.cyr (CXVM overrides it).
@@ -137,22 +150,43 @@ tcyr() {
     done
 }
 
-ISSUE=2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md
-# xfail ID FILE FLOOR WANT_RC WANT_LAST WANT_LINE — the native leg is a full pass; the cx leg runs
-# `main` (WANT_LINE, a line only `main` prints, is there) and stops exactly as filed: an exit WANT_RC
-# matches (an ERE) and the last line WANT_LAST. A full pass on cx is an XPASS: RED, so the row is promoted.
-xfail() {
-    w=$(n_lin "$2")
-    [ "$w" -ge "$3" ] || { bad "$1 $2: only $w assertions in the source (floor $3)"; return; }
-    build_run native "$2" "$T/x.native.out"
-    if [ "$RC" = 0 ] && tail -1 "$T/x.native.out" | grep -q "^$w passed, 0 failed"; then ok "$1 $2 (native): $w passed, 0 failed"
-    else bad "$1 $2 (native): exit $RC, want '$w passed, 0 failed', got: '$(tail -1 "$T/x.native.out")'"; fi
-    build_run cx "$2" "$T/x.cx.out"
-    if [ "$RC" = 0 ] && tail -1 "$T/x.cx.out" | grep -q "^$w passed, 0 failed"; then
-        bad "$1 $2 (cx): XPASS — $w passed, 0 failed under cxvm; the filed limit ($ISSUE) is gone: make this a T row"
-    elif printf '%s\n' "$RC" | grep -qxE "$4" && grep -qxF "$6" "$T/x.cx.out" && tail -1 "$T/x.cx.out" | grep -qE "$5"; then
-        ok "$1 $2 (cx): main ran ('$6') and stops at the filed guest-contract limit — exit $RC, '$(tail -1 "$T/x.cx.out" | cut -c1-60)' (XFAIL: $ISSUE)"
-    else bad "$1 $2 (cx): the failure moved — exit $RC (want $4), last line '$(tail -1 "$T/x.cx.out")' (want /$5/), '$6' $(grep -cxF "$6" "$T/x.cx.out")x"; fi
+# 6.7.12 (D13, issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md): the files
+# whose `main` stopped at the cx guest contract now take honest cx arms, so their counts differ per
+# target. n_tgt FILE TARGET — the assertion lines one target compiles: `#ifdef` / `#ifndef
+# CYRIUS_TARGET_<X>` nest (`#else` flips the innermost), any other macro reads as undefined.
+n_tgt() {
+    awk -v t="CYRIUS_TARGET_$2" '
+        /^[[:space:]]*#ifdef[[:space:]]/  { d++; on[d] = ($2 == t); next }
+        /^[[:space:]]*#ifndef[[:space:]]/ { d++; on[d] = ($2 != t); next }
+        /^[[:space:]]*#else/  { on[d] = !on[d]; next }
+        /^[[:space:]]*#endif/ { d--; next }
+        /^[[:space:]]*assert(_[a-z]+)?\(/ { a = 1; for (i = 1; i <= d; i++) if (!on[i]) a = 0; if (a) n++ }
+        END { print n + 0 }' "$1"
+}
+# n_span FILE ERE — the assertion lines of an early-return skip block: from the first line matching
+# ERE through the next `return assert_summary();` (a block that runs instead of the rest of main).
+n_span() {
+    awk -v re="$2" 'on == 0 && $0 ~ re { on = 1 }
+        on == 1 && /^[[:space:]]*assert(_[a-z]+)?\(/ { n++ }
+        on == 1 && /return assert_summary\(\);/ { exit }
+        END { print n + 0 }' "$1"
+}
+# tc ID FILE NATIVE_N CX_N FLOOR_N FLOOR_C SKIP — native and cxvm each print `<N> passed, 0 failed`
+# (the last line) and exit 0, N per leg; SKIP=1: the cx leg also prints a line naming its SKIP.
+tc() {
+    [ "$3" -ge "$5" ] || { bad "$1 $2: only $3 native assertions derived from the source (floor $5)"; return; }
+    [ "$4" -ge "$6" ] || { bad "$1 $2: only $4 cx assertions derived from the source (floor $6)"; return; }
+    for leg in native cx; do
+        if [ "$leg" = native ]; then w=$3; else w=$4; fi
+        build_run "$leg" "$2" "$T/t.$leg.out"
+        if [ "$RC" = nobuild ]; then bad "$1 $2 ($leg): does not build: $(grep -m1 '^error' "$T/t.$leg.out")"; continue; fi
+        if [ "$RC" = 0 ] && tail -1 "$T/t.$leg.out" | grep -q "^$w passed, 0 failed"; then
+            if [ "$leg" = cx ] && [ "$7" = 1 ] && ! grep -q 'SKIP' "$T/t.$leg.out"; then
+                bad "$1 $2 (cx): $w passed, but no SKIP line names what cx does not run"; continue
+            fi
+            ok "$1 $2 ($leg): $w passed, 0 failed"
+        else bad "$1 $2 ($leg): exit $RC, want '$w passed, 0 failed', got: '$(tail -1 "$T/t.$leg.out")' $(grep -m2 'FAIL\|^cxvm:' "$T/t.$leg.out" | tr '\n' ' ')"; fi
+    done
 }
 
 R1=docs/development/issues/repros/2026-10-11-cx-does-not-auto-call-main.cyr
@@ -171,14 +205,79 @@ tcyr T1 tests/tcyr/crossos/chan_try_send.tcyr 20
 tcyr T2 tests/tcyr/crossos/multi_return.tcyr 31
 tcyr T3 tests/tcyr/math/float_nan_compare.tcyr 41
 
-xfail X1 tests/tcyr/crossos/mmap_anon_flag.tcyr 5 1 '^cxvm: guest address out of range: [0-9]+ at pc [0-9]+$' '=== mmap_anon returns memory that is actually writable ==='
-# The exit and the last line take either count: the second failure ('owned by sys_geteuid()')
-# compares the untranslated buffer's 0 with the euid, so it passes under root (12 passed, 1 failed,
-# exit 1); the fstat line is the deterministic pin.
-xfail X2 tests/tcyr/crossos/uid_identity.tcyr 13 '[12]' '^1[12] passed, [12] failed \(13 total\)$' '  FAIL: sys_fstat on the probe file succeeded (got 1, expected 0)'
+# ── T4-T10 (6.7.12, D13): the seven files that stopped at the cx guest contract, X1 / X2 promoted ──
+F=tests/tcyr/crossos/mmap_anon_flag.tcyr
+tc T4 $F "$(n_tgt $F LINUX)" "$(n_tgt $F CX)" 5 3 1
+F=tests/tcyr/crossos/uid_identity.tcyr
+tc T5 $F "$(n_tgt $F LINUX)" "$(n_tgt $F CX)" 13 12 1
+F=tests/tcyr/crossos/mmap_include_order.tcyr
+tc T6 $F "$(n_tgt $F LINUX)" "$(n_tgt $F CX)" 5 2 1
+F=tests/tcyr/crossos/sys_pipe_every_target.tcyr
+tc T7 $F "$(n_tgt $F LINUX)" "$(n_tgt $F CX)" 6 2 1
+F=tests/tcyr/concurrency/async_relay_once_no_deadlock.tcyr
+tc T8 $F "$(n_tgt $F LINUX)" "$(n_span $F '^[[:space:]]*#ifdef CYRIUS_TARGET_CX')" 8 1 1
+F=tests/tcyr/crossos/signal_errno_peer_values.tcyr
+tc T9 $F "$(n_tgt $F LINUX)" "$(n_tgt $F CX)" 13 5 0
+F=tests/tcyr/concurrency/integration_closures_threads.tcyr
+_tcb=$(n_span $F 'if [(]THREADS_CONCURRENT == 0[)]')
+tc T10 $F "$(( $(n_tgt $F LINUX) - _tcb ))" "$_tcb" 2 1 1
+# No probe file is left by uid_identity on cx: its cx arm makes none (it used to, and the -EFAULT
+# unlink left `_uid_identity_probe.bin.<pid>` in the cwd — the cx leg runs in $T).
+if ls "$T"/_uid_identity_probe.bin* > /dev/null 2>&1; then bad "T5: a _uid_identity_probe.bin file was left in the cx leg's cwd"
+else ok "T5: no _uid_identity_probe.bin left behind"; fi
 
-WANT=24
+# ── W1-W3 (6.7.12, D13): the filed wrapper repro (the issue's Reproduction, verbatim) ──
+cat > "$T/w1.cyr" <<'EOF'
+# cx: stdlib wrappers that compile for cx and cannot work under cxvm (x86_64 is the oracle).
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+var fds[16];
+var rp = sys_pipe(&fds);                       # pipe(22): the fd-pair buffer is a guest offset
+var fd = sys_open("_cx_probe.bin", 577, 384);  # open(2) is translated: the file is created
+var st[160];
+var rs = sys_fstat(fd, &st);                   # fstat(5): the stat buffer is a guest offset
+sys_close(fd);
+var ru = sys_unlink("_cx_probe.bin");          # unlink(87): the path is a guest offset
+var p = mmap_anon(4096);                       # mmap(9): the host maps it and returns a HOST address
+var bad = 0;
+if (rp != 0) { bad = bad | 1; }
+if (rs != 0) { bad = bad | 2; }
+if (ru != 0) { bad = bad | 4; }
+if (p == 0) { bad = bad | 8; }
+syscall(1, 1, "before store\n", 13);
+store64(p, 7);
+syscall(60, bad);
+EOF
+# W1 the verbatim file: native exits 0 (every wrapper works, the store lands); on cx mmap_anon is 0,
+# so the store is a null store — cxvm traps it at guest 0 (the null page), never at a host address.
+rm -f "$T/_cx_probe.bin"; build_run native "$T/w1.cyr" "$T/w1.n.out"
+if [ "$RC" = 0 ] && grep -qx 'before store' "$T/w1.n.out" && [ ! -e "$T/_cx_probe.bin" ]; then ok "W1 the filed repro (native): exit 0, the probe file unlinked"
+else bad "W1 the filed repro (native): exit $RC, $(head -1 "$T/w1.n.out")"; fi
+rm -f "$T/_cx_probe.bin"; build_run cx "$T/w1.cyr" "$T/w1.c.out"
+if [ "$RC" = 1 ] && grep -qx 'before store' "$T/w1.c.out" && grep -qE '^cxvm: guest address out of range: 0 at pc [0-9]+$' "$T/w1.c.out"; then
+    ok "W1 the filed repro (cx): mmap_anon answered 0 — the store traps at guest 0, not at a host address"
+else bad "W1 the filed repro (cx): exit $RC, want 1 and 'guest address out of range: 0': $(grep -m1 '^cxvm:' "$T/w1.c.out")"; fi
+# W2 the issue's own variant (`store64(p, 7);` replaced by `syscall(60, bad);`): cx exits bad = 15,
+# all four refusals (it exited 7: pipe / fstat / unlink failed with -EFAULT, mmap_anon "succeeded").
+sed 's/^store64(p, 7);$/syscall(60, bad);/' "$T/w1.cyr" > "$T/w2.cyr"
+rm -f "$T/_cx_probe.bin"; build_run native "$T/w2.cyr" "$T/w2.n.out"
+if [ "$RC" = 0 ]; then ok "W2 the variant (native): exit 0"; else bad "W2 the variant (native): exit $RC, want 0"; fi
+rm -f "$T/_cx_probe.bin"; build_run cx "$T/w2.cyr" "$T/w2.c.out"
+if [ "$RC" = 15 ]; then ok "W2 the variant (cx): exit 15 — pipe, fstat and unlink refused, mmap_anon 0"
+else bad "W2 the variant (cx): exit $RC, want 15 (it was 7: mmap_anon handed back a host address)"; fi
+# W3 the exact answers: each refusal is -ENOSYS (-38), never -EFAULT, and pipe leaves the buffer alone.
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/mmap.cyr"' 'var fds[16];' 'store64(&fds, 0 - 1);' \
+    'var st[160];' 'var bad = 0;' \
+    'if (sys_pipe(&fds) != 0 - 38) { bad = bad | 1; }' 'if (load64(&fds) != 0 - 1) { bad = bad | 2; }' \
+    'if (sys_fstat(1, &st) != 0 - 38) { bad = bad | 4; }' 'if (sys_unlink("_cx_w3_never") != 0 - 38) { bad = bad | 8; }' \
+    'if (cyr_mmap(0, 4096, 3, 34, 0 - 1, 0) != 0 - 1) { bad = bad | 16; }' 'if (mmap_anon(4096) != 0) { bad = bad | 32; }' \
+    'syscall(60, bad);' > "$T/w3.cyr"
+build_run cx "$T/w3.cyr" "$T/w3.c.out"
+if [ "$RC" = 0 ]; then ok "W3 (cx): sys_pipe / sys_fstat / sys_unlink answer -38, the fd buffer untouched, cyr_mmap -1, mmap_anon 0"
+else bad "W3 (cx): exit $RC (a bitmask: 1 pipe, 2 its buffer, 4 fstat, 8 unlink, 16 cyr_mmap, 32 mmap_anon)"; fi
+
+WANT=40
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, two stop at the filed guest-contract limits"
+echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, and the seven that met the cx guest contract pass there with honest refusals (cyr_mmap -1, sys_pipe / sys_fstat / sys_unlink -38) and named SKIPs; the wrapper repro traps at guest 0, never a host address"
 exit 0

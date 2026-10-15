@@ -28,6 +28,12 @@ fn main(): i64 {
     # 6.6.20: Windows runs this group too (the guard that stood here claimed syscall 9 is not a
     # PE path — it is, EMMAP_PE — and hid that cyr_munmap read -38 on PE).
     test_group("mmap_anon returns writable memory with mmap.cyr first");
+    #ifdef CYRIUS_TARGET_CX
+    # 6.7.12 (D13): no guest mmap on cx — mmap_anon answers 0 (see mmap_anon_flag.tcyr). CHANGELOG [6.7.12]
+    println("SKIP: cx has no guest mmap - the writable-mapping rows are native; cx refuses");
+    assert_eq(mmap_anon(4096), 0, "cx: mmap_anon answers 0, never a host address");
+    #endif
+    #ifndef CYRIUS_TARGET_CX
     var p = mmap_anon(4096);
     assert_neq(p, 0, "mmap_anon(4096) returned a mapping (0 = the EBADF-shaped failure)");
     store64(p, 305419896);
@@ -35,6 +41,7 @@ fn main(): i64 {
     store64(p + 4088, 2596069104);
     assert_eq(load64(p + 4088), 2596069104, "last 8 bytes of the page round-trip");
     assert_eq(cyr_munmap(p, 4096), 0, "cyr_munmap released the mapping");
+    #endif
 
     var r = assert_summary();
     return r;

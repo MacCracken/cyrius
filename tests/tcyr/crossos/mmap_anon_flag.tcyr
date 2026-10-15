@@ -43,6 +43,16 @@ fn main(): i64 {
     # claim that "cyr_mmap's syscall(9) is not a PE path" — false (EMMAP_PE → VirtualAlloc), and
     # the guard hid that munmap (11) had NO reroute there: cyr_munmap read -38 on PE.
     test_group("mmap_anon returns memory that is actually writable");
+#ifdef CYRIUS_TARGET_CX
+    # 6.7.12 (D13): cx has no guest mmap. cxvm handed the guest's mmap to the HOST kernel and the
+    # guest got a host address (a cxvm trap on the first store); cyr_mmap now refuses with -1, so
+    # mmap_anon answers 0 and a caller's null check sees it. CHANGELOG [6.7.12]
+    println("SKIP: cx has no guest mmap - the writable-mapping rows are native; cx refuses");
+    var cxm = cyr_mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0 - 1, 0);
+    assert_eq(cxm, 0 - 1, "cx: cyr_mmap refuses with -1");
+    assert_eq(mmap_anon(4096), 0, "cx: mmap_anon answers 0, never a host address");
+#endif
+#ifndef CYRIUS_TARGET_CX
     var p = mmap_anon(4096);
     assert_neq(p, 0, "mmap_anon(4096) returned a mapping (0 = the EBADF-shaped failure)");
     store64(p, 305419896);
@@ -51,6 +61,7 @@ fn main(): i64 {
     assert_eq(load64(p + 4088), 2596069104, "last 8 bytes of the page round-trip");
     var rc = cyr_munmap(p, 4096);
     assert_eq(rc, 0, "cyr_munmap released the mapping");
+#endif
 
     var r = assert_summary();
     return r;

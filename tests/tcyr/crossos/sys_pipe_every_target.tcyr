@@ -17,7 +17,16 @@ fn main(): i64 {
     test_group("sys_pipe on Windows fails closed");
     assert_eq(sys_pipe(&fds), 0 - 1, "sys_pipe returns -1 on PE (no reroute), not a trap");
     #endif
+    #ifdef CYRIUS_TARGET_CX
+    # 6.7.12 (D13): cxvm does not translate pipe's fd-pair buffer (a guest offset: -EFAULT), so
+    # the wrapper refuses with -ENOSYS on cx and leaves the buffer alone. CHANGELOG [6.7.12]
+    test_group("sys_pipe on cx refuses honestly");
+    println("SKIP: cx - sys_pipe refuses with -ENOSYS; the working-pipe rows are native");
+    assert_eq(sys_pipe(&fds), 0 - 38, "cx: sys_pipe refuses with -ENOSYS");
+    assert_eq(load64(&fds), 0 - 1, "cx: the fd buffer is left as it was");
+    #endif
     #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_CX
     test_group("sys_pipe makes a working pipe");
     assert_eq(sys_pipe(&fds), 0, "sys_pipe returns 0");
     var rd = load32(&fds);
@@ -30,6 +39,7 @@ fn main(): i64 {
     assert_eq(load8(&b + 1), 107, "the bytes round-trip");
     sys_close(rd);
     sys_close(wr);
+    #endif
     #endif
     var r = assert_summary();
     return r;

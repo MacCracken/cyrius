@@ -75,6 +75,16 @@ fn main(): i64 {
     # aarch64 peer's stat64, 28 on x86-Linux — so this also exercises that sys_fstat
     # itself is routed to the variant matching the peer's layout. On macOS-arm64 it was
     # not: SYS_FSTAT=80 was unrouted until this release.)
+#ifdef CYRIUS_TARGET_CX
+    # 6.7.12 (D13): cxvm translates neither fstat's buffer nor unlink's path, so both wrappers
+    # refuse with -ENOSYS on cx — and no probe file is made (it was, and an -EFAULT unlink left it
+    # in the cwd). CHANGELOG [6.7.12]
+    println("SKIP: cx - sys_fstat / sys_unlink refuse with -ENOSYS; the ownership rows are native");
+    var cst[160];
+    assert_eq(sys_fstat(1, &cst), 0 - 38, "cx: sys_fstat refuses with -ENOSYS");
+    assert_eq(sys_unlink("_uid_identity_cx_never_made"), 0 - 38, "cx: sys_unlink refuses with -ENOSYS");
+#endif
+#ifndef CYRIUS_TARGET_CX
     # v6.6.6: PID-suffixed (test_scratch) — the name was fixed and the check driver's cwd is
     # the REPO ROOT, so concurrent runs raced over it. CHANGELOG [6.6.6]
     var probe = test_scratch("_uid_identity_probe.bin");
@@ -88,6 +98,7 @@ fn main(): i64 {
     assert_eq(owner, euid, "the file we just created is owned by sys_geteuid()");
     sys_close(fd);
     sys_unlink(probe);
+#endif
 
     test_group("is_root() is derived from the euid, not hardcoded");
     # lib/sys.cyr's macOS arm was `return 0` — correct-looking on an unprivileged box and
