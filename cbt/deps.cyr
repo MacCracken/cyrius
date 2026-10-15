@@ -153,6 +153,11 @@ fn _file_size(path): i64 {
 # (`_consumer_dir`, the local-mode walks). CHANGELOG [6.7.12]
 fn _abs_path(src): i64 {
     if (load8(src) == 47) { return _abs_drop_dot(src); }
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: a drive-rooted `C:\x` / `C:/x` is absolute; a rooted `\x` (or `\\server\share`)
+    # and a drive-relative `C:x` cannot be joined onto the cwd and are returned as given.
+    if (load8(src) == 92 || load8(src + 1) == 58) { return src; }
+    #endif
     return _abs_drop_dot(_abs_join_cwd(src));
 }
 
@@ -187,6 +192,9 @@ fn _abs_join_cwd(src): i64 {
 # The working directory into `buf` (`cap` bytes), NUL-terminated; its length, or -1 when it
 # cannot be read (or does not fit).
 fn _cwd_read(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_cwd_read(buf, cap);
+    #endif
     #ifdef CYRIUS_TARGET_MACOS
     # Darwin has NO getcwd syscall (slot 326 is unused → SIGSYS). Derive
     # the cwd from the "." fd via fcntl(F_GETPATH): open(".") then
@@ -202,13 +210,39 @@ fn _cwd_read(buf, cap): i64 {
     return strlen(buf);
     #endif
     #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
     # syscall 79 = getcwd(buf, size); returns length incl. nul, or -errno.
     # (aarch64-Linux: ESYSXLAT renumbers x86 79 → aarch64 getcwd 17.)
     var n = syscall(79, buf, cap);
     if (n <= 0) { return 0 - 1; }
     return n - 1;
     #endif
+    #endif
 }
+
+# Windows: the working directory through kernel32!GetCurrentDirectoryW, as UTF-8 into `buf`
+# (`cap` bytes); its length, or -1. getcwd (syscall 79) has no PE reroute — it returned -38, so
+# `_abs_path` was the identity on cyrius.exe: an absolute in-project unit lost its test.cyml and
+# CYRIUS_TEST_FILE / CYRIUS_TEST_DIR were exported relative. There is no reroute for
+# GetCurrentDirectoryW either; it is resolved through GetModuleHandleA / GetProcAddress (0xF013 /
+# 0xF014) and called with callptr, as `_win_sysdir` (lib/process_win.cyr) calls
+# GetSystemDirectoryW. A directory longer than 1023 WCHARs, or than `cap` in UTF-8, is -1 (never
+# cut). CHANGELOG [6.7.12]
+#ifdef CYRIUS_TARGET_WIN
+fn _win_cwd_read(buf, cap): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                       # GetModuleHandleA
+    if (k32 == 0) { return 0 - 1; }
+    var gcd = syscall(0xF014, k32, "GetCurrentDirectoryW");          # GetProcAddress
+    if (gcd == 0) { return 0 - 1; }
+    var wb = alloc(2056);                                            # 1024 WCHARs + NUL
+    var n = callptr(gcd, 1024, wb) & 0xFFFFFFFF;                     # DWORD: WCHARs, NUL excluded
+    if (n == 0 || n >= 1024) { return 0 - 1; }                       # failed, or did not fit
+    store16(wb + n * 2, 0);
+    var m = _fs_narrow(wb, buf, cap);
+    if (m <= 0 || m + 5 >= cap) { return 0 - 1; }                    # empty, or may have been cut
+    return m;
+}
+#endif
 
 # Byte-compare two files. Returns 1 if identical, 0 otherwise (including if either
 # cannot be opened). Short-circuits on the first differing byte. Added v6.5.7 for

@@ -4177,12 +4177,14 @@ CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to
   `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels above it, each once. An absolute
   path is matched to the working directory by identity (6.7.12), so under a symlinked working
   directory the logical `$PWD/tests/net/x.tcyr` and the physical spelling are the same unit.
-- A unit outside the project (an absolute path elsewhere, a `..`; on Windows any drive-qualified
-  `C:…` or rooted `\…` path) gets `cyrius.cyml`'s `[test]` only.
+- A unit outside the project (an absolute path elsewhere, a `..`; on Windows a drive-relative
+  `C:x…` or a rooted `\…` path) gets `cyrius.cyml`'s `[test]` only. On Windows a drive-rooted
+  `C:\proj\tests\net\x.tcyr` (or `c:/proj/…`) inside the working directory is the project's own
+  unit (6.7.12; until then every drive-qualified path counted as outside).
 
 **At run time** each unit gets `CYRIUS_TEST_FILE` (the unit) and `CYRIUS_TEST_DIR` (its
-directory) in its environment — absolute where the host can say so — so a test finds data beside
-itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.embed]`.
+directory) in its environment — absolute, Windows included since 6.7.12 — so a test finds data
+beside itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.embed]`.
 
 **The exit code is the contract.** `cyrius test` — a file, a directory, several operands, or bare
 — exits non-zero on any failing test (an assertion, a signal, a timeout, an assert summary that

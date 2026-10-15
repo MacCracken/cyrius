@@ -25,6 +25,12 @@
 #           stdlib = ["string", "alloc"]), whatever the manifest declared or pinned. D18 (the user,
 #           2026-10-15): it writes what `lib sync` writes — the declared set at the manifest's pin,
 #           `--full` for the whole snapshot.
+#   item 1  On cyrius.exe `_abs_path` was the identity: the cwd came from getcwd (syscall 79), which
+#           has no PE reroute (-38), and only a leading `/` counted as absolute. So an absolute
+#           in-project unit (`C:\proj\tests\sub\x.tcyr`) was "outside the project" and lost its
+#           test.cyml, and CYRIUS_TEST_FILE / CYRIUS_TEST_DIR were exported relative (`tests\sub\e.tcyr`,
+#           `.`). The cwd comes from GetCurrentDirectoryW now, a drive-rooted path is absolute, and the
+#           drive-relative refusal (`C:x`, a rooted `\x`) stays.
 #   item 8  The lock's digests came from a spawned `sha256sum` / `shasum` (certutil.exe on PE):
 #           under wine, which has no certutil, `cyrius deps` printed `warning: cyrius.lock NOT
 #           written — cannot hash lib/alloc.cyr (and 15 more)` and wrote no lock. The SHA-256 is
@@ -55,6 +61,12 @@
 #        edges): `deps --lock` writes one row per file, every row sha256sum's
 #   R8b  no hasher on PATH at all: a stdlib-only `deps` writes its first lock, rows sha256sum's
 #   W8   (wine, named SKIP without it) the PE CLI's `deps` writes cyrius.lock, rows sha256sum's
+#   W1a  (wine) `cyrius.exe test <drive>:\…\proj\tests\sub\x.tcyr` (absolute, in the project):
+#        test.cyml applies, rc 0
+#   W1b  (wine) the `<drive>:/…/tests/sub/x.tcyr` and lower-case-drive spellings: rc 0
+#   W1c  (wine) the drive-relative `<drive>:tests\sub\x.tcyr` is still outside: exit 1
+#   W1d  (wine) the relative `tests\sub\e.tcyr` gets CYRIUS_TEST_FILE / CYRIUS_TEST_DIR absolute,
+#        DIR = <drive>:\…\proj/tests\sub
 #
 # Mutations (measured, one at a time; CYRIUS_BIN=<a CLI built from the mutated cbt/> runs this gate
 # on it): `_abs_path` without `_abs_drop_dot` → R3 RED; `_process_named_deps` returning the old
@@ -68,7 +80,9 @@
 # .cyrius-toolchain written from `current` → R6c RED; the second padding block taken at tl > 56
 # (not >= 56) → R8a RED (the 56-byte tails); the length bits written little-endian → R8a R8b RED;
 # 6.7.11's sha256sum spawn → R8b RED (no lock, `neither sha256sum nor shasum`) and W8 RED (no
-# lock: wine has no certutil).
+# lock: wine has no certutil); `_win_cwd_read` returning -1 (the 6.7.11 identity) → W1a W1b W1d
+# RED; the drive compared case-sensitively → W1b RED; the `:` refusal dropped (a drive-relative
+# path read as a project path) → W1c RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_path_reporting_leftovers
@@ -294,6 +308,39 @@ if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; th
     if [ "$rc" -eq 0 ] && [ "$nr" -eq "$nf" ] && [ "$nf" -gt 0 ] && ( cd "$P" && grep '^[0-9a-f]\{64\}  ' cyrius.lock | sha256sum -c --quiet ) > /dev/null 2>&1; then
         ok "W8 wine: cyrius.exe deps writes cyrius.lock ($nr rows, each sha256sum's)"
     else bad "W8 wine (rc=$rc): $nr rows for $nf files; $(grep -m1 -E 'warning|error' "$W/w8.out" | tr -d '\r')"; fi
+    # item 1: the PE compiler beside the PE CLI, a project with tests/sub/test.cyml
+    mkdir -p "$W/wbin" && cp "$W/cyrius.exe" "$W/wbin/cyrius.exe" \
+      && "$W/cc_win" < src/main_win.cyr > "$W/wbin/cycc.exe" 2> /dev/null && [ -s "$W/wbin/cycc.exe" ] \
+      || bad "W1 setup: the PE compiler does not cross-build"
+    P="$W/w1"; rm -rf "$P"; mkdir -p "$P/tests/sub"
+    printf '[package]\nname = "w1"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "%s"\n\n[deps]\nstdlib = ["syscalls", "string", "alloc", "io"]\n' "$V" > "$P/cyrius.cyml"
+    printf '[test]\ndefines = ["FOO"]\n' > "$P/tests/sub/test.cyml"
+    printf '#ifdef FOO\nsyscall(SYS_EXIT, 0);\n#endif\nsyscall(SYS_EXIT, 1);\n' > "$P/tests/sub/x.tcyr"
+    printf 'alloc_init();\nvar f = getenv("CYRIUS_TEST_FILE");\nvar d = getenv("CYRIUS_TEST_DIR");\nif (f != 0) { syscall(1, 1, "FILE=", 5); syscall(1, 1, f, strlen(f)); syscall(1, 1, "\\n", 1); }\nif (d != 0) { syscall(1, 1, "DIR=", 4); syscall(1, 1, d, strlen(d)); syscall(1, 1, "\\n", 1); }\nsyscall(60, 0);\n' > "$P/tests/sub/e.tcyr"
+    PW=$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$P" 2> /dev/null)
+    _wt() {   # $1 = the unit as cyrius.exe is given it; prints the rc, output in w1.out
+        ( cd "$P" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+          WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' CYRIUS_HOME="$(WINEPREFIX="$WP" HOME="$WHM" winepath -w "$H" 2>/dev/null)" \
+          CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 timeout 300 wine "$W/wbin/cyrius.exe" test "$1" ) > "$W/w1.out" 2>&1
+        echo $?
+    }
+    r=$(_wt "$PW\\tests\\sub\\x.tcyr")
+    if [ "$r" -eq 0 ]; then ok "W1a wine: cyrius.exe test $PW\\tests\\sub\\x.tcyr — test.cyml applies, rc 0"
+    else bad "W1a wine: the absolute in-project unit (rc $r): $(grep -m1 -E 'FAIL|error' "$W/w1.out" | tr -d '\r')"; fi
+    PF=$(printf '%s' "$PW" | tr '\\' /)
+    PL=$(printf '%s' "$PW" | cut -c1 | tr 'A-Z' 'a-z')$(printf '%s' "$PW" | cut -c2-)
+    r1=$(_wt "$PF/tests/sub/x.tcyr"); r2=$(_wt "$PL\\tests\\sub\\x.tcyr")
+    if [ "$r1$r2" = "00" ]; then ok "W1b wine: the forward-slash and lower-case-drive spellings: rc 0"
+    else bad "W1b wine: forward-slash rc $r1, lower-case drive rc $r2"; fi
+    DR=$(printf '%s' "$PW" | cut -c1-2)
+    r=$(_wt "${DR}tests\\sub\\x.tcyr")
+    if [ "$r" -eq 1 ] && grep -q 'FAIL: .*tests.sub.x.tcyr (exit 1)' "$W/w1.out"; then ok "W1c wine: the drive-relative ${DR}tests\\sub\\x.tcyr stays outside: exit 1"
+    else bad "W1c wine: the drive-relative unit (rc $r): $(grep -m1 -E 'FAIL|error|ok' "$W/w1.out" | tr -d '\r')"; fi
+    r=$(_wt 'tests\sub\e.tcyr')
+    wf=$(grep '^FILE=' "$W/w1.out" | tr -d '\r' | sed 's/^FILE=//'); wd=$(grep '^DIR=' "$W/w1.out" | tr -d '\r' | sed 's/^DIR=//')
+    if [ "$r" -eq 0 ] && [ "$wd" = "$PW/tests\\sub" ] && [ "$wf" = "$PW/tests\\sub\\e.tcyr" ]; then
+        ok "W1d wine: CYRIUS_TEST_FILE / CYRIUS_TEST_DIR are absolute ($wd)"
+    else bad "W1d wine (rc $r): FILE='$wf' DIR='$wd' (want DIR '$PW/tests\\sub')"; fi
 else
     echo "  SKIP: W8 — wine (or sha256sum) not found; the PE leg runs where wine is installed, and on cass"
 fi
