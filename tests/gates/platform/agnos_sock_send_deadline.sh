@@ -40,6 +40,15 @@
 #   7. "no #109" cached on a dead conn (_agnos_sdl_ok = 2 whatever #48 answered)
 #        -> 2 FAIL, axis 7: the next write on a live conn goes to #48, its deadline unenforced
 #   8. the 6.7.10 loop (#48 only, no ceiling handed over) -> 11 FAIL, axes 4 5 6 7 8
+# 6.7.12 (issues/2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md):
+#   9. rearm=1's ceiling refresh deleted (`left = _agnos_dl_whole_us(tmo_us);` after the re-arm)
+#        -> 1 FAIL, axis 8's dl03 row: ceilings 1000000 750000 750000 750000 … (both gates were
+#           GREEN on it before the row; agnos_tls_deadline.sh still is — it has no stall-then-
+#           progress shape)
+#   Re-run on 6.7.12 with the dl03 row in (assertions failed, axes): 1 -> 11 (1 4 6 7);
+#   2 -> 11 (1 4 6 7); 3 -> 6 (3 8, the dl03 rows among them); 4 -> 6 (2 5 6 8); 5 -> 17
+#   (1 2 4 5 6 7 8); 6 -> 14 (1 2 3 4 6 7); 7 -> 2 (7); 8 -> 13 (4 5 6 7 8, the dl03 rows
+#   among them). Every one still RED.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_sock_send_deadline: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -165,6 +174,16 @@ probe "sock_set_send_timeout(fd, 1, 0); var r = sys_write(fd, &big, 100);"
 trace dl0
 check "with no progress the window is not re-armed: ceilings 1 s, 0.75, 0.5, 0.25 s, then -1" \
     "-1 1000000 750000 500000 250000" "$(mark 1) $(ceil109)"
+# dl03: one stall, then a trickle. The stall shrinks the window left to 0.75 s; the next call
+# moves bytes, which re-arms the window AND refreshes the ceiling to the whole 1 s — every call
+# after it gets 1000000 again, not the shrunken 750000 (6.7.12; mutation 9).
+probe "sock_set_send_timeout(fd, 1, 0); var r = sys_write(fd, &big, 100);"
+trace dl03
+check "one stall then progress: all 100 bytes, in 35 #109 sends (the stall + 33 × 3 + 1)" "100 35" \
+    "$(mark 1) $(ceil109 | wc -w | tr -d ' ')"
+check "  …ceilings 1 s, 0.75 s (the stall), then the whole 1 s window again for every later call" \
+    "1000000 750000 1000000 1000000 1000000 | 1000000" \
+    "$(ceil109 | cut -d' ' -f1-5) | $(ceil109 | cut -d' ' -f3- | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 
 echo ""
 if [ "$fails" = "0" ]; then

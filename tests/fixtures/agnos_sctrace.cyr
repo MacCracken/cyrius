@@ -28,6 +28,9 @@
 #            answers 0, and with len > 0 answers 0 (no progress); #48 answers 0. (6.7.11)
 #   dl3    — send3 with #109: the probe answers 0, a send min(3, len); #48 answers min(3, len).
 #   dl3dead — dl3, but conn 1 is dead: #109 and #48 on a1 = 1 answer -1 (the probe included).
+#   dl03   — dl3, but the FIRST data #109 (len > 0) answers 0 — one stall — and every later one
+#            min(3, len): a no-progress call followed by progress, which is what makes rearm=1's
+#            ceiling refresh after a re-arm observable. (6.7.12)
 # In every other mode #109 answers -1 — a kernel before 1.57.13, where the number is unknown — so
 # the send axes written for #48 keep pinning the #48 path.
 #   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
@@ -114,6 +117,7 @@ include "lib/args.cyr"
 include "lib/fmt.cyr"
 
 var MAX_CALLS = 200000;
+var _st_dl03_n = 0;          # dl03: data #109 calls (len > 0) answered so far
 
 fn _st_num(v): i64 {
     var b[32];
@@ -210,6 +214,10 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "dl3dead") == 1) { if (a1 == 1) { return 0 - 1; } }
         if (a3 <= 0) { return 0; }                        # the probe, on a live conn
         if (_st_mode_is(mode, "dl0") == 1) { return 0; }
+        if (_st_mode_is(mode, "dl03") == 1) {
+            _st_dl03_n = _st_dl03_n + 1;
+            if (_st_dl03_n == 1) { return 0; }            # the one stall
+        }
         if (a3 < 3) { return a3; }
         return 3;
     }
@@ -220,6 +228,7 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "send3") == 1) { tri = 1; }
         if (_st_mode_is(mode, "dl3") == 1) { tri = 1; }
         if (_st_mode_is(mode, "dl3dead") == 1) { tri = 1; }
+        if (_st_mode_is(mode, "dl03") == 1) { tri = 1; }
         if (tri == 1) {
             if (a3 < 3) { return a3; }
             return 3;
@@ -234,6 +243,7 @@ fn _st_is_dl(mode): i64 {
     if (_st_mode_is(mode, "dl0") == 1) { return 1; }
     if (_st_mode_is(mode, "dl3") == 1) { return 1; }
     if (_st_mode_is(mode, "dl3dead") == 1) { return 1; }
+    if (_st_mode_is(mode, "dl03") == 1) { return 1; }
     return 0;
 }
 
