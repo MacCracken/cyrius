@@ -114,7 +114,7 @@ if [ "$rc" -eq 1 ] \
    && grep -q "^note: 2 files in lib/ $NOTE" "$W/c2.out" && [ "$before" = "$(_tree "$S/co")" ]; then
     ok "C2 --locked: both files named CRLF, the other pin a plain difference (remedy kept + the note), nothing written"
 else bad "C2 --locked (rc $rc): $(tr '\n' ' ' < "$W/c2.out")"; fi
-( cd "$S/up" && sed -i "s/^cyrius\t6.7.6\$/cyrius\t$V/" cyrius.lock && git commit -qam pin ) || bad "C2b setup: the trailer"
+sed -i "s/^cyrius\t6.7.6\$/cyrius\t$V/" "$S/up/cyrius.lock" && ( cd "$S/up" && git commit -qam pin ) || bad "C2b setup: the trailer"
 ( cd "$S" && rm -rf co2 && git -c core.autocrlf=true clone -q up co2 ) || bad "C2b setup: the clone"
 rc=0; _cy "$S/co2" deps --locked > "$W/c2b.out" 2>&1 || rc=$?
 if [ "$rc" -eq 1 ] && [ "$(grep -cF -- "do not match cyrius.lock — $REASON" "$W/c2b.out")" -eq 2 ] \
