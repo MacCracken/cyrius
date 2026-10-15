@@ -38,7 +38,7 @@
 #      `sizeof`, a generic fn's local over its base and two instances — exactly one error naming the
 #      variable or parameter; V4 the rest of the vocabulary: a second argument, a trailing operator, a
 #      vector, a slice, u128, a prefix-only name (its note), a struct declared below a zone global, two bad
-#      elements in one fn (both reported); V5 what keeps compiling: tests/tcyr/crossos/
+#      elements in one fn (both reported), a pointer element `Vec<*Pt>` (V4i, review); V5 what keeps compiling: tests/tcyr/crossos/
 #      vec_annotation_element.tcyr (every accepted element in every position; the crossos leg runs it on
 #      every fork), a generic fn's `Vec<T>` by default and under CYRIUS_MONOMORPH=0, `Vec<dyn Show>` gives
 #      the dyn refusal alone, a program's own `struct Vec` is that struct; V6 CYRIUS_MONOMORPH=0 refuses as
@@ -57,7 +57,7 @@
 #   MV3 `_param_type_step` without its check -> V1, V2 / V3 par and ppar, V4b, V7 (the forks' parameter)
 #   MV4 `_pty_name` without its check -> V2 / V3 pppar and cb
 #   MV5 `_vec_elem_ok` answering 1 -> V1, every V2, V4c, V4f, V4g, V4h, V6, V7
-#   MV6 `_vec_tok_err` silent -> V1, every V3, V4a, V4b, V4e, V7
+#   MV6 `_vec_tok_err` silent -> V1, every V3, V4a, V4b, V4e, V4i (review), V7
 #   MV7 `_gen_ann_sid` without its check -> V1, V2 / V3 loc, gz, gp, nest, szof and gen, V4a, V4c-V4h, V6, V7
 #   MV8 `_vec_ann_vn` answering -1 (the message drops the name) -> V1, V2 / V3 loc, gz, gp, nest and gen, V4a,
 #       V4c, V4e, V4f, V4h, V6, V7
@@ -219,6 +219,10 @@ build v4h
 n=$(grep -c "^error" "$T/v4h.err")
 if [ "$rc" -ne 0 ] && [ "$n" -eq 2 ] && grep -q "'nope2' as the Vec element of 'b'" "$T/v4h.err"; then ok "V4h: two bad elements in one fn: both reported"
 else bad "V4h: rc $rc, $n error(s), want both"; fi
+# V4i (6.7.11 review): a pointer element is refused as the field form refuses it — it compiled through
+# 6.7.10 and is in the migration note.
+printf 'struct Pt { x; y; }\nfn f(): i64 {\n    var v: Vec<*Pt> = 0;\n    return 3;\n}\nsyscall(60, f());\n' > "$T/v4i.cyr"
+refused1 v4i "expected a Vec element type for 'v', got '*'" "V4i: a pointer element \`Vec<*Pt>\`"
 cp "$ROOT/tests/tcyr/crossos/vec_annotation_element.tcyr" "$T/v5a.cyr"
 build v5a
 if [ "$rc" -ne 0 ]; then bad "V5a: vec_annotation_element.tcyr: rc $rc: $(grep '^error' "$T/v5a.err" | head -1)"
