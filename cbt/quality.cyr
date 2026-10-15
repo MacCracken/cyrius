@@ -1418,8 +1418,10 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # on stderr: no prototype, rc 1 (never guessed). Field widths are the compiler's (FIELDSZ /
 # STRUCTSZ, src/frontend/parse_types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
 # per element, a dyn 16, a nested struct its size, a union its widest field, every other field 8
-# (a `Str` / `Vec` FIELD is its 8-byte handle). header_spellings_and_size.sh H8 holds them to
-# `sizeof` compiled by cycc, H11 the x86_64 registers to a linked C caller. CHANGELOG [6.7.11]
+# (a `Str` FIELD and a `Vec<T>` FIELD are their 8-byte handle; a bare `Vec` FIELD is the file's
+# own `struct Vec` when one is declared above it, else the 8-byte handle).
+# header_spellings_and_size.sh H8 holds them to `sizeof` compiled by cycc, H11 the x86_64
+# registers to a linked C caller. CHANGELOG [6.7.11]
 # ================================================================
 # The file's depth-0 struct / union / enum names: a vec of records, `_HDR_REC` words each —
 #   +0 name offset, +8 name length, +16 kind (1 struct, 2 union, 3 enum), +24 the body's `{` (-1
