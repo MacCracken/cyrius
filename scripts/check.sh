@@ -2561,8 +2561,9 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
-# `p.pick(9)` returned 0). The filed repro, a chain and a trait member, the refusals, and 31 rows,
-# x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+# `p.pick(9)` returned 0). The filed repro, a chain and a trait member, the refusals, a forwarder through
+# a field-chain or call receiver, and 49 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in
+# the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
 # the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
