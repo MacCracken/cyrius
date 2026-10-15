@@ -35,5 +35,3 @@ print("\n", 1);
 var empty = vec_new();
 test_each(empty, &_emit);
 print("end\n", 4);
-
-return 0;

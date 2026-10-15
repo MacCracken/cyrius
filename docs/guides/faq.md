@@ -31,6 +31,9 @@ crashes on hostile input. Common syntax causes:
 - **Missing expression before `;`** — empty assignments like `var x = ;`.
 - **A reserved keyword used as an identifier** (`default`, `secret`, `pub`,
   `shared`, …) — the message names the word.
+- **`return` outside a fn body** — at top level or in a top-level `if` / loop /
+  `switch` block (`return outside a fn body`, 6.7.11). End a program with
+  `syscall(60, v);`, by running off the end, or by returning from a `fn main`.
 - **`<` parsed as comparison when you meant generics** — generics live on
   function/struct *definitions* (`fn foo<T>()`), not in expressions.
 

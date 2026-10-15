@@ -1019,6 +1019,7 @@ fn _mret_fwd_ok(S, fi, want): i64 {
 # 6.7.11: a fn declared `: (T1, T2[, T3])` returns its values — judged before the arms
 # (`_mret_ret_check`), reported after them.
 fn PARSE_RETURN(S): i64 {
+    if (_ret_toplevel(S) == 1) { return 0; }   # 6.7.11: outside a fn body, refused
     var st = GTI(S) + 1;
     _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
     var bad = _mret_ret_check(S, st);

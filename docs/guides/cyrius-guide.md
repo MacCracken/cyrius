@@ -472,6 +472,15 @@ var r = add(20, 22);   # r = 42
 - All functions return a value (`return 0;` if nothing to return) — one value, or two or three
   from a fn declared `: (T1, T2)` / `: (T1, T2, T3)` (see [Multi-Return](#multi-return) and
   [Tuples](#tuples))
+- **`return` belongs to a fn body** (6.7.11). A `return` at top level, or in a top-level block (an
+  `if`, a loop, a `switch` case), is refused: `return outside a fn body`, reported once, and the
+  compile goes on to the next statement. A top-level `break`, `continue`, `defer` and `?` are
+  refused the same way: the top level has no frame and no epilogue to return to. A program exits
+  with `syscall(60, v);`, by running off the end of its top level, or by returning from a `fn
+  main` (the auto-call). A closure body and an `#inline` fn are fn bodies, so a `return` in one
+  is fine anywhere. ⚠ Before 6.7.11 a top-level `return` compiled with no diagnostic and did not
+  return: x86_64 and PE ran on past it (`return 6; syscall(60, 9);` exited 9), and aarch64 and cx
+  hung at it.
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading by arity, so a count mismatch is never intentional). The count must lie between
   the fn's required parameters and all of them: a fn that declares parameter defaults

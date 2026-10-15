@@ -2546,6 +2546,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
 # `p.pick(9)` returned 0). The filed repro, a chain and a trait member, the refusals, and 31 rows,
 # x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
+# 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
+# the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
+# return — x86 / PE ran on past it, aarch64 / cx hung at it. The issue's table, the blocks, and the
+# controls (a closure, an #inline fn, a fn in a top-level block), x86 / aarch64 / cx / PE / cycc_win, a
+# built leg run under `timeout 5`. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_return_checked.sh"
 # 6.7.9 — `&q` of a `q: *P` parameter is its slot: for P over 8 B it was the pointee (6.6.6's by-value
 # arm also fired for a `*P`), so `load64(&q)` read q's first field and `store64(&q, o)` wrote the
 # caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /

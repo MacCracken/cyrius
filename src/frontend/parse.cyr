@@ -4093,6 +4093,40 @@ fn _PARSE_CONTINUE(S): i64 {
     }
     return 0;
 }
+# return; / return v; outside every fn body — at top level or in a top-level block (GINFN 0) — is
+# refused by name, as a top-level break / continue / defer is: the top level has no frame and no
+# epilogue to land on, so the jump PARSE_RETURN records in rp_vec was never patched — a `jmp +0`
+# on x86_64 / PE (the return passed over), a branch to itself on aarch64 / cx (a hang). A closure
+# body and an #inline fn's replay are GINFN 1. Reported once and in sync: the statement is stepped
+# over through its `;` and the latch cleared, so the next statement parses and reports its own
+# errors. 1 = refused. CHANGELOG [6.7.11]
+fn _ret_toplevel(S): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    var p0 = _panic;
+    ERR_MSG(S, "return outside a fn body", 24);
+    _ret_skip_stmt(S);
+    if (p0 == 0) { _panic = 0; }
+    return 1;
+}
+# Step over the refused statement: through its `;` outside `( [ {` nesting, or up to the `}` that
+# closes the enclosing block, or EOF.
+fn _ret_skip_stmt(S): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (GTI(S) < n) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+        }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { d = 0; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
 # defer { body } — execute body at function return (LIFO)
 # Each defer gets a runtime flag (hidden local) set to 1 when reached.
 # At epilogue, flag is checked before running the block — unreached defers are skipped.
