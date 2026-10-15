@@ -33,6 +33,10 @@
 # 102 on one and 174 on the other and both are correct. The comparison that MEANS something
 # is by CAPABILITY: for each SYS_* name a wrapper issues, is the number THAT peer emits
 # routed on THAT backend?
+# The one exception (axis 2b, 6.7.12): the Darwin private-alias band, 1000 + the BSD number
+# (sysctl 1202, kqueue 1362, sigprocmask 1048, ...), is the SAME source number on both backends
+# and is issued raw, never by a name both peers declare — so there the rows themselves are
+# compared. Measured: deleting either backend's 1048 row fails axis 2b (and nothing else here).
 #
 # ⚠ Two parsing traps, both hit while producing the original numbers:
 #   * `_TARGET_MACHO == 2` appears in BOTH ESYSCALL (the svc emitter, ~line 422) and ESYSXLAT
@@ -109,7 +113,7 @@ allow_reason() {
     SYS_PPOLL)        echo "both|Darwin has no ppoll(2) (both peers declare the name for portable source: the arm peer 1073, the x86 peer 271 since 6.7.9, unrouted on either backend); its callers — sys_ppoll (6.7.9), sys_pause (6.6.8; the x86 peer since 6.6.5) and lib/yukti.cyr _yk_ppoll (yukti 2.3.14) — decline with -ENOSYS under #ifdef CYRIUS_TARGET_MACOS, and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
     # ---- a real Darwin call exists but a bare renumber would be WRONG ----
     SYS_RT_SIGPROCMASK)
-                      echo "both|Darwin sigprocmask(48) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. Needs a shim, not a row" ;;
+                      echo "both|Darwin sigprocmask(48) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. So no row for 14/135: sys_sigprocmask's macOS arm is the shim (6.7.12) — it issues the private alias 1048 (routed 1048 -> 48 on BOTH backends, which the drift axis compares), Darwin reads the low 4 bytes of the set, and the shim zeroes oldset's upper word" ;;
     SYS_SETRESUID|SYS_SETRESGID)
                       echo "both|Darwin has no setresuid/setresgid; the closest peers (setreuid/setregid) have different semantics, so a row would silently change behaviour" ;;
     # ---- same capability, different spelling: routed under the OTHER name ----
@@ -237,6 +241,28 @@ while read -r name; do
 done < "$TMP/issued"
 if [ "$a2f" -eq 0 ]; then ok "no capability drift between the two Mach-O route tables"
 else fail=$((fail + a2f)); fi
+
+# ---------------------------------------------------------------- axis 2b: the Darwin alias band
+# 6.7.12 — a private alias spelled 1000 + the DARWIN number (sysctl 1202, kqueue 1362, __ulock_wait
+# 1515, sigprocmask 1048, ...) is issued as a RAW number by a macOS arm (lib/sys.cyr, the peers'
+# kqueue / ulock wrappers, sys_sigprocmask's shim), never as a SYS_* name both peers declare, so
+# axes 1-2 cannot see it. Its row must exist on BOTH backends, renumbering to the same call: a band
+# row on one backend only is the one-fork shape this gate exists for. (The arm table's other
+# >= 1000 rows — 1049 chdir, 1054 fchownat, 1055 fchown — are the aarch64-LINUX peer's 1000 + native
+# spellings, renumbered to Darwin; the x86 peer spells those calls by their x86 numbers.)
+echo ""
+echo "axis 2b — every Darwin private alias (1000 + the BSD number) is routed on BOTH Mach-O backends:"
+awk '$1 >= 1000 && $1 - 1000 == $2 { print $1 }' "$TMP/x86_routes" | sort -n > "$TMP/x86_band"
+awk '$1 >= 1000 && $1 - 1000 == $2 { print $1 }' "$TMP/arm_routes" | sort -n > "$TMP/arm_band"
+nband=$(wc -l < "$TMP/x86_band" | tr -d ' ')
+if [ "$nband" -lt 8 ]; then bad "axis 2b found only $nband Darwin alias rows on x86 (floor 8) — the parse is broken, not the table"
+elif cmp -s "$TMP/x86_band" "$TMP/arm_band"; then ok "the $nband Darwin alias rows ($(tr '\n' ' ' < "$TMP/x86_band" | sed 's/ $//')) exist on both backends"
+else
+    comm -3 "$TMP/x86_band" "$TMP/arm_band" | while read -r a; do
+        printf '  FAIL: the Darwin alias %s is routed on ONE Mach-O backend only — DRIFT (x86: EMACHO_SYSXLAT, arm64: ESYSXLAT)\n' "$a"
+    done
+    fail=$((fail + 1))
+fi
 
 # ---------------------------------------------------------------- axis 3: registration drift
 # _macho_arm_routes is the SINGLE SOURCE OF TRUTH parse_expr.cyr queries for the

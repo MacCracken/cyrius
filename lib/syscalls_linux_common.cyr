@@ -782,9 +782,15 @@ fn sys_reboot(cmd): i64 {
 
 # Change the calling thread's signal mask. `how` is SIG_BLOCK,
 # SIG_UNBLOCK, or SIG_SETMASK. `set` and `oldset` point at sigset_t.
+# On macOS it is Darwin's sigprocmask (48) through the private alias 1048, a shim rather than a
+# renumber: Darwin reads a 32-bit set (the low half of our 8-byte one on little-endian) and writes
+# 4 bytes to `oldset`, so the upper word is zeroed here. It returned -78 before 6.7.12, so the
+# exec family could not empty a mask inherited from a launcher there. CHANGELOG [6.7.12]
 fn sys_sigprocmask(how, set, oldset): i64 {
     #ifdef CYRIUS_TARGET_MACOS
-    return 0 - 78;
+    var r = syscall(1048, how, set, oldset);
+    if (r == 0) { if (oldset != 0) { store32(oldset + 4, 0); } }
+    return r;
     #endif
     #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_RT_SIGPROCMASK, how, set, oldset, 8);
