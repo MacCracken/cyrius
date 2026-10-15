@@ -4510,6 +4510,13 @@ mutated file silently and `deps --verify` then passed on it. A lock written befo
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
+A resolve never deletes a file, so since 6.7.12 it **names** each `lib/` file it did not vendor —
+a leaf dropped from `[deps] stdlib`, the module of a dep dropped from the manifest — which `lib/`
+and the lock still hold (`note: 1 file in lib/ is outside the declared footprint …`, the file,
+then `` `rm <file> && cyrius deps --lock` drops one from lib/ and cyrius.lock ``). Nothing is
+written or deleted for it; a `lib/` that holds the whole pinned snapshot (`cyrius lib sync
+--full`) is not told, and neither is `-q`.
+
 **`--locked`: the CI check (6.7.6).** `cyrius deps --locked` — and `cyrius build --locked`, every
 resolving verb, or `CYRIUS_LOCKED=1` — resolves the TAGS into a private scratch, verifies every
 commit pin against its clone, compares the would-be `lib/` and `cyrius.lock` with the committed

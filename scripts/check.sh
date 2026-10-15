@@ -2284,6 +2284,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/api_surface_variadic_arity.sh"
 # `--aarch64 --target=js` an aarch64 ELF named .js after reading stdin); the consistent pair
 # `--aarch64 --target=aarch64-bare-metal-elf` builds as the --target alone; each single unchanged.
 _chk_gate "$ROOT/tests/gates/toolchain/target_selectors_exclusive.sh"
+# 6.7.12 — `cyrius deps` names each lib/ file it did not vendor (a leaf dropped from [deps] stdlib, a
+# dropped dep's module): they stayed vendored and locked and nothing said so. Notice only — lib/ and
+# cyrius.lock unchanged; silent for a `lib sync --full` lib/ and under -q.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_out_of_closure_named.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

@@ -243,7 +243,10 @@ fn _dep_copy_file(src, dst): i64 {
     var src_sz = _file_size(src);
     var dst_sz = _file_size(dst);
     if (src_sz > 0 && src_sz == dst_sz) {
-        if (_files_identical(src, dst) == 1) { return 2; }
+        if (_files_identical(src, dst) == 1) {
+            if (_dep_closure != 0) { vec_push(_dep_closure, dst); }   # 6.7.12: vendored (unchanged)
+            return 2;
+        }
     }
     # the dep modules path-escape bug: reject dep writes outside lib/ (path traversal)
     var di = 0;
@@ -340,6 +343,7 @@ fn _dep_copy_file(src, dst): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
+    if (_dep_closure != 0) { vec_push(_dep_closure, dst); }   # 6.7.12: vendored (written)
     return 0;
 }
 
@@ -3961,6 +3965,7 @@ fn cmd_deps(): i64 {
     _dep_includes = vec_new();
     _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
     _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
+    _dep_closure = vec_new();        # 6.7.12: every path this resolve vendors (_dep_copy_file)
     # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
@@ -4255,6 +4260,7 @@ fn _deps_finish(errors, copied, locked_root): i64 {
             }
         }
     }
+    if (errors == 0) { _dep_say_out_of_closure(); }   # 6.7.12: lib/ files no resolve vendors
     # ⛔ v6.5.37 (A1) — CLAMP. This returned the raw error COUNT, which becomes the process
     # exit status, and a wait status carries only the low 8 bits. Measured at 6.5.36:
     #     1 bad leaf -> exit 1     255 -> exit 255     256 -> exit 0     512 -> exit 0
@@ -4263,6 +4269,82 @@ fn _deps_finish(errors, copied, locked_root): i64 {
     # at all — the more wrong it was, the likelier it looked clean. Exit status is a
     # boolean channel; the count belongs in the message, which it already is.
     if (errors > 0) { return 1; }
+    return 0;
+}
+
+# 6.7.12 — lib/'s `.cyr` files (the lock walker's list, sorted) that THIS resolve did not vendor:
+# outside `_dep_closure`, the footprint the manifest declares. CHANGELOG [6.7.12]
+fn _dep_out_of_closure(): i64 {
+    var out = vec_new();
+    var files = _deps_lock_files("lib");
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        i = i + 1;
+        if (_dep_path_in(_dep_closure, f) == 0) { vec_push(out, f); }
+    }
+    return out;
+}
+
+# 6.7.12 — the stdlib snapshot this resolve reads (`_dep_find_stdlib_dir`'s pinned, else installed,
+# tree), or 0 when there is none. Never its exit on an uninstalled pin: a project whose deps are
+# all named resolves without one. Never `./lib`: that is the tree being compared. CHANGELOG [6.7.12]
+fn _dep_snapshot_dir(): i64 {
+    var pin = _dep_read_cyml_cyrius_field();
+    var d = make_path(_home, "lib");
+    if (pin != 0) { d = _cat2(_cat2(_home, "/versions/"), _cat2(pin, "/lib")); }
+    if (_dep_dir_has_stdlib(d) == 1) { return d; }
+    return 0;
+}
+
+# 6.7.12 — 1 when lib/ holds every `.cyr` of snapshot `snap` at its own path: a project that
+# vendors the whole snapshot (`lib sync --full`), and so holds files outside its closure on
+# purpose. CHANGELOG [6.7.12]
+fn _dep_lib_holds_snapshot(snap): i64 {
+    var sf = _deps_lock_files(snap);
+    if (vec_len(sf) == 0) { return 0; }
+    var sl = strlen(snap);
+    var i = 0;
+    while (i < vec_len(sf)) {
+        if (file_exists(_cat2("lib", vec_get(sf, i) + sl)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# ⭐ 6.7.12 — NAME the lib/ files this resolve did not vendor. A resolve copies the declared
+# closure into lib/ and the lock covers ALL of lib/, but nothing ever removes a file: a leaf
+# dropped from `[deps] stdlib` (or a named dep dropped from the manifest) stayed vendored and
+# locked, `deps --verify` agreed, and nothing said so — the tree and the lock overstated the
+# footprint until `rm -rf lib/ && cyrius deps`. Each such file is now named on stderr after a
+# successful default resolve, with the way to drop it. Nothing is written or deleted. Silent when
+# lib/ holds the whole pinned snapshot (a `lib sync --full` project vendors those on purpose), in
+# the cyrius source repo (lib/ is authored) and under `-q`. CHANGELOG [6.7.12]
+fn _dep_say_out_of_closure(): i64 {
+    if (_dep_closure == 0 || _quiet == 1 || _dep_lock_active == 0) { return 0; }
+    if (_dep_writes_lib() == 0) { return 0; }
+    var off = _dep_out_of_closure();
+    var k = vec_len(off);
+    if (k == 0) { return 0; }
+    var snap = _dep_snapshot_dir();
+    if (snap != 0 && _dep_lib_holds_snapshot(snap) == 1) { return 0; }
+    if (k == 1) {
+        _ew("note: 1 file in lib/ is outside the declared footprint");
+        _ew(" — this resolve did not vendor it, and lib/ and cyrius.lock keep it:\n");
+    } else {
+        _ew("note: ");
+        fmt_int_fd(STDERR_FD, k);
+        _ew(" files in lib/ are outside the declared footprint");
+        _ew(" — this resolve did not vendor them, and lib/ and cyrius.lock keep them:\n");
+    }
+    var i = 0;
+    while (i < k) {
+        _ew("  ");
+        _ew_shown(vec_get(off, i));
+        _ew("\n");
+        i = i + 1;
+    }
+    _ew("  `rm <file> && cyrius deps --lock` drops one from lib/ and cyrius.lock\n");
     return 0;
 }
 

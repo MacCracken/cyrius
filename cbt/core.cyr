@@ -109,6 +109,11 @@ var _dep_lock_soft = 0;
 var _dep_lock_only = 0;
 # The verb the stdlib-leaf guard's refusal names in its `--relock` advice.
 var _dep_lock_guard_verb = "deps";
+# 6.7.12 — vec<cstr> of every path THIS resolve vendored (written, or already byte-identical),
+# recorded at the one write choke point (cbt/deps.cyr _dep_copy_file) so no resolve phase is left
+# out: stdlib leaves and their includes, the test scope's leaves, every named dep's modules. 0
+# outside cmd_deps. lib/ is read against it (_dep_out_of_closure). CHANGELOG [6.7.12]
+var _dep_closure = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
