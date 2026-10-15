@@ -1418,15 +1418,17 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # on stderr: no prototype, rc 1 (never guessed). Field widths are the compiler's (FIELDSZ /
 # STRUCTSZ, src/frontend/parse_types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
 # per element, a dyn 16, a nested struct its size, a union its widest field, every other field 8
-# (a `Str` / `Vec` FIELD is its 8-byte handle). header_spellings_and_size.sh H8 holds them to
-# `sizeof` compiled by cycc, H11 the x86_64 registers to a linked C caller. CHANGELOG [6.7.11]
+# (a `Str` FIELD and a `Vec<T>` FIELD are their 8-byte handle; a bare `Vec` FIELD is the file's
+# own `struct Vec` when one is declared above it, else the 8-byte handle).
+# header_spellings_and_size.sh H8 holds them to `sizeof` compiled by cycc, H11 the x86_64
+# registers to a linked C caller. CHANGELOG [6.7.11]
 # ================================================================
 # The file's depth-0 struct / union / enum names: a vec of records, `_HDR_REC` words each —
 #   +0 name offset, +8 name length, +16 kind (1 struct, 2 union, 3 enum), +24 the body's `{` (-1
 #   none), +32 1 = generic (`struct B<T>`), +40 the size memo (-1 unsized, -2 being sized, -3
 #   unsizable), +48 how many times the name is declared, +56 why it is unsizable, +64 / +72 the
-#   offending type text.
-var _HDR_REC = 80;
+#   offending type text, +80 1 = an enum declared `: stack` (6.7.12).
+var _HDR_REC = 88;
 var _hdr_decls = 0;
 var _hdr_why = 0;        # why the last sizing failed, and the type text it failed at
 var _hdr_why_s = 0;
@@ -1513,10 +1515,18 @@ fn _hdr_decl_line(b, len, ls, le, kw, klen, kind): i64 {
     store64(r + 40, 0 - 1);
     store64(r + 48, 1);
     store64(r + 56, 0);
+    store64(r + 80, 0);
     var q = _hdr_ws_nl(b, ne, len);
     if (q < len && load8(b + q) == 60) {
         store64(r + 32, 1);
         q = _hdr_ws_nl(b, _hdr_skip_targs(b, q, len), len);
+    }
+    # 6.7.12 — `enum E: stack {` (the value form: a payload variant returns a (tag, payload) pair).
+    if (kind == 3 && q < len && load8(b + q) == 58) {
+        var sw = _hdr_ws_nl(b, q + 1, len);
+        var se = _src_ident_end(b, sw, len);
+        if (_hdr_is(b, sw, se - sw, "stack", 5) == 1) { store64(r + 80, 1); }
+        q = _hdr_ws_nl(b, se, len);
     }
     if (q < len && load8(b + q) == 123) { store64(r + 24, q); }
     vec_push(_hdr_decls, r);
@@ -1577,6 +1587,16 @@ fn _hdr_name_w(b, p, n): i64 {
     if (_hdr_is(b, p, n, "Tagged", 6) == 1) { return 8; }
     return 0;
 }
+# 1 iff buf[p, p+n) is `Result`, `Option` or `Tagged`: as a RETURN, the stdlib's value form — a
+# `: stack` enum's (tag, payload) pair (lib/result.cyr, lib/tagged.cyr; as a field each is its
+# 8-byte word, _hdr_name_w). CHANGELOG [6.7.12]
+fn _hdr_stack_name(b, p, n): i64 {
+    if (_hdr_is(b, p, n, "Result", 6) == 1) { return 1; }
+    if (_hdr_is(b, p, n, "Option", 6) == 1) { return 1; }
+    if (_hdr_is(b, p, n, "Tagged", 6) == 1) { return 1; }
+    return 0;
+}
+
 # i8 / i16 / i32 / i64, which the compiler reads before any struct of that name.
 fn _hdr_int_w(b, p, n): i64 {
     if (_hdr_is(b, p, n, "i8", 2) == 1) { return 1; }
@@ -1586,9 +1606,11 @@ fn _hdr_int_w(b, p, n): i64 {
     return 0;
 }
 
-# 1 iff buf[p, p+n) names a SIMD vector type. A vector return is not modelled here (it travels in
-# vector registers, or a PE result pointer, by width and target): it keeps the pre-6.7.11 word —
-# issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md.
+# 1 iff buf[p, p+n) names a SIMD vector type (the twelve: 128-bit and 256-bit). A vector return is
+# refused by name (6.7.12, D24): no C11 return type carries one — a C vector type is a compiler
+# extension or an intrinsics header, which the header's own -std=c11 -pedantic-errors rows refuse
+# — and cycc's convention differs from C's by width and target (a PE result pointer; two registers
+# for a 32-byte vector). It printed `cyr_val`, which C reads from rax / x0. CHANGELOG [6.7.12]
 fn _hdr_vec_name(b, p, n): i64 {
     if (n != 5) { return 0; }
     var v = "f64v2f64v4f32v4f32v8i32v4u32v4i16v8u16v8i64v2u64v2i8v16u8v16";
@@ -1742,7 +1764,8 @@ fn _hdr_rec_size(b, len, r, depth): i64 {
 
 # The return class of the type at buf[p] (just past the return's `:`), as `_ret_agg_class`:
 # 0 a word, 1 the rax:rdx / x0:x1 pair, 2 through the hidden pointer (`_hdr_rsz` its size), 3 two
-# values (rax:rdx / x0:x2), -1 refused (_hdr_why). Sets _hdr_rts / _hdr_rte to the type's text.
+# values (rax:rdx / x0:x2), 4 a `: stack` enum's (tag, payload) pair (rax:rdx / x0:x2 — 6.7.12),
+# -1 refused (_hdr_why). Sets _hdr_rts / _hdr_rte to the type's text.
 fn _hdr_ret_class(b, len, p): i64 {
     p = _hdr_ws_nl(b, p, len);
     _hdr_rts = p;
@@ -1779,7 +1802,10 @@ fn _hdr_ret_class(b, len, p): i64 {
     var str = _hdr_is(b, p, n, "Str", 3);
     var r = _hdr_decl_find(b, p, n);
     if (r != 0) {
-        if (load64(r + 16) == 3) { return 0; }             # an enum: a word
+        if (load64(r + 16) == 3) {
+            if (load64(r + 80) == 1) { _hdr_rsz = 16; return 4; }   # a `: stack` enum: the pair
+            return 0;                                      # a plain enum: a word
+        }
         var sz = _hdr_rec_size(b, len, r, 0);
         if (sz < 0) { return 0 - 1; }
         _hdr_rsz = sz;
@@ -1789,8 +1815,11 @@ fn _hdr_ret_class(b, len, p): i64 {
     }
     if (str == 1) { return 0; }                            # lib/str.cyr's: a 16-byte handle, a word
     if (_hdr_int_w(b, p, n) > 0) { return 0; }
+    if (_hdr_stack_name(b, p, n) == 1) { _hdr_rsz = 16; return 4; }   # 6.7.12: the stdlib's pair
     if (_hdr_name_w(b, p, n) > 0) { return 0; }
-    if (_hdr_vec_name(b, p, n) == 1) { return 0; }
+    if (_hdr_vec_name(b, p, n) == 1) {
+        return _hdr_fail("a SIMD vector return, which no C11 return type carries", p, ie);
+    }
     return _hdr_fail("a type not declared in this file, which this scanner cannot size", p, ie);
 }
 
@@ -1834,17 +1863,18 @@ fn _hdr_pair_typedef(): i64 {
     println("#ifndef _WIN64");
     println("/* A struct of 9-16 bytes and a `dyn Tr` come back in TWO registers, rax:rdx (SysV) /");
     println("   x0:x1 (AAPCS64), as C returns a struct of two int64 words; Win64 C returns one through");
-    println("   a hidden pointer, so those fns have no prototype there. A two-value return is rax:rdx");
-    println("   on x86_64 but x0:x2 on aarch64: its prototype is x86_64 SysV only. */");
+    println("   a hidden pointer, so those fns have no prototype there. A two-value return, and a");
+    println("   `: stack` enum's (Result, Option) tag in w0 and payload in w1, are rax:rdx on x86_64");
+    println("   but x0:x2 on aarch64: their prototypes are x86_64 SysV only. */");
     println("typedef struct { int64_t w0, w1; } cyr_val2;");
     println("#endif");
     return 0;
 }
 
 # The guard a two-register prototype sits under: the pair (rk 1) everywhere but Win64, two values
-# (rk 3) on x86_64 SysV alone (aarch64 lands them in x0:x2).
+# (rk 3) and a `: stack` enum's pair (rk 4) on x86_64 SysV alone (aarch64 lands them in x0:x2).
 fn _hdr_guard_open(rk): i64 {
-    if (rk == 3) { println("#if defined(__x86_64__) && !defined(_WIN64)"); }
+    if (rk == 3 || rk == 4) { println("#if defined(__x86_64__) && !defined(_WIN64)"); }
     else { println("#ifndef _WIN64"); }
     return 0;
 }
@@ -1870,10 +1900,16 @@ fn _hdr_words_typedef(nw): i64 {
     return 0;
 }
 
-# The trailing comment of a pair / hidden-pointer prototype: `/* returns T, N B */`.
+# The trailing comment of a pair / hidden-pointer prototype: `/* returns T, N B */` (a `: stack`
+# enum's: `/* returns Result: the tag in w0, the payload in w1 */`).
 fn _hdr_ret_note(b, rk): i64 {
     sys_write(STDOUT_FD, "   /* returns ", 14);
     sys_write(STDOUT_FD, b + _hdr_rts, _hdr_rte - _hdr_rts);
+    if (rk == 4) {
+        var tw = ": the tag in w0, the payload in w1 */";
+        sys_write(STDOUT_FD, tw, strlen(tw));
+        return 0;
+    }
     sys_write(STDOUT_FD, ", ", 2);
     fmt_int(_hdr_rsz);
     sys_write(STDOUT_FD, " B", 2);
@@ -1892,17 +1928,266 @@ fn _hdr_guard_else(b, ns, nl, rk): i64 {
     sys_write(STDOUT_FD, "/* ", 3);
     sys_write(STDOUT_FD, b + ns, nl);
     var t = ": no prototype on Win64 -- cycc returns its ";
-    if (rk == 3) { t = ": no prototype here -- cycc returns its "; }
+    if (rk == 3 || rk == 4) { t = ": no prototype here -- cycc returns its "; }
     sys_write(STDOUT_FD, t, strlen(t));
     sys_write(STDOUT_FD, b + _hdr_rts, _hdr_rte - _hdr_rts);
     t = " in rax:rdx, where a Win64 C caller passes a hidden result pointer */";
     if (rk == 3) {
         t = " in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64 (C passes a hidden result pointer) */";
     }
+    if (rk == 4) {
+        var t4 = " (tag, payload) in x0:x2 on aarch64 (AAPCS64 C reads x0:x1),";
+        sys_write(STDOUT_FD, t4, strlen(t4));
+        t = " in rax:rdx on Win64 (C passes a hidden result pointer) */";
+    }
     sys_write(STDOUT_FD, t, strlen(t));
     sys_write(STDOUT_FD, "\n", 1);
     println("#endif");
     return 0;
+}
+
+# ================================================================
+# 6.7.12 — A `: stack` ENUM RETURN (D23, the user, 2026-10-15). A `: stack` enum's payload
+# constructor (lib/result.cyr's Ok / Err, lib/tagged.cyr's Some / Left / Right, a file's own
+# `enum E: stack { V(x); }`) returns a (tag, payload) PAIR — rax:rdx on x86_64, x0:x2 on aarch64
+# (measured on pi and ecb: x1 is 0, x2 the payload), rax:rdx on Win64 — and so does every fn
+# that returns one (`return Ok(x);`), or returns a call of such a fn (GFLG 256, the compiler's
+# propagation, src/frontend/parse.cyr _pair_body_scan). An annotated `: Result` / `: Option` /
+# `: Tagged` (or own stack enum) return is modelled as cyr_val2 (class 4, x86_64 SysV only);
+# a fn whose signature says a word (none, or `: i64`) but whose body returns the pair is
+# REFUSED by name — a source scanner cannot see a propagated pair from the signature, so it says
+# so rather than print `cyr_val`. The propagation is a file-local fixpoint: the stack payload
+# constructors (the stdlib's unless the file declares that name itself, the file's own), every
+# fn classed 4, then each word-classed fn whose body has `return NAME(` / `return NAME<..>(` of
+# one of them, to no change. A closure's body and a nested fn are skipped (their returns are
+# their own). Not seen: a pair reached through another file's fn, or a method.
+# ================================================================
+var _hdr_pairs = 0;     # _src_ids set: the names whose call returns a stack enum's pair
+# _hdr_fns: the file's depth-0 fns, _HDR_FN bytes each — +0 name off, +8 len, +16 body `{` (-1
+# none), +24 its `}`, +32 return class, +40 / +48 the pair call that makes it pair-returning
+# (len 0: none).
+var _hdr_fns = 0;
+var _HDR_FN = 56;
+
+# The offset of the matching `}` of the `{` at b[p] in the blanked buffer, or len.
+fn _hdr_block_end(b, len, p): i64 {
+    var d = 0;
+    while (p < len) {
+        var c = load8(b + p);
+        if (c == 123) { d = d + 1; }
+        elif (c == 125) {
+            d = d - 1;
+            if (d == 0) { return p; }
+        }
+        p = p + 1;
+    }
+    return len;
+}
+
+# The body `{` of the fn whose parameter list starts at b[ps]: the first `{` after the list's own
+# `)` (the return type has none), or -1 when a `;` comes first (a declaration).
+fn _hdr_body_open(b, len, ps): i64 {
+    var p = _hdr_close(b, ps, len, 0);
+    while (p < len) {
+        var c = load8(b + p);
+        if (c == 123) { return p; }
+        if (c == 59) { return 0 - 1; }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 iff the last non-blank byte before b[p] is a `|`: the `{` there opens a closure's body.
+fn _hdr_after_pipe(b, p): i64 {
+    var q = p - 1;
+    while (q >= 0) {
+        var c = load8(b + q);
+        if (c != 32 && c != 9 && c != 10 && c != 13) { return c == 124; }
+        q = q - 1;
+    }
+    return 0;
+}
+
+# The pair call a fn body b(open, close) returns — `return NAME(` / `return NAME<..>(` with NAME
+# in _hdr_pairs — as its name's offset (its length in _hdr_via_n), or -1. A closure's body and a
+# nested fn are stepped over.
+var _hdr_via_n = 0;
+fn _hdr_body_pair(b, open, close): i64 {
+    var p = open + 1;
+    while (p < close) {
+        var c = load8(b + p);
+        if (c == 123 && _hdr_after_pipe(b, p) == 1) { p = _hdr_block_end(b, close, p) + 1; }
+        elif (_src_ident_char(c) == 1 && (c < 48 || c > 57)) {
+            var e = _src_ident_end(b, p, close);
+            var lead = 1;
+            if (p > 0) {
+                var pc = load8(b + p - 1);
+                if (_src_ident_char(pc) == 1 || pc == 46) { lead = 0; }
+            }
+            if (lead == 1 && _hdr_is(b, p, e - p, "fn", 2) == 1) {
+                var q = e;
+                while (q < close && load8(b + q) != 123 && load8(b + q) != 59) { q = q + 1; }
+                if (q < close && load8(b + q) == 123) { e = _hdr_block_end(b, close, q) + 1; }
+                else { e = q; }
+            } elif (lead == 1 && _hdr_is(b, p, e - p, "return", 6) == 1) {
+                var ns = _hdr_ws_nl(b, e, close);
+                var ne = _src_ident_end(b, ns, close);
+                if (ne > ns) {
+                    var r = _hdr_ws_nl(b, ne, close);
+                    if (r < close && load8(b + r) == 60) { r = _hdr_ws_nl(b, _hdr_skip_targs(b, r, close), close); }
+                    if (r < close && load8(b + r) == 40) {
+                        if (_src_ids_has(_hdr_pairs, b + ns, ne - ns) == 1) {
+                            _hdr_via_n = ne - ns;
+                            return ns;
+                        }
+                    }
+                }
+            }
+            p = e;
+        }
+        else { p = p + 1; }
+    }
+    return 0 - 1;
+}
+
+# Add the payload variants of the `: stack` enum record `r` to _hdr_pairs (a member with a
+# non-empty `(..)`; a nullary `None()` returns its tag alone), and every member of any enum to
+# `own`, the names the file declares itself.
+fn _hdr_enum_members(b, len, r, own): i64 {
+    var p = load64(r + 24);
+    if (p < 0) { return 0; }
+    var close = _hdr_block_end(b, len, p);
+    p = p + 1;
+    var want = 1;
+    while (p < close) {
+        var c = load8(b + p);
+        if (c == 59 || c == 44) { want = 1; p = p + 1; }
+        elif (want == 1 && _src_ident_char(c) == 1 && (c < 48 || c > 57)) {
+            var e = _src_ident_end(b, p, close);
+            _src_ids_add(own, b + p, e - p);
+            var q = _hdr_ws_nl(b, e, close);
+            if (q < close && load8(b + q) == 40) {
+                var qe = _hdr_close(b, q + 1, close, 0);
+                var inner = _hdr_ws_nl(b, q + 1, qe);
+                if (load64(r + 80) == 1 && inner < qe) { _src_ids_add(_hdr_pairs, b + p, e - p); }
+                e = qe;
+            }
+            want = 0;
+            p = e;
+        }
+        else {
+            if (c != 32 && c != 9 && c != 10 && c != 13) { want = 0; }
+            p = p + 1;
+        }
+    }
+    return 0;
+}
+
+# The pre-pass: every depth-0 fn of the (blanked) file, its body and return class; the pair
+# names; then the propagation to a fixpoint (each fn it reaches records the call it returns).
+fn _hdr_pair_scan(b, len): i64 {
+    _hdr_fns = vec_new();
+    _hdr_pairs = _src_ids_new(len);
+    var own = _src_ids_new(len);
+    var pos = 0;
+    var depth = 0;
+    while (pos < len) {
+        var le = pos;
+        while (le < len) { if (load8(b + le) == 10) { break; } le = le + 1; }
+        if (depth == 0) {
+            var ns = _src_decl_at(b, pos, le);
+            if (ns >= 0) {
+                var nl = _src_ident_end(b, ns, le) - ns;
+                var op = _src_skip_ws(b, ns + nl, le);
+                # a generic fn gets no prototype, but a call of it is a pair like any other
+                if (op < le && load8(b + op) == 60) { op = _src_skip_ws(b, _hdr_skip_targs(b, op, le), le); }
+                if (op < le && load8(b + op) == 40) {
+                    var f = alloc(_HDR_FN);
+                    store64(f, ns);
+                    store64(f + 8, nl);
+                    var bo = _hdr_body_open(b, len, op + 1);
+                    store64(f + 16, bo);
+                    store64(f + 24, len);
+                    if (bo >= 0) { store64(f + 24, _hdr_block_end(b, len, bo)); }
+                    store64(f + 32, _hdr_ret_of(b, len, op + 1));
+                    store64(f + 40, 0);
+                    store64(f + 48, 0);
+                    vec_push(_hdr_fns, f);
+                    _src_ids_add(own, b + ns, nl);
+                }
+            }
+        }
+        depth = depth + _src_brace_delta(b, pos, le);
+        if (depth < 0) { depth = 0; }
+        pos = le + 1;
+    }
+    var i = 0;
+    while (i < vec_len(_hdr_decls)) {
+        var r = vec_get(_hdr_decls, i);
+        if (load64(r + 16) == 3) { _hdr_enum_members(b, len, r, own); }
+        i = i + 1;
+    }
+    var std = "Ok Err Some Left Right ";   # lib/result.cyr's, lib/tagged.cyr's payload constructors
+    var sp = 0;
+    while (load8(std + sp) != 0) {
+        var se = sp;
+        while (load8(std + se) != 32) { se = se + 1; }
+        if (_src_ids_has(own, std + sp, se - sp) == 0) { _src_ids_add(_hdr_pairs, std + sp, se - sp); }
+        sp = se + 1;
+    }
+    i = 0;
+    while (i < vec_len(_hdr_fns)) {
+        var f4 = vec_get(_hdr_fns, i);
+        if (load64(f4 + 32) == 4) { _src_ids_add(_hdr_pairs, b + load64(f4), load64(f4 + 8)); }
+        i = i + 1;
+    }
+    var changed = 1;
+    while (changed == 1) {
+        changed = 0;
+        i = 0;
+        while (i < vec_len(_hdr_fns)) {
+            var g = vec_get(_hdr_fns, i);
+            if (load64(g + 32) == 0 && load64(g + 48) == 0 && load64(g + 16) >= 0) {
+                var via = _hdr_body_pair(b, load64(g + 16), load64(g + 24));
+                if (via >= 0) {
+                    store64(g + 40, via);
+                    store64(g + 48, _hdr_via_n);
+                    _src_ids_add(_hdr_pairs, b + load64(g), load64(g + 8));
+                    changed = 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+# The depth-0 fn record named b[ns, ns+nl) that the propagation reached, or 0.
+fn _hdr_prop_of(b, ns, nl): i64 {
+    var i = 0;
+    while (i < vec_len(_hdr_fns)) {
+        var f = vec_get(_hdr_fns, i);
+        if (load64(f) == ns && load64(f + 8) == nl) {
+            if (load64(f + 48) > 0) { return f; }
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Name a refused propagated-pair fn on stderr: the call that makes it one. 1.
+fn _hdr_refuse_prop(b, f): i64 {
+    sys_write(STDERR_FD, "error: cyrius header: '", 23);
+    sys_write(STDERR_FD, b + load64(f), load64(f + 8));
+    var t = "' returns a `: stack` enum's (tag, payload) pair through '";
+    sys_write(STDERR_FD, t, strlen(t));
+    sys_write(STDERR_FD, b + load64(f + 40), load64(f + 48));
+    t = "(..)', which its signature does not declare (cycc returns it in rax:rdx, aarch64 x0:x2); ";
+    sys_write(STDERR_FD, t, strlen(t));
+    t = "declare it `: Result`, `: Option` or `: Tagged`; no prototype written\n";
+    sys_write(STDERR_FD, t, strlen(t));
+    return 1;
 }
 
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
@@ -1932,6 +2217,7 @@ fn cmd_header(arg): i64 {
     _src_blank_noncode(hbuf, hn);
     var fpriv = _src_file_private(hbuf, hn);
     _hdr_scan_decls(hbuf, hn);               # 6.7.11: the structs a return type may name
+    _hdr_pair_scan(hbuf, hn);                # 6.7.12: the fns that return a stack enum's pair
     _hdr_pair_done = 0;
     _hdr_words_done = 0;
     var refused = 0;
@@ -1984,7 +2270,15 @@ fn cmd_header(arg): i64 {
             refused = refused + _hdr_refuse(hbuf, fname_start, fname_len);
             continue;
         }
-        if (rk == 1 || rk == 3) {
+        # 6.7.12 (D23) — a word signature over a body that returns a stack enum's pair: refused.
+        if (rk == 0) {
+            var pf = _hdr_prop_of(hbuf, fname_start, fname_len);
+            if (pf != 0) {
+                refused = refused + _hdr_refuse_prop(hbuf, pf);
+                continue;
+            }
+        }
+        if (rk == 1 || rk == 3 || rk == 4) {
             _hdr_pair_typedef();
             _hdr_guard_open(rk);
             sys_write(STDOUT_FD, "cyr_val2 ", 9);
@@ -2048,7 +2342,7 @@ fn cmd_header(arg): i64 {
         else { sys_write(STDOUT_FD, ");", 2); }
         if (rk > 0) { _hdr_ret_note(hbuf, rk); }
         sys_write(STDOUT_FD, "\n", 1);
-        if (rk == 1 || rk == 3) { _hdr_guard_else(hbuf, fname_start, fname_len, rk); }
+        if (rk == 1 || rk == 3 || rk == 4) { _hdr_guard_else(hbuf, fname_start, fname_len, rk); }
     }
 
     println("");

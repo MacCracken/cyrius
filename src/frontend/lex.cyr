@@ -544,6 +544,15 @@ fn _init_cyrius_lib(): i64 {
     _check_cyml_pin_drift();
     return 1;
     #endif
+    # 6.7.12 (D5): the macOS and Windows compilers have no fallback slot to choose, but the
+    # drift check (warn; fail under CYRIUS_STRICT_PIN) is the pin contract on EVERY host —
+    # `--strict-pin` built green on a drifted pin there, rc 0, no message. CHANGELOG [6.7.12]
+    #ifdef CYRIUS_TARGET_MACOS
+    _check_cyml_pin_drift();
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    _check_cyml_pin_drift();
+    #endif
     return 0;
 }
 
@@ -562,12 +571,10 @@ fn _init_cyrius_lib(): i64 {
 # that one walker again (a value over 255 B is refused there, and is not "1" anyway).
 # CHANGELOG [6.6.20]
 fn _env_var_is_1(name): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
     var v = _read_env(name);
     if (v != 0) {
         if (load8(v) == 49) { if (load8(v + 1) == 0) { return 1; } }
     }
-    #endif
     return 0;
 }
 
@@ -583,13 +590,19 @@ fn _env_var_is_1(name): i64 {
 # the drift regardless of wrapper-rebuild state. Wrapper-side
 # fixes (--strict-pin CLI flag, --version manifest-pin line,
 # cyrius lib sync, install.sh rebuild fix) land in v5.11.58.
+# 6.7.12 (D5): no longer Linux-only — every host's compiler calls it (`_init_cyrius_lib`); the
+# raw open / read / close / write / exit below are routed on both Macs and rerouted on PE, and
+# `_read_env` has a macOS and a PE arm. CHANGELOG [6.7.12]
 fn _check_cyml_pin_drift(): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
     var _pd_no = "CYRIUS_NO_WARN_PIN_DRIFT";
     if (_env_var_is_1(_pd_no) == 1) { return 0; }
     var _pd_fd = 0;
     if (SYS_OPEN == 2) { _pd_fd = syscall(SYS_OPEN, "cyrius.cyml", 0, 0); }
+    # The openat arm is dead in a PE compiler (SYS_OPEN = 2) and a 4-argument open is no PE
+    # route — compiled out there, as READFILE's are (no "not routed" warning). CHANGELOG [6.7.12]
+    #ifndef CYRIUS_TARGET_WIN
     else { _pd_fd = syscall(SYS_OPEN, 0 - 100, "cyrius.cyml", 0, 0); }
+    #endif
     if (_pd_fd < 0) { return 0; }
     var _pd_buf[32768];
     var _pd_clen = syscall(0, _pd_fd, &_pd_buf, 32767);
@@ -698,7 +711,6 @@ fn _check_cyml_pin_drift(): i64 {
     syscall(1, 2, " but cycc is ", 13);
     syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
     syscall(1, 2, " — toolchain drift (snapshot may be stale; set CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n", 88);
-    #endif
     return 0;
 }
 

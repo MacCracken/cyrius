@@ -472,16 +472,18 @@ _chk_reap_stale_homes() {
 _chk_reap_stale_homes
 
 # ── 6.6.20: the CLI's own temp dirs, left by a process that died without cleaning up ──
-# `cyrius` makes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` and removes it on a NORMAL exit only
-# (`_cbt_tmpdir_cleanup`, cbt/build.cyr). A signal death skips that — SIGPIPE from
-# `cyrius … | head` leaves an EMPTY dir, SIGKILL leaves `test_bin` / `cc_err` — and the
+# `cyrius` makes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` and removes it on a NORMAL exit
+# (`_cbt_tmpdir_cleanup`, cbt/build.cyr) and, since 6.7.12, on SIGTERM / SIGINT / SIGHUP (the kill
+# handler, cbt/sigclean.cyr, which unlinks the in-flight compile's scratch first). Any other signal
+# death skips that — SIGPIPE from `cyrius … | head` leaves an EMPTY dir, SIGKILL leaves
+# `test_bin` / `cc_err` — and the
 # installed 6.6.0–6.6.5 CLIs never cleaned up at all, so the dirs pile up by the hundred.
 # The same rule as the homes above: by AGE ($CYRIUS_CHECK_REAP_MINS) and by OWNERSHIP (the
 # pid in the NAME is dead to both `kill -0` and `ps -p` — a pid we cannot signal is not
 # dead), never by count; only names of exactly that shape, only dirs this user owns.
 # Best-effort: a reap that fails never fails the run. CHANGELOG [6.6.20]
 # ⛔ AND BY CONTENTS (6.7.11, user 2026-10-13). This was `rmdir` only, so a run killed mid-compile
-# kept its dir for ever: the in-flight compile's `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (on
+# (by any signal until 6.7.12's handler; by SIGKILL still) kept its dir for ever: the in-flight compile's `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (on
 # 2026-10-13, 485 dead-pid dirs in /tmp held only such names; 3 held test_bin + test_out — the
 # CLI's failure paths already unlink, so these are kills). A dir is removed WHOLE when every entry is a
 # regular file named in the CLI's scratch vocabulary below; anything else — `test_bin` (a
@@ -1941,6 +1943,18 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 # definition past the cut answered null) and refuses a document over 64 MiB by name.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 
+# 6.7.12 — cyrius-lsp publishes each diagnostic at cycc's column (the column out of the message),
+# on the URI of the file it names (an included file's error is not pinned to the open file's
+# line), clears a file a recompile no longer names, compiles every cyrius extension, and in a
+# project checks the open file itself (`cyrius check --with-deps --no-redirect`; a toolchain
+# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows.
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
+
+# 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a
+# count of 8+ digits fused with the one before: `0 110000000`), and splits words on all six C
+# `isspace` bytes (VT and FF joined words). No gate ran the demos before.
+_chk_gate "$ROOT/tests/gates/toolchain/wc_demo_columns.sh"
+
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
 # Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
 # matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
@@ -2281,6 +2295,50 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # cyriusly only, refusing by name otherwise, and every store writer ships that twin (axes 7, 9:
 # install.sh's tarball and refresh-only paths run hermetically, in throwaway homes).
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
+# 6.7.12 — the compiled `cyriusly setup` refuses by name without build/cycc (bootstrap.sh builds no
+# cycc: it ran 15 compiles against the missing compiler and left 15 zero-byte tools), builds no
+# cross_bins (its `cc5_` loop never matched; install.sh owns them), and installs the default build
+# whatever compile-mode switch the shell holds (an inherited CYRIUS_BOUNDS=1 installed a bounds
+# cyrfmt). A git-archive copy, throwaway HOME / CYRIUS_HOME.
+_chk_gate "$ROOT/tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh"
+# 6.7.12 — `cyrius package` refuses a missing [build] entry by name (rc 1, `error: no such file:
+# <entry>`, no build/ created): it skipped the compile, printed `package ready: build/<out>` and
+# exited 0 with no artifact. A real entry builds byte-identical to `cyrius build`.
+_chk_gate "$ROOT/tests/gates/toolchain/package_missing_entry.sh"
+# 6.7.12 — cyrius_type_audit counts a generic fn (`fn g<T>(..)`): it required `(` right after the
+# name, so a public generic fn was missing from the counts and the unannotated list. The filed
+# repro (2/2) and the shapes (bounded, nested-generic parameter, blanks around `<..>`).
+_chk_gate "$ROOT/tests/gates/toolchain/type_audit_generic_fns.sh"
+# 6.7.12 (D22) — cyrius api-surface writes a variadic fn as `name/MIN-` (va/1-, zv/0-): the `...`
+# tail counted as a parameter (va/2, zv/1), so a variadic fn read as a fixed one of that count.
+_chk_gate "$ROOT/tests/gates/toolchain/api_surface_variadic_arity.sh"
+# 6.7.12 (D20) — ONE emit target per run: two of --aarch64 / --win / --agnos / --target=<v> are refused
+# by name before anything resolves or compiles (`--win --aarch64` built the aarch64 ELF at rc 0,
+# `--aarch64 --target=js` an aarch64 ELF named .js after reading stdin); the consistent pair
+# `--aarch64 --target=aarch64-bare-metal-elf` builds as the --target alone; each single unchanged.
+_chk_gate "$ROOT/tests/gates/toolchain/target_selectors_exclusive.sh"
+# 6.7.12 — `cyrius deps` names each lib/ file it did not vendor (a leaf dropped from [deps] stdlib, a
+# dropped dep's module): they stayed vendored and locked and nothing said so. Notice only — lib/ and
+# cyrius.lock unchanged; silent for a `lib sync --full` lib/ and under -q.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_out_of_closure_named.sh"
+# 6.7.12 — the 6.7.6 review's CLI leftovers: `_abs_path(".")` is the cwd (no `/./` in joined paths),
+# the deps summary counts every refused section (the exit status alone is clamped), and
+# `lib sync --dry-run` prints paths, not pointers.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
+# 6.7.12 — distlib's sidecar verify credits a named dep with the include CLOSURE of its sidecar
+# leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`.
+_chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
+# 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
+# core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
+# read as LF hash to the locked value is named `CRLF checkout: add \`lib/** -text\` to .gitattributes`
+# (it was a bare `hash mismatch`, and --locked said "run `cyrius deps`", which re-locks the CRLF
+# bytes); `cyrius init` / `port` ship that .gitattributes. Wine leg named SKIP without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_verify_crlf_checkout.sh"
+# 6.7.12 (D5) — the toolchain-pin drift check (warn; fail under CYRIUS_STRICT_PIN / --strict-pin) runs
+# in EVERY host's compiler: it was `#ifdef CYRIUS_TARGET_LINUX`, so cycc.exe and both Mach-O compilers
+# built a drifted pin silently, rc 0. The Linux rows unchanged; the PE / Mach-O compilers carry and
+# call it; cycc.exe and cyrius.exe under wine (named SKIP without wine).
+_chk_gate "$ROOT/tests/gates/toolchain/strict_pin_every_host.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

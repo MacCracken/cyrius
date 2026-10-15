@@ -22,7 +22,8 @@
 #     (separate concern; could be added later if a consumer
 #     surfacing demands it).
 #
-# Entry format: `module::name/arity` per line, sorted ascending.
+# Entry format: `module::name/arity` per line, sorted ascending — `name/MIN-MAX` when trailing
+# parameters default (6.7.7), `name/MIN-` for a variadic fn (MIN or more arguments, 6.7.12).
 # Module = basename of the source file without `.cyr`.
 #
 # Default scan: src/*.cyr + lib/*.cyr (whichever exist).
@@ -68,8 +69,9 @@ fn _reset_entries(): i64 {
 
 # Append "module::name/arity" to ENTRIES_BUF — "module::name/amin-arity" when the fn takes
 # fewer (6.7.7: trailing defaults; a caller through a fn pointer passes all of them, so a range
-# that changes is still a changed signature) — and record offset+len.
-fn _push_entry(module_off, module_len, name_off, name_len, amin, arity): i64 {
+# that changes is still a changed signature), "module::name/amin-" when it takes amin or MORE
+# (`vtail` 1: a variadic `...` tail, 6.7.12) — and record offset+len.
+fn _push_entry(module_off, module_len, name_off, name_len, amin, arity, vtail): i64 {
     # Fail loud rather than silently overflow the fixed buffers. Worst-case
     # entry = module + "::" + name + "/" + up-to-24-digit arity (two and a "-" for a
     # range); +64 covers it.
@@ -98,6 +100,22 @@ fn _push_entry(module_off, module_len, name_off, name_len, amin, arity): i64 {
     p = p + name_len;
     store8(ENTRIES_BUF + p, 47);     # '/'
     p = p + 1;
+    if (vtail == 1) {
+        # 6.7.12 (the user's decision D22): `name/MIN-`, 6.7.7's MIN-MAX form with the upper
+        # bound left open — the tail is no parameter, and a variadic fn no longer reads like a
+        # fixed-arity one of the same count. CHANGELOG [6.7.12]
+        var vn_buf[24];
+        var vn_len = fmt_int_buf(amin, &vn_buf);
+        var v = 0;
+        while (v < vn_len) {
+            store8(ENTRIES_BUF + p + v, load8(&vn_buf + v));
+            v = v + 1;
+        }
+        p = p + vn_len;
+        store8(ENTRIES_BUF + p, 45);     # '-'
+        p = p + 1;
+        return _entry_done(off, p);
+    }
     if (amin < arity) {
         var mn_buf[24];
         var mn_len = fmt_int_buf(amin, &mn_buf);
@@ -118,9 +136,13 @@ fn _push_entry(module_off, module_len, name_off, name_len, amin, arity): i64 {
         k = k + 1;
     }
     p = p + ar_len;
-    var total_len = p - off;
+    return _entry_done(off, p);
+}
+
+# Record the entry written at ENTRIES_BUF[off, p).
+fn _entry_done(off, p): i64 {
     store64(ENTRIES_OFFS + ENTRIES_COUNT * 8, off);
-    store64(ENTRIES_LENS + ENTRIES_COUNT * 8, total_len);
+    store64(ENTRIES_LENS + ENTRIES_COUNT * 8, p - off);
     ENTRIES_COUNT = ENTRIES_COUNT + 1;
     ENTRIES_BUF_USED = p;
     return 0;
@@ -225,7 +247,7 @@ fn _push_synthesized(module_off, module_len,
         j = j + 1;
     }
     var s = str_builder_build(sb);
-    _push_entry(module_off, module_len, str_data(s), str_len(s), arity, arity);
+    _push_entry(module_off, module_len, str_data(s), str_len(s), arity, arity, 0);
     return 0;
 }
 
@@ -531,7 +553,11 @@ fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
 # parameter; `>>` / `>>>` close two / three, a byte each), as the compiler's _pl_next / _pl_tdepth
 # do; after the parameter's depth-1 `=` (a default) `<` and `>` are operators again
 # (`c = 1 < 2`). The list's comma inside `<..>` made `pp/3` of a two-parameter fn. CHANGELOG [6.7.11]
+# 6.7.12 — a last parameter that is exactly `...` (the lexer's one ELLIPSIS token; blanks, newlines
+# and comments around it) is a variadic tail, not a parameter: it is not counted, _asf_vtail is
+# set, and the entry reads `name/MIN-`. It counted, so `fn va(n, ...)` read `va/2`. CHANGELOG [6.7.12]
 var _asf_amin = 0;
+var _asf_vtail = 0;
 fn _asf_arity(b, paren, n): i64 {
     var p = paren + 1;
     var depth = 1;
@@ -539,7 +565,10 @@ fn _asf_arity(b, paren, n): i64 {
     var has_arg = 0;
     var dflt = 0 - 1;    # the ordinal of the first parameter with a depth-1 `=`
     var indf = 0;        # 1 inside this parameter's default (after its depth-1 `=`)
+    var pnb = 0;         # this parameter's code bytes, blanks and comments aside ...
+    var pdots = 0;       # ... and how many of them are `.`
     var st = 0;
+    _asf_vtail = 0;
     while (p < n) {
         var c = load8(b + p);
         if (st == 0) {
@@ -548,12 +577,18 @@ fn _asf_arity(b, paren, n): i64 {
                 depth = depth - 1;
                 if (depth == 0) {
                     if (has_arg == 0) { _asf_amin = 0; return 0; }
-                    _asf_amin = commas + 1;
+                    var np = commas + 1;
+                    if (pnb == 3 && pdots == 3) { np = commas; _asf_vtail = 1; }
+                    _asf_amin = np;
                     if (dflt >= 0) { _asf_amin = dflt; }
-                    return commas + 1;
+                    return np;
                 }
             }
-            if (c == 44 && depth == 1) { commas = commas + 1; indf = 0; }
+            if (c == 44 && depth == 1) { commas = commas + 1; indf = 0; pnb = 0; pdots = 0; }
+            elif (_asf_blank(c) == 0 && c != 10 && c != 13 && c != 35) {
+                pnb = pnb + 1;
+                if (c == 46) { pdots = pdots + 1; }
+            }
             if (c == 61 && depth == 1) {
                 indf = 1;
                 if (dflt < 0) { dflt = commas; }
@@ -695,7 +730,7 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                                     var arity = _asf_arity(filebuf, paren, filelen);
                                     if (arity >= 0) {
                                         _push_entry(module_off, module_len,
-                                          filebuf + np, name_end - np, _asf_amin, arity);
+                                          filebuf + np, name_end - np, _asf_amin, arity, _asf_vtail);
                                     }
                                 }
                             }

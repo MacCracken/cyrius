@@ -378,17 +378,19 @@ case "$HOST" in
     # main_cx.cyr per-target arena (mmap on macho, not brk — the fault this fixed).
     # 6.6.11 (J6) — a CLI child sees the user's environment. `load_environ` opened
     # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
-    # execs (cycc, git, the hasher, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only
-    # execvp's default /usr/bin:/bin hid it. The NATIVE CLI runs `cyrius deps` under `env -i`
-    # with a fake `sha256sum` FIRST on PATH: the hasher child (`/usr/bin/env sha256sum`) must run
-    # it. With an empty envp it resolves the real tool (or `shasum`) and never touches the fake.
+    # execs (cycc, git, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only execvp's
+    # default /usr/bin:/bin hid it. The NATIVE CLI builds under `env -i` with CYRIUS_STRICT_PIN=1
+    # inherited (no --strict-pin) a project pinned 0.0.1: the cycc child must SEE the variable and
+    # refuse the drift (rc != 0, the CYRIUS_STRICT_PIN error, nothing written); with an empty envp
+    # it would build at rc 0. 6.7.12: this probe ran `deps` with a fake `sha256sum` first on PATH,
+    # but the CLI hashes cyrius.lock in process since 6.7.12 (no hasher child) — the stale probe
+    # failed every run; the pin drift check reaches the macOS compilers in the same release (D5).
     ssh $SSHO ecb "cd ~/$RD && "'cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 ./r1r > cyrius_native && chmod +x cyrius_native && codesign -s - -f cyrius_native \
-      && D=$PWD && V=$(cat VERSION) && mkdir -p _envh/versions/$V _envfb _envp && cp -R lib _envh/versions/$V/lib \
-      && printf "#!/bin/sh\necho hit >> \"\$0.hit\"\nexec shasum -a 256 \"\$@\"\n" > _envfb/sha256sum && chmod +x _envfb/sha256sum \
-      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"%s\"\n\n[deps]\nstdlib = [\"syscalls\", \"string\", \"alloc\"]\n" "$V" > _envp/cyrius.cyml \
-      && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
-      && test -s _envfb/sha256sum.hit' \
-      || { echo "ENV_FAIL: ecb — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
+      && D=$PWD && mkdir -p _envb _envh _envp && cp cyrius_native _envb/cyrius && cp r1r _envb/cycc && cp r1r _envb/cycc_aarch64 \
+      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"0.0.1\"\n" > _envp/cyrius.cyml && printf "var x = 42;\n" > _envp/m.cyr \
+      && (cd _envp && _erc=0; env -i PATH=/usr/bin:/bin HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 CYRIUS_STRICT_PIN=1 "$D/_envb/cyrius" build m.cyr o > "$D/_env.log" 2>&1 || _erc=$?; [ $_erc -ne 0 ]) \
+      && grep -q "toolchain drift (CYRIUS_STRICT_PIN)" _env.log && test ! -s _envp/o' \
+      || { echo "ENV_FAIL: ecb — a CLI child did not inherit the environment (the cycc child never saw CYRIUS_STRICT_PIN=1; ~/$RD/_env.log)"; exit 1; }
     # 6.6.20 — the macOS argv scan honours --syntax-only (_ARGV_FLAG_ONE bit 8). `cyrius lint`
     # passes it on every POSIX host; this driver never read it, so lint refused a file whose only
     # fault was a name defined in another file. Only this host can run the arm64 scan.
@@ -443,17 +445,16 @@ case "$HOST" in
     # Here, as on ecb, a futex lib/thread.cyr lets through on cx kills cxvm with SIGSYS (140).
     # 6.6.11 (J6), as on ecb — a CLI child sees the user's environment. `load_environ` opened
     # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
-    # execs (cycc, git, the hasher, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only
-    # execvp's default /usr/bin:/bin hid it. The NATIVE CLI runs `cyrius deps` under `env -i`
-    # with a fake `sha256sum` FIRST on PATH: the hasher child (`/usr/bin/env sha256sum`) must run
-    # it. With an empty envp it resolves the real tool (or `shasum`) and never touches the fake.
+    # execs (cycc, git, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only execvp's
+    # default /usr/bin:/bin hid it. As on ecb (6.7.12): the cycc child must see an inherited
+    # CYRIUS_STRICT_PIN=1 and refuse a project pinned 0.0.1 (the old fake-`sha256sum` probe had no
+    # hasher child left to run it).
     ssh $SSHO ach "cd ~/$RD && "'cat cbt/cyrius.cyr | ./r1 > cyrius_native && chmod +x cyrius_native \
-      && D=$PWD && V=$(cat VERSION) && mkdir -p _envh/versions/$V _envfb _envp && cp -R lib _envh/versions/$V/lib \
-      && printf "#!/bin/sh\necho hit >> \"\$0.hit\"\nexec shasum -a 256 \"\$@\"\n" > _envfb/sha256sum && chmod +x _envfb/sha256sum \
-      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"%s\"\n\n[deps]\nstdlib = [\"syscalls\", \"string\", \"alloc\"]\n" "$V" > _envp/cyrius.cyml \
-      && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
-      && test -s _envfb/sha256sum.hit' \
-      || { echo "ENV_FAIL: ach — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
+      && D=$PWD && mkdir -p _envb _envh _envp && cp cyrius_native _envb/cyrius && cp r1 _envb/cycc \
+      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"0.0.1\"\n" > _envp/cyrius.cyml && printf "var x = 42;\n" > _envp/m.cyr \
+      && (cd _envp && _erc=0; env -i PATH=/usr/bin:/bin HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 CYRIUS_STRICT_PIN=1 "$D/_envb/cyrius" build m.cyr o > "$D/_env.log" 2>&1 || _erc=$?; [ $_erc -ne 0 ]) \
+      && grep -q "toolchain drift (CYRIUS_STRICT_PIN)" _env.log && test ! -s _envp/o' \
+      || { echo "ENV_FAIL: ach — a CLI child did not inherit the environment (the cycc child never saw CYRIUS_STRICT_PIN=1; ~/$RD/_env.log)"; exit 1; }
     # 6.6.20 — --syntax-only through the x86-macOS argv scan, as on ecb.
     ssh $SSHO ach "cd ~/$RD && "'printf "fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n" > _so.cyr \
       && ./r1 --syntax-only < _so.cyr > /dev/null 2> _so.err \

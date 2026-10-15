@@ -78,5 +78,42 @@ else
     echo "  FAIL axis 4: no paren-depth tracking — continuations would flatten to brace depth again"; fail=1
 fi
 
+# --- axis 5 (6.7.12, D26): `cyrius audit` gives --check's verdict. Its fmt stage byte-compared
+# cyrfmt's CANONICAL output with the file, so it flagged the accepted 4-step file --check passes
+# (cyim 1.11.0, the filed repro below). The contract stays; audit now asks `cyrfmt --check`.
+# Mutation: lib/audit_walk.cyr back on the byte compare -> axis 5 rows x and a8 RED.
+audit_fmt() {   # $1 project dir -> the audit's fmt section on stdout
+    ( cd "$1" && cyrius audit 2>&1 ) | awk '/── fmt ──/ { on = 1; next } /── lint ──/ { on = 0 } on'
+}
+mkp() {   # $1 dir, $2 the src/main.cyr content source
+    mkdir -p "$1/src"
+    printf '[package]\nname = "p"\nversion = "0.1.0"\n' > "$1/cyrius.cyml"
+    cp "$2" "$1/src/main.cyr"
+}
+# The filed repro (issues/2026-10-12-cyrfmt-check-passes-a-file-cyrfmt-would-reformat.md), verbatim.
+printf 'fn f(a, b) {\n    return a + b;\n}\nfn main() {\n    f(1,\n        2);\n    return 0;\n}\n' > "$W/x.cyr"
+for shape in x a8 a6 a12; do
+    [ -f "$W/$shape.cyr" ] || mk "$W/$shape.cyr" "${shape#a}"
+    mkp "$W/p_$shape" "$W/$shape.cyr"
+    chk=fail; cyrius fmt "$W/p_$shape/src/main.cyr" --check >/dev/null 2>&1 && chk=pass
+    sec=$(audit_fmt "$W/p_$shape")
+    aud=other
+    printf '%s\n' "$sec" | grep -qF 'ok: format clean' && aud=pass
+    printf '%s\n' "$sec" | grep -qF 'files need reformatting' && aud=fail
+    want=pass; [ "$shape" = a12 ] && want=fail
+    if [ "$chk" = "$want" ] && [ "$aud" = "$want" ]; then
+        echo "  ok axis 5: $shape — cyrfmt --check and cyrius audit both say $want"
+    else
+        echo "  FAIL axis 5: $shape — --check says $chk, cyrius audit says $aud (want $want for both): $sec"; fail=1
+    fi
+done
+# 5b: the rewrite stays canonical — fmt normalises the accepted 4 to 2 (the guide's sentence).
+cyrius fmt "$W/p_x/src/main.cyr" >/dev/null 2>&1 || true
+if grep -qx '      2);' "$W/p_x/src/main.cyr"; then
+    echo "  ok axis 5b: cyrius fmt rewrote the accepted 4-step continuation as the canonical 2"
+else
+    echo "  FAIL axis 5b: cyrius fmt did not normalise the filed repro to the 2-step form"; fail=1
+fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: fmt-continuation-contract"; exit 1; }
-echo "PASS: fmt-continuation-contract — 2 canonical / 4 accepted / deeper rejected, --check speaks, fmt writes in place, --dry does not"
+echo "PASS: fmt-continuation-contract — 2 canonical / 4 accepted / deeper rejected, --check speaks, fmt writes in place, --dry does not, cyrius audit agrees with --check"

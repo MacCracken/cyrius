@@ -331,6 +331,9 @@ _run 0 alpha
 #   EXCLUDED, by name and why: test_out (beside test_bin, the post-mortem), lsp (the build `cyrius
 #   lsp` tells the user to copy), deps / locked-deps (directories: a no-home dep cache, a vendored tree).
 EXCL="test_out lsp deps locked-deps"
+# RETIRED: names cbt/ no longer writes that check.sh still reaps, because a dir an OLDER CLI left
+# can hold them — sha_out (the lock hasher's capture; in process since 6.7.12, CHANGELOG [6.7.12]).
+RETIRED="sha_out"
 grep -ho '_cbt_tmpfile("[^"]*")' "$ROOT"/cbt/*.cyr | sed 's/^_cbt_tmpfile("//; s/")$//' | sort -u > "$D/lit"
 NLIT=$(wc -l < "$D/lit" | tr -d ' ')
 [ "$NLIT" -ge 25 ] || _fail "axis 16: only $NLIT _cbt_tmpfile(\"…\") literals found in cbt/ — the reader is not reading (floor 25)"
@@ -346,7 +349,7 @@ for f in "$ROOT"/cbt/*.cyr; do
 done | sort -u > "$D/compn"
 for w in fuzz_outa fuzz_outb; do grep -qx "$w" "$D/comp" || _fail "axis 16: the derivation lost computed name $w"; done
 for w in cov_ dlverifyerr dlverifyout; do grep -qx "$w" "$D/compn" || _fail "axis 16: the derivation lost computed numbered name $w"; done
-{ grep -v '_$' "$D/lit"; cat "$D/comp"; } | sort -u > "$D/want_plain"
+{ grep -v '_$' "$D/lit"; cat "$D/comp"; printf '%s\n' $RETIRED; } | sort -u > "$D/want_plain"
 { grep '_$' "$D/lit"; cat "$D/compn"; } | sort -u > "$D/want_n"
 for x in $EXCL; do grep -vx "$x" "$D/want_plain" > "$D/w2" || true; mv "$D/w2" "$D/want_plain"; done
 VOC=$(sed -n 's/^_CHK_CLI_SCRATCH="\(.*\)"$/\1/p' "$ROOT/scripts/check.sh")

@@ -35,10 +35,8 @@ TS_PEEKLINE x86
 _EMIT_GVAR_STATIC_INITS cx
 _IR_REC a64 a64m a64n cx
 _IR_REC1 a64 a64m a64n cx
-_check_cyml_pin_drift a64m win x86m
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
-_env_var_is_1 a64m win x86m
 _fnhash_health a64 a64m a64n cx x86m
 _gvk_arm a64 a64m a64n cx win x86m
 _ir_bb_transfer a64 a64m a64n cx win x86m

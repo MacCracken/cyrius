@@ -69,10 +69,14 @@
 # pad must be there, zero, and A's address 16-aligned. Row 9 builds a kernel at two load bases:
 # no byte of .bss or .rodata may differ, i.e. no data word holds a data address the move would
 # have to repair (the fix shifts code -> data sites only).
-# Mutations (6.7.11, each a scratch copy of src/): the data shift dropped from _wp_data_fix -> rows
-# 6 and 7 RED (the WX=0 binary prints NULs, the kernels' vaddrs are absent from .text); the +8 pad
-# dropped from _wp_data_end -> row 8 RED (A at 8 mod 16, no pad); the 6.6.20 decline restored ->
-# rows 6 and 7 RED (no elimination).
+# Mutations (6.7.11, each a scratch copy of the tree, its compiler built by build/cycc; re-run
+# 6.7.12 through this gate, which stops at its first RED row, and with `fail` made non-exiting to
+# list every RED row): the data shift dropped from _wp_data_fix -> the gate stops at row 6 (the
+# WX=0 binary exits 0 with no output); every RED row: 6, 7 (all four .bss / .rodata vaddrs absent
+# from .text, ELF32 and ELF64) and 8 (A not addressed, both kernels). The +8 pad dropped from
+# _wp_data_end -> the gate stops at row 8 (code ends at 184, want 192); every RED row: 8 only (the
+# code end and A at 8 mod 16, both kernels). The 6.6.20 declines restored in _dce_compact_why ->
+# the gate stops at row 6 (no elimination); every RED row: 6, 7, 8 and 9 (nothing compacts).
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

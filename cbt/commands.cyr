@@ -100,6 +100,7 @@ fn cmd_build(source, output): i64 {
         # to PRINT, that one decides whether to RUN, and any other caller still needs it).
         # CHANGELOG [6.6.6].
         if (_target_cc_has_js() == 0) { return _emit_js_refuse(); }
+        if (_js_cc_is_host() == 0) { return _emit_js_not_host(); }   # 6.7.12, the same rule
         sys_write(STDOUT_FD, "emit-js ", 8);
         sys_write(STDOUT_FD, source, strlen(source));
         sys_write(STDOUT_FD, " -> ", 4);
@@ -211,8 +212,12 @@ fn cmd_build(source, output): i64 {
         # Linux hosts only: the Windows and macOS CLIs refuse a bare-metal --target before
         # compiling (`_cli_foreign_target`) — this line once described a PE / Mach-O there.
         # CHANGELOG [6.7.11]
+        # 6.7.12 — the line follows the compiler that RAN (current_cc() reads _arch), not the
+        # --target value: `--aarch64 --target=x86_64-bare-metal-elf` wrote an aarch64 ELF and
+        # reported the x86 entry. The CLI refuses that pair first (_cli_targets_exclusive).
+        # CHANGELOG [6.7.12]
         if (_baremetal_target == 1) {
-            if (_baremetal_aa == 1) {
+            if (_arch == ARCH_AARCH64) {
                 var ab = _section_base_val;
                 if (ab == 0) { ab = 0x40000000; }
                 sys_write(STDOUT_FD, "  kernel: entry ", 16);
@@ -565,8 +570,8 @@ fn cmd_test(source): i64 {
 
 # v6.0.62: `cyrius tests [dir]` — the plural verb, a RECURSIVE folder/suite
 # runner (vs `cyrius test <file>` single-file + bare `cyrius test` shallow
-# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner and
-# `tests` its deprecated alias (CHANGELOG [6.7.6]). Walks `dir` (default "tests") for *.tcyr at
+# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner (CHANGELOG [6.7.6]);
+# the `tests` alias was removed at 6.7.12. Walks `dir` (default "tests") for *.tcyr at
 # any depth, runs each via cmd_test, aggregates _pass/_fail. Mirrors the
 # proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
 # for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
@@ -577,7 +582,7 @@ fn cmd_test(source): i64 {
 # possible failure for a test runner.
 # 6.6.17 (P1): the files a bare `cyrius test` has already run, so a file that `[build] test` names
 # AND the tests/ walk finds runs ONCE (crab declares `test = "tests"`; chakshu, klug and sit name
-# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>` / `tests`, which never read the key).
+# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>`, which never reads the key).
 # 6.7.6: a multi-operand `cyrius test a b ...` tracks too — see _test_path.
 var _tests_seen = 0;
 
@@ -760,24 +765,11 @@ fn _test_path(p): i64 {
     return 0;
 }
 
-# 6.7.6: `cyrius tests [dir]` is the deprecated spelling of `cyrius test <dir>` — one release, then it
-# goes (roadmap, Break 1). The notice names the exact replacement: bare `cyrius tests` walked tests/
-# and never read `[build] test`, so its equivalent is `cyrius test tests`, not bare `cyrius test`.
-fn _tests_verb_deprecated(dir): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "`cyrius tests` is deprecated and goes in the next release; use `cyrius test ");
-    str_builder_add_cstr(sb, _shown(dir));
-    str_builder_add_cstr(sb, "`");
-    _warn(str_data(str_builder_build(sb)));
-    return 0;
-}
-
-# A directory's suite: `cyrius test <dir>` (and the deprecated `cyrius tests [dir]`, and `cyrius
-# audit`'s sweep).
+# A directory's suite: `cyrius test <dir>` and `cyrius audit`'s sweep.
 fn cmd_tests(dir): i64 {
     _pass = 0; _fail = 0; _tests_found = 0;
     if (is_dir(str_from(dir)) == 0) {
-        sys_write(STDERR_FD, "cyrius tests: not a directory: ", 31);
+        sys_write(STDERR_FD, "cyrius test: not a directory: ", 30);
         sys_write(STDERR_FD, dir, strlen(dir));
         sys_write(STDERR_FD, "\n", 1);
         return 1;
@@ -1104,7 +1096,7 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
 
 fn cmd_bench(source): i64 {
     # v6.5.7: a DIRECTORY argument is now honoured — `cyrius bench benches/perf`
-    # walks that subtree, symmetric with `cyrius tests <dir>`. It previously ran
+    # walks that subtree, symmetric with `cyrius test <dir>`. It previously ran
     # nothing, printed nothing and exited 0, so a gate written that way passed
     # over zero benchmarks. A path that does not exist is refused rather than
     # silently building the auto-prepended stdlib into a do-nothing program.
@@ -1182,14 +1174,18 @@ fn _bench_all(empty_fails): i64 {
     return _bench_summary(load64(&pass_store), load64(&fail_store));
 }
 
-fn cmd_check(source, with_deps): i64 {
+fn cmd_check(source, with_deps, no_redirect): i64 {
     # v5.7.8: default skip_deps=1 (parse the file standalone — syntax-
     # checking should not drag the manifest dep graph into the parse).
     # Pass --with-deps to opt back into the legacy auto-prepend
     # behavior, useful when checking a file that depends on stdlib
     # modules pulled in by the manifest.
     var actual = source;
-    if (with_deps == 1) {
+    if (with_deps == 1 && no_redirect == 1) {
+        # 6.7.12 — `--no-redirect`: the source itself is the unit (cyrius-lsp: the redirect below
+        # published src/main.cyr's diagnostics on an include-free module and never its own).
+        # CHANGELOG [6.7.12]
+    } elif (with_deps == 1) {
         # Legacy module-redirect: if FILE has no include directives,
         # try the project entry point so transitive symbols resolve.
         var check_buf = alloc(4096);
@@ -1240,8 +1236,9 @@ fn cmd_check(source, with_deps): i64 {
     str_builder_add_int(ck_sb, ck_pid);
     var ck_out = str_data(str_builder_build(ck_sb));
     var pre_err = _err_count;
+    _cbt_scratch_track(ck_out);   # 6.7.12: compile() renames onto it; the kill handler unlinks it
     var r = compile(actual, ck_out);
-    sys_unlink(ck_out);
+    _cbt_scratch_drop(ck_out);
     _skip_deps = 0;
     if (r == 0) {
         sys_write(STDOUT_FD, "ok: ", 4);
@@ -1290,6 +1287,10 @@ fn cmd_self(): i64 {
         _err_ctx("self-host: compiler not found", _cc);
         return 1;
     }
+    # 6.7.12 — both steps build the DEFAULT compiler: their children exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does. Under an
+    # inherited CYRIUS_POISON=1 this printed PASS for two poison-mode compilers. CHANGELOG [6.7.12]
+    _envp = _envp_self_build();
     # ⛔ 6.6.9 bite 10 (CYRIUS-2026-0009) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
     # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
     # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
@@ -1826,7 +1827,11 @@ fn cmd_lib_sync(): i64 {
         var wi = 0;
         while (wi < copied) {
             sys_write(STDOUT_FD, "  would sync: ", 14);
-            println(vec_get(pd, wi));
+            # the destination cstr, written as text: `println` of an i64 dispatched to println_int
+            # and printed the pointer. CHANGELOG [6.7.12]
+            var wd = vec_get(pd, wi);
+            sys_write(STDOUT_FD, wd, strlen(wd));
+            sys_write(STDOUT_FD, "\n", 1);
             wi = wi + 1;
         }
         sys_write(STDOUT_FD, "dry-run: would sync ", 20);
@@ -1879,10 +1884,15 @@ fn _libsync_guard(ps, pd): i64 {
     _ew("error: lib sync: ");
     fmt_int_fd(STDERR_FD, _dep_lock_refused);
     _ew(" file(s) refused above — NOTHING was written and cyrius.lock is unchanged.\n");
-    _ew("  If you just moved [package].cyrius and ran `deps`/`build` first, these rows are the\n");
-    _ew("  previous pin's: `cyrius lib sync --relock` (with --full for the whole snapshot).\n");
-    _ew("  If the pin did NOT move, the installed snapshot changed under it — reinstall that\n");
-    _ew("  version; do not `--relock`.\n");
+    # 6.7.12 (D19): `deps` / `build` no longer re-stamp a moved pin over rows they did not write,
+    # so the old first branch ("you ran deps/build first") is no longer this release's doing.
+    _ew("  The installed snapshot of the pin cyrius.lock records changed under it — reinstall that\n");
+    _ew("  version; do not `--relock`. Only a lock re-stamped at a pin move without these files\n");
+    _ew("  re-vendored (by `deps`/`build` before 6.7.12, `deps --lock`, or a scoped `lib sync`)\n");
+    # The scoped `--relock` first: a closure-only project re-locked by `deps --lock` gets back
+    # its declared files with it, where `--full` would vendor the whole snapshot. CHANGELOG [6.7.12]
+    _ew("  holds the previous pin's rows: `cyrius lib sync --relock` then (`cyrius lib sync --full --relock`\n");
+    _ew("  in a project that vendors the whole snapshot).\n");
     return 1;
 }
 
@@ -2813,7 +2823,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     var cap_rc = 0;
     #ifdef CYRIUS_TARGET_WIN
     cap_rc = _win_capacity_spawn(cc, cap_source, tmperr);
-    if (cap_source != source) { xunlink(cap_source); }
+    if (cap_source != source) { xunlink(cap_source); _cbt_scratch_untrack(cap_source); }
     if (cap_rc < 0) { return 1; }
     #endif
     #ifndef CYRIUS_TARGET_WIN
@@ -2821,7 +2831,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     if (pid < 0) {
         # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
         _cbt_fork_failed("the compiler for capacity stats", pid);
-        if (cap_source != source) { sys_unlink(cap_source); }
+        if (cap_source != source) { _cbt_scratch_drop(cap_source); }
         return 1;
     }
     if (pid == 0) {
@@ -2858,7 +2868,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
     # the preprocessed temp was never removed. Same "we made it" test (the fn returns
     # `source` itself when no prepend was needed).
-    if (cap_source != source) { sys_unlink(cap_source); }
+    if (cap_source != source) { _cbt_scratch_drop(cap_source); }
     cap_rc = 1;
     if (cap_status >= 0 && WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
     #endif
@@ -3097,6 +3107,11 @@ fn cmd_soak(iters): i64 {
         _skip_deps = saved_skip_deps;
         return 1;
     }
+    # 6.7.12 — the two self-host steps build the DEFAULT compiler: they exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does; the test
+    # suite and the .scyr harnesses below are the user's own compiles and keep `_envp`, on every
+    # host (the Windows arm clears the four around the step's spawn only). CHANGELOG [6.7.12]
+    var soak_envp = _envp_self_build();
 
     var soak_pass = 0;
     var soak_fail = 0;
@@ -3131,6 +3146,8 @@ fn cmd_soak(iters): i64 {
         #     path, so `-1 != -1` scored a PASS over files that need not exist.
         # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
         # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
+        var user_envp = _envp;
+        _envp = soak_envp;
         var s1 = _self_host_step(soak_cc, soak_src, cc5_t);
         if (s1 != 0) {
             _soak_step_failed(1, s1);
@@ -3143,6 +3160,7 @@ fn cmd_soak(iters): i64 {
                 iter_ok = 0;
             }
         }
+        _envp = user_envp;
         # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
         # second "output differs" on top of it names the wrong cause.
         if (iter_ok == 1) {
@@ -4010,10 +4028,16 @@ fn _distlib_target_spawn(entry, t, vout, verr): i64 {
         _cc_stderr_to = verr;
         _cc_override = _distlib_tgt_cc(t);
         _cc_target_env = _distlib_tgt_env(t);
+        # 6.7.12: this child's own scratch for the kill handler (its first registration takes the
+        # tables over from the parent's copy); compile() registers its own temps. CHANGELOG [6.7.12]
+        _cbt_scratch_track(vout);
         var crc = compile(entry, vout);
-        sys_unlink(vout);
+        _cbt_scratch_drop(vout);
         sys_exit(crc & 255);
     }
+    # 6.7.12: a forked copy of this CLI — the kill handler forwards the signal, and the child's own
+    # handler stops its compiler and unlinks its scratch.
+    if (pid > 0) { _cbt_child_track(pid, 1); }
     if (pid < 0) {   # 6.6.20 — named here; _distlib_target_collect refuses it
         var fsb = str_builder_new();
         str_builder_add_cstr(fsb, "the sidecar verify's compile for ");
@@ -4032,6 +4056,7 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
     # "does not compile, and no symbol is missing" (or, for agnos, a not-required warning).
     if (pid < 0) {
         xunlink(verr);
+        _cbt_scratch_untrack(verr);
         if (quiet == 1) { return 0 - 1; }
         var nsb = str_builder_new();
         str_builder_add_cstr(nsb, "distlib: sidecar verify: the compile for ");
@@ -4047,10 +4072,12 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
             var sv = load32(&st);
             if (WIFEXITED(sv) == 1) { crc = WEXITSTATUS(sv); }
         }
+        _cbt_child_untrack(pid);
     }
     var elen = 0;
     var ebuf = file_read_whole(verr, &elen);
     xunlink(verr);
+    _cbt_scratch_untrack(verr);
     var got = vec_new();
     if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, got); }
     if (vec_len(got) == 0 && crc != 0 && t == _DL_TGT_AGNOS && quiet == 0) {
@@ -4098,6 +4125,7 @@ fn _distlib_verify_targets(entry, out_path, names, masks): i64 {
         str_builder_add_int(esb, t);
         var verr = _cbt_tmpfile(str_data(str_builder_build(esb)));
         sys_unlink(verr);
+        _cbt_scratch_track(verr);   # 6.7.12: the child's compiler creates it; collect drops it
         vec_push(errs, verr);
         vec_push(pids, _distlib_target_spawn(entry, t, _cbt_tmpfile(str_data(str_builder_build(tsb))), verr));
         t = t + 1;
@@ -4420,10 +4448,16 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
             if (_distlib_vec_has(leaves, owner) == 1) { continue; }
             # A named dep's leaf list may name the PEER itself (`hd_impl`), not the
-            # dispatcher the owner resolves to (`hd`): either one counts.
+            # dispatcher the owner resolves to (`hd`): either one counts. So does a leaf one of
+            # those leaves brings by its OWN include (6.7.12: `tagged` → `boxed`), as `cyrius deps`
+            # vendors it for that dep — it was recorded as the bundle's, so a pure module's
+            # sidecar read `boxed`. The bundle's own use is still recorded (below), as for a
+            # listed leaf. CHANGELOG [6.7.12]
             var brought = 0;
             if (_distlib_vec_has(_dep_nd_leaves, owner) == 1) { brought = owner; }
             elif (_distlib_vec_has(_dep_nd_leaves, raw) == 1) { brought = raw; }
+            elif (_distlib_vec_has(_distlib_nd_closure(root), owner) == 1) { brought = owner; }
+            elif (_distlib_vec_has(_distlib_nd_closure(root), raw) == 1) { brought = raw; }
             var scoped = _distlib_vec_has(scope, owner);
             if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
             if (scoped == 1 || brought != 0) {
@@ -4461,6 +4495,79 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
     # as real convergence, and an 8-leaf chain published 6 leaves as "compile-verified" at rc 0.
     # A bigger cap would only move the failure one leaf further out. CHANGELOG [6.6.11]
     return _distlib_verify_fail("distlib: sidecar verify did not converge in 6 rounds — sidecar NOT written", out_path);
+}
+
+# 6.7.12 — the transitive include closure, in the snapshot `root`, of the stdlib leaves `cyrius
+# deps` pulled for named deps (`_dep_nd_leaves`): each leaf, every leaf its file includes (the
+# resolver's own rule, `_dep_stdlib_inc_names`, cbt/deps.cyr — so it is the set the resolve
+# vendored for those deps), and so on; a family directory's members are walked and the family
+# name itself is in the set. Built once per snapshot (the verify asks for every name it
+# classifies). CHANGELOG [6.7.12]
+var _dl_ndc = 0;
+var _dl_ndc_root = 0;
+
+fn _distlib_nd_closure(root): i64 {
+    if (_dl_ndc != 0 && streq(_dl_ndc_root, root) == 1) { return _dl_ndc; }
+    var out = vec_new();
+    var q = vec_new();
+    if (_dep_nd_leaves != 0) {
+        var i = 0;
+        while (i < vec_len(_dep_nd_leaves)) { vec_push(q, vec_get(_dep_nd_leaves, i)); i = i + 1; }
+    }
+    var qi = 0;
+    while (qi < vec_len(q)) {
+        var nm = vec_get(q, qi);
+        qi = qi + 1;
+        if (_distlib_vec_has(out, nm) == 1) { continue; }
+        vec_push(out, nm);
+        _distlib_nd_closure_step(root, nm, q);
+    }
+    _dl_ndc = out;
+    _dl_ndc_root = root;
+    return out;
+}
+
+# Queue onto `q` what leaf `nm` brings: the includes of root/<nm>.cyr that the snapshot holds, or
+# each member of the family directory root/<nm>/; and a family member's family.
+fn _distlib_nd_closure_step(root, nm, q): i64 {
+    var sl = 0;
+    while (load8(nm + sl) != 0 && load8(nm + sl) != 47) { sl = sl + 1; }
+    if (load8(nm + sl) == 47) {
+        var fam = alloc(sl + 1);
+        memcpy(fam, nm, sl);
+        store8(fam + sl, 0);
+        vec_push(q, fam);
+    }
+    var fp = _cat2(_distlib_join(root, nm), ".cyr");
+    if (file_exists(fp) == 1) {
+        var n = 0;
+        var b = file_read_whole(fp, &n);
+        if (b == 0 || n <= 0) { return 0; }
+        var incs = _dep_stdlib_inc_names(b, n);
+        var k = 0;
+        while (k < vec_len(incs)) {
+            var inc = vec_get(incs, k);
+            k = k + 1;
+            if (file_exists(_cat2(_distlib_join(root, inc), ".cyr")) == 1) { vec_push(q, inc); }
+        }
+        return 0;
+    }
+    var dp = _distlib_join(root, nm);
+    if (is_dir(str_from(dp)) == 0) { return 0; }
+    var ents = dir_list(dp);
+    var e = 0;
+    while (e < vec_len(ents)) {
+        var ed = str_data(vec_get(ents, e));
+        e = e + 1;
+        var el = strlen(ed);
+        if (el > 4 && memeq(ed + el - 4, ".cyr", 4) == 1) {
+            var stem = alloc(el - 3);
+            memcpy(stem, ed, el - 4);
+            store8(stem + el - 4, 0);
+            vec_push(q, _distlib_join(nm, stem));
+        }
+    }
+    return 0;
 }
 
 # ⚠ 6.6.18 (D2) — NAME WHAT THE CONVERGED VERIFY COULD NOT OWN. A name no stdlib leaf, named

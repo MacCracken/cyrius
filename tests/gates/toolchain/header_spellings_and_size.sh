@@ -53,6 +53,27 @@
 # links against the repro (`object;`) through the header, and the callee leaves the result
 # pointer in rax; H11b a two-value return and a 17 B struct (the callee writes 3 whole words)
 # read by a linked C caller. No cc: H7's guard rows, H10 and H11 SKIP by name (exit 77).
+# 6.7.12 — EVERY LEG THAT DOES NOT RUN IS NAMED AND COUNTED (issues/2026-10-14-header-gate-skips-guard-
+# and-c-caller-rows-silently.md). H8's guard rows and H11 / H11b need cc on x86_64; on a host with cc
+# that is not x86_64 (aarch64 Linux, arm64 macOS) both were skipped with no line and the gate read
+# PASS, and the no-clang line was named but never counted. Each now SKIPs by name and counts, so
+# the gate exits 77 whenever a leg did not run. Rows (a fake `uname -m` printing aarch64 first on
+# PATH, cc present; and a PATH without clang), under sh and bash -eo pipefail: the gate exits 77
+# naming H8's guard rows and H11 (no clang: naming H8's clang guard rows and H10's cross-target
+# rows). Mutation: the 6.7.11 gate under the same fake uname exits 0 with PASS, 6 rows unrun.
+# 6.7.12 — H12, A `: stack` ENUM RETURN (issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md,
+# D23, the user 2026-10-15): `: Result` / `: Option` / `: Tagged` / an own `enum E: stack` return is
+# cyr_val2 (tag w0, payload w1) under the x86_64 SysV guard — cycc lands the pair in x0:x2 on aarch64
+# (pi and ecb: x1 0, x2 the payload) and rax:rdx on Win64 — and a word signature over a body that
+# returns the pair (a constructor, or a pair fn of this file: a fixpoint) is refused by name, rc 1;
+# cycc's own "bind both" refusal is the oracle for all 22 shapes; a C caller reads tag and payload.
+#   the 6.7.11 header (no stack-enum class, no refusal)       → H12 FAIL (26 rows: every row but the words)
+#   the stack-enum class dropped (Result/Option/Tagged a word)  → H12 FAIL (repro, process, shapes, own, guard, C)
+#   the class under the pair's #ifndef _WIN64 (aarch64 kept)   → H12 FAIL (the guard, both aarch64 rows)
+#   no propagation refusal                                     → H12 FAIL (the 10 refusals, count, prototypes)
+#   one propagation round, in file order (no fixpoint)         → H12 FAIL (early, gw: callees defined below)
+#   a closure's body not skipped                               → H12 FAIL (count, the word row, the oracle)
+#   a nullary variant (None(), Vb()) counted as a pair         → H12 FAIL (count, the word row, the oracle)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
 #   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
@@ -68,6 +89,7 @@
 #   `Str` a word before the file's own struct Str is sized             → H8 FAIL (the str3 row)
 #   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
 #   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
+# 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -75,6 +97,12 @@ D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: header_spellings_and_size: mktemp
 trap 'rm -rf "$D"' EXIT
 fails=0
 skips=0
+# H8's guard rows and H11 / H11b need cc on x86_64 (the one host whose cc runs SysV x86_64 and
+# whose cycc emits a linkable `object;`); off it, each SKIPs by name, with the reason. CHANGELOG [6.7.12]
+CCX86=0
+if ! command -v cc > /dev/null 2>&1; then CCX86_WHY="no C compiler (cc) on this host"
+elif [ "$(uname -m)" != x86_64 ]; then CCX86_WHY="needs cc on x86_64; this host is $(uname -m)"
+else CCX86=1; CCX86_WHY=""; fi
 
 check() {
     if [ "$2" = "$3" ]; then echo "  ok: $1 ($3)"
@@ -89,7 +117,7 @@ cd "$D" || exit 2
 # ── H1: every spelling the compiler accepts; not `_` names, not a comment, not a string.
 echo "H1 — every public declaration spelling gets a prototype:"
 printf 'pub fn h_pub(a, b: i64): i64 { return a; }\npublic fn h_public(): i64 { return 1; }\nfn h_bare(x): i64 { return x; }\nfn\th_tab(): i64 { return 1; }\npub  fn h_twosp(): i64 { return 1; }\n    fn h_indent(): i64 { return 1; }\n#inline fn h_attr(): i64 { return 1; }\n#deprecated("use (x)") pub fn h_dep(q): i64 { return q; }\n#deprecated ("old") fn h_depsp(x): i64 { return x; }\nasync fn h_async(x) { return x; }\npub #inline fn h_pubattr(): i64 { return 1; }\npublic #inline fn h_publicattr(): i64 { return 1; }\nfn main(): i64 { return 0; }\nfn _h_private(): i64 { return 1; }\n# fn h_comment(): i64 { return 1; }\nvar s = "\nfn h_string(): i64 {\n";\n' > s.cyr
-"$CY" header s.cyr > o1 2>&1; rc1=$?
+rc1=0; "$CY" header s.cyr > o1 2>&1 || rc1=$?
 check "exit 0" 0 "$rc1"
 check "pub fn, with params" 1 "$(has o1 'cyr_val h_pub(cyr_val a, cyr_val b);')"
 check "public fn" 1 "$(has o1 'cyr_val h_public(void);')"
@@ -128,14 +156,14 @@ echo "H3 — a >64 KiB file is read whole:"
   awk 'BEGIN{for(j=0;j<1300;j++) print "# filler line to push the next fn past the old 64 KiB header read ......"}'
   echo 'pub fn late(z): i64 { return z; }'; } > big.cyr
 check "file exceeds the old 64 KiB cap" 1 "$([ "$(wc -c < big.cyr)" -gt 65536 ] && echo 1 || echo 0)"
-"$CY" header big.cyr > o3 2>&1; rc3=$?
+rc3=0; "$CY" header big.cyr > o3 2>&1 || rc3=$?
 check "exit 0" 0 "$rc3"
 check "the fn before the cut" 1 "$(has o3 'cyr_val early(void);')"
 check "the fn AFTER the cut" 1 "$(has o3 'cyr_val late(cyr_val z);')"
 
 # ── H4: an unreadable file is an error, not an empty header.
 echo "H4 — a missing file fails:"
-"$CY" header no_such_file.cyr > o4 2>&1; rc4=$?
+rc4=0; "$CY" header no_such_file.cyr > o4 2>&1 || rc4=$?
 check "exit non-zero" 1 "$([ "$rc4" -ne 0 ] && echo 1 || echo 0)"
 check "and says so" 1 "$(grep -c 'cannot read' o4 || true)"
 
@@ -149,7 +177,7 @@ mkdir -p "$D/home/bin" && ln -s "$ROOT/build/cycc" "$D/home/bin/cycc"
   awk 'BEGIN{for(j=0;j<1300;j++) print "# filler line to push the next example past the old 64 KiB doctest read"}'
   printf 'fn dt_z(): i64 { return 1; }\n# >>> syscall(60, 4);\n# === 5\nfn dt_b(): i64 { return 1; }\n'; } > dt.cyr
 check "file exceeds the old 64 KiB cap" 1 "$([ "$(wc -c < dt.cyr)" -gt 65536 ] && echo 1 || echo 0)"
-CYRIUS_HOME="$D/home" "$CY" doctest dt.cyr > o5 2>&1; rc5=$?
+rc5=0; CYRIUS_HOME="$D/home" "$CY" doctest dt.cyr > o5 2>&1 || rc5=$?
 check "both examples are run (2 total)" 1 "$(grep -c '^1 passed, 1 failed (2 total doc tests)' o5 || true)"
 check "the failing example past the cut fails the run" 1 "$([ "$rc5" -ne 0 ] && echo 1 || echo 0)"
 check "and is named by its line" 1 "$(grep -c 'FAIL: dt.cyr:1306 (expected 5, got 4)' o5 || true)"
@@ -235,7 +263,7 @@ printf '%s\n' 'struct C3 { r: u8; g: u8; b: u8; }' 'struct B8 { a: u8; b: u8; c:
   'fn rb17(): B17 { var z: B17; return z; }' 'fn ruu(): UU { var z: UU; return z; }' \
   'fn rs(): Str { return 0; }' 'fn rp(): *B17 { return 0; }' 'fn ri(): i32 { return 1; }' 'fn rf(): f64 { return 0; }' \
   'fn rt(): (i64, f64) { return (1, 2); }' 'fn rfw(): FW { var z: FW; return z; }' \
-  'fn ml(a)' '    : B16 { var z: B16; return z; }' 'fn rv(): f64v2 { var v: f64v2; return v; }' \
+  'fn ml(a)' '    : B16 { var z: B16; return z; }' \
   'struct FW { a; b; c; d; }' > cls.cyr
 rc8b=0; "$CY" header cls.cyr > o8b 2> e8b || rc8b=$?
 check "boundaries: exit 0" 0 "$rc8b"
@@ -252,7 +280,7 @@ check "... under the x86_64 SysV guard (aarch64 lands it in x0:x2)" 1 "$(grep -B
 check "... and a named comment in its other arm" 1 "$(grep -cF '/* rt: no prototype here -- cycc returns its (i64, f64) in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64' o8b || true)"
 # The guards as each target's preprocessor reads them: the pair (rb16) everywhere but Win64, the
 # two values (rt) on x86_64 SysV alone. cc is the host (x86_64 here); clang names the others.
-if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+if [ "$CCX86" = 1 ]; then
     p8() { "$@" -E -P -x c o8b 2> /dev/null | grep -oE ' (rb16|rt)\(' | tr -d ' (' | sort | paste -sd' ' -; }
     check "x86_64 SysV (cc): rb16 and rt" "rb16 rt" "$(p8 cc)"
     if command -v clang > /dev/null 2>&1; then
@@ -260,10 +288,29 @@ if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
         check "aarch64 macOS (clang): rb16 alone" "rb16" "$(p8 clang --target=aarch64-apple-darwin -ffreestanding)"
         check "Win64 (clang): neither" "" "$(p8 clang --target=x86_64-w64-windows-gnu -ffreestanding)"
     fi
+else
+    echo "  SKIP (named): H8's guard rows — $CCX86_WHY"; skips=$((skips + 1))
 fi
 check "a struct declared after the fn is sized (the whole file is read)" 1 "$(has o8b 'cyr_val4 rfw(void);   /* returns FW, 32 B */')"
 check "a return annotation on the line after the list's ')'" 1 "$(has o8b 'cyr_val2 ml(cyr_val a);   /* returns B16, 16 B */')"
-check "a SIMD vector return keeps its pre-6.7.11 word (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md)" 1 "$(has o8b 'cyr_val rv(void);')"
+# 6.7.12 (D24, the user 2026-10-15): a SIMD vector return is REFUSED by name — it printed `cyr_val`
+# (C reads rax / x0; cycc returns a vector elsewhere, by width and target), and no C11 return type
+# carries one. The filed repro verbatim (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md),
+# then every one of the twelve vector names. Mutation: the 6.7.11 word restored → these rows RED.
+printf '%s\n' 'fn rv2(a): f64v2 { var v: f64v2; return v; }' 'fn rv4(): f64v4 { var v: f64v4; return v; }' \
+  'fn ri4(): i32v4 { var v: i32v4; return v; }' > vec.cyr
+(cd "$ROOT" && "$ROOT/build/cycc" < "$D/vec.cyr" > "$D/vec.bin" 2> /dev/null) && vrc=0 || vrc=$?
+check "the filed vec.cyr builds with cycc" 0 "$vrc"
+rcv=0; "$CY" header vec.cyr > o8v 2> e8v || rcv=$?
+check "vector returns: exit 1" 1 "$rcv"
+for vt in rv2:f64v2 rv4:f64v4 ri4:i32v4; do
+    check "'${vt%%:*}' (${vt#*:}) refused by name" 1 "$(grep -cxF "error: cyrius header: '${vt%%:*}' returns '${vt#*:}': a SIMD vector return, which no C11 return type carries; no prototype written" e8v || true)"
+done
+check "no prototype for a vector return, the header still closes" "0 1" "$(grep -cE '(rv2|rv4|ri4)\(' o8v || true) $(has o8v '#endif /* CYRIUS_FFI_H */')"
+: > v12.cyr; for vt in f64v2 f64v4 f32v4 f32v8 i32v4 u32v4 i16v8 u16v8 i64v2 u64v2 i8v16 u8v16; do echo "fn r_$vt(): $vt { var v: $vt; return v; }" >> v12.cyr; done
+echo 'fn keep(a): i64 { return a; }' >> v12.cyr
+rcv12=0; "$CY" header v12.cyr > o8w 2> e8w || rcv12=$?
+check "all twelve vector types refused, a scalar fn beside them kept, exit 1" "12 1 1" "$(grep -c "returns '[a-z0-9]*': a SIMD vector return, which no C11 return type carries; no prototype written" e8w || true) $(has o8w 'cyr_val keep(cyr_val a);') $rcv12"
 printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }' > str3.cyr
 "$CY" header str3.cyr > o8c 2>&1 || :
 check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"
@@ -320,7 +367,7 @@ if command -v clang > /dev/null 2>&1; then
         check "o7 + o8b: clang --target=$tg" 0 "$(clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o7 > /dev/null 2>&1 && clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o8b > /dev/null 2>&1; echo $?)"
     done
 else
-    echo "  SKIP (named): H10's cross-target rows — no clang on this host"
+    echo "  SKIP (named): H8's clang guard rows and H10's cross-target rows — no clang on this host"; skips=$((skips + 1))
 fi
 
 # ── H11: a real C caller, through the header, on x86_64 Linux (the one target whose cycc emits a
@@ -328,7 +375,7 @@ fi
 # through the generated header, and an asm probe checks the SysV rule the by-value large return
 # rests on: the callee leaves the result pointer in rax.
 echo "H11 — a C caller links against the repro and reads every value:"
-if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+if [ "$CCX86" = 1 ]; then
     cp o7 ffi.h
     { echo 'object;'; cat "$REPRO"; } > lib.cyr
     (cd "$ROOT" && "$ROOT/build/cycc" < "$D/lib.cyr" > "$D/lib.o" 2> /dev/null) || :
@@ -405,6 +452,148 @@ CEOF
     else
         check "H11b: the C caller compiles and links against lib2's object" 0 1; sed 's/^/    /' cc11b.err | head -5
     fi
+elif command -v cc > /dev/null 2>&1; then   # no cc at all: H11 is named in H10's SKIP line above
+    echo "  SKIP (named): H11 / H11b — $CCX86_WHY"; skips=$((skips + 1))
+fi
+# ── H12 (6.7.12, D23 — the user, 2026-10-15): A `: stack` ENUM RETURN. A payload constructor of a
+# `: stack` enum (Ok / Err / Some / Left / Right, a file's own `enum E: stack { V(x); }`) returns a
+# (tag, payload) pair — rax:rdx on x86_64 (SysV and Win64), x0:x2 on aarch64 (measured on pi and
+# ecb: x1 is 0, x2 the payload) — and the header printed `cyr_val parse(..)`, so a C caller read
+# the tag alone. An annotated `: Result` / `: Option` / `: Tagged` (or own stack enum) return is
+# now cyr_val2 (tag w0, payload w1) under the x86_64 SysV guard, a named comment elsewhere; a fn
+# whose signature says a word (none, or `: i64`) but whose body returns the pair — a constructor,
+# or a call of a pair fn of this file (a fixpoint) — is REFUSED by name, rc 1.
+# issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md
+echo "H12 — a \`: stack\` enum's pair: modelled when annotated, refused by name when propagated:"
+printf '%s\n' 'include "lib/result.cyr"' 'fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }' > se.cyr
+rc12=0; "$CY" header se.cyr > o12 2> e12 || rc12=$?
+check "the filed repro: exit 0, nothing on stderr" "0 0" "$rc12 $(wc -c < e12 | tr -d ' ')"
+check "parse is cyr_val2, the tag in w0 and the payload in w1" 1 "$(has o12 'cyr_val2 parse(cyr_val x);   /* returns Result: the tag in w0, the payload in w1 */')"
+check "... under the x86_64 SysV guard" 1 "$(grep -B1 -xF 'cyr_val2 parse(cyr_val x);   /* returns Result: the tag in w0, the payload in w1 */' o12 | grep -cxF '#if defined(__x86_64__) && !defined(_WIN64)' || true)"
+check "... and a named comment in its other arm" 1 "$(has o12 '/* parse: no prototype here -- cycc returns its Result (tag, payload) in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64 (C passes a hidden result pointer) */')"
+"$CY" header "$ROOT/lib/process.cyr" > o12p 2> e12p || :
+for fnp in 'run(cyr_val cmd, cyr_val arg1, cyr_val arg2)' 'run_capture(cyr_val cmd, cyr_val arg1, cyr_val arg2, cyr_val buf, cyr_val buflen)' \
+           'spawn(cyr_val cmd, cyr_val arg1, cyr_val arg2)' 'wait_pid(cyr_val pid)'; do
+    check "lib/process.cyr: ${fnp%%(*} (: Result) is cyr_val2" 1 "$(has o12p "cyr_val2 $fnp;   /* returns Result: the tag in w0, the payload in w1 */")"
+done
+check "lib/process.cyr: no refusal" 0 "$(wc -c < e12p | tr -d ' ')"
+cat > pr.cyr <<'EOF'
+include "lib/tagged.cyr"
+enum Sx: stack { Va(v); Vb(); }
+enum Mine { Mx(v); My; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn opt(x): Option { if (x == 0) { return None(); } return Some(x); }
+fn tg(x): Tagged { return Left(x); }
+fn mk(x) { return Ok(x); }
+fn w(x) { return mk(x); }
+fn w2(x) { return parse(x); }
+fn ai(x): i64 { return Ok(x); }
+fn nn() { return None(); }
+fn cl(x) { var f = |a| { return Ok(a); }; return 0; }
+fn sv(x) { return Va(x); }
+fn sn() { return Vb(); }
+fn bx(x) { return Mx(x); }
+fn early(x) { return late(x); }
+fn late(x) { if (x > 0) { return Err(x); } return 0; }
+fn gw(x) { return gen<i64>(x); }
+fn gen<T>(x: T) { return Right(x); }
+fn _h(x) { return Ok(x); }
+fn pubw(x) { return _h(x); }
+fn tagonly(x) { return Ok; }
+fn plain(x) { return x + 1; }
+fn callplain(x) { return plain(x); }
+fn ml(x)
+{
+    if (x == 1) { return 0; }
+    return
+        Some(x);
+}
+EOF
+rc12b=0; "$CY" header pr.cyr > o12b 2> e12b || rc12b=$?
+check "shapes: exit 1 (refusals)" 1 "$rc12b"
+check "annotated : Result / : Option / : Tagged are cyr_val2" 3 "$(grep -cE '^cyr_val2 (parse|opt|tg)\(cyr_val x\);   /\* returns (Result|Option|Tagged): the tag in w0, the payload in w1 \*/$' o12b || true)"
+refused() { grep -cxF "error: cyrius header: '$1' returns a \`: stack\` enum's (tag, payload) pair through '$2(..)', which its signature does not declare (cycc returns it in rax:rdx, aarch64 x0:x2); declare it \`: Result\`, \`: Option\` or \`: Tagged\`; no prototype written" e12b || true; }
+check "refused by name: no annotation, returns Ok(..)" 1 "$(refused mk Ok)"
+check "  ... returns a pair fn of this file (mk)" 1 "$(refused w mk)"
+check "  ... returns an annotated pair fn (parse)" 1 "$(refused w2 parse)"
+check "  ... a \`: i64\` signature over Ok(..)" 1 "$(refused ai Ok)"
+check "  ... the file's own stack enum's payload variant" 1 "$(refused sv Va)"
+check "  ... a fn defined BELOW it (the fixpoint)" "1 1" "$(refused early late) $(refused late Err)"
+check "  ... a generic fn of this file (gen<i64>(..))" 1 "$(refused gw gen)"
+check "  ... a private fn of this file (_h)" 1 "$(refused pubw _h)"
+check "  ... a return whose call is on the next line" 1 "$(refused ml Some)"
+check "exactly those 10 refusals" 10 "$(grep -c '^error: ' e12b || true)"
+check "no prototype for a refused fn" 0 "$(grep -cE '^cyr_val2? (mk|w|w2|ai|sv|early|late|gw|pubw|ml)\(' o12b || true)"
+check "a word: nullary None() / Vb(), a closure's own return, a boxing enum, a bare tag, a plain call" 7 \
+    "$(grep -cxE 'cyr_val (nn\(void\)|sn\(void\)|cl\(cyr_val x\)|bx\(cyr_val x\)|tagonly\(cyr_val x\)|plain\(cyr_val x\)|callplain\(cyr_val x\));' o12b || true)"
+# The compiler is the oracle: a single bind of every pair fn is refused ("bind both"), and of
+# every word fn is not — and the header's own verdict (refused or cyr_val2 = the pair, cyr_val = a
+# word; the expected one for gen and _h, which get no prototype) is cycc's.
+hverdict() {
+    if grep -qF "error: cyrius header: '$1' " e12b; then echo 1
+    elif grep -qE "^cyr_val2 $1\(" o12b; then echo 1
+    elif grep -qE "^cyr_val $1\(" o12b; then echo 0
+    else echo "$2"; fi
+}
+bad=""
+for fa in parse:1:5 opt:1:5 tg:1:5 mk:1:5 w:1:5 w2:1:5 ai:1:5 sv:1:5 early:1:5 late:1:5 gw:1:5 gen:1:5 _h:1:5 pubw:1:5 ml:1:5 \
+          nn:0: sn:0: cl:0:5 bx:0:5 tagonly:0:5 plain:0:5 callplain:0:5; do
+    fnm=${fa%%:*}; rest=${fa#*:}; want=${rest%%:*}; arg=${rest#*:}
+    { cat pr.cyr; echo "var z = $fnm($arg);"; echo 'syscall(60, 0);'; } > pr1.cyr
+    prc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/pr1.cyr" > /dev/null 2> "$D/pr1.err") || prc=$?
+    got=0; [ "$prc" = 0 ] || got=compile-error   # a word fn's bind must COMPILE, not merely not say it
+    grep -q 'returns two values — bind both' pr1.err && got=1
+    hv=$(hverdict "$fnm" "$want")
+    [ "$got" = "$want" ] && [ "$hv" = "$want" ] || bad="$bad $fnm:want=$want,cycc=$got,header=$hv"
+done
+check "cycc and the header agree on all 22: the pair fns, and only they, refuse a single bind" "" "$bad"
+printf '%s\n' 'enum Sx: stack { Va(v); Vb(); }' 'enum Pl { Pa; Pb; }' 'fn sa(x): Sx { return Va(x); }' 'fn pl(): Pl { return Pa; }' > own.cyr
+"$CY" header own.cyr > o12c 2> /dev/null || :
+check "a file's own \`enum E: stack\` annotation is cyr_val2, a plain enum's a word" "1 1" \
+    "$(has o12c 'cyr_val2 sa(cyr_val x);   /* returns Sx: the tag in w0, the payload in w1 */') $(has o12c 'cyr_val pl(void);')"
+printf '%s\n' 'fn Some(x) { return x; }' 'fn u(x) { return Some(x); }' > shadow.cyr
+"$CY" header shadow.cyr > o12d 2> e12d || :
+check "a file's own fn named like a stdlib constructor decides (no refusal)" "1 0" "$(has o12d 'cyr_val u(cyr_val x);') $(wc -c < e12d | tr -d ' ')"
+if [ "$CCX86" = 1 ]; then
+    p12() { "$@" -E -P -x c o12 2> /dev/null | grep -oE ' parse\(' | tr -d ' (' | paste -sd' ' -; }
+    check "x86_64 SysV (cc): parse declared" "parse" "$(p12 cc)"
+    check "-D_WIN64 (cc): no parse" "" "$(p12 cc -D_WIN64)"
+    if command -v clang > /dev/null 2>&1; then
+        check "aarch64 Linux (clang): no parse (x0:x2)" "" "$(p12 clang --target=aarch64-linux-gnu -ffreestanding)"
+        check "aarch64 macOS (clang): no parse (x0:x2)" "" "$(p12 clang --target=aarch64-apple-darwin -ffreestanding)"
+        check "Win64 (clang): no parse (a hidden result pointer)" "" "$(p12 clang --target=x86_64-w64-windows-gnu -ffreestanding)"
+        for tg in aarch64-linux-gnu x86_64-w64-windows-gnu aarch64-apple-darwin; do
+            check "o12 + o12b: clang --target=$tg" 0 "$(clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o12 > /dev/null 2>&1 && clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o12b > /dev/null 2>&1; echo $?)"
+        done
+    else
+        echo "  SKIP (named): H12's clang guard rows — no clang on this host"; skips=$((skips + 1))
+    fi
+    for f in o12 o12b o12p; do
+        check "$f: cc -std=c11 -pedantic-errors (and -D_WIN64)" "0 0" "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c "$f" > /dev/null 2>&1; echo $?) $(cc -std=c11 -pedantic-errors -fsyntax-only -D_WIN64 -x c "$f" > /dev/null 2>&1; echo $?)"
+    done
+    # A C caller linked against the filed repro (`object;`): both words through the header.
+    cp o12 ffi12.h
+    { echo 'object;'; cat se.cyr; } > lib12.cyr
+    (cd "$ROOT" && "$ROOT/build/cycc" < "$D/lib12.cyr" > "$D/lib12.o" 2> /dev/null) || :
+    cat > caller12.c <<'CEOF'
+#include <stdio.h>
+#include "ffi12.h"
+extern void _cyrius_init(void);
+int main(void) {
+    _cyrius_init();
+    cyr_val2 a = parse(21);
+    cyr_val2 b = parse(-5);
+    printf("%ld %ld|%ld %ld\n", (long)a.w0, (long)a.w1, (long)b.w0, (long)b.w1);
+    return 0;
+}
+CEOF
+    if cc -std=c11 -O1 caller12.c lib12.o -I. -o caller12 > cc12.err 2>&1; then
+        check "a C caller reads Ok(42) and Err(5) through the header: tag | payload" "0 42|1 5" "$(./caller12 2>&1)"
+    else
+        check "the C caller compiles and links against the repro object" 0 1; sed 's/^/    /' cc12.err | head -5
+    fi
+else
+    echo "  SKIP (named): H12's guard rows and C caller — $CCX86_WHY"; skips=$((skips + 1))
 fi
 cd "$ROOT" || exit 2
 echo ""

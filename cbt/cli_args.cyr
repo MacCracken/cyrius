@@ -90,7 +90,6 @@ fn _cli_verb_compiles(verb): i64 {
     if (streq(verb, "build") == 1) { return 1; }
     if (streq(verb, "run") == 1) { return 1; }
     if (streq(verb, "test") == 1) { return 1; }
-    if (streq(verb, "tests") == 1) { return 1; }
     if (streq(verb, "bench") == 1) { return 1; }
     if (streq(verb, "fuzz") == 1) { return 1; }
     if (streq(verb, "check") == 1) { return 1; }
@@ -112,13 +111,12 @@ fn _cli_spec_a(verb): i64 {
     # 6.7.6 (part T): run / test / bench / fuzz take --no-deps (no [deps] prepend — the test scope's
     # too) and --no-lock (the resolve writes no cyrius.lock), as build has; --local / --no-local /
     # --locked come with the target block. 6.7.8 (C2-7): --bounds — the bounds-checked mode — on every
-    # verb that compiles a program it then runs or ships (build / run / test / tests / fuzz).
+    # verb that compiles a program it then runs or ships (build / run / test / fuzz).
     if (streq(verb, "run") == 1) { return "--dry-run|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
-    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "bench") == 1) { return "--timeout=|--no-deps|--no-lock"; }
     if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock|--bounds"; }
-    if (streq(verb, "check") == 1) { return "--with-deps"; }
+    if (streq(verb, "check") == 1) { return "--with-deps|--no-redirect"; }
     if (streq(verb, "capacity") == 1) { return "--check|--json"; }
     if (streq(verb, "soak") == 1) { return ""; }
     if (streq(verb, "smoke") == 1) { return ""; }
@@ -137,6 +135,7 @@ fn _cli_spec_b(verb): i64 {
     if (streq(verb, "deps") == 1) { return "--verify|--lock|--no-lock|--relock|--dry-run"; }
     if (streq(verb, "clean") == 1) { return "--dry-run"; }
     if (streq(verb, "lib") == 1) { return "--dry-run|--full|--no-lock|--relock"; }
+    if (streq(verb, "update") == 1) { return "--full"; }
     if (streq(verb, "version") == 1) { return "--project"; }
     if (streq(verb, "--version") == 1) { return "--project"; }
     return 0 - 1;
@@ -159,7 +158,6 @@ fn _cli_operands(verb): i64 {
     if (streq(verb, "build") == 1) { return "[<source> [<output>]]"; }
     if (streq(verb, "run") == 1) { return "<source.cyr> [args...] | <prog.cyx>"; }
     if (streq(verb, "test") == 1) { return "[<test.tcyr|dir>...]"; }
-    if (streq(verb, "tests") == 1) { return "[<dir>]"; }
     if (streq(verb, "bench") == 1) { return "[<bench.bcyr|dir>]"; }
     if (streq(verb, "fuzz") == 1) { return "[<harness.fcyr|dir>]"; }
     if (streq(verb, "check") == 1) { return "<source.cyr>..."; }
@@ -211,7 +209,6 @@ fn _cli_known_verb_a(verb): i64 {
     if (streq(verb, "build") == 1) { return 1; }
     if (streq(verb, "run") == 1) { return 1; }
     if (streq(verb, "test") == 1) { return 1; }
-    if (streq(verb, "tests") == 1) { return 1; }
     if (streq(verb, "bench") == 1) { return 1; }
     if (streq(verb, "fuzz") == 1) { return 1; }
     if (streq(verb, "check") == 1) { return 1; }
@@ -228,6 +225,17 @@ fn _cli_known_verb_a(verb): i64 {
     if (streq(verb, "lib") == 1) { return 1; }
     if (streq(verb, "pulsar") == 1) { return 1; }
     if (streq(verb, "lsp") == 1) { return 1; }
+    return 0;
+}
+
+# A verb the CLI no longer has, named with its replacement after main()'s "Unknown command" line.
+# `cyrius tests [dir]` was the deprecated alias of `cyrius test <dir>` from 6.7.6 and was removed at
+# 6.7.12 (the user's decision D21); a bare `cyrius tests` walked tests/ and never read [test]
+# files, so it was `cyrius test tests`, not a bare `cyrius test`. CHANGELOG [6.7.12]
+fn _cli_removed_verb_hint(verb): i64 {
+    if (streq(verb, "tests") == 1) {
+        _err("`cyrius tests` was removed at 6.7.12: use `cyrius test <dir>` (`cyrius test tests` for tests/)");
+    }
     return 0;
 }
 
@@ -293,7 +301,10 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "check") == 1) {
         println("");
         println("  Default: parse each <source> standalone (no manifest dep auto-prepend).");
-        println("  --with-deps   prepend manifest [deps] entries (legacy behavior).");
+        println("  --with-deps   prepend manifest [deps] entries (legacy behavior). A <source> with no");
+        println("                `include` is then checked through src/main.cyr (the module redirect).");
+        println("  --no-redirect with --with-deps: check <source> itself, never src/main.cyr in its");
+        println("                place (cyrius-lsp passes it, so a file's own errors are reported).");
     }
     if (streq(verb, "fmt") == 1) {
         println("");
@@ -307,7 +318,8 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "build") == 1) {
         println("");
         println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
-        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1)");
+        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1; Linux ELF —");
+        println("                     the Windows CLI refuses it)");
         println("  --dce              dead-code elimination for this build (CYRIUS_DCE=1; [build] dce)");
         println("  --bounds           the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds; a #bounds");
         println("                     line in the entry file's leading block is the lowest rung)");
@@ -342,10 +354,6 @@ fn _cli_help_extra(verb): i64 {
         println("  directory) configure test, bench and fuzz compiles only; `cyrius help manifest`.");
         println("  Exit status: non-zero on any failing test, any compile failure, or no tests found.");
         println("  --bounds    compile each test in the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds).");
-    }
-    if (streq(verb, "tests") == 1) {
-        println("");
-        println("  Deprecated: `cyrius test <dir>` is the same recursive walk; `tests` goes in the next release.");
     }
     if (streq(verb, "run") == 1) {
         println("");
@@ -656,19 +664,18 @@ fn _cli_operands_ok(verb, min, max): i64 {
 # missing.cyr` fetched every dependency and only then said "no such file", and `cyrius bench a b`
 # resolved before refusing the extra operand. The counts are the branches' own (each branch still
 # checks; this runs first), and a FILE operand must exist — `cyrius test`'s every operand (a file or
-# a directory) and the deprecated `cyrius tests`' directory too: `cyrius test missing.tcyr` cloned,
-# vendored and wrote cyrius.lock before saying "no such file" (6.7.6 review). `coverage` reaches here
+# a directory) too: `cyrius test missing.tcyr` cloned, vendored and wrote cyrius.lock before saying
+# "no such file" (6.7.6 review). `coverage` reaches here
 # only in its exec mode (6.7.10), and checks its own (`_covx_preflight`, cbt/quality.cyr). 0, or 1
 # after naming the problem.
 fn _cli_preflight(verb): i64 {
     var mn = 0 - 1;
     var mx = 0 - 1;
     # which operands name a path that must exist: 1 the first (a file), 2 the first (a file or a
-    # directory), 3 every one (a file), 4 every one (a file or a directory), 5 the first (a directory)
+    # directory), 3 every one (a file), 4 every one (a file or a directory)
     var files = 0;
     if (streq(verb, "build") == 1) { mn = 0; mx = 2; files = 1; }
     elif (streq(verb, "test") == 1) { mn = 0; files = 4; }
-    elif (streq(verb, "tests") == 1) { mn = 0; mx = 1; files = 5; }
     elif (streq(verb, "run") == 1) { mn = 1; mx = 1; files = 1; }
     elif (streq(verb, "bench") == 1) { mn = 0; mx = 1; files = 2; }
     elif (streq(verb, "fuzz") == 1) { mn = 0; mx = 1; files = 2; }
@@ -691,12 +698,6 @@ fn _cli_preflight(verb): i64 {
     while (i < last) {
         var p = _cli_pos_at(i);
         i = i + 1;
-        if (files == 5) {
-            if (is_dir(str_from(p)) == 1) { continue; }
-            if (file_exists(p) == 1) { _err_ctx("not a directory (`cyrius test <file>` runs one file)", p); }
-            else { _err_ctx("no such directory", p); }
-            return 1;
-        }
         if (file_exists(p) == 1) { continue; }
         var dir_ok = 0;
         if (files == 2 || files == 4) { dir_ok = 1; }
@@ -735,9 +736,7 @@ fn _cli_features_all(): i64 {
 # exited 0 — on Windows (wine), ecb and ach alike (measured) — plus a "kernel: entry …" line for an
 # ELF that was never written. A dropped flag that changes the artifact is the 6.6.5 one-argument
 # rule's defect. What the host emits, or 0 on Linux: x86_64 Linux honours the selectors (src/main.cyr
-# reads them); the aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64
-# bare-metal target (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
-# CHANGELOG [6.7.11]
+# reads them); the aarch64 Linux CLI is `_cli_host_emits_no_x86` below. CHANGELOG [6.7.11]
 fn _cli_host_emits_only(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return "the Windows CLI: cycc.exe emits PE only";
@@ -748,34 +747,128 @@ fn _cli_host_emits_only(): i64 {
     return 0;
 }
 
-# 1 (after naming it on stderr) when `flag` selects a target this host's compiler cannot emit.
-fn _cli_host_refuses(flag): i64 {
+# 6.7.12 (D6, the user 2026-10-15) — the aarch64 Linux CLI. Its compiler (src/main_aarch64*.cyr)
+# emits aarch64 and reads CYRIUS_KERNEL alone, never CYRIUS_TARGET_AGNOS / CYRIUS_ELF64_KERNEL, so
+# `--agnos` wrote a plain aarch64 Linux ELF and `--target=x86_64-bare-metal-elf` an aarch64 image
+# under an x86_64 multiboot2 entry line, both OK at rc 0 (pi, 6.7.11). What it cannot emit is an
+# x86_64 image; `--target=aarch64-bare-metal-elf` stays (the forks honour CYRIUS_KERNEL). 0 on
+# every other host. CHANGELOG [6.7.12]
+fn _cli_host_emits_no_x86(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "the aarch64 Linux CLI: its cycc emits aarch64 only";
+    #endif
+    #endif
+    return 0;
+}
+
+# 1 (after naming it on stderr) when `flag` selects a target this host's compiler cannot emit;
+# `x86` is 1 for a target only an x86_64-emitting compiler builds (`--agnos`, the x86_64 bare-metal
+# image), which the aarch64 Linux CLI refuses as well.
+fn _cli_host_refuses(flag, x86): i64 {
     var why = _cli_host_emits_only();
+    var tail = " (build agnos / bare-metal images on Linux)\n";
+    if (why == 0 && x86 == 1) {
+        why = _cli_host_emits_no_x86();
+        tail = " (build agnos / x86_64 bare-metal images on x86_64 Linux)\n";
+    }
     if (why == 0) { return 0; }
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, flag, strlen(flag));
     sys_write(STDERR_FD, " is not available from ", 23);
     sys_write(STDERR_FD, why, strlen(why));
-    var tail = " (build agnos / bare-metal images on Linux)\n";
     sys_write(STDERR_FD, tail, strlen(tail));
     return 1;
 }
 
+# 6.7.12 (D5, the user 2026-10-15) — `--pie` from the Windows CLI: cycc.exe reads no CYRIUS_PIE
+# (PE has no position-independent mode here; DYNAMIC_BASE would need a .reloc section cycc does not
+# emit), so `cyrius build --pie` wrote the same image as a plain build at rc 0. Refused by name, as
+# a target the host cannot emit is (6.7.11). 1 after naming it, else 0. CHANGELOG [6.7.12]
+fn _cli_host_refuses_pie(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var msg = "error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no";
+    sys_write(STDERR_FD, msg, strlen(msg));
+    msg = " --pie mode (a position-independent executable is a Linux ELF)\n";
+    sys_write(STDERR_FD, msg, strlen(msg));
+    return 1;
+    #endif
+    return 0;
+}
+
 # The early block: before any selector is applied, so nothing compiles and nothing is written.
-# Kept apart from the selector chain below (6.7.12's combined-target-flags issue reworks that).
+# Kept apart from the selector chain below, which ends in _cli_targets_exclusive (6.7.12).
 fn _cli_foreign_target(): i64 {
+    if (_cli_has("--pie") == 1) {
+        if (_cli_host_refuses_pie() == 1) { return 1; }
+    }
     if (_cli_has("--agnos") == 1) {
-        if (_cli_host_refuses("--agnos") == 1) { return 1; }
+        if (_cli_host_refuses("--agnos", 1) == 1) { return 1; }
     }
     var tgt = _cli_val("--target");
     if (tgt == 0) { return 0; }
     if (streq(tgt, "x86_64-bare-metal-elf") == 1) {
-        return _cli_host_refuses("--target=x86_64-bare-metal-elf");
+        return _cli_host_refuses("--target=x86_64-bare-metal-elf", 1);
     }
     if (streq(tgt, "aarch64-bare-metal-elf") == 1) {
-        return _cli_host_refuses("--target=aarch64-bare-metal-elf");
+        return _cli_host_refuses("--target=aarch64-bare-metal-elf", 0);
     }
     return 0;
+}
+
+# 6.7.12 — ONE EMIT TARGET PER RUN (the user's decision D20, 2026-10-15). `--aarch64`, `--win`,
+# `--agnos` and `--target=<v>` were independent switches, each read by whatever cared about it:
+# `--win --aarch64` built the plain aarch64 ELF, `--win --agnos` a PE matching neither,
+# `--aarch64 --target=x86_64-bare-metal-elf` an aarch64 ELF reported with the x86 kernel line, and
+# `--aarch64 --target=js` an aarch64 ELF named .js — each rc 0 with an OK. Two of them are refused
+# by name here, before anything resolves or compiles (rule 5). The one consistent pair, `--aarch64`
+# with `--target=aarch64-bare-metal-elf`, names ONE target and builds it exactly as the --target
+# alone does. 0, or 1 after naming the selectors, in the order given. CHANGELOG [6.7.12]
+fn _cli_targets_exclusive(): i64 {
+    var tgt = _cli_val("--target");
+    var a64_named = 1;     # 0: --aarch64 restates --target=aarch64-bare-metal-elf (D20)
+    if (tgt != 0) {
+        if (streq(tgt, "aarch64-bare-metal-elf") == 1) { a64_named = 0; }
+    }
+    var names = vec_new();
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        var nm = vec_get(_cli_names, i);
+        var shown = 0;
+        if (streq(nm, "--aarch64") == 1) { if (a64_named == 1) { shown = nm; } }
+        elif (streq(nm, "--win") == 1 || streq(nm, "--agnos") == 1) { shown = nm; }
+        elif (streq(nm, "--target") == 1) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "--target=");
+            str_builder_add_cstr(sb, vec_get(_cli_vals, i));
+            shown = str_data(str_builder_build(sb));
+        }
+        if (shown != 0) {
+            # a bool selector may repeat (`--win --win` is one target)
+            var j = 0;
+            var seen = 0;
+            while (j < vec_len(names)) { if (streq(vec_get(names, j), shown) == 1) { seen = 1; } j = j + 1; }
+            if (seen == 0) { vec_push(names, shown); }
+        }
+        i = i + 1;
+    }
+    var n = vec_len(names);
+    if (n < 2) { return 0; }
+    var msg = str_builder_new();
+    var k = 0;
+    while (k < n) {
+        if (k > 0) {
+            if (k == n - 1) { str_builder_add_cstr(msg, " and "); }
+            else { str_builder_add_cstr(msg, ", "); }
+        }
+        str_builder_add_cstr(msg, vec_get(names, k));
+        k = k + 1;
+    }
+    if (n == 2) { str_builder_add_cstr(msg, " select two emit targets; pass one"); }
+    elif (n == 3) { str_builder_add_cstr(msg, " select three emit targets; pass one"); }
+    else { str_builder_add_cstr(msg, " select four emit targets; pass one"); }
+    _err(str_data(str_builder_build(msg)));
+    return 1;
 }
 
 fn _cli_apply_target(verb): i64 {
@@ -799,6 +892,7 @@ fn _cli_apply_target(verb): i64 {
         }
         else { return _cli_fail(verb, "unknown --target", tgt); }
     }
+    if (_cli_targets_exclusive() != 0) { return 1; }
     var defs = _cli_values("-D");
     if (vec_len(defs) > 0) { _defines = defs; }
     return 0;
@@ -818,6 +912,7 @@ fn _cli_apply(verb): i64 {
     if (_cli_has("--pie") == 1) { _pie_target = 1; }
     if (_cli_has("--poison") == 1) { _poison_mode = 1; }
     if (_cli_has("--full") == 1 && streq(verb, "lib") == 1) { _lib_sync_full = 1; }
+    if (_cli_has("--full") == 1 && streq(verb, "update") == 1) { _lib_sync_full = 1; }   # 6.7.12 (D18)
     if (_cli_has("--no-lock") == 1) { _no_lock = 1; }
     if (_cli_has("--relock") == 1) { _dep_relock = 1; }
     return _cli_apply_target(verb);

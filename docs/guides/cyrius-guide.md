@@ -3928,8 +3928,9 @@ with an `N passed, M failed` tally of the files they ran.
 may mix files and directories and each file runs once, and a bare `cyrius test` is unchanged.
 A directory holding no `.tcyr` is a failure, by name. Until 6.7.6 `cyrius test <dir>` was
 `error: not a file` and the directory walk was a second verb, `cyrius tests [dir]`; that
-spelling is a deprecated alias (still accepted at 6.7.9, to be removed) that prints a one-line
-notice naming the replacement (`cyrius test <dir>`; a bare `cyrius tests` was `cyrius test tests`).
+spelling was a deprecated alias from 6.7.6 and was removed at 6.7.12: `cyrius tests` is an
+unknown command (rc 1) whose refusal names the replacement (`cyrius test <dir>`; a bare
+`cyrius tests` was `cyrius test tests`).
 
 ## Manifest keys (`cyrius.cyml`)
 
@@ -3991,6 +3992,14 @@ by name instead of being silently inert; a declared synonym (`src`) is not unkno
 6.3.2 — a reachable undefined function is an error by default and `--allow-undef` downgrades it
 — so there is nothing for the key to switch. `cyrius build --strict` is still accepted and passed
 through, for scripts that spell it; it changes nothing.
+
+**The toolchain pin.** cycc compares `[package] cyrius = "X.Y.Z"` in the working directory's
+`cyrius.cyml` with its own version on every compile: a drifted pin warns (`warning: cyrius.cyml
+pins 0.0.1 but cycc is 6.7.12 — toolchain drift …`; `CYRIUS_NO_WARN_PIN_DRIFT=1` silences it), and
+`cyrius build --strict-pin` (`CYRIUS_STRICT_PIN=1`) makes it an error — rc 1, nothing written — so
+a CI build fails on drift. Since 6.7.12 that holds for every host's compiler: through 6.7.11 the
+check was Linux-only, so cycc.exe and both macOS compilers built a drifted pin with no message and
+`--strict-pin` passed there.
 
 `cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
 value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
@@ -4218,15 +4227,18 @@ CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to
   `[test] files`. A `test.cyml` elsewhere still applies when its unit runs; a leaf it names that
   the resolve did not vendor is named. A directory the resolve cannot list is warned by name.
 - However the unit is spelt, it is one directory and one chain: `tests/net/x.tcyr`,
-  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` (as the working directory
-  names it) and, on Windows, `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels
-  above it, each once.
-- A unit outside the project (an absolute path elsewhere, a `..`; on Windows any drive-qualified
-  `C:…` or rooted `\…` path) gets `cyrius.cyml`'s `[test]` only.
+  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` and, on Windows,
+  `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels above it, each once. An absolute
+  path is matched to the working directory by identity (6.7.12), so under a symlinked working
+  directory the logical `$PWD/tests/net/x.tcyr` and the physical spelling are the same unit.
+- A unit outside the project (an absolute path elsewhere, a `..`; on Windows a drive-relative
+  `C:x…` or a rooted `\…` path) gets `cyrius.cyml`'s `[test]` only. On Windows a drive-rooted
+  `C:\proj\tests\net\x.tcyr` (or `c:/proj/…`) inside the working directory is the project's own
+  unit (6.7.12; until then every drive-qualified path counted as outside).
 
 **At run time** each unit gets `CYRIUS_TEST_FILE` (the unit) and `CYRIUS_TEST_DIR` (its
-directory) in its environment — absolute where the host can say so — so a test finds data beside
-itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.embed]`.
+directory) in its environment — absolute, Windows included since 6.7.12 — so a test finds data
+beside itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.embed]`.
 
 **The exit code is the contract.** `cyrius test` — a file, a directory, several operands, or bare
 — exits non-zero on any failing test (an assertion, a signal, a timeout, an assert summary that
@@ -4248,7 +4260,8 @@ cyrius deps -v                           # ...and list where each dependency cam
 cyrius deps --dry-run                    # each dependency and where it WOULD come from; writes nothing
 cyrius deps --locked                     # CI: resolve the tags, compare with lib/ + cyrius.lock, write nothing
 CYRIUS_LOCAL=1 cyrius build              # build each [deps.X] `path` override (sibling checkouts); lib/ + lock untouched
-cyrius update                            # re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
+cyrius update                            # lib sync from the pin, re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
+cyrius update --full                     # ...with the whole pinned snapshot in lib/ (as lib sync --full)
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
 cyrius test                              # [test] files first (6.6.17; [build] test is the older spelling), then every .tcyr under tests/, each once
@@ -4258,7 +4271,6 @@ cyrius test tests/tcyr/crossos           # a directory: every .tcyr under it, re
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
 cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6.5)
-cyrius tests [dir]                       # DEPRECATED alias (6.7.6) of `cyrius test <dir>`; to be removed
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
 cyrius fuzz --poison [path|dir]          # poisoning allocators + redzones; an overwrite exits 86 (6.6.18)
@@ -4307,9 +4319,21 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > the tool builds and the install step) and the cx arc's on-demand `build/cycc_cx` / `build/cxvm`
 > builds run without `CYRIUS_POISON`, `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` and
 > `CYRIUS_COVERAGE_FILE`, as the self-build scripts do: an exported `CYRIUS_POISON=1` used to make
-> `pulsar` rebuild — and install — a poison-mode `build/cycc`. Your own compiles still see them
-> (`cyrius build --target=cx x.cyr` hands them to `cycc_cx` for `x.cyr`). Pinned by
-> `tests/gates/toolchain/cbt_self_builds_scrub_env.sh`.
+> `pulsar` rebuild — and install — a poison-mode `build/cycc`. Since 6.7.12 the self-host
+> verifiers do too: both steps of `cyrius self` and of each `cyrius soak` iteration build the
+> default compiler, so an exported `CYRIUS_POISON=1` no longer turns their verdict into one about
+> two poison-mode compilers. Your own compiles still see them (`cyrius build --target=cx x.cyr`
+> hands them to `cycc_cx` for `x.cyr`, and `soak`'s test suite and `.scyr` harnesses compile
+> with them). Pinned by `tests/gates/toolchain/cbt_self_builds_scrub_env.sh`.
+
+> ⚠ **`fmt`: a continuation line is canonical at 2, accepted at 4** (the 2026-08-18 contract).
+> Inside an open `(`, a wrapped line's indent is 2 spaces per open paren level beyond the
+> statement's. `cyrius fmt <file>` (and `cyrfmt <file>`, `--write`) always writes the canonical
+> 2, so it rewrites an accepted 4 as 2; `cyrius fmt --check` passes 2 or 4 and rejects anything
+> deeper, naming the first differing line. Since 6.7.12 `cyrius audit`'s fmt stage asks
+> `cyrfmt --check` (D26), so it agrees with it: it used to compare the file with cyrfmt's
+> canonical output and so flagged the 4-step file `--check` passed. Pinned by
+> `tests/gates/toolchain/fmt_continuation_contract.sh` axis 5.
 
 > ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
 > fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own
@@ -4373,7 +4397,10 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
 does not declare is an **error that names it**; operand counts are enforced — an extra
 operand is processed or rejected, never silently dropped; and a global `-q`/`-v` never shifts
-the operands. `cyrius <verb> --help` prints exactly the flags the parser accepts. `run` is the
+the operands. `cyrius <verb> --help` (or `-h`) prints exactly the flags the parser accepts, on
+every verb — since 6.7.12 the raw-tail verbs `init`, `port` and `sign-efi` too, whose helpers
+(`cyrius-init`, `cyrsign-efi`) print their usage on stdout and exit 0 (`cyrsign-efi` takes the
+help only as its lone argument and still refuses every other `-` token). `run` is the
 one stop-at-first-positional verb: a flag written after the source belongs to the program
 (`cyrius run -- prog.cyr a` is the same as `cyrius run prog.cyr a`). A value flag given twice
 is an error that names it (`--target=js --target=cx` used to mean cx, silently) — except the
@@ -4408,6 +4435,10 @@ whose peer declares it (`syscalls` for `O_RDWR`, never a per-arch peer); else th
 declarer. Two or more candidates is a refusal that names them all — `'X' is undefined on every
 target, and more than one stdlib leaf could own it (a, b)` — and no sidecar is written: `include`
 the right leaf from a bundled module.
+A leaf a NAMED DEP brings is that dep's, not the bundle's: one its sidecar lists, and (6.7.12) one
+of those leaves brings by its own include — `tagged` lists `boxed` in for `tagged_new`, as
+`cyrius deps` vendors it for the dep — so a bundle that calls nothing gets no sidecar (until 6.7.12
+it published `boxed`). The bundle's OWN call into such a leaf is recorded, listed or not.
 
 The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
 (`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include
@@ -4465,6 +4496,9 @@ off. The manifest can never switch it on, so no commit flips what CI builds.
 - **Local mode**, per selected override whose `path` is a directory: the working tree is used, no
   clone, and one line names it:
   `local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9`.
+  The state is the checkout's own: git's discovery stops at the parent of the directory's
+  physical path, so a `path` reached through a symlink into another repository's subdirectory
+  says `(not a git checkout)`, as its physical spelling does (6.7.12).
   A selected `path` that is not a directory is named and the tag builds instead.
 - **Local mode writes no tracked file.** The whole resolution goes to `build/local-deps/lib/` and
   `cyrius.lock` is not written, so `lib/` and the lock stay what the tag resolution wrote and
@@ -4548,7 +4582,40 @@ is the explicit accept when the snapshot legitimately moved (e.g. after
 `scripts/verify-store.sh --restore`). Before 6.6.4 the resolver re-vendored and re-locked the
 mutated file silently and `deps --verify` then passed on it. A lock written before 6.6.4 has
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
-re-hashes `lib/` **keeping** the commit pins (it used to drop them).
+re-hashes `lib/` **keeping** the commit pins (it used to drop them). A resolve never drops a
+`commit` line it did not re-verify (6.6.20, fail-closed — a repointed old tag stays refused), so
+after a `[deps.NAME] tag` moves the lock keeps the old tag's line beside the new one; since 6.7.12
+every resolve, and `--locked` (which still passes), names it: `note: cyrius.lock keeps
+darshana@1.2.1's pin (the manifest declares darshana at 1.3.0), fail-closed; delete cyrius.lock to
+re-pin`. A line a manifest the resolve read still declares (a diamond's transitive `x@v1`) is live,
+and not named.
+
+**A pin bump in a project that vendors the whole snapshot (6.7.12).** The lock records ONE pin
+for every row, so a resolve at a moved `[package].cyrius` does **not** re-lock while `lib/` holds
+stdlib files it did not vendor (outside the declared closure — a `cyrius lib sync --full` project's)
+that the new pin's snapshot ships with other bytes: re-locking stamped the new pin over the old
+pin's rows, `deps --verify` and `--locked` agreed, and the next `lib sync --full` refused as if the
+snapshot had moved under an unchanged pin. `cyrius deps` — and `cyrius build`, every resolving
+verb — exits 1 naming each file, leaves `cyrius.lock` unchanged, and gives the two ways on:
+
+```
+error: cyrius.lock not re-locked: [package].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file this resolve did not vendor that the 6.6.7 snapshot ships with other bytes:
+  lib/chrono.cyr
+  cyrius.lock records ONE pin for every row; re-locking would stamp 6.6.7 over these rows. Either:
+    cyrius lib sync --full     moves them to 6.6.7 and re-locks (a project that vendors the whole snapshot)
+    rm <file> && cyrius deps   drops them from lib/ and the lock
+```
+
+So after a pin bump a full-vendored project runs `cyrius lib sync --full` first. A file the new
+snapshot does not ship, or ships with the same bytes, does not depend on the pin and is re-locked
+as before; a project whose `lib/` is only its closure re-locks silently, as it always did.
+
+A resolve never deletes a file, so since 6.7.12 it **names** each `lib/` file it did not vendor —
+a leaf dropped from `[deps] stdlib`, the module of a dep dropped from the manifest — which `lib/`
+and the lock still hold (`note: 1 file in lib/ is outside the declared footprint …`, the file,
+then `` `rm <file> && cyrius deps --lock` drops one from lib/ and cyrius.lock ``). Nothing is
+written or deleted for it; a `lib/` that holds the whole pinned snapshot (`cyrius lib sync
+--full`) is not told, and neither is `-q`.
 
 **`--locked`: the CI check (6.7.6).** `cyrius deps --locked` — and `cyrius build --locked`, every
 resolving verb, or `CYRIUS_LOCKED=1` — resolves the TAGS into a private scratch, verifies every
@@ -4565,6 +4632,24 @@ It also names a lock hash the tag disagrees with, a `lib/` file the lock does no
 line for a file that exists nowhere, a file the tags resolve that `lib/` lacks, and a lock that
 records another stdlib pin; with no `cyrius.lock` at all it refuses by name. A clean tree says
 `--locked: lib/ and cyrius.lock are exactly what the tags resolve`.
+
+**A CRLF checkout of `lib/` (6.7.12).** The lock records the exact bytes `cyrius deps` wrote (LF),
+and git's `core.autocrlf` (Git for Windows' default) rewrites a committed `lib/` to CRLF on
+checkout. Exact bytes stay the proof, so such a checkout still fails `deps --verify` and `--locked`
+(rc 1) — normalising would let a CRLF-only rewrite of a locked file pass — but a file whose bytes,
+read with every CRLF as LF, hash to the locked value is named for what it is:
+
+```
+  FAIL: lib/alpha.cyr (hash mismatch — CRLF checkout: add `lib/** -text` to .gitattributes)
+0 verified, 2 failed
+note: 2 files in lib/ differ only by CRLF line endings: git converted lib/ on checkout (core.autocrlf), and cyrius.lock holds the exact bytes. Commit `lib/** -text` in .gitattributes and check lib/ out again (before any `cyrius deps`, which would lock the converted bytes)
+```
+
+`--locked` names the same files (`… — CRLF checkout: add …`), and when every difference is one its
+remedy is the `.gitattributes` line, not "run `cyrius deps`" (which would re-lock the CRLF bytes and
+churn the lock between a Windows and a Linux checkout). `cyrius init` writes that `.gitattributes`
+(`lib/** -text`), and `cyrius port` creates it or appends the line to an existing one. Through
+6.7.11 every such file was a bare `hash mismatch`.
 
 **A project that does not commit `lib/`** (it is in `.gitignore`, so a fresh CI checkout has none —
 the lock is the committed artifact there): with no vendored `lib/` (absent, or holding no `.cyr`)
@@ -4584,7 +4669,12 @@ Locked means nothing is written in ANY verb: under `CYRIUS_LOCKED=1` a verb whos
 (`error: cyrius update writes lib/ and cyrius.lock, and CYRIUS_LOCKED=1 means nothing is written —
 refused …`); `deps --verify` and `lib sync --dry-run`, which write nothing, still run.
 
-**`cyrius update` (6.7.6).** After refreshing `lib/` from the toolchain (as before), `update`
+**`cyrius update` (6.7.6).** `update` first refreshes `lib/` exactly as `cyrius lib sync` does
+(6.7.12, D18): the declared `[deps] stdlib` set, its per-OS peers and the test scope's leaves, from
+the snapshot of the manifest's `[package].cyrius` pin (the CLI's own version when the manifest pins
+none) — `cyrius update --full` takes the whole snapshot — with lib sync's lock guard and re-lock,
+and it writes that version into an existing `.cyrius-toolchain`. (Until 6.7.12 it copied every
+file of `$CYRIUS_HOME/current`'s snapshot, whatever the manifest declared or pinned.) Then `update`
 re-fetches each UNTAGGED dependency — it floats by design, and the cache froze it at its first
 fetch — re-resolves the manifest (`lib/` + `cyrius.lock`), and lists each root dependency's newer
 version tags, newest first: `sigil: 3.9.9 pinned; newer tags: 3.10.0, 3.9.10 (cyrius.cyml is not
@@ -4661,7 +4751,20 @@ unchecked: the check could not write its temp files, so the cache was NOT judged
 temp base is an **absolute** `$TMPDIR` when one is set, else `/tmp` (`%TEMP%` on Windows); a
 relative `TMPDIR` is ignored, and one that does not exist or cannot be written is an error
 that names it (`TMPDIR=… does not exist or is not writable`). The hashes behind `cyrius.lock`
-come from `sha256sum`, or `shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
+are computed by the CLI itself (6.7.12) — SHA-256, byte for byte what `sha256sum` prints — so no
+external hasher runs, a full temp dir cannot touch the lock, and the lock is written on every host,
+wine included (through 6.7.11 they came from `sha256sum`, `shasum -a 256` or `certutil`).
+
+**A CLI stopped mid-compile leaves nothing in its temp dir (6.7.12).** SIGTERM, SIGINT (Ctrl-C)
+or SIGHUP while a compile runs stops the compiler the CLI started (a distlib verify passes the
+signal to its per-target children, which clean up their own), unlinks the compile's scratch —
+the preprocessed `cpp_<pid>`, the `cc_err` capture, the child's `<out>.tmp.<pid>` (beside the
+output for `cyrius build`), a check's own output — removes the then-empty temp dir and exits
+128+N (143, 130, 129). A file in that dir that is not compile scratch, such as a `cyrius test`
+binary, stays, and so does the dir. A signal that was IGNORED when the CLI started (`nohup`, a
+background job of a non-interactive shell) stays ignored. Through 6.7.11 a kill left all three
+names until `scripts/check.sh`'s reaper removed the dead pid's dir. SIGKILL cannot be caught, so
+its leftovers are still the reaper's; on Windows, which has no POSIX signals, nothing is caught.
 
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
@@ -4754,9 +4857,17 @@ and the compiler refuses `a[i]` on it, so the overrun left to make is the explic
 `cyrlint` records each local of a fn body, scoped to its block, and warns on a
 `load8/16/32/64(&a + K)` or `store8/16/32/64(&a + K, ..)` — K an integer literal, or no `+ K` at
 all — whose K plus the access width runs past those bytes: `var a[16]; store64(&a + 16, 3);`
-draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. A typed
-local (`var a: i64[4]`), a scalar or a size that is not a literal shadows the name and is not
-checked. An intended offset is marked with `# lint: offset-ok` on the line of the call's name.
+draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. Since
+6.7.12 N is read as the compiler reads it for the shapes a line scanner can see: an integer
+literal, a `const NAME = <literal>;`, an enum constant with a literal value (bare or `E.X`), and
+`+ - *` over those (`*` first) — `var a[BUF]`, `var b[Sz.SMALL]`, `var c[4 + 4]` — and the
+warning names the spelling and its value (``of local `var a[BUF]` (N = 8)``). A top-level bare
+`var g[N]` is N i64 slots (N * 8 bytes) and is checked in every fn whose own local or parameter
+does not shadow the name (``of top-level `var g[2]`, which is 16 bytes``); before 6.7.12 only a
+literal N in a function was checked. A typed local (`var a: i64[4]`), a scalar or a size it
+cannot read (`sizeof`, a `const fn` call, parentheses, a name from another file, a const or
+enum constant defined twice with two values) shadows the name and is not checked. An intended
+offset is marked with `# lint: offset-ok` on the line of the call's name.
 And a write of a string literal with a literal length — `syscall(SYS_WRITE, fd, "…", N)` (or
 `syscall(1, …)`), `sys_write(fd, "…", N)`, `_aw_write(fd, "…", N)` — warns when N is not the
 literal's byte length (`write length 5, but its literal is 6 bytes …`): a raw byte counts once,
@@ -4801,7 +4912,12 @@ declaration with the same reader as `cyrius header`, `coverage` and the LSP
 `cyrius header`, `cyrius api-surface` and the LSP balance a generic type's `<` `>` in a
 parameter (`p: Pair<i64, i64>` is one parameter; after the parameter's `=` a `<` is the
 operator), and `cyrius header` writes a variadic tail as C's `...` and a fully variadic
-`fn f(...)` as `f(void)`. Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
+`fn f(...)` as `f(void)`. Since 6.7.12 `cyrius type-audit` counts a generic fn (`fn g<T>(a: T)`,
+blanks around the `<..>` allowed as the compiler allows them; it required the `(` right after
+the name, so a public generic fn was missing from its counts), and `cyrius api-surface` writes a
+variadic fn as `name/MIN-` — `va/1-` for `fn va(n, ...)`, `zv/0-` for `fn zv(...)`: the `...`
+tail is no parameter, and the open upper bound (6.7.7's `name/MIN-MAX` form for trailing
+defaults) keeps it apart from a fixed fn of the same count (it read `va/2`, `zv/1`). Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
 `cyr_val f(..)` for every fn): a scalar, a pointer, `Str` and a struct of 8 bytes or less stay
 `cyr_val`; a struct of 9-16 bytes and a `dyn Tr` are `cyr_val2` (two int64 words, as cycc returns
 them in rax:rdx / AAPCS64 x0:x1) under `#ifndef _WIN64` — Win64 C returns 16 bytes through a hidden
@@ -4812,7 +4928,23 @@ words, the size rounded up: the callee writes whole words), returned by value th
 result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the tool cannot size
 from the file itself — another file's struct, a generic instance, a struct holding one, a struct
 declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
-on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+on stderr with no prototype, and the verb exits 1. Since 6.7.12 so is a SIMD vector return (D24:
+``'rv2' returns 'f64v2': a SIMD vector return, which no C11 return type carries``) — it printed
+`cyr_val`, which C reads from rax / x0, and a C vector type is a compiler extension; make such a fn
+private, or return its lanes another way, to generate a header for the rest of the file.
+Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
+(and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
+x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden
+result pointer), and in x0:x2 on aarch64 (C reads x0:x1) — so `lib/process.cyr`'s `run`,
+`run_capture`, `spawn` and `wait_pid` are `cyr_val2`. A fn whose signature says a word (no
+annotation, or `: i64`) but whose body returns the pair — `return Ok(x);` (any payload
+constructor of the stdlib's Result / Option / Either or of the file's own stack enum; a nullary
+`None()` returns its tag alone), or `return f(..);` of a fn of the same file that returns it,
+followed to a fixpoint — is refused by name (``'mk' returns a `: stack` enum's (tag, payload)
+pair through 'Ok(..)', which its signature does not declare …``), rc 1: a source scanner cannot see
+that pair from the signature. Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
+private. A closure's own `return` is not the fn's; a pair reached through another file's fn or a
+method is not seen.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
 one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
 Whitespace at the end of a
@@ -6713,10 +6845,16 @@ CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
 The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
-x86_64 instruction set. Give ONE target flag per build: `--win`, `--agnos` (the agnos ring-3
-userspace target) and `--aarch64` (ARM64 cross-compile) each select a different target, and a
-combination is not refused — one of them silently wins (measured at 6.7.9: `--win --aarch64`
-builds the aarch64 ELF, `--win --agnos` the PE).
+x86_64 instruction set. ONE target selector per run: `--win`, `--agnos` (the agnos ring-3
+userspace target), `--aarch64` (ARM64 cross-compile) and `--target=<v>` (`js`, `cx`, a bare-metal
+triple) each select a different emit target, and since 6.7.12 two of them are refused by name
+before anything resolves or compiles — `error: --win and --aarch64 select two emit targets; pass
+one`, rc 1, no output — on every verb that takes the target block (`build`, `run`, `test`, …). The
+one consistent pair, `--aarch64 --target=aarch64-bare-metal-elf`, is accepted and builds exactly
+what the `--target` alone does (decision D20). Through 6.7.11 a combination silently kept one:
+`--win --aarch64` built the aarch64 ELF, `--win --agnos` a PE matching neither, and
+`--aarch64 --target=js` an aarch64 ELF named `.js` (its compiler read stdin, so on a terminal it
+waited for ever).
 
 ### Conditional Compilation
 
@@ -7157,13 +7295,16 @@ CYRIUS_TARGET_AGNOS=1 cycc < ...
 
 The Windows and macOS CLIs **refuse** `--agnos` and both bare-metal targets
 (`--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf`) by name, rc 1, before
-anything compiles: their compilers emit PE or Mach-O only. ⚠ The aarch64 Linux CLI does not
-honour `--agnos` or `--target=x86_64-bare-metal-elf` yet: its compiler reads `CYRIUS_KERNEL`
-alone, so it writes an aarch64 binary at rc 0 (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
+anything compiles: their compilers emit PE or Mach-O only. The aarch64 Linux CLI refuses
+`--agnos` and `--target=x86_64-bare-metal-elf` the same way (6.7.12): its compiler emits aarch64
+and reads `CYRIUS_KERNEL` alone — through 6.7.11 it wrote a plain aarch64 binary (or an aarch64
+image under an x86_64 kernel line) at rc 0 — while `--target=aarch64-bare-metal-elf` stays allowed
+there. Build agnos and x86_64 kernel images on an x86_64 Linux host.
 
 ```
 error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)
 error: --agnos is not available from the macOS CLI: cycc emits Mach-O only (build agnos / bare-metal images on Linux)
+error: --agnos is not available from the aarch64 Linux CLI: its cycc emits aarch64 only (build agnos / x86_64 bare-metal images on x86_64 Linux)
 ```
 
 ⚠ Before 6.7.11 they accepted the flag, built the host format, printed `OK` and exited 0
@@ -7512,6 +7653,10 @@ cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64
 # or
 CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
 ```
+
+PIE is a Linux ELF mode. The Windows CLI refuses `--pie` by name — `error: --pie is not available
+from the Windows CLI: cycc.exe emits PE only, which has no --pie mode …`, rc 1, nothing written —
+since 6.7.12; before, cycc.exe ignored it and wrote the same image as a plain build.
 
 Non-PIE output is **byte-identical** across all corpus inputs — the feature
 is fully opt-in and inert when disabled (v6.1.5 vs v6.1.6 differential = zero

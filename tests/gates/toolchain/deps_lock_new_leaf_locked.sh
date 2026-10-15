@@ -34,10 +34,13 @@
 #      `_deps_lock_files` (one walker — the checker cannot drift from the writer).
 #   7. Help: `deps --help` no longer says deps are "symlinked into lib/" and documents that
 #      --relock locks files --verify reports; the top-level line lists --relock.
-#   8. No working hasher: a lock write owed ONLY to a new leaf (a stdlib-only project with no
-#      lock yet) is a named WARNING — deps and build succeed, no lock is written; the explicit
-#      `--lock` still fails hard, and under an existing lock the 6.6.4 guard still refuses. (Before 6.6.9 no lock was attempted there at
-#      all — wine, with no certutil, must not lose every stdlib-only build to the new write.)
+#   8. A file that cannot be hashed: a lock write owed ONLY to a new leaf (a stdlib-only project
+#      with no lock yet) is a named WARNING — deps and build succeed, no lock is written; the
+#      explicit `--lock` still fails hard. (Before 6.6.9 no lock was attempted there at all —
+#      wine, with no certutil, must not lose every stdlib-only build to the new write.) Since
+#      6.7.12 the hash is IN PROCESS: with no hasher on PATH the first lock IS written (each row
+#      sha256sum's), and adding a leaf under an existing lock re-locks — the warning is now
+#      reached by a lib/ file that cannot be read (a dangling symlink).
 #
 # MUTATION LEDGER (measured 6.6.9, each a copy of the tree with ONE edit, CLI rebuilt):
 #   a. the `_dep_lock_new_leaf` trigger removed from cmd_deps' write condition
@@ -51,7 +54,10 @@
 #                                                   -> axis 5 FAIL (the lock is rewritten on
 #                                                      every resolve)
 #   e. the soft arm removed (a new-leaf-only hash failure counted as an error)
-#                                                   -> axis 8 FAIL (rc 1 with no hasher)
+#                                                   -> axis 8 FAIL (rc 1 with no hasher;
+#                                                      6.7.12: rc 1 over the dangling file)
+#   f. (6.7.12) `_sha256sum_file` back on 6.7.11's sha256sum spawn -> axis 8 FAIL (no lock
+#      with no hasher on PATH; the leaf added under a lock refused)
 #   pre-fix tree (the 6.6.9 slot-open commit bd6dad5f) -> axes 1-7 FAIL
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -189,11 +195,11 @@ grep -q 'not in cyrius.lock' "$W/a7a.out" || { fail "axis 7: deps --help does no
 grep -E '^  deps ' "$W/a7b.out" | grep -q -- '--relock' || { fail "axis 7: the top-level help line for deps does not list --relock: $(grep -E '^  deps ' "$W/a7b.out")"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 7: the help describes what --relock and --verify now do"
 
-# ── axis 8: no working hasher — a write owed ONLY to a new leaf warns, the resolve succeeds ──
-# Before 6.6.9 no lock was attempted in a stdlib-only project, so a host that cannot hash
-# (wine has no certutil) built fine; the first-lock write must not take that away. The
-# warning names the file and why, the lock is left as it was, --verify still names the
-# uncovered file, and the HARD paths (`--lock`) still fail.
+# ── axis 8: a write owed ONLY to a new leaf that cannot hash warns; the resolve succeeds ──
+# 6.7.12: the hash is in process, so no hasher on PATH is no longer such a case — the first lock
+# is written and a leaf added under the lock re-locks. The soft arm is still what a lib/ file
+# that cannot be READ meets: the warning names it and why, no lock is written, deps and build
+# succeed, and the HARD path (`--lock`) still fails.
 x=0
 mkdir -p "$W/nohash"
 P8="$W/r8"; mkdir -p "$P8/src"
@@ -201,26 +207,30 @@ _manifest "$P8" '"syscalls", "string"'
 printf 'fn main(): i64 { return strlen("abcde"); }\nvar r = main();\nsyscall(60, r);\n' > "$P8/src/main.cyr"
 _cyp() { _d=$1; shift; ( cd "$_d" && PATH="$W/nohash" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$CLI" "$@" ); }
 rc=0; _cyp "$P8" deps > "$W/a8a.out" 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || { fail "axis 8: with no hasher a stdlib-only cyrius deps FAILED (rc=$rc) — the first-lock write took a working resolve away:"; sed 's/^/      /' "$W/a8a.out" | head -3; x=1; }
-grep -q 'warning: cyrius.lock NOT written — cannot hash lib/' "$W/a8a.out" || { fail "axis 8: the unhashable first lock is not named as a warning:"; sed 's/^/      /' "$W/a8a.out" | head -3; x=1; }
-grep -q 'neither sha256sum nor shasum' "$W/a8a.out" || { fail "axis 8: the warning does not say why (no hasher)"; x=1; }
-[ -e "$P8/cyrius.lock" ] && { fail "axis 8: a lock was written with no hasher"; x=1; }
+[ "$rc" -eq 0 ] || { fail "axis 8: with no hasher on PATH a stdlib-only cyrius deps FAILED (rc=$rc):"; sed 's/^/      /' "$W/a8a.out" | head -3; x=1; }
+[ "$(_hashlines "$P8/cyrius.lock")" = "$(_ncyr "$P8")" ] || { fail "axis 8: with no hasher on PATH the first lock was not written whole ($(_hashlines "$P8/cyrius.lock") rows, $(_ncyr "$P8") files)"; x=1; }
+( cd "$P8" && grep '^[0-9a-f]\{64\}  ' cyrius.lock | sha256sum -c --quiet ) > /dev/null 2>&1 || { fail "axis 8: a lock row differs from sha256sum's"; x=1; }
 rc=0; _cyp "$P8" build src/main.cyr out > "$W/a8b.out" 2>&1 || rc=$?
 erc=0; [ -s "$P8/out" ] && { ( exec "$P8/out" ) > /dev/null 2>&1 || erc=$?; }
-{ [ "$rc" -eq 0 ] && [ "$erc" -eq 5 ]; } || { fail "axis 8: with no hasher cyrius build failed (rc=$rc, exit $erc):"; tail -3 "$W/a8b.out" | sed 's/^/      /'; x=1; }
-rc=0; _cyp "$P8" deps --lock > "$W/a8c.out" 2>&1 || rc=$?
-{ [ "$rc" -ne 0 ] && grep -q '^error: cannot hash' "$W/a8c.out"; } || { fail "axis 8: the explicit --lock with no hasher did not fail hard (rc=$rc)"; x=1; }
-_cy "$P8" deps > /dev/null 2>&1
-[ "$(_hashlines "$P8/cyrius.lock")" = "$(_ncyr "$P8")" ] || { fail "axis 8: with the hasher back, cyrius deps did not write the first lock"; x=1; }
-# ...and once a lock EXISTS at this pin, no hasher is the 6.6.4 guard's hard refusal (it must
-# hash every snapshot leaf it vendors): that boundary is unchanged, and the lock is untouched.
-cp "$P8/cyrius.lock" "$W/a8.before"
+{ [ "$rc" -eq 0 ] && [ "$erc" -eq 5 ]; } || { fail "axis 8: with no hasher on PATH cyrius build failed (rc=$rc, exit $erc):"; tail -3 "$W/a8b.out" | sed 's/^/      /'; x=1; }
+# ...a leaf added under the lock, still no hasher on PATH: the 6.6.4 guard hashes the snapshot
+# in process and the lock gains the leaf (it refused, `cannot hash the pinned snapshot`, before)
 sed -i 's/"string"\]/"string", "chrono"]/' "$P8/cyrius.cyml"
 rc=0; _cyp "$P8" deps > "$W/a8d.out" 2>&1 || rc=$?
-{ [ "$rc" -ne 0 ] && grep -q 'cannot hash the pinned snapshot (neither sha256sum nor shasum' "$W/a8d.out"; } \
-  || { fail "axis 8: under an existing lock, no hasher is no longer the guard's named refusal (rc=$rc):"; sed 's/^/      /' "$W/a8d.out" | head -2; x=1; }
-cmp -s "$P8/cyrius.lock" "$W/a8.before" || { fail "axis 8: the lock changed although nothing could be hashed"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 8: with no hasher, a stdlib-only project's first-lock write warns by name and deps/build succeed; --lock still fails hard; under an existing lock the 6.6.4 guard still refuses"
+{ [ "$rc" -eq 0 ] && grep -q '  lib/chrono.cyr$' "$P8/cyrius.lock"; } \
+  || { fail "axis 8: under an existing lock with no hasher on PATH, the new leaf was not locked (rc=$rc):"; sed 's/^/      /' "$W/a8d.out" | head -2; x=1; }
+# the soft arm: a lib/ file that cannot be read, in a project with no lock yet
+rm -f "$P8/cyrius.lock"
+ln -s "$W/nonexistent.cyr" "$P8/lib/dangle.cyr"
+rc=0; _cyp "$P8" deps > "$W/a8e.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 8: an unreadable lib/ file took a stdlib-only cyrius deps away (rc=$rc):"; sed 's/^/      /' "$W/a8e.out" | head -3; x=1; }
+grep -q 'warning: cyrius.lock NOT written — cannot hash lib/dangle.cyr' "$W/a8e.out" || { fail "axis 8: the unhashable first lock is not named as a warning:"; sed 's/^/      /' "$W/a8e.out" | head -3; x=1; }
+grep -q 'the hasher could not read it' "$W/a8e.out" || { fail "axis 8: the warning does not say why"; x=1; }
+[ -e "$P8/cyrius.lock" ] && { fail "axis 8: a lock was written over a file that could not be hashed"; x=1; }
+rc=0; _cyp "$P8" deps --lock > "$W/a8c.out" 2>&1 || rc=$?
+{ [ "$rc" -ne 0 ] && grep -q '^error: cannot hash' "$W/a8c.out"; } || { fail "axis 8: the explicit --lock over an unreadable file did not fail hard (rc=$rc)"; x=1; }
+rm -f "$P8/lib/dangle.cyr"
+[ "$x" = 0 ] && echo "  ok: axis 8: with no hasher on PATH the first lock is written and a new leaf re-locks (in-process hash); an unreadable file makes the first-lock write a named warning — deps/build succeed — and --lock fails hard"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: deps_lock_new_leaf_locked (8 axes — every vendored leaf locked, the first lock written, an unlocked file fails --verify)"

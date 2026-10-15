@@ -1943,21 +1943,20 @@ fn _tc_cat(a, b): i64 {
     return out;
 }
 
-# 1 for the verbs that compile in the test scope: test (and its deprecated alias tests), bench,
-# fuzz. (`cyrius audit` turns it on for its test / bench sweep itself.)
+# 1 for the verbs that compile in the test scope: test, bench, fuzz. (`cyrius audit` turns it on
+# for its test / bench sweep itself.)
 fn _tc_scope_verb(verb): i64 {
-    if (streq(verb, "test") == 1 || streq(verb, "tests") == 1) { return 1; }
+    if (streq(verb, "test") == 1) { return 1; }
     if (streq(verb, "bench") == 1 || streq(verb, "fuzz") == 1) { return 1; }
     return 0;
 }
 
-# Turn the test scope on for `verb` ("test" / "bench" / "fuzz" — "tests" is test — or "audit"):
+# Turn the test scope on for `verb` ("test" / "bench" / "fuzz", or "audit"):
 # the project's [test] read and checked, and --timeout read. Before the dependency resolve (the
 # argument rule's rule 5): a refused value stops the verb before anything is written. 0, or 1
 # after naming what is wrong.
 fn _tc_setup(verb): i64 {
     _tc_verb = verb;
-    if (streq(verb, "tests") == 1) { _tc_verb = "test"; }
     if (_tc_load() != 0) { return 1; }
     _tc_arg_timeout = 0 - 1;
     if (streq(verb, "audit") == 0) {
@@ -2040,27 +2039,22 @@ var _tc_cyml_found = 0;    # the test.cyml files the resolver reads (vec), 0 = n
 fn _tc_unit_dir(p): i64 {
     var np = _test_norm(p);
     #ifdef CYRIUS_TARGET_WIN
-    # `\` is a separator here: a relative `tests\net\x.tcyr` is tests/net/x.tcyr. A drive (`C:`,
-    # `C:x` too) is not read as a project path, and a rooted `\x` is not either (below: this host
-    # cannot name its working directory, `_abs_path` is the identity) — its directory chain would
-    # reach a drive root's test.cyml (the drive-relative plant class). Such a unit gets cyrius.cyml's
-    # [test] only.
+    # `\` is a separator here: a relative `tests\net\x.tcyr` is tests/net/x.tcyr. A drive-rooted
+    # `C:\proj\tests\x.tcyr` is matched against the working directory (6.7.12: GetCurrentDirectoryW;
+    # until then this host could not name it and every drive-qualified unit counted as outside). A
+    # drive-relative `C:x`, a rooted `\x` (the current drive's root) and any other `:` are not read
+    # as project paths — their directory chain would reach a drive root's test.cyml (the
+    # drive-relative plant class). Such a unit gets cyrius.cyml's [test] only.
     np = _test_norm(_tc_fwd_slashes(np));
-    var wi = 0;
-    while (load8(np + wi) != 0) {
-        if (load8(np + wi) == 58) { return 0 - 1; }
-        wi = wi + 1;
+    np = _tc_win_below_cwd(np);
+    if (np == 0) { return 0 - 1; }
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    if (load8(np) == 47) {
+        np = _tc_below_cwd(np);
+        if (np == 0) { return 0 - 1; }
     }
     #endif
-    if (load8(np) == 47) {
-        var cwd = _abs_path(".");
-        var cl = strlen(cwd);
-        # `_abs_path` joins "<cwd>/" + ".": the working directory is what precedes that "/."
-        if (cl >= 2 && load8(cwd + cl - 1) == 46 && load8(cwd + cl - 2) == 47) { cl = cl - 2; }
-        if (cl < 2 || strlen(np) <= cl + 1) { return 0 - 1; }
-        if (memeq(np, cwd, cl) == 0 || load8(np + cl) != 47) { return 0 - 1; }
-        np = np + cl + 1;
-    }
     var n = strlen(np);
     var d = alloc(n + 1);
     var dl = 0;
@@ -2086,6 +2080,67 @@ fn _tc_unit_dir(p): i64 {
     }
     store8(d + dl, 0);
     return d;
+}
+
+# The part of the absolute path `np` below the working directory, or 0 when the cwd is not on it.
+# The cwd is found by IDENTITY — the shortest prefix of `np` whose stat dev/ino is the cwd's — not
+# by a byte compare against getcwd: getcwd answers the PHYSICAL path, so the logical `$PWD` spelling
+# of a symlinked working directory missed it, the unit counted as outside the project and lost its
+# test.cyml. CHANGELOG [6.7.12]
+fn _tc_below_cwd(np): i64 {
+    var cid[16];
+    if (_st_ident(".", &cid) != 0) { return 0; }
+    var n = strlen(np);
+    var pre = alloc(n + 1);
+    var pid[16];
+    var i = 0;
+    while (i < n) {
+        if (load8(np + i) == 47 && i + 1 < n) {
+            var pl = i;
+            if (pl == 0) { pl = 1; }   # the root, `/`
+            memcpy(pre, np, pl);
+            store8(pre + pl, 0);
+            if (_st_ident(pre, &pid) == 0) {
+                if (load64(&pid) == load64(&cid) && load64(&pid + 8) == load64(&cid + 8)) {
+                    return np + i + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Windows (`np` with `/` separators): a relative path as it is; an absolute one (`C:/…`, or a UNC
+# `//server/share/…`) below the working directory as the part under it — compared without regard to
+# ASCII case, as NTFS names are — else 0, as for `C:x`, a rooted `/x` and any other `:`.
+# CHANGELOG [6.7.12]
+fn _tc_win_below_cwd(np): i64 {
+    var c0 = load8(np) | 32;
+    var drive = 0;
+    if (c0 >= 97 && c0 <= 122 && load8(np + 1) == 58 && load8(np + 2) == 47) { drive = 1; }
+    var unc = 0;
+    if (load8(np) == 47 && load8(np + 1) == 47) { unc = 1; }
+    var i = 2;
+    if (drive == 0) { i = 0; }
+    while (load8(np + i) != 0) {
+        if (load8(np + i) == 58) { return 0; }
+        i = i + 1;
+    }
+    if (drive == 0 && unc == 0) {
+        if (load8(np) == 47) { return 0; }
+        return np;
+    }
+    var cwd = _tc_fwd_slashes(_abs_path("."));
+    var cl = strlen(cwd);
+    while (cl > 0 && load8(cwd + cl - 1) == 47) { cl = cl - 1; }   # `C:/` is the drive root
+    if (cl < 2 || strlen(np) <= cl + 1 || load8(np + cl) != 47) { return 0; }
+    var k = 0;
+    while (k < cl) {
+        if ((load8(np + k) | 32) != (load8(cwd + k) | 32)) { return 0; }
+        k = k + 1;
+    }
+    return np + cl + 1;
 }
 
 # `p` with every `\` turned into `/` (a fresh cstr) — Windows' separator, for a project path.
@@ -2385,18 +2440,31 @@ fn _tc_run_env(path): i64 {
     var f = _abs_path(_test_norm(path));
     var n = strlen(f);
     var i = n;
-    while (i > 0 && load8(f + i - 1) != 47) { i = i - 1; }
+    while (i > 0 && _tc_is_sep(load8(f + i - 1)) == 0) { i = i - 1; }
     var d = ".";
     if (i > 1) {
-        d = alloc(i);
+        d = alloc(i + 1);
         memcpy(d, f, i - 1);
         store8(d + i - 1, 0);
+        #ifdef CYRIUS_TARGET_WIN
+        if (i == 3 && load8(f + 1) == 58) { memcpy(d, f, 3); store8(d + 3, 0); }   # `C:\`, not `C:`
+        #endif
     } elif (i == 1) { d = "/"; }
     _tc_run_file = f;
     _tc_run_dir = d;
     _tc_run_inj = vec_new();
     vec_push(_tc_run_inj, _cat2("CYRIUS_TEST_FILE=", f));
     vec_push(_tc_run_inj, _cat2("CYRIUS_TEST_DIR=", d));
+    return 0;
+}
+
+# 1 when byte `c` separates path components here: `/`, and on Windows `\` too (a unit spelled
+# `tests\net\x.tcyr` has its directory exported as `…\tests\net`). CHANGELOG [6.7.12]
+fn _tc_is_sep(c): i64 {
+    if (c == 47) { return 1; }
+    #ifdef CYRIUS_TARGET_WIN
+    if (c == 92) { return 1; }
+    #endif
     return 0;
 }
 
@@ -2520,12 +2588,11 @@ fn _cfg_bounds_inject_set(): i64 {
 }
 
 # 1 for the verbs that take --bounds — and so read `[build] bounds` too (one precedence chain for
-# the mode, manifest rung included): build, run, test, tests, fuzz.
+# the mode, manifest rung included): build, run, test, fuzz.
 fn _cfg_bounds_verb(v): i64 {
     if (streq(v, "build") == 1) { return 1; }
     if (streq(v, "run") == 1) { return 1; }
     if (streq(v, "test") == 1) { return 1; }
-    if (streq(v, "tests") == 1) { return 1; }
     if (streq(v, "fuzz") == 1) { return 1; }
     return 0;
 }

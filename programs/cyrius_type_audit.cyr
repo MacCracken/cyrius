@@ -96,6 +96,23 @@ fn _ta_lit_end(buf, p, eol): i64 {
     return eol;
 }
 
+# The offset just past the balanced `<..>` whose `<` is at buf[p] — each `<` opens and each `>`
+# closes one level, so a `>>` / `>>>` closes two / three, as _asf_arity counts them — or -1 when
+# it does not close on the line.
+fn _ta_generic_end(buf, p, eol): i64 {
+    var depth = 0;
+    while (p < eol) {
+        var c = load8(buf + p);
+        if (c == 60) { depth = depth + 1; }
+        elif (c == 62) {
+            depth = depth - 1;
+            if (depth == 0) { return p + 1; }
+        }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
 # Match `fn NAME(args)`. Returns 1 if line at `bp` opens a fn decl,
 # else 0. On match, writes name_off / name_len / has_ann / private
 # back via the four `_out` store64 addresses.
@@ -114,6 +131,15 @@ fn _match_fn_decl(buf, bp, eol, name_off_out, name_len_out, has_ann_out, private
         p = p + 1;
     }
     var name_end = p;
+    # A generic fn's `<..>` sits between its name and its `(`, with blanks around it as the
+    # compiler allows (`fn g <T>(a: T)`, `fn g<T> (a: T)`): it was not stepped over, so
+    # `fn gid<T>(a: T): T` was no public fn to the audit. CHANGELOG [6.7.12]
+    p = _src_skip_ws(buf, p, eol);
+    if (p < eol && load8(buf + p) == 60) {
+        p = _ta_generic_end(buf, p, eol);
+        if (p < 0) { return 0; }
+        p = _src_skip_ws(buf, p, eol);
+    }
     # `(`
     if (p >= eol) { return 0; }
     if (load8(buf + p) != 40) { return 0; }   # '('

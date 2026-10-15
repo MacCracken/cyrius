@@ -28,6 +28,15 @@
 # filing names: decoding the literal first (a `unicode_escape` round trip) made 23 false hits at
 # v6.5.33.
 #
+# 6.7.12 (docs/development/issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md):
+# N was read only as one integer literal, and only fn locals were recorded, so `var a[BUF]`,
+# `var b[Sz.SMALL]`, `var c[4 + 4]` and a top-level `var g[2]` were never checked (the filed
+# gap.cyr: 0 warnings). A pre-scan now records `const NAME = <literal>;` and each enum member
+# with a literal value (bare and `E.X`; a name defined twice with two values is unknown), N is
+# `+ - *` over those (`*` first), and a top-level bare `var g[N]` is N * 8 bytes, seen by every
+# fn whose local or parameter does not shadow it. Axes K (the filed repro + sizes) and G (top
+# level and shadowing); axis C's `var k[BUF]` row now warns.
+#
 # ORACLES. The repro and the escape program are COMPILED AND RUN: the binary's own output is the
 # proof that each warned line truncates / over-reads, and that the byte count the lint uses is
 # what the compiler stores. Every other expected value is typed into the fixture (`# WO` = the
@@ -49,6 +58,17 @@
 #   m7  `# lint: offset-ok` silences a write-length warning too                      1+0
 #   m8  the argument walk stops at a newline (a wrapped call is never read)          2+0
 #   m9  shadow_pam.tcyr:55 back to LEN 56                                            3+0
+# 6.7.12 (GREEN 37/37 on the real source; each RED):
+#   m10 the 6.7.11 cyrlint                                          C, K x4, sizes, tops: 7+0
+#   m11 `const` not recorded                                           C, K x3, sizes, tops: 6+0
+#   m12 enum members not recorded                                             K x3, sizes: 4+0
+#   m13 N read as one operand (no `+ - *`)                                    K x3, sizes: 4+0
+#   m14 `+ - *` left to right (`2 + 3 * 2` read as 10)                              sizes: 1+0
+#   m15 top-level arrays not recorded                                          K x3, tops: 4+0
+#   m16 a top-level array sized as a local (N bytes, rounded)    C, K, tops, census 11 hits: 4+0
+#   m17 parameters not recorded (a parameter no longer shadows)                      tops: 1+0
+#   m18 a constant defined twice keeps its last value                               sizes: 1+0
+#   m19 a top-level name declared twice keeps its first size                          tops: 1+0
 set -u
 G=cyrlint_overrun_and_write_length
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -94,7 +114,7 @@ lint_run() {
     fi
     [ -z "$LHARD" ]
 }
-OV='(load|store)(8|16|32|64)\(&[A-Za-z_][A-Za-z0-9_]* \+ [0-9]+\) reaches bytes [0-9]+\.\.[0-9]+ of local'
+OV='(load|store)(8|16|32|64)\(&[A-Za-z_][A-Za-z0-9_]* \+ [0-9]+\) reaches bytes [0-9]+\.\.[0-9]+ of (local|top-level)'
 WL='write length [0-9]+, but its literal is [0-9]+ bytes'
 warned() {   # $1 file, $2 ERE of one rule's message -> the line numbers it warned, space-separated
     lint_run "$1" || { echo "$LHARD"; return; }
@@ -198,8 +218,9 @@ check "overrun warnings == the # WO lines" "$SO" "$(warned "$T/shapes.cyr" "$OV"
 check "write-length warnings == the # WL lines" "$SL" "$(warned "$T/shapes.cyr" "$WL")"
 
 echo "axis C — scope: a block, a fn, a shadowing local, the two exemptions, top-level code"
+# 6.7.12: `var k[BUF]` with `const BUF = 8` is 8 bytes, so `&k + 8` warns (it was unread before).
 cat > "$T/scopes.cyr" <<'EOF'
-# a local array is scoped to its block and its fn; a typed, scalar or non-literal local shadows it.
+# a local array is scoped to its block and its fn; a typed, scalar or unread-N local shadows it.
 const BUF = 8;
 var g[2];
 fn scopes(): i64 {
@@ -219,7 +240,7 @@ fn scopes(): i64 {
     }
     store64(&a + 32, 4);  # WO
     var k[BUF];
-    store64(&k + 8, 5);
+    store64(&k + 8, 5);  # WO
     return 0;
 }
 fn other(): i64 {
@@ -250,9 +271,192 @@ if (t == 1) {
 }
 EOF
 CO=$(marked "$T/scopes.cyr" WO); CL=$(marked "$T/scopes.cyr" WL)
-check "  (the fixture marks 3 overrun lines and 2 write lines)" "3 2" "$(count "$CO") $(count "$CL")"
+check "  (the fixture marks 4 overrun lines and 2 write lines)" "4 2" "$(count "$CO") $(count "$CL")"
 check "overrun warnings == the # WO lines" "$CO" "$(warned "$T/scopes.cyr" "$OV")"
 check "write-length warnings == the # WL lines" "$CL" "$(warned "$T/scopes.cyr" "$WL")"
+
+echo "axis K — 6.7.12: N as a const expression; the filed gap.cyr (issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)"
+cat > "$T/gap.cyr" <<'EOF'
+const BUF = 8;
+enum Sz { SMALL = 8; }
+var g[2];
+fn f(): i64 {
+    var a[BUF];
+    var b[Sz.SMALL];
+    var c[4 + 4];
+    store64(&a + 8, 1);
+    store64(&b + 8, 2);
+    store64(&c + 8, 3);
+    store64(&g + 16, 4);
+    return load64(&a + 8) + load64(&b + 8) + load64(&c + 8);
+}
+var r = f();
+syscall(60, 0);
+EOF
+# Every access is the first byte past its array: a/b/c are 8 bytes (N = 8 in all three spellings),
+# g 2 slots = 16. That is SEVEN accesses — the filing says "six warnings", which is the count of
+# its a/b/c accesses (the literal spelling below draws exactly those six); g's store is the
+# seventh by the filing's own reasoning.
+check "the filed gap.cyr: every access warns (8 9 10 11 and line 12's three loads)" "8 9 10 11 12 12 12" "$(warned "$T/gap.cyr" "$OV")"
+lint_run "$T/gap.cyr" || :
+check "  …the trailer reads '7 warnings', rc 0" "7 warnings 0" "$(tail -n 1 "$T/lo") $LRC"
+has_le() { if grep -qF -- "$1" "$T/le"; then echo yes; else echo no; fi; }
+check "  …the const, enum and arithmetic warnings name the spelling and N" "yes yes yes" \
+    "$(has_le 'of local `var a[BUF]` (N = 8), which is 8 bytes') $(has_le 'of local `var b[Sz.SMALL]` (N = 8), which is 8 bytes') $(has_le 'of local `var c[4 + 4]` (N = 8), which is 8 bytes')"
+check "  …and g's names the top-level rule" yes "$(has_le 'of top-level `var g[2]`, which is 16 bytes (a bare top-level array is N i64 slots')"
+sed -e 's/var a\[BUF\]/var a[8]/' -e 's/var b\[Sz.SMALL\]/var b[8]/' -e 's/var c\[4 + 4\]/var c[8]/' -e '/store64(&g + 16, 4);/d' \
+    "$T/gap.cyr" > "$T/gap_lit.cyr"
+check "  …the literal spelling of a/b/c (g's store dropped) draws the same six" "8 9 10 11 11 11" "$(warned "$T/gap_lit.cyr" "$OV")"
+run_prog "$T/gap.cyr"
+check "runtime: gap.cyr builds and exits 0 (nothing else says a word)" 0 "$PRC"
+
+cat > "$T/sizes.cyr" <<'EOF'
+# a line ending `# WO` must draw the overrun warning; no other line.
+const B16 = 16;
+const HX = 0x10;
+const DUP = 8;
+const DUP = 64;
+const K2 = B16 * 2;
+const NEG = -8;
+enum E { S = 16; T = 8; }
+enum A1 { X = 8; }
+enum B1 { X = 64; }
+enum C1 { P; Q; }
+enum U { U1 = 8 U2 = 16 }
+enum R: stack { Ok(v); Err(e); W = 8; }
+fn f16(n): i64 { return n; }
+fn sizes(): i64 {
+    var a[B16];
+    store64(&a + 8, 1);
+    store64(&a + 16, 1);  # WO
+    var h[HX];
+    store64(&h + 8, 1);
+    load8(&h + 16);  # WO
+    var b[E.S];
+    store64(&b + 8, 1);
+    store64(&b + 9, 1);  # WO
+    var bt[T];
+    store64(&bt + 8, 1);  # WO
+    var c[2 + 3 * 2];
+    store64(&c + 8, 1);  # WO
+    var d[20 - 4];
+    store64(&d + 8, 1);
+    store64(&d + 16, 1);  # WO
+    var m[2 * B16 - E.S];
+    store64(&m + 8, 1);
+    store32(&m + 13, 1);  # WO
+    var x1[X];
+    store64(&x1 + 64, 1);
+    var x2[A1.X];
+    store64(&x2 + 8, 1);  # WO
+    var x3[B1.X];
+    store64(&x3 + 56, 1);
+    var q[Q];
+    store64(&q + 64, 1);
+    var u[U.U2];
+    store64(&u + 8, 1);
+    store64(&u + 16, 1);  # WO
+    var u1[U1];
+    store64(&u1 + 8, 1);  # WO
+    var w[R.W];
+    store64(&w + 8, 1);  # WO
+    var k[K2];
+    store64(&k + 64, 1);
+    var dp[DUP];
+    store64(&dp + 64, 1);
+    var ng[NEG];
+    store64(&ng + 64, 1);
+    var s1[sizeof(i64)];
+    store64(&s1 + 64, 1);
+    var s2[f16(4)];
+    store64(&s2 + 64, 1);
+    var s3[(4 + 4)];
+    store64(&s3 + 64, 1);
+    var s4[UNDEF];
+    store64(&s4 + 64, 1);
+    var s5[B16 + LATER];
+    store64(&s5 + 16, 1);
+    store64(&s5 + 24, 1);  # WO
+    return 0;
+}
+const LATER = 8;
+EOF
+KO=$(marked "$T/sizes.cyr" WO)
+check "  (the sizes fixture marks 12 overrun lines)" 12 "$(count "$KO")"
+check "sizes: const, hex const, E.X, bare enum, * before + -, a const below, an unseparated enum, a stack enum's literal member warn exactly on # WO; in-bounds rows, a const defined twice, a non-literal const, a negative, an implicit member, two enums' bare X, sizeof / a call / parentheses / an undefined name stay silent" "$KO" "$(warned "$T/sizes.cyr" "$OV")"
+
+echo "axis G — 6.7.12: a top-level bare array is N i64 slots, seen by every fn that does not shadow it"
+cat > "$T/tops.cyr" <<'EOF'
+# a line ending `# WO` must draw the overrun warning; no other line.
+const TN = 2;
+var g[2];
+var gc[TN];
+var t: i64[2];
+var sc = 0;
+var dd[2];
+var dd[4];
+var e2[f(2)];
+fn uses(): i64 {
+    store64(&g + 8, 1);
+    store64(&g + 16, 1);  # WO
+    load64(&g);
+    store8(&gc + 15, 1);
+    store8(&gc + 16, 1);  # WO
+    store64(&t + 64, 1);
+    store64(&sc + 64, 1);
+    store64(&dd + 64, 1);
+    store64(&e2 + 64, 1);
+    store64(&late + 24, 1);
+    store64(&late + 32, 1);  # WO
+    store64(&blk + 64, 1);
+    store64(&g + 16, 1);  # lint: offset-ok
+    return 0;
+}
+fn shadow_local(): i64 {
+    var g[4];
+    store64(&g + 8, 1);  # WO
+    if (1 == 1) {
+        var g: i64[8];
+        store64(&g + 56, 1);
+    }
+    store64(&g + 8, 1);  # WO
+    return 0;
+}
+fn shadow_param(g, x: i64, gc = 3): i64 {
+    store64(&g + 16, 1);
+    store64(&gc + 16, 1);
+    return 0;
+}
+fn shadow_block(): i64 {
+    if (1 == 1) {
+        var g = 0;
+        store64(&g + 16, 1);
+    }
+    store64(&g + 16, 1);  # WO
+    return 0;
+}
+fn gen<T>(g: T, p: Pair<i64, Pair<i64, i64>>, gc): i64 {
+    store64(&g + 16, 1);
+    store64(&gc + 16, 1);
+    return 0;
+}
+impl P {
+    fn m(self, g): i64 {
+        store64(&g + 16, 1);
+        store64(&gc + 16, 1);  # WO
+        return 0;
+    }
+}
+var late[4];
+if (sc == 0) {
+    var blk[1];
+    store64(&g + 64, 1);
+}
+store64(&g + 64, 1);
+EOF
+GO=$(marked "$T/tops.cyr" WO)
+check "  (the top-level fixture marks 7 overrun lines)" 7 "$(count "$GO")"
+check "tops: g / gc (a const N) / an array declared below warn past N * 8; a typed or scalar global, an #ifdef pair of two sizes, an unread N, a top-level block's array, top-level code and offset-ok stay silent; a local shadow uses ITS size (8 bytes), a typed local, a block's scalar and every parameter (generic, defaulted, a method's) shadow" "$GO" "$(warned "$T/tops.cyr" "$OV")"
 
 echo "axis E — the byte count IS what the compiler stores (raw UTF-8, \\x, \\u)"
 printf 'syscall(1, 1, "a — b\\n\\x1b[0m\\u00e9\\u{1F600}", 18);\nsyscall(60, 0);\n' > "$T/esc.cyr"

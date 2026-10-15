@@ -32,7 +32,7 @@
 #
 # Mutation ledger (MEASURED in a scratch ROOT with buildable mutants — a `:` no-op is a
 # cyrius syntax error and reads as "could not build", not as a caught mutant). The gate has
-# 14 ok() axes; the A1 setup assertions (lock written, ≥2 entries, trailer present) are
+# 15 ok() axes; the A1 setup assertions (lock written, ≥2 entries, trailer present) are
 # extra `bad` lines, not axes.
 #   the bite-4 (pre-fix) resolver                              → every axis but A5 red
 #   drop the `_dep_lock_guard_stdlib_leaf` call at the copy site → A1 A2b A4c A4d2 A5b A7 A8 red
@@ -41,7 +41,9 @@
 #   drop `|| _dep_relock == 1` at the lock-write gate            → A8 red
 #   drop the legacy re-stamp (`_stamp_legacy`)                   → A4b A4d A8 red
 #   drop the stale-pin re-stamp (`_dep_lock_pin_same == 0`)      → A4d red
-#   make the hasher-missing branch return 0 (fail open)          → A5b red
+#   make the hasher-missing branch return 0 (fail open)          → A5b red (6.7.12: A5c — the hash
+#                                                                  is in process, so the branch is
+#                                                                  an unreadable snapshot file)
 #   drop the commit-line carry in cmd_deps_lock                  → A6 red
 #   drop the CR tolerance                                        → A7 red
 #   drop CYRIUS_RESOLVED=1 from A5 after a version bump          → A5 measures the NEW reader (vacuous)
@@ -200,16 +202,30 @@ else
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
-# ── A5b: no hasher on PATH → the guard fails CLOSED (like --verify), nothing rewritten ────
+# ── A5b: no hasher on PATH → the guard still runs and refuses, nothing rewritten ──────────
+# (6.6.4-6.7.11: no hasher meant `cannot hash`, refused; since 6.7.12 the hash is in process, so
+# the guard SEES the moved leaf and names it — never a fail-open.)
 NOSHA="$W/nosha"; mkdir -p "$NOSHA"
 for t in sh git cp mv rm mkdir cat sed grep cut tr basename dirname readlink env ln find awk head tail sort uniq wc; do p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$NOSHA/$t"; done
 ( cd "$P" && "$CY" deps --relock > /dev/null 2>&1 ) || true
 cp "$P/cyrius.lock" "$W/a5b.lock.before"
 sed -i '1s/^/# mutation with no hasher on PATH\n/' "$H/versions/$V/lib/math.cyr"
 rc=0; if ( cd "$P" && PATH="$NOSHA" "$CY" deps > "$W/a5b.out" 2>&1 ); then rc=0; else rc=$?; fi
-if [ "$rc" -ne 0 ] && grep -q 'cannot hash' "$W/a5b.out" && cmp -s "$P/cyrius.lock" "$W/a5b.lock.before"; then
-    ok "A5b no sha256sum on PATH: refused ('cannot hash'), lock untouched"
+if [ "$rc" -ne 0 ] && grep -q 'lib/math.cyr: cyrius.lock and the pinned stdlib snapshot DISAGREE' "$W/a5b.out" && cmp -s "$P/cyrius.lock" "$W/a5b.lock.before"; then
+    ok "A5b no sha256sum on PATH: the moved leaf is refused by name (hashed in process), lock untouched"
 else bad "A5b (rc=$rc): $(grep -m1 -i 'error\|hash' "$W/a5b.out")"; fi
+# ── A5c: a snapshot leaf that cannot be READ → the guard fails CLOSED (like --verify) ──────
+if [ "$(id -u)" != 0 ]; then
+    chmod 000 "$H/versions/$V/lib/math.cyr"
+    rc=0; if ( cd "$P" && "$CY" deps > "$W/a5c.out" 2>&1 ); then rc=0; else rc=$?; fi
+    chmod 644 "$H/versions/$V/lib/math.cyr"
+    if [ "$rc" -ne 0 ] && grep -q 'lib/math.cyr: cannot hash the pinned snapshot' "$W/a5c.out" && cmp -s "$P/cyrius.lock" "$W/a5b.lock.before"; then
+        ok "A5c an unreadable snapshot leaf: refused ('cannot hash the pinned snapshot'), lock untouched"
+    else bad "A5c (rc=$rc): $(grep -m1 -i 'error\|hash' "$W/a5c.out")"; fi
+else
+    echo "  SKIP A5c: running as root — a chmod-000 snapshot file is still readable, the fail-closed branch cannot be reached"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
+fi
 ( cd "$P" && "$CY" deps --relock > /dev/null 2>&1 ) || true
 
 # ── A6: bare `deps --lock` KEEPS the release-integrity hardening item commit pins ──────────────────────────────────

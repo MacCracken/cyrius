@@ -136,9 +136,12 @@ grep -q 'cyrius 7.7.7 (pinned in cyrius.cyml)' "$D/a2.out" || { fail "axis 2: th
 [ "$x" = 0 ] && echo "  ok: axis 2: a [package] starting at byte $off is read (pin reported, not the global default)"
 
 # ── axis 3: the toml -> cyml migration keeps the whole toml before deleting it ──
-mkdir -p "$D/a3" "$D/uhome/versions/5.5.5/lib"
-printf '5.5.5\n' > "$D/uhome/current"
-printf '# one stdlib file so `update` has something to copy\n' > "$D/uhome/versions/5.5.5/lib/io.cyr"
+# `update` refreshes lib/ as `lib sync` does (6.7.12, D18): from the manifest's pin, else the CLI's
+# own version — this toml pins none, so the snapshot is the tree's VERSION.
+UV=$(tr -d '[:space:]' < VERSION)
+mkdir -p "$D/a3" "$D/uhome/versions/$UV/lib"
+printf '%s\n' "$UV" > "$D/uhome/current"
+printf '# one stdlib file so `update` has something to copy\n' > "$D/uhome/versions/$UV/lib/io.cyr"
 {
     printf '[package]\nname = "big"\n'
     awk 'BEGIN { for (i = 0; i < 1000; i++) printf "pad_%06d = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n", i }'
@@ -208,7 +211,6 @@ programs/checks/deps_init.cyr|_deps_lock_gate|lock_path|a cyrius.lock the gate i
 programs/checks/platform_efi.cyr|_efi_ovmf_fn_exit_gate|efi_bin|the gate reads the 64-byte header of an EFI image it just built
 cbt/commands.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
-cbt/deps.cyr|_sha_finish|tmpf|a capture of the hasher'"'"'s stdout (one 64-char line; 6.6.9 moved the read out of _sha256sum_file)
 cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""

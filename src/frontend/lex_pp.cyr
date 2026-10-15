@@ -199,7 +199,7 @@ fn PP_LEXST_INSTR(st): i64 {
 # line as code. Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of
 # step with the lexer for the whole next line — a forged `#@file` there defeated `private`,
 # and a real `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own
-# (src/frontend/lex.cyr), so the two cannot drift. CHANGELOG [6.6.20]
+# (src/frontend/lex_attr.cyr), so the two cannot drift. CHANGELOG [6.6.20]
 # EVERY walk site guards it inline — `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); }
 # else { X = PP_LEXST(X, load8(B + I)); }` — never a bare PP_LEXST: this differs from PP_LEXST
 # only on a `#`, and the per-byte call into it cost ~3 % of self_compile (#inline refuses a

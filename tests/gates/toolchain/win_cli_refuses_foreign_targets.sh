@@ -16,9 +16,12 @@
 # 2026-10-14 on ecb (arm64) and ach (x86_64), all three wrote a Mach-O at rc 0 (ach's aarch64 one
 # failed only because no cycc_aarch64 ships there). The fix: cbt/cli_args.cyr `_cli_foreign_target`,
 # the first block of `_cli_apply_target`, asks `_cli_host_emits_only()` (`#ifdef CYRIUS_TARGET_WIN` /
-# `CYRIUS_TARGET_MACOS`; 0 on Linux: x86_64 Linux, where src/main.cyr honours the selectors — the
-# aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64 bare-metal target,
-# issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
+# `CYRIUS_TARGET_MACOS`; 0 on Linux: x86_64 Linux, where src/main.cyr honours the selectors).
+# 6.7.12 (D6, issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md): the aarch64 Linux CLI's
+# forks read CYRIUS_KERNEL alone, so `--agnos` wrote a plain aarch64 ELF and
+# `--target=x86_64-bare-metal-elf` an aarch64 image under an x86_64 kernel line, OK at rc 0 (pi);
+# `_cli_host_emits_no_x86()` (`#ifdef CYRIUS_TARGET_LINUX` + `CYRIUS_ARCH_AARCH64`) refuses those two
+# there — `--target=aarch64-bare-metal-elf` stays — and the progress label names the host's arch.
 #
 # THE ROWS.
 #   S  (always) the CLI built for each host carries exactly its own refusal: the PE build the
@@ -26,12 +29,27 @@
 #      (A Mach-O cannot run here; ecb / ach ran it by hand — see the CHANGELOG.)
 #   L  (always) the x86_64 Linux CLI keeps all three selectors: `--agnos` and the x86_64 bare-metal target
 #      write an ELF (rc 0; the kernel line printed), the aarch64 bare-metal one an aarch64 ELF.
+#   S5 (always) only the aarch64 Linux CLI carries its refusal (`the aarch64 Linux CLI: its cycc emits
+#      aarch64 only`); the x86_64 Linux, PE and both Mach-O CLIs do not.
+#   A  (qemu-aarch64, SKIP by name without it) the aarch64 Linux CLI built from this tree (the refusal
+#      runs before any child exec, so no binfmt is needed): A1 `build --agnos` and A2
+#      `build --target=x86_64-bare-metal-elf` rc 1, the exact error, no output (A2 no kernel line);
+#      A3 `run --agnos` refused the same way; A4 `--target=aarch64-bare-metal-elf` passes the early
+#      block (its dry-run line, rc 0); A5 the progress label of a plain build is `[aarch64]` (the
+#      compile is an x86_64 stand-in cycc beside the CLI — qemu-user hands the child's execve to the
+#      host; it said `[x86_64]`). pi runs the filed repro on hardware (see the CHANGELOG).
 #   W  (wine) cyrius.exe + cycc.exe built from this tree: the three selectors each rc 1, the exact
 #      named error on stderr, no output file, a pre-existing output left byte-for-byte; `run --agnos`
 #      refused the same way; a plain build rc 0, an `MZ` image that exits 7; `--win` accepted (an
 #      `MZ`); `--target=cx` and `--target=js` reach their own arms (their dry-run lines). wine is not
 #      hardware: the release gate's cass leg (and the .bat probe in the CHANGELOG) is the real
 #      Windows.
+#   6.7.12 (D5, issues/2026-10-10-strict-pin-and-pie-inert-off-linux.md): `--pie` from the Windows CLI
+#      (cycc.exe has no PIE mode; it wrote the same image as a plain build, rc 0): S4 only the PE CLI
+#      carries the refusal; W11 `build --pie` rc 1, the exact error, no output, nothing compiled;
+#      W12 an existing output untouched. Mutation: the `--pie` test dropped from
+#      `_cli_foreign_target` -> W11 W12 RED; `_cli_host_refuses_pie` answering on every host -> S2
+#      S3 S4 RED (and every Linux / macOS `--pie` build refused).
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -42,6 +60,9 @@
 #   M4  the Windows answer on every host (the refusal leaks onto Linux and macOS)     RED 5: S2, S3,
 #                                                                                             L1-L3
 #   M5  only `--agnos` refused (the two `--target` tests never match)                 RED 2: W2, W3
+#   6.7.12 (D6): M6 `_cli_host_emits_no_x86` answering 0 (6.7.11's aarch64 CLI)         RED: S5, A1-A3
+#               M7 the aarch64 answer for `--target=aarch64-bare-metal-elf` too       RED: A4
+#               M8 `arch_name` without its aarch64 Linux arm                          RED: A5
 set -u
 G=win_cli_refuses_foreign_targets
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -70,6 +91,8 @@ check() {
 WINWHY="the Windows CLI: cycc.exe emits PE only"
 MACWHY="the macOS CLI: cycc emits Mach-O only"
 TAIL="(build agnos / bare-metal images on Linux)"
+PIEWHY="error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no"
+PIEFULL="$PIEWHY --pie mode (a position-independent executable is a Linux ELF)"
 # has FILE TEXT -> yes / no (a fixed-string search of the binary)
 has() { if grep -aqF "$2" "$1" 2> /dev/null; then echo yes; else echo no; fi; }
 magic() { if [ -f "$1" ]; then od -An -tx1 -N4 "$1" | tr -d ' \n'; else echo none; fi; }
@@ -91,6 +114,10 @@ CC_USE="$CC"; build "$T/cc_x" X=1 < src/main_aarch64.cyr; chmod +x "$T/cc_x"
 CC_USE="$T/cc_win"; build "$T/cyrius.exe" X=1 < cbt/cyrius.cyr
 CC_USE="$CC"; build "$T/cyrius_macho_x86" CYRIUS_MACHO=1 < cbt/cyrius.cyr
 CC_USE="$T/cc_x"; build "$T/cyrius_macho_arm" CYRIUS_MACHO_ARM=1 < cbt/cyrius.cyr
+mkdir -p "$T/a64"
+CC_USE="$T/cc_x"; build "$T/a64/cyrius" X=1 < cbt/cyrius.cyr; chmod +x "$T/a64/cyrius"
+A64WHY="the aarch64 Linux CLI: its cycc emits aarch64 only"
+A64TAIL="(build agnos / x86_64 bare-metal images on x86_64 Linux)"
 
 echo "== S: each host's CLI carries its own refusal =="
 check "S1 the PE CLI names the Windows refusal" "yes yes no" \
@@ -98,6 +125,13 @@ check "S1 the PE CLI names the Windows refusal" "yes yes no" \
 check "S2 the Mach-O CLIs (x86_64, arm64) name the macOS refusal" "yes yes no no" \
     "$(has "$T/cyrius_macho_x86" "$MACWHY") $(has "$T/cyrius_macho_arm" "$MACWHY") $(has "$T/cyrius_macho_x86" "$WINWHY") $(has "$T/cyrius_macho_arm" "$WINWHY")"
 check "S3 the Linux CLI carries neither" "no no" "$(has "$T/lin/cyrius" "$WINWHY") $(has "$T/lin/cyrius" "$MACWHY")"
+# 6.7.12 (D5): `--pie` is refused by the Windows CLI only — cycc.exe has no PIE mode
+check "S4 only the PE CLI carries the --pie refusal" "yes no no no" \
+    "$(has "$T/cyrius.exe" "$PIEWHY") $(has "$T/lin/cyrius" "$PIEWHY") $(has "$T/cyrius_macho_x86" "$PIEWHY") $(has "$T/cyrius_macho_arm" "$PIEWHY")"
+
+# 6.7.12 (D6): the aarch64 Linux CLI's refusal is its own
+check "S5 only the aarch64 Linux CLI carries the aarch64 refusal" "yes yes no no no no" \
+    "$(has "$T/a64/cyrius" "$A64WHY") $(has "$T/a64/cyrius" "$A64TAIL") $(has "$T/lin/cyrius" "$A64WHY") $(has "$T/cyrius.exe" "$A64WHY") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$A64WHY")"
 
 printf 'fn main(): i64 { return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/proj/hello.cyr"
 
@@ -121,6 +155,35 @@ rc=$(lrun --target=aarch64-bare-metal-elf hello.cyr l_bma.out)
 # e_machine (bytes 18-19): 0xb7 = EM_AARCH64
 check "L3 --target=aarch64-bare-metal-elf: rc, an aarch64 ELF" "0 7f454c46 b700" \
     "$rc $(magic "$T/proj/l_bma.out") $(od -An -tx1 -j18 -N2 "$T/proj/l_bma.out" 2> /dev/null | tr -d ' \n')"
+
+echo "== A: the aarch64 Linux CLI, under qemu-aarch64 =="
+if ! command -v qemu-aarch64 > /dev/null 2>&1; then
+    echo "  SKIP (named): the A rows — qemu-aarch64 is not installed; pi runs the filed repro"
+    skips=$((skips + 1))
+else
+    mkdir -p "$T/aproj" "$T/ahome"
+    cp "$T/proj/hello.cyr" "$T/aproj/hello.cyr"
+    arun() {   # arun VERB ARGS... -> rc; stdout+stderr in $T/a.out
+        _rc=0
+        (cd "$T/aproj" && HOME="$T/ahome" CYRIUS_HOME="$T/ahome/.cyrius" timeout 120 qemu-aarch64 "$T/a64/cyrius" "$@") \
+            > "$T/a.out" 2>&1 || _rc=$?
+        echo "$_rc"
+    }
+    arefused() { grep -cxF "error: $1 is not available from $A64WHY $A64TAIL" "$T/a.out" 2> /dev/null || :; }
+    rc=$(arun build --agnos hello.cyr agnos.out)
+    check "A1 build --agnos: rc 1, the named error, no output" "1 1 none" "$rc $(arefused --agnos) $(magic "$T/aproj/agnos.out")"
+    rc=$(arun build --target=x86_64-bare-metal-elf hello.cyr bm.out)
+    check "A2 build --target=x86_64-bare-metal-elf: rc 1, the named error, no output, no kernel line" "1 1 none 0" \
+        "$rc $(arefused --target=x86_64-bare-metal-elf) $(magic "$T/aproj/bm.out") $(grep -c 'kernel: entry' "$T/a.out")"
+    rc=$(arun run --agnos hello.cyr)
+    check "A3 run --agnos: rc 1, the named error, nothing compiled" "1 1 0" "$rc $(arefused --agnos) $(grep -c '^compile' "$T/a.out")"
+    rc=$(arun build --dry-run --target=aarch64-bare-metal-elf hello.cyr bma.out)
+    check "A4 --target=aarch64-bare-metal-elf passes the early block (its dry-run line, no refusal)" "0 1 0" \
+        "$rc $(grep -c '^dry-run: compile hello.cyr -> bma.out' "$T/a.out") $(grep -c 'is not available' "$T/a.out")"
+    cp "$CC" "$T/a64/cycc"     # an x86_64 stand-in: qemu-user execs the child on the host
+    rc=$(arun build hello.cyr plain.out)
+    check "A5 a plain build's progress label names the host's arch" "0 1" "$rc $(grep -c '^compile hello.cyr -> plain.out \[aarch64\] OK' "$T/a.out")"
+fi
 
 echo "== W: the Windows CLI, under wine =="
 if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1; then
@@ -176,12 +239,21 @@ else
     check "W9 --target=cx reaches its own arm (dry-run: emit-cx)" "0 1" "$rc $(grep -c '^dry-run: emit-cx hello.cyr' "$T/w.out")"
     rc=$(wrun build --dry-run --target=js hello.cyr out.js)
     check "W10 --target=js reaches its own arm (dry-run: emit-js)" "0 1" "$rc $(grep -c '^dry-run: emit-js hello.cyr' "$T/w.out")"
+    # 6.7.12 (D5): `--pie` built the same image as a plain build at rc 0 (cycc.exe reads no CYRIUS_PIE)
+    rc=$(wrun build --pie hello.cyr pie.exe)
+    check "W11 build --pie: rc 1, the named error, no output, nothing compiled" "1 1 none 0" \
+        "$rc $(grep -cxF "$PIEFULL" "$T/w.err" || :) $(magic "$T/w/proj/pie.exe") $(grep -c 'compile' "$T/w.out")"
+    printf 'old\n' > "$T/w/proj/keep.exe"
+    rc=$(wrun build --pie hello.cyr keep.exe)
+    kept=changed
+    [ "$(cat "$T/w/proj/keep.exe" 2> /dev/null)" = old ] && kept=untouched
+    check "W12 build --pie over an existing output: rc 1, the file untouched" "1 untouched" "$rc $kept"
     _wine_down
 fi
 
 echo ""
 if [ "$fails" -gt 0 ]; then
-    for f in l.out w.out w.err; do [ -s "$T/$f" ] && { echo "  ($f, first lines)"; sed -n '1,6p' "$T/$f" | sed 's/^/    /'; }; done
+    for f in l.out a.out w.out w.err; do [ -s "$T/$f" ] && { echo "  ($f, first lines)"; sed -n '1,6p' "$T/$f" | sed 's/^/    /'; }; done
     echo "FAIL: $G — $fails of $checks checks failed"
     exit 1
 fi

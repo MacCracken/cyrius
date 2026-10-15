@@ -51,7 +51,9 @@
 # Delete the `pulsar` allow-list row and axis 2 goes RED for pulsar; delete `pulsar`'s
 # `cmd_pulsar` call and axis 3 goes RED for the now-stale exemption.
 # Drop the `&name` address-of scan from the analyser -> axis 4 RED for `tests` alone (its walk
-# reaches cmd_test only through `&_tests_walk_one`), every other row unchanged (6.6.20).
+# reaches cmd_test only through `&_tests_walk_one`), every other row unchanged (6.6.20). 6.7.12:
+# `tests` is removed (D21); the same mutant is RED for `audit` alone (its sweep reaches compile()
+# only through the walkers' `&_tests_walk_one` / `&_bench_walk_one`), re-measured.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -279,7 +281,7 @@ done
 # builds every corpus entry — and sits in the list as a CONDITIONAL entry (`streq(cmd, "coverage")
 # == 1 && _covx_wanted() == 1`), so its text mode still resolves nothing (coverage_exec_cli.sh X3 / X7).
 echo "axis 4 — known-true / known-false rows (catches an analyser stuck at all-yes or all-no):"
-for v in build run test tests bench fuzz check audit capacity distlib doctest publish package lsp pulsar coverage; do
+for v in build run test bench fuzz check audit capacity distlib doctest publish package lsp pulsar coverage; do
     check "'$v' reaches compile()" 1 "$(has COMPILES "$v")"
 done
 for v in which help version clean deps init update port header fmt doc vet deny repl self hooks install; do

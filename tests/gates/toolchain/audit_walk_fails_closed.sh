@@ -50,6 +50,9 @@
 #      empty .cyr, hangs to the deadline, or refuses (rc 1) is an ERROR naming the file, not
 #      "formatted" or "needs reformatting"; and `cyrius audit` SETS the walkers' deadline
 #      (CYRIUS_TEST_TIMEOUT), so a hung cyrlint ends the audit red, by name, in seconds.
+#      (6.7.12, D26) the walker asks `cyrfmt --check`: exit 1 with its "not canonically
+#      formatted" line is "needs reformatting" (G7), exit 1 without it an error (G3, G7b), and
+#      the real cyrfmt passes the accepted 4-step continuation and flags an 8-step one (G8).
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
 #   m1 the lint walker back on exec_capture + the old parser (missing trailer = 0)  A,C,E
@@ -67,6 +70,8 @@
 #   m13 (6.6.10) cyrlint back on `n <= 0` (an empty file refused)                   C1, C3
 #   m14 (6.6.10) cyrfmt back on `n <= 0`                                                  C3
 #   m15 (6.6.10) cyrdoc back on `n <= 0` + the file_exists probe                     C3, C5
+#   m16 (6.7.12) audit_fmt_walk back on the byte compare of `cyrfmt <file>`  G4, G7, G7b, G8
+#   m17 (6.7.12) _aw_fmt_verdict takes exit 1 alone as "needs reformatting"       G3, G7b
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -366,9 +371,25 @@ check "   …named 'timed out'" yes "$(named "$G/e.cyr" "timed out")"
 fake f_refuse 'echo "cyrfmt: cannot read file"; exit 1'
 walk fmt "$T/f_refuse" "$G" 0
 check "G3 a REFUSING cyrfmt (rc 1) is an error, not 'needs reformatting'" "TOTAL=0 ERRORS=1" "$(counts)"
-fake f_ok 'cat "$1"'
+# 6.7.12 (D26): the walker runs `cyrfmt --check <file>` (it byte-compared `cyrfmt <file>`'s
+# canonical output, so it flagged the 4-step continuation --check accepts). The fakes see
+# `--check` as $1; a fake that answers anything else exits 9 — an error, never clean.
+fake f_ok '[ "$1" = --check ] || exit 9; exit 0'
 walk fmt "$T/f_ok" "$D" 0
-check "G4 control: a cyrfmt that echoes the file exactly is clean" "TOTAL=0 ERRORS=0" "$(counts)"
+check "G4 control: a cyrfmt --check that exits 0 is clean" "TOTAL=0 ERRORS=0" "$(counts)"
+fake f_unfmt '[ "$1" = --check ] || exit 9; echo "cyrfmt: $2:3: not canonically formatted (first differing line)"; exit 1'
+walk fmt "$T/f_unfmt" "$D" 0
+check "G7 (6.7.12) exit 1 WITH --check's 'not canonically formatted' line is 'needs reformatting', not an error" "TOTAL=1 ERRORS=0" "$(counts)"
+fake f_cat 'cat "$1"'
+walk fmt "$T/f_cat" "$D" 0
+check "G7b a tool that ignores --check (cat \$1: exit 1, no such line) is an error" "TOTAL=0 ERRORS=1" "$(counts)"
+F8="$T/g8"; mkdir -p "$F8"
+printf 'fn main(): i64 {\n    var x = some_call(1,\n        2);\n    return x;\n}\n' > "$F8/four.cyr"
+walk fmt "$T/cyrfmt_real" "$F8" 0
+check "G8 (6.7.12) real cyrfmt: the accepted 4-step continuation is clean, as --check says" "TOTAL=0 ERRORS=0" "$(counts)"
+printf 'fn main(): i64 {\n    var x = some_call(1,\n            2);\n    return x;\n}\n' > "$F8/eight.cyr"
+walk fmt "$T/cyrfmt_real" "$F8" 0
+check "   …and an 8-step one beside it needs reformatting" "TOTAL=1 ERRORS=0" "$(counts)"
 cp "$T/cyrdoc.real" "$B/cyrdoc"
 cp "$B/cyrlint" "$T/cyrlint.real"
 printf '#!/bin/sh\nexec sleep 30\n' > "$B/cyrlint"; chmod +x "$B/cyrlint"

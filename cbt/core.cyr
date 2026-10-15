@@ -10,7 +10,7 @@ var _defines = 0;
 var _pass = 0;
 var _fail = 0;
 var _total = 0;
-var _tests_found = 0;   # v6.0.62: `cyrius tests` recursive-walk found-a-.tcyr flag
+var _tests_found = 0;   # v6.0.62: the recursive test walk's found-a-.tcyr flag (`cyrius test <dir>`)
 var _tools_dir = 0;
 var _scripts_dir = 0;
 var _repo_root = 0;
@@ -93,6 +93,7 @@ var _dep_lock_len = 0;
 var _dep_lock_pin_same = 0;   # 1 iff the lock's `cyrius\t<pin>` line equals this run's pin
 var _dep_lock_refused = 0;    # leaves the guard refused this run; folded into `errors`
 var _dep_lock_has_trailer = 0;   # 1 iff the loaded lock carried a `cyrius\t<pin>` line (else it is re-written once to gain one)
+var _dep_lock_pin_rec = 0;    # 6.7.12: the pin that trailer records (0 = none) — the pin-move refusal names it
 # 6.6.9 bite 9: 1 iff this resolve vendored a lib/ file the loaded lock has NO line for — a
 # newly declared stdlib leaf, or any leaf when there is no lock yet (a stdlib-only project's
 # FIRST lock). Either way the lock would not cover lib/, so it is written. Only set outside
@@ -101,14 +102,25 @@ var _dep_lock_new_leaf = 0;
 var _dep_lock_active = 0;
 # 6.6.9: 1 while cmd_deps writes a lock ONLY because of `_dep_lock_new_leaf`. A lock that cannot
 # be HASHED then is a named warning, not a failed resolve: before 6.6.9 no lock was attempted
-# at all in that case, and a host with no working hasher (wine has no certutil) must not
-# lose every stdlib-only build to it. `deps --verify` still names each uncovered file.
+# at all in that case, and a file that cannot be read (in 6.6.9, also a host with no working
+# hasher: wine has no certutil) must not lose every stdlib-only build to it. `deps --verify`
+# still names each uncovered file.
 var _dep_lock_soft = 0;
 # 6.6.17 — when non-zero, the vec of lib/ paths `cyrius lib sync` wrote: cmd_deps_lock then
 # re-hashes only those and keeps every other file's loaded row byte for byte.
 var _dep_lock_only = 0;
 # The verb the stdlib-leaf guard's refusal names in its `--relock` advice.
 var _dep_lock_guard_verb = "deps";
+# 6.7.12 — vec<cstr> of every path THIS resolve vendored (written, or already byte-identical),
+# recorded at the one write choke point (cbt/deps.cyr _dep_copy_file) so no resolve phase is left
+# out: stdlib leaves and their includes, the test scope's leaves, every named dep's modules. 0
+# outside cmd_deps. lib/ is read against it (_dep_out_of_closure). CHANGELOG [6.7.12]
+var _dep_closure = 0;
+# 6.7.12 (D25) — vec<cstr> of `name\ttag` for every tagged [deps.NAME] a manifest this resolve read
+# declares (resolved, skipped or gated), and the root manifest's own: the kept-pin notice reads a
+# carried commit pin against them (cbt/deps.cyr _dep_say_kept_pins). 0 outside cmd_deps.
+var _dep_decl_all = 0;
+var _dep_decl_root = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
@@ -524,6 +536,30 @@ fn _tool_path(dir, name): i64 {
     if (file_exists(exe) == 1) { return exe; }
     #endif
     return plain;
+}
+
+# A file's identity — st_dev and st_ino — into `out` (two words): 0, or -1 when `path` cannot be
+# stat'ed. The offsets are each target's struct stat: Linux (x86_64's, and aarch64's generic
+# struct) dev@0 ino@8, both u64; x86_64 macOS's legacy stat (188) dev@0 u32 ino@4 u32; arm64
+# macOS's stat64 (fstatat64) dev@0 u32 ino@8 u64. PE's stat has neither: -1 there, and every caller
+# has a Windows arm of its own. CHANGELOG [6.7.12]
+fn _st_ident(path, out): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var sb[256];
+    if (sys_stat(path, &sb) != 0) { return 0 - 1; }
+    store64(out, load64(&sb));
+    store64(out + 8, load64(&sb + 8));
+    #ifdef CYRIUS_TARGET_MACOS
+    store64(out, load32(&sb));
+    #ifdef CYRIUS_ARCH_X86
+    store64(out + 8, load32(&sb + 4));
+    #endif
+    #endif
+    return 0;
+    #endif
 }
 
 # Read file contents into allocated buffer, null-terminate, return ptr
@@ -1155,6 +1191,16 @@ fn current_cc(): i64 {
 
 fn arch_name(): i64 {
     if (_arch == ARCH_AARCH64) { return "aarch64"; }
+    # 6.7.12 — on an aarch64 Linux host the default build runs the host's own cycc (`_cc`), which
+    # emits aarch64, while `_arch` stays X86 (ARCH_AARCH64 would make current_cc() pick
+    # cycc_aarch64, an x86_64 binary no aarch64 host ships): every build there said `[x86_64]`.
+    # (macOS arm64 sets ARCH_AARCH64 itself — its native compiler is named cycc_aarch64.)
+    # CHANGELOG [6.7.12]
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "aarch64";
+    #endif
+    #endif
     return "x86_64";
 }
 

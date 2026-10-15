@@ -58,7 +58,10 @@
 #   K7  path-override dep: tag repointed with the override checkout PRESENT → refused by name
 #       (6.7.6; the checkout was removed first while a present one won silently)
 #   K8  a tag bump v1 → v2 pins the dep at v2 and KEEPS its v1 line (no pin a lookup could
-#       read is dropped); K8r: v2 repointed + fresh cache → refused by name
+#       read is dropped) — and since 6.7.12 (D25) NAMES it, once: `note: cyrius.lock keeps
+#       good@v1's pin (the manifest declares good at v2), fail-closed; delete cyrius.lock to
+#       re-pin`; K8l: `deps --locked` prints the same note and still passes (rc 0);
+#       K8r: v2 repointed + fresh cache → refused by name
 #   K9  the merged lock verifies (`deps --verify`: N verified, 0 failed)
 #   K10 the lock converted to CRLF: a repointed tag is still refused by name (CBTB-05 — the
 #       pin lookup kept the `\r` on the TAG field, matched nothing and returned "no pin")
@@ -66,7 +69,9 @@
 #       failed every file "cannot hash")
 #   K12 diamond: optional root `dx` at v2 + required `dy`, whose own manifest declares dx at v1.
 #       K12a: a feature-less `deps` pins dx@v1 and keeps the dx@v2 pin, same sha; K12b: dx's v2
-#       repointed + fresh cache → `deps --features gpu` REFUSED by name, lock and lib untouched
+#       repointed + fresh cache → `deps --features gpu` REFUSED by name, lock and lib untouched;
+#       K12c: no feature-less resolve and no `deps --features gpu` (dx@v1 carried, dy's manifest
+#       still declares it) names a kept pin (D25: a live diamond pin is not stale)
 #   K13 order: a project declaring its gated dep FIRST — `deps --features gpu`, `deps`,
 #       `deps --features gpu` — leaves cyrius.lock byte-identical each time
 #   K14 a respelled url (`…/good` → `…/good.git`) replaces its line: one (good, v2) line, the
@@ -75,9 +80,10 @@
 #       fresh cache is still REFUSED by name (the lookup read a 64 KB window and said "no pin")
 #   K16 the same lock re-resolved keeps all 1006 lines, and the summary's `N commit-pinned`
 #       counts the 6 deps by name, not the lines (it printed 1006 for 6 deps): `6 commit-pinned
-#       (2 re-verified)`
+#       (2 re-verified)`; one kept-pin note, good@v1 (alpha is no root dep: its 1000 lines say nothing)
 #   K17 a fork at the same tag: fx pinned from its origin at v1, the manifest moved to a fork
-#       that also tags v1 (cache cleared). K17a: the lock keeps BOTH v1 lines; K17b: moved back,
+#       that also tags v1 (cache cleared). K17a: the lock keeps BOTH v1 lines, and names neither (the
+#       same tag is declared); K17b: moved back,
 #       the origin's v1 repointed + fresh cache → REFUSED by name, lock and lib untouched
 #   K18 two dep NAMES on one repo at one tag, one optional (libro's `sigil` + optional
 #       `sigil_tpm`, both sigil.git@3.13.7): pb required, pa behind `gpu`, different modules.
@@ -86,7 +92,7 @@
 #       REFUSED by name, lock and lib/pa_ra.cyr untouched
 #
 # Mutation ledger (measured with this file, one mutant of cbt/deps.cyr at a time; the tip is
-# 23/23 green):
+# 23/23 green at 6.6.20, 26/26 at 6.7.12):
 #   slot-open (6.6.20) CLI ............................ every axis but K1 red
 #   first cut, inherited line dropped by NAME (61c88ca3) K8 K12a K12b K13 K14 K15 K16 K17a K17b,
 #       and K2 K2l K18a for its summary (no `(K re-verified)`; it kept both of K18's lines)
@@ -102,6 +108,12 @@
 #   summary counts lines, not deps .................... K16
 #   no `(K re-verified)` in the summary ............... K2 K2l K16 K18a
 #   K counts the merged pin set, not this run's pins .. K2 K2l K16 K18a
+#   6.7.12 (D25), measured on this file's tip:
+#   the 6.7.11 CLI (no kept-pin note) ................. K8 K8l K16
+#   the note never printed in cmd_deps_lock ........... K8 K16
+#   the note never printed by --locked ................ K8l
+#   a read manifest's declaration not excluded ........ K12c (dy's dx@v1 named)
+#   every carried line named (no root-dep / tag test) . K8 K12c K16 K17a
 # "Knock-on" axes go red because an earlier axis left a duplicate line in the shared project.
 # A repoint must make a NEW commit: the second repoint of one origin used to be an empty `git
 # commit`, the tag never moved, and the CRLF axis passed nothing (caught while measuring).
@@ -269,10 +281,18 @@ sed -i '/^\[deps.good\]/,/^modules/ s/^tag = "v1"$/tag = "v2"/' "$P/cyrius.cyml"
 good2=$(git -C "$W/o/good" rev-parse 'v2^{commit}')
 rc=0; if _cy deps > "$W/k8.out" 2>&1; then rc=0; else rc=$?; fi
 gl=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "good"' | wc -l | tr -d ' ')
+KEPT_GOOD="note: cyrius.lock keeps good@v1's pin (the manifest declares good at v2), fail-closed; delete cyrius.lock to re-pin"
 if [ "$rc" -eq 0 ] && [ "$gl" -eq 2 ] && [ "$(pin_at good v2)" = "$good2" ] && [ -n "$good1" ] \
-   && [ "$(pin_at good v1)" = "$good1" ] && [ "$(npins)" -eq 6 ]; then
-    ok "K8 tag bump v1 → v2: good pinned at v2's commit, its v1 line kept, the other 4 pins kept"
-else bad "K8 (rc=$rc, $gl line(s) for good, pins: $(pinset)): $(grep -m2 -i 'error\|refus' "$W/k8.out")"; fi
+   && [ "$(pin_at good v1)" = "$good1" ] && [ "$(npins)" -eq 6 ] \
+   && grep -qxF "$KEPT_GOOD" "$W/k8.out" && [ "$(grep -c 'cyrius.lock keeps' "$W/k8.out")" -eq 1 ]; then
+    ok "K8 tag bump v1 → v2: good pinned at v2's commit, its v1 line kept AND named (one note), the other 4 pins kept"
+else bad "K8 (rc=$rc, $gl line(s) for good, pins: $(pinset)): $(grep -m2 -i 'error\|refus\|keeps' "$W/k8.out")"; fi
+cp "$P/cyrius.lock" "$W/k8l.lock"
+rc=0; if _cy deps --locked > "$W/k8l.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && grep -qxF "$KEPT_GOOD" "$W/k8l.out" && grep -q '^--locked: lib/ and cyrius.lock are exactly what the tags resolve' "$W/k8l.out" \
+   && cmp -s "$W/k8l.lock" "$P/cyrius.lock"; then
+    ok "K8l deps --locked: names the kept good@v1 pin, still passes (rc 0), writes nothing"
+else bad "K8l (rc=$rc): $(grep -m3 -i 'differs\|keeps\|locked' "$W/k8l.out")"; fi
 RTAG=v2; refused K8r good; RTAG=v1
 
 # ── K9: the merged lock is a valid lock ─────────────────────────────────────────────────
@@ -339,6 +359,15 @@ if [ "$rc" -eq 0 ] && [ "$(pin_at dx v2)" = "$dx2" ] && [ "$(pin_at dx v1)" = "$
     ok "K12a diamond: a feature-less resolve pinned dy's dx@v1 and KEPT the root's dx@v2 pin"
 else bad "K12a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus' "$W/k12a.out")"; fi
 RTAG=v2; refused K12b dx --features gpu; RTAG=v1
+#    K12c (6.7.12, D25): the diamond's pins are live, not stale — neither the feature-less resolve
+#    (dx@v2 carried, the root's own tag: K12a, and again here) nor `--features gpu` (dx@v1 carried,
+#    declared by dy's manifest, which that resolve read) names a kept pin. After K12b, whose
+#    refused run must find lib/dx.cyr as K12a left it.
+rc=0; if _cy deps > "$W/k12d.out" 2>&1; then rc=0; else rc=$?; fi
+rc2=0; if _cy deps --features gpu > "$W/k12c.out" 2>&1; then rc2=0; else rc2=$?; fi
+if [ "$rc$rc2" = "00" ] && ! grep -q 'cyrius.lock keeps' "$W/k12a.out" "$W/k12d.out" "$W/k12c.out" && [ "$(npins)" -eq 3 ]; then
+    ok "K12c diamond: no kept-pin note for dx@v2 (feature-less) or dy's transitive dx@v1 (--features gpu)"
+else bad "K12c (rc=$rc/$rc2, $(npins) pins): $(grep -h 'keeps\|error' "$W/k12a.out" "$W/k12d.out" "$W/k12c.out" | head -2)"; fi
 
 # ── K13: the commit block's order is a function of the pin SET, not of the gating ──────────
 #    The gated dep is declared FIRST: fresh-then-carried order wrote opt-first under
@@ -405,8 +434,9 @@ RTAG=v2; refused K15 good; RTAG=v1
 #    six deps (alpha good opt optdep ovr tgt), not the 1006 lines it printed before.
 rc=0; if _cy deps > "$W/k16.out" 2>&1; then rc=0; else rc=$?; fi
 na=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "alpha"' | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned (2 re-verified)$' "$W/k16.out"; then
-    ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines), 2 re-verified (good ovr)"
+if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned (2 re-verified)$' "$W/k16.out" \
+   && [ "$(grep -c 'cyrius.lock keeps' "$W/k16.out")" -eq 1 ] && grep -qxF "$KEPT_GOOD" "$W/k16.out"; then
+    ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines), 2 re-verified (good ovr); one kept-pin note (good@v1)"
 else bad "K16 (rc=$rc, $na alpha lines, $(npins) pins): $(grep -m1 'cyrius.lock' "$W/k16.out")"; fi
 
 # ── K17: the drop key includes GIT — a fork at the same tag keeps the origin's line ─────────
@@ -440,8 +470,9 @@ rc=0; if _cy deps > "$W/k17.out" 2>&1; then rc=0; else rc=$?; fi
 [ "$rc" -eq 0 ] && [ "$(pin_git fx "file://$W/o/fx" v1)" = "$fxa" ] || bad "K17 setup (rc=$rc): fx not pinned from its origin: $(grep -m2 -i 'error\|refus' "$W/k17.out")"
 sed -i "s|^git = \"file://$W/o/fx\"\$|git = \"file://$W/fork/fx\"|" "$P/cyrius.cyml"; rm -rf "$H/deps/fx"
 rc=0; if _cy deps > "$W/k17a.out" 2>&1; then rc=0; else rc=$?; fi
-if [ "$rc" -eq 0 ] && [ "$(pin_git fx "file://$W/o/fx" v1)" = "$fxa" ] && [ "$(pin_git fx "file://$W/fork/fx" v1)" = "$fxb" ] && [ "$(npins)" -eq 2 ]; then
-    ok "K17a fork at the same tag: pinned the fork's v1 and KEPT the origin's v1 line"
+if [ "$rc" -eq 0 ] && [ "$(pin_git fx "file://$W/o/fx" v1)" = "$fxa" ] && [ "$(pin_git fx "file://$W/fork/fx" v1)" = "$fxb" ] && [ "$(npins)" -eq 2 ] \
+   && ! grep -q 'cyrius.lock keeps' "$W/k17a.out"; then
+    ok "K17a fork at the same tag: pinned the fork's v1 and KEPT the origin's v1 line (not named: v1 is the declared tag)"
 else bad "K17a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,4,5 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus' "$W/k17a.out")"; fi
 sed -i "s|^git = \"file://$W/fork/fx\"\$|git = \"file://$W/o/fx\"|" "$P/cyrius.cyml"
 grep -q "o/fx\"" "$P/cyrius.cyml" || bad "K17 setup: the url was not switched back"

@@ -88,6 +88,7 @@ fn _emit_js(source, output): i64 {
     # exit 0, `out.js` a 65,888-byte aarch64 ELF). Derived from the fork, not a target
     # list — see `_target_cc_has_js`. CHANGELOG [6.6.6].
     if (_target_cc_has_js() == 0) { return _emit_js_refuse(); }
+    if (_js_cc_is_host() == 0) { return _emit_js_not_host(); }
     var cc = current_cc();
     if (cc == 0) {
         _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
@@ -751,6 +752,7 @@ fn _materialize_source(source): i64 {
         var tmp = str_data(str_builder_build(tmp_sb));
         # Unlink first so O_EXCL succeeds on re-runs with same PID
         sys_unlink(tmp);
+        _cbt_scratch_track(tmp);   # 6.7.12: the kill handler unlinks it (the callers drop it)
         var tfd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0x180);
         _mat_err = 0;
         # v6.6.6 (bite 26b) — the `else` below. A temp that could not be created used to
@@ -910,11 +912,12 @@ fn _materialize_source(source): i64 {
                 _err_ctx("could not write the preprocessed source — refusing to compile a truncated file", tmp);
             }
             if (_mat_err != 0) {
-                sys_unlink(tmp);
+                _cbt_scratch_drop(tmp);
                 return 0;
             }
             actual_source = tmp;
         } else {
+            _cbt_scratch_untrack(tmp);
             _err_ctx("could not create the preprocessed source", tmp);
             return 0;
         }
@@ -1087,6 +1090,7 @@ fn _cbt_tmpdir(): i64 {
         var mr = sys_mkdir(d, 448);         # 0700
         if (mr == 0) {
             _cbt_tmpdir_p = d;
+            _cbt_sig_dir_set(d);   # 6.7.12: the kill handler removes it (cbt/sigclean.cyr)
             return d;
         }
         # Only EEXIST is a TAKEN candidate. Anything else (a $TMPDIR that does not exist or
@@ -1150,8 +1154,9 @@ fn _cc_own_err_begin(): i64 {
     if (_cc_stderr_to != 0) { return 0; }
     var p = _cbt_tmpfile("cc_err");
     sys_unlink(p);
+    _cbt_scratch_track(p);   # 6.7.12: the kill handler unlinks it
     var fd = sys_open(p, O_WRONLY | O_CREAT | O_EXCL, 0x180);
-    if (fd < 0) { return 0; }
+    if (fd < 0) { _cbt_scratch_untrack(p); return 0; }
     sys_close(fd);
     _cc_stderr_to = p;
     return p;
@@ -1162,7 +1167,7 @@ fn _cc_own_err_end(own, rc): i64 {
     _cc_stderr_to = 0;
     _cbt_relay_file(own);
     if (rc != 0) { _cc_undef_hints(own); }
-    sys_unlink(own);
+    _cbt_scratch_drop(own);
     return 0;
 }
 
@@ -1230,7 +1235,9 @@ fn _cbt_tmpdir_cleanup(): i64 {
     if (_cbt_tmpdir_p == 0) { return 0; }
     var d = _cbt_tmpdir_p;
     _cbt_tmpdir_p = 0;
-    return xrmdir(d);
+    var r = xrmdir(d);
+    _cbt_sig_dir_set(0);
+    return r;
 }
 
 # Exit the CLI, sweeping the private temp dir first. Every PARENT-side `sys_exit` in cbt/
@@ -1297,7 +1304,7 @@ fn _cc_env_is_target(e): i64 {
 # compiler FLAGS come first, from `_cc_flag_inject` — the one list both spawn arms hand the
 # compiler (6.7.8); the target selectors below are this (POSIX) arm's alone.
 #   --agnos       CYRIUS_TARGET_AGNOS=1 (v6.0.49);  --win  CYRIUS_TARGET_WIN=1, a PE32+ (v6.0.52).
-#                 Distinct emit targets — do not combine.
+#                 Distinct emit targets — the CLI refuses two at once (_cli_targets_exclusive, 6.7.12).
 #   bare metal    CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1, and CYRIUS_KERNEL_BASE from
 #                 `[sections] base` (v6.3.3 #5).
 fn _cc_child_inject(inj): i64 {
@@ -1703,7 +1710,7 @@ fn compile(source, output): i64 {
     var wbad = _cc_win_env_apply(winj);
     if (wbad != 0) {
         _covx_win_unset();
-        if (tmp_src != 0) { sys_unlink(tmp_src); }
+        if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }
         _err_ctx("could not set the compiler's environment entry", wbad);
         return 1;
     }
@@ -1711,7 +1718,7 @@ fn compile(source, output): i64 {
     wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);
     _cc_own_err_end(w_own, wrc);
     _covx_win_unset();   # 6.7.10: the program run next never inherits the coverage mode
-    if (tmp_src != 0) { sys_unlink(tmp_src); }
+    if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }
     # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
     # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
     # own exit code on every path that got as far as running it. ⚠ ONE residual ambiguity,
@@ -1733,6 +1740,7 @@ fn compile(source, output): i64 {
     str_builder_add_int(tmp_out_sb, tmp_pid);
     var tmp_out = str_data(str_builder_build(tmp_out_sb));
     sys_unlink(tmp_out);
+    _cbt_scratch_track(tmp_out);   # 6.7.12: before the probe below creates it
     # v6.3.3 #5: resolve `[sections] base` from the manifest before fork (parent does
     # the file I/O; the child just appends the result to envp). Bare-metal only.
     # v6.5.7: prove the output is writable BEFORE forking. The child opens `tmp_out`
@@ -1753,7 +1761,8 @@ fn compile(source, output): i64 {
         # because neither return can be taken without passing through it.
         # `tmp_out` needs no cleanup: `probe_fd < 0` means the open FAILED, so there is
         # no partial file, and it was already unlinked before the probe.
-        if (tmp_src != 0) { sys_unlink(tmp_src); }
+        if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }
+        _cbt_scratch_untrack(tmp_out);
         var odir = _parent_dir(output);
         if (odir != 0) {
             if (is_dir(str_from(odir)) == 0) {
@@ -1768,6 +1777,7 @@ fn compile(source, output): i64 {
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var own_err = _cc_own_err_begin();
     var pid = sys_fork();
+    if (pid > 0) { _cbt_child_track(pid, 0); }   # 6.7.12: the kill handler stops it first
     if (pid < 0) {
         # 6.6.20 — no child, so no status: say so, and leave nothing behind — the stderr capture
         # (resetting `_cc_stderr_to` for the next compile in this process), the preprocessed
@@ -1775,8 +1785,8 @@ fn compile(source, output): i64 {
         # `output`. `_cc_last_exit` stays -1. See `_cbt_fork_failed`. CHANGELOG [6.6.20]
         _cbt_fork_failed("the compiler", pid);
         _cc_own_err_end(own_err, 1);
-        if (tmp_src != 0) { sys_unlink(tmp_src); }
-        sys_unlink(tmp_out);
+        if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }
+        _cbt_scratch_drop(tmp_out);
         return 1;
     }
     if (pid == 0) {
@@ -1818,12 +1828,13 @@ fn compile(source, output): i64 {
     # 6.6.20: -1 when the wait could not be read (named there) — then this is a failure, and
     # `_cc_last_exit` stays -1, whatever the child may have written.
     var status = _cbt_wait_status(pid, "the compiler");
+    _cbt_child_untrack(pid);
     var own_rc = 1;
     if (status >= 0 && WIFEXITED(status) == 1) { own_rc = WEXITSTATUS(status); }
     _cc_own_err_end(own_err, own_rc);
     # The compiler child has been reaped, so it is done with the preprocessed source.
     # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
-    if (tmp_src != 0) { sys_unlink(tmp_src); }
+    if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }
     # v6.6.6 (bite 24 review) — record the child's REAL status; see `_cc_last_exit`.
     # Left at -1 when the child was signalled, because then there is no exit status to
     # report and a caller must not invent one.
@@ -1842,9 +1853,10 @@ fn compile(source, output): i64 {
             sys_unlink(output);
             if (file_rename(tmp_out, output) != 0) {
                 _err_ctx("could not rename the temp output onto", output);
-                sys_unlink(tmp_out);
+                _cbt_scratch_drop(tmp_out);
                 return 1;
             }
+            _cbt_scratch_untrack(tmp_out);
             sys_chmod(output, 0x1ED);
             if (_verbose == 1) {
                 # Report binary size. 6.6.9: `_artifact_size`, not a raw `syscall(4)` stat
@@ -1864,7 +1876,7 @@ fn compile(source, output): i64 {
     }
     # Compile failed: unlink the partial tmp output. The original
     # `output` (if any) is preserved untouched.
-    sys_unlink(tmp_out);
+    _cbt_scratch_drop(tmp_out);
     if (_verbose == 1 && status >= 0) {
         sys_write(STDERR_FD, "[verbose] compile failed (exit ", 31);
         var ebuf[24];
@@ -2433,6 +2445,21 @@ fn _target_cc_has_js(): i64 {
     return 0;
 }
 
+# 1 when the compiler the js arm EXECS (current_cc()) is the host cycc — the one
+# `_target_cc_has_js` asks about. 6.7.12: under `--aarch64` current_cc() is cycc_aarch64, which
+# ignores `--emit-js`, read its stdin as the source (blocking forever on a terminal) and had its
+# ELF renamed over the .js with an OK. The CLI refuses that pair first (_cli_targets_exclusive);
+# this keeps the arm closed to any later selector. CHANGELOG [6.7.12]
+fn _js_cc_is_host(): i64 {
+    if (current_cc() == _cc) { return 1; }
+    return 0;
+}
+
+fn _emit_js_not_host(): i64 {
+    _err("build --target=js runs this host's cycc, not the compiler another target selector chose");
+    return 1;
+}
+
 # The refusal itself. NAMES the fork this host's cycc is built from, so the message is
 # about the actual compiler on the box rather than a generic "not supported".
 fn _emit_js_refuse(): i64 {
@@ -2746,13 +2773,19 @@ fn _win_cmd_self(): i64 {
     # an exit (`_raw_how_exited`, cbt/pulsar.cyr — a fn, because that global is declared in a
     # file included after this one). CHANGELOG [6.6.9]
     _raw_how_exited();
+    # 6.7.12 — both steps build the DEFAULT compiler: the compile-mode switches are cleared on
+    # this process around the two spawns (`_win_mode_switches_clear`), the POSIX arm's
+    # `_envp_self_build`. CHANGELOG [6.7.12]
+    var wsaved = _win_mode_switches_clear();
     var w1 = _win_compile_spawn(_cc, self_src, t1);
     if (w1 != 0) {
+        _win_mode_switches_restore(wsaved);
         _self_step_failed(1, w1, self_src, _cc);
         xunlink(t1);
         return 1;
     }
     var w2 = _win_compile_spawn(t1, self_src, t2);
+    _win_mode_switches_restore(wsaved);
     if (w2 != 0) {
         _self_step_failed(2, w2, self_src, 0);
         xunlink(t1);

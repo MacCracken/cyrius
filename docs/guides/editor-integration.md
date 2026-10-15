@@ -29,12 +29,34 @@ Capabilities (current):
 
 Diagnostics come from compiling the file **as saved on disk** (the server
 does not read the editor's unsaved buffer). Inside a project — a directory
-tree with a `cyrius.cyml` — it runs `cyrius check --with-deps <file>` from
-the project root, so `[deps]` modules resolve; outside one it runs `cycc`
-on the file directly. Each `error:` / `warning:` line of the output becomes
-an LSP `Diagnostic` spanning the line it names. Diagnostics and the symbol index cover
-`.cyr` files; the other extensions below reach the server, but it compiles
-and indexes only `.cyr`.
+tree with a `cyrius.cyml` — it runs `cyrius check --with-deps --no-redirect <file>`
+from the project root, so `[deps]` modules resolve and the open file itself is
+the unit (`--no-redirect` skips the CLI's module redirect, which would compile
+`src/main.cyr` in place of a file with no `include`; a project pinned to a
+toolchain older than 6.7.12, which refuses the flag, is checked without it);
+outside one it runs `cycc` on the file directly. Every extension in the table
+below is compiled and indexed — `.cyr`, `.tcyr`, `.bcyr`, `.fcyr`, `.scyr`,
+`.smcyr` (6.7.12; only `.cyr` was before).
+
+Each `error:` / `warning:` line of the output becomes an LSP `Diagnostic`
+(6.7.12):
+
+- **Position.** cycc's `<file>:<line>:<col>:` gives the range: the column
+  (`col - 1`, 0-based) to the end of that source line. The column is not
+  repeated in the message.
+- **File.** A diagnostic is published on the URI of the file it names, so an
+  error inside an included file shows in that file, not at the same line
+  number of the file you opened. `<source>` is the open file; a relative name
+  resolves as cycc resolved it — against the project root, then the open
+  file's directory (outside a project, the open file's directory). A name that
+  resolves to no file stays on the open file's line 0, with its location kept
+  in the message.
+- **Stale files.** The server remembers which files each open document's
+  compile published on; when a recompile no longer names one, it publishes an
+  empty list there, so a fixed include's error does not stay.
+- **No location.** A line with none (`error: …`) lands on the open file's
+  line 0. The CLI's closing `error: <file> (compiler exit N)` verdict repeats
+  the compiler's own errors, so it is shown only when there are none.
 
 ### Build / install
 
@@ -152,7 +174,8 @@ semantic tokens.
 
 - **No diagnostics**: confirm `cyrius-lsp` resolves on PATH (the editor
   inherits PATH at launch — restart it after installing), and that the file
-  is a `.cyr` — the server compiles only those. Its stderr log names the
+  has a cyrius extension (`.cyr`, `.tcyr`, `.bcyr`, `.fcyr`, `.scyr`,
+  `.smcyr`) — the server compiles only those. Its stderr log names the
   `cycc` / `cyrius` it found.
 - **Stale errors**: diagnostics are computed from the file on disk. Edits
   trigger a recompile (`didChange`), but of the last saved contents — save

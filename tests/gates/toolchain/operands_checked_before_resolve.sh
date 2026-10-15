@@ -4,9 +4,9 @@
 # ahead of each verb's own branch, so `cyrius run missing.cyr` fetched every dependency and only
 # then said "no such file", and `cyrius build a b c` resolved before refusing the extra operand
 # (`_cli_preflight`, cbt/cli_args.cyr: the branches' own counts, and a FILE operand must exist).
-# `cyrius test`'s operands too — every one, a file or a directory — and the deprecated `cyrius
-# tests`' directory: `cyrius test missing.tcyr` cloned, vendored and wrote cyrius.lock before
-# refusing it (6.7.6 review).
+# `cyrius test`'s operands too — every one, a file or a directory: `cyrius test missing.tcyr`
+# cloned, vendored and wrote cyrius.lock before refusing it (6.7.6 review). The deprecated `cyrius
+# tests [dir]` was removed at 6.7.12: P7 pins that its refusal, too, comes before any resolve.
 #
 # AXES (one file:// git dep, a throwaway CYRIUS_HOME; "nothing resolved" = no clone in the cache,
 # no lib/, no cyrius.lock):
@@ -17,8 +17,9 @@
 #   P5  anti-over-reach: `cyrius run ok.cyr` resolves (the clone and lib/ exist) and runs (exit 5)
 #   P6  `cyrius test missing.tcyr` and `cyrius test ok.tcyr missing.tcyr` (the second operand
 #       checked too): "no such file or directory", rc 1, nothing resolved
-#   P7  `cyrius tests nothere` and `cyrius tests ok.cyr` (a file — the deprecated verb takes a
-#       directory): named, rc 1, nothing resolved
+#   P7  6.7.12: `cyrius tests nothere` and `cyrius tests t` (the removed verb, with a missing and
+#       a real directory): `Unknown command: tests` and the line naming `cyrius test <dir>`, rc 1,
+#       nothing resolved
 #   P8  anti-over-reach: `cyrius test t` (a directory) and `cyrius test t/ok.tcyr` resolve and pass
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree; real tree 8/8 green):
@@ -26,6 +27,8 @@
 #   M2  the preflight checks counts only, not that a file exists ....... P1 P2 P4 P6 P7 red
 #   M3  the preflight leaves test / tests out (the pre-FXCL-3 shape) ... P6 P7 red
 #   M4  test's operands: only the first is checked ..................... P6 red
+#   (6.7.12: P7 is now the removed verb's refusal, which the classifier makes before the
+#   preflight, so M1-M3 no longer reach it; 6.7.11's alias restored turns it red — rc 0, resolved.)
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=operands_checked_before_resolve
@@ -79,11 +82,12 @@ fresh; rc=0; cy test t/ok.tcyr missing.tcyr > "$W/p6b.out" 2>&1 || rc=$?
 [ "$p6" -eq 2 ] && ok "P6 test missing.tcyr / test t/ok.tcyr missing.tcyr: named, rc 1, nothing resolved" \
   || bad "P6 ($p6 of 2): $(head -2 "$W/p6a.out") / $(head -2 "$W/p6b.out") cache=[$(ls -A "$H/deps")]"
 p7=0
+P7H='error: `cyrius tests` was removed at 6.7.12: use `cyrius test <dir>` (`cyrius test tests` for tests/)'
 fresh; rc=0; cy tests nothere > "$W/p7a.out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ] && grep -qxF 'error: no such directory: nothere' "$W/p7a.out" && nothing && p7=$((p7+1))
-fresh; rc=0; cy tests ok.cyr > "$W/p7b.out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ] && grep -qF 'error: not a directory (`cyrius test <file>` runs one file): ok.cyr' "$W/p7b.out" && nothing && p7=$((p7+1))
-[ "$p7" -eq 2 ] && ok "P7 tests nothere / tests ok.cyr (a file): named, rc 1, nothing resolved" \
+[ "$rc" -eq 1 ] && grep -qxF 'Unknown command: tests' "$W/p7a.out" && grep -qxF "$P7H" "$W/p7a.out" && nothing && p7=$((p7+1))
+fresh; rc=0; cy tests t > "$W/p7b.out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] && grep -qxF 'Unknown command: tests' "$W/p7b.out" && grep -qxF "$P7H" "$W/p7b.out" && nothing && p7=$((p7+1))
+[ "$p7" -eq 2 ] && ok "P7 tests nothere / tests t (the removed verb): refused naming cyrius test <dir>, rc 1, nothing resolved" \
   || bad "P7 ($p7 of 2): $(head -2 "$W/p7a.out") / $(head -2 "$W/p7b.out")"
 rc=0; cy run ok.cyr > "$W/p5.out" 2>&1 || rc=$?
 [ "$rc" -eq 5 ] && [ -d "$H/deps/d" ] && [ -f "$P/lib/d.cyr" ] && ok "P5 run ok.cyr: resolved and ran (exit 5)" \

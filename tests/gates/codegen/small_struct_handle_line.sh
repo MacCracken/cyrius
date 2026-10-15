@@ -58,7 +58,7 @@
 # tests/tcyr/crossos/small_struct_global_handle_line.tcyr (the declaration zone — judged from its
 # tokens at the end of pass 1, a fn declared below included — and after the first statement; every
 # consumer in a fn and at top level; every size 1..8 B):
-#   R2 that file on the same legs as R1, N derived from it (floor 267)
+#   R2 that file on the same legs as R1, N derived from it (floor 266)
 #   GC compile rows (x86): GC1 `var ga: Num = 1;` is a handle global — `ga + gb` is pointer
 #      arithmetic (3, no `Num_add`), as at 16 B; a struct value global still dispatches (102); GC2
 #      `var G: S8 = *GU;` with `GU: *U8` refused by name in the zone and after it, at 8 and 16 B;
