@@ -4430,10 +4430,16 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
             if (_distlib_vec_has(leaves, owner) == 1) { continue; }
             # A named dep's leaf list may name the PEER itself (`hd_impl`), not the
-            # dispatcher the owner resolves to (`hd`): either one counts.
+            # dispatcher the owner resolves to (`hd`): either one counts. So does a leaf one of
+            # those leaves brings by its OWN include (6.7.12: `tagged` → `boxed`), as `cyrius deps`
+            # vendors it for that dep — it was recorded as the bundle's, so a pure module's
+            # sidecar read `boxed`. The bundle's own use is still recorded (below), as for a
+            # listed leaf. CHANGELOG [6.7.12]
             var brought = 0;
             if (_distlib_vec_has(_dep_nd_leaves, owner) == 1) { brought = owner; }
             elif (_distlib_vec_has(_dep_nd_leaves, raw) == 1) { brought = raw; }
+            elif (_distlib_vec_has(_distlib_nd_closure(root), owner) == 1) { brought = owner; }
+            elif (_distlib_vec_has(_distlib_nd_closure(root), raw) == 1) { brought = raw; }
             var scoped = _distlib_vec_has(scope, owner);
             if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
             if (scoped == 1 || brought != 0) {
@@ -4471,6 +4477,79 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
     # as real convergence, and an 8-leaf chain published 6 leaves as "compile-verified" at rc 0.
     # A bigger cap would only move the failure one leaf further out. CHANGELOG [6.6.11]
     return _distlib_verify_fail("distlib: sidecar verify did not converge in 6 rounds — sidecar NOT written", out_path);
+}
+
+# 6.7.12 — the transitive include closure, in the snapshot `root`, of the stdlib leaves `cyrius
+# deps` pulled for named deps (`_dep_nd_leaves`): each leaf, every leaf its file includes (the
+# resolver's own rule, `_dep_stdlib_inc_names`, cbt/deps.cyr — so it is the set the resolve
+# vendored for those deps), and so on; a family directory's members are walked and the family
+# name itself is in the set. Built once per snapshot (the verify asks for every name it
+# classifies). CHANGELOG [6.7.12]
+var _dl_ndc = 0;
+var _dl_ndc_root = 0;
+
+fn _distlib_nd_closure(root): i64 {
+    if (_dl_ndc != 0 && streq(_dl_ndc_root, root) == 1) { return _dl_ndc; }
+    var out = vec_new();
+    var q = vec_new();
+    if (_dep_nd_leaves != 0) {
+        var i = 0;
+        while (i < vec_len(_dep_nd_leaves)) { vec_push(q, vec_get(_dep_nd_leaves, i)); i = i + 1; }
+    }
+    var qi = 0;
+    while (qi < vec_len(q)) {
+        var nm = vec_get(q, qi);
+        qi = qi + 1;
+        if (_distlib_vec_has(out, nm) == 1) { continue; }
+        vec_push(out, nm);
+        _distlib_nd_closure_step(root, nm, q);
+    }
+    _dl_ndc = out;
+    _dl_ndc_root = root;
+    return out;
+}
+
+# Queue onto `q` what leaf `nm` brings: the includes of root/<nm>.cyr that the snapshot holds, or
+# each member of the family directory root/<nm>/; and a family member's family.
+fn _distlib_nd_closure_step(root, nm, q): i64 {
+    var sl = 0;
+    while (load8(nm + sl) != 0 && load8(nm + sl) != 47) { sl = sl + 1; }
+    if (load8(nm + sl) == 47) {
+        var fam = alloc(sl + 1);
+        memcpy(fam, nm, sl);
+        store8(fam + sl, 0);
+        vec_push(q, fam);
+    }
+    var fp = _cat2(_distlib_join(root, nm), ".cyr");
+    if (file_exists(fp) == 1) {
+        var n = 0;
+        var b = file_read_whole(fp, &n);
+        if (b == 0 || n <= 0) { return 0; }
+        var incs = _dep_stdlib_inc_names(b, n);
+        var k = 0;
+        while (k < vec_len(incs)) {
+            var inc = vec_get(incs, k);
+            k = k + 1;
+            if (file_exists(_cat2(_distlib_join(root, inc), ".cyr")) == 1) { vec_push(q, inc); }
+        }
+        return 0;
+    }
+    var dp = _distlib_join(root, nm);
+    if (is_dir(str_from(dp)) == 0) { return 0; }
+    var ents = dir_list(dp);
+    var e = 0;
+    while (e < vec_len(ents)) {
+        var ed = str_data(vec_get(ents, e));
+        e = e + 1;
+        var el = strlen(ed);
+        if (el > 4 && memeq(ed + el - 4, ".cyr", 4) == 1) {
+            var stem = alloc(el - 3);
+            memcpy(stem, ed, el - 4);
+            store8(stem + el - 4, 0);
+            vec_push(q, _distlib_join(nm, stem));
+        }
+    }
+    return 0;
 }
 
 # ⚠ 6.6.18 (D2) — NAME WHAT THE CONVERGED VERIFY COULD NOT OWN. A name no stdlib leaf, named

@@ -4372,6 +4372,10 @@ whose peer declares it (`syscalls` for `O_RDWR`, never a per-arch peer); else th
 declarer. Two or more candidates is a refusal that names them all — `'X' is undefined on every
 target, and more than one stdlib leaf could own it (a, b)` — and no sidecar is written: `include`
 the right leaf from a bundled module.
+A leaf a NAMED DEP brings is that dep's, not the bundle's: one its sidecar lists, and (6.7.12) one
+of those leaves brings by its own include — `tagged` lists `boxed` in for `tagged_new`, as
+`cyrius deps` vendors it for the dep — so a bundle that calls nothing gets no sidecar (until 6.7.12
+it published `boxed`). The bundle's OWN call into such a leaf is recorded, listed or not.
 
 The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
 (`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include

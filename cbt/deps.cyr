@@ -1029,9 +1029,43 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     if (nread <= 0) { return 0; }
     store8(fbuf + nread, 0);
 
-    # Walk for `include "lib/`. Tolerate any leading whitespace
-    # but skip lines starting with `#` (commented-out includes
-    # in retro/historical comments shouldn't drag deps in).
+    var incs = _dep_stdlib_inc_names(fbuf, nread);
+    var ii = 0;
+    while (ii < vec_len(incs)) {
+        var inc_name = vec_get(incs, ii);
+        ii = ii + 1;
+        # Recursive fetch (transitive). Only if the
+        # source file actually exists in stdlib_dir —
+        # silently skip non-stdlib includes (consumer
+        # might `include "src/foo.cyr"` in stdlib if
+        # someone got creative; not our concern).
+        var probe_sb = str_builder_new();
+        str_builder_add_cstr(probe_sb, stdlib_dir);
+        str_builder_add_cstr(probe_sb, "/");
+        str_builder_add_cstr(probe_sb, inc_name);
+        str_builder_add_cstr(probe_sb, ".cyr");
+        var probe_path = str_data(str_builder_build(probe_sb));
+        if (file_exists(probe_path) == 1) {
+            # Transitive — is_top=0 so we copy the
+            # file but DON'T push to `_dep_includes`.
+            # The top-level dispatcher (`lib/syscalls.cyr`,
+            # `lib/alloc.cyr`) follows its own
+            # `include "lib/X.cyr"` chain at parse time
+            # gated by `#ifdef`.
+            _dep_copy_stdlib_recursive(stdlib_dir, inc_name, 0);
+        }
+    }
+    return 0;
+}
+
+# The `include "lib/X.cyr"` names in a stdlib file's text (`X`, the `.cyr` dropped), in order.
+# Leading whitespace is tolerated; a line starting with `#` is skipped (commented-out includes
+# in retro/historical comments shouldn't drag deps in). The ONE rule for a stdlib leaf's
+# includes: the resolver's transitive walk above and distlib's named-dep closure
+# (`_distlib_nd_closure`, cbt/commands.cyr) both read it, so the closure distlib credits to a
+# named dep is the one `cyrius deps` vendors for it. CHANGELOG [6.7.12]
+fn _dep_stdlib_inc_names(fbuf, nread): i64 {
+    var out = vec_new();
     var pos = 0;
     while (pos < nread) {
         var ls = pos;
@@ -1046,53 +1080,32 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
             lp = lp + 1;
         }
         # Comment line — skip
-        if (lp < le && load8(fbuf + lp) != 35) {
+        if (lp < le && load8(fbuf + lp) != 35 && le - lp >= 13) {
             # Match `include "lib/`
-            if (le - lp >= 13) {
-                if (memeq(fbuf + lp, "include \"lib/", 13) == 1) {
-                    var name_start = lp + 13;
-                    var name_end = name_start;
-                    while (name_end < le && load8(fbuf + name_end) != 34) {
-                        name_end = name_end + 1;
-                    }
-                    if (name_end < le) {
-                        var inc_len = name_end - name_start;
-                        # Strip ".cyr" suffix (4 bytes) if present.
-                        if (inc_len > 4) {
-                            if (memeq(fbuf + name_end - 4, ".cyr", 4) == 1) {
-                                inc_len = inc_len - 4;
-                            }
-                        }
-                        var inc_name = alloc(inc_len + 1);
-                        memcpy(inc_name, fbuf + name_start, inc_len);
-                        store8(inc_name + inc_len, 0);
-                        # Recursive fetch (transitive). Only if the
-                        # source file actually exists in stdlib_dir —
-                        # silently skip non-stdlib includes (consumer
-                        # might `include "src/foo.cyr"` in stdlib if
-                        # someone got creative; not our concern).
-                        var probe_sb = str_builder_new();
-                        str_builder_add_cstr(probe_sb, stdlib_dir);
-                        str_builder_add_cstr(probe_sb, "/");
-                        str_builder_add_cstr(probe_sb, inc_name);
-                        str_builder_add_cstr(probe_sb, ".cyr");
-                        var probe_path = str_data(str_builder_build(probe_sb));
-                        if (file_exists(probe_path) == 1) {
-                            # Transitive — is_top=0 so we copy the
-                            # file but DON'T push to `_dep_includes`.
-                            # The top-level dispatcher (`lib/syscalls.cyr`,
-                            # `lib/alloc.cyr`) follows its own
-                            # `include "lib/X.cyr"` chain at parse time
-                            # gated by `#ifdef`.
-                            _dep_copy_stdlib_recursive(stdlib_dir, inc_name, 0);
+            if (memeq(fbuf + lp, "include \"lib/", 13) == 1) {
+                var name_start = lp + 13;
+                var name_end = name_start;
+                while (name_end < le && load8(fbuf + name_end) != 34) {
+                    name_end = name_end + 1;
+                }
+                if (name_end < le) {
+                    var inc_len = name_end - name_start;
+                    # Strip ".cyr" suffix (4 bytes) if present.
+                    if (inc_len > 4) {
+                        if (memeq(fbuf + name_end - 4, ".cyr", 4) == 1) {
+                            inc_len = inc_len - 4;
                         }
                     }
+                    var inc_name = alloc(inc_len + 1);
+                    memcpy(inc_name, fbuf + name_start, inc_len);
+                    store8(inc_name + inc_len, 0);
+                    vec_push(out, inc_name);
                 }
             }
         }
         pos = le + 1;
     }
-    return 0;
+    return out;
 }
 
 # ⛔ v6.5.37 (A8) — DETERMINISTIC FAMILY EXPANSION. `dir_list` returns readdir order, which
