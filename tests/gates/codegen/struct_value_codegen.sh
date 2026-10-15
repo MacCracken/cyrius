@@ -223,6 +223,8 @@
 #       "the declaration zone misread .."), U3 (13), A1-A7 (U1-U8 U11 U12)
 #   M-U2 `_gz_unary` keeping `-g`'s struct (kind 4)            -> RED U2 ("the declaration zone misread ..")
 #   M-R1 `_refuse_struct_tuple_return` answering 0             -> RED R8-R11 (BUILT); R12-R15 green
+#   M-R3 `_refuse_struct_tuple_return` without its GIDEP guard  -> RED R27 R28 (refused: the inline replay judged by
+#       the caller's class); R8-R15 green
 #   M-R2 `_pair_ret_call_ok` without its `_call_ends_at` test   -> RED R16-R22 (BUILT); R23-R26 green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -434,6 +436,10 @@ exits r12 12 "R12: fn f(): (i64, i64) { return (1, 2); } still builds" "fn f(): 
 exits r13 12 "R13: an undeclared fn's return (a, b); still builds" "fn f(a, b) { return (a, b); }\nfn main(): i64 { var a, b = f(1, 2); return a * 10 + b; }$E"
 refused r14 'a multi-value return is written `return (a, b);` - drop the extra parentheses' "R14: return ((a, b)); from a Pt fn keeps its own refusal" "struct Pt { x; y; }\nfn f(a, b): Pt { return ((a, b)); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x; }$E"
 refused r15 'struct-return fn: return must be a bare local identifier' "R15: return ((a, b)); from a P3 fn keeps its own refusal" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return ((a, b)); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x; }$E"
+# R27 / R28 — the refusal judges the fn the `return` belongs to: an `#inline` or generic callee's `return (a, b);`
+# replayed inside a fn returning P3 (GIDEP) is the callee's, and builds.
+exits r27 127 "R27: an #inline fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\n#inline\nfn two(a, b) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
+exits r28 127 "R28: a generic fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\nfn two<T>(a: T, b: T) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
 # R16-R26 (6.7.11, issues/2026-10-08-struct-operator-results.md #5; the user's decision (a), 2026-10-13) in a fn
 # returning a 9-16 B struct, `return mk2(1) OP x;` with an operator that does not dispatch passed the pair-call
 # check (`_pair_ret_call_ok` asked only that a same-struct call START the value): rax the operator's result, rdx
