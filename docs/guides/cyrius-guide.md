@@ -875,8 +875,11 @@ slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field
 closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
 change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
-the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'` (6.7.11: `x = v` is reported at
-`x`, before `v` is parsed — a whole tuple `v` was refused a second time). It works in a statement, at
+the closure: `x += d`, like `x = x + d`, a `for` init or step and `a, x = f()`, is refused naming the
+capture — ``'x' is captured by value; a captured name is not assignable in a closure — copy it into a
+local (`var y = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
+body). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
+second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
@@ -6449,8 +6452,9 @@ offsets past the params.
 - A classic `for` step is ONE assignment — any assignment a statement takes, `=` or a compound
   operator (6.7.5) — ending at its `)` (6.7.8): not a call, not `i++`, not a comma list. Its
   destination resolves as the statement's does: `for (i = 0; i < 5; j = i + 1)` with `j` declared
-  nowhere (or a fn's name, or a closure's captured name) is `undefined variable 'j'` — before
-  6.7.9 it compiled and stored nothing, so the loop never advanced
+  nowhere (or a fn's name) is `undefined variable 'j'`, and a closure's captured name is the
+  capture refusal (`'j' is captured by value; ...`, 6.7.11) — before 6.7.9 it compiled and stored
+  nothing, so the loop never advanced
 - Exit codes truncated to 0-255 (Linux limitation)
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9

@@ -3563,7 +3563,9 @@ fn _asg_store_slot(S, idx, g): i64 {
 # cursor (the value's end), its excerpt and the block-scope note. ONE report for the statement arm
 # and the classic-for step, which stored nothing and said nothing — `for (i = 0; i < 5; j = i + 1)`
 # with `j` declared nowhere looped forever. The caller keeps its --syntax-only skip. CHANGELOG [6.7.9]
+# Inside a closure, a name of the enclosing scope is a capture, and the report says so (`_asg_cap_name`).
 fn _asg_undef_report(S, noff): i64 {
+    if (_asg_cap_name(S, noff) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": undefined variable '", 22);
@@ -3574,9 +3576,28 @@ fn _asg_undef_report(S, noff): i64 {
     _had_error = 1;
     return 0;
 }
+# 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
+# f()`): a capture is the closure's copy, taken by value, and a captured NAME is not an lvalue there
+# (guide § Compound assignment). It was reported as "undefined variable 'x'" — though `x` is defined and
+# readable in the same body (issues/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
+# enclosing scope's (`_cl_snap_find`: inside a closure body only) and the refusal named it, at the cursor.
+fn _asg_cap_name(S, noff): i64 {
+    if (_cl_snap_find(S, noff) < 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var y = ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(";`)\n");
+    _err_excerpt(S);
+    _bx_undef_ti = GTI(S);   # as `_gv_note_blockscoped` marks an undefined name's report
+    _had_error = 1;
+    return 1;
+}
 # `x = v;` in a closure whose `x` is a CAPTURE (cursor on the `=`, `ti` the name): a capture is not
-# assigned in its closure, so this is the statement's "undefined variable 'x'" — reported at the
-# name, before the value is parsed, and the value skipped as a refused lvalue's is. Parsed as a
+# assigned in its closure, so this is the statement's capture refusal (`_asg_cap_name`) — reported at
+# the name, before the value is parsed, and the value skipped as a refused lvalue's is. Parsed as a
 # value first, a whole tuple `u` in `t = u;` was refused too, and the caret sat on the `;`.
 # 1 = refused. CHANGELOG [6.7.11]
 fn _asg_capture_refused(S, noff, ti): i64 {
@@ -4590,6 +4611,7 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
     var gi = FINDVAR(S, nm);
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
+        if (_panic == 0) { if (_asg_cap_name(S, nm) == 1) { return 0 - 1; } }   # 6.7.11: a capture
         ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
         _gv_note_blockscoped(S, nm);
         _panic = p0;
