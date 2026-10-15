@@ -3040,9 +3040,15 @@ A `u64` field is not supported (the build fails naming `u64_to_json`), nor is `V
   of every other escape (`"\u0001\b"` read `u0001b`), and the pairs form stored bayan's value
   itself — every escape raw, and a borrow into the parsed document rather than a copy.
 
-⚠ Known defect (6.7.10, and 6.7.9): the scanner `T_from_json_str` does not decode a nested
-`#derive`d struct field, and loses every field after it (left 0); the pairs form decodes all of
-them — use `T_from_json(bayan_json_parse(..))` for a struct that nests one.
+A **nested `#derive`d struct** decodes in both decoders: the scanner decodes the object through
+the inner struct's own `T_from_json_str` and copies it in place, as the pairs form does. A nested
+value that is not an object (`null`, a number, a string) leaves the field 0, and a field typed with
+a struct no `#derive` above it registered is skipped. The scanner walks every value it does not
+take — that one, an unknown key's — WHOLE, string- and depth-aware, so an object, an array or a
+string holding `,` / `}` never derails it. Through 6.7.10 both skipped to the first `,` or `}` at
+any depth: the nested field stayed 0, the inner object's keys were read as the outer struct's (an
+outer field of the same name took the inner value) and its `}` ended the scan, so every field after
+it was lost; an unknown key holding an object fed its keys to the outer struct.
 
 The escaper and the decoders are public in `lib/str.cyr`: `str_builder_add_json_str(sb, s)`,
 `str_builder_add_json_cstr(sb, p)` (`null` for a NULL `p`), `str_json_unescape(p, n)` (a fresh

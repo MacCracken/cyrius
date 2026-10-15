@@ -1,0 +1,169 @@
+# derive_nested_scanner.tcyr — 6.7.11: the single-pass scanner `T_from_json_str` decodes a nested
+# `#derive`d struct field and skips any value WHOLE (issues/2026-10-12-derive-scanner-loses-fields-after-
+# nested-struct.md).
+#
+# Through 6.7.10 the scanner's nested-struct arm and its unknown-key arm skipped a value to its first `,`
+# or `}` at ANY depth: inside `{"x":2,"y":3}` that is the `,` after `"x":2`, so the nested field stayed 0,
+# the inner `"y":3` was read as an OUTER key and the inner `}` ended the scan — every field after the nested
+# one was lost (`Out`: 1 0 0 0), an outer field sharing an inner key's name took the inner value (`Out2`:
+# y = 3), and an unknown key holding an object fed its keys to the outer struct (`P`: b = 9). The nested
+# object is now decoded through the inner struct's own `<T>_from_json_str` and copied inline (as the pairs
+# form `T_from_json(bayan_json_parse(..))` always did), and every such value is walked whole with
+# `_cy_json_skipval` (string- and depth-aware). A nested value that is not an object (`null`) leaves the
+# field 0 — it never decodes a LATER object — and a field typed with a struct no `#derive` registered is
+# skipped whole, as is one typed with a derived enum. The scanner and the pairs form agree on every row.
+#
+# Mutations (2026-10-14; a scratch copy of the tree, rebuilt with the one change): PP_DNEST_SCAN back to the
+# depth-blind skip with no decode (= the tree before, for the nested arm) RED rows 1, 2, the positions, the
+# Str row (and derive_serialize_narrow.tcyr's scanner `Out`); without its `{` guard RED the null and number
+# rows (1994: a LATER object decoded); the unknown-key arm back to the depth-blind skip RED row 3 and the
+# unknown-key rows; the nested arm decoding but skipping depth-blind after RED 11 rows (the plain-struct row
+# among them); the decode taken for a derived ENUM type too RED the whole file (it does not build: "a `: stack`
+# enum returns two values").
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+# The filed repro's structs, verbatim.
+#derive(Serialize)
+struct In { x: i32; y: i64; }
+
+#derive(Serialize)
+struct Out { a: i64; inn: In; b: i64; }
+
+#derive(Serialize)
+struct Out2 { a: i64; inn: In; y: i64; }
+
+#derive(Serialize)
+struct P { a: i64; b: i64; }
+
+# The nested field first, last, twice.
+#derive(Serialize)
+struct NF { inn: In; a: i64; b: i64; }
+
+#derive(Serialize)
+struct NL { a: i64; b: i64; inn: In; }
+
+#derive(Serialize)
+struct N2 { p: In; a: i64; q: In; }
+
+# A nested struct whose Str field holds `,` `}` `{` `"`.
+#derive(Serialize)
+struct SIn { s: Str; n: i64; }
+
+#derive(Serialize)
+struct SOut { a: i64; sin: SIn; b: i64; }
+
+# Two levels deep.
+#derive(Serialize)
+struct Deep { k: i64; o: Out; z: i64; }
+
+# A field typed with a struct no `#derive` registered: hand-written pairs codecs, no scanner of its own.
+struct Plain { x: i64; }
+fn Plain_to_json(ptr, sb): i64 { str_builder_add_int(sb, load64(ptr)); return 0; }
+fn Plain_from_json(pairs): i64 { var r = alloc(8); store64(r, 0); return r; }
+
+#derive(Serialize)
+struct WP { a: i64; pl: Plain; b: i64; }
+
+# A field typed with a derived ENUM (one variant, so the derive's layout agrees): its `E_from_json_str`
+# returns a Result, so the struct scanner never calls it — skipped, as before (it built through 6.7.10).
+#derive(Serialize)
+enum One { ONLY = 5; }
+fn One_from_json(pairs): i64 { var r = alloc(8); store64(r, 0); return r; }
+
+#derive(Serialize)
+struct WE { a: i64; e: One; b: i64; }
+
+fn pairs(s: cstring) { return bayan_json_parse(str_from(s)); }
+fn out(o: *Out): i64 { return o.a * 1000 + o.inn.x * 100 + o.inn.y * 10 + o.b; }
+fn out2(o: *Out2): i64 { return o.a * 1000 + o.inn.x * 100 + o.inn.y * 10 + o.y; }
+fn pv(p: *P): i64 { return p.a * 10 + p.b; }
+fn nf(f: *NF): i64 { return f.inn.x * 1000 + f.inn.y * 100 + f.a * 10 + f.b; }
+fn nl(l: *NL): i64 { return l.a * 1000 + l.b * 100 + l.inn.x * 10 + l.inn.y; }
+fn n2(t: *N2): i64 { return t.p.x * 10000 + t.p.y * 1000 + t.a * 100 + t.q.x * 10 + t.q.y; }
+fn deep(d: *Deep): i64 {
+    return d.k * 100000 + d.o.a * 10000 + d.o.inn.x * 1000 + d.o.inn.y * 100 + d.o.b * 10 + d.z;
+}
+fn sout(o: *SOut): i64 { return o.a * 100 + o.sin.n * 10 + o.b; }
+fn sstr(o: *SOut): i64 { return str_eq(o.sin.s, str_from("x,}y{\"")); }
+fn wp(w: *WP): i64 { return w.a * 100 + w.pl.x * 10 + w.b; }
+fn we(w: *WE): i64 { return w.a * 100 + w.e * 10 + w.b; }
+
+fn rows_filed(): i64 {
+    alloc_init();
+    var js = "{\"a\":1,\"inn\":{\"x\":2,\"y\":3},\"b\":4}";
+    assert_eq(out(Out_from_json_str(js)), 1234, "1. scanner Out: 1 2 3 4 (the filed repro: 1 0 0 0)");
+    assert_eq(out(Out_from_json(pairs(js))), 1234, "1. pairs Out: 1 2 3 4 (the scanner agrees)");
+    var js2 = "{\"a\":1,\"inn\":{\"x\":2,\"y\":3},\"y\":4}";
+    assert_eq(out2(Out2_from_json_str(js2)), 1234, "2. scanner Out2: 1 2 3 4, inn.y 3 and the outer y 4 (1 0 0 3)");
+    assert_eq(out2(Out2_from_json(pairs(js2))), 1234, "2. pairs Out2: 1 2 3 4");
+    var js3 = "{\"a\":1,\"extra\":{\"q\":7,\"b\":9},\"b\":4}";
+    assert_eq(pv(P_from_json_str(js3)), 14, "3. scanner P: 1 4, an unknown key's object skipped whole (1 9)");
+    assert_eq(pv(P_from_json(pairs(js3))), 14, "3. pairs P: 1 4");
+    return 0;
+}
+
+fn rows_positions(): i64 {
+    assert_eq(nf(NF_from_json_str("{\"inn\":{\"x\":2,\"y\":3},\"a\":1,\"b\":4}")), 2314, "the nested field FIRST");
+    assert_eq(nl(NL_from_json_str("{\"a\":1,\"b\":4,\"inn\":{\"x\":2,\"y\":3}}")), 1423, "the nested field LAST");
+    assert_eq(n2(N2_from_json_str("{\"p\":{\"x\":5,\"y\":6},\"a\":7,\"q\":{\"x\":8,\"y\":9}}")), 56789, "two nested fields, around a scalar");
+    assert_eq(out(Out_from_json_str("{ \"a\" : 1 , \"inn\" : { \"x\" : 2 , \"y\" : 3 } , \"b\" : 4 }")), 1234, "spaces around every token");
+    assert_eq(out(Out_from_json_str("{\"b\":4,\"inn\":{\"y\":3,\"x\":2},\"a\":1}")), 1234, "keys in another order, inside and out");
+    var dj = "{\"k\":5,\"o\":{\"a\":1,\"inn\":{\"x\":2,\"y\":3},\"b\":4},\"z\":6}";
+    assert_eq(deep(Deep_from_json_str(dj)), 512346, "two levels deep: Deep { k, Out { a, In, b }, z }");
+    assert_eq(deep(Deep_from_json(pairs(dj))), 512346, "  = the pairs form");
+    return 0;
+}
+
+fn rows_strings(): i64 {
+    var sj = "{\"a\":1,\"sin\":{\"s\":\"x,}y{\\\"\",\"n\":5},\"b\":4}";
+    assert_eq(sout(SOut_from_json_str(sj)), 154, "a nested Str holding , } { and an escaped quote: a, n, b");
+    assert_eq(sstr(SOut_from_json_str(sj)), 1, "  the nested Str itself");
+    assert_eq(sout(SOut_from_json(pairs(sj))), 154, "  = the pairs form");
+    return 0;
+}
+
+fn rows_unknown(): i64 {
+    assert_eq(pv(P_from_json_str("{\"a\":1,\"o\":{\"b\":9,\"z\":{\"b\":8}},\"b\":4}")), 14, "an unknown key holding nested objects");
+    assert_eq(pv(P_from_json_str("{\"a\":1,\"arr\":[1,{\"b\":7},\"}\",[2,3]],\"b\":4}")), 14, "an unknown key holding an array of objects, strings and arrays");
+    assert_eq(pv(P_from_json_str("{\"a\":1,\"s\":\"q,\\\"b\\\":6}\",\"b\":4}")), 14, "an unknown key holding a string with , } and escaped quotes");
+    assert_eq(out(Out_from_json_str("{\"a\":1,\"u\":{\"x\":9},\"inn\":{\"x\":2,\"w\":[1,{\"y\":8}],\"y\":3},\"b\":4}")), 1234, "unknown keys holding objects in the outer AND the nested object");
+    return 0;
+}
+
+fn rows_null(): i64 {
+    assert_eq(out(Out_from_json_str("{\"a\":1,\"inn\":null,\"b\":4,\"z\":{\"x\":9,\"y\":9}}")), 1004, "a nested null leaves the field 0 and decodes no LATER object");
+    assert_eq(out(Out_from_json_str("{\"a\":1,\"inn\":\"{\\\"x\\\":9}\",\"b\":4}")), 1004, "a nested string (holding an object's text) leaves the field 0");
+    assert_eq(out(Out_from_json_str("{\"a\":1,\"inn\":7,\"b\":4,\"q\":{\"x\":9,\"y\":9}}")), 1004, "a nested number leaves the field 0");
+    return 0;
+}
+
+fn rows_plain(): i64 {
+    assert_eq(wp(WP_from_json_str("{\"a\":1,\"pl\":{\"x\":5,\"b\":9},\"b\":4}")), 104, "a field typed with a struct no #derive registered: skipped whole");
+    assert_eq(we(WE_from_json_str("{\"a\":1,\"e\":\"ONLY\",\"b\":4}")), 104, "a field typed with a derived enum: skipped (builds)");
+    return 0;
+}
+
+fn main(): i64 {
+    rows_filed();
+    rows_positions();
+    rows_strings();
+    rows_unknown();
+    rows_null();
+    rows_plain();
+    return 0;
+}
+var m = main();
+var r = assert_summary();
+syscall(SYS_EXIT, r);
