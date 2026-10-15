@@ -3957,10 +3957,22 @@ fn _pd_kind_ok(S, fi, en, k, v): i64 {
 # type's refusal stops the build). 0 keeps it dropped, as before, for any other token. CHANGELOG [6.7.11]
 fn _pd_type_refused(S, tt): i64 {
     if (_sl_ann_at(S, tt) == 1) { return 1; }
-    if (TOKTYP(S, tt) != 2) { return 0; }
+    if (TOKTYP(S, tt) != 2) { return _pd_tok_refused(S, tt); }   # 6.7.12
     if (_classify_param_type(S, TOKVAL(S, tt)) != 0) { return 0; }
     if (_tn_resolve_at(S, tt) != 0) { return 0; }
     return 1;
+}
+# ⛔ 6.7.12 — and any other token the parameter-type reader refuses by name (`a: 5`, `a: fn`, `a: "s"`, 6.7.11's
+# ARG-3): the reader itself, quiet (`_pty_end`, `loud` 0, records `_pty_bad`), so the two cannot disagree. Its
+# default was dropped, so `fn f(a: 5 = 0)` + `f()` reported "'f' expects 1 argument, got 0" after the type's
+# own refusal. Issue 2026-10-14-refused-parameter-type-default-cascades-arity-error. CHANGELOG [6.7.12]
+fn _pd_tok_refused(S, tt): i64 {
+    var b = _pty_bad;
+    _pty_bad = 0;
+    _pty_end(S, tt, 0, 0);
+    var r = _pty_bad;
+    _pty_bad = b;
+    return r;
 }
 # The type at token tt, as written (`*T`, a name, u128).
 fn _pd_tname(S, tt): i64 {

@@ -306,6 +306,16 @@ refused r9s2 "unknown type 'Nonexist' for parameter 's'" "R9s2: \`fn f(s: Nonexi
 refused r9s3 "unknown type 'Nonexist' for parameter 's'" "R9s3: \`fn f(a, s: Nonexist = 0, b = 3)\` called \`f(1)\`: the unknown type alone" "fn f(a, s: Nonexist = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n" "1:12"
 refused r9s4 "unknown type 'Nonexist' for parameter 's'" "R9s4: ... a forward call" "fn main(): i64 { return f(); }\nfn f(s: Nonexist = 0): i64 { return 7; }\nsyscall(60, main());\n" "2:9"
 refused r9s5 "a slice cannot be a parameter" "R9s5: \`s: slice<u8> = 0\`, two calls short" "fn f(a, s: slice<u8> = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1, 0); }\nsyscall(60, main());\n" "1:12"
+# R9s6-R9s8 (6.7.12; issues/2026-10-14-refused-parameter-type-default-cascades-arity-error.md): a parameter TYPE that is
+# no type at all (6.7.11's ARG-3: `a: 5`, `a: fn`, `b: "s"`) keeps its default too (`_pd_tok_refused`, the type reader
+# asked quietly) — the default was dropped, so `f()` reported "'f' expects 1 argument, got 0" after the type's refusal.
+# R9s6 the filed repro verbatim. Mutation (2026-10-15, measured) MD9b `_pd_tok_refused` answering 0 -> RED 3: R9s6 R9s7
+# (2 error lines), R9s8 (3: one per short call).
+R9S6=docs/development/issues/repros/2026-10-14-refused-parameter-type-default-cascades-arity-error.cyr
+[ -f "$R9S6" ] || { echo "FAIL: default_named_args_checked: $R9S6 is missing"; exit 1; }
+refused r9s6 "expected a type for parameter 'a', got number 5" "R9s6: the filed repro, verbatim — \`fn f(a: 5 = 0)\` called \`f()\`: the type's refusal alone" "$(cat "$R9S6")\n" "2:9"
+refused r9s7 "expected a type for parameter 'a', got fn" "R9s7: \`fn f(a: fn = 0)\` called \`f()\`: the type's refusal alone" "fn f(a: fn = 0): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:9"
+refused r9s8 "expected a type for parameter 'b', got string" "R9s8: \`fn f(a, b: \"s\" = 0, c = 2)\` called \`f(1)\`, twice: the type's refusal alone" "fn f(a, b: \"s\" = 0, c = 2): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1); }\nsyscall(60, main());\n" "1:12"
 # The grammar refusals are reported under --syntax-only (what `cyrius lint` runs) too.
 refused x0a "needs a default: it follows one that has a default" "X0a: R1 under --syntax-only" "fn f(a, b = 1, c): i64 { return a + b + c; }$E" "1:16" "--syntax-only"
 refused x0b "a parameter default cannot hold a block" "X0b: R4 under --syntax-only" "fn f(a, b = if (a > 1) { 2 } else { 3 }): i64 { return a + b; }$E" "1:13" "--syntax-only"
