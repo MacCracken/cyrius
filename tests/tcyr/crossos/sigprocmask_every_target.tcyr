@@ -14,8 +14,8 @@
 # would leave the poison). SIGINT (2) and SIGTERM (15) have the same numbers on Linux and Darwin,
 # so the expected bits are the same everywhere: 1 << 1 and 1 << 14.
 # The second group pins PER-THREAD (the user, 2026-10-15): a second thread's mask is unchanged
-# after the main thread blocks SIGTERM. Darwin's sigprocmask (48), the route first shipped, is
-# process-wide — XNU applies it to every thread — and fails that row on ach and ecb.
+# after the main thread blocks SIGTERM. Darwin's sigprocmask (48), the route the 6.7.12 darwin lane first
+# used (replaced before release), is process-wide — XNU applies it to every thread — and fails that row on ach and ecb.
 # CHANGELOG [6.7.12]
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"

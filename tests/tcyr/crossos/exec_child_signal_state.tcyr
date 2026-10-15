@@ -64,8 +64,9 @@ fn _disp(sig): i64 {
     return load64(&old);
 }
 
-# This thread's blocked mask. 6.7.12: macOS too — sys_sigprocmask is Darwin's 48 through a shim
-# there (it returned -78, so a mask the launcher blocked passed through to every child unseen).
+# This thread's blocked mask. 6.7.12: macOS too — sys_sigprocmask is Darwin's per-thread __pthread_sigmask
+# (329) through a 1329 alias there (it returned -78, so a mask the launcher blocked passed through to every
+# child unseen).
 fn _mask(): i64 {
     var cur[8];
     store64(&cur, 0);
