@@ -4204,7 +4204,8 @@ cyrius deps -v                           # ...and list where each dependency cam
 cyrius deps --dry-run                    # each dependency and where it WOULD come from; writes nothing
 cyrius deps --locked                     # CI: resolve the tags, compare with lib/ + cyrius.lock, write nothing
 CYRIUS_LOCAL=1 cyrius build              # build each [deps.X] `path` override (sibling checkouts); lib/ + lock untouched
-cyrius update                            # re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
+cyrius update                            # lib sync from the pin, re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
+cyrius update --full                     # ...with the whole pinned snapshot in lib/ (as lib sync --full)
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
 cyrius test                              # [test] files first (6.6.17; [build] test is the older spelling), then every .tcyr under tests/, each once
@@ -4581,7 +4582,12 @@ Locked means nothing is written in ANY verb: under `CYRIUS_LOCKED=1` a verb whos
 (`error: cyrius update writes lib/ and cyrius.lock, and CYRIUS_LOCKED=1 means nothing is written —
 refused …`); `deps --verify` and `lib sync --dry-run`, which write nothing, still run.
 
-**`cyrius update` (6.7.6).** After refreshing `lib/` from the toolchain (as before), `update`
+**`cyrius update` (6.7.6).** `update` first refreshes `lib/` exactly as `cyrius lib sync` does
+(6.7.12, D18): the declared `[deps] stdlib` set, its per-OS peers and the test scope's leaves, from
+the snapshot of the manifest's `[package].cyrius` pin (the CLI's own version when the manifest pins
+none) — `cyrius update --full` takes the whole snapshot — with lib sync's lock guard and re-lock,
+and it writes that version into an existing `.cyrius-toolchain`. (Until 6.7.12 it copied every
+file of `$CYRIUS_HOME/current`'s snapshot, whatever the manifest declared or pinned.) Then `update`
 re-fetches each UNTAGGED dependency — it floats by design, and the cache froze it at its first
 fetch — re-resolves the manifest (`lib/` + `cyrius.lock`), and lists each root dependency's newer
 version tags, newest first: `sigil: 3.9.9 pinned; newer tags: 3.10.0, 3.9.10 (cyrius.cyml is not

@@ -21,6 +21,10 @@
 #           mono's HEAD and dirt where `../mono/libs/foo` (the same directory) said `(not a git
 #           checkout)`. The git child resolves the physical directory (chdir + cwd) and puts the
 #           ceiling at its parent; `_git_run` (the clone cache) does the same.
+#   item 6  `cyrius update` copied the whole snapshot of `$CYRIUS_HOME/current` (113 files for
+#           stdlib = ["string", "alloc"]), whatever the manifest declared or pinned. D18 (the user,
+#           2026-10-15): it writes what `lib sync` writes — the declared set at the manifest's pin,
+#           `--full` for the whole snapshot.
 #
 # ROWS
 #   R3   a path dep `../mono/libs/foo` whose module is missing: the error names the local path
@@ -37,6 +41,11 @@
 #   R7b  the logged ceiling for both spellings is the physical parent, <mono>/libs
 #   R7c  the clone cache reached through a symlink (`<home>/deps/foo/1.0.0 -> elsewhere/1.0.0`):
 #        the cache's git runs get the physical parent `elsewhere` as their ceiling
+#   R6a  `cyrius update` with stdlib = ["string", "alloc"]: lib/ holds exactly the six files
+#        `lib sync` writes (R5's set), from versions/<pin>/lib
+#   R6b  `cyrius update --full`: lib/ holds every .cyr of the snapshot
+#   R6c  `current` names another installed version whose string.cyr differs: update copies the
+#        PIN's string.cyr, writes the pin into .cyrius-toolchain, and `deps --verify` passes
 #
 # Mutations (measured, one at a time; CYRIUS_BIN=<a CLI built from the mutated cbt/> runs this gate
 # on it): `_abs_path` without `_abs_drop_dot` → R3 RED; `_process_named_deps` returning the old
@@ -44,7 +53,10 @@
 # the dry run's `println(vec_get(pd, wi))` restored → R5 RED; `_tc_below_cwd` back to the byte
 # compare against getcwd → R2a R2b RED; the identity test replaced by "the nearest prefix holding a
 # cyrius.cyml" (the unit's own project) → R2c RED; `_dep_wt_run`'s child without the physical
-# ceiling → R7a R7b RED; `_git_run`'s → R7c RED.
+# ceiling → R7a R7b RED; `_git_run`'s → R7c RED; 6.7.11's cmd_update (the whole snapshot of
+# `current`) → R6a R6b R6c RED (R6b: `--full` refused as unknown); the `--full` switch not set for
+# update → R6b RED (6 of 113 files);
+# .cyrius-toolchain written from `current` → R6c RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_path_reporting_leftovers
@@ -190,6 +202,31 @@ rc=0; ( cd "$P" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO
 ceils=$(grep -- '--no-replace-objects' "$W/git.log" | sed 's/^CEIL=\([^ ]*\) .*/\1/' | sort -u)
 if [ "$rc" -eq 0 ] && [ "$ceils" = "$W/elsewhere" ]; then ok "R7c the cache behind a symlink: every cache git run's ceiling is the physical parent"
 else bad "R7c (rc $rc) ceilings: $(echo "$ceils" | tr '\n' ' ')"; fi
+
+# ── R6: update writes what lib sync writes (D18) ─────────────────────────────────────────────
+_mkp '"string", "alloc"'
+rc=0; _cy update > "$W/r6a.out" 2>&1 || rc=$?
+( cd "$P" && find lib -name '*.cyr' | sort ) > "$W/r6a.files"
+if [ "$rc" -eq 0 ] && cmp -s "$W/r6a.files" "$W/r5.real" && grep -qF "synced from $H/versions/$V/lib" "$W/r6a.out"; then
+    ok "R6a update: the six files lib sync writes, from versions/$V/lib"
+else bad "R6a (rc=$rc, $(wc -l < "$W/r6a.files") files): $(grep -m1 -E 'synced|updated|error' "$W/r6a.out")"; fi
+rc=0; _cy update --full > "$W/r6b.out" 2>&1 || rc=$?
+nl=$(cd "$P" && find lib -name '*.cyr' | wc -l | tr -d ' '); ns=$(cd "$H/versions/$V" && find lib -name '*.cyr' | wc -l | tr -d ' ')
+if [ "$rc" -eq 0 ] && [ "$nl" -eq "$ns" ] && [ "$ns" -gt 50 ]; then ok "R6b update --full: all $ns .cyr files of the snapshot"
+else bad "R6b (rc=$rc): $nl of $ns files; $(grep -m1 -E 'error|synced' "$W/r6b.out")"; fi
+# another installed version named by `current`, its string.cyr different
+O="0.0.9"
+mkdir -p "$H/versions/$O" && cp -r lib "$H/versions/$O/lib" && printf '# another version\n' >> "$H/versions/$O/lib/string.cyr" \
+  && printf '%s\n' "$O" > "$H/current" || bad "R6c setup: cannot stage $O"
+_mkp '"string", "alloc"'
+_cy deps > "$W/r6c0.out" 2>&1 || bad "R6c setup: deps failed: $(tail -2 "$W/r6c0.out")"
+printf '%s\n' "$O" > "$P/.cyrius-toolchain"
+rc=0; _cy update > "$W/r6c.out" 2>&1 || rc=$?
+v=0; _cy deps --verify > "$W/r6cv.out" 2>&1 || v=$?
+if [ "$rc" -eq 0 ] && cmp -s "$P/lib/string.cyr" lib/string.cyr && [ "$(cat "$P/.cyrius-toolchain")" = "$V" ] && [ "$v" -eq 0 ]; then
+    ok "R6c current = $O: update copies the pin's ($V) string.cyr, .cyrius-toolchain = $V, deps --verify passes"
+else bad "R6c (rc=$rc, verify rc=$v, .cyrius-toolchain '$(cat "$P/.cyrius-toolchain")'): string.cyr $(cmp -s "$P/lib/string.cyr" lib/string.cyr && echo "is the pin's" || echo "is NOT the pin's"); $(grep -m1 -E 'synced|updated|error' "$W/r6c.out")"; fi
+printf '%s\n' "$V" > "$H/current"
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

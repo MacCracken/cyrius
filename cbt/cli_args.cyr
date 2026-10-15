@@ -135,6 +135,7 @@ fn _cli_spec_b(verb): i64 {
     if (streq(verb, "deps") == 1) { return "--verify|--lock|--no-lock|--relock|--dry-run"; }
     if (streq(verb, "clean") == 1) { return "--dry-run"; }
     if (streq(verb, "lib") == 1) { return "--dry-run|--full|--no-lock|--relock"; }
+    if (streq(verb, "update") == 1) { return "--full"; }
     if (streq(verb, "version") == 1) { return "--project"; }
     if (streq(verb, "--version") == 1) { return "--project"; }
     return 0 - 1;
@@ -870,6 +871,7 @@ fn _cli_apply(verb): i64 {
     if (_cli_has("--pie") == 1) { _pie_target = 1; }
     if (_cli_has("--poison") == 1) { _poison_mode = 1; }
     if (_cli_has("--full") == 1 && streq(verb, "lib") == 1) { _lib_sync_full = 1; }
+    if (_cli_has("--full") == 1 && streq(verb, "update") == 1) { _lib_sync_full = 1; }   # 6.7.12 (D18)
     if (_cli_has("--no-lock") == 1) { _no_lock = 1; }
     if (_cli_has("--relock") == 1) { _dep_relock = 1; }
     return _cli_apply_target(verb);

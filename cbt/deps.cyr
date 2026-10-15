@@ -4543,110 +4543,22 @@ fn cmd_package(): i64 {
     return 0;
 }
 
-# v5.8.49: recursive directory walker for cmd_update.
-# Walks `src_dir` (e.g. ~/.cyrius/versions/<v>/lib) and copies every
-# `.cyr` file to the corresponding `lib/<rel>` path in the consumer's
-# cwd, preserving subdir structure. `rel_prefix == 0` at the root call;
-# recursion appends "<dirname>" / "<rel_prefix>/<dirname>" as we descend.
-# Returns total file count copied.
-# 6.6.10: an unlistable directory is named (_cbt_list_dir) and counted in _err_count, which
-# cmd_update checks — it copied a partial stdlib and reported success.
-fn _update_walk(src_dir, rel_prefix): i64 {
-    var copied = 0;
-    var entries = _cbt_list_dir(src_dir, "its modules were NOT copied");
-    if (entries == 0) { return 0; }
-    var ei = 0;
-    while (ei < vec_len(entries)) {
-        var name = vec_get(entries, ei);
-        var nd = str_data(name);
-        var nl = str_len(name);
-        ei = ei + 1;
-        # Skip "." and ".."
-        if (nl == 1 && load8(nd) == 46) { continue; }
-        if (nl == 2 && load8(nd) == 46 && load8(nd + 1) == 46) { continue; }
-        var from = make_path(src_dir, nd);
-        if (is_dir(str_from(from)) == 1) {
-            # Recurse — extend rel_prefix.
-            var sub_sb = str_builder_new();
-            if (rel_prefix != 0) {
-                str_builder_add_cstr(sub_sb, rel_prefix);
-                str_builder_add_cstr(sub_sb, "/");
-            }
-            str_builder_add_cstr(sub_sb, nd);
-            var sub_rel = str_data(str_builder_build(sub_sb));
-            copied = copied + _update_walk(from, sub_rel);
-            continue;
-        }
-        # File: only handle *.cyr.
-        if (nl <= 4) { continue; }
-        if (load8(nd + nl - 4) != 46) { continue; }
-        if (load8(nd + nl - 3) != 99) { continue; }
-        if (load8(nd + nl - 2) != 121) { continue; }
-        if (load8(nd + nl - 1) != 114) { continue; }
-        var to_sb = str_builder_new();
-        str_builder_add_cstr(to_sb, "lib/");
-        if (rel_prefix != 0) {
-            str_builder_add_cstr(to_sb, rel_prefix);
-            str_builder_add_cstr(to_sb, "/");
-        }
-        str_builder_add_cstr(to_sb, nd);
-        var to = str_data(str_builder_build(to_sb));
-        # _dep_copy_file streams in 32KB chunks (no size cap) and mkdir-p's
-        # intermediate dst dirs. Returns 0 on copy, 2 on already-resolved.
-        var cr = _dep_copy_file(from, to);
-        if (cr == 0 || cr == 2) {
-            copied = copied + 1;
-        }
-    }
-    return copied;
-}
-
 fn cmd_update(): i64 {
     _dep_vendor_mode = 1;   # v6.5.37 (A0): vendoring — symlinked destinations are refused
     _status("=== cyrius update ===");
-    # Find installed stdlib
-    var cur = read_file_str(make_path(_home, "current"));
-    var src_lib = 0;
-    if (cur != 0) {
-        var ver_dir = make_path(_home, "versions");
-        ver_dir = make_path(ver_dir, cur);
-        src_lib = make_path(ver_dir, "lib");
-    }
-    if (src_lib == 0) {
-        # Fallback: try ../cyrius/lib
-        if (is_dir(str_from("../cyrius/lib")) == 1) {
-            src_lib = "../cyrius/lib";
-        }
-    }
-    if (src_lib == 0) {
-        _err("cannot find Cyrius stdlib");
-        println("  expected: ~/.cyrius/versions/<ver>/lib/ or ../cyrius/lib/");
-        return 1;
-    }
-    # Ensure lib/ exists
-    sys_mkdir("lib", 0x1ED);
-    # v5.8.49: recursive walk so subdir-nested stdlib (e.g.
-    # `lib/unicode/*.cyr`) reaches the consumer. Pre-fix, the flat
-    # dir_list + extension-filter skipped directory entries entirely
-    # and used a 32KB read buffer that would have silently truncated
-    # files like `lib/unicode/_categories_data.cyr` (~59KB) even if
-    # they had been seen. Helper `_update_walk` defers file copying
-    # to `_dep_copy_file` which handles streaming reads of any size
-    # plus mkdir-p of intermediate destination dirs.
-    var _upd_e0 = _err_count;
-    var copied = _update_walk(src_lib, 0);
-    if (_err_count > _upd_e0) {
-        _err_ctx("update: lib/ is INCOMPLETE — a directory above could not be listed", src_lib);
-        return 1;
-    }
-    sys_write(STDOUT_FD, "  updated lib/ from ", 20);
-    sys_write(STDOUT_FD, src_lib, strlen(src_lib));
-    sys_write(STDOUT_FD, " (", 2);
-    fmt_int(copied);
-    println(" files)");
+    # 6.7.12 (D18, the user, 2026-10-15) — lib/ IS REFRESHED THE WAY `cyrius lib sync` REFRESHES
+    # IT: the declared `[deps] stdlib` set (its per-OS peers and the test scope's leaves) from the
+    # snapshot of the manifest's `[package].cyrius` pin, `--full` for the whole snapshot — the same
+    # plan, lock guard, re-lock and source-repo refusal, through the same function. Until 6.7.12
+    # update walked `versions/<$CYRIUS_HOME/current>/lib` and copied all of it (113 files for
+    # stdlib = ["string", "alloc"]), whatever the manifest declared or pinned, and left cyrius.lock
+    # holding the rows of the files it overwrote. CHANGELOG [6.7.12]
+    if (cmd_lib_sync() != 0) { return 1; }
+    var cur = _dep_read_cyml_cyrius_field();
+    if (cur == 0) { cur = _VERSION_TOOLCHAIN; }
 
-    # Update .cyrius-toolchain to match installed version
-    if (cur != 0 && file_exists(".cyrius-toolchain") == 1) {
+    # .cyrius-toolchain names the version lib/ was just refreshed from
+    if (file_exists(".cyrius-toolchain") == 1) {
         var tc_sb = str_builder_new();
         str_builder_add_cstr(tc_sb, cur);
         str_builder_add_cstr(tc_sb, "\n");

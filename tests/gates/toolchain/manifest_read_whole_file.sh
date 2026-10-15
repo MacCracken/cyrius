@@ -136,9 +136,12 @@ grep -q 'cyrius 7.7.7 (pinned in cyrius.cyml)' "$D/a2.out" || { fail "axis 2: th
 [ "$x" = 0 ] && echo "  ok: axis 2: a [package] starting at byte $off is read (pin reported, not the global default)"
 
 # ── axis 3: the toml -> cyml migration keeps the whole toml before deleting it ──
-mkdir -p "$D/a3" "$D/uhome/versions/5.5.5/lib"
-printf '5.5.5\n' > "$D/uhome/current"
-printf '# one stdlib file so `update` has something to copy\n' > "$D/uhome/versions/5.5.5/lib/io.cyr"
+# `update` refreshes lib/ as `lib sync` does (6.7.12, D18): from the manifest's pin, else the CLI's
+# own version — this toml pins none, so the snapshot is the tree's VERSION.
+UV=$(tr -d '[:space:]' < VERSION)
+mkdir -p "$D/a3" "$D/uhome/versions/$UV/lib"
+printf '%s\n' "$UV" > "$D/uhome/current"
+printf '# one stdlib file so `update` has something to copy\n' > "$D/uhome/versions/$UV/lib/io.cyr"
 {
     printf '[package]\nname = "big"\n'
     awk 'BEGIN { for (i = 0; i < 1000; i++) printf "pad_%06d = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n", i }'
