@@ -1769,6 +1769,9 @@ declaration SIGSEGV'd, and a field or variable kept one word of the copy, silent
 a free call in parentheses as a literal element was a scalar for the nested struct's first leaf:
 *unexpected '}'* at 16 and 24 bytes and at 8 bytes with two leaves, and a one-leaf struct took the
 call's word even from another struct (refused by name now, as the unwrapped call is).
+⚠ Known defect (filed for 6.7.12): a 9-16 byte METHOD or OPERATOR result in parentheses as a nested
+literal element (`H { 7, (q.dup()), 8 }`, `(q + r)`) is still *unexpected '}'* — drop the parentheses;
+at 8 and 24 bytes, and as every other destination, it is taken.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they

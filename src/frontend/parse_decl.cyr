@@ -2593,7 +2593,9 @@ fn _spi_follow(S, o, pk): i64 {
 }
 # ⛔ 6.7.11 — A FREE STRUCT CALL IN PARENTHESES THAT WRAP THE WHOLE ELEMENT (`H { 7, (mkq(4, 9)), 8 }`,
 # `((mk<Pt>(1)))`) is the element the unwrapped call is — 6.7.6's transparency, which a wrapped method or
-# operator result already had (`_sc_pwrap`). It was an expression whose rax went into the nested struct's
+# operator result has at 24 B and 8 B (`_sc_pwrap`; at 9-16 B not yet: issues/2026-10-14-paren-wrapped-
+# pair-method-or-operator-as-nested-literal-element-refused.md). It was an expression whose rax went into
+# the nested struct's
 # first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
 # leaves, a one-leaf struct's word unchecked (issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-
 # element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
