@@ -79,8 +79,9 @@
 #           call through the IAT slot of CreateFileW / CreateDirectoryW / DeleteFileW /
 #           RemoveDirectoryW (and TWICE per MoveFileExW call) — and, since 6.6.12, of
 #           GetFileAttributesW / FindFirstFileW (0xF019 / 0xF016 take a NARROW path now; they took
-#           a stdlib-widened, unprefixed one and so still hit MAX_PATH) — must be fed by one
-#           widen, and every
+#           a stdlib-widened, unprefixed one and so still hit MAX_PATH) — and, since 6.7.12, of
+#           CreateSymbolicLinkW (TWICE: the link, and its target decoded only, with no long-path
+#           branch) — must be fed by one widen, and every
 #           widen must carry the three things that ARE the fix: CP_UTF8 (`mov $0xfde9,%ecx`)
 #           followed by MB_ERR_INVALID_CHARS (`mov $0x8,%edx`), and the long-path branch
 #           (`cmp $0xf8,%eax`); each path frame carries its page probe (`test %rsp,(%rsp)`), and
@@ -103,6 +104,15 @@
 #   EGETFATTR_PE back to the wide-input 1-arg call      FAIL     FAIL, 4 rows        -
 #   EFINDFIRST_PE back to the wide-input 2-arg call     FAIL     FAIL, 10 rows       -
 #   the 6.6.11 compiler + stdlib (pe_path_utf8_long.exe) -       -                   FAIL, 6 rows
+# 6.7.12 (windows lane, W2) — CreateSymbolicLinkW (0xF03E) takes NARROW paths too: the LINK is fed
+# by the shared widen (CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch), the TARGET by a
+# decode-only widen (CP_UTF8 + MB_ERR_INVALID_CHARS, NO long-path branch — a link stores its target
+# verbatim). So each CreateSymbolicLinkW call adds two widens, one long-path branch and one frame.
+# Until 6.7.12 the stdlib widened both itself (519 units, no `\\?\`): a link over 260 units failed -1
+# on cass. BUILT AND RUN 2026-10-15, same method:
+#   ESYMLINKW_PE back to the wide-input 3-arg call      FAIL     FAIL, 7 rows        FAIL, 16 rows (symlink_long_path.exe, with the 6.7.11 stdlib)
+#     (axis 3 FAILS too, 8 rows: the 6.7.12 stdlib's narrow paths read as wide strings)
+#   the target fed by the full widen (prefixed)         FAIL     PASS                -
 # wine enforces no MAX_PATH and commits the whole stack, so the long-path branch and the probe are
 # invisible to it: for those two, axis 2b is the only LOCAL guard and cass the hardware one.
 #
@@ -273,16 +283,17 @@ else
     ncf=$(calls_to CreateFileW); ncd=$(calls_to CreateDirectoryW); ndf=$(calls_to DeleteFileW)
     nrd=$(calls_to RemoveDirectoryW); nmv=$(calls_to MoveFileExW)
     nga=$(calls_to GetFileAttributesW); nff=$(calls_to FindFirstFileW)   # narrow since 6.6.12
-    want_w=$((ncf + ncd + ndf + nrd + nga + nff + 2 * nmv))
-    frames=$((ncf + ncd + ndf + nrd + nga + nff + nmv))
+    nsl=$(calls_to CreateSymbolicLinkW)   # narrow since 6.7.12: the link widened, the target decoded only
+    want_w=$((ncf + ncd + ndf + nrd + nga + nff + 2 * nmv + 2 * nsl))
+    frames=$((ncf + ncd + ndf + nrd + nga + nff + nmv + nsl))
     nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis" || true)
     n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis" || true)
     nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis" || true)
     nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis" || true)
     nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis" || true)
     nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp" || true)
-    if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ] || [ "$nga" -lt 1 ] || [ "$nff" -lt 1 ]; then
-        echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv, GetFileAttributesW $nga, FindFirstFileW $nff call site(s))"
+    if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ] || [ "$nga" -lt 1 ] || [ "$nff" -lt 1 ] || [ "$nsl" -lt 1 ]; then
+        echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv, GetFileAttributesW $nga, FindFirstFileW $nff, CreateSymbolicLinkW $nsl call site(s))"
         fail=1
     elif [ "$nimp" != "2" ]; then
         echo "  FAIL axis 2b: MultiByteToWideChar / GetFullPathNameW are not both imported ($nimp of 2)"
@@ -296,14 +307,14 @@ else
     elif [ "$n8" != "$nw" ]; then
         echo "  FAIL axis 2b: $nw widen(s) but $n8 pass MB_ERR_INVALID_CHARS — invalid UTF-8 would be GUESSED at, not refused"
         fail=1
-    elif [ "$nlong" != "$nw" ]; then
-        echo "  FAIL axis 2b: $nw widen(s) but $nlong long-path (248-unit) branch(es) — a long path would hit MAX_PATH again"
+    elif [ "$nlong" != "$((nw - nsl))" ]; then
+        echo "  FAIL axis 2b: $nw widen(s) ($nsl of them a symlink TARGET, decoded only) but $nlong long-path (248-unit) branch(es), want $((nw - nsl)) — a long path would hit MAX_PATH again, or a link's relative target is being made absolute"
         fail=1
     elif [ "$nprobe" != "$frames" ]; then
         echo "  FAIL axis 2b: $frames path frame(s) but $nprobe page probe(s) — a ~128 KB frame skipping the stack guard page faults on real Windows"
         fail=1
     else
-        echo "  ok axis 2b: $want_w narrow path(s) over $frames frame(s), each through CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch, every frame probed, no cut-at-260 loop"
+        echo "  ok axis 2b: $want_w narrow path(s) over $frames frame(s), each through CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch ($nsl symlink target(s) decoded only), every frame probed, no cut-at-260 loop"
     fi
 fi
 
