@@ -22,10 +22,21 @@
 #
 # Pure functions — no socket, no peer, no clock — so it runs on every cross-OS host. The OpenSSL
 # interop legs are tests/gates/platform/tls_native_client_auth_openssl.sh.
+#
+# 6.7.12 (issues/2026-10-08-tls-native-conformance-bite.md items 2, 4 and 6):
+# test_cert_curve_not_offered is the filing's verbatim test — a client listing x25519 + secp256r1
+# refuses a P-384 server certificate (RFC 8422 §5.1; it verified with the key's curve as it came),
+# and one byte after the signature is refused (`plen + 4 + sig_len > body_len` let it through; now
+# `!=`). test_ske_guards gives each of the four ServerKeyExchange guards a row that fails without
+# it (the filing removed each alone and every TLS test stayed green): a 3-byte body, the params
+# with no room for the scheme — both also against an unreadable page where the host can protect
+# one (the guard is all that keeps the parse inside the body; a named SKIP on PE) — a signature
+# length one past the body, and an unknown scheme (TLS_ERR_KEY_UNSUPPORTED, not TLS_ERR_AUTHN).
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/io.cyr"
+include "lib/mmap.cyr"
 include "lib/tls.cyr"
 
 # The P-256 server certificate + PKCS#8 key the other TLS 1.2 unit tests use: the in-process
@@ -428,6 +439,82 @@ fn test_refusals(): i64 {
     return 0;
 }
 
+fn test_cert_curve_not_offered(): i64 {
+    var pa = alloc(128);
+    var pal = _params(TLS_GROUP_SECP256R1, _h(GR256), 65, pa);
+    var ske = alloc(512);
+    var sn = _ske_with_sig(pa, pal, TLS_SIG_ECDSA_SECP256R1_SHA256, SIG_A, ske);
+    var c = _client(G_C384, _hn(CERT384));
+    var gs: i64[2];
+    store64(&gs, TLS_GROUP_X25519);
+    store64(&gs + 8, TLS_GROUP_SECP256R1);
+    assert_eq(tls_native_set_groups(c, &gs, 2), TLS_OK, "client offers x25519, secp256r1 only");
+    assert_neq(_tn_12_parse_server_kex(c, ske, sn), TLS_OK, "a P-384 leaf's ServerKeyExchange is refused");
+    store8(ske + sn, 0xEE);
+    var c2 = _client(G_C384, _hn(CERT384));
+    assert_eq(_tn_12_parse_server_kex(c2, ske, sn), TLS_OK, "control: the exact SKE verifies");
+    var c3 = _client(G_C384, _hn(CERT384));
+    assert_neq(_tn_12_parse_server_kex(c3, ske, sn + 1), TLS_OK, "one trailing byte is refused");
+    return 0;
+}
+
+# A pointer p with [p, p + n) readable and p + n the first byte of an unreadable page (64 KiB in,
+# so any page size up to 64 KiB), or 0 where the host cannot protect one (PE: cyr_mprotect is -38).
+fn _edge(n): i64 {
+    var base = mmap_anon(131072);
+    if (base == 0) { return 0; }
+    if (cyr_mprotect(base + 65536, 65536, PROT_NONE) != 0) { return 0; }
+    return base + 65536 - n;
+}
+
+fn test_ske_guards(): i64 {
+    test_group("the four ServerKeyExchange guards, each with a row that fails without it");
+    # `body_len < 4`: a 3-byte body. The byte after it is a 0 point length, so a parse that read on
+    # would say HANDSHAKE_FAILED (a 0-byte point), not BAD_HANDSHAKE.
+    var b3 = alloc(16);
+    store8(b3, 3);
+    _tn_be16_w(b3 + 1, TLS_GROUP_SECP256R1);
+    store8(b3 + 3, 0);
+    var c1 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c1, b3, 3), TLS_ERR_BAD_HANDSHAKE, "G1 a 3-byte body: BAD_HANDSHAKE");
+    # `body_len < plen + 4`: the params alone, no scheme and no signature length.
+    var pb = alloc(128);
+    var plen = _params(TLS_GROUP_SECP256R1, _h(GR256), 65, pb);
+    var c2 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c2, pb, plen), TLS_ERR_BAD_HANDSHAKE,
+      "G2 the params with no room for the scheme: BAD_HANDSHAKE");
+    # The same two bodies ending at an unreadable page: a read past either is a fault.
+    var e3 = _edge(3);
+    var ep = _edge(plen);
+    if (e3 == 0 || ep == 0) {
+        assert_eq(1, 1, "G1e G2e: SKIP — this host cannot protect a page (cyr_mprotect refused)");
+    } else {
+        memcpy(e3, b3, 3);
+        var c1e = _client(G_C23, _hn(CERT23));
+        assert_eq(_tn_12_parse_server_kex(c1e, e3, 3), TLS_ERR_BAD_HANDSHAKE,
+          "G1e a 3-byte body against an unreadable page: refused without reading past it");
+        memcpy(ep, pb, plen);
+        var c2e = _client(G_C23, _hn(CERT23));
+        assert_eq(_tn_12_parse_server_kex(c2e, ep, plen), TLS_ERR_BAD_HANDSHAKE,
+          "G2e the params alone against an unreadable page: refused without reading past them");
+    }
+    # `plen + 4 + sig_len != body_len`: a signature length one past the body.
+    var ske = alloc(512);
+    var sn = _ske_signed(pb, plen, ske);
+    _tn_be16_w(ske + plen + 2, sn - plen - 4 + 1);
+    var c3 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c3, ske, sn), TLS_ERR_BAD_HANDSHAKE,
+      "G3 a signature length one past the body: BAD_HANDSHAKE");
+    # `ok < 0`: a scheme no verifier knows is KEY_UNSUPPORTED, not a failed signature.
+    var ske4 = alloc(512);
+    var sn4 = _ske_signed(pb, plen, ske4);
+    _tn_be16_w(ske4 + plen, 0x0999);
+    var c4 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c4, ske4, sn4), TLS_ERR_KEY_UNSUPPORTED,
+      "G4 an unknown scheme (0x0999): KEY_UNSUPPORTED, not AUTHN");
+    return 0;
+}
+
 fn _ecdhe_all(): i64 {
     alloc_init();
     G_CR = alloc(32);
@@ -443,6 +530,9 @@ fn _ecdhe_all(): i64 {
     test_x25519_unchanged();
     test_tls12_hash_not_curve();
     test_refusals();
+    test_group("a P-384 server certificate a secp256r1-only client did not list; trailing bytes");
+    test_cert_curve_not_offered();
+    test_ske_guards();
     return 0;
 }
 _ecdhe_all();

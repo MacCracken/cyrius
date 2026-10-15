@@ -494,7 +494,10 @@ fn _tn_connect_hs(ctx, sock_fd): i64 {
     var frl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
     if (frl < 0) { return _tn_read_fail(ctx, frl); }
     var rf = tls_native_client_recv_flight(ctx, inbuf, frl);
-    if (rf != TLS_OK) { return rf; }
+    if (rf != TLS_OK) {
+        _tn_send_hs_alert(ctx, sock_fd);   # the refusals that name one (6.7.12), sealed under our handshake key
+        return rf;
+    }
     # Verify the server Finished + send the client second flight. v6.2.8: this
     # may include the client Certificate + CertificateVerify (mTLS client-auth)
     # ahead of the Finished, so size for a cert chain (was 256 — Finished-only).

@@ -1640,13 +1640,13 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format) |
+| `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format); a 1.3 server selecting a protocol not on it is refused, illegal_parameter (6.7.12) |
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
 | `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13; since 6.6.14 a malformed block is counted and the rest install): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
-| `tls_native_set_groups` | `tls_native_set_groups(ctx, groups, n) → TLS_OK/err` | The ECDHE groups the ctx offers (client) or accepts (server), preference order: `groups` points at 1-3 i64 `TLS_GROUP_X25519` / `_SECP256R1` / `_SECP384R1`, none twice (default: all three, x25519 first). A 1.3 client shares the first (6.6.15) |
+| `tls_native_set_groups` | `tls_native_set_groups(ctx, groups, n) → TLS_OK/err` | The ECDHE groups the ctx offers (client) or accepts (server), preference order: `groups` points at 1-3 i64 `TLS_GROUP_X25519` / `_SECP256R1` / `_SECP384R1`, none twice (default: all three, x25519 first). A 1.3 client shares the first (6.6.15); a 1.2 client refuses an ECDSA server certificate on a curve not listed (6.7.12) |
 | `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-22) and the ctx fails (6.6.13). Linux/macOS/Windows wait for readiness (poll / WSAPoll) before each read and write non-blocking (flags restored; a Windows socket is left blocking, 6.6.14); agnos sockets take the time left; a custom transport and a Windows HANDLE that is not a socket are checked between calls |
 
 **Introspection (post-handshake):**
