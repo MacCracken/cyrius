@@ -4846,6 +4846,19 @@ result pointer cycc uses too (SysV rdi, AAPCS64 x8, Win64 rcx); and a return the
 from the file itself — another file's struct, a generic instance, a struct holding one, a struct
 declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) — is refused by name
 on stderr with no prototype, and the verb exits 1. A SIMD vector return still prints `cyr_val`.
+Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
+(and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
+x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden
+result pointer), and in x0:x2 on aarch64 (C reads x0:x1) — so `lib/process.cyr`'s `run`,
+`run_capture`, `spawn` and `wait_pid` are `cyr_val2`. A fn whose signature says a word (no
+annotation, or `: i64`) but whose body returns the pair — `return Ok(x);` (any payload
+constructor of the stdlib's Result / Option / Either or of the file's own stack enum; a nullary
+`None()` returns its tag alone), or `return f(..);` of a fn of the same file that returns it,
+followed to a fixpoint — is refused by name (``'mk' returns a `: stack` enum's (tag, payload)
+pair through 'Ok(..)', which its signature does not declare …``), rc 1: a source scanner cannot see
+that pair from the signature. Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
+private. A closure's own `return` is not the fn's; a pair reached through another file's fn or a
+method is not seen.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
 one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
 Whitespace at the end of a
