@@ -42,6 +42,7 @@ var _dep_vis_path = 0;      # ... the working tree it resolved from (0 = a clone
 var _dep_vis_by = 0;        # ... the dep whose manifest named it (0 = the root)
 var _dep_vis_desc = 0;      # ... where it came from, as `deps -v` prints it
 var _dep_locked_diff = 0;   # --locked: differences found during the resolve (named as found)
+var _dep_locked_crlf = 0;   # --locked: of _deps_locked_compare's, the CRLF checkouts (6.7.12, D10)
 var _dep_wt_why = 0;        # the first line of the last _dep_wt_run's stderr, or 0 (quoted by `cyrius update`)
 # A [deps.NAME] section's keys as `_dep_sec_read` returns them (byte offsets into the record).
 var _DS_PATH = 0;           # `path` joined onto the manifest's directory
@@ -3915,6 +3916,7 @@ fn _deps_locked_compare(scratch): i64 {
     var lb = _dep_lock_buf;
     var ln = _dep_lock_len;
     var d = 0;
+    _dep_locked_crlf = 0;
     var sl = strlen(scratch);
     var made = vec_new();
     var files = _deps_lock_files(scratch);
@@ -3950,7 +3952,15 @@ fn _deps_locked_compare(scratch): i64 {
             _ew("  differs: "); _ew(lp); _ew(": missing from lib/ (the tags resolve it)\n");
             d = d + 1;
         } elif (_files_identical(f, lp) == 0) {
-            _ew("  differs: "); _ew(lp); _ew(": lib/ holds other bytes than the tags resolve (stale)\n");
+            if (h != 0 && _sha_is_crlf_of(lp, h) == 1) {
+                # 6.7.12 (D10): the tags' bytes with LF made CRLF — still a difference, named
+                _ew("  differs: "); _ew(lp);
+                _ew(": lib/ holds other bytes than the tags resolve");
+                _ew(" — CRLF checkout: add `lib/** -text` to .gitattributes\n");
+                _dep_locked_crlf = _dep_locked_crlf + 1;
+            } else {
+                _ew("  differs: "); _ew(lp); _ew(": lib/ holds other bytes than the tags resolve (stale)\n");
+            }
             d = d + 1;
         }
     }
@@ -3970,7 +3980,12 @@ fn _deps_locked_compare(scratch): i64 {
         }
         var kh = _sha256sum_file(kf);
         if (kh == 0 || memeq(kh, klh, 64) == 0) {
-            _ew("  differs: "); _ew(kf); _ew(": its bytes do not match cyrius.lock\n");
+            _ew("  differs: "); _ew(kf); _ew(": its bytes do not match cyrius.lock");
+            if (kh != 0 && _sha_is_crlf_of(kf, klh) == 1) {
+                _ew(" — CRLF checkout: add `lib/** -text` to .gitattributes");   # 6.7.12 (D10)
+                _dep_locked_crlf = _dep_locked_crlf + 1;
+            }
+            _ew("\n");
             d = d + 1;
         }
     }
@@ -4285,9 +4300,14 @@ fn _deps_finish(errors, copied, locked_root): i64 {
             fmt_int_fd(STDERR_FD, ld);
             if (_dep_locked_nolib == 1) {
                 _ew(" difference(s) between what the tags resolve and the committed cyrius.lock (named above); nothing was written — run `cyrius deps` and commit cyrius.lock\n");
+            } elif (_dep_locked_crlf == ld) {
+                # 6.7.12 (D10): every difference is a CRLF checkout — re-locking is not the remedy
+                _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock");
+                _ew(" (named above); nothing was written — CRLF checkout: add `lib/** -text` to .gitattributes\n");
             } else {
                 _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above); nothing was written — run `cyrius deps` and commit the result\n");
             }
+            if (_dep_locked_crlf > 0) { _deps_say_crlf(_dep_locked_crlf); }
             return 1;
         }
         if (_dep_locked_nolib == 1) { _status("--locked: cyrius.lock is exactly what the tags resolve (no vendored lib/ to compare)"); }
@@ -5096,6 +5116,70 @@ fn _sha256sum_file(path): i64 {
     }
     sys_close(fd);
     return _lk_finish(h, buf, have, total, w);
+}
+
+# The SHA-256 of the file at `path` READ WITH EVERY CRLF AS LF (a lone CR kept), as
+# `_sha256sum_file` prints it, or 0 with `_sha_fail` set. A DIAGNOSTIC only: cyrius.lock proves
+# the exact bytes, so this never makes a file verify — when a file that fails its locked hash
+# matches it this way, the failure is named as a CRLF checkout (git's core.autocrlf rewrote lib/
+# on checkout) with the `.gitattributes` remedy instead of a bare mismatch. CHANGELOG [6.7.12]
+fn _sha256sum_file_lf(path): i64 {
+    _sha_fail = 0;
+    _sha_errno = 0;
+    var fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) { _sha_fail = 2; _sha_errno = 0 - fd; return 0; }
+    var raw = alloc(32768);
+    var buf = alloc(32768 + 128);
+    var h = alloc(64);
+    var w = alloc(512);
+    _lk_init(h);
+    var have = 0;     # folded bytes at buf still to be compressed (< 64 between reads)
+    var total = 0;    # folded bytes in all
+    var cr = 0;       # 1 when the last byte read was a CR not yet written (a CRLF may span reads)
+    var go = 1;
+    while (go == 1) {
+        var n = syscall(0, fd, raw, 32768);
+        if (n < 0) { sys_close(fd); _sha_fail = 2; _sha_errno = 0 - n; return 0; }
+        var emit = 0;
+        if (n == 0) {
+            go = 0;
+            if (cr == 1) { store8(buf + have, 13); emit = 1; cr = 0; }
+        } else {
+            var i = 0;
+            while (i < n) {
+                var b = load8(raw + i) & 255;
+                i = i + 1;
+                if (cr == 1) {
+                    cr = 0;
+                    if (b != 10) { store8(buf + have + emit, 13); emit = emit + 1; }
+                }
+                if (b == 13) { cr = 1; }
+                else { store8(buf + have + emit, b); emit = emit + 1; }
+            }
+        }
+        total = total + emit;
+        have = have + emit;
+        var off = 0;
+        while (have - off >= 64) {
+            _lk_block(h, buf + off, w);
+            off = off + 64;
+        }
+        if (off > 0) {
+            memcpy(buf, buf + off, have - off);
+            have = have - off;
+        }
+    }
+    sys_close(fd);
+    return _lk_finish(h, buf, have, total, w);
+}
+
+# 1 when `path`, read with CRLF as LF, hashes to the 64 hex digits at `want` (a CRLF checkout of
+# those bytes), else 0 — also when it cannot be read. CHANGELOG [6.7.12]
+fn _sha_is_crlf_of(path, want): i64 {
+    if (want == 0) { return 0; }
+    var fh = _sha256sum_file_lf(path);
+    if (fh == 0) { return 0; }
+    return memeq(fh, want, 64);
 }
 
 # Print why the last `_sha256sum_file` returned 0, to stderr, no newline.
@@ -6900,6 +6984,7 @@ fn cmd_deps_verify(): i64 {
 
     var pass = 0;
     var fail = 0;
+    var crlf = 0;   # 6.7.12 (D10): failures that are a CRLF checkout of the locked bytes
     var pos = 0;
     while (pos < n) {
         # the release-integrity hardening item (v6.2.30): skip commit-pin lines ("commit\t<sha>\t...") — those
@@ -6941,6 +7026,13 @@ fn cmd_deps_verify(): i64 {
             fail = fail + 1;
         } elif (memeq(actual_hash, expected_hash, 64) == 1) {
             pass = pass + 1;
+        } elif (_sha_is_crlf_of(path, expected_hash) == 1) {
+            # 6.7.12 (D10): still a failure — the lock proves the exact bytes — but named.
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (hash mismatch — CRLF checkout: add `lib/** -text` to .gitattributes)\n");
+            fail = fail + 1;
+            crlf = crlf + 1;
         } else {
             sys_write(STDERR_FD, "  FAIL: ", 8);
             sys_write(STDERR_FD, path, plen);
@@ -6974,6 +7066,22 @@ fn cmd_deps_verify(): i64 {
     sys_write(STDOUT_FD, " verified, ", 11);
     fmt_int(fail);
     println(" failed");
+    if (crlf > 0) { _deps_say_crlf(crlf); }
     if (fail > 0) { return 1; }
+    return 0;
+}
+
+# 6.7.12 (D10) — after `deps --verify` / `--locked` named `n` files as a CRLF checkout, the one
+# explanation and its remedy, on stderr. A CRLF checkout stays a failure: the lock proves the
+# exact bytes (normalising would let a CRLF-only rewrite of a locked file pass — the laundering
+# `_git_cfg_bad_key` refuses in git's own hashing), and re-locking would churn cyrius.lock
+# between a Windows and a Linux checkout. `cyrius init` / `port` ship the `.gitattributes`.
+fn _deps_say_crlf(n): i64 {
+    _ew("note: ");
+    fmt_int_fd(STDERR_FD, n);
+    if (n == 1) { _ew(" file in lib/ differs"); } else { _ew(" files in lib/ differ"); }
+    _ew(" only by CRLF line endings: git converted lib/ on checkout (core.autocrlf), and cyrius.lock");
+    _ew(" holds the exact bytes. Commit `lib/** -text` in .gitattributes and check lib/ out again");
+    _ew(" (before any `cyrius deps`, which would lock the converted bytes)\n");
     return 0;
 }

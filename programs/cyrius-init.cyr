@@ -818,6 +818,7 @@ fn _init_dry_run(disp, proj, shape_lib, inplace, agent, agent_seen) {
     _print("Would create (skip if exists in in-place mode):\n");
     _print("  "); _print(disp); _print("/\n");
     _print("  "); _print(disp); _print("/.gitignore\n");
+    _print("  "); _print(disp); _print("/.gitattributes           (lib/** -text: cyrius.lock holds exact bytes)\n");
     _print("  "); _print(disp); _print("/LICENSE                  (GPL-3.0-only)\n");
     _print("  "); _print(disp); _print("/README.md\n");
     _print("  "); _print(disp); _print("/CHANGELOG.md\n");
@@ -1004,6 +1005,9 @@ fn _run_init(start): i64 {
     # files (skip-if-exists in in-place mode)
     _rw_wia(templates_dir, "version", proj_root, "VERSION", inplace);
     _rw_wia(templates_dir, "gitignore", proj_root, ".gitignore", inplace);
+    # `lib/** -text`: cyrius.lock holds lib/'s exact bytes, so an autocrlf checkout fails
+    # `deps --verify` / `--locked` (6.7.12, D10). CHANGELOG [6.7.12]
+    _rw_wia(templates_dir, "gitattributes", proj_root, ".gitattributes", inplace);
     _rw_wia(templates_dir, "license", proj_root, "LICENSE", inplace);
     _rw_wia(templates_dir, "changelog.md", proj_root, "CHANGELOG.md", inplace);
     if (shape_lib == 1) {
@@ -1127,6 +1131,54 @@ fn _count_src_loc(target, ext): i64 {
     return total;
 }
 
+# 1 when the file at `path` (read up to 128 KiB) holds `needle` anywhere, else 0.
+# CHANGELOG [6.6.6] — `strstr` answers an INDEX: `== 0` meant "the needle is the file's first
+# bytes", so an existing .gitignore never got the port lines unless it started with them.
+fn _port_file_has(path, needle): i64 {
+    var gbuf = alloc(131072);
+    var gn = file_read_all(path, gbuf, 131071);
+    if (gn < 0) { gn = 0; }
+    store8(gbuf + gn, 0);
+    if (strstr(gbuf, needle) < 0) { return 0; }
+    return 1;
+}
+
+# Append `add` to the existing file `fname` of the project at `target` (port's .gitignore and
+# .gitattributes lines). 0 on success; a failure is named and counted for `_rw_report`.
+# 6.6.20 (the committed-symlink write bug): an O_APPEND open follows a link, so a checkout's
+# committed `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
+# to a file inside the project being ported (lib/io.cyr _io_replace_target_in), and the file it
+# resolves to is opened O_NOFOLLOW. That is what holds on WINDOWS, which has no readlink route
+# (the resolver answers the named path): a symlink or junction there (git for Windows,
+# core.symlinks=true) is refused by name, never followed — CreateFileW resolves a final reparse
+# point for every disposition.
+fn _port_append(target, fname, add): i64 {
+    var gw = _io_replace_target_in(target, fname);
+    var gr = 0;
+    if (gw >= 0) { gr = _append_whole_fl(gw, add, strlen(add), O_NOFOLLOW); }
+    if (gw < 0) {
+        _io_contain_refusal("error");
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot append to "); _eprint(fname); _eprint(" (left as it was)\n");
+        return 0 - 1;
+    }
+    if (gr == 0 - 40) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: refusing to append to "); _io_ew_shown(gw);
+        _eprint(": it is a symbolic link or junction, and it is not followed here (no readlink");
+        _eprint(" route on this target)\n  A checkout can commit a link to any file you can write;");
+        _eprint(" appending through it would change that file. Nothing was written.\n");
+        _eprint("  Fix: replace the link with the file itself.\n");
+        return 0 - 1;
+    }
+    if (gr != 0) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot append to "); _eprint(fname); _eprint(" (left as it was)\n");
+        return 0 - 1;
+    }
+    return 0;
+}
+
 fn _port_dry_run(name, loc) {
     _print("Dry run: cyrius port "); _print(name); _print("\n");
     _print("\n");
@@ -1138,6 +1190,7 @@ fn _port_dry_run(name, loc) {
     _print("  src/main.cyr              (entry point skeleton)\n");
     _print("  cyrius.cyml               ([package] + [build] + [deps])\n");
     _print("  cyrius.cyml [package].cyrius = \""); _print(_sv_ver); _print("\"  (pins toolchain version)\n");
+    _print("  .gitattributes            (lib/** -text, appended to an existing one)\n");
     _print("  .github/workflows/ci.yml\n");
     _print("  .github/workflows/release.yml\n");
     _print("\n");
@@ -1355,53 +1408,33 @@ fn _run_port(start): i64 {
     if (file_exists(gi) == 0) {
         if (_rw(templates_dir, "gitignore-port", target, ".gitignore") == 0) { _print("  Created .gitignore\n"); }
     } else {
-        var gbuf = alloc(131072);
-        var gn = file_read_all(gi, gbuf, 131071);
-        if (gn < 0) { gn = 0; }
-        store8(gbuf + gn, 0);
         var marker = str_builder_new();
         str_builder_add_cstr(marker, _sv_olddir);
         str_builder_add_cstr(marker, "/");
         var markerc = str_data(str_builder_build(marker));
-        # Same `strstr`-is-an-index defect as _cmtools_starship above, inverted: `== 0`
-        # meant "the marker is the file's first bytes", so an existing .gitignore never
-        # got the port lines (marker absent → -1 → skipped) unless it happened to start
-        # with them. `< 0` is "not present anywhere". CHANGELOG [6.6.6].
-        if (strstr(gbuf, markerc) < 0) {
+        if (_port_file_has(gi, markerc) == 0) {
             var ab = str_builder_new();
             str_builder_add_cstr(ab, "\n# Cyrius port\n/");
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/target/\n/");
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
-            var add = str_data(str_builder_build(ab));
-            # 6.6.20 (the committed-symlink write bug): an O_APPEND open follows a link, so a checkout's committed
-            # `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
-            # to a file inside the project being ported (lib/io.cyr _io_replace_target_in), and the
-            # file it resolves to is opened O_NOFOLLOW. That is what holds on WINDOWS, which has no
-            # readlink route (the resolver answers the named path): a `.gitignore` symlink or
-            # junction there (git for Windows, core.symlinks=true) is refused by name, never
-            # followed — CreateFileW resolves a final reparse point for every disposition.
-            var gw = _io_replace_target_in(target, ".gitignore");
-            var gr = 0;
-            if (gw >= 0) { gr = _append_whole_fl(gw, add, strlen(add), O_NOFOLLOW); }
-            if (gw < 0) {
-                _io_contain_refusal("error");
-                _rw_fails = _rw_fails + 1;
-                _eprint("error: cannot append to .gitignore (left as it was)\n");
-            } elif (gr == 0 - 40) {
-                _rw_fails = _rw_fails + 1;
-                _eprint("error: refusing to append to "); _io_ew_shown(gw);
-                _eprint(": it is a symbolic link or junction, and it is not followed here (no readlink");
-                _eprint(" route on this target)\n  A checkout can commit a link to any file you can write;");
-                _eprint(" appending through it would change that file. Nothing was written.\n");
-                _eprint("  Fix: replace the link with the file itself.\n");
-            } elif (gr != 0) {
-                _rw_fails = _rw_fails + 1;
-                _eprint("error: cannot append to .gitignore (left as it was)\n");
-            } else {
+            if (_port_append(target, ".gitignore", str_data(str_builder_build(ab))) == 0) {
                 _print("  Appended /"); _print(_sv_olddir); _print("/ and /build/ to existing .gitignore\n");
             }
+        }
+    }
+    # .gitattributes: create if absent, else append `lib/** -text` — cyrius.lock holds lib/'s exact
+    # bytes, so an autocrlf checkout fails `deps --verify` / `--locked` (6.7.12, D10).
+    var ga = _join(target, ".gitattributes");
+    if (file_exists(ga) == 0) {
+        if (_rw(templates_dir, "gitattributes", target, ".gitattributes") == 0) {
+            _print("  Created .gitattributes\n");
+        }
+    } elif (_port_file_has(ga, "lib/** -text") == 0) {
+        var aa = "\n# Cyrius port: cyrius.lock records the exact bytes of every lib/ file\nlib/** -text\n";
+        if (_port_append(target, ".gitattributes", aa) == 0) {
+            _print("  Appended lib/** -text to existing .gitattributes\n");
         }
     }
 

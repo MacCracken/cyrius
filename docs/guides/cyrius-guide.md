@@ -4579,6 +4579,24 @@ line for a file that exists nowhere, a file the tags resolve that `lib/` lacks, 
 records another stdlib pin; with no `cyrius.lock` at all it refuses by name. A clean tree says
 `--locked: lib/ and cyrius.lock are exactly what the tags resolve`.
 
+**A CRLF checkout of `lib/` (6.7.12).** The lock records the exact bytes `cyrius deps` wrote (LF),
+and git's `core.autocrlf` (Git for Windows' default) rewrites a committed `lib/` to CRLF on
+checkout. Exact bytes stay the proof, so such a checkout still fails `deps --verify` and `--locked`
+(rc 1) — normalising would let a CRLF-only rewrite of a locked file pass — but a file whose bytes,
+read with every CRLF as LF, hash to the locked value is named for what it is:
+
+```
+  FAIL: lib/alpha.cyr (hash mismatch — CRLF checkout: add `lib/** -text` to .gitattributes)
+0 verified, 2 failed
+note: 2 files in lib/ differ only by CRLF line endings: git converted lib/ on checkout (core.autocrlf), and cyrius.lock holds the exact bytes. Commit `lib/** -text` in .gitattributes and check lib/ out again (before any `cyrius deps`, which would lock the converted bytes)
+```
+
+`--locked` names the same files (`… — CRLF checkout: add …`), and when every difference is one its
+remedy is the `.gitattributes` line, not "run `cyrius deps`" (which would re-lock the CRLF bytes and
+churn the lock between a Windows and a Linux checkout). `cyrius init` writes that `.gitattributes`
+(`lib/** -text`), and `cyrius port` creates it or appends the line to an existing one. Through
+6.7.11 every such file was a bare `hash mismatch`.
+
 **A project that does not commit `lib/`** (it is in `.gitignore`, so a fresh CI checkout has none —
 the lock is the committed artifact there): with no vendored `lib/` (absent, or holding no `.cyr`)
 `--locked` checks the resolve against `cyrius.lock` alone and says so in one line —

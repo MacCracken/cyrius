@@ -2309,6 +2309,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # 6.7.12 — distlib's sidecar verify credits a named dep with the include CLOSURE of its sidecar
 # leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`.
 _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
+# 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
+# core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
+# read as LF hash to the locked value is named `CRLF checkout: add \`lib/** -text\` to .gitattributes`
+# (it was a bare `hash mismatch`, and --locked said "run `cyrius deps`", which re-locks the CRLF
+# bytes); `cyrius init` / `port` ship that .gitattributes. Wine leg named SKIP without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_verify_crlf_checkout.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the
