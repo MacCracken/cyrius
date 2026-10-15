@@ -10,8 +10,9 @@
 # object is now decoded through the inner struct's own `<T>_from_json_str` and copied inline (as the pairs
 # form `T_from_json(bayan_json_parse(..))` always did), and every such value is walked whole with
 # `_cy_json_skipval` (string- and depth-aware). A nested value that is not an object (`null`) leaves the
-# field 0 — it never decodes a LATER object — and a field typed with a struct no `#derive` registered is
-# skipped whole, as is one typed with a derived enum. The scanner and the pairs form agree on every row.
+# field 0 — it never decodes a LATER object — and a field typed with a struct no `#derive(Serialize)` /
+# `#derive(Deserialize)` registered (an accessors-only one among them) is skipped whole, as is one typed with
+# a derived enum. The scanner and the pairs form agree on every row.
 #
 # Mutations (2026-10-14; a scratch copy of the tree, rebuilt with the one change): PP_DNEST_SCAN back to the
 # depth-blind skip with no decode (= the tree before, for the nested arm) RED rows 1, 2, the positions, the
@@ -19,7 +20,9 @@
 # rows (1994: a LATER object decoded); the unknown-key arm back to the depth-blind skip RED row 3 and the
 # unknown-key rows; the nested arm decoding but skipping depth-blind after RED 11 rows (the plain-struct row
 # among them); the decode taken for a derived ENUM type too RED the whole file (it does not build: "a `: stack`
-# enum returns two values").
+# enum returns two values"); PP_DERIVE_STRUCT without its codec test (the decode taken for an accessors-only
+# struct type too) RED the whole file (it does not build: "undefined function 'AIn_from_json_str' (reachable
+# call site)" — the 6.7.11 review's find: an accessors-only inner struct built before the lane).
 
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -85,6 +88,25 @@ fn One_from_json(pairs): i64 { var r = alloc(8); store64(r, 0); return r; }
 #derive(Serialize)
 struct WE { a: i64; e: One; b: i64; }
 
+# A field typed with an ACCESSORS-ONLY struct: `#derive(accessors)` registers the struct but emits no
+# `T_from_json_str`, so the scanner skips the field whole (it built through 6.7.10). Hand-written pairs codecs,
+# as Plain has.
+#derive(accessors)
+struct AIn { x: i64; y: i64; }
+fn AIn_to_json(ptr, sb): i64 { str_builder_add_int(sb, load64(ptr)); return 0; }
+fn AIn_from_json(pairs): i64 { var r = alloc(16); store64(r, 0); store64(r + 8, 0); return r; }
+
+#derive(Serialize)
+struct WA { a: i64; ai: AIn; b: i64; }
+
+# accessors stacked over Deserialize: the stack emits the decoder, so the field decodes.
+#derive(accessors)
+#derive(Deserialize)
+struct ADIn { x: i64; y: i64; }
+
+#derive(Serialize)
+struct WAD { a: i64; ai: ADIn; b: i64; }
+
 fn pairs(s: cstring) { return bayan_json_parse(str_from(s)); }
 fn out(o: *Out): i64 { return o.a * 1000 + o.inn.x * 100 + o.inn.y * 10 + o.b; }
 fn out2(o: *Out2): i64 { return o.a * 1000 + o.inn.x * 100 + o.inn.y * 10 + o.y; }
@@ -99,6 +121,8 @@ fn sout(o: *SOut): i64 { return o.a * 100 + o.sin.n * 10 + o.b; }
 fn sstr(o: *SOut): i64 { return str_eq(o.sin.s, str_from("x,}y{\"")); }
 fn wp(w: *WP): i64 { return w.a * 100 + w.pl.x * 10 + w.b; }
 fn we(w: *WE): i64 { return w.a * 100 + w.e * 10 + w.b; }
+fn wa(w: *WA): i64 { return w.a * 1000 + w.ai.x * 100 + w.ai.y * 10 + w.b; }
+fn wad(w: *WAD): i64 { return w.a * 1000 + w.ai.x * 100 + w.ai.y * 10 + w.b; }
 
 fn rows_filed(): i64 {
     alloc_init();
@@ -152,6 +176,8 @@ fn rows_null(): i64 {
 fn rows_plain(): i64 {
     assert_eq(wp(WP_from_json_str("{\"a\":1,\"pl\":{\"x\":5,\"b\":9},\"b\":4}")), 104, "a field typed with a struct no #derive registered: skipped whole");
     assert_eq(we(WE_from_json_str("{\"a\":1,\"e\":\"ONLY\",\"b\":4}")), 104, "a field typed with a derived enum: skipped (builds)");
+    assert_eq(wa(WA_from_json_str("{\"a\":1,\"ai\":{\"x\":2,\"y\":3},\"b\":4}")), 1004, "a field typed with an accessors-only struct: skipped whole (builds)");
+    assert_eq(wad(WAD_from_json_str("{\"a\":1,\"ai\":{\"x\":2,\"y\":3},\"b\":4}")), 1234, "a field typed with accessors stacked over Deserialize: decoded");
     return 0;
 }
 

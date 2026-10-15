@@ -3046,7 +3046,8 @@ A `u64` field is not supported (the build fails naming `u64_to_json`), nor is `V
 A **nested `#derive`d struct** decodes in both decoders: the scanner decodes the object through
 the inner struct's own `T_from_json_str` and copies it in place, as the pairs form does. A nested
 value that is not an object (`null`, a number, a string) leaves the field 0, and a field typed with
-a struct no `#derive` above it registered is skipped. The scanner walks every value it does not
+a struct no `#derive(Serialize)` / `#derive(Deserialize)` above it registered (an accessors-only
+struct among them) is skipped. The scanner walks every value it does not
 take — that one, an unknown key's — WHOLE, string- and depth-aware, so an object, an array or a
 string holding `,` / `}` never derails it. Through 6.7.10 both skipped to the first `,` or `}` at
 any depth: the nested field stayed 0, the inner object's keys were read as the outer struct's (an
