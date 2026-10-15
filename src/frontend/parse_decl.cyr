@@ -1651,7 +1651,8 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
 # `_call_field` puts a call's: a > 16 B struct in the temp `_sc_pre` gave it, a 9-16 B one in a
 # temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
 # handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
-# depth. A result that is no struct, and a chain at top level (no frame), are refused by name.
+# depth. A result that is no struct (nor a `*T`: `_mchain_ptr`), and a struct chain at top level (no
+# frame), are refused by name.
 # The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
 # what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
 var _mcall_last = 0 - 1;
@@ -1678,6 +1679,7 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) {
+        if (_hl_fn_psid(fi) > 0) { return _mchain_ptr(S, noff, beg, _hl_fn_psid(fi)); }
         if (_syntax_only == 0) { _call_fld_err(S, fi, noff); }   # 6.7.7 (T5): + a multi-value one's hint
         _mchain_skip(S);
         return 1;
@@ -1692,6 +1694,19 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # consume the field / method name
     _field_load_on(S, noff, fnoff, beg, 0 - 2 - t, sid);
+    _cfo = 0;
+    return 1;
+}
+# A method declared `: *T`, T a struct (`psid`): its result (rax) is parked as a pointer receiver and
+# the chain continues through it — a field, a method, a deeper chain — in a fn and at top level, as a
+# free call's `*T` result does (`_call_ptr_field`). It was refused with "it does not return a struct"
+# (issues/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
+fn _mchain_ptr(S, noff, beg, psid): i64 {
+    var h = _ptr_park(S, psid);
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field / method name
+    _field_load_on(S, noff, fnoff, beg, h, psid);
     _cfo = 0;
     return 1;
 }

@@ -75,6 +75,10 @@
 #      a passed-through pair call keeps its wrap (`_ret_unpeel`); `return (a) + b;` is an operator
 #      receive (`_ret_expr_head`). The top-level operand refusal says "(a struct over 8 bytes)" for
 #      a by-value or untyped operator parameter, "(a `*` parameter)" only for a `*S` one
+#   MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13)
+#      a METHOD's `*T` result takes `.field`, `.m(..)` and a deeper chain (`h.get().b`), in a fn and at top
+#      level, as a free call's `*T` result has since 6.6.17; it was refused "it does not return a struct".
+#      `_method_chain` parks the pointer (`_mchain_ptr`, `_ptr_park`); `h.get().b = 5` stays refused
 #   N  (lane E2) lib/fnptr.cyr's x86_64 SysV fncall8 (Linux, macOS, agnos arms) stored argument 7 at
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
@@ -226,6 +230,9 @@
 #   M-R3 `_refuse_struct_tuple_return` without its GIDEP guard  -> RED R27 R28 (refused: the inline replay judged by
 #       the caller's class); R8-R15 green
 #   M-R2 `_pair_ret_call_ok` without its `_call_ends_at` test   -> RED R16-R22 (BUILT); R23-R26 green
+#   M-MP1 `_method_chain` without its `_mchain_ptr` arm (= the tree before) -> RED MP1 MP2 (refused 'it does not
+#       return a struct'), MP3 (refused, but as 'it does not return a struct'), A1-A7 (the values file does not build:
+#       tcyr MP1-MP16); MP4 MP5 green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -460,6 +467,17 @@ exits r23 141 "R23: return mk2(1); (the tail call) still builds" "${RPH}fn g(p: 
 exits r24 141 "R24: return (mk2(1)); still builds" "${RPH}fn g(p: Pt): Pt { return (mk2(1)); }\n${RPM}"
 exits r25 243 "R25: return mk2(1) + p; (a dispatch) still builds" "${RPH}fn Pt_add(a: Pt, b: Pt): Pt { var r: Pt = Pt { a.x + b.x, a.y + b.y }; return r; }\nfn g(p: Pt): Pt { return mk2(1) + p; }\n${RPM}"
 exits r26 141 "R26: var k = p.x; return mk2(k); (a tail call after a statement) still builds" "${RPH}fn g(p: Pt): Pt { var k = p.x; return mk2(k); }\n${RPM}"
+# MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13) a
+# METHOD's `*T` result takes `.field` / `.m(..)` / a deeper chain, as a free call's has since 6.6.17 — it was "cannot
+# take a field of the result of 'H_get': it does not return a struct" (`_mchain_ptr`; the values file's MP rows, in
+# a fn, at top level, through a dyn and a generic method, on A1-A7). The store through it stays refused, now as the
+# free call's is (the 6.7.12 store issue); a method returning no struct and no `*T` keeps its refusal.
+MPH='struct P { a; b; }\nstruct H { p: *P; }\n'
+exits_file mp1 44 "MP1: var y = h.get().b; (the filed repro, verbatim: refused)" docs/development/issues/repros/2026-10-10-field-of-method-pointer-result-refused.cyr
+exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.get().b * 10 + h.get().a; }\nimpl H { fn get(self): *P { return self.p; } }$E"
+refused mp3 'cannot assign to a field of a call result: the result is a temporary' "MP3: h.get().b = 5; stays refused, as get2(&h).b = 5; is (6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
+refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
+refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 

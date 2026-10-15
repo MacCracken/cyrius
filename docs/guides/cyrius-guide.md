@@ -1081,8 +1081,10 @@ size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
 the pointer (it never copies the struct). So does the result of a fn declared `: *Struct`
-(`first(h).next.val`, `first(h).m(..)`). Before 6.6.17 only a parameter did; a `*Node` local
-or global was "no struct type in scope", and such a call's result "does not return a struct".
+(`first(h).next.val`, `first(h).m(..)`), and since 6.7.11 that of a METHOD declared `: *Struct`
+(`h.get().b`, `h.get().m(..)`, through a `dyn` too). Before 6.6.17 only a parameter did; a `*Node`
+local or global was "no struct type in scope", and such a call's result "does not return a struct"
+(a method's until 6.7.11).
 A struct VALUE assigned to a `*Struct` local or parameter copies INTO the pointee (`p = l`,
 `p = mk(..)`), and `l = p` copies the pointee into the struct value `l`, at every size (6.7.10 —
 see [Where a struct lives](#where-a-struct-lives-v665)).
@@ -1189,10 +1191,13 @@ All of these were loud: nothing compiled wrong.
 A **method's** result takes `.field` and `.method(..)` the same way, chained to any depth, as a
 value or as a bare statement (since 6.6.17): `var u: Str = s.clone().cat(t);`,
 `p.bump().bump().sum()`, `p.big().c`. Each link's result is held like a call's (a frame
-temporary), so the receiver is untouched. At top level a chain on a struct-returning method is
-refused by name, as a call result's field is, and a chain on a method that returns no struct is
-`cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17 the `.`
-after a method call was `expected ';', got '.'` in every position.
+temporary), so the receiver is untouched. A method declared `: *Struct` is a pointer, as a free
+call's `*Struct` result is: `h.get().b`, `h.get().q.b`, `h.get().m(..)` read and call through it, in
+a fn and at top level (6.7.11; it was refused, "it does not return a struct"), and `h.get().b = 5;`
+is refused as `get2(&h).b = 5;` is. At top level a chain on a struct-returning method is refused by
+name, as a call result's field is, and a chain on a method that returns neither a struct nor a
+`*Struct` is `cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17
+the `.` after a method call was `expected ';', got '.'` in every position.
 
 ### Field types (v6.6.10)
 

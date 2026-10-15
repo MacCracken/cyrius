@@ -56,6 +56,11 @@
 #      exit 30 + the low byte of `&o` where 35 is right; `o.same(x)` saw n == self), a by-value 16 B
 #      struct argument (`bs(h, x)`) and a struct-returning call's argument (`mk(x)`). Every other
 #      leg was right. Each shape is its own fn: the store, the `lea` and the reload must be adjacent.
+#   MP (6.7.11, the user's decision (a), 2026-10-13) a METHOD's `*T` result takes `.field`, `.m(..)` and a
+#      deeper chain, as a free call's `*T` result has since 6.6.17: `h.get().b` was refused ("cannot take a
+#      field of the result of 'H_get': it does not return a struct"). The pointer is parked as a receiver
+#      (`_mchain_ptr`), in a fn and at top level, through a dyn and a generic method too; the store
+#      `h.get().b = 5` stays refused (the gate's MP rows).
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -716,10 +721,68 @@ fn u_rows(): i64 {
     return 0;
 }
 
+# MP — a method's `*T` result: `.field`, `.m(..)`, deeper chains (6.7.11).
+struct MQ { a; b; }
+struct MS8 { v: u32; w: u32; }
+struct MP { a; b; q: MQ; nx: *MP; k: i32; f: f64; s8: *MS8; }
+struct MH { p: *MP; }
+impl MP {
+    fn sum(self): i64 { return self.a * 10 + self.b; }
+    fn me(self): *MP { return self; }
+    fn bump(self): i64 { self.a = self.a + 1; return self.a; }
+}
+impl MH {
+    fn get(self): *MP { return self.p; }
+    fn gp<T>(self, x: T): *MP { return self.p; }
+    fn s8(self): *MS8 { return self.p.s8; }
+}
+trait MTr { fn mme(self): *MP; }
+impl MTr for MP { fn mme(self): *MP { return self; } }
+var GMS8 = MS8 { 3, 9 };
+fn mp_mk(p: *MP, a, b, nx: *MP): i64 {
+    p.a = a; p.b = b; p.q.a = a + 2; p.q.b = b + 2; p.nx = nx; p.k = 0 - 7; p.f = 2.5; p.s8 = &GMS8;
+    return 0;
+}
+var GMQ = MQ { 0, 0 };
+var GMT = MP { 0, 0, GMQ, 0, 0, 0.0, 0 };
+var GMH = MH { &GMT };
+var GMO: dyn MTr = &GMT;
+var GMI = mp_mk(&GMT, 9, 8, &GMT);
+var GMV = GMH.get().b * 100 + GMH.get().q.b * 10 + GMH.get().sum() % 10;
+var GMD = GMO.mme().a * 10 + GMH.get().nx.nx.k;
+fn mp_rows(): i64 {
+    var y: MP;
+    var x: MP;
+    mp_mk(&y, 50, 60, 0);
+    mp_mk(&x, 3, 4, &y);
+    var h = MH { &x };
+    assert_eq(h.get().b, 4, "MP1: h.get().b (refused: 'it does not return a struct')");
+    assert_eq(h.get().q.b, 6, "MP2: h.get().q.b, an inline struct field of the pointee");
+    assert_eq(h.get().sum(), 34, "MP3: h.get().sum(), a method on the pointee");
+    assert_eq(h.get().nx.b, 60, "MP4: h.get().nx.b, through the pointee's *T field");
+    assert_eq(h.get().me().me().a, 3, "MP5: h.get().me().me().a, a chain of *T methods");
+    assert_eq(h.get().nx.sum(), 560, "MP6: h.get().nx.sum()");
+    assert_eq(h.get().k, 0 - 7, "MP7: h.get().k, an i32 field, sign-extended");
+    assert_eq(f64_to(h.get().f * 2.0), 5, "MP8: h.get().f * 2.0, an f64 field is an f64");
+    assert_eq(h.s8().v * 10 + h.s8().w, 39, "MP9: h.s8().v / .w, a *T to an 8 B struct (u32 fields)");
+    var t = h.get().a + h.get().nx.a * 2;
+    assert_eq(t, 103, "MP10: h.get().a + h.get().nx.a * 2, operands of one expression");
+    h.get().bump();
+    assert_eq(x.a, 4, "MP11: h.get().bump(); as a statement writes the pointee (no copy)");
+    assert_eq(h.gp(1).b * 10 + h.gp(1.5).b, 44, "MP12: a generic method's *T result: its i64 base and its f64 instance");
+    var o: dyn MTr = &x;
+    assert_eq(o.mme().b * 10 + o.mme().q.a, 45, "MP13: o.mme().b / .q.a through a dyn");
+    assert_eq(o.mme().me().sum(), 44, "MP14: o.mme().me().sum(), a dyn link then a method link");
+    assert_eq(GMV, 908, "MP15: at top level: G.get().b, G.get().q.b, G.get().sum()");
+    assert_eq(GMD, 83, "MP16: at top level: a dyn's o.mme().a, G.get().nx.nx.k");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
     k_rows();
     u_rows();
+    mp_rows();
     strs();
     eladdr();
     flags();
