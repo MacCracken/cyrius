@@ -240,6 +240,20 @@
 #   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
 #       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
 #       does not build: tcyr Q31-Q41)
+#   (6.7.12, the fixfirst lane, issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md, the same
+#   procedure, 2026-10-15)
+#   M-VD1 `_pe_vret` answering 0 (no Win64 vector temp anywhere) -> RED 4: VDw1-VDw3 (exit 5), C7 (exit 5); C1-C6
+#       green (SysV / AAPCS64 / cx return a vector in registers)
+#   M-VD2 `_sc_pre` / `_sc_post` without the arm (methods, operators, `&f` calls) -> RED 3: VDw2 VDw3 (exit 5), C7
+#       (exit 5); VDw1 green
+#   M-VD3 `_fnc_agg` without the arm (by-name calls)              -> RED 2: VDw1 (exit 5), C7 (exit 5)
+#   M-VDF one `assert_eq(` row deleted from vector_call_result_discarded.tcyr -> RED 1: "only 14 rows (floor 15)"
+#
+#   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
+#      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
+#      vector, at top level) — on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE: "N passed, 0 failed (N total)".
+#      On Win64 no hidden result pointer was passed, so the callee wrote through its first argument (exit 5;
+#      `s.mv(..)` overwrote self). VDw1-VDw3: the filed repros verbatim on PE (exit 3)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -526,15 +540,24 @@ tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
 tcyr "A4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
 TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
 TCB=tests/tcyr/crossos/fncall_struct_result.tcyr   # 6.7.11: rows B
+TCC=tests/tcyr/crossos/vector_call_result_discarded.tcyr   # 6.7.12: rows C
 # One B row per `assert_eq(` call (the file defines none); the floor keeps a gutted file from passing.
 NB=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCB")
 FLOORB=48
 if [ "$NB" -lt "$FLOORB" ]; then bad "B: only $NB rows in $TCB (floor $FLOORB) — rows were lost"; fi
+NC=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCC")
+FLOORC=15
+if [ "$NC" -lt "$FLOORC" ]; then bad "C: only $NC rows in $TCC (floor $FLOORC) — rows were lost"; fi
 TC=$TCB; TN=$NB
 tcyr "B1: fncall_struct_result.tcyr (x86_64)" "$CC" ""
 tcyr "B2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "B3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
 tcyr "B4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
+TC=$TCC; TN=$NC
+tcyr "C1: vector_call_result_discarded.tcyr (x86_64)" "$CC" ""
+tcyr "C2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
+tcyr "C3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
+tcyr "C4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/cc_a64.err" && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
@@ -542,6 +565,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         tcyr "A5: aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
         TC=$TCB; TN=$NB
         tcyr "B5: fncall_struct_result.tcyr, aarch64 (qemu): X8" "$T/cc_a64" qemu-aarch64
+        TC=$TCC; TN=$NC
+        tcyr "C5: vector_call_result_discarded.tcyr, aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
     else bad "A5 / B5: src/main_aarch64.cyr did not build"; fi
 else echo "  SKIP: aarch64 legs A5 / B5 (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
 if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
@@ -552,6 +577,8 @@ if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
     tcyr "A6: cx (cxvm)" "$T/cc_cx" "$T/cxrun"
     TC=$TCB; TN=$NB
     tcyr "B6: fncall_struct_result.tcyr, cx (cxvm)" "$T/cc_cx" "$T/cxrun"
+    TC=$TCC; TN=$NC
+    tcyr "C6: vector_call_result_discarded.tcyr, cx (cxvm)" "$T/cc_cx" "$T/cxrun"
 else bad "A6 / B6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 # 6.7.11 — PE (wine): the result pointer rides after PE's stack-pushed callee and is counted into
 # ECALLPTR_PE's argc, code no other leg runs. The filed repro and the 8 B row, then the values file.
@@ -564,8 +591,14 @@ if command -v wine > /dev/null 2>&1; then
     tcyr "B7: fncall_struct_result.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
     TC=$TCA; TN=""
     tcyr "A7: the values file, PE (wine) (6.7.11: the K rows)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
-else echo "  SKIP: PE legs FPw1 / FPw2 / B7 / A7 (wine not installed)"; skips=$((skips + 1)); fi
+    # 6.7.12 — the filed repros of the Win64 discarded vector result, verbatim (exit 5 before), then rows C.
+    exits_pe vdw1 3 "VDw1: mkv(41, 7); as a statement (the filed repro 1, verbatim) on PE (wine)" "fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn run(): i64 {\n    mkv(41, 7);\n    return 3;\n}\nsyscall(60, run());\n"
+    exits_pe vdw2 3 "VDw2: callptr(&mkv, 41, 7); (the filed repro 2, verbatim) on PE (wine)" "include \"lib/fnptr.cyr\"\nfn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn run(): i64 {\n    callptr(&mkv, 41, 7);\n    return 3;\n}\nsyscall(60, run());\n"
+    exits_pe vdw3 3 "VDw3: var x = callptr(&mkv, 41, 7); (the filed repro 3, verbatim) on PE (wine)" "include \"lib/fnptr.cyr\"\nfn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn run(): i64 {\n    var x = callptr(&mkv, 41, 7);\n    return 3;\n}\nsyscall(60, run());\n"
+    TC=$TCC; TN=$NC
+    tcyr "C7: vector_call_result_discarded.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
+else echo "  SKIP: PE legs FPw1 / FPw2 / B7 / A7 / VDw1-VDw3 / C7 (wine not installed)"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, B) and PE (B7, $NB rows)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, B) and PE (B7, $NB rows); a discarded vector result (C, $NC rows, PE's VDw)"

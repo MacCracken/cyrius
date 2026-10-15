@@ -1595,6 +1595,13 @@ call), a method call, `*p`. Through a fn pointer held in a variable, give the ta
 out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
 7);` — which carries every lane on every target.
 
+A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
+7);`, an untyped `var x = callptr(&mkv, ..)`, an argument to an untyped parameter, a method call
+`s.mv(..)`, an operator fn declared to return a vector, at top level too — runs, and its vector is
+discarded, on every target (6.7.12). ⚠ Through 6.7.11 on Windows such a call passed no hidden
+result pointer, so the callee wrote the vector through its first argument: a page fault, or
+`s.mv(..)` overwriting `s`.
+
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a

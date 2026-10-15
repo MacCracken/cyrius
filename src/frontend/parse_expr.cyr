@@ -884,6 +884,7 @@ fn _icall_result(S, cfi, t, beg): i64 {
     var lt = GESTYPE(S);   # what 6.7.5 typed the result as: the last argument's type
     _icall_untyped(S);
     if (_icall_sfn(S, cfi) == 1) { return _sc_post(S, cfi, _bx_fname(S, cfi), beg, t); }
+    if (_pe_vret(S, cfi) == 1) { return _sc_post(S, cfi, _bx_fname(S, cfi), beg, t); }   # 6.7.12: its first word
     if (lt != F64_TYID) { return 0; }
     if (cfi < 0) { return 0; }
     if (GFRS(S, cfi) != 0 - 9) { return 0; }
@@ -940,7 +941,7 @@ fn _icall_open_at(S, ti): i64 {
 fn _icall_sret(S, cfi, beg): i64 {
     _sc_n0 = 0;
     if (beg == _icall_vbeg) { return _icall_vret(S); }
-    if (_icall_sfn(S, cfi) == 0) { return 0 - 1; }
+    if (_icall_sfn(S, cfi) == 0) { if (_pe_vret(S, cfi) == 0) { return 0 - 1; } }   # 6.7.12: a Win64 vector's pointer
     return _sc_pre(S, cfi, _bx_fname(S, cfi), beg);
 }
 # 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
@@ -7522,7 +7523,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # 6.6.6 (bite 14 review): an operator fn returning a struct BY VALUE takes its own path, so
     # every other dispatch below stays byte-identical. `beg` = the lhs's first token.
     var ofp = _op_fn_peek(S, stype, op_str, op_len);
-    if (_ret_agg_class(S, ofp) != 0) {
+    if (_op_agg_ret(S, ofp) == 1) {
         return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg);
     }
     var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
@@ -7595,7 +7596,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
     var t = _sc_pre(S, ofi, opnoff, beg);
     var n = 2 + _sc_n0;
-    if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }
+    if (park != 0 - 1) { _HTLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }   # 6.7.12: or a hidden global
     EPUSHR(S);
     _op_lhs_snap(S, ofi);   # 6.7.7 (EMIT_OP_DISPATCH)
     var rsvar = _op_rhs(S, ofi);
@@ -7620,7 +7621,8 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
 # Park a by-value lhs (rax) in an anonymous frame word when `_sc_pre` is about to push a retptr
 # (x86/cx, >16 B result, in a fn). Returns the slot, or -1 when nothing needs parking.
 fn _op_park_lhs(S, fi): i64 {
-    if (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
+    if (_pe_vret(S, fi) == 1) { if (GINFN(S) != 1) { return _op_park_top(S); } }   # 6.7.12: a Win64 vector's pointer
+    elif (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
     if (_AARCH64_BACKEND == 1) { return 0 - 1; }
     if (GINFN(S) != 1) { return 0 - 1; }
     var w = GFLC(S);
@@ -7631,6 +7633,20 @@ fn _op_park_lhs(S, fi): i64 {
     if (w + 1 > _flc_hwm) { _flc_hwm = w + 1; }
     EFLSTORE(S, w);
     return w;
+}
+
+# 6.7.12: at top level (no frame) the lhs waits in a hidden global (`_HTEMP`) while the Win64 vector result's
+# pointer is pushed.
+fn _op_park_top(S): i64 {
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return h;
+}
+# 1 = operator fn `fi` returns an aggregate its caller gives storage: a struct over 8 B, or (6.7.12) on Win64 a
+# vector (`_pe_vret`, its hidden result pointer) — `_EMIT_OP_DISPATCH_AGG`'s.
+fn _op_agg_ret(S, fi): i64 {
+    if (_ret_agg_class(S, fi) != 0) { return 1; }
+    return _pe_vret(S, fi);
 }
 
 # v5.6.2: emit a binop as a call to a named stdlib helper fn

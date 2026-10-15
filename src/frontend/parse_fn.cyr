@@ -5118,6 +5118,48 @@ fn _ret_agg_class(S, fi): i64 {
     return 0;
 }
 
+# ⛔ 6.7.12 — ON WIN64 A VECTOR RESULT ALWAYS HAS SOMEWHERE TO GO. A value-form vector comes back through a hidden
+# result pointer the CALLER passes as int arg 0 (the MS x64 ABI for a 16 / 32-byte value), and only the receives
+# passed one (PARSE_VAR's, `_try_vector_call_assign`, `_vrcv_emit`). A vector-returning call anywhere else — a
+# statement `mkv(41, 7);`, `callptr(&mkv, 41, 7);`, `var x = callptr(&mkv, ..)`, an argument, a method call, an
+# operator fn returning a vector, at top level too — passed none, so the callee took its first user argument as
+# the pointer and wrote the vector through it: a page fault (exit 5), or a silent overwrite of `self` for a
+# method. SysV / AAPCS64 / cx return the vector in registers and are unchanged. Now every such call gets storage
+# — a frame temporary in a fn, a hidden global at top level (no frame there) — whose address is int arg 0, and the
+# expression's value is its first word, as a struct result's is (`_fnc_agg`, `_sc_pre` / `_sc_post`, `_icall_sret`).
+# Issue 2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer. CHANGELOG [6.7.12]
+# 1 = on PE, fn `fi` returns a value-form vector (through a hidden result pointer).
+fn _pe_vret(S, fi): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    return 1;
+}
+# The storage fn `fi`'s vector result is written to, its address pushed (int arg 0): its handle (`_HTLOAD`'s —
+# a frame slot, or `0 - 2 - gv` for the hidden global at top level).
+fn _pe_vtemp(S, fi): i64 {
+    var rs = GFRS(S, fi);
+    _vec_desc(S, rs);
+    var n = GVEC_NSLOTS(S);
+    var h = 0;
+    if (GINFN(S) == 1) {
+        h = _agg_temp_t(S, n, rs);
+        EFLADDR(S, h);
+    } else {
+        h = _HTEMP(S);
+        S64(_vars_base + (0 - 2 - h) * 8, n * 8);
+        EVADDR(S, 0 - 2 - h);
+    }
+    EPUSHR(S);
+    return h;
+}
+# After the call: the value is the storage's first word (-1: a receive passed its own destination, nothing).
+fn _pe_vload(S, h): i64 {
+    if (h != 0 - 1) { _HTLOAD(S, h); }
+    SESTYPE(S, 0);
+    return 0;
+}
+
 # An anonymous in-frame destination for struct `sid`: (n-1) fillers, then the slot that
 # addresses it (field 0), laid out exactly like a `var p: S` receive. Returns that slot.
 fn _agg_temp(S, sid): i64 {
@@ -5351,6 +5393,10 @@ fn _ret_small_struct(S, fi): i64 {
 # a temp, and a destination that needs storage refuses it. CHANGELOG [6.6.6]
 fn _sc_pre(S, fi, noff, beg): i64 {
     _sc_n0 = 0;
+    if (_pe_vret(S, fi) == 1) {   # 6.7.12: a Win64 vector result's hidden pointer
+        _sc_n0 = 1;
+        return _pe_vtemp(S, fi);
+    }
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0 - 1; }
     if (GINFN(S) != 1) {
@@ -5375,6 +5421,7 @@ fn _sc_x8(S, fi, t): i64 {
 }
 
 fn _sc_post(S, fi, noff, beg, t): i64 {
+    if (_pe_vret(S, fi) == 1) { return _pe_vload(S, t); }   # 6.7.12
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return _sc_post_small(S, fi, noff, beg); }
     if (t >= 0) {
@@ -6728,6 +6775,7 @@ fn _od_arg_kind(S): i64 {
 # 6.7.6: the call `_sc_fcw` names (a parenthesised declaration initialiser, `_scv_peel`) — and a
 # 9-16 B result there too — is recorded as a method call's temp is, for `_sc_var_receive`.
 fn _fnc_agg(S, fi, noff): i64 {
+    if (_pe_vret(S, fi) == 1) { return _fnc_pe_vec(S, fi, noff); }   # 6.7.12
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0; }
     var want = 0;
@@ -6752,6 +6800,19 @@ fn _fnc_agg(S, fi, noff): i64 {
     _fnc_lo = o;   # 6.7.6: the temp, for a left operand (`_lsc_free`)
     _fnc_lt = t;
     _fnc_lcp = GCP(S);
+    return 1;
+}
+
+# 6.7.12 — PARSE_FNCALL's Win64 vector arm (cursor just past the call's `(`): the call with its storage's address
+# as int arg 0 (`_pe_vtemp`), the value its first word. 1 = emitted.
+fn _fnc_pe_vec(S, fi, noff): i64 {
+    var h = _pe_vtemp(S, fi);
+    var n = _owncall_args(S, fi, noff, 1);
+    var tgt = L64(_fnt_offsets + fi * 8);
+    if (tgt >= 0) { ECALLTO(S, tgt); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, n);
+    _pe_vload(S, h);
     return 1;
 }
 
