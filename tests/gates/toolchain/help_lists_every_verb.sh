@@ -72,7 +72,7 @@ trap 'rm -rf "$W"' EXIT
 FAIL=0
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
-VERB_FLOOR=39   # 6.7.0: the 39 non-alias verbs main() dispatches
+VERB_FLOOR=38   # 6.7.0: the 39 non-alias verbs main() dispatches; 6.7.12: 38 (`tests` removed, D21)
 
 # ── The CLI, built from THIS tree. cycc on empty stdin exits 0 and emits a runnable binary, so a
 # failed or empty build must stop the gate rather than score a fake PASS.

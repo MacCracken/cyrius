@@ -217,7 +217,8 @@ want "bounds: the child's first environment entry is the injected CYRIUS_BOUNDS=
 want "bounds: the inherited CYRIUS_BOUNDS=0 is dropped (one entry)" "$(grep -c '^CYRIUS_BOUNDS=' "$W/stub.env" 2>/dev/null)" 1
 [ "$FAIL" = "$x" ] && echo "  ok bounds (build): 9 rung combinations — default off, #bounds on, manifest false beats it (=0), true on, env 0 / 1 beat the manifest, --bounds beats both, env 0 beats #bounds, empty env is no rung; bad values refused by name; the injected entry is FIRST"
 
-# The other verbs that take --bounds read the same three rungs: test / tests / run / fuzz.
+# The other verbs that take --bounds read the same three rungs: test / run / fuzz (`tests`, removed
+# at 6.7.12, was `test <dir>`: the `test --bounds bt` row below covers the directory form).
 x=$FAIL
 mkb nb ''
 mkdir -p "$W/p/bt" "$W/p/fuzz"
@@ -229,8 +230,6 @@ vb "$W/cyrius" test --bounds bt/on.tcyr
 [ "$VRC" = 0 ] || fail "bounds: cyrius test --bounds did not compile the test in the mode (rc $VRC): $(grep -E 'FAIL|error' "$W/vb.out" | head -2 | tr '\n' ' ')"
 vb "$W/cyrius" test bt/on.tcyr
 { [ "$VRC" = 1 ] && grep -q 'FAIL: bt/on.tcyr (exit 1)' "$W/vb.out"; } || fail "bounds: cyrius test without --bounds (the control): rc $VRC — the test cannot tell the mode"
-vb "$W/cyrius" tests --bounds bt
-{ [ "$VRC" = 0 ] && grep -qE '1 passed, 0 failed' "$W/vb.out"; } || fail "bounds: cyrius tests --bounds <dir> did not compile in the mode (rc $VRC): $(grep -E 'passed|FAIL|error' "$W/vb.out" | head -1)"
 vb "$W/cyrius" test --bounds bt
 { [ "$VRC" = 0 ] && grep -qE '1 passed, 0 failed' "$W/vb.out"; } || fail "bounds: cyrius test --bounds <dir> did not compile in the mode (rc $VRC)"
 mkb nb 'bounds = true\n'

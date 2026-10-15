@@ -3,7 +3,7 @@
 #
 # Verb groups, as `cyrius --help` prints them (usage() below):
 #   Build & run:             build, run, check, clean
-#   Test:                    test, tests, bench, fuzz, coverage, doctest, smoke, soak
+#   Test:                    test, bench, fuzz, coverage, doctest, smoke, soak
 #   Code quality & API:      fmt, lint, doc, vet, deny, audit, api-surface, header
 #   Project & dependencies:  init, port, deps, update, lib sync, distlib, package, publish, install
 #   Toolchain:               self, pulsar, capacity, lsp, hooks, sign-efi, which, version
@@ -131,7 +131,6 @@ fn _help_build(): i64 {
     println("");
     println("Test:");
     _help_row("test [--aarch64] [--bounds] [file.tcyr|dir]...", "compile + run each (a dir: every .tcyr under it); none: the whole suite");
-    _help_row("tests [dir]", "DEPRECATED: use `test <dir>` (goes in the next release)");
     _help_row("bench [file.bcyr|dir]", "compile + run benchmarks (default: benches/ + tests/)");
     _help_row("fuzz [--poison[=ab]] [--bounds] [file.fcyr|dir]", "run fuzz harnesses (default: fuzz/ + tests/)");
     _help_row("coverage [--full] [--min <pct>]",
@@ -624,6 +623,7 @@ fn main(): i64 {
             sys_write(STDERR_FD, "Unknown command: ", 17);
             sys_write(STDERR_FD, cmd, strlen(cmd));
             sys_write(STDERR_FD, "\n", 1);
+            _cli_removed_verb_hint(cmd);
             println("Run 'cyrius help' for usage.");
             return 1;
         }
@@ -715,7 +715,7 @@ fn main(): i64 {
         return _cfg_print_config(_cli_pos_at(0), _cli_pos_at(1));
     }
     # AUTO_DEPS_VERBS BEGIN
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1 || (streq(cmd, "coverage") == 1 && _covx_wanted() == 1)) {
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1 || (streq(cmd, "coverage") == 1 && _covx_wanted() == 1)) {
         # AUTO_DEPS_VERBS END
         # 6.7.6 (R): the operands are checked BEFORE the resolve — `cyrius run missing.cyr` cloned
         # and vendored every dependency and only then said "no such file".
@@ -723,7 +723,7 @@ fn main(): i64 {
         # 6.7.6 (lane C): the local-development switch and --locked, for this verb
         if (_dep_switch_setup(cmd) != 0) { return 1; }
         # 6.7.8 (C2-7): the bounds-checked mode (--bounds > CYRIUS_BOUNDS > [build] bounds), named
-        # before anything is resolved — build / run / test / tests / fuzz only.
+        # before anything is resolved — build / run / test / fuzz only.
         if (_cfg_apply_bounds(cmd) != 0) { return 1; }
         # 6.7.6 (part T): test / bench / fuzz compile in the TEST SCOPE — [test], cbt/manifest.cyr
         if (_tc_scope_verb(cmd) == 1) {
@@ -838,9 +838,9 @@ fn main(): i64 {
         # 0..N files. `cyrius test a.tcyr b.tcyr` used to run ONLY a and report its
         # verdict for the pair.
         # 6.7.6: ...or DIRECTORIES — `cyrius test <dir>` runs every .tcyr under it, recursively
-        # (it was `error: not a file`; that walk was the separate `cyrius tests <dir>` verb, now a
-        # deprecated alias). One directory is exactly `cmd_tests`; a mix runs each file once
-        # (_test_path). CHANGELOG [6.7.6]
+        # (it was `error: not a file`; that walk was the separate `cyrius tests <dir>` verb, a
+        # deprecated alias until its removal at 6.7.12). One directory is exactly `cmd_tests`; a mix
+        # runs each file once (_test_path). CHANGELOG [6.7.6]
         if (_cli_npos() == 1) {
             if (is_dir(str_from(_cli_pos_at(0))) == 1) { return cmd_tests(_cli_pos_at(0)); }
         }
@@ -866,9 +866,9 @@ fn main(): i64 {
         # No args: auto-discover every .tcyr under tests/, at ANY depth.
         #
         # v6.5.11: RECURSIVE, via the same `_tests_walk` the plural `cyrius tests`
-        # verb has used since v6.0.62. This was two depth-1 `dir_list` scans
-        # (tests/tcyr, then tests), so a test in a subfolder silently never ran
-        # while the verb still exited 0 — the same defect the v6.5.7 pass fixed for
+        # verb used from v6.0.62 (removed at 6.7.12; `cyrius test <dir>` is that walk).
+        # This was two depth-1 `dir_list` scans (tests/tcyr, then tests), so a test in
+        # a subfolder silently never ran while the verb still exited 0 — the same defect the v6.5.7 pass fixed for
         # bench/fuzz and never brought this verb along with. See axis 4 of
         # tests/gates/toolchain/scaffold_verb_discovery.sh: top-level-only is a
         # defect, not a design choice.
@@ -904,18 +904,6 @@ fn main(): i64 {
         println(" failed");
         if (_fail > 0) { return 1; }
         return 0;
-    }
-
-    # v6.0.62: plural verb — recursive folder/suite runner. `cyrius tests`
-    # walks tests/ at any depth; `cyrius tests <dir>` scopes to a subtree.
-    # 6.7.6: DEPRECATED — `cyrius test <dir>` is the same walk. It stays one release with a
-    # one-line notice naming the new spelling, then goes (roadmap, Break 1). CHANGELOG [6.7.6]
-    if (streq(cmd, "tests") == 1) {
-        if (_cli_operands_ok("tests", 0, 1) == 0) { return 1; }
-        var tsd = "tests";
-        if (_cli_npos() > 0) { tsd = _cli_pos_at(0); }
-        _tests_verb_deprecated(tsd);
-        return cmd_tests(tsd);
     }
 
     if (streq(cmd, "bench") == 1) {

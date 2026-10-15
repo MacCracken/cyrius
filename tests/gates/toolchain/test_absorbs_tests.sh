@@ -1,8 +1,9 @@
 #!/bin/sh
 # test_absorbs_tests.sh — 6.7.6 (Break 1, lane G). ONE test verb: `cyrius test <file>`,
 # `cyrius test <dir>` (recursive), several operands (each file once) and a bare `cyrius test`
-# (unchanged); `cyrius tests [dir]` is a deprecated alias for one release with a one-line notice
-# naming the new spelling. And `[build] test_standalone = true` lets `cyrius test` run a corpus
+# (unchanged); `cyrius tests [dir]`, the deprecated alias from 6.7.6, was removed at 6.7.12 (the
+# user's decision D21): an unknown command whose refusal names `cyrius test <dir>`. And
+# `[build] test_standalone = true` lets `cyrius test` run a corpus
 # whose tests define a fn the [deps] stdlib prepend also defines — this repo's own.
 #
 # WHY: two verbs did one job and CLAUDE.md had to warn about the difference: `cyrius test <dir>`
@@ -21,8 +22,11 @@
 #   5  several operands mixing a dir, a subdir and a file: each file ONCE (3 passed, not 5);
 #      an empty dir among them is a counted, named failure
 #   6  bare `cyrius test`: every .tcyr under tests/, each once (unchanged)
-#   7  `cyrius tests <dir>`: one stderr line naming `cyrius test <dir>`, the same stdout and exit
-#      as `cyrius test <dir>`; bare `cyrius tests` names `cyrius test tests`
+#   7  6.7.12: `cyrius tests <dir>` is refused — rc 1, `Unknown command: tests` and one error line
+#      naming `cyrius test <dir>`; no test runs, nothing on stdout but the help pointer
+#   7b bare `cyrius tests`, `cyrius tests --help` and `cyrius tests --bounds tests` are the same
+#      refusal (the verb is gone from the dispatch, the spec tables and the help); `cyrius --help`
+#      has no `tests` row
 #   8  the run collision: [deps] stdlib carries process, a test defines `fn run()` — without the
 #      key a duplicate-fn compile error; with `[build] test_standalone = true` it passes
 #   9  the key really drops the prepend: a test calling strlen with no include passes WITHOUT the
@@ -40,6 +44,9 @@
 #   M2  cyrius.cyr: the multi-operand loop calls cmd_test (no dir walk, no dedupe)      5 5b
 #   M3  commands.cyr: _test_path without `_tests_first_run`, no `_tests_seen`           5
 #   M4  cyrius.cyr: the `tests` branch without _tests_verb_deprecated                   7 7b
+#       (6.7.12, rows 7 / 7b now the refusal; each a scratch copy of the tree through this gate:)
+#   M9  6.7.11's alias restored (dispatch arm, known verb, spec rows, help row)          7 7b
+#   M10 the refusal's hint line dropped (`Unknown command: tests` alone)                 7 7b
 #   M5  commands.cyr: cmd_test never sets _skip_deps for test_standalone                8 9 12
 #   M6  manifest.cyr: a non-bool test_standalone read as false, unnamed                 10
 #   M7  cyrius.cyml: `test_standalone = true` deleted                                   12 (x2)
@@ -123,16 +130,25 @@ if [ "$RC" = 0 ] && [ "$(marks a)" = 1 ] && [ "$(marks b)" = 1 ] && [ "$(marks c
 else fail "6: rc $RC, a $(marks a)x b $(marks b)x c $(marks c)x"; show; fi
 
 # ── 7 ──
-cy p test tests/u; cp "$W/out" "$W/new.out"; NRC=$RC
+# 6.7.12 (D21): the alias is gone; its refusal names the replacement and runs nothing.
+HINT='error: `cyrius tests` was removed at 6.7.12: use `cyrius test <dir>` (`cyrius test tests` for tests/)'
 cy p tests tests/u
 nl=$(grep -c . "$W/err" || true)
-if [ "$RC" = "$NRC" ] && cmp -s "$W/out" "$W/new.out" && [ "$nl" = 1 ] \
-    && grep -qF 'warn: `cyrius tests` is deprecated and goes in the next release; use `cyrius test tests/u`' "$W/err"; then
-    echo "  ok 7: cyrius tests tests/u — one notice naming \`cyrius test tests/u\`, same stdout and exit as the new spelling"
-else fail "7: rc $RC (new spelling $NRC), stderr $nl line(s), stdout $(cmp -s "$W/out" "$W/new.out" && echo same || echo differs)"; show; fi
-cy p tests
-if [ "$RC" = 0 ] && grep -qF 'use `cyrius test tests`' "$W/err" && grep -q '^3 passed, 0 failed$' "$W/out"; then echo "  ok 7b: bare cyrius tests names \`cyrius test tests\` and still runs tests/"
-else fail "7b: rc $RC"; show; fi
+if [ "$RC" = 1 ] && [ "$nl" = 2 ] && grep -qxF 'Unknown command: tests' "$W/err" && grep -qxF "$HINT" "$W/err" \
+    && [ "$(marks b)" = 0 ] && [ "$(marks c)" = 0 ] && ! grep -q 'passed' "$W/out"; then
+    echo "  ok 7: cyrius tests tests/u — refused (rc 1): Unknown command, one line naming \`cyrius test <dir>\`; nothing ran"
+else fail "7: rc $RC (want 1), stderr $nl line(s) (want 2), b $(marks b)x c $(marks c)x"; show; fi
+r7b=0
+for a in "" "--help" "--bounds tests"; do
+    # shellcheck disable=SC2086
+    cy p tests $a
+    if [ "$RC" = 1 ] && grep -qxF 'Unknown command: tests' "$W/err" && grep -qxF "$HINT" "$W/err" && [ "$(marks a)" = 0 ] && ! grep -qE 'passed|Usage' "$W/out"; then r7b=$((r7b + 1))
+    else fail "7b: cyrius tests $a — rc $RC, not the refusal"; show; fi
+done
+cy p --help
+if [ "$r7b" = 3 ] && [ "$RC" = 0 ] && grep -q 'test \[' "$W/out" && ! grep -qE '^ +tests( |$)' "$W/out"; then
+    echo "  ok 7b: bare cyrius tests, tests --help and tests --bounds tests are the same refusal; cyrius --help has no tests row"
+else fail "7b: $r7b of 3 refusals; cyrius --help rc $RC, tests row $(grep -cE '^ +tests( |$)' "$W/out" || true)"; fi
 
 # ── 8 ──
 RUNFN='include "lib/syscalls.cyr"\nfn run(): i64 { return 7; }\nsyscall(1, 1, "MARK-run\\n", 9);\nsyscall(60, run() - 7);\n'
@@ -184,4 +200,4 @@ if [ "$RC" != 0 ] && grep -q "duplicate fn 'run'" "$W/err"; then echo "  ok 12b:
 else fail "12b: rc $RC without the key — the anti-vacuous half did not collide"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: test_absorbs_tests — $FAIL row(s) failed"; exit 1; }
-echo "PASS: test_absorbs_tests (cyrius test <file|dir>..., bare unchanged, tests = deprecated alias, [build] test_standalone runs this repo's corpus)"
+echo "PASS: test_absorbs_tests (cyrius test <file|dir>..., bare unchanged, cyrius tests refused naming test <dir>, [build] test_standalone runs this repo's corpus)"

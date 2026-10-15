@@ -3882,8 +3882,9 @@ with an `N passed, M failed` tally of the files they ran.
 may mix files and directories and each file runs once, and a bare `cyrius test` is unchanged.
 A directory holding no `.tcyr` is a failure, by name. Until 6.7.6 `cyrius test <dir>` was
 `error: not a file` and the directory walk was a second verb, `cyrius tests [dir]`; that
-spelling is a deprecated alias (still accepted at 6.7.9, to be removed) that prints a one-line
-notice naming the replacement (`cyrius test <dir>`; a bare `cyrius tests` was `cyrius test tests`).
+spelling was a deprecated alias from 6.7.6 and was removed at 6.7.12: `cyrius tests` is an
+unknown command (rc 1) whose refusal names the replacement (`cyrius test <dir>`; a bare
+`cyrius tests` was `cyrius test tests`).
 
 ## Manifest keys (`cyrius.cyml`)
 
@@ -4212,7 +4213,6 @@ cyrius test tests/tcyr/crossos           # a directory: every .tcyr under it, re
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
 cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6.5)
-cyrius tests [dir]                       # DEPRECATED alias (6.7.6) of `cyrius test <dir>`; to be removed
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
 cyrius fuzz --poison [path|dir]          # poisoning allocators + redzones; an overwrite exits 86 (6.6.18)

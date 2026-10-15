@@ -565,8 +565,8 @@ fn cmd_test(source): i64 {
 
 # v6.0.62: `cyrius tests [dir]` — the plural verb, a RECURSIVE folder/suite
 # runner (vs `cyrius test <file>` single-file + bare `cyrius test` shallow
-# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner and
-# `tests` its deprecated alias (CHANGELOG [6.7.6]). Walks `dir` (default "tests") for *.tcyr at
+# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner (CHANGELOG [6.7.6]);
+# the `tests` alias was removed at 6.7.12. Walks `dir` (default "tests") for *.tcyr at
 # any depth, runs each via cmd_test, aggregates _pass/_fail. Mirrors the
 # proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
 # for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
@@ -577,7 +577,7 @@ fn cmd_test(source): i64 {
 # possible failure for a test runner.
 # 6.6.17 (P1): the files a bare `cyrius test` has already run, so a file that `[build] test` names
 # AND the tests/ walk finds runs ONCE (crab declares `test = "tests"`; chakshu, klug and sit name
-# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>` / `tests`, which never read the key).
+# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>`, which never reads the key).
 # 6.7.6: a multi-operand `cyrius test a b ...` tracks too — see _test_path.
 var _tests_seen = 0;
 
@@ -760,24 +760,11 @@ fn _test_path(p): i64 {
     return 0;
 }
 
-# 6.7.6: `cyrius tests [dir]` is the deprecated spelling of `cyrius test <dir>` — one release, then it
-# goes (roadmap, Break 1). The notice names the exact replacement: bare `cyrius tests` walked tests/
-# and never read `[build] test`, so its equivalent is `cyrius test tests`, not bare `cyrius test`.
-fn _tests_verb_deprecated(dir): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "`cyrius tests` is deprecated and goes in the next release; use `cyrius test ");
-    str_builder_add_cstr(sb, _shown(dir));
-    str_builder_add_cstr(sb, "`");
-    _warn(str_data(str_builder_build(sb)));
-    return 0;
-}
-
-# A directory's suite: `cyrius test <dir>` (and the deprecated `cyrius tests [dir]`, and `cyrius
-# audit`'s sweep).
+# A directory's suite: `cyrius test <dir>` and `cyrius audit`'s sweep.
 fn cmd_tests(dir): i64 {
     _pass = 0; _fail = 0; _tests_found = 0;
     if (is_dir(str_from(dir)) == 0) {
-        sys_write(STDERR_FD, "cyrius tests: not a directory: ", 31);
+        sys_write(STDERR_FD, "cyrius test: not a directory: ", 30);
         sys_write(STDERR_FD, dir, strlen(dir));
         sys_write(STDERR_FD, "\n", 1);
         return 1;
@@ -1104,7 +1091,7 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
 
 fn cmd_bench(source): i64 {
     # v6.5.7: a DIRECTORY argument is now honoured — `cyrius bench benches/perf`
-    # walks that subtree, symmetric with `cyrius tests <dir>`. It previously ran
+    # walks that subtree, symmetric with `cyrius test <dir>`. It previously ran
     # nothing, printed nothing and exited 0, so a gate written that way passed
     # over zero benchmarks. A path that does not exist is refused rather than
     # silently building the auto-prepended stdlib into a do-nothing program.

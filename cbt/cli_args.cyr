@@ -90,7 +90,6 @@ fn _cli_verb_compiles(verb): i64 {
     if (streq(verb, "build") == 1) { return 1; }
     if (streq(verb, "run") == 1) { return 1; }
     if (streq(verb, "test") == 1) { return 1; }
-    if (streq(verb, "tests") == 1) { return 1; }
     if (streq(verb, "bench") == 1) { return 1; }
     if (streq(verb, "fuzz") == 1) { return 1; }
     if (streq(verb, "check") == 1) { return 1; }
@@ -112,10 +111,9 @@ fn _cli_spec_a(verb): i64 {
     # 6.7.6 (part T): run / test / bench / fuzz take --no-deps (no [deps] prepend — the test scope's
     # too) and --no-lock (the resolve writes no cyrius.lock), as build has; --local / --no-local /
     # --locked come with the target block. 6.7.8 (C2-7): --bounds — the bounds-checked mode — on every
-    # verb that compiles a program it then runs or ships (build / run / test / tests / fuzz).
+    # verb that compiles a program it then runs or ships (build / run / test / fuzz).
     if (streq(verb, "run") == 1) { return "--dry-run|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
-    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "bench") == 1) { return "--timeout=|--no-deps|--no-lock"; }
     if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "check") == 1) { return "--with-deps"; }
@@ -159,7 +157,6 @@ fn _cli_operands(verb): i64 {
     if (streq(verb, "build") == 1) { return "[<source> [<output>]]"; }
     if (streq(verb, "run") == 1) { return "<source.cyr> [args...] | <prog.cyx>"; }
     if (streq(verb, "test") == 1) { return "[<test.tcyr|dir>...]"; }
-    if (streq(verb, "tests") == 1) { return "[<dir>]"; }
     if (streq(verb, "bench") == 1) { return "[<bench.bcyr|dir>]"; }
     if (streq(verb, "fuzz") == 1) { return "[<harness.fcyr|dir>]"; }
     if (streq(verb, "check") == 1) { return "<source.cyr>..."; }
@@ -211,7 +208,6 @@ fn _cli_known_verb_a(verb): i64 {
     if (streq(verb, "build") == 1) { return 1; }
     if (streq(verb, "run") == 1) { return 1; }
     if (streq(verb, "test") == 1) { return 1; }
-    if (streq(verb, "tests") == 1) { return 1; }
     if (streq(verb, "bench") == 1) { return 1; }
     if (streq(verb, "fuzz") == 1) { return 1; }
     if (streq(verb, "check") == 1) { return 1; }
@@ -228,6 +224,17 @@ fn _cli_known_verb_a(verb): i64 {
     if (streq(verb, "lib") == 1) { return 1; }
     if (streq(verb, "pulsar") == 1) { return 1; }
     if (streq(verb, "lsp") == 1) { return 1; }
+    return 0;
+}
+
+# A verb the CLI no longer has, named with its replacement after main()'s "Unknown command" line.
+# `cyrius tests [dir]` was the deprecated alias of `cyrius test <dir>` from 6.7.6 and was removed at
+# 6.7.12 (the user's decision D21); a bare `cyrius tests` walked tests/ and never read [test]
+# files, so it was `cyrius test tests`, not a bare `cyrius test`. CHANGELOG [6.7.12]
+fn _cli_removed_verb_hint(verb): i64 {
+    if (streq(verb, "tests") == 1) {
+        _err("`cyrius tests` was removed at 6.7.12: use `cyrius test <dir>` (`cyrius test tests` for tests/)");
+    }
     return 0;
 }
 
@@ -342,10 +349,6 @@ fn _cli_help_extra(verb): i64 {
         println("  directory) configure test, bench and fuzz compiles only; `cyrius help manifest`.");
         println("  Exit status: non-zero on any failing test, any compile failure, or no tests found.");
         println("  --bounds    compile each test in the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds).");
-    }
-    if (streq(verb, "tests") == 1) {
-        println("");
-        println("  Deprecated: `cyrius test <dir>` is the same recursive walk; `tests` goes in the next release.");
     }
     if (streq(verb, "run") == 1) {
         println("");
@@ -656,19 +659,18 @@ fn _cli_operands_ok(verb, min, max): i64 {
 # missing.cyr` fetched every dependency and only then said "no such file", and `cyrius bench a b`
 # resolved before refusing the extra operand. The counts are the branches' own (each branch still
 # checks; this runs first), and a FILE operand must exist — `cyrius test`'s every operand (a file or
-# a directory) and the deprecated `cyrius tests`' directory too: `cyrius test missing.tcyr` cloned,
-# vendored and wrote cyrius.lock before saying "no such file" (6.7.6 review). `coverage` reaches here
+# a directory) too: `cyrius test missing.tcyr` cloned, vendored and wrote cyrius.lock before saying
+# "no such file" (6.7.6 review). `coverage` reaches here
 # only in its exec mode (6.7.10), and checks its own (`_covx_preflight`, cbt/quality.cyr). 0, or 1
 # after naming the problem.
 fn _cli_preflight(verb): i64 {
     var mn = 0 - 1;
     var mx = 0 - 1;
     # which operands name a path that must exist: 1 the first (a file), 2 the first (a file or a
-    # directory), 3 every one (a file), 4 every one (a file or a directory), 5 the first (a directory)
+    # directory), 3 every one (a file), 4 every one (a file or a directory)
     var files = 0;
     if (streq(verb, "build") == 1) { mn = 0; mx = 2; files = 1; }
     elif (streq(verb, "test") == 1) { mn = 0; files = 4; }
-    elif (streq(verb, "tests") == 1) { mn = 0; mx = 1; files = 5; }
     elif (streq(verb, "run") == 1) { mn = 1; mx = 1; files = 1; }
     elif (streq(verb, "bench") == 1) { mn = 0; mx = 1; files = 2; }
     elif (streq(verb, "fuzz") == 1) { mn = 0; mx = 1; files = 2; }
@@ -691,12 +693,6 @@ fn _cli_preflight(verb): i64 {
     while (i < last) {
         var p = _cli_pos_at(i);
         i = i + 1;
-        if (files == 5) {
-            if (is_dir(str_from(p)) == 1) { continue; }
-            if (file_exists(p) == 1) { _err_ctx("not a directory (`cyrius test <file>` runs one file)", p); }
-            else { _err_ctx("no such directory", p); }
-            return 1;
-        }
         if (file_exists(p) == 1) { continue; }
         var dir_ok = 0;
         if (files == 2 || files == 4) { dir_ok = 1; }

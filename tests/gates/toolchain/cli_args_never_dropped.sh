@@ -273,7 +273,7 @@ check "census found a plausible number of verbs (>= 30)" yes "$([ "$NVERBS" -ge 
 # review: this used to be a second hand-typed list that had drifted — build, run and
 # --version were "covered" here and never probed, and the comment claimed axes 2/3/5
 # hit every verb when axis 3 drove 5 rows and axis 5 drove 3.)
-AXIS2_VERBS="lint fmt doc vet deny header doctest check capacity coverage bench fuzz test tests clean deps version which self smoke soak distlib audit api-surface repl update install publish package lib hooks pulsar lsp build run --version"
+AXIS2_VERBS="lint fmt doc vet deny header doctest check capacity coverage bench fuzz test clean deps version which self smoke soak distlib audit api-surface repl update install publish package lib hooks pulsar lsp build run --version"
 COVERED="$AXIS2_VERBS"
 # Reasoned exemptions — one line, one reason.
 EXEMPT_init='the whole tail is forwarded verbatim to programs/cyrius-init.cyr, which parses and rejects its own flags (tests/gates/toolchain/port_language_arms.sh covers it)'
@@ -623,7 +623,7 @@ ne_check "cyrius build s -o outx is refused (-o is not a cyrius flag)" "$RC"
 check "  …and no file named '-o' exists" no "$([ -e "$W/-o" ] && echo yes || echo no)"
 
 echo "axis 11 — HELP AND PARSER CANNOT DRIFT: every flag in --help is accepted:"
-for v in build run test tests bench fuzz check lint fmt doc vet deny coverage capacity deps clean lib version audit api-surface distlib soak doctest header; do
+for v in build run test bench fuzz check lint fmt doc vet deny coverage capacity deps clean lib version audit api-surface distlib soak doctest header; do
     run_in "$W" "$CY" "$v" --help
     check "$v --help exits 0" 0 "$RC"
     HELPFLAGS=$(grep -o -- '--[a-z0-9-]*' "$T/out" | LC_ALL=C sort -u || true)

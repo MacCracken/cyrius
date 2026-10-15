@@ -1943,21 +1943,20 @@ fn _tc_cat(a, b): i64 {
     return out;
 }
 
-# 1 for the verbs that compile in the test scope: test (and its deprecated alias tests), bench,
-# fuzz. (`cyrius audit` turns it on for its test / bench sweep itself.)
+# 1 for the verbs that compile in the test scope: test, bench, fuzz. (`cyrius audit` turns it on
+# for its test / bench sweep itself.)
 fn _tc_scope_verb(verb): i64 {
-    if (streq(verb, "test") == 1 || streq(verb, "tests") == 1) { return 1; }
+    if (streq(verb, "test") == 1) { return 1; }
     if (streq(verb, "bench") == 1 || streq(verb, "fuzz") == 1) { return 1; }
     return 0;
 }
 
-# Turn the test scope on for `verb` ("test" / "bench" / "fuzz" — "tests" is test — or "audit"):
+# Turn the test scope on for `verb` ("test" / "bench" / "fuzz", or "audit"):
 # the project's [test] read and checked, and --timeout read. Before the dependency resolve (the
 # argument rule's rule 5): a refused value stops the verb before anything is written. 0, or 1
 # after naming what is wrong.
 fn _tc_setup(verb): i64 {
     _tc_verb = verb;
-    if (streq(verb, "tests") == 1) { _tc_verb = "test"; }
     if (_tc_load() != 0) { return 1; }
     _tc_arg_timeout = 0 - 1;
     if (streq(verb, "audit") == 0) {
@@ -2520,12 +2519,11 @@ fn _cfg_bounds_inject_set(): i64 {
 }
 
 # 1 for the verbs that take --bounds — and so read `[build] bounds` too (one precedence chain for
-# the mode, manifest rung included): build, run, test, tests, fuzz.
+# the mode, manifest rung included): build, run, test, fuzz.
 fn _cfg_bounds_verb(v): i64 {
     if (streq(v, "build") == 1) { return 1; }
     if (streq(v, "run") == 1) { return 1; }
     if (streq(v, "test") == 1) { return 1; }
-    if (streq(v, "tests") == 1) { return 1; }
     if (streq(v, "fuzz") == 1) { return 1; }
     return 0;
 }
