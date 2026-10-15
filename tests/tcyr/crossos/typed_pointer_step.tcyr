@@ -16,6 +16,7 @@ include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
+include "lib/overflow.cyr"
 
 struct Pt { x; y; z; }
 struct Hold { p: *Pt; b: *u8; }
@@ -523,6 +524,28 @@ fn onebyte_rows(a: *u8): i64 {
     return 0;
 }
 
+# ── `+| +? -| -?` are integer operators: no step on the count or the result (6.7.11) ─────────────
+# They lower to lib/overflow.cyr's i64 helpers, so the count is not scaled — and the RESULT is no
+# pointer either (the user's decision (a), 2026-10-13): it restored the left operand's step, so with
+# `q: *i32` `(q +| 1) + 1` was q + 5 and `2 + (q +| 1)` q + 9. The gate's SAT rows hold the warnings.
+fn sat_rows(c: *i32): i64 {
+    var q: *i32 = &buf;
+    var p: *u8 = &buf;
+    assert_eq(d(q +| 1, q), 1, "*i32: q +| 1 adds one byte");
+    assert_eq(d((q +| 1) + 1, q), 2, "*i32: (q +| 1) + 1");
+    assert_eq(d((q +? 3) - 1, q), 2, "*i32: (q +? 3) - 1");
+    assert_eq(d((c -| 1) + 1, q), 0, "*i32 parameter: (c -| 1) + 1");
+    assert_eq(d((c -? 1) + 2, q), 1, "*i32 parameter: (c -? 1) + 2");
+    assert_eq(d(2 + (q +| 1), q), 3, "*i32: 2 + (q +| 1)");
+    assert_eq(d((p +| 1) + 1, q), 2, "*u8: (p +| 1) + 1");
+    assert_eq(((p -? 0) + 1) - q, 1, "*u8: ((p -? 0) + 1) - q is n - p");
+    assert_eq(d((q + 1) + 1, q), 8, "*i32 ctl: (q + 1) + 1 steps");
+    var n = 40;
+    assert_eq((n +| 1) + 1, 42, "an integer: (n +| 1) + 1");
+    assert_eq((n -? 1) + 1, 40, "an integer: (n -? 1) + 1");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
 generic_returns();
@@ -544,6 +567,7 @@ op_rows_Pt();
 qm_rows();
 intrin_rows();
 onebyte_rows(&buf);
+sat_rows(&buf);
 
 var A_u8: *u8 = &buf;
 var A_pt: *Pt = &buf;

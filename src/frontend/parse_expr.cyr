@@ -7679,7 +7679,10 @@ fn _PEXPR_IMPL(S): i64 {
             # Compiles to a call into lib/overflow.cyr. No constant-fold
             # path; let the helper handle any corner cases. SPSC(0) during
             # PARSE_TERM so pointer scaling doesn't apply (overflow ops
-            # are defined on integers only).
+            # are defined on integers only), and the RESULT is an integer
+            # too: no step, so with `q: *i32` `(q +| 1) + 1` is q + 2 — it
+            # restored q's step, q + 5 (6.6.17-6.7.10; the user's decision
+            # (a), 2026-10-13). CHANGELOG [6.7.11]
             else { if (typ == 114) {
                     STI(S, GTI(S) + 1);
                     EPUSHR(S);
@@ -7687,7 +7690,7 @@ fn _PEXPR_IMPL(S): i64 {
                     PARSE_TERM(S);
                     EPUSHR(S);
                     EMIT_OVF_CALL(S, "_sat_add_i64");
-                    SPSC(S, ps);
+                    SPSC(S, 0); ps = 0;
                     _cfo = 0;
                 }
                 else { if (typ == 115) {
@@ -7697,7 +7700,7 @@ fn _PEXPR_IMPL(S): i64 {
                         PARSE_TERM(S);
                         EPUSHR(S);
                         EMIT_OVF_CALL(S, "_chk_add_i64");
-                        SPSC(S, ps);
+                        SPSC(S, 0); ps = 0;
                         _cfo = 0;
                     }
                     else { if (typ == 117) {
@@ -7707,7 +7710,7 @@ fn _PEXPR_IMPL(S): i64 {
                             PARSE_TERM(S);
                             EPUSHR(S);
                             EMIT_OVF_CALL(S, "_sat_sub_i64");
-                            SPSC(S, ps);
+                            SPSC(S, 0); ps = 0;
                             _cfo = 0;
                         }
                         else { if (typ == 118) {
@@ -7717,7 +7720,7 @@ fn _PEXPR_IMPL(S): i64 {
                                 PARSE_TERM(S);
                                 EPUSHR(S);
                                 EMIT_OVF_CALL(S, "_chk_sub_i64");
-                                SPSC(S, ps);
+                                SPSC(S, 0); ps = 0;
                                 _cfo = 0;
                             }
                             else { if (typ == 27) {

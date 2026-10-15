@@ -321,6 +321,26 @@
 #   MAW2 `_await_coro_suspend` without its `SPSC(S, 0)` -> RED AW3a AW3b AW4da AW4db
 #   The compiler before this bite -> RED AW1a AW1b AW2da AW2db AW3a AW3b AW4da AW4db (its aarch64
 #   compiler: the repro exits 9)
+#
+# SAT — `+| +? -| -?` ARE INTEGER OPERATORS (6.7.11; the user's decision (a), 2026-10-13: "Integers
+# only"; issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md). They lower to
+# lib/overflow.cyr's i64 helpers, and their arm parsed the count with no step (it adds bytes) — then
+# restored the left operand's step, so the SUM was the `*T` again: with `q: *i32` `(q +| 1) + 1` was
+# q + 5 (6.6.17-6.7.10). The sum is now an integer (`SPSC(S, 0); ps = 0;`), as `(x == q)` is.
+#   SATR the issue's repro VERBATIM: 28 (it was 58); SAT1 each operator on a `*i32` / `*u8` local and
+#        parameter, then `+ 1` / `- 1`, in bytes, `2 + (q +| 1)`, and the `q + 1` / integer controls;
+#   SAT2 `((p8 +| 1) + 1) - q32` / `((p8 -? 0) + 1) - q32` are `n - p` (they were refused: the sum was
+#        the `*u8` again); SAT3 `var r: *i32 = q OP 1;` warns "assigning non-pointer" for each operator
+#        (it was silent) — (x86 plain and CYRIUS_IR=3, aarch64 (qemu); the value file's sat_rows on
+#        every PL leg)
+# MUTATION LEDGER (6.7.11, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant>):
+#   MSAT1 `+|` restores `SPSC(S, ps)`                  -> RED SATRa SATRb SAT1a SAT1b SAT2a SAT2b SAT3 (`+|`),
+#                                                          PLa PLb PLf PLg PLe (`(q +| 1) + 1`: 5)
+#   MSAT2 `+?` restores it                             -> RED SAT1a SAT1b SAT3 (`+?`), PLa PLb PLf PLg PLe
+#   MSAT3 `-|` restores it                             -> RED SAT1a SAT1b SAT3 (`-|`), PLa PLb PLf PLg PLe
+#   MSAT4 `-?` restores it                             -> RED SAT1a SAT1b SAT2a SAT2b SAT3 (`-?`), PL0 PL0s
+#                                                          PLa PLb PLf PLg PLe (the value file refused)
+#   (the aarch64 / cx legs' compilers are built from this tree's src)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -1074,16 +1094,18 @@ refused pldc "pointer difference of pointers with different element sizes" "PLDc
     'var B: i64[8];\nfn f(): i64 { var p: *i16 = &B; var q: *i32 = &B; return p - q; }\nsyscall(60, f());\n'
 
 # ── AW: the value of `await f` is an untyped word (6.7.11) ────────────────────────────────────
-# awx <name> <row> <want> <what> [a64]: $T/<name>.cyr under CYRIUS_ASYNC=1 on x86 (plain, CYRIUS_IR=3)
-# and, with `a64`, aarch64 (qemu) — the coroutine rows are x86 only: aarch64 refuses a mid-body
-# suspend by name ("x86-only so far").
-awx() {
+# xrow <env> <name> <row> <want> <what> [a64]: $T/<name>.cyr (compiled under <env>, `-` for none)
+# exits <want> on x86 (plain, CYRIUS_IR=3) and, with `a64`, aarch64 (qemu). awx: under CYRIUS_ASYNC=1
+# — the coroutine rows are x86 only: aarch64 refuses a mid-body suspend by name ("x86-only so far").
+xrow() {
+    xe=$1; shift
+    [ "$xe" = - ] && xe=""
     for mode in plain IR3; do
         case $mode in
             plain) env_=""; lbl="${2}a: x86" ;;
             IR3) env_="CYRIUS_IR=3"; lbl="${2}b: x86, CYRIUS_IR=3" ;;
         esac
-        rc=0; env CYRIUS_ASYNC=1 $env_ "$CC" < "$T/$1.cyr" > "$T/$1_$mode" 2> "$T/$1_$mode.err" || rc=$?
+        rc=0; env $xe $env_ "$CC" < "$T/$1.cyr" > "$T/$1_$mode" 2> "$T/$1_$mode.err" || rc=$?
         if [ "$rc" -ne 0 ]; then bad "$lbl — $4: rc $rc: $(grep '^error' "$T/$1_$mode.err" | head -1)"; continue; fi
         chmod +x "$T/$1_$mode"; got=0; timeout 10 "$T/$1_$mode" > /dev/null 2>&1 || got=$?
         if [ "$got" -eq "$3" ]; then ok "$lbl — $4: exit $got"; else bad "$lbl — $4: exit $got, want $3"; fi
@@ -1093,11 +1115,12 @@ awx() {
     if ! command -v qemu-aarch64 > /dev/null 2>&1; then
         echo "  SKIP ${2}c: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1))
     elif [ ! -x "$T/cc_a64" ]; then bad "${2}c: src/main_aarch64.cyr did not build"
-    elif CYRIUS_ASYNC=1 "$T/cc_a64" < "$T/$1.cyr" > "$T/$1.a64" 2> "$T/$1.a64.err" && [ -s "$T/$1.a64" ]; then
+    elif env $xe "$T/cc_a64" < "$T/$1.cyr" > "$T/$1.a64" 2> "$T/$1.a64.err" && [ -s "$T/$1.a64" ]; then
         chmod +x "$T/$1.a64"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$1.a64" > /dev/null 2>&1) || got=$?
         if [ "$got" -eq "$3" ]; then ok "${2}c: aarch64 (qemu) — $4: exit $got"; else bad "${2}c: aarch64 (qemu) — $4: exit $got, want $3"; fi
     else bad "${2}c: aarch64 — $4: did not compile: $(grep '^error' "$T/$1.a64.err" | head -1)"; fi
 }
+awx() { xrow CYRIUS_ASYNC=1 "$@"; }
 # aw_src <annotation> <coroutine 0/1> <result expression>: `five()`'s Future in `f`, awaited outside a
 # coroutine (main) or inside one (an async fn driven by future_force / future_pending)
 aw_src() {
@@ -1142,6 +1165,70 @@ awx awc2 AWc2 6 "the untyped control inside a coroutine"
 aw_src ': *i32' 0 'f + 1 - f' > "$T/awc3.cyr"
 awx awc3 AWc3 1 "the control: the Future pointer f: *i32 itself still steps (f + 1 - f is 1)" a64
 
+# ── SAT: `+| +? -| -?` are integer operators — no step on the count or the result (6.7.11) ─────
+# SATR: the issue's repro VERBATIM (issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md;
+# it exited 58: `(q +| 1) + 1` was q + 5 — the count unscaled, then q's step restored).
+cat > "$T/satr.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/overflow.cyr"
+var buf[64];
+fn main(): i64 {
+    var q: *i32 = &buf;
+    var a = (q +| 1) + 1;
+    var d = (q + 1) + 1;
+    return (a - &buf) * 10 + (d - &buf);
+}
+syscall(60, main());
+EOF
+xrow - satr SATR 28 "the issue's repro: (q +| 1) + 1 is q + 2, (q + 1) + 1 q + 8 (it was 58)" a64
+# SAT1: each operator on a `*i32` and a `*u8` left operand (a local, a parameter), then `+ 1`, measured
+# in bytes; the untyped-integer control; exit 0, else the failing check's number.
+cat > "$T/sat1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/overflow.cyr"
+var buf[64];
+fn d(a, b): i64 { return a - b; }
+fn cells(q: *i32, p: *u8): i64 {
+    var B = &buf + 16;
+    var l: *i32 = &buf + 16;
+    var m: *u8 = &buf + 16;
+    if (d((q +| 1) + 1, B) != 2) { return 1; }
+    if (d((q +? 1) + 1, B) != 2) { return 2; }
+    if (d((q -| 1) + 1, B) != 0) { return 3; }
+    if (d((q -? 1) + 1, B) != 0) { return 4; }
+    if (d((l +| 3) + 1, B) != 4) { return 5; }
+    if (d((l +? 3) - 1, B) != 2) { return 6; }
+    if (d((l -| 3) + 1, B) != 0 - 2) { return 7; }
+    if (d((l -? 3) - 1, B) != 0 - 4) { return 8; }
+    if (d((p +| 1) + 1, B) != 2) { return 9; }
+    if (d((p +? 1) + 1, B) != 2) { return 10; }
+    if (d((p -| 1) + 1, B) != 0) { return 11; }
+    if (d((m -? 1) + 1, B) != 0) { return 12; }
+    if (d(q +| 1, B) != 1) { return 13; }
+    if (d(2 + (q +| 1), B) != 3) { return 14; }
+    var n = 40;
+    if ((n +| 1) + 1 != 42) { return 20; }
+    if ((n +? 1) + 1 != 42) { return 21; }
+    if ((n -| 1) + 1 != 40) { return 22; }
+    if ((n -? 1) + 1 != 40) { return 23; }
+    if (d((q + 1) + 1, B) != 8) { return 24; }
+    return 0;
+}
+fn main(): i64 { return cells(&buf + 16, &buf + 16); }
+syscall(60, main());
+EOF
+xrow - sat1 SAT1 0 "+| +? -| -? on a *i32 / *u8 local and parameter, then + 1: a byte count; the integer and q + 1 controls" a64
+# SAT2: on a `*u8` the result is no pointer either — `((p +| 1) + 1) - q32` is `n - p` (it was refused as
+# a different-sizes difference: the result was the `*u8` again)
+printf 'include "lib/syscalls.cyr"\ninclude "lib/overflow.cyr"\nvar buf[64];\nfn main(): i64 {\n    var p: *u8 = &buf;\n    var q: *u32 = &buf;\n    var a = ((p +| 1) + 1) - q;\n    var b = ((p -? 0) + 1) - q;\n    return a * 10 + b;\n}\nsyscall(60, main());\n' > "$T/sat2.cyr"
+xrow - sat2 SAT2 21 "((p8 +| 1) + 1) - q32 and ((p8 -? 0) + 1) - q32 are n - p, 2 and 1 bytes (they were refused)" a64
+# SAT3: the result into a `*T` is an integer into a typed pointer — it warns, as `q | 0` does (it was
+# silent: the result was the `*i32` again)
+for op in '+|' '+?' '-|' '-?'; do
+    warns "sat3_$(printf '%s' "$op" | od -An -tx1 | tr -d ' ')" "assigning non-pointer to typed pointer" "SAT3: var r: *i32 = q $op 1; warns" \
+        "include \"lib/syscalls.cyr\"\ninclude \"lib/overflow.cyr\"\nvar buf[8];\nfn f(): i64 { var q: *i32 = &buf; var r: *i32 = q $op 1; return 0; }\nsyscall(60, f());\n"
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared \`: *T\` keeps it (PL legs, PLWo); the value of \`await f\` is an untyped word, outside a coroutine and inside one (AW1-AW4d, AWc)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared \`: *T\` keeps it (PL legs, PLWo); the value of \`await f\` is an untyped word, outside a coroutine and inside one (AW1-AW4d, AWc); \`+| +? -| -?\` are integer operators, no step on the count or the sum (SATR, SAT1-SAT3, PL legs)"
