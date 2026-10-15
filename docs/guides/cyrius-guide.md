@@ -1066,11 +1066,12 @@ different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — the
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
 only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
 computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
-unary `-` / `~`, `p?`, an operator fn's result (unless the operator fn declares `: *T`: then,
-as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
+unary `-` / `~`, `p?`, `await f`, an operator fn's result (unless the operator fn declares `: *T`:
+then, as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
 `(k * p) + 1`, `(m & p) + 1`, `(-p) + 1` and `mk(p).n + 1` add 1, and such a value assigned to a
 `*T` warns "assigning non-pointer to typed pointer". (Before 6.7.9 the pointer's step leaked
-through them: with `p: *i32`, `(x == p) + 100` was 401.) (Before 6.6.17,
+through them: with `p: *i32`, `(x == p) + 100` was 401; before 6.7.11 through `await f` too, in a
+coroutine or not: with `f: *i32`, `(await f) + 1` added 4.) (Before 6.6.17,
 `q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
 its last argument's step.)
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /

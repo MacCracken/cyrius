@@ -1458,6 +1458,7 @@ fn _await_coro_suspend(S, sk, fut): i64 {
     if (fut == 1) { vslot = _await_coro_force(S, slot, ff, fpend, again); }
     _await_unspill(S, s0, d);
     EFLLOAD(S, vslot);
+    SPSC(S, 0);                           # the awaited value is an untyped word (_await_force)
     return 0;
 }
 # Pop `d` pending expression words into consecutive fresh coroutine-frame words (top of stack
@@ -1505,7 +1506,16 @@ fn _await_call1(S, fi): i64 {
     EPUSHR(S);
     ECALLPOPS(S, 1);
     ECALLFIX(S, fi);
-    ECALLCLEAN(S, 1);
+    ECALLCLEAN(S, 1);                     # 6.6.5: was missing (see ECALLCLEAN)
+    return 0;
+}
+# `await e` outside a coroutine: rax = future_force(e). The value is an untyped word, so it leaves
+# no pointer step: with `f: *i32`, `(await f) + 1` added 4 — the step the operand factor left
+# (6.6.17-6.7.10). Inside a coroutine `_await_coro_suspend` resets it the same way. CHANGELOG [6.7.11]
+fn _await_force(S, ff): i64 {
+    PARSE_FACTOR(S);                      # rax = the Future object
+    _await_call1(S, ff);                  # rax = future_force(future)
+    SPSC(S, 0);
     return 0;
 }
 
@@ -5554,12 +5564,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             PARSE_FACTOR(S);
             return 0;
         }
-        PARSE_FACTOR(S);                          # rax = the Future object
-        EPUSHR(S);                                # push the future as the sole arg
-        ECALLPOPS(S, 1);                          # marshal into arg-reg 0
-        ECALLFIX(S, _aw_ff);                      # rax = future_force(future)
-        ECALLCLEAN(S, 1);                         # 6.6.5: was missing (see ECALLCLEAN)
-        return 0;
+        return _await_force(S, _aw_ff);
     }
     # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
     # base actually work (param passing, zero-param, unique naming); lexical

@@ -303,6 +303,24 @@
 #   (PL* / PLR* = the x86 legs and PE; the aarch64 / cx legs' compilers are built from this tree's src)
 #   The compiler before this bite -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe PLW1-3 PLWc PLD (the value
 #   file: 112 of 215 fail); its aarch64 / cx compilers exit 255 on the repro and 112 on the value file
+#
+# AW — THE VALUE OF `await f` IS AN UNTYPED WORD (6.7.11; issues/2026-10-11-await-result-keeps-typed-
+# pointer-step.md — the last arm of 6.7.9's decision 1(a), "the pointer step resets after every
+# operator that does not produce a pointer"). Neither the force call (`_await_force`) nor a coroutine's
+# suspend landing (`_await_coro_suspend`) reset the step the operand factor left, so with `f: *i32`
+# `(await f) + 1` was 9 (5 + 1 * sizeof(i32)), on x86_64 and aarch64, in a coroutine too (6.6.17-6.7.10).
+#   AW1 the issue's repro VERBATIM: 6 (it was 9); AW2 `f: *u8`; AW2d `((await f) + 1) - q32` with
+#       `f: *u8` is `n - p` (it was refused "pointer difference ... different element sizes");
+#   AW3 / AW4 / AW4d the same inside a coroutine (an async fn driven by future_force / future_pending;
+#       x86 only — aarch64 refuses a mid-body suspend by name); AWc1 / AWc2 the untyped control
+#       `var f = five();`, outside and inside; AWc3 the Future pointer `f: *i32` itself still steps
+#   (x86 plain and CYRIUS_IR=3; aarch64 (qemu) for the rows outside a coroutine)
+# MUTATION LEDGER (6.7.11, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant>):
+#   MAW1 `_await_force` without its `SPSC(S, 0)`        -> RED AW1a AW1b AW2da AW2db (its aarch64
+#                                                          compiler: the repro exits 9)
+#   MAW2 `_await_coro_suspend` without its `SPSC(S, 0)` -> RED AW3a AW3b AW4da AW4db
+#   The compiler before this bite -> RED AW1a AW1b AW2da AW2db AW3a AW3b AW4da AW4db (its aarch64
+#   compiler: the repro exits 9)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -1055,6 +1073,75 @@ exits pld 3 "PLD: p16 - (k * q32) steps the integer by 2 (it was refused as a po
 refused pldc "pointer difference of pointers with different element sizes" "PLDc: p16 - q32 is still the different-sizes error" \
     'var B: i64[8];\nfn f(): i64 { var p: *i16 = &B; var q: *i32 = &B; return p - q; }\nsyscall(60, f());\n'
 
+# ── AW: the value of `await f` is an untyped word (6.7.11) ────────────────────────────────────
+# awx <name> <row> <want> <what> [a64]: $T/<name>.cyr under CYRIUS_ASYNC=1 on x86 (plain, CYRIUS_IR=3)
+# and, with `a64`, aarch64 (qemu) — the coroutine rows are x86 only: aarch64 refuses a mid-body
+# suspend by name ("x86-only so far").
+awx() {
+    for mode in plain IR3; do
+        case $mode in
+            plain) env_=""; lbl="${2}a: x86" ;;
+            IR3) env_="CYRIUS_IR=3"; lbl="${2}b: x86, CYRIUS_IR=3" ;;
+        esac
+        rc=0; env CYRIUS_ASYNC=1 $env_ "$CC" < "$T/$1.cyr" > "$T/$1_$mode" 2> "$T/$1_$mode.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "$lbl — $4: rc $rc: $(grep '^error' "$T/$1_$mode.err" | head -1)"; continue; fi
+        chmod +x "$T/$1_$mode"; got=0; timeout 10 "$T/$1_$mode" > /dev/null 2>&1 || got=$?
+        if [ "$got" -eq "$3" ]; then ok "$lbl — $4: exit $got"; else bad "$lbl — $4: exit $got, want $3"; fi
+    done
+    [ "${5:-}" = a64 ] || return 0
+    xcc
+    if ! command -v qemu-aarch64 > /dev/null 2>&1; then
+        echo "  SKIP ${2}c: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1))
+    elif [ ! -x "$T/cc_a64" ]; then bad "${2}c: src/main_aarch64.cyr did not build"
+    elif CYRIUS_ASYNC=1 "$T/cc_a64" < "$T/$1.cyr" > "$T/$1.a64" 2> "$T/$1.a64.err" && [ -s "$T/$1.a64" ]; then
+        chmod +x "$T/$1.a64"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$1.a64" > /dev/null 2>&1) || got=$?
+        if [ "$got" -eq "$3" ]; then ok "${2}c: aarch64 (qemu) — $4: exit $got"; else bad "${2}c: aarch64 (qemu) — $4: exit $got, want $3"; fi
+    else bad "${2}c: aarch64 — $4: did not compile: $(grep '^error' "$T/$1.a64.err" | head -1)"; fi
+}
+# aw_src <annotation> <coroutine 0/1> <result expression>: `five()`'s Future in `f`, awaited outside a
+# coroutine (main) or inside one (an async fn driven by future_force / future_pending)
+aw_src() {
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\n'
+    if [ "$2" -eq 1 ]; then
+        printf 'async fn outer(): i64 {\n    var f%s = five();\n    var r = %s;\n    return r;\n}\n' "$1" "$3"
+        printf 'fn main(): i64 {\n    alloc_init();\n    var C = outer();\n    var r = future_force(C);\n    while (future_pending(C)) { r = future_force(C); }\n    return r;\n}\nsyscall(60, main());\n'
+    else
+        printf 'fn main(): i64 {\n    alloc_init();\n    var f%s = five();\n    var r = %s;\n    return r;\n}\nsyscall(60, main());\n' "$1" "$3"
+    fi
+}
+# AW1: the issue's repro VERBATIM (issues/2026-10-11-await-result-keeps-typed-pointer-step.md; it
+# exited 9: the `1` scaled by sizeof(i32)).
+cat > "$T/aw1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+async fn five(): i64 { return 5; }
+fn main(): i64 {
+    alloc_init();
+    var f: *i32 = five();
+    var r = (await f) + 1;
+    return r;
+}
+syscall(60, main());
+EOF
+awx aw1 AW1 6 "the issue's repro: (await f) + 1 with f: *i32 is 6 (it was 9)" a64
+aw_src ': *u8' 0 '(await f) + 1' > "$T/aw2.cyr"
+awx aw2 AW2 6 "(await f) + 1 with f: *u8" a64
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\nfn main(): i64 {\n    alloc_init();\n    var f: *u8 = five();\n    var q: *u32 = &B;\n    var qa: i64 = q;\n    return ((await f) + 1) - q + qa;\n}\nsyscall(60, main());\n' > "$T/aw2d.cyr"
+awx aw2d AW2d 6 "((await f) + 1) - q32 with f: *u8 is n - p (it was refused as a different-sizes difference)" a64
+aw_src ': *i32' 1 '(await f) + 1' > "$T/aw3.cyr"
+awx aw3 AW3 6 "inside a coroutine, (await f) + 1 with f: *i32 (it was 9)"
+aw_src ': *u8' 1 '(await f) + 1' > "$T/aw4.cyr"
+awx aw4 AW4 6 "inside a coroutine, (await f) + 1 with f: *u8"
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\nasync fn outer(): i64 {\n    var f: *u8 = five();\n    var q: *u32 = &B;\n    var qa: i64 = q;\n    return ((await f) + 1) - q + qa;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer();\n    var r = future_force(C);\n    while (future_pending(C)) { r = future_force(C); }\n    return r;\n}\nsyscall(60, main());\n' > "$T/aw4d.cyr"
+awx aw4d AW4d 6 "inside a coroutine, ((await f) + 1) - q32 with f: *u8 is n - p (it was refused)"
+aw_src '' 0 '(await f) + 1' > "$T/awc1.cyr"
+awx awc1 AWc1 6 "the untyped control var f = five(); (await f) + 1" a64
+aw_src '' 1 '(await f) + 1' > "$T/awc2.cyr"
+awx awc2 AWc2 6 "the untyped control inside a coroutine"
+aw_src ': *i32' 0 'f + 1 - f' > "$T/awc3.cyr"
+awx awc3 AWc3 1 "the control: the Future pointer f: *i32 itself still steps (f + 1 - f is 1)" a64
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared \`: *T\` keeps it (PL legs, PLWo); the value of \`await f\` is an untyped word, outside a coroutine and inside one (AW1-AW4d, AWc)"
