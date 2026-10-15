@@ -328,7 +328,14 @@ fn test_auto_coercion() {
 fn test_syscall_arity() {
     test_group("syscall arity (v3.5.0)");
     # Correct arities — should compile without warnings
+    #ifndef CYRIUS_TARGET_WIN
     var pid = syscall(39);         # getpid: 0 args
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.7.12: 39 is Linux's getpid; on PE it is an unrouted literal (-38). The 0-argument form
+    # there is kernel32!GetCurrentProcessId, reroute 0xF01C. CHANGELOG [6.7.12]
+    var pid = syscall(0xF01C);     # GetCurrentProcessId: 0 args
+    #endif
     assert(pid > 0, "getpid");
     syscall(1, 2, "ok\n", 3);     # write: 3 args (fd=2, buf, len)
     assert(1, "write 3-arg ok");

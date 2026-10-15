@@ -18,7 +18,20 @@ alloc_init();
 var _agnos_skip = "  SKIP (agnos): POSIX fork + 3-arg waitpid + 32-bit pipe fds (agnos: 1-arg #4, u64 fds)\n";
 sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #endif
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: a named SKIP on Windows, as on agnos: both groups are POSIX fork + pipe, and Windows has
+# neither (sys_fork and sys_pipe are the documented -1 degrades; its process surface is
+# CreateProcessW — lib/process_win.cyr, tests/tcyr/crossos/tool_spawn_roundtrip.tcyr). The rows
+# pin the premise: the day either is real on PE they fail, and these groups should run there.
+# CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): POSIX fork + pipe (no fork, no anonymous pipe on PE)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+assert_eq(sys_fork() < 0, 1, "Windows refuses fork: the reason these groups are skipped there");
+var _win_fds[16];
+assert_eq(sys_pipe(&_win_fds) < 0, 1, "Windows refuses sys_pipe");
+#endif
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
 test_group("fork + waitpid");
 var pid = sys_fork();
 if (pid == 0) {
@@ -59,5 +72,6 @@ sys_waitpid(pid2, &status_buf, 0);
 assert_eq(n, 4, "pipe read 4");
 assert_eq(streq(rbuf, "test"), 1, "pipe content");
 
+#endif
 #endif
 var r = assert_summary();

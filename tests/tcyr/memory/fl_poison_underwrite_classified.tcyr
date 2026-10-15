@@ -71,6 +71,29 @@ fn main(): i64 {
     sys_write(1, _agnos_skip, strlen(_agnos_skip));
     return assert_summary();
     #endif
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.7.12: Windows cannot capture stderr either — no anonymous pipe and no dup2 on PE (sys_pipe
+    # is the documented -1 degrade). The report-text rows are skipped by name; what the counters
+    # show still runs: the underwrite is ONE violation, the block is freed and recycled, and the
+    # next sweep is clean (the defect re-reported it). CHANGELOG [6.7.12]
+    var _win_skip = "  SKIP (windows): the report-text rows need a stderr capture (no anonymous pipe, no dup2 on PE)\n";
+    sys_write(1, _win_skip, strlen(_win_skip));
+    alloc_init();
+    poison_trap_set(0);
+    fl_poison_enable();
+    fl_poison_reset();
+    poison_reset();
+    var wq = fl_alloc(100);
+    store8(wq - 1, 7);
+    fl_free(wq);
+    assert_eq(fl_poison_violations(), 1, "a 1-byte underwrite is one violation");
+    var wr = fl_alloc(100);
+    assert_eq(wr, wq, "the block was freed: the next same-class fl_alloc recycles it");
+    assert_eq(poison_sweep(), 0, "the next sweep is clean");
+    fl_free(wr);
+    fl_poison_disable();
+    return assert_summary();
+    #endif
     alloc_init();
     poison_trap_set(0);
     fl_poison_enable();

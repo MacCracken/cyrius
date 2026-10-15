@@ -1808,7 +1808,16 @@ var sysrc = tls_native_set_ca_system(sysctx);
 if (sysrc == TLS_OK) {
     var rootset78 = load64(sysctx + TLS_CTX_OFF_CA_ROOT);
     assert_neq(rootset78, 0, "system root set stored");
+    #ifndef CYRIUS_TARGET_WIN
     assert_gt(load64(rootset78), 50, "OS trust store parsed >50 anchors (multi-root PEM at scale)");
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.7.12: Windows' CurrentUser ROOT store holds only the roots fetched so far — the chain
+    # engine downloads an AuthRoot root on demand (issues/2026-10-08-windows-trust-store-parity-
+    # gaps.md, item 4) — so its size is the machine's history, not a distro bundle's: 40 on cass
+    # (2026-10-15), where >50 failed. CHANGELOG [6.7.12]
+    assert_gt(load64(rootset78), 10, "OS trust store parsed >10 anchors (Windows: the roots fetched so far)");
+    #endif
     # cert23 (self-signed, not a public CA's child) → the loop tries every
     # system root and rejects: exercises the full multi-root walk.
     var leaf78 = x509_cert_alloc();

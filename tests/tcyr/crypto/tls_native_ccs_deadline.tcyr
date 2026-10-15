@@ -35,6 +35,11 @@ sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #ifdef CYRIUS_TARGET_WIN
 var _win_skip = "  SKIP (windows): socketpair + fork (POSIX-only; native TLS over Winsock is tests/tcyr/crossos/tls_native_socket_transport.tcyr)\n";
 sys_write(1, _win_skip, strlen(_win_skip));
+# 6.7.12: the skip alone counted nothing, and the cass full-corpus leg grades a 0-assertion run as
+# a failure ("it ran nothing"). The row pins the premise: the day Windows gains a socketpair it
+# fails, and this run should be ported. CHANGELOG [6.7.12]
+var _win_sp[16];
+assert_eq(sys_socketpair(1, 1, 0, &_win_sp) < 0, 1, "Windows refuses socketpair: the reason this run is skipped there");
 #endif
 #ifndef CYRIUS_TARGET_AGNOS
 #ifndef CYRIUS_TARGET_WIN
@@ -741,6 +746,10 @@ fn _cd_s_server_start(flag, cert, key, form, first, out_port): i64 {
         var hp = alloc(32);
         memcpy(hp, "127.0.0.1:", 10);
         fmt_int_buf(port, hp + 10);
+        # 6.7.12: LibreSSL's s_server (macOS /usr/bin/openssl) takes `-accept <port>` only — it
+        # refused "127.0.0.1:<port>" with a usage message, so neither row could start on ecb or
+        # ach. It binds every address there. CHANGELOG [6.7.12]
+        if (_cd_libressl == 1) { fmt_int_buf(port, hp); }
         xunlink(log);
         var pid = sys_fork();
         if (pid == 0) {
@@ -840,6 +849,15 @@ fn test_openssl_peer(): i64 {
     store64(&hsl, 16);
     sys_getsockname(hfd, &hsa, &hsl);
     var held = ((load8(&hsa + 2) & 0xFF) << 8) | (load8(&hsa + 3) & 0xFF);
+    if (_cd_libressl == 1) {
+        # LibreSSL's s_server binds the wildcard address with SO_REUSEADDR, which BSD allows beside
+        # this process's 127.0.0.1 listener on the same port — it would come up ON the held port,
+        # and the row's connect would reach the more specific listener. The held-port check cannot
+        # be made against it. CHANGELOG [6.7.12]
+        var _lh = "  SKIP (LibreSSL s_server): -accept takes a port only, so the held-port start is not checked\n";
+        sys_write(1, _lh, strlen(_lh));
+        held = 0;
+    }
     _cd_s_server_row("-tls1_3", cert, key, "DER", 0, held,
       "s_server -tls1_3 is up (one middlebox CCS after its ServerHello) — started on a held port first");
     sock_close(hfd);

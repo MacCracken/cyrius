@@ -120,7 +120,8 @@ _co_reap_stale() {
 }
 
 # Cross-OS LIB-TEST (v6.0.75; a STANDING release gate since v6.3.43 — release-gate.sh step 4
-# passes "crossos"). Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST) is a SUBDIRECTORY of tests/tcyr
+# passes "crossos"; since 6.7.12 the hosts in CO_FULL_HOSTS below run the whole corpus). Arg 2
+# (or $CYRIUS_CROSS_OS_LIBTEST) is a SUBDIRECTORY of tests/tcyr
 # (v6.5.11; it was a filename prefix, `vr01_`): AFTER the cycc self-host passes on this host,
 # every `tests/tcyr/<subdir>/**.tcyr` is compiled by the freshly-built NATIVE host cycc and run
 # on the real hardware — catching stdlib breakage (a syscall the target does not translate, an
@@ -129,6 +130,30 @@ _co_reap_stale() {
 # THIS repo + scp's, so it does NOT depend on the host having a current checkout. Fail-loud: a
 # lib-test failure, a missing subdir, or a remote that ran a different count exits 1.
 LIBTEST="${2:-${CYRIUS_CROSS_OS_LIBTEST:-}}"
+# 6.7.12: CYRIUS_CROSS_OS_FULL=1 alone runs the lib-test too. It used to need an arg 2 as well,
+# so `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh cass` — the documented command —
+# self-hosted and ran no test at all (the bundle carried no tests/tcyr). CHANGELOG [6.7.12]
+if [ -z "$LIBTEST" ] && [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST="crossos"; fi
+# 6.7.12 — THE FULL CORPUS BY DEFAULT ON THE HOSTS THAT PASS IT (D8, the user, 2026-10-15: "ecb /
+# ach / pi full corpus now, cass when its triage reaches zero"). When a lib-test runs and
+# CYRIUS_CROSS_OS_FULL is UNSET, a host on this list runs every tests/tcyr .tcyr instead of the
+# subset arg 2 names. The policy lives HERE, not in scripts/release-gate.sh, so release-gate step 4
+# and `cyrius audit --internal=platform-check` (the same `cross-os-selfhost.sh <host> crossos` call,
+# tests/gates/toolchain/audit_platform_check_matches_release_gate.sh) cannot disagree. A host joins
+# when its full run is at zero failures — a known failure here turns every release gate red.
+# CYRIUS_CROSS_OS_FULL=0 forces the subset. Measured (issues/2026-10-12-cass-full-corpus-failures-
+# untriaged.md): at 7f57e532 (589 tcyr) pi 589/589, ecb and ach 585/589, cass 563/589; after the
+# 6.7.12 windows lane's triage (590 tcyr) pi 590/590, ecb and ach 589/590 — platform/pwd_grp.tcyr, a
+# filed lib defect (pwd / grp parse Darwin's uid -2 as 0) — and cass 589/590 —
+# stdlib/result_stdlib.tcyr, two filed PE defects (open is -1 for every failure; a failed ReadFile
+# reads as EOF). Each joins when its defect is fixed.
+# CHANGELOG [6.7.12]
+CO_FULL_HOSTS="pi"
+if [ -n "$LIBTEST" ] && [ -z "${CYRIUS_CROSS_OS_FULL+x}" ]; then
+  case " $CO_FULL_HOSTS " in
+    *" $HOST "*) CYRIUS_CROSS_OS_FULL=1 ;;
+  esac
+fi
 
 # The ssh-config alias for this job (ecb-install reuses the ecb host).
 ALIAS="$HOST"
@@ -759,13 +784,10 @@ fi
 if [ -n "$LIBTEST" ]; then
   # v6.5.11: RECURSIVE — the corpus lives in topical subfolders under tests/tcyr.
   CORPUS_TOTAL=$(find tests/tcyr -name '*.tcyr' | wc -l | tr -d ' ')
-  # v6.5.8: CYRIUS_CROSS_OS_FULL=1 runs the WHOLE tcyr corpus instead of the subset.
-  # Opt-in, not the default, and the reason is measured rather than assumed: a full run on
-  # ecb takes 75 s (affordable only because the ssh loop is now batched — it was ~1.8 s of
-  # handshake PER TEST before) and reports 235 pass / 23 fail. Those 23 are pre-existing
-  # platform gaps, most of them downstream of the open macOS-threading issue, not
-  # regressions from this release — so defaulting to full would wedge every release behind
-  # a separate arc. Filed with the measured list; flip the default when it reaches zero.
+  # v6.5.8: CYRIUS_CROSS_OS_FULL=1 runs the WHOLE tcyr corpus instead of the subset — by
+  # default on the hosts in CO_FULL_HOSTS (6.7.12, D8; see where it is set). Wall time at
+  # 7f57e532 (589 tcyr): pi ~19 min, ecb ~4, ach ~6 (one batched ssh each), cass ~20 (a per-test
+  # ssh). CHANGELOG [6.7.12]
   if [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST=""; fi
   # v6.5.11: LIBTEST is a SUBDIRECTORY under tests/tcyr (it was the filename prefix
   # "vr01_"). A missing directory is a hard error here; a prefix that matches nothing
@@ -903,7 +925,7 @@ if [ -n "$LIBTEST" ]; then
     echo "  ran $cass_p passed, $cass_f failed on cass"
     if [ "$cass_f" != "0" ]; then
       echo "  failing:$cass_bad"
-      echo "  LIBTEST_FAIL: $cass_f test(s) on cass (PE-incompatible? fork/socketpair are POSIX-only)"
+      echo "  LIBTEST_FAIL: $cass_f test(s) on cass"
       exit 1
     fi
     echo "LIBTEST_OK: cass ($cass_p tests)"

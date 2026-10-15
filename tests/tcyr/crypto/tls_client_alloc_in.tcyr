@@ -293,6 +293,13 @@ fn test_global_connects(): i64 {
 fn test_client_cert_pem(): i64 {
     test_group("tls_native_set_client_cert (PEM): decoded into the ctx's allocator");
     var pem = "-----BEGIN CERTIFICATE-----\nMIIBkjCCATmgAwIBAgIUN0FgSN+YtJ/VsnjbAOvQ4fh7bUAwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDXpGvDB1EfJKU9z5c+Df4gWNtI19uLOUH6gBdmQa142hK4AaEklNSTEr9bCsMS89ULyiKCEm/d0DZSATv4tJxaNpMGcwHQYDVR0OBBYEFDvdbC1If4VIUfQINW5miAN1vWdDMB8GA1UdIwQYMBaAFDvdbC1If4VIUfQINW5miAN1vWdDMA8GA1UdEwEB/wQFMAMBAf8wFAYDVR0RBA0wC4IJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cAMEQCIDZb0RL5uPrsUMm0os9+xIfMQkkBhwuBVrNJ26FeHN6BAiAMHsf27v7FvJl29VpwYIsH1mnHgYP6COmoYzcNF+Od8w==\n-----END CERTIFICATE-----\n";
+    # 6.7.12: one install first, on a ctx of its own. The first certificate parse in a process
+    # builds sigil's process-wide x509 tables (_x509_oids_init and kin) once, from the global heap;
+    # every later install costs 0 B (measured: 20232 B on the first call under PE, 0 after). On
+    # Linux test_shared_system_roots above happens to parse a certificate first; on Windows nothing
+    # had, so this row measured the one-time build instead of the per-call cost. CHANGELOG [6.7.12]
+    var warm = tls_native_new_client("localhost", 9);
+    tls_native_set_client_cert(warm, pem, strlen(pem), 0);
     var a = arena_allocator(65536);
     var c = tls_native_new_client_in(a, "localhost", 9);
     var g0 = alloc_used();
@@ -368,6 +375,16 @@ _ca_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00e
 _ca_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
 test_shared_system_roots();
 test_client_cert_pem();
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: a named SKIP on Windows for the connect and libssl groups — each is a socketpair + fork
+# run, and Windows has no socketpair primitive (the documented -1 degrade) and no POSIX fork. The
+# two groups above need neither and run. The row pins the premise. CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): the socketpair + fork connect and libssl groups (no socketpair; no POSIX fork)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+var _win_sp[16];
+assert_eq(sys_socketpair(1, 1, 0, &_win_sp) < 0, 1, "Windows refuses socketpair: the reason those groups are skipped there");
+#endif
+#ifndef CYRIUS_TARGET_WIN
 _ca_ver12 = 0;
 test_arena_connects();
 _ca_ver12 = 1;
@@ -377,5 +394,6 @@ test_global_connects();
 _ca_ver12 = 1;
 test_global_connects();
 test_libssl_arm();
+#endif
 #endif
 var r = assert_summary();

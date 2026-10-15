@@ -12,6 +12,23 @@ include "lib/grp.cyr"
 
 alloc_init();
 
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: a named SKIP on Windows: it has no /etc/passwd or /etc/group (accounts are SIDs), so both
+# readers answer -1, "not readable" — and the rows below then read a record nothing filled (the
+# PE run died with 0xC0000005). The rows pin that answer where the file is absent (real Windows);
+# under wine the host's /etc is visible through Z:, and there the reader finds root. CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): no /etc/passwd or /etc/group (accounts are SIDs)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+var _wrec[56];
+var _wbuf[1024];
+var _wpw = 1;
+if (sys_access("/etc/passwd", 0) != 0) { _wpw = 0 - 1; }
+var _wgr = 1;
+if (sys_access("/etc/group", 0) != 0) { _wgr = 0 - 1; }
+assert_eq(pwd_getpwuid(0, &_wrec, &_wbuf, 1024), _wpw, "pwd_getpwuid on Windows: -1 when there is no /etc/passwd");
+assert_eq(grp_getgrgid(0, &_wrec, &_wbuf, 1024), _wgr, "grp_getgrgid on Windows: -1 when there is no /etc/group");
+#endif
+#ifndef CYRIUS_TARGET_WIN
 test_group("lib/pwd.cyr");
 
 var pwrec[56];
@@ -58,15 +75,20 @@ test_group("lib/grp.cyr");
 
 var grrec[24];
 
+# gid 0's group: `root` on Linux; Darwin has no `root` group — its gid 0 is `wheel` (/etc/group on
+# ecb and ach). 6.7.12: the rows asserted "root" on every target. CHANGELOG [6.7.12]
+var g0name = "root";
+#ifdef CYRIUS_TARGET_MACOS
+g0name = "wheel";
+#endif
 var rcg = grp_getgrgid(0, &grrec, &strbuf, 1024);
-assert_eq(rcg, 1, "getgrgid(0) finds root group");
+assert_eq(rcg, 1, "getgrgid(0) finds gid 0's group");
 assert_eq(grp_gid(&grrec), 0, "root gid == 0");
 var gn = grp_name(&grrec);
-assert_eq(load8(gn),     114, "root group name[0] == 'r'");
-assert_eq(load8(gn + 4), 0,   "root group name null-term at 4");
+assert_eq(streq(gn, g0name), 1, "gid 0's group is named root (Darwin: wheel)");
 
-var rcgn = grp_getgrnam("root", &grrec, &strbuf, 1024);
-assert_eq(rcgn, 1, "getgrnam(\"root\") succeeds");
+var rcgn = grp_getgrnam(g0name, &grrec, &strbuf, 1024);
+assert_eq(rcgn, 1, "getgrnam(\"root\") succeeds (Darwin: wheel)");
 assert_eq(grp_gid(&grrec), 0, "root group gid via name == 0");
 
 var rcg_miss = grp_getgrgid(999999, &grrec, &strbuf, 1024);
@@ -87,6 +109,7 @@ assert_eq(n_nobuf, 0 - 2, "max=0 triggers rc=-2");
 var n_nou = grp_getgrouplist("_nosuchuser_v5526_", 42, &gids, 32);
 assert_eq(n_nou, 1, "nonexistent user yields just primary");
 assert_eq(load64(&gids), 42, "that single gid is the primary");
+#endif
 
 var r = assert_summary();
 syscall(60, r);

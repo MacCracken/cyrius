@@ -39,7 +39,18 @@ fn vhook(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }
 var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
 sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #endif
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: a named SKIP on Windows, as on agnos: this run is a socketpair + fork, and Windows has
+# no socketpair primitive (sys_socketpair is the documented -1 degrade) and no POSIX fork. Native
+# TLS over Winsock is tests/tcyr/crossos/tls_native_socket_transport.tcyr. The row pins the premise:
+# the day Windows gains a socketpair it fails, and this run should be ported. CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): the socketpair + fork end-to-end run (no socketpair; no POSIX fork)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+var _win_sp[16];
+assert_eq(sys_socketpair(1, 1, 0, &_win_sp) < 0, 1, "Windows refuses socketpair: the reason this run is skipped there");
+#endif
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
 var fds[8];
 sys_socketpair(1, 1, 0, &fds);
 var fdp = load64(&fds);
@@ -73,5 +84,6 @@ var st[4];
 sys_waitpid(pid, &st, 0);
 assert_eq((load64(&st) >> 8) & 0xFF, 0, "wrapper client read+verify+close ok (child exit 0)");
 
+#endif
 #endif
 var r = assert_summary();

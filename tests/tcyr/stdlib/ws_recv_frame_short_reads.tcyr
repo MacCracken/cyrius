@@ -8,7 +8,7 @@
 # `alloc(plen + 1)` took the peer's length unchecked, so a remote peer chose this process's
 # allocation size and a failed alloc was written through at `payload + plen`.
 #
-# HOW IT IS FORCED. Group 1 (every target) reads frames out of a FILE, so EOF lands exactly
+# HOW IT IS FORCED. Group 1 (every target) reads frames out of a FILE (Windows: a loopback socket, 6.7.12), so EOF lands exactly
 # where the test puts it: a truncated payload, a truncated extended length, a length with its top
 # 32 bits set, a length above the cap. Group 2 (Linux / macOS) has a forked child write one valid
 # frame to a socketpair in pieces, with a pause between each, so every read the parent makes
@@ -28,10 +28,45 @@ include "lib/assert.cyr"
 
 var _wr_path = 0;
 
-# Put `n` bytes in the scratch file and return a ws handle reading it (state OPEN).
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: on Windows the frame reader reads through recv (lib/net.cyr _net_os_recv — ReadFile on
+# an overlapped Winsock socket is a false EOF), and recv on a FILE handle fails, so every
+# file-fed row failed there and the first dereferenced its 0 result (0xC0000005 on cass). The same
+# bytes come over a loopback TCP connection instead: the peer sends them and closes, which is the
+# EOF the file gave. Returns the accepted socket, or -1. CHANGELOG [6.7.12]
+fn _wr_feed(bytes, n): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    var mt, mv = sock_listen(lfd, 1);
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    sys_getsockname(lfd, &sa, &sl);
+    var port = ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { sock_close(lfd); return 0 - 1; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    var at, afd = sock_accept(lfd);
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { sock_close(cfd); return 0 - 1; }
+    var sent = sock_send_all(cfd, bytes, n);
+    sock_close(cfd);
+    if (sent != n) { sock_close(afd); return 0 - 1; }
+    return afd;
+}
+#endif
+
+# Put `n` bytes in the scratch file and return a ws handle reading it (state OPEN). Windows: over
+# a loopback connection (_wr_feed).
 fn _wr_ws(bytes, n): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var fd = _wr_feed(bytes, n);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     if (file_write_all(_wr_path, bytes, n) != n) { return 0; }
     var fd = file_open(_wr_path, O_RDONLY, 0);
+    #endif
     if (fd < 0) { return 0; }
     var ws = ws_new(fd);
     store64(ws + 8, WS_OPEN);                   # skip the handshake: framing is what is tested
@@ -39,7 +74,12 @@ fn _wr_ws(bytes, n): i64 {
 }
 
 fn _wr_done(ws): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    sock_close(ws_fd(ws));                     # a SOCKET closes with closesocket
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     sys_close(ws_fd(ws));
+    #endif
     return 0;
 }
 

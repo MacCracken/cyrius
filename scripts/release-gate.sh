@@ -296,6 +296,9 @@ fi
 # syscalls on cass+ecb) run on real hardware every release, so macOS/Windows stdlib rot
 # is caught here, not by ports.
 #
+# 6.7.12 (D8, the user, 2026-10-15): the hosts in cross-os-selfhost.sh's CO_FULL_HOSTS (pi;
+# ecb, ach and cass join when their full runs reach zero) run the WHOLE tcyr corpus for the same
+# call — the policy lives in that script so `cyrius audit` runs the identical leg.
 # v6.5.11: the selector is the SUBDIRECTORY tests/tcyr/crossos (it was the filename
 # prefix "vr01_"). A directory is checked for existence and cannot silently under-match;
 # cross-os-selfhost.sh additionally cross-checks the remote's ran-count against the count
@@ -319,11 +322,15 @@ for H in ecb ach cass pi; do
         tail -8 "$T/co.out"
         fail "cross-OS self-host FAILED on $H (a green CI check is NOT this — run the compiler on the hardware)"
     fi
+    # 6.7.12 (D8): a host in cross-os-selfhost.sh's CO_FULL_HOSTS runs the WHOLE tcyr corpus
+    # here, not the crossos subset — the leg's own `corpus:` line says which. CHANGELOG [6.7.12]
+    _rg_corp="tests/tcyr/crossos"
+    if grep -q "^  corpus: ALL " "$T/co.out"; then _rg_corp="the full tcyr corpus"; fi
     if ! grep -q "LIBTEST_OK: $H" "$T/co.out"; then
         tail -8 "$T/co.out"
-        fail "cross-host platform tcyr FAILED on $H (found-by-ports stdlib rot — see the failing tests/tcyr/crossos test)"
+        fail "cross-host platform tcyr FAILED on $H (found-by-ports stdlib rot — see the failing test in $_rg_corp)"
     fi
-    echo "  OK: $H SELFHOST_OK + crossos LIBTEST_OK"
+    echo "  OK: $H SELFHOST_OK + LIBTEST_OK ($_rg_corp)"
 done
 
 # 5. bench (non-blocking — record the delta, triage per the growth-tax rule) ---

@@ -22,14 +22,20 @@ include "lib/assert.cyr"
 # run of the suite (two check.sh at once), so one run deleted or rewrote another's file
 # mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" (Windows: "<name>.<pid><suffix>"), NUL-terminated
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
-    memcpy(p, "/tmp/", 5);
-    memcpy(p + 5, name, nl);
-    var o = 5 + nl;
+    # No /tmp on Windows: the name is cwd-relative there (the cass leg's cwd is its staging dir
+    # under the Defender-excluded C:\cyrius-tests). CHANGELOG [6.7.12]
+    var pl = 5;
+    #ifdef CYRIUS_TARGET_WIN
+    pl = 0;
+    #endif
+    memcpy(p, "/tmp/", pl);
+    memcpy(p + pl, name, nl);
+    var o = pl + nl;
     store8(p + o, 46);
     o = o + 1;
     var d[24];
@@ -92,7 +98,18 @@ fn chook(hctx, handle): i64 {
 var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
 sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #endif
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: a named SKIP on Windows, as on agnos: this run is a socketpair + fork, and Windows has
+# no socketpair primitive (sys_socketpair is the documented -1 degrade) and no POSIX fork. Native
+# TLS over Winsock is tests/tcyr/crossos/tls_native_socket_transport.tcyr. The row pins the premise:
+# the day Windows gains a socketpair it fails, and this run should be ported. CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): the socketpair + fork end-to-end run (no socketpair; no POSIX fork)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+var _win_sp[16];
+assert_eq(sys_socketpair(1, 1, 0, &_win_sp) < 0, 1, "Windows refuses socketpair: the reason this run is skipped there");
+#endif
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
 assert_eq(_dump(mtls_cert_path, cert, 320), 0, "wrote client cert DER");
 assert_eq(_dump(mtls_key_path, key, 48), 0, "wrote client key DER");
 
@@ -163,5 +180,6 @@ sys_waitpid(pid2, &st2, 0);
 sys_unlink(mtls_cert_path);
 sys_unlink(mtls_key_path);
 
+#endif
 #endif
 var r = assert_summary();

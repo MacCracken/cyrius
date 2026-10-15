@@ -28,6 +28,7 @@ fn _bin_echo_present(): i64 {
     return 1;
 }
 
+#ifndef CYRIUS_TARGET_WIN
 test_group("run_capture — single-arg argv (v5.11.60 Item 6 regression)");
 if (_bin_echo_present() == 1) {
     var buf1[2048];
@@ -68,5 +69,22 @@ if (true_fd >= 0) {
 } else {
     println("  skip: /bin/true not present on this host");
 }
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: the rows above need /bin/echo and /bin/true, which Windows has not, so this file counted
+# nothing there (the cass full-corpus leg grades that as a failure). The Windows verbs
+# (lib/process_win.cyr) build a command LINE, not an argv buffer; the same two-argument shape runs
+# through them. cmd.exe by its absolute path (a bare name is refused on Windows). CHANGELOG [6.7.12]
+test_group("run_capture / run on Windows — two arguments through the command line");
+var wbuf[2048];
+var wres_tag, wres = run_capture("C:\\Windows\\System32\\cmd.exe", "/c", "echo hi", &wbuf, 2048);
+var wn = result_unwrap_or(wres_tag, wres, 0);
+assert_eq(wn, 4, "cmd.exe /c \"echo hi\" captures 4 bytes (hi + CRLF)");
+assert_eq(load8(&wbuf), 104, "first byte = 'h'");
+assert_eq(load8(&wbuf + 1), 105, "second byte = 'i'");
+var wrun_tag, wrun = run("C:\\Windows\\System32\\cmd.exe", "/c", "exit 3");
+assert_eq(result_unwrap_or(wrun_tag, wrun, 0 - 1), 3, "run: cmd.exe /c \"exit 3\" exits 3");
+#endif
 
 var r = assert_summary();
