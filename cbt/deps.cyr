@@ -2320,6 +2320,28 @@ fn _dep_rm_tree(p): i64 {
     return xrmdir(p);
 }
 
+# The parent directory of absolute path `p` (trailing `/` dropped first; `/` for a top-level entry).
+fn _dep_parent_dir(p): i64 {
+    var pe = strlen(p);
+    while (pe > 0 && load8(p + pe - 1) == 47) { pe = pe - 1; }
+    while (pe > 0 && load8(p + pe - 1) != 47) { pe = pe - 1; }
+    if (pe > 1) { pe = pe - 1; }
+    var par = alloc(pe + 1);
+    memcpy(par, p, pe);
+    store8(par + pe, 0);
+    return par;
+}
+
+# IN A GIT CHILD ONLY (it changes the working directory, right before the exec): chdir to `dir`
+# and read the cwd back — the PHYSICAL path, every symlink resolved — or 0 when the chdir fails
+# (nothing changed), "." when the cwd then cannot be read (the child is in `dir`). CHANGELOG [6.7.12]
+fn _dep_child_phys(dir): i64 {
+    if (sys_chdir(dir) != 0) { return 0; }
+    var b = alloc(4096);
+    if (_cwd_read(b, 4096) < 0) { return "."; }
+    return b;
+}
+
 # Run `git [-C dir] -c … a1 a2 a3 a4` for a READ-ONLY question about a working tree, a cache or a
 # remote (`rev-parse`, `rev-list`, `status`, `check-ignore`, `ls-remote`). stdout goes to `outf`
 # (0 = discarded), stderr to a capture whose first line is kept in `_dep_wt_why` before it is removed
@@ -2332,17 +2354,7 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     _dep_wt_why = 0;
     if (_git_exec_available() == 0) { return 0 - 1; }
     var ceil = 0;
-    if (dir != 0) {
-        var ad = _abs_path(dir);
-        var pe = strlen(ad);
-        while (pe > 0 && load8(ad + pe - 1) == 47) { pe = pe - 1; }
-        while (pe > 0 && load8(ad + pe - 1) != 47) { pe = pe - 1; }
-        if (pe > 1) { pe = pe - 1; }
-        var par = alloc(pe + 1);
-        memcpy(par, ad, pe);
-        store8(par + pe, 0);
-        ceil = _cat2("GIT_CEILING_DIRECTORIES=", par);
-    }
+    if (dir != 0) { ceil = _cat2("GIT_CEILING_DIRECTORIES=", _dep_parent_dir(_abs_path(dir))); }
     var errf = _cbt_tmpfile("wt_err");
     var cfd = 0 - 1;
     if (outf != 0) {
@@ -2360,12 +2372,21 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
         var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
         if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        # The ceiling is the parent of the PHYSICAL directory, where git starts its discovery: a
+        # dep reached through a symlink (`links/foo -> ../mono/libs/foo`) got the LINK's parent,
+        # and git walked up from the target into the enclosing repository. CHANGELOG [6.7.12]
+        var cdir = dir;
+        if (dir != 0) {
+            cdir = _dep_child_phys(dir);
+            if (cdir == 0) { cdir = dir; }
+            elif (load8(cdir) == 47) { ceil = _cat2("GIT_CEILING_DIRECTORIES=", _dep_parent_dir(cdir)); }
+        }
         var argv[512];   # N BYTES: <= 64 ptrs
         var i = _git_env_argv(&argv, 0);
         if (ceil != 0) { i = _ga(&argv, i, ceil); }
         i = _ga(&argv, i, "git");
         i = _ga(&argv, i, "--no-optional-locks");
-        if (dir != 0) { i = _ga(&argv, i, "-C"); i = _ga(&argv, i, dir); }
+        if (dir != 0) { i = _ga(&argv, i, "-C"); i = _ga(&argv, i, cdir); }
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.fsmonitor=false");
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.hooksPath=/dev/null");
         if (a1 != 0) { i = _ga(&argv, i, a1); }
@@ -5317,7 +5338,8 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     var par = alloc(pe + 1);
     memcpy(par, clone_dir, pe);
     store8(par + pe, 0);
-    # git IGNORES a non-absolute ceiling entry, and CYRIUS_HOME may be relative.
+    # git IGNORES a non-absolute ceiling entry, and CYRIUS_HOME may be relative. (The child moves
+    # it to the parent of the PHYSICAL cache directory, below.)
     var ceil = _cat2("GIT_CEILING_DIRECTORIES=", _abs_path(par));
     var wte = _cat2("GIT_WORK_TREE=", _abs_path(clone_dir));
     # Probed in the PARENT: the memo has to survive the fork to be a per-process memo.
@@ -5349,6 +5371,11 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
         if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        # The ceiling at the parent of the PHYSICAL cache directory, as `_dep_wt_run` puts it: a
+        # cache directory that is a symlink stopped discovery at the LINK's parent. CHANGELOG [6.7.12]
+        var cdir = _dep_child_phys(clone_dir);
+        if (cdir == 0) { cdir = clone_dir; }
+        elif (load8(cdir) == 47) { ceil = _cat2("GIT_CEILING_DIRECTORIES=", _dep_parent_dir(cdir)); }
         var argv[1024];   # N BYTES: <= 128 ptrs; the fsck policy alone is 30 of them
         var i = _git_env_argv(&argv, 0);
         i = _ga(&argv, i, ceil);
@@ -5356,7 +5383,7 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         if (ixe != 0) { i = _ga(&argv, i, ixe); }
         i = _ga(&argv, i, "git");
         i = _ga(&argv, i, "--no-replace-objects");
-        i = _ga(&argv, i, "-C"); i = _ga(&argv, i, clone_dir);
+        i = _ga(&argv, i, "-C"); i = _ga(&argv, i, cdir);
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.fsmonitor=false");
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.hooksPath=/dev/null");
         if (fmode != 0) { i = _ga(&argv, i, "-c"); i = _ga(&argv, i, fmode); }

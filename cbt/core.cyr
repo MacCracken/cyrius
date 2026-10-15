@@ -537,6 +537,30 @@ fn _tool_path(dir, name): i64 {
     return plain;
 }
 
+# A file's identity — st_dev and st_ino — into `out` (two words): 0, or -1 when `path` cannot be
+# stat'ed. The offsets are each target's struct stat: Linux (x86_64's, and aarch64's generic
+# struct) dev@0 ino@8, both u64; x86_64 macOS's legacy stat (188) dev@0 u32 ino@4 u32; arm64
+# macOS's stat64 (fstatat64) dev@0 u32 ino@8 u64. PE's stat has neither: -1 there, and every caller
+# has a Windows arm of its own. CHANGELOG [6.7.12]
+fn _st_ident(path, out): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var sb[256];
+    if (sys_stat(path, &sb) != 0) { return 0 - 1; }
+    store64(out, load64(&sb));
+    store64(out + 8, load64(&sb + 8));
+    #ifdef CYRIUS_TARGET_MACOS
+    store64(out, load32(&sb));
+    #ifdef CYRIUS_ARCH_X86
+    store64(out + 8, load32(&sb + 4));
+    #endif
+    #endif
+    return 0;
+    #endif
+}
+
 # Read file contents into allocated buffer, null-terminate, return ptr
 # Returns 0 on failure
 fn read_file_str(path): i64 {

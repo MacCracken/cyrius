@@ -4173,9 +4173,10 @@ CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to
   `[test] files`. A `test.cyml` elsewhere still applies when its unit runs; a leaf it names that
   the resolve did not vendor is named. A directory the resolve cannot list is warned by name.
 - However the unit is spelt, it is one directory and one chain: `tests/net/x.tcyr`,
-  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` (as the working directory
-  names it) and, on Windows, `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels
-  above it, each once.
+  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` and, on Windows,
+  `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels above it, each once. An absolute
+  path is matched to the working directory by identity (6.7.12), so under a symlinked working
+  directory the logical `$PWD/tests/net/x.tcyr` and the physical spelling are the same unit.
 - A unit outside the project (an absolute path elsewhere, a `..`; on Windows any drive-qualified
   `C:…` or rooted `\…` path) gets `cyrius.cyml`'s `[test]` only.
 
@@ -4425,6 +4426,9 @@ off. The manifest can never switch it on, so no commit flips what CI builds.
 - **Local mode**, per selected override whose `path` is a directory: the working tree is used, no
   clone, and one line names it:
   `local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9`.
+  The state is the checkout's own: git's discovery stops at the parent of the directory's
+  physical path, so a `path` reached through a symlink into another repository's subdirectory
+  says `(not a git checkout)`, as its physical spelling does (6.7.12).
   A selected `path` that is not a directory is named and the tag builds instead.
 - **Local mode writes no tracked file.** The whole resolution goes to `build/local-deps/lib/` and
   `cyrius.lock` is not written, so `lib/` and the lock stay what the tag resolution wrote and
