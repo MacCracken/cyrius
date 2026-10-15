@@ -220,7 +220,8 @@ echo "axis 3 — one caller naming every listed fn with its listed arity compile
 {
     printf '%s\nfn dv_calls(): i64 {\n' "$HDR"
     while IFS= read -r e; do
-        n=${e##*/}; nm=${e#*::}; nm=${nm%/*}
+        # the arity is `N`, `MIN-MAX` (6.7.7) or `MIN-` (variadic, 6.7.12): MIN arguments fit all three
+        n=${e##*/}; n=${n%%-*}; nm=${e#*::}; nm=${nm%/*}
         args=""; i=0
         while [ "$i" -lt "$n" ]; do if [ -z "$args" ]; then args=0; else args="$args, 0"; fi; i=$((i + 1)); done
         printf '    %s(%s);\n' "$nm" "$args"
