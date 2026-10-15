@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.12** (2026-10-15) — Break 2 repair 1: 71 issues closed in seven lanes, the folds sakshi 2.5.10 / sankoch 2.8.7 / patra 1.16.2 · cycc **2,223,320 B** · `.text` **2,003,672** · `cycc-native-aarch64` **2,083,752 B** · **589** `.tcyr`, **291** in `crossos/` · **106** `lib/*.cyr` · **499** shell gates under `tests/gates/<bucket>/` · api-surface **5,850** · **166** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.12** (2026-10-15) — slot open: Break 2 re-balanced across four repair releases, 6.7.12 the platform release · cycc **2,223,320 B** · `.text` **2,003,672** · `cycc-native-aarch64` **2,083,752 B** · **589** `.tcyr`, **291** in `crossos/` · **106** `lib/*.cyr` · **499** shell gates under `tests/gates/<bucket>/` · api-surface **5,850** · **166** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -34,10 +34,11 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
    the arc is the user's call.
 2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. **6.7.9 is a repair batch before the next feature** (user,
    2026-10-11): two lanes — the quick fixes and the critical / high issues — to take weight off the queue; B7 + P5-B
-   moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.13 (user, 2026-10-09): the open
-   queue repaired to 0 bugs, so fuller audits can follow. 6.7.14 is the full security audit + the refactor /
-   optimization review (user, 2026-10-09). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.14
-   reviews produce ships first, in as many releases as it takes, and the closeout follows.
+   moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.14 (user, 2026-10-09; the fourth
+   repair release added at the 6.7.12 open, user 2026-10-15): the open queue repaired to 0 bugs, so fuller audits can
+   follow. 6.7.15 is the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered
+   2026-10-15). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.15 reviews produce ships first, in as
+   many releases as it takes, and the closeout follows.
 3. **Every language decision is the user's** — asked at the arc's start, recorded with its date, never a lane's
    "default" (CLAUDE.md *Execution integrity*).
 4. **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide section and a
@@ -48,13 +49,14 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | Release | Content |
 |---|---|
 | 6.7.0 – 6.7.11 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) |
-| 6.7.12 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
-| 6.7.13 | Break 2, repair 3: global initialisers · the IR arena (a heap-layout change) · diagnostics · u128 / asm / pointer-call stores · TLS conformance · plus whatever 6.7.8–6.7.12 file |
-| 6.7.14 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
-| 6.7.15 → | what the 6.7.14 reviews produce — the number of releases is open, set at 6.7.14's close (user, 2026-10-09) |
+| 6.7.12 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes and trust store, stdlib · agnos · cx · TLS, the tools and CLI, plus the fix-first language items the 6.7.11 close filed (57; ecb · ach · cass · pi at slot one) |
+| 6.7.13 | Break 2, repair 3: **struct values** — multi-value returns, vectors, struct dereferences / copies, struct receives, closure captures (50) |
+| 6.7.14 | Break 2, repair 4 (added 2026-10-15): **generics, the frontend, infra** — the IR arena (a heap-layout change), consts / globals / diagnostics / u128, DCE and cybs (49) |
+| 6.7.15 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.16 → | what the 6.7.15 reviews produce — the number of releases is open, set at 6.7.15's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
-**Break 2 is 6.7.11 – 6.7.13** (user, 2026-10-09): repair the open queue to 0, so fuller audits can follow. Each repair
+**Break 2 is 6.7.11 – 6.7.14** (user, 2026-10-09; 6.7.14 added 2026-10-15): repair the open queue to 0, so fuller audits can follow. Each repair
 release runs its lanes in waves, at most two `src/` lanes at a time. Each lane owns its files, and a cross-lane hunk
 travels as a named hand-off patch. The binary is rebuilt once on the merged tree. There is one review round, and the
 decisions are asked in one round at the open. The `2026-10-09-*` links resolve when 6.7.7 merges; they are on the
@@ -86,132 +88,68 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 ### 6.7.12 — repair 2: the platform release
 
-**Fix first** (the user, 2026-10-14: "file and fix them in 6.7.12" — what the 6.7.11 close found on the merged tree):
-- ⛔ [the `WS_*` tie in `lib/ws.cyr` / `lib/ws_server.cyr`](issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md) — yantra's own
-  `cyrius distlib` is refused on the 6.7.11 CLI until it lands;
-- [the x86_64 `*V` regression](issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md) — `rd(mkv(..))` / `rd(*pv)`
-  compile and fault (refused through 6.7.10);
-- [the changes beyond the decisions' text](issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md) — the user confirms or
-  restores each (D10's flip side first);
-- [the refused parameter type's default cascade](issues/2026-10-14-refused-parameter-type-default-cascades-arity-error.md) (the returns
-  lane's unapplied hand-off), [a known fn-pointer struct call into a scalar annotation](issues/2026-10-14-scalar-annotation-from-known-fn-pointer-struct-call-reads-first-field.md),
-  [the closure-field read, half 2](issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md),
-  [the stale comments and gate text](issues/2026-10-14-6711-stale-comments-and-gate-text.md),
-  [the rows not run on hardware](issues/2026-10-14-6711-rows-not-run-on-hardware.md).
-
-**Filed by 6.7.11** — 95 issues from the lanes, their reviews and the release-docs pass, each placed 6.7.12 (or left for the
-user to place): [issues/README.md](issues/README.md) § *Open queue* lists them; re-balance at the open.
+**Re-balanced at the open** (2026-10-15; triage of 158 issues on the slot-open compiler — 153 open, 3 partial, 1 fixed by
+6.7.11, 1 not reproducible; the user: "if we need an additional release to ease the pressure lets do it" — Break 2
+is now four repair releases, 6.7.11 – 6.7.14). Every issue's `**Placement:**` line names its release and lane;
+the triage (premise, plan, rows, hosts, size) is `~/.cache/c6/6712_triage.json`.
 
 **Content.**
-- Darwin / aarch64 syscall translation:
-  - [x86-macOS `EMACHO_SYSXLAT` not folded](issues/2026-10-08-x86-macos-emacho-sysxlat-not-folded.md) (XLAT-2 in);
-  - [an arm64-macOS literal carries pipe / fork fixups](issues/2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md);
-  - [a native-aarch64 region translates literals silently](issues/2026-10-08-aarch64-native-region-literal-translated-silently.md).
-- Windows reroutes:
-  - [the `[embed]` link race](issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md) — both halves, because a
-    bug ships complete; the arm64 `openat` route is the Darwin lane's bite;
-  - [`sys_symlink` without `\\?\`](issues/2026-10-08-windows-symlink-no-long-path-prefix.md);
-  - [`xflock` without `LockFileEx`](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md).
-- Syscall peers and stdlib:
-- Windows runtime and trust:
-  - [`async_iocp_pe` step 2](issues/2026-10-08-async-iocp-pe-plain-cmd-c-step2.md) (re-verified first; the gate runs
-    both launch forms);
-  - [the Windows trust store's four gaps](issues/2026-10-08-windows-trust-store-parity-gaps.md).
-- CLI and the lock:
-  - [the CLI path / reporting leftovers](issues/2026-10-08-cli-path-and-reporting-leftovers.md) (all eight items);
-  - [deps before `lib sync` stamps the new pin](issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md);
-  - [`deps --verify` on CRLF](issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md).
+- **Fix first — the language items the 6.7.11 close filed (the user, 2026-10-14: "file and fix them in 6.7.12")** (7): [closure field read of captured slice or untyped struct copy refused](issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md) · [pe discarded vector call result no hidden pointer](issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md) · [vector value into pointer parameter passes lane bits](issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md) · [6711 behaviour changes beyond the decisions text](issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md) · [redeclared global from zero is silent and cross fold collisions invisible](issues/2026-10-14-redeclared-global-from-zero-is-silent-and-cross-fold-collisions-invisible.md) · [refused parameter type default cascades arity error](issues/2026-10-14-refused-parameter-type-default-cascades-arity-error.md) · [scalar annotation from known fn pointer struct call reads first field](issues/2026-10-14-scalar-annotation-from-known-fn-pointer-struct-call-reads-first-field.md)
+- **Darwin / aarch64 — syscall translation (XLAT-2 / XLAT-3, the native-region warning), the macOS exec mask, the tarballs** (6): [aarch64 native region literal translated silently](issues/2026-10-08-aarch64-native-region-literal-translated-silently.md) · [arm64 macos literal syscall carries pipe fork fixups](issues/2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md) · [x86 macos emacho sysxlat not folded](issues/2026-10-08-x86-macos-emacho-sysxlat-not-folded.md) · [macos exec child keeps launcher signal mask](issues/2026-10-11-macos-exec-child-keeps-launcher-signal-mask.md) · [macos tarballs omit cyrius watch decision](issues/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md) · [sys ioctl comment says aarch64 has no 16 to 29 row](issues/2026-10-12-sys-ioctl-comment-says-aarch64-has-no-16-to-29-row.md)
+- **Windows — the PE reroutes (xflock, `[embed]`, symlink), the trust store, the cass full-corpus triage** (5): [embed open link race pe macos arm64](issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md) · [windows symlink no long path prefix](issues/2026-10-08-windows-symlink-no-long-path-prefix.md) · [windows trust store parity gaps](issues/2026-10-08-windows-trust-store-parity-gaps.md) · [xflock windows lockfileex not wired](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md) · [cass full corpus failures untriaged](issues/2026-10-12-cass-full-corpus-failures-untriaged.md)
+- **Stdlib · agnos · cx · TLS — ⛔ the `WS_*` tie first, the agnos net arms, the cx size and guest contract, `args_init`, the TLS bound vars** (14): [tls native conformance bite](issues/2026-10-08-tls-native-conformance-bite.md) · [tls ca max roots unread decision](issues/2026-10-11-tls-ca-max-roots-unread-decision.md) · [tls public bound vars api decision](issues/2026-10-11-tls-public-bound-vars-api-decision.md) · [tls public bound vars drive const storage](issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md) · [cx codebuf 512k overflows yukti crossos test](issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md) · [stdlib epoll event has a writer but no reader](issues/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md) · [agnos net arms take any fd for a socket slot](issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md) · [agnos sock send deadline rearm ceiling refresh unpinned](issues/2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md) · [audit walk linux lister opens without o directory](issues/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md) · [readme fold version list stale](issues/2026-10-13-readme-fold-version-list-stale.md) · [ws and ws server declare the same constants](issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md) · [6711 rows not run on hardware](issues/2026-10-14-6711-rows-not-run-on-hardware.md) · [args init truncates argv past 2 mib](issues/2026-10-14-args-init-truncates-argv-past-2-mib.md) · [cx main running tcyr fail at guest contract limits](issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md)
+- **Tools and the CLI — the lock and `update`, the target selectors (incl. the aarch64 Linux CLI, `--pie` on Windows, strict-pin off Linux), deps CRLF, `cyrius header`, the scanners, cyrfmt / audit, lsp** (25): [cli path and reporting leftovers](issues/2026-10-08-cli-path-and-reporting-leftovers.md) · [deps before lib sync stamps new pin](issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md) · [deps verify crlf checkout mismatch](issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md) · [strict pin and pie inert off linux](issues/2026-10-10-strict-pin-and-pie-inert-off-linux.md) · [combined target flags silently resolved](issues/2026-10-12-combined-target-flags-silently-resolved.md) · [cyrfmt check passes a file cyrfmt would reformat](issues/2026-10-12-cyrfmt-check-passes-a-file-cyrfmt-would-reformat.md) · [cyriusly setup bootstrap cross loop and env](issues/2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md) · [deps keeps a removed stdlib leaf vendored and locked](issues/2026-10-12-deps-keeps-a-removed-stdlib-leaf-vendored-and-locked.md) · [deps keeps a stale commit row after a tag change](issues/2026-10-12-deps-keeps-a-stale-commit-row-after-a-tag-change.md) · [distlib records a named deps transitive leaf as the bundles own](issues/2026-10-12-distlib-records-a-named-deps-transitive-leaf-as-the-bundles-own.md) · [init port sign efi reject help](issues/2026-10-12-init-port-sign-efi-reject-help.md) · [lsp diagnostics column file and extensions](issues/2026-10-12-lsp-diagnostics-column-file-and-extensions.md) · [package missing entry reports ready](issues/2026-10-12-package-missing-entry-reports-ready.md) · [tests verb deprecated alias removal decision](issues/2026-10-12-tests-verb-deprecated-alias-removal-decision.md) · [wc demo columns run together and whitespace set](issues/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md) · [api surface variadic arity](issues/2026-10-13-api-surface-variadic-arity.md) · [cli killed mid compile leaves scratch](issues/2026-10-13-cli-killed-mid-compile-leaves-scratch.md) · [cyrlint overrun rule literal size and locals only](issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md) · [type audit skips generic fns](issues/2026-10-13-type-audit-skips-generic-fns.md) · [6711 stale comments and gate text](issues/2026-10-14-6711-stale-comments-and-gate-text.md) · [aarch64 linux cli drops target selectors](issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md) · [cyrius header stack enum return prints cyr val](issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md) · [cyrius header vector return prints cyr val](issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md) · [cyrius self and soak inherit compile mode switches](issues/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md) · [header gate skips guard and c caller rows silently](issues/2026-10-14-header-gate-skips-guard-and-c-caller-rows-silently.md)
 
-- Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
-  - [cass (Windows) full-corpus failures were never triaged into named skips vs real failures — the last count is v6.5.33's 32 of 282, the corpus is now 562, and no open issue tracks it](issues/2026-10-12-cass-full-corpus-failures-untriaged.md);
-  - [`cyrius build` takes contradictory target flags (`--win --aarch64`, `--win --agnos`, `--aarch64 --target=js`, …), silently keeps one and exits 0](issues/2026-10-12-combined-target-flags-silently-resolved.md);
-  - [cx's fixed 512 KiB code buffer: `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr` stops with a bare "codebuf overflow" on cx](issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md);
-  - [`cyriusly setup` (compiled): its "bootstrap cycc" step builds no cycc, its cross-bin loop can never match, and it builds the installed tools under an inherited `CYRIUS_BOUNDS`](issues/2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md);
-  - [`cyrius init --help`, `cyrius port --help` and `cyrius sign-efi --help` (and `-h`) fail as unknown flags, while `cyrius --help` promises every command takes `--help`](issues/2026-10-12-init-port-sign-efi-reject-help.md);
-  - [`cyrius package` with a missing `[build] entry` prints "package ready: build/<out>" and exits 0 with no artifact; its help row promises an `.ark` it never writes](issues/2026-10-12-package-missing-entry-reports-ready.md);
-  - [`cyrius tests` still says it "goes in the next release" three releases after the one it named — when the deprecated alias is removed](issues/2026-10-12-tests-verb-deprecated-alias-removal-decision.md);
+**Lanes** — one wave, five lanes (one parser lane): fix-first (`src/frontend`) · Darwin (`src/backend/aarch64`, the
+x86 Mach-O region, `lib/syscalls_macos.cyr`) · Windows (`src/backend/pe`, the x86 PE hunks, `lib/syscalls_windows.cyr`,
+the trust store) · stdlib (`lib/`, `src/backend/cx` + `programs/cxvm.cyr`) · tools (`cbt/`, `programs/`). Shared:
+x86 `ESCPOPS` / `ESYSCALL` are the Darwin lane's (the Windows lane hands off); `aarch64/emit.cyr` is Darwin's (the
+Windows lane adds only its `E*_PE` stubs); the PE vector crash rides the fix-first lane with the `*V` fix.
 
-**Lanes.**
-- Wave 1, both at slot one on hardware:
-  - Darwin syscall (`src/`): owns `aarch64/emit.cyr` and `x86/emit.cyr`'s Mach-O syscall region;
-  - Windows reroutes (`src/`): owns `pe/emit.cyr`, the PE reroute hunks of `x86/emit.cyr` (a hand-off), the route
-    table, `_embed_open` and `lib/io.cyr`.
-- Alongside:
-  - syscall peers: owns `lib/syscalls_*.cyr` and takes `sys_symlink` and the cwd wrapper as hand-offs;
-  - Windows runtime + trust;
-  - CLI (`cbt/deps.cyr`, `cbt/manifest.cyr`, the in-process SHA-256).
+**Decisions at the open** (the user, 2026-10-15 — asked once: the 28 extensions as recommended, the three forks as
+recommended; each recorded on its issue's `**Decision:**` line and, when it ships, its CHANGELOG bite):
+- Darwin: D1 a native-region literal warns only · D2 XLAT-2 in · D3 `sys_sigprocmask` a public macOS shim · D4 the
+  tarballs ship every `[release]` script · D5 pin drift on every host, `--pie` refused on Windows · D6 the aarch64 Linux
+  CLI refuses `--agnos` / x86 bare metal by name · D7 `args_init` returns a negative errno.
+- Windows: D8 ecb / ach / pi run the full corpus at the gate now, cass at zero · D9 trust store: item 4 fails closed,
+  item 3 the per-root issuance bound · D10 deps CRLF: exact bytes, diagnosed, `lib/** -text` shipped.
+- Stdlib: D11 `ws_server.cyr` includes `ws.cyr` · D12 cx grows (off-heap, ~4 MiB) · D13 honest cx arms · D14 the
+  agnos-only wrappers' recorded exception · D15 `TLS_CA_MAX_ROOTS` kept · D16 the TLS bound vars stay writable (inert)
+  · D17 `TLS_RECORD_MAX_PLAINTEXT` a protocol constant.
+- Tools: D18 `update` copies the closure at the manifest pin · D19 deps refuses to re-lock at a pin move · D20 the
+  consistent target pair accepted · D21 `cyrius tests` removed · D22 `name/MIN-` · D23 / D24 `cyrius header` refuses an
+  unannotated pair and every vector return · D25 old-tag rows kept and named · D26 audit uses `cyrfmt --check`.
+- Fix first: **D27 (fork) B** — a vector value into a `*V` passes its address, another pointer kind refused · D28 D24
+  at the fn-pointer path · **D29 (fork) (a)** — an untyped `var q = p;` is a typed copy · D30 `= 0` then another value
+  warns, the fold-collision gate widened · D31 the 6.7.11 changes kept (**item 1, D10's flip side, kept — fork**).
 
-**Decisions at the open.**
-- Native-region literals: warn only (default) or stop translating.
-- `SYS_ACCEPT4`: keep it with a comment (default) or delete it.
-- Windows `sys_setsockopt` stays a stub (default).
-- Trust store: item 4 fails closed (default, which closes it); item 3's wider acceptance gets a CHANGELOG line.
-- The lock-pin shape: 1, 2 or 3.
-- `cyrius update` copies only `[deps] stdlib` at the pin (`--full` keeps today's copy).
-- XLAT-2 in (default).
-- `deps --verify`: diagnose CRLF (default).
+**Hosts.** ecb and ach (XLAT-2 / XLAT-3, the sigprocmask shim, the tarballs), pi + qemu (the aarch64 rows, `cyrius
+pulsar` once), cass + wine (the reroutes, the trust store, the corpus triage), cxvm. Seed-derive on every `src/` bite.
 
-**Hosts.** All four at slot one:
-- ach: the x86 Mach-O fold and its self-host.
-- ecb: the literal route and the `openat` route (every file open on Apple Silicon), plus self-host.
-- pi: `cyrius pulsar`.
-- cass: MAX_PATH, the two-handle lock, the junction race, both launch forms, ProtectedRoots (admin), the cwd route,
-  certutil's replacement.
+### 6.7.13 — repair 3: struct values
 
-### 6.7.13 — repair 3
+**Content** (placed at the 6.7.12 open, 2026-10-15):
+- **Multi-value returns and pairs** (16): [declared multi value fn falls off its end](issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md) · [destructure of callptr refused](issues/2026-10-13-destructure-of-callptr-refused.md) · [ret2 in three value fn leaves third register stale](issues/2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md) · [while true ending fn not provably single return](issues/2026-10-13-while-true-ending-fn-not-provably-single-return.md) · [async fn forwarding multi value call loses second value](issues/2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md) · [inline replayed pair return flags the caller](issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md) · [multi value call stored through struct pointer decision](issues/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md) · [pair trait default method used above its trait not flagged](issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md) · [paren wrapped stack pair call escapes every pair check](issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md) · [refused local const annotation cascades undefined variable](issues/2026-10-14-refused-local-const-annotation-cascades-undefined-variable.md) · [refused parameter default refuses every short call](issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md) · [ret2 in struct returning fn takes multi value path](issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md) · [scalar declared fn returning multi value literal](issues/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md) · [small struct fn returns multi value call](issues/2026-10-14-small-struct-fn-returns-multi-value-call.md) · [top level ret2 never returns](issues/2026-10-14-top-level-ret2-never-returns.md) · [undeclared multi value call into tuple parameter crashes](issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md)
+- **Vectors** (5): [vector call results the receives do not take](issues/2026-10-13-vector-call-results-the-receives-do-not-take.md) · [vector dereference into vector local decision](issues/2026-10-13-vector-dereference-into-vector-local-decision.md) · [explicit instance vector result not received](issues/2026-10-14-explicit-instance-vector-result-not-received.md) · [struct value codegen a rows no floor](issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md) · [vector local refusal hint every source](issues/2026-10-14-vector-local-refusal-hint-every-source.md)
+- **Struct dereferences and copies, small / zero-size structs, the derive scanner, `Str`** (14): [field store through pointer returning call refused](issues/2026-10-08-field-store-through-pointer-returning-call-refused.md) · [inline str local passed to str param wrong value](issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) · [double pointer dereference is an untyped word](issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md) · [address of field does not parse guide cites it](issues/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md) · [bare vec field layout depends on declaration order](issues/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md) · [dereference as if expression branch](issues/2026-10-14-dereference-as-if-expression-branch.md) · [dereference as tuple element stores first word](issues/2026-10-14-dereference-as-tuple-element-stores-first-word.md) · [dereference of address of struct faults](issues/2026-10-14-dereference-of-address-of-struct-faults.md) · [derive scanner scalar field holding object derails scan](issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md) · [return address of struct local decision](issues/2026-10-14-return-address-of-struct-local-decision.md) · [small struct byvalue word padding from frame](issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md) · [small struct field value reads past the object](issues/2026-10-14-small-struct-field-value-reads-past-the-object.md) · [untyped store through struct pointer over 8 bytes reading](issues/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md) · [zero size struct into field or dereference value moves a word](issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md)
+- **Struct results received — annotations, parenthesised calls and callees, `dyn` results, f64 typing** (11): [typed pointer non pointer warning gaps](issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md) · [field of indirect call struct result](issues/2026-10-13-field-of-indirect-call-struct-result.md) · [dyn result through known callee refused](issues/2026-10-14-dyn-result-through-known-callee-refused.md) · [f64 leading call types comparison binding f64](issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md) · [integer comparison result keeps f64 right operand type](issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md) · [paren wrapped call untyped receive 8b call and 16b method](issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md) · [paren wrapped dyn call as dyn literal element refused](issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md) · [paren wrapped pair method or operator as nested literal element refused](issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) · [parenthesised fn pointer callee loses struct result](issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) · [pointer annotated local from byvalue struct call](issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md) · [scalar annotation from struct method or operator keeps first word](issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md)
+- **Closure captures (two Highs)** (4): [captured name refusal fixit reads var y equals y](issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md) · [closure capture of narrow local reads unextended word](issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md) · [closure var initializer reading its own name drops the capture](issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md) · [nested closure parameter taken as outer capture](issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md)
 
-**Content.**
-- Global initialisers:
-  - [`var X = CONST;` is baked and stored; `2 * CONST` is unfolded](issues/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md);
-  - [a kernel float global is a dead store](issues/2026-10-08-kernel-float-global-init-not-baked.md) (the scalar
-    half; B7 fixed the field half);
-  - [a declaration-zone named struct literal is refused](issues/2026-10-09-declaration-zone-named-struct-literal-refused.md);
-  - [a redeclared global reads its own bool stamp](issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md).
-- The IR arena:
-  - [IR=3 drops unrecorded field emits](issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) (the sweep is bounded
-    at the open);
-  - [the IR heap bands become one `alloc()` arena](issues/2026-10-08-ir-heap-bands-fixed-offsets-and-caps.md) — a
-    heap LAYOUT change, so the two-step bootstrap.
-- Diagnostics:
-  - [a bare const statement](issues/2026-10-08-bare-const-statement-reported-as-assignment.md);
-  - [cascades and `error:0:1:`](issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md);
-  - [const field access misnamed](issues/2026-10-08-const-field-access-diagnostics-misname-refusal.md);
-  - [TOKNAME's unnamed tokens](issues/2026-10-08-tokname-operator-tokens-unnamed.md);
-  - [`--syntax-only` and a chained field](issues/2026-10-08-syntax-only-chained-field-through-unresolved-pointee.md);
-  - [`#pure` misses a later callee](issues/2026-10-08-pure-check-misses-later-defined-callee.md);
-  - the generic-inference diagnostic, if 6.7.8 chose it.
-- Frontend remainder:
-  - [u128 parameters / returns / fields / captures](issues/2026-10-08-u128-params-returns-fields-captures.md): the
-    capture carried, the other three refused by name; the carriage goes to roadmap_6;
-  - [`gp().n = 5` refused](issues/2026-10-08-field-store-through-pointer-returning-call-refused.md);
-  - [`asm { in al, dx; }`](issues/2026-10-08-asm-in-mnemonic-unreachable.md).
-- TLS:
-  - [native TLS conformance](issues/2026-10-08-tls-native-conformance-bite.md);
-- Slack: what 6.7.8–6.7.12 file. If it does not fit, a further repair release is said at this open, inserted before the
-  audit release (which renumbers by one).
+**Lanes** — two waves, at most two parser lanes at a time: multi-value + vectors · structs + receives, the closure
+captures alongside. **Decisions at its open** (its share of the triage's 73, asked once).
 
-- Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
-  - [A declaration after the first top-level statement: `fn` / `const` are taken, `struct` / `enum` / `trait` / `impl` / `union` / `mod` / `use` / `public` / `async fn` are refused, `impl` with a cascade, `async fn` and `union` by a misleading message](issues/2026-10-12-declarations-after-first-statement-decision.md);
-  - [cyrius-lsp diagnostics: the column lands in the message, an included file's error lands on the open file, and `.tcyr` / `.bcyr` / `.fcyr` / `.scyr` / `.smcyr` get nothing](issues/2026-10-12-lsp-diagnostics-column-file-and-extensions.md);
-  - ["assigning non-pointer to typed pointer" is missing for a declaration-zone `*T` global and for an assignment to a local or parameter `*T` of a scalar `T`](issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md);
-  - [`programs/wc.cyr` (a demo): counts of 8 or more digits run together with no separator, and VT / FF do not separate words](issues/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md);
+### 6.7.14 — repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)
 
-**Lanes.**
-- Wave 1: globals (`src/`) · IR arena (`src/`, commits `build/cycc`, two-step).
-- Wave 2: diagnostics (`src/`) · frontend remainder (`src/`).
-- Alongside: TLS (`lib/tls_native_hs12.cyr` / `hs13.cyr`).
+**Content:**
+- **Generics — instances, carriers, bounded generics, type arguments, `Vec<T>`, slices** (16): [undeclared generic type arguments accepted](issues/2026-10-09-undeclared-generic-type-arguments-accepted.md) · [generic body errors reported per instance](issues/2026-10-10-generic-body-errors-reported-per-instance.md) · [unknown generic name accepted as type argument](issues/2026-10-10-unknown-generic-name-accepted-as-type-argument.md) · [method call explicit type arguments misdiagnosed](issues/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md) · [bounded method call on carrier field is a struct use](issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md) · [generic carrier table caps at 64 silently](issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md) · [generic forwarding carrier into stub generic refused](issues/2026-10-14-generic-forwarding-carrier-into-stub-generic-refused.md) · [generic forwarding to bounded generic refused at f64](issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md) · [generic instance return takes enclosing fns struct return class](issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md) · [generic pointer call into annotated local drops struct type](issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md) · [generic pointer parameter binds only from pointer local decision](issues/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md) · [generic pointer to generic struct return refused](issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) · [slice position k2 misses sl ann at findstruct](issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md) · [two param generic nested instance names collide](issues/2026-10-14-two-param-generic-nested-instance-names-collide.md) · [type argument non name reported with garbage name](issues/2026-10-14-type-argument-non-name-reported-with-garbage-name.md) · [vec type argument unread outside annotations](issues/2026-10-14-vec-type-argument-unread-outside-annotations.md)
+- **The frontend — consts and private const fns, globals and the declaration zone, u128, diagnostics** (21): [bare const statement reported as assignment](issues/2026-10-08-bare-const-statement-reported-as-assignment.md) · [const field access diagnostics misname refusal](issues/2026-10-08-const-field-access-diagnostics-misname-refusal.md) · [const init redundant store and unfolded const operand](issues/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md) · [diagnostic cascades and locationless eof errors](issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md) · [kernel float global init not baked](issues/2026-10-08-kernel-float-global-init-not-baked.md) · [pure check misses later defined callee](issues/2026-10-08-pure-check-misses-later-defined-callee.md) · [redeclared global bool reads own stamp](issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md) · [syntax only chained field through unresolved pointee](issues/2026-10-08-syntax-only-chained-field-through-unresolved-pointee.md) · [tokname operator tokens unnamed](issues/2026-10-08-tokname-operator-tokens-unnamed.md) · [u128 params returns fields captures](issues/2026-10-08-u128-params-returns-fields-captures.md) · [const sweep swallows later const errors](issues/2026-10-09-const-sweep-swallows-later-const-errors.md) · [declaration zone named struct literal refused](issues/2026-10-09-declaration-zone-named-struct-literal-refused.md) · [folded zero or enum global reruns at startup decision](issues/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md) · [inline on async fn silently ignored](issues/2026-10-11-inline-on-async-fn-silently-ignored.md) · [struct literal outside var initializer misdiagnosed](issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md) · [declarations after first statement decision](issues/2026-10-12-declarations-after-first-statement-decision.md) · [const context skipped arm calls private const fn unchecked](issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md) · [declaration zone pointer annotation replay reads one star](issues/2026-10-14-declaration-zone-pointer-annotation-replay-reads-one-star.md) · [local const in inline or generic body refused at second call](issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md) · [private call reported once per body replay](issues/2026-10-14-private-call-reported-once-per-body-replay.md) · [var annotation non type token compiles](issues/2026-10-14-var-annotation-non-type-token-compiles.md)
+- **Infra — DCE and compaction, cybs's neighbours, IR=3, **the IR heap bands → one arena (a heap-layout change: the two-step bootstrap)**, asm, the anuenue large-fn crash** (12): [asm in mnemonic unreachable](issues/2026-10-08-asm-in-mnemonic-unreachable.md) · [ir heap bands fixed offsets and caps](issues/2026-10-08-ir-heap-bands-fixed-offsets-and-caps.md) · [ir3 drops unrecorded field emits](issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) · [dce keeps the callees of a redefined fns losing body](issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md) · [cybs include scratch and buffers unchecked](issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md) · [cyrius syms pre compaction addresses under dce](issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md) · [dce removes live generic instance nested in dead one](issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md) · [wx compaction leaves stale bytes in text pad](issues/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md) · [anuenue growing a large fn segfaults an earlier call](issues/2026-10-14-anuenue-growing-a-large-fn-segfaults-an-earlier-call.md) · [cybs indexed store undefined name not named](issues/2026-10-14-cybs-indexed-store-undefined-name-not-named.md) · [cybs segfaults on eof after fn or var](issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md) · [dead code floor trips on dce byte scan false live](issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md)
 
-**Decisions at the open.**
-- const-init: keep the store (default) or align `var X = C;` with `var X = 5;`.
-- Bool redeclaration: (a) or (b).
-- u128: refuse now (default) or carry it inside 6.7.x.
-- `gp().n = 5` compiles (the untyped-`var` typing is declined).
-- The strict asm matcher, and `out dx, eax`.
-- `TLS_CA_MAX_ROOTS` is kept (default) or retired.
+**Lanes** — the IR arena first (it commits `build/cycc` through the two-step bootstrap), then generics · frontend.
+**Decisions at its open.** If what 6.7.12 / 6.7.13 file does not fit, another repair release is said at this open,
+inserted before the audit (which renumbers by one).
 
-**Hosts.** wine (IR=1 / IR=3 on the PE fork). Seed-derive (cybs compiles `ir.cyr`). openssl locally. The standard legs.
-
-### 6.7.14 — the full security audit + the refactor / optimization review (user, 2026-10-09)
+### 6.7.15 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
@@ -231,7 +169,7 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.14's open):** folders with direct
+  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.15's open):** folders with direct
     names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
     `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
     `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
@@ -250,7 +188,7 @@ cannot pack filed.
     4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
        (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
        one-line include of the new home) and is the user's call per module.
-    5. **At 6.7.14, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
+    5. **At 6.7.15, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
        today's `file:line`.
 - **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
   language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
@@ -262,20 +200,26 @@ cannot pack filed.
   - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](issues/2026-10-13-self-compile-prints-large-static-advisory.md);
 
 
-### 6.7.15 → — what the reviews produce, then the closeout (number open)
+### 6.7.16 → — what the reviews produce, then the closeout (number open)
 
-The 6.7.14 reviews' findings that did not pack into 6.7.14 ship next, in as many releases as they take — sized and
-placed at 6.7.14's close, never squeezed into the closeout. Then the closeout:
+The 6.7.15 reviews' findings that did not pack into 6.7.15 ship next, in as many releases as they take — sized and
+placed at 6.7.15's close, never squeezed into the closeout. Then the closeout:
 
 
 The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger:
 - **Mechanical:** `release-gate.sh` (record check.sh's count) and the bench.
 - **Judgment:** heap map (the retired IR bands), the dead-code floor, the 2–3 consolidations the minor earned, code
   review, cleanup.
-- **Compliance:** the security re-scan (the full audit ran in 6.7.14); folds byte-identical to their tags (yantra,
+- **Compliance:** the security re-scan (the full audit ran in 6.7.15); folds byte-identical to their tags (yantra,
   bayan); `verify-store.sh`.
 - **Docs:** CHANGELOG / roadmap / state; vidya (tuples, defaults, `dyn`, the bounds mode, packed fields, coverage);
   the backlog re-triaged to 0 open.
+
+### Proposals — later in the 6.7.x line (the user, 2026-10-15: "keep proposals for later in 6.7.x line")
+
+After Break 2 and the 6.7.15 audit; their release is set when the review follow-ups are:
+[adjacent string-literal concatenation](proposals/2026-10-13-adjacent-string-literal-concatenation.md) ·
+[`memmove`](proposals/2026-10-14-memmove.md).
 
 ### Placed arcs — open by design (moved out of the bug queue)
 

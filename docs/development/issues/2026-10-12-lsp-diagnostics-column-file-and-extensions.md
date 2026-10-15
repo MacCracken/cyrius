@@ -10,7 +10,7 @@ the tree's `build/cyrius-lsp`), with `build/cycc` and a CLI built from `cbt/cyri
 `publishDiagnostics` at all. Inside a project (`cyrius check --with-deps`): `src/col.cyr` has no `include`, so the
 check is redirected to `src/main.cyr`; `col.cyr` shows `src/inc.cyr`'s line-7 error at its own line 6 plus a line-0
 `"…/src/col.cyr (compiler exit 1)"`, and its own line-2 error is never compiled.
-**Placement:** 6.7.13 — repair 3 (roadmap.md § *6.7.13*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (reported in its tools findings; the sweep's re-verified
 `docs/guides/editor-integration.md` documents the line-only spans and the `.cyr`-only coverage as gaps); re-verified
 and filed by the 6.7.10 planning lane.

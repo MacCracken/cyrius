@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 by the 6.7.11 genfe review on the lane tree (l6711-genfe, the carrier-field
 fix ed9456c1). The drop is loud (a parse error), but its cause is unnamed.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe review) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 genfe review.
 **Severity:** Low — only a generic with more than 64 struct-carrier slots (parameters and `var x: G<..T..>` locals,
 one entry per slot a type parameter takes whole) meets it; the result is the pre-6.7.11 refusal "expected ';', got

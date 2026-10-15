@@ -7,7 +7,7 @@ unlinked on every compile failure path, so most kills leave an empty dir". Every
 them (6.5.19 / 6.6.6 / 6.6.20 — measured, now pinned by tests/gates/toolchain/cli_temp_dir_no_leak.sh axis 7), so no
 code was missing there; the leftovers come from the CLI itself being KILLED while the compiler runs, and an unlink on
 a failure path cannot reach that case.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 tools lane (killed-tmp unit).
 **Severity:** Low — disk litter in the private 0700 dir (up to ~1 MB of `cpp_` per kill); a box that runs check.sh
 reaps it after `CYRIUS_CHECK_REAP_MINS` (240); a box that never runs check.sh keeps it.

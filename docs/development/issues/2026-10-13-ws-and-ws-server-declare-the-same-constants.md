@@ -5,7 +5,8 @@ commit): `lib/ws.cyr` declares `WS_OP_CONTINUATION` / `WS_OP_TEXT` / `WS_OP_BINA
 `WS_OP_PONG` (enum `WsOpcode`) and `WS_OPEN` / `WS_CLOSING` / `WS_CLOSED` (enum `WsState`); `lib/ws_server.cyr`
 declares the same nine as top-level `var`s with the same values. Neither file includes the other and neither is a
 peer of a dispatcher, so for `cyrius distlib`'s sidecar verify the two leaves TIE for every one of the nine names.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x. ⛔ 6.7.11 ships with the tie: the folded stdlib yantra cannot run its own `cyrius distlib` on the 6.7.11 CLI until this lands (or its bundled module includes `lib/ws.cyr` itself) — fix first in 6.7.12 (the user, 2026-10-14). The 6.7.11 tools lane's D26 brief said "no `lib/` tie exists today" — false (the release-docs pass, 2026-10-14).
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D11 — ws_server.cyr includes lib/ws.cyr and drops its nine copies.
 **Discovered:** 2026-10-13, the 6.7.11 tools lane's census of every-target owner ties
 (`tests/gates/toolchain/distlib_owner_rule_shared.sh` row C — the only ties in lib/; they are its ALLOW list).
 **Severity:** Medium — the folded stdlib yantra's own `cyrius distlib` stops at its next release: measured on a

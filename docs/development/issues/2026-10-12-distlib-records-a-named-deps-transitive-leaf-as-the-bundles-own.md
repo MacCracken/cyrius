@@ -1,7 +1,7 @@
 # `cyrius distlib` records a named dep's transitive stdlib leaf as the bundle's own: a pure module's sidecar gets `boxed` — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (the run below). Found by anuenue's 1.4.0 release, whose committed `dist/anuenue.deps` reads `boxed`.
-**Placement:** Unplaced — filed from darshana 1.3.0's consumer releases (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, regenerating anuenue's `dist/` under 6.7.9.
 **Severity:** Low — an extra leaf in a sidecar costs a consumer one unneeded `lib/boxed.cyr`, and nothing fails. But the sidecar is meant to be exactly what compile-verify proves the bundle itself needs, and this one names a leaf the bundle never uses.
 **Affects:** 6.7.9 (verified). Earlier releases were not checked.

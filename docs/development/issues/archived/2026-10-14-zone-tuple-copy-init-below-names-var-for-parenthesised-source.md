@@ -1,6 +1,8 @@
-# `var A: (i64, i64) = (B);` in the declaration zone, with B declared below: `_gci_below` names the wrong source, 'var' instead of 'B' — OPEN
+# `var A: (i64, i64) = (B);` in the declaration zone, with B declared below: `_gci_below` names the wrong source, 'var' instead of 'B' — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane tip (l6711-returns, `build/cycc` the fixpoint
+> ✅ **RESOLVED in v6.7.11** (the 6.7.12 open's triage, 2026-10-15, on the slot-open compiler: Repro verbatim gives one error, `1:21: cannot copy-init 'A' from a global declared below it (declare the source first): 'B'`. `((B))` names 'B'. The struct `(B)` names 'B' (2:12). Fixed by bcca83f9 (6.7.11 struct lane, 2026-10-14): `_gci_below` (parse_decl.cyr:6032) now steps `_pwrap_k` first. tests/gates/frontend/tuple_checked.sh cs8 pins only the UNWRAPPED form.)
+
+**Status:** ✅ **RESOLVED in v6.7.11** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane tip (l6711-returns, `build/cycc` the fixpoint
 of 4288c67f + the review's doc fix) and on the lane base 0f733aea (the slot-open cycc), x86_64.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns review) — never 7.x.
 **Severity:** Low — the program is invalid and is refused at the right place; the message names the wrong global.

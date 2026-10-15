@@ -4,7 +4,7 @@
 build/cycc) and on the lane's compiler alike. Met while running the `CYRIUS_DCE=1` differential for
 [the agnos kernel-compaction item](archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md): the corpus file
 `tests/tcyr/lang/generic_instance_inline_binding.tcyr` passes without the flag and crashes with it.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13.
 **Severity:** High — a silent miscompile under an opt-in flag a consumer ships with (agnos is moving to
 `CYRIUS_DCE=1` for image room): the program faults or hangs at run time, the build exits 0. Every target is hit:

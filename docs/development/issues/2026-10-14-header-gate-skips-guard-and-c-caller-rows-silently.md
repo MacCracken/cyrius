@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — read 2026-10-14 in tests/gates/toolchain/header_spellings_and_size.sh at l6711-tools @
 a3d9837d (lines 255 and 331).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools review) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 tools lane's review of the header struct-return bite.
 **Severity:** Low — not reachable today (check.sh runs on ubuntu x86_64 only), but the gate reads PASS on an aarch64
 or macOS-arm host with cc while two of its legs never ran: a gate that cannot run a leg says so BY NAME (CLAUDE.md,

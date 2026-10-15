@@ -1,7 +1,7 @@
 # README.md's list of fold versions is stale for six folds, and no gate ties it to `lib/`'s `# Version:` headers — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 stdlib lane tree (`338fabc0`) and on `main` (`2fdf66b4`).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 stdlib review) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 stdlib lane's review of `923f187f` (the sankoch 2.8.6 refold). The reviewer counted five stale folds. The fix step re-checked all twelve and found a sixth, yantra.
 **Severity:** Low — docs only, and nothing compiles from it. But the paragraph says it reports what `lib/` carries, so it misleads anyone choosing a pin from the README.
 **Affects:** `README.md`, the § Standard Library paragraph ("The twelve folded sibling libraries, at the versions `lib/` carries (each file's `# Version:` header)", ~line 241–247).

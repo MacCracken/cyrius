@@ -1,7 +1,8 @@
 # A global first declared `= 0` and redeclared with another value is silent (no "conflicting value" warning), so two files' same-name globals merge unseen — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 against the 6.7.11 wave-1 merge (`build/cycc` 2,168,800 B, x86_64).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 wave-1 integration) — never 7.x. ⚠ Changes what a build prints
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D30 — warn, and widen fold_namespace_collisions.sh.
 (and, if refused, what compiles): the user's call — warn, refuse across files, or document the `= 0` exception.
 **Severity:** Medium — a diagnostic gap, but it is how a real cross-fold collision shipped: sankoch 2.8.4's Brotli
 encoder declared `var _bre_err = 0;`, niyama already declared `var _bre_err = 0;`, and a program including both

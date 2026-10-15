@@ -4,7 +4,7 @@
 `2026-10-12-struct-result-through-fn-pointer-faults.md`'s fix, which made a known `&f` callee's struct result a struct
 value) and on the slot-open compiler (`0f733aea`): the repro below is refused `error:<source>:6:29: expected ';', got
 '.'` on x86_64, aarch64, cx and PE alike, while line 5's `mk3(5).b` (6.6.12, `_call_field`) compiles.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A1).
 **Severity:** Low. Refused loudly (no wrong value); the workaround is to bind the result first
 (`var p: P3 = fncall1(&mk3, 5); p.b`).

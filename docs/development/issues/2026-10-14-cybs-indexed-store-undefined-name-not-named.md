@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 infra lane (cybs.cyr @ 4e5d1f90, seed-assembled, 22,320 B).
 The routing predates 6.7.11: the slot-open cybs (0f733aea) printed a bare `syntax error` for the same input.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra review) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 infra lane's review of the cybs bare-syntax-error item
 (`issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md`, decision A). That item's table and its undefined-name rows
 (`var x = nosuch(1);`, `zz = 5;`, `a = zz;`, `&zz`) do not include a subscript, so this shape is beyond its filed

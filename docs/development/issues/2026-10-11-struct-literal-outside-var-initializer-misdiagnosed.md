@@ -7,7 +7,7 @@ literal as another literal's element (`W { P { 2 } }`) are each refused with `un
 is refused by name ("… takes a local of that struct or a call returning it — got `P`"). The installed 6.6.0, 6.7.0
 and 6.7.8 compilers refuse the assignment the same way. The guide shows struct literals only as `var` initializers and
 never says other positions are unsupported.
-**Placement:** 6.7.13 — repair 3, the diagnostics lane (roadmap.md § *The releases after 6.7.8*; part 2, the literal
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 as an expression, is the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 1 (the zero-size struct store), writing `G = P { 5 };`.
 **Severity:** Low — a loud refusal with a message that names the wrong thing (`P` is a declared struct, not an

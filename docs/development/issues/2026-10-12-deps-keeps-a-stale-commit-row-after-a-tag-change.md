@@ -1,7 +1,8 @@
 # After a `[deps.NAME]` tag changes, `cyrius.lock` keeps the old tag's `commit` row beside the new one, and `deps --locked` accepts it — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (the run below). Found independently by two agents bumping darshana in bannermanor and darshini, then re-run by hand.
-**Placement:** Unplaced — filed from darshana 1.3.0's consumer releases (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D25 — keep the rows, make them visible.
 **Discovered:** 2026-10-12, moving consumers' `[deps.darshana]` from 1.0.0 / 1.2.1 to `tag = "1.3.0"`.
 **Severity:** Low — `lib/` gets the new tag's files, so the build is right. But the lock names two commits for one dep, its own summary counts one, and the integrity check that exists to catch a lock that disagrees with the manifest passes.
 **Affects:** 6.7.9 (verified). Earlier releases were not checked.

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — collected 2026-10-14 by the 6.7.11 release-docs pass, each checked on main 0601aff4. The user,
 2026-10-14: "file and fix them in 6.7.12". Every item is comment-, message- or doc-only: cycc stays byte-identical.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 integration) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low — text that misdescribes the code.
 
 ## Items

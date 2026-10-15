@@ -11,7 +11,7 @@
 that does not exist, so the loop never builds anything. (c) With `build/cycc` present and `CYRIUS_BOUNDS=1` in the
 caller's environment, `setup` exits 0 and the installed `bin/cyrfmt` is byte-identical to a `CYRIUS_BOUNDS=1` build
 (99,280 B) and differs from the default build (95,144 B).
-**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (its tools findings: `programs/cyriusly.cyr` `_cmd_setup`, read
 against what `bootstrap/bootstrap.sh` builds); item (c) found by the 6.7.10 planning lane while reproducing it, which
 re-verified and filed the whole.

@@ -7,7 +7,8 @@ against the merged 6.7.9 tree: `cyrius.cyml`'s `[release] scripts = ["cyrius-rep
 x86_64 tarball (its `scripts/shims/` lookup fixed in 6.7.9); `scripts/build-macos-x86-tarball.sh:64-65` and
 `scripts/build-macos-arm64-tarball.sh:66-67` hand-copy `cyriusly`, `cyrius-prompt-info` and
 `scripts/shims/cyrius-repl.sh` only.
-**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *The releases after 6.7.8*; a tarball built and unpacked
+**Placement:** 6.7.12 — repair 2: the platform release (darwin lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D4 — ship every [release] script.
 on ecb and ach) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's
 [release-tarball shim fix](2026-10-08-release-tarball-misses-shim-scripts.md).

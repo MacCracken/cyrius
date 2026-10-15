@@ -8,7 +8,8 @@ with one passing `tests/a.tcyr` prints ``warn: `cyrius tests` is deprecated and 
 `docs/development/ecosystem-migration.md:293` says "a deprecated alias for 6.7.6 only"; 6.7.7, 6.7.8 and 6.7.9
 shipped it unchanged, and `docs/guides/cyrius-guide.md:3512` says "to be removed" with no release. No roadmap slot
 names the removal.
-**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D21 — removed at 6.7.12.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (its tools findings: the three notice sites); re-verified and filed
 by the 6.7.10 planning lane.
 **Severity:** Low — the alias works; its notice states a removal date that has passed, and three documents disagree

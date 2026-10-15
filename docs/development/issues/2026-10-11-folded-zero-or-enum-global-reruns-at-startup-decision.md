@@ -5,7 +5,7 @@ re-evaluation), which made cx bake what the native targets bake and left these t
 6.6.20. Verified 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B, its `cycc_aarch64`
 under qemu and its `cycc_cx` under cxvm): repro A exits 136 (SIGFPE) on x86_64 and cx and 5 on aarch64; repro B 136
 on x86_64 and cx and 8 on aarch64 (Q = INT_MIN); the non-zero literal control C exits 10 everywhere.
-**Placement:** 6.7.13 — repair 3, the globals lane (roadmap.md § *The releases after 6.7.8*; asked with
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 [the const-init redundant store](2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md), the same
 replay) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's

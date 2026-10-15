@@ -4,7 +4,8 @@
 `programs/cyrius_api_surface.cyr` built from that tree. Met while fixing
 `2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md` (whose repro has `fn va(n, ...)`; its
 "want" names only `cf/1, mp/2, pp/2`, so the variadic arity was left as it was); filed.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D22 — name/MIN-.
 **Severity:** Low — the snapshot records a variadic fn with a fixed arity it does not have. A caller may
 pass any number of arguments from the named count up; the entry reads as an exact count, so a variadic
 fn and a fixed-arity fn of the same count look the same, and a later change between the two is not a

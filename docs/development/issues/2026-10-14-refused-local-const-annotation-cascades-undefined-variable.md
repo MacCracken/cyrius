@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F3: the lane's compiler
 before the unit, 2,189,840 B, and after it, 2,194,096 B).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, probing a typed local const in a closure body for
 `issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md`. Outside that issue's scope (a diagnostic
 cascade in every fn, not a capture).

@@ -7,7 +7,7 @@ with `ps: *P8`, `pw: *P16` compiles with no diagnostic and stores each struct's 
 Since 6.7.10 (decision 6) `*p` is a struct VALUE at every size, and 6.7.11 refuses it by name as one into a by-value
 argument of 8 B or less (`take8(*pu)`), but the tuple element reads its static struct through `_expr_struct_sid`,
 which has no dereference arm (the A3 arm is the argument's: `_ess_deref`, called from `_sarg_byval_small` only).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 callargs lane (unit A3), checking what the dereference arm would change in the
 fn it shares (`_tup_elem_val`).
 **Severity:** Low — a missed refusal; the stored word is the struct's first field (an i64 there), not garbage.

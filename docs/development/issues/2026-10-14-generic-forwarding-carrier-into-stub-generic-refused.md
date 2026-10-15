@@ -5,7 +5,7 @@ and on unit G2's compiler (ed9456c1): both definitions below are refused at the 
 'gx' has no i64 (or other scalar) instance") — the forwarder's eagerly emitted i64 base meets the stub refusal. The
 explicit spelling `outer<Pt>(p)` cannot help: the base is parsed first. `gx` itself became a stub in 6.7.11 (unit G2:
 a carrier's `T` field read as a struct, `b.v.y`; before it its definition did not compile at all).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G3, while adding the row "a generic forwarding T through a
 generic call's result" for issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md.
 **Severity:** Low — a loud refusal of valid source; workaround: forward the `T` value itself

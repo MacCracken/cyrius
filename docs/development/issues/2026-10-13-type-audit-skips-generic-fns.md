@@ -4,7 +4,7 @@
 `programs/cyrius_type_audit.cyr` built from that tree. Met while fixing
 `2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md` (which gave type-audit the shared
 declaration reader, `_src_decl_at`); outside that issue's filed surface, so filed.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a public generic fn is missing from the audit's counts and its unannotated list; no
 wrong output elsewhere.
 **Affects:** `cyrius type-audit` (`programs/cyrius_type_audit.cyr`), every version with generics.

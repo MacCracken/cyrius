@@ -7,7 +7,8 @@ user's call", and that issue is now resolved with the question still open. Verif
 `memory/lib_buffers_sized_by_const.sh` axis 6), so writing `TLOCAL_MAX_SLOTS`, `TLS_REG_MAX`, `SPAWN_ARGV_MAX`,
 `SPAWN_ENV_MAX` or `KEV_SIZE` compiles and does nothing; the TLS stack's seven still drive storage
 ([2026-10-11-tls-public-bound-vars-drive-const-storage.md](2026-10-11-tls-public-bound-vars-drive-const-storage.md)).
-**Placement:** 6.7.13 — repair 3, the TLS lane (roadmap.md § *The releases after 6.7.8*; asked with the TLS twins'
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D16 — keep them writable vars (a write is inert).
 fix and [`TLS_CA_MAX_ROOTS`](2026-10-11-tls-ca-max-roots-unread-decision.md)) (the user's call, asked at that
 release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's lib-literal-bounds fix.

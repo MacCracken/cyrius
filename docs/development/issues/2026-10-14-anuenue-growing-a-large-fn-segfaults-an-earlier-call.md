@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — filed by a consumer; reproduced 2026-10-14 on Linux x86_64 under three toolchains.
 Not minimized and not investigated: the consumer only surfaces it.
-**Placement:** unplaced — for the user to place.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Source:** anuenue (`/home/macro/Repos/anuenue`), found while cutting its 1.4.3 (the escape-table word copy).
 **Discovered:** 2026-10-14, adding one unit-test group to `tests/anuenue.tcyr`.
 **Severity:** Medium — a hard crash with a known workaround. It may be worse than it looks: the failure is

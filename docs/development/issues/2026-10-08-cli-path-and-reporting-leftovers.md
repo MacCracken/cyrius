@@ -5,7 +5,8 @@
 6 and 7 reproduced on Linux; item 8 reproduced under wine (private `WINEPREFIX`) with the PE CLI cross-built from
 `src/main_win.cyr`; item 1 verified from that PE build's own warning and the code — not re-verified on hardware (needs
 cass); item 3 verified by reading.
-**Placement:** 6.7.12 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D18 — update copies the [deps] stdlib closure at the manifest pin (--full for all).
 **Discovered:** the 6.7.6 review (2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium for items 2 and 7 (a unit silently loses its `test.cyml`; another repository's HEAD is reported as
 a local dep's state); Low for the rest.

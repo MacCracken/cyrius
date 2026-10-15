@@ -5,7 +5,8 @@ drafts re-measured on the merged tree, main 0601aff4, `build/cycc` 2,223,320 B, 
 `~/.cyrius/versions/6.7.10/bin/cycc`). The user, 2026-10-14: "file and fix them in 6.7.12". Each item below shipped in
 6.7.11 and is listed in CHANGELOG [6.7.11] / ecosystem-migration § 6.7.11; each either follows an existing rule or was
 decided on a premise that turned out narrower than the change.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 integration) — never 7.x. ⚠ Language semantics are the user's
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D31 — keep all six (item 1, D10's flip side, kept by the fork answer).
 call (CLAUDE.md *Execution integrity*): for each item, keep (and the item closes) or restore the 6.7.10 behaviour.
 **Severity:** Medium — programs that compiled on 6.7.10 stop compiling; none of the new refusals miscomputes.
 

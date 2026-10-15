@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, the R3 tip after the
 impl-method pair prescan); the same on the installed 6.6.0, 6.6.10, 6.6.16, 6.6.20, 6.7.0, 6.7.2, 6.7.5, 6.7.6
 and 6.7.10 compilers.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — valid code is refused (a false "bind both" on a one-value fn) and a false warning tells the
 author to return a variant from a fn that returns an i64; nothing miscompiles silently. Met while writing the
 6.7.11 D22 rows: a refusal row whose fn calls such a generic reports a second, false error at its caller.

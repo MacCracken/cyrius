@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe) after unit F2's fix of
 `issues/archived/2026-10-09-const-context-calls-private-const-fn.md` (commit b8fc9526): the evaluated call is refused; a call in an
 arm the evaluator skips still builds silently.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F2 (the issue's fix plan checks a const context's call only
 when `_ce_skip == 0`; this is the shape that leaves out), outside the filed surface.
 **Severity:** Low — the documented `private` boundary ("covers every way of reaching a fn") is not held for a call the

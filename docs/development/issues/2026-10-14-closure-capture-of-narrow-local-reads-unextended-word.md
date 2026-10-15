@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F4, build/cycc 2,194,096 B)
 on x86_64 (plain and CYRIUS_IR=3), aarch64 (qemu) and cx (cxvm), and on the installed 6.6.0 and 6.7.9 compilers:
 identical on x86 everywhere.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F4, while adding a narrow-capture row for
 `issues/archived/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md` (that issue is about the pointer
 STEP of a narrow local; this is the captured VALUE, outside its filed surface).

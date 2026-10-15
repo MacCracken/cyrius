@@ -1,7 +1,7 @@
 # The stdlib builds an `epoll_event` per arch (`epoll_event_new`) but offers nothing to read one back, so consumers hand-gate the data offset — OPEN
 
 **Status:** 🟡 **OPEN** — checked 2026-10-12 against the published 6.7.9 `lib/`. Found by chakshu's 0.11.0 release, which had read the data field at x86_64's `+4` on aarch64.
-**Placement:** Unplaced — filed from darshana 1.3.0's consumer releases (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12. chakshu's epoll tag read was wrong on aarch64 (`0x25A5A5A5A` instead of the tag), proven on qemu-aarch64 and on a Raspberry Pi 4.
 **Severity:** Low — a stdlib surface gap (recommendation). The defect it causes is the consumer's, but the arch rule lives only in stdlib comments.
 **Affects:** 6.7.9 (verified by reading). The write side has been per-arch since v6.4.42.

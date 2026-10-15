@@ -4,7 +4,7 @@
 `build/cycc` 2,057,744 B), `programs/wc.cyr` built by that `build/cycc`, compared with GNU coreutils `wc` 9.12 under
 `LC_ALL=C`. A 10,000,000-byte one-word input prints `       0       110000000` (the word count `1` and the byte count
 `10000000` fused into `110000000`); GNU prints `       0        1 10000000`. `a\vb\fc\n` counts 1 word; GNU counts 3.
-**Placement:** 6.7.13 — repair 3 (roadmap.md § *6.7.13*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (its tools findings: `programs/wc.cyr`); re-verified and filed by the
 6.7.10 planning lane.
 **Severity:** Low — a demo program; its output is unreadable for any count of 8+ digits and its word count disagrees

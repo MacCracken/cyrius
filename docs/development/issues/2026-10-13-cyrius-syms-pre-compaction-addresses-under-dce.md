@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 infra lane (noted in passing by the 6.7.11 triage of
 [the agnos kernel-compaction item](archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md)).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13.
 **Severity:** Medium — the crash-localization map (docs/diagnosis-symbols.md) is wrong for every `CYRIUS_DCE=1`
 build that eliminates anything: a RIP maps to the wrong function, and a removed fn is listed at a live fn's address.

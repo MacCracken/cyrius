@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 stdlib lane's tree (`d534bd30`, after the
 `dir_list` fix), x86_64 Linux.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 stdlib lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low. The CLI (`cyrius audit`, `cbt/commands.cyr` ~2600) `is_dir`-checks every root before
 it walks, and the walkers descend only into entries whose `d_type` is `DT_DIR`, so a FIFO is reached
 only by a caller of the public walkers that hands one in, or by a swap between the CLI's `stat` and

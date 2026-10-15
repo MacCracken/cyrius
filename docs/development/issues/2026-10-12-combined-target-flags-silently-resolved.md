@@ -10,7 +10,8 @@ multiboot2)`; `--aarch64 --target=x86_64-bare-metal-elf` writes an AArch64 ELF (
 `--target=aarch64-bare-metal-elf`) and reports the x86 kernel line; `--win --target=cx` / `--aarch64 --target=cx`
 write the plain `.cyx`; `--aarch64 --target=js t.ts t.js` writes a 65,888-byte AArch64 ELF named `t.js` (mode 0644)
 and prints `[js] OK`. Two `--target` values ARE refused (the parser's one-value rule).
-**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D20 — accept the consistent pair.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (its tools findings: `cbt/cli_args.cyr:723-725`); re-verified and
 filed by the 6.7.10 planning lane.
 **Severity:** Medium — a wrong or unintended artifact with exit 0 and an `OK` (and for the bare-metal pairs a kernel

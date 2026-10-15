@@ -6,7 +6,7 @@ self-builds that KEEP their output — `cyrius pulsar` and the cx arc's on-deman
 (issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md, cbt/core.cyr `_envp_self_build`). The two self-host
 VERIFIERS were outside that filing's surface and still pass the CLI's whole environment: `cyrius self` and
 `cyrius soak` both step through `_self_host_step` -> `_pulsar_raw_compile`, whose POSIX child execs with `_envp`.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 tools lane (unit T4), reading every caller of `_pulsar_raw_compile` while
 fixing the pulsar site.
 **Severity:** Low — no artifact is kept (both verbs stage into the CLI's private temp dir and delete it), but the

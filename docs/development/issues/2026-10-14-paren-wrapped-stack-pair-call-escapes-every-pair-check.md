@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane tip (l6711-returns, `build/cycc` the fixpoint
 of 4288c67f + the review's doc fix) and on the lane base 0f733aea (the slot-open cycc, 2,114,376 B), x86_64. The pair
 flag and every check below are shared frontend state, so the aarch64 / cx / PE compilers take the same path.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** High — valid `?` code crashes at run time with no diagnostic, and every lossy one-slot store the
 unwrapped spelling refuses compiles clean and keeps the tag (the payload, an `Err`'s error code, is gone).
 **Affects:** every compiler since the pair checks (v6.5.67 bind, 6.6.0 assignment / `?`, 6.7.7 stores, 6.7.11 the

@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 tree (main 0601aff4, `build/cycc` 2,223,320 B, x86_64).
 Found by the 6.7.11 release-docs pass: two lanes' rules meeting on the merged tree (the user, 2026-10-14: "file and fix
 them in 6.7.12").
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 integration) — never 7.x. ⚠ Refusing it changes what compiles —
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D28 — refused as D24 refuses mk3(5).
 it extends decision D24 (user, 2026-10-13) to a shape D24's text does not name; confirm, or keep the first-field read and
 document it.
 **Severity:** Low — silent first-field read; the direct call is refused by name.

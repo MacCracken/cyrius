@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 tools lane (l6711-tools @ a3d9837d) with its
 `build/cyrius` and `build/cycc` (throwaway `HOME` / `CYRIUS_HOME`).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools review) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D23 — refuse by name (annotated pair returns modelled).
 **Discovered:** 2026-10-14 by the 6.7.11 tools lane's review of the header struct-return bite
 (issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md). That filing names structs and `dyn`; a stack enum is
 outside its surface. Same class as the staged vector-return issue

@@ -4,7 +4,7 @@
 `2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md` (b) reach a method and an operator?).
 Reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, unit R4, after its first commit) on x86_64, aarch64
 (qemu), cx (cxvm) and PE (wine), identically on all four.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — silent: a scalar holds the struct's first word (narrowed to its annotation); nothing crashes.
 **Discovered:** 2026-10-14, the 6.7.11 returns lane (unit R4), while repairing shape (b) of
 `2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md`. That issue's filed surface is PARSE_VAR's

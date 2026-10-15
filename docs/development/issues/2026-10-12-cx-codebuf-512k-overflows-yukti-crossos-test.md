@@ -4,7 +4,8 @@
 `src/main_cx.cyr`, sakshi 2.5.9 refolded): the test now gets past the sakshi fold (the 10 "undefined variable
 '_SK_SYS_*'" errors of issue 2026-10-11-sakshi-fold-has-no-cx-arm are gone) and stops at `error: codebuf overflow`,
 rc 1, no `.cyx`. The x86 build of the same file compiles and passes.
-**Placement:** 6.7.12 — repair 2, the platform release (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D12 — grow (cx bytecode off-heap, cxvm caps to match).
 **Discovered:** 2026-10-12, the 6.7.10 sakshi refold: closing the sakshi cx issue named this test compiling for cx as
 part of its acceptance; the sakshi half holds (`cx_crossos_rows_run.sh` R13), this half is a separate defect.
 **Severity:** Medium — a hard refusal on one target, no wrong value; and the message names no limit, no size and no

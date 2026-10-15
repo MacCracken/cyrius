@@ -1,6 +1,6 @@
 # `cyrius package` with a missing `[build] entry` prints "package ready: build/<out>" and exits 0 with no artifact; its help row promises an `.ark` it never writes — OPEN
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-12 on Linux x86_64 against the 6.7.10 slot-open tree (`efb6623f`,
+**Status:** 🟡 6.7.12 open (2026-10-15): PARTIAL — The help row was fixed in 6.7.10 (`cyrius --help` gives `package  compile the [build] entry to build/<output>`). The missing-entry path still reproduces with the filed repro: entry=src/nope.cyr prints `package ready: build/pk`, rc=0, tree `. ./build ./cyrius.cyml`. With no manifest and no src/main.cyr: `version: unknown`, `package ready: build/main`, rc=0, `. ./build`. Was: 🟡 **OPEN** — reproduced 2026-10-12 on Linux x86_64 against the 6.7.10 slot-open tree (`efb6623f`,
 `build/cycc` 2,057,744 B), with the CLI built from `cbt/cyrius.cyr` by that `build/cycc` and a throwaway `HOME` /
 `CYRIUS_HOME`. A manifest whose `[build] entry` names a file that does not exist: `cyrius package` prints
 `package ready: build/pk`, exits 0, and leaves an empty `build/` and no file; `cyrius build` in the same directory
@@ -9,7 +9,7 @@ fails by name (`error: no such file: src/nope.cyr`, rc 1). With no manifest and 
 `package — create .ark distributable`; no `.ark` writer exists anywhere in the tree (`programs/ark.cyr` has no
 create / pack verb; `docs/architecture/package-format.md` § *`cyrius package`* says so).
 **6.7.10:** the `package` help row now reads "compile the [build] entry to build/<output>" (the `.ark` claim removed, a stale-comment bite); the missing-entry "package ready" placeholder below is still open.
-**Placement:** 6.7.12 — repair 2, the CLI lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (reported in its tools findings; the sweep rewrote
 `docs/architecture/package-format.md` to what `package` does — "no `.ark` writer exists"); re-verified and filed by
 the 6.7.10 planning lane.

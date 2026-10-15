@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/archived/2026-10-08-struct-operator-results.md
 #2), reproduced with the lane's compiler (struct worktree after `29d1210e`).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a silent wrong value after a construct that already warns (kind 0 on the comparison, kind 1 on
 the next operator); workaround: name the comparison in a typed variable (`var c: i64 = n < x;`).
 **Affects:** cycc since v6.2.19 (the f64 comparison arms) through the 6.7.11 lane.

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN — a decision for the user** (what `return &s;` means in a fn declared `: S`). Measured 2026-10-14
 on the 6.7.11 struct lane (`l6711-struct`, after unit S3), x86_64.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S3), writing the guide paragraph for
 issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md (decision (a): a `*S` local, global,
 call or field returns the struct it points at, at every size). `&s` is no `*S` to the compiler's typing (`_hl_psid`

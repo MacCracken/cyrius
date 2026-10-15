@@ -8,7 +8,8 @@ PE 5 (an access violation). Before A2 (A1's compiler) the `*V` shapes were the s
 were refused on x86_64 only, by the value-form path's text (`value-form SIMD arg: IDENT not found as a local`,
 `value-form SIMD arg must be a local IDENT (inline-replay path)`); the non-vector-pointer and `*f32v8` shapes were the
 same on all four before and after.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D27 (fork) — B: pass the address for the *V shapes; another pointer kind refused by name.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A2), probing beyond the filed surface (a named local).
 **Severity:** High (6.7.11 regression on x86_64; Medium on the other targets, where it was never refused). Compiles clean and faults at run time; a type error the compiler does not name. Workaround: bind
 the vector to a local first (`var t: f64v2 = mkv(..); rd(t);`), or pass `pv` itself (it is the pointer).

@@ -4,7 +4,7 @@
 `2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md`'s fix) and on the slot-open compiler (`0f733aea`,
 `build/cycc` 2,114,376 B): the three repros below exit 3 on x86_64, aarch64 (qemu) and cx (cxvm), and exit 5 on PE
 (wine: a page fault writing to address 41).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A1), measuring the vector receive's neighbours.
 **Severity:** High. A crash on one target from source that compiles clean on all of them, with no diagnostic.
 **Affects:** the PE (Win64) target only — every value-form vector return type (`f64v2`, `f32v4`, the integer

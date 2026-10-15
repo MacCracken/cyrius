@@ -1,7 +1,7 @@
 # `cyrius deps` keeps a stdlib leaf removed from `[deps].stdlib` vendored and locked, and nothing reports it — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (the run below): after a leaf is dropped from `[deps].stdlib`, `lib/<leaf>.cyr` and its lock row survive `cyrius deps`, and `deps --verify` passes.
-**Placement:** Unplaced — filed from darshana 1.3.0 (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, darshana 1.1.3: dropping its `vec` and `args` leaves at the 6.6.20 bump left both files vendored and locked until `rm -rf lib/ && cyrius deps`.
 **Severity:** Low — no wrong build: auto-prepend follows `[deps].stdlib`, not `lib/`. But the vendored tree and its lock overstate the footprint, and a reviewer reading `lib/` or `cyrius.lock` to learn a project's footprint is misled.
 **Affects:** 6.6.9 (first lock of a stdlib-only project) through 6.7.9.

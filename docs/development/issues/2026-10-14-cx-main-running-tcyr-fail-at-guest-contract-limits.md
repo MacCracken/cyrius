@@ -7,7 +7,8 @@ assertions all live in `main` run them under cxvm for the first time. A before/a
 over the 584-file `.tcyr` corpus: 17 files now pass in full on cxvm (15 printed nothing and exited 0,
 two exited with a global's value); these seven now fail. Not fixed in that bite — each fix is a cx guest-contract design (or a test's cx arm),
 not a codegen repair.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D13 — honest cx arms in the wrappers.
 **Discovered:** 2026-10-14, 6.7.11 genfe F5 (the cx `main` auto-call).
 **Severity:** Low. Every failure is loud — an assertion `FAIL` line and a non-zero exit, or a cxvm
 trap with exit 1 — and no gate runs these files on cx (the cross-OS legs run `tests/tcyr/crossos/`

@@ -6,7 +6,7 @@
 refused "unknown type 'Nonexist' as a type argument". Spelled `slice<u8>` (the built-in slice's word form) the same
 program also builds and exits 11, although 6.7.8 refuses the `[u8]` spelling there by name. The installed 6.6.20,
 6.7.0, 6.7.5 and 6.7.7 compilers build the repro and exit 11 too.
-**Placement:** 6.7.13 — repair 3, the diagnostics lane, beside [`Mp<K, V>` with undeclared `K` / `V`](2026-10-09-undeclared-generic-type-arguments-accepted.md)
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at
 that release's open: programs that compile today are refused).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-6a (slices refused as type arguments; gate row K3 in

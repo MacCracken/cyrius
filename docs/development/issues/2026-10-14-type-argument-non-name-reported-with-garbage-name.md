@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit G4, the compiler built from
 the unit's tree, 2,189,720 B; the lane's base build/cycc prints the same).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G4 (comparing how each type-argument position refuses a
 token that is no type, for `Vec<1 + 2>`).
 **Severity:** Low — loud (the program is refused), but the message names a garbage type, and in a generic call the

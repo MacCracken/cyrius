@@ -15,6 +15,8 @@ cross-reference the CHANGELOG entry that closed them.
 
 | File | Brief | Resolved in |
 |------|-------|-------------|
+| [`2026-10-08-async-iocp-pe-plain-cmd-c-step2.md`](./2026-10-08-async-iocp-pe-plain-cmd-c-step2.md) | `tests/win/async_iocp_pe.cyr` returns 1 at step 2 (`async_with_timeout`) on cass under a plain `cmd /c` | closed 6.7.12 open (not reproducible) |
+| [`2026-10-14-zone-tuple-copy-init-below-names-var-for-parenthesised-source.md`](./2026-10-14-zone-tuple-copy-init-below-names-var-for-parenthesised-source.md) | `var A: (i64, i64) = (B);` in the declaration zone, with B declared below: `_gci_below` names the wrong source, 'var' instead of 'B' | v6.7.11 |
 | [`2026-10-08-attribute-word-list-hand-kept-in-five-tools.md`](./2026-10-08-attribute-word-list-hand-kept-in-five-tools.md) | The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census | v6.7.11 |
 | [`2026-10-08-cybs-bare-syntax-error-no-location.md`](./2026-10-08-cybs-bare-syntax-error-no-location.md) | cybs reports a bare "syntax error" (or "undefined variable") with no file, line or construct | v6.7.11 |
 | [`2026-10-08-cybs-undefined-fn-call-in-statement-silent.md`](./2026-10-08-cybs-undefined-fn-call-in-statement-silent.md) | cybs compiles a statement-position call to an undefined function silently; the binary segfaults | v6.7.11 |

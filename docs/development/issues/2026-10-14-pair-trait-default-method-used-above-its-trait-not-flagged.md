@@ -4,7 +4,7 @@
 the pair prescan visit `impl` methods — issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md, D23). The
 repro below compiles clean and exits 139 on x86_64, 139 on aarch64 (qemu), 1 on cx (cxvm: "guest address out of
 range") and 5 on PE (wine); with the `trait` and its `impl` moved above `usediv` it exits 70 on all four.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** High — valid `?` code crashes at run time with no diagnostic, and the single bind keeps the tag in
 silence (a lossy bind the same program refuses when the trait comes first).
 **Affects:** cycc 6.7.0 (traits with default methods) – the 6.7.11 lane tip, every target (the pair flag is shared

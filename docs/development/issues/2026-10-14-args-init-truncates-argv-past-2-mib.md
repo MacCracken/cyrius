@@ -2,7 +2,8 @@
 
 **Status:** 🔴 **OPEN** — filed by a consumer. Verified 2026-10-14 on Linux x86_64 against the stdlib
 of 6.7.9 and 6.7.11; `args_init` is byte-identical in both.
-**Placement:** unplaced — for the user to place.
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D7 — a negative errno.
 **Source:** cmdit (`/home/macro/Repos/cmdit`), found by its 1.3.2 audit
 (`docs/audit/2026-10-14-audit.md`, SEC-7).
 **Discovered:** 2026-10-14.

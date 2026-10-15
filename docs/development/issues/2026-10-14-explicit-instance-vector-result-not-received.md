@@ -7,7 +7,7 @@ since 6.7.11 ("a value-form vector local is assigned only from .. a call declare
 slot-open compiler compiled it with wrong lanes, exit 0 where 161 is right), and `var v: f64v2 = mkg<i64>(41, 7);` is
 refused "value-form SIMD arg must be a 16-byte vector" on both compilers — a misleading message for a call declared to
 return exactly that vector.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the review of the 6.7.11 callargs lane (probes review/rev/vr/k1-k3).
 **Severity:** Low — a refusal with a working spelling (the inferred call, or a local of the type); the slot-open wrong
 value is closed by 6.7.11's refusal.

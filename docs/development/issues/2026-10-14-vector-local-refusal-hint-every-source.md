@@ -9,7 +9,7 @@ not exist — `var v: f64v2 = f64v2_splat(1.0);` without `include "lib/simd.cyr"
 ("got `f64v2_splat`") ahead of the undefined-function warnings, where the slot-open compiler's error was "refusing to emit
 binary with 1 reachable undefined function(s)" after "undefined function 'f64v2_splat'". Diagnostic quality only: every
 shape is still refused, and no binary is written.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the review of the 6.7.11 callargs lane (probes review/rev/vr/c8-c10, d7).
 **Severity:** Low — message text; the refusal and its line are right.
 **Affects:** 6.7.11 (the refusal is new); every target (frontend).

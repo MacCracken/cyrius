@@ -5,7 +5,8 @@ whose fix removed the last reader; the 6.7.9 selection kept the name. Verified 2
 tree: `grep -rn TLS_CA_MAX_ROOTS lib src cbt programs` finds only its declaration (`lib/tls_native_hs12.cyr:1991`,
 `var TLS_CA_MAX_ROOTS = 300;`) and two comments; the only other reader is the 6.7.9 test that proves it bounds
 nothing (`tests/tcyr/crypto/tls_client_cert_pem_sizing.tcyr:124-129`).
-**Placement:** 6.7.13 — repair 3, the TLS lane (roadmap.md § *The releases after 6.7.8*; its "Decisions at the open"
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D15 — keep.
 already lists "`TLS_CA_MAX_ROOTS` is kept (default) or retired") (the user's call, asked at that release's open) —
 placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's

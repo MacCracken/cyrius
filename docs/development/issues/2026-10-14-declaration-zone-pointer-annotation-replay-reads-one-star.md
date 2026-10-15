@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, unit R5) with
 `build/cycc < f.cyr` from the tree root, x86_64.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — a valid program does not compile (a `**T` global before the first top-level statement);
 the same declaration after a statement, or as a local, compiles. A refused `*( .. )` global gets a second error.
 **Discovered:** 2026-10-14, the 6.7.11 returns lane (unit R5), while checking the declaration-zone form of shape 3

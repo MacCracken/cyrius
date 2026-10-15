@@ -1,7 +1,7 @@
 # W^X dead-code compaction leaves stale code bytes in .text's alignment pad — OPEN
 
 **Status:** 🟡 **OPEN** — seen 2026-10-13 on the 6.7.11 infra lane while reading compacted binaries.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra lane) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13.
 **Severity:** Low — the bytes are past the last instruction and never execute; output is merely not clean (a
 disassembler shows a stale `ud2` or a stray instruction past the program's exit, which reads like a miscompile when

@@ -4,7 +4,7 @@
 parenthesised FREE call element was fixed — issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-
 refused.md) on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine): `H { 7, (q0.dupe()), 8 }` and `H { 7, (q0 + q1), 8 }`
 with a 16-byte result are refused "unexpected '}'"; unwrapped both give 64. The same with the lane base compiler.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x. (Refused source starts compiling:
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 the user's call at that release's open, as the free-call element's was.)
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (S7), writing the free-call element's "a wrapped method element is
 unchanged" row: the filed issue says a wrapped method / operator element "has been taken since 6.7.6 (`_sc_pwrap`)" —

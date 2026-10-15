@@ -1,7 +1,7 @@
 # `CYRIUS_DCE=1` keeps the callees of a redefined function's losing body alive — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (the run below). Found by chakshu's 0.11.0 release: its four libssl refusals in `src/nolibc.cyr` redefine `lib/fdlopen.cyr`'s loaders (since 6.6.9 `lib/tls.cyr` includes `fdlopen.cyr` itself), and the loader code those losing bodies call stays in the DCE'd `shu-ai` binary.
-**Placement:** Unplaced — filed from darshana 1.3.0's consumer releases (2026-10-12). Only the user places it.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, chakshu 0.11.0's `nolibc-check.sh` work.
 **Severity:** Low — dead bytes, not wrong behaviour: every call binds to the last definition (6.6.20), and the losing body is never run. But DCE is how a consumer proves the shipped binary carries no libc-loader code. Here it keeps code no call can reach.
 **Affects:** 6.7.9 (verified). Earlier releases were not checked.

@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — collected 2026-10-14 by the 6.7.11 release-docs pass. The release gate's hardware leg runs
 `tests/tcyr/crossos/` only (ecb · ach · cass · pi, all `SELFHOST_OK` + `LIBTEST_OK` at 6.7.11), so a row that lives in
 a shell gate runs under qemu / wine / cxvm only. The user, 2026-10-14: "file and fix them in 6.7.12".
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 integration; the platform release runs the hosts at slot one) —
+**Placement:** 6.7.12 — repair 2: the platform release (stdlib lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D14 — a recorded exception for the agnos-only wrappers.
 never 7.x.
 **Severity:** Low — coverage, not a known defect.
 

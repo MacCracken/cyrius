@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F3: the lane's compiler after
 the unit, 2,193,936 B) and on the installed 6.6.0 and 6.7.9 compilers: identical everywhere.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, checking "every other declaration form the closure body
 can hold" for `issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (whose triage said none exist
 beyond `var`, `const`, `for … in` and a destructure; a nested closure literal's parameter list is one more). Outside

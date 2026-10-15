@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane's tree (`l6711-struct` @ `d2dd38fa`), x86_64 and
 aarch64 (a `cycc_aarch64` built from `src/main_aarch64.cyr`, run under qemu-aarch64), and against the lane base
 (`5fb211da:build/cycc`): the same on every leg for the rows below, so it is **pre-existing**, not a lane regression.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane's review (the struct-field-destination and deref-store bites gave
 their sibling arms `_agc_ptr_global` and `_dst_struct` a zero-size arm, `_ps_is_sz` (ac419c94), but not this one).
 **Severity:** P2 — silent neighbour clobber (a field) or an 8-byte over-read (a dereference), zero-size structs only.

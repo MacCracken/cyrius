@@ -4,7 +4,7 @@
 inside a fn reports `expected '=', got unknown` for all 23 tokens listed below (and for a float literal); `>>>` and `!`
 (named in 6.7.5 / 6.7.3) report their names. The set was derived by diffing every token number the lexer emits
 (`ADDTOK(S, N` in `src/frontend/*.cyr` + `LEXKW_EXT`'s returns) against TOKNAME + TOKNAME_BUILTIN.
-**Placement:** 6.7.13 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 6.7.5 planning (roadmap commit 68de8001, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a misleading diagnostic on source that is invalid either way.
 **Affects:** cycc through 6.7.6 (these tokens have never had names).

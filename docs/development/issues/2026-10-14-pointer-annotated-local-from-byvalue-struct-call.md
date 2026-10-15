@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane tip (l6711-returns, `build/cycc` the fixpoint
 of 4288c67f + the review's doc fix) and on the lane base 0f733aea (the slot-open cycc), x86_64.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — a warning is printed, but the program it lets through crashes (`*P2`) or reads a value as a
 pointer (`*i64`).
 **Affects:** every compiler with PARSE_VAR's struct receive — pre-existing; outside the 6.7.11 R4 decision

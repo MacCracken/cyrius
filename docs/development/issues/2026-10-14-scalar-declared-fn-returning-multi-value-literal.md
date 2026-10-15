@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane tip (l6711-returns, `build/cycc` the fixpoint
 of 4288c67f + the review's doc fix) and on the lane base 0f733aea (the slot-open cycc), x86_64.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns review) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — silent: the declaration says one value, the body returns two, and nothing is said either way.
 **Affects:** every compiler with declared return types — pre-existing. The reverse shape (a fn declared `: (i64,
 i64)` returning one value) is refused since the 6.7.11 returns lane's ac07bb7a, and the async form since fcb8d909.

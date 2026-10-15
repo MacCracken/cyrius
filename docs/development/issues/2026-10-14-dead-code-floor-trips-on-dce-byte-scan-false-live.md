@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 by the 6.7.11 genfe lane gate (after the review fixes). Pre-existing:
 the byte-scan design dates from v5.10.x; the floor gate from 6.6.20.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe review) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the genfe lane's check.sh run after 783d795c (the pair-scan path fix).
 **Severity:** Low — no miscompile (a false-live fn is only kept, never a live one dropped); the cost is a floor gate
 that fails on a byte coincidence unrelated to the change, and a floor fixture edited to match noise.

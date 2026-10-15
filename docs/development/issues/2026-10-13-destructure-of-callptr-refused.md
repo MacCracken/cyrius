@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 callargs lane tree (unit A1) and on the slot-open compiler
 (`0f733aea`): the repro below is refused at line 6 (`error:<source>:6:16: multi-value destructure needs a call on the
 right-hand side`) on x86_64, aarch64, cx and PE, while line 5's `fncall1(fp, 5)` is accepted (11 with line 6 removed).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A1), writing the two-word receive's rows.
 **Severity:** Low. Refused loudly; the workaround is `fncall1(fp, ..)` (the same lowering).
 **Affects:** `callptr` in every destructure (`var a, b = ..`, `a, b = ..`), all four targets.

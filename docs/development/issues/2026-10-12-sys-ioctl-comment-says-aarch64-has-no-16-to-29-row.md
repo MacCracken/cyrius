@@ -1,7 +1,7 @@
 # `lib/syscalls_linux_common.cyr`'s `sys_ioctl` comment says ELF aarch64 has no 16 → 29 row; the backend has had one since v6.5.38 — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-12 against the published 6.7.9: the comment is unchanged (`lib/syscalls_linux_common.cyr:179`), the row exists at the 6.7.9 tag (`src/backend/aarch64/emit.cyr:1532` comment, `:1550` the emit), and a raw `syscall(16, …)` run under qemu-aarch64 behaves as ioctl.
-**Placement:** Unplaced — filed from darshana 1.3.0 (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (darwin lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-12, darshana's 1.1.4 audit (darshana had made the same claim in its own docs and corrected it there).
 **Severity:** Low — doc mismatch. The advice it gives (use the per-arch number, not 16) is still right; the reason it gives is wrong.
 **Affects:** the comment since `sys_ioctl` was added; the row since v6.5.38.

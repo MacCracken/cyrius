@@ -9,7 +9,8 @@ pi went to zero) and handed the cass 32 to "the maintainer" without a file; no o
 (`grep` of `docs/development/issues/*.md` and `roadmap*.md`). The full corpus is now **562** `.tcyr`
 (`find tests/tcyr -name '*.tcyr' | wc -l`), the `crossos/` subset the release gate runs **267**, so the 32 is a
 measurement of a corpus half today's size.
-**Placement:** 6.7.12 — repair 2, the Windows runtime lane (roadmap.md § *6.7.12*) — placed 2026-10-12 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (windows lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D8 — ecb / ach / pi full corpus now, cass when its triage reaches zero.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (the `docs/platform-status.md` re-verification stated the 32 as open
 and untriaged); filed by the 6.7.10 planning lane.
 **Severity:** Medium — a coverage gap, not a known wrong result: about 295 `.tcyr` outside `crossos/` are never run on

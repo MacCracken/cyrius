@@ -1,6 +1,8 @@
-# `tests/win/async_iocp_pe.cyr` returns 1 at step 2 (`async_with_timeout`) on cass under a plain `cmd /c` — OPEN
+# `tests/win/async_iocp_pe.cyr` returns 1 at step 2 (`async_with_timeout`) on cass under a plain `cmd /c` — RESOLVED
 
-**Status:** 🟡 **OPEN** — not re-verified on hardware (needs cass). 2026-10-08 against 6.7.6 @ 2fb6ad8b under wine on
+> ✅ **CLOSED at the 6.7.12 open — does not reproduce** (the 6.7.12 open's triage, 2026-10-15, on the slot-open compiler: cass, 2026-10-15, 6.7.12 slot-open tree. tests/win/async_iocp_pe.cyr compiled NATIVELY on cass by build/cycc_win (output sha256 218b8dcc..., byte-identical to the Linux cross-build). Run from PowerShell, `cmd /c "cd /d C:\cyrius-tests\t6712w && aip2.exe"; $LASTEXITCODE` gave 42 three times out of three. From a .bat: plain=42 vform=42 direct=42. The gate form gave 0, which means 42. Over ssh, `ssh cass 'cmd /c "cd /d ... && aip.exe"'` gave rc 1 three times. But `ssh cass 'cmd /c "exit 42"'` also gives 1, `"exit 7"` gives 1 and `"exit 0"` gives 0. cass's sshd shell is Windows PowerShell 5.1.26100, and its -Command mode turns any non-zero native exit into 1. So the 1 recorded at 6.6.17 was 42 c)
+
+**Status:** ✅ **CLOSED at the 6.7.12 open — does not reproduce** (see the banner). Was: 🟡 **OPEN** — not re-verified on hardware (needs cass). 2026-10-08 against 6.7.6 @ 2fb6ad8b under wine on
 this Linux box (private `WINEPREFIX`, the test cross-built by the tree's `build/cycc` with `CYRIUS_TARGET_WIN=1`): it
 exits 42 run directly and under `wine cmd /c aip.exe` — wine does not reproduce it (as with the v6.4.44 misaligned-stack
 fault this test also guards, which only real Windows showed).

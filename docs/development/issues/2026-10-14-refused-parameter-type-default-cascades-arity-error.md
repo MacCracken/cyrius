@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 tree (main 0601aff4, `build/cycc` 2,223,320 B, x86_64).
 A cross-lane hand-off the returns lane left for the wave-1 merge that was not applied (the user, 2026-10-14: "file and
 fix them in 6.7.12").
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 integration) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low — the input is invalid and is refused at the parameter; the extra line is a cascade.
 **Affects:** cycc 6.7.11 (the call-arguments lane's whole-type parameter reader, 25711ad2, met the returns lane's
 cascade repair, 4288c67f).

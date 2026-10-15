@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane's tree (`l6711-struct`) and on `5fb211da` (the
 wave-1 merge): identical output, x86_64.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1), probing the consumers of a dereference while fixing
 issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md and
 issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md.

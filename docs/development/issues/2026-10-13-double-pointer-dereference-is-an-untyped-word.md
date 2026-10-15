@@ -6,7 +6,7 @@ since 6.7.11, `2026-10-10-param-type-annotation-reads-one-token.md`) alike, `*(*
 the pointee (exit 1 / 2 below, x86_64 and aarch64), and `var q: *i64 = *pp;` draws "assigning non-pointer to typed
 pointer" — the filed repro (b) of the param-annotation issue (`fn f(p: **i64): i64 { var q: *i64 = *p; return *q; }`)
 exits 42 with that warning.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A2), running the param-annotation repro (b).
 **Severity:** Low. A spurious warning on correct code, and a byte step where an element step is meant; `pp + 1`
 itself steps 8, as the guide says. Workaround: bind it first (`var q: *i64 = *pp;`, warning and all) and step `q`.

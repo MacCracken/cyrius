@@ -1,9 +1,9 @@
 # `var x = (mk1());` (an 8 B struct) and `var x = (b.mk());` (a 9–16 B method) still infer nothing — the method's first word crashes through a by-value parameter — OPEN
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, unit R4, after its first
+**Status:** 🟡 6.7.12 open (2026-10-15): PARTIAL — The 16 B method half is FIXED. `var x = (b.mk()); return dq(x);` now exits 34 on x86, aarch64 (qemu), cx (cxvm) and PE (wine). D42's struct-lane bite d09f6364 fixed it, and CHANGELOG [6.7.11] says so. The 8 B half is still OPEN. Repro 2 gives `error:<source>:4:45: no struct type in scope for 'x'`, and `((mk1()))`, generic `(mkg(33))` and two-u32 `(mk8())` are refused the same way. An 8 B method or Was: 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, unit R4, after its first
 commit, which made `var x = (mk());` transparent for a FREE call returning a struct over 8 B) on x86_64, aarch64
 (qemu), cx (cxvm) and PE (wine).
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** High — the method form builds clean and crashes (SIGSEGV on x86_64 / aarch64, a guest error on cx, an
 access violation on PE); the 8 B free-call form is loud (valid code refused at `.field`).
 **Discovered:** 2026-10-14, the 6.7.11 returns lane (unit R4), repairing shape (a) of

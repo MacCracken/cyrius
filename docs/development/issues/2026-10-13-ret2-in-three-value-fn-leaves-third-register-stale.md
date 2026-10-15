@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 returns lane (l6711-returns, after the
 declared-return repair) on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine): the repro builds and exits 88.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — silent garbage in a binding.
 **Discovered:** 2026-10-13, the 6.7.11 returns lane (unit R1), while repairing
 `2026-10-09-multi-value-receive-reads-stale-return-registers.md`, whose decision (A, 2026-10-13) refuses every

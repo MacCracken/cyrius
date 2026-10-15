@@ -4,7 +4,7 @@
 `programs/cyrlint.cyr` built from that tree (the commit that adds the overrun rule for
 `2026-10-08-cyrlint-array-overrun-and-write-length-checks.md`). That issue's filed surface is a bare LOCAL
 `var a[N]` and a constant `&a + K`; the two shapes below lie outside it, so they are filed, not widened in.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Severity:** Low — preventive lint; no in-tree site is known (the 6.7.11 census found none of either shape
 with an overrun, but it could not look).
 **Affects:** cyrlint from 6.7.11 (the rule's first release).

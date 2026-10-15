@@ -5,7 +5,8 @@
 (the first row and the `_msx_tail` row each occur 668 times), **1,261 B** at the first site (a chain is 13 B longer
 where the pipe row's arity rule keeps it) — **≈ 842 KB, ~35 %** of the binary. Size-only; behaviour not re-run on
 hardware (a fold must be verified on ach).
-**Placement:** 6.7.12 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** 6.7.12 — repair 2: the platform release (darwin lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D2 — XLAT-2 in.
 **Discovered:** 6.6.18 (2026-10-06), left out of XLAT-1 (CHANGELOG [6.6.18] *Known / not fixed*); filed 2026-10-08
 from roadmap.md.
 **Severity:** Low — size only; nothing miscompiles.

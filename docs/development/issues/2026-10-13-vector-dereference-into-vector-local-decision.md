@@ -7,7 +7,7 @@ stale). Since the 6.7.11 callargs lane (unit A1, `2026-10-12-vector-receive-from
 user's decision (a): every source into a value-form vector local that is not a local of its type or a call declared
 to return it is refused by name) both are refused: `a value-form vector local is initialised only from a local of its
 type or a call declared to return it .. - got `*p``.
-**Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A1).
 **Severity:** Low. Refused loudly since 6.7.11 (it read wrong lanes before, silently); the workaround is to use the
 vector through its pointer (the `*_ptr` forms), or to copy its lanes with `load64` / `store64` on the address.

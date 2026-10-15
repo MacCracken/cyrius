@@ -1,7 +1,8 @@
 # `cyrfmt --check` exits 0 on a file that `cyrfmt` itself reformats (a call's continuation-line indent) — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-12 against the published 6.7.9 (the run below). Found by cyim's 1.11.0 release, where `cyrius audit`'s fmt stage flagged a file that `cyrfmt --check` had passed. Also seen on 6.6.2.
-**Placement:** Unplaced — filed from darshana 1.3.0's consumer releases (2026-10-12). Only the user places it.
+**Placement:** 6.7.12 — repair 2: the platform release (tools lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.12 open):** D26 — keep the contract; audit uses cyrfmt --check.
 **Discovered:** 2026-10-12, cyim 1.11.0's lint/fmt pass.
 **Severity:** Low — a check that cannot fail. A CI that gates on `cyrfmt --check` passes code that `cyrfmt` and `cyrius audit` then disagree about.
 **Affects:** 6.6.2 and 6.7.9 (both reported; 6.7.9 re-run by hand).
