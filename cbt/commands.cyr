@@ -1290,6 +1290,10 @@ fn cmd_self(): i64 {
         _err_ctx("self-host: compiler not found", _cc);
         return 1;
     }
+    # 6.7.12 — both steps build the DEFAULT compiler: their children exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does. Under an
+    # inherited CYRIUS_POISON=1 this printed PASS for two poison-mode compilers. CHANGELOG [6.7.12]
+    _envp = _envp_self_build();
     # ⛔ 6.6.9 bite 10 (CYRIUS-2026-0009) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
     # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
     # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
@@ -3097,6 +3101,11 @@ fn cmd_soak(iters): i64 {
         _skip_deps = saved_skip_deps;
         return 1;
     }
+    # 6.7.12 — the two self-host steps build the DEFAULT compiler: they exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does; the test
+    # suite and the .scyr harnesses below are the user's own compiles and keep `_envp`, on every
+    # host (the Windows arm clears the four around the step's spawn only). CHANGELOG [6.7.12]
+    var soak_envp = _envp_self_build();
 
     var soak_pass = 0;
     var soak_fail = 0;
@@ -3131,6 +3140,8 @@ fn cmd_soak(iters): i64 {
         #     path, so `-1 != -1` scored a PASS over files that need not exist.
         # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
         # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
+        var user_envp = _envp;
+        _envp = soak_envp;
         var s1 = _self_host_step(soak_cc, soak_src, cc5_t);
         if (s1 != 0) {
             _soak_step_failed(1, s1);
@@ -3143,6 +3154,7 @@ fn cmd_soak(iters): i64 {
                 iter_ok = 0;
             }
         }
+        _envp = user_envp;
         # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
         # second "output differs" on top of it names the wrong cause.
         if (iter_ok == 1) {

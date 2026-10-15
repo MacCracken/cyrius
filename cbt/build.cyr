@@ -2746,13 +2746,19 @@ fn _win_cmd_self(): i64 {
     # an exit (`_raw_how_exited`, cbt/pulsar.cyr — a fn, because that global is declared in a
     # file included after this one). CHANGELOG [6.6.9]
     _raw_how_exited();
+    # 6.7.12 — both steps build the DEFAULT compiler: the compile-mode switches are cleared on
+    # this process around the two spawns (`_win_mode_switches_clear`), the POSIX arm's
+    # `_envp_self_build`. CHANGELOG [6.7.12]
+    var wsaved = _win_mode_switches_clear();
     var w1 = _win_compile_spawn(_cc, self_src, t1);
     if (w1 != 0) {
+        _win_mode_switches_restore(wsaved);
         _self_step_failed(1, w1, self_src, _cc);
         xunlink(t1);
         return 1;
     }
     var w2 = _win_compile_spawn(t1, self_src, t2);
+    _win_mode_switches_restore(wsaved);
     if (w2 != 0) {
         _self_step_failed(2, w2, self_src, 0);
         xunlink(t1);

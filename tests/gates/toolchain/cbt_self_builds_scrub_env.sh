@@ -32,9 +32,13 @@
 #      (cbt/cyrius.cyr) through compile(), and the install step each read all four unset.
 #   C  `cyrius build --target=cx x.cyr`: the cycc_cx build reads them unset, the user's x.cyr keeps
 #      all four; `cyrius run out.cyx`: the cxvm build reads them unset.
+#   S  (6.7.12) the self-host VERIFIERS, `cyrius self` and `cyrius soak 1`, with all four inherited:
+#      both steps of each read all four unset, and soak's test leg (the user's .tcyr through
+#      compile()) keeps all four (issues/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md).
 #   W  (wine) the PE CLI with a PE stub compiler: the cycc_cx self-build reads them unset, and the
 #      user's x.cyr compiled next IN THE SAME PROCESS still sees all four (they were restored); the
-#      cxvm build likewise unset. wine is not hardware: the cass leg is the real Windows.
+#      cxvm build likewise unset; (6.7.12) `cyrius.exe self` and `cyrius.exe soak 1`: both steps
+#      unset, soak's test leg keeps all four. wine is not hardware: the cass leg is the real Windows.
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN 17/17
 # on the real tree):
@@ -45,6 +49,13 @@
 #   M3  cx POSIX: `_cx_jit_build`'s child execs with `_envp`                  RED 2: C1, C3
 #   M4  cx PE: no clear / restore around `_win_compile_spawn`                 RED 2: W1, W3
 #   M5  cx PE: cleared, never restored                                        RED 1: W2
+# 6.7.12 (the S axis and W4-W8; GREEN 29/29 on the real tree):
+#   M0' the 6.7.12 fix reverted (cbt/commands.cyr, build.cyr, pulsar.cyr)      RED 4: S1, S3, W5, W7
+#   M6  cmd_self: no `_envp = _envp_self_build()`                              RED 1: S1
+#   M7  cmd_soak: the steps exec with `_envp` (no swap)                        RED 1: S3
+#   M8  cmd_soak: `_envp` scrubbed for the whole run (the test leg too)        RED 1: S4
+#   M9  _win_cmd_self: no clear / restore around its two spawns               RED 1: W5
+#   M10 _pulsar_raw_compile's PE arm: no clear / restore (soak's steps)       RED 1: W7
 set -u
 G=cbt_self_builds_scrub_env
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -138,6 +149,27 @@ check "C2 the user's x.cyr, compiled by it, keeps all four" "$SET" "$(logged "$T
     timeout 120 "$T/cyrius" run out.cyx) > "$T/r.out" 2>&1 || :
 check "C3 the cxvm build (programs/cxvm.cyr) reads every switch unset" "$UNSET" "$(logged "$T/c.log" cxvm)"
 
+echo "== S: the self-host verifiers, cyrius self and cyrius soak =="
+# src/main.cyr is the x86_64 Linux self-host source (`_self_host_src`); the stub emits itself, so
+# step 2 (the stub's copy) emits the same bytes and the verdict is a PASS. The test binary soak
+# runs is the stub again: it logs MARK_none and exits 0.
+SV="$T/s"; mkstub "$SV"; mkdir -p "$SV/tests/tcyr"
+echo '# MARK_self' > "$SV/src/main.cyr"
+echo '# MARK_utest' > "$SV/tests/tcyr/u.tcyr"
+rc=0
+(cd "$SV" && inherit STUBLOG="$T/s_self.log" HOME="$T/home" CYRIUS_HOME="$T/home/.cyrius" PATH=/usr/bin:/bin \
+    timeout 120 "$T/cyrius" self < /dev/null) > "$T/s_self.out" 2>&1 || rc=$?
+check "S0 cyrius self exits 0 with its PASS line" "0 1" "$rc $(grep -c 'PASS: cycc==cycc byte-identical' "$T/s_self.out")"
+check "S1 cyrius self: both steps ran" 2 "$(nlines "$T/s_self.log" self)"
+check "S1 cyrius self: both steps read every switch unset" "$UNSET" "$(logged "$T/s_self.log" self)"
+rc=0
+(cd "$SV" && inherit STUBLOG="$T/s_soak.log" HOME="$T/home" CYRIUS_HOME="$T/home/.cyrius" PATH=/usr/bin:/bin \
+    timeout 120 "$T/cyrius" soak 1 < /dev/null) > "$T/s_soak.out" 2>&1 || rc=$?
+check "S2 cyrius soak 1 exits 0, its one iteration passed" "0 1" "$rc $(grep -c 'soak complete: 1/1 passed' "$T/s_soak.out")"
+check "S3 cyrius soak 1: both steps ran" 2 "$(nlines "$T/s_soak.log" self)"
+check "S3 cyrius soak 1: both steps read every switch unset" "$UNSET" "$(logged "$T/s_soak.log" self)"
+check "S4 cyrius soak 1: its test leg (the user's .tcyr through compile()) keeps all four" "$SET" "$(logged "$T/s_soak.log" utest)"
+
 echo "== W: the PE arm, under wine =="
 if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1; then
     echo "  SKIP (named): the W rows — wine is not installed; the PE arm is covered only by the cass leg"
@@ -196,14 +228,6 @@ fn main(): i64 {
     if (wl == 0) { memcpy(w, "none", 4); wl = 4; }
     store8(w + wl, 0);
     var eb = alloc(600);
-    var out = alloc(4096);
-    var o = 0;
-    o = _wv(out, o, "POISON=", "CYRIUS_POISON", eb);
-    o = _wv(out, o, " BOUNDS=", "CYRIUS_BOUNDS", eb);
-    o = _wv(out, o, " COVERAGE=", "CYRIUS_COVERAGE", eb);
-    o = _wv(out, o, " COVFILE=", "CYRIUS_COVERAGE_FILE", eb);
-    store8(out + o, 10);
-    o = o + 1;
     var lp = alloc(1024);
     var ll = strlen("$LOGC");
     memcpy(lp, "$LOGC", ll);
@@ -211,6 +235,15 @@ fn main(): i64 {
     memcpy(lp + ll + 1, w, wl);
     memcpy(lp + ll + 1 + wl, ".log", 4);
     store8(lp + ll + 5 + wl, 0);
+    var out = alloc(8192);
+    var o = file_read_all(lp, out, 4096);   # append: a second step on the same word adds a line
+    if (o < 0) { o = 0; }
+    o = _wv(out, o, "POISON=", "CYRIUS_POISON", eb);
+    o = _wv(out, o, " BOUNDS=", "CYRIUS_BOUNDS", eb);
+    o = _wv(out, o, " COVERAGE=", "CYRIUS_COVERAGE", eb);
+    o = _wv(out, o, " COVFILE=", "CYRIUS_COVERAGE_FILE", eb);
+    store8(out + o, 10);
+    o = o + 1;
     file_write_all(lp, out, o);
     var me = alloc(4194304);
     var mn = file_read_all("$SELFC", me, 4194304);
@@ -225,7 +258,8 @@ CYR
     echo '# MARK_cx' > "$T/w/c/src/main_cx.cyr"
     echo '# MARK_cxvm' > "$T/w/c/programs/cxvm.cyr"
     echo '# MARK_user' > "$T/w/c/x.cyr"
-    wlog() { if [ -f "$T/w/log/$1.log" ]; then tr -d '\r\n' < "$T/w/log/$1.log"; else echo "(never ran)"; fi; }
+    wlog() { if [ -f "$T/w/log/$1.log" ]; then tr -d '\r' < "$T/w/log/$1.log" | sort -u | paste -sd'|' -; else echo "(never ran)"; fi; }
+    wlines() { if [ -f "$T/w/log/$1.log" ]; then wc -l < "$T/w/log/$1.log" | tr -d ' '; else echo 0; fi; }
     rc=0
     (cd "$T/w/c" && inherit CYRIUS_HOME="$T/w/home" CYRIUS_RESOLVED=1 timeout 300 wine "$T/w/home/bin/cyrius.exe" build --target=cx x.cyr out.cyx) > "$T/w.out" 2>&1 || rc=$?
     check "W0 cyrius.exe build --target=cx exits 0" 0 "$rc"
@@ -233,12 +267,26 @@ CYR
     check "W2 the user's x.cyr next, in the same process, sees all four again (restored)" "$SET" "$(wlog user)"
     (cd "$T/w/c" && inherit CYRIUS_HOME="$T/w/home" CYRIUS_RESOLVED=1 timeout 300 wine "$T/w/home/bin/cyrius.exe" run out.cyx) > "$T/wr.out" 2>&1 || :
     check "W3 the cxvm self-build reads every switch unset" "$UNSET" "$(wlog cxvm)"
+    # 6.7.12 — the PE self-host verifiers (src/main_win.cyr is the PE self-host source).
+    mkdir -p "$T/w/c/tests/tcyr"
+    echo '# MARK_wself' > "$T/w/c/src/main_win.cyr"
+    rc=0
+    (cd "$T/w/c" && inherit CYRIUS_HOME="$T/w/home" CYRIUS_RESOLVED=1 timeout 300 wine "$T/w/home/bin/cyrius.exe" self < /dev/null) > "$T/ws.out" 2>&1 || rc=$?
+    check "W4 cyrius.exe self exits 0 with its PASS line" "0 1" "$rc $(tr -d '\r' < "$T/ws.out" | grep -c 'PASS: cycc==cycc byte-identical')"
+    check "W5 cyrius.exe self: both steps read every switch unset" "2 $UNSET" "$(wlines wself) $(wlog wself)"
+    rm -f "$T/w/log/wself.log"
+    echo '# MARK_wutest' > "$T/w/c/tests/tcyr/u.tcyr"
+    rc=0
+    (cd "$T/w/c" && inherit CYRIUS_HOME="$T/w/home" CYRIUS_RESOLVED=1 timeout 300 wine "$T/w/home/bin/cyrius.exe" soak 1 < /dev/null) > "$T/wk.out" 2>&1 || rc=$?
+    check "W6 cyrius.exe soak 1 exits 0, its one iteration passed" "0 1" "$rc $(tr -d '\r' < "$T/wk.out" | grep -c 'soak complete: 1/1 passed')"
+    check "W7 cyrius.exe soak 1: both steps read every switch unset" "2 $UNSET" "$(wlines wself) $(wlog wself)"
+    check "W8 cyrius.exe soak 1: its test leg (the user's .tcyr) keeps all four" "$SET" "$(wlog wutest)"
     _wine_down
 fi
 
 echo ""
 if [ "$fails" -gt 0 ]; then
-    for f in p.out c.out w.out; do [ -s "$T/$f" ] && { echo "  ($f, first lines)"; sed -n '1,6p' "$T/$f" | sed 's/^/    /'; }; done
+    for f in p.out c.out s_self.out s_soak.out w.out ws.out wk.out; do [ -s "$T/$f" ] && { echo "  ($f, first lines)"; sed -n '1,6p' "$T/$f" | sed 's/^/    /'; }; done
     echo "FAIL: $G — $fails of $checks checks failed"
     exit 1
 fi

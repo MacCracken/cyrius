@@ -36,7 +36,12 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     # it had not done. `_win_compile_spawn` is exactly this redirect. CHANGELOG [6.6.6].
     var prc = 0;
     #ifdef CYRIUS_TARGET_WIN
+    # 6.7.12 — every caller is a self-build (pulsar, `cyrius soak`'s steps): the compile-mode
+    # switches are cleared on this process around the spawn, the POSIX child's `_envp_self_build`
+    # (`_win_mode_switches_clear`, cbt/build.cyr). CHANGELOG [6.7.12]
+    var wsaved = _win_mode_switches_clear();
     prc = _win_compile_spawn(cc, src, tmp);
+    _win_mode_switches_restore(wsaved);
     if (prc != 0) { xunlink(tmp); return prc; }
     sys_chmod(tmp, 0x1ED);
     if (file_rename(tmp, out) != 0) { xunlink(tmp); _raw_last_how = 3; return 1; }
