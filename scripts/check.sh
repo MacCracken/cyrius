@@ -2279,6 +2279,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/type_audit_generic_fns.sh"
 # 6.7.12 (D22) — cyrius api-surface writes a variadic fn as `name/MIN-` (va/1-, zv/0-): the `...`
 # tail counted as a parameter (va/2, zv/1), so a variadic fn read as a fixed one of that count.
 _chk_gate "$ROOT/tests/gates/toolchain/api_surface_variadic_arity.sh"
+# 6.7.12 (D20) — ONE emit target per run: two of --aarch64 / --win / --agnos / --target=<v> are refused
+# by name before anything resolves or compiles (`--win --aarch64` built the aarch64 ELF at rc 0,
+# `--aarch64 --target=js` an aarch64 ELF named .js after reading stdin); the consistent pair
+# `--aarch64 --target=aarch64-bare-metal-elf` builds as the --target alone; each single unchanged.
+_chk_gate "$ROOT/tests/gates/toolchain/target_selectors_exclusive.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

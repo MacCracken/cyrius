@@ -758,7 +758,7 @@ fn _cli_host_refuses(flag): i64 {
 }
 
 # The early block: before any selector is applied, so nothing compiles and nothing is written.
-# Kept apart from the selector chain below (6.7.12's combined-target-flags issue reworks that).
+# Kept apart from the selector chain below, which ends in _cli_targets_exclusive (6.7.12).
 fn _cli_foreign_target(): i64 {
     if (_cli_has("--agnos") == 1) {
         if (_cli_host_refuses("--agnos") == 1) { return 1; }
@@ -772,6 +772,61 @@ fn _cli_foreign_target(): i64 {
         return _cli_host_refuses("--target=aarch64-bare-metal-elf");
     }
     return 0;
+}
+
+# 6.7.12 — ONE EMIT TARGET PER RUN (the user's decision D20, 2026-10-15). `--aarch64`, `--win`,
+# `--agnos` and `--target=<v>` were independent switches, each read by whatever cared about it:
+# `--win --aarch64` built the plain aarch64 ELF, `--win --agnos` a PE matching neither,
+# `--aarch64 --target=x86_64-bare-metal-elf` an aarch64 ELF reported with the x86 kernel line, and
+# `--aarch64 --target=js` an aarch64 ELF named .js — each rc 0 with an OK. Two of them are refused
+# by name here, before anything resolves or compiles (rule 5). The one consistent pair, `--aarch64`
+# with `--target=aarch64-bare-metal-elf`, names ONE target and builds it exactly as the --target
+# alone does. 0, or 1 after naming the selectors, in the order given. CHANGELOG [6.7.12]
+fn _cli_targets_exclusive(): i64 {
+    var tgt = _cli_val("--target");
+    var a64_named = 1;     # 0: --aarch64 restates --target=aarch64-bare-metal-elf (D20)
+    if (tgt != 0) {
+        if (streq(tgt, "aarch64-bare-metal-elf") == 1) { a64_named = 0; }
+    }
+    var names = vec_new();
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        var nm = vec_get(_cli_names, i);
+        var shown = 0;
+        if (streq(nm, "--aarch64") == 1) { if (a64_named == 1) { shown = nm; } }
+        elif (streq(nm, "--win") == 1 || streq(nm, "--agnos") == 1) { shown = nm; }
+        elif (streq(nm, "--target") == 1) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "--target=");
+            str_builder_add_cstr(sb, vec_get(_cli_vals, i));
+            shown = str_data(str_builder_build(sb));
+        }
+        if (shown != 0) {
+            # a bool selector may repeat (`--win --win` is one target)
+            var j = 0;
+            var seen = 0;
+            while (j < vec_len(names)) { if (streq(vec_get(names, j), shown) == 1) { seen = 1; } j = j + 1; }
+            if (seen == 0) { vec_push(names, shown); }
+        }
+        i = i + 1;
+    }
+    var n = vec_len(names);
+    if (n < 2) { return 0; }
+    var msg = str_builder_new();
+    var k = 0;
+    while (k < n) {
+        if (k > 0) {
+            if (k == n - 1) { str_builder_add_cstr(msg, " and "); }
+            else { str_builder_add_cstr(msg, ", "); }
+        }
+        str_builder_add_cstr(msg, vec_get(names, k));
+        k = k + 1;
+    }
+    if (n == 2) { str_builder_add_cstr(msg, " select two emit targets; pass one"); }
+    elif (n == 3) { str_builder_add_cstr(msg, " select three emit targets; pass one"); }
+    else { str_builder_add_cstr(msg, " select four emit targets; pass one"); }
+    _err(str_data(str_builder_build(msg)));
+    return 1;
 }
 
 fn _cli_apply_target(verb): i64 {
@@ -795,6 +850,7 @@ fn _cli_apply_target(verb): i64 {
         }
         else { return _cli_fail(verb, "unknown --target", tgt); }
     }
+    if (_cli_targets_exclusive() != 0) { return 1; }
     var defs = _cli_values("-D");
     if (vec_len(defs) > 0) { _defines = defs; }
     return 0;

@@ -6663,10 +6663,16 @@ CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
 The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
-x86_64 instruction set. Give ONE target flag per build: `--win`, `--agnos` (the agnos ring-3
-userspace target) and `--aarch64` (ARM64 cross-compile) each select a different target, and a
-combination is not refused — one of them silently wins (measured at 6.7.9: `--win --aarch64`
-builds the aarch64 ELF, `--win --agnos` the PE).
+x86_64 instruction set. ONE target selector per run: `--win`, `--agnos` (the agnos ring-3
+userspace target), `--aarch64` (ARM64 cross-compile) and `--target=<v>` (`js`, `cx`, a bare-metal
+triple) each select a different emit target, and since 6.7.12 two of them are refused by name
+before anything resolves or compiles — `error: --win and --aarch64 select two emit targets; pass
+one`, rc 1, no output — on every verb that takes the target block (`build`, `run`, `test`, …). The
+one consistent pair, `--aarch64 --target=aarch64-bare-metal-elf`, is accepted and builds exactly
+what the `--target` alone does (decision D20). Through 6.7.11 a combination silently kept one:
+`--win --aarch64` built the aarch64 ELF, `--win --agnos` a PE matching neither, and
+`--aarch64 --target=js` an aarch64 ELF named `.js` (its compiler read stdin, so on a terminal it
+waited for ever).
 
 ### Conditional Compilation
 
