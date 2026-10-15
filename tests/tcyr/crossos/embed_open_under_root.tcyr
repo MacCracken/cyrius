@@ -1,0 +1,239 @@
+# embed_open_under_root.tcyr — cbt's `[embed]` / `${file:}` open (`_embed_open`,
+# cbt/manifest.cyr) refuses a file reached through a DIRECTORY LINK, on every target, with the
+# per-prefix name check (`_proj_path_bad`) BYPASSED. That bypass is the race this pins: the name
+# check runs first, the open second, and a directory swapped for a link (a junction on Windows)
+# in between used to be followed on two targets. The open must hold the line by itself.
+#
+# ⛔ 6.7.12 — THE DEFECT (issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md). Linux and x86
+# macOS walk the path from a handle on the project root with openat(dirfd, component,
+# O_DIRECTORY | O_NOFOLLOW), so a linked directory fails the open. Two targets opened the whole
+# path instead, where O_NOFOLLOW covers the LAST component only:
+#   · Windows has no dirfd openat. The opened handle is now asked where it really is
+#     (GetFinalPathNameByHandleW, reroute 0xF04E; lib/fs_win.cyr win_handle_under) and refused
+#     -ELOOP unless its final path lies inside the project root's.
+#   · macOS arm64 skipped the walk: its SYS_OPENAT 56 reached BSD open(5) with the dirfd shifted
+#     out, so `sys_openat(dirfd, rel)` opened `rel` against the CWD. 56 now reaches Darwin openat
+#     463 with the dirfd kept (Linux's AT_FDCWD -100 translated to Darwin's -2), and the walk runs.
+# The link here points at a system directory OUTSIDE the project that holds a known file
+# (/etc/hosts; C:\Windows\win.ini). Before the fix the Windows and arm64-macOS builds OPENED it
+# through the link. CHANGELOG [6.7.12]
+#
+# The group "openat keeps its dirfd" is the companion row for the arm64-macOS route (every target
+# with a dirfd openat runs it); the group "win_handle_under" pins the containment rule itself.
+# Fixtures are per-pid names in the cwd (the project root `_embed_open` opens as "."), removed at
+# the end; removing them is itself a row.
+include "lib/assert.cyr"
+#ifndef CYRIUS_TARGET_AGNOS
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/syscalls.cyr"
+include "lib/audit_walk.cyr"
+include "src/version_str.cyr"
+include "cbt/core.cyr"
+include "cbt/cli_args.cyr"
+include "cbt/manifest.cyr"
+include "cbt/build.cyr"
+include "cbt/commands.cyr"
+include "cbt/project.cyr"
+include "cbt/quality.cyr"
+include "cbt/deps.cyr"
+include "cbt/pulsar.cyr"
+
+# "<a><b>", NUL-terminated.
+fn _eo_cat(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# 1 when one read of fd `fd` returns exactly `want` (`wn` bytes).
+fn _eo_reads(fd, want, wn): i64 {
+    var buf[64];
+    var n = file_read(fd, &buf, 64);
+    if (n != wn) { return 0; }
+    return memeq(&buf, want, wn);
+}
+
+# Remove a directory link: RemoveDirectoryW on Windows (a directory symlink is a directory
+# object there), unlink elsewhere. Neither touches the target.
+fn _eo_unlink_dirlink(p): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return xrmdir(p);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return xunlink(p);
+    #endif
+}
+
+fn main(): i64 {
+    alloc_init();
+    var root = test_scratch("cyrius_eo");
+    assert_eq(xmkdir(root, 493), 0, "premise: the fixture root was created");
+    var ind = _eo_cat(root, "/in");
+    assert_eq(xmkdir(ind, 493), 0, "premise: an in-project directory");
+    var leaf = _eo_cat(test_scratch("eo_leaf"), ".bin");    # a name no other directory holds
+    var inleaf = _eo_cat(_eo_cat(ind, "/"), leaf);
+    assert_eq(file_write_all(inleaf, "inside\n", 7), 7, "premise: an in-project file");
+
+    test_group("a plain in-project path opens, and reads the file");
+    var fd = _embed_open(inleaf);
+    assert_gte(fd, 0, "_embed_open(<root>/in/<leaf>) is a descriptor");
+    if (fd >= 0) {
+        assert_eq(_eo_reads(fd, "inside\n", 7), 1, "and it reads the in-project bytes");
+        file_close(fd);
+    }
+    assert_eq(_proj_path_bad(inleaf, _PP_EMBED), 0, "the name check passes it");
+    var len = 0;
+    var why = 0;
+    var bytes = _proj_read(inleaf, &len, &why, _PP_EMBED);
+    assert_neq(bytes, 0, "_proj_read reads it");
+    assert_eq(len, 7, "all 7 bytes");
+
+    test_group("a directory link on the path is refused by the OPEN, the name check bypassed");
+    #ifdef CYRIUS_TARGET_WIN
+    var odir = "C:\\Windows";
+    var oleaf = "win.ini";
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var odir = "/etc";
+    var oleaf = "hosts";
+    #endif
+    var ofile = _eo_cat(_eo_cat(odir, "/"), oleaf);
+    assert_eq(file_exists(ofile), 1, "premise: the outside file exists (/etc/hosts; C:\\Windows\\win.ini)");
+    var lnk = _eo_cat(root, "/lnk");
+    var made = xsymlink(odir, lnk);
+    #ifdef CYRIUS_TARGET_WIN
+    if (made != 0) {
+        # Without Developer Mode (or elevation) Windows refuses to create any link: a policy, not a
+        # failure of this fix — the rows that need the link are skipped BY NAME, the rest run.
+        println("  SKIP: the directory-link rows: this Windows refuses to create a symlink (no Developer Mode)");
+    }
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(made, 0, "premise: a directory symlink <root>/lnk -> /etc");
+    #endif
+    if (made == 0) {
+        assert_eq(is_symlink(str_from(lnk)), 1, "premise: <root>/lnk is a link");
+        var via = _eo_cat(_eo_cat(lnk, "/"), oleaf);
+        assert_neq(_proj_path_bad(via, _PP_EMBED), 0,
+          "premise: the NAME check refuses <root>/lnk/<leaf> (bypassed below)");
+        var lf = _embed_open(via);
+        assert_lt(lf, 0, "_embed_open(<root>/lnk/<leaf>) is refused — the open does not follow the directory link");
+        if (lf >= 0) { file_close(lf); }
+        len = 0;
+        why = 0;
+        var lb = _proj_read(via, &len, &why, _PP_EMBED);
+        assert_eq(lb, 0, "_proj_read(<root>/lnk/<leaf>) reads nothing");
+        if (why != 0) {
+            assert_eq(memeq(why, "the file cannot be opened through a link-free path", 50), 1,
+              "and says why: the file cannot be opened through a link-free path");
+        } else {
+            assert_neq(why, 0, "and says why");
+        }
+        #ifdef CYRIUS_TARGET_WIN
+        # The mechanics of the race, on the target whose open cannot walk: a whole-path open with
+        # O_NOFOLLOW DOES follow a linked directory — which is why the handle is asked.
+        var wf = file_open(via, O_RDONLY | O_NOFOLLOW, 0);
+        assert_gte(wf, 0, "premise: a whole-path O_NOFOLLOW open follows the directory link on Windows");
+        if (wf >= 0) {
+            var rh = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+            assert_eq(win_handle_under(wf, rh), 0, "win_handle_under(that handle, the cwd) is 0: it is outside");
+            if (rh >= 0) { file_close(rh); }
+            file_close(wf);
+        }
+        #endif
+        assert_eq(_eo_unlink_dirlink(lnk), 0, "the directory link is removed (its target untouched)");
+        assert_eq(file_exists(ofile), 1, "the outside file is still there");
+    }
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("win_handle_under: inside a root only at a separator, never the root itself");
+    var inx = _eo_cat(root, "/inx");
+    assert_eq(xmkdir(inx, 493), 0, "premise: a sibling directory whose name EXTENDS the root's (in -> inx)");
+    var inxleaf = _eo_cat(_eo_cat(inx, "/"), leaf);
+    assert_eq(file_write_all(inxleaf, "sibling\n", 8), 8, "premise: a file in the sibling");
+    var rin = file_open(ind, O_RDONLY | O_DIRECTORY, 0);
+    assert_gte(rin, 0, "premise: a handle on <root>/in");
+    var fin = file_open(inleaf, O_RDONLY, 0);
+    var fx = file_open(inxleaf, O_RDONLY, 0);
+    var fo = file_open(ofile, O_RDONLY, 0);
+    assert_gte(fin, 0, "premise: a handle on <root>/in/<leaf>");
+    assert_gte(fx, 0, "premise: a handle on <root>/inx/<leaf>");
+    assert_gte(fo, 0, "premise: a handle on the outside file");
+    assert_eq(win_handle_under(fin, rin), 1, "<root>/in/<leaf> is under <root>/in");
+    assert_eq(win_handle_under(fx, rin), 0,
+      "<root>/inx/<leaf> is NOT under <root>/in (the prefix must end at a separator)");
+    assert_eq(win_handle_under(fo, rin), 0, "the outside file is not under <root>/in");
+    assert_eq(win_handle_under(rin, rin), 0, "the root is not strictly inside itself");
+    assert_eq(win_handle_under(0 - 1, rin), 0 - 1, "a handle that cannot be asked is -1, never 1");
+    var cw = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(win_handle_under(fin, cw), 1, "<root>/in/<leaf> is under the cwd");
+    if (cw >= 0) { file_close(cw); }
+    if (fin >= 0) { file_close(fin); }
+    if (fx >= 0) { file_close(fx); }
+    if (fo >= 0) { file_close(fo); }
+    if (rin >= 0) { file_close(rin); }
+    assert_eq(xunlink(inxleaf), 0, "the sibling's file is removed");
+    assert_eq(xrmdir(inx), 0, "the sibling is removed");
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("openat keeps its dirfd (arm64 macOS: Darwin openat 463, not open(5))");
+    var dfd = file_open(ind, O_RDONLY | O_DIRECTORY, 0);
+    assert_gte(dfd, 0, "premise: a directory descriptor on <root>/in");
+    assert_eq(file_exists(leaf), 0, "premise: the cwd holds no <leaf> (a dropped dirfd cannot find it)");
+    var r1 = sys_openat(dfd, leaf, O_RDONLY, 0);
+    assert_gte(r1, 0, "sys_openat(dirfd, <leaf>) opens the file RELATIVE TO THE DIRFD");
+    if (r1 >= 0) {
+        assert_eq(_eo_reads(r1, "inside\n", 7), 1, "and reads <root>/in/<leaf>");
+        file_close(r1);
+    }
+    var r2 = sys_openat(AT_FDCWD, inleaf, O_RDONLY, 0);
+    assert_gte(r2, 0, "sys_openat(AT_FDCWD, <root>/in/<leaf>) opens against the cwd");
+    if (r2 >= 0) { file_close(r2); }
+    #ifdef CYRIUS_ARCH_AARCH64
+    # Linux's AT_FDCWD spelled raw (sakshi's `_sk_open` does): native on aarch64 Linux, translated
+    # to Darwin's -2 by the arm64-macOS route.
+    var r3 = syscall(SYS_OPENAT, 0 - 100, inleaf, O_RDONLY, 0);
+    assert_gte(r3, 0, "syscall(SYS_OPENAT, -100, <root>/in/<leaf>) opens against the cwd");
+    if (r3 >= 0) { file_close(r3); }
+    #endif
+    var rdir = file_open(root, O_RDONLY | O_DIRECTORY, 0);
+    var sl = _eo_cat(root, "/sl");
+    assert_eq(xsymlink("in", sl), 0, "premise: an in-project directory symlink <root>/sl -> in");
+    var r4 = sys_openat(rdir, "sl", O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    assert_lt(r4, 0, "sys_openat(rootfd, sl, O_DIRECTORY | O_NOFOLLOW) refuses the link");
+    if (r4 >= 0) { file_close(r4); }
+    var r5 = sys_openat(rdir, "in", O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    assert_gte(r5, 0, "sys_openat(rootfd, in, O_DIRECTORY | O_NOFOLLOW) opens the real directory");
+    if (r5 >= 0) { file_close(r5); }
+    assert_eq(xunlink(sl), 0, "the in-project symlink is removed");
+    if (rdir >= 0) { file_close(rdir); }
+    if (dfd >= 0) { file_close(dfd); }
+    #endif
+
+    assert_eq(xunlink(inleaf), 0, "the in-project file is removed");
+    assert_eq(xrmdir(ind), 0, "<root>/in is removed");
+    assert_eq(xrmdir(root), 0, "the fixture root is removed — it held nothing else");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+# cbt is not built for AGNOS (cbt/cyrius.cyr compiles none of its modules there), so there is no
+# [embed] reader to test: one row, named.
+println("  SKIP: embed_open_under_root — cbt's [embed] reader is not built for AGNOS");
+assert_eq(1, 1, "AGNOS: no cbt build, so no [embed] open to pin");
+var ra = assert_summary();
+syscall(60, ra);
+#endif

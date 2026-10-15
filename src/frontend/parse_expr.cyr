@@ -1187,8 +1187,8 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     if (_pe_unrouted_noted == 1) { return 0; }
     _pe_unrouted_noted = 1;
     syscall(SYS_WRITE, 2,
-      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,11,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError) + 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx).\n",
-      1639);
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,11,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError) + 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx) + 0xF04E (kernel32: GetFinalPathNameByHandleW).\n",
+      1686);
     return 0;
 }
 
@@ -1367,14 +1367,18 @@ fn _PE_ROUTE_SOCK(S, sc_num, argc): i64 {
 }
 
 # 6.7.12 — kernel32's byte-range locks behind xflock's Windows arm (lib/io.cyr), which answered
-# -1 for every lock, so patra's open-time WAL recovery never ran on Windows:
+# -1 for every lock, so patra's open-time WAL recovery never ran on Windows; and where an opened
+# handle really is, for cbt's [embed] / ${file:} open (lib/fs_win.cyr win_handle_under — a
+# directory swapped for a junction after the per-prefix link check was followed on Windows):
 #   0xF04C LockFileEx(h, flags, 0, lenLo, lenHi, &ov)  → argc 7
 #   0xF04D UnlockFileEx(h, 0, lenLo, lenHi, &ov)       → argc 6
-# Literal-only, like every 0xF0xx id. The emitters are ELOCKFILEEX_PE / EUNLOCKFILEEX_PE
-# (x86/emit.cyr; stubs on the aarch64 and cx backends). CHANGELOG [6.7.12]
+#   0xF04E GetFinalPathNameByHandleW(h, buf, cch, fl)  → argc 5
+# Literal-only, like every 0xF0xx id. The emitters are ELOCKFILEEX_PE / EUNLOCKFILEEX_PE /
+# EGETFINALPATH_PE (x86/emit.cyr; stubs on the aarch64 and cx backends). CHANGELOG [6.7.12]
 fn _PE_ROUTE_FILELOCK(S, sc_num, argc): i64 {
     if (sc_num == 61516) { if (argc == 7) { ELOCKFILEEX_PE(S); return 1; } }
     if (sc_num == 61517) { if (argc == 6) { EUNLOCKFILEEX_PE(S); return 1; } }
+    if (sc_num == 61518) { if (argc == 5) { EGETFINALPATH_PE(S); return 1; } }
     return 0;
 }
 

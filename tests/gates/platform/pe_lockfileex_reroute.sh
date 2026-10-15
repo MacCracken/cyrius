@@ -16,9 +16,10 @@
 #           with CYRIUS_TARGET_WIN=1 and are not reported as unrouted; one argument short, each
 #           IS reported — the route is literal-and-arity.
 #   axis 2  the routed-number note names `0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx)`
-#           and is printed WHOLE, ending at the newest entry: the note is one literal written with
-#           a hand-counted byte length, and a length left at its old value silently cuts the
-#           newest entries off the end.
+#           and is printed WHOLE past it: the note is one literal written with a hand-counted byte
+#           length, and a length left at its old value silently cuts the newest entries off the
+#           end. (The END itself is pinned by the newest reroute's gate since W2's 0xF04E:
+#           tests/gates/toolchain/embed_link_race_pe.sh.)
 #   axis 3  the axis-1 builds IMPORT LockFileEx and UnlockFileEx (objdump -p; that axis alone is
 #           skipped without an objdump that reads PE).
 #   axis 4  STATIC, lib/io.cyr: xflock's CYRIUS_TARGET_WIN arm calls _xflock_win (the constant
@@ -93,9 +94,14 @@ else bad "axis 1: syscall(0xF04D, 4 args) (one argument short) was not reported"
 # axis 2: the note names 0xF04C-0xF04D and reaches its own end.
 if grep -q '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/lks.err"; then
     note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/lks.err" || true)
+    # 6.7.12 (W2): 0xF04C-0xF04D is no longer the newest entry (0xF04E follows it), so the END of
+    # the note — its byte count — is pinned by the newest reroute's gate
+    # (tests/gates/toolchain/embed_link_race_pe.sh axis 2); here the entry must be present and
+    # followed by the next one. CHANGELOG [6.7.12]
     case "$note" in
+        *'+ 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx) + '*) ok ;;
         *'+ 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx).') ok ;;
-        *'0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx)'*) bad "axis 2: the note names 0xF04C-0xF04D but does not END with it — its byte count is wrong" ;;
+        *'0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx)'*) bad "axis 2: the note names 0xF04C-0xF04D but is cut short after it — its byte count is wrong" ;;
         *) bad "axis 2: the routed-number note does not name 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx) — or it is cut short: ...$(printf '%s' "$note" | tail -c 60)" ;;
     esac
 else

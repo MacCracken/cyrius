@@ -4062,7 +4062,12 @@ instruction.
   on the path** — `[embed]` is the one key that copies a file into a built artifact, and a link
   committed into an untrusted checkout could ship any file on the build machine inside a release
   binary. The file must exist and be a regular file; it is opened once and the bytes the build
-  embeds are the bytes that were checked.
+  embeds are the bytes that were checked. The open itself refuses a link too, so a directory
+  swapped for one after the check (a second writer racing the build) is not followed: on Linux
+  and macOS it walks the path from a handle on the project root, never following a link; on
+  Windows, which has no such walk, the opened file's final path must lie inside the project
+  root's, so a junction or directory link leading outside is refused (6.7.12 — Windows and Apple
+  Silicon followed one). `${file:}` reads through the same open.
 - One path string per entry. A `{ dir, glob, prefix }` set, an array or an `[embed.X]` section is
   refused: list each file (an order that depends on a directory listing is a trap).
 - **Size.** Every string literal lives in cycc's string pool, 2 MiB (2,097,152 bytes, NUL

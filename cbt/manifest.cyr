@@ -745,12 +745,12 @@ fn _mf_key_str(section, key): i64 {
 #     x86 macOS the open WALKS the path — openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW) from a
 #     handle on the project root, the leaf O_NOFOLLOW — so no component can be swapped for a link
 #     between the per-prefix check and the open (_embed_open).
-#     ⚠ RESIDUAL, stated: on Windows and on macOS arm64 the open is the whole path with O_NOFOLLOW,
-#     which covers the LAST component only, so a directory swapped for a link/junction between the
-#     per-prefix check and the open is not caught. PE needs a GetFinalPathNameByHandleW
-#     containment check (a new PE reroute); macOS arm64 has no dirfd openat (its stdlib's SYS_OPENAT
-#     56 is rerouted to BSD open(5), dropping the dirfd). Both are backlog items; the window needs
-#     concurrent write access to the checkout during the build.
+#     macOS arm64 walks the same way since 6.7.12 (its SYS_OPENAT 56 reached BSD open(5), which
+#     dropped the dirfd, so the open there was the whole path). Windows has no dirfd openat: the
+#     whole path is opened (O_NOFOLLOW guards the leaf) and the OPENED HANDLE's final path must lie
+#     inside the project root's (GetFinalPathNameByHandleW, lib/fs_win.cyr win_handle_under), so a
+#     directory swapped for a junction or a directory link after the check is refused there too.
+#     CHANGELOG [6.7.12]
 #   · it fits cycc's string pool (below), alone and together.
 # One path string per entry: the proposal's {dir, glob, prefix} set form is refused by name.
 # CHANGELOG [6.6.19].
@@ -961,52 +961,73 @@ fn _proj_e_dir(kind): i64 {
     if (kind == _PP_FILE) { return "is a directory; a ${file:} names one regular file"; }
     return "is a directory; an [embed] names one regular file";
 }
-# Open `path` (already checked by _proj_path_bad) for reading. POSIX targets with a real dirfd
-# openat WALK it: a handle on the project root, then openat(dirfd, component, O_DIRECTORY |
-# O_NOFOLLOW) per directory and O_NOFOLLOW on the leaf, so a component swapped for a link after
-# the per-prefix check fails the open. The fd, or a negative errno.
+# Open `path` (already checked by _proj_path_bad) for reading. The POSIX targets WALK it: a
+# handle on the project root, then openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW) per
+# directory and O_NOFOLLOW on the leaf, so a component swapped for a link after the per-prefix
+# check fails the open. Windows has no dirfd openat: `_embed_open_win` asks the opened handle
+# where it is instead. The fd, or a negative errno. CHANGELOG [6.7.12] (macOS arm64 walks too: its
+# openat keeps the dirfd)
 fn _embed_open(path): i64 {
     var fl = O_RDONLY | O_NOFOLLOW;
+    #ifdef CYRIUS_TARGET_WIN
+    return _embed_open_win(path, fl);
+    #endif
     #ifndef CYRIUS_TARGET_WIN
     fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek in _proj_read refuses it
-    var walk = 1;
-    #ifdef CYRIUS_TARGET_MACOS
-    #ifdef CYRIUS_ARCH_AARCH64
-    walk = 0;               # no dirfd openat there (see the header): the whole-path open below
-    #endif
-    #endif
-    if (walk == 1) {
-        var dfd = file_open(".", O_RDONLY | O_DIRECTORY, 0);
-        if (dfd < 0) { return dfd; }
-        var n = strlen(path);
-        var comp = alloc(n + 1);
-        var s = 0;
-        var i = 0;
-        while (i <= n) {
-            if (i == n || load8(path + i) == 47) {
-                if (i > s) {
-                    memcpy(comp, path + s, i - s);
-                    store8(comp + i - s, 0);
-                    if (i == n) {
-                        var lf = sys_openat(dfd, comp, fl, 0);
-                        file_close(dfd);
-                        return lf;
-                    }
-                    var nd = sys_openat(dfd, comp, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    var dfd = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+    if (dfd < 0) { return dfd; }
+    var n = strlen(path);
+    var comp = alloc(n + 1);
+    var s = 0;
+    var i = 0;
+    while (i <= n) {
+        if (i == n || load8(path + i) == 47) {
+            if (i > s) {
+                memcpy(comp, path + s, i - s);
+                store8(comp + i - s, 0);
+                if (i == n) {
+                    var lf = sys_openat(dfd, comp, fl, 0);
                     file_close(dfd);
-                    if (nd < 0) { return nd; }
-                    dfd = nd;
+                    return lf;
                 }
-                s = i + 1;
+                var nd = sys_openat(dfd, comp, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+                file_close(dfd);
+                if (nd < 0) { return nd; }
+                dfd = nd;
             }
-            i = i + 1;
+            s = i + 1;
         }
-        file_close(dfd);
-        return 0 - 21;      # the path ends in `/`: a directory
+        i = i + 1;
     }
+    file_close(dfd);
+    return 0 - 21;          # the path ends in `/`: a directory
     #endif
-    return file_open(path, fl, 0);
 }
+
+# Windows: CreateFileW has no dirfd form, so the whole path is opened — O_NOFOLLOW refuses a link
+# at the LEAF (sys_open asks the opened handle) — and the handle is then asked where it really is:
+# its final path must lie inside the project root's own (`win_handle_under`, lib/fs_win.cyr), or
+# the file is refused -ELOOP. A directory swapped for a junction or a directory link between the
+# per-prefix check and this open was FOLLOWED here, and the build embedded the outside file's
+# bytes. The root is the cwd, as the POSIX walk's is. CHANGELOG [6.7.12]
+#ifdef CYRIUS_TARGET_WIN
+fn _embed_open_win(path, fl): i64 {
+    var rh = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+    if (rh < 0) { return rh; }
+    var fd = file_open(path, fl, 0);
+    if (fd < 0) {
+        file_close(rh);
+        return fd;
+    }
+    var under = win_handle_under(fd, rh);
+    file_close(rh);
+    if (under != 1) {
+        file_close(fd);
+        return 0 - 40;      # outside the project root (or it could not be told): refused
+    }
+    return fd;
+}
+#endif
 
 # The file at `path` (already checked by _proj_path_bad, for the key `kind`) read through ONE fd:
 # the bytes (NUL-terminated) with their count at *lenp, or 0 with the reason at *whyp. An [embed]

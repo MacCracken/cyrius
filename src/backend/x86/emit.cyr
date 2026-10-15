@@ -2143,6 +2143,17 @@ fn EUNLOCKFILEEX_PE(S): i64 {
     return 0;
 }
 
+# 6.7.12 — syscall(0xF04E, h, buf, cch, flags) → kernel32!GetFinalPathNameByHandleW (argc 5): the
+# units written (no NUL), the size needed when `cch` is too small, 0 on failure; a DWORD,
+# zero-extended. lib/fs_win.cyr win_handle_under asks where an opened handle really is, so cbt's
+# [embed] / ${file:} open refuses one a junction led outside the project. CHANGELOG [6.7.12]
+fn EGETFINALPATH_PE(S): i64 {
+    _pe_ensure_getfinalpath(S);
+    _pe_call_4arg_aligned(S, _pe_getfinalpath_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
+}
+
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
 # 1/2-arg callers above). Stack on entry (top→bottom): [a3][a2][a1][sc_nr].
 # a1→rcx, a2→rdx, a3→r8 (Win64 integer arg order), then carve the 32 B shadow.

@@ -829,6 +829,21 @@ fn _pe_ensure_unlockfileex(S): i64 {
 }
 fn _pe_unlockfileex_get(): i64 { return _pe_unlockfileex_idx; }
 
+# 6.7.12 — kernel32!GetFinalPathNameByHandleW → DWORD, for `syscall(0xF04E)`
+# (EGETFINALPATH_PE): where an OPENED handle really is. `[embed]` / `${file:}` on Windows open the
+# whole path (no dirfd openat), so a directory swapped for a junction after the per-prefix link
+# check was followed; cbt now refuses a handle whose final path is not inside the project root's
+# (lib/fs_win.cyr win_handle_under). CHANGELOG [6.7.12]
+var _pe_getfinalpath_ready = 0;
+var _pe_getfinalpath_idx   = 0;
+fn _pe_ensure_getfinalpath(S): i64 {
+    if (_pe_getfinalpath_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getfinalpath_idx, "GetFinalPathNameByHandleW");
+    _pe_getfinalpath_ready = 1;
+    return 0;
+}
+fn _pe_getfinalpath_get(): i64 { return _pe_getfinalpath_idx; }
+
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--syntax-only on Windows.
 # kernel32!GetCommandLineW() takes no args, returns the process's

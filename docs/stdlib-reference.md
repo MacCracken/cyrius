@@ -644,6 +644,7 @@ Filesystem: paths, directories, tree walking.
 | `find_files` | `find_files(path, ext) → vec` | Find by extension |
 | `is_dir` | `is_dir(path) → 0/1` | Check if directory |
 | `is_symlink` | `is_symlink(path) → 0/1` | Is `path` itself a symlink (not followed; a dangling link is 1)? `dir_walk` lists a linked directory but never descends it. On Windows (v6.6.9; **0 for everything before**) a symlink or junction is 1 — a name-surrogate reparse point — and a cloud placeholder or dedup file is 0 |
+| `win_handle_under` | `win_handle_under(h, root_h) → 1/0/-1` | **Windows only** (6.7.12, `fs_win`): is the object behind open handle `h` strictly inside the directory behind open handle `root_h`? Both handles' final paths (`GetFinalPathNameByHandleW`) compared without ASCII case, the root's a prefix that ends at a separator; -1 when a final path cannot be had (never 1). What a name check cannot see: a directory swapped for a junction after the name was checked. cbt's `[embed]` / `${file:}` open refuses a file that is not under the project root |
 
 ### net.cyr
 
@@ -2039,7 +2040,7 @@ documented separately** — their public surface is the parent module's (above):
 
 - `args.cyr` → `args_win` / `args_macos` / `args_agnos`
 - `process.cyr` → `process_win` / `process_agnos`
-- `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18)
+- `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18; `win_handle_under`, 6.7.12 — the one Windows-only name, in the fs.cyr table)
 - `sync.cyr` → `sync_windows` / `sync_macos`
 - `thread.cyr` → `thread_win` / `thread_macos` / `thread_agnos`
 - `async.cyr` → `async_win` / `async_macos` / `async_agnos`
