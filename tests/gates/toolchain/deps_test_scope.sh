@@ -23,8 +23,9 @@
 #   D10 a name both sides reach — the root's test-scope leaf@v2, a production dep's own leaf@v1 —
 #       resolves the production v1, and the diamond notice names the v2 that was not used
 #   D11 the test-scope pass walks the root manifest a second time: an unsafe `[deps.a..b]` and an
-#       unclosed `[deps.zz` header are each refused ONCE, and the root manifest counts once in the
-#       summary (`1 errors` — a pass's count is clamped to 1 since v6.5.37 — not 2)
+#       unclosed `[deps.zz` header are each refused ONCE, and counted once in the summary (`2
+#       errors`, not 4; until 6.7.12 a manifest's count was clamped to 1 and the summary said `1
+#       errors` — issues/2026-10-08-cli-path-and-reporting-leftovers.md item 4)
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:
@@ -215,8 +216,8 @@ EOF
 rc=0; cy deps > "$W/d11.out" 2>&1 || rc=$?
 n1=$(grep -c '^error: \[deps.a\.\.b\] is not a usable dep name' "$W/d11.out")
 n2=$(grep -c '^error: \[deps.zz has no closing' "$W/d11.out")
-if [ "$rc" = 1 ] && [ "$n1" = 1 ] && [ "$n2" = 1 ] && grep -q ' deps resolved, 1 errors$' "$W/d11.out"; then
-    ok "D11 an unsafe and an unclosed root header: each refused once, the root manifest counted once"
+if [ "$rc" = 1 ] && [ "$n1" = 1 ] && [ "$n2" = 1 ] && grep -q ' deps resolved, 2 errors$' "$W/d11.out"; then
+    ok "D11 an unsafe and an unclosed root header: each refused once, counted once (2 errors)"
 else bad "D11 (rc $rc; a..b named ${n1}x, zz named ${n2}x): $(grep 'resolved' "$W/d11.out")"; fi
 
 echo "$G: $pass passed, $fail failed"

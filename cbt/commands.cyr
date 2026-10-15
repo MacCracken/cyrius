@@ -1822,7 +1822,11 @@ fn cmd_lib_sync(): i64 {
         var wi = 0;
         while (wi < copied) {
             sys_write(STDOUT_FD, "  would sync: ", 14);
-            println(vec_get(pd, wi));
+            # the destination cstr, written as text: `println` of an i64 dispatched to println_int
+            # and printed the pointer. CHANGELOG [6.7.12]
+            var wd = vec_get(pd, wi);
+            sys_write(STDOUT_FD, wd, strlen(wd));
+            sys_write(STDOUT_FD, "\n", 1);
             wi = wi + 1;
         }
         sys_write(STDOUT_FD, "dry-run: would sync ", 20);

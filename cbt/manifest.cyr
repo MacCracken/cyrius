@@ -2054,8 +2054,6 @@ fn _tc_unit_dir(p): i64 {
     if (load8(np) == 47) {
         var cwd = _abs_path(".");
         var cl = strlen(cwd);
-        # `_abs_path` joins "<cwd>/" + ".": the working directory is what precedes that "/."
-        if (cl >= 2 && load8(cwd + cl - 1) == 46 && load8(cwd + cl - 2) == 47) { cl = cl - 2; }
         if (cl < 2 || strlen(np) <= cl + 1) { return 0 - 1; }
         if (memeq(np, cwd, cl) == 0 || load8(np + cl) != 47) { return 0 - 1; }
         np = np + cl + 1;

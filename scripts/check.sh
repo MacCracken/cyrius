@@ -2288,6 +2288,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/target_selectors_exclusive.sh"
 # dropped dep's module): they stayed vendored and locked and nothing said so. Notice only — lib/ and
 # cyrius.lock unchanged; silent for a `lib sync --full` lib/ and under -q.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_out_of_closure_named.sh"
+# 6.7.12 — the 6.7.6 review's CLI leftovers: `_abs_path(".")` is the cwd (no `/./` in joined paths),
+# the deps summary counts every refused section (the exit status alone is clamped), and
+# `lib sync --dry-run` prints paths, not pointers.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

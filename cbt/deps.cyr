@@ -148,50 +148,66 @@ fn _file_size(path): i64 {
 # to `{proj}/sigil/dist/sigil.cyr` (wrong) instead of `{sibling}/sigil/...`.
 # Fix: make every symlink target absolute. Absolute paths are unambiguous.
 # Returns src unchanged if already absolute, else allocates an absolute copy.
+# A trailing `/.` names the directory before it, so it is dropped: `.` is the working directory
+# itself, never `<cwd>/.` — which every caller joining "/lib" or a parent onto it carried along
+# (`_consumer_dir`, the local-mode walks). CHANGELOG [6.7.12]
 fn _abs_path(src): i64 {
-    if (load8(src) == 47) { return src; }
+    if (load8(src) == 47) { return _abs_drop_dot(src); }
+    return _abs_drop_dot(_abs_join_cwd(src));
+}
+
+# `p` without its trailing `/.` segments (`/a/b/./.` → `/a/b`, `/.` → `/`), or `p` itself when it
+# has none. CHANGELOG [6.7.12]
+fn _abs_drop_dot(p): i64 {
+    var n = strlen(p);
+    var m = n;
+    while (m >= 2 && load8(p + m - 1) == 46 && load8(p + m - 2) == 47) { m = m - 2; }
+    if (m == n) { return p; }
+    if (m == 0) { m = 1; }   # `/.` is the root
+    var out = alloc(m + 1);
+    memcpy(out, p, m);
+    store8(out + m, 0);
+    return out;
+}
+
+# "<cwd>/<src>", or `src` unchanged when the cwd cannot be read.
+fn _abs_join_cwd(src): i64 {
     var cwd[4096];
-    var cwd_len = 0;
+    var cwd_len = _cwd_read(&cwd, 4096);
+    if (cwd_len < 0) { return src; }
+    var src_len = strlen(src);
+    var out = alloc(cwd_len + 1 + src_len + 1);
+    memcpy(out, &cwd, cwd_len);
+    store8(out + cwd_len, 47);  # '/'
+    memcpy(out + cwd_len + 1, src, src_len);
+    store8(out + cwd_len + 1 + src_len, 0);
+    return out;
+}
+
+# The working directory into `buf` (`cap` bytes), NUL-terminated; its length, or -1 when it
+# cannot be read (or does not fit).
+fn _cwd_read(buf, cap): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     # Darwin has NO getcwd syscall (slot 326 is unused → SIGSYS). Derive
     # the cwd from the "." fd via fcntl(F_GETPATH): open(".") then
     # fcntl(fd, F_GETPATH=50, buf) writes the absolute path, returns 0/-errno.
     # See CHANGELOG [6.0.41]; v6.6.8 spells it through the stdlib wrappers
-    # instead of raw 2/72/3.
+    # instead of raw 2/72/3. (F_GETPATH needs MAXPATHLEN = 1024 bytes.)
+    if (cap < 1024) { return 0 - 1; }
     var fd = sys_open(".", 0, 0);
-    if (fd < 0) { return src; }
-    var fr = sys_fcntl(fd, 50, &cwd);
+    if (fd < 0) { return 0 - 1; }
+    var fr = sys_fcntl(fd, 50, buf);
     sys_close(fd);
-    if (fr != 0) { return src; }
-    while (load8(&cwd + cwd_len) != 0) { cwd_len = cwd_len + 1; }
-    #else
+    if (fr != 0) { return 0 - 1; }
+    return strlen(buf);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     # syscall 79 = getcwd(buf, size); returns length incl. nul, or -errno.
     # (aarch64-Linux: ESYSXLAT renumbers x86 79 → aarch64 getcwd 17.)
-    var n = syscall(79, &cwd, 4096);
-    if (n <= 0) { return src; }
-    # Strip trailing nul from length
-    cwd_len = n - 1;
+    var n = syscall(79, buf, cap);
+    if (n <= 0) { return 0 - 1; }
+    return n - 1;
     #endif
-    var src_len = 0;
-    while (load8(src + src_len) != 0) { src_len = src_len + 1; }
-    var out = alloc(cwd_len + 1 + src_len + 1);
-    var oi = 0;
-    var ci = 0;
-    while (ci < cwd_len) {
-        store8(out + oi, load8(&cwd + ci));
-        oi = oi + 1;
-        ci = ci + 1;
-    }
-    store8(out + oi, 47);  # '/'
-    oi = oi + 1;
-    var si = 0;
-    while (si < src_len) {
-        store8(out + oi, load8(src + si));
-        oi = oi + 1;
-        si = si + 1;
-    }
-    store8(out + oi, 0);
-    return out;
 }
 
 # Byte-compare two files. Returns 1 if identical, 0 otherwise (including if either
@@ -3517,7 +3533,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # CHANGELOG [5.11.8], roadmap v5.10.37/v5.11.8 pin.
                     if (_dep_vendor_mode == 1) {
                         var _l2 = _dep_dest_is_linked(wdst);
-                        if (_l2 != 0) { return _dep_refuse_symlinked_dest(_l2); }
+                        if (_l2 != 0) { return errors + _dep_refuse_symlinked_dest(_l2); }
                     }
                     # v6.5.39 — refuse BEFORE the unlink, same discipline as the v6.5.37
                     # symlink guard above: a delete-then-refuse would leave the tree worse
@@ -3525,7 +3541,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # copy we are defending.
                     # 6.6.11 (S2): a thin profile of a package that is a stdlib leaf here.
                     var _kf = _dep_keep_fold_over_profile(dep_name, dst, wdst, mod_path);
-                    if (_kf < 0) { return 1; }
+                    if (_kf < 0) { return errors + 1; }
                     if (_kf == 1) {
                         dep_had_success = 1;
                         mi = mi + 1;
@@ -3590,15 +3606,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             }
         }
     }
-    # ⛔ v6.5.37 (A1) — CLAMP. This returned the raw error COUNT, which becomes the process
-    # exit status, and a wait status carries only the low 8 bits. Measured at 6.5.36:
-    #     1 bad leaf -> exit 1     255 -> exit 255     256 -> exit 0     512 -> exit 0
-    # So a manifest broken badly enough reported SUCCESS, and every count that is a
-    # multiple of 256 was a silent green. This is why a defective sidecar could pass CI
-    # at all — the more wrong it was, the likelier it looked clean. Exit status is a
-    # boolean channel; the count belongs in the message, which it already is.
-    if (errors > 0) { return 1; }
-    return 0;
+    # The COUNT: the callers sum it into the `N errors` summary, and only `_deps_finish` turns
+    # it into an exit status (the v6.5.37 clamp lives there). Clamped here too, two refused
+    # sections printed two errors and a summary of `1 errors`. CHANGELOG [6.7.12]
+    return errors;
 }
 
 # The cache directory a clone of `name` at `tag` would use, WITHOUT creating anything
