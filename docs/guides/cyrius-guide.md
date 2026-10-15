@@ -7354,7 +7354,9 @@ The rules, in order:
    that relied on that now gets 0). It is Darwin's sigprocmask (48) through the private alias
    1048, a shim rather than a renumber: Darwin's set is 32 bits, so it reads the low half of the
    8-byte set and the shim writes 0 over `oldset`'s upper word. `how` is the peer's own
-   `SIG_BLOCK` / `SIG_UNBLOCK` / `SIG_SETMASK` (1 / 2 / 3 on Darwin). The exec family
+   `SIG_BLOCK` / `SIG_UNBLOCK` / `SIG_SETMASK` (1 / 2 / 3 on Darwin). On macOS the change
+   applies to every thread of the process: Darwin's sigprocmask (48) is process-wide (measured
+   on ach and ecb, 6.7.12); Linux changes the calling thread only. The exec family
    (`run`, `exec_vec`, …) now empties a mask inherited from a launcher on macOS too.
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`

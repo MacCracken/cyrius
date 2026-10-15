@@ -1,8 +1,8 @@
 # sigprocmask_every_target.tcyr — CROSS-HOST: `sys_sigprocmask` blocks, unblocks and sets the
-# calling thread's mask, and reports the old one, on every POSIX target — x86_64 and aarch64
-# Linux, Intel macOS (ach) and Apple-silicon macOS (ecb). Windows has no POSIX signal mask and
-# agnos's sigprocmask takes its own `how` values (0 = BLOCK, 1 = UNBLOCK), so there the file only
-# reports its summary.
+# mask (the calling thread's on Linux, every thread's on macOS), and reports the old one, on
+# every POSIX target — x86_64 and aarch64 Linux, Intel macOS (ach) and Apple-silicon macOS (ecb).
+# Windows has no POSIX signal mask and agnos's sigprocmask takes its own `how` values (0 = BLOCK,
+# 1 = UNBLOCK), so there the file only reports its summary.
 #
 # ⛔ WHY (6.7.12). On macOS sys_sigprocmask returned -78 (no Mach-O route), so the exec family
 # could not empty a mask inherited from a launcher (issues/2026-10-11-macos-exec-child-keeps-
@@ -34,7 +34,7 @@ fn _cur(): i64 {
 fn main(): i64 {
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
-    test_group("sys_sigprocmask round-trips the calling thread's mask");
+    test_group("sys_sigprocmask round-trips the mask (the calling thread's on Linux, every thread's on macOS)");
     var saved[8];
     store64(&saved, 0 - 1);
     var set[8];
