@@ -1372,10 +1372,11 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx32(S, 1515, 0x2000203); # __ulock_wait        1515 → BSD 515
     _msx32(S, 1516, 0x2000204); # __ulock_wake        1516 → BSD 516
     # 6.7.12 — sigprocmask, private alias (the arm64 twin is in ESYSXLAT's Mach-O arm). NOT a row for
-    # Linux 14: rt_sigprocmask takes a 64-bit set and a 4th sigsetsize, Darwin's 48 a 32-bit set, so
-    # sys_sigprocmask's macOS arm (lib/syscalls_linux_common.cyr) issues 1048 and zeroes oldset's
-    # upper word itself. CHANGELOG [6.7.12]
-    _msx32(S, 1048, 0x2000030); # sigprocmask         1048 → BSD 48
+    # Linux 14: rt_sigprocmask takes a 64-bit set and a 4th sigsetsize, Darwin's 329 a 32-bit set, so
+    # sys_sigprocmask's macOS arm (lib/syscalls_linux_common.cyr) issues 1329 and zeroes oldset's
+    # upper word itself. __pthread_sigmask (329), not sigprocmask (48): 48 is process-wide in XNU,
+    # 329 the calling thread's mask, as on Linux. CHANGELOG [6.7.12]
+    _msx32(S, 1329, 0x2000149); # __pthread_sigmask   1329 → BSD 329
     # ── v6.5.16: the credential family (the x86 fork of the arm64 rows landed in the
     # same release). Unrouted here since forever, so every sys_getuid/geteuid/getgid/
     # getegid on Intel-Mac reached Darwin unclassed and died with SIGSYS (rc 140). It
