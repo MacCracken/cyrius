@@ -1445,7 +1445,10 @@ can carry**: a local of that struct, a call to a fn returning the same struct, a
 overloaded operator returning it, or (6.7.11) a pointer to that struct (below). Anything else — a call returning a *different* struct, an
 integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
-was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+was never written. Since 6.7.11 that includes a call that only STARTS the value: `return mk2(1) ==
+p;` (any operator that does not dispatch — a comparison, `& | ^ % << >>`, `&& ||`) is refused *… got
+`mk2`*, where it returned the comparison in the first register and mk2's stale second word;
+`return mk2(1);`, `return (mk2(1));` and a dispatching `return mk2(1) + p;` are unchanged. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
 
 ⚠ **A tuple literal is not the struct (6.7.11).** `return (a, b);` or `return (a, b, c);` in a fn
 declared `: P` is a compile error at every size — a tuple is an anonymous struct, another type

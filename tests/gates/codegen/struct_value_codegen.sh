@@ -223,6 +223,7 @@
 #       "the declaration zone misread .."), U3 (13), A1-A7 (U1-U8 U11 U12)
 #   M-U2 `_gz_unary` keeping `-g`'s struct (kind 4)            -> RED U2 ("the declaration zone misread ..")
 #   M-R1 `_refuse_struct_tuple_return` answering 0             -> RED R8-R11 (BUILT); R12-R15 green
+#   M-R2 `_pair_ret_call_ok` without its `_call_ends_at` test   -> RED R16-R22 (BUILT); R23-R26 green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -433,6 +434,26 @@ exits r12 12 "R12: fn f(): (i64, i64) { return (1, 2); } still builds" "fn f(): 
 exits r13 12 "R13: an undeclared fn's return (a, b); still builds" "fn f(a, b) { return (a, b); }\nfn main(): i64 { var a, b = f(1, 2); return a * 10 + b; }$E"
 refused r14 'a multi-value return is written `return (a, b);` - drop the extra parentheses' "R14: return ((a, b)); from a Pt fn keeps its own refusal" "struct Pt { x; y; }\nfn f(a, b): Pt { return ((a, b)); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x; }$E"
 refused r15 'struct-return fn: return must be a bare local identifier' "R15: return ((a, b)); from a P3 fn keeps its own refusal" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return ((a, b)); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x; }$E"
+# R16-R26 (6.7.11, issues/2026-10-08-struct-operator-results.md #5; the user's decision (a), 2026-10-13) in a fn
+# returning a 9-16 B struct, `return mk2(1) OP x;` with an operator that does not dispatch passed the pair-call
+# check (`_pair_ret_call_ok` asked only that a same-struct call START the value): rax the operator's result, rdx
+# mk2's stale second word (the filed repro: 41). The call must END the value (`_call_ends_at`): refused by name,
+# once ('got `mk2`'), as `return mk2(1).x;` is. `return mk2(1);` (the tail call), its wrap and a dispatching
+# `mk2(1) + p` are unchanged.
+RPR='a fn returning the 9-16 byte struct `Pt` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `mk2`'
+RPH='struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v + 40 }; return t; }\n'
+RPM="fn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = g(p); return q.x * 100 + q.y; }$E"
+refused_file r16 "$RPR" "R16: return mk2(1) == p; from a Pt fn (the filed repro, verbatim: 41, q.y = mk2's y)" "$ROPR-5-pair-return-leading-call-operator.cyr"
+refused r17 "$RPR" "R17: return mk2(1) < 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) < 3; }\n${RPM}"
+refused r18 "$RPR" "R18: return mk2(1) & 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) & 3; }\n${RPM}"
+refused r19 "$RPR" "R19: return mk2(1) << 3; (73)" "${RPH}fn g(p: Pt): Pt { return mk2(1) << 3; }\n${RPM}"
+refused r20 "$RPR" "R20: return mk2(1) && 3; (141)" "${RPH}fn g(p: Pt): Pt { return mk2(1) && 3; }\n${RPM}"
+refused r21 "$RPR" "R21: return mk2(1) % 3; (101: the idiv remainder in rdx)" "${RPH}fn g(p: Pt): Pt { return mk2(1) % 3; }\n${RPM}"
+refused r22 "$RPR" "R22: return (mk2(1) == p); inside a wrap (141)" "${RPH}fn g(p: Pt): Pt { return (mk2(1) == p); }\n${RPM}"
+exits r23 141 "R23: return mk2(1); (the tail call) still builds" "${RPH}fn g(p: Pt): Pt { return mk2(1); }\n${RPM}"
+exits r24 141 "R24: return (mk2(1)); still builds" "${RPH}fn g(p: Pt): Pt { return (mk2(1)); }\n${RPM}"
+exits r25 243 "R25: return mk2(1) + p; (a dispatch) still builds" "${RPH}fn Pt_add(a: Pt, b: Pt): Pt { var r: Pt = Pt { a.x + b.x, a.y + b.y }; return r; }\nfn g(p: Pt): Pt { return mk2(1) + p; }\n${RPM}"
+exits r26 141 "R26: var k = p.x; return mk2(k); (a tail call after a statement) still builds" "${RPH}fn g(p: Pt): Pt { var k = p.x; return mk2(k); }\n${RPM}"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 

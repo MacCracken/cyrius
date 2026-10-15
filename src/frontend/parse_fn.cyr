@@ -5818,6 +5818,9 @@ fn _return_struct_expr(S): i64 {
 fn _pair_ret_call_ok(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0; }   # 6.6.10: `name(` or `name<..>(`
     if (_call_dotted(S, GTI(S)) == 1) { return 0; }   # 6.6.12: a field of the result
+    # 6.7.11: the call must END the value: `return mk2(1) == p;` (any operator that does not dispatch,
+    # `_ret_expr_head`'s) left rax the comparison and rdx mk2's stale word. CHANGELOG [6.7.11]
+    if (_call_ends_at(S, GTI(S), _ret_term) == 0) { return 0; }
     # 6.6.10 (bite 7 review): the fn the call REACHES — `return mkw(p);` from a `: W1<Pt>` fn was
     # compared against the base's 8 B `W1` and refused (6.6.9 compiled it).
     var fi = _gen_resolve_call(S, GTI(S));
