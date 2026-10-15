@@ -92,4 +92,39 @@ MISMATCH=$(awk '$2 != $3' "$W/foldres" | wc -l | tr -d ' ')
 # ── axis 3: nothing was skipped for want of a header format ─────────────────────────
 [ "$UNPARSED" -eq 0 ] || fail "$UNPARSED fold row(s) unparsed — a header format is unhandled, which is how the last audit undercounted"
 
-echo "PASS: fold_table_matches_vendored ($NROWS rows, all stated versions match lib/)"
+# ── axis 4: README.md's fold-version paragraph states the same versions ─────────────
+# The README says it lists "the versions lib/ carries (each file's # Version: header)", and
+# nothing checked it: at 6.7.12's open seven of its twelve pairs were stale. Every
+# `<name> <X.Y.Z>` pair in the paragraph must name a fold of the table above and equal that
+# file's header; every fold of the table must have a pair (a missing pair fails, so the axis
+# cannot pass on a paragraph that stopped naming versions). CHANGELOG [6.7.12]
+README="$ROOT/README.md"
+[ -f "$README" ] || fail "README.md not found"
+awk '/folded sibling libraries, at the versions `lib\/` carries/ { on = 1 }
+     on && /^[[:space:]]*$/ { exit }
+     on { printf "%s ", $0 }' "$README" > "$W/readme_para"
+[ -s "$W/readme_para" ] || fail "README.md: the fold-version paragraph (\"folded sibling libraries, at the versions \`lib/\` carries\") was not found"
+grep -oE '(^|[^a-z0-9_])[a-z][a-z0-9_]* [0-9]+(\.[0-9]+)+' "$W/readme_para" \
+    | sed -E 's/^[^a-z]*//' > "$W/readme_pairs" || true
+RPAIRS=$(wc -l < "$W/readme_pairs" | tr -d ' ')
+RBAD=0
+while read -r name ver; do
+    if ! awk -v d="$name" '$1 == d { found = 1 } END { exit !found }' "$W/foldres"; then
+        echo "  README.md names '$name $ver', which is not a fold row of docs/ecosystem.md"
+        RBAD=$((RBAD + 1)); continue
+    fi
+    actual=$(vendored_version "$ROOT/lib/$name.cyr")
+    if [ "$ver" != "$actual" ]; then
+        echo "  README.md says $name $ver, lib/$name.cyr is $actual"
+        RBAD=$((RBAD + 1))
+    fi
+done < "$W/readme_pairs"
+while read -r dep _s _a; do
+    if ! awk -v d="$dep" '$1 == d { found = 1 } END { exit !found }' "$W/readme_pairs"; then
+        echo "  README.md's fold paragraph has no '$dep <version>' pair"
+        RBAD=$((RBAD + 1))
+    fi
+done < "$W/foldres"
+[ "$RBAD" -eq 0 ] || fail "$RBAD README.md fold-paragraph pair(s) disagree with lib/ or are missing (see above)"
+
+echo "PASS: fold_table_matches_vendored ($NROWS rows and $RPAIRS README pairs, all stated versions match lib/)"

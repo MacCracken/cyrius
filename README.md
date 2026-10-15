@@ -239,14 +239,15 @@ networking (sovereign native TLS 1.3, HTTP/2, WebSockets), crypto, Unicode
 (UAX #15 normalization), regex, GPU, and OS interop.
 
 The twelve folded sibling libraries, at the versions `lib/` carries
-(each file's `# Version:` header): sakshi 2.5.8 (tracing) · patra 1.16.0
-(storage) · sigil 3.13.11 (security / crypto) · vani 1.2.10 (audio) ·
-yukti 2.3.16 (hardware) · sankoch 2.8.3 (compression) · sandhi 1.10.9
+(each file's `# Version:` header): sakshi 2.5.10 (tracing) · patra 1.16.2
+(storage) · sigil 3.13.12 (security / crypto) · vani 1.2.10 (audio) ·
+yukti 2.3.17 (hardware) · sankoch 2.8.7 (compression) · sandhi 1.10.9
 (HTTP/2, JSON-RPC, TLS policy) · niyama 1.1.0 (regex) · mabda 4.2.0
-(GPU / compute) · bayan 1.5.13 (data formats + big-int) · ganita 1.2.15
-(linear algebra + advanced math) · yantra 1.0.10 (UI / E2E testing).
+(GPU / compute) · bayan 1.5.14 (data formats + big-int) · ganita 1.2.15
+(linear algebra + advanced math) · yantra 1.0.11 (UI / E2E testing).
 Each is opt-in with an explicit `include "lib/<name>.cyr"`;
-[docs/ecosystem.md](docs/ecosystem.md) records the tag each was folded from.
+[docs/ecosystem.md](docs/ecosystem.md) records the tag each was folded from
+(`fold_table_matches_vendored` checks both against the headers).
 
 See **[docs/stdlib-modules.md](docs/stdlib-modules.md)** for the full
 categorized module index + fold-in lineage, and
