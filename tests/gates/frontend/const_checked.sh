@@ -10,7 +10,9 @@
 #      classic-for step `N = N + 1` / `L += 1` — refused once. Before 6.7.3 the step compiled, and
 #      a top-level const's size-0 slot let its store overwrite a neighbouring global
 #   I  a const initializer is a const context: a global variable, an ordinary fn's call, an unknown
-#      name, a fn's runtime local — each refused once, by name
+#      name, a fn's runtime local — each refused once, by name; (6.7.11) an ordinary fn's call as an
+#      enum value, once — the member loop read the refused `h()` as a constructor (a second error at
+#      the link, "refusing to emit binary")
 #   D  a const fn's body, checked at its definition (never called): a builtin that touches memory,
 #      a global variable in an untaken arm, an array local, an ordinary fn's call, a generic const fn
 #   E  an evaluation that cannot finish or has no target-independent answer: a const defined in
@@ -33,6 +35,7 @@
 # unknown name. 6.7.7 (run 2026-10-09, on the `_ce_top_expr` factor): `_ce_top_expr` neither zeroing nor
 # restoring `_ce_steps` -> C2 refused; `_cst_eval` without its `;` check -> M2 BUILT; `_ce_bind_params` stepping
 # a parameter with the `<`-aware `_pl_next` -> C3 refused ("a const fn called with the wrong number of arguments").
+# 6.7.11 (run 2026-10-14): `_cst_ctx_val` without its `_cst_ctx_skip` call -> I5 RED (2 error lines).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -73,6 +76,7 @@ refused i1 "'g' is a variable - a const context takes only constants" "I1: a glo
 refused i2 "'h' is not a \`const fn\`" "I2: an ordinary fn's call" 'fn h(): i64 { return 2; }\nconst N = h();\nsyscall(60, N);\n'
 refused i3 "unknown name 'nosuch' in a const context" "I3: an unknown name" 'const N = nosuch + 1;\nsyscall(60, N);\n'
 refused i4 "'x' is a variable" "I4: a runtime local in a local const" 'fn main(): i64 { var x = 3; const L = x + 1; return L; }\nsyscall(60, main());\n'
+refused i5 "'h' is not a \`const fn\`" "I5: an ordinary fn's call as an enum value (never read as a member's constructor)" 'fn h(): i64 { return 2; }\nenum E { A = h(), B = 5 }\nsyscall(60, B);\n'
 
 refused d1 "not a compile-time expression" "D1: load64 in a const fn (never called)" 'const fn f(x) { return load64(x); }\nsyscall(60, 1);\n'
 refused d2 "'g' is a variable" "D2: a global in an untaken arm" 'var g = 1;\nconst fn f(x) { if (x > 100) { return g; } return x; }\nsyscall(60, 1);\n'

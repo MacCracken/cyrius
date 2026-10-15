@@ -9836,10 +9836,22 @@ fn _cst_ctx_val(S, stop, what): i64 {
         return load64(e + 8);
     }
     var v = _ce_eval_int(S, what);
+    if (_ce_err == 1) { _case_ok = 0; _cst_ctx_skip(S, stop, ti); }
     var end = GTI(S);
-    if (_ce_err == 1) { _case_ok = 0; }
     _clm_add(ti, v, end);
     return v;
+}
+# An enum value the evaluator refused leaves the cursor where it stopped: on a call's NAME, the
+# member loop read `h()` as a new member with a constructor, which then failed the link
+# ("undefined function 'h'", "refusing to emit binary"). Past the whole expression instead, by
+# the evaluator's own grammar — when that ends where a member does (`,` `;` `}`); a malformed one
+# (`(1 + }`) stays where it stopped. A case label resyncs at its `:` already. CHANGELOG [6.7.11]
+fn _cst_ctx_skip(S, stop, ti): i64 {
+    if (stop >= 0) { return 0; }
+    var x = _ce_extent(S, ti);
+    var t = TOKTYP(S, x);
+    if (t == 31 || t == 5 || t == 14) { STI(S, x); }
+    return 0;
 }
 fn _case_val(S): i64 { return _cst_ctx_val(S, 49, "a case label must be an integer"); }
 fn _enum_val(S): i64 {
