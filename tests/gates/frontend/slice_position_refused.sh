@@ -35,6 +35,8 @@
 #       null handle, 6.7.10: both 139); K2c `var x: slice;` is the 24-byte struct (14, the issue's row); K2d
 #       a generic `struct slice<T>`'s locals `slice<i64>` / `slice<Pt>` are its instances; K2e (kept: it compiled
 #       before) a field and both global zones of the type, with a `[u8]` local in the same file still the built-in;
+#       K2f (review) the flip side: a fn-local `slice<u8>` there is the struct, so the built-in's `.len` on it is
+#       refused (it compiled through 6.7.10); K2g the `[u8]` respelling runs (14);
 #       tests/tcyr/crossos/user_struct_named_slice.tcyr runs the shapes on every fork
 #   X   --syntax-only (cyrius lint's pre-pass) reports a slice parameter, once (a grammar refusal)
 #   R12 a captured slice subscripted in a closure (read, store); R13 a struct / u128 element store;
@@ -70,7 +72,8 @@
 #         S1p7 S2a S2c S3a S3c S4a S6a S6d S6e S6f X1 (the cascades)
 #   MSW   (6.7.11; a one-edit copy of the tree, its compiler built by the fixed one, this gate run from it with
 #         CYCC= it) `_sl_word_builtin` without its FINDSTRUCT test -> RED K2b K2c K2d (the built-in slot again: each
-#         refused, as through 6.7.10); K1-K4 and K2e green (K2e declares no fn-local of the type: it compiled before)
+#         refused, as through 6.7.10) and K2f (compiled: the built-in's `.len`, review); K1-K4, K2e and K2g green
+#         (K2e declares no fn-local of the type: it compiled before)
 #   (C2 review) the value file before it (its SPAWN rows expected only the default-mode line) -> RED Wh
 #         (8 checks)
 #   the C2-5 compiler (+ the IR=3 slice-read repair; before this bite) -> RED SR S1-S6 X R12 R13 R13b
@@ -229,6 +232,13 @@ exits k2d 65 "K2d: a generic \`struct slice<T>\`'s locals \`slice<i64>\` / \`sli
     'struct Pt { x; y; }\nstruct slice<T> { a: T; n; }\nfn main(): i64 {\n    var x: slice<i64>;\n    x.a = 5;\n    x.n = 2;\n    var y: slice<Pt>;\n    y.a.x = 30;\n    y.a.y = 4;\n    return x.a + x.n + y.a.x + y.a.y + sizeof(slice<Pt>);\n}\nsyscall(60, main());\n'
 exits k2e 65 "K2e: a field and both global zones of the program's slice type; a \`[u8]\` local beside them is the built-in" \
     "${SL}struct slice { a; b; c; }\nstruct H { s: slice; k; }\nvar GZ: slice = slice { 0, 0, 0 };\nfn noop(): i64 { return 0; }\nfn main(): i64 {\n    var h: H;\n    h.s.b = 7;\n    h.k = 1;\n    GZ.c = 20;\n    var bk: u8[4];\n    store8(&bk + 2, 3);\n    var u: [u8] = 0;\n    slice_set(&u, &bk, 4);\n    return h.s.b + h.k + GZ.c + u[2] + slice_len(&u) + sizeof(slice);\n}\nnoop();\nvar GP: slice = slice { 0, 0, 0 };\nGP.a = 6;\nsyscall(60, main() + GP.a);\n"
+# K2f / K2g (6.7.11 review): the flip side of decision (b) — with the program's own `struct slice`
+# declared, a fn-local `slice<u8>` is that struct, so the built-in's `.len` on it stops compiling
+# (base 5fb211da: 14); the built-in respelled `[u8]` gives the 14.
+refused k2f "unknown field 'len' on struct 'slice'" "K2f: \`struct slice\` declared: a fn-local \`slice<u8>\`'s \`.len\` is refused (the built-in is \`[u8]\` there)" \
+    "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: slice<u8> = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
+exits k2g 14 "K2g: ... respelled \`var s: [u8] = 0;\` it is the built-in slice (7 + 7)" \
+    "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: [u8] = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
 exits k3 8 "K3: \`g<slice<u8>>(0)\` compiles as before (an unbound type argument, 6.7.7 — reported, unchanged)" \
     "${SL}fn g<T>(x: T): i64 { return sizeof(T); }\nfn f(): i64 { return g<slice<u8>>(0); }\nsyscall(60, f());\n"
 exits k4 12 "K4: fn-local \`[T]\` / \`slice<T>\` / \`[*T]\` / \`[u128]\` / \`[T]\` at a generic T still declare" \

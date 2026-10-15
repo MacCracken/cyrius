@@ -1965,7 +1965,9 @@ slice 's'"), as `s[i]` is. ⚠ Before 6.7.11 the read was "undefined variable 's
 then the name is that struct everywhere — a parameter, a pointer target, a field, a global, a type
 argument and (6.7.11) a fn-local `var x: slice;` / `var y: slice<Pt>;`; the built-in slice stays
 reachable as `[T]`. Through 6.7.10 the fn-local annotation alone still meant the built-in 16-byte slot
-(`x.a`: "no struct type in scope for 'x'"; the user's decision (b), 2026-10-13).
+(`x.a`: "no struct type in scope for 'x'"; the user's decision (b), 2026-10-13) — so a program that
+declares `struct slice` and used a fn-local `slice<u8>` as the built-in now meets its own struct there
+(`s.len`: "unknown field 'len' on struct 'slice'"): spell the built-in `[u8]`.
 
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to
