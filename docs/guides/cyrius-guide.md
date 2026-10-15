@@ -1447,6 +1447,20 @@ integer, a field, a bare `return;` — is a compile error since v6.6.6 naming wh
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
 
+⚠ **A tuple literal is not the struct (6.7.11).** `return (a, b);` or `return (a, b, c);` in a fn
+declared `: P` is a compile error at every size — a tuple is an anonymous struct, another type
+([Tuples](#tuples)), as `var t = (a, b); return t;` already was:
+
+```
+error: a fn returning the struct `P3` returns that struct — `(a, b)` is a tuple, another type
+```
+
+Through 6.7.10 it took the multi-value path: over 16 bytes the caller's result was never written
+(it read 0, 0, 0), at 8 bytes or less the second value was dropped, and at 9-16 bytes it gave the
+two words only because that class's registers are the multi-value ones. Build the struct and return
+it: `var p: P3 = P3 { a, b, 0 }; return p;`. A fn declared `: (T1, T2)`, or with no return type,
+returns `(a, b)` as before.
+
 ⚠ **A fn returning a struct of 8 bytes or less returns a value of that struct (6.7.11).** The struct
 travels in one register, and its `return` is checked as the two wider classes check theirs: a value
 of ANOTHER struct — a local, a by-value parameter, a global, `(u)`, a call (`return mk();` too), a
@@ -1511,8 +1525,9 @@ global read a stale register rather than `G`. The two that are worth spelling ou
 look reasonable:
 
 * `return (a, b);` is the **ret2 int-register** convention (rax:rdx), which is the ABI of a
-  9-16 byte *struct*, not of a vector. It stays legal for a struct return and for the scalar
-  multi-value `var a, b = f();` form — only the vector classes refuse it. To build a vector,
+  9-16 byte *struct*, not of a vector. It stays legal for the scalar multi-value `var a, b =
+  f();` form; a fn returning a named struct refuses it too since 6.7.11 (a tuple is another
+  type — [Returning a struct by value](#returning-a-struct-by-value-v666)). To build a vector,
   store the lanes into a local and return the local.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
@@ -2670,8 +2685,8 @@ every struct size, parentheses around it transparent: ``a multi-value call 'mk' 
 argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize struct 'P'`, `is not stored
 into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
 struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
-var p = P { a, b }; take(p);`. A callee declared `: P` that says `return (x, y);` returns a `P` and is accepted
-everywhere a `P` is. A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
+var p = P { a, b }; take(p);`. A callee declared `: P` returns a `P` and is accepted everywhere a `P` is (its
+`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
 does — and are not refused.
 
 ## Tuples
@@ -2754,7 +2769,8 @@ whole run of letters and digits. `p.0` on a named struct is an unknown field too
 a store into a tuple field (`h.p = (..);`), a tuple argument (`width((3, 10))`) and `return (a,
 b);`. In the var, assignment, field and argument positions, parentheses around the whole literal
 are transparent (`((1, 2))`); a multi-value return keeps its exact spelling, `return (a, b);`
-(`return ((a, b));` is refused). Anywhere else — an operand, an untyped or `callptr` argument, an
+(`return ((a, b));` is refused), and only in a fn declared `: (T1, T2[, T3])` or with no return
+type — a fn returning a named struct refuses it (6.7.11). Anywhere else — an operand, an untyped or `callptr` argument, an
 if-expression branch, `(1, 2).0`, a struct literal's element — it is refused by name. At top level
 only the declaration works: `G = (3, 4);` and `take((1, 2))` build the literal in a frame temporary
 first, so they need a fn.
@@ -2858,6 +2874,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var p = (1, 2.5);` | `a float element needs the tuple's type declared …` |
 | `(1, 2) + 3`, `g((1, 2))` (untyped `g`) | ``a tuple `( .. )` is a value only as a `var` initializer, …`` |
 | `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
+| `return (a, b);` from a fn declared `: P` (a named struct, any size; 6.7.11) | ``a fn returning the struct `P` returns that struct — `(a, b)` is a tuple, another type`` |
 | `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |

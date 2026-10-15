@@ -912,6 +912,8 @@ fn _tcp_drop(S): i64 {
 # leftover (55 where x86 gives 56). The pair's high register is synced from the multi-value slot
 # here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
 # `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
+# Since 6.7.11 only `ret2` lands here in a struct fn: a tuple literal there is refused
+# (`_refuse_struct_tuple_return`). CHANGELOG [6.7.11]
 fn _mret_land(S): i64 {
     if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
         _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
@@ -5938,8 +5940,31 @@ fn _refuse_simd_return(S): i64 {
 # cybs, the bootstrap compiler the seed assembles, fails SILENTLY when one fn accumulates too
 # many global/call references, and PARSE_RETURN is already the largest fn in the frontend.
 fn _refuse_vector_tuple_return(S): i64 {
+    _refuse_struct_tuple_return(S);
     if (_cur_fn_returns_vector(S) == 0) { return 0; }
     _refuse_simd_return(S);
+    return 0;
+}
+# ⛔ 6.7.11 — A TUPLE LITERAL IS NOT THE STRUCT A FN DECLARED `: S` RETURNS (the user's decision,
+# 2026-10-13: refused by name in every class). The multi-value arms load rax:rdx[:r3], which is the
+# 9-16 B pair's ABI by coincidence only: a fn returning a struct over 16 B never wrote its result
+# pointer (the caller read 0, 0, 0) and one of 8 B or less dropped the second value. A tuple is an
+# anonymous struct, another type (guide § Tuples); `var t = (a, b); return t;` was already refused.
+# Cursor on the literal's `(`. Not a tuple, `Str` (a handle) or dyn (`_mret_land` refuses that one),
+# and not in an inline replay, whose `return` is the callee's (`_ret_small_cls`). CHANGELOG [6.7.11]
+fn _refuse_struct_tuple_return(S): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a fn returning the struct `");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    PRSTR("` returns that struct — `");
+    if (_tup_commas(S, GTI(S)) > 1) { PRSTR("(a, b, c)"); } else { PRSTR("(a, b)"); }
+    PRSTR("` is a tuple, another type\n");
+    _had_error = 1;
     return 0;
 }
 

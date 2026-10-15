@@ -238,9 +238,11 @@ var r = main(); syscall(60, r);
     # shapes X10-X12 sit next to and must not take with them — the rax:rdx pair struct, whose
     # ABI the ret2 convention IS, and the scalar arity-2/arity-3 multi-return. Each packs its
     # values into distinct decimal digits so a row cannot pass with the operands swapped or
-    # with one register left unwritten.
+    # with one register left unwritten. 6.7.11: a fn returning a named struct refuses the tuple
+    # literal itself (the user's decision, issues/2026-10-08-struct-operator-results.md #4), so
+    # A7's pair struct says `ret2(41, 7)`, the same multi-value arm; A8 / A9 keep the tuple spelling.
     A7) printf '%s' 'struct P2 { a; b; }
-fn good(): P2 { return (41, 7); }
+fn good(): P2 { ret2(41, 7); }
 fn main(): i64 { var p: P2 = good(); return p.a + p.b; }
 var r = main(); syscall(60, r);
 ' ;;

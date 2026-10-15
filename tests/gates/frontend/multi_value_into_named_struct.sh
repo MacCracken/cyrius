@@ -318,11 +318,11 @@ row C1 'fn mkp(a): P { var p = P { a, a + 1 }; return p; }
 fn f(): i64 { return take(mkp(3)); }
 syscall(60, f());'
 runs C1 34 "control: a callee declared \`: P\` (the issue's)"
-row C2 'fn mp(x): P { return (x, x + 1); }
+row C2 'fn mp(x): P { ret2(x, x + 1); }
 fn f(): i64 { var p: P = mp(3); var h: H; h.p = mp(3); var q: P = P { 0, 0 }; q = mp(3);
     return take(mp(3)) + p.a * 10 + p.b + h.p.a * 10 + h.p.b + q.a * 10 + q.b - 102; }
 syscall(60, f());'
-runs C2 34 "control: the 6.7.7 crossing — a \`: P\` fn's \`return (x, y)\` into an argument, a declaration, a field, an assignment"
+runs C2 34 "control: the 6.7.7 crossing — a \`: P\` fn's \`ret2(x, y)\` into an argument, a declaration, a field, an assignment (6.7.11: its \`return (x, y);\` is refused)"
 row C3 'fn rd(q: *P): i64 { return q.a * 10 + q.b; }
 fn mkq(p): (i64, i64) { return (p, 1); }
 fn f(): i64 { var s = P { 3, 4 }; var q: *P = mkq(&s); var r: *P = &s; r = mkq(&s); return rd(mkq(&s)) + q.a + r.b - 7; }

@@ -222,6 +222,7 @@
 #   M-U1 `_neg_int` SPSC only (no `_int_res`)                  -> RED U1 (6), U2 (the zone's typer now disagrees:
 #       "the declaration zone misread .."), U3 (13), A1-A7 (U1-U8 U11 U12)
 #   M-U2 `_gz_unary` keeping `-g`'s struct (kind 4)            -> RED U2 ("the declaration zone misread ..")
+#   M-R1 `_refuse_struct_tuple_return` answering 0             -> RED R8-R11 (BUILT); R12-R15 green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -418,6 +419,20 @@ refused r04 'got `5`' "R4: return (5); from a Pt fn, refused once naming 5" "str
 refused r05 'struct-return: identifier type != fn ret_sid' "R5: return (q); with q: Q from a P3 fn, refused as return q; is" "struct Q { x; y; z; }\nstruct P3 { x; y; z; }\nfn f(q: Q): P3 { return (q); }\nfn main(): i64 { var a: Q = Q { 1, 2, 3 }; var r: P3 = f(a); return r.x; }$E"
 refused r06 "the left operand of 'Pt_add' is passed by address (a struct over 8 bytes)" "R6: a by-value 16-byte operand at top level is not called a * parameter" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
 refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` parameter)' "R7: a *LW operand at top level keeps its wording" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
+# R8-R15 (6.7.11, issues/2026-10-08-struct-operator-results.md #4; the user's decision (a), 2026-10-13) a tuple
+# literal `return (a, b[, c]);` in a fn declared to return a named struct took the multi-value path: over 16 B
+# the result pointer was never written (the filed repro: 0), at 8 B or less the second value was dropped (1),
+# at 9-16 B it worked by ABI coincidence (12). Refused by name in every class, once; a fn declared `: (T1, T2)`,
+# an undeclared one and `return ((a, b));`'s own refusal are unchanged.
+RTUP='returns that struct — `(a, b)` is a tuple, another type'
+refused_file r08 "a fn returning the struct \`P3\` $RTUP" "R8: return (a, b); from a fn returning a 24 B P3 (the filed repro, verbatim: 0)" "$ROPR-4-tuple-return-in-struct-fn.cyr"
+refused r09 "a fn returning the struct \`S8\` $RTUP" "R9: ... from an 8 B S8 (1: b dropped)" "struct S8 { v; }\nfn f(a, b): S8 { return (a, b); }\nfn main(): i64 { var q: S8 = f(1, 2); return q.v; }$E"
+refused r10 "a fn returning the struct \`Pt\` $RTUP" "R10: ... from a 16 B Pt (12: rax:rdx by coincidence)" "struct Pt { x; y; }\nfn f(a, b): Pt { return (a, b); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x * 10 + q.y; }$E"
+refused r11 'a fn returning the struct `P3` returns that struct — `(a, b, c)` is a tuple, another type' "R11: return (a, b, 7); from a 24 B P3 (0)" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return (a, b, 7); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
+exits r12 12 "R12: fn f(): (i64, i64) { return (1, 2); } still builds" "fn f(): (i64, i64) { return (1, 2); }\nfn main(): i64 { var a, b = f(); return a * 10 + b; }$E"
+exits r13 12 "R13: an undeclared fn's return (a, b); still builds" "fn f(a, b) { return (a, b); }\nfn main(): i64 { var a, b = f(1, 2); return a * 10 + b; }$E"
+refused r14 'a multi-value return is written `return (a, b);` - drop the extra parentheses' "R14: return ((a, b)); from a Pt fn keeps its own refusal" "struct Pt { x; y; }\nfn f(a, b): Pt { return ((a, b)); }\nfn main(): i64 { var q: Pt = f(1, 2); return q.x; }$E"
+refused r15 'struct-return fn: return must be a bare local identifier' "R15: return ((a, b)); from a P3 fn keeps its own refusal" "struct P3 { x; y; z; }\nfn f(a, b): P3 { return ((a, b)); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x; }$E"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
