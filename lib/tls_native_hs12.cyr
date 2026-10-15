@@ -1988,8 +1988,8 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # (.78: was a single root; now a set so system bundles + multi-root PEM work.)
 # TLS_CA_MAX_ROOTS bounds nothing: a trust bundle's chain scratch is sized from its own block count
 # (6.6.13, _tn_ca_parse_set) and so is a client certificate's leaf decode (6.7.9,
-# tls_native_set_client_cert). The public name is kept, so a program that assigns it still
-# compiles; retiring it is a removed-symbol decision. CHANGELOG [6.7.9]
+# tls_native_set_client_cert). The public name is kept (the user's decision D15, 2026-10-15), so a
+# program that reads or assigns it still compiles, and a write changes nothing. CHANGELOG [6.7.9] [6.7.12]
 var TLS_CA_MAX_ROOTS = 300;
 
 # Parse a trust bundle into a root set [count][root ptrs...] — the layout verify_chain reads.
