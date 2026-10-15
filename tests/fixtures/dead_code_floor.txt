@@ -89,7 +89,7 @@ ir_count_exit_bbs a64 a64m a64n cx win x86m
 ir_dce_capped a64 a64m a64n cx win x86m
 ir_dead_store_capped a64 a64m a64n cx win x86m
 ir_dump a64 a64m a64n cx x86m
-ir_emit1 a64 a64m a64n cx
+ir_emit1 a64 a64m a64n
 ir_lase a64 a64m a64n cx x86m
 ir_liveness_cfg a64 a64m a64n cx win x86m
 ir_reset a64 a64m a64n cx x86m
