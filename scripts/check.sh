@@ -2262,6 +2262,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # cyriusly only, refusing by name otherwise, and every store writer ships that twin (axes 7, 9:
 # install.sh's tarball and refresh-only paths run hermetically, in throwaway homes).
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
+# 6.7.12 — the compiled `cyriusly setup` refuses by name without build/cycc (bootstrap.sh builds no
+# cycc: it ran 15 compiles against the missing compiler and left 15 zero-byte tools), builds no
+# cross_bins (its `cc5_` loop never matched; install.sh owns them), and installs the default build
+# whatever compile-mode switch the shell holds (an inherited CYRIUS_BOUNDS=1 installed a bounds
+# cyrfmt). A git-archive copy, throwaway HOME / CYRIUS_HOME.
+_chk_gate "$ROOT/tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

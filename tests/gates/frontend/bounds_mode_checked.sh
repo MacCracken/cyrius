@@ -60,6 +60,13 @@
 #       same with a CYRIUS_COVERAGE_FILE — the mode then INSTRUMENTS every compile that sees it, so an
 #       unscrubbed script builds an instrumented cycc — green on both (anti-vacuous: the pair changes
 #       cycc(src), as E4b's does)
+#       (6.7.12) E4e: the COMPILED setup, programs/cyriusly.cyr `_cmd_setup` (the Linux x86_64
+#       tarball's cyriusly), builds and installs through shell lines that E4's script scan never
+#       read: every code line of its body that runs ./build/cycc or `sh scripts/install.sh` starts by
+#       unsetting all four switches `_envp_self_build` drops (CYRIUS_BOUNDS, CYRIUS_POISON,
+#       CYRIUS_COVERAGE, CYRIUS_COVERAGE_FILE); floor 2 (the tool loop, the install step). And the
+#       shell twin's setup arm unsets CYRIUS_COVERAGE_FILE with the three. Its run-time half is
+#       tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh row C.
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
 #       CYRIUS_TARGET_EFI=1 -> refused by name (and nothing more: the refusal is fatal at once, so the
 #       injected checker is never compiled for a target it cannot serve); each control (the same
@@ -166,6 +173,11 @@
 #   MS6  `_pp_env_rung`'s refusal text altered (" (or unset) : ")             -> RED E2 (all three values)
 # 6.7.10 E4d (P5B-2; the same procedure):
 #   MS5e build-cycc-verify.sh's CYRIUS_COVERAGE dropped from its unset       -> RED E4 + E4c + E4d (build-cycc-verify)
+# 6.7.12 E4e (the E4e block run alone on a scratch copy holding the one mutation):
+#   MS7  _cmd_setup's tool-loop line without its `unset … ;`                 -> RED E4e (all four, that line)
+#   MS7b _cmd_setup's install.sh line without CYRIUS_COVERAGE_FILE            -> RED E4e (that var, that line)
+#   MS7c scripts/cyriusly's setup unset without CYRIUS_COVERAGE_FILE          -> RED E4e (the twin)
+#   MS7d (the gate) the build / install regex blinded                         -> RED E4e floor (0 lines)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -368,6 +380,30 @@ for v in CYRIUS_BOUNDS CYRIUS_COVERAGE; do
     if [ -n "$u" ]; then ok "E4 scripts/check.sh unsets $v (line $u); its CYRIUS_POISON is selfbuild_poison_scrubbed.sh P3's"
     else bad "E4 scripts/check.sh does not unset $v (an inherited one would switch its mode on in its self-builds and its suite)"; fi
 done
+# E4e (6.7.12) — the compiled setup's shell lines: every code line of `_cmd_setup` that runs
+# ./build/cycc or `sh scripts/install.sh` unsets the four before that point on the line.
+S0=$(grep -n '^fn _cmd_setup(' programs/cyriusly.cyr | head -1 | cut -d: -f1 || true)
+if [ -z "$S0" ]; then bad "E4e programs/cyriusly.cyr has no fn _cmd_setup — the compiled setup moved; re-point this row"
+else
+    E0=$(awk -v s="$S0" 'NR > s && /^fn / { print NR - 1; exit }' programs/cyriusly.cyr)
+    awk -v s="$S0" -v e="${E0:-999999}" -v vars="CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE" '
+        NR < s || NR > e || /^[[:space:]]*#/ { next }
+        {
+            i = match($0, /\.\/build\/cycc|sh scripts\/install\.sh/); if (i == 0) next
+            pre = substr($0, 1, i - 1); u = " "
+            if (match(pre, /unset[ A-Z_]+;/)) u = " " substr(pre, RSTART + 6, RLENGTH - 7) " "
+            n = split(vars, v, " "); miss = ""
+            for (k = 1; k <= n; k++) if (index(u, " " v[k] " ") == 0) miss = miss " " v[k]
+            print NR (miss == "" ? " ok" : " missing" miss)
+        }' programs/cyriusly.cyr > "$T/e4e"
+    e4en=$(grep -c . "$T/e4e" || true)
+    if [ "$e4en" -lt 2 ]; then bad "E4e found $e4en build / install line(s) in _cmd_setup (floor 2: the tool loop, the install step) — the scan is blind"
+    elif grep -q missing "$T/e4e"; then bad "E4e programs/cyriusly.cyr _cmd_setup: $(grep missing "$T/e4e" | sed 's/^/line /' | paste -sd';' -) — an inherited switch reaches what setup builds and installs"
+    else ok "E4e programs/cyriusly.cyr _cmd_setup: its $e4en build / install lines (lines $(cut -d' ' -f1 "$T/e4e" | paste -sd, -)) each unset the four first"; fi
+fi
+u=$(_e4_unset scripts/cyriusly CYRIUS_COVERAGE_FILE)
+if [ -n "$u" ]; then ok "E4e scripts/cyriusly's setup unsets CYRIUS_COVERAGE_FILE too (line $u), as the compiled setup does"
+else bad "E4e scripts/cyriusly's setup does not unset CYRIUS_COVERAGE_FILE (the compiled setup unsets all four)"; fi
 # E4b — the scrub at run time, on the cheapest self-build script: the inherited pair leaves its
 # fixpoint green. A red run is judged against a clean one (red alone too: this row cannot judge).
 e4rc=0
