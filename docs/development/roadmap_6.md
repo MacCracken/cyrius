@@ -60,7 +60,8 @@ repair-registry cap says so too).
   code size while the kernel emitters place `.bss` / `.rodata` after the POST-compaction size, so every string and
   global address pointed 162 KB high on agnos — [issue](issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md),
   agnos-filed, with real image-room pressure). The arc's kernel bite repairs the data base after compaction (or
-  freezes it, as `_wx_dbase_frozen` does for EMITELF_USER) so a kernel image shrinks again **Pulled into 6.7.11** (user, 2026-10-13), with the
+  freezes it, as `_wx_dbase_frozen` does for EMITELF_USER) so a kernel image shrinks again — **shipped in 6.7.11** (INF-5: a `kernel;` image and a `CYRIUS_WX=0`
+  executable compact, the data moving with the code; a `--pie` kernel and aarch64 still decline / NOP-fill), with the
   kept-dead-body call retarget the agnos review found.
 - **PE and x86 Mach-O decline** (since v6.6.1) because both reach a live import / stub table through a rip-relative
   disp32 the compaction pass does not repair, and both compute file geometry before elimination runs. Declining was the

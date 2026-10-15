@@ -4,7 +4,4501 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.7.11] — 2026-10-13
+## [6.7.11] — 2026-10-14
+
+**Break 2, repair 1 — the open queue's 6.7.11 placements (73 issues, the struct-operator issue six items) repaired
+in seven lanes over two waves: multi-value receives and returns, call arguments, struct copies and struct operators,
+generics and the frontend remainder, the preprocessor fast path / cybs / the kernel DCE compaction, the tools and
+CLI, `dir_list` and the agnos peers; the folds sakshi 2.5.10, sankoch 2.8.7 and patra 1.16.2.**
+
+**Release gate GREEN** (`release-gate.sh` on `0601aff4`, 2026-10-14; a first run on `315d5e4a` was stopped one minute
+in to fold patra 1.16.2 at the user's request): fixpoint 2,223,320 B; ARM lockstep 2,083,752 B; seed-derive OK;
+check.sh 131 / 131 driver rows, 503 / 503 shell gates (the 2 named agnos-parity SKIPs); ecb, ach, cass and pi
+`SELFHOST_OK` + crossos `LIBTEST_OK`. verify-store reports the same 16 pre-6.7 slots (6.6.3 – 6.6.19) whose `bin/cybs`
+differs from a rebuild of its tag as at 6.7.10 (reported, not rewritten). The release-close docs commit after the gate
+is docs plus comment-only link repoints in `src/` and `tests/` (cycc byte-identical, seed-derive OK).
+
+**Size:** cycc **2,223,320 B** (`.text` **2,003,672**), +108,944 B over 6.7.10's 2,114,376 — wave 1 (returns, callargs,
+infra, tools, stdlib) +54,424 B, wave 2 (struct copies and operators; generics and the frontend) +54,520 B.
+`build/cycc-native-aarch64` **2,083,752 B** (0.94× x86; the pre-commit hook's ARM bound is relative now). Dead-code floor
+**52 fns / 10,597 B** (x86, unchanged).
+
+**Bench:** self_compile **1,526 ms** (the gate's run). Same-box A/B (min of 6, load ~2): 6.7.10 compiling its own
+sources 1,437 ms → 6.7.11 1,514 ms (+5.4 %) — growth tax for the +5.2 % compiler; the preprocessor's attribute-rule fast
+path (INF-1, about −3 %) is inside it.
+
+⚠ **Behaviour changes** — each decided by the user at the open (2026-10-13, asked once: D1–D45) or fixed to what the
+source says; the migration is [ecosystem-migration.md § 6.7.11](docs/development/ecosystem-migration.md). The changes
+that went beyond a decision's text (D10's flip side, ST-8, RET-2, ST-20, GF-12 / 16 / 2, D4's 8-byte store) are filed for
+confirmation: [the changes beyond the decisions' text](docs/development/issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md).
+- **Multi-value returns** — a destructure or capture of a fn that returns one value (a body ending in an infinite
+  loop, D18), of another count than an undeclared fn returns (fewer names too, D17), or of a struct callee beyond its
+  register words (D19), is refused by name; a fn declared `: (T1, T2)` returns its values or is refused (D17); a
+  multi-value call into a named struct (argument, declaration, field, assignment) is refused — "bind it first"
+  (D20 / D21); a `: stack` pair as a struct-literal element is refused, a plain argument keeps the tag (D22); a pair
+  method used above its impl is flagged — `?` works, the single bind is refused (D23); a struct over 8 B into a scalar
+  annotation is refused (D24); `async fn g(): (i64, i64)` is refused (D25); `var x = (mk());` receives the struct.
+- **Call arguments** — a struct result through `fncallN(&f, ..)` / `callptr(&f, ..)` is the struct `f(..)` returns, a
+  variable callee stays a handle (D31); a value-form vector local takes a vector or nothing (D32); `p: *V` is a pointer
+  — `rd(b)` passes `&b` (D33); a parameter's type is read whole, a non-type token refused (D34); `bs1((t))` and
+  `take8(*pu)` of another struct are refused (D35 / D36); `n + pb` with a one-byte struct pointer is that pointer (D37);
+  an integer constant into an `f64` / `f32` parameter warns.
+- **Struct copies** — `*p` of a 1–7 B struct reads exactly the struct; `l = *p` / `G = *p` / `o.s = *p` copy, `q = *p`
+  into a `*S` writes its pointee; a struct field from a `*S` global / call / field copies; a generic `: *T` call is a
+  struct source; `var G: S16 = P.s` copies; `return E;` of a `*S` returns the pointee (D1); `GP = l` copies into `*GP`
+  (D2); a small return of another struct is refused (D3); `*p = v` copies the whole struct (D4).
+- **Struct operators** — an integer operator's result is an integer (no leaked `S_add`); unary minus is word negation
+  (D38); `return (a, b);` in a struct fn is refused (D39), as is `return mk2(1) == p;` (D40); an int + f64 chain warns
+  once (D41); an untyped binding takes a method chain / if-expression of 8 B or less and a wrapped 9–16 B result's type
+  (D42); `h.get().b` on a method's `*T` result compiles (D43); a wrapped call as a nested literal element compiles,
+  another struct's is refused (D44); the `#derive` scanner keeps the fields after a nested struct.
+- **Generics** — f64 instances are `gen$f64`, a scalar never shares an instance with a struct (D5); a bounded f64 impl
+  no longer needs an i64 impl; a generic method call runs its instance (`p.bm(h)` its impl's value, GF-2); a scalar into
+  a struct-typed generic method is refused (D6); a generic call's result infers T (D7); an undefined overload sibling
+  never takes a call (D8); `Vec<T>` annotations are checked — `Vec<*Pt>` and junk refused (D9); a declared
+  `struct slice` wins in locals — a fn-local `slice<u8>` used as the built-in then stops compiling (D10, ⚠ its flip side).
+- **Frontend** — a top-level `return` is refused (D11); a const context's call of another file's `private` const fn is
+  refused (GF-12); a const fn's const arity is its run-time arity (D12); a closure reads a captured slice's `.len` /
+  `.ptr` (D13); `await f`'s value and `+| +? -| -?` results are integers (GF-16 / D14); `n + &x` is a byte pointer and a
+  narrow scalar local is an integer (D15); **cx calls `fn main`** like every image target (D16).
+- **Tools** — `CYRIUS_POISON` takes the `CYRIUS_BOUNDS` rule (D28); `cyrius distlib` refuses an owner tie by name (D26:
+  ⛔ `lib/ws.cyr` / `lib/ws_server.cyr` are one, so yantra's own distlib is refused until 6.7.12's fix); `cyrius header`
+  writes return types and refuses what it cannot size (D29); the Windows and macOS CLIs refuse `--agnos` and the
+  bare-metal targets (D30); check.sh reaps scratch-only dead-pid temp dirs (D27); cyrlint warns on two new rules; six
+  scanner tools build only from a checkout's root; `size/cycc_bytes` in bench-history.
+- **Infrastructure** — `CYRIUS_DCE=1` compacts a `kernel;` image and a `CYRIUS_WX=0` executable again (not `--pie`, not
+  aarch64), and a kept dead body's call into removed code is `ud2`; cybs names an undefined fn and prints the offending
+  line with the constructs it lacks (D45).
+- **Stdlib and folds** — sankoch's LZ4F / xz decoders are as strict as `lz4 -d` / liblzma; `dir_list` on a FIFO fails at
+  once; on agnos a negative fd is not socket slot 7 and a socket / TLS write honours its deadline per call (#109);
+  patra 1.16.2: a COMMIT that cannot be whole and durable rolls back, return values that were fixed can report failure,
+  `tbl_scan_where` takes 10 arguments.
+- ⚠ **Known in 6.7.11, fixed first in 6.7.12** (the user, 2026-10-14): on x86_64, `rd(mkv(..))` / `rd(*pv)` into a `*V`
+  parameter compile and fault (refused through 6.7.10 —
+  [the vector value into a pointer parameter](docs/development/issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md));
+  the `WS_*` tie ([ws / ws_server](docs/development/issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md)).
+
+**Closed** (71, each archived with its banner — [the archive index](docs/development/issues/archived/README.md)):
+- Multi-value: [loop ending fn not provably single return](docs/development/issues/archived/2026-10-08-loop-ending-fn-not-provably-single-return.md) · [multi value receive reads stale return registers](docs/development/issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md) · [destructure of wide struct callee reads wrong second value](docs/development/issues/archived/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md) · [struct var from multi value call crashes](docs/development/issues/archived/2026-10-09-struct-var-from-multi-value-call-crashes.md) · [multi value call into named struct slot](docs/development/issues/archived/2026-10-09-multi-value-call-into-named-struct-slot.md) · [stack pair struct literal element and argument keep tag](docs/development/issues/archived/2026-10-09-stack-pair-struct-literal-element-and-argument-keep-tag.md) · [pair method defined after use not flagged](docs/development/issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md) · [struct receive inference paren call and scalar annotation](docs/development/issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md) · [async fn multi value return loses second value](docs/development/issues/archived/2026-10-09-async-fn-multi-value-return-loses-second-value.md) · [refusal cascades tuples pairs u128 d19](docs/development/issues/archived/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md)
+- Call arguments: [struct result through fn pointer faults](docs/development/issues/archived/2026-10-12-struct-result-through-fn-pointer-faults.md) · [vector receive from callptr reads wrong lanes](docs/development/issues/archived/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md) · [pointer to vector parameter is value form](docs/development/issues/archived/2026-10-10-pointer-to-vector-parameter-is-value-form.md) · [param type annotation reads one token](docs/development/issues/archived/2026-10-10-param-type-annotation-reads-one-token.md) · [paren arg small byval struct skips type check](docs/development/issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md) · [dereference of other struct into small byvalue param decision](docs/development/issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md) · [int argument to f64 param silent](docs/development/issues/archived/2026-10-09-int-argument-to-f64-param-silent.md) · [pointer into small byvalue param untyped edges](docs/development/issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md) · [ir3 lase reloads across unrecorded efladdr](docs/development/issues/archived/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md)
+- Struct copies and operators: [small struct dereference reads past the object](docs/development/issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md) · [assignment from struct dereference copies one word](docs/development/issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md) · [generic pointer returning call as struct source](docs/development/issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md) · [struct field destination from pointer global call or field](docs/development/issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md) · [struct global init from field through pointer faults](docs/development/issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md) · [small struct return of pointer global or call decision](docs/development/issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md) · [small struct return takes another structs value](docs/development/issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md) · [struct value into pointer global destination decision](docs/development/issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md) · [deref store through struct pointer decision](docs/development/issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md) · [struct operator results](docs/development/issues/archived/2026-10-08-struct-operator-results.md) · [int f64 mix warns twice in a chain](docs/development/issues/archived/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md) · [untyped struct binding beyond operators decision](docs/development/issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md) · [derive scanner loses fields after nested struct](docs/development/issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md) · [field of method pointer result refused](docs/development/issues/archived/2026-10-10-field-of-method-pointer-result-refused.md) · [paren wrapped struct call as nested literal element refused](docs/development/issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md)
+- Generics and the frontend: [generic f64 instance name collides with struct i](docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md) · [bounded generic f64 impl needs i64 impl](docs/development/issues/archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md) · [generic method call runs i64 base](docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md) · [generic base reads carrier field as struct](docs/development/issues/archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md) · [generic call result as carrier argument refused](docs/development/issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md) · [overload router undefined sibling under allow undef decision](docs/development/issues/archived/2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md) · [vec annotation type argument unchecked](docs/development/issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md) · [user struct named slice shadowed in locals](docs/development/issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md) · [top level return decision](docs/development/issues/archived/2026-10-12-top-level-return-decision.md) · [return type refusal note incomplete](docs/development/issues/archived/2026-10-12-return-type-refusal-note-incomplete.md) · [const context calls private const fn](docs/development/issues/archived/2026-10-09-const-context-calls-private-const-fn.md) · [const fn generic param comma miscounted](docs/development/issues/archived/2026-10-09-const-fn-generic-param-comma-miscounted.md) · [closure prescan reads declared names as captures](docs/development/issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md) · [await result keeps typed pointer step](docs/development/issues/archived/2026-10-11-await-result-keeps-typed-pointer-step.md) · [saturating op keeps left pointer step decision](docs/development/issues/archived/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md) · [narrow scalar local and address of carry byte pointer step](docs/development/issues/archived/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md) · [cx does not auto call main](docs/development/issues/archived/2026-10-11-cx-does-not-auto-call-main.md)
+- Infrastructure: [self compile attribute line rule cost](docs/development/issues/archived/2026-10-08-self-compile-attribute-line-rule-cost.md) · [cybs undefined fn call in statement silent](docs/development/issues/archived/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md) · [cybs bare syntax error no location](docs/development/issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md) · [agnos kernel dce compaction moves data](docs/development/issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md)
+- Tools: [attribute word list hand kept in five tools](docs/development/issues/archived/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md) · [source scanners miss const fn and generic commas](docs/development/issues/archived/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md) · [cyrlint array overrun and write length checks](docs/development/issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md) · [distlib every target owner rule differs from partial](docs/development/issues/archived/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md) · [killed cli leaves nonempty tmp dirs](docs/development/issues/archived/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md) · [benchmarks md size rows formatted as time](docs/development/issues/archived/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md) · [poison env zero or empty turns mode on](docs/development/issues/archived/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md) · [cbt self builds inherit poison and bounds](docs/development/issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md) · [cyrius header ignores struct returns](docs/development/issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md) · [windows cli drops target selectors](docs/development/issues/archived/2026-10-10-windows-cli-drops-target-selectors.md)
+- Stdlib: [dir list opens directory without o directory](docs/development/issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md) · [agnos negative fd taken for socket slot 7](docs/development/issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md) · [agnos sys sock send dl 109 peer](docs/development/issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md) · [agnos sys console mode 110 peer](docs/development/issues/archived/2026-10-13-agnos-sys-console-mode-110-peer.md) · [agnos sys fd kind 111 peer](docs/development/issues/archived/2026-10-13-agnos-sys-fd-kind-111-peer.md)
+- Folds: [sandhi include prints large static advisory](docs/development/issues/archived/2026-10-12-sandhi-include-prints-large-static-advisory.md)
+- Stay open: [the closure-field read](docs/development/issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md) — half 1 shipped (GF-15), half 2 re-placed 6.7.12; [the seed's caps](docs/development/issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md) — the gate's CODE row shipped, the seed's own checks are roadmap_6's seed-rotation minor.
+
+### Language — multi-value receives and returns (the returns lane)
+
+#### RET-1 — a body ending in an infinite loop is provably one value (lane returns, commit 48155669)
+
+- **Changed (the user's decision D18, 2026-10-13: refuse — extend the 6.6.17 proof): a fn whose body ends in
+  `loop { }`, `while (1) { }` or `do { } while (1);` — the loop's block closing the body, holding a `return`, with
+  no `break` that leaves it — is proved to return one value, as a body ending in `return` is.** 6.6.17's proof
+  (`_body_ends_in_return`, src/frontend/parse_fn.cyr, pass 1) took only a final `return`, so
+  `fn one(x) { loop { return x + 1; } }` never set the "returns one value" bit (GFLG 1024) and
+  `var a, b = one(1);` built silently and bound b to a stale rdx — the issue's three repros exit 0 on x86_64,
+  aarch64 (qemu) and cx and 1 on PE (wine) on the slot-open compiler. Each is now refused on all four with the 6.6.17
+  message, "multi-value destructure binds 2 names, but 'one' returns 1 value - bind it to one name: `var x =
+  f(..);`", and the tuple capture's "not a tuple" refusal (R12) follows.
+- **How:** `_body_ends_in_loop`, `_cond_is_one`, `_loop_exits_by_return`, `_brk_inner_end`, `_has_return_tok`. A
+  `break` inside a nested while / for / loop / do / switch / match (C semantics: it leaves that construct), a
+  closure body or a nested fn does not count; a do-while's tail `while (c);` owns no block. A loop with no `return`
+  in it (it never returns) is not proved — conservative. The condition must be the literal `1`, the decided surface
+  (`while (true)` is filed, below). The proof is a pass-1 token walk: the do-block's `}` restarts the statement, so
+  `do { } while (1);` reads as a final `while` statement with the `do` the statement before it.
+- **What changes for code that compiles today:** a destructure or a tuple capture binding two or three names from
+  such a fn stops compiling — the extra names read a register nothing wrote. A loop a `break` can leave stays
+  silent (the body can fall off its end). The corpus differential (987 .cyr / .tcyr / .fcyr / .bcyr in src, lib,
+  programs, cbt, tests, benches, fuzz; rc, stderr and output bytes against the slot-open compiler): identical.
+- **Gate:** `tests/gates/diagnostics/destructure_one_value_refused.sh` axis 3 — refused: loop_end, while1_end,
+  dowhile1_end (the issue's three repros), loop_top (the declaration zone), loop_nested_brk (breaks only in a
+  nested while and for), loop_switch_brk (a break only in a switch); still run: loop_brk, do_brk, while_do_brk (a
+  break leaves the final loop and the body falls off with two()'s pair: 27), loop_fwd (27). Floor 20 → 30. Seven
+  mutations RED (the gate header: `_body_ends_in_loop` 0; its `loop`, `while (1) {` and do-tail arms each dropped;
+  `_brk_inner_end` stepping no nested construct; `_loop_exits_by_return` blind to `break`; `_brk_inner_end` not
+  stopping at a `;`). `tests/gates/frontend/tuple_checked.sh` R16x (a loop-ending one-value callee captured: the
+  R12 refusal). Guide § Multi-Return.
+- **Filed, not fixed:** `while (true) { }` / `do { } while (true);` endings are not proved (77 on all four
+  targets, seeded) — outside the decided literal-`1` surface (`2026-10-13-while-true-ending-fn-not-provably-single-return.md`, Low).
+- Closes [docs/development/issues/archived/2026-10-08-loop-ending-fn-not-provably-single-return.md](docs/development/issues/archived/2026-10-08-loop-ending-fn-not-provably-single-return.md).
+
+#### RET-2 — an undeclared fn's provable value count is checked (lane returns, commit a1ec0eb5)
+
+- **Changed (the user's decision D17, 2026-10-13, A: refuse by name): pass 1 records how many values an UNDECLARED
+  fn returns, and the destructure and the tuple capture refuse another count.** `fn dm(a, b) { return (a / b, a %
+  b); }` had no recorded arity, so `var q, r, z = dm(17, 5);` bound z to whatever the third return register held —
+  88 after an earlier three-value call, on x86_64, aarch64 (qemu), cx and PE (wine), with no diagnostic — while the
+  declared spelling `fn dm(a, b): (i64, i64)` was refused. The issue's shape 1 (t7 and its seeded form) is now
+  "multi-value destructure binds 3 names, but 'dm' returns 2 values - bind 2 names: `var a, b = f(..);`", at fn
+  scope, in both top-level zones and in `q, r, z = dm(..);`; the capture is "cannot capture 'dm' into tuple (i64,
+  i64, i64) - it returns 2 values".
+- **How:** `_prescan_ret_arity` (parse_fn.cyr, beside `_prescan_ret_single`) sets GFLG bit 65536 (2 values) or
+  131072 (3) when every `return` is `return (..);` of one arity (`_ret_stmt_arity`, commas read by shape), there is
+  no `ret2` / asm / `?`, and the body is left only through its returns (`_body_ends_in_return`, RET-1's loop endings
+  included); `_fn_ret_arity` reads it. Not 16384 / 32768: bits 4096..32768 are 6.7.3's bool flags, which
+  `_bx_fn_reset` clears — the heap map in src/main.cyr now lists bits 12-17. Not GFRN either: `_dsg_save` /
+  `_dsg_check` read it as the DECLARED arity. A generic instance inherits the record (`_gen_inst_record`).
+  `_dt_arity_check` (parse_decl.cyr) refuses the count (`_dt_count_err`); `_tup_cap_class` refuses the capture
+  (`_tup_cap_err` kind 7). `_prescan_ret_single` finds its body through the shared `_pre_body_open`
+  (behaviour-identical).
+- **What changes for code that compiles today:** a destructure, a tuple capture or `a, b[, c] = f();` that binds a
+  different count than an undeclared `f` provably returns stops compiling — FEWER names too: `var q, r = h3(1);`
+  with `fn h3(a) { return (a, a + 1, a + 2); }` exited 12 on 6.7.10 and is now "binds 2 names, but 'h3' returns 3
+  values", as the declared spelling's "count does not match the fn's declared return arity" already refused it. A
+  fn mixing arities, or whose body can fall off its end, is not judged (silent). Corpus differential (987
+  sources): identical — 40 declared multi-value fns in 9 files, none affected.
+- **Gate:** destructure_one_value_refused.sh axis 4 — refused: cnt_t7 (t7 verbatim), cnt_seeded (shape 1 seeded,
+  verbatim), cnt_two_of_three, cnt_top_decl, cnt_top_late, cnt_forward, cnt_method, cnt_generic (`g<i32>`: pins the
+  instance inheritance), cnt_loop, cnt_reassign (`q, r, z = dm(..)`); run: cnt_two (32), cnt_three (123), cnt_top
+  (32), cnt_mixed (41), cnt_falls_off (123). Six mutations RED (the header: the record dropped; the count arm
+  dropped; `_ret_stmt_arity` answering 2 for any tuple; the mixed-arity guard dropped; the fall-off test dropped;
+  `_gen_inst_record` dropped). tuple_checked.sh R16y (3 from an undeclared 2), R16z (2 from an undeclared 3), R16aa
+  (a zone capture), R16ab (`t = dm(..)`), R16ac (the matching count still captures: 32). Guide § Multi-Return, the
+  § Tuples refused-by-name table.
+- Closes, with RET-3, [docs/development/issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md](docs/development/issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md) (shape 1).
+
+#### RET-3 — a fn declared `: (T1, T2[, T3])` returns its values (lane returns, commit ac07bb7a)
+
+- **Changed (the user's decision D17, 2026-10-13, A: refuse by name; it applies 6.7.7 B4's "a struct return is
+  not multiple values" on the producer side and extends 6.6.17's one-value refusal to the shapes it missed): in a
+  fn declared `: (T1, T2[, T3])`, a `return` is `return (a, b[, c]);` of the declared arity, `return t;` of a tuple,
+  or a whole forwarded call returning as many values; anything else is refused at the return — "'f' returns 2
+  values - return (a, b)" / "'f' returns 3 values - return (a, b, c)".** `fn f(): (i64, i64) { return 5; }` (the
+  issue's shape 2, d4) and `return p;` of a 16-byte struct local (shape 3, v1) compiled, set rax alone, and the
+  caller's `b` read whatever an earlier call left in rdx — 77 seeded, on x86_64, aarch64 (qemu), cx and PE (wine).
+  Accepted forwards: a callee declared with the same arity, one with the same pass-1 count (RET-2), and one that
+  cannot be judged (an unresolved name, a fn pointer, `callptr`, mixed returns); parentheses around the call are
+  transparent. Refused: any other expression (`return 5;`, `return p;` of a struct local, `return t.0;`, `return
+  x?;`, `return (5);`), a bare `return;`, a literal of another arity, and a call to a provably one-value (bit
+  1024), struct, vector or dyn callee or one of another count — the tail-call arm included. No codegen changed.
+- **How:** PARSE_RETURN is now a wrapper around the unchanged arms (`_PARSE_RETURN_ARMS`) that judges each return
+  first (`_mret_ret_check` → `_mret_ret_ok`) and reports AFTER the arms parse the expression (`_mret_ret_late`),
+  only if they reported nothing — so an existing, more specific refusal keeps its text (`return h.p;` of a tuple
+  field, `return ((1, 2));`, R9t's nested literal; several report through `_dyn_err`, which does not latch). In a
+  file that has already failed the report is made up front, where the panic latch keeps the statement to one
+  error. An `#inline` replay (GIDEP) and `--syntax-only` are silent; a closure has its own return rule.
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine, identical on all four):
+
+  | repro | before | after |
+  |---|---|---|
+  | t7 (unseeded) | 32 | refused (RET-2) |
+  | d4 (unseeded) | 5 | refused |
+  | v1 (unseeded) | 30 | refused |
+  | shape 1 seeded | 88 | refused (RET-2) |
+  | shape 2 seeded | 77 | refused |
+  | shape 3 seeded | 77 | refused |
+  | the triage's capture `t.2 + u.1` | 90 | refused (two errors: dm's capture, f's return) |
+  | a tail call to a one-value fn | 77 | refused |
+  | control `return g(x);` | 56 | 56 |
+  | `return (g(x));` / undeclared / method / generic / `callptr` forwards | — | 56 / 32 / 37 / 56 / 56 |
+
+- **What changes for code that compiles today:** in a declared multi-value fn, `return 5;`, `return p;` of a
+  struct, `return t.0;`, `return x?;`, `return;`, a literal of another arity, `return one(x);` (a one-value callee),
+  `return mk();` (a struct callee) and `return g3(x);` from a 2-value fn stop compiling; each left the caller
+  reading a stale register. Corpus differential (987 sources): identical.
+- **Gate:** destructure_one_value_refused.sh axis 5 — refused: ret_d4, ret_v1 (verbatim), ret_s2, ret_s3 (seeded,
+  verbatim), ret_top_decl, ret_top_late, ret_bare, ret_paren, ret_lit3, ret_lit2, ret_tail_one, ret_tail_fwd (a
+  forward-declared one-value callee), ret_fwd_arity3, ret_fwd_undecl3, ret_fwd_struct, ret_fwd_struct_tup,
+  ret_method; run: ret_fwd (the triage control, 56), ret_fwd_callptr (56), ret_fwd_wrap (56), ret_fwd_undecl (32),
+  ret_fwd_mixed (41), ret_recursive (12), ret_fwd_method (37), ret_fwd_generic (56), ret_tuple (34), ret_closure
+  (42), ret_inline_one (42), ret_inline_two (213). Floor 74 rows. The header lists ten mutations, each RED
+  (`_mret_ret_check` 0; `_mret_fwd_ok` 1; its struct arm; its one-value arm; the literal's count; the call inside
+  parentheses; `callptr`; the `#inline` guard; the tuple-local arm; the late report not yielding — the last RED in
+  tuple_checked.sh R9n, R9s, R9t, R14n). tuple_checked.sh R16ad (the triage's `var u: (i64, i64) = f1();` with `f1`
+  returning one value: refused at f1); tuple_checked's header mutations MRA, MRC, MRP, MRL2, MRT.
+  `tests/tcyr/crossos/multi_return.tcyr`: the accepted forwards, SEEDED (a three-value call first) — a tail-call
+  forward, a parenthesised forward, an undeclared callee, arity 3, `return t;`, a method, `callptr`; 31 assertions,
+  pass on x86_64, aarch64 (qemu) and PE (wine). The cx leg at the lane tip was vacuous: the file leaves `fn main`
+  to the entry's auto-call, which cx did not make (cxvm printed nothing and exited 0, on the base as on the lane);
+  the genfe lane's 09e06b72 (D16) makes cx call it, and its commit reports multi_return printing its summary on
+  cxvm. ⭐ The release gate runs it on ecb / ach / cass / pi. Guide § Multi-Return and § Tuples.
+- **After the merge:** the struct lane's D39 (7c289392) refuses `return (a, b);` in a fn returning a named struct,
+  so ret_fwd_struct_tup's callee now returns through `ret2` (that commit's own edit to this gate); the refusal of
+  forwarding a struct callee is unchanged.
+- **cycc:** not committed by the lane; the fixpoint of RET-1..3's tip 2,126,856 B (slot open 2,114,376).
+  Seed-derive OK after each of the three commits.
+- **Filed, not fixed:** a fn declared `: (i64, i64)` whose body can reach its `}` hands back stale registers (77 on
+  all four; not a `return` statement, outside the decided surface — a decision: refuse or define;
+  `2026-10-13-declared-multi-value-fn-falls-off-its-end.md`, Medium); `ret2(a, b)` in a fn declared with three
+  values leaves the third stale (88 on all four; `2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md`,
+  Medium).
+- Closes, with RET-2, [docs/development/issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md](docs/development/issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md) (shapes 2 and 3).
+
+#### RET-4 — a destructure binds a struct callee's register words only (lane returns, commit 76eaea61)
+
+- **Changed (the user's decision D19, 2026-10-13, A: refuse over 16 B and where the names outnumber the struct's
+  register words; every pinned two-name 9-16 B row keeps working): `var a, b[, c] = f();` judges a struct callee by
+  its DECLARED return.** `var a, b = mk(5);` with `mk` declared `: Q` (a 24 B struct, returned through a hidden
+  pointer) bound b to whatever rdx held — 50 where 56 was meant on x86_64 and aarch64, 55 on cx and PE — silently;
+  three names from a 9-16 B struct read a register no struct return writes; an 8 B struct whose body pass 1 could
+  not prove one value (an if / else of returns) left b stale (50). Now: over 16 B is "cannot destructure 'mk' - it
+  returns struct 'Q', which is not in registers - bind it to one name: `var x = mk(..);`"; three names from a 9-16 B
+  struct are "cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers -
+  bind 2 names: `var a, b = mk(..);`"; an 8 B struct or a `Str` handle is one value whatever its body ("returns 1
+  value"). At fn scope, in both top-level zones, from a method and from a generic instance. Two names from a 9-16 B
+  struct (6.7.7's crossing) keep working. A `: stack` pair (bit 256) is untouched.
+- **How:** `_dt_struct_check` (src/frontend/parse_decl.cyr, from `_dt_arity_check`) takes `_ret_agg_class`'s class
+  (2 retptr / 1 rax:rdx / 0 one word — the one caller and callee share) ahead of the bit-1024 proof AND of RET-2's
+  counted `return (..)` — RET-2's `_prescan_ret_arity` also counts a `: P` fn's crossing arms, so `var a, b, c =
+  mk(5)` from `fn mk(x): P { return (x, x + 1, 9); }` had been accepted. `a, b = f()` already refused a struct
+  callee in `_masg_callee`. `_dt_zone_check` returns whether its report latched `_panic`, and the zone replay
+  (EMIT_GVAR_INITS) clears it after the statement's own right-hand side, so a 24 B callee's "needs storage in a fn's
+  frame" is not a second error.
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine):
+
+  | repro | before | after |
+  |---|---|---|
+  | the issue's repro (24 B, 2 names) | 50 50 55 55 | refused x4 |
+  | `var a, b, c = mk(5)` from 16 B | 56 56 56 56 | refused x4 |
+  | a 24 B method | 55 50 242 50 | refused x4 |
+  | `: Q` fn's `return (x, x+1, x+2)`, 3 names | 67 67 67 67 | refused x4 |
+  | an 8 B struct, if / else body | 50 50 50 50 | refused x4 |
+  | X4 control: 2 names from 16 B | 56 56 56 56 | 56 56 56 56 |
+
+- **What changes for code that compiles today:** `var a, b = f();` from a struct over 16 B, `var a, b, c = f();`
+  from a 9-16 B struct, and `var a, b = f();` from a struct of 8 B or less or a `Str` stop compiling. Corpus
+  differential (987 sources, against RET-3's tip): identical.
+- **Gate:** `tests/gates/codegen/struct_pair_multi_value_crossing.sh` D1-D10 on the x86_64, aarch64 and cx
+  compilers, refused once each: D1 the issue's repro, D2 24 B in the declaration zone, D3 after the first statement,
+  D4 a method, D5 `var a, b, c = mk(5)` from 16 B, D6 three names in the zone, D7 24 B with an if / else body, D8
+  three names from a `: P` fn's `return (x, x + 1, 9)`, D9 a generic instance, D10 an 8 B struct with an if / else
+  body; X4-X6 (two names from 16 B) unchanged. Mutations M7-M10 RED (the header). `tests/tcyr/crossos/
+  struct_pair_multi_value_crossing.tcyr` drops `dt_loc3` (now D5's refusal): 24 rows, pass on x86_64, aarch64
+  (qemu), cx (cxvm) and PE (wine); ⭐ ecb / ach / cass / pi at the release gate. Guide § Multi-Return and the
+  Refused-by-name table.
+- **After the merge:** D39 (7c289392, the struct lane) refuses D8's `return (x, x + 1, 9)` in a `: P` fn itself, so
+  that row's producer moved to `ret2` (the struct lane's edit); the destructure refusal is the same.
+- Closes [docs/development/issues/archived/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md](docs/development/issues/archived/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md).
+
+#### RET-5 — a multi-value call is not a struct value (lane returns, commit 561e1afa)
+
+- **Changed (the user's decisions D20 and D21, 2026-10-13, A: refuse by name, R17's wording, at every struct size
+  — R17 refuses this call into a tuple, and a struct return is not multiple values): a call returning several values
+  (`fn mk(a): (i64, i64)`, or an undeclared fn whose every `return` is `(a, b)` — RET-2's count) given where a named
+  struct is expected is refused.** It was taken by its FIRST value: `take(mk(3))` into `fn take(t: P)`,
+  `take(b.mk(3))`, `var p: P = mk(3);` and the struct-var issue's `var p: P = g2(5);` built clean and crashed
+  (SIGSEGV on x86_64 and aarch64, a guest error on cx, an access violation on PE); `h.p = mk(3);` and `p = mk(3);`
+  stored 30 where 34 is meant (the assignment after a misleading "assigning non-pointer to typed pointer"
+  warning); an 8 B struct took the first value as its one word (139 since 6.7.10's handle line). Now: "a
+  multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);`", "... does not
+  initialize struct 'P'", "... is not stored into a struct 'P' field", "... is not assigned to struct 'P'" (the
+  hint is `var a, b, c = mk3(..)` for three values, `b.mk(..)` for a method) — a by-value argument (a method's, a
+  named one, at top level), a declaration (a local, a global in either zone, a generic callee's), a field (a
+  local's or a global's) and an assignment (a local, a by-value parameter, a global, a classic-`for` step),
+  parentheses around the call transparent. One error each, no warning, no binary. A callee declared `: P` returns a
+  P and is accepted (the predicate keys on the declared return); a `*P` and a `Str` handle take the first value as
+  before; a scalar keeps the first value.
+- **How:** one predicate, `_mv_callee` (src/frontend/parse_fn.cyr: MULTIRET_SID, or GFRS 0 with `_fn_ret_arity`),
+  and `_mv_named` (a named plain struct — no tuple, R17's; no dyn, vector, or `Str` / `Result` / `Option` /
+  `Tagged` handle); the report `_mv_struct_err` (R17's shape: once per token, non-latching, the parse goes on,
+  `_had_error` withholds the binary). Sites: `_try_push_struct_addr_arg` → `_mv_arg_call` beside `_tup_arg_call` (a
+  by-value parameter: `_pm_copies` 1 — a `*P` parameter is address-passed but not copied); `_push_struct_expr_arg`
+  → `_mv_arg_mrc`; `_sarg_byval_small` → `_mv_small_arg` (8 B); the declaration → `_mv_decl_src` from PARSE_VAR's
+  `_var_rhs_post` and the zone's `_gvi_expr` (`_gen_decl_check` now KEEPS the declared struct for a multi-value
+  generic callee — it reset it to an untyped word); `_fsc_src` → `_mv_fsc_call` beside `_tup_fsc_call`; the
+  assignment → `_mv_asg_src` in `_pcmpe_struct_assign` (the brief's `_try_struct_call_assign` site moved there so
+  one hook takes free and method calls and types the refused source, which silences the cascade warning), the
+  destination through `_mv_dst_sid` (a `*P` destination is a pointer rebind and is not refused). The method record
+  `_mrc_note` carries its fn (`_mrc_fi`) and is written for a counted undeclared method too; R17's `_tup_arg_mrc`
+  gained a `GFRS == MULTIRET_SID` guard so it keeps to a declared callee (no tuple behaviour changes).
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine):
+
+  | repro | before | after |
+  |---|---|---|
+  | 1 `take(mk(3))` | 139 139 1 5 | refused x4 |
+  | 2 `take(b.mk(3))` | 139 139 1 5 | refused x4 |
+  | 3 `var p: P = mk(3);` | 139 139 1 5 | refused x4 |
+  | 4 `h.p = mk(3);` | 30 30 30 30 | refused x4 |
+  | `var p: P; p = mk(3);` | 30 x4 (+ a warning) | refused x4, no warning |
+  | the struct-var repro `var p: P = g2(5);` | 139 139 1 5 | refused x4 |
+  | the undeclared `fn mk(a) { return (a, a + 1); }` in shape 1 | 139 139 1 5 | refused x4 |
+  | 8 B `var p: P1 = mk(3);` | 139 139 1 5 | refused x4 |
+  | control `fn mk(a): P` in shape 1 | 34 x4 | 34 x4 |
+  | control the crossing `var p: Pr = pr_tup(5)` | 553 (exit 53) x4 | 553 (exit 53) x4 |
+
+- **What changes for code that compiles today:** a multi-value call as a by-value struct argument, a struct-typed
+  declaration's initialiser (at top level too), a store into a struct field or an assignment to a struct variable
+  stops compiling; each crashed or built the struct from the first value. Corpus differential (987 sources,
+  against RET-4's tip): identical.
+- **Gate:** new `tests/gates/frontend/multi_value_into_named_struct.sh` (wired in scripts/check.sh after
+  struct_pair_multi_value_crossing): 34 refusal rows, each on the x86_64, aarch64, cx and PE (CYRIUS_TARGET_WIN=1)
+  compilers — refused, ONE `^error`, no `^warning`, no binary: S1-S4 the four repro files verbatim, V1 the
+  struct-var repro verbatim, S5 the assignment, U1 the undeclared callee, U2 an undeclared method, FW an undeclared
+  callee defined after the call, H8 / A8 / M8 / F8 / S8 the 8 B forms (H8 the handle-line declaration), MD / MF /
+  MA a method into a declaration / field / assignment, GZ / GL zone and late globals, GA / GT a global assigned in
+  a fn and at top level, GF a global's field, TA a top-level argument, W1-W4 wrapped, NA a named argument, GC / GD a
+  generic callee, GS a generic struct parameter, FS a classic-for step, T3 three values into a 24 B struct, R17 (a
+  tuple parameter keeps R17's text); 6 controls on all four legs (C1 `fn mk(a): P` 34, C2 the crossing into all
+  four destinations 34, C3 a `*P` parameter / declaration / assignment 34, C4 the hint's fix 34, C5 a scalar keeps
+  the first value 4, C6 a `Str` handle parameter 7). Floor 40 rows, 160 checks. Mutations N0-N12 RED (N0, the tree
+  before the fix: all 33 new refusal rows built on every leg). Guide § Multi-Return ("A multi-value call is not a
+  struct value") and the Refused-by-name table.
+- **After the merge:** D39 (7c289392) refuses a `: P` fn's `return (x, y)` (the crossing's producer) at its own
+  return, so C2's producer now returns through `ret2` (the struct lane's edit); the guide's paragraph says a `: P`
+  callee "is accepted everywhere a `P` is (its `return (x, y);` is refused since 6.7.11: a tuple is not the struct)".
+- **cycc:** not committed by the lane; the fixpoint of RET-4..5's tip 2,135,456 B. Seed-derive OK after each
+  commit.
+- **Filed, not fixed:** an undeclared (pass-1-counted) multi-value call into a TUPLE parameter is still pushed as
+  the tuple's address — R17 refuses only a declared callee (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE;
+  `2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md`, High); `fn g(): P1 { return mk(3); }`
+  (an 8 B struct fn returning a multi-value call) returns the first value as the struct (3 on all four; the 9-16 B
+  and > 16 B forms are refused; a `return` is outside D20's four destinations — the user's call;
+  `2026-10-14-small-struct-fn-returns-multi-value-call.md`, Medium). Not filed: `*q = mk(3);` through `q: *P` (the
+  deref-store decision, `2026-10-11-deref-store-through-struct-pointer-decision.md`); `H { mk(3) }` with `p: P`
+  first (the positional literal's leaf rule, not a named-struct destination).
+- Closes [docs/development/issues/archived/2026-10-09-multi-value-call-into-named-struct-slot.md](docs/development/issues/archived/2026-10-09-multi-value-call-into-named-struct-slot.md) and [docs/development/issues/archived/2026-10-09-struct-var-from-multi-value-call-crashes.md](docs/development/issues/archived/2026-10-09-struct-var-from-multi-value-call-crashes.md).
+
+#### RET-6 — a `: stack` pair method used above its `impl` is a pair (lane returns, commit eb459087)
+
+- **Changed (the user's decision D23, 2026-10-13, A: visit methods — `?` fixed, the single bind refused whatever
+  the order).** The pair prescan, which flags a fn returning a `: stack` pair (fn flag 256) before its callers are
+  parsed, walked top-level `fn`s only (brace depth 0); a method in an `impl` block was flagged when pass 2 reached
+  its body, so every caller ABOVE the `impl` read it as one value: `var q = p.div(d)?;` took the boxed `?` lowering
+  and dereferenced the tag (the issue's repro: SIGSEGV on x86_64 and aarch64, a guest error on cx, an access
+  violation on PE — 139 / 139 / 1 / 5), and `var q = p.div(d);` kept the tag in silence (exit 1) where the same
+  program with the `impl` first was refused "bind both". Every `impl` method — inherent, trait, collision-prefixed
+  (`T_Trait_m`), generic — is now scanned with the top-level fns, so the repro exits 11 on all four, `?` propagates
+  above the impl, and the single bind is "a `: stack` enum returns two values — bind both: `var tag, val = f();`"
+  whatever the order. A forwarding `return self.div(d);` is a pair too.
+- **How:** `_pair_prescan` (src/frontend/parse.cyr) visits every impl method in its fixpoint rounds
+  (`_pair_prescan_impls` → `_pair_scan_method`): each method `_tr_prepass` recorded (`_tim_tab`) is resolved to the
+  fn-table entry ITS definition owns — `_impl_method_entry`: `T_m`, else the cached `T_Trait_m` collision prefix,
+  matched on name AND definition start (`_fn_by_defti`, the pass-1 GFDS) — read only, nothing interned or
+  registered (a FINDFN-or-REGFN of the bare name mints an entry the undefined-call check reports: the bayan
+  17-warning regression), and its body (`_tok_body_open`) is scanned by `_pair_body_scan`. While a method is
+  scanned an untyped `self` is typed as the impl's struct (`_tok_iself`, from pass 1's GFISELF), so `return
+  self.div(d);` resolves `Pt_div` even when another struct's `div` returns one value. `_ensure_pair_flags` /
+  `_callee_returns_pair_at` unchanged.
+- **What changes for code that compiles today:** `var v = p.m(..);`, `x = p.m(..);` and `store64(&s, p.m(..))` (any
+  one-slot store) where `m` is an impl method returning a `: stack` pair and its `impl` sits BELOW the caller stop
+  compiling — as they already did with the `impl` above; the bind kept the tag and dropped the payload. Corpus
+  differential: one difference, `tests/tcyr/crossos/method_pair_result.tcyr` itself (its new rows; the previous tip
+  builds it into a binary that crashes at them).
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine): the issue's repro 139 139 1 5 → 11 11 11 11; `var q =
+  p.div(d);` above the impl 1 1 1 1 (the tag) → refused x4; method_pair_result.tcyr 139 139 1 5 (at the first new
+  row) → 37 / 37 on all four.
+- **Gate:** `tests/gates/frontend/stack_enum_lossy_context.sh` axis 16 — 16a the repro verbatim (11); 16b `?` on an
+  `impl Dv for Pt` method above it (Ok and Err: 70); 16c a generic method `gdiv<T>` (70); 16d a forwarding `return
+  self.div(d);` with `Qt`'s `div` one value (70); 16e `var q = p.div(d);` above the impl refused at the call; 16e2
+  `x = p.div(d);` refused; 16f / 16f2 the impl above unchanged (refused / `?` + destructure 79); 16g a plain i64
+  method below its use binds one value, and a closure's pair inside a method does not flag it (45); 16h two traits
+  colliding on `m` plus an inherent impl, methods calling each other above and below: not one warning (no minted
+  entry); 16i the `T_Tr_m` collision entry `Pt_A_m(p, d)?` above the impls (23); 16j `store64(&s, p.div(d))` above
+  the impl refused. Mutations RED (the header): M30a the `_pair_prescan_impls` call dropped → 16a 16b 16c 16d 16e
+  16e2 16i 16j; M30b `_tok_ret_callee` without `_tok_iself` → 16d; M30c `_impl_method_entry` without its
+  collision-prefix arm → 16i; M30d a FINDFN-or-REGFN of the bare name → 16h and every M30a row.
+  `tests/tcyr/crossos/method_pair_result.tcyr` group "6.7.11: a pair method called ABOVE its impl" (`mi_inh`,
+  `mi_trait`, `mi_gen`, `mi_fwd` — Ok and Err each —, `mi_destr`, the control `mi_one`): 37 assertions, pass on
+  x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); M30a / M30b → rc 139. ⭐ ecb / ach / cass / pi at the release
+  gate. Guide § Bind the pair as a pair (the method's `impl` may sit above or below the call).
+- **Filed, not fixed:** a trait DEFAULT method an impl inherits (`trait Dv { fn ddiv(self, d) { .. return MOk(..);
+  } }` + `impl Dv for Pt { }`) is not scanned — its body is in the `trait` block and `_tim_tab` holds only the impl's
+  own methods: `p.ddiv(d)?` above them gives 139 / 139 / 1 / 5 (70 expected) and the single bind keeps the tag
+  (`2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md`, High; RET-6r names it in the guide);
+  a fn calling an inline-replayed one-`return` pair generic is flagged pair-returning itself — a false "bind both"
+  at its callers and a false mixed-return warning, 6.6.0 – tip (`2026-10-14-inline-replayed-pair-return-flags-the-caller.md`, Medium).
+- Closes [docs/development/issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md](docs/development/issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md).
+
+#### RET-7 — a `: stack` pair is not a struct-literal element (lane returns, commit 43066167)
+
+- **Changed (the user's decision D22, 2026-10-13, C: refuse the struct-literal ELEMENT; a pair as a plain ARGUMENT
+  keeps the guide's single-argument tag rule; operands not refused; no fold changes — the user withdrew the argument
+  half of the 2026-10-09 decision): `var p = P { f(7), 3 };` with `f` returning a `: stack` pair is refused.** It
+  stored the tag — 0 for `Ok(7)` — and dropped the payload, silently, on every target, and so did the named form
+  `P { a: f(7), b: 3 }`, a global's initialiser in either zone, a value carried into a nested struct field and any
+  field type (narrow, f64, `Result`) — where `h.n = f(7);` has been refused since 6.7.7. Each is now "a `: stack`
+  enum returns two values — bind both: `var tag, val = f();`", at the callee — the method and explicit-generic
+  spellings, a forward callee and `--syntax-only` too; an element is judged by the call it starts with, as a store
+  is (`P { f(7) + 1, 3 }` as `h.n = f(7) + 1;`). `P { f(7)?, 3 }` consumes the pair and stores the payload. A plain
+  argument keeps the documented rule — `is_ok(f())` / `g(f())` receive the tag, as the guide and lib/result.cyr's
+  `is_ok` say — and an operand reads the tag as before (`return f(7) + 1;` exits 1).
+- **How:** `_refuse_lossy_pair(S)` right before the element's PCMPE in `EMIT_STRUCT_FIELD_W`'s parsing arm
+  (src/frontend/parse_decl.cyr — every positional and named literal, a fn's, a zone global's and a late global's, a
+  nested struct field's second and later leaves) and in `_spi_expr` (a value carried into a nested struct field's
+  FIRST leaf — `H { f(7), 3, 5 }` with `p: P` first — is parsed there, not in `EMIT_STRUCT_FIELD_W`). The same
+  one-line placement as 6.7.7's T5b stores: `f(7)?` is exempt through `_call_is_propagated`. No argument, operand or
+  fold change.
+- **The issue's repro:** refused with three errors — its two literals and the global's, each at its `f(7)` — and its
+  two argument rows (`g(f(7))`, `b.m(f(7))`) report nothing (they receive the tag, by the decision).
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine):
+
+  | shape | before | after |
+  |---|---|---|
+  | the issue's repro, verbatim | 30 x4 | refused x4 (3 errors) |
+  | `var p = P { f(7), 3 };` / `P { a: 3, b: f(7) }` | 0 x4 / 0 x4 | refused x4 |
+  | `var G = P { f(7), 3 };` in the zone / after a statement | 0 x4 / 0 x4 | refused x4 |
+  | `H { f(7), 3, 5 }` / `H { 4, f(7), 5 }` (nested leaves) | 0 x4 / 0 x4 | refused x4 |
+  | `P { b.pm(7), 3 }` / `P { gg<i64>(7), 3 }` | 0 x4 / 0 x4 | refused x4 |
+  | `R { fr(7), 5 }`, `r: Result` | 5 x4 | refused x4 |
+  | `P { f(7) + 1, 3 }` | 1 x4 | refused x4 |
+  | the `?` forms, seven elements and an argument | 20 x4 | 20 x4 |
+  | `g(f(7))` / `b.m(f(7))` / top-level `g(f(7))` / `g(f(-5))` | 0 / 0 / 0 / 1 | unchanged (the tag) |
+  | `return f(7) + 1;` / `if (f(7) == 0)` | 1 / 42 | unchanged |
+
+- **What changes for code that compiles today:** a struct literal one of whose elements is a call returning a
+  `: stack` pair stops compiling ("bind both"); the element held the tag, not the payload. Arguments are unchanged.
+  Corpus differential (against RET-6's tip): identical — no program in the tree has a pair in a struct-literal
+  element; the stdlib's argument sites (`is_err_result(sock_bind(..))` in sandhi, the sigil site) keep compiling.
+- **Gate:** stack_enum_lossy_context.sh axis 17 — 17a the repro verbatim (read from
+  docs/development/issues/repros/): exactly 3 errors at the three elements' `f(7)`, no binary; refused at the callee,
+  one "bind both" each: 17b positional, 17c named, 17d a declaration-zone global, 17e a global after the first
+  statement, 17f a nested field's first (carried) leaf, 17g its second leaf, 17h a method `b.pm(7)`, 17i an explicit
+  generic `gg<i64>(7)`, 17j the stdlib `Ok(9)`, 17k a narrow i8 field, 17l a `Result`-typed field, 17m `P { mk(7) +
+  1, 3 }`, 17n a forward callee, 17o `--syntax-only`, 17p a pair method above its impl (RET-6's flag); accepted: 17q
+  `?` at a positional, named, two nested-leaf, method, generic and narrow element and an argument (14; the Err path
+  Err(9)); 17r a plain argument (free, method, top level, `is_ok` / `is_err_result`) and an operand (`+`, `==`) read
+  the tag (79); 17s a boxed enum, a nullary variant and a one-value call as elements (8). Mutations RED (the header):
+  M31a `EMIT_STRUCT_FIELD_W`'s call dropped → 17a-17e 17g-17p; M31b `_spi_expr`'s dropped → 17f; M31c
+  `_refuse_lossy_pair` without `_call_is_propagated` → 17q (and axis 15's `?` rows). `tests/tcyr/crossos/
+  stack_enum.tcyr` group "6.7.11: `?` in a struct-literal element; a single argument receives the tag" (positional,
+  named, two nested leaves and an argument with `?`, Ok and Err; `_id(_classify(5))` is 0, `_id(_classify(0 - 5))`
+  is 1): 28 assertions, pass on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); M31c → the file does not build. ⭐
+  ecb / ach / cass / pi at the release gate. Guide § Bind the pair as a pair (the struct-literal row; an argument and
+  an operand read the tag).
+- **cycc:** not committed by the lane; the fixpoint of RET-6..7's tip 2,135,472 B. Seed-derive OK after each
+  commit. check.sh on that tip: 479 / 479 shell gates (red only on the lane-only doc-stamp row); the per-file loop,
+  all 573 `.tcyr` on x86_64: every one exits 0.
+- Closes [docs/development/issues/archived/2026-10-09-stack-pair-struct-literal-element-and-argument-keep-tag.md](docs/development/issues/archived/2026-10-09-stack-pair-struct-literal-element-and-argument-keep-tag.md) — its element half refused, its argument half closed by the decision (documented tag behaviour, not refused).
+
+#### RET-8 — a local's struct receive: parentheses are transparent, and an annotation is never overridden (lane returns, commit 92b690cb)
+
+- **Fixed (a codegen fix — 6.7.6's "parentheses are transparent" rule, no decision): `var x = (mk());` receives the
+  struct as `var x = mk();` does.** PARSE_VAR gives a local initialised from a call returning a struct over 8 B the
+  struct's storage and type, inferring it when the declaration has none — but its test wanted `IDENT (` right
+  after `=`, so `var x = (mk());` inferred nothing: x held the struct's first word, `x.a` was refused ("no struct
+  type in scope for 'x'"), and `dq(x)` into a by-value `q: Q` parameter passed that word as the struct's address
+  (the issue's repro (a): SIGSEGV on x86_64 and aarch64, a guest error on cx, 5 on PE, where 34 is right). It now
+  exits 34 on all four — `((mk()))`, a 24 B struct and a closure alike.
+- **Changed (the user's decision D24, 2026-10-13, A: refuse by name — as the 6.7.8 dyn lane refuses both shapes for
+  a dyn and the guide refuses `var k: i64 = (1, 2);`): a scalar or handle annotation (one that names no struct and
+  is no pointer) receiving a struct over 8 B from a free or generic fn call is refused by name at the call —
+  "cannot initialise 'x: i64' from 'mkp', which returns the struct 'P2' - declare 'x: P2' or bind a field" — for
+  i64, u8, f64, bool and every other scalar or handle type, wrapped or not; the variable keeps its annotation.**
+  "No annotation" was read as "no struct annotation", so `var x: i64 = mkp();` / `var y: u8 = mkp();` made x and y
+  the struct: `x.b` compiled and the `u8` held 333 (repro (b): 3 on all four targets). A method or operator call,
+  and a `*T` annotation, are not judged yet (filed). A struct of 8 B or less and a `Str` are one word, which the
+  scalar keeps; a top-level global's untyped / scalar declaration keeps the first word, as documented; a generic
+  body's `var x: T` is judged per instance (`gb<P2>` builds, `gb<i32>` is refused).
+- **How (src/frontend/parse_decl.cyr):** (a) `_rcv_peel` — an UNTYPED declaration steps over parentheses that wrap
+  the whole initialiser (`_pwrap_k` up to the `;`; a tuple literal is no wrap; a dyn callee is left as it was, 6.7.8's
+  V4d); `_rcv_iscall` takes the call as whole when it ends at the wrap's `)`; the struct is inferred as for `var x =
+  mk();` and the wrapped call is taken by the typed path's `_scv_peel` / `_sc_var_receive`, exactly as `var x: Q =
+  (mk());` already was. (b) `_rcv_scalar_ann` — pscale 0 with an annotation (i64, u8, i32, f64, f32, bool, u128, a
+  slice, cstring, an enum, Result, Vec, ...) receiving a free call whose struct is over 8 B (not `Str`, not a dyn) is
+  refused at the call; the variable keeps its annotation (`_look_sid = 0`; `lbool` cleared, so a bool's own "not a
+  bool" check does not report the same initialiser again); the annotation is printed as written (`_rcv_ann_pr`).
+  `_rcv_tp_base`: a generic fn's BASE parse of `var x: T = mkp();` is not judged (T is the i64 base there).
+- **Measured** (x86_64 / aarch64 qemu / cx / PE wine):
+
+  | shape | before | after |
+  |---|---|---|
+  | repro (a) `var x = (mk()); return dq(x);` | 139 139 1 5 | 34 34 34 34 |
+  | `((mk()))` 16 B, `(mk3())` / `((mk3()))` 24 B, the closure forms | 139 139 1 5 | 34 x4 |
+  | `var x = (mk()); x.a * 10 + x.b` | refused ("no struct type in scope for 'x'") x4 | 34 x4 |
+  | repro (b) | 3 3 3 3 | refused x4 (3 errors: `x: i64`, `y: u8`, and `x.b` on the i64 x) |
+  | `x: i64 / u8 / i32 / f64 / f32 / u128 / [u8] / cstring / E / Result / Vec = mkp();` then `x.b` | 3 (inferred P2) | refused |
+  | `var x: bool = mkp();` / `mk3()` | refused "not a bool" | refused, the decided text |
+  | control `var x: Q = (mk());` | 34 x4 | 34 x4 |
+  | control `var x: i64 = mk1();` (8 B) / top-level `var g: i64 = mk();` | x.a refused / 3 | unchanged |
+
+- **What changes for code that compiles today:** `var x: <scalar> = f(..);` inside a fn, `f` a free fn declared to
+  return a struct over 8 B (not `Str`), stops compiling — it made x the struct behind its annotation; `var x =
+  (f(..));` now receives the struct where it held the first word (so `x + 1` now dispatches `Q_add`, and is refused
+  when there is none, where it gave 4 on 6.7.10 — measured on the merged tree's build/cycc). Corpus differential (988 sources, RET-7's tip vs
+  RET-9's): one difference, `tests/tcyr/crossos/struct_receive_paren_call.tcyr` itself (RET-7's tip refuses its
+  `x.a` rows).
+- **Gate:** new `tests/gates/frontend/struct_receive_inference_checked.sh` (wired in scripts/check.sh after
+  multi_value_into_named_struct): every refused row on the x86_64, aarch64, cx and PE (CYRIUS_TARGET_WIN=1)
+  compilers, every run row on x86_64 / qemu-aarch64 / cxvm / wine — A0 repro (a) verbatim (34), A1 `((mkp()))` /
+  `(mk3())` / `((mk3()))` (34), A2 the crossos file (0); B0 repro (b) verbatim (3 errors), R1-R8 i64 / u8 / f64 /
+  bool at 16 B and 24 B, R9 / R10 wrapped, R11 a closure, R12 a generic callee, R13 a generic instance `gb<i32>`,
+  R14-R17 i32 / u128 / cstring / an enum, R18 a wrapped call into bool (once); controls K1 8 B into i64 (34), K2
+  `Str` into i64 (34), K3 struct annotations plain and wrapped (34), K4 the hint `mkp().a` (34), K5 `var x: T =
+  mkp();` in `gb<P2>` (34), K6 unannotated (34); D1-D3 a dyn keeps V4d / V4n. Floor 31 rows. Mutations N0-N9 RED
+  (the header). `tests/tcyr/crossos/struct_receive_paren_call.tcyr`: `(mk())` / `((mk()))` at 16 B and 24 B, at fn
+  scope and in a closure, a field read, an argument, a generic instance, two in a row, the typed and unwrapped
+  controls — 17 assertions, pass on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); ⭐ ecb / ach / cass / pi at the
+  release gate. `tests/gates/frontend/bool_checked.sh` W13 (`var b: bool = mk();`, 24 B) expects the decided
+  message (it was "not a bool"). Guide § Returning a struct by value.
+- **Filed, not fixed:** `var x: i64 = b.mk();` / `var y: u8 = a + b;` (a method / operator returning a struct over
+  8 B) take the first word, narrowed (77 on all four) — does D24 reach them? (`2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md`,
+  a decision, Medium); `var x = (mk1());` (8 B) is refused at `x.a` where `var x = mk1();` works, and `var x =
+  (b.mk());` with a 16 B method passed by value crashed (139 / 139 / 1 / 5) (`2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md`,
+  High — measured on the merged tree's build/cycc 2,223,320 B: the 16 B method form now exits 34 after the struct
+  lane's decision-12 extension (D42, d09f6364), the 8 B form is still refused at `x.a`); `var x: *P2 = mkp();`
+  warns only and exits 139 at `x.b`, `var x: *i64 = mkp();` holds the first word (`2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md`,
+  a decision, Medium).
+- Closes [docs/development/issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md](docs/development/issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md).
+
+#### RET-9 — an `async fn` returning several values is refused by name (lane returns, commit fcb8d909)
+
+- **Changed (the user's decision D25, 2026-10-13, A: refuse by name, as 6.6.6 refuses a struct and a vector
+  return).** A Future memoises one word, so `async fn g(): (i64, i64) { return (1, 2); }` compiled clean, `await
+  g()` gave 1 and the second value was gone: the documented `rethi()` read got it only on the force that ran the
+  body, and a memoised (`await f` again) or reactor-driven force read whatever the last call left in rdx — the
+  issue's repro, CYRIUS_ASYNC=1: 19 where 12 is right, on x86_64, aarch64 (qemu), cx and PE (wine). It is now
+  refused on all four — "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct
+  holding them" — at a `: (T1, T2[, T3])` declaration (once: its body's `return (a, b)`, `ret2` and T5's `return t;`
+  agree with it), and at `return (a, b[, c]);`, `ret2(a, b)` and `return ret2(a, b);` in an async fn declared with
+  no return type, plain or coroutine. A closure's multi-value return inside an async fn and an `#inline` replay are
+  untouched.
+- **How (src/frontend/parse_fn.cyr, parse_expr.cyr):** `_refuse_async_multi_return` beside the 6.6.6 struct and
+  vector refusals (`GFRS == MULTIRET_SID`, "returns N values" from GFRN); `_refuse_async_mv_body` in the body — from
+  PARSE_RETURN's wrapper (`_async_mv_ret`: the multi-value literal by `_tup_commas`) and the `ret2` builtin
+  (PARSE_SIMD_EXT) — keyed on the body being an async fn's `$impl` (`_fn_async_impl`: a coroutine's body is its
+  `$impl` too; a closure in it is its own fn), skipping an `#inline` replay and a fn declared with its values. T5's
+  `_ret_tup_ok` no longer reports `return t;` in a DECLARED multi-value async fn (the declaration did): one error
+  per program. The name printed is the user's (`$impl` cut).
+- **What changes for code that compiles today:** none in the tree (no async fn returns several values; corpus
+  differential identical). For a consumer: `async fn f(): (T1, T2)`, and `return (a, b);` / `ret2(a, b)` in an
+  `async fn`, stop compiling; the second value never reached the awaiter.
+- **Gate:** new `tests/gates/frontend/async_multi_value_return_refused.sh` (CYRIUS_ASYNC=1, x86_64; wired in
+  scripts/check.sh after coroutine_midbody_suspend): V0 the repro verbatim; D2 / D3 declared `: (i64, i64)` /
+  `: (i64, i64, i64)`, DC2 / DC3 the coroutine forms, DB / DT declared with `return (a, b)`, `ret2` or `return t;`
+  in the body (one error); U2 / U3 undeclared `return (a, b)` / `(a, b, c)`, UC2 / UC3 coroutine, R2 `ret2(a, b);`,
+  RR `return ret2(a, b);`, RC coroutine, RM two async fns (2 errors); controls K1 one-value async fns awaited twice
+  (34), K2 a closure's `return (a, b)` inside an async fn (33), K3 an `#inline` multi-value fn replayed in an async
+  body (33), K4 T5's `return t;` in an undeclared async fn keeps its text, K5 sync multi-value fns and `ret2` under
+  CYRIUS_ASYNC=1 (34). Floor 20. Mutations M0-M7 RED (the header). tuple_checked.sh R14m (`async fn g(): (i64, i64)
+  { var t = (1, 2); return t; }`) expects the declaration's message, once (its M9 mutation still turns R14m RED).
+  Guide § async, Other limits.
+- **cycc:** not committed by the lane; the fixpoint of RET-8..9's tip 2,139,752 B. Seed-derive OK after each commit.
+- **Filed, not fixed:** an undeclared `async fn g() { return h2(); }` forwarding a multi-value call still drops the
+  second value (19 on all four) — a third body spelling, outside the filed `return (a, b)` / `ret2`
+  (`2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md`, High).
+- Closes [docs/development/issues/archived/2026-10-09-async-fn-multi-value-return-loses-second-value.md](docs/development/issues/archived/2026-10-09-async-fn-multi-value-return-loses-second-value.md).
+
+#### RET-10 — one mistake gives one error after a refusal, at its place: the nine cascades (lane returns, commit 4288c67f)
+
+- **Fixed (diagnostics only — no decision needed: "fix to what the source says"; nothing that compiled changes,
+  nothing new is refused, no binary changes for a program that builds).** All nine filed repros, verbatim, now give
+  exactly the one error (shape 3: its two refusals, no warning) at the place that is wrong. Measured on x86_64 (the
+  aarch64, cx and PE compilers share the frontend; the corpus differential covers every file they build). Before →
+  after, the filed repros: 2 → 1, 2 → 1, 2 errors + 2 warnings → 2 errors, 3 → 1 (the 257-element global 2 → 1),
+  2 → 3 (the swallowed `nosuch` now reported), 2 → 1, 4 → 1, 2 → 1, 2 → 1 (each of 9a / 9b / 9c).
+  1. `t == u` with two whole tuples reports the left operand once (`_tup_rv_chain`, parse_expr.cyr); `t + u + v`
+     3 → 1; `(t == u) && (u == t)` 4 → 2, one per comparison; `g(t, u)` stays 2.
+  2. `t = u;` in a closure, both captured tuples: one error at `t` (6:18), reported before the value is parsed and
+     the value skipped as a refused lvalue's is (`_asg_capture_refused`, parse.cyr) — it was "u used as a value"
+     (6:22) plus "undefined variable 't'" at the `;` (6:23). The lane reported it as "undefined variable 't'"; on
+     the merged tree the struct lane's 85c648c3 words that one error "'t' is captured by value; a captured name is
+     not assignable in a closure — copy it into a local (`var y = t;`)". The struct / scalar forms keep their one
+     error; its caret moves from the `;` to the name.
+  3. `t = 5;` then `var p: *(i64, i64) = 0;`: no "assigning non-pointer to typed pointer" after the refused tuple
+     store (`_asg_tup_refd`, also the dyn arm) nor about the refused `*( .. )` (`_ptr_refd_ti`). The plan's
+     "`_ptr_annot` returns 0" was measured first and rejected: it moved the warning to every use (`fn f(): *(i64,
+     i64)` then `var q: *i64 = f();` gained one); the step stays, so uses are quiet.
+  4. A tuple literal refused for its shape (an empty element, a trailing comma, the wrong arity, more than 256
+     elements) still declares its name (`_tup_var_refd`, parse_decl.cyr: the annotation's tuple, else `(i64 x n)`
+     from its commas, capped at 256 — a local block reserved and named, or an inline global after the first
+     statement), so `t.0` after it says nothing; the 257-element zone global is the refusal alone (`_tup_gci_in`
+     registers the 256-cap tuple), not the use's error printed before it.
+  5. A `: stack` pair refusal no longer swallows the NEXT statement: its latch ends with its own statement
+     (`_pair_refuse_in_sync` records where it set the latch, `_pair_sync_ti`; PARSE_STMT's end calls `_stmt_resync`
+     instead of `_sync_skip`), so the next statement's error is reported — it was lost after `x = f();` /
+     `store64(.., f())` since 6.6.0, and after a field / element / `*p` / `OP=` store since 6.7.7. Not the issue's
+     literal proposal (clear `_panic` at the report): measured, that made the same statement add a second error at
+     every bool destination (`b = mk(7)`, `var b: bool = mk(7)`, `h.f = mk(7)`, a `bool[]` element, a bool global, a
+     bool for step); the statement-scoped latch keeps those to one. The const-sweep issue with the same mechanism
+     (`2026-10-09-const-sweep-swallows-later-const-errors.md`, 6.7.13) is not pulled forward (the user's call).
+  6. A refused u128 `OP=` skips its right-hand side (`_w128_cop` returns handled, `_masg_skip`): `b *= mk(7)` is the
+     u128 refusal alone (the pair there was refused a second time); `b *= nosuch;` likewise reports only the u128
+     refusal.
+  7. D19 once, at the operator fn's first default with its column (`_pd_d19`, parse_fn.cyr) — it was one line per
+     `a + b`, at the use, without a column — and nothing for a row already refused (D13, D1, any shape refusal);
+     `_tr_check_impl` drops "takes a different number of parameters than its declaration in trait 'Add'" when the
+     impl method's parameters before its first default are exactly the trait's count (`_tr_dflt_extra`,
+     `_pd_req_n`) — `fn add(self, b, c, k = 1)` against `add(self, b)` keeps both errors. The filed repro: 4 errors →
+     the D13 refusal alone; a plain `fn V2_add(a, b, k = 1)`: one D19 at 2:19 whatever the number of uses. A direct
+     call `V2_add(a, b)` still compiles and fills.
+  8. `var A: (i64, i64) = B;` in the declaration zone above `var B = (1, 2);` is "cannot copy-init 'A' from a global
+     declared below it" alone: pass 1 (`_tup_svtype_p1`, parse_types.cyr) leaves a tuple annotation over a lone name
+     / field chain that is no global yet to the replay (`_gvi_tup_late`, from `_gvi_tup_odd`), which gives R12 when
+     the source is not a whole struct, else `_gci_init` judges it. A scalar `B` below: R12 alone.
+  9. A parameter whose TYPE is refused (`[u8]`, `slice<T>`, an unknown name) keeps its default (`_pd_kind_ok`'s
+     class -12 arm asks `_pd_type_refused`), so `f()` is not refused again ("'f' expects 1 argument, got 0"); any
+     other token keeps the old drop (on the lane's base pass 2 did not refuse `s: fn = 0` / `s: 5 = 0`, so keeping
+     their default would have made `f()` compile).
+- **What changes for code that compiles today:** nothing. A failing build's error lines move: D19 to the
+  definition, a captured assignment's caret to the name. Corpus differential (988 sources, RET-9's tip vs RET-10's;
+  rc, stdout, stderr): identical, every binary byte-identical.
+- **Gate (each mutation measured RED with its fix reverted, a scratch copy of src/ built by build/cycc, the gate run
+  with CYCC= it):** tuple_checked.sh, a new `cascade` helper (exact error count, no warning, each error at its
+  line:col with its text): CS1 / CS1b / CS1c / CS1d, CS2 / CS2b, CS3 / CS3b / CS3c, CS4 / CS4b / CS4c / CS4d / CS4e,
+  CS8 / CS8b / CS8c; mutants MCS1, MCS2, MCS3a / MCS3b, MCS4a, MCS4b, MCS8, MCS8b (the replay silent → CS8b BUILDS).
+  stack_enum_lossy_context.sh axis 18 (a new `exact` helper): 18a the filed repro (3 errors), 18b 6.6.0's `x =
+  mk(7); y = nosuch;`, 18c two refusals on consecutive lines, 18d an element store then `nosuch`, 18e a bool
+  destination keeps ONE error, 18f a for step then `nosuch`, 18g the filed u128 repro (1 error), 18h `/=` of a pair
+  then `<<=`, 18i `+=` of a pair (the pair refusal alone, unchanged); mutants M18a (`_stmt_resync` always skipping)
+  → 18a, M18b (the latch cleared at the report) → 18e, M18c (`_w128_cop` parsing on) → 18g.
+  default_named_args_checked.sh: R19 moved from the use line ("3") to the definition ("2:19"); R19b the filed repro
+  (one error, 3:37); R19c three uses on two lines; R19d the operator fn defined below its use (8:19); R19e a direct
+  call builds and fills (exit 1); R19f the extra non-default parameter keeps both errors; R19g a D1-refused operator
+  fn says nothing more; R9s1-R9s3 the three filed shape-9 repros (one error each, at the type), R9s4 a forward call,
+  R9s5 `slice<u8>` with two short calls; mutants MD19, MD19r, MD13, MD9. Guide: the compound-assignment paragraph,
+  the u128 `OP=` sentence (its right-hand side is not parsed), the operator-fn default bullet (reported once, at the
+  default; a direct call fills).
+- **After the merge — open (the integration's):** the call-arguments lane (25711ad2) refuses a non-type parameter
+  token by name ("expected a type for parameter 'a', got number 5"); `_pd_type_refused` answers 1 only for a slice
+  or an unresolved name, so on the merged tree `fn f(a: 5 = 0)` + `f()` gets that refusal AND "'f' expects 1
+  argument, got 0" (measured on build/cycc 2,223,320 B) — the handoff's integration note (answer 1 for every token
+  `_pty_end` refuses, a row beside R9s1-R9s5) is not applied yet.
+- **cycc:** not committed by the lane; the fixpoint of RET-10's tip 2,143,864 B. Seed-derive OK.
+- **Filed, not fixed:** `var P: **i64 = 0;` before the first top-level statement is refused "expected '=', got
+  identifier 'i64'" — a valid program; `_gvi_ann` steps one `*` (`2026-10-14-declaration-zone-pointer-annotation-replay-reads-one-star.md`,
+  Medium); a refused default VALUE (D7, D9, D13 on an `impl Trait for T` method …) drops every default of the fn, so
+  each short call is refused again (`2026-10-14-refused-parameter-default-refuses-every-short-call.md`, Low — the
+  same class as shape 9, outside its filed surface).
+- Closes [docs/development/issues/archived/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md](docs/development/issues/archived/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md).
+
+#### RET-6r — the guide's pair-method paragraph names the trait-default exception (lane returns, review fix, commit 2bddbe89)
+
+- **Docs only (the review's must-fix 1: RET-6's guide sentence over-claimed).** docs/guides/cyrius-guide.md § Bind
+  the pair as a pair, after "The method's `impl` may sit above or below the call", adds: "⚠ Known defect (6.7.11): a
+  method the impl INHERITS from its trait's default body is not covered yet — `p.m(..)?` above the trait and impl
+  crashes and `var v = p.m(..);` keeps the tag; keep that trait and impl above the caller
+  (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)". Re-measured on the lane's
+  cycc: the reviewer's probe compiles clean and exits 139 (139 on the 0f733aea base too); on the merged tree's
+  build/cycc 2,223,320 B as well. No src change; the fixpoint unchanged (2,143,864 B).
+- The review's other two must-fix items corrected the lane's CHANGELOG text, not the tree, and are carried above:
+  RET-8's sentence names what is not judged yet (a method or operator call, a `*T` annotation); RET-10's shape 5
+  dates the lost statement as the issue's Affects line does (6.6.0 for `x = f();` / `store64(.., f())`, 6.7.7 for the
+  T5b stores).
+- Closes nothing on its own (RET-6's issue, [docs/development/issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md](docs/development/issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md)).
+
+#### returns lane — the lane gate
+
+- **Fixpoint:** build/cycc == c2 == c3 from the branch's src, 2,143,864 B (head 2bddbe89; RET-6r changed no src).
+  The lane commits no build/cycc; the integration rebuilt it on the wave-1 merge (1d70b318 → 42f5a974, 2,168,800 B;
+  the returns merge had two conflicts, `_var_rhs_post` and `_sarg_byval_small` in parse_decl.cyr / parse_fn.cyr,
+  both lines kept).
+- **Seed-derive:** `sh scripts/seed-derive-cycc.sh` — "=== OK: build/cycc is machine-derivable from the 29024-byte
+  seed ===", after every commit and on the lane's whole src delta.
+- **check.sh** (`CYRIUS_CHECK_JOBS=4`, TMPDIR on disk): shell gates 481 of 481 produced a result, 0 NOT RUN; the
+  check binary 130 / 131 — the one failure the lane-only doc-stamp row (state.md cites the slot-open cycc size; the
+  integration restamps it); skipped 2, the named agnos-parity gates (agnos_sysinfo_tail_parity,
+  agnos_monotonic_clock_rdtsc). The lane's gates all pass: struct_receive_inference_checked (31 rows),
+  async_multi_value_return_refused (20), multi_value_into_named_struct (40), stack_enum_lossy_context,
+  tuple_checked, default_named_args_checked, bool_checked, destructure_one_value_refused (74),
+  struct_pair_multi_value_crossing.
+- **Per-file exit-code loop:** the five `.tcyr` the lane added or changed (tests/tcyr/crossos/), each compile 0 and
+  run 0 on x86_64, aarch64 (qemu, the cross compiler from the tree), cx (cxvm) and PE (wine, a private prefix):
+  method_pair_result 37 / 37, multi_return 31 / 31, stack_enum 28 / 28, struct_pair_multi_value_crossing 24 / 24,
+  struct_receive_paren_call 17 / 17 — ⚠ multi_return's cx leg vacuous at the lane tip (cx did not auto-call `fn
+  main`; `issues/2026-10-11-cx-does-not-auto-call-main.md`, fixed on the merged tree by the genfe lane's 09e06b72).
+  At RET-7's tip the whole corpus loop (573 `.tcyr`, x86_64) exited 0 file by file.
+- **Corpus differentials** (987 / 988 sources, every bite against the previous tip; rc, stdout / stderr, output
+  bytes): identical except each bite's own new or changed test file; RET-10's every binary byte-identical.
+- **Not run by the lane:** `scripts/release-gate.sh`, the cross-OS hardware legs (ecb / ach / cass / pi run the five
+  crossos files at the release gate), `cyrius pulsar`.
+
+### Language — call arguments (the call-arguments lane)
+
+#### ARG-1 — a struct result through `fncallN(&f, ..)` / `callptr(&f, ..)` carries the struct-result convention (lane callargs, commit 8359e5a4)
+
+- **Fixed: a call through a fn pointer whose callee is written `&f` carries `f`'s struct result, as `f(..)` does.**
+  Through 6.7.10 a call through `fncall0`..`fncall8` or `callptr` passed no hidden result pointer for a struct over
+  16 B and received no register pair at 9-16 B. Over 16 B the callee wrote the struct through its FIRST argument: the
+  filed repro `var p: P3 = fncall1(&mk3, 5);` (`fn mk3(a): P3`, 24 B) exited 139 on x86_64 and aarch64 (qemu), 1 on
+  cx ("guest address out of range: 5") and 5 on PE (wine: a write fault at 0x5), where 18 is right; `callptr(&mk3, 5)`,
+  the 32 B `fncall1(&mk4, 5)` and an untyped `var x = fncall1(&mk3, 5); return 3;` the same. At 9-16 B the first word
+  bound as a handle and the first field read faulted (`var p: P2 = fncall1(&mk2, 5);` 139 / 139 / 1 / 5 where 11 is
+  right). A known callee (`_icall_callee`) returning a struct now takes the struct-call hooks a method call takes: the
+  hidden result pointer over 16 B (int arg 0 on x86_64 / cx / Win64, pushed after PE's callee push; X8 on aarch64) and
+  the register pair at 9-16 B, and its result is a struct value wherever it goes — the declaration (`var x =
+  fncall1(&mk3, 5);` infers `P3`), the assignment, an argument (by value or `*S`), a field store, inside parentheses,
+  `return fncall1(&mk3, a);` from a fn returning `P3` (refused through 6.7.10), and an 8 B struct global in the
+  declaration zone (a value). Measured after on x86_64 / aarch64 / cx / PE: the filed repro 18, `callptr(&mk3, 5)` 18,
+  P4 26, P2 11, the untyped row 3, the assignment, argument and field-store rows right, `return fncall1(&mk3, a);` 18
+  and `return callptr(&mk2, a);` 11. At top level a result over 8 B is refused by name, as `mk3(5)`'s is (there is no
+  frame to hold it): `var g: P3 = fncall1(&mk3, 5);` crashed and is refused, once. A declaration of another struct
+  type is refused (it crashed).
+- ⛔ **6.7.10's regression on the 8 B row, fixed.** `var p: P1 = fncall1(&mk1, 5);` returned 8 through 6.7.9 and
+  faulted on all four targets in 6.7.10 (139 / 139 / 2 / 5): the indirect result was an untyped word, and decision 1's
+  handle line made the local a handle holding the struct's value. It is a struct value again: 8 on x86_64, aarch64, cx
+  and PE.
+- **Decided (D31, the user, 2026-10-13: "(a) a handle at every size, as shipped — decisions 1 and 5 apply
+  unchanged"): a callee held in a variable is unknown at the call, and a struct-typed receive of its result is a
+  handle.** `var fp = &mk3; var p: P3 = callptr(fp, 5);` passes no result pointer and binds the returned word as a
+  handle: right for a callee returning `*P3` (`fn gp(a): *P3`: 26 before and after, a write reaches the object),
+  unsupported for one returning a struct by value (139 / 139 / 1 / 5, unchanged). Why: decision 1 (6.7.10) makes a
+  struct local initialised from anything that is not a struct value of its type a handle, one rule at every size, and
+  decision 5 extends it to globals; an unknown callee's result is not known to be a struct value, and (a) keeps the
+  measured-right `: *P3` callee shape. At 8 B this is a cost of decision 1: through 6.7.9 an 8 B struct returned
+  through a variable callee was right, and since 6.7.10 it faults. Through a variable, receive a 9-16 B struct's two
+  words (`var a, b = fncall1(fp, 5);`, right on all four targets) or give the callee an out-pointer. The guide
+  (§ Returning a struct by value — a new ⚠ paragraph —, the handle line's list, the name-intrinsic paragraph, the
+  `callptr` section) and `docs/ffi/fncall-abi.md` (the Results bullet, whose "compiles and faults" sentence is replaced
+  by the rule) say so.
+- **How:** `_PINDIRECT_CALL_IN` (parse_expr.cyr): for a known callee with GFRS > 0, `_icall_sret` runs `_sc_pre` right
+  after the callee (after PE's callee push), its words counted into `cp_argc` after the `_fe` arity check and
+  `_pd_icall_short` (which see the user count only); `_sc_x8` between ECALLPOPS and ECALLIND on aarch64;
+  `_icall_result` ends in `_sc_post` (`_sc_post_small` at 8 B or less) in place of the untyping, so every `_sc_whole`
+  consumer sees a struct value. Three routes that decide before the parse read the callee from the tokens
+  (`_icall_sid_at` / `_icall_rs_at` / `_icall_open_at`): an argument (`_try_push_struct_addr_arg` → `_push_struct_expr_arg`),
+  `return` (`_ret_expr_head`'s `_icall_ret`), and the declaration zone's `_gz_unary` (`_gz_icall` — without it the
+  replay's `_gz_agree` refused an 8 B global as "the declaration zone misread .. please report it").
+- **What changes for code that compiles today:** the result through a known callee is the struct, so an OPERATOR on it
+  dispatches as on `f(..)`: `fncall1(&mk1, 5) + 4` calls `P1_add` (or is refused "undefined function 'P1_add'") where
+  it integer-added the struct's word (12 in the probe); a scalar receive `var n: i64 = fncall1(&mk3, 5);` reads the
+  first field (it crashed); at top level a struct result over 8 B (a statement, a global initializer) and a declaration
+  of another struct type are refused by name (each crashed); `return fncall1(&mk3, a);` and an untyped `var x =
+  fncall1(&mk3, 5);` with `x.a` start compiling. `var a, b = fncall1(&mk2, 5);` stays 11. Through a variable nothing
+  changes.
+- **Gate:** `tests/tcyr/crossos/fncall_struct_result.tcyr` (48 rows: 8 / 16 / 24 / 32 B through `fncall1(&f, ..)` and
+  `callptr(&f, ..)` — declaration, inference, wrapped, assignment, by-value and `*S` arguments, field stores, `return`
+  incl. wrapped, statements, stack-argument callees (6 / 8 args, a pair with 5), nested; K: the two-word receive 55,
+  the `: *P3` / `: *P1` callee through a variable as a handle (31 / 26, a write reaches the object), the out-pointer and
+  two-word workarounds; Z: an 8 B global from a known callee in the declaration zone and after the first statement).
+  `tests/gates/codegen/struct_value_codegen.sh` FP1-FP9 on x86_64 (FP1 the filed repro verbatim → 18; FP2 the 8 B
+  regression row → 8; FP6 the decided unknown-callee handle → 26; FP8 the top-level `var g: P3 = fncall1(&mk3, 5);`
+  refused by name, once; FP9 another struct refused), FPw1 / FPw2 on PE (wine) and B1-B7 — the crossos file on
+  x86_64 / IR=1 / IR=3 / DCE / aarch64 (qemu) / cx (cxvm) / PE (wine), 48 rows each (floor 48); the PE legs and the
+  floor are ARG-1r's. Mutations M-FP1..M-FP7 (ledger in the gate header), each RED. Hardware: the crossos file 48 / 48
+  on pi (aarch64 ELF), ecb (arm64 Mach-O, ad-hoc signed), ach (x86_64 Mach-O) and cass (PE).
+- **Found, not absorbed (staged for filing, placed 6.7.12):** `fncall1(&mk3, 5).b` is "expected ';', got '.'" where
+  `mk3(5).b` works (pre-existing); `var c, d = callptr(fp, 5);` is "multi-value destructure needs a call on the
+  right-hand side" where `fncall1(fp, 5)` destructures (pre-existing); from the review, a parenthesised callee
+  (`callptr((&mk3), 5)`, `fncall1((&mk2), 5)`) is an unknown callee — 139 / 139 / 1 / 5 where `callptr(&mk3, 5)`
+  gives 18 (Medium) — and `var a: dyn Shape = fncall1(&mkd, &q);` is refused where `mkd(&q)` forms the dyn (the
+  slot-open compiler the same).
+- Closes [`2026-10-12-struct-result-through-fn-pointer-faults.md`](docs/development/issues/archived/2026-10-12-struct-result-through-fn-pointer-faults.md).
+
+#### ARG-2 — a value-form vector local takes a vector, or nothing (lane callargs, commit d07c803d)
+
+- **Fixed: `callptr(&f, ..)`, `fncallN(&f, ..)` and `(f(..))` into a value-form vector local are received whole.** A
+  value-form vector local (`var v: f64v2 = <src>;` / `v = <src>;`) got its 16 / 32 bytes only from an unparenthesised
+  by-name call (`IDENT (`). `callptr(&mkv, 41, 7)` and `fncall2(&mkv, 41, 7)` were stored as ONE word — `lanes(v)`
+  (lane 0 × 10 + lane 1, through a value-form parameter; 161 is right) read 128 / 64 / 146 on x86_64 / aarch64 / cx —
+  `(mkv(41, 7))` and the assignments `v = callptr(&mkv, ..)` / `v = fncall2(&mkv, ..)` / `v = (mkv(..))` read 0 / 0 /
+  154 (stale frame words), and on PE no hidden result pointer was passed, so the callee wrote through its first
+  argument (exit 5, a page fault at 0x29). The f64v4 `callptr(&mkw, 1)` read 34 / 160 / 144 and faulted on PE. Each is
+  received whole now — 161 (f64v4: 1234) on x86_64, aarch64, cx and PE — in the declaration, the assignment and a
+  for step: the vector registers stored (EFLSTORE_F64V2_PAIR / _F64V4_PAIR), or on PE the local's address passed as
+  the hidden result pointer (a by-name call: the receives' own Win64 arm; an indirect one: after the callee push,
+  counted by ECALLPTR_PE).
+- **Changed (D32, the user, 2026-10-13: "(a) refuse both by name"): every other source into a value-form vector local
+  is refused by name, once** — "a value-form vector local is initialised only from a local of its type or a call
+  declared to return it (by name, or fncallN / callptr with the callee written `&f`) - got `callptr`; through a fn
+  pointer held in a variable, give the target an out-pointer" ("assigned only from" for an assignment): a callee held
+  in a variable (the filed repro `var v: f64v2 = callptr(fp, 41, 7);` with `load64(&v) + load64(&v + 8)` read 181 /
+  180 / 45 and faulted on PE, where 48 is right), a word (`= 0`, `= 5`, `load64(&w)`, `&w`, a scalar local or call), a
+  method call (`s.mv()`), `*p`. Each compiled with no diagnostic and read wrong lanes (`= 5` 50, `= load64(&w)` 33,
+  `= sc(4)` 40, `*p` 210 / 74 / 98 / 146, `s.mv()` 1 / 1 / 155 / 41). Why: the guide's vector-return rule (since 6.6.6)
+  already refuses the same sources by name as a vector RETURN — "an integer .. load64(&v) .. a callptr(..) through a
+  function pointer .. a call returning a scalar" — and accepts only a vector local of that type or a call declared to
+  return it; (a) applies that rule at the receive. A vector global source was already refused (6.6.17); decision 1's
+  handle line covers structs only — a vector has no handle form. Vector GLOBALS are unchanged (`= 0` only).
+- Moved here from the guide, where the rule replaces it ("⚠ A value-form vector LOCAL takes a vector, or nothing"):
+  "⚠ There is **no** working spelling for a vector-returning `callptr` today: `var v: f64v2 = callptr(fp, 41, 7);` is
+  broken too — it still compiles with no diagnostic at 6.7.9 and reads wrong lanes on x86_64 (measured at 6.6.5, 6.6.6
+  and 6.7.9)." The out-pointer `var ig = callptr(fp, &v, 41, 7);` (161 before and after) stays the spelling through a
+  variable; `docs/ffi/fncall-abi.md`'s Results bullet says the same.
+- **How:** parse_decl.cyr: `_vrcv_src` classifies the source from the tokens (through `_pwrap_k`: a by-name call
+  declared `: V`, or `fncallN(&f, ..)` / `callptr(&f, ..)` with `f` declared `: V`, the call alone in its parentheses);
+  `_vrcv_decl` (one call in PARSE_VAR before the `_f2c` receive) and `_vrcv_asg` (the head of
+  `_try_vector_call_assign`: the statement and the for step) emit through `_vrcv_emit` (PE by name: `_vrcv_pe_call`;
+  PE indirect: the one-shot `_icall_vbeg` / `_icall_vdst`, which ARG-1's `_icall_sret` consumes after the callee push,
+  `_icall_vret` pushing the local's address as int arg 0). The refusals (`_vrcv_decl_err` from `_var_rhs_post`, so
+  PARSE_VAR gains one call only; `_vrcv_other`) print one message through `_vrcv_err` (no `_panic`, so the statement
+  layer does not resync past the next statement) and stay silent when the source refused itself (a vector global's
+  `_vecg_refuse`, the if-expression branch refusal, "vector return type does not match").
+- **What changes for code that compiles today:** the refused sources above stop compiling (each read wrong lanes, or
+  faulted on PE) — declare the local bare (`var v: f64v2;`) and fill it, call the producer by name, or give a target
+  reached through a variable an out-pointer. `tests/gates/frontend/silent_values_checked.sh` O1's fixture `var v:
+  i64v2 = 0;` is now `var v: i64v2;` (the row tests the `+=` refusal and counts one error; `= 0` is now itself refused).
+- **Gate:** `tests/gates/codegen/simd_return_shapes.sh` V1-V9 (accepted: f64v2 / f32v4 / i32v4 / f64v4 × declaration /
+  assignment, each a `callptr(&f)`, a `fncallN(&f)` and a parenthesised by-name source, every lane read through a
+  value-form parameter → 42; V9 the out-pointer and by-name workarounds) and Y1-Y11 (refused once, by name, no
+  artifact: Y1 the filed repro verbatim, `= 5`, `= load64(&w)`, `= &w`, `v = callptr(fp, ..)`, `v = 5`, `v =
+  load64(..)`, `v = &w`, f64v4 `callptr(fp, ..)`, f32v4 `fncall4(fp, ..)`, an i32v4 for step `v = 5`) on the host / cx
+  / aarch64 (qemu) / win64 (wine) — 172 rows; mutations MV1-MV5 each RED (ledger in the gate header).
+  `tests/tcyr/crossos/simd_indirect_receive.tcyr` (30 rows, incl. f64v4 with 6 arguments through `callptr` — the PE
+  hidden pointer plus stack arguments — and a for step); hardware 30 / 30 on pi, ecb, ach and cass.
+- **Found, not absorbed (staged for filing, placed 6.7.12):** on PE a vector-returning call with no receive
+  (`mkv(41, 7);`, `callptr(&mkv, 41, 7);`, an untyped `var x = callptr(&mkv, ..)`) passes no hidden pointer — exit 5
+  where x86_64 / aarch64 / cx exit 3 (High, pre-existing: the slot-open compiler the same); a method call declared `: V`
+  (refused since this bite; wrong lanes before), an untyped `var v = callptr(&f, ..)` and `return callptr(&f, ..)` from
+  a `: V` fn — take them as the vector they are declared to be? (Medium, a question); `var v: f64v2 = *p;` with `p:
+  *f64v2` (refused since this bite; wrong lanes before) — copy through the pointer as a struct's `*p` is (6.7.10
+  decision 6)? (Low, a decision); from the review, `v = mkg<i64>(41, 7);` (an explicit-instance generic) refused since
+  this bite (wrong lanes before), and the refusal's fn-pointer hint printed for every source and reported ahead of
+  "undefined function" (both Low).
+- Closes [`2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md`](docs/development/issues/archived/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md).
+
+#### ARG-3 — a fn parameter's type is read whole, by the trait-signature grammar plus a bare `*fn` (lane callargs, commit 25711ad2)
+
+- **Changed (D34, the user, 2026-10-13: "(b) `_trs_type`'s grammar plus bare `*fn`"): a parameter's type is any number
+  of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare `*fn` (accepted since 6.7.7), or a name with
+  its `<..>`; anything else is refused by name, once, with no cascade.** Both of the compiler's parameter scans read ONE
+  token after at most one `*`: `fn f(p: **i64)` was "expected ')', got identifier 'i64'" (a forward call to it too),
+  `cb: *fn(i64): i64` was "expected ')', got '('", while `fn f(a: 5)`, `(a: +, b: ;)` and `(a: "s")` compiled with the
+  token skipped (the filed repro (a) exited 42). Now `**T` / `***T` parameters compile — a pointer whose step is 8, as a
+  `**T` local's is — on a fn, an impl method and a generic; `*fn( .. )`'s names are checked as a plain `a: T`'s are;
+  and a non-type is "expected a type for parameter 'a', got number 5" (`'+'`, `';'`, `string`, `if`, `')'`, `fn`),
+  which `cyrius lint` (`--syntax-only`) reports. `a: -1` and `a: 5 + 3` give one error (the refused token is skipped to
+  the parameter's end). The filed repro (a) is refused with exactly its 4 errors and no binary; repro (b) exits 42 on
+  x86_64 / IR=3 / aarch64 / cx / PE. Why: the user's 6.7.8 trait-signature reader (`_trs_type`) already defines a
+  parameter type, `**T` locals and fields have compiled since 6.6.17, and an unknown name was already refused by name
+  (6.6.16 C8), so refusing `5` / `+` completes an existing rule; bare `*fn` stays because CHANGELOG [6.7.7] accepted it.
+- **How:** parse_fn.cyr: one reader, `_pty_end` (+ `_pty_slice`, `_pty_tuple`, `_pty_fn`, `_pty_list`, `_pty_name`,
+  `_pty_gen_end`, `_pty_skip`, `_pty_pnoff`, `_pty_err`), used by both passes. Pass 2 (`_PARSE_FN_DEF_IMPL`):
+  `_param_ptr_head` replaces the inline one-`*` skip (one call, fewer references than before) and records the type's
+  start; `_param_type_step` steps a name the type-name arm took (the loop's SKIP_GENERICS still takes `<..>`) and
+  reads anything else from that start. Pass 1 (`_prescan_params_scan`): `_param_type_step_q` reads the same span
+  quietly. The reader's end is a function of the tokens alone, so the passes count alike even on a refused type
+  (`_pd_pc_check`); `_tn_once` reports a token once though a generic's instances re-read the signature. `**T` is a
+  pointer parameter with step 8 (`_mark_ptr_param`'s existing `**T` arm); `*fn( .. )` and bare `*fn` are one word.
+  Guide: § Type names ("A parameter's type is read whole (6.7.11)"); § Function Pointers (a `cb: *fn(i64): i64`
+  paragraph).
+- **What changes for code that compiles today:** a parameter annotated with a token that is not a type — `fn f(a: 5)`,
+  `(a: +)`, `(a: ;)`, `(a: "s")`, `(a: if)`, `(a:)`, `(a: *)`, `(cb: fn(i64))` with no `*` — stops compiling (the token
+  was ignored and the parameter was a plain word); an unknown name inside `*fn( .. )` is refused as one in `a: T` is.
+  No in-tree code (lib, programs, cbt, tests) was affected: the differential corpus compiles byte-identical, and no
+  `**T`, `*fn(..)` or `*V` parameter exists in the tree.
+- **Gate:** `tests/gates/frontend/param_type_grammar.sh` (new, registered in check.sh after address_of_pointer_param):
+  RA the filed repro (a) verbatim refused with exactly its 4 errors and no binary, RX the same under `--syntax-only`;
+  RB repro (b) verbatim → 42 on x86_64 / IR=3 / aarch64 (qemu) / cx / PE (wine); G1-G21 refused once each (number,
+  operator, `;`, string, `-1`, `5 + 3`, keyword, `a:`, lone `*`, `fn(..)` without `*`, a number / unknown name /
+  unknown result inside `*fn(..)`, `**Nope`, `**( .. )`, `**[u8]`, an impl method, a generic with two instances
+  (once), a forward call (no arity cascade), before a default, mid-list); P1 / P2 forward calls with defaults by
+  position and by name through `*fn(i64): i64` / `**i64` / `***i64`; T `tests/tcyr/crossos/param_type_pointer_forms.tcyr`
+  (23 rows: `**i64` / `***i64` reads, `p + 1` steps 8, writes and rebinds through `**`, `**Pf`, a stack-passed 7th,
+  an impl method, a generic, forward calls with defaults, `*fn(i64): i64`, `*fn(i64, i64)`, `*fn(): i64`, bare `*fn`,
+  `*fn(T): T` on a generic, a nested `*fn(*fn(i64): i64, i64): i64`, u128 / tuple / `*Pf` unchanged) on x86_64 / IR=1
+  / IR=3 / DCE=1 / aarch64 / cx / PE. Mutations (ledger in the header): M0 the fix reverted → 39 RED; M1 pass 1
+  one-token → P1 P2 T (the passes count apart); M2 no `_pty_skip` → G5 G6 G8 G9; M3 `_pty_name` a no-op → G12-G14; M4
+  no `_tn_once` → G18. Hardware: 23 / 23 on pi, ecb, ach and cass.
+- **Found, not absorbed (staged for filing, placed 6.7.12):** `*pp` of a `pp: **T` (a local, a global, and now a
+  parameter) is an untyped word — `*(*pp + 1)` steps one BYTE, and `var q: *i64 = *pp;` warns "assigning non-pointer
+  to typed pointer" (repro (b) prints that one warning) — make `*pp` a `*T`? (Low, a question).
+- Closes [`2026-10-10-param-type-annotation-reads-one-token.md`](docs/development/issues/archived/2026-10-10-param-type-annotation-reads-one-token.md).
+
+#### ARG-4 — a pointer-to-vector parameter (`p: *f64v2`) is a pointer (lane callargs, commit 528555c4)
+
+- **Changed (D33, the user, 2026-10-13: "(a) Pass b's address"): a `p: *V` parameter (V a vector type) is one integer
+  word whose `p + 1` steps one whole vector, and a vector LOCAL passed to it passes its address.** Both parameter scans
+  dropped the `*` of `p: *f64v2` / `*f64v4` / `*f32v4` / `*i32v4` / any 128-bit integer vector and made the parameter
+  a VALUE-form vector (XMM / V registers; a by-pointer copy-in on Win64), so the filed repro's `rd(&b)` was refused
+  "value-form SIMD arg must be a local IDENT (inline-replay path)" on x86_64 / aarch64 / cx (PE: exit 5), and `rd(b)`
+  compiled and the body dereferenced lane 0's bits (139 on x86_64 / aarch64, a guest fault on cx, exit 5 on PE). Now
+  `rd(&b)`, a `*f64v2` and any pointer pass as they are (repro 1 → 1), and `rd(b)` passes `&b` (repro 2 → 0; `rd(b) +
+  rd(&b)` → 84), on x86_64, aarch64, cx and PE. A vector of another type is refused by name, the same-size ones too:
+  "cannot pass 'f' to a parameter of a different vector type in a call to 'rd'" (f32v4 into `*f64v2` was 139 on
+  x86_64; f64v2 into `*f64v4` and i32v4 into `*f32v4` met "value-form SIMD arg type mismatch (callee expects ..)";
+  i64v2 into `*i32v4` was 139). `rd((f))` (refused by a cascade) is right. Why: consistency with 6.6.20 (a bare struct
+  passed to a `*T` parameter passes its address) and 6.7.3 (a struct of another type is refused); a vector is the
+  guide's other value-form aggregate, and (a) gives it the same two rules.
+- **ABI:** a fn declared with a `*V` parameter now takes it in an integer register — the C ABI's pointer — where it
+  took vector registers / a Win64 copy-in; through `fncall1(&rd, &b)` / `callptr(&rd, &b)` it now works. `p[1]` on a
+  `*f64v2` parameter is refused with a `*f64v2` local's text (the element is a vector).
+- **How:** parse_fn.cyr `_param_class(S, tnoff)` (both scans, in place of `_classify_param_type` at the type's name)
+  answers class 9 for a vector behind a `*` (the token before the name), which no mask arm takes: no `simd_mask` /
+  Win64 copy-in, no value-form slots; `_mark_ptr_param` gives it step 16 / 32, `_tn_param_check` accepts the name, and
+  `_param_wants_struct_ptr` sets the address-passed bit, as for `p: *S`. At the call `_try_push_struct_addr_arg`'s
+  vector arm calls `_sarg_vec_ptr`, which reads the callee's parameter from the definition's tokens (`_pvec_param`, so
+  a call above the definition is checked too): a `*V` parameter pushes the local's address (`_sarg_escapes` + EFLADDR,
+  so a tail call diverts); otherwise the old behaviour (Win64 value-form: the address; else the value push). Guide
+  § Vector types: "A `*V` parameter is a pointer (6.7.11)"; `docs/ffi/fncall-abi.md`'s vector-parameter bullet.
+- **What changes for code that compiles today:** an `#export`ed or C-called fn with a `p: *V` parameter now receives
+  the pointer as C passes one; one that relied on the value-form arrival (it never worked through the pointer) must
+  take `v: V` instead. `rd(b)` with a vector local passes `&b` (it faulted). A vector local of another type into `*V`
+  stops compiling. ⚠ **On x86_64 a vector call result or `*pv` into `*V` (`rd(mkv(42, 7))`, `rd(*pv)`) was refused by
+  the value-form path's text; it now compiles and passes lane 0 as the address (139 on x86_64 and aarch64, a cx fault,
+  exit 5 on PE), as it already did on aarch64 / cx / PE** — staged as a question below. No in-tree code declares a
+  `*V` parameter (the differential corpus compiles byte-identical but the new file).
+- **Gate:** `tests/gates/codegen/simd_pointer_param.sh` (new, registered in check.sh after simd_return_shapes): R1 /
+  R2 the filed repros verbatim → 1 / 0 and R3 the decision (`rd(b) + rd(&b)` → 84) on x86_64 / IR=3 / aarch64 / cx /
+  PE; Y1-Y9 refusals each once (f32v4 into `*f64v2`, f64v2 into `*f64v4`, i32v4 into `*f32v4`, i64v2 into `*i32v4` —
+  the same size —, a forward call, a method, a generic, a tail position, `rd((f))`), Yw on PE; S `p[1]` on a `*f64v2`
+  parameter refused as on a local; T `tests/tcyr/crossos/simd_pointer_param.tcyr` (29 rows: `*f64v2` / `*f64v4` /
+  `*f32v4` / `*i32v4` / `*i64v2` reads through `rd(b)` and `rd(&b)`, a `*f64v2` local and an untyped pointer passed,
+  `p + 1` stepping 16 / 32, the next vector, a write through p, `(v: f64v2, p: *f64v2)`, `(p: *f64v2, v: f64v2, k)`,
+  `(a: f64v4, p: *f32v4, b: f64v2)` — the XMM / V ordinals count only the value-form vectors —, a stack-passed 7th, an
+  impl method, a generic, handed on, a value-form parameter passed to `*V`, tail positions, `rd((b))`, a forward call,
+  `fncall1(&rd, &b)` / `callptr(&rd, &b)`) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutations (ledger in
+  the header): M0 the fix reverted → 33 RED; M1 `_param_class` without class 9 → 32 (Yw green: the Win64 arm still
+  checks); M2 no `*V` address bit → 27; M3 no type check → Y1-Y9 Yw. Hardware: 29 / 29 on pi, ecb, ach and cass.
+- **Found, not absorbed (staged for filing, placed 6.7.12):** a vector call result / `*pv` into `*V` (`rd(mkv(42,
+  7))`, `rd(*pb)`) and a vector local into `*Pt` / `*i64` / `*f32v8` compile and pass lane 0's bits as the address
+  (139 / 139 / cx fault / PE 5) — refuse by name, or pass a temp's address / the pointer as 6.6.20 / 6.7.10 decision 6
+  do for structs? (Medium, a question; the x86_64 `*V` half was refused before this bite).
+- Closes [`2026-10-10-pointer-to-vector-parameter-is-value-form.md`](docs/development/issues/archived/2026-10-10-pointer-to-vector-parameter-is-value-form.md).
+
+#### ARG-5 — parentheses around a whole argument into a by-value struct of 8 B or less no longer skip the type check (lane callargs, commit 375c2079)
+
+- **Changed (D35, the user, 2026-10-13: "(a) Refuse by name"):** `bs1((t))` with `t: T1` into `fn bs1(p: S1)` (both
+  8 B) compiled and exited 7 — T1's word read as an S1 — on x86_64, aarch64, cx and PE, where `bs1(t)` has been refused
+  since 6.7.3; so did `bs1(((t)))`, `bs1((mk(7)))`, `bs1(((mk(7))))`, `bs1((w.t))` and `bs1(((w.t)))`. They are refused
+  by name now, as `bs1(t)` is: "cannot pass 't' to a parameter of a different struct type in a call to 'bs1'" — the
+  wrapped name, call and field, a global at top level, a tail call and a method's argument. Why: 6.7.6 made
+  parentheses that wrap a whole argument transparent (`_sarg_paren`, CHANGELOG [6.7.6]) and 6.7.3 refuses a struct
+  value of another type into any struct parameter (guide § the struct ARGUMENT check); over 8 B both already held for
+  the wrapped spelling, and the roadmap listed "`bs1((t))` refused" as this release's decision at the open. A tuple
+  literal's element is read by the same reader, so `((p), 1)` is refused as `(p, 1)` is (it stored the struct's first
+  word: `((u), 3)` exited 10, now "a tuple element is i64, f64 or bool, not struct 'U8'"). `(t.w)`, `(mkt1().w)` and
+  `(x) + 1` are values, as without the parentheses; the right-type wrapped spellings are unchanged (8 → 8);
+  `bs1((o.m()))` was already refused (`_sc_pwrap`). A wrapped argument of the parameter's OWN generic struct carrier
+  (`gw((w))`) binds T and calls the instance — ARG-5r.
+- **How:** parse_fn.cyr `_expr_struct_sid` (shared by `_sarg_byval_small` and the tuple literal's `_tup_elem_val`):
+  `_ess_wrap` takes the parentheses that wrap the WHOLE expression up to its `,` / `)` (`_pwrap_k`, any depth;
+  `_ess_k` of them, `_ess_ie` the innermost `)`), and the three arms read the inside — a name only when it ends at the
+  innermost `)`, a whole call through `_ess_call` (its `)` must be the innermost one: `(mk(7) + a)` / `(mk(7), a)` are
+  not it), a field through `_fpk_want` matched at the wrap's end. Tokens only, before and after the unchanged PCMPE:
+  the emission is byte-identical (corpus). Guide § the struct ARGUMENT check: "Parentheses around the WHOLE argument
+  change nothing … A tuple literal's element is read the same way".
+- **What changes for code that compiles today:** a struct value of ANOTHER type wrapped in parentheses as an argument
+  for a by-value struct parameter of 8 B or less (`bs1((t))`, `bs1((mk(7)))`, `bs1((w.t))`), and a wrapped struct value
+  as a tuple literal element (`((p), 1)`), stop compiling — each passed / stored the other struct's first word. Pass a
+  value of the parameter's own struct, or a pointer (`bs1(&t)` converts), as for the unwrapped spelling.
+- **Gate:** `tests/gates/frontend/struct_arg_type_refused.sh` W1-W13: W1 the filed repro verbatim; W2 `bs1(((t)))`, W3
+  / W4 `bs1((mkt1()))` / `(((..)))`, W5 / W6 `bs1((h.t))` / `(((h.t)))`, W7 a global at top level, W8 a tail call, W9 a
+  method's argument — each refused once, by name, no binary; W10 the declared type wrapped (a local, a call, a field, a
+  method result) accepted (21); W11 `(t.w)`, `(mkt1().w)`, `(x) + 1` stay values (20); W12 / W13 `bs1((mkt1(), 3))` /
+  `bs1((t, 3))` give the tuple literal's refusal only. Ledger in the header: the fix reverted → W1-W9 RED; `_fpk_want`
+  at the wrap → W5 W6; no wrapped-name arm → W1 W2 W7 W8 W9; no wrapped-call arm → W3 W4; `_ess_call` without the span
+  check → W12; the wrapped name taken before a `,` → W13. `tests/gates/frontend/tuple_checked.sh` R8q / R8r (`((p),
+  1)`, `(((mk())), 1)` refused as `(p, 1)` is). `tests/gates/codegen/small_struct_handle_line.sh` C3 flipped from
+  "`bs1((t))` still compiles (6.7.11 owns it)" (exit 7) to refused by name.
+- Closes [`2026-10-08-paren-arg-small-byval-struct-skips-type-check.md`](docs/development/issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md).
+
+#### ARG-6 — a dereference of another struct's pointer into a by-value struct of 8 B or less is refused by name (lane callargs, commit c24273ac)
+
+- **Changed (D36, the user, 2026-10-13: "(a) Refuse by name — … `take8(pu)` keeps the 2026-10-08 pointer rule"):**
+  `take8(*pu)` with `pu: *U8` into `fn take8(s: S8)` compiled and passed U8's bytes (the filed repro exited 7 on
+  x86_64, aarch64, cx and PE) where `take8(u)`, the 16 B `take(*pu)` and `var l: S8 = *pu;` were refused. Now "cannot
+  pass 'pu' to a parameter of a different struct type in a call to 'take8'", for `*pu`, `(*pu)`, `*gp(&u)` (named `u`,
+  as over 8 B), `*gp()` (named `gp`), `*w.pu`, `*(pu + n)`, a tail call, and `*self` in another struct's impl, and into
+  a `Str` parameter (`sl(*pu)` SIGSEGV'd). The pointer itself (`take8(pu)`) still converts, as the user decided on
+  2026-10-08; a dereference of the same struct (`*ps`, `(*ps)`, `*gs(&s)`, `*hp.ps`, `*self`) is accepted; an untyped
+  `*x` is its word; `bs1(*tp + 1)` with `T1_add` returning i64 is a value. Why: decision 6 (6.7.10) says `*p` is a
+  struct VALUE at every size; 6.7.3 refuses a struct value of another type; 2026-10-08's "a typed POINTER converts
+  freely" covers `pu`, not `*pu`; over 8 B and in a declaration `*pu` was already refused (OPS-5's `_dro_check`), so the
+  rule is now size-independent. A generic carrier of the SAME instance through a dereference (`gw(*wp)`) binds T and
+  calls the instance — ARG-5r.
+- **How:** parse_fn.cyr `_sarg_byval_small` asks `_ess_deref(S, st)` when `_expr_struct_sid` found no struct: after the
+  argument's parse, [st, cursor) is one `* E` inside any balanced parentheses (`_ie_unparen`), nothing after it
+  (`_gz_split` -1: `*pu + a` is an operator's operand), E typed `*U` by `_hl_psid`; the refusal names the operand's last
+  name, as `_dro_check` does over 8 B. Token reads only: emission unchanged (corpus byte-identical). The by-value
+  argument only, not the tuple element (staged below). Guide § "A whole dereference is a struct value as an argument":
+  "since 6.7.11 a by-value parameter of 8 bytes or less too".
+- **What changes for code that compiles today:** a dereference of a pointer to ANOTHER struct as an argument for a
+  by-value struct parameter of 8 B or less or a `Str` parameter (`take8(*pu)`, `take8(*w.pu)`, `take8(*self)` in
+  another struct's impl) stops compiling. Pass the pointer (`take8(pu)` converts and copies through it), or copy into
+  the parameter's own struct first.
+- **Gate:** `struct_arg_type_refused.sh` D1-D12: D1 the filed repro verbatim; D2 `bs1((*tp))`, D3 `bs1(*gt(&t))`
+  (names 't'), D3b `bs1(*gtg())` (names 'gtg'), D4 `bs1(*hp.pt)`, D5 `bs1(*(tp + 0))`, D6 a tail call through a `*T1`
+  parameter, D7 `bs1(*self)` in T1's impl, D8 `sl(*tp)` into `s: Str` (139 before) — each refused once, by name; D9 a
+  generic carrier of the same instance through a dereference (`gw(*wp)`) — an acceptance since ARG-5r; D10 the same
+  struct (`*sp`, `(*sp)`, `*gs(&s)`, `*hp.ps`, `*self`, `gw<i32>(*wp)`) accepted (16); D11 `bs1(tp)` converts and an
+  untyped `*x` is its word (99); D12 `bs1(*tp + 1)` with `T1_add` returning i64 is a value (10). Ledger: the fix
+  reverted → D1-D8 D3b RED; no unwrap → D2; no last-name scan → D3 D4 D5; no `_gz_split` test → D12.
+- **Found, not absorbed (staged for filing, placed 6.7.12):** `(*ps, *pw)` as a tuple literal's elements stores each
+  struct's first word (exit 75), where `(s, w)` is refused — decision 6 makes `*p` a struct value (Low, a question).
+- Closes [`2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md`](docs/development/issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md).
+
+#### ARG-7 — an integer constant passed to an `f64` / `f32` parameter warns (lane callargs, commit 4b05d52a)
+
+- **Fixed: a missing warning** (no decision: warn-only, the ADR-002 posture of every other kind-4 site). `f(3)` into
+  `fn f(x: f64)` passed 0x3 — a subnormal, about 1.5e-323, not 3.0 — with no warning; so did an `f32` parameter, a
+  method (`p.m(3)`), a tail call (`return f(3);`), a call to a fn defined below, an `#inline` fn, a named argument and
+  an operator fn's right operand (`p + 3` into `fn P_add(a: P, b: f64)`). Each now prints "an integer stored into an
+  f64/f32 slot keeps its integer bits (write a float literal)", as a declaration, an assignment, a field store and a
+  struct literal have since 6.6.10. The value is unchanged: the filed repro prints exactly its four expected warnings,
+  at lines 11 / 15 / 16 / 17, and still exits 15 on x86_64, aarch64, cx and PE. `0`, a hex IEEE bit pattern at or
+  above 2^52, a float literal and a runtime value stay exempt (a negated literal and an enum constant are judged).
+  Write `3.0`, or `f64_from(n)` for a runtime integer.
+- **How:** the per-parameter row `_fnt_pbool` (util.cyr) gains class 4 = `: f64` (no layout change; the row is lazy).
+  Pass 1 `_bx_pscan` and pass 2 `_bx_ptype` (parse_expr.cyr) record it through a new `_is_f64_name` (the whole name
+  `f64`, not `f64v2`); `_bx_param` stores it (SLBOOL only for class 1). `_bx_pcmpe_arg` — every argument path:
+  `_arg_push_snap` (calls, methods, the tail arm, named arguments) and the `#inline` replay — calls `_IFS_CHECK(S, 1,
+  t)` for class 4 and `_IFS_CHECK(S, 2, t)` before the f32 rounding for class 3; `_bx_op_rhs` (an operator fn's right
+  operand) the same. Guide § "An integer CONSTANT stored into an f64 / f32 slot": an argument is such a slot too.
+- **What changes for code that compiles today:** a new warning; nothing stops compiling and no value changes. lib/,
+  programs/, cbt/ and the corpus print no new warning (the differential corpus, stderr compared).
+- **Gate:** `tests/gates/diagnostics/f64_int_mix_warn.sh` axis 15: the filed repro
+  (`docs/development/issues/repros/2026-10-09-int-argument-to-f64-param-silent.cyr`) verbatim — exactly 4 warnings at
+  lines 11 15 16 17 (the issue's expected lines), exit 15; a program of every path (a tail call; a call, an f32
+  parameter, a method, `#inline`, a forward call; `p + 3` into `b: f64`, `p - 3` into `b: f32`, `f(-3)`, `f(THREE)`,
+  `f(x: 3)`) = 11 warnings, none on `f(0)`, `f(0x3FF0000000000000)`, `f(3.0)`, `g(1.5)`, `f(n)`, `f((3))`, `f(3 + 1)`
+  or an untyped parameter; `CYRIUS_TYPE_CHECK=0` silent. Ledger: the fix reverted → axis 15 prints 0 warnings; pass 1
+  without the f64 class → the forward call missed; `_bx_op_rhs` without the f64 check → the operator line reads 4 for
+  5; the f32 argument arm without `_IFS_CHECK` → the f32 lines missed.
+- Closes [`2026-10-09-int-argument-to-f64-param-silent.md`](docs/development/issues/archived/2026-10-09-int-argument-to-f64-param-silent.md).
+
+#### ARG-8 — a pointer into a by-value struct of 8 B or less: an if-expression of pointers, an integer on the left (lane callargs, commit 6763243a)
+
+- **Fixed: an if-expression whose every branch is a pointer passes the struct it points at.** 6.7.10's B7-1b
+  (decision 7) passes the struct a pointer points at into a by-value struct parameter of 8 B or less, and left two
+  shapes. The first: an if-expression of pointers of DIFFERENT steps — `t7(if (c == 1) { py } else { &s })` with `py:
+  *B7`, `{ &s } else { py }`, a `*T` beside `&x`, a `*B7` beside a `*B4` — merged to no step and passed the address as
+  the struct (168 / 56 / 152 / 136 where 5 is right); and with one step 1, a narrow condition (`if (n == 1)`, `n: i32`)
+  made it a value. It is a pointer now when every branch is one by the compiler's own pointer typing (5 on each row). A
+  pointer beside a value is still the value's word, and the if-expression's own step word, its "assigning non-pointer
+  to typed pointer" warning (`var r: *B7 = if (c == 1) { py } else { &s };` still warns) and `(if ..) - q` (a plain
+  subtraction) are unchanged.
+- **Changed (D37, the user, 2026-10-13: "(a) Yes, extend 1(b) in `_add_word`"): an integer on the LEFT of a one-byte
+  STRUCT pointer is that pointer, as `n + p8` is since 6.7.9.** `t1(m + pb)`, `t1(0 + pb)`, `t1(n + pb)` with `pb:
+  *B1`, `n` an i64, a literal, an `i32` or a `u8`, and a narrow local left of any struct pointer (`t2(n + pb2)`,
+  `bs1(n + sp)`) passed the address's low bytes (80 / 96 / 16 / 208 / 112 where 5 is right). Why: decision 1(b) (6.7.9:
+  `n + p` with a one-byte `*T` is that pointer) predates one-byte structs (6.7.10's packed fields); (a) applies it to
+  them unchanged, which keeps `+` one rule: `m + pb` is that pointer everywhere — `var r: *B1 = 1 + pb;`, `g = m + pb;`
+  and `GB = 2 + pb;` no longer warn, and `(1 + pb) - q32` is refused "pointer difference of pointers with different
+  element sizes", as `(1 + p8) - q32` and `(pb + 1) - q32` already were (it compiled as a byte difference, exit 1).
+  `(1 + pb) - pb` is an element count. The filed repros exited 11 and 1 where 111 is right, on x86_64, aarch64, cx and
+  PE; now 111 on each. The 8 B `S1` form (`bs1(sp)`, `bs1(if (c == 1) { sp } else { &x })`, `bs1(n + sp)`) gives 7 of 7
+  (1 before).
+- **How:** edge 2: parse_expr.cyr `_RHS_T` records the right term's first token (`_rhs_b`, after the parse); `_ptr_add`
+  asks `_add_rb1` when `_add_word` gives no word and the left has none — a right term typed `*T` of a one-byte struct
+  (`_hl_psid`, STRUCTSZ 1) keeps its step-1 word; parse_decl.cyr `_hl_p1` judges the operand that carries the step: at
+  the chain's LAST top-level `+` / `-` (`_hl_lastop`), a `+` whose right operand is typed `*T` of a struct
+  (`_hl_rcarry`) is a pointer, whatever narrow local is on its left (`n + pb`, `n + pb2`, `n + sp`, `n - 2 + pb`).
+  Edge 1, with no merge-word change: `PARSE_IF_EXPR`'s per-expression state grows a ninth word (alloc 72; no heap
+  layout change), "every branch a pointer", cleared by `_ie_kind` for a branch `_hl_parg` calls a value (judged on the
+  branch's own tokens and word, so a narrow condition no longer decides it); `_ie_finish` records the all-pointer
+  if-expression (`_iep_beg` / `_iep_end` / `_iep_cp`); `_hl_parg` answers "pointer" when the argument, inside any
+  parentheses, is exactly that if-expression and nothing was emitted since. `_ps_merge` and the merged word are
+  unchanged. An operator's right operand (`_op_rhs` → `_hl_byval_arg`) given an if-expression of pointers copies too.
+  Guide: the `n + p` paragraph (a one-byte STRUCT pointer) and the by-value pointer paragraph.
+- **Merge note:** on the merged tree the generics + frontend lane's narrow-scalar bite (ee76a3d7, D15: a narrow scalar
+  local loads step 0) writes a kind-less step 1 in `_add_word` itself and folds `_add_rb1` in. With it a NONZERO narrow
+  `n` in `t2(n + pb2)` scales by the element (measured on the merged compiler: `t2(n + p0)` with `n: i32 = 1` reads
+  element 1, 9); on this lane's tree alone `n + pb2` added `n` bytes, and the lane's row uses `n = 0`.
+- **What changes for code that compiles today:** a by-value struct argument of 8 B or less given an if-expression whose
+  every branch is a pointer, or an integer plus a struct pointer with the integer on the left, passes the struct the
+  pointer points at (it passed the address's bits); `(1 + pb) - q32` stops compiling — subtract plain addresses for a
+  byte count (`var a = p;`); `var r: *B1 = 1 + pb;` and the same assignment lose their warning. No in-tree code was
+  affected (differential corpus byte-identical).
+- **Gate:** `tests/tcyr/crossos/small_struct_pointer_arg.tcyr` 69 → 79 rows (the `e_` rows: the table's if-expressions
+  — `py` / `&s2`, `&s` / `py2`, `py` / `&x`, `py` / `pz`, an operator's right operand — on both branches; step-1
+  branches under a narrow `i32` condition; the 8 B `take8(if (c == 1) { sp } else { &x })`; the boundary, a pointer
+  beside the value 5 staying the value's word; `m + pb`, `0 + pb`, `n + pb` (i32), `u + pb` (u8), `z + pb`; the chains
+  `n - 2 + pb`, `m + 1 + pb`; `m + pb2`, `n + pb2`; the 8 B `take8(n + sp)`), run by `small_struct_handle_line.sh` R3 on
+  x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 (qemu) / cx / PE (79 green; R4 111 × 7) and on pi, ecb, ach and cass (79
+  passed, exit 0 on each). Its ledger ("6.7.11 POINTER-EDGES"): the fix reverted → 9 rows RED; ME1 no `_hl_ie_ptr` →
+  the 5 if-expression rows; ME2 the flag never cleared → SIGSEGV (the boundary row); ME3 no `_add_rb1` → `m + pb` / `0
+  + pb` / the chain; ME4 `_hl_rcarry` 0 → `n + pb`, the chain, `n + pb2`, `n + sp`; ME5 the first `+` / `-` → the
+  chain; `_add_rb1` without its size test is an equivalent mutant. `tests/gates/frontend/pointer_subscript_checked.sh`
+  DXs1-DXs5 beside DXc4: `(1 + src) - q32` from a `*B1` local, parameter, global, field and call, and `(m + pb) - q32`,
+  refused (each compiled, a byte difference); `(pb + 1) - q32` refused as before; `var r: *B1 = 1 + pb;`, `g = m + pb;`,
+  `GB = 2 + pb;` silent (they warned); `(1 + pb) - pb` an element count; the if-expression's warning and `(if ..) -
+  q32` unchanged. Its ledger: the fix reverted / MOB3 no `_add_rb1` → DXs1 × 6, DXs3; MOB4 `_add_rb1` keeping any
+  step-1 word → DXn, PL0, PL0s, the PL legs.
+- Closes [`2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md`](docs/development/issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md).
+
+#### ARG-9 — under `CYRIUS_IR=3`, a local stored just before a call is passed as itself, not as a struct's address (lane callargs, commit d93c3321)
+
+- **Fixed (a codegen bug; no decision):** `var o: S8; o.v = 3; var x = 5; return o.with2(x);` exited 35 by default and
+  30 plus the low byte of `&o` under `CYRIUS_IR=3` — an ASLR-dependent value (222 on one run, 206 under `setarch -R`);
+  the `o.same(x)` probe saw `n == self` —, and so did `o.with2(x + 0)`, a by-value struct argument over 8 B before the
+  local (`bs(h, x)`: 214 where 35 is right), a call returning a struct over 16 B (`var b: B = mk(x);`: 168 where 5 is
+  right) and an operator returning a struct through a result buffer (`var o4: OV = na + nb`). x86's `EFLADDR` (`lea
+  rax, [rbp+d]`, the address of a frame aggregate: a method's receiver, a by-value struct argument, a hidden result
+  buffer) recorded no IR node, so LASE took the stored value as still in rax across it and NOP-filled the reload ("1
+  LASE (3B applied)"). It records `IR_RAW_EMIT` now, as `ELOAD_LOCAL_ADDR` (`&o`) always did; the return value is
+  ignored, so the bytes are emitted in every mode. The four filed repros give 35 / 0 / 35 / 5 under `CYRIUS_IR=3`
+  with "0 LASE". With IR off nothing is recorded: the default pipeline, `CYRIUS_IR=1` / `2`, aarch64 and cx (no IR
+  passes) are byte-identical, and PE — where `main_win.cyr` runs `ir_lase` as analysis only and never applies it — was
+  right and is byte-identical (its LASE count goes 1 → 0). Measured wrong from 6.6.0 (the by-value and retptr shapes)
+  and 6.7.0 (the method shape) to 6.7.10.
+- **Scope:** `EFLADDR` only. `EFLADDR_X1` and `EFIELD_LOAD_W`'s negative widths stay with
+  `issues/2026-10-08-ir3-drops-unrecorded-field-emits.md` (6.7.13); the cx and aarch64 `EFLADDR`s are untouched (no IR
+  passes there). The six files left in coverage_mode_corpus's IR=3 "fails both ways" list (8 → 6:
+  `crossos/derive_accessor_widths`, `crossos/ptr_param_bare_struct`, `crossos/struct_field_value_copy`,
+  `derive/derive_enum_inside_ifdef`, `lang/generic_struct_pointer_field`, `lang/ptr_param_small_struct`) are not
+  EFLADDR — pass-bisected: `CYRIUS_DCE_CAP=0` alone cures the five non-derive files, `DSE_CAP=0` or `FOLD_OFF` the
+  derive one, `LASE_OFF=1` all six — that is the class issue's surface.
+- **What changes for code that compiles today:** only the opt-in `CYRIUS_IR=3` output, from a wrong value to the right
+  one. Under IR=3 the differential corpus (951 inputs) moves 159 inputs, 154 of them only in the `ir:` stderr line (the
+  extra node); 5 binaries change — `struct_value_codegen.tcyr` (5 failed → 0), `struct_valued_call_sites.tcyr` (1
+  failed → 57 of 57: the operator shape) and `ptr_param_bare_struct` / `struct_deref_whole_operand` /
+  `struct_field_left_operand` (results unchanged). The self-compile records 605,173 IR nodes under IR=1 and IR=3
+  before and after (cycc's own source reaches no `EFLADDR`; the cap is 1,048,576), and its IR=3 output is
+  byte-identical.
+- **Gate:** `tests/tcyr/crossos/struct_value_codegen.tcyr` group E (E1 `o.with2(x)`, E2 the `o.same(x)` identity probe,
+  E3 `o.with2(x + 0)`, E4 a 16 B by-value `e_bs(h, x)`, E5 `var b: EAB = e_mk(x)` — each shape its own fn, so the store,
+  the `lea` and the reload stay adjacent), run by `struct_value_codegen.sh` A1-A6 (x86_64 / IR=1 / IR=3 / DCE=1 /
+  aarch64 qemu / cx: 151 of 151 on each; PE under wine 152 of 152, default and IR=3); EV1-EV4 the four filed repros
+  VERBATIM (byte-compared against the issue's heredocs), built under `CYRIUS_IR=3` by a new `exits_ir3` helper → 35 /
+  0 / 35 / 5. Mutation M-EV1 (EFLADDR without the record) → RED EV1-EV4 (254 / 1 / 230 / 216) and A3 (E1-E5); A1 A2
+  A4-A6 and B1-B6 green — only IR=3 applies LASE. The red is deterministic: a frame address is 8-aligned, so 30 plus its
+  low byte is never 35.
+- Closes [`2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md`](docs/development/issues/archived/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md).
+
+#### ARG-1r — the struct-result gate gets its PE leg and a row floor (lane callargs, review fix, commit 1ad3decf)
+
+- The review's first must-fix: the issue's acceptance names PE (wine, then cass), and the PE path has code of its own
+  (`_icall_sret` runs after PE's callee push, and its words are counted into ECALLPTR_PE's argc), but
+  `struct_value_codegen.sh` ran `fncall_struct_result.tcyr` only on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx, and
+  FP1-FP9 on x86_64 only — a PE-only misorder was invisible until the release gate's cass leg. Now a private wine prefix
+  under the gate's temp dir (`_wine_down`, torn down on exit) runs FPw1 (the filed repro verbatim, built with
+  `CYRIUS_TARGET_WIN=1`: 18), FPw2 (the 8 B row: 8) and B7 (`tests/tcyr/crossos/fncall_struct_result.tcyr` on PE). B1-B7
+  now require the exact "N passed, 0 failed (N total)" with N derived from the file (one row per `assert_eq(`, 48) and
+  a floor of 48. Without wine the PE legs are one named SKIP (exit 77), as the qemu leg is. Tests only; no src change.
+- **Mutations (measured; the gate run from a one-change copy of the tree with its 2-stage mutant):** `_icall_sret`
+  called BEFORE PE's `if (_TARGET_PE == 1)` callee push → RED FPw1 (exit 5: the result pointer popped as the callee)
+  and B7 (exit 5) only; FPw2 green (8 B pushes no result pointer), every other row and leg green. One `assert_eq(` row
+  deleted from the file → RED "only 47 rows (floor 48)". The real tree: green in 10 s, also under `bash -eo pipefail`.
+- **Found, not absorbed (staged for filing, placed 6.7.12):** the A rows (`struct_value_codegen.tcyr`) still pass on any
+  " 0 failed" — a gutted values file passes; their count is target-dependent (152 in the source, 151 on every A leg: F21
+  sits under `#ifdef CYRIUS_TARGET_WIN`). Pre-existing since the gate's 6.7.6 A rows.
+- Part of [`2026-10-12-struct-result-through-fn-pointer-faults.md`](docs/development/issues/archived/2026-10-12-struct-result-through-fn-pointer-faults.md) (its acceptance item 3).
+
+#### ARG-5r — a whole-argument wrap and a whole dereference bind a generic struct carrier's T, as the plain spelling does (lane callargs, review fix, commit 0ba73e69)
+
+- ⛔ **A refusal ARG-5 / ARG-6 introduced beyond D35 / D36, fixed before the tag** (the review's second must-fix). With
+  `fn gw<T>(w: W1<T>)`, `w: W1<i32>` and `wp: *W1<i32>`, the struct-carrier inference (`_gsc_arg`) read neither a
+  whole-argument wrap nor `* E`, so `gw((w))`, `gw((mkw(6)))` and `gw(*wp)` resolved to the generic BASE (`w: W1`), and
+  ARG-5's / ARG-6's new arms compared `W1<i32>` with `W1` and refused them "a different struct type" — an argument of
+  the parameter's OWN generic struct, which neither decision covers. Through 6.7.10 those 8 B spellings compiled and
+  called the i64 base, which read `W1<i32>` with `W1<i64>`'s layout (with `w.v = -6`, `if (w.v < 0)` tested
+  non-negative: 2 where 1 is right); over 8 B `gx((b))` and `gx(*bp)` were refused as "a different struct type" (the
+  wrap since 6.7.6, `*bp` since 6.7.10). Now `gw((w))`, `gw(((w)))`, `gw((mkw(-6)))`, `gw((GW))`, `gw(*wp)` and
+  `gw((*wp))` call `gw$i32` (1, on x86_64, aarch64, cx and PE), and over 8 B `gx((b))`, `gx(*bp)`, `gx((*bp))`,
+  `gx(*gp())`, `gpx((b))` / `gpx((&b))` call `gx$Pt` (8). A wrapped / dereferenced struct of ANOTHER type stays refused
+  (`gw((t))`, `gw(*tp)`, the same text); a tuple literal (`gx((b, 3))`, `gw((w, 3))`) binds nothing (its refusal
+  unchanged); `gw<i32>((w))` / `gw<i32>(*wp)` 11 → 11; `gw(*wp + 1)` "undefined W1$i32_add" unchanged. No decision:
+  D35 / D36 refuse a value of another struct type; 6.7.6 made a whole-argument wrap transparent and 6.7.10's decision 6
+  made `*p` a struct value, and 6.7.8 / 6.7.9 bind T from the argument's instance or from what its pointer points at —
+  the inference now reads through the same two spellings the struct check does.
+- **The pair scans too (a sibling path beyond the review's text, found before committing):** the token mirror of this
+  inference, `_tok_gen_sc_sid` (parse.cyr), reads the same two spellings — `_pwrap_in`, and `_tok_sc_deref` for `*name`
+  of a local / parameter declared `: *G<.., X, ..>` (a value's `*b`, a global, a call or a chain answer 0: a missed
+  flag, never a false one). With the inference arms alone, `fn sc_unbw(n, d) { .. var p = unbox((b)); return
+  p.hbx(d); }` below a `?` caller exited 139 (the scans missed p's type — 6.7.9's MG10 shape), a shape refused at
+  compile time before; with the mirror it is right on x86_64 / aarch64 / cx / PE.
+- **How:** parse_fn.cyr `_gsc_arg` (`_gen_infer_sc`) gets two arms at its head: `(` → `_gsc_wrap` (the inside of
+  parentheses wrapping the WHOLE argument, `_pwrap_in`, then `_gsc_arg` on it) and `*` → `_gsc_deref` (the argument's
+  end by `_arg_next`; nothing after the dereference, `_gz_split` -1; the pointee by `_hl_psid`, exactly as `_ess_deref`
+  reads it). parse.cyr: `_pwrap_in` (new, beside `_pwrap_k`: the wrap's inside, `a` when it opens none, -1 for `(x) + 1`
+  or a tuple literal). Guide: the Generic Functions carrier paragraph ("Parentheses around the WHOLE argument and a whole
+  dereference of such a pointer bind `T` as the plain spelling does (6.7.11) …").
+- **What changes for code that compiles today:** a generic struct carrier of 8 B or less given its argument in
+  parentheses or as a whole dereference calls the instance (`gw$i32`) — through 6.7.10 it called the i64 base and read
+  the struct with the base's layout; over 8 B `gx((b))` / `gx(*bp)` compile (refused before). The differential corpus
+  (951 inputs) is identical for every input but `generic_struct_inference.tcyr` (its new G11 rows) — no lib/,
+  programs/, cbt/ or corpus behaviour moved.
+- **Gate:** `struct_arg_type_refused.sh` D9 flipped from a refusal to an acceptance (`gw(*wp)` / `gw((*wp))` with `w.v
+  = -6` into `fn gw<T>(w: W1<T>) { if (w.v < 0) return 1; return 2; }` → 11, controls `gw(wp)` / `gw(w)`); G1 `gw((w))`,
+  `gw(((w)))`, `gw((mkw(-6)))`, `gw((GW))` → 111; G2 (16 B) `gx((b))`, `gx(*bp)`, `gx((*bp))`, `gx(*gpb())`, `gxp((b))`
+  → 40; G3 `gw((t))` / G4 `gw(*tp)` of ANOTHER struct stay refused by name; G5 `gx((b, 3))` the tuple literal's refusal
+  naming the base — the gate 95 rows (65 refusal, 30 acceptance; was 90). `tests/tcyr/crossos/generic_struct_inference.tcyr`
+  G11 (10 rows: `gx((b))`, `gx(*bp)`, a `*Box<Pt>` parameter in tail position, a wrapped call, `gpx((b))` /
+  `gpx((&b))`, `gsz((bi))` / `gsz(*bip)` (`gsz$i32`), `var u = unbox((b));`, `unbox(*bp).y`, the `?` above a wrapper
+  typed through `unbox((b))` / `unbox(*bp)`): 195 rows on x86_64 / aarch64 / PE, 194 on cx (cx_crossos_rows_run.sh
+  derives the count). Mutations (one-change copies of the fixed src built by the fixed compiler): `_gsc_arg` without its
+  `(` arm → RED D9 G1 G2, the tcyr does not build; without its `*` arm → RED D9 G2, the tcyr does not build;
+  `_pwrap_in` without its tuple test → RED G5 (names 'gx$Pt'); the pair scans' wrap or `*name` arm dropped → the tcyr
+  rc 139 (G11's `?` rows; MG12 in its header); `_gsc_deref` without `_gz_split` → no row (an operator on a generic
+  instance's value dispatches `W1$i32_add`, which no source can define, so `gw(*wp + 1)` is refused either way; the test
+  keeps `*wp + 1` from being read as `*(wp + 1)` — recorded in the gate header).
+- The lane's staged `2026-10-14-generic-carrier-binds-no-t-through-dereference.md` (ARG-6's: `gx(*bp)` / `gw(*wp)`
+  call the base and are refused) is resolved by this commit and was withdrawn from staging.
+- **Found, not absorbed (met in this fix, pre-existing on the slot-open compiler; staged for filing, placed 6.7.12):**
+  `take(*(&p))` / `var q: P3 = *(&p);` for a struct over 8 B exit 139 on x86_64 / aarch64 (cx 1 / 252) — `_hl_psid` does
+  not type `&x`, so the dereference is an untyped word used as the struct's address (Medium).
+- Part of [`2026-10-08-paren-arg-small-byval-struct-skips-type-check.md`](docs/development/issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md)
+  and [`2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md`](docs/development/issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md).
+
+#### callargs lane — the lane gate
+
+- `build/cycc` == cycc(src) (cmp; 2,139,400 B). Across the lane, 2,114,376 B at slot open → 2,126,960 (ARG-1, ARG-2) →
+  2,131,160 (ARG-3, ARG-4) → 2,135,304 (ARG-5 – ARG-8) → 2,135,304 (ARG-9: its four bytes of code fall in padding) →
+  2,139,400 (the review fixes), +25,024 B. Seed-derive (`sh scripts/seed-derive-cycc.sh`) after every issue and after
+  the final src change: "OK: build/cycc is machine-derivable from the 29024-byte seed".
+- `scripts/check.sh` on the final tree (`CYRIUS_CHECK_JOBS=4`, TMPDIR on disk): "shell gates: 480 of 480 produced a
+  result, 0 NOT RUN · failures: 1 (the check binary counts as one row here) · skipped: 2" — the one failure is
+  `programs/checks` (130 passed, 1 failed of 131), red only on `doc-stamp` / `doc-stamp currency` (state.md's cycc row
+  cites the slot-open 2,114,376 B against the lane's uncommitted 2,139,400 — the integration restamps it); SKIPPED
+  `tests/gates/platform/agnos_sysinfo_tail_parity.sh` and `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` (exit
+  77, as before). In that run struct_value_codegen ran FPw1 / FPw2 / B7 under wine (48 rows), struct_arg_type_refused
+  95 / 95, cx_crossos_rows_run 60 / 60 (generic_struct_inference 195 native), coverage_mode_corpus 577 .tcyr plain and
+  instrumented (IR=3's "fails both ways" list at 6, ARG-9's). Per unit, check.sh was green but the same doc-stamp row;
+  met and rerun: `embed_build` axis 6 (a timing ratio, red once under the box's parallel load, green alone),
+  `bench_timer_floor` (flaked once under a 37-gate parallel run, green alone and inside check.sh), and
+  `tcyr_epilogue_shape` (the two new ARG-3 / ARG-4 crossos files called `main()` at top level, so the epilogue ran it
+  again — renamed `pf_rows` / `sp_rows` inside the two commits, the gate green).
+- The per-file exit loop over every .tcyr the lane added or changed (compilers built from the lane tree):
+  fncall_struct_result 48 / 48, generic_struct_inference 195 / 195 (cx 194 / 194), param_type_pointer_forms 23 / 23,
+  simd_indirect_receive 30 / 30, simd_pointer_param 29 / 29, small_struct_pointer_arg 79 / 79, struct_value_codegen
+  151 / 151 — exit 0 on x86_64, aarch64 (qemu) and cx (cxvm) each; PE (wine) by hand for generic_struct_inference
+  (195 / 195) and through B7 for fncall_struct_result.
+- The differential corpus after every bite (949-951 inputs: the 7 src forks, every tests/ .tcyr / .cyr / .scyr /
+  .smcyr, programs/, benches/, fuzz/, cbt/cyrius.cyr, lib/; raw `cycc <`, the previous bite's compiler against this
+  one's, binary + rc + stderr): byte-identical for every input but the files a bite itself edited — no binary, exit code
+  or diagnostic moved in lib/, programs/, cbt/ or the corpus (ARG-9: identical on the default pipeline; under IR=3 as
+  above). `cyrius fmt --check` clean; lint counts unchanged.
+- Hardware (cross-built from the lane tree; remote dirs removed): fncall_struct_result 48 / 48 and
+  simd_indirect_receive 30 / 30 (ARG-1, ARG-2), param_type_pointer_forms 23 / 23 and simd_pointer_param 29 / 29
+  (ARG-3, ARG-4), small_struct_pointer_arg 79 / 79 (ARG-8), exit 0 on each of pi (aarch64 ELF), ecb (arm64 Mach-O,
+  ad-hoc signed), ach (x86_64 Mach-O) and cass (PE, under `C:\cyrius-tests`). Not run on hardware in the lane:
+  struct_value_codegen.tcyr's group E (ARG-9) and generic_struct_inference.tcyr's G11 (ARG-5r) — the release gate's
+  cross-OS leg runs both. Not run in the lane: `scripts/release-gate.sh`, `cyrius pulsar`.
+
+### Language — struct copies and struct operators (the struct lane)
+
+Twenty-one bites and one review fix on `5fb211da` (branch `l6711-struct`, merged at `ede93818` with every sha intact):
+6.7.10's decisions 5 / 6 applied to the struct-copy shapes they missed (D1–D4 and the shapes no decision was needed
+for), and the struct-operator results (D38–D44). Every src change is in `src/frontend/` (which cybs compiles): at
+each commit the cycc fixpoint was byte-identical, `scripts/seed-derive-cycc.sh` was OK and `cybs_call_arity_named.sh`
+passed. The lane's fixpoint went from
+2,168,800 to 2,189,824 B (+21,024; not committed: the merge's rebuild, with the generics + frontend lane, is
+2,223,320 B, `515117a9`).
+
+#### ST-1 — a dereference of a struct under 8 B reads the struct, no byte past it (lane struct, commit cf5838db)
+
+- **Fixed (no decision needed: the triage's "fix to what the source says"): a dereference `*p` of a struct of 1..7
+  bytes reads exactly the struct.** Through 6.7.10 `_deref_read` loaded 8 bytes at `p` whatever the struct's size
+  (`ELOAD64`; only a narrow scalar `*T` was read at its width), so every consumer that used a small `*p` as a value
+  read up to 7 bytes past the object: a global declared from it, in the declaration zone and after it and in every
+  spelling (`(*p)`, `*gp()`, `*(p + 0)`, `*w.p`), `G = *p`, `l = *p`, `f(*p)` by value or into a `*S`, `return *p`,
+  and `*p + a`. When the object ended a mapping that was a SIGSEGV (x86_64 and aarch64, every size 1..7; 8 B was
+  right); otherwise the bytes after the object landed in the value's padding (`load8(&G + 3)` of a 3-byte G read
+  `'D'`). Only the local declaration `var l: S3 = *p;` was byte-exact (6.7.10's `_sci_dexpr`); on 6.7.9 every row
+  faulted, that one included.
+- **How:** `_deref_read` (parse_expr.cyr) asks the new `_deref_small` before its `ELOAD64`: an operand typed `*T` by
+  `_hl_psid`, T a struct of 1..7 bytes (its pointer step; not `Str` / tuple / dyn), is read by `_hl_pval_ra` — one
+  load at 1 / 2 / 4 B, else a byte copy into a temp whose word is loaded — whether `_dlo_park` parked it or not, so
+  `take(*p)` into a `*S` and `*p + a` stop running the 8-byte load too. `_hl_pval_ra` (parse_decl.cyr) takes a `z`
+  flag that zeroes its frame temp before the copy, so the word's padding is 0 in a fn as it already was at top level:
+  the dereference and the operator operand's reload (`_opd_operand`) pass 1; the by-value `self` and the
+  pointer-into-a-by-value-parameter paths pass 0 (unchanged; filed below). Guide: the ⚠ known-defect note under *A
+  struct-typed field or a `*T` dereference is a LEFT operand too* keeps only the whole-field case, and the
+  whole-dereference paragraph says a dereference under 8 B reads exactly its struct.
+- **Rows:** `tests/gates/codegen/small_struct_handle_line.sh` PX — a generated program per size 1..8 (N i8 fields, the
+  object ending a mapping) running every consumer: zone globals from `*Q`, `(*Q)`, `*gq()`, `*(Q + 0)`, `*WQ.p`,
+  `f(*Q)`; late globals from `*P`, `(*P)`, `*gp()`, `*(P + 0)`; `G = *P`; by-value and `*S` arguments; locals declared
+  and assigned from it; `return *P` / `return (*P)` in a fn — on x86_64 and qemu-aarch64 (16 rows).
+  `tests/tcyr/crossos/struct_deref_whole_operand.tcyr` +20 `z` rows (3 / 5 / 6 / 7 B: the byte after the object and
+  the last field, zone and late globals, by-value arguments in a fn and at top level, `return *p` received, a frame
+  dirtied first), R10 floor 58 → 78. Mutants: MX1 (`_deref_small` answering 0) RED 21 (PX 1..7 B exit 139 on both
+  legs, R10 20/78 ×7); MX2 (no zeroing) RED 7 (R10 8/78 ×7).
+- **Measured** (the filed repro verbatim, compilers built from each tree): rows 1–9 exit 139 → 65, the control
+  65 → 65, the padding row 68 → 0, on x86_64 and aarch64 (qemu); PX 1..7 B 139 → 0 on both, 8 B 0 → 0;
+  struct_deref_whole_operand.tcyr 58/78 → 78/78 on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64 (qemu), cx (cxvm) and PE
+  (wine). Binary differential over tests/tcyr + programs/: besides the bite's own file only
+  `crossos/struct_field_left_operand.tcyr` compiles differently (its 1 / 3 / 7 B dereference operands, now byte-exact;
+  R6 green on every leg).
+- **What changes for code that compiles today:** nothing stops compiling. A program that read the bytes past a small
+  struct's dereference through its word — `load64(&G)` of a `var G: S3 = *p;`, a hash over the 8-byte cell, an untyped
+  `var w = *p;` compared as an integer — now sees 0 there.
+- **Filed, not fixed:** a whole 3 / 5 / 6 / 7 B struct-typed FIELD used as a value (`take(w.s)`, `return w.s`, `w.s +
+  w.s`, a top-level `var G: S3 = GW.s;`) is still an 8-byte load — SIGSEGV at a mapping's end on x86_64 and aarch64
+  (`docs/development/issues/2026-10-14-small-struct-field-value-reads-past-the-object.md`); a by-value `self` from a
+  `*S` receiver, a `*S` into a by-value parameter and `return q;` with `q: *S3` a parameter carry frame garbage in the
+  word's padding (`…/2026-10-14-small-struct-byvalue-word-padding-from-frame.md`); `var v: S = if (c) { *p } else {
+  *q };` binds a handle to the word `*p` read (`…/2026-10-14-dereference-as-if-expression-branch.md`, with a decision
+  note for the over-8 B branch).
+- Closes [`2026-10-12-small-struct-dereference-reads-past-the-object.md`](docs/development/issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md).
+
+#### ST-2 — an assignment from a struct dereference copies the struct (lane struct, commit 42a0b63a)
+
+- **Fixed (no decision needed: 6.7.10's decision 6 makes `*p` a struct value, and the declaration already copied
+  it): `l = *p`, `G = *p`, `o.s = *p` (through a `*O` too) and `q = *p` into the pointee of a `*S` or a handle copy the
+  struct, in every spelling — `(*p)`, `((*p))`, `*(p + 0)`, `*gp()`, `*w.p` — in a fn, at top level and in a for
+  step.** Through 6.7.10 each parsed `*p` as an expression and stored its first word: `l.b` stayed stale (50 in the
+  filed repro where 58 is right; `{5, 0, 0}` at 24 B), and `q` was REBOUND to the word with its pointee untouched
+  (100), with a false "assigning non-pointer to typed pointer" warning on `l = *p` and `q = *p`. A `*U` of another
+  struct is refused by name (*cannot copy 'pu' into a variable of a different struct/vector type: 'l'*; *... into a
+  struct field of a different struct type: 'v'*). A `*S` GLOBAL destination copies into its pointee too (`GP = *p`;
+  ST-8).
+- **How:** a name destination: `_try_aggregate_copy_assign` (parse.cyr) sends a `*`-led source to the new
+  `_asg_dstar` (before the name-source exit; `(*p)` reaches it through `_asg_paren`): the source up to its terminator
+  is ONE dereference typed `*S` (`_hl_dstar_t`) and the destination a struct operand, so the pointer is parked
+  (`_hl_dx_src`) and `_agc_copy_bytes` copies STRUCTSZ bytes into an inline local, a value global, a by-value
+  parameter, or — through `_AGC_DREF` — the pointee of a `*S` local / parameter or a handle (as `q = l` does); at top
+  level from the hidden-global temp. It returns before PCMPE, so the false warning is never reached. A field
+  destination: `_fsc_src` (parse_decl.cyr) sends it to `_fsc_dstar` (the same typing; another struct is
+  `_fsc_type_err` by name), which records the parked pointer as the copy's source (`_fsc_hsrc`, the helper ST-3
+  shares) for `_fsc_copy`. `_hl_dstar` became `_hl_dstar_t(S, ti, term)`, and `_hl_dx_end` ends a source at its `;` or
+  at the first unopened `)` (a for step, a wrapped source); `Str` / tuple / dyn keep their paths (`_dx_plain`). Guide:
+  the ⚠ known-defect note in the handle-line section keeps only the field-from-a-`*T`-source case (closed by ST-3),
+  and a new sentence documents the copy.
+- **Rows:** new `tests/tcyr/crossos/struct_deref_assign_copy.tcyr` (76: at 3 / 8 / 16 / 24 B `l = *p`, `G = *p`
+  with a guard global, `o.s = *p` with a guard field, `q = *p` into a `*S`'s pointee (q not rebound), the controls `q =
+  l` and `var d = *p`, `(*p)`, `((*p))`, `*(p + 0)`, `*gp()`, `*w.p`, `po.s = *p` through a `*O`, for steps, a handle,
+  a `*S` and a by-value parameter; top level `G = *P`, `G = (*P)`, `GO.s = *gp()`, a handle global), run by
+  small_struct_handle_line.sh R11 (new, floor 76) on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and PE;
+  `tests/gates/frontend/struct_copy_source_type_refused.sh` R17–R23 (a `*U` refused by name: `l = *pu`, `r.v = *pu`,
+  top-level `G = (*PU)`, `l = *gu()`, `q = *pu` into a `*Pt`, the for steps — each the one error, no binary) and A4 / A5
+  (`l = *p` / `q = *p` with no warning). Mutants: the tree before (cf5838db) RED (R11 42/76 ×7, 9 refusal-gate rows);
+  MA1 `_asg_dstar` off RED (R11 36/76 ×7; R17, R19–R22, A4, A5); MA2 `_fsc_dstar` off RED (R11 8/76 ×7; R18, R23).
+- **Measured** (the filed repro verbatim, compilers built from each tree): `l = *p` 50 + warning, `G = *p` 50, `o.s
+  = *p` 50, `q = *p` 100 + warning → 58 ×4 with no warning, the two controls 58 / 58, on x86_64, aarch64 (qemu), cx
+  (cxvm) and PE (wine); struct_deref_assign_copy.tcyr 76/76 on every leg. Hardware at this commit: ecb, ach, cass and
+  pi `SELFHOST_OK` and crossos "ran 282 passed, 0 failed".
+- **What changes for code that compiles today:** `l = *p` / `G = *p` / `o.s = *p` copy the whole struct (they kept
+  the first word), and `q = *p` with `q` a `*S` or a handle writes the struct into q's pointee instead of rebinding
+  `q`. `l = *pu` / `o.s = *pu` / `q = *pu` with `pu` a `*U` of another struct stop compiling.
+- Closes [`2026-10-13-assignment-from-struct-dereference-copies-one-word.md`](docs/development/issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md).
+
+#### ST-3 — a struct-typed field from a `*S` global, a `: *S` call or a `*S` field copies the struct (lane struct, commits 7a9938e8 + 3fc1dbbb)
+
+- **Fixed (no decision needed: decision 6 already makes these sources copy, and the name destination does since
+  6.7.10's OPS-3): a struct-typed FIELD destination from a `*S` global, a call or method declared `: *S`, a `*S` field
+  or pointer arithmetic on one copies the struct the pointer points at** — `o.s = GP`, `o.s = gp()`, `o.s = w.p`, `o.s
+  = GP + 0`, `o.s = (gp())`, through a `*O` (`po.s = GP`), at top level and in a for step. Through 6.7.10 the field kept
+  the POINTER word at every size, silently (100 in the filed repro where 58 is right). A `*U` of another struct is
+  refused by name (*cannot copy 'GU' into a struct field of a different struct type: 's'*).
+- **How:** `_fsc_src` (parse_decl.cyr) asks the new `_fsc_psrc` first (after the dyn / `Str` exits, before the paren
+  dispatch, so a wrapped source and `(GP) + 0` reach it): the source up to its terminator, typed by `_hl_psrc` (a `*S`
+  local, parameter or capture stays `_fsc_name`'s); `ps != ft` is `_fsc_type_err` by name; otherwise the source is
+  parsed, its pointer parked (`_HTEMP` / `_HTSTORE`) and recorded by ST-2's `_fsc_hsrc`, and `_fsc_copy` copies
+  STRUCTSZ bytes into the field — directly, through a `*O`, at top level, in a for step. A parsed source whose pointer
+  step is not the struct's falls back to the value store, as `_hl_psrc_copy` does. `3fc1dbbb`:
+  `tests/gates/codegen/hidden_temp_census.sh`'s axis 3 counts the new scratch slot (`_fsc_psrc:1`, 26 → 27 sites; the
+  tree without the arm reads `want 1 got 0`). Guide: the handle-line ⚠ note is replaced by the rule; the *struct-typed
+  FIELD is a copy destination* paragraph lists the sources.
+- **Rows:** `tests/tcyr/crossos/struct_pointer_source_copy.tcyr` +13 (60: `o.s = GP`, `gp()`, `w.p`, `GP + 0`,
+  `(gp())` at 8 / 16 / 24 B, directly and through a `*O`, for steps, top level, a guard field after `s`), run by
+  small_struct_handle_line.sh R9 (floor 47 → 60) on all seven legs; struct_copy_source_type_refused.sh R24–R29 (`r.v =
+  PU`, `gu()`, `w.pu`, `(PU + 0)`, top level `GR.v = PU`, a for step `r.v = gu()` — each the one error naming the
+  source) and A6 (the declared type compiles with no warning). Mutant MF1 (`_fsc_psrc` answering 0) RED: R9 12/60 ×7,
+  7 refusal-gate rows.
+- **Measured** (the filed repro verbatim): `o.s = GP` 100 → 58, `o.s = gp()` 100 → 58, `o.s = w.p` 100 → 58, the
+  controls 58 / 58, on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); struct_pointer_source_copy.tcyr 48/60 → 60/60
+  on every leg. Corpus differential (688 files): only the bite's test file.
+- **What changes for code that compiles today:** a struct-typed field assigned from a `*S` global, a `: *S` call or
+  method, a `*S` field or `GP + n` holds the struct the pointer points at (its first word held the address). The same
+  sources typed `*U` of another struct stop compiling.
+- **Filed, not fixed:** a ZERO-size struct field from these sources (`o.s = GP` / `gp()` / `(GP)` / `mk()` with `s: E`)
+  still moves a word over the next field — pre-existing; `_fsc_psrc`'s step test lacks the zero-size arm its siblings
+  got in ST-8 (`docs/development/issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md`).
+- Closes [`2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md`](docs/development/issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+
+#### ST-4 — a generic call declared `: *T` is a struct source (lane struct, commit dce13af1)
+
+- **Fixed (no decision needed: the guide listed it as a known defect, and the non-generic `fn gp(): *S` copies in
+  every position since 6.7.10): a generic call declared `: *T` is a struct source, with T bound by its type arguments
+  or inferred from its arguments** — `l = gpg<S>()`, `var q: S = *gpg<S>()`, `take(*gpg<S>())`, `a - *gpg<S>()`,
+  `*gpg<S>() + a`, `gpg<S>().v`, `o.s = gpg<S>()`, `l = *gpg<S>()`, in a fn, inside another generic's instance and at
+  top level (a declaration-zone global included). Through 6.7.10 the instance recorded T's pointer step but not its
+  struct and the chain typer skipped a generic call: the pointer word was stored (102 in the filed repro), the
+  dereferences SIGSEGV'd (cx a guest fault, PE exit 5), and `gpg<S>().v` was refused *it does not return a struct*. A
+  `*U` instance into an `S` destination is refused by name, naming the call (*cannot copy 'gug' into a variable of a
+  different struct/vector type: 'l'*); a declaration-zone global over 8 B from a generic fn declared below it is
+  refused by name (*cannot copy-init 'Z' from a dereference of a global or fn declared below it (declare it first):
+  'gpg'*), as the non-generic `*gp()` is — it SIGSEGV'd.
+- **How:** `_ret_ptr_record` (parse_types.cyr) reads the return through the new `_ptr_ann_sid_tp`: a `*T` whose T is
+  a type parameter bound to a struct (`_tp_resolve`) names that struct, a scalar binding none, so a generic INSTANCE's
+  `_fn_rpsid` is T's struct (read by `_call_ptr_field`, `_dyn_sfn`, `_sub_ret_sid`); `_ptr_tok_sid` (locals, fields,
+  globals) is unchanged. `_hl_pchain` (parse_decl.cyr) types `g<..>(` / `g(` with the new `_gen_call_psid`: the base's
+  `): *T` annotation read under the binding the call instantiates with (explicit type arguments, or `_gen_infer_tp`'s
+  inference, as `_gen_resolve_call` computes them) WITHOUT instantiating — the typer runs before the call's parse and
+  in pass 1, where instantiating would emit an instance; the instance then records the same struct. `_call_ptr_field`
+  parses an explicit `g<..>(..).f` as the factor does. `_hl_lastnm` — the name a refusal quotes — skips a generic
+  call's type-argument list (`*gug<U>()` names `gug`, not `U`) in `_hl_dstar_t`, `_hl_pnm`, `_ess_deref` and
+  `_dro_check`. Every `_hl_psid` consumer — the 6.7.10 copy arms, ST-1's `_deref_small`, ST-2's / ST-3's arms,
+  `_dlo_park`, `_ret_lopd` — covers the generic form with no change of its own. Guide: the ⚠ known-defect note is
+  replaced by the rule.
+- **The inferred form:** the brief's `gpi(&GS)` (`fn gpi<T>(x: *T): *T`) runs the i64 BASE — `&GS` infers T = i64
+  through an `x: *T` parameter, so no instance with T = S exists and typing its result `*S` would change which fn the
+  call runs. The inferred rows use the forms that infer T = S: `gpi(p)` with `p: *S` and `gpv(GS)` with `fn gpv<T>(x:
+  T): *T`. The inference rule is filed as a decision (below).
+- **Rows:** new `tests/tcyr/crossos/generic_ptr_struct_source.tcyr` (72: the seven filed positions at 8 / 16 / 24 B
+  for `gpg<S>()`, `gpi(p)` and `gpv(G)`; this release's copy arms with the generic call, wrapped, `+ 0`, two type
+  parameters `gp2<S, i64>(3)`, a guard field; inside another generic's instance; top level — a zone `var Z: S =
+  *gpg<S>();`, `G = gpg<S16>()`, `G = *gpg<S24>()`, `o.s = gpg<S24>()`, `gpg<S16>().w`; each copy proven by a write to
+  the pointee after it), run by small_struct_handle_line.sh R12 (new, floor 72) on all seven legs;
+  `tests/gates/frontend/generic_struct_field.sh` P1–P7 (the filed repro VERBATIM: 8, 58, 58, 41, 69, 5, 58), PF1–PF3
+  (the field form at top level, through a chain `gpw<WP>().p.w`, inferred `gpi(p).w`), PR1–PR7 (a `*U` instance
+  refused by name, naming the call, in seven positions), PB (the zone global above `gpg`, 16 B). Mutants: the tree
+  before RED 17 (R12 does not build ×7); MP1 `_hl_pchain` without the generic arm RED 13 (R12 exit 139 ×5, cxvm out of
+  range, PE a crash); MP2 `_ret_ptr_record` without the binding RED 4; MP3 `_call_ptr_field` without the explicit arm
+  RED 3; MP4 `_hl_lastnm` without the type-argument skip RED 8.
+- **Measured** (the filed repro verbatim, 16 B): x86_64 and aarch64 (qemu) 102 / 139 / 139 / 139 / 139 / refused /
+  58 → 8 / 58 / 58 / 41 / 69 / 5 / 58; cx (cxvm) 102 / 1 ×4 (guest fault) / refused / 58 → the same; PE (wine) 102 / 5
+  ×4 / refused / 58 → the same. The inferred `gpi(p)`, `gpv(GS)`: 102 / 139 ×4 / refused / 58 → 8 / 58 / 58 / 41 / 69
+  / 5 / 58 (x86_64). generic_ptr_struct_source.tcyr: does not build → 72/72 on every leg. Corpus differential (688
+  files): 0 differ.
+- **What changes for code that compiles today:** `l = gpg<S>()` copies the struct (it stored the address);
+  `*gpg<S>()` as a declaration, argument or operand reads the struct (it crashed); `gpg<S>().v` compiles. A generic `:
+  *T` instance of ANOTHER struct into an `S` destination stops compiling (it stored / passed U's word), and so does a
+  declaration-zone global over 8 B from a generic fn declared below it (it crashed).
+- **Filed, not fixed:** a fn-local `var h: S = gpg<S>();` (a handle from a generic `: *T` call) loses its annotation —
+  `h.v` refused *no struct type in scope* (PARSE_VAR's generic receive lookahead; PARSE_VAR is at cybs's ceiling)
+  (`docs/development/issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md`); a DECISION:
+  a `*S` LOCAL binds a generic's T = S through an `x: *T` parameter (and, against the guide, through an `x: T` one),
+  while `&G` and a `*S` global / field / parameter infer i64 and run the base
+  (`…/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md`).
+- Closes [`2026-10-13-generic-pointer-returning-call-as-struct-source.md`](docs/development/issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md).
+
+#### ST-5 — a top-level copy-init from a field reached through a pointer copies (lane struct, commit bcca83f9)
+
+- **Fixed (no decision needed: 6.6.12 defines the declaration as a copy, and decision 6 makes copies
+  size-independent): a top-level `var G: S16 = P.s;` with P a `*W` global, `= (P.s)`, `= gp().s` (`fn gp(): *W`, a
+  generic instance's too) and `= VV.p.s` (through a `p: *W` field) copy the field, at any size over 8 B, in the leading
+  declaration block and after the first statement.** Through 6.7.10 G was a one-slot pointer-mode global holding the
+  field's first word, and the first `G.v` SIGSEGV'd (x86_64 and aarch64; PE exit 5; cx "guest address out of range:
+  4"), while the same line in a fn, a fn-side `G = P.s;`, an inline base (`= A.s`) and an 8 B field all copied (6.6.20
+  – 6.7.10 measured). A leaf of another struct type is refused by name, as from an inline base; a source pass 1 cannot
+  type — a `*T` global, a holder or a callee declared below G in the leading block — is refused by name (*cannot
+  copy-init 'G' from a global declared below it (declare the source first)* / *from a field of a call to a fn declared
+  below it (declare the fn first): 'gp'*) — never the value store.
+- **How:** `_gci_src` (parse_decl.cyr) — the one predicate pass 1's `_gci_inline`, the replay's `_gci_init` and
+  PARSE_VAR's `_gci_toplevel` ask — starts the field chain from a `*T` global's T (`_gv_ptr_sid`) when `.` follows (a
+  bare `P` keeps its path: the guide's "not settled" row) and from a call's T (`_gci_call`: `f(..).` / `g<..>(..).`
+  whose fn is declared `: *T`, `_hl_fn_psid`, or a generic's `_gen_call_psid`; a struct-VALUE return stays the
+  top-level-call refusal it was); `_gci_chain` steps through a `*T` field (`_fld_ptr_sid`) when `.` follows. Pass 1
+  then registers G inline and `_gci_take_in`'s armed field record copies through the hops (a top-level hop parks in a
+  dead global, `_ptr_park`) — byte-exact, measured with a 12 B guard. `_gci_below` now names a call, and for a
+  wrapped source the name inside the wrap. Guide: the *top-level copy-init* paragraph lists the through-pointer
+  sources and the call refusal.
+- **Rows:** `tests/tcyr/crossos/struct_field_value_copy.tcyr` +15 (111: in the leading block `GZP.v`, `(GZP.v)`,
+  `gzb().v`, `GZV.p.v`, a 24 B `GZR.q`, a 12 B `GZT.t` with an i32 guard packed after it and an i64 after that; the same
+  six after the first statement; each read after its source was written — copies, not handles), run natively and on
+  cxvm by `cx_crossos_rows_run.sh` R6 (floor 96 → 111); struct_copy_source_type_refused.sh R30 / R31 (a `Q` leaf
+  through a `*RB` into a `Pt`, both zones), R32 (`gw().v`, gw declared below G), R33 (`PB.v`, the `*RB` global below),
+  R34 (`VB.p.v`, the holder below) — each the one error naming its source — and A7 (the six sources of the declared
+  type copy in both zones: 30; a handle would read 8). Mutants: the tree before RED 6 + R6 on both legs; MG1 (`_gci_src`
+  without the `*T` global arm) RED 4; MG2 (`_gci_chain` without the field hop) RED 2; MG3 (`_gci_call` answering 0) RED
+  2; MG4 (`_gci_below` without the call's message) RED 1 — each with R6 RED on both legs but MG4.
+- **Measured** (the filed repro gfp.cyr verbatim and its `gp().s` variant): x86_64 139 → 49 (both), aarch64 (qemu)
+  139 → 49, cx exit 1 (guest fault) → 49, PE (wine) 5 → 49; the issue's table (x86_64): `P.s`, `(P.s)`, `gp().s`,
+  `VV.p.s`, after `syscall(39);`, after a fn definition and the 24 B field 139 → 49 each, the controls 49 → 49.
+  struct_field_value_copy.tcyr: SIGSEGV → 111/111 on x86_64 (plain, IR=1, DCE=1), aarch64, cx and PE. Under
+  `CYRIUS_IR=3` it is 110/111: the 6.6.12 row "two field arguments in one expression" fails identically on the tree
+  before (95/96) — the IR=3 LASE class of `issues/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md`; no gate
+  runs this file under IR=3. Hardware at this commit: ecb, ach, cass and pi `SELFHOST_OK`, crossos "ran 283 passed, 0
+  failed".
+- **What changes for code that compiles today:** such a declaration now owns STRUCTSZ inline bytes, a copy (it
+  crashed). Stops compiling: one whose leaf is another struct type, and one in the leading block whose `*T` global,
+  holder or callee is declared below it (both crashed).
+- Closes [`2026-10-12-struct-global-init-from-field-through-pointer-faults.md`](docs/development/issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md).
+
+#### ST-6 — a fn returning a struct of 8 B or less checks the struct it returns; a `*S` local returns its struct (lane struct, commit 09875a47)
+
+- **Changed (D3, the user's decision 2026-10-13 (a): every other-struct shape refused by name): a fn returning a
+  struct of 8 bytes or less checks the struct of the value it returns, as the 9-16 B and > 16 B classes always did
+  (decision 6: struct rules are size-independent).** Another struct's local, by-value parameter, global, `(u)`, call
+  (`return mk();`, taken as a tail call, too), field, method or operator result, `*pu`, a `*U` local or parameter, and
+  a handle of another struct (local or global) are refused by name: *a fn returning the struct `S8` takes a value of
+  that struct, or a pointer to one — got `u` (a `U8`)* (*(a `*U8`)* for a pointer, *`*pu` (a `U8`)* for a
+  dereference). Through 6.7.10 each compiled clean and handed back the other struct's word (exit 3 in the filed repro;
+  6.6.0 – 6.7.10 measured) or, for a `*U`, its address; 6.7.10's B7-1 had kept "a handle of another struct returns its
+  struct's bytes" on purpose, and the decision covers it.
+- **Fixed (no decision needed: decision 6): a `*S8` LOCAL of the fn's own struct returns the struct it points at**,
+  byte-exact with its padding 0, as a `*S8` parameter has since 6.6.17 — it returned the address (an address byte where
+  8 is right: x86_64 240, aarch64 200, cx / PE 160 on the tree before).
+- **How:** `_bx_pcmpe_ret` (parse_expr.cyr, the scalar tail) runs `_ret_small_val` in a fn returning a struct of 8 B
+  or less (`_ret_small_cls`: a ret sid, no stash, not the pair class, in a fn, not `Str` / tuple / dyn, and NOT inside an
+  inline replay — GIDEP). `_ret_small_val` (parse_fn.cyr) parses the value with the argument check's records armed —
+  the new `_ret_expr_sid`, `_expr_struct_sid`'s reader for a value that ends at the return's `;` (a bare name, a whole
+  free call resolved after the parse, a method / operator result, a struct-typed or `Str` field, inside any
+  parentheses), then `_ess_deref` (`*pu`) — and refuses another struct by name (`_ret_sid_refuse`; a dyn is refused at
+  its own site once); then `_ret_small_ptr`: a `*X` local or parameter name, X == S, makes rax S read through it
+  (`_hl_pval_ra(.., 1)`), X another struct is refused. `_tc_small_sret_divert` (in `_tc_frame_divert`) sends a tail
+  call to a callee returning another struct to the normal path; `_ret_small_ptrp` and `_ret_small_gh` no longer take a
+  handle of another struct. PARSE_RETURN is untouched. Guide: a ⚠ paragraph for the 8 B class in *Returning a struct by
+  value*.
+- **Rows:** new `tests/gates/frontend/small_struct_return_type_refused.sh` (registered in check.sh after
+  struct_arg_type_refused): R1 / R1b / A1 the filed repros verbatim (r8 refused, r16 unchanged, rp 8), R2–R16 the
+  issue's table and its siblings (wrapped, by-value parameter, value global, tail call, wrapped call, handle local and
+  global, field, method, `*pu`, `*U8` local / parameter / wrapped, 3 B value and pointer), A2–A10 acceptances against
+  field-by-field controls (`((p))`, a `q: *S8` parameter, a same-struct local / tail call / handle, an untyped value,
+  `*p`, a 3 B `*S3` local, generic inline bodies inside a `: S8` fn) — 17 refusals, 10 acceptances.
+  `tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr` +6 (the `*T` local at 3 / 4 / 6 / 8 B, wrapped, a copy not an
+  alias, the 3 B word's padding 0 after a 0xFF frame), run by small_struct_handle_line.sh R13 (new) on all seven legs
+  and natively + on cxvm by cx_crossos_rows_run.sh R8. small_struct_handle_line.sh C6 flips to the refusal;
+  small_struct_global_handle_line.tcyr's `c_reto_8` ("return G of another struct gives its bytes") moves to the
+  refusal gate (R8 there), R2 floor 267 → 266. Mutants (ledgers in the gate headers): the tree before RED 20 + R13 ×7 +
+  C6; the value refusal off RED 12; `_ret_small_ptr` answering 0 RED 8 (+ R13 18/24 ×7); the tail divert off RED 1;
+  the 6.7.10 handle exemption back RED 1; `_ret_small_gh`'s type test off RED 1; `_ret_expr_sid` without the `;` wrap
+  RED 2; the tail a plain PCMPE RED 20; `_ret_small_cls` without GIDEP RED 1 (A10: a false refusal inside a replayed
+  generic body); `_ret_small_val` without its dyn test: dyn_checked.sh V4y RED (a second error after the dyn's own).
+- **Measured** (the filed repros verbatim, compilers built from each tree): r8.cyr exit 3 → refused by name on x86_64,
+  aarch64 (qemu), cx (cxvm) and PE (wine); rp.cyr 240 / 200 / 160 / 160 → 8 on each; r16.cyr refused → refused. The
+  table (x86_64): `(u)` 7, `p: U8` 4, `GU` 5, `mk()` 6, `u.dup()` 15, `*pu` 13, a `*U8` local 208 / parameter 112, the
+  handle rows 9 / 11 → each refused by name. Corpus differential (689 files): only small_struct_global_handle_line.tcyr
+  (its `c_reto_8`, now the refusal row) and the bite's own file.
+- **What changes for code that compiles today:** in a fn declared `: S` with S of 8 bytes or less, `return x;` with x
+  a value of another struct, a `*U` of another struct, or a handle of another struct stops compiling; `return p;` with
+  `p: *S` a LOCAL returns the struct p points at (it returned the address).
+- Closes [`2026-10-12-small-struct-return-takes-another-structs-value.md`](docs/development/issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md).
+
+#### ST-7 — `return E;` with E a pointer to the struct returns the struct it points at, at every size (lane struct, commit 299e6e60)
+
+- **Changed (D1, the user's decision 2026-10-13 (a): return the pointee at every size): `return E;` in a fn returning
+  the struct S, with E a `*S` — a local or parameter, a global, a call or method declared `: *S` (a generic one too), a
+  `*S` field, pointer arithmetic, wrapped — or a dereference `*E` of one, returns a copy of the struct E points at in
+  the 8 B-or-less, 9-16 B and > 16 B classes**, as `l = GP` copies it (decision 6). Through 6.7.10 a fn of 8 bytes or
+  less returned the POINTER as the struct's word, silently (the filed repro: 3, both `&GS`), with `return gp();` a
+  tail call doing the same; over 8 bytes every form but a `*S` local or parameter was refused (*... got `GP`*,
+  *identifier is not a local*, *return must be a bare local identifier ...*). A `*U` of another struct is refused by
+  name at every size.
+- **How:** `_ret_small_ptr` (8 B or less) takes every expression `_hl_psid` types `*X`, not only a local name; the
+  refusal names `_hl_pnm`'s name; `_tc_small_sret_divert` also diverts a callee declared `: *X`. Over 8 B the new
+  `_ret_ptr_src` runs first in `_ret_struct_big` (retptr) and, through `_ret_ptr_pair`, in `_ret_struct_pair`
+  (rax:rdx): the value (after `_ret_peel`) is one dereference of a `*X` or an expression typed `*X`; X another struct
+  is refused; else the value is parsed, its pointer parked (`_HTEMP`) and S's bytes copied into a frame temp
+  (`_ret_ptr_copy`) that the class's existing tail returns. The bare name of a `*S` local / parameter stays on the 6.6.6
+  / 6.6.17 local arms (byte-identical). Not in an inline replay (GIDEP), not for a dyn / tuple / `Str` fn.
+  hidden_temp_census.sh counts `_ret_ptr_src:1`. Guide: the 9-16 B ⚠ lists the pointer, and a new paragraph *`return
+  E;` with `E` a pointer to the struct returns the struct it points at, at every size* (`&s` noted as untyped).
+- **Rows:** `tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr` +51 (75: `return GP`, `gp()` (the tail-call shape),
+  `w.p`, `*GP`, `*gp()`, `(GP)`, `p`, `(gp())`, `*w.p`, `GP + 0`, `w.mp()`, `(*GP)` at 3 / 8 / 16 / 24 B, each a copy
+  proven by a write to the pointee after the call; a generic `gpg<B8>()` / `(gpg<P2>())`; the 3 B padding through a
+  `GP3`), small_struct_handle_line.sh R13 and cx_crossos_rows_run.sh R8 (floor 75 each);
+  `tests/gates/frontend/struct_result_type_refused.sh` PU3a–PU24e (a `*U` global, `: *U` call, `*U` field, `*GU`, a
+  `*U` local, at 3 / 8 / 16 / 24 B, each the one error), PK8 / PK16 / PK24 acceptances, RP16 (a generic's
+  inline-replayed `return GPT;` inside a `: S16` fn is never copied — refused as through 6.7.10). Mutants: the tree
+  before RED 19 + R13 does not build ×7; `_ret_ptr_src` answering −1 RED 12; `_ret_small_ptr` a bare local only RED 7
+  + R13 16/75 ×7; the `: *X` divert off RED 2 + R13 2/75; the dereference arm off RED 3; `_ret_ptr_src` without GIDEP
+  RED 1 (RP16 compiled and SIGSEGVs, rc 139).
+- **Measured** (the filed repro rg8.cyr verbatim): exit 3 → 0 (both 9) on x86_64, aarch64 (qemu), cx (cxvm) and PE
+  (wine); rg16.cyr refused → exit 0 on each; its 24 B form refused → exit 0 on each. struct_ptrmode_return_copy.tcyr:
+  does not build → 75/75 on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and PE. Hardware at this commit: ecb, ach,
+  cass and pi `SELFHOST_OK`, crossos "ran 283 passed, 0 failed".
+- **What changes for code that compiles today:** in a fn declared `: S` of 8 bytes or less, `return GP;`, `return
+  gp();`, `return w.p;` return the struct the pointer points at (they returned the pointer's word). Newly compiling:
+  the same over 8 bytes, and `return *GP;` / `return *gp();` there. Stops compiling: a `*U` of another struct returned
+  (at 8 B or less it returned the pointer word; over 8 B the old refusals are now this one, by name).
+- **Filed, not fixed:** a generic's inline-REPLAYED body runs its `return` under the CALLER's struct-return class
+  (refused naming the caller's struct; pre-existing 6.7.9 – the tree; this bite's arms stay out of it, GIDEP)
+  (`docs/development/issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md`); a
+  DECISION: `return &s;` in a fn declared `: S` returns the address as the word at 8 B or less and is refused over 8 B
+  — D1 does not reach it, `&x` being untyped (`…/2026-10-14-return-address-of-struct-local-decision.md`).
+- Closes [`2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md`](docs/development/issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
+
+#### ST-8 — a struct value into a typed `*S` global copies into its pointee (lane struct, commits f79e310b + ac419c94 + 93e04937)
+
+- **Changed (D2, the user's decision 2026-10-13 (a): copy into `*GP`): a struct value assigned to a typed `*S` GLOBAL
+  copies into the struct it points at, as a `*S` local or parameter destination does since 6.7.10 — one rule for
+  locals and globals at every size** — `GP = l` from a local, a value global, a by-value parameter, a call, a field
+  `w.s`, `*p`, a method or operator result, wrapped, in a for step, in a fn and at top level, 0 to 24 B (a zero-size
+  struct: nothing copied, the pointer kept — `ac419c94`). `GP = q` from another `*S` (a local, a global, a `: *S`
+  call, a field) or a handle, and `GP = &x` / `GP = 0` / `GP = alloc(..)`, still rebind. Through 6.7.10 `GP = l`
+  stored `l`'s first word into `GP` itself — a wild pointer, silently (the filed repro: 13, GP == 5). A struct of
+  another type is refused by name (*cannot copy 'q' into a variable of a different struct/vector type: 'GP'*); at top
+  level a call, method or operator result over 8 B is refused as into a value global (*'mk2' returns a struct by value,
+  and a struct result needs storage in a fn's frame — call it inside a fn*; it compiled through 6.7.10 as `GP = 7`, a
+  wild pointer, with the "assigning non-pointer to typed pointer" warning, which still follows the refusal).
+- **How:** `_agc_handle_global` (parse.cyr) asks the new `_agc_ptr_global` for a global that is no pointer-mode one: a
+  typed `*S` global (`_gv_ptr_sid`) of a plain struct (`_dx_plain`; over 8 B `_agc_plain_big`: no heap handle by name)
+  whose step is the struct's (`_ps_is_sz` — `ac419c94`: 8 for a zero-size struct, which `_tn_ptr_step` steps by 8), is
+  answered in the deref band (`_agc_gvi = 0 - 1000 - gvi`, `_agc_t = 0 - sid`, `AGG_NSLOTS`), so every existing arm
+  treats it as a handle: a struct value copies into `*GP` (`_try_aggregate_copy_assign`, `_hl_small_copy`,
+  `_try_struct_call_assign` / `_hl_call_into`, `_pcmpe_struct_assign` / `_hl_res_into` / `_agc_from_temp`,
+  `_fla_assign`, ST-2's `_asg_dstar`), handle <- handle and `_hl_psrc_copy`'s `*T` sources stay the rebind, another
+  struct is refused by `_AGG_ASSIGN_TYPE_ERR`. A DESTINATION only: `_agc_src_operand` raises `_agc_src` across its rung,
+  so a `*S` global SOURCE keeps `_hl_psrc_copy`'s path and every source's code stays byte-identical (the mutant without
+  the `_agc_src` test is equivalent — the same bytes copied by another arm). Guide: the "⚠ Not settled" note is the rule
+  now; `93e04937` rewords its sentence to name the `*T` global a copy DESTINATION.
+- **Rows:** new `tests/tcyr/crossos/struct_value_into_ptr_global.tcyr` (143: a `*S` global, a `*S` local and a `*S`
+  parameter destination × a local, a call, a field `w.s`, `*p`, a method and an operator source × 3 / 8 / 16 / 24 B; the
+  global also from a value global, a by-value parameter, `(l)`, `(mk())`, a for step; the rebinds `GP = q`, `GP = &x`,
+  `GP = GP2`, `GP = gq()`; top level `GP = G`, `GW.s`, `*GQ`, `(G)`, at 3 / 8 B `mk()`, `G.dup()`, `Z + G`; 0 B `GP =
+  l`, `GP = mk()`, the `*E` local control, top level `GP = mk()` / `GP = G` — nothing copied, the pointer kept, the
+  guard intact), run by small_struct_handle_line.sh R14 (new, floor 143) on all seven legs (unsigned narrow fields: a
+  signed one through a `*S` under IR=3 is the filed `issues/2026-10-08-ir3-drops-unrecorded-field-emits.md`);
+  `tests/gates/frontend/struct_copy_type_checked.sh` R10–R16 (another struct into a `*P3` global: a local, a 1-slot
+  one, top level, a call, `*pu`, an operator; R16 a 16 B call at top level) and A8 (the filed repro verbatim: 11) / A9
+  (`GP = &x` rebinds). Mutants: the tree before RED 8 + R14 74/143 ×7; `_agc_ptr_global` answering 0 the same;
+  `_ps_is_sz` without the zero-size arm R14 140/143 ×7; without the `_agc_src` test GREEN (equivalent, recorded).
+- **Measured** (the filed repro gd.cyr verbatim): 13 → 11 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
+  struct_value_into_ptr_global.tcyr 74/143 → 143/143 on every leg. Corpus differential (690–691 files, each commit):
+  only the bite's test file.
+- **What changes for code that compiles today:** `GP = v` with `GP` a `*S` global and `v` a struct value of S writes
+  `*GP` (it stored v's first word into GP). Stops compiling: `GP = u` with `u` of another struct, and at top level `GP
+  = mk()` / `GP = a.m()` / `GP = a + b` whose result is over 8 B.
+- Closes [`2026-10-13-struct-value-into-pointer-global-destination-decision.md`](docs/development/issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md).
+
+#### ST-9 — `*p = v` through a `*S` copies the struct (lane struct, commits 2f5387e5 + 8e155bf3)
+
+- **Changed (D4, the user's decision 2026-10-13 (a): copy the whole struct): `*p = v` through a pointer to a struct
+  — `p: *S` a local or parameter, `*self`, a global `*GP`, `*(p + n)`, `*gp()`, `*w.p` — copies exactly sizeof(S)
+  bytes, none for a zero-size struct, from any S value `G = v` takes**: a local, a by-value parameter, a global, a
+  field, a call, a method or operator result, a handle or a `*S` (`*p = q` copies the struct q points at), `*q`; in a
+  fn, at top level and in a for step, so `*p = l`, `p = l` and `G = l` (with `p = &G`) agree (decision 6: `*p` is a
+  struct value). Through 6.7.10 the store was the 8-byte word whatever S: a zero-size struct's neighbour clobbered (the
+  filed repro: 0, now 77), a 3..7 B struct overrun (`{4,5,6}` with its i8 neighbour clobbered), a 9..24 B one's first
+  8 bytes only (42 where 90 is right), `*p = q` the pointer. A struct of another type is refused by name (*cannot copy 'u' into a variable of a
+  different struct/vector type: 'p'*); `*p OP= v` is refused as `l += a` is (*compound assignment to the struct 'p'
+  points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)*; it combined the first
+  word); any other value (untyped, an integer) is stored as the struct's word at sizeof(S) bytes, at most 8, never past
+  the object.
+- **How:** `_deref_store` (parse.cyr) asks the new `_dst_struct` right after its operand's PARSE_FACTOR: the operand
+  typed `*S` (`_hl_psid`, its step the struct's — `_ps_is_sz`; not `Str` / tuple / dyn). A compound pair is refused in
+  sync. For `=` the pointer is parked (`_HTEMP` / `_HTSTORE`) and `_dst_arms` runs the statement's assignment arms in
+  `_PARSE_STMT_IMPL`'s order (`_try_aggregate_copy_assign`, `_try_struct_call_assign`, `_refuse_lossy_pair`,
+  `_pcmpe_struct_assign`) with the operand's last name as the destination's (`_hl_lastnm`, for refusals) and the
+  override `_agc_ovr` up: `_agc_operand` answers that name with `_agc_ovr_ans` — `_agc_pp` 1 (a value through its
+  address, as an address-passed parameter; `_agc_hdl` now returns 0 for `_agc_pp` 1, so a `*S` / handle source COPIES),
+  the frame slot in a fn, the hidden global in the deref band at top level. Never for a source (`_agc_src`), never for a
+  statement nested in the source (PARSE_STMT saves / clears / restores `_agc_ovr` — a closure body's own `p = m`), and
+  the name lookups `_tup_dst_sid`, `_bx_asg` and `_mv_dst_sid` answer 0 for it. A value no arm copies is stored by
+  `_dst_word` in 8 / 4 / 2 / 1-byte chunks (the `_fst_odd` shape), none for a zero-size struct. hidden_temp_census.sh
+  counts `_dst_struct:1`. Guide: a new paragraph *A store through a `*S` copies the struct*, and the Pointers section
+  points at it.
+- **Rows:** new `tests/tcyr/crossos/deref_store_struct_copy.tcyr` (322: at 0 / 3 / 4 / 5 / 6 / 7 / 8 / 9 / 16 / 24 B
+  with unsigned narrow fields — `*p =` a local, a by-value parameter, a value global, `w.s`, `mk()`, `l.dup()`, `z + l`,
+  `*q`, `q` (a `*S` local: copied, q not rebound), `h` (a handle), `GQ`, `gq()`, an untyped word (byte-exact: low bytes
+  in place, bytes past 8 untouched, the guard intact), into a global with a guard byte packed after it and into a struct
+  inside a local; the operands `*GP`, `*(p + 0)`, `*gp()`, `*w.p`, a `*S` parameter, `*self` (untyped and `self: *S`),
+  a for step; top level `*P = G`, `W.s`, `*Q`, `Q`, an untyped word, at 0..8 B `mk()`, `V.dup()`, `V + L`; a closure
+  statement nested in the source), run by small_struct_handle_line.sh R15 (new, floor 322) on all seven legs;
+  struct_copy_type_checked.sh R17–R25 (another struct: a local, a global, a call, `*pu`, an operator, a method, a field,
+  a `*U` local, top level, 1-slot), C1–C4 (`*p += 1`, `*p += a`, top level `*GP -= 1`, a for step), A10 / A11 the filed
+  repros verbatim (90, 77) against field-by-field controls. Mutants: the tree before RED 15 + R15 38/322 ×7;
+  `_dst_struct` answering 0 the same; without the compound refusal RED 4 (C1–C4); PARSE_STMT without clearing
+  `_agc_ovr` R15 321/322 ×7 (the nested-closure row).
+- **Measured** (the filed repros verbatim): the zero-size `E` 0 → 77 and P2 (16 B) 42 → 90 on x86_64, aarch64 (qemu),
+  cx (cxvm) and PE (wine); the issue's table (x86_64): 3 B {u8×3} `{4,5,6}` with the neighbour clobbered → `{4,5,6}`,
+  neighbour 77; 4 B {u16×2} the same; 8 B {i32×2} `{4,5}` → `{4,5}`; 16 B {i64, u8} 42 → 90.
+  deref_store_struct_copy.tcyr 38/322 → 322/322 on every leg. `*p += 1` / `*p += a` through a `*S`: compiled → refused
+  by name. Corpus differential (691 files): only the new test; cycc's own source compiles byte-identical. Hardware at
+  this commit: ecb, ach, cass and pi `SELFHOST_OK`, crossos "ran 285 passed, 0 failed".
+- **`8e155bf3`:** `dead_code_floor.sh` went RED on 2f5387e5 — the cx fork reported `ir_emit1` reachable; nothing in
+  that fork calls it (its one caller there, `_IR_REC1`, stays dead): cycc's DCE call graph is a byte scan, and an E8 /
+  E9 + rel32 landing on a fn start counts as a call, so a layout change can make a dead fn look live. The cx entry was
+  dropped from `tests/fixtures/dead_code_floor.txt` (`--write`, a one-entry diff); ST-14 puts it back.
+- **What changes for code that compiles today:** `*p = v` through a `*S` copies the whole struct (over 8 B it wrote
+  the first 8 bytes; under 8 B it wrote 8 bytes, over whatever followed); `*p = q` with q a `*S` copies q's struct (it
+  stored the pointer); `*p = 0` / an untyped word writes sizeof(S) bytes, at most 8 (it wrote 8). Stops compiling: `*p
+  = u` with u another struct, and `*p OP= v` through a `*S`.
+- **Filed, not fixed:** a DECISION: `*p = mv()` (a multi-value fn, `p: *P2`) stores the first value as the struct's
+  word, where `GT2 = mv()` is refused by name — D4's list of S values does not name a multi-value call
+  (`docs/development/issues/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md`); a DECISION: `&x.f`
+  does not parse (every compiler 6.7.0 – the lane) while the guide cites `load64(&s.f)` and `&h.f`
+  (`…/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md`); a reading to confirm: D4's "stored as the
+  struct's word at sizeof(S) bytes" shipped as min(sizeof(S), 8) bytes — `*p = 7` into a 16 B S leaves bytes 8..15 as
+  they were (72; the zero-extended reading gives 70) (`…/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md`).
+- Closes [`2026-10-11-deref-store-through-struct-pointer-decision.md`](docs/development/issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md).
+
+#### ST-10 — an untyped declaration takes a leading call's struct only when the call ends it (lane struct, commit 29d1210e)
+
+- **Fixed (no decision needed: the guide's decision-12 rule — an operator returning an integer leaves the binding
+  untyped): an untyped declaration takes a leading call's STRUCT type only when the call is the whole initialiser.**
+  `var r = mk3(4) - s;` with an integer-returning `P3_sub` took `mk3`'s P3 (6.7.6 – 6.7.10; 6.7.5 refused the shape),
+  so `r.x` dereferenced the integer (the filed repro: SIGSEGV on x86_64 and aarch64, cx a guest error, PE exit 5);
+  `var r = mk2(1) == p; return r;` in a fn returning `Pt` returned a 16-byte struct from an 8-byte slot (SIGSEGV); the
+  8 B `var d = mk8(10) - s; d.v` likewise. Each is refused by name now (*no struct type in scope for 'r'*; the pair
+  return's *... got `r`*), as the local twin `var d = a - s; d.v` always was. A struct-returning operator after a
+  leading call still types the binding (`var r = mk3(4) + s;`), and a `: f64` leading call keeps its f64 (`var x = f()
+  * 2.0;`).
+- **How:** PARSE_VAR's untyped-declaration inference reads the new `_var_rhs_csid` (out of PARSE_VAR: one reference
+  fewer there) — the leading call's GFRS, a STRUCT only when `_call_ends_at(S, ti, 5)`; an operator's struct result
+  still types the binding after the parse (`_var_rhs_post`). The triage plan put `_call_ends_at` on every return of
+  `_var_rhs_call`, which also dropped a `: f64` leading call's f64 (`var x = f() * 2.0; x + x` became an integer add —
+  measured: row `b_lf64` 0 where 6 is right); the issue is the struct type, and the f64 inference is kept exactly as it
+  was.
+- **Rows:** `tests/gates/codegen/struct_value_codegen.sh` L16 (the repro verbatim from its file, new helper
+  `refused_file`), L17 (`var r = mk2(1) == p; return r;` in a `: Pt` fn); small_struct_handle_line.sh B2's leading-call
+  twins (`var d = mk8(10) - s; d.v` at 8 B, `mkh` at 16 B); `tests/tcyr/crossos/struct_operator_result_binding.tcyr`
+  (R8, seven legs, floor 33 → 39): `b_lint_8/h/t` (an integer operator after a leading call: untyped), `b_lcmp_8` (a
+  comparison), `b_lop_t` (a struct-returning one types it), `b_lf64` (a `: f64` call keeps f64). Mutant
+  `_var_rhs_csid` without `_call_ends_at` (= the tree before) RED L16, L17, B2 ×2.
+- **Measured** (the filed repro verbatim): x86_64 139, aarch64 139, cx 1, PE 5 → refused by name on each; the pair
+  return and the 8 B form 139 → refused. Corpus differential (954 inputs × 7 modes): only the repro (0 → refused).
+- **What changes for code that compiles today:** `var r = f(..) OP x;` then `r.field` or `return r;` from a struct fn,
+  where `f` returns a struct and `OP` returns an integer or is a comparison, stops compiling (it read the integer as
+  the struct and crashed).
+- **Filed, not fixed:** `var c = f() < 1.0;` with `f: f64` types `c` f64 (the leading-call f64 peek keeps -9 whatever
+  follows), so `-c` flips the sign bit (3 where 1 is right) — pre-existing since 6.5.21, kept on purpose here
+  (`docs/development/issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md`).
+- Closes item 1 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-11 — one integer + f64 mix warns once (lane struct, commit 39f62ebb)
+
+- **Changed (D41, the user's decision 2026-10-13: the roadmap's default, "already reported"): one integer + f64 mix
+  warns once, however far its result is carried.** Kind 2 (*integer arithmetic with an f64 right operand*) leaves the
+  result f64-typed (6.6.8, ADR-002), so an enclosing integer operator saw an f64 right operand and warned again for the
+  same mix: `var x = 1; x = x + (x + 1.5);` and `2 * (x + 1.5)` twice, `x += x + 1.5` twice at one column, `x - (x * (x
+  + 1.5))` three times, `1 + 2 * f64_add(u, 1.5)` twice. Once each now; two mixes still warn twice (`(x + 1.5) + (x +
+  2.5)`), and `x + 1.5 + 2` still adds its kind 1 for the `+ 2`. Diagnostics only: typing and code are unchanged.
+- **How:** `_INT_F64_MIX` (parse_expr.cyr) warns through `_ifm_warn`, which stamps the code pointer the mix ended at
+  (`_ifm_cp`) — re-stamped when the mix is only carried, so a chain stays one report (a first variant stamped only when
+  it warned and read 2 on `x - (x * (x + 1.5))`); `_RHS_F` / `_RHS_T` capture `_ifm_rhs = _ifm_at(S)` (the right
+  operand ends exactly there, so it IS that mix's result) as they capture `_fbr_rhs`; `_asg_compound_op` (parse.cyr)
+  asks `_ifm_at` right after PCMPE, before EPTR_SCALE can emit. Guide: the Floats ⚠ paragraph says one mix warns once.
+- **Rows:** `tests/gates/diagnostics/f64_int_mix_warn.sh` axis 16 — the filed repro verbatim (1), `x += x + 1.5` (1),
+  `2 * (x + 1.5)` (1), `x - (x * (x + 1.5))` (1), `x + ((x + 1.5))` (1), `1 + 2 * f64_add(u, 1.5)` (1), `x += x - (x
+  * (x + 1.5))` (1), `(x + 1.5) + (x + 2.5)` (2), `x + 1.5 + 2` (1 kind 2 + 1 kind 1); the combined program's binary
+  equals the `CYRIUS_TYPE_CHECK=0` one. Mutants: no `_ifm_cp` stamp RED (every one-mix row 2–4); a stamp only when
+  warning RED (two rows); `_asg_compound_op` without `_ifm_at` RED (two rows); the tree before: 7 rows RED.
+- **Measured** (x86_64): the repro 2 warnings → 1; `x += x + 1.5` 2 → 1; `2 * (x + 1.5)` 2 → 1; `x - (x * (x + 1.5))`
+  3 → 1; `1 + 2 * f64_add(1.5, 1.5)` 2 → 1. Corpus differential (954 inputs × 7 modes): byte-identical.
+- Closes [`2026-10-08-int-f64-mix-warns-twice-in-a-chain.md`](docs/development/issues/archived/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md).
+
+#### ST-12 — an integer operator's result is an integer (lane struct, commit 0d1c660c)
+
+- **Fixed (no decision needed; D38's decision confirms that `n - s` stays first-word arithmetic): an integer
+  operator's result is an integer, never its right operand's struct.** The expression type is the LAST operand's, and
+  an integer operator never wrote its result's, so after `n - s` (s a struct) the result kept s's struct type and slot
+  and the next `+ - * /` dispatched on it: `n - s + 10` called `P3_add(&s, 10)`, discarding `n - s` (the filed repro:
+  SIGSEGV on x86_64 and aarch64, cx a guest error, PE exit 5; now 8) — after every integer operator: `+ - * / % << >>
+  >>>`, `& | ^`, a comparison, `&&` / `||`, `+| +? -| -? *| *?`, `~s` (`!s` always gave an integer). With no `S_add`
+  the same expressions were refused as an undefined function; they compile now. An f64 right operand's type is kept
+  (kind 2's design).
+- **How:** `_int_st` (parse_expr.cyr) clears a STRUCT expression type (0 < t < 2048) and the struct slot set beside it
+  (SESVAR −1); an f64 / f32 type is kept. `_int_res` is 6.7.9's `SPSC(S, 0)` plus `_int_st`. They replace the SPSC at
+  PARSE_TERM's loop tail (`* / % << >> >>>`, `*| *?`), `_pexpr_bit_ps` (`& | ^`), `_PLOGIC_ATOM`'s compare tail,
+  `_PLOGIC_AND` and PCMPE's `||` link, and `_bnot_int`; `_INT_F64_MIX` (`+ - * /`) and EMIT_OVF_CALL (`+| +? -| -?`)
+  call `_int_st`. The giants' reference counts stay flat. Guide: a paragraph *An integer operator's result is an
+  integer*.
+- **Rows:** struct_value_codegen.sh K1 (the repro verbatim from its file, new helper `exits_file`: 8), K2 (`n - s + 10`
+  with no `P3_add`: compiles, 8), K3 (`(n < s) + 10 + (~s) + 6` with no `P3_add`: 11);
+  `tests/tcyr/crossos/struct_value_codegen.tcyr` K1–K27 (every integer arm at 24 B — `KN_add` returns 1 when called
+  with 10, so a wrong dispatch reads 1 — four at 8 B, the twins `s + t + 10`, `s + 10`, `w.s + a`, and `(0 - x) + 1.0`
+  with `x: f64` keeping f64) on A1–A7; **A7 is new: the values file on PE (wine)** (194 rows, the PE-only F21 among
+  them). Mutants, one per site, each RED ×7 on its rows; the tree before: K1 K2 K3 + A1–A7.
+- **Measured** (the filed repro verbatim): x86_64 139, aarch64 139, cx 3 (guest error), PE 5 → 8 on each; with
+  `P3_add` returning 1 for `b == 10`, every integer arm read 1 before (23 rows) and its integer value after. Corpus
+  differential (954 inputs × 7 modes): only the repro and the values file.
+- **What changes for code that compiles today:** `n OP s + x` (and `(n < s) + x`, `(~s) + x`, ...) with a struct `s`
+  and an `S_add` / `S_sub` / `S_mul` / `S_div` defined called that operator fn on `s` and discarded `n OP s`; it is an
+  integer expression now. Newly compiling: the same with no `S_op` defined. The right-operand form `t + (n - s)` over
+  8 B passed `&s` (the leaked slot) and now passes the integer, as `t + 5` does; into a `*S` parameter of 8 B or less it
+  passes the integer as the pointer, as `t - 5` does.
+- **Filed, not fixed:** an integer comparison (and `& | ^ % << >>`) keeps an f64 right operand's type: `(n < x) * 3`
+  with `x: f64` is an f64 multiply (0 where 3 is right) — `_int_st` clears struct types only
+  (`docs/development/issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md`).
+- Closes item 2 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-13 — unary minus on a struct is integer negation of its word (lane struct, commit cb2d7406)
+
+- **Changed (D38, the user's decision 2026-10-13 (a)): unary minus on a struct is integer negation of its word, with
+  no struct type — one rule for the variable and the field**, as `-w.s + a` already was (6.7.10 OPS-1: "negates a word
+  first"). The negation kept `s`'s struct type and slot, so `-s + t` dispatched `S_add`: over 8 B from `s`'s slot with
+  the minus dropped (the filed repro: 6, `s + t`, on x86_64, aarch64, cx and PE), at 8 B with the negated word as the
+  struct (13), and `t + -s` over 8 B passed `s` itself. Now `-s + t` is an integer add at every size (the repro: 252,
+  as `-w.s + t` was before and after), `t + -s` passes the negated word, and `var X: S8 = -G + H;` at top level is the
+  integer it computes (zone and after it: 13 → 252). Nothing is refused; `n - s` stays first-word arithmetic.
+- **How:** `_neg_int` (parse_expr.cyr) ends in ST-12's `_int_res` (no step, no struct type, no struct slot). The
+  declaration zone's token typer agrees: `_gz_unary` (parse_decl.cyr) gives `-x` no struct (kind 4, `-g` dispatching,
+  retired) — with only one of the two changed, `var X: S8 = -G + H;` in the zone is refused as "the declaration zone
+  misread ..". Comments naming `-s` a struct value (`_op_is_sval`, `_op_operand_sv`, `_op_lhs_sv`) updated. Guide:
+  *Unary minus on a struct is integer negation of its word*; the field sentence points at it.
+- **Rows:** struct_value_codegen.sh U1 (the repro verbatim from its file: 252), U2 / U3 (`var X: S8 = -G + H;` in the
+  zone and after it: 252); struct_value_codegen.tcyr U1–U15 on A1–A7 (`-s + t` at 24 / 16 / 8 B against `-w.s + t`,
+  `(-s) + t`, an untyped `var c = -s + t`, `t + -s` against `t + -w.s` at 8 B and over 8 B, `-(s + t) + 1` with a
+  struct-returning `+`, f64 and u128 `-x` unchanged). Two rows pinned the old dispatch and now pin the decision:
+  `tests/tcyr/crossos/ptr_param_bare_struct.tcyr`'s `var r5: S1 = -s - t` → `(s - t) - t` plus `var r5n = -s - t`
+  (−12), and `var p3: P3 = -e4 - f4` → `mk4(9) - f4` plus `var p3n = -e4 - f4` (−11) — under the decision each is an
+  integer into a struct declaration, a handle holding −12 / −11; `tests/gates/codegen/stack_param_homing_matrix.sh`'s
+  top-level probe no longer refuses `-Gs - Gt` (5 refusals → 4). Mutants: `_neg_int` without `_int_res` RED U1–U3 +
+  A1–A7; `_gz_unary` keeping kind 4 RED U2; the tree before RED U1–U3 + A1–A7.
+- **Measured** (the filed repro verbatim): 6 → 252 on x86_64, aarch64, cx and PE; 16 B `-s + t` 51 → 252, 8 B 13 →
+  252; `t + -s` over 8 B into `*P3` / `*Pt` 15 (s passed, minus dropped) → 139, as `t + -w.s` and `t + 5` (an integer
+  into a `*S` parameter); at 8 B by value 95 before and after. ptr_param_bare_struct.tcyr 109/109 on x86_64 (plain,
+  IR=1, DCE=1), aarch64, cx and PE; under IR=3 its 8 red rows are identical on the tree before (the filed
+  `issues/2026-10-08-ir3-drops-unrecorded-field-emits.md`). Corpus differential (954 inputs × 7 modes): only the repro
+  and the two tcyr files above.
+- **What changes for code that compiles today:** `-s OP t` with a struct `s` and an `S_op` defined called `S_op` (over
+  8 B on `s` itself, the minus ignored; at 8 B on the negated word); it is an integer operation on `-s`'s word now. A
+  declaration `var r: S = -s - t;` that relied on the dispatch's struct result is now a struct from an integer — a
+  handle holding that integer. `t + -s` over 8 B passes the negated word (it passed `s`). At top level `-Gs - Gt` into
+  a `*S1` operator was refused (no frame) and now compiles as integer arithmetic.
+- Closes item 3 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-14 — dead_code_floor's cx row lists `ir_emit1` again (lane struct, commit d1ac8800)
+
+- `tests/fixtures/dead_code_floor.txt`: `ir_emit1 a64 a64m a64n` → `ir_emit1 a64 a64m a64n cx`, the reverse of ST-9's
+  `8e155bf3`. After ST-12 (`0d1c660c`) the cx fork reports `ir_emit1` dead again (measured: the `29d1210e` compilers
+  list it reachable, the `0d1c660c` ones dead) — nothing in cx calls it; the DCE byte scan's false reference moved with
+  the layout. `dead_code_floor.sh --write`, a one-entry diff, the gate GREEN (405 entries across 7 forks). Net over the
+  lane the fixture is unchanged; the merged tree's rebuild flipped the row once more (`1d04dd06`, the generics +
+  frontend lane: 403 entries).
+- Tagged to [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md) (a fixture follow-up; it closes no item).
+
+#### ST-15 — a tuple literal returned from a fn declared to return a named struct is refused by name (lane struct, commits 7c289392 + ff7604d6)
+
+- **Changed (D39, the user's decision 2026-10-13 (a): refused in every class): `return (a, b);` / `return (a, b, c);`
+  in a fn declared to return a named struct is refused by name at every size** — *a fn returning the struct `P3`
+  returns that struct — `(a, b)` is a tuple, another type*. It took the multi-value path (rax:rdx): over 16 B the
+  caller's result pointer was never written (the filed repro: 0, 0, 0), at 8 B or less the second value was dropped (1),
+  and at 9-16 B it gave the two words only because the pair's registers are the multi-value ones (12) — that form stops
+  compiling too. A tuple is an anonymous struct, another type (guide § Tuples), as `var t = (a, b); return t;` already
+  was. A fn declared `: (T1, T2[, T3])` or undeclared, `return ((a, b));`'s own refusal, a `Str` fn, a dyn fn (its own
+  refusal) and an `#inline` or generic callee's `return (a, b);` replayed inside a struct fn are unchanged.
+- **How:** `_refuse_struct_tuple_return` (parse_fn.cyr), called first in `_refuse_vector_tuple_return` (PARSE_RETURN
+  gains no reference): in a fn whose `_cur_fn_ret_sid` is a plain struct (`_dx_plain`) and not inside an inline replay
+  (GIDEP — load-bearing: without it `#inline fn two(a, b) { return (a, b); }` called from a `: P3` fn is refused), the
+  literal is refused at its `(`; the arms still parse the tuple (in sync, one error). A `: (T1, T2)` fn has
+  `_cur_fn_ret_sid` 0. Guide: § Returning a struct by value, § Tuples, the vector bullet, the refused-by-name table.
+- **Rows:** struct_value_codegen.sh R8 (the repro verbatim, `refused_file`), R9 (8 B), R10 (16 B), R11 (three values,
+  24 B), R12 (`fn f(): (i64, i64) { return (1, 2); }` builds: 12), R13 (an undeclared fn: 12), R14 / R15 (`return ((a,
+  b));` keeps its own refusal), R27 / R28 (`ff7604d6`: an `#inline` and a generic callee's `return (a, b);` replayed in
+  a `: P3` fn build, 127); mutant M-R1 (`_refuse_struct_tuple_return` answering 0) RED R8–R11; M-R3 (the GIDEP guard
+  dropped) RED R27 R28. Rows that produced the pair with a tuple literal in a `: P` fn moved to `ret2` (the same
+  multi-value arm and landing) or became refusals: struct_pair_multi_value_crossing.sh X1 / X9 refused on x86 /
+  aarch64 / cx, X3 X8 D8 and the N leg on `ret2`, its tcyr's producers on `ret2` (24 → 22 rows); cx_struct_pair.sh P8
+  refused; simd_return_shapes.sh A7, multi_value_into_named_struct.sh C2 and destructure_one_value_refused.sh
+  `ret_fwd_struct_tup` say `ret2`.
+- **Measured** (compilers built from each tree): the filed repro 0 on x86_64 / aarch64 / cx / PE → refused on each; 8 B
+  1 ×4 → refused; 16 B 12 ×4 → refused; `return (a, b, 7)` in P3 0 ×4 → refused; `: (i64, i64)` / undeclared 12 ×4
+  before and after. Corpus differential (954 inputs × 7 modes): only the repro and struct_pair_multi_value_crossing.tcyr
+  (rc 0 → 1, then rewritten).
+- **What changes for code that compiles today:** `return (a, b);` (or three values) in a fn declared `: S` for a named
+  struct `S` stops compiling, at any size (the 9-16 B form returned the right words).
+- **Filed, not fixed:** `ret2(a, b)` in a fn returning a struct over 16 B never writes the result pointer and at 8 B or
+  less drops b — the builtin spelling of item 4, which the decision named only as the tuple literal; four test files
+  rely on the 9-16 B `ret2` (`docs/development/issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md`).
+- Closes item 4 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-16 — `return f(..) OP x;` in a 9-16 B struct fn, OP not dispatching, is refused by name (lane struct, commit ee13ec8f)
+
+- **Changed (D40, the user's decision 2026-10-13 (a): refused with `_refuse_pair_return`): in a fn returning a 9-16 B
+  struct, `return mk2(1) == p;` — a same-struct call that only STARTS the value, followed by an operator that does not
+  dispatch (a comparison, `& | ^ % << >>`, `&& ||`) — is refused by name** (*a fn returning the 9-16 byte struct `Pt`
+  is returned in two registers, so `return` takes a local of that struct or a call returning it — got `mk2`*), as
+  `return mk2(1).x;` and `return 5;` were. It passed the pair-call check, which asked only that the call start the
+  value: rax was the operator's result and rdx mk2's stale second word (the filed repro: 41; `%` the idiv remainder).
+  `return mk2(1);` (a tail call), `return (mk2(1));` and a dispatching `return mk2(1) + p;` are unchanged.
+- **How:** `_pair_ret_call_ok` (parse_fn.cyr) requires the call to END the value, `_call_ends_at(S, GTI(S),
+  _ret_term)` (`_ret_term` = `;`, or the wrap's `)` after `_ret_peel`); a dispatching `f(..) OP` is taken first by
+  `_ret_expr_head`, unchanged; the tail-call caller `_tc_must_divert` asks with a tail-shaped call (`return mk2(1);`
+  emits byte-identical code). Guide: the 9-16 B paragraph of § Returning a struct by value.
+- **Rows:** struct_value_codegen.sh R16 (the repro verbatim: *got `mk2`*), R17–R21 (`< & << && %` after the leading
+  call, each refused once), R22 (`return (mk2(1) == p);`), R23 / R24 (`return mk2(1);` / `return (mk2(1));`: 141),
+  R25 (`return mk2(1) + p;`, a dispatch: 243), R26 (`var k = p.x; return mk2(k);`: 141); mutant M-R2
+  (`_pair_ret_call_ok` without the test) RED R16–R22, R23–R26 green.
+- **Measured:** the filed repro x86_64 41 / aarch64 1 / cx 41 / PE 41 → refused on each; `== 3` 41, `< 3` 141, `& 3`
+  141, `<< 3` 73, `&& 3` 141, `% 3` 101, `(mk2(1) == p)` 141 (x86_64) → refused once each; the twins 141 / 141 / 243 /
+  141 on all four before and after. Corpus differential (954 inputs × 7 modes): only the repro.
+- **What changes for code that compiles today:** `return f(..) OP x;` in a fn returning a 9-16 B struct, `f` returning
+  that struct and `OP` not an overloaded `+ - * /`, stops compiling (it returned a garbage second word).
+- Closes item 5 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-17 — a write to a captured name in a closure names the capture (lane struct, commit 85c648c3)
+
+- **Fixed (no decision needed: the guide's rule — a captured name is no lvalue — kept, its message named): a write to
+  a captured name in a closure — `x += d`, `x = x + d`, a classic-`for` init or step, `a, x = f()` — is refused naming
+  the capture**: *'x' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var
+  y = x;`)*. It said *undefined variable 'x'*, though `x` is defined, captured and readable in the same body (since
+  closures captured by value, 6.3.8). A name declared nowhere is still *undefined variable*. Diagnostics only.
+- **How:** `_asg_cap_name` (parse.cyr): inside a closure body, a destination that is neither a local nor a global but
+  one of the enclosing scope's names (`_cl_snap_find`, empty outside a closure) is reported with the excerpt and
+  `_had_error`. Called first by `_asg_undef_report` (the statement arm and the classic-for step) and by `_masg_resolve`
+  before its ERR_IDENT (`a, x = f()`). Guide: § Compound assignment, Known Limitations.
+- **Rows:** new gate `tests/gates/diagnostics/closure_capture_name_write_named.sh` (registered in check.sh; runs under
+  `bash -eo pipefail`): W1 the repro verbatim, W2 `x = x + d`, W3 a for init, W4 / W5 a for step `=` / `+=`, W6 `a, x =
+  two()`, W7 `x -= d`, W8 a nested closure — each refused once naming the capture, no binary; U1–U3 an undeclared `y`
+  (`=`, `+=`, a multi-assign) and U4 a block's local written after the closure that captured it: still *undefined
+  variable*; C1 `h.n += d` on a captured struct (7), C2 a read (7); floor 14. Mutants M1–M3 (the reporter off, either
+  caller without it) RED. Rows that pinned the old text now expect the capture message: tuple_checked.sh R18w, CL1,
+  CL2, CS2, CS2b; for_step_terminator_checked.sh U6.
+- **Measured:** `error:<source>:11:25: undefined variable 'x'` → `error:<source>:11:25: 'x' is captured by value; ...`
+  (same position) on x86_64, aarch64, cx and PE. Corpus differential: 0 differ.
+- **Filed, not fixed (the review):** the fix-it prints `(`var y = y;`)` for a capture named `y`
+  (`docs/development/issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md`).
+- Closes item 6 of [`2026-10-08-struct-operator-results.md`](docs/development/issues/archived/2026-10-08-struct-operator-results.md).
+
+#### ST-18 — an untyped binding takes the struct of every whole struct result (lane struct, commit d09f6364)
+
+- **Changed (D42, the user's decision 2026-10-13 (a): 6.7.10's decision 12 extended): an untyped binding takes the
+  struct of a method chain of 8 B or less (`var c = a.d().d();`), of an if-expression whose branches are a struct
+  (`var c = if (k == 1) { mk(7) } else { mk(9) };`) and of a 9-16 B operator or method result in parentheses (`var c =
+  (a + b);`, `var e = (a.m());`)**, as the annotated form does and as a single method and the same chain over 8 B
+  already did. Through 6.7.10 each was an untyped word: `c.v` was refused (*no struct type in scope for 'c'*), `c + 1`
+  added to the word, and `take(c)` passed the 16 B wrap's first word as the struct's address (SIGSEGV). A chain ending
+  in an integer method stays an integer, a scalar annotation keeps the first word, an untyped global keeps the word,
+  and a whole dyn result in the wrap keeps its refusal (6.7.8 V4d).
+- **How:** `_var_rhs_post` (parse_decl.cyr) takes any whole struct result of 8 B or less in rax (`_sc_small_whole`, was
+  `_sc_op_whole`: an operator's span only — a method, a chain spanning [start, end), an if-expression's
+  `_ie_struct_result`, inside any wrap); `_sc_post_op`, `_sc_opb` and `_sc_ope` are gone (EMIT_OP_DISPATCH calls
+  `_sc_post_small`). `_scv_arm` (parse_fn.cyr) takes `ext` (the scalar / float / slice / bool annotation) and steps
+  inside a whole wrap for an untyped declaration in a fn (`_scv_un_peel`), so `_sc_pre` makes the temp and
+  `_sc_var_receive` names it. `_scv_un` (parse.cyr) marks the token the untyped peel stepped to, and `_dyn_want`
+  (parse_expr.cyr) does not count it as a destination — without it `var x = (pass(o));` and `(o.me())` became dyn copies
+  (dyn_checked V4d, struct_receive_inference_checked D1 RED). Guide: the decision-12 paragraph's ⚠ is replaced by the
+  extended rule.
+- **Rows:** struct_operator_result_binding.tcyr (R8, seven legs, floor 39 → 80): u1 / u2 / u3 (the issue's own
+  structs), `m` rows (a chain at 1 B, 4 B packed, 6 B, 8 B, its 16 / 24 B twins, `c + c`, `take8(c)`, three links, on a
+  call, wrapped, an integer-ending chain staying an integer), `i` rows (8 B, else, elif, wrapped, branches naming locals
+  — a copy, 4 B, 1 B, `c + c`, `take8(c)`), `p` rows (`(a + b)` / `(a.m())` at 16 B against 8 / 24 B twins, `c + c`,
+  `takeh(c)`, `(((a + b)))`, `(a.d().d())`, `var c: i64 = (a + b);` keeping the first word, `(a - b)` returning an
+  integer), `b_paren_h`, `TI` (a top-level if-expression's global keeps the word). small_struct_handle_line.sh B3
+  (x86_64): the three repros verbatim (20, 7, 41), `var c = a.d().n(); c.v` refused, `c + 1` with no `S8_add` refused
+  (chain and if-expression), with `S8_add(a: S8, b: i64)` the dispatch (209), `take(c)` of a 16 B wrap (154), a scalar
+  annotation (13), a dyn method in an untyped wrap still refused. Mutants: the tree before RED 14 (R8 ×7 + 7 B3 rows);
+  MU1 (`_sc_small_whole` an operator's record only) RED 12; MU2 (`_scv_arm` without the untyped peel) RED 9; MU3
+  (`_dyn_want` without the `_scv_un` test) RED B3's dyn row, dyn_checked.sh V4d and struct_receive_inference_checked.sh
+  D1 ×4.
+- **Measured:** u1 / u2 / u3 refused on x86_64 / aarch64 / cx / PE → 20 / 7 / 41 on each; the values file does not
+  build → 80/80 on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and PE. Changed behaviour: `var c = a.d().d();
+  return c + 1;` 21 ×4 → refused (undefined `S8_add`), with `S8_add(a: S8, b: i64)` 21 → 209 ×4; the if-expression's
+  `c + 1` 8 ×4 → refused; `var c = (a + b); return c + 1;` at 16 B with `S16_add(a: *S16, b: *S16)` 14 ×4 → 139 / 139
+  / cx 1 / PE 5 — the integer into a `*S16` parameter, exactly as the annotated `var c: S16 = (a + b);` and the
+  unwrapped `var c = a + b;` already did; `var c = (a + b); take(c)` 139 / 139 / cx 214 / PE 5 → 154 ×4. Corpus
+  differential (954 inputs × 7 modes): only struct_operator_result_binding.tcyr.
+- **What changes for code that compiles today:** an untyped `var c = a.m1().m2();` (8 B or less), `var c = if (..) {
+  s1 } else { s2 };` (struct branches) or `var c = (a OP b);` / `(a.m())` (9-16 B) declares the struct, so `c + 1`
+  dispatches `S_add` (refused when there is none; into a `*S` parameter the integer is the pointer, as with the
+  annotated form) instead of adding to the first word, and `take(c)` passes the struct. Newly compiling: `c.field` on
+  those.
+- Cross-lane: the returns lane's filed `2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md` — its
+  16 B METHOD half (`var x = (b.mk()); dq(x)`: 139 / 139 / cx 1 / PE 5) gives 34 on all four after this bite; its 8 B
+  free-call half (`var x = (mk1()); x.a`) is still refused.
+- Closes [`2026-10-13-untyped-struct-binding-beyond-operators-decision.md`](docs/development/issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md).
+
+#### ST-19 — a method's `*T` result takes `.field`, `.method(..)` and a deeper chain (lane struct, commit 7e449392)
+
+- **Changed (D43, the user's decision 2026-10-13 (a): park the pointer and continue the chain, in a fn and at top
+  level): a method declared `: *T` (T a struct) takes `.field`, `.method(..)` and a deeper chain on its result** —
+  `h.get().b`, `h.get().q.b`, `h.get().m()`, `h.get().next.val` — in a fn and at top level, through a `dyn` and a
+  generic method too, as a free fn's `*T` result has since 6.6.17 (`get2(&h).b`). It was refused *cannot take a field
+  of the result of 'H_get': it does not return a struct* (6.7.0 – 6.7.10), though the direct spelling `H_get(h).b`
+  worked. `h.get().b = 5;` stays refused, now as `get2(&h).b = 5;` is (*cannot assign to a field of a call result: the
+  result is a temporary*; the store through a call's `*T` is the 6.7.12 free-call store issue). A method returning
+  neither a struct nor a `*T` keeps *it does not return a struct*.
+- **How:** `_method_chain` (parse_decl.cyr), before its refusal: a method that records a `*T` (`_hl_fn_psid(fi)`,
+  i.e. `_fn_rpsid`) takes the new `_mchain_ptr` — the result parked as a pointer receiver (`_ptr_park`: a frame slot
+  in a fn, `_HTEMP` at top level), `.name` consumed and `_field_load_on` run on it, exactly `_call_ptr_field`'s
+  free-call body. Verified, not assumed: pass 1 records a method's `*T` (a method used above its impl works), a dyn's
+  prototype records it (`o.mme().b`, at top level too), and a generic method records it at its i64 base and its f64
+  instance (`h.gp(1).b`, `h.gp(1.5).b`). Guide: the `*Struct` dot-syntax and method-result paragraphs.
+- **Rows:** struct_value_codegen.sh MP1 (the repro verbatim: 44), MP2 (the method defined below its use: 43), MP3 (the
+  store refused once), MP4 / MP5 (a `*i64` / `i64` method keeps *it does not return a struct*); the values file's
+  MP1–MP16 on A1–A7 (`h.get().b`, `.q.b` an inline field, `.sum()`, `.nx.b` through a `*T` field, `.me().me().a`,
+  `.nx.sum()`, an i32 field sign-extended, an f64 field typed f64, a `*T` to an 8 B struct, two chains in one
+  expression, `h.get().bump();` writing the pointee, a generic method's base and f64 instance, through a dyn, dyn then
+  method, two top-level globals). Mutant M-MP1 (no pointer arm = the tree before) RED MP1–MP3 and A1–A7; MP4 MP5 green.
+- **Measured:** the repro refused on x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine) → 44 on each. Corpus differential
+  (954 inputs × 7 modes): only the repro and struct_value_codegen.tcyr. A generic method whose `*T` is bound to a
+  STRUCT (`fn as<T>(self, d: *T): *T`, `h.as(q).b`) was still refused at the lane's tip — the method call ran the
+  type-erased base; with the generics lane's instance fix on the merged tree it reads through the instance (measured
+  on main's build/cycc: 4), with no change here.
+- Closes [`2026-10-10-field-of-method-pointer-result-refused.md`](docs/development/issues/archived/2026-10-10-field-of-method-pointer-result-refused.md).
+
+#### ST-20 — a free struct call in parentheses is the nested-literal element the unwrapped call is (lane struct, commits daecb518 + 90797c29)
+
+- **Changed (D44, the user's decision 2026-10-13 (a), at every size): a free struct-returning call in parentheses is a
+  nested-struct literal element, as the unwrapped call is** (guide § Parentheses: transparent into every struct
+  destination) — `H { 7, (mkq(4, 9)), 8 }`, `((mk<Pt>(..)))`, a 24 B or an 8 B two-leaf struct. It was parsed as a
+  scalar for the nested struct's first leaf and the next element read for its second: *unexpected '}'* (6.6.10 –
+  6.7.10). The wrapped call takes the unwrapped call's kinds and refusals: over 8 B into a temp, 8 B or less in rax; at
+  top level a wrapped call over 8 B is refused by name once (24 B: it was that refusal PLUS *unexpected '}'*); a
+  wrapped call returning ANOTHER struct is refused by name (*cannot copy 'mko' into a struct field of a different
+  struct type: 'q'*) — at 8 B with one leaf that form COMPILED through 6.7.10, its word stored into the leaf unchecked
+  (65), while the unwrapped call and a wrapped method already refused it. A 9-16 B METHOD or operator result in
+  parentheses as a literal element is still refused (filed below; the issue's premise that it worked since 6.7.6 holds
+  at 24 B and 8 B only — `90797c29` corrects `_spi_pcall`'s comment and puts a one-line known-defect note in the
+  guide's § Parentheses; comments and docs only, cycc byte-identical).
+- **How:** `_spi_src` (parse_decl.cyr) gains `_spi_pcall` for a `(`-headed element: it steps inside parentheses that
+  wrap the whole element (`_pwrap_name`: a `(`, not a tuple literal, `_pwrap_k`, the inside starting with a name, the
+  token after the outermost `)` a `,` or `}`), runs `_spi_call(S, k)` with the wrap's `)` as the call's follow
+  (`_spi_follow`) and closes the wrap (`_pw_close`); 0 = not that shape, the cursor restored, `_spi_expr` as before.
+  `_pwrap_name` is the shared peel predicate: the returns lane's `_rcv_peel` now calls it (byte-identical). A wrapped
+  DYN result is declined (`pk > 0`) and keeps 6.7.8's path (filed below).
+- **Rows:** struct_value_codegen.sh PE1 (the repro verbatim: 64), PE2 / PE3 (top level 16 B / 24 B, double-wrapped:
+  refused once), PE4 (another one-leaf 8 B struct: refused by name; it compiled, 65), PE5 (another 16 B struct: refused
+  by name), PE6 (an 8 B two-u32 element at top level: 64); the values file's Q31–Q41 on A1–A7 (16 B, 24 B, 8 B two u32
+  leaves, 8 B one leaf unchanged 55, explicit generic `(gqe<i64>(4, 9))`, a generic call whose T binds the struct
+  `(idqe(q))`, double parentheses, a wrapped 24 B method unchanged, the element first and last, two top-level globals).
+  Mutant M-PE1 (no `_spi_pcall` arm = the tree before) RED PE1–PE6 and A1–A7.
+- **Measured:** the repro refused (*unexpected '}'*) on x86_64 / aarch64 / cx / PE → 64 on each. A one-leaf 8 B
+  wrapped element moves from kind 2 to kind 3: value-identical (55 on x86_64, aarch64, cx), bytes differ (the struct
+  store vs the leaf store). Corpus differential (954 inputs × 7 modes): only the repro and struct_value_codegen.tcyr.
+- **What changes for code that compiles today:** a parenthesised call returning a struct of 8 B or less with ONE leaf,
+  of a type other than the nested field's, as a nested literal element (`H { 7, (mko(5)), 8 }` with `q: Q`, `mko`
+  returning `O`) stops compiling. Newly compiling: every same-struct wrapped call element.
+- **Filed, not fixed:** `H { 7, (q0.dupe()), 8 }` / `(q0 + q1)` with a 9-16 B result: *unexpected '}'* on all four
+  targets — `_spi_expr` arms at the wrap's `(`, so `_sc_pre` makes no rax:rdx temp; refused source would start compiling,
+  the user's call (`docs/development/issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md`);
+  `H { 7, (pass(o)), 8 }` into a `dyn` field gives two reports where the unwrapped call (169) and every other dyn
+  destination take the wrap (`…/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md`).
+- Closes [`2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md`](docs/development/issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md).
+
+#### ST-21 — the `#derive` scanner decodes a nested derived struct field and skips any value whole (lane struct, commit 6cc59858)
+
+- **Fixed (no decision needed: fixed to what the source says): the `#derive` scanner `T_from_json_str` decodes a
+  nested `#derive`d struct field through the inner struct's own `T_from_json_str`, as the pairs form
+  `T_from_json(bayan_json_parse(..))` does, and walks every value it does not take — that field's, an unknown key's —
+  whole, string- and depth-aware.** Its nested arm and unknown-key arm skipped to the first `,` or `}` at ANY depth
+  (6.6.0 – 6.7.10): the nested field stayed 0, the inner object's next key was read as the outer struct's (an outer
+  field of the same name took the inner value) and its `}` ended the scan, so every field after it was lost
+  (`{"a":1,"inn":{"x":2,"y":3},"b":4}` gave 1 0 0 0); an unknown key holding an object fed its keys to the outer struct
+  (`b` = 9, not 4). A nested value that is not an object leaves the field 0; a field typed with a struct no
+  `#derive(Serialize)` / `#derive(Deserialize)` above registered (an accessors-only struct among them: it has no
+  decoder — ST-21r), or with a derived enum, is skipped, as before. The skip helper `_cy_json_skipval` is now emitted
+  for every derived struct, so every derive-using program's bytes change.
+- **How:** `src/frontend/lex_pp.cyr` `PP_DERIVE_SERIALIZE_BODY` (the `_from_json_str` emitter, a cybs giant), through
+  small helpers: `PP_DNEST_SCAN` replaces the nested arm's depth-blind skip — for a field type whose last `#derive`
+  registration is a STRUCT (`PP_DERIVE_STRUCT`: `PP_DERIVE_LAST` + the new `_pp_derive_isen` table, 1 for an enum) it
+  emits `if (load8(json + _p) == 123) { var _nq<fi> = <T>_from_json_str(json + _p); if (_nq<fi> != 0) { memcpy(ptr +
+  <off>, _nq<fi>, <tsz>); } }`, then always `_p = _cy_json_skipval(json, _p);`; the unknown-key arm is `else { _p =
+  _cy_json_skipval(json, _p); }`; `_needsk` is gone (`_pp_skipval_done` emits the helper once per compilation).
+  `PP_DERIVE_TSZ` replaces the pairs arm's inline size loop (the same last-match rule: byte-identical pairs codecs). The
+  `{` guard matters: `<T>_from_json_str` scans to the first `{`, so a `null` would decode a LATER object. The enum
+  exclusion is load-bearing: a one-variant derived enum field builds today, and `var _nq = E_from_json_str(..)` would
+  refuse it (*a `: stack` enum returns two values*) — found in the bite's own probe, amended in. Guide: the ⚠
+  known-defect note (§ Derive Serialize on a struct) is replaced by the rule.
+- **Rows:** new `tests/tcyr/derive/derive_nested_scanner.tcyr` (25 rows here, 27 after ST-21r): the filed repro's three
+  inputs verbatim with its structs (scanner Out 1 2 3 4, Out2 1 2 3 4, P 1 4) and the pairs form agreeing; the nested
+  field first, last, twice, two levels deep; spaces around every token; keys in another order inside and out; a nested
+  `Str` holding `, } {` and an escaped quote; unknown keys holding nested objects, an array of objects / strings /
+  arrays, a string with `, }` and escaped quotes, in the outer and the nested object; a nested `null` (no later object
+  decoded), a number, a string leaving 0; a field typed with a non-derived struct skipped whole; a field typed with a
+  one-variant derived enum (builds; skipped). `tests/tcyr/derive/derive_serialize_narrow.tcyr`: the scanner `Out` check
+  flips to nested = 1. Mutations (recorded in the new file's header): M-D1 the old skip with no decode RED 9 + narrow's
+  2; M-D2 no `{` guard RED the null and number rows; M-D3 the unknown arm back to the old skip RED 5; M-D4 decode but
+  skip depth-blind after RED 11; M-D5 no enum exclusion: the file does not build. The tree before RED 10 rows +
+  narrow's 2.
+- **Measured** (the filed repro run verbatim): `1. scanner Out: 1 0 0 0 · 2. scanner Out2: 1 0 0 3 · 3. scanner P: 1
+  9 0 0` → `1 2 3 4 · 1 2 3 4 · 1 4 0 0` (the pairs `Out` row 1 2 3 4 before and after) on x86_64, aarch64 (qemu) and
+  PE (wine);
+  cx overflows its code buffer on lib/bayan.cyr, as every derive test does, before and after. The derive bucket (21
+  files) 0 failed on x86_64 and aarch64. Corpus differential: 90 inputs × 6 modes change code (every one includes a
+  `#derive(Serialize|Deserialize)` transitively: the always-emitted `_cy_json_skipval` and the new unknown-key arm), 0
+  change status.
+- **What changes for code that compiles today:** a `T_from_json_str` over a document with a nested `#derive`d struct
+  field, or with an unknown key holding an object / array / a string with `,` or `}`, now fills the nested field and
+  every field after it, and an inner or unknown object's keys no longer overwrite the outer struct's. Every
+  derive-using program's bytes change.
+- **Filed, not fixed:** the scanner's SCALAR arms (i64, untyped, f64, bool, `Str`) do not walk an object / array value
+  — `{"a":{"q":7,"b":9},"b":4}` gives b = 9 (pairs: 4), before and after
+  (`docs/development/issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md`).
+- Closes [`2026-10-12-derive-scanner-loses-fields-after-nested-struct.md`](docs/development/issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md).
+
+#### ST-21r — the derive scanner decodes a nested field only through a codec a Serialize / Deserialize derive emitted (lane struct, review fix, commit d2dd38fa)
+
+- **A regression ST-21 introduced, fixed before the merge.** `PP_DNEST_SCAN` called `<Inner>_from_json_str` whenever
+  `PP_DERIVE_STRUCT` found a non-enum `#derive` registration of the field's type, but `PP_PARSE_STRUCT_DEF` registers a
+  struct for EVERY derive, `#derive(accessors)` included, and accessors emits no codec: a `#derive(Serialize)` struct
+  with a field typed by an accessors-only struct referenced an undefined `In_from_json_str` and the build was refused
+  (*refusing to emit binary with 1 reachable undefined function(s)*); it built before the lane. A per-registration flag
+  `_pp_derive_codec` (alloc'd beside `_pp_derive_isen` in `PP_PARSE_STRUCT_DEF`, 0 at registration) is set at the top
+  of `PP_DERIVE_SERIALIZE_BODY` — the one body that emits `T_from_json_str`, reached from Serialize, Deserialize and
+  every stack of them — and `PP_DERIVE_STRUCT` requires it, so an accessors-only struct is skip-only again. The
+  `PP_DNEST_SCAN` comment, the guide sentence and the test header name the guard as a Serialize / Deserialize
+  registration.
+- **Rows:** derive_nested_scanner.tcyr 25 → 27: a field typed with an accessors-only struct (`#derive(accessors) struct
+  AIn`, with hand-written pairs codecs) builds and is skipped whole (a = 1, b = 4); accessors stacked over Deserialize
+  decodes (1 2 3 4). 27/27 on x86_64, aarch64 (qemu) and PE (wine); the review's probe builds and gives 14 on all three
+  (it was refused). Mutation: `PP_DERIVE_STRUCT` without the codec test RED (the file does not build: *undefined
+  function 'AIn_from_json_str' (reachable call site)*). Every tests/tcyr/derive/*.tcyr exits 0; every `*derive*` gate
+  (8) and guide_examples_compile green; `cyrius fmt --check` clean; seed-derive OK.
+- Completes [`2026-10-12-derive-scanner-loses-fields-after-nested-struct.md`](docs/development/issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md) with ST-21.
+
+#### struct lane — the lane gate
+
+- **At the lane head (`d2dd38fa`):** build/cycc = cycc(src) and cycc(cycc(src)) == cycc(cycc(cycc(src))) (cmp),
+  2,189,824 B (not committed). `sh scripts/seed-derive-cycc.sh`: "OK: build/cycc is machine-derivable from the
+  29024-byte seed" (run after lex_pp.cyr changed). `sh scripts/check.sh` (`CYRIUS_CHECK_JOBS=4`): *shell gates: 497 of
+  497 produced a result, 0 NOT RUN* · *failures: 2* · *skipped: 2* — the two failures are the lane base's: the check
+  binary's doc-stamp row (130 passed, 1 failed: state.md's cycc row against the lane's 2,189,824 B — the integration's
+  restamp) and `distlib_owner_rule_shared.sh` row C (`_bre_err: niyama sankoch` — the lane base predates main's
+  `3f8d1b4b` sankoch 2.8.7 refold); the SKIPs are `agnos_sysinfo_tail_parity` and `agnos_monotonic_clock_rdtsc`. The
+  per-file exit loop over the 15 `.tcyr` the lane added or changed: every one compiles rc 0 and exits 0 on x86_64 and on
+  aarch64 (qemu). At `6cc59858` a loop over all 583 `.tcyr` (raw `build/cycc <f`, standalone) built and exited 0 every
+  one; at `42a0b63a`, `bcca83f9`, `299e6e60` and `2f5387e5` the scratch-cwd loop (580–582 files) read the same three
+  failures as the lane base (`tls_native_ccs_deadline`, `f64_parse_rounding`, `unicode_normconf`).
+- **Along the lane:** check.sh at `42a0b63a` and `bcca83f9` (495 / 495 shell gates produced a result), `299e6e60`,
+  `2f5387e5` and `cb2d7406` (496 / 496), `d09f6364` and `6cc59858` (497 / 497); besides the two lane-base rows each red
+  row was the lane's own and repaired at once — `hidden_temp_census` axis 3 (`3fc1dbbb`, ST-3) and `dead_code_floor`
+  axis 1 (`8e155bf3` in ST-9, `d1ac8800` = ST-14).
+- **Hardware:** `sh scripts/cross-os-selfhost.sh <host> crossos` — `SELFHOST_OK` and the crossos suite 0 failed on ecb,
+  ach, cass and pi at `42a0b63a` (282 passed), `bcca83f9` (283), `299e6e60` (283) and `2f5387e5` (285). Not run in the
+  lane at the ST-10 – ST-21r commits or at the lane head (the release gate's cross-OS leg runs them).
+- **Noted, not a gate failure:** coverage_mode_corpus's IR=3 leg (compared only) lists derive_nested_scanner.tcyr exit
+  2: under `CYRIUS_IR=3` the "nested field first" and "two nested fields" rows read `f.inn.x` (an i32 at offset 0) as an
+  address — the same with ST-21's 25-row file and with the lane-base compiler on a minimal probe (122 where 10 is
+  right): the filed `issues/2026-10-08-ir3-drops-unrecorded-field-emits.md` (a signed narrow field through a pointer
+  under the opt-in IR=3).
+- `tests/tcyr/CORPUS_FLOOR` is not touched (503; the corpus is 583 `.tcyr` with derive_nested_scanner.tcyr) — the
+  integration ratchets it.
+
+### Language — generics and the frontend remainder (the generics + frontend lane)
+
+#### GF-1 — a generic instance at `f64` and one at a struct named like a scalar are two instances (lane genfe, commit 6538d390)
+
+- **Fixed (the user's decision D5 = C, 2026-10-13): a generic instantiated at `f64` and at a struct named `i` shared
+  one instance, so the second call ran the first's body, silently.** `_mint_generic_name` names an instance
+  `Base$<conc>`, and `_append_conc_name` (parse_fn.cyr) wrote `i` and then the width digits for i8 / i16 / i32 / i64
+  only, so f64 (conc -9) stayed a bare `i` — which is also a `struct i`'s spelling. `gen<f64>` and `gen<i>` both
+  minted `gen$i` and FINDFN's dedup returned the first: the filed repro (`fn gen<T>(x: *T): i64 { return sizeof(T);
+  }`, `gen<f64>(0) * 10 + gen<i>(0)`) exited 88 where 96 is right, and 176 with the two calls swapped. Generic STRUCT
+  instances mint through the same writer, so `Box<f64>` and `Box<i>` shared one layout (`sizeof` sum 176 for 192).
+  Present since v6.3.33's per-type instances. Now f64 is spelled `f64` (`gen$f64`), and a struct whose name is exactly
+  a scalar spelling (i8 / i16 / i32 / i64 / f64, judged by the new `_conc_sname_scalar` over `_bnd_type_is`) is
+  written with a leading `.` (`gen$.f64`, `gen$.i32`): a scalar type argument never shares an instance with a struct
+  one. Nothing stops compiling, and every other instance keeps its name.
+- **Visible names:** the execution-coverage dump (`CYRIUS_COVERAGE`), `CYRIUS_DCE_VERBOSE`, diagnostics and a shared
+  object's exported symbols print `Base$f64` (was `Base$i`) and `Base$.<name>` (was `Base$<name>`). `cyrius coverage`
+  cuts names at the first `$`, so its counts do not change. Pins updated: coverage_exec_hits.sh B1 / F3 want-files and
+  the F3 label (`gen$f64`), coverage_exec_cli.sh X1's comment (`sh_gen$f64`). The instance names are not in the
+  binaries: the whole .tcyr corpus (579 files) compiles byte-identical before and after, except the new test.
+- **Measured** (x86_64, CYRIUS_IR=3, aarch64 under qemu, cx under cxvm, PE under wine — the same on each): the repro
+  88 → 96; swapped 176 → 96; `Box<f64>` / `Box<i>` 176 → 192. The new crossos test did not build on the base (its B3
+  row `bx.v.c`: `Box<i>` had `Box<f64>`'s layout); without B3 the base compiler passed 8 of 17.
+- **Still open (filed, High; not part of this filing):** a two-parameter generic's nested instance names collide —
+  `g2<P<R>, i32>` and `g2<P, R<i32>>` both mint `g2$P$R$i32` (a nested instance's own `$` makes the split ambiguous:
+  `1604 1604` where `1604 812` is right; the struct form `Two<..>` too). Its fix is a new spelling, the user's call:
+  [docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md](docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md)
+  — 6.7.12. The guide § Generics (monomorphization) names it (GF-1r).
+- **Gate:** NEW `tests/gates/frontend/generic_instance_names_distinct.sh` (registered in check.sh after
+  generic_f64_result): R1 the filed repro verbatim (96), R2 swapped (96), S `Box<f64>` / `Box<i>` sizeof (192), F1 /
+  F2 a `struct f64` beside a scalar `gs(1.5)` against the struct `gs<f64>(p)` / `gp<f64>(&p)`, both orders (128 /
+  104), I a `struct i32` with `gen<i32>` (32) — each on x86_64 / IR=3 / aarch64 / cx / PE; N the coverage-dump names
+  on x86_64 (`gen$f64` beside `gen$i`; `gs$f64`, `gs$.f64`, `gp$.f64`; `gen$.i32`). NEW
+  `tests/tcyr/crossos/generic_instance_names.tcyr` (18 rows: fn instances in both orders, non-inlinable, in one
+  expression, the Box sizes and a `Box<i>` local's fields, two-parameter `<f64, i>` / `<i, f64>` / `<i, i>` / `<f64,
+  f64>`, `struct i32`) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutants (ledger in the gate header): M0
+  (the fix reverted) RED R1 / R2 / S on every leg and N, and T does not build; M1 (f64 spelled, no `.` marker) RED F1
+  (112) and F2 (139 on x86_64 / IR / aarch64, cx 1, PE 5) on every leg, and N. Guide § execution coverage (`gen$f64`,
+  `gen$.f64`) and § Generics (the naming rule).
+- **cycc:** 2,168,800 → 2,172,896 B over GF-1 and GF-2 together. Seed-derive OK.
+- Closes
+  [2026-10-12-generic-f64-instance-name-collides-with-struct-i.md](docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md).
+
+#### GF-2 — a bound with no `impl … for i64` is met at `f64` (lane genfe, commit 48ada282)
+
+- **Fixed: a bounded generic called at `f64` needed `impl … for i64` too.** With `trait Show` and only `impl Show for
+  f64`, `gb(h)` and `gb<f64>(h)` (`fn gb<T: Show>(x: T): i64 { return x.show(); }`, `h: f64`) were refused "its type
+  argument does not implement trait 'Show'" with a note naming `impl Show for i64`, and the method spelling `p.bm(h)`
+  compiled and ran the dead stub (0) — 6.7.0 to 6.7.10, every target. The stub scan's mode 0 (`_gs_use`, parse_fn.cyr)
+  counted a by-value bounded site (`x.show()`) a STRUCT use unless i64 implemented the trait (`_bs_i64ok`), so the
+  base became the dead stub, and a stub has no scalar instance: every f64 call path routed to the base and
+  `_refuse_bnd_base` named i64. A by-value bounded site with a trait is now a trait use whatever i64 implements.
+  Whether the i64 base is valid stays `_bnd_base_bad`'s judgment: the base is not emitted, and an i64 call with no
+  `impl Show for i64` is refused naming i64, as before. `_bs_i64ok` has no caller and is gone (it was reachable: the
+  unreachable-fn floor stays 52). No decision: the guide's own rule (§ Generics, 6.7.9: "a bound is then met at
+  `f64`").
+- **One note, naming the type the call binds:** `_explicit_generic_call` (parse_expr.cyr) sets `_ta_explicit = 2` when
+  its instance's bound was refused, and `_gen_call_head` returns before the base checks for it, so the call is not
+  judged against the base as well — the issue's "never against the base for a call that reaches a concrete instance".
+  With only a struct impl, `gb<f64>(h)` gets one note naming `impl Show for f64` (it named i64); `gb<R>(r)` with no
+  `impl Show for R` gets one note naming R (it added an i64 note).
+- **Measured** (x86_64, IR=3, aarch64 qemu, cx cxvm, PE wine): `gb(h)` / `gb<f64>(h)` refused → 5; `p.bm(h)` 0 → 5;
+  repro C one note naming i64 → one naming f64; `gb<R>(r)` two notes → one; `gb(3)` with only the f64 impl refused
+  naming i64 (unchanged); both impls `gb(h) * 10 + gb(3)` 56 (unchanged). The corpus (579 .tcyr) compiles
+  byte-identical, stderr included, except the changed test.
+- **Gate:** `tests/gates/frontend/generic_f64_result.sh` section F: F1 `gb(h)` 5, F2 `gb<f64>(h)` 5, F3 `p.bm(h)` 5,
+  F4 both impls 56 — on x86_64 / IR=3 / aarch64 / cx / PE; F5 a struct impl alone, `gb<f64>(h)` refused with ONE note
+  naming f64; F6 the f64 impl alone, `gb(3)` refused naming i64; F7 `gb<R>(r)` one note naming R — on x86_64.
+  `tests/tcyr/crossos/generic_f64_result.tcyr` +9 rows (47 → 56, FLOOR 56; a trait with only f64 and struct impls —
+  inferred, explicit, a literal, a global, a three-parameter generic, a struct, a method, the method's fn spelling) on
+  x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutants: M12 (the fix reverted) RED F1 / F2 (refused naming i64)
+  and F3 (exit 0) on every leg and F5, and T does not build; M13 (no `_ta_explicit = 2`) RED F5 and F7 (two notes).
+  Guide § Generics (f64 needs no i64 impl) and § trait bounds (an instance judged at its own type alone).
+- **Filed, not fixed:** a generic forwarding its T to a bounded generic (`fn o<T>(x: T) { return gb(x); }`) at f64
+  with only the f64 impl is refused with the struct-stub text plus an i64 note (`_gs_use` mode 1 treats a
+  bound-invalid base as a stub):
+  [docs/development/issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md](docs/development/issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md)
+  — 6.7.12.
+- Closes
+  [2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md](docs/development/issues/archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md).
+
+#### GF-3 — a generic method call `p.m(x)` reaches the instance its arguments bind (lane genfe, commit 2c7f3875)
+
+- **Fixed: a generic METHOD called as `p.m(x)` reached the i64 base for every binding but f64.** With a struct for its
+  type parameter it ran the base — the dead stub when the body uses the parameter as a struct — so `p.pick(q)` (`impl
+  P { fn pick<V>(self, w: V): i64 { return w.b; } }`) returned 0 where `P_pick(p, q)` read `q.b`: the filed repro
+  exited 7 where 77 is right, on x86_64, aarch64, cx and PE (6.7.0 – 6.7.10). A chain `mk().pick(q)` and an `impl Tr
+  for P` member did the same, `var b: Q = p.id(q);` (a `: V` return) SIGSEGV'd, and a `Box<V>` carrier was refused
+  "cannot pass 'b' to a parameter of a different struct type". `_mcall_gen` (parse_fn.cyr; called from
+  `_field_load_on`'s method arm and from `_var_rhs_msid`'s lookahead) now infers as the free call's `_gen_call_head`
+  does and calls the instance for any non-i64 binding: a struct argument of any size, an f64 (6.7.9), a struct carrier
+  (`_mcall_infer` → `_gen_infer_sc`), and a type parameter on `self`, which binds the receiver's struct (`p.me()`
+  calls `P_me$P`). Every path takes it: a `*P` receiver, `self.m(..)`, a chain, `var w = p.m(..)`, a named argument.
+  The lookahead never reports, and `_gi_sc` is saved and restored around it.
+- **Changed (the user's decision D6 = A, 2026-10-13): a scalar binding of a generic method whose base is the dead
+  stub, or whose bound fails at i64, is refused naming the method's fn, as the free call is.** `p.pick(9)` and
+  `p.pick(h)` (an f64) returned 0 silently and are now refused "generic 'P_pick' has no i64 (or other scalar)
+  instance"; `p.bm(7)` with only `impl Show for f64` returned 0 and is refused by the bound, naming i64; a struct
+  without the bound's impl (`p.bm(r)`) is refused, its note naming R.
+- **Two consequences fixed in the same bite** (without them decision D6 refused valid source): (1) `_selfbv_bit`
+  resolves an instance's `self: V` to its binding (`_selfbv_tp`), so a receiver of 8 B or less is passed by value to
+  `P_me$P` (it gave 129 for 6); (2) the stub scan's mode 1 follows a METHOD call that forwards a T-typed name into a
+  stub generic method (`_gs_mfwd` / `_gs_mcallee` / `_gs_iself`): `fn o<T>(p: P, t: T) { return p.pick(t); }` and a
+  generic method's `self.pick(w)` are stubs, as `P_pick(p, t)` makes them, so they compile uncalled and their scalar
+  call is refused naming them (`o1(p, 5)`, `p.fwd(5)`). Here the receiver is a single name typed by scope from the
+  tokens (`_tok_name_sid`; an untyped impl `self` by GFISELF); a field-chain or call-result receiver is GF-3r.
+- **Measured** (x86_64 / IR=3 / aarch64 qemu / cx cxvm / PE wine, the same on each): the repro 7 → 77; a chain plus a
+  trait member 0 → 73; `var w = p.pick(q)` 0 → 7; a bounded member (`p.bm(q) * 10 + p.bm(2) - 200`) 199 → 17; 8 / 16 /
+  40 B arguments, a `*P` receiver, `self`, two type parameters, a named argument: wrong (exit 1) → right (42); the
+  `Box<V>` carrier refused → 98; `self: V` at 8 B 0 → 6, at 24 B 0 → 4; a `: V` result at a struct refused → right,
+  and `var b: Q = p.id(q);` rc 139 → 3; forwarders 22 → 71; `p.k(9) + p.k(20)` 39 (unchanged). Corpus differential
+  (801 inputs, x86_64) against GF-2's compiler: only the two changed tests.
+- **Gate:** NEW `tests/gates/frontend/generic_method_infer.sh` (registered after generic_instance_names_distinct): R1
+  the filed repro verbatim (77), C `mk().pick(q) * 10 + p.tp(q)` (73), K `p.k(9) + p.k(20)` (39) — each on x86_64 /
+  IR=3 / aarch64 / cx / PE; S1 `p.pick(9)` and S2 `p.pick(h)` refused once at the `(`, naming P_pick; S3 the
+  free-spelling control; S4 `var a = p.pick(9);` one error (the lookahead quiet); S5 `p.bm(7)` one bound note naming
+  i64, S6 its free control; S7 S1 through the aarch64 / cx / PE compilers; S8 `o1(p, 5)` / `p.fwd(5)` refused naming
+  o1 / P_fwd; S9 `p.bm(r)` refused, its note naming R. NEW `tests/tcyr/crossos/generic_method_struct_arg.tcyr` (40
+  rows: struct arguments of 8 / 16 / 24 / 40 B, a `*P` receiver, `self.pick`, a chain, named, two type parameters, in
+  an expression, as an argument, `var w = p.pick(q)`, a `: V` return at 8 / 24 B untyped and annotated, a bounded
+  member at Q and at i64, an `impl Tr` member, a `Box<V>` carrier at Pt and i32, `self: V` at 8 / 24 B, nine
+  forwarding rows, scalars into an i64 base) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutants M0-M7 (the
+  fix reverted; a struct binding returning the base; no refusal; the lookahead reporting; no carrier inference; `self`
+  binding nothing; `_selfbv_tp` 0; no `_gs_mfwd`), each run on a scratch tree, each RED as recorded in the gate
+  header. Guide § Generics (method inference, the stub refusal for methods, the method forwarding) and § trait bounds
+  (`p.bm(7)`).
+- **cycc:** 2,172,896 → 2,181,104 B over GF-3 and GF-4 together.
+- Closes
+  [2026-10-10-generic-method-call-runs-i64-base.md](docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md)
+  (with GF-3r).
+
+#### GF-4 — a generic that reads its struct carrier's `T` field as a struct compiles (lane genfe, commit ed9456c1)
+
+- **Fixed: `fn gy<T>(b: Box<T>): i64 { return b.v.y; }` did not compile, called or not** — "expected ';', got '.'" on
+  every target (6.7.4 – 6.7.10 measured). The 6.6.10 stub scan marks a base the dead stub only when a T-typed NAME
+  (`p: T`, `var q: T`) is followed by `.field`; `b` is a `Box<T>`, so pass 2 parsed the i64 base with `b.v` an i64 and
+  `.y` a syntax error. The scan now records each struct carrier of the fn being scanned — a parameter (`_gs_param`) or
+  a `var x` (`_gs_var`) typed `[*]G<.., T, ..>`, one entry per slot one of the fn's type parameters takes whole
+  (`_gcr_note`; an alloc'd 64-entry side table `_gcr`, reset with the scan) — and mode 0 counts `x.f.g` a struct use
+  when x is a carrier and G declares `f: P` or `f: *P` with P its own type parameter in that slot (`_gs_cfield` →
+  `_gs_gfield_tp`). G's definition is read from its tokens — its recorded start when registered, else a search for
+  `struct G<` (`_gs_gdef`), since pass 1 meets a generic before a struct declared below it. The base is the dead stub:
+  `gy(b)` / `gy<Pt>(b)` call `gy$Pt` (the filed repro exits 44), and `gy(bi)` with `bi: Box<i32>` is refused naming
+  gy, as a scalar call of any stub is. No decision: the fix is to what the source says.
+- **One field deep** (the issue's own option): a field typed `Box<T>` inside another carrier (`o.inner.v.y`) is not
+  followed; the guide documents the T-typed-local workaround (`var t: T = o.inner.v;`) and the gate pins that it
+  builds.
+- **Measured** (x86_64 / IR=3 / aarch64 / cx / PE): the repro "expected ';', got '.'" → 44; a pointer / local / slot-1
+  / struct-declared-below probe 3 parse errors → 44; `gy(bi)` / `gy<i32>(bi)` / `gy(bf)` the parse error twice → one
+  refusal naming gy; the definition alone the parse error → builds.
+- **Gate:** `tests/gates/frontend/generic_type_arg_unknown_refused.sh` section CF (x86_64): CF1 the filed repro
+  verbatim (44); CF2 `gy(bi)`, CF3 `gy<i32>(bi)`, CF4 `gy(bf)` (`bf: Box<f64>`) refused naming gy; CF5 the definition
+  alone builds; CF6 the one-hop workaround builds (6); `_gs_use` without `_gs_cfield` turns CF1-CF5 RED.
+  `tests/tcyr/crossos/generic_struct_inference.tcyr` G12 (+6 rows, 195 → 201; cx 200: `gyv(b)`, `gyv<Pt>(b)`, a
+  `*Box<T>` carrier `gyp(&b)` / `gyp(bp)`, a struct declared below the generic, a `var x: Box<T>` local carrier,
+  `Pr<i64, T>` slot 1) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE; mutants MG13 (no `_gs_cfield`), MG14
+  (`_gs_var` records no carrier) and MG15 (`_gs_gdef` without its token search) — the file does not build. Guide §
+  Generics (the stub rule names the carrier field; the one-hop limit and its workaround).
+- **Filed, not fixed:** `b.v.show()` with `T: Show` on a carrier field is no bounded site, so the carrier rule makes
+  it a struct use: `gs(bi)` (`Box<i64>`, with `impl Show for i64`) is refused naming gs — before GF-4 the definition
+  did not compile at all; workaround `var t: T = b.v; return t.show();`:
+  [docs/development/issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md](docs/development/issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md)
+  — 6.7.12. From the review: the carrier table drops a generic's 65th carrier without a word (`var z: Box<T> = b;
+  return z.v.y;` after 63 carrier locals is refused "expected ';', got '.'"):
+  [docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md](docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md)
+  — 6.7.12.
+- Closes
+  [2026-10-10-generic-base-reads-carrier-field-as-struct.md](docs/development/issues/archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md).
+
+#### GF-5 — a generic call's own result binds another generic's `T` (lane genfe, commit 8650c88f)
+
+- **Changed (the user's decision D7 = A, 2026-10-13: infer it): a generic call's own result did not bind another
+  generic's `T`.** `gx(mk1(p))` with `fn mk1<T>(x: T): Box<T>` and `fn gx<T>(b: Box<T>)` was refused "cannot pass
+  'mk1' to a parameter of a different struct type in a call to 'gx'": the argument was typed by `mk1`'s BASE return,
+  the generic `Box`, which is no instance, so T inferred i64. The direct carrier `g(mk1(p))` (`fn g<T>(p: T)`) minted
+  `g$Box` and was refused the same way (6.7.3 – 6.7.10; 6.6.20 compiled it and ran the base on the wrong layout). A
+  generic call is now typed by the INSTANCE it reaches: `_gen_call_inst` (parse_fn.cyr) answers FINDFN's entry, or for
+  a generic the instance `_pair_gen_inst` resolves (minting it), with the outer inference's `_gi_sc` put back and the
+  cursor on the inner call meanwhile, so a bound its instantiation refuses names the inner call's column. The struct
+  carrier (`_gsc_call`, through `_gsc_arg`'s new `name<..>(` arm) and the direct carrier (`_ic_call_rs`, which returns
+  the instance's f64 or struct return whatever the base records — a base defined below the call has no `: T` return
+  yet) both ask it. So `gx(mk1(p))` calls `gx$Pt`, as `gx<Pt>(mk1(p))` does — inferred or explicit (`gx(mk1<Pt>(p))`),
+  nested (`gx(mk1(mk1(p)))`), into either carrier and a generic method, at a Pt / i32 / f64 instance, whatever the
+  order of definition. The filed repro exits 8. The guide's limit sentence is removed.
+- **What changes for code that compiled:** a `: T` generic's struct instance binds too. `g(id(p))` was refused when
+  `g` uses T as a struct and ran the i64 base when it does not: `gsz(id(p))` gave `sizeof(T)` 8 where 16 is right, and
+  now gives 16. An f64 nested call into a generic defined below it (`gid(gid(h)) * 2.0`) was an i64 there (an integer
+  multiply, warned: 1); it is an f64 (7).
+- **The pair scans** (parse.cyr): `_tok_gen_sc_sid`'s argument reading is split into `_tok_sc_arg`, whose whole-call
+  arm `_tok_sc_call` reads a generic callee through its own type parameters — `: G<.., U, ..>` (what U binds,
+  `_tok_gen_tp_sid`) or `: U` with U carried by a `U` parameter (`_tok_sc_fwd`) — and the direct arm takes `name<..>(`
+  (`_tok_call_whole`). Without them a `?` above a wrapper typed through `unbox(mk1(p))` died rc 139 (measured). This
+  bite reads one carrier level; two and more, and an untyped `var b = mk1(p)`, are GF-5r.
+- **Measured** (x86_64 / IR=3 / aarch64 qemu / cx cxvm / PE wine, the same on each): the filed repro refused → 8;
+  `g(mk1(p))` refused naming `g$Box` → 8; `gx(mk1(mk1(p)))`, `gx(mk1<Pt>(p))`, `g(mk1<Pt>(p))` refused → 8; `g(id(p))`
+  (a stub) refused → 4; the `?` wrapper `unbox(mk1(p))` refused → 7; `gsz(id(p))` 8 → 16; `gx(mk1(5))` 8 (unchanged);
+  `gid(gid(h)) * 2.0` with `gid` below the call 1 → 7. The corpus (801 inputs: every .tcyr, tests/fixtures, programs)
+  is byte-identical, stderr included, against GF-4's compiler.
+- **Gate:** `tests/gates/frontend/struct_arg_type_refused.sh` R18i (the filed repro verbatim, 8), R18j (`g(mk1(p))`,
+  `g(mk1<Pt>(p))`, `gx(mk1(mk1(p)))`, `gx(mk1<Pt>(p))`: 120 against a bound-local control), R18k / R18l (a `Box<Q>`
+  from a generic call into `Box<Pt>` and into the explicit `gx<Pt>` still refused by name);
+  `tests/gates/frontend/trait_bounds_checked.sh` I8 (a bound refused on `mkb(r)` inside `gx(..) + g(..)`: once, at the
+  inner call's column). `tests/tcyr/crossos/generic_struct_inference.tcyr` G13 (+29 rows, 201 → 230; cx 229: the
+  repro, the direct carrier, nested, an explicit inner call into both carriers, a scalar inner call, Pt / i32 / f64
+  instances, `g(id(p))`, `gcr_sz(gcr_id(p))` 16, generics defined below the call, `gx(id(b))`, var / assignment / tail
+  / argument / named / not-inlined / `*Box<T>` carrier / generic method / struct-receive / `unbox(mk1(p)).y`
+  positions, `Pr<T, U>` from `gcr_mkpr<Pt, i32>`, `gcr_2s(bi, gcr_id(5))`, four `?`-above-wrapper pair rows) on x86_64
+  / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutants (each a one-change copy of the fixed src built by the fixed
+  compiler): `_gsc_call` reading FINDFN's base → RED R18i R18j, the tcyr does not build; `_ic_call_rs` without the
+  instance's struct return → RED R18j, does not build; `_gsc_arg` / `_gen_arg_whole` without `<` → RED R18j, does not
+  build; `_ic_call_rs` back to base-first → the below-defined rows do not build; `_gen_call_inst` not restoring
+  `_gi_sc` → does not build; without the cursor move → RED I8 (column 74 for 77); `_tok_sc_call` reading only the
+  recorded return, or without `_tok_sc_fwd`, or `_tok_gen_tp_sid` without `<` → rc 139 on G13's pair rows. Guide §
+  Generics.
+- **cycc:** 2,181,104 → 2,185,200 B.
+- **Not written:** the issue's row "a `*Box<T>` carrier with a `*Box<T>`-returning generic" — a generic declared `:
+  *Box<T>` is refused at its definition on every compiler since 6.7.0, filed as
+  [docs/development/issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md](docs/development/issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md)
+  — 6.7.12; G13 pins the `*Box<T>` carrier given a generic call's VALUE (`gpx(mk1(p))`). Also filed: a generic
+  forwarding its T inside a carrier into a stub generic (`fn outer<T>(x: T) { return gx(mk1(x)); }`, or `gx(b)` with
+  `b: Box<T>`) is refused at its definition, before and after:
+  [docs/development/issues/2026-10-14-generic-forwarding-carrier-into-stub-generic-refused.md](docs/development/issues/2026-10-14-generic-forwarding-carrier-into-stub-generic-refused.md)
+  — 6.7.12.
+- Closes
+  [2026-10-10-generic-call-result-as-carrier-argument-refused.md](docs/development/issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md)
+  (with GF-5r).
+
+#### GF-6 — an overload sibling with no definition never takes its base's call (lane genfe, commit 0155abc7)
+
+- **Changed (the user's decision D8 = (b), 2026-10-13): an overload sibling that is only NAMED somewhere took its
+  base's calls.** The v5.10.25 router sends `base(s, ..)` with a Str first argument to `<base>_str` (and an
+  i64-returning call into a `: cstring` base to `<base>_int`), and `_OV_ARITY_OK` let a sibling with no recorded
+  definition through unjudged. With `pr_str` called in some fn but defined nowhere, `pr(s)` — written to the defined
+  `pr` — was routed to `pr_str`: an `--allow-undef` build trapped there (rc 132 on x86_64 / aarch64, 29 on PE), and
+  the default build was refused only because the route made the name reachable ("1 reachable undefined function"). In
+  an `object;` unit it bound to another object's `pr_str` (two R_X86_64_PC32 relocations), and only when this unit
+  happened to name `pr_str` above the call — the overload registry fills at a name's first mention (6.5.1 – 6.7.10).
+  `_OV_ARITY_OK` (parse_fn.cyr) now answers 0 for a target with no definition recorded (offset < 0 and GFDS 0), for
+  the `_str` and `_int` arms alike; the tail, var and assignment positions all route through `_fnc_route`. `pr(s)`
+  calls `pr` (exit 11) in every build: the filed repro with `--allow-undef`, and by default (it builds; a warning
+  names `pr_str`). A defined sibling routes as before. cx refuses every undefined call (no reachability pass, no
+  `--allow-undef`): unchanged.
+- cyrius has no bodiless / extern declaration (`fn pr_str(x): i64;` is "expected '{', got ';'"), so nothing records a
+  definition that lives elsewhere; the one "defined elsewhere" case is an `object;` unit, and there the base now takes
+  the call (one relocation, `other`'s).
+- **Measured:** the repro with `--allow-undef`: x86_64 132 → 11, aarch64 (qemu) 132 → 11, PE (wine) 29 → 11; by
+  default refused → 11 on each; the `_int` repro 132 / refused → 11 / 11; return / var / assignment 132 → 111;
+  `object;` 2 relocations → 1. Corpus differential against GF-5's compiler: 801 inputs, 0 differ.
+- **Gate:** `tests/gates/frontend/overload_arity_dispatch.sh` axis 8 (9 rows): the filed repro verbatim with
+  `--allow-undef` (11) and by default (builds, 11); the undefined sibling first named below the call (11, unchanged);
+  return / var / assignment under `--allow-undef` (111); the `_int` arm with an undefined `em_int`, with
+  `--allow-undef` and by default (11); an `object;` unit's relocations against `pr_str` (1); the repro under
+  `--allow-undef` on aarch64 (qemu) and PE (wine, a private prefix) (11) — a fork the box cannot run is NOT RUN by
+  name and fails the gate. The defined-sibling rows (axis 4, axis 7's routed rows) unchanged. Mutant (`return 1` put
+  back): RED every axis-8 row but the below-named one (132 / NOEMIT / 2 relocations; aarch64 132; PE 29). Guide §
+  String Standard Library (a sibling takes the call only when it is defined).
+- Closes
+  [2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md](docs/development/issues/archived/2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md).
+
+#### GF-7 — a `Vec<T>` annotation reads its `T` as a struct field does (lane genfe, commit 69024633)
+
+- **Changed (the user's decision D9 = (a), 2026-10-13): a `Vec<T>` annotation never read its `T`.** A local, a global
+  (either zone), a parameter, `*Vec<T>` and `sizeof(Vec<T>)` stepped the `<..>` with SKIP_GENERICS, which counts
+  brackets and reads nothing, so `var v: Vec<(i64, i64)>`, `Vec<nosuchtype>` and `Vec<1 + 2>` compiled — the filed
+  repro built silently and exited 1 — while a struct field `items: Vec<..>` refused each by name. `_vec_ann_chk`
+  (parse_types.cyr, beside `_vec_field_elem`) reads the element and puts the cursor back, so every site consumes the
+  list exactly as before and the two passes stay in step; `_vec_ann_list` takes the field vocabulary — a struct or
+  union, an integer or float, bool, cstring, Result / Option / Tagged, an enum, `Vec` (a nested `Vec<..>` read the
+  same way, the `>>` / `>>>` folding carried), or a type parameter in scope. Refused by name, once (`_tn_once`),
+  naming the variable or parameter (`_vec_ann_vn`): a tuple ("a tuple type cannot be a Vec element"), an unknown name
+  ("unknown type 'nosuchtype' as the Vec element of 'v'"), a vector type, a slice ("a slice cannot be a Vec element"),
+  u128, a pointer element (`Vec<*Pt>`: "expected a Vec element type for 'v', got '*'", as the field form refuses it),
+  a token that is no type ("expected a Vec element type for 'w', got number 1"), a second argument ("expected '>'
+  after the Vec element type for 'v', got ','"), and a declaration-zone global's element declared below it ("declared
+  after its use", as `var G: Pt` is). The positions: a local, both global zones, a parameter, `*Vec<T>` / `**Vec<T>`
+  (a variable, a parameter, a field, a return), a `*fn(Vec<T>)` parameter, `Vec<Vec<T>>` and `sizeof(Vec<T>)` (from
+  `_gen_ann_sid`, `_ptr_annot`, `_param_type_step` and `_pty_name`). A program's own `struct Vec` is that struct. The
+  handle is unchanged, and a program that still compiles compiles to the same bytes.
+- **Measured:** the filed repro on x86_64 built, exit 1 → refused with exactly its 4 errors (11:13, 14:16, 15:16,
+  16:16), the same through the aarch64 and cx compilers and PE; the 42-probe matrix (14 positions × a tuple / an
+  unknown name / `1 + 2`): 42 built → 42 refused, one error each; `vec_annotation_element.tcyr` 20 / 20 on every leg,
+  and with GF-6's compiler on x86_64 (nothing accepted changed). Corpus differential (1,096 inputs: every .cyr / .tcyr
+  / .fcyr / .bcyr under tests, lib, programs, benches, fuzz, cbt and the issue repros; binary + stderr + rc) against
+  GF-6's compiler: only the filed repro differs.
+- **Gate:** `tests/gates/frontend/tuple_checked.sh` R3q-R3z (11 rows: a `Vec<(i64, i64)>` local, a declaration-zone
+  global, a post-statement global, a parameter called above its definition, a `*Vec` local, a `*Vec` parameter, a
+  `**Vec` parameter, `Vec<Vec<( .. )>>`, `sizeof`, a `*Vec` struct field, a generic fn's local over three instances —
+  each refused once). `tests/gates/frontend/struct_field_type_unknown_refused.sh` section V (47 rows): V1 the filed
+  repro verbatim (exactly its 4 errors); V2 / V3 an unknown name and `1 + 2` in 14 positions (one error naming the
+  variable); V4a-h a second argument, a trailing operator, a vector, a slice, u128, `i8x` (and its prefix note), a
+  declaration-zone element declared below, two bad elements in one fn; V5a the crossos test; V5b a generic fn's
+  `Vec<T>` / `*Vec<T>` and the accepted elements, by default and under CYRIUS_MONOMORPH=0 (17); V5c `Vec<dyn Show>`
+  the dyn refusal alone; V5d a program's own `struct Vec` (19); V6 CYRIUS_MONOMORPH=0 refuses too; V7 the repro
+  through the aarch64 and cx compilers and PE. NEW `tests/tcyr/crossos/vec_annotation_element.tcyr` (20 assertions:
+  every accepted element in every position runs as the handle) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE.
+  Mutants MV1-MV8 (`_vec_ann_chk` returning at once; no nested-Vec arm; `_param_type_step` unchecked; `_pty_name`
+  unchecked; `_vec_elem_ok` answering 1; `_vec_tok_err` silent; `_gen_ann_sid` without the check; `_vec_ann_vn`
+  answering -1), each RED as recorded. Guide § Type names (the Vec row; the positions, the vocabulary and the
+  refusals).
+- **cycc:** 2,185,200 → 2,189,720 B.
+- **Filed, not fixed:** the `Vec<..>` positions outside the filed surface still skip the argument (a type argument
+  `Box<Vec<..>>` / `idv<Vec<..>>`, a multi-value element, a trait member's parameter, a field's nested `Vec<Vec<..>>`,
+  a Vec element's own `<..>` such as `Vec<Box<nosuch>>`); refusing them changes what compiles, the user's call:
+  [docs/development/issues/2026-10-14-vec-type-argument-unread-outside-annotations.md](docs/development/issues/2026-10-14-vec-type-argument-unread-outside-annotations.md).
+  `var b: 1 = 0;`, `var c: + = 2;` and `var G: 7 = 4;` compile silently:
+  [docs/development/issues/2026-10-14-var-annotation-non-type-token-compiles.md](docs/development/issues/2026-10-14-var-annotation-non-type-token-compiles.md).
+  `Box<1 + 2>`, `Box<u128>` and `id<1 + 2>(3)` are refused as "unknown type 'truct'" (a number read as a name offset)
+  and the generic call cascades:
+  [docs/development/issues/2026-10-14-type-argument-non-name-reported-with-garbage-name.md](docs/development/issues/2026-10-14-type-argument-non-name-reported-with-garbage-name.md).
+  Each 6.7.12.
+- Closes
+  [2026-10-09-vec-annotation-type-argument-unchecked.md](docs/development/issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md)
+  (with GF-7r).
+
+#### GF-8 — a program's own `struct slice` is what a fn-local `slice` / `slice<T>` names (lane genfe, commit 3a7febfb)
+
+- **Changed (the user's decision D10 = (b), 2026-10-13: a declared `struct slice` wins everywhere; the built-in stays
+  reachable as `[T]`).** PARSE_VAR compared the annotation word against the built-in `slice<T>` spelling before any
+  struct lookup, so with `struct slice { a; b; c; }` declared, `var x: slice = 0;` in a fn was the built-in 16-byte
+  {ptr, len} slot (`x.a`: "no struct type in scope for 'x'"), `var x: slice;` was "uninitialized variable not
+  allowed", and a generic `struct slice<T>`'s `var x: slice<i64>` was the built-in too ("slice has only .ptr and .len
+  fields") — while a parameter, a pointer target, a field, a declaration-zone global and a type argument named the
+  program's struct (6.7.8 K2). One name meant two types by position (6.6.10 – 6.7.10). PARSE_VAR's `slice` arm asks
+  `_sl_word_builtin` (parse_types.cyr, beside `_sl_ann_at`): the word is the built-in only when no `struct slice` /
+  `struct slice<T>` is declared; otherwise the annotation takes the struct path like any struct name, in a fn-local
+  and in a post-statement global. The helper replaces the arm's inline compare, so PARSE_VAR's reference count goes
+  down (cybs).
+- **What changes for code that compiled:** with a program's own `struct slice` declared, a fn-local `slice` /
+  `slice<T>` annotation names that struct, so the built-in's `.ptr` / `.len` / `s[i]` on it stop compiling — `var s:
+  slice<u8> = 0; slice_of(&s, &buf, 7); return slice_len(&s) + s.len;` exited 14 through 6.7.10 and is now "unknown
+  field 'len' on struct 'slice'". Respell the built-in `[u8]` (pinned by GF-8r). A program with no `struct slice` is
+  unchanged (`[T]` / `slice<T>` locals: K4, the slices tests, the differential).
+- **The filed repro builds.** Its `var x: slice = 0;` on the 24-byte struct is a NULL handle under 6.7.10's handle
+  line, so it faults exactly as the same program with the struct renamed `slyce` does (x86_64 139 / 139, aarch64 139 /
+  139, cx "cxvm: guest address out of range: 0" exit 1 both, PE 5 / 5); the issue's 14 is what `var x: slice;` (an
+  inline struct) gives.
+- **Measured** (x86_64 / aarch64 qemu / cx cxvm / PE wine): the repro refused at 7:9 and 10:23 on every fork → builds
+  and runs as the renamed program; `var x: slice;` "uninitialized variable not allowed" (+2 cascades) → 14; the
+  generic `slice<i64>` / `slice<Pt>` locals refused → 65; `user_struct_named_slice.tcyr` did not build → 11 / 11 on
+  x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Corpus differential (1,096 inputs) against GF-7's compiler: only
+  the filed repro differs.
+- **Gate:** `tests/gates/frontend/slice_position_refused.sh` K2b (the filed repro verbatim builds and exits as the
+  renamed program: 139 both), K2c (`var x: slice;` → 14, the issue's row), K2d (a generic `struct slice<T>`'s
+  `slice<i64>` / `slice<Pt>` locals → 65), K2e (a field and both global zones of the type beside a built-in `[u8]`
+  local → 65). NEW `tests/tcyr/crossos/user_struct_named_slice.tcyr` (11 assertions: the bare name as a 24-byte local,
+  its copy, `&x` into `*slice`, a field, `slice<i64>` / `slice<Pt>` instances and sizeof, both global zones, the filed
+  14 shape, a `[u8]` built-in slice in the same file). Mutant MSW (`_sl_word_builtin` without its FINDSTRUCT test):
+  K2b K2c K2d RED, K2e and K1-K4 green. Guide § Slices ("`slice` is not reserved").
+- Closes
+  [2026-10-10-user-struct-named-slice-shadowed-in-locals.md](docs/development/issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+  (with GF-8r).
+
+#### GF-9 — a `return` outside a fn body is refused by name (lane genfe, commit 6f5d778f)
+
+- **Changed (the user's decision D11 = (a), 2026-10-13): a `return` outside a fn body is refused — `return outside a
+  fn body` — at top level and in a top-level block (an `if`, a loop, a `switch` case, a `match` arm), reported once
+  while the compile goes on to the next statement.** Before, it compiled with no diagnostic and did not return on any
+  target: PARSE_RETURN recorded its `EJMP0` in rp_vec, which only a fn's end patches (over that fn's own range), so a
+  top-level entry was never patched — a `jmp +0` on x86_64 / PE, which falls through (`return 6; syscall(60, 9);`
+  exited 9), and a branch to itself on aarch64 / cx (a hang). No version from 5.11.69 (`build/cc5`) to 6.7.10 returned
+  from one. The FAQ listed it as a syntax error until the 6.7.9 doc sweep removed the line; it lists it again. The top
+  level now refuses `return` as 6.6.7 refused `break`, `continue`, `defer` and `?`: it has no frame and no epilogue. A
+  program exits with `syscall(60, v)`, by running off its end, or through `fn main`'s auto-call. A closure body, an
+  `#inline` fn, a generic instance, a method and a fn defined in a top-level block are fn bodies.
+- **How:** `_ret_toplevel` (parse.cyr, beside `_PARSE_DEFER` with the other context rules), called from PARSE_RETURN's
+  first line — PARSE_RETURN's only caller is `_PARSE_STMT_IMPL`'s dispatcher, which stays untouched. With GINFN 0 it
+  reports, steps over the statement through its depth-0 `;` (`_ret_skip_stmt`: balanced over `( [ {`, stopping at an
+  enclosing `}` or EOF), clears the panic latch again if it was clear before (so PARSE_STMT's resync does not swallow
+  the next statement), and never records the jump.
+- The four tree fixtures that ended in a top-level `return 0;` lose it
+  (`tests/fixtures/{json_stream,json_pointer,json_pretty,test_lib}.cyr`). The regression suite's
+  `_expected_output_gate` compiles all four, and their output is unchanged (exit codes 0 / 104 / 192 / 40 before and
+  after; that gate ignores the exit by design). A top-level `defer { return 5; }` gives one error, the defer's, where
+  it gave two.
+- **Measured** (x86_64 / aarch64 qemu / cx cxvm / PE cycc_win + wine): `return 5;` 5 / hang / hang / 5 → refused (rc
+  1, one error) on every leg; `return 6; syscall(60, 9);` 9 / hang / hang / 9 → refused; `var a = 1; if (a == 1) {
+  return 6; } syscall(60, 9);` 9 / hang / hang / 9 → refused; `var a = 1; return;` and `var a = 1; return (1, 2);` 1 /
+  hang / hang / 1 → refused; a top-level `while (a == 1) { return 6; }` hung on all four → refused; a `switch` case 9
+  / hang / hang / 9 → refused. The controls are unchanged on every leg (5 / 5 / 4 / 3 / 10). Corpus differential
+  (1,096 inputs) against the lane-base compiler: only the four fixtures differ (rc 0 → 1), before their edit.
+- **Gate:** NEW `tests/gates/frontend/toplevel_return_checked.sh` (registered in check.sh; 135 rows). Legs: x86_64,
+  and the aarch64, cx, PE (`CYRIUS_TARGET_WIN=1`) and cycc_win (src/main_win.cyr) compilers built from the tree; a leg
+  that builds a refused program runs it under `timeout 5` (60 for wine), so a reintroduced self-jump is a red row and
+  not a hung gate. R1-R8 the issue's table verbatim, R9 the reproduction's two-line file; B1-B7 a while body, a for-in
+  body, a switch case, an else branch, a nested block, a match arm and a `loop` body, each refused at the return's own
+  line; P1-P5 the parse going on (the next statement's own error, whether it starts with a keyword, a name or a
+  builtin call; two returns, two lines; a value nesting `( [ {`, one line); X `--syntax-only` refuses it once;
+  controls on every leg: C1 a closure body (5), C2 a closure in a top-level block (5), C3 an `#inline` fn (4), C4 a fn
+  defined in a top-level block (3), C5 early returns in a fn after top-level code (10). Mutants (scratch tree copies,
+  each compiler built by the fixed one): MH (PARSE_RETURN without the call) R / B / P / X RED on every leg (x86_64 /
+  PE run past the return; aarch64 / cx "hung (timeout 5)"); MG (no GINFN test) C1-C5 and P2 RED on x86_64 / PE, every
+  row on aarch64 / cx / cycc_win (those compilers no longer build); MS (no `_ret_skip_stmt`) every R / B / P / X row
+  (a second error, `unexpected number 5`); MP (the latch left set) P4 P4b P5 P5b. The lane-base compiler: R / B / P /
+  X RED, C green. Guide § Functions (a new bullet); docs/guides/faq.md's "Reading a syntax error" list has the line
+  back; doc-health's faq.md row updated. The aarch64 and PE legs run under qemu and wine; the gate is a shell gate,
+  outside `tests/tcyr/crossos/`, so pi and cass do not run it.
+- **cycc:** 2,189,720 → 2,189,744 B.
+- **Filed, not fixed (High):** a top-level `ret2(a, b)` is the same defect through `_mret_land` (x86_64 / PE 9,
+  aarch64 / cx hang, cc5 9); refusing it stops programs compiling, the user's call:
+  [docs/development/issues/2026-10-14-top-level-ret2-never-returns.md](docs/development/issues/2026-10-14-top-level-ret2-never-returns.md)
+  — 6.7.12.
+- Closes
+  [2026-10-12-top-level-return-decision.md](docs/development/issues/archived/2026-10-12-top-level-return-decision.md).
+
+#### GF-10 — the `cannot be a fn return type` note lists the whole accepted set (lane genfe, commit 7ce87373)
+
+- **Fixed: the note on `type 'u8' cannot be a fn return type`** (also printed for `u64`, `f32` and an enum) had left
+  out, since 6.6.16, `bool` (6.7.3), a multi-value `(T1, T2[, T3])` (6.5.21), `dyn Trait` (6.7.8) and a generic fn's
+  first or second type parameter; `*T` was added at 6.6.17. `_tn_ret_report` (parse_types.cyr) now prints "a return
+  type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a
+  multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no
+  annotation) for the others". The issue's proposed text left out the generic T its own title names; it is kept,
+  worded as the type-parameter refusal's own note (measured: a first and a second T return 6 / 2, and a third T is
+  refused). The stale comment above `_tn_ret_refuse` no longer lists bool as refused. The optional nearest-type hint
+  (`u8` → `i64`, `f32` → `f64`) was not added. A message change only: cycc 2,189,744 → 2,189,840 B (+96, the string).
+- **Gate:** `tests/gates/diagnostics/type_name_refused.sh` ret_known pins five fragments of the note (`f64, bool, a
+  vector type`; `a pointer *T`; `a multi-value (T1, T2[, T3])`; `dyn Trait`; `a generic fn's first or second type
+  parameter`); the gate has 88 rows. Mutant: the old string turns the four new-item rows RED and leaves `*T` green.
+  Guide § Type names (the type-parameter case; the note lists the whole set).
+- Closes
+  [2026-10-12-return-type-refusal-note-incomplete.md](docs/development/issues/archived/2026-10-12-return-type-refusal-note-incomplete.md).
+
+#### GF-11 — a refused call in an enum value is one error (lane genfe, commit db81972b)
+
+- **Fixed (found in passing, no issue file): an enum value whose const-context call is refused** (`enum E { A = h()
+  }`, with `h` an ordinary fn) left the parse cursor on the call's name, so the enum's member loop read `h()` as a new
+  member with a constructor, and the link added "warning: undefined function 'h'", "undefined function 'alloc'" and
+  "error: refusing to emit binary with 1 reachable undefined function(s)". `_cst_ctx_val` (parse_fn.cyr) now calls
+  `_cst_ctx_skip`, which moves past the whole expression (by `_ce_extent`, the evaluator's own grammar) when it ends
+  where a member does (`,` `;` `}`). A malformed value (`(1 + }`, `h(` at EOF) stays where it stopped; a case label is
+  unchanged (it resyncs at its `:`). Diagnostics only: the program was refused before too. Repaired here because
+  GF-12's enum row (V2e) hit the same cascade.
+- **Measured (x86_64):** `enum E { A = h() }` 2 errors + 3 warnings → 1 error; `A = 1 + h() * 2; B` 3 errors → 1; `A =
+  if (h() == 1) { 1 } else { 2 }, B = 5` 3 errors + 6 duplicate-symbol warnings → 1. Unchanged: `(1 + }`, `1 +, B`,
+  `nosuch + 1`, `"s"` / `1.5` (one error each), a valid `B = A + 1` (exit 4).
+- **Gate:** `tests/gates/frontend/const_checked.sh` I5 (`enum E { A = h(), B = 5 }` refused once); RED on the lane
+  base (2 error lines) and with the call removed.
+- Found on
+  [2026-10-09-const-context-calls-private-const-fn.md](docs/development/issues/archived/2026-10-09-const-context-calls-private-const-fn.md).
+
+#### GF-12 — a const context's call of a `const fn` is checked like any call (lane genfe, commit b8fc9526)
+
+- **Fixed: another file's `private` const fn was callable from every const context, silently, and a `#deprecated` one
+  never warned there** (6.7.2 – 6.7.10). The const evaluator's call (`_ce_call`) resolved the callee with FINDFN,
+  checked only that it is a `const fn` (`GFCFN`) and ran it, skipping the per-callee check every other call path makes
+  (`_callee_site_checks`: `_vis_check` + `_DEPRECATED_WARN`). The filed repro (`a.cyr` includes `b.cyr`'s `private
+  const fn pk(): i64 { return 3; }`, then `const X = pk();`) built and exited 3, while `var X = pk();` was refused.
+  `_ce_call` now calls `_ce_site` after the `GFCFN` test with the cursor on the call's NAME: `_callee_site_checks`,
+  only in a const context of its own (`_ce_infn == 0 && _ce_skip == 0` — a const fn's body is compiled by the parser,
+  which checks its calls once, and the definition check runs in skip mode); a refusal sets `_ce_err` and `_panic` as
+  `_ce_badn` does (without `_panic` a local const, an array size, `#assert` or a case label added a cascade error).
+  `_callee_site_checks` now returns `_vis_check`'s verdict (its other callers ignore it). The repro is refused
+  `error:<source>:5:11: 'pk' is private to its file` — the issue's expected text — once, at the call; so is the call
+  in a top-level or local `const`, a global or local array size, an enum value, `#assert`, a `case` label and the
+  named-argument form, and a `#deprecated` const fn warns once per call site. A parameter default is still judged in
+  the file that defines it (the caller's file comes from the call's token; `default_named_args_checked.sh` E2: 149).
+  No decision: the guide's visibility boundary ("covers every way of reaching a fn") already states it, and a const
+  READ was already refused (6.7.2, row V1).
+- **Also newly refused:** a const context naming the private fn ABOVE its `include` (exit 3 → refused); a parameter
+  default in a non-private file naming another file's private const fn (exit 3 → refused at the default, plus the
+  refused-default cascade "'f' expects 2 arguments, got 1", filed by the returns lane:
+  [docs/development/issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md](docs/development/issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md)).
+- **Measured** (x86_64; aarch64 under qemu for the top-level const, the enum value, the case label, V2p, V2s and the
+  warning): the repro, a top-level const, a local const and an enum value exit 3 → refused once at the call; a global
+  and a local array size and `#assert` exit 1 → refused; a case label and the named form exit 5 → refused;
+  `#deprecated` in a const context silent → one warning per call site. Controls unchanged: `var X = pk();` refused; a
+  same-file call and a public const fn build. Corpus differential (1,098 .cyr / .tcyr / .fcyr / .bcyr under tests,
+  lib, programs, cbt, benches, fuzz and docs/development) against the lane-base compiler: nothing differs.
+- **Gate:** `tests/gates/frontend/const_checked.sh` V2a-V2g (another file's private const fn in a top-level const, a
+  local const, a global and a local array size, an enum value, `#assert` and a case label — each exactly one error
+  line at the call's line:col), V2n (the named form, `pk2(a: 2)`), V2p (a `public const fn` of a private file exits
+  5), V2s (a private file's own const contexts exit 9), V2w (a `#deprecated` const fn in a top-level const warns
+  exactly once, at 3:11), V2w2 (the seven const contexts warn seven distinct lines). Mutants: the `_ce_site` call
+  removed → V2a-V2g, V2n, V2w, V2w2 RED (it builds and nothing warns); `_panic` dropped from `_ce_site` → V2b-V2d,
+  V2f, V2g RED (a cascade error). Guide § Constants and `const fn` (the const-contexts bullet) and § Visibility (the
+  boundary bullet).
+- **cycc:** 2,189,840 B for GF-11, GF-12 and GF-13 (the change sits inside the section padding; the bytes differ).
+- **Filed, not fixed:** a skipped arm (`const X = 1 || pk();`, `0 && pk() == 3`, an untaken if-expression arm) still
+  builds silently and a `#deprecated` one does not warn:
+  [docs/development/issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md](docs/development/issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md).
+  One private call in an `#inline` or generic body prints three identical errors, one per replay of the body:
+  [docs/development/issues/2026-10-14-private-call-reported-once-per-body-replay.md](docs/development/issues/2026-10-14-private-call-reported-once-per-body-replay.md).
+  A local `const` in an `#inline` or generic fn makes its second call in one scope a refusal ("'L' is already declared
+  in this scope"; valid code refused since 6.7.2):
+  [docs/development/issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md](docs/development/issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md).
+  Each 6.7.12.
+- Closes
+  [2026-10-09-const-context-calls-private-const-fn.md](docs/development/issues/archived/2026-10-09-const-context-calls-private-const-fn.md).
+
+#### GF-13 — a const fn's arity in a const context is the run time's (lane genfe, commit f2240732)
+
+- **Changed (the user's decision D12 = (a), 2026-10-13: const arity = run-time arity).** The const evaluator counted
+  and bound a const fn's parameters by paren depth only, so a comma inside `<..>` split `p: Pair<i64, i64>` in two:
+  `const N = pick(0, 7);` (`const fn pick(p: Pair<i64, i64>, b)`) was refused "a const fn called with the wrong number
+  of arguments", and `pick(0, 1, 7)` built (exit 7), binding a phantom parameter named `i64` (6.7.2 – 6.7.10). The
+  run-time call already counted two. `_ce_nparams` (the definition check's count, now a `_pl_next` loop),
+  `_ce_bind_params` and `_ce_tup_param` step with the parser's `_pl_next`, which balances `<..>` with its `>>` / `>>>`
+  closes and steps a default from its depth-0 `=` with `<` an operator; the count, the bind and the tuple-parameter
+  check walk the list the same way, so they cannot disagree. The filed repro exits 7; `pick(0, 1, 7)` is refused with
+  the const context's own message. `_pl_next` itself is unchanged.
+- **Measured** (x86_64; aarch64 under qemu for G1, G2, G4, G5b, the default and named form and the four const
+  contexts): the filed repro refused at 6:21 → 7; `pick(0, 1, 7)` 7 → refused at 3:24; `*Pair<i64, i64>`, the Pair
+  parameter last, `Pair<i64, Pair<i64, i64>>` and `Pair<i64, Vec<Vec<i64>>>` refused → 7; defaults and the named form
+  after a Pair parameter refused → 49; the call in an array size, a case label, an enum value and `#assert` (one
+  program) 4 errors → 30. Unchanged: `Vec<Vec<i64>>` 7, a default holding `<` 67, a tuple parameter refused, the
+  run-time `pick(q, 1, 7)` "expects 2 arguments, got 3". Corpus differential (the same 1,098 inputs): only the issue's
+  repro (rc 1 → 0).
+- **Gate:** `tests/gates/frontend/const_checked.sh` G1 (the filed repro inlined verbatim), G2 (`pick(0, 1, 7)` refused
+  once), G3 (`*Pair<i64, i64>`), G4 (the generic parameter last), G5 (`Vec<Vec<i64>>`, the `>>` close), G5b
+  (`Pair<i64, Vec<Vec<i64>>>`, the `>>>` close), G6 (a default holding `<` is one parameter, 47), G7 (the default fill
+  and the named form after a Pair parameter, 49), C3 green. Mutants: `_ce_bind_params` back on `_tok_item_end` → C3,
+  G1, G3, G4, G5b, G6, G7 RED; `_ce_nparams` back on paren-depth commas → the same rows; `_pl_tdepth` without its `>>`
+  / `>>>` closes → G5, G5b; `_ce_tup_param` back on `_tok_item_end` stays GREEN — an equivalent mutation on valid
+  input (a type argument is always a name, so the old walk re-synced on it and still reached every tuple parameter);
+  the walker moved anyway, so the three cannot drift apart (the gate's comment records it). Guide § Default and named
+  arguments (the const-contexts bullet: the arity rule and the decision).
+- Closes
+  [2026-10-09-const-fn-generic-param-comma-miscounted.md](docs/development/issues/archived/2026-10-09-const-fn-generic-param-comma-miscounted.md).
+
+#### GF-14 — a name a closure body declares is not a capture (lane genfe, commit 967f39f3)
+
+- **Fixed: a `for … in` variable, a local `const` and a destructure's second or third name were taken for reads of the
+  enclosing local of that name** (6.6.0 – 6.7.10): the capture pre-scan (`_cl_prescan_body`, parse_expr.cyr) shadowed
+  only the name right after `var`. The closure was refused without lib/alloc.cyr ("a capturing closure needs include
+  "lib/alloc.cyr" for its heap env"), or it built a heap env holding a copy it never read. The filed repro was refused
+  three times (8:97, 9:70, 10:79); it exits 22. Each declared name is now shadowed from where the parser binds it:
+  `const` names one, as `var` does; `for IDENT in` (`_cl_prescan_forin`) walks the start bound or the collection in
+  the enclosing scope (PARSE_FOR parses them before it registers the variable), then shadows IDENT for a range's end
+  bound (which reads the variable) and the body, and restores the shadow set after the loop; `var a, b[, c] = …`
+  (`_cl_prescan_mvar`) shadows the first name as after any `var`, walks the right-hand side, and only then shadows `b`
+  / `c` (PARSE_VAR's destructure binds them after the right-hand side). `_cl_walk_stop` gains two walk modes (a for-in
+  header part; a declaration's right-hand side). So `for i in i..5`, `for x in x`, `var a, b = f(b);` and a read after
+  the loop still capture the enclosing local. No decision: the fix is to what the source says.
+- The issue's plan shadowed each `, IDENT` from the name onward. Measured in a plain fn, `var a, b = two(b + 1)` reads
+  the ENCLOSING `b`, so shadowing at the name would drop that capture (refused "undefined variable 'b'", or silently a
+  global `b`: mutant m5 gives 88 where 67 is right). The names after the first are shadowed from the end of the
+  right-hand side, as the parser binds them.
+- What compiled computes the same. A closure whose only "captures" were names it declares now builds without
+  lib/alloc.cyr and is a bare fn pointer (no env), as a non-capturing closure is.
+- **Measured** (x86_64; the same on qemu-aarch64 and cxvm): the filed repro refused three times → 22; `for i in 0..4`
+  refused → 10; `for i in 0..i` (the end bound reads the variable) refused → 1; nested `for i in` / `for j in` over
+  two enclosing names refused → 5; a collection `for x in 10` refused → 34; `const k = 3;` refused → 4; a const in a
+  nested block refused → 9; `var a, b = two();` refused → 8; `var a, b, c = three();` refused → 7; the controls (start
+  bound, collection, after the loop, after a block, right-hand side) unchanged. Corpus differential (1,098 inputs):
+  only the issue's repro (rc 1 → 0).
+- **Gate:** NEW `tests/gates/frontend/closure_declared_names_not_captured.sh` (registered beside
+  closure_field_names_not_captured): 22 rows plus the filed repro file verbatim, each on x86_64, cx (cxvm) and aarch64
+  (qemu) — 69 rows. Form rows I1-I3, IC1, C1, C2, M1, M2 (the collection form over a prelude `vec_len` / `vec_get`, so
+  no heap); controls KI1-KM4 (a read after the loop, the start bound, the collection, an enclosing name after and
+  beside a nested block's const, a destructure's right-hand side, a read after a nested block's destructure) — each
+  refused without lib/alloc.cyr, and with it the right value against a same-named GLOBAL, so a dropped capture shows
+  as a wrong value. NEW `tests/tcyr/crossos/closure_declared_names.tcyr` (15 asserts) on x86_64, qemu-aarch64, cxvm
+  and the PE cross compiler under wine. Mutants (scratch trees, the gate run from each): m0 (the pre-fix src) RED 27;
+  m1 (the const arm dropped) 9; m2 (`_cl_at_mvar` 0) 9; m3 (`_cl_at_forin` 0) 15; m4 (the for-in variable shadowed
+  from its name) 12 — KI3 / KC1 refused, KI4 6 and KC2 64 (the global read); m5 (a destructure's names shadowed at the
+  names) 6 — KM1 refused, KM2 88. Guide § Closures (the declared-name rule, the start-bound / collection /
+  right-hand-side reads, a ⚠ before-6.7.11 note).
+- **cycc:** 2,189,840 → 2,194,096 B over GF-14 and GF-15 together.
+- **Filed, not fixed:** in a closure, `var a = a + n;` and a destructure's FIRST name (`var a, b = f(a);`) are
+  shadowed from the name while the parser binds them after the initializer — refused "undefined variable 'a'", or
+  silently a global `a` (101 where 6 is right; 1112 where 67 is right), measured on 6.6.0, 6.7.9 and the lane:
+  [docs/development/issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md](docs/development/issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md)
+  (High). A nested closure's parameter named like an enclosing local is captured by the closure around it (the issue
+  asked to check every other declaration form; this is one):
+  [docs/development/issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md](docs/development/issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md)
+  (Medium). `const k: i64 = 3;` is refused and never bound, so each later read of `k` adds "undefined variable 'k'":
+  [docs/development/issues/2026-10-14-refused-local-const-annotation-cascades-undefined-variable.md](docs/development/issues/2026-10-14-refused-local-const-annotation-cascades-undefined-variable.md)
+  (Low). Each 6.7.12.
+- Closes
+  [2026-10-11-closure-prescan-reads-declared-names-as-captures.md](docs/development/issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md).
+
+#### GF-15 — inside a closure, `s.len` / `s.ptr` of a captured slice read the captured copy (lane genfe, commit df77c157)
+
+- **Changed (the user's decision D13 = (a), 2026-10-13: read the captured copy).** From 6.6.0 to 6.7.10 the read was
+  refused "undefined variable 's'" (plus "no struct type in scope for 's'"), though `slice_len(&s)` in the same
+  closure read the copy (6.7.9 made a captured slice arrive in field order) and a typed struct capture's `p.y` already
+  read its copy. PARSE_FIELD_LOAD's `idx == -1` arm first asks `_cl_cslice_field` (parse_decl.cyr): when the base
+  names a captured slice local of the enclosing fn (`_cl_cslice_cap`), `.ptr` / `.len` are one load from the env words
+  (`_CL_CAP_WORDS_RA`, `.ptr` at +0, `.len` at +8). The filed repro 1 (`var c = |x| s.len + x;` over a 7-byte `[u8]`)
+  exits 8. Any other field is "slice has only .ptr and .len fields", as on a local. A store into the copy (`s.len =
+  n`, `s.ptr = p`, `s.len += 1`) is refused by name in PARSE_FIELD_STORE (`_cl_cslice_store_err`: "a closure cannot
+  assign a field of the captured slice 's' - it reads .ptr / .len only (set the slice before the closure is built, or
+  declare it in the closure)"), as the subscript `s[i]` is (6.7.8) and as a captured scalar cannot be assigned; it was
+  refused before as "undefined variable", so nothing newly compiles beyond the decided read.
+- **Not closed:** the filing's second half — `q.y` of an untyped struct copy (`var q = p;`) inside a closure (repro 2,
+  expected 45) — was left to the untyped-binding decision; that decision's fix (the struct lane) covers method chains,
+  if-expressions and wrapped results, not a name copy, and repro 2 is still refused "undefined variable 'q'" on the
+  merged tree (ac8fdac8). It needs its own filing.
+- **Measured** (x86_64; the same on qemu-aarch64 and cxvm): repro 1 two errors → 8; `s.ptr` → the pointer (S1: 11); an
+  `[i64]` slice, a nested closure, a wide env → 7 / 7 / 178; `s.foo` → "slice has only .ptr and .len fields", once;
+  the three stores → the closure-store refusal, once; the async coroutine form "undefined variable 'v'" → 122.
+  Unchanged: `slice_len(&s)` 8, a typed copy's `q.y` 45, the subscript refusal. Corpus differential (1,100 inputs):
+  only the new crossos test differs (rc 1 → 0).
+- **Gate:** NEW `tests/gates/frontend/closure_captured_slice_fields.sh` (registered after the declared-names gate; 49
+  rows). On x86_64, cxvm and qemu-aarch64: the filed repro 1 verbatim (8); S1 `s.ptr`; S2 the slice after a scalar and
+  a 2-word struct capture, with a scalar after it; S3 an `[i64]`; S4 by value (the enclosing slice re-pointed after
+  construction is not seen); S5 a nested closure; S6 `.len` in a condition; E1 `s.foo` refused once by name; E2-E4
+  `s.len = x`, `s.ptr = 0`, `s.len += x` refused once by name, with no "undefined variable"; controls K1 (a typed
+  copy, 45), K2 (a closure-local slice), K3 (`slice_len(&s)`), K4 (the captured subscript still refused), K5 (a
+  fn-local slice's dot read and write). A1 an `async fn` that builds the closure before and after its await, reading
+  `v.len` / `v.ptr` (122), on x86_64 only (aarch64 and cx refuse a mid-body `await` by name). NEW
+  `tests/tcyr/crossos/closure_captured_slice_fields.tcyr` (9 asserts) on x86_64, qemu-aarch64, cxvm and PE under wine.
+  Mutants: n0 (the pre-fix src) RED 46; n1 (the read arm dropped) 28; n2 (`.len` read at +0) 19; n3 (the store refusal
+  dropped) 18 (E2-E4 "undefined variable 's'"). Guide § Slices ("subscript and dot syntax fire on fn-local slices
+  only" gains "and the dot syntax's reads on a closure's captured copy"; the store refusal; a ⚠ before-6.7.11 note).
+- Resolves half 1 of
+  [2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md](docs/development/issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md)
+  (half 2 open, above).
+
+#### GF-16 — the value of `await f` is an untyped word (lane genfe, commit 149eac24)
+
+- **Fixed: `await f` kept its operand's pointer step.** With a Future handle held in a typed pointer (`f: *i32`),
+  `(await f) + 1` scaled the 1 by `sizeof(i32)` and gave 9 where 6 is right, on every target and inside a coroutine
+  too (6.6.17 – 6.7.10), and `((await f) + 1) - q32` with `f: *u8` was refused as a different-sizes pointer
+  difference. Neither the force call nor a coroutine's suspend landing reset the step the operand factor left. The
+  force emission moved out of `_PARSE_FACTOR_IMPL`'s await arm into `_await_force` (PARSE_FACTOR + `_await_call1`,
+  then `SPSC(S, 0)`; fewer references in the giant), and `_await_coro_suspend` ends with `SPSC(S, 0)`. No pointer-kind
+  stamp: the value is an untyped word. No new decision: the last arm of 6.7.9's decision 1(a) ("the pointer step
+  resets after every operator that does not produce a pointer"). lib/async's handles are untyped words, so only a
+  hand-typed handle was affected (its declaration already warned "assigning non-pointer to typed pointer").
+- **Measured:** the repro x86_64 9 → 6, aarch64 (qemu) 9 → 6; inside a coroutine x86_64 9 → 6 (aarch64 refuses a
+  mid-body suspend by name, as before); `((await f) + 1) - q32` with `f: *u8` refused → 6 on both. Corpus differential
+  (829 tree inputs: tests/tcyr, programs, benches, fuzz, tests/fixtures; plain and CYRIUS_ASYNC=1): 0 differ.
+- **Gate:** `tests/gates/frontend/pointer_subscript_checked.sh` AW1-AW4d, AWc1-AWc3 (a new `xrow` / `awx` helper;
+  x86_64 plain and CYRIUS_IR=3, aarch64 qemu for the rows outside a coroutine): AW1 the filed repro verbatim (6); AW2
+  `f: *u8`; AW2d `((await f) + 1) - q32` with `f: *u8` is `n - p`; AW3 / AW4 / AW4d the same inside a coroutine (an
+  async fn driven by future_force / future_pending); AWc1 / AWc2 the untyped control outside and inside; AWc3 the
+  Future pointer `f: *i32` itself still steps. Mutants: MAW1 (`_await_force` without its SPSC) RED AW1a/b and AW2da/db
+  (its aarch64 compiler gives 9 on the repro); MAW2 (`_await_coro_suspend` without it) RED AW3a/b and AW4da/db; the
+  compiler before the bite RED on those 8. Guide § Pointers (the plain-integer list gains `await f`, with a
+  before-6.7.11 note).
+- Closes
+  [2026-10-11-await-result-keeps-typed-pointer-step.md](docs/development/issues/archived/2026-10-11-await-result-keeps-typed-pointer-step.md).
+
+#### GF-17 — `+| +? -| -?` are integer operators (lane genfe, commit 96aa9f4a)
+
+- **Changed (the user's decision D14 = (a), 2026-10-13: integers only, 6.7.9's decision 1(a) applied): the sum of a
+  saturating or checked add / subtract takes no pointer step.** The four operators lower to lib/overflow.cyr's i64
+  helpers (`_sat_add_i64`, `_chk_add_i64`, `_sat_sub_i64`, `_chk_sub_i64`). Their arm in `_PEXPR_IMPL` parsed the
+  count with no step and then restored the left operand's (`SPSC(S, ps)`), so with `q: *i32`, `(q +| 1) + 1` was `q` +
+  5 bytes and `2 + (q +| 1)` was `q` + 9 (6.6.17 – 6.7.10). Each of the four arms now writes `SPSC(S, 0); ps = 0;`: +
+  2 and + 3. The filed repro exits 28 on x86_64 and qemu-aarch64 (it was 58); `var r: *i32 = q +| 1;` warns "assigning
+  non-pointer to typed pointer" (it was silent); `((p8 +| 1) + 1) - q32` is `n - p` (it was refused). The count was
+  already unscaled; `*| *? *%` were already integer.
+- **Measured** (x86_64 and qemu-aarch64 alike): the repro 58 → 28; `(q +| 1) + 1` q+5 → q+2; `(q +? 3) - 1` q-1 → q+2;
+  `(c -| 1) + 1` q+3 → q; `(c -? 1) + 2` q+7 → q+1; `2 + (q +| 1)` q+9 → q+3; `((p -? 0) + 1) - q32` refused → 1; `var
+  r: *i32 = q +| 1;` silent → warns. Corpus differential: only the new test (refused before). Nothing in the tree
+  writes the shape.
+- **Gate:** `tests/gates/frontend/pointer_subscript_checked.sh` SATR (the filed repro verbatim, 28), SAT1 (each
+  operator on a `*i32` / `*u8` local and parameter, then `+ 1` / `- 1` in bytes; `2 + (q +| 1)`; the `q + 1` and
+  integer controls), SAT2 (`((p8 +| 1) + 1) - q32` and `((p8 -? 0) + 1) - q32` are `n - p`), SAT3 (`var r: *i32 = q OP
+  1;` warns for each of the four) — on x86_64 plain, CYRIUS_IR=3 and aarch64 qemu. NEW `sat_rows()` in
+  `tests/tcyr/crossos/typed_pointer_step.tcyr` (12 asserts; `include "lib/overflow.cyr"` added) on every PL leg
+  (x86_64 × 4 modes, aarch64, cx, PE). Mutants MSAT1-4 (one arm's `SPSC(S, ps)` restored) each RED on its SAT1 / SAT3
+  rows and the PL value-file legs (`-?`'s also refuses the file; `+|`'s also SATR / SAT2). Guide § Pointers (the
+  integer list gains the four operators, with a before-6.7.11 note and the decision date).
+- Closes
+  [2026-10-11-saturating-op-keeps-left-pointer-step-decision.md](docs/development/issues/archived/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md).
+
+#### GF-18 — a narrow scalar local is an integer, and `n + &x` is the byte pointer `&x + n` is (lane genfe, commit ee76a3d7)
+
+- **Changed (the user's decision D15 = (a), 2026-10-13: `+` commutes — 6.7.9's decision 1(b) extended; the
+  narrow-local half comes with it).** (1) A narrow scalar local (`u8` / `i8` / `u16` / `i16` / `u32` / `i32`) loaded
+  with a pointer step of 1 (v6.3.34). It scaled nothing, but every "is this a pointer" test answered yes: `w - q32`
+  and `(w + 1) - q32` were refused as a pointer difference; `var r: *u32 = w;` and `= w + 1;` were silent; and `w + q`
+  with `q: *i32` made `w` the pointer (step 1), so it added `w` UNSCALED — `n + q` was `q` + 1 for `q` + 4, a silent
+  wrong value the filing did not list ("1 2 4" → "4 8 4" for an i32 / u8 / i64 left operand, x86_64 and aarch64). An
+  i64 local, a narrow global and a narrow parameter were already integers. `_PARSE_FACTOR_IMPL`'s narrow-local arm now
+  loads step 0. (A captured narrow scalar was already an integer: `_cl_snap_ptr_word` reads only a GLPTRP-marked
+  slot.) (2) `n + &x` wrote the integer's step, so `var r: *u32 = 4 + &B;` warned and `(4 + &B) - q32` was a byte
+  difference, where `&B + 4` is a byte pointer. `_add_word` (parse_expr.cyr) now writes any kind-less step-1 word —
+  `&x`, and a `*B1` (the callargs lane's `_add_rb1` is folded in; its DXs rows stay green) — except a MULTI-WORD
+  closure capture, whose value is its env words' address with step 1 and no kind: `_rhs_mwcap` keeps `z + s`, `s: Pt`
+  captured, the integer the frame's own `m + s` is.
+- **The filed repro:** d1 / d2 compile as `n - p`, r1 / r2 warn, r3 is silent and d3 alone is refused — the issue's
+  "one consistent answer" (before: errors at d1 / d2, warnings at r2 / r3; r1 and d3 silent).
+- **Measured** (the diagnostics are frontend: x86_64 and the aarch64 cross compiler agree): before, errors at lines 5
+  and 6 and warnings at 8 and 9; after, warnings at 7 and 8 and the error at 10. Corpus differential (829 inputs +
+  src/main*.cyr, cbt/cyrius.cyr, programs/cxvm.cyr, bootstrap/cybs.cyr): one file emits different code —
+  small_struct_pointer_arg.tcyr's `n + pb2` / `n + sp` with `n: i32 = 0` take `_int_plus_ptr` (an `imul`); the values
+  are unchanged at n = 0 (79 / 79 on x86_64, aarch64, cx and PE). The unreachable-fn floor stays 52.
+- **Gate:** `tests/gates/frontend/pointer_subscript_checked.sh` NSR (the filed repro verbatim: exactly d3 refused, at
+  line 10, and warnings at r1 (7) and r2 (8)), NS1 (`w - q32`, `(w + 1) - q32` are `n - p`, equal to an i64 local's),
+  NS2 (`w`, `1 + w`, `w + 1` into a `*T` warn, as `m` does), NS3 (`4 + &B`, `m + &x`, `2 + (&B + 4)`, `m + (&x)`
+  silent), NS3c (`(4 + &B) - &B` is 4), NS3d / NS3e (`(4 + &B) - q32`, `(m + &x) - q32` refused), NS4 / NS4w (i8 / u16
+  / i32 / u32 locals give 22, with every warning), NS5 (the multi-word capture kept out), NS6 (`n + q32` steps 4 for
+  i32 / u8 / i16 locals) — NS1 / NS4 / NS6 on x86_64 plain, IR=3 and aarch64 qemu. NEW `narrow_rows()` in
+  `tests/tcyr/crossos/typed_pointer_step.tcyr` (10 asserts) on every PL leg. Mutants: MNS1 (`SPSC(S, 1)` back) RED 17;
+  MNS2 (the kind test back) RED 12; MNS3 (no `_rhs_mwcap`) RED NS5; the compiler before the bite RED 20.
+  pointer_subscript_checked.sh: 250 ok rows under sh and `bash -eo pipefail`. Guide § Pointers (the `n + &x` sentence;
+  the narrow-scalar paragraph after "`n + p` steps like `p + n`").
+- **cycc:** 2,194,096 B for GF-16, GF-17 and GF-18.
+- **Filed, not fixed (High):** a closure's capture of a narrow scalar local reads the slot's whole word
+  (`_cl_emit_cap_word` copies with `EFLLOAD`, `_cl_cap_load` reads with `ELOAD64`), so a negative `i8` / `i16` / `i32`
+  reads as 253 / 65533 / 4294967293 on every target and stale upper bytes come along — measured on 6.6.0, 6.7.9 and
+  the lane:
+  [docs/development/issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md](docs/development/issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md)
+  — 6.7.12.
+- Closes
+  [2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md](docs/development/issues/archived/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md).
+
+#### GF-19 — cx calls `fn main` from the entry epilogue (lane genfe, commit 09e06b72)
+
+- **Changed (the user's decision D16 = (a), 2026-10-13): cx calls the `fn main` a program defines, from the entry
+  epilogue, as every image target has since v5.9.37 (PE since 6.0.54).** `src/main_cx.cyr`'s epilogue was only the
+  last-var load and EEXIT, so on cx `main` never ran: `var g = 3; fn main(): i64 { return 7; }` exited 3 under cxvm (7
+  on x86_64 / aarch64), `fn main` alone exited 0, and a .tcyr that leaves `main` to the epilogue printed nothing and
+  exited 0 — a pass that ran no assertion (6.6.2 – 6.7.10, every `cycc_cx` / `cxvm` pair). The v5.9.37 block is ported
+  after the last-var load and before `_cov_tail`: `_find_fn_by_name(S, "main", 4)`, then `ECALLTO` when the fn has
+  code. There is no `kernel;` / `shared;` guard (`_cx_mode_refused` stops both above it), and cx has had no DCE
+  pre-scan since v6.5.17, so `main`'s body is always emitted. `main` runs and its return value is the exit code; a
+  `main` also called at top level runs twice, as natively. `build/cycc` is unchanged (a cx-only driver);
+  `tests/fixtures/dead_code_floor.txt` drops `_find_fn_by_name cx` (live there now).
+- **What it exposed:** 17 corpus .tcyr now pass in full under cxvm (15 printed nothing and exited 0; vec_struct_field
+  and const_chained_multiply_fold exited with a global's 42 / 210). Seven fail under cxvm (filed for 6.7.12): five at
+  the cx guest contract (`mmap_anon` returns a host address; the `pipe` / `fstat` / `unlink` buffers are guest
+  offsets) and two tests with no cx arm (integration_closures_threads, signal_errno_peer_values):
+  [docs/development/issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md](docs/development/issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md)
+  — 6.7.12.
+- **Measured** (cxvm; native x86_64 already gave the after value): the filed repro 3 → 7; `fn main` alone 0 → 7;
+  called at top level and left to the epilogue 10 → 20 (x86_64 20); chan_try_send / multi_return / float_nan_compare
+  nothing, exit 0 → 20 / 31 / 41 passed, 0 failed; mmap_anon_flag nothing, exit 0 → "cxvm: guest address out of
+  range", exit 1; uid_identity nothing, exit 0 → 11 passed, 2 failed, exit 2. Corpus differential (the 584 .tcyr,
+  cycc_cx before and after, each run under cxvm): 111 do not compile for cx either way; 280 produce a byte-identical
+  .cyx; 157 differ in bytes and run the same (their `main`s exit before the epilogue); 17 now pass in full; 7 now fail
+  (filed); 12 are noise only (pre-existing top-level failures with a pid or a host address in the output).
+- **Gate:** NEW `tests/gates/codegen/cx_auto_call_main.sh` (24 rows, registered after cx_struct_pair.sh; x86_64 native
+  is the oracle, cxvm the leg): A1 the filed repro verbatim (7); A2 `fn main` alone (7); A3 called at top level and
+  left to the epilogue (twice: exit 20, the marker printed twice); A4 called at top level then `syscall(60, r)` (once:
+  10); A5 the top level first, then `main` (40); A6 `mainframe` / `mai` are not `main` (the last global, 3); A7
+  `main`'s stdout once and its own `syscall(60, 5)`; T1-T3 chan_try_send / multi_return / float_nan_compare give `N
+  passed, 0 failed` on both legs (N derived from the source; floors 20 / 31 / 41); X1 / X2 mmap_anon_flag /
+  uid_identity give `N passed, 0 failed` natively (floors 5 / 13), their cx leg pinned as XFAIL at the filed
+  guest-contract limit (an XPASS is RED — promote it to a T row; a moved failure is RED).
+  `tests/gates/codegen/coverage_exec_hits.sh` (251 → 254 rows): L5 cx H1 (the auto-called `main` counted, exit 4),
+  `emain` on cx E6 (a bounds violation, 134) and E7 (panic, 1); four stale "cx has no `main` auto-call" comments
+  rewritten. Mutants: MA1 (ECALLTO dropped) RED 10 in cx_auto_call_main (A1 A2 A3 A5 A7, T1-T3, X1 X2 cx) and RED 3 of
+  254 in coverage_exec_hits (L5 cx H1, E6 / E7 cx); MA2 (the call before the last-var load) RED 4 (A1 A3 A5, X2 cx).
+  Every cx gate green under sh (codegen/cx_*.sh, toolchain/cx_cli / cx_runtime_foundations / cx_tcyr_runs,
+  platform/cx_compiler_reads_env). Guide § execution coverage: the "cx does not auto-call `main` … header-only block"
+  sentence is removed ("the auto-call, on every target — cx's since 6.7.11").
+- Closes
+  [2026-10-11-cx-does-not-auto-call-main.md](docs/development/issues/archived/2026-10-11-cx-does-not-auto-call-main.md).
+
+#### GF-5r — the pair scans read a generic carrier's type by path (lane genfe, review fix, commit 783d795c)
+
+- ⛔ **A crash GF-5 exposed, fixed before the tag.** The shapes GF-5 newly accepted two or more carriers down compiled
+  and died rc 139 on x86_64 and aarch64: a `?` above a wrapper typed through `unbox(unbox(mk1(mk1(p))))`, or
+  `unbox(unbox(bb))` with `bb: Box<Box<Pt>>`. The token-side pair scans answered one struct id, so the X under a
+  `Box<Pt>` named nothing and `sc_q`'s `?` took the boxed lowering (it dereferenced the tag). The `_tok_sc_*` family's
+  `f` now carries, in bits 32+, the head of a chain of (G, slot) steps still to take, stored in `_tsp` (alloc'd, 256
+  words; pushed and popped by the frame that makes them, so a live chain is never overwritten): a `: U` callee whose U
+  rides a struct parameter pushes the current step and asks that argument one level deeper (`_tok_sc_carry`, from
+  `_tok_sc_fwd` and `_tok_sc_tpq` through `_tok_tp_byarg`); a `: G<U>` callee consumes one step (`_tok_sc_tpq`: U's
+  explicit `<..>` walked, else its argument); an annotation and an explicit argument walk the rest through their
+  tokens (`_tok_sc_ann`, `_tok_ann_walk`, `_tsp_walk`, `_tok_targ_at` — a nested argument closed by `>`, `>>` or
+  `>>>`); an instance through `_sinst` (`_tsp_conc`, also for a global and an untyped var). An untyped `var bb =
+  f(..);` whose call is the whole initializer is read through the call (`_tok_sc_init`), which also fixes the
+  one-level `var b = mk1(p); unbox(b)` — rc 139 since 6.7.8, whose untyped-var arm read `_tok_init_sid`, which answers
+  the generic base. With no steps left every path is the pre-fix code.
+- **Measured** (a 17-shape probe matrix, the `?` caller above its wrapper; every shape also with the wrapper above,
+  the parser's control: 7 before and after): two levels (`unbox(unbox(mk1(mk1(p))))`, `unbox(unbox(bb))`,
+  `unbox(unbox(mk1<Box<Pt>>(mk1(p))))`, `unbox(unbox<Box<Pt>>(bb))`, an untyped `var bb = mk1(mk1(p))`,
+  `unbox(id(unbox(bb)))`, `unbox(unbox(id(bb)))`, a `*Box<T>` carrier `unbox(unboxp(&bb))`,
+  `unbox(unbox(mk1(unbox(bb))))`, `unbox(fst(q))` with `q: Pr<Box<Pt>, i64>` (slot 0) and `Pr<i64, Box<Pt>>` (slot 1),
+  a non-generic `mkbb(p): Box<Box<Pt>>`) and three levels (inferred and a two-deep explicit argument): rc 139 → 7 on
+  x86_64; the review's repro and `unbox(unbox(bb))` 7 on x86_64 / qemu-aarch64 / cxvm / wine. No false flag: the same
+  shapes with a one-value receiver bind one value (77, 8 shapes). Corpus differential (959 inputs: every .cyr / .tcyr
+  / .fcyr / .bcyr under tests, benches, fuzz, programs, lib, cbt; binary + stderr + rc) of the lane's final compiler
+  against 09e06b72's: only generic_struct_inference.tcyr and generic_method_struct_arg.tcyr differ (their new rows).
+- **Gate:** `tests/tcyr/crossos/generic_struct_inference.tcyr` G13 +10 rows (230 → 240; cx 239 — the commit message's
+  "+11" miscounts) on x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 (qemu) / cx (cxvm) / PE (wine). Mutants (each a
+  one-change copy built by the fixed compiler, each rc 139): MG22 (`_tok_sc_carry` answering 0), MG23 (`_tok_sc_ann`
+  without `_tsp_walk`), MG24 (`_tok_sc_init` answering 0), MG25 (`_tok_sc_tpq` ignoring the steps left), MG26
+  (`_tok_ann_walk` without `_tsp_walk`). Green: struct_arg_type_refused (99), trait_bounds_checked,
+  generic_type_arg_unknown_refused, stack_enum_lossy_context, stack_enum_closure_return_scope, dyn_checked,
+  nested_fn_refused, cx_crossos_rows_run.
+- Part of
+  [2026-10-10-generic-call-result-as-carrier-argument-refused.md](docs/development/issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md).
+
+#### GF-3r — a forwarder through a field-chain or call-result receiver is a stub (lane genfe, review fix, commit 5853277e)
+
+- **Fixed before the tag:** GF-3's stub scan typed a single-name receiver only (`_gs_mcallee`), so a generic
+  forwarding its T into a stub generic method through a field chain or a call's result — `fn oc<T>(h: H, t: T) {
+  return h.p.pick(t); }`, `return mk().pick(t);`, `return h.gp().pick(t);`, a generic's `mkg(t).pick(t)` — kept its
+  eagerly emitted i64 base, which met GF-3's scalar-binding refusal at the definition, even uncalled (the lane base
+  5fb211da compiled them: 5 uncalled; called with a struct, 0 from the dead stub). Decision D6 covers scalar call sites, not
+  definitions. `_gs_recv_sid` (parse_fn.cyr) types the receiver from the tokens: a name by scope; `x.f[.g]` through
+  the field each struct declares (`_gs_fld_sid`: an inline struct field, a `*T` field's T); a call's result
+  (`_gs_recv_call` + `_tok_open_back`: `f(..)`, or a method call `x.f(..)` with x typed the same way; `_gs_ret_sid`:
+  the struct return or a `: *S`'s S, and for a generic callee only a plain `: S` that is no type parameter and not
+  generic). Such a forwarder is a stub, as with a single-name receiver: it compiles uncalled, its struct call reaches
+  the method's instance, and its scalar call is refused naming it. A parenthesised or subscripted receiver, and a
+  generic's `: U` result, were refused on the lane base too (other refusals) and are unchanged.
+- **Measured:** the staged repro `oc(h, q) * 10 + ok(q)` refused twice at the definitions → 77 on x86_64 / IR=3 /
+  qemu-aarch64 / cxvm / wine (the base: 0); two uncalled forwarders refused → build (5, as on the base); `x.h.p` /
+  `x.hp.p` (a `*FH` field) / `x.pp` (a `*P` field) / `mkfh().p` / `mkfpp(pp)` forwarders refused → 77 (the base: 0);
+  `oc(h, 5)` / `ok(6)` refused naming P_pick at the definitions → refused naming oc / ok at the calls.
+- **Gate:** `tests/gates/frontend/generic_method_infer.sh` F1 (the staged repro, 77) and F2 (two uncalled forwarders, 5)
+  on every leg, F3 (`oc(h, 5)` / `ok(6)` refused naming oc / ok, two errors).
+  `tests/tcyr/crossos/generic_method_struct_arg.tcyr` F10-F18 (40 → 49 rows, the gate's FLOOR 40 → 49: two hops, a
+  `*FH` field, a `*P` field, a call result's field, a `: *P` call, a method call's result, a generic's `: P`) on
+  x86_64 / IR=1 / IR=3 / DCE=1 / aarch64 / cx / PE. Mutants: M8 (single-name receivers only) RED F1 / F2 on every leg,
+  F3 and T; M9 (no method-call arm) and M10 (no generic callee) RED T. Green under sh and `bash -eo pipefail`. Guide §
+  Generics names the receivers.
+- **cycc:** 2,194,096 → 2,202,304 B over GF-5r and GF-3r together.
+- Part of
+  [2026-10-10-generic-method-call-runs-i64-base.md](docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md).
+
+#### GF-3r2 — check.sh's row count for generic_method_infer (lane genfe, review fix, commit b77ac4d9)
+
+- check.sh's comment over `generic_method_infer.sh` said its crossos test had 31 rows; it had 40 (the gate's FLOOR)
+  and, with GF-3r's F10-F18, has 49 (FLOOR 49). The comment now states the gate's count and names the forwarder rows.
+  Comment only.
+- Part of
+  [2026-10-10-generic-method-call-runs-i64-base.md](docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md).
+
+#### GF-19r — cx_auto_call_main.sh's X2 pin no longer depends on the uid (lane genfe, review fix, commit 65aa683d)
+
+- X2's cx leg required the exact last line `11 passed, 2 failed (13 total)` and exit 2, but uid_identity.tcyr's second
+  cx failure ("owned by sys_geteuid()") compares the untranslated fstat buffer's 0 with the euid, so under root it
+  passes (12 passed, 1 failed, exit 1) and a root check.sh would have read "the failure moved". The deterministic
+  `sys_fstat … succeeded` line stays the pin; the last line takes `^1[12] passed, [12] failed \(13 total\)$` and the
+  exit an ERE (`xfail`'s WANT_RC: X2 `[12]`, X1 `1`). Not run as root (no root on the box); the patterns were checked
+  against 12 / 1 and 11 / 2 (match) and 10 / 3, 13 / 0, exit 0 / 3 (no match). Green 24 / 24 under sh and `bash -eo
+  pipefail`; MA1 (ECALLTO dropped) still RED X1 / X2 cx among its 10.
+- Part of
+  [2026-10-11-cx-does-not-auto-call-main.md](docs/development/issues/archived/2026-10-11-cx-does-not-auto-call-main.md).
+
+#### GF-8r — the slice decision's flip side, pinned (lane genfe, review fix, commit 2044d729)
+
+- What GF-8 does to a program that declares its own `struct slice` and also uses the built-in through the word `slice`
+  (its `.len` on a fn-local `slice<u8>` stops compiling; GF-8 above) is pinned:
+  `tests/gates/frontend/slice_position_refused.sh` K2f (with `struct slice` declared, a fn-local `slice<u8>`'s `.len`:
+  one error, "unknown field 'len' on struct 'slice'"; 6.7.10 gave 14) and K2g (the same program with the built-in
+  respelled `[u8]`: 14). Mutant MSW now also turns K2f RED. Guide § Slices says to spell the built-in `[u8]` there.
+- Part of
+  [2026-10-10-user-struct-named-slice-shadowed-in-locals.md](docs/development/issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md).
+
+#### GF-7r — a pointer element `Vec<*Pt>` is pinned among the refused (lane genfe, review fix, commit bc2fec1d)
+
+- GF-7 refuses a pointer element as the field form does (`Vec<*Pt>`: "expected a Vec element type for 'v', got '*'";
+  6.7.10 compiled it); the lane's migration list had left it out. Row
+  `tests/gates/frontend/struct_field_type_unknown_refused.sh` V4i (refused once); mutant MV6 (`_vec_tok_err` silent)
+  RED V4i too. Guide § Type names lists the pointer element.
+- Part of
+  [2026-10-09-vec-annotation-type-argument-unchecked.md](docs/development/issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md).
+
+#### GF-1r — the instance-name rule says what shipped (lane genfe, review fix, commit 8ce7fee4)
+
+- GF-1's wording — its commit subject too — said "no two type arguments share an instance". What shipped is narrower:
+  a scalar type argument never shares an instance with a struct one (f64 is `f64`, a struct named like a scalar
+  `.name`). A two-parameter generic still collides through nested instance names (`g2<P<R>, i32>` and `g2<P, R<i32>>`
+  both mint `g2$P$R$i32`, printing `1604 1604`), and the guide § Generics (monomorphization) names it as open, by its
+  issue file (`docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md`). The same
+  narrowing in check.sh's comment, generic_instance_names_distinct.sh's PASS line and generic_instance_names.tcyr's
+  header. Wording only; the gate green.
+- Part of
+  [2026-10-12-generic-f64-instance-name-collides-with-struct-i.md](docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md).
+
+#### GF-20 — dead_code_floor's fixture drops `ir_emit1 cx` (lane genfe, lane-gate fix, commit 1d04dd06)
+
+- The first check.sh run after the review fixes had dead_code_floor RED: "1 floor entry no longer dead: ir_emit1 cx".
+  Bisected to GF-5r's two new globals (`_tsp`, `_tsp_n`), not its code: cycc's DCE call graph is a byte scan, and an
+  E8 byte inside an imm32 / disp32 that lands on a fn start counts as a call (x86 fixup.cyr: "false positives only
+  OVER-estimate liveness"). The two globals moved the cx program's data addresses onto ir_emit1's start; two unrelated
+  `var _zz_gN = 0;` appended to 09e06b72's parse.cyr flip it the same way, one does not. Nothing in the cx fork calls
+  ir_emit1 (its one caller, `_IR_REC1`, stays dead). The fixture row `ir_emit1 a64 a64m a64n cx` is now `ir_emit1 a64
+  a64m a64n`; dead_code_floor green (403 entries, 7 forks). Fixture only, no src change.
+- The gate's sensitivity to the byte coincidence is filed:
+  [docs/development/issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md](docs/development/issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md)
+  — 6.7.12. After the merge with the other lanes' globals the gate has to be rerun: the coincidence can move either
+  way.
+
+#### genfe lane — the lane gate
+
+- **Self-host:** build/cycc == cycc(src) of 1d04dd06 (cmp OK): **2,202,304 B** (the lane base 5fb211da 2,168,800 B:
+  +33,504 B over the lane). Unreachable-fn floor unchanged: 52 fns / 10,597 B. build/cycc is not committed by the lane
+  (the integration rebuilds it).
+- **Seed-derive:** `=== OK: build/cycc is machine-derivable from the 29024-byte seed ===` after every src change and
+  on the final tree.
+- **check.sh** (`CYRIUS_CHECK_JOBS=4`, the final run on 1d04dd06): `shell gates: 501 of 501 produced a result, 0 NOT
+  RUN` · `failures: 2` · `skipped: 2`. The two failures are lane-only ties: programs/checks `130 passed, 1 failed, 0
+  skipped (131 total)`, the doc-stamp row only (state.md's cycc row cites the slot-open size; the integration
+  restamps), and `tests/gates/toolchain/distlib_owner_rule_shared.sh` row C (`_bre_err: niyama sankoch` — the lane
+  base predates main's sankoch 2.8.7 refold, 3f8d1b4b). Skipped: agnos_sysinfo_tail_parity and
+  agnos_monotonic_clock_rdtsc (the named agnos SKIPs). Nothing else red; the first run (before GF-20) had
+  dead_code_floor RED as a third failure.
+- **The per-file exit-code loop** over the nine .tcyr the lane added or changed — each exits 0 with `N passed, 0
+  failed` on x86_64 and on qemu-aarch64 / cxvm / wine: closure_captured_slice_fields 9, closure_declared_names 15,
+  generic_f64_result 56, generic_instance_names 18, generic_method_struct_arg 49, generic_struct_inference 240 (cx
+  239), typed_pointer_step 267, user_struct_named_slice 11, vec_annotation_element 20. At the F3 / F4 unit tips
+  `check.sh tcyr` passed the whole suite (584 files).
+- **Not run by the lane:** the hardware legs (ecb / ach / cass / pi) — the lane's crossos files run there in the
+  release gate's cross-OS leg; `scripts/release-gate.sh`; `cyrius pulsar`.
+- **Filed from the lane** (each placed 6.7.12 — repair 2): two-param-generic-nested-instance-names-collide (High),
+  closure-var-initializer-reading-its-own-name-drops-the-capture (High),
+  closure-capture-of-narrow-local-reads-unextended-word (High), top-level-ret2-never-returns (High),
+  nested-closure-parameter-taken-as-outer-capture (Medium),
+  local-const-in-inline-or-generic-body-refused-at-second-call (Medium),
+  generic-forwarding-to-bounded-generic-refused-at-f64 (Medium), generic-pointer-to-generic-struct-return-refused
+  (Low), generic-forwarding-carrier-into-stub-generic-refused (Low),
+  bounded-method-call-on-carrier-field-is-a-struct-use (Low), generic-carrier-table-caps-at-64-silently (Low, review),
+  slice-position-k2-misses-sl-ann-at-findstruct (Low, review),
+  const-context-skipped-arm-calls-private-const-fn-unchecked (Low), private-call-reported-once-per-body-replay (Low),
+  refused-local-const-annotation-cascades-undefined-variable (Low), vec-type-argument-unread-outside-annotations
+  (Low), var-annotation-non-type-token-compiles (Low), type-argument-non-name-reported-with-garbage-name (Low),
+  cx-main-running-tcyr-fail-at-guest-contract-limits (Low), dead-code-floor-trips-on-dce-byte-scan-false-live (Low,
+  lane gate) — each `docs/development/issues/2026-10-14-<name>.md`.
+
+### Infrastructure — the preprocessor, cybs and the seed, the kernel DCE compaction (the infra lane)
+
+#### INF-1 — the preprocessor's walks test for `#` inline: no call per byte for the attribute-line rule (lane infra, commit 1c270797)
+
+- **Fixed (no decision needed: "fix to what the source says").** 6.6.20's attribute-line fix (`0d85cdcd`: a `#` that
+  spells one of the lexer's ten attribute words does not open a comment) moved every preprocessor walk from
+  `PP_LEXST(st, c)` onto the four-parameter wrapper `PP_LEXST_AT(base, i, n, st)`, which loads the byte and calls
+  `PP_LEXST`: one extra call per source byte per pass, filed as ~4 % of self_compile (6.6.20 – 6.7.10; the cost is the
+  call layer, not the attribute test). Each of the ten walk sites — `PP_NEUT_FMARK`, `PP_A64_NATIVE_AT`,
+  `PP_IS_HOST_ONLY`, the `#derive` brace copy in `PP_PARSE_STRUCT_DEF`, `PP_PASS`, `PP_MACRO_PASS`, `PP_IFDEF_PASS`,
+  `PP_REF_PASS`, `_bnd_entry_start`, `_bnd_scan` (the filing named eight) — now reads
+  `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); } else { X = PP_LEXST(X, load8(B + I)); }`: a `#` goes
+  through `PP_LEXST_AT`, every other byte straight to `PP_LEXST`. Both fns are unchanged, and `PP_LEXST_AT` differs from
+  `PP_LEXST` only on a `#` in state 0, so the state machine is the same. `#inline` cannot absorb the wrapper: it refuses
+  a fn of more than 2 parameters (`#inline ignored: fn takes more than 2 parameters`). `PP_LEXST_AT`'s comment no longer
+  says "EVERY pass walks its buffer through this"; it states the guard and its census.
+- **The output is unchanged:** cycc(src) is a fixpoint (c2 == c3), and the old and the new compiler give byte-identical
+  output on the new source (c1 == c2); old vs new `build/cycc` (output + stderr + rc): all 573 `tests/tcyr/**/*.tcyr`
+  and all 111 programs/ + cbt/ `.cyr` identical; the aarch64, cx and win cross compilers built from the old and the new
+  tree give identical output on 145 inputs each (the four `src/main*.cyr` plus a sample of tests/tcyr).
+- **Gate:** `tests/gates/frontend/file_marker_forge_refused.sh` axis 26 is rewritten as the guarded-site census. It
+  counts occurrences over code lines (a comment may name either fn): every guarded line has the shape above with the
+  same B / I / X in both arms (BRE back-references); guards >= 9; `PP_LEXST_AT(` occurrences == guards + 1 (the
+  definition), so no walk sits outside a guard; `PP_LEXST(` occurrences == guards + 2 (the definition and
+  `PP_LEXST_AT`'s tail), so no walk is bare; the definition and the tail each once; `LEXATTRWORD` once in the
+  preprocessor and once in the lexer. The axis checks itself on two awk-made copies of the source with the FIRST guard
+  mutated — M-bare (a bare `X = PP_LEXST(X, load8(B + I));`, which reopens the forge) and M-at (a bare
+  `X = PP_LEXST_AT(B, I, N, X);`, the 6.6.20 shape) — and must go RED on both; a mutant that does not apply is RED too,
+  so a census that matches nothing cannot read green. 41 / 41 under `sh` and `bash -eo pipefail`. Tree mutations, each
+  built with the good cycc and the gate run from that tree: M10 (the fix reverted: 6.7.10's `lex_pp.cyr`) 1 FAIL,
+  axis 26 (guarded 0, both in-gate mutants not applied); M11 (`PP_NEUT_FMARK`'s walk on a bare `PP_LEXST`) 1 FAIL,
+  axis 26 — every behaviour axis stays green, because `PP_NEUT_BOLMARK` still catches the forge, which is why axis 26
+  has to be a census; M12 (the same walk back to a bare `PP_LEXST_AT`) 1 FAIL, axis 26. Also green on the new compiler:
+  `lexer_attribute_word_boundary.sh` 51 / 51, `macro_invocation_boundary.sh` 12 / 12,
+  `pp_directive_inside_multiline_string.sh` 10 / 10, every other gate that reads `lex_pp.cyr` / `PP_LEXST` (22 in all:
+  `diag_line_after_include`, `directive_prefix_never_eats_bytes`, `preprocess_arena_caps`,
+  `preprocessor_scratch_bounds`, `macro_pass_preserves_ifdef_filtering`, the api-surface / cyaudit / raw-syscall
+  censuses, …), `cybs_call_arity_named.sh`, `scripts/seed-derive-cycc.sh` (`lex_pp.cyr` is compiled by cybs).
+- **Bench** (interleaved A/B on the lane's box, `<cc> < src/main.cyr`, 15 runs each): old `build/cycc` 1,560 → new
+  1,516 ms median (−44 ms, −2.8 %; fastest 1,533 → 1,485 ms) at load ~2. The triage, earlier the same day on the
+  byte-identical pair of binaries: 1,522 / 1,519 → 1,472 / 1,470 ms (two rounds of 15, −50 ms, −3.3 %), recovering 50
+  of the 57 ms the no-wrapper probe showed. Later rounds ran at load 10–22 (other lanes) and are noise. ⚠ The
+  release's bench line re-runs the A/B on a quiet box: slot-open `86592071`'s `build/cycc` against this commit's
+  cycc(src).
+- **cycc:** 2,114,376 → 2,118,472 B (+4,096, one page; the R/X LOAD segment +1,000 B, 0x1cffb8 → 0x1d03a0).
+- Issue: [the per-byte `PP_LEXST_AT` call layer](docs/development/issues/archived/2026-10-08-self-compile-attribute-line-rule-cost.md).
+
+#### INF-2 — gate row S guards the seed's CODE cap too (lane infra, commit a57d2397)
+
+- **Gate only; the seed is unchanged** (`bootstrap/asm`, sha256 `8e096b4a…fbd20a2`). The seed checks none of its three
+  fixed regions: input 131,072 B (the read stops and the rest of stdin is dropped with exit 0), labels 512 (`ADDL`
+  writes entry 512 + k over the next table: a false `label not found`, or worse) and the 65,536 B CODE buffer (`EB`
+  stores past it into the label tables and then into OUT, and `EELF` copies back bytes it has already overwritten: the
+  emitted tail is earlier output, silently). Row S of `tests/gates/toolchain/cybs_call_arity_named.sh` held
+  `bootstrap/cybs.cyr` under the first two. It now also holds cybs's assembled code — the assembled cybs minus EELF's
+  120 B header (`fsz = 120 + cp`) — under 65,536 B, and fails with `cybs's code is N B — the seed's CODE buffer holds
+  65536 and past it overwrites its label tables and output, silently`. The row runs after the seed has assembled cybs;
+  the ok line reports all three caps: `112175 / 131072 B input, 501 / 512 labels, 21660 / 65536 B code` at this commit,
+  115,974 B / 506 labels / 22,200 B at the lane's head.
+- **Mutation** (a scratch copy of the gate: an honest over-cap cybs.cyr cannot be built inside the input cap — the seed
+  has no fill directive, so cybs is ~0.19 B of code per input byte): `CODE_CAP` lowered to 21,000, below the 21,660 B of
+  code → S RED, A B C E D green.
+- **The issue stays open.** The seed's own bounds checks are a new `bootstrap/asm`, a new trusted root, and ride
+  roadmap_6's seed-rotation minor (the user, 2026-10-09); roadmap_6's seed-rotation paragraph carries 6.7.11's numbers
+  and "row S checks all three caps" (INF-4's commit).
+- Issue (open, for the seed's own checks): [the seed's silent caps](docs/development/issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md).
+
+#### INF-3 — cybs refuses a statement call to a fn that is never defined, naming it (lane infra, commit ac8e8e70)
+
+- **Fixed (no decision needed: cybs narrows to what cycc already refuses).** In a statement, `nosuch(1);` compiled under
+  cybs with exit 0 and the binary died with SIGSEGV (139): the statement arm (`parse_assign_is_fn_call`) registers an
+  unknown name with entry -1, so that a definition further down can fill it in, and `fixup_fn_call` patched
+  `rel32 = entry − (site + 4)` with no check — a call to one byte before the code. `fp(5);` on a fn-pointer variable
+  took the same arm (cybs calls a variable by name only in an expression). cycc refuses both (`undefined function`).
+  `fixup_fn_call` now stops on an entry still -1 (`cmp rax, -1` / `je fixup_fn_undef`) and writes
+  `cybs: undefined function: <name>` (the name from the fn-name table, `r15 + 0x7200000`), exit 1, before the ELF is
+  emitted — nothing on stdout. The name printer is a shared `cybs_write_name`, which INF-4 reuses.
+- **Measured** (the seed-assembled cybs, before → after): the filed `stmt.cyr` rc 0, 256 B, run 139 → rc 1,
+  `cybs: undefined function: nosuch`, 0 B; `fp.cyr` rc 0, 360 B, run 139 → rc 1, `cybs: undefined function: fp`, 0 B; the
+  control (`f(1);` with f defined) runs, exit 7, before and after. `var x = nosuch(1);` still printed
+  `undefined variable` at this commit; INF-4 names it.
+- No input that built before changes: gen1 = cybs(src/main.cyr) is byte-identical to the slot-open gen1 (sha256
+  `3e9146b7…44fff`), the closure cybs(bootstrap/asm.cyr) == bootstrap/asm holds, seed-derive OK. Labels 501 → 505 / 512
+  (`fixup_fn_undef`, `cybs_write_name`, `cwn_scan`, `err_undef_fn` — one more than the triage's prototype, which printed
+  the name inline), input 113,542 / 131,072 B, code 21,864 / 65,536 B (the assembled cybs 21,780 → 21,984 B).
+- **Gate:** `tests/gates/toolchain/cybs_undefined_fn_named.sh` (registered in check.sh after `cybs_call_arity_named`):
+  A the closure; U the filed repro verbatim (rc 1, exactly `cybs: undefined function: nosuch`, no stdout); P
+  `var fp = 0; … fp = &f; fp(5);` → `cybs: undefined function: fp`; R `build/cycc` refuses both fixtures; F
+  (anti-vacuous) a statement call to a fn defined after its use, and the filing's control, run (exit 7); E
+  (anti-vacuous) an expression call through a fn-pointer variable, `gp(3, 4, 4, 4)`, runs (exit 42). Green under
+  `bash -eo pipefail`. Mutations (scratch copies of the tree): the `cmp` / `je` deleted → U and P RED (rc 0, the binary
+  exits 139); `call cybs_write_name` dropped → U and P RED (the name missing).
+- Issue: [cybs compiles a statement call to an undefined fn silently](docs/development/issues/archived/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md).
+
+#### INF-4 — cybs's refusals name what it lacks and print the offending line (lane infra, commit 421a0db7)
+
+- **Changed (the user's decision D45, option A, 2026-10-13): one class message plus the offending line.** Through 6.7.10
+  every construct cybs does not compile stopped seed-derive with a bare `syntax error`, and every unknown name with a
+  bare `undefined variable` — no line, no name and no construct, for a 1.7 MB stream spliced from 20+ files. Now
+  `parse_err` prints `cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while,
+  an if-expression, unary minus, >>>, >>=), at: <the line>`, and the undefined-name path prints `cybs: undefined
+  variable or function (cybs has no const): <name>, at: <the line>`; exit 1, nothing on stdout. The line is the
+  expanded stream's — an error inside an include prints that file's line — and greps straight to its `src/` file; at the
+  end of the input it is the last token's line (`parse_err` steps back from the EOF token, so a fn left open prints its
+  last line instead of an empty one). A real-tree probe: a `-x` planted in a copy of `src/common/util.cyr`, with cybs
+  over the full 1.7 MB spliced stream, printed `…, at:     var zz_probe_line = 0 - 1; zz_probe_line = -zz_probe_line;`,
+  which greps to `src/common/util.cyr:21`. Why this slice (D45): roadmap.md placed the item "within the 11-label
+  headroom" and any change to the seed's caps is its own minor (the user, 2026-10-09); the line's text is what locates a
+  construct in the spliced stream, while per-construct wording would spend the last labels on what the printed line
+  already shows.
+- **How:** each of the lexer's five token stores (string, `lexer_emit_simple`, number, identifier, `lexer_emit_kw`) also
+  stores the cursor r8 (in the token or just past it) at `r15 + 0xA000000 + r10 * 8` — a cybs-private 16 MB region
+  sized like the token arrays, four instructions per store. The region is free: the pp include scratch below it is
+  reached only at depth 8, and the preprocessor is finished before the lexer runs. cycc's heap is not involved, so no
+  two-step bootstrap. `parse_err` copies the token index into rbx first, because the kernel's `syscall` clobbers rcx and
+  r11 (cybs's parse cursor); `cybs_write_line` writes ` at: ` and the token's line (back to the LF before it, forward to
+  the LF after it or to r12, the stream's end, that LF written as the message's own) and exits 1. `find_var_undef`
+  takes token r11 − 1 (the last one taken: the name, in every caller) for the line and writes the name through
+  `cybs_write_name` with `,` in place of its NUL.
+- **Labels:** five unreferenced labels freed — `_start` (the entry is the first code byte), the dead fns
+  `emit_mov_rcx_imm64` and `parse_array_decl` (each behind a `ret`), and the fall-throughs `emit_sp_done` and
+  `lexer_char_err`, left as comment lines (the mutation ledgers of `cybs_call_arity_named.sh` and
+  `cybs_lexer_drops_nothing.sh` that name those two now say to restore the label before re-running that mutation) —
+  and six added (`parse_err_at`, `cybs_write_line`, `cwl_back`, `cwl_fwd`, `cwl_out`, `err_at`): 505 → 506 / 512, 6
+  left. Input 115,974 / 131,072 B, code 22,200 / 65,536 B (the assembled cybs 22,320 B). gen1 and the closure
+  byte-identical; seed-derive OK. Unchanged: what cycc compiles.
+- **Not shipped, by the decision:** a per-construct refusal and `file:line` (the filing's expected
+  ``cybs: src/x.cyr:1: `loop` is not supported by the bootstrap compiler``) need more seed labels than are left. Filed:
+  [cybs names neither the construct nor the file and line](docs/development/issues/2026-10-13-cybs-per-construct-refusal-and-file-line.md),
+  placed in roadmap_6 § *A seed-rotation minor* (its item 5 links it).
+- **Gate:** `tests/gates/toolchain/cybs_diagnostics_named.sh` (registered after `cybs_undefined_fn_named`; each row
+  checks rc 1, no stdout, and stderr exactly one line equal to the expected message): A the closure; L the filed loop
+  repro verbatim → `…, at: fn main() { var x = 0; loop { … } return x; }`; T const at the top level
+  (`at: const N = 3;`), const in a fn, do/while, an if-expression, `-a`, `-3`, `a >>> 2`, `a >>= 2` and `fn bad( { }`
+  after valid code, each on its own line of a multi-line `fn main()`, each printing that line; N `var x = nosuch(1);` →
+  `…: nosuch, at:     var x = nosuch(1);`, and a top-level const read from a fn → `…: N, at:     return N + 1;` (cybs
+  compiles every fn body in pass 0, before the top-level statements, which is why the filed "top-level const →
+  undefined variable" row is this shape); I an error inside an included file prints that file's line, one after an
+  include the main file's; E a fn left open at the end of the input, with trailing blank lines → `at:     return x;`;
+  V (anti-vacuous) a valid program using `0 - a`, `>>`, `while`, an if statement, a top-level var and a forward call
+  runs (exit 42; cycc agrees). Green under `bash -eo pipefail`. Mutations (scratch copies of the tree): `err_syntax`'s
+  length back to 13 and the line not written → L, T, I and E RED (13 rows); `lexer_emit_kw`'s position store dropped →
+  the T if-expression row RED (it prints line 1, `fn main() {`); `find_var_undef` exiting after its message → N RED
+  (2 rows); the end-of-input `dec rbx` dropped → E RED (an empty line).
+- **Found, not absorbed** (each filed, placed 6.7.12 — repair 2; each beyond the filed surface):
+  [cybs exits 139 with nothing on stderr when the input ends right after `fn` / `var`](docs/development/issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md)
+  (the review: pass 0's `shallow_fn` / `shallow_global` consume the name token with an unconditional `inc r11`, stepping
+  over EOF; the slot-open cybs too);
+  [an indexed store to an undefined name, `zz[1] = 5;`, gets the class message, not `zz`](docs/development/issues/2026-10-14-cybs-indexed-store-undefined-name-not-named.md)
+  (the review: `parse_assign_stmt` dispatches on the token after the identifier before resolving it; cybs has no
+  subscript at all, and the class message's list does not say so);
+  [cybs's pp include scratch, stdin and expand buffers are unchecked](docs/development/issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md)
+  (2 MB of include scratch per depth with an unbounded read and no depth cap, stdin truncated at 15 MB: a 2,178,045 B
+  include that itself includes a file has its tail overwritten at 2 MB and cybs prints a line that is not in the file,
+  while cycc runs the program — latent: the largest include is 300 KB, the depth 2, the stream 1.7 MB).
+- Issue: [cybs reports a bare "syntax error" with no file, line or construct](docs/development/issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md)
+  (closed to the decided slice; the remainder is the filed issue above).
+
+#### INF-5 — `CYRIUS_DCE=1` shrinks a `kernel;` image and a `CYRIUS_WX=0` executable again, and a kept dead body's call into removed code becomes `ud2` (lane infra, commit 4e5d1f90)
+
+- **Fixed (no decision needed: "fix to what the source says" — the issue's own design, re-pointed to current lines;
+  agnos-filed, High; the kept-dead call retarget pulled into it by the user at the open, 2026-10-13).**
+  - Before: a kernel image (ELF32 multiboot1 `kernel;` and `CYRIUS_ELF64_KERNEL=1`) and a `CYRIUS_WX=0` executable put
+    `.bss` / `.rodata` right after the code, while FIXUP patches every data address against the PRE-compaction code
+    end. 6.5.72 – 6.6.19: compaction moved the data and not the addresses (agnos printed ~18 serial lines of NUL strings
+    and died before its banner). From 6.6.20 `_dce_compact_why` declined compaction for both layouts, so
+    `CYRIUS_DCE=1` only NOP-filled them and a kernel could not shrink.
+  - Now both compact. FIXUP sets `_wp_data_follows` around the post-patch `wp_compact` when
+    `kmode == 1 || _wx_active(S) == 0`; the code then ends at align8(old end − removed) (`_wp_data_end`), plus 8 zero
+    bytes when that move would be 8 mod 16, so every array FIXUP padded to 16 against the old data base keeps its
+    alignment; every surviving data imm64 FIXUP patched — a string (ftype 1) or a global (ftype 0 below `GVCNT`) —
+    moves down by the same amount (`_wp_data_fix`, in stage 1b on pre-move coordinates: plain arithmetic, no re-run of
+    the patch loop); after stage 6 the gap is zeroed and the code end set (`_wp_pad_to`). The two 6.6.20 declines are
+    gone from `_dce_compact_why`; aarch64, PE, Mach-O, `--pie` (a `--pie` kernel included: its data is reached through
+    rip-relative displacements) and `shared;` decline and NOP-fill as before. A W^X executable's layout is unchanged
+    (its data segment stays frozen where FIXUP patched it).
+  - A static initializer cannot hold a data address the move would miss: in a kernel an address-valued global is a
+    run-time initializer, and row 9 below finds no `.bss` / `.rodata` byte that differs between two load bases.
+- **The second defect — a kept dead body's call.** A dead fn the compiler keeps because the length decoder cannot size
+  one of its instructions (agnos: five bodies holding `out dx, al`) had its calls into REMOVED fns shifted like every
+  other rel32, onto whatever moved into the hole — an unrelated live fn, or its own entry; live on the W^X compaction
+  too. In the post-patch pass a rel32 that survives while its target is removed can only sit in such a body (a live
+  caller keeps its callee). It is now `ud2; ud2; nop` (`0f 0b 0f 0b 90`, FIXUP's no-target sentinel) for a call or a
+  jmp — forward call and tail call (ftype 2), backward call and tail call (the disp32 sources) — through
+  `_wp_dead_xfer` and `_wp_removed_at` (a removed byte, the run's first byte included, where `_wp_inside` excludes it:
+  a call aims at a run's first byte). An `&fn` (ftype 3) of a removed fn in such a body is written 0. Any other
+  surviving rel32 into removed code refuses the build by name (`error: dead-code elimination: the rel32 at code offset N
+  (opcode byte B) survives but aims into removed code, and only a call or jmp can be neutralised; refusing to emit`, no
+  output — verified by a scratch mutant that sends E8 down that arm: rc 1, 0 bytes written).
+- **In passing:** under `--allow-undef`, stage 1b read FIXUP's `ud2` sentinel for an undefined callee back as a rel32
+  and rewrote it into `0f 5f 0f …` (`maxps`; the call died SIGSEGV, 139). A site whose callee was never defined
+  (`_fnt_offsets[idx] < 0`) is now left alone: `0f 0b 0f 0b 90`, SIGILL (132), as in the plain build.
+- **Measured** (x86_64 Linux; slot-open `86592071`'s `build/cycc` → this commit):
+  - the issue's `k.cyr` (`var A[32]`), ELF64 kernel: `CYRIUS_DCE=1` 1,720 B (declined) → 984 B; `.text` 0x3a0 → 0xc0;
+    `.bss` 0x100448 → 0x100168; `.rodata` 0x100550 → 0x100270; A 0x100450 → 0x100170 — each an imm64 in `.text`. ELF32
+    kernel: 1,536 B (declined) → 800 B; `.bss` 0x100400 → 0x100120; `.rodata` 0x100510 → 0x100230. 750 B removed; the
+    plain move, 744 B (8 mod 16), became 736 B with the 8-byte zero pad.
+  - the `CYRIUS_WX=0` probe (60 dead fns, two globals, a string): 8,320 B either way (declined) → 736 B; exit 42
+    `data-ok` both.
+  - the QEMU boot probe: 1,688 B either way → 952 B; `kdata-ok C`, QEMU exit 33, on the plain and the compacted image
+    (also under `CYRIUS_IR=3` + `CYRIUS_DCE=1`).
+  - kept dead bodies (W^X, `CYRIUS_DCE=1`): a forward `call` and a forward tail `jmp` that landed on `live_fn`, and a
+    backward `call` and a backward tail `jmp` that landed on `kept_dead`'s own entry → `ud2; ud2; nop` each.
+  - a `--pie` kernel (the review): `CYRIUS_ELF64_KERNEL=1 CYRIUS_DCE=1 cycc --pie` on `k.cyr` prints
+    `compaction declined on x86_64 ELF (--pie)`, 1,704 B.
+- **What changes for code that compiles today** — only under the opt-in `CYRIUS_DCE=1`. A `kernel;` / `CYRIUS_WX=0`
+  image is smaller, its `.bss` / `.rodata` lower, and the unreachable-fns note no longer says `compaction declined …`.
+  The differential, slot-open vs this compiler, all 573 `tests/tcyr/**/*.tcyr` (binary + stderr + rc):
+  `CYRIUS_DCE=1` (W^X) 535 byte-identical and 38 different, every differing byte inside a 5-byte window that went from
+  E8 / E9 to `0f0b0f0b90` — 206 kept-dead call sites, nothing else; 37 of the 38 run identically (exit 0), and
+  `tests/tcyr/lang/generic_instance_inline_binding.tcyr`, already broken under `CYRIUS_DCE=1` (139), now dies SIGILL
+  (132) at the sentinel — a pre-existing DCE defect, filed below. `CYRIUS_IR=3` + `CYRIUS_DCE=1`: the same 38 files /
+  206 sites, sentinel-only. Default and `CYRIUS_IR=3`: 573 / 573 identical. programs/ + cbt/ (96), default and
+  `CYRIUS_DCE=1`: identical except `programs/isr_stub.cyr` (a `kernel;`), whose unreachable-fns note now reads
+  `set CYRIUS_DCE=1 to eliminate` and which compacts 464 → 384 B under `CYRIUS_DCE=1`. cycc's own `CYRIUS_DCE=1` build
+  is byte-identical between the two compilers and reproduces cycc(src). The aarch64, win, cx and x86_macho cross
+  compilers built from both trees: 61 inputs (the 60 `tests/tcyr/crossos` files + `src/main.cyr`) × `CYRIUS_DCE` 0 / 1,
+  output and stderr identical — they still decline.
+- **Gates:**
+  - `tests/gates/codegen/dce_data_vaddr_frozen.sh` (rows 1–5 unchanged): row 6 inverted — the 60-dead-fn probe under
+    `CYRIUS_DCE=1 CYRIUS_WX=0` says `dead code eliminated` and no `compaction declined`, is smaller than the
+    `CYRIUS_WX=0` plain build, and runs (exit 42, `data-ok`); row 7 inverted — ELF32 and ELF64 kernels, `CYRIUS_DCE` 0
+    and 1: the `.bss` / `.rodata` vaddrs occur as imm64 in `.text`, and DCE=1 compacts with no decline, a smaller image
+    and `.bss` moved down; row 8 (new) — the issue's `k.cyr` with `var A[32]`, ELF32 and ELF64: anti-vacuous, the plain
+    move cp − align8(cp − deleted) is 8 mod 16 (744); the code ends at align8(928 − 750) + 8 = 192; the 14 bytes
+    `[178, 192)` are zero; A (the last 256 B of `.bss`) is 16-aligned before (0x100450 / 0x100410) and after (0x100170 /
+    0x100130), moved by exactly the code end's move (736), and is an imm64 in `.text`; row 9 (new) — a kernel with every
+    static-init shape (`var G = 7; var S = "hello"; var P = &G; var Q: i64[2] = {1, 2}; var R = Q[1];`) built under
+    DCE=1 at `CYRIUS_KERNEL_BASE` 0x100000 and 0x200000: both compact, the images differ (anti-vacuous), and no byte of
+    `.bss` or `.rodata` differs — no data → data address exists for the move to miss.
+  - `tests/gates/codegen/dce_kept_dead_calls.sh` (new): K, four shapes, each a dead `kept_dead` holding an
+    `asm { 0x90; 0x90; 0x90; 0xEE; }` marker the length decoder cannot size and calling a removed fn — a forward call
+    (ftype 2, E8), a forward tail call (ftype 2, E9 via `ETAILJMP`), a backward call (a disp32 source, E8 via
+    `ECALLTO`), a backward tail call (E9): each compacts; the marker is in `.text` exactly once before and after; the
+    plain build's E8 / E9 after the marker aims at the callee (`CYRIUS_SYMS`, anti-vacuous); after compaction those 5
+    bytes are `0f0b0f0b90`; the program exits 0. U: `--allow-undef` with a dead fn below a taken call to an undefined fn
+    — the DCE=1 build eliminates, `.text` holds `push rax; pop rdi; 0f0b0f0b90`, and the call dies SIGILL (132) as in
+    the plain build.
+  - `tests/gates/codegen/dce_kernel_compaction_boots.sh` (new): an ELF32 multiboot1 `kernel;` with a top-level
+    long-mode shim (page tables at 0x70000, a 64-bit GDT, a far return), six dead fns,
+    `var G = 40; var A: i64[4] = {65, 66, 67, 68};` and a COM1 `putc`. C: `CYRIUS_DCE=1` compacts it, 1,688 → 952 B.
+    B0 / B1: the plain and the compacted kernel each boot under `qemu-system-x86_64 -accel tcg -kernel …
+    -device isa-debug-exit` and write exactly `kdata-ok C` and a LF to the serial port (the string from `.rodata`,
+    A[2] + G − 40 from `.bss`), QEMU exit 33. Without QEMU: exit 77 with a named SKIP line (a FAIL under
+    `CYRIUS_REQUIRE_BOOT=1`) — both paths exercised with a PATH that lacks QEMU.
+  - All three green under `sh` and `bash -eo pipefail`; the two new gates take `CC=${CYCC:-…}` and are registered in
+    check.sh after `dce_data_vaddr_frozen`. `check_gate_census`, `gates_never_write_tree`,
+    `dce_pe_macho_layout_declines_compaction` and `dce_bounds_match_fn_ceiling` green.
+  - Mutations (scratch copies of `src/`, each compiler built from the tree's `build/cycc`; the frozen gate run through
+    a copy whose `fail` does not exit, so every red row shows): M1 `_wp_data_fix` returns before the subtract → frozen
+    rows 6, 7 (four vaddrs absent) and 8 RED, boot B1 RED (serial: ten NUL bytes and a LF); M2 the +8 pad dropped from
+    `_wp_data_end` → row 8 RED (the code ends at 184, A at 8 mod 16); M3 the 6.6.20 declines restored in
+    `_dce_compact_why` → rows 6, 7, 8 and 9 RED; M4 `_wp_dead_xfer` returns 0 → K RED on all four shapes (`e818000000`,
+    `e902000000`, `e8e0ffffff`, `e9dcffffff`); M5 the ftype-2 `poff2 >= 0` skip dropped → U RED (the sentinel gone,
+    rc 139). The slot-open compiler: K × 4 and U RED, boot C RED.
+- **Dead-code floor:** `tests/fixtures/dead_code_floor.txt` gains the six new `ir.cyr` helpers (`_wp_removed_at`,
+  `_wp_ud2`, `_wp_dead_xfer`, `_wp_data_end`, `_wp_data_fix`, `_wp_pad_to`) on a64 / a64m / a64n / cx — reached only
+  through `wp_compact`, which those forks never run, like `_wp_inside`, `_wp_shift` and `_wp_sort_prefix`
+  (`--write`, reviewed: exactly those six lines). The x86 floor is unchanged (52 fns / 10,597 B).
+- **Docs:** `docs/guides/cyrius-guide.md` § Kernel Mode gains a paragraph (DCE removes a kernel image's dead fns since
+  6.7.11; the data moves with the code, a multiple of 16; a kept dead body's calls into removed fns become `ud2`;
+  `CYRIUS_WX=0` likewise — INF-5r2 corrects its first sentence); `docs/platform-status.md`'s Linux x86_64 row and its
+  Bare-metal row, which no longer lists this issue as open (INF-5r corrects both).
+- **cycc:** 2,118,472 → 2,118,408 B (−64: the two decline strings left `.rodata`). Self-host fixpoint (c2 == c3 ==
+  `build/cycc`), seed-derive OK (cybs compiles `ir.cyr`, `util.cyr`, `fixup.cyr` and `runtime.cyr`: the new code stays
+  inline arithmetic plus small helpers), `var x = 42;` → 42, `cyrfmt --check` clean on the four `.cyr` files,
+  `cyrius lint src/common/ir.cyr` adds no warning.
+- **Found, not absorbed** (each filed, placed 6.7.12 — repair 2):
+  [`CYRIUS_DCE=1` removes a LIVE generic instance emitted inside a dead instance's code range](docs/development/issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md)
+  (High; found by this bite's DCE=1 differential: a generic instance is emitted inline in the enclosing fn's range, so a
+  dead forwarder's `[start, end)` contains the live instance it forwards to — `generic_instance_inline_binding.tcyr`
+  and a 5-line repro exit 253 without the flag, 139 under x86 compaction and `CYRIUS_WX=0` NOP-fill, and hang under
+  aarch64 NOP-fill, on the slot-open compiler);
+  [`CYRIUS_SYMS` writes pre-compaction addresses under `CYRIUS_DCE=1`](docs/development/issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md)
+  (Medium: a removed fn is listed at a live fn's address, and the rest sit high by the removed bytes);
+  [W^X compaction leaves stale code bytes in `.text`'s alignment pad](docs/development/issues/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md)
+  (Low: `[wp, align8(wp))` keeps the old bytes — never executed, but it reads like a miscompile in a disassembly).
+- Not run in the lane (lane rules): `cyrius pulsar` (the ARM lockstep) and the release gate's cross-OS legs — the
+  integration's, for a compiler change.
+- Issue: [`CYRIUS_DCE=1` cannot shrink a `kernel;` image](docs/development/issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md)
+  (filed by agnos).
+
+#### INF-5r — platform-status says which images compact under `CYRIUS_DCE=1` (lane infra, review fix, commit 71811882)
+
+- Doc only; cycc unchanged. INF-5 added the kernel / `CYRIUS_WX=0` sentence to `docs/platform-status.md`'s Linux
+  x86_64 row but left its "`CYRIUS_DCE=1` performs REAL elimination only here, on a plain W^X executable" beside it; the
+  row now reads "… only here: on a plain W^X executable (…) and, since 6.7.11, on a `kernel;` image and a `CYRIUS_WX=0`
+  executable". The Bare-metal row's "shrinks a `kernel;` image" is narrowed to "shrinks an x86_64 `kernel;` image since
+  6.7.11 (not a `--pie` kernel; aarch64 still NOP-fills)" — both verified by the review on the lane's compilers.
+- Issue: [`CYRIUS_DCE=1` cannot shrink a `kernel;` image](docs/development/issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md).
+
+#### INF-5r2 — the guide's Kernel Mode paragraph names the `--pie` kernel (lane infra, review fix, commit d5fede5f)
+
+- Doc only; cycc unchanged. INF-5's paragraph said `CYRIUS_DCE=1` removes the unreachable fns from an x86 kernel image
+  as from a host executable; its first sentence now ends "; a `--pie` kernel still declines (its data is reached
+  through rip-relative displacements) and NOP-fills." Verified: `CYRIUS_ELF64_KERNEL=1 CYRIUS_DCE=1 cycc --pie` on the
+  filed `k.cyr` prints `compaction declined on x86_64 ELF (--pie)` (1,704 B), while the plain ELF64 / ELF32 kernels
+  compact to 984 / 800 B.
+- Issue: [`CYRIUS_DCE=1` cannot shrink a `kernel;` image](docs/development/issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md).
+
+#### infra lane — the lane gate
+
+- Head `d5fede5f`. `build/cycc` is the fixpoint of the lane's `src/`: cycc(src) == c1 == c2 == c3, **2,118,408 B**
+  (slot-open 2,114,376: INF-1 +4,096, INF-5 −64). The review fixes are doc-only.
+- `sh scripts/seed-derive-cycc.sh`: OK (closure, gen2 == `build/cycc`, fixpoint, the same diagnostics) — after every
+  bite, and on the head with the final `bootstrap/cybs.cyr` and the final `src/`.
+- cybs (INF-2 – INF-4, x86_64 Linux only — cybs is an x86-64 ELF): each commit kept gen1 = cybs(src/main.cyr)
+  byte-identical to the slot-open gen1 (sha256 `3e9146b7…44fff`), so the cybs edits change no output on the bootstrap
+  chain; every cybs gate green (`cybs_call_arity_named` S A B C E D, `cybs_lexer_drops_nothing`, `cybs_if_else_rbx`,
+  `cybs_leading_underscore`, `cybs_undefined_fn_named`, `cybs_diagnostics_named`), each new or changed gate also through
+  `sh scripts/check.sh gate:<name>`. The seed's caps along the lane:
+
+  | | slot open | after a57d2397 | after ac8e8e70 | after 421a0db7 |
+  |---|---|---|---|---|
+  | cybs.cyr input (/ 131,072 B) | 112,175 | 112,175 | 113,542 | 115,974 |
+  | labels (/ 512) | 501 | 501 | 505 | 506 |
+  | cybs code (/ 65,536 B) | 21,660 | 21,660 | 21,864 | 22,200 |
+  | the assembled cybs (B) | 21,780 | 21,780 | 21,984 | 22,320 |
+
+  cybs's own run on `src/main.cyr` (box load ~14, interleaved, 3 rounds of 5): old 505–534 ms, new 522–617 ms — four
+  stores per token; only seed-derive and the cybs gates run cybs.
+- `CYRIUS_CHECK_JOBS=4 sh scripts/check.sh` (TMPDIR on disk): shell gates **482 of 482** produced a result, 0 NOT RUN;
+  failures 1 = `programs/checks` (130 passed, 1 failed, 0 skipped of 131), the lane-only doc-stamp row: `state.md`'s
+  cycc row cites the slot-open 2,114,376 B and the lane's uncommitted `build/cycc` is 2,118,408 B — the integration's
+  stamp, as in every lane. Proved with `cyrius_check --doc-stamp-row` (built from the tree) over three roots: the lane
+  tree FAIL (expected 2,118,408); the lane's docs + `0f733aea`'s `build/cycc` PASS; the lane's docs with only that row
+  restamped to 2,118,408 + the lane's `build/cycc` PASS. The 2 named agnos-parity SKIPs (`agnos_sysinfo_tail_parity.sh`,
+  `agnos_monotonic_clock_rdtsc.sh`: the emulator answers the probed syscall). `check_gate_census` and
+  `gates_never_write_tree` green.
+- Per-file exit-code loop: the lane added or changed no `.tcyr`, so it ran the whole corpus (573) with the lane's cycc,
+  plain and `CYRIUS_DCE=1`: plain 573 / 573 compile and exit 0; `CYRIUS_DCE=1` 572 / 573 — the one failure is
+  `lang/generic_instance_inline_binding.tcyr` (132; the slot-open compiler gives 139), the pre-existing defect filed as
+  [`CYRIUS_DCE=1` removes a live generic instance nested in a dead one](docs/development/issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md).
+- Hardware legs: not run in the lane (lane rules). INF-1 and INF-5 change `build/cycc`, so the integration runs
+  `cyrius pulsar` (the ARM lockstep) and the cross-OS self-host legs on ecb / ach / cass / pi; INF-1's quiet-box bench
+  A/B is the release's bench line.
+
+### Tooling — scanners, cyrlint, distlib, the CLI (the tools lane)
+
+#### TL-1 — the six source scanners include the lexer's attribute list (lane tools, commit 7c978df8)
+
+- **Fixed (no decision needed: the issue's option (a), the move): the lexer's `#` attribute word list is one file,
+  included by the lexer and by all six source-scanning tools.** `LEXATTRBOUND`, `_lex_attr_is` and `LEXATTRWORD` (the
+  ten words `assert`, `regalloc`, `deprecated`, `must_use`, `pure`, `io`, `alloc`, `naked`, `inline`, `pe_import`, and
+  the `(` boundary of three of them) move verbatim from `src/frontend/lex.cyr` into a new pure file,
+  `src/frontend/lex_attr.cyr`, which lex.cyr includes at the same position; the name and signature are kept (the
+  preprocessor walk calls `LEXATTRWORD` from lex_pp.cyr). cyrlint, cyrfmt, cyrdoc, `cbt/srcscan.cyr` (the CLI and
+  cyrius-lsp), cyrius_api_surface and cyaudit include it, and each `_xx_attr_len` is now `LEXATTRWORD`'s length
+  (`w == 0 ? 0 : (w & 15) + 1`). Deleted: `_lx_attr_bound`, `_cf_attr_bound`, `_doc_attr_bound`, `_src_attr_bound`,
+  `_asf_attr_bound`, cyaudit's `_au_attr_bound` / `_au_attr_is`, and every hand row. Through 6.7.10 each tool carried a
+  hand-copied ten-row table and only cyaudit's was held to the lexer's (6.7.3), so the next attribute added to the
+  lexer would have left five tools reading its line as a comment — one quote out of step with the compiler for the
+  rest of the file (the 6.6.6 / 6.6.20 / 6.7.3 class).
+- **What changes for code that compiles today:** no tool's output changes — a differential of cyrlint, cyrfmt, cyrdoc
+  and `cyaudit vet` over the 1,155 tracked `.cyr` / `.tcyr` / `.bcyr` / `.fcyr`, api-surface's snapshot and
+  `cyrius header` over lib/: 0 diffs (the tools shrink 8–16 B). The six tools now include a `src/` file, so they build
+  from a cyrius checkout's root, as every tarball, install and CI path already runs them; cyaudit's "a copy so the tool
+  builds from anywhere" comment is rewritten. The PE / x86 Mach-O / arm64 Mach-O tool builds work from the root as the
+  tarball scripts run them (cyrius-lsp and cyrius_type_audit still do not build for PE — pre-existing, `sys_fstat` /
+  `sys_readlink` undefined there, neither shipped for Windows); PE cyrlint / cyrfmt under wine read `#io q {` as code
+  and `#iox q {` as a comment, as on Linux.
+- **Gate:** `tests/gates/frontend/lexer_attribute_word_boundary.sh` — B0 reads lex_attr.cyr; C0 a census (each of the
+  six includes `src/frontend/lex_attr.cyr` at column 0; no `"#<word>"` / `"<word>", 0|1)` row of any word derived from
+  `LEXATTRWORD`); C8 cyrlint, C9 cyrfmt, C10 cyrdoc, C11 `cyrius coverage` (srcscan), C12 `cyaudit vet`, F9 api-surface:
+  every derived word in the `#w q` / `#w(q)` / `#wx q` forms, the expected reading derived from the row (58 / 58).
+  `cyaudit_include_directives.sh` axis 7 checks the include instead of comparing rows (44 checks).
+  `refresh_never_installs_a_stale_bin.sh` stages lex_attr.cyr in its scratch tree and moves axis 7's probe edit to
+  srcscan's `"#define "` (the `"#io"` row it edited is gone; 15 / 15). Mutations: M20 a hand row restored in cyrlint →
+  C0 + C8 RED; M21 an eleventh word (`packed`) in `LEXATTRWORD` only → B0 RED; M22 M21 with the 6.7.10 hand copies →
+  B0, C0, C8–C12, F9 RED; cyaudit M13 (a hand row) → 2 RED. Ledgers in both gate headers.
+- **cycc:** byte-identical before and after on all seven forks plus the PE-native and cx-on-Mach-O builds (x86 cycc
+  2,114,376 B). Seed-derive OK.
+- **Closes:** [the lexer's attribute word list hand-copied into six tools](docs/development/issues/archived/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md).
+
+#### TL-2 — the source scanners see `const fn`, balance a generic type's `<..>`, write a C variadic tail; cyrdoc prints from the source (lane tools, commit 50a981eb)
+
+- **Fixed (no decision needed): the source scanners read three shapes the compiler accepts, and cyrdoc stops writing
+  past its buffers.**
+  1. **`const fn`** (6.7.2) was invisible to every scanner — `cyrius header`, `cyrius coverage`, the LSP index
+     (documentSymbol, go-to-definition, hover), distlib and `[embed]`, api-surface, cyrdoc and type-audit. `const` is
+     now stepped over beside `async` in `cbt/srcscan.cyr` `_src_decl_at` and in api-surface's `_asf_decl_prefix`;
+     cyrdoc's `_doc_fn_at` and type-audit's `_match_fn_decl` give way to an include of `cbt/srcscan.cyr` and
+     `_src_decl_at` (as cyrius-lsp already did), so type-audit also counts `pub` / `public` / `async` / `#inline fn` (it
+     took only a line-initial `fn `: 2 of 7 spellings) and cyrdoc an `async fn` and a `#deprecated("…") fn`.
+  2. **A generic type's comma split a parameter in two:** `p: Pair<i64, i64>` printed
+     `cyr_val pp(cyr_val p, cyr_val i64>, cyr_val b);` (cc rejects it), api-surface recorded `pp/3`, and the LSP took
+     `i64` for a parameter name and coloured every `i64` in the file a parameter. A parameter's TYPE now balances `<`
+     `>` (`>>` / `>>>` a byte each, closing two / three levels) up to its depth-0 `=` — in a default `<` is the
+     less-than operator, so `c = 1 < 2` stays one parameter — reset at the depth-0 `,`: the compiler's own rule
+     (`_pl_next` / `_pl_tdepth`), in `cbt/quality.cyr` `_hdr_close` (both uses), `_asf_arity` and
+     `_lsp_collect_locals`.
+  3. **A variadic tail:** `cyrius header` printed `cyr_val va(cyr_val n, cyr_val ...);` (cc rejects it); it writes C's
+     `...` alone, and a fully variadic `fn f(...)` as `cyr_val f(void); /* variadic in cyrius: it reads no argument */`
+     — pre-C23 C refuses a bare `(...)`, and a cyrius variadic tail is never read (`tests/tcyr/lang/varargs.tcyr`), so a
+     C caller passing no extra argument is the whole contract.
+  4. ⚠ **cyrdoc's fixed buffers (memory corruption):** `process_file` copied every name and signature into
+     `alloc(128)` / `alloc(256)` with no bound (an 80-parameter line wrote ~550 bytes past `sigbuf`), silent only
+     because nothing was allocated after them. cyrdoc now prints the name and the signature straight from the source
+     line (`_doc_sig_end`); `namebuf` / `sigbuf`, `extract_fn_name` and `extract_fn_sig` are gone. A
+     `CYRIUS_POISON=1` build of the 6.7.10 cyrdoc exits 86 (`redzone overwrite — alloc block (256 bytes): 32 byte(s)
+     changed [trailing]`) on the 80-parameter line plus any one more file, and on a 200-byte name under `--check`; the
+     new one exits 0 / 1. A bug, not a ledger id: the input is the developer's own source.
+- **Measured (the filed repro verbatim):** `cyrius header` 4 prototypes → 5 — `cf(cyr_val a)`,
+  `pp(cyr_val p, cyr_val b)`, `mp(cyr_val m, cyr_val b)`, `va(cyr_val n, ...)`, `plain` unchanged — passing
+  `cc -std=c11 -pedantic-errors -fsyntax-only`; api-surface `mp/3 plain/2 pp/3 va/2` → `cf/1 mp/2 plain/2 pp/2 va/2`;
+  the LSP's semanticTokens 10 `i64` parameter tokens → 0, documentSymbol gains `cf`; type-audit's seven spellings
+  2 / 7 → 7 / 7. Under wine `cyrius.exe header` prints the five prototypes and `cyrdoc.exe` the 812-byte line; the
+  Mach-O builds compile.
+- **What changes for code that compiles today:** `cyrdoc --check` now sees a public `const fn`, `async fn` and
+  `#deprecated("…") fn`, so an undocumented one fails the check; `cyrius type-audit` counts more public fns (this tree:
+  6,963 → 7,295 public fns, 176 → 497 unannotated, 97 % → 93 % — regex 11 / 11 and yukti 0 / 321 newly visible); an
+  api-surface snapshot gains its const fns and records a generic-typed parameter as one (a regenerated snapshot reads as
+  new entries / changed arities); `cyrius header` output gains const fns, `...` and `(void)`. On this tree:
+  `docs/api-surface.snapshot` regenerates identical (lib/ has no const fn, generic comma or variadic), `cyrius header`
+  over lib/, src/, programs/ and cbt/ 0 diffs, cyrdoc over the 1,155 tracked sources 18 files gain entries (every one a
+  `const fn` / `async fn`, nothing lost), `cyrdoc --check` over lib/ identical.
+- **Gate:** `tests/gates/frontend/default_named_args_checked.sh` — SC-hdr (12 prototypes: the repro and a shapes fixture
+  with `>>`, `>>>`, `c = 1 < 2`, `u2: i64 = 1 < 2`, `d = 4 >> 1`, `zv(...)`, `pub const fn`), SC-cc
+  (`cc -std=c11 -pedantic-errors`; SKIP by name with no cc), SC-asf, SC-doc, SC-dbuf (the 80-parameter signature and
+  the 200-byte name printed whole), SC-dpz (a `CYRIUS_POISON=1` cyrdoc over both plus 16 fillers: no redzone touched),
+  SC-lsp (no `i64` parameter; lu's u3 a parameter; documentSymbol lists `cf`), SC-ta (7 / 7); S-ta reads 5 / 6 (its
+  fixture's `const fn sq2` is a public fn now). Mutations MS1–MS10 each RED (ledger in the gate header). The 40 tool
+  gates (api_surface_*, coverage_*, distlib_*, embed_*, lsp_*, header_spellings_and_size, dyn_checked, tuple_checked,
+  lexer_attribute_word_boundary, …) re-run green. Guide: the cyrdoc `--check` / `cyrius header` paragraph.
+- **Found, not absorbed (filed):** type-audit requires `(` right after the name, so `fn gid<T>(..)` is never a public
+  fn ([`cyrius type-audit` does not count a generic fn](docs/development/issues/2026-10-13-type-audit-skips-generic-fns.md),
+  Low, 6.7.12); api-surface counts a variadic `...` as a parameter (`va/2`, `zv/1`; the "N or more" notation is the
+  user's call — [api-surface variadic arity](docs/development/issues/2026-10-13-api-surface-variadic-arity.md), Low,
+  6.7.12).
+- No src/ change: cycc unchanged.
+- **Closes:** [source scanners: `const fn` invisible, `Pair<i64, i64>` split in two, header prints `cyr_val ...`, cyrdoc buffer overrun](docs/development/issues/archived/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md).
+
+#### TL-3 — cyrlint warns on a bare local array's constant-offset overrun and on a write whose length is not its literal's (lane tools, commit 5580518f)
+
+- **New (the issue's two planned rules; no decision needed).** `programs/cyrlint.cyr` gains `lint_mem_rules`, a
+  lexical walk of its own (strings, chars, comments, attribute tokens; a string's newlines counted), called at the end
+  of `lint_file`:
+  - **The overrun rule.** A bare `var a[N]` in a fn is N BYTES (rounded up to 8), and since 6.6.12 cycc refuses `a[i]`
+    on it, so the overrun left was the explicit offset — `var a[16]; store64(&a + 16, 3);` wrote past the array with
+    no word from cycc or cyrlint. Inside a fn body (`impl` / trait methods included) each local `var` is now recorded
+    with its block depth and popped at its block's `}`: a bare `var a[N]` / `stack var a[N]` with a literal N (decimal
+    or `0x`) at `(N + 7) & ~7` bytes; any other local — typed `var a: T[N]`, a scalar, a const / enum / expression N —
+    as unknown, so it shadows an outer array and never warns. `load8/16/32/64(&a + K)` /
+    `store8/16/32/64(&a + K, ..)` with an integer-literal K (or no `+ K`; the call may wrap lines; a method
+    `x.load64(` is not the builtin) warns when K + width runs past the size:
+    `store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes (a bare array in a fn is N BYTES, not
+    N slots: `var a: i64[N]` holds slots; an intended offset takes `# lint: offset-ok`)`.
+  - **The write-length rule.** `syscall(SYS_WRITE|1, fd, "lit", N)`, `sys_write(fd, "lit", N)` and
+    `_aw_write(fd, "lit", N)` — anywhere, top-level code included — with an integer-literal N warn when N is not the
+    literal's byte length: `write length 5, but its literal is 6 bytes (the write drops the last 1)` /
+    `… (the write reads 3 past it)`. The count is what the lexer STORES (src/frontend/lex.cyr's string arm): a raw byte
+    is one byte, never decoded (an em dash is 3), a two-character escape one byte, `\xHH` one byte, `\u####` /
+    `\u{…}` the code point's UTF-8 length. No Unicode decoding anywhere — the v6.5.33 trap (23 false hits). (Collapsing
+    only two-character escapes, as the plan read, would count `\x1b` as three bytes and warn on every correct
+    `"\x1b[0m"`, 4 write.)
+  - `#skip-lint` exempts a line from both rules; `# lint: offset-ok` on the line of the call's name silences the
+    overrun rule only.
+- **Measured:** the filed repro, `0 warnings` rc 0 → 5 warnings — lines 11 and 12 (the BAD overruns), 13
+  (`return load64(&a + 24)`, the same bytes read, not marked BAD in the repro), 18 and 19 (the BAD writes); rc 0 by
+  default, 2 under `--strict`, 5 under `--exit-with-count`. The repro's binary is the oracle (stdout `hello`, 5 bytes;
+  stderr 7 bytes from `abc\n`).
+- **The tree census found three, fixed in the same commit** (src, cbt, programs, lib, tests — 964 files; lib/mabda.cyr
+  and lib/sigil.cyr, over cyrlint's 1,028 KB cap, linted in pieces cut at a column-0 `fn`):
+  `tests/tcyr/platform/shadow_pam.tcyr:55` passed LEN 56 for its 58-byte SKIP line (the em dash counted as one
+  character: the line lost `s\n`) → 58; the check driver's own `programs/checks/cx.cyr` stored four 8-byte slots at
+  +0..+24 into `var vals[5]` (8 bytes — the driver's stack overrun, right by luck: those frame bytes were not yet live)
+  → `var vals: i64[4]`; `tests/fixtures/lint_lexical/brace_rawstr.cyr` wrote 31 bytes of a 29-byte literal (in an
+  `if (1 == 0)` branch) → 29. Five hits before (cx.cyr ×3, brace_rawstr, shadow_pam), 0 after; an independent scratch
+  scanner over the tracked set (bootstrap, benches and fuzz included) agreed exactly (3 overrun candidates, 1,840 write
+  sites, 2 mismatches). No `# lint: offset-ok` was needed anywhere in the tree. x86_64 Linux only (cyrlint is host lint).
+- **What changes for code that compiles today:** `cyrius lint` / `cyrlint` may report NEW warnings on these two
+  shapes, and a CI step on `--strict` / `--exit-with-count` turns red on them; each is a real truncation or overrun.
+  Code that compiled still compiles and behaves the same. `sh scripts/check.sh lint` 3 / 3 (0 new warnings in lib/);
+  cyrlint's self-lint 4 warnings before and after (pre-existing long lines).
+- **Gate:** `tests/gates/toolchain/cyrlint_overrun_and_write_length.sh` (new, 27 checks; registered after
+  `cyrlint_cross_line.sh`): R the filed repro verbatim (each warned line, every BAD line, rc under default / `--strict`
+  / `--exit-with-count`, compiled and run); S shapes (7 overrun and 5 write lines warn; exact fits, `store64(&a + 8)`,
+  `var b[12]`'s rounding, `stack var`, `&a + 8 * 2`, a non-literal K / N / buffer, `syscall(2, …)`, `x.sys_write`, the
+  exact writes `"\x1b[0m"` 4, `"é\u{1F600}"` 6, the em-dash line 8 and the shadow_pam line 58 are silent; a wrapped call
+  warns at its name's line); C scopes (an inner block popped, a typed / scalar shadow, `var k[BUF]` unknown, another
+  fn's local invisible, a top-level array untracked, an `impl` method body, both exemptions, `# lint: offset-ok` NOT
+  silencing a write, a top-level write); E an 18-byte literal (raw UTF-8, `\x`, `\u`) compiled and run byte-identical
+  to printf — lint silent at 18, warning at 17 and 12; P shadow_pam's file clean, its 6.7.10 LEN 56 copy warned; T the
+  tree census (a floor of 900 files, every file linted, 0 hits). `bash -eo pipefail` clean. Mutations ("checks failed +
+  hard"): m0 the 6.7.10 cyrlint 13 + 0; m1 `k + w < size` 6 + 0 (census 691 hits); m2 `<= size + 1` 1 + 0; m3 the em
+  dash as one character 5 + 0 (census 61); m4 `\x` as a two-character escape 2 + 0; m5 no rounding 2 + 0 (census 130);
+  m6 no block scoping 1 + 0; m7 the trailer silencing writes 1 + 0; m8 the argument walk stopping at a newline 2 + 0;
+  m9 shadow_pam back to 56 3 + 0. Guide: § Linter (both rules) and the bare-array footgun note (§ Arrays: byte vs slot
+  sizing).
+- **Found, not absorbed (filed):** the overrun rule sizes only a fn-local bare array with a LITERAL N — `var a[BUF]`,
+  `var b[Sz.SMALL]`, `var c[4 + 4]` and a top-level bare `var g[2]` (N × 8 bytes) are never checked (a repro with six
+  overruns lints `0 warnings`; no in-tree site of either shape is known) —
+  [cyrlint's overrun rule sizes only a literal N](docs/development/issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)
+  (Low, 6.7.12).
+- No src/ change: cycc unchanged.
+- **Closes:** [cyrlint lacks the bare-local-array overrun rule and the write-length rule](docs/development/issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
+
+#### TL-4 — distlib's every-target owner rule is the partial-target rule (lane tools, commit 16878149)
+
+- **Changed (the user's decision D26, 2026-10-13: one owner rule for both paths, ties refused by name, no sidecar):
+  `cyrius distlib`'s sidecar verify has ONE owner rule for an undefined name, whether every target or only some left it
+  undefined.** The every-target arm of `_distlib_verify_rounds` called `_distlib_leaf_defining`: the first non-fold
+  declarer in byte order, with no D3 skip and no tie refusal. So a name two stdlib leaves declare was settled by their
+  file names at rc 0; an in-unit declarer first in byte order that never defines the name (a dead `#ifdef` arm) was
+  taken, nothing was added, D2 warned `(every target)`, the sidecar was written short and the bundle self-check then
+  failed ("the generated bundle does not compile", rc 1); and a dispatcher peer's constant went to whichever leaf
+  sorted first (`O_RDWR` → `io` in round 1, before `syscalls`). Both arms now call one helper, `_distlib_symbol_owner`
+  (it was `_distlib_partial_owner`) — the partial-target rule of 6.6.18 D3 / 6.7.7: a declarer already in the unit is
+  skipped; a fold bundle counts only when nothing else declares the name; the one dispatcher whose peer declares it
+  wins; else the one non-peer declarer; two or more candidates is a refusal that names them all, in byte order —
+  `'X' is undefined on every target, and more than one stdlib leaf could own it (a, b) — include the right leaf from a
+  bundled module. Sidecar NOT written` (the partial path keeps naming its targets) — and no sidecar is written, as an
+  `[embed]` NAME another declaration owns is refused (6.6.19). `_distlib_leaf_defining` is removed (its only caller).
+- **Measured** (x86_64 Linux; distlib verifies all six targets from it): a tie (`foo` in two leaves, undefined on every
+  target) rc 0 with sidecar `dlt_one` → rc 1, the refusal naming `(dlt_one, dlt_two)`, no sidecar; the D3 fixture
+  (lib/aad3_decl.cyr first in byte order, declaring the name only in a never-defined `#ifdef` arm) → rc 0, sidecar
+  `aad3_decl zzd3_own`, no warning; `O_RDWR` declared nowhere → `round 1: syscalls recorded`,
+  `round 2: io recorded for 'O_RDWR' (x86_64-agnos)`, sidecar [syscalls io].
+- ⚠ **lib/ has one live every-target tie, so a fold's next distlib is refused.** `lib/ws.cyr` (enums) and
+  `lib/ws_server.cyr` (vars) both declare the nine `WS_*` constants (`WS_CLOSED`, `WS_CLOSING`, `WS_OPEN`,
+  `WS_OP_BINARY`, `WS_OP_CLOSE`, `WS_OP_CONTINUATION`, `WS_OP_PING`, `WS_OP_PONG`, `WS_OP_TEXT`), so a bundle that uses
+  one with neither leaf in its unit is now refused. Measured on a `git archive` of **yantra 1.0.11** (@737f539, its
+  lock removed, this tree's lib/ as the snapshot): the 6.7.10 CLI records `ws` for `WS_OPEN` (12 leaves, rc 0); the
+  6.7.11 CLI: `'WS_OPEN' is undefined on every target, and more than one stdlib leaf could own it (ws, ws_server) — …
+  Sidecar NOT written`, rc 1. The lib/ fix (filed) or an `include "lib/ws.cyr"` in yantra's own module must precede
+  yantra's next release. Over the 12 folds at their tags: 10 sidecars byte-identical between the 6.7.10 and 6.7.11 CLIs
+  (bayan, ganita, niyama, patra, sakshi 2.5.10, sandhi, sankoch, sigil, vani, yukti); **mabda** the same 12 leaves with
+  `io` recorded a round later (in the `.deps` and the requires block — its `distlib --check` will read the committed
+  bundle as stale: regenerate); yantra refused.
+- **Census** (the CLI's own reader, `cbt/srcscan.cyr`, over this tree's lib/): 536 names declared by two or more leaves;
+  9 every-target ties (the `WS_*` above); 15 names whose every-target owner changes, all agnos-arm duplicates of a
+  syscalls peer's constants — `O_RDONLY` `O_WRONLY` `O_RDWR` `O_CREAT` `O_TRUNC` `O_APPEND` `O_EXCL` `O_DIRECTORY`
+  `O_NOFOLLOW` io → syscalls; `PROT_READ` `PROT_WRITE` `PROT_EXEC` `MAP_PRIVATE` `MAP_ANONYMOUS` mmap → syscalls;
+  `CLOCK_MONOTONIC` chrono → syscalls.
+- **Memory:** the every-target path now resolves every declarer of every undefined name, and resolving reads dispatcher
+  files whole (the v6.6.3 arena-OOM class), so each snapshot leaf's dispatcher and fold answer is memoized
+  (`_distlib_snap_owner` / `_distlib_snap_fold`; vecs `_dl_snap_own` / `_dl_snap_fold` parallel to `_dl_snap_names`,
+  reset with the snapshot cache): an 8,454-name every-target verify (every lib fn called, nothing declared) peaks at
+  287 MB where it would take 582 MB without the memo, wall-clock within noise (76–96 s against 78–84 s at load 24),
+  identical 72-leaf sidecars; `distlib_leaf_lookup_memory.sh` 160 symbols, 62 MB.
+- **What changes for code that compiles today:** a `cyrius distlib` that picked a leaf by byte order may now refuse by
+  name (include the right leaf from a bundled module); a sidecar may list the same leaves in another order (a dispatcher
+  peer's constant with an agnos-arm copy records `syscalls` first), so `distlib --check` reads a committed bundle as
+  stale — regenerate.
+- **Gate:** `tests/gates/toolchain/distlib_owner_rule_shared.sh` (new; registered after
+  `distlib_sidecar_agnos_target.sh`): T the tie (rc 1, the refusal naming both leaves in byte order, "Sidecar NOT
+  written", no sidecar); D the D3 fixture (zzd3_own recorded, no D2 warning); P `O_RDWR` (syscalls in round 1, never io
+  first, sidecar [syscalls io]); C a census of lib/'s every-target ties against an ALLOW list holding the nine `WS_*`
+  rows (empty it when the ws issue is fixed — a stale row goes RED by design), a floor of 200 multi-declared names, a
+  self-test on the fixture snapshot, and the CLI refusing ALLOW's first row with the census's candidates.
+  `distlib_sidecar_host_independent.sh` axis 8 rewritten: the TIEZ tie (three non-fold leaves) is refused with its
+  candidates in BYTE order — the 6.7.7 listing-order guard kept (a CLI reading the snapshot in `dir_list` order lists
+  `tiez_w1b, tiez_a1, tiez_w1a` and fails it). Mutations: the 0f733aea CLI (byte order first) → T RED; with T removed
+  D RED; with T and D removed P RED; C's live cross-check RED (`WS_CLOSED` recorded `ws`); a new tie pair in lib/ → C
+  RED naming it; a stale ALLOW row → C RED; axis 8: the 0f733aea CLI RED, a snapshot read in listing order RED. Every
+  distlib_* and embed_* gate, `build_undefined_leaf_hint`, `removed_symbol_census` and `gates_run_from_foreign_cwd` (the
+  new gate also from `/` under a HOME with no store — TL-6) re-run green. Guide: the sidecar paragraph (the owner rule
+  and the refusal text).
+- **Found, not absorbed (filed):** [`lib/ws.cyr` and `lib/ws_server.cyr` both declare the nine `WS_*` constants](docs/development/issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md)
+  (Medium, 6.7.12; repro verified with both CLIs).
+- **Closes (with TL-6):** [distlib: the every-target owner rule and the partial-target rule disagree on ties and on the D3 in-unit skip](docs/development/issues/archived/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md).
+
+#### TL-5 — check.sh reaps a dead CLI's temp dir that holds only compile scratch (lane tools, commit dae78508)
+
+- **Changed (the user's decision D27, 2026-10-13: reap by contents): check.sh's reaper removes a dead `cyrius` run's
+  `cyrius-<pid>` temp dir that holds only compile scratch.** `_chk_reap_dead_cli_tmpdirs` (6.6.20) removed only EMPTY
+  dirs (`rmdir`), so a run killed mid-compile kept its `cpp_<pid>` (the preprocessed unit, up to ~1 MB), `cc_err` and
+  `<out>.tmp.<pid>` for ever — 485 such dirs in the dev box's /tmp on 2026-10-13. Now, after the age
+  (`CYRIUS_CHECK_REAP_MINS`, 240 min) and dead-pid tests, a dir `rmdir` cannot remove goes to `_chk_reap_scratch_dir`,
+  which removes it WHOLE only when every entry is a regular file (not a link, not a directory) that `_chk_cli_scratch`
+  accepts: one of the 28 names of `_CHK_CLI_SCRATCH` (every `_cbt_tmpfile("…")` literal in cbt/ plus `_fuzz_leg`'s
+  `fuzz_outa` / `fuzz_outb`, minus `test_out`, `lsp` and the directories `deps` / `locked-deps`), or a
+  `_CHK_CLI_SCRATCH_N` prefix plus a number (`check_`, `cov_`, `cpp_`, `distchk_`, `dlverifyerr`, `dlverifyout`), each
+  optionally with compile()'s `.tmp.<digits>`. `test_bin` and `test_out` (a SIGKILLed test's post-mortem), the
+  `cyrius lsp` build, a directory, a link or any other name keep the dir and everything in it — 6.6.6's contract — and
+  a live pid's dir is never touched. Counted on its own line: `check: reaped N cyrius-<pid> temp dir(s) holding only
+  compile scratch in <tmp> (their process is gone, older than 240 min)` (the empty-dir line is unchanged).
+- **The decision's other half — scratch unlinked on every compile failure path — needed no code:** ten failing
+  invocations in a fresh TMPDIR (`check` on a compile error / an undefined fn / a missing source; `build` on a compile
+  error / a missing output dir / an output that is a directory; `run` on a compile error; a failing `test`; `lint`;
+  `distlib`) and the compiler killed by a signal each leave nothing (6.5.19 / 6.6.6 / 6.6.20 already unlink every
+  path); now pinned. The leftovers are kills of the CLI itself mid-compile — SIGTERM or SIGKILL of `cyrius check` leaves
+  `cc_err check_<pid>.tmp.<pid> cpp_<pid>`, of `cyrius build` `cc_err cpp_<pid>` — which only this reaper removes, so
+  "most kills leave an empty dir" does not follow from unlinks (filed below, with its two options: unlink before the
+  fork, or a TERM / INT / HUP handler). The issue's third item, which runs land in /tmp although `TMPDIR` is exported,
+  did not reproduce (`TMPDIR` is unset on this box); the live CLI honours an absolute `TMPDIR` with a trailing slash —
+  now pinned with a kill under one.
+- **Measured** (/tmp, read only; this user's dead-pid `cyrius-<pid>` dirs): 516 — 28 empty (the old rule's), 485
+  scratch-only (443 holding `wt_err` alone — 6.7.10's normal-exit leak, fixed there — about 40 `cc_err` +
+  `check_N.tmp.N` + `cpp_N`, one distlib run's `dlverifyerr*` / `dlverifyout*.tmp` and four `cpp_`, one `sha_out`), 3
+  kept (`test_bin` + `test_out`). By contents the old rule could remove 28 of them, the new one 513 (each once it is past
+  the 240-minute bound). Nothing was deleted from /tmp.
+- **What changes for code that compiles today:** nothing in the CLI; only cyrius's own scripts/check.sh deletes, and
+  only this user's dead-pid, scratch-only dirs past the age bound.
+- **Gate:** `check_stale_home_reaper.sh` axes 12–16 (the real check.sh in its harness): 12 five scratch-only shapes
+  reaped, with the separate count line; 13 kept — `test_bin` with scratch beside it, `test_out`, `lsp`, an unknown name
+  (all or nothing), a subdirectory, a symlink named `cc_err` (its target untouched), the no-home `deps/` cache, seven
+  look-alikes each in its own dir (`cpp_12x`, `check_.tmp.5`, `cc_err.tmp.`, `cc_err.tmp.5x`, `cpp_`, `cc_err2`,
+  `xcpp_12`); 14 a young scratch dir survives the default age; 15 a LIVE pid's scratch survives with the age gate off
+  (and its anti-vacuous twin); 16 the vocabulary DERIVED from cbt/ (literals, `_fuzz_leg` captures, numbered
+  `str_builder` names; 6 computed `_cbt_tmpfile(` sites pinned) equals check.sh's two lists minus the four named
+  exclusions. `cli_temp_dir_no_leak.sh` axis 7: `check` on a compile error / an undefined fn, `build` onto a directory
+  (and no `outdir.tmp.*`), a distlib verify refused mid-round (a tie fixture; no `dist/.dlverify-*`), the compiler
+  killed by a signal — each 0 temp dirs; a CLI SIGTERM'd mid-compile under `TMPDIR=<abs>/` leaves its dir there (not in
+  /tmp) holding two or more entries, every one accepted by check.sh's own `_chk_cli_scratch` (sourced out of
+  scripts/check.sh). Mutations: the reaper reaping anything 10 RED; rmdir-only 7; the regular-file test dropped 3; the
+  number check loosened 4; `test_out` added 3; `sha_out` dropped 3; compile() keeping `cpp_` on a failed compile 4;
+  distlib keeping `dlverifyerr<t>` 1; `_cbt_tmpbase` ignoring TMPDIR 5; `cc_err` dropped from check.sh's vocabulary 1
+  (axis 7's kill row). Ledgers in both gate headers.
+- **Found, not absorbed (filed):** [a `cyrius` run killed mid-compile still leaves `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` — only check.sh's reaper removes them](docs/development/issues/2026-10-13-cli-killed-mid-compile-leaves-scratch.md)
+  (Low, 6.7.12).
+- **Closes:** [a killed `cyrius` run leaves a non-empty `cyrius-<pid>` temp dir that nothing reaps](docs/development/issues/archived/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md).
+
+#### TL-6 — distlib_owner_rule_shared.sh runs from any directory (lane tools, commit 524e7d7e)
+
+- TL-4's new gate now changes to the repository root it derives, as every gate does, so it passes from `/` under a
+  HOME with no store (`gates_run_from_foreign_cwd.sh`). One line, gate only.
+- **Issue (with TL-4):** [distlib: the every-target owner rule and the partial-target rule disagree](docs/development/issues/archived/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md).
+
+#### TL-7 — BENCHMARKS.md prints the size rows in bytes; the file-size row is `size/cycc_bytes` (lane tools, commit cb5f270c)
+
+- **Fixed (no decision needed).** `scripts/bench-history.sh` formatted every BENCHMARKS.md row with its time
+  formatter, `fmt_ns`, so the two size rows — byte counts — read as milliseconds: `| cc5_bytes | 2ms | 2ms | 2ms |
+  +3.0% |` for 2,053,536 / 2,057,736 / 2,114,376 bytes. The generator moves into `render_md` (with `lookup`, `fmt_ns`
+  and a new `fmt_bytes`); the size group prints `2,114,376 B` (the delta stays a percentage) and every other group is
+  formatted exactly as before. The file-size row kept its pre-6.0.0 CSV name `size/cc5_bytes` beside the console's
+  `size/cycc`; it is written as `size/cycc_bytes` now, and bench-history.csv's 417 `size/cc5_bytes` rows are renamed in
+  the same commit (field 4 only — 417 changed lines, each equal to its original with the name swapped), so the
+  three-run window and the history stay one series. The console line (`size/cycc … bytes`, which release-gate step 5
+  greps) is unchanged. The generated header — and `docs/development/benchmark-regimes.md`, in two places — no longer
+  says `size/*` rows are timed by `bench_cmd` (`compiler/*` is, its `phase_*` rows by `CYRIUS_PROF`; `size/*` are byte
+  counts). New `sh scripts/bench-history.sh --report` writes BENCHMARKS.md from the CSV alone — no compile, no run, no
+  row; a missing CSV refused by name — which is how this commit's BENCHMARKS.md was regenerated; `docs/benchmarks.md`
+  documents it and the size rows. `fmt_ns` and `bench_cmd`'s display lose their duplicate `>= 1e9` branch (identical
+  output).
+- **Measured:** BENCHMARKS.md regenerated by `--report` from the renamed CSV differs from the committed one only in the
+  header and the two size rows: `| cycc_bytes | 2,053,536 B | 2,057,736 B | 2,114,376 B | +3.0% |` and
+  `| cycc_text_bytes | 1,840,016 B | 1,845,440 B | 1,900,296 B | +3.3% |`. x86_64 Linux only.
+- **What changes:** nothing for consumers. Anything reading cyrius's own bench-history.csv by the name
+  `size/cc5_bytes` reads `size/cycc_bytes` (every historical row renamed). The rename lands before the release's bench
+  run, so 6.7.11's rows join the same series.
+- **Gate:** `tests/gates/toolchain/bench_history_size_rows.sh` (new, 32 checks, ~0.5 s; registered after
+  `bench_timer_floor_measured.sh`): R `--report` on a fixture CSV in a scratch copy of the script (size rows in grouped
+  bytes, 999 / 1,000 / 1,000,000 B included; ms / us / ns / `-` rows as before; every size cell bytes-shaped and none
+  outside the group; the CSV byte for byte; nothing else written; a missing CSV refused by name, nothing written); E the
+  WHOLE script with a 4,096-byte stub cycc (console `size/cycc 4096 bytes`, one appended `size/cycc_bytes,4096` row, no
+  `size/cc5_bytes`, the fixture rows untouched, `4,096 B` in BENCHMARKS.md); T the tree read-only (no `size/cc5_bytes`
+  row, at least 417 `size/cycc_bytes` rows, no `cc5_bytes` in BENCHMARKS.md or the script's code, the committed size
+  cells bytes-shaped). `sh` and `bash -eo pipefail` green. Mutations: size via `fmt_ns` 5 RED; the writer back to
+  `cc5_bytes` 4; no thousands grouping 5; the 6.7.10 script 18; `--report` unrecognised 14; the 6.7.10 CSV 2; the
+  6.7.10 BENCHMARKS.md 2.
+- **Closes:** [BENCHMARKS.md prints the cycc size rows as milliseconds; the CSV row is still `size/cc5_bytes`](docs/development/issues/archived/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md).
+
+#### TL-8 — `CYRIUS_POISON` reads like `CYRIUS_BOUNDS` / `CYRIUS_COVERAGE` on every fork (lane tools, commit 291d8dc6)
+
+- **Changed (the user's decision D28, 2026-10-13: the CYRIUS_BOUNDS / CYRIUS_COVERAGE rule): `CYRIUS_POISON` — the
+  allocator poison mode's switch — reads `1` on; `0`, empty or unset off; any other value refused by name**:
+  `error: CYRIUS_POISON must be 0 or 1 (or unset): no`, rc 1, nothing written, on every fork. Each of the seven
+  compiler forks (`src/main{,_aarch64,_aarch64_macho,_aarch64_native,_cx,_win,_x86_macho}.cyr`) read the variable
+  itself and tested only whether it was set (`_read_env(..) != 0`), so `CYRIUS_POISON=0`, an empty value and `no` all
+  built the poisoned binary (redzones, poison fill, quarantine-on-free) without a word: the filed repro exited 7 for
+  each. The variable is now decided once, in the shared PREPROCESS beside the other two switches:
+  `src/frontend/parse_cov.cyr` `_poison_setup` (`_pp_env_rung(S, "CYRIUS_POISON") == 1` → `PP_PREDEFINE`), called after
+  `_cov_setup` and before `PP_PASS`, so before the first `#ifdef`; the seven fork reads are gone, each replaced by a
+  two-line pointer comment, so the forks cannot drift. `cyrius fuzz --poison` is unchanged (it hands the compiler
+  `CYRIUS_POISON=1` ahead of the shell's value). The self-build scripts' "(any value, an empty one included)" comments
+  (bootstrap.sh, version-bump.sh, release-gate.sh, seed-derive-cycc.sh, check.sh), `_pp_env_rung`'s comment and the
+  guide's § Fuzzing with `--poison` state the rule. cybs-safe constructs only.
+- **Measured** (the filed repro verbatim; exit 7 = the predefine on): before (x86 build/cycc, the aarch64 cross, cx)
+  `1` → 7, `0` → 7, `''` → 7, `no` → 7, unset → 0; after, on x86, the cx fork (+ cxvm), the aarch64 cross (+ qemu), the
+  aarch64 and native-aarch64 compilers under qemu, the PE host stage (+ wine), and cycc.exe and cx.exe under wine:
+  `1` → 7, `0` → 0, `''` → 0, `no` → compile rc 1 / 0 B / the named error, unset → 0. Hardware, this tree's binaries by
+  hand: ecb (Mach-O arm64, signed), ach (Mach-O x86_64) and pi (main_aarch64 and the native fork) 7 / 0 / 0 / refused
+  / 0 each; cass (cycc.exe; cmd.exe cannot hold an empty value) `1` → 7, `0` → 0, `no` → refused, unset → 0. Probe
+  dirs removed on all four hosts.
+- **What changes for code that compiles today:** a build under `CYRIUS_POISON=0` or an empty `CYRIUS_POISON=` is no
+  longer poisoned; a build under any value other than `0` / `1` (`yes`, `true`, `no`) stops compiling. Default and
+  `=1` outputs are byte-identical to 6.7.10 (x86, 658 inputs — every `tests/tcyr/**/*.tcyr` and `programs/*.cyr` —
+  with the variable unset and with `=1`); on the new compiler `=0` equals unset for all 658 (607 of them differ under
+  `=1`). Under wine and cmd.exe an empty variable reads as unset.
+- **Gate:** `tests/gates/platform/poison_env_rung.sh` (new, 52 checks, ~37 s; registered after `fork_flag_parity.sh`;
+  SKIP 77 by name without qemu / wine): S1 no fork reads `CYRIUS_POISON` in code (a floor of 7 forks); S2 no
+  `_read_env("CYRIUS_POISON")` in src/, one rung read and one predefine, both in parse_cov.cyr; S3 `_poison_setup`
+  before `PP_PASS`; R the repro × 5 values on 8 compilers, each output RUN on its target; F `cyrius fuzz --poison`
+  passes over an inherited unset / `0` / `no` (the CLI injects `=1` first), and without it fails for unset and `0` and
+  is a COMPILE FAIL naming `no`. `sh` and `bash -eo pipefail` green. Mutations (scratch trees, cycc rebuilt from the
+  mutated src/): the old `!= 0` test 26 RED; the PREPROCESS call dropped 21; main_cx.cyr's old read restored beside the
+  shared one 6; the 6.7.10 x86 cycc as `$CYCC` 5 (under wine an EMPTY variable reads as unset, so the two wine
+  compilers' empty rows cannot tell old from new — noted in the header). `selfbuild_poison_scrubbed.sh` P0 re-derived:
+  it asserted that an EMPTY `CYRIUS_POISON` changes cycc(src), true only under the old rule; now `=1` changes it and
+  `=no` stops it (refused by name), and the old compiler as `$CYCC` turns the new P0 RED (MP5's ledger notes P2 no
+  longer reddens: a blank is off). `cx_compiler_reads_env.sh` names parse_cov.cyr (comments and PASS text only).
+- **cycc:** 2,114,376 → 2,114,368 B (the seven forks' removed global; cycc_aarch64 1,676,040 → 1,676,032,
+  native-aarch64 1,950,240 → 1,950,232, cycc_win 1,842,336 → 1,842,328; cycc_cx 1,578,424, the same size, different
+  bytes). Fixpoint and seed-derive OK; `build/cycc-native-aarch64` regenerated by `cyrius pulsar` on the merged tree.
+- **Closes:** [`CYRIUS_POISON=0` (or empty, or any word) turns poison mode ON](docs/development/issues/archived/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md).
+
+#### TL-9 — `cyrius pulsar` and the cx arc's on-demand builds run without the compile-mode switches (lane tools, commit b6d970d5)
+
+- **Fixed (no decision needed): the CLI's own self-builds no longer inherit a compile-mode switch.** `cyrius pulsar` —
+  the `src/main.cyr` stages over the tracked build/cycc, the aarch64 cross and native compilers, the tool builds and
+  the install step — and the cx arc's on-demand `build/cycc_cx` (first `cyrius build --target=cx`) and `build/cxvm`
+  (first `cyrius run x.cyx`) passed the CLI's whole environment: an exported `CYRIUS_POISON=1` made pulsar rebuild the
+  TRACKED build/cycc as a poison-mode compiler whose stages agreed (so the self-host check passed) and install it, and
+  `CYRIUS_COVERAGE=1` refused or instrumented every stage. `cbt/core.cyr` `_envp_self_build()` returns a fresh copy of
+  `_envp` without `CYRIUS_POISON`, `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` and `CYRIUS_COVERAGE_FILE` (`_env_mode_switch`
+  lists them — the issue's addendum's two included); `cmd_pulsar` sets `_envp` to it right after its host check, which
+  covers the raw compiles, compile()'s tool builds (their child env is made from `_envp`) and the `sys_system` install
+  step; `_cx_jit_build`'s POSIX child execs with it; its Windows arm saves the four (`_win_getenv_alloc`,
+  GetEnvironmentVariableA), clears them around `_win_compile_spawn` and restores them (`_win_mode_switches_clear` /
+  `_win_mode_switches_restore`, under `#ifdef CYRIUS_TARGET_WIN` — on Windows there is no envp to hand the child), which
+  also covers values compile()'s own Windows arm set earlier in the process. `_emit_cx` — the user's compile — keeps
+  `_envp`: a user's own compile keeps the switches. Guide: a note beside pulsar's in the CLI section. The CLI
+  cross-builds for PE, Mach-O arm64 / x86_64 and aarch64.
+- **Measured:** the filed repro verbatim — before, `pulsar self-build: POISON=1 BOUNDS=1` ×2 and
+  `cx compiler build, then x.cyr: POISON=1 BOUNDS=1` ×2; after, both pulsar lines and the cx build's line
+  `POISON=unset BOUNDS=unset`, the x.cyr line `POISON=1 BOUNDS=1`. Real Windows (cass; this tree's cyrius.exe and a PE
+  stub compiler, all four set in a .bat): the cycc_cx and cxvm self-builds read all four unset, the user's x.cyr all four
+  (restored); the pre-fix cyrius.exe in the same harness leaked all four into both self-builds.
+- **What changes:** what `cyrius pulsar` and the first cx use build is now always the default build; user compiles are
+  unchanged.
+- **Gate:** `tests/gates/toolchain/cbt_self_builds_scrub_env.sh` (new, 17 checks, ~12 s; registered after
+  `poison_env_rung.sh`; the W rows SKIP 77 by name without wine), stub compilers logging all four variables per source:
+  P `cyrius pulsar` in a scratch repo with a logging stub compiler and a logging stub install.sh — both `src/main.cyr`
+  stages, the aarch64 cross, the native build, programs/cyrfmt.cyr and cbt/cyrius.cyr through compile(), the install
+  step: all four unset; the stub renamed over build/cycc (a new inode); C `cyrius build --target=cx x.cyr`: the cycc_cx
+  build unset, x.cyr keeps all four; `cyrius run out.cyx`: the cxvm build unset; W the PE CLI with a PE stub under
+  wine: the cx and cxvm self-builds unset, x.cyr in the same process sees all four again. Mutations (one per site): the
+  fix reverted 10 RED; pulsar raw (the assignment moved after step 2) 3; pulsar tool compile (`_envp` put back before
+  step 3) 3; cx POSIX (`_envp` in the child) 2; cx PE with no clear / restore 2; cx PE cleared, never restored 1.
+- **Found, not absorbed (filed):** `cyrius self` and `cyrius soak`, the self-host VERIFIERS (outside the filed
+  surface), still step with the inherited switches — under `CYRIUS_POISON=1` `cyrius self` PASSes about two poison-mode
+  compilers ([`cyrius self` and `cyrius soak` inherit the compile-mode switches](docs/development/issues/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md),
+  Low, 6.7.12).
+- **Closes:** [`cyrius pulsar` and the CLI's on-demand cx builds pass an inherited `CYRIUS_POISON` / `CYRIUS_BOUNDS` / `CYRIUS_COVERAGE`](docs/development/issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md).
+
+#### TL-10 — the Windows and macOS CLIs refuse `--agnos` and the bare-metal targets by name (lane tools, commit a35ca452)
+
+- **Changed (the user's decision D30, 2026-10-13: refuse by name, rc 1, no output; `--win` stays a no-op; `--target=cx`
+  / `js` keep their arms — applied to macOS in the same bite, as the question asked, because ecb and ach were measured
+  writing a Mach-O): the Windows and macOS CLIs refuse `--agnos`, `--target=x86_64-bare-metal-elf` and
+  `--target=aarch64-bare-metal-elf` by name, rc 1, before anything compiles or is written** —
+  `error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on
+  Linux)` (macOS: `… from the macOS CLI: cycc emits Mach-O only …`). The PE and both Mach-O compilers read none of
+  `CYRIUS_TARGET_AGNOS` / `CYRIUS_KERNEL` / `CYRIUS_ELF64_KERNEL` (and compile()'s Windows arm never passed them), so
+  the flags were dropped: cyrius.exe, ecb and ach all wrote the HOST format, printed OK and exited 0, and a bare-metal
+  build also printed `kernel: entry …` for an ELF that was never written — the 6.6.5 one-argument rule's defect (a
+  dropped flag that exits 0 reads as a pass). `cbt/cli_args.cyr`: `_cli_host_emits_only()` (the host's reason under
+  `#ifdef CYRIUS_TARGET_WIN` / `#ifdef CYRIUS_TARGET_MACOS`, else 0), `_cli_host_refuses(flag)` and
+  `_cli_foreign_target()`, called as the first line of `_cli_apply_target` — a separate early block, so every verb that
+  applies targets (`build`, `run`, …) is refused first; 6.7.12's combined-target-flags issue reworks the selector chain
+  below it. `cbt/commands.cyr`'s `kernel: entry` line is reached on Linux hosts only (a comment says so). x86_64 Linux is
+  unchanged; `--win` stays a no-op on Windows; `--target=cx` / `js` reach their arms. Guide § Targeting AGNOS: the
+  refusal, its two texts, the pre-6.7.11 behaviour.
+- **Measured** (`a35ca452^`'s CLI against this tree's, the same host compiler, re-run 2026-10-14): **cass** (a .bat
+  under `cmd /v /c`, `C:\cyrius-tests`) — before, `--agnos` rc 0 with output written; `--target=x86_64-bare-metal-elf`
+  rc 0, output written, `kernel: entry` printed; `--target=aarch64-bare-metal-elf` rc 1 (`cycc_aarch64 not found`: no
+  aarch64 compiler ships on Windows); after, the three each rc 1 with the Windows text and no output file; a plain build
+  and `--win` rc 0, exit 7. **ecb** (macOS arm64; binaries ad-hoc signed, cycc copied as cycc_aarch64 as the tarball
+  ships it) — before, all three rc 0 with a Mach-O written (`cffaedfe`), the two bare-metal ones printing
+  `kernel: entry`; after, rc 1 with the macOS text, no output; a plain build rc 0, exit 7. **ach** (macOS x86_64) —
+  before, `--agnos` and x86_64 bare-metal rc 0 with a Mach-O (and the kernel line), aarch64 bare-metal rc 1 (no
+  cycc_aarch64 there); after, the three rc 1 with the macOS text, no output; plain rc 0, exit 7. **wine**: the gate
+  16 / 16; its M1 (the `_cli_foreign_target()` call removed) RED 5 (`MZ` written at rc 0, `run --agnos` running the
+  program, exit 7). **Linux**: unchanged (the gate's L rows: all three still write ELFs).
+- **What changes for code that compiles today:** on a Windows or macOS host, `cyrius build --agnos …`,
+  `--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf` and `cyrius run --agnos` stop with rc 1 and the
+  named error, writing nothing. They never produced the requested image there.
+- **Gate:** `tests/gates/toolchain/win_cli_refuses_foreign_targets.sh` (new, 16 checks, ~15 s; registered after
+  `cli_args_never_dropped.sh`): S each host's CLI carries exactly its own refusal text (PE, both Mach-O; Linux neither);
+  L the x86_64 Linux CLI keeps the three selectors; W (wine, a private WINEPREFIX; SKIP 77 by name without wine) the
+  three refused with the exact text and no output, an existing output untouched, `run --agnos` refused, a plain build an
+  `MZ` that exits 7, `--win` accepted, `--target=cx` / `js` reaching their arms. Mutations M1–M5 (RED 5 / 6 / 1 / 5 / 2)
+  in the gate header. `cli_args_never_dropped`, `cbt_fork_sites_have_pe_arm`, `cli_pe_file_size_and_sibling_tools`,
+  `help_lists_every_verb` re-run green.
+- **Closes (with TL-10r):** [on Windows, `cyrius build --agnos` / `--target=x86_64-bare-metal-elf` write a plain PE and exit 0](docs/development/issues/archived/2026-10-10-windows-cli-drops-target-selectors.md).
+
+#### TL-11 — `cyrius header` reads a fn's return type (lane tools, commit fb5278a4)
+
+- **Changed (the user's decision D29, 2026-10-13: model the ABI, refuse what it cannot express): `cyrius header` reads
+  the `: T` after the parameter list's own `)` (on a later line too) and classes it exactly as the compiler's
+  `_ret_agg_class` / `_mret_land`.** It never looked past the `)`, so every prototype said `cyr_val f(..)`: a C caller of
+  a 9–16 B struct or `dyn Tr` return read rax alone (a dyn lost its vtable), and one of a struct over 16 B passed its
+  first argument where cycc writes the result (memory corruption). Now:
+  - 8 B or less, a pointer, a scalar, and lib's 16-byte `Str` handle: `cyr_val` (unchanged);
+  - a 9–16 B struct and a `dyn Tr`: `cyr_val2` (`typedef struct { int64_t w0, w1; } cyr_val2;`, written once with its
+    comment) — rax:rdx / AAPCS64 x0:x1 — under `#ifndef _WIN64`, the prototype carrying `/* returns T, N B */`; Win64 C
+    returns 16 bytes through a hidden pointer, so the `#else` arm is a named comment and no prototype
+    (`/* mkq: no prototype on Win64 -- cycc returns its Q in rax:rdx, where a Win64 C caller passes a hidden result
+    pointer */`);
+  - over 16 B: `cyr_valN` (`typedef struct { int64_t w[N]; } cyr_valN;`, N the size rounded up to words, each N
+    written once), returned by value and unguarded — SysV rdi, AAPCS64 x8 and Win64 rcx all match cycc, which leaves the
+    pointer in rax / x0 and writes WHOLE words (a 17 B struct writes 24 B; a non-word size notes "the callee writes N
+    words");
+  - a two-value return `(T1, T2)`: `cyr_val2` under `#if defined(__x86_64__) && !defined(_WIN64)`, a named comment
+    otherwise — cycc lands the second value in x2 on aarch64 (x0:x2 is not C's x0:x1; on pi a C caller reading
+    `cyr_val2 rt(..)` got 40, x1's leftover argument, where the value is 42), and Win64 C uses a hidden pointer;
+  - refused by name on stderr, no prototype, the rest of the header still written, rc 1: three values (`returned in
+    rax:rdx:r8 (aarch64 x0:x2:x3), which no C return type carries`), a type not declared in the file (another file's
+    struct or enum), a generic instance `Box<T>` or a generic struct, a struct holding one (the message names the
+    field's type), a struct declared more than once (two `#ifdef` arms), a struct whose fields sit under a preprocessor
+    conditional (read from the raw text — the blanked buffer had summed both arms), a self-containing struct:
+    `error: cyrius header: 'f' returns 'Box<i64>': a generic struct instance, which this scanner cannot size; no
+    prototype written`.
+
+  A pre-scan records the file's depth-0 `struct` / `union` / `enum` declarations; the sizer mirrors FIELDSZ / STRUCTSZ
+  (packed: i8 / u8 1, i16 / u16 2, i32 / u32 / f32 4, a tuple 8 per element, a dyn 16, a nested struct its size, a union
+  its widest field, a `Str` field its 8-byte handle, every other field 8). A file's own `struct Str` over 16 B goes
+  through the result pointer, as the compiler does (its `Str` exception is the 9–16 B band only). A SIMD vector return
+  keeps `cyr_val` (filed). Guide: the source scanners' paragraph documents all of it.
+- **Measured:** the filed repro verbatim — before, `cyr_val mkq(cyr_val a, cyr_val b);` / `cyr_val mkr(cyr_val a);` /
+  `cyr_val mkd(cyr_val p);` / `cyr_val plain(cyr_val a);`, rc 0; after, `cyr_val2 mkq(cyr_val a, cyr_val b);   /* returns
+  Q, 16 B */` and `cyr_val2 mkd(cyr_val p);   /* returns dyn Show, 16 B */` (each under `#ifndef _WIN64`, a named Win64
+  comment in the `#else`), `cyr_val3 mkr(cyr_val a);   /* returns R, 24 B */`, `plain` unchanged; rc 0, nothing on
+  stderr — byte-identical from the Linux CLI, the PE CLI on cass and under wine, the Mach-O CLIs on ecb and ach, and the
+  aarch64 CLI under qemu. The ABI each prototype states, per target:
+  - **x86_64 Linux** — a C caller linked against the repro built `object;`, through the generated header: mkq 11 22,
+    mkr 33 ×3, mkd's data word and its vtable's show() = 5, plain 44, rax = the result pointer after mkr; a two-value
+    `rt` 41 42, `(f64, i64)` 3.0 3; a 17 B struct overwrites bytes 17–23 (the callee writes 3 whole words), the word
+    past 24 B untouched.
+  - **aarch64, pi** — a gcc-built C loader mapped cycc's aarch64 ELF (the repro, a 17 B struct, a two-value fn) at its
+    fixed addresses and called through the header's prototypes: `mkq 11 22 | mkr 33 33 33 | mkd data ok, show 5 |
+    plain 44 | rb17 7 100 101, guard intact`; `rt(40)` called as `cyr_val2` gave w0 41, w1 40 (want 42) — why the
+    two-value prototype is x86_64-only. llvm-objdump agrees (mkq / mkd set x0, x1; mkr reads x8, copies 0x18 bytes,
+    returns x0 = x8; rt sets x0, x2; rt3 x0, x2, x3). The header passes `gcc -std=c11 -pedantic-errors -fsyntax-only`
+    there.
+  - **Win64** — a cycc_win probe calling the over-16 B fn through `fncall2` (rcx = a buffer, rdx = the argument): the
+    result is written through rcx, rax = rcx after, 24 bytes for a 17 B struct; mkq and mkd in rax:rdx — 63 / 63 on
+    cass and under wine (and on ach, Mach-O x86_64). No C-caller link path exists on Windows (cycc emits no object
+    there); the `_WIN64` arms are checked by clang's x86_64-w64-windows-gnu target and `cc -D_WIN64`.
+- **What changes for code that compiles today:** `cyrius header` output changes for every public fn returning a struct
+  over 8 bytes, a `dyn` or a two-value tuple, and a file with a public fn whose return the tool cannot size now makes
+  `cyrius header` exit 1 (the header for the other fns still printed). Census — all 1,158 tracked `.cyr` / `.tcyr` /
+  `.bcyr` / `.fcyr` / `.scyr` / `.smcyr` through the old and new CLI: 69 headers change, none under lib/, programs/,
+  cbt/ or src/; 5 go rc 0 → 1 (11 refusals), each a decided refusal (`crossos/generic_struct_inference.tcyr` and
+  `crossos/ptr_param_bare_struct.tcyr`: `Box<..>` instances; `crossos/multi_return.tcyr`, `crossos/tuple_values.tcyr`
+  and `frontend/nested_type_args.tcyr`: three-value returns); every one of the 113 struct sizes printed across those
+  files equals `sizeof` compiled by cycc.
+- **Gate:** `tests/gates/toolchain/header_spellings_and_size.sh` H7–H11b (with no cc, H7's guard rows, H10 and H11 SKIP
+  77 by name): H7 the repro verbatim (each typedef once, the two Win64 comments, nothing on stderr, `cc -E` with and
+  without `-D_WIN64`); H8 31 field shapes sized against `sizeof` compiled by build/cycc and the class boundaries (3 B /
+  8 B a word, 9 B / 16 B the pair, 17 B three words, a 4 B union, `Str`, a pointer / i32 / f64, a two-value return under
+  the x86_64 guard read by `cc -E` and clang's aarch64 Linux / aarch64 macOS / Win64 targets, a struct declared after
+  the fn, the annotation on the next line, a vector return unchanged, a file's own 24 B `struct Str`); H9 eight refusals
+  by exact text (rc 1, no refused prototype, the rest written); H10 every header through `cc -std=c11 -pedantic-errors`
+  (and `-D_WIN64`) and clang's aarch64 / Windows / macOS targets; H11 / H11b the linked x86_64 C callers. Two gates
+  pinned the old output and are updated: `dyn_checked.sh` TT4 (`cyr_val as_area(cyr_val q);` →
+  `cyr_val2 as_area(cyr_val q);   /* returns dyn Area, 16 B */`) and `tuple_checked.sh` T1 (`h` / `k`, two-value
+  returns, → `cyr_val2 …   /* returns (i64, i64), 16 B */`). Mutations (each a scratch tree, the CLI rebuilt from it,
+  the gate re-run; all RED): the annotation ignored 34 (H7, H8, H9, H11); a `Str` field 16 B 1; u8 / u16 / u32 / f32
+  fields 8 B 5; the pair unguarded 6; two values under the pair's guard 3; an undeclared type read as a word 3; three
+  values as the pair 3; an `#ifdef`'d body summed 3; newlines not skipped before `:` 1; floor(size / 8) words 6; a union
+  summed 1; `Str` a word before the file's own struct is sized 1.
+- **Found, not absorbed (filed):** [`cyrius header` prints `cyr_val f(..)` for a fn returning a SIMD vector](docs/development/issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md)
+  (`f64v2`, `f64v4`, `i32v4`, … — vector registers, or a PE result pointer; Medium, 6.7.12; cited by name from
+  `_hdr_vec_name`'s comment and the H8 row).
+- **Closes (with TL-11r):** [`cyrius header` prints `cyr_val f(..)` for a fn returning a struct or a dyn](docs/development/issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md).
+
+#### TL-11r — `cyrius header` sizes a bare `Vec` field as cycc does (lane tools, review fix, commit 3624e00f)
+
+- **Fixed (caught in review, never released):** TL-11's sizer answered 8 for every bare `Vec` field, while the
+  compiler's arm (PARSE_STRUCT_DEF / PARSE_UNION_DEF, `FINDSTRUCT(S, tnoff)`) takes the file's own `struct Vec` when it
+  was parsed already. So `struct Vec { x: f64; y: f64; z: f64; }` / `struct Ray { o: Vec; d: Vec; }` /
+  `fn mkray(a): Ray` printed `cyr_val2 mkray(cyr_val a);   /* returns Ray, 16 B */` at rc 0, where cycc's sizeof(Ray) is
+  48 and mkray writes 48 bytes through rdi — a C caller's first argument. `_hdr_type_size` now sizes a bare `Vec` field
+  as the file's own `struct Vec` when one is declared ABOVE the field (`_hdr_decl_find`, its name offset before the
+  field's), else the 8-byte handle; `Vec<T>` is always the handle. The repro prints
+  `cyr_val6 mkray(cyr_val a);   /* returns Ray, 48 B */`; with `struct Vec` declared below, 16 B, as cycc;
+  `struct Vec { a; b; c; }` / `struct Z { v: Vec; p1; p2; }` 24 B → 40 B (`cyr_val5`). No `struct Vec` / `union Vec` in
+  the tree, so `cyrius header` output over it is unchanged.
+- **Gate:** H8 gains both orders in one file (`struct VB { v: Vec; p1; p2; }` above `struct Vec { a; b; c; }` above
+  `struct VA { v: Vec; p1; p2; }`): cycc's sizeof `40 24`, `cyr_val5 rva(void);   /* returns VA, 40 B */`,
+  `cyr_val3 rvb(void);   /* returns VB, 24 B */`. Mutations: the old `Vec → 8` line RED 1 (the above row); declaration
+  order ignored RED 1 (the below row). The gate PASSes (98 checks); `default_named_args_checked`, `dyn_checked`,
+  `tuple_checked` green. Guide: the header paragraph says sizes are cycc's `sizeof`, field by field.
+- **Residual and filed.** A `struct Vec` declared in another included file is beyond a one-file scanner (lib/ declares
+  none). The compiler's own order dependence — `struct Vec` above `struct Ray` gives sizeof 48, below it 16, both rc 0,
+  while any other name declared below its use is refused since 6.6.10 — is filed:
+  [a bare `Vec` field's layout depends on declaration order](docs/development/issues/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md)
+  (Medium, compiler, 6.7.12). The review also filed
+  [`cyrius header` prints `cyr_val` for a `: stack` enum return](docs/development/issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md)
+  (`: Result` / `: Option` / a file's own `enum E: stack`, which cycc returns as (tag, payload) in rax:rdx —
+  lib/process.cyr's `run`, `run_capture`, `spawn`, `wait_pid`; Medium, 6.7.12) and
+  [header_spellings_and_size.sh skips its guard and C-caller rows silently on a non-x86_64 host with cc](docs/development/issues/2026-10-14-header-gate-skips-guard-and-c-caller-rows-silently.md)
+  (Low, 6.7.12).
+- **Issue (with TL-11):** [`cyrius header` ignores struct returns](docs/development/issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md).
+
+#### TL-10r — agnos cross-compiles from an x86_64 Linux host (lane tools, review fix, commit a3d9837d)
+
+- **Corrected (doc and comment only):** the guide's § Targeting AGNOS said agnos cross-compiles "from a Linux host
+  (x86_64 or aarch64)"; it now says "from an x86_64 Linux host". Only `src/main.cyr` reads `CYRIUS_TARGET_AGNOS` /
+  `CYRIUS_ELF64_KERNEL`; `main_aarch64.cyr` and `main_aarch64_native.cyr` read `CYRIUS_KERNEL` alone, so the aarch64
+  Linux CLI writes an aarch64 Linux ELF for `--agnos` at rc 0 — re-measured on pi with the lane's aarch64 CLI and native
+  cycc: `--agnos` rc 0, a 65,888 B aarch64 ELF equal to a plain build, exit 7 as on Linux;
+  `--target=x86_64-bare-metal-elf` rc 0, a 536 B image with e_machine 0xb7, the x86_64 multiboot2 kernel line printed.
+  A ⚠ after the refusal paragraph names that drop by its issue; `_cli_host_emits_only`'s comment and
+  `win_cli_refuses_foreign_targets.sh`'s header (and its L row: "the x86_64 Linux CLI") say the same. The CLI rebuilds
+  byte-identical; the gate 16 / 16, `guide_examples_compile` green.
+- **Found, not absorbed (filed):** [on an aarch64 Linux host `--agnos` writes an aarch64 Linux ELF and `--target=x86_64-bare-metal-elf` an aarch64 image with an x86_64 multiboot2 entry line, both rc 0](docs/development/issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md)
+  (High, 6.7.12; cited by name from the guide, `cbt/cli_args.cyr` and the gate).
+- **Issue (with TL-10):** [on Windows, `--agnos` / the bare-metal targets write a plain PE](docs/development/issues/archived/2026-10-10-windows-cli-drops-target-selectors.md).
+
+#### tools lane — the lane gate
+
+- **Fixpoint:** build/cycc is the fixpoint of the lane's src (cycc → c1 → c2 → c3; c2 == c3 == build/cycc), 2,114,368 B.
+  The lane committed nothing under build/: integration rebuilt build/cycc on the merged tree and regenerated
+  `build/cycc-native-aarch64` with `cyrius pulsar` (TL-8 moved it off lockstep, 1,950,240 → 1,950,232 B on the lane).
+- **Seed-derive:** `sh scripts/seed-derive-cycc.sh` — `=== OK: build/cycc is machine-derivable from the 29024-byte seed
+  ===` (6 / 6; the lane changed src/ in TL-1 and TL-8).
+- **check.sh** (`CYRIUS_CHECK_JOBS=4 sh scripts/check.sh` on the lane's head, a3d9837d): `shell gates: 484 of 484
+  produced a result, 0 NOT RUN` (6.7.10's 478 plus this lane's six new gates); failures 1 — `FAIL programs/checks`, whose
+  only red row is the driver's doc-stamp currency (`state.md line 14: … expected 2,114,368 (stale stamp)`; the driver
+  130 passed, 1 failed), the lane-only row integration restamps; skipped 2 — `agnos_sysinfo_tail_parity.sh` and
+  `agnos_monotonic_clock_rdtsc.sh` (the named agnos-parity SKIPs, exit 77). A first full run on T4's tip also caught
+  `gates_never_write_tree.sh` axis 9 on the new `cbt_self_builds_scrub_env.sh` (wine's HOME passed through a variable the
+  static detector cannot read), fixed by amending b6d970d5; axis 9 re-run green.
+- **Per-file exit-code loop** over the lane's changed `.tcyr`: `tests/tcyr/crossos/attribute_word_boundary.tcyr` rc 0
+  (9 / 9; aarch64 under qemu rc 0, 9 / 9), `tests/tcyr/platform/shadow_pam.tcyr` rc 0 (8 / 8).
+- **Hardware, by hand with the lane's binaries** (the crossos leg cannot vary a compiler's environment or a CLI's host,
+  so no crossos row was added): TL-8's repro × 5 values on ecb, ach, pi and cass; TL-10 on cass, ecb and ach, TL-10r on
+  pi; TL-9's Windows arm and TL-11's Win64 registers on cass; TL-11's aarch64 C loader on pi. Every probe directory
+  removed (cass `C:\cyrius-tests\c6t5` deleted, `Get-MpThreatDetection` 0 in the last 2 h). Not run in the lane:
+  `scripts/release-gate.sh`, the cross-OS self-host legs, `cyrius pulsar` (stubs only).
+
+### Stdlib — dir_list and the agnos peers (the stdlib lane)
+
+Seven commits on `0f733aea` (branch `l6711-stdlib`, merged with their shas intact): the sankoch 2.8.6 refold, `dir_list`
+with `O_DIRECTORY`, the agnos negative-fd fix, the three agnos 1.57.13 peers (#110, #111, #109) and one review fix.
+Nothing under `src/` or `bootstrap/` changed: `build/cycc` is byte-identical to the slot-open compiler. No user decision
+was needed for any bite — each is listed at the open among the items fixed with no decision (2026-10-13). ⚠ The four agnos
+commits ran on the fake-kernel tracer and as agnos ELFs on the x86_64 Linux host only. cyrius has no agnos host, so no
+real-kernel leg ran on the cyrius side.
+
+#### LIB-1 — sankoch 2.8.6 refolded (lane stdlib, commit 923f187f)
+
+- **Refolded: sankoch 2.8.6** (`e15fff1`; was 2.8.3 @ `3893be2`). `lib/sankoch.cyr` is byte-identical to
+  `git -C ~/Repos/sankoch show 2.8.6:dist/sankoch.cyr` (cmp; the old copy was 2.8.3's `dist/` byte for byte). What the
+  three releases bring:
+  - **@2.8.4:** the Brotli encoder (RFC 7932) — `brotli_compress` / `brotli_compress_bound` / `brotli_compress_level`.
+  - **@2.8.5:** CRC-32 folds with PCLMULQDQ on x86_64 (15–21× faster, bit-identical); slice-by-8 elsewhere.
+  - **@2.8.6, the 2.8.x closeout:**
+    - Two HIGHs fixed. The zip streaming writer kept a member's offset in its allocator slot, so streaming any member
+      but the first called through a byte offset. The API lock could be created twice; it is now one BSS cell.
+    - The public Huffman / LZ77 builders take the lock, and a streaming context finishes once.
+    - DEFLATE decodes long codes in bounded work and checks Kraft completeness as zlib does.
+    - ⚠ LZ4F and xz decode as strictly as `lz4 -d` / liblzma, and linked-block LZ4F frames decode.
+    - zstd frames over the 512 KiB window declare it.
+- **What changes for code that compiles today** (the migration note):
+  - An LZ4F frame is now `ERR_CORRUPT_DATA` / `ERR_CHECKSUM_MISMATCH` where the batch decoder returned its prefix as
+    success: a frame cut before its end mark or before a declared content checksum, a bad header checksum, reserved BD
+    bits, a wrong declared content size, or a block past the declared maximum.
+  - An xz stream is refused when its Index does not describe its blocks, when its padding is non-zero, when its
+    block-header sizes do not match, when a dictionary byte is over 40, or when an LZMA chunk does not decode to exactly
+    its size.
+  - Linked-block LZ4F frames (the LZ4F library's default) decode; they were rejected.
+  - DEFLATE rejects the over-subscribed / incomplete code-length sets zlib rejects.
+  - API +3 (`sankoch::brotli_compress/4`, `brotli_compress_bound/1`, `brotli_compress_level/5`), 0 public fns or vars
+    removed, no signature changes. The bundle's Requires block is unchanged (syscalls, string, alloc, fmt, vec, fnptr,
+    thread).
+  - A binary that keeps the encoder grows: a bare `include "lib/sankoch.cyr"` program (DCE off) is 635,128 → 706,264 B
+    on x86 (+71,136 B).
+- **No decision needed** — a fold refolded to its tag.
+- **Docs:** `docs/ecosystem.md`'s row reads `refold v6.7.11, sankoch tag 2.8.6 @ e15fff1`, with @2.8.4 / @2.8.5 / @2.8.6
+  prose. `docs/api-surface.snapshot` +3.
+- **Rows** (existing gates, all PASS on the lane tree):
+  - fold_table_matches_vendored (12 rows; RED before the row moved).
+  - removed_symbol_census, run in the real git tree: 0 removed vs 6.7.10, 5 accounted.
+  - fold_namespace_collisions, folds_agnos_parity 12/12, embed_build, distlib_embed, duplicate_fn_arity_mismatch,
+    private_scoped_at_insertion, api_surface_derive_matches_emitter, lib_freshness, stdlib_modules_self_sufficient,
+    pe_reloc_cap_full_stdlib, large_static_data_every_backend.
+  - `formats/sankoch_bzip2_roundtrip` 3/3 (x86, qemu-aarch64).
+  - `crossos/global_alignment` 61/61 (x86, qemu-aarch64, wine).
+  - `compiler/many_initialized_globals` 4/4 (x86, qemu-aarch64).
+- **Per target.** The probe does three things: a 70,000-byte Brotli round trip through `brotli_compress` /
+  `brotli_decompress`; the CRC-32 of "123456789" (0xCBF43926); and a 300,000-byte `crc32` checked against a
+  `crc32_update` split.
+  - It prints `sankoch-probe OK` and exits 0 on x86_64 Linux, qemu-aarch64, wine, pi, ecb (arm64 Mach-O, ad-hoc
+    codesigned), ach (x86 Mach-O) and cass (PE).
+  - It compiles clean for agnos.
+  - Every build is warning-free apart from the unreachable-fns note.
+  - cx gives `error: codebuf overflow` on 2.8.3 AND on 2.8.6 (both measured). That is the filed 512 KiB codebuf issue
+    (`docs/development/issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md`, 6.7.12).
+- **Found, not absorbed (filed, 6.7.12):** `2026-10-13-readme-fold-version-list-stale.md` (from the lane's review).
+  README.md's fold-version paragraph is stale for six folds — sakshi, sigil, yukti, sankoch, bayan and yantra (README
+  says 1.0.10, `lib/` carries 1.0.11) — and no gate ties it to the `# Version:` headers.
+- ⚠ **Superseded at the integration (not this lane):**
+  - 2.8.4's encoder declared its overflow flag `_bre_err` as a top-level global. niyama declares the same name, so a
+    program including both folds shared one cell.
+  - The lane's gates passed, fold_namespace_collisions among them. The tools lane's `distlib_owner_rule_shared.sh` row
+    C reported the collision at the wave-1 merge (`_bre_err: niyama sankoch`).
+  - sankoch 2.8.7 (`33d7fc7`; the flag is `_bre_ovf`) is refolded on main as `3f8d1b4b`, so the release ships 2.8.7 —
+    see Folds.
+- No issue file: SANKOCH-REFOLD was a planned refold.
+
+#### LIB-2 — `dir_list` / `dir_list_checked` / `dir_list_into` open the directory with `O_DIRECTORY` (lane stdlib, commit d534bd30)
+
+- **Fixed: a FIFO at a listed path blocked the call in `open(2)` until a writer came — for good.**
+  - Two POSIX open sites in `lib/fs.cyr` opened the path with `sys_open(&cpath, O_RDONLY, 0)` and only then called
+    `getdents64`. They are `_dir_list_into_vec` (behind `dir_list` and `dir_list_checked`) and `dir_list_into`.
+  - `open(2)` of a FIFO with `O_RDONLY` waits for a writer before `getdents64` could ever answer `ENOTDIR`.
+  - In agora 1.9.1, a FIFO in place of a store directory froze its single-process poll server, so every client after
+    it waited.
+- **The fix.** Both sites open with `O_RDONLY | O_DIRECTORY | O_CLOEXEC` (a WHY comment + `CHANGELOG [6.7.11]`). The
+  kernel then refuses a non-directory at path resolution:
+  - a FIFO or a regular file: `dir_list_checked` -20 (`-ENOTDIR`), `dir_list_into` -1, `dir_list` an empty vec;
+  - a dangling link: -2;
+  - a directory lists as before.
+
+  The agnos arms (already `AO_DIRECTORY`) and Windows (`FindFirstFileW`) are untouched, and the return shapes are
+  unchanged. The `cyrius` CLI calls `dir_list_checked` (`cbt/core.cyr`, `cbt/manifest.cyr`), so a CLI built from this
+  tree gets the change.
+- **Measured before → after.** The probe calls `dir_list_into`, then `dir_list_checked`, on `target`:
+  - x86_64 Linux:
+    - a FIFO hung (`timeout 3` → 124) → `-1 -20`;
+    - a regular file `-1 -20` → `-1 -20`;
+    - a dangling link `-1 -2` → `-1 -2`.
+  - qemu-aarch64: a FIFO 124 → `-1 -20`; a regular file `-1 -20`, unchanged.
+  - ecb (arm64 macOS) and ach (x86 macOS), with a shell `mkfifo`:
+    - a FIFO hung (killed after 3 s) → `-1 -20`. Darwin checks `O_DIRECTORY` before the FIFO open; this was measured,
+      not assumed;
+    - ⚠ a regular file `-1 -22` → `-1 -20` (Darwin's getdirentries answered `EINVAL`);
+    - a link `-1 -2` both; a directory `0 0` both.
+  - Windows and agnos: no change. `fs_dirlist.tcyr` compiles for agnos and cx.
+- **No decision needed** — fixed to the source: no caller can want to `getdents64` a non-directory. The macOS -22 → -20
+  is the errno Linux already gave.
+- **Rows:**
+  - `tests/tcyr/crossos/fs_dirlist.tcyr` 26 → 32 (+6; Linux and macOS, with Windows and agnos excluded by `#ifndef`):
+    - a regular file: `dir_list_checked` -20, `dir_list_into` -1;
+    - a FIFO premise: Linux makes it with `sys_mknodat(AT_FDCWD, p, 4096 | 384, 0)`. macOS uses `/usr/bin/mkfifo` via
+      `exec_vec`, because Darwin's mknodat declines with -78;
+    - the three listers run on the FIFO in a FORKED CHILD that the parent waits 5 s for and then kills, so a
+      regression reads RED, never a hung leg. The rows: the call returns; `dir_list_into` is -1, `dir_list_checked`
+      -20 and `dir_list` an empty vec;
+    - the FIFO unlinks.
+
+    Results: 32/32 on x86, qemu-aarch64, pi, ecb and ach; 30/30 under wine and on cass, where the new group does not
+    run (Windows has no FIFO).
+    With 6.7.10's `fs.cyr`: pi 30/32, ecb / ach 29/32 (the -22 file row too), x86 / qemu 30/32 — each in 5 s.
+  - NEW `tests/gates/platform/dir_list_fifo_refused.sh`, registered in `scripts/check.sh` after
+    walkers_fail_closed_unreadable_dir (Linux only; a named SKIP elsewhere; ~8 s):
+    - Every probe runs under `timeout`.
+    - A1–A4 on x86: a FIFO "-1 -20", a regular file "-1 -20", a dangling link "-1 -2", a one-entry directory "1 0".
+    - A5–A6 on qemu-aarch64, with `cycc_aarch64` cross-built from `src/` in the gate.
+    - Built-in anti-vacuity: M0 requires the copy of `lib/fs.cyr` with both sites put back to `O_RDONLY` to change
+      exactly 2 lines. M1–M2 require that copy to TIME OUT on the FIFO, on x86 and on qemu.
+    - Mutation ledger (measured): both sites, only `_dir_list_into_vec`'s, and only `dir_list_into`'s reverted in the
+      tree → each RED (M0 + A1 + A5).
+  - The 22 other tests that reach `lib/fs.cyr`, on x86 and qemu-aarch64:
+    - every x86 run is green;
+    - on qemu, bounds_mode_violation (61 failed), exec_capture_status (14), slice_subscript_write (13) and
+      regression_wait_unobserved (6) fail identically with 6.7.10's `fs.cyr`. That is pre-existing qemu-user
+      behaviour of those exec-based tests;
+    - `crossos/fs_walk_fails_closed` 24/24, `platform/fs.tcyr` 27/27 and `crossos/audit_walk_lister` 15/15 on both.
+  - Gates PASS: pe_last_error_reroute (runs fs_dirlist under wine, floor 30), walkers_fail_closed_unreadable_dir,
+    audit_walk_fails_closed, guide_examples_compile, stdlib_modules_self_sufficient. `cyrius lint` / `fmt --check`
+    are clean on `lib/fs.cyr` and the `.tcyr`; the one lint note, the raw getdents at line 372, is pre-existing.
+- **Guide:** "Example: Directory Listing and File I/O" names the behaviour, old and new.
+- **Found, not absorbed (filed, 6.7.12):** `2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md` — the same
+  class outside the filed `lib/fs.cyr` surface:
+  - `lib/audit_walk.cyr`'s Linux `_aw_dir_list_typed` opens with plain `O_RDONLY`, so `audit_fmt_walk` on a FIFO times
+    out (124).
+  - Low: the CLI `is_dir`-checks its roots, and the walkers descend only into `DT_DIR`.
+  - Filed rather than fixed, because the fix changes what a program computes.
+- Closes [docs/development/issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md](docs/development/issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md).
+
+#### LIB-3 — agnos: a negative fd is no longer taken for tagged socket slot 7 (lane stdlib, commit 12679844)
+
+- **Fixed: the agnos socket adapter recognised its tagged fds (`AGNOS_SOCK_TAG | slot`, `0x40000000 | 0..7`) with
+  `fd & AGNOS_SOCK_TAG`, which every negative i64 passes.** So the -1 of a failed open was slot `-1 & 7 = 7`:
+  - `sys_write(-1, …)` sent the bytes to slot 7's peer;
+  - `sys_read(-1, …)` read from slot 7's connection;
+  - `sys_close(-1)` — and so `file_close(-1)` — cleared slot 7's state, sent FIN on its connection and returned 0.
+- **The fix, three lines in `lib/syscalls_x86_64_agnos.cyr`** (WHY comments + `CHANGELOG [6.7.11]`):
+  - `_agnos_is_sock_fd` accepts exactly `AGNOS_SOCK_TAG + 0..7`, the values `_agnos_sock_open` hands out.
+  - `_agnos_fd_conn` answers -1 first for anything `_agnos_is_sock_fd` rejects. Before, it indexed `fd & 7` whatever
+    `fd` was.
+  - `sys_close` answers -1 for `fd < 0` before any table or kernel call. That is agnos's own answer for an fd that does
+    not exist, and it keeps the filed host repro meaningful.
+
+  `sys_read` / `sys_write` (and the `_nb` forms) of a negative fd now reach the kernel, which answers -1.
+  `AGNOS_SOCK_TAG + 8` and up no longer alias a slot.
+- **Measured before → after** (an agnos ELF run on the x86_64 host):
+  - The filed repro printed `1 / 1 / 4 / 0 / 0` and now prints `0 / 0 / -1 / -1 / 12345` — exactly the filing's expected
+    output.
+  - On the fake kernel, `sys_write(-1)` made ~99,999 `#48` calls on slot 7's conn and now makes one `write#1(-1)`.
+- **No decision needed** — fixed to the source: the filing's expected output, and agnos's own -1 for an fd that is not
+  open (Linux fails the same calls with `-EBADF` and touches nothing).
+- **Rows:**
+  - NEW `tests/gates/platform/agnos_negative_fd_not_socket.sh`, registered in `scripts/check.sh` right after
+    agnos_peer_fake_kernel (a named SKIP off x86_64 Linux; ~1 s):
+    - A1 is the FILED repro verbatim (its manifest's stdlib list as includes), built for agnos and run on the host:
+      `0 0 -1 -1 12345`.
+    - Built-in anti-vacuity: in each of M1–M3, a copy of `lib/` puts ONE fix line back and must differ from the tree
+      in exactly that line. The three copies must print `1 1 4 -1 12345`, `0 0 4 -1 12345` and `0 0 -1 -14 12345`
+      (-14 is the host's syscall 6, lstat, on a -1 path).
+    - Mutation ledger (measured in the tree): each of the three lines reverted → A1 RED, plus the drifted mutant.
+  - `agnos_peer_fake_kernel.sh` axis 9 (8 rows, with slot 7 LIVE):
+    - `sys_write(-1)` is `write#1` with a1 = -1 and a4 0, and no `#48`;
+    - `sys_read(-1)` is `read#5` with no `#49`;
+    - `sys_close(-1)` = -1, with no `#50` and no `#6`;
+    - slot 7 is still conn 0, and `_agnos_fd_conn(-1)` is -1;
+    - the range is exactly TAG + 0..7 (+8 no, -1 no);
+    - `sys_write(TAG + 8)` is a plain `write#1`;
+    - slot 7's own fd still sends `#48`.
+
+    On 6.7.10's peer: 7 FAIL (`sys_write(-1)` loops on `#48` up to the tracer's call limit).
+- **Found, not absorbed (filed, 6.7.12):** `2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md` — the same
+  class outside the filed surface:
+  - `lib/net.cyr`'s agnos `sock_bind` / `sock_listen` / `sock_accept` / `sock_connect` reach `_agnos_listen_stash` /
+    `_agnos_listen_start` / `_agnos_fd_listen` / `_agnos_sock_bind`. Those index `fd & 7` with no `_agnos_is_sock_fd`
+    test.
+  - So `sock_bind(-1, …)` is Ok and stashes slot 7's port, `sock_accept(-1)` maps to slot 7's listener, and
+    `sock_connect(-1, …)` overwrites slot 7's conn (measured on the lane tree).
+  - Filed rather than fixed, because the fix turns an Ok into an Err. The peer's BSD verbs (`sys_bind` …) are guarded.
+- Filed from darshana 1.3.0 (its 1.1.4 audit: `tty_close_signalfd(-1, …)` freed socket slot 7). Closes
+  [docs/development/issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md](docs/development/issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md).
+
+#### LIB-4 — agnos: the `console_mode`#110 peer, and `SIGWINCH = 28` (lane stdlib, commit e7cac25f)
+
+- **Added (agnos 1.57.13):**
+  - `SYS_CONSOLE_MODE = 110` in `SysNrAgnos`, after `SYS_WINSIZE`.
+  - `enum AgnosConsoleMode`, right after `SysNrAgnos` (an enum cannot nest, so this is the nearest place):
+    - `CM_NOECHO = 1` — a MODE: cooked console reads still store and edit input, but echo nothing, not even the
+      newline;
+    - `CM_FLUSH = 2` — an ACTION, set only: drop the typeahead and the non-blocking reader's partial line.
+  - `fn sys_console_mode(set, clear): i64`, after `sys_winsize`, returns the flags before the call, or -1.
+  - Its doc comment carries the contract:
+    - the new flags are `(old & ~clear) | set`, and FLUSH never appears in a return;
+    - an unknown bit, or FLUSH in `clear`, is -1 with nothing changed;
+    - the mode is held by its setter and dies with it;
+    - `(0, 0)` is the query and the support probe (`>= 0`), and `(0, CM_NOECHO)` restores echo.
+
+  darshana's agnos `tty_echo_off` is `(CM_NOECHO | CM_FLUSH, 0)`, and its restore is `(0, CM_NOECHO)`.
+- **Added: `SIGWINCH = 28` in `AgnosSignal`.** agnos posts it only to a process holding a signalfd whose mask has bit
+  28.
+- **Additive** — new names on the agnos peer only, so no other target's output changes. No decision needed.
+- **Rows:**
+  - The tracer now answers `#110` with 1 (outside the rg* / as* modes), so the pass-through row is not vacuous.
+  - `agnos_peer_fake_kernel.sh` axis 10 (6 rows):
+    - `sys_console_mode(CM_NOECHO | CM_FLUSH, 0)` → `sc 110 3 0`, a4 0;
+    - `(CM_FLUSH, 0)` → `2 0`; `(0, CM_NOECHO)` → `0 1`; `(0, 0)` → `0 0`;
+    - the kernel's answer is returned as is (1);
+    - CM_NOECHO / CM_FLUSH / SIGWINCH = 1 / 2 / 28.
+  - Mutants measured RED: set and clear swapped → 3 FAIL; the answer dropped → 1 FAIL.
+  - `agnos_abi_doc_parity`: #110 shared (109 shared, 2 awaiting at this commit). api-surface +1
+    (`syscalls_x86_64_agnos::sys_console_mode/2`); `cyrdoc --check` 0 undocumented.
+- **Measured before → after:** before, the axis-10 probe does not build (`sys_console_mode`, `CM_*` and `SIGWINCH` are
+  undefined); after, the six rows above. Fake kernel only.
+- Closes [docs/development/issues/archived/2026-10-13-agnos-sys-console-mode-110-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-console-mode-110-peer.md).
+
+#### LIB-5 — agnos: the `fd_kind`#111 peer (lane stdlib, commit 624ed9d9)
+
+- **Added (agnos 1.57.13):**
+  - `SYS_FD_KIND = 111`, after `SYS_LSTAT`.
+  - `enum FdKind`, beside `AgnosConsoleMode`: `FDK_CONSOLE = 1`, `FILE`, `DIR`, `PIPE`, `CHAN`, `SOCKET`, `SIGNALFD`,
+    `EPOLL`, `TIMERFD`, `FDK_DEVICE = 10`. agnos uses its own enum, not `S_IFMT` values.
+  - `fn sys_fd_kind(fd): i64`, after `sys_lstat`, returns the kind or -1. It answers fstat's `S_IFMT` and isatty(3)'s
+    question in one call: darshana's agnos `tty_isatty` is `sys_fd_kind(fd) == FDK_CONSOLE`.
+- **The wrapper answers cyrius's own sockets — the contract's rule, not the filing's one-line sketch.** The kernel
+  answers -1 for this adapter's tagged handles (a userland handle over conn ids, not a kernel fd). agnos's contract asks
+  a cyrius-side wrapper to answer for its own sockets first. So:
+  - a tagged fd whose slot is open (reserved, connected or listening: `_agnos_conn_tbl` or `_agnos_listen_tbl`
+    non-zero) → `FDK_SOCKET`, with no kernel call;
+  - a free tagged slot → -1;
+  - every other fd, a negative one included, → `#111`.
+
+  It relies on LIB-3, so a -1 is never slot 7. The doc comment names `sys_fd_kind(0) != -1` as the support probe, not
+  `== FDK_CONSOLE` (fd 0 is a pipe or a file when stdin is redirected).
+- **Additive**, on the agnos peer only. No decision needed — the contract wins over the filing's raw one-liner.
+- **Rows:**
+  - The tracer answers `#111` as 1.57.13 does: -1 for fd < 0 or ≥ 32, 1 for 0..2, 2 otherwise.
+  - `agnos_peer_fake_kernel.sh` axis 11 (10 rows):
+    - `sys_fd_kind(5)` → `sc 111 5`, a4 0, and returns FILE;
+    - the probe `#111(0)` → CONSOLE;
+    - `sys_fd_kind(-1)` → `#111(-1)` → -1, never FDK_SOCKET;
+    - reserved / connected / listening tagged fds → 6, with no `#111`;
+    - a closed one → -1, with no `#111`;
+    - `AGNOS_SOCK_TAG + 8` → the kernel;
+    - FDK_* = 1..10.
+  - Mutants measured RED: the filing's raw one-liner → 5 FAIL; `_agnos_is_sock_fd` back to a bit test → 2 FAIL in this
+    axis (9 overall).
+  - `agnos_abi_doc_parity`: 110 shared, 1 awaiting at this commit. api-surface +1 (`syscalls_x86_64_agnos::sys_fd_kind/1`).
+- **Measured before → after:** before, the probe does not build (`sys_fd_kind` / `FDK_*` are undefined); after, the ten
+  rows. Fake kernel only.
+- Closes [docs/development/issues/archived/2026-10-13-agnos-sys-fd-kind-111-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-fd-kind-111-peer.md).
+
+#### LIB-6 — agnos: the `sock_send_dl`#109 peer; the agnos socket / TLS write deadline holds per call (lane stdlib, commit 20c0e160)
+
+- **Added (agnos 1.57.13):**
+  - `SYS_SOCK_SEND_DL = 109`, in `SysNrAgnosNet` after `SYS_SOCK_PEER`. The filing named `SysNrAgnos`, but
+    `SYS_SOCK_SEND = 48` lives in `SysNrAgnosNet`.
+  - `sys_sock_send_dl(conn, buf, len, timeout_us)`, after `sys_sock_send`. It returns the committed count (≤ len,
+    maybe 0) or -1.
+  - The contract: #109 is `#48` with a caller ceiling, measured once from entry and never re-armed by ACK progress.
+    ⚠ `timeout_us = 0` means NO ceiling (exactly `#48`'s ~8 s window), and < 0 means no wait. #109 is a new number, not
+    an a4 on `#48`: a4 is a stale register in every shipped three-argument `#48` caller.
+- **Fixed: an agnos socket write under a deadline overshot it by one `sock_send#48` stall (~8 s).** A `#48` call is
+  not interruptible, and `_agnos_sock_send_dl` could check the deadline only between calls. That function is the agnos
+  path of `sys_write` on a tagged socket (rearm 1, through `_agnos_sock_send_all`) and of native TLS's deadline-bounded
+  writes (rearm 0). This was CYRIUS-2026-0017's "Not covered" (the 2026-09-03 audit). Now:
+  - `_agnos_dl_left_us(dl)`, beside `_agnos_dl_over`, answers the time left in µs, one tier at a time:
+    - tier 1: the deadline − `uptime_us#95`;
+    - tier 2: (deadline_s − now_s) × 1e6;
+    - tier 3, or an RTC not yet armed: 0 (`#48`'s own window; the spins still end it);
+    - once passed: -1.
+
+    `_agnos_dl_over` is now `_agnos_dl_left_us(dl) < 0`: the same clock reads and state changes, and one copy of the
+    tier logic.
+  - The send loop reads the clock exactly where it did (so every `#48`-path count is unchanged). The time left after
+    a call is the next call's ceiling. Right after an arm the ceiling is the whole `tmo_us` (`_agnos_dl_whole_us`, -1
+    "no wait" for a spent ≤ 0 timeout). At -1 the loop stops. **Time's up is never passed as 0.** 0 (no ceiling) still
+    goes over in tier 3, or before the RTC arms, where `#48`'s own window is all there is. Rearm 1 passes the stall
+    window left.
+  - Kernel support (`_agnos_sock_send_left` + the tri-state `_agnos_sdl_ok`: 0 unknown, 1 yes, 2 no):
+    - the first use probes `#109(conn, buf, 0, 0)`, and an answer of 0 means supported;
+    - otherwise the call goes to `#48`, and "no #109" is cached only when `#48` answers ≥ 0. So a dead conn never
+      disables #109;
+    - a kernel before 1.57.13 keeps the `#48` path and its overshoot.
+- **No decision needed** — fixed to the source (agnos's contract, the documented deadline).
+- ⚠ **Verified against the fake-kernel tracer only.** cyrius has no agnos host, so no real-kernel leg ran on the cyrius
+  side; agnos's `scripts/smoke/sock-send-dl-smoke.sh` is the kernel side.
+- **Measured before → after (fake kernel):**
+  - A whole-transfer (rearm 0) send under a 1 s deadline on a #109 kernel: before, four `#48` calls, each free to
+    block ~8 s (the tracer's `#48` has no ceiling); after, four `#109` calls with ceilings 1 s / 0.75 / 0.5 / 0.25 s,
+    and none after the deadline.
+  - On a kernel without #109: identical `#48` call and clock counts, plus one `#109` probe per process.
+- **Rows:**
+  - Tracer: `#109` answers -1 in every existing mode, so the `#48` axes stay the `#48` path. New modes `dl0`, `dl3` and
+    `dl3dead`.
+  - `agnos_sock_send_deadline.sh` axes 4–8 (the header names "no real-kernel leg"):
+    - dl3, rearm 0 → 12 bytes. The `#109` a3:a4 pairs are `0:0 100:1000000 97:750000 94:500000 91:250000`: every data
+      ceiling > 0 and strictly decreasing, no `#48`, 5 clock reads.
+    - dl0 → -1, with ceilings `1000000 750000 500000 250000`: none after expiry, none 0.
+    - An old kernel (send3) → one `0:0` probe before the first `#48`, then `#48` only: 12 + 9 bytes in 7 `#48` calls.
+      send0 → -1, with 1 probe and 4 `#48` calls.
+    - dl3dead → the dead conn's send is -1 (probe -1, `#48` -1, nothing cached). The live conn is probed again, then
+      uses `#109` (-988), with one `#48` in all.
+    - `sys_write` on dl3 → 100 bytes in 34 `#109` calls, each with the 1 s window. On dl0 → -1, with the window left
+      at 1 / 0.75 / 0.5 / 0.25 s.
+    - Mutation ledger (measured): time's up handed over as 0 → 17 FAIL; no probe → 14 FAIL; "no #109" cached on a dead
+      conn → 2 FAIL (axis 7); the 6.7.10 `#48`-only loop → 11 FAIL.
+  - `agnos_tls_deadline.sh` axes 3–4, restated for a #109 kernel:
+    - dl0 / dl3 → -22, with ceilings `500000 250000` and no `#48`;
+    - no deadline → 100 bytes in 34 `#109` calls at the 1 s window;
+    - an expired deadline → -22, with no `#109` (not even the probe) and no `#48`;
+    - mutant 6 (the `#48`-only loop) → 3 FAIL.
+  - `agnos_peer_fake_kernel.sh` axis 12 (4 rows):
+    - `sys_sock_send_dl(2, b, 7, 1500000)` → `sc 109 2 b 7 1500000`, and the answer is returned;
+    - a -1 ceiling reaches a4, even after a 7-argument call left r10 = 5;
+    - the probe shape is `0 0`;
+    - with its a4 dropped → 2 FAIL.
+  - api-surface +1 (`syscalls_x86_64_agnos::sys_sock_send_dl/4`). `agnos_abi_doc_parity` 111 shared, 0 awaiting (108 /
+    3 at the slot open).
+- **Docs:**
+  - The 2026-09-03 audit's CYRIUS-2026-0017 gains an **Update (6.7.11)**: the overshoot is closed on a #109 kernel,
+    stays on older kernels, and was verified on the fake kernel only.
+  - The guide's agnos surface reads `#0–#104 + #106–#111` (#109–#111 since agnos 1.57.13; the next free number is #112)
+    in all six places.
+  - The stale overshoot notes in `tls_native_set_deadline`'s (`lib/tls_native_conn.cyr`) and `sock_set_send_timeout`'s
+    (`lib/net.cyr`) comments are corrected. Comment-only: an x86 build of `crossos/tls_native_deadline_ccs.tcyr` is
+    `cmp`-identical.
+- Closes [docs/development/issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md).
+  ⚠ Its "re-run `agnos_tls_deadline.sh` with a real-kernel leg" is not done: the fake-kernel axes stand in. The audit's
+  "Not covered" line stays, with the Update beside it, since a pre-1.57.13 kernel still overshoots.
+
+#### LIB-6r — the agnos peer's own comments match its bites (lane stdlib, review fix, commit 338fabc0)
+
+- **Fixed (the review's one must_fix, for #109 / #110 / #111):** two comments in `lib/syscalls_x86_64_agnos.cyr` still
+  described the slot-open state.
+  - The file header said the kernel's highest arm is #108 and the next free number #109. It now names #111 (fd_kind,
+    agnos 1.57.13; #109 sock_send_dl and #110 console_mode came with it) and #112 next free, matching the guide's six
+    places.
+  - `_agnos_sock_send_all` called itself "unchanged since 6.6.7". It now says that since 6.7.11 each of its calls
+    carries the stall window left as its sock_send_dl#109 ceiling on an agnos 1.57.13+ kernel (`CHANGELOG [6.7.11]`).
+- Comment-only: every binary is byte-identical. `cyrfmt --check` and `cyrius lint` pass (0 warnings; the 2 deferral notes
+  match the slot open).
+- **Found, not absorbed (filed, 6.7.12):** `2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md`. No
+  row pins rearm 1's ceiling refresh after a re-arm: with `left = _agnos_dl_whole_us(tmo_us);` deleted,
+  `agnos_sock_send_deadline.sh` and `agnos_tls_deadline.sh` both still PASS. The issue proposes a `dl03` tracer mode and
+  an axis-8 row expecting `1000000 750000 1000000 1000000 …`.
+- Part of [docs/development/issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md),
+  [docs/development/issues/archived/2026-10-13-agnos-sys-console-mode-110-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-console-mode-110-peer.md)
+  and [docs/development/issues/archived/2026-10-13-agnos-sys-fd-kind-111-peer.md](docs/development/issues/archived/2026-10-13-agnos-sys-fd-kind-111-peer.md).
+
+#### stdlib lane — the lane gate
+
+- **On `338fabc0`** (the worktree was clean after the run):
+  - **Fixpoint:** `build/cycc` is the cycc fixpoint of the lane's `src/` (c2 == c3, `cmp c2 build/cycc` OK). It is
+    byte-identical to `0f733aea`'s `build/cycc`, because nothing under `src/` or `bootstrap/` changed.
+  - **Seed-derive:** `sh scripts/seed-derive-cycc.sh` OK, run although not required — "build/cycc is
+    machine-derivable from the 29024-byte seed".
+  - **check.sh** (`CYRIUS_CHECK_JOBS=4`, TMPDIR on disk) exits 0: 480 / 480 shell gates produced a result (0 NOT RUN)
+    with 0 failures, and the driver ran 131 passed, 0 failed, 0 skipped. GREEN, with the 2 named pre-existing
+    agnos-parity SKIPs (exit 77): `agnos_sysinfo_tail_parity.sh` and `agnos_monotonic_clock_rdtsc.sh`.
+    `coverage_mode_corpus`: all 573 `.tcyr` exit 0 alike, plain and instrumented, on x86.
+  - **Per-file `.tcyr` exit-code loop** over the one `.tcyr` the lane changed, `tests/tcyr/crossos/fs_dirlist.tcyr`:
+    on x86, compile 0, exit 0, 32/32; on qemu-aarch64 (the cross compiler built from the lane's `src/main_aarch64.cyr`),
+    compile 0, exit 0, 32/32.
+- **Per bite:**
+  - Every agnos gate green on the final tree: agnos_peer_fake_kernel (axes 1–12), agnos_negative_fd_not_socket,
+    agnos_sock_send_deadline, agnos_tls_deadline, agnos_sock_recv_bound, ws_close_socket_route,
+    agnos_accept_timeout_inherit, agnos_syscall_a4_defined, io_rdwr_agnos, folds_agnos_parity (12/12),
+    agnos_abi_doc_parity, agnos_create_exclusive_atomic, agnos_async_process, agnos_process_spawn,
+    agnos_regression_spawn, agnos_proc_kill_tree_refused, agnos_net_config_field_parity, agnos_process_peer_parity,
+    agnos_proclist_record_parity.
+  - Also green: api_surface_derive_matches_emitter, guide_examples_compile, stdlib_modules_self_sufficient,
+    check_gate_census, gates_never_write_tree, removed_symbol_census, fold_namespace_collisions and
+    duplicate_fn_arity_mismatch.
+  - `cyrius_api_surface --snapshot` "matches snapshot exactly": 5844 fns. That is +3 in LIB-1 (the sankoch encoder)
+    and +3 in LIB-4–6 (`sys_console_mode/2`, `sys_fd_kind/1`, `sys_sock_send_dl/4`), with 0 removed. `cyrdoc --check`
+    0 undocumented on the three touched libs.
+- **Hardware legs (per bite):**
+  - `fs_dirlist.tcyr` 32/32 on pi, ecb and ach, and 30/30 on cass (`C:\cyrius-tests`) and under wine.
+  - The sankoch probe exits 0 on pi, ecb, ach and cass.
+  - The agnos bites have no hardware leg (no agnos host): the fake-kernel tracer and agnos ELFs run on the x86_64 host.
+- **Not run in the lane:** `scripts/release-gate.sh`, `cross-os-selfhost.sh` (no compiler change) and `cyrius pulsar`
+  (cycc unchanged).
+- **No `tests/tcyr/crossos/` row** for the three new agnos wrappers: no cross-OS host runs agnos, and their rows are
+  fake-kernel axes 10–12.
+
+### Folds — sakshi 2.5.10, sankoch 2.8.6 → 2.8.7, patra 1.16.2 (each byte-identical to its tag; `docs/ecosystem.md` rows)
+
+- **sakshi 2.5.10** (`569e9f8`, the user's tag; was 2.5.9 @ `243ae06`; commit 2fdf66b4) — four private buffers
+  declared in bytes, not slots: a bare top-level `var x[N]` is N slots (8N bytes), so `_sk_ring_buf[4096]` /
+  `_sk_aring_buf[4096]` (4 KiB rings, every index `& 0xFFF`) reserved 32,768 B each, `_sk_span_stack[384]` 3,072 B and
+  `_sk_udp_addr[16]` 128 B. sakshi's static data 69,232 → 9,088 B, so `include "lib/sandhi.cyr"` and
+  `include "lib/yantra.cyr"` no longer print the large-static-data advisory: the cause the issue named was sandhi; it
+  was sakshi (no sandhi release, no yantra refold). `tls_sigil_include_warning_free.sh` axis 1 widened to sakshi /
+  sandhi / yantra (mutation b: 2.5.9 back → sandhi and yantra RED). Closes
+  [the sandhi large-static advisory](docs/development/issues/archived/2026-10-12-sandhi-include-prints-large-static-advisory.md).
+- **sankoch 2.8.6** — the stdlib lane's LIB-1 below (2.8.4 the Brotli encoder, 2.8.5 the PCLMULQDQ CRC-32, 2.8.6 the
+  2.8.x closeout).
+- **sankoch 2.8.7** (`33d7fc7`, the user's tag, 2026-10-14; commit 3f8d1b4b) — the Brotli encoder's overflow flag is
+  `_bre_ovf`. As `_bre_err` (since 2.8.4) it was the same top-level global as niyama's regex error code: cyrius
+  accepts a repeated same-value top-level `var` (the guide's *Declaring a global twice*), so a program including
+  both folds compiled clean with ONE cell for both — each resets it per operation, so only two threads running a
+  niyama compile and a Brotli encode at once could read each other's value. Found at the wave-1 merge, where the tools
+  lane's new owner-rule census (`distlib_owner_rule_shared.sh` row C) met the stdlib lane's 2.8.6 refold:
+  `_bre_err: niyama sankoch`, an every-target tie (a bundle reaching it gets `Sidecar NOT written`). Fixed upstream
+  (11 sites, the test row that resets it, architecture 005; every bundle regenerated; sankoch's own CI 17 / 17 in an
+  isolated copy on its 6.7.10 pin), refolded byte-identical. Row C green again (536 multi-declared `lib/` names, 9
+  allowlisted ties, none new); niyama + sankoch build together warning-free; the sankoch `.tcyr` on x86 and
+  qemu-aarch64.
+
+- **patra 1.16.2** (`3937505`, the user's tag, 2026-10-14; was 1.16.0 @ `00cf574`; commit 0601aff4; added to the
+  release at the user's request, 2026-10-14). **@1.16.1:** `patra_open` before `patra_init` returns 0 instead of
+  dying with SIGSEGV on x86_64 Linux (no TLS block, no `_pc_mtx`; on agnos / cx it used to work and now returns 0
+  too); `patra_initialized()` added; `patra_init` returns `PATRA_ERR_IO` when an allocation it needs is refused;
+  `EXISTS` no longer depends on how full the file is; cyrius 6.7.10 pin. **@1.16.2:** failures are reported, not
+  taken for success — a failed `fdatasync` reports `PATRA_ERR_IO` and stays sticky on the handle until reopen, a
+  refused allocation or write fails the statement, and a COMMIT that cannot make the transaction whole and durable
+  rolls it back (`PATRA_ERR_FULL` / `PATRA_ERR_IO`); a header re-read by a statement is verified after WAL recovery;
+  three ways to lose acknowledged rows and `CREATE TABLE t ()` (which made the database unopenable) are fixed; two
+  transactions on two databases on two threads no longer destroy each other's indexes. **API:** +6 public fns
+  (`patra_initialized`, `page_free_buf`, `tbl_chain_rows`, `tbl_unappend`, `wal_mark_failed`, `wal_writes`) and
+  `tbl_scan_where` takes an overflow out-parameter (9 → 10 arguments); `docs/api-surface.snapshot` updated,
+  `removed_symbol_census` 0 removed. The DB handle is 96 B (was 88), `patra_init` reserves 48 KB more, patra claims
+  nine thread-local slots (was six). patra's own CI on the tag 18 / 18 in an isolated copy (1,631 assertions); the
+  fold gates and the patra-using `.tcyr` on x86 and qemu-aarch64 green.
+
+### Integration — the two waves merged
+
+- **Wave 1** (returns, callargs, infra, tools, stdlib; five worktree lanes, one review round each, then a fix step and
+  a lane gate) merged into main. Two textual conflicts, both an adjacent one-line insertion from each side, both
+  kept: `_var_rhs_post` (callargs' `_vrcv_decl_err` for a vector annotation, returns' `_mv_decl_src` for a named
+  struct — disjoint by `pscale`) and `_sarg_byval_small` (callargs' `_ess_deref` for an argument starting with `*`,
+  returns' `_mv_small_arg` for a multi-value call). `build/cycc` rebuilt once on the merged tree (2,168,800 B,
+  fixpoint, seed-derive OK); check.sh on the merge: 495 / 495 shell gates, red only on the doc stamp and on census
+  row C (the sankoch 2.8.7 item above).
+- **Wave 2** (struct; generics + frontend), branched from the wave-1 merge, merged with no textual conflict although
+  the lanes share seven parser files. `build/cycc` rebuilt once: **2,223,320 B**, fixpoint, seed-derive OK; check.sh:
+  503 / 503 shell gates; every one of the 589 `.tcyr` compiles and exits 0 on x86 plain and instrumented.
+- **The pre-commit hook's ARM size bound is relative to `build/cycc`** (5fb211da). `cyrius pulsar` on the wave-1 merge
+  built a folded, seed-derived `build/cycc-native-aarch64` of 2,016,960 B, and the hook refused it: its fixed 2 MB
+  ceiling (6.6.18) was outgrown (x86 2,168,800 B; ARM 0.93×). It now allows at most 1.10× the `build/cycc` the commit
+  records (the index's blob), under 700K–3M; with no `build/cycc` in the index, the old fixed 2M. An un-folded
+  ESYSXLAT build ran 1.29× (6.6.17: 2,042,184 / 1,582,088), so the lost-fold backstop still trips.
+  `precommit_arm_size_band.sh` rows 1 / 2 / 2b–2e rewritten against a staged x86 `build/cycc` (the 6.6.17 un-folded
+  pair refused naming 1.10×; the 6.6.18 and 6.7.11 folded pairs accepted; 1.15×, over 3M and 2.04M-with-no-cycc
+  refused); mutations (the relative arm dropped, the fixed 2M back, the fallback dropped) RED. The wave-2 ARM binary
+  is 2,083,752 B (0.94×).
+- **`dead_code_floor`: `ir_emit1 cx` back on the floor** (26cd009c). The generics lane dropped it (1d04dd06) when its
+  tree's data addresses put an `E8` byte inside an imm32 on `ir_emit1`'s start and cycc's byte-scan DCE counted it as
+  a call; on the merged tree the addresses moved again and the cx fork reads it dead, as it is. The layout
+  sensitivity is filed ([the DCE byte-scan false live](docs/development/issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md)).
+- **Filed for the user's decision:** [a global first declared `= 0` and redeclared with another value is silent](docs/development/issues/2026-10-14-redeclared-global-from-zero-is-silent-and-cross-fold-collisions-invisible.md)
+  — every other conflicting pair warns, and the guide does not list the exception; it is how the `_bre_err`
+  collision went unseen (`fold_namespace_collisions.sh` reads the compiler's warnings over four folds only).
+
+### Filed, not fixed (each its own issue, placed; the backlog is `docs/development/issues/`)
+
+95 issues: 90 from the lanes and their reviews, 5 from the release-docs pass (the user, 2026-10-14: "file and fix them in 6.7.12").
+
+- [agnos: `sock_bind` / `sock_listen` / `sock_accept` / `sock_connect` take ANY fd for socket slot `fd & 7` — a failed open's -1 binds, listens, accepts and connects on slot 7](docs/development/issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md) — 6.7.12
+- [`agnos_sock_send_deadline`: rearm=1's ceiling refresh after a re-arm is pinned by no row — deleting it leaves both deadline gates GREEN](docs/development/issues/2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md) — 6.7.12
+- [`cyrius api-surface` counts a variadic tail `...` as a parameter (`va/2`, `zv/1`)](docs/development/issues/2026-10-13-api-surface-variadic-arity.md) — 6.7.12
+- [`lib/audit_walk.cyr`'s Linux lister opens a directory with plain `O_RDONLY` — a FIFO there blocks the walk forever](docs/development/issues/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md) — 6.7.12
+- [A `cyrius` run killed mid-compile still leaves `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` in its temp dir — only check.sh's reaper removes them](docs/development/issues/2026-10-13-cli-killed-mid-compile-leaves-scratch.md) — 6.7.12
+- [cybs's preprocessor buffers are unchecked: an include over 2 MB that includes another file has its tail overwritten](docs/development/issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md) — 6.7.12
+- [CYRIUS_SYMS writes pre-compaction addresses under CYRIUS_DCE=1](docs/development/issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md) — 6.7.12
+- [cyrlint's overrun rule sizes only a fn-local `var a[N]` with a LITERAL N — a const / enum / expression size and a top-level bare array are never checked](docs/development/issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md) — 6.7.12
+- [CYRIUS_DCE=1 removes a LIVE generic instance emitted inside a dead instance's code range](docs/development/issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md) — 6.7.12
+- [A fn declared `: (T1, T2[, T3])` that can fall off its end hands the caller stale registers](docs/development/issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md) — 6.7.12
+- [`var a, b = callptr(fp, 5);` is refused "multi-value destructure needs a call on the right-hand side", where `fncall1(fp, 5)` destructures](docs/development/issues/2026-10-13-destructure-of-callptr-refused.md) — 6.7.12
+- [`*pp` of a `pp: **T` is an untyped word, not a `*T`: `*pp + 1` steps one BYTE, and `var q: *T = *pp;` warns "assigning non-pointer to typed pointer"](docs/development/issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md) — 6.7.12
+- [`fncall1(&mk3, 5).b` — a field of a struct result through fncallN / callptr is a parse error, where `mk3(5).b` works](docs/development/issues/2026-10-13-field-of-indirect-call-struct-result.md) — 6.7.12
+- [On PE a vector-returning call whose result goes nowhere passes no hidden result pointer: `mkv(41, 7);` as a statement page-faults](docs/development/issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md) — 6.7.12
+- [README.md's list of fold versions is stale for six folds, and no gate ties it to `lib/`'s `# Version:` headers](docs/development/issues/2026-10-13-readme-fold-version-list-stale.md) — 6.7.12
+- [`ret2(a, b)` in a fn declared `: (i64, i64, i64)` leaves the third value stale](docs/development/issues/2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md) — 6.7.12
+- [`cyrius type-audit` does not count a generic fn (`fn f<T>(..)`) as a public fn](docs/development/issues/2026-10-13-type-audit-skips-generic-fns.md) — 6.7.12
+- [A call DECLARED to return a vector that the vector receive / return still do not take: a method call, an untyped `var v = callptr(&f, ..)`, `return callptr(&f, ..)`](docs/development/issues/2026-10-13-vector-call-results-the-receives-do-not-take.md) — 6.7.12
+- [`var v: f64v2 = *p;` / `v = *p;` with `p: *f64v2` — refused since 6.7.11 (it stored one word); copy the vector through the pointer, as a struct's `*p` is?](docs/development/issues/2026-10-13-vector-dereference-into-vector-local-decision.md) — 6.7.12
+- [A vector VALUE that is not a named local, passed to a `*V` parameter (`rd(mkv(..))`, `rd(*pv)`), and a vector local passed to a non-vector pointer (`*Pt`, `*i64`) or to a `*f32v8`, pass lane 0's bits as the address](docs/development/issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md) — 6.7.12
+- [A fn ending in `while (true) { .. }` / `do { .. } while (true);` is not proved to return one value](docs/development/issues/2026-10-13-while-true-ending-fn-not-provably-single-return.md) — 6.7.12
+- [`lib/ws.cyr` and `lib/ws_server.cyr` both declare the nine `WS_*` constants, so `cyrius distlib` refuses a bundle that uses one with neither leaf in its unit](docs/development/issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md) — 6.7.12
+- [W^X dead-code compaction leaves stale code bytes in .text's alignment pad](docs/development/issues/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md) — 6.7.12
+- [On an aarch64 Linux host, `cyrius build --agnos` writes an aarch64 Linux ELF, and `--target=x86_64-bare-metal-elf` writes an aarch64 image while printing an x86_64 multiboot2 entry line, both at rc 0](docs/development/issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md) — 6.7.12
+- [`&x.f` — the address of a struct field — does not parse (`expected ')', got '.'`), while the guide cites `load64(&s.f)` and `&h.f` as expressions — OPEN (a decision)](docs/development/issues/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md) — 6.7.12
+- [An undeclared `async fn` that says `return h();` of a multi-value call still drops the second value](docs/development/issues/2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md) — 6.7.12
+- [A bare `Vec` struct field's size depends on whether a `struct Vec` is declared above or below the struct that uses it — the same text gives two layouts (the 6.6.10 order-dependent-layout class)](docs/development/issues/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md) — 6.7.12
+- [A bounded method call on a struct carrier's `T` field (`b.v.show()`, `b: Box<T>`, `T: Show`) is a struct use: `gs(bi)` with `bi: Box<i64>` is refused although `impl Show for i64` exists](docs/development/issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md) — 6.7.12
+- [The captured-name refusal's fix-it reads `var y = y;` when the captured name is `y`](docs/development/issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md) — 6.7.12
+- [A closure's capture of a narrow scalar local (`i8` .. `i32`, `u8` .. `u32`) reads the slot's whole 8-byte word: a negative value is zero-extended, and stale upper bytes come along](docs/development/issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md) — 6.7.12
+- [In a closure, `var a = a + n;` (and a destructure's FIRST name, `var a, b = f(a);`) reads a global `a`, or is refused "undefined variable", where the enclosing local `a` is meant](docs/development/issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md) — 6.7.12
+- [A const context's skipped arm (`1 || pk()`, an untaken if-expression arm) names another file's `private` const fn with no visibility check and no `#deprecated` warning](docs/development/issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md) — 6.7.12
+- [cx: seven corpus .tcyr fail under cxvm once their `fn main` runs — stdlib wrappers that compile for cx but pass guest offsets to the host (pipe, fstat, unlink), a host-address `mmap_anon`, and tests with no cx arm](docs/development/issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md) — 6.7.12
+- [cybs reports an indexed store to an undefined name (`zz[1] = 5;`) as the syntax-error class, never naming `zz`](docs/development/issues/2026-10-14-cybs-indexed-store-undefined-name-not-named.md) — 6.7.12
+- [cybs segfaults with no message when the input ends right after `fn` or `var`](docs/development/issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md) — 6.7.12
+- [`cyrius header` prints `cyr_val f(..)` for a fn returning a `: stack` enum (`: Result` / `: Option`, the stdlib's value form), which cycc returns as a (tag, payload) pair in rax:rdx](docs/development/issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md) — 6.7.12
+- [`cyrius header` prints `cyr_val f(..)` for a fn returning a SIMD vector (`f64v2`, `f64v4`, `i32v4`, ...)](docs/development/issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md) — 6.7.12
+- [`cyrius self` and `cyrius soak` self-host the compiler under an inherited CYRIUS_POISON / CYRIUS_BOUNDS / CYRIUS_COVERAGE — their verdict is about a mode build, not the default compiler](docs/development/issues/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md) — 6.7.12
+- [dead_code_floor.sh axis 1 goes RED on the DCE byte scan's false-live: two unrelated globals flip `ir_emit1 cx`](docs/development/issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md) — 6.7.12
+- [A declaration-zone global annotated `**T` is refused "expected '='" — the replay reads one `*`](docs/development/issues/2026-10-14-declaration-zone-pointer-annotation-replay-reads-one-star.md) — 6.7.12
+- [A struct dereference as an IF-EXPRESSION BRANCH is typed an integer: `var v: S = if (c) { *p } else { *q };` binds `v` as a handle holding the word `*p` read (SIGSEGV at every size), and `if (c) { *p } else { s }` is refused as "branches differ in type"](docs/development/issues/2026-10-14-dereference-as-if-expression-branch.md) — 6.7.12
+- [A dereference of a `*S` as a tuple literal's element stores the struct's first word, where a struct value element is refused by name](docs/development/issues/2026-10-14-dereference-as-tuple-element-stores-first-word.md) — 6.7.12
+- [`*(&p)` of a struct over 8 B — as an argument for a by-value struct parameter or a declaration's initialiser — reads its first word as the struct's address: SIGSEGV](docs/development/issues/2026-10-14-dereference-of-address-of-struct-faults.md) — 6.7.12
+- [The `#derive` scanner `T_from_json_str` does not walk a SCALAR field's object or array value: its inner keys are read as the outer struct's](docs/development/issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md) — 6.7.12
+- [A `dyn Tr` result through a known callee (`var a: dyn Shape = fncall1(&mkd, &q);`) is refused, where `mkd(&q)` forms the dyn](docs/development/issues/2026-10-14-dyn-result-through-known-callee-refused.md) — 6.7.12
+- [An explicit-instance generic call returning a vector (`mkg<i64>(41, 7)`) is not received by a value-form vector local](docs/development/issues/2026-10-14-explicit-instance-vector-result-not-received.md) — 6.7.12
+- [An untyped `var c = f() < 1.0;` with a `: f64` leading call is typed f64 — `-c` flips the sign bit](docs/development/issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md) — 6.7.12
+- [The stub scan's struct-carrier table (`_gcr`) holds 64 entries per generic and drops the rest without a word](docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md) — 6.7.12
+- [A generic forwarding its `T` inside a struct carrier into a stub generic (`gx(mk1(x))`, `gx(b)` with `b: Box<T>`) is refused at its definition](docs/development/issues/2026-10-14-generic-forwarding-carrier-into-stub-generic-refused.md) — 6.7.12
+- [A generic that forwards its `T` to a bounded generic is refused at `f64` when the bound has no `impl … for i64`: `o(h)` says "uses its type parameter as a struct"](docs/development/issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md) — 6.7.12
+- [A generic fn's inline-replayed `return` inside a fn that returns a struct by value runs under THAT fn's struct-return class: `fn gpg<T>(): *T { return GPA; }` is refused ("… the 9-16 byte struct `P2` … got `GPA`")](docs/development/issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md) — 6.7.12
+- [A fn-local `var h: S = gpg<S>();` — a handle from a GENERIC call declared `: *T` — drops its `S` annotation: `h` is an untyped word and `h.v` is refused "no struct type in scope for 'h'"](docs/development/issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md) — 6.7.12
+- [A `*S` LOCAL binds a generic's T to S — through an `x: *T` parameter and, against the guide, an `x: T` one — while `&G`, a `*S` global, field or parameter infer i64 and run the base — DECISION](docs/development/issues/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md) — 6.7.12
+- [A generic fn declared `: *Box<T>` is refused at its definition ("unknown type 'T' as a type argument")](docs/development/issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) — 6.7.12
+- [header_spellings_and_size.sh: H8's preprocessor-guard rows and H11 / H11b are skipped silently on a host with cc that is not x86_64 (no SKIP named, the gate PASSes)](docs/development/issues/2026-10-14-header-gate-skips-guard-and-c-caller-rows-silently.md) — 6.7.12
+- [A fn that calls an inline-replayed `: stack` pair generic is flagged pair-returning ITSELF: a false "bind both" at its callers and a false mixed-return warning](docs/development/issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md) — 6.7.12
+- [An integer comparison or bitwise operator with an f64 right operand leaves its result typed f64](docs/development/issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md) — 6.7.12
+- [A local `const` in an `#inline` fn or a generic fn makes its second call in one scope a refusal — "'L' is already declared in this scope"](docs/development/issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md) — 6.7.12
+- [`*p = f()` with `f` a multi-value fn and `p: *S` stores the FIRST value as the struct's word, where `G = f()` into a struct is refused by name — OPEN (a decision)](docs/development/issues/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md) — 6.7.12
+- [A nested closure's parameter named like an enclosing local is taken as a capture by the closure around it — refused without lib/alloc.cyr, or a needless heap env](docs/development/issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md) — 6.7.12
+- [A `: stack` pair-returning trait DEFAULT method used above its trait / impl is not a pair: `p.m(d)?` SIGSEGVs, `var v = p.m(d);` binds the tag](docs/development/issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md) — 6.7.12
+- [`var x = (mk1());` (an 8 B struct) and `var x = (b.mk());` (a 9–16 B method) still infer nothing — the method's first word crashes through a by-value parameter](docs/development/issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md) — 6.7.12
+- [A parenthesised dyn-returning call as a struct literal's `dyn` element is refused with two reports, where the unwrapped call and every other dyn destination take it](docs/development/issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md) — 6.7.12
+- [A parenthesised 9-16 B method or operator result as a nested-struct literal element is refused ("unexpected '}'")](docs/development/issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) — 6.7.12
+- [A parenthesised `: stack` pair call escapes every pair check: `var v = (f(7));`, `x = (f(7));`, `h.a = (f(7));`, `P { (f(7)), 3 }` keep the tag silently, and `var v = (f(7))?;` takes the boxed `?` and SIGSEGVs](docs/development/issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md) — 6.7.12
+- [A parenthesised `&f` callee (`callptr((&mk3), 5)`, `fncall1((&mk2), 5)`) is an unknown callee: its struct / vector result convention is lost — SIGSEGV](docs/development/issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) — 6.7.12
+- [A pointer-annotated local from a by-value struct call: `var x: *P2 = mkp();` (16 B) compiles with only a warning and SIGSEGVs at `x.b`; `var x: *i64 = mkp();` holds the first word](docs/development/issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md) — 6.7.12
+- [One call of another file's `private` fn inside an `#inline` or generic body is reported once per replay of the body — three identical errors](docs/development/issues/2026-10-14-private-call-reported-once-per-body-replay.md) — 6.7.12
+- [A global first declared `= 0` and redeclared with another value is silent (no "conflicting value" warning), so two files' same-name globals merge unseen](docs/development/issues/2026-10-14-redeclared-global-from-zero-is-silent-and-cross-fold-collisions-invisible.md) — 6.7.12
+- [A local `const k: i64 = 3;` is refused, and every later read of `k` adds "undefined variable 'k'"](docs/development/issues/2026-10-14-refused-local-const-annotation-cascades-undefined-variable.md) — 6.7.12
+- [A refused parameter default drops every default of its fn — each call that relies on one is refused again](docs/development/issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md) — 6.7.12
+- [`ret2(a, b)` in a fn returning a struct over 16 B or of 8 B or less takes the multi-value path](docs/development/issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md) — 6.7.12
+- [`return &s;` in a fn returning the struct `S`: at 8 B or less the ADDRESS is the struct's word; over 8 B it is refused in other words — OPEN (a decision)](docs/development/issues/2026-10-14-return-address-of-struct-local-decision.md) — 6.7.12
+- [`var x: i64 = b.mk();` / `var y: u8 = a + b;` take a struct METHOD's or OPERATOR's first word, narrowed, where the free-call form is refused since 6.7.11 — OPEN (a decision)](docs/development/issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md) — 6.7.12
+- [A sync fn declared one value (`fn g2(): i64 { return (1, 2); }`) compiles clean and the caller silently gets the first value](docs/development/issues/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md) — 6.7.12
+- [slice_position_refused.sh K2 does not depend on `_sl_ann_at`'s FINDSTRUCT test: deleting it leaves the gate green](docs/development/issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md) — 6.7.12
+- [A by-value `self` from a `*S` receiver, and a `*S` into a by-value `S` parameter, of a 3 / 5 / 6 / 7-byte struct carry FRAME GARBAGE in the word's padding (`_hl_pval_ra`'s temp is not zeroed)](docs/development/issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md) — 6.7.12
+- [A whole struct-typed FIELD of 3, 5, 6 or 7 bytes used as a value — `take(w.s)`, `return w.s`, `w.s + a`, a top-level `var G: S3 = GW.s;` — is loaded as an 8-byte word: it reads past the object (SIGSEGV when it ends a mapping)](docs/development/issues/2026-10-14-small-struct-field-value-reads-past-the-object.md) — 6.7.12
+- [A fn declared `: P1` (a struct of 8 B or less) that says `return mk(..);` of a multi-value call returns its first value as the struct](docs/development/issues/2026-10-14-small-struct-fn-returns-multi-value-call.md) — 6.7.12
+- [struct_value_codegen.sh's A rows (struct_value_codegen.tcyr) carry no row-count floor — a gutted values file passes](docs/development/issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md) — 6.7.12
+- [A top-level `ret2(a, b)` compiles with no diagnostic and does not return: x86_64 / PE run on past it, aarch64 / cx hang at it](docs/development/issues/2026-10-14-top-level-ret2-never-returns.md) — 6.7.12
+- [A two-parameter generic's instance name is ambiguous when a type argument is itself an instance: `g2<P<R>, i32>` and `g2<P, R<i32>>` share `g2$P$R$i32` — the second call runs the first's body](docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md) — 6.7.12
+- [A type argument that is not a name (`Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`) is refused as "unknown type 'truct'" / "'struct'" — a name read from a number — and the generic call cascades](docs/development/issues/2026-10-14-type-argument-non-name-reported-with-garbage-name.md) — 6.7.12
+- [An undeclared multi-value call (`return (a, b)`, counted by pass 1) passed to a TUPLE parameter is taken as its address](docs/development/issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md) — 6.7.12
+- [`*p = v` with an untyped value into a struct over 8 bytes writes only the first 8 bytes — confirm the reading of decision D4 (a)'s "at sizeof(S) bytes" — OPEN (a decision to confirm)](docs/development/issues/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md) — 6.7.12
+- [A `var` annotation that is not a type at all (`var b: 1 = 0;`, `var c: + = 2;`, `var G: 7 = 4;`) compiles silently](docs/development/issues/2026-10-14-var-annotation-non-type-token-compiles.md) — 6.7.12
+- [A `Vec<..>` still skips its argument unread as a type argument, a multi-value element, a trait member's parameter, a field's nested `Vec<Vec<..>>`, and in a Vec element's own `<..>`](docs/development/issues/2026-10-14-vec-type-argument-unread-outside-annotations.md) — 6.7.12
+- [The value-form vector local refusal prints its fn-pointer hint for every source, and now reports an undefined function as a refused source](docs/development/issues/2026-10-14-vector-local-refusal-hint-every-source.md) — 6.7.12
+- [A zero-size struct value into a struct-typed FIELD (`o.s = GP`, `o.s = gp()`, `o.s = (GP)`, `o.s = mk()`) or a zero-size `*p` used as a value still moves an 8-byte word: the field's neighbour is clobbered, and `take(*p)` reads 8 bytes past the object](docs/development/issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md) — 6.7.12
+- [`var A: (i64, i64) = (B);` in the declaration zone, with B declared below: `_gci_below` names the wrong source, 'var' instead of 'B'](docs/development/issues/2026-10-14-zone-tuple-copy-init-below-names-var-for-parenthesised-source.md) — 6.7.12
+- [A parameter type refused by the 6.7.11 type reader still drops its default: `fn f(a: 5 = 0)` + `f()` gives a second error, "'f' expects 1 argument, got 0"](docs/development/issues/2026-10-14-refused-parameter-type-default-cascades-arity-error.md) — 6.7.12
+- [`var n: i64 = fncall1(&mk3, 5);` (a struct over 8 B through a known fn pointer into a scalar annotation) compiles and reads the first field, where `var n: i64 = mk3(5);` is refused (D24)](docs/development/issues/2026-10-14-scalar-annotation-from-known-fn-pointer-struct-call-reads-first-field.md) — 6.7.12
+- [6.7.11 changes that stop existing programs compiling (or change a result) without a decision naming them — confirm each, or restore it](docs/development/issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md) — 6.7.12
+- [Stale comments, gate text and doc lines the 6.7.11 lanes left behind (comment / doc only)](docs/development/issues/2026-10-14-6711-stale-comments-and-gate-text.md) — 6.7.12
+- [6.7.11 rows the issues asked to run on hardware that only run under emulation (or not at all)](docs/development/issues/2026-10-14-6711-rows-not-run-on-hardware.md) — 6.7.12
 
 ## [6.7.10] — 2026-10-13
 

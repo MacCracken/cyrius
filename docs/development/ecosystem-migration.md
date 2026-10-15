@@ -32,6 +32,677 @@ does or builds; never a per-repo worklist.*
 
 ## 6.7.x — the language minor
 
+### 6.7.11
+
+Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).
+The changes that went beyond a decision's text are filed for confirmation in 6.7.12
+(`docs/development/issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md`).
+⛔ **yantra:** its own `cyrius distlib` is refused on the 6.7.11 CLI (`lib/ws.cyr` / `lib/ws_server.cyr` declare the same
+`WS_*` constants, a tie D26 refuses) until 6.7.12 fixes `lib/` — or its bundled module includes `lib/ws.cyr` itself.
+⚠ **x86_64:** `rd(mkv(..))` / `rd(*pv)` into a `*V` parameter compile and fault in 6.7.11 (refused through 6.7.10; fixed first
+in 6.7.12) — bind the vector to a local and pass it, or pass the pointer.
+
+#### Multi-value receives and returns
+
+**RET-1 — a body ending in an infinite loop is provably one value**
+- `var a, b = f();` (or `var t: (i64, i64) = f();`, or `a, b = f();`) where `f`'s body ends in `loop { }`,
+  `while (1) { }` or `do { } while (1);` and every `return` in it returns one value now stops compiling: "multi-value
+  destructure binds 2 names, but 'f' returns 1 value - bind it to one name". The second name was a register `f`
+  never wrote. Bind one name (`var a = f();`). A final loop that a `break` can leave is not judged (the body can
+  fall off its end), and neither is a non-literal condition such as `while (true)`.
+
+**RET-2 — an undeclared fn's provable value count is checked**
+- A destructure, a tuple capture or `a, b[, c] = f();` that binds a different number of names than an UNDECLARED `f`
+  provably returns (every `return` is `return (..);` of one arity, and the body is left only through them) now
+  stops compiling: "multi-value destructure binds 3 names, but 'dm' returns 2 values", "cannot capture 'dm' into
+  tuple (i64, i64, i64) - it returns 2 values". More names read a register the call never wrote. FEWER names are
+  refused too — `var q, r = h3(..);` with `h3` returning `(a, b, c)` computed the right two values on 6.7.10 and is
+  now "binds 2 names, but 'h3' returns 3 values", as the declared spelling (`fn h3(..): (i64, i64, i64)`) already
+  refused it. Bind every value (`var q, r, _z = h3(..);`) or capture them in a tuple of the right arity. A fn that
+  mixes arities, or whose body can fall off its end, is not judged.
+
+**RET-3 — a fn declared `: (T1, T2[, T3])` returns its values**
+- In a fn declared `: (T1, T2[, T3])`, a `return` is now one of: `return (a, b[, c]);` of the declared arity,
+  `return t;` of a tuple local, or a whole forwarded call returning as many values (`return g(x);` with `g`
+  declared, or provably returning, that arity; a fn pointer or `callptr` call is accepted unjudged). Anything else
+  stops compiling with "'f' returns 2 values - return (a, b)" (or "... 3 values - return (a, b, c)"): a single value
+  (`return 5;`, `return x?;`, `return t.0;`, `return (5);`), `return p;` of a struct local, a bare `return;`, a
+  literal of another arity, and a forward of a one-value callee (`return one(x);`), a struct callee (`return mk();`)
+  or another arity (`return g3(x);` from a 2-value fn). Each left the caller reading a stale register for the
+  values not written. Write `return (a, b);` — for a struct local, `return (p.a, p.b);`.
+
+**RET-4 — a destructure binds a struct callee's register words only**
+- `var a, b = f();` where `f` is declared to return a struct over 16 B, `var a, b, c = f();` where it returns a
+  9-16 B struct, and `var a, b = f();` where it returns a struct of 8 B or less or a `Str` now stop compiling ("cannot
+  destructure 'f' - it returns struct 'Q', which is not in registers", "cannot destructure 'f' into 3 names - it
+  returns struct 'P', whose 2 words are its return registers - bind 2 names", "... returns 1 value"). The extra
+  names read registers the call never wrote (over 16 B the struct comes back through a hidden pointer). Bind the
+  struct to one name (`var q = f();`) and read its fields. `var a, b = f();` from a 9-16 B struct keeps working
+  (its two words).
+
+**RET-5 — a multi-value call is not a struct value**
+- A call returning several values — declared `: (T1, T2[, T3])`, or undeclared with every `return` `(a, b)` — used
+  where a named struct is expected now stops compiling: as a by-value struct argument (a method's, a named one, at
+  top level), as a struct-typed declaration's initialiser (`var p: P = mk(..);`, at top level too), stored into a
+  struct field (`h.p = mk(..);`) or assigned to a struct variable (`p = mk(..);`, a classic-`for` step too) — "a
+  multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);`" (and "does not
+  initialize struct 'P'", "is not stored into a struct 'P' field", "is not assigned to struct 'P'"). Each crashed
+  (the first value taken as the struct's address) or built the struct from the first value alone. Bind the values
+  and build the struct — `var a, b = mk(3); var p = P { a, b };` — or declare the callee `: P` and return a `P`
+  local. A `*P` destination and a `Str` handle are unchanged (they take the first value).
+
+**RET-6 — a `: stack` pair method used above its `impl` is a pair**
+- `var v = p.m(..);`, `x = p.m(..);` or `store64(&s, p.m(..))` (any one-slot store), where `m` is an impl method
+  returning a `: stack` pair (`Result` / `Option` / `Either`, a user `: stack` enum) and its `impl` block sits BELOW
+  the caller, now stops compiling — "a `: stack` enum returns two values — bind both" — as it already did with the
+  `impl` above. The bind kept the tag and dropped the payload. Write `var t, v = p.m(..);` or `p.m(..)?`. (`p.m(..)?`
+  above the impl, which crashed, now propagates.) Not covered yet: a method the impl inherits from its trait's
+  DEFAULT body — keep that trait and impl above the caller.
+
+**RET-7 — a `: stack` pair is not a struct-literal element**
+- A struct literal one of whose elements is a call returning a `: stack` pair — `P { f(x), 3 }`, `P { a: f(x), .. }`,
+  a global's `var G = P { f(x), .. };`, a value filling a nested struct field — now stops compiling ("bind both"). The
+  element held the tag, not the payload. Bind first — `var t, v = f(x); var p = P { v, 3 };` — or write `P { f(x)?, 3 }`
+  to propagate the Err. Arguments (`is_ok(f(x))`, `g(f(x))`) and operands (`f(x) == 0`) are unchanged: they read the
+  tag, as documented.
+
+**RET-8 — a local's struct receive: parentheses are transparent, and an annotation is never overridden**
+- `var x: <scalar> = f(..);` inside a fn (i64, u8, i32, f64, f32, bool, u128, a slice, cstring, an enum, `Result`,
+  `Vec`, …), where `f` is a free or generic fn declared to return a struct over 8 B (not `Str`), now stops compiling:
+  "cannot initialise 'x: i64' from 'f', which returns the struct 'P2' - declare 'x: P2' or bind a field". It made x
+  the struct behind its annotation (`x.b` compiled; a `u8` held 333). Declare the struct (`var x: P2 = f(..);`) or
+  bind a field (`var x: i64 = f(..).a;`). A method or operator call, a struct of 8 B or less, a `Str` and a
+  top-level global are not affected.
+- `var x = (f(..));` (an untyped local, the call wrapped in parentheses, `f` returning a struct over 8 B) now
+  receives the struct, exactly as `var x = f(..);` does. It held the struct's first word, so `x.a` was refused and
+  `dq(x)` into a by-value struct parameter crashed; code that used `x` as that word now has the struct — `x + 1`
+  dispatches `Q_add` (refused when there is none: "refusing to emit binary with 1 reachable undefined function(s)"),
+  where it added 1 to the first word (4 on 6.7.10 for a `{3, 4}` struct). Read the field you meant: `var x =
+  f(..).a;` or `x.a`.
+
+**RET-9 — an `async fn` returning several values is refused by name**
+- None in the tree (no async fn returns several values). For a consumer: `async fn f(): (T1, T2[, T3])`, and
+  `return (a, b);` / `ret2(a, b)` / `return ret2(a, b);` in an `async fn`, now stop compiling — "`async fn f`
+  returns 2 values, and a Future carries one i64 - return a pointer to a struct holding them". The second value never
+  reached the awaiter (and `rethi()` after `await` read a stale register on a memoised or reactor-driven force).
+  Return a pointer to a struct (or a heap block) holding both, or split the fn.
+
+#### Call arguments
+
+**ARG-1 — a struct result through `fncallN(&f, ..)` / `callptr(&f, ..)` is that struct**
+- A call through `fncall0`..`fncall8` or `callptr` whose callee is written `&f` (`fncall1(&mk3, 5)`, `callptr(&mk3,
+  5)`) and whose `f` returns a struct is now that struct, as `f(..)` is — the hidden result pointer over 16 B and the
+  register pair at 9-16 B are passed and received. Through 6.7.10 a struct over 8 B faulted (the callee wrote through
+  its first argument) and an 8 B struct faulted since 6.7.10's handle line; those are right now with no source change.
+- An OPERATOR on such a call dispatches as on `f(..)`: `fncall1(&mk1, 5) + 4` now calls `P1_add` (or is refused
+  "undefined function 'P1_add'"), where it integer-added the struct's word (12 in the probe). For the old integer add,
+  bind it first and add the field: `var p: P1 = fncall1(&mk1, 5);` then `p.a + 4`.
+- A scalar receive `var n: i64 = fncall1(&mk3, 5);` reads the struct's first field (it crashed); an untyped `var x =
+  fncall1(&mk3, 5);` now declares `x` a `P3` (`x.a` compiles), and `return fncall1(&mk3, a);` compiles in a fn returning
+  `P3` (it was refused).
+- Newly refused (each crashed before): at top level, a struct result over 8 B through a known callee — a statement, or
+  a global initializer (`var g: P3 = fncall1(&mk3, 5);`; 9-16 B as a global initializer) — refused by name, as
+  `mk3(5)`'s is: move the call into a fn. A declaration of ANOTHER struct type from such a call is refused: declare the
+  callee's own struct.
+- Unchanged: a callee held in a variable (`var fp = &mk3; callptr(fp, 5)`) — its result is one word, and a struct-typed
+  receive binds it as a handle (the user's decision, 2026-10-13). That is right for a callee returning `*P3` and does
+  not work for one returning a struct by value: receive a 9-16 B struct's two words (`var a, b = fncall1(fp, 5);`) or
+  give the callee an out-pointer (`fn mk3o(a, out: *P3)`, then `var p: P3 = P3 { 0, 0, 0 }; var ig = callptr(fp, 5,
+  &p);`). A parenthesised callee (`callptr((&mk3), 5)`) is still a callee in a variable (filed, 6.7.12) — write `&f`
+  unwrapped.
+
+**ARG-2 — a value-form vector local takes a vector, or nothing**
+- Stops compiling: a value-form vector LOCAL (in a fn) declared or assigned from anything but a local of its type or a
+  call declared to return it — `var v: f64v2 = callptr(fp, ..)` / `fncallN(fp, ..)` through a variable, `= 0`, `= 5`,
+  `= load64(..)`, `= &w`, a scalar local or call, a method call (`s.mv()`), `*p`, and the same as an assignment
+  (`v = 5`) or a for step. Each read wrong lanes (or faulted on PE). The refusal: "a value-form vector local is
+  initialised only from a local of its type or a call declared to return it (by name, or fncallN / callptr with the
+  callee written `&f`) - got `…`".
+- Fix: declare the local bare (`var v: f64v2;`) and fill it (`store64(&v, a); store64(&v + 8, b);`, or a
+  `lib/simd.cyr` maker), call the producer by name (`var v: f64v2 = mkv(41, 7);`), or give a target reached through a
+  variable an out-pointer (`var ig = callptr(fp, &v, 41, 7);`). A `var v: f64v2 = 0;` written to zero a local becomes
+  `var v: f64v2;` plus an explicit fill if the lanes must be zero.
+- Starts working (no change needed): `callptr(&f, ..)`, `fncallN(&f, ..)` and `(f(..))` into a vector local are received
+  whole on every target. Vector GLOBALS are unchanged (`= 0` only).
+- Still refused, now by this rule (they read wrong lanes before): a method declared `: V` as the source, an
+  explicit-instance generic `v = mkg<i64>(..)`, and `var v: f64v2 = *p;` with `p: *f64v2` — each filed for 6.7.12;
+  until then bind through a by-name call or copy the lanes through `p`.
+
+**ARG-3 — a fn parameter's type is read whole**
+- Stops compiling: a fn parameter annotated with a token that is not a type — `fn f(a: 5)`, `(a: +)`, `(a: ;)`,
+  `(a: "s")`, `(a: if)`, `(a:)`, `(a: *)`, `(cb: fn(i64))` (no `*`) — refused "expected a type for parameter 'a', got
+  …". The token was ignored and the parameter was a plain word: delete the annotation, or write the type you meant. An
+  unknown name inside `*fn( .. )` is refused as one in `a: T` is: declare or spell the type.
+- Starts compiling: `p: **T` / `***T` (a pointer whose `p + 1` steps 8) and `cb: *fn(..)[: T]` parameters. A bare
+  `a: *fn` is unchanged. No in-tree code (lib, programs, cbt, tests) was affected.
+
+**ARG-4 — a pointer-to-vector parameter (`p: *f64v2`) is a pointer**
+- A fn with a `p: *V` parameter (V a vector type) changes its calling convention: the pointer arrives in an integer
+  register (as C passes a pointer), not as a vector value — an `#export`ed or C-called fn declared that way now matches
+  C; one that relied on the old value-form arrival (it never worked through the pointer) must take `v: V` instead.
+- Changes value: `rd(b)` with a vector local `b` passes `&b` (it faulted). Starts compiling: `rd(&b)` and any pointer
+  argument into `*V`, and `fncall1(&rd, &b)` / `callptr(&rd, &b)` work.
+- Stops compiling: a vector local of ANOTHER type into `*V` (an f32v4 into `*f64v2`, an i64v2 into `*i32v4`) — "cannot
+  pass 'f' to a parameter of a different vector type in a call to 'rd'"; it faulted, or met "value-form SIMD arg type
+  mismatch". Pass a vector of the parameter's type, or its address through an untyped or matching pointer.
+- ⚠ On x86_64 a vector call result or `*pv` into `*V` (`rd(mkv(..))`, `rd(*pv)`) was refused by the value-form path's
+  text; it now compiles and passes lane 0 as the address (139), as it already did on aarch64 / cx / PE — filed for
+  6.7.12 as a question. Bind the vector to a local first (`var t: f64v2 = mkv(..); rd(t)`) or pass the pointer
+  (`rd(pv)`).
+- `p[1]` on a `*f64v2` parameter is refused with a `*f64v2` local's text (a vector element); step with `p + 1`.
+
+**ARG-5 — parentheses around a whole argument into a by-value struct of 8 B or less**
+- Stops compiling: a struct value of ANOTHER type wrapped in parentheses as an argument for a by-value struct parameter
+  of 8 B or less (`bs1((t))`, `bs1(((t)))`, `bs1((mk(7)))`, `bs1((w.t))`), and a wrapped struct value as a tuple literal
+  element (`((p), 1)`) — refused by name, as the unwrapped spellings are. Each passed / stored the other struct's first
+  word. Fix: pass a value of the parameter's own struct, or a pointer (`bs1(&t)` converts), as for the unwrapped
+  spelling.
+- A wrapped value of the parameter's own struct, or a wrapped field / expression (`(t.w)`, `(x) + 1`), is unchanged; a
+  generic carrier wrapped is ARG-5r.
+
+**ARG-6 — a dereference of another struct's pointer into a by-value struct of 8 B or less**
+- Stops compiling: a dereference of a pointer to ANOTHER struct as an argument for a by-value struct parameter of 8 B
+  or less or a `Str` parameter — `take8(*pu)`, `take8((*pu))`, `take8(*gp())`, `take8(*w.pu)`, `take8(*(pu + n))`,
+  `take8(*self)` in another struct's impl — "cannot pass 'pu' to a parameter of a different struct type in a call to
+  'take8'" (over 8 B it was already refused). Fix: pass the pointer (`take8(pu)` converts and copies through it), or
+  copy into the parameter's own struct first (`var s: S8; s.v = pu.u; take8(s);`).
+- A dereference of the parameter's own struct (`take8(*ps)`) is unchanged; a generic carrier through a dereference is
+  ARG-5r.
+
+**ARG-8 — a pointer into a by-value struct of 8 B or less: an if-expression of pointers, an integer on the left**
+- Changes value: a by-value struct argument of 8 B or less given an if-expression whose every branch is a pointer (of
+  any steps: `t7(if (c == 1) { py } else { &s })`), or an integer plus a struct pointer with the integer on the left
+  (`t1(m + pb)`, `t1(0 + pb)`, `t1(n + pb)`, `t2(n + pb2)`), now passes the struct the pointer points at — it passed
+  the address's bits. Code that wanted the address in the parameter takes a `p: *S` parameter or an untyped value.
+- Stops compiling: a pointer difference between `n + pb` (`pb` a pointer to a one-byte struct) and a pointer of another
+  element size (`(1 + pb) - q32`) — "pointer difference of pointers with different element sizes"; it was a byte
+  difference. Subtract plain addresses for a byte count (`var a = pb; var b = q32; a + 1 - b`).
+- Loses a warning: `var r: *B1 = 1 + pb;`, `g = m + pb;` and `GB = 2 + pb;` are silent (they warned "assigning
+  non-pointer to typed pointer"). No in-tree code was affected.
+
+**ARG-5r — a generic struct carrier through a wrap or a dereference binds its T**
+- Changes value: a generic struct carrier of 8 B or less given its argument in parentheses or as a whole dereference
+  (`gw((w))`, `gw((mkw(-6)))`, `gw(*wp)` with `fn gw<T>(w: W1<T>)`, `w: W1<i32>`) now calls the instance (`gw$i32`);
+  through 6.7.10 it called the i64 base and read the struct with the base's layout (a negative `i32` field tested
+  non-negative). Code that leaned on the base call names it (`gw<i64>(..)`), which reads `W1<i64>`'s layout as before.
+- Starts compiling: over 8 B, `gx((b))`, `gx(*bp)`, `gx((*bp))`, `gx(*gp())` (refused "a different struct type"
+  before) call `gx$Pt`.
+
+No block for the lane's other bites: ARG-7 (an integer constant passed to an `f64` / `f32` parameter now WARNS — "an
+integer stored into an f64/f32 slot keeps its integer bits (write a float literal)" — and nothing stops compiling or
+changes value; no in-tree site; a build that treats new stderr as a failure writes `3.0`, or `f64_from(n)` for a runtime
+integer); ARG-9 (only the opt-in `CYRIUS_IR=3` output changes, from a wrong value to the right one); ARG-1r (a gate's PE
+leg and row floor).
+
+#### Struct copies and struct operators
+
+**ST-1 — a dereference of a struct under 8 B reads exactly the struct**
+- No source stops compiling. A dereference `*p` of a struct of 1..7 bytes now reads only the struct's bytes, and the
+  rest of the one-word value is 0: a program that read the bytes past the object through the word — `load64(&G)` of a
+  `var G: S3 = *p;`, a hash or `memeq` over the 8-byte cell, an untyped `var w = *p;` compared as an integer — sees 0
+  there instead of whatever followed the object. Read the fields (`G.a`), or copy `sizeof(S3)` bytes.
+
+**ST-2 — an assignment from a struct dereference copies the struct**
+- `l = *p`, `G = *p` and `o.s = *p` with `p: *S` copy the whole struct, in every spelling (`(*p)`, `*(p + n)`,
+  `*gp()`, `*w.p`), at top level and in a for step; through 6.7.10 they stored the first word and left the rest stale.
+- `q = *p` with `q` a `*S` (or a handle) now writes the struct into q's POINTEE instead of rebinding `q` to the
+  struct's first word. A program that used `q = *p` to load a pointer stored in the struct's first field must write
+  `q = p.first` (or dereference an untyped `*x`).
+- Stops compiling: `l = *pu` / `o.s = *pu` / `q = *pu` with `pu` a `*U` of a different struct (it stored U's first
+  word) — *cannot copy 'pu' into a variable of a different struct/vector type* / *... into a struct field of a different
+  struct type*. Copy the fields, or retype the pointer.
+- The false "assigning non-pointer to typed pointer" warning on `l = *p` / `q = *p` is gone.
+
+**ST-3 — a struct-typed field from a `*S` global, a `: *S` call or a `*S` field copies the struct**
+- `o.s = GP`, `o.s = gp()` (`fn gp(): *S`, or a method declared `: *S`), `o.s = w.p` and `o.s = GP + n` into a
+  struct-typed field copy the struct the pointer points at, directly, through a `*O`, at top level and in a for step;
+  through 6.7.10 the field's first word held the address. Code that read the address back out of `o.s`'s first word
+  must keep the pointer in a `*S` field or local.
+- Stops compiling: the same sources typed `*U` of a different struct into an `S` field — *cannot copy 'GU' into a
+  struct field of a different struct type: 's'*. Copy the fields, or retype the pointer.
+
+**ST-4 — a generic call declared `: *T` is a struct source**
+- `l = gpg<S>()` (with `fn gpg<T>(): *T`) copies the struct (it stored the address); `*gpg<S>()` as a declaration, an
+  argument or either operand reads the struct (it crashed), in a fn, inside another generic's instance and at top
+  level. An inferred call is a struct source when its arguments infer T = S (`gpi(p)` with `p: *S`, `gpv(s)` with `fn
+  gpv<T>(x: T): *T`); `gpi(&s)` infers T = i64 and runs the base, unchanged.
+- Newly compiling: `gpg<S>().v` (it was refused *it does not return a struct*).
+- Stops compiling: a generic `: *T` instance of a DIFFERENT struct into an `S` destination (`l = gug<U>()`, `var q: S =
+  *gug<U>()`, `o.s = gug<U>()`, `take(*gug<U>())`, `a - *gug<U>()`) — refused by name, naming the call (it stored or
+  passed U's word); and a declaration-zone global over 8 B from a generic fn declared BELOW it (`var Z: S16 =
+  *gpg<S16>();` above `gpg`) — *cannot copy-init 'Z' from a dereference of a global or fn declared below it (declare it
+  first): 'gpg'* (it crashed). Declare the fn first, or move the declaration after the first statement.
+
+**ST-5 — a top-level copy-init from a field reached through a pointer copies**
+- `var G: S16 = P.s;` (P a `*W` global), `= (P.s)`, `= gp().s` (`fn gp(): *W`), `= VV.p.s` (through a `*W` field) at
+  top level, over 8 B, now give G its own inline copy of the field (it was a one-slot global holding the field's first
+  word, and the first `G.v` crashed).
+- Stops compiling (both crashed before): such a declaration whose leaf is a different struct type; and one in the
+  leading declaration block whose `*T` global, holder or callee is declared below it — *cannot copy-init 'G' from a
+  global declared below it (declare the source first)* / *... from a field of a call to a fn declared below it (declare
+  the fn first)*. Declare the source first, or move the declaration after the first statement.
+
+**ST-6 — a fn returning a struct of 8 B or less checks the struct it returns (D3)**
+- Stops compiling: in a fn declared `: S` with S of 8 bytes or less, `return x;` where x is a value of ANOTHER struct
+  (a local, a by-value parameter, a global, `(u)`, a call — `return mk();` included —, a field, a method or operator
+  result, `*pu`), a `*U` of another struct, or a handle of another struct (6.7.10 returned that struct's bytes on
+  purpose) — *a fn returning the struct `S8` takes a value of that struct, or a pointer to one — got `u` (a `U8`)*.
+  Build or copy a value of the declared struct: `var s: S8; s.v = u.u; return s;`.
+- Computes differently: `return p;` with `p: *S8` a LOCAL returns the struct p points at (it returned the address),
+  as a `*S8` parameter already did.
+
+**ST-7 — `return E;` with E a pointer to the struct returns the struct it points at, at every size (D1)**
+- Computes differently: in a fn declared `: S` of 8 bytes or less, `return GP;`, `return gp();`, `return w.p;` (a `*S`
+  global, a `: *S` call or method, a `*S` field) and `return GP + n;` return the struct the pointer points at (they
+  returned the pointer's word as the struct). Code that smuggled an address out through a small struct return must
+  return the pointer from a `: *S` fn instead.
+- Newly compiling: the same over 8 bytes, and `return *GP;` / `return *gp();` there.
+- Stops compiling: returning a `*U` of another struct (at 8 B or less it returned the pointer word; over 8 B the old
+  refusals are now this one, by name). Return a value of the declared struct.
+
+**ST-8 — a struct value into a typed `*S` global copies into its pointee (D2)**
+- `GP = v` with `GP` a `*S` global and `v` a struct value of S (a local, a value global, a by-value parameter, a call,
+  a field, `*p`, a method or operator result) writes `*GP`, as a `*S` local or parameter destination does; through
+  6.7.10 it stored v's first word into GP itself. A program that used it to load a pointer kept in the struct's first
+  field must write `GP = v.first`. A zero-size struct copies nothing and keeps the pointer.
+- Unchanged: `GP = q` from another `*S` or a handle, `GP = &x`, `GP = 0`, `GP = alloc(..)` rebind.
+- Stops compiling: `GP = u` with `u` of another struct (*cannot copy 'u' into a variable of a different struct/vector
+  type: 'GP'*), and at top level `GP = mk()` / `GP = a.m()` / `GP = a + b` whose result is over 8 B (*... a struct
+  result needs storage in a fn's frame — call it inside a fn*; it stored the first word as the pointer). Move the
+  statement into a fn.
+
+**ST-9 — `*p = v` through a `*S` copies the struct (D4)**
+- `*p = v` with `p` typed `*S` (a local or parameter, `*self`, `*GP`, `*(p + n)`, `*gp()`, `*w.p`) copies exactly
+  sizeof(S) bytes: over 8 B it wrote the first 8 bytes only; under 8 B it wrote 8 bytes over whatever followed the
+  object; a zero-size struct now writes nothing.
+- `*p = q` with `q` a `*S` (or a handle) copies q's struct (it stored the pointer).
+- `*p = 0` / an untyped word writes sizeof(S) bytes, at most 8 (it wrote 8). A program that used `*p = x` to write a
+  full word through a pointer to a struct under 8 bytes must use `store64(p, x)`.
+- Stops compiling: `*p = u` with `u` of another struct (it stored u's first word) — *cannot copy 'u' into a variable of
+  a different struct/vector type: 'p'*; and `*p OP= v` through a `*S` (it combined the first word) — *compound
+  assignment to the struct 'p' points at is refused ...*. Write `*p = *p + b`, or the field (`p.v += b`).
+
+**ST-10 — an untyped declaration takes a leading call's struct only when the call ends it**
+- Stops compiling: `var r = f(..) OP x;` followed by `r.field`, or `return r;` from a struct fn, where `f` returns a
+  struct and `OP` returns an integer or is a comparison — *no struct type in scope for 'r'* (it read the integer as
+  the struct and crashed). Use the integer as an integer (`r + 1`), or bind the struct first (`var a = f(..);`).
+
+**ST-12 — an integer operator's result is an integer**
+- Computes differently: `n OP s + x` (and `(n < s) + x`, `(~s) + x`, `(n & s) + x`, ...) with an integer left operand,
+  a struct `s` and an `S_add` / `S_sub` / `S_mul` / `S_div` defined called that operator fn on `s` and discarded `n OP
+  s`; it is an integer expression now (`n OP s` is first-word arithmetic, as before).
+- Newly compiling: the same with no `S_op` defined (it was an undefined-function refusal).
+- ⚠ The right-operand form `t + (n - s)` over 8 B passed `&s` (the leaked slot) and now passes the integer, as `t + 5`
+  does; into a `*S` parameter of 8 B or less it passes the integer as the pointer, as `t - 5` does — both are an integer
+  into a struct parameter. Name the struct operand if the operator call was meant.
+
+**ST-13 — unary minus on a struct is integer negation of its word (D38)**
+- Computes differently: `-s OP t` with a struct `s` and an `S_op` defined called `S_op` (over 8 B on `s` itself, the
+  minus ignored; at 8 B on the negated word as the struct); it is an integer operation on `-s`'s word now, as `-w.s +
+  t` already was. Nothing is refused.
+- A declaration `var r: S = -s - t;` that relied on the dispatch's struct result is now a struct from an integer — a
+  handle holding that integer (`r.f` faults). Write the operator call on a struct value: `var r: S = mk(-s.v) - t;`, or
+  `(z - s) - t`.
+- `t + -s` over 8 B passes the negated word (it passed `s`, the minus dropped) — into a `*S` parameter that is an
+  integer as a pointer.
+- At top level `-Gs - Gt` into a `*S1` operator was refused (no frame) and now compiles as integer arithmetic.
+
+**ST-15 — a tuple literal returned from a fn declared to return a named struct is refused (D39)**
+- Stops compiling: `return (a, b);` (or three values) in a fn declared `: S` for a named struct `S`, at any size — *a
+  fn returning the struct `S` returns that struct — `(a, b)` is a tuple, another type*. The 9-16 B form returned the
+  right words, by register coincidence; the 8 B form dropped `b`, the > 16 B form never wrote the result. Build the
+  struct and return it (`var r: S = S { a, b }; return r;` — a struct literal is not a return value), or declare the
+  fn `: (i64, i64)` and receive `var a, b = f();`.
+  `ret2(a, b)` in such a fn still compiles (filed separately).
+
+**ST-16 — `return f(..) OP x;` in a 9-16 B struct fn, OP not dispatching, is refused (D40)**
+- Stops compiling: `return f(..) OP x;` in a fn returning a 9-16 B struct, `f` returning that struct and `OP` a
+  comparison, `& | ^ % << >>` or `&& ||` — *... got `f`* (it returned the operator's value with a stale second word).
+  Return a struct value (`var r = f(..); ...; return r;`). `return f(..);`, `return (f(..));` and a dispatching `return
+  f(..) + p;` are unchanged.
+
+**ST-18 — an untyped binding takes the struct of every whole struct result (D42)**
+- Computes differently: an untyped `var c = a.m1().m2();` (a method chain of 8 B or less), `var c = if (..) { s1 } else
+  { s2 };` (struct branches of 8 B or less) or `var c = (a OP b);` / `(a.m())` (a 9-16 B result in parentheses)
+  declares `c` the struct, so `c + 1` dispatches `S_add` (refused when there is none; into a `*S` parameter the integer
+  is the pointer, as with the annotated form) instead of adding to the first word, and `take(c)` passes the struct (the
+  16 B wrap passed its first word as the address). Write `c.v + 1`, or annotate a scalar (`var c: i64 = ...;`) to keep
+  the word.
+- Newly compiling: `c.field` on those bindings.
+
+**ST-20 — a free struct call in parentheses is the nested-literal element the unwrapped call is (D44)**
+- Newly compiling: `H { 7, (mkq(4, 9)), 8 }` and every same-struct wrapped call as a nested literal element, at every
+  size.
+- Stops compiling: a parenthesised call returning a struct of 8 B or less with ONE leaf, of a type other than the nested
+  field's, as a nested literal element (`H { 7, (mko(5)), 8 }` with `q: Q` and `mko` returning `O`) — *cannot copy
+  'mko' into a struct field of a different struct type: 'q'* (it stored the call's word into the field unchecked, as
+  the unwrapped call never did). Write the field it meant (`H { 7, mko(5).a, 8 }`: the one leaf from O's field), or
+  return the field's struct.
+
+**ST-21 — the `#derive` scanner decodes a nested derived struct field and skips any value whole**
+- A `T_from_json_str` over a document with a nested `#derive(Serialize)` / `#derive(Deserialize)` struct field, or with
+  an unknown key holding an object, an array or a string containing `,` or `}`, now fills the nested field and every
+  field after it, and an inner or unknown object's keys no longer overwrite the outer struct's fields of the same name.
+  A consumer that declared the nested field LAST (the old workaround) or decoded through the pairs form
+  `T_from_json(bayan_json_parse(..))` keeps working. A nested value that is not an object leaves the field 0; a field
+  typed with a struct no Serialize / Deserialize derive registered (accessors-only, hand-written codecs) is skipped, as
+  before.
+- Every derive-using program's bytes change (`_cy_json_skipval` is emitted for every derived struct).
+
+#### Generics and the frontend
+
+**GF-1 — a generic instance at `f64` and one at a struct named like a scalar are two instances**
+- An `f64` generic instance is now named `Base$f64` (it was `Base$i`), and an instance at a struct named exactly `i8`
+  / `i16` / `i32` / `i64` / `f64` is `Base$.<name>` (it was `Base$<name>`). The names show in the execution-coverage
+  dump (`CYRIUS_COVERAGE`), `CYRIUS_DCE_VERBOSE`, diagnostics and a shared object's exported symbols. A tool that
+  matches those names by their full spelling updates; `cyrius coverage` cuts at the first `$` and is unaffected.
+- A program with a `struct i` (or a struct named like a scalar) and an `f64` instance of the same generic now runs the
+  right body for each: through 6.7.10 the second instantiation ran the first's body. Nothing stops compiling.
+
+**GF-2 — a bound with no `impl … for i64` is met at `f64`**
+- A bounded generic METHOD called at `f64` with no `impl … for i64` (`p.bm(h)` with only `impl Show for f64`) now
+  returns its impl's result where it returned 0 (the dead stub ran).
+- The free spellings `gb(h)` / `gb<f64>(h)` were refused and now compile. A dummy `impl … for i64` added only to get
+  an f64 call past the bound can be dropped (an i64 call still needs the real one).
+
+**GF-3 — a generic method call `p.m(x)` reaches the instance its arguments bind**
+- Code that compiled now stops compiling (decision D6): a generic method called with a scalar where its type parameter
+  is used as a struct (`p.pick(9)`, an `f64` too), or where i64 fails its bound (`p.bm(7)` with only `impl Show for
+  f64`); a bounded generic method called with a struct that lacks the impl (`p.bm(r)`); and a scalar call of a generic
+  that forwards its T into such a method (`o(p, 5)` with `fn o<T>(p: P, t: T) { return p.pick(t); }`, or with the
+  receiver a field chain or a call's result: `h.p.pick(t)`, `mk().pick(t)`, `h.gp().pick(t)`). Each returned 0 or ran
+  the i64 body on a struct's address; the error names the fn. Pass a struct of the type the body reads, or drop the
+  call.
+- A generic method called with a struct (or through `self: V`, or forwarded through a generic) now runs its instance
+  where it returned 0 (or faulted, for a `: V` return): a program that relied on the 0 changes value.
+
+**GF-5 — a generic call's own result binds another generic's `T`**
+- A generic called with another generic's call result that returns a struct, where the outer generic does not use its
+  `T` as a struct (so the call compiled at its i64 base), now calls the struct instance: `g(id(p))` calls `g$Pt`, so
+  `sizeof(T)` and every `T`-typed local follow the struct (`sizeof(T)` was 8, now the struct's size). If the i64 base
+  was what the program meant, call `g` with an i64 (an untyped word), not with a struct result.
+- A nested f64 call into a generic defined below it (`gid(gid(h))`) is now an f64 (it was an i64, warned at a float
+  operand).
+- Every other shape (`gx(mk1(p))`, `g(mk1(p))`, nested, explicit inner) was refused and now compiles.
+
+**GF-6 — an overload sibling with no definition never takes its base's call**
+- An `--allow-undef` build whose overloaded call was routed to an undefined `<base>_str` / `<base>_int` sibling now
+  runs the base (it trapped there).
+- A program whose only reference to an undefined sibling is unreachable code now builds by default (the routed call
+  made it reachable and the build was refused).
+- In an `object;` unit, `base(s)` no longer binds to a `base_str` defined in ANOTHER object: call `base_str(s)` by
+  name there. Defined siblings route unchanged.
+
+**GF-7 — a `Vec<T>` annotation reads its `T` as a struct field does**
+- Code that compiled now stops compiling (decision D9): a `Vec<..>` annotation — a var, a global, a parameter,
+  `*Vec<..>` / `**Vec<..>`, a `*fn(Vec<..>)` parameter, `Vec<Vec<..>>`, `sizeof(Vec<..>)` — whose brackets hold
+  anything but a type the field form takes: a tuple, an unknown or misspelled name (`Vec<Strr>`, `Vec<i8x>`; also
+  `Vec<Str>` without lib/str.cyr included), a vector type, a slice, u128, a pointer element (`Vec<*Pt>`), an
+  expression (`Vec<1 + 2>`), a second argument; and a declaration-zone global whose element is declared BELOW it (`var
+  G: Vec<Pt>` above `struct Pt`: "declared after its use", as `var G: Pt` is).
+- Each error names the variable. Fix the element — `Vec<i64>` for a handle of words (a `Vec<*Pt>` holds words either
+  way), the struct's real name, the missing include — or move the struct above the global. The compiled program is
+  unchanged where it still compiles.
+
+**GF-8 — a program's own `struct slice` is what a fn-local `slice` / `slice<T>` names**
+- A program that declares its own `struct slice` (or `struct slice<T>`) and uses a fn-local `slice` / `slice<T>`
+  annotation as the BUILT-IN slice (`.ptr`, `.len`, `s[i]`; `slice_of(&s, ..)` then `s.len`) stops compiling: the
+  annotation now names the program's struct, so the built-in fields are "unknown field 'len' on struct 'slice'" (it
+  exited 14 through 6.7.10). Respell the built-in `[T]` (`var s: [u8] = 0;`).
+- A program with no `struct slice` is unchanged. One that used the word for its own struct in a fn-local annotation
+  now gets the struct (it was refused, or mistyped as the built-in).
+
+**GF-9 — a `return` outside a fn body is refused by name**
+- A top-level `return` — at the end of a program, or in a top-level `if` / loop / `switch` / `match` — no longer
+  compiles: `return outside a fn body`. Delete a trailing `return 0;`, or write the early exit as `syscall(60, v);`
+  (`sys_exit(v)`), or move the code into `fn main` and return from that. Nothing that compiled worked as written:
+  x86_64 / PE ran on past the return, and aarch64 / cx hung at it.
+
+**GF-12 — a const context's call of a `const fn` is checked like any call**
+- A const context that calls another file's `private` const fn no longer compiles: `'pk' is private to its file`. The
+  const contexts are a `const` (top-level or local), an array size, an enum value, `#assert` and a `case` label, and a
+  parameter default naming one from another file. Mark the const fn `public`, or compute the constant in its own file
+  and export the const.
+- A `#deprecated` const fn called in a const context now warns, once per call site, as its run-time call always did.
+
+**GF-13 — a const fn's arity in a const context is the run time's**
+- A const-context call that passed one argument too many to a const fn with a generic struct parameter (`const N =
+  pick(0, 1, 7);` for `const fn pick(p: Pair<i64, i64>, b)`) is refused: "a const fn called with the wrong number of
+  arguments". Pass the arguments the fn declares (`pick(0, 7)`), as its run-time call always required. `pick(0, 7)`,
+  refused before, now compiles.
+
+**GF-16 — the value of `await f` is an untyped word**
+- `(await f) OP n`, where `f` is declared `*T` with `sizeof(T) > 1`, now computes the integer sum (it scaled `n` by
+  `sizeof(T)`): `(await f) + 1` with `f: *i32` is 6 where it was 9. lib/async's handles are untyped words, so only a
+  hand-typed handle is affected (its declaration already warned "assigning non-pointer to typed pointer"). Keep Future
+  handles untyped.
+
+**GF-17 — `+| +? -| -?` are integer operators**
+- An expression that continues after `+| +? -| -?` on a typed pointer (`(q +| n) + m`, `k + (q -? n)`) computes a
+  different value: `m` / `k` are no longer scaled by `sizeof(T)`. Such a sum assigned to a `*T` now warns "assigning
+  non-pointer to typed pointer", and `((p8 +| 1) + 1) - q32` is `n - p` (it was refused). Use `p + n` for a pointer
+  step. Nothing in the tree writes the shape.
+
+**GF-18 — a narrow scalar local is an integer, and `n + &x` is the byte pointer `&x + n` is**
+- `w + p` with a narrow local `w` (`u8` .. `i32`) and a `*T` `p` (`sizeof(T) > 1`) now steps `w * sizeof(T)` bytes (it
+  added `w` bytes).
+- `var r: *T = w;` / `= w + n;` from a narrow local now warns "assigning non-pointer to typed pointer", as from an i64
+  local.
+- `(n + &x) - q` with `q` of another element size is now refused ("pointer difference of pointers with different
+  element sizes"), as `(&x + n) - q` always was: for a byte count subtract plain addresses (the error's own hint: `var
+  a = p;`). `var r: *u32 = 4 + &B;` no longer warns.
+- `w - q` with a narrow local `w` newly compiles (an integer minus a pointer).
+
+**GF-19 — cx calls `fn main` from the entry epilogue**
+- On cx (`--target=cx` / `cycc_cx`), a program that defines `fn main` now runs it, and its return value is the exit
+  code. A program that relied on cx skipping it (its exit was the last global's value) now exits with `main`'s return
+  value.
+- A program that calls `main()` at top level and does not exit explicitly now runs `main` twice on cx too, exiting
+  with the second run's value, as it always did on x86_64 / aarch64 / Mach-O / PE. Write `syscall(SYS_EXIT, main());`,
+  or leave the call to the epilogue.
+- A .tcyr that keeps its asserts in `main` now runs them on cxvm; one that touches a host-only buffer (`mmap_anon`,
+  `pipe`, `fstat`, `unlink`) can now fail there where it passed vacuously.
+
+#### Infrastructure
+
+**INF-5 — `CYRIUS_DCE=1` compacts a `kernel;` image and a `CYRIUS_WX=0` executable; a kept dead body's call into removed code is `ud2`**
+- Only a build under `CYRIUS_DCE=1` changes; without the flag every image is byte-identical to 6.7.10's.
+- A `kernel;` image (ELF32 multiboot1 and `CYRIUS_ELF64_KERNEL=1`) and a `CYRIUS_WX=0` executable now have their dead
+  fns REMOVED, where 6.6.20 – 6.7.10 only NOP-filled them: the image is smaller, and `.bss` / `.rodata` sit lower by
+  the removed bytes, rounded so the move is a multiple of 16 (an array keeps its 16-byte alignment; up to 8 zero bytes
+  pad the end of `.text`). Every data address the code holds moves with the data, so nothing that computed correctly
+  before computes differently (the filed `k.cyr`: ELF64 1,720 → 984 B, ELF32 1,536 → 800 B; a compacted multiboot1
+  kernel boots under QEMU). A kernel that hard-codes its own layout — section addresses written into a linker script,
+  a boot shim or a loader that assumed the DCE image matches the plain one — must take them from the image
+  (`readelf -SW`), or build without `CYRIUS_DCE=1`. A `--pie` kernel and every aarch64 / PE / Mach-O / `shared;` image
+  still decline compaction and NOP-fill, as before.
+- The unreachable-fns note for these two layouts no longer says `compaction declined on x86_64 ELF (kernel;)` /
+  `(CYRIUS_WX=0)`: with the flag unset it reads `set CYRIUS_DCE=1 to eliminate`, and under `CYRIUS_DCE=1` the build
+  reports `dead code eliminated`. A script that grepped the decline note must look for the new text.
+- On every x86 layout that compacts (the plain W^X executable included): a dead fn the compiler keeps because it cannot
+  size one of its instructions (an `in` / `out` in an `asm` block) now holds `ud2; ud2; nop` (`0f 0b 0f 0b 90`) where it
+  called or tail-called a removed fn, and 0 where it took a removed fn's address. Through 6.7.10 those bytes were a call
+  into whatever had moved there (an unrelated live fn, or the body itself). The body is dead, so nothing executes it; a
+  tool that disassembles or patches such a body now finds the sentinel (on the 6.7.11 corpus: 206 sites in 38 of 573
+  `.tcyr`, nothing else changed). Any other kind of surviving rel32 aimed into removed code now refuses the build by
+  name (`error: dead-code elimination: the rel32 at code offset N (opcode byte B) survives but aims into removed code,
+  and only a call or jmp can be neutralised; refusing to emit`). No known source produces one; if a build meets it,
+  build without `CYRIUS_DCE=1` and report it.
+- `--allow-undef` + `CYRIUS_DCE=1`: a taken call to an undefined fn now dies SIGILL (132), as it does without the flag;
+  compaction no longer rewrites FIXUP's `ud2` sentinel into `maxps` bytes (it died SIGSEGV, 139).
+
+No block for the lane's other bites: INF-1 (the preprocessor's walks — the output is byte-identical); INF-2 (a gate
+row only); INF-3 (cybs now refuses `nosuch(1);` and `fp(5);` by name — it compiled them to a binary that died with
+SIGSEGV, and cybs builds only `src/` and `bootstrap/asm.cyr`); INF-4 (cybs's refusal text only — nothing that compiled
+changes); INF-5r / INF-5r2 (docs).
+
+#### Tools and the CLI
+
+**TL-1 / TL-2 — the source tools build from a cyrius checkout's root**
+- cyrlint, cyrfmt, cyrdoc, cyrius_api_surface and cyaudit now `include "src/frontend/lex_attr.cyr"` (the lexer's own
+  attribute list), and cyrdoc and cyrius_type_audit `include "cbt/srcscan.cyr"` (the CLI's declaration reader). Through
+  6.7.10 the first five included only `lib/` files, so a copy of `programs/<tool>.cyr` built beside any `lib/`. A
+  script that compiles one of these tools from outside a cyrius checkout now fails on the missing include: build them
+  from the checkout's root, as the tarball, install and CI paths do, or use the installed binaries. The tools' output
+  is unchanged by TL-1.
+
+**TL-2 — the source scanners see `const fn`, `Pair<i64, i64>` and a variadic tail**
+- `cyrdoc --check` now sees a public `const fn`, `async fn` and `#deprecated("…") fn`; an undocumented one fails the
+  check. Add its doc comment (or make it private / `_`-named).
+- `cyrius type-audit` counts more public fns (every `pub` / `public` / `async` / `const` / `#inline fn` spelling, not
+  only a line starting `fn `), so its coverage percentage drops where those fns are unannotated (this repo: 97 % →
+  93 %). A CI floor on that figure may need annotations or a new floor.
+- `cyrius api-surface`: a public `const fn` is now recorded, and a parameter with a generic type holding a comma
+  (`p: Pair<i64, i64>`) counts as one (`pp/2`, was `pp/3`). A checked-in snapshot reads as new entries / changed
+  arities against it: regenerate it (`cyrius api-surface --update`) and review the diff once.
+- `cyrius header`: const fns get prototypes; a generic-typed parameter is one `cyr_val` (the old `cyr_val i64>` line
+  did not compile); a variadic tail is `...` (`cyr_val va(cyr_val n, ...);`) and a fully variadic `fn f(...)` is
+  `cyr_val f(void); /* variadic in cyrius: it reads no argument */`. Regenerate a checked-in header.
+
+**TL-3 — cyrlint's overrun and write-length rules**
+- `cyrius lint` / `cyrlint` can report NEW warnings: a constant `load*/store*(&a + K)` that runs past a bare local
+  `var a[N]` (N BYTES in a fn, rounded up to 8), and a `syscall(SYS_WRITE|1, …)` / `sys_write` / `_aw_write` whose
+  literal length argument is not the literal's byte count. A CI step on `--strict` or `--exit-with-count` turns red on
+  them. Each is a real truncation or overrun: for slots declare `var a: i64[N]`, count a literal's UTF-8 bytes (`—` is
+  3, `"\x1b[0m"` is 4, `é` is 2), and mark a deliberate offset with `# lint: offset-ok` on the call's line (it does not
+  silence the write rule; `#skip-lint` silences both). Code that compiled still compiles and behaves the same.
+
+**TL-4 — `cyrius distlib`: one owner rule, ties refused**
+- `cyrius distlib` may refuse where it used to pick by file name: `'X' is undefined on every target, and more than one
+  stdlib leaf could own it (a, b) — include the right leaf from a bundled module. Sidecar NOT written`, rc 1, no
+  sidecar. Fix: `include "lib/<the right leaf>.cyr"` from a bundled module, so the verify has it in its unit.
+- ⚠ The one tie in lib/ today is the nine `WS_*` constants, declared by both `lib/ws.cyr` and `lib/ws_server.cyr`
+  (filed for 6.7.12): a bundle that reads one of them without including either leaf is refused until that is fixed —
+  yantra 1.0.11's own `cyrius distlib` is (measured). Include `lib/ws.cyr` (or `lib/ws_server.cyr`) from the module that
+  uses them.
+- A regenerated sidecar may list the same leaves in another order: a dispatcher peer's constant that an agnos arm also
+  declares (`O_*` in io, `PROT_*` / `MAP_*` in mmap, `CLOCK_MONOTONIC` in chrono) records `syscalls` first and the agnos
+  leaf a round later, so `distlib --check` reads the committed bundle as stale (mabda's does). Regenerate
+  (`cyrius distlib --all`) and commit `dist/`.
+
+**TL-7 — bench-history.csv's file-size row is `size/cycc_bytes`**
+- cyrius's own `bench-history.csv` names its file-size row `size/cycc_bytes` (every historical `size/cc5_bytes` row
+  renamed), and BENCHMARKS.md prints the size rows in bytes (`2,114,376 B`). A script that reads cyrius's CSV by the old
+  name reads the new one. No consumer-facing change.
+
+**TL-8 — `CYRIUS_POISON` takes `0` / `1` only**
+- A build under `CYRIUS_POISON=0` or an empty `CYRIUS_POISON=` is no longer poisoned (before 6.7.11 any set value
+  turned the mode on); a build under any other value (`CYRIUS_POISON=yes`, `=true`, `=no`) stops compiling:
+  `error: CYRIUS_POISON must be 0 or 1 (or unset): <v>`, rc 1, nothing written — as `CYRIUS_BOUNDS` and
+  `CYRIUS_COVERAGE` already do. Use `CYRIUS_POISON=1` (or `cyrius fuzz --poison`) to turn it on; unset it, or set `0`,
+  for a normal build. A CI environment that exported the variable with a word must change it.
+
+**TL-9 — `cyrius pulsar` and the first cx use always build the default compiler**
+- `cyrius pulsar` and the on-demand `build/cycc_cx` / `build/cxvm` builds no longer see `CYRIUS_POISON`,
+  `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` or `CYRIUS_COVERAGE_FILE` from the shell: an exported switch no longer produces a
+  mode-built compiler or tool (and `CYRIUS_COVERAGE=1` no longer refuses them). User compiles (`cyrius build` / `test` /
+  `fuzz` / `run` of your own program) still get the switches. To build a mode compiler on purpose, invoke the compiler on
+  `src/main.cyr` directly with the variable set.
+
+**TL-10 — the Windows and macOS CLIs refuse `--agnos` and the bare-metal targets**
+- On a Windows or macOS host, `cyrius build --agnos …`, `--target=x86_64-bare-metal-elf`,
+  `--target=aarch64-bare-metal-elf` (and `cyrius run --agnos`) stop with rc 1, writing nothing:
+  `error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on
+  Linux)` (macOS: `… from the macOS CLI: cycc emits Mach-O only …`). They never produced the requested image there — a
+  PE or Mach-O came out under its name at rc 0. Build agnos and x86_64 bare-metal images on an x86_64 Linux host.
+  `--win` (a no-op on Windows), `--target=cx` / `js` and plain builds are unchanged.
+- ⚠ Not changed yet: the aarch64 Linux CLI still drops `--agnos` and `--target=x86_64-bare-metal-elf` (an aarch64 binary
+  at rc 0; filed, 6.7.12) — do not build agnos images there.
+
+**TL-11 — `cyrius header` writes return types**
+- `cyrius header` output changes for every public fn returning a struct over 8 bytes, a `dyn Tr` or a two-value tuple:
+  new `cyr_val2` / `cyr_valN` typedefs (`typedef struct { int64_t w0, w1; } cyr_val2;`,
+  `typedef struct { int64_t w[N]; } cyr_valN;`), `#ifndef _WIN64` and `#if defined(__x86_64__) && !defined(_WIN64)`
+  arms with a named comment and no prototype in the other arm, and a `/* returns T, N B */` note. C code that called
+  those fns through the old `cyr_val` prototypes misread the result (a 9–16 B value lost its second word; over 16 B the
+  first argument landed in the result-pointer slot): regenerate the header and use the new return types. On Win64 a
+  9–16 B struct or `dyn` return and a two-value return have no prototype (C uses a hidden pointer there) — wrap such a
+  fn in one that writes through an out-pointer and returns a word.
+- A file with a public fn whose return the tool cannot size from that file — another file's struct or enum, a generic
+  instance or generic struct, a struct holding one, a struct declared twice or with `#ifdef`'d fields, three values —
+  now makes `cyrius header` exit 1, with one `error: cyrius header: '<f>' returns '<T>': …; no prototype written` line
+  per fn on stderr (the header for the other fns is still printed). A build step `cyrius header f.cyr > f.h` under
+  `set -e` fails there: make the fn private / `_`-named, or wrap it in one returning a word.
+- A SIMD vector return and a `: stack` enum return (`: Result` / `: Option`) still print `cyr_val` (both filed for
+  6.7.12): keep hand-writing those prototypes.
+
+#### Stdlib
+
+**LIB-1 — sankoch 2.8.6 refolded (the release ships 2.8.7: the integration's refold on top, `3f8d1b4b`)**
+- ⚠ **Stricter decoders.** Each of these now fails where the batch decoder returned the decoded prefix as success:
+  - **LZ4F:** a frame cut before its end mark or before a declared content checksum, a bad header checksum, reserved BD
+    bits, a wrong declared content size, or a block past the declared maximum → `ERR_CORRUPT_DATA` /
+    `ERR_CHECKSUM_MISMATCH`.
+  - **xz:** a stream whose Index does not describe its blocks, non-zero padding, mismatched block-header sizes, a
+    dictionary byte over 40, or an LZMA chunk that does not decode to exactly its size → refused.
+
+  `lz4 -d` / `xz -d` refuse the same inputs. A program that kept the prefix of a truncated or damaged frame now gets the
+  error code. Treat it as the corrupt input it is, or decode with a tool that salvages.
+- **DEFLATE** rejects the over-subscribed / incomplete code-length sets zlib rejects.
+- **Linked-block LZ4F frames now decode** (the LZ4F library's default; they were rejected). A program that relied on the
+  rejection — say, to detect such frames — now receives the data.
+- **New:** `brotli_compress` / `brotli_compress_bound` / `brotli_compress_level`. No signature changes, nothing removed,
+  and the Requires block is unchanged, so no include change.
+- A binary that keeps the encoder grows ~71 KB on x86 (a bare `include "lib/sankoch.cyr"` program, DCE off: 635,128 →
+  706,264 B).
+
+**LIB-2 — `dir_list` / `dir_list_checked` / `dir_list_into` on a path that is not a directory**
+- A FIFO at the listed path now fails at once — `dir_list_checked` -20 (`-ENOTDIR`), `dir_list_into` -1, `dir_list` an
+  empty vec — instead of blocking in `open(2)` until a writer comes. Linux and macOS; Windows and agnos are unchanged.
+- ⚠ On macOS, `dir_list_checked` of a REGULAR FILE is now -20 (`ENOTDIR`), not -22 (`EINVAL`), the value Linux already
+  gave. A caller that matched -22 should match -20, or test `< 0`.
+- A `stat`-first guard written only to dodge the hang (agora's `store_is_dir`) is no longer needed. The stat / open swap
+  it left open is closed. Keep it only if you want a different error for a non-directory.
+
+**LIB-3 — agnos: a negative fd is not socket slot 7**
+- On agnos, `sys_close(-1)` / `file_close(-1)` (any negative fd) now return -1, not 0, and touch no socket slot.
+- `sys_read` / `sys_write` (and the `_nb` forms) of a negative fd now go to the kernel and return -1. Before, they read
+  from or wrote to the 8th tagged socket's connection.
+- `AGNOS_SOCK_TAG + 8` and above are no longer taken for a socket slot.
+- A program that closed or wrote an unchecked -1 used to tear down, or write into, its 8th socket silently. It now gets
+  -1 and the socket is left alone. Nothing to change unless code matched the old 0 from `sys_close(-1)`. Check an open's
+  result before using it, as on Linux (where these calls fail with `-EBADF`).
+
+**LIB-6 — agnos: socket writes on an agnos 1.57.13+ kernel end at their deadline**
+- On a 1.57.13+ kernel, `sys_write` on a tagged socket and native-TLS writes under `tls_native_set_deadline` /
+  `tls_set_deadline` pass the time left to `sock_send_dl`#109 as each call's ceiling. So a stalled peer returns
+  `TLS_ERR_TIMEOUT` (-22) or the partial count AT the deadline, instead of up to ~8 s later. A write that used to finish
+  inside that overshoot now times out at the deadline you set. Set the deadline you mean.
+- The first socket send in a process issues one extra zero-length `#109` call, the support probe. On a kernel before
+  1.57.13 it answers -1, sends continue on `#48` as before, and the overshoot remains there. A syscall trace or a
+  seccomp-style allowlist on agnos sees `#109`.
+- A raw caller of the new `sys_sock_send_dl(conn, buf, len, timeout_us)` must never pass 0 to mean "time's up": 0 is
+  "no ceiling" (exactly `#48`). Pass a negative value ("no wait"), or do not call.
+
+**Additive — no block (LIB-4, LIB-5, and LIB-6's new names).** The agnos peer gains `SYS_CONSOLE_MODE`, `CM_NOECHO`,
+`CM_FLUSH`, `sys_console_mode`, `SIGWINCH` (in `AgnosSignal`), `SYS_FD_KIND`, `FdKind` / `FDK_*`, `sys_fd_kind`,
+`SYS_SOCK_SEND_DL` and `sys_sock_send_dl`. A program with its own agnos copy of one of these keeps compiling:
+- a redeclared constant or enum is accepted silently;
+- a redefined `sys_*` fn warns `duplicate fn '…' (last definition wins; first defined in lib/syscalls_x86_64_agnos.cyr)`
+  (measured on the merged tree).
+
+Drop the private copy. Two notes:
+- the stdlib's `sys_fd_kind` answers `FDK_SOCKET` (6) for a cyrius tagged socket where the raw `#111` answers -1;
+- cycc warns on a conflicting `SYS_*` redefinition.
+
+#### Folds
+
+**patra 1.16.2 (refolded from 1.16.0)**
+- `patra_commit` that cannot make the transaction whole and durable now rolls it back and returns `PATRA_ERR_FULL` /
+  `PATRA_ERR_IO` (it committed what it had, or reported a commit that was not durable): treat a failed commit as
+  rolled back.
+- Return values that used to be fixed can now report failure: `patra_close` (the rollback's or a sync failure; it
+  returned 0), `patra_flush`, `patra_set_sync_mode`, `jsonl_append_obj(_lens)` (`PATRA_ERR_IO`); any statement can
+  return `PATRA_ERR_PAGE` / `PATRA_ERR_MAGIC` / `PATRA_ERR_IO` for a header that fails verification or cannot be read;
+  `ALTER … ADD / DROP COLUMN` can return `PATRA_ERR_FULL` / `PATRA_ERR_IO` with nothing changed. ⚠ An autocommit
+  statement that fails its sync HAS been applied — retrying an `INSERT` on that error inserts it twice.
+- A query refused part-way returns 0 (it could return unsorted or empty values).
+- `patra_open` without `patra_init` returns 0 on every target (on agnos and cx it used to work): call `patra_init`
+  first. `patra_initialized()` tells a wrapping library whether it has run.
+- `CREATE TABLE t ()` is `PATRA_ERR_SYNTAX`; a direct `tbl_create` with no columns is `PATRA_ERR_COLCOUNT`.
+- `tbl_scan_where` takes a 10th argument (an overflow out-parameter): a direct caller passes it.
+- `BEGIN` syncs pending BATCH writes first; the DB handle is 96 B and `patra_init` reserves 48 KB more.
+
 ### 6.7.10
 **B7-0 — a baked f32 struct field**
 - A declaration-zone struct literal with an `f32` field (`var KS = KP { 1.5, 7 };` with `x: f32`) now puts the
