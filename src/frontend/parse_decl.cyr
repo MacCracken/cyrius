@@ -573,6 +573,44 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
     _cap_fld_sid = 0 - _cft;
     return 0 - 1000000 - _cfc;
 }
+# ⛔ 6.7.11 — A CLOSURE READS ITS CAPTURED SLICE'S `.ptr` / `.len`. The slice arm of the field read
+# is a fn-local's (`_slice_lw`) and `_CL_CAP_FIELD_IDX` takes a struct capture only, so `s.len`
+# inside a closure that captured `s` was "undefined variable 's'", while `slice_len(&s)` read the
+# copy (6.7.9: a captured slice arrives in field order). The user's decision (a), 2026-10-13: the
+# fields read the captured copy, one load from the env words (`.ptr` at +0, `.len` at +8). A store
+# into them is refused by name (`_cl_cslice_store_err`): the decision covers reads. CHANGELOG [6.7.11]
+# The capture index of `noff` when it names a captured slice local of the enclosing fn, else -1.
+fn _cl_cslice_cap(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    if (_sub_cslice(S, noff) != 1) { return 0 - 1; }
+    return _cl_cap_find(_cl_snap_find(S, noff));
+}
+# The slice field `fnoff` names: 0 `.ptr`, 8 `.len`, -1 any other (refused by name).
+fn _slice_fld_off(S, fnoff): i64 {
+    var fname = L64(S + 0xEC00000 + fnoff) & 0xFFFFFFFF;
+    if (fname == 0x00727470) { return 0; }        # "ptr\0"
+    if (fname == 0x006E656C) { return 8; }        # "len\0"
+    ERR_MSG(S, "slice has only .ptr and .len fields", 35);
+    return 0 - 1;
+}
+# `s.ptr` / `s.len` on a captured slice (cursor past the field name): rax = the field; 1 when it
+# was one, 0 when `noff` is no captured slice.
+fn _cl_cslice_field(S, noff, fnoff): i64 {
+    var capi = _cl_cslice_cap(S, noff);
+    if (capi < 0) { return 0; }
+    var off = _slice_fld_off(S, fnoff);
+    if (off < 0) { return 1; }
+    _CL_CAP_WORDS_RA(S, capi);
+    if (off > 0) { EADDRA_IMM(S, off); }
+    ELOAD64(S);
+    return 1;
+}
+fn _cl_cslice_store_err(S, noff): i64 {
+    ERR_IDENT(S, "a closure cannot assign a field of the captured slice ", noff,
+      " - it reads .ptr / .len only (set the slice before the closure is built, or declare it in the closure)", 0 - 1);
+    return 0;
+}
 
 # rax = the base address of a captured aggregate. A capture wider than one word IS those
 # words, so its base is `&env[woff]`; a one-word capture of a struct over 8 B holds the
@@ -1553,6 +1591,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         }
     }
     if (idx == 0 - 1) {
+        if (_cl_cslice_field(S, noff, fnoff) == 1) { return 0; }   # 6.7.11: a captured slice's .ptr / .len
         var _cfx = _CL_CAP_FIELD_IDX(S, noff);
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }
@@ -2147,6 +2186,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         }
     }
     if (idx == 0 - 1) {
+        if (_cl_cslice_cap(S, noff) >= 0) { return _cl_cslice_store_err(S, noff); }   # 6.7.11
         var _cfx = _CL_CAP_FIELD_IDX(S, noff);
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }

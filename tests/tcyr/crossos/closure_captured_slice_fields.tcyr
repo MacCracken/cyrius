@@ -1,0 +1,98 @@
+# closure_captured_slice_fields.tcyr — 6.7.11 — inside a closure, `s.len` / `s.ptr` of a captured
+# slice read the captured copy (the user's decision (a), 2026-10-13): one load from the env words,
+# `.ptr` at +0, `.len` at +8.
+#
+# Before 6.7.11 the read was refused, "undefined variable 's'": the field read's slice arm is a
+# fn-local's and its capture arm takes a struct capture only, while `slice_len(&s)` inside the same
+# closure read the copy (6.7.9 made a captured slice arrive in field order). The refusals (a
+# non-field, a store into the copy, a subscript) are pinned by
+# tests/gates/frontend/closure_captured_slice_fields.sh.
+#
+# CROSS-HOST: the env-base load, the +8 and the load are each backend's.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+include "lib/assert.cyr"
+
+struct P { x; y; }
+var g_buf[16];
+var g_wide: i64[4];
+
+# ── the filed repro 1 (issues/2026-10-11-closure-field-read-of-captured-slice-…), verbatim body ──
+fn repro(): i64 {
+    var buf[16];
+    var s: [u8] = 0;
+    slice_of(&s, &buf, 7);
+    var c = |x| s.len + x;
+    return fncall1(c, 1);
+}
+
+fn ptr_read(): i64 {
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var c = |x| (s.ptr == &g_buf) * 10 + x;
+    return fncall1(c, 1);
+}
+# the slice after a scalar and a two-word struct capture, a scalar after it
+fn wide_env(): i64 {
+    var a = 1;
+    var p = P { 2, 3 };
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var b = 4;
+    var c = |x| a + s.len * 10 + (s.ptr == &g_buf) * 100 + p.y + b + x;
+    return fncall1(c, 0);
+}
+fn i64_slice(): i64 {
+    var s: [i64] = 0;
+    slice_set(&s, &g_wide, 2);
+    var c = || s.len * 10 + (s.ptr == &g_wide);
+    return fncall0(c);
+}
+# by value: the enclosing slice re-pointed after the closure is built is not seen
+fn by_value(): i64 {
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var c = |x| s.len + x;
+    slice_of(&s, &g_buf, 9);
+    return fncall1(c, 1) * 10 + s.len;
+}
+fn nested(): i64 {
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var c = || { var d = || s.len; return fncall0(d); };
+    return fncall0(c);
+}
+fn in_cond(): i64 {
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var c = |x| { if (s.len > x) { return s.len - x; } return 0; };
+    return fncall1(c, 2);
+}
+# controls: the helper read of the same copy, and a struct capture's field
+fn helper_read(): i64 {
+    var s: [u8] = 0;
+    slice_of(&s, &g_buf, 7);
+    var c = |x| slice_len(&s) + x;
+    return fncall1(c, 1);
+}
+fn typed_copy(): i64 {
+    var p: P = P { 3, 4 };
+    var q: P = p;
+    var c = |k| q.y + k;
+    return fncall1(c, 1) + q.y * 10;
+}
+
+alloc_init();
+assert_eq(repro(), 8, "repro: s.len of a captured slice + 1");
+assert_eq(ptr_read(), 11, "s.ptr of a captured slice is the slice's pointer");
+assert_eq(wide_env(), 178, "the slice's words after a scalar and a struct capture");
+assert_eq(i64_slice(), 21, "an [i64] slice's .len and .ptr");
+assert_eq(by_value(), 89, "captured by value: the closure reads 7, the enclosing slice 9");
+assert_eq(nested(), 7, "a nested closure reads the field through the outer env");
+assert_eq(in_cond(), 5, "s.len in a condition and an expression");
+assert_eq(helper_read(), 8, "control: slice_len(&s) in the closure");
+assert_eq(typed_copy(), 45, "control: a typed struct copy's field in a closure");
+var r = assert_summary();

@@ -1942,8 +1942,13 @@ a **type argument** (`g<[u8]>`) and a **tuple element**. Before 6.7.8 each was a
 (`expected ')', got identifier 'u8'`, `expected identifier, got '['`, `unknown type 'slice'`, ...).
 A top-level `var s: [T]` AFTER the first top-level statement is still a 16-byte global, used through
 the helper API — `slice_set(&s, ..)`, `slice_ptr(&s)` / `slice_len(&s)`, `slice_unchecked_get_W` —
-as before: subscript and dot syntax fire on **fn-local** slices only. See `lib/slice.cyr` for the
-full helper list.
+as before: subscript and dot syntax fire on **fn-local** slices only — and the dot syntax's reads
+on a closure's captured copy (6.7.11, the user's decision of 2026-10-13): inside a closure that
+captured `s`, `s.len` / `s.ptr` read the copy the closure was built with (a later `slice_set` on
+the enclosing `s` is not seen, as for any capture). A store into the copy (`s.len = n`,
+`s.ptr = p`, `s.len += 1`) is refused by name ("a closure cannot assign a field of the captured
+slice 's'"), as `s[i]` is. ⚠ Before 6.7.11 the read was "undefined variable 's'". See
+`lib/slice.cyr` for the full helper list.
 
 **`slice` is not reserved.** A program may declare its own `struct slice` (or `struct slice<T>`), and
 then the name is that struct everywhere — a parameter, a pointer target, a field, a global, a type
