@@ -32,17 +32,25 @@
 #   P  the dispatcher is preferred on the every-target path too: a bundle reading O_RDWR with
 #      nothing declared records `syscalls` in round 1 (the -v trace), then `io` (the agnos arm)
 #      in round 2 — never `io` first.
-#   C  census: the live lib/ (this tree's) has no every-target tie beyond ALLOW below; every ALLOW
-#      row is still a tie (a fixed one is removed from the list); the census finds the fixture's
-#      `foo` tie in the hermetic snapshot (self-test), it read a floor of names, and the CLI
-#      refuses the first ALLOW row naming the same candidates (the two rules agree). Its reader
-#      is the CLI's own (cbt/srcscan.cyr, compiled here); the rule is re-derived in shell, so it
-#      cannot share a defect with `_distlib_symbol_owner`.
+#   C  census: the live lib/ (this tree's) has no every-target tie beyond ALLOW below (empty since
+#      6.7.12); every ALLOW row is still a tie (a fixed one is removed from the list); the census
+#      finds the fixture's `foo` tie in the hermetic snapshot (self-test), it read a floor of
+#      names, and the CLI refuses the first ALLOW row — or, with ALLOW empty, the first tie the
+#      census finds in the hermetic snapshot (a fixture's: `D3Z: aad3_decl zzd3_own` sorts
+#      first) — naming the same candidates (the two rules agree). Its reader is the CLI's own
+#      (cbt/srcscan.cyr, compiled here); the rule is re-derived in shell, so it cannot share a
+#      defect with `_distlib_symbol_owner`.
+#   W  issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md's repro verbatim: a bundle
+#      reading WS_OPEN with nothing declared records `ws` (ws_server.cyr includes ws.cyr and no
+#      longer declares the nine WS_* names, D11 2026-10-15): rc 0, the sidecar is exactly `ws`.
 # MUTATIONS (measured): CYRIUS_BIN=<0f733aea's CLI> (byte-order first restored) -> T RED ("distlib
 # exited 0 — the tie was settled by byte order (sidecar: dlt_one)"), and with T removed D RED
-# (exit 1, the self-check), with T and D removed P RED ("round 1: io recorded"), and C's live
-# cross-check RED (WS_CLOSED recorded `ws`); a new tie pair in lib/ -> C RED naming it; an ALLOW
-# row lib/ no longer has -> C RED ("remove it").
+# (exit 1, the self-check), with T and D removed P RED ("round 1: io recorded"), and C's
+# cross-check RED (6.7.11: WS_CLOSED recorded `ws`; 6.7.12, ALLOW empty, with T / D / P removed:
+# D3Z taken from aad3_decl, "the generated bundle does not compile"); a new tie pair in lib/ -> C
+# RED naming it; an ALLOW row lib/ no longer has -> C RED ("remove it"); ws_server.cyr's nine
+# `var WS_*` copies restored (6.7.11's lib/) -> C RED (the nine WS_* ties), and with C's new-tie
+# check removed W RED (rc 1, "more than one stdlib leaf could own it (ws, ws_server)").
 # Exit 77 when it could not run (no compiler, no CLI, the aarch64 compiler would not build).
 set -eu
 
@@ -118,18 +126,10 @@ echo "$OP" | grep -q "round 1: io recorded" && fail "P: io (a non-peer declarer)
 [ "$(leaves "$P")" = "syscalls io " ] || fail "P: the sidecar is [$(leaves "$P")], not [syscalls io] (io: O_RDWR's agnos arm)"
 
 # ── C: census of every-target ties in the live lib/ ──────────────────────────────────────
-# A tie that is ALLOWED here is a FILED issue, never a silent pass:
-#   ws / ws_server — both declare the WS_* opcode and state constants (an enum in ws.cyr, vars
-#   in ws_server.cyr). issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md
-ALLOW='WS_CLOSED: ws ws_server
-WS_CLOSING: ws ws_server
-WS_OPEN: ws ws_server
-WS_OP_BINARY: ws ws_server
-WS_OP_CLOSE: ws ws_server
-WS_OP_CONTINUATION: ws ws_server
-WS_OP_PING: ws ws_server
-WS_OP_PONG: ws ws_server
-WS_OP_TEXT: ws ws_server'
+# A tie that is ALLOWED here is a FILED issue, never a silent pass. One "NAME: cand cand" row per
+# tie. Empty since 6.7.12: the ws / ws_server WS_* tie (the only rows 6.7.11 listed) ended when
+# ws_server.cyr took the names from ws.cyr (row W).
+ALLOW=''
 cat > "$WORK/dump.cyr" <<'EOF'
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -252,22 +252,30 @@ _c_resolve() {  # <snap> <work> <leaf>: the dispatcher, or the leaf itself
 census "$ROOT/lib" "$WORK/cl" || fail "C: the census could not read $ROOT/lib"
 NM=$(cat "$WORK/cl/nmulti")
 [ "$NM" -ge 200 ] || fail "C: the census found only $NM names declared by two or more lib/ leaves — the reader is not reading (floor 200)"
-printf '%s\n' "$ALLOW" | LC_ALL=C sort > "$WORK/allow"
+printf '%s\n' "$ALLOW" | sed '/^$/d' | LC_ALL=C sort > "$WORK/allow"
 NEW=$(LC_ALL=C comm -23 "$WORK/cl/ties" "$WORK/allow")
 [ -z "$NEW" ] || fail "C: lib/ has an every-target tie the owner rule refuses — a consumer bundle using it gets 'Sidecar NOT written': $(echo "$NEW" | head -5 | tr '\n' ';') (fix lib/, or file it and add it to ALLOW)"
 GONE=$(LC_ALL=C comm -13 "$WORK/cl/ties" "$WORK/allow")
 [ -z "$GONE" ] || fail "C: ALLOW lists a tie lib/ no longer has — remove it: $(echo "$GONE" | tr '\n' ';')"
 census "$L" "$WORK/cf" || fail "C: the census could not read the fixture snapshot"
 grep -qx 'foo: dlt_one dlt_two' "$WORK/cf/ties" || fail "C: self-test — the census did not find the fixture's 'foo' tie: $(head -3 "$WORK/cf/ties" | tr '\n' ';')"
-# The census's rule and the CLI's agree on a LIVE tie: the first ALLOW row, through distlib.
+# The census's rule and the CLI's agree on a tie: the first ALLOW row (a live lib/ tie) through
+# distlib, or — ALLOW empty — the first tie the census found in the hermetic snapshot.
 A1=$(sed -n 1p "$WORK/allow")
-if [ -n "$A1" ]; then
-    an=${A1%%:*}; ac=$(echo "${A1#*: }" | sed 's/ /, /g')
-    A=$(mkproj a "fn orp_a(): i64 { return $an; }")
-    if OA=$(run_distlib "$A"); then fail "C: the CLI did not refuse the live tie $an (census: $ac): sidecar [$(leaves "$A")]"; fi
-    echo "$OA" | grep -qF "'$an' is undefined on every target, and more than one stdlib leaf could own it ($ac)" \
-        || fail "C: the CLI's refusal for $an does not name the census's candidates ($ac): $(echo "$OA" | grep -i error | head -2)"
-fi
+AK=live
+if [ -z "$A1" ]; then A1=$(sed -n 1p "$WORK/cf/ties"); AK=snapshot; fi
+[ -n "$A1" ] || fail "C: no tie to cross-check the CLI against (ALLOW empty and the snapshot census found none)"
+an=${A1%%:*}; ac=$(echo "${A1#*: }" | sed 's/ /, /g')
+A=$(mkproj a "fn orp_a(): i64 { return $an; }")
+if OA=$(run_distlib "$A"); then fail "C: the CLI did not refuse the $AK tie $an (census: $ac): sidecar [$(leaves "$A")]"; fi
+echo "$OA" | grep -qF "'$an' is undefined on every target, and more than one stdlib leaf could own it ($ac)" \
+    || fail "C: the CLI's refusal for $an does not name the census's candidates ($ac): $(echo "$OA" | grep -i error | head -2)"
 
-echo "PASS: distlib_owner_rule_shared (one owner rule on every target too: a tie is refused by name with no sidecar, an in-unit declarer is skipped, the dispatcher is preferred; census: $NM multi-declared lib/ names, $(wc -l < "$WORK/allow" | tr -d ' ') allowlisted ties, none new)"
+# ── W: the WS_* names have one owner (issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md)
+WSP=$(mkproj w 'fn orp_a(): i64 { return WS_OPEN; }')
+rc=0; OW=$(run_distlib "$WSP") || rc=$?
+[ "$rc" -eq 0 ] || fail "W: distlib exited $rc for a bundle reading WS_OPEN: $(echo "$OW" | grep -i error | head -3)"
+[ "$(leaves "$WSP")" = "ws " ] || fail "W: the sidecar is [$(leaves "$WSP")], not [ws] — WS_OPEN's one owner is lib/ws.cyr"
+
+echo "PASS: distlib_owner_rule_shared (one owner rule on every target too: a tie is refused by name with no sidecar, an in-unit declarer is skipped, the dispatcher is preferred; census: $NM multi-declared lib/ names, $(wc -l < "$WORK/allow" | tr -d ' ') allowlisted ties, none new, the CLI agrees on the $AK tie $an; WS_OPEN records ws)"
 exit 0

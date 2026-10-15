@@ -1831,7 +1831,7 @@ WebSocket client (RFC 6455): handshake upgrade, frame masking/unmasking, automat
 
 ### ws_server.cyr
 
-WebSocket server (RFC 6455). An HTTP handler (the sandhi fold's server) detects an upgrade request and calls `ws_server_handshake` on the connection; after the upgrade this module handles frame I/O, masking and control frames. Includes: syscalls, alloc, string, str, net, sha1, and the bayan (`base64_encode`) and sandhi (`sandhi_server_find_header`) folds.
+WebSocket server (RFC 6455). An HTTP handler (the sandhi fold's server) detects an upgrade request and calls `ws_server_handshake` on the connection; after the upgrade this module handles frame I/O, masking and control frames. Includes: syscalls, alloc, string, str, net, ws (the `WS_OP_*` opcodes and the `WS_OPEN` / `WS_CLOSING` / `WS_CLOSED` states are ws.cyr's enum constants since 6.7.12 — one home per name), sha1, and the bayan (`base64_encode`) and sandhi (`sandhi_server_find_header`) folds.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

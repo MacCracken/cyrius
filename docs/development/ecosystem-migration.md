@@ -32,6 +32,22 @@ does or builds; never a per-repo worklist.*
 
 ## 6.7.x — the language minor
 
+### 6.7.12
+
+#### The standard library
+
+**`lib/ws_server.cyr` includes `lib/ws.cyr` (D11, the user 2026-10-15)**
+- `lib/ws_server.cyr` no longer declares its own `WS_OP_CONTINUATION` / `WS_OP_TEXT` / `WS_OP_BINARY` / `WS_OP_CLOSE` /
+  `WS_OP_PING` / `WS_OP_PONG` / `WS_OPEN` / `WS_CLOSING` / `WS_CLOSED` vars: it includes `lib/ws.cyr`, and the nine
+  are ws.cyr's enum constants (same values). `include "lib/ws_server.cyr"` now also brings ws.cyr's client fns (DCE
+  drops the unused ones), `WS_CONNECTING` and `WS_RECV_MAX_PAYLOAD`. With ws_server alone, a write to one of the nine
+  (`WS_OPEN = 5;`: "cannot assign to enum constant 'WS_OPEN'") or its address (`&WS_OPEN`) stops compiling;
+  reading them is unchanged. A program that defines its own `WS_CONNECTING` or a `ws_*` fn beside ws_server now
+  gets the duplicate-definition warning (its own, the last definition, still wins).
+- `cyrius distlib` records `ws` for a bundle that reads a `WS_*` name with neither leaf in its unit (6.7.11 refused it
+  as a tie, "more than one stdlib leaf could own it (ws, ws_server)") — yantra's distlib converges again, its bundle
+  byte-identical.
+
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).

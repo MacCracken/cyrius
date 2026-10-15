@@ -1,0 +1,25 @@
+# ws_and_ws_server_constants_agree.tcyr — 6.7.12 (D11, the user 2026-10-15): a program including
+# BOTH lib/ws.cyr and lib/ws_server.cyr (client first) sees one set of WS_* names — ws.cyr's enum
+# constants, which ws_server.cyr now takes from it — and the client and server state accessors
+# agree on them. Twin of ws_server_constants_from_ws.tcyr (ws_server alone).
+# issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md. CHANGELOG [6.7.12]
+include "lib/ws.cyr"
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("ws + ws_server: one set of values");
+    assert_eq(WS_OP_CONTINUATION + WS_OP_TEXT + WS_OP_BINARY, 3, "opcodes 0 / 1 / 2");
+    assert_eq(WS_OP_CLOSE * 100 + WS_OP_PING * 10 + WS_OP_PONG, 900, "opcodes 8 / 9 / 10");
+    assert_eq(WS_CONNECTING * 1000 + WS_OPEN * 100 + WS_CLOSING * 10 + WS_CLOSED, 123, "states 0 / 1 / 2 / 3");
+    test_group("ws + ws_server: the client and server handles read the same state names");
+    var sv = ws_server_new(0 - 1);
+    assert_nonnull(sv, "ws_server_new");
+    assert_eq(ws_server_state(sv), WS_OPEN, "server handle: WS_OPEN");
+    store64(sv + 8, WS_CLOSED);
+    assert_eq(ws_state(sv), WS_CLOSED, "ws_state reads the server handle's +8 as WS_CLOSED");
+    return assert_summary();
+}
+var r = main();
+syscall(SYS_EXIT, r);

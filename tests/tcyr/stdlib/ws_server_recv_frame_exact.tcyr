@@ -1,8 +1,8 @@
 # ws_server_recv_frame_exact.tcyr — 6.6.10 (the CYRIUS-2026-0011 sweep): lib/ws_server.cyr's frame
 # reader reads every part EXACTLY and refuses a 64-bit length with its top bits set.
 #
-# The server twin of ws_recv_frame_short_reads.tcyr (a separate file because lib/ws.cyr and
-# lib/ws_server.cyr both define the WS_OP_* names). ws_server_recv_frame took ONE read for the
+# The server twin of ws_recv_frame_short_reads.tcyr (a separate file: lib/ws.cyr and
+# lib/ws_server.cyr each declared the WS_OP_* names until 6.7.12). ws_server_recv_frame took ONE read for the
 # header, the extended length and the mask, and a short one dropped the connection — so a
 # healthy client whose frame arrived split across segments was disconnected. And a 64-bit
 # length with its MSB set composed to a NEGATIVE len that passed both `len > max` bounds and
