@@ -522,53 +522,26 @@ fn EXORAA(S): i64 { EW(S, 0xCA000000); return 0; }    # eor x0, x0, x0 (zero)
 # a `csneg x0, x0, x0, cc` after the Mach-O ARM SVC: if carry clear
 # (success) x0 is unchanged; if carry set (error) x0 gets negated so
 # the returned value is -errno, matching Linux.
+# 6.7.12 (XLAT-3) — the x16 a LITERAL site's folded chain leaves (_esx_fold), or -1 when it is
+# not a compile-time fact: a variable number (the shared stub), a `#naked` inline chain, EEXIT.
+# The pipe / fork fixups below test x16 at run time; at a literal site that value is known, so
+# 42 keeps only the pipe halves, 2 only the fork half, and anything else (incl. the unrouted
+# head 0xFFFF) neither — 64 B a site. Only clone 220 -> 2 and pipe2 59 -> 42 (argc >= 2) produce
+# those values. ESCPOPS sets it around the one ESYSCALL it emits. CHANGELOG [6.7.12]
+var _esx_lit_x16 = 0 - 1;
 fn ESYSCALL(S): i64 {
     if (_TARGET_MACHO == 2) {
-        # v6.5.15 pipe fd-buffer fixup, PRE-svc half. Darwin `pipe` (BSD 42) returns the
-        # two fds in x0/x1 and never writes the caller's buffer, but the Linux-shaped
-        # caller passed an fds pointer in x0 (lib/process.cyr:71 `sys_pipe(&pipefd)`), and
-        # the svc destroys x0. Stash it now, recover it post-svc. Gated on x16 — ESYSXLAT
-        # runs immediately before this with nothing in between (see ESCPOPS), so x16
-        # already holds the TRANSLATED BSD number, and it is preserved across svc (the
-        # v6.0.34 fork fixup below has relied on that since it shipped). Push and pop are
-        # gated on the IDENTICAL condition, so sp is balanced on every path. 42 is unique
-        # in this chain — no other row produces movz x16,#42. Cross-arch twin of
-        # EMACHO_PROC_FIXUP's `cmp r11, 22` pipe arm in backend/x86/emit.cyr.
-        EW(S, 0xF100AA1F);      # cmp x16, #42  (pipe?)
-        EW(S, 0x54000041);      # b.ne +8       (not pipe → skip the stash)
-        EW(S, 0xF81F0FE0);      # str x0, [sp, #-16]!  (stash the fds buffer pointer)
+        var _fxp = 1;
+        var _fxf = 1;
+        if (_esx_lit_x16 >= 0) {
+            if (_esx_lit_x16 != 42) { _fxp = 0; }
+            if (_esx_lit_x16 != 2) { _fxf = 0; }
+        }
+        if (_fxp == 1) { _esx_pipe_pre(S); }
         EW(S, 0xD4001001);      # svc #0x80
         EW(S, 0xDA803400);      # csneg x0, x0, x0, cc  (error → -errno)
-        # v6.0.34 fork x1-fixup. macOS raw fork (BSD #2) returns the child
-        # pid in x0 for BOTH parent and child, distinguishing via x1
-        # (0=parent, 1=child). Without this, the child sees a nonzero x0
-        # and runs the parent path → broken fork. x16 holds the BSD num
-        # (preserved across svc) and x1 survives csneg, so: if fork and
-        # child, zero x0. Gated on x16==2 → no-op for every other syscall.
-        # No error test is needed here, unlike the x86 twin (EMACHO_PROC_FIXUP, 6.6.20): XNU's
-        # arm64 syscall return ZEROES x1 on an error, so a refused fork never reads as the child.
-        # Measured on ecb; held by tests/tcyr/crossos/fork_refused_stays_negative.tcyr.
-        EW(S, 0xF1000A1F);      # cmp x16, #2   (fork?)
-        EW(S, 0x54000081);      # b.ne +16      (not fork → skip 3)
-        EW(S, 0xF100043F);      # cmp x1, #1    (child?)
-        EW(S, 0x54000041);      # b.ne +8       (parent → skip 1)
-        EW(S, 0xD2800000);      # movz x0, #0   (child → return 0)
-        # v6.5.15 pipe fd-buffer fixup, POST-svc half (see the PRE-svc stash above). MUST
-        # sit AFTER the csneg: csneg consumes the carry flag svc sets, so nothing that
-        # writes the flags may come between them — the fork block above is already past
-        # it, and this block falls through from it (x16==2 and x16==42 are exclusive).
-        # ldr pops UNCONDITIONALLY inside the x16==42 arm so sp always re-balances; the
-        # b.lt then keeps -errno on failure and leaves the caller's buffer untouched,
-        # matching the x86 `js +8` guard. Success stores fd0→[buf] / fd1→[buf+4] as two
-        # 32-bit ints (the shape lib/process.cyr load32s) and returns 0.
-        EW(S, 0xF100AA1F);      # cmp x16, #42        (pipe?)
-        EW(S, 0x540000E1);      # b.ne +28            (not pipe → past the whole fixup)
-        EW(S, 0xF84107E2);      # ldr x2, [sp], #16   (recover the fds buffer ptr; always)
-        EW(S, 0xF100001F);      # cmp x0, #0
-        EW(S, 0x5400008B);      # b.lt +16            (error → keep -errno, no store)
-        EW(S, 0xB9000040);      # str w0, [x2]        (fds[0] = read end)
-        EW(S, 0xB9000441);      # str w1, [x2, #4]    (fds[1] = write end)
-        EW(S, 0xD2800000);      # movz x0, #0         (success → 0, Linux-shaped)
+        if (_fxf == 1) { _esx_fork_post(S); }
+        if (_fxp == 1) { _esx_pipe_post(S); }
         # v6.0.75: getrandom→getentropy return-normalization (0→len) is NOT done
         # here — the kernel clobbers x1 across a getentropy svc (verified on ecb:
         # x1 came back 0, unlike fork which WRITES x1), so len can't be recovered
@@ -578,6 +551,61 @@ fn ESYSCALL(S): i64 {
         return 0;
     }
     EW(S, 0xD4000001); return 0;                               # svc #0
+}
+
+fn _esx_pipe_pre(S): i64 {
+    # v6.5.15 pipe fd-buffer fixup, PRE-svc half. Darwin `pipe` (BSD 42) returns the
+    # two fds in x0/x1 and never writes the caller's buffer, but the Linux-shaped
+    # caller passed an fds pointer in x0 (lib/process.cyr:71 `sys_pipe(&pipefd)`), and
+    # the svc destroys x0. Stash it now, recover it post-svc. Gated on x16 — ESYSXLAT
+    # runs immediately before this with nothing in between (see ESCPOPS), so x16
+    # already holds the TRANSLATED BSD number, and it is preserved across svc (the
+    # v6.0.34 fork fixup below has relied on that since it shipped). Push and pop are
+    # gated on the IDENTICAL condition, so sp is balanced on every path. 42 is unique
+    # in this chain — no other row produces movz x16,#42. Cross-arch twin of
+    # EMACHO_PROC_FIXUP's `cmp r11, 22` pipe arm in backend/x86/emit.cyr.
+    EW(S, 0xF100AA1F);      # cmp x16, #42  (pipe?)
+    EW(S, 0x54000041);      # b.ne +8       (not pipe → skip the stash)
+    EW(S, 0xF81F0FE0);      # str x0, [sp, #-16]!  (stash the fds buffer pointer)
+    return 0;
+}
+
+fn _esx_fork_post(S): i64 {
+    # v6.0.34 fork x1-fixup. macOS raw fork (BSD #2) returns the child
+    # pid in x0 for BOTH parent and child, distinguishing via x1
+    # (0=parent, 1=child). Without this, the child sees a nonzero x0
+    # and runs the parent path → broken fork. x16 holds the BSD num
+    # (preserved across svc) and x1 survives csneg, so: if fork and
+    # child, zero x0. Gated on x16==2 → no-op for every other syscall.
+    # No error test is needed here, unlike the x86 twin (EMACHO_PROC_FIXUP, 6.6.20): XNU's
+    # arm64 syscall return ZEROES x1 on an error, so a refused fork never reads as the child.
+    # Measured on ecb; held by tests/tcyr/crossos/fork_refused_stays_negative.tcyr.
+    EW(S, 0xF1000A1F);      # cmp x16, #2   (fork?)
+    EW(S, 0x54000081);      # b.ne +16      (not fork → skip 3)
+    EW(S, 0xF100043F);      # cmp x1, #1    (child?)
+    EW(S, 0x54000041);      # b.ne +8       (parent → skip 1)
+    EW(S, 0xD2800000);      # movz x0, #0   (child → return 0)
+    return 0;
+}
+
+fn _esx_pipe_post(S): i64 {
+    # v6.5.15 pipe fd-buffer fixup, POST-svc half (see the PRE-svc stash above). MUST
+    # sit AFTER the csneg: csneg consumes the carry flag svc sets, so nothing that
+    # writes the flags may come between them — the fork block above is already past
+    # it, and this block falls through from it (x16==2 and x16==42 are exclusive).
+    # ldr pops UNCONDITIONALLY inside the x16==42 arm so sp always re-balances; the
+    # b.lt then keeps -errno on failure and leaves the caller's buffer untouched,
+    # matching the x86 `js +8` guard. Success stores fd0→[buf] / fd1→[buf+4] as two
+    # 32-bit ints (the shape lib/process.cyr load32s) and returns 0.
+    EW(S, 0xF100AA1F);      # cmp x16, #42        (pipe?)
+    EW(S, 0x540000E1);      # b.ne +28            (not pipe → past the whole fixup)
+    EW(S, 0xF84107E2);      # ldr x2, [sp], #16   (recover the fds buffer ptr; always)
+    EW(S, 0xF100001F);      # cmp x0, #0
+    EW(S, 0x5400008B);      # b.lt +16            (error → keep -errno, no store)
+    EW(S, 0xB9000040);      # str w0, [x2]        (fds[0] = read end)
+    EW(S, 0xB9000441);      # str w1, [x2, #4]    (fds[1] = write end)
+    EW(S, 0xD2800000);      # movz x0, #0         (success → 0, Linux-shaped)
+    return 0;
 }
 
 # === PIE-safe PC-relative addressing (Mach-O ARM) ===
@@ -1941,7 +1969,12 @@ fn _esx_fold(S, st, lit): i64 {
     var cur = _esx_walk(cb, p, en, lit, st);
     var out = _esx_wout;
     # Mach-O: every body ends in movz x16 (checked above), so the head matters only on a miss.
-    if (_TARGET_MACHO == 2) { if (_esx_whit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; } }
+    # The x16 the folded words leave is a compile-time fact here, and ESYSCALL drops the pipe /
+    # fork fixups it cannot need (XLAT-3, _esx_lit_x16).
+    if (_TARGET_MACHO == 2) {
+        if (_esx_whit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; }
+        _esx_lit_x16 = _esx_wx16;
+    }
     SCP(S, out);
     return cur;
 }
@@ -1952,17 +1985,23 @@ fn _esx_fold(S, st, lit): i64 {
 # value. out >= 0 copies each kept body down to `out` (the fold — never past the read cursor,
 # since only kept words are written); out < 0 writes nothing (a query). Returns the final x8;
 # leaves the end of the copied words in _esx_wout and whether any row matched in _esx_whit.
+# Mach-O: _esx_wx16 is the x16 the kept words leave — the last kept body's final `movz x16`
+# (every Mach-O body ends in one, _esx_body_bad), 0xFFFF (the chain head) when no row matched,
+# and -1 when that body branches, so its end is not straight-line (no shipped row does).
 var _esx_wout = 0;
 var _esx_whit = 0;
+var _esx_wx16 = 0;
 fn _esx_walk(cb, p, en, n, out): i64 {
     var cur = n;
     var hit = 0;
+    var x16 = 0xFFFF;
     var q = p;
     while (q < en) {
         var src = (load32(cb + q) >> 10) & 0xFFF;
         var e = q + 4 + ((load32(cb + q + 4) >> 5) & 0x7FFFF) * 4;
         if (src == cur) {
             hit = 1;
+            x16 = _esx_body_x16(cb, q + 8, e);
             if (out >= 0) {
                 var r = q + 8;
                 while (r < e) {
@@ -1978,7 +2017,24 @@ fn _esx_walk(cb, p, en, n, out): i64 {
     }
     _esx_wout = out;
     _esx_whit = hit;
+    _esx_wx16 = x16;
     return cur;
+}
+# The x16 body [bs, be) leaves: its final `movz x16, #d` gives d; -1 when the body holds a branch
+# (B, B.cond, CBZ/CBNZ, TBZ/TBNZ — the forms _esx_body_bad admits) or ends otherwise.
+fn _esx_body_x16(cb, bs, be): i64 {
+    var o = bs;
+    while (o < be) {
+        var w = load32(cb + o);
+        if ((w & 0xFC000000) == 0x14000000) { return 0 - 1; }
+        if ((w & 0xFF000010) == 0x54000000) { return 0 - 1; }
+        if ((w & 0x7E000000) == 0x34000000) { return 0 - 1; }
+        if ((w & 0x7E000000) == 0x36000000) { return 0 - 1; }
+        o = o + 4;
+    }
+    var lw = load32(cb + be - 4);
+    if ((lw & 0xFFE0001F) == 0xD2800010) { return (lw >> 5) & 0xFFFF; }
+    return 0 - 1;
 }
 
 # ⛔ 6.7.12 — A RAW LITERAL INSIDE A NATIVE-AARCH64 REGION THAT A COMPAT ROW RENUMBERS IS WARNED.
@@ -2240,10 +2296,12 @@ fn ESCPOPS(S, n, lit): i64 {
     }
     _esx_argc = n;          # the Mach-O pointer emulations key on it (EMACHO_NANOSLEEP_ARM, _esx_short)
     var xst = GCP(S);
+    _esx_lit_x16 = 0 - 1;   # unknown unless the fold sets it (Mach-O, a literal site)
     if (lit >= 0) { ESYSXLAT(S); _esx_fold(S, xst, lit); }   # a compile-time number: keep what runs
     else { _esx_stub_site(S, n); }                         # else: one shared stub per class
     _esx_argc = 7;
     ESYSCALL(S);
+    _esx_lit_x16 = 0 - 1;
     return 0;
 }
 
