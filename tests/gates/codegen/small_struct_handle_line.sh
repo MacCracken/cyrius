@@ -127,7 +127,12 @@
 # g: u8; b: u8; a: u8; }` from 32 B to 4, so `var c = A + B; c.g = 1;` was refused. Its runtime half is
 # tests/tcyr/crossos/struct_operator_result_binding.tcyr (the C4 case, every shape against its 16 B twin,
 # the operator's own return type, sizes 1..7 B, top level):
-#   R8 that file on the same legs as R1, N derived from it (floor 39; 6.7.11: the leading-call rows)
+#   R8 that file on the same legs as R1, N derived from it (floor 80; 6.7.11: the leading-call rows; and the
+#      user's decision (a), 2026-10-13: every whole struct result — a method chain and an if-expression of 8 B or
+#      less, a 9-16 B operator / method result in parentheses — binds the struct, the `u` / `m` / `i` / `p` rows)
+#   B3 (x86) the issue's three repros verbatim (u1 20, u2 7, u3 41); an integer-ending chain stays untyped; `c + 1`
+#      dispatches (refused with no S_add, the word + 1 through 6.7.10); `take(c)` of a 16 B wrap passes the struct
+#      (SIGSEGV through 6.7.10); a scalar annotation keeps the first word
 #   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
 #      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
 #      — and (6.7.11, issues/2026-10-08-struct-operator-results.md #1) after a LEADING CALL: `var d = mk8(10)
@@ -463,6 +468,18 @@
 # issues/2026-10-08-struct-operator-results.md #1):
 #   MV1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED 2: B2 8 B and 16 B (compiled:
 #                                                      d took mk8's / mkh's struct); R8 green (an untyped value reads alike)
+# 6.7.11 UNTYPED-BINDING MUTATION LEDGER (2026-10-14, the same method; R8's `u` / `m` / `i` / `p` rows and B3,
+# issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md, the user's decision (a) 2026-10-13: MB4
+# above is the rule now — `_sc_op_whole` became `_sc_small_whole`, any whole result of 8 B or less):
+#   the tree before (85c648c3)                       -> RED 14: R8 does not build x7 (`c.v`: "no struct type in scope
+#                                                      for 'c'"), B3 u1 u2 u3 (refused), the two `c + 1` refusals and
+#                                                      the S8_add row (21, 8: the word + 1), take(c) (139)
+#   MU1 `_sc_small_whole` an OPERATOR's record only (6.7.10's `_sc_op_whole` / `_sc_post_op` span, the peel kept)
+#                                                   -> RED 12: R8 does not build x7 (the `m` / `i` rows), B3 u1 u2, the
+#                                                      two `c + 1` refusals and the S8_add row
+#   MU2 `_scv_arm` without its untyped peel           -> RED 9: R8 does not build x7 (the `p` rows), B3 u3 and take(c)
+#   MU3 `_dyn_want` without its `_scv_un` test         -> RED 1: B3's dyn row (BUILT: a copy); dyn_checked.sh V4d and
+#                                                      struct_receive_inference_checked.sh D1 x4 RED too
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -698,9 +715,9 @@ done
 TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
 [ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
 NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
-BFLOOR=39
+BFLOOR=80
 if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
-echo "R8. $TB ($NB rows: an untyped binding of a struct-returning operator takes the struct type)"
+echo "R8. $TB ($NB rows: an untyped binding of a whole struct result takes the struct type)"
 for leg in $XLEGS $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
     run_leg "$leg" "$TB" "$D/ob_$n"
@@ -931,7 +948,7 @@ crow "CQ6 l = pu + k (16 B) refused naming the pointer" "refuse:cannot copy 'pu'
 crow "CQ7 l = pi + 0 (pi: *i64) into a struct value stays its word" 1 \
   'struct S8 { v; }\nvar XI = 4;\nfn f() { var pi: *i64 = &XI; var l: S8; l.v = 1; l = pi + 0; return l.v == pi; }\nsyscall(60, f());\n'
 
-echo "B. an untyped binding of an operator result (x86)"
+echo "B. an untyped binding of an operator result, a method chain, an if-expression, a wrap (x86)"
 crow "B1 the C4 case: var c = A + B; c.g = 1; c + c" 111 \
   'struct C4 { r: u8; g: u8; b: u8; a: u8; }\nfn C4_add(a: C4, b: C4): C4 { var r: C4; r.r = a.r + b.r; r.g = a.g + b.g; r.b = a.b + b.b; r.a = a.a + b.a; return r; }\nfn f() { var A = C4 { 1, 2, 3, 4 }; var B = C4 { 10, 20, 30, 40 }; var c = A + B; c.g = 1; var d = c + c; var k = 0; if (c.r == 11) { if (c.g == 1) { if (c.b == 33) { if (c.a == 44) { k = k + 1; } } } } if (d.g == 2) { if (d.a == 88) { k = k + 10; } } if (A.g == 2) { k = k + 100; } return k; }\nsyscall(60, f());\n'
 crow "B2 var r = a - b with S8_sub returning i64: r untyped" "refuse:no struct type in scope for 'r'" \
@@ -942,6 +959,26 @@ crow "B2 var d = mk8(10) - s, a LEADING CALL, S8_sub returning i64: d untyped (6
   'struct S8 { v; }\nfn S8_sub(a: S8, b: S8): i64 { return a.v - b.v; }\nfn mk8(n): S8 { var r: S8; r.v = n; return r; }\nfn f() { var s = S8 { 3 }; var d = mk8(10) - s; return d.v; }\nsyscall(60, f());\n'
 crow "B2 its 16 B twin" "refuse:no struct type in scope for 'd'" \
   'struct H { v; w; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn mkh(n): H { var r: H; r.v = n; r.w = 0; return r; }\nfn f() { var s = H { 3, 0 }; var d = mkh(10) - s; return d.v; }\nsyscall(60, f());\n'
+U1='struct S8 { v; }\nfn S8_d(self: *S8): S8 { var r: S8; r.v = self.v * 2; return r; }\nfn main(): i64 { var a: S8; a.v = 5; var c = a.d().d(); return c.v; }\nsyscall(60, main());\n'
+U2='struct S8 { v; }\nfn mk(n): S8 { var r: S8; r.v = n; return r; }\nfn main(): i64 { var k = 1; var c = if (k == 1) { mk(7) } else { mk(9) }; return c.v; }\nsyscall(60, main());\n'
+U3='struct S16 { v; w; }\nfn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }\nfn S16_m(self: *S16): S16 { var r: S16; r.v = self.v + 1; r.w = 2; return r; }\nfn main(): i64 { var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20;\n    var c = (a + b); var e = (a.m()); return c.v + c.w + e.v; }\nsyscall(60, main());\n'
+crow "B3 u1: var c = a.d().d(); c.v at 8 B (the issue's repro, verbatim: refused through 6.7.10)" 20 "$U1"
+crow "B3 u2: var c = if (k == 1) { mk(7) } else { mk(9) }; c.v (the issue's repro, verbatim: refused)" 7 "$U2"
+crow "B3 u3: var c = (a + b); var e = (a.m()); at 16 B (the issue's repro, verbatim: refused)" 41 "$U3"
+crow "B3 a chain ENDING in an integer method stays untyped: var c = a.d().n(); c.v" "refuse:no struct type in scope for 'c'" \
+  'struct S8 { v; }\nfn S8_d(self: *S8): S8 { var r: S8; r.v = self.v * 2; return r; }\nfn S8_n(self: *S8): i64 { return self.v; }\nfn f() { var a: S8; a.v = 5; var c = a.d().n(); return c.v; }\nsyscall(60, f());\n'
+crow "B3 var c = a.d().d(); c + 1 with no S8_add dispatches now (21 through 6.7.10, the word + 1)" "refuse:undefined function 'S8_add'" \
+  'struct S8 { v; }\nfn S8_d(self: *S8): S8 { var r: S8; r.v = self.v * 2; return r; }\nfn f() { var a: S8; a.v = 5; var c = a.d().d(); return c + 1; }\nsyscall(60, f());\n'
+crow "B3 ... with S8_add(a: S8, b: i64): the dispatch, 2001 % 256" 209 \
+  'struct S8 { v; }\nfn S8_d(self: *S8): S8 { var r: S8; r.v = self.v * 2; return r; }\nfn S8_add(a: S8, b: i64): i64 { return a.v * 100 + b; }\nfn f() { var a: S8; a.v = 5; var c = a.d().d(); return c + 1; }\nsyscall(60, f());\n'
+crow "B3 the if-expression's c + 1 with no S8_add dispatches now (8 through 6.7.10)" "refuse:undefined function 'S8_add'" \
+  'struct S8 { v; }\nfn mk(n): S8 { var r: S8; r.v = n; return r; }\nfn f() { var k = 1; var c = if (k == 1) { mk(7) } else { mk(9) }; return c + 1; }\nsyscall(60, f());\n'
+crow "B3 var c = (a + b) at 16 B into a by-value parameter: take(c) (SIGSEGV through 6.7.10: the first word as the address)" 154 \
+  'struct S16 { v; w; }\nfn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }\nfn take(s: S16): i64 { return s.v * 10 + s.w; }\nfn f() { var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20; var c = (a + b); return take(c) % 256; }\nsyscall(60, f());\n'
+crow "B3 a whole DYN method result in an untyped wrap keeps V4's refusal: var x = (o.me());" "refuse:a dyn Show result used as a value" \
+  'include "lib/alloc.cyr"\ntrait Show { fn show(self): i64; fn me(self): dyn Show; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } fn me(self): dyn Show { var o: dyn Show = self; return o; } }\nfn f(o: dyn Show): i64 { var x = (o.me()); return 0; }\nsyscall(60, 0);\n'
+crow "B3 var c: i64 = (a + b) at 16 B: a scalar annotation keeps the first word" 13 \
+  'struct S16 { v; w; }\nfn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }\nfn f() { var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20; var c: i64 = (a + b); return c; }\nsyscall(60, f());\n'
 
 echo "F. a field / dereference left operand refused exactly as a struct variable is (x86)"
 crow "F1 w.s + 1 with no S8_add refused" "refuse:undefined function 'S8_add'" \

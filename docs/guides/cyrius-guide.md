@@ -1885,9 +1885,17 @@ global keeps the result's word at every size. So does a comparison, and so does 
 LEADING CALL (6.7.11): a call's struct types the binding only when the call is the whole initialiser —
 through 6.7.10 `var r = mk3(4) - s;` with an integer `P3_sub` took `mk3`'s `P3`, so `r.x` dereferenced
 the integer, and `var r = mk2(1) == p; return r;` returned a 16-byte struct from an 8-byte slot; both
-are refused now (*no struct type in scope for 'r'*, *... got `r`*). ⚠ A 9-16 byte result in parentheses (`var c = (a +
-b);`) is still an untyped word (it has no temporary to name): write `var c: T = (a + b);` or drop
-the parentheses.
+are refused now (*no struct type in scope for 'r'*, *... got `r`*).
+
+The same rule holds for **every whole struct result** (6.7.11, the user's decision of 2026-10-13): a
+method chain of 8 bytes or less (`var c = a.d().d();`), an if-expression whose branches are a struct of 8
+bytes or less (`var c = if (k == 1) { mk(7) } else { mk(9) };`) and a 9-16 byte operator or method result
+in parentheses (`var c = (a + b);`, `var e = (a.m());`) each declare `c` the struct, as the annotated
+form does and as a single method and the same chain over 8 bytes always did. Through 6.7.10 each was an
+untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the word (now it dispatches
+`S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
+first word as its address. A method chain ending in an integer method stays untyped; a scalar
+annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,

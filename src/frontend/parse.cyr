@@ -1402,10 +1402,9 @@ var _sc_beg = 0 - 1;    # first token of the last recorded struct-valued call
 var _sc_end = 0 - 1;    # the token after it
 var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
 var _sc_sid = 0;        # the struct it returned
+var _scv_un = 0 - 1;    # 6.7.11: the token an untyped declaration's wrap stepped to (`_scv_un_peel`)
 var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
 var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
-var _sc_opb = 0 - 1;    # 6.7.10: the span of the last <= 8 B record an OPERATOR made (`_sc_post_op`)
-var _sc_ope = 0 - 1;
 # The span of the last >16 B call `_sc_pre` REFUSED at top level (not recorded above, so no
 # destination re-refuses it): a positional literal's nested field takes it as the whole field,
 # instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]

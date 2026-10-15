@@ -852,15 +852,15 @@ fn _var_rhs_msid(S, ti): i64 {
     return rs;
 }
 # The untyped declaration's type, judged once its initialiser at `start` is parsed (`sid0` the type the
-# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): an OPERATOR's
-# struct result of 8 B or less (`_sc_op_whole`, which wins over a leading call's type, as over 8 B), else
+# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
+# result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
 fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
-    var os = _sc_op_whole(S, start);
+    var os = _sc_small_whole(S, start);
     if (os > 0) { return os; }
     if (sid0 != 0) { return sid0; }
     return _var_rhs_mchain(S, start, GTI(S));
@@ -869,15 +869,17 @@ fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
 # user's decision 12, 2026-10-12), as over 8 B, where the result's temporary BECOMES `c` (`_sc_var_receive`).
 # Of 8 B or less the result is a value in rax with no temporary, so `c` was an untyped word: `c.g` was "no
 # struct type in scope for 'c'" and `c + c` added integers — and 6.7.10's packed fields moved `C4 { r: u8;
-# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. The struct of
-# the whole initialiser [start, cursor) when it is one operator dispatch's result of 8 B or less (inside any
-# wrap; `_sc_post_op` noted it), else 0. A method's or an if-expression's result is not an operator's. A
-# global does not read it (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over
-# 8 B. CHANGELOG [6.7.10]
-fn _sc_op_whole(S, start): i64 {
+# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. CHANGELOG [6.7.10]
+# ⛔ 6.7.11 — AND ANY WHOLE STRUCT RESULT OF 8 B OR LESS, not only an operator's (the user's decision (a),
+# 2026-10-13: decision 12 extended): a method chain `var c = a.d().d();` and an if-expression of struct
+# branches `var c = if (k) { mk(7) } else { mk(9) };` bound an untyped word (`c.v` refused, `c + 1` added to
+# it), where a single method (6.7.0 A5) and the same chain over 8 B were typed
+# (issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). The struct of the whole
+# initialiser [start, cursor) when it is one recorded result of 8 B or less in rax (`_sc_whole` -3: an
+# operator dispatch, a method, an if-expression; inside any wrap), else 0. A global does not read it
+# (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over 8 B.
+fn _sc_small_whole(S, start): i64 {
     if (_sc_whole(S, start) != 0 - 3) { return 0; }
-    if (_sc_beg != _sc_opb) { return 0; }
-    if (_sc_end != _sc_ope) { return 0; }
     return _sc_sid;
 }
 # 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
@@ -5481,7 +5483,7 @@ fn _gvi_expr(S, gps): i64 {
     if (gps == 0) { PCMPE(S); return 0; }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
-    var w = _scv_arm(S, gps);
+    var w = _scv_arm(S, gps, 0);
     PCMPE(S);
     _scv_disarm(S, w);
     _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
@@ -7539,7 +7541,7 @@ fn PARSE_VAR(S): i64 {
     # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
-    var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
+    var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
     PCMPE(S);
     _scv_disarm(S, scv_prev);
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value

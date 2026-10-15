@@ -2233,7 +2233,7 @@ fn _dyn_dst_chk(S, st, dt): i64 {
 fn _dyn_want(S, ti0): i64 {
     var nt = TOKTYP(S, GTI(S));
     if (nt != 5 && nt != 31 && nt != 11 && nt != 14) { return 0; }
-    if (_sc_want == ti0) { return 1; }
+    if (_sc_want == ti0) { if (_scv_un != ti0) { return 1; } }   # 6.7.11: not through an untyped decl's wrap
     return _dyn_wraps(S, _dyn_rw, ti0);
 }
 # 1 = `w` is `ti0`, or opens only `(` up to it.
@@ -7453,7 +7453,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # found bite 5's flat 0 stepped a `: *i32` result by 1. The `+` / `-` loop takes it as its left
     # step (`v + q + 1`), and the `*` / `/` loop skips its own reset (`v * q + 1`). CHANGELOG [6.7.9]
     SPSC(S, _fn_ret_ps(ofi));
-    _sc_post_op(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
+    _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
 
