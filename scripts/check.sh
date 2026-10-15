@@ -2272,6 +2272,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh"
 # <entry>`, no build/ created): it skipped the compile, printed `package ready: build/<out>` and
 # exited 0 with no artifact. A real entry builds byte-identical to `cyrius build`.
 _chk_gate "$ROOT/tests/gates/toolchain/package_missing_entry.sh"
+# 6.7.12 — cyrius_type_audit counts a generic fn (`fn g<T>(..)`): it required `(` right after the
+# name, so a public generic fn was missing from the counts and the unannotated list. The filed
+# repro (2/2) and the shapes (bounded, nested-generic parameter, blanks around `<..>`).
+_chk_gate "$ROOT/tests/gates/toolchain/type_audit_generic_fns.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

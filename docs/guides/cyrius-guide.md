@@ -4761,7 +4761,9 @@ declaration with the same reader as `cyrius header`, `coverage` and the LSP
 `cyrius header`, `cyrius api-surface` and the LSP balance a generic type's `<` `>` in a
 parameter (`p: Pair<i64, i64>` is one parameter; after the parameter's `=` a `<` is the
 operator), and `cyrius header` writes a variadic tail as C's `...` and a fully variadic
-`fn f(...)` as `f(void)`. Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
+`fn f(...)` as `f(void)`. Since 6.7.12 `cyrius type-audit` counts a generic fn (`fn g<T>(a: T)`,
+blanks around the `<..>` allowed as the compiler allows them; it required the `(` right after
+the name, so a public generic fn was missing from its counts). Since 6.7.11 `cyrius header` also reads a fn's RETURN type (it printed
 `cyr_val f(..)` for every fn): a scalar, a pointer, `Str` and a struct of 8 bytes or less stay
 `cyr_val`; a struct of 9-16 bytes and a `dyn Tr` are `cyr_val2` (two int64 words, as cycc returns
 them in rax:rdx / AAPCS64 x0:x1) under `#ifndef _WIN64` — Win64 C returns 16 bytes through a hidden
