@@ -306,7 +306,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A parameter type refused by the 6.7.11 type reader still drops its default: `fn f(a: 5 = 0)` + `f()` gives a second error, "'f' expects 1 argument, got 0"](2026-10-14-refused-parameter-type-default-cascades-arity-error.md)
 - [`var n: i64 = fncall1(&mk3, 5);` (a struct over 8 B through a known fn pointer into a scalar annotation) compiles and reads the first field, where `var n: i64 = mk3(5);` is refused (D24)](2026-10-14-scalar-annotation-from-known-fn-pointer-struct-call-reads-first-field.md)
 
-**6.7.13 — Break 2, repair 3: struct values** (71)
+**6.7.13 — Break 2, repair 3: struct values** (75)
 
 - [`gp().n = 5` through a `*T`-returning call is refused as "the result is a temporary"](2026-10-08-field-store-through-pointer-returning-call-refused.md)
 - [An inline `Str` (from a `Str { .. }` literal) used as a `Str` value passes its `data` word, not a handle: `f(t)` with `fn f(s: Str)` reads the wrong length, silently](2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md)
@@ -358,9 +358,11 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`*p = v` with an untyped value into a struct over 8 bytes writes only the first 8 bytes — confirm the reading of decision D4 (a)'s "at sizeof(S) bytes" — OPEN (a decision to confirm)](2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md)
 - [The value-form vector local refusal prints its fn-pointer hint for every source, and now reports an undefined function as a refused source](2026-10-14-vector-local-refusal-hint-every-source.md)
 - [A zero-size struct value into a struct-typed FIELD (`o.s = GP`, `o.s = gp()`, `o.s = (GP)`, `o.s = mk()`) or a zero-size `*p` used as a value still moves an 8-byte word: the field's neighbour is clobbered, and `take(*p)` reads 8 bytes past the object](2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md)
+- [6.7.12 changes that stop existing programs compiling (or change what they do) beyond the decisions' text — confirm each, or restore it](2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md)
 - [On an aarch64 Linux host, `cyrius build --win` writes an aarch64 ELF named `.exe` at rc 0, and `--aarch64` / `--target=aarch64-bare-metal-elf` fail looking for the x86_64-hosted `cycc_aarch64`](2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md)
 - [A SIGTERM'd `cyrius capacity` leaves `cap_err` in its temp dir and its compiler running](2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md)
 - [Inside a closure, a captured vector passed to `p: *Pt` / `p: *i64` passes the capture's address (exit 42), where the same local outside the closure is refused by name under D27](2026-10-15-captured-vector-into-other-pointer-kind-passes-capture-address.md)
+- [The CLI's kill handler has a fork-to-track window: a signal between `fork` and `_cbt_child_track` lets one child recreate `<out>.tmp.<pid>`](2026-10-15-cli-kill-handler-fork-to-track-window.md)
 - [`cyrius header` prints `cyr_val f(..)` for a fn that is pair-returning only through a `?` on a pair call](2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md)
 - [`cyrius header` prints `cyr_val v` for a SIMD vector PARAMETER, which cycc receives in a vector register](2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md)
 - [After D19's pin-move refusal, the closure files are already re-vendored at the new pin, so `deps --verify` fails on them while the refusal says only that the lock is unchanged](2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md)
@@ -371,6 +373,8 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A `cyrius distlib` killed mid-verify leaves its stdlib mirror `dist/.dlverify-<pid>/` (114 files) in the project](2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md)
 - [cyrius-lsp outside a project compiles a file from the server's working directory without its `#@incdir`, so a sibling `include` that `cyrius check` resolves is reported as `cannot open include file`](2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md)
 - [`cyrius build --pie` on a macOS host writes the same Mach-O as a plain build at rc 0 — neither Mach-O compiler reads CYRIUS_PIE](2026-10-15-macos-cli-pie-inert-mach-o-compilers-read-no-cyrius-pie.md)
+- [`cyrius package`: keep it, retire it, or give it an `.ark` writer?](2026-10-15-package-verb-keep-retire-or-ark-writer-decision.md)
+- [patra on Windows still treats a contended `xflock` as "no lock can be had": `_pt_flock_contended` accepts EAGAIN only on Linux / macOS](2026-10-15-patra-flock-contended-ignores-windows-xflock.md)
 - [A struct passed to a `*V` parameter (`rd(s)` with `p: *f64v2`, `s: Pt`) is accepted silently: its address is read as the vector](2026-10-15-struct-into-vector-pointer-parameter-accepted.md)
 - [A struct local passed to a word-pointer parameter (`ri(s)` with `p: *i64`) pushes its first field as the address](2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md)
 - [An untyped `var q = G;` (a struct global) or `var q = h;` (a handle) in a fn still binds a word — does D29's typed copy reach them?](2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md)
@@ -380,7 +384,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A vector call result or `*pv` into a pointer of another kind (`*Pt`, `*i64`), a vector local into a by-value struct parameter, and a vector METHOD or explicit-instance call result into `*V`, pass lane 0's bits as the address](2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md)
 - [Windows: a drive-rooted `[deps.X] path` is joined onto the manifest's directory](2026-10-15-windows-drive-rooted-dep-path-joined-onto-manifest-dir.md)
 
-**6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (71)
+**6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (72)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -435,6 +439,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [arm64 macOS `sys_mkdirat` / `sys_fchmodat` drop the dirfd: a relative path lands against the cwd](2026-10-15-arm64-macos-mkdirat-fchmodat-drop-the-dirfd.md)
 - [Call-site diagnostics name a method by its mangled fn name (`in a call to 'S_ri'`, `'S_two' expects 2 arguments`) and a generic call by its instance (`'g$i'`) — D27 / A2's vector refusals among them](2026-10-15-call-diagnostics-name-method-by-mangled-name.md)
 - [cx: a conditional jump (`jz` / `jnz`) over more than 128 KiB of bytecode wraps its 16-bit offset silently — the compile exits 0 and cxvm jumps to the wrong place](2026-10-15-cx-conditional-jump-past-128k-wraps-silently.md)
+- [cx: two raw `syscall(SYS_MMAP)` paths still hand back a HOST address as success — `mmap_stack` and freelist's `_fl_mmap`](2026-10-15-cx-raw-mmap-paths-return-host-address.md)
 - [cx: the static heap is still 128 KB (`lib/alloc_cx.cyr` `_CX_HEAP_SLOTS`) though cxvm's guest memory is 8 MiB since 6.7.12](2026-10-15-cx-static-heap-128k-while-guest-is-8-mib.md)
 - [cx: the pointer-taking wrappers outside D13's four still hand the host a guest address — and since the 8 MiB guest segment a guest address can be cxvm's own Linux image (`cyr_munmap(0x400000, …)` unmaps cxvm's code)](2026-10-15-cx-untranslated-pointer-wrappers-can-reach-cxvm-image.md)
 - [`cyrius-watch.sh` builds with raw `cat | cycc`: its output is unsigned and SIGKILLed on Apple Silicon, and an entry-relative `include` fails on every OS](2026-10-15-cyrius-watch-builds-with-raw-cycc-unsigned-on-apple-silicon.md)
