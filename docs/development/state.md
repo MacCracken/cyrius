@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.12 — slot open 2026-10-15** (6.7.11 tagged at `99c681d2` and pushed by the user, store slot refreshed from the tag). 6.7.11: Break 2 repair 1 — 71 issues closed in seven lanes over two waves, the folds sakshi 2.5.10 / sankoch 2.8.7 / patra 1.16.2 (release gate GREEN on `0601aff4`). |
-| **cycc** | x86 **2,223,320 B** (`.text` **2,003,672**) at 6.7.11, +108,944 B over 6.7.10's 2,114,376 B. `build/cycc-native-aarch64` **2,083,752 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,244,696 B** (`.text` **2,024,160**) at 6.7.12 (in flight, the merged lanes), +21,376 B over 6.7.11's 2,223,320 B. `build/cycc-native-aarch64` **2,150,672 B**. Dead-code floor: re-derived at the gate. |
 | **Bootstrap / cross-OS** | 6.7.11: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on REAL hardware through `scripts/release-gate.sh` (on `0601aff4`). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.11 `release-gate.sh` GREEN (2026-10-14; a first run on `315d5e4a` stopped to fold patra 1.16.2): check.sh 503 of 503 shell gates, the driver 131 of 131, the 2 named agnos-parity SKIPs. self_compile 1,526 ms (A/B 6.7.10 1,437 → 6.7.11 1,514 ms). |
 | **Corpus** | **589** `.tcyr` (**291** in `crossos/`) · **106** `lib/*.cyr` · **499** shell gates under `tests/gates/<bucket>/` · api-surface **5,850**. |
