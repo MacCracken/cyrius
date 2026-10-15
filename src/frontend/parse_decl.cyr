@@ -6767,7 +6767,7 @@ fn PARSE_VAR(S): i64 {
             # u128 type
             scalar_type = 16;
             STI(S, GTI(S) + 1);
-        } elif (PEEKT(S) == 2 && (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF) == 0x006563696C73) {
+        } elif (_sl_word_builtin(S) == 1) {   # 6.7.11: a program's own `struct slice` wins (see there)
             # v5.8.10 §2: `slice<T>` ident form — 16-byte {ptr,len} slot.
             # v5.8.14 §6: extract element width from <T> for §7 indexing.
             # Bytes for "slice\0" = 0x006563696C73 (little-endian load64

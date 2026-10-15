@@ -1929,6 +1929,12 @@ the helper API — `slice_set(&s, ..)`, `slice_ptr(&s)` / `slice_len(&s)`, `slic
 as before: subscript and dot syntax fire on **fn-local** slices only. See `lib/slice.cyr` for the
 full helper list.
 
+**`slice` is not reserved.** A program may declare its own `struct slice` (or `struct slice<T>`), and
+then the name is that struct everywhere — a parameter, a pointer target, a field, a global, a type
+argument and (6.7.11) a fn-local `var x: slice;` / `var y: slice<Pt>;`; the built-in slice stays
+reachable as `[T]`. Through 6.7.10 the fn-local annotation alone still meant the built-in 16-byte slot
+(`x.a`: "no struct type in scope for 'x'"; the user's decision (b), 2026-10-13).
+
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to
 `slice_ptr` / `slice_len` / `slice_eq` etc. without conversion.

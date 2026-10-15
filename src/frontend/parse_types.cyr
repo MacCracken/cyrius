@@ -2892,6 +2892,20 @@ fn _sl_ann_at(S, ti): i64 {
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     return 1;
 }
+# ⛔ 6.7.11 — PARSE_VAR's `slice` word, cursor on it: 1 for the built-in `slice<T>` / bare `slice` slot,
+# 0 when the program declares a `struct slice` (or `slice<T>`), which a fn-local annotation now names as
+# a parameter, a pointer target, a field, a global and a type argument already did (`_sl_ann_at`, 6.7.8
+# row K2) — the built-in stays reachable as `[T]`. The ladder compared the word before any struct
+# lookup, so `var x: slice = 0;` was the built-in 16-byte slot and `x.a` "no struct type in scope for
+# 'x'" (the user's decision (b), 2026-10-13). A helper, so PARSE_VAR's reference count does not grow
+# (cybs's per-fn ceiling). CHANGELOG [6.7.11] (issues/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+fn _sl_word_builtin(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var noff = PEEKV(S);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
 # Cursor on a slice type's first token: consumes it whole — `[ .. ]` with any nesting, or
 # `slice<..>` (`>>` closing two). Stops, consuming nothing more, at a token no type holds.
 fn _sl_ann_skip(S): i64 {

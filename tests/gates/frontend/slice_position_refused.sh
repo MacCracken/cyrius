@@ -27,6 +27,15 @@
 #   K   kept: the post-statement top-level slice compiles and runs (the helper API); a program's own
 #       `struct slice` as a parameter / pointer type; `g<slice<u8>>(0)` still compiles (6.7.7 reads it
 #       as an unbound type argument — reported, not changed here)
+#       K2b-K2f (6.7.11, the user's decision (b), 2026-10-13: a declared `struct slice` wins everywhere,
+#       the built-in stays reachable as `[T]`; issues/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+#       a FN-LOCAL `var x: slice` names the program's struct too — it was the built-in 16-byte slot
+#       ("no struct type in scope for 'x'", "uninitialized variable not allowed"): K2b the filed repro
+#       verbatim builds and runs as the same program with the struct renamed (`= 0` on a 24-byte struct is a
+#       null handle, 6.7.10: both 139); K2c `var x: slice;` is the 24-byte struct (14, the issue's row); K2d
+#       a generic `struct slice<T>`'s locals `slice<i64>` / `slice<Pt>` are its instances; K2e (kept: it compiled
+#       before) a field and both global zones of the type, with a `[u8]` local in the same file still the built-in;
+#       tests/tcyr/crossos/user_struct_named_slice.tcyr runs the shapes on every fork
 #   X   --syntax-only (cyrius lint's pre-pass) reports a slice parameter, once (a grammar refusal)
 #   R12 a captured slice subscripted in a closure (read, store); R13 a struct / u128 element store;
 #       R13b `OP=` on an f64 / f32 / bool element (the slice read is an untyped word); R10 a non-bool
@@ -59,6 +68,9 @@
 #   MR13b the float / bool `OP=` refusal dropped -> RED R13b1-R13b3 (they compile)
 #   MSK2  `_sl_ann_skip` steps one token of a `[..]` -> RED SR1 SR2 S1a S1c S1d S1e S1p1 S1p3 S1p4 S1p6
 #         S1p7 S2a S2c S3a S3c S4a S6a S6d S6e S6f X1 (the cascades)
+#   MSW   (6.7.11; a one-edit copy of the tree, its compiler built by the fixed one, this gate run from it with
+#         CYCC= it) `_sl_word_builtin` without its FINDSTRUCT test -> RED K2b K2c K2d (the built-in slot again: each
+#         refused, as through 6.7.10); K1-K4 and K2e green (K2e declares no fn-local of the type: it compiled before)
 #   (C2 review) the value file before it (its SPAWN rows expected only the default-mode line) -> RED Wh
 #         (8 checks)
 #   the C2-5 compiler (+ the IR=3 slice-read repair; before this bite) -> RED SR S1-S6 X R12 R13 R13b
@@ -194,6 +206,29 @@ exits k1 9 "K1: a top-level slice after the first statement (the helper API)" \
     "${SL}fn noop(): i64 { return 0; }\nvar BK: u8[4];\nnoop();\nvar GS: [u8] = 0;\nvar GT: slice<u8> = 0;\nslice_set(&GS, &BK, 4);\nslice_set(&GT, &BK, 5);\nsyscall(60, slice_len(&GS) + slice_len(&GT));\n"
 exits k2 7 "K2: a program's own \`struct slice\` as a parameter type and a pointer target" \
     'struct slice { a; }\nfn f(p: *slice): i64 { return p.a; }\nfn g(s: slice): i64 { return s.a; }\nvar B: i64[2];\nstore64(&B, 7);\nsyscall(60, f(&B));\n'
+# K2b-K2e (6.7.11): the program's own `struct slice` in a fn-local annotation
+KR="$ROOT/docs/development/issues/repros/2026-10-10-user-struct-named-slice-shadowed-in-locals.cyr"
+if [ ! -f "$KR" ]; then bad "K2b: $KR missing"
+else
+    sed 's/slice/slyce/g' "$KR" > "$T/k2b_ren.cyr"
+    rc=0; timeout 60 "$CC" < "$KR" > "$T/k2b.bin" 2> "$T/k2b.err" || rc=$?
+    rr=0; timeout 60 "$CC" < "$T/k2b_ren.cyr" > "$T/k2b_ren.bin" 2> /dev/null || rr=$?
+    if [ "$rc" -ne 0 ]; then bad "K2b: the filed repro verbatim: rc $rc: $(grep '^error' "$T/k2b.err" | head -1)"
+    elif [ "$rr" -ne 0 ]; then bad "K2b: the renamed control did not build (rc $rr)"
+    else
+        chmod +x "$T/k2b.bin" "$T/k2b_ren.bin"
+        g1=0; timeout 10 "$T/k2b.bin" > /dev/null 2>&1 || g1=$?
+        g2=0; timeout 10 "$T/k2b_ren.bin" > /dev/null 2>&1 || g2=$?
+        if [ "$g1" -eq "$g2" ]; then ok "K2b: the filed repro verbatim builds and runs as the renamed program (exit $g1 both: \`= 0\` is a null handle)"
+        else bad "K2b: the repro exits $g1, the renamed program $g2"; fi
+    fi
+fi
+exits k2c 14 "K2c: a fn-local \`var x: slice;\` is the program's 24-byte struct (the issue's 14)" \
+    'include "lib/syscalls.cyr"\nstruct slice { a; b; c; }\nfn f(s: *slice): i64 { return s.c; }\nfn main(): i64 {\n    var x: slice;\n    x.a = 5;\n    var B: i64[3];\n    store64(&B + 16, 9);\n    return f(&B) + x.a;\n}\nvar rc = main();\nsyscall(60, rc);\n'
+exits k2d 65 "K2d: a generic \`struct slice<T>\`'s locals \`slice<i64>\` / \`slice<Pt>\` are its instances (5 + 2 + 30 + 4 + 24)" \
+    'struct Pt { x; y; }\nstruct slice<T> { a: T; n; }\nfn main(): i64 {\n    var x: slice<i64>;\n    x.a = 5;\n    x.n = 2;\n    var y: slice<Pt>;\n    y.a.x = 30;\n    y.a.y = 4;\n    return x.a + x.n + y.a.x + y.a.y + sizeof(slice<Pt>);\n}\nsyscall(60, main());\n'
+exits k2e 65 "K2e: a field and both global zones of the program's slice type; a \`[u8]\` local beside them is the built-in" \
+    "${SL}struct slice { a; b; c; }\nstruct H { s: slice; k; }\nvar GZ: slice = slice { 0, 0, 0 };\nfn noop(): i64 { return 0; }\nfn main(): i64 {\n    var h: H;\n    h.s.b = 7;\n    h.k = 1;\n    GZ.c = 20;\n    var bk: u8[4];\n    store8(&bk + 2, 3);\n    var u: [u8] = 0;\n    slice_set(&u, &bk, 4);\n    return h.s.b + h.k + GZ.c + u[2] + slice_len(&u) + sizeof(slice);\n}\nnoop();\nvar GP: slice = slice { 0, 0, 0 };\nGP.a = 6;\nsyscall(60, main() + GP.a);\n"
 exits k3 8 "K3: \`g<slice<u8>>(0)\` compiles as before (an unbound type argument, 6.7.7 — reported, unchanged)" \
     "${SL}fn g<T>(x: T): i64 { return sizeof(T); }\nfn f(): i64 { return g<slice<u8>>(0); }\nsyscall(60, f());\n"
 exits k4 12 "K4: fn-local \`[T]\` / \`slice<T>\` / \`[*T]\` / \`[u128]\` / \`[T]\` at a generic T still declare" \
