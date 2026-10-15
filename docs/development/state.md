@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.10 — release gate GREEN 2026-10-13** (on `5eb7fb3c`; the user tags and pushes, then `sh scripts/install.sh --refresh-only` at the tagged commit): **B7** packed narrow fields + the handle line + size-independent struct copies, **P5-B** execution coverage, the 6.7.9 fold wave refolded. |
-| **cycc** | x86 **2,114,376 B** (`.text` **1,900,296**) at 6.7.10, +56,640 B over 6.7.9's 2,057,736 B. `build/cycc-native-aarch64` **1,950,240 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,223,320 B** (`.text` **2,003,672**) at 6.7.11, +108,944 B over 6.7.10's 2,114,376 B. `build/cycc-native-aarch64` **2,083,752 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
 | **Bootstrap / cross-OS** | 6.7.10: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on REAL hardware through `scripts/release-gate.sh` (on `5eb7fb3c`; cass also ran P5-B's coverage step). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.10 `release-gate.sh` GREEN (2026-10-13, the second run — the first went RED on 78 "Disk quota exceeded" writes from the shared per-user `/tmp` quota; re-run with `TMPDIR` on disk): check.sh 478 of 478 shell gates, the driver 131 of 131, the 2 named agnos-parity SKIPs. self_compile 1,529 ms (A/B 6.7.9 1,441 → 6.7.10 1,504 ms). |
 | **Corpus** | **573** `.tcyr` (**276** in `crossos/`) · **106** `lib/*.cyr` · **474** shell gates under `tests/gates/<bucket>/` · api-surface **5,838**. |
