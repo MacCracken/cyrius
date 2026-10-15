@@ -282,7 +282,7 @@ CLI argument parsing via /proc/self/cmdline. Includes: syscalls + alloc on Linux
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `args_init` | `args_init()` | Parse cmdline (call once) |
+| `args_init` | `args_init() → bytes` | Parse cmdline (call once); a negative errno when it cannot be read (6.7.12) |
 | `argc` | `argc() → count` | Number of arguments |
 | `argv` | `argv(n) → cstr` | Get argument n (0-based) |
 
