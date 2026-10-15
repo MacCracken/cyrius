@@ -153,8 +153,11 @@
 # unchanged), Pt / i32 / f64 instances, generics defined below the call, every path (var, assignment, tail,
 # argument, by name, not inlined, a `*Box<T>` carrier, a generic method, a struct receive, `unbox(..).y`),
 # `Pr<T, U>`, an outer `_gi_sc` kept across U's inner resolve, and the pair scans (`?` above a wrapper typed
-# through `unbox(mk1(p))`, `unbox(mk1<Pt>(p))`, `unbox(id(b))`, `id(id<Pt>(p))`). The filed repro and the
-# refusals that stay are struct_arg_type_refused.sh R18i-R18l.
+# through `unbox(mk1(p))`, `unbox(mk1<Pt>(p))`, `unbox(id(b))`, `id(id<Pt>(p))`) — also two and three
+# carriers down, read by path (the review's repro, rc 139: `unbox(unbox(mk1(mk1(p))))`, `unbox(unbox(bb))`
+# with `bb: Box<Box<Pt>>`, an explicit nested argument, an untyped `var bb = mk1(mk1(p))`, a `: T` generic
+# between, `Pr<Box<Pt>, i64>`) and the one-level untyped `var b = mk1(p); unbox(b)` (rc 139 since 6.7.8).
+# The filed repro and the refusals that stay are struct_arg_type_refused.sh R18i-R18l.
 # MUTATIONS (scratch tree, measured), each RED here:
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
@@ -188,6 +191,11 @@
 #       reached the base: "cannot pass 'bi' ...")
 #   MG21 (6.7.11) the pair scans' `_tok_sc_call` reading only the callee's recorded return, or without
 #       `_tok_sc_fwd`, or `_tok_gen_tp_sid` without the `<` arm -> rc 139 (G13's `?` above its wrapper)
+#   MG22 (6.7.11 review) `_tok_sc_carry` answering 0 (a `: U` callee's struct carrier not followed) -> rc 139
+#   MG23 (6.7.11 review) `_tok_sc_ann` without its `_tsp_walk` (`bb: Box<Box<Pt>>` read one level) -> rc 139
+#   MG24 (6.7.11 review) `_tok_sc_init` answering 0 (an untyped `var bb = mk1(..)` carrier) -> rc 139
+#   MG25 (6.7.11 review) `_tok_sc_tpq` ignoring the steps left (a `: G<U>` callee ends the path) -> rc 139
+#   MG26 (6.7.11 review) `_tok_ann_walk` without its `_tsp_walk` (an explicit `<Box<Box<Pt>>>`) -> rc 139
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -803,6 +811,26 @@ fn sc13_qc(n, d) { var v = sc13_unbc(n, d)?; return Ok(v + 44000); }
 fn sc13_unbc(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var u = unbox(gcr_id(b)); return u.hbx(d); }
 fn sc13_qd(n, d) { var v = sc13_unbd(n, d)?; return Ok(v + 55000); }
 fn sc13_unbd(n, d) { var p: Pt; p.x = n; p.y = 0; var u = gcr_id(gcr_id<Pt>(p)); return u.hbx(d); }
+# ... and two carriers down, a `G<G<X>>` (the review's repro: rc 139 — the scans named one level).
+fn sc13_qe(n, d) { var v = sc13_unbe(n, d)?; return Ok(v + 22000); }
+fn sc13_unbe(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(unbox(mk1(mk1(p)))); return u.hbx(d); }
+fn sc13_qf(n, d) { var v = sc13_unbf(n, d)?; return Ok(v + 33000); }
+fn sc13_unbf(n, d) { var p: Pt; p.x = n; p.y = 0; var b: Box<Pt> = mk1(p); var bb: Box<Box<Pt>> = mk1(b); var u = unbox(unbox(bb)); return u.hbx(d); }
+fn sc13_qg(n, d) { var v = sc13_unbg(n, d)?; return Ok(v + 44000); }
+fn sc13_unbg(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(unbox(mk1<Box<Pt>>(mk1(p)))); return u.hbx(d); }
+fn sc13_qh(n, d) { var v = sc13_unbh(n, d)?; return Ok(v + 55000); }
+fn sc13_unbh(n, d) { var p: Pt; p.x = n; p.y = 0; var bb = mk1(mk1(p)); var u = unbox(unbox(bb)); return u.hbx(d); }
+fn sc13_qi(n, d) { var v = sc13_unbi(n, d)?; return Ok(v + 66000); }
+fn sc13_unbi(n, d) { var p: Pt; p.x = n; p.y = 0; var b: Box<Pt> = mk1(p); var bb: Box<Box<Pt>> = mk1(b); var u = unbox(gcr_id(unbox(bb))); return u.hbx(d); }
+fn sc13_qj(n, d) { var v = sc13_unbj(n, d)?; return Ok(v + 77000); }
+fn sc13_unbj(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(unbox(unbox(mk1(mk1(mk1(p)))))); return u.hbx(d); }
+fn sc13_qk(n, d) { var v = sc13_unbk(n, d)?; return Ok(v + 88000); }
+fn sc13_unbk(n, d) { var p: Pt; p.x = n; p.y = 0; var b: Box<Pt> = mk1(p); var q: Pr<Box<Pt>, i64>; q.a = b; q.b = 1; q.n = 2; var u = unbox(gcr_fst(q)); return u.hbx(d); }
+fn sc13_ql(n, d) { var v = sc13_unbl(n, d)?; return Ok(v + 99000); }
+fn sc13_unbl(n, d) { var p: Pt; p.x = n; p.y = 0; var b = mk1(p); var u = unbox(b); return u.hbx(d); }
+fn sc13_qm(n, d) { var v = sc13_unbm(n, d)?; return Ok(v + 11000); }
+fn sc13_unbm(n, d) { var p: Pt; p.x = n; p.y = 0; var u = unbox(unbox(unbox(mk1<Box<Box<Pt>>>(mk1(mk1(p)))))); return u.hbx(d); }
+fn gcr_fst<A, B>(q: Pr<A, B>): A { var r: A = q.a; return r; }
 
 fn run_call_result_carrier(): i64 {
     test_group("a generic call's own result binds T (6.7.11)");
@@ -850,6 +878,28 @@ fn run_call_result_carrier(): i64 {
     assert_eq(t4 * 100000 + v4, 44002, "G13: ... `unbox(id(b))`");
     var t5, v5 = sc13_qd(6, 3);
     assert_eq(t5 * 100000 + v5, 55002, "G13: ... `id(id<Pt>(p))`");
+    var e1, x1 = sc13_qe(6, 2);
+    var e2, x2 = sc13_qe(6, 0);
+    assert_eq(e1 * 100000 + x1 + e2 * 1000000 + x2 * 10, 1000990 + 22003,
+        "G13: ... two carriers down, `unbox(unbox(mk1(mk1(p))))` (the review's repro: rc 139)");
+    var e3, x3 = sc13_qf(6, 3);
+    assert_eq(e3 * 100000 + x3, 33002, "G13: ... `unbox(unbox(bb))`, `bb: Box<Box<Pt>>` (rc 139)");
+    var e4, x4 = sc13_qg(6, 3);
+    assert_eq(e4 * 100000 + x4, 44002, "G13: ... `unbox(unbox(mk1<Box<Pt>>(mk1(p))))`, an explicit nested argument");
+    var e5, x5 = sc13_qh(6, 3);
+    assert_eq(e5 * 100000 + x5, 55002, "G13: ... `var bb = mk1(mk1(p)); unbox(unbox(bb))`, an untyped carrier");
+    var e6, x6 = sc13_qi(6, 3);
+    assert_eq(e6 * 100000 + x6, 66002, "G13: ... `unbox(id(unbox(bb)))`, a `: T` generic between");
+    var e7, x7 = sc13_qj(6, 3);
+    assert_eq(e7 * 100000 + x7, 77002, "G13: ... three carriers down");
+    var e8, x8 = sc13_qk(6, 3);
+    assert_eq(e8 * 100000 + x8, 88002, "G13: ... `unbox(fst(q))`, `q: Pr<Box<Pt>, i64>`");
+    var e0, x0 = sc13_qm(6, 3);
+    assert_eq(e0 * 100000 + x0, 11002, "G13: ... `unbox(unbox(unbox(mk1<Box<Box<Pt>>>(..))))`, a two-deep explicit argument");
+    var e9, x9 = sc13_ql(6, 3);
+    assert_eq(e9 * 100000 + x9, 99002, "G13: ... one carrier, `var b = mk1(p); unbox(b)` (rc 139 since 6.7.8)");
+    var bb: Box<Box<Pt>> = mk1(b);
+    assert_eq(unbox(unbox(bb)).x * 10 + unbox(unbox(mk1(mk1(p)))).y, 34, "G13: `unbox(unbox(bb))` / `unbox(unbox(mk1(mk1(p))))` read the Pt");
     return 0;
 }
 fn gcr_idlater<T>(x: T): T { return x; }
