@@ -5727,7 +5727,9 @@ A generic method's scalar call is refused the same way, naming the method's fn:
 before it they compiled and returned 0), and a generic that forwards a `T`-typed
 name into such a method — `fn o<T>(p: P, t: T) { return p.pick(t); }`, or a
 generic method's `self.pick(w)` — is a stub too: `o(p, 5)` is refused, `o(p, q)`
-calls `o$Q`.
+calls `o$Q`. The receiver may be a name, a field chain (`h.p.pick(t)`, `x.hp.p.pick(t)`
+through a `*H` field) or a call's result (`mk().pick(t)`, `mkh().p.pick(t)`, a method
+call's `h.gp().pick(t)`, a generic's plain `: P` return).
 
 ```
 struct Pt { x; y; }

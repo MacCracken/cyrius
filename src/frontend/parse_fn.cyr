@@ -11443,18 +11443,102 @@ fn _gs_mfwd(S, fi, i): i64 {
     if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 1) == 1) { return 1; }
     return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 1);
 }
-# The fn a method call `x.m(` reaches, its name at token i and x a single name, or -1.
+# The fn a method call `x.m(` reaches, its name at token i, or -1. x is a single name, a field chain
+# `h.p` / `h.q.p` or a call result `mk()` / `h.gp()` (`_gs_recv_sid`): a forwarder `h.p.pick(t)` /
+# `mk().pick(t)` untyped here kept its i64 base, which met the scalar-binding refusal at its own
+# definition, called or not (the 6.7.11 review; the free spelling `P_pick(h.p, t)` was a stub).
 fn _gs_mcallee(S, fi, i): i64 {
     if (TOKTYP(S, i - 1) != 41) { return 0 - 1; }
-    var r = i - 2;
-    if (TOKTYP(S, r) != 2) { return 0 - 1; }
-    if (TOKTYP(S, r - 1) == 41) { return 0 - 1; }
     var a = GFDS(S, fi) - 1;
     if (a < 0) { return 0 - 1; }
-    var sid = _tok_name_sid(S, a, r, TOKVAL(S, r));
-    if (sid == 0) { sid = _gs_iself(S, fi, a, r); }
+    var sid = _gs_recv_sid(S, fi, a, i - 2, 0);
     if (sid <= 0) { return 0 - 1; }
     return _meth_fn_at(S, sid, TOKVAL(S, i), i);
+}
+# The struct the receiver ending at token r holds, from the tokens of fi's unit (its first token a), or
+# 0: a single name by scope (`_tok_name_sid`; an untyped impl `self` by GFISELF), `x.f` through the
+# field f that x's struct declares (`_gs_fld_sid`), or a call's result (`_gs_recv_call`). CHANGELOG [6.7.11]
+fn _gs_recv_sid(S, fi, a, r, dep): i64 {
+    if (dep > 32) { return 0; }
+    var t = TOKTYP(S, r);
+    if (t == 11) { return _gs_recv_call(S, fi, a, r, dep); }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, r - 1) == 41) {
+        var bs = _gs_recv_sid(S, fi, a, r - 2, dep + 1);
+        if (bs <= 0) { return 0; }
+        return _gs_fld_sid(S, bs, TOKVAL(S, r));
+    }
+    var sid = _tok_name_sid(S, a, r, TOKVAL(S, r));
+    if (sid == 0) { sid = _gs_iself(S, fi, a, r); }
+    return sid;
+}
+# The struct field `noff` of struct sid holds: an inline struct field's type, a `*T` field's T, else 0
+# (`_gsc_chain`'s hop).
+fn _gs_fld_sid(S, sid, noff): i64 {
+    var fx = FINDFIELD(S, sid - 1, noff);
+    if (fx < 0) { return 0; }
+    var ps = _fld_ptr_sid(S, sid - 1, fx);
+    if (ps > 0) { return ps; }
+    var ft = GETFTYPE(S, sid - 1, fx);
+    if (ft > 0) { return ft; }
+    return 0;
+}
+# The `)` at token r closes a call: `f(..)` or a method call `x.f(..)` (x typed as a receiver is); the
+# struct the callee returns whatever it binds (`_gs_ret_sid`). Anything else (a parenthesised value, a
+# subscript) 0.
+fn _gs_recv_call(S, fi, a, r, dep): i64 {
+    var o = _tok_open_back(S, r);
+    if (o < 2) { return 0; }
+    if (TOKTYP(S, o - 1) != 2) { return 0; }
+    var cfi = 0 - 1;
+    if (TOKTYP(S, o - 2) == 41) {
+        var xs = _gs_recv_sid(S, fi, a, o - 3, dep + 1);
+        if (xs <= 0) { return 0; }
+        cfi = _meth_fn_at(S, xs, TOKVAL(S, o - 1), o - 1);
+    } else { cfi = FINDFN(S, TOKVAL(S, o - 1)); }
+    if (cfi < 0) { return 0; }
+    return _gs_ret_sid(S, cfi);
+}
+# The struct every call of cfi returns: its declared struct return or a `: *S` return's S; for a
+# generic only a plain `: S` whose S is no type parameter and not generic (a binding changes nothing).
+fn _gs_ret_sid(S, cfi): i64 {
+    if (GFTP(S, cfi) != 0) {
+        if (_gen_ret_tp(S, cfi) >= 0) { return 0; }
+        var o = _gen_def_open(S, cfi);
+        if (o < 0) { return 0; }
+        var c = _tok_close_paren(S, o);
+        if (c < 0) { return 0; }
+        if (TOKTYP(S, c + 1) != 49) { return 0; }
+        if (TOKTYP(S, c + 2) != 2) { return 0; }
+        if (TOKTYP(S, c + 3) != 13) { return 0; }   # `: S {` — no `<..>`, no `*`
+        var gs = FINDSTRUCT(S, TOKVAL(S, c + 2));
+        if (gs <= 0) { return 0; }
+        if (GSTP(S, gs - 1) != 0) { return 0; }
+        return gs;
+    }
+    var rs = GFRS(S, cfi);
+    if (rs > 0) { return rs; }
+    if (_fn_rpsid != 0) {
+        var ps = L64(_fn_rpsid + cfi * 8);
+        if (ps > 0) { return ps; }
+    }
+    return 0;
+}
+# The `(` matching the `)` at token r, or -1 (a brace or `;` first: a closure argument is not walked).
+fn _tok_open_back(S, r): i64 {
+    var d = 0;
+    var k = r;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            d = d - 1;
+            if (d == 0) { return k; }
+        }
+        elif (t == 5 || t == 13 || t == 14) { return 0 - 1; }
+        k = k - 1;
+    }
+    return 0 - 1;
 }
 # An untyped impl `self` (the first parameter, no annotation) at token r: its impl's struct.
 fn _gs_iself(S, fi, a, r): i64 {

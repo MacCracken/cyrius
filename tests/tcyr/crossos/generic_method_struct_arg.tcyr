@@ -15,7 +15,10 @@
 #   C  a struct carrier `Box<V>` (V = Pt, V = i32)      E  `self: V` binds the receiver (8 / 24 B)
 #   F  a generic forwarding its T-typed name into a stub generic method (`p.pick(t)`, `self.pick(w)`)
 #      is a stub too, as with the free spelling: its i64 base is not emitted, so it compiles and its
-#      struct instance reaches the method's (a scalar call of it is refused — the gate's S8)
+#      struct instance reaches the method's (a scalar call of it is refused — the gate's S8); the
+#      receiver a single name, a field chain (`h.p`, `x.hp.p`, `x.pp`) or a call result (`mk()`,
+#      `mkfh().p`, a `: *P` call, a method call `h.gp()`, a generic's `: P`) — F10-F18, the 6.7.11
+#      review
 #   K  scalars into a generic method that has an i64 instance are unchanged
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -70,6 +73,23 @@ fn o4<T>(t: T): i64 {
     return x.pick(t);
 }
 fn o5<T>(p: P, t: T): i64 { return p.k(t); }
+# A forwarder whose receiver is a field chain or a call result (the 6.7.11 review: the stub scan typed a
+# single name only, so these were refused at their own definitions).
+struct FH { p: P; n; }
+struct FHH { h: FH; hp: *FH; pp: *P; }
+fn mkfh(): FH { var h: FH; h.p.v = 5; h.n = 1; return h; }
+fn mkfpp(pp: *P): *P { return pp; }
+fn of_c<T>(h: FH, t: T): i64 { return h.p.pick(t); }
+fn of_k<T>(t: T): i64 { return mk().pick(t); }
+fn of_h1<T>(x: FHH, t: T): i64 { return x.h.p.pick(t); }
+fn of_h2<T>(x: *FHH, t: T): i64 { return x.hp.p.pick(t); }
+fn of_h3<T>(x: FHH, t: T): i64 { return x.pp.pick(t); }
+fn of_h4<T>(t: T): i64 { return mkfh().p.pick(t); }
+fn of_h5<T>(pp: *P, t: T): i64 { return mkfpp(pp).pick(t); }
+impl FH { fn gp(self): P { return self.p; } }
+fn mkfg<U>(u: U): P { var p = P { 5 }; return p; }
+fn of_m<T>(h: FH, t: T): i64 { return h.gp().pick(t); }
+fn of_g<T>(t: T): i64 { return mkfg(t).pick(t); }
 fn o6<T>(p: P, t: T): i64 {
     var u: T = t;
     return p.pick(u);
@@ -133,6 +153,21 @@ fn run(): i64 {
     assert_eq(o6(p, q), 7, "F7: ... a `var u: T` local forwarded");
     assert_eq(o5(p, 2), 7, "F8: forwarding into a method with an i64 base, at i64");
     assert_eq(p.kf(4), 12, "F9: self.k(w) at i64");
+    var fh = mkfh();
+    var fp2 = P { 5 };
+    var fx: FHH;
+    fx.h = fh;
+    fx.hp = &fh;
+    fx.pp = &fp2;
+    assert_eq(of_c(fh, q), 7, "F10: a field-chain receiver, h.p.pick(t) (was refused at its definition)");
+    assert_eq(of_k(q), 7, "F11: a call-result receiver, mk().pick(t)");
+    assert_eq(of_h1(fx, q), 7, "F12: two hops, x.h.p.pick(t)");
+    assert_eq(of_h2(&fx, q), 7, "F13: through a `*FH` field, x.hp.p.pick(t)");
+    assert_eq(of_h3(fx, q), 7, "F14: a `*P` field, x.pp.pick(t)");
+    assert_eq(of_h4(q), 7, "F15: a call result's field, mkfh().p.pick(t)");
+    assert_eq(of_h5(&fp2, q), 7, "F16: a `: *P` call result, mkfpp(pp).pick(t)");
+    assert_eq(of_m(fh, q), 7, "F17: a method call's result, h.gp().pick(t)");
+    assert_eq(of_g(q), 7, "F18: a generic's `: P` result, mkfg(t).pick(t)");
     assert_eq(p.k(9), 14, "K1: a scalar into a generic method with an i64 base");
     var kv = p.k(20);
     assert_eq(kv, 25, "K2: var kv = p.k(20);");

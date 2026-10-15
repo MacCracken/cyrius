@@ -22,6 +22,12 @@
 #   C  `mk().pick(q) * 10 + p.tp(q)` — a chain and an `impl Tr for P` generic member: 73 (0 before),
 #      every leg
 #   K  `p.k(9) + p.k(20)` into a generic method with an i64 base: 39 (unchanged), every leg
+#   F  (the 6.7.11 review) a forwarder whose receiver is a field chain or a call result (`h.p.pick(t)`,
+#      `mk().pick(t)`; a method call's and a generic's `: P` result in the tcyr's F17 / F18) is a
+#      stub, as the free spelling `P_pick(h.p, t)` makes it: the stub scan typed a
+#      single name only, so their i64 bases met the scalar-binding refusal at their own definitions.
+#      F1 `oc(h, q) * 10 + ok(q)` 77 and F2 two uncalled forwarders 5, every leg; F3 `oc(h, 5)` /
+#      `ok(6)` refused naming oc / ok (two errors) — x86_64
 #   S  refusals, by name and once: `p.pick(9)` (S1) and `p.pick(h)` with `h: f64` (S2) refused naming
 #      P_pick with the stub text, as the free spelling `P_pick(p, 9)` is (S3); `var w = p.pick(9);` (S4)
 #      one error, at the call's `(` (the lookahead stays quiet); `p.bm(7)` with only `impl Show for
@@ -58,6 +64,14 @@
 #   M7  the stub scan skips method calls (`_gs_use` -> RED S8 (the forwarders' own definitions refused,
 #       mode 1 without `_gs_mfwd`)                    naming P_pick); T: the file does not build on any
 #                                                     leg (`p.pick(t)` in o1's base)
+#   M8  (review) `_gs_mcallee` types a single-name   -> RED F1 / F2 on every leg (the forwarders' own
+#       receiver only (no `_gs_recv_sid` chain or     definitions refused, naming P_pick) and F3 (the
+#       call arm)                                     errors name P_pick at the definitions, not oc /
+#                                                     ok); T: the file does not build on any leg
+#   M9  (review) `_gs_recv_call` without its method  -> RED T: the file does not build on any leg
+#       arm (`h.gp().pick(t)`)                        (F17's of_m refused at its definition)
+#   M10 (review) `_gs_ret_sid` answering 0 for a     -> RED T: the file does not build on any leg
+#       generic callee (`mkfg(t).pick(t)`)            (F18's of_g refused at its definition)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -89,7 +103,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-method-call-runs-i64-base.c
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=40
+FLOOR=49
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -183,6 +197,50 @@ syscall(60, rc);
 XEOF
 xr K "$D/k.cyr" 39 "p.k(9) + p.k(20)"
 
+STUB="has no i64 (or other scalar) instance: it uses its type parameter as a struct"
+echo "F. a forwarder whose receiver is a field chain or a call result is a stub, as P_pick(h.p, t) makes it"
+cat > "$D/f1.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P { v; }
+struct Q { a; b; c; }
+struct H { p: P; n; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+fn mk(): P { var p = P { 5 }; return p; }
+fn oc<T>(h: H, t: T): i64 { return h.p.pick(t); }
+fn ok<T>(t: T): i64 { return mk().pick(t); }
+fn main(): i64 {
+    var h: H;
+    h.p.v = 5;
+    h.n = 1;
+    var q = Q { 1, 7, 3 };
+    return oc(h, q) * 10 + ok(q);
+}
+var rc = main();
+syscall(60, rc);
+XEOF
+xr F1 "$D/f1.cyr" 77 "oc(h, q) * 10 + ok(q) (h.p.pick(t) / mk().pick(t) were refused at their definitions)"
+cat > "$D/f2.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P { v; }
+struct Q { a; b; c; }
+struct H { p: P; n; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+fn mk(): P { var p = P { 5 }; return p; }
+fn outer<T>(h: H, t: T): i64 { return h.p.pick(t); }
+fn outk<T>(t: T): i64 { return mk().pick(t); }
+fn main(): i64 { return 5; }
+syscall(60, main());
+XEOF
+xr F2 "$D/f2.cyr" 5 "two forwarders never called"
+sed 's/    var q = Q { 1, 7, 3 };/    var a = oc(h, 5);/; s/    return oc(h, q) \* 10 + ok(q);/    var b = ok(6);\n    return a + b;/' "$D/f1.cyr" > "$D/f3.cyr"
+f3rc=0; "$CC" < "$D/f3.cyr" > "$D/f3" 2> "$D/f3.err" || f3rc=$?
+ne=$(grep -c '^error' "$D/f3.err" || true)
+if [ "$f3rc" -eq 0 ]; then bad "F3: oc(h, 5) and ok(6) compiled (want them refused)"
+elif [ "$ne" -ne 2 ]; then bad "F3: $ne errors, want 2: $(grep '^error' "$D/f3.err" | tr '\n' ' ')"
+elif grep -q "^error:<source>:13:16: generic 'oc' $STUB" "$D/f3.err" \
+     && grep -q "^error:<source>:14:16: generic 'ok' $STUB" "$D/f3.err"; then ok "F3: oc(h, 5) and ok(6) are refused, naming oc and ok (the forwarders are stubs)"
+else bad "F3: not the stub refusals naming oc and ok: $(grep '^error' "$D/f3.err" | tr '\n' ' ')"; fi
+
 echo "S. a scalar binding of a stub is refused naming the method's fn, once, as the free call is"
 cat > "$D/s1.cyr" <<'XEOF'
 include "lib/syscalls.cyr"
@@ -200,7 +258,6 @@ XEOF
 sed 's/    var a: i64 = p.pick(9);/    var h: f64 = 1.5;\n    var a: i64 = p.pick(h);/' "$D/s1.cyr" > "$D/s2.cyr"
 sed 's/p\.pick(9)/P_pick(p, 9)/' "$D/s1.cyr" > "$D/s3.cyr"
 sed 's/    var a: i64 = p.pick(9);/    var a = p.pick(9);/' "$D/s1.cyr" > "$D/s4.cyr"
-STUB="has no i64 (or other scalar) instance: it uses its type parameter as a struct"
 # srow <id> <compiler> <src> <line:col> <what>: refused with exactly one error, at <line:col>, naming
 # 'P_pick' with the stub text
 srow() {
@@ -309,4 +366,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
