@@ -1299,7 +1299,8 @@ fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
 #          the OPENED handle (name-surrogate reparse point → -ELOOP, O_DIRECTORY on a file →
 #          -ENOTDIR);
 #   0xF03E CreateSymbolicLinkW(link, target, flags) → argc 4 — sys_symlink / xsymlink; NARROW
-#          UTF-8 paths since 6.7.12 (the emitter widens them; the link gets `\\?\` at 248+ units);
+#          UTF-8 paths since 6.7.12 (the emitter widens them; the link, and an absolute target,
+#          get `\\?\` at 248+ units — a relative target is decoded only);
 #   0xF03F SetEndOfFile(h) → argc 2 — O_TRUNC|O_NOFOLLOW truncates only after the verify, and
 #          sys_ftruncate.
 # Literal-only, like every 0xF0xx id: a number held in a var reaches EPE_SYSCALL_DYNAMIC,

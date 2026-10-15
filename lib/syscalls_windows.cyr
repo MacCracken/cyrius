@@ -719,8 +719,9 @@ fn _win_widen(dst, src, cap): i64 {
 # NON-elevated process cannot create a link at all and this returns -1 — a Windows policy,
 # not a missing route. 0 on success, -1 on failure.
 # ⛔ 6.7.12 — both paths go to the reroute NARROW (UTF-8), and the emitter widens them: the link
-# path is made absolute and `\\?\`-prefixed at 248+ units, as open() / mkdir() / rename() do,
-# and the target is decoded only ('/' → '\'), never rewritten — the link stores it verbatim.
+# path is made absolute and `\\?\`-prefixed at 248+ units, as open() / mkdir() / rename() do;
+# the target is stored verbatim, so a relative one is decoded only ('/' → '\'), never made
+# absolute, and an absolute one (`X:\…`, `\\server\…`) takes the same `\\?\` at 248+ units.
 # Until 6.7.12 this fn widened both itself, capped at 519 units and never prefixed, so a link
 # path over MAX_PATH (260 units) failed -1 on a Windows without process-wide long paths while
 # open() of the same path worked. CHANGELOG [6.6.9], [6.7.12]

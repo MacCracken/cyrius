@@ -3325,14 +3325,9 @@ fn EMOVEFILEEX_PE(S): i64 {
     return 0;
 }
 
-# 6.7.12 — the TARGET's widen for CreateSymbolicLinkW: step 1 of `_pe_widen_path`
-# (MultiByteToWideChar, invalid UTF-8 refused) and '/' → '\', nothing else — no GetFullPathNameW,
-# no `\\?\`: a link stores its target VERBATIM and resolves it later, relative to the link, so a
-# relative target must stay relative; and an NT reparse target does not read '/' as a separator
-# (the stdlib's `_win_widen_n` made the same swap before 6.7.12). rsi = the UTF-8 target in, W at
-# [rsp+woff]; rdi = the wide target out, or 0 when refused. Clobbers rax, rcx, rdx, r8-r11.
-fn _pe_wp_target(S, woff): i64 {
-    var r0 = _pe_wp_decode(S, woff);                    # rdi = W; jz refused
+# 6.7.12 — '/' → '\' over the wide string at rdi, in place (rdi kept). An NT reparse target does
+# not read '/' as a separator (the stdlib's `_win_widen_n` made the same swap before 6.7.12).
+fn _pe_wp_slashes(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xF8);              # mov rax, rdi
     var top = GCP(S);
     EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x08);              # top: movzx ecx, word [rax]
@@ -3344,10 +3339,74 @@ fn _pe_wp_target(S, woff): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC0); EB(S, 0x02); #      add rax, 2
     EB(S, 0xE9); EDISP32(S, top - (GCP(S) + 4));        #      jmp top
     _pe_j_land(S, done);
-    var over = _pe_j(S, 0);                             # jmp over (rdi = W)
+    return 0;
+}
+
+# 6.7.12 — is the wide target at rdi (separators already '\') ABSOLUTE in a way the link stores
+# whole: drive-absolute (`X:\…`) or UNC (`\\server\…`, not a verbatim `\\?\` / `\\.\`)? Falls
+# through when it is; returns the raw jump taken when it is NOT — empty, relative, rooted with no
+# drive (`\foo`), drive-relative (`X:foo`) or already verbatim — which must stay as written.
+fn _pe_wp_isabs(S): i64 {
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x07);              # movzx eax, word [rdi]
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    var n0 = _pe_j(S, 0x84);                            # jz not (empty)
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x47); EB(S, 0x02); # movzx eax, word [rdi+2]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x3A);              # cmp eax, ':'
+    var u1 = _pe_j(S, 0x85);                            # jne unc
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x47); EB(S, 0x04); # movzx eax, word [rdi+4]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x5C);              # cmp eax, '\'
+    var a1 = _pe_j(S, 0x84);                            # je abs (X:\…)
+    var n1 = _pe_j(S, 0);                               # jmp not (X:foo)
+    _pe_j_land(S, u1);
+    EB(S, 0x81); EB(S, 0x3F); EDISP32(S, 0x005C005C);   # unc: cmp dword [rdi], "\\"
+    var n2 = _pe_j(S, 0x85);                            # jne not (relative, or `\foo`)
+    var va = 0;
+    var vb = 0;
+    _pe_wp_verbatim(S, &va, &vb);                       # `\\?\` / `\\.\` -> not
+    var a2 = _pe_j(S, 0);                               # jmp abs (\\server\…)
+    _pe_j_land(S, n0);
+    _pe_j_land(S, n1);
+    _pe_j_land(S, n2);
+    _pe_j_land(S, va);
+    _pe_j_land(S, vb);
+    var nj = _pe_j(S, 0);                               # not: jmp <as written>
+    _pe_j_land(S, a1);
+    _pe_j_land(S, a2);
+    return nj;
+}
+
+# 6.7.12 — the TARGET's widen for CreateSymbolicLinkW. A link stores its target VERBATIM and
+# resolves it later, relative to the link, so a relative (or rooted, or drive-relative) target is
+# decoded only — step 1 of `_pe_widen_path` (MultiByteToWideChar, invalid UTF-8 refused) and
+# '/' → '\' — never made absolute. An ABSOLUTE target (`X:\…`, `\\server\…`) whose full form is
+# 248+ units gets `\\?\` (`\\?\UNC\…`) exactly as `_pe_widen_path` gives a path: without it,
+# CreateSymbolicLinkW refused a 260+-unit absolute target on a Windows without process-wide long
+# paths (cass: -1 for a short link and a long one alike). GetFullPathNameW on an absolute path only
+# normalizes (`.`, `..`, trailing dots), which is what the prefix turns off, so the meaning holds; a
+# shorter one is passed as written. rsi = the UTF-8 target in, W at [rsp+woff], F at [rsp+foff];
+# rdi = the wide target out, or 0 when refused. Clobbers rax, rcx, rdx, r8-r11. CHANGELOG [6.7.12]
+fn _pe_wp_target(S, woff, foff): i64 {
+    _pe_ensure_widen(S);
+    var vc = 0;
+    var vd = 0;
+    var r1 = 0;
+    var r2 = 0;
+    var r0 = _pe_wp_decode(S, woff);                    # rdi = W; jz refused
+    _pe_wp_slashes(S);
+    var nj = _pe_wp_isabs(S);                           # relative / rooted / verbatim -> as written
+    var sj = _pe_wp_full(S, foff, &r1, &r2);            # absolute: under 248 units -> as written
+    _pe_wp_verbatim(S, &vc, &vd);                       # a full path that came back verbatim
+    var ds = _pe_wp_prefix(S);
     _pe_j_land(S, r0);
+    _pe_j_land(S, r1);
+    _pe_j_land(S, r2);
     EB(S, 0x31); EB(S, 0xFF);                           # refused: xor edi, edi
-    _pe_j_land(S, over);
+    _pe_j_land(S, nj);
+    _pe_j_land(S, sj);
+    _pe_j_land(S, vc);
+    _pe_j_land(S, vd);
+    _pe_j_land(S, ds >> 32);
+    _pe_j_land(S, ds & 0xFFFFFFFF);
     return 0;
 }
 
@@ -3358,10 +3417,10 @@ fn _pe_wp_target(S, woff): i64 {
 # (260 units) failed -1 (measured on cass: a 269-unit directory took `open(O_CREAT)` and a short
 # link, and refused the link) while open() of the same path worked. It now takes NARROW UTF-8
 # paths, as every other path reroute does: the LINK goes through `_pe_widen_path` (absolute and
-# `\\?\` at 248+ units), the TARGET through `_pe_wp_target` (decoded only — the link stores it
-# verbatim). Either refused → FALSE without the call. BOOLEAN (one byte) → movzx. Frame:
-# `_PE_PATH_FRAME2` (the link's W/F pair, then the target's W), probed, rbx-anchored.
-# CHANGELOG [6.6.9], [6.7.12]
+# `\\?\` at 248+ units), the TARGET through `_pe_wp_target` (stored verbatim, so decoded only —
+# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → FALSE
+# without the call. BOOLEAN (one byte) → movzx. Frame: `_PE_PATH_FRAME2` (the link's W/F pair,
+# then the target's), probed, rbx-anchored. CHANGELOG [6.6.9], [6.7.12]
 fn ESYMLINKW_PE(S): i64 {
     _pe_ensure_symlinkw(S);
     var sl_idx = _pe_symlinkw_get();
@@ -3380,7 +3439,7 @@ fn ESYMLINKW_PE(S): i64 {
     _pe_widen_path(S, 0x80, 0x10080);
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], rdi (link wide, or 0)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, 0x48); # mov rsi, [rsp+0x48] (target)
-    _pe_wp_target(S, _PE_PATH_FRAME1);
+    _pe_wp_target(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
     # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> FALSE without the call.
     EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax

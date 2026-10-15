@@ -80,12 +80,14 @@
 #           RemoveDirectoryW (and TWICE per MoveFileExW call) — and, since 6.6.12, of
 #           GetFileAttributesW / FindFirstFileW (0xF019 / 0xF016 take a NARROW path now; they took
 #           a stdlib-widened, unprefixed one and so still hit MAX_PATH) — and, since 6.7.12, of
-#           CreateSymbolicLinkW (TWICE: the link, and its target decoded only, with no long-path
-#           branch) — must be fed by one widen, and every
-#           widen must carry the three things that ARE the fix: CP_UTF8 (`mov $0xfde9,%ecx`)
+#           CreateSymbolicLinkW (TWICE: the link, and its target) — must be fed by one widen, and
+#           every widen must carry the three things that ARE the fix: CP_UTF8 (`mov $0xfde9,%ecx`)
 #           followed by MB_ERR_INVALID_CHARS (`mov $0x8,%edx`), and the long-path branch
 #           (`cmp $0xf8,%eax`); each path frame carries its page probe (`test %rsp,(%rsp)`), and
-#           the truncating loop (`mov %ax,(%rdi,%rcx,2)`, `cmp $0x104,%ecx`) is GONE.
+#           the truncating loop (`mov %ax,(%rdi,%rcx,2)`, `cmp $0x104,%ecx`) is GONE. A symlink
+#           TARGET reaches its long-path branch only past the absolute test — drive-absolute is
+#           `movzwl 0x2(%rdi),%eax` + `cmp $0x3a,%eax` (unit 1 is ':'), once per CreateSymbolicLinkW
+#           call — so a relative target is never made absolute (the link stores it verbatim).
 #   axis 4  BEHAVIOUR of that .tcyr — natively (POSIX is the oracle: Linux takes a 300-byte path
 #           and a UTF-8 name as they are) and under wine with a UTF-8 locale (wine maps a WCHAR
 #           name to a Unix name through the locale; under LANG=C it cannot store `é` at all,
@@ -113,6 +115,12 @@
 #   ESYMLINKW_PE back to the wide-input 3-arg call      FAIL     FAIL, 7 rows        FAIL, 16 rows (symlink_long_path.exe, with the 6.7.11 stdlib)
 #     (axis 3 FAILS too, 8 rows: the 6.7.12 stdlib's narrow paths read as wide strings)
 #   the target fed by the full widen (prefixed)         FAIL     PASS                -
+# 6.7.12 (windows lane, review fix) — an ABSOLUTE target (`X:\…`, `\\server\…`) of 248+ units gets the
+# same `\\?\` as a path: decoded only, a 260+-unit absolute target failed -1 on cass for a short
+# link and a long one alike (the issue's "link path OR TARGET over MAX_PATH"). So every widen now
+# carries the long-path branch, the target's behind the absolute test. BUILT AND RUN 2026-10-15:
+#   the target decoded only again (W2's emitter)        FAIL     PASS                FAIL, 12 rows (symlink_long_path.exe)
+#   the target fed by the full widen (no absolute test) FAIL     PASS                -
 # wine enforces no MAX_PATH and commits the whole stack, so the long-path branch and the probe are
 # invisible to it: for those two, axis 2b is the only LOCAL guard and cass the hardware one.
 #
@@ -289,6 +297,7 @@ else
     nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis" || true)
     n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis" || true)
     nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis" || true)
+    nabs=$(awk '/movzwl[[:space:]]+0x2\(%rdi\),%eax/ {p=1; next} p && /cmp[[:space:]]+\$0x3a,%eax/ {n++} {p=0} END {print n+0}' "$D/pdis" || true)
     nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis" || true)
     nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis" || true)
     nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp" || true)
@@ -307,14 +316,17 @@ else
     elif [ "$n8" != "$nw" ]; then
         echo "  FAIL axis 2b: $nw widen(s) but $n8 pass MB_ERR_INVALID_CHARS — invalid UTF-8 would be GUESSED at, not refused"
         fail=1
-    elif [ "$nlong" != "$((nw - nsl))" ]; then
-        echo "  FAIL axis 2b: $nw widen(s) ($nsl of them a symlink TARGET, decoded only) but $nlong long-path (248-unit) branch(es), want $((nw - nsl)) — a long path would hit MAX_PATH again, or a link's relative target is being made absolute"
+    elif [ "$nlong" != "$nw" ]; then
+        echo "  FAIL axis 2b: $nw widen(s) but $nlong long-path (248-unit) branch(es) — a long path (or a long ABSOLUTE symlink target) would hit MAX_PATH again"
+        fail=1
+    elif [ "$nabs" != "$nsl" ]; then
+        echo "  FAIL axis 2b: $nsl CreateSymbolicLinkW call(s) but $nabs absolute-target test(s) — a link's relative target would be made absolute (the link stores it verbatim), or an absolute one never prefixed"
         fail=1
     elif [ "$nprobe" != "$frames" ]; then
         echo "  FAIL axis 2b: $frames path frame(s) but $nprobe page probe(s) — a ~128 KB frame skipping the stack guard page faults on real Windows"
         fail=1
     else
-        echo "  ok axis 2b: $want_w narrow path(s) over $frames frame(s), each through CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch ($nsl symlink target(s) decoded only), every frame probed, no cut-at-260 loop"
+        echo "  ok axis 2b: $want_w narrow path(s) over $frames frame(s), each through CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch ($nsl symlink target(s) behind the absolute test), every frame probed, no cut-at-260 loop"
     fi
 fi
 

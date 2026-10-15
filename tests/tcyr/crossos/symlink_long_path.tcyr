@@ -9,7 +9,9 @@
 # a 269-unit directory took `open(O_CREAT)` and a short link, and refused the link — and anything
 # of 519+ units was refused before the call. The reroute now takes NARROW paths like every other
 # path reroute: the link is made absolute and `\\?\`-prefixed at 248+ units, the target is decoded
-# only (the link stores it verbatim, resolved against the link's directory; '/' becomes '\').
+# only (the link stores it verbatim, resolved against the link's directory; '/' becomes '\') —
+# except an ABSOLUTE target (`X:\…`, `\\server\…`), which takes the same `\\?\` at 248+ units:
+# without it a 260+-unit absolute target failed -1 on cass for a short link and a long one alike.
 # wine does not enforce MAX_PATH, so only real Windows reddens without the fix; every POSIX
 # target is the oracle. CHANGELOG [6.7.12]
 #
@@ -59,11 +61,76 @@ fn _sl_reads(p, want, wn): i64 {
 # 1 when the link at `p` holds exactly `want` — readlink on POSIX. Windows has no readlink route
 # (xreadlink is -1 there), so the read-through rows carry it.
 fn _sl_target_is(p, want): i64 {
-    var buf[256];
-    var n = xreadlink(p, &buf, 256);
+    var buf[1024];
+    var n = xreadlink(p, &buf, 1024);
     var wn = strlen(want);
     if (n != wn) { return 0; }
     return memeq(&buf, want, wn);
+}
+
+# 1 where this target can read its cwd (so `_sl_abs` must answer): Linux, macOS, Windows.
+fn _sl_cwd_arm(): i64 {
+    var a = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    a = 1;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    a = 1;
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    a = 1;
+    #endif
+    return a;
+}
+
+# The ABSOLUTE form of the cwd-relative path `rel`, "<cwd>/<rel>", or 0 when the cwd cannot be read
+# (or this target has no arm: AGNOS, cx). Linux: readlink /proc/self/cwd; macOS: fcntl(F_GETPATH)
+# on "." (Darwin has no getcwd syscall); Windows: GetFinalPathNameByHandleW on "." (reroute 0xF04E),
+# its `\\?\` dropped so the target is a plain `X:\…` (`\\?\UNC\…` becomes `\\…`).
+fn _sl_abs(rel): i64 {
+    var cwd = alloc(98304);
+    var n = 0 - 1;
+    #ifdef CYRIUS_TARGET_LINUX
+    var g = xreadlink("/proc/self/cwd", cwd, 4096);
+    if (g > 0) {
+        store8(cwd + g, 0);
+        n = g;
+    }
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var fd = sys_open(".", 0, 0);
+    if (fd >= 0) {
+        if (sys_fcntl(fd, 50, cwd) == 0) { n = strlen(cwd); }
+        sys_close(fd);
+    }
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    var w = alloc(65536);
+    var h = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+    if (h >= 0) {
+        var wn = syscall(0xF04E, h, w, 32768, 0);    # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+        file_close(h);
+        if (wn > 0) {
+            if (wn < 32768) { n = _fs_narrow(w, cwd, 98304); }
+        }
+    }
+    if (n > 4) {
+        if (memeq(cwd, "\\\\?\\", 4) == 1) {
+            var skip = 4;
+            var keep = 0;
+            if (memeq(cwd + 4, "UNC\\", 4) == 1) { skip = 6; keep = 1; }
+            var i = 0;
+            while (i + skip <= n) {
+                store8(cwd + i, load8(cwd + i + skip));
+                i = i + 1;
+            }
+            n = n - skip;
+            if (keep == 1) { store8(cwd, 92); }          # "UNC\server" -> "\\server"
+        }
+    }
+    #endif
+    if (n <= 0) { return 0; }
+    return _sl_cat(_sl_cat(cwd, "/"), rel);
 }
 
 # Remove a directory link: RemoveDirectoryW on Windows (a directory symlink is a directory
@@ -139,6 +206,40 @@ fn main(): i64 {
         assert_eq(_sl_target_is(l4, "target.txt"), 1, "readlink returns the target verbatim");
         #endif
         assert_eq(xunlink(l4), 0, "the link is removed");
+
+        test_group("a symlink to an ABSOLUTE target past 260 units (Windows: the long-path prefix at 248+ units)");
+        var at2 = _sl_abs(t2);
+        var atd = _sl_abs(sub);
+        var known = 0;
+        if (at2 != 0) { known = 1; }
+        assert_eq(known, _sl_cwd_arm(), "premise: the cwd is read (Linux, macOS, Windows)");
+        if (at2 == 0) {
+            println("  SKIP: the absolute-target rows: no way to read the cwd on this target");
+        }
+        if (at2 != 0) {
+            assert_gt(strlen(at2), 260, "premise: the absolute target is longer than MAX_PATH");
+            var la = _sl_cat(root, "/abs_link");
+            assert_eq(xsymlink(at2, la), 0,
+              "xsymlink(<260+-unit ABSOLUTE target>, <short link>) is 0 (Windows: -1 before)");
+            assert_eq(is_symlink(str_from(la)), 1, "it is a link");
+            assert_eq(_sl_reads(la, "level-two\n", 10), 1, "opened through it, it reads its target");
+            #ifndef CYRIUS_TARGET_WIN
+            assert_eq(_sl_target_is(la, at2), 1, "readlink returns the absolute target verbatim");
+            #endif
+            assert_eq(xunlink(la), 0, "the short link is removed");
+            var lla = _sl_cat(d2, "/abs_link");
+            assert_eq(xsymlink(at2, lla), 0,
+              "xsymlink(<260+-unit ABSOLUTE target>, <260+-unit link>) is 0 (Windows: -1 before)");
+            assert_eq(is_symlink(str_from(lla)), 1, "it is a link");
+            assert_eq(_sl_reads(lla, "level-two\n", 10), 1, "opened through it, it reads its target");
+            assert_eq(xunlink(lla), 0, "the long link is removed");
+            var adl = _sl_cat(root, "/abs_dir_link");
+            assert_eq(xsymlink(atd, adl), 0, "xsymlink(<260+-unit ABSOLUTE directory>, <short link>) is 0");
+            assert_eq(is_dir(str_from(adl)), 1, "a DIRECTORY link: the kind probe saw the long absolute target");
+            assert_eq(_sl_reads(_sl_cat(adl, "/inner.txt"), "inner\n", 6), 1, "a file reads through it");
+            assert_eq(_sl_unlink_dirlink(adl), 0, "the directory link is removed");
+            assert_eq(file_exists(t2), 1, "the absolute target is still there");
+        }
 
         test_group("the target is stored as given: a relative target with '/', a directory target");
         var l3 = _sl_cat(d2, "/slash_link");

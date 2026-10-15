@@ -6972,11 +6972,12 @@ whose full form is 248 units or more is passed as `\\?\<full>` (`\\?\UNC\…` fo
 holds for open / create / mkdir / unlink / rename / rmdir since 6.6.11, for the directory
 calls (`is_dir`, `dir_list`, `is_symlink`, `sys_access`, `xmkdir_p`) since 6.6.12, and for
 the link path of `xsymlink` since 6.7.12 (it was widened in the stdlib, capped at 519 units and
-never prefixed, so a link path over 260 units failed -1). A link's TARGET is widened as written —
-never made absolute or prefixed, `/` becoming `\` — because the link stores it verbatim and
-resolves it against the link's directory. ⚠ Before 6.6.11 a path was copied one byte per UTF-16
-unit and cut at 260 units: a non-ASCII name failed, and a long relative `O_CREAT` open returned a
-handle for the name cut short.
+never prefixed, so a link path over 260 units failed -1). A link's TARGET is stored verbatim, so a
+relative one is widened as written — never made absolute, `/` becoming `\` — and resolves against
+the link's directory; an ABSOLUTE target (`X:\…`, `\\server\…`) whose full form is 248 units or
+more takes the same `\\?\` prefix (6.7.12 — it failed -1 past MAX_PATH). ⚠ Before 6.6.11 a
+path was copied one byte per UTF-16 unit and cut at 260 units: a non-ASCII name failed, and a long
+relative `O_CREAT` open returned a handle for the name cut short.
 
 **Sockets**
 
