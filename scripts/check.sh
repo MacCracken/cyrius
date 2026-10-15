@@ -2268,6 +2268,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
 # whatever compile-mode switch the shell holds (an inherited CYRIUS_BOUNDS=1 installed a bounds
 # cyrfmt). A git-archive copy, throwaway HOME / CYRIUS_HOME.
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh"
+# 6.7.12 — `cyrius package` refuses a missing [build] entry by name (rc 1, `error: no such file:
+# <entry>`, no build/ created): it skipped the compile, printed `package ready: build/<out>` and
+# exited 0 with no artifact. A real entry builds byte-identical to `cyrius build`.
+_chk_gate "$ROOT/tests/gates/toolchain/package_missing_entry.sh"
 # 6.6.20 (SEC-07, CYRIUS-2026-0035) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the

@@ -108,8 +108,9 @@ vendored byte-identical from each fold's tag.
 ## `cyrius package`
 
 `cyrius package` compiles `[build] entry` to `[build] output` (default `build/main`) and prints
-the project version (`[package] version`, else `./VERSION`); it fails when the entry does not
-compile. It writes **no archive**: the `.ark` package format that `cyrius help` still names is
+the project version (`[package] version`, else `./VERSION`). It fails by name when the entry is
+missing (`error: no such file: <entry>`, rc 1, nothing created — 6.7.12; it printed `package
+ready` and exited 0) or does not compile. It writes **no archive**: the `.ark` package format is
 not implemented, and `ark install` (`programs/ark.cyr`) resolves through a stub. Ship the binary
 the build produced (or the distlib bundle, for a library).
 

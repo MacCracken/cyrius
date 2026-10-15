@@ -4399,21 +4399,25 @@ fn cmd_package(): i64 {
     sys_write(STDOUT_FD, "  version: ", 11);
     println(ver);
 
-    # Compile if entry exists
+    # A missing entry is refused by name, in compile()'s words (so `build` and `package` say the
+    # same thing), before build/ is created: it skipped the compile and printed "package ready"
+    # with rc 0, no artifact and an empty build/ left behind. CHANGELOG [6.7.12]
+    if (file_exists(entry) == 0) {
+        _err_ctx("no such file", entry);
+        return 1;
+    }
     sys_mkdir("build", 0x1ED);
     var out = make_path("build", output_name);
     if (mout != 0) { out = mout; }
-    if (file_exists(entry) == 1) {
-        println("  compiling...");
-        # v6.5.19: was a bare `compile(entry, out);`. On a failed compile package
-        # printed "package ready in build/" and exited 0 with no artifact — the
-        # same green-placebo shape as the v6.4.73 `capacity` bug.
-        # CHANGELOG [6.5.19].
-        var pkg_cr = compile(entry, out);
-        if (pkg_cr != 0) {
-            _err_ctx("package: entry does not compile", entry);
-            return 1;
-        }
+    println("  compiling...");
+    # v6.5.19: was a bare `compile(entry, out);`. On a failed compile package
+    # printed "package ready in build/" and exited 0 with no artifact — the
+    # same green-placebo shape as the v6.4.73 `capacity` bug.
+    # CHANGELOG [6.5.19].
+    var pkg_cr = compile(entry, out);
+    if (pkg_cr != 0) {
+        _err_ctx("package: entry does not compile", entry);
+        return 1;
     }
     sys_write(STDOUT_FD, "  package ready: ", 17);
     sys_write(STDOUT_FD, out, strlen(out));
