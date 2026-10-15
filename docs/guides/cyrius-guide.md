@@ -6417,6 +6417,16 @@ half-fixes that stopped at the first symptom. If you add a wrapper, add a test f
 that DIRECTORY (the old `vr01_` filename prefix was retired at v6.5.11; a file named that way
 anywhere else is not run on the other hosts).
 
+**The recorded exception — the agnos-only wrappers** (6.7.12; the user's decision, 2026-10-15). Three
+wrappers exist only in the agnos peer (`lib/syscalls_x86_64_agnos.cyr`, 6.7.11): `sys_console_mode`
+(#110), `sys_fd_kind` (#111) and `sys_sock_send_dl` (#109). No cross-OS host runs agnos, so a
+`tests/tcyr/crossos/` file could only compile them under `CYRIUS_TARGET_AGNOS` and skip on all four
+hosts, a pass that covers nothing. They have no crossos file. Their companion is
+`tests/gates/platform/agnos_peer_fake_kernel.sh` axes 10–12, which run each wrapper against the fake
+kernel (`tests/fixtures/agnos_sctrace.cyr`) and check the syscall it hands the kernel and the answer it
+returns. #109's real-kernel leg (`sys_sock_send_dl`'s deadline on a live agnos kernel) **cannot run: no
+agnos host**. That leg is named as not run; it is not counted as coverage.
+
 ## Allocators & Arenas
 
 `lib/alloc.cyr` ships three layers: the process-wide bump allocator (`alloc`), independent

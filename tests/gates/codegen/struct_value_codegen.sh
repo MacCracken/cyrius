@@ -240,6 +240,8 @@
 #   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
 #       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
 #       does not build: tcyr Q31-Q41)
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): the accepted rows R12 R13 R23-R28 run on ecb / ach / cass / pi as
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr, K2 K3 U2 U3 MP2 as tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

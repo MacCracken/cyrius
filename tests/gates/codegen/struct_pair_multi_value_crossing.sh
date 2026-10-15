@@ -64,6 +64,8 @@
 # longer reaches a struct fn. Re-measured 2026-10-14:
 #   M3 (again) `_mret_land` without ESTRUCT_PAIR_HI_SYNC                  -> RED X2 X3 a64, N x2, T2 (6 of 22)
 #   M11 `_refuse_struct_tuple_return` answering 0                        -> RED X1 X9 (BUILT, every leg)
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): X8 runs on ecb / ach / cass / pi in
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

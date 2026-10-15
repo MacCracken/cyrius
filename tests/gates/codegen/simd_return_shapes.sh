@@ -104,6 +104,8 @@
 #   MV4 `_icall_sret` without its `_icall_vbeg` arm (PE)   -> RED win64 V1-V8 only (5: the callee wrote through its
 #                                                          first argument) — the hidden pointer is PE's alone
 #   MV5 `_vrcv_emit` without the register-pair store       -> RED V1-V8 on host / cx / aarch64 (1); win64 green (no pair)
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): A7 runs on ecb / ach / cass / pi in
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

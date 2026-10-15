@@ -480,6 +480,8 @@
 #   MU2 `_scv_arm` without its untyped peel           -> RED 9: R8 does not build x7 (the `p` rows), B3 u3 and take(c)
 #   MU3 `_dyn_want` without its `_scv_un` test         -> RED 1: B3's dyn row (BUILT: a copy); dyn_checked.sh V4d and
 #                                                      struct_receive_inference_checked.sh D1 x4 RED too
+# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): B3's `S8_add(a: S8, b: i64)` row runs on ecb / ach / cass / pi in
+# tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2

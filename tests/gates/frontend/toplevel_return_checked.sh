@@ -23,6 +23,7 @@
 #   C1-C5  controls: a fn body is a fn body wherever it sits. They compile and run on every leg: a return in a
 #          top-level closure body (5), in a closure in a top-level block (5), in an #inline fn called at top level
 #          (4), in a fn defined in a top-level block (3), early returns in a fn defined after top-level code (10)
+#          — on ecb / ach / cass / pi too, as tests/tcyr/crossos/toplevel_return_controls.tcyr (6.7.12)
 #
 # MUTATION LEDGER (2026-10-14; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run
 # from that copy with CYCC= it, so the cross legs are built from the mutated src too):
