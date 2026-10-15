@@ -1095,7 +1095,16 @@ fn _lint_cols(buf, pos, eol): i64 {
 # unicode-escape round trip does, gave 23 false hits at v6.5.33), and an escape counts what the
 # lexer stores for it (`\n` 1, `\xHH` 1, `\u` its code point's UTF-8 length). The walk is
 # lexical like the other rules, across lines. CHANGELOG [6.7.11]
-var _ov_tab = 0;    # the open fn body's locals, 40 bytes each: name off, name len, size, N, depth
+# 6.7.12 — N is sized as the compiler sizes it for the shapes a scanner can see: an integer
+# literal, a `const NAME = <literal>;`, an enum constant with a literal value (bare or `E.X`),
+# and `+ - *` over those (a pre-scan of the file; a name defined twice with two values, and
+# anything else, stays unknown). A top-level bare `var g[N]` is N i64 slots (N * 8 bytes) and
+# is seen by every fn whose own local or parameter does not shadow the name; before, only a
+# literal N in a fn was checked. CHANGELOG [6.7.12]
+# _ov_tab: the open fn body's locals and parameters, _OV_REC bytes each: name off, name len,
+# size (-1 unknown), N, depth, N's spelling off, its len.
+var _ov_tab = 0;
+var _OV_REC = 56;
 var _ov_cap = 0;
 var _ov_n = 0;
 var _ov_val = 0;    # the value _ov_int read
@@ -1104,21 +1113,23 @@ var _ov_ml = 0;
 
 # Record a local: its name buf[off, off+len), its bytes (-1 unknown), the N it declared and the
 # brace depth it was declared at. Grow-only, like the deferral arrays.
-fn _ov_push(off, len, size, n, dep): i64 {
+fn _ov_push(off, len, size, n, dep, noff, nlen): i64 {
     if (_ov_n >= _ov_cap) {
         var c = _ov_cap * 2 + 64;
-        var t = alloc(c * 40);
+        var t = alloc(c * _OV_REC);
         if (t == 0) { return _dp_oom(); }
-        if (_ov_n > 0) { memcpy(t, _ov_tab, _ov_n * 40); }
+        if (_ov_n > 0) { memcpy(t, _ov_tab, _ov_n * _OV_REC); }
         _ov_tab = t;
         _ov_cap = c;
     }
-    var rec = _ov_tab + _ov_n * 40;
+    var rec = _ov_tab + _ov_n * _OV_REC;
     store64(rec, off);
     store64(rec + 8, len);
     store64(rec + 16, size);
     store64(rec + 24, n);
     store64(rec + 32, dep);
+    store64(rec + 40, noff);
+    store64(rec + 48, nlen);
     _ov_n = _ov_n + 1;
     return 0;
 }
@@ -1126,7 +1137,7 @@ fn _ov_push(off, len, size, n, dep): i64 {
 # A `}` brought the depth to `depth`: the locals of the block it closed are gone.
 fn _ov_pop(depth): i64 {
     while (_ov_n > 0) {
-        if (load64(_ov_tab + (_ov_n - 1) * 40 + 32) <= depth) { return 0; }
+        if (load64(_ov_tab + (_ov_n - 1) * _OV_REC + 32) <= depth) { return 0; }
         _ov_n = _ov_n - 1;
     }
     return 0;
@@ -1136,7 +1147,7 @@ fn _ov_pop(depth): i64 {
 fn _ov_find(buf, off, len): i64 {
     var i = _ov_n - 1;
     while (i >= 0) {
-        var rec = _ov_tab + i * 40;
+        var rec = _ov_tab + i * _OV_REC;
         if (_eq_substr(buf, load64(rec), load64(rec + 8), off, len) == 1) { return i; }
         i = i - 1;
     }
@@ -1255,27 +1266,533 @@ fn _ov_decl(buf, p, total, depth): i64 {
     if (q >= lim) { return 0; }
     if (_is_id_start(load8(buf + q)) == 0) { return 0; }
     var ne = _scan_id_end(buf, q, lim);
+    var n = _ov_bare_n(buf, ne, lim);
     var size = 0 - 1;
-    var n = 0;
+    if (n > 0) { size = (n + 7) & (0 - 8); }
+    return _ov_push(q, ne - q, size, n, depth, _ov_noff, _ov_nlen);
+}
+
+# === 6.7.12: N as a const expression, and the top-level bare arrays ===
+# The pre-scan's table of named integer constants, _OVC_REC bytes each: name off, name len,
+# the enum's name off and len (0 for a `const` and for a bare enum constant), the value (-1
+# unknown: not a literal, or defined again with another value), the next record in its hash
+# chain. Both pre-scan tables are hashed (chained, grown at load 1), so a file of 50K
+# constants stays linear: a scan per insert took 12 s there.
+var _ovc_tab = 0;
+var _OVC_REC = 48;
+var _ovc_cap = 0;
+var _ovc_n = 0;
+var _ovc_bk = 0;    # bucket heads (record index, -1 empty), _ovc_nb of them, a power of 2
+var _ovc_nb = 0;
+var _ovc_buf = 0;   # the file the pre-scan read (the tables' offsets point into it)
+# _ovg_tab: the file's top-level `var`s, the _ov_tab layout (depth 0) + the next record in its
+# name's hash chain at +56.
+var _ovg_tab = 0;
+var _OVG_REC = 64;
+var _ovg_cap = 0;
+var _ovg_n = 0;
+var _ovg_bk = 0;
+var _ovg_nb = 0;
+var _ov_noff = 0;   # the spelling of the N _ov_bare_n read
+var _ov_nlen = 0;
+var _OV_EXPR_MAX = 1099511627776;   # 2^40: past it an expression is not a size here
+
+# The hash of buf[off, off+len) then buf[qoff, qoff+qlen) (djb2).
+fn _ov_hash(off, len, qoff, qlen): i64 {
+    var h = 5381;
+    var i = 0;
+    while (i < len) {
+        h = h * 33 + load8(_ovc_buf + off + i);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < qlen) {
+        h = h * 33 + load8(_ovc_buf + qoff + i);
+        i = i + 1;
+    }
+    return h;
+}
+
+# A bucket array of nb heads, every one -1 (empty); 0 when out of memory.
+fn _ov_buckets(nb): i64 {
+    var b = alloc(nb * 8);
+    if (b == 0) { return _dp_oom(); }
+    var i = 0;
+    while (i < nb) {
+        store64(b + i * 8, 0 - 1);
+        i = i + 1;
+    }
+    return b;
+}
+
+# Grow the constants' buckets to twice the records and re-chain every record.
+fn _ovc_rehash(): i64 {
+    var nb = 256;
+    while (nb < _ovc_n * 2) { nb = nb * 2; }
+    var b = _ov_buckets(nb);
+    if (b == 0) { return 0; }
+    _ovc_bk = b;
+    _ovc_nb = nb;
+    var i = 0;
+    while (i < _ovc_n) {
+        var rec = _ovc_tab + i * _OVC_REC;
+        var h = _ov_hash(load64(rec), load64(rec + 8), load64(rec + 16), load64(rec + 24)) & (nb - 1);
+        store64(rec + 40, load64(b + h * 8));
+        store64(b + h * 8, i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The record index of the constant buf[off, off+len) qualified by buf[qoff, qoff+qlen), or -1.
+fn _ovc_index(off, len, qoff, qlen): i64 {
+    if (_ovc_nb == 0) { return 0 - 1; }
+    var h = _ov_hash(off, len, qoff, qlen) & (_ovc_nb - 1);
+    var i = load64(_ovc_bk + h * 8);
+    while (i >= 0) {
+        var rec = _ovc_tab + i * _OVC_REC;
+        if (_eq_substr(_ovc_buf, load64(rec), load64(rec + 8), off, len) == 1) {
+            if (_eq_substr(_ovc_buf, load64(rec + 16), load64(rec + 24), qoff, qlen) == 1) { return i; }
+        }
+        i = load64(rec + 40);
+    }
+    return 0 - 1;
+}
+
+# Record a named constant, or fold a second definition into it: two values make it unknown.
+fn _ovc_put(off, len, qoff, qlen, v): i64 {
+    var i = _ovc_index(off, len, qoff, qlen);
+    if (i >= 0) {
+        var orec = _ovc_tab + i * _OVC_REC;
+        if (load64(orec + 32) != v) { store64(orec + 32, 0 - 1); }
+        return 0;
+    }
+    if (_ovc_n >= _ovc_cap) {
+        var c = _ovc_cap * 2 + 64;
+        var t = alloc(c * _OVC_REC);
+        if (t == 0) { return _dp_oom(); }
+        if (_ovc_n > 0) { memcpy(t, _ovc_tab, _ovc_n * _OVC_REC); }
+        _ovc_tab = t;
+        _ovc_cap = c;
+    }
+    var nr = _ovc_tab + _ovc_n * _OVC_REC;
+    store64(nr, off);
+    store64(nr + 8, len);
+    store64(nr + 16, qoff);
+    store64(nr + 24, qlen);
+    store64(nr + 32, v);
+    _ovc_n = _ovc_n + 1;
+    if (_ovc_n > _ovc_nb) { return _ovc_rehash(); }
+    var h = _ov_hash(off, len, qoff, qlen) & (_ovc_nb - 1);
+    store64(nr + 40, load64(_ovc_bk + h * 8));
+    store64(_ovc_bk + h * 8, _ovc_n - 1);
+    return 0;
+}
+
+# The value of the constant buf[off, off+len) (qualified by the enum buf[qoff, qoff+qlen) when
+# qlen > 0), or -1: not in the table, or unknown.
+fn _ovc_get(off, len, qoff, qlen): i64 {
+    var i = _ovc_index(off, len, qoff, qlen);
+    if (i < 0) { return 0 - 1; }
+    return load64(_ovc_tab + i * _OVC_REC + 32);
+}
+
+# One operand of a size expression at p: an integer literal, a constant, or `E.X`. The offset
+# past it with its value in _ov_val, or -1.
+fn _ov_atom(buf, p, lim): i64 {
+    var q = _ov_ws(buf, p, lim);
+    if (q >= lim) { return 0 - 1; }
+    var s = _ov_int(buf, q, lim);
+    if (s >= 0) { return s; }
+    if (_is_id_start(load8(buf + q)) == 0) { return 0 - 1; }
+    var ne = _scan_id_end(buf, q, lim);
     var r = _ov_ws(buf, ne, lim);
-    if (r < lim) {
-        if (load8(buf + r) == 91) {
-            var s = _ov_int(buf, _ov_ws(buf, r + 1, lim), lim);
-            if (s >= 0) {
-                s = _ov_ws(buf, s, lim);
-                if (s < lim && load8(buf + s) == 93 && _ov_val > 0) {
-                    n = _ov_val;
-                    size = (n + 7) & (0 - 8);
-                }
-            }
+    var v = 0 - 1;
+    if (r < lim && load8(buf + r) == 46) {
+        var m = _ov_ws(buf, r + 1, lim);
+        if (m >= lim) { return 0 - 1; }
+        if (_is_id_start(load8(buf + m)) == 0) { return 0 - 1; }
+        var me = _scan_id_end(buf, m, lim);
+        v = _ovc_get(m, me - m, q, ne - q);
+        ne = me;
+    } else {
+        v = _ovc_get(q, ne - q, 0, 0);
+    }
+    if (v < 0) { return 0 - 1; }
+    _ov_val = v;
+    return ne;
+}
+
+# A product of operands at p; the offset past it with its value in _ov_val, or -1.
+fn _ov_term(buf, p, lim): i64 {
+    var q = _ov_atom(buf, p, lim);
+    if (q < 0) { return 0 - 1; }
+    var acc = _ov_val;
+    while (1 == 1) {
+        var r = _ov_ws(buf, q, lim);
+        if (r >= lim) { break; }
+        if (load8(buf + r) != 42) { break; }
+        q = _ov_atom(buf, r + 1, lim);
+        if (q < 0) { return 0 - 1; }
+        if (acc > 2147483647 || _ov_val > 2147483647) { return 0 - 1; }
+        acc = acc * _ov_val;
+        if (acc > _OV_EXPR_MAX) { return 0 - 1; }
+    }
+    _ov_val = acc;
+    return q;
+}
+
+# A size expression at p: `+ - *` over the operands above (no parentheses, no unary minus).
+# The offset of the first byte past it (blanks skipped) with its value in _ov_val, or -1.
+fn _ov_expr(buf, p, lim): i64 {
+    var q = _ov_term(buf, p, lim);
+    if (q < 0) { return 0 - 1; }
+    var acc = _ov_val;
+    while (1 == 1) {
+        var r = _ov_ws(buf, q, lim);
+        if (r >= lim) { return 0 - 1; }
+        var c = load8(buf + r);
+        if (c != 43 && c != 45) {
+            _ov_val = acc;
+            return r;
+        }
+        q = _ov_term(buf, r + 1, lim);
+        if (q < 0) { return 0 - 1; }
+        if (c == 43) { acc = acc + _ov_val; } else { acc = acc - _ov_val; }
+        if (acc > _OV_EXPR_MAX || acc < 0 - _OV_EXPR_MAX) { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
+# ne is just past a declared name: when `[N]` follows (a bare array) and N is a positive size
+# _ov_expr can read, N (its spelling in _ov_noff / _ov_nlen); else 0, unknown.
+fn _ov_bare_n(buf, ne, lim): i64 {
+    _ov_noff = 0;
+    _ov_nlen = 0;
+    var r = _ov_ws(buf, ne, lim);
+    if (r >= lim) { return 0; }
+    if (load8(buf + r) != 91) { return 0; }
+    var a = _ov_ws(buf, r + 1, lim);
+    var s = _ov_expr(buf, a, lim);
+    if (s < 0) { return 0; }
+    if (load8(buf + s) != 93 || _ov_val <= 0) { return 0; }
+    var e = s;
+    while (e > a && (_dp_ws(load8(buf + e - 1)) == 1 || load8(buf + e - 1) == 10)) { e = e - 1; }
+    _ov_noff = a;
+    _ov_nlen = e - a;
+    return _ov_val;
+}
+
+# p is just past a `const`: record `const NAME = <integer literal>;` by its value, any other
+# const by name as unknown (`const fn` is not a constant).
+fn _ovc_const(buf, p, total): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var q = _ov_ws(buf, p, lim);
+    if (q >= lim) { return 0; }
+    if (_is_id_start(load8(buf + q)) == 0) { return 0; }
+    var ne = _scan_id_end(buf, q, lim);
+    if (ne - q == 2 && memeq(buf + q, "fn", 2) == 1) { return 0; }
+    var v = 0 - 1;
+    var r = _ov_ws(buf, ne, lim);
+    if (r < lim && load8(buf + r) == 61) {
+        var s = _ov_int(buf, _ov_ws(buf, r + 1, lim), lim);
+        if (s >= 0) {
+            s = _ov_ws(buf, s, lim);
+            if (s < lim && load8(buf + s) == 59) { v = _ov_val; }
         }
     }
-    return _ov_push(q, ne - q, size, n, depth);
+    return _ovc_put(q, ne - q, 0, 0, v);
+}
+
+# From p (inside a payload's or a value's parentheses at depth d > 0), the offset past the
+# matching `)`, or lim.
+fn _ovc_skip_parens(buf, p, lim): i64 {
+    var d = 1;
+    while (p < lim) {
+        var q = _lx_skip(buf, p, lim);
+        if (q != p) { p = q; }
+        else {
+            var c = load8(buf + p);
+            if (c == 40) { d = d + 1; }
+            if (c == 41) {
+                d = d - 1;
+                if (d == 0) { return p + 1; }
+            }
+            p = p + 1;
+        }
+    }
+    return lim;
+}
+
+# p is just past an `enum`: record each member, bare and qualified by the enum's name, by its
+# literal value (`NAME = <integer literal>`) or as unknown (implicit, a payload, an expression).
+# The separator is optional, as in the parser. Returns where the body ends (or the search gave
+# up: `;`, `(`, `=` or `}` before the `{`).
+fn _ovc_enum(buf, p, total): i64 {
+    var q = _ov_ws(buf, p, total);
+    if (q >= total) { return total; }
+    if (_is_id_start(load8(buf + q)) == 0) { return q; }
+    var qe = _scan_id_end(buf, q, total);
+    var r = qe;
+    while (r < total) {
+        var k = _lx_skip(buf, r, total);
+        if (k != r) { r = k; }
+        else {
+            var c = load8(buf + r);
+            if (c == 123) { break; }
+            if (c == 59 || c == 40 || c == 61 || c == 125) { return r; }
+            r = r + 1;
+        }
+    }
+    r = r + 1;
+    while (r < total) {
+        r = _ov_ws(buf, r, total);
+        if (r >= total) { return total; }
+        var c = load8(buf + r);
+        if (c == 125) { return r + 1; }
+        if (_is_id_start(c) == 0) {
+            if (c == 40) { r = _ovc_skip_parens(buf, r + 1, total); }
+            else {
+                var k = _lx_skip(buf, r, total);
+                if (k == r) { k = r + 1; }
+                r = k;
+            }
+        } else {
+            var me = _scan_id_end(buf, r, total);
+            var mo = r;
+            var v = 0 - 1;
+            r = _ov_ws(buf, me, total);
+            if (r < total && load8(buf + r) == 40) { r = _ov_ws(buf, _ovc_skip_parens(buf, r + 1, total), total); }
+            elif (r < total && load8(buf + r) == 61) {
+                var s = _ov_int(buf, _ov_ws(buf, r + 1, total), total);
+                var t = 0 - 1;
+                if (s >= 0) { t = _ov_ws(buf, s, total); }
+                if (t >= 0 && t < total) {
+                    var tc = load8(buf + t);
+                    if (tc == 59 || tc == 44 || tc == 125 || _is_id_start(tc) == 1) {
+                        v = _ov_val;
+                        r = t;
+                    }
+                }
+                if (v < 0) { r = _ovc_skip_value(buf, r + 1, total); }
+            }
+            _ovc_put(mo, me - mo, 0, 0, v);
+            _ovc_put(mo, me - mo, q, qe - q, v);
+        }
+    }
+    return total;
+}
+
+# p is inside a member's value expression: the offset of the `;` / `,` / `}` that ends it
+# (parentheses and brackets balanced), or total.
+fn _ovc_skip_value(buf, p, total): i64 {
+    var d = 0;
+    while (p < total) {
+        var k = _lx_skip(buf, p, total);
+        if (k != p) { p = k; }
+        else {
+            var c = load8(buf + p);
+            if (c == 40 || c == 91) { d = d + 1; }
+            elif (c == 41 || c == 93) { d = d - 1; }
+            elif (d <= 0 && (c == 59 || c == 44 || c == 125)) { return p; }
+            p = p + 1;
+        }
+    }
+    return total;
+}
+
+# Record a top-level `var` (p just past the keyword): a bare array by N * 8 bytes when N can be
+# read, anything else (typed, scalar, an unread N) as unknown. A second declaration of the
+# name with another size makes it unknown (an `#ifdef` pair). N is read after the pre-scan
+# (_ovg_size), since a const may be declared below.
+fn _ovg_decl(buf, p, total): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var q = _ov_ws(buf, p, lim);
+    if (q >= lim) { return 0; }
+    if (_is_id_start(load8(buf + q)) == 0) { return 0; }
+    var ne = _scan_id_end(buf, q, lim);
+    if (_ovg_n >= _ovg_cap) {
+        var c = _ovg_cap * 2 + 64;
+        var t = alloc(c * _OVG_REC);
+        if (t == 0) { return _dp_oom(); }
+        if (_ovg_n > 0) { memcpy(t, _ovg_tab, _ovg_n * _OVG_REC); }
+        _ovg_tab = t;
+        _ovg_cap = c;
+    }
+    var rec = _ovg_tab + _ovg_n * _OVG_REC;
+    store64(rec, q);
+    store64(rec + 8, ne - q);
+    store64(rec + 16, 0 - 1);
+    store64(rec + 24, 0);
+    store64(rec + 32, 0);
+    store64(rec + 40, 0);
+    store64(rec + 48, 0);
+    store64(rec + 56, 0 - 1);
+    _ovg_n = _ovg_n + 1;
+    return 0;
+}
+
+# Size every recorded top-level `var` once the constants are known, chain them by name, and
+# fold repeats: a name declared twice with two sizes is unknown.
+fn _ovg_size(buf, total): i64 {
+    var nb = 256;
+    while (nb < _ovg_n * 2) { nb = nb * 2; }
+    var b = _ov_buckets(nb);
+    if (b == 0) { return 0; }
+    _ovg_bk = b;
+    _ovg_nb = nb;
+    var i = 0;
+    while (i < _ovg_n) {
+        var rec = _ovg_tab + i * _OVG_REC;
+        var ne = load64(rec) + load64(rec + 8);
+        var lim = ne + _CALL_SCAN_MAX;
+        if (lim > total) { lim = total; }
+        var n = _ov_bare_n(buf, ne, lim);
+        if (n > 0) {
+            store64(rec + 16, n * 8);
+            store64(rec + 24, n);
+            store64(rec + 40, _ov_noff);
+            store64(rec + 48, _ov_nlen);
+        }
+        var h = _ov_hash(load64(rec), load64(rec + 8), 0, 0) & (nb - 1);
+        var j = load64(b + h * 8);
+        var first = 0 - 1;
+        while (j >= 0) {
+            var o = _ovg_tab + j * _OVG_REC;
+            if (_eq_substr(buf, load64(o), load64(o + 8), load64(rec), load64(rec + 8)) == 1) {
+                first = j;
+                j = 0 - 1;
+            } else { j = load64(o + 56); }
+        }
+        if (first < 0) {
+            store64(rec + 56, load64(b + h * 8));
+            store64(b + h * 8, i);
+        } else {
+            # the first declaration stays the chained one; it carries the folded size
+            var fr = _ovg_tab + first * _OVG_REC;
+            if (load64(fr + 16) != load64(rec + 16)) { store64(fr + 16, 0 - 1); }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The top-level `var` named buf[off, off+len) (its first declaration), or -1.
+fn _ovg_find(buf, off, len): i64 {
+    if (_ovg_nb == 0) { return 0 - 1; }
+    var h = _ov_hash(off, len, 0, 0) & (_ovg_nb - 1);
+    var i = load64(_ovg_bk + h * 8);
+    while (i >= 0) {
+        var rec = _ovg_tab + i * _OVG_REC;
+        if (_eq_substr(buf, load64(rec), load64(rec + 8), off, len) == 1) { return i; }
+        i = load64(rec + 56);
+    }
+    return 0 - 1;
+}
+
+# The fn header buf[p, b) (p just past `fn`, b its body's `{`): record each parameter as an
+# unknown local at `depth`, so it shadows a top-level array of the same name.
+fn _ov_params(buf, p, b, depth): i64 {
+    while (p < b && load8(buf + p) != 40) {
+        var k = _lx_skip(buf, p, b);
+        if (k == p) { k = p + 1; }
+        p = k;
+    }
+    if (p >= b) { return 0; }
+    p = p + 1;
+    var d = 1;
+    var start = 1;   # 1 at the start of a parameter (after the `(` or a `,` at depth 1)
+    while (p < b && d > 0) {
+        var k = _lx_skip(buf, p, b);
+        if (k != p) { p = k; }
+        else {
+            var c = load8(buf + p);
+            if (c == 40 || c == 91 || c == 60) { d = d + 1; start = 0; p = p + 1; }
+            elif (c == 41 || c == 93 || c == 62) { d = d - 1; start = 0; p = p + 1; }
+            elif (c == 44) {
+                if (d == 1) { start = 1; }
+                p = p + 1;
+            }
+            elif (_dp_ws(c) == 1 || c == 10) { p = p + 1; }
+            elif (_is_id_start(c) == 1) {
+                var e = _scan_id_end(buf, p, b);
+                if (start == 1 && d == 1) { _ov_push(p, e - p, 0 - 1, 0, depth, 0, 0); }
+                start = 0;
+                p = e;
+            }
+            else { start = 0; p = p + 1; }
+        }
+    }
+    return 0;
+}
+
+# The pre-scan: every `const` and `enum` member of the file (at any depth; one name defined
+# with two values is unknown), and every top-level `var` (depth 0, outside a fn), sized last.
+fn _ov_prescan(buf, total): i64 {
+    _ovc_buf = buf;
+    _ovc_n = 0;
+    _ovc_nb = 0;
+    _ovg_n = 0;
+    _ovg_nb = 0;
+    var p = 0;
+    var depth = 0;
+    var fst = 0;
+    var fdep = 0;
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 34 || c == 39 || c == 35) {
+            var k = _lx_skip(buf, p, total);
+            if (k == p) { k = p + 1; }
+            p = k;
+        }
+        elif (c == 123) {
+            if (fst == 1) {
+                fst = 2;
+                fdep = depth;
+            }
+            depth = depth + 1;
+            p = p + 1;
+        }
+        elif (c == 125) {
+            depth = depth - 1;
+            if (fst == 1) { fst = 0; }
+            if (fst == 2 && depth <= fdep) { fst = 0; }
+            p = p + 1;
+        }
+        elif (c == 59) {
+            if (fst == 1) { fst = 0; }
+            p = p + 1;
+        }
+        elif (_is_id_start(c) == 1) {
+            var e = _scan_id_end(buf, p, total);
+            var wl = e - p;
+            var dot = 0;
+            if (p > 0) { if (load8(buf + p - 1) == 46) { dot = 1; } }
+            if (dot == 0) {
+                if (wl == 2 && memeq(buf + p, "fn", 2) == 1) { if (fst == 0) { fst = 1; } }
+                elif (wl == 5 && memeq(buf + p, "const", 5) == 1) { _ovc_const(buf, e, total); }
+                elif (wl == 4 && memeq(buf + p, "enum", 4) == 1) { _ovc_enum(buf, e, total); }
+                elif (wl == 3 && fst == 0 && depth == 0 && memeq(buf + p, "var", 3) == 1) { _ovg_decl(buf, e, total); }
+            }
+            p = e;
+        }
+        elif (_is_digit(c) == 1) {
+            p = p + 1;
+            while (p < total) {
+                if (_is_id_cont(load8(buf + p)) == 0) { break; }
+                p = p + 1;
+            }
+        }
+        else { p = p + 1; }
+    }
+    return _ovg_size(buf, total);
 }
 
 # buf[p, e) is a `load<W>` / `store<W>` name of width w, on the line starting at ls. When the
 # call's first argument is `&a` or `&a + K` (K an integer literal) for a bare local array `a`,
-# warn if K + w runs past its bytes.
+# or (6.7.12) a top-level one no local or parameter shadows, warn if K + w runs past its bytes.
 fn _ov_access(buf, p, e, total, w, lineno, ls): i64 {
     var lp = _call_paren(buf, e, total);
     if (lp < 0) { return 0; }
@@ -1288,9 +1805,16 @@ fn _ov_access(buf, p, e, total, w, lineno, ls): i64 {
     if (q >= lim) { return 0; }
     if (_is_id_start(load8(buf + q)) == 0) { return 0; }
     var ne = _scan_id_end(buf, q, lim);
+    var top = 0;
     var i = _ov_find(buf, q, ne - q);
-    if (i < 0) { return 0; }
-    var rec = _ov_tab + i * 40;
+    var rec = 0;
+    if (i >= 0) { rec = _ov_tab + i * _OV_REC; }
+    else {
+        i = _ovg_find(buf, q, ne - q);
+        if (i < 0) { return 0; }
+        rec = _ovg_tab + i * _OVG_REC;
+        top = 1;
+    }
     var size = load64(rec + 16);
     if (size < 0) { return 0; }
     var r = _ov_ws(buf, ne, lim);
@@ -1320,15 +1844,44 @@ fn _ov_access(buf, p, e, total, w, lineno, ls): i64 {
     _ov_mn(k);
     _ov_ms("..");
     _ov_mn(k + w - 1);
-    _ov_ms(" of local `var ");
+    if (top == 1) { _ov_ms(" of top-level `var "); }
+    else { _ov_ms(" of local `var "); }
     _ov_mput(buf + q, nl);
     _ov_ms("[");
-    _ov_mn(load64(rec + 24));
-    _ov_ms("]`, which is ");
+    var vnote = _ov_nspell(buf, rec);
+    _ov_ms("]`");
+    if (vnote == 1) {
+        _ov_ms(" (N = ");
+        _ov_mn(load64(rec + 24));
+        _ov_ms(")");
+    }
+    _ov_ms(", which is ");
     _ov_mn(size);
-    _ov_ms(" bytes (a bare array in a fn is N BYTES, not N slots: `var a: i64[N]` holds slots;");
+    if (top == 1) {
+        _ov_ms(" bytes (a bare top-level array is N i64 slots, N * 8 bytes;");
+    } else {
+        _ov_ms(" bytes (a bare array in a fn is N BYTES, not N slots: `var a: i64[N]` holds slots;");
+    }
     _ov_ms(" an intended offset takes `# lint: offset-ok`)");
     return warn(lineno, _ov_mb);
+}
+
+# Append a recorded array's N as written; 1 when that is not the decimal literal of its value
+# (the caller then adds `(N = 8)`), else 0.
+fn _ov_nspell(buf, rec): i64 {
+    var n = load64(rec + 24);
+    var so = load64(rec + 40);
+    var sl = load64(rec + 48);
+    var nb[24];
+    var nl = fmt_int_buf(n, &nb);
+    if (sl <= 0) {
+        _ov_mput(&nb, nl);
+        return 0;
+    }
+    if (sl > 64) { sl = 64; }
+    _ov_mput(buf + so, sl);
+    if (sl == nl) { if (memeq(buf + so, &nb, nl) == 1) { return 0; } }
+    return 1;
 }
 
 # The byte length the lexer stores for the string literal body buf[a, b) (between the quotes):
@@ -1459,7 +2012,9 @@ fn lint_mem_rules(buf, total): i64 {
     var depth = 0;
     var fst = 0;         # 0 outside a fn; 1 a `fn` header read, its body not open; 2 in the body
     var fdep = 0;        # the depth the body's `{` opened at
+    var fhdr = 0;        # just past the `fn` of the header being read (its parameters)
     _ov_n = 0;
+    _ov_prescan(buf, total);
     while (p < total) {
         var c = load8(buf + p);
         if (c == 10) {
@@ -1489,6 +2044,7 @@ fn lint_mem_rules(buf, total): i64 {
                 fst = 2;
                 fdep = depth;
                 _ov_n = 0;
+                _ov_params(buf, fhdr, p, depth + 1);
             }
             depth = depth + 1;
             p = p + 1;
@@ -1514,7 +2070,12 @@ fn lint_mem_rules(buf, total): i64 {
             var dot = 0;
             if (p > 0) { if (load8(buf + p - 1) == 46) { dot = 1; } }
             if (dot == 0) {
-                if (wl == 2 && memeq(buf + p, "fn", 2) == 1) { if (fst == 0) { fst = 1; } }
+                if (wl == 2 && memeq(buf + p, "fn", 2) == 1) {
+                    if (fst == 0) {
+                        fst = 1;
+                        fhdr = e;
+                    }
+                }
                 elif (fst == 2 && wl == 3 && memeq(buf + p, "var", 3) == 1) { _ov_decl(buf, e, total, depth); }
                 elif (wl == 7 && memeq(buf + p, "syscall", 7) == 1) { _wl_call(buf, e, total, 0, lineno, ls); }
                 elif (wl == 9 && memeq(buf + p, "sys_write", 9) == 1) { _wl_call(buf, e, total, 1, lineno, ls); }

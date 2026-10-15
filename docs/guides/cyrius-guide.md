@@ -4774,9 +4774,17 @@ and the compiler refuses `a[i]` on it, so the overrun left to make is the explic
 `cyrlint` records each local of a fn body, scoped to its block, and warns on a
 `load8/16/32/64(&a + K)` or `store8/16/32/64(&a + K, ..)` — K an integer literal, or no `+ K` at
 all — whose K plus the access width runs past those bytes: `var a[16]; store64(&a + 16, 3);`
-draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. A typed
-local (`var a: i64[4]`), a scalar or a size that is not a literal shadows the name and is not
-checked. An intended offset is marked with `# lint: offset-ok` on the line of the call's name.
+draws ``store64(&a + 16) reaches bytes 16..23 of local `var a[16]`, which is 16 bytes …``. Since
+6.7.12 N is read as the compiler reads it for the shapes a line scanner can see: an integer
+literal, a `const NAME = <literal>;`, an enum constant with a literal value (bare or `E.X`), and
+`+ - *` over those (`*` first) — `var a[BUF]`, `var b[Sz.SMALL]`, `var c[4 + 4]` — and the
+warning names the spelling and its value (``of local `var a[BUF]` (N = 8)``). A top-level bare
+`var g[N]` is N i64 slots (N * 8 bytes) and is checked in every fn whose own local or parameter
+does not shadow the name (``of top-level `var g[2]`, which is 16 bytes``); before 6.7.12 only a
+literal N in a function was checked. A typed local (`var a: i64[4]`), a scalar or a size it
+cannot read (`sizeof`, a `const fn` call, parentheses, a name from another file, a const or
+enum constant defined twice with two values) shadows the name and is not checked. An intended
+offset is marked with `# lint: offset-ok` on the line of the call's name.
 And a write of a string literal with a literal length — `syscall(SYS_WRITE, fd, "…", N)` (or
 `syscall(1, …)`), `sys_write(fd, "…", N)`, `_aw_write(fd, "…", N)` — warns when N is not the
 literal's byte length (`write length 5, but its literal is 6 bytes …`): a raw byte counts once,
