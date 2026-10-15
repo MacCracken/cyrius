@@ -4379,6 +4379,7 @@ fn _gv_clear(S, vi): i64 {
     SVTYPE(S, vi, 0);
     SVSGN(S, vi, 0);
     S64(_vgsi_base + vi * 8, 0);
+    _gv_lit_set(vi, 0);   # 6.7.12 (D30)
     SVGAI(S, vi, 0);   # 6.6.16 (C1): an array initializer's blob
     if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
     if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
@@ -5240,6 +5241,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
     # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
+    if (cf_has == 1) { if (is_struct == 0) { _gv_lit_set(gvi, 1); } }   # 6.7.12 (D30): a constant, zero too
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
         SLVAR(S, gvi);
