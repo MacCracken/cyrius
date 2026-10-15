@@ -56,6 +56,18 @@ does or builds; never a per-repo worklist.*
   connected on slot 7) and could answer `Ok`. Linux already answered these errnos; a program that passed only
   sockets sees no change.
 
+**epoll_event readers: `epoll_event_events` / `epoll_event_data` / `const EPOLL_EVENT_SIZE`**
+- New beside `epoll_event_new` in the x86_64 Linux, aarch64 and x86-macOS peers: read one element of a
+  `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and step by `EPOLL_EVENT_SIZE` (12 on
+  x86_64 and x86-macOS, 16 on aarch64). A hand-gated `load64(ev + 4)` / `load64(ev + 8)` per arch can become
+  `epoll_event_data(ev)`. ⚠ A program that declares its own `EPOLL_EVENT_SIZE` after including `lib/syscalls.cyr`
+  now stops compiling ("'EPOLL_EVENT_SIZE' is already declared as a top-level const") — drop the copy; one that
+  defines its own `epoll_event_data` / `epoll_event_events` gets the duplicate-fn warning (its own, the last, wins).
+- `lib/async.cyr`'s epoll reactor reads each event at the peer's stride. It read every arch at 16, so on x86_64 the
+  2nd..8th event of one wait were read off by 4, 8, … bytes — a stale or garbage fd (the real one re-reported by the
+  next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
+  unchanged.
+
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).

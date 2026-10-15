@@ -761,6 +761,8 @@ Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sy
 
 Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
 
+epoll_event readers (6.7.12): `epoll_event_events(ev)` and `epoll_event_data(ev)` read one element of a `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and `const EPOLL_EVENT_SIZE` is the array stride — 12 on x86_64 Linux and x86-macOS (packed, data @4), 16 on aarch64 (unpacked, data @8). Step through the array by `EPOLL_EVENT_SIZE` instead of hand-gating `+4` / `+8` per arch.
+
 Signal disposition (defined in `syscalls.cyr` itself, per-target routed inside
 one fn so the `#ifdef`-blind static checker sees a single definition):
 

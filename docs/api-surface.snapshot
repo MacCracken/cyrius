@@ -4553,6 +4553,8 @@ sys::uname_machine/1
 sys::uname_release/1
 syscalls::signal_default/1
 syscalls::signal_ignore/1
+syscalls_aarch64_linux::epoll_event_data/1
+syscalls_aarch64_linux::epoll_event_events/1
 syscalls_aarch64_linux::epoll_event_new/2
 syscalls_aarch64_linux::err_code/1
 syscalls_aarch64_linux::is_err/1
@@ -4696,6 +4698,8 @@ syscalls_linux_common::sys_unshare/1
 syscalls_linux_common::sys_utimensat/4
 syscalls_linux_common::sys_waitpid/3
 syscalls_linux_common::sys_write/3
+syscalls_macos::epoll_event_data/1
+syscalls_macos::epoll_event_events/1
 syscalls_macos::epoll_event_new/2
 syscalls_macos::err_code/1
 syscalls_macos::is_err/1
@@ -5031,6 +5035,8 @@ syscalls_x86_64_agnos::sys_waitpid_block/1
 syscalls_x86_64_agnos::sys_winsize/0
 syscalls_x86_64_agnos::sys_write/3
 syscalls_x86_64_agnos::sys_write_nb/3
+syscalls_x86_64_linux::epoll_event_data/1
+syscalls_x86_64_linux::epoll_event_events/1
 syscalls_x86_64_linux::epoll_event_new/2
 syscalls_x86_64_linux::err_code/1
 syscalls_x86_64_linux::is_err/1
