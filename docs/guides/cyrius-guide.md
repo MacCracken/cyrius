@@ -1719,9 +1719,10 @@ inside a fn was copied. A callee that must change the caller's struct says so in
 `fn bump(p: *P3)`, called `bump(&p)` — or a method with an untyped `self` or `self: *T`. Because
 the copy is made on entry, an argument that is not a struct (`take(0)` for a `q: P3`) now faults
 there even when the body never reads `q`. And `q` reads like any struct variable: a bare `q` where
-an untyped value is expected (`var k = q;`, `raw(q)` into an untyped parameter, `load64(q)`) is its
-first field, as for an inline local and for a struct of 8 bytes or less — before v6.6.16 it was
-the caller's address. Write `&q` for the address (of the copy). A struct of 8 bytes or less was
+an untyped value is expected (`raw(q)` into an untyped parameter, `load64(q)`, `return q;` from an
+`i64` fn) is its first field, as for an inline local and for a struct of 8 bytes or less — before
+v6.6.16 it was the caller's address. An untyped `var k = q;` is a copy of the struct (6.7.12, see
+*An untyped binding*). Write `&q` for the address (of the copy). A struct of 8 bytes or less was
 already a value: it travels in a register. An `async fn` refuses such a parameter (see *Other
 limits* under async).
 
@@ -1958,6 +1959,18 @@ untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the 
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
 annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
+
+**So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
+(or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
+included) or a closure's captured copy of one, declares `q` a copy of `p`'s struct, as `var q: P = p;`
+does — `q.y` reads and writes the copy (`p` is untouched), in a fn and inside a closure that captures `q`,
+`take(q)` passes it, and `q + p` dispatches `P_add`. Through 6.7.11 `q` was `p`'s first word: `q.y` was *no
+struct type in scope for 'q'* (*undefined variable 'q'* in a closure), `take(q)` passed the word as the
+struct's address, and `q + 1` added to it (now it dispatches `P_add`, or is refused if there is none). A
+bare `q` where a value is expected is still the first word (`return q;` from an `i64` fn). Unchanged: a
+`*T` source stays a plain word (an untyped impl `self` is one), as do a handle and a struct global named
+in a fn (`var q = G;`); an untyped global keeps the word; a tuple stays refused (*tuple 't' used as a
+value*).
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,

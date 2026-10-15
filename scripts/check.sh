@@ -1125,7 +1125,9 @@ _chk_gate "$ROOT/tests/gates/frontend/closure_declared_names_not_captured.sh"
 # 6.7.11: inside a closure, `s.len` / `s.ptr` of a captured slice was "undefined variable 's'"
 # while `slice_len(&s)` read the copy. The fields read the captured copy (the user's decision (a),
 # 2026-10-13); a store into it is refused by name; host, cx and aarch64-qemu legs, and an async
-# coroutine row on the host.
+# coroutine row on the host. 6.7.12 (D29): an untyped `var q = p;` of a struct value is a typed copy
+# (`q.y` in a fn and in a closure; a `*T`, an untyped impl self and an untyped global stay words);
+# + a PE (wine) leg and crossos/untyped_struct_name_copy.tcyr on every leg.
 _chk_gate "$ROOT/tests/gates/frontend/closure_captured_slice_fields.sh"
 
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
