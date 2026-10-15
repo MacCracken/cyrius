@@ -58,6 +58,9 @@ fn main(): i64 {
     var r = syscall(_unrouted_nr(), 0, 0, 0);
     assert(r != pid, "a runtime unrouted number does NOT re-run the previous call (was: == getpid)");
     assert_eq(r, 0 - 78, "a runtime unrouted number returns -ENOSYS (-78)");
+    # 6.7.12: x86-macOS keeps one shared chain stub per arity class (argc < 2, argc >= 2), so the
+    # one-argument form reaches the OTHER stub. CHANGELOG [6.7.12]
+    assert_eq(syscall(_unrouted_nr()), 0 - 78, "a runtime unrouted number with no arguments returns -ENOSYS (-78)");
     var pid2 = syscall(SYS_GETPID);
     var r2 = syscall(4001, 0, 0, 0);
     assert(r2 != pid2, "a literal unrouted number does NOT re-run the previous call");

@@ -1813,6 +1813,10 @@ if (_epi_km == 3 || _epi_km == 2) {
     _cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
     EEXIT(S);
 }
+# 6.7.12 (XLAT-2): the x86 Mach-O syscall-translation stubs the run-time-number sites call, then
+# their placeholders patched — after EEXIT, before the IR passes and FIXUP (which asserts it ran).
+# A no-op with no such site. CHANGELOG [6.7.12]
+EMACHO_SYSX_STUBS(S);
 
 # cycc: IR stats/dump
 if (IR_ENABLED(S) == 1) {

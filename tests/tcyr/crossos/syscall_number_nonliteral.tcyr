@@ -10,6 +10,12 @@
 # each against the literal / the bytes it moved. Runs on pi and ecb (the stubs) and on every
 # other host as the reference. Windows routes a variable number through EPE_SYSCALL_DYNAMIC and
 # spells none of these, so it passes trivially there.
+# 6.7.12 — x86-macOS joins (XLAT-2: one stub per arity class, argc < 2 and argc >= 2, plus the
+# run-time fork / pipe fixup). Two rows are for its one hazard: x86 MOVES code after emitting it
+# (the per-fn NOP compaction runs whenever the register allocator takes a local), so a stub call
+# is patched through the disp32 registry rather than at the offset it was emitted at. `_nv_busy`
+# issues its variable getpid after such a body; and a fork through a variable takes the run-time
+# fork fixup (the child must see 0). CHANGELOG [6.7.12]
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -26,8 +32,21 @@ var _nv_fds[16];
 var _nv_buf[16];
 var _nv_ts[16];
 
+# Locals the register allocator takes (a loop over four of them), then a variable-number syscall.
+fn _nv_busy(k): i64 {
+    var a = 0; var b = 1; var c = 2; var i = 0;
+    while (i < k) { a = a + b; b = b + c; c = c + 1; i = i + 1; }
+    var g = syscall(_nv_n);
+    var s = 0;
+    while (i > 0) { s = s + a + b + c; i = i - 1; }
+    if (s < 0) { return 0 - 1; }
+    return g;
+}
+
 _nv_n = SYS_GETPID;
 assert_eq(syscall(_nv_n), syscall(SYS_GETPID), "argc 1: getpid through a variable equals the literal");
+_nv_n = SYS_GETPID;
+assert_eq(_nv_busy(16), syscall(SYS_GETPID), "argc 1: the same, issued after a register-allocated loop");
 
 # pipe at argc 2: the x86 number everywhere it is routed, Darwin's aarch64 peer spelling on arm64
 # macOS (the Mach-O pipe row, emitted only for argc >= 2, plus ESYSCALL's fd-store fixup).
@@ -63,6 +82,19 @@ if (_nv_sleep == 1) {
     store64(&_nv_ts + 8, 2000000);
     assert_eq(syscall(_nv_n, &_nv_ts, 0), 0, "argc 3: nanosleep 35 (2 ms) through a variable");
 }
+
+# x86: fork through a variable — the child must see 0 (the run-time fork fixup), the parent its pid.
+#ifdef CYRIUS_ARCH_X86
+#ifndef CYRIUS_TARGET_AGNOS
+_nv_n = SYS_FORK;
+var _nv_pid = syscall(_nv_n);
+if (_nv_pid == 0) { syscall(SYS_EXIT, 37); }
+assert_eq(_nv_pid > 0, 1, "fork through a variable returns the child's pid in the parent");
+var _nv_st = 0;
+assert_eq(sys_waitpid(_nv_pid, &_nv_st, 0), _nv_pid, "waitpid reaps that child");
+assert_eq(WEXITSTATUS(_nv_st), 37, "and the child saw 0 (it took the child's branch and exited 37)");
+#endif
+#endif
 #endif
 
 var r = assert_summary();

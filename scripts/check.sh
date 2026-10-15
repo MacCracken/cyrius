@@ -2696,6 +2696,14 @@ _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
 # repro's binary byte-identical to its region-free twin. qemu legs SKIP by name.
 _chk_gate "$ROOT/tests/gates/platform/native_region_literal_warns.sh"
 
+# 6.7.12 (D2) — the x86 Mach-O twin of esysxlat_fold: a literal syscall number folds its
+# EMACHO_SYSXLAT chain to its row's classed number (read from the emitter) with only the fork / pipe
+# fixup half it needs; run-time numbers share one stub per arity class, patched through the disp32
+# registry after the per-fn compaction / wp_compact move code; every x86 driver emits the stubs and
+# FIXUP refuses a driver that did not; CYRIUS_IR=1 builds byte-identical; the x86-macOS compiler
+# carries at most one chain per class (733 inline at the slot open).
+_chk_gate "$ROOT/tests/gates/platform/emacho_sysxlat_fold.sh"
+
 # 6.6.18 (XLAT-4) — the pre-commit hook refuses an un-folded build/cycc-native-aarch64: a COPY of
 # scripts/hooks/pre-commit in a throwaway `git init` (6.7.11: the bound is 1.10x build/cycc, under 700K–3M).
 _chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"

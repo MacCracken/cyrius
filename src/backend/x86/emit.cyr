@@ -430,11 +430,35 @@ fn EW128_TST(S, op): i64 {
 fn EMOVR3RAX(S): i64 { if (_IR_REC0(S, IR_MOV_R3_RAX) == 1) { return 0; } E3(S, 0xC08949); return 0; }                              # mov r8, rax
 fn EMOVRA_R3(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_R3) == 1) { return 0; } E3(S, 0xC0894C); _flags_reflect_rax = 0; return 0; }      # mov rax, r8
 fn EMOVRDI(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xC78948); return 0; }
+# 6.7.12 — the syscall number this site holds at compile time, or -1 when it is a run-time value.
+# ESCPOPS sets it from the parser's literal (`lit`) around the one ESYSCALL it emits; EEXIT sets
+# its pre-classed 0x2000001. Read only by the x86 Mach-O arm (_msx_syscall). CHANGELOG [6.7.12]
+var _msx_lit = 0 - 1;
 fn ESYSCALL(S): i64 {
     if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; }
-    if (_TARGET_MACHO == 1) {
+    if (_TARGET_MACHO == 1) { return _msx_syscall(S); }
+    E2(S, 0x050F);
+    _flags_reflect_rax = 0; return 0;
+}
+# The x86 Mach-O syscall. A number known at compile time (`_msx_lit` >= 0) is translated HERE,
+# from the same EMACHO_SYSXLAT rows replayed in query mode (_msx_fold): at most one
+# `mov rax, imm32`, and only the fork / pipe fixup half that number can need (XLAT-1 + the x86
+# twin of arm64's XLAT-3). A run-time number calls one shared chain stub per arity class
+# (_msx_stub_site, XLAT-2) and keeps the run-time fixup, which needs the RAW number pushed first
+# (the syscall clobbers rax). Before 6.7.12 every site inlined the whole chain (~1.26 KB, 733
+# copies, a third of the x86-macOS compiler). CHANGELOG [6.7.12]
+fn _msx_syscall(S): i64 {
+    var lit = _msx_lit;
+    if (lit >= 0) {
+        var cls = _msx_fold(lit);
+        if (cls != lit) {
+            EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);       # mov rax, imm32 (the classed number)
+            EB(S, cls & 0xFF); EB(S, (cls >> 8) & 0xFF);
+            EB(S, (cls >> 16) & 0xFF); EB(S, (cls >> 24) & 0xFF);
+        }
+    } else {
         EB(S, 0x50);                       # push rax — stash the RAW Linux num for
-        EMACHO_SYSXLAT(S);                 # EMACHO_PROC_FIXUP, THEN translate to BSD
+        _msx_stub_site(S);                 # EMACHO_PROC_FIXUP, THEN translate to BSD
     }                                      # (syscall clobbers rax; we pop the num back)
     E2(S, 0x050F);
     # v6.0.43: Darwin returns syscall errors via the CARRY flag with a
@@ -446,11 +470,11 @@ fn ESYSCALL(S): i64 {
     # this with `csneg x0,x0,x0,cc`; the x86 equivalent is a post-syscall
     # `jnc +3; neg rax` (negate only when carry/error is set). See issue
     # 2026-06-02-macos-x86-release-no-compiler.md layer 5.
-    if (_TARGET_MACHO == 1) {
-        EB(S, 0x73); EB(S, 0x03);          # jnc +3 (skip neg when no error)
-        EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);  # neg rax
-        EMACHO_PROC_FIXUP(S);              # fork/pipe rax:rdx multi-return fixup
-    }
+    EB(S, 0x73); EB(S, 0x03);              # jnc +3 (skip neg when no error)
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8); # neg rax
+    if (lit < 0) { EMACHO_PROC_FIXUP(S); } # fork/pipe rax:rdx multi-return fixup
+    if (lit == 57) { _msx_fork_fix(S); }   # fork: the child half only
+    if (lit == 22) { if (_msx_argc >= 2) { _msx_pipe_fix(S); } }   # pipe (routed at argc >= 2 only)
     _flags_reflect_rax = 0; return 0;
 }
 
@@ -485,14 +509,25 @@ fn ESYSCALL(S): i64 {
 fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x41); EB(S, 0x5B);                            # pop r11  (recover Linux num)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x39);  # cmp r11, 57  (fork?)
-    EB(S, 0x75); EB(S, 0x0E);                            # jne +14
+    EB(S, 0x75); EB(S, 0x0E);                            # jne +14 (over _msx_fork_fix)
+    _msx_fork_fix(S);
+    EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x16);  # cmp r11, 22  (pipe?)
+    EB(S, 0x75); EB(S, 0x0D);                            # jne +13 (over _msx_pipe_fix)
+    _msx_pipe_fix(S);
+    return 0;
+}
+# The two halves, shared by the run-time fixup above and a literal site that folds to fork 57
+# or pipe 22 (_msx_syscall), which emits its half with no pop / cmp r11: the number is known.
+# 14 and 13 bytes — the jne distances above. CHANGELOG [6.7.12]
+fn _msx_fork_fix(S): i64 {
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);               # test rax, rax
     EB(S, 0x78); EB(S, 0x09);                            # js  +9  (rax<0 error → rdx is stale)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xFA); EB(S, 0x01);  # cmp rdx, 1   (child?)
     EB(S, 0x75); EB(S, 0x03);                            # jne +3
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (child → 0)
-    EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x16);  # cmp r11, 22  (pipe?)
-    EB(S, 0x75); EB(S, 0x0D);                            # jne +13
+    return 0;
+}
+fn _msx_pipe_fix(S): i64 {
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);               # test rax, rax
     EB(S, 0x78); EB(S, 0x08);                            # js  +8  (rax<0 error → skip)
     EB(S, 0x89); EB(S, 0x07);                            # mov [rdi], eax     (fds[0])
@@ -835,7 +870,7 @@ fn ESADDR(S, soff): i64 {
 # _msx_short. CHANGELOG [6.6.10]
 var _msx_argc = 7;
 # emit syscall pops for N args then syscall
-fn ESCPOPS(S, n, lit): i64 {   # lit: the aarch64 fold's literal number; unused here
+fn ESCPOPS(S, n, lit): i64 {   # lit: the syscall number when it is a compile-time literal, else -1
     if (_sc_argc_refuse(S, n) == 1) { return 0; }   # > 6 arguments: no backend can pass them
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_CALL_POPS, n); }
     if (n >= 7) { EPOPR9(S); }
@@ -847,7 +882,9 @@ fn ESCPOPS(S, n, lit): i64 {   # lit: the aarch64 fold's literal number; unused 
     if (n >= 1) { EPOPR(S); }
     if (n < 5) { if (_TARGET_AGNOS == 1) { E3(S, 0xD23145); } }   # xor r10d, r10d
     _msx_argc = n;          # EMACHO_SYSXLAT's pointer-carrying rows key on it (see _msx_short)
+    _msx_lit = lit;         # x86 Mach-O folds a compile-time number (_msx_syscall). CHANGELOG [6.7.12]
     ESYSCALL(S);
+    _msx_lit = 0 - 1;
     _msx_argc = 7;
     return 0;
 }
@@ -1082,10 +1119,13 @@ fn EEXIT(S): i64 {
         return 0;
     }
     EMOVRDI(S);
-    if (_TARGET_MACHO == 1) { EMOVI(S, 0x2000001); }
+    # x86 Mach-O: the number is already classed, so the fold leaves it as it is — no chain, no
+    # fixup (exit never returns). CHANGELOG [6.7.12]
+    if (_TARGET_MACHO == 1) { EMOVI(S, 0x2000001); _msx_lit = 0x2000001; }
     elif (_TARGET_AGNOS == 1) { EMOVI(S, 0); }   # agnos exit = syscall 0 (not Linux 60)
     else { EMOVI(S, 60); }
     ESYSCALL(S);
+    _msx_lit = 0 - 1;
     return 0;
 }
 
@@ -1111,6 +1151,11 @@ fn EEXIT(S): i64 {
 var _msx_qon = 0;
 var _msx_q = 0;
 var _msx_hit = 0;
+# 6.7.12 — FOLD MODE (`_msx_qon == 2`, _msx_fold): the same replay, but it answers "what does the
+# chain leave in rax for the compile-time number q at this arity?". It records the FIRST row that
+# matches (every row writes 0x2000000|bsd, which no later row's source can equal, so the first hit
+# is what runs) and honours _msx_short, which query mode 1 deliberately does not. CHANGELOG [6.7.12]
+var _msx_val = 0;
 # 6.6.10 — 1 when row `lin` must NOT be emitted at this call's arity. The pipe row (22) is
 # emitted only when the call PASSES the fds pointer (argc >= 2, counting the number, as ESCPOPS
 # does): Darwin pipe returns fd0:fd1 in rax:rdx and EMACHO_PROC_FIXUP stores them through rdi,
@@ -1128,6 +1173,7 @@ fn _msx_short(lin): i64 {
 }
 fn _msx(S, lin, classed): i64 {
     if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
+    if (_msx_qon == 2) { return _msx_fq(lin, classed); }
     if (_msx_short(lin) == 1) { return 0; }
     if (lin >= 128) { return _msx32(S, lin, classed); }   # >127 sets imm8 bit 7 -> sign-extends to negative; route to the imm32 form (cf. getdents64 217, getrandom 318). CHANGELOG [6.4.15] L2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
@@ -1141,6 +1187,7 @@ fn _msx(S, lin, classed): i64 {
 # > 255 (getrandom is 318 — the imm8 cmp in _msx can't reach it). v6.0.75.
 fn _msx32(S, lin, classed): i64 {
     if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
+    if (_msx_qon == 2) { return _msx_fq(lin, classed); }
     EB(S, 0x48); EB(S, 0x3D);                            # cmp rax, imm32 (REX.W 3D)
     EB(S, lin & 0xFF); EB(S, (lin >> 8) & 0xFF);
     EB(S, (lin >> 16) & 0xFF); EB(S, (lin >> 24) & 0xFF);
@@ -1162,11 +1209,34 @@ fn _msx32(S, lin, classed): i64 {
 # Its own fn, not inline above: EMACHO_SYSXLAT already carries ~100 calls, and cybs (the
 # seed's bootstrap compiler) fails SILENTLY past its per-fn reference cap.
 fn _msx_tail(S): i64 {
-    if (_msx_qon == 1) { return 0; }
+    if (_msx_qon != 0) { return 0; }
     EB(S, 0x48); EB(S, 0x3D); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x01);  # cmp rax, 0x1000000
     EB(S, 0x73); EB(S, 0x07);                                                      # jae +7
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0x00); EB(S, 0x02);  # mov rax, 0x200FFFF
     return 0;
+}
+# Fold mode's row test (see `_msx_val`). Its own fn so _msx / _msx32 each gain one reference.
+fn _msx_fq(lin, classed): i64 {
+    if (_msx_hit == 0) {
+        if (lin == _msx_q) {
+            if (_msx_short(lin) == 0) { _msx_hit = 1; _msx_val = classed; }
+        }
+    }
+    return 0;
+}
+# 6.7.12 (XLAT-1 on x86 Mach-O) — the number the chain leaves in rax for the compile-time number
+# `lit` at the current arity (`_msx_argc`), resolved from EMACHO_SYSXLAT's own rows: a row's
+# classed number; else _msx_tail's 0x200FFFF for an unclassed number (< 0x1000000, its unsigned
+# `jae`); else `lit` itself (already classed, e.g. EEXIT's 0x2000001). Its own fn, not a guard in
+# the table: cybs caps EMACHO_SYSXLAT's per-fn references (the note above _msx_tail).
+# CHANGELOG [6.7.12]
+fn _msx_fold(lit): i64 {
+    _msx_qon = 2; _msx_q = lit; _msx_hit = 0; _msx_val = 0;
+    EMACHO_SYSXLAT(0);
+    _msx_qon = 0;
+    if (_msx_hit == 1) { return _msx_val; }
+    if (lit < 0x1000000) { return 0x200FFFF; }
+    return lit;
 }
 fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 0,  0x2000003);   # read     0  → 3
@@ -1408,6 +1478,105 @@ fn _macho_x86_routes(n): i64 {
     EMACHO_SYSXLAT(0);
     _msx_qon = 0;
     return _msx_hit;
+}
+
+# 6.7.12 (XLAT-2 on x86 Mach-O) — a RUN-TIME number calls ONE shared translation stub per arity
+# class instead of inlining the chain: `call <stub>` (a `call .` placeholder, rel32 -5, patched by
+# EMACHO_SYSX_STUBS once the stubs exist after EEXIT). Two classes, argc < 2 and argc >= 2: the
+# chain's only arity rule is _msx_short's pipe row. A stub is the push-free chain + tail + `ret`;
+# it touches only rax and the flags, so the six argument registers reach the syscall intact, and
+# the caller's `push rax` (the raw number EMACHO_PROC_FIXUP pops) sits under the return address.
+# Arm64 parity: _esx_stub_site / ESYSX_STUBS (6.6.18).
+# ⛔ x86 MOVES CODE AFTER IT IS EMITTED — the per-fn NOP compaction (parse_fn.cyr, every build)
+# and wp_compact (CYRIUS_IR=3) — so a site is NOT kept as a code offset. It goes into the
+# whole-program disp32 registry (`_wpjs_add_raw`, unconditionally) and this list keeps its INDEX:
+# both compactions shift registry entries (stage 3d per fn, wp_compact's own), so the patch reads
+# where the site is NOW, and wp_compact, which runs after the patch, repairs the rel32 like any
+# call's. A driver that reached FIXUP without EMACHO_SYSX_STUBS would ship `call .` (unbounded
+# recursion): FIXUP asserts the list drained (_msx_stubs_drained). CHANGELOG [6.7.12]
+var _msx_sl = 0;     # alloc()'d list of {registry index, class} pairs, 16 B each
+var _msx_ns = 0;
+var _msx_scap = 0;
+fn _msx_stub_site(S): i64 {
+    if (_msx_ns >= _msx_scap) {
+        var nc = _msx_scap * 2;
+        if (nc < 64) { nc = 64; }
+        var nl = alloc(nc * 16);
+        if (nl == 0) { PRSTR("error: EMACHO_SYSXLAT stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+        var i = 0;
+        while (i < _msx_ns * 2) { store64(nl + i * 8, load64(_msx_sl + i * 8)); i = i + 1; }
+        _msx_sl = nl;
+        _msx_scap = nc;
+    }
+    var cls = 0;
+    if (_msx_argc >= 2) { cls = 1; }
+    EB(S, 0xE8);                                          # call rel32
+    var wi = _wpjs_n;
+    _wpjs_add_raw(S, GCP(S));
+    if (_wpjs_n != wi + 1) {
+        PRSTR("error: EMACHO_SYSXLAT stub sites: the disp32 registry could not grow\n");
+        syscall(SYS_EXIT, 1);
+    }
+    EB(S, 0xFB); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF);   # -5: `call .`, the placeholder
+    store64(_msx_sl + _msx_ns * 16, wi);
+    store64(_msx_sl + _msx_ns * 16 + 8, cls);
+    _msx_ns = _msx_ns + 1;
+    return 0;
+}
+# Called by every x86 driver between EEXIT and FIXUP (a no-op with no run-time-number Mach-O site):
+# outside every fn's range, so the DCE NOP-fill never touches a stub and nothing falls into one
+# (EEXIT does not return), and patched before the DCE byte-scan and the CYRIUS_IR=3 wp_compact.
+fn EMACHO_SYSX_STUBS(S): i64 {
+    var c = 0;
+    while (c < 2) {
+        var stub = 0 - 1;
+        var i = 0;
+        while (i < _msx_ns) {
+            if (load64(_msx_sl + i * 16 + 8) == c) {
+                if (stub < 0) { stub = _msx_stub_emit(S, c); }
+                _msx_stub_patch(S, load64(_msx_sl + i * 16), stub);
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    _msx_ns = 0;
+    return 0;
+}
+fn _msx_stub_emit(S, c): i64 {
+    var at = GCP(S);
+    _msx_argc = 7;
+    if (c == 0) { _msx_argc = 1; }
+    EMACHO_SYSXLAT(S);
+    _msx_argc = 7;
+    EB(S, 0xC3);            # ret
+    return at;
+}
+fn _msx_stub_patch(S, wi, stub): i64 {
+    var site = L64(_wpjs_base + wi * 8);
+    var a = _codebuf_base + site;
+    if (load8(a - 1) != 0xE8 || load32(a) != 0xFFFFFFFB) {
+        PRSTR("error: internal: EMACHO_SYSXLAT stub site at code offset ");
+        PRNUM(site);
+        PRSTR(" is no longer its call placeholder (did a pass move code without the registry?)\n");
+        syscall(SYS_EXIT, 1);
+    }
+    var rel = stub - site - 4;
+    store8(a, rel & 0xFF);
+    store8(a + 1, (rel >> 8) & 0xFF);
+    store8(a + 2, (rel >> 16) & 0xFF);
+    store8(a + 3, (rel >> 24) & 0xFF);
+    return 0;
+}
+fn _msx_stubs_drained(): i64 {
+    if (_msx_ns != 0) {
+        PRSTR("error: internal: ");
+        PRNUM(_msx_ns);
+        PRSTR(" run-time-number x86 Mach-O syscall site(s) reached FIXUP unpatched");
+        PRSTR(" — this driver never called EMACHO_SYSX_STUBS\n");
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
 }
 
 # v5.5.13 x86 stub: the `_TARGET_MACHO == 2` branch in parse.cyr that

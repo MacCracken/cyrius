@@ -5,8 +5,28 @@
 # call, not a link error. Windows now answers -1 (fail closed; there is no anonymous-pipe
 # reroute), and every POSIX target still creates a working pipe. Includes ONLY
 # lib/syscalls.cyr + lib/assert.cyr. CHANGELOG [6.6.9] bite 7.
+# 6.7.12 — the same pipe through a RUN-TIME number (`_pipe_rt`), the twin of the wrapper's
+# compile-time one: on both Macs a literal site now folds its translation (and x86-macOS keeps
+# only the pipe fixup half), while a run-time number calls the shared stub and keeps the run-time
+# fixup. The two must make the same working pipe. CHANGELOG [6.7.12]
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_WIN
+var _pn = 0;
+# sys_pipe's own call, with the number held in a global the compiler cannot fold.
+fn _pipe_rt(fds): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    _pn = SYS_PIPE2;
+    return syscall(_pn, fds, 0);
+    #endif
+    #ifdef CYRIUS_ARCH_X86
+    _pn = SYS_PIPE;
+    return syscall(_pn, fds);
+    #endif
+    return 0 - 1;
+}
+#endif
 
 fn main(): i64 {
     alloc_init();
@@ -30,6 +50,20 @@ fn main(): i64 {
     assert_eq(load8(&b + 1), 107, "the bytes round-trip");
     sys_close(rd);
     sys_close(wr);
+    test_group("the same pipe through a run-time syscall number");
+    store64(&fds, 0 - 1);
+    store64(&fds + 8, 0 - 1);
+    assert_eq(_pipe_rt(&fds), 0, "the run-time-number pipe returns 0, like the wrapper");
+    var rd2 = load32(&fds);
+    var wr2 = load32(&fds + 4);
+    assert(rd2 >= 0, "its read fd is valid");
+    assert(wr2 >= 0, "its write fd is valid");
+    assert(rd2 != wr2, "the two ends differ");
+    assert_eq(sys_write(wr2, "hi", 2), 2, "wrote 2 bytes");
+    assert_eq(sys_read(rd2, &b, 2), 2, "read 2 bytes back");
+    assert_eq(load8(&b + 1), 105, "the bytes round-trip");
+    sys_close(rd2);
+    sys_close(wr2);
     #endif
     var r = assert_summary();
     return r;
