@@ -34,9 +34,10 @@
 # is by CAPABILITY: for each SYS_* name a wrapper issues, is the number THAT peer emits
 # routed on THAT backend?
 # The one exception (axis 2b, 6.7.12): the Darwin private-alias band, 1000 + the BSD number
-# (sysctl 1202, kqueue 1362, sigprocmask 1048, ...), is the SAME source number on both backends
-# and is issued raw, never by a name both peers declare — so there the rows themselves are
-# compared. Measured: deleting either backend's 1048 row fails axis 2b (and nothing else here).
+# (sysctl 1202, kqueue 1362, __pthread_sigmask 1329, ...), is the SAME source number on both
+# backends and is issued raw, never by a name both peers declare — so there the rows themselves are
+# compared. Measured: deleting either backend's sigprocmask alias row fails axis 2b (and nothing
+# else here).
 #
 # ⚠ Two parsing traps, both hit while producing the original numbers:
 #   * `_TARGET_MACHO == 2` appears in BOTH ESYSCALL (the svc emitter, ~line 422) and ESYSXLAT
@@ -113,7 +114,7 @@ allow_reason() {
     SYS_PPOLL)        echo "both|Darwin has no ppoll(2) (both peers declare the name for portable source: the arm peer 1073, the x86 peer 271 since 6.7.9, unrouted on either backend); its callers — sys_ppoll (6.7.9), sys_pause (6.6.8; the x86 peer since 6.6.5) and lib/yukti.cyr _yk_ppoll (yukti 2.3.14) — decline with -ENOSYS under #ifdef CYRIUS_TARGET_MACOS, and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
     # ---- a real Darwin call exists but a bare renumber would be WRONG ----
     SYS_RT_SIGPROCMASK)
-                      echo "both|Darwin sigprocmask(48) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. So no row for 14/135: sys_sigprocmask's macOS arm is the shim (6.7.12) — it issues the private alias 1048 (routed 1048 -> 48 on BOTH backends, which the drift axis compares), Darwin reads the low 4 bytes of the set, and the shim zeroes oldset's upper word" ;;
+                      echo "both|Darwin's per-thread mask call __pthread_sigmask(329) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. So no row for 14/135: sys_sigprocmask's macOS arm is the shim (6.7.12) — it issues the private alias 1329 (routed 1329 -> 329 on BOTH backends, which axis 2b compares), Darwin reads the low 4 bytes of the set, and the shim zeroes oldset's upper word. 329, not Darwin's sigprocmask(48): 48 is process-wide in XNU, 329 changes the calling thread's mask, as rt_sigprocmask does" ;;
     SYS_SETRESUID|SYS_SETRESGID)
                       echo "both|Darwin has no setresuid/setresgid; the closest peers (setreuid/setregid) have different semantics, so a row would silently change behaviour" ;;
     # ---- same capability, different spelling: routed under the OTHER name ----
@@ -245,7 +246,7 @@ else fail=$((fail + a2f)); fi
 
 # ---------------------------------------------------------------- axis 2b: the Darwin alias band
 # 6.7.12 — a private alias spelled 1000 + the DARWIN number (sysctl 1202, kqueue 1362, __ulock_wait
-# 1515, sigprocmask 1048, ...) is issued as a RAW number by a macOS arm (lib/sys.cyr, the peers'
+# 1515, __pthread_sigmask 1329, ...) is issued as a RAW number by a macOS arm (lib/sys.cyr, the peers'
 # kqueue / ulock wrappers, sys_sigprocmask's shim), never as a SYS_* name both peers declare, so
 # axes 1-2 cannot see it. Its row must exist on BOTH backends, renumbering to the same call: a band
 # row on one backend only is the one-fork shape this gate exists for. (The arm table's other

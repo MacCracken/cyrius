@@ -1250,10 +1250,11 @@ fn ESYSXLAT(S): i64 {
         _esx_arm(S, 1515, 515);  # __ulock_wait        1515→515
         _esx_arm(S, 1516, 516);  # __ulock_wake        1516→516
         # 6.7.12 — sigprocmask, private alias; the x86 twin is in EMACHO_SYSXLAT. Not a row for
-        # aarch64 135: rt_sigprocmask's set is 64-bit with a 4th sigsetsize, Darwin's 48 takes a
-        # 32-bit set, so sys_sigprocmask's macOS arm issues 1048 and zeroes oldset's upper word.
-        # CHANGELOG [6.7.12]
-        _esx_arm(S, 1048, 48);  # sigprocmask         1048→48
+        # aarch64 135: rt_sigprocmask's set is 64-bit with a 4th sigsetsize, Darwin's 329 takes a
+        # 32-bit set, so sys_sigprocmask's macOS arm issues 1329 and zeroes oldset's upper word.
+        # __pthread_sigmask (329), not sigprocmask (48): 48 is process-wide in XNU, 329 the
+        # calling thread's mask, as on Linux. CHANGELOG [6.7.12]
+        _esx_arm(S, 1329, 329);  # __pthread_sigmask   1329→329
         # ── v6.5.16: the credential family. `is_root()` hardcoded `return 0` on macOS
         # (lib/sys.cyr), so the ONE consumer that would have exercised these never called
         # them and the whole family sat unrouted on BOTH Mach-O backends since forever:
