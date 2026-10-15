@@ -18,9 +18,11 @@
 #           block and after the first statement), local and global `*T`, `[T]`, `slice<T>`,
 #           `[*T]`, param, return, multi-value return element, sizeof, `#assert sizeof`, struct
 #           field, array element; plus `type 'u8' cannot be a fn return type` (a known type the
-#           return set does not take), a struct declared after a declaration-block global, the
-#           generic-body dedupe, four bad names in one fn reported four times, and two or three
-#           in ONE statement (a signature, an expression) each reported too.
+#           return set does not take; 6.7.11: its note names the whole set — bool, `*T`, a
+#           multi-value, `dyn Trait`, a type parameter), a struct declared after a
+#           declaration-block global, the generic-body dedupe, four bad names in one fn reported
+#           four times, and two or three in ONE statement (a signature, an expression) each
+#           reported too.
 #   axis 2  ANTI-VACUOUS: every name of the vocabulary compiles at every site that takes it, a
 #           `Str` param in a unit without lib/str.cyr (the by-name handle), enums declared on
 #           either side, a fn's type parameters (first, second and THIRD, in the default build and
@@ -58,6 +60,9 @@
 #                                                and its --syntax-only row RED (rc 1)
 #   _sl_load_marks without its SPSC(S, 1)     -> ptr_copy_nowarn RED (4 warnings: every copy and
 #                                                step of an 8-byte *iN slot read as a non-pointer)
+# and at 6.7.11 (the note, issues/2026-10-12-return-type-refusal-note-incomplete.md), measured:
+#   _tn_ret_report's 6.6.17 note string       -> RED the four ret_known note rows naming bool, a
+#                                                multi-value, dyn Trait and a type parameter (`*T` green)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: type_name_refused: cannot cd to $ROOT"; exit 1; }
@@ -122,6 +127,12 @@ refused param_prefix  'fn f(a: i16q): i64 { return a; }\nsyscall(60, f(3));\n' "
 refused ret_unknown   'fn f(): Nonexist { return 3; }\nsyscall(60, f());\n' "unknown type 'Nonexist' as a fn return type"
 refused ret_prefix    'fn f(): i8x { return 3; }\nsyscall(60, f());\n' "unknown type 'i8x' as a fn return type"
 refused ret_known     'fn f(): u8 { return 3; }\nsyscall(60, f());\n' "type 'u8' cannot be a fn return type"
+# 6.7.11: its note lists the whole accepted set. `bool` (6.7.3), a multi-value (6.5.21), `dyn Tr` (6.7.8) and a generic
+# fn's type parameter were accepted but not named (issues/2026-10-12-return-type-refusal-note-incomplete.md).
+for frag in "f64, bool, a vector type" "a pointer *T" "a multi-value (T1, T2[, T3])" "dyn Trait" "a generic fn's first or second type parameter"; do
+    rows=$((rows + 1))
+    check "ret_known: the note names '$frag'" yes "$(grep '^  note: a return type is ' "$T/ret_known.err" | grep -qF -- "$frag" && echo yes || echo no)"
+done
 refused ret_enum      'enum Color { RED = 0; }\nfn f(): Color { return 0; }\nsyscall(60, f());\n' "type 'Color' cannot be a fn return type"
 refused ret_tparam_m0 'fn g<T>(a: T): T { return a; }\nsyscall(60, g(3));\n' "type parameter 'T' cannot be this fn's return type" 1 CYRIUS_MONOMORPH=0
 refused mret_unknown  'fn f(): (i64, Nonexist) { return (1, 2); }\nvar a, b = f();\nsyscall(60, a + b);\n' "unknown type 'Nonexist' in a multi-value return type"

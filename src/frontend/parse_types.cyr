@@ -3050,8 +3050,10 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
 
 # A return type _classify_return_type does not take (cursor on it): an unknown name is
 # `unknown type 'X' as a fn return type`; a type that exists but is not a return type (u8..u64,
-# f32, bool, an enum) says so by name — both used to be the one unnamed "fn return type must be
-# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged.
+# f32, an enum) says so by name — both used to be the one unnamed "fn return type must be
+# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged. The
+# note lists all of it, the forms taken before the classifier is asked too (bool, a multi-value,
+# `*T`, a type parameter; `dyn Tr` is a struct to it). CHANGELOG [6.7.11]
 # Returns the return code to record: 0 after the refusal, and -8 (an i64) under --syntax-only,
 # which resolves nothing and refuses nothing (see the v6.5.19 note at the call site). Either
 # way a `<..>` after the name (`fn f(): Vec<i64>`) is skipped with it — the cursor is left on its
@@ -3081,7 +3083,7 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged, cstring or a pointer *T; return an i64 (no annotation) for the others\n");
+        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
     }
     _panic = 0;
     return 0;

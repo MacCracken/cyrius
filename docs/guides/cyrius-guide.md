@@ -205,9 +205,11 @@ and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `size
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, `bool`
 (6.7.3), a vector type, `Result`, `Option`, `Tagged`, `cstring`, a pointer `*T` (6.6.17), a
-multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `dyn Tr` (6.7.8)
-— `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
-type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dyn Tr` (6.7.8) or
+a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
+refused by name (`type 'u8' cannot be a fn return type`; return an `i64`), with a note that lists
+this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn` and `T`).
+`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
