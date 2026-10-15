@@ -7,7 +7,7 @@ explicit spelling `outer<Pt>(p)` cannot help: the base is parsed first. `gx` its
 a carrier's `T` field read as a struct, `b.v.y`; before it its definition did not compile at all).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G3, while adding the row "a generic forwarding T through a
-generic call's result" for issues/2026-10-10-generic-call-result-as-carrier-argument-refused.md.
+generic call's result" for issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md.
 **Severity:** Low — a loud refusal of valid source; workaround: forward the `T` value itself
 (`fn outer<T>(x: T) { return gy(x); }` with `gy` reading `x.y`) or give the forwarder a scalar-safe callee.
 **Affects:** the 6.7.11 lane tree (units G2 / G3).

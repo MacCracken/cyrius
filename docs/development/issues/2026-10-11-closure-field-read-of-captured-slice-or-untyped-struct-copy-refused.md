@@ -1,12 +1,14 @@
 # Inside a closure, `s.len` of a captured slice and `q.y` of a captured untyped struct copy (`var q = p;`) are refused as "undefined variable" — OPEN
 
+> ⚠ **HALF RESOLVED in v6.7.11 — half 1 only** (GF-15: inside a closure, `s.len` / `s.ptr` of a captured slice read the captured copy, the user's decision (a), D13, 2026-10-13. Repro 1 exits 8 (it was `undefined variable 's'`) on x86_64, qemu-aarch64 and cxvm, and the `async fn` form across an await on x86_64 (aarch64 and cx refuse a mid-body await by name); any other field is refused as on a local, and a store into the copy is refused by name. Rows: `frontend/closure_captured_slice_fields.sh`, `crossos/closure_captured_slice_fields.tcyr`. **Half 2 is NOT resolved:** repro 2 (`var q = p;` untyped, then `q.y` in a closure, expected 45) is still refused `undefined variable 'q'` on the merged wave-2 tree (ac8fdac8); it was routed to the untyped-binding decision, whose fix covers method chains, if-expressions and wrapped results, not a name copy. CHANGELOG [6.7.11])
+
 **Status:** 🟡 **OPEN** — reported by the 6.7.9 critical lane (bite 12, the coroutine closure capture) as two loud
 refusals met in passing. Verified 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B):
 both repros are refused, `undefined variable 's'` / `undefined variable 'q'`, at the closure's use; the same reads
 outside the closure compile, and a closure reading `p.y` of a captured TYPED struct local (`var p: P = …`) compiles
 and runs (exit 5). The installed 6.6.0, 6.7.0 and 6.7.8 compilers refuse both the same way.
-**Placement:** 6.7.11 — repair 1 (roadmap.md § *The releases after 6.7.8*; a parser defect in the closure capture,
-beside [the declared-name pre-scan](2026-10-11-closure-prescan-reads-declared-names-as-captures.md)) — placed
+**Placement:** 6.7.12 — repair 2 (half 2 only, re-placed at the 6.7.11 close; the user, 2026-10-14: "file and fix them in 6.7.12") — never 7.x.
+beside [the declared-name pre-scan](archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md)) — placed
 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 12.
 **Severity:** Low — a loud refusal of valid source, with a message that names the wrong thing (the name IS defined

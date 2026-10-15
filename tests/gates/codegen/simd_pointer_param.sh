@@ -9,7 +9,7 @@
 # V registers; a by-pointer copy-in on Win64) and every caller routed it as one: `rd(&b)` was refused
 # "value-form SIMD arg must be a local IDENT (inline-replay path)", and `rd(b)` compiled and the body
 # dereferenced lane 0's bits (exit 139 on x86_64 and aarch64; cx "guest address out of range").
-# Measured on 6.6.10 - 6.7.10. Filed: docs/development/issues/2026-10-10-pointer-to-vector-parameter-is-value-form.md
+# Measured on 6.6.10 - 6.7.10. Filed: docs/development/issues/archived/2026-10-10-pointer-to-vector-parameter-is-value-form.md
 #
 #   R1 the filed repro (the valid call, refused) verbatim: exits 1 on x86_64, x86_64 CYRIUS_IR=3,
 #      aarch64 (qemu), cx (cxvm) and PE (wine)

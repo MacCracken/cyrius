@@ -7,7 +7,7 @@
 # Before 6.7.11 a top-level `return` compiled with no diagnostic and did not return. PARSE_RETURN recorded its jump in
 # rp_vec, and only a fn's end patches rp_vec, over the range that fn owns, so a top-level entry kept displacement 0:
 # `jmp +0` on x86_64 / PE (`return 6; syscall(60, 9);` exited 9), a branch to itself on aarch64 / cx (a hang). No
-# version from 5.11.69 to 6.7.10 returned from one. (issues/2026-10-12-top-level-return-decision.md)
+# version from 5.11.69 to 6.7.10 returned from one. (issues/archived/2026-10-12-top-level-return-decision.md)
 #
 #   R1-R9  R1-R8 the issue's table, each program verbatim (its last row's two programs are R7 and R8); R9 its
 #          reproduction's file (`printf 'return 6;\nsyscall(60, 9);\n'`). Each is refused once by name, rc 1, on

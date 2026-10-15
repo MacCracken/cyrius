@@ -249,7 +249,7 @@ var GCT12: T12 = GCT.t;
 # +16 and a 16-byte over-copy would land in padding. The i32 guard packs at +12, directly after.
 var GCT12_G: i32 = 0x5A5A5A5A;
 var GCT12_C = 0x5A5A5A5A5A5A5A5A;
-# 6.7.11 (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md): a copy-init from a
+# 6.7.11 (issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md): a copy-init from a
 # field reached through a POINTER — a `*T` global's field, wrapped, a `: *T` call's field, a field through a
 # `*T` field, 24 and 12 B. Each held the field's FIRST WORD in one pointer-mode slot and SIGSEGV'd at the
 # first `G.x` (139; cxvm "guest address out of range").

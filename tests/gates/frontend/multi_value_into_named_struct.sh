@@ -3,8 +3,8 @@
 #
 # A MULTI-VALUE CALL WHERE A NAMED STRUCT IS EXPECTED IS REFUSED BY NAME (the user's decision,
 # 2026-10-13: R17's wording, at every struct size).
-# (issues/2026-10-09-multi-value-call-into-named-struct-slot.md,
-#  issues/2026-10-09-struct-var-from-multi-value-call-crashes.md)
+# (issues/archived/2026-10-09-multi-value-call-into-named-struct-slot.md,
+#  issues/archived/2026-10-09-struct-var-from-multi-value-call-crashes.md)
 #
 # THE DEFECT (measured on 6.7.11's returns-lane tip before the fix, x86_64 / aarch64 under qemu / cx
 # under cxvm / PE under wine): a call returning several values (`fn mk(a): (i64, i64)`, or an
@@ -189,7 +189,7 @@ fn f(): i64 { var h: H; h.p = mk(3); return h.p.a * 10 + h.p.b; }
 syscall(60, f());
 EOF
 refused S4 "a multi-value call 'mk' $FLD" "repro 4, the field store"
-# --- the struct-var issue's repro, verbatim (issues/2026-10-09-struct-var-from-multi-value-call-crashes.md)
+# --- the struct-var issue's repro, verbatim (issues/archived/2026-10-09-struct-var-from-multi-value-call-crashes.md)
 src V1 <<'EOF'
 struct P { a; b; }
 fn g2(x): (i64, i64) { return (x, x + 1); }

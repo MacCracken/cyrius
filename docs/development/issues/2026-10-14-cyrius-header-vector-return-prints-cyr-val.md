@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 tools lane (l6711-tools, after the header
 struct-return bite) with its `build/cyrius` (throwaway `HOME` / `CYRIUS_HOME`).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.
-**Discovered:** 2026-10-14 by the 6.7.11 tools lane, unit T5 (issues/2026-10-10-cyrius-header-ignores-struct-returns.md),
+**Discovered:** 2026-10-14 by the 6.7.11 tools lane, unit T5 (issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md),
 which taught the verb to read a fn's return type for structs, a `dyn` and multi-value returns. A vector return is
 outside that filing's surface (it names structs and `dyn`), so the bite left it printing the pre-6.7.11 word.
 **Severity:** Medium — a generated C header that is wrong for every vector-returning public fn: the C caller reads

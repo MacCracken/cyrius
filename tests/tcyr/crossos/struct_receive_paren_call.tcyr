@@ -1,7 +1,7 @@
 # struct_receive_paren_call.tcyr — 6.7.11. PARENTHESES AROUND A WHOLE STRUCT-RETURNING CALL ARE
 # TRANSPARENT TO AN UNTYPED DECLARATION: `var x = (mk());` RECEIVES THE STRUCT AS `var x = mk();` DOES.
 #
-# ⛔ THE DEFECT (issues/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md, shape
+# ⛔ THE DEFECT (issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md, shape
 # (a)). PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so a call wrapped in
 # parentheses inferred nothing: x was an i64 holding the struct's FIRST word (3), and `dq(x)` into a
 # by-value `q: Q` parameter passed 3 as the struct's address — SIGSEGV on x86_64 and aarch64, a guest

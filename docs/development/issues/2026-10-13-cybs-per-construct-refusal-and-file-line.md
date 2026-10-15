@@ -1,6 +1,6 @@
 # cybs names neither the construct it refused nor the file and line — OPEN
 
-**Status:** 🟡 **OPEN** — the remainder of [the bare `syntax error` fix](2026-10-08-cybs-bare-syntax-error-no-location.md)
+**Status:** 🟡 **OPEN** — the remainder of [the bare `syntax error` fix](archived/2026-10-08-cybs-bare-syntax-error-no-location.md)
 that the seed's label table cannot hold today. 6.7.11 shipped the user's option A (2026-10-13): one class message that
 lists what cybs lacks, followed by the offending line's text from the expanded stream; an undefined name is named. The
 per-construct refusal and `file:line` were filed here by that decision.

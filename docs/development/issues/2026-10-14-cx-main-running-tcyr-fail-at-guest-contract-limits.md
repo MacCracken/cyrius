@@ -1,7 +1,7 @@
 # cx: seven corpus .tcyr fail under cxvm once their `fn main` runs — stdlib wrappers that compile for cx but pass guest offsets to the host (pipe, fstat, unlink), a host-address `mmap_anon`, and tests with no cx arm — OPEN
 
 **Status:** 🟡 **OPEN**. Found 2026-10-14 by the 6.7.11 genfe lane (unit F5), while landing
-[`2026-10-11-cx-does-not-auto-call-main.md`](2026-10-11-cx-does-not-auto-call-main.md) (commit 09e06b72 on
+[`2026-10-11-cx-does-not-auto-call-main.md`](archived/2026-10-11-cx-does-not-auto-call-main.md) (commit 09e06b72 on
 `l6711-genfe`): cx now calls the `fn main` a program defines from the entry epilogue, so files whose
 assertions all live in `main` run them under cxvm for the first time. A before/after cxvm differential
 over the 584-file `.tcyr` corpus: 17 files now pass in full on cxvm (15 printed nothing and exited 0,

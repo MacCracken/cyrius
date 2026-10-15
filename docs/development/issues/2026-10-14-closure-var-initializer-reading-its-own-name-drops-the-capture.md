@@ -5,7 +5,7 @@ before the unit, 2,189,840 B, and after it, 2,193,936 B) and on the installed 6.
 everywhere.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, while fixing
-`issues/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (a declared name read as a capture). This is the
+`issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (a declared name read as a capture). This is the
 opposite direction: a real read DROPPED from the capture set. Outside that issue's filed surface (it names the
 `for … in` variable, a local `const` and a destructure's second and later names).
 **Severity:** High — a silent wrong value when a global has the name; a refusal of valid source otherwise.

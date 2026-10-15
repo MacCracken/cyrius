@@ -1,6 +1,6 @@
 # An integer comparison or bitwise operator with an f64 right operand leaves its result typed f64 — OPEN
 
-**Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/2026-10-08-struct-operator-results.md
+**Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/archived/2026-10-08-struct-operator-results.md
 #2), reproduced with the lane's compiler (struct worktree after `29d1210e`).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Severity:** Low — a silent wrong value after a construct that already warns (kind 0 on the comparison, kind 1 on

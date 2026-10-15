@@ -4,8 +4,8 @@
 wave-1 merge): identical output, x86_64.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1), probing the consumers of a dereference while fixing
-issues/2026-10-12-small-struct-dereference-reads-past-the-object.md and
-issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md.
+issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md and
+issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md.
 **Severity:** High for the two-dereference shape (it compiles clean and faults: a wrong program with no diagnostic);
 low for the mixed shape (a false refusal of valid source). Not a security id: the developer's own source.
 **Decision note:** 6.7.10's decision 6 makes `*p` a struct VALUE in every spelling; an if-expression branch that is a

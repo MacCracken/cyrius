@@ -138,7 +138,7 @@
 #   h. (R18 — R13 in the refold worktree, measured there; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the
 #      6.7.9 fold, no cx arm) -> R18 cxvm RED twice ("undefined variable '_SK_SYS_WRITE'" at
 #      lib/sakshi.cyr:248; no log line), both native legs green, 48 green.
-#   i. (6.7.11, R6; issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md) the tree before it
+#   i. (6.7.11, R6; issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md) the tree before it
 #      (dce13af1) -> R6 RED on both legs (native SIGSEGV; cxvm "guest address out of range"); `_gci_src` without
 #      its `*T` global arm (MG1), `_gci_chain` without its `*T` field hop (MG2), `_gci_call` answering 0 (MG3)
 #      -> each R6 RED on both legs.

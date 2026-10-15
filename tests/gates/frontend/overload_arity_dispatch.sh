@@ -246,7 +246,7 @@ syscall(60, main());
 
 # ---------------------------------------------------------------------------
 # AXIS 8 — a sibling with NO definition never takes the call (6.7.11, the user's decision (b),
-# 2026-10-13; docs/development/issues/2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md).
+# 2026-10-13; docs/development/issues/archived/2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md).
 # `_OV_ARITY_OK` let a target with no recorded definition (offset < 0, GFDS 0 — a name only CALLED
 # somewhere) through, "into the undefined-function diagnostic": `pr(s)`, written to the DEFINED `pr`,
 # was sent to the undefined `pr_str`. The default build was refused only because that route made the

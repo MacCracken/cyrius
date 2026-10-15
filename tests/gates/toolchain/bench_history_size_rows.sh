@@ -3,7 +3,7 @@
 #
 # BENCHMARKS.md prints the size rows as BYTES, and the cycc file-size row has ONE name.
 #
-# THE FILED DEFECT (docs/development/issues/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md).
+# THE FILED DEFECT (docs/development/issues/archived/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md).
 # scripts/bench-history.sh formatted every BENCHMARKS.md row with fmt_ns, the time formatter,
 # whatever its group, so the two `size/*` rows — byte counts — printed as milliseconds:
 # `| cc5_bytes | 2ms | 2ms | 2ms | +3.0% |` for 2,053,536 / 2,057,736 / 2,114,376 bytes. The CSV row

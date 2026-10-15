@@ -4,7 +4,7 @@
 both rows exit 255 (the 0xFF a previous call left in the frame); the dereference control exits 0.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1). The dereference fix
-(issues/2026-10-12-small-struct-dereference-reads-past-the-object.md) reads a 3 / 5 / 6 / 7 B struct through
+(issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md) reads a 3 / 5 / 6 / 7 B struct through
 `_hl_pval_ra` — a byte copy into a frame temp, whose word is loaded — and found the temp's other bytes are whatever
 the frame held. It added a `z` flag that zeroes the temp for the dereference (and its operator-operand reload); the
 two other callers pass 0, unchanged, because changing what they compute was outside that issue's surface.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # cx_auto_call_main.sh — 6.7.11. A cx program runs the `fn main` it defines, as every image target
 # does: the entry epilogue calls it after the top level and the last-var load, and its return value
-# is the exit code (issues/2026-10-11-cx-does-not-auto-call-main.md; the user's decision (a),
+# is the exit code (issues/archived/2026-10-11-cx-does-not-auto-call-main.md; the user's decision (a),
 # 2026-10-13).
 #
 # THE DEFECT. The x86, aarch64 (cross and native), Mach-O and PE drivers end the entry with v5.9.37's

@@ -218,7 +218,7 @@
 #       `(1 + w) - q32` is `n - p`; DXR the issue's repro VERBATIM: d1, d2, d3 refused, r silent. The value file's
 #       onebyte_rows (in typed_pointer_step.tcyr, the PL legs) pin every value, which no row changes.
 #   DXs `n + pb` with `pb: *B1` IS that pointer too (6.7.11; the user's decision 2026-10-13: "(a) Yes,
-#       extend 1(b)"; issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md): DXs1 `(1 + src)
+#       extend 1(b)"; issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md): DXs1 `(1 + src)
 #       - q32` from each `*B1` source and `(m + pb) - q32` refused (each compiled, a byte difference);
 #       DXs2 the control; DXs3 the declaration / assignment / global store silent (they warned); DXs4 one
 #       element size an element count; DXs5 an if-expression of `py` and `&s` keeps no step (its warning,
@@ -347,7 +347,7 @@
 #   compiler: the repro exits 9)
 #
 # SAT — `+| +? -| -?` ARE INTEGER OPERATORS (6.7.11; the user's decision (a), 2026-10-13: "Integers
-# only"; issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md). They lower to
+# only"; issues/archived/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md). They lower to
 # lib/overflow.cyr's i64 helpers, and their arm parsed the count with no step (it adds bytes) — then
 # restored the left operand's step, so the SUM was the `*T` again: with `q: *i32` `(q +| 1) + 1` was
 # q + 5 (6.6.17-6.7.10). The sum is now an integer (`SPSC(S, 0); ps = 0;`), as `(x == q)` is.
@@ -1057,7 +1057,7 @@ exits dxc5 1 "DXc5: (1 + p8) - p8 and (1 + i8) - p8 stay legal (one element size
 exits dxn 6 "DXn: (1 + w) - q32 with w: u8 (a narrow scalar, no *T) is still n - p" \
     'var B: i64[2];\nfn f(): i64 { var w: u8 = 5; var q32: *u32 = &B; var qa: i64 = q32; return (1 + w) - q32 + qa; }\nsyscall(60, f());\n'
 # DXs: 6.7.11 — decision 1(b) EXTENDED TO A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a)
-# Yes, extend 1(b) in `_add_word`"; issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md):
+# Yes, extend 1(b) in `_add_word`"; issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md):
 # `n + pb` with `pb: *B1` is that pointer, as `n + p8` is. A one-byte struct's word carries no element
 # kind, so `_add_word` wrote no step: `(1 + pb) - q32` was a byte difference (exit 1, no diagnostic) and
 # `var r: *B1 = 1 + pb;` warned. DXs1 each `*B1` source (a local, a parameter, a global, a field, a call)
@@ -1253,7 +1253,7 @@ aw_src() {
         printf 'fn main(): i64 {\n    alloc_init();\n    var f%s = five();\n    var r = %s;\n    return r;\n}\nsyscall(60, main());\n' "$1" "$3"
     fi
 }
-# AW1: the issue's repro VERBATIM (issues/2026-10-11-await-result-keeps-typed-pointer-step.md; it
+# AW1: the issue's repro VERBATIM (issues/archived/2026-10-11-await-result-keeps-typed-pointer-step.md; it
 # exited 9: the `1` scaled by sizeof(i32)).
 cat > "$T/aw1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -1287,7 +1287,7 @@ aw_src ': *i32' 0 'f + 1 - f' > "$T/awc3.cyr"
 awx awc3 AWc3 1 "the control: the Future pointer f: *i32 itself still steps (f + 1 - f is 1)" a64
 
 # ── SAT: `+| +? -| -?` are integer operators — no step on the count or the result (6.7.11) ─────
-# SATR: the issue's repro VERBATIM (issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md;
+# SATR: the issue's repro VERBATIM (issues/archived/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md;
 # it exited 58: `(q +| 1) + 1` was q + 5 — the count unscaled, then q's step restored).
 cat > "$T/satr.cyr" <<'EOF'
 include "lib/syscalls.cyr"

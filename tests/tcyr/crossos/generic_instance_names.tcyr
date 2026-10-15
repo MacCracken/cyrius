@@ -7,7 +7,7 @@
 # exactly like a scalar (`struct f64`, `struct i32`) is marked `.f64` / `.i32` (the user's decision
 # C, 2026-10-13). The `struct f64` rows (a scalar f64 and a struct f64 on one generic) need a file
 # where `f64` names the struct, so they are in tests/gates/frontend/generic_instance_names_distinct.sh
-# (every leg). Filed: docs/development/issues/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
+# (every leg). Filed: docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
 #   F  a fn instance at f64 and at `struct i`, both orders            B  `Box<f64>` / `Box<i>`
 #   T  two type parameters: <f64, i>, <i, f64>, <i, i>, <f64, f64>     I  `struct i32` binds `<i32>`
 include "lib/syscalls.cyr"

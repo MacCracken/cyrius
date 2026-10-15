@@ -33,7 +33,7 @@
 #      with ONE note, naming `impl Show for f64` (F5; it named i64), `gb(3)` with the f64 impl alone is
 #      refused naming i64 (F6), and an explicit struct argument without its impl, `gb<R>(r)`, gets one
 #      note naming R (F7; the refused instance's base call added an i64 note).
-#      Filed: docs/development/issues/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
+#      Filed: docs/development/issues/archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
 #   T  tests/tcyr/crossos/generic_f64_result.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach

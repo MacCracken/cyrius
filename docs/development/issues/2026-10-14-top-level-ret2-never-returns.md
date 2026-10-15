@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F1: the compiler built from
 the unit's tree, 2,189,744 B, and the cross compilers built from it). Unit F1 refuses a top-level `return` (the user's
-decision (a), 2026-10-13, `issues/2026-10-12-top-level-return-decision.md`); `ret2` is the same defect through a
+decision (a), 2026-10-13, `issues/archived/2026-10-12-top-level-return-decision.md`); `ret2` is the same defect through a
 different statement, and it still compiles.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x. Refusing it stops programs that
 compile today, so the answer is the user's; the precedent is 6.7.11's top-level `return` decision (refused by name,

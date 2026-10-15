@@ -1,7 +1,7 @@
 # `ret2(a, b)` in a fn returning a struct over 16 B or of 8 B or less takes the multi-value path — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S6, after the
-tuple-literal refusal of issues/2026-10-08-struct-operator-results.md #4) on x86_64, aarch64 (qemu), cx (cxvm)
+tuple-literal refusal of issues/archived/2026-10-08-struct-operator-results.md #4) on x86_64, aarch64 (qemu), cx (cxvm)
 and PE (wine).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (S6), while refusing `return (a, b);` in a struct fn.

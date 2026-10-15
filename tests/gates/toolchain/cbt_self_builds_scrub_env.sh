@@ -4,7 +4,7 @@
 # The CLI's own SELF-BUILDS never inherit a compile-mode switch — CYRIUS_POISON, CYRIUS_BOUNDS,
 # CYRIUS_COVERAGE, CYRIUS_COVERAGE_FILE — and the user's own compile still does.
 #
-# THE FILED DEFECT (docs/development/issues/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md,
+# THE FILED DEFECT (docs/development/issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md,
 # with its 6.7.10 addendum). Two CLI paths build a compiler or tool from the checkout and KEEP it,
 # and both passed the CLI's whole environment (`_envp`):
 #   * `cyrius pulsar` — the raw compiles of src/main.cyr (twice) over the TRACKED build/cycc, the

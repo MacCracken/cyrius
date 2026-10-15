@@ -1,5 +1,5 @@
 #!/bin/sh
-# closure_capture_name_write_named.sh — 6.7.11 (issues/2026-10-08-struct-operator-results.md #6)
+# closure_capture_name_write_named.sh — 6.7.11 (issues/archived/2026-10-08-struct-operator-results.md #6)
 #
 # A WRITE TO A CAPTURED NAME IN A CLOSURE NAMES THE CAPTURE. A closure captures by value, and a captured
 # NAME is not an lvalue in its body (guide § Compound assignment): `x += d`, `x = x + d`, a classic-`for`

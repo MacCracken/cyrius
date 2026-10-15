@@ -2912,7 +2912,7 @@ fn _sl_ann_at(S, ti): i64 {
 # row K2) — the built-in stays reachable as `[T]`. The ladder compared the word before any struct
 # lookup, so `var x: slice = 0;` was the built-in 16-byte slot and `x.a` "no struct type in scope for
 # 'x'" (the user's decision (b), 2026-10-13). A helper, so PARSE_VAR's reference count does not grow
-# (cybs's per-fn ceiling). CHANGELOG [6.7.11] (issues/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+# (cybs's per-fn ceiling). CHANGELOG [6.7.11] (issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
 fn _sl_word_builtin(S): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var noff = PEEKV(S);

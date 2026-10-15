@@ -1,7 +1,7 @@
 # A `: stack` pair-returning trait DEFAULT method used above its trait / impl is not a pair: `p.m(d)?` SIGSEGVs, `var v = p.m(d);` binds the tag — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, the R3 tip that makes
-the pair prescan visit `impl` methods — issues/2026-10-10-pair-method-defined-after-use-not-flagged.md, D23). The
+the pair prescan visit `impl` methods — issues/archived/2026-10-10-pair-method-defined-after-use-not-flagged.md, D23). The
 repro below compiles clean and exits 139 on x86_64, 139 on aarch64 (qemu), 1 on cx (cxvm: "guest address out of
 range") and 5 on PE (wine); with the `trait` and its `impl` moved above `usediv` it exits 70 on all four.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 returns lane) — never 7.x.

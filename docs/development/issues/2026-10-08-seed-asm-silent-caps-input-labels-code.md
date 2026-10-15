@@ -1,12 +1,12 @@
 # The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked — OPEN
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b (seed sha256 `8e096b4a…fbd20a2`, ==
+**Status:** 🟡 **OPEN** — 6.7.11: the interim shipped — gate row S of `cybs_call_arity_named.sh` guards all three caps for `bootstrap/cybs.cyr` (the CODE row added, a57d2397: 22,200 / 65,536 B at 6.7.11); the seed's own checks stay with roadmap_6.md's seed-rotation minor (user, 2026-10-09). Was: reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b (seed sha256 `8e096b4a…fbd20a2`, ==
 `bootstrap/SHA256SUMS`) with `repros/2026-10-08-seed-asm-silent-caps-input-labels-code.sh`: a 144,052 B input
 assembles with exit 0 to a 130 B program that segfaults (its tail was dropped); 522 labels fail with `label not found:
 lbl5` for a label that is defined; 80,000 B of code assembles with exit 0 to a program whose tail is replaced
 (SIGSEGV). Latent today: `bootstrap/cybs.cyr` is inside all three (112,175 / 131,072 B, 501 / 512 labels, cybs's code
 21,660 / 65,536 B).
-**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Placement:** roadmap_6.md § *A seed-rotation minor* — the seed's own refusals (the 6.7.11 slice, the gate's CODE row, shipped) — never 7.x.
 **Discovered:** 6.7.6 Break 1 (roadmap commit a29d1492, 2026-10-08; the input cap was probed then — "3 bytes over
 assembled a cybs 1 byte short, silently"); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent miscompilation by the trust root, latent (no shipped input is over a cap; two of the

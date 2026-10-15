@@ -913,7 +913,7 @@ fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
 # 2026-10-13: decision 12 extended): a method chain `var c = a.d().d();` and an if-expression of struct
 # branches `var c = if (k) { mk(7) } else { mk(9) };` bound an untyped word (`c.v` refused, `c + 1` added to
 # it), where a single method (6.7.0 A5) and the same chain over 8 B were typed
-# (issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). The struct of the whole
+# (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). The struct of the whole
 # initialiser [start, cursor) when it is one recorded result of 8 B or less in rax (`_sc_whole` -3: an
 # operator dispatch, a method, an if-expression; inside any wrap), else 0. A global does not read it
 # (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over 8 B.
@@ -1155,7 +1155,7 @@ fn _fsc_dstar(S, ft, fnoff, term): i64 {
 # ⛔ 6.7.11 — `o.s = GP;`, `o.s = gp();`, `o.s = w.p;` (a struct-typed field from a `*S` global, a call or
 # method declared `: *S`, a `*S` field, or pointer arithmetic on a `*S`, wrapped or not) COPIES THE STRUCT,
 # as the name destination does since 6.7.10 (decision 6, `_hl_psrc_copy`). The field kept the POINTER's word
-# at every size, silently (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# at every size, silently (issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
 # The source up to `term`, typed by `_hl_psrc` (a `*S` local, parameter or capture is `_fsc_name`'s), is
 # parsed, its pointer parked in a hidden temp and recorded as the copy's source (1); a `*U` of another struct
 # is refused by name (0); 2 = parsed but the parser's pointer step is not the struct's (the value store, as
@@ -1740,7 +1740,7 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
 # A method declared `: *T`, T a struct (`psid`): its result (rax) is parked as a pointer receiver and
 # the chain continues through it — a field, a method, a deeper chain — in a fn and at top level, as a
 # free call's `*T` result does (`_call_ptr_field`). It was refused with "it does not return a struct"
-# (issues/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
+# (issues/archived/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
 fn _mchain_ptr(S, noff, beg, psid): i64 {
     var h = _ptr_park(S, psid);
     STI(S, GTI(S) + 1);                 # `.`
@@ -5884,7 +5884,7 @@ fn _gci_src(S, ti): i64 {
 # `= gp().s;` (`fn gp(): *W`) and `= VV.p.s;` (`p: *W`) left G a one-slot pointer-mode global holding the
 # field's FIRST WORD, and the first `G.v` read or wrote through it: SIGSEGV on x86 / aarch64, a cxvm guest
 # fault — while in a fn, as an assignment, and from an inline base the same declaration copies
-# (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md). The chain now starts from a
+# (issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md). The chain now starts from a
 # `*T` global's T or a `: *T` call's T (`_gci_call`), and a `*T` field hop steps into its T when `.` follows:
 # pass 1 registers G inline and both init paths copy (`_gci_take_in`'s field record follows the hops). A
 # source pass 1 could not type (a global or fn declared below G) is refused by name (`_gci_below`).

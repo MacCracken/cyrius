@@ -275,7 +275,7 @@ fn z7() {
 fn z8p(p: *S8) { var r = take8(p); return r; }
 fn z8() { var b: S8; b.v = 0 - 7000000000; var p: *S8 = &b; return take8(&b) + take8(p) + z8p(&b); }
 
-# ── 6.7.11: the two edges B7-1b left (issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md) ──
+# ── 6.7.11: the two edges B7-1b left (issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md) ──
 # (1) An if-expression whose branches are all pointers, of DIFFERENT steps (`py` step 7 beside `&s2` step
 # 1, `pz` step 4) merged to no step and passed the address as the struct (168 / 56 / 152 / 136 where 5 is
 # right); one whose branches share step 1 under a narrow condition (`n == 1`, `n: i32`) read the

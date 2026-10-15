@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 stdlib lane tree (`338fabc0`), x86_64 Linux host, by the mutation below.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 stdlib review) — never 7.x.
-**Discovered:** 2026-10-13, the 6.7.11 stdlib lane's review of `20c0e160` (issues/2026-10-13-agnos-sys-sock-send-dl-109-peer.md). The reviewer deleted the line in a scratch copy; the fix step re-ran it.
+**Discovered:** 2026-10-13, the 6.7.11 stdlib lane's review of `20c0e160` (issues/archived/2026-10-13-agnos-sys-sock-send-dl-109-peer.md). The reviewer deleted the line in a scratch copy; the fix step re-ran it.
 **Severity:** Low — a gate coverage gap, not a live defect. The line is present and correct in the tree. If it regressed, the deadline would still hold. The cost would be early 0 returns that the loop retries.
 **Affects:** `tests/gates/platform/agnos_sock_send_deadline.sh` (and `agnos_tls_deadline.sh`, which reaches the same loop). The code under test is `_agnos_sock_send_dl` in `lib/syscalls_x86_64_agnos.cyr` (6.7.11).
 

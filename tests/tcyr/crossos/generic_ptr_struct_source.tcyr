@@ -1,5 +1,5 @@
 # generic_ptr_struct_source.tcyr — 6.7.11. A GENERIC CALL DECLARED `: *T` IS A STRUCT SOURCE, as `fn gp(): *S` is
-# (6.7.10, decision 6) — issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md.
+# (6.7.10, decision 6) — issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md.
 #
 # ⛔ THROUGH 6.7.10 the chain typer skipped a generic call (`_hl_pchain`), and the instance recorded T's pointer
 # STEP but not its struct (`_ret_ptr_record` read `*T` with `FINDSTRUCT('T')`): `l = gpg<S>()` stored the

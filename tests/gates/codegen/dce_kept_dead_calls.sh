@@ -4,7 +4,7 @@
 # into the hole. And FIXUP's own `ud2` sentinel (an undefined callee under --allow-undef) is left
 # alone by the compaction's repair pass.
 #
-# THE DEFECT (filed by agnos: issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md, its
+# THE DEFECT (filed by agnos: issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md, its
 # second half). A dead fn whose body the length decoder cannot size (an `out dx, al` — agnos had
 # five) is KEPT, while the fns it calls are removed. Compaction shifted the kept body's call like
 # any other, by the bytes deleted below each end, so it landed on whatever now sits where the

@@ -810,7 +810,7 @@ else
     # over 8 bytes does); its type, with the space in it, is skipped whole to the parameter's `,`. A
     # trait member and an impl method are not FFI surface (brace depth), nor is `main`. A dyn RETURN
     # is the {data, vtable} pair, `cyr_val2` (6.7.11: it printed `cyr_val as_area(..)`, the vtable
-    # lost — issues/2026-10-10-cyrius-header-ignores-struct-returns.md).
+    # lost — issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md).
     if ttool cyrius cbt/cyrius.cyr; then
         rc=0; ( cd "$T/tt/w" && CYRIUS_HOME="$T/tt/hh" HOME="$T/tt/hh" timeout 60 "$T/tt/cyrius" header ds.cyr > "$T/tt/hdr.out" 2>&1 ) || rc=$?
         miss=""

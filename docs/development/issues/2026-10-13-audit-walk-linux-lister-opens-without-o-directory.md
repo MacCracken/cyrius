@@ -7,7 +7,7 @@
 it walks, and the walkers descend only into entries whose `d_type` is `DT_DIR`, so a FIFO is reached
 only by a caller of the public walkers that hands one in, or by a swap between the CLI's `stat` and
 the walker's `open`. A lib/ defect all the same: the same class as
-`issues/2026-10-13-dir-list-opens-directory-without-o-directory.md`, met while fixing it — the
+`issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md`, met while fixing it — the
 `dir_list` issue's filed surface is `lib/fs.cyr` only, so this site was not touched.
 **Affects:** `_aw_dir_list_typed` (`lib/audit_walk.cyr`, the Linux x86 / aarch64 arm, ~line 240) — behind
 the public `audit_fmt_walk`, `audit_lint_walk` and `audit_doc_walk`. macOS / Windows / agnos route

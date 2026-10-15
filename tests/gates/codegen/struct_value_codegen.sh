@@ -51,7 +51,7 @@
 #      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
 #      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
 #      operator receive (rows L12-L15)
-#   K  (6.7.11, issues/2026-10-08-struct-operator-results.md #2) an INTEGER operator's result kept its right
+#   K  (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #2) an INTEGER operator's result kept its right
 #      operand's struct type and slot, so the next `+ - * /` dispatched on it: `n - s + 10` called `P3_add(&s,
 #      10)` and discarded `n - s` (the filed repro: SIGSEGV), for every integer arm (`+ - * / % << >> >>>`,
 #      `& | ^`, a comparison, `&&` / `||`, `+| +? -| -? *| *?`, `~`). Each clears a struct expression type
@@ -59,7 +59,7 @@
 #      (refused 'undefined function' through 6.7.10); the values file's K rows (every arm, 24 B and 8 B, the
 #      dispatching twins, an f64 right operand's type kept) run on A1-A7 — A7 (new) is the values file on PE
 #      (wine)
-#   U  (6.7.11, issues/2026-10-08-struct-operator-results.md #3; the user's decision (a), 2026-10-13) `-s` on a
+#   U  (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #3; the user's decision (a), 2026-10-13) `-s` on a
 #      struct is integer negation of its word with no struct type (`_neg_int` -> `_int_res`; the declaration
 #      zone's typer `_gz_unary` agrees): `-s + t` dispatched `S_add` — over 8 B from s's slot, the minus
 #      dropped (the filed repro: 6), at 8 B on the negated word (13) — where `-w.s + t` added (252). U1 the
@@ -75,11 +75,11 @@
 #      a passed-through pair call keeps its wrap (`_ret_unpeel`); `return (a) + b;` is an operator
 #      receive (`_ret_expr_head`). The top-level operand refusal says "(a struct over 8 bytes)" for
 #      a by-value or untyped operator parameter, "(a `*` parameter)" only for a `*S` one
-#   MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13)
+#   MP (6.7.11, issues/archived/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13)
 #      a METHOD's `*T` result takes `.field`, `.m(..)` and a deeper chain (`h.get().b`), in a fn and at top
 #      level, as a free call's `*T` result has since 6.6.17; it was refused "it does not return a struct".
 #      `_method_chain` parks the pointer (`_mchain_ptr`, `_ptr_park`); `h.get().b = 5` stays refused
-#   PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+#   PE (6.7.11, issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
 #      (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element (`H { 7, (mkq(4,
 #      9)), 8 }`) was a scalar for the nested struct's first leaf: "unexpected '}'" at 16 / 24 B and 8 B with two
 #      leaves. It is the element the unwrapped call is (`_spi_pcall`), its refusals the unwrapped call's
@@ -213,7 +213,7 @@
 #       B1-B7 then read "47 passed" (each requires the derived N exactly)
 #   M-EV1 x86 EFLADDR without its `_IR_REC0(S, IR_RAW_EMIT)` (= the A3 compiler) -> RED EV1-EV4 (exit 30 +
 #       the low byte of the address / 1), A3 (tcyr E1-E5); A1 A2 A4-A6 and B1-B6 green (only IR=3 applies LASE)
-#   (6.7.11, the struct lane, issues/2026-10-08-struct-operator-results.md, the same procedure, 2026-10-14)
+#   (6.7.11, the struct lane, issues/archived/2026-10-08-struct-operator-results.md, the same procedure, 2026-10-14)
 #   M-V1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED L16 L17 (BUILT); the
 #       values files green (an untyped value and a mistyped one read alike: only `.f` / a pair return differ)
 #   the tree before #2 (39f62ebb)                          -> RED K1 (139), K2 K3 (undefined P3_add), A1-A7
@@ -436,7 +436,7 @@ refused r04 'got `5`' "R4: return (5); from a Pt fn, refused once naming 5" "str
 refused r05 'struct-return: identifier type != fn ret_sid' "R5: return (q); with q: Q from a P3 fn, refused as return q; is" "struct Q { x; y; z; }\nstruct P3 { x; y; z; }\nfn f(q: Q): P3 { return (q); }\nfn main(): i64 { var a: Q = Q { 1, 2, 3 }; var r: P3 = f(a); return r.x; }$E"
 refused r06 "the left operand of 'Pt_add' is passed by address (a struct over 8 bytes)" "R6: a by-value 16-byte operand at top level is not called a * parameter" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
 refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` parameter)' "R7: a *LW operand at top level keeps its wording" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
-# R8-R15 (6.7.11, issues/2026-10-08-struct-operator-results.md #4; the user's decision (a), 2026-10-13) a tuple
+# R8-R15 (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #4; the user's decision (a), 2026-10-13) a tuple
 # literal `return (a, b[, c]);` in a fn declared to return a named struct took the multi-value path: over 16 B
 # the result pointer was never written (the filed repro: 0), at 8 B or less the second value was dropped (1),
 # at 9-16 B it worked by ABI coincidence (12). Refused by name in every class, once; a fn declared `: (T1, T2)`,
@@ -454,7 +454,7 @@ refused r15 'struct-return fn: return must be a bare local identifier' "R15: ret
 # replayed inside a fn returning P3 (GIDEP) is the callee's, and builds.
 exits r27 127 "R27: an #inline fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\n#inline\nfn two(a, b) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
 exits r28 127 "R28: a generic fn's return (a, b); replayed in a P3 fn still builds" "struct P3 { x; y; z; }\nfn two<T>(a: T, b: T) { return (a, b); }\nfn f(a, b): P3 { var c, d = two(a, b); var r: P3 = P3 { c, d, 7 }; return r; }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }$E"
-# R16-R26 (6.7.11, issues/2026-10-08-struct-operator-results.md #5; the user's decision (a), 2026-10-13) in a fn
+# R16-R26 (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #5; the user's decision (a), 2026-10-13) in a fn
 # returning a 9-16 B struct, `return mk2(1) OP x;` with an operator that does not dispatch passed the pair-call
 # check (`_pair_ret_call_ok` asked only that a same-struct call START the value): rax the operator's result, rdx
 # mk2's stale second word (the filed repro: 41). The call must END the value (`_call_ends_at`): refused by name,
@@ -474,7 +474,7 @@ exits r23 141 "R23: return mk2(1); (the tail call) still builds" "${RPH}fn g(p: 
 exits r24 141 "R24: return (mk2(1)); still builds" "${RPH}fn g(p: Pt): Pt { return (mk2(1)); }\n${RPM}"
 exits r25 243 "R25: return mk2(1) + p; (a dispatch) still builds" "${RPH}fn Pt_add(a: Pt, b: Pt): Pt { var r: Pt = Pt { a.x + b.x, a.y + b.y }; return r; }\nfn g(p: Pt): Pt { return mk2(1) + p; }\n${RPM}"
 exits r26 141 "R26: var k = p.x; return mk2(k); (a tail call after a statement) still builds" "${RPH}fn g(p: Pt): Pt { var k = p.x; return mk2(k); }\n${RPM}"
-# MP (6.7.11, issues/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13) a
+# MP (6.7.11, issues/archived/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13) a
 # METHOD's `*T` result takes `.field` / `.m(..)` / a deeper chain, as a free call's has since 6.6.17 — it was "cannot
 # take a field of the result of 'H_get': it does not return a struct" (`_mchain_ptr`; the values file's MP rows, in
 # a fn, at top level, through a dyn and a generic method, on A1-A7). The store through it stays refused, now as the
@@ -485,7 +485,7 @@ exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn m
 refused mp3 'cannot assign to a field of a call result: the result is a temporary' "MP3: h.get().b = 5; stays refused, as get2(&h).b = 5; is (6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
 refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
 refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
-# PE (6.7.11, issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
+# PE (6.7.11, issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
 # (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element is the element the
 # unwrapped call is (`_spi_pcall`): it was parsed as a scalar for the first leaf, so 16 B, 24 B and 8 B with two
 # leaves were "unexpected '}'". The values file's Q31-Q41 run it on A1-A7; here the repro, the top-level refusals

@@ -5,7 +5,7 @@
 # empty or unset off; any other value refused by name — `error: CYRIUS_POISON must be 0 or 1 (or
 # unset): <v>`, rc 1, nothing written (user decision, 2026-10-13).
 #
-# THE FILED DEFECT (docs/development/issues/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md).
+# THE FILED DEFECT (docs/development/issues/archived/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md).
 # Each of the seven forks read the variable itself — `var _poison_env_early =
 # _read_env("CYRIUS_POISON"); if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }`
 # — and `_read_env` returns a pointer for ANY set variable, so `CYRIUS_POISON=0`, an empty value

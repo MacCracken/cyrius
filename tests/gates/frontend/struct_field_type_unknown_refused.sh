@@ -29,7 +29,7 @@
 #      struct-typed field — from a name, a call or another field — is refused by name (it stored
 #      one word, silently); a struct-valued call into a field at top level is refused (no frame)
 #   V  (6.7.11) a `Vec<T>` ANNOTATION reads its T as the D field form does (the user's decision (a),
-#      2026-10-13; issues/2026-10-09-vec-annotation-type-argument-unchecked.md). Through 6.7.10 a local,
+#      2026-10-13; issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md). Through 6.7.10 a local,
 #      a global, a parameter, `*Vec<T>` and `sizeof(Vec<T>)` skipped the `<..>` unread, so every row here
 #      compiled. V1 the filed repro VERBATIM: its four annotations, each refused once (and nothing
 #      else); V2 an unknown name and V3 a token that is no type (`1 + 2`) in each position — a local, both

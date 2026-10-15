@@ -117,7 +117,7 @@ needs its consumers on at least that pin, under the existing pin-floor rules.
   - Optionally, note a `#skip-lint` line that is long only because of a literal ("split the literal instead"), so the
     536 can be retired.
 - **cyrius-lsp, cyrdoc, vet, coverage, and the tools with their own lexers** (cf.
-  `issues/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md`) — no change needed unless a tool reports literal
+  `issues/archived/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md`) — no change needed unless a tool reports literal
   values. Each piece is a complete `"…"` span, so tokenizers that skip string spans work as before. `coverage`'s
   whole-identifier rule (6.6.8) already skips literals.
 

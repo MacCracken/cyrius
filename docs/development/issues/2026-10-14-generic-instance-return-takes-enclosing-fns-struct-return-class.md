@@ -4,7 +4,7 @@
 x86_64) and on the installed 6.7.9 and 6.7.10 compilers: identical refusals.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S3), writing a `return gpg<P2>();` row for
-issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md.
+issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md.
 **Severity:** Medium — valid source refused (loud, no wrong code). The message names a struct the generic never
 mentions, at a `return` inside the generic, so the cause is hard to see.
 **Affects:** cycc 6.7.9 – the 6.7.11 tree (measured 6.7.9, 6.7.10, 3fc1dbbb); every target (frontend).

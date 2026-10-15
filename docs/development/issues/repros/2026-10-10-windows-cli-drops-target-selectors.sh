@@ -1,5 +1,5 @@
 #!/bin/sh
-# Repro for docs/development/issues/2026-10-10-windows-cli-drops-target-selectors.md — run from the repo root.
+# Repro for docs/development/issues/archived/2026-10-10-windows-cli-drops-target-selectors.md — run from the repo root.
 # from the repo root, on Linux with wine (or on cass with the shipped cyrius.exe / cycc.exe)
 W=$(mktemp -d); WP="$W/wine"; mkdir -p "$W/bin" "$W/proj" "$W/h/.cache" "$W/ch"
 cat src/main.cyr | build/cycc > "$W/cc" && chmod +x "$W/cc"

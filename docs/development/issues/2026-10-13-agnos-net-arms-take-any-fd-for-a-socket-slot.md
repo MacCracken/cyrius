@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 stdlib lane tree (after the negative-fd fix), by the run below and by reading the four call paths.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 stdlib lane) — never 7.x.
-**Discovered:** 2026-10-13, while fixing `issues/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md` (6.7.11 stdlib lane, unit L2). That filing's surface is `_agnos_is_sock_fd`, `_agnos_fd_conn`, `sys_close` and the `sys_read` / `sys_write` family; this is the same class in the adapter's OTHER slot helpers, which no `_agnos_is_sock_fd` check guards.
+**Discovered:** 2026-10-13, while fixing `issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md` (6.7.11 stdlib lane, unit L2). That filing's surface is `_agnos_is_sock_fd`, `_agnos_fd_conn`, `sys_close` and the `sys_read` / `sys_write` family; this is the same class in the adapter's OTHER slot helpers, which no `_agnos_is_sock_fd` check guards.
 **Severity:** Medium — the same shape as the filed one: a caller's bug (an unchecked `-1`, or a plain file fd) turns into a listener on, an accept from, or a connection planted in an UNRELATED socket's slot, with a success return. On agnos only.
 **Affects:** 6.7.10 and the 6.7.11 lane tree (verified); the helpers date from v6.2.22.
 

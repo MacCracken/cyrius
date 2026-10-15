@@ -23,7 +23,7 @@
 #   P6   a destructure `var a, b = mk(4, 2);` of a `: P2` fn returning a P2 local (r4 read as the
 #        multi-value slot)                                       P7  `mk(7, 42); var b = rethi();`
 #   P8   a `: P2` fn's `return (x, 2);` — refused since 6.7.11 (a tuple is not the struct: the user's
-#        decision, issues/2026-10-08-struct-operator-results.md #4), on cx as natively, once
+#        decision, issues/archived/2026-10-08-struct-operator-results.md #4), on cx as natively, once
 #                                                                P8b `ret2(x, 2);` received as `var p: P2 = mr(4);`
 #   P9   a 13-argument callee returning a pair (arguments 11 and 12 ride r14 / r15, the emitters'
 #        temps)                                                  P10 a pair call as the 13th argument

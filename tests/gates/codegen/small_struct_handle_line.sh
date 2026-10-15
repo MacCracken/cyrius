@@ -22,7 +22,7 @@
 #   C  compile rows (x86): C1 a handle <- handle of ANOTHER struct type compiles and rebinds (exit
 #      58), as over 8 B; C2 a struct value of another type is still refused by name — `var q: S8 =
 #      mku(1);` and, into a handle, `q = mku(1);`; C3 `bs1((t))` with `t: T1` into `p: S1` is
-#      refused by name, as `bs1(t)` is (6.7.11: issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md,
+#      refused by name, as `bs1(t)` is (6.7.11: issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md,
 #      the user's decision 2026-10-13 — it compiled, exit 7, through 6.7.10); C4
 #      `var q: S8 = *pu;` with `pu: *U8` (a local or a global) is refused by name, as `= pu` is, at
 #      8 and 16 B; C5 `return (a, 1)` with a handle compiles and the element is the handle's word,
@@ -42,7 +42,7 @@
 #      too: exit 0. The receiver was loaded rounded up to 4 / 8 bytes (`_self_value_ra`, 6.6.11)
 #   PD (Linux x86_64 + aarch64; the review fix) a local declared from a dereference of a `*S7` ending a
 #      mapping — `(*p)`, `*(p + 0)`, `*gp()`, `*w.p` — copies byte-exact: exit 0
-#   PX (Linux x86_64 + aarch64; 6.7.11, issues/2026-10-12-small-struct-dereference-reads-past-the-object.md)
+#   PX (Linux x86_64 + aarch64; 6.7.11, issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md)
 #      a dereference `*p` of a struct of N = 1..7 i8 fields ending a mapping (8 B the control) in every
 #      value use — a global declared from it in the declaration zone (`*Q`, `(*Q)`, `*gq()`, `*(Q + 0)`,
 #      `*WQ.p`, `f(*Q)`) and after it (`*P`, `(*P)`, `*gp()`, `*(P + 0)`), `G = *P`, a by-value and a `*S`
@@ -135,7 +135,7 @@
 #      (SIGSEGV through 6.7.10); a scalar annotation keeps the first word
 #   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
 #      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
-#      — and (6.7.11, issues/2026-10-08-struct-operator-results.md #1) after a LEADING CALL: `var d = mk8(10)
+#      — and (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #1) after a LEADING CALL: `var d = mk8(10)
 #      - s; d.v` took mk8's S8 and dereferenced the integer (SIGSEGV through 6.7.10), at 8 and 16 B
 #
 # 6.7.10 (decision 6 completed) — A STRUCT COPY THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD COPIES THE
@@ -169,19 +169,19 @@
 # of 1 / 3 / 7 / 8 B, top level):
 #   R10 that file on the same legs as R1, N derived from it (floor 78; 6.7.11: the `z` rows — a dereference
 #      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0)
-#   R11 (6.7.11, issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
+#   R11 (6.7.11, issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
 #      tests/tcyr/crossos/struct_deref_assign_copy.tcyr on the same legs (floor 76): an ASSIGNMENT from a
 #      dereference — `l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S` / a handle's pointee, wrapped, `*(p +
 #      0)`, `*gp()`, `*w.p`, through a `*O`, a for step, top level — copies the struct at 3 / 8 / 16 / 24 B
 #      (through 6.7.10 one word; the refusals are struct_copy_source_type_refused.sh's R17-R23)
-#   R12 (6.7.11, issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md)
+#   R12 (6.7.11, issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md)
 #      tests/tcyr/crossos/generic_ptr_struct_source.tcyr on the same legs (floor 72): a GENERIC call declared
 #      `: *T` is a struct source, as `fn gp(): *S` is — the seven filed positions at 8 / 16 / 24 B for
 #      `gpg<S>()`, `gpi(p)` and `gpv(G)`, the 6.7.11 copy arms (`o.s = gpg<S>()`, `l = *gpg<S>()`), wrapped,
 #      `+ 0`, two type parameters, inside another instance, top level (through 6.7.10 the pointer word
 #      stored, SIGSEGVs, the field form refused; the compile rows are generic_struct_field.sh's P)
-#   R13 (6.7.11, issues/2026-10-12-small-struct-return-takes-another-structs-value.md and
-#      issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md)
+#   R13 (6.7.11, issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md and
+#      issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md)
 #      tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr on the same legs (floor 75): a `*T` LOCAL returned
 #      from a fn of 8 B or less is the struct it points at, as a `*T` parameter is (6.6.17) — wrapped, 3 / 4 /
 #      6 / 8 B, a copy (not an alias), its word's padding 0 (through 6.7.10 the ADDRESS); and `return E;` with E
@@ -189,14 +189,14 @@
 #      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
-#   R14 (6.7.11, issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
+#   R14 (6.7.11, issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
 #      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 143): a
 #      struct VALUE into a typed `*S` GLOBAL — a local, a value global, a by-value parameter, a call, a field
 #      `w.s`, `*p`, a method, an operator, wrapped, a for step — copies into its pointee at 0 / 3 / 8 / 16 / 24 B, in
 #      a fn and at top level, as into a `*S` local or parameter (the controls); `GP = q`, `GP = &x`, `GP = GP2`,
 #      `GP = gq()` rebind (through 6.7.10 `GP` became the value's first word); the refusals are
 #      tests/gates/frontend/struct_copy_type_checked.sh's R10-R16
-#   R15 (6.7.11, issues/2026-10-11-deref-store-through-struct-pointer-decision.md, the user's decision (a) of
+#   R15 (6.7.11, issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md, the user's decision (a) of
 #      2026-10-13) tests/tcyr/crossos/deref_store_struct_copy.tcyr on the same legs (floor 322): `*p = v` through a
 #      `*S` copies exactly sizeof(S) bytes at 0 / 3 / 4 / 5 / 6 / 7 / 8 / 9 / 16 / 24 B — from a local, a by-value
 #      parameter, a global, a field, a call, a method, an operator, `*q`, a `*S` local (copied, not rebound), a
@@ -401,7 +401,7 @@
 #   MD4  `_dro_check` answering 0 (no type check)     -> RED 4: D1 x2 / D2 x2 (compiled)
 #   MD5  `_op_rhs`'s want without the wrap (`_dro_want = rb`) -> RED 7: R10 x7 (`a - (*p)`, `a * (*q)`)
 # 6.7.11 POINTER-EDGES MUTATION LEDGER (2026-10-14, the same method; R3's `e_` rows,
-# issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md; the user's decision 2026-10-13: (a)):
+# issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md; the user's decision 2026-10-13: (a)):
 #   the A3 f64 tree (4b05d52a, before the fix)      -> RED R3 x7: 9 rows (the if-expressions of different
 #                                                      steps / under a narrow condition, `m + pb`, `n + pb`,
 #                                                      the chain, `n + pb2`, `n + sp`); R4 exit 111 (it was 0
@@ -415,32 +415,32 @@
 #   ME5  `_hl_p1` on the FIRST `+` / `-` (no `_hl_lastop`) -> RED R3: the chain (`n - 2 + pb`)
 #   (`_add_rb1` without its one-byte size test is an equivalent mutant: a step-1 `*T` struct is one byte.)
 # 6.7.11 SMALL-DEREFERENCE MUTATION LEDGER (2026-10-14, the same method; PX and R10's `z` rows,
-# issues/2026-10-12-small-struct-dereference-reads-past-the-object.md):
+# issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md):
 #   real tree                                         -> GREEN
 #   MX1  `_deref_small` answering 0 (the word load back) -> RED 21: PX 1..7 B x86 / aarch64 exit 139 (14), R10 20 of
 #                                                      78 rows x7 (the padding 'D'..'H', every `z` row)
 #   MX2  `_hl_pval_ra` never zeroing its frame temp (`z` ignored) -> RED 7: R10 8 of 78 rows x7 (in a fn, a by-value
 #                                                      argument's and a return's padding 0xFF from the frame)
 # 6.7.11 ASSIGNMENT-FROM-DEREFERENCE MUTATION LEDGER (2026-10-14, the same method; R11,
-# issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md):
+# issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md):
 #   the tree before it (cf5838db)                   -> RED 7: R11 42 of 76 rows x7 (one word stored; `q = *p`
 #                                                      rebound q)
 #   MA1  `_asg_dstar` answering 0 (no name arm)       -> RED 7: R11 36 of 76 rows x7
 #   MA2  `_fsc_dstar` answering 0 (no field arm)      -> RED 7: R11 8 of 76 rows x7 (`o.s = *p`, `po.s = *p`, the
 #                                                      for step, `GO.s = *gp()` at 16 / 24 B)
 # 6.7.11 GENERIC `: *T` SOURCE MUTATION LEDGER (2026-10-14, the same method; R12,
-# issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md):
+# issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md):
 #   the tree before it (7a9938e8)                   -> RED 7: R12 does not build x7 (`gpg<S>().v` refused)
 #   MP1 `_hl_pchain` without the generic arm         -> RED 7: R12 exit 139 x5, cxvm out of range, PE a crash (the
 #                                                      zone's `var Z: S = *gpg<S>();` a handle holding the word
 #                                                      the dereference read)
 #   MP2 `_ret_ptr_record` without the binding       -> RED 7: R12 does not build x7
 # 6.7.11 SMALL STRUCT RETURN MUTATION LEDGER (2026-10-14, the same method; R13,
-# issues/2026-10-12-small-struct-return-takes-another-structs-value.md):
+# issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md):
 #   the tree before it (3fc1dbbb)                   -> RED 8: R13 18 of 24 rows x7 (the `*T` local's address), C6
 #                                                      (compiled, exit 3: U8's bytes as the S8)
 #   MS2  `_ret_small_ptr` answering 0                -> RED 7: R13 18 of 24 rows x7
-#   (issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md, R13 at 75 rows:)
+#   (issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md, R13 at 75 rows:)
 #   the tree before it (the 8 B refusal commit)     -> RED 7: R13 does not build x7 (`return GP16;` refused)
 #   MT3  `_ret_small_ptr` a bare local only (as before) -> RED 7: R13 16 of 75 rows x7 (3 / 8 B: the pointer's word)
 #   MT2  `_ret_ptr_src` answering -1                 -> R13 does not build (x86 measured: the 16 B rows refused)
@@ -448,28 +448,28 @@
 #                                                      `return gp8();` kept the `jmp`, the pointer's word)
 #   MT5  `_ret_ptr_src` without its dereference arm -> R13 does not build (x86 measured: `return *GP16;` refused)
 # 6.7.11 `*S` GLOBAL DESTINATION MUTATION LEDGER (2026-10-14, the same method; R14,
-# issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
+# issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
 #   the tree before it (299e6e60)                   -> RED 7: R14 74 of 143 rows x7 (`GP` became the value's first
 #                                                      word; the rebinds and the `*S` local / parameter controls green)
 #   M5a `_agc_ptr_global` answering 0                -> RED 7: R14 74 of 143 rows x7
 #   M5c `_ps_is_sz` without the zero-size arm         -> RED 7: R14 140 of 143 rows x7 (a `*E` global's step is 8:
 #                                                      `GP = l` rebound it, the 0 B rows)
 # 6.7.11 `*p = v` THROUGH A `*S` MUTATION LEDGER (2026-10-14, the same method; R15,
-# issues/2026-10-11-deref-store-through-struct-pointer-decision.md):
+# issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md):
 #   the tree before it (ac419c94)                   -> RED 7: R15 38 of 322 rows x7 (the 8-byte word, whatever S)
 #   M9a `_dst_struct` answering 0                    -> RED 7: R15 38 of 322 rows x7
 #   M9c PARSE_STMT without clearing `_agc_ovr`       -> RED 7: R15 321 of 322 rows x7 (a closure body's own `p = m`
 #                                                      in the source taken for the outer store's destination)
 # 6.7.11 FIELD-DESTINATION MUTATION LEDGER (2026-10-14, the same method; R9's `fd` / `fp` / `ff` / top-level rows,
-# issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
+# issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md):
 #   MF1  `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R9 12 of 60 rows x7 (the pointer word
 #                                                      stored into the field; the guard row stays green)
 # 6.7.11 LEADING-CALL BINDING MUTATION LEDGER (2026-10-14, the same method; B2's leading-call rows,
-# issues/2026-10-08-struct-operator-results.md #1):
+# issues/archived/2026-10-08-struct-operator-results.md #1):
 #   MV1 `_var_rhs_csid` without its `_call_ends_at` test (= the tree before it) -> RED 2: B2 8 B and 16 B (compiled:
 #                                                      d took mk8's / mkh's struct); R8 green (an untyped value reads alike)
 # 6.7.11 UNTYPED-BINDING MUTATION LEDGER (2026-10-14, the same method; R8's `u` / `m` / `i` / `p` rows and B3,
-# issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md, the user's decision (a) 2026-10-13: MB4
+# issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md, the user's decision (a) 2026-10-13: MB4
 # above is the rule now — `_sc_op_whole` became `_sc_small_whole`, any whole result of 8 B or less):
 #   the tree before (85c648c3)                       -> RED 14: R8 does not build x7 (`c.v`: "no struct type in scope
 #                                                      for 'c'"), B3 u1 u2 u3 (refused), the two `c + 1` refusals and

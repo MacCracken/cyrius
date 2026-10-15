@@ -4,7 +4,7 @@
 before the unit, 2,189,840 B) and on the installed 6.7.2 and 6.7.9 compilers: identical everywhere.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F2 (probing a private const fn called from a local const in an
-`#inline` body, for `issues/2026-10-09-const-context-calls-private-const-fn.md`), outside that issue's scope.
+`#inline` body, for `issues/archived/2026-10-09-const-context-calls-private-const-fn.md`), outside that issue's scope.
 **Severity:** Medium — valid code is refused. A helper that names a local const cannot be called twice in one scope
 when it is `#inline` or generic, and the error names the helper's own line, not the second call.
 **Affects:** cycc 6.7.2 (local `const`) through the 6.7.11 genfe lane tree.

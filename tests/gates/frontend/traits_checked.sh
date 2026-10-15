@@ -190,7 +190,7 @@ else ok "TS9: --syntax-only reports both grammar rows and no type-name row"; fi
 
 # ── V (6.7.8) — what a fn signature takes still compiles in a member ──
 # (V2 calls the bounded generic member as `P_bnd(p, p)`: the method spelling `p.bnd(p)` runs the i64 base —
-# issues/2026-10-10-generic-method-call-runs-i64-base.md, filed by the same lane.)
+# issues/archived/2026-10-10-generic-method-call-runs-i64-base.md, filed by the same lane.)
 printf 'include "lib/syscalls.cyr"\ntrait Sh { fn sh(self, q: Qt): Qt; }\nstruct Qt { x; y; z; }\nstruct P { v; }\nimpl Sh for P { fn sh(self, q: Qt): Qt { return q; } }\nfn main(): i64 { var p = P { 5 }; var q = Qt { 1, 2, 3 }; var r = p.sh(q); return r.y * 10 + r.z; }\nsyscall(60, main());\n' > "$T/v1.cyr"
 exits v1 23 "V1: a member naming a struct declared BELOW the trait"
 printf "$S"'trait Sh { fn sh(self, c: Color): i64; }\nimpl Sh for P { fn sh(self, c: Color): i64 { return c + self.v; } }\nenum Color { Red, Green, Blue }\nfn main(): i64 { var p = P { 5 }; return p.sh(Color.Blue); }\nsyscall(60, main());\n' > "$T/v1b.cyr"

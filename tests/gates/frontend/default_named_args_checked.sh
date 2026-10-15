@@ -48,7 +48,7 @@
 #      type-audit (a `)` in a literal default does not close the list); S-fmt cyrfmt accepts the
 #      crossos tcyr; S-R5 no helper the compiler calls with a FIXED argument count declares a
 #      default (the names derived from src; each must be defined in lib/)
-#   SC (6.7.11, docs/development/issues/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md;
+#   SC (6.7.11, docs/development/issues/archived/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md;
 #      its repro verbatim plus a shapes fixture, each compiling first): SC-hdr `cyrius header` — the
 #      const fn, `p: Pair<i64, i64>` / `>>` / `>>>` one parameter, `c = 1 < 2` and `u2: i64 = 1 < 2`
 #      one parameter (after the `=` a `<` is an operator), `cyr_val va(cyr_val n, ...)`, `zv(void)`;
@@ -279,7 +279,7 @@ refused r18 "a closure's parameters take no defaults" "R18: a closure parameter 
 refused r20 "a parameter default is one constant expression, ending at ',' or ')'" "R20: a default that is not one expression" "fn f(a, b = 1 2): i64 { return a + b; }$E" "1:15"
 refused r16 "the default of parameter 'b' of 'cf' is defined in terms of itself" "R16: a default defined in terms of itself (a const fn filling its own default)" "const fn cf(a, b = cf(1)): i64 { return a + b; }$E" "1:20"
 refused r19 "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19: an operator fn that declares a default (an operator passes exactly two operands)" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 { var a = V2 { 1, 2 }; var b = V2 { 3, 4 }; var c = a + b; return c; }\nsyscall(60, main());\n" "2:19"
-# R19b-R19e (6.7.11, the returns lane; issues/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md, shape 7): D19 is
+# R19b-R19e (6.7.11, the returns lane; issues/archived/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md, shape 7): D19 is
 # reported ONCE, at the operator fn's first default (with its column) — it was one line per use, at the use, with no
 # column, and again after the definition's own refusal. R19b the filed repro verbatim (a method of `impl Add for V2`):
 # the D13 refusal alone — no D19 per use, and no "different number of parameters" for the parameter it names;

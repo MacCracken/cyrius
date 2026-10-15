@@ -6,7 +6,7 @@
 `var h: *S = gpg<S>();` both work (8).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S2), probing the positions of
-issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md. That issue (fixed in S2) made a generic `: *T`
+issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md. That issue (fixed in S2) made a generic `: *T`
 call a struct SOURCE (copies, dereferences, `gpg<S>().v`); the handle BINDING of an annotated fn-local is a different
 path (PARSE_VAR's struct-receive lookahead) and was not in its filed surface.
 **Severity:** Medium — a loud refusal at the first `h.f`; but a use that does not name a field (`take(h)`, `h + 1`,

@@ -1,0 +1,62 @@
+# cybs compiles a statement-position call to an undefined function silently; the binary segfaults — RESOLVED
+
+> ✅ **RESOLVED in v6.7.11** (INF-3: the filed `nosuch(1);` is refused by cybs with `cybs: undefined function: nosuch`, exit 1, nothing written — it compiled with exit 0 to a binary that died with SIGSEGV — and `fp(5);` on a fn-pointer variable with `cybs: undefined function: fp`, as cycc refuses both: `fixup_fn_call` stops on an entry still -1 instead of patching a call to one byte before the code. The control `f(1);`, a call to a fn defined after its use and an expression call through a fn-pointer variable still run; gen1 and the closure are byte-identical. No decision needed (cybs narrows to what cycc already refuses). Labels 501 → 505 / 512. Rows: `cybs_undefined_fn_named.sh` (U the repro verbatim, P `fp(5);`, R cycc refuses both, F and E anti-vacuous; two mutations RED). CHANGELOG [6.7.11])
+
+**Status:** ✅ **RESOLVED in v6.7.11** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b: cybs assembled from the seed
+(`bootstrap/asm < bootstrap/cybs.cyr`, byte-identical to `build/cybs`, 21,780 B) compiles `nosuch(1);` with exit 0 and
+the program dies with SIGSEGV (exit 139); the expression form `var x = nosuch(1);` is refused (exit 1). A
+statement-position call through a fn-pointer VARIABLE (`fp(5);`) takes the same path and also segfaults, where
+`build/cycc` refuses it (`undefined function 'fp'`).
+**Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+**Discovered:** 6.7.6 (roadmap commit c2178734, 2026-10-08); filed 2026-10-08 from roadmap.md.
+**Severity:** Medium — a silent bad binary from the bootstrap compiler. Contained today: cybs only builds `src/`
+(→ gen1) and `bootstrap/asm.cyr`, and gen1 (cycc itself) refuses an undefined function when it compiles gen2, so
+seed-derive fails loudly — but at the wrong rung, with no name.
+**Affects:** `bootstrap/cybs.cyr` as of 6.7.6 (not bisected).
+
+## Reproduction
+
+```cyr
+fn main() {
+    nosuch(1);
+    return 7;
+}
+var r = main();
+syscall(60, r);
+```
+
+```sh
+cat bootstrap/cybs.cyr | bootstrap/asm > cybs && chmod +x cybs
+./cybs < stmt.cyr > stmt && chmod +x stmt; echo "cybs=$?"; ./stmt; echo "run=$?"
+# 6.7.6: cybs=0  run=139           expected: cybs refuses, naming 'nosuch'
+# the control (`fn f(a) { return a; }` defined, `f(1);`) runs and exits 7
+# `var x = nosuch(1);` instead: cybs prints "undefined variable" and exits 1
+```
+
+## Root cause
+
+- The statement arm `parse_assign_is_fn_call` (`bootstrap/cybs.cyr:2990`) looks the name up with `find_fn_index`;
+  on a miss it does not error but **registers a new fn** (`parse_assign_fn_new`, cybs.cyr:3021, `call register_fn`),
+  whose entry `register_fn` sets to -1 (cybs.cyr:1024), so the call is emitted as a placeholder with a type-2 fixup
+  (`parse_assign_fn_fixup`, cybs.cyr:3039).
+- `fixup_fn_call` (cybs.cyr:4702) reads the entry from `r15 + 0x7300000 + idx*8` and patches `rel32 = entry -
+  (site + 4)` with **no check that the entry is still -1** — the call lands one byte before the code start.
+- The expression arm (`parse_factor_fn_call`, cybs.cyr:4140) treats a miss as a fn-pointer variable
+  (`parse_factor_fn_new`, cybs.cyr:4169 → `find_var_index`), which is why it reports "undefined variable" (itself a
+  misleading name for an undefined function — see `2026-10-08-cybs-bare-syntax-error-no-location.md`).
+
+## Proposed fix
+
+In `fixup_fn_call`, refuse an entry of -1: write "cybs: undefined function" (+ the name from the fn-name table at
+`r15 + 0x7200000`) and exit 1. That reaches the existing error-exit path and needs few or no new labels — the budget
+matters: cybs.cyr defines **501 of the seed's 512 labels** (gate row S, `tests/gates/toolchain/cybs_call_arity_named.sh`).
+Then a fn-pointer variable in statement position (`fp(5);`) is refused instead of segfaulting, matching cycc. Gate:
+a cybs row asserting `nosuch(1);` exits non-zero with the name. Mandatory after: the seed-derive gate
+(`sh scripts/seed-derive-cycc.sh`) and the closure (`cybs(bootstrap/asm.cyr) == bootstrap/asm`). No change to what
+cycc compiles; cybs's accepted language only narrows to what cycc already refuses.
+
+## Seed headroom (2026-10-09)
+
+Changing `bootstrap/cybs.cyr` needs no new seed, but the seed assembles it under three unchecked caps; the label
+table is the tight one (501 / 512). Size this fix's new labels against that headroom before placing it: if it needs
+more than is left, it rides the seed-rotation minor (roadmap_6.md § *A seed-rotation minor*), never a patch.

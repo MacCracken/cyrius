@@ -33,7 +33,7 @@
 #      multi-value registers themselves, so nothing differs there — the leg pins that it stays so
 #      (it had no 16 B struct pair at all before 6.7.8: issues/archived/2026-10-08-cx-16b-struct-return-refused.md)
 #   D  (6.7.11) a destructure binds a struct callee's REGISTER words only (the user's decision,
-#      2026-10-13; issues/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md):
+#      2026-10-13; issues/archived/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md):
 #      over 16 B (a retptr: `var a, b = mk(5);` read a stale rdx, 50 where 56 is meant, on every
 #      target) and three names from a 9-16 B struct's two words are refused by name, on the x86_64,
 #      aarch64 and cx compilers, once each — at fn scope, in both top-level zones, as a method, from a
@@ -56,7 +56,7 @@
 #   M8 `_dt_struct_check` accepting three names from 9-16 B             -> RED D5 D6 D8 (every leg)
 #   M9 `_dt_zone_check` clearing the latch before the right-hand side   -> RED D2 (two errors, every leg)
 #   M10 `_dt_struct_check` accepting an 8 B struct                      -> RED D10 (every leg)
-# (6.7.11, issues/2026-10-08-struct-operator-results.md #4, the user's decision 2026-10-13) a tuple literal
+# (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #4, the user's decision 2026-10-13) a tuple literal
 # `return (x, y[, z]);` in a fn declared `: P` is refused by name in every class (`_refuse_struct_tuple_return`;
 # struct_value_codegen.sh R8-R14), so the rows that produced the pair with it say `ret2(x, x + 1)` — the same
 # multi-value arm and landing (`_mret_land`) — and X1 / X9 pin the refusal on the three compilers: X3 X8 D8

@@ -6,7 +6,7 @@ of 4288c67f + the review's doc fix) and on the lane base 0f733aea (the slot-open
 **Severity:** Medium — a warning is printed, but the program it lets through crashes (`*P2`) or reads a value as a
 pointer (`*i64`).
 **Affects:** every compiler with PARSE_VAR's struct receive — pre-existing; outside the 6.7.11 R4 decision
-(issues/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md, A: refuse by name for a SCALAR or
+(issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md, A: refuse by name for a SCALAR or
 handle annotation), which does not name a pointer annotation.
 **Discovered:** 2026-10-14, the 6.7.11 returns lane's review (of 92b690cb).
 

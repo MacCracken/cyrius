@@ -3,7 +3,7 @@
 # a path that is not a directory at the open, so a FIFO there fails at once instead of blocking
 # the caller forever (6.7.11).
 #
-# THE BUG (issues/2026-10-13-dir-list-opens-directory-without-o-directory.md, from agora 1.9.1).
+# THE BUG (issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md, from agora 1.9.1).
 # Both POSIX arms of lib/fs.cyr opened the path with `sys_open(&cpath, O_RDONLY, 0)` and only
 # then called getdents64. open(2) of a FIFO with O_RDONLY blocks until a writer opens the other
 # end — before getdents64 could ever say ENOTDIR — so the listing never returned (agora's store

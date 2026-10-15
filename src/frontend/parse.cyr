@@ -3779,7 +3779,7 @@ fn _asg_undef_report(S, noff): i64 {
 # 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
 # f()`): a capture is the closure's copy, taken by value, and a captured NAME is not an lvalue there
 # (guide § Compound assignment). It was reported as "undefined variable 'x'" — though `x` is defined and
-# readable in the same body (issues/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
+# readable in the same body (issues/archived/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
 # enclosing scope's (`_cl_snap_find`: inside a closure body only) and the refusal named it, at the cursor.
 fn _asg_cap_name(S, noff): i64 {
     if (_cl_snap_find(S, noff) < 0) { return 0; }

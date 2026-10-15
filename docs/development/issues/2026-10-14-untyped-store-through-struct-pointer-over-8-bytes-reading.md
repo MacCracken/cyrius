@@ -5,12 +5,12 @@
 the 16-byte row's behaviour is unchanged by the lane; what is open is whether the decision asked for more.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct review) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane's review of the deref-store bite
-(issues/2026-10-11-deref-store-through-struct-pointer-decision.md, `2f5387e5` + `8e155bf3`).
+(issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md, `2f5387e5` + `8e155bf3`).
 **Severity:** P3 — decision wording / documentation. No miscompile: the lane's reading is stated in the guide.
 
 ## The decision's text
 
-D4 (a), the user's answer for issues/2026-10-11-deref-store-through-struct-pointer-decision.md: *"Copies sizeof(S)
+D4 (a), the user's answer for issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md: *"Copies sizeof(S)
 bytes (0 for a zero-size struct) from any S value that `G = v` takes ... An untyped value is stored as the struct's
 word at sizeof(S) bytes, never past the object."*
 

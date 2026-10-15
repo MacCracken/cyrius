@@ -136,10 +136,10 @@ fi
 # top level; parse.cyr).
 # 6.7.11: _fsc_psrc — `o.s = GP` / `o.s = gp()` / `o.s = w.p` into a struct-typed FIELD parks the `*T` source's
 # pointer while the struct is copied through it into the field (a frame slot in a fn, a dead global at top
-# level; parse_decl.cyr — issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# level; parse_decl.cyr — issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
 # 6.7.11: _ret_ptr_src — `return GP;` / `return gp();` / `return w.p;` from a fn returning a struct over 8 B parks the
 # `*S` value's pointer while the struct is copied through it into a frame temp (parse_fn.cyr —
-# issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
+# issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
 # 6.7.11: _dst_struct — `*p = v` through a `*S` parks p while the assignment arms copy the struct into what it points
 # at (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-11-deref-store-through-struct-
 # pointer-decision.md).

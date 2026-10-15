@@ -53,7 +53,7 @@
 #      with `bf: Box<f64>` are refused naming 'gy' (CF2-CF4), an uncalled definition builds (CF5), and
 #      a field typed `Box<T>` one hop down (`o.inner.v.y`, out of the scan's reach) builds through the
 #      documented `var t: T = o.inner.v;` (CF6). The runtime rows are generic_struct_inference.tcyr G12.
-#      Filed: docs/development/issues/2026-10-10-generic-base-reads-carrier-field-as-struct.md
+#      Filed: docs/development/issues/archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument

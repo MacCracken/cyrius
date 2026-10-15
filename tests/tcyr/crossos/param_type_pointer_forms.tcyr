@@ -7,7 +7,7 @@
 # `fn f(p: **i64)` was "expected ')', got identifier 'i64'" (and `*fn(i64): i64` "expected ')', got
 # '('"), while a `**i64` local and field compiled; and `fn f(a: 5)` compiled, the token skipped (the
 # refusals are tests/gates/frontend/param_type_grammar.sh's).
-# Filed: docs/development/issues/2026-10-10-param-type-annotation-reads-one-token.md
+# Filed: docs/development/issues/archived/2026-10-10-param-type-annotation-reads-one-token.md
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/param_type_grammar.sh, on the
 # four hardware hosts by the release gate's cross-OS leg.
 include "lib/syscalls.cyr"

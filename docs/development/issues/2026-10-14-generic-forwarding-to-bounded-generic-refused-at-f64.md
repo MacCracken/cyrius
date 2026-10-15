@@ -4,7 +4,7 @@
 the struct-stub text"); measured 2026-10-14 by the 6.7.11 genfe lane (unit G1) before and after that fix: unchanged.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14, 6.7.11 genfe G1 (the out-of-scope note of
-[2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md](2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md))
+[2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md](archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md))
 **Severity:** Medium — valid source is refused, and the message is wrong twice (no `T` is used as a struct; the note
 names `i64`, the impl the call does not need). Workaround: a dummy `impl Show for i64`.
 **Affects:** cycc 6.7.1 (bounds) through the 6.7.11 genfe tree, every target (the check is frontend)

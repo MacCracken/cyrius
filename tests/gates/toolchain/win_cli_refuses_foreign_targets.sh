@@ -7,7 +7,7 @@
 # agnos / bare-metal images on Linux)` (macOS: `the macOS CLI: cycc emits Mach-O only`), before
 # anything compiles or is written.
 #
-# THE FILED DEFECT (docs/development/issues/2026-10-10-windows-cli-drops-target-selectors.md). The
+# THE FILED DEFECT (docs/development/issues/archived/2026-10-10-windows-cli-drops-target-selectors.md). The
 # selectors reach the compiler as environment entries (CYRIUS_TARGET_AGNOS, CYRIUS_KERNEL +
 # CYRIUS_ELF64_KERNEL). compile()'s Windows arm never passed them, and the PE-hosted compiler
 # (src/main_win.cyr) reads none of them anyway, so cyrius.exe built a plain PE, printed `OK (2560

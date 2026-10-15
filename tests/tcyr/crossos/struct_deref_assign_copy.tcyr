@@ -1,5 +1,5 @@
 # struct_deref_assign_copy.tcyr — 6.7.11. AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT
-# (issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md; 6.7.10 decision 6: `*p` is a struct
+# (issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md; 6.7.10 decision 6: `*p` is a struct
 # value at every size, and the declaration `var d: S = *p;` copies it).
 #
 # ⛔ THROUGH 6.7.10 the assignment forms parsed `*p` as an expression and stored its FIRST WORD: `l = *p`,

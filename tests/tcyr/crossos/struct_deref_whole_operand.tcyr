@@ -19,7 +19,7 @@
 # A `*U` of another struct is refused by name, and an untyped `*x` keeps its word (the gate's D rows).
 #
 # ⛔ 6.7.11 — A DEREFERENCE OF A STRUCT UNDER 8 BYTES READS THE STRUCT, NO BYTE PAST IT
-# (issues/2026-10-12-small-struct-dereference-reads-past-the-object.md). Through 6.7.10 a `*p` of a 1..7 B
+# (issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md). Through 6.7.10 a `*p` of a 1..7 B
 # struct loaded the whole WORD at p wherever it was a value — a global declared from it (the declaration zone
 # and after it), a by-value argument, `return *p` — so the bytes after the object landed in the value's
 # padding (and a SIGSEGV when the object ended a mapping: the gate's PX rows). The `z` rows, at 3 / 5 / 6 / 7 B

@@ -239,7 +239,7 @@ var r = main(); syscall(60, r);
     # ABI the ret2 convention IS, and the scalar arity-2/arity-3 multi-return. Each packs its
     # values into distinct decimal digits so a row cannot pass with the operands swapped or
     # with one register left unwritten. 6.7.11: a fn returning a named struct refuses the tuple
-    # literal itself (the user's decision, issues/2026-10-08-struct-operator-results.md #4), so
+    # literal itself (the user's decision, issues/archived/2026-10-08-struct-operator-results.md #4), so
     # A7's pair struct says `ret2(41, 7)`, the same multi-value arm; A8 / A9 keep the tuple spelling.
     A7) printf '%s' 'struct P2 { a; b; }
 fn good(): P2 { ret2(41, 7); }

@@ -2138,7 +2138,7 @@ _chk_gate "$ROOT/tests/gates/platform/kmode_enum_initializer_baked.sh"
 # store, struct literal, assignment and declaration, as the local form is, and emits no binary.
 _chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh"
 
-# 6.7.11 (issues/2026-10-08-struct-operator-results.md #6) — a write to a captured NAME in a closure (`x += d`,
+# 6.7.11 (issues/archived/2026-10-08-struct-operator-results.md #6) — a write to a captured NAME in a closure (`x += d`,
 # `x = x + d`, a for init or step, `a, x = f()`) is refused naming the capture, not "undefined variable 'x'";
 # a name declared nowhere stays undefined, a captured struct's field and a read still build.
 _chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_name_write_named.sh"

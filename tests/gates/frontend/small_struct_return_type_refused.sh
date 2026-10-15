@@ -13,7 +13,7 @@
 # did ("identifier type != fn ret_sid"), and a `q: *S8` PARAMETER copied (6.6.17). The class's only
 # `return IDENT;` arm (`_ret_small_ptrp`) took a `*T` parameter or a handle and never compared the type;
 # every other shape reached the scalar tail (`_bx_pcmpe_ret`), a plain PCMPE.
-# docs/development/issues/2026-10-12-small-struct-return-takes-another-structs-value.md
+# docs/development/issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md
 #
 # THE RULE (the user's decision, 2026-10-13, (a)): every other-struct shape is refused by name — a local,
 # a by-value parameter, a global, a parenthesised name, a call (the tail-called `return mk();` included),

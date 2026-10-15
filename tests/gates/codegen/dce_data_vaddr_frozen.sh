@@ -60,7 +60,7 @@
 #   compacts under W^X.
 #
 # 6.7.11 — THE DECLINE IS GONE: BOTH LAYOUTS COMPACT AND MOVE THE DATA WITH THE CODE (rows 6-9).
-# agnos needs the shrink (issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md). wp_compact
+# agnos needs the shrink (issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md). wp_compact
 # now ends the code at cp' = align8(cp - deleted), plus 8 when the move would be 8 mod 16, and
 # subtracts the move from every data imm64 FIXUP patched (_wp_data_follows, ir.cyr), so every
 # array FIXUP padded to 16 keeps its alignment. Rows 6 and 7 are INVERTED: the probe must compact

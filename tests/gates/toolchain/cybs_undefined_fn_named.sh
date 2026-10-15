@@ -9,7 +9,7 @@
 # died the same way. cycc refuses both ("undefined function"); cybs now refuses them at the fixup,
 # naming the fn, and writes nothing. cybs's language narrows to what cycc already refuses: no
 # input that built before changes (gen1 and the closure are byte-identical with the fix).
-# issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md
+# issues/archived/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md
 #
 #   A  closure: the seed assembles cybs, and cybs reproduces the seed
 #   U  the filed repro, verbatim (`nosuch(1);` in a fn): exit 1, `cybs: undefined function: nosuch`,

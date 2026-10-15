@@ -1,6 +1,6 @@
 # A vector VALUE that is not a named local, passed to a `*V` parameter (`rd(mkv(..))`, `rd(*pv)`), and a vector local passed to a non-vector pointer (`*Pt`, `*i64`) or to a `*f32v8`, pass lane 0's bits as the address — OPEN
 
-**Status:** 🟡 **OPEN** — a decision for the user (refuse by name, or pass an address). Measured 2026-10-13 on the
+**Status:** 🟡 **OPEN** — ⚠ **a 6.7.11 regression on x86_64** (the release-docs pass, 2026-10-14): the `*V` shapes were refused there through 6.7.10 and 6.7.11 ships them compiling to a fault (ARG-4, 528555c4) — fix first in 6.7.12 (the user, 2026-10-14). A decision for the user (refuse by name, or pass an address). Measured 2026-10-13 on the
 6.7.11 callargs lane after unit A2 (`2026-10-10-pointer-to-vector-parameter-is-value-form.md`, the user's decision
 (a): `p: *f64v2` is a pointer and a vector LOCAL passed to it passes its address): each shape below compiles with no
 diagnostic and the callee dereferences lane 0's bits — x86_64 139, aarch64 139, cx 208 / 253 / 1 (a guest fault),
@@ -10,7 +10,7 @@ were refused on x86_64 only, by the value-form path's text (`value-form SIMD arg
 same on all four before and after.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 callargs lane) — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A2), probing beyond the filed surface (a named local).
-**Severity:** Medium. Compiles clean and faults at run time; a type error the compiler does not name. Workaround: bind
+**Severity:** High (6.7.11 regression on x86_64; Medium on the other targets, where it was never refused). Compiles clean and faults at run time; a type error the compiler does not name. Workaround: bind
 the vector to a local first (`var t: f64v2 = mkv(..); rd(t);`), or pass `pv` itself (it is the pointer).
 **Affects:** every target; every vector type.
 

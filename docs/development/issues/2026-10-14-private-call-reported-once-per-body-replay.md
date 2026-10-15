@@ -4,7 +4,7 @@
 const-context fix) and on the installed 6.7.2 and 6.7.9 compilers: identical everywhere.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F2 (checking that the const-context visibility refusal of
-`issues/2026-10-09-const-context-calls-private-const-fn.md` is reported once), outside that issue's scope.
+`issues/archived/2026-10-09-const-context-calls-private-const-fn.md` is reported once), outside that issue's scope.
 **Severity:** Low — the program is refused correctly; the same error is printed once per replay of the body (its
 definition, then each `#inline` expansion or generic instance), so one violation reads as several.
 **Affects:** cycc 6.5.0 (`private`) through the 6.7.11 genfe lane tree (measured: 6.7.2, 6.7.9, the lane tree).

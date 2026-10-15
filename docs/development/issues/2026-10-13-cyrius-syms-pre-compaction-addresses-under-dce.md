@@ -1,7 +1,7 @@
 # CYRIUS_SYMS writes pre-compaction addresses under CYRIUS_DCE=1 — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 infra lane (noted in passing by the 6.7.11 triage of
-[the agnos kernel-compaction item](2026-10-10-agnos-kernel-dce-compaction-moves-data.md)).
+[the agnos kernel-compaction item](archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md)).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra lane) — never 7.x.
 **Discovered:** 2026-10-13.
 **Severity:** Medium — the crash-localization map (docs/diagnosis-symbols.md) is wrong for every `CYRIUS_DCE=1`

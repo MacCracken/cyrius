@@ -2,7 +2,7 @@
 # agnos_negative_fd_not_socket.sh — 6.7.11. On agnos a NEGATIVE fd is not a tagged socket fd:
 # sys_write / sys_read / sys_close of -1 never reach a socket slot, and sys_close(-1) is -1.
 #
-# ⛔ THE BUG (issues/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md, from darshana 1.3.0's
+# ⛔ THE BUG (issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md, from darshana 1.3.0's
 # 1.1.4 audit). The socket adapter in lib/syscalls_x86_64_agnos.cyr hands out tagged fds
 # AGNOS_SOCK_TAG | slot (0x40000000 | 0..7) and recognised one with `fd & AGNOS_SOCK_TAG`. Every
 # negative i64 has that bit set, so the -1 of a failed open was socket slot `-1 & 7 = 7`:

@@ -36,7 +36,7 @@
 #   real tree                                              -> GREEN (9 refusals, 7 acceptances)
 #
 # 6.7.11 — A TYPED `*S` GLOBAL AS THE DESTINATION OF A STRUCT VALUE (the user's decision (a), 2026-10-13;
-# issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md): `GP = l` copies `l` into `*GP`, as
+# issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md): `GP = l` copies `l` into `*GP`, as
 # through a `*S` local or parameter, so a struct of ANOTHER type into it is refused by name, as into the local:
 # R10-R15 (a local, 1-slot, a top-level global, a call, `*pu`, an operator result), R16 (a call over 8 B at top
 # level: no frame for its result, as into a value global); A8 the filed repro verbatim (11 = 1 + 2 + 8; 13 when
@@ -335,7 +335,7 @@ fn take(p: P3): i64 { return p.z; }
 fn main(): i64 { var a: P3 = P3{1,2,3}; return take(a); }
 var r = main(); syscall(60, r);
 '
-# A8 — the filed repro, verbatim (issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
+# A8 — the filed repro, verbatim (issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md):
 # 11 = 1 (the local copies) + 2 (`GP = l` copied into GS) + 8 (the parameter copies); 13 through 6.7.10.
 accept "A8 GP = l copies into *GP (filed)" 'struct S { a; b; }
 var GS = S { 0, 0 };
@@ -369,7 +369,7 @@ var r = main(); syscall(60, r);
 ' 9 "$PS"'fn main(): i64 { var x: P3 = P3{7,8,9}; var q = &x; return load64(q + 16) + GT.z; }
 var r = main(); syscall(60, r);
 '
-# A10 / A11 — issues/2026-10-11-deref-store-through-struct-pointer-decision.md's repros, verbatim: 90 (the whole
+# A10 / A11 — issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md's repros, verbatim: 90 (the whole
 # 16 B struct; 42 through 6.7.10, only x copied) and 77 (a zero-size struct stores nothing; 0 through 6.7.10).
 accept "A10 *p = l copies 16 B (filed)" 'struct P2 { x; y; }
 var G: P2 = P2 { 1, 2 };

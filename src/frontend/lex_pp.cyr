@@ -3063,7 +3063,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
 # no `#derive(Serialize)` / `#derive(Deserialize)` above has registered as a STRUCT (a plain struct,
 # one derived further down, an accessors-only struct — it has no decoder — a derived enum, whose
 # `E_from_json_str` returns a Result) is skipped only, as before
-# (issues/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md). CHANGELOG [6.7.11]
+# (issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md). CHANGELOG [6.7.11]
 fn PP_DNEST_SCAN(S, out, op, fi): i64 {
     var tn = S + 0x1FE000 + fi * 32;
     if (PP_DERIVE_STRUCT(tn) == 1) {

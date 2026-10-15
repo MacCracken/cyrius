@@ -10,7 +10,7 @@ row also on `42a0b63a`), x86_64, `struct S { v; w; x; }` (24 B):
   docs/guides/cyrius-guide.md § generics); `gs(pp)` with `pp: *S` a parameter gives 8, as the guide says.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S2). The brief for
-issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md asked for rows in an inferred `gpi(&GS)` form
+issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md asked for rows in an inferred `gpi(&GS)` form
 (`fn gpi<T>(x: *T): *T`); that call runs the i64 base — no instance with T = S exists — so its `: *T` result is a
 `*i64`, not a `*S`, and the struct-source fix cannot type it without changing which fn the call runs. S2's rows use
 the forms that do infer (`gpi(p)` with a `*S` local, and a by-value `gpv(GS)`).

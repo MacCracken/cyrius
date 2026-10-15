@@ -17,7 +17,7 @@
 #      backstop, as one holding any struct that is not itself derived is (never a silent layout)
 #   C  ANTI-VACUOUS: `b: Box<i32>` builds and runs (exit 42)
 #
-#   P  (6.7.11, issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md) a GENERIC call declared
+#   P  (6.7.11, issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md) a GENERIC call declared
 #      `: *T` is a struct source, as `fn gp(): *S` is: the filed repro VERBATIM (16 B) — `l = gpg<S>()` 8,
 #      `var q: S = *gpg<S>()` 58, `take(*gpg<S>())` 58, `a - *gpg<S>()` 41, `*gpg<S>() + a` 69, the field
 #      form `gpg<S>().v` 5, the control 58 (through 6.7.10: 102, 139 x4, refused, 58); the field form at top

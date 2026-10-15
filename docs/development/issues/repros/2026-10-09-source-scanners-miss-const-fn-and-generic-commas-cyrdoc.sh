@@ -1,5 +1,5 @@
 #!/bin/sh
-# issues/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md, item 4 — cyrdoc copies a signature
+# issues/archived/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md, item 4 — cyrdoc copies a signature
 # into a 256-byte buffer with no bound. This writes one documented 80-parameter fn line (~820 bytes) and runs
 # cyrdoc on it: the signature it prints comes back out of that buffer whole (~806 bytes), i.e. ~550 bytes were
 # written past the allocation. Usage: sh <this> [path/to/cyrdoc]   (default: build/cyrdoc)

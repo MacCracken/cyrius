@@ -4,7 +4,7 @@
 points at a struct). Measured 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S4), x86_64.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S4), implementing
-issues/2026-10-11-deref-store-through-struct-pointer-decision.md (decision (a): `*p = v` copies what `G = v` copies —
+issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md (decision (a): `*p = v` copies what `G = v` copies —
 "a local, parameter, global, field, call, method or operator result, handle or `*q`"; "an untyped value is stored as
 the struct's word at sizeof(S) bytes"). A multi-value call is none of the listed `S` values, and the decision does not
 say whether it is "an untyped value": the S4 implementation leaves it the word store it was (now at `sizeof(S)` bytes,

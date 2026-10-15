@@ -66,7 +66,7 @@
 #      R5e-R5h a const fn's tuple parameter (used, unused, called in a const, after a `Pair<i64, i64>` one), refused
 #         once at its definition; R5i the other const fn parameters untouched
 #      CL1-CL2 re-assigning a whole captured tuple is refused, as any captured assignment is (6.7.11: naming the
-#      capture, `'t' is captured by value; ..`, not "undefined variable": issues/2026-10-08-struct-operator-results.md #6)
+#      capture, `'t' is captured by value; ..`, not "undefined variable": issues/archived/2026-10-08-struct-operator-results.md #6)
 #   CS (6.7.11) — one mistake, one error, at its place (the cascade issue's shapes 1-4 and 8, its repros verbatim)
 #   T7 — the tools that read a signature by hand (rows T1 / T2; the CLI and the LSP built from this tree with $CC):
 #      T1 `cyrius header` (cbt/quality.cyr cmd_header) cut the parameter list at its FIRST `)` and skipped a type to
@@ -258,7 +258,7 @@
 #   MCS8 `_tup_svtype_p1` reporting in pass 1 -> CS8, CS8c (R12 first, then the real cause); MCS8b `_gvi_tup_late`
 #       saying nothing -> CS8b BUILDS (the replay's report is what refuses a scalar declared below)
 # 6.7.11 REPAIR 1 (the genfe lane, unit G4; a one-edit copy of src/, its compiler built by the fixed one, this gate
-# run with CYCC= the mutant; issues/2026-10-09-vec-annotation-type-argument-unchecked.md):
+# run with CYCC= the mutant; issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md):
 #   MV1 `_vec_ann_chk` returning at once (every `Vec<..>` annotation unread again) -> R3q-R3z BUILD
 #   MV2 `_vec_ann_list` without its nested-`Vec` arm (a nested `<..>` skipped) -> R3w BUILDS
 #   MV3 `_param_type_step` without its check -> R3t, R3v BUILD; MV4 `_pty_name` without it -> R3v2 BUILDS
@@ -631,7 +631,7 @@ refused r08d "$E8 a vector" "R8d: an f64v2" "${TL}    var v: f64v2;\n    var q =
 refused r08e "$E8 a slice" "R8e: a slice" "${TL}    var s: [u8] = 0;\n    var q = (s, 1);${TE}"
 refused r08f "$E8 struct 'P'" "R8f: a struct-valued call \`(mk(), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (mk(), 1);${TE}"
 # 6.7.11: parentheses wrapping a whole element are transparent, as around a by-value struct argument
-# (`_expr_struct_sid`, issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): `((p), 1)`
+# (`_expr_struct_sid`, issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): `((p), 1)`
 # and `((mk()), 1)` compiled through 6.7.10, storing the struct's first word.
 refused r08q "$E8 struct 'P'" "R8q: a wrapped struct local \`((p), 1)\`" "${P}${TL}    var p: P;\n    var q = ((p), 1);${TE}"
 refused r08r "$E8 struct 'P'" "R8r: a wrapped struct-valued call \`(((mk())), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (((mk())), 1);${TE}"
@@ -891,7 +891,7 @@ refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchan
 refused cl1 "'t' is captured by value; a captured name is not assignable in a closure" "CL1: \`t = (3, 4);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = (3, 4); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
 refused cl2 "'t' is captured by value; a captured name is not assignable in a closure" "CL2: \`t = m2(5);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn m2(x): (i64, i64) { return (x, 1); }\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = m2(5); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
 # CS (6.7.11, the returns lane) — ONE MISTAKE, ONE ERROR, at its place (the filed repros of
-# issues/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md verbatim, shapes 1-4 and 8): EXACTLY the errors
+# issues/archived/2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md verbatim, shapes 1-4 and 8): EXACTLY the errors
 # named, and no warning. CS1 `t == u` reports the left operand alone (a chain too; two arguments are two
 # mistakes); CS2 a captured tuple's `t = u;` is the captured-assignment error alone, its caret on `t` (the struct
 # form's caret too); CS3 no "assigning non-pointer to typed pointer" after the tuple store's refusal nor about a
@@ -991,7 +991,7 @@ printf 'fn g(t: (i64, i64), x): i64 { return t.0 + x; }\npub fn h(a, w: (f64, i6
 if tool_build "$T/tl/cyrius" cbt/cyrius.cyr; then
     rc=0; (cd "$T/tl" && HOME="$T/tl/home" CYRIUS_HOME="$T/tl/ch" timeout 30 ./cyrius header tup.cyr > hdr.out 2> hdr.err) || rc=$?
     # 6.7.11: a two-value RETURN (`h`, `k`) is `cyr_val2` on x86_64 SysV (rax:rdx), with its note — it
-    # printed `cyr_val`, the second value lost (issues/2026-10-10-cyrius-header-ignores-struct-returns.md).
+    # printed `cyr_val`, the second value lost (issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md).
     got=$(grep -E '^cyr_val2? ' "$T/tl/hdr.out" | tr '\n' '|')
     want='cyr_val g(cyr_val t, cyr_val x);|cyr_val2 h(cyr_val a, cyr_val w, cyr_val z);   /* returns (i64, i64), 16 B */|cyr_val2 k(void);   /* returns (i64, i64), 16 B */|cyr_val m(cyr_val p);|cyr_val n(cyr_val a, cyr_val b);|'
     if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "T1: \`cyrius header\`: a tuple parameter is one \`cyr_val\`, the parameters after it kept (5 prototypes)"

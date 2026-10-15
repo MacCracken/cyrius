@@ -70,7 +70,7 @@ fn t_fw4() { var s: B4; s.a = 0 - 7; var c: B4 = fw4(&s); s.a = 0; return c.a; }
 fn t_fw6() { var s: B6; s.a = 300; s.b = 0 - 2; var c: B6 = fw6(&s); s.a = 0; return c.a * 10 + c.b; }
 # ⛔ 6.7.11 — a `*T` LOCAL returned from a fn of 8 B or less is the struct it points at, as a `*T`
 # parameter is (above) and as a `*T` local is over 8 B: it returned the ADDRESS — an address byte where
-# 8 is right, on every target (issues/2026-10-12-small-struct-return-takes-another-structs-value.md,
+# 8 is right, on every target (issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md,
 # the user's decision 2026-10-13). A copy, not an alias: the pointee is written after the return. The
 # struct is read byte-exact, its word's padding 0 (Z3: a frame of 0xFF words first).
 struct Z3 { a: i8; b: i8; c: i8; }
@@ -97,7 +97,7 @@ fn t_rlz3() { zdirty(); var l: Z3 = rlz3(); return load8(&l + 3) * 100000 + l.c;
 # ⛔ 6.7.11 — `return E;` with E a `*S` — a global, a call or method declared `: *S`, a `*S` field, a `*S`
 # local, pointer arithmetic, any of them wrapped — or a dereference of one, from a fn returning S, is the
 # struct E points at, at 3 / 8 / 16 / 24 B (the user's decision 2026-10-13, (a): decision 6's rule on the
-# `return` side; issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md). Through
+# `return` side; issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md). Through
 # 6.7.10 at 8 B or less `return GP;`, `return gp();` (a tail call), `return w.p;` handed back the POINTER, and
 # over 8 B every non-local form was refused. Each row writes the pointee after the call: a copy, not an alias.
 var GS3 = Z3 { 0, 0, 0 };

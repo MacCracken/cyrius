@@ -41,7 +41,7 @@
 #   `private;` + an item on the same line rejected       → H2 FAIL
 #   real tree → every assertion green
 #
-# 6.7.11 — THE RETURN TYPE (H7-H11; issues/2026-10-10-cyrius-header-ignores-struct-returns.md,
+# 6.7.11 — THE RETURN TYPE (H7-H11; issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md,
 # decision A, user 2026-10-13). The verb never read past the parameter list's `)`: a 9-16 B struct,
 # a dyn and a two-value return (rax:rdx / x0:x1) and a >16 B struct (a hidden result pointer) all
 # printed `cyr_val f(..)`. H7 the filed repro verbatim (and the `_WIN64` guard as cc -E reads it);
@@ -174,7 +174,7 @@ check "method_dispatch.tcyr: no bare 'new' prototype" 0 "$(grep -c ' new(' o6b |
 # result slot). The user's decision (2026-10-13): model the ABI — the pair is `cyr_val2` under
 # `#ifndef _WIN64` (Win64 C returns 16 B through a hidden pointer: a named comment there, no
 # prototype), over 16 B a `cyr_valN` of N words returned by value; refuse by name (stderr, rc 1)
-# what the scanner cannot size. docs/development/issues/2026-10-10-cyrius-header-ignores-struct-returns.md
+# what the scanner cannot size. docs/development/issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md
 REPRO="$ROOT/docs/development/issues/repros/2026-10-10-cyrius-header-ignores-struct-returns.cyr"
 echo "H7 — the filed repro, verbatim:"
 rc7=0; "$CY" header "$REPRO" > o7 2> e7 || rc7=$?

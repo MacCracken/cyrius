@@ -11,7 +11,7 @@
 # line's text greps straight to its src/ file. The lexer records each token's position in the
 # stream (a cybs-private region, r15 + 0xA000000). Per-construct refusals and file:line need more
 # seed labels than are left: issues/2026-10-13-cybs-per-construct-refusal-and-file-line.md, the
-# seed-rotation minor. issues/2026-10-08-cybs-bare-syntax-error-no-location.md
+# seed-rotation minor. issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md
 #
 #   A  closure: the seed assembles cybs, and cybs reproduces the seed
 #   L  the filed loop repro, verbatim: exit 1, nothing on stdout, and stderr is exactly the class

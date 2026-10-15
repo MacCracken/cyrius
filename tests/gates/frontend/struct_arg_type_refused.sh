@@ -91,7 +91,7 @@
 # 6.7.11 — PARENTHESES WRAPPING A WHOLE ARGUMENT INTO A BY-VALUE STRUCT OF 8 B OR LESS ARE TRANSPARENT
 # to the type check (`_expr_struct_sid` / `_ess_wrap`, the user's decision 2026-10-13: refuse by name):
 # `bs1((t))` compiled and exited 7 (T1's word read as an S1) through 6.7.10, where `bs1(t)` and every
-# wrapped spelling over 8 B were refused (issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md).
+# wrapped spelling over 8 B were refused (issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md).
 # W1 is the filed repro verbatim; W2-W9 the wrapped name / call / field / global / tail / method-argument
 # spellings; W10 the declared type wrapped (no false refusal); W11 an expression in parentheses stays a
 # value; W12 / W13 a tuple literal is not a wrap of its first element. Mutations (each a one-change
@@ -108,7 +108,7 @@
 # BY NAME (`_ess_deref`, the user's decision 2026-10-13: refuse by name; `*p` is a struct value at every
 # size, 6.7.10 decision 6): `take8(*pu)` with `pu: *U8` into `s: S8` compiled and exited 7 through 6.7.10,
 # where `take8(u)`, the 16 B `take(*pu)` and `var l: S8 = *pu;` were refused
-# (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md). D1 is the filed
+# (issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md). D1 is the filed
 # repro verbatim; D2-D9 wrapped, a `: *T` call (named by its last name, as `_dro_check` names it over 8 B),
 # a `*T` field, pointer arithmetic, a tail call, `*self` and a `Str` parameter (139 before); D9 a generic
 # carrier of the SAME instance binds T through the dereference (the review fix below); D10 the same struct
@@ -561,7 +561,7 @@ accept "B5 the untyped boundary: an untyped local holding &s is its word" \
     "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; var c: S1; c.u = u; if (bs1(c) == u) { return 7; } return 1; } syscall(60, go());"
 
 echo "=== 6.7.11: parentheses wrapping a whole argument into a by-value struct of 8 B or less ==="
-# The filed repro, verbatim (issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): it
+# The filed repro, verbatim (issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md): it
 # compiled and exited 7 (T1's word read as an S1) through 6.7.10, where `bs1(t)` was refused.
 refuse "W1 the filed repro, verbatim: bs1((t))" "cannot pass 't' $MA 'bs1'" \
     'struct S1 { v; }
@@ -609,7 +609,7 @@ GW='struct W1<T> { v: T; }
 fn gw<T>(w: W1<T>): i64 { if (w.v < 0) { return 1; } return 2; }
 fn mkw(a): W1<i32> { var r: W1<i32>; r.v = a; return r; }
 '
-# The filed repro, verbatim (issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md):
+# The filed repro, verbatim (issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md):
 # it compiled and exited 7 (U8's `u` read as an S8) through 6.7.10, where `take8(u)`, the 16 B `take(*pu)`
 # and `var l: S8 = *pu;` were refused by name.
 refuse "D1 the filed repro, verbatim: take8(*pu)" "cannot pass 'pu' $MA 'take8'" \

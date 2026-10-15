@@ -5,7 +5,7 @@ the definition alone is refused, called or not, with the same error printed twic
 6.7.10 compilers refuse it identically. `: Box<T>`, `: *T` and `: *Box<Pt>` returns of a generic all compile.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G3, while adding the row "a `*Box<T>` carrier with a
-`*Box<T>`-returning generic" that issues/2026-10-10-generic-call-result-as-carrier-argument-refused.md lists: no such
+`*Box<T>`-returning generic" that issues/archived/2026-10-10-generic-call-result-as-carrier-argument-refused.md lists: no such
 generic can be declared, so that row could not be written.
 **Severity:** Low — a loud refusal of valid source at the definition; workaround: return the pointer untyped or as
 `*Box<Pt>` per concrete type, or return `Box<T>` by value.

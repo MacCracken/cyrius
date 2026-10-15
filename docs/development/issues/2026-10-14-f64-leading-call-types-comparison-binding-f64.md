@@ -1,6 +1,6 @@
 # An untyped `var c = f() < 1.0;` with a `: f64` leading call is typed f64 — `-c` flips the sign bit — OPEN
 
-**Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/2026-10-08-struct-operator-results.md
+**Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/archived/2026-10-08-struct-operator-results.md
 #1), reproduced with the lane's compiler (struct worktree after `29d1210e`) and with the tree before it (`93e04937`).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Severity:** Low — a silent wrong value on a narrow shape (a boolean bound from a comparison whose left operand is a

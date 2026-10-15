@@ -1,7 +1,7 @@
 # A const context's skipped arm (`1 || pk()`, an untaken if-expression arm) names another file's `private` const fn with no visibility check and no `#deprecated` warning — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe) after unit F2's fix of
-`issues/2026-10-09-const-context-calls-private-const-fn.md` (commit b8fc9526): the evaluated call is refused; a call in an
+`issues/archived/2026-10-09-const-context-calls-private-const-fn.md` (commit b8fc9526): the evaluated call is refused; a call in an
 arm the evaluator skips still builds silently.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F2 (the issue's fix plan checks a const context's call only

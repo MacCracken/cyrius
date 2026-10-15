@@ -15,7 +15,7 @@
 # stub generic method (`p.pick(t)`, `self.pick(w)`) is a stub too (`_gs_mfwd`), as the free spelling
 # makes it — or its eagerly emitted i64 base met the new refusal at its own definition. 6.7.0 - 6.7.10,
 # every target.
-# Filed: docs/development/issues/2026-10-10-generic-method-call-runs-i64-base.md
+# Filed: docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md
 #
 #   R1 the filed repro, verbatim: exit 77 (7 before) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu),
 #      cx (cxvm) and PE (wine)

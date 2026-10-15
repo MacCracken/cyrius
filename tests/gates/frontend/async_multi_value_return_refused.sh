@@ -2,7 +2,7 @@
 # tests/gates/frontend/async_multi_value_return_refused.sh — 6.7.11 (returns lane)
 #
 # AN `async fn` THAT RETURNS SEVERAL VALUES IS REFUSED BY NAME — a Future carries one i64.
-# (issues/2026-10-09-async-fn-multi-value-return-loses-second-value.md)
+# (issues/archived/2026-10-09-async-fn-multi-value-return-loses-second-value.md)
 #
 # THE DEFECT (measured on 6.7.11's returns-lane tip before the fix, CYRIUS_ASYNC=1): an `async fn`
 # hands its result back through ONE word — `future_force` returns what the body left in rax, and a

@@ -546,7 +546,7 @@ refuse_all toplevel-small-ptr-arg "$T/rt8.cyr" "returns a struct by value" 5
 # S1_sub's `a: *S1` — until then the outer `-` was an integer subtract of the result's word (5 by
 # accident of the one field). Through 6.7.10 `-Gs - Gt` was refused too (a left operand that is a
 # value, not a name); since 6.7.11 `-Gs` is integer negation of the struct's word with no struct type
-# (the user's decision (a), 2026-10-13; issues/2026-10-08-struct-operator-results.md #3), so it is an
+# (the user's decision (a), 2026-10-13; issues/archived/2026-10-08-struct-operator-results.md #3), so it is an
 # integer subtraction, dispatches nothing and is not refused (5 refusals -> 4).
 # Not refused, so the count is exact: `-Gs - Gt` (6.7.11), global operands (`Gs - Gt`, `(Gs) - Gt`),
 # by-value operands (`Gs / mk(2)`, `Gs + mk(3)`), and

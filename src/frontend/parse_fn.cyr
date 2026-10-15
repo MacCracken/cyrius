@@ -2683,7 +2683,7 @@ fn _hl_ret_k(S): i64 {
 # parenthesised name, call, field, method or operator result, a handle of another struct or a dereference
 # of a `*U` handed back U's bytes as S's (`return u;` exit 3, no diagnostic), and a `*S` LOCAL handed
 # back the ADDRESS (an address byte where 8 was right), while a `p: *S` parameter copied (6.6.17)
-# (issues/2026-10-12-small-struct-return-takes-another-structs-value.md). The user's decision
+# (issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md). The user's decision
 # (2026-10-13): every other-struct shape is refused by name. The expression at `st` is parsed with the
 # argument check's records armed (`_ret_expr_sid`, `_ess_deref`: the parse and its emission are
 # unchanged): a value of another struct is refused; an expression typed `*S` (`_ret_small_ptr`) is the
@@ -5342,7 +5342,7 @@ fn _scv_restore(d): i64 {
 # (a.m());` with a 9-16 B result take the temp as the unwrapped form does: `_sc_pre` makes one only for the
 # destination's own start (`_sc_want`), and the wrap's `(` is not it, so c held the first word (`c.w`
 # refused, `take(c)` passed the word as the struct's address) — the user's decision (a), 2026-10-13
-# (issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). CHANGELOG [6.7.11]
+# (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). CHANGELOG [6.7.11]
 fn _scv_arm(S, pscale, ext): i64 {
     var d = _scv_save();
     _scv_pk = 0;

@@ -60,7 +60,7 @@
 #                                                and its --syntax-only row RED (rc 1)
 #   _sl_load_marks without its SPSC(S, 1)     -> ptr_copy_nowarn RED (4 warnings: every copy and
 #                                                step of an 8-byte *iN slot read as a non-pointer)
-# and at 6.7.11 (the note, issues/2026-10-12-return-type-refusal-note-incomplete.md), measured:
+# and at 6.7.11 (the note, issues/archived/2026-10-12-return-type-refusal-note-incomplete.md), measured:
 #   _tn_ret_report's 6.6.17 note string       -> RED the four ret_known note rows naming bool, a
 #                                                multi-value, dyn Trait and a type parameter (`*T` green)
 set -u
@@ -128,7 +128,7 @@ refused ret_unknown   'fn f(): Nonexist { return 3; }\nsyscall(60, f());\n' "unk
 refused ret_prefix    'fn f(): i8x { return 3; }\nsyscall(60, f());\n' "unknown type 'i8x' as a fn return type"
 refused ret_known     'fn f(): u8 { return 3; }\nsyscall(60, f());\n' "type 'u8' cannot be a fn return type"
 # 6.7.11: its note lists the whole accepted set. `bool` (6.7.3), a multi-value (6.5.21), `dyn Tr` (6.7.8) and a generic
-# fn's type parameter were accepted but not named (issues/2026-10-12-return-type-refusal-note-incomplete.md).
+# fn's type parameter were accepted but not named (issues/archived/2026-10-12-return-type-refusal-note-incomplete.md).
 for frag in "f64, bool, a vector type" "a pointer *T" "a multi-value (T1, T2[, T3])" "dyn Trait" "a generic fn's first or second type parameter"; do
     rows=$((rows + 1))
     check "ret_known: the note names '$frag'" yes "$(grep '^  note: a return type is ' "$T/ret_known.err" | grep -qF -- "$frag" && echo yes || echo no)"

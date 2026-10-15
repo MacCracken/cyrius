@@ -4,7 +4,7 @@
 before the unit, 2,189,840 B, and after it, 2,194,096 B).
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, probing a typed local const in a closure body for
-`issues/2026-10-11-closure-prescan-reads-declared-names-as-captures.md`. Outside that issue's scope (a diagnostic
+`issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md`. Outside that issue's scope (a diagnostic
 cascade in every fn, not a capture).
 **Severity:** Low — a second, misleading error after a correct refusal; nothing compiles that should not.
 **Affects:** cycc 6.7.2 (local `const`) through the 6.7.11 genfe lane tree. Every target (the shared frontend).

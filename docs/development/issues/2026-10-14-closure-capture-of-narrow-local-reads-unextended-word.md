@@ -5,7 +5,7 @@ on x86_64 (plain and CYRIUS_IR=3), aarch64 (qemu) and cx (cxvm), and on the inst
 identical on x86 everywhere.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F4, while adding a narrow-capture row for
-`issues/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md` (that issue is about the pointer
+`issues/archived/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-pointer-step.md` (that issue is about the pointer
 STEP of a narrow local; this is the captured VALUE, outside its filed surface).
 **Severity:** High — a silent wrong value: a captured `i8` / `i16` / `i32` holding a negative number reads as its
 unsigned bit pattern on every target, and on aarch64 / cx (and on x86 in some frame layouts) a positive one reads

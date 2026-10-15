@@ -58,7 +58,7 @@ repair-registry cap says so too).
   for EVERY aarch64 target today (`src/common/ir.cyr`), so arm64 Mach-O and aarch64 ELF never compact.
 - **`kernel;` layouts decline since 6.6.20** (REVBE-01: FIXUP patches data addresses against the PRE-compaction
   code size while the kernel emitters place `.bss` / `.rodata` after the POST-compaction size, so every string and
-  global address pointed 162 KB high on agnos — [issue](issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md),
+  global address pointed 162 KB high on agnos — [issue](issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md),
   agnos-filed, with real image-room pressure). The arc's kernel bite repairs the data base after compaction (or
   freezes it, as `_wx_dbase_frozen` does for EMITELF_USER) so a kernel image shrinks again **Pulled into 6.7.11** (user, 2026-10-13), with the
   kept-dead-body call retarget the agnos review found.
@@ -146,8 +146,8 @@ input, `bootstrap/cybs.cyr`, and that input is inside all three of the seed's un
 131,072 B · labels 506 / 512 · code 22,200 / 65,536 B — [issue](issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md)).
 So nothing forces a new seed: v6.7.x only guards the one input (gate row S of `cybs_call_arity_named.sh` checks all
 three caps since 6.7.11). **The trigger** is cybs.cyr outgrowing a cap — the label table is the tight one (6 left after
-6.7.11's two cybs fixes, [the silent statement call](issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md)
-and [the locationless syntax error](issues/2026-10-08-cybs-bare-syntax-error-no-location.md), sized against it) — or
+6.7.11's two cybs fixes, [the silent statement call](issues/archived/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md)
+and [the locationless syntax error](issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md), sized against it) — or
 a deliberate decision to rotate.
 
 **If it happens, it is its own MINOR** (the user): a new seed is a new trusted root, so it never rides a patch and it

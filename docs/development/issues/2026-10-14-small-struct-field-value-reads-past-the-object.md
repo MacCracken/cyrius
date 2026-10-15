@@ -5,7 +5,7 @@ assignment-from-dereference bite), x86_64 and aarch64 (a `cycc_aarch64` built fr
 qemu-aarch64): every value row below exits 139, both controls 65.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 struct lane) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1), while fixing the same over-read for a DEREFERENCE
-(issues/2026-10-12-small-struct-dereference-reads-past-the-object.md): the guide's ⚠ note at § *A struct-typed field or
+(issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md): the guide's ⚠ note at § *A struct-typed field or
 a `*T` dereference is a LEFT operand too* names this case ("a whole field of 3, 5, 6 or 7 bytes is still loaded as an
 8-byte word on the way"), but no issue file carried it.
 **Severity:** Medium — silent: a SIGSEGV when the object ends a mapping (an `mmap`'d record, a packed array's last

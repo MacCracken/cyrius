@@ -11,7 +11,7 @@
 # user's decision C (2026-10-13): f64 is `gen$f64`, and a struct named exactly like a scalar
 # (i8 / i16 / i32 / i64 / f64) is marked with a byte no identifier holds, `gen$.f64` — every other
 # instance keeps its name. 6.3.33 - 6.7.10, every target.
-# Filed: docs/development/issues/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
+# Filed: docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
 #
 #   R1 the filed repro, verbatim: exit 96 (88 before), on x86_64, x86_64 CYRIUS_IR=3, aarch64
 #      (qemu), cx (cxvm) and PE (wine); R2 its swapped form: 96 (176 before)

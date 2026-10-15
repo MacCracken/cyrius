@@ -4,7 +4,7 @@
 # cyrlint warns on a bare local array's constant-offset OVERRUN and on a write whose LENGTH is not
 # its literal's.
 #
-# THE FILED GAP (docs/development/issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
+# THE FILED GAP (docs/development/issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
 # cyrlint had neither of its two planned checks, and the filed repro linted `0 warnings`:
 #   * a bare `var a[N]` in a fn is N BYTES (rounded up to 8), not N slots, and since 6.6.12 the
 #     compiler refuses `a[i]` on it, so the overrun left is the explicit offset —

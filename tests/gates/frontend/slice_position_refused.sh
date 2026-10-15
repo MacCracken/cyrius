@@ -28,7 +28,7 @@
 #       `struct slice` as a parameter / pointer type; `g<slice<u8>>(0)` still compiles (6.7.7 reads it
 #       as an unbound type argument — reported, not changed here)
 #       K2b-K2f (6.7.11, the user's decision (b), 2026-10-13: a declared `struct slice` wins everywhere,
-#       the built-in stays reachable as `[T]`; issues/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+#       the built-in stays reachable as `[T]`; issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
 #       a FN-LOCAL `var x: slice` names the program's struct too — it was the built-in 16-byte slot
 #       ("no struct type in scope for 'x'", "uninitialized variable not allowed"): K2b the filed repro
 #       verbatim builds and runs as the same program with the struct renamed (`= 0` on a 24-byte struct is a

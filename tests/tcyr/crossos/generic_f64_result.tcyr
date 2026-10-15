@@ -59,7 +59,7 @@ struct GfW { v: GfP; n; }
 
 # 6.7.11: a bound with NO `impl … for i64` — met at f64 and at a struct, never judged at the i64
 # base (`gf_tg(h)` was refused: "needs `impl GfTag for i64`"). Filed:
-# docs/development/issues/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
+# docs/development/issues/archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
 trait GfTag { fn tag(self): i64; }
 impl GfTag for f64 { fn tag(self): i64 { return 5; } }
 impl GfTag for GfW { fn tag(self): i64 { return self.n + 10; } }

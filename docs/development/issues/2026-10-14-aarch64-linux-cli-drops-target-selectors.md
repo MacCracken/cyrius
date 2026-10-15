@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on pi (aarch64 Linux hardware) with the CLI and the native compiler
 cross-built from the 6.7.11 tools lane (l6711-tools @ a3d9837d), throwaway `HOME` / `CYRIUS_HOME`.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools review) — never 7.x.
-**Discovered:** 2026-10-14 by the 6.7.11 tools lane's review (issues/2026-10-10-windows-cli-drops-target-selectors.md,
+**Discovered:** 2026-10-14 by the 6.7.11 tools lane's review (issues/archived/2026-10-10-windows-cli-drops-target-selectors.md,
 which refuses the selectors on Windows and macOS). The aarch64 Linux CLI is outside that filing's surface.
 **Severity:** High — a dropped target selector: the requested artifact (an agnos ring-3 binary, an x86_64 kernel
 image) is not written, the host format is, and the CLI says OK at rc 0 — for the bare-metal target it also prints an

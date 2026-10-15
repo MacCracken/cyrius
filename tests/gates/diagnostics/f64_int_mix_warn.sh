@@ -71,14 +71,14 @@
 #           replay, a forward call (pass 1's parameter class), an operator fn's right operand (+ and
 #           -), a negated literal, an enum constant, a named argument; 0, a hex IEEE pattern, a float
 #           literal, a runtime value, `(3)`, `3 + 1` and an untyped parameter do not; the filed repro
-#           (issues/2026-10-09-int-argument-to-f64-param-silent.md) warns at lines 11 15 16 17 and
+#           (issues/archived/2026-10-09-int-argument-to-f64-param-silent.md) warns at lines 11 15 16 17 and
 #           still exits 15. Mutations (measured): the fix reverted -> axis 15 reads 0 warnings and
 #           fails; pass 1 without the f64 class (`_bx_pscan`) -> line 18 (the forward call) missed;
 #           `_bx_op_rhs` without the f64 check -> line 19 reads 4; the f32 argument arm without
 #           `_IFS_CHECK` -> line 15 and the repro's line 16 missed.
 #   axis 16 (6.7.11) ONE integer + f64 mix warns ONCE: kind 2 leaves the result f64-typed (ADR-002), so an
 #           enclosing integer operator warned again for the same mix — `x = x + (x + 1.5)` (the filed repro,
-#           issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md) and `2 * (x + 1.5)` twice, `x += x + 1.5`
+#           issues/archived/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md) and `2 * (x + 1.5)` twice, `x += x + 1.5`
 #           twice at one column, `x - (x * (x + 1.5))` three times. Now once each; two mixes still warn twice
 #           (`(x + 1.5) + (x + 2.5)`), and `x + 1.5 + 2` still adds its kind 1 for the `+ 2`. The binary is
 #           byte-identical to the CYRIUS_TYPE_CHECK=0 one (diagnostic only). Mutations (2026-10-14): never
@@ -508,7 +508,7 @@ CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a14.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 14: CYRIUS_TYPE_CHECK=0 still printed $n kind-2 warning(s)"
 
 # --- axis 15 (6.7.11): kind 4 for an ARGUMENT into an f64 / f32 parameter ---
-# The filed repro, verbatim (issues/2026-10-09-int-argument-to-f64-param-silent.md): no warning through
+# The filed repro, verbatim (issues/archived/2026-10-09-int-argument-to-f64-param-silent.md): no warning through
 # 6.7.10; four now — the tail call (line 11), a call (15), an f32 parameter (16), a method (17) — and the
 # exit code stays 15 (ADR-002: the integer's bits are passed, a warning, not a conversion).
 RP15="docs/development/issues/repros/2026-10-09-int-argument-to-f64-param-silent.cyr"
@@ -567,7 +567,7 @@ CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a15.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 15: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
 
 # --- axis 16 (6.7.11): ONE integer + f64 mix warns ONCE, however far its result is carried ---
-# The filed repro (issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md), verbatim in a fn: two kind-2
+# The filed repro (issues/archived/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md), verbatim in a fn: two kind-2
 # warnings through 6.7.10 (the enclosing `+` saw the inner mix's f64 type); one now. Each row is one
 # statement in its own program: <id>|<statement>|<kind-2 count>|<kind-1 count>.
 for spec in 'r|var x = 1; x = x + (x + 1.5);|1|0' 'c|var x = 1; x += x + 1.5;|1|0' \

@@ -4,7 +4,7 @@
 the unit, 2,193,936 B) and on the installed 6.6.0 and 6.7.9 compilers: identical everywhere.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, checking "every other declaration form the closure body
-can hold" for `issues/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (whose triage said none exist
+can hold" for `issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (whose triage said none exist
 beyond `var`, `const`, `for … in` and a destructure; a nested closure literal's parameter list is one more). Outside
 that issue's three filed forms, and a separate mechanism: telling a closure literal's `|` from a bitwise or.
 **Severity:** Medium — valid source is refused; with lib/alloc.cyr the value is right, but the outer closure carries a

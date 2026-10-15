@@ -1,7 +1,7 @@
 # A bounded method call on a struct carrier's `T` field (`b.v.show()`, `b: Box<T>`, `T: Show`) is a struct use: `gs(bi)` with `bi: Box<i64>` is refused although `impl Show for i64` exists — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 by the 6.7.11 genfe lane (unit G2) on its tree, after the
-carrier-field fix ([2026-10-10-generic-base-reads-carrier-field-as-struct.md](2026-10-10-generic-base-reads-carrier-field-as-struct.md)).
+carrier-field fix ([2026-10-10-generic-base-reads-carrier-field-as-struct.md](archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md)).
 Before that fix the definition did not compile at all ("expected ';', got '.'").
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 genfe lane) — never 7.x.
 **Discovered:** 2026-10-14, 6.7.11 genfe G2, probing the carrier-field rule's edges.

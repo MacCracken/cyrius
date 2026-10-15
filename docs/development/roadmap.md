@@ -89,68 +89,68 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 **Content.**
 - Return registers:
-  - [a multi-value receive reads stale registers](issues/2026-10-09-multi-value-receive-reads-stale-return-registers.md);
-  - [a loop-ending fn is not provably one value](issues/2026-10-08-loop-ending-fn-not-provably-single-return.md).
+  - [a multi-value receive reads stale registers](issues/archived/2026-10-09-multi-value-receive-reads-stale-return-registers.md);
+  - [a loop-ending fn is not provably one value](issues/archived/2026-10-08-loop-ending-fn-not-provably-single-return.md).
 - Call arguments:
-  - [a parenthesised struct argument of 8 B or less skips the type check](issues/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md);
-  - [an integer into an f64 parameter](issues/2026-10-09-int-argument-to-f64-param-silent.md);
+  - [a parenthesised struct argument of 8 B or less skips the type check](issues/archived/2026-10-08-paren-arg-small-byval-struct-skips-type-check.md);
+  - [an integer into an f64 parameter](issues/archived/2026-10-09-int-argument-to-f64-param-silent.md);
 - Struct operators, on the merge of the two lanes above:
-  - [six struct-operator defects](issues/2026-10-08-struct-operator-results.md);
+  - [six struct-operator defects](issues/archived/2026-10-08-struct-operator-results.md);
   - [a struct field as the left operand](issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md);
-  - [an int + f64 mix warns twice](issues/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md).
-- [The preprocessor's per-byte `PP_LEXST_AT` layer](issues/2026-10-08-self-compile-attribute-line-rule-cost.md),
+  - [an int + f64 mix warns twice](issues/archived/2026-10-08-int-f64-mix-warns-twice-in-a-chain.md).
+- [The preprocessor's per-byte `PP_LEXST_AT` layer](issues/archived/2026-10-08-self-compile-attribute-line-rule-cost.md),
   early, so later benches carry the win.
 - cybs and the seed:
   - [the seed's unchecked caps](issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md): the code-cap row only;
     the seed's own checks are [roadmap_6](roadmap_6.md)'s seed-rotation minor;
-  - [cybs: a statement call to an undefined fn](issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md)
+  - [cybs: a statement call to an undefined fn](issues/archived/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md)
     first;
-  - [cybs: a bare "syntax error"](issues/2026-10-08-cybs-bare-syntax-error-no-location.md), within the 11-label
+  - [cybs: a bare "syntax error"](issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md), within the 11-label
     headroom.
 - Install:
 - Scanners:
-  - [the attribute word list in five tools](issues/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md);
-  - [cyrlint's two rules](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
+  - [the attribute word list in five tools](issues/archived/2026-10-08-attribute-word-list-hand-kept-in-five-tools.md);
+  - [cyrlint's two rules](issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md).
 - CLI:
-  - [distlib's two owner rules](issues/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md);
-  - [a killed run's temp dir](issues/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md);
+  - [distlib's two owner rules](issues/archived/2026-10-08-distlib-every-target-owner-rule-differs-from-partial.md);
+  - [a killed run's temp dir](issues/archived/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md);
 - Stdlib and folds:
 
 - Filed 2026-10-12 (the doc sweep's verifiers, the 6.7.10 refolds):
-  - [BENCHMARKS.md prints the cycc size rows (byte counts) as milliseconds — `cc5_bytes | 1ms | 2ms | 2ms` — and the file-size row is still named `size/cc5_bytes`](issues/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md);
-  - [The "cannot be a fn return type" note lists an incomplete return-type set: `bool`, a multi-value `(T1, T2)`, `dyn Tr` and a generic's `T` are accepted but not named](issues/2026-10-12-return-type-refusal-note-incomplete.md);
-  - [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](issues/2026-10-12-sandhi-include-prints-large-static-advisory.md);
-  - [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](issues/2026-10-12-struct-result-through-fn-pointer-faults.md);
-  - [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](issues/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md);
+  - [BENCHMARKS.md prints the cycc size rows (byte counts) as milliseconds — `cc5_bytes | 1ms | 2ms | 2ms` — and the file-size row is still named `size/cc5_bytes`](issues/archived/2026-10-12-benchmarks-md-size-rows-formatted-as-time.md);
+  - [The "cannot be a fn return type" note lists an incomplete return-type set: `bool`, a multi-value `(T1, T2)`, `dyn Tr` and a generic's `T` are accepted but not named](issues/archived/2026-10-12-return-type-refusal-note-incomplete.md);
+  - [Every build that includes `lib/sandhi.cyr` (so every `lib/yantra.cyr` build) prints the large-static-data advisory](issues/archived/2026-10-12-sandhi-include-prints-large-static-advisory.md);
+  - [A struct result over 8 bytes through `fncallN` / `callptr` compiles with no diagnostic and faults: no hidden result pointer is passed, no register pair is received](issues/archived/2026-10-12-struct-result-through-fn-pointer-faults.md);
+  - [A value-form vector receive from `callptr` / `fncallN` (or any source but a by-name vector call) compiles with no diagnostic and reads wrong lanes, and faults on PE](issues/archived/2026-10-12-vector-receive-from-callptr-reads-wrong-lanes.md);
 
 - Filed 2026-10-12 / 13 (the 6.7.10 lanes and their reviews):
-  - [The `#derive` scanner `T_from_json_str` skips a nested `#derive`d struct field's object to its first inner `,`: the nested field stays 0, every field after it is lost, and the nested object's own keys land in the outer struct](issues/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md);
-  - [Under `CYRIUS_IR=3`, LASE drops the reload of a just-stored local across an unrecorded `EFLADDR` (`lea rax, [rbp+d]`): a method's argument, a by-value struct argument or a struct-returning call's argument receives the struct's ADDRESS](issues/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md);
-  - [A pointer into a by-value struct parameter of 8 B or less is still passed as the pointer word when the pointer typing calls it no pointer: an if-expression of two different steps, an integer on the LEFT of the pointer](issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md);
-  - [A dereference `*p` of a struct under 8 bytes is read as a whole word: a global initialised or assigned from it, a local assigned from it, a by-value argument and a `return *p` read past the object (SIGSEGV when it ends a mapping); only a local declaration copies byte-exact](issues/2026-10-12-small-struct-dereference-reads-past-the-object.md);
-  - [A fn returning a struct of 8 B or less returns a local of ANOTHER struct type (its word) with no refusal, and a `*T` local or a `*U` parameter as its ADDRESS](issues/2026-10-12-small-struct-return-takes-another-structs-value.md);
-  - [A struct global over 8 B initialised from a field reached through a `*T` (`var G: S16 = P.s;`, `= gp().s;`, `= VV.p.s;`) holds the field's first word and SIGSEGVs at the first use](issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md);
-  - [An ASSIGNMENT from a struct dereference (`l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S`) stores one word at every size, with a false "assigning non-pointer to typed pointer" warning](issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md);
-  - [`take8(*pu)` with `pu: *U8` (a pointer to ANOTHER struct) into a by-value `S8` parameter compiles and passes U8's bytes; `take8(u)` with `u: U8` and the 16 B `take(*pu)` are refused by name](issues/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md);
-  - [A generic call declared `: *T` (`fn gpg<T>(): *T`) is no struct source: `l = gpg<S>()` stores the pointer's word, `*gpg<S>()` as a value SIGSEGVs (a declaration, an argument, either operand), `gpg<S>().v` is refused](issues/2026-10-13-generic-pointer-returning-call-as-struct-source.md);
-  - [`return GP;` (a `*S` global) and `return gp();` (a `: *S` call) from a fn returning a struct of 8 B or less return the POINTER's word; over 8 B both are refused by name](issues/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md);
-  - [A struct-typed FIELD destination from a `*S` global, a `: *S` call or a `*S` field (`o.s = GP`, `o.s = gp()`, `o.s = w.p`) stores the pointer's word at every size](issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md);
-  - [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee](issues/2026-10-13-struct-value-into-pointer-global-destination-decision.md);
-  - [An untyped binding takes a struct-returning OPERATOR's type at every size (decision 12), but not a method chain or an if-expression of 8 B or less, nor a parenthesised 9–16 B operator / method result](issues/2026-10-13-untyped-struct-binding-beyond-operators-decision.md);
+  - [The `#derive` scanner `T_from_json_str` skips a nested `#derive`d struct field's object to its first inner `,`: the nested field stays 0, every field after it is lost, and the nested object's own keys land in the outer struct](issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md);
+  - [Under `CYRIUS_IR=3`, LASE drops the reload of a just-stored local across an unrecorded `EFLADDR` (`lea rax, [rbp+d]`): a method's argument, a by-value struct argument or a struct-returning call's argument receives the struct's ADDRESS](issues/archived/2026-10-12-ir3-lase-reloads-across-unrecorded-efladdr.md);
+  - [A pointer into a by-value struct parameter of 8 B or less is still passed as the pointer word when the pointer typing calls it no pointer: an if-expression of two different steps, an integer on the LEFT of the pointer](issues/archived/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md);
+  - [A dereference `*p` of a struct under 8 bytes is read as a whole word: a global initialised or assigned from it, a local assigned from it, a by-value argument and a `return *p` read past the object (SIGSEGV when it ends a mapping); only a local declaration copies byte-exact](issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md);
+  - [A fn returning a struct of 8 B or less returns a local of ANOTHER struct type (its word) with no refusal, and a `*T` local or a `*U` parameter as its ADDRESS](issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md);
+  - [A struct global over 8 B initialised from a field reached through a `*T` (`var G: S16 = P.s;`, `= gp().s;`, `= VV.p.s;`) holds the field's first word and SIGSEGVs at the first use](issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md);
+  - [An ASSIGNMENT from a struct dereference (`l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S`) stores one word at every size, with a false "assigning non-pointer to typed pointer" warning](issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md);
+  - [`take8(*pu)` with `pu: *U8` (a pointer to ANOTHER struct) into a by-value `S8` parameter compiles and passes U8's bytes; `take8(u)` with `u: U8` and the 16 B `take(*pu)` are refused by name](issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md);
+  - [A generic call declared `: *T` (`fn gpg<T>(): *T`) is no struct source: `l = gpg<S>()` stores the pointer's word, `*gpg<S>()` as a value SIGSEGVs (a declaration, an argument, either operand), `gpg<S>().v` is refused](issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md);
+  - [`return GP;` (a `*S` global) and `return gp();` (a `: *S` call) from a fn returning a struct of 8 B or less return the POINTER's word; over 8 B both are refused by name](issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md);
+  - [A struct-typed FIELD destination from a `*S` global, a `: *S` call or a `*S` field (`o.s = GP`, `o.s = gp()`, `o.s = w.p`) stores the pointer's word at every size](issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md);
+  - [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee](issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md);
+  - [An untyped binding takes a struct-returning OPERATOR's type at every size (decision 12), but not a method chain or an if-expression of 8 B or less, nor a parenthesised 9–16 B operator / method result](issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md);
 
 **Pulled in at the open (user, 2026-10-13).**
 - The agnos filings: the `#109` `sys_sock_send_dl` / `#110` `sys_console_mode` / `#111` `sys_fd_kind` peers (agnos
-  1.57.13 is tagged), [the negative fd taken for socket slot 7](issues/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md),
-  and [the kernel DCE compaction](issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md) (roadmap_6.md's arc,
+  1.57.13 is tagged), [the negative fd taken for socket slot 7](issues/archived/2026-10-12-agnos-negative-fd-taken-for-socket-slot-7.md),
+  and [the kernel DCE compaction](issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md) (roadmap_6.md's arc,
   its kernel bite only).
-- The newly filed Highs: [the f64 / `struct i` instance collision](issues/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md),
-  [the top-level `return`](issues/2026-10-12-top-level-return-decision.md) and
-  [the async multi-value return](issues/2026-10-09-async-fn-multi-value-return-loses-second-value.md) (from 6.7.13),
-  [the poison env](issues/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md),
-  [`cyrius header`'s struct returns](issues/2026-10-10-cyrius-header-ignores-struct-returns.md),
-  [the Windows target selectors](issues/2026-10-10-windows-cli-drops-target-selectors.md) and
-  [cbt's self-builds](issues/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md) (from 6.7.12).
-- [`dir_list` without `O_DIRECTORY`](issues/2026-10-13-dir-list-opens-directory-without-o-directory.md) (a `lib/` defect).
+- The newly filed Highs: [the f64 / `struct i` instance collision](issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md),
+  [the top-level `return`](issues/archived/2026-10-12-top-level-return-decision.md) and
+  [the async multi-value return](issues/archived/2026-10-09-async-fn-multi-value-return-loses-second-value.md) (from 6.7.13),
+  [the poison env](issues/archived/2026-10-10-poison-env-zero-or-empty-turns-mode-on.md),
+  [`cyrius header`'s struct returns](issues/archived/2026-10-10-cyrius-header-ignores-struct-returns.md),
+  [the Windows target selectors](issues/archived/2026-10-10-windows-cli-drops-target-selectors.md) and
+  [cbt's self-builds](issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md) (from 6.7.12).
+- [`dir_list` without `O_DIRECTORY`](issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md) (a `lib/` defect).
 - The folds: sankoch **2.8.6** refolded; sakshi **2.5.10** (the two 4 KiB rings declared as 4096 slots — the cause of
   the sandhi large-static advisory). ⛔ 6.7.11 cannot tag before the user tags sakshi 2.5.10 and it is refolded.
 

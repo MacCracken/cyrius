@@ -5,7 +5,7 @@ and on the slot-open cybs (0f733aea's `bootstrap/cybs.cyr`, seed-assembled, 21,7
 6.7.11. Latent: cybs only ever compiles `src/` and `bootstrap/asm.cyr`.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 infra review) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 infra lane's review, probing end-of-input shapes for the cybs bare-syntax-error
-item (`issues/2026-10-08-cybs-bare-syntax-error-no-location.md`, decision A). That item's table uses `fn bad( { }`,
+item (`issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md`, decision A). That item's table uses `fn bad( { }`,
 not a keyword at the very end of the input, so this shape is beyond its filed surface.
 **Severity:** Low — a crash (exit 139, nothing on stderr) on the developer's own malformed input to the bootstrap
 compiler; no shipped input reaches it (a bug, not a vulnerability).

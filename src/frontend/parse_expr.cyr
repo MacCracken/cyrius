@@ -1593,7 +1593,7 @@ fn _bnot_int(S): i64 {
 # -| -? *| *?` and `~` (`!` always cleared it). Each clears a STRUCT expression type and the struct slot
 # that goes with it (`_int_st`), where 6.7.9 clears the pointer step (`_int_res`): `n - s` is first-word
 # arithmetic with an integer result. An f64 / f32 type is kept (kind 2's design: the result type is left
-# as it was, ADR-002). issues/2026-10-08-struct-operator-results.md #2. CHANGELOG [6.7.11]
+# as it was, ADR-002). issues/archived/2026-10-08-struct-operator-results.md #2. CHANGELOG [6.7.11]
 fn _int_st(S): i64 {
     var t = GESTYPE(S);
     if (t <= 0) { return 0; }

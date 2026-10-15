@@ -8,7 +8,7 @@
 # `rd(b)` compiled and the body dereferenced lane 0's bits as an address (SIGSEGV; cx "guest address
 # out of range"). A vector of another type into `*V` is refused by name (param_type_grammar's sibling
 # gate, tests/gates/codegen/simd_pointer_param.sh).
-# Filed: docs/development/issues/2026-10-10-pointer-to-vector-parameter-is-value-form.md
+# Filed: docs/development/issues/archived/2026-10-10-pointer-to-vector-parameter-is-value-form.md
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/codegen/simd_pointer_param.sh, on the
 # four hardware hosts by the release gate's cross-OS leg — Win64 routed this through its by-pointer
 # value-form path, so cass is the leg that matters most.

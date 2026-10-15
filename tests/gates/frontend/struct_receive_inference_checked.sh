@@ -3,7 +3,7 @@
 #
 # A LOCAL'S STRUCT RECEIVE FROM A CALL: PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT, AND AN
 # ANNOTATION THAT NAMES NO STRUCT IS NEVER OVERRIDDEN BY THE CALLEE'S STRUCT.
-# (issues/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md)
+# (issues/archived/2026-10-10-struct-receive-inference-paren-call-and-scalar-annotation.md)
 #
 # THE DEFECT (measured on 6.7.11's returns-lane tip before the fix, x86_64 / aarch64 under qemu / cx
 # under cxvm / PE under wine). PARSE_VAR gives a local initialised from a call returning a struct over

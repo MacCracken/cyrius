@@ -2,7 +2,7 @@
 # dce_kernel_compaction_boots.sh — 6.7.11. A `kernel;` image compacted by CYRIUS_DCE=1 BOOTS: its
 # code reads a string and an array element from data that moved down with the code.
 #
-# THE DEFECT (filed by agnos: issues/2026-10-10-agnos-kernel-dce-compaction-moves-data.md). A
+# THE DEFECT (filed by agnos: issues/archived/2026-10-10-agnos-kernel-dce-compaction-moves-data.md). A
 # kernel image puts .bss / .rodata right after the code, and FIXUP patches every data address in
 # BEFORE compaction shrinks the code. Through 6.6.19 the data moved and the addresses did not:
 # agnos printed ~18 serial lines of NUL bytes and died before its banner. 6.6.20 declined

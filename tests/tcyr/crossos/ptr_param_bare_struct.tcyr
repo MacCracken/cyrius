@@ -292,7 +292,7 @@ fn operators(): i64 {
     assert_eq(r5.v, 3, "(s - t) - t: a left operand that is not a name");
     # 6.7.11 (the user's decision (a), 2026-10-13): `-s` is integer negation of s's word, with no struct
     # type, so `-s - t` subtracts integers — through 6.7.10 `-s` was a struct value here, its temp's
-    # address passed to S1_sub (issues/2026-10-08-struct-operator-results.md #3)
+    # address passed to S1_sub (issues/archived/2026-10-08-struct-operator-results.md #3)
     var r5n = -s - t;
     assert_eq(r5n, 0 - 12, "-s - t: an integer subtraction of the negated word");
     var h: HI;

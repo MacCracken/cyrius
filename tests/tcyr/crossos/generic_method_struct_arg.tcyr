@@ -8,7 +8,7 @@
 # struct carrier (`b: Box<V>`), and a type parameter on `self` (the receiver's struct). A scalar
 # binding of a stub is refused naming the fn (the user's decision A, 2026-10-13) — those rows are in
 # tests/gates/frontend/generic_method_infer.sh. Filed:
-# docs/development/issues/2026-10-10-generic-method-call-runs-i64-base.md
+# docs/development/issues/archived/2026-10-10-generic-method-call-runs-i64-base.md
 #   S  struct arguments: 8 / 16 / 24 / 40 B, pointer receiver, self.m, chain, named, two params
 #   R  results: `var w = p.m(q);`, `: V` returned at a struct (untyped / annotated, 8 and 24 B)
 #   B  a bounded `<V: Show>` member and an `impl Tr for P` member

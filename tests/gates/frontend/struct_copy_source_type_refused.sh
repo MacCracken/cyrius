@@ -44,14 +44,14 @@
 #   6.6.20: `_for_step_assign` without `_for_step_aggregate` (the 6.6.19 step)
 #                                                   -> RED R12 R13 R14 R15 R16 (compiled clean)
 #   real tree                                       -> GREEN
-# 6.7.11 (issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md), the same method:
+# 6.7.11 (issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md), the same method:
 #   the 6.7.11 tree before it (cf5838db)            -> RED 9: R17-R23 compiled (a warning at most), A4 A5 warned
 #   `_asg_dstar` answering 0 (no name arm)          -> RED 7: R17 R19 R20 R21 R22 compiled, A4 A5 warned
 #   `_fsc_dstar` answering 0 (no field arm)         -> RED 2: R18 R23 compiled
-# 6.7.11 (issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md), the same method:
+# 6.7.11 (issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md), the same method:
 #   `_fsc_psrc` answering 0 (no pointer-source field arm) -> RED 7: R24-R29 compiled clean, A6 exit 0 (the
 #                                                      pointer word in the field)
-# 6.7.11 (issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md), the same method:
+# 6.7.11 (issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md), the same method:
 #   the tree before it (dce13af1)                   -> RED 6: R30-R34 compiled clean (the value store), A7 SIGSEGV
 #   MG1 `_gci_src` without the `*T` global arm     -> RED 4: R30 R31 R33 compiled, A7 SIGSEGV
 #   MG2 `_gci_chain` without the `*T` field hop    -> RED 2: R34 compiled, A7 SIGSEGV
@@ -177,7 +177,7 @@ refuse "R11 a field of a global declared below" "cannot copy-init 'G' $MB (decla
     "${T}var G: Pt = BX.v; var BX = RB { 3, 4, 9, 0, 0, 0 }; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
 
 echo "=== a top-level copy-init from a field reached through a POINTER (6.7.11) ==="
-# issues/2026-10-12-struct-global-init-from-field-through-pointer-faults.md: `var G: Pt = PW.v;`, `= gw().v;`,
+# issues/archived/2026-10-12-struct-global-init-from-field-through-pointer-faults.md: `var G: Pt = PW.v;`, `= gw().v;`,
 # `= VW.p.v;` copy now (tests/tcyr/crossos/struct_field_value_copy.tcyr); a leaf of another struct type is
 # refused by name, as from an inline base (R6 / R8), and a source pass 1 cannot type — a `*T` global, a holder
 # or a fn declared BELOW G in the leading block — is refused by name, as R10 / R11 are (never the value
@@ -217,7 +217,7 @@ refuse "R16 step v = mk4(), another vector width" "vector return type does not m
     "${T}${SQ}fn go(): i64 { var v: f64v2; var i = 0; for (i = 0; i < 1; v = mk4()) { i = i + 1; } return 0; } syscall(60, go());"
 
 echo "=== an assignment from a dereference of a *U of another struct type (6.7.11) ==="
-# issues/2026-10-13-assignment-from-struct-dereference-copies-one-word.md: `l = *p` / `o.s = *p` copy the
+# issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md: `l = *p` / `o.s = *p` copy the
 # struct now (tests/tcyr/crossos/struct_deref_assign_copy.tcyr); a `*U` of another struct is refused by name,
 # as the declaration `var l: Pt = *pu;` is. Through 6.7.10 each row compiled (a warning at most) and stored
 # U's first word.
@@ -239,7 +239,7 @@ refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of 
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
 
 echo "=== a struct-typed FIELD from a *U global, a : *U call, a *U field (6.7.11) ==="
-# issues/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md: `o.s = GP` / `gp()` / `w.p`
+# issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md: `o.s = GP` / `gp()` / `w.p`
 # copy the struct now (tests/tcyr/crossos/struct_pointer_source_copy.tcyr); a `*U` of another struct is refused
 # by name, as `o.s = u` and `l = GU` are. Through 6.7.10 each row compiled clean and stored the pointer word.
 SW='struct WU { n; pu: *Q; }

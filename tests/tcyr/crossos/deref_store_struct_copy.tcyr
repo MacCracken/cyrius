@@ -1,5 +1,5 @@
 # deref_store_struct_copy.tcyr — 6.7.11. `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a),
-# 2026-10-13; issues/2026-10-11-deref-store-through-struct-pointer-decision.md): exactly `sizeof(S)` bytes (none for
+# 2026-10-13; issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md): exactly `sizeof(S)` bytes (none for
 # a zero-size struct) from any `S` value `G = v` takes — a local, a by-value parameter, a global, a field, a call, a
 # method or operator result, a handle or a `*S` (copied, never rebound), `*q` — as `p = l` and `G = l` (with
 # `p = &G`) copy it; an untyped value is stored as the struct's word at `sizeof(S)` bytes, at most 8, never past

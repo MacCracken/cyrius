@@ -9,7 +9,7 @@
 # so `fn f(p: **i64)` was "expected ')', got identifier 'i64'" and `*fn(i64): i64` "expected ')', got
 # '('", while `fn f(a: 5)` / `(a: +)` / `(a: "s")` compiled with the token skipped (rc 0, exit 42).
 # Measured on 6.7.4 - 6.7.10, x86_64 (the parse is shared by every target).
-# Filed: docs/development/issues/2026-10-10-param-type-annotation-reads-one-token.md
+# Filed: docs/development/issues/archived/2026-10-10-param-type-annotation-reads-one-token.md
 #
 #   RA the filed repro (a) verbatim: refused, exactly its 4 error lines (`5`, `+`, `;`, a string), each
 #      "expected a type for parameter", no binary; RX the same under --syntax-only (lint's pre-pass)

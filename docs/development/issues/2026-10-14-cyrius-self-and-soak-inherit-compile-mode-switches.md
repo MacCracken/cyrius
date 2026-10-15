@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 tools lane (l6711-tools @ b6d970d5). 6.7.11 scrubbed the
 four compile-mode switches (CYRIUS_POISON, CYRIUS_BOUNDS, CYRIUS_COVERAGE, CYRIUS_COVERAGE_FILE) from the CLI's
 self-builds that KEEP their output — `cyrius pulsar` and the cx arc's on-demand cycc_cx / cxvm builds
-(issues/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md, cbt/core.cyr `_envp_self_build`). The two self-host
+(issues/archived/2026-10-11-cbt-self-builds-inherit-poison-and-bounds.md, cbt/core.cyr `_envp_self_build`). The two self-host
 VERIFIERS were outside that filing's surface and still pass the CLI's whole environment: `cyrius self` and
 `cyrius soak` both step through `_self_host_step` -> `_pulsar_raw_compile`, whose POSIX child execs with `_envp`.
 **Placement:** 6.7.12 — repair 2 (filed from the 6.7.11 tools lane) — never 7.x.

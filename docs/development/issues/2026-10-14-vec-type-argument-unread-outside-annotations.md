@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit G4, the compiler built from
 the unit's tree, 2,189,720 B): the repro builds with no diagnostic and exits 3. Unit G4
-([`2026-10-09-vec-annotation-type-argument-unchecked.md`](2026-10-09-vec-annotation-type-argument-unchecked.md), the
+([`2026-10-09-vec-annotation-type-argument-unchecked.md`](archived/2026-10-09-vec-annotation-type-argument-unchecked.md), the
 user's decision (a), 2026-10-13: "a `Vec<T>` var / global / parameter / `*Vec<T>` annotation reads and checks its T
 the way a struct field does") made a local, a global (either zone), a parameter, `*Vec<T>` / `**Vec<T>`, a
 `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)` read T. The positions below were outside that issue's filed surface and
