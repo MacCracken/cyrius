@@ -1,0 +1,6 @@
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+fn mk3(x): P3 { var r = P3 { x, x + 1, x + 2 }; return r; }
+fn main(): i64 { var n: i64 = fncall1(&mk3, 5); var m: i64 = callptr(&mk3, 5); return n * 10 + m; }
+syscall(60, main());

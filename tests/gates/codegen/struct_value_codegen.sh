@@ -240,8 +240,9 @@
 #   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
 #       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
 #       does not build: tcyr Q31-Q41)
-#   (6.7.12, the fixfirst lane, issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md, the same
-#   procedure, 2026-10-15)
+#   (6.7.12, the fixfirst lane, the same procedure, 2026-10-15: M-FP10 issues/2026-10-14-scalar-annotation-from-known-
+#   fn-pointer-struct-call-reads-first-field.md; M-VD* issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md)
+#   M-FP10 `_scv_icall_ann` returning 0 (D28)                    -> RED FP10 (BUILT)
 #   M-VD1 `_pe_vret` answering 0 (no Win64 vector temp anywhere) -> RED 4: VDw1-VDw3 (exit 5), C7 (exit 5); C1-C6
 #       green (SysV / AAPCS64 / cx return a vector in registers)
 #   M-VD2 `_sc_pre` / `_sc_post` without the arm (methods, operators, `&f` calls) -> RED 3: VDw2 VDw3 (exit 5), C7
@@ -527,6 +528,9 @@ exits fp6 26 "FP6: var p: P3 = callptr(fp, 5) through a variable is a handle (de
 exits fp7 61 "FP7: var a, b = fncall1(&mk2, 5) keeps its two words; var g: P1 = fncall1(&mk1, 2) in the zone" "${FPH}var g: P1 = fncall1(&mk1, 2);\nfn main() { var a, b = fncall1(&mk2, 5); return a + b + g.a * 10; }$E"
 refused fp8 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP8: var g: P3 = fncall1(&mk3, 5); at top level, refused by name" "${FPH}var g: P3 = fncall1(&mk3, 5);\nsyscall(60, g.a);\n"
 refused fp9 "fn return struct-id differs from declared var type" "FP9: var q: Q3 = fncall1(&mk3, 5); (another struct: SIGSEGV)" "${FPH}struct Q3 { a; b; c; }\nfn main() { var q: Q3 = fncall1(&mk3, 5); return q.a; }$E"
+# 6.7.12 (D28): into an annotation that names no struct it is refused as the direct call is (D24); the rows and the
+# other legs are tests/gates/frontend/struct_receive_inference_checked.sh FP0-FP10.
+refused fp10 "cannot initialise 'n: i64' from 'mk3', which returns the struct 'P3' - declare 'n: P3' or bind a field" "FP10: var n: i64 = fncall1(&mk3, 5); (D28: P3.a read, exit 5)" "${FPH}fn main() { var n: i64 = fncall1(&mk3, 5); return n; }$E"
 
 # EV (6.7.11) — the filed repros verbatim, under CYRIUS_IR=3: a just-stored local after an EFLADDR `lea`.
 exits_ir3 ev1 35 "EV1: o.with2(x) after var x = 5; under CYRIUS_IR=3 (the filed repro: 30 + the low byte of &o)" "struct S8 { v; }\nimpl S8 { fn with2(self: *S8, n): i64 { return self.v * 10 + n; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.with2(x); }\nsyscall(60, a2());\n"

@@ -5532,6 +5532,7 @@ fn _scv_restore(d): i64 {
 # (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). CHANGELOG [6.7.11]
 fn _scv_arm(S, pscale, ext): i64 {
     var d = _scv_save();
+    _scv_icall_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`
     _scv_pk = 0;
     _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {

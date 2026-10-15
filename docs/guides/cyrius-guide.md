@@ -1486,6 +1486,10 @@ Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y
 `u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
 (`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
 keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
+The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
+2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
+result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
+field). A callee held in a variable is unknown: its result stays a word.
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
