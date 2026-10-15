@@ -25,7 +25,7 @@
 # in a register (arguments 248+ go in the guest stack, as SysV passes 7+; before it, 249 arguments
 # gave a wrong value and 252 trapped). The 2100 / 8200 rows stay inside `#ifndef
 # CYRIUS_TARGET_CX`: their thresholds are aarch64 immediates, and with them the bytecode fills
-# most of cx's 512 KiB code buffer. The frame rows run
+# most of what was cx's 512 KiB code buffer (4 MiB since 6.7.12). The frame rows run
 # there because cx had the same 16-bit truncation by frame size: ESUBRSP reserved a lone
 # `movi r252, size` and EPATCHFRAME patched only `size & 0xFFFF` into it, so a frame of 64 KiB or
 # more lowered sp by size mod 64 KiB and every callee frame landed inside the caller's buffer (a

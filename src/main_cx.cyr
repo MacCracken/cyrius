@@ -440,7 +440,7 @@ if (cx_undef > 0) {
 }
 
 # 6.6.9: the "large static data" advisory every native backend prints — the var data is
-# written into the .cyx after the bytecode (and lives in cxvm's 1 MB guest region), so a
+# written into the .cyx after the bytecode (and lives in cxvm's 8 MiB guest region), so a
 # `var buf[200000]` costs MORE here, not less. lib/alloc_cx.cyr's `_cx_heap_buf` is left
 # out: it IS alloc()'s heap, so counting it would advise "consider alloc()" to every cx
 # program that allocates. CHANGELOG [6.6.9]
