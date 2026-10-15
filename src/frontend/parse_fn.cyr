@@ -6076,12 +6076,13 @@ fn _gen_inherit_dep(S, spec, base_fi): i64 {
 # own call or address: the `private` check and the `#deprecated` warning, together, so the two
 # lists cannot drift apart again (they had: 14 sites against 3). A new call path is ONE call
 # here; `grep -n '_callee_site_checks' src/frontend/` is the list of paths. `ti` is the token
-# the warning names. CHANGELOG [6.6.16]
+# the warning names. Returns 1 when the `private` check refused the call (reported), else 0 —
+# only the const evaluator reads it, to stop its evaluation (CHANGELOG [6.7.11]). CHANGELOG [6.6.16]
 fn _callee_site_checks(S, fi, noff, ti): i64 {
     if (fi < 0) { return 0; }
-    _vis_check(S, fi, noff, ti);
+    var r = _vis_check(S, fi, noff, ti);
     _DEPRECATED_WARN(S, fi, noff, ti);
-    return 0;
+    return r;
 }
 
 # The same, naming a token relative to the cursor: `back` = 0 is the cursor itself (a path
@@ -8581,6 +8582,21 @@ fn _ce_sizeof(S): i64 {
 }
 
 # ── calls ────────────────────────────────────────────────────────────────────────────────────────
+# ⛔ 6.7.11 — a const context's call is a call path like any other: another file's `private` const
+# fn is refused and a `#deprecated` one warns, through `_callee_site_checks`, at the call's NAME
+# token (whose file is the caller's — a parameter default's call is judged in its own file). Every
+# const context (a top-level or local const, an array size, an enum value, `#assert`, a case
+# label) ran both silently while `var X = pk();` was refused. Said only in a const context of its
+# own: a const fn's body (`_ce_infn`) is compiled by the parser, which checks its calls once, and
+# the definition check runs in SKIP mode. A refusal is the evaluator's own (`_ce_err`, and
+# `_panic` as `_ce_badn` sets it), so the statement's cascade is swallowed. 1 = refused.
+# CHANGELOG [6.7.11]
+fn _ce_site(S, fi, noff): i64 {
+    if (_ce_infn != 0) { return 0; }
+    if (_ce_skip != 0) { return 0; }
+    if (_callee_site_checks(S, fi, noff, _ce_ti) == 1) { _ce_err = 1; _panic = 1; return 1; }
+    return 0;
+}
 # `NAME(args)` at the cursor: NAME must be a const fn. Arguments are evaluated in the caller's
 # frame, bound by the callee's parameter names (and declared types) in a new frame, and the body
 # runs; the result carries the callee's declared return type (`: f64` -> f64).
@@ -8588,6 +8604,7 @@ fn _ce_call(S, noff): i64 {
     var fi = FINDFN(S, noff);
     if (fi < 0) { _ce_badn(S, "unknown fn ", noff, " in a const context"); return 0; }
     if (GFCFN(S, fi) != 1) { _ce_badn(S, "", noff, " is not a `const fn` - a const context calls only const fns"); return 0; }
+    if (_ce_site(S, fi, noff) == 1) { return 0; }
     _ce_ti = _ce_ti + 2;   # the name, `(`
     if (_pd_named_at(S, _ce_ti - 1) == 1) { return _ce_call_named(S, fi); }   # 6.7.7 (B6)
     # The arguments are pushed on the frame stack, unnamed, and become the callee's parameters in

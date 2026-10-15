@@ -3424,7 +3424,8 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return
   forms all report `'_helper' is private to its file` exactly like a direct call — before
   6.6.4 every one of them compiled and ran (hisab found `&_helper` while writing a
-  reachability gate). Top-level **arrays** are covered too: `var _buf[N]` in a private file
+  reachability gate). So does a `const fn` called in a const context — a `const`, an array
+  size, an enum value, `#assert`, a `case` label (6.7.11; it ran silently before). Top-level **arrays** are covered too: `var _buf[N]` in a private file
   is file-private like any other global (it was never stamped before 6.6.4). A `public fn
   f<T>` in a private file is reachable at every instantiation (`f<i32>(x)` from another file
   used to be refused while `f(x)` was accepted — the instance inherited the file default).
@@ -5452,7 +5453,9 @@ fn f(v): i64 {
   `sizeof`, `const fn` calls, arithmetic: a const's value, an array size (top level and in a fn,
   bare or element-typed), `#assert` (any expression since 6.7.2, `&&` / `||` included), a
   `case` label, an enum value. Anything else — a variable, an ordinary fn's call — is refused
-  by name. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
+  by name. A `const fn` call there is a call like any other (6.7.11): another file's `private`
+  const fn is refused at the call (`'pk' is private to its file`), and a `#deprecated` one warns
+  once per call site — before 6.7.11 every const context ran both silently. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
   `const fn` they call must be declared above them (a top-level const need not be).
 - **A `const fn` runs at compile time only in a const context**; everywhere else it is an
   ordinary runtime call, so the disassembly shows the call you wrote (user decision,

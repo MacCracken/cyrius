@@ -22,7 +22,12 @@
 #      and a var in one scope (either order); `const` is reserved
 #   M  a malformed top-level const is reported, not stepped over; (6.7.7) a value that is not one
 #      expression (`sq(3) 4`) is refused once — the end rule `_cst_eval` keeps after `_ce_top_expr`
-#   V  a `private` const read in another file's const context is refused (as a read of it is)
+#   V  a `private` const read in another file's const context is refused (as a read of it is);
+#      (6.7.11) V2 another file's `private` const fn CALLED from a const context — a top-level and a
+#      local const, a global and a local array size, an enum value, `#assert`, a case label, and the
+#      named-argument form — is refused once, at the call, as a run-time call is; a same-file call
+#      and a `public const fn` of a private file build; a `#deprecated` const fn warns once per call
+#      site in every const context (V2w). All of them built silently before
 #   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
 #      heavy consts each within its OWN step budget; (6.7.7) an uncalled const fn whose parameter type
 #      holds a comma inside `<..>` builds (the definition check's two parameter counts agree)
@@ -35,7 +40,9 @@
 # unknown name. 6.7.7 (run 2026-10-09, on the `_ce_top_expr` factor): `_ce_top_expr` neither zeroing nor
 # restoring `_ce_steps` -> C2 refused; `_cst_eval` without its `;` check -> M2 BUILT; `_ce_bind_params` stepping
 # a parameter with the `<`-aware `_pl_next` -> C3 refused ("a const fn called with the wrong number of arguments").
-# 6.7.11 (run 2026-10-14): `_cst_ctx_val` without its `_cst_ctx_skip` call -> I5 RED (2 error lines).
+# 6.7.11 (run 2026-10-14): `_cst_ctx_val` without its `_cst_ctx_skip` call -> I5 RED (2 error lines);
+# `_ce_call` without its `_ce_site` call -> V2a-V2g, V2n, V2w, V2w2 RED (built, no warning); `_ce_site`
+# without its `_panic` -> V2b-V2d, V2f, V2g RED (a second, cascade error).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -107,6 +114,40 @@ vrc=0; ( cd "$T/v" && "$CC" < usep.cyr > /dev/null 2> e ) || vrc=$?
 if [ "$vrc" -eq 0 ]; then bad "V1: another file's private const as an array size BUILT"
 elif [ "$(grep -c "'SECRET' is private to its file" "$T/v/e")" -ne 1 ]; then bad "V1: refused, but not once as private: $(grep '^error' "$T/v/e" | head -1)"
 else ok "V1: another file's private const in a const context: refused once"; fi
+# V2 (6.7.11) — another file's private const fn CALLED from a const context: refused once, at the call
+mkdir -p "$T/v2"
+printf 'private\nconst fn pk(): i64 { return 3; }\nconst fn pk2(a, b = 1): i64 { return a + b; }\npublic\nconst fn pp(): i64 { return 5; }\n' > "$T/v2/priv.cyr"
+vrefused() {   # <name> <name:line:col fragment> <what> <source after the include line>
+    printf 'include "priv.cyr"\n%b' "$4" > "$T/v2/$1.cyr"
+    rc=0; ( cd "$T/v2" && timeout 60 "$CC" < "$1.cyr" > "$1.bin" 2> "$1.err" ) || rc=$?
+    n=$(grep -c '^error' "$T/v2/$1.err")
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ "$n" -ne 1 ] || ! grep -q "^error:<source>:$2' is private to its file" "$T/v2/$1.err"; then
+        bad "$3: $n error lines (want 1, at $2): $(grep '^error' "$T/v2/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused once, at the call"; fi
+}
+vrefused v2a "2:11: 'pk" "V2a: a top-level const" 'const X = pk();\nsyscall(60, X);\n'
+vrefused v2b "2:28: 'pk" "V2b: a local const" 'fn main(): i64 { const L = pk(); return L; }\nsyscall(60, main());\n'
+vrefused v2c "2:12: 'pk" "V2c: a global array size" 'var g: i64[pk()];\nsyscall(60, 1);\n'
+vrefused v2d "2:29: 'pk" "V2d: a local array size" 'fn main(): i64 { var a: i64[pk()]; return 1; }\nsyscall(60, main());\n'
+vrefused v2e "2:14: 'pk" "V2e: an enum value" 'enum E { A = pk() }\nsyscall(60, A);\n'
+vrefused v2f "2:9: 'pk" "V2f: #assert" '#assert pk() == 3, "x";\nsyscall(60, 1);\n'
+vrefused v2g "2:34: 'pk" "V2g: a case label" 'fn f(x): i64 { switch (x) { case pk(): return 5; default: return 0; } return 1; }\nsyscall(60, f(3));\n'
+vrefused v2n "2:11: 'pk2" "V2n: the named-argument form" 'const X = pk2(a: 2);\nsyscall(60, X);\n'
+printf 'include "priv.cyr"\nconst X = pp();\nsyscall(60, X);\n' > "$T/v2/v2p.cyr"
+rc=0; ( cd "$T/v2" && timeout 60 "$CC" < v2p.cyr > v2p.bin 2> v2p.err ) || rc=$?
+if [ "$rc" -ne 0 ]; then bad "V2p: a public const fn of a private file: rc $rc: $(grep '^error' "$T/v2/v2p.err" | head -1)"
+else chmod +x "$T/v2/v2p.bin"; got=0; "$T/v2/v2p.bin" || got=$?
+    [ "$got" -eq 5 ] && ok "V2p: a public const fn of a private file: exit 5" || bad "V2p: exit $got, want 5"; fi
+exits v2s 9 "V2s: a private file calls its own private const fn in its const contexts" 'private\nconst fn pk(): i64 { return 3; }\nconst X = pk();\nfn main(): i64 { const L = pk(); var a: i64[pk()]; return L; }\nsyscall(60, X + main() + pk());\n'
+# V2w — a #deprecated const fn warns once per call site from a const context, as a run-time call does
+DK='#deprecated("old")\nconst fn dk(): i64 { return 6; }\n'
+exits v2w 6 "V2w: a #deprecated const fn in a top-level const" "${DK}const X = dk();\nsyscall(60, X);\n"
+w=$(grep -c "^warning:<source>:3:11: 'dk' is deprecated: old" "$T/v2w.err"); a=$(grep -c "deprecated" "$T/v2w.err")
+[ "$w" -eq 1 ] && [ "$a" -eq 1 ] && ok "V2w: ... warned once, at the call" || bad "V2w: $a deprecation warnings, $w at 3:11 (want 1 / 1)"
+exits v2w2 6 "V2w2: a #deprecated const fn in all seven const contexts" "${DK}const X = dk();\nvar g: i64[dk()];\nenum E { A = dk() }\n#assert dk() == 6, \"x\";\nfn f(v): i64 { const L = dk(); var a: i64[dk()]; switch (v) { case dk(): return L; default: return 0; } return 1; }\nsyscall(60, f(A) + X - 6);\n"
+w=$(grep -c "' is deprecated: old" "$T/v2w2.err"); u=$(grep "' is deprecated: old" "$T/v2w2.err" | sort | uniq -d | wc -l)
+[ "$w" -eq 7 ] && [ "$u" -eq 0 ] && ok "V2w2: ... seven warnings, one per call site" || bad "V2w2: $w deprecation warnings ($u repeated), want 7 distinct"
 # C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
 exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
 # C3 (6.7.7) — the definition check's two parameter counts agree: `_ce_bind_params` walks a parameter
