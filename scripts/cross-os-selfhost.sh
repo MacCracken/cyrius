@@ -143,12 +143,12 @@ if [ -z "$LIBTEST" ] && [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST="cr
 # when its full run is at zero failures — a known failure here turns every release gate red.
 # CYRIUS_CROSS_OS_FULL=0 forces the subset. Measured (issues/2026-10-12-cass-full-corpus-failures-
 # untriaged.md): at 7f57e532 (589 tcyr) pi 589/589, ecb and ach 585/589, cass 563/589; after the
-# 6.7.12 windows lane's triage (590 tcyr) pi 590/590, ecb and ach 589/590 — platform/pwd_grp.tcyr, a
-# filed lib defect (pwd / grp parse Darwin's uid -2 as 0) — and cass 589/590 —
-# stdlib/result_stdlib.tcyr, two filed PE defects (open is -1 for every failure; a failed ReadFile
-# reads as EOF). Each joins when its defect is fixed.
+# 6.7.12 windows lane's triage (590 tcyr) pi 590/590, ecb and ach 589/590 — platform/pwd_grp.tcyr,
+# lib/pwd.cyr + lib/grp.cyr parsing Darwin's uid -2 as 0, fixed in the same release, so ecb and ach
+# are on the list — and cass 589/590 — stdlib/result_stdlib.tcyr, two filed PE defects (open is -1
+# for every failure; a failed ReadFile reads as EOF). cass joins when they are fixed.
 # CHANGELOG [6.7.12]
-CO_FULL_HOSTS="pi"
+CO_FULL_HOSTS="ecb ach pi"
 if [ -n "$LIBTEST" ] && [ -z "${CYRIUS_CROSS_OS_FULL+x}" ]; then
   case " $CO_FULL_HOSTS " in
     *" $HOST "*) CYRIUS_CROSS_OS_FULL=1 ;;

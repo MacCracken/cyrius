@@ -1,0 +1,158 @@
+# pwd_grp_negative_id.tcyr — an /etc/passwd or /etc/group id field is ONE number end to end: a
+# leading '-' is that number's sign, anything else that is not a digit makes the line malformed
+# (skipped). So on macOS, whose first records are `nobody:*:-2:-2:…` and `nobody:*:-2:`,
+# `pwd_getpwuid(0)` is root and `grp_getgrgid(0)` is wheel, and nobody keeps its own -2.
+#
+# ⛔ 6.7.12 — THE DEFECT, found by the full-corpus triage (issues/2026-10-12-cass-full-corpus-failures-
+# untriaged.md, D8): platform/pwd_grp.tcyr was the one failure left on ecb and ach. lib/pwd.cyr
+# `_pwd_atoi_span` and lib/grp.cyr `_grp_atoi_span` read a digit run, stopped at the first non-digit
+# and were never checked against the field, so `-2` was uid / gid 0 and nobody — ahead of root in
+# Darwin's file — answered uid 0 and gid 0: measured on ecb and ach, `nobody` / `nobody` where Linux
+# prints `root` / `root`. The parsers now take one optional '-' and require the digits to reach the
+# field's end (`_pwd_id_field` / `_grp_id_field`).
+#
+# Every target runs the parser rows and the whole-file rows on a SYNTHETIC Darwin-shaped file put in
+# the reader's cache; the host rows (the filed repro) read the real files — Linux and macOS, and
+# Windows where an /etc is visible (wine's Z:); real Windows has none, and its readers answer -1.
+# CHANGELOG [6.7.12]
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fnptr.cyr"
+include "lib/pwd.cyr"
+include "lib/grp.cyr"
+
+var _rec[56];
+var _sb[1024];
+
+# _pwd_parse_line over the C string `line`: its answer (1 parsed, 0 malformed).
+fn _pw_parse(line): i64 {
+    return _pwd_parse_line(line, line + strlen(line), &_rec, &_sb, 1024);
+}
+
+# _grp_parse_header over the C string `line`.
+fn _gr_parse(line): i64 {
+    return _grp_parse_header(line, line + strlen(line), &_rec, &_sb, 1024);
+}
+
+# The C strings a, b, c, d joined into one new one (a file image for the reader's cache).
+fn _join4(a, b, c, d): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var nc = strlen(c);
+    var nd = strlen(d);
+    var out = alloc(na + nb + nc + nd + 1);
+    memcpy(out, a, na);
+    memcpy(out + na, b, nb);
+    memcpy(out + na + nb, c, nc);
+    memcpy(out + na + nb + nc, d, nd);
+    store8(out + na + nb + nc + nd, 0);
+    return out;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("an id field is one number: a '-' is its sign");
+    assert_eq(_pw_parse("nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false"), 1,
+      "Darwin's nobody line parses");
+    assert_eq(pwd_uid(&_rec), 0 - 2, "its uid is -2 (was 0)");
+    assert_eq(pwd_gid(&_rec), 0 - 2, "its gid is -2 (was 0)");
+    assert_eq(streq(pwd_name(&_rec), "nobody"), 1, "its name is nobody");
+    assert_eq(_pw_parse("root:*:0:0:System Administrator:/var/root:/bin/sh"), 1, "root's line parses");
+    assert_eq(pwd_uid(&_rec), 0, "root's uid is 0");
+    assert_eq(_pw_parse("daemon:*:1:1:System Services:/var/root:/usr/bin/false"), 1, "a plain id parses");
+    assert_eq(pwd_uid(&_rec), 1, "its uid is 1");
+    assert_eq(_gr_parse("nobody:*:-2:"), 1, "Darwin's nobody group parses");
+    assert_eq(grp_gid(&_rec), 0 - 2, "its gid is -2 (was 0)");
+    assert_eq(_gr_parse("nogroup:*:-1:"), 1, "Darwin's nogroup parses");
+    assert_eq(grp_gid(&_rec), 0 - 1, "its gid is -1 (was 0)");
+    assert_eq(_gr_parse("wheel:*:0:root"), 1, "wheel parses");
+    assert_eq(grp_gid(&_rec), 0, "its gid is 0");
+
+    test_group("an id field that is not one number end to end: the line is malformed");
+    assert_eq(_pw_parse("x:*:abc:0:g:/d:/s"), 0, "uid 'abc' (was uid 0)");
+    assert_eq(_pw_parse("x:*::0:g:/d:/s"), 0, "an empty uid (was uid 0)");
+    assert_eq(_pw_parse("x:*:-:0:g:/d:/s"), 0, "a lone '-'");
+    assert_eq(_pw_parse("x:*:--2:0:g:/d:/s"), 0, "two signs");
+    assert_eq(_pw_parse("x:*:12a:0:g:/d:/s"), 0, "digits then a stray byte (was uid 12)");
+    assert_eq(_pw_parse("x:*:2-:0:g:/d:/s"), 0, "a sign after the digits");
+    assert_eq(_pw_parse("x:*:0:z:g:/d:/s"), 0, "gid 'z' (was gid 0)");
+    assert_eq(_pw_parse("x:*: 5:0:g:/d:/s"), 0, "a leading space");
+    assert_eq(_gr_parse("x:*:z:"), 0, "group gid 'z' (was gid 0)");
+    assert_eq(_gr_parse("x:*::"), 0, "an empty group gid (was gid 0)");
+
+    test_group("the lookups over a Darwin-shaped file (nobody first)");
+    var pf = _join4("nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false\n",
+      "root:*:0:0:System Administrator:/var/root:/bin/sh\n",
+      "bad:*:x0:0:B:/:/s\n",
+      "daemon:*:1:1:System Services:/var/root:/usr/bin/false\n");
+    var saved_pw = _pwd_buf;
+    _pwd_buf = pf;
+    _pwd_buf_len = strlen(pf);
+    assert_eq(pwd_getpwuid(0, &_rec, &_sb, 1024), 1, "pwd_getpwuid(0) finds a record");
+    assert_eq(streq(pwd_name(&_rec), "root"), 1, "it is root (was nobody)");
+    assert_eq(pwd_getpwuid(0 - 2, &_rec, &_sb, 1024), 1, "pwd_getpwuid(-2) finds a record");
+    assert_eq(streq(pwd_name(&_rec), "nobody"), 1, "it is nobody");
+    assert_eq(pwd_getpwnam("nobody", &_rec, &_sb, 1024), 1, "pwd_getpwnam(\"nobody\") finds it");
+    assert_eq(pwd_uid(&_rec), 0 - 2, "with uid -2");
+    assert_eq(pwd_getpwnam("bad", &_rec, &_sb, 1024), 0, "a malformed line is skipped");
+    assert_eq(pwd_getpwuid(1, &_rec, &_sb, 1024), 1, "a record after it is still found");
+    _pwd_buf = saved_pw;
+    _pwd_buf_len = 0;
+
+    var gf = "nobody:*:-2:\nnogroup:*:-1:\nwheel:*:0:root\nbad:*:x9:root\ndaemon:*:1:root\n";
+    var saved_gr = _grp_buf;
+    _grp_buf = gf;
+    _grp_buf_len = strlen(gf);
+    assert_eq(grp_getgrgid(0, &_rec, &_sb, 1024), 1, "grp_getgrgid(0) finds a group");
+    assert_eq(streq(grp_name(&_rec), "wheel"), 1, "it is wheel (was nobody)");
+    assert_eq(grp_getgrgid(0 - 1, &_rec, &_sb, 1024), 1, "grp_getgrgid(-1) finds a group");
+    assert_eq(streq(grp_name(&_rec), "nogroup"), 1, "it is nogroup");
+    assert_eq(grp_getgrnam("bad", &_rec, &_sb, 1024), 0, "a malformed group line is skipped");
+    var gids: i64[8];
+    var ng = grp_getgrouplist("root", 20, &gids, 8);
+    assert_eq(ng, 3, "root's groups: the primary, wheel, daemon — the malformed line adds nothing (was 4)");
+    assert_eq(load64(&gids), 20, "the primary first");
+    assert_eq(load64(&gids + 8), 0, "then wheel's 0");
+    assert_eq(load64(&gids + 16), 1, "then daemon's 1 (was a second 0, from 'x9')");
+    _grp_buf = saved_gr;
+    _grp_buf_len = 0;
+
+    test_group("the host's own files (the filed repro)");
+    var have_pw = 1;
+    var have_gr = 1;
+    #ifdef CYRIUS_TARGET_WIN
+    if (sys_access("/etc/passwd", 0) != 0) { have_pw = 0; }
+    if (sys_access("/etc/group", 0) != 0) { have_gr = 0; }
+    #endif
+    var rp = pwd_getpwuid(0, &_rec, &_sb, 1024);
+    if (have_pw == 0) {
+        println("  SKIP: the host passwd rows: no /etc/passwd on this Windows (accounts are SIDs)");
+        assert_eq(rp, 0 - 1, "pwd_getpwuid(0) is -1 with no /etc/passwd");
+    }
+    if (have_pw == 1) {
+        assert_eq(rp, 1, "pwd_getpwuid(0) finds a record");
+        assert_eq(streq(pwd_name(&_rec), "root"), 1, "uid 0 is root (macOS: was nobody)");
+    }
+    var g0 = "root";
+    #ifdef CYRIUS_TARGET_MACOS
+    g0 = "wheel";
+    #endif
+    var rg = grp_getgrgid(0, &_rec, &_sb, 1024);
+    if (have_gr == 0) {
+        println("  SKIP: the host group rows: no /etc/group on this Windows");
+        assert_eq(rg, 0 - 1, "grp_getgrgid(0) is -1 with no /etc/group");
+    }
+    if (have_gr == 1) {
+        assert_eq(rg, 1, "grp_getgrgid(0) finds a group");
+        assert_eq(streq(grp_name(&_rec), g0), 1, "gid 0 is root (macOS: wheel; was nobody)");
+    }
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

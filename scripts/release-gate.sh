@@ -296,8 +296,8 @@ fi
 # syscalls on cass+ecb) run on real hardware every release, so macOS/Windows stdlib rot
 # is caught here, not by ports.
 #
-# 6.7.12 (D8, the user, 2026-10-15): the hosts in cross-os-selfhost.sh's CO_FULL_HOSTS (pi;
-# ecb, ach and cass join when their full runs reach zero) run the WHOLE tcyr corpus for the same
+# 6.7.12 (D8, the user, 2026-10-15): the hosts in cross-os-selfhost.sh's CO_FULL_HOSTS (ecb,
+# ach, pi; cass joins when its full run reaches zero) run the WHOLE tcyr corpus for the same
 # call — the policy lives in that script so `cyrius audit` runs the identical leg.
 # v6.5.11: the selector is the SUBDIRECTORY tests/tcyr/crossos (it was the filename
 # prefix "vr01_"). A directory is checked for existence and cannot silently under-match;
