@@ -68,6 +68,18 @@ does or builds; never a per-repo worklist.*
   next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
   unchanged.
 
+**The native TLS stack's public bound vars are inert (D16, D17, the user 2026-10-15)**
+- `TLS_HANDSHAKE_HEADER_LEN`, `TLS_MAX_DIGEST_LEN`, `TLS_RANDOM_LEN`, `TLS_RECORD_MAX_PLAINTEXT`,
+  `TLS12_VERIFY_DATA_LEN`, `TLS12_RANDOM_LEN` and `TLS_SHA384_CTX_LEN` no longer steer the stack: every read in
+  lib/tls_native*.cyr and lib/tls.cyr reads the `_X` const that sizes the storage. They are still writable vars holding
+  the same values (read them freely); a write now changes nothing. Before, a write drove copies, indexes and
+  allocations over const-sized storage — `TLS12_RANDOM_LEN = 256` smashed the PRF seed (SIGSEGV),
+  `TLS12_VERIFY_DATA_LEN` / `TLS_SHA384_CTX_LEN` raised overran the stack.
+- ⚠ `TLS_RECORD_MAX_PLAINTEXT` is the protocol's 2^14, not a knob (D17). A program that LOWERED it no longer gets
+  smaller outgoing fragments (`tls_write`, the handshake-record fragmenter, `tls_native_record_fragment_count`), and
+  no longer refuses a peer's full 2^14-byte records; one that RAISED it no longer seals over-length records (2^14 + 1
+  is `TLS_ERR_RECORD_OVERFLOW`). A real max_fragment_length (RFC 6066) is a feature, not this var.
+
 #### The cx target
 
 **cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**

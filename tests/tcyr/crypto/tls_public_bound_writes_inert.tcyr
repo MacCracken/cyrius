@@ -1,0 +1,170 @@
+# tls_public_bound_writes_inert.tcyr — 6.7.12. A WRITE TO ONE OF THE NATIVE TLS STACK'S PUBLIC BOUND VARS CHANGES
+# NOTHING: every storage it once drove is sized and filled by the const.
+#
+# 6.7.6 gave each public bound a `const _X` twin that sizes its buffers and kept `var X = _X;` for the API; through
+# 6.7.11 lib/tls_native*.cyr still READ the var at ~190 sites, so a program that wrote one drove copies, indexes and
+# allocations over storage the const had sized (issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md).
+# Since 6.7.12 every read is the const; the vars stay writable and a write is inert (the user's decision D16,
+# 2026-10-15), and TLS_RECORD_MAX_PLAINTEXT is the protocol constant 2^14, not a tunable (D17, 2026-10-15).
+# The filed repro (TLS12_RANDOM_LEN into the PRF seed) is tls12_random_len_writable_bound.tcyr. One row per
+# storage site the filing names, each RED on 6.7.11:
+#   V  TLS12_VERIFY_DATA_LEN = 256: tls_native_12_verify_finished's PRF wrote 256 bytes into
+#      `var expected[_TLS12_VERIFY_DATA_LEN]` (12) for a 256-byte "verify_data" (6.7.11: SIGSEGV). Now the
+#      message is refused (its verify_data is not 12 bytes) and a real Finished still builds and verifies.
+#   C  TLS_SHA384_CTX_LEN = 4096: tls_native_transcript_digest copied 4096 bytes into `var clone[_TLS_SHA384_CTX_LEN]`
+#      (208) (6.7.11: SIGSEGV). Now the digest is the one taken before the write.
+#   M  the HRR message_hash (`var mh[_TLS_HANDSHAKE_HEADER_LEN + _TLS_MAX_DIGEST_LEN]` in _tn_transcript_after_hrr)
+#      with TLS_HANDSHAKE_HEADER_LEN, TLS_MAX_DIGEST_LEN and TLS_SHA384_CTX_LEN all written: through 6.7.11 the
+#      clone copy under it ran over the frame holding mh (SIGSEGV). Now the transcript is the reference
+#      message_hash(254) || 00 00 || 48 || Hash(ClientHello1).
+# and D17's three shapes:
+#   R1 TLS_RECORD_MAX_PLAINTEXT = 1000: 16384 bytes are ONE record (6.7.11: 17 — smaller outgoing fragments).
+#   R2 ... a full 2^14-byte TLS 1.2 record seals and opens (6.7.11: TLS_ERR_RECORD_OVERFLOW both ways — a peer's
+#      full record refused).
+#   R3 TLS_RECORD_MAX_PLAINTEXT = 2^20: 2^14 + 1 bytes are still TLS_ERR_RECORD_OVERFLOW (6.7.11 sealed an
+#      over-length record).
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+var _pm[32];
+var _cr[32];
+var _sr[32];
+
+fn _fill(p, n, v): i64 { var i = 0; while (i < n) { store8(p + i, (v + i * 7) & 0xFF); i = i + 1; } return 0; }
+
+# A client ctx with the TLS 1.2 keys derived from fixed inputs and a SHA-384 transcript holding "transcript".
+fn _ctx12(): i64 {
+    var c = tls_native_new_client(0, 0);
+    store64(c + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+    store64(c + TLS_CTX_OFF_CLIENT_RANDOM, &_cr);
+    store64(c + TLS_CTX_OFF_SERVER_RANDOM, &_sr);
+    if (tls_native_12_derive_keys(c, &_pm, 32) != TLS_OK) { return 0; }
+    var t = tls_native_transcript_init(TLS_HASH_SHA384);
+    store64(c + TLS_CTX_OFF_TRANSCRIPT, t);
+    tls_native_transcript_update(t, "transcript", 10);
+    return c;
+}
+
+fn row_v(): i64 {
+    test_group("V: TLS12_VERIFY_DATA_LEN = 256 — the expected verify_data stays 12 bytes");
+    var a = _ctx12();
+    var b = _ctx12();
+    assert(a != 0 && b != 0, "two TLS 1.2 ctxs with the same keys and transcript");
+    var fin = alloc(300);
+    TLS12_VERIFY_DATA_LEN = 256;
+    tls_native_handshake_write_header(fin, TLS_HS_FINISHED, 256);
+    memset(fin + 4, 7, 256);
+    assert_eq(tls_native_12_verify_finished(a, fin, 260, "client finished"), TLS_ERR_BAD_HANDSHAKE,
+      "a Finished with a 256-byte verify_data is refused (6.7.11: 256 bytes into the 12-byte expected)");
+    memset(fin, 0, 300);
+    var n = tls_native_12_build_finished(b, "client finished", fin, 300);
+    assert_eq(n, 16, "build_finished writes 4 + 12 bytes");
+    assert_eq(load8(fin + 3), 12, "  its header says 12");
+    assert_eq(load8(fin + 16), 0, "  and nothing past them");
+    assert_eq(tls_native_12_verify_finished(a, fin, n, "client finished"), TLS_OK, "the peer verifies it");
+    TLS12_VERIFY_DATA_LEN = _TLS12_VERIFY_DATA_LEN;
+    return 0;
+}
+
+fn row_c(): i64 {
+    test_group("C: TLS_SHA384_CTX_LEN = 4096 — the transcript clone copies 208 bytes");
+    var data = alloc(100);
+    _fill(data, 100, 3);
+    var t = tls_native_transcript_init(TLS_HASH_SHA384);
+    tls_native_transcript_update(t, data, 100);
+    var ref = alloc(48);
+    assert_eq(tls_native_transcript_digest(t, ref), 48, "the reference digest, before the write");
+    TLS_SHA384_CTX_LEN = 4096;
+    var got = alloc(48);
+    assert_eq(tls_native_transcript_digest(t, got), 48,
+      "after the write the digest is taken (6.7.11: 4096 bytes into the 208-byte clone)");
+    assert_eq(_tn_ct_eq(got, ref, 48), 1, "  and equals the reference");
+    var t2 = tls_native_transcript_init(TLS_HASH_SHA384);
+    tls_native_transcript_update(t2, data, 100);
+    var got2 = alloc(48);
+    assert_eq(tls_native_transcript_digest(t2, got2), 48, "a transcript made after the write digests");
+    assert_eq(_tn_ct_eq(got2, ref, 48), 1, "  to the reference");
+    TLS_SHA384_CTX_LEN = _TLS_SHA384_CTX_LEN;
+    return 0;
+}
+
+fn row_m(): i64 {
+    test_group("M: the HRR message_hash with the header, digest and ctx bounds written");
+    var ch1 = alloc(40);
+    _fill(ch1, 40, 11);
+    # the reference, before any write: message_hash(254) || 00 00 || 48 || SHA-384(ch1), then its transcript
+    var t1 = tls_native_transcript_init(TLS_HASH_SHA384);
+    tls_native_transcript_update(t1, ch1, 40);
+    var mhb = alloc(52);
+    store8(mhb, TLS_HS_MESSAGE_HASH);
+    store8(mhb + 1, 0);
+    store8(mhb + 2, 0);
+    store8(mhb + 3, 48);
+    assert_eq(tls_native_transcript_digest(t1, mhb + 4), 48, "Hash(ClientHello1)");
+    var rt = tls_native_transcript_init(TLS_HASH_SHA384);
+    tls_native_transcript_update(rt, mhb, 52);
+    var ref = alloc(48);
+    tls_native_transcript_digest(rt, ref);
+    TLS_HANDSHAKE_HEADER_LEN = 64;
+    TLS_MAX_DIGEST_LEN = 4;
+    TLS_SHA384_CTX_LEN = 4096;
+    var c = tls_native_new_client(0, 0);
+    var ts = _tn_transcript_after_hrr(c, TLS_HASH_SHA384, ch1, 40);
+    assert(ts != 0, "the transcript after the HelloRetryRequest is built (6.7.11: the clone ran over mh's frame)");
+    var got = alloc(48);
+    assert_eq(tls_native_transcript_digest(ts, got), 48, "  it digests");
+    assert_eq(_tn_ct_eq(got, ref, 48), 1, "  to message_hash(254) || 00 00 || 48 || Hash(ClientHello1)");
+    TLS_HANDSHAKE_HEADER_LEN = _TLS_HANDSHAKE_HEADER_LEN;
+    TLS_MAX_DIGEST_LEN = _TLS_MAX_DIGEST_LEN;
+    TLS_SHA384_CTX_LEN = _TLS_SHA384_CTX_LEN;
+    return 0;
+}
+
+fn row_r(): i64 {
+    test_group("R: TLS_RECORD_MAX_PLAINTEXT is the protocol's 2^14 whatever the var says (D17)");
+    var key = alloc(32);
+    var iv = alloc(12);
+    _fill(key, 32, 1);
+    _fill(iv, 12, 2);
+    var n = 16384;
+    var plain = alloc(n + 64);
+    memset(plain, 0x41, n + 64);
+    var out = alloc(n + 512);
+    var back = alloc(n + 64);
+    var ct = alloc(8);
+    TLS_RECORD_MAX_PLAINTEXT = 1000;
+    assert_eq(tls_native_record_fragment_count(n), 1,
+      "R1: 2^14 bytes are one record (6.7.11 with the var at 1000: 17)");
+    assert_eq(tls_native_record_fragment_count(n + 1), 2, "R1: 2^14 + 1 are two");
+    var seq = alloc(8);
+    store64(seq, 0);
+    var r = tls_native_record_seal_12(TLS_CHACHA20_POLY1305_SHA256, key, iv, seq, TLS_CT_APPLICATION_DATA,
+      plain, n, out, n + 512);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + n + 16, "R2: a full 2^14 record seals (6.7.11: TLS_ERR_RECORD_OVERFLOW)");
+    var rseq = alloc(8);
+    store64(rseq, 0);
+    var got = tls_native_record_open_12(TLS_CHACHA20_POLY1305_SHA256, key, iv, rseq, out, r, back, n + 64, ct);
+    assert_eq(got, n, "R2: and a peer's full 2^14 record opens (6.7.11: TLS_ERR_RECORD_OVERFLOW)");
+    TLS_RECORD_MAX_PLAINTEXT = 1048576;
+    store64(seq, 0);
+    r = tls_native_record_seal_12(TLS_CHACHA20_POLY1305_SHA256, key, iv, seq, TLS_CT_APPLICATION_DATA,
+      plain, n + 1, out, n + 512);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "R3: with the var at 2^20, 2^14 + 1 bytes are refused (6.7.11: sealed)");
+    TLS_RECORD_MAX_PLAINTEXT = _TLS_RECORD_MAX_PLAINTEXT;
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _fill(&_pm, 32, 5);
+    _fill(&_cr, 32, 9);
+    _fill(&_sr, 32, 13);
+    row_v();
+    row_c();
+    row_m();
+    row_r();
+    return 0;
+}
+var m = main();
+var r = assert_summary();
+syscall(SYS_EXIT, r);

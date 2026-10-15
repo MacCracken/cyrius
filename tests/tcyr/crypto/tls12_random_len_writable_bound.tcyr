@@ -1,0 +1,40 @@
+# tls12_random_len_writable_bound.tcyr — 6.7.12. A RAISED `TLS12_RANDOM_LEN` NO LONGER SMASHES THE PRF SEED.
+#
+# The filed repro (docs/development/issues/repros/2026-10-11-tls12-random-len-writable-bound.cyr), as a test:
+# `TLS12_RANDOM_LEN` is a public var initialised from `const _TLS12_RANDOM_LEN = 32`, and
+# tls_native_12_master_secret copies the two randoms into `var seed[_TLS12_SEED_LEN]` — 64 bytes on the stack,
+# sized by the const. Through 6.7.11 the copies read the VAR: after `TLS12_RANDOM_LEN = 256` they wrote 512
+# bytes into the 64-byte seed and the program died of SIGSEGV (exit 139, "returned" never printed). Since 6.7.12
+# every read in the TLS stack reads the const (issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md;
+# the public var stays writable and a write is inert — the user's decision D16, 2026-10-15), so the copy is
+# bounded by the storage it fills and the master secret is the one a 32-byte random gives.
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var cr = alloc(256); var sr = alloc(256); var pm = alloc(48); var out = alloc(48);
+    memset(cr, 65, 256); memset(sr, 66, 256); memset(pm, 1, 48);
+    # the references: an AEAD identity's master secret and key_block from the same inputs before any write
+    var id = TLS_AES_128_GCM_SHA256;
+    var ref = alloc(48); var kref = alloc(64);
+    assert_eq(tls_native_12_master_secret(id, pm, 48, cr, sr, ref), TLS_OK, "the reference master secret derives");
+    assert_eq(tls_native_12_key_block(id, ref, cr, sr, kref, 40), TLS_OK, "the reference key_block derives");
+    # the filed repro, verbatim: 0xC02F is a wire id, not an AEAD identity, so the PRF refuses it — AFTER the
+    # seed copy, which is where 6.7.11 died
+    TLS12_RANDOM_LEN = 256;
+    var rc = tls_native_12_master_secret(0xC02F, pm, 48, cr, sr, out);
+    sys_write(1, "returned\n", 9);
+    assert_eq(rc, TLS_ERR_CIPHER_NOT_SUPPORTED, "the repro returns (0xC02F refused by the PRF, past the seed copy)");
+    # the var still 256: the copies are bounded by the seed, so the derivations are the references
+    assert_eq(tls_native_12_master_secret(id, pm, 48, cr, sr, out), TLS_OK,
+      "after TLS12_RANDOM_LEN = 256 the master secret derives");
+    assert_eq(_tn_ct_eq(out, ref, 48), 1, "  and is the one 32-byte randoms give (the write is inert)");
+    var kb = alloc(64);
+    assert_eq(tls_native_12_key_block(id, ref, cr, sr, kb, 40), TLS_OK, "key_block (server random first) derives");
+    assert_eq(_tn_ct_eq(kb, kref, 40), 1, "  and equals the reference");
+    return 0;
+}
+var m = main();
+var r = assert_summary();
+syscall(SYS_EXIT, r);
