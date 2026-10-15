@@ -5,7 +5,7 @@
 # Encoding: [opcode:8][a:8][b:8][c:8] (little-endian in file)
 #
 # Registers: r0-r255 (64-bit), r0 = accumulator, r253 = fp, r254 = sp
-# Memory: 1 MB data segment (_CX_MEM_SIZE; it read "64KB" here after the v6.4.20 raise)
+# Memory: 8 MiB data segment (_CX_MEM_SIZE; 1 MB until 6.7.12)
 #
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
 #   passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the guest's raw
@@ -96,7 +96,7 @@ include "lib/alloc.cyr"
 # CHANGELOG [6.6.8]
 var _CX_REGS_BYTES = 2048;
 var _cx_regs = 0;        # r0-r255 (256 × 8 = 2048 bytes)
-var _cx_mem = 0;          # 1 MB data segment (_CX_MEM_SIZE; stack grows down from top)
+var _cx_mem = 0;          # 8 MiB data segment (_CX_MEM_SIZE; stack grows down from top)
 var _cx_dstack = 0;       # _CX_STACK_ENTRIES data stack entries (expression spills, call args)
 var _cx_dsp = 0;
 var _cx_cstack = 0;       # _CX_STACK_ENTRIES call stack entries (return addresses + saved fp)
@@ -106,18 +106,20 @@ var _cx_csp = 0;
 # the bottom traps (cx_push / cx_call_push). They held 1024 entries with NO check until
 # 6.6.12, so the 513th nested call (two entries per frame: the return address and the saved
 # fp) wrote into the next host allocation — the loaded code — and a deep recursion ended with
-# a garbage exit code instead of a diagnostic (the cxvm host-memory bug). 65536 entries (512 KiB each) makes
-# the guest's own 1 MB data segment, not these arrays, the binding limit on recursion depth.
-# CHANGELOG [6.6.12]
-var _CX_STACK_ENTRIES = 65536;
+# a garbage exit code instead of a diagnostic (the cxvm host-memory bug). The entry count keeps
+# the guest's own data segment, not these arrays, the binding limit on recursion depth: 65536 for
+# the 1 MB segment, 524288 (4 MiB each) since the segment is 8 MiB — at 65536 a runaway recursion
+# met the call-stack trap first. CHANGELOG [6.6.12] [6.7.12]
+var _CX_STACK_ENTRIES = 524288;
 var _cx_pc = 0;
 
-# Data segment = code + var-data + strings + downward stack, one flat region.
-# 64 KB was too small for a real cross-OS .cyx; raised to 1 MB (matches cycc's
-# input_buf, main_cx.cyr:91). CHANGELOG [6.4.20]. NB: code, data AND the stack
-# (grows down from _CX_MEM_SIZE) still share this one region — a program whose
-# data approaches the top collides with the stack; keep large .cyx modest.
-var _CX_MEM_SIZE = 1048576;
+# Data segment = code + var-data + strings + downward stack, one flat region. NB: code, data AND
+# the stack (grows down from _CX_MEM_SIZE) share it — the guest stack traps before it reaches the
+# image. 64 KB -> 1 MB at v6.4.20; 1 MB -> 8 MiB at 6.7.12, sized for the cx compiler's 4 MiB code
+# region (backend/cx/emit.cyr _CX_CODE_CAP) plus its data and a stack: a ~1 MB .cyx (yukti +
+# patra + sakshi) loaded and then ran out of guest memory. The .cyx read cap below is this size
+# plus the header, so an image cxvm accepts always fits. CHANGELOG [6.7.12]
+var _CX_MEM_SIZE = 8388608;
 var _cx_code = 0;       # set after loading .cyx file
 
 fn cx_init(): i64 {
@@ -127,7 +129,10 @@ fn cx_init(): i64 {
     _cx_dstack = alloc(_CX_STACK_ENTRIES * 8);
     _cx_cstack = alloc(_CX_STACK_ENTRIES * 8);
     memset(_cx_regs, 0, _CX_REGS_BYTES);
-    memset(_cx_mem, 0, _CX_MEM_SIZE);
+    # Eight bytes a store: lib/string.cyr's memset is a byte loop, and over the 8 MiB segment it
+    # cost every run ~10 ms. CHANGELOG [6.7.12]
+    var zi = 0;
+    while (zi < _CX_MEM_SIZE) { store64(_cx_mem + zi, 0); zi = zi + 8; }
     return 0;
 }
 
@@ -219,8 +224,9 @@ fn _cx_fault(what, wlen, v): i64 {
 # [0, 8) is refused as the null page (guest 0 is the in-memory copy of the bytecode, so a
 # store through a null pointer used to succeed silently — x86 answers the same program with
 # SIGSEGV). The upper test is written `a > SIZE - w` so no guest value can overflow it. Before
-# 6.6.12 every load/store was `_cx_mem + reg` with no check, so a guest address past 1 MB read
-# and wrote cxvm's own heap — the register file, the stacks, the loaded code (the cxvm host-memory bug).
+# 6.6.12 every load/store was `_cx_mem + reg` with no check, so a guest address past the segment
+# read and wrote cxvm's own heap — the register file, the stacks, the loaded code (the cxvm
+# host-memory bug).
 fn _cx_addr(a, w): i64 {
     if (a < 8) { _cx_fault("guest address out of range:", 27, a); }
     if (a > _CX_MEM_SIZE - w) { _cx_fault("guest address out of range:", 27, a); }
@@ -487,7 +493,7 @@ fn cx_run(code, code_len): i64 {
             # its OS-RNG draw AND its clock fallback both failed, leaving every
             # cx process on the same published seed. CHANGELOG [6.6.8]
             # 6.6.12 (the cxvm host-memory bug): each buffer is range-checked for its FULL length before it is
-            # translated — `read(fd, buf, n)` with buf + n past 1 MB had the host kernel write
+            # translated — `read(fd, buf, n)` with buf + n past the segment had the host kernel write
             # cxvm's own heap. An out-of-range buffer answers -EFAULT without reaching the host,
             # which is what Linux answers a bad pointer with. CHANGELOG [6.6.12]
             var sfault = 0;
@@ -564,8 +570,9 @@ cx_init();
 # Read .cyx header: "CYX\0" magic + 4-byte entry offset
 # 64 KB → 1 MB (CHANGELOG [6.4.20]). The read loop now probes for overflow
 # instead of SILENTLY TRUNCATING a >cap .cyx (which mis-executed) — mirrors
-# main_cx.cyr:95-101's input-buffer probe.
-var _cx_code_cap = 1048576;
+# main_cx.cyr's input-buffer probe. 6.7.12: the guest memory plus the 8-byte header, so every
+# image read here fits the data segment it is copied into. CHANGELOG [6.7.12]
+var _cx_code_cap = _CX_MEM_SIZE + 8;
 _cx_code = alloc(_cx_code_cap);
 var _cx_code_len = 0;
 var _cx_done = 0;
@@ -578,7 +585,9 @@ while (_cx_done == 0) {
             var _cx_probe[1];
             var pn = syscall(0, 0, &_cx_probe, 1);
             if (pn > 0) {
-                syscall(1, 2, "error: .cyx exceeds 1MB cxvm code buffer\n", 41);
+                syscall(1, 2, "error: .cyx exceeds cxvm's guest memory (", 41);
+                _cx_put_dec(_CX_MEM_SIZE);
+                syscall(1, 2, " B of code and data)\n", 21);
                 syscall(60, 1);
             }
             _cx_done = 1;

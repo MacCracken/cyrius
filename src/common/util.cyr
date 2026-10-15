@@ -571,8 +571,8 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 }
 
 # Phase 0 (v6.2.0): growable codebuf. The generated machine code lived in a FIXED
-# 3 MB region at S+0x41A000 (the cx bytecode backend keeps its own separate 512 KB
-# region at 0x54A000), hard-capped — cyrius-ts test compiles hit 94 %. EB appends
+# 3 MB region at S+0x41A000 (the cx bytecode backend keeps its own fixed 4 MiB buffer,
+# backend/cx/emit.cyr _cx_code_base), hard-capped — cyrius-ts test compiles hit 94 %. EB appends
 # bytes here; the disp32 patch sites do an 8 B read-modify-write at cp (4 B past the
 # 4 B slot) and the DSE/LASE peephole passes read+patch already-emitted code in
 # place — all reach codebuf through `_codebuf_base`, re-derived fresh each access,
@@ -785,7 +785,10 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
                 syscall(SYS_WRITE, 2, "% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
                 syscall(SYS_WRITE, 2, " bytes, +8 MiB/grow)\n", 21);
             } else {
-                syscall(SYS_WRITE, 2, "% of the 512 KiB cx region (", 28); PRNUM(GCP(S));
+                # The fixed cx code region: the cap is main_cx.cyr's, never a size named here
+                # (this read "512 KiB" after the region moved). CHANGELOG [6.7.12]
+                syscall(SYS_WRITE, 2, "% of the cx code region (", 25); PRNUM(GCP(S));
+                syscall(SYS_WRITE, 2, "/", 1); PRNUM(codebuf_cap);
                 syscall(SYS_WRITE, 2, " bytes)\n", 8);
             }
         }

@@ -3,9 +3,10 @@
 # Run:   cat prog.cyx | ./build/cxvm
 #
 # HEAP MAP — none here: src/main.cyr carries the ONE heap map. This driver uses its
-# layout plus the regions tagged `(cx only)` there (the bytecode buffer at 0x54A000, the
-# fixup table at 0x150B000, the break-chain shadow at 0x41A000), and never touches the
-# ones tagged `(not cx)`. tests/gates/memory/heapmap.sh checks both layouts. CHANGELOG [6.6.20]
+# layout plus the regions tagged `(cx only)` there (the fixup table at 0x150B000), and never
+# touches the ones tagged `(not cx)`. tests/gates/memory/heapmap.sh checks both layouts.
+# CHANGELOG [6.6.20] The bytecode buffer and the break-chain shadow are off-heap allocs (see
+# `_cx_code_base` below). CHANGELOG [6.7.12]
 
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
 
@@ -215,12 +216,19 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
 _fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so load stays <=50 % before the first grow (was 4096 = 100 % full)        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
+# cx's bytecode buffer: _CX_CODE_CAP (4 MiB) off-heap, fixed — backend/cx/emit.cyr EB refuses
+# cp >= _CX_CODE_CAP by name. It was the 512 KiB arena region at 0x54A000. CHANGELOG [6.7.12]
+_cx_code_base = alloc(_CX_CODE_CAP);
 # Not a code buffer on cx: the SHARED break/continue chain (parse.cyr _PARSE_BREAK,
-# parse_ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset, so this points it
-# at the (cx only) cx_brk_shadow region of main.cyr's map. cx's bytecode is the fixed
-# cx_codebuf at 0x54A000 (backend/cx/emit.cyr EB, which refuses cp >= 524288 and never grows);
-# `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx does not compile.
-_codebuf_base = S + 0x41A000;
+# parse_ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset — an 8-byte
+# read-modify-write at an instruction start below the cap, hence _CX_CODE_CAP + 8. It was the
+# arena region at 0x41A000. `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx
+# does not compile.
+_codebuf_base = alloc(_CX_CODE_CAP + 8);
+if (_cx_code_base == 0 || _codebuf_base == 0) {
+    syscall(SYS_WRITE, 2, "error: cannot allocate the cx code region\n", 42);
+    syscall(SYS_EXIT, 1);
+}
 _varn_base = S + 0x11A000;
 _vars_base = S + 0x12A000;
 _vart_base = S + 0x13A000;
@@ -465,53 +473,53 @@ while (fi < fcnt) {
         # CHANGELOG [6.4.54]
         var target = L64(_fnt_offsets + idx * 8);
         var off = (target - coff) / 4;
-        store8(S + 0x54A000 + coff + 1, off & 0xFF);
-        store8(S + 0x54A000 + coff + 2, (off >> 8) & 0xFF);
-        store8(S + 0x54A000 + coff + 3, (off >> 16) & 0xFF);
+        store8(_cx_code_base + coff + 1, off & 0xFF);
+        store8(_cx_code_base + coff + 2, (off >> 8) & 0xFF);
+        store8(_cx_code_base + coff + 3, (off >> 16) & 0xFF);
     }
     elif (ftype == 3) {
         # Function pointer — absolute code offset
         var foff = L64(_fnt_offsets + idx * 8);   # v6.4.58: canonical table (mirrors the ftype==2 reader migrated in v6.4.54)
         # Patch movi: store 16-bit value in bytes 2-3
-        store8(S + 0x54A000 + coff + 2, foff & 0xFF);
-        store8(S + 0x54A000 + coff + 3, (foff >> 8) & 0xFF);
+        store8(_cx_code_base + coff + 2, foff & 0xFF);
+        store8(_cx_code_base + coff + 3, (foff >> 8) & 0xFF);
         if (foff > 0xFFFF) {
             # movhi slot at coff+4 (ELOAD_FN_ADDR always emits it since v6.6.4)
-            store8(S + 0x54A000 + coff + 6, (foff >> 16) & 0xFF);
-            store8(S + 0x54A000 + coff + 7, (foff >> 24) & 0xFF);
+            store8(_cx_code_base + coff + 6, (foff >> 16) & 0xFF);
+            store8(_cx_code_base + coff + 7, (foff >> 24) & 0xFF);
         }
     }
     elif (ftype == 1) {
         # String address → dbase + totvar + string_offset
         # coff points AFTER the movi instruction — patch at coff-4+2 = coff-2
         var addr = dbase + totvar + idx;
-        store8(S + 0x54A000 + coff - 2, addr & 0xFF);
-        store8(S + 0x54A000 + coff - 1, (addr >> 8) & 0xFF);
+        store8(_cx_code_base + coff - 2, addr & 0xFF);
+        store8(_cx_code_base + coff - 1, (addr >> 8) & 0xFF);
         if (addr > 0xFFFF) {
             # Patch the movhi slot (starts at coff, bytes 2-3) — always emitted since v6.6.4;
             # before that a bare movi placeholder put this write on the NEXT instruction.
-            store8(S + 0x54A000 + coff + 2, (addr >> 16) & 0xFF);
-            store8(S + 0x54A000 + coff + 3, (addr >> 24) & 0xFF);
+            store8(_cx_code_base + coff + 2, (addr >> 16) & 0xFF);
+            store8(_cx_code_base + coff + 3, (addr >> 24) & 0xFF);
         }
     }
     else {
         # Variable address → dbase + its aligned offset (6.6.13: GVOFF, never a re-sum)
         var cumul = GVOFF(S, idx);
         var addr = dbase + cumul;
-        store8(S + 0x54A000 + coff - 2, addr & 0xFF);
-        store8(S + 0x54A000 + coff - 1, (addr >> 8) & 0xFF);
+        store8(_cx_code_base + coff - 2, addr & 0xFF);
+        store8(_cx_code_base + coff - 1, (addr >> 8) & 0xFF);
         if (addr > 0xFFFF) {
-            store8(S + 0x54A000 + coff + 2, (addr >> 16) & 0xFF);
-            store8(S + 0x54A000 + coff + 3, (addr >> 24) & 0xFF);
+            store8(_cx_code_base + coff + 2, (addr >> 16) & 0xFF);
+            store8(_cx_code_base + coff + 3, (addr >> 24) & 0xFF);
         }
     }
     fi = fi + 1;
 }
 
-# v6.4.50: soft capacity warnings (util.cyr, shared). cx's code lives in the
-# fixed 512 KiB region at 0x54A000 — no growable codebuf — so pass (524288, 0).
+# v6.4.50: soft capacity warnings (util.cyr, shared). cx's code region is fixed (no growable
+# codebuf), so pass (_CX_CODE_CAP, 0). CHANGELOG [6.7.12]
 # Warnings go to stderr (fd 2); the .cyx below goes to stdout (fd 1), unaffected.
-_capacity_warnings(S, 524288, 0);
+_capacity_warnings(S, _CX_CODE_CAP, 0);
 
 # Emit CYX file: header + bytecode + var data + string data
 # Header: "CYX" (3 bytes) + format version (1 byte) + entry_offset (4 bytes LE).
@@ -535,7 +543,7 @@ if (_had_error == 0) {
     store32(&entry_off, 0);
     _write_out_all(&entry_off, 4);
     # Write bytecode
-    _write_out_all(S + 0x54A000, cp);
+    _write_out_all(_cx_code_base, cp);
     # Write variable data: zero, but for the array initializers (6.6.16, C1). cxvm copies the
     # var data into the guest, so a list is baked here exactly as every image target bakes it
     # (_gai_bake, util.cyr) and holds from the first instruction — it was stored at its replay

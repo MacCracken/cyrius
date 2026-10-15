@@ -24,6 +24,10 @@
 # 6.6.8 folds yukti 2.3.14: `_yk_ppoll` declines on macOS (last group). CHANGELOG [6.6.8]
 # 6.7.10 folds yukti 2.3.17: `_yk_ppoll` is gone — its udev wait is the stdlib `sys_ppoll` (6.7.9), so the
 # last group asks the same per-target answers of `sys_ppoll`. CHANGELOG [6.7.10]
+# 6.7.12: the file compiles for cx (~900 KB of bytecode — cx's code region was 512 KiB) and runs
+# under cxvm. statfs takes a path, and cxvm passes a pointer-taking syscall outside its translated
+# set to the host untranslated (docs/platform-status.md, cyrius-x guest contract), so on cx the
+# row is that the call FAILS CLEANLY, as on Windows. CHANGELOG [6.7.12]
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -55,7 +59,12 @@ var t, v = filesystem_usage(".");
 # The PE peer's sys_statfs declines with -ENOSYS: an Err, never a fault or a fake size.
 assert_eq(t, 1, "Windows: filesystem_usage is an Err (sys_statfs declines)");
 #endif
+#ifdef CYRIUS_TARGET_CX
+# The path is a guest offset the host cannot read (statfs is outside cxvm's translated set).
+assert_eq(t, 1, "cx: filesystem_usage is an Err (statfs's path is not translated by cxvm)");
+#endif
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_CX
 assert_eq(t, 0, "filesystem_usage(\".\") is Ok (statfs ran; errno 14 = accept on aarch64)");
 if (t == 0) {
     assert_gt(load64(v), 0, "total bytes > 0");
@@ -63,6 +72,7 @@ if (t == 0) {
     assert_lte(load64(v + 16), load64(v), "available <= total");
     assert_lte(load64(v + 24), 10000, "usage x100 <= 100%");
 }
+#endif
 #endif
 
 test_group("including yukti keeps the stdlib's per-target constants");

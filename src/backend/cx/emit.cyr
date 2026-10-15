@@ -51,14 +51,41 @@ var _last_movca_popr_cp = 0 - 1;
 # x86 inline-fn toggle. cx does not inline; 0.
 var _INLINE_OK = 0;
 
+# The cx bytecode buffer: an off-heap alloc of _CX_CODE_CAP bytes that main_cx.cyr makes before the
+# first emit (the native drivers' code buffers have been off-heap since v6.4.49). It was a fixed
+# 512 KiB region of the compiler arena (S + 0x54A000) whose overflow printed a bare "codebuf
+# overflow" — a program the size of yukti + patra + sakshi needs ~900 KB. 4 MiB, fixed: EB refuses
+# past it by name. cxvm's guest memory (programs/cxvm.cyr _CX_MEM_SIZE) is sized to hold a .cyx
+# with this much code. CHANGELOG [6.7.12]
+var _cx_code_base = 0;
+var _CX_CODE_CAP = 4194304;
+
+# The refusal names the limit, the bytes emitted and the fn being emitted (top level when none).
+fn _cx_code_overflow(S, cp): i64 {
+    syscall(SYS_WRITE, 2, "error: cx bytecode exceeds the cx code region (", 47);
+    PRNUM(_CX_CODE_CAP);
+    syscall(SYS_WRITE, 2, " B): ", 5);
+    PRNUM(cp);
+    syscall(SYS_WRITE, 2, " B emitted when ", 16);
+    if (_cur_fn_ix >= 0) {
+        syscall(SYS_WRITE, 2, "fn '", 4);
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
+        syscall(SYS_WRITE, 2, "' (its code starts at byte ", 27);
+        PRNUM(L64(_fnt_offsets + _cur_fn_ix * 8));
+        syscall(SYS_WRITE, 2, ")", 1);
+    } else {
+        syscall(SYS_WRITE, 2, "top-level code", 14);
+    }
+    syscall(SYS_WRITE, 2, " reached it — build this program for a native target\n", 55);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Emit byte to codebuf (same as x86/emit.cyr but for bytecode)
 fn EB(S, b): i64 {
     var cp = GCP(S);
-    if (cp >= 524288) {
-        syscall(SYS_WRITE, 2, "error: codebuf overflow\n", 24);
-        syscall(SYS_EXIT, 1);
-    }
-    store8(S + 0x54A000 + cp, b & 0xFF);
+    if (cp >= _CX_CODE_CAP) { _cx_code_overflow(S, cp); }
+    store8(_cx_code_base + cp, b & 0xFF);
     SCP(S, cp + 1);
     return 0;
 }
@@ -461,8 +488,8 @@ fn EDROPI64(S): i64 {
 # loop patches bytes 2-3 of the movi with `_fnt_offsets[fni]` (main_cx.cyr), which is why
 # the placeholder is emitted as a fixed-shape movi + movhi pair and NOT via CX_MOVI — CX_MOVI
 # emits a VARIABLE number of words for a value, and the patcher writes fixed slots.
-# v6.6.4: the movhi slot is always emitted; the codebuf is 512 KiB, so code offsets DO
-# exceed 16 bits (a fn past 64 KB of code used to have its pointer truncated).
+# v6.6.4: the movhi slot is always emitted; the code region is 4 MiB (_CX_CODE_CAP), so code
+# offsets DO exceed 16 bits (a fn past 64 KB of code used to have its pointer truncated).
 fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     S64(fnaddr, GCP(S));                 # fixup patches the movi at this code offset
@@ -556,12 +583,12 @@ fn ECALLTO(S, target): i64 {
 
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off` (opcode 80, 4-byte
 # instruction units like ECALLTO), so every reference already compiled against it reaches the
-# last definition. Writes the cx code buffer EB writes (S + 0x54A000). Returns 1, writing
+# last definition. Writes the cx code buffer EB writes (_cx_code_base). Returns 1, writing
 # nothing, when the earlier body is too short. See `_fn_redirect` (parse_fn.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var off = (new_off - old_off) / 4;
-    var a = S + 0x54A000 + old_off;
+    var a = _cx_code_base + old_off;
     store8(a, 80);
     store8(a + 1, off & 0xFF);
     store8(a + 2, (off >> 8) & 0xFF);
@@ -785,21 +812,21 @@ fn EJMP0(S): i64 {
 fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var rel = (cp - off) / 4;
-    var opcode = load8(S + 0x54A000 + off);
+    var opcode = load8(_cx_code_base + off);
     # For jz/jnz (0x51/0x52): offset is in bytes 2-3 (byte 1 = register)
     # For jmp/call (0x50/0x60): offset is in bytes 1-3
     if (opcode == 0x51) {
-        store8(S + 0x54A000 + off + 2, rel & 0xFF);
-        store8(S + 0x54A000 + off + 3, (rel >> 8) & 0xFF);
+        store8(_cx_code_base + off + 2, rel & 0xFF);
+        store8(_cx_code_base + off + 3, (rel >> 8) & 0xFF);
     }
     elif (opcode == 0x52) {
-        store8(S + 0x54A000 + off + 2, rel & 0xFF);
-        store8(S + 0x54A000 + off + 3, (rel >> 8) & 0xFF);
+        store8(_cx_code_base + off + 2, rel & 0xFF);
+        store8(_cx_code_base + off + 3, (rel >> 8) & 0xFF);
     }
     else {
-        store8(S + 0x54A000 + off + 1, rel & 0xFF);
-        store8(S + 0x54A000 + off + 2, (rel >> 8) & 0xFF);
-        store8(S + 0x54A000 + off + 3, (rel >> 16) & 0xFF);
+        store8(_cx_code_base + off + 1, rel & 0xFF);
+        store8(_cx_code_base + off + 2, (rel >> 8) & 0xFF);
+        store8(_cx_code_base + off + 3, (rel >> 16) & 0xFF);
     }
     return 0;
 }
@@ -1078,14 +1105,14 @@ fn EFLSTORE(S, idx): i64 {
 fn EPATCHFRAME(S, patch, size): i64 {
     # Patch ESUBRSP's movi r252 (bits 0..15) and the movhi r252 after it (bits 16..31). A frame is
     # far below 4 GiB (arrays past the per-fn frame budget go static), so two slots carry it whole.
-    store8(S + 0x54A000 + patch, 1);        # movi opcode
-    store8(S + 0x54A000 + patch + 1, 252);  # r252
-    store8(S + 0x54A000 + patch + 2, size & 0xFF);
-    store8(S + 0x54A000 + patch + 3, (size >> 8) & 0xFF);
-    store8(S + 0x54A000 + patch + 4, 254);  # movhi opcode
-    store8(S + 0x54A000 + patch + 5, 252);  # r252
-    store8(S + 0x54A000 + patch + 6, (size >> 16) & 0xFF);
-    store8(S + 0x54A000 + patch + 7, (size >> 24) & 0xFF);
+    store8(_cx_code_base + patch, 1);        # movi opcode
+    store8(_cx_code_base + patch + 1, 252);  # r252
+    store8(_cx_code_base + patch + 2, size & 0xFF);
+    store8(_cx_code_base + patch + 3, (size >> 8) & 0xFF);
+    store8(_cx_code_base + patch + 4, 254);  # movhi opcode
+    store8(_cx_code_base + patch + 5, 252);  # r252
+    store8(_cx_code_base + patch + 6, (size >> 16) & 0xFF);
+    store8(_cx_code_base + patch + 7, (size >> 24) & 0xFF);
     return 0;
 }
 
@@ -1394,10 +1421,11 @@ fn _cx_mode_refused(S): i64 {
 }
 # 6.6.11 — modules OUTSIDE the cx target's scope, refused BY NAME before anything is lexed.
 # lib/tls.cyr, lib/tls_native.cyr and the lib/sigil.cyr fold compile to several MB of cx
-# bytecode (cx output runs ~3.2x x86: tls is ~1.6 MB as an x86 ELF) against the fixed
-# 512 KiB code buffer here and cxvm's 1 MB code/guest caps, so they died mid-emit with a
-# bare "codebuf overflow" that named nothing. cx is a single-threaded test VM; the TLS stack
-# and the crypto bundle are declared out of its scope rather than growing both halves.
+# bytecode (cx output runs ~3.2x x86; measured at 6.7.12: a program including lib/sigil.cyr is
+# a 2.4 MB .cyx, lib/tls.cyr 2.9 MB). Against 6.6.11's 512 KiB code buffer they died mid-emit
+# with a bare "codebuf overflow"; cx is a single-threaded test VM, and the TLS stack and the
+# crypto bundle were declared out of its scope. 6.7.12 grew the code region to 4 MiB for the
+# programs inside that scope; these three stay refused by name (the user, 2026-10-15, D12).
 # `p` is one NUL-terminated #@file name (the include path as written); it matches `suf` when
 # it IS `suf` or ends in "/" + `suf`. CHANGELOG [6.6.11]
 fn _cx_path_is(p, n, suf, sl): i64 {
@@ -1414,7 +1442,7 @@ fn _cx_out_of_scope(p, n): i64 {
     return 0;
 }
 # Walks FM_BUILD's name table (one entry per distinct file). A map that overflowed its
-# 1024 entries drops later names; such a build still stops at the codebuf cap.
+# 1024 entries drops later names; such a build still stops at the code region's cap (EB).
 fn _cx_scope_refused(S): i64 {
     var nm = S + 0x721000;
     var pos = 0;
@@ -1425,7 +1453,7 @@ fn _cx_scope_refused(S): i64 {
         if (_cx_out_of_scope(nm + pos, n) == 1) {
             syscall(SYS_WRITE, 2, "error: ", 7);
             PRSTR(nm + pos);
-            syscall(SYS_WRITE, 2, " is outside the cx target's scope (the TLS stack and the sigil bundle compile to several MB of bytecode; a .cyx holds 512 KiB) — build it for a native target\n", 160);
+            syscall(SYS_WRITE, 2, " is outside the cx target's scope (the TLS stack and the sigil bundle are refused by name: several MB of bytecode for a single-threaded test VM) — build it for a native target\n", 178);
             bad = 1;
         }
         pos = pos + n + 1;
