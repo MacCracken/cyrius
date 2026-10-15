@@ -323,8 +323,9 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 }
 # Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
 # expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
-# (2, a `for` header) to its unmatched `)`; the cursor is left AT that token. Every `{` is walked
-# as its own scope (`_cl_prescan_nested`).
+# (2, a `for` header) to its unmatched `)`, a `for … in` header's part (3) to its depth-0 `{`,
+# range `..` or `;`, a declaration's right-hand side (4) to its depth-0 `;` (`_cl_walk_stop`); the
+# cursor is left AT that token. Every other `{` is walked as its own scope (`_cl_prescan_nested`).
 # ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
 # and the `var` names it declares leave the shadow set when it ends: they used to stay, so
 # `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
@@ -338,6 +339,7 @@ fn _cl_prescan_body(S, is_block): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }
+        elif (_cl_walk_stop(S, is_block, t, depth) == 1) { go = 0; }
         elif (t == 13) {
             _cl_prescan_nested(S);             # any block is a scope (6.6.17)
             t = 0 - 1;                         # consumed through its `}`
@@ -345,6 +347,10 @@ fn _cl_prescan_body(S, is_block): i64 {
         elif (t == 14) { go = 0; }
         elif (t == 55) {
             if (TOKTYP(S, GTI(S) + 1) == 10) { _cl_prescan_for(S); t = 0 - 1; }
+            elif (_cl_at_forin(S) == 1) { _cl_prescan_forin(S); t = 0 - 1; }   # 6.7.11
+        }
+        elif (t == 3) {
+            if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
         }
         elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
@@ -353,7 +359,7 @@ fn _cl_prescan_body(S, is_block): i64 {
             elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
-            if (t == 3) { prev_var = 1; }
+            if (t == 3 || t == 168) { prev_var = 1; }   # `var` / a local `const` (6.7.11) names one
             elif (t == 2) {
                 var noff = PEEKV(S);
                 if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
@@ -375,6 +381,70 @@ fn _cl_prescan_for(S): i64 {
     if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
     if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
     _cl_nshadow = mk;
+    return 0;
+}
+# ⛔ 6.7.11 — A NAME THE BODY DECLARES IS NOT A READ. Only the name right after `var` was shadowed,
+# so `for i in 0..4 { .. }`, `const k = 3;` and the `b` of `var a, b = two();` each captured the
+# enclosing local of that name (refused without lib/alloc.cyr, or a needless heap env holding a
+# copy of it). Each is shadowed from where the PARSER binds it (`PARSE_FOR`, `PARSE_VAR`): a
+# `for … in` variable after the start bound or the collection, which read the enclosing name (a
+# range's end bound reads the variable), for the loop only; the names of a destructure after its
+# right-hand side, which reads the enclosing ones. CHANGELOG [6.7.11]
+fn _cl_walk_stop(S, m, t, depth): i64 {
+    if (m < 3) { return 0; }
+    if (depth != 0) { return 0; }
+    if (t == 5) { return 1; }
+    if (m == 4) { return 0; }
+    if (t == 13) { return 1; }
+    if (t == 41) { if (TOKTYP(S, GTI(S) + 1) == 41) { return 1; } }
+    return 0;
+}
+# 1 at `for IDENT in`.
+fn _cl_at_forin(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 76) { return 0; }
+    return 1;
+}
+# Cursor at `for IDENT in`: the start bound or the collection (the enclosing scope), then IDENT
+# shadowed for a range's end bound and the body. Leaves the cursor past the body.
+fn _cl_prescan_forin(S): i64 {
+    var mk = _cl_nshadow;
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 3);                  # `for IDENT in`
+    _cl_prescan_body(S, 3);
+    _cl_shadow_add(S, noff);
+    if (PEEKT(S) == 41) {
+        STI(S, GTI(S) + 2);              # a range's `..`
+        _cl_prescan_body(S, 3);
+    }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# 1 at `var IDENT , IDENT` — a destructure.
+fn _cl_at_mvar(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 31) { return 0; }
+    if (TOKTYP(S, GTI(S) + 3) != 2) { return 0; }
+    return 1;
+}
+# Cursor at `var a, b[, c] = f(..);`: `a` as after any `var`, the right-hand side read, then `b`
+# (and `c`) shadowed. Leaves the cursor at the `;`.
+fn _cl_prescan_mvar(S): i64 {
+    var ti = GTI(S) + 1;
+    _cl_shadow_add(S, TOKVAL(S, ti));
+    var n2 = TOKVAL(S, ti + 2);
+    var n3 = 0;
+    var has3 = 0;
+    ti = ti + 3;
+    if (TOKTYP(S, ti) == 31) { if (TOKTYP(S, ti + 1) == 2) { n3 = TOKVAL(S, ti + 1); has3 = 1; ti = ti + 2; } }
+    STI(S, ti);
+    if (PEEKT(S) == 4) {
+        STI(S, ti + 1);
+        _cl_prescan_body(S, 4);
+    }
+    _cl_shadow_add(S, n2);
+    if (has3 == 1) { _cl_shadow_add(S, n3); }
     return 0;
 }
 # Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`

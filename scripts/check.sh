@@ -1116,6 +1116,12 @@ _chk_gate "$ROOT/tests/gates/frontend/toplevel_closure_stale_locals.sh"
 # A range's `0..y` and a value after a label stay captures; host, cx and aarch64-qemu legs.
 _chk_gate "$ROOT/tests/gates/frontend/closure_field_names_not_captured.sh"
 
+# 6.7.11: a name a closure body declares — a `for … in` variable, a local `const`, a destructure's
+# second / third name — was taken as a capture of the enclosing local of that name. Each is now
+# shadowed from where the parser binds it; a range's start bound, a collection and a destructure's
+# right-hand side stay reads (controls with a same-named global); host, cx and aarch64-qemu legs.
+_chk_gate "$ROOT/tests/gates/frontend/closure_declared_names_not_captured.sh"
+
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
 # at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same

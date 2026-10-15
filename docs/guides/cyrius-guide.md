@@ -5336,7 +5336,16 @@ address. Fixed in 6.6.6; pinned by `tests/tcyr/crossos/toplevel_block_closure.tc
 
 Parameters and any locals declared inside the closure are its own; the
 enclosing function's locals are untouched (so a closure declared after a local
-doesn't clobber it).
+doesn't clobber it). That holds for every name the body declares: a `var`, a local
+`const`, a `for … in` variable (for the loop only) and each name of a destructure
+`var a, b = f();`. A range's start bound and a collection are read before the loop
+variable is bound, so `for i in i..5` and `for x in x` read (and capture) the enclosing
+`i` / `x`; a range's end bound reads the loop variable. A destructure binds its names after
+its right-hand side, so `var a, b = f(b);` passes (and captures) the enclosing `b`.
+⚠ Before 6.7.11 a `for … in` variable, a local `const` and a destructure's second or
+third name were taken for a read of the enclosing local of that name: the closure was
+refused without lib/alloc.cyr, or carried a heap copy it never read. Pinned by
+`tests/gates/frontend/closure_declared_names_not_captured.sh`.
 
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable
 from the enclosing scope (a *free variable*). Each such variable is captured
