@@ -1796,7 +1796,7 @@ as is an operator fn whose first parameter is another struct, and, at top level,
 (`var G: H = GW.s + A;`). Through 6.7.9 only a variable or a struct result typed the left operand:
 `h.p - s` subtracted the first words (250 where `P2_sub` gives 139), silently, at every size. A
 `*T` field itself is a pointer (`w.p + 1` steps it), a `Str` field a handle, and `-w.s + a`
-negates a word first (no dispatch). ⚠ Known defect (6.7.10): a whole field of 3, 5, 6 or 7 bytes is
+negates a word first (no dispatch) — as `-s + a` does since 6.7.11 (see below). ⚠ Known defect (6.7.10): a whole field of 3, 5, 6 or 7 bytes is
 still loaded as an 8-byte word on the way (as in every value use of one — an argument, a right
 operand): an object ending exactly at the end of a mapping faults. (A dereference of a `*S` of 1 to 7
 bytes reads exactly its struct since 6.7.11 — see below.)
@@ -1808,6 +1808,15 @@ integer whatever the operator — `+ - * / % << >> >>>`, `& | ^`, a comparison, 
 struct type, and the next `+ - * /` dispatched on it: `n - s + 10` called `S_add(&s, 10)` and discarded
 `n - s` (a crash when `S_add` read its right operand as a struct), `(n < s) + 1` and `(~s) + 1` likewise,
 and with no `S_add` each was refused as an undefined function. (`!s` was always an integer.)
+
+**Unary minus on a struct is integer negation of its word** (6.7.11, the user's decision of
+2026-10-13): `-s` negates the struct's first word (its word, at 8 bytes or less) and the result has
+no struct type, exactly as `-w.s` on a struct-typed field — so `-s + t` is an integer add at every
+size, never `S_add`, and as a right operand `t + -s` passes the negated word, as `t + -w.s` does.
+Through 6.7.10 the negation kept `s`'s struct type and slot: `-s + t` over 8 bytes called `S_add(&s,
+&t)` with the minus dropped (`s + t`'s value), at 8 bytes `S_add` with the negated word as the
+struct, and `t + -s` over 8 bytes passed `s` itself. Nothing is refused. `-` on an f64 / f32 is a
+float negation, and on a `u128` the 128-bit `0 - x`, as before.
 
 **A whole dereference is a struct value as an argument and a right operand too** (6.7.10, decision 6):
 `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)`, `take(*(p + 1))` and `a - *p`, `a + (*p)` pass

@@ -59,6 +59,12 @@
 #      (refused 'undefined function' through 6.7.10); the values file's K rows (every arm, 24 B and 8 B, the
 #      dispatching twins, an f64 right operand's type kept) run on A1-A7 — A7 (new) is the values file on PE
 #      (wine)
+#   U  (6.7.11, issues/2026-10-08-struct-operator-results.md #3; the user's decision (a), 2026-10-13) `-s` on a
+#      struct is integer negation of its word with no struct type (`_neg_int` -> `_int_res`; the declaration
+#      zone's typer `_gz_unary` agrees): `-s + t` dispatched `S_add` — over 8 B from s's slot, the minus
+#      dropped (the filed repro: 6), at 8 B on the negated word (13) — where `-w.s + t` added (252). U1 the
+#      repro, verbatim (252); U2 / U3 `var X: S8 = -G + H;` in the zone and after it (252); the values file's
+#      U rows (every size against the field form, the right operand, `-(s + t)`, f64, u128) on A1-A7
 #      L16 / L17 (6.7.11): a leading call's struct types an untyped declaration only when the call ENDS it
 #      (`_var_rhs_csid`): `var r = mk3(4) - s; r.x` (the filed repro, verbatim) and `var r = mk2(1) == p; return
 #      r;` in a fn returning Pt took the call's struct (SIGSEGV each); refused by name now
@@ -212,6 +218,10 @@
 #   M-K5 `_PLOGIC_AND` / PCMPE's `||` SPSC only                -> RED A1-A7 (K14 K15)
 #   M-K6 EMIT_OVF_CALL without `_int_st` (`+| +? -| -?`)       -> RED A1-A7 (K17 K18)
 #   M-K7 `_bnot_int` SPSC only (`~`)                           -> RED A1-A7 (K16 K23)
+#   the tree before #3 (0d1c660c)                          -> RED U1 (6) U2 U3 (13), A1-A7 (U1-U8 U11 U12)
+#   M-U1 `_neg_int` SPSC only (no `_int_res`)                  -> RED U1 (6), U2 (the zone's typer now disagrees:
+#       "the declaration zone misread .."), U3 (13), A1-A7 (U1-U8 U11 U12)
+#   M-U2 `_gz_unary` keeping `-g`'s struct (kind 4)            -> RED U2 ("the declaration zone misread ..")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -394,6 +404,12 @@ refused l17 'got `r`' "L17: var r = mk2(1) == p; return r; from a fn returning P
 exits_file k01 8 "K1: n - s + 10 (the filed repro, verbatim: SIGSEGV in P3_add(&s, 10))" "$ROPR-2-integer-op-keeps-right-struct-type.cyr"
 exits k02 8 "K2: n - s + 10 with no P3_add compiles (refused 'undefined function P3_add' through 6.7.10)" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return n - s + 10; }$E"
 exits k03 11 "K3: (n < s) + 10 and (~s) + 10 with no P3_add compile" "struct P3 { x; y; z; }\nfn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return (n < s) + 10 + (~s) + 6; }$E"
+# U (6.7.11, the user's decision (a), 2026-10-13) — `-s` on a struct is integer negation of its word, with no
+# struct type: `-s + t` is an integer add at every size, as `-w.s + t` is (the values file's U rows).
+exits_file u01 252 "U1: -s + t (the filed repro, verbatim: 6, the minus dropped)" "$ROPR-3-unary-minus-on-struct-dropped.cyr"
+US8='struct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = a.v * 100 + b.v; return r; }\nvar G = S8 { 5 };\nvar H = S8 { 1 };\n'
+exits u02 252 "U2: var X: S8 = -G + H; in the declaration zone (13: the dispatch; the zone's typer agrees)" "${US8}var X: S8 = -G + H;\nsyscall(60, load64(&X));\n"
+exits u03 252 "U3: ... after the first statement (13)" "${US8}var k = 0;\nk = 1;\nvar X: S8 = -G + H;\nsyscall(60, load64(&X));\n"
 # R (6.7.6 E2) — parentheses around a struct fn's whole return value; the top-level operand wording.
 exits r01 6 "R1: return (j); from a fn returning a 24-byte P3 (the filed repro: refused)" "struct P3 { x; y; z; }\nfn cp(j: P3): P3 { return (j); }\nfn main(): i64 { var j = P3 { 1, 2, 3 }; var q: P3 = cp(j); return q.x + q.y + q.z; }$E"
 exits r02 6 "R2: return (mk3(v)); (the filed repro: refused)" "struct P3 { x; y; z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\nfn cp(v): P3 { return (mk3(v)); }\nfn main(): i64 { var q: P3 = cp(2); return q.x + q.y + q.z; }$E"

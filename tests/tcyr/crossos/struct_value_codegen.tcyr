@@ -44,6 +44,12 @@
 #      `||`, `+| -| *| +? -? *?`, `~`) at 24 B and 8 B; `KN_add` returns 1 when it is called with 10, so a
 #      wrong dispatch reads 1. The twins dispatch as before: `s + t`, `s + 10`, `w.s + a` (decision 11);
 #      an f64 right operand's type is kept (kind 2: `(0 - x) + 1.0` is an f64 add, with its warning).
+#   U  (6.7.11, the user's decision (a), 2026-10-13) `-s` on a struct is integer negation of its word, with
+#      no struct type: `-s + t` is an integer add at every size, as the field form `-w.s + t` always was
+#      (252). It dispatched `S_add`: over 8 B from s's slot, the minus dropped (`s + t`: 51 here; the filed
+#      repro 6), at 8 B with the negated word as the struct (13). As a right operand `t + -s` passes the
+#      negated word, as `t + -w.s` does (into an untyped parameter: -5; over 8 B it passed s itself). The
+#      negation of a struct result (`-(s + t)`), `-x` on an f64 and on a u128 are unchanged.
 #   E  (6.7.11) under CYRIUS_IR=3 (the gate's A3 leg), LASE kept a just-stored local's rax image
 #      across EFLADDR's unrecorded `lea rax, [rbp+d]` and dropped the reload after it, so the
 #      aggregate's ADDRESS went out as the local: a method on an inline struct local (`o.with2(x)`:
@@ -655,9 +661,65 @@ fn k_rows(): i64 {
     return 0;
 }
 
+# U — unary minus on a struct is integer negation of its word, with no struct type (decision (a)).
+struct UP3 { x; y; z; }
+struct UPt { x; y; }
+struct US8 { v; }
+struct UN { x; y; z; }
+struct UR { v; }
+struct UW3 { n; s: UP3; }
+struct UW2 { n; s: UPt; }
+struct UW8 { n; s: US8; }
+struct UWN { n; s: UN; }
+fn UP3_add(a: *UP3, b: *UP3): i64 { return a.x * 10 + b.x; }
+fn UPt_add(a: *UPt, b: *UPt): i64 { return a.x * 10 + b.x; }
+fn US8_add(a: US8, b: US8): i64 { return a.v * 100 + b.v; }
+fn UN_add(a, b): i64 { return b; }
+fn UR_add(a: UR, b: UR): UR { var r: UR; r.v = a.v * 100 + b.v; return r; }
+fn u_24(): i64 { var s: UP3 = UP3 { 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return -s + t; }
+fn u_24f(): i64 { var w: UW3 = UW3 { 0, 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return -w.s + t; }
+fn u_16(): i64 { var s: UPt = UPt { 5, 6 }; var t: UPt = UPt { 1, 1 }; return -s + t; }
+fn u_16f(): i64 { var w: UW2 = UW2 { 0, 5, 6 }; var t: UPt = UPt { 1, 1 }; return -w.s + t; }
+fn u_8(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; return -s + t; }
+fn u_8f(): i64 { var w: UW8 = UW8 { 0, 5 }; var t: US8 = US8 { 1 }; return -w.s + t; }
+fn u_paren(): i64 { var s: UP3 = UP3 { 5, 6, 7 }; var t: UP3 = UP3 { 1, 1, 1 }; return (-s) + t; }
+fn u_decl(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; var c = -s + t; return c; }
+fn u_8r(): i64 { var s: US8 = US8 { 5 }; var t: US8 = US8 { 1 }; return t + -s; }
+fn u_8rf(): i64 { var w: UW8 = UW8 { 0, 5 }; var t: US8 = US8 { 1 }; return t + -w.s; }
+fn u_rn(): i64 { var s: UN = UN { 5, 6, 7 }; var t: UN = UN { 1, 1, 1 }; return t + -s; }
+fn u_rnf(): i64 { var w: UWN = UWN { 0, 5, 6, 7 }; var t: UN = UN { 1, 1, 1 }; return t + -w.s; }
+fn u_res(): i64 { var s: UR = UR { 5 }; var t: UR = UR { 1 }; return -(s + t) + 1; }
+fn u_f64(): i64 { var x: f64 = 2.5; var y: f64 = -x * 2.0; return f64_to(y); }
+fn u_u128(): i64 {
+    var u: u128 = 5;
+    var w: u128 = -u;
+    if (load64(&w) != 0 - 5) { return 0; }
+    if (load64(&w + 8) != 0 - 1) { return 0; }
+    return 1;
+}
+fn u_rows(): i64 {
+    assert_eq(u_24(), 0 - 4, "U1: -s + t, 24 B: an integer add (dispatched UP3_add(&s, &t): 51)");
+    assert_eq(u_24(), u_24f(), "U2:   = -w.s + t at 24 B");
+    assert_eq(u_16(), 0 - 4, "U3: -s + t, 16 B (51)");
+    assert_eq(u_16(), u_16f(), "U4:   = -w.s + t at 16 B");
+    assert_eq(u_8(), 0 - 4, "U5: -s + t, 8 B (dispatched US8_add with the negated word: -499)");
+    assert_eq(u_8(), u_8f(), "U6:   = -w.s + t at 8 B");
+    assert_eq(u_paren(), 0 - 4, "U7: (-s) + t");
+    assert_eq(u_decl(), 0 - 4, "U8: var c = -s + t; an integer binding");
+    assert_eq(u_8r(), 95, "U9: t + -s, 8 B: the negated word into the by-value operand");
+    assert_eq(u_8r(), u_8rf(), "U10:   = t + -w.s");
+    assert_eq(u_rn(), 0 - 5, "U11: t + -s into an untyped operand over 8 B: the negated word (it passed &s)");
+    assert_eq(u_rn(), u_rnf(), "U12:   = t + -w.s");
+    assert_eq(u_res(), 0 - 500, "U13: -(s + t) + 1: the negation of a struct result (unchanged)");
+    assert_eq(u_f64(), 0 - 5, "U14: -x on an f64 is a float negation (unchanged)");
+    assert_eq(u_u128(), 1, "U15: -u on a u128 is the u128 0 - u (unchanged)");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
     k_rows();
+    u_rows();
     strs();
     eladdr();
     flags();

@@ -8110,7 +8110,7 @@ fn _hl_pval_ra(S, sid, z): i64 {
 # as over 8 B. CHANGELOG [6.7.10]
 var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, initialiser token) pairs
 # `_gz_ty`'s kind of value: 1 a call / method / operator / if-expression result, 2 an inline global, 3 a
-# handle global, 4 an operand an operator dispatches on that is no value (`-g`), 5 a struct-typed field (a
+# handle global, 4 (retired in 6.7.11: `-g` is an integer), 5 a struct-typed field (a
 # struct value; 6.7.10: an operator's left operand dispatches on it, decision 11), 6 a `*T` (the struct it
 # points at; a receiver, never a value), 7 a dereference `*E` of a `*T` (6.7.10: an operator's left
 # operand dispatches on it; a declaration from it is `_gz_star`'s).
@@ -8381,17 +8381,13 @@ fn _gz_opfn(S, sid, op): i64 {
     SNPOS(S, np);
     return fi;
 }
-# No binary operator: `-x` keeps x's struct for an operator (`_neg_int` leaves the expression type) and
-# is no struct value; a name or call chain (`_gz_chain`); anything else gives no struct.
+# No binary operator: a name or call chain (`_gz_chain`); anything else gives no struct — `-x` too, an
+# integer (6.7.11, the user's decision (a): `_neg_int` clears the struct type, so `-G + H` never
+# dispatches; it kept G's struct for an operator, kind 4).
 fn _gz_unary(S, b, e): i64 {
     var t = TOKTYP(S, b);
-    if (t == 7) {
-        var r = _gz_ty(S, b + 1, e);
-        if (_gz_k == 2) { _gz_k = 4; return r; }
-        _gz_k = 0;
-        return 0;
-    }
     _gz_k = 0;
+    if (t == 7) { return 0; }
     if (t == 8) { return _gz_deref(S, b, e); }   # 6.7.10: `*p` — an operator dispatches on it
     if (_icall_sid_at(S, b) > 0) { return _gz_icall(S, b, e); }   # 6.7.11
     if (t != 2) { return 0; }

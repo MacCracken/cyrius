@@ -1481,6 +1481,12 @@ fn _NEG_F32(S): i64 {
 # ⛔ `_cfo = 0`: a constant operand (`K`, `E.K`, a `const`) armed the run-time fold, and the next
 # literal operator rewound the code to it, so `-K + 10` folded `5 + 10` (and left the pushed 0 on
 # the stack: `1 + -K * 2` was 10). A unary result is never a foldable constant. CHANGELOG [6.7.9]
+# ⛔ 6.7.11 — `-s` ON A STRUCT IS INTEGER NEGATION OF ITS WORD, WITH NO STRUCT TYPE (the user's decision
+# (a), 2026-10-13). The negation kept s's struct type and slot, so `-s + t` dispatched `S_add`: over 8 B
+# from s's slot, the minus dropped (the filed repro: 6, `s + t`), at 8 B with the negated word as the
+# struct (13), while the field form `-w.s + t` negated a word and added (252, documented in 6.7.10).
+# `_int_res` clears both, as for `~s` and `n - s`: `-s + t` is an integer add at every size (252), and
+# `t + -s` passes the negated word, not s. Nothing is refused. CHANGELOG [6.7.11]
 fn _neg_int(S): i64 {
     _cfo = 0;
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }
@@ -1488,7 +1494,7 @@ fn _neg_int(S): i64 {
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
-    SPSC(S, 0);   # 6.7.9: `-q` is a plain integer — no step (see _pexpr_bit_ps)
+    _int_res(S);   # 6.7.9: `-q` is a plain integer — no step (see _pexpr_bit_ps); 6.7.11: nor a struct
     return 0;
 }
 # Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
@@ -7187,7 +7193,7 @@ fn _OP_OPERAND_ADDR(S, svar, ofi, ord): i64 {
 # what the operand IS once it is parsed:
 #   - a bare struct name (`s`, `(s)` — local, global, capture) passes its OWN address, so a write
 #     through it reaches the caller, as `rd1(s)` does;
-#   - a struct VALUE (`sval`: a call, method or operator result, `-s`) lands in a frame temp whose
+#   - a struct VALUE (`sval`: a call, method or operator result) lands in a frame temp whose
 #     address is passed — at top level, where there is no frame, it is refused by name;
 #   - a whole struct-typed field passes its own address (`_op_rhs`);
 #   - anything else is already an address or an untyped word — `&t`, a `*S1` variable, a call
@@ -7206,7 +7212,7 @@ fn _op_operand_sv(S, fi, k, svar, bare, sval): i64 {
     return 0 - 2 - t;
 }
 # The LEFT operand, tokens [beg, opti), already parsed and in rax: its encoding for operand 0.
-# It dispatched, so its recorded type is the struct: a name, or a value such as `-s`.
+# It dispatched, so its recorded type is the struct: a name, or a struct value (6.7.11: `-s` is an integer).
 fn _op_lhs_sv(S, fi, beg, opti): i64 {
     if (_lsc_hit == 1) { _lsc_hit = 0; return _op_lhs_call_sv(S, fi); }   # 6.7.6
     if (_flo_hit + _dlo_hit > 0) { return _opd_lhs_sv(S, fi); }   # 6.7.10: a field / a dereference
@@ -7351,11 +7357,11 @@ fn _op_lhs_check(S, fi, stype, beg): i64 {
     if (TOKTYP(S, nt) == 2) { nm = TOKVAL(S, nt); }
     return _sarg_type_err(S, fi, 0, stype, nm);
 }
-# 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name
-# under `-` / parentheses; 6.7.11: `~s` and `k * s` are integers, `_int_st`), or it is one whole
-# method / operator result of 8 B or
-# less (`_sc_post_small`'s record, -3: the value is in rax), bare or in parentheses. `&s`, a `*S`
-# variable, a call returning a pointer or an integer and a literal record no struct type.
+# 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name, under
+# parentheses too; 6.7.11: `-s`, `~s` and `k * s` are integers, `_int_st`), or it is one whole method /
+# operator result of 8 B or less (`_sc_post_small`'s record, -3: the value is in rax), bare or in
+# parentheses. `&s`, a `*S` variable, a call returning a pointer or an integer and a literal record no
+# struct type.
 fn _op_is_sval(S, b, e): i64 {
     var st = GESTYPE(S);
     if (st > 0) { if (st < 2048) { return 1; } }
