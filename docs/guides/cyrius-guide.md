@@ -4330,7 +4330,10 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
 does not declare is an **error that names it**; operand counts are enforced — an extra
 operand is processed or rejected, never silently dropped; and a global `-q`/`-v` never shifts
-the operands. `cyrius <verb> --help` prints exactly the flags the parser accepts. `run` is the
+the operands. `cyrius <verb> --help` (or `-h`) prints exactly the flags the parser accepts, on
+every verb — since 6.7.12 the raw-tail verbs `init`, `port` and `sign-efi` too, whose helpers
+(`cyrius-init`, `cyrsign-efi`) print their usage on stdout and exit 0 (`cyrsign-efi` takes the
+help only as its lone argument and still refuses every other `-` token). `run` is the
 one stop-at-first-positional verb: a flag written after the source belongs to the program
 (`cyrius run -- prog.cyr a` is the same as `cyrius run prog.cyr a`). A value flag given twice
 is an error that names it (`--target=js --target=cx` used to mean cx, silently) — except the

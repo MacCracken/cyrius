@@ -884,6 +884,10 @@ fn _run_init(start): i64 {
             elif (streq(a, "--description") == 1) { _print("error: --description requires a value\n"); return 1; }
             elif (streq(a, "--lib") == 1) { shape_lib = 1; }
             elif (streq(a, "--bin") == 1) { shape_lib = 0; }
+            # 6.7.12 — `cyrius init --help` / `-h` (a raw-tail verb: the CLI forwards the tail
+            # here) failed as an unknown flag while `cyrius --help` promises every command takes
+            # it: the usage on stdout, exit 0. CHANGELOG [6.7.12]
+            elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) { _init_usage(); return 0; }
             else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
         } else {
             # v6.6.5 (round-3 review) — ONE project per invocation. The last positional
@@ -1206,6 +1210,7 @@ fn _run_port(start): i64 {
             if (streq(a, "--dry-run") == 1) { dry = 1; }
             elif (alen > 11 && memeq(a, "--language=", 11) == 1) { language = a + 11; }
             elif (streq(a, "--language") == 1) { _print("error: --language requires a value (rust)\n"); return 1; }
+            elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) { _port_usage(); return 0; }   # 6.7.12, as init's
             else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
         } else {
             # Same rule as init: one target, never "the last one wins". CHANGELOG [6.6.5].

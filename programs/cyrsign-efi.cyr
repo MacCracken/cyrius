@@ -39,6 +39,18 @@ fn _cse_err(msg) { sys_write(2, "cyrsign-efi: ", 13); sys_write(2, msg, strlen(m
 
 fn _cse_usage(): i64 { _cse_err("usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>"); return 0; }
 
+# 6.7.12 — the help a lone `--help` / `-h` asks for (`cyrius sign-efi --help` forwards its tail
+# here): on stdout, and the caller exits 0. The usage above stays on stderr for a refusal.
+# CHANGELOG [6.7.12]
+fn _cse_out(s): i64 { sys_write(1, s, strlen(s)); return 0; }
+fn _cse_help(): i64 {
+    _cse_out("Usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>\n\n");
+    _cse_out("Signs the PE image <pe-in> (Authenticode, RSA) with <key.der> (PKCS#1 or PKCS#8 DER)\n");
+    _cse_out("and <cert.der>, and writes the signed image to <pe-out> atomically. Takes no options:\n");
+    _cse_out("any other '-' token is refused.\n");
+    return 0;
+}
+
 fn _cse_named(msg, tok): i64 {
     sys_write(2, "cyrsign-efi: ", 13);
     sys_write(2, msg, strlen(msg));
@@ -54,8 +66,12 @@ fn _cse_named(msg, tok): i64 {
 # `... out.efi --verify-only` signed out.efi and dropped the flag. This tool takes no
 # flags at all, so ANY '-'-prefixed token is refused by name, before the count (a
 # flag is never an operand), and a fifth operand is refused rather than ignored.
-# CHANGELOG [6.6.5].
+# CHANGELOG [6.6.5]. The one exception: a LONE `--help` / `-h` asks for the help (2 here: the
+# caller exits 0 after `_cse_help`). CHANGELOG [6.7.12]
 fn _cse_args_ok(): i64 {
+    if (argc() == 2) {
+        if (streq(argv(1), "--help") == 1 || streq(argv(1), "-h") == 1) { return 2; }
+    }
     var i = 1;
     while (i < argc()) {
         var a = argv(i);
@@ -84,7 +100,9 @@ fn main(): i64 {
     alloc_init();
     args_init();
     _ac_oids_init();
-    if (_cse_args_ok() == 0) { return 2; }
+    var aok = _cse_args_ok();
+    if (aok == 0) { return 2; }
+    if (aok == 2) { return _cse_help(); }
 
     var pe_len = 0;   var pe   = _cse_read(argv(1), &pe_len);
     var kl = 0;       var kder = _cse_read(argv(2), &kl);

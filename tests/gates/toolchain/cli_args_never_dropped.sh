@@ -129,6 +129,12 @@
 #   MU  THIS GATE without its HOME override, run with an empty outer HOME      7 fails
 #   MB/MC/MD are caught ONLY by axis 19 (wine) — on a box without wine they are
 #   covered by the cass rows in scripts/cross-os-selfhost.sh, nowhere else.
+# 6.7.12 — axis 18b (--help / -h on every dispatched verb; each mutant a scratch copy of the
+# tree run through THIS gate):
+#   MV1 cyrius-init: init's --help / -h arm dropped                          3 fails (init x2, direct)
+#   MV2 cyrius-init: port's arm dropped                                      3 fails (port x2, direct)
+#   MV3 cyrsign-efi: the lone --help / -h check dropped                      3 fails (sign-efi x2, direct)
+#   MV4 cyrsign-efi: `--help` accepted anywhere (not only alone)             1 fail  (the anti-vacuous row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -943,6 +949,44 @@ ne_check "deps --dry-run with NO manifest fails like deps does (it exited 0)" "$
 run_in "$FT" "$CY" deps --dry-run
 # 6.7.6: one line per dep with where it would come from — `  fa  (skipped: optional, no active feature)`
 check "deps --dry-run lists the manifest's [deps.NAME] entries, each with its source" 2 "$(grep -c '^  f[ab]  (skipped: optional, no active feature)$' "$T/out" || true)"
+
+echo "axis 18b — --help and -h on EVERY verb main() dispatches: rc 0 and a usage, nothing written:"
+# 6.7.12 (issues/2026-10-12-init-port-sign-efi-reject-help.md): `cyrius --help` promises that
+# `cyrius <command> --help` lists that command's flags, and the three RAW-TAIL verbs — init and
+# port (forwarded to cyrius-init), sign-efi (execve'd into cyrsign-efi) — failed it as an unknown
+# flag (rc 1 / 1 / 2). The verb list is axis 0's, DERIVED from the dispatch, so a new verb is
+# probed without being listed. The general-help spellings (help, --help, -h) print the general
+# help; every other verb's output must START with `Usage:` (stdout and stderr together, as the
+# filing's survey read it). Run from an empty scratch dir whose tree hash must not change.
+cp "$T/cyrsign-efi.real" "$HOME_DIR/bin/cyrsign-efi" && chmod +x "$HOME_DIR/bin/cyrsign-efi"
+HLP="$T/hlp"; mkdir -p "$HLP"; HH0=$(treehash "$HLP")
+nhelp=0
+for v in $VERBS; do
+    for h in --help -h; do
+        nhelp=$((nhelp + 1))
+        RC=0; ( cd "$HLP" && timeout 20 "$CY" "$v" "$h" < /dev/null > "$T/out" 2>&1 ) || RC=$?
+        first=$(head -n 1 "$T/out")
+        case "$v" in
+            help|--help|-h) want="Cyrius Build Tool" ;;
+            *) want="Usage:" ;;
+        esac
+        case "$first" in "$want"*) got="$want" ;; *) got="$first" ;; esac
+        check "cyrius $v $h: rc 0, starts '$want'" "0 $want" "$RC $got"
+    done
+done
+check "every derived verb probed, both spellings (2 x $NVERBS)" "$((2 * NVERBS))" "$nhelp"
+check "  …and nothing was written in the scratch dir" "$HH0" "$(treehash "$HLP")"
+# The helpers called DIRECTLY answer the same way (so `cyrius-init --help` / `cyrsign-efi -h` run
+# from a tarball's bin/ do too), and cyrsign-efi still refuses every other '-' token.
+run_in "$HLP" "$HOME_DIR/bin/cyrius-init" --help
+check "cyrius-init --help: rc 0, the init usage on stdout" "0 1" "$RC $(head -n 1 "$T/out" | grep -c '^Usage: cyrius init')"
+run_in "$HLP" "$HOME_DIR/bin/cyrius-init" --__mode=port -h
+check "cyrius-init --__mode=port -h: rc 0, the port usage on stdout" "0 1" "$RC $(head -n 1 "$T/out" | grep -c '^Usage: cyrius port')"
+run_in "$HLP" "$T/cyrsign-efi.real" -h
+check "cyrsign-efi -h: rc 0, the usage on stdout, nothing on stderr" "0 1 0" "$RC $(head -n 1 "$T/out" | grep -c '^Usage: cyrsign-efi') $(wc -c < "$T/err" | tr -d ' ')"
+run_in "$HLP" "$T/cyrsign-efi.real" --help in.efi
+check "ANTI-VACUOUS: cyrsign-efi --help with an operand is still an unknown option (rc 2)" "2 1" "$RC $(grep -c "unknown option '--help'" "$T/err" || true)"
+rm -f "$HOME_DIR/bin/cyrsign-efi"
 
 echo "axis 19 — the WINDOWS CLI under wine (SKIP when wine is absent — NOT hardware):"
 # Until 6.6.5 every spawn the CLI makes — tools (lint/fmt/doc/vet/deny/api-surface) AND
