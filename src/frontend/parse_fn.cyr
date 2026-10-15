@@ -8778,11 +8778,12 @@ fn _ce_bind_params(S, op, base, n, fi): i64 {
                 store64(e, pn); store64(e + 8, av); store64(e + 16, pk); store64(e + 24, w);
             }
             k = k + 1;
-            # 6.7.7: to its `,` / `)` with `( [ {` balanced, so a default (`b = sq2(1, 2)`) is one
-            # parameter. NOT `_pl_next`: this count must agree with `_ce_nparams` (paren depth only)
-            # at the definition check, and a `<`-aware one refuses an uncalled `const fn f(p:
-            # Pair<i64, i64>, b)` that compiles today.
-            i = _tok_item_end(S, i);
+            # To its `,` / `)` by the parser's own parameter walker, `_pl_next`: the type balanced
+            # with `<..>` (`p: Pair<i64, i64>` is ONE parameter), a default (`b = sq2(1, 2)`, `c =
+            # 1 < 2`) to its depth-0 `,` / `)`. The definition check's count (`_ce_nparams`) and
+            # `_ce_tup_param` walk the same way, so the three agree and the arity is the run
+            # time's. CHANGELOG [6.7.11]
+            i = _pl_next(S, i);
             if (TOKTYP(S, i) == 31) { i = i + 1; }
         } else { i = i + 1; }
     }
@@ -9378,23 +9379,24 @@ fn _ce_tup_param(S, op): i64 {
                 return 1;
             }
         }
-        i = _tok_item_end(S, i);
+        i = _pl_next(S, i);   # 6.7.11: the parser's walker, as `_ce_bind_params`
         if (TOKTYP(S, i) != 31) { return 0; }
         i = i + 1;
     }
     return 0;
 }
+# The number of parameters in the list whose `(` is token `op`, by `_pl_next` — the run-time
+# arity. ⛔ 6.7.11: it counted depth-0 commas with `( )` depth only, so `p: Pair<i64, i64>` was two
+# parameters in a const context: `pick(0, 7)` was refused and `pick(0, 1, 7)` bound a phantom
+# parameter named `i64`, while the run-time call counted two. CHANGELOG [6.7.11]
 fn _ce_nparams(S, op): i64 {
     var i = op + 1;
-    if (TOKTYP(S, i) == 11) { return 0; }
-    var n = 1;
-    var d = 0;
-    while (TOKTYP(S, i) != 12) {
-        var t = TOKTYP(S, i);
-        if (t == 10) { d = d + 1; }
-        if (t == 11) { if (d == 0) { return n; } d = d - 1; }
-        if (t == 31) { if (d == 0) { n = n + 1; } }
-        i = i + 1;
+    var n = 0;
+    while (TOKTYP(S, i) != 11) {
+        if (TOKTYP(S, i) == 12) { return n; }
+        n = n + 1;
+        i = _pl_next(S, i);
+        if (TOKTYP(S, i) == 31) { i = i + 1; }
     }
     return n;
 }

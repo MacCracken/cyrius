@@ -669,6 +669,11 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
 - **Const contexts** call a `const fn` with fills and names as run time does: `const N =
   cf(1);`, `const M = cf(1, c: 9);`, `#assert`, an array size, an enum value, a `case` label, a
   local const. A default defined in terms of itself (`const fn cf(a, b = cf(1))`) is refused.
+  The arity is the run time's too (6.7.11): a parameter typed `p: Pair<i64, i64>` is ONE
+  parameter, so `pick(0, 7)` calls `const fn pick(p: Pair<i64, i64>, b)` and `pick(0, 1, 7)` is
+  refused (`a const fn called with the wrong number of arguments`). Before 6.7.11 a const
+  context split the type at its comma: the two-argument call was refused and the three-argument
+  one bound a phantom parameter named `i64` (user decision (a), 2026-10-13).
 - **Methods and traits.** An inherent `impl T` method may declare defaults (`p.m()`,
   `p.m(k: 5)`, `T_m(&p)`). A trait's methods may not, in a required signature or a default
   body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.

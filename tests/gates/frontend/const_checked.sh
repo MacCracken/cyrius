@@ -31,6 +31,12 @@
 #   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
 #      heavy consts each within its OWN step budget; (6.7.7) an uncalled const fn whose parameter type
 #      holds a comma inside `<..>` builds (the definition check's two parameter counts agree)
+#   G  (6.7.11) a const fn's arity in a const context is the run time's: `_ce_nparams`,
+#      `_ce_bind_params` and `_ce_tup_param` walk the parameter list with the parser's `_pl_next`, so
+#      `p: Pair<i64, i64>` is ONE parameter — the filed repro `pick(0, 7)` runs (it was refused) and
+#      `pick(0, 1, 7)` is refused (it bound a phantom parameter named `i64`; the user's decision (a),
+#      2026-10-13); `*Pair<..>`, the generic parameter last, `Vec<Vec<i64>>` (`>>`), `Pair<i64,
+#      Vec<Vec<i64>>>` (`>>>`), a default holding `<`, the default fill and the named form
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; (6.7.3) `_for_step_assign` without its `_asg_lvalue_refused` check -> L5, L6 BUILD
@@ -38,11 +44,16 @@
 # by the 60 s timeout, RED); `_cst_eval` neither zeroing nor restoring `_ce_steps` (the pre-review
 # shared budget) -> C2 refused as an endless loop; `_ce_name`'s local-variable refusal removed -> I4 refused only as an
 # unknown name. 6.7.7 (run 2026-10-09, on the `_ce_top_expr` factor): `_ce_top_expr` neither zeroing nor
-# restoring `_ce_steps` -> C2 refused; `_cst_eval` without its `;` check -> M2 BUILT; `_ce_bind_params` stepping
-# a parameter with the `<`-aware `_pl_next` -> C3 refused ("a const fn called with the wrong number of arguments").
+# restoring `_ce_steps` -> C2 refused; `_cst_eval` without its `;` check -> M2 BUILT; `_ce_bind_params` alone
+# stepping with the `<`-aware `_pl_next` -> C3 refused (the count disagreed; 6.7.11 moved all three walkers).
 # 6.7.11 (run 2026-10-14): `_cst_ctx_val` without its `_cst_ctx_skip` call -> I5 RED (2 error lines);
 # `_ce_call` without its `_ce_site` call -> V2a-V2g, V2n, V2w, V2w2 RED (built, no warning); `_ce_site`
-# without its `_panic` -> V2b-V2d, V2f, V2g RED (a second, cascade error).
+# without its `_panic` -> V2b-V2d, V2f, V2g RED (a second, cascade error); `_ce_bind_params` back on
+# `_tok_item_end` -> C3, G1, G3-G5b, G6, G7 RED; `_ce_nparams` back on paren-depth commas -> C3, G1, G3-G5b,
+# G6, G7 RED (the definition check counts 3 and binds 2). `_ce_tup_param` back on `_tok_item_end` stays
+# GREEN: a type argument is a name, so the old walk re-synced on the split's name and reached every
+# tuple parameter anyway — the walker moved with the other two so the three cannot drift apart.
+# `_pl_tdepth` without its `>>` / `>>>` closes -> G5, G5b RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -150,11 +161,21 @@ w=$(grep -c "' is deprecated: old" "$T/v2w2.err"); u=$(grep "' is deprecated: ol
 [ "$w" -eq 7 ] && [ "$u" -eq 0 ] && ok "V2w2: ... seven warnings, one per call site" || bad "V2w2: $w deprecation warnings ($u repeated), want 7 distinct"
 # C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
 exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
-# C3 (6.7.7) — the definition check's two parameter counts agree: `_ce_bind_params` walks a parameter
-# with `( [ {` balance only, as `_ce_nparams` counts, so an uncalled const fn whose parameter type
-# holds a comma inside `<..>` still builds (a `<`-aware walk refused it: 3 counted against 2)
+# C3 (6.7.7) — the definition check's two parameter counts agree, so an uncalled const fn whose
+# parameter type holds a comma inside `<..>` builds (6.7.11: both walk with `_pl_next`; one alone
+# refused it, 3 counted against 2)
 exits c3 3 "C3: an uncalled const fn with a Pair<i64, i64> parameter" 'struct Pair<A, B> { a: A; b: B; }\nconst fn pick(p: Pair<i64, i64>, b) { return b; }\nsyscall(60, 3);\n'
+# G (6.7.11) — a const fn's arity in a const context is the run time's (`_pl_next`)
+PR='struct Pair<A, B> { a: A; b: B; }\n'
+exits g1 7 "G1: the filed repro, pick(0, 7) with p: Pair<i64, i64>" "${PR}const fn pick(p: Pair<i64, i64>, b) { return b; }\nconst N = pick(0, 7);\nsyscall(60, N);\n"
+refused g2 "a const fn called with the wrong number of arguments" "G2: pick(0, 1, 7) — one argument too many, as at run time" "${PR}const fn pick(p: Pair<i64, i64>, b) { return b; }\nconst N = pick(0, 1, 7);\nsyscall(60, N);\n"
+exits g3 7 "G3: a p: *Pair<i64, i64> parameter" "${PR}const fn pick(p: *Pair<i64, i64>, b) { return b; }\nconst N = pick(0, 7);\nsyscall(60, N);\n"
+exits g4 7 "G4: the generic parameter in last place" "${PR}const fn pick(b, p: Pair<i64, i64>) { return b; }\nconst N = pick(7, 0);\nsyscall(60, N);\n"
+exits g5 7 "G5: a Vec<Vec<i64>> parameter (the \`>>\` close)" 'include "lib/vec.cyr"\nconst fn pick(v: Vec<Vec<i64>>, b) { return b; }\nconst N = pick(0, 7);\nsyscall(60, N);\n'
+exits g5b 7 "G5b: a Pair<i64, Vec<Vec<i64>>> parameter (the \`>>>\` close)" "${PR}include \"lib/vec.cyr\"\nconst fn pick(p: Pair<i64, Vec<Vec<i64>>>, b) { return b; }\nconst N = pick(0, 7);\nsyscall(60, N);\n"
+exits g6 47 "G6: a default holding \`<\` (c = 1 < 2) is one parameter" "${PR}const fn pick(p: Pair<i64, i64>, c = 1 < 2, b = 5) { return c * 10 + b; }\nconst N = pick(0);\nconst M = pick(0, 0, 2);\nsyscall(60, N * 3 + M);\n"
+exits g7 49 "G7: the default fill and the named form after a Pair<i64, i64> parameter" "${PR}const fn pick(p: Pair<i64, i64>, b = 4) { return b; }\nconst N = pick(0);\nconst M = pick(b: 9, p: 0);\nsyscall(60, N * 10 + M);\n"
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), and well-formed consts run (C)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), and well-formed consts run (C)"
