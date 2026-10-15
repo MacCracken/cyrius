@@ -3355,9 +3355,11 @@ a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)`
 value-form `v: f32v8` parameter is a separate matter). A vector **local** passed to a pointer of
 another kind — `p: *Pt`, `p: *i64`, `p: *u8`, `p: **T` — is refused by name: `cannot pass 'b' to a
 parameter that is not a pointer to its vector type in a call to 'rp' - pass &b for its address`
-(as a struct of another type is). ⚠ Through 6.7.11 every one of these passed lane 0's bits as the
+(as a struct of another type is). ⚠ Through 6.7.11 each of these passed lane 0's bits as the
 address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win64; x86_64 refused
-the `*V` call result and dereference through 6.7.10 by the value-form path's text).
+the `*V` call result and dereference through 6.7.10 by the value-form path's text) — except on
+Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops compiling there too
+(pass `&b`).
 
 ### Packed-op builtins
 

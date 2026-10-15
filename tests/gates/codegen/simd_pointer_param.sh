@@ -33,8 +33,9 @@
 # name"): a vector VALUE that is not a named local into a `*V` parameter passes an address — a call result
 # through a frame temp (`_sarg_vec_call`), `*pv` as pv (`_dlo_vec`, the step word's vector) — and a vector
 # local into a pointer of another kind is refused by name; `*f32v8` is a `*V` (`_ptr_vclass`). They passed
-# lane 0's bits as the address (139 / 139 / a cx fault / PE 5); x86_64 refused the `*V` shapes through 6.7.10
-# (an x86_64 regression in 6.7.11). Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-
+# lane 0's bits as the address (139 / 139 / a cx fault / PE 5; on PE `rp(b)` into `*Pt` alone passed `&b` by
+# accident and ran — it is refused now too); x86_64 refused the `*V` shapes through 6.7.10 (an x86_64 regression
+# in 6.7.11). Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-
 # parameter-passes-lane-bits.md
 #   R4 the filed repro 1 verbatim (`rd(mkv(42, 7))` + `rd(*pb)`): exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   R5 the filed repro 2 verbatim: `rp(b)` and `ri(b)` refused by name, once each (two lines, no binary), on
