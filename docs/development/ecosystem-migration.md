@@ -68,6 +68,26 @@ does or builds; never a per-repo worklist.*
   next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
   unchanged.
 
+#### The cx target
+
+**cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**
+- `cycc_cx` holds 4 MiB of bytecode (it stopped at 512 KiB with a bare `error: codebuf overflow`); past it, it refuses
+  by name: `error: cx bytecode exceeds the cx code region (4194304 B): <n> B emitted when fn '<name>' (its code starts
+  at byte <off>) reached it — build this program for a native target`. cxvm's guest memory is 8 MiB (it was 1 MB) and
+  it reads a `.cyx` up to that plus its 8-byte header (`error: .cyx exceeds cxvm's guest memory (8388608 B of code and
+  data)` past it); a `.cyx` an older cycc_cx wrote runs unchanged. Guest addresses from 1 MB to 8 MiB are now ordinary
+  memory (they trapped as "guest address out of range"), and the guest stack starts at 8 MiB, so recursion runs about
+  eight times deeper before "guest stack overflow" (the VM stacks hold 524288 entries, so a runaway recursion still
+  meets the guest-stack trap first). `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` stay refused by name;
+  the message no longer cites a 512 KiB `.cyx`.
+
+**cx: honest refusals from four wrappers (D13, the user 2026-10-15)**
+- On cx, `cyr_mmap` returns -1, so `mmap_anon` returns 0 — it returned a HOST address the guest could not use (a
+  non-zero pointer; the first access trapped). `sys_pipe` (its buffer left as it was), `sys_fstat` and `sys_unlink`
+  return -38 (-ENOSYS) where they returned -14 (-EFAULT); `sys_unlink` never removed the file on cx and still does
+  not. A cx program that tested `< 0` or `== 0` sees the same branch; one that compared against -14 must read -38.
+  Native targets are unchanged (the arms are `CYRIUS_TARGET_CX` only).
+
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).
