@@ -4272,6 +4272,15 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > hands them to `cycc_cx` for `x.cyr`, and `soak`'s test suite and `.scyr` harnesses compile
 > with them). Pinned by `tests/gates/toolchain/cbt_self_builds_scrub_env.sh`.
 
+> ⚠ **`fmt`: a continuation line is canonical at 2, accepted at 4** (the 2026-08-18 contract).
+> Inside an open `(`, a wrapped line's indent is 2 spaces per open paren level beyond the
+> statement's. `cyrius fmt <file>` (and `cyrfmt <file>`, `--write`) always writes the canonical
+> 2, so it rewrites an accepted 4 as 2; `cyrius fmt --check` passes 2 or 4 and rejects anything
+> deeper, naming the first differing line. Since 6.7.12 `cyrius audit`'s fmt stage asks
+> `cyrfmt --check` (D26), so it agrees with it: it used to compare the file with cyrfmt's
+> canonical output and so flagged the 4-step file `--check` passed. Pinned by
+> `tests/gates/toolchain/fmt_continuation_contract.sh` axis 5.
+
 > ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
 > fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own
 > file's `syscall(60, main())` (or the epilogue's auto-call), never by a test — so it could never

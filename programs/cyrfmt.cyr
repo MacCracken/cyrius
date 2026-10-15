@@ -1,8 +1,11 @@
 # cyrfmt — Cyrius code formatter
 # Reads source file, writes formatted output.
 # Rules: 4-space indent, trim trailing whitespace, consistent brace depth.
-# Usage: cyrfmt <file.cyr>                 (format to stdout)
+# Usage: cyrfmt <file.cyr>                 (format to stdout, in the canonical form)
 #        cyrfmt --check <file.cyr>         (exit 0 if formatted, 1 if not)
+# A continuation line's indent is 2 spaces per open paren level in the canonical form; --check
+# accepts 2 or 4, and formatting rewrites an accepted 4 as 2. `cyrius audit` asks --check, so it
+# agrees with it (6.7.12, D26).
 #        cyrfmt --write <file.cyr>         (format in-place — v5.5.22)
 #        cyrfmt -w <file.cyr>              (short form of --write)
 #
@@ -440,9 +443,9 @@ fn _fmt_one(path): i64 {
 
 fn _fmt_usage(): i64 {
     println("Usage: cyrfmt [--check | --write | -w] <file.cyr>...");
-    println("  (no mode)   format to stdout");
-    println("  --check     exit 1 if not canonically formatted, and say where");
-    println("  --write     rewrite in place (or -w)");
+    println("  (no mode)   format to stdout, canonically: 2 spaces of continuation indent per open paren");
+    println("  --check     exit 1 if not formatted, and say where (accepts a continuation step of 2 or 4)");
+    println("  --write     rewrite in place, canonically (or -w): an accepted 4 becomes 2");
     return 1;
 }
 
