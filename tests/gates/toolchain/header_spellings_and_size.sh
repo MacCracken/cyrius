@@ -53,6 +53,14 @@
 # links against the repro (`object;`) through the header, and the callee leaves the result
 # pointer in rax; H11b a two-value return and a 17 B struct (the callee writes 3 whole words)
 # read by a linked C caller. No cc: H7's guard rows, H10 and H11 SKIP by name (exit 77).
+# 6.7.12 — EVERY LEG THAT DOES NOT RUN IS NAMED AND COUNTED (issues/2026-10-14-header-gate-skips-guard-
+# and-c-caller-rows-silently.md). H8's guard rows and H11 / H11b need cc on x86_64; on a host with cc
+# that is not x86_64 (aarch64 Linux, arm64 macOS) both were skipped with no line and the gate read
+# PASS, and the no-clang line was named but never counted. Each now SKIPs by name and counts, so
+# the gate exits 77 whenever a leg did not run. Rows (a fake `uname -m` printing aarch64 first on
+# PATH, cc present; and a PATH without clang), under sh and bash -eo pipefail: the gate exits 77
+# naming H8's guard rows and H11 (no clang: naming H8's clang guard rows and H10's cross-target
+# rows). Mutation: the 6.7.11 gate under the same fake uname exits 0 with PASS, 6 rows unrun.
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
 #   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
@@ -75,6 +83,12 @@ D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: header_spellings_and_size: mktemp
 trap 'rm -rf "$D"' EXIT
 fails=0
 skips=0
+# H8's guard rows and H11 / H11b need cc on x86_64 (the one host whose cc runs SysV x86_64 and
+# whose cycc emits a linkable `object;`); off it, each SKIPs by name, with the reason. CHANGELOG [6.7.12]
+CCX86=0
+if ! command -v cc > /dev/null 2>&1; then CCX86_WHY="no C compiler (cc) on this host"
+elif [ "$(uname -m)" != x86_64 ]; then CCX86_WHY="needs cc on x86_64; this host is $(uname -m)"
+else CCX86=1; CCX86_WHY=""; fi
 
 check() {
     if [ "$2" = "$3" ]; then echo "  ok: $1 ($3)"
@@ -89,7 +103,7 @@ cd "$D" || exit 2
 # ── H1: every spelling the compiler accepts; not `_` names, not a comment, not a string.
 echo "H1 — every public declaration spelling gets a prototype:"
 printf 'pub fn h_pub(a, b: i64): i64 { return a; }\npublic fn h_public(): i64 { return 1; }\nfn h_bare(x): i64 { return x; }\nfn\th_tab(): i64 { return 1; }\npub  fn h_twosp(): i64 { return 1; }\n    fn h_indent(): i64 { return 1; }\n#inline fn h_attr(): i64 { return 1; }\n#deprecated("use (x)") pub fn h_dep(q): i64 { return q; }\n#deprecated ("old") fn h_depsp(x): i64 { return x; }\nasync fn h_async(x) { return x; }\npub #inline fn h_pubattr(): i64 { return 1; }\npublic #inline fn h_publicattr(): i64 { return 1; }\nfn main(): i64 { return 0; }\nfn _h_private(): i64 { return 1; }\n# fn h_comment(): i64 { return 1; }\nvar s = "\nfn h_string(): i64 {\n";\n' > s.cyr
-"$CY" header s.cyr > o1 2>&1; rc1=$?
+rc1=0; "$CY" header s.cyr > o1 2>&1 || rc1=$?
 check "exit 0" 0 "$rc1"
 check "pub fn, with params" 1 "$(has o1 'cyr_val h_pub(cyr_val a, cyr_val b);')"
 check "public fn" 1 "$(has o1 'cyr_val h_public(void);')"
@@ -128,14 +142,14 @@ echo "H3 — a >64 KiB file is read whole:"
   awk 'BEGIN{for(j=0;j<1300;j++) print "# filler line to push the next fn past the old 64 KiB header read ......"}'
   echo 'pub fn late(z): i64 { return z; }'; } > big.cyr
 check "file exceeds the old 64 KiB cap" 1 "$([ "$(wc -c < big.cyr)" -gt 65536 ] && echo 1 || echo 0)"
-"$CY" header big.cyr > o3 2>&1; rc3=$?
+rc3=0; "$CY" header big.cyr > o3 2>&1 || rc3=$?
 check "exit 0" 0 "$rc3"
 check "the fn before the cut" 1 "$(has o3 'cyr_val early(void);')"
 check "the fn AFTER the cut" 1 "$(has o3 'cyr_val late(cyr_val z);')"
 
 # ── H4: an unreadable file is an error, not an empty header.
 echo "H4 — a missing file fails:"
-"$CY" header no_such_file.cyr > o4 2>&1; rc4=$?
+rc4=0; "$CY" header no_such_file.cyr > o4 2>&1 || rc4=$?
 check "exit non-zero" 1 "$([ "$rc4" -ne 0 ] && echo 1 || echo 0)"
 check "and says so" 1 "$(grep -c 'cannot read' o4 || true)"
 
@@ -149,7 +163,7 @@ mkdir -p "$D/home/bin" && ln -s "$ROOT/build/cycc" "$D/home/bin/cycc"
   awk 'BEGIN{for(j=0;j<1300;j++) print "# filler line to push the next example past the old 64 KiB doctest read"}'
   printf 'fn dt_z(): i64 { return 1; }\n# >>> syscall(60, 4);\n# === 5\nfn dt_b(): i64 { return 1; }\n'; } > dt.cyr
 check "file exceeds the old 64 KiB cap" 1 "$([ "$(wc -c < dt.cyr)" -gt 65536 ] && echo 1 || echo 0)"
-CYRIUS_HOME="$D/home" "$CY" doctest dt.cyr > o5 2>&1; rc5=$?
+rc5=0; CYRIUS_HOME="$D/home" "$CY" doctest dt.cyr > o5 2>&1 || rc5=$?
 check "both examples are run (2 total)" 1 "$(grep -c '^1 passed, 1 failed (2 total doc tests)' o5 || true)"
 check "the failing example past the cut fails the run" 1 "$([ "$rc5" -ne 0 ] && echo 1 || echo 0)"
 check "and is named by its line" 1 "$(grep -c 'FAIL: dt.cyr:1306 (expected 5, got 4)' o5 || true)"
@@ -252,7 +266,7 @@ check "... under the x86_64 SysV guard (aarch64 lands it in x0:x2)" 1 "$(grep -B
 check "... and a named comment in its other arm" 1 "$(grep -cF '/* rt: no prototype here -- cycc returns its (i64, f64) in x0:x2 on aarch64 (AAPCS64 C reads x0:x1), in rax:rdx on Win64' o8b || true)"
 # The guards as each target's preprocessor reads them: the pair (rb16) everywhere but Win64, the
 # two values (rt) on x86_64 SysV alone. cc is the host (x86_64 here); clang names the others.
-if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+if [ "$CCX86" = 1 ]; then
     p8() { "$@" -E -P -x c o8b 2> /dev/null | grep -oE ' (rb16|rt)\(' | tr -d ' (' | sort | paste -sd' ' -; }
     check "x86_64 SysV (cc): rb16 and rt" "rb16 rt" "$(p8 cc)"
     if command -v clang > /dev/null 2>&1; then
@@ -260,6 +274,8 @@ if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
         check "aarch64 macOS (clang): rb16 alone" "rb16" "$(p8 clang --target=aarch64-apple-darwin -ffreestanding)"
         check "Win64 (clang): neither" "" "$(p8 clang --target=x86_64-w64-windows-gnu -ffreestanding)"
     fi
+else
+    echo "  SKIP (named): H8's guard rows — $CCX86_WHY"; skips=$((skips + 1))
 fi
 check "a struct declared after the fn is sized (the whole file is read)" 1 "$(has o8b 'cyr_val4 rfw(void);   /* returns FW, 32 B */')"
 check "a return annotation on the line after the list's ')'" 1 "$(has o8b 'cyr_val2 ml(cyr_val a);   /* returns B16, 16 B */')"
@@ -320,7 +336,7 @@ if command -v clang > /dev/null 2>&1; then
         check "o7 + o8b: clang --target=$tg" 0 "$(clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o7 > /dev/null 2>&1 && clang --target=$tg -ffreestanding -std=c11 -pedantic-errors -fsyntax-only -x c o8b > /dev/null 2>&1; echo $?)"
     done
 else
-    echo "  SKIP (named): H10's cross-target rows — no clang on this host"
+    echo "  SKIP (named): H8's clang guard rows and H10's cross-target rows — no clang on this host"; skips=$((skips + 1))
 fi
 
 # ── H11: a real C caller, through the header, on x86_64 Linux (the one target whose cycc emits a
@@ -328,7 +344,7 @@ fi
 # through the generated header, and an asm probe checks the SysV rule the by-value large return
 # rests on: the callee leaves the result pointer in rax.
 echo "H11 — a C caller links against the repro and reads every value:"
-if command -v cc > /dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
+if [ "$CCX86" = 1 ]; then
     cp o7 ffi.h
     { echo 'object;'; cat "$REPRO"; } > lib.cyr
     (cd "$ROOT" && "$ROOT/build/cycc" < "$D/lib.cyr" > "$D/lib.o" 2> /dev/null) || :
@@ -405,6 +421,8 @@ CEOF
     else
         check "H11b: the C caller compiles and links against lib2's object" 0 1; sed 's/^/    /' cc11b.err | head -5
     fi
+elif command -v cc > /dev/null 2>&1; then   # no cc at all: H11 is named in H10's SKIP line above
+    echo "  SKIP (named): H11 / H11b — $CCX86_WHY"; skips=$((skips + 1))
 fi
 cd "$ROOT" || exit 2
 echo ""
