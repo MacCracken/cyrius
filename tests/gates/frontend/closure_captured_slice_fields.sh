@@ -287,8 +287,10 @@ fi
 WP="$WORK/wine"
 _wine_down() {
     [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
     WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
     WINEPREFIX="$WP" wineserver -w > /dev/null 2>&1 || true
+    rm -rf "$_ws" || true
 }
 trap '_wine_down; rm -rf "$WORK"' EXIT
 if command -v wine > /dev/null 2>&1; then
