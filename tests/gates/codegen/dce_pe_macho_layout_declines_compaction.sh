@@ -72,11 +72,25 @@ SRC="$WORK/all.cyr"
 # are refused, as any user fn of that name is.
 for m in "$WORK"/lib/*.cyr; do echo "include \"lib/$(basename "$m")\"" >> "$SRC"; done
 cat "$WORK/src/main.cyr" >> "$SRC"
+# The ELF axis (3) gets the same set WITHOUT the macOS / Windows peers: no Linux build reaches them
+# (lib/syscalls.cyr includes ONE peer per target), and pasted beside the Linux peer they collide —
+# since 6.7.12 `const EPOLL_EVENT_SIZE` is declared in syscalls_x86_64_linux.cyr AND
+# syscalls_macos.cyr, and a const declared twice is an error ("const 'EPOLL_EVENT_SIZE' is declared
+# twice"), where the peers' same-name vars only warned. CHANGELOG [6.7.12]
+SRC_ELF="$WORK/all_elf.cyr"
+: > "$SRC_ELF"
+for m in "$WORK"/lib/*.cyr; do
+    case "$(basename "$m")" in *_win.cyr|*_windows.cyr|*_macos.cyr) continue ;; esac
+    echo "include \"lib/$(basename "$m")\"" >> "$SRC_ELF"
+done
+cat "$WORK/src/main.cyr" >> "$SRC_ELF"
 
-build() {  # build <outfile> <env-assignments...>
+build() {  # build <outfile> <env-assignments...>   (compiles $SRC)
     out="$1"; shift
     if ! (cd "$WORK" && env "$@" "$CYCC" < "$SRC" > "$out" 2>"$WORK/err.txt"); then
-        fail "compile failed for $out: $(tail -1 "$WORK/err.txt")"
+        # The first error, not the last line: a compile that reports an error still prints the
+        # unreachable-fns note last, which hid the cause. CHANGELOG [6.7.12]
+        fail "compile failed for $out: $(grep -m1 '^error' "$WORK/err.txt" || tail -1 "$WORK/err.txt")"
     fi
     [ -s "$out" ] || fail "compile produced an empty $out"
 }
@@ -108,6 +122,7 @@ if [ "$MA" != "$MB" ]; then
 fi
 
 # ---- axis 3: ANTI-VACUOUS — ELF must still really eliminate --------------------------------
+SRC="$SRC_ELF"
 build "$WORK/elf_off" CYRIUS_DCE_UNSET=1
 build "$WORK/elf_dce" CYRIUS_DCE=1
 EA=$(wc -c < "$WORK/elf_off" | tr -d ' ')

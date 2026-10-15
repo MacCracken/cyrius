@@ -63,6 +63,9 @@ does or builds; never a per-repo worklist.*
   `epoll_event_data(ev)`. ⚠ A program that declares its own `EPOLL_EVENT_SIZE` after including `lib/syscalls.cyr`
   now stops compiling ("'EPOLL_EVENT_SIZE' is already declared as a top-level const") — drop the copy; one that
   defines its own `epoll_event_data` / `epoll_event_events` gets the duplicate-fn warning (its own, the last, wins).
+  ⚠ A build that includes a second syscall peer beside the one `lib/syscalls.cyr` picks (`lib/syscalls_macos.cyr`
+  in a Linux build, say) stops compiling too ("const 'EPOLL_EVENT_SIZE' is declared twice"; the peers' same-name vars
+  only warned) — include `lib/syscalls.cyr` alone, which selects one peer per target.
 - `lib/async.cyr`'s epoll reactor reads each event at the peer's stride. It read every arch at 16, so on x86_64 the
   2nd..8th event of one wait were read off by 4, 8, … bytes — a stale or garbage fd (the real one re-reported by the
   next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
