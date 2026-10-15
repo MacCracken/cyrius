@@ -1232,8 +1232,9 @@ fn cmd_check(source, with_deps): i64 {
     str_builder_add_int(ck_sb, ck_pid);
     var ck_out = str_data(str_builder_build(ck_sb));
     var pre_err = _err_count;
+    _cbt_scratch_track(ck_out);   # 6.7.12: compile() renames onto it; the kill handler unlinks it
     var r = compile(actual, ck_out);
-    sys_unlink(ck_out);
+    _cbt_scratch_drop(ck_out);
     _skip_deps = 0;
     if (r == 0) {
         sys_write(STDOUT_FD, "ok: ", 4);
@@ -2815,7 +2816,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     var cap_rc = 0;
     #ifdef CYRIUS_TARGET_WIN
     cap_rc = _win_capacity_spawn(cc, cap_source, tmperr);
-    if (cap_source != source) { xunlink(cap_source); }
+    if (cap_source != source) { xunlink(cap_source); _cbt_scratch_untrack(cap_source); }
     if (cap_rc < 0) { return 1; }
     #endif
     #ifndef CYRIUS_TARGET_WIN
@@ -2823,7 +2824,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     if (pid < 0) {
         # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
         _cbt_fork_failed("the compiler for capacity stats", pid);
-        if (cap_source != source) { sys_unlink(cap_source); }
+        if (cap_source != source) { _cbt_scratch_drop(cap_source); }
         return 1;
     }
     if (pid == 0) {
@@ -2860,7 +2861,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
     # the preprocessed temp was never removed. Same "we made it" test (the fn returns
     # `source` itself when no prepend was needed).
-    if (cap_source != source) { sys_unlink(cap_source); }
+    if (cap_source != source) { _cbt_scratch_drop(cap_source); }
     cap_rc = 1;
     if (cap_status >= 0 && WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
     #endif
@@ -4020,10 +4021,16 @@ fn _distlib_target_spawn(entry, t, vout, verr): i64 {
         _cc_stderr_to = verr;
         _cc_override = _distlib_tgt_cc(t);
         _cc_target_env = _distlib_tgt_env(t);
+        # 6.7.12: this child's own scratch for the kill handler (its first registration takes the
+        # tables over from the parent's copy); compile() registers its own temps. CHANGELOG [6.7.12]
+        _cbt_scratch_track(vout);
         var crc = compile(entry, vout);
-        sys_unlink(vout);
+        _cbt_scratch_drop(vout);
         sys_exit(crc & 255);
     }
+    # 6.7.12: a forked copy of this CLI — the kill handler forwards the signal, and the child's own
+    # handler stops its compiler and unlinks its scratch.
+    if (pid > 0) { _cbt_child_track(pid, 1); }
     if (pid < 0) {   # 6.6.20 — named here; _distlib_target_collect refuses it
         var fsb = str_builder_new();
         str_builder_add_cstr(fsb, "the sidecar verify's compile for ");
@@ -4042,6 +4049,7 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
     # "does not compile, and no symbol is missing" (or, for agnos, a not-required warning).
     if (pid < 0) {
         xunlink(verr);
+        _cbt_scratch_untrack(verr);
         if (quiet == 1) { return 0 - 1; }
         var nsb = str_builder_new();
         str_builder_add_cstr(nsb, "distlib: sidecar verify: the compile for ");
@@ -4057,10 +4065,12 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
             var sv = load32(&st);
             if (WIFEXITED(sv) == 1) { crc = WEXITSTATUS(sv); }
         }
+        _cbt_child_untrack(pid);
     }
     var elen = 0;
     var ebuf = file_read_whole(verr, &elen);
     xunlink(verr);
+    _cbt_scratch_untrack(verr);
     var got = vec_new();
     if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, got); }
     if (vec_len(got) == 0 && crc != 0 && t == _DL_TGT_AGNOS && quiet == 0) {
@@ -4108,6 +4118,7 @@ fn _distlib_verify_targets(entry, out_path, names, masks): i64 {
         str_builder_add_int(esb, t);
         var verr = _cbt_tmpfile(str_data(str_builder_build(esb)));
         sys_unlink(verr);
+        _cbt_scratch_track(verr);   # 6.7.12: the child's compiler creates it; collect drops it
         vec_push(errs, verr);
         vec_push(pids, _distlib_target_spawn(entry, t, _cbt_tmpfile(str_data(str_builder_build(tsb))), verr));
         t = t + 1;

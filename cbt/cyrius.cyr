@@ -82,6 +82,8 @@ include "cbt/core.cyr"
 include "cbt/cli_args.cyr"
 # 6.6.17: the manifest reader — before build (compile() reads its resolved configuration).
 include "cbt/manifest.cyr"
+# 6.7.12: the kill handler and its scratch tables — before build (compile() registers its temps).
+include "cbt/sigclean.cyr"
 include "cbt/build.cyr"
 include "cbt/commands.cyr"
 include "cbt/project.cyr"
@@ -562,6 +564,7 @@ fn main(): i64 {
     args_init();
     load_environ();
     _cbt_children_waitable();   # 6.6.20 — an inherited SIGCHLD ignore made no child waitable
+    _cbt_sig_install();         # 6.7.12 — a SIGTERM / SIGINT / SIGHUP mid-compile leaves no scratch
     find_tools();
     # 6.7.6: the compiler's lib/ overlay is this CLI's to set (local mode, cbt/deps.cyr) — one
     # inherited from a shell never reaches a compile.

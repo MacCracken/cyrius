@@ -1,0 +1,246 @@
+# cbt/sigclean.cyr — a kill mid-compile leaves nothing behind (6.7.12)
+#
+# A compile's scratch — `cpp_<pid>` (_materialize_source), `cc_err` (_cc_own_err_begin), the
+# child's `<out>.tmp.<pid>`, a check's own output, a distlib verify's `dlverifyerr<t>` /
+# `dlverifyout<t>` — lives exactly as long as the compile, and every FAILURE path unlinks it. A
+# CLI KILLED while the compiler ran skipped every unlink, so the names stayed until check.sh's
+# reaper found the dead pid's directory. SIGTERM / SIGINT / SIGHUP now run a handler that stops
+# the running children, unlinks the in-flight names, removes the (then empty) private directory
+# and exits 128+N. SIGKILL cannot be caught: that leftover stays the reaper's.
+#
+# Async-signal-safe by construction: the handler reads fixed tables and makes raw syscalls
+# through the plain wrappers — no alloc, str_builder or vec. A name is registered BEFORE its file
+# can exist and dropped AFTER it is unlinked, and each slot is one word, so a signal sees a slot
+# either set or clear. The names are arena strings, which cbt never frees or moves.
+#
+# The tables belong to the process that wrote them (`_cbt_sig_owner`). A forked child (the distlib
+# verify's per-target compile) inherits the parent's copy, and its handler must neither signal
+# its siblings nor unlink the parent's names, so its first registration clears the copy and
+# takes it over; until then its handler leaves the tables alone. The private directory likewise
+# goes only from the process that created it (`_cbt_sig_dir_owner`).
+#
+# Self-contained (lib/ only), so tests/tcyr/crossos/cli_kill_handler.tcyr runs this file on every
+# host the release gate reaches. CHANGELOG [6.7.12]
+
+var _cbt_sig_names[32];      # in-flight scratch names (cstr pointers; 0 = a free slot)
+var _cbt_sig_pids[16];       # running children (0 = a free slot)
+var _cbt_sig_fwd[16];        # per child: 1 = a forked copy of this CLI, 0 = an exec'd tool
+var _cbt_sig_owner = 0;      # the pid whose entries the tables hold
+var _cbt_sig_dir = 0;        # the private temp dir (`_cbt_tmpdir`), 0 when there is none
+var _cbt_sig_dir_owner = 0;  # the pid that created it
+
+# Make the tables this process's own (see above).
+fn _cbt_sig_claim(): i64 {
+    var me = sys_getpid();
+    if (_cbt_sig_owner == me) { return 0; }
+    var i = 0;
+    while (i < 32) { store64(&_cbt_sig_names + i * 8, 0); i = i + 1; }
+    i = 0;
+    while (i < 16) { store64(&_cbt_sig_pids + i * 8, 0); i = i + 1; }
+    _cbt_sig_owner = me;
+    return 0;
+}
+
+# The private directory the handler removes: `_cbt_tmpdir` sets it once created, and
+# `_cbt_tmpdir_cleanup` clears it once removed (0).
+fn _cbt_sig_dir_set(d): i64 {
+    if (d != 0) { _cbt_sig_dir_owner = sys_getpid(); }
+    _cbt_sig_dir = d;
+    return 0;
+}
+
+# Register scratch name `p` (a cstr that stays valid) for the kill handler. Call it BEFORE the file
+# can exist. A full table leaves `p` untracked: a kill then leaves it to the reaper, as before.
+fn _cbt_scratch_track(p): i64 {
+    if (p == 0) { return 0; }
+    _cbt_sig_claim();
+    var i = 0;
+    while (i < 32) {
+        if (load64(&_cbt_sig_names + i * 8) == 0) {
+            store64(&_cbt_sig_names + i * 8, p);
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Forget scratch name `p` (the same pointer that was tracked); the file is gone or renamed.
+fn _cbt_scratch_untrack(p): i64 {
+    var i = 0;
+    while (i < 32) {
+        if (load64(&_cbt_sig_names + i * 8) == p) { store64(&_cbt_sig_names + i * 8, 0); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Unlink scratch name `p`, then forget it (in that order: a signal between the two unlinks again).
+fn _cbt_scratch_drop(p): i64 {
+    var r = sys_unlink(p);
+    _cbt_scratch_untrack(p);
+    return r;
+}
+
+# Register running child `pid` straight after the fork. `fwd` 1: a forked copy of this CLI — it is
+# sent the signal itself, and its own handler stops its children and unlinks its own scratch;
+# 0: an exec'd tool (the compiler) — SIGKILLed, it has nothing to clean up.
+fn _cbt_child_track(pid, fwd): i64 {
+    if (pid <= 0) { return 0; }
+    _cbt_sig_claim();
+    var i = 0;
+    while (i < 16) {
+        if (load64(&_cbt_sig_pids + i * 8) == 0) {
+            store64(&_cbt_sig_fwd + i * 8, fwd);
+            store64(&_cbt_sig_pids + i * 8, pid);
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Forget child `pid` once it has been reaped.
+fn _cbt_child_untrack(pid): i64 {
+    var i = 0;
+    while (i < 16) {
+        if (load64(&_cbt_sig_pids + i * 8) == pid) { store64(&_cbt_sig_pids + i * 8, 0); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Stop child `c` and reap it — only while it is still this process's unreaped child (a WNOHANG wait
+# answers 0), so a pid the main path has already reaped, which the system may have reused, is
+# never signalled.
+fn _cbt_sig_stop(c, fwd, n): i64 {
+    var st[8];
+    store64(&st, 0);
+    if (sys_waitpid(c, &st, 1) != 0) { return 0; }   # WNOHANG (1 on Linux and Darwin)
+    if (fwd == 1) { sys_kill(c, n); } else { sys_kill(c, 9); }
+    var w = sys_waitpid(c, &st, 0);
+    while (w == 0 - 4) { w = sys_waitpid(c, &st, 0); }
+    return 0;
+}
+
+# The handler's exit: the private directory goes when this process created it and it is empty
+# (rmdir, never a sweep — anything still in it was not compile scratch: a `cyrius test` binary
+# kept for a post-mortem), then 128+N.
+fn _cbt_sig_exit(code, me): i64 {
+    if (_cbt_sig_dir != 0 && _cbt_sig_dir_owner == me) { xrmdir(_cbt_sig_dir); }
+    sys_exit(code);
+    return code;
+}
+
+# What every handler does for signal `n`: children first (one still running could create a name
+# after it was unlinked), then the names, then the directory, then exit 128+N.
+fn _cbt_sig_fire(n): i64 {
+    var me = sys_getpid();
+    if (_cbt_sig_owner == me) {
+        var i = 0;
+        while (i < 16) {
+            var c = load64(&_cbt_sig_pids + i * 8);
+            if (c > 0) { _cbt_sig_stop(c, load64(&_cbt_sig_fwd + i * 8), n); }
+            i = i + 1;
+        }
+        i = 0;
+        while (i < 32) {
+            var p = load64(&_cbt_sig_names + i * 8);
+            if (p != 0) { sys_unlink(p); }
+            i = i + 1;
+        }
+    }
+    _cbt_sig_exit(128 + n, me);
+    return 0;
+}
+
+# One handler per signal, so none reads the signal number from an argument register: the
+# kernel enters a Linux handler as handler(sig, info, uctx) but a Darwin one through its
+# trampoline slot as tramp(catcher, style, sig, info, uctx). SIGHUP / SIGINT / SIGTERM are 1 / 2
+# / 15 on Linux and Darwin alike. Each ends in exit and never returns.
+fn _cbt_sig_hup(): i64 { return _cbt_sig_fire(1); }
+fn _cbt_sig_int(): i64 { return _cbt_sig_fire(2); }
+fn _cbt_sig_term(): i64 { return _cbt_sig_fire(15); }
+
+# x86_64 Linux refuses to deliver a caught signal without SA_RESTORER (the frame's return address
+# must be given). The handlers above exit and never return into it, so this is never run.
+fn _cbt_sig_restorer(): i64 { return _cbt_sig_fire(0); }
+
+# Catch signal `sig` with `fnp` — unless it was IGNORED when the CLI started (nohup; a background
+# job of a non-interactive shell ignores SIGINT): an inherited ignore is the invoker's choice and
+# stays. HUP, INT and TERM are blocked while a handler runs (sa_mask bits sig-1, the same
+# numbering on Linux and Darwin), so a second signal waits for the exit. Answers 0 when the
+# handler is installed or the signal was left ignored, else the sigaction error.
+fn _cbt_sig_on(sig, fnp): i64 {
+    var act[32];
+    var old[32];
+    var i = 0;
+    while (i < 32) { store8(&act + i, 0); store8(&old + i, 0); i = i + 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    # struct kernel_sigaction: handler, flags, restorer, mask (u64); sigsetsize 8.
+    store64(&act, fnp);
+    store64(&act + 24, 0x4003);
+    #ifdef CYRIUS_ARCH_X86
+    store64(&act + 8, 0x04000000);              # SA_RESTORER
+    store64(&act + 16, &_cbt_sig_restorer);
+    var qr = syscall(13, sig, 0, &old, 8);      # rt_sigaction: the current action
+    if (qr != 0) { return qr; }
+    if (load64(&old) == 1) { return 0; }        # SIG_IGN
+    return syscall(13, sig, &act, 0, 8);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    var aqr = syscall(134, sig, 0, &old, 8);    # rt_sigaction (aarch64 #134; vDSO return)
+    if (aqr != 0) { return aqr; }
+    if (load64(&old) == 1) { return 0; }
+    return syscall(134, sig, &act, 0, 8);
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # struct __sigaction: handler, sa_tramp, sa_mask (u32), sa_flags (i32); the old action comes
+    # back as struct sigaction (handler first). No libc trampoline exists in a cyrius binary, so
+    # the handler IS the trampoline: the kernel jumps to sa_tramp, and these handlers take no
+    # arguments and exit — the sigreturn a trampoline would make never happens.
+    store64(&act, fnp);
+    store64(&act + 8, fnp);
+    store32(&act + 16, 0x4003);
+    #ifdef CYRIUS_ARCH_X86
+    var mqr = syscall(13, sig, 0, &old);        # ESYSXLAT 13 -> BSD sigaction 46
+    if (mqr != 0) { return mqr; }
+    if (load64(&old) == 1) { return 0; }
+    return syscall(13, sig, &act, 0);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    var maqr = syscall(134, sig, 0, &old);      # ESYSXLAT 134 -> BSD sigaction 46
+    if (maqr != 0) { return maqr; }
+    if (load64(&old) == 1) { return 0; }
+    return syscall(134, sig, &act, 0);
+    #endif
+    #endif
+    return 0;
+}
+
+# Install the kill handlers, once, at start-up (main); every one is tried. Answers 0, or the
+# first sigaction error.
+# Windows has no POSIX signals: Ctrl-C, Ctrl-Break and a console close reach a console program as
+# control events (SetConsoleCtrlHandler), which no reroute wires, so a killed cyrius.exe still
+# leaves its scratch in %TEMP% — named here, not handled. agnos and cx run no CLI.
+fn _cbt_sig_install(): i64 {
+    var r = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    r = _cbt_sig_first(r, _cbt_sig_on(1, &_cbt_sig_hup));
+    r = _cbt_sig_first(r, _cbt_sig_on(2, &_cbt_sig_int));
+    r = _cbt_sig_first(r, _cbt_sig_on(15, &_cbt_sig_term));
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    r = _cbt_sig_first(r, _cbt_sig_on(1, &_cbt_sig_hup));
+    r = _cbt_sig_first(r, _cbt_sig_on(2, &_cbt_sig_int));
+    r = _cbt_sig_first(r, _cbt_sig_on(15, &_cbt_sig_term));
+    #endif
+    return r;
+}
+
+# The first non-zero of `r` (what came before) and `e` (this step's answer).
+fn _cbt_sig_first(r, e): i64 {
+    if (r != 0) { return r; }
+    return e;
+}

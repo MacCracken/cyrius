@@ -472,16 +472,18 @@ _chk_reap_stale_homes() {
 _chk_reap_stale_homes
 
 # ── 6.6.20: the CLI's own temp dirs, left by a process that died without cleaning up ──
-# `cyrius` makes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` and removes it on a NORMAL exit only
-# (`_cbt_tmpdir_cleanup`, cbt/build.cyr). A signal death skips that — SIGPIPE from
-# `cyrius … | head` leaves an EMPTY dir, SIGKILL leaves `test_bin` / `cc_err` — and the
+# `cyrius` makes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` and removes it on a NORMAL exit
+# (`_cbt_tmpdir_cleanup`, cbt/build.cyr) and, since 6.7.12, on SIGTERM / SIGINT / SIGHUP (the kill
+# handler, cbt/sigclean.cyr, which unlinks the in-flight compile's scratch first). Any other signal
+# death skips that — SIGPIPE from `cyrius … | head` leaves an EMPTY dir, SIGKILL leaves
+# `test_bin` / `cc_err` — and the
 # installed 6.6.0–6.6.5 CLIs never cleaned up at all, so the dirs pile up by the hundred.
 # The same rule as the homes above: by AGE ($CYRIUS_CHECK_REAP_MINS) and by OWNERSHIP (the
 # pid in the NAME is dead to both `kill -0` and `ps -p` — a pid we cannot signal is not
 # dead), never by count; only names of exactly that shape, only dirs this user owns.
 # Best-effort: a reap that fails never fails the run. CHANGELOG [6.6.20]
 # ⛔ AND BY CONTENTS (6.7.11, user 2026-10-13). This was `rmdir` only, so a run killed mid-compile
-# kept its dir for ever: the in-flight compile's `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (on
+# (by any signal until 6.7.12's handler; by SIGKILL still) kept its dir for ever: the in-flight compile's `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (on
 # 2026-10-13, 485 dead-pid dirs in /tmp held only such names; 3 held test_bin + test_out — the
 # CLI's failure paths already unlink, so these are kills). A dir is removed WHOLE when every entry is a
 # regular file named in the CLI's scratch vocabulary below; anything else — `test_bin` (a

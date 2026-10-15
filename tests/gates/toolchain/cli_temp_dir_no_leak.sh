@@ -58,13 +58,21 @@
 #     collect keeping `dlverifyerr<t>` -> 1 RED (7's distlib row); `_cbt_tmpbase` ignoring
 #     $TMPDIR -> 5 RED (axis 1's squeeze, axis 4, and 7's three kill rows); `cc_err` dropped from
 #     check.sh's scratch vocabulary -> 1 RED (7's last row: the kill leaves a name the reaper keeps).
+#   * (6.7.12, axis 7's kill rows; each mutant replaces build/cyrius) no `_cbt_sig_install()` in
+#     main, or the 6.7.11 CLI -> 19 RED (every kill row's dir and compiler, build's k7out.tmp, the
+#     planted dir's leftover names, the nohup row's TERM, the distlib kill); `_cbt_sig_stop` not
+#     stopping children -> 8 RED (each run's compiler still running, the distlib dir and compilers);
+#     distlib's children tracked as exec'd tools (SIGKILLed, not forwarded) -> 2 RED (the distlib
+#     dir, its six compilers); an inherited SIG_IGN overridden -> 1 RED (the nohup row).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
-# mid-round, the compiler killed by a signal), and a CLI SIGTERM'd mid-compile leaves its dir under
-# an absolute $TMPDIR holding only names check.sh's reaper removes (`_chk_cli_scratch`, read out of
-# scripts/check.sh). Measured before writing it: every one of those failure paths already unlinked
-# its scratch (6.5.19 / 6.6.6 / 6.6.20); the leftovers on this box were all kills mid-compile.
+# mid-round, the compiler killed by a signal). Measured before writing it: every one of those
+# failure paths already unlinked its scratch (6.5.19 / 6.6.6 / 6.6.20); the leftovers on this box
+# were all kills mid-compile. Since 6.7.12 a CLI stopped by SIGTERM / SIGINT / SIGHUP mid-compile
+# (check, build, a distlib verify) stops its compiler, leaves no dir under the absolute $TMPDIR and
+# exits 128+N; the in-flight names (what a SIGKILL still leaves) are ones check.sh's reaper removes
+# (`_chk_cli_scratch`, read out of scripts/check.sh).
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -240,7 +248,9 @@ sweep_for "$T/p4"
 # ── AXIS 5 — ⭐ EVERY PARENT-SIDE EXIT IS ROUTED. Axes 2 and 3 can only watch the exits
 # that EXIST today; this one is about the next one somebody writes. Every `sys_exit(` in
 # cbt/ must be either inside a FORKED CHILD (a different process — the parent's temp dir
-# is not its to remove) or inside `_cbt_tmpdir` / `_cbt_exit` themselves. A new
+# is not its to remove) or inside `_cbt_tmpdir` / `_cbt_exit` themselves, or the kill
+# handler's `_cbt_sig_exit` (6.7.12), which removes the dir itself — only in the process that
+# created it, so a forked child's handler never removes its parent's. A new
 # parent-side `sys_exit` anywhere else is a new leak, and it is invisible to a
 # leave-nothing-behind delta because nothing drives that path yet.
 #
@@ -290,9 +300,9 @@ check "the scan found cbt/'s sys_exit sites (floor 30, found $NEX)" yes \
     "$([ "$NEX" -ge 30 ] && echo yes || echo no)"
 check "  …most of them child-side (floor 25, found $NCH)" yes \
     "$([ "$NCH" -ge 25 ] && echo yes || echo no)"
-grep ' PARENT$' "$T/exits" | grep -Ev 'fn=(_cbt_tmpdir|_cbt_exit) ' > "$T/stray" || true
+grep ' PARENT$' "$T/exits" | grep -Ev 'fn=(_cbt_tmpdir|_cbt_exit|_cbt_sig_exit) ' > "$T/stray" || true
 if [ -s "$T/stray" ]; then
-    echo "  parent-side sys_exit() outside _cbt_tmpdir/_cbt_exit — each one leaks the temp dir:"
+    echo "  parent-side sys_exit() outside _cbt_tmpdir/_cbt_exit/_cbt_sig_exit — each one leaks the temp dir:"
     sed 's/^/    /' "$T/stray"
 fi
 check "no parent-side sys_exit bypasses _cbt_exit" 0 "$(wc -l < "$T/stray" | tr -d ' ')"
@@ -373,13 +383,14 @@ else
     sweep_for "$T/p6c"
 fi
 
-# ── AXIS 7 — COMPILE FAILURES leave no scratch, and a KILL leaves only scratch (6.7.11). A dead
-# pid's dir is removed by check.sh only when every entry is compile scratch (the reaper,
+# ── AXIS 7 — COMPILE FAILURES leave no scratch (6.7.11), and a caught KILL leaves no dir (6.7.12).
+# A dead pid's dir is removed by check.sh only when every entry is compile scratch (the reaper,
 # scripts/check.sh `_chk_cli_scratch`, user decision 2026-10-13). So: every way a compile FAILS
 # with the CLI still alive unlinks its `cpp_<pid>`, `cc_err` and `<out>.tmp.<pid>` (the dir is then
-# empty and goes at exit); and a CLI killed mid-compile leaves exactly names the reaper's
+# empty and goes at exit); a CLI stopped by SIGTERM / SIGINT / SIGHUP mid-compile unlinks them in
+# its handler and removes the dir; and what a SIGKILL leaves is exactly names the reaper's
 # vocabulary accepts, under an ABSOLUTE $TMPDIR (trailing slash dropped), never /tmp.
-echo "axis 7 — compile failures leave no scratch; a SIGTERM'd compile leaves only reapable scratch under \$TMPDIR:"
+echo "axis 7 — compile failures leave no scratch; a SIGTERM / SIGINT / SIGHUP mid-compile leaves no dir under \$TMPDIR:"
 printf 'include "helper.cyr"\nfn main(): i64 { return nope_undefined_fn(); }\nvar r = main();\n' > "$T/proj/src/undef.cyr"
 mkdir -p "$T/proj/outdir"
 rc7=0; ( cd "$T/proj" && run_cli "$T/p7a" check src/bad.cyr > "$T/o7a" 2>&1 ) || rc7=$?
@@ -425,42 +436,156 @@ rc7=0; ( cd "$T/proj" && timeout 120 sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7d" 
 check "the COMPILER killed by a signal fails the check" yes "$([ "$rc7" != 0 ] && echo yes || echo no)"
 check "  …and leaves 0 temp dirs" 0 "$(dirs_for "$T/p7d")"
 sweep_for "$T/p7d"
-# The kill shape, under an absolute TMPDIR with a trailing slash.
+# ── The KILL shape (6.7.12). A CLI stopped by SIGTERM / SIGINT / SIGHUP while its compiler runs
+# stops that compiler, unlinks the compile's in-flight names (`cpp_<pid>`, `cc_err`, the check's
+# `check_<pid>[.tmp.<pid>]`, build's `<out>.tmp.<pid>` beside the output), removes its private dir
+# and exits 128+N (cbt/build.cyr `_cbt_sig_fire`). Until 6.7.12 no handler existed: the dir kept
+# all three names until check.sh's reaper found the dead pid. SIGKILL cannot be caught, so the
+# in-flight names must still be ones the reaper removes. Every run sits under an ABSOLUTE
+# $TMPDIR with a trailing slash (`_cbt_tmpbase`), never /tmp. The k2 stand-in records its pid
+# and sleeps, so the compile is still running when the signal lands.
 TB="$T/tbase"
 mkdir -p "$TB"
-rm -f "$T/k2.cc"
-# (the subshell outlives the CLI it runs, so the TERM is reported to its /dev/null, not here)
-( cd "$T/proj" && TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7f" "$T/k2/cyrius" check src/ok.cyr > "$T/o7f" 2>&1; true ) 2>/dev/null &
-bg7=$!
-w=0
-while [ ! -s "$T/k2.cc" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
-p7f=$(cat "$T/p7f" 2>/dev/null || true)
-[ -n "$p7f" ] && kill -TERM "$p7f" 2>/dev/null
-{ wait "$bg7"; } 2>/dev/null || true
-cc7=$(cat "$T/k2.cc" 2>/dev/null || true)
-[ -n "$cc7" ] && kill -KILL "$cc7" 2>/dev/null
-K7=""
-for d in "$TB/cyrius-$p7f" "$TB/cyrius-$p7f"-*; do [ -d "$d" ] && K7="$d"; done
-check "an absolute \$TMPDIR (trailing slash) is the CLI's temp base: the killed run's dir is under it" yes "$([ -n "$K7" ] && echo yes || echo no)"
-check "  …and nothing of that pid under /tmp" 0 "$(ls -d /tmp/cyrius-"$p7f" /tmp/cyrius-"$p7f"-* 2>/dev/null | wc -l | tr -d ' ')"
+# A `&` job starts with SIGINT IGNORED, and the CLI keeps an ignore it inherits (nohup's
+# contract), so the INT runs put INT back to default with env(1) — Ctrl-C at a terminal reaches
+# a foreground CLI that has it at default. Named SKIP (exit 77) where env has no such flag.
+K7_INT=yes
+env --default-signal=INT true > /dev/null 2>&1 || K7_INT=no
+K7_SKIPS=0
+# kill_run <tag> <SIG> <verb> [args...] — run the k2 CLI in the background, wait for its compiler,
+# record the live dir's names in $T/k7-<tag>.live (and plant $T/k7-<tag>.plant's name in it when
+# that file exists), deliver SIG to the CLI, wait. Leaves the CLI's pid in $T/p7-<tag>, its exit
+# status in $T/k7-<tag>.rc, and "gone" / "running" for the compiler in $T/k7-<tag>.cc.
+kill_run() {
+    _kt=$1; _ks=$2; shift 2
+    rm -f "$T/k2.cc" "$T/p7-$_kt" "$T/k7-$_kt.rc" "$T/k7-$_kt.live" "$T/k7-$_kt.cc"
+    _ke=""
+    [ "$_ks" = INT ] && _ke="env --default-signal=INT"
+    # (the subshell outlives the CLI it runs, so a signal death is reported to its /dev/null)
+    # shellcheck disable=SC2086
+    ( _kr=0; cd "$T/proj" && TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_kt" $_ke "$T/k2/cyrius" "$@" > "$T/o7-$_kt" 2>&1 || _kr=$?
+      echo "$_kr" > "$T/k7-$_kt.rc" ) 2>/dev/null &
+    _kb=$!
+    _kw=0
+    while [ ! -s "$T/k2.cc" ] && [ "$_kw" -lt 600 ]; do sleep 0.05; _kw=$((_kw + 1)); done
+    _kp=$(cat "$T/p7-$_kt" 2>/dev/null || true)
+    _kd=""
+    for _d in "$TB/cyrius-$_kp" "$TB/cyrius-$_kp"-*; do [ -d "$_d" ] && _kd="$_d"; done
+    [ -n "$_kd" ] && ls -A "$_kd" > "$T/k7-$_kt.live"
+    [ -n "$_kd" ] && [ -f "$T/k7-$_kt.plant" ] && : > "$_kd/gate_keepme"
+    [ -n "$_kp" ] && kill "-$_ks" "$_kp" 2>/dev/null || true
+    { wait "$_kb"; } 2>/dev/null || true
+    _kc=$(cat "$T/k2.cc" 2>/dev/null || true)
+    if [ -n "$_kc" ] && kill -0 "$_kc" 2>/dev/null; then
+        echo running > "$T/k7-$_kt.cc"; kill -KILL "$_kc" 2>/dev/null
+    else
+        echo gone > "$T/k7-$_kt.cc"
+    fi
+}
+# the dirs of tag's pid under $TB / under /tmp
+k7_dirs() { _p=$(cat "$T/p7-$1" 2>/dev/null || echo none); n=0; for d in "$2/cyrius-$_p" "$2/cyrius-$_p"-*; do [ -d "$d" ] && n=$((n + 1)); done; echo "$n"; }
 # the reaper's own matcher, read out of scripts/check.sh (never a copy of it)
 sed -n '/^_CHK_CLI_SCRATCH=/,/^_chk_reap_scratch_dir() {/p' "$ROOT/scripts/check.sh" | sed '$d' > "$T/scratch.sh"
 # shellcheck disable=SC1090
 . "$T/scratch.sh"
-nleft=0; nbad=0; bad=""
-if [ -n "$K7" ]; then
-    for f in "$K7"/* "$K7"/.[!.]*; do
-        [ -e "$f" ] || continue
-        nleft=$((nleft + 1))
-        if [ -f "$f" ] && _chk_cli_scratch "${f##*/}"; then :; else nbad=$((nbad + 1)); bad="$bad ${f##*/}"; fi
+for k7v in check build; do
+    for k7s in TERM INT HUP; do
+        case $k7s in TERM) k7n=15 ;; INT) k7n=2 ;; HUP) k7n=1 ;; esac
+        if [ "$k7s" = INT ] && [ "$K7_INT" = no ]; then
+            echo "  SKIP (named): axis 7 $k7v SIGINT row — env(1) has no --default-signal on this host"
+            K7_SKIPS=$((K7_SKIPS + 1)); continue
+        fi
+        k7t="$k7v$k7s"
+        if [ "$k7v" = check ]; then kill_run "$k7t" "$k7s" check src/ok.cyr
+        else rm -f "$T/proj/build/k7out"*; kill_run "$k7t" "$k7s" build src/ok.cyr build/k7out; fi
+        nlive=$(wc -l < "$T/k7-$k7t.live" 2>/dev/null | tr -d ' ')
+        check "$k7v SIG$k7s mid-compile — the live dir is under the absolute \$TMPDIR, holding the compile's names (anti-vacuous: ${nlive:-0})" yes \
+            "$([ "${nlive:-0}" -ge 2 ] && echo yes || echo no)"
+        nbad=0; bad=""
+        while IFS= read -r f; do
+            _chk_cli_scratch "$f" || { nbad=$((nbad + 1)); bad="$bad $f"; }
+        done < "$T/k7-$k7t.live"
+        check "  …each one a name check.sh's reaper removes (what a SIGKILL leaves:$(tr '\n' ' ' < "$T/k7-$k7t.live" | sed 's/ $//; s/^/ /'))" 0 "$nbad"
+        check "  …the CLI exits 128+$k7n" "$((128 + k7n))" "$(cat "$T/k7-$k7t.rc" 2>/dev/null || echo none)"
+        check "  …its private dir is gone" 0 "$(k7_dirs "$k7t" "$TB")"
+        check "  …nothing of that pid under /tmp" 0 "$(k7_dirs "$k7t" /tmp)"
+        check "  …the compiler it was running is stopped" gone "$(cat "$T/k7-$k7t.cc")"
+        if [ "$k7v" = build ]; then
+            check "  …and no k7out.tmp.<pid> beside the output" 0 "$(ls "$T/proj/build" | grep -c '^k7out' || true)"
+        fi
+        for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
     done
+done
+# rmdir, never a sweep (axis 4's contract, on the kill path): a file in the live dir that is not
+# the compile's survives, and so does the dir; the compile's own names are gone.
+: > "$T/k7-plant.plant"
+kill_run plant TERM check src/ok.cyr
+K7P=""
+for d in "$TB/cyrius-$(cat "$T/p7-plant" 2>/dev/null)"*; do [ -d "$d" ] && K7P="$d"; done
+check "SIGTERM with a foreign file in the live dir: the file survives, and its dir" yes \
+    "$([ -n "$K7P" ] && [ -f "$K7P/gate_keepme" ] && echo yes || echo no)"
+check "  …and it is the only name left (the compile's are unlinked)" gate_keepme "$(ls -A "$K7P" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+[ -n "$K7P" ] && rm -rf "$K7P"
+# An ignore inherited at start stays (nohup): SIGHUP ignored -> the CLI keeps compiling; the
+# SIGTERM that follows still cleans up.
+rm -f "$T/k2.cc" "$T/p7-nohup"
+( cd "$T/proj" && trap '' HUP; TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-nohup" "$T/k2/cyrius" check src/ok.cyr > "$T/o7-nohup" 2>&1 ) 2>/dev/null &
+k7b=$!
+w=0
+while [ ! -s "$T/k2.cc" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
+k7p=$(cat "$T/p7-nohup" 2>/dev/null || true)
+[ -n "$k7p" ] && kill -HUP "$k7p" 2>/dev/null || true
+sleep 0.5
+check "SIGHUP ignored at start stays ignored: the CLI is still compiling after a SIGHUP" yes \
+    "$([ -n "$k7p" ] && kill -0 "$k7p" 2>/dev/null && echo yes || echo no)"
+[ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
+{ wait "$k7b"; } 2>/dev/null || true
+check "  …and the SIGTERM after it still leaves no dir" 0 "$(k7_dirs nohup "$TB")"
+k7c=$(cat "$T/k2.cc" 2>/dev/null || true)
+[ -n "$k7c" ] && kill -KILL "$k7c" 2>/dev/null || true
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A distlib verify SIGTERM'd mid-round: the signal is FORWARDED to its forked per-target
+# children, whose own handlers stop their compilers and unlink their `cpp_<pid>` /
+# `dlverifyout<t>.tmp.<pid>`; the parent then unlinks `dlverifyerr<t>`. Stand-in compilers for
+# every target (cycc and cycc_aarch64) sleep; each records its pid.
+D7K="$T/d7k"
+if [ -d "$D7/home/versions/$V7/lib" ]; then
+    mkdir -p "$D7K/bin" "$D7K/p/src"
+    cp "$CYRIUS" "$D7K/bin/cyrius"
+    printf '#!/bin/sh\necho $$ >> "%s/d7k.cc"\ncat > /dev/null\necho partial\nexec sleep 60\n' "$T" > "$D7K/bin/cycc"
+    cp "$D7K/bin/cycc" "$D7K/bin/cycc_aarch64"
+    chmod +x "$D7K/bin/cyrius" "$D7K/bin/cycc" "$D7K/bin/cycc_aarch64"
+    printf '[package]\nname = "d7k"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' "$V7" > "$D7K/p/cyrius.cyml"
+    printf 'fn d7k_a(): i64 { return 1; }\n' > "$D7K/p/src/lib.cyr"
+    rm -f "$T/d7k.cc" "$T/p7-dl"
+    ( _kr=0; cd "$D7K/p" && CYRIUS_HOME="$D7/home" CYRIUS_RESOLVED=1 TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-dl" "$D7K/bin/cyrius" distlib > "$T/o7-dl" 2>&1 || _kr=$?
+      echo "$_kr" > "$T/k7-dl.rc" ) 2>/dev/null &
+    k7b=$!
+    w=0
+    while [ "$(wc -l 2>/dev/null < "$T/d7k.cc" || echo 0)" -lt 6 ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
+    k7p=$(cat "$T/p7-dl" 2>/dev/null || true)
+    nlive=$(ls -A "$TB/cyrius-$k7p" 2>/dev/null | wc -l | tr -d ' ')
+    check "distlib SIGTERM mid-round — the verify's six compiles are running, their scratch in flight (anti-vacuous: $nlive names)" yes \
+        "$([ "$(wc -l 2>/dev/null < "$T/d7k.cc" || echo 0)" -ge 6 ] && [ "$nlive" -ge 12 ] && echo yes || echo no)"
+    [ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
+    { wait "$k7b"; } 2>/dev/null || true
+    check "  …the CLI exits 143" 143 "$(cat "$T/k7-dl.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no cpp_ / dlverify* left by the parent or a child)" 0 "$(k7_dirs dl "$TB")"
+    nrun=0
+    for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null; }; done
+    check "  …every target's compiler is stopped" 0 "$nrun"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+else
+    echo "  SKIP (named): axis 7 distlib kill row — the distlib row above did not stage its snapshot (cycc_aarch64 did not build)"
+    K7_SKIPS=$((K7_SKIPS + 1))
 fi
-check "  …it holds the in-flight compile's files (anti-vacuous: $nleft)" yes "$([ "$nleft" -ge 2 ] && echo yes || echo no)"
-check "  …every one of them is scratch check.sh's reaper removes ($(ls -A "$K7" 2>/dev/null | tr '\n' ' '))" 0 "$nbad"
-[ -n "$K7" ] && rm -rf "$K7"
 
 echo ""
 if [ "$fails" = "0" ]; then
+    if [ "$K7_SKIPS" -gt 0 ]; then
+        echo "SKIP: cli-temp-dir-no-leak — $K7_SKIPS axis 7 row(s) above could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"
+        exit 77
+    fi
     echo "PASS: cli-temp-dir-no-leak — no CLI exit path leaves its private temp directory behind"
     exit 0
 fi

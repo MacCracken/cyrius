@@ -4683,6 +4683,17 @@ are computed by the CLI itself (6.7.12) — SHA-256, byte for byte what `sha256s
 external hasher runs, a full temp dir cannot touch the lock, and the lock is written on every host,
 wine included (through 6.7.11 they came from `sha256sum`, `shasum -a 256` or `certutil`).
 
+**A CLI stopped mid-compile leaves nothing in its temp dir (6.7.12).** SIGTERM, SIGINT (Ctrl-C)
+or SIGHUP while a compile runs stops the compiler the CLI started (a distlib verify passes the
+signal to its per-target children, which clean up their own), unlinks the compile's scratch —
+the preprocessed `cpp_<pid>`, the `cc_err` capture, the child's `<out>.tmp.<pid>` (beside the
+output for `cyrius build`), a check's own output — removes the then-empty temp dir and exits
+128+N (143, 130, 129). A file in that dir that is not compile scratch, such as a `cyrius test`
+binary, stays, and so does the dir. A signal that was IGNORED when the CLI started (`nohup`, a
+background job of a non-interactive shell) stays ignored. Through 6.7.11 a kill left all three
+names until `scripts/check.sh`'s reaper removed the dead pid's dir. SIGKILL cannot be caught, so
+its leftovers are still the reaper's; on Windows, which has no POSIX signals, nothing is caught.
+
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
 a one-line warning that it was NOT verified, rather than failing with a reason that would be
