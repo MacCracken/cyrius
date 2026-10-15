@@ -14,7 +14,8 @@
 #      S5 `#derive` on a struct with a tuple field is refused by name
 #   R  the shapes the decision leaves open, each refused by name (one error line, its fragment):
 #      R1 an element outside i64 / f64 / bool; R2 arity and spelling; R3 a type position outside
-#      a var / a struct field / a parameter; R4 a tuple in a generic fn / struct; R6 an `async fn`
+#      a var / a struct field / a parameter (R3q-R3z, 6.7.11: a `Vec<( .. )>` annotation in every
+#      position — the user's decision (a), 2026-10-13); R4 a tuple in a generic fn / struct; R6 an `async fn`
 #      tuple parameter; R11 a tuple (or a tuple field) used as a value; R12 a non-tuple source into
 #      a tuple place (an argument of another struct or tuple type too); R13 methods; R17 a
 #      multi-value call as a tuple argument (`g(f())`: bind it first); R21 `t.N` spellings that
@@ -256,6 +257,12 @@
 #       use); MCS4b `_tup_gci_in` registering no tuple over 256 -> CS4e (the use's error printed before the refusal)
 #   MCS8 `_tup_svtype_p1` reporting in pass 1 -> CS8, CS8c (R12 first, then the real cause); MCS8b `_gvi_tup_late`
 #       saying nothing -> CS8b BUILDS (the replay's report is what refuses a scalar declared below)
+# 6.7.11 REPAIR 1 (the genfe lane, unit G4; a one-edit copy of src/, its compiler built by the fixed one, this gate
+# run with CYCC= the mutant; issues/2026-10-09-vec-annotation-type-argument-unchecked.md):
+#   MV1 `_vec_ann_chk` returning at once (every `Vec<..>` annotation unread again) -> R3q-R3z BUILD
+#   MV2 `_vec_ann_list` without its nested-`Vec` arm (a nested `<..>` skipped) -> R3w BUILDS
+#   MV3 `_param_type_step` without its check -> R3t, R3v BUILD; MV4 `_pty_name` without it -> R3v2 BUILDS
+#   MV7 `_gen_ann_sid` without its check -> R3q, R3r, R3s, R3w, R3x, R3z BUILD (the `*Vec` / parameter rows stay red)
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -367,6 +374,21 @@ refused r03m "a tuple type cannot be a multi-value return element" "R3m: \`fn g(
 refused r03n "a tuple in a const fn" "R3n: a tuple local in a const fn's evaluation" 'const fn cf(x: i64): i64 {\n    var t: (i64, i64);\n    return x;\n}\nconst C = cf(3);\nsyscall(60, C);\n'
 refused r03o "a tuple type cannot be a Vec element" "R3o: a \`Vec<(i64, i64)>\` struct field (it said \"expected identifier\")" 'struct W { v: Vec<(i64, i64)>; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
 refused r03p "a tuple type cannot be a pointer target" "R3p: a parameter \`t: *(i64, i64)\`" 'fn g(t: *(i64, i64)): i64 { return 1; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+# R3q-R3z (6.7.11) — a `Vec<( .. )>` ANNOTATION, refused as the field form (R3o) refuses it: the user's
+# decision (a), 2026-10-13 — a `Vec<T>` annotation reads its T. Each compiled through 6.7.10 (its `<..>`
+# skipped unread). One error each, the generic fn's over its base and two instances too.
+VTE="a tuple type cannot be a Vec element"
+refused r03q "$VTE" "R3q: a local \`var v: Vec<(i64, i64)>\`" 'fn f(): i64 {\n    var v: Vec<(i64, i64)> = 0;\n    return 3;\n}\nsyscall(60, f());\n'
+refused r03r "$VTE" "R3r: a declaration-zone global" 'var G: Vec<(i64, i64)> = 0;\nfn f(): i64 { return G; }\nsyscall(60, f());\n'
+refused r03s "$VTE" "R3s: a global after the first statement" 'fn f(): i64 { return 3; }\nf();\nvar G: Vec<(i64, i64)> = 0;\nsyscall(60, G);\n'
+refused r03t "$VTE" "R3t: a parameter, called above its definition (pass 1 counts 2: no arity error)" 'fn f(): i64 { return g(0, 3); }\nfn g(v: Vec<(i64, i64)>, b): i64 { return b; }\nsyscall(60, f());\n'
+refused r03u "$VTE" "R3u: a \`*Vec<(i64, i64)>\` local" 'fn f(): i64 {\n    var b = 0;\n    var p: *Vec<(i64, i64)> = &b;\n    return 3;\n}\nsyscall(60, f());\n'
+refused r03v "$VTE" "R3v: a \`p: *Vec<(i64, i64)>\` parameter" 'fn g(p: *Vec<(i64, i64)>): i64 { return 1; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+refused r03v2 "$VTE" "R3v2: a \`p: **Vec<(i64, i64)>\` parameter" 'fn g(p: **Vec<(i64, i64)>): i64 { return 1; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+refused r03w "$VTE" "R3w: \`Vec<Vec<(i64, i64)>>\` (the nested Vec read the same way)" 'fn f(): i64 {\n    var v: Vec<Vec<(i64, i64)>> = 0;\n    return 3;\n}\nsyscall(60, f());\n'
+refused r03x "$VTE" "R3x: \`sizeof(Vec<(i64, i64)>)\`" 'fn f(): i64 { return sizeof(Vec<(i64, i64)>); }\nsyscall(60, f());\n'
+refused r03y "$VTE" "R3y: a \`p: *Vec<(i64, i64)>\` struct field" 'struct H { p: *Vec<(i64, i64)>; n; }\nfn f(): i64 { var h: H; h.n = 3; return h.n; }\nsyscall(60, f());\n'
+refused r03z "$VTE" "R3z: in a generic fn called at i64, a struct and i64 again (once, not per instance)" 'struct Pt { x; y; }\nfn g<T>(x: T): i64 {\n    var v: Vec<(i64, i64)> = 0;\n    return 1;\n}\nfn f(): i64 { var p: Pt; return g(1) + g(p) + g(2); }\nsyscall(60, f());\n'
 
 # ── R4: generics ───────────────────────────────────────────────────────────────────────────────────
 refused r04a "a tuple type in a generic fn is refused" "R4a: a tuple local in a generic fn" 'fn g<T>(x: T): T {\n    var t: (i64, i64);\n    t.0 = x;\n    return t.0;\n}\nfn f(): i64 { return g(3); }\nsyscall(60, f());\n'

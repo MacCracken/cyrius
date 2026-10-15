@@ -323,8 +323,9 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 }
 # Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
 # expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
-# (2, a `for` header) to its unmatched `)`; the cursor is left AT that token. Every `{` is walked
-# as its own scope (`_cl_prescan_nested`).
+# (2, a `for` header) to its unmatched `)`, a `for … in` header's part (3) to its depth-0 `{`,
+# range `..` or `;`, a declaration's right-hand side (4) to its depth-0 `;` (`_cl_walk_stop`); the
+# cursor is left AT that token. Every other `{` is walked as its own scope (`_cl_prescan_nested`).
 # ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
 # and the `var` names it declares leave the shadow set when it ends: they used to stay, so
 # `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
@@ -338,6 +339,7 @@ fn _cl_prescan_body(S, is_block): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }
+        elif (_cl_walk_stop(S, is_block, t, depth) == 1) { go = 0; }
         elif (t == 13) {
             _cl_prescan_nested(S);             # any block is a scope (6.6.17)
             t = 0 - 1;                         # consumed through its `}`
@@ -345,6 +347,10 @@ fn _cl_prescan_body(S, is_block): i64 {
         elif (t == 14) { go = 0; }
         elif (t == 55) {
             if (TOKTYP(S, GTI(S) + 1) == 10) { _cl_prescan_for(S); t = 0 - 1; }
+            elif (_cl_at_forin(S) == 1) { _cl_prescan_forin(S); t = 0 - 1; }   # 6.7.11
+        }
+        elif (t == 3) {
+            if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
         }
         elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
@@ -353,7 +359,7 @@ fn _cl_prescan_body(S, is_block): i64 {
             elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
-            if (t == 3) { prev_var = 1; }
+            if (t == 3 || t == 168) { prev_var = 1; }   # `var` / a local `const` (6.7.11) names one
             elif (t == 2) {
                 var noff = PEEKV(S);
                 if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
@@ -375,6 +381,70 @@ fn _cl_prescan_for(S): i64 {
     if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
     if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
     _cl_nshadow = mk;
+    return 0;
+}
+# ⛔ 6.7.11 — A NAME THE BODY DECLARES IS NOT A READ. Only the name right after `var` was shadowed,
+# so `for i in 0..4 { .. }`, `const k = 3;` and the `b` of `var a, b = two();` each captured the
+# enclosing local of that name (refused without lib/alloc.cyr, or a needless heap env holding a
+# copy of it). Each is shadowed from where the PARSER binds it (`PARSE_FOR`, `PARSE_VAR`): a
+# `for … in` variable after the start bound or the collection, which read the enclosing name (a
+# range's end bound reads the variable), for the loop only; the names of a destructure after its
+# right-hand side, which reads the enclosing ones. CHANGELOG [6.7.11]
+fn _cl_walk_stop(S, m, t, depth): i64 {
+    if (m < 3) { return 0; }
+    if (depth != 0) { return 0; }
+    if (t == 5) { return 1; }
+    if (m == 4) { return 0; }
+    if (t == 13) { return 1; }
+    if (t == 41) { if (TOKTYP(S, GTI(S) + 1) == 41) { return 1; } }
+    return 0;
+}
+# 1 at `for IDENT in`.
+fn _cl_at_forin(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 76) { return 0; }
+    return 1;
+}
+# Cursor at `for IDENT in`: the start bound or the collection (the enclosing scope), then IDENT
+# shadowed for a range's end bound and the body. Leaves the cursor past the body.
+fn _cl_prescan_forin(S): i64 {
+    var mk = _cl_nshadow;
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 3);                  # `for IDENT in`
+    _cl_prescan_body(S, 3);
+    _cl_shadow_add(S, noff);
+    if (PEEKT(S) == 41) {
+        STI(S, GTI(S) + 2);              # a range's `..`
+        _cl_prescan_body(S, 3);
+    }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# 1 at `var IDENT , IDENT` — a destructure.
+fn _cl_at_mvar(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 31) { return 0; }
+    if (TOKTYP(S, GTI(S) + 3) != 2) { return 0; }
+    return 1;
+}
+# Cursor at `var a, b[, c] = f(..);`: `a` as after any `var`, the right-hand side read, then `b`
+# (and `c`) shadowed. Leaves the cursor at the `;`.
+fn _cl_prescan_mvar(S): i64 {
+    var ti = GTI(S) + 1;
+    _cl_shadow_add(S, TOKVAL(S, ti));
+    var n2 = TOKVAL(S, ti + 2);
+    var n3 = 0;
+    var has3 = 0;
+    ti = ti + 3;
+    if (TOKTYP(S, ti) == 31) { if (TOKTYP(S, ti + 1) == 2) { n3 = TOKVAL(S, ti + 1); has3 = 1; ti = ti + 2; } }
+    STI(S, ti);
+    if (PEEKT(S) == 4) {
+        STI(S, ti + 1);
+        _cl_prescan_body(S, 4);
+    }
+    _cl_shadow_add(S, n2);
+    if (has3 == 1) { _cl_shadow_add(S, n3); }
     return 0;
 }
 # Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
@@ -1388,6 +1458,7 @@ fn _await_coro_suspend(S, sk, fut): i64 {
     if (fut == 1) { vslot = _await_coro_force(S, slot, ff, fpend, again); }
     _await_unspill(S, s0, d);
     EFLLOAD(S, vslot);
+    SPSC(S, 0);                           # the awaited value is an untyped word (_await_force)
     return 0;
 }
 # Pop `d` pending expression words into consecutive fresh coroutine-frame words (top of stack
@@ -1435,7 +1506,16 @@ fn _await_call1(S, fi): i64 {
     EPUSHR(S);
     ECALLPOPS(S, 1);
     ECALLFIX(S, fi);
-    ECALLCLEAN(S, 1);
+    ECALLCLEAN(S, 1);                     # 6.6.5: was missing (see ECALLCLEAN)
+    return 0;
+}
+# `await e` outside a coroutine: rax = future_force(e). The value is an untyped word, so it leaves
+# no pointer step: with `f: *i32`, `(await f) + 1` added 4 — the step the operand factor left
+# (6.6.17-6.7.10). Inside a coroutine `_await_coro_suspend` resets it the same way. CHANGELOG [6.7.11]
+fn _await_force(S, ff): i64 {
+    PARSE_FACTOR(S);                      # rax = the Future object
+    _await_call1(S, ff);                  # rax = future_force(future)
+    SPSC(S, 0);
     return 0;
 }
 
@@ -2790,6 +2870,10 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
+    # 6.7.11: 2 = the instance's bound was refused (-4) and reported at the type the call binds: the
+    # base call below only consumes the arguments, and is not judged against the base (`gb<f64>(h)`
+    # also said "needs `impl Show for i64`"). CHANGELOG [6.7.11]
+    if (_spec == 0 - 4) { _ta_explicit = 2; }
     if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
     else { PARSE_FNCALL(S, noff); }
     return 0;
@@ -4226,14 +4310,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 _lt_spsc(S, li, lt);   # SPSC(S, lt); 6.7.8: a step-8 `*T` local's step word
                 # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
                 # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
-                # a pointer — its scale for `+`/`-` arithmetic must be 1, not its byte
-                # width. The SPSC(S, lt) above sets scale=lt, which is only correct for a
-                # pointer-to-lt element; a plain `var a: i32` then made `a + 2` add
-                # 2*sizeof(i32). Reset to 1 for lt < 8 ONLY: SLTYPE 8 is a `*i64` typed
-                # pointer (scalar i64 is SLTYPE 0), which genuinely needs scale 8 for
-                # `p + i`. No sub-i64 typed pointers exist, so 1/2/4 are always scalars.
+                # a pointer — the SPSC(S, lt) above sets a step of lt, which would make
+                # `a + 2` on a plain `var a: i32` add 2*sizeof(i32). Reset for lt < 8 ONLY:
+                # SLTYPE 8 is a `*i64` typed pointer (scalar i64 is SLTYPE 0), which needs
+                # its step for `p + i`. 6.7.11: reset to 0, an integer's — it was 1, which
+                # scales nothing but answers "a pointer" to every `> 0` test, so `w - q32`
+                # was refused as a pointer difference and `var r: *u32 = w;` did not warn,
+                # where an i64 local, a narrow global and a narrow parameter are integers.
+                # CHANGELOG [6.7.11]
                 if (lt > 0) { if (lt <= 8) {
-                        if (lt < 8) { SPSC(S, 1); }
+                        if (lt < 8) { SPSC(S, 0); }
                         SEXW(S, lt);
                         # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
                         # sentinel) loads via movsx (negative width); unsigned stays movzx.
@@ -5545,12 +5631,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             PARSE_FACTOR(S);
             return 0;
         }
-        PARSE_FACTOR(S);                          # rax = the Future object
-        EPUSHR(S);                                # push the future as the sole arg
-        ECALLPOPS(S, 1);                          # marshal into arg-reg 0
-        ECALLFIX(S, _aw_ff);                      # rax = future_force(future)
-        ECALLCLEAN(S, 1);                         # 6.6.5: was missing (see ECALLCLEAN)
-        return 0;
+        return _await_force(S, _aw_ff);
     }
     # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
     # base actually work (param passing, zero-param, unique naming); lexical
@@ -7027,34 +7108,44 @@ fn _ptr_add(S, ps): i64 {
     EUNSPILL(S);
     EADDR(S);
     var w = _add_word(ps, rs);
-    if (w == 0) { if (ps == 0) { w = _add_rb1(S, rs); } }   # 6.7.11: `n + pb`, `pb: *B1`
+    if (ps == 0) { if (_rhs_mwcap(S) == 1) { w = 0; } }   # 6.7.11: `n + cap`, no pointer
     return _pk_set(S, w);
 }
-# `+`'s result word: the left operand's (`p + n`), else a one-byte `*T`'s on the right (`n + p`, the
+# `+`'s result word: the left operand's (`p + n`), else a one-byte pointer's on the right (`n + p`, the
 # user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
 # `*u8` where `p8 + 1` is one: `(1 + p8) - q32` built a byte difference and `var r: *u8 = 1 + p8;`
-# warned. A step 1 with no element kind (`&x`, a narrow scalar local) is no `*T`: not written.
-# CHANGELOG [6.7.9]
+# warned. CHANGELOG [6.7.9] 6.7.11: a step 1 with no element kind too — `&x` (v6.5.29: "`&x` IS a
+# pointer", byte-addressed) and a `*B1` (a one-byte struct's): `n + &x` is the byte pointer `&x + n`
+# is (the user's decision (a), 2026-10-13), so `var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32`
+# refused. The kind test kept a narrow scalar local's step 1 out; that local now loads 0.
+# CHANGELOG [6.7.11]
 fn _add_word(ps, rs): i64 {
     if (ps != 0) { return ps; }
     if (_ps_step(rs) != 1) { return 0; }
-    if (((rs >> 40) & 0xFF) == 0) { return 0; }
     return rs;
 }
 # ⛔ 6.7.11 — DECISION 1(b) FOR A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a) Yes, extend
 # 1(b)"): `m + pb` / `0 + pb` with `pb: *B1` are that pointer, as `n + p8` is. A one-byte struct's word
 # carries no element kind (a struct is no subscript element), so `_add_word` could not tell it from `&x`
 # or a narrow local's step 1 and wrote no step: `t1(m + pb)` passed the address's low byte as the B1, and
-# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. The right term [`_rhs_b`,
-# cursor) is typed by its tokens (`_hl_psid`, parse_decl.cyr): a `*T` of a one-byte struct keeps `rs`.
-# CHANGELOG [6.7.11]
-fn _add_rb1(S, rs): i64 {
-    if (_ps_step(rs) != 1) { return 0; }
+# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. 6.7.11 (`n + &x`): a narrow
+# local loads no step now, and `&x` commutes too, so `_add_word` writes every step-1 word — but one: a
+# MULTI-WORD closure capture's value is its env words' address, step 1 with no kind, and the struct it
+# holds is no pointer the source wrote (`m + s` on the frame's own `s: Pt` is an integer). 1 when the
+# right term [`_rhs_b`, cursor) is such a capture's bare (parenthesised) name. CHANGELOG [6.7.11]
+fn _rhs_mwcap(S): i64 {
+    if (_cl_capturing != 1) { return 0; }
     if (_rhs_b < 0) { return 0; }
-    var t = _hl_psid(S, _rhs_b, GTI(S));
-    if (t <= 0) { return 0; }
-    if (STRUCTSZ(S, t - 1) != 1) { return 0; }
-    return rs;
+    var a = _ie_unparen(S, _rhs_b, GTI(S));
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0; }
+    var esl = _cl_snap_find(S, TOKVAL(S, a));
+    if (esl < 0) { return 0; }
+    var c = _cl_cap_find(esl);
+    if (c < 0) { return 0; }
+    if (L64(&_cl_cap_w + c * 8) > 1) { return 1; }
+    return 0;
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
 # step word (6.7.8): the multiplier is its step, and the result keeps the word.
@@ -7667,7 +7758,10 @@ fn _PEXPR_IMPL(S): i64 {
             # Compiles to a call into lib/overflow.cyr. No constant-fold
             # path; let the helper handle any corner cases. SPSC(0) during
             # PARSE_TERM so pointer scaling doesn't apply (overflow ops
-            # are defined on integers only).
+            # are defined on integers only), and the RESULT is an integer
+            # too: no step, so with `q: *i32` `(q +| 1) + 1` is q + 2 — it
+            # restored q's step, q + 5 (6.6.17-6.7.10; the user's decision
+            # (a), 2026-10-13). CHANGELOG [6.7.11]
             else { if (typ == 114) {
                     STI(S, GTI(S) + 1);
                     EPUSHR(S);
@@ -7675,7 +7769,7 @@ fn _PEXPR_IMPL(S): i64 {
                     PARSE_TERM(S);
                     EPUSHR(S);
                     EMIT_OVF_CALL(S, "_sat_add_i64");
-                    SPSC(S, ps);
+                    SPSC(S, 0); ps = 0;
                     _cfo = 0;
                 }
                 else { if (typ == 115) {
@@ -7685,7 +7779,7 @@ fn _PEXPR_IMPL(S): i64 {
                         PARSE_TERM(S);
                         EPUSHR(S);
                         EMIT_OVF_CALL(S, "_chk_add_i64");
-                        SPSC(S, ps);
+                        SPSC(S, 0); ps = 0;
                         _cfo = 0;
                     }
                     else { if (typ == 117) {
@@ -7695,7 +7789,7 @@ fn _PEXPR_IMPL(S): i64 {
                             PARSE_TERM(S);
                             EPUSHR(S);
                             EMIT_OVF_CALL(S, "_sat_sub_i64");
-                            SPSC(S, ps);
+                            SPSC(S, 0); ps = 0;
                             _cfo = 0;
                         }
                         else { if (typ == 118) {
@@ -7705,7 +7799,7 @@ fn _PEXPR_IMPL(S): i64 {
                                 PARSE_TERM(S);
                                 EPUSHR(S);
                                 EMIT_OVF_CALL(S, "_chk_sub_i64");
-                                SPSC(S, ps);
+                                SPSC(S, 0); ps = 0;
                                 _cfo = 0;
                             }
                             else { if (typ == 27) {

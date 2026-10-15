@@ -1,0 +1,65 @@
+# generic_instance_names.tcyr — 6.7.11: a scalar type argument never shares a generic instance with a struct.
+#
+# ⛔ An instance is named `Base$<fragment>`, and FINDFN / FINDSTRUCT dedup by that name. f64's
+# fragment was a bare `i` (`_append_conc_name` spelled only i8 / i16 / i32 / i64), the name of a
+# `struct i` too: `gen<f64>` and `gen<i>` shared `gen$i`, and the second call ran the first's body
+# — the filed repro exited 88 (96 is right), 176 swapped. Now f64 is `f64`, and a struct named
+# exactly like a scalar (`struct f64`, `struct i32`) is marked `.f64` / `.i32` (the user's decision
+# C, 2026-10-13). The `struct f64` rows (a scalar f64 and a struct f64 on one generic) need a file
+# where `f64` names the struct, so they are in tests/gates/frontend/generic_instance_names_distinct.sh
+# (every leg). Filed: docs/development/issues/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
+#   F  a fn instance at f64 and at `struct i`, both orders            B  `Box<f64>` / `Box<i>`
+#   T  two type parameters: <f64, i>, <i, f64>, <i, i>, <f64, f64>     I  `struct i32` binds `<i32>`
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct i { a; b; c; }
+struct i32 { a; b; c; d; }
+struct Box<T> { v: T; n; }
+
+fn gf<T>(x: *T): i64 { return sizeof(T); }
+fn gs<T>(x: *T): i64 { return sizeof(T); }
+fn g2<A, B>(a: *A, b: *B): i64 { return sizeof(A) * 100 + sizeof(B); }
+fn gi<T>(x: *T): i64 { return sizeof(T); }
+# not inlinable: the instance is a call of its own
+fn gl<T>(x: *T): i64 {
+    var t = 0;
+    var k = 0;
+    while (k < 2) { t = t + sizeof(T); k = k + 1; }
+    return t;
+}
+fn gl2<T>(x: *T): i64 {
+    var t = 0;
+    var k = 0;
+    while (k < 2) { t = t + sizeof(T); k = k + 1; }
+    return t;
+}
+
+fn run(): i64 {
+    assert_eq(gf<f64>(0), 8, "F1: gf<f64> first is the f64 instance");
+    assert_eq(gf<i>(0), 24, "F2: gf<i> after it is the struct's (was 8: gf$i)");
+    assert_eq(gs<i>(0), 24, "F3: gs<i> first is the struct's");
+    assert_eq(gs<f64>(0), 8, "F4: gs<f64> after it is the f64 instance (was 24)");
+    assert_eq(gl<f64>(0), 16, "F5: non-inlinable gl<f64> first");
+    assert_eq(gl<i>(0), 48, "F6: non-inlinable gl<i> after it (was 16)");
+    assert_eq(gl2<i>(0), 48, "F7: non-inlinable gl2<i> first");
+    assert_eq(gl2<f64>(0), 16, "F8: non-inlinable gl2<f64> after it (was 48)");
+    assert_eq(gf<f64>(0) * 10 + gf<i>(0), 104, "F9: the two instances in one expression");
+    assert_eq(sizeof(Box<f64>), 16, "B1: Box<f64> first");
+    assert_eq(sizeof(Box<i>), 32, "B2: Box<i> after it (was 16: Box$i)");
+    var bx: Box<i>;
+    bx.v.c = 5;
+    bx.n = 7;
+    assert_eq(bx.v.c + bx.n, 12, "B3: a Box<i> local's fields");
+    assert_eq(g2<f64, i>(0, 0), 824, "T1: g2<f64, i>");
+    assert_eq(g2<i, f64>(0, 0), 2408, "T2: g2<i, f64> (was 824: g2$i$i)");
+    assert_eq(g2<i, i>(0, 0), 2424, "T3: g2<i, i> (was 824)");
+    assert_eq(g2<f64, f64>(0, 0), 808, "T4: g2<f64, f64> (was 824)");
+    assert_eq(gi<i32>(0), 32, "I1: gi<i32> binds the program's struct i32");
+    assert_eq(sizeof(Box<i32>), 40, "I2: Box<i32> binds it too");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

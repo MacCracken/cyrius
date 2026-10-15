@@ -182,7 +182,7 @@ matches the **whole** name:
 | `u128` | 16 | |
 | `f32` / `f64` | 4 / 8 | |
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | an enum may be declared on either side |
-| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it |
+| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it; `T` is read (6.7.11, below) |
 | a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
 | a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
@@ -209,9 +209,23 @@ and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `size
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, `bool`
 (6.7.3), a vector type, `Result`, `Option`, `Tagged`, `cstring`, a pointer `*T` (6.6.17), a
-multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)) or `dyn Tr` (6.7.8)
-— `fn f(): u8`, `: u64` and `: f32` are refused by name (`type 'u8' cannot be a fn return
-type`; return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dyn Tr` (6.7.8) or
+a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
+refused by name (`type 'u8' cannot be a fn return type`; return an `i64`), with a note that lists
+this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn` and `T`).
+`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+
+**A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
+local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
+`**Vec<T>`, a `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)`. `T` is a struct or union, an integer or
+float, `bool`, `cstring`, `Result` / `Option` / `Tagged`, an enum, `Vec` (a nested `Vec<..>` is read
+the same way) or a type parameter in scope; any other element's own `<..>` is not read
+(`Vec<Box<i64>>`). Everything else is refused by name, once: a tuple (`a tuple type cannot be a Vec
+element`), an unknown name (`unknown type 'Nope' as the Vec element of 'v'`), a vector type, a slice,
+`u128`, a token that is no type (`expected a Vec element type for 'v', got number 1`; a pointer element
+`Vec<*Pt>` too, as the field form refuses it) or a second argument (`Vec<i64, i64>`). The handle is unchanged: `Vec<T>` declares the 8-byte word it always did.
+Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i64)>`,
+`Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13).
 
 **A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
 plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
@@ -464,6 +478,15 @@ var r = add(20, 22);   # r = 42
 - All functions return a value (`return 0;` if nothing to return) — one value, or two or three
   from a fn declared `: (T1, T2)` / `: (T1, T2, T3)` (see [Multi-Return](#multi-return) and
   [Tuples](#tuples))
+- **`return` belongs to a fn body** (6.7.11). A `return` at top level, or in a top-level block (an
+  `if`, a loop, a `switch` case), is refused: `return outside a fn body`, reported once, and the
+  compile goes on to the next statement. A top-level `break`, `continue`, `defer` and `?` are
+  refused the same way: the top level has no frame and no epilogue to return to. A program exits
+  with `syscall(60, v);`, by running off the end of its top level, or by returning from a `fn
+  main` (the auto-call). A closure body and an `#inline` fn are fn bodies, so a `return` in one
+  is fine anywhere. ⚠ Before 6.7.11 a top-level `return` compiled with no diagnostic and did not
+  return: x86_64 and PE ran on past it (`return 6; syscall(60, 9);` exited 9), and aarch64 and cx
+  hung at it.
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading by arity, so a count mismatch is never intentional). The count must lie between
   the fn's required parameters and all of them: a fn that declares parameter defaults
@@ -650,6 +673,11 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
 - **Const contexts** call a `const fn` with fills and names as run time does: `const N =
   cf(1);`, `const M = cf(1, c: 9);`, `#assert`, an array size, an enum value, a `case` label, a
   local const. A default defined in terms of itself (`const fn cf(a, b = cf(1))`) is refused.
+  The arity is the run time's too (6.7.11): a parameter typed `p: Pair<i64, i64>` is ONE
+  parameter, so `pick(0, 7)` calls `const fn pick(p: Pair<i64, i64>, b)` and `pick(0, 1, 7)` is
+  refused (`a const fn called with the wrong number of arguments`). Before 6.7.11 a const
+  context split the type at its comma: the two-argument call was refused and the three-argument
+  one bound a phantom parameter named `i64` (user decision (a), 2026-10-13).
 - **Methods and traits.** An inherent `impl T` method may declare defaults (`p.m()`,
   `p.m(k: 5)`, `T_m(&p)`). A trait's methods may not, in a required signature or a default
   body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.
@@ -1029,7 +1057,10 @@ at another size (before 6.7.9 a one-byte `n + p` was no typed pointer: that decl
 the difference was a byte count). A pointer to a one-byte STRUCT (`pb: *B1`) is such a pointer too
 (6.7.11, the user's decision of 2026-10-13): `m + pb` and `0 + pb` are that pointer, `var r: *B1 = 1 +
 pb;` is silent and `(1 + pb) - q32` is refused as `(pb + 1) - q32` is (through 6.7.10 the
-difference was a byte count and the declaration warned). `load8` / `store16` / … stay valid for an
+difference was a byte count and the declaration warned). So is `&x`, a byte address, on either side
+of `+` (6.7.11, the user's decision of 2026-10-13): `n + &x` is the pointer `&x + n` is, so
+`var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32` is refused (through 6.7.10 the first warned
+and the second was a byte difference). `load8` / `store16` / … stay valid for an
 explicit width. ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
@@ -1041,17 +1072,25 @@ closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, 
 is a pointer, not a `T`: `p + 1` on a `p: *f32` parameter is address arithmetic (not a
 float add), and on a `p: *Pt` parameter it is not `Pt`'s `+` overload — `p.x` still reads
 through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q = p;`).
-`n + p` steps like `p + n`. `q - p` of two pointers with the same element size is the number
+`n + p` steps like `p + n`. A narrow scalar — a `u8` / `i8` / … / `i32` local, global or parameter —
+is an integer, never a pointer: `w - q` is `n - p`, `w + q` steps `q`'s `sizeof(T)`, and
+`var r: *u32 = w;` warns. (Through 6.7.10 a narrow LOCAL was a one-byte pointer to these rules:
+`w - q32` was refused as a pointer difference, `var r: *u32 = w;` was silent, and with `q: *i32`
+`w + q` added `w` unscaled — `q` + 1 for `w = 1`.) `q - p` of two pointers with the same element size is the number
 of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
 different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
 only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
 computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
-unary `-` / `~`, `p?`, an operator fn's result (unless the operator fn declares `: *T`: then,
-as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
+the saturating / checked `+| +? -| -?` (integer operators: `q +| 1` adds one byte, and the sum is
+no pointer), unary `-` / `~`, `p?`, `await f`, an operator fn's result (unless the operator fn declares `: *T`:
+then, as its free call `V_add(v, p)` does, it steps by `T`) and a field that is no `*T` — `(x == p) + 1`,
 `(k * p) + 1`, `(m & p) + 1`, `(-p) + 1` and `mk(p).n + 1` add 1, and such a value assigned to a
 `*T` warns "assigning non-pointer to typed pointer". (Before 6.7.9 the pointer's step leaked
-through them: with `p: *i32`, `(x == p) + 100` was 401.) (Before 6.6.17,
+through them: with `p: *i32`, `(x == p) + 100` was 401; before 6.7.11 through `await f` too, in a
+coroutine or not: with `f: *i32`, `(await f) + 1` added 4, and `+| +? -| -?` handed their sum the
+left operand's step: with `q: *i32`, `(q +| 1) + 1` was `q` + 5 bytes, now + 2 — the user's decision
+of 2026-10-13.) (Before 6.6.17,
 `q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
 its last argument's step.)
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
@@ -2058,8 +2097,21 @@ a **type argument** (`g<[u8]>`) and a **tuple element**. Before 6.7.8 each was a
 (`expected ')', got identifier 'u8'`, `expected identifier, got '['`, `unknown type 'slice'`, ...).
 A top-level `var s: [T]` AFTER the first top-level statement is still a 16-byte global, used through
 the helper API — `slice_set(&s, ..)`, `slice_ptr(&s)` / `slice_len(&s)`, `slice_unchecked_get_W` —
-as before: subscript and dot syntax fire on **fn-local** slices only. See `lib/slice.cyr` for the
-full helper list.
+as before: subscript and dot syntax fire on **fn-local** slices only — and the dot syntax's reads
+on a closure's captured copy (6.7.11, the user's decision of 2026-10-13): inside a closure that
+captured `s`, `s.len` / `s.ptr` read the copy the closure was built with (a later `slice_set` on
+the enclosing `s` is not seen, as for any capture). A store into the copy (`s.len = n`,
+`s.ptr = p`, `s.len += 1`) is refused by name ("a closure cannot assign a field of the captured
+slice 's'"), as `s[i]` is. ⚠ Before 6.7.11 the read was "undefined variable 's'". See
+`lib/slice.cyr` for the full helper list.
+
+**`slice` is not reserved.** A program may declare its own `struct slice` (or `struct slice<T>`), and
+then the name is that struct everywhere — a parameter, a pointer target, a field, a global, a type
+argument and (6.7.11) a fn-local `var x: slice;` / `var y: slice<Pt>;`; the built-in slice stays
+reachable as `[T]`. Through 6.7.10 the fn-local annotation alone still meant the built-in 16-byte slot
+(`x.a`: "no struct type in scope for 'x'"; the user's decision (b), 2026-10-13) — so a program that
+declares `struct slice` and used a fn-local `slice<u8>` as the built-in now meets its own struct there
+(`s.len`: "unknown field 'len' on struct 'slice'"): spell the built-in `[u8]`.
 
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to
@@ -2260,7 +2312,9 @@ file by its include path as written (`lib/assert.cyr`, `src/parse.cyr`), `<sourc
 file (through `cyrius build` / `run` too). `<line>` is the line of the `fn` keyword; a closure's is its
 closing `|` (or its `||`); a fn a `#derive` writes has no `fn` of its own and is named at its struct's closing `}`.
 `<name>` is the name the compiler registers: `P_sum` for a method,
-`gen$i32` for `gen<i32>` (an `i64` instance is `gen` itself), `f$impl` for an `async fn f`'s body,
+`gen$i32` for `gen<i32>` and `gen$f64` for `gen<f64>` (an `i64` instance is `gen` itself; a struct
+type argument is its name, `gen$Pt`, and one named exactly like a scalar is marked, `gen$.f64` for a
+`struct f64`), `f$impl` for an `async fn f`'s body,
 `__clNNNNN` for a closure (the number is an index, so it moves as fns are added). The counts are
 this process's. A dump that cannot open its file — an open the program's own sandbox denies, a path
 that cannot be created — writes nothing and says nothing.
@@ -2276,7 +2330,8 @@ before its first statement.
 
 **When it dumps.**
 
-- the program falls off the end of its top level, or the `main` it defines returns (the auto-call);
+- the program falls off the end of its top level, or the `main` it defines returns (the auto-call,
+  on every target — cx's since 6.7.11);
 - the program makes an exit syscall whose NUMBER is a compile-time constant — a literal, a `const` or
   an `enum` value: `sys_exit`, `sys_exit_group`, `panic`, the stdlib's aborts, a bounds violation's
   exit 134, `syscall(SYS_EXIT, main())`. The dump runs after the syscall's arguments are evaluated, so
@@ -2308,10 +2363,8 @@ overwrites the other. Only whether a fn was entered is stable from run to run, a
 **Per target.** The dump opens its file through the routes every target already has — no new OS
 call: `O_WRONLY | O_CREAT | O_APPEND` on Linux, Windows and cx, the Darwin flags (0x209) on macOS, and
 on agnos `AO_WRONLY | AO_CREAT | AO_APPEND` followed by a seek to the end (its kernel does not honour
-`AO_APPEND` yet). cx takes no `#naked`, so such a fn is an ordinary counted one there, and cx does not
-auto-call `main`: a cx program whose only call is the implicit one exits 0 with a header-only block
-(call it from the top level — `var r = main();`). `cyrius coverage --exec` runs host binaries only,
-so it never runs cx bytecode.
+`AO_APPEND` yet). cx takes no `#naked`, so such a fn is an ordinary counted one there.
+`cyrius coverage --exec` runs host binaries only, so it never runs cx bytecode.
 
 **Reserved names.** The dump is four fns the compiler appends to the program —
 `__cyrius_cov_cp`, `__cyrius_cov_num`, `__cyrius_cov_w` and `__cyrius_cov_dump`; the `__cyrius_`
@@ -3546,7 +3599,8 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return
   forms all report `'_helper' is private to its file` exactly like a direct call — before
   6.6.4 every one of them compiled and ran (hisab found `&_helper` while writing a
-  reachability gate). Top-level **arrays** are covered too: `var _buf[N]` in a private file
+  reachability gate). So does a `const fn` called in a const context — a `const`, an array
+  size, an enum value, `#assert`, a `case` label (6.7.11; it ran silently before). Top-level **arrays** are covered too: `var _buf[N]` in a private file
   is file-private like any other global (it was never stamped before 6.6.4). A `public fn
   f<T>` in a private file is reachable at every instantiation (`f<i32>(x)` from another file
   used to be refused while `f(x)` was accepted — the instance inherited the file default).
@@ -5452,7 +5506,16 @@ address. Fixed in 6.6.6; pinned by `tests/tcyr/crossos/toplevel_block_closure.tc
 
 Parameters and any locals declared inside the closure are its own; the
 enclosing function's locals are untouched (so a closure declared after a local
-doesn't clobber it).
+doesn't clobber it). That holds for every name the body declares: a `var`, a local
+`const`, a `for … in` variable (for the loop only) and each name of a destructure
+`var a, b = f();`. A range's start bound and a collection are read before the loop
+variable is bound, so `for i in i..5` and `for x in x` read (and capture) the enclosing
+`i` / `x`; a range's end bound reads the loop variable. A destructure binds its names after
+its right-hand side, so `var a, b = f(b);` passes (and captures) the enclosing `b`.
+⚠ Before 6.7.11 a `for … in` variable, a local `const` and a destructure's second or
+third name were taken for a read of the enclosing local of that name: the closure was
+refused without lib/alloc.cyr, or carried a heap copy it never read. Pinned by
+`tests/gates/frontend/closure_declared_names_not_captured.sh`.
 
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable
 from the enclosing scope (a *free variable*). Each such variable is captured
@@ -5574,7 +5637,9 @@ fn f(v): i64 {
   `sizeof`, `const fn` calls, arithmetic: a const's value, an array size (top level and in a fn,
   bare or element-typed), `#assert` (any expression since 6.7.2, `&&` / `||` included), a
   `case` label, an enum value. Anything else — a variable, an ordinary fn's call — is refused
-  by name. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
+  by name. A `const fn` call there is a call like any other (6.7.11): another file's `private`
+  const fn is refused at the call (`'pk' is private to its file`), and a `#deprecated` one warns
+  once per call site — before 6.7.11 every const context ran both silently. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
   `const fn` they call must be declared above them (a top-level const need not be).
 - **A `const fn` runs at compile time only in a const context**; everywhere else it is an
   ordinary runtime call, so the disassembly shows the call you wrote (user decision,
@@ -5715,7 +5780,8 @@ The type parameter `T` may appear in parameter types (`x: T`), the return type
 the concrete type is **inferred** from the argument in the parameter `T` types —
 the first such parameter, wherever it sits (`fn g<T>(n, p: T)` infers `T` from
 `g(2, p)`'s `p`). A struct argument — a struct local or by-value struct
-parameter, a struct global, a call returning a struct — binds `T` to that struct
+parameter, a struct global, a call returning a struct (a generic call at the instance
+it reaches, 6.7.11: `g(id(p))`, `g(mk1(p))` bind `Pt` and `Box<Pt>`) — binds `T` to that struct
 on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
@@ -5730,12 +5796,20 @@ call ran the i64 base — `dbl(h)` with `x + x` added the double's bits — and 
 result was an untyped word, so `gid(h) * 2.0` multiplied the bits as integers with
 a warning; so did `gg<f64>(&q) * 2.0`, a `T` named only in the return). The same
 WHOLE-argument rule holds — `g(h * 2.0)` infers `i64` — and an `f32` is not a type
-argument, so `g(f)` with `f: f32` infers `i64`. A generic method binds an `f64`
-type parameter from its arguments the same way (`p.id(h)` calls the `f64`
-instance, as `P_id(&p, h)` does). A bound is then met at `f64`: `gb(h)` with
+argument, so `g(f)` with `f: f32` infers `i64`. A **generic method** binds its
+type parameters from its arguments exactly as its free spelling does: a struct
+argument (`p.pick(q)` calls `P_pick$Q`, as `P_pick(p, q)` does), an `f64` one
+(`p.id(h)` calls the `f64` instance, 6.7.9), a struct carrier (`p.cm(b)` with
+`b: Box<Pt>`), and a type parameter on `self` binds the receiver's struct
+(`fn me<V>(self: V)`: `p.me()` calls `P_me$P`) — on every call path, a chain
+`mk().pick(q)` and `var w = p.pick(q);` included (6.7.11; before it every binding
+but `f64` called the i64 base — the dead stub when the body uses the parameter as a
+struct, so `p.pick(q)` returned 0, and a carrier was refused as a different struct
+type). A bound is then met at `f64`: `gb(h)` with
 `fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
-`gb<f64>(h)` is. Any other argument infers `i64`, or the width a scalar-returning
-call declares.
+`gb<f64>(h)` is — and it needs no `impl Show for i64` (6.7.11: without one, `gb(h)`,
+`gb<f64>(h)` and `p.bm(h)` were refused naming `i64`, or ran the dead stub). Any other
+argument infers `i64`, or the width a scalar-returning call declares.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
@@ -5758,9 +5832,13 @@ does (6.7.11): `gx((b))`, a wrapped call returning the instance, `gx(*bp)` and `
 `gw((w))` / `gw(*wp)` with `w: W1<i32>` call `gw$i32` — they reached the base, refused
 as a different struct type (through 6.7.10 a carrier of 8 bytes or less compiled there and
 read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` keeps
-the rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
-(`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
-write `gx<Pt>(..)`.
+the rule above. A **generic** call's own result binds `T` as the instance that call
+reaches (6.7.11): `gx(mk1(p))` with `fn mk1<T>(x: T): Box<T>` calls `gx$Pt`, as
+`gx<Pt>(mk1(p))` does — inferred or explicit (`gx(mk1<Pt>(p))`), nested
+(`gx(mk1(mk1(p)))`), and through a `: T` generic (`gx(id(b))`); before 6.7.11 the call
+was typed by `mk1`'s base return, the generic `Box`, and refused as a different struct
+type. An `x: T` parameter wins over a struct one; `T` nested deeper (`Box<Pair<T>>`)
+is not inferred — write `gx<Pt>(..)`.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
@@ -5778,16 +5856,38 @@ definition's base *is* its i64 instantiation: the body is emitted once with
 argument (`add<i32>`, `Box<Point>`) is **monomorphized on demand**: the
 specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
-dispatch — `T` is resolved entirely at compile time.
+dispatch — `T` is resolved entirely at compile time. An instance is named by its
+type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own name
+for a struct — and a struct named exactly like a scalar (`struct f64`, which
+`add<f64>` then binds) is marked `.f64`, so a scalar type argument never shares an
+instance with a struct one (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i`
+too, and the second call ran the first's body). ⚠ Still open: a two-parameter generic
+whose type argument is itself a generic struct's instance — `g2<P<R>, i32>` and
+`g2<P, R<i32>>` both mint `g2$P$R$i32`, so the second call runs the first's body
+(`docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md`).
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
-value — a parameter or a `var q: T` local — is used as a struct (`p.y`), there is
+value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`
+with `b: Box<T>` / `b: *Box<T>` or a `var x: Box<T>` local, where `Box` declares
+`v: T`; 6.7.11, before it such a definition failed to parse, called or not) — is
+used as a struct (`p.y`), there is
 no valid i64 form, so the base is a dead stub, and any use that would reach it is
 a compile error naming the fn: a scalar call (`g(5)`, `g<i64>(5)`, `g<i32>(5)`,
 in any position, tail included), `&g`, and a generic that FORWARDS its own `T` to
 such a generic (`fn outer<T>(p: T) { return g(p); }` makes `outer(5)` an error
 too, whichever order the two are defined in). Call it with a struct argument or a
 struct type argument (6.6.10; before that each of these compiled and returned 0).
+The carrier rule looks one field deep: a field typed `Box<T>` inside another carrier
+(`o.inner.v.y` with `o: Out<T>`) is not followed — bind the value to a `T`-typed
+local first (`var t: T = o.inner.v; return t.y;`), which makes the base the stub.
+A generic method's scalar call is refused the same way, naming the method's fn:
+`p.pick(9)` and `p.pick(h)` (an `f64`) are refused as `P_pick(p, 9)` is (6.7.11;
+before it they compiled and returned 0), and a generic that forwards a `T`-typed
+name into such a method — `fn o<T>(p: P, t: T) { return p.pick(t); }`, or a
+generic method's `self.pick(w)` — is a stub too: `o(p, 5)` is refused, `o(p, q)`
+calls `o$Q`. The receiver may be a name, a field chain (`h.p.pick(t)`, `x.hp.p.pick(t)`
+through a `*H` field) or a call's result (`mk().pick(t)`, `mkh().p.pick(t)`, a method
+call's `h.gp().pick(t)`, a generic's plain `: P` return).
 
 ```
 struct Pt { x; y; }
@@ -5903,10 +6003,13 @@ describe<i32>(7);   # needs impl Show for i32
   takes no type arguments, and goes on one of the first two type parameters (at most two are
   recorded); up to 8 per parameter.
 - **Every instantiation is checked**, and is refused when its type has no impl — naming the trait
-  and the `impl` it needs: an inferred or explicit type argument, the **i64 base** a scalar call
-  reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is the dead stub and
-  every scalar path — a call, a tail call, `&describe` — is refused), and a generic struct's instance,
-  its i64 base included (a bare `Shown`, a written `Shown<i64>`).
+  and the `impl` it needs: an inferred or explicit type argument, the **i64 base** an i64 call
+  reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is not emitted and
+  every path to it — a call, a tail call, `&describe`, a generic method's `p.bm(7)` (6.7.11: it
+  returned 0) — is refused), and a generic struct's instance,
+  its i64 base included (a bare `Shown`, a written `Shown<i64>`). An instance is judged at its own type
+  alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
+  instance's one note names the type the call binds (6.7.11).
 - **Any type satisfies a bound through its impl**, a scalar too: `impl Show for i64` defines
   `i64_show`, a bounded call on an i64 `T` calls it with the value, and a trait default instantiated
   for a scalar calls `self.show()` (6.7.1; before it, `self.m()` in a scalar impl was "no struct type
@@ -6264,6 +6367,9 @@ closure capture or global annotated `i8`..`i64` / `u8`..`u64` — as the whole a
 (`var n: i64 = 42; println(n);` prints 42; until 6.7.6 it ran the cstring body over 42 and crashed).
 An untyped name is passed as a cstring (it may hold one); write `println_int(x)` or annotate it.
 Any base with a `: cstring` parameter 0, an `: i64` return and a `<base>_int` sibling routes the same way.
+A sibling takes the call only when it is DEFINED: one that is merely named somewhere — undefined under
+`--allow-undef`, or defined in another object of an `object;` build — never does, and the call reaches
+the base it names (6.7.11; it reached the undefined sibling, which trapped under `--allow-undef`).
 
 ## Standard Libraries
 

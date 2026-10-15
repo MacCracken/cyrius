@@ -23,17 +23,29 @@
 #
 # 6.7.9 — axis 7: the arity gate judges a sibling defined BELOW the call as it judges
 # one above it. CYCC overrides the compiler (a candidate built from a patched src).
+# 6.7.11 — axis 8: a sibling with NO definition never takes the call (the user's decision (b)).
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="${CYCC:-$ROOT/build/cycc}"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: overload_arity_dispatch: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$D"' EXIT
+# A PRIVATE wine prefix under $D for axis 8's PE row (never ~/.wine), torn down with its server dir on
+# exit — the defer_every_return_path.sh helper.
+WP="$D/wine"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
 fails=0
 
-# Compile $1 (source text) and echo the run exit code, or NOEMIT if no binary.
+# Compile $1 (source text; $2 an optional compiler flag) and echo the run exit code, or NOEMIT if no binary.
 run() {
     printf '%s' "$1" > "$D/p.cyr"
-    ( cd "$ROOT" && cat "$D/p.cyr" | "$CC" > "$D/p.bin" 2>"$D/p.err" ) || true
+    ( cd "$ROOT" && cat "$D/p.cyr" | "$CC" ${2:-} > "$D/p.bin" 2>"$D/p.err" ) || true
     if [ ! -s "$D/p.bin" ]; then echo "NOEMIT"; return; fi
     chmod +x "$D/p.bin"
     "$D/p.bin" >/dev/null 2>&1 && echo 0 || echo $?
@@ -231,6 +243,99 @@ fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); return pr(s) * 10 + 
 fn pr_str(s: Str, k): i64 { return k; }
 syscall(60, main());
 ')"
+
+# ---------------------------------------------------------------------------
+# AXIS 8 — a sibling with NO definition never takes the call (6.7.11, the user's decision (b),
+# 2026-10-13; docs/development/issues/2026-10-11-overload-router-undefined-sibling-under-allow-undef-decision.md).
+# `_OV_ARITY_OK` let a target with no recorded definition (offset < 0, GFDS 0 — a name only CALLED
+# somewhere) through, "into the undefined-function diagnostic": `pr(s)`, written to the DEFINED `pr`,
+# was sent to the undefined `pr_str`. The default build was refused only because that route made the
+# name reachable; under --allow-undef the call trapped (x86 / aarch64 rc 132, PE 29). The route also
+# hung on text order (a sibling first named BELOW the call was never registered in time: 11). Now the
+# base takes the call in every build and position, and in an `object;` unit, where a sibling defined
+# in another object is such a name too. cx refuses every undefined call (no --allow-undef): no row.
+# Mutation: put back `return 1` for a target with no definition -> RED every row below but the
+# below-named one (132 / NOEMIT / 2 relocations; aarch64 132, PE 29).
+# ---------------------------------------------------------------------------
+echo "axis 8 — a sibling with no definition never takes the call:"
+OVR='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn other(): i64 { return pr_str(0); }    # pr_str is named, never defined
+fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); return pr(s) * 10 + pr(5); }
+syscall(60, main());
+'
+check "filed repro, --allow-undef: pr(s) reaches pr (was 132)"       11 "$(run "$OVR" --allow-undef)"
+check "filed repro, default build: builds, pr(s) reaches pr (was refused)" 11 "$(run "$OVR")"
+check "the undefined sibling named below the call (11 before too)"   11 \
+    "$(run 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); return pr(s) * 10 + pr(5); }
+fn later(): i64 { return pr_str(0); }
+syscall(60, main());
+' --allow-undef)"
+check "return / var / assignment, --allow-undef (was 132)"          111 \
+    "$(run 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn other(): i64 { return pr_str(0); }
+fn t(s: Str): i64 { return pr(s); }
+fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); var a = pr(s); var b = 0; b = pr(s); return t(s) * 100 + a * 10 + b; }
+syscall(60, main());
+' --allow-undef)"
+OVI='include "lib/syscalls.cyr"
+fn em(a: cstring): i64 { return 11; }
+fn mk(): i64 { return 7; }
+fn other(): i64 { return em_int(0); }    # em_int is named, never defined
+fn main(): i64 { var r = em(mk()); return r; }
+syscall(60, main());
+'
+check "_int arm, an undefined em_int, --allow-undef (was 132)"      11 "$(run "$OVI" --allow-undef)"
+check "_int arm, default build: builds (was refused)"               11 "$(run "$OVI")"
+# A defined sibling still routes, above and below (axis 4 and axis 7's "routed" rows).
+# An `object;` unit: `pr(s)` calls `pr`, so the only relocation against `pr_str` is `other`'s (was 2).
+if command -v readelf > /dev/null 2>&1; then
+    printf '%s' 'object;
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn other(): i64 { return pr_str(0); }
+fn app_main(): i64 { var s: Str = str_from("ab"); return pr(s) * 10 + pr(5); }
+' > "$D/o.cyr"
+    ( cd "$ROOT" && "$CC" < "$D/o.cyr" > "$D/o.o" 2> "$D/o.err" ) || true
+    check "object; unit: one relocation against pr_str, other's (was 2)" 1 \
+        "$(readelf -r "$D/o.o" 2> /dev/null | grep -c ' pr_str' || true)"
+else
+    echo "  NOT RUN: the object-mode row (readelf not installed)"; fails=$((fails + 1))
+fi
+# The other forks: the filed repro under --allow-undef on aarch64 (qemu) and PE (wine), each compiler
+# built from this tree by $CC. A fork this box cannot run says so by name and fails the gate.
+printf '%s' "$OVR" > "$D/x.cyr"
+if command -v qemu-aarch64 > /dev/null 2>&1 && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null ) && [ -s "$D/cc_a64" ]; then
+    chmod +x "$D/cc_a64"
+    ( cd "$ROOT" && "$D/cc_a64" --allow-undef < "$D/x.cyr" > "$D/x_a64" 2> /dev/null ) || true
+    r=NOEMIT
+    if [ -s "$D/x_a64" ]; then chmod +x "$D/x_a64"; r=0; ( ulimit -c 0; qemu-aarch64 "$D/x_a64" ) > /dev/null 2>&1 || r=$?; fi
+    check "aarch64 (qemu): filed repro, --allow-undef (was 132)" 11 "$r"
+else
+    echo "  NOT RUN: the aarch64 row (qemu-aarch64 missing, or src/main_aarch64.cyr did not build)"; fails=$((fails + 1))
+fi
+if command -v wine > /dev/null 2>&1; then
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" --allow-undef < "$D/x.cyr" > "$D/x_pe.exe" 2> /dev/null ) || true
+    r=NOEMIT
+    if [ -s "$D/x_pe.exe" ]; then
+        r=0
+        ( cd "$D" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine ./x_pe.exe > /dev/null 2>&1 ) || r=$?
+    fi
+    check "PE (wine): filed repro, --allow-undef (was 29, the trap)" 11 "$r"
+else
+    echo "  NOT RUN: the PE row (wine not installed)"; fails=$((fails + 1))
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then

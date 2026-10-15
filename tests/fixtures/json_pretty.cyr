@@ -18,4 +18,3 @@ var v = bayan_json_v_parse_buf(src, strlen(src));
 var pretty = bayan_json_v_build_pretty(v, 2);
 print(str_data(pretty), str_len(pretty));
 print("\n", 1);
-return 0;

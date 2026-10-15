@@ -2688,6 +2688,7 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     if (n > 1) { ps = 8; }
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
         STI(S, GTI(S) + 1);
+        if (quiet == 0) { _vec_ann_chk(S, GTI(S) - 1, vnoff); }   # 6.7.11: `*Vec<T>` reads T
         SKIP_GENERICS(S);
     } elif (PEEKT(S) == 10) {
         if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
@@ -2905,6 +2906,20 @@ fn _sl_ann_at(S, ti): i64 {
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     return 1;
 }
+# ⛔ 6.7.11 — PARSE_VAR's `slice` word, cursor on it: 1 for the built-in `slice<T>` / bare `slice` slot,
+# 0 when the program declares a `struct slice` (or `slice<T>`), which a fn-local annotation now names as
+# a parameter, a pointer target, a field, a global and a type argument already did (`_sl_ann_at`, 6.7.8
+# row K2) — the built-in stays reachable as `[T]`. The ladder compared the word before any struct
+# lookup, so `var x: slice = 0;` was the built-in 16-byte slot and `x.a` "no struct type in scope for
+# 'x'" (the user's decision (b), 2026-10-13). A helper, so PARSE_VAR's reference count does not grow
+# (cybs's per-fn ceiling). CHANGELOG [6.7.11] (issues/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+fn _sl_word_builtin(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var noff = PEEKV(S);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
 # Cursor on a slice type's first token: consumes it whole — `[ .. ]` with any nesting, or
 # `slice<..>` (`>>` closing two). Stops, consuming nothing more, at a token no type holds.
 fn _sl_ann_skip(S): i64 {
@@ -3049,8 +3064,10 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
 
 # A return type _classify_return_type does not take (cursor on it): an unknown name is
 # `unknown type 'X' as a fn return type`; a type that exists but is not a return type (u8..u64,
-# f32, bool, an enum) says so by name — both used to be the one unnamed "fn return type must be
-# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged.
+# f32, an enum) says so by name — both used to be the one unnamed "fn return type must be
+# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged. The
+# note lists all of it, the forms taken before the classifier is asked too (bool, a multi-value,
+# `*T`, a type parameter; `dyn Tr` is a struct to it). CHANGELOG [6.7.11]
 # Returns the return code to record: 0 after the refusal, and -8 (an i64) under --syntax-only,
 # which resolves nothing and refuses nothing (see the v6.5.19 note at the call site). Either
 # way a `<..>` after the name (`fn f(): Vec<i64>`) is skipped with it — the cursor is left on its
@@ -3080,7 +3097,7 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged, cstring or a pointer *T; return an i64 (no annotation) for the others\n");
+        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
     }
     _panic = 0;
     return 0;
@@ -3955,6 +3972,151 @@ fn _vec_field_elem(S, si, fnoff): i64 {
     if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
     STI(S, GTI(S) + 1);                     # consume >
     return elemc;
+}
+
+# ⛔ 6.7.11 — A `Vec<T>` ANNOTATION READS ITS T AS THE FIELD FORM DOES (the user's decision (a),
+# 2026-10-13). A local, a global (either zone), a parameter, a `*Vec<T>` and `sizeof(Vec<T>)` skipped
+# their `<..>` unread (SKIP_GENERICS), so `Vec<(i64, i64)>`, `Vec<nosuchtype>` and `Vec<1 + 2>`
+# compiled where a field `items: Vec<..>` refused each by name. T is now one of the field vocabulary's
+# names (`_vec_elem_code`'s: a struct or union, an integer or float, bool, cstring, Result / Option /
+# Tagged, an enum, Vec) or a type parameter in scope; a nested `Vec<..>` is read the same way, any
+# other element's own `<..>` is skipped as the field form skips it. Anything else is refused by name,
+# once per token. The check only reads: the cursor is put back, so each site consumes the list exactly
+# as it did and the two passes agree. CHANGELOG [6.7.11]
+# 1 when token `ti` is the built-in word `Vec` (no program struct of that name) with a `<` after it.
+fn _vec_ann_at(S, ti): i64 {
+    if (ti < 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) != 0x00636556) { return 0; }   # "Vec\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# The check of the `Vec` annotation at token `ti` (`vnoff` the variable or parameter it declares, -1
+# for none); nothing when `ti` is not one. The cursor does not move.
+fn _vec_ann_chk(S, ti, vnoff): i64 {
+    if (_vec_ann_at(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti + 1);
+    _vec_ann_list(S, vnoff);
+    STI(S, sv);
+    return 0;
+}
+# The variable an annotation at token `ti` declares — `name : <ti>` — else -1 (`sizeof(Vec<..>)`).
+fn _vec_ann_vn(S, ti): i64 {
+    if (ti < 2) { return 0 - 1; }
+    if (TOKTYP(S, ti - 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, ti - 2) != 2) { return 0 - 1; }
+    return TOKVAL(S, ti - 2);
+}
+# Cursor on the `<` after `Vec`: the element read, its first problem reported. Returns the levels the
+# last closer closed BEYOND this list (the `>>` of `Vec<Vec<i64>>`, seen from the inner one), or -1
+# after a refusal (the enclosing list reads nothing more).
+fn _vec_ann_list(S, vnoff): i64 {
+    STI(S, GTI(S) + 1);                     # `<`
+    var ti = GTI(S);
+    var t = PEEKT(S);
+    if (t == 10) {
+        _tup_pos_refuse(S, "a Vec element");
+        return 0 - 1;
+    }
+    if (_sl_ann_at(S, ti) == 1) {
+        _sl_err(S, ti, "a slice cannot be a Vec element (6.7.8: slices are fn-locals)", "");
+        return 0 - 1;
+    }
+    if (t != 2) {
+        _vec_tok_err(S, ti, vnoff, "a Vec element type");
+        return 0 - 1;
+    }
+    STI(S, ti + 1);
+    var p = 0;
+    if (_vec_ann_at(S, ti) == 1) { p = _vec_ann_list(S, vnoff); }
+    else {
+        if (_vec_elem_ok(S, ti, vnoff) == 0) { return 0 - 1; }
+        if (PEEKT(S) == 19) { p = _skip_targ_list(S); }
+    }
+    if (p < 0) { return p; }
+    if (p > 0) { return p - 1; }
+    t = PEEKT(S);
+    STI(S, GTI(S) + 1);
+    if (t == 20) { return 0; }
+    if (t == 39) { return 1; }
+    if (t == 152) { return 2; }
+    _vec_tok_err(S, GTI(S) - 1, vnoff, "'>' after the Vec element type");
+    return 0 - 1;
+}
+# The element name at token `ti`: 1 when it is one (see above), else refused by name and 0.
+fn _vec_elem_ok(S, ti, vnoff): i64 {
+    var c = _tn_resolve_at(S, ti);
+    if (c != 0) { if (_tn_class(c) != 5) { return 1; } }
+    if (c == 0) { if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, TOKVAL(S, ti)) == 1) { return 1; } } }
+    _vec_elem_refuse(S, ti, vnoff, c);
+    return 0;
+}
+# The refusal of the element name at token `ti` (`c` its code: a vector's, or 0 for no type), as
+# `_tn_refuse` reports one: once, at the name, the cursor put back, the latch it set cleared, nothing
+# under `--syntax-only`.
+fn _vec_elem_refuse(S, ti, vnoff, c): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sv = GTI(S);
+    STI(S, ti);
+    var tail = " as a Vec element";
+    if (vnoff >= 0) { tail = " as the Vec element of "; }
+    if (c != 0) {
+        tail = " cannot be a Vec element";
+        if (vnoff >= 0) { tail = " cannot be the Vec element of "; }
+        ERR_IDENT(S, "vector type ", noff, tail, vnoff);
+    } elif (_declared_later(S, noff, 40, 101) == 1) {
+        ERR_IDENT(S, "type ", noff, " is declared after its use; declare it above the first use", 0 - 1);
+    } else {
+        ERR_IDENT(S, "unknown type ", noff, tail, vnoff);
+        _tn_prefix_note(S, noff);
+        PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
+        PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
+        PRSTR(" (missing include?)\n");
+    }
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# "expected <what> for 'v', got <token>" at token `ti`: a token no Vec element is (`Vec<1 + 2>`), or
+# what follows the element where its `>` belongs (`Vec<i64, i64>`). Once per token; not a panic, so
+# the declaration reads on.
+fn _vec_tok_err(S, ti, vnoff, what): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": expected ");
+    PRSTR(what);
+    if (vnoff >= 0) {
+        PRSTR(" for '");
+        PRSTR(S + 0xEC00000 + vnoff);
+        PRSTR("'");
+    }
+    PRSTR(", got ");
+    var t = TOKTYP(S, ti);
+    PRSTR(TOKNAME(t));
+    if (t == 1) {
+        PRSTR(" ");
+        PRNUM(TOKVAL(S, ti));
+    }
+    if (t == 2) {
+        PRSTR(" '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+        PRSTR("'");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 
 # ⛔ 6.7.1 (C3) — A FIELD WHOSE TYPE IS A GENERIC STRUCT INSTANCE, `b: Box<i32>`. It was `expected

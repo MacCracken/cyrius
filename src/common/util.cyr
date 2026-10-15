@@ -1378,7 +1378,8 @@ var _tp_c0 = 0;
 var _tp_n1 = 0;
 var _tp_c1 = 0;
 # 6.6.10: 1 from an explicit-type-arg call (`g<Pt>(p)`, `g<i64>(5)`) until the PARSE_FNCALL it
-# makes reads it — that call must not re-infer its type arguments from the argument list.
+# makes reads it — that call must not re-infer its type arguments from the argument list. 2 (6.7.11):
+# the explicit instance's bound was refused and reported — the base call is not judged again.
 var _ta_explicit = 0;
 # 6.6.10: the type arguments PARSE_FNCALL's head inferred for a scalar generic call, read by the
 # inline replay's binding (was a positional re-inference inside the replay's argument loop).

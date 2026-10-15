@@ -28,6 +28,8 @@
 #   refusing -> D2/D3 refused only by the cascade; `_bnd_base_bad` answering 0 -> I3-I5 refused
 #   with the struct-stub message instead of the bound's; `_bnd_sbase` a no-op -> S2-S4 BUILD; no
 #   quiet mode in `_sfield_gen` -> S4 BUILDS (W's base never learns it holds a Box<i64>).
+# 6.7.11 I8: `_gen_call_inst` resolving the inner call with the cursor left on the outer one -> RED
+#   I8's column (the refusal named `gx`'s column, 12 for 15 in the filed shape).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -103,6 +105,16 @@ refused i6 "generic 'g': its type argument does not implement trait 'Size'" "I6:
 mk i7 "$B1
 fn u<T>(v: T): i64 { return f(v); }" 'return u(5);'
 refused i7 "generic 'u' has no i64 (or other scalar) instance" "I7: an unbounded generic forwarding T to a bounded one, u(5)"
+# 6.7.11: a bounded generic CALLED AS ANOTHER GENERIC'S ARGUMENT is resolved while the outer call infers T
+# (a generic call's own result binds T, `_gen_call_inst`) — its refusal still names the inner call's column.
+mk i8 'struct Box<T> { v: T; n; }
+fn mkb<T: Show>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+fn g<T>(p: T): i64 { return p.n; }' 'var r: R; r.r = 1; return gx(mkb(r)) + g(mkb(r));'
+refused i8 "generic 'mkb': its type argument does not implement trait 'Show'" "I8: gx(mkb(r)) + g(mkb(r)), R has no impl Show"
+c8=$(grep '^fn main' "$T/i8.cyr" | awk '{ print index($0, "gx(mkb") + 3 }')
+if grep -q ":$c8: generic 'mkb'" "$T/i8.err"; then ok "I8: ... reported at the inner call (column $c8)"
+else bad "I8: not reported at the inner call's column $c8: $(grep '^error' "$T/i8.err" | head -1)"; fi
 
 # S — bounded generic structs
 SB='struct Box<T: Show> { v: T; n; }'
@@ -134,4 +146,4 @@ printf 'fn id<T>(v: T): i64 { return v + 1; }\nsyscall(60, id(41));\n' > "$T/c2.
 exits c2 42 "C2: a program with no bound"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g and a tail call (I1-I7), and on generic structs incl. their i64 base (S1-S5); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); well-formed bounded code runs (C)"

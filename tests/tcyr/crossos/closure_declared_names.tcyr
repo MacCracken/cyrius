@@ -1,0 +1,116 @@
+# closure_declared_names.tcyr — 6.7.11 — a name a closure body declares (a `for … in` variable, a
+# local `const`, a destructure's second / third name) is the closure's own, and what the
+# declaration reads before the name is bound (a range's start bound, a collection, a destructure's
+# right-hand side) is still a capture of the enclosing local.
+#
+# Before 6.7.11 the capture pre-scan (`_cl_prescan_body`) shadowed only the name right after
+# `var`: `for i in 0..4`, `const k = 3;` and the `b` of `var a, b = two();` captured the enclosing
+# local of that name — refused without lib/alloc.cyr, or a heap env holding a copy the closure
+# never read. The no-lib/alloc.cyr refusal is pinned by
+# tests/gates/frontend/closure_declared_names_not_captured.sh; these rows pin the VALUES on every
+# host, and each control carries a GLOBAL of the same name, so a capture the pre-scan dropped
+# would read the global (a wrong value), not refuse.
+#
+# CROSS-HOST: the pre-scan is the shared frontend; the env copy and the loop / destructure code
+# are each backend's.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+var i = 40;
+var x = 20;
+var k = 70;
+var b = 100;
+
+fn two(): (i64, i64) { return (3, 4); }
+fn tw(v): (i64, i64) { return (v, v + 1); }
+fn three(): (i64, i64, i64) { return (1, 2, 3); }
+
+# ── the filed repro's three closures (issues/2026-10-11-closure-prescan-reads-declared-names-…) ──
+fn fi(): i64 {
+    var i = 3;
+    var cl = |n| { var s = 0; for i in 0..4 { s = s + i + n; } return s; };
+    return fncall1(cl, 1);
+}
+fn fc(): i64 { var k = 5; var cl = |n| { const k = 3; return k + n; }; return fncall1(cl, 1); }
+fn fm(): i64 { var b = 5; var cl = |n| { var a, b = two(); return a + b + n; }; return fncall1(cl, 1); }
+
+# ── the declared names ──────────────────────────────────────────────────────────────────────────
+fn end_bound(): i64 {
+    var i = 3;
+    var cl = |n| { var s = 0; for i in 0..i { s = s + 1; } return s + n; };
+    return fncall1(cl, 1);
+}
+fn nested_for(): i64 {
+    var i = 3;
+    var j = 4;
+    var cl = |n| { var s = 0; for i in 0..2 { for j in 0..2 { s = s + i + j; } } return s + n; };
+    return fncall1(cl, 1);
+}
+fn coll(): i64 {
+    var v = vec_new(); vec_push(v, 10); vec_push(v, 11); vec_push(v, 12);
+    var x = 5;
+    var cl = |n| { var s = 0; for x in v { s = s + x; } return s + n; };
+    return fncall1(cl, 1);
+}
+fn const_block(): i64 {
+    var k = 5;
+    var cl = |n| { var s = 0; if (n > 0) { const k = 4; s = k * 2; } return s + n; };
+    return fncall1(cl, 1);
+}
+fn three_names(): i64 {
+    var c = 9;
+    var b = 9;
+    var cl = |n| { var a, b, c = three(); return a + b + c + n; };
+    return fncall1(cl, 1);
+}
+
+# ── controls: still captures (a global of the name exists) ─────────────────────────────────────
+fn after_loop(): i64 {
+    var i = 3;
+    var cl = |n| { var s = 0; for i in 0..4 { s = s + i; } return s + i + n; };
+    i = 50;
+    return fncall1(cl, 1);
+}
+fn start_bound(): i64 {
+    var i = 3;
+    var cl = |n| { var s = 0; for i in i..5 { s = s + 1; } return s + n; };
+    return fncall1(cl, 1);
+}
+fn coll_self(): i64 {
+    var x = vec_new(); vec_push(x, 1); vec_push(x, 2);
+    var cl = |n| { var s = 0; for x in x { s = s + x; } return s + n; };
+    return fncall1(cl, 1);
+}
+fn const_after_block(): i64 {
+    var k = 5;
+    var cl = |n| { var s = 0; if (n > 0) { const k = 3; s = k; } return s + k + n; };
+    return fncall1(cl, 1);
+}
+fn mv_rhs(): i64 { var b = 5; var cl = |n| { var a, b = tw(b + n); return a * 10 + b; }; return fncall1(cl, 1); }
+fn mv_after_block(): i64 {
+    var b = 5;
+    var cl = |n| { var s = 0; if (n > 0) { var a, b = two(); s = a + b; } return s + b + n; };
+    return fncall1(cl, 1);
+}
+
+alloc_init();
+assert_eq(fi(), 10, "repro: for i in 0..4 is the closure's i");
+assert_eq(fc(), 4, "repro: const k is the closure's k");
+assert_eq(fm(), 8, "repro: var a, b = two() binds the closure's b");
+assert_eq(fi() + fc() + fm(), 22, "repro: the three closures");
+assert_eq(end_bound(), 1, "for i in 0..i: the end bound reads the loop variable (no iteration)");
+assert_eq(nested_for(), 5, "nested for … in loops over two enclosing names");
+assert_eq(coll(), 34, "for x in v: the collection loop variable");
+assert_eq(const_block(), 9, "a const in a nested block");
+assert_eq(three_names(), 7, "var a, b, c = three()");
+assert_eq(after_loop(), 10, "control: the enclosing i after the loop (by value: 3, not 50 nor the global 40)");
+assert_eq(start_bound(), 3, "control: for i in i..5 reads the enclosing i (3), not the global (40)");
+assert_eq(coll_self(), 4, "control: for x in x iterates the enclosing vector");
+assert_eq(const_after_block(), 9, "control: the enclosing k after a block's const k (5, not the global 70)");
+assert_eq(mv_rhs(), 67, "control: var a, b = tw(b + n) passes the enclosing b (5, not the global 100)");
+assert_eq(mv_after_block(), 13, "control: the enclosing b after a block's destructure");
+var r = assert_summary();

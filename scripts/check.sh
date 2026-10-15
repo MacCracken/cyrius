@@ -1116,6 +1116,18 @@ _chk_gate "$ROOT/tests/gates/frontend/toplevel_closure_stale_locals.sh"
 # A range's `0..y` and a value after a label stay captures; host, cx and aarch64-qemu legs.
 _chk_gate "$ROOT/tests/gates/frontend/closure_field_names_not_captured.sh"
 
+# 6.7.11: a name a closure body declares — a `for … in` variable, a local `const`, a destructure's
+# second / third name — was taken as a capture of the enclosing local of that name. Each is now
+# shadowed from where the parser binds it; a range's start bound, a collection and a destructure's
+# right-hand side stay reads (controls with a same-named global); host, cx and aarch64-qemu legs.
+_chk_gate "$ROOT/tests/gates/frontend/closure_declared_names_not_captured.sh"
+
+# 6.7.11: inside a closure, `s.len` / `s.ptr` of a captured slice was "undefined variable 's'"
+# while `slice_len(&s)` read the copy. The fields read the captured copy (the user's decision (a),
+# 2026-10-13); a store into it is refused by name; host, cx and aarch64-qemu legs, and an async
+# coroutine row on the host.
+_chk_gate "$ROOT/tests/gates/frontend/closure_captured_slice_fields.sh"
+
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
 # at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same
@@ -1930,7 +1942,9 @@ _chk_gate "$ROOT/tests/gates/frontend/derive_directive_refused.sh"
 
 # 6.6.8 (bite 1b) — a forwarded type parameter (`inner<T>(p)` in a generic body) resolves to its
 # binding; it read as "no type" and silently hit the i64 base (outer<Pt> returned 2, want 16). A
-# type-arg naming no type is refused by name. Mutation-proven in the header.
+# type-arg naming no type is refused by name. Mutation-proven in the header. 6.7.11 (CF): a generic that
+# reads its struct carrier's T field as a struct (`b.v.y`, `b: Box<T>`) has a stub base — the definition
+# failed to parse, called or not; a scalar binding of it is refused by name.
 _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"
 
 # 6.6.8 (bite 1b) — inside a coroutine `async fn`: fncallN / callptr / a closure call through the
@@ -2520,6 +2534,12 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_receive_inference_checked.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
+# 6.7.11 — cx calls the `fn main` a program defines from the entry epilogue, as every image target
+# does (the user's decision (a), 2026-10-13): `var g = 3; fn main(): i64 { return 7; }` exited 3 on
+# cxvm, `fn main` alone 0, and a .tcyr leaving `main` to the epilogue ran no assertion. The filed
+# repro, twice when also called, the exact name; three .tcyr pass on cxvm, two pinned at the filed
+# guest-contract limits. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
 # 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
 # position is refused by name, uninitialised / value / address / word uses refused (decision 7). The
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's
@@ -2542,8 +2562,30 @@ _chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
 # 6.7.9 — a generic call whose T = f64 is inferred, or names T only in its return, is an f64: `gid(h)`
 # ran the i64 base and `gid(h) * 2.0` / `gg<f64>(&h) * 2.0` multiplied bits; the f64 instance runs and
 # its result is typed f64 on every spelling, a generic method's included, and a bound is met at f64.
-# The filed repro, the warnings, the bound, and 44 rows, x86 / IR / DCE / aarch64 / cx / PE.
+# 6.7.11: a bound with no `impl … for i64` is met at f64 too (`gb(h)` / `gb<f64>(h)` / `p.bm(h)` were
+# refused naming i64, or ran the dead stub), and a refused explicit instance gets one note, its type's.
+# The filed repros, the warnings, the bounds, and 56 rows, x86 / IR / DCE / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
+# 6.7.11 — a scalar type argument never shares a generic instance with a struct: f64's fragment was a
+# bare `i`, so `gen<f64>` and `gen<i>` (a `struct i`) shared `gen$i` and the second call ran the first's
+# body. f64 is `$f64`, and a struct named exactly like a scalar is `$.f64` (the user's decision C,
+# 2026-10-13). The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR /
+# DCE / aarch64 / cx / PE. Mutation ledger in the header. (A two-parameter generic's nested instance
+# names still collide: issues/2026-10-14-two-param-generic-nested-instance-names-collide.md.)
+_chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
+# 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
+# struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
+# refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
+# `p.pick(9)` returned 0). The filed repro, a chain and a trait member, the refusals, a forwarder through
+# a field-chain or call receiver, and 49 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
+# 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
+# the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
+# return — x86 / PE ran on past it, aarch64 / cx hung at it. The issue's table, the blocks, and the
+# controls (a closure, an #inline fn, a fn in a top-level block), x86 / aarch64 / cx / PE / cycc_win, a
+# built leg run under `timeout 5`. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_return_checked.sh"
 # 6.7.9 — `&q` of a `q: *P` parameter is its slot: for P over 8 B it was the pointee (6.6.6's by-value
 # arm also fired for a `*P`), so `load64(&q)` read q's first field and `store64(&q, o)` wrote the
 # caller's struct. The filed repro, the size probe, the #naked halves and 19 rows, x86 / IR / DCE /

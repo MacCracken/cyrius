@@ -350,6 +350,16 @@ if (_cx_mode_refused(S) == 1) { syscall(SYS_EXIT, 1); }
 # Exit epilogue — load last var
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+# The entry epilogue's auto-call of `fn main`, as every image target makes it (main.cyr's
+# v5.9.37 block): a program that leaves `main` to the epilogue runs it and exits with its
+# return value; one that also calls it at top level runs it twice, as natively. After the
+# last-var load, which would clobber r0. No `kernel;` / `shared;` guard: cx refused those
+# above. CHANGELOG [6.7.11]
+var _main_found = _find_fn_by_name(S, "main", 4);
+if (_main_found >= 0) {
+    var _main_off = L64(_fnt_offsets + _main_found * 8);
+    if (_main_off >= 0) { ECALLTO(S, _main_off); }
+}
 _cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
 EEXIT(S);
 

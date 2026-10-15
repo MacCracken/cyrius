@@ -16,6 +16,7 @@ include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
+include "lib/overflow.cyr"
 
 struct Pt { x; y; z; }
 struct Hold { p: *Pt; b: *u8; }
@@ -491,7 +492,7 @@ fn intrin_rows(): i64 {
 # DXc rows hold the diagnostics). It now keeps p's word. A step of 1 scales nothing, so every value
 # is the one it always was: these rows pin it on every leg — a difference of two such values (now an
 # element count, `_ptr_diff`), a typed declaration from one, the chains, each one-byte source. A
-# narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) - q` is `n - p`.
+# narrow SCALAR (`w: u8`, no `*T`; no step since 6.7.11) stays an integer: `(1 + w) - q` is `n - p`.
 fn ob_u8(): *u8 { return &buf; }
 fn onebyte_rows(a: *u8): i64 {
     var p: *u8 = &buf;
@@ -523,6 +524,58 @@ fn onebyte_rows(a: *u8): i64 {
     return 0;
 }
 
+# ── `+| +? -| -?` are integer operators: no step on the count or the result (6.7.11) ─────────────
+# They lower to lib/overflow.cyr's i64 helpers, so the count is not scaled — and the RESULT is no
+# pointer either (the user's decision (a), 2026-10-13): it restored the left operand's step, so with
+# `q: *i32` `(q +| 1) + 1` was q + 5 and `2 + (q +| 1)` q + 9. The gate's SAT rows hold the warnings.
+fn sat_rows(c: *i32): i64 {
+    var q: *i32 = &buf;
+    var p: *u8 = &buf;
+    assert_eq(d(q +| 1, q), 1, "*i32: q +| 1 adds one byte");
+    assert_eq(d((q +| 1) + 1, q), 2, "*i32: (q +| 1) + 1");
+    assert_eq(d((q +? 3) - 1, q), 2, "*i32: (q +? 3) - 1");
+    assert_eq(d((c -| 1) + 1, q), 0, "*i32 parameter: (c -| 1) + 1");
+    assert_eq(d((c -? 1) + 2, q), 1, "*i32 parameter: (c -? 1) + 2");
+    assert_eq(d(2 + (q +| 1), q), 3, "*i32: 2 + (q +| 1)");
+    assert_eq(d((p +| 1) + 1, q), 2, "*u8: (p +| 1) + 1");
+    assert_eq(((p -? 0) + 1) - q, 1, "*u8: ((p -? 0) + 1) - q is n - p");
+    assert_eq(d((q + 1) + 1, q), 8, "*i32 ctl: (q + 1) + 1 steps");
+    var n = 40;
+    assert_eq((n +| 1) + 1, 42, "an integer: (n +| 1) + 1");
+    assert_eq((n -? 1) + 1, 40, "an integer: (n -? 1) + 1");
+    return 0;
+}
+
+# ── a narrow scalar local is an integer; `n + &x` is a byte pointer (6.7.11) ──────────────────────
+# A `u8` / `i8` / `u16` / `i16` / `u32` / `i32` local loaded with a step of 1: it scaled nothing, but
+# every "is this a pointer?" test answered yes, so `w - q` was refused as a pointer difference where an
+# i64 local, a narrow global and a narrow parameter give `n - p`, and `w + q` made W the pointer: it
+# added w unscaled (with `q: *i32`, `n + q` for `n: i32 = 1` was q + 1). It is an integer now. And
+# `n + &x` is the byte pointer `&x + n` is (the user's decision (a), 2026-10-13) — one size, a count.
+fn narrow_rows(): i64 {
+    var q: *i32 = &buf;
+    var qa: i64 = q;
+    var a: u8 = 5;
+    var b: i8 = 5;
+    var c: u16 = 5;
+    var e: i16 = 5;
+    var g: u32 = 5;
+    var h: i32 = 5;
+    assert_eq(a - q + qa, 5, "u8 local: w - q is n - p");
+    assert_eq((a + 1) - q + qa, 6, "u8 local: (w + 1) - q");
+    assert_eq(b - q + qa, 5, "i8 local: w - q");
+    assert_eq((1 + c) - q + qa, 6, "u16 local: (1 + w) - q");
+    assert_eq(e - q + qa, 5, "i16 local: w - q");
+    assert_eq((g + 1) - q + qa, 6, "u32 local: (w + 1) - q");
+    assert_eq(h - q + qa, 5, "i32 local: w - q");
+    assert_eq(d(c + q, q), 20, "u16 local: c + q steps sizeof(i32), as an i64 local's does");
+    assert_eq(d(b + q, q), 20, "i8 local: b + q");
+    assert_eq(d(h + q, q), 20, "i32 local: h + q");
+    assert_eq((4 + &buf) - &buf, 4, "(4 + &buf) - &buf: one size, a count");
+    assert_eq(d(2 + (&buf + 4), &buf), 6, "2 + (&buf + 4)");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
 generic_returns();
@@ -544,6 +597,8 @@ op_rows_Pt();
 qm_rows();
 intrin_rows();
 onebyte_rows(&buf);
+sat_rows(&buf);
+narrow_rows();
 
 var A_u8: *u8 = &buf;
 var A_pt: *Pt = &buf;

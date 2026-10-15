@@ -573,6 +573,44 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
     _cap_fld_sid = 0 - _cft;
     return 0 - 1000000 - _cfc;
 }
+# ⛔ 6.7.11 — A CLOSURE READS ITS CAPTURED SLICE'S `.ptr` / `.len`. The slice arm of the field read
+# is a fn-local's (`_slice_lw`) and `_CL_CAP_FIELD_IDX` takes a struct capture only, so `s.len`
+# inside a closure that captured `s` was "undefined variable 's'", while `slice_len(&s)` read the
+# copy (6.7.9: a captured slice arrives in field order). The user's decision (a), 2026-10-13: the
+# fields read the captured copy, one load from the env words (`.ptr` at +0, `.len` at +8). A store
+# into them is refused by name (`_cl_cslice_store_err`): the decision covers reads. CHANGELOG [6.7.11]
+# The capture index of `noff` when it names a captured slice local of the enclosing fn, else -1.
+fn _cl_cslice_cap(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    if (_sub_cslice(S, noff) != 1) { return 0 - 1; }
+    return _cl_cap_find(_cl_snap_find(S, noff));
+}
+# The slice field `fnoff` names: 0 `.ptr`, 8 `.len`, -1 any other (refused by name).
+fn _slice_fld_off(S, fnoff): i64 {
+    var fname = L64(S + 0xEC00000 + fnoff) & 0xFFFFFFFF;
+    if (fname == 0x00727470) { return 0; }        # "ptr\0"
+    if (fname == 0x006E656C) { return 8; }        # "len\0"
+    ERR_MSG(S, "slice has only .ptr and .len fields", 35);
+    return 0 - 1;
+}
+# `s.ptr` / `s.len` on a captured slice (cursor past the field name): rax = the field; 1 when it
+# was one, 0 when `noff` is no captured slice.
+fn _cl_cslice_field(S, noff, fnoff): i64 {
+    var capi = _cl_cslice_cap(S, noff);
+    if (capi < 0) { return 0; }
+    var off = _slice_fld_off(S, fnoff);
+    if (off < 0) { return 1; }
+    _CL_CAP_WORDS_RA(S, capi);
+    if (off > 0) { EADDRA_IMM(S, off); }
+    ELOAD64(S);
+    return 1;
+}
+fn _cl_cslice_store_err(S, noff): i64 {
+    ERR_IDENT(S, "a closure cannot assign a field of the captured slice ", noff,
+      " - it reads .ptr / .len only (set the slice before the closure is built, or declare it in the closure)", 0 - 1);
+    return 0;
+}
 
 # rax = the base address of a captured aggregate. A capture wider than one word IS those
 # words, so its base is `&env[woff]`; a one-word capture of a struct over 8 B holds the
@@ -837,13 +875,14 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # temp-receive path (`_sc_var_receive`). 0 = not such a call.
 # 6.7.9: and a `: f64` method's result (-9) types it f64, as `var x = f();` is (v6.5.21): `var a =
 # p.area();` was an untyped word, so `a + 1.0` added integers — a generic method's at the instance
-# its arguments reach (`_mcall_gen`: `var w = p.id(h);`). CHANGELOG [6.7.9]
+# its arguments reach (`_mcall_gen`: `var w = p.id(h);`; 6.7.11 a struct's, `var w = p.pick(q);`, and a
+# lookahead never reports). CHANGELOG [6.7.9]
 fn _var_rhs_msid(S, ti): i64 {
     if (_tok_method_open(S, ti) == 0) { return 0; }
     if (TOKTYP(S, _call_close(S, ti + 3) + 1) != 5) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
-    mf = _mcall_gen(S, mf, ti + 3);
+    mf = _mcall_gen(S, mf, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0);
     var rs = GFRS(S, mf);
     if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
@@ -1616,6 +1655,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         }
     }
     if (idx == 0 - 1) {
+        if (_cl_cslice_field(S, noff, fnoff) == 1) { return 0; }   # 6.7.11: a captured slice's .ptr / .len
         var _cfx = _CL_CAP_FIELD_IDX(S, noff);
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }
@@ -1936,7 +1976,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
             mfi = REGFN(S, mname);
         }
-        mfi = _mcall_gen(S, mfi, GTI(S));    # 6.7.9: an f64 type parameter's instance
+        mfi = _mcall_gen(S, mfi, GTI(S), sid, 1);   # 6.7.11: the instance its arguments bind
         mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
         # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
@@ -2233,6 +2273,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         }
     }
     if (idx == 0 - 1) {
+        if (_cl_cslice_cap(S, noff) >= 0) { return _cl_cslice_store_err(S, noff); }   # 6.7.11
         var _cfx = _CL_CAP_FIELD_IDX(S, noff);
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }
@@ -4785,6 +4826,7 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
+    if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
     if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
     if (sid <= 0) { SKIP_GENERICS(S); return sid; }
     if (PEEKT(S) != 19) {
@@ -6960,7 +7002,7 @@ fn PARSE_VAR(S): i64 {
             # u128 type
             scalar_type = 16;
             STI(S, GTI(S) + 1);
-        } elif (PEEKT(S) == 2 && (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF) == 0x006563696C73) {
+        } elif (_sl_word_builtin(S) == 1) {   # 6.7.11: a program's own `struct slice` wins (see there)
             # v5.8.10 §2: `slice<T>` ident form — 16-byte {ptr,len} slot.
             # v5.8.14 §6: extract element width from <T> for §7 indexing.
             # Bytes for "slice\0" = 0x006563696C73 (little-endian load64

@@ -214,8 +214,8 @@
 #       each source, `*i8`, `7 + (1 + p8)` and a global / field store warn nothing (they warned); DXc3
 #       an if-expression of `1 + p8` and `p8`, and `k + p8` on a capture, warn nothing; DXc4 `p8 + 1 -
 #       q32` (the control) is still refused; DXc5 `(1 + p8) - p8` and `(1 + i8) - p8` (one size) stay an
-#       element count; DXn a narrow SCALAR (`w: u8`, step 1 but no `*T`) stays an integer: `(1 + w) -
-#       q32` is `n - p`; DXR the issue's repro VERBATIM: d1, d2, d3 refused, r silent. The value file's
+#       element count; DXn a narrow SCALAR (`w: u8`, no `*T`; no step since 6.7.11, NS) stays an integer:
+#       `(1 + w) - q32` is `n - p`; DXR the issue's repro VERBATIM: d1, d2, d3 refused, r silent. The value file's
 #       onebyte_rows (in typed_pointer_step.tcyr, the PL legs) pin every value, which no row changes.
 #   DXs `n + pb` with `pb: *B1` IS that pointer too (6.7.11; the user's decision 2026-10-13: "(a) Yes,
 #       extend 1(b)"; issues/2026-10-12-pointer-into-small-byvalue-param-untyped-edges.md): DXs1 `(1 + src)
@@ -223,6 +223,22 @@
 #       DXs2 the control; DXs3 the declaration / assignment / global store silent (they warned); DXs4 one
 #       element size an element count; DXs5 an if-expression of `py` and `&s` keeps no step (its warning,
 #       and `(if ..) - q32` a plain subtraction) — the argument side is small_struct_pointer_arg.tcyr.
+#   NS  A NARROW SCALAR LOCAL IS AN INTEGER, AND `n + &x` IS THE BYTE POINTER `&x + n` IS (6.7.11; the
+#       user's decision (a), 2026-10-13: "Yes, `+` commutes"; issues/2026-10-11-narrow-scalar-local-and-
+#       address-of-carry-byte-pointer-step.md). A `u8` .. `i32` local loaded with step 1 (v6.3.34): it
+#       scaled nothing, but every `> 0` test called it a pointer — `w - q32` was refused as a pointer
+#       difference, `var r: *u32 = w;` was silent, and `w + q32` made w the pointer, adding it UNSCALED
+#       (a silent wrong value) — where an i64 local, a narrow global and a narrow parameter are integers.
+#       It loads step 0 now; and `_add_word` writes a kind-less step 1 too (`&x`, a `*B1` — `_add_rb1`'s
+#       `*B1` typing folded in), all but a MULTI-WORD closure capture's (its env words' address: `z + s`
+#       on a captured struct stays the integer the frame's `m + s` is — `_rhs_mwcap`).
+#       NSR the issue's repro VERBATIM: d3 refused alone, r1 / r2 warn (it refused d1 / d2 and warned at
+#       r2 / r3); NS1 `w - q32`, `(w + 1) - q32` are `n - p`; NS2 `w`, `1 + w`, `w + 1` into a `*T` warn
+#       as an i64 local does; NS3 `4 + &B`, `m + &x`, `2 + (&B + 4)`, `m + (&x)` into a `*T` silent, NS3d /
+#       NS3e `(4 + &B) - q32` / `(m + &x) - q32` refused, NS3c one size a count; NS4 i8 / u16 / i32 / u32
+#       locals and a u8 capture as the u8 local (the locals' values, every warning); NS6 `n + q32` with an i32 / u8 / i16
+#       local steps 4 (it added 1, 2, 3); NS5 the multi-word capture kept out. (NS1, NS4, NS6: x86 plain,
+#       CYRIUS_IR=3, aarch64 (qemu); the value file's narrow_rows on every PL leg.)
 #
 # MUTATION LEDGER (C2-5, scratch trees, each its 2-stage mutant cycc, this gate + the value file as
 # CYCC=<mutant>; 2026-10-10):
@@ -249,6 +265,14 @@
 #   MOB3  `_ptr_add` without `_add_rb1`             -> RED DXs1 (6) DXs3
 #   MOB4  `_add_rb1` keeping any step-1 word (no `_hl_psid` typing) -> RED DXn, PL0 PL0s PLa PLb PLf PLg PLe
 #         (the value file's `(1 + w) - q` with `w: u8` refused as a pointer difference)
+#   (6.7.11, NS: a narrow local loads no step, so `_add_word` writes every step-1 word — `_add_rb1` folded
+#   in, MOB2-MOB4 describe the code before; scratch trees, 2-stage mutant cycc, 2026-10-14):
+#   MNS1  the narrow local's `SPSC(S, 1)` back          -> RED DXn NSR NS1a NS1b NS2 NS4a NS4b NS4w NS6a
+#                                                          NS6b, PL0 PL0s PLa PLb PLf PLg PLe (17)
+#   MNS2  `_add_word`'s element-kind test back          -> RED DXs1 (5) DXs1m DXs3 NSR NS3 NS3d NS3e NS5 (12)
+#   MNS3  `_ptr_add` without the `_rhs_mwcap` exclusion -> RED NS5 (`z + s`, `z + (s)` silent)
+#   The compiler before this bite -> RED NSR NS1a NS1b NS2 NS3 NS3d NS3e NS4a NS4b NS4w NS5 NS6a NS6b, PL0
+#   PL0s PLa PLb PLf PLg PLe (20; its aarch64 compiler: `n + q32` 1, 2 for 4, 8)
 #   The compiler before this bite -> RED DXc1 (6) DXc2 DXc3 DXR PL0 (its two warnings); the values all pass
 #   (235 of 235: a step of 1 scales nothing). The dereference-only stamp's removal is proven by a corpus
 #   differential: 1098 tree sources compile byte-identically, diagnostics included, with and without it.
@@ -303,6 +327,44 @@
 #   (PL* / PLR* = the x86 legs and PE; the aarch64 / cx legs' compilers are built from this tree's src)
 #   The compiler before this bite -> RED PLa PLb PLf PLg PLe PLRa PLRb PLRe PLW1-3 PLWc PLD (the value
 #   file: 112 of 215 fail); its aarch64 / cx compilers exit 255 on the repro and 112 on the value file
+#
+# AW — THE VALUE OF `await f` IS AN UNTYPED WORD (6.7.11; issues/2026-10-11-await-result-keeps-typed-
+# pointer-step.md — the last arm of 6.7.9's decision 1(a), "the pointer step resets after every
+# operator that does not produce a pointer"). Neither the force call (`_await_force`) nor a coroutine's
+# suspend landing (`_await_coro_suspend`) reset the step the operand factor left, so with `f: *i32`
+# `(await f) + 1` was 9 (5 + 1 * sizeof(i32)), on x86_64 and aarch64, in a coroutine too (6.6.17-6.7.10).
+#   AW1 the issue's repro VERBATIM: 6 (it was 9); AW2 `f: *u8`; AW2d `((await f) + 1) - q32` with
+#       `f: *u8` is `n - p` (it was refused "pointer difference ... different element sizes");
+#   AW3 / AW4 / AW4d the same inside a coroutine (an async fn driven by future_force / future_pending;
+#       x86 only — aarch64 refuses a mid-body suspend by name); AWc1 / AWc2 the untyped control
+#       `var f = five();`, outside and inside; AWc3 the Future pointer `f: *i32` itself still steps
+#   (x86 plain and CYRIUS_IR=3; aarch64 (qemu) for the rows outside a coroutine)
+# MUTATION LEDGER (6.7.11, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant>):
+#   MAW1 `_await_force` without its `SPSC(S, 0)`        -> RED AW1a AW1b AW2da AW2db (its aarch64
+#                                                          compiler: the repro exits 9)
+#   MAW2 `_await_coro_suspend` without its `SPSC(S, 0)` -> RED AW3a AW3b AW4da AW4db
+#   The compiler before this bite -> RED AW1a AW1b AW2da AW2db AW3a AW3b AW4da AW4db (its aarch64
+#   compiler: the repro exits 9)
+#
+# SAT — `+| +? -| -?` ARE INTEGER OPERATORS (6.7.11; the user's decision (a), 2026-10-13: "Integers
+# only"; issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md). They lower to
+# lib/overflow.cyr's i64 helpers, and their arm parsed the count with no step (it adds bytes) — then
+# restored the left operand's step, so the SUM was the `*T` again: with `q: *i32` `(q +| 1) + 1` was
+# q + 5 (6.6.17-6.7.10). The sum is now an integer (`SPSC(S, 0); ps = 0;`), as `(x == q)` is.
+#   SATR the issue's repro VERBATIM: 28 (it was 58); SAT1 each operator on a `*i32` / `*u8` local and
+#        parameter, then `+ 1` / `- 1`, in bytes, `2 + (q +| 1)`, and the `q + 1` / integer controls;
+#   SAT2 `((p8 +| 1) + 1) - q32` / `((p8 -? 0) + 1) - q32` are `n - p` (they were refused: the sum was
+#        the `*u8` again); SAT3 `var r: *i32 = q OP 1;` warns "assigning non-pointer" for each operator
+#        (it was silent) — (x86 plain and CYRIUS_IR=3, aarch64 (qemu); the value file's sat_rows on
+#        every PL leg)
+# MUTATION LEDGER (6.7.11, scratch trees, each its 2-stage mutant cycc, this gate as CYCC=<mutant>):
+#   MSAT1 `+|` restores `SPSC(S, ps)`                  -> RED SATRa SATRb SAT1a SAT1b SAT2a SAT2b SAT3 (`+|`),
+#                                                          PLa PLb PLf PLg PLe (`(q +| 1) + 1`: 5)
+#   MSAT2 `+?` restores it                             -> RED SAT1a SAT1b SAT3 (`+?`), PLa PLb PLf PLg PLe
+#   MSAT3 `-|` restores it                             -> RED SAT1a SAT1b SAT3 (`-|`), PLa PLb PLf PLg PLe
+#   MSAT4 `-?` restores it                             -> RED SAT1a SAT1b SAT2a SAT2b SAT3 (`-?`), PL0 PL0s
+#                                                          PLa PLb PLf PLg PLe (the value file refused)
+#   (the aarch64 / cx legs' compilers are built from this tree's src)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -521,6 +583,33 @@ legs() {
         leg_ok "${r}e: PE (wine)" "$got" "$w" "$T/$n.exe.out"
     else bad "${r}e: PE: did not compile: $(grep '^error' "$T/$n.exe.err" | head -1)"; fi
 }
+# xrow <env> <name> <row> <want> <what> [a64]: $T/<name>.cyr (compiled under <env>, `-` for none)
+# exits <want> on x86 (plain, CYRIUS_IR=3) and, with `a64`, aarch64 (qemu). awx: under CYRIUS_ASYNC=1
+# — the coroutine rows are x86 only: aarch64 refuses a mid-body suspend by name ("x86-only so far").
+xrow() {
+    xe=$1; shift
+    [ "$xe" = - ] && xe=""
+    for mode in plain IR3; do
+        case $mode in
+            plain) env_=""; lbl="${2}a: x86" ;;
+            IR3) env_="CYRIUS_IR=3"; lbl="${2}b: x86, CYRIUS_IR=3" ;;
+        esac
+        rc=0; env $xe $env_ "$CC" < "$T/$1.cyr" > "$T/$1_$mode" 2> "$T/$1_$mode.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "$lbl — $4: rc $rc: $(grep '^error' "$T/$1_$mode.err" | head -1)"; continue; fi
+        chmod +x "$T/$1_$mode"; got=0; timeout 10 "$T/$1_$mode" > /dev/null 2>&1 || got=$?
+        if [ "$got" -eq "$3" ]; then ok "$lbl — $4: exit $got"; else bad "$lbl — $4: exit $got, want $3"; fi
+    done
+    [ "${5:-}" = a64 ] || return 0
+    xcc
+    if ! command -v qemu-aarch64 > /dev/null 2>&1; then
+        echo "  SKIP ${2}c: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1))
+    elif [ ! -x "$T/cc_a64" ]; then bad "${2}c: src/main_aarch64.cyr did not build"
+    elif env $xe "$T/cc_a64" < "$T/$1.cyr" > "$T/$1.a64" 2> "$T/$1.a64.err" && [ -s "$T/$1.a64" ]; then
+        chmod +x "$T/$1.a64"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$1.a64" > /dev/null 2>&1) || got=$?
+        if [ "$got" -eq "$3" ]; then ok "${2}c: aarch64 (qemu) — $4: exit $got"; else bad "${2}c: aarch64 (qemu) — $4: exit $got, want $3"; fi
+    else bad "${2}c: aarch64 — $4: did not compile: $(grep '^error' "$T/$1.a64.err" | head -1)"; fi
+}
+awx() { xrow CYRIUS_ASYNC=1 "$@"; }
 legs st4 ST4 "every real-slice check"
 
 # ── P / S0: the step word carries the element kind (C2-3a) ────────────────────────────────────
@@ -1006,6 +1095,103 @@ if [ "$rc" -ne 0 ] && [ "$dl" = "9 10 11 " ] && [ "$(grep -c '^error' "$T/dxr_re
     ok "DXR: the issue's repro: d1, d2 and d3 refused, r silent"
 else bad "DXR: rc $rc, refused lines '$dl': $(grep '^warning\|^error' "$T/dxr_rep.err" | head -4 | tr '\n' '|')"; fi
 
+# ── NS: a narrow scalar local is an integer; `n + &x` is the byte pointer `&x + n` is (6.7.11) ──
+# NSR: the issue's repro VERBATIM (issues/2026-10-11-narrow-scalar-local-and-address-of-carry-byte-
+# pointer-step.md; it refused d1 (line 5) and d2 (6) and warned at r2 (8) and r3 (9)): now d3 (10) alone
+# is refused, as `(&B + 4) - q32` is, and r1 (7) and r2 (8) warn — an integer into a typed pointer.
+cat > "$T/nsr.cyr" <<'EOF'
+var B: i64[4];
+fn f(): i64 {
+    var q32: *u32 = &B;
+    var w: u8 = 5;
+    var d1 = w - q32;             # error: pointer difference ... different element sizes (valid: n - p)
+    var d2 = (w + 1) - q32;       # error, the same
+    var r1: *u32 = w;             # silent (an integer into a typed pointer: should warn)
+    var r2: *u8 = 1 + w;          # warning (the same value spelled w + 1 is silent)
+    var r3: *u32 = 4 + &B;        # warning, where `&B + 4` is silent
+    var d3 = (4 + &B) - q32;      # silent byte difference, where `(&B + 4) - q32` is refused
+    return 0;
+}
+syscall(60, f());
+EOF
+rc=0; timeout 60 "$CC" < "$T/nsr.cyr" > "$T/nsr.bin" 2> "$T/nsr.err" || rc=$?
+el=$(grep '^error' "$T/nsr.err" | sed 's/^error:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+wl=$(grep '^warning' "$T/nsr.err" | sed 's/^warning:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$rc" -ne 0 ] && [ "$el" = "10 " ] && grep '^error' "$T/nsr.err" | grep -qF 'pointer difference of pointers with different element sizes' \
+   && [ "$wl" = "7 8 " ] && [ "$(grep '^warning' "$T/nsr.err" | grep -cF 'assigning non-pointer to typed pointer')" -eq 2 ]; then
+    ok "NSR: the issue's repro: d1, d2 compile, r1 and r2 warn, r3 silent, d3 refused"
+else bad "NSR: rc $rc, error lines '$el', warning lines '$wl': $(grep '^warning\|^error' "$T/nsr.err" | head -4 | tr '\n' '|')"; fi
+# NS1: `w - q32` and `(w + 1) - q32` with `w: u8` are `n - p`, the values an i64 local gives (they were
+# refused "pointer difference of pointers with different element sizes")
+printf 'var B: i64[4];\nfn f(): i64 {\n    var q32: *u32 = &B;\n    var qa: i64 = q32;\n    var w: u8 = 5;\n    var m = 5;\n    var d1 = w - q32;\n    var d2 = (w + 1) - q32;\n    if (d1 != m - q32) { return 1; }\n    if (d2 != (m + 1) - q32) { return 2; }\n    if (d1 + qa != 5) { return 3; }\n    if (d2 + qa != 6) { return 4; }\n    return 0;\n}\nsyscall(60, f());\n' > "$T/ns1.cyr"
+xrow - ns1 NS1 0 "w - q32 and (w + 1) - q32 with w: u8 are n - p, as with an i64 local (they were refused)" a64
+# NS2: `var r: *T = w;`, `= 1 + w;`, `= w + 1;` each warn "assigning non-pointer" (r1 and `w + 1` were silent)
+printf 'var B: i64[4];\nfn f(): i64 {\n    var w: u8 = 5;\n    var r1: *u32 = w;\n    var r2: *u8 = 1 + w;\n    var r3: *u8 = w + 1;\n    var m = 5;\n    var r4: *u8 = m;\n    return 0;\n}\nsyscall(60, f());\n' > "$T/ns2.cyr"
+rc=0; timeout 60 "$CC" < "$T/ns2.cyr" > "$T/ns2.bin" 2> "$T/ns2.err" || rc=$?
+wl=$(grep '^warning' "$T/ns2.err" | grep -F 'assigning non-pointer to typed pointer' | sed 's/^warning:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$rc" -eq 0 ] && [ "$wl" = "4 5 6 8 " ]; then ok "NS2: w, 1 + w, w + 1 into a *u32 / *u8 warn, as an i64 local m does (w and w + 1 were silent)"
+else bad "NS2: rc $rc, warning lines '$wl' (want '4 5 6 8 '): $(grep '^warning\|^error' "$T/ns2.err" | head -3 | tr '\n' '|')"; fi
+# NS3: `n + &x` is a byte pointer, as `&x + n` is (the user's decision (a), 2026-10-13): into a `*T` it
+# is silent (it warned), and `(4 + &B) - q32` is refused (it was a byte difference); NS3c one element
+# size stays a count
+printf 'var B: i64[4];\nfn f(m): i64 {\n    var x = 0;\n    var r1: *u32 = 4 + &B;\n    var r2: *u32 = &B + 4;\n    var r3: *u8 = m + &x;\n    var r4: *u32 = 2 + (&B + 4);\n    var r5: *u8 = m + (&x);\n    return 0;\n}\nsyscall(60, f(1));\n' > "$T/ns3.cyr"
+rc=0; timeout 60 "$CC" < "$T/ns3.cyr" > "$T/ns3.bin" 2> "$T/ns3.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/ns3.err"; then ok "NS3: 4 + &B, m + &x, 2 + (&B + 4), m + (&x) into a *u32 / *u8 warn nothing, as &B + 4 does (they warned)"
+else bad "NS3: rc $rc: $(grep '^warning\|^error' "$T/ns3.err" | head -2 | tr '\n' '|')"; fi
+refused ns3d "pointer difference of pointers with different element sizes" "NS3d: (4 + &B) - q32 is refused, as (&B + 4) - q32 is (it was a byte difference)" \
+    'var B: i64[4];\nfn f(): i64 { var q32: *u32 = &B; return (4 + &B) - q32; }\nsyscall(60, f());\n'
+refused ns3e "pointer difference of pointers with different element sizes" "NS3e: (m + &x) - q32 with m an i64 local, the same" \
+    'var B: i64[4];\nfn f(m): i64 { var x = 0; var q32: *u32 = &B; return (m + &x) - q32; }\nsyscall(60, f(1));\n'
+exits ns3c 4 "NS3c: (4 + &B) - &B stays legal (one element size): 4" \
+    'var B: i64[4];\nfn f(): i64 { return (4 + &B) - &B; }\nsyscall(60, f());\n'
+# NS4: an i8 / u16 / i32 / u32 local and a narrow capture behave as the u8 local: `x - q32` / `(x + 1) - q32`
+# are `n - p` (the locals' were refused; the capture's already was), and each into a `*u32` warns. The
+# capture is compiled, not called: its VALUE is staged 2026-10-14-closure-capture-of-narrow-local-reads-
+# unextended-word.md (the env copies the slot's whole word).
+cat > "$T/ns4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+var B: i64[4];
+fn f(): i64 {
+    var q32: *u32 = &B;
+    var qa: i64 = q32;
+    var a: i8 = 5;
+    var b: u16 = 5;
+    var c: i32 = 5;
+    var e: u32 = 5;
+    var w: u8 = 5;
+    var d1 = a - q32 + qa;
+    var d2 = (b + 1) - q32 + qa;
+    var d3 = c - q32 + qa;
+    var d4 = (1 + e) - q32 + qa;
+    var r1: *u32 = a;
+    var r2: *u32 = b + 1;
+    var r3: *u32 = 1 + c;
+    var r4: *u8 = w + 1;
+    var k = |z| { var dd = (w + z) - q32 + qa; var rr: *u32 = w; return dd; };
+    return d1 + d2 + d3 + d4;
+}
+alloc_init();
+syscall(60, f());
+EOF
+xrow - ns4 NS4 22 "i8 / u16 / i32 / u32 locals: x - q32, (x + 1) - q32 are n - p (5 + 6 + 5 + 6); a u8 capture's compiles" a64
+wl=$(grep '^warning' "$T/ns4_plain.err" | grep -F 'assigning non-pointer to typed pointer' | sed 's/^warning:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$wl" = "17 18 19 20 21 " ]; then ok "NS4w: each narrow local, and the capture, into a *u32 / *u8 warns"
+else bad "NS4w: warning lines '$wl' (want '17 18 19 20 21 ')"; fi
+# NS6: `w + q32` steps sizeof(T), as `m + q32` with an i64 local does — the narrow local's step 1 made it the
+# pointer, so the `+` added w unscaled (`n: i32 = 1`: q + 1 for q + 4; a silent wrong value)
+printf 'var B: i64[8];\nfn d(a, b): i64 { return a - b; }\nfn f(): i64 {\n    var q: *i32 = &B;\n    var n: i32 = 1;\n    var w: u8 = 2;\n    var s: i16 = 3;\n    var m = 1;\n    var r = 0;\n    if (d(n + q, &B) == 4) { r = r + 1; }\n    if (d(w + q, &B) == 8) { r = r + 10; }\n    if (d(s + q, &B) == 12) { r = r + 100; }\n    if (d(m + q, &B) == 4) { r = r + 2; }\n    return r;\n}\nsyscall(60, f());\n' > "$T/ns6.cyr"
+xrow - ns6 NS6 113 "n + q32 / w + q32 / s + q32 (i32, u8, i16 locals) step 4, as m + q32 does: 4, 8, 12 (they were 1, 2, 3)" a64
+# NS5: a MULTI-WORD capture's value is its env words' address (step 1, no kind) — no `&x`: `z + s` and
+# `z + (s)` with `s: Pt` captured stay integers, as `m + s` on the frame's own `s` is (each into a `*u32`
+# warns); `z + &s` is the byte pointer (silent)
+printf 'include "lib/alloc.cyr"\nstruct Pt { x; y; z; }\nfn f(m): i64 {\n    var s: Pt;\n    s.x = 1;\n    var r: *u32 = m + s;\n    var k1 = |z| { var r1: *u32 = z + s; return 0; };\n    var k2 = |z| { var r2: *u32 = z + (s); return 0; };\n    var k3 = |z| { var r3: *u32 = z + &s; return 0; };\n    return 0;\n}\nsyscall(60, f(1));\n' > "$T/ns5.cyr"
+rc=0; timeout 60 "$CC" < "$T/ns5.cyr" > "$T/ns5.bin" 2> "$T/ns5.err" || rc=$?
+wl=$(grep '^warning' "$T/ns5.err" | grep -F 'assigning non-pointer to typed pointer' | sed 's/^warning:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$rc" -eq 0 ] && [ "$wl" = "6 7 8 " ]; then ok "NS5: m + s, and z + s / z + (s) on a captured struct, into a *u32 warn; z + &s does not"
+else bad "NS5: rc $rc, warning lines '$wl' (want '6 7 8 '): $(grep '^warning\|^error' "$T/ns5.err" | head -3 | tr '\n' '|')"; fi
+
 # ── PL: a pointer's step dies with the operator that consumed it (6.7.9) ──────────────────────
 # PL0: the value file (its op_rows_* section holds the issue's table) compiles with only the five
 # `#inline ignored` notes it has always had, and --syntax-only reports no error; PL: it on every leg.
@@ -1055,6 +1241,115 @@ exits pld 3 "PLD: p16 - (k * q32) steps the integer by 2 (it was refused as a po
 refused pldc "pointer difference of pointers with different element sizes" "PLDc: p16 - q32 is still the different-sizes error" \
     'var B: i64[8];\nfn f(): i64 { var p: *i16 = &B; var q: *i32 = &B; return p - q; }\nsyscall(60, f());\n'
 
+# ── AW: the value of `await f` is an untyped word (6.7.11) ────────────────────────────────────
+# aw_src <annotation> <coroutine 0/1> <result expression>: `five()`'s Future in `f`, awaited outside a
+# coroutine (main) or inside one (an async fn driven by future_force / future_pending)
+aw_src() {
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\n'
+    if [ "$2" -eq 1 ]; then
+        printf 'async fn outer(): i64 {\n    var f%s = five();\n    var r = %s;\n    return r;\n}\n' "$1" "$3"
+        printf 'fn main(): i64 {\n    alloc_init();\n    var C = outer();\n    var r = future_force(C);\n    while (future_pending(C)) { r = future_force(C); }\n    return r;\n}\nsyscall(60, main());\n'
+    else
+        printf 'fn main(): i64 {\n    alloc_init();\n    var f%s = five();\n    var r = %s;\n    return r;\n}\nsyscall(60, main());\n' "$1" "$3"
+    fi
+}
+# AW1: the issue's repro VERBATIM (issues/2026-10-11-await-result-keeps-typed-pointer-step.md; it
+# exited 9: the `1` scaled by sizeof(i32)).
+cat > "$T/aw1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+async fn five(): i64 { return 5; }
+fn main(): i64 {
+    alloc_init();
+    var f: *i32 = five();
+    var r = (await f) + 1;
+    return r;
+}
+syscall(60, main());
+EOF
+awx aw1 AW1 6 "the issue's repro: (await f) + 1 with f: *i32 is 6 (it was 9)" a64
+aw_src ': *u8' 0 '(await f) + 1' > "$T/aw2.cyr"
+awx aw2 AW2 6 "(await f) + 1 with f: *u8" a64
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\nfn main(): i64 {\n    alloc_init();\n    var f: *u8 = five();\n    var q: *u32 = &B;\n    var qa: i64 = q;\n    return ((await f) + 1) - q + qa;\n}\nsyscall(60, main());\n' > "$T/aw2d.cyr"
+awx aw2d AW2d 6 "((await f) + 1) - q32 with f: *u8 is n - p (it was refused as a different-sizes difference)" a64
+aw_src ': *i32' 1 '(await f) + 1' > "$T/aw3.cyr"
+awx aw3 AW3 6 "inside a coroutine, (await f) + 1 with f: *i32 (it was 9)"
+aw_src ': *u8' 1 '(await f) + 1' > "$T/aw4.cyr"
+awx aw4 AW4 6 "inside a coroutine, (await f) + 1 with f: *u8"
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nasync fn five(): i64 { return 5; }\nasync fn outer(): i64 {\n    var f: *u8 = five();\n    var q: *u32 = &B;\n    var qa: i64 = q;\n    return ((await f) + 1) - q + qa;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer();\n    var r = future_force(C);\n    while (future_pending(C)) { r = future_force(C); }\n    return r;\n}\nsyscall(60, main());\n' > "$T/aw4d.cyr"
+awx aw4d AW4d 6 "inside a coroutine, ((await f) + 1) - q32 with f: *u8 is n - p (it was refused)"
+aw_src '' 0 '(await f) + 1' > "$T/awc1.cyr"
+awx awc1 AWc1 6 "the untyped control var f = five(); (await f) + 1" a64
+aw_src '' 1 '(await f) + 1' > "$T/awc2.cyr"
+awx awc2 AWc2 6 "the untyped control inside a coroutine"
+aw_src ': *i32' 0 'f + 1 - f' > "$T/awc3.cyr"
+awx awc3 AWc3 1 "the control: the Future pointer f: *i32 itself still steps (f + 1 - f is 1)" a64
+
+# ── SAT: `+| +? -| -?` are integer operators — no step on the count or the result (6.7.11) ─────
+# SATR: the issue's repro VERBATIM (issues/2026-10-11-saturating-op-keeps-left-pointer-step-decision.md;
+# it exited 58: `(q +| 1) + 1` was q + 5 — the count unscaled, then q's step restored).
+cat > "$T/satr.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/overflow.cyr"
+var buf[64];
+fn main(): i64 {
+    var q: *i32 = &buf;
+    var a = (q +| 1) + 1;
+    var d = (q + 1) + 1;
+    return (a - &buf) * 10 + (d - &buf);
+}
+syscall(60, main());
+EOF
+xrow - satr SATR 28 "the issue's repro: (q +| 1) + 1 is q + 2, (q + 1) + 1 q + 8 (it was 58)" a64
+# SAT1: each operator on a `*i32` and a `*u8` left operand (a local, a parameter), then `+ 1`, measured
+# in bytes; the untyped-integer control; exit 0, else the failing check's number.
+cat > "$T/sat1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/overflow.cyr"
+var buf[64];
+fn d(a, b): i64 { return a - b; }
+fn cells(q: *i32, p: *u8): i64 {
+    var B = &buf + 16;
+    var l: *i32 = &buf + 16;
+    var m: *u8 = &buf + 16;
+    if (d((q +| 1) + 1, B) != 2) { return 1; }
+    if (d((q +? 1) + 1, B) != 2) { return 2; }
+    if (d((q -| 1) + 1, B) != 0) { return 3; }
+    if (d((q -? 1) + 1, B) != 0) { return 4; }
+    if (d((l +| 3) + 1, B) != 4) { return 5; }
+    if (d((l +? 3) - 1, B) != 2) { return 6; }
+    if (d((l -| 3) + 1, B) != 0 - 2) { return 7; }
+    if (d((l -? 3) - 1, B) != 0 - 4) { return 8; }
+    if (d((p +| 1) + 1, B) != 2) { return 9; }
+    if (d((p +? 1) + 1, B) != 2) { return 10; }
+    if (d((p -| 1) + 1, B) != 0) { return 11; }
+    if (d((m -? 1) + 1, B) != 0) { return 12; }
+    if (d(q +| 1, B) != 1) { return 13; }
+    if (d(2 + (q +| 1), B) != 3) { return 14; }
+    var n = 40;
+    if ((n +| 1) + 1 != 42) { return 20; }
+    if ((n +? 1) + 1 != 42) { return 21; }
+    if ((n -| 1) + 1 != 40) { return 22; }
+    if ((n -? 1) + 1 != 40) { return 23; }
+    if (d((q + 1) + 1, B) != 8) { return 24; }
+    return 0;
+}
+fn main(): i64 { return cells(&buf + 16, &buf + 16); }
+syscall(60, main());
+EOF
+xrow - sat1 SAT1 0 "+| +? -| -? on a *i32 / *u8 local and parameter, then + 1: a byte count; the integer and q + 1 controls" a64
+# SAT2: on a `*u8` the result is no pointer either — `((p +| 1) + 1) - q32` is `n - p` (it was refused as
+# a different-sizes difference: the result was the `*u8` again)
+printf 'include "lib/syscalls.cyr"\ninclude "lib/overflow.cyr"\nvar buf[64];\nfn main(): i64 {\n    var p: *u8 = &buf;\n    var q: *u32 = &buf;\n    var a = ((p +| 1) + 1) - q;\n    var b = ((p -? 0) + 1) - q;\n    return a * 10 + b;\n}\nsyscall(60, main());\n' > "$T/sat2.cyr"
+xrow - sat2 SAT2 21 "((p8 +| 1) + 1) - q32 and ((p8 -? 0) + 1) - q32 are n - p, 2 and 1 bytes (they were refused)" a64
+# SAT3: the result into a `*T` is an integer into a typed pointer — it warns, as `q | 0` does (it was
+# silent: the result was the `*i32` again)
+for op in '+|' '+?' '-|' '-?'; do
+    warns "sat3_$(printf '%s' "$op" | od -An -tx1 | tr -d ' ')" "assigning non-pointer to typed pointer" "SAT3: var r: *i32 = q $op 1; warns" \
+        "include \"lib/syscalls.cyr\"\ninclude \"lib/overflow.cyr\"\nvar buf[8];\nfn f(): i64 { var q: *i32 = &buf; var r: *i32 = q $op 1; return 0; }\nsyscall(60, f());\n"
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared `: *T` keeps it (PL legs, PLWo)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), a one-byte n + p too (DX, DXr); a one-byte n + p is that *T, as p + n is (DXc1-5, DXn, DXR), a one-byte struct pointer's too (DXs1-5); a narrow scalar local is an integer and \`n + &x\` the byte pointer \`&x + n\` is (NSR, NS1-NS6); a pointer's step dies with the operator that consumed it (PL legs, PLR, PLW, PLD), an operator fn's declared \`: *T\` keeps it (PL legs, PLWo); the value of \`await f\` is an untyped word, outside a coroutine and inside one (AW1-AW4d, AWc); \`+| +? -| -?\` are integer operators, no step on the count or the sum (SATR, SAT1-SAT3, PL legs)"

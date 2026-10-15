@@ -341,6 +341,12 @@ fn _gen_ret_tp(S, fi): i64 {
 fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     var w = _gen_ret_tp(S, fi);
     if (w < 0) { return 0; }
+    return _tok_gen_tp_sid(S, a, i, j, fi, w);
+}
+# ... the struct type parameter `w` of the generic fi binds at the call at token j (`_tok_gen_ret_sid`'s
+# rule). 6.7.11: a whole argument that is an explicit generic call `g(mk1<Pt>(p))` too, as the parser
+# binds it (`_gen_arg_whole`).
+fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var r = 0;
     if (TOKTYP(S, j + 1) == 19) {
         var k = j + 2;
@@ -361,8 +367,14 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
     if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
-    elif (nt == 10) { if (_call_is_whole_arg(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
+    elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
     return r;
+}
+# 1 = the call `name(..)` / `name<..>(..)` at token at is the whole argument (a `,` or `)` follows it).
+fn _tok_call_whole(S, at): i64 {
+    var o = _pair_ret_open(S, at);
+    if (o < 0) { return 0; }
+    return _call_is_whole_arg(S, o - 1);
 }
 # 6.7.8 — the same when T is carried by a generic struct parameter (`_gs_carrier`, field
 # f), answered as the parser infers it (`_gen_infer_sc`) but from the tokens: no fn-local instance
@@ -377,23 +389,201 @@ fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if (at < 0) { return 0; }
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
+    return _tok_sc_arg(S, a, i, at, g, f);
+}
+# ... the X the whole argument at token at holds in the slot of G (the generic struct g) — as
+# `_gsc_arg` reads it.
+fn _tok_sc_arg(S, a, i, at, g, f): i64 {
     at = _pwrap_in(S, at);   # 6.7.11: `gw((w))`, as `_gsc_wrap`
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) == 8) { return _tok_sc_deref(S, a, i, at + 1, g, f); }   # 6.7.11: `gw(*wp)`
     if (TOKTYP(S, at) == 27) {
         at = at + 1;
         if (TOKTYP(S, at + 1) == 10) { return 0; }   # `&f(..)`
+        if (TOKTYP(S, at + 1) == 19) { return 0; }   # `&f<..>(..)` (6.7.11: the call arm takes `<`)
         f = f | (1 << 20);
     }
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
     var r = 0;
     if (nt == 31 || nt == 11) { r = _tok_sc_name(S, a, i, at, g, f); }
-    elif (nt == 10) {
-        if (_call_is_whole_arg(S, at) == 1) { r = _sinst_conc(S, _tok_init_sid(S, a, i, at), g, (f >> 8) & 1); }
-    }
+    elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_sc_call(S, a, i, at, g, f); } }
     if (r > 0) { if (GSTP(S, r - 1) == 0) { return r; } }
     return 0;
+}
+# ⛔ 6.7.11 — a whole call `f(..)` / `f<..>(..)` (token at): the X in T's slot of the instance it returns,
+# as `_gsc_call` binds it. A GENERIC callee is read through its own type parameters: declared `: G<..,
+# U, ..>` with U in that slot, what U binds at this call (`_tok_gen_tp_sid`: `unbox(mk1(p))`,
+# `unbox(mk1<Pt>(p))`); declared `: U` with U carried by a `U` parameter, the X of the argument there
+# (`unbox(idb(b))`). The parser now calls `unbox$Pt` in each, so a `?` above a wrapper typed through it
+# needs its pair. U carried through a struct (`unbox(unbox(bb))`, a G<G<X>>) is read by PATH: see
+# `_tsp_push`.
+fn _tok_sc_call(S, a, i, at, g, f): i64 {
+    var slot = (f >> 8) & 1;
+    var r = _tsp_conc(S, _tok_init_sid(S, a, i, at), g, f);
+    if (r != 0) { return r; }
+    var fi = FINDFN(S, TOKVAL(S, at));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    var w = _gen_ret_targ_tp(S, fi, g, slot);
+    if (w >= 0) { return _tok_sc_tpq(S, a, i, at, fi, w, f >> 32); }
+    return _tok_sc_fwd(S, a, i, at, fi, g, f);
+}
+fn _tok_sc_fwd(S, a, i, at, fi, g, f): i64 {
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    return _tok_tp_byarg(S, a, i, _pair_ret_open(S, at), fi, w, g, f);
+}
+# ⛔ 6.7.11 — THE PAIR SCANS READ A TYPE BY PATH. `_gsc_call` binds T through a generic call's INSTANCE
+# at any depth: `unbox(unbox(bb))` (`bb: Box<Box<Pt>>`) and `unbox(unbox(mk1(mk1(p))))` call `unbox$Pt`.
+# A token answer is ONE struct id, so the X two carriers down — a `Box<Pt>` whose own X is wanted — named
+# nothing, the scan answered 0, and a `?` above a wrapper typed through it took the boxed lowering:
+# rc 139 (the review's repro). So the question carries the steps still to take after the current one:
+# `f`'s bits 32+ are the head of a chain of (G, slot) steps, each a word in `_tsp` (G in bits 0-15, the
+# slot bit 16, the next step's head from bit 20; heads are 1-based, 0 ends the chain). A callee that
+# returns `: U` with U carried by a struct parameter (`_tok_sc_carry`) pushes the current step and asks
+# that argument one level deeper; a callee declared `: G<.., U, ..>` consumes one (`_tok_sc_tpq`); an
+# annotation (`_tok_sc_ann`, an explicit `<..>`: `_tok_ann_walk`) walks the rest through its tokens, an
+# instance through `_sinst` (`_tsp_conc`). Pushes are popped by the frame that made them, so a live
+# chain is never overwritten, and a fresh question (`_tok_init_sid`) starts with none. A full stack
+# answers 0 — a missed flag, never a false one. CHANGELOG [6.7.11]
+var _tsp = 0;
+var _tsp_n = 0;
+fn _tsp_push(g, slot, next): i64 {
+    if (_tsp == 0) { _tsp = alloc(256 * 8); }
+    if (_tsp_n >= 256) { return 0; }
+    S64(_tsp + _tsp_n * 8, g + (slot << 16) + (next << 20));
+    _tsp_n = _tsp_n + 1;
+    return _tsp_n;
+}
+fn _tsp_pop(): i64 {
+    _tsp_n = _tsp_n - 1;
+    return 0;
+}
+fn _tsp_ent(h): i64 { return L64(_tsp + (h - 1) * 8); }
+# The type argument in slot (g, f) of the struct instance c, then each step of f's chain in turn: 0
+# when one is not an instance of its G.
+fn _tsp_conc(S, c, g, f): i64 {
+    var r = _sinst_conc(S, c, g, (f >> 8) & 1);
+    var h = f >> 32;
+    while (h > 0) {
+        var e = _tsp_ent(h);
+        r = _sinst_conc(S, r, e & 0xFFFF, (e >> 16) & 1);
+        h = e >> 20;
+    }
+    return r;
+}
+# The token where the chain at head h ends, walking the type written from token k (each step's
+# `G<..>` must be there), or -1.
+fn _tsp_walk(S, k, h): i64 {
+    while (h > 0) {
+        var e = _tsp_ent(h);
+        if (TOKTYP(S, k) != 2) { return 0 - 1; }
+        if (FINDSTRUCT(S, TOKVAL(S, k)) != (e & 0xFFFF)) { return 0 - 1; }
+        if (TOKTYP(S, k + 1) != 19) { return 0 - 1; }
+        k = _tok_targ_at(S, k + 2, (e >> 16) & 1);
+        if (k < 0) { return 0 - 1; }
+        h = e >> 20;
+    }
+    return k;
+}
+# The first token of type argument `slot` (0 / 1) of the list whose first argument starts at token k
+# (just past its `<`), or -1. An argument may nest `<..>`, closed by `>`, `>>` or `>>>`.
+fn _tok_targ_at(S, k, slot): i64 {
+    if (slot == 0) { return k; }
+    var n = GTCNT(S);
+    var d = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0 - 1; }
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t == 31) { if (d == 0) { return k + 1; } }
+        if (d < 0) { return 0 - 1; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# The struct the plain type name at token k names (a closer or `,` after it), else 0.
+fn _tok_plain_sid(S, k): i64 {
+    if (TOKTYP(S, k) != 2) { return 0; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31 && kt != 39 && kt != 152) { return 0; }   # a plain name, not `Pair<..>`
+    return FINDSTRUCT(S, TOKVAL(S, k));
+}
+# The X at (g, f) and f's chain in the type written from token k (an explicit type argument).
+fn _tok_ann_walk(S, k, g, f): i64 {
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, k)) != g) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    k = _tok_targ_at(S, k + 2, (f >> 8) & 1);
+    if (k < 0) { return 0; }
+    k = _tsp_walk(S, k, f >> 32);
+    if (k < 0) { return 0; }
+    return _tok_plain_sid(S, k);
+}
+# A callee declared `: G<.., U, ..>` matched the current step: what U binds at the call at token at, or
+# with steps left (head h), the X they reach in it — U's explicit `<..>` argument walked, else the
+# argument carrying U.
+fn _tok_sc_tpq(S, a, i, at, fi, w, h): i64 {
+    if (h == 0) { return _tok_gen_tp_sid(S, a, i, at, fi, w); }
+    var e = _tsp_ent(h);
+    var f = (((e >> 16) & 1) << 8) | ((e >> 20) << 32);
+    if (TOKTYP(S, at + 1) == 19) {
+        var k = _tok_targ_at(S, at + 2, w);
+        if (k < 0) { return 0; }
+        return _tok_ann_walk(S, k, e & 0xFFFF, f);
+    }
+    return _tok_tp_byarg(S, a, i, at + 1, fi, w, e & 0xFFFF, f);
+}
+# The X at (g, f) in what type parameter w of fi binds at the call whose `(` is token o: through the
+# argument in w's by-value position, or through its struct carrier (`_tok_sc_carry`).
+fn _tok_tp_byarg(S, a, i, o, fi, w, g, f): i64 {
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return _tok_sc_carry(S, a, i, o, fi, (m >> (24 + w * 20)) & 0xFFFFF, g, f); }
+    var arg = _call_arg_for(S, fi, o, pk - 1);
+    if (arg < 0) { return 0; }
+    return _tok_sc_arg(S, a, i, arg, g, f);
+}
+# U rides fi's struct carrier `b: G'<.., U, ..>` (carrier code fc, as `_tok_gen_sc_sid` reads it): the
+# X at (g, f) in U is the X at (G', slot') and then (g, f) in b's argument — the current step pushed.
+fn _tok_sc_carry(S, a, i, o, fi, fc, g, f): i64 {
+    if ((fc & 255) == 0) { return 0; }
+    var at = _call_arg_for(S, fi, o, (fc & 255) - 1);
+    if (at < 0) { return 0; }
+    var g2 = _gsc_g(S, fi, (fc >> 10) & 1023);
+    if (g2 <= 0) { return 0; }
+    var h = _tsp_push(g, (f >> 8) & 1, f >> 32);
+    if (h == 0) { return 0; }
+    var r = _tok_sc_arg(S, a, i, at, g2, fc | (h << 32));
+    _tsp_pop();
+    return r;
+}
+# Which type parameter (0 / 1) of the generic fi sits as the WHOLE type argument in `slot` of its
+# `: G<..>` return, G the generic struct g, or -1 (another return, or a nested / concrete argument).
+fn _gen_ret_targ_tp(S, fi, g, slot): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 2) { return 0 - 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, c + 2)) != g) { return 0 - 1; }
+    if (TOKTYP(S, c + 3) != 19) { return 0 - 1; }
+    var k = c + 4;
+    if (slot == 1) { if (TOKTYP(S, k + 1) != 31) { return 0 - 1; } k = k + 2; }
+    if (TOKTYP(S, k) != 2) { return 0 - 1; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31 && kt != 39 && kt != 152) { return 0 - 1; }
+    var rn = TOKVAL(S, k) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
 }
 # 6.7.11 — `*name` (token `at` on the name) as a whole argument: the X of its declaration's `: *G<..,
 # X, ..>` annotation, as `_gsc_deref` binds T through the pointer's pointee. A value's `*b`, a global, a
@@ -414,16 +604,28 @@ fn _tok_sc_deref(S, a, i, at, g, f): i64 {
 # global by its instance.
 fn _tok_sc_name(S, a, i, at, g, f): i64 {
     var d = _tok_name_decl(S, a, i, TOKVAL(S, at));
-    if (d < 0) { return _sinst_conc(S, _glob_name_sid(S, TOKVAL(S, at)), g, (f >> 8) & 1); }
+    if (d < 0) { return _tsp_conc(S, _glob_name_sid(S, TOKVAL(S, at)), g, f); }
     if (TOKTYP(S, d + 1) == 4) {
         if (TOKTYP(S, d - 1) != 3) { return 0; }
-        return _sinst_conc(S, _tok_init_sid(S, a, d, d + 2), g, (f >> 8) & 1);
+        var r = _tsp_conc(S, _tok_init_sid(S, a, d, d + 2), g, f);
+        if (r != 0) { return r; }
+        return _tok_sc_init(S, a, d, d + 2, g, f);
     }
     return _tok_sc_ann(S, d, g, f);
 }
+# 6.7.11 — an untyped `var b = f(..);` whose callee is generic (`var bb = mk1(mk1(p));`): PARSE_VAR
+# types b by the instance the call reaches, so the X is read through the call as an argument's is.
+fn _tok_sc_init(S, a, d, j, g, f): i64 {
+    if (TOKTYP(S, j) != 2) { return 0; }
+    var o = _pair_ret_open(S, j);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }   # the whole initializer
+    return _tok_sc_call(S, a, d, j, g, f);
+}
 # The type argument in T's slot of the annotation after the declared name at token d, when it is a
 # plain struct name and the annotation names G: `b: G<.., X, ..>`, or `*G<..>` not reached through
-# `&` (bit 20: `&bp` is a `**`). 0 otherwise.
+# `&` (bit 20: `&bp` is a `**`) — or, with steps left in f's chain, the X they reach in that argument
+# (`b: Box<Box<Pt>>`, 6.7.11). 0 otherwise.
 fn _tok_sc_ann(S, d, g, f): i64 {
     if (TOKTYP(S, d + 1) != 49) { return 0; }
     var at = d + 2;
@@ -436,10 +638,9 @@ fn _tok_sc_ann(S, d, g, f): i64 {
     if (TOKTYP(S, at + 1) != 19) { return 0; }
     var k = at + 2;
     if (((f >> 8) & 1) == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
-    if (TOKTYP(S, k) != 2) { return 0; }
-    var kt = TOKTYP(S, k + 1);
-    if (kt != 20 && kt != 31 && kt != 39 && kt != 152) { return 0; }   # a plain name, not `Pair<..>`
-    return FINDSTRUCT(S, TOKVAL(S, k));
+    k = _tsp_walk(S, k, f >> 32);
+    if (k < 0) { return 0; }
+    return _tok_plain_sid(S, k);
 }
 # A method `x.m(` whose single-name receiver the tokens do not type — a generic fn's `p: T` param,
 # bound per instance — still has ONE answer when every struct's `T_m` agrees on the pair flag: the
@@ -4237,6 +4438,40 @@ fn _PARSE_CONTINUE(S): i64 {
     } else {
         # A `while`: a direct jump to the loop top
         EJMP(S, L64(S + 0x18F838));
+    }
+    return 0;
+}
+# return; / return v; outside every fn body — at top level or in a top-level block (GINFN 0) — is
+# refused by name, as a top-level break / continue / defer is: the top level has no frame and no
+# epilogue to land on, so the jump PARSE_RETURN records in rp_vec was never patched — a `jmp +0`
+# on x86_64 / PE (the return passed over), a branch to itself on aarch64 / cx (a hang). A closure
+# body and an #inline fn's replay are GINFN 1. Reported once and in sync: the statement is stepped
+# over through its `;` and the latch cleared, so the next statement parses and reports its own
+# errors. 1 = refused. CHANGELOG [6.7.11]
+fn _ret_toplevel(S): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    var p0 = _panic;
+    ERR_MSG(S, "return outside a fn body", 24);
+    _ret_skip_stmt(S);
+    if (p0 == 0) { _panic = 0; }
+    return 1;
+}
+# Step over the refused statement: through its `;` outside `( [ {` nesting, or up to the `}` that
+# closes the enclosing block, or EOF.
+fn _ret_skip_stmt(S): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (GTI(S) < n) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+        }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { d = 0; }
+        STI(S, GTI(S) + 1);
     }
     return 0;
 }

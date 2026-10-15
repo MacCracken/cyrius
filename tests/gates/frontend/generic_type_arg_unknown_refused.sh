@@ -47,6 +47,13 @@
 #      `g(pp)` is refused like `g(5)`, `f(pp) - pp` runs the base (exit 1)
 #   P  (review) at top level, `w1s(mkw(gp))` — a register-pair INSTANCE result as a struct
 #      argument — is refused by name (the class was read from the 8 B base: SIGSEGV)
+#   CF (6.7.11) a generic that reads its STRUCT CARRIER's T field as a struct (`b.v.y`, `b: Box<T>`)
+#      has no i64 instance: the filed repro builds and exits 44 (CF1; it failed "expected ';', got '.'"
+#      at the definition, called or not), `gy(bi)` / `gy<i32>(bi)` with `bi: Box<i32>` and `gy(bf)`
+#      with `bf: Box<f64>` are refused naming 'gy' (CF2-CF4), an uncalled definition builds (CF5), and
+#      a field typed `Box<T>` one hop down (`o.inner.v.y`, out of the scan's reach) builds through the
+#      documented `var t: T = o.inner.v;` (CF6). The runtime rows are generic_struct_inference.tcyr G12.
+#      Filed: docs/development/issues/2026-10-10-generic-base-reads-carrier-field-as-struct.md
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -69,6 +76,8 @@
 #   drop the `_gen_own_call_check` in the asv_pair receive (parse_decl.cyr) -> L RED (rc 0)
 #   drop the vector guard in _infer_conc_at_cursor      -> M's vector row RED
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
+#   6.7.11: `_gs_use` mode 0 without `_gs_cfield` -> CF1 / CF5 RED (the definition fails), CF2-CF4
+#   RED (refused, but by the parse error, not by name)
 #   (review) `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
 #   `_refuse_toplevel_pair_arg` on FINDFN -> P RED (BUILT)
 # The runtime halves (inference on every path, signature types) are mutation-proven by
@@ -281,5 +290,23 @@ if [ "$rc" -eq 0 ]; then bad "N: var a = idv<f64v2>(v): BUILT (rc 0)"
 elif [ "$nerr" -ne 1 ]; then bad "N: var a = idv<f64v2>(v): the refusal printed $nerr times, want 1"
 else ok "N: var a = idv<f64v2>(v): refused once"; fi
 
+# ── 6.7.11: a struct carrier's T field read as a struct ────────────────────────────────────────
+cp docs/development/issues/repros/2026-10-10-generic-base-reads-carrier-field-as-struct.cyr "$T/cf1.cyr" 2> /dev/null \
+    || { bad "CF1: the filed repro is missing"; : > "$T/cf1.cyr"; }
+exits cf1 44 "CF1: the filed repro, verbatim (gy(b) * 10 + gy<Pt>(b))"
+CFH='struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn gy<T>(b: Box<T>): i64 { return b.v.y; }'
+printf '%s\nfn go(): i64 { var bi: Box<i32>; bi.v = 3; bi.n = 8; return gy(bi); }\nsyscall(60, go());\n' "$CFH" > "$T/cf2.cyr"
+stubref cf2 gy "CF2: gy(bi), bi: Box<i32>"
+printf '%s\nfn go(): i64 { var bi: Box<i32>; bi.v = 3; bi.n = 8; return gy<i32>(bi); }\nsyscall(60, go());\n' "$CFH" > "$T/cf3.cyr"
+stubref cf3 gy "CF3: gy<i32>(bi)"
+printf '%s\nfn go(): i64 { var bf: Box<f64>; bf.v = 1.5; bf.n = 8; return gy(bf); }\nsyscall(60, go());\n' "$CFH" > "$T/cf4.cyr"
+stubref cf4 gy "CF4: gy(bf), bf: Box<f64>"
+printf '%s\nsyscall(60, 5);\n' "$CFH" > "$T/cf5.cyr"
+exits cf5 5 "CF5: the definition alone, never called"
+printf 'struct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nstruct Out<T> { inner: Box<T>; k; }\nfn gd<T>(o: Out<T>): i64 { var t: T = o.inner.v; return t.y; }\nfn go(): i64 { var o: Out<Pt>; o.inner.v.x = 1; o.inner.v.y = 6; o.k = 2; return gd(o); }\nsyscall(60, go());\n' > "$T/cf6.cyr"
+exits cf6 6 "CF6: one hop down (o.inner.v), through the documented T-typed local"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11)"
