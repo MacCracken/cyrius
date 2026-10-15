@@ -165,13 +165,24 @@ fn main(): i64 {
     var _agnos_skip = "  SKIP (agnos): the 4 fmt_float stdout rows need a stdout capture, and the agnos peer defines no sys_dup2\n";
     sys_write(1, _agnos_skip, strlen(_agnos_skip));
     #endif
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.7.12: a named SKIP on Windows too — the capture needs an anonymous pipe and sys_dup2, and
+    # the PE peer has neither (sys_pipe is the documented -1 degrade, sys_dup2 a stub). The
+    # fmt_float_buf rows above check the same text. The row pins the premise. CHANGELOG [6.7.12]
+    var _win_skip = "  SKIP (windows): the 4 fmt_float stdout rows need a stdout capture (no anonymous pipe, no dup2 on PE)\n";
+    sys_write(1, _win_skip, strlen(_win_skip));
+    var _win_fds[16];
+    assert_eq(sys_pipe(&_win_fds) < 0, 1, "Windows refuses sys_pipe: the reason the stdout rows are skipped there");
+    #endif
     #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
     assert_eq(_ffout(0x7E37E43C8800759C, 2, "1.00e+300"), 1, "fmt_float(1e300, 2)");
     assert_eq(_ffout(0xFE37E43C8800759C, 2, "-1.00e+300"), 1, "fmt_float(-1e300, 2)");
     assert_eq(_ffout(0x7E37E43C8800759C, 20, "1.00000000000000005300e+300"), 1,
       "fmt_float(1e300, 20): padding before e+300");
     assert_eq(_ffout(0x43E0000000000000, 20, "9223372036854775808.00000000000000000000"), 1,
       "fmt_float(2^63, 20)");
+    #endif
     #endif
 
     # fmt_float's own stack buffer: these overran `var buf[32]` (a smashed frame).

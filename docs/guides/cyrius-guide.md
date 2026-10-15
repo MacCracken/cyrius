@@ -4117,7 +4117,12 @@ instruction.
   on the path** — `[embed]` is the one key that copies a file into a built artifact, and a link
   committed into an untrusted checkout could ship any file on the build machine inside a release
   binary. The file must exist and be a regular file; it is opened once and the bytes the build
-  embeds are the bytes that were checked.
+  embeds are the bytes that were checked. The open itself refuses a link too, so a directory
+  swapped for one after the check (a second writer racing the build) is not followed: on Linux
+  and macOS it walks the path from a handle on the project root, never following a link; on
+  Windows, which has no such walk, the opened file's final path must lie inside the project
+  root's, so a junction or directory link leading outside is refused (6.7.12 — Windows and Apple
+  Silicon followed one). `${file:}` reads through the same open.
 - One path string per entry. A `{ dir, glob, prefix }` set, an array or an `[embed.X]` section is
   refused: list each file (an order that depends on a directory listing is a trap).
 - **Size.** Every string literal lives in cycc's string pool, 2 MiB (2,097,152 bytes, NUL
@@ -6585,7 +6590,11 @@ primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xrea
 Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
 miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
 (`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, `FlushFileBuffers` for `xfsync`
-since v6.6.7, …) behind the same names. `cyrlint` flags a raw `sys_open`
+since v6.6.7, `LockFileEx` / `UnlockFileEx` for `xflock` since 6.7.12, …) behind the same names.
+`xflock` on Windows locks ONE sentinel byte at offset 2^63 − 1, never the file's data: Windows
+byte locks are mandatory, so it excludes other lockers and leaves every handle's reads and writes
+alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35), where it used
+to answer -1 for every lock. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
@@ -7160,10 +7169,15 @@ A path is UTF-8 in the cyrius API and is widened to UTF-16LE where it meets kern
 `MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS)`, surrogate pairs included. Invalid UTF-8,
 or a path with no room, is REFUSED (the call returns -1) — never guessed or cut — and a path
 whose full form is 248 units or more is passed as `\\?\<full>` (`\\?\UNC\…` for a share). That
-holds for open / create / mkdir / unlink / rename / rmdir since 6.6.11 and for the directory
-calls (`is_dir`, `dir_list`, `is_symlink`, `sys_access`, `xmkdir_p`) since 6.6.12. ⚠ Before
-6.6.11 a path was copied one byte per UTF-16 unit and cut at 260 units: a non-ASCII name
-failed, and a long relative `O_CREAT` open returned a handle for the name cut short.
+holds for open / create / mkdir / unlink / rename / rmdir since 6.6.11, for the directory
+calls (`is_dir`, `dir_list`, `is_symlink`, `sys_access`, `xmkdir_p`) since 6.6.12, and for
+the link path of `xsymlink` since 6.7.12 (it was widened in the stdlib, capped at 519 units and
+never prefixed, so a link path over 260 units failed -1). A link's TARGET is stored verbatim, so a
+relative one is widened as written — never made absolute, `/` becoming `\` — and resolves against
+the link's directory; an ABSOLUTE target (`X:\…`, `\\server\…`) whose full form is 248 units or
+more takes the same `\\?\` prefix (6.7.12 — it failed -1 past MAX_PATH). ⚠ Before 6.6.11 a
+path was copied one byte per UTF-16 unit and cut at 260 units: a non-ASCII name failed, and a long
+relative `O_CREAT` open returned a handle for the name cut short.
 
 **Sockets**
 

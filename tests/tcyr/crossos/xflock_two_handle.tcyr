@@ -1,0 +1,88 @@
+# 6.7.12 — xflock with TWO handles on one file, on every target. Windows had no route: xflock's
+# PE arm was the constant -1, so a lock was never granted there and patra's open-time WAL
+# recovery (taken only under a granted LOCK_EX|LOCK_NB) never ran. It is now kernel32
+# LockFileEx / UnlockFileEx (reroutes 0xF04C / 0xF04D) on ONE sentinel byte at 2^63 - 1:
+# Windows byte locks are MANDATORY, so locking the file's real bytes would fail the other
+# handle's reads and writes — the rows below that read and write through the second handle
+# while the first holds LOCK_EX are what pin the sentinel. Linux and both Macs run the same
+# rows through flock(2) (flock locks belong to the open file description, so two opens in one
+# process contend, as two handles do on Windows). A refused LOCK_NB is -EAGAIN: 11 on Linux
+# and PE, 35 on Darwin. CHANGELOG [6.7.12]
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var XF_EAGAIN = 11;
+#ifdef CYRIUS_TARGET_MACOS
+XF_EAGAIN = 35;
+#endif
+var XF_SH = 1;
+var XF_EX = 2;
+var XF_NB = 4;
+var XF_UN = 8;
+
+var path = test_scratch("cyrius_xflock_two_handle.tmp");
+xunlink(path);
+
+test_group("the filed repro: LOCK_EX on a freshly opened file is granted");
+var a = file_open(path, O_RDWR | O_CREAT, 420);
+assert_eq(a >= 0, 1, "handle A opens");
+assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX -> 0 (Windows: -1 before 6.7.12)");
+
+test_group("a second handle is refused while A holds LOCK_EX, and still reads and writes");
+var b = file_open(path, O_RDWR, 420);
+assert_eq(b >= 0, 1, "handle B opens");
+assert_eq(file_write(a, "data", 4), 4, "A writes 4 data bytes");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN");
+assert_eq(xflock(b, XF_SH | XF_NB), 0 - XF_EAGAIN, "B: LOCK_SH|LOCK_NB -> -EAGAIN (A is exclusive)");
+var rb = alloc(16);
+assert_eq(xlseek(b, 0, 0), 0, "B seeks to 0");
+assert_eq(file_read(b, rb, 4), 4, "B reads the data bytes under A's lock (the lock is not on them)");
+store8(rb + 4, 0);
+assert_eq(streq(rb, "data"), 1, "B read back what A wrote");
+assert_eq(file_write(b, "more", 4), 4, "B writes 4 more bytes under A's lock");
+var ra = alloc(16);
+assert_eq(xlseek(a, 0, 0), 0, "A seeks to 0");
+assert_eq(file_read(a, ra, 8), 8, "A reads all 8 bytes back");
+store8(ra + 8, 0);
+assert_eq(streq(ra, "datamore"), 1, "A sees B's write");
+
+test_group("LOCK_UN releases it to the other handle");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 once A has unlocked");
+assert_eq(xflock(a, XF_EX | XF_NB), 0 - XF_EAGAIN, "A: LOCK_EX|LOCK_NB -> -EAGAIN (B holds it now)");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN of a lock it no longer holds -> 0");
+
+test_group("two LOCK_SH are both granted, and both exclude LOCK_EX");
+var c = file_open(path, O_RDWR, 420);
+assert_eq(c >= 0, 1, "handle C opens");
+assert_eq(xflock(a, XF_SH | XF_NB), 0, "A: LOCK_SH|LOCK_NB -> 0");
+assert_eq(xflock(b, XF_SH | XF_NB), 0, "B: LOCK_SH|LOCK_NB -> 0 beside A's");
+assert_eq(xflock(c, XF_EX | XF_NB), 0 - XF_EAGAIN, "C: LOCK_EX|LOCK_NB -> -EAGAIN under two shared locks");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+assert_eq(xflock(c, XF_EX | XF_NB), 0 - XF_EAGAIN, "C: LOCK_EX|LOCK_NB -> -EAGAIN while B still shares");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+assert_eq(xflock(c, XF_EX | XF_NB), 0, "C: LOCK_EX|LOCK_NB -> 0 once both shared locks are gone");
+assert_eq(xflock(c, XF_UN), 0, "C: LOCK_UN -> 0");
+
+test_group("one handle converts its own lock without deadlocking itself");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH -> 0");
+assert_eq(xflock(a, XF_EX | XF_NB), 0, "A: LOCK_SH -> LOCK_EX|LOCK_NB -> 0 (its own shared lock does not block it)");
+assert_eq(xflock(b, XF_SH | XF_NB), 0 - XF_EAGAIN, "B: LOCK_SH|LOCK_NB -> -EAGAIN (A converted to exclusive)");
+assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX again on its own exclusive lock -> 0, no self-deadlock");
+assert_eq(xflock(a, XF_SH | XF_NB), 0, "A: LOCK_EX -> LOCK_SH|LOCK_NB -> 0");
+assert_eq(xflock(b, XF_SH | XF_NB), 0, "B: LOCK_SH|LOCK_NB -> 0 (A is shared again)");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+assert_eq(xflock(a, 0) < 0, 1, "an op that is none of LOCK_SH / LOCK_EX / LOCK_UN is refused");
+
+file_close(c);
+file_close(b);
+file_close(a);
+xunlink(path);
+var r = assert_summary();

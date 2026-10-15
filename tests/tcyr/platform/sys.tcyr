@@ -10,8 +10,23 @@ include "lib/sys.cyr"
 
 alloc_init();
 
-test_group("uname");
 var uts[390];
+var si[120];
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: Windows has no uname or sysinfo — the PE arms are the documented -38 (ENOSYS) declines
+# (lib/sys.cyr; GetVersionEx / GlobalMemoryStatusEx have no reroute), so the rows below failed
+# there. The declines are pinned instead, through the convenience wrappers too; is_root runs.
+# CHANGELOG [6.7.12]
+test_group("uname / sysinfo on Windows: the documented declines");
+var _win_skip = "  SKIP (windows): uname / sysinfo values (no uname or sysinfo on Windows)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+assert_eq(sys_uname(&uts), 0 - 38, "sys_uname declines on Windows (-38)");
+assert_eq(sys_sysinfo(&si), 0 - 38, "sys_sysinfo declines on Windows (-38)");
+assert_eq(system_uptime(), 0 - 38, "system_uptime() passes the decline through");
+assert_eq(system_total_memory(), 0 - 38, "system_total_memory() passes the decline through");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+test_group("uname");
 var ur = sys_uname(&uts);
 assert_eq(ur, 0, "sys_uname returns 0");
 var host_ok = (load8(uname_hostname(&uts)) != 0);
@@ -22,7 +37,6 @@ var mach_ok = (load8(uname_machine(&uts)) != 0);
 assert_eq(mach_ok, 1, "machine is a non-empty cstring");
 
 test_group("sysinfo");
-var si[120];
 var sr = sys_sysinfo(&si);
 assert_eq(sr, 0, "sys_sysinfo returns 0");
 var up = sysinfo_uptime(&si);
@@ -42,6 +56,7 @@ assert_eq(su_ok, 1, "system_uptime() > 0");
 var stm = system_total_memory();
 var stm_ok = (stm > 0);
 assert_eq(stm_ok, 1, "system_total_memory() > 0");
+#endif
 
 test_group("is_root");
 var ir = is_root();

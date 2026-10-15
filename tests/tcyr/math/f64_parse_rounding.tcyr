@@ -274,9 +274,22 @@ _fpn("x1", 2, 0);
 
 test_group("f64_parse_n never reads s[n]: each span ends at a PROT_NONE page");
 # A 64 KiB guard (a whole page at 4 / 16 / 64 KiB) after 64 KiB of readable memory.
-var _fpg = cyr_mmap(0, 131072, 3, 34, 0 - 1, 0);
+# 6.7.12: the flags are the named MAP_PRIVATE | MAP_ANONYMOUS. The literal 34 is Linux's value; on
+# Darwin MAP_ANONYMOUS is 0x1000, so 34 asked for a FILE mapping of fd -1 (EBADF) and the rows
+# below wrote through the failed mapping (SIGSEGV on ecb and ach). CHANGELOG [6.7.12]
+var _fpg = cyr_mmap(0, 131072, 3, MAP_PRIVATE | MAP_ANONYMOUS, 0 - 1, 0);
 assert_gt(_fpg, 0, "guard mapping");
+#ifndef CYRIUS_TARGET_WIN
 assert_eq(cyr_mprotect(_fpg + 65536, 65536, 0), 0, "guard page PROT_NONE");
+#endif
+#ifdef CYRIUS_TARGET_WIN
+# No PROT_NONE page on Windows: cyr_mprotect is the documented -38 decline (VirtualProtect has no
+# reroute — lib/mmap.cyr). The rows below still run, against readable memory past each span, so
+# there they check the values, not the bound. CHANGELOG [6.7.12]
+var _fpg_skip = "  SKIP (windows): no PROT_NONE guard page (cyr_mprotect declines): the rows check values only\n";
+sys_write(1, _fpg_skip, strlen(_fpg_skip));
+assert_eq(cyr_mprotect(_fpg + 65536, 65536, 0), 0 - 38, "cyr_mprotect declines on Windows (-38): why there is no guard page");
+#endif
 fn _fpg_row(s, want) {
     var n = strlen(s);
     var p = _fpg + 65536 - n;

@@ -2126,6 +2126,34 @@ fn EGETLASTERR_PE(S): i64 {
     return 0;
 }
 
+# 6.7.12 — syscall(0xF04C, h, flags, 0, lenLo, lenHi, &ov) → kernel32!LockFileEx (argc 7) and
+# syscall(0xF04D, h, 0, lenLo, lenHi, &ov) → kernel32!UnlockFileEx (argc 6); each a BOOL,
+# zero-extended. xflock's Windows arm (lib/io.cyr) — it answered -1 for every lock, so patra's
+# open-time WAL recovery never ran on Windows. CHANGELOG [6.7.12]
+fn ELOCKFILEEX_PE(S): i64 {
+    _pe_ensure_lockfileex(S);
+    _pe_call_6arg_aligned(S, _pe_lockfileex_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn EUNLOCKFILEEX_PE(S): i64 {
+    _pe_ensure_unlockfileex(S);
+    _pe_call_5arg_aligned(S, _pe_unlockfileex_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
+# 6.7.12 — syscall(0xF04E, h, buf, cch, flags) → kernel32!GetFinalPathNameByHandleW (argc 5): the
+# units written (no NUL), the size needed when `cch` is too small, 0 on failure; a DWORD,
+# zero-extended. lib/fs_win.cyr win_handle_under asks where an opened handle really is, so cbt's
+# [embed] / ${file:} open refuses one a junction led outside the project. CHANGELOG [6.7.12]
+fn EGETFINALPATH_PE(S): i64 {
+    _pe_ensure_getfinalpath(S);
+    _pe_call_4arg_aligned(S, _pe_getfinalpath_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
+}
+
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
 # 1/2-arg callers above). Stack on entry (top→bottom): [a3][a2][a1][sc_nr].
 # a1→rcx, a2→rdx, a3→r8 (Win64 integer arg order), then carve the 32 B shadow.
@@ -2506,25 +2534,20 @@ fn EFLUSHFB_PE(S): i64 {
 }
 
 # 6.6.9 — the file-handle reroutes behind POSIX open semantics on PE (lib/syscalls_windows.cyr
-# sys_open / sys_symlink / sys_ftruncate). All three go through the rbx-anchored aligned
-# callers, so they are correct at any expression depth. The raw Win32 result comes back,
-# ZERO-EXTENDED from what the callee defines: a BOOL is a DWORD (`mov eax, eax` drops an
-# undefined upper half so `!= 0` cannot read garbage as TRUE), and CreateSymbolicLinkW
+# sys_open / sys_symlink / sys_ftruncate). All three are correct at any expression depth (the
+# rbx-anchored aligned callers; CreateSymbolicLinkW the probed path frame). The raw Win32 result
+# comes back, ZERO-EXTENDED from what the callee defines: a BOOL is a DWORD (`mov eax, eax` drops
+# an undefined upper half so `!= 0` cannot read garbage as TRUE), and CreateSymbolicLinkW
 # returns a BOOLEAN — ONE byte — so only `al` is defined there. The peer folds each to the
 # POSIX contract. CHANGELOG [6.6.9]
 #   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
-#   syscall(0xF03E, wlink, wtarget, flags) → CreateSymbolicLinkW (argc 4; wide paths)
+#   syscall(0xF03E, link, target, flags) → CreateSymbolicLinkW (argc 4; NARROW UTF-8 paths
+#                                          since 6.7.12 — see ESYMLINKW_PE below the path frame)
 #   syscall(0xF03F, h) → SetEndOfFile (argc 2)
 fn EGETFINFO_PE(S): i64 {
     _pe_ensure_getfinfo(S);
     _pe_call_4arg_aligned(S, _pe_getfinfo_get());
     EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
-    return 0;
-}
-fn ESYMLINKW_PE(S): i64 {
-    _pe_ensure_symlinkw(S);
-    _pe_call_3arg_aligned(S, _pe_symlinkw_get());
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
     return 0;
 }
 fn ESETEOF_PE(S): i64 {
@@ -3299,6 +3322,142 @@ fn EMOVEFILEEX_PE(S): i64 {
     _pe_path_unframe(S);
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
+
+# 6.7.12 — '/' → '\' over the wide string at rdi, in place (rdi kept). An NT reparse target does
+# not read '/' as a separator (the stdlib's `_win_widen_n` made the same swap before 6.7.12).
+fn _pe_wp_slashes(S): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF8);              # mov rax, rdi
+    var top = GCP(S);
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x08);              # top: movzx ecx, word [rax]
+    EB(S, 0x85); EB(S, 0xC9);                           #      test ecx, ecx
+    var done = _pe_j(S, 0x84);                          #      jz done
+    EB(S, 0x83); EB(S, 0xF9); EB(S, 0x2F);              #      cmp ecx, '/'
+    EB(S, 0x75); EB(S, 0x05);                           #      jne +5 (past the store)
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x00); EB(S, 0x5C); EB(S, 0x00); # mov word [rax], '\'
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC0); EB(S, 0x02); #      add rax, 2
+    EB(S, 0xE9); EDISP32(S, top - (GCP(S) + 4));        #      jmp top
+    _pe_j_land(S, done);
+    return 0;
+}
+
+# 6.7.12 — is the wide target at rdi (separators already '\') ABSOLUTE in a way the link stores
+# whole: drive-absolute (`X:\…`) or UNC (`\\server\…`, not a verbatim `\\?\` / `\\.\`)? Falls
+# through when it is; returns the raw jump taken when it is NOT — empty, relative, rooted with no
+# drive (`\foo`), drive-relative (`X:foo`) or already verbatim — which must stay as written.
+fn _pe_wp_isabs(S): i64 {
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x07);              # movzx eax, word [rdi]
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    var n0 = _pe_j(S, 0x84);                            # jz not (empty)
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x47); EB(S, 0x02); # movzx eax, word [rdi+2]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x3A);              # cmp eax, ':'
+    var u1 = _pe_j(S, 0x85);                            # jne unc
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x47); EB(S, 0x04); # movzx eax, word [rdi+4]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x5C);              # cmp eax, '\'
+    var a1 = _pe_j(S, 0x84);                            # je abs (X:\…)
+    var n1 = _pe_j(S, 0);                               # jmp not (X:foo)
+    _pe_j_land(S, u1);
+    EB(S, 0x81); EB(S, 0x3F); EDISP32(S, 0x005C005C);   # unc: cmp dword [rdi], "\\"
+    var n2 = _pe_j(S, 0x85);                            # jne not (relative, or `\foo`)
+    var va = 0;
+    var vb = 0;
+    _pe_wp_verbatim(S, &va, &vb);                       # `\\?\` / `\\.\` -> not
+    var a2 = _pe_j(S, 0);                               # jmp abs (\\server\…)
+    _pe_j_land(S, n0);
+    _pe_j_land(S, n1);
+    _pe_j_land(S, n2);
+    _pe_j_land(S, va);
+    _pe_j_land(S, vb);
+    var nj = _pe_j(S, 0);                               # not: jmp <as written>
+    _pe_j_land(S, a1);
+    _pe_j_land(S, a2);
+    return nj;
+}
+
+# 6.7.12 — the TARGET's widen for CreateSymbolicLinkW. A link stores its target VERBATIM and
+# resolves it later, relative to the link, so a relative (or rooted, or drive-relative) target is
+# decoded only — step 1 of `_pe_widen_path` (MultiByteToWideChar, invalid UTF-8 refused) and
+# '/' → '\' — never made absolute. An ABSOLUTE target (`X:\…`, `\\server\…`) whose full form is
+# 248+ units gets `\\?\` (`\\?\UNC\…`) exactly as `_pe_widen_path` gives a path: without it,
+# CreateSymbolicLinkW refused a 260+-unit absolute target on a Windows without process-wide long
+# paths (cass: -1 for a short link and a long one alike). GetFullPathNameW on an absolute path only
+# normalizes (`.`, `..`, trailing dots), which is what the prefix turns off, so the meaning holds; a
+# shorter one is passed as written. rsi = the UTF-8 target in, W at [rsp+woff], F at [rsp+foff];
+# rdi = the wide target out, or 0 when refused. Clobbers rax, rcx, rdx, r8-r11. CHANGELOG [6.7.12]
+fn _pe_wp_target(S, woff, foff): i64 {
+    _pe_ensure_widen(S);
+    var vc = 0;
+    var vd = 0;
+    var r1 = 0;
+    var r2 = 0;
+    var r0 = _pe_wp_decode(S, woff);                    # rdi = W; jz refused
+    _pe_wp_slashes(S);
+    var nj = _pe_wp_isabs(S);                           # relative / rooted / verbatim -> as written
+    var sj = _pe_wp_full(S, foff, &r1, &r2);            # absolute: under 248 units -> as written
+    _pe_wp_verbatim(S, &vc, &vd);                       # a full path that came back verbatim
+    var ds = _pe_wp_prefix(S);
+    _pe_j_land(S, r0);
+    _pe_j_land(S, r1);
+    _pe_j_land(S, r2);
+    EB(S, 0x31); EB(S, 0xFF);                           # refused: xor edi, edi
+    _pe_j_land(S, nj);
+    _pe_j_land(S, sj);
+    _pe_j_land(S, vc);
+    _pe_j_land(S, vd);
+    _pe_j_land(S, ds >> 32);
+    _pe_j_land(S, ds & 0xFFFFFFFF);
+    return 0;
+}
+
+# syscall(0xF03E, link, target, flags) → kernel32!CreateSymbolicLinkW(wlink, wtarget, flags), the
+# reroute behind sys_symlink. Stack on entry (top→bottom): [flags] [target] [link] [sc_nr].
+# ⛔ 6.7.12 — the reroute took WIDE paths the stdlib had widened itself, at most 519 units and
+# never `\\?\`-prefixed, so on a Windows without process-wide long paths a link path over MAX_PATH
+# (260 units) failed -1 (measured on cass: a 269-unit directory took `open(O_CREAT)` and a short
+# link, and refused the link) while open() of the same path worked. It now takes NARROW UTF-8
+# paths, as every other path reroute does: the LINK goes through `_pe_widen_path` (absolute and
+# `\\?\` at 248+ units), the TARGET through `_pe_wp_target` (stored verbatim, so decoded only —
+# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → FALSE
+# without the call. BOOLEAN (one byte) → movzx. Frame: `_PE_PATH_FRAME2` (the link's W/F pair,
+# then the target's), probed, rbx-anchored. CHANGELOG [6.6.9], [6.7.12]
+fn ESYMLINKW_PE(S): i64 {
+    _pe_ensure_symlinkw(S);
+    var sl_idx = _pe_symlinkw_get();
+    EB(S, 0x58);                                        # pop rax (flags)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax (stash flags)
+    EB(S, 0x58);                                        # pop rax (target ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash target)
+    EB(S, 0x58);                                        # pop rax (link ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash link)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+
+    _pe_path_frame(S, _PE_PATH_FRAME2);
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x50); # mov [rsp+0x50], r8 (flags)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x48); # mov [rsp+0x48], r11 (target; the API calls clobber r8-r11)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10 (link)
+    _pe_widen_path(S, 0x80, 0x10080);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], rdi (link wide, or 0)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, 0x48); # mov rsi, [rsp+0x48] (target)
+    _pe_wp_target(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
+
+    # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> FALSE without the call.
+    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
+    var o1 = _pe_j(S, 0x84);                            # jz out
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var o2 = _pe_j(S, 0x84);                            # jz out
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xFA);              # mov rdx, rdi
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x50); # mov r8, [rsp+0x50] (flags)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateSymbolicLinkW]
+    _pe_iat_fixup_add(S, GCP(S), sl_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_j_land(S, o1);
+    _pe_j_land(S, o2);
+
+    _pe_path_unframe(S);
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
     return 0;
 }
 

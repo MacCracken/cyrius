@@ -917,6 +917,7 @@ fs::path_dirname/1
 fs::path_has_ext/2
 fs::path_join/2
 fs_win::is_dir/1
+fs_win::win_handle_under/2
 ganita::binomial/2
 ganita::f64_acos/1
 ganita::f64_acosh/1

@@ -219,7 +219,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. Windows routes to `RemoveDirectoryW` (v6.6.6; **-1 before that**) |
 | `xmkdir` | `xmkdir(path, mode) → 0/-errno` | v6.5.7 — create a directory. Windows **does** route here |
 | `xmkdir_p` | `xmkdir_p(path, mode) → 0/-1` | v6.5.7 — `mkdir -p`. Existing directory is success; tries the full path first, walks parents only on failure; paths >1023 bytes return -1 rather than truncating |
-| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. Windows routes to `CreateSymbolicLinkW` since v6.6.9 (a directory target gets a directory link); it needs Developer Mode or an elevated process, else -1 (**-1 always before 6.6.9**) |
+| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. Windows routes to `CreateSymbolicLinkW` since v6.6.9 (a directory target gets a directory link); it needs Developer Mode or an elevated process, else -1 (**-1 always before 6.6.9**). Since 6.7.12 a link path of any length (`\\?\` at 248+ units; it failed -1 past 260 units), and the target stored as written |
 | `xreadlink` | `xreadlink(path, buf, bufsize) → n/-errno` | v6.5.7 — read a symlink target. **NOT NUL-terminated** (readlink(2)'s contract). **-1 on Windows** |
 | `xlink` | `xlink(oldpath, newpath) → 0/-errno` | v6.5.7 — hard link. **-1 on Windows** |
 | `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING\|WRITE_THROUGH)` — the rename is on disk when it returns (write-through since v6.6.7; before that the Windows rename was atomic but not durable) |
@@ -227,7 +227,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xstat` | `xstat(path, buf) → 0/-errno` | stat into `buf`. **-1 on Windows.** Read fields via `STAT_MODE` etc. — the offsets differ per arch (st_mode @24 x86-Linux, @16 aarch64, @4 macOS-arm64) |
 | `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record). **-1 on Windows** — use `dir_list` |
 | `xlseek` | `xlseek(fd, off, whence) → off/-errno` | Reposition (whence 0=SET / 1=CUR / 2=END) |
-| `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). **-1 on Windows** |
+| `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). Windows (6.7.12): `LockFileEx` on one sentinel byte at 2^63 − 1 (Windows locks are mandatory; the data bytes stay readable and writable through other handles), a held `LOCK_NB` is -11; it was -1 for every lock |
 
 **Crash-safe write + locking helpers (v6.4.57–.58):**
 
@@ -644,6 +644,7 @@ Filesystem: paths, directories, tree walking.
 | `find_files` | `find_files(path, ext) → vec` | Find by extension |
 | `is_dir` | `is_dir(path) → 0/1` | Check if directory |
 | `is_symlink` | `is_symlink(path) → 0/1` | Is `path` itself a symlink (not followed; a dangling link is 1)? `dir_walk` lists a linked directory but never descends it. On Windows (v6.6.9; **0 for everything before**) a symlink or junction is 1 — a name-surrogate reparse point — and a cloud placeholder or dedup file is 0 |
+| `win_handle_under` | `win_handle_under(h, root_h) → 1/0/-1` | **Windows only** (6.7.12, `fs_win`): is the object behind open handle `h` strictly inside the directory behind open handle `root_h`? Both handles' final paths (`GetFinalPathNameByHandleW`) compared without ASCII case, the root's a prefix that ends at a separator; -1 when a final path cannot be had (never 1). What a name check cannot see: a directory swapped for a junction after the name was checked. cbt's `[embed]` / `${file:}` open refuses a file that is not under the project root |
 
 ### net.cyr
 
@@ -2041,7 +2042,7 @@ documented separately** — their public surface is the parent module's (above):
 
 - `args.cyr` → `args_win` / `args_macos` / `args_agnos`
 - `process.cyr` → `process_win` / `process_agnos`
-- `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18)
+- `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18; `win_handle_under`, 6.7.12 — the one Windows-only name, in the fs.cyr table)
 - `sync.cyr` → `sync_windows` / `sync_macos`
 - `thread.cyr` → `thread_win` / `thread_macos` / `thread_agnos`
 - `async.cyr` → `async_win` / `async_macos` / `async_agnos`

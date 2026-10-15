@@ -136,13 +136,14 @@ BR_END=$(awk -v s="$BR_START" -v e="$FN_END" 'NR>s&&NR<=e&&/^        return 0;/{
 # computed emitter, `_esx_arm(S, src, dst)`, so the numbers are now legible directly and the
 # decoder is gone. Strictly less to get wrong on both sides.
 sed -n "${BR_START},${BR_END}p" "$ARM" \
-  | grep -oE '_esx_arm(_shift)?\(S, *[0-9]+, *[0-9]+' \
-  | sed -E 's/_esx_arm(_shift)?\(S, *([0-9]+), *([0-9]+)/\2 \3/' \
+  | grep -oE '_esx_arm(_shift|_atfd)?\(S, *[0-9]+, *[0-9]+' \
+  | sed -E 's/_esx_arm(_shift|_atfd)?\(S, *([0-9]+), *([0-9]+)/\2 \3/' \
   | sort -n -u > "$TMP/arm_routes"
-# ⚠ BOTH FORMS. `_esx_arm_shift` is the at-family rows that renumber AND drop an argument
-# (openat 56 -> open 5, mkdirat 34 -> mkdir 136, fchmodat 53 -> chmod 15). Reading only the
-# plain form loses exactly those three and reports them as unrouted DRIFT — measured on this
-# gate's first run after the v6.5.48 consolidation.
+# ⚠ EVERY FORM. `_esx_arm_shift` is the at-family rows that renumber AND drop an argument
+# (mkdirat 34 -> mkdir 136, fchmodat 53 -> chmod 15). Reading only the plain form lost exactly
+# those and reported them as unrouted DRIFT — measured on this gate's first run after the v6.5.48
+# consolidation. `_esx_arm_atfd` (6.7.12) renumbers and KEEPS the dirfd, translating Linux's
+# AT_FDCWD: openat 56 -> Darwin openat 463 (it was open 5 with the dirfd shifted out).
 
 # ---------------------------------------------------------------- parse: x86 routes
 awk '/^fn EMACHO_SYSXLAT\(S\): i64 \{/{s=1} s&&/^\}/{exit} s' "$X86" \

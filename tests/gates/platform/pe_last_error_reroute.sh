@@ -15,7 +15,8 @@
 #           unrouted; with one argument it IS reported — the route is literal-and-arity.
 #   axis 2  the routed-number note names `0xF04B (kernel32: GetLastError)` and is printed WHOLE:
 #           the note is one literal written with a hand-counted byte length, and a length left at
-#           its old value silently cuts the newest entries off the end.
+#           its old value silently cuts the newest entries off the end. (6.7.12: the end itself is
+#           now pinned by the newest reroute's gate, pe_lockfileex_reroute.sh.)
 #   axis 3  the axis-1 build IMPORTS GetLastError (objdump -p; that axis alone is skipped
 #           without an objdump that reads PE).
 #   axis 4  STATIC, lib/fs_win.cyr: every FindNextFileW loop (`syscall(61463, ...)`) ends in
@@ -83,9 +84,13 @@ else bad "axis 1: syscall(0xF04B, 0) (one argument too many) was not reported"; 
 # axis 2: the note names 0xF04B and reaches its own end.
 if grep -q '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/s.err"; then
     note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/s.err" || true)
+    # 6.7.12: 0xF04B is no longer the newest entry (0xF04C-0xF04D follow it), so the END of the
+    # note — its byte count — is pinned by the newest reroute's gate (pe_lockfileex_reroute.sh
+    # axis 2); here the entry must be present and followed by the next one. CHANGELOG [6.7.12]
     case "$note" in
+        *'+ 0xF04B (kernel32: GetLastError) + '*) ok ;;
         *'+ 0xF04B (kernel32: GetLastError).') ok ;;
-        *'0xF04B (kernel32: GetLastError)'*) bad "axis 2: the note names 0xF04B but does not END with it — its byte count is wrong" ;;
+        *'0xF04B (kernel32: GetLastError)'*) bad "axis 2: the note names 0xF04B but is cut short after it — its byte count is wrong" ;;
         *) bad "axis 2: the routed-number note does not name 0xF04B (kernel32: GetLastError) — or it is cut short: ...$(printf '%s' "$note" | tail -c 60)" ;;
     esac
 else

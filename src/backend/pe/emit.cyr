@@ -586,7 +586,9 @@ fn _pe_flushfb_get(): i64 { return _pe_flushfb_idx; }
 #   0xF03D GetFileInformationByHandleEx(h, class, buf, size) — the FileAttributeTagInfo
 #          query that tells a name-surrogate reparse point (symlink, junction) from a file,
 #          and a directory from a file, ON THE OPENED HANDLE (no check-then-open race);
-#   0xF03E CreateSymbolicLinkW(wlink, wtarget, flags) — BOOLEAN (a byte) return;
+#   0xF03E CreateSymbolicLinkW(link, target, flags) — BOOLEAN (a byte) return; the reroute takes
+#          NARROW paths since 6.7.12 and widens them in the emitter (ESYMLINKW_PE: the link and an
+#          absolute target get `\\?\` at 248+ units, a relative target is decoded only);
 #   0xF03F SetEndOfFile(h) — truncation of an ALREADY-VERIFIED handle, and sys_ftruncate.
 # CHANGELOG [6.6.9]
 var _pe_getfinfo_ready    = 0;
@@ -805,6 +807,44 @@ fn _pe_ensure_getlasterr(S): i64 {
     return 0;
 }
 fn _pe_getlasterr_get(): i64 { return _pe_getlasterr_idx; }
+
+# 6.7.12 — kernel32!LockFileEx / UnlockFileEx → BOOL, for `syscall(0xF04C)` / `syscall(0xF04D)`
+# (ELOCKFILEEX_PE / EUNLOCKFILEEX_PE): xflock's Windows arm (lib/io.cyr) — it answered -1 for
+# every lock, so patra's open-time WAL recovery never ran on Windows. CHANGELOG [6.7.12]
+var _pe_lockfileex_ready = 0;
+var _pe_lockfileex_idx   = 0;
+fn _pe_ensure_lockfileex(S): i64 {
+    if (_pe_lockfileex_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_lockfileex_idx, "LockFileEx");
+    _pe_lockfileex_ready = 1;
+    return 0;
+}
+fn _pe_lockfileex_get(): i64 { return _pe_lockfileex_idx; }
+
+var _pe_unlockfileex_ready = 0;
+var _pe_unlockfileex_idx   = 0;
+fn _pe_ensure_unlockfileex(S): i64 {
+    if (_pe_unlockfileex_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_unlockfileex_idx, "UnlockFileEx");
+    _pe_unlockfileex_ready = 1;
+    return 0;
+}
+fn _pe_unlockfileex_get(): i64 { return _pe_unlockfileex_idx; }
+
+# 6.7.12 — kernel32!GetFinalPathNameByHandleW → DWORD, for `syscall(0xF04E)`
+# (EGETFINALPATH_PE): where an OPENED handle really is. `[embed]` / `${file:}` on Windows open the
+# whole path (no dirfd openat), so a directory swapped for a junction after the per-prefix link
+# check was followed; cbt now refuses a handle whose final path is not inside the project root's
+# (lib/fs_win.cyr win_handle_under). CHANGELOG [6.7.12]
+var _pe_getfinalpath_ready = 0;
+var _pe_getfinalpath_idx   = 0;
+fn _pe_ensure_getfinalpath(S): i64 {
+    if (_pe_getfinalpath_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getfinalpath_idx, "GetFinalPathNameByHandleW");
+    _pe_getfinalpath_ready = 1;
+    return 0;
+}
+fn _pe_getfinalpath_get(): i64 { return _pe_getfinalpath_idx; }
 
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--syntax-only on Windows.

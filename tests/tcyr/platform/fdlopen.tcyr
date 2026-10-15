@@ -35,6 +35,16 @@ while (zero_i < 128) { store8(buf + zero_i, 0); zero_i = zero_i + 1; }
 var r = dl_setjmp(buf);
 assert_eq(r, 0, "dl_setjmp direct call returns 0");
 
+#ifdef CYRIUS_TARGET_WIN
+# 6.7.12: dl_setjmp / dl_longjmp are stubs on Win64 BY DESIGN (lib/fdlopen.cyr: Win64 is the one
+# different ABI — arg1 in rcx, rdi/rsi/xmm6-15 callee-saved, the shadow space): setjmp saves
+# nothing and longjmp returns. The round-trip is skipped by name; the stub contract itself is
+# tests/tcyr/crossos/setjmp_naked.tcyr's, run on cass. CHANGELOG [6.7.12]
+var _win_skip = "  SKIP (windows): the setjmp/longjmp round-trip (Win64 keeps the documented stub)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+assert_eq(load64(buf + 56), 0, "the Win64 stub saves nothing (no return rip in the buffer)");
+#endif
+#ifndef CYRIUS_TARGET_WIN
 # Saved RIP should be a non-zero address (somewhere in .text)
 var saved_rip = load64(buf + 56);
 assert(saved_rip != 0, "dl_setjmp saved non-zero return rip");
@@ -66,6 +76,7 @@ if (z_count == 1) {
     assert(0, "unreachable: dl_longjmp(0) returned");
 }
 assert_eq(z_val, 1, "dl_longjmp(buf, 0) -> setjmp returns 1 (POSIX)");
+#endif
 
 test_group("state buffer shape");
 

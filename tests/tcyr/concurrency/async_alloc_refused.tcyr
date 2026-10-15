@@ -15,8 +15,8 @@
 # the alloc census matched only the `alloc(` spelling, so it never saw `alloc_via(`. The Windows
 # group below runs the same rows on PE (wine locally; check.sh compiles it for PE). CHANGELOG [6.6.20]
 #
-# Linux x86_64 + aarch64 (the epoll reactor in lib/async.cyr) and Windows (the IOCP peer); other
-# targets print a named SKIP.
+# Linux x86_64 + aarch64 (the epoll reactor in lib/async.cyr), Windows (the IOCP peer) and macOS
+# (the kqueue reactor, 6.7.12); other targets print a named SKIP.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -120,6 +120,34 @@ fn _aar_rows_win(): i64 {
 }
 #endif
 
+#ifdef CYRIUS_TARGET_MACOS
+# 6.7.12: the macOS kqueue reactor (lib/async_macos.cyr) checks the same contexts (6.6.10), but
+# this file printed a SKIP there and counted nothing — which the cross-OS full-corpus leg grades
+# as a failure ("it ran nothing"). The same rows as the Windows group; async_connect, _accept and
+# _resolve are not provided on macOS and answer 0 regardless. async_spawn_process is left out: on
+# macOS it forks before it allocates. CHANGELOG [6.7.12]
+fn _aar_rows_macos(): i64 {
+    test_group("macOS kqueue verbs under a refusing allocator");
+    var al = allocator_new(&_aar_alloc, &_aar_realloc, &_aar_free, &_aar_reset, 0);
+    var rt = async_new_in(al);
+    _aar_rt = rt;
+    assert_eq(rt != 0, 1, "runtime built while the allocator still serves");
+    var h = async_spawn(rt, &_aar_task, 0);
+    assert_eq(h != 0, 1, "a task spawned while the allocator still serves");
+    var buf = alloc(64);
+    _aar_refuse = 1;
+    assert_eq(async_recv(rt, 0, buf, 64), 0, "async_recv: 0, no store through null");
+    assert_eq(async_send(rt, 1, buf, 1), 0, "async_send: 0");
+    assert_eq(async_interval(rt, &_aar_tick, 0, 50, 0), 0, "async_interval: 0");
+    assert_eq(async_with_timeout(rt, h, 50), 0 - 1, "async_with_timeout: -1 (no sentinel, no deadline)");
+    _aar_refuse = 2;
+    assert_eq(async_interval(rt, &_aar_tick, 0, 50, 0), 0, "async_interval: 0 when its task cannot be spawned");
+    assert_eq(async_with_timeout(rt, h, 50), 0 - 1, "async_with_timeout: -1 when its sentinel cannot be spawned");
+    _aar_refuse = 0;
+    return 0;
+}
+#endif
+
 fn main(): i64 {
     alloc_init();
     #ifdef CYRIUS_TARGET_LINUX
@@ -128,9 +156,14 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     _aar_rows_win();
     #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    _aar_rows_macos();
+    #endif
     #ifndef CYRIUS_TARGET_LINUX
     #ifndef CYRIUS_TARGET_WIN
-    println("    SKIP: these rows cover the Linux reactor and the Windows IOCP peer; this target has its own");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: these rows cover the Linux reactor, the Windows IOCP peer and the macOS kqueue reactor; this target has its own");
+    #endif
     #endif
     #endif
     return assert_summary();

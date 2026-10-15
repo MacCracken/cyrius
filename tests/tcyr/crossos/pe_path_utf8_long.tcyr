@@ -144,15 +144,15 @@ fn main(): i64 {
     assert_eq(sys_access(lf, 0), 0, "access() of the long file is 0");
     assert_lt(sys_access(_cat(d3, "/missing.txt"), 0), 0, "access() of a missing long path is -1");
     #endif
-    #ifndef CYRIUS_TARGET_WIN
+    # A link CREATED at the long path — on Windows too since 6.7.12, when CreateSymbolicLinkW's link
+    # path got the `\\?\` rule (it failed -1 there: symlink_long_path.tcyr has the full set).
     var lnk = _cat(d3, "/link_to_target");
     assert_eq(xsymlink("target_file.txt", lnk), 0, "a symlink at the long path");
     assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink of it is 1");
     assert_eq(is_symlink(str_from(lf)), 0, "is_symlink of the long regular file is 0");
     assert_eq(xunlink(lnk), 0, "the symlink is removed");
-    #endif
-    # Every target, Windows included: a link that ENDS UP on a long path. sys_symlink cannot create
-    # one there on Windows, so it is made short and MOVED in (MoveFileExW moves the link itself).
+    # Every target, Windows included: a link that ENDS UP on a long path, made short and MOVED in
+    # (MoveFileExW moves the link itself) — until 6.7.12 the only way to put one there on Windows.
     # On cass at 6.6.11 is_symlink of it was 0 — GetFileAttributesW/FindFirstFileW hit MAX_PATH.
     var sl = _cat(root, "/short_link");
     assert_eq(xsymlink("target_file.txt", sl), 0, "a short symlink to be moved onto the long path");
