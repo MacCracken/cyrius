@@ -25,6 +25,14 @@
 # and AGNOS_SOCK_TAG + 8 never reach #111: 2 FAIL in this axis); axis 12 sock_send_dl#109's raw
 # wrapper (its a4 dropped -> both ceilings read 0, the zero a short call's r10 gets — i.e. "no
 # ceiling": 2 FAIL).
+# 6.7.12: axis 13 lib/net.cyr's agnos arms and the adapter's slot helpers refuse an fd that is not
+# a tagged socket fd before any table write or kernel call
+# (issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md). Mutants measured: on the
+# 6.7.11 lib/ -> 8 FAIL (every arm Ok but sock_accept's Err(1) after its #57s; six #56, three #57,
+# six #47; slots 7 and 1 re-stashed to ports 9000 / 9002); _agnos_listen_start's guard alone
+# removed -> 2 FAIL (the direct calls issue three #56 and answer 0); net_connect_nb's guard alone
+# removed -> 2 FAIL (three #47, the answer 0). The host-observable guards are agnos_negative_fd_not_socket.sh's
+# built-in M4-M10.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -614,6 +622,68 @@ check "  and returns the kernel's answer (here -1: the plain fake has no #109)" 
 check "a negative ceiling (no wait) reaches a4 as -1, after a 7-arg call left r10 = 5" "3 16 -1" \
     "$(after 182 109 | awk '{ print $1, $3, $4 }')"
 check "the probe shape (conn, buf, 0, 0) reaches the kernel as 0 / 0" "3 0 0" "$(after 183 109 | awk '{ print $1, $3, $4 }')"
+
+# ── axis 13 — the agnos net arms take only a tagged socket fd (6.7.12) ─────────────────────────
+# sock_bind / sock_listen / sock_accept / sock_connect / net_connect_nb on -1 (slot 7 by `fd & 7`),
+# on fd 1 and on AGNOS_SOCK_TAG + 9 (both slot 1). Slots 1 and 7 are LIVE LISTENERS here (bound,
+# #56 issued), so an arm that indexed by `fd & 7` would re-issue #56 on their stash, #57 on their
+# listen id, or #47 and plant the conn in their slot. Each arm answers Err(9) (EBADF) for -1 and
+# Err(88) (ENOTSOCK) for the other two — net_connect_nb _NET_CONN_NB_ERR (-1) — with no #56 / #57
+# / #47 at all; the helpers called directly (_agnos_listen_start, the one no arm reaches past its
+# own guard) answer -1, and slots 1 and 7 keep their ports and listen ids.
+echo "axis 13 — the agnos net arms refuse a non-socket fd before any table or kernel access (6.7.12):"
+cat > "$T/a13.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+var s0_t, s0 = tcp_socket();
+var s1_t, s1 = tcp_socket();
+var s2_t, s2 = tcp_socket();
+var s3_t, s3 = tcp_socket();
+var s4_t, s4 = tcp_socket();
+var s5_t, s5 = tcp_socket();
+var s6_t, s6 = tcp_socket();
+var s7_t, s7 = tcp_socket();
+sock_bind(s1, INADDR_LOOPBACK(), 8081);
+sock_listen(s1, 4);
+sock_bind(s7, INADDR_LOOPBACK(), 8087);
+sock_listen(s7, 4);
+var TG9 = AGNOS_SOCK_TAG + 9;
+syscall(999, 190, (s1 - AGNOS_SOCK_TAG) * 10 + (s7 - AGNOS_SOCK_TAG));
+var b1_t, b1 = sock_bind(0 - 1, INADDR_ANY(), 9000);
+var b2_t, b2 = sock_bind(1, INADDR_ANY(), 9001);
+var b3_t, b3 = sock_bind(TG9, INADDR_ANY(), 9002);
+syscall(999, 191, err_code_of(b1_t, b1) * 10000 + err_code_of(b2_t, b2) * 100 + err_code_of(b3_t, b3));
+var l1_t, l1 = sock_listen(0 - 1, 4);
+var l2_t, l2 = sock_listen(1, 4);
+var l3_t, l3 = sock_listen(TG9, 4);
+syscall(999, 192, err_code_of(l1_t, l1) * 10000 + err_code_of(l2_t, l2) * 100 + err_code_of(l3_t, l3));
+var a1_t, a1 = sock_accept(0 - 1);
+var a2_t, a2 = sock_accept(1);
+var a3_t, a3 = sock_accept(TG9);
+syscall(999, 193, err_code_of(a1_t, a1) * 10000 + err_code_of(a2_t, a2) * 100 + err_code_of(a3_t, a3));
+var c1_t, c1 = sock_connect(0 - 1, INADDR_LOOPBACK(), 8080);
+var c2_t, c2 = sock_connect(1, INADDR_LOOPBACK(), 8080);
+var c3_t, c3 = sock_connect(TG9, INADDR_LOOPBACK(), 8080);
+syscall(999, 194, err_code_of(c1_t, c1) * 10000 + err_code_of(c2_t, c2) * 100 + err_code_of(c3_t, c3));
+syscall(999, 195, net_connect_nb(0 - 1, INADDR_LOOPBACK(), 8080, 100) * 100 + net_connect_nb(1, INADDR_LOOPBACK(), 8080, 100) * 10 + net_connect_nb(TG9, INADDR_LOOPBACK(), 8080, 100));
+syscall(999, 196, _agnos_listen_start(0 - 1) * 100 + _agnos_listen_start(1) * 10 + _agnos_listen_start(TG9));
+syscall(999, 197, load64(&_agnos_listen_port + 7 * 8) * 100000 + load64(&_agnos_listen_port + 8));
+syscall(999, 198, load64(&_agnos_listen_tbl + 7 * 8) * 10 + load64(&_agnos_listen_tbl + 8));
+syscall(999, 199, 0);
+sys_exit(0);
+EOF
+run "$T/a13.cyr" plain
+check "the probe's listeners are slots 1 and 7" "17" "$(mark 190)"
+check "sock_bind(-1 / 1 / AGNOS_SOCK_TAG + 9) is Err(9) / Err(88) / Err(88)" "98888" "$(mark 191)"
+check "sock_listen(-1 / 1 / +9) is Err(9) / Err(88) / Err(88)" "98888" "$(mark 192)"
+check "sock_accept(-1 / 1 / +9) is Err(9) / Err(88) / Err(88)" "98888" "$(mark 193)"
+check "sock_connect(-1 / 1 / +9) is Err(9) / Err(88) / Err(88)" "98888" "$(mark 194)"
+check "net_connect_nb(-1 / 1 / +9) is _NET_CONN_NB_ERR each (-1 -1 -1 -> -111)" "-111" "$(mark 195)"
+check "_agnos_listen_start(-1 / 1 / +9) is -1 each" "-111" "$(mark 196)"
+check "  and none of them issued a sock_listen#56, sock_accept#57 or sock_connect#47" "0 0 0" \
+    "$(awk '$1 == "sc" && $2 == 999 && $3 == 190 { on = 1; next } $1 == "sc" && $2 == 999 && $3 == 199 { exit } on && $1 == "sc" && $2 == 56 { a++ } on && $1 == "sc" && $2 == 57 { b++ } on && $1 == "sc" && $2 == 47 { c++ } END { print a + 0, b + 0, c + 0 }' "$T/run.log")"
+check "slots 7 and 1 keep their ports (8087, 8081) and listen ids (id 0, stored +1)" "808708081 11" "$(mark 197) $(mark 198)"
 
 echo ""
 if [ "$fails" = "0" ]; then

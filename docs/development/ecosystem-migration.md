@@ -48,6 +48,14 @@ does or builds; never a per-repo worklist.*
   as a tie, "more than one stdlib leaf could own it (ws, ws_server)") — yantra's distlib converges again, its bundle
   byte-identical.
 
+**agnos: the net arms take only a tagged socket fd**
+- On agnos, `sock_bind` / `sock_listen` / `sock_accept` / `sock_connect` on an fd that is not one `tcp_socket()`
+  handed out (a failed open's `-1`, a file or stdio fd, `AGNOS_SOCK_TAG + 8` and up) now return `Err(9)` (EBADF) for a
+  negative fd and `Err(88)` (ENOTSOCK) for any other, and `net_connect_nb` returns `_NET_CONN_NB_ERR` — with no
+  table write and no kernel call. They used to act on socket slot `fd & 7` (a `-1` bound, listened, accepted and
+  connected on slot 7) and could answer `Ok`. Linux already answered these errnos; a program that passed only
+  sockets sees no change.
+
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).
