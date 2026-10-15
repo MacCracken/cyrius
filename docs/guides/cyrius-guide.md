@@ -4510,6 +4510,26 @@ mutated file silently and `deps --verify` then passed on it. A lock written befo
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
+**A pin bump in a project that vendors the whole snapshot (6.7.12).** The lock records ONE pin
+for every row, so a resolve at a moved `[package].cyrius` does **not** re-lock while `lib/` holds
+stdlib files it did not vendor (outside the declared closure — a `cyrius lib sync --full` project's)
+that the new pin's snapshot ships with other bytes: re-locking stamped the new pin over the old
+pin's rows, `deps --verify` and `--locked` agreed, and the next `lib sync --full` refused as if the
+snapshot had moved under an unchanged pin. `cyrius deps` — and `cyrius build`, every resolving
+verb — exits 1 naming each file, leaves `cyrius.lock` unchanged, and gives the two ways on:
+
+```
+error: cyrius.lock not re-locked: [package].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file this resolve did not vendor that the 6.6.7 snapshot ships with other bytes:
+  lib/chrono.cyr
+  cyrius.lock records ONE pin for every row; re-locking would stamp 6.6.7 over these rows. Either:
+    cyrius lib sync --full     moves them to 6.6.7 and re-locks (a project that vendors the whole snapshot)
+    rm <file> && cyrius deps   drops them from lib/ and the lock
+```
+
+So after a pin bump a full-vendored project runs `cyrius lib sync --full` first. A file the new
+snapshot does not ship, or ships with the same bytes, does not depend on the pin and is re-locked
+as before; a project whose `lib/` is only its closure re-locks silently, as it always did.
+
 A resolve never deletes a file, so since 6.7.12 it **names** each `lib/` file it did not vendor —
 a leaf dropped from `[deps] stdlib`, the module of a dep dropped from the manifest — which `lib/`
 and the lock still hold (`note: 1 file in lib/ is outside the declared footprint …`, the file,

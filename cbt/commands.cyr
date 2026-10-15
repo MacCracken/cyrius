@@ -1875,10 +1875,12 @@ fn _libsync_guard(ps, pd): i64 {
     _ew("error: lib sync: ");
     fmt_int_fd(STDERR_FD, _dep_lock_refused);
     _ew(" file(s) refused above — NOTHING was written and cyrius.lock is unchanged.\n");
-    _ew("  If you just moved [package].cyrius and ran `deps`/`build` first, these rows are the\n");
-    _ew("  previous pin's: `cyrius lib sync --relock` (with --full for the whole snapshot).\n");
-    _ew("  If the pin did NOT move, the installed snapshot changed under it — reinstall that\n");
-    _ew("  version; do not `--relock`.\n");
+    # 6.7.12 (D19): `deps` / `build` no longer re-stamp a moved pin over rows they did not write,
+    # so the old first branch ("you ran deps/build first") is no longer this release's doing.
+    _ew("  The installed snapshot of the pin cyrius.lock records changed under it — reinstall that\n");
+    _ew("  version; do not `--relock`. Only a lock re-stamped at a pin move without these files\n");
+    _ew("  re-vendored (by `deps`/`build` before 6.7.12, `deps --lock`, or a scoped `lib sync`)\n");
+    _ew("  holds the previous pin's rows: `cyrius lib sync --full --relock` then.\n");
     return 1;
 }
 

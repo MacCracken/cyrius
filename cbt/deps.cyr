@@ -6098,6 +6098,7 @@ fn _dep_lock_load(): i64 {
     _dep_lock_pin_same = 0;
     _dep_lock_refused = 0;
     _dep_lock_has_trailer = 0;
+    _dep_lock_pin_rec = 0;
     _dep_lock_new_leaf = 0;
     _dep_lock_active = 0;
     if (_dep_is_cyrius_source_repo() == 1) { return 0; }
@@ -6122,6 +6123,7 @@ fn _dep_lock_load(): i64 {
             var vs = pos + 7;
             if (lw - vs == strlen(want) && memeq(lbuf + vs, want, lw - vs) == 1) { _dep_lock_pin_same = 1; }
             _dep_lock_has_trailer = 1;
+            _dep_lock_pin_rec = _git_cstr_copy(lbuf + vs, lw - vs);
             return 0;
         }
         pos = le + 1;
@@ -6203,7 +6205,8 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
     # same shape appears when the LOCK moved (`cyrius update` + `--lock`) and the snapshot
     # did not; the `source:` line lets the reader tell which side moved
     var m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under an unchanged pin ";
-    # 6.6.17: `lib sync` cannot tell an unchanged pin from one `deps` just re-stamped; its own
+    # 6.6.17: `lib sync` cannot tell an unchanged pin from one a verb re-stamped without
+    # re-vendoring this file (6.7.12: no longer `deps` / `build` — _dep_pin_move_refused); its own
     # summary (_libsync_guard) says which advice fits which case.
     if (streq(_dep_lock_guard_verb, "deps") == 0) { m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under the pin the lock records, "; }
     sys_write(STDERR_FD, m1, strlen(m1));
@@ -6526,6 +6529,68 @@ fn _lock_commit_line_cmp(a, b): i64 {
     return _lock_cstr_cmp(a, b);
 }
 
+# ⛔ 6.7.12 (D19, the user, 2026-10-15) — A RESOLVE DOES NOT RE-LOCK AT A PIN MOVE WHILE lib/ HOLDS
+# SNAPSHOT FILES IT DID NOT RE-VENDOR. The lock has ONE pin (the trailer, 6.6.4) and this writer
+# re-hashes all of lib/, so `deps` / `build` after `[package].cyrius` moved stamped the new pin over
+# the OLD pin's rows of every file outside the declared closure (a `lib sync --full` project's):
+# `--verify` and `--locked` agreed with that lock, and the next `lib sync --full` refused as if the
+# snapshot had moved under an unchanged pin. Now, when the inherited trailer names another pin, each
+# lib/ file outside this resolve's closure (`_dep_out_of_closure`) that the new pin's snapshot ships
+# with OTHER bytes is named and the lock is not opened: rc 1, cyrius.lock byte-unchanged, two
+# remedies (`lib sync --full` moves them, deleting them drops them). The lock never states a pin its
+# rows do not have, and its format does not change. A file the snapshot does not ship, or ships
+# with the same bytes, is pin-independent and re-locked as before. Only after a resolve
+# (`_dep_closure`): `lib sync` re-locks what it wrote, the bare `--lock` resolved nothing.
+# CHANGELOG [6.7.12]
+fn _dep_pin_move_refused(): i64 {
+    if (_dep_closure == 0 || _dep_lock_only != 0) { return 0; }
+    if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
+    var snap = _dep_snapshot_dir();
+    if (snap == 0) { return 0; }
+    var off = _dep_out_of_closure();
+    var stale = vec_new();
+    var i = 0;
+    while (i < vec_len(off)) {
+        var f = vec_get(off, i);
+        i = i + 1;
+        var sf = _cat2(snap, f + 3);              # lib/<rel> -> <snapshot>/<rel>
+        if (file_exists(sf) == 0) { continue; }
+        if (_files_identical(sf, f) == 1) { continue; }
+        vec_push(stale, f);
+    }
+    var k = vec_len(stale);
+    if (k == 0) { return 0; }
+    var pin = _dep_lock_pin_value();
+    _ew("error: cyrius.lock not re-locked: [package].cyrius moved from ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(" to ");
+    _ew_shown(pin);
+    _ew(", and lib/ holds ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" file"); } else { _ew(" files"); }
+    _ew(" this resolve did not vendor that the ");
+    _ew_shown(pin);
+    _ew(" snapshot ships with other bytes:\n");
+    i = 0;
+    while (i < k) {
+        _ew("  ");
+        _ew_shown(vec_get(stale, i));
+        _ew("\n");
+        i = i + 1;
+    }
+    _ew("  cyrius.lock records ONE pin for every row; re-locking would stamp ");
+    _ew_shown(pin);
+    _ew(" over these rows. Either:\n");
+    _ew("    cyrius lib sync --full     moves them to ");
+    _ew_shown(pin);
+    _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    _ew("    rm <file> && cyrius deps   drops them from lib/ and the lock\n");
+    _ew("  cyrius.lock is unchanged (it records ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(").\n");
+    return 1;
+}
+
 fn cmd_deps_lock(): i64 {
     # v6.0.2: cyrius's own repo authors its lib/ — skip (self-referential
     # + would churn the tracked cyrius.lock on every check.sh). See
@@ -6537,6 +6602,7 @@ fn cmd_deps_lock(): i64 {
     # v6.6.4: read the inherited lock BEFORE the lock is rewritten below — the bare `--lock` verb has no
     # resolve behind it and needs the old lock's `commit\t` pins (carried forward below).
     if (_dep_lock_buf == 0) { _dep_lock_load(); }
+    if (_dep_pin_move_refused() != 0) { return 1; }   # 6.7.12 (D19): before the lock is opened
     # Generate cyrius.lock by hashing every resolved .cyr under lib/
     # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
     # Crash-safe: the lock is built in a sibling temp and renamed over cyrius.lock only once
