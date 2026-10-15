@@ -1486,6 +1486,10 @@ Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y
 `u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
 (`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
 keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
+The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
+2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
+result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
+field). A callee held in a variable is unknown: its result stays a word.
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
@@ -1594,6 +1598,13 @@ type or a call declared to return it .. - got `callptr``): a callee held in a va
 call), a method call, `*p`. Through a fn pointer held in a variable, give the target an
 out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
 7);` — which carries every lane on every target.
+
+A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
+7);`, an untyped `var x = callptr(&mkv, ..)`, an argument to an untyped parameter, a method call
+`s.mv(..)`, an operator fn declared to return a vector, at top level too — runs, and its vector is
+discarded, on every target (6.7.12). ⚠ Through 6.7.11 on Windows such a call passed no hidden
+result pointer, so the callee wrote the vector through its first argument: a page fault, or
+`s.mv(..)` overwriting `s`.
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
@@ -1708,9 +1719,10 @@ inside a fn was copied. A callee that must change the caller's struct says so in
 `fn bump(p: *P3)`, called `bump(&p)` — or a method with an untyped `self` or `self: *T`. Because
 the copy is made on entry, an argument that is not a struct (`take(0)` for a `q: P3`) now faults
 there even when the body never reads `q`. And `q` reads like any struct variable: a bare `q` where
-an untyped value is expected (`var k = q;`, `raw(q)` into an untyped parameter, `load64(q)`) is its
-first field, as for an inline local and for a struct of 8 bytes or less — before v6.6.16 it was
-the caller's address. Write `&q` for the address (of the copy). A struct of 8 bytes or less was
+an untyped value is expected (`raw(q)` into an untyped parameter, `load64(q)`, `return q;` from an
+`i64` fn) is its first field, as for an inline local and for a struct of 8 bytes or less — before
+v6.6.16 it was the caller's address. An untyped `var k = q;` is a copy of the struct (6.7.12, see
+*An untyped binding*). Write `&q` for the address (of the copy). A struct of 8 bytes or less was
 already a value: it travels in a register. An `async fn` refuses such a parameter (see *Other
 limits* under async).
 
@@ -1947,6 +1959,18 @@ untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the 
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
 annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
+
+**So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
+(or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
+included) or a closure's captured copy of one, declares `q` a copy of `p`'s struct, as `var q: P = p;`
+does — `q.y` reads and writes the copy (`p` is untouched), in a fn and inside a closure that captures `q`,
+`take(q)` passes it, and `q + p` dispatches `P_add`. Through 6.7.11 `q` was `p`'s first word: `q.y` was *no
+struct type in scope for 'q'* (*undefined variable 'q'* in a closure), `take(q)` passed the word as the
+struct's address, and `q + 1` added to it (now it dispatches `P_add`, or is refused if there is none). A
+bare `q` where a value is expected is still the first word (`return q;` from an `i64` fn). Unchanged: a
+`*T` source stays a plain word (an untyped impl `self` is one), as do a handle and a struct global named
+in a fn (`var q = G;`); an untyped global keeps the word; a tuple stays refused (*tuple 't' used as a
+value*).
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
@@ -2733,6 +2757,10 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
+#   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
+#                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
+#                                     # (6.7.11, kept by the user 2026-10-15; through 6.7.10 the
+#                                     # leading two were taken)
 #   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
 #                                     # single value and the body ends in one — at fn scope and
 #                                     # at top level, a forward-declared `one` included. A body
@@ -3314,6 +3342,24 @@ Before 6.7.11 the `*` was dropped and the parameter was a value-form vector: `rd
 dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is called through
 `fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
 registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
+
+**A vector value that is not a named local passes an address too (6.7.12; the user's decision
+D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
+`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))` — is received into a frame temporary whose
+address is passed (on Win64 the temporary is the call's hidden result pointer), as a struct call
+result into `*T` is (6.6.20); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
+a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)` passes a struct's
+pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
+top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
+a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)` passes `&e`; a
+value-form `v: f32v8` parameter is a separate matter). A vector **local** passed to a pointer of
+another kind — `p: *Pt`, `p: *i64`, `p: *u8`, `p: **T` — is refused by name: `cannot pass 'b' to a
+parameter that is not a pointer to its vector type in a call to 'rp' - pass &b for its address`
+(as a struct of another type is). ⚠ Through 6.7.11 each of these passed lane 0's bits as the
+address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win64; x86_64 refused
+the `*V` call result and dereference through 6.7.10 by the value-form path's text) — except on
+Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops compiling there too
+(pass `&b`).
 
 ### Packed-op builtins
 
@@ -6247,7 +6293,12 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   one of the two would read the other's storage in the wrong shape. Same rule as a
   duplicate `fn` that disagrees about arity.
 - A same-value redeclaration is silent; that is the usual way two files, or an
-  `#ifdef` arm, end up declaring one global.
+  `#ifdef` arm, end up declaring one global. A later integer literal that **differs**
+  from the earlier constant warns, whatever that constant was — `var a = 0;` then
+  `var a = 5;` included (6.7.12, the user's decision of 2026-10-15: through 6.7.11 an
+  earlier constant zero read as "no value" and the pair compiled silently, so two
+  files' `var _shared = 0;` / `= 5;` became one cell unseen). An earlier *computed*
+  initializer has no value to compare, and stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
   gives `b == 7`, and every later `K` is the var.

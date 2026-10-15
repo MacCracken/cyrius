@@ -28,6 +28,32 @@
 #      `fncall1` / `callptr` with `&b` (an integer register now); the release gate's cross-OS leg runs
 #      it on ecb / ach / cass / pi
 #
+#
+# 6.7.12 (D27, the user, 2026-10-15: B — "pass the address for the *V shapes; another pointer kind refused by
+# name"): a vector VALUE that is not a named local into a `*V` parameter passes an address — a call result
+# through a frame temp (`_sarg_vec_call`), `*pv` as pv (`_dlo_vec`, the step word's vector) — and a vector
+# local into a pointer of another kind is refused by name; `*f32v8` is a `*V` (`_ptr_vclass`). They passed
+# lane 0's bits as the address (139 / 139 / a cx fault / PE 5; on PE `rp(b)` into `*Pt` alone passed `&b` by
+# accident and ran — it is refused now too); x86_64 refused the `*V` shapes through 6.7.10 (an x86_64 regression
+# in 6.7.11). Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-
+# parameter-passes-lane-bits.md
+#   R4 the filed repro 1 verbatim (`rd(mkv(42, 7))` + `rd(*pb)`): exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   R5 the filed repro 2 verbatim: `rp(b)` and `ri(b)` refused by name, once each (two lines, no binary), on
+#      x86_64 and PE; R5e `r8(e)` (and `r8(&e)`) alone exits 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   Y10-Y12 refused by name, once: `rd(mkv4(..))` (a call result of another vector type), `rd(*pq)` (a `*f32v4`
+#      into `*f64v2`), `ri(b)` (a vector local into `*i64`); Y13 a top-level `rd(mkv(..))` (no frame for the
+#      temp); Yw2 the Y10-Y12 refusals on PE
+#   T  also carries the D27 rows (`sp_vrows`)
+#
+# MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
+# mutant>; measured):
+#   M4  `_sarg_vec_call` answers 0 (no call-result arm)    -> RED 15: R4 (139 / 139 / 139 / cx 253 / PE 5),
+#                                                             Y10 Y13 Yw2a (compiled), T on every leg
+#   M5  `_dlo_vec` answers 0 (no vector park)              -> RED 14: R4 (as M4), Y11 Yw2b, T on every leg
+#   M6  `_vec_kind_err` reports nothing                    -> RED 4: R5 x86 / PE (compiled), Y12 Yw2c
+#   M7  `_ptr_vclass` without f32v8                        -> RED 14: R5 (a third line: `r8(e)` refused as a
+#                                                             pointer of another kind), R5e on every leg, T
+#
 # MUTATION LEDGER (2026-10-13; a scratch copy of the tree with the one change, this gate run from that
 # copy with CYCC=<its 2-stage mutant>; measured):
 #   M0  the fix reverted (the slot-open scans and call)   -> RED 33: R1 (refused "value-form SIMD arg must
@@ -69,10 +95,12 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/simd_pointer_param.tcyr
 R1=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form.cyr
 R2=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form-value.cyr
-for f in "$TC" "$R1" "$R2"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
+R4=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.cyr
+R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits-other-kinds.cyr
+for f in "$TC" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=29
+FLOOR=51
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -148,18 +176,19 @@ syscall(60, rc);
 EOF
 exit_rows R3 "$D/r3.cyr" 84 "42 + 42"
 
-# refused <name> <what> <body> [pe]: compile fails with exactly one error line holding the vector-type
-# refusal, and no binary
+# refused <name> <what> <body> [pe|x86 [frag]]: compile fails with exactly one error line holding the
+# refusal (`FRAG`, the vector-type one, unless a fragment is given), and no binary
 FRAG="to a parameter of a different vector type in a call to"
 refused() {
     printf '%b' "$3" > "$D/$1.cyr"
     rc=0
+    fr=${5:-$FRAG}
     if [ "${4:-}" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
     else timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?; fi
     n=$(grep -c '^error' "$D/$1.err" || true)
-    if [ "$rc" -eq 0 ]; then bad "$2: compiled (rc 0) — want \"cannot pass .. $FRAG ..\""
+    if [ "$rc" -eq 0 ]; then bad "$2: compiled (rc 0) — want \".. $fr ..\""
     elif [ "$n" -ne 1 ]; then bad "$2: $n error lines, want exactly 1: $(grep '^error' "$D/$1.err" | head -3 | tr '\n' '|')"
-    elif ! grep '^error' "$D/$1.err" | grep -qF -- "$FRAG"; then bad "$2: wrong refusal: $(grep '^error' "$D/$1.err" | head -1)"
+    elif ! grep '^error' "$D/$1.err" | grep -qF -- "$fr"; then bad "$2: wrong refusal: $(grep '^error' "$D/$1.err" | head -1)"
     elif [ -s "$D/$1.bin" ]; then bad "$2: refused, but a binary was written"
     else ok "$2"; fi
 }
@@ -177,6 +206,41 @@ refused Y8 "Y8 a tail position" "${H}fn rd(p: *f64v2): i64 { return load64(p); }
 refused Y9 "Y9 a parenthesised argument" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd((f)) + 1; }\n${E}"
 if [ "$WINE" = 1 ]; then
     refused Yw "Yw f32v4 into *f64v2 on PE" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(f); }\n${E}" pe
+fi
+
+echo "R4. the filed repro 1, verbatim: \`rd(mkv(42, 7))\` + \`rd(*pb)\` into \`p: *f64v2\` (exit 42; 139 / cx fault / PE 5 before)"
+exit_rows R4 "$R4" 42 "a temp's address and pb"
+echo "R5. the filed repro 2, verbatim: \`rp(b)\` (\`*Pt\`) and \`ri(b)\` (\`*i64\`) refused by name; \`r8(e)\` (\`*f32v8\`) alone exits 42"
+KFRAG="to a parameter that is not a pointer to its vector type in a call to"
+for leg in x86 pe; do
+    [ "$leg" = pe ] && [ "$WINE" != 1 ] && continue
+    rc=0
+    if [ "$leg" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$R5" > "$D/r5.bin" 2> "$D/r5.err" || rc=$?
+    else timeout 60 "$CC" < "$R5" > "$D/r5.bin" 2> "$D/r5.err" || rc=$?; fi
+    np=$(grep '^error' "$D/r5.err" | grep -cF "cannot pass 'b' $KFRAG 'rp'" || true)
+    ni=$(grep '^error' "$D/r5.err" | grep -cF "cannot pass 'b' $KFRAG 'ri'" || true)
+    n=$(grep -c '^error' "$D/r5.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "R5 $leg: compiled - want rp(b) and ri(b) refused"
+    elif [ "$n" -ne 2 ] || [ "$np" -ne 1 ] || [ "$ni" -ne 1 ]; then bad "R5 $leg: $n error lines (rp $np, ri $ni), want one each: $(grep '^error' "$D/r5.err" | head -3 | tr '\n' '|')"
+    elif [ -s "$D/r5.bin" ]; then bad "R5 $leg: refused, but a binary was written"
+    else ok "R5 $leg: rp(b) and ri(b) refused by name, once each"; fi
+done
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' \
+  'fn r8(p: *f32v8): i64 { return load32(p); }' \
+  'fn main(): i64 {' \
+  '    var e: f32v8 = f32v8_make(42, 2, 3, 4, 5, 6, 7, 8);' \
+  '    return r8(e) + r8(&e) - 42;' \
+  '}' 'var rc = main();' 'syscall(60, rc);' > "$D/r5e.cyr"
+exit_rows R5e "$D/r5e.cyr" 42 "r8(e) passes &e"
+echo "Y10-Y13. refused by name, once"
+refused Y10 "Y10 a call result of another vector type (f64v4 into *f64v2)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv4(a): f64v4 { var v: f64v4; return v; }\nfn main(): i64 { return rd(mkv4(1)) + 1; }\n${E}"
+refused Y11 "Y11 a dereference of another vector type (*f32v4 into *f64v2)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pq: *f32v4 = &f; return rd(*pq) + 1; }\n${E}"
+refused Y12 "Y12 a vector local into *i64" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" x86 "$KFRAG"
+refused Y13 "Y13 a top-level rd(mkv(..)) (no frame for the temp)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv(a, b): f64v2 { return f64v2_make(a, b); }\nvar r1 = rd(mkv(42, 7));\nsyscall(60, r1);\n" x86 "returns a vector by value, and a vector result needs storage in a fn's frame"
+if [ "$WINE" = 1 ]; then
+    refused Yw2a "Yw2 Y10 on PE" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv4(a): f64v4 { var v: f64v4; return v; }\nfn main(): i64 { return rd(mkv4(1)) + 1; }\n${E}" pe
+    refused Yw2b "Yw2 Y11 on PE" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pq: *f32v4 = &f; return rd(*pq) + 1; }\n${E}" pe
+    refused Yw2c "Yw2 Y12 on PE" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" pe "$KFRAG"
 fi
 
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
@@ -201,4 +265,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2) and the decision (R3) on x86_64 / IR / aarch64 / cx / PE, 10 refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

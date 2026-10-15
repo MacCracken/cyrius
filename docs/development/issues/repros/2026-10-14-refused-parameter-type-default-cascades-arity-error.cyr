@@ -1,0 +1,4 @@
+include "lib/syscalls.cyr"
+fn f(a: 5 = 0): i64 { return a; }
+fn main(): i64 { return f(); }
+syscall(60, main());

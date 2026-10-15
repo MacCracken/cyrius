@@ -4379,6 +4379,7 @@ fn _gv_clear(S, vi): i64 {
     SVTYPE(S, vi, 0);
     SVSGN(S, vi, 0);
     S64(_vgsi_base + vi * 8, 0);
+    _gv_lit_set(vi, 0);   # 6.7.12 (D30)
     SVGAI(S, vi, 0);   # 6.6.16 (C1): an array initializer's blob
     if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
     if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
@@ -5240,6 +5241,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
     # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
+    if (cf_has == 1) { if (is_struct == 0) { _gv_lit_set(gvi, 1); } }   # 6.7.12 (D30): a constant, zero too
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
         SLVAR(S, gvi);
@@ -6227,6 +6229,60 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     STI(S, GTI(S) + 2 * ci_pk + ci_dr);   # 6.7.6: and the wrap's `(` / `)`; 6.7.10: the `*`
     return 1;
 }
+# ⛔ 6.7.12 (D29) — AN UNTYPED `var q = p;` OF A STRUCT VALUE IS A TYPED COPY, as `var q: P = p;` is (the
+# user's decision (a), 2026-10-15; decision 12 / D42's "every whole struct result binds the struct"): q
+# took p's FIRST WORD, so `q.y` was "no struct type in scope for 'q'" — and "undefined variable 'q'" in a
+# closure that captured it — and `take(q)` passed the word as the struct's address. Called by PARSE_VAR
+# with no annotation, cursor on `=`: when the initialiser up to its `;` is a name, or a wrap `(name)`,
+# naming an inline struct local, a by-value struct parameter or a closure's captured copy of one, the
+# answer is the source's `0 - sid` and the declaration goes on as the annotated form (its copy-init, or
+# the inline word at 8 B or less) — so a closure's snapshot carries q's type. Anything else is 0, and
+# stays what it was: a `*T` (laundered through an untyped name it is a plain word), a handle, a tuple, a
+# dyn, a vector, a global source, and any declaration at top level (an untyped global keeps the word).
+# CHANGELOG [6.7.12]
+fn _uci_ps(S): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var pk = _sci_pname(S, GTI(S) + 1);
+    if (pk < 0) { return 0; }
+    var snoff = TOKVAL(S, GTI(S) + 1 + pk);
+    var li = FINDLOCAL(S, snoff);
+    if (li >= 0) { return _uci_local(S, li); }
+    return _uci_cap(S, snoff);
+}
+# `t` (a slot's type) names a struct a name copy takes: not a vector, a tuple or a dyn. 1 / 0.
+fn _uci_sid_ok(S, t): i64 {
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    if (_tup_is(S, 0 - t) == 1) { return 0; }
+    if (_dyn_is(S, 0 - t) == 1) { return 0; }
+    return 1;
+}
+# A local source: an inline struct (a by-value parameter copied in included), or an address-passed
+# by-value parameter (`_addr_is_slot_content`: a `#naked` fn's, never a `*T`).
+fn _uci_local(S, li): i64 {
+    var t = GLTYPE(S, li);
+    if (_uci_sid_ok(S, t) == 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    if (GLAGG(S, li) != 0) { return t; }
+    if (_addr_is_slot_content(S, li) == 1) { return t; }
+    return 0;
+}
+# A captured source, as `_sci_cap_src` takes one: the capture's words, or a captured address-passed
+# parameter's (`_cl_snap_is_sptr`) — never a captured `*T` or handle.
+fn _uci_cap(S, snoff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, snoff);
+    if (esl < 0) { return 0; }
+    if (_cl_cap_find(esl) < 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (_uci_sid_ok(S, t) == 0) { return 0; }
+    if (_cl_snap_ptrp(esl) == 1) { return 0; }
+    if (_cl_snap_span(esl) >= 1) { return t; }
+    if (_cl_snap_is_sptr(S, esl) == 1) { return t; }
+    return 0;
+}
 # The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then
 # the named slot, SLTYPE = the declared type), after the duplicate-name check. Returns the named slot.
 fn _sci_slots(S, noff, pscale, nslots): i64 {
@@ -6648,6 +6704,56 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     _had_error = 1;
     STI(S, eq);
     return 1;
+}
+# ⛔ 6.7.12 — D24 REACHES A KNOWN FN-POINTER CALL (D28, the user, 2026-10-15). `var n: i64 = fncall1(&mk3, 5);` and
+# `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries mk3's struct result (6.7.11, ARG-1) — into an
+# annotation that names no struct read P3's first field (n = 5) where `var n: i64 = mk3(5);` is refused (D24). Now
+# refused with D24's words, naming mk3, at its name: in a fn, a declaration of no struct type (`pscale` 0, the
+# cursor on its initialiser) whose initialiser is one whole such call, inside any parentheses up to its `;`
+# (`_rcv_scalar_ann` judges the struct's size, a `Str`, the annotation). The initialiser's first token is marked
+# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is no
+# known callee yet (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md); a callee in a
+# variable stays a word (D31). 1 = refused. CHANGELOG [6.7.12]
+fn _scv_icall_ann(S, pscale): i64 {
+    if (pscale != 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    var st = GTI(S);
+    if (TOKTYP(S, st - 1) != 4) { return 0; }
+    var c = st;
+    var x = 5;   # what follows the call: the `;`, or a `)` of the wrap
+    if (TOKTYP(S, st) == 10) {
+        var k = _pwrap_k(S, st);
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        c = st + k;
+        x = 11;
+    }
+    var sid = _icall_sid_at(S, c);
+    if (sid <= 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, c + 1) + 1) != x) { return 0; }
+    var ann = _scv_ann_at(S, st - 1);
+    if (ann <= 0) { return 0; }
+    STI(S, st - 1);
+    var r = _rcv_scalar_ann(S, _icall_open_at(S, c) + 2, sid, 0, ann, _scv_ann_nm);
+    STI(S, st);
+    if (r == 1) { _tn_once(S, st); }
+    return r;
+}
+# The annotation of the declaration `var NAME : <ann> =` whose `=` is token `eq`: its first token, `_scv_ann_nm`
+# the name; 0 for an untyped declaration.
+var _scv_ann_nm = 0;
+fn _scv_ann_at(S, eq): i64 {
+    var k = eq - 1;
+    while (k >= 2) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        if (t == 49) { if (TOKTYP(S, k - 1) == 2) { if (TOKTYP(S, k - 2) == 3) {
+                    _scv_ann_nm = TOKVAL(S, k - 1);
+                    return k + 1;
+                } } }
+        if (eq - k > 64) { return 0; }
+        k = k - 1;
+    }
+    return 0;
 }
 # The annotation is the enclosing generic fn's type parameter, in its BASE parse (`_inst_name` 0, T
 # the i64 base): each instance judges its own binding — `var x: T = mkp();` is `x: P2` in `f<P2>`.
@@ -7162,6 +7268,7 @@ fn PARSE_VAR(S): i64 {
     }
     # v6.3.36 (issue [6]) — `var b: P = a;` struct-to-struct copy-init from a
     # local struct variable (as opposed to a fn call, handled by the asv paths).
+    if (ann_ti == 0) { if (pscale == 0) { pscale = _uci_ps(S); } }   # 6.7.12 (D29): untyped `var q = p;`
     if (_try_struct_copy_init(S, noff, pscale) == 1) { return 0; }
     # v5.5.36 Phase 2b — struct-valued assignment from a fn call:
     #   `var got: Point = make(args);`

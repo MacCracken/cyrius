@@ -307,6 +307,57 @@ else
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
+# W — 6.7.12 (the user's decision D30, 2026-10-15): the conflicting-value WARNING sees a prior
+#     constant ZERO. CHKDUPVAL read the recorded value (`_vgsi_base`), where 0 also meant "no
+#     constant", so `var a = 0;` then `var a = 5;` — and two files' `var _shared = 0;` / `= 5;`,
+#     one cell — compiled silently. Now `_gv_has_lit` (a byte per global) says a constant was
+#     recorded. A diagnostic only: every row builds (rc 0). Host only (the frontend is shared).
+#     MUTATION LEDGER (6.7.12, scratch trees as above):
+#       w1 PARSE_GVAR_REG's `_gv_lit_set` dropped   -> RED W3 W6 W7 W9 XF1 (5); redefinition_layout_and_
+#                                                      enum_over_var.sh ev_zero on x86 + aarch64 (4)
+#       w2 CHKDUPVAL reads only the value again      -> RED W3 W6 W7 W9 XF1 (5); ev_zero x86 + aarch64 (2)
+#       the 6.7.11 compiler (slot open)              -> RED W3 W6 W7 W9 XF1
+#       real tree                                   -> GREEN (W1-W9, XF1-XF3)
+NW=0
+# _wrow <id> <want warnings> <src>
+_wrow() {
+    NW=$((NW + 1))
+    printf '%b' "$3" > "$WORK/w.cyr"
+    if ! "$CC" < "$WORK/w.cyr" > "$WORK/w.bin" 2> "$WORK/w.err"; then bad "row $1: compile failed (a warning must not fail the build)"; return 0; fi
+    n=$(grep -c "duplicate symbol '[A-Za-z_]*' redefined with conflicting value (last definition wins)" "$WORK/w.err" || true)
+    [ "$n" = "$2" ] || bad "row $1: $n conflicting-value warning(s), want $2"
+}
+_wrow W1 1 'var a = 5;\nvar a = 7;\nsyscall(60, a);\n'
+_wrow W2 1 'var a = 5;\nvar a = 0;\nsyscall(60, a);\n'
+_wrow W3 1 'var a = 0;\nvar a = 5;\nsyscall(60, a);\n'
+_wrow W4 0 'var a = 0;\nvar a = 0;\nsyscall(60, a);\n'
+_wrow W5 0 'var a = 5;\nvar a = 5;\nsyscall(60, a);\n'
+_wrow W6 1 'var a = 1 - 1;\nvar a = 5;\nsyscall(60, a);\n'
+_wrow W7 2 'var a = 5;\nvar a = 0;\nvar a = 5;\nsyscall(60, a);\n'
+_wrow W8 0 'fn f(): i64 { return 2; }\nvar a = f();\nvar a = 5;\nsyscall(60, a);\n'
+_wrow W9 1 'var a: i32 = 0;\nvar a: i32 = 5;\nsyscall(60, a);\n'
+# XF — the filed cross-file pair: two files' same-name globals (the sankoch / niyama `_bre_err`
+#      shape); `a_set(7); b_get()` shares one cell, so the run is 7 either way.
+mkdir -p "$WORK/xf"
+printf 'var _shared = 0;\nfn a_set(v): i64 { _shared = v; return 0; }\n' > "$WORK/xf/a.cyr"
+printf 'var _shared = 5;\nfn b_get(): i64 { return _shared; }\n' > "$WORK/xf/b.cyr"
+printf 'var _shared = 0;\nfn c_get(): i64 { return _shared; }\n' > "$WORK/xf/c.cyr"
+# _xrow <id> <want warnings> <want exit> <main src>
+_xrow() {
+    NW=$((NW + 1))
+    printf '%b' "$4" > "$WORK/xf/m.cyr"
+    if ! (cd "$WORK/xf" && "$CC" < m.cyr > m.bin 2> m.err) || [ ! -s "$WORK/xf/m.bin" ]; then bad "row $1: compile failed"; return 0; fi
+    n=$(grep -c "duplicate symbol '_shared' redefined with conflicting value" "$WORK/xf/m.err" || true)
+    [ "$n" = "$2" ] || bad "row $1: $n conflicting-value warning(s), want $2"
+    chmod +x "$WORK/xf/m.bin"
+    set +e; "$WORK/xf/m.bin" > /dev/null 2>&1; r=$?; set -e
+    [ "$r" = "$3" ] || bad "row $1: exited $r, want $3"
+}
+_xrow XF1 1 7 'include "a.cyr"\ninclude "b.cyr"\nvar r = a_set(7);\nsyscall(60, b_get());\n'
+_xrow XF2 1 7 'include "b.cyr"\ninclude "a.cyr"\nvar r = a_set(7);\nsyscall(60, b_get());\n'
+_xrow XF3 0 7 'include "a.cyr"\ninclude "c.cyr"\nvar r = a_set(7);\nsyscall(60, c_get());\n'
+[ "$NW" -ge 12 ] || bad "floor: $NW warning rows ran, want 12"
+
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
 DECL=$((DECL + 6))   # rows I, K, K2, K3, P and R are hand-rolled
@@ -319,5 +370,5 @@ if [ "$NFAIL" -ne 0 ]; then
 fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: global_redeclaration_one_definition — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6)"
+echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6); a conflicting value warns, a prior zero included ($NW rows, 6.7.12)"
 exit 0

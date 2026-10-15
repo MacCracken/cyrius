@@ -1,0 +1,128 @@
+# untyped_struct_name_copy.tcyr — 6.7.12 (D29) — an untyped `var q = p;` of a struct VALUE is a typed
+# copy, as `var q: P = p;` is (the user's decision (a), 2026-10-15).
+#
+# Through 6.7.11 the untyped declaration took p's FIRST WORD: `q.y` was "no struct type in scope for
+# 'q'" in a fn and "undefined variable 'q'" inside a closure that captured q (the filed repro,
+# issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md, half 2),
+# `take(q)` into a by-value struct parameter passed the word as the struct's address (SIGSEGV), and
+# `q + p` added integers. Now q takes p's type and its own bytes: field reads and writes are the
+# copy's, a closure's snapshot carries the type, and an operator dispatches on it. The source is a
+# name (or a wrap `(p)`) naming an inline struct local, a by-value struct parameter or a closure's
+# captured copy of one. Unchanged, and asserted here: a `*T` source stays a plain word, an untyped
+# impl `self` (a `*T`) too, an untyped GLOBAL keeps the word, and `return q;` from an i64 fn is the
+# first word (an rvalue of an inline struct is its first word).
+#
+# CROSS-HOST: the copy is the copy-init's per-chunk address + load / store (8/4/2/1 bytes) or, at 8 B
+# or less, the one inline word, emitted by each backend; the closure rows read the captured words
+# through the env base. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct P { x; y; }
+struct S8 { a: i32; b: i32; }
+struct P3 { x; y; z; }
+struct Odd { a: i8; b: i16; }
+struct Box<T> { v: T; w: T; }
+
+var GP: P = P { 3, 4 };
+var GH = GP;   # an untyped global in the declaration zone keeps the word
+
+# ── the filed repro 2, as a fn ──────────────────────────────────────────────────────────────────
+fn repro(): i64 {
+    var p: P = P { 3, 4 };
+    var q = p;
+    var c = |k| q.y + k;
+    return fncall1(c, 1) + q.y * 10;
+}
+
+fn rd(): i64 { var p: P = P { 3, 4 }; var q = p; return q.y; }
+fn wr(): i64 { var p: P = P { 3, 4 }; var q = p; q.y = 9; return p.y * 10 + q.y; }
+fn wrx(): i64 { var p: P = P { 3, 4 }; var q = p; p.x = 7; return q.x * 10 + p.x; }
+fn s8(): i64 { var p: S8 = S8 { 3, 4 }; var q = p; q.b = 9; return p.b * 10 + q.b; }
+fn p24(): i64 { var p = P3 { 1, 2, 3 }; var q = p; q.z = 9; return p.z * 1000 + q.x * 100 + q.y * 10 + q.z; }
+fn odd(): i64 { var p: Odd = Odd { 3, 4 }; var q = p; q.b = 9; return p.a * 100 + p.b * 10 + q.b; }
+fn prm(p: P): i64 { var q = p; q.y = 9; return p.y * 10 + q.y; }
+fn prmc(): i64 { var p: P = P { 3, 4 }; var r = prm(p); return r * 10 + p.y; }
+fn prm8(p: S8): i64 { var q = p; q.b = 9; return p.b * 10 + q.b; }
+fn prm8c(): i64 { var p: S8 = S8 { 3, 4 }; return prm8(p); }
+fn nest(): i64 {
+    var p: P = P { 3, 4 };
+    var c = |k| { var q = p; var d = |j| q.y + j; return fncall1(d, k); };
+    return fncall1(c, 1);
+}
+fn capprm(p: P): i64 {
+    var c = |k| { var q = p; q.y = 9; return p.y * 10 + q.y + k; };
+    return fncall1(c, 0);
+}
+fn capprmc(): i64 { var p: P = P { 3, 4 }; return capprm(p); }
+fn cap8(): i64 {
+    var p: S8 = S8 { 3, 4 };
+    var c = |k| { var q = p; q.b = 9; return p.b * 10 + q.b + k; };
+    return fncall1(c, 0);
+}
+fn twice(): i64 {
+    var p: P = P { 3, 4 };
+    var c = || { var q = p; q.y = q.y + 1; return q.y; };
+    return fncall0(c) * 10 + fncall0(c);
+}
+fn capptr(pp: *P): i64 {
+    var c = |k| { var q = pp; return (q == pp) * 10 + load64(q + 8) + k; };
+    return fncall1(c, 0);
+}
+fn capptrc(): i64 { var p: P = P { 3, 4 }; return capptr(&p); }
+fn ptr(): i64 { var p: P = P { 3, 4 }; var pp: *P = &p; var q = pp; return (q == &p) * 10 + load64(q + 8); }
+fn wrap(): i64 { var p: P = P { 3, 4 }; var q = (p); q.x = 1; return p.x * 10 + q.y; }
+fn tk(a: P): i64 { return a.y; }
+fn arg(): i64 { var p: P = P { 3, 4 }; var q = p; return tk(q); }
+fn word(): i64 { var p: P = P { 3, 4 }; var q = p; return q; }
+fn chain(): i64 { var p: P = P { 3, 4 }; var q = p; var r = q; r.y = 7; return q.y * 10 + r.y; }
+fn P_add(a: P, b: P): P { var r = P { a.x + b.x, a.y + b.y }; return r; }
+fn opd(): i64 { var p: P = P { 3, 4 }; var q = p; var s = q + p; return s.x * 10 + s.y; }
+fn gen(): i64 { var b: Box<i64> = Box<i64> { 3, 4 }; var q = b; q.w = 9; return b.w * 10 + q.w; }
+impl P {
+    fn sy(self): i64 { var q = self; return load64(q + 8); }
+    fn vy(self: P): i64 { var q = self; q.y = 9; return self.y * 10 + q.y; }
+}
+fn selfp(): i64 { var p: P = P { 3, 4 }; return p.sy(); }
+fn selfv(): i64 { var p: P = P { 3, 4 }; return p.vy(); }
+fn loopc(): i64 {
+    var p: P = P { 3, 4 };
+    var t = 0;
+    var i = 0;
+    while (i < 3) { var q = p; q.y = q.y + i; t = t * 10 + q.y; i = i + 1; }
+    return t;
+}
+
+assert_eq(repro(), 45, "filed repro 2: a closure reads q.y of an untyped copy");
+assert_eq(GH, 3, "an untyped global (declaration zone) keeps the word");
+var GH2 = GP;   # after the first statement: PARSE_VAR's global arm
+assert_eq(GH2, 3, "an untyped global (after a statement) keeps the word");
+assert_eq(rd(), 4, "q.y reads the copy outside a closure");
+assert_eq(wr(), 49, "q.y = 9 writes the copy, p.y stays 4");
+assert_eq(wrx(), 37, "a write to p after the copy leaves q.x at 3");
+assert_eq(s8(), 49, "an 8 B S8 source: the copy is its own word");
+assert_eq(p24(), 3129, "a 24 B source: copied, q.z = 9 leaves p.z at 3");
+assert_eq(odd(), 349, "an odd 3 B source: copied byte-exact");
+assert_eq(prmc(), 494, "a by-value parameter source; the caller's p.y stays 4");
+assert_eq(prm8c(), 49, "an 8 B by-value parameter source");
+assert_eq(nest(), 5, "a captured struct copied in a closure, read by a nested closure");
+assert_eq(capprmc(), 49, "a captured by-value parameter copied in a closure");
+assert_eq(cap8(), 49, "a captured 8 B struct copied in a closure");
+assert_eq(twice(), 55, "a copy inside a closure is fresh on every call");
+assert_eq(ptr(), 14, "a *T source stays a plain word (the address)");
+assert_eq(capptrc(), 14, "a captured *T parameter copied in a closure stays a word");
+assert_eq(wrap(), 34, "a wrapped (p) source is a copy");
+assert_eq(arg(), 4, "the copy passes to a by-value struct parameter");
+assert_eq(word(), 3, "return q from an i64 fn is the first word");
+assert_eq(chain(), 47, "a copy of a copy is a copy");
+assert_eq(opd(), 68, "q + p dispatches P_add on the copy");
+assert_eq(gen(), 49, "a generic instance Box<i64> source");
+assert_eq(selfp(), 4, "an untyped impl self (a *T) stays a word");
+assert_eq(selfv(), 49, "a by-value self: P source is a copy");
+assert_eq(loopc(), 456, "a copy declared in a loop body is fresh each iteration");
+
+var r = assert_summary();

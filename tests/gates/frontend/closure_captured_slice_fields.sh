@@ -40,6 +40,24 @@
 #   n3 the store refusal dropped                       -> RED E2-E4 ("undefined variable 's'") on every leg (18)
 #   real tree                                          -> GREEN (49: 15 rows and the repro per leg, A1)
 # (a count is FAIL lines: an E row that both misses its message and says "undefined variable" is two.)
+#
+# HALF 2 (6.7.12, the user's decision D29 (a), 2026-10-15): an untyped `var q = p;` of a struct VALUE
+# is a typed copy, as `var q: P = p;` is. Through 6.7.11 q took p's FIRST WORD, so `q.y` was "no
+# struct type in scope for 'q'" in a fn and "undefined variable 'q'" in a closure that captured q (the
+# filed repro 2, verbatim below: exit 45), and `take(q)` passed the word as the struct's address.
+# THE FIX (src/frontend/parse_decl.cyr `_uci_ps`, called by PARSE_VAR with no annotation): a name or
+# a wrap `(name)` up to the `;` naming an inline struct local, a by-value struct parameter or a
+# closure's captured copy of one gives the declaration the source's `0 - sid`, and it goes on as the
+# annotated form. Q rows were refused before; QK rows are controls that held before and after (a
+# `*T` source and an untyped impl `self` stay plain words, an untyped global keeps the word). The
+# runtime rows are tests/tcyr/crossos/untyped_struct_name_copy.tcyr, run here on every leg (its row
+# count derived, floor 25) and on ecb / ach / cass / pi by the release gate. The PE leg (wine, a
+# private prefix) runs the repro 2, the Q / QK rows and the .tcyr.
+# MUTATION LEDGER (6.7.12, measured the same way):
+#   m1 PARSE_VAR's `_uci_ps` call dropped (D29 out)  -> RED Q1-Q9, repro 2 and the .tcyr on every leg (44)
+#   m2 `_uci_cap` answers 0 (no captured source)      -> RED Q5, Q9 and the .tcyr on every leg (12)
+#   m3 `_uci_cap`'s `*T` check dropped                 -> RED QK5 and the .tcyr on every leg (8)
+#   real tree                                          -> GREEN (117: host 34, cx 33, aarch64 33, PE 17)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -67,6 +85,7 @@ include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
 include "lib/slice.cyr"
 struct P { x; y; }
+struct S8 { a: i32; b: i32; }
 var g_buf[16];
 PRE
 
@@ -86,6 +105,21 @@ K2|v|6|fn main(): i64 { alloc_init(); var c = |x| { var t: [u8] = 0; slice_of(&t
 K3|v|8|fn main(): i64 { alloc_init(); var s: [u8] = 0; slice_of(&s, &g_buf, 7); var c = |x| slice_len(&s) + x; return fncall1(c, 1); }\nsyscall(60, main());\n
 K4|e|a closure cannot subscript a captured slice|fn main(): i64 { alloc_init(); var s: [u8] = 0; slice_of(&s, &g_buf, 7); var c = |x| s[0] + x; return fncall1(c, 1); }\nsyscall(60, main());\n
 K5|v|73|fn main(): i64 { alloc_init(); var s: [u8] = 0; slice_of(&s, &g_buf, 7); s.len = 3; return s.len * 10 + (s.ptr == &g_buf) * 43; }\nsyscall(60, main());\n
+Q1|v|4|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; return q.y; }\nsyscall(60, main());\n
+Q2|v|49|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; q.y = 9; return p.y * 10 + q.y; }\nsyscall(60, main());\n
+Q3|v|49|fn main(): i64 { var p: S8 = S8 { 3, 4 }; var q = p; q.b = 9; return p.b * 10 + q.b; }\nsyscall(60, main());\n
+Q4|v|53|fn f(p: P): i64 { var q = p; q.y = 9; return p.y * 10 + q.y; }\nfn main(): i64 { var p: P = P { 3, 4 }; return f(p) + p.y; }\nsyscall(60, main());\n
+Q5|v|5|fn main(): i64 { alloc_init(); var p: P = P { 3, 4 }; var c = |k| { var q = p; var d = |j| q.y + j; return fncall1(d, k); }; return fncall1(c, 1); }\nsyscall(60, main());\n
+Q6|v|34|fn main(): i64 { var p: P = P { 3, 4 }; var q = (p); q.x = 1; return p.x * 10 + q.y; }\nsyscall(60, main());\n
+Q7|v|4|fn tk(a: P): i64 { return a.y; }\nfn main(): i64 { var p: P = P { 3, 4 }; var q = p; return tk(q); }\nsyscall(60, main());\n
+Q8|v|49|fn f(p: S8): i64 { var q = p; q.b = 9; return p.b * 10 + q.b; }\nfn main(): i64 { var p: S8 = S8 { 3, 4 }; return f(p); }\nsyscall(60, main());\n
+Q9|v|49|fn f(p: P): i64 { var c = |k| { var q = p; q.y = 9; return p.y * 10 + q.y + k; }; return fncall1(c, 0); }\nfn main(): i64 { alloc_init(); var p: P = P { 3, 4 }; return f(p); }\nsyscall(60, main());\n
+QK1|v|3|var G: P = P { 3, 4 };\nvar H = G;\nsyscall(60, H);\n
+QK2|v|3|var G: P = P { 3, 4 };\nalloc_init();\nvar H = G;\nsyscall(60, H);\n
+QK3|v|14|fn main(): i64 { var p: P = P { 3, 4 }; var pp: *P = &p; var q = pp; return (q == &p) * 10 + load64(q + 8); }\nsyscall(60, main());\n
+QK4|v|4|impl P { fn sy(self): i64 { var q = self; return load64(q + 8); } }\nfn main(): i64 { var p: P = P { 3, 4 }; return p.sy(); }\nsyscall(60, main());\n
+QK5|v|14|fn f(pp: *P): i64 { var c = |k| { var q = pp; return (q == pp) * 10 + load64(q + 8) + k; }; return fncall1(c, 0); }\nfn main(): i64 { alloc_init(); var p: P = P { 3, 4 }; return f(&p); }\nsyscall(60, main());\n
+QK6|v|3|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; return q; }\nsyscall(60, main());\n
 ROWS
 NTAB=$(grep -c '|' "$WORK/rows")
 
@@ -107,6 +141,29 @@ fn main(): i64 {
 syscall(60, main());
 # error:<source>:10:23: undefined variable 's'      expected: exit 8
 RP
+
+# The filed repro 2 (half 2, D29), verbatim: exit 45.
+cat > "$WORK/repro2.cyr" <<'RP2'
+# 2 — an untyped struct copy's field
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+struct P { x; y; }
+fn main(): i64 {
+    alloc_init();
+    var p: P = P { 3, 4 };
+    var q = p;
+    var c = |k| q.y + k;
+    return fncall1(c, 1) + q.y * 10;
+}
+syscall(60, main());
+# error:<source>:9:21: undefined variable 'q'      expected: exit 45
+RP2
+TC="$ROOT/tests/tcyr/crossos/untyped_struct_name_copy.tcyr"
+[ -f "$TC" ] || { echo "FAIL: closure_captured_slice_fields: $TC is missing"; exit 1; }
+# One row per `assert_eq(` call; the floor keeps a gutted file from passing.
+NTC=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
+if [ "$NTC" -lt 25 ]; then echo "FAIL: closure_captured_slice_fields: only $NTC rows in $TC (floor 25)"; exit 1; fi
 
 # A1: a closure built in a coroutine, after and before its await, reads the captured slice's
 # fields (the axis-11 shape of coroutine_midbody_suspend.sh with the dot syntax): 71 + 51.
@@ -160,6 +217,24 @@ run_row() {
     run_bin "$1" "$4" "$3" "$WORK/t.bin" "$6"
 }
 
+# run_tc <leg> <compiler> <runner>: the crossos .tcyr, "N passed, 0 failed (N total)" with N derived.
+run_tc() {
+    NROWS=$((NROWS + 1))
+    if ! build "$2" "$TC" "$WORK/tc.bin"; then
+        bad "$1 untyped_struct_name_copy.tcyr: compile failed: $(grep error "$WORK/tc.bin.err" | head -1 | head -c 300)"; return 0
+    fi
+    chmod +x "$WORK/tc.bin"
+    set +e
+    if [ -n "$3" ]; then $3 "$WORK/tc.bin" > "$WORK/tc.out" 2>&1
+    else "$WORK/tc.bin" > "$WORK/tc.out" 2>&1; fi
+    r=$?
+    set -e
+    last=$(tail -1 "$WORK/tc.out" | tr -d '\r')
+    [ "$r" = 0 ] && [ "$last" = "$NTC passed, 0 failed ($NTC total)" ] \
+        || bad "$1 untyped_struct_name_copy.tcyr: exit $r, '$last' (want $NTC passed)"
+    return 0
+}
+
 # run_leg <leg> <compiler> <runner>
 run_leg() {
     while IFS='|' read -r id mode want src; do
@@ -169,6 +244,10 @@ run_leg() {
     NROWS=$((NROWS + 1))
     if build "$2" "$WORK/repro.cyr" "$WORK/rp.bin"; then run_bin "$1" repro "$3" "$WORK/rp.bin" 8
     else bad "$1 repro: compile failed: $(grep error "$WORK/rp.bin.err" | head -1 | head -c 300)"; fi
+    NROWS=$((NROWS + 1))
+    if build "$2" "$WORK/repro2.cyr" "$WORK/rp2.bin"; then run_bin "$1" repro2 "$3" "$WORK/rp2.bin" 45
+    else bad "$1 repro2: compile failed: $(grep error "$WORK/rp2.bin.err" | head -1 | head -c 300)"; fi
+    run_tc "$1" "$2" "$3"
     # A1 on the host only: a mid-body `await` is x86-only so far (aarch64 and cx refuse it by name).
     [ "$1" = host ] || return 0
     NROWS=$((NROWS + 1))
@@ -204,10 +283,51 @@ else
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
-# Derived floor: the row table (15 rows) and the repro on host + cx, A1 on the host, even with
-# qemu absent.
-if [ "$NTAB" -lt 15 ]; then bad "the row table holds $NTAB rows (floor 15) — it did not load"; fi
-if [ "$NROWS" -lt $(((NTAB + 1) * 2 + 1)) ]; then bad "only $NROWS rows ran (floor $(((NTAB + 1) * 2 + 1)))"; fi
+# ---- PE leg (wine, a private prefix — never ~/.wine): the D29 rows, repro 2 and the .tcyr ----
+WP="$WORK/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w > /dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$WORK"' EXIT
+if command -v wine > /dev/null 2>&1; then
+    echo "PE (wine):"
+    pecc() { CYRIUS_TARGET_WIN=1 "$CC"; }
+    per() {
+        cp "$1" "$1.exe"
+        (cd "$WORK" && WINEPREFIX="$WP" HOME="$WORK/whome" XDG_CACHE_HOME="$WORK/whome/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$1.exe")
+    }
+    pe_build() { CYRIUS_TARGET_WIN=1 build "$CC" "$1" "$2"; }
+    grep '^Q' "$WORK/rows" > "$WORK/qrows"
+    while IFS='|' read -r id mode want src; do
+        NROWS=$((NROWS + 1))
+        { cat "$WORK/prelude"; printf '%b' "$src"; } > "$WORK/t.cyr"
+        if pe_build "$WORK/t.cyr" "$WORK/t.bin"; then run_bin pe "$id" per "$WORK/t.bin" "$want"
+        else bad "pe row $id: compile failed: $(grep error "$WORK/t.bin.err" | head -1 | head -c 300)"; fi
+    done < "$WORK/qrows"
+    NROWS=$((NROWS + 1))
+    if pe_build "$WORK/repro2.cyr" "$WORK/rp2.bin"; then run_bin pe repro2 per "$WORK/rp2.bin" 45
+    else bad "pe repro2: compile failed: $(grep error "$WORK/rp2.bin.err" | head -1 | head -c 300)"; fi
+    NROWS=$((NROWS + 1))
+    if pe_build "$TC" "$WORK/tc.bin"; then
+        set +e; per "$WORK/tc.bin" > "$WORK/tc.out" 2> /dev/null; r=$?; set -e
+        last=$(tail -1 "$WORK/tc.out" | tr -d '\r')
+        [ "$r" = 0 ] && [ "$last" = "$NTC passed, 0 failed ($NTC total)" ] \
+            || bad "pe untyped_struct_name_copy.tcyr: exit $r, '$last' (want $NTC passed)"
+    else bad "pe untyped_struct_name_copy.tcyr: compile failed: $(grep error "$WORK/tc.bin.err" | head -1 | head -c 300)"; fi
+else
+    echo "  SKIP: PE leg (wine not installed; cass covers PE at the release gate)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
+fi
+
+# Derived floor: the row table (30 rows), the two repros and the .tcyr on host + cx, A1 on the host,
+# even with qemu and wine absent.
+if [ "$NTAB" -lt 30 ]; then bad "the row table holds $NTAB rows (floor 30) — it did not load"; fi
+if [ "$NROWS" -lt $(((NTAB + 3) * 2 + 1)) ]; then bad "only $NROWS rows ran (floor $(((NTAB + 3) * 2 + 1)))"; fi
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: closure_captured_slice_fields ($NFAIL of $NROWS rows)"
     exit 1

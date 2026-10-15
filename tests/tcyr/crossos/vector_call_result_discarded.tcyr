@@ -1,0 +1,110 @@
+# vector_call_result_discarded.tcyr — 6.7.12: a vector-returning call whose result goes nowhere (a statement,
+# an untyped receive through a fn pointer, an argument to an untyped parameter, a method call, an operator fn
+# returning a vector, at top level too) runs and leaves everything else as it was, on every target.
+#
+# ⛔ THE DEFECT (PE only, through 6.7.11). On Win64 a value-form vector comes back through a hidden result pointer
+# the CALLER passes as int arg 0, and only the vector receives passed one: anywhere else the callee took its first
+# user argument as that pointer and wrote the vector through it — `mkv(41, 7);` page-faulted writing address 41
+# (exit 5), `s.mv(41, 7);` overwrote `self` (s.k 7 where 1 is right). SysV / AAPCS64 / cx return a vector in
+# registers and were right. Now every such call gets storage (a frame temporary; a hidden global at top level).
+# Filed: docs/development/issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md
+# Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/codegen/struct_value_codegen.sh (rows C), on the
+# four hardware hosts by the release gate's cross-OS leg — cass is the leg this file exists for.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/fnptr.cyr"
+
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkv4(a): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 24, a + 3); return v; }
+fn mkf(a): f32v4 { var v: f32v4; store32(&v, a); store32(&v + 12, a); return v; }
+fn mki(a): i32v4 { var v: i32v4; store32(&v, a); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+
+# --- the filed repros (each returned 3; PE exit 5) ------------------------------------------------------
+fn run1(): i64 {
+    mkv(41, 7);
+    return 3;
+}
+fn run2(): i64 {
+    callptr(&mkv, 41, 7);
+    return 3;
+}
+fn run3(): i64 {
+    var x = callptr(&mkv, 41, 7);
+    return 3;
+}
+
+# --- the class -------------------------------------------------------------------------------------------
+fn take(x): i64 { return 3; }
+fn run_arg(): i64 { return take(mkv(41, 7)); }
+fn run_fn2(): i64 { fncall2(&mkv, 41, 7); return 3; }
+fn run_32(): i64 { mkv4(41); return 3; }
+fn run_f32(): i64 { mkf(41); mki(41); return 3; }
+fn run_loop(): i64 {
+    var i = 0;
+    var n = 0;
+    while (i < 5) { mkv(i + 41, 7); n = n + 1; i = i + 1; }
+    return n;
+}
+# the locals around a discarded call keep their values
+fn run_canary(): i64 {
+    var a = 11;
+    mkv(41, 7);
+    var b = 22;
+    mkv4(41);
+    var w: f64v2 = mkv(4, 2);
+    callptr(&mkv, 41, 7);
+    return a + b + lanes(w);
+}
+
+struct Sv { k; }
+impl Sv {
+    fn mv(self, a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+}
+fn run_method(): i64 {
+    var s: Sv = Sv { 1 };
+    s.mv(41, 7);
+    return s.k;
+}
+fn run_method_ptr(): i64 {
+    var s: Sv = Sv { 2 };
+    var p: *Sv = &s;
+    p.mv(41, 7);
+    return s.k;
+}
+
+struct Vo { k; }
+fn Vo_add(a: Vo, b: Vo): f64v2 { var v: f64v2; store64(&v, a.k); store64(&v + 8, b.k); return v; }
+fn run_op(): i64 {
+    var x: Vo = Vo { 3 };
+    var y: Vo = Vo { 4 };
+    var r = x + y;
+    return x.k * 10 + y.k;
+}
+
+# --- at top level (no frame: a hidden global) ------------------------------------------------------------
+var gs: Sv = Sv { 5 };
+var gx: Vo = Vo { 6 };
+var gy: Vo = Vo { 8 };
+mkv(41, 7);
+callptr(&mkv, 41, 7);
+gs.mv(41, 7);
+var gr = gx + gy;
+var gw = take(mkv(41, 7));
+
+assert_eq(run1(), 3, "filed repro 1: mkv(41, 7); as a statement");
+assert_eq(run2(), 3, "filed repro 2: callptr(&mkv, 41, 7); as a statement");
+assert_eq(run3(), 3, "filed repro 3: var x = callptr(&mkv, 41, 7);");
+assert_eq(run_arg(), 3, "an argument to an untyped parameter: take(mkv(41, 7))");
+assert_eq(run_fn2(), 3, "fncall2(&mkv, 41, 7); as a statement");
+assert_eq(run_32(), 3, "a 32-byte result discarded (f64v4)");
+assert_eq(run_f32(), 3, "f32v4 / i32v4 results discarded");
+assert_eq(run_loop(), 5, "discarded in a loop");
+assert_eq(run_canary(), 75, "the locals around discarded calls keep their values");
+assert_eq(run_method(), 1, "s.mv(41, 7); leaves self intact");
+assert_eq(run_method_ptr(), 2, "p.mv(41, 7); through a *Sv leaves the struct intact");
+assert_eq(run_op(), 34, "an operator fn returning a vector, its result an untyped word");
+assert_eq(gs.k, 5, "top level: gs.mv(41, 7); leaves gs intact");
+assert_eq(gx.k * 10 + gy.k, 68, "top level: gx + gy leaves its operands intact");
+assert_eq(gw, 3, "top level: take(mkv(41, 7))");
+var r = assert_summary();

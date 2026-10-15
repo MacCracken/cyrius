@@ -12,9 +12,17 @@
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/codegen/simd_pointer_param.sh, on the
 # four hardware hosts by the release gate's cross-OS leg — Win64 routed this through its by-pointer
 # value-form path, so cass is the leg that matters most.
+#
+# 6.7.12 (D27, the user, 2026-10-15: B): a vector VALUE that is not a named local passes an address too —
+# a call result (by name, parenthesised, `fncallN(&f, ..)` / `callptr(&f, ..)`, a tail position) through a
+# frame temp it is received into, a dereference `*pv` of a `*V` (a local, a parameter, a capture, a field, a
+# global, a `: *V` call, `pv + n`) as pv itself — and `*f32v8` is a `*V` (`r8(e)` passes `&e`). They passed
+# lane 0's bits as the address (139 / 139 / a cx fault / PE 5; x86_64 refused the first two through 6.7.10).
+# Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
+include "lib/fnptr.cyr"
 
 struct Sv { k; }
 
@@ -49,6 +57,59 @@ fn sp_pass(p: *f64v2): i64 { return sp_lo(p); }
 fn sp_vparam(v: f64v2): i64 { return sp_hi(v); }             # a value-form parameter handed to `*V`
 fn sp_tail(b: f64v2): i64 { return sp_hi(b); }
 fn sp_tail2(): i64 { var c: f64v2 = f64v2_make(5, 6); return sp_hi(c); }   # its frame outlives the call
+
+# --- 6.7.12 (D27): a vector value that is not a named local --------------------------------------
+struct Hv { k; pv: *f64v2; }
+var GPV: *f64v2 = 0;
+fn sp_mkv(a, b): f64v2 { return f64v2_make(a, b); }
+fn sp_mkv4(d): f64v4 { return f64v4_make(1, 2, 3, d); }
+fn sp_mk8(a): f32v8 { return f32v8_make(a, 2, 3, 4, 5, 6, 7, a + 1); }
+fn sp_mkg<T>(a: T, b): f64v2 { return f64v2_make(a, b); }
+fn sp_f8(p: *f32v8): i64 { var q = p; return load32(q) * 100 + load32(q + 28); }
+fn sp_gpv(p: *f64v2): *f64v2 { return p; }
+fn sp_tcall(): i64 { return sp_hi(sp_mkv(5, 61)); }       # a call result in a tail position
+fn sp_tderef(p: *f64v2): i64 { return sp_hi(*p); }        # a parameter's dereference, in a tail position
+impl Sv {
+    fn rdh(self, p: *f64v2): i64 { var q = p; return load64(q + 8) + self.k; }
+}
+
+fn sp_vrows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var pb: *f64v2 = &b;
+    assert_eq(sp_lo(sp_mkv(42, 7)), 42, "D27: rd(mkv(..)) passes a temp's address");
+    assert_eq(sp_hi(sp_mkv(42, 7)), 7, "D27: rd(mkv(..)), lane 1");
+    assert_eq(sp_lo((sp_mkv(43, 7))), 43, "D27: rd((mkv(..)))");
+    assert_eq(sp_hi(fncall2(&sp_mkv, 44, 8)), 8, "D27: rd(fncall2(&mkv, ..))");
+    assert_eq(sp_lo(callptr(&sp_mkv, 45, 9)), 45, "D27: rd(callptr(&mkv, ..))");
+    assert_eq(sp_tcall(), 61, "D27: a call result in a tail position");
+    assert_eq(sp_lo(sp_mkg(46, 1)), 46, "D27: an inferred generic call result");
+    assert_eq(sp_w3(sp_mkv4(47)), 47, "D27: a 32-byte call result (*f64v4)");
+    var s: Sv;
+    s.k = 100;
+    assert_eq(s.rdh(sp_mkv(1, 48)), 148, "D27: a method's argument");
+    assert_eq(sp_lo(*pb), 11, "D27: rd(*pb) passes pb");
+    assert_eq(sp_hi(*pb), 22, "D27: rd(*pb), lane 1");
+    assert_eq(sp_lo((*pb)), 11, "D27: rd((*pb))");
+    assert_eq(sp_tderef(pb), 22, "D27: a *V parameter's dereference, in a tail position");
+    assert_eq(sp_lo(*sp_gpv(pb)), 11, "D27: the dereference of a : *V call");
+    var h: Hv;
+    h.pv = &b;
+    assert_eq(sp_hi(*h.pv), 22, "D27: the dereference of a *V field");
+    GPV = &b;
+    assert_eq(sp_lo(*GPV), 11, "D27: the dereference of a *V global");
+    var two: f64v2[2];
+    store64(&two + 16, 31);
+    var pt: *f64v2 = &two;
+    assert_eq(sp_lo(*(pt + 1)), 31, "D27: rd(*(pv + 1)) is the next vector");
+    var cl = |x| sp_hi(*pb) + x;
+    assert_eq(fncall1(cl, 1), 23, "D27: a captured *V's dereference");
+    assert_eq(s.rdh(*pb), 122, "D27: a method's argument, dereferenced");
+    var e: f32v8 = f32v8_make(42, 2, 3, 4, 5, 6, 7, 8);
+    assert_eq(sp_f8(e), 4208, "D27: *f32v8: r8(e) passes &e");
+    assert_eq(sp_f8(&e), 4208, "D27: *f32v8: r8(&e)");
+    assert_eq(sp_f8(sp_mk8(50)), 5051, "D27: *f32v8: a call result");
+    return 0;
+}
 
 fn sp_rows(): i64 {
     var b: f64v2 = f64v2_make(11, 22);
@@ -104,4 +165,5 @@ fn sp_rows(): i64 {
 fn sp_fwd(p: *f64v2): i64 { var q = p; return load64(q + 8); }
 
 sp_rows();
+sp_vrows();
 var r = assert_summary();

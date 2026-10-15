@@ -19,6 +19,23 @@
 # MUTATION PROOF (6.6.12): restoring the 6.6.11 lib/mabda.cyr + lib/vani.cyr reddens axes
 # 1 and 2: the PCI_VENDOR_AMD conflict, the _sk_emit_err duplicate and three mixed-return
 # warnings are reported, and the run probe no longer compiles (WGPU_VENDOR_ID_AMD undefined).
+#
+# 6.7.12 (the user's decision D30, 2026-10-15) — EVERY FOLD, AND SAME-VALUE PAIRS. sankoch 2.8.4's
+# Brotli encoder declared `var _bre_err = 0;` and niyama already did: one cell for both, no warning
+# (a prior `= 0` read as "no constant" — fixed in the compiler, see global_redeclaration_one_definition.sh
+# W / XF — and a same-value pair is silent by design, the two-files-one-global rule), found only by
+# the 6.7.11 distlib census; sankoch 2.8.7 renamed its side `_bre_ovf`. This gate looked at four folds.
+#   axis 3  the fold list is DERIVED from docs/ecosystem.md's folded-distlib table (floor 12): every
+#           fold compiles together after the prelude, in table order and reversed, rc 0, with no
+#           collision / mixed-return warning located in any fold.
+#   axis 4  census: a top-level `var` or `fn` name declared by TWO folds is a collision whatever its
+#           value (the compiler is silent on a same-value pair). Read with the floors below, and
+#           self-tested on a planted pair so a reader that matches nothing cannot pass.
+# MUTATION LEDGER (6.7.12, a scratch tree whose lib/ carries the plant):
+#   f1 `var _bre_err = 0;` appended to lib/sankoch.cyr and lib/niyama.cyr  -> RED axis 4 (same value)
+#   f2 `var _bre_err = 0;` / `var _bre_err = 5;` in niyama / sankoch      -> RED axis 3 both orders and
+#      axis 4; with a compiler before D30 the reverse order (niyama's 0 first, then 5) is silent
+#   f3 a fold row dropped from docs/ecosystem.md's table (11 folds)        -> RED the floor
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -98,6 +115,64 @@ build_run ymv
 printf '%s\ninclude "lib/mabda.cyr"\ninclude "lib/yukti.cyr"\ninclude "lib/vani.cyr"\n%s\n' "$PRE" "$MAIN" > "$D/myv.cyr"
 build_run myv
 
+# ── axis 3: every fold in docs/ecosystem.md, compiled together ──────────────────────────────────
+FOLDS=$(grep -oE '^\| `lib/[a-z_0-9]+\.cyr`' docs/ecosystem.md | sed -E 's/.*lib\/([a-z_0-9]+)\.cyr.*/\1/')
+NF=0
+for f in $FOLDS; do
+    NF=$((NF + 1))
+    [ -f "lib/$f.cyr" ] || { echo "FAIL: fold-namespace-collisions: docs/ecosystem.md names lib/$f.cyr, which is missing"; fail=1; }
+done
+if [ "$NF" -lt 12 ]; then echo "FAIL: fold-namespace-collisions: docs/ecosystem.md's fold table gave $NF folds (floor 12) — the reader matched too little"; exit 1; fi
+FALT=$(printf '%s\n' $FOLDS | paste -sd'|' -)
+REV=""
+for f in $FOLDS; do REV="$f $REV"; done
+check_all() {
+    tag=$1
+    hits=$(grep -E "^warning:lib/($FALT)\.cyr:" "$D/$tag.err" \
+        | grep -E "duplicate fn|duplicate symbol .* conflicting value|but a SINGLE value here" || true)
+    if [ -n "$hits" ]; then
+        echo "FAIL: fold-namespace-collisions ($tag): cross-fold collision or mixed return:"
+        echo "$hits" | sed 's/^/  /'
+        fail=1
+    fi
+}
+all_build() {
+    tag=$1; shift
+    { printf '%s\n' "$PRE"; for f in "$@"; do printf 'include "lib/%s.cyr"\n' "$f"; done
+      printf 'fn main() { return 0; }\nsyscall(SYS_EXIT, main());\n'; } > "$D/$tag.cyr"
+    "$CC" < "$D/$tag.cyr" > "$D/$tag.bin" 2> "$D/$tag.err"; crc=$?
+    check_all "$tag"
+    [ "$crc" -eq 0 ] || { echo "FAIL: fold-namespace-collisions ($tag): every fold together did not compile: $(grep -m2 '^error' "$D/$tag.err" | tr '\n' ' ')"; fail=1; }
+}
+all_build all_fwd $FOLDS
+all_build all_rev $REV
+
+# ── axis 4: the census — a top-level name two folds declare, whatever its value ──────────────────
+# names <file> <tag>: "<tag> <name>" per top-level `var` / `fn` (column 0, `public` / `private` /
+# `inline` / `async` allowed), one per name.
+names() {
+    grep -oE '^(public |private )?var [A-Za-z_][A-Za-z_0-9]*' "$1" | sed -E 's/^(public |private )?var /var /' | sort -u | sed "s/^/$2 /"
+    grep -oE '^(public |private )?(inline |async )?fn [A-Za-z_][A-Za-z_0-9]*' "$1" | sed -E 's/^.*fn /fn /' | sort -u | sed "s/^/$2 /"
+}
+# census <list-file>: the "kind name" pairs two or more tags declare
+census() { awk '{ k = $2 " " $3; key = k SUBSEP $1; if (!(key in seen)) { seen[key] = 1; n[k]++; who[k] = who[k] " " $1 } } END { for (k in n) if (n[k] > 1) print k ":" who[k] }' "$1" | sort; }
+# self-test: a planted same-value pair across two fixture files is found
+printf 'var _fnc_plant = 0;\nfn _fnc_pf(): i64 { return 1; }\n' > "$D/pa.cyr"
+printf 'var _fnc_plant = 0;\nfn _fnc_pf(): i64 { return 1; }\n' > "$D/pb.cyr"
+{ names "$D/pa.cyr" pa; names "$D/pb.cyr" pb; } > "$D/plant.lst"
+census "$D/plant.lst" > "$D/plant.hit"
+[ "$(grep -c '_fnc_plant\|_fnc_pf' "$D/plant.hit")" = 2 ] || { echo "FAIL: fold-namespace-collisions: the census missed a planted same-value pair (the reader is broken)"; fail=1; }
+: > "$D/folds.lst"
+for f in $FOLDS; do names "lib/$f.cyr" "$f" >> "$D/folds.lst"; done
+NV=$(grep -c ' var ' "$D/folds.lst"); NFN=$(grep -c ' fn ' "$D/folds.lst")
+if [ "$NV" -lt 1000 ] || [ "$NFN" -lt 1000 ]; then echo "FAIL: fold-namespace-collisions: the census read $NV var / $NFN fn names (floor 1000 each)"; fail=1; fi
+census "$D/folds.lst" > "$D/folds.hit"
+if [ -s "$D/folds.hit" ]; then
+    echo "FAIL: fold-namespace-collisions (census): a top-level name declared by two folds (one global for both, by include order; fix it in the fold's SOURCE):"
+    sed 's/^/  /' "$D/folds.hit"
+    fail=1
+fi
+
 [ "$fail" -eq 0 ] || exit 1
-echo "PASS: fold-namespace-collisions: yukti + mabda + vani + sakshi compile together with no cross-fold collision or mixed return, both orders; both vendor ids keep their values"
+echo "PASS: fold-namespace-collisions: yukti + mabda + vani + sakshi compile together with no cross-fold collision or mixed return, both orders; both vendor ids keep their values; all $NF folds compile together both ways, and no top-level name is declared by two folds ($NV var / $NFN fn names)"
 exit 0

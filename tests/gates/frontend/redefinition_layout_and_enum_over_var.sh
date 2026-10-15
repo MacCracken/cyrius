@@ -20,7 +20,9 @@
 #
 # Anti-vacuous rows: an IDENTICAL redefinition stays silent; distinct names stay silent; a zero
 # constant over a zero var is not reported; the literal-vs-enum conflict keeps its existing
-# CHKDUPVAL wording. The compilers are built FROM SOURCE, so reverting either fix turns this RED.
+# CHKDUPVAL wording. 6.7.12 (the user's decision D30, 2026-10-15): a CONSTANT zero prior (`var A = 0;`,
+# ev_zero) is a recorded constant now, so it takes the literal's CHKDUPVAL wording too (it took this
+# gate's enum-over-var wording, which keeps the computed priors: ev_call, ev_str). The compilers are built FROM SOURCE, so reverting either fix turns this RED.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: redefinition_layout_and_enum_over_var: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
@@ -98,7 +100,8 @@ for c in x86 aarch64; do
   expect "$c" sp_distinct "$LAY" 0
   expect "$c" ev_call      "duplicate symbol 'A' $EOV" 1
   expect "$c" ev_str       "duplicate symbol 'A' $EOV" 1
-  expect "$c" ev_zero      "duplicate symbol 'A' $EOV" 1
+  expect "$c" ev_zero      "duplicate symbol 'A' redefined with conflicting value" 1   # 6.7.12 (D30): a constant zero is compared
+  expect "$c" ev_zero      "$EOV" 0
   expect "$c" ev_zero_zero "duplicate symbol" 0
   expect "$c" ev_enum_enum "duplicate symbol" 0
   expect "$c" ev_literal   "redefined with conflicting value" 1

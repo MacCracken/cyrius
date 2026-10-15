@@ -50,3 +50,12 @@ Peel parentheses wrapping the WHOLE callee argument (as 6.7.6 made them transpar
 `_icall_callee` (the callee span `cst` .. the cursor) and in `_icall_rs_at` (`o + 1`), using `_pwrap_in` (parse.cyr,
 6.7.11). Rows beside struct_value_codegen.sh FP1-FP9 and tests/tcyr/crossos/fncall_struct_result.tcyr (x86 / IR / DCE /
 aarch64 / cx / PE), plus the vector receive in simd_return_shapes.sh.
+
+## Acceptance
+
+- D28 (the user, 2026-10-15: "refused as D24 refuses mk3(5)", the wrapped callee `(&mk3)` too, via this issue):
+  `var n: i64 = fncall1((&mk3), 5);` / `var n: i64 = callptr((&mk3), 5);` refused with D24's words naming mk3
+  ("cannot initialise 'n: i64' from 'mk3', which returns the struct 'P3' - declare 'n: P3' or bind a field") — add the
+  row beside struct_receive_inference_checked.sh FP0-FP10 (6.7.12 fixfirst shipped the unwrapped `&mk3` half there;
+  FP9 wraps the whole call, `((fncall0(&mk3)))`, not the callee). Measured on the 6.7.12 fixfirst lane: both compile
+  with no diagnostic and exit 139 (x86_64), as on 6.7.11.

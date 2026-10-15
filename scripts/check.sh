@@ -1087,6 +1087,8 @@ _chk_gate "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
 # and the "(last definition wins)" collision warning described a semantics the compiler did not
 # implement. Rows are checked against no-redeclaration CONTROL programs, with a cx leg (the one
 # target that stores the value rather than baking it) and an aarch64 leg under qemu.
+# 6.7.12 (D30): + rows W / XF — a conflicting value warns over an earlier constant zero (`var a = 0;`
+# then `var a = 5;`, and the two-file pair), as over any other constant; a same value stays silent.
 _chk_gate "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 
 # 6.6.20 (BACKLOG-01): a redefined FN binds every call to its last definition, as its warning
@@ -1125,7 +1127,9 @@ _chk_gate "$ROOT/tests/gates/frontend/closure_declared_names_not_captured.sh"
 # 6.7.11: inside a closure, `s.len` / `s.ptr` of a captured slice was "undefined variable 's'"
 # while `slice_len(&s)` read the copy. The fields read the captured copy (the user's decision (a),
 # 2026-10-13); a store into it is refused by name; host, cx and aarch64-qemu legs, and an async
-# coroutine row on the host.
+# coroutine row on the host. 6.7.12 (D29): an untyped `var q = p;` of a struct value is a typed copy
+# (`q.y` in a fn and in a closure; a `*T`, an untyped impl self and an untyped global stay words);
+# + a PE (wine) leg and crossos/untyped_struct_name_copy.tcyr on every leg.
 _chk_gate "$ROOT/tests/gates/frontend/closure_captured_slice_fields.sh"
 
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
@@ -1487,6 +1491,9 @@ _chk_gate "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
 # each other by include order, and mabda's and vani's `_sk_emit_err` did the same; vani's
 # drain/drop/state returned a raw integer beside Err, read as the tag. Both yukti/mabda orders;
 # each build also RUNS and must keep both vendor ids. Red on the 6.6.11 folds in both orders.
+# 6.7.12 (D30): every fold in docs/ecosystem.md compiles together (both orders, no collision
+# warning in a fold), and a census refuses a top-level var / fn name declared by two folds whatever
+# its value (sankoch / niyama's same-value `_bre_err` shape, which the compiler cannot see).
 _chk_gate "$ROOT/tests/gates/toolchain/fold_namespace_collisions.sh"
 
 # v6.5.2: ir_const_fold must not erase a following jump. EJCC/EJMP0 were the only two

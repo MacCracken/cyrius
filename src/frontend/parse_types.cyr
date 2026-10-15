@@ -2424,6 +2424,7 @@ fn _sl_last_marks(S, li, lbool, st, ann): i64 {
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
     _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
+    _gv_pvd_set(vi, _ek_vd(S, ann));   # 6.7.12: a `*V`'s vector
     _gv_tn_set(S, vi, ann);   # 6.7.8 (D5)
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
@@ -2506,11 +2507,57 @@ fn _gv_ped_get(vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gv_ped + vi);
 }
+# 6.7.12: and a `*V` global's vector (`_ek_vd`, bits 48-55 of the step word), a byte per global the same way.
+var _gv_pvd = 0;
+fn _gv_pvd_set(vi, vd): i64 {
+    if (_gv_pvd == 0) {
+        if (vd == 0) { return 0; }
+        _gv_pvd = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_pvd + vi, vd);
+    return 0;
+}
+fn _gv_pvd_get(vi): i64 {
+    if (_gv_pvd == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_pvd + vi);
+}
+# ⛔ 6.7.12 (D30) — "a declaration of global `vi` had a constant initializer", a byte per global (zero
+# included). The value alone (`_vgsi_base`) could not say it: 0 there also means "none", so CHKDUPVAL took a
+# prior `var a = 0;` for no constant and `var a = 0; var a = 5;` — two files' `var _shared = 0;` / `= 5;`,
+# one cell — compiled with no warning, where every other differing pair warns (the user's decision D30,
+# 2026-10-15). Set by PARSE_GVAR_REG beside the value; never cleared by a computed redeclaration, as the
+# value is not. Lazily allocated (no heap region), as `_gv_ped`. CHANGELOG [6.7.12]
+var _gv_lit = 0;
+fn _gv_lit_set(vi, b): i64 {
+    if (_gv_lit == 0) {
+        if (b == 0) { return 0; }
+        _gv_lit = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_lit + vi, b);
+    return 0;
+}
+fn _gv_lit_get(vi): i64 {
+    if (_gv_lit == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_lit + vi);
+}
+# 1 = prior global `pi` has a recorded constant (a non-zero value, or the byte above for a zero).
+fn _gv_has_lit(pi): i64 {
+    if (L64(_vgsi_base + pi * 8) != 0) { return 1; }
+    return _gv_lit_get(pi);
+}
 # The step word of a `*T` global `vi` (GVTYPE = 0 - its step, 6.6.17; T's kind beside it), else 0.
 fn _gv_ptr_word(S, vi): i64 {
     var vt = GVTYPE(S, vi);
     if (vt >= 0) { return 0; }
-    return _ps_word(0 - vt, _gv_ped_get(vi));
+    return _ps_vw(_ps_word(0 - vt, _gv_ped_get(vi)), _gv_pvd_get(vi));
 }
 fn _gv_ptr_sid(S, vi): i64 {
     if (_gv_psid == 0) { return 0; }
@@ -2567,6 +2614,34 @@ fn _ps_step(w): i64 {
     if (w < 0) { return w; }
     return w & 0xFFFFFFFFFF;
 }
+# ⛔ 6.7.12 — THE STEP WORD NAMES A VECTOR POINTEE. A `*V` (V a value-form vector) has no element kind (a vector
+# is no element a subscript loads), so its word said only "step 16 / 32": a dereference of it could not be told
+# from one of a `*u128` or of a 16-byte struct pointer, nor `*f64v2` from `*i32v4`. The vector's descriptor
+# (`_vec_desc`'s, less 2048: 44..130) rides bits 48-55 — above the kind, so every reader that takes the step
+# (`_ps_step`) or the kind (bits 40-47) is unchanged, and the slot mark's array band (`0 - 2^48 - N`) is read
+# only behind an array descriptor. A `*V` local, parameter, capture, field, global and `: *V` return carry it,
+# `p + n` keeps it, and `rd(*pv)` into a `*V` parameter passes pv (`_dlo_vec`, D27). The emitted bytes are
+# unchanged. CHANGELOG [6.7.12]
+# The vector the annotation `*V` (its `*` at token `ann`) points at, as bits 48-55 carry it; 0 otherwise.
+fn _ek_vd(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 2) { return 0; }
+    var c = _tn_resolve_at(S, ann + 1);
+    if (_tn_class(c) != 5) { return 0; }
+    return _tn_val(c) - 2048;
+}
+fn _ps_vw(w, vd): i64 {
+    if (w <= 0) { return w; }
+    return w | (vd << 48);
+}
+# The vector (its descriptor sid, >= 2048) step word `w` points at, or 0.
+fn _ps_vdesc(w): i64 {
+    if (w <= 0) { return 0; }
+    var vd = (w >> 48) & 0xFF;
+    if (vd == 0) { return 0; }
+    return vd + 2048;
+}
 # Two branches' words: the same word, else the shared step without a kind, else 0 (no step).
 fn _ps_merge(a, b): i64 {
     if (a == b) { return a; }
@@ -2585,10 +2660,11 @@ fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
 # `*`). `_sl_marks` sits at cybs's 6-parameter cap, so `_sl_last_marks` calls this.
 fn _sl_ptr_ed(S, li, ann): i64 {
     var ed = _ek_of_ptr_ann(S, ann);
-    if (ed == 0) { return 0; }
+    var vd = _ek_vd(S, ann);   # 6.7.12: a `*V`'s vector
+    if (ed == 0) { if (vd == 0) { return 0; } }
     var w = GSLICE_W(S, li);
     if (w > 0 - 0x7E01) { return 0; }
-    SSLICE_W(S, li, 0 - 0x7E00 - _ps_word(0 - w - 0x7E00, ed));
+    SSLICE_W(S, li, 0 - 0x7E00 - _ps_vw(_ps_word(0 - w - 0x7E00, ed), vd));
     return 0;
 }
 # The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
@@ -2724,6 +2800,7 @@ var _fld_ps = 0;   # per field-pool entry: the step word of a `*T` field (or T's
 fn _add_ptr_field(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume ':'
     var ed = _ek_of_ptr_ann(S, GTI(S));     # 6.7.8 (C2-3a): T's kind rides the step (`_ps_word`)
+    var vd = _ek_vd(S, GTI(S));             # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
     var ps = _fld_ptr_late(S);
     if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
@@ -2732,7 +2809,7 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    S64(_fld_ps + ent * 8, _ps_word(ps, ed));   # a late struct T (`0 - token`) keeps its form
+    S64(_fld_ps + ent * 8, _ps_vw(_ps_word(ps, ed), vd));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
     return 0;
 }
@@ -2836,10 +2913,11 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
         S64(_fn_rpsid + fi * 8, psid);
     }
     var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
+    var vd = _ek_vd(S, GTI(S));           # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
-    S64(_fn_rps + fi * 8, _ps_word(ps, ed));
+    S64(_fn_rps + fi * 8, _ps_vw(_ps_word(ps, ed), vd));
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
     return 0;
 }
@@ -3642,7 +3720,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # (issue 2026-06-14) BEFORE registering it, so the lookup sees only
                 # prior defs. Pass-1-only (emit_code==0) → no double-warn.
                 CHKDUPVAL(S, vnoff, val);
-                CHK_ENUM_OVER_VAR(S, vnoff, val);   # 6.6.9: the zero/computed-var prior CHKDUPVAL cannot compare
+                CHK_ENUM_OVER_VAR(S, vnoff, val);   # 6.6.9: the computed-var prior CHKDUPVAL cannot compare
                 S64(_varn_base + vcnt * 8, vnoff);
                 S64(_vars_base + vcnt * 8, 8);
                 # v5.5.2: record enum variant's compile-time value in the
@@ -4763,10 +4841,10 @@ fn _vis_check_var(S, vi, noff): i64 {
 # WARN only — never blocks the build. This is a best-effort lint that catches
 # the dangerous two-module collisions (one def per module); it deliberately
 # under-fires (false-negatives only, never false-positives) in these cases:
-#   - a prior literal-init-to-ZERO global is indistinguishable from an
-#     uninitialised 0x1EC000 slot, so a `var X = 0` prior is not compared (the
-#     dangerous SYS_*/ERR_* cases are enum or nonzero). 6.6.9: when the NEW
-#     definition is a nonzero enum constant, CHK_ENUM_OVER_VAR (above) reports it;
+#   - a prior with a COMPUTED initializer (`var X = f();`) has no value to compare.
+#     6.6.9: when the NEW definition is a nonzero enum constant, CHK_ENUM_OVER_VAR
+#     (above) reports it. (A prior constant ZERO is compared since 6.7.12 —
+#     `_gv_has_lit`, the user's decision D30: it read as "no literal".)
 #   - value-identical redefinitions are silent (intended);
 #   - (no index cap on either half any more.) 6.6.6 bite 19c removed a blanket
 #     `if (pi >= 1024) { return 0; }` over the WHOLE function, which made a LITERAL-init
@@ -4796,18 +4874,19 @@ fn _vis_check_var(S, vi, noff): i64 {
 # included — with no diagnostic. Measured: `var A = f();` then `enum { A = 4130 }` built rc 0
 # and read 4130 everywhere. A WARNING (as CHKDUPVAL is) so existing builds keep compiling; a
 # zero constant over such a var is not compared (a zero var and a zero constant agree).
-# CHANGELOG [6.6.9]
+# CHANGELOG [6.6.9] — 6.7.12 (D30): a CONSTANT zero prior (`var A = 0;`) is CHKDUPVAL's now
+# (`_gv_has_lit`), the conflicting-value warning as for a non-zero one; this keeps the computed.
 fn CHK_ENUM_OVER_VAR(S, noff, newval): i64 {
     if (newval == 0) { return 0; }
     var pi = _findvar_core(S, noff);
     if (pi < 0) { return 0; }
     if (GVECP(S, pi) == 1) { return 0; }                 # prior is an enum const: CHKDUPVAL
-    if (L64(_vgsi_base + pi * 8) != 0) { return 0; }     # prior literal recorded: CHKDUPVAL
+    if (_gv_has_lit(pi) == 1) { return 0; }              # prior constant recorded, zero too (6.7.12): CHKDUPVAL
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' is an enum constant here and a global variable before it (value 0 or computed) — every use now reads the constant, including the variable's own module\n", 155);
+    syscall(SYS_WRITE, 2, "' is an enum constant here and a global variable before it (computed) — every use now reads the constant, including the variable's own module\n", 144);
     return 0;
 }
 
@@ -4823,8 +4902,7 @@ fn CHKDUPVAL(S, noff, newval): i64 {
         pval = L64(_vecv_base + pi * 8);
         phas = 1;
     } else {
-        var plit = L64(_vgsi_base + pi * 8);   # prior literal-init global
-        if (plit != 0) { pval = plit; phas = 1; }
+        if (_gv_has_lit(pi) == 1) { pval = L64(_vgsi_base + pi * 8); phas = 1; }   # 6.7.12 (D30): a zero too
     }
     if (phas == 1) {
         if (pval != newval) {
