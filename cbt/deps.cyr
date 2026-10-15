@@ -2888,6 +2888,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # with the local-mode prescan and the dry run so the three cannot disagree).
             var rec = alloc(_DS_SIZE);
             si = _dep_sec_read(buf, n, si, manifest_dir, rec);
+            _dep_decl_note(dep_name, rec);   # 6.7.12 (D25): before any skip — a declaration read
             # 6.7.6 (part T) — SCOPE. A dependency's own `scope = "test"` deps are its own test
             # business: never walked by a consumer. The project's are resolved in phase 4, after
             # every production dependency (`_dep_test_pass`), so a name both sides reach is the
@@ -3919,6 +3920,7 @@ fn _deps_locked_compare(scratch): i64 {
         _ew("\n");
         d = d + 1;
     }
+    _dep_say_kept_pins();   # 6.7.12 (D25): a carried old-tag pin is named; it is not a difference
     return d;
 }
 
@@ -3966,6 +3968,8 @@ fn cmd_deps(): i64 {
     _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
     _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
     _dep_closure = vec_new();        # 6.7.12: every path this resolve vendors (_dep_copy_file)
+    _dep_decl_all = vec_new();       # 6.7.12 (D25): every tagged declaration a manifest read holds
+    _dep_decl_root = vec_new();      # ... and the root manifest's own
     # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
@@ -6501,6 +6505,80 @@ fn _dep_commit_fresh_count(): i64 {
     return k;
 }
 
+# 6.7.12 (D25) — record [deps.NAME]'s tag (rec, `_dep_sec_read`'s) as `name\ttag` in
+# `_dep_decl_all`, and in `_dep_decl_root` when the manifest is the project's own. CHANGELOG [6.7.12]
+fn _dep_decl_note(name, rec): i64 {
+    if (_dep_decl_all == 0) { return 0; }
+    var tag = load64(rec + _DS_TAG);
+    if (tag == 0) { return 0; }
+    var k = _cat2(_cat2(name, "\t"), tag);
+    vec_push(_dep_decl_all, k);
+    if (_dep_ctx_kind == 0) { vec_push(_dep_decl_root, k); }
+    return 0;
+}
+
+# The tag the root manifest declares for dep `name` (a `name\ttag` entry of `_dep_decl_root`), or 0.
+fn _dep_decl_root_tag(name): i64 {
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_decl_root)) {
+        var k = vec_get(_dep_decl_root, i);
+        i = i + 1;
+        if (memeq(k, name, nl) == 1 && load8(k + nl) == 9) { return k + nl + 1; }
+    }
+    return 0;
+}
+
+# ⭐ 6.7.12 (D25, the user, 2026-10-15) — A CARRIED PIN OF A ROOT DEP'S OTHER TAG IS NAMED, NEVER
+# DROPPED. cmd_deps_lock keeps every inherited `commit` line no fresh line supersedes (CYRIUS-2026-0030,
+# fail-closed: dropping by name lost a diamond's pin), so after `[deps.NAME] tag` moved the lock held
+# the old tag's line beside the new one, its summary counted one dep, `--locked` passed, and nothing
+# said the row was stale. Each carried line whose NAME the root manifest declares at ANOTHER tag, and
+# whose (name, tag) no manifest this resolve read declares (a diamond's transitive x@v1 is live, not
+# stale), now gets one note. Nothing written changes; `--locked` still passes. Only after a resolve
+# (`_dep_decl_root`): the bare `--lock` read no manifest. CHANGELOG [6.7.12]
+fn _dep_say_kept_pins(): i64 {
+    if (_dep_decl_root == 0 || _dep_lock_buf == 0 || _quiet == 1) { return 0; }
+    if (vec_len(_dep_decl_root) == 0) { return 0; }
+    var lb = _dep_lock_buf;
+    var ln = _dep_lock_len;
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lb + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lb + lw - 1) == 13) { lw = lw - 1; }
+        if (lw - pos > 7 && memeq(lb + pos, "commit", 6) == 1 && load8(lb + pos + 6) == 9) {
+            if (_dep_commit_fresh_has(lb + pos, lw - pos) == 0) { _dep_say_kept_pin(lb + pos, lw - pos); }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# One carried commit line (`n` bytes at `p`): the note when its name is a root dep declared at
+# another tag and no manifest read declares its own (name, tag) — see above.
+fn _dep_say_kept_pin(p, n): i64 {
+    var no = _lock_commit_field_at(p, n, 2);
+    var to = _lock_commit_field_at(p, n, 4);
+    if (no < 0 || to < 0) { return 0; }
+    var name = _git_cstr_copy(p + no, _lock_commit_field_len(p, n, no));
+    var tag = _git_cstr_copy(p + to, n - to);
+    if (_dep_path_in(_dep_decl_all, _cat2(_cat2(name, "\t"), tag)) == 1) { return 0; }
+    var rt = _dep_decl_root_tag(name);
+    if (rt == 0 || streq(rt, tag) == 1) { return 0; }
+    _ew("note: cyrius.lock keeps ");
+    _ew_shown(name);
+    _ew("@");
+    _ew_shown(tag);
+    _ew("'s pin (the manifest declares ");
+    _ew_shown(name);
+    _ew(" at ");
+    _ew_shown(rt);
+    _ew("), fail-closed; delete cyrius.lock to re-pin\n");
+    return 0;
+}
+
 fn _lock_cstr_cmp(a, b): i64 {
     var i = 0;
     while (1 == 1) {
@@ -6631,6 +6709,8 @@ fn cmd_deps_lock(): i64 {
     # (delete
     # cyrius.lock to re-pin). Not filtered to the manifest's names either: a transitive dep of a
     # gated-out dep is declared only in that dep's own, unread manifest.
+    # 6.7.12 (D25, the user, 2026-10-15): kept AND NAMED — a carried line of a root dep's other tag
+    # gets a note after the summary (_dep_say_kept_pins); nothing written changes. CHANGELOG [6.7.12]
     # SORTED (_lock_commit_line_cmp): fresh-then-carried order wrote one pin set in an order set
     # by which deps the run re-verified — the 6.6.3 churn class. CHANGELOG [6.6.20]
     var _pins = vec_new();
@@ -6704,6 +6784,7 @@ fn cmd_deps_lock(): i64 {
         sys_write(STDOUT_FD, " re-verified)", 13);
     }
     println("");
+    if (_dep_lock_only == 0) { _dep_say_kept_pins(); }   # 6.7.12 (D25): named, not dropped
     return 0;
 }
 

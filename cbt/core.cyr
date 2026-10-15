@@ -115,6 +115,11 @@ var _dep_lock_guard_verb = "deps";
 # out: stdlib leaves and their includes, the test scope's leaves, every named dep's modules. 0
 # outside cmd_deps. lib/ is read against it (_dep_out_of_closure). CHANGELOG [6.7.12]
 var _dep_closure = 0;
+# 6.7.12 (D25) — vec<cstr> of `name\ttag` for every tagged [deps.NAME] a manifest this resolve read
+# declares (resolved, skipped or gated), and the root manifest's own: the kept-pin notice reads a
+# carried commit pin against them (cbt/deps.cyr _dep_say_kept_pins). 0 outside cmd_deps.
+var _dep_decl_all = 0;
+var _dep_decl_root = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.

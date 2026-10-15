@@ -4508,7 +4508,13 @@ is the explicit accept when the snapshot legitimately moved (e.g. after
 `scripts/verify-store.sh --restore`). Before 6.6.4 the resolver re-vendored and re-locked the
 mutated file silently and `deps --verify` then passed on it. A lock written before 6.6.4 has
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
-re-hashes `lib/` **keeping** the commit pins (it used to drop them).
+re-hashes `lib/` **keeping** the commit pins (it used to drop them). A resolve never drops a
+`commit` line it did not re-verify (6.6.20, fail-closed — a repointed old tag stays refused), so
+after a `[deps.NAME] tag` moves the lock keeps the old tag's line beside the new one; since 6.7.12
+every resolve, and `--locked` (which still passes), names it: `note: cyrius.lock keeps
+darshana@1.2.1's pin (the manifest declares darshana at 1.3.0), fail-closed; delete cyrius.lock to
+re-pin`. A line a manifest the resolve read still declares (a diamond's transitive `x@v1`) is live,
+and not named.
 
 **A pin bump in a project that vendors the whole snapshot (6.7.12).** The lock records ONE pin
 for every row, so a resolve at a moved `[package].cyrius` does **not** re-lock while `lib/` holds
