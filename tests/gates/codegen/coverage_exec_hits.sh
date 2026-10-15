@@ -63,7 +63,7 @@
 #   CC1 an instrumented cycc compiles src/main.cyr byte-identical to cycc(src); its dump is ONE block
 #       of > 500 records (through src/main.cyr's own `syscall(SYS_EXIT, _had_error);`)
 #   L1-L5 aarch64 (qemu), the main_aarch64_native fork (qemu), PE through main.cyr and through the
-#       main_win fork (wine), cx (cxvm; no `main` auto-call there, so its probes fall off the top level)
+#       main_win fork (wine), cx (cxvm; H1 there since 6.7.11, when cx gained the `main` auto-call)
 #
 # GROUP E — EVERY EXIT ROUTE (P5B-3). A program that leaves through an exit syscall never reaches
 # `_cov_tail`, so the syscall builtin hooks every exit whose NUMBER is a compile-time constant
@@ -94,8 +94,8 @@
 #       none precedes `syscall(60, ..)`
 #   DW  Darwin's 0x209 open flags in the x86 and arm64 Mach-O dumps, Linux's 0x441 in neither
 #   Legs: E1-E3, E11-E13 on x86, aarch64 (qemu), the native fork (qemu), PE via main.cyr and
-#   main_win (wine) and cx; E6 / E7 wherever `main` is auto-called; E8 / E9 on x86 and aarch64;
-#   E1b / E7 under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0
+#   main_win (wine) and cx; E6 / E7 wherever `main` is auto-called (cx too since 6.7.11); E8 / E9 on
+#   x86 and aarch64; E1b / E7 under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0
 #
 # GROUP F — EVERY FN SHAPE (P5B-4). An `#inline` replay re-parses its callee's body inside the
 # caller and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
@@ -198,6 +198,9 @@
 #   MG4  the guide's stated exit altered (`# 11` -> `# 12`)           -> RED 2 of 250: G1 G1'
 #   MG5  the guide's derive clause altered (`closing `}`` -> `struct` line) -> RED 1 of 251: G5 (the 6.7.10
 #        review: the guide said every `<line>` is the `fn` keyword's, which a derive-written fn has not)
+# MUTATION LEDGER (6.7.11, cx's `main` auto-call; a scratch copy of the tree; "N of 254"):
+#   MA1  the auto-call's `ECALLTO` dropped from src/main_cx.cyr    -> RED 3 of 254: L5 cx H1 (exit 0, the
+#        header alone), E6 / E7 cx (exit 0, not 134 / 1)
 # NOT MUTATION-PROVABLE, said by name (plan §5; the 6.7.10 review), kept as defensive lines:
 #   - the two `_IR_REC0(S, IR_RAW_EMIT)` marks in `_cov_hit`: P11 measured identical output without them;
 #     the IR=3 rows are pinned by M2.
@@ -607,8 +610,8 @@ else
 fi
 
 # ── L: the other targets — aarch64 (qemu), the native aarch64 fork (qemu), PE through main.cyr and
-# through the main_win fork (wine), cx (cxvm; cx has no `main` auto-call, so its probes fall off the
-# top level) ──────────────────────────────────────────────────────────────────────────────────────
+# through the main_win fork (wine), cx (cxvm; its H1 returns from the auto-called `main`, 6.7.11)
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
 if [ "$HAVE_QEMU" = 1 ]; then
     if [ -x "$T/cc_a64" ]; then
         hx "L1 aarch64 (qemu): H1" "$T/h1.cyr" "$T" qemu "$T/h1.want" "$T/cc_a64"
@@ -634,6 +637,7 @@ if [ -x "$T/cc_cx" ]; then
     printf '%s\n2 <source>:1 code\n2 <source>:2 deep2\n2 <source>:3 deep1\n' "$HDR" > "$T/l5.want"
     hx "L5 cx (cxvm): three frames deep, twice; the exit is the last var" "$T/l5.cyr" "$T" cxvm "$T/l5.want" "$T/cc_cx"
     hx "L5 cx (cxvm): H3" "$T/h3.cyr" "$T" cxvm "$T/h3.want" "$T/cc_cx"
+    hx "L5 cx (cxvm): H1 — the auto-called main counted, its return the exit (6.7.11)" "$T/h1.cyr" "$T" cxvm "$T/h1.want" "$T/cc_cx"
 else bad "L5 cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -742,7 +746,7 @@ en() {
     else ok "$row (exit $got; no dump)"; fi
 }
 # eleg <leg> <runner> <compiler> [env...]: the rows every target runs (each falls off or calls its
-# top level explicitly, so cx — no `main` auto-call — runs them too)
+# top level explicitly)
 eleg() {
     leg=$1; runr=$2; comp=$3; shift 3
     ex_ "E1a $leg: sys_exit(code()) three frames deep" "$T/e1a.cyr" "$runr" "$T/e1.want" 5 "$comp" "$@"
@@ -858,6 +862,7 @@ fi
 if [ -x "$T/cc_cx" ]; then
     eleg "cx (cxvm)" cxvm "$T/cc_cx"
     ex_ "E4 cx (cxvm): cxvm passes 231 to the host as exit_group — exit 23, ONE block" "$T/e4.cyr" cxvm "$T/e4.want" 23 "$T/cc_cx"
+    emain "cx (cxvm)" cxvm "$T/cc_cx"
 else bad "E cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -865,9 +870,9 @@ else bad "E cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 # CALLER and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
 # `PARSE_FNCALL`'s PARSE_PROG); a closure bumps its own once its frame is open (`_cl_frame_open`,
 # the 1-for-1 swap for `_PARSE_FACTOR_IMPL`'s ESUBRSP), named at its closing bar's line; a `#naked`
-# fn is recorded as not instrumented (`- <file>:<line> <name>`). Each probe falls off the top level
-# (cx has no `main` auto-call), holds the exit to the plain build's and to its stated value, and the
-# whole dump exactly (no lib is included, so every record is the program's own).
+# fn is recorded as not instrumented (`- <file>:<line> <name>`). Each probe falls off the top level,
+# holds the exit to the plain build's and to its stated value, and the whole dump exactly (no lib is
+# included, so every record is the program's own).
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 cat > "$T/f1.cyr" << 'EOF'
 #inline

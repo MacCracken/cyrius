@@ -2184,7 +2184,8 @@ before its first statement.
 
 **When it dumps.**
 
-- the program falls off the end of its top level, or the `main` it defines returns (the auto-call);
+- the program falls off the end of its top level, or the `main` it defines returns (the auto-call,
+  on every target — cx's since 6.7.11);
 - the program makes an exit syscall whose NUMBER is a compile-time constant — a literal, a `const` or
   an `enum` value: `sys_exit`, `sys_exit_group`, `panic`, the stdlib's aborts, a bounds violation's
   exit 134, `syscall(SYS_EXIT, main())`. The dump runs after the syscall's arguments are evaluated, so
@@ -2216,10 +2217,8 @@ overwrites the other. Only whether a fn was entered is stable from run to run, a
 **Per target.** The dump opens its file through the routes every target already has — no new OS
 call: `O_WRONLY | O_CREAT | O_APPEND` on Linux, Windows and cx, the Darwin flags (0x209) on macOS, and
 on agnos `AO_WRONLY | AO_CREAT | AO_APPEND` followed by a seek to the end (its kernel does not honour
-`AO_APPEND` yet). cx takes no `#naked`, so such a fn is an ordinary counted one there, and cx does not
-auto-call `main`: a cx program whose only call is the implicit one exits 0 with a header-only block
-(call it from the top level — `var r = main();`). `cyrius coverage --exec` runs host binaries only,
-so it never runs cx bytecode.
+`AO_APPEND` yet). cx takes no `#naked`, so such a fn is an ordinary counted one there.
+`cyrius coverage --exec` runs host binaries only, so it never runs cx bytecode.
 
 **Reserved names.** The dump is four fns the compiler appends to the program —
 `__cyrius_cov_cp`, `__cyrius_cov_num`, `__cyrius_cov_w` and `__cyrius_cov_dump`; the `__cyrius_`

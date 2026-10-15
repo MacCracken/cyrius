@@ -2520,6 +2520,12 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_receive_inference_checked.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
+# 6.7.11 — cx calls the `fn main` a program defines from the entry epilogue, as every image target
+# does (the user's decision (a), 2026-10-13): `var g = 3; fn main(): i64 { return 7; }` exited 3 on
+# cxvm, `fn main` alone 0, and a .tcyr leaving `main` to the epilogue ran no assertion. The filed
+# repro, twice when also called, the exact name; three .tcyr pass on cxvm, two pinned at the filed
+# guest-contract limits. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
 # 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
 # position is refused by name, uninitialised / value / address / word uses refused (decision 7). The
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's
