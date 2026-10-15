@@ -1191,6 +1191,16 @@ fn current_cc(): i64 {
 
 fn arch_name(): i64 {
     if (_arch == ARCH_AARCH64) { return "aarch64"; }
+    # 6.7.12 — on an aarch64 Linux host the default build runs the host's own cycc (`_cc`), which
+    # emits aarch64, while `_arch` stays X86 (ARCH_AARCH64 would make current_cc() pick
+    # cycc_aarch64, an x86_64 binary no aarch64 host ships): every build there said `[x86_64]`.
+    # (macOS arm64 sets ARCH_AARCH64 itself — its native compiler is named cycc_aarch64.)
+    # CHANGELOG [6.7.12]
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "aarch64";
+    #endif
+    #endif
     return "x86_64";
 }
 

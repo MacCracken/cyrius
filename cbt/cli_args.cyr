@@ -736,9 +736,7 @@ fn _cli_features_all(): i64 {
 # exited 0 — on Windows (wine), ecb and ach alike (measured) — plus a "kernel: entry …" line for an
 # ELF that was never written. A dropped flag that changes the artifact is the 6.6.5 one-argument
 # rule's defect. What the host emits, or 0 on Linux: x86_64 Linux honours the selectors (src/main.cyr
-# reads them); the aarch64 Linux CLI's forks read CYRIUS_KERNEL alone and drop `--agnos` / the x86_64
-# bare-metal target (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
-# CHANGELOG [6.7.11]
+# reads them); the aarch64 Linux CLI is `_cli_host_emits_no_x86` below. CHANGELOG [6.7.11]
 fn _cli_host_emits_only(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return "the Windows CLI: cycc.exe emits PE only";
@@ -749,15 +747,36 @@ fn _cli_host_emits_only(): i64 {
     return 0;
 }
 
-# 1 (after naming it on stderr) when `flag` selects a target this host's compiler cannot emit.
-fn _cli_host_refuses(flag): i64 {
+# 6.7.12 (D6, the user 2026-10-15) — the aarch64 Linux CLI. Its compiler (src/main_aarch64*.cyr)
+# emits aarch64 and reads CYRIUS_KERNEL alone, never CYRIUS_TARGET_AGNOS / CYRIUS_ELF64_KERNEL, so
+# `--agnos` wrote a plain aarch64 Linux ELF and `--target=x86_64-bare-metal-elf` an aarch64 image
+# under an x86_64 multiboot2 entry line, both OK at rc 0 (pi, 6.7.11). What it cannot emit is an
+# x86_64 image; `--target=aarch64-bare-metal-elf` stays (the forks honour CYRIUS_KERNEL). 0 on
+# every other host. CHANGELOG [6.7.12]
+fn _cli_host_emits_no_x86(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "the aarch64 Linux CLI: its cycc emits aarch64 only";
+    #endif
+    #endif
+    return 0;
+}
+
+# 1 (after naming it on stderr) when `flag` selects a target this host's compiler cannot emit;
+# `x86` is 1 for a target only an x86_64-emitting compiler builds (`--agnos`, the x86_64 bare-metal
+# image), which the aarch64 Linux CLI refuses as well.
+fn _cli_host_refuses(flag, x86): i64 {
     var why = _cli_host_emits_only();
+    var tail = " (build agnos / bare-metal images on Linux)\n";
+    if (why == 0 && x86 == 1) {
+        why = _cli_host_emits_no_x86();
+        tail = " (build agnos / x86_64 bare-metal images on x86_64 Linux)\n";
+    }
     if (why == 0) { return 0; }
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, flag, strlen(flag));
     sys_write(STDERR_FD, " is not available from ", 23);
     sys_write(STDERR_FD, why, strlen(why));
-    var tail = " (build agnos / bare-metal images on Linux)\n";
     sys_write(STDERR_FD, tail, strlen(tail));
     return 1;
 }
@@ -784,15 +803,15 @@ fn _cli_foreign_target(): i64 {
         if (_cli_host_refuses_pie() == 1) { return 1; }
     }
     if (_cli_has("--agnos") == 1) {
-        if (_cli_host_refuses("--agnos") == 1) { return 1; }
+        if (_cli_host_refuses("--agnos", 1) == 1) { return 1; }
     }
     var tgt = _cli_val("--target");
     if (tgt == 0) { return 0; }
     if (streq(tgt, "x86_64-bare-metal-elf") == 1) {
-        return _cli_host_refuses("--target=x86_64-bare-metal-elf");
+        return _cli_host_refuses("--target=x86_64-bare-metal-elf", 1);
     }
     if (streq(tgt, "aarch64-bare-metal-elf") == 1) {
-        return _cli_host_refuses("--target=aarch64-bare-metal-elf");
+        return _cli_host_refuses("--target=aarch64-bare-metal-elf", 0);
     }
     return 0;
 }

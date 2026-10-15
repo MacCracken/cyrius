@@ -7226,13 +7226,16 @@ CYRIUS_TARGET_AGNOS=1 cycc < ...
 
 The Windows and macOS CLIs **refuse** `--agnos` and both bare-metal targets
 (`--target=x86_64-bare-metal-elf`, `--target=aarch64-bare-metal-elf`) by name, rc 1, before
-anything compiles: their compilers emit PE or Mach-O only. ⚠ The aarch64 Linux CLI does not
-honour `--agnos` or `--target=x86_64-bare-metal-elf` yet: its compiler reads `CYRIUS_KERNEL`
-alone, so it writes an aarch64 binary at rc 0 (issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md).
+anything compiles: their compilers emit PE or Mach-O only. The aarch64 Linux CLI refuses
+`--agnos` and `--target=x86_64-bare-metal-elf` the same way (6.7.12): its compiler emits aarch64
+and reads `CYRIUS_KERNEL` alone — through 6.7.11 it wrote a plain aarch64 binary (or an aarch64
+image under an x86_64 kernel line) at rc 0 — while `--target=aarch64-bare-metal-elf` stays allowed
+there. Build agnos and x86_64 kernel images on an x86_64 Linux host.
 
 ```
 error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)
 error: --agnos is not available from the macOS CLI: cycc emits Mach-O only (build agnos / bare-metal images on Linux)
+error: --agnos is not available from the aarch64 Linux CLI: its cycc emits aarch64 only (build agnos / x86_64 bare-metal images on x86_64 Linux)
 ```
 
 ⚠ Before 6.7.11 they accepted the flag, built the host format, printed `OK` and exited 0
