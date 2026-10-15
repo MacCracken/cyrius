@@ -29,11 +29,12 @@ include "cbt/sigclean.cyr"
 #ifndef CYRIUS_TARGET_CX
 var _ckh_parent = 0;
 
-# "/tmp/ckh<tag>.<parent pid><suffix>" — a fresh arena string.
+# "/tmp/" "ckh<tag>.<parent pid><suffix>" — a fresh arena string, per process (the parent's pid).
 fn _ckh_path(tag, suffix): i64 {
     var p = alloc(96);
     var o = 0;
-    memcpy(p, "/tmp/ckh", 8);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, "ckh", 3);
     o = 8;
     memcpy(p + o, tag, strlen(tag));
     o = o + strlen(tag);
