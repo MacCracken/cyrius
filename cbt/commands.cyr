@@ -1174,14 +1174,18 @@ fn _bench_all(empty_fails): i64 {
     return _bench_summary(load64(&pass_store), load64(&fail_store));
 }
 
-fn cmd_check(source, with_deps): i64 {
+fn cmd_check(source, with_deps, no_redirect): i64 {
     # v5.7.8: default skip_deps=1 (parse the file standalone — syntax-
     # checking should not drag the manifest dep graph into the parse).
     # Pass --with-deps to opt back into the legacy auto-prepend
     # behavior, useful when checking a file that depends on stdlib
     # modules pulled in by the manifest.
     var actual = source;
-    if (with_deps == 1) {
+    if (with_deps == 1 && no_redirect == 1) {
+        # 6.7.12 — `--no-redirect`: the source itself is the unit (cyrius-lsp: the redirect below
+        # published src/main.cyr's diagnostics on an include-free module and never its own).
+        # CHANGELOG [6.7.12]
+    } elif (with_deps == 1) {
         # Legacy module-redirect: if FILE has no include directives,
         # try the project entry point so transitive symbols resolve.
         var check_buf = alloc(4096);

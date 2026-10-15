@@ -1005,12 +1005,39 @@ fn _lsp_reap(pid): i64 {
 }
 
 # v5.11.56: fork cyrius wrapper with cwd=project_root, exec
-# `cyrius check --with-deps <filepath>`. Wrapper handles [deps.*]
+# `cyrius check --with-deps --no-redirect <filepath>`. Wrapper handles [deps.*]
 # resolution that raw cycc (read source from stdin, no project
 # context) can't see. Closes the undefined-stdlib-fn false-positive
 # class. Returns stderr buffer (never NULL except on pipe failure
 # upstream of fork).
+# 6.7.12 — `--no-redirect`: the open file is the unit. `--with-deps` alone keeps the CLI's legacy
+# module redirect, which compiled `src/main.cyr` instead of any file with no `include`, so such a
+# file showed the entry's diagnostics and never its own. A toolchain older than 6.7.12 (a project
+# can pin one) refuses the flag by name; then the check runs again without it, as before.
+# CHANGELOG [6.7.12]
 fn _compile_via_wrapper(filepath, project_root): i64 {
+    var out = _compile_via_wrapper_run(filepath, project_root, 1);
+    if (out != 0 && _lsp_has(out, "unknown option '--no-redirect'") == 1) {
+        log_msg("this project's cyrius predates --no-redirect (6.7.12): checking with the module redirect");
+        out = _compile_via_wrapper_run(filepath, project_root, 0);
+    }
+    return out;
+}
+
+# 1 when the cstr `hay` contains the cstr `needle`.
+fn _lsp_has(hay, needle): i64 {
+    var hl = strlen(hay);
+    var nl = strlen(needle);
+    var i = 0;
+    while (i + nl <= hl) {
+        if (memeq(hay + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# One `cyrius check --with-deps [--no-redirect] <filepath>` run from `project_root`; its stderr.
+fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
     var pipe_fds[16];
     var pr = sys_pipe(&pipe_fds);
     if (pr < 0) { return 0; }
@@ -1034,12 +1061,15 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
         # x86-macho 80→12) and is correct on every target. See the macho route
         # parity gate, tests/gates/platform/macho_route_parity.sh.
         sys_chdir(project_root);
-        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 5 ptrs = 40 B
+        var argv[48];   # N BYTES per CLAUDE.md buffer contract: 6 ptrs = 48 B
+        var ai = 0;
         store64(&argv, _cyrius_path);
         store64(&argv + 8, "check");
         store64(&argv + 16, "--with-deps");
-        store64(&argv + 24, filepath);
-        store64(&argv + 32, 0);
+        ai = 24;
+        if (no_redirect == 1) { store64(&argv + ai, "--no-redirect"); ai = ai + 8; }
+        store64(&argv + ai, filepath);
+        store64(&argv + ai + 8, 0);
         var envp = _build_envp_from_proc();
         if (envp == 0) {
             var envp_empty[1];
@@ -1064,6 +1094,10 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
     return errbuf;
 }
 
+# 6.7.12 — the directory the diagnostics' relative file names resolve against first: the project
+# root when the last compile ran `cyrius check` there, 0 when it ran cycc on the file directly.
+var _lsp_last_root = 0;
+
 # Run cycc on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
 # v5.11.56: when both the cyrius wrapper and a project root are
@@ -1074,9 +1108,11 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
 # cycc (pre-.56 behavior) for files outside any project tree or
 # when the wrapper isn't installed.
 fn compile_and_capture(filepath): i64 {
+    _lsp_last_root = 0;
     if (_cyrius_path != 0) {
         var project_root = find_project_root(filepath);
         if (project_root != 0) {
+            _lsp_last_root = project_root;
             return _compile_via_wrapper(filepath, project_root);
         }
     }
@@ -1144,158 +1180,351 @@ fn compile_and_capture(filepath): i64 {
 # DIAGNOSTIC PARSING
 # ================================================================
 
-# Parse cycc stderr output into LSP diagnostics JSON.
-# cycc format: "error:filename:line: message\n" or "warning:filename:line: message\n"
-# Sends publishDiagnostics notification for the given URI.
-fn parse_and_send_diagnostics(uri, stderr_output): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"");
-    str_builder_add_cstr(sb, uri);
-    str_builder_add_cstr(sb, "\",\"diagnostics\":[");
+# Parse the compiler's stderr into LSP diagnostics and publish them.
+# A diagnostic line is `error:<file>:<line>:<col>: <message>` (cycc; `<source>` for the unit it
+# read), `error:<file>:<line>: <message>` or `error:<line>: <message>` (older forms), or a bare
+# `error: <message>` (no location: published on the open file's line 0); `warning:` likewise.
+# ⛔ 6.7.12 — this read only `error:<file>:<line>:`, skipping the file name unread: the column
+# stayed in the message (`14: undefined variable …`), the range was always characters 0-100,
+# and an error in an INCLUDED file was published on the open document at that line number.
+# Now the column gives the range's start (col - 1, to the end of that source line) and leaves the
+# message, and each diagnostic is published on the URI of the file it names. A relative name
+# resolves as cycc resolved it: against the project root (the checker's working directory) when
+# `cyrius check` ran there, then against the open file's directory (the entry's, `#@incdir`); a
+# name that resolves to no file stays on the open file's line 0 with its location in the text.
+# The files a unit published on are remembered, and a recompile that no longer names one
+# publishes an empty list there, so a fixed include's error does not stick. CHANGELOG [6.7.12]
+var _ld_file = 0;   # vec of cstr: the file each diagnostic is published on (resolved)
+var _ld_line = 0;   # vec: 0-based line
+var _ld_col = 0;    # vec: 0-based start character
+var _ld_sev = 0;    # vec: 1 error, 2 warning
+var _ld_ms = 0;     # vec: the message's start offset in the compiler's text
+var _ld_me = 0;     # vec: its end offset
+var _lsp_pub_units = 0;   # vec of cstr: per (unit, file) pair, the unit (an open document's path)
+var _lsp_pub_files = 0;   # vec of cstr: the file that unit last published diagnostics on
 
-    var slen = strlen(stderr_output);
-    if (slen == 0) {
-        # No errors — clear diagnostics
-        str_builder_add_cstr(sb, "]}}");
-        send_response(str_data(str_builder_build(sb)));
+# The digits at s[p, eol) as a number; *endp = the first non-digit (p when there is none).
+fn _lsp_num(s, p, eol, endp): i64 {
+    var v = 0;
+    var q = p;
+    while (q < eol && load8(s + q) >= 48 && load8(s + q) <= 57) {
+        v = v * 10 + load8(s + q) - 48;
+        q = q + 1;
+    }
+    store64(endp, q);
+    return v;
+}
+
+# The directory of `path`, without its trailing slash ("" for a bare name).
+fn _lsp_dir_of(path): i64 {
+    var n = strlen(path);
+    var slash = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        if (load8(path + i) == 47) { slash = i; }
+        i = i + 1;
+    }
+    if (slash < 0) { slash = 0; }
+    var d = alloc(slash + 1);
+    memcpy(d, path, slash);
+    store8(d + slash, 0);
+    return d;
+}
+
+# `dir` + "/" + s[p, p + n) as a fresh cstr.
+fn _lsp_join(dir, s, p, n): i64 {
+    var dl = strlen(dir);
+    var r = alloc(dl + n + 2);
+    memcpy(r, dir, dl);
+    store8(r + dl, 47);
+    memcpy(r + dl + 1, s + p, n);
+    store8(r + dl + 1 + n, 0);
+    return r;
+}
+
+# The file a diagnostic names (s[p, p + n)), resolved: `<source>` is the open file; an absolute
+# name is itself; a relative one is tried against `root` (when there is one) and then the open
+# file's directory. 0 when it names no file there.
+fn _lsp_resolve_file(s, p, n, open_path, root): i64 {
+    if (n == 8 && memeq(s + p, "<source>", 8) == 1) { return open_path; }
+    if (n > 0 && load8(s + p) == 47) {
+        var a = alloc(n + 1);
+        memcpy(a, s + p, n);
+        store8(a + n, 0);
+        return a;
+    }
+    if (root != 0) {
+        var c1 = _lsp_join(root, s, p, n);
+        if (file_exists(c1) == 1) { return c1; }
+    }
+    var c2 = _lsp_join(_lsp_dir_of(open_path), s, p, n);
+    if (file_exists(c2) == 1) { return c2; }
+    return 0;
+}
+
+var _lsp_ll_path = 0;   # the file _lsp_line_len last read, and its text
+var _lsp_ll_buf = 0;
+var _lsp_ll_len = 0;
+
+# The length in bytes of 0-based line `line` of `path` (its `\r` excluded); -1 when the file or
+# the line is not there.
+fn _lsp_line_len(path, line): i64 {
+    if (_lsp_ll_path == 0 || streq(_lsp_ll_path, path) == 0) {
+        var tot = 0;
+        _lsp_ll_buf = file_read_whole(path, &tot);
+        _lsp_ll_len = tot;
+        _lsp_ll_path = path;
+    }
+    if (_lsp_ll_buf == 0) { return 0 - 1; }
+    var b = _lsp_ll_buf;
+    var n = _lsp_ll_len;
+    var i = 0;
+    var l = 0;
+    while (l < line && i < n) {
+        if (load8(b + i) == 10) { l = l + 1; }
+        i = i + 1;
+    }
+    if (l < line) { return 0 - 1; }
+    var e = i;
+    while (e < n && load8(b + e) != 10) { e = e + 1; }
+    if (e > i && load8(b + e - 1) == 13) { e = e - 1; }
+    return e - i;
+}
+
+# Append `s[a, b)` to `sb`, JSON-escaped (quote, backslash; a control byte becomes a space).
+fn _lsp_json_esc(sb, s, a, b): i64 {
+    var i = a;
+    while (i < b) {
+        var ch = load8(s + i);
+        if (ch == 34) { str_builder_add_cstr(sb, "\\\""); }
+        elif (ch == 92) { str_builder_add_cstr(sb, "\\\\"); }
+        elif (ch < 32) { str_builder_add_cstr(sb, " "); }
+        else {
+            var cbuf[2];
+            store8(&cbuf, ch);
+            store8(&cbuf + 1, 0);
+            str_builder_add_cstr(sb, &cbuf);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Record one parsed diagnostic.
+fn _lsp_diag_add(file, line, col, sev, ms, me): i64 {
+    vec_push(_ld_file, file);
+    vec_push(_ld_line, line);
+    vec_push(_ld_col, col);
+    vec_push(_ld_sev, sev);
+    vec_push(_ld_ms, ms);
+    vec_push(_ld_me, me);
+    return 0;
+}
+
+# 1 when line s[pos, eol) is the CLI's compile verdict for `open_path` — `error: <path> (compiler
+# exit N)` or `… (the compiler did not exit normally)`, printed after the compiler's own
+# diagnostics: it repeats them and is not one.
+fn _lsp_is_verdict(s, pos, eol, open_path): i64 {
+    var ol = strlen(open_path);
+    if (eol - pos < 7 + ol + 2) { return 0; }
+    if (memeq(s + pos, "error: ", 7) != 1) { return 0; }
+    if (memeq(s + pos + 7, open_path, ol) != 1) { return 0; }
+    var t = pos + 7 + ol;
+    if (eol - t >= 16 && memeq(s + t, " (compiler exit ", 16) == 1) { return 1; }
+    if (eol - t >= 37 && memeq(s + t, " (the compiler did not exit normally)", 37) == 1) { return 1; }
+    return 0;
+}
+
+# Parse one `error:` / `warning:` line, s[pos, eol), whose location starts at `p`.
+fn _lsp_parse_diag(s, p, eol, sev, open_path, root): i64 {
+    var endp[8];
+    if (p < eol && load8(s + p) == 32) {   # `error: message` — no location
+        _lsp_diag_add(open_path, 0, 0, sev, p + 1, eol);
         return 0;
     }
-
-    var pos = 0;
-    var diag_count = 0;
-
-    while (pos < slen) {
-        # Find end of line
-        var eol = pos;
-        while (eol < slen && load8(stderr_output + eol) != 10) { eol += 1; }
-
-        var line_start = pos;
-        var line_len = eol - pos;
-
-        # Check for "error:" or "warning:" prefix
-        var severity = 0;
-        var msg_start = pos;
-
-        if (line_len > 6 && memeq(stderr_output + pos, "error:", 6) == 1) {
-            severity = 1;
-            msg_start = pos + 6;
-        }
-        elif (line_len > 8 && memeq(stderr_output + pos, "warning:", 8) == 1) {
-            severity = 2;
-            msg_start = pos + 8;
-        }
-
-        if (severity > 0) {
-            # Parse cycc error format after "error:" or "warning:" prefix
-            # Formats:
-            #   "error: message"                    (no location)
-            #   "error:42: message"                 (line only)
-            #   "error:file.cyr:42: message"        (file + line)
-            var diag_line = 0;
-            var diag_msg_start = msg_start;
-
-            # Skip leading space if present (e.g. "error: message")
-            var p = msg_start;
-            if (p < eol && load8(stderr_output + p) == 32) {
-                # "error: message" — no line number, message starts after space
-                diag_msg_start = p + 1;
-            } else {
-                # Try to parse a number directly
-                var got_num = 0;
-                while (p < eol && load8(stderr_output + p) >= 48 && load8(stderr_output + p) <= 57) {
-                    diag_line = diag_line * 10 + load8(stderr_output + p) - 48;
-                    p += 1;
-                    got_num = 1;
-                }
-
-                if (got_num == 1 && p < eol && load8(stderr_output + p) == 58) {
-                    # "error:N: message" — line number only
-                    diag_msg_start = p + 1;
-                    if (diag_msg_start < eol && load8(stderr_output + diag_msg_start) == 32) {
-                        diag_msg_start += 1;
-                    }
-                } else {
-                    # "error:filename:line: message" — skip filename, find colon + number
-                    p = msg_start;
-                    while (p < eol && load8(stderr_output + p) != 58) { p += 1; }
-                    if (p < eol) {
-                        p += 1;
-                        diag_line = 0;
-                        got_num = 0;
-                        while (p < eol && load8(stderr_output + p) >= 48 && load8(stderr_output + p) <= 57) {
-                            diag_line = diag_line * 10 + load8(stderr_output + p) - 48;
-                            p += 1;
-                            got_num = 1;
-                        }
-                        if (got_num == 1 && p < eol && load8(stderr_output + p) == 58) {
-                            diag_msg_start = p + 1;
-                            if (diag_msg_start < eol && load8(stderr_output + diag_msg_start) == 32) {
-                                diag_msg_start += 1;
-                            }
-                        } else {
-                            # No line info found — use whole message
-                            diag_msg_start = msg_start;
-                            if (diag_msg_start < eol && load8(stderr_output + diag_msg_start) == 32) {
-                                diag_msg_start += 1;
-                            }
-                        }
-                    }
-                }
-            }
-
-            # Convert 1-based line to 0-based for LSP
-            if (diag_line > 0) { diag_line -= 1; }
-
-            # Extract message text
-            var msg_len = eol - diag_msg_start;
-            if (msg_len < 0) { msg_len = 0; }
-
-            # Add comma separator between diagnostics
-            if (diag_count > 0) { str_builder_add_cstr(sb, ","); }
-
-            str_builder_add_cstr(sb, "{\"range\":{\"start\":{\"line\":");
-            str_builder_add_int(sb, diag_line);
-            str_builder_add_cstr(sb, ",\"character\":0},\"end\":{\"line\":");
-            str_builder_add_int(sb, diag_line);
-            str_builder_add_cstr(sb, ",\"character\":100}},\"severity\":");
-            str_builder_add_int(sb, severity);
-            str_builder_add_cstr(sb, ",\"source\":\"cyrius\",\"message\":\"");
-
-            # JSON-escape the message (escape quotes and backslashes)
-            var mi = diag_msg_start;
-            while (mi < eol) {
-                var ch = load8(stderr_output + mi);
-                if (ch == 34) {
-                    str_builder_add_cstr(sb, "\\\"");
-                }
-                elif (ch == 92) {
-                    str_builder_add_cstr(sb, "\\\\");
-                }
-                elif (ch == 10 || ch == 13) {
-                    str_builder_add_cstr(sb, " ");
-                }
-                else {
-                    # Single char — use a temp buffer
-                    var cbuf[2];
-                    store8(&cbuf, ch);
-                    store8(&cbuf + 1, 0);
-                    str_builder_add_cstr(sb, &cbuf);
-                }
-                mi += 1;
-            }
-
-            str_builder_add_cstr(sb, "\"}");
-            diag_count += 1;
-        }
-
-        pos = eol + 1;
+    # `error:N: message` — a line, no file
+    var ln0 = _lsp_num(s, p, eol, &endp);
+    var q0 = load64(&endp);
+    if (q0 > p && q0 < eol && load8(s + q0) == 58) {
+        var m0 = q0 + 1;
+        if (m0 < eol && load8(s + m0) == 32) { m0 = m0 + 1; }
+        if (ln0 > 0) { ln0 = ln0 - 1; }
+        _lsp_diag_add(open_path, ln0, 0, sev, m0, eol);
+        return 0;
     }
+    # `error:<file>:<line>[:<col>]: message` — the file ends at the first `:<digits>:`
+    var f = p;
+    while (f < eol) {
+        if (load8(s + f) == 58) {
+            _lsp_num(s, f + 1, eol, &endp);
+            var qd = load64(&endp);
+            if (qd > f + 1 && qd < eol && load8(s + qd) == 58) { break; }
+        }
+        f = f + 1;
+    }
+    if (f >= eol) {   # no location found: the whole text on the open file
+        _lsp_diag_add(open_path, 0, 0, sev, p, eol);
+        return 0;
+    }
+    var line = _lsp_num(s, f + 1, eol, &endp);
+    var q = load64(&endp) + 1;   # past the `:` after the line
+    var col = 0 - 1;
+    var cv = _lsp_num(s, q, eol, &endp);
+    var qc = load64(&endp);
+    if (qc > q && qc < eol && load8(s + qc) == 58) {
+        col = cv;
+        q = qc + 1;
+    }
+    var ms = q;
+    if (ms < eol && load8(s + ms) == 32) { ms = ms + 1; }
+    var file = _lsp_resolve_file(s, p, f - p, open_path, root);
+    if (file == 0) {   # names no file the editor could open: keep the location in the text
+        _lsp_diag_add(open_path, 0, 0, sev, p, eol);
+        return 0;
+    }
+    if (line > 0) { line = line - 1; }
+    var c0 = 0;
+    if (col > 0) { c0 = col - 1; }
+    _lsp_diag_add(file, line, c0, sev, ms, eol);
+    return 0;
+}
 
+# Publish the diagnostics of the parsed set that sit on `file` as one notification on `uri`.
+fn _lsp_publish_file(uri, file, s): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"");
+    _lsp_json_esc(sb, uri, 0, strlen(uri));
+    str_builder_add_cstr(sb, "\",\"diagnostics\":[");
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(_ld_file)) {
+        if (file != 0 && streq(vec_get(_ld_file, i), file) == 1) {
+            var line = vec_get(_ld_line, i);
+            var c0 = vec_get(_ld_col, i);
+            var ce = _lsp_line_len(file, line);
+            if (ce < c0) { ce = c0; }
+            if (n > 0) { str_builder_add_cstr(sb, ","); }
+            str_builder_add_cstr(sb, "{\"range\":{\"start\":{\"line\":");
+            str_builder_add_int(sb, line);
+            str_builder_add_cstr(sb, ",\"character\":");
+            str_builder_add_int(sb, c0);
+            str_builder_add_cstr(sb, "},\"end\":{\"line\":");
+            str_builder_add_int(sb, line);
+            str_builder_add_cstr(sb, ",\"character\":");
+            str_builder_add_int(sb, ce);
+            str_builder_add_cstr(sb, "}},\"severity\":");
+            str_builder_add_int(sb, vec_get(_ld_sev, i));
+            str_builder_add_cstr(sb, ",\"source\":\"cyrius\",\"message\":\"");
+            _lsp_json_esc(sb, s, vec_get(_ld_ms, i), vec_get(_ld_me, i));
+            str_builder_add_cstr(sb, "\"}");
+            n = n + 1;
+        }
+        i = i + 1;
+    }
     str_builder_add_cstr(sb, "]}}");
     send_response(str_data(str_builder_build(sb)));
+    return n;
+}
 
+# "file://" + path.
+fn _lsp_uri_of(path): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "file://");
+    str_builder_add_cstr(sb, path);
+    return str_data(str_builder_build(sb));
+}
+
+# 1 when the cstr vec `v` holds a string equal to `x`.
+fn _lsp_vec_has(v, x): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), x) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Publish the compile of the open document (`uri`, at `open_path`) from its stderr text; `root`
+# as for _lsp_resolve_file. Answers the number of diagnostics published.
+fn parse_and_send_diagnostics(uri, open_path, stderr_output, root): i64 {
+    _ld_file = vec_new();
+    _ld_line = vec_new();
+    _ld_col = vec_new();
+    _ld_sev = vec_new();
+    _ld_ms = vec_new();
+    _ld_me = vec_new();
+    _lsp_ll_path = 0;
+    if (_lsp_pub_units == 0) { _lsp_pub_units = vec_new(); _lsp_pub_files = vec_new(); }
+    var s = stderr_output;
+    var slen = strlen(s);
+    var errors = 0;
+    var verdicts = vec_new();
+    var pos = 0;
+    while (pos < slen) {
+        var eol = pos;
+        while (eol < slen && load8(s + eol) != 10) { eol = eol + 1; }
+        var sev = 0;
+        var p = pos;
+        if (eol - pos > 6 && memeq(s + pos, "error:", 6) == 1) { sev = 1; p = pos + 6; }
+        elif (eol - pos > 8 && memeq(s + pos, "warning:", 8) == 1) { sev = 2; p = pos + 8; }
+        if (sev > 0) {
+            if (_lsp_is_verdict(s, pos, eol, open_path) == 1) {
+                vec_push(verdicts, pos);
+            } else {
+                _lsp_parse_diag(s, p, eol, sev, open_path, root);
+                if (sev == 1) { errors = errors + 1; }
+            }
+        }
+        pos = eol + 1;
+    }
+    # The CLI's verdict repeats the compiler's errors; it is shown only when there are none.
+    if (errors == 0) {
+        var vi = 0;
+        while (vi < vec_len(verdicts)) {
+            var vp = vec_get(verdicts, vi);
+            var ve = vp;
+            while (ve < slen && load8(s + ve) != 10) { ve = ve + 1; }
+            _lsp_diag_add(open_path, 0, 0, 1, vp + 7, ve);
+            vi = vi + 1;
+        }
+    }
+    # The open document always gets its list (an empty one clears it); then each other file named.
+    var files = vec_new();
+    var total = _lsp_publish_file(uri, open_path, s);
+    var i = 0;
+    while (i < vec_len(_ld_file)) {
+        var f = vec_get(_ld_file, i);
+        if (streq(f, open_path) == 0 && _lsp_vec_has(files, f) == 0) {
+            vec_push(files, f);
+            total = total + _lsp_publish_file(_lsp_uri_of(f), f, s);
+        }
+        i = i + 1;
+    }
+    # Clear what this unit published last time and no longer names; remember what it named now.
+    var keep_u = vec_new();
+    var keep_f = vec_new();
+    var j = 0;
+    while (j < vec_len(_lsp_pub_units)) {
+        var uj = vec_get(_lsp_pub_units, j);
+        var fj = vec_get(_lsp_pub_files, j);
+        if (streq(uj, open_path) == 1) {
+            if (_lsp_vec_has(files, fj) == 0) { _lsp_publish_file(_lsp_uri_of(fj), 0, s); }
+        } else {
+            vec_push(keep_u, uj);
+            vec_push(keep_f, fj);
+        }
+        j = j + 1;
+    }
+    var k = 0;
+    while (k < vec_len(files)) {
+        vec_push(keep_u, open_path);
+        vec_push(keep_f, vec_get(files, k));
+        k = k + 1;
+    }
+    _lsp_pub_units = keep_u;
+    _lsp_pub_files = keep_f;
     log_msg("sent diagnostics");
-    return diag_count;
+    return total;
 }
 
 # ================================================================
@@ -1359,10 +1588,10 @@ fn handle_did_open_or_save(body): i64 {
     var path = uri_to_path(uri);
     log_msg(path);
 
-    # Only process .cyr files
-    var plen = strlen(path);
-    if (plen < 4) { return 0; }
-    if (memeq(path + plen - 4, ".cyr", 4) != 1) { return 0; }
+    # Every extension the documented `.lsp.json` routes here (editor-integration.md). Until 6.7.12
+    # only `.cyr` was compiled and indexed: a `.tcyr` / `.bcyr` / `.fcyr` / `.scyr` / `.smcyr`
+    # returned before both and got no diagnostics at all. CHANGELOG [6.7.12]
+    if (_lsp_is_cyrius_doc(path) == 0) { return 0; }
 
     # v5.7.39: index this file (and transitive includes) into the
     # symbol table for go-to-def + outline. Idempotent — second
@@ -1372,12 +1601,32 @@ fn handle_did_open_or_save(body): i64 {
     var stderr_out = compile_and_capture(path);
     if (stderr_out == 0) {
         # Compilation failed to launch — clear diagnostics
-        parse_and_send_diagnostics(uri, "");
+        parse_and_send_diagnostics(uri, path, "", 0);
         return 0;
     }
 
-    parse_and_send_diagnostics(uri, stderr_out);
+    parse_and_send_diagnostics(uri, path, stderr_out, _lsp_last_root);
     return 0;
+}
+
+# 1 when `path` ends in one of the cyrius source extensions the server compiles and indexes:
+# .cyr, .tcyr, .bcyr, .fcyr, .scyr, .smcyr.
+fn _lsp_is_cyrius_doc(path): i64 {
+    if (_lsp_ends(path, ".cyr") == 1) { return 1; }
+    if (_lsp_ends(path, ".tcyr") == 1) { return 1; }
+    if (_lsp_ends(path, ".bcyr") == 1) { return 1; }
+    if (_lsp_ends(path, ".fcyr") == 1) { return 1; }
+    if (_lsp_ends(path, ".scyr") == 1) { return 1; }
+    if (_lsp_ends(path, ".smcyr") == 1) { return 1; }
+    return 0;
+}
+
+# 1 when the cstr `s` ends with the cstr `suf` (and is longer than it).
+fn _lsp_ends(s, suf): i64 {
+    var n = strlen(s);
+    var k = strlen(suf);
+    if (n <= k) { return 0; }
+    return memeq(s + n - k, suf, k);
 }
 
 # v5.7.39: textDocument/definition.

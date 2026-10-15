@@ -1924,6 +1924,13 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 # definition past the cut answered null) and refuses a document over 64 MiB by name.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 
+# 6.7.12 — cyrius-lsp publishes each diagnostic at cycc's column (the column out of the message),
+# on the URI of the file it names (an included file's error is not pinned to the open file's
+# line), clears a file a recompile no longer names, compiles every cyrius extension, and in a
+# project checks the open file itself (`cyrius check --with-deps --no-redirect`; a toolchain
+# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows.
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
+
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
 # Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
 # matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4

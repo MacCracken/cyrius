@@ -116,7 +116,7 @@ fn _cli_spec_a(verb): i64 {
     if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock|--bounds"; }
     if (streq(verb, "bench") == 1) { return "--timeout=|--no-deps|--no-lock"; }
     if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock|--bounds"; }
-    if (streq(verb, "check") == 1) { return "--with-deps"; }
+    if (streq(verb, "check") == 1) { return "--with-deps|--no-redirect"; }
     if (streq(verb, "capacity") == 1) { return "--check|--json"; }
     if (streq(verb, "soak") == 1) { return ""; }
     if (streq(verb, "smoke") == 1) { return ""; }
@@ -301,7 +301,10 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "check") == 1) {
         println("");
         println("  Default: parse each <source> standalone (no manifest dep auto-prepend).");
-        println("  --with-deps   prepend manifest [deps] entries (legacy behavior).");
+        println("  --with-deps   prepend manifest [deps] entries (legacy behavior). A <source> with no");
+        println("                `include` is then checked through src/main.cyr (the module redirect).");
+        println("  --no-redirect with --with-deps: check <source> itself, never src/main.cyr in its");
+        println("                place (cyrius-lsp passes it, so a file's own errors are reported).");
     }
     if (streq(verb, "fmt") == 1) {
         println("");

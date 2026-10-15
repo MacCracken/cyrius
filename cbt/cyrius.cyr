@@ -128,7 +128,7 @@ fn _help_build(): i64 {
     _help_row("build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--pie] [--bounds] [--features <list>] [-D NAME]... [<src> [<out>]]",
       "compile (default: [build] entry/output), resolving [deps] first");
     _help_row("run [--aarch64] [--bounds] <src.cyr> [args...]", "compile + run (args go to the program)");
-    _help_row("check [--with-deps] <src.cyr>...", "syntax check (default: standalone)");
+    _help_row("check [--with-deps [--no-redirect]] <src.cyr>...", "syntax check (default: standalone)");
     _help_row("clean", "remove build/ contents");
     println("");
     println("Test:");
@@ -917,13 +917,15 @@ fn main(): i64 {
 
     if (streq(cmd, "check") == 1) {
         # 1..N sources, each parsed. Default is standalone (no manifest prepend);
-        # --with-deps restores the legacy behaviour.
+        # --with-deps restores the legacy behaviour; --no-redirect (6.7.12) checks each source
+        # itself under --with-deps (cyrius-lsp).
         if (_cli_operands_ok("check", 1, 0 - 1) == 0) { return 1; }
         var ck_with_deps = _cli_has("--with-deps");
+        var ck_no_redirect = _cli_has("--no-redirect");
         var ck_rc = 0;
         var ck_i = 0;
         while (ck_i < _cli_npos()) {
-            if (cmd_check(_cli_pos_at(ck_i), ck_with_deps) != 0) { ck_rc = 1; }
+            if (cmd_check(_cli_pos_at(ck_i), ck_with_deps, ck_no_redirect) != 0) { ck_rc = 1; }
             ck_i = ck_i + 1;
         }
         return ck_rc;
