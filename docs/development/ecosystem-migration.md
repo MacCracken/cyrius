@@ -80,6 +80,23 @@ does or builds; never a per-repo worklist.*
   no longer refuses a peer's full 2^14-byte records; one that RAISED it no longer seals over-length records (2^14 + 1
   is `TLS_ERR_RECORD_OVERFLOW`). A real max_fragment_length (RFC 6066) is a feature, not this var.
 
+**`args_init()`: a failure is a negative errno on Linux and Windows (D7, the user 2026-10-15)**
+- `args_init()`'s failure return is a negative errno on Linux and Windows (was 0). Code that treated
+  `args_init() == 0` as "could not read the command line" must test `< 0`; 0 is success on macOS / agnos.
+- A consumer that refused a 2,097,152-byte `_args_len` as "may be truncated" (cmdit 1.3.2's workaround) can drop that
+  check: a longer command line is now read whole.
+
+**The native TLS client is stricter with non-conformant peers**
+- A 1.3 server that sends an extension the client did not offer (or one its message may not carry), an ALPN protocol
+  outside the client's list, an ECDSA CertificateVerify on the other curve, or a byte after a signature now fails the
+  handshake (`TLS_ERR_HANDSHAKE_FAILED` / `TLS_ERR_AUTHN` / `TLS_ERR_BAD_HANDSHAKE`, the alert sent). A 1.2
+  ServerKeyExchange with a byte after its signature is refused too (`TLS_ERR_BAD_HANDSHAKE`; the 1.2 client sends no
+  alert).
+- A 1.2 client restricted with `tls_native_set_groups` refuses a server whose ECDSA certificate is on an unlisted
+  curve (`TLS_ERR_HANDSHAKE_FAILED`; list the certificate's curve, as OpenSSL requires too).
+- A native 1.2 server refuses a ClientHello with a session id over 32 bytes (`TLS_ERR_BAD_HANDSHAKE`, decode_error).
+- Conformant peers (OpenSSL's 68 interop rows) are unaffected.
+
 #### The cx target
 
 **cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**
