@@ -47,6 +47,12 @@ var _ts_mi = 0;            # Microsoft TLS G2 RSA CA OCSP 04 (2025-08-01 .. 2029
 var _ts_mi_len = 1980;
 var _ts_mr = 0;            # Microsoft TLS RSA Root G2, cross-signed by DigiCert Global Root G2
 var _ts_mr_len = 1421;
+var _ts_eku_root = 0;      # tls_native_ca_eku.tcyr's root_none (CN=eku-root, no EKU), DER, 348 bytes, and
+var _ts_eku_leaf = 0;      # its leaf_r (CN=localhost, serverAuth + clientAuth, notBefore 2025-01-01), 432 bytes
+var _ts_eku_nb = 1735689600;
+var _TS_EKU_NOW = 1893456000;   # 2030-01-01: inside the eku fixtures' 2025 .. 2049 window
+var _ts_dn = 0;            # DigiNotar Root CA (SHA-1 c060ed44...), DER, 1422 bytes: distrusted by Windows
+var _ts_dn_len = 1422;     # through the disallowed CTL (6.7.12)
 
 # Base64 (RFC 4648) of src[0..n) into out; returns the length written.
 fn _ts_b64(src, n, out): i64 {
@@ -269,6 +275,190 @@ fn test_real_chain(): i64 {
     return 0;
 }
 
+# ── 6.7.12: the root set's trust policy, every target ─────────────────────────────────────────────
+# On Windows tls_native_set_ca_system installs the system store's policy (TLS_CTX_OFF_CA_POLICY): the
+# disallowed CTL's public-key entries, the Disallowed store's certificates, a NotBefore root's issuance
+# bound. The verifier applies it on every target, so these rows install policies of their own and run
+# the verifier offline.
+
+# The MD5 of `c`'s (parsed) subjectPublicKey, 16 bytes (the CTL's identifier form).
+fn _tp_key(c): i64 {
+    var h = alloc(16);
+    if (_tn_spki_md5(load64(c), load64(c + 8), h) != 1) { return 0; }
+    return h;
+}
+
+# A policy that distrusts the keys of the certificates `a` and `b` (parsed; 0 = none).
+fn _tp_deny_keys(a, b): i64 {
+    var keys = alloc(32);
+    var n = 0;
+    if (a != 0) {
+        memcpy(keys, _tp_key(a), 16);
+        n = 1;
+    }
+    if (b != 0) {
+        memcpy(keys + n * 16, _tp_key(b), 16);
+        n = n + 1;
+    }
+    return _tn_pol_new(n, keys, 0, 0, 0, 0);
+}
+
+# A policy that distrusts the certificate `c` (parsed) byte for byte.
+fn _tp_deny_cert(c): i64 {
+    var l = alloc(16);
+    store64(l, load64(c));
+    store64(l + 8, load64(c + 8));
+    return _tn_pol_new(0, 0, 1, l, 0, 0);
+}
+
+# A policy giving the root `r` (parsed) the issuance bound `b`.
+fn _tp_bound(r, b): i64 {
+    var l = alloc(24);
+    store64(l, load64(r));
+    store64(l + 8, load64(r + 8));
+    store64(l + 16, b);
+    return _tn_pol_new(0, 0, 0, 0, 1, l);
+}
+
+# The microsoft.com chain's verdict at _ts_now on a client ctx with the system roots and policy `pol`.
+fn _tp_ms(leaf, inters, pol): i64 {
+    var c = tls_native_new_client("www.microsoft.com", 17);
+    if (tls_native_set_ca_system(c) != TLS_OK) { return 0 - 99; }
+    store64(c + TLS_CTX_OFF_CA_POLICY, pol);
+    return _ts_verify(c, leaf, inters, _ts_now);
+}
+
+# The system root that anchors `cur` (parsed): issuer-matching and signing it; 0 when none.
+fn _tp_anchor_of(cur): i64 {
+    var c = tls_native_new_client("localhost", 9);
+    if (tls_native_set_ca_system(c) != TLS_OK) { return 0; }
+    var set = load64(c + TLS_CTX_OFF_CA_ROOT);
+    var i = 0;
+    while (i < load64(set)) {
+        var r = load64(set + 8 + i * 8);
+        if (_x509_issuer_matches(cur, r) == 1) {
+            if (_x509_verify_link(cur, r) == 1) { return r; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Every target: a certificate the policy distrusts — by its key (the disallowed CTL's form) or byte for
+# byte (the Disallowed store's) — breaks the path wherever it stands: leaf, intermediate, cross-signed
+# root, trust anchor. Before 6.7.12 nothing beyond the root set was consulted.
+fn test_policy_deny_rows(): i64 {
+    test_group("the trust policy's deny list binds every certificate of a path (6.7.12)");
+    var leaf = _ts_cert(_ts_ms, _ts_ms_len);
+    var ica = _ts_cert(_ts_mi, _ts_mi_len);
+    var xr = _ts_cert(_ts_mr, _ts_mr_len);
+    var other = _ts_cert(_ts_p256, _ts_p256_len);
+    var inters = alloc(24);
+    store64(inters, 2);
+    store64(inters + 8, ica);
+    store64(inters + 16, xr);
+    var anchor = _tp_anchor_of(xr);
+    assert_neq(anchor, 0, "DigiCert Global Root G2 is in the system set and anchors the chain");
+    assert_eq(_tp_ms(leaf, inters, 0), TLS_OK, "no policy: the chain verifies (control)");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, 0)), TLS_OK, "an unrelated key denied: verifies");
+    assert_eq(_tp_ms(leaf, inters, _tn_pol_new(0, 0, 0, 0, 0, 0)), TLS_OK, "an empty policy: verifies");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(ica, 0)), TLS_ERR_CERT_INVALID,
+      "the INTERMEDIATE's key denied: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(xr, 0)), TLS_ERR_CERT_INVALID,
+      "the cross-signed root's key denied: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(leaf, 0)), TLS_ERR_CERT_INVALID, "the LEAF's key denied: refused");
+    if (anchor != 0) {
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(anchor, 0)), TLS_ERR_CERT_INVALID,
+          "the trust anchor's key denied: refused");
+    }
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, ica)), TLS_ERR_CERT_INVALID,
+      "the intermediate's key second in the list: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(ica)), TLS_ERR_CERT_INVALID,
+      "the intermediate denied byte for byte (the Disallowed store's form): refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(other)), TLS_OK, "an unrelated certificate denied: verifies");
+    # A caller's own bundle carries no system policy: installing one clears it.
+    var c = tls_native_new_client("www.microsoft.com", 17);
+    store64(c + TLS_CTX_OFF_CA_POLICY, _tp_deny_keys(ica, 0));
+    assert_eq(tls_native_set_ca_bundle(c, _ts_p256, _ts_p256_len, 1), TLS_OK, "a caller's bundle installs");
+    assert_eq(load64(c + TLS_CTX_OFF_CA_POLICY), 0, "  and clears the policy");
+    var d = tls_native_new_client("www.microsoft.com", 17);
+    assert_eq(tls_native_set_ca_system(d), TLS_OK, "the system set installs");
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(load64(d + TLS_CTX_OFF_CA_POLICY), 0, "  POSIX: with no policy (a bundle is a list of roots)");
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(load64(d + TLS_CTX_OFF_CA_POLICY), _tn_ca_sys_pol, "  Windows: with the system store's policy");
+    #endif
+    return 0;
+}
+
+# Every target: the identifier the disallowed CTL lists DigiNotar Root CA under is the MD5 of its
+# public key — the entry read from the CTL on cass (2026-10-15), and what Windows' chain engine
+# distrusts DigiNotar by (CERT_TRUST_IS_EXPLICIT_DISTRUST, the Disallowed store empty).
+fn test_ctl_identifier_row(): i64 {
+    test_group("the disallowed CTL's identifier is the MD5 of a certificate's public key (6.7.12)");
+    var dn = _ts_cert(_ts_dn, _ts_dn_len);
+    assert_neq(dn, 0, "DigiNotar Root CA parses");
+    var want = hex_decode("37392e833dc605dd7b38244739939ee3", 32);
+    var h = alloc(16);
+    assert_eq(_tn_spki_md5(_ts_dn, _ts_dn_len, h), 1, "its subjectPublicKey is found");
+    assert_eq(memeq(h, want, 16), 1, "  its MD5 is the CTL's entry 37392e83 3dc605dd 7b382447 39939ee3");
+    var keys = alloc(16);
+    memcpy(keys, want, 16);
+    var pol = _tn_pol_new(1, keys, 0, 0, 0, 0);
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(c, _ts_dn, _ts_dn_len, 1), TLS_OK, "a set of DigiNotar Root CA alone");
+    assert_eq(_tn_pol_der_denied(pol, _ts_dn, _ts_dn_len), 1, "a policy holding that entry denies it");
+    assert_eq(_tn_pol_der_denied(pol, _ts_p256, _ts_p256_len), 0, "  and not an unrelated certificate");
+    return 0;
+}
+
+# Every target: a root carrying an issuance bound (Windows' NotBefore distrust, D9) anchors a leaf whose
+# notBefore precedes the bound, and refuses one issued on or after it — it is the LEAF's date that counts.
+fn test_policy_bound_rows(): i64 {
+    test_group("a root's issuance bound: older leaves anchor, newer ones do not (6.7.12, D9)");
+    var root = _ts_cert(_ts_eku_root, 348);
+    var leaf = _ts_cert(_ts_eku_leaf, 432);
+    assert_neq(root, 0, "the eku root parses");
+    assert_neq(leaf, 0, "its leaf parses");
+    assert_eq(x509_cert_not_before(leaf), _ts_eku_nb, "  the leaf's notBefore is 2025-01-01T00:00:00Z");
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(c, _ts_eku_root, 348, 1), TLS_OK, "a set of the eku root alone");
+    var set = load64(c + TLS_CTX_OFF_CA_ROOT);
+    var r = load64(set + 8);
+    assert_eq(_tn_verify_chain(c, leaf, 0, _TS_EKU_NOW, _TN_PURPOSE_SERVER), TLS_OK, "no bound: verifies");
+    store64(c + TLS_CTX_OFF_CA_POLICY, _tp_bound(r, _ts_eku_nb + 1));
+    assert_eq(_tn_verify_chain(c, leaf, 0, _TS_EKU_NOW, _TN_PURPOSE_SERVER), TLS_OK,
+      "bound one second after the leaf's notBefore: verifies (issued before the date)");
+    store64(c + TLS_CTX_OFF_CA_POLICY, _tp_bound(r, _ts_eku_nb));
+    assert_eq(_tn_verify_chain(c, leaf, 0, _TS_EKU_NOW, _TN_PURPOSE_SERVER), TLS_ERR_CERT_INVALID,
+      "bound AT the leaf's notBefore: refused (on or after)");
+    store64(c + TLS_CTX_OFF_CA_POLICY, _tp_bound(r, _ts_eku_nb - 86400));
+    assert_eq(_tn_verify_chain(c, leaf, 0, _TS_EKU_NOW, _TN_PURPOSE_SERVER), TLS_ERR_CERT_INVALID,
+      "bound a day before it: refused");
+    store64(c + TLS_CTX_OFF_CA_POLICY, _tp_bound(_ts_cert(_ts_p256, _ts_p256_len), _ts_eku_nb));
+    assert_eq(_tn_verify_chain(c, leaf, 0, _TS_EKU_NOW, _TN_PURPOSE_SERVER), TLS_OK,
+      "a bound on a different root: verifies");
+    # Through intermediates: the anchor's bound is compared with the LEAF, not with the CA below it.
+    var mleaf = _ts_cert(_ts_ms, _ts_ms_len);
+    var ica = _ts_cert(_ts_mi, _ts_mi_len);
+    var xr = _ts_cert(_ts_mr, _ts_mr_len);
+    var inters = alloc(24);
+    store64(inters, 2);
+    store64(inters + 8, ica);
+    store64(inters + 16, xr);
+    var anchor = _tp_anchor_of(xr);
+    assert_neq(anchor, 0, "the microsoft.com chain's anchor is in the system set");
+    if (anchor != 0) {
+        var lnb = x509_cert_not_before(mleaf);
+        assert_eq(_tp_ms(mleaf, inters, _tp_bound(anchor, lnb + 1)), TLS_OK,
+          "anchor bound just after the leaf's notBefore: verifies");
+        assert_eq(_tp_ms(mleaf, inters, _tp_bound(anchor, x509_cert_not_before(ica) + 1)), TLS_ERR_CERT_INVALID,
+          "anchor bound after the intermediates' notBefore but before the leaf's: refused");
+    }
+    return 0;
+}
+
 #ifdef CYRIUS_TARGET_WIN
 var _TS_NOT_FOUND = 0x80092004;     # CRYPT_E_NOT_FOUND
 var _ts_oid_sa = 0;                 # 06 08 2B 06 01 05 05 07 03 01 — serverAuth, as a whole TLV
@@ -352,9 +542,33 @@ fn _ts_dated(fns, cc, d, e, pu): i64 {
     return 0;
 }
 
-# What Windows' root-program properties say about `cc` for TLS purpose `pu`: 1 an anchor, 0 not a
-# root for it, 2 refused by the library — distrusted by a date that covers it (Disable 104 / 122 or
-# NotBefore 126 / 127), confined by root-program name constraints (84), or a purpose list it cannot read.
+var _ts_xbound = 0;                 # the issuance bound _ts_expect derived (answer 3)
+
+# The NotBefore distrust (126 / 127) of `cc` for purpose `pu`, the test's own reading: 0 none covers
+# it, 1 one does (its bound, Unix seconds rounded up, in _ts_xbound), 2 it cannot be judged (a date that
+# is not one 8-byte FILETIME, a scope that cannot be read or is malformed).
+fn _ts_notbefore(fns, cc, pu): i64 {
+    var nd = _ts_prop(fns, cc, 126);
+    if (nd == 0 - 1) { return 0; }
+    if (nd != 8) { return 2; }
+    var ft = load64(_ts_pbuf);
+    if (ft < 0) { return 2; }
+    var ne = _ts_prop(fns, cc, 127);
+    if (ne == 0 - 2) { return 2; }
+    if (ne >= 0) {
+        if (_ts_eku_ok(ne) == 0) { return 2; }
+        if (_ts_names(ne, pu) == 0) { return 0; }
+    }
+    var secs = ft / 10000000;
+    if (secs * 10000000 != ft) { secs = secs + 1; }
+    _ts_xbound = secs - 11644473600;
+    return 1;
+}
+
+# What Windows' root-program properties say about `cc` for TLS purpose `pu`: 1 an anchor, 3 an anchor
+# with an issuance bound (6.7.12, D9: a NotBefore date 126 / 127 covers it; the bound in _ts_xbound),
+# 0 not a root for it, 2 refused by the library — distrusted by a Disable date that covers it (104 /
+# 122), confined by root-program name constraints (84), or a property it cannot read.
 fn _ts_expect(fns, cc, pu): i64 {
     var n = _ts_prop(fns, cc, 9);
     if (n == 0 - 2) { return 2; }    # unreadable: the library refuses and counts it
@@ -364,8 +578,81 @@ fn _ts_expect(fns, cc, pu): i64 {
     }
     if (_ts_prop(fns, cc, 84) != 0 - 1) { return 2; }
     if (_ts_dated(fns, cc, 104, 122, pu) == 1) { return 2; }
-    if (_ts_dated(fns, cc, 126, 127, pu) == 1) { return 2; }
+    var nb = _ts_notbefore(fns, cc, pu);
+    if (nb == 2) { return 2; }
+    if (nb == 1) { return 3; }
     return 1;
+}
+
+# ── The disallowed CTL, the test's own reading (6.7.12) ──────────────────────────────────────────
+var _ts_ctl_present = 0;            # 1 when the registry holds DisallowedCertEncodedCtl
+var _ts_ctl_n = 0;                  # its entries,
+var _ts_ctl_n16 = 0;                # those of 16 bytes (the public-key MD5s),
+var _ts_ctl_keys = 0;               # copied (16 B each)
+var _ts_ctl_n48 = 0;                # and those of 48 bytes (a form not applied; see the library's header)
+
+# Read the CTL through advapi32 + crypt32 directly, into the _ts_ctl_* cells. 1, or 0 when it is
+# present but cannot be read.
+fn _ts_ctl_read(): i64 {
+    var k = syscall(0xF013, "kernel32.dll");
+    var ll = syscall(0xF014, k, "LoadLibraryExA");
+    var adv = callptr(ll, "advapi32.dll", 0, 0x800);
+    var c32 = callptr(ll, "crypt32.dll", 0, 0x800);
+    var reg = syscall(0xF014, adv, "RegGetValueW");
+    var mk = syscall(0xF014, c32, "CertCreateCTLContext");
+    var ws = alloc(256);
+    var wv = alloc(64);
+    _tn_w_widen("SOFTWARE\\Microsoft\\SystemCertificates\\AuthRoot\\AutoUpdate", ws, 256);
+    _tn_w_widen("DisallowedCertEncodedCtl", wv, 64);
+    var data = alloc(1048576);
+    var cb[8];
+    store64(&cb, 1048576);
+    var r = callptr(reg, 0x80000002, ws, wv, 0xFFFF, 0, data, &cb) & 0xFFFFFFFF;
+    if (r == 2) { return 1; }
+    if (r != 0) { return 0; }
+    _ts_ctl_present = 1;
+    var ctl = callptr(mk, 0x10001, data, load32(&cb));
+    if (ctl == 0) { return 0; }
+    var info = load64(ctl + 24);
+    _ts_ctl_n = load32(info + 96);
+    var ents = load64(info + 104);
+    _ts_ctl_keys = alloc(_ts_ctl_n * 16 + 16);
+    var i = 0;
+    while (i < _ts_ctl_n) {
+        var l = load32(ents + i * 32);
+        if (l == 16) {
+            memcpy(_ts_ctl_keys + _ts_ctl_n16 * 16, load64(ents + i * 32 + 8), 16);
+            _ts_ctl_n16 = _ts_ctl_n16 + 1;
+        }
+        if (l == 48) { _ts_ctl_n48 = _ts_ctl_n48 + 1; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 1 when the 16 bytes at h are one of the CTL's public-key entries.
+fn _ts_ctl_lists(h): i64 {
+    var i = 0;
+    while (i < _ts_ctl_n16) {
+        if (memeq(_ts_ctl_keys + i * 16, h, 16) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when the policy `pol` holds a bound `b` for exactly der[0..dlen).
+fn _ts_pol_bound_is(pol, der, dlen, b): i64 {
+    var i = 0;
+    while (i < load64(pol + 32)) {
+        var e = load64(pol + 40) + i * 24;
+        if (load64(e + 8) == dlen) {
+            if (memeq(load64(e), der, dlen) == 1) {
+                if (load64(e + 16) == b) { return 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
 }
 
 # 1 when der[0..dlen) is one of the `nd` copied certificates at list ([ptr][len] pairs).
@@ -383,7 +670,7 @@ fn _ts_listed(list, nd, der, dlen): i64 {
 # Windows: the exported bundle for purpose `pu` (`bundle`[0..`blen`), `refused` roots) is exactly the
 # ROOT store's roots for it — re-derived here from the store, certificate by certificate, with the
 # test's own reading of the properties.
-fn _ts_store_policy(pu, bundle, blen, refused): i64 {
+fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
     _ts_oid_sa = hex_decode("06082b06010505070301", 20);
     _ts_oid_ca = hex_decode("06082b06010505070302", 20);
     _ts_oid_any = hex_decode("0604551d2500", 12);
@@ -415,20 +702,46 @@ fn _ts_store_policy(pu, bundle, blen, refused): i64 {
     var want_ref = 0;
     var not_tls = 0;
     var wrong = 0;
-    var nb_tls = 0;                     # roots whose NotBefore distrust (126 / 127) covers TLS
-    var nb_in = 0;                      # ... that are in the bundle anyway
+    var nb_tls = 0;                     # roots whose NotBefore distrust (126 / 127) covers TLS (bounded)
+    var nb_ok = 0;                      # ... in the bundle AND carrying that bound in the policy
+    var ctl_out = 0;                    # roots the CTL's public-key entries keep out
+    var keydiff = 0;                    # roots whose key MD5 the library computes differently from crypt32
+    var h = alloc(64);
+    var kid = alloc(64);                # crypt32's key MD5 (prop 25) of the current root
     var pem = alloc(65536);
     c = callptr(en, root, 0);
     while (c != 0) {
         total = total + 1;
         var der = load64(c + 8);
         var dlen = load32(c + 16);
+        # The key identifier the CTL lists (crypt32's CERT_SUBJECT_PUBLIC_KEY_MD5_HASH_PROP_ID, 25) —
+        # and the library's own computation of it must agree.
+        var kn = _ts_prop(&fns, c, 25);
+        if (kn == 16) { memcpy(kid, _ts_pbuf, 16); }
+        var lib_ok = _tn_spki_md5(der, dlen, h);
+        if (kn != 16) { keydiff = keydiff + 1; }
+        if (kn == 16) {
+            if (lib_ok != 1) { keydiff = keydiff + 1; }
+            if (lib_ok == 1) {
+                if (memeq(h, kid, 16) != 1) { keydiff = keydiff + 1; }
+            }
+        }
         var x = _ts_expect(&fns, c, pu);
+        var xb = _ts_xbound;
         if (x != 0) {
             if (_ts_listed(dlist, nd, der, dlen) == 1) { x = 0; }
         }
+        if (x != 0) {
+            if (kn == 16) {
+                if (_ts_ctl_lists(kid) == 1) {
+                    x = 0;
+                    ctl_out = ctl_out + 1;
+                }
+            }
+        }
         if (x == 0) { not_tls = not_tls + 1; }
         if (x == 1) { want_in = want_in + 1; }
+        if (x == 3) { want_in = want_in + 1; }
         if (x == 2) { want_ref = want_ref + 1; }
         var got = 0;
         if (dlen < 40000) {
@@ -438,11 +751,17 @@ fn _ts_store_policy(pu, bundle, blen, refused): i64 {
         if (x == 1) {
             if (got != 1) { wrong = wrong + 1; }
         }
-        if (_ts_dated(&fns, c, 126, 127, pu) == 1) {
+        if (x == 3) {
             nb_tls = nb_tls + 1;
-            if (got != 0) { nb_in = nb_in + 1; }
+            if (got != 1) { wrong = wrong + 1; }
+            if (got == 1) {
+                if (_ts_pol_bound_is(pol, der, dlen, xb) == 1) { nb_ok = nb_ok + 1; }
+            }
         }
-        if (x != 1) {
+        if (x == 0) {
+            if (got != 0) { wrong = wrong + 1; }
+        }
+        if (x == 2) {
             if (got != 0) { wrong = wrong + 1; }
         }
         c = callptr(en, root, c);
@@ -459,27 +778,54 @@ fn _ts_store_policy(pu, bundle, blen, refused): i64 {
     fmt_int(want_ref);
     syscall(1, 1, " refused by policy, ", 20);
     fmt_int(nd);
-    syscall(1, 1, " in Disallowed; ", 16);
+    syscall(1, 1, " in Disallowed, ", 16);
+    fmt_int(ctl_out);
+    syscall(1, 1, " kept out by the CTL; ", 22);
     fmt_int(nb_tls);
-    syscall(1, 1, " with a NotBefore distrust covering TLS\n", 40);
+    syscall(1, 1, " taken with a NotBefore bound\n", 30);
     assert_gt(total, 0, "the ROOT store has certificates");
     assert_gt(want_in, 0, "some are TLS roots");
+    assert_eq(keydiff, 0, "the library's key MD5 equals crypt32's (prop 25) for every ROOT certificate");
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
     assert_eq(_ts_blocks(bundle, blen), want_in, "the bundle holds exactly those");
-    assert_eq(nb_in, 0, "no root whose NotBefore distrust (126 / 127) covers TLS is in the bundle");
+    assert_eq(nb_ok, nb_tls, "every root whose NotBefore distrust covers TLS is in it WITH its bound (D9)");
+    assert_eq(load64(pol + 32), nb_tls, "  and the policy carries exactly those bounds");
     assert_eq(refused, want_ref, "the roots the policy refuses are the refused count");
+    assert_eq(load64(pol), _ts_ctl_n16, "the policy carries the CTL's public-key entries, every one");
+    assert_eq(load64(pol + 16), nd, "  and the Disallowed store's certificates");
     return 0;
 }
 
 fn test_store_policy(): i64 {
+    test_group("Windows: the disallowed CTL is read (6.7.12)");
+    assert_eq(_ts_ctl_read(), 1, "the test reads the CTL itself (or finds none)");
+    syscall(1, 1, "  CTL: ", 7);
+    if (_ts_ctl_present == 0) { syscall(1, 1, "absent (no DisallowedCertEncodedCtl - wine) ", 44); }
+    fmt_int(_ts_ctl_n);
+    syscall(1, 1, " entries, ", 10);
+    fmt_int(_ts_ctl_n16);
+    syscall(1, 1, " public-key MD5s applied, ", 26);
+    fmt_int(_ts_ctl_n48);
+    syscall(1, 1, " of 48 bytes not applied\n", 25);
+    assert_neq(_tn_ca_sys_pol, 0, "the system set was published with a trust policy");
+    if (_tn_ca_sys_pol == 0) { return 0; }
+    if (_ts_ctl_present == 1) {
+        assert_gt(_ts_ctl_n16, 0, "present: it lists public keys (cass: 82 of 88)");
+        assert_gt(load64(_tn_ca_sys_pol), 0, "  and the system set's policy carries them");
+    }
+    if (_ts_ctl_present == 0) {
+        assert_eq(load64(_tn_ca_sys_pol), 0, "absent: the policy lists no key, and the store still loads");
+    }
     test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
-    _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused);
+    _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused, _tn_ca_sys_pol);
     # CYRIUS-2026-0027: a server ctx's set is the store's CLIENT-authentication roots.
     test_group("Windows: a server ctx's bundle is exactly the ROOT store's clientAuth roots, re-derived here");
     var sv = _tn_ctx_new(TLS_ROLE_SERVER);
     assert_eq(tls_native_set_ca_system(sv), TLS_OK, "a server ctx loads the client-purpose set");
     assert_gt(_tn_ca_cl_len, 0, "  its bundle has bytes");
-    _ts_store_policy(_TN_PURPOSE_CLIENT, _tn_ca_cl_buf, _tn_ca_cl_len, _tn_ca_cl_refused);
+    assert_neq(_tn_ca_cl_pol, 0, "  published with a trust policy");
+    if (_tn_ca_cl_pol == 0) { return 0; }
+    _ts_store_policy(_TN_PURPOSE_CLIENT, _tn_ca_cl_buf, _tn_ca_cl_len, _tn_ca_cl_refused, _tn_ca_cl_pol);
     return 0;
 }
 
@@ -501,6 +847,11 @@ var _tm_cert = 0;       # the certificate the row puts in ROOT (DER) — the fix
 var _tm_cert_len = 0;
 var _tm_out = 0;        # the last export's bundle and byte count (the end-to-end rows parse it)
 var _tm_out_len = 0;
+var _tm_nkeys = 0;      # the row's trust-policy deny keys (16 B each) and deny certs ([ptr][len]) —
+var _tm_keys = 0;       # what the disallowed CTL and the Disallowed store hand the export (6.7.12)
+var _tm_ncerts = 0;
+var _tm_certs = 0;
+var _tm_bound = 0;      # the issuance bound the last export recorded for the row's certificate (got 3)
 
 var _TM_SA = "300a06082b06010505070301";                            # [serverAuth]
 var _TM_CS = "300a06082b06010505070303";                            # [codeSigning]
@@ -509,9 +860,14 @@ var _TM_ANY = "30060604551d2500";                                   # [anyExtend
 var _TM_CA = "300a06082b06010505070302";                            # [clientAuth]
 var _TM_SA_CA = "301406082b0601050507030106082b06010505070302";     # [serverAuth, clientAuth]
 var _TM_DATE = "0080e9e6f9c7d901";                                  # a FILETIME
+var _TM_DATE_UNIX = 1691280412;     # its issuance bound: 1691280411.8986752 s after the epoch, rounded UP
+var _TM_DATE_EXACT = "00006dc64717da01";                            # a FILETIME on a whole second,
+var _TM_DATE_EXACT_UNIX = 1700000000;                               # 1700000000 exactly
 
 fn _tm_reset(): i64 {
     _tm_n = 0;
+    _tm_nkeys = 0;
+    _tm_ncerts = 0;
     return 0;
 }
 
@@ -555,9 +911,11 @@ fn _tm_long(sa): i64 {
 }
 
 # ROOT (memory) holds the fixture root with the properties given since _tm_reset; Disallowed
-# (memory) holds nothing (dis 0), the fixture too (1), or a different certificate (2). Run
-# _tn_w_export into a `cap`-byte buffer and classify the result: 1 exported (exactly the fixture's
-# PEM, nothing refused), 0 excluded (nothing written, nothing counted), 2 refused (nothing written,
+# (memory) holds nothing (dis 0), the fixture too (1), or a different certificate (2); the trust
+# policy holds the row's deny keys and certs (_tm_nkeys / _tm_ncerts). Run _tn_w_export into a
+# `cap`-byte buffer and classify the result: 1 exported (exactly the fixture's PEM, nothing refused,
+# no bound), 3 exported WITH an issuance bound (6.7.12: one bound, for exactly this certificate, its
+# value in _tm_bound), 0 excluded (nothing written, nothing counted), 2 refused (nothing written,
 # counted once), -1 anything else, -9 the stores could not be built as the row says.
 fn _tm_run(fns, dis_holds, cap): i64 {
     var open = load64(fns);
@@ -593,18 +951,34 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         var buf = alloc(cap);
         var nref[8];
         store64(&nref, 0 - 1);
-        var total = _tn_w_export(fns, root, dis, buf, cap, &nref, _tm_pu);
+        var pol = _tn_pol_new(_tm_nkeys, _tm_keys, _tm_ncerts, _tm_certs, 0, 0);
+        var total = _tn_w_export(fns, root, dis, buf, cap, &nref, _tm_pu, pol);
         var r = load64(&nref);
+        var nb = load64(pol + 32);
         _tm_out = buf;
         _tm_out_len = total;
+        _tm_bound = 0;
         got = 0 - 1;
         if (total == 0) {
-            if (r == 0) { got = 0; }
-            if (r == 1) { got = 2; }
+            if (nb == 0) {
+                if (r == 0) { got = 0; }
+                if (r == 1) { got = 2; }
+            }
         }
         if (total == _tm_pem_len) {
             if (r == 0) {
-                if (memeq(buf, _tm_pem, _tm_pem_len) == 1) { got = 1; }
+                if (memeq(buf, _tm_pem, _tm_pem_len) == 1) {
+                    if (nb == 0) { got = 1; }
+                    if (nb == 1) {
+                        var e = load64(pol + 40);
+                        if (load64(e + 8) == _tm_cert_len) {
+                            if (memeq(load64(e), _tm_cert, _tm_cert_len) == 1) {
+                                got = 3;
+                                _tm_bound = load64(e + 16);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -637,6 +1011,28 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
     assert_eq(_tm_run(&fns, 1, cap), 0, "also in Disallowed: excluded, not counted");
     assert_eq(_tm_run(&fns, 2, cap), 1, "a DIFFERENT certificate in Disallowed: still exported");
+    # 6.7.12: the trust policy's deny list (the disallowed CTL's keys, the Disallowed store's
+    # certificates) keeps a root out the way the Disallowed store does.
+    _tm_keys = alloc(32);
+    _tm_certs = alloc(32);
+    _tm_nkeys = 1;
+    _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "its key in the CTL's list: excluded, not counted");
+    _tm_nkeys = 1;
+    _tn_spki_md5(_ts_mr, _ts_mr_len, _tm_keys);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a DIFFERENT key in the CTL's list: exported");
+    _tm_ncerts = 1;
+    store64(_tm_certs, _ts_p256);
+    store64(_tm_certs + 8, _ts_p256_len);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "it, byte for byte, in the policy's deny certs: excluded");
+    _tm_nkeys = 1;
+    _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
+    _tm_with(84, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 0, "refused by name constraints AND its key listed: excluded, not counted");
+    _tm_nkeys = 1;
+    _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "a NotBefore root whose key is listed: excluded, no bound");
     # The purposes allow-list (prop 9).
     _tm_with(9, _TM_CS);
     assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
@@ -702,22 +1098,35 @@ fn test_policy_rows(): i64 {
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 1, cap), 0, "refused by date AND in Disallowed: excluded, not counted");
     # The NotBefore date (prop 126: certificates issued after it are not trusted), scoped by 127.
+    # 6.7.12 (D9): a NotBefore date covering the purpose no longer refuses the root — it is exported WITH
+    # an issuance bound (3), so the leaves it issued before the date verify, as on SChannel. Until 6.7.11
+    # each `3` below was a `2`: refused whole, counted.
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for every purpose: refused, counted");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for every purpose: exported WITH a bound");
+    assert_eq(_tm_bound, _TM_DATE_UNIX, "  the bound is the date in Unix seconds, rounded up");
+    _tm_with(126, _TM_DATE_EXACT);
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date on a whole second: exported with a bound");
+    assert_eq(_tm_bound, _TM_DATE_EXACT_UNIX, "  the bound is that second exactly");
     _tm_with(126, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY NotBefore date: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY NotBefore date: refused (cannot be judged)");
+    _tm_with(126, "0080e9e6");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a 4-byte NotBefore date (not a FILETIME): refused");
+    _tm_with(126, "0080e9e6f9c7d90100");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a 9-byte NotBefore date: refused");
+    _tm_with(126, "00000000000000ff");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore FILETIME with its top bit set: refused");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [serverAuth]: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [serverAuth]: exported with a bound");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [codeSigning, serverAuth] (Entrust's shape): refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [codeSigning, serverAuth] (Entrust's shape): bounded");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_ANY);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [anyExtendedKeyUsage]: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [anyExtendedKeyUsage]: bounded");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): exported");
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): no bound");
     _tm_with(126, _TM_DATE);
     _tm_with(127, "3005060300");
     assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with a MALFORMED scope: refused (fails closed)");
@@ -729,13 +1138,20 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for a 694-byte [codeSigning ...] scope: read whole, exported");
     _tm_with(126, _TM_DATE);
     _tm_with_bytes(127, _tm_long(1), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for a 694-byte scope ending in serverAuth: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for a 694-byte scope ending in serverAuth: bounded");
     _tm_with(127, _TM_SA);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_CS);
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a Disable date for [codeSigning] but NotBefore for all: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a Disable date for [codeSigning] but NotBefore for all: bounded");
+    _tm_with(104, _TM_DATE);
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a Disable date for all AND a NotBefore date: refused (Disable wins)");
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 1, cap), 0, "a NotBefore date AND in Disallowed: excluded, no bound");
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, 300), 2, "a bounded root that does not fit the buffer: refused, counted");
     # A block that does not fit the buffer is refused and counted, never silently dropped.
     assert_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
     return 0;
@@ -780,10 +1196,10 @@ fn test_policy_rows_client(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [serverAuth] only: exported for client authentication");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [clientAuth]: refused");
+    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [clientAuth]: exported with a bound (6.7.12)");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning, serverAuth]: exported for client authentication");
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning, serverAuth]: no bound for client authentication");
     _tm_with_bytes(9, _tm_long(1), 694);
     assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list ending in serverAuth: not a client root");
     # The mirror, for the server purpose: a [clientAuth] root is not a TLS server anchor.
@@ -814,8 +1230,8 @@ fn test_policy_client_chain(): i64 {
     test_group("Windows: a client chain anchored at a [serverAuth]-only store root is refused (CYRIUS-2026-0027)");
     var fns[32];
     assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
-    var root = hex_decode("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);
-    var leaf = _ts_cert(hex_decode("308201ac30820151a0030201020202100b300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100bd0c7b53f3770f5bfd09fe63cacd9c6ceefddc676413f1a942c29c4a5854d241022100958dfd9011a1da93bb80788723bd6f30224b6543e3ee1453cb623c3fb32bc42e", 864), 432);
+    var root = _ts_eku_root;
+    var leaf = _ts_cert(_ts_eku_leaf, 432);
     assert_neq(leaf, 0, "the client leaf parses");
     _tm_cert = root;
     _tm_cert_len = 348;
@@ -852,6 +1268,71 @@ fn test_policy_client_chain(): i64 {
     _tm_pem_len = _ts_pem(_tm_pem, _ts_p256, _ts_p256_len);
     return 0;
 }
+
+# Windows, OPT-IN and administrator only (CYRIUS_TLS_TEST_PROTECTED_ROOTS=1): the ProtectedRoots policy
+# (HKLM\SOFTWARE\Policies\Microsoft\SystemCertificates\Root\ProtectedRoots, Flags) reaches the export
+# because crypt32 applies it when the loader opens CurrentUser\ROOT (6.7.12; the issue's item 1). It
+# sets Flags = 8 for one fresh export and removes the key at once — machine policy, seen by every
+# process for that moment, hence opt-in. Flags = 1 (no user roots) cannot be shown on a host where none
+# can be planted: from a session with no desktop, `certutil -user -addstore Root` is refused
+# ERROR_NOT_SUPPORTED (as SYSTEM too) and a root written into the registry is purged at the next open;
+# 8 (ONLY_LM_GPT / DISABLE_LM_AUTH: no AuthRoot) takes the same path and shrinks the set measurably.
+fn test_protected_roots(): i64 {
+    test_group("Windows: the ProtectedRoots policy reaches the export through crypt32's open (opt-in)");
+    if (getenv("CYRIUS_TLS_TEST_PROTECTED_ROOTS") == 0) {
+        syscall(1, 1, "  not run: set CYRIUS_TLS_TEST_PROTECTED_ROOTS=1, as an administrator (it sets machine policy briefly)\n", 103);
+        return 0;
+    }
+    var k = syscall(0xF013, "kernel32.dll");
+    var ll = syscall(0xF014, k, "LoadLibraryExA");
+    var adv = callptr(ll, "advapi32.dll", 0, 0x800);
+    var ropen = syscall(0xF014, adv, "RegOpenKeyExW");
+    var rclose = syscall(0xF014, adv, "RegCloseKey");
+    var rset = syscall(0xF014, adv, "RegSetKeyValueW");
+    var rdel = syscall(0xF014, adv, "RegDeleteKeyW");
+    var parent = alloc(256);
+    var sub = alloc(256);
+    var val = alloc(32);
+    _tn_w_widen("SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root", parent, 256);
+    _tn_w_widen("SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root\\ProtectedRoots", sub, 256);
+    _tn_w_widen("Flags", val, 32);
+    var h[8];
+    store64(&h, 0);
+    var pe = callptr(ropen, _TN_W_HKLM, parent, 0, 0x20019, &h) & 0xFFFFFFFF;
+    if (pe == 0) { callptr(rclose, load64(&h)); }
+    assert_eq(pe, 0, "the parent policy key exists (nothing but the leaf is ever created)");
+    var ex = callptr(ropen, _TN_W_HKLM, sub, 0, 0x20019, &h) & 0xFFFFFFFF;
+    if (ex == 0) { callptr(rclose, load64(&h)); }
+    assert_eq(ex, 2, "the ProtectedRoots key is absent (an administrator's own is never touched)");
+    if (pe != 0) { return 0; }
+    if (ex != 2) { return 0; }
+    var cap = 1048576;
+    var buf = alloc(cap);
+    var nref[8];
+    var pol[8];
+    var b0 = _ts_blocks(buf, _tn_ca_read_win(buf, cap, &nref, &pol, _TN_PURPOSE_SERVER));
+    var v[8];
+    store64(&v, 8);
+    var b1 = 0 - 1;
+    var sr = callptr(rset, _TN_W_HKLM, sub, val, 4, &v, 4) & 0xFFFFFFFF;    # REG_DWORD
+    if (sr == 0) {
+        b1 = _ts_blocks(buf, _tn_ca_read_win(buf, cap, &nref, &pol, _TN_PURPOSE_SERVER));
+        assert_eq(callptr(rdel, _TN_W_HKLM, sub) & 0xFFFFFFFF, 0, "the ProtectedRoots key is removed again");
+    }
+    assert_eq(sr, 0, "Flags = 8 set (an administrator)");
+    var b2 = _ts_blocks(buf, _tn_ca_read_win(buf, cap, &nref, &pol, _TN_PURPOSE_SERVER));
+    syscall(1, 1, "  exported roots: ", 18);
+    fmt_int(b0);
+    syscall(1, 1, " -> under Flags = 8: ", 21);
+    fmt_int(b1);
+    syscall(1, 1, " -> key removed: ", 17);
+    fmt_int(b2);
+    syscall(1, 1, "\n", 1);
+    assert_gt(b0, 0, "the export holds roots");
+    assert_lt(b1, b0, "under the policy it holds fewer: crypt32 applied it at the loader's open");
+    assert_eq(b2, b0, "with the key removed it is whole again");
+    return 0;
+}
 #endif
 
 # Every target: a system load that found no usable bundle because the store refused every root
@@ -879,6 +1360,9 @@ fn test_all_refused_counted(): i64 {
 
 fn main(): i64 {
     alloc_init();
+    _ts_eku_root = hex_decode("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);
+    _ts_eku_leaf = hex_decode("308201ac30820151a0030201020202100b300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100bd0c7b53f3770f5bfd09fe63cacd9c6ceefddc676413f1a942c29c4a5854d241022100958dfd9011a1da93bb80788723bd6f30224b6543e3ee1453cb623c3fb32bc42e", 864);
+    _ts_dn = hex_decode("3082058a30820372a00302010202100c76da9c910c4e2c9efe15d058933c4c300d06092a864886f70d0101050500305f310b3009060355040613024e4c31123010060355040a1309446967694e6f746172311a301806035504031311446967694e6f74617220526f6f742043413120301e06092a864886f70d0109011611696e666f40646967696e6f7461722e6e6c301e170d3037303531363137313933365a170d3235303333313138313932315a305f310b3009060355040613024e4c31123010060355040a1309446967694e6f746172311a301806035504031311446967694e6f74617220526f6f742043413120301e06092a864886f70d0109011611696e666f40646967696e6f7461722e6e6c30820222300d06092a864886f70d01010105000382020f003082020a0282020100acb058c100bdd821080b2b9afe6e5630059f1b779010415cc30d8711778e81f1ca7ce98c6aed387435bbdadff9bbc00937b49673817d331a9839f7936f957f3db9b17587ba5148e88b703e9504c5d8b6c316d988b0b1871d70da86b40f148b7acf10d17436a2127b77864a79e67bdf021168a54e86ae34589b2413785622251e018b4b5171fb82cc599669885a6853c5b90d0237cb4bbc664a907e2a0b0507ed165f559075d846c91b83e208bef123cc991dd62a0f8320155827822efae222c249b1b901816a9d6d9d407768764e212a6d8440854e76997c82f3f3b70259d426011b8edfad5306d1ae18dde2b23acbd788388eac5b29b919d398f91803cf488286660b1b690fc9eb38887a261a054c92d724d496f2ac522da347d552f63ffece840670a6aa3ea2f2b656341857a2e4816de7caf06ad3c7916b0283417c15ef6b9a645ee3d03ce5b1eb7b5d86fbcbe67749cda365dcf7b99cb8e40b5f93cfcc301a321cce1c6395a5f9eae1748b9ee92ba9307ba0181f0e180be55ba9d3d16c1e07678f914ba98abcd266aa930188b291fa315cd5a6c1520809cd0a63a2d322a6e8a1d9390697f56e8d02908c147b3f80cd1b9cbac4587223afb6569fc67a423329073f82c9e61f050dcd4c28368bd3c83e1cc688ef5eee8964e91debda897e32a669d1ddcc889fd1d0c96621dc0667c5947a9a6d624c7dcce06480b29e478ea30203010001a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e041604148868bfe08e35c43b386b62f7283b8481c80cd74d300d06092a864886f70d010105050003820201003b028dcb3c30e86ea0adf273b35f9e25130405d3f6e38bbb0b79ce53dee496c5d1af73bcd5c3d040557c407fcd1b5f09d5f27c9f681dbb5dce7a39c28cd6987bc58355a8d57d40cae01ef7895e635da113c25d8ab68a7c00f323c3ed855f7176f06863aa45213948617836dcf14393d425c7f28065e153027551fc7a3aef37ab8428570cd8d4d499566ce3a2fe5984b431e833f86494945197ab39c54beddadd800b6f7c290dc48e8a720de75314b260413d849131683d2744dbe5def4fa6345c84c3e98f53f41ba4ecb370dba6698f1ddcb9f5cf75436826b2cbc13619742f878bbccc8a29fcaf068bd6b1db2df8d6f079dda8e67c7471ecab9bf2a4291b7635366f142a3e1f45a4d586bb5e4a433ad5c701ddce0f2eb7314919a03c1ea0065bc07fccf1211222caea0bd3ae0a22ad859e929d31835a4ac115f19b5b51bff224a5cc67ae417ef20a9a7f43fad8aa79a04259d0eca37e650fd8c4229049aecb9cf4b72bde20836af232f62e5ca01d370db7c82232c16310cc63607907ab11f6758c43b585989b08c8c50b3d886cb68a3c40ae7694b20cec11e564b95a92368d830d8c3ebb05551cde5fd2bb8f5bb119f5354f634198c790936ca611725170b8298730c7774c3d50dc7a8124cc7a75471472e2c1a7dc9e32b3b48de2784a76336b37d8fa06439240d3d7b87af665c741b4b73b2e58cf08699b8e5c5df84c1b7eb", 2844);
     _ts_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
     _ts_ms = hex_decode("308209aa30820792a003020102021343000253929e1c999055f04653000000025392300d06092a864886f70d01010c05003057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f435350203034301e170d3236303132323139353532315a170d3237303131373139353532315a3068310b3009060355040613025553310b30090603550408130257413110300e060355040713075265646d6f6e64311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e311a3018060355040313117777772e6d6963726f736f66742e636f6d30820122300d06092a864886f70d01010105000382010f003082010a0282010100c182c8a381c46bbd1d574788af700850f3d425f3c8a4d3c5a1823427d663cdbb124d18c2f7441dd982441d0b184775fb8160619e133a19b677cf8cde1bda03fcd179ae6727bf928f38dad7a101af8983fbd4edc5549742839598c88ad1a26607cd4ef78910f8c02a5af8cfbcc7aec665d5238809c7dabad3423e83e6224b300743e06b8f94f7b1efc5937f49c29841391e34dbbc208e84795c1d6b2fff0c8a4a247b0ee7af82f5f7330123846d14525e447b9592cb08a196cb444970379507ffacde78113a99cda88b48c8b71b89a72ed8e04094bd5e4ad9f19ed2f4ef2b7f643ccc6133b2657ee978a58ae4f48bb1db15aee59b502d361dc76af8f091f73dfb0203010001a382055c308205583082017f060a2b06010401d6790204020482016f0482016b016900750044c2bd0ce9140e64a5c94a01930a5aa1bb35970e00ee111689682a1c44d7b5660000019be74fd2250000040300463044022069b43f39dcca47688cd4739e6a3636f1d7a40f139583f20b0126c02ff6fbae6c022034ab4e7fb41c762b278a705b7a575da0ce6533a92c004cc8c20e40d97559ebc90077001c9f682ce9faf0456950f81b968a87dddb3210d84ce6c8b2e382524ac4cf599f0000019be74fd20a0000040300483046022100da07cd98a5adbcfa707ec35cf5cc8960ce4cf2ac8b4151be09d025a637dab529022100f544180ac6206624fa201eec7bc7b2043ba6c992c27caa960bfa11563813f4ee007700d6d58da9d01753f36a4aa0c7574902afebc7dc2cd38cd9f764c80c89191e9f020000019be74fd1cb0000040300483046022100dabe9fd11acfa36c4e7bd1b4d19ebc0b5ded9b4ccd992d2b934c4a9bc7990a25022100c605090339d63e44b41d6076ce1eb743c1fb08aca2b2bc02286b89026dbd3adb301b06092b060104018237150a040e300c300a06082b06010505070301303c06092b0601040182371507042f302d06252b060104018237150887bdd71b81e7eb4682819d2e8ed00c87f0da1d5d81b5dd50859ffd750201640201213082010b06082b060105050701010481fe3081fb306106082b060105050730028655687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274306706082b06010505073002865b687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370301d0603551d0e0416041452c8583a1d6912533da5b7b08b5c79b934cf8e64300e0603551d0f0101ff0404030205a03081990603551d1104819130818e821377777771612e6d6963726f736f66742e636f6d82117777772e6d6963726f736f66742e636f6d8218737461746963766965772e6d6963726f736f66742e636f6d8211692e732d6d6963726f736f66742e636f6d820d6d6963726f736f66742e636f6d8211632e732d6d6963726f736f66742e636f6d8215707269766163792e6d6963726f736f66742e636f6d300c0603551d130101ff040230003081f10603551d1f0481e93081e63081e3a081e0a081dd866c687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c866d687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c30660603551d20045f305d3051060c2b0601040182374c837d01013041303f06082b060105050702011633687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f446f63732f5265706f7369746f72792e68746d3008060667810c010202301f0603551d23041830168014540cbcec18f77df103e284be34644467cf751f6530130603551d25040c300a06082b06010505070301300d06092a864886f70d01010c050003820201004d2e64bb7e6b4eef4a619c609e4d47c4e2506881a53257623e1370e23643ac56e6552b84d38ff27cd78c57cd7d92f103c7ca1b8c4ac8d9da0893825fbfb8f6f20881241547a2326dcbe19300a3cf840fa7fbc74ad4920d1cf53addde9f79e48046a4dbf536470ce338a19eb4b0b0d967e0a0337776013e17bd910622b3fcfddaa462e5a39ab5433cff36826c7dfe9c51fffbc256b4e5547c93409a636c541418fa5553c21aa08f0f0d61f8a7b4572bcd97e0dcc41731be2b7ccd6d9371175a9c7d81a93158fc49ccd6f30a1aaa56522ec980715bafd6178aa4d90114a466305bb72ad0628069447031e74df3e154d627bef605fef0b3f4712406f2cb04d44186ef72bd39f799dc4f67e8638b69a1d74f6be246d5ccdac4020609a01fe0e37e13629939aa79ee88b6d3ee827a0a2071592906a11e6e89213f430513048f167e8fcb11c6d44b3b497aaaaac6dbc6e0335e32a82e558f73fb4be1e3070a5f354fe759cf23400a78bc5fa527065fe1760aef6a017d7de3a3020c7681f5f622b99f25f4a9240ef0df5c2a177b6e9917daec5614c497a6823e0b7f97527fdb8636b345882313a8bb7f232e4068d248e07acc46a9d7307763303e2809f9c2e73bd7a386afe9de490b2b627b42c0afab5c3b26191eb5030dad5a950b2f4f90b2465fc11dace5b4b6ce7ad0126ccb1bd52656a0ea67e6b060c5d2a9227d441b78a17880c2", 4956);
     _ts_mi = hex_decode("308207b8308205a0a0030201020213330000000b13e5667d4a9b558000000000000b300d06092a864886f70d01010c05003051310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e31223020060355040313194d6963726f736f667420544c532052534120526f6f74204732301e170d3235303830313230303235395a170d3239303630333230303235395a3057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f43535020303430820222300d06092a864886f70d01010105000382020f003082020a02820201009c3a24085a1892f29ed560cde2e6fb8047db44ae2bdd6d107021154529aad2c7dce6c442b1a08d52e04f5c395506364d17c1586634e285529fe2a4fec6dec2c23b86bfcaad872906eb1d491d5f81dbb7a4ac561ad61287fd5f4049e2a00c6a84c64e6fdf24b89a95745a597fade93c13157840ccecdaef88364a90deea630794c3836a1aae98e6f164805a296704e856f421a6c5468dc8dd02abbc06f06c477823bb38b0bbfb4d71b0df22c37f1a7ef99daa412ad1de68dd9574253866c91611c5593d2ab168b9933b66e83ce1fca7ff2c6b50e0c0b9c8717393b177bfedaa4d0e0a55db139c72e069ad814cda23f906cb3fed428a868c0dd20c1525d08668eb7856aa2e5c08b34d33804eee353c2fc37a7dc16672606890f4ebf608ec13d789925f5c52f4879578b136e1b342536e3a373707c873751ebb5d6e67c99a7ccb4af3c6cdf04ef586fb143519463d97867264dd4336efd4578200220ca33aedb3657065f982a5bab8d2eac0688a3537a040f5fe028966a830f89447625747b27b9b8cc795bceb9af6c68c4489db16e61efde789fc81353530ea2f7d896452b3461934e33b574f0a182031efc5fdb9b127f6975935fb0ac244d6d0b2ed554d1d57487512d7f29860169ec4069cd4ae7e2e65c753e422251830636a9057c594b4f7e54d4c0d54c71fa93d4d0a460962d0232251e38e374cc5f40140990582d3a2b0530203010001a38202813082027d300e0603551d0f0101ff040403020186301006092b06010401823715010403020100301d0603551d0e04160414540cbcec18f77df103e284be34644467cf751f6530130603551d20040c300a3008060667810c01020230130603551d25040c300a06082b06010505070301301906092b0601040182371402040c1e0a0053007500620043004130120603551d130101ff040830060101ff020100301f0603551d23041830168014de918648b7a1315931f14b5f07a9dc8879daa8763081ab0603551d1f0481a33081a030819da0819aa081978649687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c864a687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c3082011006082b06010505070101048201023081ff306306082b060105050730028657687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274306906082b06010505073002865d687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370300d06092a864886f70d01010c050003820201007c4871c2b6c045ab740fc63f49e2fc0fd675fdcd50d1e04bb3b3d1a8995ffe5d350d6c0bddd0ad6160188938e2f0b735d2b5213a0c0e5899387cd4d7dd024dd4dcf5ee90e37b6793a8acd41b50bbc54fe6d3f1b51ef0ff99bc2333b0c8a8a627d6d15bed6f14de4b071a0c50fd0edfbeeb4fb29810cb222ae61dd74ba7ae15d10136090b86434f4ee7c57e5ca36b832e493e9488998b52d3963f7198242f3782fa6c74f2bcdb0621bbb85067702415b60b228ff7b927e4037c8495b76604a99255c2bd11c7210a727f65c060a65049e9f62348203a8e9226a8178c98af14a73dce4cadc08e8c3c44f17ffb13f914d77b333d105e64e7273d0c4ce271d766ceaef74eb664ba542bb7fd03d798679837b20a6320e5b0fbd8a48d3a2e42229a22f42655833015c7a242b3bfd036c53652a773677a736e54acbce989d8a5eb1f6dac2750c4c8ebd41c54294dbbb6deabd7c7f11f1464ba7f473165ef797d14c4f019e48076e73b28009b446f2457f507dc8e5ab400589756b10bfa087571de1b53c8eebdf0ab224cbd6bba5d8a44593c246baabce97d8b5f4a4dd78c54b0ab769b80284d457465106021f98e795fda92fb178400dbc4ae8259813c27779e56f707c8bdbe3d91c5978ae69c0f591658486c7da41632ed16c92da796f5e4fdc5cf65a4ddd700e8c90ef49db2a40280cc1bf028ebb03177349ec3ccd7c89b36bbc525e2", 3960);
@@ -888,11 +1372,15 @@ fn main(): i64 {
     #endif
     test_system_roots();
     test_real_chain();
+    test_policy_deny_rows();
+    test_ctl_identifier_row();
+    test_policy_bound_rows();
     #ifdef CYRIUS_TARGET_WIN
     test_store_policy();
     test_policy_rows();
     test_policy_rows_client();
     test_policy_client_chain();
+    test_protected_roots();
     #endif
     test_all_refused_counted();
     return assert_summary();
