@@ -2757,6 +2757,10 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
+#   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
+#                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
+#                                     # (6.7.11, kept by the user 2026-10-15; through 6.7.10 the
+#                                     # leading two were taken)
 #   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
 #                                     # single value and the body ends in one — at fn scope and
 #                                     # at top level, a forward-declared `one` included. A body
