@@ -1,4 +1,4 @@
-# generic_instance_names.tcyr — 6.7.11: no two type arguments share a generic instance.
+# generic_instance_names.tcyr — 6.7.11: a scalar type argument never shares a generic instance with a struct.
 #
 # ⛔ An instance is named `Base$<fragment>`, and FINDFN / FINDSTRUCT dedup by that name. f64's
 # fragment was a bare `i` (`_append_conc_name` spelled only i8 / i16 / i32 / i64), the name of a

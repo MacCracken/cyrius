@@ -5706,9 +5706,12 @@ second `add<i32>` call reuses it) and called normally. There is no runtime type
 dispatch — `T` is resolved entirely at compile time. An instance is named by its
 type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own name
 for a struct — and a struct named exactly like a scalar (`struct f64`, which
-`add<f64>` then binds) is marked `.f64`, so no two type arguments share an
-instance (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i` too, and the
-second call ran the first's body).
+`add<f64>` then binds) is marked `.f64`, so a scalar type argument never shares an
+instance with a struct one (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i`
+too, and the second call ran the first's body). ⚠ Still open: a two-parameter generic
+whose type argument is itself a generic struct's instance — `g2<P<R>, i32>` and
+`g2<P, R<i32>>` both mint `g2$P$R$i32`, so the second call runs the first's body
+(`docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md`).
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`

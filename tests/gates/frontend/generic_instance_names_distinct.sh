@@ -215,4 +215,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — no two type arguments share a generic instance: f64 is \$f64 and a struct named like a scalar \$.<name> — the filed repro and its swap (R), Box (S), struct f64 (F), struct i32 (I) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a scalar type argument never shares a generic instance with a struct: f64 is \$f64 and a struct named like a scalar \$.<name> — the filed repro and its swap (R), Box (S), struct f64 (F), struct i32 (I) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

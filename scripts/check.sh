@@ -2552,11 +2552,12 @@ _chk_gate "$ROOT/tests/gates/frontend/call_result_type.sh"
 # refused naming i64, or ran the dead stub), and a refused explicit instance gets one note, its type's.
 # The filed repros, the warnings, the bounds, and 56 rows, x86 / IR / DCE / aarch64 / cx / PE.
 _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
-# 6.7.11 — no two type arguments share a generic instance: f64's fragment was a bare `i`, so
-# `gen<f64>` and `gen<i>` (a `struct i`) shared `gen$i` and the second call ran the first's body. f64
-# is `$f64`, and a struct named exactly like a scalar is `$.f64` (the user's decision C, 2026-10-13).
-# The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR / DCE /
-# aarch64 / cx / PE. Mutation ledger in the header.
+# 6.7.11 — a scalar type argument never shares a generic instance with a struct: f64's fragment was a
+# bare `i`, so `gen<f64>` and `gen<i>` (a `struct i`) shared `gen$i` and the second call ran the first's
+# body. f64 is `$f64`, and a struct named exactly like a scalar is `$.f64` (the user's decision C,
+# 2026-10-13). The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR /
+# DCE / aarch64 / cx / PE. Mutation ledger in the header. (A two-parameter generic's nested instance
+# names still collide: issues/2026-10-14-two-param-generic-nested-instance-names-collide.md.)
 _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
