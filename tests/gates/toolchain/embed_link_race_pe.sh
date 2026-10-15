@@ -164,7 +164,7 @@ fi
 [ "$fail" = "$f4" ] && ok
 
 # axis 5: the arm64-macOS openat route, on the binary.
-"$CC" < "$ROOT/src/main_aarch64.cyr" > "$D/cc_a64" 2> "$D/cc_a64.err"
+( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> "$D/cc_a64.err" )   # includes resolve from the root
 if [ ! -s "$D/cc_a64" ]; then
     bad "axis 5: the aarch64 cross compiler did not build from this tree: $(head -2 "$D/cc_a64.err" | tr '\n' ' ')"
 else
@@ -211,8 +211,10 @@ if command -v qemu-aarch64 > /dev/null 2>&1 && [ -s "$D/cc_a64" ]; then
         arc=0; ( cd "$D/a" && ulimit -c 0 && qemu-aarch64 "$D/eo_a" > "$D/a.out" 2>&1 ) || arc=$?
         grade qemu-aarch64 "$D/a.out" "$arc" 25
     fi
-else
+elif [ -s "$D/cc_a64" ]; then
     echo "  SKIP: axis 6 qemu-aarch64 (qemu-aarch64 absent — pi runs the .tcyr in the release gate)"
+else
+    echo "  SKIP: axis 6 qemu-aarch64 (no aarch64 cross compiler — axis 5 has failed on that)"
 fi
 if ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP: axis 6 wine (wine absent — the cass cross-OS leg runs embed_open_under_root.tcyr on real Windows)"
@@ -227,9 +229,9 @@ else
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             wine eo.exe > "$D/w.out" 2>&1 ) || wrc=$?
         if tr -d '\r' < "$D/w.out" | grep -q 'SKIP: the directory-link rows'; then
-            bad "axis 6 (wine): this wine refused to create the directory link, so the race rows did not run"
+            bad "axis 6 (PE): this wine refused to create the directory link, so the race rows did not run"
         else
-            grade wine "$D/w.out" "$wrc" 30
+            grade "PE" "$D/w.out" "$wrc" 30
         fi
     fi
     WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
