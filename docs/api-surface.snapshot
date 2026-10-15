@@ -2257,6 +2257,7 @@ patra::jsonl_open/1
 patra::jsonl_read/1
 patra::page_alloc/2
 patra::page_free/3
+patra::page_free_buf/4
 patra::page_init_data/1
 patra::page_offset/1
 patra::page_read/3
@@ -2281,6 +2282,7 @@ patra::patra_hdr_verify/1
 patra::patra_hdr_write/2
 patra::patra_hdr_write_nosync/2
 patra::patra_init/0
+patra::patra_initialized/0
 patra::patra_insert_returning/3
 patra::patra_insert_row/10
 patra::patra_insert_row_or_ignore/10
@@ -2325,13 +2327,15 @@ patra::row_write_int/3
 patra::row_write_str/4
 patra::sql_parse/0
 patra::sql_tokenize/1
+patra::tbl_chain_rows/4
 patra::tbl_create/8
 patra::tbl_delete/7
 patra::tbl_drop/3
 patra::tbl_find/3
 patra::tbl_insert/6
 patra::tbl_scan/6
-patra::tbl_scan_where/9
+patra::tbl_scan_where/10
+patra::tbl_unappend/5
 patra::tbl_update/7
 patra::wal_commit/2
 patra::wal_exists/1
@@ -2339,11 +2343,13 @@ patra::wal_forget/1
 patra::wal_is_active/1
 patra::wal_log_hdr/1
 patra::wal_log_page/2
+patra::wal_mark_failed/2
 patra::wal_overflowed/1
 patra::wal_recover/4
 patra::wal_rollback/2
 patra::wal_slots_init/0
 patra::wal_start/3
+patra::wal_writes/1
 patra::where_eval/4
 patra::where_validate_types/3
 poison::poison_alloc/1
