@@ -301,6 +301,16 @@
 #                                                                         the no-frame one), CW, A x86 IR=1 / IR=3 / DCE,
 #                                                                         aarch64, PE and IX3 (dyn_objects refused)
 #   M-KC2 `_dyn_icall` under the `t == 2` arm (callptr is token 137)   -> KC2-KC4, CW, the A and IX3 dyn_objects legs
+#   PW  (6.7.13, the user's decision D17 (a), 2026-10-15) a dyn-returning call in parentheses is a struct literal's dyn
+#       element, as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md):
+#       PW1 the filed repro verbatim (refused before, 169 now); PW2 double parentheses; PW3 a wrapped dyn method result;
+#       PW4 / PW5 at top level, wrapped and not, refused once by name (the element's no-frame refusal marks the call, so
+#       V4's "a dyn Show result used as a value" at the same call is not a second report). aarch64 / cx / PE:
+#       dyn_objects.tcyr §literal through the A / IX3 legs. Mutants (2026-10-16, the KC procedure):
+#   M-PW1 the tree before it (5a73a702: `_spi_call` declines a wrapped dyn) -> RED 12: PW1 PW2 (refused), PW4 (refused,
+#                                                                         not as expected), PW5 (2 errors), CW, the A
+#                                                                         x86 / PE and IX3 dyn_objects legs
+#   M-PW2 `_spi_top_ref` without its `_tn_once` mark                   -> RED 2: PW4 PW5 (2 errors)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -722,6 +732,16 @@ exits kc4 42 "KC4: every destination — an assignment, an argument (a dyn resul
 refused kc5 "cannot form dyn Shape from this expression" "KC5: a callee held in a variable stays refused (\`callptr(fp, &q)\`, D31 / FP6)" "${KH}fn run(): i64 { var q = Sq { 3 }; var fp = &mkd; var a: dyn Shape = callptr(fp, &q); return 0; }\nsyscall(60, run());\n"
 refused kc6 "cannot form dyn Shape from this expression" "KC6: a known callee returning \`i64\` stays refused" "${KH}fn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mki, &q); return 0; }\nsyscall(60, run());\n"
 refused kc7 "'mkd' returns a struct by value, and a struct result needs storage in a fn's frame" "KC7: at top level the call refuses itself, once, as \`mkd(&Q0)\` does (TY2b)" "${KH}var Q0 = Sq { 3 };\nvar G: dyn Shape = fncall1(&mkd, &Q0);\nsyscall(60, 0);\n"
+# ── PW (6.7.13, D17 (a) — the user, 2026-10-15): a dyn-returning call in parentheses is a struct literal's dyn element,
+# as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md). `H { 7,
+# (pass(o)), 8 }` was refused twice at the lane base ("a dyn Show result used as a value", then "a struct literal does
+# not form a dyn"), once after 6.7.13's wrapped pair element; `_spi_call` declined a wrapped dyn result. PW1 the filed
+# repro verbatim (169); aarch64 / cx / PE: dyn_objects.tcyr §literal, the A legs.
+exits pw1 169 "PW1: the filed repro verbatim, \`H { 7, (pass(o)), 8 }\` (refused before)" 'include "lib/alloc.cyr"\ntrait Show { fn show(self): i64; }\nstruct W { o: dyn Show; }\nstruct H { a; o: dyn Show; b; }\nfn mkw(d, v): i64 { var m = alloc(16); store64(m, d); store64(m + 8, v); return m; }\nfn get(w: *W): dyn Show { var o: dyn Show = w.o; return o; }\nfn pass(o: dyn Show): dyn Show { return o; }\nfn dw(o: dyn Show): i64 { var w: W = W { o }; return load64(&w) * 10 + load64(&w + 8); }\nfn main(): i64 {\n    alloc_init();\n    var o: dyn Show = get(mkw(4, 9));\n    var h: H = H { 7, (pass(o)), 8 };      # refused (2 errors); without the parentheses: 169\n    return dw(h.o) + h.a * 1000 + h.b * 100;\n}\nsyscall(60, main() & 255);\n'
+exits pw2 169 "PW2: double parentheses, \`H { 7, ((pass(o))), 8 }\`" "${HP}${FM}    var h: H = H { 7, ((pass(o))), 8 };\n    return (dw(h.o) + h.a * 1000 + h.b * 100) & 255;\n${ME}"
+exits pw3 169 "PW3: a dyn method result in parentheses, \`H { 7, (q.mk(o)), 8 }\`" "${HP}struct Q { k; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\n${FM}    var q: Q = Q { 1 };\n    var h: H = H { 7, (q.mk(o)), 8 };\n    return (dw(h.o) + h.a * 1000 + h.b * 100) & 255;\n${ME}"
+refused pw4 "'pass' returns a struct by value, and a struct result needs storage in a fn's frame" "PW4: at top level, \`var G: H = H { 7, (pass(O)), 8 };\` is refused once, by name" "${HP}struct Sq { n; }\nimpl Show for Sq { fn show(self): i64 { return self.n; } }\nvar S0: Sq = Sq { 5 };\nvar O: dyn Show = &S0;\nvar G: H = H { 7, (pass(O)), 8 };\nsyscall(60, G.a);\n"
+refused pw5 "'pass' returns a struct by value, and a struct result needs storage in a fn's frame" "PW5: ... and unwrapped, \`H { 7, pass(O), 8 }\` (the same element: once; it was refused twice)" "${HP}struct Sq { n; }\nimpl Show for Sq { fn show(self): i64 { return self.n; } }\nvar S0: Sq = Sq { 5 };\nvar O: dyn Show = &S0;\nvar G: H = H { 7, pass(O), 8 };\nsyscall(60, G.a);\n"
 
 # ── H28: the fold, across a newline and a comment; the caret on `dyn` ───────────────────────────────
 exits h28a 49 "H28a: \`dyn\` and its trait split across a newline and a comment fold to one type" "${HP}fn k(o: dyn\n    # a comment\n    Show): i64 { return dw(o); }\n${FM}    return k(o);\n${ME}"

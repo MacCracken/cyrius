@@ -1933,7 +1933,10 @@ call's word even from another struct (refused by name now, as the unwrapped call
 Until 6.7.13 a 9-16 byte METHOD or OPERATOR result in parentheses as a nested literal element
 (`H { 7, (q.dup()), 8 }`, `(q + r)`) and a wrapped struct-typed field (`H { 7, (h.q), 8 }`) were
 *unexpected '}'* too; they are the element the unwrapped source is now, refused by name where it is
-(another struct, no frame at top level).
+(another struct, no frame at top level). So is a dyn-returning call in parentheses as a `dyn` field's
+element (`H { 7, (pass(o)), 8 }`, 6.7.13, the user's decision D17 (a), 2026-10-15; it was refused: *a struct
+literal does not form a dyn*); at top level the element is refused once, by name (no frame). The untyped
+`var x = (pass(o));` stays refused: a dyn result goes only into a dyn.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they

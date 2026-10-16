@@ -51,6 +51,8 @@
 #                  arguments, an f64 result, a statement — each in the indirect call's micro-frame
 #   §known         (6.7.13, D15) a known `&f` callee is a dyn source as the direct call is: `fncall1(&mkdk, &p)`
 #                  and `callptr((&mkdk), &p)` copy the dyn result, `fncall1(&mkpk, &p)` (a `*P` result) forms
+#   §literal       (6.7.13, D17) a dyn-returning call in parentheses is a struct literal's dyn element, as the
+#                  unwrapped call is: `H { 7, (mkdk(&p)), 8 }`, double parentheses
 # The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
 # what a prototype is not (S4-S7) and what the call is (CG1-CG2) are compile-time:
 # tests/gates/frontend/dyn_checked.sh. cx runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R9).
@@ -586,6 +588,14 @@ fn known_callee(): i64 {
     d = callptr(&mkdk, &p);
     return a.show() + b.show() * 100 + c.show() * 10000 + d.show() * 1000000;
 }
+# §literal (6.7.13, the user's decision D17 (a)) — a dyn-returning call in parentheses is a struct literal's dyn element,
+# as the unwrapped call is (`H { 7, (pass(o)), 8 }` was refused: "a struct literal does not form a dyn").
+fn lit_wrapped(): i64 {
+    var p = P { 4, 9 };
+    var h: H = H { 7, (mkdk(&p)), 8 };
+    var h2: H = H { 6, ((mkdk(&p))), 2 };
+    return h.o.show() + h.a * 1000 + h.b * 100 + h2.o.show() * 10000 + h2.a * 1000000;
+}
 # C-ORD — the callee and `self` are read BEFORE the arguments: an argument that reseats the dyn does
 # not change the call it is an argument of.
 trait Ad { fn ad(self, n): i64; }
@@ -764,6 +774,7 @@ receivers();
 arguments();
 results();
 assert_eq(known_callee(), 18181818, "§known `fncall1(&mkdk, &p)` / `callptr((&mkdk), &p)` copy the dyn, `fncall1(&mkpk, &p)` forms, an assignment takes it");
+assert_eq(lit_wrapped(), 6497849, "§literal `H { 7, (mkdk(&p)), 8 }` and `((mkdk(&p)))`: a wrapped dyn call is the element");
 assert_eq(c_ord(), 507002, "§calls C-ORD: the callee and `self` are read before an argument reseats the dyn");
 assert_eq(copies(), 595959, "§copies every copy holds `&p`: all see `p.a = 5`");
 assert_eq(closures(), 4912, "§closures a capture is by value: the closure keeps p's words after `o = &q`");

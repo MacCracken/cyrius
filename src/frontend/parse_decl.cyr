@@ -2678,13 +2678,11 @@ fn _spi_call(S, pk): i64 {
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (rs == _STR_SID(S)) { return 0; }
-    # A wrapped dyn result keeps 6.7.8's path (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md).
-    if (pk > 0) { if (_dyn_is(S, rs) == 1) { return 0; } }
     var noff = PEEKV(S);
     var k = 1;
     if (STRUCTSZ(S, rs - 1) <= 8) { PCMPE(S); k = 3; }
     elif (GINFN(S) != 1) {
-        if (_ret_agg_class(S, fi) == 1) { _refuse_toplevel_struct_call(S, noff); }
+        if (_ret_agg_class(S, fi) == 1) { _spi_top_ref(S, noff); }
         PCMPE(S);
         return 4;
     } else {
@@ -2698,6 +2696,13 @@ fn _spi_call(S, pk): i64 {
     return k;
 }
 
+# ... that refusal, the call's token marked reported, so a dyn result's V4 refusal at the same call ("a dyn Show
+# result used as a value") is not a second report (6.7.13, D17 (a)'s top-level row). CHANGELOG [6.7.13]
+fn _spi_top_ref(S, noff): i64 {
+    _refuse_toplevel_struct_call(S, noff);
+    _tn_once(S, GTI(S));
+    return 0;
+}
 # The call whose `(` is token `o` ends the element: `,` / `}`, or the wrap's `)` (`pk` > 0).
 fn _spi_follow(S, o, pk): i64 {
     var nx = _call_follow(S, o - 1);
@@ -2717,6 +2722,8 @@ fn _spi_follow(S, o, pk): i64 {
 # element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
 # call (its refusals — another struct, no frame at top level — the unwrapped call's), and the wrap is
 # closed. 0 = not that shape (cursor untouched). CHANGELOG [6.7.11]
+# 6.7.13: a dyn-returning call too (`H { 7, (pass(o)), 8 }`, the user's decision D17 (a), 2026-10-15) — it was
+# refused twice ("a dyn Show result used as a value", then `_dyn_lit_form`'s). CHANGELOG [6.7.13]
 fn _spi_pcall(S): i64 {
     var st = GTI(S);
     var k = _pwrap_name(S, st);
