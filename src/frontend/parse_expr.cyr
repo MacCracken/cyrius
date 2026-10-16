@@ -6387,7 +6387,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         EPOPR(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
-        if (r2out == 0) { _mret_land(S); }   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
+        if (r2out == 0) { _mret_land(S); }   # rax:rdx, then the epilogue jump (6.7.7); none outside a fn (6.7.13)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
