@@ -4607,7 +4607,9 @@ stdlib files it did not vendor (outside the declared closure — a `cyrius lib s
 that the new pin's snapshot ships with other bytes: re-locking stamped the new pin over the old
 pin's rows, `deps --verify` and `--locked` agreed, and the next `lib sync --full` refused as if the
 snapshot had moved under an unchanged pin. `cyrius deps` — and `cyrius build`, every resolving
-verb — exits 1 naming each file, leaves `cyrius.lock` unchanged, and gives the two ways on:
+verb — exits 1 naming each file, leaves `cyrius.lock` **and `lib/`** unchanged (6.7.13, D41: the
+refusal comes before anything is written, so `deps --verify` stays green; until then the closure's
+own files were already re-vendored at the new pin), and gives the two ways on:
 
 ```
 error: cyrius.lock not re-locked: [package].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file this resolve did not vendor that the 6.6.7 snapshot ships with other bytes:
@@ -4624,7 +4626,11 @@ So after a pin bump a full-vendored project runs `cyrius lib sync --full` first.
 resolve does not vendor that the 6.6.7 snapshot ships with other bytes, so `cyrius deps` will not
 re-lock:`, the files, `Either, then commit the result:` and the two lines above. A file the new
 snapshot does not ship, or ships with the same bytes, does not depend on the pin and is re-locked
-as before; a project whose `lib/` is only its closure re-locks silently, as it always did.
+as before; a project whose `lib/` is only its closure re-locks silently, as it always did. To know
+the closure before it writes, a resolve at a moved pin (when some `lib/` file differs from the new
+snapshot at all) runs once first into a private scratch, silently — one extra resolve at such a
+bump, its named dependencies from the clone cache; whatever that pass printed, the real resolve
+prints once.
 
 The two other lock writers are held to the same rule (6.7.13, D42). The bare `cyrius deps --lock`
 (and `cyrius publish`'s lock step) resolves nothing, so at a moved pin it refuses while `lib/` holds

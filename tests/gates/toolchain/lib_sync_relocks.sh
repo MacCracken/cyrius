@@ -31,7 +31,9 @@
 #      deps`" — and passes once `lib sync --full` has run. (6.7.13, D42) At the bump the bare
 #      `deps --lock` exits 1 naming lib/chrono.cyr and lib/string.cyr (it vendored nothing) with
 #      `cyrius deps` as its first way, and the scoped `lib sync` (and its --dry-run) exits 1 naming
-#      lib/chrono.cyr alone before it copies — lib/ and cyrius.lock byte-unchanged by both. 2c: a lock an older `deps` re-stamped
+#      lib/chrono.cyr alone before it copies — lib/ and cyrius.lock byte-unchanged by both. (6.7.13,
+#      D41) the refused deps / build write NOTHING: lib/string.cyr (in the closure, moved at 6.6.7)
+#      and all of lib/ byte-unchanged, `deps --verify` green after the refusal. 2c: a lock an older `deps` re-stamped
 #      (trailer 6.6.7 over 6.6.6 rows): `lib sync` refuses by name, writes nothing, its summary
 #      names `lib sync --full --relock`, which then verifies. 2d: a closure-only project whose pin
 #      moves re-locks silently (rc 0, trailer 6.6.7, string's row the new hash, no refusal).
@@ -40,7 +42,10 @@
 #      --lock` refuses lib/string.cyr (6.7.13); the lock an older `deps --lock` re-stamped
 #      (simulated): `lib sync` refuses lib/string.cyr and its summary names the SCOPED
 #      `cyrius lib sync --relock` (not only `--full`, which vendors the whole snapshot), which then
-#      verifies with lib/ the same file count.
+#      verifies with lib/ the same file count. 2g (D41): the pin-move dry pass — its own home, 6.7.1
+#      moving string and ws_server.cyr, a path dep `ws` whose module is a thin profile of the leaf —
+#      is silent (a closure-only move prints the resolve's note once, rc 0) and decides what D19
+#      decided (a full-vendored lib/ws_server.cyr the resolve deletes is not held against it).
 #   3. Same pin, moved snapshot: `lib sync` (and `--dry-run`) refuse, lock and lib/ unchanged,
 #      and `cyrius deps` still refuses.
 #   4. A locked file the sync does not write, edited locally: its row is kept and
@@ -60,6 +65,9 @@
 # FAILS the at-the-bump row (lib/string.cyr, still 6.6.6 bytes, named beside chrono). D42: the bare
 # `--lock` branch dropped (it re-stamps again) FAILS axis 2's --lock row and 2f's; the scoped sync's
 # check dropped FAILS axis 2's sync and --dry-run rows; `--no-lock` not exempt FAILS axis 7's last row.
+# D41: no dry pass FAILS axis 2's string / lib/ / --verify rows and the build row; no mute FAILS 2g
+# (the note twice); the stale profile copy not recorded (`_dep_dry_drop`) FAILS 2g (rc 1); no pass
+# reset after the dry pass FAILS 2g (the note 0 times, a lock row that lies).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lib_sync_relocks
@@ -130,7 +138,7 @@ printf 'fn mine(): i64 { return 1; }\n' > "$P/lib/mine.cyr"   # outside the clos
 _cy deps --lock > /dev/null 2>&1 && grep -q '  lib/mine.cyr$' "$P/cyrius.lock" || { fail "axis 2 setup: lib/mine.cyr not locked"; x=1; }
 _pin 6.6.7
 printf '\n[build]\nentry = "main.cyr"\noutput = "build/m"\n' >> "$P/cyrius.cyml"; printf 'syscall(SYS_EXIT, 0);\n' > "$P/main.cyr"
-cp "$P/cyrius.lock" "$W/a2.lock"; cp "$P/lib/chrono.cyr" "$W/a2.chrono"
+cp "$P/cyrius.lock" "$W/a2.lock"; cp "$P/lib/chrono.cyr" "$W/a2.chrono"; cp "$P/lib/string.cyr" "$W/a2.string"
 # 6.7.13: `deps --locked` (CI) at the moved pin gives D19's remedy, naming chrono — never "run
 # `cyrius deps`", which refuses here (issues/2026-10-15-deps-locked-remedy-names-deps-after-a-d19-refusal.md)
 _locked_remedy() {   # <tag>: rc 1, the D19 remedy naming lib/chrono.cyr alone, not "run `cyrius deps`"
@@ -178,11 +186,18 @@ rc=0; _cy deps > "$W/a2d.out" 2>&1 || rc=$?
   || { fail "axis 2: deps after the pin move did not refuse lib/chrono.cyr by name (rc=$rc):"; head -3 "$W/a2d.out" | sed 's/^/      /'; x=1; }
 cmp -s "$W/a2.lock" "$P/cyrius.lock" || { fail "axis 2: the refused deps rewrote cyrius.lock ($(tail -1 "$P/cyrius.lock"))"; x=1; }
 cmp -s "$W/a2.chrono" "$P/lib/chrono.cyr" || { fail "axis 2: the refused deps wrote lib/chrono.cyr"; x=1; }
+# 6.7.13 (D41): refused BEFORE Phase 1 writes — string (in the closure, moved at 6.6.7) is not
+# re-vendored, so lib/ is the old pin's throughout and `deps --verify` stays green
+# (issues/2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md)
+cmp -s "$W/a2.string" "$P/lib/string.cyr" || { fail "axis 2: the refused deps re-vendored lib/string.cyr at 6.6.7 (D41: refused before anything is written)"; x=1; }
+[ "$(_libsum)" = "$lib0" ] || { fail "axis 2: the refused deps changed lib/"; x=1; }
+rc=0; _cy deps --verify > "$W/a2dv.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 2: deps --verify after the refused deps fails (rc=$rc):"; grep -E 'FAIL|verified' "$W/a2dv.out" | head -3 | sed 's/^/      /'; x=1; }
 _locked_remedy "after the refused deps"
 rc=0; _cy build > "$W/a2b.out" 2>&1 || rc=$?
 { [ "$rc" -ne 0 ] && grep -q '^error: cyrius.lock not re-locked' "$W/a2b.out" && ! grep -q '^compile ' "$W/a2b.out" \
-  && cmp -s "$W/a2.lock" "$P/cyrius.lock"; } \
-  || { fail "axis 2: cyrius build after the pin move did not stop at the refusal (rc=$rc):"; head -2 "$W/a2b.out" | sed 's/^/      /'; x=1; }
+  && cmp -s "$W/a2.lock" "$P/cyrius.lock" && [ "$(_libsum)" = "$lib0" ]; } \
+  || { fail "axis 2: cyrius build after the pin move did not stop at the refusal, lib/ and the lock unchanged (rc=$rc):"; head -2 "$W/a2b.out" | sed 's/^/      /'; x=1; }
 rc=0; _cy lib sync --full > "$W/a2s.out" 2>&1 || rc=$?
 rc2=0; _cy deps --verify > "$W/a2v.out" 2>&1 || rc2=$?
 rc3=0; _cy deps > "$W/a2x.out" 2>&1 || rc3=$?
@@ -265,6 +280,46 @@ n1=$(find "$P/lib" -name '*.cyr' | wc -l | tr -d ' ')
   || { fail "axis 2f: lib sync --relock (rc=$rc) then deps --verify (rc=$rc2): lib/ $n0 -> $n1 files, $(tail -1 "$W/a2hv.out")"; x=1; }
 why=$(_hashes_true) || { fail "axis 2f: $why"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 2f: deps --lock refuses the closure-only move (lib/string.cyr); a lock an older deps --lock re-stamped: lib sync names the scoped --relock, which verifies $n1 files (lib/ unchanged in size)"
+
+# ── axis 2g: the pin-move dry pass (6.7.13, D41) is invisible and decides what D19 decided ──
+#    Its own home: 6.7.1 moves string (in the closure) and ws_server.cyr. A path dep `ws` whose
+#    module is dist/ws_server.cyr is a thin profile of the declared leaf `ws`, so the resolve keeps
+#    the fold, prints one note, and deletes a lib/ws_server.cyr an earlier sync left.
+x=0
+H2="$W/home2"
+mkdir -p "$H2/versions/6.7.0" "$H2/versions/6.7.1" \
+  && cp -r lib "$H2/versions/6.7.0/lib" && cp -r lib "$H2/versions/6.7.1/lib" \
+  && echo '# moved in 6.7.1' >> "$H2/versions/6.7.1/lib/string.cyr" \
+  && echo '# moved in 6.7.1' >> "$H2/versions/6.7.1/lib/ws_server.cyr" \
+  && printf '6.7.1\n' > "$H2/current" && mkdir -p "$W/wsthin/dist" \
+  && printf 'fn wsthin(): i64 { return 1; }\n' > "$W/wsthin/dist/ws_server.cyr" \
+  && printf '[package]\nname = "wsthin"\nversion = "0.1.0"\n' > "$W/wsthin/cyrius.cyml" \
+  || { echo "FAIL: $G: cannot stage axis 2g's home"; exit 1; }
+_mkws() { rm -rf "$P"; mkdir -p "$P"
+    printf '[package]\nname = "r"\nversion = "0.0.1"\ncyrius = "6.7.0"\n\n[deps]\nstdlib = ["syscalls", "string", "ws"]\n\n[deps.ws]\npath = "../wsthin"\nmodules = ["dist/ws_server.cyr"]\n' > "$P/cyrius.cyml"; }
+_cy2() { ( cd "$P" && HOME="$W/nohome" CYRIUS_HOME="$H2" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$CLI" "$@" ); }
+# (a) closure-only: the dry pass runs (lib/string.cyr differs at 6.7.1), refuses nothing, and is
+#     silent — the resolve's note appears ONCE, as from a resolve with no dry pass
+_mkws
+_cy2 deps > /dev/null 2>&1 || { fail "axis 2g setup: deps at 6.7.0 failed"; x=1; }
+_pin 6.7.1
+rc=0; _cy2 deps > "$W/a2w.out" 2>&1 || rc=$?
+nn=$(grep -c "^note: \[deps.ws\] dist/ws_server.cyr not vendored" "$W/a2w.out")
+{ [ "$rc" -eq 0 ] && [ "$nn" = 1 ] && [ "$(grep -c '^1 deps resolved' "$W/a2w.out")" = 1 ] \
+  && [ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t6.7.1')" ] && cmp -s "$P/lib/string.cyr" "$H2/versions/6.7.1/lib/string.cyr"; } \
+  || { fail "axis 2g: a closure-only pin move with a dry pass (rc=$rc, the note $nn times):"; head -4 "$W/a2w.out" | sed 's/^/      /'; x=1; }
+# (b) full-vendored, lib/ws_server.cyr re-synced: outside the closure and moved at 6.7.1, but the
+#     resolve deletes it (the fold is kept), so D19 never held it — nor does the dry pass
+_mkws
+{ _cy2 lib sync --full && _cy2 deps && _cy2 lib sync --full; } > /dev/null 2>&1
+[ -f "$P/lib/ws_server.cyr" ] || { fail "axis 2g setup: lib/ws_server.cyr was not re-synced"; x=1; }
+_pin 6.7.1
+rc=0; _cy2 deps > "$W/a2x2.out" 2>&1 || rc=$?
+{ [ "$rc" -eq 0 ] && ! grep -q 'not re-locked' "$W/a2x2.out" && [ ! -f "$P/lib/ws_server.cyr" ] \
+  && [ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t6.7.1')" ]; } \
+  || { fail "axis 2g: the dry pass held the thin-profile copy the resolve deletes (rc=$rc):"; head -3 "$W/a2x2.out" | sed 's/^/      /'; x=1; }
+why=$(_hashes_true) || { fail "axis 2g: $why"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 2g: the pin-move dry pass is silent (the resolve's note once) and keeps D19's verdict on a thin-profile copy the resolve deletes"
 
 # ── axis 3: same pin, moved snapshot ─────────────────────────────────────────────────────
 x=0

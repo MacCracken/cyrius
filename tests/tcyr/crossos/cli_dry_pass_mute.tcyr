@@ -1,0 +1,122 @@
+# cli_dry_pass_mute.tcyr — CROSS-HOST: the CLI's output mute (cbt/build.cyr `_cbt_mute`) on each
+# host's own compiler. `cyrius deps` at a moved pin runs its resolve once first into a private
+# scratch (deps.cyr `_deps_pin_move_dry`, D41) with stdout and stderr muted, so the user sees the
+# real resolve's output once. POSIX (ecb, ach, pi, x86_64 Linux): /dev/null is dup2'd over fds 1
+# and 2 and the saved fds put back — checked by pointing fds 1 and 2 at two files first: what is
+# written while muted lands in neither, what is written after the restore lands in each. The
+# saved fds are closed after the restore. Windows (cass): sys_write asks GetStdHandle per write,
+# so the mute is SetStdHandle to NUL — checked as the handles GetStdHandle answers while muted and
+# after. CHANGELOG [6.7.13]
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+include "src/version_str.cyr"
+include "cbt/core.cyr"
+include "cbt/cli_args.cyr"
+include "cbt/manifest.cyr"
+include "cbt/sigclean.cyr"
+include "cbt/build.cyr"
+include "cbt/commands.cyr"
+include "cbt/project.cyr"
+include "cbt/quality.cyr"
+include "cbt/deps.cyr"
+include "cbt/pulsar.cyr"
+
+alloc_init();
+
+#ifndef CYRIUS_TARGET_WIN
+# "/tmp/cdpm<pid><suffix>", a fresh arena string.
+fn _cdpm_path(suffix): i64 {
+    var p = alloc(64);
+    memcpy(p, "/tmp/cdpm", 9);
+    var o = 9 + fmt_int_buf(sys_getpid(), p + 9);
+    memcpy(p + o, suffix, strlen(suffix));
+    store8(p + o + strlen(suffix), 0);
+    return p;
+}
+
+# The bytes of file `p` (up to 63) as a fresh string; "" when it cannot be read.
+fn _cdpm_read(p): i64 {
+    var b = alloc(64);
+    store8(b, 0);
+    var fd = sys_open(p, O_RDONLY, 0);
+    if (fd < 0) { return b; }
+    var n = sys_read(fd, b, 63);
+    sys_close(fd);
+    if (n < 0) { n = 0; }
+    store8(b + n, 0);
+    return b;
+}
+
+var po = _cdpm_path(".out");
+var pe = _cdpm_path(".err");
+var fo = sys_open(po, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+var fe = sys_open(pe, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+var so = sys_fcntl(1, F_DUPFD, 10);   # this test's own stdout / stderr, put back below
+var se = sys_fcntl(2, F_DUPFD, 10);
+sys_dup2(fo, 1);
+sys_dup2(fe, 2);
+var m1 = _cbt_mute(1);
+var m1b = _cbt_mute(1);               # a second mute is a no-op answering 1
+sys_write(1, "muted-out ", 10);
+sys_write(2, "muted-err ", 10);
+var sv_o = _cbt_mute_out;
+var sv_e = _cbt_mute_err;
+var m0 = _cbt_mute(0);
+sys_write(1, "out", 3);
+sys_write(2, "err", 3);
+var m00 = _cbt_mute(0);               # restoring an unmuted CLI does nothing
+var cl_o = sys_fcntl(sv_o, F_GETFD, 0);   # the saved fds are closed by the restore
+var cl_e = sys_fcntl(sv_e, F_GETFD, 0);
+sys_dup2(so, 1);
+sys_dup2(se, 2);
+sys_close(so);
+sys_close(se);
+sys_close(fo);
+sys_close(fe);
+assert_eq(m1, 1, "POSIX: _cbt_mute(1) mutes (1)");
+assert_eq(m1b, 1, "POSIX: a second _cbt_mute(1) answers 1");
+assert_eq(m0, 0, "POSIX: _cbt_mute(0) restores (0)");
+assert_eq(m00, 0, "POSIX: _cbt_mute(0) when unmuted answers 0");
+assert_eq(_cbt_muted, 0, "POSIX: unmuted after the restore");
+assert(sv_o > 9 && sv_e > 9, "POSIX: the saved fds sit above 9");
+assert_streq(_cdpm_read(po), "out", "POSIX: fd 1 got only what was written after the restore");
+assert_streq(_cdpm_read(pe), "err", "POSIX: fd 2 got only what was written after the restore");
+assert(cl_o < 0 && cl_e < 0, "POSIX: the saved fds are closed by the restore");
+sys_unlink(po);
+sys_unlink(pe);
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+var k32 = syscall(0xF013, "kernel32.dll");
+var gsh = syscall(0xF014, k32, "GetStdHandle");
+var h_o0 = callptr(gsh, 0 - 11);
+var h_e0 = callptr(gsh, 0 - 12);
+var m1 = _cbt_mute(1);
+var h_o1 = callptr(gsh, 0 - 11);
+var h_e1 = callptr(gsh, 0 - 12);
+var nul = _cbt_mute_nul;
+var m0 = _cbt_mute(0);
+var h_o2 = callptr(gsh, 0 - 11);
+var h_e2 = callptr(gsh, 0 - 12);
+assert_eq(m1, 1, "PE: _cbt_mute(1) mutes (1)");
+assert(nul > 0, "PE: NUL was opened");
+assert(h_o1 == nul && h_e1 == nul, "PE: while muted, GetStdHandle answers NUL for stdout and stderr");
+assert_eq(m0, 0, "PE: _cbt_mute(0) restores (0)");
+assert(h_o2 == h_o0 && h_e2 == h_e0, "PE: after the restore, the original stdout and stderr handles");
+#endif
+#endif
+#endif
+var r = assert_summary();
+syscall(SYS_EXIT, r);

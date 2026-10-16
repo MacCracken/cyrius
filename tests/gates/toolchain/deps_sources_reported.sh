@@ -29,6 +29,8 @@
 #   S8  only an entry this run would resolve can be "wanted": p4's leaf v2 is `optional` with no
 #       active feature and p5's leaf v2 is `target = "aarch64"` (an x86_64 build) — no note for
 #       either, leaf resolved at p1's v1 (both were called "wanted by p4 / p5")
+#   S9  (6.7.13, D41) at a moved pin the resolve runs once first into a private scratch; a dep
+#       that dry pass cloned is still reported `(fetched)` by -v, not `(cache)`
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree, one at a time; real
 # tree 8/8 green):
@@ -38,6 +40,7 @@
 #   M4  the dry run does not walk the cache (no transitive lines) ..... S3 S7 red
 #   M5  `deps -v` prints no sources ................................... S2 S6 red
 #   M6  the diamond notice ignores the optional / target gates (6.7.6 FXCL-7) .. S8 red
+#   M7  (6.7.13) the dry pass's fetches not carried to the real pass (`_dep_dry_fetched`) .. S9 red
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_sources_reported
@@ -152,6 +155,23 @@ rc=0; cy -v deps > "$W/s8.out" 2>&1 || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^note: ' "$W/s8.out" && grep -q 'return 10;' "$P/lib/leaf.cyr"; then
     ok "S8 a gated-out entry (optional with no feature, another target) wants nothing: no note, leaf at v1"
 else bad "S8 (rc=$rc): $(grep note "$W/s8.out" | tr '\n' '|') leaf=[$(cat "$P/lib/leaf.cyr" 2>/dev/null)]"; fi
+# ── S9 (6.7.13, D41) ──
+# At a moved pin the resolve runs once first into a private scratch (the dry pass that refuses before
+# anything is written). A dep that pass cloned is still this command's fetch: -v says (fetched), not
+# (cache). Its own snapshot V9 moves lib/string.cyr, so the dry pass runs.
+V9=6.99.0
+mkdir -p "$H/versions/$V9" && cp -r lib "$H/versions/$V9/lib" && echo '# moved' >> "$H/versions/$V9/lib/string.cyr" \
+  || { echo "FAIL: $G: cannot stage S9's snapshot"; exit 1; }
+mkorigin q9 9
+P="$W/ws/app9"; rm -rf "$P"; mkdir -p "$P"
+printf '[package]\nname = "app9"\nversion = "0.1.0"\ncyrius = "%s"\n\n[deps]\nstdlib = ["string"]\n' "$V" > "$P/cyrius.cyml"
+r9a=0; cy deps > "$W/s9a.out" 2>&1 || r9a=$?
+printf '[package]\nname = "app9"\nversion = "0.1.0"\ncyrius = "%s"\n\n[deps]\nstdlib = ["string"]\n\n[deps.q9]\ngit = "file://%s/o/q9"\ntag = "v1"\nmodules = ["dist/q9.cyr"]\n' "$V9" "$W" > "$P/cyrius.cyml"
+rc=0; cy -v deps > "$W/s9.out" 2>&1 || rc=$?
+if [ "$r9a" -eq 0 ] && [ "$rc" -eq 0 ] && grep -qxF "  q9  tag v1 @$(sha7 q9 v1) (fetched)" "$W/s9.out" \
+   && [ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t%s' "$V9")" ] && [ -d "$H/deps/q9" ]; then
+    ok "S9 at a moved pin (a dry pass ran first) a dep cloned by this command is still reported (fetched)"
+else bad "S9 (rc=$r9a/$rc): $(sed -n '/dependency sources/,+2p' "$W/s9.out" | tr '\n' '|') $(grep -m1 error "$W/s9.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
