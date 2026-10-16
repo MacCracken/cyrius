@@ -1262,7 +1262,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `f32` | 4 | Typed (single-precision arithmetic): its binary32 bits (6.7.10). |
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
-| `Vec` / `Vec<T>` | 8 | A handle. |
+| `Vec` / `Vec<T>` | 8 | A handle. A bare `Vec` is the file's own `struct Vec` / `union Vec` when one is declared above the field; declared below it, the field is refused by name (6.7.13, below). |
 | `*T` (any type name `T`) | 8 | A pointer: `p.f + n` steps `sizeof(T)` (see [Pointers](#pointers)). Since 6.6.17. |
 | a tuple `(T1, T2, ..)` | 8 × elements | Stored **inline**, an anonymous struct of 8-byte slots: `h.p.0`, `h.p = (1, 2);`. Since 6.7.7 — see [Tuples](#tuples). |
 | `dyn Tr` | 16 | Two opaque words, stored inline; formed or copied whole (`h.o = &p;`) and called through (`h.o.m()`). A struct local holding one is declared with its value. Not in a generic struct, a union or a `#derive`d struct. Since 6.7.8 — see [Trait objects](#trait-objects-dyn-678). |
@@ -1303,7 +1303,11 @@ silently an 8-byte i64, and three cases were silent miscompiles:
 * A struct used as a field type **above** its own declaration got a different layout than the
   same text below it: `struct A { b: B; x; }` written before `struct B { p; q; }` made A 16
   bytes instead of 24, and `a.b` read 8 bytes of a 16-byte value. It now reports
-  `struct field type 'B' is declared after its use; declare it before 'A'`.
+  `struct field type 'B' is declared after its use; declare it before 'A'`. Since 6.7.13 a bare
+  `Vec` field follows the same rule: with the file's own `struct Vec` (or `union Vec`) declared
+  below the field it is refused with the same words, where it was silently lib's 8-byte handle (the
+  same declaration above the field made it the struct: two layouts for one text). Declared above,
+  it is that struct; with no `Vec` of the file's own, the handle.
 * `v: i16v8` (a vector type) registered as a 2-byte `i16` field. A vector cannot be a field
   type.
 
@@ -5054,7 +5058,8 @@ that pair from the signature. Declare such a fn `: Result`, `: Option` or `: Tag
 private. A closure's own `return` is not the fn's; a pair reached through another file's fn or a
 method is not seen.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
-one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
+one is declared above it, else the 8-byte handle (as `Vec<T>` always is); one whose `struct Vec` is
+declared below it is refused by name, as cycc refuses it (6.7.13).
 Whitespace at the end of a
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.

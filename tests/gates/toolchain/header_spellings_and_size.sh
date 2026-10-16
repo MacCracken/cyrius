@@ -89,6 +89,7 @@
 #   `Str` a word before the file's own struct Str is sized             → H8 FAIL (the str3 row)
 #   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
 #   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
+# 6.7.13 (D10 (b)): a struct Vec declared below the field sized 8 again → H8 FAIL (the refusal rows)
 # 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -315,17 +316,28 @@ printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }
 "$CY" header str3.cyr > o8c 2>&1 || :
 check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"
 # A bare `Vec` field is the file's own `struct Vec` when one is declared ABOVE the field (the
-# compiler's FINDSTRUCT), else the 8-byte handle: both orders held to cycc's sizeof.
+# compiler's FINDSTRUCT), the 8-byte handle when the file has none, and refused by name when the
+# file's struct Vec is declared BELOW it — cycc refuses that order since 6.7.13 (D10 (b), the user
+# 2026-10-15; it was silently the handle, 24 B here), so the header names it and guesses no size.
+# Mutation: `_hdr_type_size`'s below arm back to `return 8` -> the refusal rows RED.
 printf '%s\n' 'struct VB { v: Vec; p1; p2; }' 'struct Vec { a; b; c; }' 'struct VA { v: Vec; p1; p2; }' > vo.cyr
 { cat vo.cyr
   echo 'fn pz(n): i64 { var d[24]; var i = 22; store8(&d + 23, 10); if (n == 0) { store8(&d + i, 48); i = i - 1; } while (n > 0) { store8(&d + i, 48 + n % 10); n = n / 10; i = i - 1; } syscall(1, 1, &d + i + 1, 23 - i); return 0; }'
-  echo 'pz(sizeof(VA)); pz(sizeof(VB)); syscall(60, 0);'; } > vop.cyr
-{ (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> /dev/null) && chmod +x vop && ./vop > vo.cc 2> /dev/null; } || :
-check "cycc's sizeof: struct Vec above the field 40 B, below it 24 B" "40 24" "$(paste -sd' ' vo.cc 2> /dev/null)"
+  echo 'pz(sizeof(VA)); syscall(60, 0);'; } > vop.cyr
+rcvo=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> "$D/vop.err") || rcvo=$?
+check "cycc refuses the field whose struct Vec is declared below it, by name, once" "1 1 1" \
+    "$rcvo $(grep -c "^error:<source>:1:19: struct field type 'Vec' is declared after its use; declare it before 'VB'" vop.err || true) $(grep -c '^error' vop.err || true)"
+grep -v 'struct VB' vop.cyr > vopa.cyr
+{ (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vopa.cyr" > "$D/vopa" 2> /dev/null) && chmod +x vopa && ./vopa > vo.cc 2> /dev/null; } || :
+check "cycc's sizeof: struct Vec above the field 40 B" "40" "$(paste -sd' ' vo.cc 2> /dev/null)"
 printf '%s\n' 'fn rva(): VA { var z: VA; return z; }' 'fn rvb(): VB { var z: VB; return z; }' >> vo.cyr
-"$CY" header vo.cyr > o8d 2>&1 || :
+rc8d=0; "$CY" header vo.cyr > o8d 2> e8d || rc8d=$?
 check "a bare Vec field with the file's own struct Vec declared above: that struct (40 B, cyr_val5)" 1 "$(has o8d 'cyr_val5 rva(void);   /* returns VA, 40 B */')"
-check "... declared below the field: the 8-byte handle (24 B, cyr_val3)" 1 "$(has o8d 'cyr_val3 rvb(void);   /* returns VB, 24 B */')"
+check "... declared below the field: refused by name, no prototype, exit 1" "1 0 1" \
+    "$(grep -cxF "error: cyrius header: 'rvb' returns 'VB': its field type 'Vec' is the file's own struct Vec declared below its use, which cycc refuses; no prototype written" e8d || true) $(grep -c 'rvb(' o8d || true) $rc8d"
+printf '%s\n' 'struct VN { v: Vec; p1; p2; }' 'fn rvn(): VN { var z: VN; return z; }' 'enum Vec { VX; }' > von.cyr
+"$CY" header von.cyr > o8n 2>&1 || :
+check "no struct Vec of the file's own (an enum Vec below): the 8-byte handle (24 B, cyr_val3)" 1 "$(has o8n 'cyr_val3 rvn(void);   /* returns VN, 24 B */')"
 check "each typedef once (cyr_val2, cyr_val3, cyr_val4)" "1 1 1" \
     "$(grep -c 'cyr_val2;$' o8b) $(grep -c '} cyr_val3;$' o8b) $(grep -c '} cyr_val4;$' o8b)"
 

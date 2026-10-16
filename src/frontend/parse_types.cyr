@@ -3996,6 +3996,22 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
     return 0;
 }
 
+# A bare `Vec` field (no `<T>`; struct and union): the file's own `struct Vec` / `union Vec` when it is
+# declared ABOVE the field, else lib's 8-byte handle. Declared BELOW it is refused by name, as any field
+# type declared after its use is (6.6.10): it was silently the handle there, so one text had two layouts
+# (D10 (b), the user 2026-10-15). The cursor is past the name. CHANGELOG [6.7.13]
+fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
+    var bsid = FINDSTRUCT(S, tnoff);
+    if (bsid == 0) {
+        if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
+                ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));
+                _panic = 0;
+            } }
+    }
+    ADDFIELDTYPED(S, si, fnoff, bsid);
+    return 0;
+}
+
 # ⛔ 6.7.10 (B7) — u8 / u16 / u32 / f32 FIELDS ARE THEIR WIDTHS (the user's decision, 2026-10-08:
 # packed, no padding — the rule i8 / i16 / i32 fields follow). A u8..u32 field is `0 - width`
 # (the i8..i32 encoding, so FIELDSZ / FIELDOFF / STRUCTSZ / every store take the width) plus the
@@ -4454,8 +4470,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             var _vsent = MKVEC(S, elemc);
                             ADDFIELDTYPED(S, si, fnoff, _vsent);
                         } else {
-                            var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
-                            ADDFIELDTYPED(S, si, fnoff, _bsid);
+                            _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                         }
                     } elif (fscalar > 0) {
                         # Store as negative width for sized scalars, 0 for i64 (default)
@@ -4527,8 +4542,7 @@ fn PARSE_UNION_DEF(S): i64 {
                         var _vsent = MKVEC(S, elemc);
                         ADDFIELDTYPED(S, si, fnoff, _vsent);
                     } else {
-                        var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
-                        ADDFIELDTYPED(S, si, fnoff, _bsid);
+                        _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                     }
                 } elif (fscalar > 0) {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
