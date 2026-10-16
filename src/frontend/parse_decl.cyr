@@ -6757,6 +6757,22 @@ fn _vcall_fi(S, ti): i64 {
     _vcall_o = o;
     return fi;
 }
+# ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15) — A METHOD CALL DECLARED TO RETURN A VECTOR IS ONE: `x.m(..)` on a
+# single name typed as a struct (`_tok_method_open`, `_pair_callee_at`), at the instance its arguments reach
+# (`_mcall_gen`, quietly, as `_var_rhs_msid` resolves it). Every vector receive refused it ("got `s`"), where a by-name
+# call declared `: f64v2` was taken. At token `ti`: that method's fn when it is declared to return a vector, else -1;
+# `_vcall_o` its `(`. Its call is the method arm's (`_field_load_on`), which on Win64 passes a receive's own
+# destination as the hidden result pointer (`_sc_vbeg`, parse_fn.cyr). CHANGELOG [6.7.13]
+fn _vmc_fi(S, ti): i64 {
+    if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
+    var mf = _pair_callee_at(S, ti);
+    if (mf < 0) { return 0 - 1; }
+    mf = _mcall_gen(S, mf, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0);
+    if (mf < 0) { return 0 - 1; }
+    if (GFRS(S, mf) > 0 - 2048) { return 0 - 1; }
+    _vcall_o = ti + 3;
+    return mf;
+}
 # The cursor on the call `fi` (`_vcall_fi`'s): its checks — and an explicit instance's own (`_gen_own_call_check`) —
 # then past its name, `<..>` and `(`, for a path that emits the call itself (Win64's hidden result pointer).
 fn _vcall_enter(S, fi): i64 {
@@ -6776,7 +6792,8 @@ fn _vrcv_vec(S, ty): i64 {
 }
 # The source at token `ti` of a vector of type `ty`, ended by `term`, when it is that vector: 1 = a
 # by-name call to a fn declared `: ty`, 2 = `fncallN(&f, ..)` / `callptr(&f, ..)` with `f` declared
-# `: ty` — inside `_vrcv_k` parentheses, the call alone in them; 0 = any other source.
+# `: ty`, 3 = (6.7.13, D29) a method call `x.m(..)` declared `: ty` (`_vmc_fi`) — inside `_vrcv_k`
+# parentheses, the call alone in them; 0 = any other source.
 fn _vrcv_src(S, ti, ty, term): i64 {
     _vrcv_k = 0;
     var c = ti;
@@ -6792,6 +6809,9 @@ fn _vrcv_src(S, ti, ty, term): i64 {
         if (_vrcv_k == 0) { return 1; }   # the receives below, as ever (`_vrcv_g`: an explicit instance)
         r = 1;
         o = _vcall_o;   # 6.7.13: past `<..>`
+    } elif (_vrcv_mty(S, c) == ty) {
+        r = 3;
+        o = c + 3;
     }
     if (r == 0) { return 0; }
     var x = _call_close(S, o) + 1;   # the token after the call
@@ -6805,6 +6825,27 @@ fn _vrcv_byname(S, c, ty): i64 {
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != ty) { return 0; }
     if (_vcall_o != c + 1) { _vrcv_g = 1; }
+    return 1;
+}
+# The vector a method call at token `ti` is declared to return (`_vmc_fi`), else 0.
+fn _vrcv_mty(S, ti): i64 {
+    var mf = _vmc_fi(S, ti);
+    if (mf < 0) { return 0; }
+    return GFRS(S, mf);
+}
+# A whole method call at token `ti` (ended by `term`) declared to return a vector other than `ty`, into a vector
+# local of type `ty`: refused by name, in the by-name call's words (`verb` "declared type" / "assigned variable") — 1;
+# else 0. CHANGELOG [6.7.13]
+fn _vrcv_mbad(S, ti, ty, term, verb): i64 {
+    var mt = _vrcv_mty(S, ti);
+    if (mt == 0) { return 0; }
+    if (mt == ty) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != term) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    if (verb == 0) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
+    else { ERR_MSG(S, "vector return type does not match the assigned variable", 55); }
+    STI(S, sv);
     return 1;
 }
 # 1 = token `ti` starts a by-name call to a fn declared to return a vector — any: the receives check
@@ -6821,7 +6862,12 @@ fn _vrcv_emit(S, dst, ty, k): i64 {
     STI(S, GTI(S) + w);
     if (_TARGET_PE == 1) {
         if (k == 1) { _vrcv_pe_call(S, dst); }
-        else {
+        elif (k == 3) {   # 6.7.13 (D29): the method arm's `_sc_pre` passes dst's address, before `self`
+            _sc_vbeg = GTI(S);
+            _sc_vdst = dst;
+            PCMPE(S);
+            _sc_vbeg = 0 - 1;
+        } else {
             _icall_vbeg = GTI(S);
             _icall_vdst = dst;
             PCMPE(S);
@@ -6852,13 +6898,22 @@ fn _vrcv_pe_call(S, dst): i64 {
 }
 # PARSE_VAR, cursor on `=`: `var v: <vector> = <src>;` in a fn for an accepted source the receives
 # there do not take — inside parentheses, through fncallN / callptr, or (6.7.13) an explicit instance
-# `g<T>(..)`: the inline receives below test `IDENT (`. 1 = declared.
-fn _vrcv_decl(S, noff, pscale): i64 {
+# `g<T>(..)` or a method `x.m(..)`: the inline receives below test `IDENT (`. 1 = declared.
+# ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15) — AN UNANNOTATED `var v = callptr(&f, ..);` /
+# `fncallN(&f, ..)` WITH `f` DECLARED TO RETURN A VECTOR IS THAT VECTOR'S LOCAL, as `var v = f(..);` is (v6.5.61): it
+# bound one word — `lanes(v)` was refused "value-form SIMD arg must be a 16-byte vector" on x86_64 / aarch64 / cx, and on
+# PE `v` held lane 0, which the value-form parameter took as the vector's address (exit 5). `ann` = the annotation's
+# token (0: none); the call must be the whole initialiser. A callee held in a variable stays a word (D32).
+fn _vrcv_decl(S, noff, pscale, ann): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
+    if (pscale == 0) { if (ann == 0) { pscale = _vrcv_ity(S, GTI(S) + 1); } }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
-    if (k == 0) { return 0; }
+    if (k == 0) {
+        _vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0);   # 6.7.13 (D29): a method declared to return another vector
+        return 0;
+    }
     if (_vrcv_k == 0) { if (k == 1) { if (_vrcv_g == 0) { return 0; } } }   # 6.7.13: `g<T>(..)` is ours
     _vec_desc(S, pscale);
     var named = _sci_slots(S, noff, pscale, GVEC_NSLOTS(S));
@@ -6867,6 +6922,14 @@ fn _vrcv_decl(S, noff, pscale): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# The vector a whole initialiser `fncallN(&f, ..)` / `callptr(&f, ..)` at token `ti` (`;` after it) returns, `f`
+# declared to return one (`_icall_rs_at`), else 0.
+fn _vrcv_ity(S, ti): i64 {
+    var rs = _icall_rs_at(S, ti);
+    if (rs > 0 - 2048) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
+    return rs;
 }
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
 # scalar path, so not a source the receives take: refused by name, once — not after the initialiser
@@ -6889,7 +6952,10 @@ fn _vrcv_asg(S, noff, term): i64 {
     var lt = GLTYPE(S, li);
     if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
     var k = _vrcv_src(S, GTI(S), lt, term);
-    if (k == 0) { return _vrcv_other(S, term); }
+    if (k == 0) {
+        _vrcv_mbad(S, GTI(S), lt, term, 1);   # 6.7.13 (D29): a method declared to return another vector
+        return _vrcv_other(S, term);
+    }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
     _vrcv_emit(S, li, lt, k);
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
@@ -6918,7 +6984,7 @@ fn _vrcv_err(S, ti, verb): i64 {
     _err_head(S);
     PRSTR(": a value-form vector local is ");
     PRSTR(verb);
-    PRSTR(" only from a local of its type or a call declared to return it (by name, or fncallN / callptr with the callee written `&f`) - got `");
+    PRSTR(" only from a local of its type or a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) - got `");
     _vrcv_offender(S, ti);
     PRSTR("`; through a fn pointer held in a variable, give the target an out-pointer\n");
     _err_excerpt(S);
@@ -7690,7 +7756,7 @@ fn PARSE_VAR(S): i64 {
     # callee writes through the retptr. No post-call store needed
     # (the local is already populated). Mirror of the existing
     # big-struct asv path at line ~1063.
-    if (_vrcv_decl(S, noff, pscale) == 1) { return 0; }   # 6.7.11: wrapped, or through fncallN / callptr
+    if (_vrcv_decl(S, noff, pscale, ann_ti) == 1) { return 0; }   # 6.7.11: wrapped, or through fncallN / callptr (6.7.13: a method; untyped)
     if ((_is_simd128(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # any 16B/1-XMM vector receive
         var _f2c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f2c_look_ti) == 2) {

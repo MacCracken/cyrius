@@ -1618,11 +1618,14 @@ b = fncall1(fp, 5);`), or, at any size, give the target an out-pointer and have 
 (`fn mko(a, out: *P3)`, then `var p: P3 = P3 { 0, 0, 0 }; var ig = callptr(fp, 5, &p);`).
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
-that vector type, or a call to a fn *declared* to return the same one. Anything else — an
+that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the
+whole `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (on Windows it writes into
+a temporary that is copied into the fn's own result pointer). Anything else — an
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
-multi-value `return (a, b);`, a `callptr(..)` through a function pointer, a **global** of the
+multi-value `return (a, b);`, a `callptr(fp, ..)` through a fn pointer held in a variable, a **global** of the
 right vector type, or a call returning a scalar or a different-width vector — is a compile error
-since v6.6.6 naming what it got. Before v6.6.6 every one of those compiled clean and handed back
+since v6.6.6 naming what it got. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
+(*… got `this expression`*), though its callee is known. Before v6.6.6 every one of those compiled clean and handed back
 a half-written register pair; `return x + y;` returned `y` unchanged and `return G;` for a
 global read a stale register rather than `G`. The two that are worth spelling out because they
 look reasonable:
@@ -1638,15 +1641,21 @@ look reasonable:
 
 ⚠ **A value-form vector LOCAL takes a vector, or nothing (6.7.11).** `var v: f64v2 = <src>;` and
 `v = <src>;` take their 16 / 32 bytes only from a source that IS that vector: a local of the type,
-or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`), or
-through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (on Windows the call
-then passes the local's address as its hidden result pointer, as `mkv(..)` does). Every other
-source is refused by name (`a value-form vector local is initialised only from a local of its
-type or a call declared to return it .. - got `callptr``): a callee held in a variable
-(`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`), a word (`5`, `load64(&w)`, `&w`, a scalar local or
-call), a method call, `*p`. Through a fn pointer held in a variable, give the target an
-out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
-7);` — which carries every lane on every target.
+or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`),
+through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f`, or (6.7.13) a
+method call `s.mv(..)` on a single name, `impl S { fn mv(self, ..): f64v2 }` (on Windows each call
+then passes the local's address as its hidden result pointer, as `mkv(..)` does — a method's before
+`self`). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
+(6.7.13), as `var v = mkv(..);` is. A method declared to return another vector is refused as a
+by-name call is (`vector return type does not match the declared type` / `.. the assigned
+variable`). Every other source is refused by name (`a value-form vector local is initialised only
+from a local of its type or a call declared to return it .. - got `callptr``): a callee held in a
+variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an unannotated `var v = callptr(fp, ..)` is
+one word), a word (`5`, `load64(&w)`, `&w`, a scalar local or call), `*p`. Through a fn pointer
+held in a variable, give the target an out-pointer and have it store the lanes — `var v: f64v2 =
+mkv(0, 0); var ig = callptr(fp, &v, 41, 7);` — which carries every lane on every target. ⚠ Through
+6.7.12 a method call was refused (*… got `s`*), and the unannotated `var v = callptr(&mkv, ..)` was
+one word: `lanes(v)` was refused on x86_64 / aarch64 / cx and faulted on Windows.
 
 **An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
 `mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
@@ -1664,9 +1673,9 @@ vector annotation is now never dropped: `var v: f64v2 = idg<i64>(5)`, a generic 
 scalar, meets the refusal above.
 
 A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
-7);`, an untyped `var x = callptr(&mkv, ..)`, an argument to an untyped parameter, a method call
-`s.mv(..)`, an operator fn declared to return a vector, at top level too — runs, and its vector is
-discarded, on every target (6.7.12). ⚠ Through 6.7.11 on Windows such a call passed no hidden
+7);`, an argument to an untyped parameter, a statement `s.mv(..);`, an operator fn declared to
+return a vector, at top level too — runs, and its vector is discarded, on every target (6.7.12;
+since 6.7.13 an unannotated `var x = callptr(&mkv, ..)` receives it, above). ⚠ Through 6.7.11 on Windows such a call passed no hidden
 result pointer, so the callee wrote the vector through its first argument: a page fault, or
 `s.mv(..)` overwriting `s`.
 

@@ -139,6 +139,28 @@
 #       wrap) green
 #   ME4 `_vcall_enter` stepping two tokens (`IDENT (` only) -> RED 8: win64 E1-E4 E6-E9 ("undefined variable 'i64'":
 #       the type argument parsed as the first argument) — PE's own call alone
+#
+# ⛔ 6.7.13 (the vectors lane, D29 A — the user's decision, 2026-10-15; issues/2026-10-13-vector-call-results-the-receives-
+# do-not-take.md) — THREE CALLS DECLARED TO RETURN THE VECTOR THAT THE RECEIVES AND THE RETURN STILL REFUSED: a method
+# `var v: f64v2 = s.mv();` ("a value-form vector local is initialised only from .. got `s`" on all five legs; before 6.7.11
+# it read wrong lanes: 1 / 1 / cx 155 / PE 41), an unannotated `var v = callptr(&mkv, 41, 7);` (one word: `lanes(v)` refused
+# "value-form SIMD arg must be a 16-byte vector" on x86_64 / IR=3 / aarch64 / cx, PE exit 5 — lane 0 taken as the vector's
+# address) and `return callptr(&mkv, a, b);` from a `: f64v2` fn (refused ".. got `this expression`"). Each is taken now:
+# the method by the receive (`_vmc_fi`; on PE its hidden result pointer is the local's address, `_sc_vbeg`), the untyped
+# declaration as the callee's vector (`_vrcv_ity`), the return by the rule (`_ret_vicall`; PE `_ret_vicall_pe`). Rows C
+# (accepted, 161 on x86_64 / IR=3 / cx / aarch64 / PE): C1-C3 the three filed repros verbatim, C4 the method assignment
+# with `s` intact afterwards (PE: the pointer goes before `self`), C5 `return fncall2(&mkv, a, b)` in a tail position.
+# Rows Q (refused once): Q1 `var v: f64v4 = s.mv()` (an f64v2 method) "vector return type does not match the declared
+# type", Q2 `w = s.mv()` into an f64v4 ".. the assigned variable", Q3 an unannotated `var v = callptr(fp, ..)` through a
+# variable stays a word (D32): `lanes(v)` refused "value-form SIMD arg must be a 16-byte vector", Q4 `return callptr(&mk4,
+# ..)` (an f64v4 callee) from a `: f64v2` fn — the return rule's refusal.
+# MUTATION LEDGER (6.7.13 D29 — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>; measured):
+#   MC1 `_vrcv_src` without the method arm      -> RED 10: C1 C4 on all five legs (refused 'got `s`'); Q1 Q2 green (the
+#       method's own mismatch refusal stands)
+#   MC2 `_vrcv_decl` without the untyped inference -> RED 5: C2 on all five legs (refused; PE 5)
+#   MC3 `_simd_ret_call_ok` without `_ret_vicall` -> RED 10: C3 C5 on all five legs (refused)
+#   MC4 `_sc_pre` without its `_sc_vbeg` arm      -> RED 2: win64 C1 C4 = 0 (the method wrote a temp; the local never set)
+#   MC5 `_ret_vicall_pe` answering 0             -> RED 2: win64 C3 C5 = 0 (the generic path passes no hidden pointer)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -453,6 +475,82 @@ z_msg() {
     Z6) echo "$MSG";;
     esac
 }
+# ---- 6.7.13 (D29): a method, an untyped indirect call and an indirect return (rows C accepted, Q refused) ----------
+CH='include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, a); store64(&v + 16, a); store64(&v + 24, a); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(40 + self.k, 7); } }
+'
+c_src() {  # $1 row id -> source on stdout; each exits 161 when right
+    case "$1" in
+    C1) printf '%s' 'include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+fn run(): i64 {
+    var s: S = S { 1 };
+    var v: f64v2 = s.mv();
+    return lanes(v);
+}
+syscall(60, run() % 256);
+' ;;
+    C2) printf '%s' 'include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 {
+    var v = callptr(&mkv, 41, 7);
+    return lanes(v);
+}
+syscall(60, run() % 256);
+' ;;
+    C3) printf '%s' 'include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn fwd(a, b): f64v2 { return callptr(&mkv, a, b); }
+fn run(): i64 { var v: f64v2 = fwd(41, 7); return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    C4) printf '%s' "$CH"'fn run(): i64 { var s: S = S { 1 }; var v: f64v2 = mkv(0, 0); v = s.mv(); if (s.k != 1) { return 1; } return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    C5) printf '%s' "$CH"'fn fwd(a, b): f64v2 { return fncall2(&mkv, a, b); }
+fn run(): i64 { var v: f64v2 = fwd(41, 7); return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    esac
+}
+C_ROWS="C1 C2 C3 C4 C5"
+q_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    Q1) printf '%s' "$CH"'fn run(): i64 { var s: S = S { 1 }; var v: f64v4 = s.mv(); return 1; }
+syscall(60, run());
+' ;;
+    Q2) printf '%s' "$CH"'fn run(): i64 { var s: S = S { 1 }; var w: f64v4 = mk4(0); w = s.mv(); return 1; }
+syscall(60, run());
+' ;;
+    Q3) printf '%s' "$CH"'fn run(): i64 { var fp = &mkv; var v = callptr(fp, 41, 7); return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    Q4) printf '%s' "$CH"'fn fwd(a): f64v2 { return callptr(&mk4, a); }
+syscall(60, 1);
+' ;;
+    esac
+}
+Q_ROWS="Q1 Q2 Q3 Q4"
+q_msg() {
+    case "$1" in
+    Q1) echo "vector return type does not match the declared type";;
+    Q2) echo "vector return type does not match the assigned variable";;
+    Q3) echo "value-form SIMD arg must be a 16-byte vector";;
+    Q4) echo "$MSG";;
+    esac
+}
+# Which legs a Q row is asked on: Q3's refusal is the value-form argument's, which PE's address-passed parameter does
+# not run (it took lane 0 as the address: exit 5).
+q_legs() { case "$1" in Q3) echo "host cx aarch64";; *) echo "host cx aarch64 win64";; esac; }
 # Which legs an acceptance row RUNS on: every row on all four. A7's int-class 16-byte pair return
 # is a per-target ABI the tuple guard has nothing to do with, and it was kept off two legs until
 # each target carried it:
@@ -580,6 +678,42 @@ refuse_z_all() {  # $1 leg label  $2 compiler
     done
 }
 
+# 6.7.13 (D29): rows C built by the leg's compiler and run (161); rows Q refused once, by their own words, no artifact.
+accept_c_all() {  # $1 leg label  $2 compiler  $3 runner fn name  [$4 VAR=value for the compiler]
+    for row in $C_ROWS; do
+        c_src "$row" > "$W/c.cyr"
+        rc=0
+        if [ -n "${4:-}" ]; then env "$4" "$2" < "$W/c.cyr" > "$W/c.out" 2>"$W/c.err" || rc=$?
+        else "$2" < "$W/c.cyr" > "$W/c.out" 2>"$W/c.err" || rc=$?; fi
+        naccept=$((naccept+1))
+        if ! [ -s "$W/c.out" ]; then bad "$1 $row: produced no artifact (rc=$rc: $(grep -m1 '^error' "$W/c.err" 2>/dev/null))"; continue; fi
+        chmod +x "$W/c.out"
+        got=0
+        ( ulimit -c 0; "$3" "$W/c.out" ) >/dev/null 2>&1 || got=$?
+        if [ "$got" = 161 ]; then good "$1 $row = 161"; else bad "$1 $row = $got, want 161"; fi
+    done
+}
+refuse_q_all() {  # $1 leg label  $2 compiler
+    for row in $Q_ROWS; do
+        case " $(q_legs "$row") " in *" $1 "*) ;; *) echo "  skip: $1 $row (see q_legs)"; continue;; esac
+        q_src "$row" > "$W/q.cyr"
+        rc=0
+        "$2" < "$W/q.cyr" > "$W/q.out" 2>"$W/q.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        qm=$(q_msg "$row")
+        ne=$(grep -c '^error' "$W/q.err" 2>/dev/null || true)
+        if ! grep -qF "$qm" "$W/q.err" 2>/dev/null; then
+            bad "$1 $row: not refused as '$qm' (rc=$rc, first line: $(head -1 "$W/q.err" 2>/dev/null))"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1)"
+        elif [ -s "$W/q.out" ]; then
+            bad "$1 $row: reported but still emitted an artifact"
+        else
+            good "$1 $row refused once"
+        fi
+    done
+}
+
 hostr() { timeout 60 "$1"; }
 echo "host x86_64:"
 refuse_all host "$CC"
@@ -589,6 +723,9 @@ accept_v_all host "$CC" hostr
 accept_e_all host "$CC" hostr
 accept_e_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_z_all host "$CC"
+accept_c_all host "$CC" hostr
+accept_c_all host-ir3 "$CC" hostr CYRIUS_IR=3
+refuse_q_all host "$CC"
 
 echo "cx (cxvm):"
 if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ] \
@@ -601,6 +738,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_v_all cx "$W/cycc_cx" cxr
     accept_e_all cx "$W/cycc_cx" cxr
     refuse_z_all cx "$W/cycc_cx"
+    accept_c_all cx "$W/cycc_cx" cxr
+    refuse_q_all cx "$W/cycc_cx"
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -616,6 +755,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_v_all aarch64 "$W/cycc_a64" a64r
         accept_e_all aarch64 "$W/cycc_a64" a64r
         refuse_z_all aarch64 "$W/cycc_a64"
+        accept_c_all aarch64 "$W/cycc_a64" a64r
+        refuse_q_all aarch64 "$W/cycc_a64"
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -636,6 +777,8 @@ if command -v wine > /dev/null 2>&1; then
         accept_v_all win64 "$W/cycc_win" wr_
         accept_e_all win64 "$W/cycc_win" wr_
         refuse_z_all win64 "$W/cycc_win"
+        accept_c_all win64 "$W/cycc_win" wr_
+        refuse_q_all win64 "$W/cycc_win"
     else
         bad "win64 leg: could not build src/main_win.cyr"
     fi
@@ -647,7 +790,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS; echo $#)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS; echo $#)   # 6.7.13: + Q (every Q row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -660,11 +803,12 @@ for row in $ACCEPT_ROWS; do
 done
 na_floor=$((na_floor + $(set -- $V_ROWS; echo $#) * 2))   # 6.7.11: every V row on host + cx
 na_floor=$((na_floor + $(set -- $E_ROWS; echo $#) * 3))   # 6.7.13: every E row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $C_ROWS; echo $#) * 3))   # 6.7.13 (D29): every C row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

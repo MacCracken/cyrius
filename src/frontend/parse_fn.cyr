@@ -1480,6 +1480,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     if (_cur_fn_returns_vector(S) == 1) {
         if (_simd_ret_call_ok(S) == 0) { _refuse_simd_return(S); }
     }
+    if (_ret_vicall_pe(S) == 1) { return 0; }   # 6.7.13 (D29): `return callptr(&f, ..);` on Win64
     # v6.4.31: `return <simd_call>(args);` on Win64 PE — a SIMD-returning fn
     # whose return expression is itself a SIMD-returning call (e.g.
     # `f32v4_splat` → `return f32v4_make(x,x,x,x);`). The callee writes its
@@ -5598,6 +5599,7 @@ fn _sc_pre(S, fi, noff, beg): i64 {
     _sc_n0 = 0;
     if (_pe_vret(S, fi) == 1) {   # 6.7.12: a Win64 vector result's hidden pointer
         _sc_n0 = 1;
+        if (beg == _sc_vbeg) { return _sc_vret(S); }   # 6.7.13 (D29): a vector receive's own destination
         return _pe_vtemp(S, fi);
     }
     var cls = _ret_agg_class(S, fi);
@@ -5616,6 +5618,15 @@ fn _sc_pre(S, fi, noff, beg): i64 {
     return t;
 }
 
+# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse_decl.cyr) on PE: the
+# method whose receiver is token `_sc_vbeg` (one-shot) takes the destination's address, slot `_sc_vdst`, as its
+# hidden result pointer (int arg 0, before `self`) — `_icall_vret`'s shape. -1 (no temp: `_sc_post` reads nothing).
+fn _sc_vret(S): i64 {
+    _sc_vbeg = 0 - 1;
+    EFLADDR(S, _sc_vdst);
+    EPUSHR(S);
+    return 0 - 1;
+}
 fn _sc_x8(S, fi, t): i64 {
     if (t < 0) { return 0; }
     if (_AARCH64_BACKEND != 1) { return 0; }
@@ -6314,10 +6325,45 @@ fn _pair_ret_offender(S): i64 {
 # declared type would miss that arm and land on the generic path on Windows, which is the shape
 # this bite removes. Refusing is the conservative answer, never a miscompile.
 # 6.7.13: an explicit instance `g<T>(..)` too, as the fn it reaches (`_vcall_fi`; the tail arm takes only `IDENT (`).
+# ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15): and the whole `return callptr(&f, ..);` / `fncallN(&f, ..)`
+# with `f` declared to return this vector (`_ret_vicall`) — refused "got `this expression`" though its callee is
+# known; through a variable it stays refused (no declared type: X13).
 fn _simd_ret_call_ok(S): i64 {
+    if (_ret_vicall(S) == 1) { return 1; }
     var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
+    return 1;
+}
+# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (`;` after it), `f` declared
+# to return this fn's vector (`_icall_rs_at`).
+fn _ret_vicall(S): i64 {
+    if (_icall_rs_at(S, GTI(S)) != _cur_fn_ret_scalar) { return 0; }
+    if (_cur_fn_ret_scalar > 0 - 2048) { return 0; }
+    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != 5) { return 0; }
+    return 1;
+}
+# On Win64 that call returns through a hidden pointer (int arg 0), as `f(..)` does: into an anonymous temp
+# (`_icall_vbeg` / `_icall_vdst`, parse_expr.cyr), copied into this fn's own result pointer — the by-name arm's
+# shape below. SysV / AAPCS64 / cx return it in the vector registers, which the scalar path leaves as they are.
+# 1 = emitted (the `;` consumed). CHANGELOG [6.7.13]
+fn _ret_vicall_pe(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    if (_cur_fn_ret_stash <= 0) { return 0; }
+    if (_ret_vicall(S) == 0) { return 0; }
+    _vec_desc(S, _cur_fn_ret_scalar);
+    var n = GVEC_NSLOTS(S);
+    var t = _agg_temp_t(S, n, _cur_fn_ret_scalar);
+    _icall_vbeg = GTI(S);
+    _icall_vdst = t;
+    PCMPE(S);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    var src = 0 - ((t + 1) * 8);
+    if (_cur_fn_regalloc > 0) { src = src - _cur_fn_regalloc * 8; }
+    src = src - _cur_fn_ret_stash;
+    ESTRUCT_BYVAL_COPY(S, src, 0 - (_cur_fn_regalloc * 8 + 8), n * 8);
+    vec_push(rp_vec, EJMP0(S));
     return 1;
 }
 fn _cur_fn_returns_vector(S): i64 {
