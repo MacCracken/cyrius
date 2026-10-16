@@ -4626,6 +4626,29 @@ re-lock:`, the files, `Either, then commit the result:` and the two lines above.
 snapshot does not ship, or ships with the same bytes, does not depend on the pin and is re-locked
 as before; a project whose `lib/` is only its closure re-locks silently, as it always did.
 
+The two other lock writers are held to the same rule (6.7.13, D42). The bare `cyrius deps --lock`
+(and `cyrius publish`'s lock step) resolves nothing, so at a moved pin it refuses while `lib/` holds
+any file the new snapshot ships with other bytes — the closure's own files included — and its first
+way is the resolve that re-vendors them:
+
+```
+error: cyrius.lock not re-locked: [package].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 2 files that the 6.6.7 snapshot ships with other bytes (a bare re-lock vendors nothing):
+  lib/chrono.cyr
+  lib/string.cyr
+  cyrius.lock records ONE pin for every row; re-locking would stamp 6.6.7 over these rows. Either:
+    cyrius deps                re-vendors the declared closure at 6.6.7 and re-locks
+    cyrius lib sync --full     moves them to 6.6.7 and re-locks (a project that vendors the whole snapshot)
+  cyrius.lock is unchanged (it records 6.6.6).
+```
+
+A scoped `cyrius lib sync` (the declared `[deps] stdlib` subset; `cyrius update` refreshes `lib/`
+the same way) refuses **before it copies anything** while `lib/` holds files outside that subset
+which the new snapshot ships with other bytes: `error: lib sync: nothing was copied: … lib/ holds 1
+file outside the declared [deps].stdlib subset that the 6.6.7 snapshot ships with other bytes:`, the
+files, and `cyrius lib sync --full` as the way on (`--dry-run` refuses too). `--full` vendors them;
+`--no-lock` re-locks nothing, stamps no pin, and is not refused. Until 6.7.13 both writers stamped
+the new pin over the old pin's rows, as `deps` did before D19.
+
 A resolve never deletes a file, so since 6.7.12 it **names** each `lib/` file it did not vendor —
 a leaf dropped from `[deps] stdlib`, the module of a dep dropped from the manifest — which `lib/`
 and the lock still hold (`note: 1 file in lib/ is outside the declared footprint …`, the file,

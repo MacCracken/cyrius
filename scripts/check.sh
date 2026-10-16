@@ -2395,7 +2395,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
 
 # 6.6.17 — `cyrius lib sync` is held to the 6.6.4 stdlib-leaf guard (a snapshot moved under an
 # unchanged pin is refused by name, nothing written; `--relock` accepts) and re-locks only the
-# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept.
+# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept. At a moved
+# pin no lock writer — the resolve (6.7.12, D19), the bare `deps --lock` and a scoped `lib sync`
+# (6.7.13, D42) — stamps the new pin over lib/ files it did not write.
 _chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 
 # 6.6.9 (bite 10, CYRIUS-2026-0009) — no cbt string literal names a shared /tmp/ path, and `cyrius self`

@@ -1822,6 +1822,7 @@ fn cmd_lib_sync(): i64 {
     var had_lock = file_exists("cyrius.lock");
     _dep_lock_load();
     if (_libsync_guard(ps, pd) != 0) { return 1; }
+    if (_libsync_pin_move_refused(src_dir, pd, declared) != 0) { return 1; }   # 6.7.13 (D42)
     var copied = vec_len(pd);
     if (_dry_run == 1) {
         var wi = 0;
@@ -1886,13 +1887,52 @@ fn _libsync_guard(ps, pd): i64 {
     _ew(" file(s) refused above — NOTHING was written and cyrius.lock is unchanged.\n");
     # 6.7.12 (D19): `deps` / `build` no longer re-stamp a moved pin over rows they did not write,
     # so the old first branch ("you ran deps/build first") is no longer this release's doing.
+    # 6.7.13 (D42): nor `deps --lock` / a scoped `lib sync` — only a lock an older CLI wrote.
     _ew("  The installed snapshot of the pin cyrius.lock records changed under it — reinstall that\n");
     _ew("  version; do not `--relock`. Only a lock re-stamped at a pin move without these files\n");
-    _ew("  re-vendored (by `deps`/`build` before 6.7.12, `deps --lock`, or a scoped `lib sync`)\n");
+    _ew("  re-vendored (by `deps`/`build` before 6.7.12, or `deps --lock` / a scoped `lib sync` before\n");
     # The scoped `--relock` first: a closure-only project re-locked by `deps --lock` gets back
     # its declared files with it, where `--full` would vendor the whole snapshot. CHANGELOG [6.7.12]
-    _ew("  holds the previous pin's rows: `cyrius lib sync --relock` then (`cyrius lib sync --full --relock`\n");
-    _ew("  in a project that vendors the whole snapshot).\n");
+    _ew("  6.7.13) holds the previous pin's rows: `cyrius lib sync --relock` then\n");
+    _ew("  (`cyrius lib sync --full --relock` in a project that vendors the whole snapshot).\n");
+    return 1;
+}
+
+# ⛔ 6.7.13 (D42, the user, 2026-10-15) — D19 FOR THE SCOPED SYNC. Its re-lock keeps every row it
+# did not write byte for byte and stamps the pin it synced from, so at a pin move a lib/ file
+# outside the declared subset that the new snapshot ships with other bytes kept the OLD pin's row
+# under the NEW pin's trailer: `deps --verify` agreed, and the next `lib sync --full` refused as if
+# the snapshot had moved under an unchanged pin. Now those files are named BEFORE anything is
+# copied (a --dry-run refuses as the real run would), lib/ and cyrius.lock unchanged; `--full`
+# moves them. Only for a scoped sync (`declared`) that would re-lock (a lock with a trailer, not
+# --no-lock). Against the snapshot this sync copies from (`src_dir`). CHANGELOG [6.7.13]
+fn _libsync_pin_move_refused(src_dir, pd, declared): i64 {
+    if (declared == 0 || _no_lock == 1) { return 0; }
+    if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
+    var stale = _dep_pin_move_stale_in(src_dir, pd);
+    var k = vec_len(stale);
+    if (k == 0) { return 0; }
+    var pin = _dep_lock_pin_value();
+    _ew("error: lib sync: nothing was copied: [package].cyrius moved from ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(" to ");
+    _ew_shown(pin);
+    _ew(", and lib/ holds ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" file"); } else { _ew(" files"); }
+    _ew(" outside the declared [deps].stdlib subset that the ");
+    _ew_shown(pin);
+    _ew(" snapshot ships with other bytes:\n");
+    _dep_pin_move_list(stale);
+    _ew("  cyrius.lock records ONE pin for every row; a scoped sync would stamp ");
+    _ew_shown(pin);
+    _ew(" over these rows. Instead:\n");
+    _ew("    cyrius lib sync --full     moves them to ");
+    _ew_shown(pin);
+    _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    _ew("  Nothing was written: cyrius.lock and lib/ are unchanged (the lock records ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(").\n");
     return 1;
 }
 
