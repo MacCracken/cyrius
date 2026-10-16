@@ -489,9 +489,8 @@ fn decl_alias() {
     a.x = 1;
     return q.x * 10 + q.y;
 }
-# The inline Str pun: `var t: Str; t = a;` keeps the handle — one word, in t's first field. 6.7.13 (D7 (1)):
-# `str_len(t)` of the inline t passes t's OWN header (`&t`), so the pun is read back from that field.
-fn str_inline_pun() { var a = str_from("abcde"); var t: Str; t = a; return str_len(load64(&t)); }
+# The inline Str pun: `var t: Str; t = a;` keeps the handle, so str_len(t) reads a's string.
+fn str_inline_pun() { var a = str_from("abcde"); var t: Str; t = a; return str_len(t); }
 fn str_rebind() { var a: Str = str_from("abcde"); var b: Str = str_from("xy"); b = a; return str_len(b); }
 # ⛔ 6.7.10 (the handle line): a <= 8 B struct local initialised from an address is a HANDLE, as a
 # wide one is, and both directions copy through it — the writes after the copy show it is no alias,

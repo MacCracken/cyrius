@@ -1279,8 +1279,8 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_arg_type_refused.sh"
 # mutation-proven (ledger in header). The runtime half: struct_ptrmode_return_copy.tcyr (crossos).
 _chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
 
-# 6.7.13 (the struct lane, the user's decision D7 (1), 2026-10-15): an INLINE `Str` (`Str { .. }`, `var t:
-# Str;`) is its header's address wherever a `Str` value is taken — a `Str` parameter, `var h: Str = t;` /
+# 6.7.13 (the struct lane, the user's decision D7 (1), 2026-10-15): an INLINE `Str` (`Str { .. }`) is its
+# header's address wherever a `Str` value is taken — a `Str` parameter, `var h: Str = t;` /
 # `var h = t;` (a handle bound to t's header) and `h = t` into a handle; through 6.7.12 each took the
 # `data` word as the header (the filed `f(t)` exited 0 where 7 is right, on every target). `return t;`
 # from a fn returning `Str` and a store into a `Str` global, field or through a `*Str` are refused by

@@ -2790,7 +2790,7 @@ always correct and always has been.
 ### An inline `Str` passes its header (6.7.13)
 
 A `Str` is a heap handle by name: a `Str` variable holds the ADDRESS of a 16-byte `{ data; len; }`
-header (`str_new`, `str_from`). A `Str { p, n }` literal — or `var t: Str;` — is an INLINE header, in
+header (`str_new`, `str_from`). A `Str { p, n }` literal is an INLINE header, in
 the frame or, at top level, in the data section. Wherever a `Str` VALUE is taken, its bare name is that
 header's address (the user's decision D7 (1), 2026-10-15), with no allocation:
 
@@ -2814,6 +2814,9 @@ the inline Str 't' into a global* / *into a field* / *through a pointer*). Build
 fn with `str_new(p, n)`. An inline `Str` global is never refused, and a closure that captures `t` holds a
 copy of the header in its environment, which lives as long as the closure. A position that takes no `Str`
 value — an untyped parameter or variable, an untyped fn's `return` — still takes the header's first word.
+A `var t: Str;` declared with no initialiser is not covered: its bare name is still its first word, as is
+a copy of it (`var h: Str = t;`), so `t = a` with `a` a handle stores `a` there and `str_len(t)` reads a's
+string, as through 6.7.12 (whether `t = a` should copy the header instead is an open question).
 Through 6.7.12 every `Str` position took that word: `slen(t)` read the length from the bytes after the
 string (0 for this `t`) on every target, and `var h: Str = t;` was a copy whose own first word was passed.
 

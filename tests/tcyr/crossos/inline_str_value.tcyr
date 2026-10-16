@@ -2,7 +2,7 @@
 # address wherever a `Str` value is taken.
 #
 # A `Str` is a heap handle by name: its slot holds the address of a 16-byte `{ data; len; }` header. A
-# `Str { p, n }` literal (or `var t: Str;`) is an INLINE header on the frame, whose slot is field 0 — and every
+# `Str { p, n }` literal is an INLINE header on the frame, whose slot is field 0 — and every
 # use of the bare name as a `Str` value took that slot, the `data` word, as the header: `f(t)` into `s: Str`
 # read the length out of whatever followed the string (the filed repro exited 0 where 7 is right, on every
 # target; issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Now `f(t)`, `f((t))`,
@@ -12,6 +12,8 @@
 # a frame's header outlive the frame are refused by name (tests/gates/frontend/inline_str_value.sh): `return t;`
 # from a fn returning `Str`, a store into a `Str` global, a `Str` field or through a `*Str`. A global's address
 # is static and a capture is a copy in the closure's environment, so neither is refused: those rows are here.
+# A `var t: Str;` declared with NO initialiser is outside the decision (worded for `var t: Str = Str { .. }`):
+# its bare name stays its first word, so 6.6.16's pun `t = a; str_len(t)` reads a's string (the u_* rows).
 #
 # CROSS-HOST: the address is EFLADDR / EVADDR on each backend, the tail-call rows check that a frame address
 # laundered through a handle diverts the `jmp` (`_fn_local_addr`). Run on ecb / ach (Mach-O), cass (PE) and pi
@@ -75,8 +77,14 @@ fn b_asg(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = 0; h = t; h.le
 fn b_wrap(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = (t); var k: Str = 0; k = ((t)); return f(h) * 10 + f(k); }
 fn b_param(s: Str): i64 { var t: Str = Str { "abc", 3 }; s = t; return str_len(s); }
 fn b_inline(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = Str { "zz", 2 }; h = t; h.len = 3; return t.len * 10 + f(h); }
-fn b_bare(): i64 { var t: Str; t.data = "abc"; t.len = 3; return f(t); }
 fn b_shadow(): i64 { alloc_init(); var gt: Str = str_from("zz"); return f(gt); }
+
+# ── `var t: Str;` with no initialiser keeps its first word, as through 6.7.12 (and so does a copy of it) ─────
+fn u_pun(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }
+fn u_branch(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t = str_from("de"); } return str_len(t); }
+fn u_copy(): i64 { var t: Str; t = str_from("hello"); var h: Str = t; var k = t; return f(h) * 10 + f(k); }
+fn u_cap(): i64 { var t: Str; t = str_from("hello"); var c = || { var h: Str = t; return f(h); }; return callptr(c); }
+fn u_reuse(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }   # the slot a u_* fn marked: a literal again
 
 # ── a global inline `Str`: its static address, wherever it goes ─────────────────────────────────────────────
 fn mkg(): Str { return gt; }
@@ -155,8 +163,13 @@ assert_eq(b_asg(), 33, "h = t rebinds h to t's header");
 assert_eq(b_wrap(), 77, "var h: Str = (t); k = ((t))");
 assert_eq(b_param(str_from("zzzzz")), 3, "s = t rebinds a by-value Str parameter");
 assert_eq(b_inline(), 73, "h = t between two inline Strs copies the header (h is its own)");
-assert_eq(b_bare(), 3, "var t: Str; (inline, no literal) passes its header");
 assert_eq(b_shadow(), 2, "a local handle named gt shadows the global: its own word");
+assert_eq(u_pun(), 5, "var t: Str; t = a; str_len(t) — the 6.6.16 pun reads a's string");
+assert_eq(u_branch(1), 3, "var t: Str; assigned in one branch (then)");
+assert_eq(u_branch(0), 2, "var t: Str; assigned in one branch (else)");
+assert_eq(u_copy(), 55, "var h: Str = t; / var k = t; of a bare t keep the first word");
+assert_eq(u_cap(), 5, "var h: Str = t; of a captured bare t keeps the first word");
+assert_eq(u_reuse(), 7, "a literal Str in a slot an earlier fn's bare Str used");
 assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
 assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
 assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");

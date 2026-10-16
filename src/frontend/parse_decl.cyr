@@ -6284,6 +6284,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         nslots = aligned / 8;
     }
     var named = _sci_slots(S, noff, pscale, nslots);
+    if (ci_dr == 0) { _istr_cpmark(S, named, pscale, TOKVAL(S, ci_ti)); }   # 6.7.13: a bare `Str`'s copy
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
@@ -6385,7 +6386,7 @@ fn _uci_cap(S, snoff): i64 {
 }
 # ⛔ 6.7.13 — AN INLINE `Str` IS ITS HEADER'S ADDRESS WHERE A `Str` VALUE IS TAKEN (the user's decision D7 (1),
 # 2026-10-15). A `Str` is a heap handle by name — its slot holds a 16 B header's address — but `var t: Str = Str {
-# p, 7 };` (or `var t: Str;`) is an INLINE header whose slot is field 0, so `f(t)` into `s: Str`, `str_len(t)`, `var
+# p, 7 };` is an INLINE header whose slot is field 0, so `f(t)` into `s: Str`, `str_len(t)`, `var
 # h: Str = t;`, `var h = t;` and `h = t;` into a handle took the `data` word as the header (str_len 0 where 7 is
 # right, on every target). Each takes the header's address now, with no allocation: `&t` for a local, the static
 # address for an inline global, and a closure's captured copy is already its environment words' address (6.6.5).
@@ -6413,6 +6414,7 @@ fn _istr_name(S, noff): i64 {
         if (li >= 0) {
             if (GLTYPE(S, li) != 0 - ss) { return 0; }
             if (GLAGG(S, li) == 0) { return 0; }
+            if (_istr_bare(S, li) == 1) { return 0; }
             _istr_ix = li;
             return 1;
         }
@@ -6432,7 +6434,46 @@ fn _istr_cap(S, noff, ss): i64 {
     if (_cl_snap_type(esl) != 0 - ss) { return 0; }
     if (_cl_snap_ptrp(esl) == 1) { return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
+    if (_istr_bare_cap(esl) == 1) { return 0; }
     return 3;
+}
+# ⛔ `var t: Str;` with NO initialiser is outside D7 (1), which is worded for `var t: Str = Str { .. }`: `t = a`
+# with `a` a handle stores the handle into t's first word (6.6.16's pun), and `str_len(t)` / `f(t)` / `h = t` /
+# `var h: Str = t;` read a's string through that word, as through 6.7.12. Whether `t = a` copies the header (and
+# the bare declaration joins D7 (1)) is an open question. Its slot is marked 2 in the per-slot byte table
+# `_lfi_base` (util.cyr: cleared as SFLC hands the slot out, saved with a closure's snapshot), and the two rungs
+# above answer 0 for it. CHANGELOG [6.7.13]
+fn _istr_unset(S, li, sid): i64 {
+    if (sid != _STR_SID(S)) { return 0; }
+    SLFI(S, li, 2);
+    return 0;
+}
+# 1 = local slot `li` is such a `var t: Str;`.
+fn _istr_bare(S, li): i64 {
+    if (_lfi_base == 0) { return 0; }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (load8(_lfi_base + li) == 2) { return 1; }
+    return 0;
+}
+# 1 = enclosing slot `esl` of the closure snapshot is one (the snapshot's byte segment, `_cl_save_locals`).
+fn _istr_bare_cap(esl): i64 {
+    if (_lfi_base == 0) { return 0; }
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    if (load8(_cl_snap + _cl_snap_n * 32 + esl) == 2) { return 1; }
+    return 0;
+}
+# `var h: Str = t;` / `var h = t;` copying such a `t` (a local, or a closure's capture of one) into the new
+# inline slot `named`: h is marked too, so `f(h)` takes h's first word as through 6.7.12.
+fn _istr_cpmark(S, named, pscale, noff): i64 {
+    if (0 - pscale != _STR_SID(S)) { return 0; }
+    var li = FINDLOCAL(S, noff);
+    var b = 0;
+    if (li >= 0) { b = _istr_bare(S, li); }
+    elif (_hl_capn(S, noff) == 1) { b = _istr_bare_cap(_cl_snap_find(S, noff)); }
+    if (b == 1) { SLFI(S, named, 2); }
+    return 0;
 }
 # rax = the header's address for `_istr_at`'s answer `k` (a capture's value already is). A frame's escapes into
 # a value as `&t` does (`_fn_local_addr`: a later tail call is an ordinary call — the `jmp` would free it).
@@ -7585,6 +7626,7 @@ fn PARSE_VAR(S): i64 {
         SLAGG(S, sv_named, sv_nslots);   # 6.6.5: `var p: T;` is inline, at EVERY width and on every target
         SLTYPE(S, sv_named, 0 - sv_sid);
         SFLC(S, sv_named + 1);
+        _istr_unset(S, sv_named, sv_sid);   # 6.7.13: `var t: Str;` keeps its word (see `_istr_bare`)
         STI(S, GTI(S) + 1);   # consume ';'
         return 0;
     }

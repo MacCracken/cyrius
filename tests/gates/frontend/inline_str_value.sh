@@ -4,8 +4,8 @@
 #
 # THE DEFECT (measured on the 6.7.13 structs lane before the fix, 44ab2052, x86_64 / aarch64 under qemu /
 # cx under cxvm / PE under wine, all four equal): a `Str` is a heap handle by name — its slot holds the
-# address of a 16-byte `{ data; len; }` header — but `var t: Str = Str { "abcdefg", 7 };` (or `var t: Str;`)
-# is an INLINE header on the frame, whose slot is field 0. Every use of the bare name as a `Str` value took
+# address of a 16-byte `{ data; len; }` header — but `var t: Str = Str { "abcdefg", 7 };` is an INLINE
+# header on the frame, whose slot is field 0. Every use of the bare name as a `Str` value took
 # that slot, the `data` word, as the header, with no diagnostic:
 #     f(t), f((t)), str_len(t) with `fn f(s: Str)`        -> 0 (the filed repro), want 7
 #     f(30, t) with `fn f(k, s: Str)`                     -> 30, want 37
@@ -26,13 +26,17 @@
 #     cannot store the inline Str 't' into a global / into a field / through a pointer - ... (store a handle: ...)
 # A global's address is static and a capture is a copy in the closure's environment, so neither is refused
 # (a closure returned out of t's frame keeps its copy: K4); a `defer` runs in the frame. A position that takes
-# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6).
+# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6). A `var t: Str;` declared
+# with NO initialiser is outside the decision (worded for `var t: Str = Str { .. }`): its bare name stays its
+# first word, as through 6.7.12, so 6.6.16's pun `t = a; str_len(t)` reads a's string (U1, U2; the review fix,
+# 2026-10-16 — the lane had widened D7 (1) to it and the pun read t's unwritten length: 0 where 5 is right).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
-# floor 42) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
-# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
-# warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K7 controls that compile and run on
-# every leg; AS1 an inline `Str` in an `async fn` across awaits (x86_64, CYRIUS_ASYNC=1).
+# floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
+# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X2 and X4-X13 refused (the message first, ONE
+# `^error`, no warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K7 controls that compile and
+# run on every leg; U1-U2 a bare `var t: Str;` keeps its word on every leg; AS1 an inline `Str` in an
+# `async fn` across awaits (x86_64, CYRIUS_ASYNC=1).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its
 # tcyr) with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that
@@ -51,6 +55,12 @@
 #   n9 `_istr_ra` without `_fn_local_addr = 1`     -> RED 18: R0 x7 (`return f(t);` jumped out of t's frame: 8-248),
 #                                                     R1 x7 (8-10 rows), K2 x4
 #   n10 `_istr_name` without the capture rung      -> RED 7: R1 x7 (c_bindcap: `var h: Str = t` copied the capture)
+#   (n0-n10 were measured with X3 — `var t: Str;` returned, refused — which the review fix moved out: the bare
+#   declaration's D7 question is open, issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md)
+#   2026-10-16 (the review fix; the same scratch-copy method):
+#   n11 `_istr_bare` / `_istr_bare_cap` answer 0   -> RED 15: R1 x7 (the five u_* rows), U1 x4, U2 x4 (t's unwritten
+#                                                     length: 224 / 24 / 0 / 0 and 1 / 0 / 0 / 1)
+#   n12 `_istr_cpmark` returns at once             -> RED 7: R1 x7 (u_copy 22, u_cap 22: the copy read its length)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -173,7 +183,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=42
+FLOOR=47
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -207,9 +217,6 @@ refused X1 "$MR" "the filed table's \`return t;\` from \`fn mk(): Str\` (was 0)"
 row X2 'fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; return ((t)); }
 fn go(): i64 { return f(mk()); }'
 refused X2 "$MR" "\`return ((t));\`"
-row X3 'fn mk(): Str { var t: Str; t.data = "abc"; t.len = 3; return t; }
-fn go(): i64 { return f(mk()); }'
-refused X3 "$MR" "\`var t: Str;\` (inline, no literal) returned"
 row X4 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = t; return f(G); }'
 refused X4 "$MG" "\`G = t;\` into a Str global"
 row X5 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = (t); return 0; }'
@@ -253,13 +260,20 @@ row K7 'fn mk(): Str { var h = str_from("abcde"); return h; }
 fn go(): i64 { return f(mk()); }'
 runs K7 5 "a Str handle returned from a fn returning Str"
 
+# --- U: `var t: Str;` with no initialiser keeps its first word (outside D7 (1)), as through 6.7.12 ---
+row U1 'fn go(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }'
+runs U1 5 "\`var t: Str; t = a; str_len(t)\` — the 6.6.16 pun reads a's string (the lane read t's unwritten length)"
+row U2 'fn g(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t = str_from("de"); } return str_len(t); }
+fn go(): i64 { return g(1); }'
+runs U2 3 "\`var t: Str;\` assigned in one branch (the lane read t's unwritten length)"
+
 # --- AS1: an inline Str in an async fn (the coroutine's heap frame), across awaits ---
 if [ -f lib/async.cyr ]; then
     printf 'include "lib/alloc.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/str.cyr"\ninclude "lib/async.cyr"\nfn f(s: Str): i64 { return str_len(s); }\nasync fn job(x): i64 { return x; }\nasync fn outer(x): i64 {\n    var t: Str = Str { "abcdefg", 7 };\n    var u = await job(x);\n    var h: Str = t;\n    var v = await job(f(t));\n    return u * 100 + v * 10 + str_len(h);\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer(1);\n    var r = 0;\n    var n = 0;\n    while (n < 4) { r = future_force(C); n = n + 1; }\n    return r %% 256;\n}\nvar rr = main();\nsyscall(60, rr);\n' > "$T/AS1.cyr"
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=23
+FLOOR_ROWS=24
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

@@ -836,6 +836,8 @@ fn GFLC(S): i64 { return L64(S + 0x18DA10); }
 # the `_grow_g*` chain. A slot SFLC hands out is cleared here, so a parameter, a hidden temp or
 # the next fn's local never inherits a flag. Read by unary minus to warn; see _UFV_L
 # (src/frontend/parse_expr.cyr). CHANGELOG [6.6.10]
+# A local's byte is 2 for a `var t: Str;` declared with no initialiser (`_istr_bare`, parse_decl.cyr), which
+# is never a float's 1. CHANGELOG [6.7.13]
 var _lfi_base = 0;
 var _gfi_base = 0;
 fn _lfi_clear(S, v): i64 {
