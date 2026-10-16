@@ -921,6 +921,28 @@ fn _mret_land(S): i64 {
     vec_push(rp_vec, rp);
     return 0;
 }
+# ⛔ 6.7.13 — OFF THE END OF A FN DECLARED `: (T1, T2[, T3])` EVERY VALUE IS 0 (D28 C, the user's
+# decision, 2026-10-15), the multi-value twin of a bool fn's `false` (6.7.3, `_bx_falloff`): rax, rdx[,
+# r3] = 0 on the fall-through path only — every `return` jumps past it to the landing. A body that
+# reached its `}` handed the caller's `var a, b = f(0);` whatever an earlier call left in the second
+# (and third) register. The #inline replay of such a callee lands the same way (`_mret_falloff_fi`, the
+# CALLEE's fi); a #naked body is its own exit. CHANGELOG [6.7.13]
+fn _mret_falloff(S): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (_cur_fn_naked == 1) { return 0; }
+    return _mret_zero(S, _cur_fn_ix);
+}
+fn _mret_falloff_fi(S, fi): i64 {
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    return _mret_zero(S, fi);
+}
+fn _mret_zero(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    EMOVI(S, 0);
+    if (GFRN(S, fi) == 3) { EMOVR3RAX(S); }
+    EMOVRDXRAX(S);
+    return 0;
+}
 
 # ⛔ 6.7.13 — `ret2(a, b)` LANDS AS `return (a, b);` DOES, so it is judged where that is. Outside every
 # fn body — at top level or in a top-level block (GINFN 0) — it is refused by name, as a top-level
@@ -7237,6 +7259,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     _cur_fn_ret_scalar = _rs_saved;
                     SSDEP(S, _sdep_saved);
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
+                    _mret_falloff_fi(S, fi);   # 6.7.13 (D28 C): a declared multi-value one's values 0
                     # Patch return jumps from inlined body to here
                     var new_rpc = vec_len(rp_vec);
                     var ri = saved_rpc;
@@ -17488,6 +17511,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # 6.7.3: off the end of a bool fn is `false` — before the defer trampoline (with defers the
     # fall-through jmps round it to the landing); every return lands past it.
     _bx_falloff(S);
+    _mret_falloff(S);   # 6.7.13 (D28 C): and of a fn declared `: (T1, T2[, T3])`, every value 0
     _defer_emit_init(S, defer_init_jmp, body_cp);
     _tcp_resolve(S);   # 6.7.3: the in-loop tail calls' verdicts (a fn with a defer has none)
     _rp_patch_here(S);

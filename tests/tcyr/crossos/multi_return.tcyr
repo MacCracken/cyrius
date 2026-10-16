@@ -70,9 +70,29 @@ fn mr_fwd_divmod(a, b): (i64, i64) { return mr_divmod(a, b); }
 fn mr_fwd_triple(a): (i64, i64, i64) { return mr_triple(a); }
 fn mr_ret_tuple(a, b): (i64, i64) { var t = (b, a); return t; }
 struct MrBox { v; }
-impl MrBox { fn pair(self, a): (i64, i64) { return (a, self.v); } }
+impl MrBox {
+    fn pair(self, a): (i64, i64) { return (a, self.v); }
+    fn fall(self, x): (i64, i64, i64) { if (x > 0) { return (self.v, 2, 3); } }
+}
 fn mr_fwd_method(a): (i64, i64) { var bx = MrBox { 9 }; return bx.pair(a); }
 fn mr_fwd_callptr(a, b): (i64, i64) { var fp = &mr_pair; return callptr(fp, a, b); }
+
+# --- 6.7.13 (D28 C, the user's decision, 2026-10-15): a fn declared `: (T1, T2[, T3])` whose body reaches
+# its `}` returns 0 for every value, as a bool fn's is `false` (6.7.3); every `return` is untouched. A body
+# whose returns cover every path (if / else, an infinite loop) never reaches it. The defer runs and the
+# values stay 0; an #inline replay, a method, a generic instance and an empty body land the same way.
+fn mr_fall2(x): (i64, i64) { if (x > 0) { return (1, 2); } }
+fn mr_fall3(x): (i64, i64, i64) { if (x > 0) { return (1, 2, 3); } }
+fn mr_ifelse(x): (i64, i64) { if (x > 0) { return (1, 2); } else { return (3, 4); } }
+fn mr_loopend(x): (i64, i64) { while (1) { if (x > 3) { return (x, 2); } x = x + 1; } }
+var mr_dg = 0;
+fn mr_fall_defer(x): (i64, i64) { defer { var p, q, w = mr_triple(76); mr_dg = q; } if (x > 0) { return (1, 2); } }
+fn mr_fall_f64(x): (f64, f64) { if (x > 0) { return (f64_from(1), f64_from(2)); } }
+fn mr_fall_gen<T>(x: T): (i64, i64) { if (x > 0) { return (x, 2); } }
+fn mr_k40(x) { return x + 40; }
+#inline
+fn mr_fall_inline(x): (i64, i64) { mr_k40(x); }
+fn mr_empty(): (i64, i64) { }
 
 fn main(): i64 {
     # 1. undeclared arity 2 — order-sensitive
@@ -171,6 +191,56 @@ fn main(): i64 {
     assert_eq(y1, 40, "callptr destructure arity 3: first value");
     assert_eq(y2, 41, "callptr destructure arity 3: second value");
     assert_eq(y3, 42, "callptr destructure arity 3: third value");
+
+    # 9. 6.7.13 — off the end of a fn declared `: (T1, T2[, T3])` every value is 0 (D28 C, the user's decision,
+    # 2026-10-15; issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro read the seeded 77 on
+    # every target). SEEDED as section 7 is, so a value left stale reads 77 / 78 (7.0 for the f64 pair).
+    # MUTATION (run 2026-10-15): `_mret_falloff` answering 0 -> 9 rows fail on x86 (the stale 77 / 78 / 7.0);
+    # `_mret_falloff_fi` answering 0 -> the #inline row (4077: 40, 77).
+    s1, s2, s3 = mr_triple(76);
+    var fo1, fo2 = mr_fall2(0);
+    assert_eq(fo1, 0, "fall-off arity 2: first value 0");
+    assert_eq(fo2, 0, "fall-off arity 2: second value 0 (it read the seeded 77)");
+    s1, s2, s3 = mr_triple(76);
+    var fo3a, fo3b, fo3c = mr_fall3(0);
+    assert_eq(fo3a, 0, "fall-off arity 3: first value 0");
+    assert_eq(fo3b, 0, "fall-off arity 3: second value 0");
+    assert_eq(fo3c, 0, "fall-off arity 3: third value 0 (it read the seeded 78)");
+    s1, s2, s3 = mr_triple(76);
+    var fr1, fr2 = mr_fall2(1);
+    assert_eq(fr1 * 10 + fr2, 12, "fall-off fn, the return taken: its values");
+    s1, s2, s3 = mr_triple(76);
+    var ie1, ie2 = mr_ifelse(0);
+    assert_eq(ie1 * 10 + ie2, 34, "if / else both returning: the else arm's values");
+    s1, s2, s3 = mr_triple(76);
+    var le1, le2 = mr_loopend(0);
+    assert_eq(le1 * 10 + le2, 42, "a body ending in while (1): the loop's return");
+    mr_dg = 0;
+    s1, s2, s3 = mr_triple(76);
+    var fd1, fd2 = mr_fall_defer(0);
+    assert_eq(mr_dg, 77, "fall-off with a defer: the defer ran (its own call returned 77)");
+    assert_eq(fd1 * 10 + fd2, 0, "fall-off with a defer: the values stay 0 across the defer's call");
+    var sf1, sf2 = mr_f64pair(f64_from(3), f64_from(4));
+    var ff1, ff2 = mr_fall_f64(0);
+    assert_eq(f64_to(ff1), 0, "fall-off f64 pair: first value 0.0");
+    assert_eq(f64_to(ff2), 0, "fall-off f64 pair: second value 0.0 (it read the seeded 7.0)");
+    var fbx = MrBox { 9 };
+    s1, s2, s3 = mr_triple(76);
+    var fm1, fm2, fm3 = fbx.fall(0);
+    assert_eq(fm1 + fm2 + fm3, 0, "fall-off method arity 3: every value 0");
+    s1, s2, s3 = mr_triple(76);
+    var fg1, fg2 = mr_fall_gen<i64>(0);
+    assert_eq(fg1 * 10 + fg2, 0, "fall-off generic instance: every value 0");
+    s1, s2, s3 = mr_triple(76);
+    var fi1, fi2 = mr_fall_inline(0);
+    assert_eq(fi1 * 100 + fi2, 0, "fall-off #inline replay: every value 0 (it read 40, 77)");
+    s1, s2, s3 = mr_triple(76);
+    var fe1, fe2 = mr_empty();
+    assert_eq(fe1 * 10 + fe2, 0, "an empty body: every value 0");
+    s1, s2, s3 = mr_triple(76);
+    mr_fall2(0);
+    var fh = rethi();
+    assert_eq(fh, 0, "fall-off then rethi(): the second register is 0");
 
     var r2 = assert_summary();
     return r2;

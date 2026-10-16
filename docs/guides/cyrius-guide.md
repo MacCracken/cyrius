@@ -2762,6 +2762,11 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # not multiple values)
 #   ret2(a, b);                       # two values in a fn declared with three (6.7.13): the
 #                                     # caller's third read what an earlier call left
+# A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
+# 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
+# and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the
+# second (and third) return register:
+#   fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } }    # f(0) is (0, 0); f(1) is (1, 2)
 
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`

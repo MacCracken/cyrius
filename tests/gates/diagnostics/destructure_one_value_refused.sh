@@ -41,6 +41,11 @@
 #           wrapped one, an undeclared callee of that arity, a recursive one, a method and a generic,
 #           a tuple local, a closure's and an #inline callee's own returns inside the fn. (6.7.13) `ret2(a, b)` in
 #           a fn declared with three values is refused the same way (D21 A); in a 2-value fn it runs.
+#           (6.7.13, D28 C, the user's decision, 2026-10-15) A body that reaches its `}` returns 0 for every
+#           value, nothing refused (issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro
+#           read the seeded 77 on every target): the repro verbatim (0), three values, a defer (it runs, the
+#           values stay 0), an f64 pair, an #inline replay; the return taken, an if / else whose arms both
+#           return (34) and a `while (1)` end (42) are unchanged.
 #   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
@@ -72,6 +77,8 @@
 # tuple_checked.sh R9n, R9s, R9t, R14n give two errors.
 # 6.7.13 (run 2026-10-15): `_cond_is_one` without its `true` arm -> while_true_end, dowhile_true_end,
 # while_true_top and cnt_while_true build (tuple_checked.sh R16x-true too).
+# 6.7.13 (run 2026-10-15): `_mret_falloff` answering 0 -> fall_off_2, fall_off_3, fall_off_defer, fall_off_f64
+# read the stale registers (77, 9, 9, 9); `_mret_falloff_fi` answering 0 -> fall_off_inline (117: 40 + 77).
 # 6.7.13 (run 2026-10-15): `_ret2_in3` answering 0 at once -> ret2_in_3, ret2_in_3_gen build, ret2_in_3_next
 # one error line (return_ret2_in_3 stays refused, by the return check); its `_tn_once` dropped -> ret2_in_3_gen
 # two error lines; the latch left set -> ret2_in_3_next one error line (the next statement's lost).
@@ -236,6 +243,17 @@ check "ret2_in_3_next: the next statement's own error" yes "$(grep -qF "1:62: un
 refused return_ret2_in_3 "${SEED}fn f(x): (i64, i64, i64) { return ret2(x, x + 1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = f(5); return c; }\nvar r = main(); syscall(60, r);\n" "2:35: $R3"
 runs ret2_in_2    'fn f(x): (i64, i64) { ret2(x, x + 5); }\nfn main(): i64 { var a, b = f(5); return a + b; }\nsyscall(60, main());\n' 15
 runs ret2_closure_in_3 'include "lib/fnptr.cyr"\nfn f(x): (i64, i64, i64) { var cl = |y| { ret2(y, y + 1); }; var p, q = fncall1(cl, x); return (p, q, 9); }\nfn main(): i64 { var a, b, c = f(5); return a * 100 + b * 10 + c; }\nsyscall(60, main() & 255);\n' 57
+# 6.7.13 (D28 C, 2026-10-15): off the end every value is 0 — the repro verbatim, then three values (5 only when all
+# three are 0), a defer whose own call writes the registers (6: it ran, the values stay 0), an f64 pair seeded with
+# 7.0 (7), an #inline replay (0; it read 40 + 77); the bodies that never reach the `}` are unchanged.
+runs fall_off_2   "${SEED}fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return b; }\nvar r = main(); syscall(60, r);\n" 0
+runs fall_off_3   "${SEED}fn g(x): (i64, i64, i64) { if (x > 0) { return (1, 2, 3); } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g(0); if (a == 0 && b == 0 && c == 0) { return 5; } return 9; }\nvar r = main(); syscall(60, r);\n" 5
+runs fall_off_defer "${SEED}var G = 0;\nfn f(x): (i64, i64) { defer { var p, q, s = h(); G = q; } if (x > 0) { return (1, 2); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); if (a == 0 && b == 0 && G == 77) { return 6; } return 9; }\nvar r = main(); syscall(60, r);\n" 6
+runs fall_off_f64 'fn h2(): (f64, f64) { return (3.5, 7.0); }\nfn f(x): (f64, f64) { if (x > 0) { return (1.5, 2.5); } }\nfn main(): i64 { var x, y = h2(); var a, b = f(0); if (f64_to(a) == 0 && f64_to(b) == 0) { return 7; } return 9; }\nvar r = main(); syscall(60, r);\n' 7
+runs fall_off_inline "${SEED}fn k(x) { return x + 40; }\n#inline\nfn f(x): (i64, i64) { k(x); }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return a + b; }\nvar r = main(); syscall(60, r);\n" 0
+runs fall_off_taken "${SEED}fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(1); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 12
+runs ifelse_both_return "${SEED}fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } else { return (3, 4); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 34
+runs loop_end_declared "${SEED}fn f(x): (i64, i64) { while (1) { if (x > 3) { return (x, 2); } x = x + 1; } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 42
 
 echo "axis 6 - \`callptr(fp, ..)\` destructures as \`fncallN\` does:"
 TWO='fn two(a): (i64, i64) { return (a, a + 1); }\n'
@@ -247,7 +265,7 @@ runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsysca
 runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
 refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
 
-if [ "$rows" -lt 93 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 93)"; exit 1; fi
+if [ "$rows" -lt 101 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 101)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0
