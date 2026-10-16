@@ -3513,7 +3513,7 @@ a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)`
 pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
 top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
 a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)` passes `&e`; a
-value-form `v: f32v8` parameter is a separate matter). A vector **local** passed to a pointer of
+value-form `v: f32v8` parameter: below). A vector **local** passed to a pointer of
 another kind — `p: *Pt`, `p: *i64`, `p: *u8`, `p: **T` — is refused by name: `cannot pass 'b' to a
 parameter that is not a pointer to its vector type in a call to 'rp' - pass &b for its address`
 (as a struct of another type is). ⚠ Through 6.7.11 each of these passed lane 0's bits as the
@@ -3521,6 +3521,17 @@ address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win
 the `*V` call result and dereference through 6.7.10 by the value-form path's text) — except on
 Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops compiling there too
 (pass `&b`).
+
+**A value-form `v: f32v8` parameter is its 32 bytes (6.7.13), as `v: f64v4` is:** two XMM registers
+(SysV), two V registers (aarch64), four cx slots, a 32-byte copy-in through a pointer on Win64. It
+takes an f32v8 local; any other vector — an f64v4 too, the same size — is refused by name,
+`value-form SIMD arg type mismatch (callee expects f32v8)`, and an f32v8 local into `v: f64v4`
+likewise (`.. expects f64v4`), on Win64 as well, which checked no value-form vector argument before
+(an f64v2 local into `v: f64v4` compiled there and read past it). ⚠ Through 6.7.12 `v: f32v8` was one
+integer word and the caller passed lane 0's bits — `load32(&v + 8)` read 0 on every target. A fn
+with a `v: f32v8` parameter that C calls, or that is called through `fncallN`, now takes it as an
+f64v4 parameter is taken, and an `async fn` refuses it, as it refuses every value-form vector
+parameter.
 
 ### Packed-op builtins
 

@@ -78,6 +78,8 @@ fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
         if (alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
     } elif (want_t == 0 - 2125) {
         if (alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
+    } elif (want_t == 0 - 2153) {   # 6.7.13: `v: f32v8`
+        if (alt != 0 - 2153) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v8)", 56); }
     } else {
         if (_is_simd128(S, alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
     }
@@ -1898,6 +1900,7 @@ fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
     var pv = _pvec_param(S, fi, argc);
     if (pv == 0) {
         if (_pptr_param(S, fi, argc) == 1) { return _vec_kind_err(S, PEEKV(S), fi); }   # 6.7.12 (D27)
+        if (_TARGET_PE == 1) { _sarg_pe_v32(S, fi, argc, lt); }   # 6.7.13
         return _TARGET_PE;
     }
     if (pv != 0 - lt) {
@@ -1905,6 +1908,13 @@ fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
           L64(_fnt_names + fi * 8));
     }
     return 1;
+}
+# Win64 passes a value-form vector parameter by address (this arm), so the SIMD mask's check never runs there: a
+# 32-byte one (`v: f32v8` / `v: f64v4`) gets it here, by the same words. CHANGELOG [6.7.13]
+fn _sarg_pe_v32(S, fi, argc, lt): i64 {
+    var w = _pv32_param(S, fi, argc);
+    if (w == 0) { return 0; }
+    return _simd256_typecheck(S, w, lt);
 }
 # The vector type (its descriptor sid) parameter `k` of fn `fi` points at when it is declared `*V`,
 # read from the definition's tokens (a call above the definition has them too); 0 = not a `*V`.
@@ -1916,7 +1926,7 @@ fn _pvec_param(S, fi, k): i64 {
     if (TOKTYP(S, i) != 8) { return 0; }
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     var tn = TOKVAL(S, i + 1);
-    return _ptc_vec_sid(_ptr_vclass(S, tn, _classify_param_type(S, tn)));
+    return _ptc_vec_sid(_classify_param_type(S, tn));
 }
 # 1 = parameter `k` of fn `fi` is declared a pointer (`p: *T`, `**T`, `*fn(..)`), read as `_pvec_param` reads it.
 fn _pptr_param(S, fi, k): i64 {
@@ -5176,7 +5186,7 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
 # returned 923 — `j` received the vector's low half. `tbl` is the CALLER's scratch table
 # (a local, so a nested call cannot clobber it). Returns the number of XMM slots consumed
 # (1 for a 16-byte vector, 2 for 32-byte). CHANGELOG [6.6.5]
-fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
+fn _simd_arg_record(S, cls, tbl, cnt, pc, want): i64 {
     if (PEEKT(S) != 2) {
         ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 102);
     }
@@ -5187,7 +5197,7 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
         ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
     }
     var lt = GLTYPE(S, lli);
-    _simd_arg_typecheck(S, cls, lt);
+    _simd_arg_typecheck(S, cls, lt, want);
     store64(tbl + cnt * 24, lli);
     store64(tbl + cnt * 24 + 8, pc);
     store64(tbl + cnt * 24 + 16, cls);
@@ -5224,7 +5234,9 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
         var vs = _later_args_may_write(S);   # 6.7.7: its register is loaded after them (`_simd_arg_snap`)
         var n = load64(st + 8);
         var o = load64(st + 16);
-        store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o));
+        var w = 0;
+        if (cls == 2) { w = _pv32_param(S, fi, uarg); }   # 6.7.13: f64v4 or f32v8
+        store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o, w));
         store64(st + 8, n + 1);
         if (vs == 1) { _simd_arg_snap(S, tbl, n); }
         return 0;
@@ -6575,8 +6587,8 @@ fn _refuse_toplevel_struct_call(S, noff): i64 {
 
 # v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
 # the test is the SIZE class), 3 = f32v4 exactly (distinguished so an f64v2 arg is rejected
-# rather than silently run through addps), 2 = f64v4 (32-byte).
-fn _simd_arg_typecheck(S, cls, lt): i64 {
+# rather than silently run through addps), 2 = a 32-byte vector: `want` (`_pv32_param`) says which.
+fn _simd_arg_typecheck(S, cls, lt, want): i64 {
     if (cls == 1) {
         if (_is_simd128(S, lt) == 0) {
             ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44);
@@ -6586,6 +6598,32 @@ fn _simd_arg_typecheck(S, cls, lt): i64 {
     if (cls == 3) {
         if (lt != 0 - 2121) {
             ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
+        }
+        return 0;
+    }
+    return _simd256_typecheck(S, want, lt);
+}
+# ⛔ 6.7.13 — THE 32-BYTE VECTOR PARAMETER'S OWN TYPE. f32v8 and f64v4 share the value-form ABI (two XMM / V
+# registers, a 32-byte copy-in on Win64) and the 2-bit SIMD mask's code 2, which has no room for a fourth code, so
+# parameter `k` of fn `fi` is read from the definition's tokens, as `_pvec_param` reads a `*V`: 2153 = `v: f32v8`,
+# 2125 = `v: f64v4`, 0 = neither, or no definition to read. CHANGELOG [6.7.13]
+fn _pv32_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 2) { return 0; }
+    var c = _classify_param_type(S, TOKVAL(S, i));
+    if (c == 10) { return 2153; }
+    if (c == 7) { return 2125; }
+    return 0;
+}
+# A vector local of SLTYPE `lt` into a value-form 32-byte parameter declared `want` (0: f64v4, the mask's reading
+# before 6.7.13): anything but that vector is refused by name, f64v4 into `v: f32v8` and f32v8 into `v: f64v4` too.
+fn _simd256_typecheck(S, want, lt): i64 {
+    if (want == 2153) {
+        if (lt != 0 - 2153) {
+            ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v8)", 56);
         }
         return 0;
     }
@@ -13524,7 +13562,8 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
 # Returns the param-type class for a type name at tok_names offset `tnoff`:
 #   0 = int / struct / other (no special ABI mask)
 #   1 = Str       2 = cstring   3 = Result   4 = Option
-#   5 = Tagged    6 = f64v2     7 = f64v4
+#   5 = Tagged    6 = f64v2     7 = f64v4     8 = f32v4     10 = f32v8
+#   (9 is `_param_class`'s `*V`; an integer 128-bit vector is its negative descriptor, below)
 # Pure byte-compares over the name pool (S+0x60000); zero global-var refs and
 # no calls beyond the L64/load8 memory builtins → cybs-safe by construction.
 # Extracted verbatim from the PARSE_FN_DEF param loop so the pass-1 signature
@@ -13567,8 +13606,13 @@ fn _classify_param_type(S, tnoff): i64 {
                 } } } }
     # f32v4 → 'f','3','2','v','4', 0 — 128-bit; class 8 reuses f64v2's XMM/2-slot ABI
     # (pt_simd_class 1) but tags the param SLTYPE -2121 for op-width dispatch.
+    # ⛔ 6.7.13 — f32v8 → 'f','3','2','v','8', 0 — 256-bit; class 10 is f64v4's 32-byte ABI (pt_simd_class 2: two
+    # XMM / V registers, mask code 2, a 32-byte copy-in on Win64), its SLTYPE -2153. With no class, `v: f32v8` was a
+    # one-word integer parameter and the caller pushed lane 0's word (`load32(&v + 8)` read 0 on every target). The
+    # mask code is f64v4's, so the argument check reads the parameter's own type (`_pv32_param`). CHANGELOG [6.7.13]
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
                     if (b4 == 52) { if (b5 == 0) { return 8; } }
+                    if (b4 == 56) { if (b5 == 0) { return 10; } }
                 } } } }
     # v6.4.7 (Phase 3b) — integer vector value-form params: return the NEGATIVE
     # descriptor sentinel (≤ -2048), distinct from the small positive codes 1-8.
@@ -13784,7 +13828,6 @@ fn _prescan_skip_fn(S): i64 {
 # while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
 fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
     var c = _classify_param_type(S, tnoff);
-    if (isptr == 1) { c = _ptr_vclass(S, tnoff, c); }   # 6.7.12: `*f32v8`
     if (c != 0) {
         if (isptr == 1) { return _ptc_is_vec(c); }   # 6.7.11: `p: *V` takes an address, as `*S` does
         return 0;
@@ -13807,22 +13850,14 @@ fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
 fn _param_class(S, tnoff): i64 {
     var c = _classify_param_type(S, tnoff);
     if (TOKTYP(S, GTI(S) - 1) != 8) { return c; }
-    if (_ptc_is_vec(_ptr_vclass(S, tnoff, c)) == 1) { return 9; }
+    if (_ptc_is_vec(c) == 1) { return 9; }
     return c;
 }
-# ⛔ 6.7.12 — `*f32v8` IS A `*V` (D27's `*f32v8` row, D33's rule): `_classify_param_type` has no class for f32v8,
-# so a `p: *f32v8` parameter was an untyped pointer and `r8(e)` pushed lane 0 as the address (139 on x86_64 and
-# aarch64, cx 1, PE 5), where `*f32v4` took `&e`. Behind a `*` only, class `c` of type name `tnoff` becomes
-# f32v8's descriptor (-2153), which the `*V` rules take (`_ptc_is_vec`, `_ptc_vec_sid`). A value-form
-# `v: f32v8` parameter keeps its class. CHANGELOG [6.7.12]
-fn _ptr_vclass(S, tnoff, c): i64 {
-    if (c != 0) { return c; }
-    if (_classify_return_type(S, tnoff) == 0 - 2153) { return 0 - 2153; }
-    return 0;
-}
-# 1 = `_classify_param_type`'s class `c` is a vector (f64v2 / f64v4 / f32v4, an integer 128-bit one).
+# 1 = `_classify_param_type`'s class `c` is a vector (f64v2 / f64v4 / f32v4 / f32v8, an integer 128-bit one).
+# 6.7.12 recognised `*f32v8` here through `_ptr_vclass`; f32v8 has its own class since 6.7.13. CHANGELOG [6.7.13]
 fn _ptc_is_vec(c): i64 {
     if (c >= 6) { if (c <= 8) { return 1; } }
+    if (c == 10) { return 1; }
     if (c <= 0 - 2048) { return 1; }
     return 0;
 }
@@ -13831,6 +13866,7 @@ fn _ptc_vec_sid(c): i64 {
     if (c == 6) { return 2093; }
     if (c == 7) { return 2125; }
     if (c == 8) { return 2121; }
+    if (c == 10) { return 2153; }
     if (c <= 0 - 2048) { return 0 - c; }
     return 0;
 }
@@ -13978,8 +14014,7 @@ fn _bvcp_note(S, m, smask, pc, inst): i64 {
         return m;
     }
     if (_TARGET_PE == 0) { return m; }
-    if (c >= 6) { if (c <= 8) { return _bvcp_bit(_cur_fn_ix, m, pc); } }
-    if (c <= 0 - 2048) { return _bvcp_bit(_cur_fn_ix, m, pc); }
+    if (_ptc_is_vec(c) == 1) { return _bvcp_bit(_cur_fn_ix, m, pc); }   # 6.7.13: f32v8 too
     return m;
 }
 # 1 when a `#naked` may apply to the fn whose `fn` token is `ti`: a token 133 anywhere after the
@@ -14373,7 +14408,8 @@ fn _prescan_params_scan(S, fi): i64 {
                         # set struct_mask (drives the caller's &local push), NOT
                         # simd_mask (which would XMM-route it, the SysV path).
                         elif (c == 6) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 1); } }
-                        elif (c == 7) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 2); } }
+                        # f64v4, and (6.7.13) f32v8: 32-byte, mask 2
+                        elif (c == 7 || c == 10) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 2); } }
                         elif (c == 8) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 3); } }  # f32v4 (16-byte; mask=3 distinguishes from f64v2=1)
                         elif (c <= 0 - 2048) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 1); } }  # v6.4.7: integer 128-bit vector → 16-byte/1-XMM (mask 1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
@@ -16970,6 +17006,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     elif (_ptc == 6) { pt_simd_class = 1; pt_simd_sid = 2093; }  # f64v2 (v6.4.14: was 20, collided w/ struct-id 20)
                     elif (_ptc == 7) { pt_simd_class = 2; pt_simd_sid = 2125; }  # f64v4 (v6.4.14: was 21)
                     elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
+                    elif (_ptc == 10) { pt_simd_class = 2; pt_simd_sid = 2153; }  # 6.7.13: f32v8 (f64v4's 32-byte ABI)
                     elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                     if (_param_wants_struct_ptr(S, tnoff, _ptrp_now(S)) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }

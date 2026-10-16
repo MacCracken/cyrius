@@ -89,6 +89,32 @@ fn passthru4(v: f64v4, s): f64v4 {
     return r;
 }
 
+# --- axis 7 (6.7.13, issues/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a value-form
+#     `v: f32v8` parameter is its 32 bytes, as `v: f64v4` is — it had no parameter class, so it was one
+#     integer word and the caller pushed lane 0's (`load32(&v + 8)` read 0 on every target). The filed
+#     repro's fn verbatim (flat: the inline-replay path), then real calls (an `if` body: not inlined). ---
+fn lanes8(v: f32v8): i64 { return load32(&v + 8) * 10 + load32(&v + 28); }
+fn f8_scalars(v: f32v8, a, b): i64 {
+    if (a == 0) { return 0; }
+    return load32(&v + 8) * 100 + a * 10 + b + load32(&v + 28) * 1000;
+}
+fn f8_two(x: f32v8, y: f32v8): i64 {
+    if (load32(&x) == 99) { return 0; }
+    return load32(&x + 8) * 10 + load32(&y + 28);
+}
+fn f8_two_flat(x: f32v8, y: f32v8): i64 { return load32(&x + 4) * 10 + load32(&y + 24); }
+fn f8_mixed(x: f32v8, y: f64v4, n): i64 {
+    if (n == 0) { return 0; }
+    return load32(&x + 28) * 100 + load64(&y + 24) * 10 + n;
+}
+struct V8K { k; }
+impl V8K {
+    fn m(self, v: f32v8, n): i64 {
+        if (n == 0) { return 0; }
+        return self.k * 100 + load32(&v + 8) * 10 + n;
+    }
+}
+
 fn main(): i64 {
     var a: f64v4 = f64v4_make(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
 
@@ -131,6 +157,20 @@ fn main(): i64 {
     test_group("axis 6 — the caller's own operand is untouched by the calls above");
     assert_eq(f64_to(load64(&a + 0)), 1, "caller a lane0");
     assert_eq(f64_to(load64(&a + 24)), 4, "caller a lane3");
+
+    test_group("axis 7 — a value-form f32v8 parameter is its 32 bytes (6.7.13)");
+    var e: f32v8 = f32v8_make(1, 2, 3, 4, 5, 6, 7, 8);
+    var e2: f32v8 = f32v8_make(9, 9, 9, 9, 9, 9, 5, 6);
+    assert_eq(lanes8(e), 38, "the filed repro: lanes8(e) = lane 2 * 10 + lane 7");
+    assert_eq(f8_scalars(e, 4, 5), 8345, "f32v8 then two scalar ints, a real call");
+    assert_eq(f8_two(e, e2), 36, "two f32v8 parameters, a real call");
+    assert_eq(f8_two_flat(e, e2), 25, "two f32v8 parameters, inline-replayed");
+    var y4: f64v4 = f64v4_make(0, 0, 0, 2);
+    assert_eq(f8_mixed(e, y4, 3), 823, "f32v8, then f64v4, then a scalar");
+    var o8: V8K;
+    o8.k = 1;
+    assert_eq(o8.m(e, 4), 134, "a method with an f32v8 parameter");
+    assert_eq(load32(&e + 28), 8, "the caller's f32v8 is untouched");
 
     var r = assert_summary();
     return r;

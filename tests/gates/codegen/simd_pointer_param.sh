@@ -32,8 +32,8 @@
 # 6.7.12 (D27, the user, 2026-10-15: B — "pass the address for the *V shapes; another pointer kind refused by
 # name"): a vector VALUE that is not a named local into a `*V` parameter passes an address — a call result
 # through a frame temp (`_sarg_vec_call`), `*pv` as pv (`_dlo_vec`, the step word's vector) — and a vector
-# local into a pointer of another kind is refused by name; `*f32v8` is a `*V` (`_ptr_vclass`). They passed
-# lane 0's bits as the address (139 / 139 / a cx fault / PE 5; on PE `rp(b)` into `*Pt` alone passed `&b` by
+# local into a pointer of another kind is refused by name; `*f32v8` is a `*V` (`_ptr_vclass`; 6.7.13: class 10).
+# They passed lane 0's bits as the address (139 / 139 / a cx fault / PE 5; on PE `rp(b)` into `*Pt` alone passed `&b` by
 # accident and ran — it is refused now too); x86_64 refused the `*V` shapes through 6.7.10 (an x86_64 regression
 # in 6.7.11). Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-
 # parameter-passes-lane-bits.md
@@ -47,13 +47,39 @@
 #      refusal; 6.7.11 compiled it to a fault, 139 on x86_64 and aarch64)
 #   T  also carries the D27 rows (`sp_vrows`)
 #
+# 6.7.13 (issues/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a VALUE-form `v: f32v8` parameter is its
+# 32 bytes, as `v: f64v4` is. `_classify_param_type` had no class for f32v8, so it was one integer word and the caller
+# pushed lane 0's (`load32(&v + 8)` read 0 on x86_64 / IR=3 / aarch64 / cx / PE; 38 is right). Class 10 takes f64v4's
+# 32-byte routing in both scans (mask code 2; Win64's 32-byte copy-in); the mask has no fourth code, so the argument
+# check reads the parameter's own type from the definition (`_pv32_param`), on Win64's address push too
+# (`_sarg_pe_v32`).
+#   V8  the filed repro verbatim: exit 38 on x86_64 / IR=3 / aarch64 / cx / PE (0 before)
+#   VY1 / VY2 an f64v4 local into `v: f32v8`, an f32v8 local into `v: f64v4`: one error line, "value-form SIMD arg type
+#      mismatch (callee expects f32v8 / f64v4)"; VYw1 / VYw2 the same on PE (both compiled there: Win64 checked no
+#      value-form vector argument); VY3 VY1 through an `#inline` fn (the replay's own check)
+#   T2 tests/tcyr/crossos/simd_param_then_scalar.tcyr ($N2 rows, axis 7: the repro, f32v8 + scalars, two f32v8, a
+#      method, f32v8 + f64v4) on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE: "N passed, 0 failed (N total)"
+#
+# MUTATION LEDGER (2026-10-16, 6.7.13, the vectors lane; each change alone in a scratch copy of the tree, this gate run
+# there with CYCC=<its 2-stage mutant>; measured):
+#   M-V8a `_classify_param_type` without the f32v8 arm      -> RED 29: V8 on every leg (exit 0), VY1 VY3 VYw1
+#       (compiled), T2 on every leg (19 passed, 6 failed); and, `*f32v8` no `*V` again, R5 x86 / PE (a third line),
+#       R5e and T on every leg ("not a pointer to its vector type"); VY2 VYw2 green (`v: f64v4` keeps its class)
+#   M-V8b `_pv32_param` answering 0                          -> RED 9: VY1 (compiled: the mask's f64v4 reading),
+#       VYw1 VYw2 (compiled), T2 x86 / IR=1 / IR=3 / DCE / aarch64 / cx (an f32v8 local refused "callee expects
+#       f64v4"); V8 VY3 green (the replay checks by its own record), T2 PE green (Win64 routes no mask)
+#   M-V8c `_sarg_pe_v32` answering 0                         -> RED 2: VYw1 VYw2 (compiled)
+#   M-V8d `_inl_simd_arg` without the f32v8 arm              -> RED 11: V8 x86 / IR=3 / aarch64 / cx, T2 x86 / IR=1 /
+#       IR=3 / DCE / aarch64 / cx ("value-form SIMD arg must be a 16-byte vector": the replay took f32v8 for a
+#       16-byte one), VY3 (that text); V8 / T2 PE green (Win64 does not replay a vector-parameter fn)
+#
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
 # mutant>; measured):
 #   M4  `_sarg_vec_call` answers 0 (no call-result arm)    -> RED 15: R4 (139 / 139 / 139 / cx 253 / PE 5),
 #                                                             Y10 Y13 Yw2a (compiled), T on every leg
 #   M5  `_dlo_vec` answers 0 (no vector park)              -> RED 14: R4 (as M4), Y11 Yw2b, T on every leg
 #   M6  `_vec_kind_err` reports nothing                    -> RED 4: R5 x86 / PE (compiled), Y12 Yw2c
-#   M7  `_ptr_vclass` without f32v8                        -> RED 14: R5 (a third line: `r8(e)` refused as a
+#   M7  `_ptr_vclass` without f32v8 (6.7.13: M-V8a)        -> RED 14: R5 (a third line: `r8(e)` refused as a
 #                                                             pointer of another kind), R5e on every leg, T
 #   (6.7.13, D40) `_sarg_vec_call` without its top-level   -> RED 4: Y13 Y13a Y13c Yw2d (compiled)
 #       arm (`_svc_toplevel_err`)
@@ -97,15 +123,19 @@ ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 
 TC=tests/tcyr/crossos/simd_pointer_param.tcyr
+TC2=tests/tcyr/crossos/simd_param_then_scalar.tcyr   # 6.7.13: rows T2
 R1=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form.cyr
 R2=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form-value.cyr
 R4=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.cyr
 R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits-other-kinds.cyr
-for f in "$TC" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
+for f in "$TC" "$TC2" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
 FLOOR=51
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
+N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
+FLOOR2=25
+if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -258,6 +288,33 @@ if [ "$WINE" = 1 ]; then
     refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
 
+echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
+cat > "$D/v8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanes8(v: f32v8): i64 { return load32(&v + 8) * 10 + load32(&v + 28); }
+fn main(): i64 {
+    var e: f32v8 = f32v8_make(1, 2, 3, 4, 5, 6, 7, 8);
+    return lanes8(e);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+exit_rows V8 "$D/v8.cyr" 38 "lane 2 * 10 + lane 7"
+echo "VY. the other 32-byte vector into a value-form \`v: f32v8\` / \`v: f64v4\` parameter: refused by name, once"
+VFR8="value-form SIMD arg type mismatch (callee expects f32v8)"
+VFR4="value-form SIMD arg type mismatch (callee expects f64v4)"
+# (an `if` keeps g from the inline replay, so the call's own check runs; VY3 is the replay's)
+VY1B="${H}fn g(v: f32v8): i64 { if (load32(&v) == 9) { return 0; } return load32(&v + 8); }\nfn main(): i64 { var e: f64v4 = f64v4_make(1, 2, 3, 4); return g(e) + 1; }\n${E}"
+VY2B="${H}fn g(v: f64v4): i64 { if (load64(&v) == 9) { return 0; } return load64(&v + 8); }\nfn main(): i64 { var e: f32v8 = f32v8_make(1, 2, 3, 4, 5, 6, 7, 8); return g(e) + 1; }\n${E}"
+refused VY1 "VY1 an f64v4 local into v: f32v8" "$VY1B" x86 "$VFR8"
+refused VY2 "VY2 an f32v8 local into v: f64v4" "$VY2B" x86 "$VFR4"
+refused VY3 "VY3 VY1 through an #inline fn (the inline replay)" "${H}#inline\nfn g(v: f32v8): i64 { return load32(&v + 8); }\nfn main(): i64 { var e: f64v4 = f64v4_make(1, 2, 3, 4); return g(e); }\n${E}" x86 "$VFR8"
+if [ "$WINE" = 1 ]; then
+    refused VYw1 "VYw1 VY1 on PE" "$VY1B" pe "$VFR8"
+    refused VYw2 "VYw2 VY2 on PE" "$VY2B" pe "$VFR4"
+fi
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -278,6 +335,15 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     else bad "T $leg: exit $RC, '$LAST' (want '$N passed, 0 failed ($N total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "T2. $TC2 ($N2 rows)"
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TC2" "$D/t2_$n"
+    if [ "$RC" -eq -1 ]; then bad "T2 $leg: the values file did not build: $(grep -h -m1 'error' "$D/t2_$n.err" "$D/t2_$n.exe.err" 2>/dev/null | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$N2 passed, 0 failed ($N2 total)" ]; then ok "T2 $leg: $LAST"
+    else bad "T2 $leg: exit $RC, '$LAST' (want '$N2 passed, 0 failed ($N2 total)') $(grep -m3 'FAIL' "$D/t2_$n.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2)"
