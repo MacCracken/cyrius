@@ -1137,6 +1137,56 @@ var rc = main();
 syscall(60, rc);
 EOF
 
+# ── axis IR — 6.7.13: AN INLINE-REPLAYED PAIR GENERIC DOES NOT FLAG ITS CALLER ─────────────────
+# ⛔ A one-statement generic instance (`gg<i64>`) is inline-REPLAYED into its caller (GIDEP > 0), where
+# `_cur_fn_ix` is still the CALLER — so the replayed `return SOk(v);` (the call's value) marked the CALLER
+# pair-returning: `main` (which returns one value, v) was refused "bind both" at `var x = main();` (the
+# issue's repro, IR1, verbatim) and warned "a SINGLE value here". The `return` arm marks nothing inside a
+# replay now; the replayed fn's own entry carries its flag (IR5b).
+# (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md)
+# Mutation (a scratch copy of src/, CYCC= it; measured red): MIR `_PARSE_RETURN_ARMS` without its
+# `GIDEP == 0` guard -> IR1 ("bind both" at `main()`; the gate stops at its first red — IR2 and IR4 red
+# when run alone).
+accept "the issue's repro: a caller of an inline-replayed pair generic binds one value" axisIR1 7 <<'EOF'
+include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn gg<T>(v: T) { return SOk(v); }
+fn main(): i64 { var t, v = gg<i64>(7); return v; }
+fn caller(): i64 { var x = main(); return x; }
+syscall(60, caller());
+EOF
+IRG='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn gg<T>(v: T) { return SOk(v); }
+'
+accept "the same caller bound at top level" axisIR2 7 <<EOF
+${IRG}fn main(): i64 { var t, v = gg<i64>(7); return v; }
+var e = main();
+syscall(60, e);
+EOF
+refuse_at "a refused store h.a = gg<i64>(7); reports its own error only" axisIR4 "gg<i64>(7);" <<EOF
+${IRG}struct H { a; b; }
+fn main(): i64 { var h: H; h.a = gg<i64>(7); return h.a; }
+var e = main();
+syscall(60, e);
+EOF
+# A replayed generic that FORWARDS a pair: its caller's destructure is right, and the generic's own single
+# bind is still refused (its own entry is flagged).
+IRF='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn inner(v) { if (v == 0) { return SErr(5); } return SOk(v * 10); }
+fn gg<T>(v: T) { return inner(v); }
+'
+accept "a replayed generic forwarding return inner(v); still propagates" axisIR5 161 <<EOF
+${IRF}fn main(): i64 { var t, v = gg<i64>(16); var t2, v2 = gg<i64>(0); return t * 100 + v + t2 + v2 - 5; }
+fn caller(): i64 { var x = main(); return x; }
+syscall(60, caller());
+EOF
+refuse_at "the forwarding generic's own single bind still refused" axisIR5b "= gg<i64>(16);" <<EOF
+${IRF}fn main(): i64 { var x = gg<i64>(16); return x; }
+syscall(60, main());
+EOF
+
 # ── axis 17 — 6.7.11: A STRUCT-LITERAL ELEMENT; AN ARGUMENT KEEPS THE TAG ─────────────────────
 # ⛔ A struct-literal element is a one-slot store, and it kept the TAG of a `: stack` pair and dropped
 # the payload in silence: `var p = P { mk(7), 3 };`, `P { a: mk(7), b: 3 }` and `var G = P { mk(7), 3 };`
@@ -1419,5 +1469,5 @@ ${PRE}fn main(): i64 {
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
 exit 0

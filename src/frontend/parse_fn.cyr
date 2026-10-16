@@ -1064,9 +1064,13 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     # ⚠ Order-dependent by construction: a caller parsed BEFORE the callee's body will not see the
     # flag and degrades to the pre-v6.5.67 behaviour. That is the safe direction for a diagnostic —
     # a missed warning, never a false one.
-    if (_cur_fn_ix >= 0) {
-        if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
-    }
+    # 6.7.13: not inside an inline replay (GIDEP > 0) — `_cur_fn_ix` is still the CALLER there, and the
+    # replayed `return` is the call's value, not the caller's; the replayed fn's own entry carries its
+    # flag. (A replayed `?` does leave through the caller's epilogue: its two marking arms stay.)
+    # CHANGELOG [6.7.13]
+    if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) {
+            if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+        } }
     # Check for tail call: return IDENT(args);
     # Pattern: next token is IDENT, followed by LPAREN
     # Disabled inside inline replay (would emit caller's epilogue)

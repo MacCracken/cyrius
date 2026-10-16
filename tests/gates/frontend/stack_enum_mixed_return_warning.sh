@@ -181,6 +181,12 @@ fx m3_unknown   "$P3
 fn h<T>(p: T, x) { if (x > 5) { return Ok(5); } return p.div(1); }
 fn f(x) { var p: Pt; p.x = x; p.y = 0; var t, v = h(p, x); return Ok(v); }"
 
+# 6.7.13: a caller of an inline-replayed pair generic returns ONE value — the replayed `return Ok(v);` is the
+# call's value, not the caller's (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md: it warned
+# "a SINGLE value here" on main's `return v;`). MIR (the `GIDEP == 0` guard dropped) -> ir_replay red on both.
+printf '%s\n%s\n' "$H" 'fn gg<T>(v: T) { return Ok(v); }
+fn main(): i64 { var t, v = gg<i64>(7); return v; }
+sys_exit(main());' > "$T/ir_replay.cyr"
 # warns <compiler> <fixture> <expected count>
 warns() {
   "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
@@ -223,6 +229,7 @@ for c in x86 aarch64; do
   warns "$c" m3_geni_one 1
   warns "$c" m3_ptr_one 1
   warns "$c" m3_unknown 0
+  warns "$c" ir_replay 0
 done
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)
