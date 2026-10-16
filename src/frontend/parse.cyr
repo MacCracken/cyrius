@@ -3979,6 +3979,7 @@ fn _deref_store(S, term): i64 {
     PARSE_FACTOR(S);
     if (_dst_struct(S, term, d) == 1) { return 0; }
     var ed = _deref_ed(S);   # before the push: the operand's own kind
+    var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp += n` steps a `**T`'s pointee
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
@@ -3996,6 +3997,7 @@ fn _deref_store(S, term): i64 {
         _asg_compound_op(S, cop, _ek_lt(ed));
     } else {
         ELOAD64(S);       # rax = the word at the address
+        _asg_cstep = _ps_step(iw);
         _asg_compound_op(S, cop, 0);
     }
     if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from

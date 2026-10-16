@@ -11018,7 +11018,8 @@ fn _mark_ptr_param(S): i64 {
         ps = _ptr_step_peek(S, 0 - 1, 1);
         ed = _ek_at(S, GTI(S));
     }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1)));   # 6.7.12: a `*V`'s vector
+    var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _ek_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`

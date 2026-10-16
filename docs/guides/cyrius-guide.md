@@ -230,7 +230,8 @@ Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i
 **A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
 plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
 `*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
-`**T` is a pointer whose step is a pointer's 8, as a `**T` local's is; `*fn( .. )` is one word, its
+`**T` is a pointer whose step is a pointer's 8, as a `**T` local's is, and `*p` of it is a `*T` (6.7.13, see
+[Pointers](#pointers)); `*fn( .. )` is one word, its
 names are checked, and a call does not check the fn it is given against them. Anything else is refused
 by name, once, with no cascade — `fn f(a: 5)` is `expected a type for parameter 'a', got number 5`,
 and so are an operator, `;`, a string, a keyword, a missing type (`a:`), a lone `*` and `fn( .. )`
@@ -1044,11 +1045,21 @@ combines and stores at that width, so it wraps there (an `f32` combines in singl
 pointer is narrow wherever the compiler knows it is one: a name declared `*T` (a local, a parameter,
 a global, a closure capture, a generic instance's at its `T`), a field declared `*T` (`*h.p`,
 `*self.p`, `*mk(4).p`), a call declared `: *T` (`*f()`, `*g<i16>(k)`, `*o.m()`), `p + n`, `p - n`,
-`n + p`, parenthesised, or an if-expression whose branches all are. **Every other operand is a WORD
+`n + p`, parenthesised, an if-expression whose branches all are, or the dereference of a pointer to
+one (`*pp` of a `pp: **T`, below). **Every other operand is a WORD
 address, read and written 8 bytes as before**: an untyped name (`var w = p;` is the spelling for a
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
-untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
+untyped word — `p[0]` is the typed spelling), and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
+**`*pp` of a `pp: **T` is a `*T`** (6.7.13, the user's decision D9 (a), 2026-10-15) — through a `**T`
+local, parameter, global, closure capture, field, `: **T` call, generic instance or `pp + n`: `*pp + n`
+steps `n` elements of `T` and `*pp += n` steps them too, `*pp - *qq` is an element count (refused, as for
+any two pointers, when the element sizes differ), `var q: *T = *pp;` / `q = *pp;` are silent, and `**pp`
+through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written at its width. A
+`***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. Through 6.7.12 `*pp` was the
+untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
+declaration warned *assigning non-pointer to typed pointer*. A program may name at most 126 distinct
+pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*).
 Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
 (6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,

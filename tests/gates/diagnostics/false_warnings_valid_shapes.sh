@@ -129,6 +129,73 @@ syscall(60, main());
 EOF
 chk "P2 (control: int, another struct's global, i64 field, i64 method)" p2.cyr "assigning non-pointer to typed pointer" 4
 
+# D (6.7.13, D9 (a), the user 2026-10-15; issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md):
+# `*pp` of a `pp: **T` is a `*T`, so `var q: *T = *pp;` and `q = *pp;` are silent — a `**i64` local, parameter,
+# global (in a fn and at top level), field and `: **i64` call, and a `***i64`'s `**ppp`. It warned "assigning
+# non-pointer to typed pointer" at each (the filed repro: line 9). D2 (controls): `**pp` (the i64 element) and an
+# integer still warn — one each. D3: `*pp - b` with `b: *u8` is a pointer difference of two element sizes now,
+# refused by name (it was a byte count of an untyped word). Mutation: `_pp_inner` answering 0 -> D0, D1 RED (the
+# warnings return; D0's repro exits 1) and D3 RED (it compiles).
+DR="$ROOT/docs/development/issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md"
+if [ -f "$DR" ]; then
+  awk '/^```cyrius$/ { f = 1; next } /^```$/ { if (f) exit } f' "$DR" > "$D/d0.cyr"
+  chk "D0 (the filed repro verbatim: silent, exit 0)" d0.cyr "assigning non-pointer to typed pointer" 0 0
+fi
+cat > "$D/d1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct H { k; pp: **i64; }
+var GA: i64[3];
+var GP: *i64 = &GA;
+fn sec(pp: **i64): i64 { var q: *i64 = *pp; q = *pp; return *(q + 1); }
+fn trip(ppp: ***i64): i64 { var q: *i64 = **ppp; return *(q + 2); }
+GA[1] = 4;
+GA[2] = 5;
+var GPP: **i64 = &GP;
+var TQ: *i64 = *GPP;
+fn gpp(): **i64 { return GPP; }
+fn main(): i64 {
+    var p: *i64 = &GA;
+    var pp: **i64 = &p;
+    var q: *i64 = *pp;
+    q = *pp;
+    var g: *i64 = *GPP;
+    var h: H;
+    h.pp = &p;
+    var f: *i64 = *h.pp;
+    var c: *i64 = *gpp();
+    return *(q + 1) + sec(pp) + *(g + 1) + *(f + 1) + *(c + 2) + trip(&pp) + *(TQ + 1) - 25;
+}
+syscall(60, main());
+EOF
+chk "D1 (var q: *i64 = *pp: a local, a parameter, a global in a fn and at top level, a field, a call, ***)" d1.cyr "assigning non-pointer to typed pointer" 0 5
+cat > "$D/d2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var a: i64[2];
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var q: *i64 = **pp;
+    var r: *i64 = 7;
+    return 0;
+}
+syscall(60, main());
+EOF
+chk "D2 (control: **pp, the element, and an integer still warn)" d2.cyr "assigning non-pointer to typed pointer" 2
+cat > "$D/d3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var a: i64[4];
+    var p: *i64 = &a;
+    var b: *u8 = &a;
+    var pp: **i64 = &p;
+    return *pp - b;
+}
+syscall(60, main());
+EOF
+rc=0; "$CC" < "$D/d3.cyr" > /dev/null 2> "$D/d3.err" || rc=$?
+n=$(grep -c "pointer difference of pointers with different element sizes" "$D/d3.err" || true)
+[ "$rc" != 0 ] && [ "$n" = 1 ] || bad "D3 (*pp - b, a *i64 less a *u8): rc $rc, refused $n time(s), want refused once"
+
 if [ "$fail" -ne 0 ]; then echo "FAIL false_warnings_valid_shapes: $fail row(s) red"; exit 1; fi
-echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are)"
+echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a))"
 exit 0

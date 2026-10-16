@@ -4035,9 +4035,11 @@ fn _deref_read(S): i64 {
     PARSE_FACTOR(S);
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
+    var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     if (_deref_small(S, d) == 0) { ELOAD64(S); }
-    SPSC(S, 0);
+    SPSC(S, iw);
+    if (iw > 0) { _PK_MARK(S, iw); }   # the pointee's word is this value's own (`_pk_word`)
     if (pk == 1) { _dlo_note(S, d); }
     return 0;
 }

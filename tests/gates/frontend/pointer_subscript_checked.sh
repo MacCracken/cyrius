@@ -195,8 +195,9 @@
 #       every narrow kind's width / sign / neighbours, eleven OP= with wraparound, every operand form
 #       (name, parameter, global, field, call, generic, method, `p ± n`, `n + p`, parentheses, an
 #       if-expression, a capture, a generic instance), f32 rounding and typing, the for step, top level,
-#       and the operands that stay a WORD (an untyped name, `*i64` / `*f64` / `*bool`, `**pp`, `m & q`,
-#       `-(-q)`, `~(~q)`, `0 | q`, a call result's untyped field, a bitwise operand of `+`)
+#       and the operands that stay a WORD (an untyped name, `*i64` / `*f64` / `*bool`, `m & q`,
+#       `-(-q)`, `~(~q)`, `0 | q`, a call result's untyped field, a bitwise operand of `+`); `**pp`
+#       through a `**i32` is the element since 6.7.13 (D9 (a))
 #   DR  the issue's repro VERBATIM (issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-
 #       store.md; it exited 14) exits 0 on every leg
 #   AS3 `*p` through a `*i16` parameter and a `*u8` local in a suspending `async fn`, across awaits

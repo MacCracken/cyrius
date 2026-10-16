@@ -9,10 +9,11 @@
 # typed f32 — and stored as `p[0] = v` stores it (an f64 into an f32 element rounds). The operand is
 # a narrow `*T` when the compiler knows it is one: a name declared `*T` (local, parameter, global,
 # capture, a generic instance's), a field declared `*T`, a call declared `: *T` (a method, a generic
-# call), `p + n`, `p - n`, `n + p`, a parenthesised one, an if-expression whose branches are. Every
-# other operand is the WORD it always was: an untyped address (`var w = p;`), a `*i64` / `*u64` /
-# `*f64` / `*bool`, `**pp`, a bitwise or comparison result (`*(m & p)`), a call result's untyped
-# field (`*mk(p).n`) — rows D12 pin each, so the narrow rule cannot reach past its operands.
+# call), `p + n`, `p - n`, `n + p`, a parenthesised one, an if-expression whose branches are, and
+# (6.7.13, D9 (a)) `*pp` of a `pp: **T`, so `**pp` through a `**i32` is the element. Every other
+# operand is the WORD it always was: an untyped address (`var w = p;`), a `*i64` / `*u64` / `*f64` /
+# `*bool`, a bitwise or comparison result (`*(m & p)`), a call result's untyped field (`*mk(p).n`) —
+# rows D12 pin each, so the narrow rule cannot reach past its operands.
 #
 # Every pointer points into BUF, zeroed before each group and followed by a canary; the rows read
 # the stored bytes back through `load8/16/32/64`, so a wrong width or a lost sign cannot pass. The
@@ -486,8 +487,9 @@ fn wordforms(): i64 {
     assert_eq(*(if (c > 0) { q } else { w }), 0xAAAAAAAA00000001, "an if-expression with an untyped branch: a word");
     assert_eq(*(if (c > 0) { m & q } else { q }), 0xAAAAAAAA00000001, "an if-expression with a bitwise branch: a word");
     var pp: **i32 = &q;
+    assert_eq(**pp, 1, "**pp through a **i32: *pp is a *i32 (6.7.13, D9 (a)), so the 4-byte element");
     **pp = 3;
-    assert_eq(load64(&BUF), 3, "**pp: the inner pointer carries no element, so a word store");
+    assert_eq(load64(&BUF), 0xAAAAAAAA00000003, "**pp = 3 through a **i32: a 4-byte store (a word through 6.7.12)");
     return 0;
 }
 
