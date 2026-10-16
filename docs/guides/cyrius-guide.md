@@ -3146,6 +3146,13 @@ any depth: the nested field stayed 0, the inner object's keys were read as the o
 outer field of the same name took the inner value) and its `}` ended the scan, so every field after
 it was lost; an unknown key holding an object fed its keys to the outer struct.
 
+A **scalar field** — an integer (typed or untyped), `f64` / `f32`, `bool`, `Str`, `cstring` — whose value
+is another JSON shape is walked whole too (6.7.13): the scanner takes what its type can take and then
+skips the rest of the value, so an object or an array where a number, a `bool` or a string was expected
+leaves the field 0 (a `cstring`, its text) and its inner keys stay inside it — `{"a":{"q":7,"b":9},"b":4}`
+decodes with `b` 4, as the pairs form reads it. Through 6.7.12 those arms stopped at the value's `{` /
+`[` (a `bool` at the first inner `,`), and the scan read the inner keys as the outer struct's: `b` was 9.
+
 The escaper and the decoders are public in `lib/str.cyr`: `str_builder_add_json_str(sb, s)`,
 `str_builder_add_json_cstr(sb, p)` (`null` for a NULL `p`), `str_json_unescape(p, n)` (a fresh
 `Str`) and `str_json_unescape_cstr(p, n)` (a fresh C string), the last two over the `n` bytes

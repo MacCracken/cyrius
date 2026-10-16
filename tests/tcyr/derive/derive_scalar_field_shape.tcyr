@@ -1,0 +1,137 @@
+# derive_scalar_field_shape.tcyr — 6.7.13: the `#derive` scanner `T_from_json_str` walks a SCALAR field's
+# value whole (issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
+#
+# Through 6.7.12 the scanner's scalar arms — a typed integer, an untyped field, f64 / f32, bool, Str, cstring —
+# took their own token and stopped: on an object or array value the cursor stayed at its `{` / `[` (the bool
+# arm walked to the first `,` / `}`, INSIDE the object), and the main loop then stepped into it byte by byte
+# and read its keys as the outer struct's. `{"a":{"q":7,"b":9},"b":4}` decoded with b = 9 for every kind,
+# where the pairs form `T_from_json(bayan_json_parse(..))` (and any JSON parser) reads b = 4.
+#
+# THE RULE: every field arm ends with `_cy_json_skipval` (string- and depth-aware; it stops AT the value's
+# depth-0 terminator), so after a well-formed value it moves nothing, and an object, an array or a string where
+# a scalar was expected is walked whole. Rows: each scalar kind holding an object, a nested object, an array
+# (of scalars and objects, of objects), a string, with spaces, and the object AFTER `b` — b is 4 every time,
+# as the pairs form says; well-formed documents decode as before (the values the pairs form gives).
+# x86_64 here (check.sh); aarch64 by hand under qemu at the fix (the scanner is generated cyrius).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct P { a: i64; b: i64; }
+#derive(Serialize)
+struct U { a; b; }
+#derive(Serialize)
+struct F { a: f64; b: i64; }
+#derive(Serialize)
+struct G { a: f32; b: i64; }
+#derive(Serialize)
+struct B { a: bool; b: i64; }
+#derive(Serialize)
+struct T { a: Str; b: i64; }
+#derive(Serialize)
+struct C { a: cstring; b: i64; }
+
+fn pb(p: *P): i64 { return p.b; }
+fn ub(p: *U): i64 { return p.b; }
+fn fb(p: *F): i64 { return p.b; }
+fn gb(p: *G): i64 { return p.b; }
+fn bb(p: *B): i64 { return p.b; }
+fn tb(p: *T): i64 { return p.b; }
+fn cb(p: *C): i64 { return p.b; }
+fn pairs(d) { return bayan_json_parse(str_from(d)); }
+
+# b through the scanner, for kind `k` (0 P, 1 U, 2 F, 3 G, 4 B, 5 T, 6 C).
+fn scan_b(k, d): i64 {
+    if (k == 0) { return pb(P_from_json_str(d)); }
+    if (k == 1) { return ub(U_from_json_str(d)); }
+    if (k == 2) { return fb(F_from_json_str(d)); }
+    if (k == 3) { return gb(G_from_json_str(d)); }
+    if (k == 4) { return bb(B_from_json_str(d)); }
+    if (k == 5) { return tb(T_from_json_str(d)); }
+    return cb(C_from_json_str(d));
+}
+# b through the pairs form.
+fn pair_b(k, d): i64 {
+    if (k == 0) { return pb(P_from_json(pairs(d))); }
+    if (k == 1) { return ub(U_from_json(pairs(d))); }
+    if (k == 2) { return fb(F_from_json(pairs(d))); }
+    if (k == 3) { return gb(G_from_json(pairs(d))); }
+    if (k == 4) { return bb(B_from_json(pairs(d))); }
+    if (k == 5) { return tb(T_from_json(pairs(d))); }
+    return cb(C_from_json(pairs(d)));
+}
+# Every kind: the document's b through the scanner is 4, as through the pairs form.
+fn shape(d, tag): i64 {
+    var k = 0;
+    while (k < 7) {
+        assert_eq(scan_b(k, d), 4, tag);
+        assert_eq(scan_b(k, d), pair_b(k, d), tag);
+        k = k + 1;
+    }
+    return 0;
+}
+
+alloc_init();
+
+# ── a scalar field holding another JSON shape: b is the outer 4 for every kind ──
+shape("{\"a\":{\"q\":7,\"b\":9},\"b\":4}", "a holding an object: b = 4");
+shape("{\"a\":{\"q\":{\"b\":9},\"b\":9},\"b\":4}", "a holding a nested object");
+shape("{\"a\":[1,{\"b\":9}],\"b\":4}", "a holding an array of a scalar and an object");
+shape("{\"a\":[{\"b\":9},{\"b\":8}],\"b\":4}", "a holding an array of objects");
+shape("{\"a\":\"x,\\\"b\\\":9\",\"b\":4}", "a holding a string with a key in it");
+shape("{ \"a\" : { \"b\" : 9 } , \"b\" : 4 }", "a holding an object, with spaces");
+shape("{\"b\":4,\"a\":{\"b\":9}}", "the object after b: its b is not the outer one");
+shape("{\"b\":4,\"a\":[{\"b\":9}]}", "an array of objects after b");
+
+# ── well-formed documents decode as before, as the pairs form does ──
+var p1: *P = P_from_json_str("{\"a\":-5,\"b\":4}");
+assert_eq(p1.a, 0 - 5, "i64: -5");
+assert_eq(pb(p1), 4, "i64: b after it");
+var p2: *P = P_from_json(pairs("{\"a\":-5,\"b\":4}"));
+assert_eq(p1.a, p2.a, "i64: as the pairs form");
+var u1: *U = U_from_json_str("{\"a\":12,\"b\":4}");
+assert_eq(u1.a, 12, "untyped: 12");
+assert_eq(ub(u1), 4, "untyped: b after it");
+var f1: *F = F_from_json_str("{\"a\":2.5,\"b\":4}");
+var f2: *F = F_from_json(pairs("{\"a\":2.5,\"b\":4}"));
+assert_eq(load64(f1), load64(f2), "f64: 2.5, as the pairs form");
+assert_eq(load64(f1), f64_div(f64_from(5), f64_from(2)), "f64: 2.5");
+assert_eq(fb(f1), 4, "f64: b after it");
+var g1: *G = G_from_json_str("{\"a\":1.5,\"b\":4}");
+var g2: *G = G_from_json(pairs("{\"a\":1.5,\"b\":4}"));
+assert_eq(load32(g1), load32(g2), "f32: 1.5, as the pairs form");
+assert_eq(gb(g1), 4, "f32: b after it");
+var b1: *B = B_from_json_str("{\"a\":true,\"b\":4}");
+assert_eq(load64(b1), 1, "bool: true");
+assert_eq(bb(b1), 4, "bool: b after true");
+var b2: *B = B_from_json_str("{\"a\":false,\"b\":4}");
+assert_eq(load64(b2), 0, "bool: false");
+assert_eq(bb(b2), 4, "bool: b after false");
+var b3: *B = B_from_json_str("{\"a\":{\"b\":9},\"b\":4}");
+assert_eq(load64(b3), 0, "bool: an object is not true (0)");
+var t1: *T = T_from_json_str("{\"a\":\"hi\",\"b\":4}");
+assert_eq(str_eq_cstr(t1.a, "hi"), 1, "Str: \"hi\"");
+assert_eq(tb(t1), 4, "Str: b after it");
+var c1: *C = C_from_json_str("{\"a\":\"hi\",\"b\":4}");
+assert_eq(streq(c1.a, "hi"), 1, "cstring: \"hi\"");
+assert_eq(cb(c1), 4, "cstring: b after it");
+var c2: *C = C_from_json_str("{\"a\":null,\"b\":4}");
+assert_eq(c2.a, 0, "cstring: null is NULL");
+assert_eq(cb(c2), 4, "cstring: b after null");
+var p3: *P = P_from_json_str("{\"a\":7}");
+assert_eq(p3.a, 7, "i64: the last key, no b");
+assert_eq(pb(p3), 0, "i64: a missing b stays 0");
+
+var r = assert_summary();
