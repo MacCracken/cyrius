@@ -17,7 +17,10 @@
 #       scalar annotation passes, so x became the struct: `x.b` compiled, a `u8` held 333. The repro:
 #       3 on all four targets (0 is right). A `: bool` was refused as "not a bool".
 # THE FIX. (a) The receive judges the call inside a whole wrap (`_rcv_peel`, `_pwrap_k` up to the `;`)
-# and the typed path's `_scv_peel` takes it, as for `var x: Q = (mk());`. (b) The user's decision
+# and the typed path's `_scv_peel` takes it, as for `var x: Q = (mk());`. 6.7.13: of 8 B or less the peek types it
+# (`_var_rhs_wsid`; `x.a` was "no struct type in scope for 'x'"): A3 the repro verbatim, A4 the 16 B method's
+# (D42), tcyr w8* / w16_m / wf64 / wexpr, K7. The fix reverted (the 6.7.13 lane base as CYCC; the cross legs
+# build from the tree): RED A3 (refused) and A2 K7 (do not build) on x86_64 and PE; D1 (V4d) green. (b) The user's decision
 # (2026-10-13, A): an annotation that names no struct, receiving a struct over 8 B (not a `Str`), is
 # refused by name at the call (`_rcv_scalar_ann`) —
 #   cannot initialise 'x: i64' from 'mkp', which returns the struct 'P2' - declare 'x: P2' or bind a field
@@ -397,7 +400,27 @@ refused TL18 "cannot initialise 'G: bool' $MT" "after a first statement: \`fncal
 row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); return dq(x) + dq3(y) + dq3(z) - 68; }'
 runs A1 34 "\`((mkp()))\`, \`(mk3())\`, \`((mk3()))\` into by-value parameters"
 cp tests/tcyr/crossos/struct_receive_paren_call.tcyr "$T/A2.cyr"
-runs A2 0 "tests/tcyr/crossos/struct_receive_paren_call.tcyr (fn scope, a closure, a generic; 16 B and 24 B)"
+runs A2 0 "tests/tcyr/crossos/struct_receive_paren_call.tcyr (fn scope, a closure, a generic; 16 B and 24 B; 6.7.13: 8 B)"
+# 6.7.13 (issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md): the issue's two repros,
+# verbatim — the 8 B free call (`x.a` refused before: "no struct type in scope for 'x'") and the 16 B method
+# (139 / 139 / 1 / 5 through 6.7.10; D42 fixed it in 6.7.11, pinned here).
+cat > "$T/A3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P1 { a; }
+fn mk1(): P1 { var p: P1; p.a = 33; return p; }
+fn main(): i64 { var x = (mk1()); return x.a; }
+syscall(60, main());
+EOF
+runs A3 33 "the 8 B repro verbatim: \`var x = (mk1()); return x.a;\` (refused before)"
+cat > "$T/A4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 3; q.b = 4; return q; } }
+fn dq(q: Q): i64 { return q.a * 10 + q.b; }
+fn main(): i64 { var b = Q { 1, 2 }; var x = (b.mk()); return dq(x); }
+syscall(60, main());
+EOF
+runs A4 34 "the 16 B method repro verbatim: \`var x = (b.mk()); return dq(x);\` (D42)"
 
 # --- controls ---
 row K1 'fn f(): i64 { var x: i64 = mk1(); return x + 1; }'
@@ -421,6 +444,8 @@ fn f(): i64 { return gb<P2>(mkp()); }'
 runs K5 34 "control: \`var x: T = mkp();\` in \`gb<P2>\` (the base parse is not judged)"
 row K6 'fn f(): i64 { var x = mkp(); var y = mk3(); return x.a + x.b + y.c - 7; }'
 runs K6 34 "control: unannotated, unwrapped"
+row K7 'fn f(): i64 { var x = (31 + 3); var y = ((mk1())); return x + y.a - 33; }'
+runs K7 34 "control: \`var x = (31 + 3);\` stays an untyped word beside a wrapped 8 B call (6.7.13)"
 
 # --- a dyn result keeps the 6.7.8 refusals ---
 DH='include "lib/alloc.cyr"
@@ -434,7 +459,7 @@ refused D2 "a dyn Show result $RV" "a dyn: \`var y: i64 = pass(o);\` keeps V4n"
 printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\nsyscall(60, 0);\n' "$DH" > "$T/D3.cyr"
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
-[ "$rows" -ge 71 ] || bad "only $rows rows ran (floor 71)"
+[ "$rows" -ge 74 ] || bad "only $rows rows ran (floor 74)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13)"

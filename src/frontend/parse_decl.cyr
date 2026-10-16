@@ -6947,6 +6947,27 @@ fn _var_rhs_csid(S, ti): i64 {
     if (_call_ends_at(S, ti, 5) == 0) { return 0; }
     return rs;
 }
+# ⛔ 6.7.13 — `var x = (mk1());` WITH AN 8 B STRUCT RESULT INFERRED NOTHING: the peek above wants `IDENT (`
+# first, so x was an untyped word and `x.a` was "no struct type in scope for 'x'" (decision 12 / 6.7.11 D42:
+# a whole struct result binds the struct at every size, the wrap transparent). The type of a WHOLE free
+# call inside parentheses that wrap the whole untyped initialiser at `ti` (`_pwrap_name` up to the `;`,
+# `_rcv_iscall`): a struct of 8 B or less (over 8 B the receive takes it, `_rcv_peel`; a dyn, 16 B, keeps
+# 6.7.8 V4d's refusal), or a `: f64` call's -9 (judged after the parse, as `var x = f();` is); else 0.
+# CHANGELOG [6.7.13]
+fn _var_rhs_wsid(S, ti): i64 {
+    var k = _pwrap_name(S, ti);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    if (_rcv_iscall(S, ti + k, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti + k);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == 0 - 9) { return rs; }
+    if (rs <= 0) { return 0; }
+    if (rs > 2047) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    return rs;
+}
 
 # ⛔ 6.7.11 — PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so `var x = (mk());`
 # with `mk` returning a struct over 8 B inferred nothing: x held the FIRST word, and `dq(x)` into a
@@ -8109,7 +8130,7 @@ fn PARSE_VAR(S): i64 {
                 # 6.7.11: a struct only from a call that ENDS the initialiser (`_var_rhs_csid`).
                 if (_var_rhs_call(S, GTI(S)) == 1) { _ti_inferred_sid = _var_rhs_csid(S, GTI(S)); }
                 else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
-            }
+            } elif (PEEKT(S) == 10) { _ti_inferred_sid = _var_rhs_wsid(S, GTI(S)); }   # 6.7.13: `var x = (mk1());`
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
     # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
