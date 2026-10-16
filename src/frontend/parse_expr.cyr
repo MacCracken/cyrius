@@ -997,8 +997,10 @@ fn _icall_chain(S, cfi, t, beg): i64 {
     _cfo = 0;
     return 1;
 }
+# Silent under `--syntax-only` (lint's pre-pass), where a callee from a sibling file is unknown too, as `_method_chain`
+# and `_call_field` stay silent there.
 fn _icall_fld_err(S, beg): i64 {
-    if (_panic == 0) {
+    if (_panic + _syntax_only == 0) {
         syscall(SYS_WRITE, 2, "error:", 6);
         _err_head(S);
         PRSTR(": cannot take a field of the result of '");

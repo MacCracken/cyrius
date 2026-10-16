@@ -111,8 +111,8 @@
 #      2026-10-15) a known callee's result takes `.field` / `.method(..)` (`fncall1(&mk3, 5).b`, `callptr(&mk3, 1).dbl().c`,
 #      a `*T` callee's field, the callee wrapped, the statement form), as `mk3(5).b` does: it was "expected ';', got
 #      '.'" (`_icall_chain` after `_icall_result`; a 9-16 B result's temp from `_sc_pre_c`). Top level is refused once by
-#      name, a callee in a variable by name (its result is a word, D31). FP20 / FPw4 the filed repro verbatim; tcyr
-#      FC1-FC14 on B1-B7
+#      name, a callee in a variable by name (its result is a word, D31); --syntax-only reports nothing (FP32). FP20 /
+#      FPw4 the filed repro verbatim; tcyr FC1-FC14 on B1-B7
 #   EV (6.7.11, the call-arguments lane) under CYRIUS_IR=3, LASE kept a just-stored local's rax image
 #      across EFLADDR's `lea rax, [rbp+d]`, which recorded no IR node, and dropped the reload after it:
 #      `o.with2(x)` / `bs(h, x)` / `var b: B = mk(x)` right after `var x = 5;` passed the aggregate's
@@ -272,14 +272,15 @@
 #   M-VDF one `assert_eq(` row deleted from vector_call_result_discarded.tcyr -> RED 1: "only 14 rows (floor 15)"
 #   (6.7.13, the receives lane, unit R3, the same procedure, 2026-10-16: issues/2026-10-13-field-of-indirect-call-
 #   struct-result.md; the cross legs build from the tree, so B5 / B6 stay green)
-#   the fix reverted (the lane's previous tip, 1330b9ed)         -> RED 18: FP20-FP24 FP26-FP28 FP30 (expected ';'), FP25
-#       (2 errors), FP29 FP31 (refused 'fncall1' does not return a struct), B1-B4 B7 (the values file refused at FC1),
-#       FPw4
+#   the fix reverted (the lane's previous tip, 1330b9ed)         -> RED 19: FP20-FP24 FP26-FP28 FP30 (expected ';'), FP25
+#       (2 errors), FP29 FP31 (refused 'fncall1' does not return a struct), FP32 (expected ';'), B1-B4 B7 (the values
+#       file refused at FC1), FPw4
 #   M-FI1 `_icall_chain` answering 0 (no chain)                  -> RED 18: as the fix reverted (FP29 FP31: expected ';')
 #   M-FI2 `_icall_sret` calling `_sc_pre` (no 9-16 B temp)        -> RED 8: FP21 FP22 FP24 (139), B1-B4 (139), B7 (exit 5)
 #   M-FI3 `_call_field` without the fncallN route (statements)   -> RED 7: FP29 FP31, B1-B4 B7 (refused at FC12)
 #   M-FI4 `_icall_chain` without its top-level skip              -> RED 1: FP25 (2 errors)
 #   M-FI5 `_icall_chain` without its unknown-callee refusal      -> RED 2: FP27 FP28 (the refusal names a garbage fn)
+#   M-FI6 `_icall_fld_err` without its --syntax-only test        -> RED 1: FP32 (the two chains refused by name)
 #
 #   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
 #      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
@@ -604,6 +605,12 @@ refused fp28 "cannot take a field of the result of 'callptr': its callee is a va
 exits fp29 7 "FP29: fncall1(&mk3, 5).tot(); / callptr(&gp, 7).b; as statements (cannot take a field of 'fncall1' before)" "${FPH}${FPM}fn main() { fncall1(&mk3, 5).tot(); callptr(&mk3, 5).dbl().tot(); fncall1(&gp, 7).b; return G.a; }$E"
 refused fp30 "cannot take a field of the result of 'sc': it does not return a struct" "FP30: fncall1(&sc, 5).b, a scalar callee, refused by name" "${FPH}${FPM}fn main() { return fncall1(&sc, 5).b; }$E"
 refused fp31 "cannot assign to a field of a call result: the result is a temporary" "FP31: fncall1(&mk3, 5).b = 1; refused as mk3(5).b = 1; is" "${FPH}fn main() { fncall1(&mk3, 5).b = 1; return 0; }$E"
+# FP32: under --syntax-only (lint's pre-pass) a callee from a sibling file is unknown, as a variable's is: the chain is
+# parsed and nothing is reported, as `mk3sib(5).b` (`_call_field`) and a method's result (`_method_chain`) are.
+printf '%b' 'include "lib/fnptr.cyr"\nfn main(): i64 {\n    var x = fncall1(&mk3sib, 5).b;\n    var y = mk3sib(5).b;\n    var fp = &mk3sib;\n    var z = callptr(fp, 5).tot();\n    return x + y + z;\n}\nsyscall(60, main());\n' > "$T/fp32.cyr"
+rc=0; timeout 60 "$CC" --syntax-only --allow-undef < "$T/fp32.cyr" > /dev/null 2> "$T/fp32.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/fp32.err"; then ok "FP32: --syntax-only: fncall1(&mk3sib, 5).b / callptr(fp, 5).tot() with mk3sib in a sibling file report nothing"
+else bad "FP32: --syntax-only reported (rc $rc): $(grep '^error' "$T/fp32.err" | head -1)"; fi
 
 # EV (6.7.11) — the filed repros verbatim, under CYRIUS_IR=3: a just-stored local after an EFLADDR `lea`.
 exits_ir3 ev1 35 "EV1: o.with2(x) after var x = 5; under CYRIUS_IR=3 (the filed repro: 30 + the low byte of &o)" "struct S8 { v; }\nimpl S8 { fn with2(self: *S8, n): i64 { return self.v * 10 + n; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.with2(x); }\nsyscall(60, a2());\n"
