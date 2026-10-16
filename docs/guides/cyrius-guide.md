@@ -6356,6 +6356,10 @@ reason (6.7.11): `async fn g(): (i64, i64)` at its declaration, and `return (a, 
 holding them ``". Before 6.7.11 it compiled, `await g()` gave the first value, and the second
 was gone: `rethi()` after the `await` read it only on the force that ran the body, and a
 memoised (`await f` again) or reactor-driven force read whatever the last call left there.
+`return h(..);` that forwards a multi-value call — `h` declared `: (T1, T2[, T3])`, an
+undeclared fn whose every `return` is `(a, b)`, a method or a generic instance, parentheses
+around the call transparent — is the same loss and is refused the same way, at the call (6.7.13,
+the user's decision of 2026-10-15); `return callptr(fp, ..);` (its callee unknown) is not judged.
 
 ## Global Initializers
 

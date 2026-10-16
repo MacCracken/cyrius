@@ -1051,6 +1051,14 @@ fn _mret_ret_ok(S, want): i64 {
 # `k` parentheses at `st`, then `;`: 1 = its callee returns `want` values or cannot be judged; 0 = no
 # such call, or another count.
 fn _mret_call_ok(S, st, k, want): i64 {
+    var fi = _ret_whole_call(S, st, k);
+    if (fi == 0 - 2) { return 0; }
+    return _mret_fwd_ok(S, fi, want);
+}
+# ... that whole call's fn (-1: unresolved, `callptr(..)` included); -2 = no such call. The cursor is
+# kept. Shared with `_ret_mv_fwd` (6.7.13). A generic callee is instantiated here, as the arms would.
+fn _ret_whole_call(S, st, k): i64 {
+    var sv = GTI(S);
     STI(S, st + k);
     var o = 0 - 1;
     var fi = 0 - 1;
@@ -1060,16 +1068,16 @@ fn _mret_call_ok(S, st, k, want): i64 {
         o = _dt_call_open(S);
         if (o >= 0) { fi = _dt_call_fn(S); }
     }
-    STI(S, st);
-    if (o < 0) { return 0; }
+    STI(S, sv);
+    if (o < 0) { return 0 - 2; }
     var e = _call_close(S, o) + 1;
     var j = 0;
     while (j < k) {
-        if (TOKTYP(S, e + j) != 11) { return 0; }
+        if (TOKTYP(S, e + j) != 11) { return 0 - 2; }
         j = j + 1;
     }
-    if (TOKTYP(S, e + k) != 5) { return 0; }
-    return _mret_fwd_ok(S, fi, want);
+    if (TOKTYP(S, e + k) != 5) { return 0 - 2; }
+    return fi;
 }
 # A forwarded callee `fi` (-1: unresolved): 1 = it returns `want` values, or its count is unknown.
 fn _mret_fwd_ok(S, fi, want): i64 {
@@ -1098,6 +1106,7 @@ fn PARSE_RETURN(S): i64 {
     if (_ret_toplevel(S) == 1) { return 0; }   # 6.7.11: outside a fn body, refused
     var st = GTI(S) + 1;
     _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
+    _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
     _PARSE_RETURN_ARMS(S);
@@ -6399,6 +6408,25 @@ fn _async_mv_ret(S, st): i64 {
     var c = _tup_commas(S, st);
     if (c <= 0) { return 0; }
     return _refuse_async_mv_body(S, st, c + 1);
+}
+# ⛔ 6.7.13 — ... AND `return h(..);` FORWARDING A MULTI-VALUE CALL: the callee declared `: (T1, T2[,
+# T3])`, counted by pass 1 or a method (`_mv_callee`), parentheses around the whole call transparent
+# (`_ret_whole_call`). The forward left the values in the return registers and the Future memoised the
+# first — the third spelling of the loss above (the repro exited 19 where 12 is right, on every target).
+# Refused with the same text at the forwarded call (D24 A, the user's decision, 2026-10-15); a callee
+# held in a variable (`callptr(fp, ..)`) is unknown and not judged. Token `st` = the value's first;
+# called once from PARSE_RETURN, before the arms (the tail-call arm takes `return h(..);`).
+# CHANGELOG [6.7.13]
+fn _ret_mv_fwd(S, st): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (_fn_async_impl(S, _cur_fn_ix) == 0) { return 0; }
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var fi = _ret_whole_call(S, st, k);
+    if (_mv_callee(S, fi) == 0) { return 0; }
+    return _refuse_async_mv_body(S, st + k, _mv_count(S, fi));
 }
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
 # them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).
