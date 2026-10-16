@@ -2021,10 +2021,15 @@ does — `q.y` reads and writes the copy (`p` is untouched), in a fn and inside 
 `take(q)` passes it, and `q + p` dispatches `P_add`. Through 6.7.11 `q` was `p`'s first word: `q.y` was *no
 struct type in scope for 'q'* (*undefined variable 'q'* in a closure), `take(q)` passed the word as the
 struct's address, and `q + 1` added to it (now it dispatches `P_add`, or is refused if there is none). A
-bare `q` where a value is expected is still the first word (`return q;` from an `i64` fn). Unchanged: a
-`*T` source stays a plain word (an untyped impl `self` is one), as do a handle and a struct global named
-in a fn (`var q = G;`); an untyped global keeps the word; a tuple stays refused (*tuple 't' used as a
-value*).
+bare `q` where a value is expected is still the first word (`return q;` from an `i64` fn). Since 6.7.13
+(the user's decision D6 (b), 2026-10-15) an inline struct GLOBAL named in a fn is such a source too:
+`var q = G;` (or `var q = (G);`) with `var G: P = P { 3, 4 };` is a copy of `G`, as `var q: P = G;` is —
+`q.y = 9` leaves `G` untouched, `take(q)` passes it, `q + G` dispatches `P_add` (through 6.7.12 `q` was
+`G`'s first word: `q.y` *no struct type in scope for 'q'*, `take(q)` a fault, `q + 1` an integer add).
+Unchanged: a `*T` source stays a plain word (an untyped impl `self` is one), and so does a HANDLE — a
+local, a handle global (`var GH: P = 0;` then `GH = alloc(16);`), a local that shadows the global — whose
+word is the struct's address: `var q = h;` is that address, `q + n` byte arithmetic on it; an untyped
+global keeps the word (`var H = G;` at top level); a tuple stays refused (*tuple 't' used as a value*).
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,

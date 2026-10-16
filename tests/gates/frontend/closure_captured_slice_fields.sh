@@ -51,13 +51,30 @@
 # annotated form. Q rows were refused before; QK rows are controls that held before and after (a
 # `*T` source and an untyped impl `self` stay plain words, an untyped global keeps the word). The
 # runtime rows are tests/tcyr/crossos/untyped_struct_name_copy.tcyr, run here on every leg (its row
-# count derived, floor 25) and on ecb / ach / cass / pi by the release gate. The PE leg (wine, a
+# count derived, floor 46 since 6.7.13) and on ecb / ach / cass / pi by the release gate. The PE leg (wine, a
 # private prefix) runs the repro 2, the Q / QK rows and the .tcyr.
 # MUTATION LEDGER (6.7.12, measured the same way):
 #   m1 PARSE_VAR's `_uci_ps` call dropped (D29 out)  -> RED Q1-Q9, repro 2 and the .tcyr on every leg (44)
 #   m2 `_uci_cap` answers 0 (no captured source)      -> RED Q5, Q9 and the .tcyr on every leg (12)
 #   m3 `_uci_cap`'s `*T` check dropped                 -> RED QK5 and the .tcyr on every leg (8)
 #   real tree                                          -> GREEN (117: host 34, cx 33, aarch64 33, PE 17)
+#
+# 6.7.13 (the user's decision D6 (b), 2026-10-15): D29 reaches a struct GLOBAL — `var q = G;` in a fn, G an
+# inline struct global, is a copy of it, as `var q: P = G;` is; a HANDLE keeps the word (`_uci_glob`, beside
+# `_uci_ps`; issues/2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md). Q10 / Q11 the filed
+# repros 1 and 2 verbatim (refused "no struct type in scope for 'q'" / exit 139 through 6.7.12), Q12-Q18 a write
+# leaving G, 8 B, wrapped, `q + G` dispatched, inside a closure, captured, a local named G (a local copy); QK7-QK9
+# a handle local, a handle global and a local handle named G keep the word, QK10 a captured local handle named G
+# inside a closure too; UK1 the filed repro 3 (a handle's `q.y`) is still refused, UK2 / UK3 a handle global's and
+# a captured shadowing handle's `q.y` too. The .tcyr's 6.7.13 rows (3 / 8 / 16 / 24 B) run on every leg here too.
+#   m4 the tree before it (5e488400)                   -> RED 36: Q10-Q17 and the .tcyr on every leg (host, cx,
+#                                                         aarch64, PE; Q10 Q12-Q17 refused, Q11 exit 139); Q18 (a local
+#                                                         named G) green
+#   m5 `_uci_glob` without the GVPM test               -> RED UK2 on host / cx / aarch64 (a handle global typed P:
+#                                                         `q.y` compiled; the value rows agree, the handle rebinds)
+#   m6 `_uci_glob` without its closure-snapshot test   -> RED UK3 on host / cx / aarch64 (a captured local handle
+#                                                         named G read as the global: `q.y` compiled)
+#   real tree                                          -> GREEN
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -120,6 +137,22 @@ QK3|v|14|fn main(): i64 { var p: P = P { 3, 4 }; var pp: *P = &p; var q = pp; re
 QK4|v|4|impl P { fn sy(self): i64 { var q = self; return load64(q + 8); } }\nfn main(): i64 { var p: P = P { 3, 4 }; return p.sy(); }\nsyscall(60, main());\n
 QK5|v|14|fn f(pp: *P): i64 { var c = |k| { var q = pp; return (q == pp) * 10 + load64(q + 8) + k; }; return fncall1(c, 0); }\nfn main(): i64 { alloc_init(); var p: P = P { 3, 4 }; return f(&p); }\nsyscall(60, main());\n
 QK6|v|3|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; return q; }\nsyscall(60, main());\n
+Q10|v|4|var G: P = P { 3, 4 };\nfn main(): i64 {\n    var q = G;\n    return q.y;\n}\nsyscall(60, main());\n
+Q11|v|4|var G: P = P { 3, 4 };\nfn tk(a: P): i64 { return a.y; }\nfn main(): i64 {\n    var q = G;\n    return tk(q);\n}\nsyscall(60, main());\n
+Q12|v|49|var G: P = P { 3, 4 };\nfn main(): i64 { var q = G; q.y = 9; return G.y * 10 + q.y; }\nsyscall(60, main());\n
+Q13|v|49|var G: S8 = S8 { 3, 4 };\nfn main(): i64 { var q = G; q.b = 9; return G.b * 10 + q.b; }\nsyscall(60, main());\n
+Q14|v|34|var G: P = P { 3, 4 };\nfn main(): i64 { var q = (G); q.x = 1; return G.x * 10 + q.y; }\nsyscall(60, main());\n
+Q15|v|68|var G: P = P { 3, 4 };\nfn P_add(a: P, b: P): P { var r = P { a.x + b.x, a.y + b.y }; return r; }\nfn main(): i64 { var q = G; var s = q + G; return s.x * 10 + s.y; }\nsyscall(60, main());\n
+Q16|v|5|var G: P = P { 3, 4 };\nfn main(): i64 { alloc_init(); var c = |k| { var q = G; var d = |j| q.y + j; return fncall1(d, k); }; return fncall1(c, 1); }\nsyscall(60, main());\n
+Q17|v|45|var G: P = P { 3, 4 };\nfn main(): i64 { alloc_init(); var q = G; var c = |k| q.y + k; return fncall1(c, 1) + q.y * 10; }\nsyscall(60, main());\n
+Q18|v|89|var G: P = P { 3, 4 };\nfn main(): i64 { var G: P = P { 7, 8 }; var q = G; q.y = 9; return G.y * 10 + q.y; }\nsyscall(60, main());\n
+QK7|v|14|fn main(): i64 { alloc_init(); var h: P = alloc(16); h.x = 3; h.y = 4; var q = h; return (q == h) * 10 + load64(q + 8); }\nsyscall(60, main());\n
+QK8|v|14|var GH: P = 0;\nfn main(): i64 { alloc_init(); GH = alloc(16); GH.y = 4; var q = GH; return (q == GH) * 10 + load64(q + 8); }\nsyscall(60, main());\n
+QK9|v|14|var G: P = P { 3, 4 };\nfn main(): i64 { alloc_init(); var G: P = alloc(16); G.y = 4; var q = G; return (q == G) * 10 + load64(q + 8); }\nsyscall(60, main());\n
+QK10|v|5|var G: P = P { 3, 4 };\nfn main(): i64 { alloc_init(); var G: P = alloc(16); G.y = 5; var c = |k| { var q = G; return load64(q + 8) + k; }; return fncall1(c, 0); }\nsyscall(60, main());\n
+UK2|e|no struct type in scope for 'q'|var GH: P = 0;\nfn main(): i64 { alloc_init(); GH = alloc(16); GH.y = 4; var q = GH; return q.y; }\nsyscall(60, main());\n
+UK3|e|no struct type in scope for 'q'|var G: P = P { 3, 4 };\nfn main(): i64 { alloc_init(); var G: P = alloc(16); G.y = 5; var c = |k| { var q = G; return q.y + k; }; return fncall1(c, 0); }\nsyscall(60, main());\n
+UK1|e|no struct type in scope for 'q'|fn main(): i64 {\n    alloc_init();\n    var h: P = alloc(16);\n    h.x = 3; h.y = 4;\n    var q = h;\n    return q.y;\n}\nsyscall(60, main());\n
 ROWS
 NTAB=$(grep -c '|' "$WORK/rows")
 
@@ -163,7 +196,7 @@ TC="$ROOT/tests/tcyr/crossos/untyped_struct_name_copy.tcyr"
 [ -f "$TC" ] || { echo "FAIL: closure_captured_slice_fields: $TC is missing"; exit 1; }
 # One row per `assert_eq(` call; the floor keeps a gutted file from passing.
 NTC=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-if [ "$NTC" -lt 25 ]; then echo "FAIL: closure_captured_slice_fields: only $NTC rows in $TC (floor 25)"; exit 1; fi
+if [ "$NTC" -lt 46 ]; then echo "FAIL: closure_captured_slice_fields: only $NTC rows in $TC (floor 46)"; exit 1; fi
 
 # A1: a closure built in a coroutine, after and before its await, reads the captured slice's
 # fields (the axis-11 shape of coroutine_midbody_suspend.sh with the dot syntax): 71 + 51.
@@ -324,9 +357,9 @@ else
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
-# Derived floor: the row table (30 rows), the two repros and the .tcyr on host + cx, A1 on the host,
+# Derived floor: the row table (46 rows), the two repros and the .tcyr on host + cx, A1 on the host,
 # even with qemu and wine absent.
-if [ "$NTAB" -lt 30 ]; then bad "the row table holds $NTAB rows (floor 30) — it did not load"; fi
+if [ "$NTAB" -lt 46 ]; then bad "the row table holds $NTAB rows (floor 46) — it did not load"; fi
 if [ "$NROWS" -lt $(((NTAB + 3) * 2 + 1)) ]; then bad "only $NROWS rows ran (floor $(((NTAB + 3) * 2 + 1)))"; fi
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: closure_captured_slice_fields ($NFAIL of $NROWS rows)"
