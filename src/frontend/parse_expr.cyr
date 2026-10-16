@@ -870,11 +870,14 @@ fn _icall_mark(S): i64 {
     _lfa_end = 0 - 1;
     return GTI(S);
 }
-# The callee expression parsed from `cst` to the cursor: its fn when it is exactly `&f`, else -1.
+# The callee expression parsed from `cst` to the cursor: its fn when it is exactly `&f`, inside any
+# parentheses that wrap the whole callee (`callptr((&mk3), 5)`, 6.7.13: guide § Parentheses), else -1.
 fn _icall_callee(S, cst): i64 {
-    if (TOKTYP(S, cst) != 27) { return 0 - 1; }
-    if (GTI(S) != cst + 2) { return 0 - 1; }
-    if (_lfa_end != cst + 2) { return 0 - 1; }
+    var a = _pwrap_in(S, cst);
+    if (a < 0) { return 0 - 1; }
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (_lfa_end != a + 2) { return 0 - 1; }
+    if (GTI(S) != a + 2 + (a - cst)) { return 0 - 1; }
     return _lfa_fi;
 }
 # The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word, or an
@@ -917,15 +920,34 @@ fn _icall_sid_at(S, ti): i64 {
 }
 # ... the declared return (GFRS: a struct, a vector's descriptor, a scalar's sentinel) of that `&f`, or 0.
 fn _icall_rs_at(S, ti): i64 {
-    var o = _icall_open_at(S, ti);
-    if (o < 0) { return 0; }
-    if (TOKTYP(S, o + 1) != 27) { return 0; }
-    if (TOKTYP(S, o + 2) != 2) { return 0; }
-    var nx = TOKTYP(S, o + 3);
-    if (nx != 31) { if (nx != 11) { return 0; } }
-    var fi = FINDFN(S, TOKVAL(S, o + 2));
+    var f = _icall_fti(S, ti);
+    if (f < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, f));
     if (fi < 0) { return 0; }
     return GFRS(S, fi);
+}
+# ⛔ 6.7.13 — A PARENTHESISED `&f` CALLEE IS THE KNOWN CALLEE. `callptr((&mk3), 5)` was an unknown callee:
+# the token routes wanted `&` right after the call's `(`, so the struct result convention was lost (SIGSEGV).
+# The `f` token of the call through fncallN / callptr at token `ti` when its first argument is `& IDENT`
+# alone, inside any parentheses wrapping that whole argument (`_pwrap_in`) — the name followed by the
+# wrap's closers, then `,` / `)`; else -1. CHANGELOG [6.7.13]
+fn _icall_fti(S, ti): i64 {
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { return 0 - 1; }
+    var a = _pwrap_in(S, o + 1);
+    if (a < 0) { return 0 - 1; }
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (TOKTYP(S, a + 1) != 2) { return 0 - 1; }
+    var e = a + 2;
+    var k = a - (o + 1);
+    while (k > 0) {
+        if (TOKTYP(S, e) != 11) { return 0 - 1; }
+        e = e + 1;
+        k = k - 1;
+    }
+    var nx = TOKTYP(S, e);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    return a + 1;
 }
 # The `(` of a call through fncallN / callptr at token `ti` (PARSE_FACTOR's gates), or -1.
 fn _icall_open_at(S, ti): i64 {

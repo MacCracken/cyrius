@@ -2048,7 +2048,7 @@ fn _svc_rs(S, ti): i64 {
     var rs = _icall_rs_at(S, ti);
     if (rs <= 0 - 2048) {
         _svc_k = 2;
-        _svc_nm = TOKVAL(S, _icall_open_at(S, ti) + 2);
+        _svc_nm = TOKVAL(S, _icall_fti(S, ti));
     } elif (_vrcv_vcall(S, ti) == 1) {
         _svc_k = 1;
         _svc_nm = TOKVAL(S, ti);

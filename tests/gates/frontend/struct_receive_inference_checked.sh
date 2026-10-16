@@ -60,9 +60,12 @@
 # first-field.md). FP0 the filed repro verbatim (both declarations refused); FP1-FP8 `fncall0` / `callptr` at
 # 16 B and 24 B into i64 / u8 / f64 / bool; FP9 / FP10 a wrapped initialiser (into `: bool`, the bool check not
 # run again); FPK1 an 8 B struct is its word, FPK2 a callee in a variable is a word (D31: not refused), FPK3
-# an untyped receive is the struct (D31). A parenthesised callee `(&mk3)` is no known callee yet (i8: issues/
-# 2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md), so D28's "the wrapped callee too (via i8)"
-# rides that fix.
+# an untyped receive is the struct (D31). D28's "the wrapped callee too" rode issues/2026-10-14-parenthesised-fn-
+# pointer-callee-loses-struct-result.md (6.7.13): FP11 its acceptance rows (`fncall1((&mk3), 5)` / `callptr((&mk3),
+# 5)` into `: i64`, exit 139 before), FP12 FP13 a wrapped callee into `: bool` / inside a wrapped initialiser, FPK4
+# an untyped receive of it, TL17 TL18 the same at top level. With the fix reverted (the 6.7.13 lane base as CYCC;
+# the cross legs build from the tree): RED 13 — FP11 FP13 TL17 (BUILT), FP12 TL18 (the old "not a bool"), FPK4
+# (139 / PE 5), FP11's second line, on x86_64 and PE.
 #   N10 `_scv_icall_ann` returns 0 (2026-10-15)          -> RED 45: FP0 (BUILT; and its second line) FP1-FP10 on
 #                                                           every leg (BUILT, or FP4 FP8 FP10 the bool check's
 #                                                           "not a bool"); FPK1-FPK3 green
@@ -286,6 +289,27 @@ rowf FPK2 'fn f(): i64 { var fp = &mkp; var x: i64 = callptr(fp); return x + 4; 
 runs FPK2 34 "control: a callee held in a variable is a word (D31), not refused"
 rowf FPK3 'fn f(): i64 { var x = callptr(&mk3); var y = fncall0(&mkp); return dq3(x) + dq(y) - 34; }'
 runs FPK3 34 "control: an untyped receive of a known callee is the struct (D31)"
+# 6.7.13 — the callee in parentheses, `(&mk3)`, is the known callee (issues/2026-10-14-parenthesised-fn-pointer-
+# callee-loses-struct-result.md): D28's acceptance rows, refused with D24's words naming mk3 (they compiled and exited
+# 139 on x86_64 / aarch64, 1 on cx, 5 on PE).
+cat > "$T/FP11.cyr" <<'EOF'
+include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+fn main(): i64 { var n: i64 = fncall1((&mk3), 5); var m: i64 = callptr((&mk3), 5); return n + m; }
+syscall(60, main());
+EOF
+refused FP11 "cannot initialise 'n: i64' from 'mk3', which returns the struct 'P3' - declare 'n: P3' or bind a field" \
+    "D28's wrapped callee: \`fncall1((&mk3), 5)\` and \`callptr((&mk3), 5)\` into \`: i64\` (exit 139 before)" 2
+if grep -qF "cannot initialise 'm: i64' from 'mk3', which returns the struct 'P3' - declare 'm: P3' or bind a field" "$T/FP11.x86_64.err"; then
+    ok "FP11 the callptr declaration is refused by name too"
+else bad "FP11 the second declaration (\`m: i64 = callptr((&mk3), 5)\`) was not refused by name"; fi
+rowf FP12 'fn f(): i64 { var x: bool = fncall0(((&mk3))); if (x) { return 1; } return 0; }'
+refused FP12 "cannot initialise 'x: bool' $M24" "\`fncall0(((&mk3)))\` into \`: bool\` (the bool check not run again)"
+rowf FP13 'fn f(): i64 { var x: u8 = (callptr((&mkp))); return x; }'
+refused FP13 "cannot initialise 'x: u8' $M16" "a wrapped initialiser and callee, \`(callptr((&mkp)))\`"
+rowf FPK4 'fn f(): i64 { var x = callptr((&mk3)); var y = fncall0(((&mkp))); var z: i64 = fncall0((&mk1)); return dq3(x) + dq(y) + z - 67; }'
+runs FPK4 34 "control: an untyped receive of a wrapped known callee is the struct; 8 B into \`: i64\` its word"
 
 # --- D24 at top level (6.7.13; 6.7.12's D28, "D24 at every path"): the declaration zone and after a first statement ---
 # The filed repro, verbatim (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md): exit 10 before.
@@ -364,6 +388,10 @@ rowt TLK2 after 'var G: i64 = mk3(5);'
 refused TLK2 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: over 16 B keeps its one no-frame refusal"
 printf '%s\nvar A: i64 = mk1(5);\nvar B: i64 = fncall1(&mk1, 6);\n%s\nalloc_init();\nvar C: i64 = mk1(9);\nvar D: i64 = mks();\nvar E: i64 = callptr(&mk1, 9);\nsyscall(60, A + B + C + str_len(D) + E);\n' "$TH" "$TS" > "$T/TLK3.cyr"
 runs TLK3 34 "control: an 8 B struct (direct, \`fncall1\`, \`callptr\`) and a \`Str\` into top-level \`: i64\`, the zone and after"
+rowt TL17 zone 'var G: i64 = callptr((&mk2), 5);'
+refused TL17 "cannot initialise 'G: i64' $MT" "the declaration zone: the callee in parentheses, \`callptr((&mk2), 5)\` (6.7.13; exit 5 before)"
+rowt TL18 after 'var G: bool = fncall1(((&mk2)), 5);'
+refused TL18 "cannot initialise 'G: bool' $MT" "after a first statement: \`fncall1(((&mk2)), 5)\` into \`: bool\` (once)"
 
 # --- (a): wrapped calls, run ---
 row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); return dq(x) + dq3(y) + dq3(z) - 68; }'
@@ -406,7 +434,7 @@ refused D2 "a dyn Show result $RV" "a dyn: \`var y: i64 = pass(o);\` keeps V4n"
 printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\nsyscall(60, 0);\n' "$DH" > "$T/D3.cyr"
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
-[ "$rows" -ge 65 ] || bad "only $rows rows ran (floor 65)"
+[ "$rows" -ge 71 ] || bad "only $rows rows ran (floor 71)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13)"

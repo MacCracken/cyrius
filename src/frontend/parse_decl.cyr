@@ -7029,9 +7029,9 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
 # refused with D24's words, naming mk3, at its name: in a fn, a declaration of no struct type (`pscale` 0, the
 # cursor on its initialiser) whose initialiser is one whole such call, inside any parentheses up to its `;`
 # (`_rcv_scalar_ann` judges the struct's size, a `Str`, the annotation). The initialiser's first token is marked
-# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is no
-# known callee yet (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md); a callee in a
-# variable stays a word (D31). 1 = refused. CHANGELOG [6.7.12]
+# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is the
+# same known callee (6.7.13, `_icall_fti`); a callee in a variable stays a word (D31). 1 = refused.
+# CHANGELOG [6.7.12]
 # 6.7.13: and at top level (6.7.12's D28 "D24 at every path"; `_scv_gcall_ann`). CHANGELOG [6.7.13]
 fn _scv_icall_ann(S, pscale): i64 {
     if (pscale != 0) { return 0; }
@@ -7052,7 +7052,7 @@ fn _scv_icall_ann(S, pscale): i64 {
     var ann = _scv_ann_at(S, st - 1);
     if (ann <= 0) { return 0; }
     STI(S, st - 1);
-    var r = _rcv_scalar_ann(S, _icall_open_at(S, c) + 2, sid, 0, ann, _scv_ann_nm);
+    var r = _rcv_scalar_ann(S, _icall_fti(S, c), sid, 0, ann, _scv_ann_nm);
     STI(S, st);
     if (r == 1) { _tn_once(S, st); }
     return r;

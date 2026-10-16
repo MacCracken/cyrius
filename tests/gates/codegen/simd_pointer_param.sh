@@ -45,7 +45,9 @@
 #      temp); Yw2 the Y10-Y12 refusals on PE
 #   Y13a / Y13c / Yw2d Y13 on aarch64, cx and PE (6.7.13, D40 — the user 2026-10-15: keep the top-level
 #      refusal; 6.7.11 compiled it to a fault, 139 on x86_64 and aarch64)
-#   T  also carries the D27 rows (`sp_vrows`)
+#   T  also carries the D27 rows (`sp_vrows`); 6.7.13 (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-
+#      struct-result.md) the callee in parentheses, `rd(callptr((&mkv), 42, 2))` (139 / 139 / 0 / 5 before: an unknown
+#      callee's lane bits as the address), as the known callee it is (`_icall_fti`, `_svc_rs`)
 #
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
 # mutant>; measured):
@@ -104,7 +106,7 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=51
+FLOOR=53
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
