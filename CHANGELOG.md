@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.14] — 2026-10-16
+
 ## [6.7.13] — 2026-10-16
 
 **Break 2, repair 3 — struct values: 76 issues in six lanes over two waves — struct values (dereferences, small and
