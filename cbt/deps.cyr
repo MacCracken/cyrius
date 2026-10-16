@@ -4365,7 +4365,12 @@ fn _deps_finish(errors, copied, locked_root): i64 {
             # over it even tampered — restoring the v5.7.8 intent stated above.
             var _must = 0;
             if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) { _must = 1; }
-            if (_must == 1 || _dep_lock_new_leaf == 1) {
+            # ...and (6.7.13) the opposite of a new leaf: a lock row for a file neither lib/ nor
+            # this resolve holds — `rm lib/<f> && cyrius deps` left it, so `--verify` and
+            # `--locked` stayed red after doing what --locked says. Soft, like the new leaf.
+            var _stale = 0;
+            if (_must == 0 && _dep_lock_new_leaf == 0) { _stale = _dep_lock_stale_row(); }
+            if (_must == 1 || _dep_lock_new_leaf == 1 || _stale == 1) {
                 # v6.6.6: a lock that could not be written is an error, not a dropped rc —
                 # except (6.6.9) a hash failure on a write owed ONLY to a new leaf, which is a
                 # named warning (_dep_lock_soft; cmd_deps_lock returns 2 for it).
@@ -4385,6 +4390,41 @@ fn _deps_finish(errors, copied, locked_root): i64 {
     # at all — the more wrong it was, the likelier it looked clean. Exit status is a
     # boolean channel; the count belongs in the message, which it already is.
     if (errors > 0) { return 1; }
+    return 0;
+}
+
+# 6.7.13 — 1 when lib/'s lock walk (`_deps_lock_files`, the writer's own walker) lists `path`.
+fn _dep_lib_entry(path): i64 {
+    return _dep_path_in(_deps_lock_files("lib"), path);
+}
+
+# 6.7.13 — 1 when the lock loaded at entry has a hash row for a path that is neither on disk (it
+# cannot be opened and lib/'s walk has no such entry) nor vendored by this resolve
+# (`_dep_closure`): a file removed from lib/. A stdlib-only resolve wrote
+# the lock only for `_must` or a new leaf, so such a row survived every `cyrius deps`. One scan of
+# the loaded lock, `file_exists` per row. CHANGELOG [6.7.13]
+fn _dep_lock_stale_row(): i64 {
+    if (_dep_lock_buf == 0) { return 0; }
+    var lb = _dep_lock_buf;
+    var ln = _dep_lock_len;
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lb + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lb + lw - 1) == 13) { lw = lw - 1; }   # CRLF-tolerant, as the lookup
+        if (lw - pos > 66 && load8(lb + pos + 64) == 32 && load8(lb + pos + 65) == 32) {
+            var pl = lw - pos - 66;
+            var p = alloc(pl + 1);
+            memcpy(p, lb + pos + 66, pl);
+            store8(p + pl, 0);
+            if (file_exists(p) == 0 && _dep_lib_entry(p) == 0) {
+                if (_dep_closure == 0) { return 1; }
+                if (_dep_path_in(_dep_closure, p) == 0) { return 1; }
+            }
+        }
+        pos = le + 1;
+    }
     return 0;
 }
 
@@ -7029,7 +7069,19 @@ fn cmd_deps_verify(): i64 {
         memcpy(path, buf + path_start, plen);
         store8(path + plen, 0);
 
-        var actual_hash = _sha256sum_file(path);
+        # 6.7.13: a row whose file is gone — it cannot be opened, and lib/'s walk has no such entry
+        # (an unreadable or dangling file still has one, and goes to the hasher) — is named as
+        # that, not as a hasher failure. CHANGELOG [6.7.13]
+        var actual_hash = 0;
+        if (file_exists(path) == 0 && _dep_lib_entry(path) == 0) {
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (missing from lib/)\n");
+            fail = fail + 1;
+            pos = path_end + 1;
+            continue;
+        }
+        actual_hash = _sha256sum_file(path);
         if (actual_hash == 0) {
             sys_write(STDERR_FD, "  FAIL: ", 8);
             sys_write(STDERR_FD, path, plen);

@@ -34,6 +34,8 @@
 #      `_deps_lock_files` (one walker — the checker cannot drift from the writer).
 #   7. Help: `deps --help` no longer says deps are "symlinked into lib/" and documents that
 #      --relock locks files --verify reports; the top-level line lists --relock.
+#   9. (6.7.13) A lock row for a file removed from lib/ (the filing's repro verbatim): --verify
+#      names it "missing from lib/", and `cyrius deps` — --locked's remedy — drops the row.
 #   8. A file that cannot be hashed: a lock write owed ONLY to a new leaf (a stdlib-only project
 #      with no lock yet) is a named WARNING — deps and build succeed, no lock is written; the
 #      explicit `--lock` still fails hard. (Before 6.6.9 no lock was attempted there at all —
@@ -59,6 +61,9 @@
 #   f. (6.7.12) `_sha256sum_file` back on 6.7.11's sha256sum spawn -> axis 8 FAIL (no lock
 #      with no hasher on PATH; the leaf added under a lock refused)
 #   pre-fix tree (the 6.6.9 slot-open commit bd6dad5f) -> axes 1-7 FAIL
+#   g. (6.7.13) the stale-row trigger removed from `_deps_finish`'s write condition -> axis 9 FAIL
+#      (the row survives `cyrius deps`; --verify / --locked stay red)
+#   h. (6.7.13) cmd_deps_verify's missing-file arm removed -> axis 9 FAIL ("cannot hash" again)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -232,5 +237,54 @@ rc=0; _cyp "$P8" deps --lock > "$W/a8c.out" 2>&1 || rc=$?
 rm -f "$P8/lib/dangle.cyr"
 [ "$x" = 0 ] && echo "  ok: axis 8: with no hasher on PATH the first lock is written and a new leaf re-locks (in-process hash); an unreadable file makes the first-lock write a named warning — deps/build succeed — and --lock fails hard"
 
+# ── axis 9: a lock row for a file removed from lib/ (6.7.13) ───────────────────────────
+# issues/2026-10-15-deps-keeps-a-lock-row-for-a-file-removed-from-lib.md, the filing's repro
+# verbatim (pin "6.7.12", a snapshot of this tree's lib/): `rm lib/vec.cyr` after dropping vec from
+# the manifest left its lock row through every stdlib-only `cyrius deps` (the lock was written
+# only for `_must` or a new leaf), so --verify ("cannot hash: the hasher could not read it") and
+# --locked stayed red after doing what --locked says. The stale row now triggers the (soft) write.
+x=0
+mkdir -p "$H/versions/6.7.12" && cp -r lib "$H/versions/6.7.12/lib" || { echo "FAIL: axis 9 setup: cannot stage the 6.7.12 snapshot"; exit 1; }
+P9="$W/r9"; mkdir -p "$P9"
+cat > "$P9/cyrius.cyml" <<'EOM'
+[package]
+name = "lockprune"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "6.7.12"
+
+[build]
+entry = "main.cyr"
+output = "build/main"
+
+[deps]
+stdlib = ["syscalls", "alloc", "vec"]
+EOM
+printf 'syscall(SYS_EXIT, 0);\n' > "$P9/main.cyr"
+_cy "$P9" deps > "$W/a9a.out" 2>&1
+n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null); n=${n:-0}
+[ "$n" = 1 ] || { fail "axis 9 (anti-vacuous): the first lock has $n lib/vec.cyr rows"; x=1; }
+sed -i 's/, "vec"\]/]/' "$P9/cyrius.cyml"
+rm "$P9/lib/vec.cyr"
+rc=0; _cy "$P9" deps --verify > "$W/a9b.out" 2>&1 || rc=$?
+{ [ "$rc" -ne 0 ] && grep -q '  FAIL: lib/vec.cyr (missing from lib/)$' "$W/a9b.out"; } \
+  || { fail "axis 9: --verify over the removed file does not say 'missing from lib/' (rc=$rc):"; sed 's/^/      /' "$W/a9b.out" | head -2; x=1; }
+grep -q 'cannot hash' "$W/a9b.out" && { fail "axis 9: --verify still blames the hasher for a file that is not there"; x=1; }
+rc=0; _cy "$P9" deps --locked > "$W/a9c.out" 2>&1 || rc=$?
+{ [ "$rc" -ne 0 ] && grep -q 'lists lib/vec.cyr' "$W/a9c.out" && grep -q 'run `cyrius deps` and commit the result' "$W/a9c.out"; } \
+  || { fail "axis 9: --locked before the resolve does not name the row with its remedy (rc=$rc):"; sed 's/^/      /' "$W/a9c.out" | head -3; x=1; }
+rc=0; _cy "$P9" deps > "$W/a9d.out" 2>&1 || rc=$?
+n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null); n=${n:-0}
+{ [ "$rc" -eq 0 ] && [ "$n" = 0 ]; } || { fail "axis 9: rm lib/vec.cyr && cyrius deps kept the row ($n rows, rc=$rc)"; x=1; }
+[ "$(_hashlines "$P9/cyrius.lock")" = "$(_ncyr "$P9")" ] || { fail "axis 9: the re-written lock has $(_hashlines "$P9/cyrius.lock") rows for $(_ncyr "$P9") files"; x=1; }
+rc=0; _cy "$P9" deps --verify > "$W/a9e.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 9: --verify after the remedy fails (rc=$rc): $(tail -1 "$W/a9e.out")"; x=1; }
+rc=0; _cy "$P9" deps --locked > "$W/a9f.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 9: --locked after the remedy fails (rc=$rc):"; sed 's/^/      /' "$W/a9f.out" | head -2; x=1; }
+cp "$P9/cyrius.lock" "$W/a9.before"
+_cy "$P9" deps > "$W/a9g.out" 2>&1
+cmp -s "$P9/cyrius.lock" "$W/a9.before" || { fail "axis 9: a no-change cyrius deps after the remedy rewrote the lock"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 9: a file removed from lib/ — --verify says 'missing from lib/', and --locked's remedy (cyrius deps) drops the row, after which --verify and --locked pass"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: deps_lock_new_leaf_locked (8 axes — every vendored leaf locked, the first lock written, an unlocked file fails --verify)"
+echo "PASS: deps_lock_new_leaf_locked (9 axes — every vendored leaf locked, the first lock written, an unlocked file fails --verify, a removed file's row dropped)"

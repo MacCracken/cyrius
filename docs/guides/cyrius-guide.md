@@ -4569,10 +4569,13 @@ one `commit	…` line per git dep (a repointed tag is refused against it), one
 `<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>` trailer naming
 the stdlib pin. It is written whenever `lib/` gains a file the lock does not cover — since
 6.6.9 that includes the **first** lock of a stdlib-only project and a stdlib leaf newly added
-to `[deps] stdlib` (both used to be left out), so commit it. `cyrius deps --verify` checks
-every locked hash **and** that every `.cyr` under `lib/` has a line: an unlocked file fails by
-name (`not in cyrius.lock — run cyrius deps --relock`), and an empty lock is reported as
-empty, not missing. On every resolve — including the implicit one `cyrius build`
+to `[deps] stdlib` (both used to be left out), so commit it — and since 6.7.13 whenever the lock
+has a row for a file that is no longer in `lib/`, so `rm lib/<file> && cyrius deps` drops that row
+(a stdlib-only resolve kept it, and `deps --verify` and `--locked` stayed red). `cyrius deps --verify`
+checks every locked hash **and** that every `.cyr` under `lib/` has a line: an unlocked file fails by
+name (`not in cyrius.lock — run cyrius deps --relock`), a locked file that is gone fails as
+`missing from lib/` (6.7.13; it read `cannot hash: the hasher could not read it`), and an empty lock
+is reported as empty, not missing. On every resolve — including the implicit one `cyrius build`
 runs — a stdlib leaf whose bytes in `~/.cyrius/versions/<pin>/lib` disagree with the locked
 hash **under an unchanged `[package].cyrius`** is refused by name, with both hashes, and
 neither `lib/` nor the lock is written:
