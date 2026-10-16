@@ -4002,6 +4002,7 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
 # (D10 (b), the user 2026-10-15). The cursor is past the name. CHANGELOG [6.7.13]
 fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
     var bsid = FINDSTRUCT(S, tnoff);
+    if (bsid == si + 1) { return _add_named_field(S, si, fnoff, tnoff); }   # `struct Vec { v: Vec; }`: refused, not a SIGSEGV
     if (bsid == 0) {
         if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
                 ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));

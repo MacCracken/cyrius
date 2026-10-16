@@ -51,7 +51,7 @@
 # `_declared_later` arm -> C RED (refused as "unknown"). `_bare_vec_field` without its refusal (6.7.13) ->
 # C3's four refusal rows and the vb-vq row RED (vb prints 16, vu 8: built; measured). Drop `_field_scalar_width` from the
 # ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error). Drop the
-# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139). Make `_fsc_src`
+# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139); `_bare_vec_field`'s (6.7.13) -> j4 / j5 RED. Make `_fsc_src`
 # (parse_decl.cyr) return 0 -> K RED (rc 0).
 # V (6.7.11; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run from that copy
 # with CYCC= it, 2026-10-14; each measured):
@@ -184,6 +184,12 @@ printf 'struct Node { next: Node; val; }\nsyscall(60, sizeof(Node));\n' > "$T/j1
 refused j1 "field 'next' makes a struct contain itself: 'Node'" "J: a struct containing itself"
 printf 'union UN { next: UN; val; }\nsyscall(60, sizeof(UN));\n' > "$T/j2.cyr"
 refused j2 "field 'next' makes a struct contain itself: 'UN'" "J: a union containing itself"
+# 6.7.13: a bare `Vec` field of the file's own `struct Vec` / `union Vec` (its own arm, `_bare_vec_field`)
+# SIGSEGV'd the compiler (rc 139) the same way
+printf 'struct Vec { x; v: Vec; }\nsyscall(60, sizeof(Vec));\n' > "$T/j4.cyr"
+refused j4 "field 'v' makes a struct contain itself: 'Vec'" "J: a struct Vec containing a bare Vec"
+printf 'union Vec { x; v: Vec; }\nsyscall(60, sizeof(Vec));\n' > "$T/j5.cyr"
+refused j5 "field 'v' makes a struct contain itself: 'Vec'" "J: a union Vec containing a bare Vec"
 printf 'struct Tree { kids: Vec<Tree>; val; }\nsyscall(60, sizeof(Tree));\n' > "$T/j3.cyr"
 exits j3 16 "J: Vec<Self> (a handle) still builds"
 
