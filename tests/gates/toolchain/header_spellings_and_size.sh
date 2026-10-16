@@ -74,6 +74,11 @@
 #   one propagation round, in file order (no fixpoint)         → H12 FAIL (early, gw: callees defined below)
 #   a closure's body not skipped                               → H12 FAIL (count, the word row, the oracle)
 #   a nullary variant (None(), Vb()) counted as a pair         → H12 FAIL (count, the word row, the oracle)
+# 6.7.13 — H12's `?` route (issues/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md):
+#   no `?` route (6.7.12's _hdr_body_pair)                     → H12 FAIL (9: the filed repro's 2, count, 5 refusal rows, the oracle)
+#   an expression closure's body not skipped                   → H12 FAIL (count, the word row, the oracle)
+#   the call's `)` found by _hdr_close (`<` a bracket)          → H12 FAIL (count, the qx row, the oracle)
+#   the `?` route named as a `return` ('parse(..)')            → H12 FAIL (the filed repro and the 5 refusal rows)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
 #   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
@@ -580,6 +585,62 @@ check "a file's own \`enum E: stack\` annotation is cyr_val2, a plain enum's a w
 printf '%s\n' 'fn Some(x) { return x; }' 'fn u(x) { return Some(x); }' > shadow.cyr
 "$CY" header shadow.cyr > o12d 2> e12d || :
 check "a file's own fn named like a stdlib constructor decides (no refusal)" "1 0" "$(has o12d 'cyr_val u(cyr_val x);') $(wc -c < e12d | tr -d ' ')"
+# 6.7.13 — THE `?` ROUTE (issues/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md): a `?` on
+# a pair call returns the callee's pair on its Err path and marks the enclosing fn pair-returning
+# (the compiler's third route to GFLG 256), and the header printed `cyr_val q2(..)`. The filed
+# repro verbatim, then the shapes; cycc's "bind both" refusal is the oracle again.
+printf '%s\n' 'include "lib/result.cyr"' 'fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }' \
+  'fn q2(x) { var v = parse(x)?; return v + 1; }' > qm.cyr
+rcq=0; "$CY" header qm.cyr > o12q 2> e12q || rcq=$?
+qref() { grep -cxF "error: cyrius header: '$1' returns a \`: stack\` enum's (tag, payload) pair through '$2(..)?', which its signature does not declare (its \`?\` returns the Err pair, in rax:rdx, aarch64 x0:x2); declare it \`: Result\`, \`: Option\` or \`: Tagged\`; no prototype written" "$3" || true; }
+check "the filed qm.cyr: q2 refused by name through 'parse(..)?', exit 1" "1 1" "$(qref q2 parse e12q) $rcq"
+check "... no q2 prototype; parse still cyr_val2; the header closes" "0 1 1" \
+    "$(grep -c 'q2(' o12q || true) $(has o12q 'cyr_val2 parse(cyr_val x);   /* returns Result: the tag in w0, the payload in w1 */') $(has o12q '#endif /* CYRIUS_FFI_H */')"
+{ cat qm.cyr; echo 'var z = q2(5);'; echo 'syscall(60, z);'; } > qm1.cyr
+(cd "$ROOT" && "$ROOT/build/cycc" < "$D/qm1.cyr" > /dev/null 2> "$D/qm1.err") || :
+{ cat qm.cyr; echo 'var t, v = q2(0 - 3);'; echo 'syscall(60, t * 10 + v);'; } > qm3.cyr
+qrc=0; { (cd "$ROOT" && "$ROOT/build/cycc" < "$D/qm3.cyr" > "$D/qm3" 2> /dev/null) && chmod +x qm3 && ./qm3; } || qrc=$?
+check "cycc agrees: a single bind of q2 is refused (bind both), and q2(-3) forwards Err(3) (13)" "1 13" "$(grep -c 'returns two values — bind both' qm1.err || true) $qrc"
+cat > qs.cyr <<'QEOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn plain(x) { return x + 1; }
+fn gen<T>(x: T) { return Ok(x); }
+fn q2(x) { var v = parse(x)?; return v + 1; }
+fn q3(x) { var v = q2(x)?; return v; }
+fn qg(x) { var v = gen<i64>(x)?; return v; }
+fn qs(x) { parse(x)?; return 0; }
+fn qi(x): i64 { var v = parse(x)?; return v; }
+fn qx(x) { var v = parse((x + 1) < 3)?; return v; }
+fn qsp(x) { var v = parse(x) ?; return v; }
+fn qok(x): Result { var v = parse(x)?; return Ok(v); }
+fn qw(x) { var r = alloc(16); var v = plain(r)?; return v; }
+fn qcb(x) { var f = |a| { var v = parse(a)?; return v; }; return 0; }
+fn qce(x) { var f = |a| parse(a)?; return 0; }
+fn qcz(x) { var f = || parse(1)?; return x; }
+fn qor(x) { var y = x | 1; var z = y || 0; return z; }
+QEOF
+rcqs=0; "$CY" header qs.cyr > o12r 2> e12r || rcqs=$?
+check "the ? shapes: exit 1, seven refusals" "1 7" "$rcqs $(grep -c '^error: ' e12r || true)"
+check "  refused: a chained q2(..)? (the fixpoint)" 1 "$(qref q3 q2 e12r)"
+check "  ... a generic call's gen<i64>(..)?" 1 "$(qref qg gen e12r)"
+check "  ... a bare-statement parse(..)?;" 1 "$(qref qs parse e12r)"
+check "  ... a \`: i64\` signature (D37's reach)" 1 "$(qref qi parse e12r)"
+check "  ... nested parentheses and a < in the arguments; a blank before the ?" "1 1" "$(qref qx parse e12r) $(qref qsp parse e12r)"
+check "a word: ? on a word call, a closure's own ? (a block, an expression, ||), | and ||" 5 \
+    "$(grep -cxE 'cyr_val (qw|qcb|qce|qcz|qor)\(cyr_val x\);' o12r || true)"
+check "an annotated : Result with a ? stays cyr_val2" 1 "$(has o12r 'cyr_val2 qok(cyr_val x);   /* returns Result: the tag in w0, the payload in w1 */')"
+qbad=""
+for fa in q2:1 q3:1 qg:1 qs:1 qi:1 qx:1 qsp:1 qok:1 qw:0 qcb:0 qce:0 qcz:0 qor:0; do
+    fnm=${fa%%:*}; want=${fa#*:}
+    { cat qs.cyr; echo "var z = $fnm(5);"; echo 'syscall(60, 0);'; } > qs1.cyr
+    prc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/qs1.cyr" > /dev/null 2> "$D/qs1.err") || prc=$?
+    got=0; [ "$prc" = 0 ] || got=compile-error
+    grep -q 'returns two values — bind both' qs1.err && got=1
+    hv=0; { grep -qF "error: cyrius header: '$fnm' " e12r || grep -qE "^cyr_val2 $fnm\(" o12r; } && hv=1
+    [ "$got" = "$want" ] && [ "$hv" = "$want" ] || qbad="$qbad $fnm:want=$want,cycc=$got,header=$hv"
+done
+check "cycc and the header agree on all 13 ? shapes" "" "$qbad"
 if [ "$CCX86" = 1 ]; then
     p12() { "$@" -E -P -x c o12 2> /dev/null | grep -oE ' parse\(' | tr -d ' (' | paste -sd' ' -; }
     check "x86_64 SysV (cc): parse declared" "parse" "$(p12 cc)"
@@ -594,7 +655,7 @@ if [ "$CCX86" = 1 ]; then
     else
         echo "  SKIP (named): H12's clang guard rows — no clang on this host"; skips=$((skips + 1))
     fi
-    for f in o12 o12b o12p; do
+    for f in o12 o12b o12p o12q o12r; do
         check "$f: cc -std=c11 -pedantic-errors (and -D_WIN64)" "0 0" "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c "$f" > /dev/null 2>&1; echo $?) $(cc -std=c11 -pedantic-errors -fsyntax-only -D_WIN64 -x c "$f" > /dev/null 2>&1; echo $?)"
     done
     # A C caller linked against the filed repro (`object;`): both words through the header.

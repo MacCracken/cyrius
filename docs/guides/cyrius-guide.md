@@ -4954,9 +4954,12 @@ constructor of the stdlib's Result / Option / Either or of the file's own stack 
 `None()` returns its tag alone), or `return f(..);` of a fn of the same file that returns it,
 followed to a fixpoint — is refused by name (``'mk' returns a `: stack` enum's (tag, payload)
 pair through 'Ok(..)', which its signature does not declare …``), rc 1: a source scanner cannot see
-that pair from the signature. Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
-private. A closure's own `return` is not the fn's; a pair reached through another file's fn or a
-method is not seen.
+that pair from the signature. Since 6.7.13 the same holds for a `?` on such a call
+(`var v = parse(x)?;` — its Err path returns the callee's pair, so the compiler makes the fn
+pair-returning): refused as ``… pair through 'parse(..)?' …``, followed to the same fixpoint.
+Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
+private. A closure's own `return` or `?` is not the fn's (a block or an expression body); a pair
+reached through another file's fn or a method is not seen.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
 one is declared above it, else the 8-byte handle (as `Vec<T>` always is).
 Whitespace at the end of a
