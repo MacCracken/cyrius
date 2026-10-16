@@ -2650,8 +2650,11 @@ a `return` in a fn declared `: dyn Tr` — the compiler forms a dyn from a sourc
 | a literal: `5`, `-5`, `'A'` (`i64`), `2.5` (`f64`), `true` / `false` (`bool`) | as listed | the value |
 | another dyn of the same trait (a name, a field, a call returning one) | — | a copy |
 
-Parentheses around the whole source change nothing. `T` must implement `Tr`; otherwise the forming
-is refused, naming the missing `impl Tr for T`. A scalar impl (`impl Num for i64`) receives the
+Parentheses around the whole source change nothing. A call through a fn pointer whose callee is
+written `&f` — `fncall1(&mkd, &q)`, `callptr((&mkd), &q)` — is the call `mkd(&q)`: a dyn result is a
+copy, a `*T` result forms (6.7.13; the user's decision D15, 2026-10-15 — through 6.7.12 it was refused
+as *any other expression*); a callee held in a variable is unknown and stays refused. `T` must
+implement `Tr`; otherwise the forming is refused, naming the missing `impl Tr for T`. A scalar impl (`impl Num for i64`) receives the
 value as `self`:
 
 ```cyrius

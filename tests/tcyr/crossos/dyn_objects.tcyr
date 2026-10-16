@@ -49,6 +49,8 @@
 #                  value (review 2026-10-10: the prototype had no value class, `?` dereferenced the tag)
 #   §toplevel      a declaration-zone initialiser, a top-level call, 7 arguments, a call in another's
 #                  arguments, an f64 result, a statement — each in the indirect call's micro-frame
+#   §known         (6.7.13, D15) a known `&f` callee is a dyn source as the direct call is: `fncall1(&mkdk, &p)`
+#                  and `callptr((&mkdk), &p)` copy the dyn result, `fncall1(&mkpk, &p)` (a `*P` result) forms
 # The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
 # what a prototype is not (S4-S7) and what the call is (CG1-CG2) are compile-time:
 # tests/gates/frontend/dyn_checked.sh. cx runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R9).
@@ -571,6 +573,19 @@ fn results(): i64 {
     assert_eq(o.rdyn().rdyn().fi(10), 13, "§calls a chain `o.rdyn().rdyn().fi(10)`");
     return 0;
 }
+# §known (6.7.13, the user's decision D15) — a known `&f` callee is a dyn source as the direct call is: a dyn result
+# is a copy, a `*T` result forms (`fncall1(&mkd, &q)` was refused "cannot form dyn Show from this expression").
+fn mkdk(p: *P): dyn Show { var o: dyn Show = p; return o; }
+fn mkpk(p: *P): *P { return p; }
+fn known_callee(): i64 {
+    var p = P { 1, 8 };
+    var a: dyn Show = fncall1(&mkdk, &p);
+    var b: dyn Show = callptr((&mkdk), &p);
+    var c: dyn Show = fncall1(&mkpk, &p);
+    var d: dyn Show = &p;
+    d = callptr(&mkdk, &p);
+    return a.show() + b.show() * 100 + c.show() * 10000 + d.show() * 1000000;
+}
 # C-ORD — the callee and `self` are read BEFORE the arguments: an argument that reseats the dyn does
 # not change the call it is an argument of.
 trait Ad { fn ad(self, n): i64; }
@@ -748,6 +763,7 @@ assert_eq(inl_rows(), 20052006, "§inline a declared u64 parameter forms in an a
 receivers();
 arguments();
 results();
+assert_eq(known_callee(), 18181818, "§known `fncall1(&mkdk, &p)` / `callptr((&mkdk), &p)` copy the dyn, `fncall1(&mkpk, &p)` forms, an assignment takes it");
 assert_eq(c_ord(), 507002, "§calls C-ORD: the callee and `self` are read before an argument reseats the dyn");
 assert_eq(copies(), 595959, "§copies every copy holds `&p`: all see `p.a = 5`");
 assert_eq(closures(), 4912, "§closures a capture is by value: the closure keeps p's words after `o = &q`");

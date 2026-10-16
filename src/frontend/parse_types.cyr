@@ -1056,6 +1056,8 @@ fn _dyn_src_in(S, a, b): i64 {
         }
         if (t == 27) { if (t1 == 2) { return _dyn_src_addr(S, a); } }
     }
+    var ic = _dyn_icall(S, a, b);   # 6.7.13 (D15): `fncall1(&mkd, &q)` is `mkd(&q)`
+    if (ic >= 0) { return ic; }
     if (t == 2) {
         var c = _dyn_scall(S, a, b);
         if (c >= 0) { return c; }
@@ -1184,6 +1186,24 @@ fn _dyn_scall(S, a, b): i64 {
     var mf = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);   # 6.7.8 (D6): through a dyn, its prototype
     if (mf < 0) { return 0; }   # the method reports itself
     return _dyn_sfn(S, mf, a);
+}
+# ⛔ 6.7.13 — A KNOWN `&f` CALLEE IS A DYN SOURCE AS THE DIRECT CALL IS (D15, the user, 2026-10-15). `var a: dyn Shape =
+# fncall1(&mkd, &q);` with `fn mkd(p: *Sq): dyn Shape` was refused "cannot form dyn Shape from this expression" where
+# `mkd(&q)` copies the dyn mkd returns: the source arms asked only for a call by name. A whole call through fncallN /
+# callptr (token 137, so before the `t == 2` arm) at token `a` ending at `b`, whose first argument is `& IDENT` inside
+# any parentheses (`_icall_fti`, the known callee of 6.7.11 / 6.7.13), is read as the call of that fn: a dyn (a
+# struct) result is a copy — its two words travel by 6.7.11's known-callee struct result (`_icall_sret` / `_sc_post`)
+# — a `*T` result forms, any other is refused. A callee held in a variable is unknown and stays refused (FP6, D31).
+# -1: not one. CHANGELOG [6.7.13]
+fn _dyn_icall(S, a, b): i64 {
+    var o = _icall_open_at(S, a);
+    if (o < 0) { return 0 - 1; }
+    if (_call_close(S, o) != b - 1) { return 0 - 1; }
+    var fti = _icall_fti(S, a);
+    if (fti < 0) { return 0 - 1; }
+    var fi = FINDFN(S, TOKVAL(S, fti));
+    if (fi < 0) { return 0 - 1; }
+    return _dyn_sfn(S, fi, a);
 }
 # A whole call of fn `fi`: a struct result is a copy (the struct paths check its type); a `*T`
 # result, T a struct, forms; any other result is refused.
