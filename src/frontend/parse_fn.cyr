@@ -2789,12 +2789,26 @@ fn _ret_ptr_src(S): i64 {
     if (e < 0) { return 0 - 1; }
     var a = _ie_unparen(S, st, e);
     var pe = _ie_pe;
+    var af = _ret_addr_field(S, a);   # 6.7.13 (D3 (b)): `&w.s`, refused once
+    if (af >= 0) { return af; }
     var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
     if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    PCMPE(S);
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return _ret_ptr_copy(S, h);
+}
+# `return &w.s;` (`a` the value's `&`, a `.` two tokens on): the address of a field, which D3 (b) refuses by
+# name — parsed here (`_addr_field_post`: once, the parse in step), so the pair class's "two registers" and the
+# retptr class's "bare local identifier" refusals never run beside it or in its place (8 B and less parse it in
+# PCMPE already). Handled as a pointer value; no binary follows the error. -1 = not this shape. CHANGELOG [6.7.13]
+fn _ret_addr_field(S, a): i64 {
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (TOKTYP(S, a + 2) != 41) { return 0 - 1; }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);

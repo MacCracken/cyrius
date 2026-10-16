@@ -55,6 +55,11 @@
 #   `_ret_ptr_src` typing by `_hl_psid` again           -> RED 2: R21 R22 (the old refusals)
 #   `_ret_sid_refuse` without kind 3 (`&u` read `u`, `U8`) -> RED 6: R17-R22 (the message names `u` (a `U8`))
 #   real tree                                           -> GREEN (24 refusal rows, 13 acceptance rows)
+# 6.7.13 (the review fix, measured 2026-10-16; R23b-R23d, each on the x86_64, aarch64, cx and PE compilers):
+#   `_ret_addr_field` answering -1 (the lane before it) -> RED 12: R23b R23d x4 (the pair class's "two registers"
+#                                                          first, D3's second: 2 errors), R23c x4 ("return must be a
+#                                                          bare local identifier ..." alone)
+#   real tree                                           -> GREEN (27 refusal rows — floor 27 — and 13 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -70,10 +75,19 @@ MS='takes a value of that struct, or a pointer to one'
 pass=0; fail=0; nrefuse=0; naccept=0
 
 refuse() {  # $1 label  $2 expected message  $3 source — the message must be the ONE error
+    nrefuse=$((nrefuse+1))
+    _refuse_leg x86_64 "$@"
+}
+_refuse_leg() {  # $1 leg (x86_64 / aarch64 / cx / pe), then refuse's arguments
+    leg=$1; shift
     printf '%s' "$3" > "$D/r.cyr"
     rc=0
-    cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || rc=$?
-    nrefuse=$((nrefuse+1))
+    case $leg in
+        x86_64)  "$CC" < "$D/r.cyr" > "$D/r.bin" 2>"$D/r.err" || rc=$? ;;
+        aarch64) "$D/cc_a64" < "$D/r.cyr" > "$D/r.bin" 2>"$D/r.err" || rc=$? ;;
+        cx)      "$D/cc_cx" < "$D/r.cyr" > "$D/r.bin" 2>"$D/r.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/r.cyr" > "$D/r.bin" 2>"$D/r.err" || rc=$? ;;
+    esac
     nerr=$(grep -c '^error' "$D/r.err" 2>/dev/null || true)
     if grep -q "$2" "$D/r.err" 2>/dev/null; then
         if [ -s "$D/r.bin" ]; then
@@ -244,6 +258,34 @@ syscall(60, g());
 '
 # `&w.u` is no expression at all (6.7.13 D3 (b)): its own refusal, once — the return check adds nothing.
 refuse "R23 return &w.u; (the address of a field)" "the address of a field is not taken" "$T"'fn f(): S8 { var w: W; return &w.u; }'"$E"
+# ... at 16 and 24 B too (the review fix, `_ret_addr_field`): the pair class raised its "two registers ... got
+# `this expression`" before D3's refusal (two errors) and the retptr class its "return must be a bare local
+# identifier ..." alone. Each row on the four compilers (aarch64 and cx cross-built from this tree's src).
+"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null && [ -s "$D/cc_a64" ] && chmod +x "$D/cc_a64" \
+    || { echo "FAIL: src/main_aarch64.cyr did not build"; exit 1; }
+"$CC" < src/main_cx.cyr > "$D/cc_cx" 2>/dev/null && [ -s "$D/cc_cx" ] && chmod +x "$D/cc_cx" \
+    || { echo "FAIL: src/main_cx.cyr did not build"; exit 1; }
+refuse4() {  # refuse on the x86_64, aarch64, cx and PE compilers
+    nrefuse=$((nrefuse+1))
+    for l4 in x86_64 aarch64 cx pe; do _refuse_leg "$l4" "$1 ($l4)" "$2" "$3"; done
+}
+FW='struct S16 { v; w; }
+struct S24 { v; w; x; }
+struct W16 { n; s: S16; }
+struct W24 { n; s: S24; }
+'
+refuse4 "R23b return &w.s; from : S16 (16 B)" "the address of a field is not taken" "$FW"'fn f(): S16 { var w: W16; w.s.v = 3; return &w.s; }
+fn g(): i64 { var s: S16 = f(); return s.v; }
+syscall(60, g());
+'
+refuse4 "R23c return &w.s; from : S24 (24 B)" "the address of a field is not taken" "$FW"'fn f(): S24 { var w: W24; w.s.v = 3; return &w.s; }
+fn g(): i64 { var s: S24 = f(); return s.v; }
+syscall(60, g());
+'
+refuse4 "R23d return (&w.s); from : S16 (16 B)" "the address of a field is not taken" "$FW"'fn f(): S16 { var w: W16; w.s.v = 3; return (&w.s); }
+fn g(): i64 { var s: S16 = f(); return s.v; }
+syscall(60, g());
+'
 accept "A11 return &u; (u: S8) is the struct" "$T"'fn f(): S8 { var u: S8; u.v = 21; return &u; }'"$E" 21 \
     "$T"'fn f(): S8 { var u: S8; u.v = 21; return u; }'"$E"
 accept "A12 return (&u); (u: S3) is the struct" "$T"'fn f(): S3 { var u: S3; u.c = 22; return (&u); }'"$E3" 22 \
@@ -252,5 +294,7 @@ accept "A13 return &p; (p: S8, a by-value parameter)" "$T"'fn f2(p: S8): S8 { re
 fn f(): S8 { var u: S8; u.v = 23; return f2(u); }'"$E" 23 "$T"'fn f(): S8 { var u: S8; u.v = 23; return u; }'"$E"
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
+[ "$nrefuse" -ge 27 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 27) — rows were lost"; exit 1; }
+[ "$naccept" -ge 13 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 13) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

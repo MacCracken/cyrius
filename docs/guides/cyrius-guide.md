@@ -1585,8 +1585,9 @@ by-value parameter, a value global, inside parentheses or not — returns the st
 every size, as `bs(&s)` passes it into a by-value parameter. Through 6.7.12 a fn of 8 bytes or less
 returned the ADDRESS as the struct's word (for a local, a dead frame's), and over 8 bytes it was a
 compile error in other words (*… two registers … got `this expression`*, *return must be a bare local
-identifier …*). `&u` of another struct is refused by name at every size (*… got `&u` (a `*U`)*). A
-handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct.
+identifier …*). `&u` of another struct is refused by name at every size (*… got `&u` (a `*U`)*), and
+`return &w.s;` — the address of a field — with the one message `&x.f` gets anywhere (*the address of a field
+is not taken …*), at every size. A handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct.
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
