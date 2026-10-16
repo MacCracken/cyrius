@@ -150,7 +150,10 @@ fi
 # addresses: a frame temp in a fn (`_agg_temp_t`), at top level a dead global resized to the vector; _op_park_top —
 # an operator fn returning a vector at top level parks its by-value left operand while that pointer is pushed
 # (parse_fn.cyr / parse_expr.cyr — issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _dst_struct:1 _dlo_vec:1 _pe_vtemp:1 _op_park_top:1"
+# 6.7.13: _ret_addr_field — `return &w.s;` from a fn returning a struct over 8 B is parsed as a pointer value (D3 (b)
+# refuses it, once) and parked as `_ret_ptr_src` parks one, so neither return class's own refusal runs beside it; no
+# binary follows the error (parse_fn.cyr — issues/2026-10-14-return-address-of-struct-local-decision.md).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _ret_addr_field:1 _dst_struct:1 _dlo_vec:1 _pe_vtemp:1 _op_park_top:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
