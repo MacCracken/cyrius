@@ -4222,11 +4222,15 @@ fn _deref_read(S): i64 {
     PARSE_FACTOR(S);
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
-    var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
+    var ow = _pk_word(S);
+    var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     if (_deref_small(S, d) == 0) { ELOAD64(S); }
     SPSC(S, iw);
-    if (iw > 0) { _PK_MARK(S, iw); }   # the pointee's word is this value's own (`_pk_word`)
+    if (iw > 0) {
+        _PK_MARK(S, iw);   # the pointee's word is this value's own (`_pk_word`)
+        _ppd_note(S, d, ow);   # 6.7.13: and its struct, for `**pps`
+    }
     if (pk == 1) { _dlo_note(S, d); }
     return 0;
 }
@@ -4268,6 +4272,7 @@ fn _dlo_park(S, d): i64 {
     if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
     if (d == _dro_vt) { if (_dlo_vec(S, d) == 1) { return 1; } }   # 6.7.12 (D27)
     var sid = _hl_dpsid(S, d + 1, GTI(S));
+    if (sid <= 0) { if (d == _dro_want) { sid = _dlo_ppsid(S, d); } }   # 6.7.13: `take(**pps)`
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
@@ -4285,12 +4290,72 @@ fn _dlo_park(S, d): i64 {
 fn _dlo_vec(S, d): i64 {
     var t = TOKTYP(S, GTI(S));
     if (t != 31) { if (t != 11) { return 0; } }
-    var vd = _ps_vdesc(_pk_word(S));
+    var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.13: `*&b` too
     if (vd == 0) { return 0; }
     _dlo_sid = vd;
     _dlo_h = _HTEMP(S);
     _HTSTORE(S, _dlo_h);
     return 1;
+}
+# The vector a dereference's operand [a, e) — just parsed, GPSC its word — points at: its step word's (6.7.12), or
+# (6.7.13) the vector an address-of names (`_amp_vd`); its descriptor (>= 2048), else 0.
+fn _dop_vd(S, a, e): i64 {
+    var vd = _ps_vdesc(_pk_word(S));
+    if (vd != 0) { return vd; }
+    return _amp_vd(S, a, e);
+}
+# ⛔ 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF A VECTOR IS THAT VECTOR: `rd(*&b)` / `rd(*(&b))` into a `*V` parameter
+# pushed lane 0 as the address (139 on x86_64 and aarch64, a cx guest fault, PE 5) — `&b` carries no step word (`&x +
+# n` steps bytes, 6.7.11 D15), so `_dlo_vec` found no vector and the word the dereference loaded was pushed. The source
+# says `b`, as `*(&p)` of a struct is p (6.7.13): the dereference consumers read the operand [a, e) — exactly `& NAME`
+# inside any balanced parentheses, NAME a value-form vector local or parameter, a closure's captured vector or a vector
+# global — as a `*V` of NAME's type; `&b` itself is unchanged. Its descriptor (>= 2048), else 0. CHANGELOG [6.7.13]
+fn _amp_vd(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    return 0 - _name_vty(S, TOKVAL(S, b + 1));
+}
+# The vector type (<= -2048) the name `noff` has where `&` resolves it — a local (a parameter's copy too), a closure's
+# capture, a global — else 0.
+fn _name_vty(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (_vrcv_vec(S, lt) == 1) { return lt; }
+            return 0;
+        }
+        if (_hl_capn(S, noff) == 1) { return _cl_cap_vec(S, noff); }
+    }
+    var vd = _gv_vvd_get(_findvar_core(S, noff));
+    if (vd == 0) { return 0; }
+    return 0 - vd - 2048;
+}
+# ⛔ 6.7.13 — `**pps` OF A `**S` IS THE STRUCT: `take(**pps)` into `p: *P3` pushed the word the outer dereference read
+# (P3's first field) as the address — 139 on x86_64 and aarch64, a cx guest fault, PE 5 — because `_hl_dpsid` types a
+# `*T` operand by its tokens and an inner dereference has none (D9 (a) typed `*pps` by its step word, which carries
+# sizeof(P3), not P3). The inner `*pps` notes its pin's struct (`_ppd_note`, from `_deref_read`); the outer `*` that
+# starts an address-passed argument (`_dro_want`) reads it when its operand, inside any parentheses, is exactly that
+# dereference and nothing was emitted since (`_dlo_ppsid`), so the pointer is parked and checked as `take(*ps)`'s is.
+var _ppd_beg = 0 - 1;   # the inner dereference's `*`
+var _ppd_end = 0 - 1;   # the token after its operand
+var _ppd_cp = 0 - 1;    # the code pointer after its load
+var _ppd_sid = 0;       # the struct its `*S` result points at
+fn _ppd_note(S, d, w): i64 {
+    _ppd_sid = _pp_sid(_ps_pin(w));
+    _ppd_beg = d;
+    _ppd_end = GTI(S);
+    _ppd_cp = GCP(S);
+    return 0;
+}
+fn _dlo_ppsid(S, d): i64 {
+    if (_ppd_cp != GCP(S)) { return 0; }
+    var a = _ie_unparen(S, d + 1, GTI(S));
+    if (a != _ppd_beg) { return 0; }
+    if (_ie_pe != _ppd_end) { return 0; }
+    return _ppd_sid;
 }
 # 1 = `+ - * /` (or a wrapping form) follows the dereference at `d`, past the `)`s closing the `(`s
 # right before it — the token test only: `_op_lst` decides whether it is the whole left operand.

@@ -364,6 +364,20 @@ fn a_radd_w() { var a = T3 { 9, 0, 0 }; var x = T3 { 5, 7, 9 }; var q: T3 = a + 
 # `*(&x + 8)` the word at x + 8
 fn a_hdl_w() { var h: T3 = gp3(); return take3(*(&h)); }
 fn a_off_w() { var x = T3 { 5, 7, 9 }; return *(&x + 8); }
+# ── 6.7.13: `**pps` of a `pps: **S` is the struct S as an argument (issues/2026-10-15-vector-deref-through-address-of-or-
+# double-pointer-into-vector-pointer-param.md, the struct analogue): `take(**pps)` into a `*S` parameter pushed S's
+# first field as the address (139 / cx 252 / PE 5). The `d` rows: into a `*T3` (the struct itself, the write reaches
+# it: r * 10 + the field = 66) through a `**T3` local, wrapped, `*(*pp)`, a parameter, a field, a capture; into a
+# by-value H (16 B, address-passed) the struct's value.
+struct WP3 { n; pp: **T3; }
+fn d_prmf(pp: **T3): i64 { return bp3w(**pp); }
+fn d_loc_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var pp: **T3 = &p; var r = bp3w(**pp); return r * 10 + y.x; }
+fn d_par_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var pp: **T3 = &p; var r = bp3w((**pp)); return r * 10 + y.x; }
+fn d_star_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var pp: **T3 = &p; var r = bp3w(*(*pp)); return r * 10 + y.x; }
+fn d_prm_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var r = d_prmf(&p); return r * 10 + y.x; }
+fn d_fld_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var w: WP3; w.pp = &p; var r = bp3w(**w.pp); return r * 10 + y.x; }
+fn d_cap_w() { var y = T3 { 5, 7, 9 }; var p: *T3 = &y; var pp: **T3 = &p; var c = || bp3w(**pp); var r = callptr(c); return r * 10 + y.x; }
+fn d_bv_h() { var y = H { 5, 7 }; var p: *H = &y; var pp: **H = &p; return takeh(**pp); }
 var TAA3 = takea3(*(&GA3));
 var TAAH = takeh(*&GXH);
 var TAS8 = GA8 - *(&GX8);
@@ -385,6 +399,10 @@ var UZ3 = zp3((*PZ3));
 var UZ7 = zp7(*PZ7);
 var TW3 = zp3(GW3.s);
 var TW7 = zp7(GW7.s);
+var GY3 = T3 { 5, 7, 9 };
+var GPY3: *T3 = &GY3;
+var GPPY3: **T3 = &GPY3;
+var TDG = bp3w(**GPPY3) * 10;
 
 assert_eq(f_loc_8(), 5, "take(*p): a *S local's struct, by value");
 assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
@@ -583,4 +601,12 @@ assert_eq(TBA3, 5, "3 B: take((*(&G))) at top level, after the first statement")
 assert_eq(TBAW, 5, "24 B: take(*(&G)) at top level");
 assert_eq(TBSH, 85, "16 B: A - *(&G) at top level");
 assert_eq(TBLW, 45, "24 B: *&G - A at top level dispatches");
+assert_eq(d_loc_w(), 66, "24 B: bp(**pp) into a *S: the struct itself, the write reaches it");
+assert_eq(d_par_w(), 66, "24 B: bp((**pp))");
+assert_eq(d_star_w(), 66, "24 B: bp(*(*pp))");
+assert_eq(d_prm_w(), 66, "24 B: bp(**pp), pp: **T3 a parameter");
+assert_eq(d_fld_w(), 66, "24 B: bp(**w.pp), a **T3 field");
+assert_eq(d_cap_w(), 66, "24 B: || bp(**pp), pp captured");
+assert_eq(d_bv_h(), 5, "16 B: take(**pp) into a by-value H");
+assert_eq(TDG + GY3.x, 66, "24 B: bp(**GPP) at top level, a **T3 global");
 var r = assert_summary();

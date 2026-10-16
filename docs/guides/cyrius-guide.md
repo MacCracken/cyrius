@@ -1070,7 +1070,12 @@ through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written
 `***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. Through 6.7.12 `*pp` was the
 untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
 declaration warned *assigning non-pointer to typed pointer*. A program may name at most 126 distinct
-pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*).
+pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*). **`**pps` of a `pps: **S` is the
+struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S` over 8 B) passes `*pps`, as
+`take(*ps)` passes `ps` — a `**S` local, parameter, field, global or capture, inside parentheses or written `*(*pps)`
+— and a `**Q` of another struct is refused by name (*cannot pass 'ppq' to a parameter of a different struct type*). ⚠
+Through 6.7.12 (and 6.7.13 before this) the word `**pps` read — S's first field — was passed as the address: 139 on
+x86_64 and aarch64, a cx guest fault, exit 5 on Windows.
 Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
 (6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
@@ -1663,11 +1668,14 @@ by name (*its callee is a value, not `&f`, so the result is a word*). Through 6.
 got '.'`.
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
-that vector type, or a call to a fn *declared* to return the same one. Anything else — an
+that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the
+whole `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (on Windows it writes into
+a temporary that is copied into the fn's own result pointer). Anything else — an
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
-multi-value `return (a, b);`, a `callptr(..)` through a function pointer, a **global** of the
+multi-value `return (a, b);`, a `callptr(fp, ..)` through a fn pointer held in a variable, a **global** of the
 right vector type, or a call returning a scalar or a different-width vector — is a compile error
-since v6.6.6 naming what it got. Before v6.6.6 every one of those compiled clean and handed back
+since v6.6.6 naming what it got. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
+(*… got `this expression`*), though its callee is known. Before v6.6.6 every one of those compiled clean and handed back
 a half-written register pair; `return x + y;` returned `y` unchanged and `return G;` for a
 global read a stale register rather than `G`. The two that are worth spelling out because they
 look reasonable:
@@ -1683,21 +1691,58 @@ look reasonable:
 
 ⚠ **A value-form vector LOCAL takes a vector, or nothing (6.7.11).** `var v: f64v2 = <src>;` and
 `v = <src>;` take their 16 / 32 bytes only from a source that IS that vector: a local of the type,
-or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`), or
-through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f`, in parentheses too
-(`callptr((&mkv), ..)`, 6.7.13) (on Windows the call
-then passes the local's address as its hidden result pointer, as `mkv(..)` does). Every other
-source is refused by name (`a value-form vector local is initialised only from a local of its
-type or a call declared to return it .. - got `callptr``): a callee held in a variable
-(`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`), a word (`5`, `load64(&w)`, `&w`, a scalar local or
-call), a method call, `*p`. Through a fn pointer held in a variable, give the target an
-out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
-7);` — which carries every lane on every target.
+or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`),
+through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (in parentheses too,
+`callptr((&mkv), ..)`, 6.7.13), or (6.7.13) a
+method call `s.mv(..)` on a single name, `impl S { fn mv(self, ..): f64v2 }` (on Windows each call
+then passes the local's address as its hidden result pointer, as `mkv(..)` does — a method's before
+`self`). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
+(6.7.13), as `var v = mkv(..);` is. A method declared to return another vector is refused as a
+by-name call is (`vector return type does not match the declared type` / `.. the assigned
+variable`). Every other source is refused by name (`a value-form vector local is initialised only
+from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
+type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
+unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local
+or call), the dereference of an untyped word (`*x`). Through a fn pointer held in a variable — the
+one source whose refusal adds `; through a fn pointer held in a variable, give the target an
+out-pointer` — give the target an out-pointer and have it store the lanes — `var v: f64v2 =
+mkv(0, 0); var ig = callptr(fp, &v, 41, 7);` — which carries every lane on every target. A call to a
+fn that does not exist (`var v: f64v2 = f64v2_splat(1.0);` without `include "lib/simd.cyr"`) is no
+refused source: the undefined-function diagnostic names it (`undefined function 'f64v2_splat'`, then
+`refusing to emit binary ..`), as at any other destination. ⚠ Through 6.7.12 a method call was
+refused (*… got `s`*), and the unannotated `var v = callptr(&mkv, ..)` was one word: `lanes(v)` was
+refused on x86_64 / aarch64 / cx and faulted on Windows; 6.7.11 and 6.7.12 printed the out-pointer
+advice for every source and reported a call to a missing fn as a refused source (*… got
+`f64v2_splat`*) ahead of the undefined-function lines.
+
+**A dereference of a `*V` is the vector (6.7.13; the user's decision D34, 2026-10-15: A).** `var v: f64v2 =
+*p;` and `v = *p;` with `p: *f64v2` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
+struct — `p` a local, a parameter, a capture, a field, a global, a `: *V` call, `p + n`, inside parentheses
+(`(*p)`), `**pp` of a `**f64v2`, and `*&w` of a vector `w`; `v` is a copy (writing either side leaves the other). A `*q` of another
+vector type is refused as a local of that type is — `cannot copy 'q' into a variable of a different
+struct/vector type: 'v'`, the same-size ones too (`*i32v4` into `f64v2`). ⚠ Refused since 6.7.11 (*… got
+`*p`*); through 6.7.10 it stored one word, the high lanes stale (x86_64 210, aarch64 74, cx 98, Windows 146 where
+161 is right).
+
+**An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
+`mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
+`mkg(41, 7)` is: `var v: f64v2 = mkg<i64>(41, 7);`, `v = mkg<i64>(41, 7);`, an untyped `var v =
+mkg<i64>(41, 7);` (an `f64v2` local), `(mkg<i64>(41, 7))`, `return mkg<i64>(a, b);` from a `:
+f64v2` fn and `rd(mkg<i64>(42, 7))` into a `p: *f64v2` parameter all carry the vector. Into a
+local of another type it is refused as any by-name call is (`vector return type does not match
+the declared type` / `.. the assigned variable`), a scalar local (`var x: i64 = ..`, `x = ..`)
+included. ⚠ Through 6.7.12 every receive tested `name(`: the assignment and the return were
+refused, and the declaration silently dropped its annotation — `v` was one word, so
+`load64(&v) * 10 + load64(&v + 8)` read 0 on x86_64 and aarch64, 154 on cx and 195 on Windows,
+where 161 is right — and `var v: f64v4 = mkg<i64>(..)`, `var x: i64 = mkg<i64>(..)` and `x =
+mkg<i64>(..)` compiled. A
+vector annotation is now never dropped: `var v: f64v2 = idg<i64>(5)`, a generic returning a
+scalar, meets the refusal above.
 
 A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
-7);`, an untyped `var x = callptr(&mkv, ..)`, an argument to an untyped parameter, a method call
-`s.mv(..)`, an operator fn declared to return a vector, at top level too — runs, and its vector is
-discarded, on every target (6.7.12). ⚠ Through 6.7.11 on Windows such a call passed no hidden
+7);`, an argument to an untyped parameter, a statement `s.mv(..);`, an operator fn declared to
+return a vector, at top level too — runs, and its vector is discarded, on every target (6.7.12;
+since 6.7.13 an unannotated `var x = callptr(&mkv, ..)` receives it, above). ⚠ Through 6.7.11 on Windows such a call passed no hidden
 result pointer, so the callee wrote the vector through its first argument: a page fault, or
 `s.mv(..)` overwriting `s`.
 
@@ -3555,25 +3600,81 @@ Before 6.7.11 the `*` was dropped and the parameter was a value-form vector: `rd
 (`value-form SIMD arg must be a local IDENT`), and `rd(b)` compiled and faulted (the body
 dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is called through
 `fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
-registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
+registers (SysV / aarch64 / cx) or a by-pointer copy (Win64). **A struct value passed to a `*V` parameter is refused by
+name (6.7.13; the user's decision D33, 2026-10-15: A)** — a local, a call or method result, `*ps`, a global, a
+closure's captured copy, parenthesised or not: `cannot pass 's' to a parameter that is a pointer to a vector type in a
+call to 'rd'`, the mirror of a struct of another type into `*S` and a vector of another type into `*V`. `rd(&s)` and a
+typed `*Pt` pointer still convert freely. ⚠ Through 6.7.12 the struct's address was passed and its bytes read as the
+vector, silently.
 
 **A vector value that is not a named local passes an address too (6.7.12; the user's decision
 D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
-`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))` — is received into a frame temporary whose
-address is passed (on Win64 the temporary is the call's hidden result pointer), as a struct call
-result into `*T` is (6.6.20); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
-a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)` passes a struct's
-pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
+`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))`, and (6.7.13) an explicit instance
+`rd(mkg<i64>(42, 7))` and a method `rd(s.mv(42, 7))` — is received into a frame temporary whose
+address is passed (on Win64 the temporary is the call's hidden result pointer, a method's before
+`self`), as a struct call result into `*T` is (6.6.20; through 6.7.12 the method and the explicit
+instance passed lane 0 as the address); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
+a field, a global, a `: *V` call, `pv + n`, and (6.7.13) `*ppv` of a `**V` — passes `pv` itself, as `take(*p)`
+passes a struct's pointer (6.7.10). **A dereference of an address-of a vector is that vector (6.7.13):**
+`rd(*&b)` and `rd(*(&b))` — `b` a vector local, a parameter, a closure's capture or a vector global — pass `&b`, as
+`rd(b)` does, and `var v: f64v2 = *&w;` copies `w` (*A dereference of a `*V` is the vector*); `&b` itself is still the byte pointer (`&b + 8` is lane
+1). ⚠ Through 6.7.12 `rd(*&b)` and `rd(**ppb)` passed lane 0 as the address (139 on x86_64 and aarch64, a cx guest
+fault, exit 5 on Windows). A call result or a `*` of another vector type is refused with the words above. At
 top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
 a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)` passes `&e`; a
-value-form `v: f32v8` parameter is a separate matter). A vector **local** passed to a pointer of
+value-form `v: f32v8` parameter: below). A vector **local** passed to a pointer of
 another kind — `p: *Pt`, `p: *i64`, `p: *u8`, `p: **T` — is refused by name: `cannot pass 'b' to a
 parameter that is not a pointer to its vector type in a call to 'rp' - pass &b for its address`
 (as a struct of another type is). ⚠ Through 6.7.11 each of these passed lane 0's bits as the
 address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win64; x86_64 refused
 the `*V` call result and dereference through 6.7.10 by the value-form path's text) — except on
 Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops compiling there too
-(pass `&b`).
+(pass `&b`). **Every vector value follows the local (6.7.13; the user's decision D31, 2026-10-15:
+A):** a call result (`rp(mkv(42, 7))`, `ri(s.mv(..))`, `ri(callptr(&mkv, ..))`) and a `*V`
+dereference (`rp(*pb)`, `ri(*pb)`) into a pointer of another kind are refused with the same words,
+naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a pointer to its vector
+type in a call to 'ri'`); and a vector local, call result or `*pb` passed to a **by-value struct**
+parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-value
+struct parameter in a call to 'bv' - a vector is not a struct`. ⚠ Through 6.7.12 each of these
+compiled and passed lane 0's bits as the address or the struct (139 on x86_64 and aarch64, a cx
+guest fault, exit 5 on Win64) — and on Win64 `bv(b)` passed `&b` by accident and ran (42); it now
+stops compiling there too. **A closure's captured vector follows the local too (6.7.13; the user's decision D32,
+2026-10-15: A):** inside `|k| ..` a captured `b` passed to `p: *f64v2` passes the address of the closure's captured
+copy (a write through `p` reaches that copy, not the enclosing local), a captured vector of another type is refused
+with A2's words, and `|k| ri(b)` / `|k| rp(b)` / a by-value struct are refused with the words above. ⚠ Through 6.7.12
+every captured vector argument passed the capture's address unchecked: `|k| ri(b)` and `|k| rp(b)` ran (42) where the
+same calls on the local were refused.
+
+**A value-form `v: f32v8` parameter is its 32 bytes (6.7.13), as `v: f64v4` is:** two XMM registers
+(SysV), two V registers (aarch64), four cx slots, a 32-byte copy-in through a pointer on Win64. It
+takes an f32v8 local; any other vector — an f64v4 too, the same size — is refused by name,
+`value-form SIMD arg type mismatch (callee expects f32v8)`, and an f32v8 local into `v: f64v4`
+likewise (`.. expects f64v4`), on Win64 as well, which checked no value-form vector argument before
+(an f64v2 local into `v: f64v4` compiled there and read past it). ⚠ Through 6.7.12 `v: f32v8` was one
+integer word and the caller passed lane 0's bits — `load32(&v + 8)` read 0 on every target. A fn
+with a `v: f32v8` parameter that C calls, or that is called through `fncallN`, now takes it as an
+f64v4 parameter is taken, and an `async fn` refuses it, as it refuses every value-form vector
+parameter.
+
+**A vector call result into a value-form parameter is passed (6.7.13; the user's decision D30,
+2026-10-15: A).** A value-form parameter (`x: f64v2`, `lib/simd.cyr`'s `f64v2_add(a, b)`) takes a
+vector local of its type, or a call declared to return such a vector — by name, an explicit
+instance, `fncallN(&f, ..)` / `callptr(&f, ..)`, a method: `lanes(mkv(4, 2))`, `f64v2_add(a, mkv(3,
+4))`, `lanes(s.mv())`, in a method's parameter and through an `#inline` fn too. SysV / AAPCS64 /
+cx receive the call into a frame temporary the vector registers are loaded from after the integer
+arguments; Win64 passes the temporary's address (the call's hidden result pointer). A call of a
+vector the local rule refuses (an f64v4 into `x: f64v2`) is refused with the words above (`cannot
+pass 'mk4' to a parameter of a different vector type ..`); at top level there is no frame (`'mkv'
+returns a vector by value ..`). Any other source that is no local — `lanes(5)`, `lanes(load64(p))`,
+a global — is refused once, by name: `a value-form vector argument to 'lanes' is a local of its type
+or a call declared to return it (..) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
+refused as on the other targets (`value-form SIMD arg must be a 16-byte vector`), a pointer word
+holding a vector's address too (`var pv: *f64v2 = &w; lanes(pv)`, `var p = &w; lanes(p)`) — pass
+the vector local, `lanes(w)`. ⚠ Through 6.7.12 a call result was refused on x86_64 / aarch64 / cx
+with `value-form SIMD arg: IDENT not found as a local` and a cascaded second error (`expected ';',
+got number 4`), and on Win64 it compiled to a page fault (lane 0 taken as the vector's address) — as
+did the word local there; the pointer word ran there (Win64 passes the parameter by address, so the
+callee copied the vector it pointed at).
 
 ### Packed-op builtins
 

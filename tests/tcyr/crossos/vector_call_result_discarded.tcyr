@@ -29,6 +29,8 @@ fn run2(): i64 {
     callptr(&mkv, 41, 7);
     return 3;
 }
+# 6.7.13 (D29 A): this declaration receives the vector now (`x` is an f64v2 local, as `var x = mkv(..)` is) — the
+# row stays: the call still runs and nothing else moves.
 fn run3(): i64 {
     var x = callptr(&mkv, 41, 7);
     return 3;

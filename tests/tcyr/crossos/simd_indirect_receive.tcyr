@@ -139,12 +139,83 @@ fn rows_workarounds() {
     return 0;
 }
 
+# ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15; docs/development/issues/2026-10-13-vector-call-results-the-
+# receives-do-not-take.md) — three calls DECLARED to return the vector that the receives and the return refused: a
+# METHOD `s.mv(..)` declared `: f64v2` (refused "got `s`"), an unannotated `var v = callptr(&f, ..)` (one word: `l2(v)`
+# refused on x86_64 / aarch64 / cx, exit 5 on PE) and `return callptr(&f, ..)` from a `: f64v2` fn (refused "got `this
+# expression`"). On Win64 the method's hidden result pointer is the local's address, before `self` — `self` must come
+# through untouched (6.7.12 measured `s.mv()` overwriting `s` before its fix).
+struct Mv { k; j; }
+impl Mv {
+    fn m2(self, a): f64v2 { return mk2(a + self.k, 7); }
+    fn mf(self): f32v4 { return mkf(5, 6, 7, self.k); }
+    fn mi(self): i32v4 { return mki(9, 8, 7, self.k); }
+    fn md(self, a, b, c, d, e): f64v4 { return mkd6(a, b, c, d, e, self.k); }
+    fn mg<T>(self, a: T): f64v2 { return mk2(a, self.j); }
+}
+fn rows_method() {
+    var s: Mv = Mv { 1, 2 };
+    var v: f64v2 = s.m2(40);
+    assert_eq(l2(v), 4107, "M1: var v: f64v2 = s.m2(40) (6.7.12: refused 'got `s`')");
+    assert_eq(s.k * 10 + s.j, 12, "M2: s untouched by the method's hidden result pointer (PE)");
+    v = s.m2(11);
+    assert_eq(l2(v), 1207, "M3: v = s.m2(11)");
+    var w: f64v2 = (s.m2(20));
+    assert_eq(l2(w), 2107, "M4: var v: f64v2 = (s.m2(20)), parenthesised");
+    var f: f32v4 = s.mf();
+    assert_eq(lf(f), 5060701, "M5: var v: f32v4 = s.mf()");
+    var i: i32v4 = mki(0, 0, 0, 0);
+    i = s.mi();
+    assert_eq(li(i), 9080701, "M6: v = s.mi() (i32v4)");
+    var d: f64v4 = s.md(1, 2, 3, 4, 5);
+    assert_eq(ld(d), 12034501, "M7: var v: f64v4 = s.md(1..5): the result pointer, self and stack arguments");
+    var p: *Mv = &s;
+    d = p.md(6, 5, 4, 3, 2);
+    assert_eq(ld(d), 65043201, "M8: v = p.md(6..2) through a *Mv receiver");
+    var g: f64v2 = s.mg(30);
+    assert_eq(l2(g), 3002, "M9: var v: f64v2 = s.mg(30), a generic method's instance");
+    var n = 0;
+    for (n = 0; n < 1; v = s.m2(70)) { n = n + 1; }
+    assert_eq(l2(v), 7107, "M10: a for step, v = s.m2(70)");
+    assert_eq(s.k * 10 + s.j, 12, "M11: s untouched after every method receive (PE)");
+    return 0;
+}
+fn rows_untyped() {
+    var a = callptr(&mk2, 41, 7);
+    assert_eq(l2(a), 4107, "U1: var v = callptr(&mk2, 41, 7) is an f64v2 local (6.7.12: a word, PE exit 5)");
+    var b = fncall2(&mk2, 12, 34);
+    assert_eq(l2(b), 1234, "U2: var v = fncall2(&mk2, 12, 34)");
+    var c = fncall4(&mkf, 1, 2, 3, 4);
+    assert_eq(lf(c), 1020304, "U3: var v = fncall4(&mkf, 1..4) is an f32v4 local");
+    var d = callptr(&mkd6, 1, 2, 3, 4, 5, 6);
+    assert_eq(ld(d), 12034506, "U4: var v = callptr(&mkd6, 1..6) is an f64v4 local");
+    return 0;
+}
+fn r2(a, b): f64v2 { return callptr(&mk2, a, b); }
+fn r2n(a, b): f64v2 { return fncall2(&mk2, a, b); }
+fn rf(a): f32v4 { return fncall4(&mkf, a, 2, 3, 4); }
+fn rd6(a): f64v4 { return callptr(&mkd6, a, 2, 3, 4, 5, 6); }
+fn rows_return() {
+    var a: f64v2 = r2(41, 7);
+    assert_eq(l2(a), 4107, "R1: return callptr(&mk2, a, b) from a : f64v2 fn (6.7.12: refused)");
+    a = r2n(12, 34);
+    assert_eq(l2(a), 1234, "R2: return fncall2(&mk2, a, b)");
+    var f: f32v4 = rf(1);
+    assert_eq(lf(f), 1020304, "R3: return fncall4(&mkf, ..) from a : f32v4 fn");
+    var d: f64v4 = rd6(1);
+    assert_eq(ld(d), 12034506, "R4: return callptr(&mkd6, ..) from a : f64v4 fn: both hidden result pointers");
+    return 0;
+}
+
 fn rows() {
     rows_f64v2();
     rows_f32v4();
     rows_i32v4();
     rows_f64v4();
     rows_workarounds();
+    rows_method();
+    rows_untyped();
+    rows_return();
     return 0;
 }
 var r0 = rows();

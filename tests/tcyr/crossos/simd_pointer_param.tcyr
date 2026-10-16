@@ -113,6 +113,90 @@ fn sp_vrows(): i64 {
     return 0;
 }
 
+# ⛔ 6.7.13 — a vector METHOD result and an explicit-instance result into `*V` (D27's call-result rule once the sources
+# are typed: issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows
+# 6-7): `rd(s.mv(42, 7))` and `rd(mkg<i64>(42, 7))` pushed lane 0 as the address (139 / cx 253 / PE 5; PE 7 for the
+# method). On Win64 the method's hidden result pointer is the temp's, before `self`, which must stay intact.
+struct Smv { k; j; }
+impl Smv {
+    fn mv(self, a, b): f64v2 { return f64v2_make(a + self.k, b); }
+    fn m4(self, d): f64v4 { return f64v4_make(1, 2, 3, d + self.k); }
+    fn mg<T>(self, a: T): f64v2 { return f64v2_make(a, self.j); }
+}
+fn sp_mrows(): i64 {
+    var s: Smv;
+    s.k = 0;
+    s.j = 9;
+    assert_eq(sp_lo(s.mv(42, 7)), 42, "6.7.13: rd(s.mv(42, 7)), a method result (the filed row 6)");
+    assert_eq(sp_hi(s.mv(42, 7)), 7, "6.7.13: rd(s.mv(42, 7)), lane 1");
+    assert_eq(sp_lo((s.mv(43, 7))), 43, "6.7.13: rd((s.mv(..))), parenthesised");
+    assert_eq(sp_w3(s.m4(47)), 47, "6.7.13: a 32-byte method result (*f64v4)");
+    assert_eq(sp_hi(s.mg(5)), 9, "6.7.13: a generic method's result");
+    var sv: Sv;
+    sv.k = 100;
+    assert_eq(sv.rdh(s.mv(1, 48)), 148, "6.7.13: a method result as a method's argument");
+    var ps: *Smv = &s;
+    assert_eq(sp_lo(ps.mv(44, 1)), 44, "6.7.13: through a *Smv receiver");
+    assert_eq(s.k * 10 + s.j, 9, "6.7.13: the receiver untouched by the hidden result pointer (PE)");
+    assert_eq(sp_lo(sp_mkg<i64>(42, 7)), 42, "6.7.13: rd(mkg<i64>(42, 7)), an explicit instance (the filed row 7)");
+    assert_eq(sp_hi(sp_mkg<i32>(1, 8)), 8, "6.7.13: rd(mkg<i32>(..)), a real instance, lane 1");
+    return 0;
+}
+
+# ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — a closure's captured vector meets the local's argument rules: into a
+# `*V` of its type it passes the capture's address (both lanes are the captured copy's), and into a pointer of another kind
+# it is refused by name, as the local is (D27; the refusals are tests/gates/codegen/simd_pointer_param.sh CR rows).
+# issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-capture-address.md
+fn sp_crows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var w: f64v4 = f64v4_make(1, 2, 3, 44);
+    var f: f32v4 = f32v4_make(5, 6, 7, 88);
+    var c1 = |k| sp_lo(b) * 100 + sp_hi(b) + k;
+    assert_eq(fncall1(c1, 0), 1122, "6.7.13 D32: a captured f64v2 into *f64v2 passes the capture's address, both lanes");
+    var c2 = |k| sp_w3(w) + k;
+    assert_eq(fncall1(c2, 1), 45, "6.7.13 D32: a captured f64v4 into *f64v4, lane 3");
+    var c3 = |k| sp_f4(f) + k;
+    assert_eq(fncall1(c3, 0), 88, "6.7.13 D32: a captured f32v4 into *f32v4, lane 3");
+    var c4 = |k| sp_hi((b)) + k;
+    assert_eq(fncall1(c4, 0), 22, "6.7.13 D32: a captured vector, parenthesised");
+    var s: Sv;
+    s.k = 100;
+    var c5 = |k| s.rdm(b) + k;
+    assert_eq(fncall1(c5, 0), 111, "6.7.13 D32: a captured vector into a method's *V parameter");
+    var c6 = |k| sp_wr(b, 77) + sp_lo(b) + k;
+    assert_eq(fncall1(c6, 0), 77, "6.7.13 D32: a write through *V reaches the closure's captured copy");
+    assert_eq(load64(&b), 11, "6.7.13 D32: ... not the enclosing local (captured by value)");
+    return 0;
+}
+
+# ⛔ 6.7.13 — a dereference of an ADDRESS-OF a vector, or of a `**V`, is the vector: `rd(*&b)`, `rd(*(&b))` and
+# `rd(**ppb)` into `*V` pass `&b` / `*ppb` (they pushed lane 0 as the address: 139 / cx 253 / PE 5).
+# issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md
+var GDV: f64v2 = 0;
+fn sp_dparam(x: f64v2): i64 { return sp_hi(*&x); }
+fn sp_drows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var pb: *f64v2 = &b;
+    var ppb: **f64v2 = &pb;
+    assert_eq(sp_lo(*&b), 11, "6.7.13: rd(*&b) passes &b, lane 0");
+    assert_eq(sp_hi(*&b), 22, "6.7.13: rd(*&b), lane 1");
+    assert_eq(sp_hi(*(&b)), 22, "6.7.13: rd(*(&b))");
+    assert_eq(sp_hi((*&b)), 22, "6.7.13: rd((*&b))");
+    assert_eq(sp_lo(**ppb), 11, "6.7.13: rd(**ppb) passes *ppb, lane 0");
+    assert_eq(sp_hi(**ppb), 22, "6.7.13: rd(**ppb), lane 1");
+    var w: f64v4 = f64v4_make(1, 2, 3, 44);
+    assert_eq(sp_w3(*&w), 44, "6.7.13: rd(*&w) into *f64v4, lane 3");
+    assert_eq(sp_dparam(b), 22, "6.7.13: rd(*&x), x a value-form parameter");
+    var c = |k| sp_hi(*&b) + k;
+    assert_eq(fncall1(c, 1), 23, "6.7.13: rd(*&b), b a closure's capture");
+    store64(&GDV, 31);
+    store64(&GDV + 8, 32);
+    assert_eq(sp_hi(*&GDV), 32, "6.7.13: rd(*&G), G a vector global");
+    sp_wr(*&b, 77);
+    assert_eq(load64(&b), 77, "6.7.13: a write through rd(*&b) reaches b");
+    return 0;
+}
+
 fn sp_rows(): i64 {
     var b: f64v2 = f64v2_make(11, 22);
     var w: f64v4 = f64v4_make(1, 2, 3, 44);
@@ -168,4 +252,7 @@ fn sp_fwd(p: *f64v2): i64 { var q = p; return load64(q + 8); }
 
 sp_rows();
 sp_vrows();
+sp_mrows();
+sp_crows();
+sp_drows();
 var r = assert_summary();
