@@ -1870,7 +1870,10 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     # 6.6.11 (S2): a modular sub-module of a package that is a stdlib leaf here.
     var _kf = _dep_keep_fold_over_profile(pkg, dst_full, wdst, submod);
     if (_kf < 0) { return errs + 1; }
-    if (_kf == 1) { return errs; }
+    if (_kf == 1) {
+        _dep_note_nd_leaf(pkg);   # 6.7.13: the fold stands in for the dep's sub-module: its leaf (CHANGELOG [6.7.13])
+        return errs;
+    }
     # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
     # deleted either: unlink on a link removes the link, but the guard exists so a
     # vendoring run cannot touch a shared target at all, and a delete-then-refuse
@@ -3638,6 +3641,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     var _kf = _dep_keep_fold_over_profile(dep_name, dst, wdst, mod_path);
                     if (_kf < 0) { return errors + 1; }
                     if (_kf == 1) {
+                        # 6.7.13: the fold stands in for this named dep's module, so it is a leaf
+                        # pulled on the dep's behalf — distlib's verify then splices it (and what
+                        # it includes) as the dep's and records neither as the bundle's own need.
+                        _dep_note_nd_leaf(dep_name);
                         dep_had_success = 1;
                         mi = mi + 1;
                         continue;

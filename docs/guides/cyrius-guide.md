@@ -4443,7 +4443,12 @@ the right leaf from a bundled module.
 A leaf a NAMED DEP brings is that dep's, not the bundle's: one its sidecar lists, and (6.7.12) one
 of those leaves brings by its own include — `tagged` lists `boxed` in for `tagged_new`, as
 `cyrius deps` vendors it for the dep — so a bundle that calls nothing gets no sidecar (until 6.7.12
-it published `boxed`). The bundle's OWN call into such a leaf is recorded, listed or not.
+it published `boxed`). The bundle's OWN call into such a leaf is recorded, listed or not. So is
+(6.7.13) a fold `cyrius deps` keeps in place of a named dep's thin profile (`note: [deps.sigil]
+dist/sigil-mldsa.cyr not vendored — 'sigil' is a stdlib leaf here …`, a `modules` file or a
+`modular` sub-module): the fold, and what it includes, stand in for that dep's module, so they are
+its need — until 6.7.13 a named dep with no sidecar of its own got them written into the bundle's
+(bote-core: `sigil ct`).
 
 The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
 (`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include

@@ -2331,7 +2331,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_out_of_closure_named.sh"
 # `lib sync --dry-run` prints paths, not pointers.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # 6.7.12 — distlib's sidecar verify credits a named dep with the include CLOSURE of its sidecar
-# leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`.
+# leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`. 6.7.13 — and
+# a fold `cyrius deps` kept over a named dep's thin profile (6.6.11 S2) is that dep's need too.
 _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
 # 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
 # core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
