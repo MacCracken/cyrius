@@ -61,18 +61,21 @@ fn _inl_simd_arg_copy(S, alli, dst_slot, w): i64 {
     return 0;
 }
 
-fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
-    if (PEEKT(S) != 2) {
-        ERR_MSG(S, "value-form SIMD arg must be a local IDENT (inline-replay path)", 62);
-        return 0;
-    }
-    var anoff = PEEKV(S);
-    STI(S, GTI(S) + 1);
-    var alli = FINDLOCAL(S, anoff);
+# 6.7.13 (D30 A): a call declared to return the vector is received straight into the parameter's slots, and any
+# other source that is no local is refused by name once and skipped (`_sar_vcall` / `_sar_err`, the call path's).
+fn _inl_simd_arg(S, dst_slot, w, want_t, fi): i64 {
+    var ti = GTI(S);
+    var nx = TOKTYP(S, ti + 1);
+    var alli = 0 - 1;
+    if (TOKTYP(S, ti) == 2) { if (nx == 31 || nx == 11) { alli = FINDLOCAL(S, TOKVAL(S, ti)); } }
     if (alli < 0) {
-        ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
+        var cls = _vf_cls(S, want_t);
+        if (_sar_vcall(S, fi, cls, 0 - want_t, dst_slot) != 0 - 2) { return 0; }
+        _sar_err(S, ti, fi);
+        STI(S, _arg_next(S, ti));
         return 0;
     }
+    STI(S, ti + 1);
     var alt = GLTYPE(S, alli);
     if (want_t == 0 - 2121) {
         if (alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
@@ -1927,6 +1930,17 @@ fn _pvec_param(S, fi, k): i64 {
     var tn = TOKVAL(S, i + 1);
     return _ptc_vec_sid(_classify_param_type(S, tn));
 }
+# The vector type (its descriptor sid) of parameter `k` of fn `fi` when it is a VALUE-form vector (`v: f64v2`), read
+# from the definition's tokens as `_pvec_param` reads a `*V`; 0 = none. Win64 passes it by address, under the struct
+# mask, so no SIMD mask names it there. CHANGELOG [6.7.13]
+fn _pvf_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 2) { return 0; }
+    return _ptc_vec_sid(_classify_param_type(S, TOKVAL(S, i)));
+}
 # 1 = parameter `k` of fn `fi` is declared a pointer (`p: *T`, `**T`, `*fn(..)`), read as `_pvec_param` reads it.
 fn _pptr_param(S, fi, k): i64 {
     var o = _gen_def_open(S, fi);
@@ -2031,12 +2045,20 @@ fn _sarg_struct_other(S, fi, argc): i64 {
 # name, as a struct result is there. 1 = pushed; 0 = not this arm, or refused (the value push follows).
 var _svc_k = 0;    # `_svc_rs`'s source kind for `_vrcv_emit`: 1 by name, 2 through `&f`
 var _svc_nm = 0;   # ... and the callee's name
+# 6.7.13 (D30 A): and on Win64 a VALUE-form vector parameter, which is passed by address there: the temp is the call's
+# hidden result pointer and its address is what the callee copies in (`lanes(mkv(4, 2))` passed lane 0 as the
+# address: exit 5); the call's vector meets the rule a local of its type meets (`_sar_vok`), as on SysV / AAPCS64 / cx.
 fn _sarg_vec_call(S, fi, argc, tail): i64 {
     var pv = _pvec_param(S, fi, argc);
-    if (pv == 0) { return 0; }
+    var vf = 0;
+    if (pv == 0) { if (_TARGET_PE == 1) { vf = _pvf_param(S, fi, argc); } }
+    if (pv == 0) { if (vf == 0) { return 0; } }
     var rs = _svc_rs(S, GTI(S));
     if (rs == 0) { return 0; }
-    if (0 - rs != pv) {
+    var ok = 0;
+    if (vf != 0) { ok = _sar_vok(S, _vf_cls(S, 0 - vf), rs, vf); }
+    elif (0 - rs == pv) { ok = 1; }
+    if (ok == 0) {
         ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ",
           L64(_fnt_names + fi * 8));
         return 0;
@@ -5199,23 +5221,106 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
 # returned 923 — `j` received the vector's low half. `tbl` is the CALLER's scratch table
 # (a local, so a nested call cannot clobber it). Returns the number of XMM slots consumed
 # (1 for a 16-byte vector, 2 for 32-byte). CHANGELOG [6.6.5]
+var _sar_fi = 0 - 1;   # 6.7.13: the callee `_simd_arg_record`'s argument is passed to (cybs's 6-parameter cap)
 fn _simd_arg_record(S, cls, tbl, cnt, pc, want): i64 {
-    if (PEEKT(S) != 2) {
-        ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 102);
-    }
-    var noff = PEEKV(S);
-    STI(S, GTI(S) + 1);  # consume IDENT
-    var lli = FINDLOCAL(S, noff);
-    if (lli < 0) {
-        ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
-    }
-    var lt = GLTYPE(S, lli);
-    _simd_arg_typecheck(S, cls, lt, want);
+    var lli = _sar_src(S, _sar_fi, cls, want);   # 6.7.13 (D30): a local, or a call's temp; -1 refused
     store64(tbl + cnt * 24, lli);
     store64(tbl + cnt * 24 + 8, pc);
     store64(tbl + cnt * 24 + 16, cls);
     if (cls == 2) { return 2; }
     return 1;
+}
+
+# ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15) — A VECTOR CALL RESULT PASSED TO A VALUE-FORM VECTOR PARAMETER IS
+# PASSED. `lanes(mkv(4, 2))` and `f64v2_add(a, mkv(3, 4))` were refused on x86_64 / aarch64 / cx with the v5.10.38 scope
+# wording ("value-form SIMD arg: IDENT not found as a local") and a cascade ("expected ';', got number 4": the IDENT was
+# consumed, the `(` left); on Win64 the value push handed the callee lane 0 as the vector's address (exit 5). A value-form
+# parameter is the callee's vector local, which takes a call declared to return the vector (6.7.11's D32), and D27
+# (6.7.12) passes such a call to a `*V` parameter through a frame temp: the same here. The whole argument at the cursor
+# (`fi`'s parameter of class `cls`, `want` its 32-byte type), consumed: a local — its slot, checked by the class as ever;
+# a call declared to return a vector (`_svc_rs`: by name, `g<T>(..)`, `&f` through fncallN / callptr, a method) — received
+# into anonymous slots (`_vrcv_emit`; the second pass loads them after ECALLPOPS, and nothing names them, so no later
+# argument writes them), their slot; anything else — or a call of another vector type, or one at top level (no frame:
+# D40) — refused by name, once, and skipped to its `,` / `)`: -1. CHANGELOG [6.7.13]
+fn _sar_src(S, fi, cls, want): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 2) {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx == 31 || nx == 11) {
+            var li = FINDLOCAL(S, TOKVAL(S, ti));
+            if (li >= 0) {
+                STI(S, ti + 1);
+                _simd_arg_typecheck(S, cls, GLTYPE(S, li), want);
+                return li;
+            }
+        }
+    }
+    var r = _sar_vcall(S, fi, cls, want, 0 - 1);
+    if (r != 0 - 2) { return r; }
+    _sar_err(S, ti, fi);
+    STI(S, _arg_next(S, ti));
+    return 0 - 1;
+}
+# The whole argument at the cursor when it is a call declared to return a vector (`_svc_rs`), into a value-form
+# parameter of class `cls` / `want` of `fi`: received into slot `dst` (-1: anonymous slots of its type) — that slot; a
+# vector the local rule refuses (`_sar_vok`) or a call at top level: refused by name, the argument skipped (-1); not
+# such a call: -2, nothing moved.
+fn _sar_vcall(S, fi, cls, want, dst): i64 {
+    var rs = _svc_rs(S, GTI(S));
+    if (rs == 0) { return 0 - 2; }
+    var bad = 0;
+    if (_sar_vok(S, cls, rs, want) == 0) {
+        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ", L64(_fnt_names + fi * 8));
+        bad = 1;
+    } elif (GINFN(S) != 1) {
+        _svc_toplevel_err(S);
+        bad = 1;
+    }
+    if (bad == 1) {
+        STI(S, _arg_next(S, GTI(S)));
+        return 0 - 1;
+    }
+    _vec_desc(S, rs);
+    if (dst < 0) { dst = _agg_temp_t(S, GVEC_NSLOTS(S), rs); }
+    _vrcv_k = 0;
+    _vrcv_emit(S, dst, rs, _svc_k);
+    return dst;
+}
+# 1 = a vector of local type `rs` passes a value-form parameter of class `cls` (`want` its 32-byte type), by the rule
+# a local of that type meets (`_simd_arg_typecheck`): any 16-byte vector, exactly f32v4, exactly the 32-byte one.
+fn _sar_vok(S, cls, rs, want): i64 {
+    if (cls == 1) { return _is_simd128(S, rs); }
+    var w = 0 - 2125;
+    if (cls == 3) { w = 0 - 2121; }
+    elif (want == 2153) { w = 0 - 2153; }
+    if (rs == w) { return 1; }
+    return 0;
+}
+# The class `_simd_arg_typecheck` reads for a value-form parameter of local type `t` (its SLTYPE): 3 = f32v4, 2 = a
+# 32-byte vector, 1 = any other (16-byte) one.
+fn _vf_cls(S, t): i64 {
+    if (t == 0 - 2121) { return 3; }
+    if (_is_simd256(S, t) == 1) { return 2; }
+    return 1;
+}
+# The refusal of a value-form vector argument at token `ti` to `fi` that is no local and no call declared to return a
+# vector: once, by name, without `_panic` (the caller skips the argument, so the parse stays in step and one compile
+# reports every such argument). Returns 0.
+fn _sar_err(S, ti, fi): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a value-form vector argument to '");
+    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR("' is a local of its type or a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) - got `");
+    _vrcv_offender(S, ti);
+    PRSTR("`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 
 # ⭐ 6.6.6 — ONE ARGUMENT OF AN OWN-CALL LOOP, run through PARSE_FNCALL's callee-mask gates: a
@@ -5249,6 +5354,7 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
         var o = load64(st + 16);
         var w = 0;
         if (cls == 2) { w = _pv32_param(S, fi, uarg); }   # 6.7.13: f64v4 or f32v8
+        _sar_fi = fi;
         store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o, w));
         store64(st + 8, n + 1);
         if (vs == 1) { _simd_arg_snap(S, tbl, n); }
@@ -7356,8 +7462,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                             # materialise a value-form vector (see _inl_simd_arg).
                             var _sd = 0;
                             # 6.6.17 (a9): a vector's sentinel is negative; an f64 / f32 tag is positive.
-                            if (iargc == 0) { if (_t0 < 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
-                            if (iargc == 1) { if (_t1 < 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
+                            if (iargc == 0) { if (_t0 < 0) { _inl_simd_arg(S, p0_slot, _w0, _t0, fi); _sd = 1; } }
+                            if (iargc == 1) { if (_t1 < 0) { _inl_simd_arg(S, p1_slot, _w1, _t1, fi); _sd = 1; } }
                             if (_sd == 0) {
                                 _bx_pcmpe_arg(S, fi, iargc, noff);   # PCMPE + 6.7.3's bool check
                                 if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
@@ -14276,9 +14382,43 @@ fn _sarg_snap(S, tail, ty): i64 {
 # write it. Shared by `_call_arg_one` and the tail arm (`tail` 1).
 fn _arg_push_snap(S, fi, argc, noff, tail): i64 {
     var ty = _sarg_snap_ty(S, fi, argc);
-    if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) { _bx_pcmpe_arg(S, fi, argc, noff); EPUSHR(S); }
+    if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) {
+        _sarg_pe_vword(S, fi, argc);   # 6.7.13 (D30): a word into Win64's value-form vector parameter
+        _bx_pcmpe_arg(S, fi, argc, noff);
+        EPUSHR(S);
+    }
     if (ty != 0) { _sarg_snap(S, tail, ty); }
     return 0;
+}
+# ⛔ 6.7.13 (D30) — Win64 passes a value-form vector parameter by address, so a VALUE pushed for one is dereferenced
+# as the vector: `var x = 5; lanes(x)` (pw.cyr) exited 5 on PE where SysV / AAPCS64 / cx refuse it ("value-form SIMD arg
+# must be a 16-byte vector"). Every address arm has declined the argument at the cursor (a vector local, a call
+# declared to return a vector, a parenthesised one): refused by name with the SysV words — a non-vector local by the
+# class check, any other source by `_sar_err` — once; nothing consumed (the value push keeps the parse in step and no
+# binary is written). An address-of `&x` is not a word here: it is the address the parameter takes — the pointer form
+# (`f64v2_add(&a, &b)`, which PARSE_FNCALL routes to `f64v2_add_ptr` and the PE vector receives' own calls pass to the
+# value form by address) — and passes as before. 0.
+fn _sarg_pe_vword(S, fi, argc): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    var vf = _pvf_param(S, fi, argc);
+    if (vf == 0) { return 0; }
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 27) { return 0; }   # `&x`: the pointer form
+    if (_svc_rs(S, ti) != 0) { return 0; }   # a vector call: `_sarg_vec_call` took or refused it
+    if (TOKTYP(S, ti) == 2) {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx == 31 || nx == 11) {
+            var li = FINDLOCAL(S, TOKVAL(S, ti));
+            if (li >= 0) {
+                var cls = _vf_cls(S, 0 - vf);
+                STI(S, ti + 1);   # the class check reports at the argument's end, as the SysV record does
+                _simd_arg_typecheck(S, cls, GLTYPE(S, li), vf);
+                STI(S, ti);
+                return 0;
+            }
+        }
+    }
+    return _sar_err(S, ti, fi);
 }
 # A method's `self` just pushed for `fi` (the cursor on the call's `(`; `sid` the receiver's struct):
 # copied where it stands when `fi` copies a by-value `self` and an argument may write it.

@@ -84,6 +84,28 @@
 #   M-R6 `_svc_rs` without the method arm                    -> RED 12: OK6 on every leg (139 / 139 / 139 / cx 253 /
 #       PE 5), T on every leg (a fault; cx "54 passed, 7 failed")
 #
+# ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
+# parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
+# x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
+# exited 5 on PE (lane 0 taken as the vector's address); `f64v2_add(a, mkv(3, 4))` the same. SysV / AAPCS64 / cx receive
+# the call into a frame temp the vector second pass loads (`_sar_src` / `_sar_vcall`); the inline replay receives it
+# into the parameter's slots (`_inl_simd_arg`); Win64 passes the temp's address (`_sarg_vec_call` for a value-form
+# parameter, `_pvf_param`). Any other source that is no local is refused once by name, the argument skipped (no
+# cascade), and on PE a word into a value-form parameter is refused as on the other three (`_sarg_pe_vword`, pw.cyr).
+#   VC1 / VC2 the filed repro verbatim (42) and `f64v2_add(a, mkv(3, 4))` (46) on x86_64 / IR=3 / aarch64 / cx / PE
+#   VZ1-VZ4 on x86_64 / aarch64 / cx / PE, each one line: a call of another vector type (A2's words), a top-level call
+#      (D40's words), `lanes(5)` (no 'expected ;'), pw.cyr's word local ("must be a 16-byte vector"; PE compiled it: 5)
+#   T3 tests/tcyr/crossos/vector_param_forward_call.tcyr (FLOOR3 29): by name, an explicit instance, fncall2 / callptr
+#      (&f), a method; f64v4 / f32v4 / i32v4 / f32v8; between integers, two calls, a local and a call, after six
+#      integers, a method's parameter, the inline replay, nested
+#   M-VC1 `_sar_vcall` never taking a call                   -> RED 20: VC1 VC2 x86 / IR=3 / aarch64 / cx (refused), VZ1
+#       VZ2 x86 / aarch64 / cx (the generic refusal instead), T3 x86 / IR=1 / IR=3 / DCE / aarch64 / cx; PE green
+#   M-VC2 `_sarg_vec_call` without the value-form arm (PE)   -> RED 5: VC1 VC2 pe (exit 5), VZ1 VZ2 pe (compiled), T3 pe
+#   M-VC3 `_sarg_pe_vword` answering 0                       -> RED 2: VZ3 VZ4 pe (compiled); and simd_return_shapes Q3
+#       win64
+#   M-VC4 `_inl_simd_arg` without the call arm               -> RED 17: VC1 VC2 x86 / IR=3 / aarch64 / cx (`lanes` and
+#       `f64v2_add` are replayed), VZ1 x86 / aarch64 / cx (the generic refusal), T3 x86 / IR=1 / IR=3 / DCE / aarch64 / cx
+#
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
 # mutant>; measured):
 #   M4  `_sarg_vec_call` answers 0 (no call-result arm)    -> RED 15: R4 (139 / 139 / 139 / cx 253 / PE 5),
@@ -135,11 +157,12 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 
 TC=tests/tcyr/crossos/simd_pointer_param.tcyr
 TC2=tests/tcyr/crossos/simd_param_then_scalar.tcyr   # 6.7.13: rows T2
+TC3=tests/tcyr/crossos/vector_param_forward_call.tcyr   # 6.7.13 (D30): rows T3
 R1=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form.cyr
 R2=docs/development/issues/repros/2026-10-10-pointer-to-vector-parameter-is-value-form-value.cyr
 R4=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.cyr
 R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits-other-kinds.cyr
-for f in "$TC" "$TC2" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
+for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
 FLOOR=61   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`)
@@ -147,6 +170,9 @@ if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
 if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
+N3=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC3")
+FLOOR3=29
+if [ "$N3" -lt "$FLOOR3" ]; then echo "FAIL: $G: only $N3 rows in $TC3 (floor $FLOOR3) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -346,6 +372,39 @@ if [ "$WINE" = 1 ]; then
     refused VYw2 "VYw2 VY2 on PE" "$VY2B" pe "$VFR4"
 fi
 
+# 6.7.13 (D30 A) — a vector CALL RESULT into a value-form vector parameter is passed (issues/2026-10-15-vector-call-
+# result-into-value-form-vector-parameter.md).
+echo "VC. a vector call result into a value-form parameter: passed (D30 A)"
+printf '%s\n' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }' \
+  'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }' \
+  'fn run(): i64 {' \
+  '    return lanes(mkv(4, 2));' \
+  '}' \
+  'syscall(60, run());' > "$D/vc1.cyr"
+exit_rows VC1 "$D/vc1.cyr" 42 "the filed repro: lanes(mkv(4, 2))"
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' \
+  'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }' \
+  'fn main(): i64 {' \
+  '    var a: f64v2 = mkv(1, 2);' \
+  '    var r: f64v2 = f64v2_add(a, mkv(3, 4));' \
+  '    return load64(&r) * 10 + load64(&r + 8);' \
+  '}' 'var rc = main();' 'syscall(60, rc);' > "$D/vc2.cyr"
+exit_rows VC2 "$D/vc2.cyr" 46 "f64v2_add(a, mkv(3, 4)): (1 + 3) * 10 + (2 + 4)"
+VCH="${H}fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn mk4(a): f64v4 { var v: f64v4; store64(&v, a); return v; }\nfn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }\n"
+VZ1B="${VCH}fn main(): i64 { return lanes(mk4(1)); }\n${E}"
+VZ2B="${VCH}var r1 = lanes(mkv(4, 2));\nsyscall(60, r1);\n"
+VZ3B="${VCH}fn main(): i64 { return lanes(5); }\n${E}"
+VZ3F="a value-form vector argument to 'lanes' is a local of its type or a call declared to return it"
+VZ4B="fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }\nfn run(): i64 {\n    var x = 5;\n    return lanes(x);\n}\nsyscall(60, run());\n"
+VZ4F="value-form SIMD arg must be a 16-byte vector"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "VZ1$lg" "VZ1 $lg: a call of another vector type (f64v4 into x: f64v2)" "$VZ1B" "$lg"
+    refused "VZ2$lg" "VZ2 $lg: a top-level lanes(mkv(..)) (no frame for the temp, D40)" "$VZ2B" "$lg" "$Y13F"
+    refused "VZ3$lg" "VZ3 $lg: lanes(5), one line (no 'expected ;' cascade)" "$VZ3B" "$lg" "$VZ3F"
+    refused "VZ4$lg" "VZ4 $lg: pw.cyr, a word local (PE: parity with the three)" "$VZ4B" "$lg" "$VZ4F"
+done
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -375,6 +434,15 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     else bad "T2 $leg: exit $RC, '$LAST' (want '$N2 passed, 0 failed ($N2 total)') $(grep -m3 'FAIL' "$D/t2_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "T3. $TC3 ($N3 rows)"
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TC3" "$D/t3_$n"
+    if [ "$RC" -eq -1 ]; then bad "T3 $leg: the values file did not build: $(grep -h -m1 'error' "$D/t3_$n.err" "$D/t3_$n.exe.err" 2>/dev/null | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$N3 passed, 0 failed ($N3 total)" ]; then ok "T3 $leg: $LAST"
+    else bad "T3 $leg: exit $RC, '$LAST' (want '$N3 passed, 0 failed ($N3 total)') $(grep -m3 'FAIL' "$D/t3_$n.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3)"

@@ -3559,6 +3559,23 @@ with a `v: f32v8` parameter that C calls, or that is called through `fncallN`, n
 f64v4 parameter is taken, and an `async fn` refuses it, as it refuses every value-form vector
 parameter.
 
+**A vector call result into a value-form parameter is passed (6.7.13; the user's decision D30,
+2026-10-15: A).** A value-form parameter (`x: f64v2`, `lib/simd.cyr`'s `f64v2_add(a, b)`) takes a
+vector local of its type, or a call declared to return such a vector — by name, an explicit
+instance, `fncallN(&f, ..)` / `callptr(&f, ..)`, a method: `lanes(mkv(4, 2))`, `f64v2_add(a, mkv(3,
+4))`, `lanes(s.mv())`, in a method's parameter and through an `#inline` fn too. SysV / AAPCS64 /
+cx receive the call into a frame temporary the vector registers are loaded from after the integer
+arguments; Win64 passes the temporary's address (the call's hidden result pointer). A call of a
+vector the local rule refuses (an f64v4 into `x: f64v2`) is refused with the words above (`cannot
+pass 'mk4' to a parameter of a different vector type ..`); at top level there is no frame (`'mkv'
+returns a vector by value ..`). Any other source that is no local — `lanes(5)`, `lanes(load64(p))`,
+a global — is refused once, by name: `a value-form vector argument to 'lanes' is a local of its type
+or a call declared to return it (..) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
+refused as on the other targets (`value-form SIMD arg must be a 16-byte vector`). ⚠ Through 6.7.12
+a call result was refused on x86_64 / aarch64 / cx with `value-form SIMD arg: IDENT not found as a
+local` and a cascaded second error (`expected ';', got number 4`), and on Win64 it compiled to a
+page fault (lane 0 taken as the vector's address) — as did the word local there.
+
 ### Packed-op builtins
 
 The raw builtins take **pointer arguments** (a destination and the operand

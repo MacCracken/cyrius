@@ -8,7 +8,10 @@
 # register as a pointer: a page fault (wine), while the same code with the callee first ran.
 # The target flags are now known before pass 1 in every fork. A callee defined first is the
 # control row.
+include "lib/syscalls.cyr"
 include "lib/assert.cyr"
+include "lib/simd.cyr"   # 6.7.13: f64v2_add, f32v8_make
+include "lib/fnptr.cyr"   # 6.7.13: fncall2
 
 fn first_lo(v: f64v2): i64 { return load64(&v + 0); }
 
@@ -41,7 +44,117 @@ fn late_lo(v: f64v2): i64 { return load64(&v + 0); }
 fn late_hi(v: f64v2): i64 { return load64(&v + 8); }
 fn late_sum(k, p: f64v2, q: f64v2): i64 { return k + load64(&p + 0) + load64(&p + 8) + load64(&q + 0) + load64(&q + 8); }
 
+# ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15) — a vector CALL RESULT passed to a value-form vector parameter is
+# passed, on every target. `lanes(mkv(4, 2))` with `fn lanes(x: f64v2)` was refused on x86_64 / aarch64 / cx ("value-form
+# SIMD arg: IDENT not found as a local", then "expected ';'") and compiled to a page fault on Win64 (the value push handed
+# the callee lane 0 as the vector's address). SysV / AAPCS64 / cx now receive the call into a frame temp that the vector
+# second pass loads after the integer arguments; the inline replay receives it straight into the parameter's slots; Win64
+# passes the temp's address (the call's hidden result pointer, which the callee copies in). Every source declared to
+# return the vector counts: by name, an explicit instance, `fncallN(&f, ..)` / `callptr(&f, ..)`, a method. Each lane is
+# weighted, so a lost, stale or swapped lane changes the value. Filed: docs/development/issues/2026-10-15-vector-call-
+# result-into-value-form-vector-parameter.md. Run on x86_64 / IR / DCE / aarch64 / cx / PE by
+# tests/gates/codegen/simd_pointer_param.sh (rows T3), and on ecb / ach / cass / pi by the release gate's cross-OS leg.
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 {
+    var v: f64v4;
+    store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d);
+    return v;
+}
+fn mkf(a, b, c, d): f32v4 {
+    var v: f32v4;
+    store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d);
+    return v;
+}
+fn mki(a, b, c, d): i32v4 {
+    var v: i32v4;
+    store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d);
+    return v;
+}
+fn mk8(a, h): f32v8 { return f32v8_make(a, 2, 3, 4, 5, 6, 7, h); }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+
+# The `if` keeps each from the inline replay, so the call path's second pass carries the vector; `lanes` / `l2i`
+# below are replayed (rows P).
+fn l2(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 100 + load64(&x + 8); }
+fn l4(x: f64v4): i64 {
+    if (load64(&x) == 999) { return 0; }
+    return load64(&x) * 1000000 + load64(&x + 8) * 10000 + load64(&x + 16) * 100 + load64(&x + 24);
+}
+fn lf(x: f32v4): i64 {
+    if (load32(&x) == 999) { return 0; }
+    return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12);
+}
+fn li(x: i32v4): i64 {
+    if (load32(&x) == 999) { return 0; }
+    return load32(&x) * 1000000 + load32(&x + 4) * 10000 + load32(&x + 8) * 100 + load32(&x + 12);
+}
+fn l8(x: f32v8): i64 { if (load32(&x) == 999) { return 0; } return load32(&x) * 100 + load32(&x + 28); }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+#inline
+fn l2i(x: f64v2, y: f64v2): i64 { return load64(&x) * 1000 + load64(&x + 8) * 100 + load64(&y) * 10 + load64(&y + 8); }
+fn mix(a, x: f64v2, b): i64 { if (a == 999) { return 0; } return a * 100000 + l2(x) * 10 + b; }
+fn two(x: f64v2, y: f64v2): i64 { if (load64(&x) == 999) { return 0; } return l2(x) * 10000 + l2(y); }
+fn wide(a, b, c, d, e, f, x: f64v2, g): i64 { if (a == 999) { return 0; } return l2(x) * 10 + a + b + c + d + e + f + g; }
+
+struct Vm { k; j; }
+impl Vm {
+    fn mv(self, a): f64v2 { return mkv(a + self.k, self.j); }
+    fn vm(self, x: f64v2, b): i64 { if (b == 999) { return 0; } return l2(x) + b + self.k; }
+    fn m4(self): f64v4 { return mk4(1, 2, 3, self.k); }
+}
+
+fn rows_f64v2() {
+    assert_eq(l2(mkv(41, 7)), 4107, "C1: l2(mkv(41, 7)), by name (6.7.12: refused, PE exit 5)");
+    assert_eq(lanes(mkv(4, 2)), 42, "C2: the filed repro's lanes(mkv(4, 2))");
+    assert_eq(l2(mkg<i64>(12, 34)), 1234, "C3: an explicit instance mkg<i64>(..)");
+    assert_eq(l2(fncall2(&mkv, 56, 78)), 5678, "C4: fncall2(&mkv, ..)");
+    assert_eq(l2(callptr(&mkv, 9, 8)), 908, "C5: callptr(&mkv, ..)");
+    var s: Vm = Vm { 1, 7 };
+    assert_eq(l2(s.mv(40)), 4107, "C6: a method result s.mv(40)");
+    assert_eq(s.k * 10 + s.j, 17, "C7: the method's receiver untouched (PE)");
+    var a: f64v2 = mkv(1, 2);
+    var r: f64v2 = f64v2_add(a, mkv(3, 4));
+    assert_eq(l2(r), 406, "C8: f64v2_add(a, mkv(3, 4)), lib/simd.cyr's value form (the filed second shape)");
+    return 0;
+}
+
+fn rows_other_types() {
+    assert_eq(l4(mk4(1, 2, 3, 4)), 1020304, "T1: an f64v4 call result into x: f64v4");
+    assert_eq(lf(mkf(5, 6, 7, 8)), 5060708, "T2: an f32v4 call result into x: f32v4");
+    assert_eq(li(mki(9, 10, 11, 12)), 9101112, "T3: an i32v4 call result into x: i32v4");
+    assert_eq(l2(mki(1, 0, 2, 0)), 102, "T4: an i32v4 call result into x: f64v2 (the size class, as a local)");
+    assert_eq(l8(mk8(4, 9)), 409, "T5: an f32v8 call result into x: f32v8");
+    var s: Vm = Vm { 5, 0 };
+    assert_eq(l4(s.m4()), 1020305, "T6: an f64v4 method result");
+    assert_eq(l4(callptr(&mk4, 4, 3, 2, 1)), 4030201, "T7: callptr(&mk4, ..) into x: f64v4");
+    return 0;
+}
+
+fn rows_positions() {
+    assert_eq(mix(7, mkv(4, 2), 9), 704029, "P1: between two integer arguments");
+    assert_eq(two(mkv(1, 2), mkv(3, 4)), 1020304, "P2: two call results, each its own temp");
+    var v: f64v2 = mkv(5, 6);
+    assert_eq(two(v, mkv(7, 8)), 5060708, "P3: a local, then a call result");
+    assert_eq(two(mkv(7, 8), v), 7080506, "P4: a call result, then a local");
+    assert_eq(wide(1, 2, 3, 4, 5, 6, mkv(4, 2), 7), 4048, "P5: after six integer arguments (stack-passed ones)");
+    var s: Vm = Vm { 1, 2 };
+    assert_eq(s.vm(mkv(4, 2), 3), 406, "P6: a method's value-form parameter");
+    assert_eq(s.vm(s.mv(3), 0), 403, "P7: a method result into a method's value-form parameter");
+    assert_eq(l2i(mkv(1, 2), mkv(3, 4)), 1234, "P8: the inline replay, two call results");
+    assert_eq(l2i(v, callptr(&mkv, 7, 8)), 5678, "P9: the inline replay, a local and callptr(&mkv, ..)");
+    assert_eq(lanes(s.mv(3)), 42, "P10: the inline replay, a method result");
+    assert_eq(l2(mkv(lanes(mkv(1, 2)), 3)), 1203, "P11: a call result inside a call result's argument");
+    return 0;
+}
+
+fn rows() {
+    rows_f64v2();
+    rows_other_types();
+    rows_positions();
+    return 0;
+}
 assert_eq(early(), 0x3333, "forward calls passing one f64v2");
 assert_eq(early_two(), 47, "a forward call mixing an int and two f64v2");
 assert_eq(early_control(), 0x4444, "control: the callee defined first");
+var r0 = rows();
 var r = assert_summary();

@@ -161,6 +161,8 @@
 #   MC3 `_simd_ret_call_ok` without `_ret_vicall` -> RED 10: C3 C5 on all five legs (refused)
 #   MC4 `_sc_pre` without its `_sc_vbeg` arm      -> RED 2: win64 C1 C4 = 0 (the method wrote a temp; the local never set)
 #   MC5 `_ret_vicall_pe` answering 0             -> RED 2: win64 C3 C5 = 0 (the generic path passes no hidden pointer)
+# Q3 runs on win64 too since D30 (simd_pointer_param.sh's VZ4: a word into Win64's value-form parameter is refused);
+# M-VC3 there (`_sarg_pe_vword` answering 0) -> RED win64 Q3 here.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -548,9 +550,9 @@ q_msg() {
     Q4) echo "$MSG";;
     esac
 }
-# Which legs a Q row is asked on: Q3's refusal is the value-form argument's, which PE's address-passed parameter does
-# not run (it took lane 0 as the address: exit 5).
-q_legs() { case "$1" in Q3) echo "host cx aarch64";; *) echo "host cx aarch64 win64";; esac; }
+# Every Q row on all four legs: Q3's refusal is the value-form argument's, which PE's address-passed parameter runs since
+# D30 (`_sarg_pe_vword`; it took lane 0 as the address before: exit 5).
+q_legs() { echo "host cx aarch64 win64"; }
 # Which legs an acceptance row RUNS on: every row on all four. A7's int-class 16-byte pair return
 # is a per-target ABI the tuple guard has nothing to do with, and it was kept off two legs until
 # each target carried it:
