@@ -68,6 +68,27 @@
 #                                                           "not a bool"); FPK1-FPK3 green
 #   N11 `_scv_icall_ann` without its `_tn_once(st)` mark -> RED 12: FP8 FP10 on every leg (2 errors: + "not a
 #                                                           bool" at the initialiser's first token)
+#
+# 6.7.13 — D24 AT TOP LEVEL (6.7.12's D28, "D24 at every path", binding). `var G: i64 = mk2(5);` (a 9-16 B struct) and
+# `var H: i64 = fncall1(&mk2, 5);` at top level compiled and read the first field (the filed repro: exit 10 on every
+# target) — in the declaration zone (`_gvi_expr`'s scalar arm, a plain PCMPE) and after a first statement (PARSE_VAR's
+# receive runs only in a fn; D28's `_scv_icall_ann` was fn-only). `_scv_gcall_ann` / `_scv_icall_ann` (parse_decl.cyr,
+# through `_scv_top_ann` from `_scv_arm` and `_gvi_expr`) refuse it with D24's words, once (a bool's check not run
+# again); over 16 B keeps its one no-frame refusal (`_scv_top_big`), 8 B or less and a `Str` keep the word
+# (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md). TL0 the repro verbatim; TL1-TL14 the zone /
+# after a first statement x the direct, wrapped and `&f` forms, a redeclared global, `: u8` / `: f64` / `: cstring` /
+# `: bool` (TL15 TL16 wrapped: once), a generic callee; TLK1 a struct annotation (no frame), TLK2 24 B (one error),
+# TLK3 the 8 B / `Str` runs. (Each mutant: a scratch copy of the tree with the one change, this gate run from it.)
+#   N12 the tree before it (ac17a963)                    -> RED 69: TL0-TL16 on every leg (BUILT; TL12 TL13 TL15 TL16
+#                                                           the bool check's "not a bool"), TL0's second line;
+#                                                           TLK1-TLK3 green
+#   N13 `_scv_gcall_ann` returns 0                       -> RED 52: TL0 (one error, not 2) TL1 TL3 TL4 TL7-TL12 TL14
+#                                                           TL15 TL16 x4 legs
+#   N14 `_gvi_expr` without `_scv_top_ann`               -> RED 37: TL0 (+ its second line) TL1 TL2 TL7 TL9 TL11 TL12
+#                                                           TL14 TL15 x4 (the zone; after a first statement green)
+#   N15 `_scv_icall_ann` with its `GINFN != 1` return    -> RED 21: TL0 (+ its second line) TL2 TL5 TL6 TL13 x4
+#   N16 `_scv_top_big` returns 0                         -> RED 4: TLK2 x4 (2 errors: + D24's at the call)
+#   N17 `_scv_gcall_ann` without its `_tn_once(st)` mark -> RED 8: TL15 TL16 x4 (2 errors: + "not a bool" at the `(`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -266,6 +287,84 @@ runs FPK2 34 "control: a callee held in a variable is a word (D31), not refused"
 rowf FPK3 'fn f(): i64 { var x = callptr(&mk3); var y = fncall0(&mkp); return dq3(x) + dq(y) - 34; }'
 runs FPK3 34 "control: an untyped receive of a known callee is the struct (D31)"
 
+# --- D24 at top level (6.7.13; 6.7.12's D28, "D24 at every path"): the declaration zone and after a first statement ---
+# The filed repro, verbatim (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md): exit 10 before.
+cat > "$T/TL0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P2 { a; b; }
+fn mk2(x): P2 { var r = P2 { x, x + 1 }; return r; }
+var G: i64 = mk2(5);
+var H: i64 = fncall1(&mk2, 5);
+syscall(60, G + H);
+EOF
+refused TL0 "cannot initialise 'G: i64' from 'mk2', which returns the struct 'P2' - declare 'G: P2' or bind a field" \
+    "the filed repro verbatim: \`mk2(5)\` and \`fncall1(&mk2, 5)\` into top-level \`: i64\` (exit 10 before)" 2
+if grep -qF "cannot initialise 'H: i64' from 'mk2', which returns the struct 'P2' - declare 'H: P2' or bind a field" "$T/TL0.x86_64.err"; then
+    ok "TL0 the fncall1 declaration is refused by name too"
+else bad "TL0 the second declaration (\`H: i64 = fncall1(&mk2, 5)\`) was not refused by name"; fi
+TH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct P1 { a; }
+struct P2 { a; b; }
+struct P3 { a; b; c; }
+fn mk1(x): P1 { var r = P1 { x }; return r; }
+fn mk2(x): P2 { var r = P2 { x, x + 1 }; return r; }
+fn mk3(x): P3 { var r = P3 { x, x + 1, x + 2 }; return r; }
+fn mkg<T>(x: T): P2 { var r = P2 { x, x + 1 }; return r; }
+fn mks(): Str { return str_from("abcde"); }'
+TS='var Z = 0;
+Z = 1;'
+# rowt <name> <zone|after> <declarations>: the declarations in the declaration zone, or after a first statement
+rowt() {
+    if [ "$2" = zone ]; then printf '%s\n%s\nsyscall(60, 0);\n' "$TH" "$3" > "$T/$1.cyr"
+    else printf '%s\n%s\n%s\nsyscall(60, 0);\n' "$TH" "$TS" "$3" > "$T/$1.cyr"; fi
+}
+MT="from 'mk2', which returns the struct 'P2' - declare 'G: P2' or bind a field"
+rowt TL1 zone 'var G: i64 = (mk2(5));'
+refused TL1 "cannot initialise 'G: i64' $MT" "the declaration zone: \`(mk2(5))\`"
+rowt TL2 zone 'var G: i64 = callptr(&mk2, 5);'
+refused TL2 "cannot initialise 'G: i64' $MT" "the declaration zone: \`callptr(&mk2, 5)\`"
+rowt TL3 after 'var G: i64 = mk2(5);'
+refused TL3 "cannot initialise 'G: i64' $MT" "after a first statement: \`mk2(5)\`"
+rowt TL4 after 'var G: i64 = (mk2(5));'
+refused TL4 "cannot initialise 'G: i64' $MT" "after a first statement: \`(mk2(5))\`"
+rowt TL5 after 'var G: i64 = fncall1(&mk2, 5);'
+refused TL5 "cannot initialise 'G: i64' $MT" "after a first statement: \`fncall1(&mk2, 5)\`"
+rowt TL6 after 'var G: i64 = callptr(&mk2, 5);'
+refused TL6 "cannot initialise 'G: i64' $MT" "after a first statement: \`callptr(&mk2, 5)\`"
+rowt TL7 zone 'var G: i64 = 0;
+var G: i64 = mk2(5);'
+refused TL7 "cannot initialise 'G: i64' $MT" "a redeclared global in the declaration zone (exit 5 before)"
+rowt TL8 after 'var G: i64 = 0;
+var G: i64 = mk2(5);'
+refused TL8 "cannot initialise 'G: i64' $MT" "a redeclared global after a first statement"
+rowt TL9 zone 'var G: u8 = mk2(5);'
+refused TL9 "cannot initialise 'G: u8' $MT" "the declaration zone: \`: u8\`"
+rowt TL10 after 'var G: f64 = mk2(5);'
+refused TL10 "cannot initialise 'G: f64' $MT" "after a first statement: \`: f64\`"
+rowt TL11 zone 'var G: cstring = mk2(5);'
+refused TL11 "cannot initialise 'G: cstring' $MT" "the declaration zone: \`: cstring\`"
+rowt TL12 zone 'var G: bool = mk2(5);'
+refused TL12 "cannot initialise 'G: bool' $MT" "the declaration zone: \`: bool\` (D24's words, the bool check not run again)"
+rowt TL13 after 'var G: bool = (fncall1(&mk2, 5));'
+refused TL13 "cannot initialise 'G: bool' $MT" "after a first statement: a wrapped call into \`: bool\` (once)"
+rowt TL14 zone 'var G: i64 = mkg<i64>(5);'
+refused TL14 "cannot initialise 'G: i64' from 'mkg', which returns the struct 'P2' - declare 'G: P2' or bind a field" "the declaration zone: a generic callee"
+rowt TL15 zone 'var G: bool = (mk2(5));'
+refused TL15 "cannot initialise 'G: bool' $MT" "the declaration zone: a wrapped direct call into \`: bool\` (once)"
+rowt TL16 after 'var G: bool = ((mk2(5)));'
+refused TL16 "cannot initialise 'G: bool' $MT" "after a first statement: a wrapped direct call into \`: bool\` (once)"
+rowt TLK1 zone 'var G: P2 = mk2(5);'
+refused TLK1 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: \`var G: P2 = mk2(5);\` keeps its no-frame refusal"
+rowt TLK2 after 'var G: i64 = mk3(5);'
+refused TLK2 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: over 16 B keeps its one no-frame refusal"
+printf '%s\nvar A: i64 = mk1(5);\nvar B: i64 = fncall1(&mk1, 6);\n%s\nalloc_init();\nvar C: i64 = mk1(9);\nvar D: i64 = mks();\nvar E: i64 = callptr(&mk1, 9);\nsyscall(60, A + B + C + str_len(D) + E);\n' "$TH" "$TS" > "$T/TLK3.cyr"
+runs TLK3 34 "control: an 8 B struct (direct, \`fncall1\`, \`callptr\`) and a \`Str\` into top-level \`: i64\`, the zone and after"
+
 # --- (a): wrapped calls, run ---
 row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); return dq(x) + dq3(y) + dq3(z) - 68; }'
 runs A1 34 "\`((mkp()))\`, \`(mk3())\`, \`((mk3()))\` into by-value parameters"
@@ -307,7 +406,7 @@ refused D2 "a dyn Show result $RV" "a dyn: \`var y: i64 = pass(o);\` keeps V4n"
 printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\nsyscall(60, 0);\n' "$DH" > "$T/D3.cyr"
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
-[ "$rows" -ge 45 ] || bad "only $rows rows ran (floor 45)"
+[ "$rows" -ge 65 ] || bad "only $rows rows ran (floor 65)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13)"

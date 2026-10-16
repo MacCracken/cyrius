@@ -1494,7 +1494,11 @@ keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3`
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
-field). A callee held in a variable is unknown: its result stays a word.
+field). A callee held in a variable is unknown: its result stays a word. A global declaration is judged
+the same (6.7.13): `var G: i64 = mk2(5);` at top level — in the declaration zone or after the first
+statement — with `mk2` returning a 9-16 byte struct is refused with the same words, directly or
+through `&mk2` (through 6.7.12 it stored the first field). Over 16 bytes a top-level call is refused
+anyway (a struct result needs a fn's frame).
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
