@@ -1952,7 +1952,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 # on the URI of the file it names (an included file's error is not pinned to the open file's
 # line), clears a file a recompile no longer names, compiles every cyrius extension, and in a
 # project checks the open file itself (`cyrius check --with-deps --no-redirect`; a toolchain
-# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows.
+# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows. 6.7.13 —
+# outside a project it compiles what `cyrius check <file>` compiles from its working directory
+# (the CLI, else cycc with `#@incdir`), so a loose file's sibling include resolves.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
 
 # 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a

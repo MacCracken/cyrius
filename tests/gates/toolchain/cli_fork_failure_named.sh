@@ -26,7 +26,9 @@
 #      --target=cx, `run x.cyx`, fmt, run, capacity, self, `hooks install` (sys_system), and
 #      distlib's per-target sidecar verify (refused for that reason, not "does not compile").
 #   3  the LSP's two diagnostics spawns (raw cycc outside a project, the `cyrius` wrapper inside
-#      one) log the fork failure instead of publishing silently empty diagnostics.
+#      one) log the fork failure instead of publishing silently empty diagnostics. (6.7.13: a
+#      loose file goes to the wrapper too when the CLI is found — `cyrius check` from the server's
+#      working directory — so the raw-cycc spawn is driven from a home holding cycc alone.)
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
 #      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away. A
 #      `_cbt_fork_tracked(fwd)` call (6.7.13: the tracked fork, cbt/sigclean.cyr) is a site too.
@@ -249,8 +251,10 @@ ls "$W/dl/dist" 2>/dev/null | grep -q '\.deps$' && fail "distlib: a sidecar was 
 
 # ── axis 3 — the LSP's diagnostics spawns ───────────────────────────────────────────────
 x=$FAIL
-LH="$W/lhome"; mkdir -p "$LH/.cyrius/bin" "$W/lone" "$W/proj"
+LH="$W/lhome"; mkdir -p "$LH/.cyrius/bin" "$W/lone" "$W/proj" "$W/lhome2/.cyrius/bin"
 cp "$W/stubtool" "$LH/.cyrius/bin/cycc"; cp "$W/stubtool" "$LH/.cyrius/bin/cyrius"
+cp "$W/stubtool" "$W/lhome2/.cyrius/bin/cycc"   # cycc alone: the loose file takes the raw spawn
+mkdir -p "$W/lsp2" && cp "$W/cyrius-lsp" "$W/lsp2/cyrius-lsp"   # no `cyrius` beside it either
 printf 'var a = 1;\n' > "$W/lone/a.cyr"
 printf '[package]\nname = "q"\n' > "$W/proj/cyrius.cyml"; printf 'var b = 1;\n' > "$W/proj/b.cyr"
 msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
@@ -260,11 +264,14 @@ msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"
   msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'; } > "$W/lsp.in"
 ( cd "$W/lone" && lim env -i HOME="$LH" PATH=/usr/bin:/bin "$W/cyrius-lsp" ) \
     < "$W/lsp.in" > "$W/lsp.out" 2> "$W/lsp.err" || true
-grep -q "could not start $LH/.cyrius/bin/cycc: fork failed" "$W/lsp.err" \
-    || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp.err" | tail -3 | tr '\n' ' ')"
-grep -q "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err" \
-    || fail "axis 3: the wrapper diagnostics spawn did not log its fork failure"
-grep -q '"id":2,' "$W/lsp.out" || fail "axis 3: the server did not answer shutdown after the failed spawns"
+( cd "$W/lone" && lim env -i HOME="$W/lhome2" PATH=/usr/bin:/bin "$W/lsp2/cyrius-lsp" ) \
+    < "$W/lsp.in" > "$W/lsp2.out" 2> "$W/lsp2.err" || true
+grep -q "could not start $W/lhome2/.cyrius/bin/cycc: fork failed" "$W/lsp2.err" \
+    || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp2.err" | tail -3 | tr '\n' ' ')"
+[ "$(grep -c "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err")" = 2 ] \
+    || fail "axis 3: the wrapper diagnostics spawn (a project's file, and a loose one) did not log its fork failure twice"
+grep -q '"id":2,' "$W/lsp.out" && grep -q '"id":2,' "$W/lsp2.out" \
+    || fail "axis 3: the server did not answer shutdown after the failed spawns"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: both LSP diagnostics spawns log the fork failure, and the server goes on"
 
 # ── axis 6 — an inherited SIGCHLD ignore ────────────────────────────────────────────────

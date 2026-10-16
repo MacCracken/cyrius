@@ -33,8 +33,16 @@ tree with a `cyrius.cyml` — it runs `cyrius check --with-deps --no-redirect <f
 from the project root, so `[deps]` modules resolve and the open file itself is
 the unit (`--no-redirect` skips the CLI's module redirect, which would compile
 `src/main.cyr` in place of a file with no `include`; a project pinned to a
-toolchain older than 6.7.12, which refuses the flag, is checked without it);
-outside one it runs `cycc` on the file directly. Every extension in the table
+toolchain older than 6.7.12, which refuses the flag, is checked without it).
+Outside one it compiles what `cyrius check <file>` compiles from the server's
+working directory (6.7.13): `cyrius check <file>` there when the CLI is found,
+else `cycc` with `#@incdir <dir>` and `#@srcline` ahead of the file — the
+file named relative to that directory when it lies under it, so an `include`
+of a sibling file resolves as it does for the CLI. (A file outside the
+server's working directory gets no `#@incdir`, as `cyrius check` writes none
+for it; until 6.7.13 every loose file was compiled that way, and a sibling
+include read `cannot open include file` unless the editor had started the
+server in the file's own directory.) Every extension in the table
 below is compiled and indexed — `.cyr`, `.tcyr`, `.bcyr`, `.fcyr`, `.scyr`,
 `.smcyr` (6.7.12; only `.cyr` was before).
 
@@ -47,8 +55,8 @@ Each `error:` / `warning:` line of the output becomes an LSP `Diagnostic`
 - **File.** A diagnostic is published on the URI of the file it names, so an
   error inside an included file shows in that file, not at the same line
   number of the file you opened. `<source>` is the open file; a relative name
-  resolves as cycc resolved it — against the project root, then the open
-  file's directory (outside a project, the open file's directory). A name that
+  resolves as cycc resolved it — against the project root (outside a project,
+  the server's working directory), then the open file's directory. A name that
   resolves to no file stays on the open file's line 0, with its location kept
   in the message.
 - **Stale files.** The server remembers which files each open document's
@@ -81,7 +89,8 @@ stderr (`[cyrius-lsp] found cycc: …`), which most editors show in their LSP
 log. Inside a project, `cyrius` then runs the toolchain version the
 project's `cyrius.cyml` pins (`cyrius = "…"`, which must be installed), so
 diagnostics match what `cyrius build` sees; outside a project they come from
-the `cycc` found above.
+`cyrius check` with the toolchain the CLI finds, or the `cycc` found above
+when there is no CLI.
 
 ## `.lsp.json` wiring
 
