@@ -1,0 +1,126 @@
+# closure_capture_narrow_scalar.tcyr — 6.7.13: a closure's capture of a NARROW scalar local (`i8` / `i16` / `i32`,
+# `u8` / `u16` / `u32`) reads its value, sign-extended for a signed one, zero-extended for an unsigned one.
+#
+# A narrow local's frame slot holds its value only in its low 1 / 2 / 4 bytes, and the closure's env copy took the
+# slot's whole raw word: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on every target,
+# and on aarch64 / cx a positive one read the stale upper bytes of a slot a previous call left dirty (-249 for 7)
+# (docs/development/issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). The env copy now
+# loads the local at its width (`_cl_cap_narrow`, src/frontend/parse_expr.cyr), as reading the local in its own fn
+# does. Each row runs after `dirty()` has left the stack it reuses all-ones; a nested closure reads the outer
+# closure's copy, and a narrow local of a closure BODY captured by an inner closure takes the same copy. A narrow
+# PARAMETER was always right: the controls. In this directory so the release gate runs it on ecb / ach / cass / pi;
+# tests/gates/frontend/closure_capture_narrow_scalar.sh runs it on x86_64 / IR=3 / aarch64 (qemu) / cx / PE.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# Leaves the frame it ran in all-ones, so the next call's slots start dirty.
+fn dirty(): i64 {
+    var a = 0 - 1; var b = 0 - 1; var c = 0 - 1; var d = 0 - 1;
+    var e = 0 - 1; var f = 0 - 1; var g = 0 - 1; var h = 0 - 1;
+    return a + b + c + d + e + f + g + h;
+}
+
+# Captured in a closure.
+fn c_i8(v): i64 { var b: i8 = v; var k = |z| b + z; return callptr(k, 0); }
+fn c_i16(v): i64 { var b: i16 = v; var k = |z| b + z; return callptr(k, 0); }
+fn c_i32(v): i64 { var b: i32 = v; var k = |z| b + z; return callptr(k, 0); }
+fn c_u8(v): i64 { var b: u8 = v; var k = |z| b + z; return callptr(k, 0); }
+fn c_u16(v): i64 { var b: u16 = v; var k = |z| b + z; return callptr(k, 0); }
+fn c_u32(v): i64 { var b: u32 = v; var k = |z| b + z; return callptr(k, 0); }
+# ... and read through a nested closure (the outer closure's env word, re-copied).
+fn n_i8(v): i64 { var b: i8 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+fn n_i16(v): i64 { var b: i16 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+fn n_i32(v): i64 { var b: i32 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+fn n_u8(v): i64 { var b: u8 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+fn n_u16(v): i64 { var b: u16 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+fn n_u32(v): i64 { var b: u32 = v; var k = |z| { var j = |y| b + y; return callptr(j, z); }; return callptr(k, 0); }
+# A narrow local of a closure body, captured by an inner closure.
+fn b_i8(v): i64 { var k = |z| { var c: i8 = z; var j = |y| c + y; return callptr(j, 0); }; return callptr(k, v); }
+fn b_u16(v): i64 { var k = |z| { var c: u16 = z; var j = |y| c + y; return callptr(j, 0); }; return callptr(k, v); }
+fn b_i32(v): i64 { var k = |z| { var c: i32 = z; var j = |y| c + y; return callptr(j, 0); }; return callptr(k, v); }
+# Two narrow locals and a word in one env.
+fn c_mix(): i64 {
+    var a: i8 = 0 - 7;
+    var w = 1000;
+    var u: u16 = 65535;
+    var k = |z| a * 100000 + w + u + z;
+    return callptr(k, 0);
+}
+# The controls: a narrow PARAMETER captured.
+fn p_i8(b: i8): i64 { var k = |z| b + z; return callptr(k, 0); }
+fn p_i16(b: i16): i64 { var k = |z| b + z; return callptr(k, 0); }
+fn p_i32(b: i32): i64 { var k = |z| b + z; return callptr(k, 0); }
+fn p_u8(b: u8): i64 { var k = |z| b + z; return callptr(k, 0); }
+fn p_u16(b: u16): i64 { var k = |z| b + z; return callptr(k, 0); }
+fn p_u32(b: u32): i64 { var k = |z| b + z; return callptr(k, 0); }
+
+fn rows(): i64 {
+    alloc_init();
+    var d = dirty();
+    assert_eq(c_i8(0 - 3), 0 - 3, "C1: a captured i8 holding -3 (253 before)");
+    d = dirty();
+    assert_eq(c_i8(100), 100, "C2: a captured i8 holding 100");
+    d = dirty();
+    assert_eq(c_i16(0 - 3), 0 - 3, "C3: a captured i16 holding -3 (65533 before)");
+    d = dirty();
+    assert_eq(c_i16(30000), 30000, "C4: a captured i16 holding 30000");
+    d = dirty();
+    assert_eq(c_i32(0 - 3), 0 - 3, "C5: a captured i32 holding -3 (4294967293 before)");
+    d = dirty();
+    assert_eq(c_i32(0 - 2147483648), 0 - 2147483648, "C6: a captured i32 holding its minimum");
+    d = dirty();
+    assert_eq(c_i32(2000000000), 2000000000, "C7: a captured i32 holding 2000000000");
+    d = dirty();
+    assert_eq(c_u8(200), 200, "C8: a captured u8 holding 200 (zero-extended)");
+    d = dirty();
+    assert_eq(c_u8(7), 7, "C9: a captured u8 holding 7 (the slot's stale upper bytes before, aarch64 / cx)");
+    d = dirty();
+    assert_eq(c_u16(60000), 60000, "C10: a captured u16 holding 60000");
+    d = dirty();
+    assert_eq(c_u16(7), 7, "C11: a captured u16 holding 7 (-65529 on aarch64 / cx before)");
+    d = dirty();
+    assert_eq(c_u32(4000000000), 4000000000, "C12: a captured u32 holding 4000000000");
+    d = dirty();
+    assert_eq(c_u32(7), 7, "C13: a captured u32 holding 7");
+    d = dirty();
+    assert_eq(n_i8(0 - 3), 0 - 3, "N1: an i8 holding -3, through a nested closure");
+    d = dirty();
+    assert_eq(n_i8(9), 9, "N2: an i8 holding 9, through a nested closure");
+    d = dirty();
+    assert_eq(n_i16(0 - 300), 0 - 300, "N3: an i16 holding -300, through a nested closure");
+    d = dirty();
+    assert_eq(n_i32(0 - 70000), 0 - 70000, "N4: an i32 holding -70000, through a nested closure");
+    d = dirty();
+    assert_eq(n_u8(250), 250, "N5: a u8 holding 250, through a nested closure");
+    d = dirty();
+    assert_eq(n_u16(65000), 65000, "N6: a u16 holding 65000, through a nested closure");
+    d = dirty();
+    assert_eq(n_u32(3000000000), 3000000000, "N7: a u32 holding 3000000000, through a nested closure");
+    d = dirty();
+    assert_eq(n_u32(11), 11, "N8: a u32 holding 11, through a nested closure");
+    d = dirty();
+    assert_eq(b_i8(0 - 5), 0 - 5, "B1: an i8 local of a closure body, captured by an inner closure");
+    d = dirty();
+    assert_eq(b_u16(65535), 65535, "B2: a u16 local of a closure body, captured by an inner closure");
+    d = dirty();
+    assert_eq(b_i32(0 - 123456), 0 - 123456, "B3: an i32 local of a closure body, captured by an inner closure");
+    d = dirty();
+    assert_eq(c_mix(), 0 - 700000 + 1000 + 65535, "M1: an i8, a word and a u16 captured in one env");
+    d = dirty();
+    assert_eq(p_i8(0 - 3), 0 - 3, "K1: a captured i8 PARAMETER holding -3 (the control)");
+    d = dirty();
+    assert_eq(p_i16(0 - 3), 0 - 3, "K2: a captured i16 parameter holding -3");
+    d = dirty();
+    assert_eq(p_i32(0 - 3), 0 - 3, "K3: a captured i32 parameter holding -3");
+    d = dirty();
+    assert_eq(p_u8(200), 200, "K4: a captured u8 parameter holding 200");
+    d = dirty();
+    assert_eq(p_u16(65535), 65535, "K5: a captured u16 parameter holding 65535");
+    d = dirty();
+    assert_eq(p_u32(4000000000), 4000000000, "K6: a captured u32 parameter holding 4000000000");
+    return 0;
+}
+var r0 = rows();
+var r = assert_summary();

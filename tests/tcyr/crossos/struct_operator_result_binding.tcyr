@@ -22,7 +22,8 @@
 # 9-16 B operator / method result in parentheses (`var c = (a + b);`, `(a.m())`) bind an inline struct, as
 # the annotated form does; through 6.7.10 each was an untyped word (`c.v` refused, `c + 1` added to it,
 # `takeh(c)` passed the 16 B one's first word as its address). The `m` / `i` / `p` rows below, each at
-# 1..8 B and against its 16 / 24 B twin; an integer-ending chain, a scalar annotation and a global keep the word.
+# 1..8 B and against its 16 / 24 B twin; an integer-ending chain, a scalar annotation (8 B or less: over 8 B it is
+# refused since 6.7.13, D13) and a global keep the word.
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R8 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -153,6 +154,31 @@ fn b_lint_t() { var b: T3 = T3 { 9, 9, 9 }; var r = mkt(4) - b; return r + 10; }
 fn b_lcmp_8() { var b: S8 = S8 { 1 }; var r = mk8(1) == b; return r + 1; }
 fn b_lop_t() { var b: T3 = T3 { 5, 6, 7 }; var r = mkt(4) + b; return r.x + r.y + r.z; }
 fn b_lf64() { var x = fdbl() * 2.0; var y = x + x; return f64_to(y); }
+# 6.7.13 (issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md) — a comparison, an `&&` /
+# `||` link and (the user's decision D12 (a), 2026-10-15) `& | ^ % << >> >>>` give an INTEGER whatever the
+# right operand: with an f64 one the result kept the f64 type and the next `*` took the f64 arm (the repro: 0).
+# `xb` holds f64 bits whose low byte is 3 (a shift count of 3), so the integer result is checkable.
+fn f64_bits3(): f64 { var x: f64 = 0.0; store64(&x, 0x3FF0000000000003); return x; }
+fn c_lt() { var n = 1; var x: f64 = 2.5; var c = (n < x) * 3; return c; }
+fn c_and() { var n = 1; var x: f64 = 2.5; var c = (n == 1 && x) * 3; return c; }
+fn c_or() { var n = 1; var x: f64 = 2.5; var c = (n == 0 || x) * 3; return c; }
+fn c_band() { var m = 7; var xb = f64_bits3(); var c = (m & xb) * 3; return c; }
+fn c_bxor() { var m = 7; var xb = f64_bits3(); var c = (m ^ xb) * 3; return c & 255; }
+fn c_mod() { var m = 64; var xb = f64_bits3(); var c = (m % xb) * 3; return c; }
+fn c_shl() { var m = 7; var xb = f64_bits3(); var c = (m << xb) * 3; return c; }
+fn c_shr() { var m = 64; var xb = f64_bits3(); var c = (m >> xb) * 3; return c; }
+# 6.7.13 (issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md) — `var c = f() < 1.0;` with a `: f64`
+# leading call bound c as an f64 (the leading call's type), so `-c` was a float negation: the sign bit flipped
+# (0x8000000000000001, the repro: 3 where 1 is right) and `0 - c` warned kind 2. The f64 binding holds only
+# while the whole initialiser is still f64 (`_var_rhs_post`): b_lf64 above keeps it.
+fn fhalf(): f64 { return 0.5; }
+fn l_lt() { var c = fhalf() < 1.0; var n = -c; return n; }
+fn l_eq() { var c = fhalf() == 0.5; var n = -c; return n; }
+fn l_le() { var c = fhalf() <= 0.5; var n = -c; return n; }
+fn l_ge() { var c = fhalf() >= 0.5; var n = 0 - c; return n; }
+fn l_and() { var k = 1; var c = fhalf() > 0.1 && k == 1; var n = -c; return n; }
+fn l_andx() { var k = 0; var x: f64 = 2.5; var c = fhalf() > 0.1 && k < x; var n = -c; return n; }
+fn l_keep() { var x = fhalf(); var y = x + 1.5; return f64_to(y); }
 
 # ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
 struct Z1 { a: u8; }
@@ -265,8 +291,10 @@ fn p_arg_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); r
 fn p_arg_m() { var a: H = H { 5, 1 }; var e = (a.m()); return takeh(e); }
 fn p_deep_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (((a + b))); return c.v + c.w; }
 fn p_mchain_h() { var a: H = H { 5, 1 }; var c = (a.d().d()); return c.v + c.w; }
-# a scalar annotation keeps the first word; parentheses around an integer stay an integer
-fn p_scalar_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c: i64 = (a + b); return c; }
+# a scalar annotation keeps an 8 B struct's one word (over 8 B it is refused by name since 6.7.13, D13 — the
+# 16 B row that kept H's first word is a refusal row in tests/gates/frontend/struct_receive_inference_checked.sh);
+# parentheses around an integer stay an integer
+fn p_scalar_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c: i64 = (a + b); return c; }
 fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); return r + 1; }
 
 # ── top level: an untyped global keeps the operator result's word, untyped, as over 8 B ──
@@ -308,6 +336,21 @@ assert_eq(b_lint_t(), 5, "  24 B: var r = mkt(4) - b; r + 10");
 assert_eq(b_lcmp_8(), 2, "var r = mk8(1) == b; a comparison after a leading call: untyped");
 assert_eq(b_lop_t(), 38, "var r = mkt(4) + b; a struct-returning operator after a leading call types it");
 assert_eq(b_lf64(), 6, "var x = f() * 2.0; a : f64 leading call keeps the f64 binding");
+assert_eq(c_lt(), 3, "(n < x) * 3 with x: f64 is an integer multiply (the repro: 0)");
+assert_eq(c_and(), 3, "(n == 1 && x) * 3: an && link is 0 / 1");
+assert_eq(c_or(), 3, "(n == 0 || x) * 3: an || link is 0 / 1");
+assert_eq(c_band(), 9, "(m & x) * 3 is an integer (D12 (a))");
+assert_eq(c_bxor(), 12, "(m ^ x) * 3 is an integer (D12 (a))");
+assert_eq(c_mod(), 192, "(m % x) * 3 is an integer (D12 (a))");
+assert_eq(c_shl(), 168, "(m << x) * 3 is an integer (D12 (a))");
+assert_eq(c_shr(), 24, "(m >> x) * 3 is an integer (D12 (a))");
+assert_eq(l_lt(), 0 - 1, "var c = f() < 1.0; -c is -1 (the repro: the sign bit flipped)");
+assert_eq(l_eq(), 0 - 1, "var c = f() == 0.5; -c is -1");
+assert_eq(l_le(), 0 - 1, "var c = f() <= 0.5; -c is -1");
+assert_eq(l_ge(), 0 - 1, "var c = f() >= 0.5; 0 - c is -1");
+assert_eq(l_and(), 0 - 1, "var c = f() > 0.1 && k == 1; -c is -1");
+assert_eq(l_andx(), 0 - 1, "var c = f() > 0.1 && k < x (x: f64); -c is -1 (the compare half)");
+assert_eq(l_keep(), 2, "var x = f(); a whole : f64 call keeps the f64 binding");
 assert_eq(z1(), 28, "1 B: c.a written, c + c");
 assert_eq(z2(), 28, "2 B: c.a written, c + c");
 assert_eq(z3(), 1028, "3 B: c.a written, c + c");
@@ -352,7 +395,7 @@ assert_eq(p_arg_h(), 82, "p: takeh(c): c passed by value (its first word as its 
 assert_eq(p_arg_m(), 6, "p: takeh(e) of (a.m())");
 assert_eq(p_deep_h(), 85, "p: (((a + b)))");
 assert_eq(p_mchain_h(), 24, "p: (a.d().d()) at 16 B");
-assert_eq(p_scalar_h(), 82, "p: var c: i64 = (a + b): a scalar annotation keeps the first word");
+assert_eq(p_scalar_8(), 82, "p: var c: i64 = (a + b) at 8 B: a scalar annotation keeps the struct's one word");
 assert_eq(p_int_h(), 67, "p: (a - b) returning an integer stays an integer");
 assert_eq(TI, 7, "top level: an if-expression's untyped global keeps the word");
 var r = assert_summary();

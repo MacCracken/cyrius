@@ -188,6 +188,74 @@ fn known() {
     return 0;
 }
 
+# 6.7.13 — the callee in parentheses, `(&mk3)`, is the same known callee (it was unknown: no hidden
+# result pointer, no pair receive — SIGSEGV on x86_64 / aarch64, a guest error on cx, exit 5 on PE;
+# issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md). A wrapped variable stays a
+# word (D31): W13.
+fn rv3w(a): P3 { return callptr((&mk3), a); }
+fn rv2w(a): P2 { return fncall1(((&mk2)), a); }
+fn wrapped() {
+    var p3: P3 = callptr((&mk3), 5);
+    assert_eq(p3.a + p3.b + p3.c, 555, "W1: var p: P3 = callptr((&mk3), 5) (the filed repro's shape: SIGSEGV)");
+    var p2: P2 = fncall1((&mk2), 5);
+    assert_eq(w2(p2), 155, "W2: var p: P2 = fncall1((&mk2), 5) (16 B: the pair)");
+    assert_eq(w3(callptr((&mk3), 1)), 731, "W3: w3(callptr((&mk3), 1)), by value, 24 B");
+    assert_eq(r3(fncall1((&mk3), 2)), 1462, "W4: r3(fncall1((&mk3), 2)), a *P3 parameter");
+    assert_eq(w2(callptr((&mk2), 4)), 124, "W5: w2(callptr((&mk2), 4)), by value, 16 B");
+    var d: P3 = fncall1(((&mk3)), 1);
+    assert_eq(w3(d), 731, "W6: var p: P3 = fncall1(((&mk3)), 1), the callee wrapped twice");
+    assert_eq(w1(fncall1((&mk1), 2)), 5, "W7: w1(fncall1((&mk1), 2)), 8 B (a word: right before too)");
+    var x = callptr((&mk3), 3);
+    assert_eq(x.a + x.b + x.c, 333, "W8: var x = callptr((&mk3), 3) infers P3 (refused at x.a before)");
+    var e: P3 = rv3w(2);
+    assert_eq(w3(e), 1462, "W9: return callptr((&mk3), a); from a P3 fn (refused before)");
+    var f: P2 = rv2w(3);
+    assert_eq(w2(f), 93, "W10: return fncall1(((&mk2)), a); from a P2 fn (refused before)");
+    var q: P3 = P3 { 0, 0, 0 };
+    q = callptr((&mk3), 3);
+    assert_eq(w3(q), 2193, "W11: q = callptr((&mk3), 3), the assignment");
+    var o: O = O { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    o.j = fncall1((&mk3), 3);
+    o.i = callptr((&mk2), 2);
+    assert_eq(o.j.a + o.j.b + o.j.c + o.i.a + o.i.b + o.n, 356, "W12: o.j = fncall1((&mk3), 3), o.i = callptr((&mk2), 2)");
+    var fp = &gp3;
+    var h: P3 = callptr((fp), 7);
+    assert_eq(h.a + h.b + h.c, 37, "W13: callptr((fp), 7) through a variable stays a word, a handle (D31)");
+    return 0;
+}
+
+# 6.7.13 — a known callee's result takes `.field` and `.method(..)`, as `mk3(5).b` does (the user's decision D16 (a),
+# 2026-10-15; issues/2026-10-13-field-of-indirect-call-struct-result.md): it was "expected ';', got '.'" on every target.
+var GN = 0;
+impl P2 { fn tot(self): i64 { return self.a + self.b; } }
+impl P3 {
+    fn tot(self): i64 { return self.a + self.b + self.c; }
+    fn dbl(self): P3 { var r: P3 = P3 { self.a * 2, self.b * 2, self.c * 2 }; return r; }
+    fn note(self): i64 { GN = self.a + self.b + self.c; return GN; }
+}
+fn mko(a): O { var r: O = O { a, a, a + 1, a, a + 1, a + 2, a, a + 1, a + 2, a + 3, a + 9 }; return r; }
+fn chains() {
+    assert_eq(fncall1(&mk3, 5).b, 50, "FC1: fncall1(&mk3, 5).b (the filed repro's shape: expected ';')");
+    assert_eq(callptr(&mk1, 5).a, 8, "FC2: callptr(&mk1, 5).a, 8 B");
+    assert_eq(fncall1(&mk2, 5).b, 50, "FC3: fncall1(&mk2, 5).b, 16 B (the pair's temp)");
+    assert_eq(callptr(&mk4, 2).d, 2000, "FC4: callptr(&mk4, 2).d, 32 B");
+    assert_eq(fncall1(&mk3, 2).tot(), 222, "FC5: fncall1(&mk3, 2).tot(), a method on the result");
+    assert_eq(callptr(&mk3, 1).dbl().c, 200, "FC6: callptr(&mk3, 1).dbl().c, a chain");
+    assert_eq(fncall1(&mk2, 3).tot(), 33, "FC7: fncall1(&mk2, 3).tot(), 16 B");
+    assert_eq(fncall1(&gp3, 4).c + callptr(&gp3, 4).tot(), 19 + 28, "FC8: fncall1(&gp3, 4).c / .tot(), a *P3 callee");
+    assert_eq(fncall1((&mk3), 3).b + callptr(((&mk2)), 2).b, 50, "FC9: fncall1((&mk3), 3).b, callptr(((&mk2)), 2).b");
+    assert_eq(fncall1(&mko, 1).j.c + callptr(&mko, 2).k.d, 3 + 5, "FC10: fncall1(&mko, 1).j.c, a nested field");
+    var k = |z| fncall1(&mk3, z).c + 1;
+    assert_eq(callptr(k, 2), 201, "FC11: |z| fncall1(&mk3, z).c + 1, in a closure");
+    fncall1(&mk3, 2).note();
+    assert_eq(GN, 222, "FC12: fncall1(&mk3, 2).note(); the statement form");
+    callptr(&mk3, 1).note();
+    assert_eq(GN, 111, "FC13: callptr(&mk3, 1).note(); the statement form");
+    fncall1(&gp3, 5).b = 77;
+    assert_eq(GK.b, 77, "FC14: fncall1(&gp3, 5).b = 77; stores through a *P3 result, as gp3(5).b = 77 (D8 a)");
+    return 0;
+}
+
 # A struct global of 8 B or less, in the declaration zone and after the first statement: a value.
 var ZG: P1 = fncall1(&mk1, 2);
 fn rows() {
@@ -198,6 +266,8 @@ fn rows() {
     returns();
     many();
     known();
+    wrapped();
+    chains();
     return 0;
 }
 var r0 = rows();

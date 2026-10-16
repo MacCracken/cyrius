@@ -85,6 +85,14 @@
 #           stamping `_ifm_cp` -> every one-mix row reads 2 or 3 (RED); `_ifm_warn` stamping only when it
 #           warns -> `k` and `cc` read 2 (RED); `_asg_compound_op` without its `_ifm_at` test -> `c` and `cc`
 #           read 2 (RED).
+#   axis 17 (6.7.13) a comparison, an `&&` / `||` link and `& | ^ % << >> >>>` (D12 (a), 2026-10-15) with an f64
+#           right operand give an integer (`_int_resb`, `_int_rest`): `(n < x) * 3` is 3 with only the kind-0
+#           warning (the repro, verbatim: 0 and a false kind-1 before); `n + x` keeps kind 2 (D41). Mutations
+#           (2026-10-16, a scratch tree each): `_int_resb` as `_int_res` -> RED the repro and every row but
+#           `add` (exit 0 / wrong, kind 1); `_int_rest` always `_int_res` -> RED mod shl shr sar only.
+#   axis 18 (6.7.13) `var c = f() < 1.0;` with a `: f64` leading call is an integer binding (`_var_rhs_post`): the
+#           repro verbatim exits 1 (3 before: `-c` flipped the sign bit), `0 - c` draws no kind 2, `var x = f() *
+#           2.0;` keeps its f64. The fix reverted (a scratch tree): RED the repro (3), `sub` / `and` (kind 2: 1).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -595,5 +603,52 @@ if [ ! -s "$W/a16_on" ]; then bad "axis 16: the combined program did not build: 
 elif ! cmp -s "$W/a16_on" "$W/a16_off"; then bad "axis 16: the warned binary differs from the CYRIUS_TYPE_CHECK=0 one"
 elif [ "$n" != 10 ]; then bad "axis 16: the combined program draws $n kind-2 warnings, want 10"; fi
 
+# --- axis 17 (6.7.13): a comparison, `&&` / `||` and `& | ^ % << >> >>>` give an INTEGER — no f64 type left ---
+# issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md; `& | ^ % << >> >>>` the user's
+# decision D12 (a), 2026-10-15. With an f64 RIGHT operand the result kept the f64 type, so the next `*` took
+# the f64 arm (the repro: exit 0, want 3) with a false kind-1 warning naming the wrong mix. Each row is one
+# program, built and run on x86_64: <id>@<statements>@<exit>@<kind-0>@<kind-1>@<kind-2> warnings. `x` holds
+# f64 bits whose low byte is 3 (a shift count of 3, a checkable `&`). `n + x` keeps kind 2's f64 (D41).
+K0="comparison mixes f64 and integer operands"
+printf 'fn main(): i64 { var n = 1; var x: f64 = 2.5; var c = (n < x) * 3; return c; }\nsyscall(60, main());\n' > "$W/a17_repro.cyr"
+build "$W/a17_repro.cyr"; chmod +x "$W/o" 2>/dev/null || true
+rc=0; [ -s "$W/o" ] && { "$W/o" || rc=$?; }
+n0=$(count "$K0"); n1=$(count "$K1")
+[ "$rc" = 3 ] || bad "axis 17 (the repro, verbatim): exit $rc, want 3"
+[ "$n0" = 1 ] && [ "$n1" = 0 ] || bad "axis 17 (the repro): kind-0 $n0 / kind-1 $n1 warnings, want 1 / 0"
+for spec in 'lt@var c = (n < x) * 3; return c;@3@1@0@0' 'and@var c = (n == 64 && x) * 3; return c;@3@0@0@0' \
+            'or@var c = (n == 0 || x) * 3; return c;@3@0@0@0' 'band@var m = 7; var c = (m & x) * 3; return c;@9@0@0@0' \
+            'bor@var m = 7; var c = (m | x) * 3; return c & 255;@21@0@0@0' 'bxor@var m = 7; var c = (m ^ x) * 3; return c & 255;@12@0@0@0' \
+            'mod@var c = (n % x) * 3; return c;@192@0@0@0' 'shl@var m = 7; var c = (m << x) * 3; return c;@168@0@0@0' \
+            'shr@var c = (n >> x) * 3; return c;@24@0@0@0' 'sar@var c = (n >>> x) * 3; return c;@24@0@0@0' \
+            'add@var y = n + x; return 5;@5@0@0@1'; do
+    id=${spec%%@*}; rest=${spec#*@}; stmt=${rest%%@*}; rest=${rest#*@}; want=${rest%%@*}; rest=${rest#*@}
+    w0=${rest%%@*}; rest=${rest#*@}; w1=${rest%%@*}; w2=${rest#*@}
+    printf 'fn main(): i64 {\n    var n = 64;\n    var x: f64 = 0.0;\n    store64(&x, 0x3FF0000000000003);\n    %s\n}\nsyscall(60, main());\n' "$stmt" > "$W/a17_$id.cyr"
+    build "$W/a17_$id.cyr"; chmod +x "$W/o" 2>/dev/null || true
+    rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+    [ "$rc" = "$want" ] || bad "axis 17 ($id: '$stmt'): exit $rc, want $want"
+    n=$(count "$K0"); [ "$n" = "$w0" ] || bad "axis 17 ($id): kind-0 warning count $n, want $w0"
+    n=$(count "$K1"); [ "$n" = "$w1" ] || { bad "axis 17 ($id): kind-1 warning count $n, want $w1"; sed -n 1,3p "$W/e"; }
+    n=$(count "$K2"); [ "$n" = "$w2" ] || bad "axis 17 ($id): kind-2 warning count $n, want $w2"
+done
+
+# --- axis 18 (6.7.13): a comparison bound from a `: f64` leading call is an integer — `0 - c` does not warn ---
+# issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md: `var c = f() < 1.0;` was typed f64 (the leading
+# call's type), so `0 - c` warned kind 2 (and computed -1) and `-c` flipped the sign bit (the repro: exit 3, want 1).
+printf 'fn f(): f64 { return 0.5; }\nfn main(): i64 { var c = f() < 1.0; var n = -c; return n + 2; }\nsyscall(60, main());\n' > "$W/a18_repro.cyr"
+build "$W/a18_repro.cyr"; chmod +x "$W/o" 2>/dev/null || true
+rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+[ "$rc" = 1 ] || bad "axis 18 (the repro, verbatim): exit $rc, want 1"
+for spec in 'sub@var c = f() < 1.0; var n = 0 - c; return n + 2;@1@0' 'and@var k = 1; var c = f() > 0.1 && k == 1; var n = 0 - c; return n + 2;@1@0' \
+            'keep@var x = f() * 2.0; var y = x + x; return f64_to(y);@2@0'; do
+    id=${spec%%@*}; rest=${spec#*@}; stmt=${rest%%@*}; rest=${rest#*@}; want=${rest%%@*}; w2=${rest#*@}
+    printf 'fn f(): f64 { return 0.5; }\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$stmt" > "$W/a18_$id.cyr"
+    build "$W/a18_$id.cyr"; chmod +x "$W/o" 2>/dev/null || true
+    rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+    [ "$rc" = "$want" ] || bad "axis 18 ($id: '$stmt'): exit $rc, want $want"
+    n=$(count "$K2"); [ "$n" = "$w2" ] || { bad "axis 18 ($id): kind-2 warning count $n, want $w2"; sed -n 1,3p "$W/e"; }
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer, a comparison bound from a : f64 call too)"

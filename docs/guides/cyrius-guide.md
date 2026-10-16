@@ -76,7 +76,10 @@ negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns
 bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
 (v6.5.21), which types `x` from the declared return, as it does (6.7.9) a whole method call
 ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(1).area()`
-with `fn area(self): f64`. It does NOT cover an **untyped**
+with `fn area(self): f64`. A leading `: f64` call types the binding only while the whole
+initialiser is still an f64 (6.7.13): `var x = f() * 2.0;` is an f64, `var c = f() < 1.0;` and
+`var c = f() > 0.1 && k == 1;` are the integer 0 / 1 a comparison is (through 6.7.12 `c` was typed
+f64, so `-c` flipped its sign bit and `0 - c` warned). It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
@@ -144,6 +147,12 @@ however far its result is carried (6.7.11): `x = x + (x + 1.5)`, `2 * (x + 1.5)`
 warned twice, `x - (x * (x + 1.5))` three times — the mix's result keeps the f64 type, so each
 enclosing integer operator saw an f64 right operand again. Two mixes still warn twice, and `x + 1.5
 + 2` still warns kind 1 for the `+ 2`.
+A comparison, an `&&` / `||` link and `& | ^ % << >> >>>` give an INTEGER whatever their right
+operand (6.7.13; `& | ^ % << >> >>>` the user's decision D12, 2026-10-15): with `n` an integer and `x:
+f64`, `(n < x) * 3` is 3 (the comparison still warns `comparison mixes f64 and integer operands`),
+and `(n & x) * 3` multiplies integers. Through 6.7.12 the result kept the f64 type of its right operand,
+so the next operator took the f64 arm (`(n < x) * 3` was 0, with a kind-1 warning naming the wrong mix).
+Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
@@ -908,8 +917,8 @@ change the closure's own copy (it persists from call to call; the enclosing fn's
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
 the closure: `x += d`, like `x = x + d`, a `for` init or step and `a, x = f()`, is refused naming the
 capture — ``'x' is captured by value; a captured name is not assignable in a closure — copy it into a
-local (`var y = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
-body). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
+local (`var x_l = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
+body; through 6.7.12 the fix-it's local was always `y`, so a capture named `y` read `var y = y;`). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
 second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
@@ -1111,6 +1120,12 @@ left operand's step: with `q: *i32`, `(q +| 1) + 1` was `q` + 5 bytes, now + 2 �
 of 2026-10-13.) (Before 6.6.17,
 `q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
 its last argument's step.)
+That warning fires at every `*T` site (6.7.13, the user's decision D18 (a), 2026-10-15): a declaration in a fn,
+after the first top-level statement and in the declaration zone, and an assignment to a `*T` local, parameter or
+global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
+assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
+alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
+fn and the assignment to a `*Struct` local or a `*T` global warned on it).
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
 `*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
@@ -1502,7 +1517,9 @@ fn f(): i64 {
 An untyped `var x = mk(9);` takes the struct's type from the call, and so does `var x = (mk(9));`
 or `((mk(9)))`: parentheses around the whole call are transparent (6.7.11; before, `x` held the
 struct's first word, `x.z` was refused and `take(x)` passed that word as the struct's address —
-a crash). An annotation that names no struct is never replaced by the callee's struct:
+a crash), at every size since 6.7.13: `var x = (mk1());` with `mk1` returning an 8-byte struct is
+that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());` with `f` returning
+`: f64` is an f64, as `var x = f();` is. An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 
@@ -1517,11 +1534,29 @@ keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3`
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
-field). A callee held in a variable is unknown: its result stays a word. A global declaration is judged
+field); so is the callee in parentheses, `fncall1((&mk), 9)` (6.7.13). A callee held in a variable is unknown: its result stays a word. A global declaration is judged
 the same (6.7.13): `var G: i64 = mk2(5);` at top level — in the declaration zone or after the first
 statement — with `mk2` returning a 9-16 byte struct is refused with the same words, directly or
 through `&mk2` (through 6.7.12 it stored the first field). Over 16 bytes a top-level call is refused
-anyway (a struct result needs a fn's frame).
+anyway (a struct result needs a fn's frame). A method or an overloaded operator result is judged the
+same (6.7.13; the user's decision D13, 2026-10-15): `var x: i64 = b.mk();` and `var y: u8 = a + c;`
+— or `: f64`, `: bool`, `: cstring`, inside parentheses, in a fn or at top level — with the method or
+the operator fn returning a struct over 8 bytes are refused with the same words, naming that fn (a
+method by its compiler name, `Q_mk`). Through 6.7.12 they kept the struct's first word, narrowed
+(`y` held 77 of 333), and a `: bool` was refused as *not a bool*.
+A pointer annotation names no struct value either (6.7.13; the user's decision D14, 2026-10-15):
+inside a fn, `var x: *P2 = mkp();` — or `*i64`, `*u8`, any `*T` — with `mkp` returning a struct over
+8 bytes is refused, directly, in parentheses, through a generic, a known `&f`, a method or an
+operator:
+
+```
+error: cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take `&x`
+```
+
+Through 6.7.12 it compiled with only *assigning non-pointer to typed pointer* and stored the struct's
+first word as the pointer (`x.b` faulted; a `*i64` held 333). A struct of 8 bytes or less still
+stores its one word, with that warning, as a scalar keeps it; `x = mkp();` into a `*P2` local copies
+through it, unchanged.
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
@@ -1616,6 +1651,16 @@ gp(a): *P3`, whose `p` reads and writes the object) and is NOT supported for a c
 struct by value, which faults. Through a variable, receive a 9-16 byte struct's two words (`var a,
 b = fncall1(fp, 5);`), or, at any size, give the target an out-pointer and have it store the fields
 (`fn mko(a, out: *P3)`, then `var p: P3 = P3 { 0, 0, 0 }; var ig = callptr(fp, 5, &p);`).
+The callee may sit inside parentheses that wrap the whole callee — `callptr((&mk), 5)`,
+`fncall1(((&mk)), 5)` — and is the same known callee, at every destination above (6.7.13; through
+6.7.12 a parenthesised `&f` was unknown, so the struct result convention was lost: a SIGSEGV, or
+`return callptr((&mk), a);` refused). `callptr((fp), 5)` is still a callee held in a variable.
+The known callee's result also takes `.field` and `.method(..)`, chained, as `mk(5).b` does (6.7.13, the
+user's decision D16 (a), 2026-10-15): `fncall1(&mk, 5).b`, `callptr(&mk, 1).dbl().c`, `fncall1((&mk), 5).b`,
+`fncall1(&gp, 5).b` through a `*P3` callee, and the statement `fncall1(&mk, 5).total();`. At top level a struct
+result's field is refused by name, as `mk(5).b`'s is, and a callee held in a variable followed by `.name` is refused
+by name (*its callee is a value, not `&f`, so the result is a word*). Through 6.7.12 the `.` was `expected ';',
+got '.'`.
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
@@ -1639,7 +1684,8 @@ look reasonable:
 ⚠ **A value-form vector LOCAL takes a vector, or nothing (6.7.11).** `var v: f64v2 = <src>;` and
 `v = <src>;` take their 16 / 32 bytes only from a source that IS that vector: a local of the type,
 or a call declared to return it — by name (`mkv(41, 7)`), inside parentheses (`(mkv(41, 7))`), or
-through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (on Windows the call
+through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f`, in parentheses too
+(`callptr((&mkv), ..)`, 6.7.13) (on Windows the call
 then passes the local's address as its hidden result pointer, as `mkv(..)` does). Every other
 source is refused by name (`a value-form vector local is initialised only from a local of its
 type or a call declared to return it .. - got `callptr``): a callee held in a variable
@@ -1890,9 +1936,13 @@ declaration SIGSEGV'd, and a field or variable kept one word of the copy, silent
 a free call in parentheses as a literal element was a scalar for the nested struct's first leaf:
 *unexpected '}'* at 16 and 24 bytes and at 8 bytes with two leaves, and a one-leaf struct took the
 call's word even from another struct (refused by name now, as the unwrapped call is).
-⚠ Known defect (filed for 6.7.12): a 9-16 byte METHOD or OPERATOR result in parentheses as a nested
-literal element (`H { 7, (q.dup()), 8 }`, `(q + r)`) is still *unexpected '}'* — drop the parentheses;
-at 8 and 24 bytes, and as every other destination, it is taken.
+Until 6.7.13 a 9-16 byte METHOD or OPERATOR result in parentheses as a nested literal element
+(`H { 7, (q.dup()), 8 }`, `(q + r)`) and a wrapped struct-typed field (`H { 7, (h.q), 8 }`) were
+*unexpected '}'* too; they are the element the unwrapped source is now, refused by name where it is
+(another struct, no frame at top level). So is a dyn-returning call in parentheses as a `dyn` field's
+element (`H { 7, (pass(o)), 8 }`, 6.7.13, the user's decision D17 (a), 2026-10-15; it was refused: *a struct
+literal does not form a dyn*); at top level the element is refused once, by name (no frame). The untyped
+`var x = (pass(o));` stays refused: a dyn result goes only into a dyn.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
@@ -2615,8 +2665,11 @@ a `return` in a fn declared `: dyn Tr` — the compiler forms a dyn from a sourc
 | a literal: `5`, `-5`, `'A'` (`i64`), `2.5` (`f64`), `true` / `false` (`bool`) | as listed | the value |
 | another dyn of the same trait (a name, a field, a call returning one) | — | a copy |
 
-Parentheses around the whole source change nothing. `T` must implement `Tr`; otherwise the forming
-is refused, naming the missing `impl Tr for T`. A scalar impl (`impl Num for i64`) receives the
+Parentheses around the whole source change nothing. A call through a fn pointer whose callee is
+written `&f` — `fncall1(&mkd, &q)`, `callptr((&mkd), &q)` — is the call `mkd(&q)`: a dyn result is a
+copy, a `*T` result forms (6.7.13; the user's decision D15, 2026-10-15 — through 6.7.12 it was refused
+as *any other expression*); a callee held in a variable is unknown and stays refused. `T` must
+implement `Tr`; otherwise the forming is refused, naming the missing `impl Tr for T`. A scalar impl (`impl Num for i64`) receives the
 value as `self`:
 
 ```cyrius
@@ -5924,11 +5977,21 @@ doesn't clobber it). That holds for every name the body declares: a `var`, a loc
 `const`, a `for … in` variable (for the loop only) and each name of a destructure
 `var a, b = f();`. A range's start bound and a collection are read before the loop
 variable is bound, so `for i in i..5` and `for x in x` read (and capture) the enclosing
-`i` / `x`; a range's end bound reads the loop variable. A destructure binds its names after
-its right-hand side, so `var a, b = f(b);` passes (and captures) the enclosing `b`.
+`i` / `x`; a range's end bound reads the loop variable. A `var` binds its name after its
+initializer, and a destructure its names after its right-hand side, so `var a = a + n;`,
+`var a: i64 = a + n;`, a classic `for (var a = a; ..)` header and `var a, b = f(a);` read (and
+capture) the enclosing `a`; after the declaration `a` is the closure's own.
 ⚠ Before 6.7.11 a `for … in` variable, a local `const` and a destructure's second or
 third name were taken for a read of the enclosing local of that name: the closure was
-refused without lib/alloc.cyr, or carried a heap copy it never read. Pinned by
+refused without lib/alloc.cyr, or carried a heap copy it never read. ⚠ Through 6.7.12 the
+opposite held for a `var` and a destructure's first name: the initializer's read of the
+enclosing name was dropped, so it read a GLOBAL of that name silently (`var a = a + 1;` gave
+the global's value + 1) or was refused `undefined variable 'a'`; now it is a capture (which
+needs lib/alloc.cyr, as any capture does). A nested closure literal's parameters are its own
+too: in `|n| { var g = |m| m + 1; .. }` the `m` is `g`'s parameter, never a read of an
+enclosing `m` (a nested body's other names are still captured through every level). ⚠ Through
+6.7.12 the outer closure captured the enclosing `m` there: refused without lib/alloc.cyr, or a
+heap copy it never read. Pinned by
 `tests/gates/frontend/closure_declared_names_not_captured.sh`.
 
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable
@@ -5978,6 +6041,11 @@ Capture is **by value**: the closure sees the value the variable held at
 construction. Mutating the original afterward does not change what the closure
 returns, and the closure cannot write back to the enclosing variable. Two
 closures built from the same literal have independent environments.
+A narrow scalar local (`i8` .. `i32`, `u8` .. `u32`) is captured as its value — sign-extended for a signed type,
+zero-extended for an unsigned one — exactly as reading it in its own fn gives it, in a nested closure too. ⚠ Through
+6.7.12 the copy took the local's whole 8-byte slot: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 /
+32 bits) on every target, and a positive one could read stale upper bytes (on aarch64 / cx: -249 for 7). A narrow
+parameter was always right. Pinned by `tests/gates/frontend/closure_capture_narrow_scalar.sh`.
 
 Because the environment is heap-allocated, a translation unit that constructs a
 capturing closure must `include "lib/alloc.cyr"` and call `alloc_init()` before

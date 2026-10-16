@@ -17,7 +17,10 @@
 #       scalar annotation passes, so x became the struct: `x.b` compiled, a `u8` held 333. The repro:
 #       3 on all four targets (0 is right). A `: bool` was refused as "not a bool".
 # THE FIX. (a) The receive judges the call inside a whole wrap (`_rcv_peel`, `_pwrap_k` up to the `;`)
-# and the typed path's `_scv_peel` takes it, as for `var x: Q = (mk());`. (b) The user's decision
+# and the typed path's `_scv_peel` takes it, as for `var x: Q = (mk());`. 6.7.13: of 8 B or less the peek types it
+# (`_var_rhs_wsid`; `x.a` was "no struct type in scope for 'x'"): A3 the repro verbatim, A4 the 16 B method's
+# (D42), tcyr w8* / w16_m / wf64 / wexpr, K7. The fix reverted (the 6.7.13 lane base as CYCC; the cross legs
+# build from the tree): RED A3 (refused) and A2 K7 (do not build) on x86_64 and PE; D1 (V4d) green. (b) The user's decision
 # (2026-10-13, A): an annotation that names no struct, receiving a struct over 8 B (not a `Str`), is
 # refused by name at the call (`_rcv_scalar_ann`) —
 #   cannot initialise 'x: i64' from 'mkp', which returns the struct 'P2' - declare 'x: P2' or bind a field
@@ -60,9 +63,12 @@
 # first-field.md). FP0 the filed repro verbatim (both declarations refused); FP1-FP8 `fncall0` / `callptr` at
 # 16 B and 24 B into i64 / u8 / f64 / bool; FP9 / FP10 a wrapped initialiser (into `: bool`, the bool check not
 # run again); FPK1 an 8 B struct is its word, FPK2 a callee in a variable is a word (D31: not refused), FPK3
-# an untyped receive is the struct (D31). A parenthesised callee `(&mk3)` is no known callee yet (i8: issues/
-# 2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md), so D28's "the wrapped callee too (via i8)"
-# rides that fix.
+# an untyped receive is the struct (D31). D28's "the wrapped callee too" rode issues/2026-10-14-parenthesised-fn-
+# pointer-callee-loses-struct-result.md (6.7.13): FP11 its acceptance rows (`fncall1((&mk3), 5)` / `callptr((&mk3),
+# 5)` into `: i64`, exit 139 before), FP12 FP13 a wrapped callee into `: bool` / inside a wrapped initialiser, FPK4
+# an untyped receive of it, TL17 TL18 the same at top level. With the fix reverted (the 6.7.13 lane base as CYCC;
+# the cross legs build from the tree): RED 13 — FP11 FP13 TL17 (BUILT), FP12 TL18 (the old "not a bool"), FPK4
+# (139 / PE 5), FP11's second line, on x86_64 and PE.
 #   N10 `_scv_icall_ann` returns 0 (2026-10-15)          -> RED 45: FP0 (BUILT; and its second line) FP1-FP10 on
 #                                                           every leg (BUILT, or FP4 FP8 FP10 the bool check's
 #                                                           "not a bool"); FPK1-FPK3 green
@@ -89,6 +95,51 @@
 #   N15 `_scv_icall_ann` with its `GINFN != 1` return    -> RED 21: TL0 (+ its second line) TL2 TL5 TL6 TL13 x4
 #   N16 `_scv_top_big` returns 0                         -> RED 4: TLK2 x4 (2 errors: + D24's at the call)
 #   N17 `_scv_gcall_ann` without its `_tn_once(st)` mark -> RED 8: TL15 TL16 x4 (2 errors: + "not a bool" at the `(`)
+#
+# 6.7.13 — D13 (the user, 2026-10-15): D24 REACHES A METHOD OR OPERATOR RESULT. `var x: i64 = b.mk();` / `var y: u8 = a + c;`
+# (any annotation that names no struct) with the method / operator fn returning a struct over 8 B kept the struct's first
+# word, narrowed (the filed repro exited 77 on every target), and a `: bool` was "not a bool". `_scv_rec_ann`
+# (parse_decl.cyr; PARSE_VAR after the initialiser's parse, and the declaration zone's `_gvi_scalar`) reads the
+# struct-result record (`_sc_whole`) and refuses with D24's words through the shared `_rcv_ann_refuse`, naming the fn
+# (issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). SA0 the repro verbatim;
+# SA1-SA13 a 16 B / 24 B method and a 16 B / 24 B operator into i64 / u8 / f64 / bool; SA14 SA15 SA24 wrapped; SA16 a
+# generic method; SA17 a closure; SA18 SA22 `: cstring` (SA22: the annotation stands, `x.b` the second error); SA19 a
+# chain; SA20 a generic instance (T = i32); SA21 `x.b` the second error; SA23 an initialiser refused inside is not
+# refused again; SAT1-SAT6 top level, the zone and after a first statement; controls SATK1 (24 B at top level: one
+# no-frame refusal), SATK2 SAK1 SAK2 (8 B and `Str` keep the word), SAK3 (a struct annotation receives), SAK4 (untyped,
+# a field), SAK5 (`var x: T` in `gb<Q>`), SAK6 (an 8 B method into `: bool` keeps the bool check). (Each mutant: a
+# scratch copy of the tree with the one change, its compiler built from it, this gate run from the copy as CYCC.)
+#   N18 the tree before it (7c29f2e1)                    -> RED 121: SA0 (+ its second line) SA1-SA22 SA24 SAT1-SAT6 x4
+#                                                           legs (BUILT, or the bool check's "not a bool" / one error
+#                                                           where two are wanted); SA23 and every control green
+#   N19 `_scv_rec_ann` returns 0                         -> RED 121 (as N18)
+#   N20 `_gvi_scalar` without `_scv_rec_ann`             -> RED 12: SAT1 SAT3 SAT5 x4 (the declaration zone)
+#   N21 `_scv_rec_ann` without its `_tn_once(start)` mark-> RED 8: SA15 SAT5 x4 (2 errors: + "not a bool" at the `(`)
+#   N22 `_sc_var_receive` without the `_scv_refd` test   -> RED 4: SA22 x4 (one error: x received the struct)
+#   N23 `_scv_rec_ann` without the `_scv_err` test       -> RED 4: SA23 x4 (2 errors)
+#   N24 `_rcv_ann_hit` without the size / `Str` tests    -> RED 20: K1 K2 FPK1 FPK4 TLK3 x4 (a method / operator of 8 B
+#                                                           or less is never offered: its record is -3)
+#
+# 6.7.13 — D14 (the user, 2026-10-15): A BY-VALUE STRUCT OVER 8 B INTO A POINTER ANNOTATION, refused by name in a fn:
+# "cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take `&x`". It compiled
+# under "assigning non-pointer to typed pointer" and stored the struct's first word as the pointer (the filed repros:
+# 139 / 139 / 14 / 5 for `*P2`, 77 for `*i64`). PARSE_VAR's receive is gated on `pscale <= 0`; `_rcv_ptr_ann` takes the
+# free call (wrapped, generic), `_scv_icall_ann` the known `&f` call and `_scv_rec_ann` a method / operator, each through
+# `_rcv_ann_refuse` with the pointer remedy, the typed-pointer warning silenced on the refused line (`_ptr_refd_ti`)
+# (issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md). PT0 PT00 the two repros verbatim; PT1-PT9
+# `*u8` / `*P3` / `*i64` at 16 and 24 B, wrapped, a generic callee, a closure, `*T` in a generic fn; PT10-PT13 `&f`
+# (`fncall0`, `callptr`, the callee wrapped, the call wrapped; PT10's refusal at the callee's name, as D28's); PT14-PT18
+# a method, an operator, wrapped, a generic method; controls PTK1 PTK2 (8 B keeps its word AND the warning), PTK3
+# (`x = mkp();` into a `*P2` local copies through it), PTK4 (the remedy), PTK5 (a `Str` into `*Str`). Top level is
+# outside the filed surface (staged: 2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md).
+#   N25 the tree before it (6ab2a9c8)                    -> RED 80: PT0 PT00 PT1-PT18 x4 (BUILT with the warning)
+#   N26 `_rcv_ptr_ann` returns 0                         -> RED 44: PT0 PT00 PT1-PT9 x4
+#   N27 `_scv_icall_ann` without its pointer arm         -> RED 1: PT10's column (`_scv_rec_ann` still refuses the `&f`
+#                                                           call from its struct-result record, at `fncall0`)
+#   N28 `_scv_rec_ann` without its pointer arm           -> RED 20: PT14-PT18 x4
+#   N29 `_rcv_ptr_ann` without `_ptr_refd_ti`            -> RED 44: PT0 PT00 PT1-PT9 x4 (a warning beside the refusal)
+#   N30 `_rcv_ptr_ann` without the wrap peel             -> RED 8: PT5 PT6 x4
+#   N31 `_scv_rec_ann` without `_ptr_refd_ti`            -> RED 20: PT14-PT18 x4 (a warning beside the refusal)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -286,6 +337,27 @@ rowf FPK2 'fn f(): i64 { var fp = &mkp; var x: i64 = callptr(fp); return x + 4; 
 runs FPK2 34 "control: a callee held in a variable is a word (D31), not refused"
 rowf FPK3 'fn f(): i64 { var x = callptr(&mk3); var y = fncall0(&mkp); return dq3(x) + dq(y) - 34; }'
 runs FPK3 34 "control: an untyped receive of a known callee is the struct (D31)"
+# 6.7.13 — the callee in parentheses, `(&mk3)`, is the known callee (issues/2026-10-14-parenthesised-fn-pointer-
+# callee-loses-struct-result.md): D28's acceptance rows, refused with D24's words naming mk3 (they compiled and exited
+# 139 on x86_64 / aarch64, 1 on cx, 5 on PE).
+cat > "$T/FP11.cyr" <<'EOF'
+include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+fn main(): i64 { var n: i64 = fncall1((&mk3), 5); var m: i64 = callptr((&mk3), 5); return n + m; }
+syscall(60, main());
+EOF
+refused FP11 "cannot initialise 'n: i64' from 'mk3', which returns the struct 'P3' - declare 'n: P3' or bind a field" \
+    "D28's wrapped callee: \`fncall1((&mk3), 5)\` and \`callptr((&mk3), 5)\` into \`: i64\` (exit 139 before)" 2
+if grep -qF "cannot initialise 'm: i64' from 'mk3', which returns the struct 'P3' - declare 'm: P3' or bind a field" "$T/FP11.x86_64.err"; then
+    ok "FP11 the callptr declaration is refused by name too"
+else bad "FP11 the second declaration (\`m: i64 = callptr((&mk3), 5)\`) was not refused by name"; fi
+rowf FP12 'fn f(): i64 { var x: bool = fncall0(((&mk3))); if (x) { return 1; } return 0; }'
+refused FP12 "cannot initialise 'x: bool' $M24" "\`fncall0(((&mk3)))\` into \`: bool\` (the bool check not run again)"
+rowf FP13 'fn f(): i64 { var x: u8 = (callptr((&mkp))); return x; }'
+refused FP13 "cannot initialise 'x: u8' $M16" "a wrapped initialiser and callee, \`(callptr((&mkp)))\`"
+rowf FPK4 'fn f(): i64 { var x = callptr((&mk3)); var y = fncall0(((&mkp))); var z: i64 = fncall0((&mk1)); return dq3(x) + dq(y) + z - 67; }'
+runs FPK4 34 "control: an untyped receive of a wrapped known callee is the struct; 8 B into \`: i64\` its word"
 
 # --- D24 at top level (6.7.13; 6.7.12's D28, "D24 at every path"): the declaration zone and after a first statement ---
 # The filed repro, verbatim (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md): exit 10 before.
@@ -364,12 +436,282 @@ rowt TLK2 after 'var G: i64 = mk3(5);'
 refused TLK2 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: over 16 B keeps its one no-frame refusal"
 printf '%s\nvar A: i64 = mk1(5);\nvar B: i64 = fncall1(&mk1, 6);\n%s\nalloc_init();\nvar C: i64 = mk1(9);\nvar D: i64 = mks();\nvar E: i64 = callptr(&mk1, 9);\nsyscall(60, A + B + C + str_len(D) + E);\n' "$TH" "$TS" > "$T/TLK3.cyr"
 runs TLK3 34 "control: an 8 B struct (direct, \`fncall1\`, \`callptr\`) and a \`Str\` into top-level \`: i64\`, the zone and after"
+rowt TL17 zone 'var G: i64 = callptr((&mk2), 5);'
+refused TL17 "cannot initialise 'G: i64' $MT" "the declaration zone: the callee in parentheses, \`callptr((&mk2), 5)\` (6.7.13; exit 5 before)"
+rowt TL18 after 'var G: bool = fncall1(((&mk2)), 5);'
+refused TL18 "cannot initialise 'G: bool' $MT" "after a first statement: \`fncall1(((&mk2)), 5)\` into \`: bool\` (once)"
+
+# --- D13 (6.7.13; the user, 2026-10-15): D24 reaches a METHOD or OPERATOR result, in a fn and at top level ---
+# (issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md) The filed repro, verbatim:
+# exit 77 on x86_64 / aarch64 / cx / PE before (x = 333, y = 77); now both declarations are refused by name.
+cat > "$T/SA0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 4; return q; } }
+fn Q_add(l: *Q, r: *Q): Q { var q: Q; q.a = l.a + r.a; q.b = l.b + r.b; return q; }
+fn main(): i64 {
+    var b = Q { 1, 2 };
+    var x: i64 = b.mk();          # 333 — the first word
+    var a = Q { 300, 2 };
+    var c = Q { 33, 2 };
+    var y: u8 = a + c;            # 333 narrowed to 77
+    return x % 256 + y - 77;      # 77 on every target
+}
+syscall(60, main());
+EOF
+refused SA0 "cannot initialise 'x: i64' from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' or bind a field" \
+    "D13's repro verbatim: \`var x: i64 = b.mk();\` and \`var y: u8 = a + c;\` (exit 77 before)" 2
+if grep -qF "cannot initialise 'y: u8' from 'Q_add', which returns the struct 'Q' - declare 'y: Q' or bind a field" "$T/SA0.x86_64.err"; then
+    ok "SA0 the operator declaration is refused by name too"
+else bad "SA0 the second declaration (\`y: u8 = a + c\`) was not refused by name"; fi
+MH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct Q { a; b; }
+struct Q3 { a; b; c; }
+struct Q1 { a; }
+impl Q {
+    fn mk(self): Q { var q: Q; q.a = 30; q.b = 4; return q; }
+    fn mk3(self): Q3 { var q: Q3; q.a = 30; q.b = 4; q.c = 7; return q; }
+    fn mk1(self): Q1 { var q: Q1; q.a = 33; return q; }
+    fn ms(self): Str { return str_from("abc"); }
+    fn mkg<T>(self, v: T): Q { var q: Q; q.a = v; q.b = 4; return q; }
+}
+fn Q_add(l: *Q, r: *Q): Q { var q: Q; q.a = l.a + r.a; q.b = l.b + r.b; return q; }
+fn Q3_add(l: *Q3, r: *Q3): Q3 { var q: Q3; q.a = l.a + r.a; q.b = l.b + r.b; q.c = 7; return q; }
+fn Q1_add(l: *Q1, r: *Q1): Q1 { var q: Q1; q.a = l.a + r.a; return q; }
+fn dqm(q: Q): i64 { return q.a + q.b; }'
+rowm() { printf '%s\n%s\nsyscall(60, f());\n' "$MH" "$2" > "$T/$1.cyr"; }
+MB='var b = Q { 1, 2 };'
+MO='var a = Q { 10, 1 }; var c = Q { 20, 3 };'
+MO3='var a = Q3 { 10, 1, 0 }; var c = Q3 { 20, 3, 0 };'
+MQ="from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' or bind a field"
+MQ3="from 'Q_mk3', which returns the struct 'Q3' - declare 'x: Q3' or bind a field"
+MQA="from 'Q_add', which returns the struct 'Q' - declare 'x: Q' or bind a field"
+MQ3A="from 'Q3_add', which returns the struct 'Q3' - declare 'x: Q3' or bind a field"
+rowm SA1 "fn f(): i64 { $MB var x: i64 = b.mk(); return x; }"
+refused SA1 "cannot initialise 'x: i64' $MQ" "a 16 B method into \`: i64\` (exit 30 before: the first word)"
+rowm SA2 "fn f(): i64 { $MB var x: u8 = b.mk(); return x; }"
+refused SA2 "cannot initialise 'x: u8' $MQ" "a 16 B method into \`: u8\`"
+rowm SA3 "fn f(): i64 { $MB var x: f64 = b.mk(); return 0; }"
+refused SA3 "cannot initialise 'x: f64' $MQ" "a 16 B method into \`: f64\` (built before)"
+rowm SA4 "fn f(): i64 { $MB var x: bool = b.mk(); if (x) { return 1; } return 0; }"
+refused SA4 "cannot initialise 'x: bool' $MQ" "a 16 B method into \`: bool\` (D24's words, not \"not a bool\")"
+rowm SA5 "fn f(): i64 { $MB var x: i64 = b.mk3(); return x; }"
+refused SA5 "cannot initialise 'x: i64' $MQ3" "a 24 B method into \`: i64\`"
+rowm SA6 "fn f(): i64 { $MB var x: u8 = b.mk3(); return x; }"
+refused SA6 "cannot initialise 'x: u8' $MQ3" "a 24 B method into \`: u8\`"
+rowm SA7 "fn f(): i64 { $MB var x: f64 = b.mk3(); return 0; }"
+refused SA7 "cannot initialise 'x: f64' $MQ3" "a 24 B method into \`: f64\`"
+rowm SA8 "fn f(): i64 { $MB var x: bool = b.mk3(); if (x) { return 1; } return 0; }"
+refused SA8 "cannot initialise 'x: bool' $MQ3" "a 24 B method into \`: bool\`"
+rowm SA9 "fn f(): i64 { $MO var x: i64 = a + c; return x; }"
+refused SA9 "cannot initialise 'x: i64' $MQA" "a 16 B operator into \`: i64\`"
+rowm SA10 "fn f(): i64 { $MO var x: u8 = a + c; return x; }"
+refused SA10 "cannot initialise 'x: u8' $MQA" "a 16 B operator into \`: u8\`"
+rowm SA11 "fn f(): i64 { $MO var x: f64 = a + c; return 0; }"
+refused SA11 "cannot initialise 'x: f64' $MQA" "a 16 B operator into \`: f64\`"
+rowm SA12 "fn f(): i64 { $MO var x: bool = a + c; if (x) { return 1; } return 0; }"
+refused SA12 "cannot initialise 'x: bool' $MQA" "a 16 B operator into \`: bool\`"
+rowm SA13 "fn f(): i64 { $MO3 var x: i64 = a + c; return x; }"
+refused SA13 "cannot initialise 'x: i64' $MQ3A" "a 24 B operator into \`: i64\`"
+rowm SA14 "fn f(): i64 { $MB var x: i64 = (b.mk()); return x; }"
+refused SA14 "cannot initialise 'x: i64' $MQ" "a wrapped method, \`(b.mk())\`"
+rowm SA15 "fn f(): i64 { $MO var x: bool = ((a + c)); if (x) { return 1; } return 0; }"
+refused SA15 "cannot initialise 'x: bool' $MQA" "a wrapped operator into \`: bool\` (the bool check not run again)"
+rowm SA16 "fn f(): i64 { $MB var x: i64 = b.mkg(33); return x; }"
+refused SA16 "cannot initialise 'x: i64' from 'Q_mkg', which returns the struct 'Q' - declare 'x: Q' or bind a field" "a generic method, \`b.mkg(33)\`"
+rowm SA17 "fn f(): i64 { $MB var g = |k| { var x: u8 = b.mk(); return x + k; }; return fncall1(g, 0); }"
+refused SA17 "cannot initialise 'x: u8' $MQ" "a method in a closure"
+rowm SA18 "fn f(): i64 { $MB var x: cstring = b.mk(); return 0; }"
+refused SA18 "cannot initialise 'x: cstring' $MQ" "\`: cstring\` (the struct was received behind it before)"
+rowm SA19 "fn f(): i64 { $MB var x: i64 = b.mk().mk(); return x; }"
+refused SA19 "cannot initialise 'x: i64' $MQ" "a method chain ending in a 16 B result"
+rowm SA20 "fn gb<T>(b: Q): i64 { var x: T = b.mk(); return 0; }
+fn f(): i64 { $MB return gb<i32>(b); }"
+refused SA20 "cannot initialise 'x: T' $MQ" "a generic instance whose T is i32"
+rowm SA21 "fn f(): i64 { $MB var x: i64 = b.mk(); return x.b; }"
+refused SA21 "cannot initialise 'x: i64' $MQ" "x keeps its \`i64\`: \`x.b\` the second, accurate error" 2
+rowm SA24 "fn f(): i64 { $MO var x: i64 = (a + c); return x; }"
+refused SA24 "cannot initialise 'x: i64' $MQA" "a wrapped 16 B operator into \`: i64\` (struct_operator_result_binding.tcyr pinned its first word through 6.7.12)"
+rowm SA22 "fn f(): i64 { $MB var x: cstring = b.mk(); return x.b; }"
+refused SA22 "cannot initialise 'x: cstring' $MQ" "\`: cstring\` keeps its annotation: \`x.b\` the second error (it read 4 before)" 2
+rowm SA23 "fn f(): i64 { $MB var x: i64 = b.mkg(zz); return x; }"
+refused SA23 "undefined variable 'zz'" "a line refused inside its initialiser is not refused again for its result"
+# top level: the declaration zone (`_gvi_expr`) and after a first statement (PARSE_VAR)
+MZ='var B = Q { 1, 2 };
+var A = Q { 10, 1 };
+var C = Q { 20, 3 };'
+rowz() {
+    if [ "$2" = zone ]; then printf '%s\n%s\n%s\nsyscall(60, 0);\n' "$MH" "$MZ" "$3" > "$T/$1.cyr"
+    else printf '%s\n%s\nvar Z = 0;\nZ = 1;\n%s\nsyscall(60, 0);\n' "$MH" "$MZ" "$3" > "$T/$1.cyr"; fi
+}
+MGQ="from 'Q_mk', which returns the struct 'Q' - declare 'G: Q' or bind a field"
+MGA="from 'Q_add', which returns the struct 'Q' - declare 'G: Q' or bind a field"
+rowz SAT1 zone 'var G: i64 = B.mk();'
+refused SAT1 "cannot initialise 'G: i64' $MGQ" "top level, the declaration zone: \`var G: i64 = B.mk();\` (exit 30 before)"
+rowz SAT2 after 'var G: i64 = B.mk();'
+refused SAT2 "cannot initialise 'G: i64' $MGQ" "top level, after a first statement: a method"
+rowz SAT3 zone 'var G: u8 = A + C;'
+refused SAT3 "cannot initialise 'G: u8' $MGA" "top level, the declaration zone: an operator into \`: u8\`"
+rowz SAT4 after 'var G: f64 = (A + C);'
+refused SAT4 "cannot initialise 'G: f64' $MGA" "top level, after a first statement: a wrapped operator into \`: f64\`"
+rowz SAT5 zone 'var G: bool = (B.mk());'
+refused SAT5 "cannot initialise 'G: bool' $MGQ" "top level, the declaration zone: a wrapped method into \`: bool\` (once)"
+rowz SAT6 after 'var G: cstring = B.mkg(7);'
+refused SAT6 "cannot initialise 'G: cstring' from 'Q_mkg', which returns the struct 'Q' - declare 'G: Q' or bind a field" "top level, after a first statement: a generic method into \`: cstring\`"
+rowz SATK1 after 'var G: i64 = B.mk3();'
+refused SATK1 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: a 24 B method at top level keeps its one no-frame refusal"
+printf '%s\n%s\nvar P = Q1 { 33 };\nvar G1: i64 = B.mk1();\nvar G2 = B.mk();\nvar Z = 0;\nZ = 1;\nalloc_init();\nvar G3: i64 = B.ms();\nvar G4: i64 = P + P;\nsyscall(60, G1 + str_len(G3) - 36 + G4 - 66 + 34 + G2 - 30);\n' "$MH" "$MZ" > "$T/SATK2.cyr"
+runs SATK2 34 "control: at top level an 8 B method / operator and a \`Str\` method into \`: i64\`, an untyped method, keep the word"
+# controls in a fn
+rowm SAK1 "fn f(): i64 { $MB var x: i64 = b.mk1(); var a1 = Q1 { 30 }; var y: u8 = a1 + a1; return x + y - 59; }"
+runs SAK1 34 "control: an 8 B method and operator result into \`: i64\` / \`: u8\` keep their one word"
+rowm SAK2 "fn f(): i64 { alloc_init(); $MB var s: i64 = b.ms(); return str_len(s) + 31; }"
+runs SAK2 34 "control: a \`Str\`-returning method into \`: i64\` keeps the handle"
+rowm SAK3 "fn f(): i64 { $MB $MO var x: Q = b.mk(); var y: Q = (a + c); var z: Q3 = b.mk3(); return dqm(x) + dqm(y) + z.c - 41; }"
+runs SAK3 34 "control: a struct annotation still receives the method / operator result"
+rowm SAK4 "fn f(): i64 { $MB $MO var x = b.mk(); var y = (a + c); var n: i64 = b.mk().b; return dqm(x) + dqm(y) + n - 38; }"
+runs SAK4 34 "control: an untyped receive is the struct; a field of the result binds the field"
+rowm SAK5 "fn gb<T>(b: Q): i64 { var x: T = b.mk(); return dqm(x); }
+fn f(): i64 { $MB return gb<Q>(b); }"
+runs SAK5 34 "control: \`var x: T = b.mk();\` in \`gb<Q>\` is the struct (the base parse is not judged)"
+rowm SAK6 "fn f(): i64 { $MB var x: bool = b.mk1(); return 0; }"
+refused SAK6 "cannot initialize bool 'x' with a value that is not a bool" "control: an 8 B method into \`: bool\` keeps the bool check"
+
+# --- D14 (6.7.13; the user, 2026-10-15): a by-value struct over 8 B into a POINTER annotation, refused by name ---
+# (issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md) The two filed repros, verbatim: they compiled
+# under "assigning non-pointer to typed pointer" and exited 139 on x86_64 / aarch64, 14 on cx, 5 on PE (`*P2`), and 77
+# on all four (`*i64`, the struct's first word held as an address); now each is refused once, with no warning.
+cat > "$T/PT0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+fn mkp(): P2 { var p: P2; p.a = 333; p.b = 3; return p; }
+fn main(): i64 {
+    var x: *P2 = mkp();
+    return x.b;
+}
+var rc = main();
+syscall(60, rc);
+EOF
+refused PT0 "cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take \`&x\`" \
+    "D14's repro 1 verbatim: \`var x: *P2 = mkp();\` (warning only, SIGSEGV at x.b before)"
+cat > "$T/PT00.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+fn mkp(): P2 { var p: P2; p.a = 333; p.b = 3; return p; }
+fn main(): i64 {
+    var x: *i64 = mkp();
+    return x;
+}
+var rc = main();
+syscall(60, rc);
+EOF
+refused PT00 "cannot initialise 'x: *i64' from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take \`&x\`" \
+    "D14's repro 2 verbatim: \`var x: *i64 = mkp();\` (it held 333 as an address)"
+PM16="from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take \`&x\`"
+PM24="from 'mk3', which returns the struct 'P3' - declare 'x: P3' and take \`&x\`"
+row PT1 'fn f(): i64 { var x: *u8 = mkp(); return 0; }'
+refused PT1 "cannot initialise 'x: *u8' $PM16" "16 B into \`*u8\`"
+row PT2 'fn f(): i64 { var x: *P3 = mk3(); return x.c; }'
+refused PT2 "cannot initialise 'x: *P3' $PM24" "24 B into \`*P3\` (SIGSEGV before)"
+row PT3 'fn f(): i64 { var x: *i64 = mk3(); return 0; }'
+refused PT3 "cannot initialise 'x: *i64' $PM24" "24 B into \`*i64\`"
+row PT4 'fn f(): i64 { var x: *u8 = mk3(); return 0; }'
+refused PT4 "cannot initialise 'x: *u8' $PM24" "24 B into \`*u8\`"
+row PT5 'fn f(): i64 { var x: *P2 = (mkp()); return x.b; }'
+refused PT5 "cannot initialise 'x: *P2' $PM16" "a wrapped call, \`(mkp())\`"
+row PT6 'fn f(): i64 { var x: *i64 = ((mk3())); return 0; }'
+refused PT6 "cannot initialise 'x: *i64' $PM24" "a wrapped call, \`((mk3()))\`"
+row PT7 'fn f(): i64 { var x: *i64 = mkg<i64>(3); return 0; }'
+refused PT7 "cannot initialise 'x: *i64' from 'mkg', which returns the struct 'Bx' - declare 'x: Bx' and take \`&x\`" "a generic callee, \`mkg<i64>(3)\`"
+row PT8 'fn f(): i64 { var g = |k| { var x: *P2 = mkp(); return k; }; return fncall1(g, 0); }'
+refused PT8 "cannot initialise 'x: *P2' $PM16" "in a closure"
+row PT9 'fn gp<T>(v: T): i64 { var x: *T = mkp(); return 0; }
+fn f(): i64 { return gp<i32>(3); }'
+refused PT9 "cannot initialise 'x: *T' $PM16" "in a generic fn (\`*T\`, every instance)"
+rowf PT10 'fn f(): i64 { var x: *P2 = fncall0(&mkp); return x.b; }'
+refused PT10 "cannot initialise 'x: *P2' $PM16" "\`fncall0(&mkp)\`"
+if grep -q '^error:<source>:[0-9]*:37: cannot initialise' "$T/PT10.x86_64.err"; then
+    ok "PT10 the refusal sits at the callee's name (\`mkp\`, column 37), as D28's does"
+else bad "PT10 the refusal is not at the callee's name: $(grep '^error' "$T/PT10.x86_64.err" | head -1)"; fi
+rowf PT11 'fn f(): i64 { var x: *i64 = fncall0((&mkp)); return 0; }'
+refused PT11 "cannot initialise 'x: *i64' $PM16" "\`fncall0((&mkp))\`, the callee in parentheses"
+rowf PT12 'fn f(): i64 { var x: *P3 = callptr(&mk3); return x.c; }'
+refused PT12 "cannot initialise 'x: *P3' $PM24" "\`callptr(&mk3)\` (24 B)"
+rowf PT13 'fn f(): i64 { var x: *u8 = (fncall0(&mkp)); return 0; }'
+refused PT13 "cannot initialise 'x: *u8' $PM16" "a wrapped \`(fncall0(&mkp))\`"
+PMQ="from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`"
+PMA="from 'Q_add', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`"
+rowm PT14 "fn f(): i64 { $MB var x: *Q = b.mk(); return x.b; }"
+refused PT14 "cannot initialise 'x: *Q' $PMQ" "a 16 B method into \`*Q\` (SIGSEGV before)"
+rowm PT15 "fn f(): i64 { $MB var x: *i64 = b.mk3(); return 0; }"
+refused PT15 "cannot initialise 'x: *i64' from 'Q_mk3', which returns the struct 'Q3' - declare 'x: Q3' and take \`&x\`" "a 24 B method into \`*i64\`"
+rowm PT16 "fn f(): i64 { $MO var x: *Q = a + c; return x.b; }"
+refused PT16 "cannot initialise 'x: *Q' $PMA" "a 16 B operator into \`*Q\`"
+rowm PT17 "fn f(): i64 { $MO var x: *u8 = ((a + c)); return 0; }"
+refused PT17 "cannot initialise 'x: *u8' $PMA" "a wrapped operator into \`*u8\`"
+rowm PT18 "fn f(): i64 { $MB var x: *Q = b.mkg(5); return 0; }"
+refused PT18 "cannot initialise 'x: *Q' from 'Q_mkg', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`" "a generic method into \`*Q\`"
+# controls: 8 B or less keeps its word and the typed-pointer warning (D14); an assignment through a *P2 local is unchanged
+# warned <name> <want exit> <what>: builds on every leg WITH the typed-pointer warning, and exits <want>
+warned() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        compile "$leg" "$1"
+        if [ "$crc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$1 $3 ($leg): did not build (rc $crc): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"; continue; fi
+        if grep -qF "assigning non-pointer to typed pointer" "$T/$1.$leg.err"; then ok "$1 $3 ($leg): the warning kept"
+        else bad "$1 $3 ($leg): no typed-pointer warning"; fi
+    done
+    runs "$1" "$2" "$3"
+    rows=$((rows - 1))
+}
+row PTK1 'fn f(): i64 { var x: *P1 = mk1(); return x; }'
+warned PTK1 33 "control: an 8 B struct into \`*P1\` is its one word, with the typed-pointer warning"
+rowm PTK2 "fn f(): i64 { $MB var x: *Q1 = b.mk1(); return x; }"
+warned PTK2 33 "control: an 8 B method into \`*Q1\` is its one word, with the warning"
+row PTK3 'fn f(): i64 { var p: P2; var x: *P2 = &p; x = mkp(); return x.b + 30; }'
+runs PTK3 34 "control: \`x = mkp();\` into a \`*P2\` local copies through it (the issue's \"right (3)\")"
+row PTK4 'fn f(): i64 { var x: P2 = mkp(); var y: *P2 = &x; var z: P3 = mk3(); var w: *P3 = &z; return y.a + y.b + w.c - 7; }'
+runs PTK4 34 "control: the remedy — \`var x: P2 = mkp();\` and take \`&x\`"
+cat > "$T/PTK5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+fn mks(): Str { return str_from("abc"); }
+fn f(): i64 { alloc_init(); var s: *Str = mks(); return str_len(s) + 31; }
+syscall(60, f());
+EOF
+runs PTK5 34 "control: a \`Str\` result into \`*Str\` keeps its handle (a \`Str\` is one word)"
 
 # --- (a): wrapped calls, run ---
 row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); return dq(x) + dq3(y) + dq3(z) - 68; }'
 runs A1 34 "\`((mkp()))\`, \`(mk3())\`, \`((mk3()))\` into by-value parameters"
 cp tests/tcyr/crossos/struct_receive_paren_call.tcyr "$T/A2.cyr"
-runs A2 0 "tests/tcyr/crossos/struct_receive_paren_call.tcyr (fn scope, a closure, a generic; 16 B and 24 B)"
+runs A2 0 "tests/tcyr/crossos/struct_receive_paren_call.tcyr (fn scope, a closure, a generic; 16 B and 24 B; 6.7.13: 8 B)"
+# 6.7.13 (issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md): the issue's two repros,
+# verbatim — the 8 B free call (`x.a` refused before: "no struct type in scope for 'x'") and the 16 B method
+# (139 / 139 / 1 / 5 through 6.7.10; D42 fixed it in 6.7.11, pinned here).
+cat > "$T/A3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P1 { a; }
+fn mk1(): P1 { var p: P1; p.a = 33; return p; }
+fn main(): i64 { var x = (mk1()); return x.a; }
+syscall(60, main());
+EOF
+runs A3 33 "the 8 B repro verbatim: \`var x = (mk1()); return x.a;\` (refused before)"
+cat > "$T/A4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 3; q.b = 4; return q; } }
+fn dq(q: Q): i64 { return q.a * 10 + q.b; }
+fn main(): i64 { var b = Q { 1, 2 }; var x = (b.mk()); return dq(x); }
+syscall(60, main());
+EOF
+runs A4 34 "the 16 B method repro verbatim: \`var x = (b.mk()); return dq(x);\` (D42)"
 
 # --- controls ---
 row K1 'fn f(): i64 { var x: i64 = mk1(); return x + 1; }'
@@ -393,6 +735,8 @@ fn f(): i64 { return gb<P2>(mkp()); }'
 runs K5 34 "control: \`var x: T = mkp();\` in \`gb<P2>\` (the base parse is not judged)"
 row K6 'fn f(): i64 { var x = mkp(); var y = mk3(); return x.a + x.b + y.c - 7; }'
 runs K6 34 "control: unannotated, unwrapped"
+row K7 'fn f(): i64 { var x = (31 + 3); var y = ((mk1())); return x + y.a - 33; }'
+runs K7 34 "control: \`var x = (31 + 3);\` stays an untyped word beside a wrapped 8 B call (6.7.13)"
 
 # --- a dyn result keeps the 6.7.8 refusals ---
 DH='include "lib/alloc.cyr"
@@ -406,7 +750,7 @@ refused D2 "a dyn Show result $RV" "a dyn: \`var y: i64 = pass(o);\` keeps V4n"
 printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\nsyscall(60, 0);\n' "$DH" > "$T/D3.cyr"
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
-[ "$rows" -ge 65 ] || bad "only $rows rows ran (floor 65)"
+[ "$rows" -ge 138 ] || bad "only $rows rows ran (floor 138)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14)"

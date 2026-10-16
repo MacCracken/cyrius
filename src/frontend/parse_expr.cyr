@@ -324,8 +324,9 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 # Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
 # expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
 # (2, a `for` header) to its unmatched `)`, a `for … in` header's part (3) to its depth-0 `{`,
-# range `..` or `;`, a declaration's right-hand side (4) to its depth-0 `;` (`_cl_walk_stop`); the
-# cursor is left AT that token. Every other `{` is walked as its own scope (`_cl_prescan_nested`).
+# range `..` or `;`, a declaration's tail (4: its annotation and right-hand side) to its depth-0 `;`
+# (`_cl_walk_stop`); the cursor is left AT that token. Every other `{` is walked as its own scope
+# (`_cl_prescan_nested`).
 # ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
 # and the `var` names it declares leave the shadow set when it ends: they used to stay, so
 # `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
@@ -333,6 +334,7 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 # body (`|x| |y| { var t = y; return t + b; }`) or a struct literal holds `;` / `,` that do not
 # end the expression, and stopping there dropped every capture after it. CHANGELOG [6.6.17]
 fn _cl_prescan_body(S, is_block): i64 {
+    var t0 = GTI(S);
     var depth = 0;
     var prev_var = 0;
     var go = 1;
@@ -351,6 +353,10 @@ fn _cl_prescan_body(S, is_block): i64 {
         }
         elif (t == 3) {
             if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
+            elif (TOKTYP(S, GTI(S) + 1) == 2) { _cl_prescan_var(S); t = 0 - 1; }   # 6.7.13
+        }
+        elif (t == 35) {
+            if (_cl_at_lit(S, t0) == 1) { _cl_prescan_lit(S); t = 0 - 1; }     # 6.7.13
         }
         elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
@@ -359,7 +365,7 @@ fn _cl_prescan_body(S, is_block): i64 {
             elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
-            if (t == 3 || t == 168) { prev_var = 1; }   # `var` / a local `const` (6.7.11) names one
+            if (t == 3 || t == 168) { prev_var = 1; }   # a local `const` (6.7.11) names one here
             elif (t == 2) {
                 var noff = PEEKV(S);
                 if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
@@ -390,6 +396,13 @@ fn _cl_prescan_for(S): i64 {
 # `for … in` variable after the start bound or the collection, which read the enclosing name (a
 # range's end bound reads the variable), for the loop only; the names of a destructure after its
 # right-hand side, which reads the enclosing ones. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — NOR IS A DECLARATION'S INITIALIZER A READ OF THE NAME IT DECLARES. A `var` (and a
+# destructure's FIRST name) was still shadowed from the name, so `var a = a + n;` dropped the read
+# of the enclosing `a` that PARSE_VAR makes (it binds after the right-hand side): the body read a
+# GLOBAL `a` silently, or was refused "undefined variable". Every `var` name is shadowed after its
+# tail (`_cl_prescan_var`: the annotation and the `=` right-hand side, mode 4 to its `;`) — a
+# typed `var a: T = ..` and a classic `for (var a = a; ..)` header alike. A local `const` keeps
+# shadowing from its name: its initializer cannot read a runtime local. CHANGELOG [6.7.13]
 fn _cl_walk_stop(S, m, t, depth): i64 {
     if (m < 3) { return 0; }
     if (depth != 0) { return 0; }
@@ -428,11 +441,11 @@ fn _cl_at_mvar(S): i64 {
     if (TOKTYP(S, GTI(S) + 3) != 2) { return 0; }
     return 1;
 }
-# Cursor at `var a, b[, c] = f(..);`: `a` as after any `var`, the right-hand side read, then `b`
-# (and `c`) shadowed. Leaves the cursor at the `;`.
+# Cursor at `var a, b[, c] = f(..);`: the right-hand side read, then `a`, `b` (and `c`) shadowed.
+# Leaves the cursor at the `;`.
 fn _cl_prescan_mvar(S): i64 {
     var ti = GTI(S) + 1;
-    _cl_shadow_add(S, TOKVAL(S, ti));
+    var n1 = TOKVAL(S, ti);
     var n2 = TOKVAL(S, ti + 2);
     var n3 = 0;
     var has3 = 0;
@@ -443,8 +456,19 @@ fn _cl_prescan_mvar(S): i64 {
         STI(S, ti + 1);
         _cl_prescan_body(S, 4);
     }
+    _cl_shadow_add(S, n1);
     _cl_shadow_add(S, n2);
     if (has3 == 1) { _cl_shadow_add(S, n3); }
+    return 0;
+}
+# Cursor at `var IDENT` (one name, `stack var` and a classic `for (` header's included): the tail —
+# an annotation, the `=` right-hand side — read first, then the name shadowed, as PARSE_VAR binds it.
+# Leaves the cursor at the `;`.
+fn _cl_prescan_var(S): i64 {
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 2);
+    _cl_prescan_body(S, 4);
+    _cl_shadow_add(S, noff);
     return 0;
 }
 # Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
@@ -457,6 +481,67 @@ fn _cl_prescan_nested(S): i64 {
     _cl_prescan_body(S, 1);
     _cl_nshadow = mk;
     if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+# ⛔ 6.7.13 — A NESTED CLOSURE'S PARAMETERS ARE ITS OWN. The walk read the names between a nested
+# literal's bars, and every read of them in its body, as reads of the enclosing locals of those
+# names: `|n| { var g = |m| m + 1; .. }` beside an enclosing `m` captured it (refused without
+# lib/alloc.cyr, or a heap env holding a copy never read). At a literal's opening `|` the
+# parameters are shadowed for its body only, as `_cl_prescan_captures` seeds its own. A `|` opens a
+# literal only where an operand starts (`_cl_lit_pos`) and with the parser's parameter list after it
+# (`_cl_lit_end`): a bitwise or follows an operand, and reading one as a literal would DROP the
+# captures between its bars. A position missed falls back to the plain walk — an extra capture, never
+# a dropped one. `||` has no parameters: its body is walked as before. CHANGELOG [6.7.13]
+# `t0`: the walk's first token — a body, a header, a bound, a tail starts an operand there.
+fn _cl_at_lit(S, t0): i64 {
+    if (GTI(S) != t0) { if (_cl_lit_pos(S, GTI(S)) == 0) { return 0; } }
+    if (_cl_lit_end(S, GTI(S)) < 0) { return 0; }
+    return 1;
+}
+# 1 when the token before the `|` at `ti` cannot end an operand: `=` `(` `[` `,` `return` `:` `{` `;`
+# `||`, a binary or prefix operator. A generic's closing `>` / `>>` / `>>>` and a postfix `?` can. A
+# `|` before it is a literal's closing bar only at the walk's first token (`|x| |y| ..`, the case
+# `t0` covers): elsewhere it can be a missed `| |` literal's, and `| | q | r` would shadow `q`.
+fn _cl_lit_pos(S, ti): i64 {
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p == 4 || p == 10 || p == 28 || p == 31 || p == 33 || p == 49) { return 1; }
+    if (p == 13 || p == 5 || p == 54) { return 1; }
+    if (p >= 6 && p <= 9) { return 1; }                                      # + - * /
+    if (p == 17 || p == 18 || p == 19 || p == 21 || p == 22) { return 1; }   # == != < <= >=
+    if (p == 27 || p == 34 || p == 36 || p == 37 || p == 38) { return 1; }   # & % ^ ~ <<
+    if (p == 53 || p == 171) { return 1; }                                   # && !
+    if (p >= 113 && p <= 121) { return 1; }                                  # +% +| +? .. *?
+    return 0;
+}
+# The closing `|` of the parameter list the parser takes after the `|` at `ti` — `| |` or
+# `| IDENT (, IDENT)* |` (a closure's parameters are untyped) — or -1.
+fn _cl_lit_end(S, ti): i64 {
+    var j = ti + 1;
+    if (TOKTYP(S, j) == 35) { return j; }
+    while (TOKTYP(S, j) == 2) {
+        j = j + 1;
+        if (TOKTYP(S, j) == 35) { return j; }
+        if (TOKTYP(S, j) != 31) { return 0 - 1; }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+# Cursor at a nested literal's opening `|` (`_cl_at_lit`): its parameters shadowed, its body walked
+# (a block through `_cl_prescan_nested`, an expression to the `;` / `,` / unmatched closer that ends
+# it), the parameters dropped. Leaves the cursor past a block body, at an expression body's end.
+fn _cl_prescan_lit(S): i64 {
+    var mk = _cl_nshadow;
+    var e = _cl_lit_end(S, GTI(S));
+    var j = GTI(S) + 1;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { _cl_shadow_add(S, TOKVAL(S, j)); }
+        j = j + 1;
+    }
+    STI(S, e + 1);
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    else { _cl_prescan_body(S, 0); }
+    _cl_nshadow = mk;
     return 0;
 }
 # ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took
@@ -685,6 +770,7 @@ fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
             ELOAD64(S);
             return 0;
         }
+        if (w == 1) { if (_cl_cap_narrow(S, base) == 1) { return 0; } }   # 6.7.13: an i8 .. u32 local
         EFLLOAD(S, base - k);
         return 0;
     }
@@ -692,6 +778,22 @@ fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
     if (k > 0) { EADDRA_IMM(S, k * 8); }
     ELOAD64(S);
     return 0;
+}
+
+# ⛔ 6.7.13 — A NARROW SCALAR LOCAL (i8 .. i32, u8 .. u32) holds its value in its slot's low 1 / 2 / 4 bytes, and the
+# env copy took the slot's whole raw word: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on
+# every target, and stale upper bytes came along (a positive one read -249 on aarch64 / cx). Rax = local `base`'s value
+# at its width, sign-extended for a signed one, as the local-read arm loads it (`EFLLOAD_W`): the env word holds the
+# value, so `_cl_cap_load`'s ELOAD64 and a nested closure's re-copy read it right
+# (issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). 1 = loaded. CHANGELOG [6.7.13]
+fn _cl_cap_narrow(S, base): i64 {
+    var lt = _load_lt(S, base);
+    if (lt <= 0) { return 0; }
+    if (lt >= 8) { return 0; }
+    var lw = lt;
+    if (GSLICE_W(S, base) < 0) { lw = 0 - lt; }
+    EFLLOAD_W(S, base, lw);
+    return 1;
 }
 
 # v6.3.10 (F-structs/explicit): non-consuming lookahead from a `<` (token 19) at the
@@ -870,11 +972,14 @@ fn _icall_mark(S): i64 {
     _lfa_end = 0 - 1;
     return GTI(S);
 }
-# The callee expression parsed from `cst` to the cursor: its fn when it is exactly `&f`, else -1.
+# The callee expression parsed from `cst` to the cursor: its fn when it is exactly `&f`, inside any
+# parentheses that wrap the whole callee (`callptr((&mk3), 5)`, 6.7.13: guide § Parentheses), else -1.
 fn _icall_callee(S, cst): i64 {
-    if (TOKTYP(S, cst) != 27) { return 0 - 1; }
-    if (GTI(S) != cst + 2) { return 0 - 1; }
-    if (_lfa_end != cst + 2) { return 0 - 1; }
+    var a = _pwrap_in(S, cst);
+    if (a < 0) { return 0 - 1; }
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (_lfa_end != a + 2) { return 0 - 1; }
+    if (GTI(S) != a + 2 + (a - cst)) { return 0 - 1; }
     return _lfa_fi;
 }
 # The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word, or an
@@ -917,15 +1022,34 @@ fn _icall_sid_at(S, ti): i64 {
 }
 # ... the declared return (GFRS: a struct, a vector's descriptor, a scalar's sentinel) of that `&f`, or 0.
 fn _icall_rs_at(S, ti): i64 {
-    var o = _icall_open_at(S, ti);
-    if (o < 0) { return 0; }
-    if (TOKTYP(S, o + 1) != 27) { return 0; }
-    if (TOKTYP(S, o + 2) != 2) { return 0; }
-    var nx = TOKTYP(S, o + 3);
-    if (nx != 31) { if (nx != 11) { return 0; } }
-    var fi = FINDFN(S, TOKVAL(S, o + 2));
+    var f = _icall_fti(S, ti);
+    if (f < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, f));
     if (fi < 0) { return 0; }
     return GFRS(S, fi);
+}
+# ⛔ 6.7.13 — A PARENTHESISED `&f` CALLEE IS THE KNOWN CALLEE. `callptr((&mk3), 5)` was an unknown callee:
+# the token routes wanted `&` right after the call's `(`, so the struct result convention was lost (SIGSEGV).
+# The `f` token of the call through fncallN / callptr at token `ti` when its first argument is `& IDENT`
+# alone, inside any parentheses wrapping that whole argument (`_pwrap_in`) — the name followed by the
+# wrap's closers, then `,` / `)`; else -1. CHANGELOG [6.7.13]
+fn _icall_fti(S, ti): i64 {
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { return 0 - 1; }
+    var a = _pwrap_in(S, o + 1);
+    if (a < 0) { return 0 - 1; }
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (TOKTYP(S, a + 1) != 2) { return 0 - 1; }
+    var e = a + 2;
+    var k = a - (o + 1);
+    while (k > 0) {
+        if (TOKTYP(S, e) != 11) { return 0 - 1; }
+        e = e + 1;
+        k = k - 1;
+    }
+    var nx = TOKTYP(S, e);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    return a + 1;
 }
 # The `(` of a call through fncallN / callptr at token `ti` (PARSE_FACTOR's gates), or -1.
 fn _icall_open_at(S, ti): i64 {
@@ -942,7 +1066,47 @@ fn _icall_sret(S, cfi, beg): i64 {
     _sc_n0 = 0;
     if (beg == _icall_vbeg) { return _icall_vret(S); }
     if (_icall_sfn(S, cfi) == 0) { if (_pe_vret(S, cfi) == 0) { return 0 - 1; } }   # 6.7.12: a Win64 vector's pointer
-    return _sc_pre(S, cfi, _bx_fname(S, cfi), beg);
+    return _sc_pre_c(S, cfi, _bx_fname(S, cfi), beg, beg + 1);   # 6.7.13: + a 9-16 B temp when a chain follows
+}
+# ⛔ 6.7.13 — A KNOWN CALLEE'S RESULT TAKES `.field` AND `.method(..)` (the user's decision D16 (a), 2026-10-15):
+# `fncall1(&mk3, 5).b`, `callptr(&mk3, 5).tot()`, `fncall1((&gp), 5).n`, as `mk3(5).b` (6.6.12) and a method's
+# result (6.6.17) do. The call returned at its `)` and the `.` was "expected ';'". After the call the method arm's
+# chain runs on the result (`_method_chain`: a struct in the temp `_icall_sret` gave it, a `*T` parked, a scalar
+# callee and a top-level struct refused by name); a callee in a variable is unknown, its result a word (D31), so a
+# `.name` on it is refused by name. Cursor past the call's `)`; `beg` the fncallN / callptr token. CHANGELOG [6.7.13]
+fn _icall_chain(S, cfi, t, beg): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    if (cfi < 0) { return _icall_fld_err(S, beg); }
+    if (GINFN(S) != 1) { if (_ret_agg_class(S, cfi) == 2) { _mchain_skip(S); return 1; } }   # `_sc_pre` refused it
+    _method_chain(S, cfi, _bx_fname(S, cfi), beg, t);
+    _cfo = 0;
+    return 1;
+}
+# Silent under `--syntax-only` (lint's pre-pass), where a callee from a sibling file is unknown too, as `_method_chain`
+# and `_call_field` stay silent there.
+fn _icall_fld_err(S, beg): i64 {
+    if (_panic + _syntax_only == 0) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        PRSTR(": cannot take a field of the result of '");
+        if (TOKTYP(S, beg) == 137) { PRSTR("callptr"); }
+        else { PRSTR(S + 0xEC00000 + TOKVAL(S, beg)); }
+        PRSTR("': its callee is a value, not `&f`, so the result is a word\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    _mchain_skip(S);
+    return 1;
+}
+# The statement form `fncall1(&mk3, 5).tot();` (`_call_field` from `_stmt_call_field`, ti the lowered fncallN
+# name): the call as PARSE_STMT lowers it, its chain run by `_icall_chain`. 1.
+fn _icall_stmt_chain(S, ti): i64 {
+    _fncall_expect = ((L64(S + 0xEC00000 + TOKVAL(S, ti)) >> 48) & 0xFF) - 48;
+    STI(S, ti + 2);
+    PINDIRECT_CALL(S);
+    _cfo = 0;
+    return 1;
 }
 # 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
 # parse_decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
@@ -1051,6 +1215,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     }
     _cfo = 0;
     _icall_result(S, cfi, cp_t, cst - 2);   # 6.7.6: the result is not its last argument's struct (an f64: FE)
+    _icall_chain(S, cfi, cp_t, cst - 2);    # 6.7.13 (D16 (a)): `.field` / `.m(..)` on it
     return 0;
 }
 
@@ -1630,6 +1795,27 @@ fn _int_res(S): i64 {
     SPSC(S, 0);
     _int_st(S);
     return 0;
+}
+# ⛔ 6.7.13 — A COMPARISON (and an `&&` / `||` link) IS 0 OR 1, WHATEVER ITS OPERANDS: its integer arm never
+# wrote its result's type, so with an f64 RIGHT operand (`(n < x) * 3`) the result kept the f64 type and the
+# next operator took the f64 arm (0 where 3 is right, and a false kind-1 warning). An f64 LEFT operand was
+# right (its arm sets 0). And `& | ^ % << >> >>>` give an integer too — they have no f64 form (the user's
+# decision D12 (a), 2026-10-15) — where kind 2 keeps the f64 type for `+ - * /` (`_int_st` leaves floats).
+# `_int_res`, and no expression type at all. issues/2026-10-14-integer-comparison-result-keeps-f64-right-
+# operand-type.md. CHANGELOG [6.7.13]
+fn _int_resb(S): i64 {
+    _int_res(S);
+    SESTYPE(S, 0);
+    return 0;
+}
+# PARSE_TERM's tail after operator token `typ`: `% << >> >>>` give an integer (`_int_resb`); `* /`, whose
+# f64 arms keep their type, and `*| *?` clear only the step and a struct (`_int_res`).
+fn _int_rest(S, typ): i64 {
+    if (typ == 34) { return _int_resb(S); }
+    if (typ == 38) { return _int_resb(S); }
+    if (typ == 39) { return _int_resb(S); }
+    if (typ == 152) { return _int_resb(S); }
+    return _int_res(S);
 }
 
 # _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
@@ -2777,6 +2963,7 @@ fn _mret_fld_err(S, fi, noff): i64 {
 fn _call_field(S): i64 {
     var ti = GTI(S) - 1;
     if (_call_dotted(S, ti) == 0) { return 0; }
+    if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
     var sid = 0;
@@ -7158,7 +7345,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     }
                                     else { go = 0; }
                                 } } } } } } }
-        if (go == 1) { _int_res(S); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct
+        if (go == 1) { _int_rest(S, typ); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13
     }
     return 0;
 }
@@ -7768,9 +7955,9 @@ fn PEXPR(S): i64 {
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
 fn _pexpr_bit_ps(S, typ, ps): i64 {
-    if (typ == 27) { _int_res(S); return 0; }   # 6.7.11: and no struct type (_int_st)
-    if (typ == 35) { _int_res(S); return 0; }
-    if (typ == 36) { _int_res(S); return 0; }
+    if (typ == 27) { _int_resb(S); return 0; }   # 6.7.11: and no struct type (_int_st); 6.7.13: nor an f64 (D12 (a))
+    if (typ == 35) { _int_resb(S); return 0; }
+    if (typ == 36) { _int_resb(S); return 0; }
     return ps;
 }
 
@@ -8073,7 +8260,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 }
             }
             _cfo = 0;
-            _int_res(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct
+            _int_resb(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
         }
     }
@@ -8112,7 +8299,7 @@ fn _PLOGIC_AND(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 0);                 # short-circuited (left false) → result 0
         EPATCH(S, p_end);
-        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
         _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
         lop = PEEKT(S);
     }
@@ -8152,7 +8339,7 @@ fn PCMPE(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 1);                 # short-circuited (left true) → result 1
         EPATCH(S, p_end);
-        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
         _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
         lop = PEEKT(S);
     }

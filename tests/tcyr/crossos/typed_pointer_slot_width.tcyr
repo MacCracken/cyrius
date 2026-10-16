@@ -73,8 +73,8 @@ fn l_i32(): i64 {
     return 0;
 }
 # A stack address can sit below 4 GiB (Windows), where a 4-byte slot would still compare equal:
-# an address with bits above 32 tells every host apart. Assigned, not declared, so the
-# declaration's non-pointer warning does not fire; never dereferenced.
+# an address with bits above 32 tells every host apart. Never dereferenced. (The integer assigned to a
+# `*T` warns "assigning non-pointer to typed pointer" since 6.7.13, D18, as the declaration always did.)
 fn l_high(): i64 {
     var buf: i64[1];
     var a: *i8 = &buf;

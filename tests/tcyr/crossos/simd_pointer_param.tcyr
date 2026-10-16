@@ -81,6 +81,8 @@ fn sp_vrows(): i64 {
     assert_eq(sp_lo((sp_mkv(43, 7))), 43, "D27: rd((mkv(..)))");
     assert_eq(sp_hi(fncall2(&sp_mkv, 44, 8)), 8, "D27: rd(fncall2(&mkv, ..))");
     assert_eq(sp_lo(callptr(&sp_mkv, 45, 9)), 45, "D27: rd(callptr(&mkv, ..))");
+    assert_eq(sp_lo(callptr((&sp_mkv), 42, 2)), 42, "D27: rd(callptr((&mkv), ..)), the callee wrapped (6.7.13: 139 before)");
+    assert_eq(sp_hi(fncall2(((&sp_mkv)), 44, 9)), 9, "D27: rd(fncall2(((&mkv)), ..)), lane 1");
     assert_eq(sp_tcall(), 61, "D27: a call result in a tail position");
     assert_eq(sp_lo(sp_mkg(46, 1)), 46, "D27: an inferred generic call result");
     assert_eq(sp_w3(sp_mkv4(47)), 47, "D27: a 32-byte call result (*f64v4)");

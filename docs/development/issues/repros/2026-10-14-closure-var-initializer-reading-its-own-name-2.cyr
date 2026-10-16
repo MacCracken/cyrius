@@ -1,0 +1,3 @@
+include "lib/fnptr.cyr"
+fn f(): i64 { var a = 5; var cl = |n| { var a = a + n; return a; }; return fncall1(cl, 1); }
+syscall(60, f());

@@ -95,6 +95,8 @@
 # parameter; f64v2 / f32v4 / i32v4 / f64v4, declaration and assignment, and the guide's out-pointer
 # workaround) and Y (refused once, by name, no artifact — Y1 is the filed repro verbatim) on all four
 # legs; tests/tcyr/crossos/simd_indirect_receive.tcyr is the same table for the release gate's hosts.
+# 6.7.13 (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md): V10 — the callee in parentheses,
+# `callptr((&mk2), 4, 1)`, is the known callee (`_icall_fti`): it was refused as a callee in a variable is.
 # MUTATION LEDGER (6.7.11 — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>):
 #   MV1 `_vrcv_decl` never declaring                       -> RED V1 V3 V5 V7 on all four legs (refused: the declaration
 #                                                          fell to the scalar path)
@@ -302,13 +304,17 @@ v_src() {  # $1 row id -> source on stdout; each returns 42 when every lane is r
     V8) printf '%s' "$VH"'fn main(): i64 { var a: f64v4 = mkd(0, 0, 0, 0); a = callptr(&mkd, 1, 2, 3, 4); if (ld(a) != 1020304) { return 1; }
   a = fncall4(&mkd, 5, 6, 7, 8); if (ld(a) != 5060708) { return 2; } a = (mkd(9, 10, 11, 12)); if (ld(a) != 9101112) { return 3; } return 42; }
 '"$VE" ;;
+    V10) printf '%s' "$VH"'fn main(): i64 { var a: f64v2 = callptr((&mk2), 4, 1); if (load64(&a) + load64(&a + 8) != 5) { return 1; }
+  var b: f64v4 = fncall4(((&mkd)), 1, 2, 3, 4); if (ld(b) != 1020304) { return 2; }
+  a = fncall2((&mk2), 56, 78); if (l2(a) != 5678) { return 3; } var c: f32v4 = (callptr((&mkf), 9, 10, 11, 12)); if (lf(c) != 9101112) { return 4; } return 42; }
+'"$VE" ;;
     V9) printf '%s' "$VH"'fn mko(out, a, b): i64 { store64(out, a); store64(out + 8, b); return 0; }
 fn main(): i64 { var fp = &mko; var v: f64v2 = mk2(0, 0); var ig = callptr(fp, &v, 41, 7); var u: f64v2 = mk2(41, 7);
   if (l2(v) != 4107) { return 1; } if (l2(u) != 4107) { return 2; } return 42; }
 '"$VE" ;;
     esac
 }
-V_ROWS="V1 V2 V3 V4 V5 V6 V7 V8 V9"
+V_ROWS="V1 V2 V3 V4 V5 V6 V7 V8 V9 V10"
 y_src() {  # $1 row id -> source on stdout
     case "$1" in
     Y1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }

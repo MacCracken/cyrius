@@ -3852,13 +3852,17 @@ fn _asg_undef_report(S, noff): i64 {
 # (guide § Compound assignment). It was reported as "undefined variable 'x'" — though `x` is defined and
 # readable in the same body (issues/archived/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
 # enclosing scope's (`_cl_snap_find`: inside a closure body only) and the refusal named it, at the cursor.
+# The fix-it's local is named from the capture (`var x_l = x;`): a fixed `y` read `var y = y;` for a
+# capture named `y`, a self-initialisation that names the local as the capture. CHANGELOG [6.7.13]
 fn _asg_cap_name(S, noff): i64 {
     if (_cl_snap_find(S, noff) < 0) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var y = ");
+    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("_l = ");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(";`)\n");
     _err_excerpt(S);
@@ -5657,8 +5661,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # 0. Without this the warning fired on `t = str_new(..)` while the identical
                 # initializer `var t = str_new(..)` was accepted — the two paths disagreeing
                 # about the same expression.
-                if (lt < 0 && _asg_ret_sid <= 0) {
-                    if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
+                # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
+                # the literal 0 is a null reset, never warned (`_tp_warn`).
+                if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
+                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
                 }
             }
         }
@@ -5688,7 +5694,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
-                if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
+                if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
             }
             _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11

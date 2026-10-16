@@ -1,0 +1,7 @@
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var y = 5;
+    var f = |d| { y += d; return y; };
+    return callptr(f, 2);
+}
+syscall(60, main());

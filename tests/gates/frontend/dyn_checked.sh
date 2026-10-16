@@ -288,6 +288,29 @@
 #   MX6  the checker injected with the mode off (`_bnd_finish`)        -> IX3 both files' mode-off rows; S7
 #   MX7  the injected checker's text broken (a missing `;`)            -> IX1 / IX3 the mode-on legs, IX2 every
 #        leg and k (`<bounds>:5:1: expected ';'`)
+#
+#   KC  (6.7.13, the user's decision D15, 2026-10-15) a known `&f` callee is a dyn source as the direct call is
+#       (issues/2026-10-14-dyn-result-through-known-callee-refused.md): KC1 the filed repro verbatim (refused "cannot
+#       form dyn Shape from this expression" on x86_64 / aarch64 / cx / PE before, 18 now); KC2 `callptr`, the callee
+#       wrapped, the call wrapped; KC3 a `*Sq`-returning known callee forms; KC4 an assignment, an argument, a field
+#       store, a `return`; KC5 a callee held in a variable stays refused (FP6, D31); KC6 a known callee returning i64
+#       stays refused; KC7 at top level the call refuses itself once (as TY2b). aarch64 / cx / PE: dyn_objects.tcyr
+#       §known through the A / IX3 legs. Mutants (2026-10-16, a scratch copy of src/ with the one edit, this gate run
+#       from it; its TT rows read cbt/ / editors/ / the guide the copy does not carry, so those are left out here):
+#   M-KC1 the tree before it (39070516) / `_dyn_icall` answering -1    -> KC1-KC4 (refused), KC7 (the dyn refusal, not
+#                                                                         the no-frame one), CW, A x86 IR=1 / IR=3 / DCE,
+#                                                                         aarch64, PE and IX3 (dyn_objects refused)
+#   M-KC2 `_dyn_icall` under the `t == 2` arm (callptr is token 137)   -> KC2-KC4, CW, the A and IX3 dyn_objects legs
+#   PW  (6.7.13, the user's decision D17 (a), 2026-10-15) a dyn-returning call in parentheses is a struct literal's dyn
+#       element, as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md):
+#       PW1 the filed repro verbatim (refused before, 169 now); PW2 double parentheses; PW3 a wrapped dyn method result;
+#       PW4 / PW5 at top level, wrapped and not, refused once by name (the element's no-frame refusal marks the call, so
+#       V4's "a dyn Show result used as a value" at the same call is not a second report). aarch64 / cx / PE:
+#       dyn_objects.tcyr §literal through the A / IX3 legs. Mutants (2026-10-16, the KC procedure):
+#   M-PW1 the tree before it (5a73a702: `_spi_call` declines a wrapped dyn) -> RED 12: PW1 PW2 (refused), PW4 (refused,
+#                                                                         not as expected), PW5 (2 errors), CW, the A
+#                                                                         x86 / PE and IX3 dyn_objects legs
+#   M-PW2 `_spi_top_ref` without its `_tn_once` mark                   -> RED 2: PW4 PW5 (2 errors)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -696,6 +719,29 @@ else ok "S5: \`shared;\` exports app_entry and no prototype"; fi
 PB="${HP}struct Q { a; b; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\nfn take(k, o: dyn Show, j): i64 { return k * 1000 + dw(o) * 10 + j; }\nfn rw(o: dyn Show): dyn Show { return (pass(o)); }\nfn rd(o: dyn Show): dyn Show {\n    defer { syscall(1, 1, \"\", 0); }\n    return pass(o);\n}\nfn rr(o: dyn Show, k): dyn Show {\n    if (k > 0) { return rr(o, k - 1); }\n    return pass(o);\n}\n${FM}    var q = Q { 1, 2 };\n"
 PL='    var y1: dyn Show = pass(o);\n    if (dw(y1) != 49) { return 1; }\n    var y2: dyn Show = (pass(o));\n    if (dw(y2) != 49) { return 2; }\n    var x3 = pass(o);\n    if (dw(x3) != 49) { return 3; }\n    var z: dyn Show = get(mkw(1, 2));\n    z = pass(o);\n    if (dw(z) != 49) { return 4; }\n    z = get(mkw(1, 2));\n    z = (pass(o));\n    if (dw(z) != 49) { return 5; }\n    var h: H = H { 7, get(mkw(1, 2)), 8 };\n    h.o = pass(o);\n    if (dw(h.o) != 49) { return 6; }\n    h.o = get(mkw(1, 2));\n    h.o = (pass(o));\n    if (dw(h.o) + h.a * 1000 + h.b * 100 != 7849) { return 7; }\n    if (take(3, pass(o), 5) != 3495) { return 8; }\n    if (take(3, (pass(o)), 5) != 3495) { return 9; }\n    var h2: H = H { 6, pass(o), 2 };\n    if (dw(h2.o) + h2.a * 1000 + h2.b * 100 != 6249) { return 10; }\n    var m1: dyn Show = q.mk(o);\n    if (dw(m1) != 49) { return 11; }\n    var m2: dyn Show = (q.mk(o));\n    if (dw(m2) != 49) { return 12; }\n    var m3 = q.mk(o);\n    if (dw(m3) != 49) { return 13; }\n    z = q.mk(o);\n    if (dw(z) != 49) { return 14; }\n    if (take(2, q.mk(o), 1) != 2491) { return 15; }\n    if (dw(rw(o)) != 49) { return 16; }\n    if (dw(rd(o)) != 49) { return 17; }\n    if (dw(rr(o, 3)) != 49) { return 18; }\n    if (dw(pass(pass(o))) != 49) { return 19; }\n    var c = || dw(o);\n    if (callptr(c) != 49) { return 20; }\n    secret var s: dyn Show = o;\n    if (dw(s) != 49) { return 21; }\n    return 42;\n'
 exits p01 42 "P1-P21: var (annotated, wrapped, inferred), assignment (bare, wrapped), field store (bare, wrapped), argument (bare, wrapped), struct-literal element, a method result (var / wrapped / inferred / assignment / argument), return (wrapped, non-tail in a \`defer\` fn, after a tail call), a nested call, a closure capture, \`secret var\` — each takes the dyn whole" "${PB}${PL}${ME}"
+
+# ── KC (6.7.13, D15 — the user, 2026-10-15): a known `&f` callee declared `: dyn Tr` is a dyn source, as the direct
+# call is (issues/2026-10-14-dyn-result-through-known-callee-refused.md). `fncall1(&mkd, &q)` was refused "cannot form
+# dyn Shape from this expression" where `mkd(&q)` copies; `_dyn_icall` (parse_types.cyr) reads it as that call.
+# KC1 the filed repro verbatim (exit 18 on x86_64 here; aarch64 / cx / PE: dyn_objects.tcyr §known, the A legs).
+KH='include "lib/fnptr.cyr"\ntrait Shape { fn area(self): i64; }\nstruct Sq { s; }\nstruct HS { a; o: dyn Shape; b; }\nimpl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }\nfn mkd(p: *Sq): dyn Shape { var o: dyn Shape = p; return o; }\nfn mkp(p: *Sq): *Sq { return p; }\nfn mki(p: *Sq): i64 { return 5; }\nfn take(o: dyn Shape): i64 { return o.area(); }\n'
+exits kc1 18 "KC1: the filed repro verbatim, \`var a: dyn Shape = fncall1(&mkd, &q);\` (refused before)" 'include "lib/fnptr.cyr"\ntrait Shape { fn area(self): i64; }\nstruct Sq { s; }\nimpl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }\nfn mkd(p: *Sq): dyn Shape { var o: dyn Shape = p; return o; }\nfn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mkd, &q); var b: dyn Shape = mkd(&q); return a.area() + b.area(); }\nsyscall(60, run());\n'
+exits kc2 18 "KC2: \`callptr(&mkd, &q)\`, \`fncall1((&mkd), &q)\`, \`callptr(((&mkd)), &q)\` and a wrapped \`(fncall1(&mkd, &q))\`" "${KH}fn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = callptr(&mkd, &q); var b: dyn Shape = fncall1((&mkd), &q); var c: dyn Shape = callptr(((&mkd)), &q); var d: dyn Shape = (fncall1(&mkd, &q)); return a.area() + b.area() + c.area() - d.area(); }\nsyscall(60, run());\n"
+exits kc3 18 "KC3: a known callee returning \`*Sq\` forms (\`fncall1(&mkp, &q)\`, \`callptr((&mkp), &q)\`)" "${KH}fn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mkp, &q); var b: dyn Shape = callptr((&mkp), &q); return a.area() + b.area(); }\nsyscall(60, run());\n"
+exits kc4 42 "KC4: every destination — an assignment, an argument (a dyn result and a \`*Sq\` one), a field store, a \`return\`" "${KH}fn rt(p: *Sq): dyn Shape { return fncall1(&mkd, p); }\nfn run(): i64 { var q = Sq { 3 }; var r = Sq { 1 }; var a: dyn Shape = &r; a = fncall1(&mkd, &q); if (a.area() != 9) { return 1; } if (take(fncall1(&mkd, &q)) + take(callptr(&mkp, &q)) != 18) { return 2; } var h: HS = HS { 1, mkd(&r), 2 }; h.o = callptr(&mkd, &q); if (h.o.area() != 9) { return 3; } var b: dyn Shape = rt(&q); if (b.area() != 9) { return 4; } return 42; }\nsyscall(60, run());\n"
+refused kc5 "cannot form dyn Shape from this expression" "KC5: a callee held in a variable stays refused (\`callptr(fp, &q)\`, D31 / FP6)" "${KH}fn run(): i64 { var q = Sq { 3 }; var fp = &mkd; var a: dyn Shape = callptr(fp, &q); return 0; }\nsyscall(60, run());\n"
+refused kc6 "cannot form dyn Shape from this expression" "KC6: a known callee returning \`i64\` stays refused" "${KH}fn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mki, &q); return 0; }\nsyscall(60, run());\n"
+refused kc7 "'mkd' returns a struct by value, and a struct result needs storage in a fn's frame" "KC7: at top level the call refuses itself, once, as \`mkd(&Q0)\` does (TY2b)" "${KH}var Q0 = Sq { 3 };\nvar G: dyn Shape = fncall1(&mkd, &Q0);\nsyscall(60, 0);\n"
+# ── PW (6.7.13, D17 (a) — the user, 2026-10-15): a dyn-returning call in parentheses is a struct literal's dyn element,
+# as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md). `H { 7,
+# (pass(o)), 8 }` was refused twice at the lane base ("a dyn Show result used as a value", then "a struct literal does
+# not form a dyn"), once after 6.7.13's wrapped pair element; `_spi_call` declined a wrapped dyn result. PW1 the filed
+# repro verbatim (169); aarch64 / cx / PE: dyn_objects.tcyr §literal, the A legs.
+exits pw1 169 "PW1: the filed repro verbatim, \`H { 7, (pass(o)), 8 }\` (refused before)" 'include "lib/alloc.cyr"\ntrait Show { fn show(self): i64; }\nstruct W { o: dyn Show; }\nstruct H { a; o: dyn Show; b; }\nfn mkw(d, v): i64 { var m = alloc(16); store64(m, d); store64(m + 8, v); return m; }\nfn get(w: *W): dyn Show { var o: dyn Show = w.o; return o; }\nfn pass(o: dyn Show): dyn Show { return o; }\nfn dw(o: dyn Show): i64 { var w: W = W { o }; return load64(&w) * 10 + load64(&w + 8); }\nfn main(): i64 {\n    alloc_init();\n    var o: dyn Show = get(mkw(4, 9));\n    var h: H = H { 7, (pass(o)), 8 };      # refused (2 errors); without the parentheses: 169\n    return dw(h.o) + h.a * 1000 + h.b * 100;\n}\nsyscall(60, main() & 255);\n'
+exits pw2 169 "PW2: double parentheses, \`H { 7, ((pass(o))), 8 }\`" "${HP}${FM}    var h: H = H { 7, ((pass(o))), 8 };\n    return (dw(h.o) + h.a * 1000 + h.b * 100) & 255;\n${ME}"
+exits pw3 169 "PW3: a dyn method result in parentheses, \`H { 7, (q.mk(o)), 8 }\`" "${HP}struct Q { k; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\n${FM}    var q: Q = Q { 1 };\n    var h: H = H { 7, (q.mk(o)), 8 };\n    return (dw(h.o) + h.a * 1000 + h.b * 100) & 255;\n${ME}"
+refused pw4 "'pass' returns a struct by value, and a struct result needs storage in a fn's frame" "PW4: at top level, \`var G: H = H { 7, (pass(O)), 8 };\` is refused once, by name" "${HP}struct Sq { n; }\nimpl Show for Sq { fn show(self): i64 { return self.n; } }\nvar S0: Sq = Sq { 5 };\nvar O: dyn Show = &S0;\nvar G: H = H { 7, (pass(O)), 8 };\nsyscall(60, G.a);\n"
+refused pw5 "'pass' returns a struct by value, and a struct result needs storage in a fn's frame" "PW5: ... and unwrapped, \`H { 7, pass(O), 8 }\` (the same element: once; it was refused twice)" "${HP}struct Sq { n; }\nimpl Show for Sq { fn show(self): i64 { return self.n; } }\nvar S0: Sq = Sq { 5 };\nvar O: dyn Show = &S0;\nvar G: H = H { 7, pass(O), 8 };\nsyscall(60, G.a);\n"
 
 # ── H28: the fold, across a newline and a comment; the caret on `dyn` ───────────────────────────────
 exits h28a 49 "H28a: \`dyn\` and its trait split across a newline and a comment fold to one type" "${HP}fn k(o: dyn\n    # a comment\n    Show): i64 { return dw(o); }\n${FM}    return k(o);\n${ME}"

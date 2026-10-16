@@ -900,6 +900,8 @@ fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
+    # 6.7.13: a leading `: f64` call's f64 only when the whole initialiser still is one (`_var_rhs_csid`).
+    if (sid0 == 0 - 9) { if (GESTYPE(S) != F64_TYID) { sid0 = 0; } }
     var os = _sc_small_whole(S, start);
     if (os > 0) { return os; }
     if (sid0 != 0) { return sid0; }
@@ -1704,8 +1706,10 @@ fn _mchain_at(S, k): i64 {
 }
 # `_sc_pre` for the method arm (cursor on the call's `(`): a 9-16 B result followed by a chain
 # needs its temp as much as one a destination asked for.
-fn _sc_pre_m(S, fi, noff, beg): i64 {
-    if (_mchain_at(S, _call_close(S, GTI(S)) + 1) == 0) { return _sc_pre(S, fi, noff, beg); }
+fn _sc_pre_m(S, fi, noff, beg): i64 { return _sc_pre_c(S, fi, noff, beg, GTI(S)); }
+# ... with the call's `(` at token `o` (6.7.13: `_icall_sret`, whose cursor is past the callee).
+fn _sc_pre_c(S, fi, noff, beg, o): i64 {
+    if (_mchain_at(S, _call_close(S, o) + 1) == 0) { return _sc_pre(S, fi, noff, beg); }
     var w = _sc_want;
     _sc_want = beg;
     var t = _sc_pre(S, fi, noff, beg);
@@ -2674,13 +2678,11 @@ fn _spi_call(S, pk): i64 {
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (rs == _STR_SID(S)) { return 0; }
-    # A wrapped dyn result keeps 6.7.8's path (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md).
-    if (pk > 0) { if (_dyn_is(S, rs) == 1) { return 0; } }
     var noff = PEEKV(S);
     var k = 1;
     if (STRUCTSZ(S, rs - 1) <= 8) { PCMPE(S); k = 3; }
     elif (GINFN(S) != 1) {
-        if (_ret_agg_class(S, fi) == 1) { _refuse_toplevel_struct_call(S, noff); }
+        if (_ret_agg_class(S, fi) == 1) { _spi_top_ref(S, noff); }
         PCMPE(S);
         return 4;
     } else {
@@ -2694,6 +2696,13 @@ fn _spi_call(S, pk): i64 {
     return k;
 }
 
+# ... that refusal, the call's token marked reported, so a dyn result's V4 refusal at the same call ("a dyn Show
+# result used as a value") is not a second report (6.7.13, D17 (a)'s top-level row). CHANGELOG [6.7.13]
+fn _spi_top_ref(S, noff): i64 {
+    _refuse_toplevel_struct_call(S, noff);
+    _tn_once(S, GTI(S));
+    return 0;
+}
 # The call whose `(` is token `o` ends the element: `,` / `}`, or the wrap's `)` (`pk` > 0).
 fn _spi_follow(S, o, pk): i64 {
     var nx = _call_follow(S, o - 1);
@@ -2707,14 +2716,14 @@ fn _spi_follow(S, o, pk): i64 {
 }
 # ⛔ 6.7.11 — A FREE STRUCT CALL IN PARENTHESES THAT WRAP THE WHOLE ELEMENT (`H { 7, (mkq(4, 9)), 8 }`,
 # `((mk<Pt>(1)))`) is the element the unwrapped call is — 6.7.6's transparency, which a wrapped method or
-# operator result has at 24 B and 8 B (`_sc_pwrap`; at 9-16 B not yet: issues/2026-10-14-paren-wrapped-
-# pair-method-or-operator-as-nested-literal-element-refused.md). It was an expression whose rax went into
-# the nested struct's
-# first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
+# operator result has too (`_spi_epk`, 6.7.13). It was an expression whose rax went into the nested
+# struct's first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
 # leaves, a one-leaf struct's word unchecked (issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-
 # element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
 # call (its refusals — another struct, no frame at top level — the unwrapped call's), and the wrap is
 # closed. 0 = not that shape (cursor untouched). CHANGELOG [6.7.11]
+# 6.7.13: a dyn-returning call too (`H { 7, (pass(o)), 8 }`, the user's decision D17 (a), 2026-10-15) — it was
+# refused twice ("a dyn Show result used as a value", then `_dyn_lit_form`'s). CHANGELOG [6.7.13]
 fn _spi_pcall(S): i64 {
     var st = GTI(S);
     var k = _pwrap_name(S, st);
@@ -2737,20 +2746,23 @@ fn _spi_pcall(S): i64 {
 # only error.
 fn _spi_expr(S, ft): i64 {
     var st = GTI(S);
+    var pk = _spi_epk(S, st);   # 6.7.13: the arms below run inside a wrap of the whole element
     var sv = _fla_want;
     var svl = _fla_lit;
-    _fla_want = st;
-    _fla_lit = st;
+    _fla_want = st + pk;
+    _fla_lit = st + pk;
     _fla_hit = 0;
     _sc_rbeg = 0 - 1;
+    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too (at its first token). CHANGELOG [6.7.11]
+    STI(S, st + pk);
     var w = _sc_arm(S);
-    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too. CHANGELOG [6.7.11]
     PCMPE(S);
     var bx = _BX_IS(S);   # 6.7.3: the stamp, before anything below can move the cursor
+    _pw_close(S, pk);
     _sc_want = w;
     _fla_want = sv;
     _fla_lit = svl;
-    if (_spi_refused(S, st) == 1) { return 4; }
+    if (_spi_refused(S, st, pk) == 1) { return 4; }
     var t = _sc_whole(S, st);
     if (t >= 0) {
         _fsc_reset();
@@ -2770,6 +2782,25 @@ fn _spi_expr(S, ft): i64 {
     _spi_leaf_check(S, _spi_first_fk(S, ft), st, bx);
     return 2;
 }
+# ⛔ 6.7.13 — A 9-16 B METHOD OR OPERATOR RESULT IN PARENTHESES AS A NESTED-STRUCT LITERAL ELEMENT
+# (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`) was refused "unexpected '}'": the struct-call destination was
+# armed at the `(`, so the call inside got no frame temp (`_sc_pre` wants `_sc_want` at the call), the
+# element was a scalar for the nested struct's first leaf and the next element its second. At 8 B and
+# 24 B it worked by accident (rax; the retptr temp). Every other destination steps a whole wrap before it
+# arms (`_scv_peel`, `_rcv_peel`, `_ret_peel`); the element now does too: the parentheses wrapping the
+# whole element at `st` (up to its `,` / `}`; a tuple literal is no wrap), 0 for none. `_pw_end` is kept.
+# CHANGELOG [6.7.13]
+fn _spi_epk(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var pe = _pw_end;
+    var k = 0;
+    if (_tup_lit_at(S, st) < 0) { k = _pwrap_k(S, st); }
+    var e = TOKTYP(S, _pw_end);
+    _pw_end = pe;
+    if (k == 0) { return 0; }
+    if (e != 31) { if (e != 14) { return 0; } }
+    return k;
+}
 # A scalar carried into a nested struct lands on its first leaf: the float warning, and (6.7.3) a
 # bool leaf's check — `bx` the stamp taken right after the value was parsed.
 fn _spi_leaf_check(S, k, st, bx): i64 {
@@ -2780,11 +2811,11 @@ fn _spi_leaf_check(S, k, st, bx): i64 {
     return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);
 }
 
-# The whole value (up to its `,` / `}`) was a > 16 B method / operator call `_sc_pre` refused
-# at top level.
-fn _spi_refused(S, st): i64 {
-    if (_sc_rbeg != st) { return 0; }
-    if (_sc_rend != GTI(S)) { return 0; }
+# The whole value (up to its `,` / `}`; inside its `pk` parentheses, 6.7.13) was a > 16 B method /
+# operator call `_sc_pre` refused at top level.
+fn _spi_refused(S, st, pk): i64 {
+    if (_sc_rbeg != st + pk) { return 0; }
+    if (_sc_rend + pk != GTI(S)) { return 0; }
     if (PEEKT(S) == 31) { return 1; }
     if (PEEKT(S) == 14) { return 1; }
     return 0;
@@ -5317,6 +5348,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
     # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
+    if (sit_lit == 1) { if (psc > 0) { _tp_warn_baked(S, rhs_ti); } }   # 6.7.13 (D18 (a)): never replayed
     if (cf_has == 1) { if (is_struct == 0) { _gv_lit_set(gvi, 1); } }   # 6.7.12 (D30): a constant, zero too
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
@@ -5658,11 +5690,7 @@ fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
 # check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
 fn _gvi_expr(S, gps): i64 {
     _gvi_pair_bind(S);   # 6.7.6: a `: stack` pair into one global is refused, as in a fn
-    if (gps == 0) {
-        _scv_top_ann(S, gps);   # 6.7.13: D24 in the declaration zone (`var G: i64 = mk2(5);`)
-        PCMPE(S);
-        return 0;
-    }
+    if (gps == 0) { return _gvi_scalar(S); }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
     var w = _scv_arm(S, gps, 0);
@@ -5670,6 +5698,63 @@ fn _gvi_expr(S, gps): i64 {
     _scv_disarm(S, w);
     _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
     _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
+    return 0;
+}
+
+# The declaration zone's initialiser of no struct type: D24 at its call (`var G: i64 = mk2(5);`, 6.7.13) and at a
+# method / operator result (`var G: i64 = B.mk();`, D13 — `_sc_beg` cleared, so only this parse's record is read;
+# `_scv_err` as `_scv_disarm` sets it). Nothing is armed: a dyn result keeps V4's refusal at the factor.
+fn _gvi_scalar(S): i64 {
+    var st = GTI(S);
+    var he = _had_error;
+    _scv_top_ann(S, 0);   # 6.7.13: D24 in the declaration zone
+    _sc_beg = 0 - 1;
+    PCMPE(S);
+    _scv_err = 0;
+    if (he == 0) { _scv_err = _had_error; }
+    _scv_rec_ann(S, 0, st);   # 6.7.13 (D13)
+    return 0;
+}
+
+# ⛔ 6.7.13 — "ASSIGNING NON-POINTER TO TYPED POINTER" AT EVERY `*T` SITE, THE LITERAL 0 EXEMPT (the user's decision
+# D18 (a), 2026-10-15). The warning fired for a `*T` declaration in a fn or after the first statement and for an
+# assignment to a `*T` global or a `*Struct` local, and nowhere else: a declaration-zone `*T` global (its initialiser is
+# replayed by EMIT_GVAR_INITS, or baked into the image when it folds — `_tp_warn_gv`, `_tp_warn_baked`) and an
+# assignment to a `*T` local or `p: *T` parameter of a scalar T (parse.cyr: the slot's typed-pointer bit) never
+# warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every site,
+# as the kind-0 compare-mix warning exempts it (issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
+# CHANGELOG [6.7.13]
+# 1 = the initialiser / right-hand side at token `st` is the literal 0 and nothing else.
+fn _tp_null(S, st): i64 {
+    if (st < 0) { return 0; }
+    if (TOKTYP(S, st) != 1) { return 0; }
+    if (TOKVAL(S, st) != 0) { return 0; }
+    if (TOKTYP(S, st + 1) != 5) { return 0; }
+    return 1;
+}
+# The warning (at the cursor), unless the value starting at `st` is the null literal.
+fn _tp_warn(S, st): i64 {
+    if (_tp_null(S, st) == 1) { return 0; }
+    WARN(S, "assigning non-pointer to typed pointer", 38);
+    return 0;
+}
+# The declaration zone's replay (cursor past the initialiser at `st`): the global `slot` is a `*T` (GVTYPE `0 - step`).
+# A line refused inside its initialiser (`_scv_err`, `_gvi_scalar`) or at its first token (D24) is not warned too.
+fn _tp_warn_gv(S, slot, st): i64 {
+    if (slot < 0) { return 0; }
+    if (GVTYPE(S, slot) >= 0) { return 0; }
+    if (GPSC(S) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    if (_tn_seen_at(S, st) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
+# its `;`, as the replay would report.
+fn _tp_warn_baked(S, st): i64 {
+    if (_tp_null(S, st) == 1) { return 0; }
+    var e = st;
+    while (e < GTCNT(S)) { if (TOKTYP(S, e) == 5) { break; } e = e + 1; }
+    WARN_AT(S, e, "assigning non-pointer to typed pointer", 38);
     return 0;
 }
 
@@ -5697,6 +5782,7 @@ fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
 fn _bx_gvi_expr(S, gps, gi, noff): i64 {
     var ti = GTI(S);
     _gvi_expr(S, gps);
+    _tp_warn_gv(S, _gv_ent_slot(S, gi, 0, noff), ti);   # 6.7.13 (D18 (a)): a declaration-zone `*T`
     _gz_agree(S, gps, _gv_ent_slot(S, gi, 0, noff), ti, noff);   # 6.7.10 (B7-1g)
     if (_gvb_base == 0) { return 0; }   # no bool global anywhere: no lookup
     if (_BX_IS(S) == 1) { return 0; }
@@ -6937,14 +7023,37 @@ fn _var_rhs_call(S, ti): i64 {
 # initialiser (`_call_ends_at`, as the receive asks): `var r = mk3(4) - s;` with an integer-returning
 # `P3_sub` was typed P3, so `r.x` dereferenced -5 and `var r = mk2(1) == p; return r;` returned a 16-byte
 # struct from an 8-byte slot (SIGSEGV, 6.7.6 - 6.7.10). An operator's struct result types the binding
-# after the parse (`_var_rhs_post`); any other value leaves it untyped. A `: f64` call keeps its f64 (-9):
-# its operator result is the f64 arithmetic the leading call drives. CHANGELOG [6.7.11]
+# after the parse (`_var_rhs_post`); any other value leaves it untyped. A `: f64` call's f64 (-9) is judged
+# there too (6.7.13): kept when the whole initialiser's type is still f64 — `var x = f() * 2.0;`, the f64
+# arithmetic the leading call drives — and dropped for a comparison or an `&&` / `||` (`var c = f() < 1.0;`
+# is 0 / 1: it was typed f64, so `-c` flipped the sign bit). CHANGELOG [6.7.11] [6.7.13]
 fn _var_rhs_csid(S, ti): i64 {
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs <= 0) { return rs; }
     if (_call_ends_at(S, ti, 5) == 0) { return 0; }
+    return rs;
+}
+# ⛔ 6.7.13 — `var x = (mk1());` WITH AN 8 B STRUCT RESULT INFERRED NOTHING: the peek above wants `IDENT (`
+# first, so x was an untyped word and `x.a` was "no struct type in scope for 'x'" (decision 12 / 6.7.11 D42:
+# a whole struct result binds the struct at every size, the wrap transparent). The type of a WHOLE free
+# call inside parentheses that wrap the whole untyped initialiser at `ti` (`_pwrap_name` up to the `;`,
+# `_rcv_iscall`): a struct of 8 B or less (over 8 B the receive takes it, `_rcv_peel`; a dyn, 16 B, keeps
+# 6.7.8 V4d's refusal), or a `: f64` call's -9 (judged after the parse, as `var x = f();` is); else 0.
+# CHANGELOG [6.7.13]
+fn _var_rhs_wsid(S, ti): i64 {
+    var k = _pwrap_name(S, ti);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    if (_rcv_iscall(S, ti + k, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti + k);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == 0 - 9) { return rs; }
+    if (rs <= 0) { return 0; }
+    if (rs > 2047) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
     return rs;
 }
 
@@ -6991,6 +7100,11 @@ fn _rcv_iscall(S, ti, pk): i64 {
 # token, the cursor its `=`. CHANGELOG [6.7.11]
 fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     if (pscale != 0) { return 0; }
+    return _rcv_ann_refuse(S, ti, TOKVAL(S, ti), sid, 0, ann, noff);
+}
+# 1 = D24 refuses the struct `sid` into the annotation at `ann`: a struct over 8 B, not a `Str` handle, not a
+# dyn (`_dyn_var_ann`'s), and not a generic base's `T` (`_rcv_tp_base`).
+fn _rcv_ann_hit(S, sid, ann): i64 {
     if (ann <= 0) { return 0; }
     if (sid <= 0) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
@@ -6998,6 +7112,15 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     if (sz <= 8) { return 0; }
     if (sz <= 16) { if (sid == _STR_SID(S)) { return 0; } }
     if (_rcv_tp_base(S, ann) == 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.13 — D24's one refusal, shared by every path that reaches it: the free call (`_rcv_scalar_ann`), the known
+# `&f` call (`_scv_icall_ann`), the top-level call (`_scv_gcall_ann`) and a method or operator result
+# (`_scv_rec_ann`, D13). Reported at token `ti`, naming the fn `fnoff`; `pscale` > 0 is a pointer annotation, whose
+# remedy is D14's (`declare 'x: P2' and take `&x``). 1 = refused (or already reported at `ti`). The cursor is the
+# declaration's `=`. CHANGELOG [6.7.13]
+fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
+    if (_rcv_ann_hit(S, sid, ann) == 0) { return 0; }
     if (_syntax_only == 1) { return 0; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, ti) == 0) { return 1; }
@@ -7010,18 +7133,50 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     PRSTR(": ");
     _rcv_ann_pr(S, ann, eq);
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    PRSTR(S + 0xEC00000 + fnoff);
     PRSTR("', which returns the struct '");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     PRSTR("' - declare '");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(": ");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
-    PRSTR("' or bind a field\n");
+    _rcv_ann_tail(S, pscale, noff);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, eq);
     return 1;
+}
+fn _rcv_ann_tail(S, pscale, noff): i64 {
+    if (pscale <= 0) { PRSTR("' or bind a field\n"); return 0; }
+    PRSTR("' and take `&");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("`\n");
+    return 0;
+}
+# ⛔ 6.7.13 — A BY-VALUE STRUCT RESULT INTO A POINTER ANNOTATION (D14, the user, 2026-10-15). `var x: *P2 = mkp();` with
+# mkp returning a struct over 8 B stored the call's value as the pointer — rax, the struct's first word (the hidden
+# result pointer's target was never set up over 16 B) — under only the typed-pointer warning, so `x.b` dereferenced
+# 333: SIGSEGV on x86_64 / aarch64, a guest fault on cx, exit 5 on PE; `var x: *i64 = mkp();` held 333 as an address.
+# PARSE_VAR's receive is gated on `pscale <= 0`, so a `*T` (pscale > 0) never reached D24. Refused by name at the
+# call, in a fn, for every `*T`: "cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare
+# 'x: P2' and take `&x`". The whole initialiser, inside any parentheses (`_rcv_peel` judged as for a scalar), is one
+# free call (a generic's instance, `_gen_resolve_call`); the known `&f` call is `_scv_icall_ann`'s and a method /
+# operator result `_scv_rec_ann`'s. 8 B or less (the struct's word, as a scalar keeps it) and a `Str` handle keep
+# today's word and warning. The refused line says no typed-pointer warning (`_ptr_refd_ti`). The cursor is the
+# declaration's `=`. 1 = refused. CHANGELOG [6.7.13]
+fn _rcv_ptr_ann(S, pscale, ann, noff): i64 {
+    if (pscale <= 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var k = _rcv_peel(S, GTI(S) + 1, 0);
+    var c = GTI(S) + 1 + k;
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (_rcv_iscall(S, c, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    var r = _rcv_ann_refuse(S, c, TOKVAL(S, c), GFRS(S, fi), pscale, ann, noff);
+    if (r == 1) { _ptr_refd_ti = ann; }
+    return r;
 }
 # ⛔ 6.7.12 — D24 REACHES A KNOWN FN-POINTER CALL (D28, the user, 2026-10-15). `var n: i64 = fncall1(&mk3, 5);` and
 # `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries mk3's struct result (6.7.11, ARG-1) — into an
@@ -7029,12 +7184,13 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
 # refused with D24's words, naming mk3, at its name: in a fn, a declaration of no struct type (`pscale` 0, the
 # cursor on its initialiser) whose initialiser is one whole such call, inside any parentheses up to its `;`
 # (`_rcv_scalar_ann` judges the struct's size, a `Str`, the annotation). The initialiser's first token is marked
-# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is no
-# known callee yet (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md); a callee in a
-# variable stays a word (D31). 1 = refused. CHANGELOG [6.7.12]
+# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is the
+# same known callee (6.7.13, `_icall_fti`); a callee in a variable stays a word (D31). 1 = refused.
+# CHANGELOG [6.7.12]
 # 6.7.13: and at top level (6.7.12's D28 "D24 at every path"; `_scv_gcall_ann`). CHANGELOG [6.7.13]
 fn _scv_icall_ann(S, pscale): i64 {
-    if (pscale != 0) { return 0; }
+    if (pscale < 0) { return 0; }
+    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14 (6.7.13): a `*T` in a fn
     var st = GTI(S);
     if (TOKTYP(S, st - 1) != 4) { return 0; }
     var c = st;
@@ -7052,9 +7208,11 @@ fn _scv_icall_ann(S, pscale): i64 {
     var ann = _scv_ann_at(S, st - 1);
     if (ann <= 0) { return 0; }
     STI(S, st - 1);
-    var r = _rcv_scalar_ann(S, _icall_open_at(S, c) + 2, sid, 0, ann, _scv_ann_nm);
+    var fti = _icall_fti(S, c);
+    var r = _rcv_ann_refuse(S, fti, TOKVAL(S, fti), sid, pscale, ann, _scv_ann_nm);
     STI(S, st);
     if (r == 1) { _tn_once(S, st); }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
     return r;
 }
 # ⛔ 6.7.13 — D24 AT TOP LEVEL (6.7.12's D28, the user, 2026-10-15: "D24 at every path", binding here).
@@ -7100,6 +7258,39 @@ fn _scv_top_big(S, sid): i64 {
 fn _scv_top_ann(S, pscale): i64 {
     if (_scv_gcall_ann(S, pscale) == 1) { return 1; }
     return _scv_icall_ann(S, pscale);
+}
+# ⛔ 6.7.13 — D24 REACHES A METHOD OR OPERATOR RESULT (D13, the user, 2026-10-15). `var x: i64 = b.mk();` and
+# `var y: u8 = a + c;` (`: f64`, `: bool`, `: cstring`, any annotation that names no struct) with the method / the
+# operator fn returning a struct over 8 B kept the struct's first word, narrowed (the filed repro: x = 333, y = 77),
+# where the free call (D24) and the `&f` call (D28) are refused; a `: bool` was refused as "not a bool". Now refused
+# with D24's words, naming the fn, after the initialiser's parse (`start` its first token, the cursor after it): the
+# whole initialiser, inside any parentheses, is the method / operator call the struct-result record spans
+# (`_sc_whole`: a temp, -4 in rax:rdx, -1 at top level; -3 is 8 B or less, a word), in a fn and at top level (PARSE_VAR
+# and the declaration zone, `_gvi_expr`). A line refused inside its initialiser (`_scv_err`) or already refused at its
+# first token (the free / `&f` call) is not reported again; the first token is marked, so a bool's own check does not
+# refuse it a second time; and the declaration takes no struct (`_scv_refd`, read by `_sc_var_receive`): it parses on
+# as its annotation says, as after the free call's refusal. 1 = refused. CHANGELOG [6.7.13]
+var _scv_refd = 0 - 1;   # the initialiser's first token of the last declaration `_scv_rec_ann` refused
+fn _scv_rec_ann(S, pscale, start): i64 {
+    if (pscale < 0) { return 0; }
+    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14: a `*T` in a fn
+    if (_scv_err == 1) { return 0; }
+    var t = _sc_whole(S, start);
+    if (t == 0 - 2) { return 0; }
+    if (t == 0 - 3) { return 0; }
+    var ann = _scv_ann_at(S, start - 1);
+    if (ann <= 0) { return 0; }
+    if (pscale == 0) { if (TOKTYP(S, ann) == 8) { return 0; } }   # the declaration zone's `*T` (its pscale is 0)
+    if (_rcv_ann_hit(S, _sc_sid, ann) == 0) { return 0; }
+    if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
+    var eq = GTI(S);
+    STI(S, start - 1);
+    var r = _rcv_ann_refuse(S, _sc_beg, _sc_fn, _sc_sid, pscale, ann, _scv_ann_nm);
+    STI(S, eq);
+    if (r == 1) { _tn_once(S, start); }
+    if (r == 1) { _scv_refd = start; }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
+    return r;
 }
 # The annotation of the declaration `var NAME : <ann> =` whose `=` is token `eq`: its first token, `_scv_ann_nm`
 # the name; 0 for an untyped declaration.
@@ -7801,6 +7992,7 @@ fn PARSE_VAR(S): i64 {
     var asv_try = 0;
     var asv_pair = 0;
     var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
+    _rcv_ptr_ann(S, pscale, ann_ti, noff);   # 6.7.13 (D14): `var x: *P2 = mkp();` refused by name
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_pk = _rcv_peel(S, GTI(S) + 1, pscale);   # 6.7.11: `var x = (mk());`
         var _look_ti = GTI(S) + 1 + _look_pk;
@@ -8109,7 +8301,7 @@ fn PARSE_VAR(S): i64 {
                 # 6.7.11: a struct only from a call that ENDS the initialiser (`_var_rhs_csid`).
                 if (_var_rhs_call(S, GTI(S)) == 1) { _ti_inferred_sid = _var_rhs_csid(S, GTI(S)); }
                 else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
-            }
+            } elif (PEEKT(S) == 10) { _ti_inferred_sid = _var_rhs_wsid(S, GTI(S)); }   # 6.7.13: `var x = (mk1());`
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
     # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
@@ -8127,6 +8319,7 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
     PCMPE(S);
     _scv_disarm(S, scv_prev);
+    _scv_rec_ann(S, pscale, scv_start);   # 6.7.13 (D13): a method / operator struct result into `: i64`
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
@@ -8142,7 +8335,7 @@ fn PARSE_VAR(S): i64 {
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
-        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { WARN(S, "assigning non-pointer to typed pointer", 38); } }   # 6.7.11
+        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { _tp_warn(S, scv_start); } }   # 6.7.11; 6.7.13: not the literal 0
     }
     # Check if inside function → local variable
     if (GINFN(S) == 1) {
