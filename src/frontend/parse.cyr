@@ -769,17 +769,39 @@ fn _pair_prescan_impls(S): i64 {
         var k = L64(_ti_tab + ii * 64 + 16);
         var e = k + L64(_ti_tab + ii * 64 + 24);
         while (k < e) {
-            if (_pair_scan_method(S, ii, k) == 1) { ch = 1; }
+            if (_pair_scan_method(S, ii, L64(_tim_tab + k * 24), L64(_tim_tab + k * 24 + 8)) == 1) { ch = 1; }
             k = k + 1;
         }
+        if (_pair_scan_defaults(S, ii) == 1) { ch = 1; }   # 6.7.13: + the trait defaults it inherits
         ii = ii + 1;
     }
     return ch;
 }
-# Impl `ii`'s method record k: 1 when its entry is newly flagged 256.
-fn _pair_scan_method(S, ii, k): i64 {
-    var p = L64(_tim_tab + k * 24 + 8);   # its `fn` token
-    var fi = _impl_method_entry(S, ii, L64(_tim_tab + k * 24), p);
+# ⛔ 6.7.13 — AN INHERITED TRAIT DEFAULT IS A DEFINITION TOO. A method impl `ii` takes from its trait's
+# default body (`trait Dv { fn ddiv(self, d): i64 { .. } }` + `impl Dv for Pt { }`) has no `fn` in the
+# impl block: `_tr_defaults` registers it per impl from the trait's `fn` token, so the walk above never
+# saw it and a caller above the trait read `p.ddiv(d)?` as boxed (rc 139). Each default the impl does
+# not override is scanned as the impl's own method is, under the entry registered for this impl. Read
+# only (`_impl_method_entry`, never REGFN — the axis-13 rule). 1 when a flag was set. CHANGELOG [6.7.13]
+fn _pair_scan_defaults(S, ii): i64 {
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    if (tx < 0) { return 0; }
+    var ch = 0;
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        var dt = L64(_trm_tab + k * 32 + 16);   # the default's `fn` token + 1 (0 = required)
+        var m = L64(_trm_tab + k * 32);
+        if (dt != 0) { if (_tim_of(S, ii, m) < 0) {
+                if (_pair_scan_method(S, ii, m, dt - 1) == 1) { ch = 1; }
+            } }
+        k = k + 1;
+    }
+    return ch;
+}
+# Impl `ii`'s method `m`, defined at `fn` token p: 1 when its entry is newly flagged 256.
+fn _pair_scan_method(S, ii, m, p): i64 {
+    var fi = _impl_method_entry(S, ii, m, p);
     if (fi < 0) { return 0; }
     if ((GFLG(S, fi) & 256) != 0) { return 0; }
     var o = _tr_paren(S, p);

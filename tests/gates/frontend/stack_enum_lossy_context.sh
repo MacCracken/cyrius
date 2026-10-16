@@ -1047,6 +1047,96 @@ var rc = main();
 syscall(60, rc);
 EOF
 
+# ── axis TD — 6.7.13: A PAIR TRAIT DEFAULT USED ABOVE ITS TRAIT ────────────────────────────────
+# ⛔ A method an impl INHERITS from its trait's default body has no `fn` in the impl block: axis 16's
+# walk (the impl's own methods) never saw it, so a caller above the trait read `p.ddiv(d)?` as boxed
+# (rc 139 on x86 and aarch64, 1 on cx, 5 on PE — the issue's repro, TD1, verbatim) and `var q =
+# p.ddiv(d);` kept the tag (exit 1). Each default the impl does not override is scanned under the entry
+# registered for that impl (`_pair_scan_defaults`, read only), in the same rounds.
+# (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
+# Mutation (a scratch copy of src/, CYCC= it; measured red): MTD `_pair_prescan_impls` without its
+# `_pair_scan_defaults` call -> TD1 (rc 139; the gate stops at its first red — TD2 BUILDS, TD3 / TD4 /
+# TD6 rc 139 when run alone).
+accept "the issue's repro: p.ddiv(d)? above its trait and impl" axisTD1 70 <<'EOF'
+include "lib/syscalls.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+fn usediv(p: Pt, d): i64 { var q = p.ddiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "the single bind var q = p.ddiv(d); above the trait and impl" axisTD2 "= p.ddiv(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.ddiv(d); return q + 1; }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "the trait above, its impl below the caller" axisTD3 70 <<EOF
+${M16}trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.ddiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "a default forwarding return self.ddiv(d); to another default" axisTD4 70 <<EOF
+${M16}fn usefwd(p: Pt, d): i64 { var q = p.dfwd(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usefwd(p, 4);
+    var t2, v2 = usefwd(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv {
+    fn dfwd(self, d): i64 { return self.ddiv(d); }
+    fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); }
+}
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+# ANTI-OVER-REACH: a one-value default below its use binds to one variable; a default an impl OVERRIDES is
+# that impl's own body (Pt's one value binds), while another impl inheriting it gets the pair (Qt's `?`).
+accept "a plain i64 default below its use is not flagged" axisTD5 10 <<EOF
+${M16}fn useone(p: Pt): i64 { var q = p.done(); return q; }
+fn main(): i64 { var p = Pt { 10, 2 }; return useone(p); }
+trait Do { fn done(self): i64 { return self.x; } }
+impl Do for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+# (2 * 10 + 10) for Ok, then Pt's 0 and Qt's Err(9) folded: 30 + 59.
+accept "an overridden default is its impl's one value; an inheriting impl's is the pair" axisTD6 89 <<EOF
+${M16}fn useboth(p: Pt, q: Qt, d): i64 { var a = p.ddiv(d); var b = q.ddiv(d)?; return MOk(a * 10 + b); }
+fn main(): i64 {
+    var p = Pt { 8, 2 };
+    var q = Qt { 40 };
+    var t, v = useboth(p, q, 4);
+    var t2, v2 = useboth(p, q, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { fn ddiv(self, d): i64 { if (d == 0) { return 0; } return self.x / d; } }
+impl Dv for Qt { }
+var rc = main();
+syscall(60, rc);
+EOF
+
 # ── axis 17 — 6.7.11: A STRUCT-LITERAL ELEMENT; AN ARGUMENT KEEPS THE TAG ─────────────────────
 # ⛔ A struct-literal element is a one-slot store, and it kept the TAG of a `: stack` pair and dropped
 # the payload in silence: `var p = P { mk(7), 3 };`, `P { a: mk(7), b: 3 }` and `var G = P { mk(7), 3 };`
@@ -1329,5 +1419,5 @@ ${PRE}fn main(): i64 {
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
 exit 0
