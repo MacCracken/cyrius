@@ -25,8 +25,9 @@
 #   a multi-value call 'mk' does not initialize struct 'P' - bind it first: ...
 #   a multi-value call 'mk' is not stored into a struct 'P' field - bind it first: ...
 #   a multi-value call 'mk' is not assigned to struct 'P' - bind it first: ...
-# The predicate keys on the callee's DECLARED return (`_mv_callee`): a `: P` fn's `return (x, y)` arms
-# (the 6.7.7 crossing) return a P and stay accepted (C2). A `*P` (parameter, variable) and a `Str`
+# The predicate keys on the callee's DECLARED return (`_mv_callee`): a `: P` fn returns a P and stays
+# accepted (C2; its `return (x, y)` / `ret2` producers are refused at the producer since 6.7.11 / 6.7.13 —
+# the SR axis below). A `*P` (parameter, variable) and a `Str`
 # handle take a word — the call's first value, as `var x = mk(3);` does — and are not refused (C3, C6).
 #
 # LEGS: every refused row on the x86_64, aarch64 (cross), cx and PE (CYRIUS_TARGET_WIN=1) compilers —
@@ -51,6 +52,20 @@
 #   N12 `_mv_asg_src` not typing the refused source      -> RED S5 S8 MA W4 (the warning after the error)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): C2 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
+#
+# 6.7.13 — AXIS SR: `ret2(a, b)` IN A FN DECLARED TO RETURN A NAMED STRUCT IS REFUSED IN EVERY CLASS (D22 A, the
+# user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), as the
+# tuple literal `return (a, b);` is since 6.7.11 (D39): over 16 B the result pointer was never written (the
+# repro read 0 on x86_64 / aarch64 / cx / PE), at 8 B or less the second value was dropped (1), at 9-16 B the
+# words came back by ABI coincidence (the C2 control's old producer). Once (a generic's instances), in sync (the
+# next statement's own error), at the ret2 — `return ret2(..)` too, where the 9-16 B return's "got `this
+# expression`" yields to it; over 16 B the retptr arm's own refusal speaks first (once). A dyn keeps its V7 text;
+# an #inline fn's ret2 replayed in a struct fn and a closure's own ret2 there still run. C2's producer says
+# `return p;` now.
+#   N13 `_ret2_in_struct` answering 0 at once           -> RED SR1 SR2 SR3 SR3m SR3g SR3d SR5 SR5b SR6 (BUILT / one line), every leg
+#   N14 ... without its GIDEP test                      -> RED SC1 (the replayed #inline ret2 refused), every leg
+#   N15 ... without its `_tn_once`                      -> RED SR3g (two lines), every leg
+#   N16 `_ret_struct_pair` reporting a ret2 return too  -> RED SR5b (two lines), every leg
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -320,11 +335,11 @@ row C1 'fn mkp(a): P { var p = P { a, a + 1 }; return p; }
 fn f(): i64 { return take(mkp(3)); }
 syscall(60, f());'
 runs C1 34 "control: a callee declared \`: P\` (the issue's)"
-row C2 'fn mp(x): P { ret2(x, x + 1); }
+row C2 'fn mp(x): P { var p: P = P { x, x + 1 }; return p; }
 fn f(): i64 { var p: P = mp(3); var h: H; h.p = mp(3); var q: P = P { 0, 0 }; q = mp(3);
     return take(mp(3)) + p.a * 10 + p.b + h.p.a * 10 + h.p.b + q.a * 10 + q.b - 102; }
 syscall(60, f());'
-runs C2 34 "control: the 6.7.7 crossing — a \`: P\` fn's \`ret2(x, y)\` into an argument, a declaration, a field, an assignment (6.7.11: its \`return (x, y);\` is refused)"
+runs C2 34 "control: a \`: P\` fn's \`return p;\` into an argument, a declaration, a field, an assignment (its \`return (x, y);\` refused since 6.7.11, its \`ret2(x, y)\` since 6.7.13: axis SR)"
 row C3 'fn rd(q: *P): i64 { return q.a * 10 + q.b; }
 fn mkq(p): (i64, i64) { return (p, 1); }
 fn f(): i64 { var s = P { 3, 4 }; var q: *P = mkq(&s); var r: *P = &s; r = mkq(&s); return rd(mkq(&s)) + q.a + r.b - 7; }
@@ -348,7 +363,69 @@ syscall(60, f());
 EOF
 runs C6 7 "control: a \`Str\` handle parameter takes a word"
 
-[ "$rows" -ge 40 ] || bad "only $rows rows ran (floor 40)"
+# --- axis SR (6.7.13, D22 A): `ret2(a, b)` in a fn declared to return a named struct, every class ---
+R2S="returns that struct — \`ret2\` writes two values"
+# the issue's two repros, verbatim (issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md)
+printf 'struct P3 { x; y; z; }\nfn f(a, b): P3 { ret2(a, b); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }\nsyscall(60, main());\n' > "$T/SR1.cyr"
+refused SR1 "2:18: a fn returning the struct \`P3\` $R2S" "repro 1 verbatim: over 16 B (it read 0, the result pointer never written)"
+printf 'struct S8 { v; }\nfn f(a, b): S8 { ret2(a, b); }\nfn main(): i64 { var q: S8 = f(1, 2); return q.v; }\nsyscall(60, main());\n' > "$T/SR2.cyr"
+refused SR2 "2:18: a fn returning the struct \`S8\` $R2S" "repro 2 verbatim: 8 B (it read 1, the second value dropped)"
+row SR3 'fn mp(x): P { ret2(x, x + 1); }
+fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
+syscall(60, f());'
+refused SR3 "a fn returning the struct \`P\` $R2S" "9-16 B: the form that worked by the registers' coincidence"
+row SR3m 'impl B { fn mkp(self, x): P { ret2(x, x + 1); } }
+fn f(): i64 { var b = B { 0 }; var p: P = b.mkp(3); return p.a * 10 + p.b; }
+syscall(60, f());'
+refused SR3m "a fn returning the struct \`P\` $R2S" "a method"
+row SR3g 'fn mg<T>(x: T): P { ret2(x, x + 1); }
+fn f(): i64 { var p: P = mg<i64>(3); var q: P = mg<i32>(3); return p.a * 10 + q.b; }
+syscall(60, f());'
+refused SR3g "a fn returning the struct \`P\` $R2S" "a generic with two instances: once"
+row SR3d 'var runs = 0;
+fn md(x): P1 { defer { runs = runs + 1; } ret2(x, x + 1); }
+fn f(): i64 { var p: P1 = md(3); return p.a + runs; }
+syscall(60, f());'
+refused SR3d "a fn returning the struct \`P1\` $R2S" "8 B through a defer"
+printf 'trait Show { fn show(self): i64; }\nfn mk(a, b): dyn Show { ret2(a, b); }\nsyscall(60, 0);\n' > "$T/SR4.cyr"
+refused SR4 "a fn returning dyn Show returns a whole dyn - \`return (a, b)\` / \`ret2\` would write its words" "a dyn keeps its V7 text"
+for leg in $(legs); do
+    if grep -qF "$R2S" "$T/SR4.$leg.err"; then bad "SR4 the struct text beside the dyn's ($leg)"; else ok "SR4 no struct text ($leg)"; fi
+done
+row SR5 'fn m1(x): P1 { return ret2(x, x + 1); }
+fn f(): i64 { var p: P1 = m1(3); return p.a; }
+syscall(60, f());'
+refused SR5 "a fn returning the struct \`P1\` $R2S" "\`return ret2(..);\` at 8 B (it compiled: 3)"
+row SR5b 'fn mp(x): P { return ret2(x, x + 1); }
+fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
+syscall(60, f());'
+refused SR5b "a fn returning the struct \`P\` $R2S" "\`return ret2(..);\` at 9-16 B: once, not beside \"got \`this expression\`\""
+printf 'struct P3 { x; y; z; }\nfn f(a, b): P3 { return ret2(a, b); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x; }\nsyscall(60, main());\n' > "$T/SR5c.cyr"
+refused SR5c "struct-return fn: return must be a bare local identifier" "\`return ret2(..);\` over 16 B: the retptr arm's refusal, once"
+# in sync: the next statement's own error is reported (two lines)
+row SR6 'fn m1(x): P1 { ret2(x, x + 1); syscall(60, nosuch); }
+fn f(): i64 { var p: P1 = m1(3); return p.a; }
+syscall(60, f());'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" SR6
+    n=$(grep -c '^error' "$T/SR6.$leg.err" || true)
+    if [ "$crc" -ne 0 ] && [ "$n" -eq 2 ] && grep -qF "$R2S" "$T/SR6.$leg.err" && grep -qF "undefined variable 'nosuch'" "$T/SR6.$leg.err"; then ok "SR6 in sync: the ret2 refusal and the next statement's own error ($leg)"
+    else bad "SR6 in sync ($leg): rc $crc, $n error lines: $(grep '^error' "$T/SR6.$leg.err" | tr '\n' '|')"; fi
+done
+row SC1 '#inline
+fn two(a, b) { ret2(a, b); }
+fn mp(x): P { var a, b = two(x, x + 1); var p: P = P { a, b }; return p; }
+fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
+syscall(60, f());'
+runs SC1 34 "control: an #inline fn's ret2 replayed in a struct fn"
+row SC2 'include "lib/fnptr.cyr"
+fn mp(x): P { var cl = |y| { ret2(y, y + 1); }; var a, b = fncall1(cl, x); var p: P = P { a, b }; return p; }
+fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
+syscall(60, f());'
+runs SC2 34 "control: a closure's own ret2 inside a struct fn"
+
+[ "$rows" -ge 53 ] || bad "only $rows rows ran (floor 53)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four"

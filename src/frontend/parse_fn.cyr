@@ -935,8 +935,15 @@ fn _mret_land(S): i64 {
 # an earlier call left in r3 — so it is refused as a two-value `return (a, b);` is there (6.7.11, D17;
 # D21 A, the user's decision, 2026-10-15): "'f' returns 3 values - return (a, b, c)", at the ret2,
 # once (a generic's body is parsed per instance), in sync. The landing is kept (no binary is written).
+# In a fn declared to return a named struct it is refused in every class, as the tuple literal is (D39,
+# `_refuse_struct_tuple_return`; D22 A, the user's decision, 2026-10-15): over 16 B the result pointer
+# was never written, at 8 B or less the second value was dropped, at 9-16 B the words came back by ABI
+# coincidence only. `_ret2_in_struct`, once and in sync; a dyn keeps `_mret_land`'s V7 text.
 fn _ret2_ctx(S, ti): i64 {
-    if (GINFN(S) == 1) { return _ret2_in3(S, ti); }
+    if (GINFN(S) == 1) {
+        _ret2_in_struct(S, ti);
+        return _ret2_in3(S, ti);
+    }
     if (_tn_once(S, ti) == 0) { return 1; }
     var p0 = _panic;
     ERR_MSG(S, "ret2 outside a fn body", 22);
@@ -953,6 +960,26 @@ fn _ret2_in3(S, ti): i64 {
     var p0 = _panic;
     _mret_ret_err(S, ti);
     if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+# ... in a fn declared `: S` (not `Str`, a tuple or a dyn: `_dx_plain`, D39's own test): the
+# struct is the value it returns, never two words. CHANGELOG [6.7.13]
+fn _ret2_in_struct(S, ti): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: the ret2 is the callee's, not this fn's
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a fn returning the struct `");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    PRSTR("` returns that struct — `ret2` writes two values\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
     return 0;
 }
 
@@ -2745,7 +2772,7 @@ fn _ret_struct_pair(S): i64 {
         return 1;
     }
     if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
-        if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
+        if (_tup_lit_at(S, GTI(S)) < 0) { if (PEEKT(S) != 97) { _refuse_pair_return(S); } }   # 6.7.13: and ret2's
     }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
     _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one

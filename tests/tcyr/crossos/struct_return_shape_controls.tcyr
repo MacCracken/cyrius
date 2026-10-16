@@ -4,20 +4,25 @@
 # 6.7.11's struct lane refused two return shapes by name (issues/archived/2026-10-08-struct-operator-results.md):
 #   #4  a tuple literal `return (a, b[, c]);` in a fn declared to return a named struct (the user's decision (a),
 #       2026-10-13) — over 16 B the retptr was never written, at 8 B b was dropped, at 9-16 B the two words came
-#       back by ABI coincidence; the producers that meant the pair now say `ret2(a, b)`;
+#       back by ABI coincidence; the producers that meant the pair said `ret2(a, b)` — refused too since
+#       6.7.13 (D22 A, the user's decision, 2026-10-15), so X8 / P8b / A7 / C2 below say `return p;`;
 #   #5  `return mk2(1) OP x;` in a 9-16 B struct fn whose operator does not dispatch (the pair registers held
 #       mk2's second word).
 # The refusals are host-independent and stay in the shell gates. The shapes that must STILL build and return the
 # right struct ran only there — on x86_64 (and qemu / cxvm / wine for some) — never on ecb / ach / cass / pi. Each
 # row below is one of those gate rows as an assertion, its expected value the gate's exit code:
 #   R12 R13 R23-R28  tests/gates/codegen/struct_value_codegen.sh (commits 7c289392, ee13ec8f, ff7604d6)
-#   X8               tests/gates/codegen/struct_pair_multi_value_crossing.sh (the `ret2` producer, then `rethi()`)
+#   X8               tests/gates/codegen/struct_pair_multi_value_crossing.sh X7 (a struct producer, then `rethi()`)
 #   P8b              tests/gates/codegen/cx_struct_pair.sh
 #   A7               tests/gates/codegen/simd_return_shapes.sh
 #   C2               tests/gates/frontend/multi_value_into_named_struct.sh
 # Struct and fn names carry a per-row prefix (the gate programs each declare their own `Pt` / `P` / `P2`); the
-# shapes and values are the gate's. The `ret2` crossing's other shapes are carried by
+# shapes and values are the gate's. The crossing's other shapes are carried by
 # crossos/struct_pair_multi_value_crossing.tcyr, the struct-operator values by crossos/struct_value_codegen.tcyr.
+# 6.7.13: `ret2(a, b)` in a fn declared to return a named struct is refused in every class
+# (issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md; the refusal rows are
+# tests/gates/frontend/multi_value_into_named_struct.sh SR*), so the four rows that produced the pair with it
+# produce it with `return p;` — the same values, the struct's own return path.
 include "lib/assert.cyr"
 
 # ---- R12 / R13: a tuple return where no named struct is declared still builds ----
@@ -49,26 +54,26 @@ fn rp_f28(a, b): RP3 { var c, d = rp_twog(a, b); var r: RP3 = RP3 { c, d, 7 }; r
 fn r27(): i64 { var q: RP3 = rp_f27(1, 2); return q.x * 100 + q.y * 10 + q.z; }
 fn r28(): i64 { var q: RP3 = rp_f28(1, 2); return q.x * 100 + q.y * 10 + q.z; }
 
-# ---- X8: `rethi()` after a `: XP` fn's `ret2(x, x + 1);` reads the second value ----
+# ---- X8: `rethi()` after a `: XP` fn's `return p;` reads the second word ----
 struct XP { a; b; }
-fn xp_mk(x): XP { ret2(x, x + 1); }
+fn xp_mk(x): XP { var p: XP = XP { x, x + 1 }; return p; }
 fn x8(): i64 { xp_mk(5); var b = rethi(); return b; }
 
-# ---- P8b: a `: PP2` fn's `ret2(x, 2);` received as the struct ----
+# ---- P8b: a `: PP2` fn's `return p;` received as the struct ----
 struct PP2 { x; y; }
-fn pp_mr(x): PP2 { ret2(x, 2); }
+fn pp_mr(x): PP2 { var p: PP2 = PP2 { x, 2 }; return p; }
 fn p8b(): i64 { var p: PP2 = pp_mr(4); return p.x * 10 + p.y; }
 
-# ---- A7: a pair struct produced with `ret2(41, 7)` ----
+# ---- A7: a pair struct produced with `return p;` ----
 struct SP2 { a; b; }
-fn sp_good(): SP2 { ret2(41, 7); }
+fn sp_good(): SP2 { var p: SP2 = SP2 { 41, 7 }; return p; }
 fn a7(): i64 { var p: SP2 = sp_good(); return p.a + p.b; }
 
-# ---- C2: a `: MP` fn's `ret2(x, y)` into an argument, a declaration, a field and an assignment ----
+# ---- C2: a `: MP` fn's `return p;` into an argument, a declaration, a field and an assignment ----
 struct MP { a; b; }
 struct MH { p: MP; }
 fn mv_take(t: MP): i64 { return t.a * 10 + t.b; }
-fn mv_mp(x): MP { ret2(x, x + 1); }
+fn mv_mp(x): MP { var p: MP = MP { x, x + 1 }; return p; }
 fn c2(): i64 {
     var p: MP = mv_mp(3); var h: MH; h.p = mv_mp(3); var q: MP = MP { 0, 0 }; q = mv_mp(3);
     return mv_take(mv_mp(3)) + p.a * 10 + p.b + h.p.a * 10 + h.p.b + q.a * 10 + q.b - 102;
@@ -83,10 +88,10 @@ fn rows(): i64 {
     assert_eq(r26(), 141, "R26: var k = p.x; return mk2(k); a tail call after a statement");
     assert_eq(r27(), 127, "R27: an #inline fn's return (a, b); replayed in a 24 B struct fn");
     assert_eq(r28(), 127, "R28: a generic fn's return (a, b); replayed in a 24 B struct fn");
-    assert_eq(x8(), 6, "X8: mk(5); var b = rethi(); after ret2(x, x + 1)");
-    assert_eq(p8b(), 42, "P8b: ret2(x, 2) received as var p: P2 = mr(4)");
-    assert_eq(a7(), 48, "A7: ret2(41, 7) into a pair struct");
-    assert_eq(c2(), 34, "C2: ret2(x, y) into an argument, a declaration, a field, an assignment");
+    assert_eq(x8(), 6, "X8: mk(5); var b = rethi(); after a struct's return p;");
+    assert_eq(p8b(), 42, "P8b: return p; received as var p: P2 = mr(4)");
+    assert_eq(a7(), 48, "A7: return p; into a pair struct");
+    assert_eq(c2(), 34, "C2: return p; into an argument, a declaration, a field, an assignment");
     return 0;
 }
 var r0 = rows();

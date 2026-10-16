@@ -194,8 +194,10 @@ refused ret_fwd_arity3 "fn g3(x): (i64, i64, i64) { return (x, 1, 2); }\nfn f(x)
 refused ret_fwd_undecl3 "fn h3(a) { return (a, a + 1, a + 2); }\nfn f(): (i64, i64) { return h3(1); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
 refused ret_fwd_struct "struct P { a; b; }\nfn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
 # A struct callee is no multiple values (the B4 rule) even when its own `ret2(1, 2);` fills rax:rdx (6.7.11: its
-# `return (1, 2);` is refused, issues/archived/2026-10-08-struct-operator-results.md #4).
-refused ret_fwd_struct_tup "struct P { a; b; }\nfn mk(): P { ret2(1, 2); }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2"
+# `return (1, 2);` is refused, issues/archived/2026-10-08-struct-operator-results.md #4). 6.7.13: that `ret2` is
+# refused too, at the producer (D22 A, 2026-10-15) — two mistakes, two lines; the forward's is still R2.
+refused ret_fwd_struct_tup "struct P { a; b; }\nfn mk(): P { ret2(1, 2); }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2" 2
+check "ret_fwd_struct_tup: the producer's own ret2 refusal" yes "$(grep -qF "2:14: a fn returning the struct \`P\` returns that struct — \`ret2\` writes two values" "$T/ret_fwd_struct_tup.err" && echo yes || echo no)"
 refused ret_method 'struct P { a; }\nimpl P { fn m(self): (i64, i64) { return self.a; } }\nfn main(): i64 { var p = P { 4 }; var a, b = p.m(); return a; }\nsyscall(60, main());\n' "'P_m' returns 2 values - return (a, b)"
 runs ret_fwd      "${G56}fn f(x): (i64, i64) { return g(x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
 runs ret_fwd_callptr "${G56}fn f(x): (i64, i64) { var fp = &g; return callptr(fp, x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56

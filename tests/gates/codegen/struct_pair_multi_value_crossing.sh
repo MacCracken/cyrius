@@ -66,6 +66,14 @@
 #   M11 `_refuse_struct_tuple_return` answering 0                        -> RED X1 X9 (BUILT, every leg)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): X8 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
+# 6.7.13 (D22 A, the user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md):
+# `ret2(a, b)` in a fn declared `: P` is refused in every class, as the tuple literal is — so direction A has no
+# producer left in a program that compiles. X2 pins the refusal on the three compilers (the SR rows of
+# tests/gates/frontend/multi_value_into_named_struct.sh carry every class and PE); X3 receives a `return p;`
+# producer by the assignment; X8's control `ret2` moved to a fn with no declared return (a multi-value fn); D8
+# (three names from 16 B, the body no help) has the if / else body pass 1 cannot prove, as D7 has for 24 B; the N
+# leg reads X3 and X4; the values file's repro-A rows take a `return p;` producer through each path.
+#   M12 `_ret2_in_struct` answering 0 at once                            -> RED X2 (BUILT, every leg)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -144,17 +152,17 @@ refused() {
 }
 
 P='struct P { a; b; }\n'
-MT='fn mk(x): P { ret2(x, x + 1); }\n'
+MT='fn mk(x) { ret2(x, x + 1); }\n'
 ML='fn mk(x): P { var p: P; p.a = x; p.b = x + 1; return p; }\n'
 E='var r = main(); syscall(60, r);\n'
 refused x1 "returns that struct — \`(a, b)\` is a tuple, another type" "X1: repro A's \`return (x, x + 1);\` in a \`: P\` fn is refused (6.7.11)" "${P}fn mk(x): P { return (x, x + 1); }\nfn main(): i64 { var p: P = mk(5); return p.a * 10 + p.b; }\n$E"
-exits x2 56 "X2: A with \`ret2(x, x + 1);\`" "${P}fn mk(x): P { ret2(x, x + 1); }\nfn main(): i64 { var p: P = mk(5); return p.a * 10 + p.b; }\n$E"
-exits x3 56 "X3: A with the assignment \`p = mk(5);\` into an existing P" "${P}${MT}fn main(): i64 { var p: P; p.a = 0; p.b = 0; p = mk(5); return p.a * 10 + p.b; }\n$E"
+refused x2 "returns that struct — \`ret2\` writes two values" "X2: A with \`ret2(x, x + 1);\` in a \`: P\` fn is refused (6.7.13, D22 A)" "${P}fn mk(x): P { ret2(x, x + 1); }\nfn main(): i64 { var p: P = mk(5); return p.a * 10 + p.b; }\n$E"
+exits x3 56 "X3: the assignment \`p = mk(5);\` into an existing P (a P local)" "${P}${ML}fn main(): i64 { var p: P; p.a = 0; p.b = 0; p = mk(5); return p.a * 10 + p.b; }\n$E"
 exits x4 56 "X4: repro B — \`var a, b = mk(5);\` from a \`: P\` fn returning a P local" "${P}${ML}fn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
 exits x5 56 "X5: B at top level, in the declaration zone" "${P}${ML}var a, b = mk(5);\nsyscall(60, a * 10 + b);\n"
 exits x6 56 "X6: B at top level, after the first statement" "${P}${ML}var z = 0;\nz = 1;\nvar a, b = mk(5);\nsyscall(60, a * 10 + b);\n"
 exits x7 6 "X7: \`mk(5); var b = rethi();\` after a P local" "${P}${ML}fn main(): i64 { mk(5); var b = rethi(); return b; }\n$E"
-exits x8 6 "X8: \`mk(5); var b = rethi();\` after \`ret2(x, x + 1);\` (control)" "${P}${MT}fn main(): i64 { mk(5); var b = rethi(); return b; }\n$E"
+exits x8 6 "X8: \`mk(5); var b = rethi();\` after an undeclared fn's \`ret2(x, x + 1);\` (control)" "${MT}fn main(): i64 { mk(5); var b = rethi(); return b; }\n$E"
 refused x9 "returns that struct — \`(a, b, c)\` is a tuple, another type" "X9: A's \`return (x, x + 1, 9);\` is refused (6.7.11)" "${P}fn mk(x): P { return (x, x + 1, 9); }\nfn main(): i64 { var p: P = mk(5); return p.a * 10 + p.b; }\n$E"
 
 Q='struct Q { a; b; c; }\n'
@@ -168,7 +176,7 @@ refused d4 "cannot destructure 'mk' - $NR" "D4: 24 B from a method" "${Q}impl Q 
 refused d5 "cannot destructure 'mk' $N3" "D5: \`var a, b, c = mk(5);\` from a 16 B \`: P\` fn" "${P}${ML}fn main(): i64 { var a, b, c = mk(5); return a * 10 + b; }\n$E"
 refused d6 "cannot destructure 'mk' $N3" "D6: three names from 16 B at top level, in the declaration zone" "${P}${ML}var a, b, c = mk(5);\nsyscall(60, a * 10 + b);\n"
 refused d7 "cannot destructure 'mk' - $NR" "D7: 24 B with the if / else body pass 1 cannot prove" "${Q}fn mk(x): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; if (x > 3) { return q; } else { return q; } }\nfn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
-refused d8 "cannot destructure 'mk' $N3" "D8: three names from a 16 B \`: P\` fn saying \`ret2(x, x + 1);\`" "${P}${MT}fn main(): i64 { var a, b, c = mk(5); return a * 10 + b + c; }\n$E"
+refused d8 "cannot destructure 'mk' $N3" "D8: three names from 16 B with the if / else body pass 1 cannot prove" "${P}fn mk(x): P { var p: P; p.a = x; p.b = x + 1; if (x > 3) { return p; } else { return p; } }\nfn main(): i64 { var a, b, c = mk(5); return a * 10 + b + c; }\n$E"
 refused d9 "cannot destructure 'mk' - $NR" "D9: 24 B from a generic instance" "${Q}fn mk<T>(x: T): Q { var q: Q; q.a = x; q.b = x + 1; q.c = x + 2; return q; }\nfn main(): i64 { var a, b = mk<i64>(5); return a * 10 + b; }\n$E"
 refused d10 "but 'mk' returns 1 value - bind it to one name" "D10: an 8 B struct is one value, whatever its body" "struct P1 { a; }\nfn mk(x): P1 { var q: P1; q.a = x; if (x > 3) { return q; } else { return q; } }\nfn main(): i64 { var a, b = mk(5); return a * 10 + b; }\n$E"
 
@@ -177,7 +185,7 @@ if [ "$QEMU" -eq 1 ]; then
     if "$A64" < src/main_aarch64_native.cyr > "$NAT" 2> "$T/cc_nat.err" && [ -s "$NAT" ]; then
         chmod +x "$NAT"
         printf '#!/bin/sh\nexec qemu-aarch64 "%s"\n' "$NAT" > "$T/natcc"; chmod +x "$T/natcc"
-        for row in x2 x4; do
+        for row in x3 x4; do
             run "$T/natcc" qemu-aarch64 "$row" nat
             if [ "$got" = 56 ]; then ok "N: $row through the native aarch64 fork: exit 56"; else bad "N: $row through the native aarch64 fork: $got, want 56"; fi
         done

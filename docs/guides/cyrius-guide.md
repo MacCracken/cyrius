@@ -1517,6 +1517,13 @@ two words only because that class's registers are the multi-value ones. Build th
 it: `var p: P3 = P3 { a, b, 0 }; return p;`. A fn declared `: (T1, T2)`, or with no return type,
 returns `(a, b)` as before.
 
+The builtin `ret2(a, b)` is the same two values, so it is refused there the same way, in every class and
+`return ret2(..);` too (6.7.13, the user's decision of 2026-10-15): ``a fn returning the struct `P3`
+returns that struct — `ret2` writes two values``. It compiled through 6.7.12 with the same three
+outcomes (0, 0, 0 over 16 bytes; the second value dropped at 8 bytes or less; the two words by
+coincidence at 9-16 bytes). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's
+own and is unchanged; a fn returning a `dyn` keeps its own refusal.
+
 ⚠ **A fn returning a struct of 8 bytes or less returns a value of that struct (6.7.11).** The struct
 travels in one register, and its `return` is checked as the two wider classes check theirs: a value
 of ANOTHER struct — a local, a by-value parameter, a global, `(u)`, a call (`return mk();` too), a
@@ -2988,6 +2995,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `(1, 2) + 3`, `g((1, 2))` (untyped `g`) | ``a tuple `( .. )` is a value only as a `var` initializer, …`` |
 | `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
 | `return (a, b);` from a fn declared `: P` (a named struct, any size; 6.7.11) | ``a fn returning the struct `P` returns that struct — `(a, b)` is a tuple, another type`` |
+| `ret2(a, b);` in a fn declared `: P` (any size; 6.7.13) | ``a fn returning the struct `P` returns that struct — `ret2` writes two values`` |
 | `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
