@@ -1653,6 +1653,27 @@ fn _int_res(S): i64 {
     _int_st(S);
     return 0;
 }
+# ⛔ 6.7.13 — A COMPARISON (and an `&&` / `||` link) IS 0 OR 1, WHATEVER ITS OPERANDS: its integer arm never
+# wrote its result's type, so with an f64 RIGHT operand (`(n < x) * 3`) the result kept the f64 type and the
+# next operator took the f64 arm (0 where 3 is right, and a false kind-1 warning). An f64 LEFT operand was
+# right (its arm sets 0). And `& | ^ % << >> >>>` give an integer too — they have no f64 form (the user's
+# decision D12 (a), 2026-10-15) — where kind 2 keeps the f64 type for `+ - * /` (`_int_st` leaves floats).
+# `_int_res`, and no expression type at all. issues/2026-10-14-integer-comparison-result-keeps-f64-right-
+# operand-type.md. CHANGELOG [6.7.13]
+fn _int_resb(S): i64 {
+    _int_res(S);
+    SESTYPE(S, 0);
+    return 0;
+}
+# PARSE_TERM's tail after operator token `typ`: `% << >> >>>` give an integer (`_int_resb`); `* /`, whose
+# f64 arms keep their type, and `*| *?` clear only the step and a struct (`_int_res`).
+fn _int_rest(S, typ): i64 {
+    if (typ == 34) { return _int_resb(S); }
+    if (typ == 38) { return _int_resb(S); }
+    if (typ == 39) { return _int_resb(S); }
+    if (typ == 152) { return _int_resb(S); }
+    return _int_res(S);
+}
 
 # _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
 # a scalar f32 bit pattern, else 0. Those builtins inherit their ARGUMENT's estype (the
@@ -7180,7 +7201,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     }
                                     else { go = 0; }
                                 } } } } } } }
-        if (go == 1) { _int_res(S); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct
+        if (go == 1) { _int_rest(S, typ); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13
     }
     return 0;
 }
@@ -7790,9 +7811,9 @@ fn PEXPR(S): i64 {
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
 fn _pexpr_bit_ps(S, typ, ps): i64 {
-    if (typ == 27) { _int_res(S); return 0; }   # 6.7.11: and no struct type (_int_st)
-    if (typ == 35) { _int_res(S); return 0; }
-    if (typ == 36) { _int_res(S); return 0; }
+    if (typ == 27) { _int_resb(S); return 0; }   # 6.7.11: and no struct type (_int_st); 6.7.13: nor an f64 (D12 (a))
+    if (typ == 35) { _int_resb(S); return 0; }
+    if (typ == 36) { _int_resb(S); return 0; }
     return ps;
 }
 
@@ -8095,7 +8116,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 }
             }
             _cfo = 0;
-            _int_res(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct
+            _int_resb(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
         }
     }
@@ -8134,7 +8155,7 @@ fn _PLOGIC_AND(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 0);                 # short-circuited (left false) → result 0
         EPATCH(S, p_end);
-        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
         _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
         lop = PEEKT(S);
     }
@@ -8174,7 +8195,7 @@ fn PCMPE(S): i64 {
         EPATCH(S, p_skip);
         EMOVI(S, 1);                 # short-circuited (left true) → result 1
         EPATCH(S, p_end);
-        _int_res(S);                 # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
         _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
         lop = PEEKT(S);
     }

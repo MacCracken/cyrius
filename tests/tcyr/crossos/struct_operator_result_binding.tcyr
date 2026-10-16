@@ -153,6 +153,19 @@ fn b_lint_t() { var b: T3 = T3 { 9, 9, 9 }; var r = mkt(4) - b; return r + 10; }
 fn b_lcmp_8() { var b: S8 = S8 { 1 }; var r = mk8(1) == b; return r + 1; }
 fn b_lop_t() { var b: T3 = T3 { 5, 6, 7 }; var r = mkt(4) + b; return r.x + r.y + r.z; }
 fn b_lf64() { var x = fdbl() * 2.0; var y = x + x; return f64_to(y); }
+# 6.7.13 (issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md) — a comparison, an `&&` /
+# `||` link and (the user's decision D12 (a), 2026-10-15) `& | ^ % << >> >>>` give an INTEGER whatever the
+# right operand: with an f64 one the result kept the f64 type and the next `*` took the f64 arm (the repro: 0).
+# `xb` holds f64 bits whose low byte is 3 (a shift count of 3), so the integer result is checkable.
+fn f64_bits3(): f64 { var x: f64 = 0.0; store64(&x, 0x3FF0000000000003); return x; }
+fn c_lt() { var n = 1; var x: f64 = 2.5; var c = (n < x) * 3; return c; }
+fn c_and() { var n = 1; var x: f64 = 2.5; var c = (n == 1 && x) * 3; return c; }
+fn c_or() { var n = 1; var x: f64 = 2.5; var c = (n == 0 || x) * 3; return c; }
+fn c_band() { var m = 7; var xb = f64_bits3(); var c = (m & xb) * 3; return c; }
+fn c_bxor() { var m = 7; var xb = f64_bits3(); var c = (m ^ xb) * 3; return c & 255; }
+fn c_mod() { var m = 64; var xb = f64_bits3(); var c = (m % xb) * 3; return c; }
+fn c_shl() { var m = 7; var xb = f64_bits3(); var c = (m << xb) * 3; return c; }
+fn c_shr() { var m = 64; var xb = f64_bits3(); var c = (m >> xb) * 3; return c; }
 
 # ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
 struct Z1 { a: u8; }
@@ -308,6 +321,14 @@ assert_eq(b_lint_t(), 5, "  24 B: var r = mkt(4) - b; r + 10");
 assert_eq(b_lcmp_8(), 2, "var r = mk8(1) == b; a comparison after a leading call: untyped");
 assert_eq(b_lop_t(), 38, "var r = mkt(4) + b; a struct-returning operator after a leading call types it");
 assert_eq(b_lf64(), 6, "var x = f() * 2.0; a : f64 leading call keeps the f64 binding");
+assert_eq(c_lt(), 3, "(n < x) * 3 with x: f64 is an integer multiply (the repro: 0)");
+assert_eq(c_and(), 3, "(n == 1 && x) * 3: an && link is 0 / 1");
+assert_eq(c_or(), 3, "(n == 0 || x) * 3: an || link is 0 / 1");
+assert_eq(c_band(), 9, "(m & x) * 3 is an integer (D12 (a))");
+assert_eq(c_bxor(), 12, "(m ^ x) * 3 is an integer (D12 (a))");
+assert_eq(c_mod(), 192, "(m % x) * 3 is an integer (D12 (a))");
+assert_eq(c_shl(), 168, "(m << x) * 3 is an integer (D12 (a))");
+assert_eq(c_shr(), 24, "(m >> x) * 3 is an integer (D12 (a))");
 assert_eq(z1(), 28, "1 B: c.a written, c + c");
 assert_eq(z2(), 28, "2 B: c.a written, c + c");
 assert_eq(z3(), 1028, "3 B: c.a written, c + c");

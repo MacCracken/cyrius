@@ -144,6 +144,12 @@ however far its result is carried (6.7.11): `x = x + (x + 1.5)`, `2 * (x + 1.5)`
 warned twice, `x - (x * (x + 1.5))` three times — the mix's result keeps the f64 type, so each
 enclosing integer operator saw an f64 right operand again. Two mixes still warn twice, and `x + 1.5
 + 2` still warns kind 1 for the `+ 2`.
+A comparison, an `&&` / `||` link and `& | ^ % << >> >>>` give an INTEGER whatever their right
+operand (6.7.13; `& | ^ % << >> >>>` the user's decision D12, 2026-10-15): with `n` an integer and `x:
+f64`, `(n < x) * 3` is 3 (the comparison still warns `comparison mixes f64 and integer operands`),
+and `(n & x) * 3` multiplies integers. Through 6.7.12 the result kept the f64 type of its right operand,
+so the next operator took the f64 arm (`(n < x) * 3` was 0, with a kind-1 warning naming the wrong mix).
+Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
