@@ -1187,6 +1187,40 @@ ${IRF}fn main(): i64 { var x = gg<i64>(16); return x; }
 syscall(60, main());
 EOF
 
+# IR6 — the replayed `?` (the issue's "check the two `?` arms for the same replay case"). Its Err jump is
+# patched to the replay's END (the call's value: (tag, payload), as a real call to the instance returns), not
+# the caller's epilogue — so the `?` arms marking `_cur_fn_ix` (the caller) were the same false flag: `fn
+# mid(v): i64 { var t, x = gq<i64>(v); return x; }` was refused "bind both" at `var y = mid(3);`, and compiled
+# (31) with a `var k = v;` added to gq's body (no replay). Both arms are guarded `GIDEP == 0` now.
+# Mutations (measured red): MIRQe the expression arm's guard dropped -> IR6b; MIRQs the statement arm's -> IR6c.
+IRQ='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn inner(v) { if (v == 0) { return SErr(5); } return SOk(v * 10); }
+fn gq<T>(v: T) { return SOk(inner(v)? + 1); }
+fn gs<T>(v: T) { inner(v)?; return SOk(v + 1); }
+'
+# (0, 62) and the Err (1, 5) as gq's value: mid(0) = SOk(5 * 2 + 1) -> 62 + 11.
+accept "a replayed \`?\` propagates as the instance's value (unchanged)" axisIR6a 73 <<EOF
+${IRQ}fn mid(v) { var t, x = gq<i64>(v); return SOk(x * 2 + t); }
+fn main(): i64 { var t, v = mid(3); var t2, v2 = mid(0); return t * 100 + v + t2 * 50 + v2; }
+syscall(60, main());
+EOF
+accept "a caller of a replayed expression \`?\` binds one value" axisIR6b 31 <<EOF
+${IRQ}fn mid(v): i64 { var t, x = gq<i64>(v); return x; }
+fn main(): i64 { var y = mid(3); return y; }
+syscall(60, main());
+EOF
+# mid(3): (0, 4) -> 40; mid(0): the statement `?`'s Err (1, 5) as gs's value -> 51.
+accept "a caller of a replayed statement \`inner(v)?;\` binds one value" axisIR6c 91 <<EOF
+${IRQ}fn mid(v): i64 { var t, x = gs<i64>(v); return x * 10 + t; }
+fn main(): i64 { var y = mid(3); var z = mid(0); return y + z; }
+syscall(60, main());
+EOF
+refuse_at "the replayed \`?\` generic's own single bind still refused" axisIR6d "= gq<i64>(3);" <<EOF
+${IRQ}fn main(): i64 { var y = gq<i64>(3); return y; }
+syscall(60, main());
+EOF
+
 # ── axis 17 — 6.7.11: A STRUCT-LITERAL ELEMENT; AN ARGUMENT KEEPS THE TAG ─────────────────────
 # ⛔ A struct-literal element is a one-slot store, and it kept the TAG of a `: stack` pair and dropped
 # the payload in silence: `var p = P { mk(7), 3 };`, `P { a: mk(7), b: 3 }` and `var G = P { mk(7), 3 };`

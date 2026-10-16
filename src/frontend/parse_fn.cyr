@@ -1065,9 +1065,8 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     # flag and degrades to the pre-v6.5.67 behaviour. That is the safe direction for a diagnostic —
     # a missed warning, never a false one.
     # 6.7.13: not inside an inline replay (GIDEP > 0) — `_cur_fn_ix` is still the CALLER there, and the
-    # replayed `return` is the call's value, not the caller's; the replayed fn's own entry carries its
-    # flag. (A replayed `?` does leave through the caller's epilogue: its two marking arms stay.)
-    # CHANGELOG [6.7.13]
+    # replayed `return` is the call's value, not the caller's (its jump lands at the replay's end); the
+    # replayed fn's own entry carries its flag. The two `?` arms are guarded the same way. CHANGELOG [6.7.13]
     if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) {
             if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
         } }

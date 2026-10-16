@@ -187,6 +187,11 @@ fn f(x) { var p: Pt; p.x = x; p.y = 0; var t, v = h(p, x); return Ok(v); }"
 printf '%s\n%s\n' "$H" 'fn gg<T>(v: T) { return Ok(v); }
 fn main(): i64 { var t, v = gg<i64>(7); return v; }
 sys_exit(main());' > "$T/ir_replay.cyr"
+# The same for a replayed `?` (its Err jump lands at the replay's end): MIRQe -> ir_replay_q red on both.
+printf '%s\n%s\n' "$H" 'fn inner(v) { if (v == 0) { return Err(5); } return Ok(v * 10); }
+fn gq<T>(v: T) { return Ok(inner(v)? + 1); }
+fn mid(v): i64 { var t, x = gq<i64>(v); return x; }
+sys_exit(mid(3));' > "$T/ir_replay_q.cyr"
 # warns <compiler> <fixture> <expected count>
 warns() {
   "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
@@ -230,6 +235,7 @@ for c in x86 aarch64; do
   warns "$c" m3_ptr_one 1
   warns "$c" m3_unknown 0
   warns "$c" ir_replay 0
+  warns "$c" ir_replay_q 0
 done
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)

@@ -4636,7 +4636,9 @@ fn _stmt_qmark(S, pair): i64 {
             EPATCH(S, qspj);
             _HTLOAD(S, qsval);            # Ok path: rax = payload (dropped by the
             # bare-statement convention)
-            if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+            # Not inside an inline replay: its Err jump lands at the replay's end (the call's value), not
+            # the caller's epilogue — `_cur_fn_ix` is the caller there. CHANGELOG [6.7.13]
+            if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
         } else {
             var qsidx = _HTEMP(S);
             _HTSTORE(S, qsidx);

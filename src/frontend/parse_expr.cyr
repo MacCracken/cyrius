@@ -6914,8 +6914,10 @@ fn _PARSE_TERM_IMPL(S): i64 {
             _HTLOAD(S, qval);                 # Ok path: rax = payload
             _cfo = 0;
             # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
-            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN).
-            if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN). Not inside
+            # an inline replay: there the Err jump lands at the replay's end (the call's value) and
+            # `_cur_fn_ix` is the caller. CHANGELOG [6.7.13]
+            if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
             _qpair_done = 1;
         }
         if (_qpair_done == 0) {
