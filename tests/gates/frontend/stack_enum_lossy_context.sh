@@ -1047,6 +1047,180 @@ var rc = main();
 syscall(60, rc);
 EOF
 
+# ── axis TD — 6.7.13: A PAIR TRAIT DEFAULT USED ABOVE ITS TRAIT ────────────────────────────────
+# ⛔ A method an impl INHERITS from its trait's default body has no `fn` in the impl block: axis 16's
+# walk (the impl's own methods) never saw it, so a caller above the trait read `p.ddiv(d)?` as boxed
+# (rc 139 on x86 and aarch64, 1 on cx, 5 on PE — the issue's repro, TD1, verbatim) and `var q =
+# p.ddiv(d);` kept the tag (exit 1). Each default the impl does not override is scanned under the entry
+# registered for that impl (`_pair_scan_defaults`, read only), in the same rounds.
+# (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
+# Mutation (a scratch copy of src/, CYCC= it; measured red): MTD `_pair_prescan_impls` without its
+# `_pair_scan_defaults` call -> TD1 (rc 139; the gate stops at its first red — TD2 BUILDS, TD3 / TD4 /
+# TD6 rc 139 when run alone).
+accept "the issue's repro: p.ddiv(d)? above its trait and impl" axisTD1 70 <<'EOF'
+include "lib/syscalls.cyr"
+enum MR: stack { MOk(v); MErr(e); }
+struct Pt { x; y; }
+fn usediv(p: Pt, d): i64 { var q = p.ddiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+refuse_at "the single bind var q = p.ddiv(d); above the trait and impl" axisTD2 "= p.ddiv(d);" <<EOF
+${M16}fn usediv(p: Pt, d): i64 { var q = p.ddiv(d); return q + 1; }
+fn main(): i64 { var p = Pt { 40, 2 }; return usediv(p, 4); }
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "the trait above, its impl below the caller" axisTD3 70 <<EOF
+${M16}trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+fn usediv(p: Pt, d): i64 { var q = p.ddiv(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usediv(p, 4);
+    var t2, v2 = usediv(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+accept "a default forwarding return self.ddiv(d); to another default" axisTD4 70 <<EOF
+${M16}fn usefwd(p: Pt, d): i64 { var q = p.dfwd(d)?; return MOk(q + 1); }
+fn main(): i64 {
+    var p = Pt { 40, 2 };
+    var t, v = usefwd(p, 4);
+    var t2, v2 = usefwd(p, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv {
+    fn dfwd(self, d): i64 { return self.ddiv(d); }
+    fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); }
+}
+impl Dv for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+# ANTI-OVER-REACH: a one-value default below its use binds to one variable; a default an impl OVERRIDES is
+# that impl's own body (Pt's one value binds), while another impl inheriting it gets the pair (Qt's `?`).
+accept "a plain i64 default below its use is not flagged" axisTD5 10 <<EOF
+${M16}fn useone(p: Pt): i64 { var q = p.done(); return q; }
+fn main(): i64 { var p = Pt { 10, 2 }; return useone(p); }
+trait Do { fn done(self): i64 { return self.x; } }
+impl Do for Pt { }
+var rc = main();
+syscall(60, rc);
+EOF
+# (2 * 10 + 10) for Ok, then Pt's 0 and Qt's Err(9) folded: 30 + 59.
+accept "an overridden default is its impl's one value; an inheriting impl's is the pair" axisTD6 89 <<EOF
+${M16}fn useboth(p: Pt, q: Qt, d): i64 { var a = p.ddiv(d); var b = q.ddiv(d)?; return MOk(a * 10 + b); }
+fn main(): i64 {
+    var p = Pt { 8, 2 };
+    var q = Qt { 40 };
+    var t, v = useboth(p, q, 4);
+    var t2, v2 = useboth(p, q, 0);
+    return t * 100 + v + t2 * 50 + v2;
+}
+trait Dv { fn ddiv(self, d): i64 { if (d == 0) { return MErr(9); } return MOk(self.x / d); } }
+impl Dv for Pt { fn ddiv(self, d): i64 { if (d == 0) { return 0; } return self.x / d; } }
+impl Dv for Qt { }
+var rc = main();
+syscall(60, rc);
+EOF
+
+# ── axis IR — 6.7.13: AN INLINE-REPLAYED PAIR GENERIC DOES NOT FLAG ITS CALLER ─────────────────
+# ⛔ A one-statement generic instance (`gg<i64>`) is inline-REPLAYED into its caller (GIDEP > 0), where
+# `_cur_fn_ix` is still the CALLER — so the replayed `return SOk(v);` (the call's value) marked the CALLER
+# pair-returning: `main` (which returns one value, v) was refused "bind both" at `var x = main();` (the
+# issue's repro, IR1, verbatim) and warned "a SINGLE value here". The `return` arm marks nothing inside a
+# replay now; the replayed fn's own entry carries its flag (IR5b).
+# (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md)
+# Mutation (a scratch copy of src/, CYCC= it; measured red): MIR `_PARSE_RETURN_ARMS` without its
+# `GIDEP == 0` guard -> IR1 ("bind both" at `main()`; the gate stops at its first red — IR2 and IR4 red
+# when run alone).
+accept "the issue's repro: a caller of an inline-replayed pair generic binds one value" axisIR1 7 <<'EOF'
+include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn gg<T>(v: T) { return SOk(v); }
+fn main(): i64 { var t, v = gg<i64>(7); return v; }
+fn caller(): i64 { var x = main(); return x; }
+syscall(60, caller());
+EOF
+IRG='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn gg<T>(v: T) { return SOk(v); }
+'
+accept "the same caller bound at top level" axisIR2 7 <<EOF
+${IRG}fn main(): i64 { var t, v = gg<i64>(7); return v; }
+var e = main();
+syscall(60, e);
+EOF
+refuse_at "a refused store h.a = gg<i64>(7); reports its own error only" axisIR4 "gg<i64>(7);" <<EOF
+${IRG}struct H { a; b; }
+fn main(): i64 { var h: H; h.a = gg<i64>(7); return h.a; }
+var e = main();
+syscall(60, e);
+EOF
+# A replayed generic that FORWARDS a pair: its caller's destructure is right, and the generic's own single
+# bind is still refused (its own entry is flagged).
+IRF='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn inner(v) { if (v == 0) { return SErr(5); } return SOk(v * 10); }
+fn gg<T>(v: T) { return inner(v); }
+'
+accept "a replayed generic forwarding return inner(v); still propagates" axisIR5 161 <<EOF
+${IRF}fn main(): i64 { var t, v = gg<i64>(16); var t2, v2 = gg<i64>(0); return t * 100 + v + t2 + v2 - 5; }
+fn caller(): i64 { var x = main(); return x; }
+syscall(60, caller());
+EOF
+refuse_at "the forwarding generic's own single bind still refused" axisIR5b "= gg<i64>(16);" <<EOF
+${IRF}fn main(): i64 { var x = gg<i64>(16); return x; }
+syscall(60, main());
+EOF
+
+# IR6 — the replayed `?` (the issue's "check the two `?` arms for the same replay case"). Its Err jump is
+# patched to the replay's END (the call's value: (tag, payload), as a real call to the instance returns), not
+# the caller's epilogue — so the `?` arms marking `_cur_fn_ix` (the caller) were the same false flag: `fn
+# mid(v): i64 { var t, x = gq<i64>(v); return x; }` was refused "bind both" at `var y = mid(3);`, and compiled
+# (31) with a `var k = v;` added to gq's body (no replay). Both arms are guarded `GIDEP == 0` now.
+# Mutations (measured red): MIRQe the expression arm's guard dropped -> IR6b; MIRQs the statement arm's -> IR6c.
+IRQ='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn inner(v) { if (v == 0) { return SErr(5); } return SOk(v * 10); }
+fn gq<T>(v: T) { return SOk(inner(v)? + 1); }
+fn gs<T>(v: T) { inner(v)?; return SOk(v + 1); }
+'
+# (0, 62) and the Err (1, 5) as gq's value: mid(0) = SOk(5 * 2 + 1) -> 62 + 11.
+accept "a replayed \`?\` propagates as the instance's value (unchanged)" axisIR6a 73 <<EOF
+${IRQ}fn mid(v) { var t, x = gq<i64>(v); return SOk(x * 2 + t); }
+fn main(): i64 { var t, v = mid(3); var t2, v2 = mid(0); return t * 100 + v + t2 * 50 + v2; }
+syscall(60, main());
+EOF
+accept "a caller of a replayed expression \`?\` binds one value" axisIR6b 31 <<EOF
+${IRQ}fn mid(v): i64 { var t, x = gq<i64>(v); return x; }
+fn main(): i64 { var y = mid(3); return y; }
+syscall(60, main());
+EOF
+# mid(3): (0, 4) -> 40; mid(0): the statement `?`'s Err (1, 5) as gs's value -> 51.
+accept "a caller of a replayed statement \`inner(v)?;\` binds one value" axisIR6c 91 <<EOF
+${IRQ}fn mid(v): i64 { var t, x = gs<i64>(v); return x * 10 + t; }
+fn main(): i64 { var y = mid(3); var z = mid(0); return y + z; }
+syscall(60, main());
+EOF
+refuse_at "the replayed \`?\` generic's own single bind still refused" axisIR6d "= gq<i64>(3);" <<EOF
+${IRQ}fn main(): i64 { var y = gq<i64>(3); return y; }
+syscall(60, main());
+EOF
+
 # ── axis 17 — 6.7.11: A STRUCT-LITERAL ELEMENT; AN ARGUMENT KEEPS THE TAG ─────────────────────
 # ⛔ A struct-literal element is a one-slot store, and it kept the TAG of a `: stack` pair and dropped
 # the payload in silence: `var p = P { mk(7), 3 };`, `P { a: mk(7), b: 3 }` and `var G = P { mk(7), 3 };`
@@ -1329,5 +1503,208 @@ ${PRE}fn main(): i64 {
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
+# ── axis PW — 6.7.13: PARENTHESES AROUND A WHOLE PAIR CALL ARE TRANSPARENT (D19 A) ─────────────────
+# ⛔ `_callee_returns_pair_at` read the callee at the value's first token, so a wrap `(` answered "no
+# pair": `var v = (f(7))?;` took the BOXED `?` lowering and dereferenced the tag (x86 / aarch64 139, cx 1,
+# PE 5; right: 77), and every lossy store the unwrapped spelling refuses — a bind, an assignment, a field,
+# an element, `OP=`, `*p`, `store64`, a struct-literal element, a global — compiled clean and kept the TAG
+# (the issue's second repro exited 0). The user's decision (2026-10-15, D19 A): the parentheses are
+# transparent everywhere, as around a whole struct source (6.7.6): each store is refused "bind both" as its
+# unwrapped form is, `?` propagates (generic, method, depth 2), `(mk(7)) + 1` is judged as `mk(7) + 1`,
+# and an argument keeps the tag as `g(mk(7))` does (D22). The token passes peel the same wrap
+# (`_pair_unwrap`): `return (mk(x));` forwards a pair in either order. A wrap that is not ONE whole call
+# — `(3) + (mk(7))`, a boxed / one-value call — is untouched.
+# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
+# Mutations (scratch trees, run 2026-10-15, measured red): MPW1 `_callee_returns_pair_at` without
+# `_pair_unwrap` -> PW1 (rc 139; the gate stops there — the axis run alone: PW2r, PW2-PW13b and PW15
+# red); MPW2 `_refuse_lossy_pair` scanning for `?` from the token after the value's first again -> PW15
+# (`x = (mk(x))?;` refused); MPW3 `_tok_ret_callee` without `_pair_unwrap` -> PW16 (the forwarder below
+# its caller: rc 139), PW16b.
+accept "the issue's repro 1, verbatim: (f(7))? propagates" axisPW1 77 <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+fn t1() { var v = (f(7))?; return ROk(v); }
+fn t2() { var v = f(7)?; return ROk(v); }
+fn main(): i64 { var c, d = t2(); var a, b = t1(); return b * 10 + d; }
+syscall(60, main());
+EOF
+exact "the issue's repro 2, verbatim: one 'bind both' per wrapped store" axisPW2r 4 "= (f(7)); return v|bind both" "(f(7)); return x|bind both" "(f(7)); return h.a|bind both" "(f(7)), 3|bind both" <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+struct P { a; b; }
+fn t1(): i64 { var v = (f(7)); return v; }
+fn t2(): i64 { var x = 0; x = (f(7)); return x; }
+fn t3(): i64 { var h: P; h.a = (f(7)); return h.a; }
+fn t4(): i64 { var p = P { (f(7)), 3 }; return p.a; }
+syscall(60, t1() * 1000 + t2() * 100 + t3() * 10 + t4());
+EOF
+refuse_at "var v = (mk(7))" axisPW2 "= (mk(7));" <<EOF
+${P15}fn main(): i64 { var v = (mk(7)); return v; }
+var e = main();
+EOF
+refuse_at "x = (mk(7))" axisPW3 "(mk(7));" <<EOF
+${P15}fn main(): i64 { var x = 0; x = (mk(7)); return x; }
+var e = main();
+EOF
+refuse_at "h.n = (mk(7)), a field" axisPW4 "(mk(7));" <<EOF
+${P15}fn main(): i64 { var h: H; h.n = (mk(7)); return h.n; }
+var e = main();
+EOF
+refuse_at "a[0] = (mk(7)), an element" axisPW5 "(mk(7));" <<EOF
+${P15}fn main(): i64 { var a: i64[2]; a[0] = (mk(7)); return a[0]; }
+var e = main();
+EOF
+refuse_at "x += (mk(7))" axisPW6 "(mk(7));" <<EOF
+${P15}fn main(): i64 { var x = 0; x += (mk(7)); return x; }
+var e = main();
+EOF
+refuse_at "*p = (mk(7))" axisPW7 "(mk(7));" <<EOF
+${P15}fn main(): i64 { var x = 0; var p = &x; *p = (mk(7)); return x; }
+var e = main();
+EOF
+refuse_at "store64(&s, (mk(7)))" axisPW8 "(mk(7)))" <<EOF
+${P15}fn main(): i64 { var s = 0; store64(&s, (mk(7))); return s; }
+var e = main();
+EOF
+refuse_at "P { (mk(7)), 3 }, a positional element" axisPW9a "(mk(7)), 3" <<EOF
+${P17}fn main(): i64 { var p = P { (mk(7)), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "P { a: 3, b: (mk(7)) }, a named element" axisPW9b "(mk(7)) }" <<EOF
+${P17}fn main(): i64 { var p = P { a: 3, b: (mk(7)) }; return p.b; }
+var e = main();
+EOF
+refuse_at "H { (mk(7)), 3, 5 }, a nested struct's first leaf" axisPW9c "(mk(7)), 3" <<EOF
+${P17}fn main(): i64 { var h = H { (mk(7)), 3, 5 }; return h.p.a; }
+var e = main();
+EOF
+refuse_at "P { ((gg<i64>(7))), 3 }, the generic at depth 2" axisPW9d "((gg<i64>(7)))" <<EOF
+${P17}fn main(): i64 { var p = P { ((gg<i64>(7))), 3 }; return p.a; }
+var e = main();
+EOF
+refuse_at "var G = (mk(7)), the declaration zone" axisPW10a "= (mk(7));" <<EOF
+${P15}var G = (mk(7));
+syscall(60, G);
+EOF
+refuse_at "var G = (mk(7)), after the first statement" axisPW10b "= (mk(7));" <<EOF
+${P15}var z = 1;
+z = 2;
+var G = (mk(7));
+syscall(60, G);
+EOF
+refuse_at "G = ((mk(7))), a top-level assignment" axisPW10c "((mk(7)));" <<EOF
+${P15}var G = 0;
+G = ((mk(7)));
+syscall(60, G);
+EOF
+synonly_refuse axisPW10d "(mk(7));" <<EOF
+${P15}fn k(): i64 { e.size = (mk(7)); return 0; }
+EOF
+accept "? on a wrapped explicit generic and a wrapped method call" axisPW11 242 <<EOF
+${GM}fn relay(d) {
+    var p: Pt; p.x = 12; p.y = 0;
+    var a = (gdiv<i32>(12, d))?;
+    var b = (p.div(d))?;
+    return GOk(a * 10 + b);
+}
+fn main(): i64 {
+    var t, v = relay(3);
+    var t2, v2 = relay(0);
+    if (t != 0) { return 101; }
+    if (v != 44) { return 102; }
+    if (t2 != 1) { return 103; }
+    if (v2 != 99) { return 104; }
+    return 242;
+}
+syscall(60, main());
+EOF
+accept "? on ((mk(x))), depth 2: Ok(7) and Err(33)" axisPW12 41 <<EOF
+${P15}fn relay(x) { var v = ((mk(x)))?; return SOk(v + 1); }
+fn main(): i64 {
+    var t, v = relay(7);
+    var t2, v2 = relay(0 - 1);
+    if (t != 0) { return 101; }
+    if (t2 != 1) { return 103; }
+    return v + v2;
+}
+syscall(60, main());
+EOF
+refuse_at "x = (mk(7)) + 1, judged as x = mk(7) + 1 is" axisPW13a "(mk(7)) + 1" <<EOF
+${P15}fn main(): i64 { var x = 0; x = (mk(7)) + 1; return x; }
+var e = main();
+EOF
+refuse_at "var v = (mk(7)) + 1, judged as var v = mk(7) + 1 is" axisPW13b "= (mk(7)) + 1" <<EOF
+${P15}fn main(): i64 { var v = (mk(7)) + 1; return v; }
+var e = main();
+EOF
+accept "g((mk(7))) receives the tag, as g(mk(7)) does (D22, unchanged)" axisPW14 80 <<EOF
+${P15}fn g(v): i64 { return v + 40; }
+fn main(): i64 { return g((mk(7))) + g(mk(7)); }
+syscall(60, main());
+EOF
+accept "? on a wrap at an assignment, a field, an argument and an operand" axisPW15 30 <<EOF
+${P15}fn g(v): i64 { return v * 2; }
+fn relay(x) {
+    var y = 0;
+    y = (mk(x))?;
+    var h: H;
+    h.n = ((mk(x + 1)))?;
+    return SOk(y * 10 + h.n + g((mk(x))?) + (mk(x))? * 100);
+}
+fn main(): i64 {
+    var t, v = relay(3);
+    var t2, v2 = relay(0 - 1);
+    if (t != 0) { return 101; }
+    if (v != 340) { return 102; }
+    if (t2 != 1) { return 103; }
+    return v2 - 3;
+}
+syscall(60, main());
+EOF
+accept "return (mk(x)); forwards the pair, the forwarder above and below its ? caller" axisPW16 40 <<EOF
+${P15}fn above(x) { return (mk(x)); }
+fn r1(x) { var v = above(x)?; return SOk(v + 1); }
+fn r2(x) { var v = below(x)?; return SOk(v + 2); }
+fn below(x) { return ((mk(x))); }
+fn main(): i64 {
+    var a, b = r1(2);
+    var c, d = r2(0 - 1);
+    var e2, f2 = r2(2);
+    if (a != 0) { return 101; }
+    if (c != 1) { return 103; }
+    return b + d + f2;
+}
+syscall(60, main());
+EOF
+refuse_at "var v = below(7), the wrapped forwarder below its single bind" axisPW16b "= below(7);" <<EOF
+${P15}fn main(): i64 { var v = below(7); return v; }
+fn below(x) { return (mk(x)); }
+var e = main();
+EOF
+accept "a boxed, a one-value and an operand wrap stay legal" axisPW17 28 <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+enum BR { BOk(v); BErr(e); }
+fn mk(x) { return SOk(x); }
+fn bf(x) { return BOk(x); }
+fn one(x): i64 { return x + 1; }
+struct P { a; b; }
+fn main(): i64 {
+    alloc_init();
+    var a = (one(4));
+    var b = 0;
+    b = (one(5));
+    var h: P;
+    h.a = (one(6));
+    var r = (bf(3));
+    var c = 0;
+    c = (bf(4));
+    var z = (3) + (mk(7));
+    return a + b + h.a + load64(r + 8) + load64(c + 8) + z;
+}
+syscall(60, main());
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
 exit 0

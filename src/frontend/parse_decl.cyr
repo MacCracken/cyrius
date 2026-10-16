@@ -7154,6 +7154,9 @@ fn _dt_rhs_check(S): i64 { return _dt_rhs_check_t(S, 5); }
 # ... ending at `term` (6.7.7, T5: `;`, or a classic-for step's `)` for `a, b = f()`).
 fn _dt_rhs_check_t(S, term): i64 {
     var sc = _dt_call_open(S);
+    # 6.7.13: `callptr(fp, ..)` is a call (the guide's Multi-Return list names it), lowered as `fncallN`:
+    # no fn to judge its count by (`_dt_call_fn` answers -1). CHANGELOG [6.7.13]
+    if (sc < 0) { if (PEEKT(S) == 137) { if (TOKTYP(S, GTI(S) + 1) == 10) { sc = GTI(S) + 1; } } }
     if (sc < 0) {
         ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         sc = GTI(S) + 1;

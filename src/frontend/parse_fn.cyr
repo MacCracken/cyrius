@@ -906,21 +906,100 @@ fn _tcp_drop(S): i64 {
 }
 
 # ⛔ 6.7.7 — THE LANDING OF A MULTI-VALUE RETURN: `return (a, b[, c]);` and `ret2(a, b)`, values in
-# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. In a fn returning a
-# 9-16 B struct the caller reads the struct PAIR's registers, which on aarch64 are x0:x1, not the
-# multi-value x0:x2: `fn mk(x): P { return (x, x + 1); }` gave `var p: P = mk(5);` p.b = x1's
-# leftover (55 where x86 gives 56). The pair's high register is synced from the multi-value slot
-# here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
-# `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
-# Since 6.7.11 only `ret2` lands here in a struct fn: a tuple literal there is refused
-# (`_refuse_struct_tuple_return`). CHANGELOG [6.7.11]
+# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. No struct fn's value
+# lands here: the tuple literal is refused there (6.7.11, `_refuse_struct_tuple_return`) and `ret2`
+# too (6.7.13, `_ret2_in_struct`), so the aarch64 sync of the pair's x1 from the multi-value x2 that
+# stood here (ESTRUCT_PAIR_HI_SYNC, 6.7.7) lost its last producer and went; an #inline replay's
+# landing inside a struct fn is that call's value, read from x0 / x2. The other direction — a
+# `return p;` read by `var a, b = f();` / `rethi()` — is EFLLOAD_STRUCT_INT_PAIR writing x2 too.
+# CHANGELOG [6.7.7], [6.7.13]
 fn _mret_land(S): i64 {
     if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
         _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
     }
-    if (_cur_fn_ret_pair == 1) { ESTRUCT_PAIR_HI_SYNC(S); }
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
+    return 0;
+}
+# ⛔ 6.7.13 — OFF THE END OF A FN DECLARED `: (T1, T2[, T3])` EVERY VALUE IS 0 (D28 C, the user's
+# decision, 2026-10-15), the multi-value twin of a bool fn's `false` (6.7.3, `_bx_falloff`): rax, rdx[,
+# r3] = 0 on the fall-through path only — every `return` jumps past it to the landing. A body that
+# reached its `}` handed the caller's `var a, b = f(0);` whatever an earlier call left in the second
+# (and third) register. The #inline replay of such a callee lands the same way (`_mret_falloff_fi`, the
+# CALLEE's fi); a #naked body is its own exit. CHANGELOG [6.7.13]
+fn _mret_falloff(S): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (_cur_fn_naked == 1) { return 0; }
+    return _mret_zero(S, _cur_fn_ix);
+}
+fn _mret_falloff_fi(S, fi): i64 {
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    return _mret_zero(S, fi);
+}
+fn _mret_zero(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    EMOVI(S, 0);
+    if (GFRN(S, fi) == 3) { EMOVR3RAX(S); }
+    EMOVRDXRAX(S);
+    return 0;
+}
+
+# ⛔ 6.7.13 — `ret2(a, b)` LANDS AS `return (a, b);` DOES, so it is judged where that is. Outside every
+# fn body — at top level or in a top-level block (GINFN 0) — it is refused by name, as a top-level
+# `return` is (6.7.11, `_ret_toplevel`; D20 A, the user's decision, 2026-10-15): the top level has no
+# epilogue, so the jump `_mret_land` records was never patched — x86_64 / PE fell through into the next
+# statement, aarch64 / cx branched to itself (a hang). Reported once (`_tn_once`: a global initializer
+# is parsed in two zones) and in sync: the arguments are parsed on and the panic latch is left as it
+# was, so the next statement reports its own errors. 1 = refused: no landing. CHANGELOG [6.7.13]
+# In a fn declared `: (T1, T2, T3)` it writes two of the three values — the caller's third read what
+# an earlier call left in r3 — so it is refused as a two-value `return (a, b);` is there (6.7.11, D17;
+# D21 A, the user's decision, 2026-10-15): "'f' returns 3 values - return (a, b, c)", at the ret2,
+# once (a generic's body is parsed per instance), in sync. The landing is kept (no binary is written).
+# In a fn declared to return a named struct it is refused in every class, as the tuple literal is (D39,
+# `_refuse_struct_tuple_return`; D22 A, the user's decision, 2026-10-15): over 16 B the result pointer
+# was never written, at 8 B or less the second value was dropped, at 9-16 B the words came back by ABI
+# coincidence only. `_ret2_in_struct`, once and in sync; a dyn keeps `_mret_land`'s V7 text.
+fn _ret2_ctx(S, ti): i64 {
+    if (GINFN(S) == 1) {
+        _ret2_in_struct(S, ti);
+        return _ret2_in3(S, ti);
+    }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var p0 = _panic;
+    ERR_MSG(S, "ret2 outside a fn body", 22);
+    if (p0 == 0) { _panic = 0; }
+    return 1;
+}
+fn _ret2_in3(S, ti): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: its definition judged itself
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (GFRN(S, _cur_fn_ix) != 3) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var p0 = _panic;
+    _mret_ret_err(S, ti);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+# ... in a fn declared `: S` (not `Str`, a tuple or a dyn: `_dx_plain`, D39's own test): the
+# struct is the value it returns, never two words. CHANGELOG [6.7.13]
+fn _ret2_in_struct(S, ti): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: the ret2 is the callee's, not this fn's
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a fn returning the struct `");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    PRSTR("` returns that struct — `ret2` writes two values\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
     return 0;
 }
 
@@ -994,6 +1073,14 @@ fn _mret_ret_ok(S, want): i64 {
 # `k` parentheses at `st`, then `;`: 1 = its callee returns `want` values or cannot be judged; 0 = no
 # such call, or another count.
 fn _mret_call_ok(S, st, k, want): i64 {
+    var fi = _ret_whole_call(S, st, k);
+    if (fi == 0 - 2) { return 0; }
+    return _mret_fwd_ok(S, fi, want);
+}
+# ... that whole call's fn (-1: unresolved, `callptr(..)` included); -2 = no such call. The cursor is
+# kept. Shared with `_ret_mv_fwd` (6.7.13). A generic callee is instantiated here, as the arms would.
+fn _ret_whole_call(S, st, k): i64 {
+    var sv = GTI(S);
     STI(S, st + k);
     var o = 0 - 1;
     var fi = 0 - 1;
@@ -1003,16 +1090,16 @@ fn _mret_call_ok(S, st, k, want): i64 {
         o = _dt_call_open(S);
         if (o >= 0) { fi = _dt_call_fn(S); }
     }
-    STI(S, st);
-    if (o < 0) { return 0; }
+    STI(S, sv);
+    if (o < 0) { return 0 - 2; }
     var e = _call_close(S, o) + 1;
     var j = 0;
     while (j < k) {
-        if (TOKTYP(S, e + j) != 11) { return 0; }
+        if (TOKTYP(S, e + j) != 11) { return 0 - 2; }
         j = j + 1;
     }
-    if (TOKTYP(S, e + k) != 5) { return 0; }
-    return _mret_fwd_ok(S, fi, want);
+    if (TOKTYP(S, e + k) != 5) { return 0 - 2; }
+    return fi;
 }
 # A forwarded callee `fi` (-1: unresolved): 1 = it returns `want` values, or its count is unknown.
 fn _mret_fwd_ok(S, fi, want): i64 {
@@ -1041,6 +1128,7 @@ fn PARSE_RETURN(S): i64 {
     if (_ret_toplevel(S) == 1) { return 0; }   # 6.7.11: outside a fn body, refused
     var st = GTI(S) + 1;
     _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
+    _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there, or in a <= 8 B struct fn
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
     _PARSE_RETURN_ARMS(S);
@@ -1064,9 +1152,12 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     # ⚠ Order-dependent by construction: a caller parsed BEFORE the callee's body will not see the
     # flag and degrades to the pre-v6.5.67 behaviour. That is the safe direction for a diagnostic —
     # a missed warning, never a false one.
-    if (_cur_fn_ix >= 0) {
-        if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
-    }
+    # 6.7.13: not inside an inline replay (GIDEP > 0) — `_cur_fn_ix` is still the CALLER there, and the
+    # replayed `return` is the call's value, not the caller's (its jump lands at the replay's end); the
+    # replayed fn's own entry carries its flag. The two `?` arms are guarded the same way. CHANGELOG [6.7.13]
+    if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) {
+            if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+        } }
     # Check for tail call: return IDENT(args);
     # Pattern: next token is IDENT, followed by LPAREN
     # Disabled inside inline replay (would emit caller's epilogue)
@@ -2028,7 +2119,8 @@ fn _dro_vcheck(S, fi, k, nm): i64 {
     return 1;
 }
 
-# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`).
+# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`, or
+# undeclared with every return `(a, b)` — `_mv_callee`, CHANGELOG [6.7.13]).
 # The parameter takes a tuple's ADDRESS, and the call leaves its values in the return registers —
 # nothing to point at — so the value push handed the callee the first value as an address (a
 # SIGSEGV, or a silent read through it). Refused by name: bind the values first. Cursor on the
@@ -2044,8 +2136,7 @@ fn _tup_arg_call(S, fi, argc): i64 {
     if (_call_dotted(S, ti) == 1) { return 0; }
     if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
     var cfi = _gen_resolve_call(S, ti);
-    if (cfi < 0) { return 0; }
-    if (GFRS(S, cfi) != MULTIRET_SID) { return 0; }
+    if (_mv_callee(S, cfi) == 0) { return 0; }   # declared or counted (6.7.11 pass 1). CHANGELOG [6.7.13]
     return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
@@ -2065,7 +2156,7 @@ fn _mrc_note(S, fi, noff, beg): i64 {
 fn _tup_arg_mrc(S, fi, argc, st): i64 {
     if (_mrc_beg != st) { return 0; }
     if (_mrc_end != GTI(S)) { return 0; }
-    if (GFRS(S, _mrc_fi) != MULTIRET_SID) { return 0; }   # R17's own callee: a declared one
+    if (_mv_callee(S, _mrc_fi) == 0) { return 0; }   # declared or counted. CHANGELOG [6.7.13]
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
     return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
@@ -2131,7 +2222,7 @@ fn _mv_named(S, sid): i64 {
     return 1;
 }
 # The report at token `ti`: struct `sid`, the call named `noff` (fn `fi`, its count in the hint); `kind`
-# 0 an argument, 1 a field, 2 a declaration, 3 an assignment; `free` spells the hint: 1 `noff(..)`, 2
+# 0 an argument, 1 a field, 2 a declaration, 3 an assignment, 4 a return (6.7.13); `free` spells the hint: 1 `noff(..)`, 2
 # `x.noff(..)` (a method on the name at `ti`), 0 `...`. Once per token (a generic body is parsed per instance); the parse goes on and
 # `_had_error` withholds the binary, as R17's. 1 = refused.
 fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
@@ -2147,6 +2238,7 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     if (kind == 1) { PRSTR("' is not stored into a struct '"); }
     elif (kind == 2) { PRSTR("' does not initialize struct '"); }
     elif (kind == 3) { PRSTR("' is not assigned to struct '"); }
+    elif (kind == 4) { PRSTR("' is not returned as struct '"); }
     else { PRSTR("' is not a struct '"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     if (kind == 0) { PRSTR("' argument"); }
@@ -2232,8 +2324,11 @@ fn _mv_decl_src(S, pscale, start): i64 {
 }
 # The struct of an assignment's destination name `noff` when it is a named struct VALUE or handle — a
 # local, a by-value parameter, a global — and not a `*P` (a pointer rebinds to any word); else 0.
+# `*p = v` through a `*S` (`_dst_arms`: no name, the override's struct) copies what `G = v` copies (D4),
+# so a multi-value call into it is refused as into `G` (D26 A, the user's decision, 2026-10-15): it
+# stored the first value as the struct's word. CHANGELOG [6.7.13]
 fn _mv_dst_sid(S, noff): i64 {
-    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: `*p = v`'s destination has no name (`_dst_arms`)
+    if (_agc_ovr_is(noff) == 1) { return _mv_ovr_sid(S); }
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {
@@ -2251,6 +2346,10 @@ fn _mv_dst_sid(S, noff): i64 {
     var gt = GVTYPE(S, gvi);
     if (_mv_named(S, gt) == 0) { return 0; }
     return gt;
+}
+fn _mv_ovr_sid(S): i64 {
+    if (_mv_named(S, 0 - _agc_ovr_t) == 1) { return 0 - _agc_ovr_t; }
+    return 0;
 }
 # `x = f(..);` / `x = b.m(..);`, the source [st, cursor) just parsed (`_pcmpe_struct_assign`, which the
 # statement and a classic-for step reach once `_try_struct_call_assign` has passed the call by — it takes
@@ -2749,7 +2848,7 @@ fn _ret_struct_pair(S): i64 {
         return 1;
     }
     if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
-        if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
+        if (_tup_lit_at(S, GTI(S)) < 0) { if (PEEKT(S) != 97) { _refuse_pair_return(S); } }   # 6.7.13: and ret2's
     }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
     _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one
@@ -3509,11 +3608,13 @@ fn _pd_first_eq(S, op): i64 {
 # `_prescan_params_scan`) and refuses a bad SHAPE there; the end of pass 1 evaluates every default
 # once, in the top context with the parser cursor on its own token — so FINDFN's file scoping and
 # a const's `private` judge it at the definition, and no caller's local is ever visible — and
-# refuses a value its parameter's type does not take (`_pd_sweep`). A refused row has min = max: a
-# call passes every argument. Names are never stored: the definition's tokens hold them. Every
+# refuses a value its parameter's type does not take (`_pd_sweep`). A refused row keeps its min — a
+# call that leaves a refused default to it is not refused a second time, by arity (the default's own
+# refusal stopped the build; the fill pushes 0) — except a fn defined twice (D15), whose calls pass
+# every argument. Names are never stored: the definition's tokens hold them. Every
 # refusal is one line at its token (`_tn_once`), and the parse stays in step. CHANGELOG [6.7.7]
 # Row (alloc'd per definition that declares a default): [0] max = the parameter count, [8] min =
-# the first default's index (max when refused), [16] the list's `(`, [24] flags (1 a refused
+# the first default's index (max for D15), [16] the list's `(`, [24] flags (1 a refused
 # shape: never evaluated; 2 redefined; 4 refused), [32] d0 = the first default's index, then for
 # parameter d0 + j at [40 + j * 56]: its `=` token, its type token (-1 untyped), state (0 new, 1
 # being evaluated, 2 done, 3 refused), kind (0 i64, 1 f64, 2 string, 3 bool), value, float-literal
@@ -3529,12 +3630,12 @@ fn SFPD(fi, row): i64 {
     store64(_fnt_pdflt + fi * 8, row);
     return 0;
 }
-# A row refused: min = max, so its calls pass every argument (`shape` 1: never evaluated).
+# A row refused (`shape` 1: never evaluated). Its min is kept: a short call is not refused again by
+# arity, one error per mistake (6.7.13, issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md).
 fn _pd_refuse_row(row, shape): i64 {
     var f = L64(row + 24) | 4;
     if (shape == 1) { f = f | 1; }
     S64(row + 24, f);
-    S64(row + 8, L64(row));
     return 0;
 }
 
@@ -3600,7 +3701,9 @@ fn _pd_record_at(S, fi, op): i64 {
     S64(row + 24, 0);
     S64(row + 32, max);
     SFPD(fi, row);
-    if (_pd_shape(S, fi, row) == 1) { _pd_refuse_row(row, 1); }
+    # A refused shape: the min is the parameters before the first `=` — D11 / D13 refuse the whole list
+    # before `_pd_shape` lowers it from max. CHANGELOG [6.7.13]
+    if (_pd_shape(S, fi, row) == 1) { _pd_refuse_row(row, 1); S64(row + 8, _pd_req_n(S, op)); }
     return 0;
 }
 # D15: a fn defined twice (fn flag 2048, pass 1) where any definition declares a default — which
@@ -3618,6 +3721,7 @@ fn _pd_redef(S, fi, op, row): i64 {
     var seen = L64(row + 24) & 2;
     S64(row + 24, L64(row + 24) | 2);
     _pd_refuse_row(row, 1);
+    S64(row + 8, max);   # D15: which list a call is checked against is not one thing — every argument
     if (seen != 0) { return 0; }
     var nt = GFDS(S, fi);
     if (_pd_eo(S, nt) == 0) { return 0; }
@@ -6407,6 +6511,36 @@ fn _async_mv_ret(S, st): i64 {
     if (c <= 0) { return 0; }
     return _refuse_async_mv_body(S, st, c + 1);
 }
+# ⛔ 6.7.13 — ... AND `return h(..);` FORWARDING A MULTI-VALUE CALL: the callee declared `: (T1, T2[,
+# T3])`, counted by pass 1 or a method (`_mv_callee`), parentheses around the whole call transparent
+# (`_ret_whole_call`). The forward left the values in the return registers and the Future memoised the
+# first — the third spelling of the loss above (the repro exited 19 where 12 is right, on every target).
+# Refused with the same text at the forwarded call (D24 A, the user's decision, 2026-10-15); a callee
+# held in a variable (`callptr(fp, ..)`) is unknown and not judged. Token `st` = the value's first;
+# called once from PARSE_RETURN, before the arms (the tail-call arm takes `return h(..);`).
+# In a fn returning a struct of 8 B or less (`_ret_small_cls`) the same forward returned the call's
+# FIRST value as the struct's word (the repro exited 3) — the fifth named-struct destination of "a
+# multi-value call is not a struct value" (6.7.11, D20 / D21), where the 9-16 B and over-16 B classes
+# already refuse it by their own texts: "a multi-value call 'mk' is not returned as struct 'P1' - bind
+# it first" (`_mv_struct_err` kind 4; D25 A, the user's decision, 2026-10-15). CHANGELOG [6.7.13]
+fn _ret_mv_fwd(S, st): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var asy = _fn_async_impl(S, _cur_fn_ix);
+    if (asy == 0) { if (_ret_small_cls(S) == 0) { return 0; } }
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var fi = _ret_whole_call(S, st, k);
+    if (_mv_callee(S, fi) == 0) { return 0; }
+    if (asy == 1) { return _refuse_async_mv_body(S, st + k, _mv_count(S, fi)); }
+    return _ret_mv_small(S, st + k, fi);
+}
+# ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`).
+fn _ret_mv_small(S, ct, fi): i64 {
+    if (_tok_method_open(S, ct) == 1) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct + 2), fi, 4, 2); }
+    return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct), fi, 4, 1);
+}
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
 # them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).
 fn _async_mv_say(S, noff, cut, n): i64 {
@@ -7197,6 +7331,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     _cur_fn_ret_scalar = _rs_saved;
                     SSDEP(S, _sdep_saved);
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
+                    _mret_falloff_fi(S, fi);   # 6.7.13 (D28 C): a declared multi-value one's values 0
                     # Patch return jumps from inlined body to here
                     var new_rpc = vec_len(rp_vec);
                     var ri = saved_rpc;
@@ -9894,19 +10029,53 @@ fn _ce_nparams(S, op): i64 {
 # ── top-level consts ──────────────────────────────────────────────────────────────────────────────
 # `_cst_tab` (8 words): name, initializer token, declaration token, var slot, state (0 new, 1
 # being evaluated, 2 done, 3 refused), kind, value, float-literal index (an f64 const's, else -1).
+# A refused annotation, `const K: T = e;`, is recorded too (its initializer after the `=`, the
+# refusal reported once, by `_cst_record`): an unrecorded K made every read of it, above or below,
+# a second error, "undefined variable 'K'". CHANGELOG [6.7.13]
 fn _cst_prepass(S): i64 {
     var p = 0;
     var d = 0;
     while (TOKTYP(S, p) != 12) {
         var t = TOKTYP(S, p);
-        if (d == 0) { if (t == 168) { if (TOKTYP(S, p + 1) == 2) { if (TOKTYP(S, p + 2) == 4) { _cst_record(S, p); } } } }
+        if (d == 0) { if (t == 168) { if (TOKTYP(S, p + 1) == 2) { _cst_pre_at(S, p); } } }
         if (t == 13) { d = d + 1; }
         if (t == 14) { if (d > 0) { d = d - 1; } }
         p = p + 1;
     }
     return 0;
 }
-fn _cst_record(S, p): i64 {
+# `const NAME` at token p (depth 0): recorded when `=` follows the name, or a refused `: T` and then
+# an `=`.
+fn _cst_pre_at(S, p): i64 {
+    if (TOKTYP(S, p + 2) == 4) { _cst_record(S, p, p + 3); return 0; }
+    if (TOKTYP(S, p + 2) != 49) { return 0; }
+    var q = _cst_ann_eq(S, p + 2);
+    if (q > 0) { _cst_record(S, p, q + 1); }
+    return 0;
+}
+# The `=` after a const's refused annotation (the `:` at token q): its token, or 0 when the
+# statement has none (a `;`, `{`, `}` or EOF comes first) — then nothing is bound.
+fn _cst_ann_eq(S, q): i64 {
+    while (TOKTYP(S, q) != 12) {
+        var t = TOKTYP(S, q);
+        if (t == 4) { return q; }
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        q = q + 1;
+    }
+    return 0;
+}
+# "a const takes no type annotation" at the `:` (token q), once and in sync: the latch is left as
+# it was, so the const is still bound and the statement after it reports its own errors.
+fn _cst_ann_err(S, q): i64 {
+    var sv = GTI(S);
+    var p0 = _panic;
+    STI(S, q);
+    ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57);
+    STI(S, sv);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+fn _cst_record(S, p, ini): i64 {
     if (_cst_tab == 0) { _cst_tab = alloc(16384 * 64); }
     if (_cst_n >= 16384) { _tr_cap(S, p, "too many top-level consts (max 16384)", 37); return 0; }
     var name = TOKVAL(S, p + 1);
@@ -9918,8 +10087,9 @@ fn _cst_record(S, p): i64 {
     }
     var e = _cst_tab + _cst_n * 64;
     S64(e, name);
-    S64(e + 8, p + 3);
+    S64(e + 8, ini);
     S64(e + 16, p);
+    if (TOKTYP(S, p + 2) == 49) { _cst_ann_err(S, p + 2); }
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, name);
     S64(_vars_base + vcnt * 8, 0);
@@ -10253,7 +10423,12 @@ fn _cst_stmt(S): i64 {
     var name = PEEKV(S);
     _RSV_INTRINSIC_DECL(S, name, GTI(S), 0);
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 49) { ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+    if (PEEKT(S) == 49) {   # refused, then bound as `const NAME = e;` (6.7.13: no cascade at its reads)
+        var q = _cst_ann_eq(S, GTI(S));
+        if (q == 0) { ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+        _cst_ann_err(S, GTI(S));
+        STI(S, q);
+    }
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); return 0; }
     STI(S, GTI(S) + 1);
     _lc_dup_check(S, name, ti + 1);
@@ -14513,9 +14688,12 @@ fn _body_ends_in_loop(S, li, pi, e): i64 {
     if (cb != e - 1) { return 0; }
     return _loop_exits_by_return(S, ob, cb);
 }
-# `( 1 )` at token k: the constant-true condition `while (1)` spells.
+# `( 1 )` at token k: the constant-true condition `while (1)` spells — or `( true )`, the bool
+# literal 1 (token 169; D27 A, the user's decision, 2026-10-15: `while (true) { .. }` and
+# `do { .. } while (true);` end a body in its returns as `while (1)` does). CHANGELOG [6.7.13]
 fn _cond_is_one(S, k): i64 {
     if (TOKTYP(S, k) != 10) { return 0; }
+    if (TOKTYP(S, k + 1) == 169) { if (TOKTYP(S, k + 2) == 11) { return 1; } return 0; }
     if (TOKTYP(S, k + 1) != 1) { return 0; }
     if (TOKVAL(S, k + 1) != 1) { return 0; }
     if (TOKTYP(S, k + 2) != 11) { return 0; }
@@ -17406,6 +17584,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # 6.7.3: off the end of a bool fn is `false` — before the defer trampoline (with defers the
     # fall-through jmps round it to the landing); every return lands past it.
     _bx_falloff(S);
+    _mret_falloff(S);   # 6.7.13 (D28 C): and of a fn declared `: (T1, T2[, T3])`, every value 0
     _defer_emit_init(S, defer_init_jmp, body_cp);
     _tcp_resolve(S);   # 6.7.3: the in-loop tail calls' verdicts (a fn with a defer has none)
     _rp_patch_here(S);

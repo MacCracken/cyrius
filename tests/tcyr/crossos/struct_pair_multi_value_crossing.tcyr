@@ -12,8 +12,9 @@
 #   * a `: P` fn's `return p;` (x1) read by `var a, b = f();` at fn scope or at top level, or by
 #     `rethi()` (x2): repro B, 50 on pi and qemu, 250 on ecb.
 # Since 6.7.7 a 9-16 B struct return carries its high word in BOTH registers on aarch64
-# (EFLLOAD_STRUCT_INT_PAIR writes x2 too; `_mret_land`'s ESTRUCT_PAIR_HI_SYNC sets x1 from x2 in a
-# struct fn's multi-value arms), so every consumer reads the word it expects; x86 emits nothing new.
+# (EFLLOAD_STRUCT_INT_PAIR writes x2 too; `_mret_land`'s ESTRUCT_PAIR_HI_SYNC set x1 from x2 in a
+# struct fn's multi-value arms — removed in 6.7.13 with the last such producer, below), so every
+# consumer reads the word it expects; x86 emits nothing new.
 #
 # ⚠ WHY crossos/: the defect was aarch64-only — this file passes on x86_64 against the broken
 # compiler. It runs on pi and ecb at the release gate, and under qemu-aarch64 in
@@ -25,8 +26,14 @@
 # (issues/archived/2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md), so its row left this
 # file for the gate's refused rows. 6.7.11: so is a tuple literal `return (x, y[, z]);` in a fn declared
 # `: Pr` (the user's decision, 2026-10-13; issues/archived/2026-10-08-struct-operator-results.md #4): its
-# producers here say `ret2(x, y)`, which lands through the same multi-value arm (`_mret_land`), and the
-# refusal is tests/gates/codegen/struct_value_codegen.sh's rows R8-R14.
+# producers here said `ret2(x, y)`, which lands through the same multi-value arm (`_mret_land`), and the
+# refusal is tests/gates/codegen/struct_value_codegen.sh's rows R8-R14. 6.7.13: `ret2(x, y)` in a fn declared
+# `: Pr` is refused too, in every class (D22 A, the user's decision, 2026-10-15;
+# issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), so repro A — a multi-value
+# producer received as the struct — has no producer left: its rows take the struct pair through each path
+# (an assignment, a forward, a method, a defer, a generic instance) from a `return p;` producer, the ret2
+# controls name an undeclared multi-value fn, and the refusal is
+# tests/gates/frontend/multi_value_into_named_struct.sh's SR rows.
 #
 # ⭐ Every value is (x, x * 10 + 3) for x = 5, read back as a * 100 + b = 553: the two words differ
 # from each other and from every argument register (a two-argument `mk(a, b)` would leave b in x1
@@ -41,15 +48,13 @@ include "lib/assert.cyr"
 
 struct Pr { a; b; }
 
-# --- producers: the multi-value arm inside a 9-16 B struct fn ---
-fn pr_ret2(x): Pr { ret2(x, x * 10 + 3); }
+# --- the multi-value control: `ret2` in a fn with no declared return (6.7.13: in a `: Pr` fn it is refused) ---
+fn mv_ret2(x) { ret2(x, x * 10 + 3); }
 # --- producers: the struct pair itself ---
 fn pr_loc(x): Pr { var p: Pr; p.a = x; p.b = x * 10 + 3; return p; }
 fn pr_pass(x): Pr { return pr_loc(x); }
-fn pr_pass_ret2(x): Pr { return pr_ret2(x); }
 fn pr_fwd(x) { return pr_loc(x); }
 impl Pr {
-    fn m_ret2(self, x): Pr { ret2(x, x * 10 + 3); }
     fn m_loc(self, x): Pr { var q: Pr; q.a = x; q.b = x * 10 + 3; return q; }
 }
 fn Pr_add(l, r): Pr { var p: Pr; p.a = load64(l) + load64(r); p.b = load64(l + 8) + load64(r + 8); return p; }
@@ -99,16 +104,14 @@ fn pr_deep(x): Pr {
     return p;
 }
 var pr_runs = 0;
-fn pr_defer_ret2(x): Pr { defer { pr_runs = pr_runs + 1; } ret2(x, x * 10 + 3); }
 fn pr_defer_loc(x): Pr { defer { pr_runs = pr_runs + 1; } var p: Pr; p.a = x; p.b = x * 10 + 3; return p; }
-fn pr_gen<T>(x: T): Pr { ret2(x, x * 10 + 3); }
+fn pr_gen<T>(x: T): Pr { var p: Pr; p.a = x; p.b = x * 10 + 3; return p; }
 
 # --- consumers ---
-fn into_struct_ret2(): i64 { var p: Pr = pr_ret2(5); return p.a * 100 + p.b; }
-fn assign_struct_ret2(): i64 { var p: Pr; p.a = 0; p.b = 0; p = pr_ret2(5); return p.a * 100 + p.b; }
-fn into_struct_pass_ret2(): i64 { var p: Pr = pr_pass_ret2(5); return p.a * 100 + p.b; }
-fn into_struct_method_ret2(): i64 { var z: Pr; z.a = 0; z.b = 0; var p: Pr = z.m_ret2(5); return p.a * 100 + p.b; }
-fn into_struct_defer_ret2(): i64 { var p: Pr = pr_defer_ret2(5); return p.a * 100 + p.b; }
+fn assign_struct(): i64 { var p: Pr; p.a = 0; p.b = 0; p = pr_loc(5); return p.a * 100 + p.b; }
+fn into_struct_pass(): i64 { var p: Pr = pr_pass(5); return p.a * 100 + p.b; }
+fn into_struct_method(): i64 { var z: Pr; z.a = 0; z.b = 0; var p: Pr = z.m_loc(5); return p.a * 100 + p.b; }
+fn into_struct_defer(): i64 { var p: Pr = pr_defer_loc(5); return p.a * 100 + p.b; }
 fn into_struct_gen(): i64 { var p: Pr = pr_gen<i64>(5); return p.a * 100 + p.b; }
 fn into_struct_loc(): i64 { var p: Pr = pr_loc(5); return p.a * 100 + p.b; }
 fn dt_loc(): i64 { var a, b = pr_loc(5); return a * 100 + b; }
@@ -118,24 +121,23 @@ fn dt_method_loc(): i64 { var z: Pr; z.a = 0; z.b = 0; var a, b = z.m_loc(5); re
 fn dt_op(): i64 { var a, b = pr_op(5); return a * 100 + b; }
 fn dt_deep(): i64 { var a, b = pr_deep(5); return a * 100 + b; }
 fn dt_defer_loc(): i64 { var a, b = pr_defer_loc(5); return a * 100 + b; }
-fn dt_ret2(): i64 { var a, b = pr_ret2(5); return a * 100 + b; }
+fn dt_ret2(): i64 { var a, b = mv_ret2(5); return a * 100 + b; }
 fn dt_twice(): i64 { var a, b = pr_loc(5); var c, d = pr_loc(a + b - 53); return c * 100 + d; }
 fn rethi_loc(): i64 { pr_loc(5); var b = rethi(); return b; }
-fn rethi_ret2(): i64 { pr_ret2(5); var b = rethi(); return b; }
+fn rethi_ret2(): i64 { mv_ret2(5); var b = rethi(); return b; }
 fn rethi_deep(): i64 { pr_deep(5); var b = rethi(); return b; }
 fn rethi_after_struct(): i64 { var p: Pr = pr_loc(5); var b = rethi(); return p.a * 100 + b; }
 
 alloc_init();
 var tl_a, tl_b = pr_loc(5);
 
-test_group("a 9-16 B struct fn's multi-value return, received as the struct (repro A)");
-assert_eq(into_struct_ret2(), 553, "var p: Pr = f(); f says ret2(x, y)");
-assert_eq(assign_struct_ret2(), 553, "p = f(); into an existing Pr");
-assert_eq(into_struct_pass_ret2(), 553, "return g(x); where g says ret2(x, y)");
-assert_eq(into_struct_method_ret2(), 553, "a method saying ret2(x, y)");
-assert_eq(into_struct_defer_ret2(), 553, "ret2(x, y) through a defer");
-assert_eq(into_struct_gen(), 553, "a generic instance saying ret2(x, y)");
-assert_eq(into_struct_loc(), 553, "control: return p; into var p: Pr");
+test_group("a 9-16 B struct return, received as the struct (repro A's paths; 6.7.13: its ret2 producer is refused)");
+assert_eq(into_struct_loc(), 553, "var p: Pr = f(); f returns a Pr local");
+assert_eq(assign_struct(), 553, "p = f(); into an existing Pr");
+assert_eq(into_struct_pass(), 553, "return g(x); forwarding a Pr local");
+assert_eq(into_struct_method(), 553, "a method returning a Pr local");
+assert_eq(into_struct_defer(), 553, "a Pr local through a defer");
+assert_eq(into_struct_gen(), 553, "a generic instance returning a Pr local");
 
 test_group("a 9-16 B struct return, destructured (repro B)");
 assert_eq(dt_loc(), 553, "var a, b = f(); f returns a Pr local");
@@ -146,7 +148,7 @@ assert_eq(dt_op(), 553, "an overloaded operator's result");
 assert_eq(dt_deep(), 553, "a Pr local past the 256-byte frame window");
 assert_eq(dt_defer_loc(), 553, "a Pr local through a defer");
 assert_eq(dt_twice(), 553, "two destructures in a row");
-assert_eq(dt_ret2(), 553, "control: ret2(x, y) destructured");
+assert_eq(dt_ret2(), 553, "control: an undeclared fn's ret2(x, y) destructured");
 assert_eq(tl_a * 100 + tl_b, 553, "at top level");
 assert_eq(pr_runs, 2, "each defer ran once");
 
@@ -154,6 +156,6 @@ test_group("rethi() after a 9-16 B struct call");
 assert_eq(rethi_loc(), 53, "f(); rethi(); f returns a Pr local");
 assert_eq(rethi_deep(), 53, "... a Pr local past the 256-byte frame window");
 assert_eq(rethi_after_struct(), 553, "var p: Pr = f(); rethi();");
-assert_eq(rethi_ret2(), 53, "control: f says ret2(x, y)");
+assert_eq(rethi_ret2(), 53, "control: an undeclared f says ret2(x, y)");
 
 var r = assert_summary();

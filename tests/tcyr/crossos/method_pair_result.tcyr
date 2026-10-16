@@ -42,6 +42,20 @@
 # `_pair_prescan_impls` call -> rc 139 (the first `mi_` row); `_tok_ret_callee` without `_tok_iself`
 # -> rc 139 (`mi_fwd`). The impl sits below its callers, before `alloc_init();`.
 #
+# 6.7.13 — A TRAIT DEFAULT INHERITED BY AN impl BELOW ITS CALLERS (the `mt_*` rows). An inherited default
+# has no `fn` in its impl block, so the 6.7.11 walk never saw it: `r.ddv(d)?` above `trait Dd` + `impl Dd
+# for Rt { }` was boxed (rc 139 / cx 1 / PE 5). MUTATION: `_pair_prescan_impls` without its
+# `_pair_scan_defaults` call -> rc 139 (the first `mt_` row).
+# (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
+#
+# 6.7.13 — PARENTHESES AROUND A WHOLE PAIR CALL (the `pw_*` rows; the user's decision D19 A, 2026-10-15).
+# The pair check read the wrap's `(` as no call, so `var v = (p.div(d))?;` took the boxed `?` (rc 139 on x86
+# and aarch64, 1 on cx, 5 on PE); the wrap is transparent now — a free, a method and a generic-method
+# call, at depth 2, into an assignment, and `return (p.div(d));` forwarding the pair to a caller ABOVE it.
+# MUTATIONS: `_callee_returns_pair_at` without `_pair_unwrap` -> rc 139 (the first `pw_` row);
+# `_tok_ret_callee` without it -> rc 139 (`pw_fwd`).
+# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
+#
 # CROSS-HOST because the pair is the per-target two-register return (rax:rdx / x0:x1 / the cx
 # pair), `self` is passed by address from five receiver storages, and a propagated Err
 # re-emits both halves through each backend's epilogue.
@@ -139,6 +153,17 @@ fn mi_gen(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.gdv(d)?; return Ok(v + 
 fn mi_fwd(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.rfwd(d)?; return Ok(v + 25000); }
 fn mi_destr(n, d): i64 { var r: Rt; r.x = n; r.y = 0; var a, b = r.rdiv(d); return a * 1000 + b; }
 fn mi_one(n): i64 { var r: Rt; r.x = n; r.y = 0; var v = r.rone(); return v; }
+# 6.7.13: callers ABOVE the trait whose DEFAULT bodies `impl Dd for Rt { }` inherits (both below).
+fn mt_def(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.ddv(d)?; return Ok(v + 26000); }
+fn mt_fwd(n, d) { var r: Rt; r.x = n; r.y = 0; var v = r.dfw(d)?; return Ok(v + 27000); }
+fn mt_destr(n, d): i64 { var r: Rt; r.x = n; r.y = 0; var a, b = r.ddv(d); return a * 1000 + b; }
+
+# 6.7.13: `?` on a parenthesised pair call (`pw_impl`'s generic method sits in `impl Rt` below).
+fn pw_free(n, d) { var p: Pt; p.x = n; p.y = 0; var v = (Pt_div(p, d))?; return Ok(v + 28000); }
+fn pw_meth(n, d) { var p: Pt; p.x = n; p.y = 0; var v = ((p.div(d)))?; return Ok(v + 29000); }
+fn pw_impl(n, d) { var r: Rt; r.x = n; r.y = 0; var x = 0; x = (r.gdv(d))?; return Ok(x + 30000); }
+fn pw_fwd(n, d) { var v = pw_wrapped(n, d)?; return Ok(v + 31000); }
+fn pw_wrapped(n, d) { var p: Pt; p.x = n; p.y = 0; return (p.div(d)); }
 
 # Ok and Err of a `(tag, payload)` wrapper folded into one number: the Ok row's payload (its tag 0)
 # plus the Err row's tag * 1000000 and payload * 10 — so (1, 99) reads 1000990.
@@ -245,6 +270,28 @@ fn run_method_q(): i64 {
         "MI: the same, `rfwd` forwarding `return self.rdiv(d);` (Wt's `rdiv` is one value)");
     assert_eq(mi_destr(6, 0), 1099, "MI: `var a, b = r.rdiv(d);` above the impl binds (1, 99)");
     assert_eq(mi_one(7), 7, "control: a ONE-value method above its impl binds to one variable");
+    test_group("6.7.13: a pair trait DEFAULT called above its trait");
+    var k1, l1 = mt_def(6, 2);
+    var k2, l2 = mt_def(6, 0);
+    assert_eq(okerr(k1, l1, k2, l2), 1000990 + 26003,
+        "MT: `r.ddv(d)?`, ddv a default of `trait Dd` below (was rc 139 / cx 1 / PE 5)");
+    var k3, l3 = mt_fwd(6, 2);
+    var k4, l4 = mt_fwd(6, 0);
+    assert_eq(okerr(k3, l3, k4, l4), 1000990 + 27003, "MT: the same, the default `dfw` forwarding `return self.ddv(d);`");
+    assert_eq(mt_destr(6, 0), 1099, "MT: `var a, b = r.ddv(d);` above the trait binds (1, 99)");
+    test_group("6.7.13: `?` on a parenthesised pair call");
+    var w1, x1 = pw_free(6, 2);
+    var w2, x2 = pw_free(6, 0);
+    assert_eq(okerr(w1, x1, w2, x2), 1000990 + 28003, "PW: `(Pt_div(p, d))?` (was rc 139 / cx 1 / PE 5)");
+    var w3, x3 = pw_meth(6, 2);
+    var w4, x4 = pw_meth(6, 0);
+    assert_eq(okerr(w3, x3, w4, x4), 1000990 + 29003, "PW: `((p.div(d)))?`, the method at depth 2");
+    var w5, x5 = pw_impl(6, 2);
+    var w6, x6 = pw_impl(6, 0);
+    assert_eq(okerr(w5, x5, w6, x6), 1000990 + 30003, "PW: `x = (r.gdv(d))?;`, a generic method above its impl");
+    var w7, x7 = pw_fwd(6, 2);
+    var w8, x8 = pw_fwd(6, 0);
+    assert_eq(okerr(w7, x7, w8, x8), 1000990 + 31003, "PW: `return (p.div(d));` below its `?` caller forwards the pair");
     return 0;
 }
 impl Wt { fn rdiv(self, d): i64 { return self.x / d; } }
@@ -255,6 +302,11 @@ impl Rt {
     fn rone(self): i64 { return self.x; }
 }
 impl Rd for Rt { fn tdiv(self, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); } }
+trait Dd {
+    fn dfw(self, d) { return self.ddv(d); }
+    fn ddv(self, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+}
+impl Dd for Rt { }
 
 alloc_init();
 gp = alloc(16);

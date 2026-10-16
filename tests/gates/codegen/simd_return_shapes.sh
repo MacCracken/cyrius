@@ -105,7 +105,7 @@
 #                                                          first argument) — the hidden pointer is PE's alone
 #   MV5 `_vrcv_emit` without the register-pair store       -> RED V1-V8 on host / cx / aarch64 (1); win64 green (no pair)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): A7 runs on ecb / ach / cass / pi in
-# tests/tcyr/crossos/struct_return_shape_controls.tcyr.
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr (6.7.13: its producer says `return p;`, as here).
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -242,9 +242,11 @@ var r = main(); syscall(60, r);
     # values into distinct decimal digits so a row cannot pass with the operands swapped or
     # with one register left unwritten. 6.7.11: a fn returning a named struct refuses the tuple
     # literal itself (the user's decision, issues/archived/2026-10-08-struct-operator-results.md #4), so
-    # A7's pair struct says `ret2(41, 7)`, the same multi-value arm; A8 / A9 keep the tuple spelling.
+    # A7's pair struct said `ret2(41, 7)`, the same multi-value arm; A8 / A9 keep the tuple spelling. 6.7.13:
+    # `ret2` in a fn declared to return a named struct is refused too (D22 A, the user's decision, 2026-10-15), so
+    # A7 returns its struct as the struct: `return p;`, the 9-16 B pair's own path.
     A7) printf '%s' 'struct P2 { a; b; }
-fn good(): P2 { ret2(41, 7); }
+fn good(): P2 { var p: P2 = P2 { 41, 7 }; return p; }
 fn main(): i64 { var p: P2 = good(); return p.a + p.b; }
 var r = main(); syscall(60, r);
 ' ;;
@@ -348,7 +350,8 @@ Y_ROWS="Y1 Y2 Y3 Y4 Y5 Y6 Y7 Y8 Y9 Y10 Y11"
 #   aarch64 — silently lost the second register (41 for 48): the struct pair (x0:x1) and the
 #             multi-value slot (x2) disagreed until 6.7.7 (ESTRUCT_PAIR_HI_SYNC); 48 since.
 #             Mutation (6.7.8, a scratch copy): aarch64 ESTRUCT_PAIR_HI_SYNC emitting nothing ->
-#             RED aarch64 A7 = 41, every other row green.
+#             RED aarch64 A7 = 41, every other row green. 6.7.13: A7's producer is `return p;` (its
+#             `ret2` refused) and the sync is gone with its last producer.
 # A8 and A9 (the SCALAR arity-2/arity-3 multi-return) run on all four legs and are green on all
 # four, so the "tuple syntax still works" property is not host-only.
 a_legs() { echo "host cx aarch64 win64"; }

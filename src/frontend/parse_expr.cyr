@@ -6411,6 +6411,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
     }
     # ret2(a, b) — return two values in rax:rdx
     if (ptyp == 97) {
+        var r2out = _ret2_ctx(S, GTI(S));      # 6.7.13: refused outside a fn (no landing), in a 3-value or struct fn
         _refuse_async_mv_body(S, GTI(S), 2);   # 6.7.11: a Future carries one i64
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
@@ -6423,7 +6424,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         EPOPR(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
-        _mret_land(S);   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
+        if (r2out == 0) { _mret_land(S); }   # rax:rdx, then the epilogue jump (6.7.7); none outside a fn (6.7.13)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
@@ -6951,8 +6952,10 @@ fn _PARSE_TERM_IMPL(S): i64 {
             _HTLOAD(S, qval);                 # Ok path: rax = payload
             _cfo = 0;
             # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
-            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN).
-            if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN). Not inside
+            # an inline replay: there the Err jump lands at the replay's end (the call's value) and
+            # `_cur_fn_ix` is the caller. CHANGELOG [6.7.13]
+            if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
             _qpair_done = 1;
         }
         if (_qpair_done == 0) {

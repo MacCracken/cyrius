@@ -181,6 +181,45 @@ fx m3_unknown   "$P3
 fn h<T>(p: T, x) { if (x > 5) { return Ok(5); } return p.div(1); }
 fn f(x) { var p: Pt; p.x = x; p.y = 0; var t, v = h(p, x); return Ok(v); }"
 
+# 6.7.13: a caller of an inline-replayed pair generic returns ONE value — the replayed `return Ok(v);` is the
+# call's value, not the caller's (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md: it warned
+# "a SINGLE value here" on main's `return v;`). MIR (the `GIDEP == 0` guard dropped) -> ir_replay red on both.
+printf '%s\n%s\n' "$H" 'fn gg<T>(v: T) { return Ok(v); }
+fn main(): i64 { var t, v = gg<i64>(7); return v; }
+sys_exit(main());' > "$T/ir_replay.cyr"
+# The same for a replayed `?` (its Err jump lands at the replay's end): MIRQe -> ir_replay_q red on both.
+printf '%s\n%s\n' "$H" 'fn inner(v) { if (v == 0) { return Err(5); } return Ok(v * 10); }
+fn gq<T>(v: T) { return Ok(inner(v)? + 1); }
+fn mid(v): i64 { var t, x = gq<i64>(v); return x; }
+sys_exit(mid(3));' > "$T/ir_replay_q.cyr"
+# 6.7.13 (D19 A): parentheses around a whole pair call are transparent to the token passes too
+# (`_pair_unwrap`): `return (gd<i32>(x));` beside `return Ok(5)` forwards the pair (it warned "a SINGLE
+# value here"), a fn whose only return is `return (h(x));` is a forwarder (flagged by PARSE_RETURN's
+# peel, it would warn on its sole return), and a closure's wrapped `return` / `?` makes it pair-returning
+# (its plain `return 0;` went unwarned); a wrapped ONE value, `(x)` or `(gid<i32>(x))`, still warns.
+# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md) Mutations (scratch trees,
+# run 2026-10-15, each red on x86 and aarch64): `_ret_is_variant` without `_pair_unwrap` -> pw_beside,
+# pw_m_beside, pw_depth2, pw_sole; `_tok_ret_callee` without it -> pw_cl_mixed, pw_cl_q; `_tok_q_is_pair`
+# without its wrap arm -> pw_cl_q.
+fx pw_beside    "$P2
+fn f(x) { if (x > 5) { return Ok(5); } return (gd<i32>(x)); }"
+fx pw_m_beside  "$P2
+fn f(x) { var p: Pt; p.x = x; p.y = 0; if (x > 5) { return Ok(5); } return (p.div(1)); }"
+fx pw_depth2    "$P2
+fn f(x) { if (x > 5) { return Err(5); } return ((gd<i32>(x))); }"
+fx pw_sole      "$P2
+fn h(x) { if (x == 0) { return Err(1); } return Ok(x); }
+fn f(x) { return (h(x)); }"
+fx pw_single    "$P2
+fn f(x) { if (x > 5) { return Ok(5); } return (gid<i32>(x)); }"
+fx pw_value     "$P2
+fn f(x) { if (x > 5) { return Ok(5); } return (x); }"
+fx pw_cl_mixed  "$P2
+fn f(x) { var g = |y| { if (y > 5) { return (gd<i32>(y)); } return 0; }; return Ok(x); }"
+fx pw_cl_q      "$P2
+fn f(x) { var g = |y| { var v = (gd<i32>(y))?; return v; }; return Ok(x); }"
+fx pw_cl_pair   "$P2
+fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; return Ok(x); }"
 # warns <compiler> <fixture> <expected count>
 warns() {
   "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
@@ -223,6 +262,17 @@ for c in x86 aarch64; do
   warns "$c" m3_geni_one 1
   warns "$c" m3_ptr_one 1
   warns "$c" m3_unknown 0
+  warns "$c" ir_replay 0
+  warns "$c" ir_replay_q 0
+  warns "$c" pw_beside 0
+  warns "$c" pw_m_beside 0
+  warns "$c" pw_depth2 0
+  warns "$c" pw_sole 0
+  warns "$c" pw_single 1
+  warns "$c" pw_value 1
+  warns "$c" pw_cl_mixed 1
+  warns "$c" pw_cl_q 1
+  warns "$c" pw_cl_pair 0
 done
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)
@@ -236,5 +286,5 @@ out=$("$T/kyb" | tr '\n' ' ')
 if [ "$out" = "pick(4) is_some=1 pick(4) payload=40 pick(0) is_some=0 " ]; then pass=$((pass + 1)); else _bad "kyb repro printed '$out'"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL stack_enum_mixed_return_warning: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, generic and method forwards silent and their single values warned, method receivers typed by scope, inference and capture, on x86 and aarch64"
+echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, generic and method forwards silent and their single values warned, method receivers typed by scope, inference and capture, a whole-call wrap judged as its call, on x86 and aarch64"
 exit 0

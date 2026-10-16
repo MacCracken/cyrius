@@ -37,6 +37,16 @@
 #   M6 `_refuse_async_mv_body` without `_fn_async_impl`      -> RED K2 K3 K5 (a closure's, a plain fn's, a sync
 #                                                               fn's `return (a, b)` / ret2 refused)
 #   M7 `_ret_tup_ok` reporting T5 for a declared async fn   -> RED DT (2 errors: + "cannot return tuple 't'")
+#
+# 6.7.13 — AXIS F: `return h(..);` FORWARDING A MULTI-VALUE CALL in such a body is the third spelling of the loss
+# (D24 A, the user's decision, 2026-10-15; issues/2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md):
+# the repro built clean and exited 19 on x86_64 / aarch64 / cx / PE (the memoised 1, then h's 9 from rethi()). The
+# callee declared `: (T1, T2[, T3])`, counted by pass 1, a method or a generic instance, parentheses around the whole
+# call transparent — refused with the same text, at the forwarded call (`_ret_mv_fwd`, PARSE_RETURN). Wherever the
+# literal is refused the forward is (a `: i64`-declared async fn included, as `return (1, 2);` there since 6.7.11).
+# A one-value forward, `callptr(fp, ..)` (its callee unknown), a closure's own forward and a sync fn's still run.
+#   M8 `_ret_mv_fwd` answering 0 at once                    -> RED F1 F2 F3 F4 F6 F7 F8 FD (BUILT)
+#   M9 `_ret_mv_fwd` without the wrap step (k = 0)          -> RED F4 F7 (BUILT)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -172,6 +182,73 @@ syscall(60, main());
 EOF
 runs K5 34 "control: a sync fn's \`return (a, b)\`, \`: (T1, T2, T3)\` and ret2 under CYRIUS_ASYNC=1"
 
-[ "$rows" -ge 20 ] || bad "only $rows rows ran (floor 20)"
+# --- axis F (6.7.13, D24 A): `return h(..);` forwarding a multi-value call ---
+# the issue's repro, verbatim
+cat > "$T/F1.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+fn h2(): (i64, i64) { return (1, 2); }
+async fn g() { return h2(); }
+fn h(): (i64, i64) { return (7, 9); }
+fn main(): i64 {
+    alloc_init();
+    var f = g();
+    var a0 = await f;
+    var x, y = h();
+    var a = await f;
+    var b = rethi();
+    return a * 10 + b;
+}
+syscall(60, main());
+EOF
+refused F1 "5:23: \`async fn g\` $M2" "the repro verbatim (it exited 19)"
+row F2 'fn h2(a) { return (a, 2); }
+async fn g(a) { return h2(a); }'
+refused F2 "\`async fn g\` $M2" "an undeclared callee pass 1 counted (the issue's second form)"
+row F3 'struct B { z; }
+impl B { fn mk(self, a): (i64, i64) { return (a, 1); } }
+async fn g(a) { var b = B { 0 }; return b.mk(a); }'
+refused F3 "\`async fn g\` $M2" "a method callee"
+row F4 'fn h2(a) { return (a, 2); }
+async fn g(a) { return (h2(a)); }'
+refused F4 "\`async fn g\` $M2" "wrapped: \`return (h2(a));\`"
+row F6 'async fn g(a) { var s = await nopark(); return h(); }'
+refused F6 "\`async fn g\` $M2" "a coroutine body"
+row F7 'fn h3(a): (i64, i64, i64) { return (a, 1, 2); }
+async fn g(a) { return ((h3(a))); }'
+refused F7 "\`async fn g\` $M3" "three values, at depth 2"
+row F8 'fn hg<T>(a: T): (T, T) { return (a, a + 1); }
+async fn g(a) { return hg<i64>(a); }'
+refused F8 "\`async fn g\` $M2" "a generic instance"
+row FD 'async fn g(a): i64 { return h(); }'
+refused FD "\`async fn g\` $M2" "a \`: i64\` async fn, as its \`return (a, b);\` is (6.7.11)"
+cat > "$T/F5.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+fn h(): (i64, i64) { return (7, 9); }
+fn one(a) { return a + 1; }
+async fn g(a) { return one(a); }
+async fn gp(a) { var fp = &h; return callptr(fp); }
+async fn gc(a) { var c = |x| { return h(); }; var p = fncall1(c, a); return p; }
+fn fw(a) { return h(); }
+fn main(): i64 {
+    alloc_init();
+    var f = g(1);
+    var a = await f;
+    var b = await gp(0);
+    var c = await gc(0);
+    var x, y = fw(0);
+    if (a != 2) { return 1; }
+    if (b != 7) { return 2; }
+    if (c != 7) { return 3; }
+    if (y != 9) { return 4; }
+    return 42;
+}
+syscall(60, main());
+EOF
+runs F5 42 "control: a one-value forward (2), \`callptr\` (7), a closure's own forward (7), a sync fn's (9)"
+[ "$rows" -ge 29 ] || bad "only $rows rows ran (floor 29)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 echo "PASS: $G ($rows rows) — an \`async fn\` returning several values is refused by name: declared \`: (T1, T2[, T3])\` at its declaration, \`return (a, b[, c]);\` and \`ret2\` in an undeclared body, plain and coroutine; one-value async fns, a closure's and an #inline replay's multi-value return, a sync fn's and T5's tuple refusal unchanged"
