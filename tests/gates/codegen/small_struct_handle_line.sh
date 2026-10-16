@@ -167,8 +167,10 @@
 # address (SIGSEGV; PE an access violation; cx a guest error). Its runtime half is
 # tests/tcyr/crossos/struct_deref_whole_operand.tcyr (every shape against its 16 B twin, 24 B, `*S` parameters
 # of 1 / 3 / 7 / 8 B, top level):
-#   R10 that file on the same legs as R1, N derived from it (floor 78; 6.7.11: the `z` rows — a dereference
-#      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0)
+#   R10 that file on the same legs as R1, N derived from it (floor 113; 6.7.11: the `z` rows — a dereference
+#      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0; 6.7.13: the `zs` / `zv` / `zh` / `zc` / `zq` rows —
+#      a by-value self from a `*S`, a `*S` into a by-value parameter, a handle (and a captured one) by value,
+#      `return q` of a `*S` parameter, at 1..7 B: the word's padding 0, never the frame's old bytes)
 #   R11 (6.7.11, issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
 #      tests/tcyr/crossos/struct_deref_assign_copy.tcyr on the same legs (floor 76): an ASSIGNMENT from a
 #      dereference — `l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S` / a handle's pointee, wrapped, `*(p +
@@ -421,6 +423,12 @@
 #                                                      78 rows x7 (the padding 'D'..'H', every `z` row)
 #   MX2  `_hl_pval_ra` never zeroing its frame temp (`z` ignored) -> RED 7: R10 8 of 78 rows x7 (in a fn, a by-value
 #                                                      argument's and a return's padding 0xFF from the frame)
+# 6.7.13 PADDING MUTATION LEDGER (2026-10-15, the same method; R10's `zs` / `zv` / `zh` / `zc` / `zq` rows,
+# issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md):
+#   the tree before it (b13d3598: `_hl_pval_ra` zeroing only for a dereference, `_sptr_param_temp` and
+#   `_hl_cap_val_ra` never) -> RED: R10 19 of 113 rows on x86 / cx / PE (`zs` / `zv` / `zh` at 3 / 5 / 6 / 7 B,
+#                                                      `zq` at 1..7 B: padding 0xFF), 21 on aarch64 (and `zc` at
+#                                                      3 / 5 B, which x86 hides)
 # 6.7.11 ASSIGNMENT-FROM-DEREFERENCE MUTATION LEDGER (2026-10-14, the same method; R11,
 # issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md):
 #   the tree before it (cf5838db)                   -> RED 7: R11 42 of 76 rows x7 (one word stored; `q = *p`
@@ -671,7 +679,7 @@ done
 TD=tests/tcyr/crossos/struct_deref_whole_operand.tcyr
 [ -f "$TD" ] || { echo "FAIL: $G: $TD is missing"; exit 1; }
 ND=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TD")
-DFLOOR=78
+DFLOOR=113
 if [ "$ND" -lt "$DFLOOR" ]; then echo "FAIL: $G: only $ND rows in $TD (floor $DFLOOR) — rows were lost"; exit 1; fi
 
 TF=tests/tcyr/crossos/struct_field_left_operand.tcyr

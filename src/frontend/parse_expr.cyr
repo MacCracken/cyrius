@@ -4028,7 +4028,7 @@ fn _deref_small(S, d): i64 {
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
     if (STRUCTSZ(S, sid - 1) != st) { return 0; }
-    _hl_pval_ra(S, sid, 1);
+    _hl_pval_ra(S, sid);
     return 1;
 }
 # ⛔ 6.7.10 — A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
@@ -7427,7 +7427,7 @@ fn _opd_lhs_sv(S, fi): i64 {
 fn _opd_operand(S, fi): i64 {
     if (_opd_k == 1) { return _flo_addr_ra(S, fi); }
     _HTLOAD(S, _dlo_h);
-    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid, 1); }   # 6.7.11: its padding 0, as `_deref_small`'s
+    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid); }   # 6.7.11: its padding 0, as `_deref_small`'s
     return 0;
 }
 # Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).

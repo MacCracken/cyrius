@@ -1536,7 +1536,7 @@ fn _self_value_ra(S, idx, sid): i64 {
     var sz = STRUCTSZ(S, sid - 1);
     if (_hl_wpow(sz) == 0) {
         _fld_addr_ra(S, idx, sid, 0, 0 - 1);
-        _hl_pval_ra(S, sid, 0);
+        _hl_pval_ra(S, sid);
         return 0;
     }
     _resolve_field_base_addr(S, idx, sid);
@@ -8127,7 +8127,8 @@ fn _hl_cap_word(S, noff, ptrp): i64 {
     return 0 - t;
 }
 # rax = the struct a captured handle `noff` (struct `sid`, `_hl_cap_hdl`) points at; `_hdl_val_ra`'s
-# two shapes, through the capture source record (`_fsc_cap_src`).
+# two shapes, through the capture source record (`_fsc_cap_src`). The temp is zeroed first, as
+# `_sptr_param_temp`'s is: its word's padding is 0. CHANGELOG [6.7.13]
 fn _hl_cap_val_ra(S, noff, sid): i64 {
     var sz = STRUCTSZ(S, sid - 1);
     _fsc_cap_src(S, noff);
@@ -8137,6 +8138,8 @@ fn _hl_cap_val_ra(S, noff, sid): i64 {
         return 0;
     }
     var t = _agg_temp(S, sid);
+    EMOVI(S, 0);
+    EFLSTORE(S, t);
     _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, sz);
     EFLLOAD(S, t);
     return 0;
@@ -8189,7 +8192,7 @@ fn _hl_byval(S, fi, k): i64 {
 fn _hl_byval_arg(S, fi, k, b, ps): i64 {
     if (_hl_bare_val(S, b, GTI(S)) == 1) { return 1; }
     if (_hl_parg(S, b, GTI(S), ps) == 0) { return 0; }
-    _hl_pval_ra(S, GFPSID(S, fi, k), 0);
+    _hl_pval_ra(S, GFPSID(S, fi, k));
     return 1;
 }
 # 1 = the argument [b, e) just parsed, its pointer step `ps` (GPSC after its parse), is a typed pointer
@@ -8286,10 +8289,10 @@ fn _hl_narrow_at(S, i): i64 {
 }
 # rax (an address) becomes the struct `sid` (8 B or less) it points at, as a by-value consumer takes
 # it: one load of 1 / 2 / 4 / 8 bytes, else (3, 5, 6, 7) a byte-exact copy into a temp — a frame temp
-# in a fn, a hidden global at top level — whose word is loaded: no byte past the object is read. `z` 1
-# zeroes the frame temp first, so the word's padding is 0 as a hidden global's is (a dereference's
-# value, `_deref_small`, 6.7.11); 0 leaves it as before.
-fn _hl_pval_ra(S, sid, z): i64 {
+# in a fn, a hidden global at top level — whose word is loaded: no byte past the object is read. The
+# frame temp is zeroed first, so the word's padding is 0 as a fresh hidden global's is, for every
+# consumer (the frame's old bytes showed there). CHANGELOG [6.7.13]
+fn _hl_pval_ra(S, sid): i64 {
     var sz = STRUCTSZ(S, sid - 1);
     if (_hl_wpow(sz) == 1) {
         EMOVCA(S);
@@ -8300,7 +8303,8 @@ fn _hl_pval_ra(S, sid, z): i64 {
     _HTSTORE(S, h);
     if (h >= 0) {
         var t = _agg_temp(S, sid);
-        if (z == 1) { EMOVI(S, 0); EFLSTORE(S, t); }
+        EMOVI(S, 0);
+        EFLSTORE(S, t);
         _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(h), 0 - 1, sz);
         EFLLOAD(S, t);
         return 0;

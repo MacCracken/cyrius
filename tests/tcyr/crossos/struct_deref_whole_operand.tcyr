@@ -211,6 +211,75 @@ fn zret3(): i64 { zdirty(); var l: Z3 = zr3(); return load8(&l + 3) * 100000 + l
 fn zret5(): i64 { zdirty(); var l: Z5 = zr5(); return load8(&l + 5) * 100000 + l.b; }
 fn zret6(): i64 { zdirty(); var l: Z6 = zr6(); return load8(&l + 6) * 100000 + l.c; }
 fn zret7(): i64 { zdirty(); var l: Z7 = zr7(); return load8(&l + 7) * 100000 + l.c; }
+# ── 6.7.13: the word a struct under 8 B travels in has no bytes but the struct's
+# (issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md). A by-value `self` from a `*S`, a `*S`
+# into a by-value parameter, `return q` of a `*S` parameter and a handle passed by value copied a 3 / 5 / 6 / 7 B
+# struct into a frame temp that was never cleared: the word's padding was the frame's old 0xFF (exit 255 where
+# 0 is right). The `zs` / `zv` / `zh` / `zc` / `zq` rows at 1..7 B, after zdirty(): the padding 0, the last
+# field the struct's. 1 / 2 / 4 B are one load (no temp) but for `return q`, whose temp was loaded whole.
+struct Z1 { a: i8; }
+struct Z2 { a: i8; b: i8; }
+struct Z4 { a: i16; b: i16; }
+var PZ1: *Z1 = &ZB;
+var PZ2: *Z2 = &ZB;
+var PZ4: *Z4 = &ZB;
+fn zp1(s: Z1): i64 { return load8(&s + 1) * 100000 + s.a; }
+fn zp2(s: Z2): i64 { return load8(&s + 2) * 100000 + s.b; }
+fn zp4(s: Z4): i64 { return load8(&s + 4) * 100000 + s.b; }
+fn Z1_pad(self: Z1): i64 { return load8(&self + 1) * 100000 + self.a; }
+fn Z2_pad(self: Z2): i64 { return load8(&self + 2) * 100000 + self.b; }
+fn Z3_pad(self: Z3): i64 { return load8(&self + 3) * 100000 + self.c; }
+fn Z4_pad(self: Z4): i64 { return load8(&self + 4) * 100000 + self.b; }
+fn Z5_pad(self: Z5): i64 { return load8(&self + 5) * 100000 + self.b; }
+fn Z6_pad(self: Z6): i64 { return load8(&self + 6) * 100000 + self.c; }
+fn Z7_pad(self: Z7): i64 { return load8(&self + 7) * 100000 + self.c; }
+# a by-value self from a *S receiver
+fn zs1(p: *Z1): i64 { return p.pad(); }
+fn zs2(p: *Z2): i64 { return p.pad(); }
+fn zs3(p: *Z3): i64 { return p.pad(); }
+fn zs4(p: *Z4): i64 { return p.pad(); }
+fn zs5(p: *Z5): i64 { return p.pad(); }
+fn zs6(p: *Z6): i64 { return p.pad(); }
+fn zs7(p: *Z7): i64 { return p.pad(); }
+# a *S into a by-value S parameter
+fn zv1(p: *Z1): i64 { return zp1(p); }
+fn zv2(p: *Z2): i64 { return zp2(p); }
+fn zv3(p: *Z3): i64 { return zp3(p); }
+fn zv4(p: *Z4): i64 { return zp4(p); }
+fn zv5(p: *Z5): i64 { return zp5(p); }
+fn zv6(p: *Z6): i64 { return zp6(p); }
+fn zv7(p: *Z7): i64 { return zp7(p); }
+# `return q;` of a *S parameter, received
+fn zf1(q: *Z1): Z1 { return q; }
+fn zf2(q: *Z2): Z2 { return q; }
+fn zf3(q: *Z3): Z3 { return q; }
+fn zf4(q: *Z4): Z4 { return q; }
+fn zf5(q: *Z5): Z5 { return q; }
+fn zf6(q: *Z6): Z6 { return q; }
+fn zf7(q: *Z7): Z7 { return q; }
+fn zq1(): i64 { zdirty(); var l: Z1 = zf1(PZ1); return load8(&l + 1) * 100000 + l.a; }
+fn zq2(): i64 { zdirty(); var l: Z2 = zf2(PZ2); return load8(&l + 2) * 100000 + l.b; }
+fn zq3(): i64 { zdirty(); var l: Z3 = zf3(PZ3); return load8(&l + 3) * 100000 + l.c; }
+fn zq4(): i64 { zdirty(); var l: Z4 = zf4(PZ4); return load8(&l + 4) * 100000 + l.b; }
+fn zq5(): i64 { zdirty(); var l: Z5 = zf5(PZ5); return load8(&l + 5) * 100000 + l.b; }
+fn zq6(): i64 { zdirty(); var l: Z6 = zf6(PZ6); return load8(&l + 6) * 100000 + l.c; }
+fn zq7(): i64 { zdirty(); var l: Z7 = zf7(PZ7); return load8(&l + 7) * 100000 + l.c; }
+# a handle (a struct local initialised from an address) passed by value
+fn zh1(): i64 { var h: Z1 = zsrc(); return zp1(h); }
+fn zh2(): i64 { var h: Z2 = zsrc(); return zp2(h); }
+fn zh3(): i64 { var h: Z3 = zsrc(); return zp3(h); }
+fn zh4(): i64 { var h: Z4 = zsrc(); return zp4(h); }
+fn zh5(): i64 { var h: Z5 = zsrc(); return zp5(h); }
+fn zh6(): i64 { var h: Z6 = zsrc(); return zp6(h); }
+fn zh7(): i64 { var h: Z7 = zsrc(); return zp7(h); }
+# a captured handle passed by value, inside a closure
+fn zc1(): i64 { var h: Z1 = zsrc(); var c = || zp1(h); return callptr(c); }
+fn zc2(): i64 { var h: Z2 = zsrc(); var c = || zp2(h); return callptr(c); }
+fn zc3(): i64 { var h: Z3 = zsrc(); var c = || zp3(h); return callptr(c); }
+fn zc4(): i64 { var h: Z4 = zsrc(); var c = || zp4(h); return callptr(c); }
+fn zc5(): i64 { var h: Z5 = zsrc(); var c = || zp5(h); return callptr(c); }
+fn zc6(): i64 { var h: Z6 = zsrc(); var c = || zp6(h); return callptr(c); }
+fn zc7(): i64 { var h: Z7 = zsrc(); var c = || zp7(h); return callptr(c); }
 fn zarg3(): i64 { return zp3(*PZ3); }
 fn zarg5(): i64 { return zp5((*PZ5)); }
 fn zarg6(): i64 { return zp6(*PZ6); }
@@ -315,4 +384,67 @@ assert_eq(zret3(), 67, "3 B: return *p, received");
 assert_eq(zret5(), 69, "5 B: return (*p)");
 assert_eq(zret6(), 17989, "6 B: return *(p + 0)");
 assert_eq(zret7(), 71, "7 B: return *p");
+zdirty();
+assert_eq(zs1(PZ1), 65, "1 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs2(PZ2), 66, "2 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs3(PZ3), 67, "3 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs4(PZ4), 17475, "4 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs5(PZ5), 69, "5 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs6(PZ6), 17989, "6 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs7(PZ7), 71, "7 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zv1(PZ1), 65, "1 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv2(PZ2), 66, "2 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv3(PZ3), 67, "3 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv4(PZ4), 17475, "4 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv5(PZ5), 69, "5 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv6(PZ6), 17989, "6 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv7(PZ7), 71, "7 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zh1(), 65, "1 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh2(), 66, "2 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh3(), 67, "3 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh4(), 17475, "4 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh5(), 69, "5 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh6(), 17989, "6 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh7(), 71, "7 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zc1(), 65, "1 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc2(), 66, "2 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc3(), 67, "3 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc4(), 17475, "4 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc5(), 69, "5 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc6(), 17989, "6 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc7(), 71, "7 B: || f(h): a captured handle by value: its padding 0");
+assert_eq(zq1(), 65, "1 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq2(), 66, "2 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq3(), 67, "3 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq4(), 17475, "4 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq5(), 69, "5 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq6(), 17989, "6 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq7(), 71, "7 B: return q of a *S parameter, received: its padding 0");
 var r = assert_summary();

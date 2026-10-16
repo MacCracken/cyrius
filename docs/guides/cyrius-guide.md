@@ -1704,6 +1704,11 @@ still the value's word. Over 8 bytes this is what the address-passed parameter
 always did; through 6.7.9 a struct of 8 bytes or less got the POINTER as its one word, and the
 callee read the address as its fields, silently. An UNTYPED value is still the struct's word: an
 untyped local holding an address (`var u = &s; bs1(u)`), an integer, an `i8` / `i16` / `i32` value.
+The word a struct of 8 bytes or less travels in holds nothing but the struct (6.7.13): its bytes past
+`sizeof(S)` are 0 — from a pointer into a by-value parameter, a by-value `self` from a `*S` receiver, a
+handle (or a captured one) passed by value and `return q` of a `q: *S` parameter, as from a dereference
+since 6.7.11. Through 6.7.12 the word of a 3, 5, 6 or 7-byte struct (and `return q`'s at 1, 2 and 4
+bytes) carried whatever the frame held there, so `load8(&s + 3)` in the callee read a stale byte.
 
 ⚠ **A by-value struct PARAMETER is a COPY, at every width (v6.6.16).** A `q: P3` parameter over
 8 bytes still TRAVELS by address — the caller passes its struct's address, so the calling

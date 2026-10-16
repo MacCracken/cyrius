@@ -2901,7 +2901,7 @@ fn _ret_small_ptr(S, st): i64 {
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
     if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, 1); }
-    _hl_pval_ra(S, ps, 1);
+    _hl_pval_ra(S, ps);
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
@@ -3068,9 +3068,15 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
     STI(S, sv);
     return 0;
 }
+# The struct slot `li` points at (struct `sid`), copied byte-exact into an inline frame temp; its field-0
+# slot. Under 8 B the temp's word is what a by-value consumer loads (`return q` of a `*S` parameter, a
+# handle passed by value), so it is zeroed first: the padding is 0, never the frame's old bytes.
+# CHANGELOG [6.7.13]
 fn _sptr_param_temp(S, li, sid): i64 {
     var t = _agg_temp(S, sid);
-    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, STRUCTSZ(S, sid - 1));
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz < 8) { EMOVI(S, 0); EFLSTORE(S, t); }
+    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, sz);
     return t;
 }
 
