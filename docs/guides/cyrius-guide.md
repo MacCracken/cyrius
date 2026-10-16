@@ -1061,7 +1061,12 @@ difference was a byte count and the declaration warned). So is `&x`, a byte addr
 of `+` (6.7.11, the user's decision of 2026-10-13): `n + &x` is the pointer `&x + n` is, so
 `var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32` is refused (through 6.7.10 the first warned
 and the second was a byte difference). `load8` / `store16` / … stay valid for an
-explicit width. ⚠ Before
+explicit width. **`&x` takes the address of a NAME** — a local, a parameter, a global, a closure
+capture or a fn — never of a field or an element: `&x.f` (6.7.13, the user's decision D3 (b),
+2026-10-15; *the address of a field is not taken - write `&x + offset` or reach it through a `*T`*)
+and `&a[i]` are refused by name — write `&x + offset` (`&a + i * sizeof(T)`), or reach the field
+through a pointer (`var p: *S = &x; p.f`). Through 6.7.12 `&x.f` failed to parse at its `.`
+(`expected ')', got '.'`). ⚠ Before
 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
 through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
 word, `*s` on a `*u8` string read eight characters. `T` must name a type
@@ -1278,7 +1283,7 @@ struct that shrinks to 8 bytes or less (see [Trait objects](#trait-objects-dyn-6
 refusals that key on a size over 8 bytes stop applying to it: an if-expression branch, an
 `async fn`'s by-value parameter, a top-level call result (`var G: C4 = mk4(9);`). Code that
 reached such a struct by hand — `load64(p + 8)` for the second field, a literal size,
-`load64(&s.f)` on a narrow field (it now reads the next fields too), a file or wire format
+`load64(&s + 8)` at a narrow field's offset (it now reads the next fields too), a file or wire format
 written with `sizeof` — must be re-checked; the fields, `sizeof` and the `#derive(accessors)`
 functions follow the layout. **Packed means unaligned:** a `u32` / `f32` after a `u8` sits at
 offset 1. A plain field read or write is fine on every target, but an atomic or a futex word
@@ -2577,8 +2582,9 @@ Every other source is refused by name, at the source:
 - `&q` of a pointer (write `q`), `&n` of a scalar (write `n`: a scalar's dyn holds its value), `&o`
   of a dyn (copy it), and a pointer to a scalar such as `q: *i64` (bind the value: `var n: i64 = *q;`);
 - a closure's captured name (bind it to a declared local first);
-- any other expression — `alloc(..)`, arithmetic, a string literal, an enum constant, `&h.f`,
-  `&a[i]`, a call returning an `i64`: bind it to a declared variable first;
+- any other expression — `alloc(..)`, arithmetic, a string literal, an enum constant, `&a + i *
+  sizeof(T)`, a call returning an `i64`: bind it to a declared variable first (`&a[i]` and `&h.f` are
+  not expressions at all — refused by name);
 - at top level, forming into an assignment, a field or an argument — there is no frame to build the
   dyn in (a top-level `var G: dyn Tr = ..;` is fine, in the declaration section or after it).
 

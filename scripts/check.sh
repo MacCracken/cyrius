@@ -2550,6 +2550,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.13 (D3 (b)) — `&x.f`, the address of a struct field, is refused by name once (it failed to parse with no
+# word of why: "expected ')', got '.'"), its steps consumed so the parse stays in step; `&E.V`, `&o`, `&o + 8` stay.
+_chk_gate "$ROOT/tests/gates/frontend/address_of_field_refused.sh"
 # 6.7.8 (C2-1b) — a slice read `s[i]` is a whole value as a left operand: a constant index armed the
 # constant folder (`return s[0] + 10;` exited 134, `s[1] * 2` SIGSEGV'd), a `*T` / struct index left
 # its step / type. x86 (plain, IR=1, IR=3, DCE=1), aarch64, cx, PE legs; mutation ledger in the header.

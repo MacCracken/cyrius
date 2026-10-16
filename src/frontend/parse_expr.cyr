@@ -1550,6 +1550,7 @@ fn PARSE_FACTOR(S): i64 {
     var _rc = 0;
     if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
+    _addr_field_post(S, _ti0);  # 6.7.13 (D3 (b)): `&x.f` refused by name
     if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
@@ -3486,6 +3487,28 @@ fn _sub_more(S): i64 {
 # The PARSE_FACTOR wrapper's postfix `[` (the factor began at token ti0): a `*T` field's or call's
 # element read; every other factor refused by name — `&a[i]` (an address is no base), `a[i][j]`,
 # `(expr)[i]`, a literal.
+# ⛔ 6.7.13 — `&x.f` IS NOT CYRIUS: THE ADDRESS OF A FIELD IS NOT TAKEN (the user's D3 (b), 2026-10-15; issues/
+# 2026-10-14-address-of-field-does-not-parse-guide-cites-it.md). The `&` factor takes `&x` and stopped at the `.`,
+# so the parse failed on the token after it ("expected ')', got '.'") with no word of why. The factor at `ti0` an
+# `&` with a `.` next: refused by name once, as `&a[i]` is (`_sub_post`), its `.f` / `.0` / `.m(..)` steps
+# consumed so the parse stays in step; rax 0. `&E.A` keeps its own refusal (the `&` arm consumed `.A`).
+fn _addr_field_post(S, ti0): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, ti0) != 27) { return 0; }
+    _psub_err(S, ": the address of a field is not taken", 0 - 1, " - write `&x + offset` or reach it through a `*T`", "", 0);
+    while (PEEKT(S) == 41) {
+        var t = TOKTYP(S, GTI(S) + 1);
+        if (t != 2) { if (t != 1) { STI(S, GTI(S) + 1); return _addr_field_val(S); } }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return _addr_field_val(S);
+}
+fn _addr_field_val(S): i64 {
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    return 0;
+}
 fn _sub_post(S, ti0): i64 {
     var ed = 0;
     if (TOKTYP(S, ti0) == 27) {
