@@ -3876,7 +3876,7 @@ fn _asg_compound_op(S, cop, lt): i64 {
 # 6.7.10 `p = l` copies `l` INTO `*p`; the store wrote the 8-byte word whatever S: a zero-size or 3..7 B struct
 # overran into its neighbour, one over 8 B kept only its first 8 bytes, `*p = q` stored the pointer, and `*p += a`
 # added to the first word. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
-# typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size; not `Str` / tuple / dyn),
+# typed `*S` by the compiler's own typing (`_hl_dpsid`, its step the struct's size; not `Str` / tuple / dyn),
 # `*p OP= v` is refused by name as `l += a` is (the statement parses on: 0), and for `=` the pointer is parked in a
 # hidden temp and the statement's assignment arms run with that temp as their destination (`_agc_ovr`), so
 # `*p = v` copies exactly what `G = v` copies — a local, parameter, global, field, call, method or operator result,
@@ -3884,12 +3884,13 @@ fn _asg_compound_op(S, cop, lt): i64 {
 # struct refused by name; any other value (untyped, an integer) is stored as the struct's word at `sizeof(S)` bytes,
 # at most 8, never past the object (`_dst_word`). 1 = done (`term` consumed); 0 = not this shape (cursor untouched).
 fn _dst_struct(S, term, d): i64 {
-    var sid = _hl_psid(S, d + 1, GTI(S));
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (_dx_plain(S, sid) == 0) { return 0; }
-    if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
+    if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
     if (PEEKT(S) != 4) {
+        if (_hl_damp == 1) { return 0; }   # 6.7.13: `*(&s) OP= v` keeps 6.7.5's word op (not this fix's)
         if (_asg_pair_at(S) == 1) {
             _err_in_sync(S, "compound assignment to the struct ", nm,
               " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");

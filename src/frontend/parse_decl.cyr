@@ -8644,10 +8644,10 @@ fn _gz_icall(S, b, e): i64 {
     _gz_k = 1;
     return _icall_sid_at(S, b);
 }
-# `* E` with E typed `*S` (`_hl_psid`, as `_dlo_park` reads it): S, kind 7 — an operator's left operand
+# `* E` with E typed `*S` (`_hl_dpsid`, as `_dlo_park` reads it): S, kind 7 — an operator's left operand
 # dispatches on it (decision 11); a declaration from it is `_gz_star`'s. Else 0.
 fn _gz_deref(S, b, e): i64 {
-    var r = _hl_psid(S, b + 1, e);
+    var r = _hl_dpsid(S, b + 1, e);
     if (r <= 0) { return 0; }
     if (r == _STR_SID(S)) { return 0; }
     _gz_k = 7;
@@ -8909,7 +8909,7 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
 # zone and after it — became handles holding the word the dereference read, and the first write SIGSEGV'd
 # (inline copies through 6.7.9). The declaration initialiser at token `ti`, up to its `;`, is ONE
 # dereference `* E` (inside any balanced parentheses — `(*p)` — and nothing after it: `*p + a` is an
-# operator's operand), with E typed `*T` by the compiler's own typing (`_hl_psid`): T's struct, else 0.
+# operator's operand), with E typed `*T` by the compiler's own typing (`_hl_dpsid`): T's struct, else 0.
 # `_hl_dk` = the parentheses around it; `_hl_dnm` = the operand's last name, for a refusal.
 var _hl_dk = 0;
 var _hl_dnm = 0;
@@ -8925,7 +8925,7 @@ fn _hl_dstar_t(S, ti, term): i64 {
     if (pe - a < 2) { return 0; }
     if (TOKTYP(S, a) != 8) { return 0; }
     if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
-    var ps = _hl_psid(S, a + 1, pe);
+    var ps = _hl_dpsid(S, a + 1, pe);
     if (ps <= 0) { return 0; }
     _hl_dk = a - ti;
     _hl_dnm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));
@@ -9007,6 +9007,56 @@ fn _hl_psid(S, a, e): i64 {
     var t = _hl_pchain(S, a, e);
     if (_hl_cp != 1) { return 0; }
     return t;
+}
+# ⛔ 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF IS THE STRUCT IT NAMES: `*(&p)` / `*&p` is the struct value `p`
+# is (6.7.10 decision 6, with decision 7's reading of `&c` as a pointer to c). `_hl_psid` answers 0 for `&x`,
+# so `take(*(&p))` into a by-value P3 and `var q: P3 = *(&p);` used p's first word as its address (SIGSEGV).
+# The struct the OPERAND [a, e) of a dereference points at: exactly `& IDENT`, inside any balanced
+# parentheses, naming a struct `&` takes the address of (`_hl_amp_sid`) — `_hl_damp` 1: its step word is 1,
+# not the struct's size (`_hl_dstep`) — else `_hl_psid`'s typing. Asked by the dereference consumers only:
+# `&x + n` stays the byte pointer (6.7.11 D15). CHANGELOG [6.7.13]
+var _hl_damp = 0;
+fn _hl_dpsid(S, a, e): i64 {
+    _hl_damp = 0;
+    var b = _ie_unparen(S, a, e);
+    if (TOKTYP(S, b) == 27) { if (_ie_pe == b + 2) { if (TOKTYP(S, b + 1) == 2) {
+                var t = _hl_amp_sid(S, TOKVAL(S, b + 1));
+                if (t > 0) { _hl_damp = 1; }
+                return t;
+            } } }
+    return _hl_psid(S, a, e);
+}
+# The struct `&noff` takes the address of, resolved as the `&` factor resolves it (a local, a closure
+# capture, a global): an inline local (a by-value parameter of 8 B or less too), an address-passed by-value
+# parameter (its `&q` is the struct, 6.6.6), a capture of an inline struct, an inline global — not a `Str`,
+# tuple or dyn. 0 for a handle, a `*T` (their `&` is the slot holding the address) or no struct.
+fn _hl_amp_sid(S, noff): i64 {
+    var t = _hl_name_ty(S, noff);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    if (_dx_plain(S, t) == 0) { return 0; }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 1) { return t; }
+            if (_addr_is_slot_content(S, li) == 1) { return t; }
+            return 0;
+        }
+        if (_hl_capn(S, noff) == 1) {
+            var esl = _cl_snap_find(S, noff);
+            if (_cl_cap_find(esl) < 0) { return 0; }
+            if (_cl_snap_span(esl) == 0) { return 0; }
+            return t;
+        }
+    }
+    if (GVPM(S, _findvar_core(S, noff)) != 2) { return 0; }
+    return t;
+}
+# 1 = pointer step `st` is that of the dereference `_hl_dpsid` just typed, a struct of `sz` bytes: the `&x`
+# arm's step 1 (`_hl_damp`), else `_ps_is_sz`.
+fn _hl_dstep(st, sz): i64 {
+    if (_hl_damp == 1) { return 1; }
+    return _ps_is_sz(st, sz);
 }
 # The chain [b, e) — a name or a call `f(..)`, then `.field` / `.method(..)` steps — read from its tokens:
 # the struct at its end, `_hl_cp` 1 when that is a `*T` (a `*T` name, a `: *T` call or method, a `*T`

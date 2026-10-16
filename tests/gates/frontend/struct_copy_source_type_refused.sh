@@ -58,6 +58,11 @@
 #   MG2 `_gci_chain` without the `*T` field hop    -> RED 2: R34 compiled, A7 SIGSEGV
 #   MG3 `_gci_call` answering 0 (no call base)     -> RED 2: R32 compiled, A7 SIGSEGV
 #   MG4 `_gci_below` without the call's message    -> RED 1: R32 refused as "a global declared below it"
+#
+# 6.7.13: R35-R38 — a declaration / assignment / struct-typed field / top-level declaration from a dereference of an
+# ADDRESS-OF another struct, `*(&q)` / `*&u`, refused by name as from `q` itself (issues/2026-10-14-dereference-of-
+# address-of-struct-faults.md; through 6.7.12 R35 / R37 / R38 compiled clean, R36 with a warning). Mutation
+# (2026-10-15): `_hl_dpsid` answering `_hl_psid` (no `&x` arm) -> RED 4: R35-R38 compiled.
 #   (struct_field_value_copy.tcyr: MG1-MG3 SIGSEGV at its first through-pointer row, x86 and cxvm)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -238,6 +243,18 @@ refuse "R22 step a = *pu, 8 B" "cannot copy 'pu' $MV: 'a'" \
     "${T}fn go(): i64 { var u = Q8 { 1, 2 }; var pu: *Q8 = &u; var a = P8 { 0, 0 }; var i = 0; for (i = 0; i < 1; a = *pu) { i = i + 1; } return a.x; } syscall(60, go());"
 refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
+
+# 6.7.13 (issues/2026-10-14-dereference-of-address-of-struct-faults.md): `*(&u)` / `*&u` is the struct `u` names, so
+# a declaration or an assignment from another struct's is refused by name, as from `u` itself. Through 6.7.12 the
+# 16 B declaration SIGSEGV'd (a handle holding u's first field) and the 8 B rows compiled clean.
+refuse "R35 var l: Pt = *(&q), a Q" "cannot copy 'q' $MV: 'l'" \
+    "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var l: Pt = *(&q); return l.x; } syscall(60, go());"
+refuse "R36 l = *&u, 8 B" "cannot copy 'u' $MV: 'l'" \
+    "${T}fn go(): i64 { var u = Q8 { 1, 2 }; var l = P8 { 0, 0 }; l = *&u; return l.x; } syscall(60, go());"
+refuse "R37 r.v = *(&q), a struct-typed field" "cannot copy 'q' into a struct field of a different struct type: 'v'" \
+    "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var r: RB; r.v = *(&q); return r.v.x; } syscall(60, go());"
+refuse "R38 var G: Pt = *(&GQ) at top level" "cannot copy 'GQ' $MV: 'G'" \
+    "${T}var GQ = Q { 1, 2, 3 }; var G: Pt = *(&GQ); syscall(60, G.x);"
 
 echo "=== a struct-typed FIELD from a *U global, a : *U call, a *U field (6.7.11) ==="
 # issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md: `o.s = GP` / `gp()` / `w.p`

@@ -1335,7 +1335,7 @@ writes. A struct value is a literal; another inline struct of the type — a loc
 parameter, a global, a closure's captured copy of one, parenthesised or not; a struct-typed field
 (`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
 `*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
-pointer); and a call, method, operator or if-expression that returns the struct (a generic or a
+pointer), and since 6.7.13 `*(&x)` / `*&x` of an inline `x`; and a call, method, operator or if-expression that returns the struct (a generic or a
 parenthesised call too, and since 6.7.11 a call through `fncallN(&f, ..)` / `callptr(&f, ..)` whose
 callee `f` returns it). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
 dereference of one, `*x`, included), a call returning a `*T` or an untyped value (a call through a
@@ -1930,6 +1930,19 @@ object filled the padding (`load8(&G + 3)` of a 3-byte `G` read the next byte) a
 a mapping faulted. A dereference of a ZERO-SIZE struct reads no byte (6.7.13): as a value its word is 0,
 into a `*S` parameter it passes the pointer, and `*p + l` dispatches `S_add` as at every other size;
 through 6.7.12 it loaded the 8 bytes at `p` (a fault when the object ended a mapping).
+
+**A dereference of an address-of is the struct it names** (6.7.13): `*(&x)` / `*&x`, with `x` an inline
+struct — a local, a by-value parameter (`&q` of an address-passed one is the caller's struct, 6.6.6), a
+value global, a closure's captured copy of one — is the struct value `x` is, wherever a dereference of a
+`*S` is one: `take(*(&x))`, `bp(*(&x))` into a `*S` parameter (the struct itself), `var d: S = *(&x);`,
+`l = *(&x)`, `o.s = *(&x)`, `q = *(&x)` through a `*S`, `*(&x) = v` (copies `v` into `x`), `return
+*(&x)`, `*(&x) + a` (dispatched) and `a - *(&x)`, in a fn and at top level; another struct's is refused by
+name, as `x` itself is. Through 6.7.12 it was an untyped word load: over 8 bytes `take(*(&x))` passed x's
+first field as the struct's address and `var d: S = *(&x);` was a handle holding it (a crash on every
+target), the assignments stored one word, `return *(&x)` was refused, and another struct's compiled. A
+handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` is still the untyped word the slot
+holds; `&x + n` is still a byte pointer, so `*(&x + 8)` is the word at that address; and `*(&x) OP= v`
+still operates on x's first word (6.7.5), where `*p OP= v` through a `*S` is refused.
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,

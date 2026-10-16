@@ -120,6 +120,13 @@
 #   no whole-dereference test (`_gz_split`)            -> RED D12 (`*tp + 1` refused as `tp`)
 #   real tree                                          -> GREEN (63 refusal rows, 27 acceptance rows)
 #
+# 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF, `*(&t)` / `*&t`, IS THE STRUCT `t` NAMES (issues/2026-10-14-dereference-of-
+# address-of-struct-faults.md): another struct's into a by-value parameter is refused by name at 8 B (D13, D14 at top
+# level) and over 8 B (D15), and a generic carrier binds T through it (D16; 22 through 6.7.12, the base's layout).
+# Mutation (2026-10-15): `_hl_dpsid` answering `_hl_psid` -> RED 4: D13-D15 compiled, D16 exit 22; `_hl_dstep`
+# ignoring the `&x` arm's step -> RED D15.
+#   real tree                                          -> GREEN (70 refusal rows, 33 acceptance rows)
+#
 # 6.7.11 (the lane's review) — THE TWO SPELLINGS ABOVE BIND A GENERIC CARRIER'S T AS THEIR PLAIN ONES DO
 # (`_gsc_wrap` / `_gsc_deref`, out of `_gsc_arg`): the struct-carrier inference read neither a whole-argument
 # wrap nor `* E`, so `gw((w))`, `gw((mkw(6)))` and `gw(*wp)` with `fn gw<T>(w: W1<T>)`, `w: W1<i32>` reached
@@ -664,6 +671,21 @@ accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
     "${T}fn T1_add(a: T1, b): i64 { return a.w + b; } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*tp + 1); } syscall(60, go());" \
     10 \
     "${T}fn go(): i64 { var s: S1; s.u = 10; return bs1(s); } syscall(60, go());"
+
+# 6.7.13 (issues/2026-10-14-dereference-of-address-of-struct-faults.md): a dereference of an ADDRESS-OF, `*(&u)` /
+# `*&u`, is the struct `u` names, so another struct's is refused by name as `take8(u)` is (through 6.7.12 the 8 B
+# row compiled and passed U's bytes, the 16 B row SIGSEGV'd: the first word passed as the address), and a generic
+# carrier binds T through it as `gw(w)` does (139 through 6.7.12).
+refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(*(&t)); } syscall(60, go());"
+refuse "D14 bs1(*&t) at top level" "cannot pass 'GT1' $MA 'bs1'" \
+    "${T}var GT1 = T1 { 9 }; var r = bs1(*&GT1); syscall(60, r);"
+refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass 'p' $MA 'bq'" \
+    "${T}fn go(): i64 { ${PQ} return bq(*(&p)); } syscall(60, go());"
+accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) does" \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(*(&w)) * 10 + gw(*&w); } syscall(60, go());" \
+    11 \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(w) * 10 + gw(w); } syscall(60, go());"
 
 echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
 # `gw((w))` and `gw((mkw(-6)))` call `gw$i32`, as `gw(w)` / `gw(mkw(-6))` do: the i32 -6 tests negative.

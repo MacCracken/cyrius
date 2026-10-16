@@ -4015,7 +4015,7 @@ fn _deref_read(S): i64 {
 # value, 6.7.10 decision 6). Its load read 8 bytes from `p` whatever the struct's size, so a global
 # initialised or assigned from `*p`, a local assigned from it, `f(*p)`, `return *p` and `*p + a` read up
 # to 7 bytes past the object — SIGSEGV when it ends a mapping, else foreign bytes in the word's padding.
-# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_psid`), T a
+# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_dpsid`), T a
 # struct of 1..7 bytes (its step): rax becomes T read byte-exact, its padding 0 (`_hl_pval_ra`), 1; else
 # 0 (the word load). CHANGELOG [6.7.11]
 # A zero-size T (its step 8) reads no byte: rax 0, 1 — its word load read 8 bytes past the object.
@@ -4024,15 +4024,15 @@ fn _deref_small(S, d): i64 {
     var st = _ps_step(GPSC(S));
     if (st < 1) { return 0; }
     if (st > 8) { return 0; }
-    var sid = _hl_psid(S, d + 1, GTI(S));
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
     var sz = STRUCTSZ(S, sid - 1);
-    if (_ps_is_sz(st, sz) == 0) { return 0; }
+    if (_hl_dstep(st, sz) == 0) { return 0; }
     if (sz == 0) { EMOVI(S, 0); return 1; }
-    if (sz == 8) { return 0; }
+    if (sz >= 8) { return 0; }   # 6.7.13: `*(&p)` of a struct over 8 B steps 1
     _hl_pval_ra(S, sid);
     return 1;
 }
@@ -4040,7 +4040,7 @@ fn _deref_small(S, d): i64 {
 # 2026-10-12): `*p + a`, `(*p) + a`, `*gp() * a`, `*w.p - a` with a `*S` operand dispatch `S_add` (etc.)
 # at every size, as a struct variable does — `*p` is a struct value (decision 6). It added the first
 # word, silently. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
-# typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size) and an overloadable
+# typed `*S` by the compiler's own typing (`_hl_dpsid`, its step the struct's size) and an overloadable
 # operator follows (past the parentheses wrapping the dereference), the pointer is parked in a hidden
 # temp — the left operand's address, or its struct, is read from it (`_opd_lhs_sv`). 1 = parked. A
 # dereference no operator follows is untouched, unless it starts an address-passed argument or right
@@ -4048,12 +4048,12 @@ fn _deref_small(S, d): i64 {
 fn _dlo_park(S, d): i64 {
     if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
     if (d == _dro_vt) { if (_dlo_vec(S, d) == 1) { return 1; } }   # 6.7.12 (D27)
-    var sid = _hl_psid(S, d + 1, GTI(S));
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
-    if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }   # 6.7.13: zero-size steps 8
+    if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }   # 6.7.13: zero-size steps 8, `&x` 1
     _dlo_sid = sid;
     _dlo_h = _HTEMP(S);
     _HTSTORE(S, _dlo_h);
