@@ -2786,6 +2786,9 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 # calls _xflock_win, which locks ONE sentinel byte at 2^63 - 1 (Windows byte locks are mandatory);
 # the filed repro exits 11 and xflock_two_handle.tcyr passes under wine. Hardware: the same .tcyr
 # on cass (wine does not enforce a byte lock on another handle's I/O). Whole-gate SKIP is exit 77.
+# 6.7.13 (stdlib lane) — axis 6: a re-lock to the mode the handle holds is a no-op that never lets
+# go of the sentinel (the mode is a lock on its own byte, probed first); xflock_relock_keeps_lock.tcyr
+# under wine too, bounded. Hardware: that .tcyr's threaded rows on cass (red there on 6.7.12).
 _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
