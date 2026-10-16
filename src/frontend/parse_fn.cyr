@@ -9830,19 +9830,53 @@ fn _ce_nparams(S, op): i64 {
 # ── top-level consts ──────────────────────────────────────────────────────────────────────────────
 # `_cst_tab` (8 words): name, initializer token, declaration token, var slot, state (0 new, 1
 # being evaluated, 2 done, 3 refused), kind, value, float-literal index (an f64 const's, else -1).
+# A refused annotation, `const K: T = e;`, is recorded too (its initializer after the `=`, the
+# refusal reported once, by `_cst_record`): an unrecorded K made every read of it, above or below,
+# a second error, "undefined variable 'K'". CHANGELOG [6.7.13]
 fn _cst_prepass(S): i64 {
     var p = 0;
     var d = 0;
     while (TOKTYP(S, p) != 12) {
         var t = TOKTYP(S, p);
-        if (d == 0) { if (t == 168) { if (TOKTYP(S, p + 1) == 2) { if (TOKTYP(S, p + 2) == 4) { _cst_record(S, p); } } } }
+        if (d == 0) { if (t == 168) { if (TOKTYP(S, p + 1) == 2) { _cst_pre_at(S, p); } } }
         if (t == 13) { d = d + 1; }
         if (t == 14) { if (d > 0) { d = d - 1; } }
         p = p + 1;
     }
     return 0;
 }
-fn _cst_record(S, p): i64 {
+# `const NAME` at token p (depth 0): recorded when `=` follows the name, or a refused `: T` and then
+# an `=`.
+fn _cst_pre_at(S, p): i64 {
+    if (TOKTYP(S, p + 2) == 4) { _cst_record(S, p, p + 3); return 0; }
+    if (TOKTYP(S, p + 2) != 49) { return 0; }
+    var q = _cst_ann_eq(S, p + 2);
+    if (q > 0) { _cst_record(S, p, q + 1); }
+    return 0;
+}
+# The `=` after a const's refused annotation (the `:` at token q): its token, or 0 when the
+# statement has none (a `;`, `{`, `}` or EOF comes first) — then nothing is bound.
+fn _cst_ann_eq(S, q): i64 {
+    while (TOKTYP(S, q) != 12) {
+        var t = TOKTYP(S, q);
+        if (t == 4) { return q; }
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        q = q + 1;
+    }
+    return 0;
+}
+# "a const takes no type annotation" at the `:` (token q), once and in sync: the latch is left as
+# it was, so the const is still bound and the statement after it reports its own errors.
+fn _cst_ann_err(S, q): i64 {
+    var sv = GTI(S);
+    var p0 = _panic;
+    STI(S, q);
+    ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57);
+    STI(S, sv);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+fn _cst_record(S, p, ini): i64 {
     if (_cst_tab == 0) { _cst_tab = alloc(16384 * 64); }
     if (_cst_n >= 16384) { _tr_cap(S, p, "too many top-level consts (max 16384)", 37); return 0; }
     var name = TOKVAL(S, p + 1);
@@ -9854,8 +9888,9 @@ fn _cst_record(S, p): i64 {
     }
     var e = _cst_tab + _cst_n * 64;
     S64(e, name);
-    S64(e + 8, p + 3);
+    S64(e + 8, ini);
     S64(e + 16, p);
+    if (TOKTYP(S, p + 2) == 49) { _cst_ann_err(S, p + 2); }
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, name);
     S64(_vars_base + vcnt * 8, 0);
@@ -10189,7 +10224,12 @@ fn _cst_stmt(S): i64 {
     var name = PEEKV(S);
     _RSV_INTRINSIC_DECL(S, name, GTI(S), 0);
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 49) { ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+    if (PEEKT(S) == 49) {   # refused, then bound as `const NAME = e;` (6.7.13: no cascade at its reads)
+        var q = _cst_ann_eq(S, GTI(S));
+        if (q == 0) { ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+        _cst_ann_err(S, GTI(S));
+        STI(S, q);
+    }
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); return 0; }
     STI(S, GTI(S) + 1);
     _lc_dup_check(S, name, ti + 1);

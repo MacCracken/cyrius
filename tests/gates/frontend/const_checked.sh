@@ -37,6 +37,11 @@
 #      `pick(0, 1, 7)` is refused (it bound a phantom parameter named `i64`; the user's decision (a),
 #      2026-10-13); `*Pair<..>`, the generic parameter last, `Vec<Vec<i64>>` (`>>`), `Pair<i64,
 #      Vec<Vec<i64>>>` (`>>>`), a default holding `<`, the default fill and the named form
+#   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
+#      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
+#      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
+#      fn body (LC4); a refused value reports its own error beside it and nothing else (LC5); the
+#      unannotated const is unchanged (LC6). Before, every read of the name was a second error
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; (6.7.3) `_for_step_assign` without its `_asg_lvalue_refused` check -> L5, L6 BUILD
@@ -54,6 +59,10 @@
 # GREEN: a type argument is a name, so the old walk re-synced on the split's name and reached every
 # tuple parameter anyway — the walker moved with the other two so the three cannot drift apart.
 # `_pl_tdepth` without its `>>` / `>>>` closes -> G5, G5b RED.
+# 6.7.13 (run 2026-10-15): `_cst_stmt` back to returning at the refused `:` (no step to the `=`, the
+# name never bound) -> LC1, LC2, LC4, LC5, LC5n RED (the "undefined variable 'k'" line is back);
+# `_cst_pre_at` without its `: T =` arm -> LC3, LC5t RED (each read of K above and below is a second
+# error).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -175,7 +184,27 @@ exits g5 7 "G5: a Vec<Vec<i64>> parameter (the \`>>\` close)" 'include "lib/vec.
 exits g5b 7 "G5b: a Pair<i64, Vec<Vec<i64>>> parameter (the \`>>>\` close)" "${PR}include \"lib/vec.cyr\"\nconst fn pick(p: Pair<i64, Vec<Vec<i64>>>, b) { return b; }\nconst N = pick(0, 7);\nsyscall(60, N);\n"
 exits g6 47 "G6: a default holding \`<\` (c = 1 < 2) is one parameter" "${PR}const fn pick(p: Pair<i64, i64>, c = 1 < 2, b = 5) { return c * 10 + b; }\nconst N = pick(0);\nconst M = pick(0, 0, 2);\nsyscall(60, N * 3 + M);\n"
 exits g7 49 "G7: the default fill and the named form after a Pair<i64, i64> parameter" "${PR}const fn pick(p: Pair<i64, i64>, b = 4) { return b; }\nconst N = pick(0);\nconst M = pick(b: 9, p: 0);\nsyscall(60, N * 10 + M);\n"
+# A (6.7.13) — a refused annotation is one error, the const still bound
+AN="a const takes no type annotation: its type is its value's"
+refused lc1 "1:22: $AN" "LC1: the filed repro, a local const k: i64 = 3 then return k" 'fn f(): i64 { const k: i64 = 3; return k; }\nsyscall(60, f());\n'
+refused lc2 "2:48: $AN" "LC2: in a closure body (the enclosing fn has a k)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var k = 5; var cl = |n| { const k: i64 = 3; return k + n; }; return fncall1(cl, 1) + k; }\nsyscall(60, f());\n'
+refused lc3 "2:8: $AN" "LC3: a top-level const K: i64 = 3 read above and below it" 'fn f(): i64 { return K; }\nconst K: i64 = 3;\nfn g(): i64 { return K + 1; }\nvar a[K];\nsyscall(60, f() + g());\n'
+refused lc4 "1:29: $AN" "LC4: in a const fn body, the const fn called at run time and in a const" 'const fn cf(): i64 { const k: i64 = 3; return k; }\nconst Z = cf();\nfn g(): i64 { return cf(); }\nsyscall(60, g() + Z);\n'
+refusedn() {   # <name> <want error lines> <what> <source> <fragment>... : exactly n lines, each fragment present
+    nm=$1; want=$2; what=$3; printf '%b' "$4" > "$T/$nm.cyr"; shift 4
+    build "$nm"
+    n=$(grep -c '^error' "$T/$nm.err")
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$n" -ne "$want" ]; then bad "$what: $n error lines (want $want): $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' '|')"; return; fi
+    for fr in "$@"; do grep -qF "$fr" "$T/$nm.err" || { bad "$what: no \"$fr\": $(grep '^error' "$T/$nm.err" | tr '\n' '|')"; return; }; done
+    ok "$what: refused, $want error lines, each its own"
+}
+refusedn lc5 2 "LC5: a refused value beside the annotation: its own error, no undefined variable" 'fn f(): i64 { const k: i64 = zz + 1; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:30: unknown name 'zz' in a const context"
+refusedn lc5t 2 "LC5t: the top-level form, read above and below" 'fn f(): i64 { return K; }\nconst K: i64 = zz + 1;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n' "2:8: $AN" "2:16: unknown name 'zz' in a const context"
+refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): i64 { const k: i64 = 3; var y = nope; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:45: undefined variable 'nope'"
+exits lc6 3 "LC6: the unannotated local const, unchanged" 'fn f(): i64 { const k = 3; return k; }\nsyscall(60, f());\n'
+exits lc6t 7 "LC6t: the unannotated top-level const read above and below, unchanged" 'fn f(): i64 { return K; }\nconst K = 3;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), and well-formed consts run (C)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C)"
