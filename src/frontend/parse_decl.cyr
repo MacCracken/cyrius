@@ -8767,6 +8767,7 @@ fn _gz_bty(S, a, b): i64 {
         } }
     var t = _gz_ty(S, a, b);
     if (_gz_k == 1 || _gz_k == 2 || _gz_k == 5) { return t; }
+    if (_gz_k == 7) { if (_dx_plain(S, t) == 1) { return t; } }   # 6.7.13: a whole `*p` (`_ie_deref_sid`)
     return 0;
 }
 # The replay's check, the initialiser at `ti` just parsed (cursor on its `;`): a declaration-zone struct

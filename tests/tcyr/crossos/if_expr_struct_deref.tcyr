@@ -1,0 +1,91 @@
+# if_expr_struct_deref.tcyr — 6.7.13. A STRUCT DEREFERENCE AS AN IF-EXPRESSION BRANCH IS A STRUCT VALUE
+# (issues/2026-10-14-dereference-as-if-expression-branch.md; 6.7.10 decision 6: `*p` is a struct value at every
+# size; 6.7.11 D42: an if-expression of 8 B or less is one).
+#
+# ⛔ THROUGH 6.7.12 the if-expression typed a branch by its shape (a name, a whole call, a method / operator
+# result, a whole field) and a dereference `*p` was none of them: an INTEGER, the word `_deref_read` loaded. So
+# `var v: S = if (c) { *p } else { *q };` bound v as a HANDLE holding that word as the struct's address (SIGSEGV
+# at every size), and `if (c) { *p } else { s }` was refused "branches differ in type: struct 'S' here, an
+# integer before it". Every target.
+#
+# THE RULE, at 1 / 3 / 8 B (S1, S3, S8 — u8 fields): a whole dereference of a `*S` branch — `*p`, `(*p)`,
+# `*gp()`, `*(&t)` — is the struct value S, beside another dereference, a struct variable or a call returning S;
+# the destination copies it (a later write through p is not seen); in a fn and at top level; the word a 3 B one
+# travels in has padding 0. Over 8 B it is refused as any struct value over 8 B is — branch on the pointer (the
+# user's D1 (a), 2026-10-15): the refusals are tests/gates/frontend/if_expr_checked.sh's D rows.
+#
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi; tests/gates/frontend/
+# if_expr_checked.sh runs it on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm)
+# and PE (wine).
+include "lib/assert.cyr"
+
+struct S1 { a: u8; }
+struct S3 { a: u8; b: u8; c: u8; }
+struct S8 { a; }
+var GS1 = S1 { 7 };
+var GS3 = S3 { 7, 8, 9 };
+var GS8 = S8 { 7 };
+fn gp1(): *S1 { return &GS1; }
+fn gp3(): *S3 { return &GS3; }
+fn gp8(): *S8 { return &GS8; }
+
+# t.a = 5 (the taken branch when c == 1), s.a = 1: f(1) * 10 + f(0) = 51; the write to t after the binding is
+# not seen (a copy, not a handle)
+fn dd1(c): i64 { var s = S1 { 1 }; var t = S1 { 5 }; var p: *S1 = &t; var q: *S1 = &s; var v: S1 = if (c == 1) { *p } else { *q }; t.a = 9; return v.a; }
+fn dd3(c): i64 { var s = S3 { 1, 0, 0 }; var t = S3 { 5, 0, 0 }; var p: *S3 = &t; var q: *S3 = &s; var v: S3 = if (c == 1) { *p } else { *q }; t.a = 9; return v.a; }
+fn dd8(c): i64 { var s = S8 { 1 }; var t = S8 { 5 }; var p: *S8 = &t; var q: *S8 = &s; var v: S8 = if (c == 1) { *p } else { *q }; t.a = 9; return v.a; }
+# beside a struct variable
+fn ds1(c): i64 { var s = S1 { 1 }; var t = S1 { 5 }; var p: *S1 = &t; var v: S1 = if (c == 1) { *p } else { s }; return v.a; }
+fn ds3(c): i64 { var s = S3 { 1, 0, 0 }; var t = S3 { 5, 0, 0 }; var p: *S3 = &t; var v: S3 = if (c == 1) { *p } else { s }; return v.a; }
+fn ds8(c): i64 { var s = S8 { 1 }; var t = S8 { 5 }; var p: *S8 = &t; var v: S8 = if (c == 1) { s } else { *p }; return v.a; }
+# parenthesised, a `: *S` call (GS.a = 7): f(1) * 10 + f(0) = 57
+fn dp1(c): i64 { var t = S1 { 5 }; var p: *S1 = &t; var v: S1 = if (c == 1) { (*p) } else { *gp1() }; return v.a; }
+fn dp3(c): i64 { var t = S3 { 5, 0, 0 }; var p: *S3 = &t; var v: S3 = if (c == 1) { (*p) } else { *gp3() }; return v.a; }
+fn dp8(c): i64 { var t = S8 { 5 }; var p: *S8 = &t; var v: S8 = if (c == 1) { (*p) } else { *gp8() }; return v.a; }
+# a dereference of an address-of (`*(&t)` is t), and a by-value use: the if-expression as an argument
+fn da3(c): i64 { var s = S3 { 1, 0, 0 }; var t = S3 { 5, 0, 0 }; var v: S3 = if (c == 1) { *(&t) } else { s }; return v.a; }
+fn tk3(x: S3): i64 { return x.a; }
+fn dg3(c): i64 { var s = S3 { 1, 0, 0 }; var t = S3 { 5, 0, 0 }; var p: *S3 = &t; var q: *S3 = &s; return tk3(if (c == 1) { *p } else { *q }); }
+# an untyped binding takes the struct (D42): its field reads the struct
+fn du8(c): i64 { var s = S8 { 1 }; var t = S8 { 5 }; var p: *S8 = &t; var q: *S8 = &s; var v = if (c == 1) { *p } else { *q }; return v.a; }
+# the word a 3 B branch travels in has padding 0: the bytes after the object are 0xFF
+var PADB[2];
+fn padsrc(): *S3 { store64(&PADB, 0 - 1); store8(&PADB, 5); store8(&PADB + 1, 6); store8(&PADB + 2, 7); return &PADB; }
+fn pk3(x: S3): i64 { return load8(&x + 3) * 1000 + x.c; }
+fn dz3(c): i64 { var p: *S3 = padsrc(); var q: *S3 = padsrc(); return pk3(if (c == 1) { *p } else { *q }); }
+
+# top level: in the declaration zone and after the first statement (K = 1)
+var K = 1;
+var GT3 = S3 { 7, 8, 9 };
+var GT8 = S8 { 7 };
+var GP3: *S3 = &GT3;
+var GQ3 = S3 { 1, 0, 0 };
+var GP8: *S8 = &GT8;
+fn gt3(): *S3 { return &GT3; }
+fn gt8(): *S8 { return &GT8; }
+var TV3: S3 = if (K == 1) { *GP3 } else { GQ3 };
+var TV8: S8 = if (K == 0) { GT8 } else { (*GP8) };
+var e = 0;
+var TW3: S3 = if (K == 1) { (*GP3) } else { *gt3() };
+var TW8: S8 = if (K == 0) { *gt8() } else { *GP8 };
+GT3.a = 1;
+GT8.a = 1;
+
+assert_eq(dd1(1) * 10 + dd1(0), 51, "1 B: var v: S = if (c) { *p } else { *q } (a copy: a later write not seen)");
+assert_eq(dd3(1) * 10 + dd3(0), 51, "3 B: var v: S = if (c) { *p } else { *q }");
+assert_eq(dd8(1) * 10 + dd8(0), 51, "8 B: var v: S = if (c) { *p } else { *q }");
+assert_eq(ds1(1) * 10 + ds1(0), 51, "1 B: { *p } else { s }, beside a struct variable (was refused)");
+assert_eq(ds3(1) * 10 + ds3(0), 51, "3 B: { *p } else { s }");
+assert_eq(ds8(0) * 10 + ds8(1), 51, "8 B: { s } else { *p }");
+assert_eq(dp1(1) * 10 + dp1(0), 57, "1 B: { (*p) } else { *gp() }");
+assert_eq(dp3(1) * 10 + dp3(0), 57, "3 B: { (*p) } else { *gp() }");
+assert_eq(dp8(1) * 10 + dp8(0), 57, "8 B: { (*p) } else { *gp() }");
+assert_eq(da3(1) * 10 + da3(0), 51, "3 B: { *(&t) } else { s }, a dereference of an address-of");
+assert_eq(dg3(1) * 10 + dg3(0), 51, "3 B: tk(if (c) { *p } else { *q }), a by-value argument");
+assert_eq(du8(1) * 10 + du8(0), 51, "8 B: var v = if (c) { *p } else { *q }, untyped: the struct");
+assert_eq(dz3(1), 7, "3 B: the branch's word has padding 0 (no byte past the object)");
+assert_eq(TV3.a, 7, "3 B: top level, var G: S = if (K) { *GP } else { GQ }, the declaration zone (a copy)");
+assert_eq(TV8.a, 7, "8 B: top level, { GS } else { (*GP) }, the declaration zone");
+assert_eq(TW3.a, 7, "3 B: top level, { (*GP) } else { *gp() }, after the first statement");
+assert_eq(TW8.a, 7, "8 B: top level, { *gp() } else { *GP }, after the first statement");
+var r = assert_summary();
