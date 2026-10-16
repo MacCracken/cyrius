@@ -200,6 +200,28 @@ fn _skip_nested_body(S, k): i64 {
 # never a warning (`_ret_is_variant`). CHANGELOG [6.6.16]
 #
 # The `(` of `name(` or `name<..>(` at token ti, else -1.
+# 6.7.13 (D19 A, the user's decision, 2026-10-15) — PARENTHESES AROUND A WHOLE PAIR CALL ARE
+# TRANSPARENT to every pair check, as around a whole struct source (6.7.6, `_pwrap_k`): the first
+# token inside the wrap at token ti when one call — `f(`, `g<..>(` or `x.m(` (by shape: its callee is
+# the asker's to resolve) — closes right before the innermost `)`; ti itself when ti opens no wrap;
+# -1 otherwise (`(a) + b`, a tuple, a call that is only part of the inside). The parser's asker
+# (`_callee_returns_pair_at`) and the token passes' (`_tok_ret_callee`, `_ret_is_variant`,
+# `_tok_q_is_pair`) both start here, so they agree: `(f(7))?` took the BOXED `?` (SIGSEGV), `var v =
+# (f(7));`, `x = (f(7));`, `h.a = (f(7));`, `P { (f(7)), 3 }` kept the tag in silence, and `return
+# (f(x));` forwarded a pair no check knew of. Reads tokens only; `_pw_end` is kept. CHANGELOG [6.7.13]
+fn _pair_unwrap(S, ti): i64 {
+    if (TOKTYP(S, ti) != 10) { return ti; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, ti);
+    _pw_end = pe;
+    var a = ti + k;
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    var o = _pair_ret_open(S, a);
+    if (o < 0) { if (_tok_method_open(S, a) == 1) { o = a + 3; } }
+    if (o < 0) { return 0 - 1; }
+    if (_call_close(S, o) + 1 != _call_close(S, a - 1)) { return 0 - 1; }
+    return a;
+}
 fn _pair_ret_open(S, ti): i64 {
     var nt = TOKTYP(S, ti + 1);
     if (nt == 10) { return ti + 1; }
@@ -663,6 +685,8 @@ fn _tok_method_any(S, mnoff): i64 {
 # The fn the call at token t reaches — `name(`, `name<..>(`, or `x.m(` with x resolved at t in the
 # unit starting at token a (`_tok_name_sid`; its `T_m`, else `_tok_method_any`) — or -1.
 fn _tok_ret_callee(S, a, t): i64 {
+    t = _pair_unwrap(S, t);   # 6.7.13: `return (f(..));` forwards as `return f(..);`
+    if (t < 0) { return 0 - 1; }
     if (TOKTYP(S, t) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, t);
     if (o >= 0) {
@@ -916,7 +940,12 @@ var _mixed_warned = 0;
 # cannot resolve is UNKNOWN, and unknown is not plain: the parser may have typed that receiver and
 # flagged this fn by it (PARSE_RETURN, `_pair_callee_at`), and the receiver's own NAME looked up as
 # a fn — the old fallback — answered "plain" and warned on a wrapper's only return. CHANGELOG [6.6.16]
+# 6.7.13: any return value's first token — a whole-call wrap is judged as its call (`_pair_unwrap`),
+# anything but a name is plain. CHANGELOG [6.7.13]
 fn _ret_is_variant(S, a, t): i64 {
+    t = _pair_unwrap(S, t);
+    if (t < 0) { return 1; }
+    if (TOKTYP(S, t) != 2) { return 1; }
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
     if (rf < 0) {
@@ -970,6 +999,12 @@ fn _tok_targs_open(S, e): i64 {
     return 0 - 1;
 }
 
+# 1 = a `(` after a token of type ct opens a wrap, not a call's arguments: ct is neither a name nor
+# the `>` / `>>` / `>>>` closing a type-argument list. CHANGELOG [6.7.13]
+fn _tok_wrap_open(ct): i64 {
+    if (ct == 2 || ct == 20 || ct == 39 || ct == 152) { return 0; }
+    return 1;
+}
 # Does the `?` at token q consume a pair (`f(..)?`, `g<..>(..)?`, `x.m(..)?` — the callee flagged
 # 256)? Walks back to the `(` that matches the `)` before it, then to the call's first token.
 # 6.6.16: a method or explicit generic call was never a pair here, as it was not in `_tpair`;
@@ -987,6 +1022,7 @@ fn _tok_q_is_pair(S, a, q): i64 {
             if (d == 0) {
                 var c = p - 1;
                 var ct = TOKTYP(S, c);
+                if (_tok_wrap_open(ct) == 1) { return _tok_call_is_pair(S, a, p); }   # 6.7.13: `(f(..))?`
                 if (ct == 20 || ct == 39 || ct == 152) { c = _tok_targs_open(S, c) - 1; }
                 elif (c >= 2) { if (TOKTYP(S, c - 1) == 41) { c = c - 2; } }
                 var r = _tok_call_is_pair(S, a, c);
@@ -1032,8 +1068,7 @@ fn _warn_closure_block(S, k, n, encl, a): i64 {
         elif (t == 33) {
             var nt = TOKTYP(S, j + 1);
             if (_tok_call_is_pair(S, a, j + 1) == 1) { pair = 1; }
-            elif (nt == 2) { if (_ret_is_variant(S, a, j + 1) == 1) { if (plain < 0) { plain = j; } } }
-            elif (nt != 5) { if (plain < 0) { plain = j; } }
+            elif (nt != 5) { if (_ret_is_variant(S, a, j + 1) == 1) { if (plain < 0) { plain = j; } } }
         }
         j = j + 1;
     }
@@ -1100,9 +1135,7 @@ fn _warn_mixed_pair_returns(S): i64 {
                                             elif (t == 33) {
                                                 var plain = 1;
                                                 if (TOKTYP(S, k + 1) == 5) { plain = 0; }
-                                                if (TOKTYP(S, k + 1) == 2) {
-                                                    plain = _ret_is_variant(S, i, k + 1);
-                                                }
+                                                else { plain = _ret_is_variant(S, i, k + 1); }
                                                 if (plain == 1) {
                                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                                     _err_head_at(S, k);
@@ -1197,6 +1230,8 @@ fn _recv_sid(S, noff): i64 {
     return r;
 }
 fn _callee_returns_pair_at(S, ti): i64 {
+    ti = _pair_unwrap(S, ti);
+    if (ti < 0) { return 0; }
     var _cra = _pair_callee_at(S, ti);
     if (_cra < 0) { return 0; }
     _ensure_pair_flags(S);
@@ -1247,9 +1282,11 @@ fn _call_is_propagated(S, ti): i64 {
 # (`_asg_compound_op`: a field's, an element's, `*p`'s, a for step's; a u128 place's in
 # `_w128_binop`). Each call sits right before its PCMPE, where the term's own pair lookahead runs
 # (a generic callee is instantiated there, inline: earlier would move its bytes). CHANGELOG [6.7.7]
+# 6.7.13: the `?` is looked for from the value's first token — a wrap's `(` scans to the `)` that
+# closes it, so `x = (f(7))?;` propagates (from `f` the scan stopped at the inner `)`). CHANGELOG [6.7.13]
 fn _refuse_lossy_pair(S): i64 {
     if (_callee_returns_pair(S) == 0) { return 0; }
-    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    if (_call_is_propagated(S, GTI(S)) == 1) { return 0; }
     return _pair_refuse_in_sync(S);
 }
 # The two refusals' report. It is made IN SYNC — the statement parses on to its own end — so the

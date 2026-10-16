@@ -5221,6 +5221,14 @@ the call (6.7.11 — with the `impl` below its caller, `p.m(..)?` crashed and `v
 kept the tag in silence), and so may the `trait` whose DEFAULT body the impl inherits (6.7.13 — an
 inherited default below its caller crashed the same way).
 
+**Parentheses around a whole pair call are transparent** (6.7.13, the user's decision of 2026-10-15),
+as around a whole struct source: `var v = (f());`, `x = ((f()));`, `h.n = (f());`, `P { (f()), 3 }`
+and every other store above are refused as their unwrapped spelling is, `(f())?` propagates like
+`f()?`, `return (f());` forwards the pair as `return f();` does, and `g((f()))` receives the tag as
+`g(f())` does. Before, the wrap hid the call from every check: `(f())?` crashed (it took the boxed
+`?` lowering) and each wrapped store kept the tag in silence. `x = (3) + (f());` is an operand, as
+`x = 3 + f();` is.
+
 The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
 before the first top-level statement or after it — kept the tag and dropped the payload, silently
 (`Ok(42)` read as 0). Bind both with `var t, v = f();`, which works at top level.
