@@ -5987,7 +5987,11 @@ refused without lib/alloc.cyr, or carried a heap copy it never read. ⚠ Through
 opposite held for a `var` and a destructure's first name: the initializer's read of the
 enclosing name was dropped, so it read a GLOBAL of that name silently (`var a = a + 1;` gave
 the global's value + 1) or was refused `undefined variable 'a'`; now it is a capture (which
-needs lib/alloc.cyr, as any capture does). Pinned by
+needs lib/alloc.cyr, as any capture does). A nested closure literal's parameters are its own
+too: in `|n| { var g = |m| m + 1; .. }` the `m` is `g`'s parameter, never a read of an
+enclosing `m` (a nested body's other names are still captured through every level). ⚠ Through
+6.7.12 the outer closure captured the enclosing `m` there: refused without lib/alloc.cyr, or a
+heap copy it never read. Pinned by
 `tests/gates/frontend/closure_declared_names_not_captured.sh`.
 
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable

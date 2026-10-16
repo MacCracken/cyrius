@@ -16,6 +16,9 @@
 # as PARSE_VAR binds after the right-hand side; the pre-scan shadowed them from the name, so the read
 # took the global `a` (101 for 6). The vi_* rows.
 #
+# 6.7.13: a nested closure literal's parameters (`|n| { var g = |m| m + 1; .. }`) are its own, not a
+# read of the enclosing `m`; a bitwise `|` beside it keeps its captures. The np_* rows.
+#
 # CROSS-HOST: the pre-scan is the shared frontend; the env copy and the loop / destructure code
 # are each backend's.
 include "lib/syscalls.cyr"
@@ -30,6 +33,8 @@ var x = 20;
 var k = 70;
 var b = 100;
 var a = 100;
+var m = 100;
+var q = 100;
 
 fn two(): (i64, i64) { return (3, 4); }
 fn tw(v): (i64, i64) { return (v, v + 1); }
@@ -121,6 +126,21 @@ fn vi_after(): i64 {
     return fncall1(cl, 1);
 }
 
+# ── 6.7.13: a nested closure's parameters are its own (globals `m` / `q` exist) ─────────────────
+# issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md: the outer pre-scan read a
+# nested literal's parameter `m` as a capture of the enclosing `m`.
+fn np_f(): i64 { var m = 5; var cl = |n| { var g = |m| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }
+fn np_h(): i64 { var m = 5; var cl = |n| { var g = |m| { return m * 2; }; return fncall1(g, n); }; return fncall1(cl, 3); }
+fn np_through(): i64 { var q = 5; var m = 7; var cl = |n| { var g = |m| m + q; return fncall1(g, n); }; return fncall1(cl, 1); }
+fn np_bitwise(): i64 {
+    var q = 6;
+    var cl = |n| { var g = |m| m + 1; return ((n + 0) | q | 0) + (8 | q | 0) + fncall1(g, n); };
+    return fncall1(cl, 1);
+}
+fn np_after(): i64 { var m = 5; var cl = |n| { var h = |m| { return m * 2; }; return fncall1(h, n) + m; }; return fncall1(cl, 1); }
+fn np_arg(): i64 { var m = 5; var cl = |n| fncall2(|m, k| m * 10 + k, m, n); return fncall1(cl, 1); }
+fn np_thunk(): i64 { var m = 5; var cl = |n| { var t = || m + n; return fncall0(t); }; return fncall1(cl, 1); }
+
 alloc_init();
 assert_eq(fi(), 10, "repro: for i in 0..4 is the closure's i");
 assert_eq(fc(), 4, "repro: const k is the closure's k");
@@ -142,4 +162,10 @@ assert_eq(vi_mvar(), 67, "var a, b = tw(a + n): the first name's right-hand side
 assert_eq(vi_typed(), 6, "var a: i64 = a + n reads the enclosing a");
 assert_eq(vi_for(), 18, "for (var a = a; ..) starts from the enclosing a (5 + 6 + 7)");
 assert_eq(vi_after(), 13, "after var a = a + n, a is the closure's own (6 * 2 + 1; the enclosing a later 50)");
+assert_eq(np_f() * 10 + np_h(), 26, "the filed repro: a nested closure's |m| is its own (f 2, h 6)");
+assert_eq(np_through(), 6, "a nested body's q (not its parameter) is captured through both levels");
+assert_eq(np_bitwise(), 23, "a bitwise | beside a nested closure keeps its captures (7 + 14 + 2)");
+assert_eq(np_after(), 7, "the enclosing m read after a nested |m| literal is still a capture (2 + 5)");
+assert_eq(np_arg(), 51, "fncall2(|m, k| .., m, n): the argument m after the literal is the enclosing m");
+assert_eq(np_thunk(), 6, "a || thunk reads the enclosing m through the outer closure");
 var r = assert_summary();

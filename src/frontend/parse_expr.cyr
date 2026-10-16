@@ -334,6 +334,7 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 # body (`|x| |y| { var t = y; return t + b; }`) or a struct literal holds `;` / `,` that do not
 # end the expression, and stopping there dropped every capture after it. CHANGELOG [6.6.17]
 fn _cl_prescan_body(S, is_block): i64 {
+    var t0 = GTI(S);
     var depth = 0;
     var prev_var = 0;
     var go = 1;
@@ -353,6 +354,9 @@ fn _cl_prescan_body(S, is_block): i64 {
         elif (t == 3) {
             if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
             elif (TOKTYP(S, GTI(S) + 1) == 2) { _cl_prescan_var(S); t = 0 - 1; }   # 6.7.13
+        }
+        elif (t == 35) {
+            if (_cl_at_lit(S, t0) == 1) { _cl_prescan_lit(S); t = 0 - 1; }     # 6.7.13
         }
         elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
@@ -477,6 +481,67 @@ fn _cl_prescan_nested(S): i64 {
     _cl_prescan_body(S, 1);
     _cl_nshadow = mk;
     if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+# ⛔ 6.7.13 — A NESTED CLOSURE'S PARAMETERS ARE ITS OWN. The walk read the names between a nested
+# literal's bars, and every read of them in its body, as reads of the enclosing locals of those
+# names: `|n| { var g = |m| m + 1; .. }` beside an enclosing `m` captured it (refused without
+# lib/alloc.cyr, or a heap env holding a copy never read). At a literal's opening `|` the
+# parameters are shadowed for its body only, as `_cl_prescan_captures` seeds its own. A `|` opens a
+# literal only where an operand starts (`_cl_lit_pos`) and with the parser's parameter list after it
+# (`_cl_lit_end`): a bitwise or follows an operand, and reading one as a literal would DROP the
+# captures between its bars. A position missed falls back to the plain walk — an extra capture, never
+# a dropped one. `||` has no parameters: its body is walked as before. CHANGELOG [6.7.13]
+# `t0`: the walk's first token — a body, a header, a bound, a tail starts an operand there.
+fn _cl_at_lit(S, t0): i64 {
+    if (GTI(S) != t0) { if (_cl_lit_pos(S, GTI(S)) == 0) { return 0; } }
+    if (_cl_lit_end(S, GTI(S)) < 0) { return 0; }
+    return 1;
+}
+# 1 when the token before the `|` at `ti` cannot end an operand: `=` `(` `[` `,` `return` `:` `{` `;`
+# `||`, a binary or prefix operator. A generic's closing `>` / `>>` / `>>>` and a postfix `?` can. A
+# `|` before it is a literal's closing bar only at the walk's first token (`|x| |y| ..`, the case
+# `t0` covers): elsewhere it can be a missed `| |` literal's, and `| | q | r` would shadow `q`.
+fn _cl_lit_pos(S, ti): i64 {
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p == 4 || p == 10 || p == 28 || p == 31 || p == 33 || p == 49) { return 1; }
+    if (p == 13 || p == 5 || p == 54) { return 1; }
+    if (p >= 6 && p <= 9) { return 1; }                                      # + - * /
+    if (p == 17 || p == 18 || p == 19 || p == 21 || p == 22) { return 1; }   # == != < <= >=
+    if (p == 27 || p == 34 || p == 36 || p == 37 || p == 38) { return 1; }   # & % ^ ~ <<
+    if (p == 53 || p == 171) { return 1; }                                   # && !
+    if (p >= 113 && p <= 121) { return 1; }                                  # +% +| +? .. *?
+    return 0;
+}
+# The closing `|` of the parameter list the parser takes after the `|` at `ti` — `| |` or
+# `| IDENT (, IDENT)* |` (a closure's parameters are untyped) — or -1.
+fn _cl_lit_end(S, ti): i64 {
+    var j = ti + 1;
+    if (TOKTYP(S, j) == 35) { return j; }
+    while (TOKTYP(S, j) == 2) {
+        j = j + 1;
+        if (TOKTYP(S, j) == 35) { return j; }
+        if (TOKTYP(S, j) != 31) { return 0 - 1; }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+# Cursor at a nested literal's opening `|` (`_cl_at_lit`): its parameters shadowed, its body walked
+# (a block through `_cl_prescan_nested`, an expression to the `;` / `,` / unmatched closer that ends
+# it), the parameters dropped. Leaves the cursor past a block body, at an expression body's end.
+fn _cl_prescan_lit(S): i64 {
+    var mk = _cl_nshadow;
+    var e = _cl_lit_end(S, GTI(S));
+    var j = GTI(S) + 1;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { _cl_shadow_add(S, TOKVAL(S, j)); }
+        j = j + 1;
+    }
+    STI(S, e + 1);
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    else { _cl_prescan_body(S, 0); }
+    _cl_nshadow = mk;
     return 0;
 }
 # ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took

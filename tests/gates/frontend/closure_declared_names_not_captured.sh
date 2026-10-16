@@ -23,7 +23,8 @@
 # ROWS: id|mode|want|source (printf %b; the prelude below is prepended). mode n: no lib/alloc.cyr —
 # the source compiles and exits `want`. mode a: with lib/alloc.cyr — it exits `want`. mode r: no
 # lib/alloc.cyr — the source is REFUSED with exactly `want` "a capturing closure needs" errors (a
-# real capture is still a capture). I / IC / C / M rows were refused before the fix; the K rows
+# real capture is still a capture). mode x: refused by the PARSER, its report holding `want`. I / IC /
+# C / M rows were refused before the fix; the K rows
 # are CONTROLS that held before and after: KI1-KI2 a read after the loop, KI3-KI4 a range's start
 # bound, KC1-KC2 the collection, KK1-KK4 an enclosing name after a nested block's const and beside
 # one, KM1-KM4 a destructure's right-hand side and a read after a nested block's destructure. The
@@ -62,6 +63,27 @@
 #   m7 the `_cl_prescan_var` arm dropped            -> RED V1 V3 V5-V9 RV1 RV2, every leg (27)
 #   m8 a destructure's first name shadowed at it    -> RED V2 V4 RV1g, every leg (9)
 #   real tree                                       -> GREEN (114: 34 rows and 4 repros per leg)
+#
+# 6.7.13 — A NESTED CLOSURE'S PARAMETERS ARE ITS OWN (issues/2026-10-14-nested-closure-parameter-
+# taken-as-outer-capture.md, measured 6.6.0 - 6.7.12): `|n| { var g = |m| m + 1; .. }` beside an
+# enclosing `m` was refused without lib/alloc.cyr (the outer pre-scan read the nested literal's `m`,
+# and its body's reads of it, as reads of the enclosing `m`), or built a heap env holding a copy never
+# read. The fix: at a literal's opening `|` (`_cl_at_lit`: an operand position — the walk's first
+# token, or after a token that cannot end an operand — and the parser's `| IDENT, .. |` list after
+# it) the parameters are shadowed for its body only (`_cl_prescan_lit`). P1-P6: the filed repro's two
+# closures, a literal as a call argument, a curried body (`|n| |m| ..`), a classic-for initializer, a
+# literal nested in a literal — each builds without lib/alloc.cyr. KP1-KP11 controls: a nested body's
+# NON-parameter name still captured through both levels (KP1 / KP2), a bitwise `|` after a name, a
+# `)` and a number beside a literal (KP3-KP5: reading one as a literal would DROP the capture between
+# its bars), a `||` thunk (KP6 / KP7), a sibling literal reading the enclosing name (KP8), a typed
+# `|m: i64|` (KP9: refused by the parser at the `:`, as before — a closure's parameters are untyped),
+# the enclosing name read after a block-bodied and an expression-bodied literal (KP10 / KP11: the
+# shadow ends with the literal). RN: the filed repro verbatim (26).
+#   m9  the pre-fix src (this bite's base)          -> RED P1-P6 RN, every leg (21)
+#   m10 `_cl_lit_pos` answering 1 (no position)     -> RED KP3 (103) KP4 (211) KP5 (undefined 'q'), every leg (9)
+#   m11 the walk's-first-token rule dropped         -> RED P4, every leg (3)
+#   m12 the parameter shadow kept after the literal -> RED KP10 (102) KP11 (233: the global m), every leg (6)
+#   real tree                                       -> GREEN (168: 51 rows and 5 repros per leg)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -129,6 +151,23 @@ V9|a|13|var a = 100;\nfn f(): i64 { alloc_init(); var a = 5; var cl = |n| { var 
 KV1|n|2|fn f(): i64 { var a = 5; var cl = |n| { var a = n; return a + 1; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KV2|n|4|fn f(): i64 { var a = 5; var b = 9; var cl = |n| { var a: i64 = n; for (var b = n; b < 3; b = b + 1) { a = a + b; } return a; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KV3|n|7|fn f(): i64 { var a = 5; var cl = |n| { var a, b = tw(n); return a + b + a; }; return fncall1(cl, 2); }\nsyscall(60, f());\n
+P1|n|2|fn f(): i64 { var m = 5; var cl = |n| { var g = |m| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+P2|n|6|fn h(): i64 { var m = 5; var cl = |n| { var g = |m| { return m * 2; }; return fncall1(g, n); }; return fncall1(cl, 3); }\nsyscall(60, h());\n
+P3|n|23|fn f(): i64 { var m = 5; var k = 9; var cl = |n| fncall2(|m, k| m * 10 + k, n, 3); return fncall1(cl, 2); }\nsyscall(60, f());\n
+P4|n|6|fn f(): i64 { var m = 5; var cl = |n| |m| m * 2; return fncall1(fncall1(cl, 1), 3); }\nsyscall(60, f());\n
+P5|n|5|fn f(): i64 { var m = 5; var cl = |n| { var s = 0; for (var i = fncall1(|m| m + 1, n); i < 4; i = i + 1) { s = s + i; } return s; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+P6|n|2|fn f(): i64 { var m = 5; var cl = |n| { var g = |m| { var h = |k| k + 1; return fncall1(h, m); }; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP1|a|6|var q = 100;\nfn f(): i64 { alloc_init(); var q = 5; var m = 7; var cl = |n| { var g = |m| m + q; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP2|r|2|fn f(): i64 { var q = 5; var m = 7; var cl = |n| { var g = |m| m + q; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP3|a|9|var q = 100;\nfn f(): i64 { alloc_init(); var q = 6; var cl = |n| { var g = |m| m + 1; return (n | q | 0) + fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP4|a|23|var q = 100;\nfn f(): i64 { alloc_init(); var q = 6; var cl = |n| { var g = |m| m + 1; return ((n + 0) | q | 0) + (8 | q | 0) + fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP5|r|1|fn f(): i64 { var q = 6; var cl = |n| n | q | 0; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP6|a|6|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var t = || m + n; return fncall0(t); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP7|r|2|fn f(): i64 { var m = 5; var cl = |n| { var t = || m + 1; return fncall0(t) + n; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP8|a|13|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var g = |k| m + k; var h = |m| m * 2; return fncall1(g, n) + fncall1(h, n) + m; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP9|x|got ':'|fn f(): i64 { var m = 5; var cl = |n| { var g = |m: i64| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP10|a|7|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var h = |m| { return m * 2; }; return fncall1(h, n) + m; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP11|a|51|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| fncall2(|m, k| m * 10 + k, m, n); return fncall1(cl, 1); }\nsyscall(60, f());\n
 ROWS
 NTAB=$(grep -c '|' "$WORK/rows")
 
@@ -140,6 +179,11 @@ run_row() {
         cat "$WORK/prelude"
         printf '%b' "$7"
     } > "$WORK/t.cyr"
+    if [ "$5" = x ]; then
+        if build "$2" "$WORK/t.cyr" "$WORK/t.bin"; then bad "$1 row $4: compiled, want refused by the parser"; return 0; fi
+        grep -qF -- "$6" "$WORK/t.bin.err" || bad "$1 row $4: refused, but without '$6': $(grep '^error' "$WORK/t.bin.err" | head -1 | head -c 300)"
+        return 0
+    fi
     if [ "$5" = r ]; then
         if build "$2" "$WORK/t.cyr" "$WORK/t.bin"; then
             bad "$1 row $4: compiled, want refused (a real capture must still be one)"; return 0
@@ -169,6 +213,7 @@ RPD="$ROOT/docs/development/issues/repros"
 RP="$RPD/2026-10-11-closure-prescan-reads-declared-names-as-captures.cyr"
 RV1="$RPD/2026-10-14-closure-var-initializer-reading-its-own-name-1.cyr"
 RV2="$RPD/2026-10-14-closure-var-initializer-reading-its-own-name-2.cyr"
+RN="$RPD/2026-10-14-nested-closure-parameter-taken-as-outer-capture.cyr"   # 6.7.13: builds without lib/alloc.cyr, 26
 # run_repro <leg> <compiler> <runner> <file> <want: an exit code, or r = one capture refusal>
 run_repro() {
     NROWS=$((NROWS + 1))
@@ -194,7 +239,7 @@ run_repro() {
 }
 RV1G="$WORK/2026-10-14-closure-var-initializer-reading-its-own-name-1g.cyr"
 [ -f "$RV1" ] && sed -e 's/^syscall(60, f());/# &/' -e 's/^# syscall(60, g());/syscall(60, g());/' "$RV1" > "$RV1G"
-NREPRO=4
+NREPRO=5
 
 # run_leg <leg> <compiler> <runner>
 run_leg() {
@@ -206,6 +251,7 @@ run_leg() {
     run_repro "$1" "$2" "$3" "$RV1" 6
     run_repro "$1" "$2" "$3" "$RV1G" 67
     run_repro "$1" "$2" "$3" "$RV2" r
+    run_repro "$1" "$2" "$3" "$RN" 26
 }
 
 echo "host x86_64:"
@@ -236,8 +282,8 @@ else
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
-# Derived floor: the row table (34 rows) and the repros on host + cx, even with qemu absent.
-if [ "$NTAB" -lt 34 ]; then bad "the row table holds $NTAB rows (floor 34) — it did not load"; fi
+# Derived floor: the row table (51 rows) and the repros on host + cx, even with qemu absent.
+if [ "$NTAB" -lt 51 ]; then bad "the row table holds $NTAB rows (floor 51) — it did not load"; fi
 if [ "$NROWS" -lt $(((NTAB + NREPRO) * 2)) ]; then bad "only $NROWS rows ran (floor $(((NTAB + NREPRO) * 2)))"; fi
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: closure_declared_names_not_captured ($NFAIL of $NROWS rows)"
