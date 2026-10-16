@@ -1122,14 +1122,25 @@ fn _icall_vret(S): i64 {
     _sc_n0 = 1;
     return 0 - 1;
 }
+# ⛔ 6.7.13 — AN INDIRECT CALL'S OWN SPILL SLOTS COUNT IN THE FRAME. A fresh anonymous frame slot (the callee value,
+# the callee pointer), recorded in the `_flc_hwm` high-water as every other transient slot is: the inline replay
+# releases GFLC back to its parameters after each argument, so a slot GFLC alone counted could lie below the frame,
+# where the call's own argument `push` landed on it: D30's `la(callptr(&mkv, 4, 2))` into an inline-replayed
+# value-form vector parameter passed `mkv` its code address as `a` (2 on x86_64 where 42 is right), and
+# `lc(callptr(&mkv, 4, 2), 0)` faulted. CHANGELOG [6.7.13]
+fn _icall_slot(S): i64 {
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);   # anonymous (stale-name guard)
+    SLDEP(S, t, 0);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    return t;
+}
 fn _PINDIRECT_CALL_IN(S): i64 {
     var cst = _icall_mark(S);
     PCMPE(S);                               # eval callee → rax
     var cfi = _icall_callee(S, cst);
-    var cp_v = GFLC(S);
-    S64(S + 0x5D9D000 + cp_v * 8, 0 - 1);   # anonymous (stale-name guard)
-    SLDEP(S, cp_v, 0);
-    SFLC(S, cp_v + 1);
+    var cp_v = _icall_slot(S);
     EFLSTORE(S, cp_v);                      # spill the callee VALUE
     var cp_idx = 0;
     var cp_argc = 0;
@@ -1203,10 +1214,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     } else {
         EFLLOAD(S, cp_v);
         ECLNORM(S, cp_v);                   # rax = real code address
-        cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
-        S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);   # anonymous (stale-name guard)
-        SLDEP(S, cp_idx, 0);
-        SFLC(S, cp_idx + 1);
+        cp_idx = _icall_slot(S);            # fresh frame slot for the callee ptr
         EFLSTORE(S, cp_idx);                # spill callee → [rbp-disp(cp_idx)]
         ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
         _sc_x8(S, cfi, cp_t);               # 6.7.11: aarch64's result pointer

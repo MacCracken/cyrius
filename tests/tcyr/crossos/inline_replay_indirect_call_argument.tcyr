@@ -1,0 +1,67 @@
+# inline_replay_indirect_call_argument.tcyr — 6.7.13: an indirect call (`callptr(&f, ..)`, `fncallN(&f, ..)`) as an
+# argument of a fn the compiler replays inline reads its own arguments, on every target.
+#
+# The indirect call spills its callee into frame slots of its own. The inline replay releases the local count back to
+# its parameters after each argument, and those spill slots were counted by the local count alone, not the frame's
+# high-water: the frame could end above them, so the call's own argument `push` landed on the spilled callee and the
+# callee was passed its own code address as its first argument. This release's D30 shape `la(callptr(&mkv, 4, 2))`
+# into an inline value-form vector parameter read 2 where 42 is right on x86_64, and the two-parameter `lc(..)` faulted
+# (`_icall_slot`, src/frontend/parse_expr.cyr). The scalar rows are controls (an integer argument's spill stayed inside
+# the frame). Each argument is weighted, so a lost or swapped one changes the value. In this directory so the release
+# gate runs it on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+fn mk(a, b): i64 { return a * 10 + b; }
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+
+# Small enough to be replayed inline (the replay takes fns of up to two parameter slots).
+fn add1(x): i64 { return x + 1; }
+fn add2(y, x): i64 { return x * 100 + y; }
+fn la(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn lb(y: i64, x: f64v2): i64 { return y * 100 + load64(&x) * 10 + load64(&x + 8); }
+fn lc(x: f64v2, y: i64): i64 { return y * 100 + load64(&x) * 10 + load64(&x + 8); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn sum2(y, x): i64 { return x + y; }
+
+# Each row is its own fn with no local of its own: the frame is then exactly the replay's parameters, the shape the
+# spill fell out of (a local or two of the caller's own padded the frame and hid it).
+fn r1(): i64 { return add1(callptr(&mk, 4, 2)); }
+fn r2(): i64 { return add1(fncall2(&mk, 4, 2)); }
+fn r3(): i64 { return add2(1, callptr(&mk, 4, 2)); }
+fn r4(): i64 { return add2(callptr(&mk, 4, 2), 1); }
+fn r5(): i64 { return add2(fncall2(&mk, 3, 5), fncall2(&mk, 6, 7)); }
+fn r6(): i64 { return add2(callptr(&mk, 1, 2), add1(callptr(&mk, 3, 4))); }
+fn r7(): i64 { return add2(7, fncall2(&mk, 2, 9)); }
+fn r8(): i64 { return sum2(1, callptr(&mk, 4, 2)); }
+fn r9(): i64 { return sum2(callptr(&mk, 4, 2), 1); }
+fn v1(): i64 { return la(callptr(&mkv, 4, 2)); }
+fn v2(): i64 { return la(fncall2(&mkv, 4, 2)); }
+fn v3(): i64 { return lb(3, callptr(&mkv, 4, 2)); }
+fn v4(): i64 { return lc(callptr(&mkv, 4, 2), 3); }
+fn v5(): i64 { return li(callptr(&mkv, 5, 1)); }
+fn v6(): i64 { return la(mkv(4, 2)); }
+
+fn main(): i64 {
+    assert_eq(r1(), 43, "add1(callptr(&mk, 4, 2))");
+    assert_eq(r2(), 43, "add1(fncall2(&mk, 4, 2))");
+    assert_eq(r3(), 4201, "add2(1, callptr(..)) — the call second");
+    assert_eq(r4(), 142, "add2(callptr(..), 1) — the call first");
+    assert_eq(r5(), 6735, "add2 of two fncall2 calls");
+    assert_eq(r6(), 3512, "a nested replay in the second argument");
+    assert_eq(r7(), 2907, "add2(7, fncall2(..))");
+    assert_eq(r8(), 43, "sum2(1, callptr(&mk, 4, 2))");
+    assert_eq(r9(), 43, "sum2(callptr(&mk, 4, 2), 1)");
+    assert_eq(v1(), 42, "la(callptr(&mkv, 4, 2)) — D30 into an inline value-form parameter");
+    assert_eq(v2(), 42, "la(fncall2(&mkv, 4, 2))");
+    assert_eq(v3(), 342, "lb(3, callptr(..)) — the vector second");
+    assert_eq(v4(), 342, "lc(callptr(..), 3) — the vector first");
+    assert_eq(v5(), 51, "an #inline fn's vector parameter from callptr");
+    assert_eq(v6(), 42, "by name (unchanged)");
+    return 0;
+}
+
+main();
+var r = assert_summary();

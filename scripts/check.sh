@@ -1386,6 +1386,9 @@ _chk_gate "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 # cannot see, so axis 1 counts call sites and axis 2 pins the diagnostic. Mutation-proven: arming
 # nothing gives "with=100 without=100" and axis 1 fires.
 _chk_gate "$ROOT/tests/gates/codegen/inline_directive.sh"
+# 6.7.13: an indirect call as an argument of an inline-replayed fn keeps its own arguments — its callee spill slots
+# count in the frame's high-water (D30's `la(callptr(&mkv, 4, 2))` read 2 for 42 on x86_64).
+_chk_gate "$ROOT/tests/gates/codegen/inline_replay_indirect_call_spill.sh"
 _chk_gate "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 # 6.7.11: CYRIUS_DCE=1 compacts a `kernel;` image (agnos-filed): a kept dead body's call into removed
 # code becomes ud2, never a live address; the compacted kernel BOOTS under QEMU (exit 77 without it).
