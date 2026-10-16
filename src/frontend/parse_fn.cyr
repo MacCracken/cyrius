@@ -1106,7 +1106,7 @@ fn PARSE_RETURN(S): i64 {
     if (_ret_toplevel(S) == 1) { return 0; }   # 6.7.11: outside a fn body, refused
     var st = GTI(S) + 1;
     _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
-    _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there
+    _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there, or in a <= 8 B struct fn
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
     _PARSE_RETURN_ARMS(S);
@@ -2164,7 +2164,7 @@ fn _mv_named(S, sid): i64 {
     return 1;
 }
 # The report at token `ti`: struct `sid`, the call named `noff` (fn `fi`, its count in the hint); `kind`
-# 0 an argument, 1 a field, 2 a declaration, 3 an assignment; `free` spells the hint: 1 `noff(..)`, 2
+# 0 an argument, 1 a field, 2 a declaration, 3 an assignment, 4 a return (6.7.13); `free` spells the hint: 1 `noff(..)`, 2
 # `x.noff(..)` (a method on the name at `ti`), 0 `...`. Once per token (a generic body is parsed per instance); the parse goes on and
 # `_had_error` withholds the binary, as R17's. 1 = refused.
 fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
@@ -2180,6 +2180,7 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     if (kind == 1) { PRSTR("' is not stored into a struct '"); }
     elif (kind == 2) { PRSTR("' does not initialize struct '"); }
     elif (kind == 3) { PRSTR("' is not assigned to struct '"); }
+    elif (kind == 4) { PRSTR("' is not returned as struct '"); }
     else { PRSTR("' is not a struct '"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     if (kind == 0) { PRSTR("' argument"); }
@@ -6416,17 +6417,28 @@ fn _async_mv_ret(S, st): i64 {
 # Refused with the same text at the forwarded call (D24 A, the user's decision, 2026-10-15); a callee
 # held in a variable (`callptr(fp, ..)`) is unknown and not judged. Token `st` = the value's first;
 # called once from PARSE_RETURN, before the arms (the tail-call arm takes `return h(..);`).
-# CHANGELOG [6.7.13]
+# In a fn returning a struct of 8 B or less (`_ret_small_cls`) the same forward returned the call's
+# FIRST value as the struct's word (the repro exited 3) — the fifth named-struct destination of "a
+# multi-value call is not a struct value" (6.7.11, D20 / D21), where the 9-16 B and over-16 B classes
+# already refuse it by their own texts: "a multi-value call 'mk' is not returned as struct 'P1' - bind
+# it first" (`_mv_struct_err` kind 4; D25 A, the user's decision, 2026-10-15). CHANGELOG [6.7.13]
 fn _ret_mv_fwd(S, st): i64 {
     if (GIDEP(S) != 0) { return 0; }
     if (_cur_fn_ix < 0) { return 0; }
     if (_syntax_only == 1) { return 0; }
-    if (_fn_async_impl(S, _cur_fn_ix) == 0) { return 0; }
+    var asy = _fn_async_impl(S, _cur_fn_ix);
+    if (asy == 0) { if (_ret_small_cls(S) == 0) { return 0; } }
     var k = 0;
     while (TOKTYP(S, st + k) == 10) { k = k + 1; }
     var fi = _ret_whole_call(S, st, k);
     if (_mv_callee(S, fi) == 0) { return 0; }
-    return _refuse_async_mv_body(S, st + k, _mv_count(S, fi));
+    if (asy == 1) { return _refuse_async_mv_body(S, st + k, _mv_count(S, fi)); }
+    return _ret_mv_small(S, st + k, fi);
+}
+# ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`).
+fn _ret_mv_small(S, ct, fi): i64 {
+    if (_tok_method_open(S, ct) == 1) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct + 2), fi, 4, 2); }
+    return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct), fi, 4, 1);
 }
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
 # them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).

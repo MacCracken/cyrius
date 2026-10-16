@@ -2808,6 +2808,11 @@ struct's address (a crash) or as one field. Bind the values and build the struct
 var p = P { a, b }; take(p);`. A callee declared `: P` returns a `P` and is accepted everywhere a `P` is (its
 `return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
 does — and are not refused.
+A `return` is the fifth such destination (6.7.13, the user's decision of 2026-10-15): in a fn returning a
+struct of 8 bytes or less, `return mk(3);` (`(mk(3))`, `b.mk(3)` too) returned the call's first value as
+the struct's word, and is refused as ``a multi-value call 'mk' is not returned as struct 'P1' - bind it
+first: `var a, b = mk(..);` ``; the 9-16 byte and over-16-byte classes already refused it by their own
+texts.
 
 ## Tuples
 

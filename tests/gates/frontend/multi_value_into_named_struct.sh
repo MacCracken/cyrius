@@ -66,6 +66,14 @@
 #   N14 ... without its GIDEP test                      -> RED SC1 (the replayed #inline ret2 refused), every leg
 #   N15 ... without its `_tn_once`                      -> RED SR3g (two lines), every leg
 #   N16 `_ret_struct_pair` reporting a ret2 return too  -> RED SR5b (two lines), every leg
+#
+# 6.7.13 — AXIS RT: `return mk(..);` OF A MULTI-VALUE CALL IN A FN RETURNING A STRUCT OF 8 B OR LESS is refused by
+# name, the fifth destination (D25 A, the user's decision, 2026-10-15;
+# issues/2026-10-14-small-struct-fn-returns-multi-value-call.md): the call's FIRST value was returned as the struct's
+# word (the repro exited 3 on x86_64 / aarch64 / cx / PE) — `a multi-value call 'mk' is not returned as struct 'P1' -
+# bind it first: ...`, at the call, parentheses transparent; the 9-16 B and over-16 B classes keep their own texts; a
+# `: P1` callee and a one-value callee still run.
+#   N17 `_ret_mv_fwd` without its small-struct arm       -> RED RT1 RT2 RT3 RT4 RT7 RT8 (BUILT), every leg
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -413,6 +421,52 @@ for leg in $(legs); do
     if [ "$crc" -ne 0 ] && [ "$n" -eq 2 ] && grep -qF "$R2S" "$T/SR6.$leg.err" && grep -qF "undefined variable 'nosuch'" "$T/SR6.$leg.err"; then ok "SR6 in sync: the ret2 refusal and the next statement's own error ($leg)"
     else bad "SR6 in sync ($leg): rc $crc, $n error lines: $(grep '^error' "$T/SR6.$leg.err" | tr '\n' '|')"; fi
 done
+# --- axis RT (6.7.13, D25 A): `return mk(..);` of a multi-value call in a fn returning a struct of 8 B or less ---
+RTT="is not returned as struct 'P1' - bind it first:"
+# the issue's repro, verbatim
+printf 'struct P1 { a; }\nfn mk(a): (i64, i64) { return (a, a + 1); }\nfn g(): P1 { return mk(3); }\nfn f(): i64 { var p: P1 = g(); return p.a; }\nsyscall(60, f());\n' > "$T/RT1.cyr"
+refused RT1 "3:21: a multi-value call 'mk' $RTT \`var a, b = mk(..);\`" "the repro verbatim (it exited 3)"
+row RT2 'fn g(): P1 { return mku(3); }
+fn f(): i64 { var p: P1 = g(); return p.a + 10; }
+syscall(60, f());'
+refused RT2 "a multi-value call 'mku' $RTT \`var a, b = mku(..);\`" "an undeclared callee pass 1 counted (it exited 13)"
+row RT3 'fn g(): P1 { var b = B { 0 }; return b.mk(3); }
+fn f(): i64 { var p: P1 = g(); return p.a; }
+syscall(60, f());'
+refused RT3 "a multi-value call 'mk' $RTT \`var a, b = b.mk(..);\`" "a method callee"
+row RT4 'fn g(): P1 { return ((mk(3))); }
+fn f(): i64 { var p: P1 = g(); return p.a; }
+syscall(60, f());'
+refused RT4 "a multi-value call 'mk' $RTT" "wrapped, depth 2"
+row RT7 'fn mk3(a): (i64, i64, i64) { return (a, 1, 2); }
+fn g(): P1 { return mk3(3); }
+fn f(): i64 { var p: P1 = g(); return p.a; }
+syscall(60, f());'
+refused RT7 "a multi-value call 'mk3' $RTT \`var a, b, c = mk3(..);\`" "three values: the hint binds three"
+row RT8 'fn mkg<T>(a: T): (T, T) { return (a, a + 1); }
+impl P1 { fn m(self): P1 { return mkg<i64>(self.a); } }
+fn f(): i64 { var q = P1 { 3 }; var p: P1 = q.m(); return p.a; }
+syscall(60, f());'
+refused RT8 "a multi-value call 'mkg' $RTT" "a generic callee, in a method"
+row RT9 'fn g(): P { return mk(3); }
+fn f(): i64 { var p: P = g(); return p.a; }
+syscall(60, f());'
+refused RT9 "a fn returning the 9-16 byte struct \`P\` is returned in two registers" "9-16 B: its own text, unchanged"
+row RT10 'struct Q { a; b; c; }
+fn g(): Q { return mk(3); }
+fn f(): i64 { var p: Q = g(); return p.a; }
+syscall(60, f());'
+refused RT10 "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct" "over 16 B: its own text, unchanged"
+row RT5 'fn mk1(a): P1 { var p = P1 { a }; return p; }
+fn g(): P1 { return mk1(7); }
+fn f(): i64 { var p: P1 = g(); return p.a; }
+syscall(60, f());'
+runs RT5 7 "control: a \`: P1\` callee forwarded"
+row RT6 'fn one(a) { return a + 4; }
+fn g(): P1 { return one(3); }
+fn f(): i64 { var p: P1 = g(); return p.a; }
+syscall(60, f());'
+runs RT6 7 "control: a one-value callee (an untyped word stays the struct's word)"
 row SC1 '#inline
 fn two(a, b) { ret2(a, b); }
 fn mp(x): P { var a, b = two(x, x + 1); var p: P = P { a, b }; return p; }
@@ -425,7 +479,7 @@ fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
 syscall(60, f());'
 runs SC2 34 "control: a closure's own ret2 inside a struct fn"
 
-[ "$rows" -ge 53 ] || bad "only $rows rows ran (floor 53)"
+[ "$rows" -ge 63 ] || bad "only $rows rows ran (floor 63)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four"
