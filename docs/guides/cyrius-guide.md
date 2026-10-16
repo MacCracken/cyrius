@@ -1522,7 +1522,9 @@ The builtin `ret2(a, b)` is the same two values, so it is refused there the same
 returns that struct — `ret2` writes two values``. It compiled through 6.7.12 with the same three
 outcomes (0, 0, 0 over 16 bytes; the second value dropped at 8 bytes or less; the two words by
 coincidence at 9-16 bytes). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's
-own and is unchanged; a fn returning a `dyn` keeps its own refusal.
+own and still compiles — and an `#inline` fn's `return ret2(..);` replayed in a 9-16 byte struct fn,
+refused ("got `this expression`") through 6.7.12, compiles now too; a fn returning a `dyn` keeps its
+own refusal.
 
 ⚠ **A fn returning a struct of 8 bytes or less returns a value of that struct (6.7.11).** The struct
 travels in one register, and its `return` is checked as the two wider classes check theirs: a value

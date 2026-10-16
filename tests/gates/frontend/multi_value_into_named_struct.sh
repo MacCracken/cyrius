@@ -60,12 +60,14 @@
 # words came back by ABI coincidence (the C2 control's old producer). Once (a generic's instances), in sync (the
 # next statement's own error), at the ret2 — `return ret2(..)` too, where the 9-16 B return's "got `this
 # expression`" yields to it; over 16 B the retptr arm's own refusal speaks first (once). A dyn keeps its V7 text;
-# an #inline fn's ret2 replayed in a struct fn and a closure's own ret2 there still run. C2's producer says
-# `return p;` now.
+# an #inline fn's ret2 replayed in a struct fn and a closure's own ret2 there still run — and an #inline fn's
+# `return ret2(..);` replayed in a 9-16 B struct fn, refused "got `this expression`" through 6.7.12, now runs
+# (SC1r). C2's producer says `return p;` now.
 #   N13 `_ret2_in_struct` answering 0 at once           -> RED SR1 SR2 SR3 SR3m SR3g SR3d SR5 SR5b SR6 (BUILT / one line), every leg
 #   N14 ... without its GIDEP test                      -> RED SC1 (the replayed #inline ret2 refused), every leg
 #   N15 ... without its `_tn_once`                      -> RED SR3g (two lines), every leg
-#   N16 `_ret_struct_pair` reporting a ret2 return too  -> RED SR5b (two lines), every leg
+#   N16 `_ret_struct_pair` reporting a ret2 return too  -> RED SR5b (two lines), SC1r (refused "got `this
+#                                                           expression`", as through 6.7.12), every leg
 #
 # 6.7.13 — AXIS RT: `return mk(..);` OF A MULTI-VALUE CALL IN A FN RETURNING A STRUCT OF 8 B OR LESS is refused by
 # name, the fifth destination (D25 A, the user's decision, 2026-10-15;
@@ -519,13 +521,25 @@ fn mp(x): P { var a, b = two(x, x + 1); var p: P = P { a, b }; return p; }
 fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
 syscall(60, f());'
 runs SC1 34 "control: an #inline fn's ret2 replayed in a struct fn"
+# SC1r — the `return ret2(..);` spelling of SC1's callee: the replay is judged by the CALLER's class, so through
+# 6.7.12 the 9-16 B return's "got `this expression`" refused it (base b13d3598: 2:28); since `_ret_struct_pair`
+# yields to a ret2 value (6.7.13) it compiles and runs. The review probe, verbatim; on ecb / ach / cass / pi as
+# tests/tcyr/crossos/struct_return_shape_controls.tcyr's SC1r.
+src SC1r <<'EOF'
+struct Pt { x; y; }
+#inline fn two(a) { return ret2(a, a + 1); }
+fn mk(): Pt { var a, b = two(3); var p = Pt { a, b }; return p; }
+fn m(): i64 { var p = mk(); return p.x * 10 + p.y; }
+syscall(60, m());
+EOF
+runs SC1r 34 "control: an #inline fn's \`return ret2(..);\` replayed in a 9-16 B struct fn (refused through 6.7.12)"
 row SC2 'include "lib/fnptr.cyr"
 fn mp(x): P { var cl = |y| { ret2(y, y + 1); }; var a, b = fncall1(cl, x); var p: P = P { a, b }; return p; }
 fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
 syscall(60, f());'
 runs SC2 34 "control: a closure's own ret2 inside a struct fn"
 
-[ "$rows" -ge 74 ] || bad "only $rows rows ran (floor 74)"
+[ "$rows" -ge 75 ] || bad "only $rows rows ran (floor 75)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four; 6.7.13: \`ret2\` in a struct fn (every class), \`return mk(..)\` from an 8 B struct fn and \`*p = mk(..)\` through a \`*S\` refused"

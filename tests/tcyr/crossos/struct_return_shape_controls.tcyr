@@ -16,6 +16,7 @@
 #   P8b              tests/gates/codegen/cx_struct_pair.sh
 #   A7               tests/gates/codegen/simd_return_shapes.sh
 #   C2               tests/gates/frontend/multi_value_into_named_struct.sh
+#   SC1r             tests/gates/frontend/multi_value_into_named_struct.sh (6.7.13: refused through 6.7.12)
 # Struct and fn names carry a per-row prefix (the gate programs each declare their own `Pt` / `P` / `P2`); the
 # shapes and values are the gate's. The crossing's other shapes are carried by
 # crossos/struct_pair_multi_value_crossing.tcyr, the struct-operator values by crossos/struct_value_codegen.tcyr.
@@ -54,6 +55,14 @@ fn rp_f28(a, b): RP3 { var c, d = rp_twog(a, b); var r: RP3 = RP3 { c, d, 7 }; r
 fn r27(): i64 { var q: RP3 = rp_f27(1, 2); return q.x * 100 + q.y * 10 + q.z; }
 fn r28(): i64 { var q: RP3 = rp_f28(1, 2); return q.x * 100 + q.y * 10 + q.z; }
 
+# ---- SC1r: an #inline fn's `return ret2(..);` replayed inside a 16 B struct fn ----
+# The replay is judged by the caller's class: through 6.7.12 the 9-16 B return refused it ("got `this
+# expression`"); since 6.7.13 `_ret_struct_pair` yields to a ret2 value, so it builds. CHANGELOG [6.7.13]
+struct RQ2 { x; y; }
+#inline fn rq_two(a) { return ret2(a, a + 1); }
+fn rq_mk(): RQ2 { var a, b = rq_two(3); var p = RQ2 { a, b }; return p; }
+fn sc1r(): i64 { var p = rq_mk(); return p.x * 10 + p.y; }
+
 # ---- X8: `rethi()` after a `: XP` fn's `return p;` reads the second word ----
 struct XP { a; b; }
 fn xp_mk(x): XP { var p: XP = XP { x, x + 1 }; return p; }
@@ -88,6 +97,7 @@ fn rows(): i64 {
     assert_eq(r26(), 141, "R26: var k = p.x; return mk2(k); a tail call after a statement");
     assert_eq(r27(), 127, "R27: an #inline fn's return (a, b); replayed in a 24 B struct fn");
     assert_eq(r28(), 127, "R28: a generic fn's return (a, b); replayed in a 24 B struct fn");
+    assert_eq(sc1r(), 34, "SC1r: an #inline fn's return ret2(..); replayed in a 16 B struct fn");
     assert_eq(x8(), 6, "X8: mk(5); var b = rethi(); after a struct's return p;");
     assert_eq(p8b(), 42, "P8b: return p; received as var p: P2 = mr(4)");
     assert_eq(a7(), 48, "A7: return p; into a pair struct");
