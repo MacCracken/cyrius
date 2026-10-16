@@ -1887,10 +1887,12 @@ as is an operator fn whose first parameter is another struct, and, at top level,
 (`var G: H = GW.s + A;`). Through 6.7.9 only a variable or a struct result typed the left operand:
 `h.p - s` subtracted the first words (250 where `P2_sub` gives 139), silently, at every size. A
 `*T` field itself is a pointer (`w.p + 1` steps it), a `Str` field a handle, and `-w.s + a`
-negates a word first (no dispatch) — as `-s + a` does since 6.7.11 (see below). ⚠ Known defect (6.7.10): a whole field of 3, 5, 6 or 7 bytes is
-still loaded as an 8-byte word on the way (as in every value use of one — an argument, a right
-operand): an object ending exactly at the end of a mapping faults. (A dereference of a `*S` of 1 to 7
-bytes reads exactly its struct since 6.7.11 — see below.)
+negates a word first (no dispatch) — as `-s + a` does since 6.7.11 (see below). A whole field of 3, 5,
+6 or 7 bytes used as a value — this operand, an argument (`take(w.s)`), `return w.s`, a right operand, an
+untyped `var u = w.s`, a top-level `var G: S3 = GW.s` — reads exactly the field's bytes, its word's padding
+0, and a zero-size one reads none (6.7.13), as a dereference of a `*S` of 1 to 7 bytes does since 6.7.11
+(see below). Through 6.7.12 it was loaded as an 8-byte word: up to 5 bytes past the object landed in the
+padding, and an object ending exactly at the end of a mapping faulted.
 
 **An integer operator's result is an integer** (6.7.11): with an integer left operand, `n - s` on a
 struct `s` is arithmetic on the struct's first word (its word, at 8 bytes or less), and the result is an

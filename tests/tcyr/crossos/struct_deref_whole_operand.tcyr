@@ -280,6 +280,26 @@ fn zc4(): i64 { var h: Z4 = zsrc(); var c = || zp4(h); return callptr(c); }
 fn zc5(): i64 { var h: Z5 = zsrc(); var c = || zp5(h); return callptr(c); }
 fn zc6(): i64 { var h: Z6 = zsrc(); var c = || zp6(h); return callptr(c); }
 fn zc7(): i64 { var h: Z7 = zsrc(); var c = || zp7(h); return callptr(c); }
+# ── 6.7.13: a whole struct-typed FIELD of 3 / 5 / 6 / 7 B as a value reads the field, no byte past it
+# (issues/2026-10-14-small-struct-field-value-reads-past-the-object.md): through 6.7.12 its leaf load read the
+# 8-byte word, so the bytes after the field (0xFF here) landed in the word's padding. The `zw` rows: an argument
+# from a value global's field, through a `*W`, `return w.s`, the left operand of an integer-result operator, and
+# at top level.
+struct ZW3 { n: i8; s: Z3; g: i64; }
+struct ZW5 { n: i8; s: Z5; g: i64; }
+struct ZW6 { n: i8; s: Z6; g: i64; }
+struct ZW7 { n: i8; s: Z7; g: i64; }
+var GW3 = ZW3 { 1, 65, 66, 67, 0 - 1 };
+var GW5 = ZW5 { 1, 0x44434241, 69, 0 - 1 };
+var GW6 = ZW6 { 1, 0x4241, 0x4443, 0x4645, 0 - 1 };
+var GW7 = ZW7 { 1, 0x44434241, 0x4645, 71, 0 - 1 };
+fn Z3_sub(a: Z3, b: Z3): i64 { return load8(&a + 3) * 100000 + a.c; }
+fn zw3(): i64 { return zp3(GW3.s); }
+fn zw5(): i64 { var p: *ZW5 = &GW5; return zp5(p.s); }
+fn zr6w(p: *ZW6): Z6 { return p.s; }
+fn zw6(): i64 { var l: Z6 = zr6w(&GW6); return load8(&l + 6) * 100000 + l.c; }
+fn zw7(): i64 { var p: *ZW7 = &GW7; return zp7((p.s)); }
+fn zwo(): i64 { var p: *ZW3 = &GW3; return p.s - p.s; }
 fn zarg3(): i64 { return zp3(*PZ3); }
 fn zarg5(): i64 { return zp5((*PZ5)); }
 fn zarg6(): i64 { return zp6(*PZ6); }
@@ -301,6 +321,8 @@ var LZ6: Z6 = *PZ6;
 var LZ7: Z7 = *(PZ7 + 0);
 var UZ3 = zp3((*PZ3));
 var UZ7 = zp7(*PZ7);
+var TW3 = zp3(GW3.s);
+var TW7 = zp7(GW7.s);
 
 assert_eq(f_loc_8(), 5, "take(*p): a *S local's struct, by value");
 assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
@@ -440,6 +462,18 @@ zdirty();
 assert_eq(zc6(), 17989, "6 B: || f(h): a captured handle by value: its padding 0");
 zdirty();
 assert_eq(zc7(), 71, "7 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zw3(), 67, "3 B: f(G.s), a struct-typed field: no byte past it, its padding 0");
+zdirty();
+assert_eq(zw5(), 69, "5 B: f(p.s) through a *W");
+zdirty();
+assert_eq(zw6(), 17989, "6 B: return p.s, received");
+zdirty();
+assert_eq(zw7(), 71, "7 B: f((p.s))");
+zdirty();
+assert_eq(zwo(), 67, "3 B: p.s - p.s, the field as an operator's left operand");
+assert_eq(TW3, 67, "3 B: f(G.s) at top level");
+assert_eq(TW7, 71, "7 B: f(G.s) at top level");
 assert_eq(zq1(), 65, "1 B: return q of a *S parameter, received: its padding 0");
 assert_eq(zq2(), 66, "2 B: return q of a *S parameter, received: its padding 0");
 assert_eq(zq3(), 67, "3 B: return q of a *S parameter, received: its padding 0");

@@ -2077,10 +2077,31 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 # always signed) — then typed (`_field_load_type`). Out of `_field_load_on`, a giant at cybs's per-fn
 # reference ceiling. CHANGELOG [6.7.10]
 fn _fld_leaf_load(S, beg, idx, sid): i64 {
-    EFIELD_LOAD_W(S, _fld_lw(S, _rlf_si, _rlf_fi));
+    if (_fld_sval_ra(S, idx, sid) == 0) { EFIELD_LOAD_W(S, _fld_lw(S, _rlf_si, _rlf_fi)); }
     _field_load_type(S, _rlf_si, _rlf_fi);
     _flo_note(S, beg, idx, sid);   # 6.7.10: an operator's left operand, maybe
     return 0;
+}
+# ⛔ 6.7.13 — A WHOLE STRUCT-TYPED FIELD OF 3, 5, 6 OR 7 BYTES AS A VALUE READS THE STRUCT, NO BYTE PAST IT
+# (issues/2026-10-14-small-struct-field-value-reads-past-the-object.md), as a dereference does since 6.7.11.
+# Its leaf load read the 8-byte word at the field's address, so `take(w.s)`, `return w.s`, `w.s + a` and a
+# top-level `var G: S3 = GW.s` read up to 5 bytes past the object — SIGSEGV when it ended a mapping. The leaf
+# `_resolve_leaf_field` published, of base `idx` / `sid` at `_rlf_off`, no `Str` hop: a plain struct of 3 / 5
+# / 6 / 7 bytes — rax becomes it read through its address byte-exact, its padding 0 (`_hl_pval_ra`); a
+# zero-size one reads no byte (rax 0). 1 = rax holds it; 0 = the word load (1 / 2 / 4 / 8 B are one load).
+# The `x1` address `_field_load_on` computed goes unused here. CHANGELOG [6.7.13]
+fn _fld_sval_ra(S, idx, sid): i64 {
+    if (_rlf_hop >= 0) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (_dx_plain(S, ft) == 0) { return 0; }
+    var sz = STRUCTSZ(S, ft - 1);
+    if (sz == 0) { EMOVI(S, 0); return 1; }
+    if (_fst_odd_sz(sz) == 0) { return 0; }
+    _fld_addr_ra(S, idx, sid, _rlf_off, 0 - 1);
+    _hl_pval_ra(S, ft);
+    return 1;
 }
 # ⛔ 6.7.10 — A STRUCT-TYPED FIELD AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
 # 2026-10-12): `w.s + a`, `p.s + a` through a `*T`, `f().s + a`, `(w.s) + a`, `self.s * a`, at every size,
