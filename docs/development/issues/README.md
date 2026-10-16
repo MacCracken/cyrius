@@ -249,7 +249,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.12 — Break 2, repair 2: the platform release** (0)
 
 
-**6.7.13 — Break 2, repair 3: struct values** (75)
+**6.7.13 — Break 2, repair 3: struct values** (76)
 
 - [`gp().n = 5` through a `*T`-returning call is refused as "the result is a temporary"](2026-10-08-field-store-through-pointer-returning-call-refused.md)
 - [An inline `Str` (from a `Str { .. }` literal) used as a `Str` value passes its `data` word, not a handle: `f(t)` with `fn f(s: Str)` reads the wrong length, silently](2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md)
@@ -326,6 +326,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A vector dereference through an address-of or a double pointer, `rd(*&b)` / `rd(**ppb)`, into a `*V` parameter still passes lane 0 as the address (D27's `*pv` rule misses an operand with no step word)](2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md)
 - [A vector call result or `*pv` into a pointer of another kind (`*Pt`, `*i64`), a vector local into a by-value struct parameter, and a vector METHOD or explicit-instance call result into `*V`, pass lane 0's bits as the address](2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md)
 - [Windows: a drive-rooted `[deps.X] path` is joined onto the manifest's directory](2026-10-15-windows-drive-rooted-dep-path-joined-onto-manifest-dir.md)
+- [Windows `xflock`: re-taking a lock the handle already holds drops it first, so a waiting handle gets in — a patra transaction's writes from another handle return OK and are lost](2026-10-15-xflock-windows-relock-drops-the-lock-first.md)
 
 **6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (74)
 
