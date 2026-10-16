@@ -178,6 +178,26 @@
 #   M-D1 `_vrcv_dsrc` answering 0 (2026-10-16, measured)    -> RED 33: P1-P5 on all five legs (refused, the 6.7.11
 #       words), K1 K2 on all four (the receive refusal, not the copy's words)
 #   M-D2 `_vrcv_demit` without the vector-type test          -> RED 8: K1 K2 on all four legs (compiled)
+#
+# ⛔ 6.7.13 (issues/2026-10-14-vector-local-refusal-hint-every-source.md) — THE RECEIVE'S REFUSAL NAMES WHAT IT REFUSES. Since
+# 6.7.11 every refusal ended "; through a fn pointer held in a variable, give the target an out-pointer" (`= 5`,
+# `= load64(&w)`, `= &w`), and a call to a fn that does not exist (`var v: f64v2 = f64v2_splat(1.0);`, no include) was
+# reported as a refused source ahead of the undefined-function warnings. The hint now follows a whole fncallN / callptr
+# call whose callee is not written `&f` (`_vrcv_fptr`), a call naming no fn is the undefined-function path's alone
+# (`_vrcv_nofn`), and the accepted list names `*p` (D34). Rows H on all four legs, one `error` line each, no artifact:
+#   H1 the filed c8 verbatim (`= 5`), H2 `= load64(&w)`, H3 `= &w`, H6 `v = load64(&w)`, H8 `callptr(&sc, ..)` (the
+#   callee written `&f`, a word), H10 an untyped `*x` — refused without the hint; H4 `callptr(fp, 41, 7)`, H7 `v =
+#   fncall2(fp, 41, 7)`, H11 `(callptr(fp, 41, 7))` — refused with it; every one names its source and the dereference
+#   in the list; H5 the filed d7 verbatim and H9 its `v = ..` twin — the undefined-function warning and the
+#   refusing-to-emit line, no receive line.
+# MUTATION LEDGER (6.7.13, measured — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>):
+#   the lane's previous compiler (the hint everywhere, the old list) -> RED 44: H1-H11 on all four legs
+#   M-H1 `_vrcv_fptr` answering 1                  -> RED 20: H1 H2 H3 H6 H8 on all four legs (the hint printed);
+#       H10 green (the dereference's refusal passes no hint)
+#   M-H2 `_vrcv_nofn` answering 0                  -> RED 8: H5 H9 on all four legs (the receive line, two errors)
+#   M-H3 `_vrcv_fptr` without its `&f` test         -> RED 4: H8 on all four legs
+#   M-H4 `_vrcv_nofn` taking FINDFN < 0 only        -> RED 4: H5 on all four legs (the declaration asks after the
+#       parse, which registered the name: only the definition stamp `GFDS` tells it from a declared fn)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -631,6 +651,69 @@ k_msg() {
     K4) echo "a value-form vector local is assigned only from";;
     esac
 }
+# ---- 6.7.13 (issues/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
+# The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
+# the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
+HINT="through a fn pointer held in a variable, give the target an out-pointer"
+MSGL='or a dereference of a pointer to its type (`*p`) - got'
+HH='include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn sc(a, b) { return a + b; }
+'
+h_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    H1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 { var v: f64v2 = 5; return lanes(v); }
+syscall(60, run());
+' ;;
+    H2) printf '%s' "$HH"'fn run(): i64 { var w = 3; var v: f64v2 = load64(&w); return lanes(v); }
+syscall(60, run());
+' ;;
+    H3) printf '%s' "$HH"'fn run(): i64 { var w = 3; var v: f64v2 = &w; return lanes(v); }
+syscall(60, run());
+' ;;
+    H4) printf '%s' "$HH"'fn run(): i64 { var fp = &mkv; var v: f64v2 = callptr(fp, 41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    H5) printf '%s' 'fn run(): i64 { var v: f64v2 = f64v2_splat(1.0); return 1; }
+syscall(60, run());
+' ;;
+    H6) printf '%s' "$HH"'fn run(): i64 { var w = 3; var v: f64v2 = mkv(1, 2); v = load64(&w); return lanes(v); }
+syscall(60, run());
+' ;;
+    H7) printf '%s' "$HH"'fn run(): i64 { var fp = &mkv; var v: f64v2 = mkv(1, 2); v = fncall2(fp, 41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    H8) printf '%s' "$HH"'fn run(): i64 { var v: f64v2 = callptr(&sc, 41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    H9) printf '%s' 'fn run(): i64 { var v: f64v2; v = f64v2_splat(1.0); return 1; }
+syscall(60, run());
+' ;;
+    H10) printf '%s' "$HH"'fn run(): i64 { var w: f64v2 = mkv(41, 7); var x = &w; var v: f64v2 = *x; return lanes(v); }
+syscall(60, run());
+' ;;
+    H11) printf '%s' "$HH"'fn run(): i64 { var fp = &mkv; var v: f64v2 = (callptr(fp, 41, 7)); return lanes(v); }
+syscall(60, run());
+' ;;
+    esac
+}
+H_ROWS="H1 H2 H3 H4 H5 H6 H7 H8 H9 H10 H11"
+h_kind() {  # undef = the undefined-function path alone; hint = refused with the hint; plain = refused without it
+    case "$1" in
+    H5|H9) echo undef;;
+    H4|H7|H11) echo hint;;
+    *) echo plain;;
+    esac
+}
+h_got() {  # what the refusal names
+    case "$1" in
+    H1) echo '5';; H2|H6) echo 'load64';; H3) echo '&w';; H4|H8) echo 'callptr';; H7) echo 'fncall2';;
+    H10) echo '*x';; H11) echo '(...)';; *) echo '';;
+    esac
+}
 # Every Q row on all four legs: Q3's refusal is the value-form argument's, which PE's address-passed parameter runs since
 # D30 (`_sarg_pe_vword`; it took lane 0 as the address before: exit 5).
 q_legs() { echo "host cx aarch64 win64"; }
@@ -832,6 +915,43 @@ refuse_k_all() {  # $1 leg label  $2 compiler
     done
 }
 
+# 6.7.13: rows H — the refusal's words, or (H5 H9) the undefined-function path alone; one `error` line, no artifact.
+refuse_h_all() {  # $1 leg label  $2 compiler
+    for row in $H_ROWS; do
+        h_src "$row" > "$W/h.cyr"
+        rc=0
+        "$2" < "$W/h.cyr" > "$W/h.out" 2>"$W/h.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        ne=$(grep -c '^error' "$W/h.err" 2>/dev/null || true)
+        nv=$(grep -c "$MSGV" "$W/h.err" 2>/dev/null || true)
+        nh=$(grep -c "$HINT" "$W/h.err" 2>/dev/null || true)
+        hk=$(h_kind "$row")
+        hg="- got \`$(h_got "$row")\`"
+        if [ -s "$W/h.out" ]; then
+            bad "$1 $row: emitted an artifact (rc=$rc)"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1; first: $(head -1 "$W/h.err" 2>/dev/null))"
+        elif [ "$hk" = undef ]; then
+            if [ "$nv" != 0 ]; then bad "$1 $row: the receive refused a call naming no fn ($(grep -m1 "$MSGV" "$W/h.err" | cut -c1-120))"
+            elif ! grep -qF "undefined function 'f64v2_splat'" "$W/h.err"; then bad "$1 $row: no undefined-function warning"
+            elif ! grep -qF "refusing to emit" "$W/h.err"; then bad "$1 $row: no refusing-to-emit line"
+            else good "$1 $row: the undefined-function path alone"; fi
+        elif [ "$nv" != 1 ]; then
+            bad "$1 $row: not refused by the receive (rc=$rc, first line: $(head -1 "$W/h.err" 2>/dev/null))"
+        elif ! grep -qF "$MSGL" "$W/h.err"; then
+            bad "$1 $row: the accepted list does not name the dereference ('$MSGL')"
+        elif ! grep -qF -e "$hg" "$W/h.err"; then
+            bad "$1 $row: does not name its source ('$hg')"
+        elif [ "$hk" = hint ] && [ "$nh" != 1 ]; then
+            bad "$1 $row: the fn-pointer hint is missing (a callee held in a variable)"
+        elif [ "$hk" = plain ] && [ "$nh" != 0 ]; then
+            bad "$1 $row: the fn-pointer hint printed for a source it does not fit"
+        else
+            good "$1 $row refused once ($hk)"
+        fi
+    done
+}
+
 hostr() { timeout 60 "$1"; }
 echo "host x86_64:"
 refuse_all host "$CC"
@@ -847,6 +967,7 @@ refuse_q_all host "$CC"
 accept_p_all host "$CC" hostr
 accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
+refuse_h_all host "$CC"
 
 echo "cx (cxvm):"
 if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ] \
@@ -863,6 +984,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_q_all cx "$W/cycc_cx"
     accept_p_all cx "$W/cycc_cx" cxr
     refuse_k_all cx "$W/cycc_cx"
+    refuse_h_all cx "$W/cycc_cx"
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -882,6 +1004,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_q_all aarch64 "$W/cycc_a64"
         accept_p_all aarch64 "$W/cycc_a64" a64r
         refuse_k_all aarch64 "$W/cycc_a64"
+        refuse_h_all aarch64 "$W/cycc_a64"
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -906,6 +1029,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_q_all win64 "$W/cycc_win"
         accept_p_all win64 "$W/cycc_win" wr_
         refuse_k_all win64 "$W/cycc_win"
+        refuse_h_all win64 "$W/cycc_win"
     else
         bad "win64 leg: could not build src/main_win.cyr"
     fi
@@ -917,7 +1041,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS; echo $#)   # 6.7.13: + Q, K (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS; echo $#)   # 6.7.13: + Q, K, H (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -935,14 +1059,16 @@ na_floor=$((na_floor + $(set -- $P_ROWS; echo $#) * 3))   # 6.7.13 (D34): every 
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_fn.cyr no longer spells '$MSG' — reworded?"
 n=$(grep -c "$MSGV" src/frontend/parse_decl.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$MSGV' — reworded?"
+n=$(grep -c "$HINT" src/frontend/parse_decl.cyr || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$HINT' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.

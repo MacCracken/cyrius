@@ -6856,7 +6856,7 @@ fn _vrcv_demit(S, dst, ty, verb, noff): i64 {
     _HTSTORE(S, h);
     var pe = GTI(S);
     _pw_close(S, k);
-    if (vd == 0) { return _vrcv_err(S, ti, verb); }
+    if (vd == 0) { return _vrcv_err(S, ti, verb, 0); }
     if (0 - vd != ty) { return _vrcv_dbad(S, ti, ty, vd, noff, _hl_lastnm(S, a, pe, TOKVAL(S, a))); }
     _vec_desc(S, ty);
     _agc_copy_bytes(S, dst, 0 - 1, _AGC_DREF(h), 0 - 1, GVEC_NSLOTS(S) * 8);
@@ -6987,13 +6987,14 @@ fn _vrcv_ity(S, ti): i64 {
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
 # scalar path, so not a source the receives take: refused by name, once — not after the initialiser
 # refused itself (`_scv_err`; `_panic` in `_vrcv_err`), nor for a by-name call declared to return
-# another vector (refused before the parse).
+# another vector (refused before the parse), nor (6.7.13) for a call naming no fn (`_vrcv_nofn`).
 fn _vrcv_decl_err(S, pscale, start): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_vrcv_vcall(S, start) == 1) { return 0; }
-    return _vrcv_err(S, start, "initialised");
+    if (_vrcv_nofn(S, start) == 1) { return 0; }   # 6.7.13: the undefined-function path names it
+    return _vrcv_err(S, start, "initialised", _vrcv_fptr(S, start, GTI(S)));
 }
 # `v = <src>` with `v` a local (cursor on the source, `term` ending it): into a value-form vector, an
 # accepted source the by-name path below does not take, emitted (1), or any source that is no
@@ -7016,21 +7017,33 @@ fn _vrcv_asg(S, noff, term): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
-# The assigned source that is no vector: a by-name call declared to return one is the path below's
-# (-1); anything else is parsed and refused by name — once: not when its own parse reported (a
-# vector global's read, `_vecg_refuse`) — and the statement consumed (1).
+# The assigned source that is no vector: a by-name call declared to return one, and (6.7.13) a call
+# naming no fn (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
+# — once: not when its own parse reported (a vector global's read, `_vecg_refuse`) — and the statement
+# consumed (1).
 fn _vrcv_other(S, term): i64 {
     var ti = GTI(S);
     if (_vrcv_vcall(S, ti) == 1) { return 0 - 1; }
+    if (_vrcv_nofn(S, ti) == 1) { return 0 - 1; }   # 6.7.13: the undefined-function path names it
     var he = _had_error;
     PCMPE(S);
     if (he == 0) { if (_had_error == 1) { he = 2; } }
-    if (he != 2) { _vrcv_err(S, ti, "assigned"); }
+    if (he != 2) { _vrcv_err(S, ti, "assigned", _vrcv_fptr(S, ti, GTI(S))); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
     return 1;
 }
-fn _vrcv_err(S, ti, verb): i64 {
+# ⛔ 6.7.13 — THE REFUSAL NAMES WHAT IT REFUSES, AND ITS ADVICE FITS THE SOURCE. Since 6.7.11 the text ended
+# "; through a fn pointer held in a variable, give the target an out-pointer" for every source (`= 5`,
+# `= load64(&w)`, `= &w`), and a call to a fn that does not exist — `var v: f64v2 = f64v2_splat(1.0);` with
+# lib/simd.cyr not included — was reported as a refused source ("got `f64v2_splat`") ahead of the
+# undefined-function warnings. The hint now follows a callee held in a variable only (`_vrcv_fptr`), a call
+# naming no fn is left to the undefined-function path (`_vrcv_nofn`: "undefined function 'f64v2_splat'",
+# then "refusing to emit binary"; under --allow-undef it builds and traps at the call, as through 6.7.10),
+# and the accepted list names `*p` (D34). CHANGELOG [6.7.13]
+# The refusal at token `ti`, `verb` "initialised" / "assigned"; `fp` 1 = the source is a call through a fn
+# pointer held in a variable (the out-pointer hint). 0.
+fn _vrcv_err(S, ti, verb, fp): i64 {
     if (_panic == 1) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
@@ -7038,13 +7051,44 @@ fn _vrcv_err(S, ti, verb): i64 {
     _err_head(S);
     PRSTR(": a value-form vector local is ");
     PRSTR(verb);
-    PRSTR(" only from a local of its type or a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) - got `");
+    PRSTR(" only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) or a dereference of a pointer to its type (`*p`) - got `");
     _vrcv_offender(S, ti);
-    PRSTR("`; through a fn pointer held in a variable, give the target an out-pointer\n");
+    if (fp == 1) { PRSTR("`; through a fn pointer held in a variable, give the target an out-pointer\n"); }
+    else { PRSTR("`\n"); }
     _err_excerpt(S);
     _had_error = 1;
     STI(S, sv);
     return 0;
+}
+# 1 = the source at token `ti` starts with a call `name(` naming no fn: FINDFN finds none, or only the entry an
+# earlier such call registered (no definition — `GFDS` 0, the prescan stamps every fn — and no code); not
+# `sizeof` / `mulh64`, intrinsics read by name. Before the parse or after it (the call registers the name).
+fn _vrcv_nofn(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var n = TOKVAL(S, ti);
+    if (_is_sizeof_word(S, n) == 1) { return 0; }
+    if (_is_mulh64_word(S, n) == 1) { return 0; }
+    var fi = FINDFN(S, n);
+    if (fi < 0) { return 1; }
+    if (GFDS(S, fi) != 0) { return 0; }
+    if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
+    return 1;
+}
+# 1 = the source [ti, e), inside any parentheses, is one whole call through fncallN / callptr (`_icall_open_at`)
+# whose callee is not written `&f` — a fn pointer held in a variable, the one source an out-pointer is the
+# answer for.
+fn _vrcv_fptr(S, ti, e): i64 {
+    var a = _ie_unparen(S, ti, e);
+    var o = _icall_open_at(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != _ie_pe) { return 0; }
+    if (TOKTYP(S, o + 1) != 27) { return 1; }
+    if (TOKTYP(S, o + 2) != 2) { return 1; }
+    var nx = TOKTYP(S, o + 3);
+    if (nx == 31) { return 0; }
+    if (nx == 11) { return 0; }
+    return 1;
 }
 # The refused source at token `ti`, as written: a name, a builtin (`callptr`, `load64`), a number,
 # `&x` / `*x`, `(...)`.
