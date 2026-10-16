@@ -4772,7 +4772,9 @@ output for `cyrius build`), a check's own output — removes the then-empty temp
 binary, stays, and so does the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
 forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt_err` / `wt_out` /
 `ls_remote` captures and the git they run) are
-stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running).
+stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running),
+and a distlib verify's copy of the pinned stdlib in the project, `dist/.dlverify-<pid>/` (with the
+round's `entry.cyr`), is removed too (6.7.13; before, a kill left the ~114-file mirror there).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
 shell) stays ignored. Through 6.7.11 a kill left all three
 names until `scripts/check.sh`'s reaper removed the dead pid's dir. SIGKILL cannot be caught, so

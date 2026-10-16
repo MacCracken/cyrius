@@ -13,13 +13,14 @@
 # as 1000+N — or falls through to the next line, which exits 91). 64 + a code is a CHILD-side
 # failure. SIGINT is not used: the cross-OS runner starts each test as a `&` job, which ignores
 # it, and the CLI keeps an inherited ignore (scenario C is that contract, on SIGHUP).
-# CHANGELOG [6.7.12]
+# CHANGELOG [6.7.12]; scenario F (a registered scratch tree) CHANGELOG [6.7.13]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
+include "lib/vec.cyr"
 #ifndef CYRIUS_TARGET_AGNOS
 include "cbt/sigclean.cyr"
 #endif
@@ -228,6 +229,44 @@ fn _ckh_child_d(): i64 {
     return 0;
 }
 
+# Scenario F (CHILD): a scratch TREE registered through the slot (the distlib verify's stdlib
+# mirror: two vecs, files and directories parents first) — a forked child that did not register
+# it leaves it alone; this process's SIGTERM removes it, files first, then directories deepest
+# first. A 0 entry (a push a signal caught half way) is skipped. CHANGELOG [6.7.13]
+fn _ckh_child_f(): i64 {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var files = vec_new();
+    var dirs = vec_new();
+    var d0 = _ckh_path("F", "");
+    var d1 = _ckh_path("F", "/lib");
+    var d2 = _ckh_path("F", "/lib/fam");
+    vec_push(dirs, d0);
+    if (xmkdir(d0, 448) != 0) { sys_exit(64 + 2); }
+    _cbt_sig_tree_set(files, dirs);
+    vec_push(dirs, d1);
+    if (xmkdir(d1, 448) != 0) { sys_exit(64 + 2); }
+    vec_push(dirs, d2);
+    if (xmkdir(d2, 448) != 0) { sys_exit(64 + 2); }
+    var fa = _ckh_path("F", "/lib/a.cyr");
+    var fb = _ckh_path("F", "/lib/fam/b.cyr");
+    vec_push(files, fa);
+    if (_ckh_touch(fa) != 0) { sys_exit(64 + 3); }
+    vec_push(files, 0);
+    vec_push(files, fb);
+    if (_ckh_touch(fb) != 0) { sys_exit(64 + 3); }
+    var c = sys_fork();
+    if (c == 0) {
+        sys_kill(sys_getpid(), 15);
+        sys_exit(91);
+    }
+    if (_ckh_wait(c) != 143) { sys_exit(64 + 11); }
+    if (file_exists(fb) != 1) { sys_exit(64 + 12); }   # the tree is the parent's
+    if (file_exists(d2) != 1) { sys_exit(64 + 12); }
+    sys_kill(sys_getpid(), 15);
+    sys_exit(91);
+    return 0;
+}
+
 # Run scenario `which` in a forked child; answer its status (see _ckh_wait).
 fn _ckh_run(which): i64 {
     var c = sys_fork();
@@ -236,6 +275,7 @@ fn _ckh_run(which): i64 {
         if (which == 2) { _ckh_child_b(); }
         if (which == 3) { _ckh_child_c(); }
         if (which == 4) { _ckh_child_d(); }
+        if (which == 6) { _ckh_child_f(); }
         sys_exit(90);
     }
     return _ckh_wait(c);
@@ -272,6 +312,14 @@ fn main(): i64 {
     i = 0;
     while (i < 16) { if (load64(&_cbt_sig_pids + i * 8) != 0) { seen = seen + 1; } i = i + 1; }
     assert_eq(seen, 0, "a tracked child is forgotten once untracked");
+    var tf = vec_new();
+    var td = vec_new();
+    _cbt_sig_tree_set(tf, td);
+    var mine = 0;
+    if (_cbt_sig_tree_files == tf && _cbt_sig_tree_owner == sys_getpid()) { mine = 1; }
+    assert_eq(mine, 1, "a scratch tree is registered to this process");
+    _cbt_sig_tree_set(0, 0);
+    assert_eq(_cbt_sig_tree_files, 0, "(0, 0) clears the scratch tree");
     #endif
     #ifdef CYRIUS_TARGET_WIN
     assert_eq(_cbt_sig_install(), 0, "the install is inert on Windows (no POSIX signals)");
@@ -314,6 +362,17 @@ fn main(): i64 {
     sys_unlink(_ckh_path("D", "/cc_err"));
     sys_unlink(_ckh_path("D", "/cpp_4"));
     xrmdir(_ckh_path("D", ""));
+    # F: a registered scratch tree
+    var rf = _ckh_run(6);
+    assert_eq(rf, 143, "F: SIGTERM -> 128+15, a forked child having spared the tree (64+11 / 64+12 if not)");
+    assert_eq(file_exists(_ckh_path("F", "/lib/fam/b.cyr")), 0, "F: the tree's files are unlinked");
+    assert_eq(file_exists(_ckh_path("F", "/lib/a.cyr")), 0, "F: …every one");
+    assert_eq(file_exists(_ckh_path("F", "")), 0, "F: and its directories removed, deepest first");
+    sys_unlink(_ckh_path("F", "/lib/fam/b.cyr"));
+    sys_unlink(_ckh_path("F", "/lib/a.cyr"));
+    xrmdir(_ckh_path("F", "/lib/fam"));
+    xrmdir(_ckh_path("F", "/lib"));
+    xrmdir(_ckh_path("F", ""));
     #endif
     #endif
     #endif

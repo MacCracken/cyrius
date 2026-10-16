@@ -68,6 +68,8 @@
 #     again (the 6.7.13-open CLI) -> 4 RED (capacity's dir and compiler, the --local git row's dir
 #     and git); their anti-vacuous rows stay GREEN. `_dep_wt_run`'s stdout capture untracked again
 #     (that commit's CLI) -> 2 RED (the rev-parse and ls-remote rows' dirs, holding wt_out / ls_remote).
+#     The distlib mirror's slot never set (`_cbt_sig_tree_set` dropped from `_distlib_mirror_make`), or
+#     the round's entry.cyr untracked -> 1 RED each (the distlib kill row's dist/.dlverify-<pid>).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -642,10 +644,16 @@ if [ -d "$D7/home/versions/$V7/lib" ]; then
     nlive=$(ls -A "$TB/cyrius-$k7p" 2>/dev/null | wc -l | tr -d ' ')
     check "distlib SIGTERM mid-round — the verify's six compiles are running, their scratch in flight (anti-vacuous: $nlive names)" yes \
         "$([ "$(wc -l 2>/dev/null < "$T/d7k.cc" || echo 0)" -ge 6 ] && [ "$nlive" -ge 12 ] && echo yes || echo no)"
+    nmir=$(find "$D7K/p/dist" -path '*/.dlverify-*' -type f 2>/dev/null | wc -l | tr -d ' ')
+    check "  …its stdlib mirror is in the project's dist/, entry.cyr beside it (anti-vacuous: $nmir files)" yes \
+        "$([ "$nmir" -ge 20 ] && [ -f "$D7K/p/dist/.dlverify-$k7p/entry.cyr" ] && echo yes || echo no)"
     [ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
     { wait "$k7b"; } 2>/dev/null || true
     check "  …the CLI exits 143" 143 "$(cat "$T/k7-dl.rc" 2>/dev/null || echo none)"
     check "  …its private dir is gone (no cpp_ / dlverify* left by the parent or a child)" 0 "$(k7_dirs dl "$TB")"
+    # 6.7.13: the mirror is a scratch TREE the handler removes (cbt/sigclean.cyr `_cbt_sig_tree_set`);
+    # until then a kill left all of it (issues/2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md).
+    check "  …and no dist/.dlverify-<pid> mirror is left in the project" 0 "$(ls -d "$D7K/p/dist"/.dlverify-* 2>/dev/null | wc -l | tr -d ' ')"
     nrun=0
     for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null; }; done
     check "  …every target's compiler is stopped" 0 "$nrun"

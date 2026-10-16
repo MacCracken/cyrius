@@ -3636,13 +3636,15 @@ fn _distlib_vec_has_n(v, n, name): i64 {
 var _dl_mirror_files = 0;   # vec of cstr: every file the mirror holds (removed by _distlib_mirror_drop)
 var _dl_mirror_dirs = 0;    # vec of cstr: its directories, parents first
 
-# Copy `src` to `dst` whole. 0, or -1 (read or write failed).
+# Copy `src` to `dst` whole. 0, or -1 (read or write failed). `dst` is recorded BEFORE the write
+# creates it, so the kill handler's walk and the drop see every file that can exist (a short
+# write's partial file included). CHANGELOG [6.7.13]
 fn _distlib_copy_whole(src, dst): i64 {
     var n = 0;
     var b = file_read_whole(src, &n);
     if (b == 0) { return 0 - 1; }
-    if (file_write_all(dst, b, n) != n) { return 0 - 1; }
     vec_push(_dl_mirror_files, dst);
+    if (file_write_all(dst, b, n) != n) { return 0 - 1; }
     return 0;
 }
 
@@ -3700,6 +3702,9 @@ fn _distlib_mirror_make(root): i64 {
         _err_ctx("distlib: sidecar verify cannot create its scratch directory (a stale one? remove it)", m);
         return 0;
     }
+    # The kill handler removes the mirror too: a SIGTERM mid-verify left all of it in the project's
+    # dist/. The drop clears the slot. CHANGELOG [6.7.13]
+    _cbt_sig_tree_set(_dl_mirror_files, _dl_mirror_dirs);
     if (_distlib_mirror_copy_dir(root, _distlib_join(m, "lib"), 0) != 0) {
         _err_ctx("distlib: sidecar verify cannot mirror the stdlib snapshot", root);
         _distlib_mirror_drop();
@@ -3715,6 +3720,7 @@ fn _distlib_mirror_drop(): i64 {
     while (i < vec_len(_dl_mirror_files)) { xunlink(vec_get(_dl_mirror_files, i)); i = i + 1; }
     var d = vec_len(_dl_mirror_dirs);
     while (d > 0) { d = d - 1; xrmdir(vec_get(_dl_mirror_dirs, d)); }
+    _cbt_sig_tree_set(0, 0);
     _dl_mirror_files = 0;
     _dl_mirror_dirs = 0;
     return 0;
@@ -4399,8 +4405,12 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         }
         var entry = _distlib_join(m, "entry.cyr");
         var esrc = str_data(str_builder_build(esb));
+        # In the mirror's root, so the kill handler unlinks it before it removes the mirror (a
+        # name; the tree walk only knows the snapshot copy). CHANGELOG [6.7.13]
+        _cbt_scratch_track(entry);
         if (file_write_all(entry, esrc, strlen(esrc)) < 0) {
             xunlink(entry);
+            _cbt_scratch_untrack(entry);
             return _distlib_verify_fail("distlib: sidecar verify cannot write its compile unit", entry);
         }
         # One compile per target; `masks[i]` says which targets left `names[i]` undefined.
@@ -4408,6 +4418,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         var masks = vec_new();
         var vt = _distlib_verify_targets(entry, out_path, names, masks);
         xunlink(entry);
+        _cbt_scratch_untrack(entry);
         if (vt != 0) { return 0 - 1; }
         if (vec_len(names) == 0) { return added_total; }
         var all_mask = (1 << _DL_TGT_N) - 1;

@@ -28,6 +28,9 @@ var _cbt_sig_fwd[16];        # per child: 1 = a forked copy of this CLI, 0 = an 
 var _cbt_sig_owner = 0;      # the pid whose entries the tables hold
 var _cbt_sig_dir = 0;        # the private temp dir (`_cbt_tmpdir`), 0 when there is none
 var _cbt_sig_dir_owner = 0;  # the pid that created it
+var _cbt_sig_tree_files = 0; # a scratch TREE (the distlib verify's stdlib mirror): a vec of file cstrs
+var _cbt_sig_tree_dirs = 0;  # …and a vec of its directory cstrs, parents first (0 = no tree)
+var _cbt_sig_tree_owner = 0; # the pid that registered it
 
 # Make the tables this process's own (see above).
 fn _cbt_sig_claim(): i64 {
@@ -46,6 +49,49 @@ fn _cbt_sig_claim(): i64 {
 fn _cbt_sig_dir_set(d): i64 {
     if (d != 0) { _cbt_sig_dir_owner = sys_getpid(); }
     _cbt_sig_dir = d;
+    return 0;
+}
+
+# Register a scratch TREE too large for the name table — the distlib verify's stdlib mirror,
+# ~114 files under the project's `dist/` — as the two vecs its maker fills: `files` (every file)
+# and `dirs` (every directory, parents first). The handler unlinks the files, then removes the
+# directories deepest first, reading the vecs with plain loads (it never grows or frees them;
+# the arena never frees a vec's old buffer). (0, 0) clears it. A forked child inherits the slot,
+# and the owner check leaves the tree to the process that registered it. CHANGELOG [6.7.13]
+fn _cbt_sig_tree_set(files, dirs): i64 {
+    if (files == 0) {
+        _cbt_sig_tree_files = 0;
+        _cbt_sig_tree_dirs = 0;
+        return 0;
+    }
+    _cbt_sig_tree_owner = sys_getpid();
+    _cbt_sig_tree_dirs = dirs;
+    _cbt_sig_tree_files = files;
+    return 0;
+}
+
+# The handler's tree removal (see `_cbt_sig_tree_set`): a vec is { data, len, cap }; a slot a
+# signal caught mid-push may still read 0, and is skipped.
+fn _cbt_sig_tree_drop(): i64 {
+    var fv = _cbt_sig_tree_files;
+    var dv = _cbt_sig_tree_dirs;
+    if (fv == 0) { return 0; }
+    var fd = load64(fv);
+    var nf = load64(fv + 8);
+    var i = 0;
+    while (i < nf) {
+        var p = load64(fd + i * 8);
+        if (p != 0) { sys_unlink(p); }
+        i = i + 1;
+    }
+    if (dv == 0) { return 0; }
+    var dd = load64(dv);
+    var d = load64(dv + 8);
+    while (d > 0) {
+        d = d - 1;
+        var q = load64(dd + d * 8);
+        if (q != 0) { xrmdir(q); }
+    }
     return 0;
 }
 
@@ -133,7 +179,8 @@ fn _cbt_sig_exit(code, me): i64 {
 }
 
 # What every handler does for signal `n`: children first (one still running could create a name
-# after it was unlinked), then the names, then the directory, then exit 128+N.
+# after it was unlinked, or still be compiling from the tree), then the names, then the scratch
+# tree, then the directory, then exit 128+N.
 fn _cbt_sig_fire(n): i64 {
     var me = sys_getpid();
     if (_cbt_sig_owner == me) {
@@ -150,6 +197,7 @@ fn _cbt_sig_fire(n): i64 {
             i = i + 1;
         }
     }
+    if (_cbt_sig_tree_owner == me) { _cbt_sig_tree_drop(); }
     _cbt_sig_exit(128 + n, me);
     return 0;
 }
