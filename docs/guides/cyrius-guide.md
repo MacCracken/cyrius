@@ -1538,6 +1538,19 @@ same (6.7.13; the user's decision D13, 2026-10-15): `var x: i64 = b.mk();` and `
 the operator fn returning a struct over 8 bytes are refused with the same words, naming that fn (a
 method by its compiler name, `Q_mk`). Through 6.7.12 they kept the struct's first word, narrowed
 (`y` held 77 of 333), and a `: bool` was refused as *not a bool*.
+A pointer annotation names no struct value either (6.7.13; the user's decision D14, 2026-10-15):
+inside a fn, `var x: *P2 = mkp();` — or `*i64`, `*u8`, any `*T` — with `mkp` returning a struct over
+8 bytes is refused, directly, in parentheses, through a generic, a known `&f`, a method or an
+operator:
+
+```
+error: cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare 'x: P2' and take `&x`
+```
+
+Through 6.7.12 it compiled with only *assigning non-pointer to typed pointer* and stored the struct's
+first word as the pointer (`x.b` faulted; a `*i64` held 333). A struct of 8 bytes or less still
+stores its one word, with that warning, as a scalar keeps it; `x = mkp();` into a `*P2` local copies
+through it, unchanged.
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or

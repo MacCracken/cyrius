@@ -7100,6 +7100,31 @@ fn _rcv_ann_tail(S, pscale, noff): i64 {
     PRSTR("`\n");
     return 0;
 }
+# ⛔ 6.7.13 — A BY-VALUE STRUCT RESULT INTO A POINTER ANNOTATION (D14, the user, 2026-10-15). `var x: *P2 = mkp();` with
+# mkp returning a struct over 8 B stored the call's value as the pointer — rax, the struct's first word (the hidden
+# result pointer's target was never set up over 16 B) — under only the typed-pointer warning, so `x.b` dereferenced
+# 333: SIGSEGV on x86_64 / aarch64, a guest fault on cx, exit 5 on PE; `var x: *i64 = mkp();` held 333 as an address.
+# PARSE_VAR's receive is gated on `pscale <= 0`, so a `*T` (pscale > 0) never reached D24. Refused by name at the
+# call, in a fn, for every `*T`: "cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare
+# 'x: P2' and take `&x`". The whole initialiser, inside any parentheses (`_rcv_peel` judged as for a scalar), is one
+# free call (a generic's instance, `_gen_resolve_call`); the known `&f` call is `_scv_icall_ann`'s and a method /
+# operator result `_scv_rec_ann`'s. 8 B or less (the struct's word, as a scalar keeps it) and a `Str` handle keep
+# today's word and warning. The refused line says no typed-pointer warning (`_ptr_refd_ti`). The cursor is the
+# declaration's `=`. 1 = refused. CHANGELOG [6.7.13]
+fn _rcv_ptr_ann(S, pscale, ann, noff): i64 {
+    if (pscale <= 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var k = _rcv_peel(S, GTI(S) + 1, 0);
+    var c = GTI(S) + 1 + k;
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (_rcv_iscall(S, c, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    var r = _rcv_ann_refuse(S, c, TOKVAL(S, c), GFRS(S, fi), pscale, ann, noff);
+    if (r == 1) { _ptr_refd_ti = ann; }
+    return r;
+}
 # ⛔ 6.7.12 — D24 REACHES A KNOWN FN-POINTER CALL (D28, the user, 2026-10-15). `var n: i64 = fncall1(&mk3, 5);` and
 # `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries mk3's struct result (6.7.11, ARG-1) — into an
 # annotation that names no struct read P3's first field (n = 5) where `var n: i64 = mk3(5);` is refused (D24). Now
@@ -7111,7 +7136,8 @@ fn _rcv_ann_tail(S, pscale, noff): i64 {
 # CHANGELOG [6.7.12]
 # 6.7.13: and at top level (6.7.12's D28 "D24 at every path"; `_scv_gcall_ann`). CHANGELOG [6.7.13]
 fn _scv_icall_ann(S, pscale): i64 {
-    if (pscale != 0) { return 0; }
+    if (pscale < 0) { return 0; }
+    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14 (6.7.13): a `*T` in a fn
     var st = GTI(S);
     if (TOKTYP(S, st - 1) != 4) { return 0; }
     var c = st;
@@ -7129,9 +7155,11 @@ fn _scv_icall_ann(S, pscale): i64 {
     var ann = _scv_ann_at(S, st - 1);
     if (ann <= 0) { return 0; }
     STI(S, st - 1);
-    var r = _rcv_scalar_ann(S, _icall_fti(S, c), sid, 0, ann, _scv_ann_nm);
+    var fti = _icall_fti(S, c);
+    var r = _rcv_ann_refuse(S, fti, TOKVAL(S, fti), sid, pscale, ann, _scv_ann_nm);
     STI(S, st);
     if (r == 1) { _tn_once(S, st); }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
     return r;
 }
 # ⛔ 6.7.13 — D24 AT TOP LEVEL (6.7.12's D28, the user, 2026-10-15: "D24 at every path", binding here).
@@ -7191,14 +7219,15 @@ fn _scv_top_ann(S, pscale): i64 {
 # as its annotation says, as after the free call's refusal. 1 = refused. CHANGELOG [6.7.13]
 var _scv_refd = 0 - 1;   # the initialiser's first token of the last declaration `_scv_rec_ann` refused
 fn _scv_rec_ann(S, pscale, start): i64 {
-    if (pscale != 0) { return 0; }
+    if (pscale < 0) { return 0; }
+    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14: a `*T` in a fn
     if (_scv_err == 1) { return 0; }
     var t = _sc_whole(S, start);
     if (t == 0 - 2) { return 0; }
     if (t == 0 - 3) { return 0; }
     var ann = _scv_ann_at(S, start - 1);
     if (ann <= 0) { return 0; }
-    if (TOKTYP(S, ann) == 8) { return 0; }   # a `*T` annotation (the declaration zone's pscale is 0)
+    if (pscale == 0) { if (TOKTYP(S, ann) == 8) { return 0; } }   # the declaration zone's `*T` (its pscale is 0)
     if (_rcv_ann_hit(S, _sc_sid, ann) == 0) { return 0; }
     if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
     var eq = GTI(S);
@@ -7207,6 +7236,7 @@ fn _scv_rec_ann(S, pscale, start): i64 {
     STI(S, eq);
     if (r == 1) { _tn_once(S, start); }
     if (r == 1) { _scv_refd = start; }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
     return r;
 }
 # The annotation of the declaration `var NAME : <ann> =` whose `=` is token `eq`: its first token, `_scv_ann_nm`
@@ -7909,6 +7939,7 @@ fn PARSE_VAR(S): i64 {
     var asv_try = 0;
     var asv_pair = 0;
     var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
+    _rcv_ptr_ann(S, pscale, ann_ti, noff);   # 6.7.13 (D14): `var x: *P2 = mkp();` refused by name
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_pk = _rcv_peel(S, GTI(S) + 1, pscale);   # 6.7.11: `var x = (mk());`
         var _look_ti = GTI(S) + 1 + _look_pk;
