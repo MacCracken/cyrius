@@ -43,6 +43,8 @@
 #   Y10-Y12 refused by name, once: `rd(mkv4(..))` (a call result of another vector type), `rd(*pq)` (a `*f32v4`
 #      into `*f64v2`), `ri(b)` (a vector local into `*i64`); Y13 a top-level `rd(mkv(..))` (no frame for the
 #      temp); Yw2 the Y10-Y12 refusals on PE
+#   Y13a / Y13c / Yw2d Y13 on aarch64, cx and PE (6.7.13, D40 — the user 2026-10-15: keep the top-level
+#      refusal; 6.7.11 compiled it to a fault, 139 on x86_64 and aarch64)
 #   T  also carries the D27 rows (`sp_vrows`)
 #
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
@@ -53,6 +55,8 @@
 #   M6  `_vec_kind_err` reports nothing                    -> RED 4: R5 x86 / PE (compiled), Y12 Yw2c
 #   M7  `_ptr_vclass` without f32v8                        -> RED 14: R5 (a third line: `r8(e)` refused as a
 #                                                             pointer of another kind), R5e on every leg, T
+#   (6.7.13, D40) `_sarg_vec_call` without its top-level   -> RED 4: Y13 Y13a Y13c Yw2d (compiled)
+#       arm (`_svc_toplevel_err`)
 #
 # MUTATION LEDGER (2026-10-13; a scratch copy of the tree with the one change, this gate run from that
 # copy with CYCC=<its 2-stage mutant>; measured):
@@ -176,15 +180,19 @@ syscall(60, rc);
 EOF
 exit_rows R3 "$D/r3.cyr" 84 "42 + 42"
 
-# refused <name> <what> <body> [pe|x86 [frag]]: compile fails with exactly one error line holding the
+# refused <name> <what> <body> [pe|x86|a64|cx [frag]]: compile fails with exactly one error line holding the
 # refusal (`FRAG`, the vector-type one, unless a fragment is given), and no binary
 FRAG="to a parameter of a different vector type in a call to"
 refused() {
     printf '%b' "$3" > "$D/$1.cyr"
     rc=0
     fr=${5:-$FRAG}
-    if [ "${4:-}" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
-    else timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?; fi
+    case "${4:-}" in
+        pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        a64) timeout 60 "$A64" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        cx)  timeout 60 "$CXCC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        *)   timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+    esac
     n=$(grep -c '^error' "$D/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$2: compiled (rc 0) — want \".. $fr ..\""
     elif [ "$n" -ne 1 ]; then bad "$2: $n error lines, want exactly 1: $(grep '^error' "$D/$1.err" | head -3 | tr '\n' '|')"
@@ -236,11 +244,18 @@ echo "Y10-Y13. refused by name, once"
 refused Y10 "Y10 a call result of another vector type (f64v4 into *f64v2)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv4(a): f64v4 { var v: f64v4; return v; }\nfn main(): i64 { return rd(mkv4(1)) + 1; }\n${E}"
 refused Y11 "Y11 a dereference of another vector type (*f32v4 into *f64v2)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pq: *f32v4 = &f; return rd(*pq) + 1; }\n${E}"
 refused Y12 "Y12 a vector local into *i64" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" x86 "$KFRAG"
-refused Y13 "Y13 a top-level rd(mkv(..)) (no frame for the temp)" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv(a, b): f64v2 { return f64v2_make(a, b); }\nvar r1 = rd(mkv(42, 7));\nsyscall(60, r1);\n" x86 "returns a vector by value, and a vector result needs storage in a fn's frame"
+Y13B="${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv(a, b): f64v2 { return f64v2_make(a, b); }\nvar r1 = rd(mkv(42, 7));\nsyscall(60, r1);\n"
+Y13F="returns a vector by value, and a vector result needs storage in a fn's frame"
+refused Y13 "Y13 a top-level rd(mkv(..)) (no frame for the temp)" "$Y13B" x86 "$Y13F"
+# D40 (the user, 2026-10-15: keep the top-level refusal): the same refusal on aarch64 and cx (6.7.11's
+# aarch64 compiled it to a fault, 139 under qemu; its x86_64 too). CHANGELOG [6.7.13]
+[ -n "$A64" ] && refused Y13a "Y13 on aarch64" "$Y13B" a64 "$Y13F"
+[ -n "$CXCC" ] && refused Y13c "Y13 on cx" "$Y13B" cx "$Y13F"
 if [ "$WINE" = 1 ]; then
     refused Yw2a "Yw2 Y10 on PE" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn mkv4(a): f64v4 { var v: f64v4; return v; }\nfn main(): i64 { return rd(mkv4(1)) + 1; }\n${E}" pe
     refused Yw2b "Yw2 Y11 on PE" "${H}fn rd(p: *f64v2): i64 { return load64(p); }\nfn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pq: *f32v4 = &f; return rd(*pq) + 1; }\n${E}" pe
     refused Yw2c "Yw2 Y12 on PE" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" pe "$KFRAG"
+    refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
 
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
