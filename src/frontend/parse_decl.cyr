@@ -1170,7 +1170,7 @@ fn _fsc_psrc(S, ft, fnoff, term): i64 {
     if (_dx_plain(S, ps) == 0) { return 0; }
     if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
     PCMPE(S);
-    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ft - 1)) { return 2; }
+    if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, ft - 1)) == 0) { return 2; }   # 6.7.13: a zero-size T steps 8
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     _fsc_hsrc(h);
@@ -2353,6 +2353,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
     var fst_sz = FIELDSZ(S, ft);
+    if (fst_sz == 0) { return _fst_end(S, term); }   # 6.7.13: a zero-size struct field stores no byte
     if (_fst_odd_sz(fst_sz) == 1) {
         _fst_odd(S, idx, sid, off, fst_sz);
         return _fst_end(S, term);

@@ -1620,7 +1620,9 @@ pointer) still stores one word, capped at the field's size. An odd-sized struct 
 or 7 bytes, such as `struct Odd { a: i8; b: i16; }`) gets exactly that many bytes from any
 source, so the fields after it are never touched. Before v6.6.10 a method, an operator, a
 top-level call or an integer stored 8 bytes into such a field, silently overwriting its
-neighbours.
+neighbours. A ZERO-SIZE struct field (`struct E { }`, `struct O { s: E; n; }`) takes no byte from any
+source (6.7.13): `o.s = GP`, `o.s = gp()`, `o.s = (GP)` (a `*E`), `o.s = mk()` and `o.s = 5` leave `o.n`
+as it was. Through 6.7.12 each of those stored an 8-byte word over the field's neighbour.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
@@ -1923,7 +1925,9 @@ dereference reads exactly the struct's bytes wherever it is a value — a global
 the declaration zone or after it), a by-value argument, `return *p`, an operator's operand — and its
 word's padding is 0 (6.7.11): through 6.7.10 it loaded the whole word at `p`, so the bytes after the
 object filled the padding (`load8(&G + 3)` of a 3-byte `G` read the next byte) and an object ending
-a mapping faulted.
+a mapping faulted. A dereference of a ZERO-SIZE struct reads no byte (6.7.13): as a value its word is 0,
+into a `*S` parameter it passes the pointer, and `*p + l` dispatches `S_add` as at every other size;
+through 6.7.12 it loaded the 8 bytes at `p` (a fault when the object ended a mapping).
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,
