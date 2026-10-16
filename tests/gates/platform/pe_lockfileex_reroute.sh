@@ -26,7 +26,10 @@
 #           -1 is gone), and _xflock_win locks the sentinel (0x7FFFFFFFFFFFFFFF, length 1) through
 #           its helpers: _xflock_win_lock puts the byte's offset in the OVERLAPPED and calls 0xF04C at
 #           argc 7, _xflock_win_unlock 0xF04D at argc 6, reading GetLastError (0xF04B) for
-#           ERROR_LOCK_VIOLATION (33) and ERROR_NOT_LOCKED (158).
+#           ERROR_LOCK_VIOLATION (33) and ERROR_NOT_LOCKED (158). _xflock_win_unlock's answers are
+#           pinned (6.7.13): 0 for a byte this handle held, 1 for ERROR_NOT_LOCKED — axis 6's
+#           re-lock probe reads that 0 as "held in this mode", so a helper answering otherwise
+#           silently restores 6.7.12's unlock-first re-lock while axis 6 still sees its call site.
 #   axis 5  BEHAVIOUR under wine (skipped without wine — NOT hardware; the cass cross-OS leg of
 #           the release gate runs the same .tcyr): the filed repro exits 11 (xflock LOCK_EX -> 0;
 #           10 before), tests/tcyr/crossos/xflock_two_handle.tcyr's PE build reports 0 failed
@@ -41,8 +44,9 @@
 #           and returns 0 from that branch BEFORE its first _xflock_win_release; it records the
 #           mode only after the sentinel is granted; _xflock_win_release drops both mode bytes
 #           before the sentinel. ⚠ wine shows the 6.7.12 gap only on some runs (the threaded rows
-#           of xflock_relock_keeps_lock.tcyr failed 1 of 4 there), so this static axis is the
-#           deterministic local guard; cass failed those rows on every run (3 rows, 4 of 4).
+#           of xflock_relock_keeps_lock.tcyr failed 1 of 4 there), so this static axis, with axis
+#           4's pin on _xflock_win_unlock's answers, is the deterministic local guard; cass failed
+#           those rows on every run (3 rows, 4 of 4).
 #
 # MUTATION LEDGER — every mutant BUILT AND RUN 2026-10-15 (6.7.12 windows lane, W1; x86_64 Linux
 # + wine; CYCC=<mutant cycc> for the compiler rows):
@@ -67,6 +71,14 @@
 #                                                                LOCK_EX) — so the wine runs are
 #                                                                bounded now (exit 124)
 #   _xflock_win_release drops the sentinel before the mode bytes axis 6 FAIL
+# 6.7.13 (stdlib lane, review fix) — BUILT AND RUN 2026-10-16 (x86_64 Linux + wine):
+#   _xflock_win_unlock answers 1 for a held byte                 axis 4 FAIL (was green before this
+#                                                                row: the probe never fires, every
+#                                                                re-lock takes 6.7.12's unlock-first
+#                                                                path; axis 5 under wine did not
+#                                                                catch it either)
+#   _xflock_win_unlock answers 0 for ERROR_NOT_LOCKED (158)      axis 4 FAIL; axis 5 FAILS by HANGING
+#                                                                (an unheld mode byte reads as held)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -174,8 +186,13 @@ else
         || bad "axis 4: _xflock_win_unlock does not UnlockFileEx one byte (0xF04D, argc 6)"
     printf '%s\n' "$lbody" | grep -q 'e == 33' \
         || bad "axis 4: _xflock_win_lock does not map ERROR_LOCK_VIOLATION (33) to -EAGAIN"
-    printf '%s\n' "$ubody" | grep -q '== 158' \
-        || bad "axis 4: _xflock_win_unlock does not treat ERROR_NOT_LOCKED (158) as nothing held"
+    printf '%s\n' "$ubody" | grep -q '== 158) { return 1; }' \
+        || bad "axis 4: _xflock_win_unlock does not answer 1 for ERROR_NOT_LOCKED (158) (nothing held must not read as held)"
+    # 6.7.13: the re-lock probe (axis 6) reads this helper's 0 as "this handle held the byte"; a
+    # helper that answers anything else for a granted unlock never fires the probe, and every
+    # re-lock silently goes back to 6.7.12's unlock-first gap. CHANGELOG [6.7.13]
+    printf '%s\n' "$ubody" | grep -q 'if (u > 0) { return 0; }' \
+        || bad "axis 4: _xflock_win_unlock does not answer 0 for a lock this handle held (the re-lock probe would never fire: 6.7.12's unlock-first re-lock)"
     [ "$fail" = "$f4" ] && ok
 fi
 
