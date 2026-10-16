@@ -1648,6 +1648,21 @@ call), a method call, `*p`. Through a fn pointer held in a variable, give the ta
 out-pointer and have it store the lanes — `var v: f64v2 = mkv(0, 0); var ig = callptr(fp, &v, 41,
 7);` — which carries every lane on every target.
 
+**An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
+`mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
+`mkg(41, 7)` is: `var v: f64v2 = mkg<i64>(41, 7);`, `v = mkg<i64>(41, 7);`, an untyped `var v =
+mkg<i64>(41, 7);` (an `f64v2` local), `(mkg<i64>(41, 7))`, `return mkg<i64>(a, b);` from a `:
+f64v2` fn and `rd(mkg<i64>(42, 7))` into a `p: *f64v2` parameter all carry the vector. Into a
+local of another type it is refused as any by-name call is (`vector return type does not match
+the declared type` / `.. the assigned variable`), a scalar local (`var x: i64 = ..`, `x = ..`)
+included. ⚠ Through 6.7.12 every receive tested `name(`: the assignment and the return were
+refused, and the declaration silently dropped its annotation — `v` was one word, so
+`load64(&v) * 10 + load64(&v + 8)` read 0 on x86_64 and aarch64, 154 on cx and 195 on Windows,
+where 161 is right — and `var v: f64v4 = mkg<i64>(..)`, `var x: i64 = mkg<i64>(..)` and `x =
+mkg<i64>(..)` compiled. A
+vector annotation is now never dropped: `var v: f64v2 = idg<i64>(5)`, a generic returning a
+scalar, meets the refusal above.
+
 A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
 7);`, an untyped `var x = callptr(&mkv, ..)`, an argument to an untyped parameter, a method call
 `s.mv(..)`, an operator fn declared to return a vector, at top level too — runs, and its vector is

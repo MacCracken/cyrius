@@ -45,6 +45,30 @@ fn mk4(): f64v4 {
     return r;
 }
 
+# --- E (6.7.13, issues/2026-10-14-explicit-instance-vector-result-not-received.md): an EXPLICIT-INSTANCE generic call
+#     `g<T>(..)` is a by-name call declared to return its vector. Every receive tested `IDENT (`, so the assignment
+#     was refused, the declaration dropped its annotation (a one-word local: the high lanes garbage, silently) and
+#     `return g<T>(..)` was refused. Raw lane bits, each lane distinct; `<i32>` is a real instance, `<i64>` the
+#     base. ---
+fn ge2<T>(x: T, y: T): f64v2 {
+    var v: f64v2;
+    store64(&v, x); store64(&v + 8, y);
+    return v;
+}
+fn ge4<T>(x: T, y: T): f64v4 {
+    var v: f64v4;
+    store64(&v, x); store64(&v + 8, y); store64(&v + 16, x + 100); store64(&v + 24, y + 100);
+    return v;
+}
+fn gef<T>(x: T, y: T): f32v4 {
+    var v: f32v4;
+    store32(&v, x); store32(&v + 4, y); store32(&v + 8, x + 100); store32(&v + 12, y + 100);
+    return v;
+}
+fn re2(x, y): f64v2 { return ge2<i64>(x, y); }
+fn re4(x, y): f64v4 { return ge4<i64>(x, y); }
+fn ref4(x, y): f32v4 { return gef<i32>(x, y); }
+
 fn main(): i64 {
     var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
     var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
@@ -126,6 +150,44 @@ fn main(): i64 {
     assert_eq(f64_to(load64(&a + 8)), 20, "operand a lane1 intact");
     assert_eq(f64_to(load64(&h + 0)), 1, "operand h lane0 intact");
     assert_eq(f64_to(load64(&h + 24)), 4, "operand h lane3 intact");
+
+    # --- E: the explicit instance, every binding form (6.7.13) ---
+    test_group("E explicit instance: g<T>(..) into a value-form vector local");
+    var e2: f64v2 = ge2<i64>(41, 7);
+    assert_eq(load64(&e2), 41, "declared f64v2 from ge2<i64> lane0");
+    assert_eq(load64(&e2 + 8), 7, "declared f64v2 from ge2<i64> lane1");
+    var a2: f64v2;
+    a2 = ge2<i64>(3, 9);
+    assert_eq(load64(&a2), 3, "assigned f64v2 from ge2<i64> lane0");
+    assert_eq(load64(&a2 + 8), 9, "assigned f64v2 from ge2<i64> lane1");
+    var u2 = ge2<i32>(5, 6);
+    assert_eq(load64(&u2), 5, "untyped from ge2<i32> lane0");
+    assert_eq(load64(&u2 + 8), 6, "untyped from ge2<i32> lane1");
+    var e4: f64v4 = ge4<i64>(1, 2);
+    assert_eq(load64(&e4), 1, "declared f64v4 from ge4<i64> lane0");
+    assert_eq(load64(&e4 + 8), 2, "declared f64v4 from ge4<i64> lane1");
+    assert_eq(load64(&e4 + 16), 101, "declared f64v4 from ge4<i64> lane2");
+    assert_eq(load64(&e4 + 24), 102, "declared f64v4 from ge4<i64> lane3");
+    e4 = ge4<i32>(3, 4);
+    assert_eq(load64(&e4), 3, "assigned f64v4 from ge4<i32> lane0");
+    assert_eq(load64(&e4 + 24), 104, "assigned f64v4 from ge4<i32> lane3");
+    var ef: f32v4 = gef<i32>(1, 2);
+    assert_eq(load32(&ef), 1, "declared f32v4 from gef<i32> lane0");
+    assert_eq(load32(&ef + 4), 2, "declared f32v4 from gef<i32> lane1");
+    assert_eq(load32(&ef + 8), 101, "declared f32v4 from gef<i32> lane2");
+    assert_eq(load32(&ef + 12), 102, "declared f32v4 from gef<i32> lane3");
+    ef = gef<i64>(7, 8);
+    assert_eq(load32(&ef), 7, "assigned f32v4 from gef<i64> lane0");
+    assert_eq(load32(&ef + 12), 108, "assigned f32v4 from gef<i64> lane3");
+    var r2: f64v2 = re2(11, 12);
+    assert_eq(load64(&r2), 11, "return ge2<i64>(..) from a f64v2 fn lane0");
+    assert_eq(load64(&r2 + 8), 12, "return ge2<i64>(..) from a f64v2 fn lane1");
+    var r4: f64v4 = re4(5, 6);
+    assert_eq(load64(&r4), 5, "return ge4<i64>(..) from a f64v4 fn lane0");
+    assert_eq(load64(&r4 + 24), 106, "return ge4<i64>(..) from a f64v4 fn lane3");
+    var rf: f32v4 = ref4(9, 10);
+    assert_eq(load32(&rf), 9, "return gef<i32>(..) from a f32v4 fn lane0");
+    assert_eq(load32(&rf + 12), 110, "return gef<i32>(..) from a f32v4 fn lane3");
 
     var r = assert_summary();
     return r;

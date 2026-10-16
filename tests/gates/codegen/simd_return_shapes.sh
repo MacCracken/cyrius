@@ -106,6 +106,39 @@
 #   MV5 `_vrcv_emit` without the register-pair store       -> RED V1-V8 on host / cx / aarch64 (1); win64 green (no pair)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): A7 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr (6.7.13: its producer says `return p;`, as here).
+#
+# ⛔ 6.7.13 (the vectors lane, issues/2026-10-14-explicit-instance-vector-result-not-received.md) — AN
+# EXPLICIT-INSTANCE GENERIC CALL `mkg<i64>(41, 7)` IS A BY-NAME CALL DECLARED TO RETURN ITS VECTOR. Every receive tested `IDENT (`: the
+# assignment `v = mkg<i64>(41, 7);` was refused (".. got `mkg`"), the declaration `var v: f64v2 = mkg<i64>(..)` lost its
+# annotation (PARSE_VAR's struct lookahead reset it: `_gen_decl_check` answered 0 for a vector), so the local was one
+# word — `lanes(v)` refused "value-form SIMD arg must be a 16-byte vector" (PE: exit 5), `load64(&v + 8)` read garbage
+# silently (x86_64 / IR=3 / aarch64 0, cx 154, PE 195; 161 is right) — and `return mkg<i64>(a, b)` from a `: f64v2` fn
+# was refused. One recogniser (`_vcall_fi`: `_gcall_open` + `_gen_resolve_call`) now serves the receives, the
+# declared-type check, the return rule, PE's own call (`_vcall_enter`) and D27's `*V` argument (`_svc_rs`); a vector
+# annotation is never reset. Rows E (accepted; x86_64 / IR=3 / cx / aarch64 / PE) and Z (refused once, by name):
+#   E1 the filed repro verbatim (161)   E2 the declaration with lanes(v)   E3 the declaration read through load64(&v)
+#   (the silent one)   E4 `return mkg<i64>(a, b)`   E5 the inferred `mkg(41, 7)` (the control, always 161)   E6 the
+#   unannotated `var v = mkg<i64>(..)` (inferred, as `var v = mkv(..)` is)   E7 `rd(mkg<i64>(42, 7))` into `*f64v2`
+#   (42: D27's call result; row 7 of 2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-
+#   sources.md)   E8 a real instance `mkg<i32>` and a struct type argument `mkp<Pt>`, declaration and assignment
+#   E9 wrapped `(mkg<i64>(..))`, declaration and assignment
+#   Z1 `var v: f64v4 = mkg<i64>(..)` (an f64v2 call) "vector return type does not match the declared type" (compiled
+#   before: the annotation dropped)   Z2 `w = mkg<i64>(..)` into an f64v4 ".. the assigned variable"
+#   Z3 `x = mkg<i64>(..)` into a scalar local, as `x = mkv(..)` is (compiled before: exit 0)   Z4 `var x: i64 =
+#   mkg<i64>(..)` (compiled before)
+#   Z5 `var v: f64v2 = idg<i64>(5)`, a scalar-returning generic: the vector local's own refusal (compiled before: the
+#   annotation reset)   Z6 `return mkg<i64>(a, b)` from a `: f64v4` fn (the return rule's)
+# MUTATION LEDGER (6.7.13 — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>; measured):
+#   ME1 `_vcall_fi` taking `IDENT (` only (`o != ti + 1` -> -1) -> RED 56: E1-E4 E6-E9 on all five legs (refused, or
+#       the one-word local: E6 0 / cx 154 / PE 195, E7 139 / cx 0 / PE 5), Z1-Z4 on all four (another refusal, or
+#       compiled); E5 (the inferred `IDENT (`) and Z5 Z6 green
+#   ME2 `_gen_decl_check` without its vector guard          -> RED 4: Z5 on all four legs (compiled); the E rows green
+#       (the receive takes them before the reset)
+#   ME3 `_vrcv_decl` deferring an explicit instance (no `_vrcv_g` arm) -> RED 20: E2 E3 E6 E8 on all five legs (0;
+#       cx 154 / 88, PE 195 / 244: the scalar init); E1 (`_try_vector_call_assign` takes the assignment) and E9 (a
+#       wrap) green
+#   ME4 `_vcall_enter` stepping two tokens (`IDENT (` only) -> RED 8: win64 E1-E4 E6-E9 ("undefined variable 'i64'":
+#       the type argument parsed as the first argument) — PE's own call alone
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -342,6 +375,84 @@ syscall(60, run());
     esac
 }
 Y_ROWS="Y1 Y2 Y3 Y4 Y5 Y6 Y7 Y8 Y9 Y10 Y11"
+# ---- 6.7.13: the explicit instance (rows E accepted, Z refused) --------------------------------
+EH='include "lib/fnptr.cyr"
+struct Pt { x; y; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkp<T>(p: T, a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn idg<T>(a: T): T { return a; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+'
+e_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    E1) printf '%s' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn run(): i64 { var v: f64v2; v = mkg<i64>(41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    E2) printf '%s' "$EH"'fn run(): i64 { var v: f64v2 = mkg<i64>(41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    E3) printf '%s' "$EH"'fn run(): i64 { var v: f64v2 = mkg<i64>(41, 7); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run());
+' ;;
+    E4) printf '%s' "$EH"'fn mk2(a, b): f64v2 { return mkg<i64>(a, b); }
+fn run(): i64 { var v: f64v2 = mk2(41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    E5) printf '%s' "$EH"'fn run(): i64 { var v: f64v2 = mkg(41, 7); return lanes(v); }
+syscall(60, run());
+' ;;
+    E6) printf '%s' "$EH"'fn run(): i64 { var v = mkg<i64>(41, 7); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run());
+' ;;
+    E7) printf '%s' "$EH"'fn run(): i64 { return rd(mkg<i64>(42, 7)); }
+syscall(60, run());
+' ;;
+    E8) printf '%s' "$EH"'fn run(): i64 { var p: Pt; var v: f64v2 = mkg<i32>(41, 7); var w: f64v2; w = mkp<Pt>(p, 1, 2);
+  var q: f64v2 = mkp<Pt>(p, 3, 4); v = mkg<i32>(lanes(v) - 120, 7); return lanes(v) + lanes(w) + lanes(q) - 46; }
+syscall(60, run());
+' ;;
+    E9) printf '%s' "$EH"'fn run(): i64 { var v: f64v2 = (mkg<i64>(41, 7)); var w: f64v2; w = (mkg<i64>(1, 2));
+  return lanes(v) + lanes(w) - 12; }
+syscall(60, run());
+' ;;
+    esac
+}
+E_ROWS="E1 E2 E3 E4 E5 E6 E7 E8 E9"
+e_want() { case "$1" in E7) echo 42;; *) echo 161;; esac; }
+z_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    Z1) printf '%s' "$EH"'fn run(): i64 { var v: f64v4 = mkg<i64>(41, 7); return 1; }
+syscall(60, run());
+' ;;
+    Z2) printf '%s' "$EH"'fn run(): i64 { var w: f64v4; w = mkg<i64>(1, 2); return 1; }
+syscall(60, run());
+' ;;
+    Z3) printf '%s' "$EH"'fn run(): i64 { var x = 0; x = mkg<i64>(1, 2); return x; }
+syscall(60, run());
+' ;;
+    Z4) printf '%s' "$EH"'fn run(): i64 { var x: i64 = mkg<i64>(1, 2); return x; }
+syscall(60, run());
+' ;;
+    Z5) printf '%s' "$EH"'fn run(): i64 { var v: f64v2 = idg<i64>(5); return 1; }
+syscall(60, run());
+' ;;
+    Z6) printf '%s' "$EH"'fn r4(a, b): f64v4 { return mkg<i64>(a, b); }
+syscall(60, 1);
+' ;;
+    esac
+}
+Z_ROWS="Z1 Z2 Z3 Z4 Z5 Z6"
+z_msg() {
+    case "$1" in
+    Z1|Z4) echo "vector return type does not match the declared type";;
+    Z2|Z3) echo "vector return type does not match the assigned variable";;
+    Z5) echo "$MSGV";;
+    Z6) echo "$MSG";;
+    esac
+}
 # Which legs an acceptance row RUNS on: every row on all four. A7's int-class 16-byte pair return
 # is a per-target ABI the tuple guard has nothing to do with, and it was kept off two legs until
 # each target carried it:
@@ -432,12 +543,52 @@ accept_v_all() {  # $1 leg label  $2 compiler  $3 runner fn name
     done
 }
 
+# 6.7.13: the explicit-instance rows — each E built by the leg's compiler (`$3` an env assignment or -) and run;
+# each Z refused once, by its own words, with no artifact.
+accept_e_all() {  # $1 leg label  $2 compiler  $3 runner fn name  [$4 VAR=value for the compiler]
+    for row in $E_ROWS; do
+        e_src "$row" > "$W/e.cyr"
+        rc=0
+        if [ -n "${4:-}" ]; then env "$4" "$2" < "$W/e.cyr" > "$W/e.out" 2>"$W/e.err" || rc=$?
+        else "$2" < "$W/e.cyr" > "$W/e.out" 2>"$W/e.err" || rc=$?; fi
+        naccept=$((naccept+1))
+        if ! [ -s "$W/e.out" ]; then bad "$1 $row: produced no artifact (rc=$rc: $(grep -m1 '^error' "$W/e.err" 2>/dev/null))"; continue; fi
+        chmod +x "$W/e.out"
+        got=0
+        ( ulimit -c 0; "$3" "$W/e.out" ) >/dev/null 2>&1 || got=$?
+        want=$(e_want "$row")
+        if [ "$got" = "$want" ]; then good "$1 $row = $got"; else bad "$1 $row = $got, want $want"; fi
+    done
+}
+refuse_z_all() {  # $1 leg label  $2 compiler
+    for row in $Z_ROWS; do
+        z_src "$row" > "$W/z.cyr"
+        rc=0
+        "$2" < "$W/z.cyr" > "$W/z.out" 2>"$W/z.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        zm=$(z_msg "$row")
+        ne=$(grep -c '^error' "$W/z.err" 2>/dev/null || true)
+        if ! grep -qF "$zm" "$W/z.err" 2>/dev/null; then
+            bad "$1 $row: not refused as '$zm' (rc=$rc, first line: $(head -1 "$W/z.err" 2>/dev/null))"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1)"
+        elif [ -s "$W/z.out" ]; then
+            bad "$1 $row: reported but still emitted an artifact"
+        else
+            good "$1 $row refused once"
+        fi
+    done
+}
+
 hostr() { timeout 60 "$1"; }
 echo "host x86_64:"
 refuse_all host "$CC"
 accept_all host "$CC" hostr
 refuse_v_all host "$CC"
 accept_v_all host "$CC" hostr
+accept_e_all host "$CC" hostr
+accept_e_all host-ir3 "$CC" hostr CYRIUS_IR=3
+refuse_z_all host "$CC"
 
 echo "cx (cxvm):"
 if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ] \
@@ -448,6 +599,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_all cx "$W/cycc_cx" cxr
     refuse_v_all cx "$W/cycc_cx"
     accept_v_all cx "$W/cycc_cx" cxr
+    accept_e_all cx "$W/cycc_cx" cxr
+    refuse_z_all cx "$W/cycc_cx"
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -461,6 +614,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_all aarch64 "$W/cycc_a64" a64r
         refuse_v_all aarch64 "$W/cycc_a64"
         accept_v_all aarch64 "$W/cycc_a64" a64r
+        accept_e_all aarch64 "$W/cycc_a64" a64r
+        refuse_z_all aarch64 "$W/cycc_a64"
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -479,6 +634,8 @@ if command -v wine > /dev/null 2>&1; then
         accept_all win64 "$W/cycc_win" wr_
         refuse_v_all win64 "$W/cycc_win"
         accept_v_all win64 "$W/cycc_win" wr_
+        accept_e_all win64 "$W/cycc_win" wr_
+        refuse_z_all win64 "$W/cycc_win"
     else
         bad "win64 leg: could not build src/main_win.cyr"
     fi
@@ -490,7 +647,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS; echo $#)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS; echo $#)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -502,11 +659,12 @@ for row in $ACCEPT_ROWS; do
     done
 done
 na_floor=$((na_floor + $(set -- $V_ROWS; echo $#) * 2))   # 6.7.11: every V row on host + cx
+na_floor=$((na_floor + $(set -- $E_ROWS; echo $#) * 3))   # 6.7.13: every E row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

@@ -1495,9 +1495,9 @@ fn _PARSE_RETURN_ARMS(S): i64 {
             var _rc_is256 = _is_simd256(S, _cur_fn_ret_scalar);
             if (_rc_is128 == 1 || _rc_is256 == 1) {
                 if (PEEKT(S) == 2) {
-                    if (TOKTYP(S, GTI(S) + 1) == 10) {   # IDENT '(' → a call
+                    if (_gcall_open(S, GTI(S)) >= 0) {   # IDENT '(' → a call (6.7.13: or `g<T>(`)
                         var _rc_noff = PEEKV(S);
-                        var _rc_fi = FINDFN(S, _rc_noff);
+                        var _rc_fi = _vcall_fi(S, GTI(S));
                         if (_rc_fi >= 0) {
                             if (GFRS(S, _rc_fi) == _cur_fn_ret_scalar) {
                                 # Allocate anon temp (filler(s) + named lo slot).
@@ -1526,9 +1526,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
                                 SFLC(S, _rc_named + 1);
                                 if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
                                 # Marshal the inner call: retptr = &temp, then args.
-                                _callee_site_checks_here(S, _rc_fi, _rc_noff, 0);   # v6.6.4: PE SIMD-return call emits its own call
-                                STI(S, GTI(S) + 1);   # consume callee IDENT
-                                STI(S, GTI(S) + 1);   # consume '('
+                                _vcall_enter(S, _rc_fi);   # v6.6.4: PE SIMD-return call emits its own call (6.7.13: past `<..>`)
                                 EFLADDR(S, _rc_named);
                                 EPUSHR(S);
                                 # 6.6.6: `_owncall_args` — the gates plus the arity check this
@@ -2053,18 +2051,24 @@ fn _sarg_vec_call(S, fi, argc, tail): i64 {
     return 1;
 }
 # The vector (its descriptor, negative) the WHOLE argument at token `ti` returns when it is a call declared
-# to return one — by name (`_vrcv_vcall`), or `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`); else 0.
+# to return one — by name (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too, read past its `<..>`), or
+# `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`); else 0.
 fn _svc_rs(S, ti): i64 {
     var rs = _icall_rs_at(S, ti);
+    var o = ti + 1;
     if (rs <= 0 - 2048) {
         _svc_k = 2;
         _svc_nm = TOKVAL(S, _icall_open_at(S, ti) + 2);
-    } elif (_vrcv_vcall(S, ti) == 1) {
+    } else {
+        var vf = _vcall_fi(S, ti);
+        if (vf < 0) { return 0; }
         _svc_k = 1;
         _svc_nm = TOKVAL(S, ti);
-        rs = GFRS(S, FINDFN(S, _svc_nm));
-    } else { return 0; }
-    if (_call_is_whole_arg(S, ti) == 0) { return 0; }
+        rs = GFRS(S, vf);
+        o = _vcall_o;
+    }
+    var nx = TOKTYP(S, _call_close(S, o) + 1);   # the whole argument: `,` or `)` follows the call
+    if (nx != 31) { if (nx != 11) { return 0; } }
     return rs;
 }
 fn _svc_toplevel_err(S): i64 {
@@ -6309,10 +6313,9 @@ fn _pair_ret_offender(S): i64 {
 # PE arm keys on `GFRS(callee) == _cur_fn_ret_scalar` — so a same-class call of a DIFFERENT
 # declared type would miss that arm and land on the generic path on Windows, which is the shape
 # this bite removes. Refusing is the conservative answer, never a miscompile.
+# 6.7.13: an explicit instance `g<T>(..)` too, as the fn it reaches (`_vcall_fi`; the tail arm takes only `IDENT (`).
 fn _simd_ret_call_ok(S): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    var fi = FINDFN(S, PEEKV(S));
+    var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
     return 1;

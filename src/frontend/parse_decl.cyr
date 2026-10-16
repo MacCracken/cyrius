@@ -5907,7 +5907,11 @@ fn _sci_gsrc_type(S, snoff): i64 {
 # the declared type is kept so the statement parses on without a cascade. A call that failed to
 # instantiate (`_grc_err`, or a stub base) is the call's own refusal to make, once, and is left
 # to it. CHANGELOG [6.6.11]
+# ⛔ 6.7.13 — and a VECTOR annotation is never dropped (1): the reset made `var v: f64v2 = g<i64>(..)` a one-word
+# local whenever the receives did not take the call, with no diagnostic; kept, the initialiser meets the vector
+# local's own refusal (`_vrcv_decl_err`). The struct band is as before. CHANGELOG [6.7.13]
 fn _gen_decl_check(S, pscale, fi): i64 {
+    if (pscale <= 0 - 2048) { return 1; }
     if (_grc_err < 0) { return 0; }
     if (_gen_stub(S, fi) != 0) { return 0; }
     if (_mv_callee(S, fi) == 1) { return 1; }   # 6.7.11: kept, for `_mv_decl_src` to refuse the call
@@ -6687,14 +6691,12 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (GINFN(S) != 1) { return 0; }
     var vo = _vrcv_asg(S, noff, term);   # 6.7.11
     if (vo >= 0) { return vo; }
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    if (_gcall_open(S, GTI(S)) < 0) { return 0; }
     var dst_li = FINDLOCAL(S, noff);
     if (dst_li < 0) { return 0; }
-    var vfi = FINDFN(S, PEEKV(S));
-    if (vfi < 0) { return 0; }
+    var vfi = _vcall_fi(S, GTI(S));   # 6.7.13: `g<T>(..)` too
+    if (vfi < 0) { return 0; }   # callee does not return a vector — not our shape
     var vrs = GFRS(S, vfi);
-    if (vrs > 0 - 2048) { return 0; }   # callee does not return a vector — not our shape
     var lt = GLTYPE(S, dst_li);
     # Destination is not the vector the callee returns. Diagnose rather than fall through to
     # the 8-byte store, which is what made every form of this silent (see the header above).
@@ -6707,9 +6709,7 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (vns <= 1) { return 0; }
     if (_TARGET_PE == 1) {
         var vnoff = PEEKV(S);
-        _callee_site_checks_here(S, vfi, vnoff, 0);   # v6.6.4: PE retptr vector receive emits its own call
-        STI(S, GTI(S) + 1);   # consume callee IDENT
-        STI(S, GTI(S) + 1);   # consume '('
+        _vcall_enter(S, vfi);   # v6.6.4: PE retptr vector receive emits its own call (6.7.13: past `<..>`)
         EFLADDR(S, dst_li);
         EPUSHR(S);
         # 6.6.6: the arguments through `_owncall_args` — the gates AND the arity check, which
@@ -6738,6 +6738,35 @@ fn _try_vector_call_assign(S, noff, term): i64 {
 # argument: refused by name, in the declaration and the assignment (the user's decision, 2026-10-13),
 # as the same sources are as a vector RETURN (6.6.6). CHANGELOG [6.7.11]
 var _vrcv_k = 0;    # the parentheses `_vrcv_src` found around the source
+var _vrcv_g = 0;    # 1 = the by-name source `_vrcv_byname` took is an explicit instance (`g<T>(..)`)
+# ⛔ 6.7.13 — A CALL DECLARED TO RETURN A VECTOR, BY NAME: `f(..)`, or an explicit instance `g<T>(..)` (`_gcall_open`
+# steps over its `<..>`). Every vector receive tested `IDENT (`, so `v = mkg<i64>(41, 7);` was refused, `var v: f64v2 =
+# mkg<i64>(..)` dropped its annotation (a one-word local: `load64(&v + 8)` read garbage, silently), and `return
+# mkg<i64>(..)` from a `: f64v2` fn was refused — an explicit instance is a by-name call declared to return the vector,
+# which 6.7.11's rule accepts. At token `ti`: the fn the call reaches (`IDENT (`: FINDFN, as ever; `g<T>(`:
+# `_gen_resolve_call`, asked only once the base is declared to return a vector — a type argument never makes one), else
+# -1; `_vcall_o` its `(`. CHANGELOG [6.7.13]
+var _vcall_o = 0;
+fn _vcall_fi(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0 - 1; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0 - 1; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0 - 1; }
+    if (o != ti + 1) { fi = _gen_resolve_call(S, ti); }
+    _vcall_o = o;
+    return fi;
+}
+# The cursor on the call `fi` (`_vcall_fi`'s): its checks — and an explicit instance's own (`_gen_own_call_check`) —
+# then past its name, `<..>` and `(`, for a path that emits the call itself (Win64's hidden result pointer).
+fn _vcall_enter(S, fi): i64 {
+    var noff = PEEKV(S);
+    var o = _gcall_open(S, GTI(S));
+    if (o != GTI(S) + 1) { _gen_own_call_check(S, fi, noff); }
+    _callee_site_checks_here(S, fi, noff, 0);
+    STI(S, o + 1);
+    return 0;
+}
 # 1 = local type `ty` is a value-form vector of 16 / 32 bytes.
 fn _vrcv_vec(S, ty): i64 {
     if (ty > 0 - 2048) { return 0; }
@@ -6757,33 +6786,31 @@ fn _vrcv_src(S, ti, ty, term): i64 {
         c = ti + _vrcv_k;
     }
     var r = 0;
+    var o = c + 1;
     if (_icall_rs_at(S, c) == ty) { r = 2; }
     elif (_vrcv_byname(S, c, ty) == 1) {
-        if (_vrcv_k == 0) { return 1; }   # the receives below, as ever
+        if (_vrcv_k == 0) { return 1; }   # the receives below, as ever (`_vrcv_g`: an explicit instance)
         r = 1;
+        o = _vcall_o;   # 6.7.13: past `<..>`
     }
     if (r == 0) { return 0; }
-    var x = _call_close(S, c + 1) + 1;   # the token after the call
+    var x = _call_close(S, o) + 1;   # the token after the call
     if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { return 0; } }
     elif (TOKTYP(S, x) != term) { return 0; }
     return r;
 }
 fn _vrcv_byname(S, c, ty): i64 {
-    if (TOKTYP(S, c) != 2) { return 0; }
-    if (TOKTYP(S, c + 1) != 10) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, c));
+    _vrcv_g = 0;
+    var fi = _vcall_fi(S, c);   # 6.7.13: `g<T>(..)` too
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != ty) { return 0; }
+    if (_vcall_o != c + 1) { _vrcv_g = 1; }
     return 1;
 }
 # 1 = token `ti` starts a by-name call to a fn declared to return a vector — any: the receives check
 # its type (a different vector is refused there, before the parse).
 fn _vrcv_vcall(S, ti): i64 {
-    if (TOKTYP(S, ti) != 2) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, ti));
-    if (fi < 0) { return 0; }
-    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    if (_vcall_fi(S, ti) < 0) { return 0; }   # 6.7.13: `g<T>(..)` too
     return 1;
 }
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
@@ -6812,9 +6839,8 @@ fn _vrcv_emit(S, dst, ty, k): i64 {
 # 0), as the receives' own Win64 arm emits it.
 fn _vrcv_pe_call(S, dst): i64 {
     var fnoff = PEEKV(S);
-    var fi = FINDFN(S, fnoff);
-    _callee_site_checks_here(S, fi, fnoff, 0);
-    STI(S, GTI(S) + 2);   # the callee's name and `(`
+    var fi = _vcall_fi(S, GTI(S));   # 6.7.13: an explicit instance's, past its `<..>`
+    _vcall_enter(S, fi);
     EFLADDR(S, dst);
     EPUSHR(S);
     var n = _owncall_args(S, fi, fnoff, 1);
@@ -6825,14 +6851,15 @@ fn _vrcv_pe_call(S, dst): i64 {
     return 0;
 }
 # PARSE_VAR, cursor on `=`: `var v: <vector> = <src>;` in a fn for an accepted source the receives
-# there do not take — inside parentheses, or through fncallN / callptr. 1 = declared.
+# there do not take — inside parentheses, through fncallN / callptr, or (6.7.13) an explicit instance
+# `g<T>(..)`: the inline receives below test `IDENT (`. 1 = declared.
 fn _vrcv_decl(S, noff, pscale): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
     if (k == 0) { return 0; }
-    if (_vrcv_k == 0) { if (k == 1) { return 0; } }
+    if (_vrcv_k == 0) { if (k == 1) { if (_vrcv_g == 0) { return 0; } } }   # 6.7.13: `g<T>(..)` is ours
     _vec_desc(S, pscale);
     var named = _sci_slots(S, noff, pscale, GVEC_NSLOTS(S));
     STI(S, GTI(S) + 1);   # `=`
@@ -6863,7 +6890,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) { return _vrcv_other(S, term); }
-    if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }
+    if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
     _vrcv_emit(S, li, lt, k);
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
@@ -7549,28 +7576,22 @@ fn PARSE_VAR(S): i64 {
     if (_tup_var(S, noff, pscale, ann_ti) == 1) { return 0; }
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
-            var _vin_ti = GTI(S) + 1;
-            if (TOKTYP(S, _vin_ti) == 2) {
-                if (TOKTYP(S, _vin_ti + 1) == 10) {
-                    var _vin_fi = FINDFN(S, TOKVAL(S, _vin_ti));
-                    if (_vin_fi >= 0) {
-                        var _vin_rs = GFRS(S, _vin_fi);
-                        if (_vin_rs <= 0 - 2048) {
-                            if (pscale == 0) {
-                                # No annotation of its own: take the callee's.
-                                if (scalar_type == 0) { pscale = _vin_rs; }
-                            }
-                            # An annotation that DISAGREES with the callee is a type error, and
-                            # it used to be silent in the same way the missing one was: the
-                            # receive paths below require `GFRS == pscale`, so a mismatch simply
-                            # fell out of them into the scalar init. `var r: f64v4 =
-                            # f64v2_add(a, b);` and `var r: i64 = f64v2_add(a, b);` both read
-                            # back as zero, exit 0. Refuse them instead of truncating.
-                            if (pscale != _vin_rs) {
-                                ERR_MSG(S, "vector return type does not match the declared type", 51);
-                            }
-                        }
-                    }
+            # 6.7.13: an explicit instance `g<T>(..)` too (`_vcall_fi`, the vector-returning by-name call)
+            var _vin_fi = _vcall_fi(S, GTI(S) + 1);
+            if (_vin_fi >= 0) {
+                var _vin_rs = GFRS(S, _vin_fi);
+                if (pscale == 0) {
+                    # No annotation of its own: take the callee's.
+                    if (scalar_type == 0) { pscale = _vin_rs; }
+                }
+                # An annotation that DISAGREES with the callee is a type error, and
+                # it used to be silent in the same way the missing one was: the
+                # receive paths below require `GFRS == pscale`, so a mismatch simply
+                # fell out of them into the scalar init. `var r: f64v4 =
+                # f64v2_add(a, b);` and `var r: i64 = f64v2_add(a, b);` both read
+                # back as zero, exit 0. Refuse them instead of truncating.
+                if (pscale != _vin_rs) {
+                    ERR_MSG(S, "vector return type does not match the declared type", 51);
                 }
             }
         }
