@@ -261,5 +261,68 @@ if [ "$crc" -ne 0 ] && grep -q "pointer difference of pointers with different el
     echo "  ok axis 11: *i64 - *u8 is refused by name"
 else echo "  FAIL axis 11: *i64 - *u8 was not refused by name (rc $crc)"; fail=1; fi
 
+# --- axis 12 (6.7.13, the user's decision D18 (a), 2026-10-15; issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md) ---
+# The warning at EVERY `*T` site, the literal 0 exempt. It was missing for a declaration-zone `*T` global (replayed
+# by EMIT_GVAR_INITS, or baked when it folds) and for an assignment to a `*T` local or `p: *T` parameter of a scalar T;
+# and `= 0` / `p = 0` (a null pointer) warned where the warning fired at all. P1-P3: the filed commands verbatim
+# (0 / 0 / 1 before, 1 / 1 / 1 now); the issue's whole table, each row its warning count.
+# MUTATION LEDGER (2026-10-16, a scratch copy of src/ with the one edit, this gate run as CYCC=<mutant>):
+#   the fix reverted (the lane's previous tip, 98801809)  -> RED 21: P1 P2, z_i64 z_u8 z_pt z_add z_3 z_re3 z_neg,
+#       z_after0 t_asg0 f_decl0 f_asg f_asg8 f_asg32 f_asg3 f_par f_pt0 f_g0 f_ld z_8b
+#   M-TP1 `_tp_null` answering 0 (no null exemption)      -> RED 12: axis 10 (`var G: *i32 = 0;`), z_0 z_re0 z_re3 (its
+#       superseded `= 0` replayed) z_after0 t_asg0 f_decl0 f_asg0 f_par0 f_pt0 f_g f_g0 (the zone `= 0`)
+#   M-TP2 the local arm without the typed-pointer bit     -> RED 7: P2, f_asg f_asg8 f_asg32 f_asg3 f_par f_ld
+#   M-TP3 `_tp_warn_gv` answering 0 (the zone replay)     -> RED 6: P1, z_i64 z_u8 z_pt z_add z_8b
+#   M-TP4 PARSE_GVAR_REG without `_tp_warn_baked`         -> RED 3: z_3 z_re3 z_neg
+#   M-TP5 `_tp_warn_gv` without its refused-line tests     -> RED 2: z_ref z_ref3
+tprow() {   # <name> <want> <what> <source, printf %b>
+    printf '%b' "$4" > "$T"
+    build
+    n=$(warns)
+    if [ "$n" -ne "$2" ]; then echo "  FAIL axis 12 $1: $3 — $n warning(s), want $2"; fail=1
+    else echo "  ok axis 12 $1: $3 — $n"; fi
+}
+tprow P1 1 "the filed command 1, verbatim: zone var p: *i64 = x; (0 before)" 'var x = 3;\nvar p: *i64 = x;\nsyscall(60, 0);\n'
+tprow P2 1 "the filed command 2, verbatim: fn p = x; into a *i64 local (0 before)" 'fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = x;\n    return 0;\n}\nsyscall(60, f());\n'
+tprow P3 1 "the filed command 3, verbatim: fn var q: *i64 = x; (the control)" 'fn f(): i64 {\n    var x = 3;\n    var q: *i64 = x;\n    return 0;\n}\nsyscall(60, f());\n'
+tprow z_i64 1 "zone: var x = 3; var p: *i64 = x; (0 before)" "var x = 3;\nvar p: *i64 = x;\nsyscall(60, 0);\n"
+tprow z_u8 1 "zone: var p: *u8 = x; (0 before)" "var x = 3;\nvar p: *u8 = x;\nsyscall(60, 0);\n"
+tprow z_pt 1 "zone: var p: *Pt = x; (0 before)" "struct Pt { a; b; }\nvar x = 3;\nvar p: *Pt = x;\nsyscall(60, 0);\n"
+tprow z_add 1 "zone: var p: *i64 = x + 1; (0 before)" "var x = 3;\nvar p: *i64 = x + 1;\nsyscall(60, 0);\n"
+tprow z_3 1 "zone: var p: *i64 = 3; baked into the image (0 before)" "var p: *i64 = 3;\nsyscall(60, 0);\n"
+tprow z_0 0 "zone: var p: *i64 = 0; the null literal (D18)" "var p: *i64 = 0;\nsyscall(60, 0);\n"
+tprow z_amp 0 "zone: var p: *i64 = &x; a pointer" "var x = 3;\nvar p: *i64 = &x;\nsyscall(60, 0);\n"
+tprow z_gp 0 "zone: var p: *i64 = gp(); a : *i64 call" "var Y = 4;\nfn gp(): *i64 { return &Y; }\nvar p: *i64 = gp();\nsyscall(60, 0);\n"
+tprow z_re0 0 "zone: a redeclaration = 0 (baked) is the null literal" "var p: *i64 = 0;\nvar p: *i64 = 0;\nsyscall(60, 0);\n"
+tprow z_re3 1 "zone: a redeclaration = 3 (baked) warns" "var p: *i64 = 0;\nvar p: *i64 = 3;\nsyscall(60, 0);\n"
+tprow z_neg 1 "zone: var p: *i64 = 0 - 1; folds, not the literal 0" "var p: *i64 = 0 - 1;\nsyscall(60, 0);\n"
+tprow z_after 1 "top level after a statement: var p: *i64 = x; (the control)" "var x = 3;\nsyscall(39);\nvar p: *i64 = x;\nsyscall(60, 0);\n"
+tprow z_after0 0 "top level after a statement: var p: *i64 = 0; (D18: 1 before)" "syscall(39);\nvar p: *i64 = 0;\nsyscall(60, 0);\n"
+tprow t_asg 1 "top level: p = x; (the control)" "var x = 3;\nvar p: *i64 = &x;\np = x;\nsyscall(60, 0);\n"
+tprow t_asg0 0 "top level: p = 0; (D18: 1 before)" "var x = 3;\nvar p: *i64 = &x;\np = 0;\nsyscall(60, 0);\n"
+tprow f_decl 1 "fn: var q: *i64 = x; (the control)" "fn f(): i64 {\n    var x = 3;\n    var q: *i64 = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_decl1 2 "fn: var q: *i64 = x + 1; var r: *i64 = 3; (2)" "fn f(): i64 {\n    var x = 3;\n    var q: *i64 = x + 1;\n    var r: *i64 = 3;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_decl0 0 "fn: var q: *i64 = 0; (D18: 1 before)" "fn f(): i64 {\n    var q: *i64 = 0;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_asg 1 "fn: p = x; into a *i64 local (0 before)" "fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_asg8 1 "fn: p = x; into a *u8 local (0 before)" "fn f(): i64 {\n    var x = 3;\n    var p: *u8 = &x;\n    p = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_asg32 1 "fn: p = x; into a *i32 local (0 before)" "fn f(): i64 {\n    var x = 3;\n    var p: *i32 = &x;\n    p = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_asg3 1 "fn: p = 3; into a *i64 local (0 before)" "fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = 3;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_asg0 0 "fn: p = 0; into a *i64 local (D18)" "fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = 0;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_par 1 "fn: p = x; into a p: *i64 parameter (0 before)" "fn f(p: *i64): i64 {\n    var x = 3;\n    p = x;\n    return 0;\n}\nsyscall(60, f(0));\n"
+tprow f_par0 0 "fn: p = 0; into a p: *i64 parameter (D18)" "fn f(p: *i64): i64 {\n    p = 0;\n    return 0;\n}\nsyscall(60, f(0));\n"
+tprow f_pt 1 "fn: p = x; into a *Pt local (the control)" "struct Pt { a; b; }\nfn f(): i64 {\n    var x = 3;\n    var q: Pt = Pt { 1, 2 };\n    var p: *Pt = &q;\n    p = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_pt0 0 "fn: p = 0; into a *Pt local (D18: 1 before)" "struct Pt { a; b; }\nfn f(): i64 {\n    var q: Pt = Pt { 1, 2 };\n    var p: *Pt = &q;\n    p = 0;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_g 1 "fn: G = x; into a *i64 global (the control)" "var G: *i64 = 0;\nfn f(): i64 {\n    var x = 3;\n    G = x;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_g0 0 "fn: G = 0; into a *i64 global (D18: 1 before)" "var Y = 1;\nvar G: *i64 = &Y;\nfn f(): i64 {\n    G = 0;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_amp 0 "fn: p = &y; a pointer" "fn f(): i64 {\n    var x = 3;\n    var y = 4;\n    var p: *i64 = &x;\n    p = &y;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_gp 0 "fn: p = gp(); a : *i64 call" "var Y = 4;\nfn gp(): *i64 { return &Y; }\nfn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = gp();\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_cmp 0 "fn: p += 1; p = p + 1; p -= 1; on a *i64 local" "fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p += 1;\n    p = p + 1;\n    p -= 1;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_cmp8 0 "fn: p += 1; p = p + 2; var q: *u8 = p + 1; on a *u8 local" "fn f(): i64 {\n    var b = 3;\n    var p: *u8 = &b;\n    p += 1;\n    p = p + 2;\n    var q: *u8 = p + 1;\n    return 0;\n}\nsyscall(60, f());\n"
+tprow f_cmpp 0 "fn: p += 1; p = p + 2; on a p: *u8 parameter" "fn f(p: *u8): i64 {\n    p += 1;\n    p = p + 2;\n    return 0;\n}\nsyscall(60, f(0));\n"
+tprow f_ld 1 "fn: p = load64(&x); a word into a *i64 local (0 before)" "fn f(): i64 {\n    var x = 3;\n    var p: *i64 = &x;\n    p = load64(&x);\n    return 0;\n}\nsyscall(60, f());\n"
+tprow z_ref 0 "zone: var X: *P2 = mkp(); refused by D24, no warning beside the refusal" 'struct P2 { a; b; }\nfn mkp(): P2 { var r: P2 = P2 { 1, 2 }; return r; }\nvar X: *P2 = mkp();\nsyscall(60, 0);\n'
+tprow z_ref3 0 "zone: var X: *P3 = mk3(); refused (no frame), no warning beside the refusal" 'struct P3 { a; b; c; }\nfn mk3(): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; }\nvar X: *P3 = mk3();\nsyscall(60, 0);\n'
+tprow z_8b 1 "zone: var X: *P1 = mk1(); an 8 B struct's word warns, as in a fn (D14)" 'struct P1 { a; }\nfn mk1(): P1 { var r: P1 = P1 { 1 }; return r; }\nvar X: *P1 = mk1();\nsyscall(60, 0);\n'
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18)"

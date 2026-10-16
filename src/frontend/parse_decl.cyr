@@ -5348,6 +5348,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
     # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
     _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
+    if (sit_lit == 1) { if (psc > 0) { _tp_warn_baked(S, rhs_ti); } }   # 6.7.13 (D18 (a)): never replayed
     if (cf_has == 1) { if (is_struct == 0) { _gv_lit_set(gvi, 1); } }   # 6.7.12 (D30): a constant, zero too
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
@@ -5715,6 +5716,48 @@ fn _gvi_scalar(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.13 — "ASSIGNING NON-POINTER TO TYPED POINTER" AT EVERY `*T` SITE, THE LITERAL 0 EXEMPT (the user's decision
+# D18 (a), 2026-10-15). The warning fired for a `*T` declaration in a fn or after the first statement and for an
+# assignment to a `*T` global or a `*Struct` local, and nowhere else: a declaration-zone `*T` global (its initialiser is
+# replayed by EMIT_GVAR_INITS, or baked into the image when it folds — `_tp_warn_gv`, `_tp_warn_baked`) and an
+# assignment to a `*T` local or `p: *T` parameter of a scalar T (parse.cyr: the slot's typed-pointer bit) never
+# warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every site,
+# as the kind-0 compare-mix warning exempts it (issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
+# CHANGELOG [6.7.13]
+# 1 = the initialiser / right-hand side at token `st` is the literal 0 and nothing else.
+fn _tp_null(S, st): i64 {
+    if (st < 0) { return 0; }
+    if (TOKTYP(S, st) != 1) { return 0; }
+    if (TOKVAL(S, st) != 0) { return 0; }
+    if (TOKTYP(S, st + 1) != 5) { return 0; }
+    return 1;
+}
+# The warning (at the cursor), unless the value starting at `st` is the null literal.
+fn _tp_warn(S, st): i64 {
+    if (_tp_null(S, st) == 1) { return 0; }
+    WARN(S, "assigning non-pointer to typed pointer", 38);
+    return 0;
+}
+# The declaration zone's replay (cursor past the initialiser at `st`): the global `slot` is a `*T` (GVTYPE `0 - step`).
+# A line refused inside its initialiser (`_scv_err`, `_gvi_scalar`) or at its first token (D24) is not warned too.
+fn _tp_warn_gv(S, slot, st): i64 {
+    if (slot < 0) { return 0; }
+    if (GVTYPE(S, slot) >= 0) { return 0; }
+    if (GPSC(S) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    if (_tn_seen_at(S, st) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
+# its `;`, as the replay would report.
+fn _tp_warn_baked(S, st): i64 {
+    if (_tp_null(S, st) == 1) { return 0; }
+    var e = st;
+    while (e < GTCNT(S)) { if (TOKTYP(S, e) == 5) { break; } e = e + 1; }
+    WARN_AT(S, e, "assigning non-pointer to typed pointer", 38);
+    return 0;
+}
+
 # 6.7.3 (B2) — a declaration-zone `var g: bool = e;` is judged exactly once: a value the folder
 # BAKES into the image (the final `sit_lit` 1: `= true`, a constant shadow or redeclaration, cx
 # included) here, by its token shape — `true` / `false`, optionally parenthesised, then `;` (the
@@ -5739,6 +5782,7 @@ fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
 fn _bx_gvi_expr(S, gps, gi, noff): i64 {
     var ti = GTI(S);
     _gvi_expr(S, gps);
+    _tp_warn_gv(S, _gv_ent_slot(S, gi, 0, noff), ti);   # 6.7.13 (D18 (a)): a declaration-zone `*T`
     _gz_agree(S, gps, _gv_ent_slot(S, gi, 0, noff), ti, noff);   # 6.7.10 (B7-1g)
     if (_gvb_base == 0) { return 0; }   # no bool global anywhere: no lookup
     if (_BX_IS(S) == 1) { return 0; }
@@ -8291,7 +8335,7 @@ fn PARSE_VAR(S): i64 {
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
-        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { WARN(S, "assigning non-pointer to typed pointer", 38); } }   # 6.7.11
+        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { _tp_warn(S, scv_start); } }   # 6.7.11; 6.7.13: not the literal 0
     }
     # Check if inside function → local variable
     if (GINFN(S) == 1) {

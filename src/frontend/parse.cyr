@@ -5657,8 +5657,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # 0. Without this the warning fired on `t = str_new(..)` while the identical
                 # initializer `var t = str_new(..)` was accepted — the two paths disagreeing
                 # about the same expression.
-                if (lt < 0 && _asg_ret_sid <= 0) {
-                    if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
+                # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
+                # the literal 0 is a null reset, never warned (`_tp_warn`).
+                if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
+                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
                 }
             }
         }
@@ -5688,7 +5690,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
-                if (aps == 0) { if (_asg_tup_refd == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); } }
+                if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
             }
             _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11

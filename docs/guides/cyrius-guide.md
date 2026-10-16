@@ -1120,6 +1120,12 @@ left operand's step: with `q: *i32`, `(q +| 1) + 1` was `q` + 5 bytes, now + 2 â
 of 2026-10-13.) (Before 6.6.17,
 `q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
 its last argument's step.)
+That warning fires at every `*T` site (6.7.13, the user's decision D18 (a), 2026-10-15): a declaration in a fn,
+after the first top-level statement and in the declaration zone, and an assignment to a `*T` local, parameter or
+global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
+assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
+alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
+fn and the assignment to a `*Struct` local or a `*T` global warned on it).
 âš  Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
 `*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
