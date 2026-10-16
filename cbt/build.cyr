@@ -2108,7 +2108,11 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         # runs its own arch directly; find_tools() forces _arch=AARCH64 on arm64-macOS,
         # so this branch execve-failed → exit 127 with zero test output (the yantra
         # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
+        # 6.7.13: and on an aarch64 Linux host, where `--aarch64` runs the host's own cycc and is a
+        # no-op — the qemu exec failed there (no qemu-aarch64 on pi) and `run --aarch64` exited 127
+        # with no output. CHANGELOG [6.7.13]
         #ifndef CYRIUS_TARGET_MACOS
+        #ifndef CYRIUS_ARCH_AARCH64
         if (_arch == ARCH_AARCH64) {
             if (_run_stdout_to != 0) {
                 var qfd = sys_open(_run_stdout_to, O_WRONLY, 0);
@@ -2120,6 +2124,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
             sys_execve("/usr/bin/qemu-aarch64", qav, renv);
             sys_exit(127);
         }
+        #endif
         #endif
         # 6.6.11: `cyrius test` reads the child's stdout (see `_run_stdout_to`).
         if (_run_stdout_to != 0) {

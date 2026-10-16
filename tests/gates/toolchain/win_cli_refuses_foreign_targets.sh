@@ -50,6 +50,18 @@
 #      W12 an existing output untouched. Mutation: the `--pie` test dropped from
 #      `_cli_foreign_target` -> W11 W12 RED; `_cli_host_refuses_pie` answering on every host -> S2
 #      S3 S4 RED (and every Linux / macOS `--pie` build refused).
+#   6.7.13 (issues/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md):
+#      on the aarch64 Linux CLI `--win` wrote an aarch64 ELF named `.exe` at rc 0 (its compiler reads
+#      no CYRIUS_TARGET_WIN), and `--aarch64` / `--target=aarch64-bare-metal-elf` looked for the
+#      x86_64-hosted cycc_aarch64 and failed (pi). `--win` is refused by name there
+#      (`_cli_host_refuses_win`), and find_tools runs the host's own cycc for both aarch64 selectors.
+#      S6 only the aarch64 Linux CLI carries the `--win` refusal; A6 `build --win` rc 1, the exact
+#      error, no output, nothing compiled; with a `cycc` beside the CLI that runs the tree's native
+#      aarch64 compiler under qemu (what pi ships): A7 `build --aarch64` rc 0, an aarch64 ELF equal
+#      to the plain build's, exits 7; A8 `--target=aarch64-bare-metal-elf` rc 0, an aarch64 ELF, the
+#      aarch64 kernel line; A9 the D20 pair `--aarch64 --target=aarch64-bare-metal-elf` writes A8's
+#      image byte for byte; A10 `run --aarch64` execs the program itself, not /usr/bin/qemu-aarch64
+#      (no qemu on an aarch64 host: pi exited 127 with no output once the compile succeeded).
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -63,6 +75,11 @@
 #   6.7.12 (D6): M6 `_cli_host_emits_no_x86` answering 0 (6.7.11's aarch64 CLI)         RED: S5, A1-A3
 #               M7 the aarch64 answer for `--target=aarch64-bare-metal-elf` too       RED: A4
 #               M8 `arch_name` without its aarch64 Linux arm                          RED: A5
+#   6.7.13: M9  the `--win` test dropped from `_cli_foreign_target`                   RED: A6
+#           M10 `_cli_host_refuses_win` unguarded (its text in every CLI)             RED: S6
+#           M11 `_cli_host_refuses_win` answering on every host                       RED: S5, S6, W8
+#           M12 find_tools without `_cc_arm = _cc` on aarch64 Linux (6.7.12)          RED: A7, A8, A9
+#           M13 run_binary_timed's qemu exec without its CYRIUS_ARCH_AARCH64 guard    RED: A10
 set -u
 G=win_cli_refuses_foreign_targets
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -118,6 +135,7 @@ mkdir -p "$T/a64"
 CC_USE="$T/cc_x"; build "$T/a64/cyrius" X=1 < cbt/cyrius.cyr; chmod +x "$T/a64/cyrius"
 A64WHY="the aarch64 Linux CLI: its cycc emits aarch64 only"
 A64TAIL="(build agnos / x86_64 bare-metal images on x86_64 Linux)"
+A64WINTAIL="(build PE images on x86_64 Linux or Windows)"
 
 echo "== S: each host's CLI carries its own refusal =="
 check "S1 the PE CLI names the Windows refusal" "yes yes no" \
@@ -132,6 +150,10 @@ check "S4 only the PE CLI carries the --pie refusal" "yes no no no" \
 # 6.7.12 (D6): the aarch64 Linux CLI's refusal is its own
 check "S5 only the aarch64 Linux CLI carries the aarch64 refusal" "yes yes no no no no" \
     "$(has "$T/a64/cyrius" "$A64WHY") $(has "$T/a64/cyrius" "$A64TAIL") $(has "$T/lin/cyrius" "$A64WHY") $(has "$T/cyrius.exe" "$A64WHY") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$A64WHY")"
+
+# 6.7.13: so is its `--win` refusal (cycc_aarch64's native fork has no PE emitter)
+check "S6 only the aarch64 Linux CLI carries the --win refusal" "yes no no no no" \
+    "$(has "$T/a64/cyrius" "$A64WINTAIL") $(has "$T/lin/cyrius" "$A64WINTAIL") $(has "$T/cyrius.exe" "$A64WINTAIL") $(has "$T/cyrius_macho_x86" "$A64WINTAIL") $(has "$T/cyrius_macho_arm" "$A64WINTAIL")"
 
 printf 'fn main(): i64 { return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/proj/hello.cyr"
 
@@ -180,9 +202,35 @@ else
     rc=$(arun build --dry-run --target=aarch64-bare-metal-elf hello.cyr bma.out)
     check "A4 --target=aarch64-bare-metal-elf passes the early block (its dry-run line, no refusal)" "0 1 0" \
         "$rc $(grep -c '^dry-run: compile hello.cyr -> bma.out' "$T/a.out") $(grep -c 'is not available' "$T/a.out")"
+    rc=$(arun build --win hello.cyr w.exe)
+    check "A6 build --win: rc 1, the named error, no output, nothing compiled" "1 1 none 0" \
+        "$rc $(grep -cxF "error: --win is not available from $A64WHY $A64WINTAIL" "$T/a.out" || :) $(magic "$T/aproj/w.exe") $(grep -c '^compile' "$T/a.out")"
     cp "$CC" "$T/a64/cycc"     # an x86_64 stand-in: qemu-user execs the child on the host
     rc=$(arun build hello.cyr plain.out)
     check "A5 a plain build's progress label names the host's arch" "0 1" "$rc $(grep -c '^compile hello.cyr -> plain.out \[aarch64\] OK' "$T/a.out")"
+    # 6.7.13: the cycc beside the CLI is the tree's native aarch64 compiler (what pi ships), run
+    # under qemu by a wrapper; no cycc_aarch64 exists anywhere the CLI looks.
+    CC_USE="$T/cc_x"; build "$T/a64/cycc_native" X=1 < src/main_aarch64_native.cyr; chmod +x "$T/a64/cycc_native"
+    rm -f "$T/a64/cycc"
+    printf '#!/bin/sh\nexec qemu-aarch64 "%s/a64/cycc_native" "$@"\n' "$T" > "$T/a64/cycc"; chmod +x "$T/a64/cycc"
+    rc=$(arun build hello.cyr plain.out)
+    rc=$(arun build --aarch64 hello.cyr a.out)
+    prc=0; timeout 60 qemu-aarch64 "$T/aproj/a.out" > /dev/null 2>&1 || prc=$?
+    same=differs; cmp -s "$T/aproj/a.out" "$T/aproj/plain.out" && same=same
+    check "A7 build --aarch64 runs the host's cycc: rc 0, an aarch64 ELF, the plain build's image, exits 7" "0 7f454c46 b700 same 7" \
+        "$rc $(magic "$T/aproj/a.out") $(od -An -tx1 -j18 -N2 "$T/aproj/a.out" 2> /dev/null | tr -d ' \n') $same $prc"
+    rc=$(arun build --target=aarch64-bare-metal-elf hello.cyr kk.out)
+    check "A8 --target=aarch64-bare-metal-elf runs the host's cycc: rc 0, an aarch64 ELF, the aarch64 kernel line" "0 7f454c46 b700 1" \
+        "$rc $(magic "$T/aproj/kk.out") $(od -An -tx1 -j18 -N2 "$T/aproj/kk.out" 2> /dev/null | tr -d ' \n') $(grep -c 'kernel: entry 0x40000078, load base 0x40000000 (aarch64 ELF64)' "$T/a.out")"
+    rc=$(arun build --aarch64 --target=aarch64-bare-metal-elf hello.cyr pair.out)
+    same=differs; [ -s "$T/aproj/kk.out" ] && cmp -s "$T/aproj/kk.out" "$T/aproj/pair.out" && same=same
+    check "A9 the D20 pair --aarch64 --target=aarch64-bare-metal-elf: rc 0, A8's image" "0 same" "$rc $same"
+    # `run --aarch64` execs the program itself, never /usr/bin/qemu-aarch64 (absent on an aarch64
+    # host). Read from qemu's syscall trace: here, without binfmt, the direct exec is ENOEXEC.
+    (cd "$T/aproj" && HOME="$T/ahome" CYRIUS_HOME="$T/ahome/.cyrius" timeout 120 qemu-aarch64 -strace "$T/a64/cyrius" run --aarch64 hello.cyr) \
+        > "$T/a.out" 2>&1 || :
+    check "A10 run --aarch64 execs the program directly (no qemu-aarch64 exec)" "0 1" \
+        "$(grep -ac 'execve("/usr/bin/qemu-aarch64"' "$T/a.out" || :) $(grep -ac 'execve("[^"]*/cyrius-[0-9]*/run"' "$T/a.out" || :)"
 fi
 
 echo "== W: the Windows CLI, under wine =="

@@ -6857,7 +6857,15 @@ CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
 The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
-x86_64 instruction set. ONE target selector per run: `--win`, `--agnos` (the agnos ring-3
+x86_64 instruction set. The aarch64 Linux CLI **refuses** `--win` by name, rc 1, before anything
+compiles — its cycc emits aarch64 only (6.7.13; through 6.7.12 it wrote an aarch64 ELF named
+`.exe` and said OK at rc 0):
+
+```
+error: --win is not available from the aarch64 Linux CLI: its cycc emits aarch64 only (build PE images on x86_64 Linux or Windows)
+```
+
+ONE target selector per run: `--win`, `--agnos` (the agnos ring-3
 userspace target), `--aarch64` (ARM64 cross-compile) and `--target=<v>` (`js`, `cx`, a bare-metal
 triple) each select a different emit target, and since 6.7.12 two of them are refused by name
 before anything resolves or compiles — `error: --win and --aarch64 select two emit targets; pass
@@ -7316,7 +7324,11 @@ anything compiles: their compilers emit PE or Mach-O only. The aarch64 Linux CLI
 `--agnos` and `--target=x86_64-bare-metal-elf` the same way (6.7.12): its compiler emits aarch64
 and reads `CYRIUS_KERNEL` alone — through 6.7.11 it wrote a plain aarch64 binary (or an aarch64
 image under an x86_64 kernel line) at rc 0 — while `--target=aarch64-bare-metal-elf` stays allowed
-there. Build agnos and x86_64 kernel images on an x86_64 Linux host.
+there. Build agnos and x86_64 kernel images on an x86_64 Linux host. On the aarch64 Linux CLI
+`--target=aarch64-bare-metal-elf` and `--aarch64` run the host's own cycc, which emits aarch64 and
+honours `CYRIUS_KERNEL` (6.7.13): `--aarch64` is a no-op there, and the bare-metal target writes the
+aarch64 kernel image. Through 6.7.12 both looked for `cycc_aarch64` — the x86_64-hosted cross
+compiler, which no aarch64 host can run — and failed with `compiler not found`.
 
 ```
 error: --agnos is not available from the Windows CLI: cycc.exe emits PE only (build agnos / bare-metal images on Linux)

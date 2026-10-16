@@ -796,6 +796,25 @@ fn _cli_host_refuses_pie(): i64 {
     return 0;
 }
 
+# 6.7.13 — `--win` from the aarch64 Linux CLI: its compiler (src/main_aarch64_native.cyr) reads no
+# CYRIUS_TARGET_WIN and has no PE emitter, so `cyrius build --win` wrote an aarch64 ELF named `.exe`
+# and said OK at rc 0 (pi). Refused by name, as D6 refuses `--agnos` there (a target the host's
+# compiler cannot emit, the user's 2026-10-13 rule). Only that CLI answers: `--win` is native on
+# Windows and the x86_64 Linux compiler emits PE. 1 after naming it, else 0. CHANGELOG [6.7.13]
+fn _cli_host_refuses_win(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    var why = _cli_host_emits_no_x86();
+    sys_write(STDERR_FD, "error: --win is not available from ", 35);
+    sys_write(STDERR_FD, why, strlen(why));
+    var tail = " (build PE images on x86_64 Linux or Windows)\n";
+    sys_write(STDERR_FD, tail, strlen(tail));
+    return 1;
+    #endif
+    #endif
+    return 0;
+}
+
 # The early block: before any selector is applied, so nothing compiles and nothing is written.
 # Kept apart from the selector chain below, which ends in _cli_targets_exclusive (6.7.12).
 fn _cli_foreign_target(): i64 {
@@ -804,6 +823,9 @@ fn _cli_foreign_target(): i64 {
     }
     if (_cli_has("--agnos") == 1) {
         if (_cli_host_refuses("--agnos", 1) == 1) { return 1; }
+    }
+    if (_cli_has("--win") == 1) {
+        if (_cli_host_refuses_win() == 1) { return 1; }
     }
     var tgt = _cli_val("--target");
     if (tgt == 0) { return 0; }
