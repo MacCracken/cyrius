@@ -112,6 +112,14 @@
 #   M-C2 `_sarg_vec_other` without the capture arm           -> RED 6: CR1 on every leg (compiled), CRX x86 / PE (2
 #       lines: `ru` / `rpp` / `ri((b))` / `bv1` gone)
 #
+# ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/2026-10-15-struct-into-vector-pointer-parameter-accepted.md)
+# — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME (a `*V` records no struct, so `_sarg_type_err` compared
+# nothing: `_sarg_svec_err`): the filed `rd(s)` read the struct's bytes as the vector (42 on every leg, silently).
+#   SV1 the filed repro verbatim: one line on x86_64 / aarch64 / cx / PE; SV2-SV9 a call result, `*ps`, a global, a
+#      captured struct, a method result, parenthesised, 24 B into `*f64v4`, 8 B; SVw SV2-SV5 on PE
+#   SVok `rd(&s)` and `rd(ps)` (a typed `*Pt`) exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   M-S1 `_sarg_svec_err` answering 0                        -> RED 16: SV1 on every leg, SV2-SV9, SVw2-SVw5 (compiled)
+#
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
 # x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
@@ -461,6 +469,46 @@ CRY1B="${CRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var c = |k|
 refused CRY1 "CRY1 a captured f32v4 into *f64v2 (A2)" "$CRY1B"
 refused CRY2 "CRY2 a captured f64v4 into *f64v2 (A2)" "${CRH}fn main(): i64 { var w: f64v4 = f64v4_make(1, 2, 3, 4); var c = |k| rd(w) + k; return fncall1(c, 0); }\n${E}"
 [ "$WINE" = 1 ] && refused CRYw "CRYw CRY1 on PE" "$CRY1B" pe
+
+# 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/2026-10-15-struct-into-vector-pointer-parameter-accepted.md) —
+# A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME, the mirror of 6.7.3 / A2 / D27: the filed `rd(s)` (`s: Pt`,
+# `p: *f64v2`) passed the struct's address and the callee read its bytes as the vector (42 on x86_64 / IR=3 / aarch64 /
+# cx / PE). `rd(&s)` and a typed `*Pt` pointer convert freely, as ever.
+echo "SV. a struct value into a \`*V\` parameter: refused by name, once (D33 A); \`rd(&s)\` passes"
+cat > "$D/sv1.src" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Pt { x; y; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 { var s: Pt; s.x = 42; s.y = 7; return rd(s); }
+var rc = main();
+syscall(60, rc);
+EOF2
+SVF="to a parameter that is a pointer to a vector type in a call to 'rd'"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "SV1$lg" "SV1 $lg: the filed repro, rd(s) with s: Pt" "$(cat "$D/sv1.src")" "$lg" "cannot pass 's' $SVF"
+done
+SVH="${H}include \"lib/fnptr.cyr\"\nstruct Pt { x; y; }\nstruct Q { a; b; c; }\nstruct P1 { x; }\nvar G = Pt { 42, 7 };\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rd4(p: *f64v4): i64 { return load64(p); }\nfn mkp(): Pt { var s: Pt; s.x = 42; s.y = 7; return s; }\nimpl Pt { fn dup(self): Pt { return self; } }\n"
+refused SV2 "SV2 rd(mkp()), a struct call result" "${SVH}fn main(): i64 { return rd(mkp()); }\n${E}" x86 "cannot pass 'mkp' $SVF"
+refused SV3 "SV3 rd(*ps), a *Pt dereference" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" x86 "cannot pass 'ps' $SVF"
+refused SV4 "SV4 rd(G), a struct global" "${SVH}fn main(): i64 { return rd(G); }\n${E}" x86 "cannot pass 'G' $SVF"
+refused SV5 "SV5 |k| rd(s), a captured struct" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" x86 "cannot pass 's' $SVF"
+refused SV6 "SV6 rd(s.dup()), a method result" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "$SVF"
+refused SV7 "SV7 rd((s)), parenthesised" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd((s)); }\n${E}" x86 "cannot pass 's' $SVF"
+refused SV8 "SV8 a 24-byte struct into *f64v4" "${SVH}fn main(): i64 { var q: Q; q.a = 42; return rd4(q); }\n${E}" x86 "cannot pass 'q' to a parameter that is a pointer to a vector type in a call to 'rd4'"
+refused SV9 "SV9 an 8-byte struct into *f64v2" "${SVH}fn main(): i64 { var t: P1; t.x = 42; return rd(t); }\n${E}" x86 "cannot pass 't' $SVF"
+if [ "$WINE" = 1 ]; then
+    refused SVw2 "SVw SV2 on PE" "${SVH}fn main(): i64 { return rd(mkp()); }\n${E}" pe "cannot pass 'mkp' $SVF"
+    refused SVw3 "SVw SV3 on PE" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" pe "cannot pass 'ps' $SVF"
+    refused SVw4 "SVw SV4 on PE" "${SVH}fn main(): i64 { return rd(G); }\n${E}" pe "cannot pass 'G' $SVF"
+    refused SVw5 "SVw SV5 on PE" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" pe "cannot pass 's' $SVF"
+fi
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt { x; y; }' \
+  'fn rd(p: *f64v2): i64 { return load64(p); }' \
+  'fn main(): i64 { var s: Pt; s.x = 42; s.y = 7; var ps: *Pt = &s; return rd(&s) + rd(ps) - 42; }' \
+  'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
+exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
 cat > "$D/v8.cyr" <<'EOF'

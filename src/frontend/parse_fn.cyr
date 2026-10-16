@@ -1737,9 +1737,22 @@ fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
     if (asid <= 0) { return 0; }
     if (asid >= 2048) { return 0; }    # a vector descriptor: not this rule
     var ps = GFPSID(S, fi, argc);
-    if (ps <= 0) { return 0; }
+    if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff); }   # 6.7.13 (D33): a `*V` records no struct
     if (ps == asid) { return 0; }
     ERR_IDENT(S, "cannot pass ", anoff, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+    return 1;
+}
+# ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15) — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME. `rd(s)`
+# with `p: *f64v2` and `s: Pt` — a local, a call result, `*ps`, a global, a closure's capture — passed the struct's
+# address and the callee read its bytes as the vector (42 on every target, silently): a `*V` records no struct
+# (GFPSID), so `_sarg_type_err` compared nothing. It is the mirror of 6.7.3 (another struct into `*S`), 6.7.11 A2
+# (another vector into `*V`) and D27 (a vector into another pointer kind); `rd(&s)` stays the explicit conversion
+# (a plain pointer converts freely). The struct argument `anoff` (every struct arm's `_sarg_type_err`) to parameter
+# `argc` of `fi` that records no struct: 1 = refused (the push follows, no binary), 0 = not a `*V`. CHANGELOG [6.7.13]
+fn _sarg_svec_err(S, fi, argc, anoff): i64 {
+    if (_pvec_param(S, fi, argc) == 0) { return 0; }
+    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter that is a pointer to a vector type in a call to ",
+      L64(_fnt_names + fi * 8));
     return 1;
 }
 # The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,

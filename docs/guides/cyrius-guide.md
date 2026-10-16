@@ -3526,7 +3526,12 @@ Before 6.7.11 the `*` was dropped and the parameter was a value-form vector: `rd
 (`value-form SIMD arg must be a local IDENT`), and `rd(b)` compiled and faulted (the body
 dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is called through
 `fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
-registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
+registers (SysV / aarch64 / cx) or a by-pointer copy (Win64). **A struct value passed to a `*V` parameter is refused by
+name (6.7.13; the user's decision D33, 2026-10-15: A)** — a local, a call or method result, `*ps`, a global, a
+closure's captured copy, parenthesised or not: `cannot pass 's' to a parameter that is a pointer to a vector type in a
+call to 'rd'`, the mirror of a struct of another type into `*S` and a vector of another type into `*V`. `rd(&s)` and a
+typed `*Pt` pointer still convert freely. ⚠ Through 6.7.12 the struct's address was passed and its bytes read as the
+vector, silently.
 
 **A vector value that is not a named local passes an address too (6.7.12; the user's decision
 D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
