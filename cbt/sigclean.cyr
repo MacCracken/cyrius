@@ -6,7 +6,8 @@
 # CLI KILLED while the compiler ran skipped every unlink, so the names stayed until check.sh's
 # reaper found the dead pid's directory. SIGTERM / SIGINT / SIGHUP now run a handler that stops
 # the running children, unlinks the in-flight names, removes the (then empty) private directory
-# and exits 128+N. SIGKILL cannot be caught: that leftover stays the reaper's.
+# and then dies by the signal itself (6.7.13, D39), so a parent still sees a signal death. SIGKILL
+# cannot be caught: that leftover stays the reaper's.
 #
 # Async-signal-safe by construction: the handler reads fixed tables and makes raw syscalls
 # through the plain wrappers — no alloc, str_builder or vec. A name is registered BEFORE its file
@@ -229,16 +230,42 @@ fn _cbt_sig_stop(c, fwd, n): i64 {
 
 # The handler's exit: the private directory goes when this process created it and it is empty
 # (rmdir, never a sweep — anything still in it was not compile scratch: a `cyrius test` binary
-# kept for a post-mortem), then 128+N.
-fn _cbt_sig_exit(code, me): i64 {
+# kept for a post-mortem), then the process dies by signal `n` (`_cbt_sig_reraise`), so a parent's
+# wait reads WIFSIGNALED / WTERMSIG n as it did before the handler existed (a shell's `$?` reads
+# 128+N either way). exit(128+N) is only the fallthrough, for a process that outlives its own
+# signal (and for `n` 0). CHANGELOG [6.7.13]
+fn _cbt_sig_exit(n, me): i64 {
     if (_cbt_sig_dir != 0 && _cbt_sig_dir_owner == me) { xrmdir(_cbt_sig_dir); }
-    sys_exit(code);
-    return code;
+    if (n > 0) { _cbt_sig_reraise(n); }
+    sys_exit(128 + n);
+    return 128 + n;
+}
+
+# Die by signal `n` once the cleanup is done (D39, the user 2026-10-15): its disposition back to
+# SIG_DFL, the signal raised at this process — pending, since the handler runs with HUP / INT /
+# TERM blocked (sa_mask) — and then unblocked, so the default action ends the process inside the
+# unblock. The same three steps on Darwin, where the handler is its own trampoline and never
+# returns: the kill is process-directed and Darwin's sys_sigprocmask is the per-thread
+# __pthread_sigmask. Windows has no POSIX signals (nothing is caught there). CHANGELOG [6.7.13]
+fn _cbt_sig_reraise(n): i64 {
+    var set[8];
+    store64(&set, 1 << (n - 1));
+    #ifdef CYRIUS_TARGET_LINUX
+    signal_default(n);
+    sys_kill(sys_getpid(), n);
+    sys_sigprocmask(SIG_UNBLOCK, &set, 0);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    signal_default(n);
+    sys_kill(sys_getpid(), n);
+    sys_sigprocmask(SIG_UNBLOCK, &set, 0);
+    #endif
+    return 0;
 }
 
 # What every handler does for signal `n`: children first (one still running could create a name
 # after it was unlinked, or still be compiling from the tree), then the names, then the scratch
-# tree, then the directory, then exit 128+N.
+# tree, then the directory, then death by `n` itself.
 fn _cbt_sig_fire(n): i64 {
     var me = sys_getpid();
     if (_cbt_sig_owner == me) {
@@ -256,20 +283,21 @@ fn _cbt_sig_fire(n): i64 {
         }
     }
     if (_cbt_sig_tree_owner == me) { _cbt_sig_tree_drop(); }
-    _cbt_sig_exit(128 + n, me);
+    _cbt_sig_exit(n, me);
     return 0;
 }
 
 # One handler per signal, so none reads the signal number from an argument register: the
 # kernel enters a Linux handler as handler(sig, info, uctx) but a Darwin one through its
 # trampoline slot as tramp(catcher, style, sig, info, uctx). SIGHUP / SIGINT / SIGTERM are 1 / 2
-# / 15 on Linux and Darwin alike. Each ends in exit and never returns.
+# / 15 on Linux and Darwin alike. Each ends in the process's death and never returns.
 fn _cbt_sig_hup(): i64 { return _cbt_sig_fire(1); }
 fn _cbt_sig_int(): i64 { return _cbt_sig_fire(2); }
 fn _cbt_sig_term(): i64 { return _cbt_sig_fire(15); }
 
 # x86_64 Linux refuses to deliver a caught signal without SA_RESTORER (the frame's return address
-# must be given). The handlers above exit and never return into it, so this is never run.
+# must be given). The handlers above end the process and never return into it, so this is never
+# run.
 fn _cbt_sig_restorer(): i64 { return _cbt_sig_fire(0); }
 
 # Catch signal `sig` with `fnp` — unless it was IGNORED when the CLI started (nohup; a background

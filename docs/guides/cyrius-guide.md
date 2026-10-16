@@ -4809,9 +4809,12 @@ wine included (through 6.7.11 they came from `sha256sum`, `shasum -a 256` or `ce
 or SIGHUP while a compile runs stops the compiler the CLI started (a distlib verify passes the
 signal to its per-target children, which clean up their own), unlinks the compile's scratch —
 the preprocessed `cpp_<pid>`, the `cc_err` capture, the child's `<out>.tmp.<pid>` (beside the
-output for `cyrius build`), a check's own output — removes the then-empty temp dir and exits
-128+N (143, 130, 129). A file in that dir that is not compile scratch, such as a `cyrius test`
-binary, stays, and so does the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
+output for `cyrius build`), a check's own output — removes the then-empty temp dir and then dies
+by that same signal, as a CLI with no handler does: a shell's `$?` reads 128+N (143, 130, 129),
+and a parent's wait sees a signal death (`exec_capture_status`: `st[1]` = 1), so a Ctrl-C'd
+`cyrius` stops a shell loop (6.7.13; 6.7.12 exited 128+N, which a parent read as an exit). A
+file in that dir that is not compile scratch, such as a `cyrius test` binary, stays, and so does
+the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
 forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt_err` / `wt_out` /
 `ls_remote` captures and the git they run) are
 stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running),
