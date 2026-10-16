@@ -1,0 +1,208 @@
+# 6.7.13 — xflock: re-taking the lock a handle already holds keeps it held. flock(2)'s
+# contract: a re-lock to the mode the descriptor already holds is a no-op, and patra relies on it
+# (every statement inside a transaction re-takes LOCK_EX on its own handle). xflock's Windows arm
+# (6.7.12: LockFileEx / UnlockFileEx on one sentinel byte) unlocked the handle's byte before it
+# locked again, ALSO for the mode already held — and a handle blocked waiting for the lock was
+# granted it in that gap. On real Windows patra's test_no_mutex_flock_deadlock kept 40 of 60 rows:
+# the second handle's INSERTs returned PATRA_OK and were lost (wine does not reproduce the race).
+#
+# The discriminating rows are the threaded ones: handle B blocks in xflock(b, LOCK_EX) on a worker
+# while A re-locks; B must still be waiting afterwards. The worker releases the lock the moment it
+# gets it, so the 6.7.12 code fails the row instead of hanging (A's re-lock then completes). The
+# sequential rows pin what the fix must not break: a re-lock with LOCK_NB, a re-taken LOCK_SH that
+# does not stack, SH <-> EX conversion, LOCK_UN, and a closed handle whose value comes back from a
+# new open (on Windows usually the same value) inheriting nothing. Every row holds under flock(2)
+# on Linux and both Macs too (two opens in one process are two open file descriptions, so they
+# contend). A refused LOCK_NB is -EAGAIN: 11 on Linux and PE, 35 on Darwin. The threaded rows run
+# where threads are real (THREADS_CONCURRENT); every wait has a deadline, so a regression fails
+# the file instead of hanging the cross-OS leg. CHANGELOG [6.7.13]
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var XF_EAGAIN = 11;
+#ifdef CYRIUS_TARGET_MACOS
+XF_EAGAIN = 35;
+#endif
+var XF_SH = 1;
+var XF_EX = 2;
+var XF_NB = 4;
+var XF_UN = 8;
+
+# Generous: qemu-aarch64 and a loaded Windows host are slow; a passing run never waits this long.
+var XR_DEADLINE_MS = 30000;
+# How long a worker that should be blocked is given to (wrongly) get the lock.
+var XR_SETTLE_MS = 200;
+
+# End every thread in the process with `code` (a worker may be parked in the kernel for good).
+fn _xr_exit_all(code): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    syscall(60, code);         # Darwin exit(2) ends the whole process
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    sys_exit_group(code);
+    #endif
+    return 0;
+}
+
+# A deadline expired: report it and end the process.
+fn _xr_abort(what): i64 {
+    assert_eq(0, 1, what);
+    assert_summary();
+    _xr_exit_all(1);
+    return 0;
+}
+
+# Wait until *addr is non-zero; aborts the file past the deadline.
+fn _xr_wait(addr, what): i64 {
+    var t0 = clock_now_ms();
+    while (atomic_load(addr) == 0) {
+        if (clock_now_ms() - t0 > XR_DEADLINE_MS) { _xr_abort(what); return 0; }
+        sleep_ms(1);
+    }
+    return 1;
+}
+
+# The waiter: takes xflock(_w_fd, LOCK_EX) (blocking), records that it got it, and releases it
+# at once — so a holder whose re-lock let go of the lock finishes its re-lock instead of hanging.
+var _w_fd = 0 - 1;
+var _w_started = 0;
+var _w_got = 0;
+var _w_rc = 0 - 99;
+var _w_done = 0;
+
+fn _w_locker(arg): i64 {
+    atomic_store(&_w_started, 1);
+    var rc = xflock(_w_fd, XF_EX);
+    atomic_store(&_w_rc, rc);
+    atomic_store(&_w_got, 1);
+    xflock(_w_fd, XF_UN);
+    atomic_store(&_w_done, 1);
+    return 0;
+}
+
+# Start the waiter on handle `fd` and give it time to block behind the holder's lock.
+fn _w_start(fd, what): i64 {
+    _w_fd = fd;
+    atomic_store(&_w_started, 0);
+    atomic_store(&_w_got, 0);
+    atomic_store(&_w_rc, 0 - 99);
+    atomic_store(&_w_done, 0);
+    var t = thread_create(&_w_locker, 0);
+    if (t == 0) { _xr_abort(what); return 0; }
+    _xr_wait(&_w_started, what);
+    sleep_ms(XR_SETTLE_MS);
+    return t;
+}
+
+# The holder has released: the waiter must get the lock, then the thread is joined.
+fn _w_finish(t, what): i64 {
+    _xr_wait(&_w_done, what);
+    thread_join(t);
+    return atomic_load(&_w_rc);
+}
+
+var path = test_scratch("cyrius_xflock_relock.tmp");
+xunlink(path);
+var a = file_open(path, O_RDWR | O_CREAT, 420);
+var b = file_open(path, O_RDWR, 420);
+assert_eq(a >= 0, 1, "handle A opens");
+assert_eq(b >= 0, 1, "handle B opens");
+
+test_group("a re-taken LOCK_EX keeps the lock held");
+assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX -> 0");
+assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX again on its own exclusive lock -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN after A's re-lock");
+assert_eq(xflock(a, XF_EX | XF_NB), 0, "A: LOCK_EX|LOCK_NB on its own exclusive lock -> 0");
+assert_eq(xflock(b, XF_SH | XF_NB), 0 - XF_EAGAIN, "B: LOCK_SH|LOCK_NB -> -EAGAIN (A still exclusive)");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 once A has unlocked");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+
+test_group("a re-taken LOCK_SH does not stack: one LOCK_UN releases it");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH -> 0");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH again -> 0");
+assert_eq(xflock(a, XF_SH | XF_NB), 0, "A: LOCK_SH|LOCK_NB a third time -> 0");
+assert_eq(xflock(b, XF_SH | XF_NB), 0, "B: LOCK_SH|LOCK_NB -> 0 beside A's shared lock");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN (A still shares)");
+assert_eq(xflock(a, XF_UN), 0, "A: ONE LOCK_UN -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 (A held one lock, not three)");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+
+test_group("SH <-> EX conversion on one handle, and LOCK_UN");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH -> 0");
+assert_eq(xflock(a, XF_EX | XF_NB), 0, "A: LOCK_SH -> LOCK_EX|LOCK_NB -> 0 (no other holder)");
+assert_eq(xflock(b, XF_SH | XF_NB), 0 - XF_EAGAIN, "B: LOCK_SH|LOCK_NB -> -EAGAIN (A converted to exclusive)");
+assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX again after the conversion -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN (still exclusive)");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_EX -> LOCK_SH -> 0");
+assert_eq(xflock(b, XF_SH | XF_NB), 0, "B: LOCK_SH|LOCK_NB -> 0 (A is shared again)");
+assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH again after the conversion -> 0");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN of a lock it no longer holds -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 (A holds nothing)");
+assert_eq(xflock(b, XF_EX), 0, "B: LOCK_EX again -> 0");
+assert_eq(xflock(a, XF_SH | XF_NB), 0 - XF_EAGAIN, "A: LOCK_SH|LOCK_NB -> -EAGAIN (B holds it)");
+assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
+
+test_group("a closed handle hands nothing to the next open (Windows reuses the value)");
+var c = file_open(path, O_RDWR, 420);
+assert_eq(c >= 0, 1, "handle C opens");
+assert_eq(xflock(c, XF_EX), 0, "C: LOCK_EX -> 0");
+file_close(c);
+var d = file_open(path, O_RDWR, 420);
+assert_eq(d >= 0, 1, "handle D opens after C is closed holding its lock");
+assert_eq(xflock(d, XF_EX), 0, "D: LOCK_EX -> 0 (the close released C's lock)");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN (D holds it, whatever C held)");
+assert_eq(xflock(d, XF_EX), 0, "D: LOCK_EX again -> 0");
+assert_eq(xflock(b, XF_EX | XF_NB), 0 - XF_EAGAIN, "B: LOCK_EX|LOCK_NB -> -EAGAIN after D's re-lock");
+assert_eq(xflock(d, XF_UN), 0, "D: LOCK_UN -> 0");
+file_close(d);
+
+if (THREADS_CONCURRENT == 1) {
+    test_group("the filed shape: A re-takes LOCK_EX while B waits for it — B keeps waiting");
+    assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX -> 0");
+    var t1 = _w_start(b, "the waiter starts");
+    assert_eq(atomic_load(&_w_got), 0, "B blocks while A holds LOCK_EX");
+    assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX again while B waits -> 0");
+    assert_eq(xflock(a, XF_EX), 0, "A: and again -> 0");
+    sleep_ms(XR_SETTLE_MS);
+    assert_eq(atomic_load(&_w_got), 0, "B is STILL waiting after A's re-locks (6.7.12 Windows: B got in)");
+    assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+    assert_eq(_w_finish(t1, "B gets the lock once A unlocks"), 0, "B: its LOCK_EX -> 0 once A unlocked");
+
+    test_group("A re-takes LOCK_SH while B waits for LOCK_EX — B keeps waiting");
+    assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH -> 0");
+    var t2 = _w_start(b, "the waiter starts (shared holder)");
+    assert_eq(atomic_load(&_w_got), 0, "B blocks while A holds LOCK_SH");
+    assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH again while B waits -> 0");
+    sleep_ms(XR_SETTLE_MS);
+    assert_eq(atomic_load(&_w_got), 0, "B is STILL waiting after A's shared re-lock");
+    assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+    assert_eq(_w_finish(t2, "B gets the lock once A's shared lock is gone"), 0, "B: its LOCK_EX -> 0 once A unlocked");
+
+    test_group("after SH -> EX conversion, A's re-taken LOCK_EX still keeps B waiting");
+    assert_eq(xflock(a, XF_SH), 0, "A: LOCK_SH -> 0");
+    assert_eq(xflock(a, XF_EX), 0, "A: LOCK_SH -> LOCK_EX -> 0");
+    var t3 = _w_start(b, "the waiter starts (converted holder)");
+    assert_eq(atomic_load(&_w_got), 0, "B blocks while A holds the converted LOCK_EX");
+    assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX again while B waits -> 0");
+    sleep_ms(XR_SETTLE_MS);
+    assert_eq(atomic_load(&_w_got), 0, "B is STILL waiting after A's re-lock");
+    assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
+    assert_eq(_w_finish(t3, "B gets the lock once A unlocks (converted)"), 0, "B: its LOCK_EX -> 0 once A unlocked");
+}
+
+file_close(b);
+file_close(a);
+xunlink(path);
+var r = assert_summary();

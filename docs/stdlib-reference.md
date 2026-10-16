@@ -227,7 +227,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xstat` | `xstat(path, buf) → 0/-errno` | stat into `buf`. **-1 on Windows.** Read fields via `STAT_MODE` etc. — the offsets differ per arch (st_mode @24 x86-Linux, @16 aarch64, @4 macOS-arm64) |
 | `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record). **-1 on Windows** — use `dir_list` |
 | `xlseek` | `xlseek(fd, off, whence) → off/-errno` | Reposition (whence 0=SET / 1=CUR / 2=END) |
-| `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). Windows (6.7.12): `LockFileEx` on one sentinel byte at 2^63 − 1 (Windows locks are mandatory; the data bytes stay readable and writable through other handles), a held `LOCK_NB` is -11; it was -1 for every lock |
+| `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). Windows (6.7.12): `LockFileEx` on one sentinel byte at 2^63 − 1 (Windows locks are mandatory; the data bytes stay readable and writable through other handles), a held `LOCK_NB` is -11; it was -1 for every lock. A re-lock to the mode the handle holds is a no-op that keeps the lock (6.7.13; it was dropped and re-taken, letting a waiting handle in) |
 
 **Crash-safe write + locking helpers (v6.4.57–.58):**
 
