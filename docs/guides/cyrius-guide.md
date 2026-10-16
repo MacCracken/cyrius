@@ -5977,11 +5977,17 @@ doesn't clobber it). That holds for every name the body declares: a `var`, a loc
 `const`, a `for … in` variable (for the loop only) and each name of a destructure
 `var a, b = f();`. A range's start bound and a collection are read before the loop
 variable is bound, so `for i in i..5` and `for x in x` read (and capture) the enclosing
-`i` / `x`; a range's end bound reads the loop variable. A destructure binds its names after
-its right-hand side, so `var a, b = f(b);` passes (and captures) the enclosing `b`.
+`i` / `x`; a range's end bound reads the loop variable. A `var` binds its name after its
+initializer, and a destructure its names after its right-hand side, so `var a = a + n;`,
+`var a: i64 = a + n;`, a classic `for (var a = a; ..)` header and `var a, b = f(a);` read (and
+capture) the enclosing `a`; after the declaration `a` is the closure's own.
 ⚠ Before 6.7.11 a `for … in` variable, a local `const` and a destructure's second or
 third name were taken for a read of the enclosing local of that name: the closure was
-refused without lib/alloc.cyr, or carried a heap copy it never read. Pinned by
+refused without lib/alloc.cyr, or carried a heap copy it never read. ⚠ Through 6.7.12 the
+opposite held for a `var` and a destructure's first name: the initializer's read of the
+enclosing name was dropped, so it read a GLOBAL of that name silently (`var a = a + 1;` gave
+the global's value + 1) or was refused `undefined variable 'a'`; now it is a capture (which
+needs lib/alloc.cyr, as any capture does). Pinned by
 `tests/gates/frontend/closure_declared_names_not_captured.sh`.
 
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable

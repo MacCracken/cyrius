@@ -1,0 +1,8 @@
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+fn two(x): (i64, i64) { return (x, x + 1); }
+var a = 100;
+fn f(): i64 { alloc_init(); var a = 5; var cl = |n| { var a = a + n; return a; }; return fncall1(cl, 1); }
+fn g(): i64 { alloc_init(); var a = 5; var cl = |n| { var a, b = two(a + n); return a * 10 + b; }; return fncall1(cl, 1); }
+syscall(60, f());      # 101; expected 6
+# syscall(60, g());    # 88 (1112: two(101)); expected 67 (two(6))

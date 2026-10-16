@@ -324,8 +324,9 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
 # Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
 # expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
 # (2, a `for` header) to its unmatched `)`, a `for … in` header's part (3) to its depth-0 `{`,
-# range `..` or `;`, a declaration's right-hand side (4) to its depth-0 `;` (`_cl_walk_stop`); the
-# cursor is left AT that token. Every other `{` is walked as its own scope (`_cl_prescan_nested`).
+# range `..` or `;`, a declaration's tail (4: its annotation and right-hand side) to its depth-0 `;`
+# (`_cl_walk_stop`); the cursor is left AT that token. Every other `{` is walked as its own scope
+# (`_cl_prescan_nested`).
 # ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
 # and the `var` names it declares leave the shadow set when it ends: they used to stay, so
 # `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
@@ -351,6 +352,7 @@ fn _cl_prescan_body(S, is_block): i64 {
         }
         elif (t == 3) {
             if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
+            elif (TOKTYP(S, GTI(S) + 1) == 2) { _cl_prescan_var(S); t = 0 - 1; }   # 6.7.13
         }
         elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
@@ -359,7 +361,7 @@ fn _cl_prescan_body(S, is_block): i64 {
             elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
-            if (t == 3 || t == 168) { prev_var = 1; }   # `var` / a local `const` (6.7.11) names one
+            if (t == 3 || t == 168) { prev_var = 1; }   # a local `const` (6.7.11) names one here
             elif (t == 2) {
                 var noff = PEEKV(S);
                 if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
@@ -390,6 +392,13 @@ fn _cl_prescan_for(S): i64 {
 # `for … in` variable after the start bound or the collection, which read the enclosing name (a
 # range's end bound reads the variable), for the loop only; the names of a destructure after its
 # right-hand side, which reads the enclosing ones. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — NOR IS A DECLARATION'S INITIALIZER A READ OF THE NAME IT DECLARES. A `var` (and a
+# destructure's FIRST name) was still shadowed from the name, so `var a = a + n;` dropped the read
+# of the enclosing `a` that PARSE_VAR makes (it binds after the right-hand side): the body read a
+# GLOBAL `a` silently, or was refused "undefined variable". Every `var` name is shadowed after its
+# tail (`_cl_prescan_var`: the annotation and the `=` right-hand side, mode 4 to its `;`) — a
+# typed `var a: T = ..` and a classic `for (var a = a; ..)` header alike. A local `const` keeps
+# shadowing from its name: its initializer cannot read a runtime local. CHANGELOG [6.7.13]
 fn _cl_walk_stop(S, m, t, depth): i64 {
     if (m < 3) { return 0; }
     if (depth != 0) { return 0; }
@@ -428,11 +437,11 @@ fn _cl_at_mvar(S): i64 {
     if (TOKTYP(S, GTI(S) + 3) != 2) { return 0; }
     return 1;
 }
-# Cursor at `var a, b[, c] = f(..);`: `a` as after any `var`, the right-hand side read, then `b`
-# (and `c`) shadowed. Leaves the cursor at the `;`.
+# Cursor at `var a, b[, c] = f(..);`: the right-hand side read, then `a`, `b` (and `c`) shadowed.
+# Leaves the cursor at the `;`.
 fn _cl_prescan_mvar(S): i64 {
     var ti = GTI(S) + 1;
-    _cl_shadow_add(S, TOKVAL(S, ti));
+    var n1 = TOKVAL(S, ti);
     var n2 = TOKVAL(S, ti + 2);
     var n3 = 0;
     var has3 = 0;
@@ -443,8 +452,19 @@ fn _cl_prescan_mvar(S): i64 {
         STI(S, ti + 1);
         _cl_prescan_body(S, 4);
     }
+    _cl_shadow_add(S, n1);
     _cl_shadow_add(S, n2);
     if (has3 == 1) { _cl_shadow_add(S, n3); }
+    return 0;
+}
+# Cursor at `var IDENT` (one name, `stack var` and a classic `for (` header's included): the tail —
+# an annotation, the `=` right-hand side — read first, then the name shadowed, as PARSE_VAR binds it.
+# Leaves the cursor at the `;`.
+fn _cl_prescan_var(S): i64 {
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 2);
+    _cl_prescan_body(S, 4);
+    _cl_shadow_add(S, noff);
     return 0;
 }
 # Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
