@@ -193,7 +193,9 @@ function flush(  p, i) {
         p = s; sub(/^[a-z_]+\([^,]+,/, "", p); sub(/,.*/, "", p); gsub(/[ \t]/, "", p)
         wrote[p] = 1
     }
-    if (match(line, /(sys_unlink|xunlink)\([^)]+\)/)) {
+    # 6.7.13: `_cbt_scratch_drop(p)` (cbt/sigclean.cyr) is an unlink too — the kill handler's
+    # tracked scratch is removed through it (capacity's cap_err since 6.7.13).
+    if (match(line, /(sys_unlink|xunlink|_cbt_scratch_drop)\([^)]+\)/)) {
         s = substr(line, RSTART, RLENGTH)
         p = s; sub(/^[a-z_]+\(/, "", p); sub(/\).*/, "", p); gsub(/[ \t]/, "", p)
         unlinked[p] = 1

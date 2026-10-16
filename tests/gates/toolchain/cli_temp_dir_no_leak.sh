@@ -553,7 +553,7 @@ if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
     # in $T/k7-<tag>.rc and "gone" / "running" for the stand-in git in $T/k7-<tag>.cc.
     g7_run() {
         _gt=$1; _gs=$2; shift 2
-        printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "%s" ] && { echo $$ > "%s/g7.cc"; exec sleep 60; }; done\nexec "%s" "$@"\n' "$_gs" "$T" "$G7GIT" > "$T/g7bin/git"
+        printf '#!/bin/sh\nfor a in "$@"; do\n  if [ "$a" = "%s" ]; then\n    echo $$ > "%s/g7.cc"\n    exec sleep 60\n  fi\ndone\nexec "%s" "$@"\n' "$_gs" "$T" "$G7GIT" > "$T/g7bin/git"
         chmod +x "$T/g7bin/git"
         rm -f "$T/g7.cc" "$T/p7-$_gt" "$T/k7-$_gt.rc" "$T/k7-$_gt.live" "$T/k7-$_gt.cc"
         ( _kr=0; cd "$P6" && HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 PATH="$T/g7bin:$PATH" TMPDIR="$TB/" \
