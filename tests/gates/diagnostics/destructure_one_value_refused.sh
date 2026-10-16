@@ -46,6 +46,12 @@
 #           read the seeded 77 on every target): the repro verbatim (0), three values, a defer (it runs, the
 #           values stay 0), an f64 pair, an #inline replay; the return taken, an if / else whose arms both
 #           return (34) and a `while (1)` end (42) are unchanged.
+#           (6.7.13, D23 B, the user's decision, 2026-10-15) A sync fn declared ONE type may return several
+#           values — kept and documented (issues/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md):
+#           the issue's two programs verbatim (1: a one-name bind keeps the first value; 12) and its ret2 form
+#           (1) run; pass 1 counts a `return (a, b);` body, so three names from `: i64` / `: f64` and a 3-tuple
+#           capture are refused; a `: f64` fn's values are each an f64 (3.0); a `: bool` fn's first value is
+#           checked as its bool.
 #   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
@@ -79,6 +85,8 @@
 # while_true_top and cnt_while_true build (tuple_checked.sh R16x-true too).
 # 6.7.13 (run 2026-10-15): `_mret_falloff` answering 0 -> fall_off_2, fall_off_3, fall_off_defer, fall_off_f64
 # read the stale registers (77, 9, 9, 9); `_mret_falloff_fi` answering 0 -> fall_off_inline (117: 40 + 77).
+# 6.7.13 (run 2026-10-15): `_prescan_ret_arity` recording nothing for a scalar-declared fn -> sc_count3,
+# sc_f64_count3, sc_tup3 build (the rows pin D23 B's count, which that record carries).
 # 6.7.13 (run 2026-10-15): `_ret2_in3` answering 0 at once -> ret2_in_3, ret2_in_3_gen build, ret2_in_3_next
 # one error line (return_ret2_in_3 stays refused, by the return check); its `_tn_once` dropped -> ret2_in_3_gen
 # two error lines; the latch left set -> ret2_in_3_next one error line (the next statement's lost).
@@ -254,6 +262,19 @@ runs fall_off_inline "${SEED}fn k(x) { return x + 40; }\n#inline\nfn f(x): (i64,
 runs fall_off_taken "${SEED}fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(1); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 12
 runs ifelse_both_return "${SEED}fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } else { return (3, 4); } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 34
 runs loop_end_declared "${SEED}fn f(x): (i64, i64) { while (1) { if (x > 3) { return (x, 2); } x = x + 1; } }\nfn main(): i64 { var x, y, w = h(); var a, b = f(0); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 42
+# 6.7.13 (D23 B, 2026-10-15): a fn declared ONE type returning several values is kept — the issue's two programs
+# verbatim and its ret2 form; the count pass 1 records (three names, a 3-tuple capture) refused; each value typed by
+# the declared type.
+SC='fn g2(): i64 { return (1, 2); }\n'
+runs sc_one_bind  "${SC}fn main(): i64 { var a = g2(); return a; }\nsyscall(60, main());\n" 1
+runs sc_two_bind  "${SC}fn main(): i64 { var a, b = g2(); return a * 10 + b; }\nsyscall(60, main());\n" 12
+runs sc_ret2_one_bind 'fn g2(): i64 { ret2(1, 2); }\nfn main(): i64 { var a = g2(); return a; }\nsyscall(60, main());\n' 1
+refused sc_count3 "${SC}fn main(): i64 { var a, b, c = g2(); return a; }\nsyscall(60, main());\n" "2:32: multi-value destructure binds 3 names, but 'g2' returns 2 values"
+refused sc_f64_count3 'fn g2(x): f64 { return (f64_from(x), f64_from(x + 1)); }\nfn main(): i64 { var a, b, c = g2(1); return 0; }\nsyscall(60, main());\n' "binds 3 names, but 'g2' returns 2 values"
+refused sc_tup3   "${SC}fn main(): i64 { var t: (i64, i64, i64) = g2(); return t.0; }\nsyscall(60, main());\n" "cannot capture 'g2' into tuple (i64, i64, i64) - it returns 2 values"
+runs sc_f64_two   'fn g2(x): f64 { return (f64_from(x), f64_from(x + 1)); }\nfn main(): i64 { var a, b = g2(1); var s: f64 = a + b; return f64_to(s); }\nsyscall(60, main());\n' 3
+refused sc_bool_first 'fn g2(x): bool { return (x, 5); }\nfn main(): i64 { var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n' "cannot return a value that is not a bool from bool fn 'g2'"
+runs sc_bool_two  'fn g2(x): bool { return (x > 0, 5); }\nfn main(): i64 { var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n' 15
 
 echo "axis 6 - \`callptr(fp, ..)\` destructures as \`fncallN\` does:"
 TWO='fn two(a): (i64, i64) { return (a, a + 1); }\n'
@@ -265,7 +286,7 @@ runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsysca
 runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
 refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
 
-if [ "$rows" -lt 101 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 101)"; exit 1; fi
+if [ "$rows" -lt 110 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 110)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

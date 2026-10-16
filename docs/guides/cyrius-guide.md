@@ -2768,6 +2768,15 @@ var hi, lo, bexp = dd_pow10(k);
 # second (and third) return register:
 #   fn f(x): (i64, i64) { if (x > 0) { return (1, 2); } }    # f(0) is (0, 0); f(1) is (1, 2)
 
+# A sync fn declared ONE type may still return several values — kept (6.7.13, the user's decision
+# of 2026-10-15) — but spell it `: (T1, T2)`: that names each value's type and checks every return.
+#   fn g2(): i64 { return (1, 2); }   # `ret2(1, 2);` likewise
+# The declared type types each value: a `: f64` fn's values are each an f64 (its bindings are f64,
+# and `var t: (i64, i64) = g(..);` is refused), and a `: bool` fn's first value is checked as its
+# bool. Pass 1 counts it as it counts an undeclared fn (every `return` `(a, b)`, the body left only
+# through them), so `var a, b, c = g2();` and a 3-tuple capture are refused. A one-name bind,
+# `var a = g2();`, keeps the first value, as for any multi-value callee (`rethi()` reads the second).
+
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
 # was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
