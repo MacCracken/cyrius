@@ -142,7 +142,7 @@
 # g: u8; b: u8; a: u8; }` from 32 B to 4, so `var c = A + B; c.g = 1;` was refused. Its runtime half is
 # tests/tcyr/crossos/struct_operator_result_binding.tcyr (the C4 case, every shape against its 16 B twin,
 # the operator's own return type, sizes 1..7 B, top level):
-#   R8 that file on the same legs as R1, N derived from it (floor 80; 6.7.11: the leading-call rows; and the
+#   R8 that file on the same legs as R1, N derived from it (floor 95 — BFLOOR; 6.7.11: the leading-call rows; and the
 #      user's decision (a), 2026-10-13: every whole struct result — a method chain and an if-expression of 8 B or
 #      less, a 9-16 B operator / method result in parentheses — binds the struct, the `u` / `m` / `i` / `p` rows)
 #   B3 (x86) the issue's three repros verbatim (u1 20, u2 7, u3 41); an integer-ending chain stays untyped; `c + 1`
