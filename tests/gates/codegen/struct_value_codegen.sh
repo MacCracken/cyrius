@@ -249,6 +249,14 @@
 #       (exit 5); VDw1 green
 #   M-VD3 `_fnc_agg` without the arm (by-name calls)              -> RED 2: VDw1 (exit 5), C7 (exit 5)
 #   M-VDF one `assert_eq(` row deleted from vector_call_result_discarded.tcyr -> RED 1: "only 14 rows (floor 15)"
+#   (6.7.13, the vectors lane, issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md, the same procedure, 2026-10-16:
+#   the values file mutated in a scratch copy, the gate run there with this tree's compiler)
+#   M-AF1 one `assert_eq(` row deleted from struct_value_codegen.tcyr -> RED 1: "only 219 rows (floor 220)"; A1-A7
+#       green (each leg requires the derived count, which is the mutant's)
+#   M-AF2 one row wrapped in `if (0) { .. }` (kept in the source, never run) -> RED 7: A1-A6 ("219 passed", want 220),
+#       A7 ("220 passed", want 221); the gate before this fix: all green
+#   M-AF3 the values file gutted (its includes and `var r = assert_summary();` only) -> RED 1: "only 0 rows (floor
+#       220)"; A1-A7 read the derived "0 passed, 0 failed (0 total)" (the gate before this fix: all green)
 #
 #   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
 #      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
@@ -323,7 +331,7 @@ exits_ir3() {   # <name> <want> <what> <source>: built under CYRIUS_IR=3
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 # tcyr <what> <compiler> <runner> [ENV=V]: build the values file, run it, require "0 failed" — with TN
-# set, exactly "TN passed, 0 failed (TN total)" (the B rows: a gutted or truncated file is RED).
+# set, exactly "TN passed, 0 failed (TN total)" (rows A, B and C set it: a gutted or truncated file is RED).
 TC=tests/tcyr/crossos/struct_value_codegen.tcyr
 TN=""
 _tc_ok() {
@@ -541,11 +549,19 @@ exits_ir3 ev2 0 "EV2: o.same(x), the identity probe, under CYRIUS_IR=3 (the file
 exits_ir3 ev3 35 "EV3: bs(h, x), a 16 B by-value struct, under CYRIUS_IR=3 (the filed repro: varies)" "struct H { a; b; }\nfn bs(h: H, n): i64 { return h.a * 10 + n; }\nfn g(): i64 { var h: H; h.a = 3; h.b = 0; var x = 5; return bs(h, x); }\nsyscall(60, g());\n"
 exits_ir3 ev4 5 "EV4: var b: B = mk(x), a 24 B result, under CYRIUS_IR=3 (the filed repro: varies)" "struct B { a; b; c; }\nfn mk(n): B { var k: B; k.a = n; k.b = 0; k.c = 0; return k; }\nfn g(): i64 { var x = 5; var b: B = mk(x); return b.a; }\nsyscall(60, g());\n"
 
+TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
+# 6.7.13 (issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md): the A rows carry a floor and each leg requires
+# the derived count exactly, as B and C do. NA counts the `assert_eq(` rows outside `#ifdef CYRIUS_TARGET_WIN` blocks
+# (A1-A6), NAW every row (A7, PE). Counts are derived: the struct lanes keep adding rows (raise FLOORA with them).
+NA=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/{s=1; next} /^[[:space:]]*#endif/{s=0; next} /^[[:space:]]*#/{next} !s && /assert_eq\(/{n++} END{print n+0}' "$TCA")
+NAW=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCA")
+FLOORA=220
+if [ "$NA" -lt "$FLOORA" ]; then bad "A: only $NA rows in $TCA (floor $FLOORA) — rows were lost"; fi
+TC=$TCA; TN=$NA
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
 tcyr "A4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
-TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
 TCB=tests/tcyr/crossos/fncall_struct_result.tcyr   # 6.7.11: rows B
 TCC=tests/tcyr/crossos/vector_call_result_discarded.tcyr   # 6.7.12: rows C
 # One B row per `assert_eq(` call (the file defines none); the floor keeps a gutted file from passing.
@@ -568,7 +584,7 @@ tcyr "C4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/cc_a64.err" && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
-        TC=$TCA; TN=""
+        TC=$TCA; TN=$NA
         tcyr "A5: aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
         TC=$TCB; TN=$NB
         tcyr "B5: fncall_struct_result.tcyr, aarch64 (qemu): X8" "$T/cc_a64" qemu-aarch64
@@ -580,7 +596,7 @@ if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     printf '#!/bin/sh\nexec "%s" < "$1"\n' "$T/cxvm" > "$T/cxrun"; chmod +x "$T/cxrun"
-    TC=$TCA; TN=""
+    TC=$TCA; TN=$NA
     tcyr "A6: cx (cxvm)" "$T/cc_cx" "$T/cxrun"
     TC=$TCB; TN=$NB
     tcyr "B6: fncall_struct_result.tcyr, cx (cxvm)" "$T/cc_cx" "$T/cxrun"
@@ -596,7 +612,7 @@ if command -v wine > /dev/null 2>&1; then
         "$T" "$WP" "$WHM" "$WHM" > "$T/winrun"; chmod +x "$T/winrun"
     TC=$TCB; TN=$NB
     tcyr "B7: fncall_struct_result.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
-    TC=$TCA; TN=""
+    TC=$TCA; TN=$NAW
     tcyr "A7: the values file, PE (wine) (6.7.11: the K rows)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
     # 6.7.12 — the filed repros of the Win64 discarded vector result, verbatim (exit 5 before), then rows C.
     exits_pe vdw1 3 "VDw1: mkv(41, 7); as a statement (the filed repro 1, verbatim) on PE (wine)" "fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn run(): i64 {\n    mkv(41, 7);\n    return 3;\n}\nsyscall(60, run());\n"
@@ -608,4 +624,4 @@ else echo "  SKIP: PE legs FPw1 / FPw2 / B7 / A7 / VDw1-VDw3 / C7 (wine not inst
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, B) and PE (B7, $NB rows); a discarded vector result (C, $NC rows, PE's VDw)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV): values on x86_64 / IR / DCE / aarch64 / cx (A, $NA rows; B) and PE (A7, $NAW rows; B7, $NB rows); a discarded vector result (C, $NC rows, PE's VDw)"
