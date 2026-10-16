@@ -2190,6 +2190,46 @@ fn _hdr_refuse_prop(b, f): i64 {
     return 1;
 }
 
+# 6.7.13 — A SIMD VECTOR PARAMETER. cycc passes a vector by value in vector registers (xmm / v; a
+# 32-byte vector in two, or by a PE convention of its own) while the prototype said `cyr_val v`,
+# which a C caller passes in rdi / x0: the callee computed on whatever the vector register held.
+# Refused by name as D24 refuses a vector return (no C11 type carries one). A pointer (`*f64v2`)
+# is a word and stays `cyr_val`. The parameter list b[ps, pe): 1 when a parameter's type is one of
+# the twelve vector names (_hdr_vp_s / _hdr_vp_e its `name: type` text), else 0. CHANGELOG [6.7.13]
+var _hdr_vp_s = 0;
+var _hdr_vp_e = 0;
+fn _hdr_vparam(b, ps, pe): i64 {
+    var pi = ps;
+    while (pi < pe) {
+        pi = _hdr_ws_nl(b, pi, pe);
+        var pend = _hdr_close(b, pi, pe, 1);
+        var q = pi;
+        while (q < pend && load8(b + q) != 58 && load8(b + q) != 61) { q = q + 1; }
+        if (q < pend && load8(b + q) == 58) {
+            var ts = _hdr_ws_nl(b, q + 1, pend);
+            var te = _src_ident_end(b, ts, pend);
+            if (te > ts && _hdr_vec_name(b, ts, te - ts) == 1) {
+                _hdr_vp_s = pi;
+                _hdr_vp_e = te;
+                return 1;
+            }
+        }
+        pi = pend + 1;
+    }
+    return 0;
+}
+
+# Name a fn refused for a vector parameter on stderr. 1.
+fn _hdr_refuse_vparam(b, ns, nl): i64 {
+    sys_write(STDERR_FD, "error: cyrius header: '", 23);
+    sys_write(STDERR_FD, b + ns, nl);
+    sys_write(STDERR_FD, "' takes '", 9);
+    sys_write(STDERR_FD, b + _hdr_vp_s, _hdr_vp_e - _hdr_vp_s);
+    var t = "': a SIMD vector parameter, which no C11 type carries; no prototype written\n";
+    sys_write(STDERR_FD, t, strlen(t));
+    return 1;
+}
+
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
 # declaration spelling at brace depth 0, the file-scope `private` rule, `_`-prefixed names
 # and the `main` entry point excluded. This
@@ -2277,6 +2317,11 @@ fn cmd_header(arg): i64 {
                 refused = refused + _hdr_refuse_prop(hbuf, pf);
                 continue;
             }
+        }
+        # 6.7.13 — a SIMD vector parameter: refused (see _hdr_vparam). CHANGELOG [6.7.13]
+        if (_hdr_vparam(hbuf, ps, pe) == 1) {
+            refused = refused + _hdr_refuse_vparam(hbuf, fname_start, fname_len);
+            continue;
         }
         if (rk == 1 || rk == 3 || rk == 4) {
             _hdr_pair_typedef();

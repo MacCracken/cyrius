@@ -4939,7 +4939,11 @@ declared twice or whose fields sit under `#ifdef`, three values (rax:rdx:r8) —
 on stderr with no prototype, and the verb exits 1. Since 6.7.12 so is a SIMD vector return (D24:
 ``'rv2' returns 'f64v2': a SIMD vector return, which no C11 return type carries``) — it printed
 `cyr_val`, which C reads from rax / x0, and a C vector type is a compiler extension; make such a fn
-private, or return its lanes another way, to generate a header for the rest of the file.
+private, or return its lanes another way, to generate a header for the rest of the file. Since
+6.7.13 a SIMD vector PARAMETER is refused the same way (``'pv' takes 'v: f64v2': a SIMD vector
+parameter, which no C11 type carries``): cycc receives it in a vector register (xmm / v), where the
+printed `cyr_val v` had a C caller pass it in rdi / x0. A pointer to a vector (`v: *f64v2`) and a
+`: Result` / `: Option` / `: Tagged` parameter (one word, the tag) stay `cyr_val`.
 Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
 (and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
 x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden

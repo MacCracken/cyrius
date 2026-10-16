@@ -90,6 +90,8 @@
 #   a bare `Vec` field always the 8-byte handle (the review's find)   → H8 FAIL (the struct-Vec-above row)
 #   a bare `Vec` the file's struct Vec in either order                → H8 FAIL (the struct-Vec-below row)
 # 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
+# 6.7.13: `_hdr_vparam` answering 0 (a vector parameter `cyr_val`)     → H8 FAIL (7: the vector-parameter rows)
+#         a `*` pointer type read as its vector name                 → H8 FAIL (the stays-cyr_val row, the count)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -311,6 +313,30 @@ check "no prototype for a vector return, the header still closes" "0 1" "$(grep 
 echo 'fn keep(a): i64 { return a; }' >> v12.cyr
 rcv12=0; "$CY" header v12.cyr > o8w 2> e8w || rcv12=$?
 check "all twelve vector types refused, a scalar fn beside them kept, exit 1" "12 1 1" "$(grep -c "returns '[a-z0-9]*': a SIMD vector return, which no C11 return type carries; no prototype written" e8w || true) $(has o8w 'cyr_val keep(cyr_val a);') $rcv12"
+# 6.7.13: a SIMD vector PARAMETER is refused the same way — cycc receives it in xmm / v, the
+# prototype said `cyr_val v` (C passes it in rdi / x0). The filed repro verbatim
+# (issues/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md), then f64v4 / i32v4 and a
+# vector second; a `: Result` / `: Option` parameter (one word, its tag) and a `*f64v2` (a
+# pointer) stay `cyr_val`. Mutation: `_hdr_vparam` answering 0 (6.7.12) → these rows RED.
+printf 'fn pv(v: f64v2): i64 { return 0; }\nfn pr(r: Result): i64 { return r; }\n' > pv.cyr
+rcp=0; "$CY" header pv.cyr > o8p 2> e8p || rcp=$?
+check "the filed pv.cyr: pv refused by name, exit 1" "1 1" \
+    "$(grep -cxF "error: cyrius header: 'pv' takes 'v: f64v2': a SIMD vector parameter, which no C11 type carries; no prototype written" e8p || true) $rcp"
+check "... no pv prototype; pr (: Result) stays cyr_val; the header closes" "0 1 1" \
+    "$(grep -c 'pv(' o8p || true) $(has o8p 'cyr_val pr(cyr_val r);') $(has o8p '#endif /* CYRIUS_FFI_H */')"
+printf '%s\n' 'include "lib/tagged.cyr"' 'fn p4(v: f64v4): i64 { return 0; }' 'fn pi4(v: i32v4, x): i64 { return x; }' \
+  'fn pm(a, w :f64v2, b = 2): i64 { return a + b; }' 'fn po(o: Option, t: Tagged): i64 { return o; }' \
+  'fn pp(v: *f64v2): i64 { return v; }' 'fn pd(a: f64, n: i64): i64 { return n; }' > vp.cyr
+(cd "$ROOT" && "$ROOT/build/cycc" < "$D/vp.cyr" > "$D/vp.bin" 2> /dev/null) && vprc=0 || vprc=$?
+check "vp.cyr builds with cycc" 0 "$vprc"
+rcvp=0; "$CY" header vp.cyr > o8q 2> e8q || rcvp=$?
+check "vector parameters: exit 1, three refusals" "1 3" "$rcvp $(grep -c '^error: ' e8q || true)"
+for vt in 'p4:v: f64v4' 'pi4:v: i32v4' 'pm:w :f64v2'; do
+    check "'${vt%%:*}' ('${vt#*:}') refused by name" 1 "$(grep -cxF "error: cyrius header: '${vt%%:*}' takes '${vt#*:}': a SIMD vector parameter, which no C11 type carries; no prototype written" e8q || true)"
+done
+check "no prototype for a refused fn" 0 "$(grep -cE '(p4|pi4|pm)\(' o8q || true)"
+check "Option / Tagged parameters, a *f64v2 and scalars stay cyr_val" "1 1 1" \
+    "$(has o8q 'cyr_val po(cyr_val o, cyr_val t);') $(has o8q 'cyr_val pp(cyr_val v);') $(has o8q 'cyr_val pd(cyr_val a, cyr_val n);')"
 printf '%s\n' 'struct Str { a; b; c; }' 'fn rs3(): Str { var z: Str; return z; }' > str3.cyr
 "$CY" header str3.cyr > o8c 2>&1 || :
 check "a file's own 24 B struct Str: the result pointer (Str's word is the 9-16 B band alone)" 1 "$(has o8c 'cyr_val3 rs3(void);   /* returns Str, 24 B */')"
@@ -355,7 +381,7 @@ check "the rest is written and the header closes" "1 1" "$(has o9 'cyr_val fine(
 # the aarch64 Linux / Windows / macOS targets (freestanding: <stdint.h> only).
 echo "H10 — the generated headers compile as C:"
 if command -v cc > /dev/null 2>&1; then
-    for f in o7 o8 o8b o9; do
+    for f in o7 o8 o8b o8p o8q o9; do
         check "$f: cc -std=c11 -pedantic-errors" 0 "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c "$f" > /dev/null 2>&1; echo $?)"
         check "$f: the same with -D_WIN64" 0 "$(cc -std=c11 -pedantic-errors -fsyntax-only -D_WIN64 -x c "$f" > /dev/null 2>&1; echo $?)"
     done
