@@ -37,6 +37,12 @@
 #           every target). The controls compile and run: a forwarded call of the same arity (56), a
 #           wrapped one, an undeclared callee of that arity, a recursive one, a method and a generic,
 #           a tuple local, a closure's and an #inline callee's own returns inside the fn.
+#   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
+#           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
+#           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
+#           three names are accepted as `fncall1`'s are (an unknown callee is not judged, D31); `callptr(..) + 1`
+#           is still refused. MUTATION: `_dt_rhs_check_t` without its `callptr` line -> cp_repro, cp_assign,
+#           cp_for, cp_zone, cp_top, cp_three refused.
 #
 # MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
 # while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
@@ -200,7 +206,17 @@ runs ret_closure  'include "lib/alloc.cyr"\nfn f(x): (i64, i64) { alloc_init(); 
 runs ret_inline_one '#inline\nfn one(x) { return x + 1; }\nfn f(x): (i64, i64) { return (one(x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
 runs ret_inline_two '#inline\nfn two(x) { return (x, 1); }\nfn f(x): (i64, i64, i64) { var a, b = two(x); return (a, b, 3); }\nfn main(): i64 { var a, b, c = f(2); return a * 100 + b * 10 + c; }\nvar r = main(); syscall(60, r);\n' 213
 
-if [ "$rows" -lt 74 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 74)"; exit 1; fi
+echo "axis 6 - \`callptr(fp, ..)\` destructures as \`fncallN\` does:"
+TWO='fn two(a): (i64, i64) { return (a, a + 1); }\n'
+runs cp_repro  'include "lib/fnptr.cyr"\nfn two(a): (i64, i64) { return (a, a + 1); }\nfn main(): i64 {\n    var fp = &two;\n    var a, b = fncall1(fp, 5);\n    var c, d = callptr(fp, 5);\n    return a + b + c + d;\n}\nsyscall(60, main());\n' 22
+runs cp_assign "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c = 0;\n    var d = 0;\n    c, d = callptr(fp, 5);\n    return c + d;\n}\nsyscall(60, main());\n" 11
+runs cp_for    "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c = 0;\n    var d = 0;\n    var s = 0;\n    for (var i = 0; i < 3; c, d = callptr(fp, i)) { s = s + c + d; i = i + 1; }\n    return s;\n}\nsyscall(60, main());\n" 8
+runs cp_zone   "${TWO}var fp = &two;\nvar c, d = callptr(fp, 5);\nsyscall(60, c + d);\n" 11
+runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsyscall(60, c + d);\n" 11
+runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
+refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
+
+if [ "$rows" -lt 81 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 81)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

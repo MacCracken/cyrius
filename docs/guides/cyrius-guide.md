@@ -2749,7 +2749,9 @@ var hi, lo, bexp = dd_pow10(k);
 #   return one(x);   return mk();     # a one-value callee; a struct callee (a struct is
 #                                     # not multiple values)
 
-# The destructure requires a CALL as the whole right-hand side (v6.5.21).
+# The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
+# `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
+# was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
 # These are rejected rather than silently reading whatever rdx held:
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS

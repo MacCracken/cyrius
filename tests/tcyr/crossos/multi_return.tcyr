@@ -153,6 +153,25 @@ fn main(): i64 {
     assert_eq(ca, 7, "forwarded callptr (callee unknown): first value");
     assert_eq(cb, 4, "forwarded callptr (callee unknown): second value");
 
+    # 8. 6.7.13 — `callptr(fp, ..)` destructures as `fncallN` does (it was refused "multi-value destructure
+    # needs a call on the right-hand side"; issues/2026-10-13-destructure-of-callptr-refused.md): every value
+    # read after an INDIRECT call, SEEDED as section 7 is. MUTATION: `_dt_rhs_check_t` without its `callptr`
+    # line -> the file does not build.
+    var cfp = &mr_pair;
+    s1, s2, s3 = mr_triple(76);
+    var xa, xb = callptr(cfp, 5, 9);
+    assert_eq(xa, 5, "callptr destructure: first value");
+    assert_eq(xb, 9, "callptr destructure: second value");
+    s1, s2, s3 = mr_triple(76);
+    xa, xb = callptr(cfp, 6, 8);
+    assert_eq(xa * 10 + xb, 68, "callptr re-assignment `a, b = callptr(..)`: both values");
+    var tfp = &mr_triple;
+    s1, s2, s3 = mr_triple(10);
+    var y1, y2, y3 = callptr(tfp, 40);
+    assert_eq(y1, 40, "callptr destructure arity 3: first value");
+    assert_eq(y2, 41, "callptr destructure arity 3: second value");
+    assert_eq(y3, 42, "callptr destructure arity 3: third value");
+
     var r2 = assert_summary();
     return r2;
 }
