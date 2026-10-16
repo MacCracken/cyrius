@@ -1712,6 +1712,17 @@ address-passed parameter was checked: every other mismatch compiled clean and th
 argument with its own layout — `bq(p)` read past the 16-byte `Pt` (0), `bs(mk1(p))` returned `b.v.y`
 where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
 
+⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
+(a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
+no struct — and `s` an inline struct (a local, a by-value parameter, a value global, a closure's
+captured copy, inside parentheses or not) reports `cannot pass 's' to a parameter that is not a
+pointer to its struct type in a call to 'ri' - pass &s for its address`, as a vector local is refused
+there (6.7.12) and a struct of another type into a `*Q` is (6.7.3). Write `ri(&s)` for the address.
+Through 6.7.12 it compiled and passed s's first field as the address (a fault on every target, or a
+read through whatever that field held). A handle (`var h: Pt = alloc(16);`), a `*Pt` and a `Str`
+hold the address in their word and pass it as before; a `*Pt` parameter still takes `&s` itself
+(6.6.20), and an untyped parameter the word.
+
 **A pointer into a BY-VALUE struct parameter passes the struct it points at, at every size
 (6.7.10).** `bs1(&s)`, `bs1(sp)` with `sp: *S1`, `bs1(gp())` with `fn gp(): *S1`, `bs1(h.p)` with a
 `*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:

@@ -1841,12 +1841,18 @@ fn _pptr_param(S, fi, k): i64 {
 # pushed `&b` by accident, 42): a vector is no `*Pt`, as a struct of another type is no `*S` (6.7.3). The
 # name `noff` as an argument of `fi`; 0 (the value push keeps the parse in step, no binary is written).
 fn _vec_kind_err(S, noff, fi): i64 {
+    return _agg_kind_err(S, noff, fi, "vector");
+}
+# ... `kind` "vector" or "struct" (6.7.13 D5 (a), `_sarg_struct_other`).
+fn _agg_kind_err(S, noff, fi, kind): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("' to a parameter that is not a pointer to its vector type in a call to '");
+    PRSTR("' to a parameter that is not a pointer to its ");
+    PRSTR(kind);
+    PRSTR(" type in a call to '");
     PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
     PRSTR("' - pass &");
     PRSTR(S + 0xEC00000 + noff);
@@ -1860,18 +1866,8 @@ fn _vec_kind_err(S, noff, fi): i64 {
 # Nothing is consumed.
 fn _sarg_vec_other(S, fi, argc): i64 {
     if (GINFN(S) != 1) { return 0; }
-    var ti = GTI(S);
-    if (TOKTYP(S, ti) == 10) {
-        var k = _pwrap_k(S, ti);
-        var e = TOKTYP(S, _pw_end);
-        if (e != 31) { if (e != 11) { return 0; } }
-        ti = ti + k;
-        if (TOKTYP(S, ti + 1) != 11) { return 0; }
-    } else {
-        var nx = TOKTYP(S, ti + 1);
-        if (nx != 31) { if (nx != 11) { return 0; } }
-    }
-    if (TOKTYP(S, ti) != 2) { return 0; }
+    var ti = _sarg_wname(S);
+    if (ti < 0) { return 0; }
     var li = FINDLOCAL(S, TOKVAL(S, ti));
     if (li < 0) { return 0; }
     if (_is_simd_any(S, GLTYPE(S, li)) == 0) { return 0; }
@@ -1879,6 +1875,46 @@ fn _sarg_vec_other(S, fi, argc): i64 {
     var sv = GTI(S);
     STI(S, ti);
     _vec_kind_err(S, TOKVAL(S, ti), fi);
+    STI(S, sv);
+    return 1;
+}
+# The name token of a whole argument at the cursor that is one name, inside any parentheses that wrap all of
+# it, ending at `,` / `)`; -1 for any other shape.
+fn _sarg_wname(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        var e = TOKTYP(S, _pw_end);
+        if (e != 31) { if (e != 11) { return 0 - 1; } }
+        ti = ti + k;
+        if (TOKTYP(S, ti + 1) != 11) { return 0 - 1; }
+    } else {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    }
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    return ti;
+}
+# ⛔ 6.7.13 — A STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (the user's decision D5 (a),
+# 2026-10-15). `ri(s)` with `p: *i64` (`*u8`, `*f64`, `**T`, any `*T` whose T is no struct) and `s` an inline
+# struct — a local, a by-value parameter, a value global, a closure's captured copy, any size — pushed s's
+# first word as the address (139 on x86_64 / aarch64, a cx guest fault, exit 5 on PE): a struct is no `*i64`,
+# as a vector is not (D27) and a struct of another type is no `*S` (6.7.3). The whole argument at the cursor
+# (`_sarg_wname`) to parameter `argc` of `fi`, a pointer (`_pptr_param`) that is not address-passed (the
+# caller, `_sarg_byval_small`) and records no struct (a `*Str` is the struct check's, 6.7.3). The name is an
+# inline struct as `&` reads one (`_hl_amp_sid`): a handle, a `*T` and a `Str` (their word is the address)
+# pass as before. 1 = refused: nothing consumed, the value push keeps the parse in step, no binary is
+# written. CHANGELOG [6.7.13]
+fn _sarg_struct_other(S, fi, argc): i64 {
+    var ti = _sarg_wname(S);
+    if (ti < 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_hl_amp_sid(S, noff) <= 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    if (GFPSID(S, fi, argc) > 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _agg_kind_err(S, noff, fi, "struct");
     STI(S, sv);
     return 1;
 }
@@ -2312,7 +2348,9 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
 # POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
-    _sarg_vec_other(S, fi, argc);   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
+    if (_sarg_vec_other(S, fi, argc) == 0) {   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
+        _sarg_struct_other(S, fi, argc);       # 6.7.13 (D5 (a)): ... and a struct value
+    }
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
