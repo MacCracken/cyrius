@@ -263,6 +263,10 @@
 #   MV2 `_vec_ann_list` without its nested-`Vec` arm (a nested `<..>` skipped) -> R3w BUILDS
 #   MV3 `_param_type_step` without its check -> R3t, R3v BUILD; MV4 `_pty_name` without it -> R3v2 BUILDS
 #   MV7 `_gen_ann_sid` without its check -> R3q, R3r, R3s, R3w, R3x, R3z BUILD (the `*Vec` / parameter rows stay red)
+# 6.7.13 REPAIR 3 (the multivalue lane, unit M1; a one-edit copy of src/, its compiler built by the fixed one, this gate
+# run with CYCC= the mutant; issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md):
+#   MU1 `_tup_arg_call` back to the declared-only guard (`GFRS != MULTIRET_SID`) -> R17u1, R17u3 BUILD
+#   MU2 `_tup_arg_mrc` back to the declared-only guard -> R17u2 BUILDS
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -509,6 +513,15 @@ refused r17e "a multi-value call 'mk' $R17" "R17e: an explicit generic \`mk<i64>
 refused r17f "a multi-value call 'mk' $R17" "R17f: \`take((mk(3)))\`, parenthesised" "${MK}${TK}fn f(): i64 { return take((mk(3))); }\nsyscall(60, f());\n"
 refused r17g "a multi-value call 'B_mk' $R17" "R17g: a method \`take(b.mk(3))\`" "struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\n${TK}fn f(): i64 {\n    var b: B;\n    b.v = 1;\n    return take(b.mk(3));\n}\nsyscall(60, f());\n"
 refused r17h "a multi-value call 'P_add' $R17" "R17h: an operator \`take(p + q)\`" "${P}fn P_add(a: P, b: P): (i64, i64) { return (a.a + b.a, a.b + b.b); }\n${TK}fn f(): i64 {\n    var p = P { 1, 2 };\n    var q = P { 3, 4 };\n    return take(p + q);\n}\nsyscall(60, f());\n"
+# R17u (6.7.13, issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md): an UNDECLARED
+# callee whose every return is \`(a, b)\` (counted by 6.7.11's pass 1, \`_mv_callee\`) is a multi-value call too — its
+# first value was pushed as the tuple's address (x86 / aarch64 rc 139, cx guest error 1, PE 5). The repros verbatim.
+MKU='fn mku(a) { return (a, a + 1); }\n'
+refused r17u1 "a multi-value call 'mku' $R17" "R17u1: \`take(mku(3))\`, mku undeclared (counted)" "${MKU}${TK}fn f(): i64 { return take(mku(3)); }\nsyscall(60, f());\n"
+refused r17u2 "a multi-value call 'B_mku' $R17" "R17u2: a method \`take(b.mku(3))\`, undeclared (counted)" "struct B { z; }\nimpl B { fn mku(self, a) { return (a, a + 1); } }\n${TK}fn f(): i64 { var b = B { 0 }; return take(b.mku(3)); }\nsyscall(60, f());\n"
+refused r17u3 "a multi-value call 'mk3' is not a tuple argument - bind it first: \`var t: (i64, i64, i64) = mk3(..);\`" "R17u3: a counted 3-value callee into \`(i64, i64, i64)\`" 'fn mk3(a) { return (a, a + 1, a + 2); }\nfn take(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }\nfn f(): i64 { return take(mk3(1)); }\nsyscall(60, f());\n'
+exits r17u4 45 "R17u4: a mixed-arity undeclared callee is not judged (its one-value path hands a tuple's address)" "var G: (i64, i64) = (4, 5);\nfn mkm(a) { if (a == 0) { return (1, 2); } return &G; }\n${TK}fn f(): i64 { return take(mkm(1)); }\nsyscall(60, f());\n"
+refused r17u5 "a multi-value call 'mk' $R17" "R17u5: the declared callee, the same text (control)" "${MK}${TK}fn f(): i64 { return take(mk(3)); }\nsyscall(60, f());\n"
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"

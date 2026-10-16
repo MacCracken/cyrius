@@ -1992,7 +1992,8 @@ fn _dro_vcheck(S, fi, k, nm): i64 {
     return 1;
 }
 
-# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`).
+# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`, or
+# undeclared with every return `(a, b)` — `_mv_callee`, CHANGELOG [6.7.13]).
 # The parameter takes a tuple's ADDRESS, and the call leaves its values in the return registers —
 # nothing to point at — so the value push handed the callee the first value as an address (a
 # SIGSEGV, or a silent read through it). Refused by name: bind the values first. Cursor on the
@@ -2008,8 +2009,7 @@ fn _tup_arg_call(S, fi, argc): i64 {
     if (_call_dotted(S, ti) == 1) { return 0; }
     if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
     var cfi = _gen_resolve_call(S, ti);
-    if (cfi < 0) { return 0; }
-    if (GFRS(S, cfi) != MULTIRET_SID) { return 0; }
+    if (_mv_callee(S, cfi) == 0) { return 0; }   # declared or counted (6.7.11 pass 1). CHANGELOG [6.7.13]
     return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
@@ -2029,7 +2029,7 @@ fn _mrc_note(S, fi, noff, beg): i64 {
 fn _tup_arg_mrc(S, fi, argc, st): i64 {
     if (_mrc_beg != st) { return 0; }
     if (_mrc_end != GTI(S)) { return 0; }
-    if (GFRS(S, _mrc_fi) != MULTIRET_SID) { return 0; }   # R17's own callee: a declared one
+    if (_mv_callee(S, _mrc_fi) == 0) { return 0; }   # declared or counted. CHANGELOG [6.7.13]
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
     return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
