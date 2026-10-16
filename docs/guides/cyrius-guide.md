@@ -4468,6 +4468,9 @@ modules = ["src/types.cyr", "src/error.cyr"]
 ```
 
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
+A `path` is relative to the manifest's directory; an absolute one is taken as given — `/…`, and on
+Windows a drive-rooted `C:/…` / `C:\\…` or a rooted `\…` (6.7.13: cyrius.exe used to join a
+drive-rooted path onto the manifest's directory and report the module missing).
 Includes are auto-prepended by the build tool — source files only need project includes.
 
 **Git first; local development is a switch (6.7.6).** The committed manifest means the TAGS. A

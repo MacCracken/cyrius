@@ -1909,6 +1909,12 @@ fn _dep_name_visited(name): i64 {
 # directory. Returns `rel` unchanged if absolute.
 fn _dep_join_path(manifest_dir, rel): i64 {
     if (load8(rel) == 47) { return rel; }
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: a drive-rooted `C:\x` / `C:/x` is absolute, and a rooted `\x` (or `\\server\share`)
+    # or a drive-relative `C:x` cannot be joined onto a directory: returned as given, the rule
+    # `_abs_path` uses. CHANGELOG [6.7.13]
+    if (load8(rel) == 92 || (load8(rel) != 0 && load8(rel + 1) == 58)) { return rel; }
+    #endif
     var ml = strlen(manifest_dir);
     var rl = strlen(rel);
     var out = alloc(ml + 1 + rl + 1);
