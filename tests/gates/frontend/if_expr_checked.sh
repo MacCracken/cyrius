@@ -42,7 +42,18 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: if_expr_checked: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: if_expr_checked: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# D10's PE leg: a PRIVATE wine prefix and HOME under $T (never ~/.wine or the user's ~/.cache), torn down with its
+# server dir on exit — the defer_every_return_path.sh helper.
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0
 ok()  { echo "  ok   $1"; }
@@ -208,7 +219,8 @@ for leg in $legs; do
         x86|x86:*) chmod +x "$out"; timeout 60 "$out" > "$out.out" 2>&1 || got=$? ;;
         a64) chmod +x "$out"; ( cd "$T" && ulimit -c 0 && timeout 120 qemu-aarch64 "$out" ) > "$out.out" 2>&1 || got=$? ;;
         cx)  timeout 120 "$T/cxvm" < "$out" > "$out.out" 2>&1 || got=$? ;;
-        pe)  ( cd "$T" && WINEPREFIX="$T/wp" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$out.exe" ) > "$out.out" 2> /dev/null || got=$? ;;
+        pe)  ( cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$out.exe" ) > "$out.out" 2> /dev/null || got=$? ;;
     esac
     last=$(tail -1 "$out.out" | tr -d '\r')
     if [ "$got" -eq 0 ] && [ "$last" = "$NI passed, 0 failed ($NI total)" ]; then ok "D10 $leg: $last"
