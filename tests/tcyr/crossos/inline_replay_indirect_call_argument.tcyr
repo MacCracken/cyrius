@@ -44,7 +44,7 @@ fn v4(): i64 { return lc(callptr(&mkv, 4, 2), 3); }
 fn v5(): i64 { return li(callptr(&mkv, 5, 1)); }
 fn v6(): i64 { return la(mkv(4, 2)); }
 
-fn main(): i64 {
+fn rows(): i64 {
     assert_eq(r1(), 43, "add1(callptr(&mk, 4, 2))");
     assert_eq(r2(), 43, "add1(fncall2(&mk, 4, 2))");
     assert_eq(r3(), 4201, "add2(1, callptr(..)) — the call second");
@@ -63,5 +63,5 @@ fn main(): i64 {
     return 0;
 }
 
-main();
+rows();
 var r = assert_summary();
