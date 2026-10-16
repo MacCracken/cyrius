@@ -540,14 +540,18 @@ done
 # before the 6.7.12 handler (which exited 128+N). A shell's `$?` reads 128+N either way (the rows
 # above); a cyrius parent reading the wait status through lib/process.cyr's exec_capture_status
 # tells them apart: st[1] = 1 on a signal death (st[0] = 128+N), 0 on an exit. The parent runs
-# `sh -c '…; exec cyrius check'` (exec_capture_status passes an empty environment, so the script
-# exports what kill_run's runs inherit), so its child IS the CLI.
-K7SCRIPT="cd '$T/proj' && echo \$\$ > '$T/p7-par' && export TMPDIR='$TB/' CYRIUS_HOME='$CYRIUS_HOME' HOME='${HOME:-/nonexistent}' PATH='$PATH' && exec '$T/k2/cyrius' check src/ok.cyr"
+# `/bin/sh k7.sh`, a script ending `exec cyrius check` (exec_capture_status passes an empty
+# environment, so the script exports what kill_run's runs inherit), so its child IS the CLI. The
+# script is written through a heredoc: check_sh_targeted_path_cleans_up.sh's census skips heredoc
+# bodies, and a one-line `… && exec` string in this trap-installing gate reads as a top-level exec.
+cat > "$T/k7.sh" <<K7
+cd '$T/proj' && echo \$\$ > '$T/p7-par' && export TMPDIR='$TB/' CYRIUS_HOME='$CYRIUS_HOME' HOME='${HOME:-/nonexistent}' PATH='$PATH' && exec '$T/k2/cyrius' check src/ok.cyr
+K7
 {
     printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/alloc.cyr"' 'include "lib/string.cyr"' 'include "lib/vec.cyr"' \
         'include "lib/fmt.cyr"' 'include "lib/process.cyr"' 'fn main(): i64 {' '    alloc_init();' '    var args = vec_new();' \
-        '    vec_push(args, "/bin/sh");' '    vec_push(args, "-c");'
-    printf '    vec_push(args, "%s");\n' "$K7SCRIPT"
+        '    vec_push(args, "/bin/sh");'
+    printf '    vec_push(args, "%s");\n' "$T/k7.sh"
     printf '%s\n' '    var buf = alloc(4096);' '    var st: i64[2];' '    exec_capture_status(args, buf, 4096, &st);' \
         '    var o[48];' '    var n = fmt_int_buf(load64(&st), &o);' '    store8(&o + n, 32);' \
         '    n = n + 1 + fmt_int_buf(load64(&st + 8), &o + n + 1);' '    store8(&o + n, 10);' '    sys_write(1, &o, n + 1);' \
