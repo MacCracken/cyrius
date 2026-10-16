@@ -5827,6 +5827,7 @@ fn _sc_pwrap(S, start): i64 {
 # untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_scv_refd == start) { return 0; }   # 6.7.13 (D13): refused by `_scv_rec_ann`; the annotation stands
     if (_scv_dyn_chk(S, pscale, ext, start) == 1) { return 0; }   # 6.7.8
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field

@@ -1532,7 +1532,12 @@ field); so is the callee in parentheses, `fncall1((&mk), 9)` (6.7.13). A callee 
 the same (6.7.13): `var G: i64 = mk2(5);` at top level — in the declaration zone or after the first
 statement — with `mk2` returning a 9-16 byte struct is refused with the same words, directly or
 through `&mk2` (through 6.7.12 it stored the first field). Over 16 bytes a top-level call is refused
-anyway (a struct result needs a fn's frame).
+anyway (a struct result needs a fn's frame). A method or an overloaded operator result is judged the
+same (6.7.13; the user's decision D13, 2026-10-15): `var x: i64 = b.mk();` and `var y: u8 = a + c;`
+— or `: f64`, `: bool`, `: cstring`, inside parentheses, in a fn or at top level — with the method or
+the operator fn returning a struct over 8 bytes are refused with the same words, naming that fn (a
+method by its compiler name, `Q_mk`). Through 6.7.12 they kept the struct's first word, narrowed
+(`y` held 77 of 333), and a `: bool` was refused as *not a bool*.
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or

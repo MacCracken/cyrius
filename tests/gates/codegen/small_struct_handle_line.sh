@@ -147,7 +147,8 @@
 #      less, a 9-16 B operator / method result in parentheses — binds the struct, the `u` / `m` / `i` / `p` rows)
 #   B3 (x86) the issue's three repros verbatim (u1 20, u2 7, u3 41); an integer-ending chain stays untyped; `c + 1`
 #      dispatches (refused with no S_add, the word + 1 through 6.7.10); `take(c)` of a 16 B wrap passes the struct
-#      (SIGSEGV through 6.7.10); a scalar annotation keeps the first word
+#      (SIGSEGV through 6.7.10); a scalar annotation over 8 B is refused by name (6.7.13, the user's decision D13; it
+#      kept the first word through 6.7.12)
 #   B  (x86) B1 the C4 case as a program: exit 111; B2 an operator returning an INTEGER leaves the binding
 #      untyped — `var r = a - b; r.v` is refused ("no struct type in scope for 'r'"), at 8 and 16 B
 #      — and (6.7.11, issues/archived/2026-10-08-struct-operator-results.md #1) after a LEADING CALL: `var d = mk8(10)
@@ -1115,7 +1116,7 @@ crow "B3 var c = (a + b) at 16 B into a by-value parameter: take(c) (SIGSEGV thr
   'struct S16 { v; w; }\nfn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }\nfn take(s: S16): i64 { return s.v * 10 + s.w; }\nfn f() { var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20; var c = (a + b); return take(c) % 256; }\nsyscall(60, f());\n'
 crow "B3 a whole DYN method result in an untyped wrap keeps V4's refusal: var x = (o.me());" "refuse:a dyn Show result used as a value" \
   'include "lib/alloc.cyr"\ntrait Show { fn show(self): i64; fn me(self): dyn Show; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } fn me(self): dyn Show { var o: dyn Show = self; return o; } }\nfn f(o: dyn Show): i64 { var x = (o.me()); return 0; }\nsyscall(60, 0);\n'
-crow "B3 var c: i64 = (a + b) at 16 B: a scalar annotation keeps the first word" 13 \
+crow "B3 var c: i64 = (a + b) at 16 B: a scalar annotation is refused by name (6.7.13, D13; it kept the first word, 13)" "refuse:cannot initialise 'c: i64' from 'S16_add', which returns the struct 'S16' - declare 'c: S16' or bind a field" \
   'struct S16 { v; w; }\nfn S16_add(a: *S16, b: *S16): S16 { var r: S16; r.v = a.v + b.v; r.w = a.w + b.w; return r; }\nfn f() { var a: S16; a.v = 3; a.w = 4; var b: S16; b.v = 10; b.w = 20; var c: i64 = (a + b); return c; }\nsyscall(60, f());\n'
 
 echo "F. a field / dereference left operand refused exactly as a struct variable is (x86)"

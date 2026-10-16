@@ -20,7 +20,8 @@
 # message changes); `_bx_asg` a no-op -> W15 W16 W17 W27 BUILD; `_bx_pcmpe_arg`'s check removed ->
 # W37-W43 W52 BUILD; `_bx_live` ignoring --syntax-only -> X1; the lexer dropping `!` again -> A1 A4
 # A6 A7 A10; `_bx_falloff_fi` a no-op -> A13 A14 (exit 77 / 66); the undefined-name guard in
-# `_bx_refuse` removed -> W58 two errors.
+# `_bx_refuse` removed -> W58 two errors. 6.7.13 (D13): the tree before `_scv_rec_ann` (7c29f2e1) -> W13m W13o refused
+# as "not a bool".
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -71,6 +72,10 @@ refused w12 "$DI" "W12: = 1.5"                     "$M var b: bool = 1.5; return
 # (the user's decision, 2026-10-13; tests/gates/frontend/struct_receive_inference_checked.sh).
 refused w13 "cannot initialise 'b: bool' from 'mk', which returns the struct 'Pt' - declare 'b: Pt' or bind a field" "W13: = a 24-byte struct call"   'struct Pt { x; y; z; }\nfn mk(): Pt { var p: Pt; p.x = 1; p.y = 2; p.z = 3; return p; }\nfn main(): i64 { var b: bool = mk(); return 0; }\nsyscall(60, main());\n'
 refused w14 "$DI" "W14: = an 8-byte struct call"   'struct Q { a; }\nfn mq(): Q { var q: Q; q.a = 1; return q; }\nfn main(): i64 { var b: bool = mq(); return 0; }\nsyscall(60, main());\n'
+# W13m / W13o: 6.7.13 (D13) — the same for a method or an operator result over 8 B: D24's words replace "not a bool".
+refused w13m "cannot initialise 'b: bool' from 'Pt_mk', which returns the struct 'Pt' - declare 'b: Pt' or bind a field" "W13m: = a 24-byte struct method"   'struct Pt { x; y; z; }\nimpl Pt { fn mk(self): Pt { var p: Pt; p.x = 1; p.y = 2; p.z = 3; return p; } }\nfn main(): i64 { var s = Pt { 1, 2, 3 }; var b: bool = s.mk(); return 0; }\nsyscall(60, main());\n'
+refused w13o "cannot initialise 'b: bool' from 'Pq_add', which returns the struct 'Pq' - declare 'b: Pq' or bind a field" "W13o: = a 16-byte struct operator"   'struct Pq { x; y; }\nfn Pq_add(a: *Pq, c: *Pq): Pq { var p: Pq; p.x = a.x + c.x; p.y = 0; return p; }\nfn main(): i64 { var s = Pq { 1, 2 }; var b: bool = s + s; return 0; }\nsyscall(60, main());\n'
+refused w14m "$DI" "W14m: = an 8-byte struct method"   'struct Q { a; }\nimpl Q { fn mq(self): Q { var q: Q; q.a = 1; return q; } }\nfn main(): i64 { var s = Q { 1 }; var b: bool = s.mq(); return 0; }\nsyscall(60, main());\n'
 refused w15 "$AS" "W15: b = 1"                     "$M var b: bool = true; b = 1; return b; }$E"
 refused w16 "$AS" "W16: b = !b + 1"                "$M var b: bool = false; b = !b + 1; return 0; }$E"
 refused w17 "$AS" "W17: a for step b = 5"          "$M var b: bool = true; for (var i = 0; i < 3; b = 5) { i = i + 1; } return b; }$E"

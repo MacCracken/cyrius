@@ -22,7 +22,8 @@
 # 9-16 B operator / method result in parentheses (`var c = (a + b);`, `(a.m())`) bind an inline struct, as
 # the annotated form does; through 6.7.10 each was an untyped word (`c.v` refused, `c + 1` added to it,
 # `takeh(c)` passed the 16 B one's first word as its address). The `m` / `i` / `p` rows below, each at
-# 1..8 B and against its 16 / 24 B twin; an integer-ending chain, a scalar annotation and a global keep the word.
+# 1..8 B and against its 16 / 24 B twin; an integer-ending chain, a scalar annotation (8 B or less: over 8 B it is
+# refused since 6.7.13, D13) and a global keep the word.
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R8 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -290,8 +291,10 @@ fn p_arg_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (a + b); r
 fn p_arg_m() { var a: H = H { 5, 1 }; var e = (a.m()); return takeh(e); }
 fn p_deep_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c = (((a + b))); return c.v + c.w; }
 fn p_mchain_h() { var a: H = H { 5, 1 }; var c = (a.d().d()); return c.v + c.w; }
-# a scalar annotation keeps the first word; parentheses around an integer stay an integer
-fn p_scalar_h() { var a: H = H { 4, 1 }; var b: H = H { 70, 2 }; var c: i64 = (a + b); return c; }
+# a scalar annotation keeps an 8 B struct's one word (over 8 B it is refused by name since 6.7.13, D13 — the
+# 16 B row that kept H's first word is a refusal row in tests/gates/frontend/struct_receive_inference_checked.sh);
+# parentheses around an integer stay an integer
+fn p_scalar_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c: i64 = (a + b); return c; }
 fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); return r + 1; }
 
 # ── top level: an untyped global keeps the operator result's word, untyped, as over 8 B ──
@@ -392,7 +395,7 @@ assert_eq(p_arg_h(), 82, "p: takeh(c): c passed by value (its first word as its 
 assert_eq(p_arg_m(), 6, "p: takeh(e) of (a.m())");
 assert_eq(p_deep_h(), 85, "p: (((a + b)))");
 assert_eq(p_mchain_h(), 24, "p: (a.d().d()) at 16 B");
-assert_eq(p_scalar_h(), 82, "p: var c: i64 = (a + b): a scalar annotation keeps the first word");
+assert_eq(p_scalar_8(), 82, "p: var c: i64 = (a + b) at 8 B: a scalar annotation keeps the struct's one word");
 assert_eq(p_int_h(), 67, "p: (a - b) returning an integer stays an integer");
 assert_eq(TI, 7, "top level: an if-expression's untyped global keeps the word");
 var r = assert_summary();

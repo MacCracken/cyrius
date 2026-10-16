@@ -5680,11 +5680,7 @@ fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
 # check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
 fn _gvi_expr(S, gps): i64 {
     _gvi_pair_bind(S);   # 6.7.6: a `: stack` pair into one global is refused, as in a fn
-    if (gps == 0) {
-        _scv_top_ann(S, gps);   # 6.7.13: D24 in the declaration zone (`var G: i64 = mk2(5);`)
-        PCMPE(S);
-        return 0;
-    }
+    if (gps == 0) { return _gvi_scalar(S); }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
     var w = _scv_arm(S, gps, 0);
@@ -5692,6 +5688,21 @@ fn _gvi_expr(S, gps): i64 {
     _scv_disarm(S, w);
     _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
     _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
+    return 0;
+}
+
+# The declaration zone's initialiser of no struct type: D24 at its call (`var G: i64 = mk2(5);`, 6.7.13) and at a
+# method / operator result (`var G: i64 = B.mk();`, D13 — `_sc_beg` cleared, so only this parse's record is read;
+# `_scv_err` as `_scv_disarm` sets it). Nothing is armed: a dyn result keeps V4's refusal at the factor.
+fn _gvi_scalar(S): i64 {
+    var st = GTI(S);
+    var he = _had_error;
+    _scv_top_ann(S, 0);   # 6.7.13: D24 in the declaration zone
+    _sc_beg = 0 - 1;
+    PCMPE(S);
+    _scv_err = 0;
+    if (he == 0) { _scv_err = _had_error; }
+    _scv_rec_ann(S, 0, st);   # 6.7.13 (D13)
     return 0;
 }
 
@@ -7036,6 +7047,11 @@ fn _rcv_iscall(S, ti, pk): i64 {
 # token, the cursor its `=`. CHANGELOG [6.7.11]
 fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     if (pscale != 0) { return 0; }
+    return _rcv_ann_refuse(S, ti, TOKVAL(S, ti), sid, 0, ann, noff);
+}
+# 1 = D24 refuses the struct `sid` into the annotation at `ann`: a struct over 8 B, not a `Str` handle, not a
+# dyn (`_dyn_var_ann`'s), and not a generic base's `T` (`_rcv_tp_base`).
+fn _rcv_ann_hit(S, sid, ann): i64 {
     if (ann <= 0) { return 0; }
     if (sid <= 0) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
@@ -7043,6 +7059,15 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     if (sz <= 8) { return 0; }
     if (sz <= 16) { if (sid == _STR_SID(S)) { return 0; } }
     if (_rcv_tp_base(S, ann) == 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.13 — D24's one refusal, shared by every path that reaches it: the free call (`_rcv_scalar_ann`), the known
+# `&f` call (`_scv_icall_ann`), the top-level call (`_scv_gcall_ann`) and a method or operator result
+# (`_scv_rec_ann`, D13). Reported at token `ti`, naming the fn `fnoff`; `pscale` > 0 is a pointer annotation, whose
+# remedy is D14's (`declare 'x: P2' and take `&x``). 1 = refused (or already reported at `ti`). The cursor is the
+# declaration's `=`. CHANGELOG [6.7.13]
+fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
+    if (_rcv_ann_hit(S, sid, ann) == 0) { return 0; }
     if (_syntax_only == 1) { return 0; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, ti) == 0) { return 1; }
@@ -7055,18 +7080,25 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
     PRSTR(": ");
     _rcv_ann_pr(S, ann, eq);
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    PRSTR(S + 0xEC00000 + fnoff);
     PRSTR("', which returns the struct '");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     PRSTR("' - declare '");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(": ");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
-    PRSTR("' or bind a field\n");
+    _rcv_ann_tail(S, pscale, noff);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, eq);
     return 1;
+}
+fn _rcv_ann_tail(S, pscale, noff): i64 {
+    if (pscale <= 0) { PRSTR("' or bind a field\n"); return 0; }
+    PRSTR("' and take `&");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("`\n");
+    return 0;
 }
 # ⛔ 6.7.12 — D24 REACHES A KNOWN FN-POINTER CALL (D28, the user, 2026-10-15). `var n: i64 = fncall1(&mk3, 5);` and
 # `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries mk3's struct result (6.7.11, ARG-1) — into an
@@ -7145,6 +7177,37 @@ fn _scv_top_big(S, sid): i64 {
 fn _scv_top_ann(S, pscale): i64 {
     if (_scv_gcall_ann(S, pscale) == 1) { return 1; }
     return _scv_icall_ann(S, pscale);
+}
+# ⛔ 6.7.13 — D24 REACHES A METHOD OR OPERATOR RESULT (D13, the user, 2026-10-15). `var x: i64 = b.mk();` and
+# `var y: u8 = a + c;` (`: f64`, `: bool`, `: cstring`, any annotation that names no struct) with the method / the
+# operator fn returning a struct over 8 B kept the struct's first word, narrowed (the filed repro: x = 333, y = 77),
+# where the free call (D24) and the `&f` call (D28) are refused; a `: bool` was refused as "not a bool". Now refused
+# with D24's words, naming the fn, after the initialiser's parse (`start` its first token, the cursor after it): the
+# whole initialiser, inside any parentheses, is the method / operator call the struct-result record spans
+# (`_sc_whole`: a temp, -4 in rax:rdx, -1 at top level; -3 is 8 B or less, a word), in a fn and at top level (PARSE_VAR
+# and the declaration zone, `_gvi_expr`). A line refused inside its initialiser (`_scv_err`) or already refused at its
+# first token (the free / `&f` call) is not reported again; the first token is marked, so a bool's own check does not
+# refuse it a second time; and the declaration takes no struct (`_scv_refd`, read by `_sc_var_receive`): it parses on
+# as its annotation says, as after the free call's refusal. 1 = refused. CHANGELOG [6.7.13]
+var _scv_refd = 0 - 1;   # the initialiser's first token of the last declaration `_scv_rec_ann` refused
+fn _scv_rec_ann(S, pscale, start): i64 {
+    if (pscale != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    var t = _sc_whole(S, start);
+    if (t == 0 - 2) { return 0; }
+    if (t == 0 - 3) { return 0; }
+    var ann = _scv_ann_at(S, start - 1);
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) == 8) { return 0; }   # a `*T` annotation (the declaration zone's pscale is 0)
+    if (_rcv_ann_hit(S, _sc_sid, ann) == 0) { return 0; }
+    if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
+    var eq = GTI(S);
+    STI(S, start - 1);
+    var r = _rcv_ann_refuse(S, _sc_beg, _sc_fn, _sc_sid, pscale, ann, _scv_ann_nm);
+    STI(S, eq);
+    if (r == 1) { _tn_once(S, start); }
+    if (r == 1) { _scv_refd = start; }
+    return r;
 }
 # The annotation of the declaration `var NAME : <ann> =` whose `=` is token `eq`: its first token, `_scv_ann_nm`
 # the name; 0 for an untyped declaration.
@@ -8172,6 +8235,7 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
     PCMPE(S);
     _scv_disarm(S, scv_prev);
+    _scv_rec_ann(S, pscale, scv_start);   # 6.7.13 (D13): a method / operator struct result into `: i64`
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
