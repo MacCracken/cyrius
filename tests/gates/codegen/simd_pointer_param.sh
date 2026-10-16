@@ -148,6 +148,9 @@
 #   VC1 / VC2 the filed repro verbatim (42) and `f64v2_add(a, mkv(3, 4))` (46) on x86_64 / IR=3 / aarch64 / cx / PE
 #   VZ1-VZ4 on x86_64 / aarch64 / cx / PE, each one line: a call of another vector type (A2's words), a top-level call
 #      (D40's words), `lanes(5)` (no 'expected ;'), pw.cyr's word local ("must be a 16-byte vector"; PE compiled it: 5)
+#   VZw1 / VZw2 on PE, each one line: `lanes(G)` of a vector global and `lanes(nosuch)` — `_sarg_pe_vword`'s refusal skips
+#      the argument as SysV's `_sar_src` does (the value parse added "vector global 'G' is read and written through its
+#      address .." / "undefined variable 'nosuch'": two lines, where x86_64 / aarch64 / cx and the base PE print one)
 #   T3 tests/tcyr/crossos/vector_param_forward_call.tcyr (FLOOR3 29): by name, an explicit instance, fncall2 / callptr
 #      (&f), a method; f64v4 / f32v4 / i32v4 / f32v8; between integers, two calls, a local and a call, after six
 #      integers, a method's parameter, the inline replay, nested
@@ -158,6 +161,9 @@
 #       win64
 #   M-VC4 `_inl_simd_arg` without the call arm               -> RED 17: VC1 VC2 x86 / IR=3 / aarch64 / cx (`lanes` and
 #       `f64v2_add` are replayed), VZ1 x86 / aarch64 / cx (the generic refusal), T3 x86 / IR=1 / IR=3 / DCE / aarch64 / cx
+#   M-VC5 `_arg_push_snap` parsing the refused argument      -> RED 2: VZw1 VZw2 (two error lines each); VZ3pe green
+#       (the review fix reverted: `_sarg_pe_vword`'s refusal     (a literal's value parse reports nothing)
+#       not skipped)
 #
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
 # mutant>; measured):
@@ -647,6 +653,12 @@ for lg in x86 a64 cx pe; do
     refused "VZ3$lg" "VZ3 $lg: lanes(5), one line (no 'expected ;' cascade)" "$VZ3B" "$lg" "$VZ3F"
     refused "VZ4$lg" "VZ4 $lg: pw.cyr, a word local (PE: parity with the three)" "$VZ4B" "$lg" "$VZ4F"
 done
+if [ "$WINE" = 1 ]; then
+    refused VZw1 "VZw1 pe: lanes(G) of a vector global, one line (skipped: no 'vector global' second line)" \
+        "${VCH}var G: f64v2 = 0;\nfn main(): i64 { store64(&G, 4); store64(&G + 8, 2); return lanes(G); }\n${E}" pe "$VZ3F"
+    refused VZw2 "VZw2 pe: lanes(nosuch), one line (skipped: no 'undefined variable' second line)" \
+        "${VCH}fn main(): i64 { return lanes(nosuch); }\n${E}" pe "$VZ3F"
+fi
 
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
