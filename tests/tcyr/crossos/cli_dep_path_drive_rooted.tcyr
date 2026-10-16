@@ -1,0 +1,49 @@
+# cli_dep_path_drive_rooted.tcyr — CROSS-HOST: the CLI's `[deps.X] path` join (cbt/deps.cyr
+# `_dep_join_path`) on each host's own compiler. On Windows (cass) a drive-rooted `C:/x` / `C:\x`,
+# a rooted `\x` (UNC included) and a drive-relative `C:x` are taken as given; a relative path joins
+# onto the manifest's directory. POSIX hosts (ecb, ach, pi, x86_64 Linux) take only a leading `/` as
+# absolute. Through 6.7.12 cyrius.exe joined every drive-rooted path (`C:\proj/C:/deps/foo`) and
+# reported the module missing. The CLI's own file, compiled the way cbt/cyrius.cyr includes it.
+# CHANGELOG [6.7.13]
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+include "src/version_str.cyr"
+include "cbt/core.cyr"
+include "cbt/cli_args.cyr"
+include "cbt/manifest.cyr"
+include "cbt/sigclean.cyr"
+include "cbt/build.cyr"
+include "cbt/commands.cyr"
+include "cbt/project.cyr"
+include "cbt/quality.cyr"
+include "cbt/deps.cyr"
+include "cbt/pulsar.cyr"
+
+alloc_init();
+assert_streq(_dep_join_path("C:/proj", "../dep"), "C:/proj/../dep", "a relative path joins");
+assert_streq(_dep_join_path("C:/proj", "/deps/foo"), "/deps/foo", "a rooted /path is taken as given");
+#ifdef CYRIUS_TARGET_WIN
+assert_streq(_dep_join_path("C:\\proj", "D:/deps/foo"), "D:/deps/foo", "PE: a drive-rooted D:/ path is taken as given");
+assert_streq(_dep_join_path("C:\\proj", "D:\\deps\\foo"), "D:\\deps\\foo", "PE: a drive-rooted D:\\ path is taken as given");
+assert_streq(_dep_join_path("C:\\proj", "\\\\srv\\share\\foo"), "\\\\srv\\share\\foo", "PE: a UNC path is taken as given");
+assert_streq(_dep_join_path("C:\\proj", "D:foo"), "D:foo", "PE: a drive-relative D:foo is taken as given");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_streq(_dep_join_path("/proj", "D:/deps/foo"), "/proj/D:/deps/foo", "POSIX: D:/x is a relative name");
+#endif
+#endif
+#endif
+var r = assert_summary();
+syscall(SYS_EXIT, r);

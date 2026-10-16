@@ -1240,6 +1240,90 @@ fn _cbt_tmpdir_cleanup(): i64 {
     return r;
 }
 
+# 6.7.13 (D41) — SILENCE this process's stdout and stderr, and what its children inherit, while
+# `cyrius deps` runs its pin-move dry pass (deps.cyr `_deps_pin_move_dry`): the user then sees
+# the real resolve's output alone, once. `_cbt_mute(1)` returns 1 when muted and 0 when it could
+# not be set up (the caller runs on unmuted); `_cbt_mute(0)` restores. Whatever is written while
+# muted is gone, so the caller takes every exit it can reach BEFORE muting (the dry pass runs
+# `_dep_find_stdlib_dir` first). POSIX: the two fds saved above 9 (close-on-exec) and /dev/null
+# dup2'd over them. Windows: sys_write asks GetStdHandle
+# per write, so SetStdHandle to NUL silences it (kernel32 by GetProcAddress, as cbt/cyrius.cyr
+# calls SetEnvironmentVariableA). CHANGELOG [6.7.13]
+var _cbt_muted = 0;
+var _cbt_mute_out = 0;
+var _cbt_mute_err = 0;
+var _cbt_mute_nul = 0;
+var _cbt_mute_ssh = 0;
+
+fn _cbt_mute(on): i64 {
+    if (on == 1) {
+        if (_cbt_muted == 0) { _cbt_muted = _cbt_mute_set(); }
+        return _cbt_muted;
+    }
+    if (_cbt_muted == 1) {
+        _cbt_mute_unset();
+        _cbt_muted = 0;
+    }
+    return 0;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+fn _cbt_mute_set(): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                  # GetModuleHandleA
+    if (k32 == 0) { return 0; }
+    var gsh = syscall(0xF014, k32, "GetStdHandle");             # GetProcAddress
+    var ssh = syscall(0xF014, k32, "SetStdHandle");
+    if (gsh == 0 || ssh == 0) { return 0; }
+    var nul = sys_open("NUL", O_WRONLY, 0);
+    if (nul < 0) { return 0; }
+    _cbt_mute_out = callptr(gsh, 0 - 11);                       # STD_OUTPUT_HANDLE
+    _cbt_mute_err = callptr(gsh, 0 - 12);                       # STD_ERROR_HANDLE
+    _cbt_mute_nul = nul;
+    _cbt_mute_ssh = ssh;
+    callptr(ssh, 0 - 11, nul);
+    callptr(ssh, 0 - 12, nul);
+    return 1;
+}
+
+fn _cbt_mute_unset(): i64 {
+    callptr(_cbt_mute_ssh, 0 - 11, _cbt_mute_out);
+    callptr(_cbt_mute_ssh, 0 - 12, _cbt_mute_err);
+    sys_close(_cbt_mute_nul);
+    return 0;
+}
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+fn _cbt_mute_set(): i64 {
+    var nul = sys_open("/dev/null", O_WRONLY, 0);
+    if (nul < 0) { return 0; }
+    var so = sys_fcntl(1, F_DUPFD, 10);
+    var se = sys_fcntl(2, F_DUPFD, 10);
+    if (so < 0 || se < 0) {
+        if (so >= 0) { sys_close(so); }
+        if (se >= 0) { sys_close(se); }
+        sys_close(nul);
+        return 0;
+    }
+    sys_fcntl(so, F_SETFD, FD_CLOEXEC);
+    sys_fcntl(se, F_SETFD, FD_CLOEXEC);
+    _cbt_mute_out = so;
+    _cbt_mute_err = se;
+    sys_dup2(nul, 1);
+    sys_dup2(nul, 2);
+    sys_close(nul);
+    return 1;
+}
+
+fn _cbt_mute_unset(): i64 {
+    sys_dup2(_cbt_mute_out, 1);
+    sys_dup2(_cbt_mute_err, 2);
+    sys_close(_cbt_mute_out);
+    sys_close(_cbt_mute_err);
+    return 0;
+}
+#endif
+
 # Exit the CLI, sweeping the private temp dir first. Every PARENT-side `sys_exit` in cbt/
 # goes through here; main's own return value is swept at the bottom of cbt/cyrius.cyr,
 # and THAT is the path doing the work today.
@@ -1776,8 +1860,7 @@ fn compile(source, output): i64 {
     sys_close(probe_fd);
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var own_err = _cc_own_err_begin();
-    var pid = sys_fork();
-    if (pid > 0) { _cbt_child_track(pid, 0); }   # 6.7.12: the kill handler stops it first
+    var pid = _cbt_fork_tracked(0);   # the kill handler stops it first (6.7.12; no fork-to-track window, 6.7.13)
     if (pid < 0) {
         # 6.6.20 — no child, so no status: say so, and leave nothing behind — the stderr capture
         # (resetting `_cc_stderr_to` for the next compile in this process), the preprocessed
@@ -2108,7 +2191,11 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         # runs its own arch directly; find_tools() forces _arch=AARCH64 on arm64-macOS,
         # so this branch execve-failed → exit 127 with zero test output (the yantra
         # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
+        # 6.7.13: and on an aarch64 Linux host, where `--aarch64` runs the host's own cycc and is a
+        # no-op — the qemu exec failed there (no qemu-aarch64 on pi) and `run --aarch64` exited 127
+        # with no output. CHANGELOG [6.7.13]
         #ifndef CYRIUS_TARGET_MACOS
+        #ifndef CYRIUS_ARCH_AARCH64
         if (_arch == ARCH_AARCH64) {
             if (_run_stdout_to != 0) {
                 var qfd = sys_open(_run_stdout_to, O_WRONLY, 0);
@@ -2120,6 +2207,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
             sys_execve("/usr/bin/qemu-aarch64", qav, renv);
             sys_exit(127);
         }
+        #endif
         #endif
         # 6.6.11: `cyrius test` reads the child's stdout (see `_run_stdout_to`).
         if (_run_stdout_to != 0) {

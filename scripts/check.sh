@@ -489,8 +489,8 @@ _chk_reap_stale_homes
 # regular file named in the CLI's scratch vocabulary below; anything else — `test_bin` (a
 # SIGKILLed test's post-mortem) and `test_out` with it, the `cyrius lsp` build it tells the user
 # to copy out, a directory, a link, a name not listed — keeps the dir and all of it.
-# The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the two
-# directories (`deps`, `locked-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
+# The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the three
+# directories (`deps`, `locked-deps`, `pin-move-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
 # it from cbt/ and fails when this list and the source part. `_N` names take a number
 # (`cpp_<pid>`, `dlverifyerr<t>`); any listed name may carry compile()'s `.tmp.<pid>` (its output
 # before the rename).
@@ -1968,7 +1968,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 # on the URI of the file it names (an included file's error is not pinned to the open file's
 # line), clears a file a recompile no longer names, compiles every cyrius extension, and in a
 # project checks the open file itself (`cyrius check --with-deps --no-redirect`; a toolchain
-# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows.
+# without the flag is checked again without it). The 6.7.11 server fails 8 of its 9 rows. 6.7.13 —
+# outside a project it compiles what `cyrius check <file>` compiles from its working directory
+# (the CLI, else cycc with `#@incdir`), so a loose file's sibling include resolves.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
 
 # 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a
@@ -2347,7 +2349,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_out_of_closure_named.sh"
 # `lib sync --dry-run` prints paths, not pointers.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # 6.7.12 — distlib's sidecar verify credits a named dep with the include CLOSURE of its sidecar
-# leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`.
+# leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`. 6.7.13 — and
+# a fold `cyrius deps` kept over a named dep's thin profile (6.6.11 S2) is that dep's need too.
 _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
 # 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
 # core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
@@ -2411,7 +2414,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
 
 # 6.6.17 — `cyrius lib sync` is held to the 6.6.4 stdlib-leaf guard (a snapshot moved under an
 # unchanged pin is refused by name, nothing written; `--relock` accepts) and re-locks only the
-# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept.
+# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept. At a moved
+# pin no lock writer — the resolve (6.7.12, D19), the bare `deps --lock` and a scoped `lib sync`
+# (6.7.13, D42) — stamps the new pin over lib/ files it did not write.
 _chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 
 # 6.6.9 (bite 10, CYRIUS-2026-0009) — no cbt string literal names a shared /tmp/ path, and `cyrius self`

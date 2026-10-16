@@ -2,24 +2,30 @@
 # hardware. A CLI stopped by SIGTERM / SIGINT / SIGHUP mid-compile stops the children it tracks
 # (an exec'd tool is SIGKILLed; a forked copy of the CLI is sent the signal and cleans up its
 # own scratch), unlinks the scratch names it tracks, removes the private directory it created
-# and exits 128+N. The handler ABI differs per host — x86_64 Linux needs SA_RESTORER, Darwin has
-# no libc trampoline (the handler is installed as sa_tramp too) — so this runs the CLI's own file
+# and then dies by the signal itself (6.7.13, D39). The handler ABI differs per host — x86_64
+# Linux needs SA_RESTORER, Darwin has no libc trampoline (the handler is installed as sa_tramp
+# too), and the re-raise must unblock what sa_mask blocked — so this runs the CLI's own file
 # through the release gate's cross-OS leg on ecb (macOS arm64), ach (Intel Mac) and pi (aarch64),
 # and locally on x86_64 Linux. Windows has no POSIX signals (the install is inert, named in the
 # file); there only the tables and the install's answer are checked.
 #
-# Each scenario runs in a forked child CHILD that signals ITSELF, so the handler's exit status is
-# what the test reads: 128+N through WIFEXITED (a handler that never ran dies WIFSIGNALED — read
-# as 1000+N — or falls through to the next line, which exits 91). 64 + a code is a CHILD-side
-# failure. SIGINT is not used: the cross-OS runner starts each test as a `&` job, which ignores
-# it, and the CLI keeps an inherited ignore (scenario C is that contract, on SIGHUP).
-# CHANGELOG [6.7.12]
+# Each scenario runs in a forked child CHILD that signals ITSELF, and the test reads how it ended:
+# the handler cleans up and then dies by the same signal (D39, the user 2026-10-15: reset to
+# SIG_DFL, raised again, unblocked), so the CHILD's status is WIFSIGNALED with WTERMSIG N — read
+# as 1000+N; the 6.7.12 handler's exit(128+N) reads as 128+N (143) and fails every row. A CHILD
+# with no handler dies by the signal too, so what proves the handler RAN is each scenario's
+# cleanup (its names, its dir, its children gone); one that outlives the signal falls through to
+# exit 91. 64 + a code is a CHILD-side failure. SIGINT is not used: the cross-OS runner starts
+# each test as a `&` job, which ignores it, and the CLI keeps an inherited ignore (scenario C is
+# that contract, on SIGHUP). CHANGELOG [6.7.12]; scenarios E (the fork-to-track window), F (a
+# registered scratch tree), G (SIGHUP) and the signal death (D39) CHANGELOG [6.7.13]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
+include "lib/vec.cyr"
 #ifndef CYRIUS_TARGET_AGNOS
 include "cbt/sigclean.cyr"
 #endif
@@ -176,12 +182,33 @@ fn _ckh_child_b(): i64 {
     return 0;
 }
 
-# Scenario C (CHILD): SIGHUP ignored when the CLI starts stays ignored (nohup); SIGTERM is caught.
+# Scenario C (CHILD): SIGHUP ignored when the CLI starts stays ignored (nohup); SIGTERM is caught —
+# the tracked name `C.name` is unlinked (a SIGHUP that was not ignored ends the CHILD as 1000+1).
 fn _ckh_child_c(): i64 {
     signal_ignore(1);
     if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var f = _ckh_path("C", ".name");
+    _cbt_scratch_track(f);
+    if (_ckh_touch(f) != 0) { sys_exit(64 + 3); }
     sys_kill(sys_getpid(), 1);    # ignored: execution continues
-    sys_kill(sys_getpid(), 15);   # caught: exits 143
+    sys_kill(sys_getpid(), 15);   # caught: the name goes, then death by SIGTERM
+    sys_exit(91);
+    return 0;
+}
+
+# Scenario G (CHILD): SIGHUP at its default when the CLI starts is caught like SIGTERM, and the
+# death is by SIGHUP (the re-raise unblocks bit 0 and raises 1, not a fixed SIGTERM): the tracked
+# name `G.name` and the private dir go. CHANGELOG [6.7.13]
+fn _ckh_child_g(): i64 {
+    signal_default(1);            # deterministic under a `nohup` runner
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var d = _ckh_path("G", "");
+    if (xmkdir(d, 448) != 0) { sys_exit(64 + 2); }
+    _cbt_sig_dir_set(d);
+    var f = _ckh_path("G", "/cc_err");
+    _cbt_scratch_track(f);
+    if (_ckh_touch(f) != 0) { sys_exit(64 + 3); }
+    sys_kill(sys_getpid(), 1);
     sys_exit(91);
     return 0;
 }
@@ -200,7 +227,7 @@ fn _ckh_child_d(): i64 {
         sys_kill(sys_getpid(), 15);
         sys_exit(91);
     }
-    if (_ckh_wait(c3) != 143) { sys_exit(64 + 5); }
+    if (_ckh_wait(c3) != 1015) { sys_exit(64 + 5); }
     if (file_exists(d) != 1) { sys_exit(64 + 6); }   # the empty dir is the parent's
     var f = _ckh_path("D", "/cc_err");
     _cbt_scratch_track(f);
@@ -210,7 +237,7 @@ fn _ckh_child_d(): i64 {
         sys_kill(sys_getpid(), 15);
         sys_exit(91);
     }
-    if (_ckh_wait(c3b) != 143) { sys_exit(64 + 5); }
+    if (_ckh_wait(c3b) != 1015) { sys_exit(64 + 5); }
     if (file_exists(f) != 1) { sys_exit(64 + 10); }  # the inherited table is not the child's
     var c4 = sys_fork();
     if (c4 == 0) {
@@ -220,10 +247,90 @@ fn _ckh_child_d(): i64 {
         sys_kill(sys_getpid(), 15);
         sys_exit(91);
     }
-    if (_ckh_wait(c4) != 143) { sys_exit(64 + 7); }
+    if (_ckh_wait(c4) != 1015) { sys_exit(64 + 7); }
     if (file_exists(f) != 1) { sys_exit(64 + 8); }   # the parent's name survived its child
     if (file_exists(_ckh_path("D", "/cpp_4")) != 0) { sys_exit(64 + 9); }   # the child's did not
-    sys_kill(sys_getpid(), 15);   # its own SIGTERM cleans up its name and dir, exits 143
+    sys_kill(sys_getpid(), 15);   # its own SIGTERM cleans up its name and dir, then ends it
+    sys_exit(91);
+    return 0;
+}
+
+# The HUP / INT / TERM bits (0x4003) of this thread's signal mask.
+fn _ckh_mask_bits(): i64 {
+    var none[8];
+    var cur[8];
+    store64(&none, 0);
+    store64(&cur, 0);
+    sys_sigprocmask(SIG_BLOCK, &none, &cur);
+    return load64(&cur) & 0x4003;
+}
+
+# Scenario E's hook, run by `_cbt_fork_tracked` in the parent between the fork and the track: it
+# marks that it ran, waits until the child is running, then sends SIGTERM to its own process.
+fn _ckh_hook_term(): i64 {
+    _ckh_touch(_ckh_path("E", ".hook"));
+    var i = 0;
+    while (i < 200 && _ckh_get(_ckh_path("E", ".pid")) == 0) { _ckh_nap(10); i = i + 1; }
+    sys_kill(sys_getpid(), 15);
+    return 0;
+}
+
+# Scenario E (CHILD): a signal INSIDE the fork-to-track window. `_cbt_fork_tracked` holds HUP /
+# INT / TERM from before the fork until the child is tracked, so the hook's SIGTERM is delivered
+# after the track and the handler stops the child, which would otherwise create `E.late` about
+# 300 ms later. The child records whether it started with HUP / INT / TERM blocked (`E.masked`).
+# CHANGELOG [6.7.13]
+fn _ckh_child_e(): i64 {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var base = _ckh_mask_bits();
+    _cbt_fork_hook = &_ckh_hook_term;
+    var c = _cbt_fork_tracked(0);
+    if (c == 0) {
+        if (_ckh_mask_bits() != base) { _ckh_touch(_ckh_path("E", ".masked")); }
+        _ckh_put(_ckh_path("E", ".pid"), sys_getpid());
+        _ckh_nap(300);
+        _ckh_touch(_ckh_path("E", ".late"));
+        sys_exit(0);
+    }
+    if (c < 0) { sys_exit(64 + 2); }
+    sys_exit(91);   # the hook's SIGTERM never ended this process
+    return 0;
+}
+
+# Scenario F (CHILD): a scratch TREE registered through the slot (the distlib verify's stdlib
+# mirror: two vecs, files and directories parents first) — a forked child that did not register
+# it leaves it alone; this process's SIGTERM removes it, files first, then directories deepest
+# first. A 0 entry (a push a signal caught half way) is skipped. CHANGELOG [6.7.13]
+fn _ckh_child_f(): i64 {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var files = vec_new();
+    var dirs = vec_new();
+    var d0 = _ckh_path("F", "");
+    var d1 = _ckh_path("F", "/lib");
+    var d2 = _ckh_path("F", "/lib/fam");
+    vec_push(dirs, d0);
+    if (xmkdir(d0, 448) != 0) { sys_exit(64 + 2); }
+    _cbt_sig_tree_set(files, dirs);
+    vec_push(dirs, d1);
+    if (xmkdir(d1, 448) != 0) { sys_exit(64 + 2); }
+    vec_push(dirs, d2);
+    if (xmkdir(d2, 448) != 0) { sys_exit(64 + 2); }
+    var fa = _ckh_path("F", "/lib/a.cyr");
+    var fb = _ckh_path("F", "/lib/fam/b.cyr");
+    vec_push(files, fa);
+    if (_ckh_touch(fa) != 0) { sys_exit(64 + 3); }
+    vec_push(files, 0);
+    vec_push(files, fb);
+    if (_ckh_touch(fb) != 0) { sys_exit(64 + 3); }
+    var c = sys_fork();
+    if (c == 0) {
+        sys_kill(sys_getpid(), 15);
+        sys_exit(91);
+    }
+    if (_ckh_wait(c) != 1015) { sys_exit(64 + 11); }
+    if (file_exists(fb) != 1) { sys_exit(64 + 12); }   # the tree is the parent's
+    if (file_exists(d2) != 1) { sys_exit(64 + 12); }
+    sys_kill(sys_getpid(), 15);
     sys_exit(91);
     return 0;
 }
@@ -236,6 +343,9 @@ fn _ckh_run(which): i64 {
         if (which == 2) { _ckh_child_b(); }
         if (which == 3) { _ckh_child_c(); }
         if (which == 4) { _ckh_child_d(); }
+        if (which == 5) { _ckh_child_e(); }
+        if (which == 6) { _ckh_child_f(); }
+        if (which == 7) { _ckh_child_g(); }
         sys_exit(90);
     }
     return _ckh_wait(c);
@@ -272,9 +382,18 @@ fn main(): i64 {
     i = 0;
     while (i < 16) { if (load64(&_cbt_sig_pids + i * 8) != 0) { seen = seen + 1; } i = i + 1; }
     assert_eq(seen, 0, "a tracked child is forgotten once untracked");
+    var tf = vec_new();
+    var td = vec_new();
+    _cbt_sig_tree_set(tf, td);
+    var mine = 0;
+    if (_cbt_sig_tree_files == tf && _cbt_sig_tree_owner == sys_getpid()) { mine = 1; }
+    assert_eq(mine, 1, "a scratch tree is registered to this process");
+    _cbt_sig_tree_set(0, 0);
+    assert_eq(_cbt_sig_tree_files, 0, "(0, 0) clears the scratch tree");
     #endif
     #ifdef CYRIUS_TARGET_WIN
     assert_eq(_cbt_sig_install(), 0, "the install is inert on Windows (no POSIX signals)");
+    assert_eq(_cbt_fork_tracked(0), 0 - 1, "_cbt_fork_tracked answers -1 on Windows (no fork)");
     #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
@@ -282,7 +401,7 @@ fn main(): i64 {
     _ckh_parent = sys_getpid();
     # A: SIGTERM mid-compile
     var ra = _ckh_run(1);
-    assert_eq(ra, 143, "A: SIGTERM -> the handler exits 128+15");
+    assert_eq(ra, 1015, "A: SIGTERM -> the handler cleans up, then dies by SIGTERM (1000+15; 143 = an exit(128+15))");
     assert_eq(file_exists(_ckh_path("A", "/cpp_1")), 0, "A: the tracked name is unlinked");
     assert_eq(file_exists(_ckh_path("A", "")), 0, "A: the private dir is removed");
     var sa = _ckh_get(_ckh_path("A", ".pid"));
@@ -293,7 +412,7 @@ fn main(): i64 {
     xrmdir(_ckh_path("A", ""));
     # B: the signal forwarded to a forked copy
     var rb = _ckh_run(2);
-    assert_eq(rb, 143, "B: the parent exits 128+15");
+    assert_eq(rb, 1015, "B: the parent dies by SIGTERM after its cleanup");
     assert_eq(file_exists(_ckh_path("B", "/cpp_2")), 0, "B: the forked copy unlinked its own name");
     assert_eq(file_exists(_ckh_path("B", "/dlverifyerr0")), 0, "B: the parent unlinked its name");
     assert_eq(file_exists(_ckh_path("B", "")), 0, "B: the private dir is removed");
@@ -305,15 +424,67 @@ fn main(): i64 {
     sys_unlink(_ckh_path("B", "/dlverifyerr0"));
     xrmdir(_ckh_path("B", ""));
     # C: an inherited ignore stays
-    assert_eq(_ckh_run(3), 143, "C: SIGHUP ignored at start stays ignored; SIGTERM is caught");
+    assert_eq(_ckh_run(3), 1015, "C: SIGHUP ignored at start stays ignored (1001 if not); SIGTERM ends it");
+    assert_eq(file_exists(_ckh_path("C", ".name")), 0, "C: SIGTERM is caught: the tracked name is unlinked");
+    sys_unlink(_ckh_path("C", ".name"));
     # D: an unregistered forked child leaves its parent's scratch alone
     var rd = _ckh_run(4);
-    assert_eq(rd, 143, "D: a signalled forked child spared its parent's dir and names (64+6 / 64+10 / 64+8 if not)");
+    assert_eq(rd, 1015, "D: a signalled forked child spared its parent's dir and names (64+6 / 64+10 / 64+8 if not)");
     assert_eq(file_exists(_ckh_path("D", "/cc_err")), 0, "D: the parent's handler unlinked its name");
     assert_eq(file_exists(_ckh_path("D", "")), 0, "D: and removed its dir");
     sys_unlink(_ckh_path("D", "/cc_err"));
     sys_unlink(_ckh_path("D", "/cpp_4"));
     xrmdir(_ckh_path("D", ""));
+    # E0: _cbt_fork_tracked restores the parent's mask, and the child starts with that mask
+    var mb = _ckh_mask_bits();
+    var ce = _cbt_fork_tracked(0);
+    if (ce == 0) {
+        if (_ckh_mask_bits() != mb) { sys_exit(1); }
+        sys_exit(0);
+    }
+    assert(ce > 0, "E0: _cbt_fork_tracked forked");
+    var tracked = 0;
+    i = 0;
+    while (i < 16) { if (load64(&_cbt_sig_pids + i * 8) == ce) { tracked = 1; } i = i + 1; }
+    assert_eq(tracked, 1, "E0: the child is tracked when the call returns");
+    assert_eq(_ckh_mask_bits(), mb, "E0: the parent's HUP / INT / TERM mask is restored");
+    assert_eq(_ckh_wait(ce), 0, "E0: the child started with the parent's mask (1 if HUP / INT / TERM stayed blocked)");
+    _cbt_child_untrack(ce);
+    # E: a SIGTERM between fork and track
+    var re = _ckh_run(5);
+    var pe = _ckh_get(_ckh_path("E", ".pid"));
+    var pe_gone = 0;
+    if (pe > 0 && sys_kill(pe, 0) != 0) { pe_gone = 1; }
+    assert_eq(re, 1015, "E: the SIGTERM raised inside the window is handled, then ends the process (1000+15)");
+    assert_eq(file_exists(_ckh_path("E", ".hook")), 1, "E: the hook ran between fork and track (anti-vacuous)");
+    assert(pe > 0, "E: the child ran (anti-vacuous)");
+    assert_eq(pe_gone, 1, "E: the child was stopped and reaped before the handler exited");
+    assert_eq(file_exists(_ckh_path("E", ".masked")), 0, "E: the child started with HUP / INT / TERM unblocked");
+    _ckh_nap(800);
+    assert_eq(file_exists(_ckh_path("E", ".late")), 0, "E: the child never created its file (the window is closed)");
+    if (pe > 0) { _ckh_gone(pe); }
+    sys_unlink(_ckh_path("E", ".hook"));
+    sys_unlink(_ckh_path("E", ".pid"));
+    sys_unlink(_ckh_path("E", ".masked"));
+    sys_unlink(_ckh_path("E", ".late"));
+    # F: a registered scratch tree
+    var rf = _ckh_run(6);
+    assert_eq(rf, 1015, "F: SIGTERM -> death by SIGTERM, a forked child having spared the tree (64+11 / 64+12 if not)");
+    assert_eq(file_exists(_ckh_path("F", "/lib/fam/b.cyr")), 0, "F: the tree's files are unlinked");
+    assert_eq(file_exists(_ckh_path("F", "/lib/a.cyr")), 0, "F: …every one");
+    assert_eq(file_exists(_ckh_path("F", "")), 0, "F: and its directories removed, deepest first");
+    sys_unlink(_ckh_path("F", "/lib/fam/b.cyr"));
+    sys_unlink(_ckh_path("F", "/lib/a.cyr"));
+    xrmdir(_ckh_path("F", "/lib/fam"));
+    xrmdir(_ckh_path("F", "/lib"));
+    xrmdir(_ckh_path("F", ""));
+    # G: SIGHUP — caught, cleaned up, and the death is by SIGHUP
+    var rg = _ckh_run(7);
+    assert_eq(rg, 1001, "G: SIGHUP -> the handler cleans up, then dies by SIGHUP (1000+1; 129 = an exit(128+1))");
+    assert_eq(file_exists(_ckh_path("G", "/cc_err")), 0, "G: the tracked name is unlinked");
+    assert_eq(file_exists(_ckh_path("G", "")), 0, "G: the private dir is removed");
+    sys_unlink(_ckh_path("G", "/cc_err"));
+    xrmdir(_ckh_path("G", ""));
     #endif
     #endif
     #endif

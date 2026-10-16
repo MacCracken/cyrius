@@ -1963,13 +1963,18 @@ fn _hdr_guard_else(b, ns, nl, rk): i64 {
 # fn classed 4, then each word-classed fn whose body has `return NAME(` / `return NAME<..>(` of
 # one of them, to no change. A closure's body and a nested fn are skipped (their returns are
 # their own). Not seen: a pair reached through another file's fn, or a method.
+# 6.7.13 — the compiler's third route to GFLG 256: a `?` on a pair call (`v = parse(x)?;`) returns
+# the callee's pair on its Err path, so the body also counts `NAME(..)?` / `NAME<..>(..)?` of one
+# of them, in the same fixpoint (refused as `'parse(..)?'`). A closure's `?` is its own — a block
+# or an expression body — and a method call's `?` is not seen, as a method return is not.
+# CHANGELOG [6.7.13]
 # ================================================================
 var _hdr_pairs = 0;     # _src_ids set: the names whose call returns a stack enum's pair
 # _hdr_fns: the file's depth-0 fns, _HDR_FN bytes each — +0 name off, +8 len, +16 body `{` (-1
 # none), +24 its `}`, +32 return class, +40 / +48 the pair call that makes it pair-returning
-# (len 0: none).
+# (len 0: none), +56 1 when that call is propagated by `?` (6.7.13).
 var _hdr_fns = 0;
-var _HDR_FN = 56;
+var _HDR_FN = 64;
 
 # The offset of the matching `}` of the `{` at b[p] in the blanked buffer, or len.
 fn _hdr_block_end(b, len, p): i64 {
@@ -2010,15 +2015,88 @@ fn _hdr_after_pipe(b, p): i64 {
     return 0;
 }
 
+# The offset of the `)` matching the `(` at b[p] (`( [ {` balance `) ] }`; strings are blanked),
+# or lim. A call's arguments: `<` / `>` are operators there, never brackets. CHANGELOG [6.7.13]
+fn _hdr_paren_end(b, p, lim): i64 {
+    var d = 0;
+    while (p < lim) {
+        var c = load8(b + p);
+        if (c == 40 || c == 91 || c == 123) { d = d + 1; }
+        elif (c == 41 || c == 93 || c == 125) {
+            d = d - 1;
+            if (d == 0) { return p; }
+        }
+        p = p + 1;
+    }
+    return lim;
+}
+
+# 1 iff the `|` at b[p] opens a closure's parameter list: the last non-blank byte before it starts
+# an expression (`= ( , { } ; : [`), or ends the word `return`. A `|` after an operand is `|`,
+# `||` or `|=`. CHANGELOG [6.7.13]
+fn _hdr_closure_pipe(b, p): i64 {
+    var q = p - 1;
+    while (q >= 0) {
+        var c = load8(b + q);
+        if (c != 32 && c != 9 && c != 10 && c != 13) { break; }
+        q = q - 1;
+    }
+    if (q < 0) { return 1; }
+    var pc = load8(b + q);
+    if (pc == 61 || pc == 40 || pc == 44 || pc == 123 || pc == 125 || pc == 59 || pc == 58 || pc == 91) { return 1; }
+    if (q >= 5 && memeq(b + q - 5, "return", 6) == 1) {
+        if (q == 5) { return 1; }
+        return 1 - _src_ident_char(load8(b + q - 6));
+    }
+    return 0;
+}
+
+# Past the closure whose parameter list opens at b[p]: a block body's `{` (the caller's
+# `_hdr_after_pipe` steps over it), or the end of an expression body — its first depth-0 `;`, `,`
+# or unmatched closer. CHANGELOG [6.7.13]
+fn _hdr_closure_skip(b, p, close): i64 {
+    var q = p + 1;
+    while (q < close && load8(b + q) != 124) { q = q + 1; }
+    q = _hdr_ws_nl(b, q + 1, close);
+    if (q >= close || load8(b + q) == 123) { return q; }
+    var d = 0;
+    while (q < close) {
+        var c = load8(b + q);
+        if (c == 40 || c == 91 || c == 123) { d = d + 1; }
+        elif (c == 41 || c == 93 || c == 125) {
+            if (d == 0) { return q; }
+            d = d - 1;
+        }
+        elif (d == 0 && (c == 59 || c == 44)) { return q; }
+        q = q + 1;
+    }
+    return close;
+}
+
+# 1 when the pair call NAME at b[ns, ne) — `NAME(..)` / `NAME<..>(..)` — is followed by `?`: the
+# `?` desugar returns the callee's pair on its Err path and marks the enclosing fn pair-returning
+# (src/frontend/parse.cyr and parse_expr.cyr, the `?` lowering's SFLG 256). CHANGELOG [6.7.13]
+fn _hdr_q_after(b, ne, close): i64 {
+    var r = _hdr_ws_nl(b, ne, close);
+    if (r < close && load8(b + r) == 60) { r = _hdr_ws_nl(b, _hdr_skip_targs(b, r, close), close); }
+    if (r >= close || load8(b + r) != 40) { return 0; }
+    var x = _hdr_ws_nl(b, _hdr_paren_end(b, r, close) + 1, close);
+    if (x < close && load8(b + x) == 63) { return 1; }
+    return 0;
+}
+
 # The pair call a fn body b(open, close) returns — `return NAME(` / `return NAME<..>(` with NAME
-# in _hdr_pairs — as its name's offset (its length in _hdr_via_n), or -1. A closure's body and a
-# nested fn are stepped over.
+# in _hdr_pairs, or (6.7.13) `NAME(..)?` / `NAME<..>(..)?` anywhere in the body — as its name's
+# offset (its length in _hdr_via_n; _hdr_via_q 1 for the `?` route), or -1. A closure's body
+# (a block or an expression) and a nested fn are stepped over; a method call's `?` is not seen.
 var _hdr_via_n = 0;
+var _hdr_via_q = 0;
 fn _hdr_body_pair(b, open, close): i64 {
     var p = open + 1;
     while (p < close) {
         var c = load8(b + p);
         if (c == 123 && _hdr_after_pipe(b, p) == 1) { p = _hdr_block_end(b, close, p) + 1; }
+        elif (c == 124 && _hdr_closure_pipe(b, p) == 1) { p = _hdr_closure_skip(b, p, close); }
         elif (_src_ident_char(c) == 1 && (c < 48 || c > 57)) {
             var e = _src_ident_end(b, p, close);
             var lead = 1;
@@ -2040,9 +2118,16 @@ fn _hdr_body_pair(b, open, close): i64 {
                     if (r < close && load8(b + r) == 40) {
                         if (_src_ids_has(_hdr_pairs, b + ns, ne - ns) == 1) {
                             _hdr_via_n = ne - ns;
+                            _hdr_via_q = 0;
                             return ns;
                         }
                     }
+                }
+            } elif (lead == 1 && _src_ids_has(_hdr_pairs, b + p, e - p) == 1) {
+                if (_hdr_q_after(b, e, close) == 1) {
+                    _hdr_via_n = e - p;
+                    _hdr_via_q = 1;
+                    return p;
                 }
             }
             p = e;
@@ -2114,6 +2199,7 @@ fn _hdr_pair_scan(b, len): i64 {
                     store64(f + 32, _hdr_ret_of(b, len, op + 1));
                     store64(f + 40, 0);
                     store64(f + 48, 0);
+                    store64(f + 56, 0);
                     vec_push(_hdr_fns, f);
                     _src_ids_add(own, b + ns, nl);
                 }
@@ -2154,6 +2240,7 @@ fn _hdr_pair_scan(b, len): i64 {
                 if (via >= 0) {
                     store64(g + 40, via);
                     store64(g + 48, _hdr_via_n);
+                    store64(g + 56, _hdr_via_q);
                     _src_ids_add(_hdr_pairs, b + load64(g), load64(g + 8));
                     changed = 1;
                 }
@@ -2186,8 +2273,51 @@ fn _hdr_refuse_prop(b, f): i64 {
     sys_write(STDERR_FD, t, strlen(t));
     sys_write(STDERR_FD, b + load64(f + 40), load64(f + 48));
     t = "(..)', which its signature does not declare (cycc returns it in rax:rdx, aarch64 x0:x2); ";
+    if (load64(f + 56) == 1) {
+        t = "(..)?', which its signature does not declare (its `?` returns the Err pair, in rax:rdx, aarch64 x0:x2); ";
+    }
     sys_write(STDERR_FD, t, strlen(t));
     t = "declare it `: Result`, `: Option` or `: Tagged`; no prototype written\n";
+    sys_write(STDERR_FD, t, strlen(t));
+    return 1;
+}
+
+# 6.7.13 — A SIMD VECTOR PARAMETER. cycc passes a vector by value in vector registers (xmm / v; a
+# 32-byte vector in two, or by a PE convention of its own) while the prototype said `cyr_val v`,
+# which a C caller passes in rdi / x0: the callee computed on whatever the vector register held.
+# Refused by name as D24 refuses a vector return (no C11 type carries one). A pointer (`*f64v2`)
+# is a word and stays `cyr_val`. The parameter list b[ps, pe): 1 when a parameter's type is one of
+# the twelve vector names (_hdr_vp_s / _hdr_vp_e its `name: type` text), else 0. CHANGELOG [6.7.13]
+var _hdr_vp_s = 0;
+var _hdr_vp_e = 0;
+fn _hdr_vparam(b, ps, pe): i64 {
+    var pi = ps;
+    while (pi < pe) {
+        pi = _hdr_ws_nl(b, pi, pe);
+        var pend = _hdr_close(b, pi, pe, 1);
+        var q = pi;
+        while (q < pend && load8(b + q) != 58 && load8(b + q) != 61) { q = q + 1; }
+        if (q < pend && load8(b + q) == 58) {
+            var ts = _hdr_ws_nl(b, q + 1, pend);
+            var te = _src_ident_end(b, ts, pend);
+            if (te > ts && _hdr_vec_name(b, ts, te - ts) == 1) {
+                _hdr_vp_s = pi;
+                _hdr_vp_e = te;
+                return 1;
+            }
+        }
+        pi = pend + 1;
+    }
+    return 0;
+}
+
+# Name a fn refused for a vector parameter on stderr. 1.
+fn _hdr_refuse_vparam(b, ns, nl): i64 {
+    sys_write(STDERR_FD, "error: cyrius header: '", 23);
+    sys_write(STDERR_FD, b + ns, nl);
+    sys_write(STDERR_FD, "' takes '", 9);
+    sys_write(STDERR_FD, b + _hdr_vp_s, _hdr_vp_e - _hdr_vp_s);
+    var t = "': a SIMD vector parameter, which no C11 type carries; no prototype written\n";
     sys_write(STDERR_FD, t, strlen(t));
     return 1;
 }
@@ -2279,6 +2409,11 @@ fn cmd_header(arg): i64 {
                 refused = refused + _hdr_refuse_prop(hbuf, pf);
                 continue;
             }
+        }
+        # 6.7.13 — a SIMD vector parameter: refused (see _hdr_vparam). CHANGELOG [6.7.13]
+        if (_hdr_vparam(hbuf, ps, pe) == 1) {
+            refused = refused + _hdr_refuse_vparam(hbuf, fname_start, fname_len);
+            continue;
         }
         if (rk == 1 || rk == 3 || rk == 4) {
             _hdr_pair_typedef();

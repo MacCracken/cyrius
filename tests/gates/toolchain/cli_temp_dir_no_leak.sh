@@ -64,6 +64,15 @@
 #     stopping children -> 8 RED (each run's compiler still running, the distlib dir and compilers);
 #     distlib's children tracked as exec'd tools (SIGKILLed, not forwarded) -> 2 RED (the distlib
 #     dir, its six compilers); an inherited SIG_IGN overridden -> 1 RED (the nohup row).
+#   * (6.7.13) capacity's `cap_err` / compiler and `_dep_wt_run`'s `wt_err` / git child untracked
+#     again (the 6.7.13-open CLI) -> 4 RED (capacity's dir and compiler, the --local git row's dir
+#     and git); their anti-vacuous rows stay GREEN. `_dep_wt_run`'s stdout capture untracked again
+#     (that commit's CLI) -> 2 RED (the rev-parse and ls-remote rows' dirs, holding wt_out / ls_remote).
+#   * (6.7.13, D39) the 6.7.12 `_cbt_sig_exit` (exit(128+N) after the cleanup, no re-raise) -> 1 RED
+#     (the cyrius parent row: st[1] 0, an exit); every `$?` row stays GREEN (143 either way), which is
+#     why that row reads the wait status through a parent that can tell the two apart.
+#     The distlib mirror's slot never set (`_cbt_sig_tree_set` dropped from `_distlib_mirror_make`), or
+#     the round's entry.cyr untracked -> 1 RED each (the distlib kill row's dist/.dlverify-<pid>).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -71,8 +80,10 @@
 # failure paths already unlinked its scratch (6.5.19 / 6.6.6 / 6.6.20); the leftovers on this box
 # were all kills mid-compile. Since 6.7.12 a CLI stopped by SIGTERM / SIGINT / SIGHUP mid-compile
 # (check, build, a distlib verify) stops its compiler, leaves no dir under the absolute $TMPDIR and
-# exits 128+N; the in-flight names (what a SIGKILL still leaves) are ones check.sh's reaper removes
-# (`_chk_cli_scratch`, read out of scripts/check.sh).
+# ends with a shell `$?` of 128+N — since 6.7.13 by dying of the signal after that cleanup (D39), as
+# it did before the handler, so a cyrius parent reads a signal death; the in-flight names (what a
+# SIGKILL still leaves) are ones check.sh's reaper removes (`_chk_cli_scratch`, read out of
+# scripts/check.sh).
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -264,13 +275,14 @@ echo "axis 5 — ⭐ every sys_exit() in cbt/ is child-side or routed through _c
 cat > "$T/exits.awk" <<'AWK'
 # A `sys_exit` is CHILD-side when it sits inside an `if (<v> == 0) { ... }` whose <v> was
 # assigned from `sys_fork()` earlier in the same fn — derived from the source, never a
-# name list (the fork variable is `pid`, `pid2`, `gpid`, `cpid`, ... across cbt/).
+# name list (the fork variable is `pid`, `pid2`, `gpid`, `cpid`, ... across cbt/). Since 6.7.13 a
+# tracked fork is `_cbt_fork_tracked(fwd)` (cbt/sigclean.cyr), which answers as sys_fork() does.
 /^fn [A-Za-z_]/ { fname = $2; sub(/\(.*/, "", fname); depth = 0; child = -1; delete forkv }
 {
     line = $0
     gsub(/"[^"]*"/, "", line)
     if (line !~ /^[ \t]*#(ifdef|ifndef|endif|else|elif)/) { sub(/#.*/, "", line) }
-    if (match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*sys_fork\(\)/)) {
+    if (match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(sys_fork\(\)|_cbt_fork_tracked\()/)) {
         v = substr(line, RSTART, RLENGTH)
         sub(/^var[ \t]+/, "", v); sub(/[ \t]*=.*/, "", v)
         forkv[v] = 1
@@ -329,9 +341,16 @@ fn no_fork_at_all(): i64 {
     sys_exit(3);
     return 0;
 }
+fn tracked_fork(): i64 {
+    var tpid = _cbt_fork_tracked(0);
+    if (tpid == 0) {
+        sys_exit(127);
+    }
+    return 0;
+}
 EOF
 awk -f "$T/exits.awk" "$T/ax5/probe.cyr" > "$T/ax5/out"
-check "  ⭐ ANTI-VACUOUS: a child-side exit is cleared" 3 "$(grep -c ' child$' "$T/ax5/out" || true)"
+check "  ⭐ ANTI-VACUOUS: a child-side exit is cleared (a _cbt_fork_tracked child too, 6.7.13)" 4 "$(grep -c ' child$' "$T/ax5/out" || true)"
 check "  ⭐ ANTI-VACUOUS: an exit AFTER the child block is flagged" 1 \
     "$(grep -c 'fn=after_the_child PARENT' "$T/ax5/out" || true)"
 check "  ⭐ ANTI-VACUOUS: a fork-free exit is flagged" 1 \
@@ -439,7 +458,8 @@ sweep_for "$T/p7d"
 # ── The KILL shape (6.7.12). A CLI stopped by SIGTERM / SIGINT / SIGHUP while its compiler runs
 # stops that compiler, unlinks the compile's in-flight names (`cpp_<pid>`, `cc_err`, the check's
 # `check_<pid>[.tmp.<pid>]`, build's `<out>.tmp.<pid>` beside the output), removes its private dir
-# and exits 128+N (cbt/build.cyr `_cbt_sig_fire`). Until 6.7.12 no handler existed: the dir kept
+# and ends 128+N in the shell's `$?` (cbt/sigclean.cyr `_cbt_sig_fire`; since 6.7.13 a death by the
+# signal itself after the cleanup, D39). Until 6.7.12 no handler existed: the dir kept
 # all three names until check.sh's reaper found the dead pid. SIGKILL cannot be caught, so the
 # in-flight names must still be ones the reaper removes. Every run sits under an ABSOLUTE
 # $TMPDIR with a trailing slash (`_cbt_tmpbase`), never /tmp. The k2 stand-in records its pid
@@ -506,7 +526,7 @@ for k7v in check build; do
             _chk_cli_scratch "$f" || { nbad=$((nbad + 1)); bad="$bad $f"; }
         done < "$T/k7-$k7t.live"
         check "  …each one a name check.sh's reaper removes (what a SIGKILL leaves:$(tr '\n' ' ' < "$T/k7-$k7t.live" | sed 's/ $//; s/^/ /'))" 0 "$nbad"
-        check "  …the CLI exits 128+$k7n" "$((128 + k7n))" "$(cat "$T/k7-$k7t.rc" 2>/dev/null || echo none)"
+        check "  …the shell reads \$? = 128+$k7n" "$((128 + k7n))" "$(cat "$T/k7-$k7t.rc" 2>/dev/null || echo none)"
         check "  …its private dir is gone" 0 "$(k7_dirs "$k7t" "$TB")"
         check "  …nothing of that pid under /tmp" 0 "$(k7_dirs "$k7t" /tmp)"
         check "  …the compiler it was running is stopped" gone "$(cat "$T/k7-$k7t.cc")"
@@ -516,6 +536,120 @@ for k7v in check build; do
         for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
     done
 done
+# 6.7.13 (D39 — the user, 2026-10-15): after its cleanup the CLI dies by the signal, as it did
+# before the 6.7.12 handler (which exited 128+N). A shell's `$?` reads 128+N either way (the rows
+# above); a cyrius parent reading the wait status through lib/process.cyr's exec_capture_status
+# tells them apart: st[1] = 1 on a signal death (st[0] = 128+N), 0 on an exit. The parent runs
+# `/bin/sh k7.sh`, a script ending `exec cyrius check` (exec_capture_status passes an empty
+# environment, so the script exports what kill_run's runs inherit), so its child IS the CLI. The
+# script is written through a heredoc: check_sh_targeted_path_cleans_up.sh's census skips heredoc
+# bodies, and a one-line `… && exec` string in this trap-installing gate reads as a top-level exec.
+cat > "$T/k7.sh" <<K7
+cd '$T/proj' && echo \$\$ > '$T/p7-par' && export TMPDIR='$TB/' CYRIUS_HOME='$CYRIUS_HOME' HOME='${HOME:-/nonexistent}' PATH='$PATH' && exec '$T/k2/cyrius' check src/ok.cyr
+K7
+{
+    printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/alloc.cyr"' 'include "lib/string.cyr"' 'include "lib/vec.cyr"' \
+        'include "lib/fmt.cyr"' 'include "lib/process.cyr"' 'fn main(): i64 {' '    alloc_init();' '    var args = vec_new();' \
+        '    vec_push(args, "/bin/sh");'
+    printf '    vec_push(args, "%s");\n' "$T/k7.sh"
+    printf '%s\n' '    var buf = alloc(4096);' '    var st: i64[2];' '    exec_capture_status(args, buf, 4096, &st);' \
+        '    var o[48];' '    var n = fmt_int_buf(load64(&st), &o);' '    store8(&o + n, 32);' \
+        '    n = n + 1 + fmt_int_buf(load64(&st + 8), &o + n + 1);' '    store8(&o + n, 10);' '    sys_write(1, &o, n + 1);' \
+        '    return 0;' '}' 'var r = main();' 'syscall(60, r);'
+} > "$T/sigpar.cyr"
+rm -f "$T/k2.cc" "$T/p7-par" "$T/k7-par.st"
+if ( cd "$ROOT" && "$ROOT/build/cycc" < "$T/sigpar.cyr" > "$T/sigpar" 2> "$T/sigpar.err" ) && chmod +x "$T/sigpar"; then
+    "$T/sigpar" > "$T/k7-par.st" 2> /dev/null &
+    k7b=$!
+    w=0
+    while [ ! -s "$T/k2.cc" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
+    k7p=$(cat "$T/p7-par" 2>/dev/null || true)
+    k7m=0
+    for _d in "$TB/cyrius-$k7p" "$TB/cyrius-$k7p"-*; do [ -n "$k7p" ] && [ -d "$_d" ] && k7m=$(ls -A "$_d" | wc -l | tr -d ' '); done
+    [ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
+    { wait "$k7b"; } 2>/dev/null || true
+    check "check SIGTERM under a cyrius parent — the CLI was mid-compile (anti-vacuous: $k7m names in its dir)" yes \
+        "$([ -n "$k7p" ] && [ "$k7m" -ge 1 ] && echo yes || echo no)"
+    check "  …exec_capture_status reads a signal death: st[0] 143, st[1] 1 (6.7.12: 143 0, an exit)" "143 1" "$(cat "$T/k7-par.st" 2>/dev/null || echo none)"
+    check "  …after the cleanup: its private dir is gone" 0 "$(k7_dirs par "$TB")"
+    k7c=$(cat "$T/k2.cc" 2>/dev/null || true)
+    check "  …and the compiler it was running is stopped" no "$([ -n "$k7c" ] && kill -0 "$k7c" 2>/dev/null && echo yes || echo no)"
+    [ -n "$k7c" ] && kill -KILL "$k7c" 2>/dev/null || true
+else
+    check "the cyrius parent (exec_capture_status) compiles" 0 1; sed 's/^/    /' "$T/sigpar.err" | head -5
+fi
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# `cyrius capacity` forks its own compiler (CYRIUS_STATS=1, stderr into `cap_err`) outside
+# compile(): until 6.7.13 neither was tracked, so a SIGTERM left `cap_err` (and the dir) behind and
+# the compiler running (issues/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md).
+kill_run cap TERM capacity src/ok.cyr
+check "capacity SIGTERM mid-compile — the live dir holds cap_err and the materialized source (anti-vacuous)" yes \
+    "$(grep -qx cap_err "$T/k7-cap.live" 2>/dev/null && grep -q '^cpp_' "$T/k7-cap.live" && echo yes || echo no)"
+check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-cap.rc" 2>/dev/null || echo none)"
+check "  …its private dir is gone (no cap_err left)" 0 "$(k7_dirs cap "$TB")"
+check "  …the compiler it was running is stopped" gone "$(cat "$T/k7-cap.cc")"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A local-mode resolve's git queries (`_dep_wt_run`, cbt/deps.cyr) capture git's stderr in `wt_err`,
+# which the child creates: a SIGTERM while git runs left it (and the dir) and git running until
+# 6.7.13. A stand-in `git` first on PATH (`_dep_wt_run` execs `env … git`) records its pid and
+# sleeps on `check-ignore` (no stdout capture: wt_err is the query's only scratch); every other
+# query runs the real git. Runs on axis 6's fixture; named SKIP without git.
+if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
+    G7GIT=$(command -v git)
+    mkdir -p "$T/g7bin"
+    # g7_run <tag> <git subcommand to sleep on> <verb...>: the verb in the background, stopped by
+    # SIGTERM once the stand-in sleeps; leaves the live names in $T/k7-<tag>.live, the exit status
+    # in $T/k7-<tag>.rc and "gone" / "running" for the stand-in git in $T/k7-<tag>.cc.
+    g7_run() {
+        _gt=$1; _gs=$2; shift 2
+        printf '#!/bin/sh\nfor a in "$@"; do\n  if [ "$a" = "%s" ]; then\n    echo $$ > "%s/g7.cc"\n    exec sleep 60\n  fi\ndone\nexec "%s" "$@"\n' "$_gs" "$T" "$G7GIT" > "$T/g7bin/git"
+        chmod +x "$T/g7bin/git"
+        rm -f "$T/g7.cc" "$T/p7-$_gt" "$T/k7-$_gt.rc" "$T/k7-$_gt.live" "$T/k7-$_gt.cc"
+        ( _kr=0; cd "$P6" && HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 PATH="$T/g7bin:$PATH" TMPDIR="$TB/" \
+            sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" "$@" > "$T/o7-$_gt" 2>&1 || _kr=$?
+          echo "$_kr" > "$T/k7-$_gt.rc" ) 2>/dev/null &
+        _gb=$!
+        _gw=0
+        while [ ! -s "$T/g7.cc" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
+        _gp=$(cat "$T/p7-$_gt" 2>/dev/null || true)
+        ls -A "$TB/cyrius-$_gp" > "$T/k7-$_gt.live" 2>/dev/null || : > "$T/k7-$_gt.live"
+        [ -n "$_gp" ] && kill -TERM "$_gp" 2>/dev/null || true
+        { wait "$_gb"; } 2>/dev/null || true
+        _gc=$(cat "$T/g7.cc" 2>/dev/null || true)
+        if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
+            echo running > "$T/k7-$_gt.cc"; kill -KILL "$_gc" 2>/dev/null
+        else
+            echo gone > "$T/k7-$_gt.cc"
+        fi
+    }
+    g7_run gci check-ignore build --local
+    check "a --local build SIGTERM'd in its check-ignore query — git's stderr capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx wt_err "$T/k7-gci.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-gci.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no wt_err left)" 0 "$(k7_dirs gci "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-gci.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    # A query with a stdout capture: the parent creates it (`wt_out` for the checkout's state line,
+    # `ls_remote` for update's tag listing) and the caller unlinks it once read — a SIGTERM while
+    # git ran left it, and the dir, until 6.7.13.
+    g7_run grp rev-parse build --local
+    check "a --local build SIGTERM'd in its rev-parse query — the stdout capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx wt_out "$T/k7-grp.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-grp.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no wt_out / wt_err left)" 0 "$(k7_dirs grp "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-grp.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    g7_run gls ls-remote update
+    check "update SIGTERM'd in its ls-remote query — the tag listing's capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx ls_remote "$T/k7-gls.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-gls.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no ls_remote / wt_err left)" 0 "$(k7_dirs gls "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-gls.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+else
+    echo "  SKIP (named): axis 7 --local git kill row — git is not installed (axis 6's fixture did not run)"
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
 # rmdir, never a sweep (axis 4's contract, on the kill path): a file in the live dir that is not
 # the compile's survives, and so does the dir; the compile's own names are gone.
 : > "$T/k7-plant.plant"
@@ -567,10 +701,16 @@ if [ -d "$D7/home/versions/$V7/lib" ]; then
     nlive=$(ls -A "$TB/cyrius-$k7p" 2>/dev/null | wc -l | tr -d ' ')
     check "distlib SIGTERM mid-round — the verify's six compiles are running, their scratch in flight (anti-vacuous: $nlive names)" yes \
         "$([ "$(wc -l 2>/dev/null < "$T/d7k.cc" || echo 0)" -ge 6 ] && [ "$nlive" -ge 12 ] && echo yes || echo no)"
+    nmir=$(find "$D7K/p/dist" -path '*/.dlverify-*' -type f 2>/dev/null | wc -l | tr -d ' ')
+    check "  …its stdlib mirror is in the project's dist/, entry.cyr beside it (anti-vacuous: $nmir files)" yes \
+        "$([ "$nmir" -ge 20 ] && [ -f "$D7K/p/dist/.dlverify-$k7p/entry.cyr" ] && echo yes || echo no)"
     [ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
     { wait "$k7b"; } 2>/dev/null || true
-    check "  …the CLI exits 143" 143 "$(cat "$T/k7-dl.rc" 2>/dev/null || echo none)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-dl.rc" 2>/dev/null || echo none)"
     check "  …its private dir is gone (no cpp_ / dlverify* left by the parent or a child)" 0 "$(k7_dirs dl "$TB")"
+    # 6.7.13: the mirror is a scratch TREE the handler removes (cbt/sigclean.cyr `_cbt_sig_tree_set`);
+    # until then a kill left all of it (issues/2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md).
+    check "  …and no dist/.dlverify-<pid> mirror is left in the project" 0 "$(ls -d "$D7K/p/dist"/.dlverify-* 2>/dev/null | wc -l | tr -d ' ')"
     nrun=0
     for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null; }; done
     check "  …every target's compiler is stopped" 0 "$nrun"

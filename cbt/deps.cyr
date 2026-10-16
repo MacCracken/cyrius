@@ -856,11 +856,19 @@ fn _dep_is_leaf_profile(stem, leaf): i64 {
 # stdlib leaf already copied — the caller then skips it (see above). Removes a stale vendored
 # copy at `wdst` (where this run writes `dst`: `_dep_wpath`), through the symlink guard; -1 when
 # that guard refuses.
+# 6.7.13 (D41) — during the pin-move dry pass (`_deps_pin_move_dry`) a vec of the lib/ paths of
+# stale thin-profile copies Phase 2 removes (in scope: they are not held after the real pass); else 0.
+var _dep_dry_drop = 0;
+# ... and the clone directories the dry pass fetched (kept for the real pass, whose `deps -v`
+# then still says "fetched"); 0 when no dry pass ran this resolve.
+var _dep_dry_fetched = 0;
+
 fn _dep_keep_fold_over_profile(dep, dst, wdst, mod_path): i64 {
     var stem = _dep_lib_dst_stem(dst);
     if (stem == 0) { return 0; }
     if (_dep_stdlib_seen_has(dep) == 0) { return 0; }
     if (_dep_is_leaf_profile(stem, dep) == 0) { return 0; }
+    if (_dep_dry_drop != 0) { vec_push(_dep_dry_drop, dst); }   # 6.7.13 (D41): the real pass drops it
     if (file_exists(wdst) == 1) {
         if (_dep_vendor_mode == 1) {
             var lk = _dep_dest_is_linked(wdst);
@@ -1862,7 +1870,10 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     # 6.6.11 (S2): a modular sub-module of a package that is a stdlib leaf here.
     var _kf = _dep_keep_fold_over_profile(pkg, dst_full, wdst, submod);
     if (_kf < 0) { return errs + 1; }
-    if (_kf == 1) { return errs; }
+    if (_kf == 1) {
+        _dep_note_nd_leaf(pkg);   # 6.7.13: the fold stands in for the dep's sub-module: its leaf (CHANGELOG [6.7.13])
+        return errs;
+    }
     # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
     # deleted either: unlink on a link removes the link, but the guard exists so a
     # vendoring run cannot touch a shared target at all, and a delete-then-refuse
@@ -1909,6 +1920,12 @@ fn _dep_name_visited(name): i64 {
 # directory. Returns `rel` unchanged if absolute.
 fn _dep_join_path(manifest_dir, rel): i64 {
     if (load8(rel) == 47) { return rel; }
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: a drive-rooted `C:\x` / `C:/x` is absolute, and a rooted `\x` (or `\\server\share`)
+    # or a drive-relative `C:x` cannot be joined onto a directory: returned as given, the rule
+    # `_abs_path` uses. CHANGELOG [6.7.13]
+    if (load8(rel) == 92 || (load8(rel) != 0 && load8(rel + 1) == 58)) { return rel; }
+    #endif
     var ml = strlen(manifest_dir);
     var rl = strlen(rel);
     var out = alloc(ml + 1 + rl + 1);
@@ -2406,11 +2423,17 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     var errf = _cbt_tmpfile("wt_err");
     var cfd = 0 - 1;
     if (outf != 0) {
+        # The stdout capture is the caller's scratch: registered before it exists, so a kill while
+        # git runs unlinks it; the caller drops it. CHANGELOG [6.7.13]
+        _cbt_scratch_track(outf);
         cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
-        if (cfd < 0) { return 0 - 1; }
+        if (cfd < 0) { _cbt_scratch_untrack(outf); return 0 - 1; }
     }
-    var pid = sys_fork();
-    if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
+    # The kill handler unlinks `wt_err` (the child creates it) and stops git, as for compile()'s
+    # compiler; both are dropped once git is reaped and its first line read. CHANGELOG [6.7.13]
+    _cbt_scratch_track(errf);
+    var pid = _cbt_fork_tracked(0);
+    if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } _cbt_scratch_untrack(errf); return 0 - 1; }
     if (pid == 0) {
         var nfd = sys_open("/dev/null", O_RDONLY, 0);
         if (nfd >= 0) { sys_dup2(nfd, 0); sys_close(nfd); }
@@ -2449,8 +2472,9 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     var wst[8];
     store64(&wst, 0);
     var wr = sys_waitpid(pid, &wst, 0);
+    _cbt_child_untrack(pid);
     _dep_wt_why = _git_first_line_of(errf);
-    sys_unlink(errf);
+    _cbt_scratch_drop(errf);
     if (wr < 0) { return 0 - 1; }
     var st = load64(&wst);
     if ((st & 127) != 0) { return 0 - 1; }
@@ -2462,10 +2486,10 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
 fn _dep_wt_out(dir, a1, a2, a3, a4): i64 {
     var tf = _cbt_tmpfile("wt_out");
     var rc = _dep_wt_run(dir, a1, a2, a3, a4, tf);
-    if (rc != 0) { sys_unlink(tf); return 0; }
+    if (rc != 0) { _cbt_scratch_drop(tf); return 0; }
     var nn = 0;
     var buf = file_read_whole(tf, &nn);
-    sys_unlink(tf);
+    _cbt_scratch_drop(tf);
     if (buf == 0 || nn < 0) { return ""; }
     var i = 0;
     while (i < nn && load8(buf + i) != 10 && load8(buf + i) != 13) { i = i + 1; }
@@ -3161,6 +3185,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     _dep_rm_tree(clone_dir);
                 }
                 if (is_dir(str_from(clone_dir)) == 0) { dep_fetched = 1; }
+                # 6.7.13 (D41): a clone the pin-move dry pass fetched is this command's fetch too
+                if (_dep_dry_drop != 0 && dep_fetched == 1) { vec_push(_dep_dry_fetched, clone_dir); }
+                if (_dep_dry_drop == 0 && _dep_dry_fetched != 0) {
+                    if (_dep_path_in(_dep_dry_fetched, clone_dir) == 1) { dep_fetched = 1; }
+                }
                 if (is_dir(str_from(clone_dir)) == 0) {
                     var git_ok = 1;
                     var gi2 = 0;
@@ -3612,6 +3641,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     var _kf = _dep_keep_fold_over_profile(dep_name, dst, wdst, mod_path);
                     if (_kf < 0) { return errors + 1; }
                     if (_kf == 1) {
+                        # 6.7.13: the fold stands in for this named dep's module, so it is a leaf
+                        # pulled on the dep's behalf — distlib's verify then splices it (and what
+                        # it includes) as the dep's and records neither as the bundle's own need.
+                        _dep_note_nd_leaf(dep_name);
                         dep_had_success = 1;
                         mi = mi + 1;
                         continue;
@@ -4058,29 +4091,11 @@ fn cmd_deps(): i64 {
     if (_dry_run == 1) { return _deps_dry_list(_manifest, buf, n); }
     var copied = 0;
     var errors = 0;
-    _dep_includes = vec_new();
-    _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
-    _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
-    _dep_closure = vec_new();        # 6.7.12: every path this resolve vendors (_dep_copy_file)
-    _dep_decl_all = vec_new();       # 6.7.12 (D25): every tagged declaration a manifest read holds
-    _dep_decl_root = vec_new();      # ... and the root manifest's own
-    # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
-    # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
-    _dep_visited = vec_new();
-    _dep_queue = vec_new();
-    # 6.7.6: the visited set's parallel records and the queue's kinds (see "LOCAL MODE")
-    _dep_vis_tag = vec_new();
-    _dep_vis_git = vec_new();
-    _dep_vis_path = vec_new();
-    _dep_vis_by = vec_new();
-    _dep_vis_desc = vec_new();
-    _dep_queue_kind = vec_new();
-    _dep_queue_owner = vec_new();
+    _deps_pass_reset();              # what one resolve accumulates (the pin-move dry pass runs one more)
+    _dep_dry_fetched = 0;
     _dep_hint = 0;
     _dep_local_seen = 0;
     _dep_locked_diff = 0;
-    _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
-    _dep_commit_lines = vec_new();   # the release-integrity hardening item (v6.2.30): git-dep commit pins
     _dep_lock_load();                # v6.6.4: the inherited lock, read BEFORE any copy (stdlib-leaf guard)
     var _consumer_dir = _abs_path(".");
     # 6.7.6 (lane C) — where this resolve WRITES. Default: lib/ + cyrius.lock (the tag resolution).
@@ -4134,6 +4149,29 @@ fn cmd_deps(): i64 {
             if (_dep_local_begin() != 0) { return 1; }
         }
     }
+    # ⛔ 6.7.13 (D41): at a moved pin, refused BEFORE Phase 1 writes (_deps_pin_move_dry)
+    if (locked_root == 0 && _dep_local_active == 0) {
+        if (_deps_pin_move_dry(buf, n, _consumer_dir) != 0) { return 1; }
+    }
+    errors = _deps_resolve(buf, n, _consumer_dir);
+
+    # v5.7.14: `copied` is the count of distinct deps resolved (direct +
+    # transitive). _dep_visited grows once per resolved dep across both
+    # phases.
+    copied = vec_len(_dep_visited);
+    # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
+    errors = errors + _dep_lock_refused;
+    _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
+    _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
+    if (_verbose == 1) { _dep_say_sources(); }   # 6.7.6 (part L): `deps -v`
+    return _deps_finish(errors, copied, locked_root);
+}
+
+# The resolve proper — phases 1 to 4 into `_dep_vroot` — from the state `_deps_pass_reset` left.
+# Returns the error count. cmd_deps runs it once; at a moved pin `_deps_pin_move_dry` runs it
+# first into a private scratch. CHANGELOG [6.7.13]
+fn _deps_resolve(buf, n, cdir): i64 {
+    var errors = 0;
     _dep_ctx_kind = 0;               # the root manifest
     _dep_ctx_owner = 0;
 
@@ -4183,7 +4221,7 @@ fn cmd_deps(): i64 {
     # v5.7.14: extracted to _process_named_deps. Consumer's manifest_dir
     # is abs(cwd). After this returns, _dep_queue holds the resolved
     # dirs of every direct dep — Phase 3 drains them.
-    errors = errors + _process_named_deps(buf, n, _consumer_dir);
+    errors = errors + _process_named_deps(buf, n, cdir);
 
     # === Phase 3: transitive deps (BFS drain of _dep_queue) ===
     # v5.7.14. For each resolved dep dir, read its cyrius.cyml and
@@ -4195,18 +4233,89 @@ fn cmd_deps(): i64 {
 
     # === Phase 4 (6.7.6, part T): the TEST SCOPE ===
     # After every production dependency, so a leaf or a dep both sides name is the production one.
-    errors = errors + _deps_test_scope(buf, n, _consumer_dir);
+    errors = errors + _deps_test_scope(buf, n, cdir);
+    return errors;
+}
 
-    # v5.7.14: `copied` is the count of distinct deps resolved (direct +
-    # transitive). _dep_visited grows once per resolved dep across both
-    # phases.
-    copied = vec_len(_dep_visited);
-    # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
-    errors = errors + _dep_lock_refused;
-    _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
-    _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
-    if (_verbose == 1) { _dep_say_sources(); }   # 6.7.6 (part L): `deps -v`
-    return _deps_finish(errors, copied, locked_root);
+# What one resolve accumulates, emptied before it runs: the include / closure / named-dep lists,
+# the visited set and its records, the queue, the commit pins, the stdlib leaves already copied.
+# cmd_deps calls it before its resolve, and `_deps_pin_move_dry` after the dry one, so the real
+# resolve starts from the state the dry one found (a leaf left "already copied" would not be
+# copied at all). CHANGELOG [6.7.13]
+fn _deps_pass_reset(): i64 {
+    _dep_includes = vec_new();
+    _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
+    _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
+    _dep_closure = vec_new();        # 6.7.12: every path this resolve vendors (_dep_copy_file)
+    _dep_decl_all = vec_new();       # 6.7.12 (D25): every tagged declaration a manifest read holds
+    _dep_decl_root = vec_new();      # ... and the root manifest's own
+    # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
+    # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
+    _dep_visited = vec_new();
+    _dep_queue = vec_new();
+    # 6.7.6: the visited set's parallel records and the queue's kinds (see "LOCAL MODE")
+    _dep_vis_tag = vec_new();
+    _dep_vis_git = vec_new();
+    _dep_vis_path = vec_new();
+    _dep_vis_by = vec_new();
+    _dep_vis_desc = vec_new();
+    _dep_queue_kind = vec_new();
+    _dep_queue_owner = vec_new();
+    _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
+    _dep_commit_lines = vec_new();   # the release-integrity hardening item (v6.2.30): git-dep commit pins
+    _dep_stdlib_seen = 0;            # 6.7.13: Phase 1 re-inits it only when [deps] stdlib is declared
+    return 0;
+}
+
+# ⛔ 6.7.13 (D41, the user, 2026-10-15) — A RESOLVE REFUSED AT A PIN MOVE WRITES NOTHING.
+# D19 (`_dep_pin_move_refused`) needs the resolve's closure, so it ran after Phase 1 had already
+# re-vendored every closure file at the new pin: the refusal said "cyrius.lock is unchanged" while
+# lib/ held the new pin's string.cyr, and `deps --verify` failed on a file it never named. Now, at a
+# pin move only (the inherited trailer names another pin, the lock is written: not --no-lock,
+# --locked, local mode or the source repo) and only when some lib/ file differs from the new
+# snapshot at all, the resolve runs ONCE MORE first, into a private scratch, with stdout and stderr
+# muted (`_cbt_mute`): its closure (plus the stale thin-profile copies Phase 2 would delete, from
+# `_dep_dry_drop`) is D19's scope, and a non-empty stale set is refused with D19's text — lib/ AND
+# cyrius.lock byte-unchanged, `--verify` still green. A dry pass with errors decides nothing (the
+# real resolve reports them; D19 after it stays the backstop). The cost: one extra resolve at such
+# a move (named deps come from the clone cache). `_dep_find_stdlib_dir` runs before the mute, so
+# its exits — the only ones a resolve reaches — print. 0 = go on, 1 = refused. CHANGELOG [6.7.13]
+fn _deps_pin_move_dry(buf, n, cdir): i64 {
+    if (_no_lock == 1 || _dep_lock_active == 0) { return 0; }
+    if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
+    if (vec_len(_dep_pin_move_stale(vec_new())) == 0) { return 0; }
+    _dep_find_stdlib_dir();
+    var root = _cbt_tmpfile("pin-move-deps");
+    _dep_rm_tree(root);
+    _dep_vroot = _cat2(root, "/lib");
+    _dep_vendor_mode = 0;            # a private scratch under this run's own temp dir
+    _dep_dry_drop = vec_new();
+    _dep_dry_fetched = vec_new();
+    var po = _progress_open;
+    var ec = _err_count;
+    _cbt_mute(1);
+    var errs = _deps_resolve(buf, n, cdir) + _dep_lock_refused;
+    var scope = _dep_closure_lib();
+    _cbt_mute(0);
+    _progress_open = po;
+    _err_count = ec;
+    var k = 0;
+    while (k < vec_len(_dep_dry_drop)) {
+        vec_push(scope, vec_get(_dep_dry_drop, k));
+        k = k + 1;
+    }
+    _dep_dry_drop = 0;
+    _dep_rm_tree(root);
+    _dep_vroot = "lib";
+    _dep_vendor_mode = 1;
+    _deps_pass_reset();
+    _dep_hint = 0;
+    _dep_lock_load();                # its per-resolve flags (the guard's refusals, a new leaf)
+    if (errs != 0) { return 0; }
+    var stale = _dep_pin_move_stale(scope);
+    if (vec_len(stale) == 0) { return 0; }
+    _dep_pin_move_say(stale, 0);
+    return 1;
 }
 
 # The BFS drain of `_dep_queue` from `_dep_qi` (phase 3, and phase 4's for the test scope's own
@@ -4284,6 +4393,13 @@ fn _deps_finish(errors, copied, locked_root): i64 {
     if (locked_root != 0) {
         var ld = _dep_locked_diff;
         if (errors == 0) { ld = ld + _deps_locked_compare(_dep_vroot); }
+        # 6.7.13: at a moved pin, the files D19 refuses to re-lock over (read before the scratch
+        # goes: the closure is the scratch's paths), so the remedy is one that works.
+        var pstale = 0;
+        if (ld > 0 && _dep_lock_has_trailer == 1 && _dep_lock_pin_same == 0) {
+            pstale = _dep_pin_move_stale(_dep_closure_lib());
+            if (vec_len(pstale) == 0) { pstale = 0; }
+        }
         # With no vendored lib/, a compiling verb keeps the proven resolution (build/locked-deps/lib)
         # and reads it through the overlay; anything else is removed.
         var keep = 0;
@@ -4304,6 +4420,9 @@ fn _deps_finish(errors, copied, locked_root): i64 {
                 # 6.7.12 (D10): every difference is a CRLF checkout — re-locking is not the remedy
                 _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock");
                 _ew(" (named above); nothing was written — CRLF checkout: add `lib/** -text` to .gitattributes\n");
+            } elif (pstale != 0) {
+                # 6.7.13: `cyrius deps` would refuse (D19), so it is not the remedy — D19's ways are
+                _deps_locked_pin_move_remedy(pstale);
             } else {
                 _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above); nothing was written — run `cyrius deps` and commit the result\n");
             }
@@ -4352,7 +4471,12 @@ fn _deps_finish(errors, copied, locked_root): i64 {
             # over it even tampered — restoring the v5.7.8 intent stated above.
             var _must = 0;
             if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) { _must = 1; }
-            if (_must == 1 || _dep_lock_new_leaf == 1) {
+            # ...and (6.7.13) the opposite of a new leaf: a lock row for a file neither lib/ nor
+            # this resolve holds — `rm lib/<f> && cyrius deps` left it, so `--verify` and
+            # `--locked` stayed red after doing what --locked says. Soft, like the new leaf.
+            var _stale = 0;
+            if (_must == 0 && _dep_lock_new_leaf == 0) { _stale = _dep_lock_stale_row(); }
+            if (_must == 1 || _dep_lock_new_leaf == 1 || _stale == 1) {
                 # v6.6.6: a lock that could not be written is an error, not a dropped rc —
                 # except (6.6.9) a hash failure on a write owed ONLY to a new leaf, which is a
                 # named warning (_dep_lock_soft; cmd_deps_lock returns 2 for it).
@@ -4375,18 +4499,145 @@ fn _deps_finish(errors, copied, locked_root): i64 {
     return 0;
 }
 
+# 6.7.13 — --locked's remedy at a moved pin when lib/ holds files outside the closure that the new
+# snapshot ships with other bytes (`stale`): `cyrius deps` refuses there (D19), so the line names
+# those files and D19's two ways instead of "run `cyrius deps`". Follows the count on the line.
+fn _deps_locked_pin_move_remedy(stale): i64 {
+    var pin = _dep_lock_pin_value();
+    var k = vec_len(stale);
+    _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above);");
+    _ew(" nothing was written — [package].cyrius moved from ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(" to ");
+    _ew_shown(pin);
+    _ew(", and lib/ holds ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" file"); } else { _ew(" files"); }
+    _ew(" the resolve does not vendor that the ");
+    _ew_shown(pin);
+    _ew(" snapshot ships with other bytes, so `cyrius deps` will not re-lock:\n");
+    _dep_pin_move_list(stale);
+    _ew("  Either, then commit the result:\n");
+    _dep_pin_move_ways(pin);
+    return 0;
+}
+
+# 6.7.13 — 1 when lib/'s lock walk (`_deps_lock_files`, the writer's own walker) lists `path`.
+fn _dep_lib_entry(path): i64 {
+    return _dep_path_in(_deps_lock_files("lib"), path);
+}
+
+# 6.7.13 — 1 when the lock loaded at entry has a hash row for a path that is neither on disk (it
+# cannot be opened and lib/'s walk has no such entry) nor vendored by this resolve
+# (`_dep_closure`): a file removed from lib/. A stdlib-only resolve wrote
+# the lock only for `_must` or a new leaf, so such a row survived every `cyrius deps`. One scan of
+# the loaded lock, `file_exists` per row. CHANGELOG [6.7.13]
+fn _dep_lock_stale_row(): i64 {
+    if (_dep_lock_buf == 0) { return 0; }
+    var lb = _dep_lock_buf;
+    var ln = _dep_lock_len;
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lb + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lb + lw - 1) == 13) { lw = lw - 1; }   # CRLF-tolerant, as the lookup
+        if (lw - pos > 66 && load8(lb + pos + 64) == 32 && load8(lb + pos + 65) == 32) {
+            var pl = lw - pos - 66;
+            var p = alloc(pl + 1);
+            memcpy(p, lb + pos + 66, pl);
+            store8(p + pl, 0);
+            if (file_exists(p) == 0 && _dep_lib_entry(p) == 0) {
+                if (_dep_closure == 0) { return 1; }
+                if (_dep_path_in(_dep_closure, p) == 0) { return 1; }
+            }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
 # 6.7.12 — lib/'s `.cyr` files (the lock walker's list, sorted) that THIS resolve did not vendor:
 # outside `_dep_closure`, the footprint the manifest declares. CHANGELOG [6.7.12]
 fn _dep_out_of_closure(): i64 {
+    return _dep_out_of_scope(_dep_closure);
+}
+
+# lib/'s `.cyr` files outside `scope` (a vec of lib/ paths), sorted. CHANGELOG [6.7.13]
+fn _dep_out_of_scope(scope): i64 {
     var out = vec_new();
     var files = _deps_lock_files("lib");
     var i = 0;
     while (i < vec_len(files)) {
         var f = vec_get(files, i);
         i = i + 1;
-        if (_dep_path_in(_dep_closure, f) == 0) { vec_push(out, f); }
+        if (_dep_path_in(scope, f) == 0) { vec_push(out, f); }
     }
     return out;
+}
+
+# ⭐ 6.7.13 — D19's set, shared by the refusal and --locked's remedy: the lib/ files outside
+# `scope` (the resolve's closure, as lib/ paths) that the pinned snapshot ships with other bytes —
+# what a re-lock at a moved pin would stamp the new pin over. Read-only. A vec, empty when there
+# is no snapshot. CHANGELOG [6.7.13]
+fn _dep_pin_move_stale(scope): i64 {
+    return _dep_pin_move_stale_in(_dep_snapshot_dir(), scope);
+}
+
+# `_dep_pin_move_stale` against snapshot `snap` (0 = none): `lib sync` names the tree it copies
+# from itself. CHANGELOG [6.7.13]
+fn _dep_pin_move_stale_in(snap, scope): i64 {
+    var stale = vec_new();
+    if (snap == 0) { return stale; }
+    var off = _dep_out_of_scope(scope);
+    var i = 0;
+    while (i < vec_len(off)) {
+        var f = vec_get(off, i);
+        i = i + 1;
+        var sf = _cat2(snap, f + 3);              # lib/<rel> -> <snapshot>/<rel>
+        if (file_exists(sf) == 0) { continue; }
+        if (_files_identical(sf, f) == 1) { continue; }
+        vec_push(stale, f);
+    }
+    return stale;
+}
+
+# 6.7.13 — `_dep_closure` as lib/ paths: a --locked resolve vendors into its scratch root
+# (`_dep_vroot`), a default one into lib/ itself. CHANGELOG [6.7.13]
+fn _dep_closure_lib(): i64 {
+    var out = vec_new();
+    if (_dep_closure == 0) { return out; }
+    var pre = _cat2(_dep_vroot, "/");
+    var pl = strlen(pre);
+    var i = 0;
+    while (i < vec_len(_dep_closure)) {
+        var e = vec_get(_dep_closure, i);
+        i = i + 1;
+        if (strlen(e) > pl && memeq(e, pre, pl) == 1) { vec_push(out, _cat2("lib/", e + pl)); }
+        else { vec_push(out, e); }
+    }
+    return out;
+}
+
+# 6.7.13 — D19's files, one per line (the refusal and --locked's remedy alike).
+fn _dep_pin_move_list(stale): i64 {
+    var i = 0;
+    while (i < vec_len(stale)) {
+        _ew("  ");
+        _ew_shown(vec_get(stale, i));
+        _ew("\n");
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 6.7.13 — D19's two ways on, to pin `pin` (the refusal and --locked's remedy alike).
+fn _dep_pin_move_ways(pin): i64 {
+    _ew("    cyrius lib sync --full     moves them to ");
+    _ew_shown(pin);
+    _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    _ew("    rm <file> && cyrius deps   drops them from lib/ and the lock\n");
+    return 0;
 }
 
 # 6.7.12 — the stdlib snapshot this resolve reads (`_dep_find_stdlib_dir`'s pinned, else installed,
@@ -4777,7 +5028,7 @@ fn _dep_report_newer_tags(buf, n): i64 {
         var tf = _cbt_tmpfile("ls_remote");
         var rc = _dep_wt_run(0, "ls-remote", "--tags", "--", git, tf);
         if (rc != 0) {
-            sys_unlink(tf);
+            _cbt_scratch_drop(tf);
             sys_write(STDOUT_FD, " pinned; the remote's tags could not be listed", 46);
             var why = _dep_wt_why;
             if (why != 0) { sys_write(STDOUT_FD, " (", 2); var sw = _shown(why); sys_write(STDOUT_FD, sw, strlen(sw)); sys_write(STDOUT_FD, ")", 1); }
@@ -4785,7 +5036,7 @@ fn _dep_report_newer_tags(buf, n): i64 {
             continue;
         }
         var newer = _dep_newer_tags(tf, mine);
-        sys_unlink(tf);
+        _cbt_scratch_drop(tf);
         if (vec_len(newer) == 0) { println(" pinned; it is the newest version tag"); continue; }
         sys_write(STDOUT_FD, " pinned; newer tags: ", 21);
         var k = 0;
@@ -6783,27 +7034,32 @@ fn _lock_commit_line_cmp(a, b): i64 {
 # with OTHER bytes is named and the lock is not opened: rc 1, cyrius.lock byte-unchanged, two
 # remedies (`lib sync --full` moves them, deleting them drops them). The lock never states a pin its
 # rows do not have, and its format does not change. A file the snapshot does not ship, or ships
-# with the same bytes, is pin-independent and re-locked as before. Only after a resolve
-# (`_dep_closure`): `lib sync` re-locks what it wrote, the bare `--lock` resolved nothing.
-# CHANGELOG [6.7.12]
+# with the same bytes, is pin-independent and re-locked as before. CHANGELOG [6.7.12]
+# 6.7.13 (D42, the user, 2026-10-15): every lock writer is held to it. The bare `--lock` (and
+# publish's lock) resolved nothing, so it wrote none of lib/: every lib/ file the new snapshot
+# ships with other bytes is named (`cyrius deps` re-vendors the closure first). A scoped
+# `lib sync` refuses before it copies (commands.cyr `_libsync_pin_move_refused`), so its re-lock
+# (`_dep_lock_only`) never meets the shape. A resolve is refused before Phase 1 writes
+# (`_deps_pin_move_dry`, D41); this check after it stays as the backstop. CHANGELOG [6.7.13]
 fn _dep_pin_move_refused(): i64 {
-    if (_dep_closure == 0 || _dep_lock_only != 0) { return 0; }
+    if (_dep_lock_only != 0) { return 0; }
     if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
-    var snap = _dep_snapshot_dir();
-    if (snap == 0) { return 0; }
-    var off = _dep_out_of_closure();
-    var stale = vec_new();
-    var i = 0;
-    while (i < vec_len(off)) {
-        var f = vec_get(off, i);
-        i = i + 1;
-        var sf = _cat2(snap, f + 3);              # lib/<rel> -> <snapshot>/<rel>
-        if (file_exists(sf) == 0) { continue; }
-        if (_files_identical(sf, f) == 1) { continue; }
-        vec_push(stale, f);
+    var bare = 0;
+    var scope = _dep_closure;
+    if (scope == 0) {
+        bare = 1;
+        scope = vec_new();
     }
+    var stale = _dep_pin_move_stale(scope);
+    if (vec_len(stale) == 0) { return 0; }
+    _dep_pin_move_say(stale, bare);
+    return 1;
+}
+
+# D19's refusal text for `stale` (a vec of lib/ paths); `bare` 1 for a re-lock that resolved
+# nothing (6.7.13, D42): its first way is the resolve. CHANGELOG [6.7.12]
+fn _dep_pin_move_say(stale, bare): i64 {
     var k = vec_len(stale);
-    if (k == 0) { return 0; }
     var pin = _dep_lock_pin_value();
     _ew("error: cyrius.lock not re-locked: [package].cyrius moved from ");
     _ew_shown(_dep_lock_pin_rec);
@@ -6812,27 +7068,33 @@ fn _dep_pin_move_refused(): i64 {
     _ew(", and lib/ holds ");
     fmt_int_fd(STDERR_FD, k);
     if (k == 1) { _ew(" file"); } else { _ew(" files"); }
-    _ew(" this resolve did not vendor that the ");
-    _ew_shown(pin);
-    _ew(" snapshot ships with other bytes:\n");
-    i = 0;
-    while (i < k) {
-        _ew("  ");
-        _ew_shown(vec_get(stale, i));
-        _ew("\n");
-        i = i + 1;
+    if (bare == 1) {
+        _ew(" that the ");
+        _ew_shown(pin);
+        _ew(" snapshot ships with other bytes (a bare re-lock vendors nothing):\n");
+    } else {
+        _ew(" this resolve did not vendor that the ");
+        _ew_shown(pin);
+        _ew(" snapshot ships with other bytes:\n");
     }
+    _dep_pin_move_list(stale);
     _ew("  cyrius.lock records ONE pin for every row; re-locking would stamp ");
     _ew_shown(pin);
     _ew(" over these rows. Either:\n");
-    _ew("    cyrius lib sync --full     moves them to ");
-    _ew_shown(pin);
-    _ew(" and re-locks (a project that vendors the whole snapshot)\n");
-    _ew("    rm <file> && cyrius deps   drops them from lib/ and the lock\n");
+    if (bare == 1) {
+        _ew("    cyrius deps                re-vendors the declared closure at ");
+        _ew_shown(pin);
+        _ew(" and re-locks\n");
+        _ew("    cyrius lib sync --full     moves them to ");
+        _ew_shown(pin);
+        _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    } else {
+        _dep_pin_move_ways(pin);
+    }
     _ew("  cyrius.lock is unchanged (it records ");
     _ew_shown(_dep_lock_pin_rec);
     _ew(").\n");
-    return 1;
+    return 0;
 }
 
 fn cmd_deps_lock(): i64 {
@@ -6846,7 +7108,7 @@ fn cmd_deps_lock(): i64 {
     # v6.6.4: read the inherited lock BEFORE the lock is rewritten below — the bare `--lock` verb has no
     # resolve behind it and needs the old lock's `commit\t` pins (carried forward below).
     if (_dep_lock_buf == 0) { _dep_lock_load(); }
-    if (_dep_pin_move_refused() != 0) { return 1; }   # 6.7.12 (D19): before the lock is opened
+    if (_dep_pin_move_refused() != 0) { return 1; }   # D19 (6.7.12; D42 6.7.13): before the lock opens
     # Generate cyrius.lock by hashing every resolved .cyr under lib/
     # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
     # Crash-safe: the lock is built in a sibling temp and renamed over cyrius.lock only once
@@ -7016,7 +7278,19 @@ fn cmd_deps_verify(): i64 {
         memcpy(path, buf + path_start, plen);
         store8(path + plen, 0);
 
-        var actual_hash = _sha256sum_file(path);
+        # 6.7.13: a row whose file is gone — it cannot be opened, and lib/'s walk has no such entry
+        # (an unreadable or dangling file still has one, and goes to the hasher) — is named as
+        # that, not as a hasher failure. CHANGELOG [6.7.13]
+        var actual_hash = 0;
+        if (file_exists(path) == 0 && _dep_lib_entry(path) == 0) {
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (missing from lib/)\n");
+            fail = fail + 1;
+            pos = path_end + 1;
+            continue;
+        }
+        actual_hash = _sha256sum_file(path);
         if (actual_hash == 0) {
             sys_write(STDERR_FD, "  FAIL: ", 8);
             sys_write(STDERR_FD, path, plen);

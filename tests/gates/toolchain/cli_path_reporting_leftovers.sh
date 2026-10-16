@@ -35,6 +35,10 @@
 #           under wine, which has no certutil, `cyrius deps` printed `warning: cyrius.lock NOT
 #           written — cannot hash lib/alloc.cyr (and 15 more)` and wrote no lock. The SHA-256 is
 #           computed in process now, byte-identical to sha256sum (no existing lock churns).
+#   W9      6.7.13 (issues/2026-10-15-windows-drive-rooted-dep-path-joined-onto-manifest-dir.md): on
+#           cyrius.exe `_dep_join_path` took only a leading `/` as absolute, so a drive-rooted
+#           `[deps.X] path = "C:/deps/foo"` was joined onto the manifest's directory (`… not found in
+#           the local path C:\proj/C:/deps/foo`). A drive-rooted or `\`-led path is taken as given now.
 #
 # ROWS
 #   R3   a path dep `../mono/libs/foo` whose module is missing: the error names the local path
@@ -67,6 +71,9 @@
 #   W1c  (wine) the drive-relative `<drive>:tests\sub\x.tcyr` is still outside: exit 1
 #   W1d  (wine) the relative `tests\sub\e.tcyr` gets CYRIUS_TEST_FILE / CYRIUS_TEST_DIR absolute,
 #        DIR = <drive>:\…\proj/tests\sub
+#   W9a  (wine) `[deps.dep] path = "<drive>:/…/dep"`: `1 deps resolved`, lib/dep.cyr is the dep's file
+#   W9b  (wine) the same path spelled `"<drive>:\\…\\dep"`: resolves the same
+#   W9c  (wine) `path = "../dep"` still joins: a missing module names `<drive>:\…\proj/../dep`
 #
 # Mutations (measured, one at a time; CYRIUS_BIN=<a CLI built from the mutated cbt/> runs this gate
 # on it): `_abs_path` without `_abs_drop_dot` → R3 RED; `_process_named_deps` returning the old
@@ -82,7 +89,8 @@
 # 6.7.11's sha256sum spawn → R8b RED (no lock, `neither sha256sum nor shasum`) and W8 RED (no
 # lock: wine has no certutil); `_win_cwd_read` returning -1 (the 6.7.11 identity) → W1a W1b W1d
 # RED; the drive compared case-sensitively → W1b RED; the `:` refusal dropped (a drive-relative
-# path read as a project path) → W1c RED.
+# path read as a project path) → W1c RED; `_dep_join_path` without its Windows arm (6.7.12's join)
+# → W9a W9b RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_path_reporting_leftovers
@@ -341,6 +349,29 @@ if command -v wine > /dev/null 2>&1 && command -v sha256sum > /dev/null 2>&1; th
     if [ "$r" -eq 0 ] && [ "$wd" = "$PW/tests\\sub" ] && [ "$wf" = "$PW/tests\\sub\\e.tcyr" ]; then
         ok "W1d wine: CYRIUS_TEST_FILE / CYRIUS_TEST_DIR are absolute ($wd)"
     else bad "W1d wine (rc $r): FILE='$wf' DIR='$wd' (want DIR '$PW/tests\\sub')"; fi
+    # W9: a drive-rooted [deps.X] path is taken as given, not joined onto the manifest's directory
+    mkdir -p "$W/w9/dep/dist" && printf 'fn pd_f(): i64 { return 3; }\n' > "$W/w9/dep/dist/dep.cyr"
+    DW=$(winepath -w "$W/w9/dep" 2> /dev/null)
+    DWF=$(printf '%s' "$DW" | tr '\\' /); DWB=$(printf '%s' "$DW" | sed 's/\\/\\\\/g')
+    P="$W/w9/proj"
+    _w9() {   # $1 = the [deps.dep] path as the manifest spells it, $2 = its module; output in w9.out
+        rm -rf "$P"; mkdir -p "$P"
+        printf '[package]\nname = "w9"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "%s"\n\n[deps]\nstdlib = ["string"]\n\n[deps.dep]\npath = "%s"\nmodules = ["%s"]\n' "$V" "$1" "$2" > "$P/cyrius.cyml"
+        rc=0; _wcy deps > "$W/w9.out" 2>&1 || rc=$?
+    }
+    _w9 "$DWF" dist/dep.cyr
+    if [ "$rc" -eq 0 ] && grep -q '^1 deps resolved' "$W/w9.out" && cmp -s "$P/lib/dep.cyr" "$W/w9/dep/dist/dep.cyr"; then
+        ok "W9a wine: path = \"$DWF\" (drive-rooted, /) resolves: 1 deps resolved, lib/dep.cyr vendored"
+    else bad "W9a wine: the drive-rooted / path (rc $rc): $(grep -m1 -E 'error|resolved' "$W/w9.out" | tr -d '\r')"; fi
+    _w9 "$DWB" dist/dep.cyr
+    if [ "$rc" -eq 0 ] && grep -q '^1 deps resolved' "$W/w9.out" && cmp -s "$P/lib/dep.cyr" "$W/w9/dep/dist/dep.cyr"; then
+        ok "W9b wine: path = \"$DWB\" (drive-rooted, \\\\) resolves: 1 deps resolved, lib/dep.cyr vendored"
+    else bad "W9b wine: the drive-rooted \\ path (rc $rc): $(grep -m1 -E 'error|resolved' "$W/w9.out" | tr -d '\r')"; fi
+    PW9=$(winepath -w "$P" 2> /dev/null)
+    _w9 ../dep dist/nope.cyr
+    if [ "$rc" -eq 1 ] && tr -d '\r' < "$W/w9.out" | grep -qF "not found in the local path $PW9/../dep"; then
+        ok "W9c wine: a relative path still joins onto the manifest's directory ($PW9/../dep)"
+    else bad "W9c wine: the relative path (rc $rc): $(grep -m1 -E 'error|resolved' "$W/w9.out" | tr -d '\r')"; fi
 else
     echo "  SKIP: W8 — wine (or sha256sum) not found; the PE leg runs where wine is installed, and on cass"
 fi

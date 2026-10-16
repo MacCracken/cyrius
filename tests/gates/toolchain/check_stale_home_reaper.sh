@@ -329,8 +329,9 @@ _run 0 alpha
 #   computed (pinned site count): `_fuzz_leg(…, "X")` captures; a `str_builder_add_cstr(…, "X")`
 #   followed by `str_builder_add_int(` in a fn that passes a built name to `_cbt_tmpfile` (numbered).
 #   EXCLUDED, by name and why: test_out (beside test_bin, the post-mortem), lsp (the build `cyrius
-#   lsp` tells the user to copy), deps / locked-deps (directories: a no-home dep cache, a vendored tree).
-EXCL="test_out lsp deps locked-deps"
+#   lsp` tells the user to copy), deps / locked-deps / pin-move-deps (directories: a no-home dep
+#   cache, a vendored tree, the pin-move dry pass's tree — 6.7.13, D41).
+EXCL="test_out lsp deps locked-deps pin-move-deps"
 # RETIRED: names cbt/ no longer writes that check.sh still reaps, because a dir an OLDER CLI left
 # can hold them — sha_out (the lock hasher's capture; in process since 6.7.12, CHANGELOG [6.7.12]).
 RETIRED="sha_out"

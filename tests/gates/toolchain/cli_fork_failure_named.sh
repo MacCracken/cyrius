@@ -26,9 +26,12 @@
 #      --target=cx, `run x.cyx`, fmt, run, capacity, self, `hooks install` (sys_system), and
 #      distlib's per-target sidecar verify (refused for that reason, not "does not compile").
 #   3  the LSP's two diagnostics spawns (raw cycc outside a project, the `cyrius` wrapper inside
-#      one) log the fork failure instead of publishing silently empty diagnostics.
+#      one) log the fork failure instead of publishing silently empty diagnostics. (6.7.13: a
+#      loose file goes to the wrapper too when the CLI is found — `cyrius check` from the server's
+#      working directory — so the raw-cycc spawn is driven from a home holding cycc alone.)
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
-#      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away.
+#      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away. A
+#      `_cbt_fork_tracked(fwd)` call (6.7.13: the tracked fork, cbt/sigclean.cyr) is a site too.
 #   5  control: without the limit, the same build succeeds (the rows are about the limit).
 #   6  ⭐ an inherited SIGCHLD ignore (`trap '' CHLD; exec cyrius ...` — under it the kernel reaps
 #      every child and wait4 answers ECHILD): the CLI resets SIGCHLD at start-up, so a good
@@ -61,7 +64,7 @@ function flush(   i, v, ok) {
 FNR == 1 { flush(); fname = "" }
 /^fn [A-Za-z_]/ { flush(); fname = $2; sub(/\(.*/, "", fname) }
 { code = $0; gsub(/"[^"]*"/, "", code); sub(/#.*/, "", code); body = body "\n " code }
-code ~ /=[ \t]*sys_fork\(\)/ {
+code ~ /=[ \t]*(sys_fork\(\)|_cbt_fork_tracked\()/ {
     m = code; sub(/^[ \t]*(var[ \t]+)?/, "", m); sub(/[ \t]*=.*/, "", m)
     nf++; fv[nf] = m; fl[nf] = FILENAME ":" FNR
 }
@@ -90,6 +93,11 @@ fn handed_back(): i64 {
     var pid = sys_fork();
     return pid;
 }
+fn tracked_unchecked(): i64 {
+    var tpid = _cbt_fork_tracked(0);
+    if (tpid == 0) { sys_exit(0); }
+    return 0;
+}
 fn prose_only(): i64 {
     # sys_fork() in a comment, and sys_waitpid( too
     var s = "var pid = sys_fork();";
@@ -98,8 +106,9 @@ fn prose_only(): i64 {
 EOF
 awk -f "$W/sites.awk" "$W/self.cyr" > "$W/self.out"
 x=$FAIL
-[ "$(grep -c 'fn=' "$W/self.out")" = 5 ] || fail "axis 0: the detector should report 4 forks + 1 bare wait: $(tr '\n' '|' < "$W/self.out")"
+[ "$(grep -c 'fn=' "$W/self.out")" = 6 ] || fail "axis 0: the detector should report 5 forks + 1 bare wait: $(tr '\n' '|' < "$W/self.out")"
 grep -q 'fn=unchecked pid=pid UNCHECKED' "$W/self.out" || fail "axis 0: the unchecked fork was not flagged"
+grep -q 'fn=tracked_unchecked pid=tpid UNCHECKED' "$W/self.out" || fail "axis 0: an unchecked _cbt_fork_tracked() was not flagged"
 grep -q 'fn=unchecked BARE-WAIT' "$W/self.out" || fail "axis 0: the discarded wait was not flagged"
 grep -q 'fn=checked_lt pid=pid checked' "$W/self.out" || fail "axis 0: a pid < 0 arm was not recognised"
 grep -q 'fn=checked_gt pid=gpid checked' "$W/self.out" || fail "axis 0: a gpid > 0 guard was not recognised"
@@ -242,8 +251,10 @@ ls "$W/dl/dist" 2>/dev/null | grep -q '\.deps$' && fail "distlib: a sidecar was 
 
 # ── axis 3 — the LSP's diagnostics spawns ───────────────────────────────────────────────
 x=$FAIL
-LH="$W/lhome"; mkdir -p "$LH/.cyrius/bin" "$W/lone" "$W/proj"
+LH="$W/lhome"; mkdir -p "$LH/.cyrius/bin" "$W/lone" "$W/proj" "$W/lhome2/.cyrius/bin"
 cp "$W/stubtool" "$LH/.cyrius/bin/cycc"; cp "$W/stubtool" "$LH/.cyrius/bin/cyrius"
+cp "$W/stubtool" "$W/lhome2/.cyrius/bin/cycc"   # cycc alone: the loose file takes the raw spawn
+mkdir -p "$W/lsp2" && cp "$W/cyrius-lsp" "$W/lsp2/cyrius-lsp"   # no `cyrius` beside it either
 printf 'var a = 1;\n' > "$W/lone/a.cyr"
 printf '[package]\nname = "q"\n' > "$W/proj/cyrius.cyml"; printf 'var b = 1;\n' > "$W/proj/b.cyr"
 msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
@@ -253,11 +264,14 @@ msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"
   msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'; } > "$W/lsp.in"
 ( cd "$W/lone" && lim env -i HOME="$LH" PATH=/usr/bin:/bin "$W/cyrius-lsp" ) \
     < "$W/lsp.in" > "$W/lsp.out" 2> "$W/lsp.err" || true
-grep -q "could not start $LH/.cyrius/bin/cycc: fork failed" "$W/lsp.err" \
-    || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp.err" | tail -3 | tr '\n' ' ')"
-grep -q "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err" \
-    || fail "axis 3: the wrapper diagnostics spawn did not log its fork failure"
-grep -q '"id":2,' "$W/lsp.out" || fail "axis 3: the server did not answer shutdown after the failed spawns"
+( cd "$W/lone" && lim env -i HOME="$W/lhome2" PATH=/usr/bin:/bin "$W/lsp2/cyrius-lsp" ) \
+    < "$W/lsp.in" > "$W/lsp2.out" 2> "$W/lsp2.err" || true
+grep -q "could not start $W/lhome2/.cyrius/bin/cycc: fork failed" "$W/lsp2.err" \
+    || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp2.err" | tail -3 | tr '\n' ' ')"
+[ "$(grep -c "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err")" = 2 ] \
+    || fail "axis 3: the wrapper diagnostics spawn (a project's file, and a loose one) did not log its fork failure twice"
+grep -q '"id":2,' "$W/lsp.out" && grep -q '"id":2,' "$W/lsp2.out" \
+    || fail "axis 3: the server did not answer shutdown after the failed spawns"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: both LSP diagnostics spawns log the fork failure, and the server goes on"
 
 # ── axis 6 — an inherited SIGCHLD ignore ────────────────────────────────────────────────

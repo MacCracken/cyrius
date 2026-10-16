@@ -28,9 +28,17 @@
 #   D4  two includes deep: sd calls vec_new (tagged → result → fmt → vec): in scope, no sidecar
 #   D5  anti-vacuous: sd's sidecar removed (it lists nothing) — its tagged_new is recorded as
 #       `boxed`, so D1's silence is the closure's doing, not a blind pass
+#   K1-K4 (6.7.13) a named dep `nd` with no sidecar whose manifest selects a thin profile of a leaf the
+#       bundle declares, so `cyrius deps` keeps the fold (6.6.11 S2): the fold is nd's need — K1 a
+#       `modules` profile (dist/ct-thin.cyr) and K2 a `modular` one (lib/ct_thin.cyr): `ct in scope
+#       (a named dep's)`, nothing recorded, no sidecar for a pure module; K3 what the fold includes
+#       (tagged -> boxed) likewise; K4 anti-vacuous: the bundle's own ct_eq_bytes records ct
 # Mutation (measured): the two closure arms removed (the list-only match of 6.7.11) → D1 D3 D4
 # RED; the closure built without following includes (the listed leaves alone) → D1 D3 D4 RED;
 # 6.7.11's CLI → D1 D3 D4 RED (D2 and D5 hold on it: the rule they anchor is unchanged).
+# 6.7.13: no `_dep_note_nd_leaf` in the module loop's kept-fold branch → K1 K3 K4 RED (ct / boxed
+# recorded; K4's ct recorded for nd's ct_eq_bytes_lens, not the bundle's ct_eq_bytes); none in
+# `_dep_pull_submodule`'s → K2 RED; the CLI before the fix → K1-K4 RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=distlib_named_dep_transitive
@@ -129,6 +137,66 @@ _dl d5
 if [ "$rc" -eq 0 ] && [ "$(cat "$W/d5.sc")" = "boxed" ] && grep -q "boxed recorded for 'tagged_new'" "$W/d5.out"; then
     ok "D5 sd with no sidecar: its tagged_new is recorded as boxed (the closure is anchored to sd's listed leaves)"
 else bad "D5 (rc=$rc, sidecar: $(cat "$W/d5.sc")): $(grep -E "recorded|named dep's|error" "$W/d5.out" | head -2)"; fi
+
+# ── K: a named dep whose thin profile of a leaf the bundle declares was not vendored (6.7.13) ──
+# issues/2026-10-15-bote-distlib-kept-fold-over-thin-profile-records-named-deps-need.md. `nd`'s
+# manifest selects a thin `[deps.<L>]` profile; the bundle declares <L> in `[deps] stdlib`, so
+# `cyrius deps` keeps the fold (6.6.11 S2: "'<L>' is a stdlib leaf here") and the fold stands in
+# for the profile. nd's sidecar lists nothing (its profile's requires block carried its needs), so
+# the fold was nd's need that nobody recorded as nd's: the verify recorded it as the bundle's own.
+_thin() {   # <name> <file path under the origin> <tag>: a tagged origin holding one thin module
+    _t="$W/o/$1"; mkdir -p "$(dirname "$_t/$2")" && printf 'fn %s_thin(): i64 { return 1; }\n' "$1" > "$_t/$2" \
+      && ( cd "$_t" && git init -q . 2> /dev/null; git add -A && git commit -qm "$3" && git tag "$3" ) || bad "setup: cannot tag $1 $3"
+}
+_thin ctthin dist/ct-thin.cyr v1
+_thin ctthin2 dist/ct/thin.cyr v2   # another tag: the cache keys a clone by (name, tag)
+_thin tagthin dist/tagged-thin.cyr v1
+ND="$W/o/nd"
+mkdir -p "$ND/dist" && ( cd "$ND" && git init -q . ) || { echo "FAIL: $G: cannot create the nd origin"; exit 1; }
+_ndtag() {   # <tag> <nd.cyr body> <nd's [deps.X] table>: nd has no sidecar
+    printf '%s\n' "$2" > "$ND/dist/nd.cyr"
+    printf '[package]\nname = "nd"\nversion = "0.1.0"\n\n%s\n' "$3" > "$ND/cyrius.cyml"
+    ( cd "$ND" && git add -A && git commit -qm "$1" && git tag "$1" ) || bad "setup: cannot tag nd $1"
+}
+_ndtag k1 'fn nd_eq(a, b): i64 { return ct_eq_bytes_lens(a, 1, b, 1); }' "$(printf '[deps.ct]\ngit = "file://%s/o/ctthin"\ntag = "v1"\nmodules = ["dist/ct-thin.cyr"]' "$W")"
+_ndtag k2 'fn nd_eq(a, b): i64 { return ct_eq_bytes_lens(a, 1, b, 1); }' "$(printf '[deps.ct]\ngit = "file://%s/o/ctthin2"\ntag = "v2"\nmodular = ["thin"]' "$W")"
+_ndtag k3 'fn nd_make(v): i64 { return tagged_new(1, v); }' "$(printf '[deps.tagged]\ngit = "file://%s/o/tagthin"\ntag = "v1"\nmodules = ["dist/tagged-thin.cyr"]' "$W")"
+_projk() {   # <nd tag> <the bundle's stdlib leaf> <src/a.cyr body>
+    rm -rf "$P"; mkdir -p "$P/src"
+    printf '[package]\nname = "dla"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "%s"\n\n[build]\nentry = "main.cyr"\noutput = "build/m"\n\n[lib]\nmodules = ["src/a.cyr"]\n\n[deps]\nstdlib = ["syscalls", "%s"]\n\n[deps.nd]\ngit = "file://%s"\ntag = "%s"\nmodules = ["dist/nd.cyr"]\n' "$V" "$2" "$ND" "$1" > "$P/cyrius.cyml"
+    printf '%s\n' "$3" > "$P/src/a.cyr"
+    printf 'include "src/a.cyr"\nsyscall(SYS_EXIT, 0);\n' > "$P/main.cyr"
+}
+# K1: the filed shape (bote / libro / sigil, synthetic): nd's module calls ct_eq_bytes_lens, its thin
+#     `[deps.ct] modules = ["dist/ct-thin.cyr"]` is not vendored — a pure module's sidecar is EMPTY
+_projk k1 ct "$PURE"
+_dl k1
+if [ "$rc" -eq 0 ] && grep -q "^note: \[deps.ct\] dist/ct-thin.cyr not vendored — 'ct' is a stdlib leaf here" "$W/k1.deps" \
+   && grep -q "ct in scope (a named dep's) for 'ct_eq_bytes_lens'" "$W/k1.out" && ! grep -q ' recorded for ' "$W/k1.out" \
+   && [ "$(cat "$W/k1.sc")" = "NONE" ]; then
+    ok "K1 the fold kept over nd's thin ct profile is nd's: ct in scope (nd's), nothing recorded, no sidecar"
+else bad "K1 (rc=$rc, sidecar: $(cat "$W/k1.sc")): $(grep -E "recorded|named dep's|error" "$W/k1.out" | head -2)"; fi
+# K2: the same through a MODULAR sub-module (`modular = ["thin"]`, lib/ct_thin.cyr)
+_projk k2 ct "$PURE"
+_dl k2
+if [ "$rc" -eq 0 ] && grep -q "^note: \[deps.ct\] thin not vendored — 'ct' is a stdlib leaf here" "$W/k2.deps" \
+   && grep -q "ct in scope (a named dep's) for 'ct_eq_bytes_lens'" "$W/k2.out" && ! grep -q ' recorded for ' "$W/k2.out" \
+   && [ "$(cat "$W/k2.sc")" = "NONE" ]; then
+    ok "K2 a modular thin sub-module of ct kept as the fold: ct in scope (nd's), nothing recorded, no sidecar"
+else bad "K2 (rc=$rc, sidecar: $(cat "$W/k2.sc")): $(grep -m1 'note' "$W/k2.deps") / $(grep -E "recorded|named dep's|error" "$W/k2.out" | head -2)"; fi
+# K3: what the kept fold INCLUDES is nd's too: nd calls tagged_new (boxed.cyr, which tagged.cyr includes)
+_projk k3 tagged "$PURE"
+_dl k3
+if [ "$rc" -eq 0 ] && grep -q "boxed in scope (a named dep's) for 'tagged_new'" "$W/k3.out" && ! grep -q ' recorded for ' "$W/k3.out" \
+   && [ "$(cat "$W/k3.sc")" = "NONE" ]; then
+    ok "K3 a leaf the kept fold includes (tagged -> boxed) is nd's: in scope, nothing recorded, no sidecar"
+else bad "K3 (rc=$rc, sidecar: $(cat "$W/k3.sc")): $(grep -E "recorded|named dep's|error" "$W/k3.out" | head -2)"; fi
+# K4: anti-vacuous — the bundle's OWN call into the kept leaf is still recorded
+_projk k1 ct 'fn own_eq(a, b): i64 { return ct_eq_bytes(a, b, 1); }'
+_dl k4
+if [ "$rc" -eq 0 ] && [ "$(cat "$W/k4.sc")" = "ct" ] && grep -q "ct recorded for 'ct_eq_bytes'" "$W/k4.out"; then
+    ok "K4 a module that itself calls ct_eq_bytes: ct recorded (its own need)"
+else bad "K4 (rc=$rc, sidecar: $(cat "$W/k4.sc")): $(grep -E "recorded|named dep's|error" "$W/k4.out" | head -2)"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

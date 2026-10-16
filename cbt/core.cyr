@@ -1121,6 +1121,16 @@ fn find_tools(): i64 {
             _cc_arm = "./build/cycc_aarch64";
         }
     }
+    # On an aarch64 Linux host the host's own cycc emits aarch64 and honours CYRIUS_KERNEL, while
+    # cycc_aarch64 is the x86_64-hosted cross compiler no aarch64 host can run: `--aarch64` and
+    # `--target=aarch64-bare-metal-elf` looked for it and failed (pi). They run `_cc` there —
+    # `--aarch64` a no-op, the bare-metal target the aarch64 kernel image. (No cycc found: the
+    # cross path stays, so the errors below name a file, never a null.) CHANGELOG [6.7.13]
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    if (_cc != 0) { _cc_arm = _cc; }
+    #endif
+    #endif
 
     # cx bytecode compiler: tools dir, then ./build/. Absent → JIT-built on first
     # use (see _ensure_cc_cx in build.cyr), matching the cross_bins on-demand model.

@@ -1037,6 +1037,8 @@ fn _lsp_has(hay, needle): i64 {
 }
 
 # One `cyrius check --with-deps [--no-redirect] <filepath>` run from `project_root`; its stderr.
+# 6.7.13: `project_root` 0 = a file outside any project — `cyrius check <filepath>` (standalone,
+# as `cyrius check` runs in a loose directory) from THIS server's working directory, no chdir.
 fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
     var pipe_fds[16];
     var pr = sys_pipe(&pipe_fds);
@@ -1060,14 +1062,17 @@ fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
         # wrapper renumbers per peer (x86-Linux 80, arm-macho alias 1049→12,
         # x86-macho 80→12) and is correct on every target. See the macho route
         # parity gate, tests/gates/platform/macho_route_parity.sh.
-        sys_chdir(project_root);
         var argv[48];   # N BYTES per CLAUDE.md buffer contract: 6 ptrs = 48 B
         var ai = 0;
         store64(&argv, _cyrius_path);
         store64(&argv + 8, "check");
-        store64(&argv + 16, "--with-deps");
-        ai = 24;
-        if (no_redirect == 1) { store64(&argv + ai, "--no-redirect"); ai = ai + 8; }
+        ai = 16;
+        if (project_root != 0) {
+            sys_chdir(project_root);
+            store64(&argv + 16, "--with-deps");
+            ai = 24;
+            if (no_redirect == 1) { store64(&argv + ai, "--no-redirect"); ai = ai + 8; }
+        }
         store64(&argv + ai, filepath);
         store64(&argv + ai + 8, 0);
         var envp = _build_envp_from_proc();
@@ -1094,9 +1099,120 @@ fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
     return errbuf;
 }
 
+# 6.7.13 — this server's working directory (a fresh string), or 0 when it cannot be read: the
+# CLI's `_cwd_read` (cbt/deps.cyr) — Darwin has no getcwd syscall, so fcntl(F_GETPATH) on ".".
+fn _lsp_cwd(): i64 {
+    var buf = alloc(4096);
+    #ifdef CYRIUS_TARGET_MACOS
+    var fd = sys_open(".", 0, 0);
+    if (fd < 0) { return 0; }
+    var fr = sys_fcntl(fd, 50, buf);
+    sys_close(fd);
+    if (fr != 0) { return 0; }
+    return buf;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    var n = syscall(79, buf, 4096);   # getcwd (aarch64: ESYSXLAT 79 -> 17)
+    if (n <= 0) { return 0; }
+    return buf;
+    #endif
+}
+
+# 6.7.13 — `path` relative to `cwd` when it lies under it (`cwd` + "/" + rest: the rest), else
+# `path` itself (also when `cwd` is 0).
+fn _lsp_rel_to(cwd, path): i64 {
+    if (cwd == 0) { return path; }
+    var cl = strlen(cwd);
+    if (cl == 1 && load8(cwd) == 47) {
+        if (load8(path) == 47 && load8(path + 1) != 0) { return path + 1; }
+        return path;
+    }
+    if (strlen(path) <= cl + 1) { return path; }
+    if (memeq(path, cwd, cl) == 0) { return path; }
+    if (load8(path + cl) != 47) { return path; }
+    return path + cl + 1;
+}
+
+# 6.7.13 — the `#@incdir` the CLI writes for entry `unit` (cbt/build.cyr `_source_incdir`): its
+# directory component when `unit` is relative, has one, and holds no `..` component; else 0 (no
+# marker — cycc refuses an absolute or `..` directory).
+fn _lsp_incdir(unit): i64 {
+    var n = strlen(unit);
+    if (n == 0 || load8(unit) == 47) { return 0; }
+    var cut = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        if (load8(unit + i) == 47) { cut = i; }
+        i = i + 1;
+    }
+    if (cut <= 0) { return 0; }
+    var j = 0;
+    while (j < cut) {
+        if (load8(unit + j) == 46 && load8(unit + j + 1) == 46) {
+            if (j == 0 || load8(unit + j - 1) == 47) { return 0; }
+        }
+        j = j + 1;
+    }
+    var d = alloc(cut + 1);
+    memcpy(d, unit, cut);
+    store8(d + cut, 0);
+    return d;
+}
+
+# 6.7.13 — in the cycc child: a pipe whose read end is cycc's stdin, fed by a forked writer with
+# `#@incdir <incdir>\n#@srcline\n` (the incdir at byte 0, the only place cycc honours it; the
+# srcline keeps `<source>` lines the file's own) and then the file open on `sfd`. The writer, not
+# the server, writes the pipe, so the server only drains stderr and a cycc that stops reading
+# kills nothing but the writer. Returns the read end, or `sfd` unchanged when the pipe or the
+# fork fails (the file alone, as before). `errw` is the stderr pipe the writer must not hold.
+fn _lsp_feed_incdir(sfd, incdir, errw): i64 {
+    var fds[16];
+    if (sys_pipe(&fds) < 0) { return sfd; }
+    var rd = load32(&fds);
+    var wr = load32(&fds + 4);
+    var w = sys_fork();
+    if (w < 0) {
+        sys_close(rd);
+        sys_close(wr);
+        return sfd;
+    }
+    if (w == 0) {
+        sys_close(rd);
+        sys_close(errw);
+        _lsp_write_all(wr, "#@incdir ", 9);
+        _lsp_write_all(wr, incdir, strlen(incdir));
+        _lsp_write_all(wr, "\n#@srcline\n", 11);
+        var buf = alloc(32768);
+        var k = sys_read(sfd, buf, 32768);
+        while (k > 0) {
+            if (_lsp_write_all(wr, buf, k) != 0) { k = 0; }
+            else { k = sys_read(sfd, buf, 32768); }
+        }
+        sys_exit(0);
+    }
+    sys_close(wr);
+    sys_close(sfd);
+    return rd;
+}
+
+# Write all `n` bytes of `buf` to `fd`; 0, or -1 when a write fails.
+fn _lsp_write_all(fd, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var r = sys_write(fd, buf + off, n - off);
+        if (r <= 0) { return 0 - 1; }
+        off = off + r;
+    }
+    return 0;
+}
+
 # 6.7.12 — the directory the diagnostics' relative file names resolve against first: the project
-# root when the last compile ran `cyrius check` there, 0 when it ran cycc on the file directly.
+# root when the last compile ran `cyrius check` there; (6.7.13) outside a project this server's
+# working directory, where both loose routes compile (0 when it cannot be read).
 var _lsp_last_root = 0;
+# 6.7.13 — the name the last `cyrius check` outside a project was given for the file (relative to
+# the working directory when under it), so its verdict line is known; 0 otherwise.
+var _lsp_last_unit = 0;
 
 # Run cycc on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
@@ -1107,8 +1223,20 @@ var _lsp_last_root = 0;
 # stdlib fns the consumer pulls via cyrius.cyml. Fall back to raw
 # cycc (pre-.56 behavior) for files outside any project tree or
 # when the wrapper isn't installed.
+# ⛔ 6.7.13 — OUTSIDE A PROJECT, THE UNIT `cyrius check` COMPILES. cycc resolves an `include`
+# against its working directory and then against the entry's directory — the latter only through
+# the `#@incdir <dir>` line the CLI writes for an entry in a subdirectory. This forked cycc with
+# the file itself on stdin, so a loose file's sibling include was `cannot open include file` unless
+# the editor had started the server in that file's directory, while `cyrius check` from the same
+# working directory said ok. Now, from this server's working directory and with the file named
+# relative to it when it lies inside (`_lsp_rel_to`): the CLI when found runs `cyrius check <file>`
+# (standalone), else cycc gets `#@incdir <dir>` + `#@srcline` ahead of the file through a pipe,
+# by the CLI's own rule (`_lsp_incdir`: a relative, `..`-free directory). A file outside the
+# working directory's subtree gets no marker, as `cyrius check` writes none there. Relative names
+# in the diagnostics resolve against that directory first (`_lsp_last_root`). CHANGELOG [6.7.13]
 fn compile_and_capture(filepath): i64 {
     _lsp_last_root = 0;
+    _lsp_last_unit = 0;
     if (_cyrius_path != 0) {
         var project_root = find_project_root(filepath);
         if (project_root != 0) {
@@ -1116,7 +1244,15 @@ fn compile_and_capture(filepath): i64 {
             return _compile_via_wrapper(filepath, project_root);
         }
     }
+    var cwd = _lsp_cwd();
+    var unit = _lsp_rel_to(cwd, filepath);
+    _lsp_last_root = cwd;
+    if (_cyrius_path != 0) {
+        _lsp_last_unit = unit;
+        return _compile_via_wrapper_run(unit, 0, 0);
+    }
     if (_cycc_path == 0) { return 0; }
+    var incdir = _lsp_incdir(unit);
 
     # Create pipe for stderr capture
     var pipe_fds[16];
@@ -1133,6 +1269,7 @@ fn compile_and_capture(filepath): i64 {
 
         var sfd = sys_open(filepath, 0, 0);
         if (sfd < 0) { syscall(60, 1); }
+        if (incdir != 0) { sfd = _lsp_feed_incdir(sfd, incdir, pipe_write); }   # 6.7.13
         sys_dup2(sfd, 0);
         sys_close(sfd);
 
@@ -1323,12 +1460,20 @@ fn _lsp_diag_add(file, line, col, sev, ms, me): i64 {
 
 # 1 when line s[pos, eol) is the CLI's compile verdict for `open_path` — `error: <path> (compiler
 # exit N)` or `… (the compiler did not exit normally)`, printed after the compiler's own
-# diagnostics: it repeats them and is not one.
+# diagnostics: it repeats them and is not one. (6.7.13) Outside a project the CLI was given the
+# file relative to this server's working directory (`_lsp_last_unit`), and names it so.
 fn _lsp_is_verdict(s, pos, eol, open_path): i64 {
-    var ol = strlen(open_path);
+    if (_lsp_verdict_for(s, pos, eol, open_path) == 1) { return 1; }
+    if (_lsp_last_unit == 0) { return 0; }
+    return _lsp_verdict_for(s, pos, eol, _lsp_last_unit);
+}
+
+# `_lsp_is_verdict` for the CLI's name of the unit, `path`.
+fn _lsp_verdict_for(s, pos, eol, path): i64 {
+    var ol = strlen(path);
     if (eol - pos < 7 + ol + 2) { return 0; }
     if (memeq(s + pos, "error: ", 7) != 1) { return 0; }
-    if (memeq(s + pos + 7, open_path, ol) != 1) { return 0; }
+    if (memeq(s + pos + 7, path, ol) != 1) { return 0; }
     var t = pos + 7 + ol;
     if (eol - t >= 16 && memeq(s + t, " (compiler exit ", 16) == 1) { return 1; }
     if (eol - t >= 37 && memeq(s + t, " (the compiler did not exit normally)", 37) == 1) { return 1; }

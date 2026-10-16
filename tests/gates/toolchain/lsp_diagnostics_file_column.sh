@@ -31,6 +31,16 @@
 #   R9  `cyrius check --help` names --no-redirect
 #   R10 the CLI half direct: `cyrius check --with-deps --no-redirect src/col.cyr` checks the file
 #       itself; without the flag the redirect (`check via src/main.cyr`) is unchanged
+#   R11 (6.7.13) the filed repro: a loose file in a subdirectory of the server's working directory
+#       whose sibling include `cyrius check` resolves publishes an EMPTY list — through the CLI
+#       (`cyrius check <file relative to the cwd>`) and with cycc alone (`#@incdir` + `#@srcline`
+#       fed ahead of the file)
+#   R12 the same routes: a genuine error in the sibling inc.cyr is published on inc.cyr's URI
+#   R13 the same routes: the file's own error keeps its line (`#@srcline`), and the CLI's verdict
+#       (it names the file as it was given, relative) is not shown beside it
+#   R14 outside the working directory's subtree there is no marker — the same "cannot open" as
+#       `cyrius check <absolute path>` from there (the CLI writes none for an absolute entry)
+#   R15 the CLI half: `cyrius check ok/main.cyr` from that directory says ok
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
 #
 # PROVEN RED (run when written, each mutant via LSP_BIN / CLI_BIN):
@@ -44,6 +54,13 @@
 #   no old-CLI fallback                                R6 FAIL
 #   the verdict always shown / never shown             R4 / R7 FAIL
 #   an unresolved name published on its own URI        R8 FAIL
+# 6.7.13 (measured):
+#   the 6.7.12 server                                 R11 R12 R13 FAIL (both routes; R14 R15 pass)
+#   the file not made relative to the cwd (no _lsp_rel_to) R11 R12 R13 FAIL (both routes)
+#   the cycc route without the #@incdir feed           R11 R12 R13 FAIL (cycc)
+#   the loose verdict not recognised (_lsp_last_unit)  R2 R12 R13 FAIL (cli: the verdict on main.cyr)
+#   (the feed without #@srcline turns nothing RED: cycc already discounts the `#@incdir` line,
+#   6.5.7 — the marker is there because the CLI's unit carries it)
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lsp_diagnostics_file_column
@@ -175,6 +192,54 @@ if grep -q "^error:<source>:2:14: undefined variable 'nope'" "$W/r10a" && ! grep
    && grep -q 'check via src/main.cyr' "$W/r10b"; then
     ok "R10 cyrius check --with-deps --no-redirect checks src/col.cyr itself; without the flag the redirect stays"
 else fail "R10 with the flag: $(tr '\n' ' ' < "$W/r10a") / without: $(head -1 "$W/r10b")"; fi
+
+# ── R11-R15 (6.7.13): a loose file in a subdirectory of the server's working directory ─────────
+# issues/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md. cycc tries an include
+# against its working directory and then the entry's directory — the latter only through the
+# `#@incdir` line the CLI writes. The server ran cycc on the file itself from its own working
+# directory, so `include "inc.cyr"` beside a loose file was "cannot open" unless the editor started
+# the server in that directory. Now it compiles what `cyrius check <file>` compiles from there:
+# the CLI when found, else cycc with `#@incdir <dir>` + `#@srcline` ahead of the file.
+mkdir -p "$W/top/ok" "$W/top/bad" "$W/top/own" "$W/other" "$W/cc/.cyrius/bin"
+cp "$CC" "$W/cc/.cyrius/bin/cycc"   # a home with cycc alone: the server's own #@incdir route
+printf 'fn helper(): i64 { return 0; }\n' > "$W/top/ok/inc.cyr"
+printf 'include "inc.cyr"\nvar x = helper();\n' > "$W/top/ok/main.cyr"
+printf 'fn helper2(): i64 { return 0; }\nvar bad = undefined_two + 1;\n' > "$W/top/bad/inc.cyr"
+printf 'include "inc.cyr"\nvar x = helper2();\n' > "$W/top/bad/main.cyr"
+cp "$W/top/ok/inc.cyr" "$W/top/own/inc.cyr"
+printf 'include "inc.cyr"\nvar y = nope3 + helper();\n' > "$W/top/own/main.cyr"
+for route in cli cycc; do
+    hm="$W/h"; [ "$route" = cycc ] && hm="$W/cc"
+    { trap '' PIPE; start; open_msg Open "$W/top/ok/main.cyr"; open_msg Open "$W/top/bad/main.cyr"; open_msg Open "$W/top/own/main.cyr"
+      stop; true; } 2> /dev/null | serve "$W/top" "$hm" > "$W/r11$route"
+    P=$(pub "$W/r11$route" top/ok/main.cyr)
+    if [ "$P" = '"uri":"top/ok/main.cyr","diagnostics":[]}}' ]; then
+        ok "R11 ($route) the filed repro: top/ok/main.cyr's sibling include resolves — an empty list"
+    else fail "R11 ($route) top/ok/main.cyr: ${P:-none}"; fi
+    PM=$(pub "$W/r11$route" top/bad/main.cyr); PI=$(pub "$W/r11$route" top/bad/inc.cyr)
+    if [ "$PM" = '"uri":"top/bad/main.cyr","diagnostics":[]}}' ] && printf '%s' "$PI" | grep -qF '"start":{"line":1,' \
+       && printf '%s' "$PI" | grep -qF "undefined variable 'undefined_two'"; then
+        ok "R12 ($route) a genuine error in the sibling inc.cyr is published on inc.cyr's URI, line 1; main.cyr's list is empty"
+    else fail "R12 ($route) main.cyr: ${PM:-none} / inc.cyr: ${PI:-none}"; fi
+    P=$(pub "$W/r11$route" top/own/main.cyr)
+    if printf '%s' "$P" | grep -qF '"start":{"line":1,' && printf '%s' "$P" | grep -qF "undefined variable 'nope3'" \
+       && ! printf '%s' "$P" | grep -q 'compiler exit\|cannot open'; then
+        ok "R13 ($route) the file's own error keeps its own line (1): #@srcline, no verdict beside it"
+    else fail "R13 ($route) top/own/main.cyr: ${P:-none}"; fi
+done
+# R14: a file outside the working directory's subtree gets no marker — as `cyrius check` writes
+# none for it (cycc refuses an absolute #@incdir): the include is "cannot open" from both
+{ trap '' PIPE; start; open_msg Open "$W/top/ok/main.cyr"; stop; true; } 2> /dev/null | serve "$W/other" "$W/h" > "$W/r14"
+P=$(pub "$W/r14" top/ok/main.cyr)
+( cd "$W/other" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:/bin "$W/h/.cyrius/bin/cyrius" check "$W/top/ok/main.cyr" > "$W/r14c" 2>&1 ) || true
+if printf '%s' "$P" | grep -qF 'cannot open include file: inc.cyr' && grep -q 'cannot open include file: inc.cyr' "$W/r14c"; then
+    ok "R14 outside the working directory's subtree: no marker, the same 'cannot open' as cyrius check from there"
+else fail "R14 top/ok/main.cyr from another directory: ${P:-none} / cyrius check: $(head -1 "$W/r14c")"; fi
+# R15: the CLI half the server relies on — `cyrius check ok/main.cyr` from $W/top
+if ( cd "$W/top" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:/bin "$W/h/.cyrius/bin/cyrius" check ok/main.cyr > "$W/r15" 2>&1 ) \
+   && grep -q '^ok: ok/main.cyr' "$W/r15"; then
+    ok "R15 cyrius check ok/main.cyr from the same directory: ok"
+else fail "R15 cyrius check ok/main.cyr: $(head -2 "$W/r15" | tr '\n' ' ')"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G"; exit 1; }
 echo "PASS: $G"
