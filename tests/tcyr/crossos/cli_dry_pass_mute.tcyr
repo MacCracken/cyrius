@@ -36,11 +36,12 @@ include "cbt/pulsar.cyr"
 alloc_init();
 
 #ifndef CYRIUS_TARGET_WIN
-# "/tmp/cdpm<pid><suffix>", a fresh arena string.
+# "/tmp/" "cdpm.<pid><suffix>" — a fresh arena string, per process.
 fn _cdpm_path(suffix): i64 {
     var p = alloc(64);
-    memcpy(p, "/tmp/cdpm", 9);
-    var o = 9 + fmt_int_buf(sys_getpid(), p + 9);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, "cdpm.", 5);
+    var o = 10 + fmt_int_buf(sys_getpid(), p + 10);
     memcpy(p + o, suffix, strlen(suffix));
     store8(p + o + strlen(suffix), 0);
     return p;

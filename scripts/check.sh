@@ -489,8 +489,8 @@ _chk_reap_stale_homes
 # regular file named in the CLI's scratch vocabulary below; anything else — `test_bin` (a
 # SIGKILLed test's post-mortem) and `test_out` with it, the `cyrius lsp` build it tells the user
 # to copy out, a directory, a link, a name not listed — keeps the dir and all of it.
-# The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the two
-# directories (`deps`, `locked-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
+# The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the three
+# directories (`deps`, `locked-deps`, `pin-move-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
 # it from cbt/ and fails when this list and the source part. `_N` names take a number
 # (`cpp_<pid>`, `dlverifyerr<t>`); any listed name may carry compile()'s `.tmp.<pid>` (its output
 # before the rename).
