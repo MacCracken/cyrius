@@ -12,7 +12,8 @@
 # THE FIX. Both emitters are the f64v2 pair's shape with r4 in place of r1 — lo at the named slot,
 # hi at its filler — and r4 because it is cx's rdx peer: the multi-value second slot (`return (a,
 # b);`, `ret2`, the destructure, `rethi()`), so the struct pair and the multi-value return meet with
-# no sync, as on x86 (ESTRUCT_PAIR_HI_SYNC stays a no-op on cx).
+# no sync, as on x86 (ESTRUCT_PAIR_HI_SYNC stayed a no-op on cx; 6.7.13 removed it on every target,
+# its last producer — `ret2` in a struct fn — refused).
 #
 # ROWS — each a program run NATIVELY (x86_64, the oracle) and on cxvm; both must exit the value the
 # row states. Every value is order-sensitive (x * 10 + y over a (4, 2) pair: a swapped pair reads 24).

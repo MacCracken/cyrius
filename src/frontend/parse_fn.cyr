@@ -906,19 +906,17 @@ fn _tcp_drop(S): i64 {
 }
 
 # ⛔ 6.7.7 — THE LANDING OF A MULTI-VALUE RETURN: `return (a, b[, c]);` and `ret2(a, b)`, values in
-# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. In a fn returning a
-# 9-16 B struct the caller reads the struct PAIR's registers, which on aarch64 are x0:x1, not the
-# multi-value x0:x2: `fn mk(x): P { return (x, x + 1); }` gave `var p: P = mk(5);` p.b = x1's
-# leftover (55 where x86 gives 56). The pair's high register is synced from the multi-value slot
-# here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
-# `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
-# Since 6.7.11 only `ret2` lands here in a struct fn: a tuple literal there is refused
-# (`_refuse_struct_tuple_return`). CHANGELOG [6.7.11]
+# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. No struct fn's value
+# lands here: the tuple literal is refused there (6.7.11, `_refuse_struct_tuple_return`) and `ret2`
+# too (6.7.13, `_ret2_in_struct`), so the aarch64 sync of the pair's x1 from the multi-value x2 that
+# stood here (ESTRUCT_PAIR_HI_SYNC, 6.7.7) lost its last producer and went; an #inline replay's
+# landing inside a struct fn is that call's value, read from x0 / x2. The other direction — a
+# `return p;` read by `var a, b = f();` / `rethi()` — is EFLLOAD_STRUCT_INT_PAIR writing x2 too.
+# CHANGELOG [6.7.7], [6.7.13]
 fn _mret_land(S): i64 {
     if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
         _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
     }
-    if (_cur_fn_ret_pair == 1) { ESTRUCT_PAIR_HI_SYNC(S); }
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
     return 0;

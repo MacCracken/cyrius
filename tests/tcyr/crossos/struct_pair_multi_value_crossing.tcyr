@@ -12,8 +12,9 @@
 #   * a `: P` fn's `return p;` (x1) read by `var a, b = f();` at fn scope or at top level, or by
 #     `rethi()` (x2): repro B, 50 on pi and qemu, 250 on ecb.
 # Since 6.7.7 a 9-16 B struct return carries its high word in BOTH registers on aarch64
-# (EFLLOAD_STRUCT_INT_PAIR writes x2 too; `_mret_land`'s ESTRUCT_PAIR_HI_SYNC sets x1 from x2 in a
-# struct fn's multi-value arms), so every consumer reads the word it expects; x86 emits nothing new.
+# (EFLLOAD_STRUCT_INT_PAIR writes x2 too; `_mret_land`'s ESTRUCT_PAIR_HI_SYNC set x1 from x2 in a
+# struct fn's multi-value arms — removed in 6.7.13 with the last such producer, below), so every
+# consumer reads the word it expects; x86 emits nothing new.
 #
 # ⚠ WHY crossos/: the defect was aarch64-only — this file passes on x86_64 against the broken
 # compiler. It runs on pi and ecb at the release gate, and under qemu-aarch64 in

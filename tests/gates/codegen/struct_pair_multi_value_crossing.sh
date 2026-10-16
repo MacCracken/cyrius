@@ -16,8 +16,10 @@
 #   H  `f(); var b = rethi();` after such a call (x2): 0 where 6 is right
 # Since 6.7.7 every 9-16 B struct return carries its high word in BOTH registers on aarch64:
 # EFLLOAD_STRUCT_INT_PAIR writes x2 as well as x1, and `_mret_land` (the multi-value arms' landing,
-# PARSE_RETURN's arity 2 and 3 and `ret2`) emits ESTRUCT_PAIR_HI_SYNC (`mov x1, x2`) in a struct fn —
+# PARSE_RETURN's arity 2 and 3 and `ret2`) emitted ESTRUCT_PAIR_HI_SYNC (`mov x1, x2`) in a struct fn —
 # a no-op on x86 and cx, where nothing differs. Neither convention moved; AAPCS64's x0:x1 holds.
+# 6.7.13: A has no producer left (the tuple literal refused in a struct fn since 6.7.11, `ret2` since
+# 6.7.13 — D22 A), so the sync went with its last one; A's rows are refusals (X1 X2 X9) and B / H stand.
 #
 # LEGS (every compiler built from this tree by $CYCC):
 #   X  the issue's table, verbatim shapes, as exit codes: x86_64 (the oracle — it was always right) and
@@ -66,7 +68,8 @@
 #   M11 `_refuse_struct_tuple_return` answering 0                        -> RED X1 X9 (BUILT, every leg)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): X8 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
-# 6.7.13 (D22 A, the user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md):
+# 6.7.13 (D22 A, the user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md;
+# M3-M5 retired with ESTRUCT_PAIR_HI_SYNC, removed in its own commit after the refusal: nothing compiling lands there):
 # `ret2(a, b)` in a fn declared `: P` is refused in every class, as the tuple literal is — so direction A has no
 # producer left in a program that compiles. X2 pins the refusal on the three compilers (the SR rows of
 # tests/gates/frontend/multi_value_into_named_struct.sh carry every class and PE); X3 receives a `return p;`
@@ -213,4 +216,4 @@ refused_a64 r2 "cannot re-assign from 'mk' - it returns struct 'P', not multiple
 if [ "$QEMU" -eq 0 ]; then echo "  SKIP: the aarch64 legs (qemu-aarch64 not installed; the crossos tcyr covers pi / ecb)"; skips=$((skips + 1)); fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — the aarch64 legs could not run; the x86_64 rows passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a 9-16 B struct return and a multi-value return agree in both directions on x86_64, aarch64 (cross + native fork) and cx, rethi() included; a destructure past a struct's register words is refused"
+echo "PASS: $G — a 9-16 B struct return read as two values agrees on x86_64, aarch64 (cross + native fork) and cx, rethi() included; a multi-value producer in a struct fn and a destructure past a struct's register words are refused"

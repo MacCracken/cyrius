@@ -350,7 +350,8 @@ Y_ROWS="Y1 Y2 Y3 Y4 Y5 Y6 Y7 Y8 Y9 Y10 Y11"
 #   aarch64 — silently lost the second register (41 for 48): the struct pair (x0:x1) and the
 #             multi-value slot (x2) disagreed until 6.7.7 (ESTRUCT_PAIR_HI_SYNC); 48 since.
 #             Mutation (6.7.8, a scratch copy): aarch64 ESTRUCT_PAIR_HI_SYNC emitting nothing ->
-#             RED aarch64 A7 = 41, every other row green.
+#             RED aarch64 A7 = 41, every other row green. 6.7.13: A7's producer is `return p;` (its
+#             `ret2` refused) and the sync is gone with its last producer.
 # A8 and A9 (the SCALAR arity-2/arity-3 multi-return) run on all four legs and are green on all
 # four, so the "tuple syntax still works" property is not host-only.
 a_legs() { echo "host cx aarch64 win64"; }
