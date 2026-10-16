@@ -36,7 +36,8 @@ vec_push(wf, "a");
 vec_push(wf, "b,c");
 vec_push(wf, "d");
 var line = bayan_csv_write_line(wf);
-assert_eq(streq(line, "a,\"b,c\",d\n"), 1, "write escaped");
+# bayan 1.7.0 (RFC 4180 s2.1, folded 6.7.13): a record ends in CRLF; it ended in a lone LF.
+assert_eq(streq(line, "a,\"b,c\",d\r\n"), 1, "write escaped");
 
 test_group("csv empty");
 var f3 = bayan_csv_parse_line("");
