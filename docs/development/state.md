@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.13 — slot open 2026-10-15** (6.7.12 tagged at `97abbfec` and pushed by the user, store slot refreshed from the tag). 6.7.12: Break 2 repair 2, the platform release — 57 issues closed in five lanes, the fold bayan 1.6.0 (release gate GREEN on `2a4be9e0`). |
-| **cycc** | x86 **2,244,696 B** (`.text` **2,024,160**) at 6.7.12, +21,376 B over 6.7.11's 2,223,320 B. `build/cycc-native-aarch64` **2,150,672 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,299,144 B** in flight (6.7.13, both waves merged, 2026-10-16), +54,448 B over 6.7.12's 2,244,696 B. `build/cycc-native-aarch64` **2,151,872 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
 | **Bootstrap / cross-OS** | 6.7.12: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on REAL hardware through `scripts/release-gate.sh` (on `2a4be9e0`; ecb / ach / pi now run the full corpus, D8). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.12 `release-gate.sh` GREEN (2026-10-15): check.sh 522 of 522 shell gates, the driver 131 of 131, the 2 named agnos-parity SKIPs; ecb / ach / pi on the full corpus. self_compile 1,535 ms (A/B 6.7.11 1,503 → 6.7.12 1,536 ms). |
 | **Corpus** | **611** `.tcyr` (**306** in `crossos/`) · **106** `lib/*.cyr` · **518** shell gates under `tests/gates/<bucket>/` · api-surface **5,857**. |
