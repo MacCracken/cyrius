@@ -390,6 +390,37 @@ fn q_elems(): i64 {
     var l = HEL { 7, (mkqe(4, 9)) };
     assert_eq(l.x + l.q.a * 10 + l.q.b, 56, "Q40: ... as the LAST element");
     assert_eq(GHE8.x + GHE8.q.a * 10 + GHE8.q.b + GHE8.z + GHE1.q.a * 1000, 4064, "Q41: at top level, an 8 B element (two leaves; one leaf, double-wrapped)");
+    q_elems_mo();
+    return 0;
+}
+# Q42+ (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) — a
+# 9-16 B METHOD or OPERATOR result in parentheses as the element (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`) was
+# "unexpected '}'": the destination is armed inside the wrap now (`_spi_epk`), as for every other destination.
+impl QE { fn dupe(self): QE { var q = QE { self.a, self.b }; return q; } }
+impl QE8 { fn dupe8(self): QE8 { var q = QE8 { self.a, self.b }; return q; } }
+fn QE_add(a: QE, b: QE): QE { var q = QE { a.a + b.a, a.b + b.b }; return q; }
+fn q_elems_mo(): i64 {
+    var q0 = QE { 4, 9 };
+    var q1 = QE { 0, 0 };
+    var m = HE { 7, (q0.dupe()), 8 };
+    assert_eq(he(&m), 64, "Q42: HE { 7, (q0.dupe()), 8 }, a 16 B method (unexpected '}')");
+    var n = HE { 7, (q0 + q1), 8 };
+    assert_eq(he(&n), 64, "Q43: HE { 7, (q0 + q1), 8 }, a 16 B operator (unexpected '}')");
+    var d = HE { 7, ((q0.dupe())), 8 };
+    var e = HE { 7, ((q0 + q1)), 8 };
+    assert_eq(he(&d) + he(&e), 128, "Q44: double parentheses, method and operator");
+    var q8 = QE8 { 4, 9 };
+    var m8 = HE8 { 7, (q8.dupe8()), 8 };
+    assert_eq(m8.x + m8.q.a * 10 + m8.q.b + m8.z, 64, "Q45: an 8 B two-u32 method (unchanged)");
+    var f = HEF { (q0 + q1), 8 };
+    var l = HEL { 7, (q0.dupe()) };
+    assert_eq(f.q.a * 10 + f.q.b + f.z + l.x + l.q.a * 10 + l.q.b, 113, "Q46: as the FIRST and the LAST element");
+    var h = HE { 7, q0, 8 };
+    var w = HE { 7, (h.q), 8 };
+    assert_eq(he(&w), 64, "Q47: HE { 7, (h.q), 8 }, a wrapped struct-typed field (unexpected '}')");
+    var k = 3;
+    var sc = HE { (k + 4), (4), ((9)), (k + 5) };
+    assert_eq(he(&sc), 64, "Q48: wrapped scalar elements, each a leaf (unchanged)");
     return 0;
 }
 

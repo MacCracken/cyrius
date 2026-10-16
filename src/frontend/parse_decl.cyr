@@ -2707,10 +2707,8 @@ fn _spi_follow(S, o, pk): i64 {
 }
 # ⛔ 6.7.11 — A FREE STRUCT CALL IN PARENTHESES THAT WRAP THE WHOLE ELEMENT (`H { 7, (mkq(4, 9)), 8 }`,
 # `((mk<Pt>(1)))`) is the element the unwrapped call is — 6.7.6's transparency, which a wrapped method or
-# operator result has at 24 B and 8 B (`_sc_pwrap`; at 9-16 B not yet: issues/2026-10-14-paren-wrapped-
-# pair-method-or-operator-as-nested-literal-element-refused.md). It was an expression whose rax went into
-# the nested struct's
-# first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
+# operator result has too (`_spi_epk`, 6.7.13). It was an expression whose rax went into the nested
+# struct's first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
 # leaves, a one-leaf struct's word unchecked (issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-
 # element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
 # call (its refusals — another struct, no frame at top level — the unwrapped call's), and the wrap is
@@ -2737,20 +2735,23 @@ fn _spi_pcall(S): i64 {
 # only error.
 fn _spi_expr(S, ft): i64 {
     var st = GTI(S);
+    var pk = _spi_epk(S, st);   # 6.7.13: the arms below run inside a wrap of the whole element
     var sv = _fla_want;
     var svl = _fla_lit;
-    _fla_want = st;
-    _fla_lit = st;
+    _fla_want = st + pk;
+    _fla_lit = st + pk;
     _fla_hit = 0;
     _sc_rbeg = 0 - 1;
+    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too (at its first token). CHANGELOG [6.7.11]
+    STI(S, st + pk);
     var w = _sc_arm(S);
-    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too. CHANGELOG [6.7.11]
     PCMPE(S);
     var bx = _BX_IS(S);   # 6.7.3: the stamp, before anything below can move the cursor
+    _pw_close(S, pk);
     _sc_want = w;
     _fla_want = sv;
     _fla_lit = svl;
-    if (_spi_refused(S, st) == 1) { return 4; }
+    if (_spi_refused(S, st, pk) == 1) { return 4; }
     var t = _sc_whole(S, st);
     if (t >= 0) {
         _fsc_reset();
@@ -2770,6 +2771,25 @@ fn _spi_expr(S, ft): i64 {
     _spi_leaf_check(S, _spi_first_fk(S, ft), st, bx);
     return 2;
 }
+# ⛔ 6.7.13 — A 9-16 B METHOD OR OPERATOR RESULT IN PARENTHESES AS A NESTED-STRUCT LITERAL ELEMENT
+# (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`) was refused "unexpected '}'": the struct-call destination was
+# armed at the `(`, so the call inside got no frame temp (`_sc_pre` wants `_sc_want` at the call), the
+# element was a scalar for the nested struct's first leaf and the next element its second. At 8 B and
+# 24 B it worked by accident (rax; the retptr temp). Every other destination steps a whole wrap before it
+# arms (`_scv_peel`, `_rcv_peel`, `_ret_peel`); the element now does too: the parentheses wrapping the
+# whole element at `st` (up to its `,` / `}`; a tuple literal is no wrap), 0 for none. `_pw_end` is kept.
+# CHANGELOG [6.7.13]
+fn _spi_epk(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var pe = _pw_end;
+    var k = 0;
+    if (_tup_lit_at(S, st) < 0) { k = _pwrap_k(S, st); }
+    var e = TOKTYP(S, _pw_end);
+    _pw_end = pe;
+    if (k == 0) { return 0; }
+    if (e != 31) { if (e != 14) { return 0; } }
+    return k;
+}
 # A scalar carried into a nested struct lands on its first leaf: the float warning, and (6.7.3) a
 # bool leaf's check — `bx` the stamp taken right after the value was parsed.
 fn _spi_leaf_check(S, k, st, bx): i64 {
@@ -2780,11 +2800,11 @@ fn _spi_leaf_check(S, k, st, bx): i64 {
     return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);
 }
 
-# The whole value (up to its `,` / `}`) was a > 16 B method / operator call `_sc_pre` refused
-# at top level.
-fn _spi_refused(S, st): i64 {
-    if (_sc_rbeg != st) { return 0; }
-    if (_sc_rend != GTI(S)) { return 0; }
+# The whole value (up to its `,` / `}`; inside its `pk` parentheses, 6.7.13) was a > 16 B method /
+# operator call `_sc_pre` refused at top level.
+fn _spi_refused(S, st, pk): i64 {
+    if (_sc_rbeg != st + pk) { return 0; }
+    if (_sc_rend + pk != GTI(S)) { return 0; }
     if (PEEKT(S) == 31) { return 1; }
     if (PEEKT(S) == 14) { return 1; }
     return 0;

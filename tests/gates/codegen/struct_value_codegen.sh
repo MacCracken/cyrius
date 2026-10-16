@@ -83,6 +83,10 @@
 #      (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element (`H { 7, (mkq(4,
 #      9)), 8 }`) was a scalar for the nested struct's first leaf: "unexpected '}'" at 16 / 24 B and 8 B with two
 #      leaves. It is the element the unwrapped call is (`_spi_pcall`), its refusals the unwrapped call's
+#   PM (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) and a
+#      9-16 B METHOD or OPERATOR result in parentheses (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`): "unexpected '}'"
+#      on every target. The element steps its whole wrap before it arms (`_spi_epk`); a wrapped struct-typed field
+#      `(h.q)` with it (tcyr Q47). PM1 the repro verbatim, PM3-PM5 top level once by name, PM6 another struct
 #   N  (lane E2) lib/fnptr.cyr's x86_64 SysV fncall8 (Linux, macOS, agnos arms) stored argument 7 at
 #      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
 #      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
@@ -528,6 +532,17 @@ refused pe3 "$PEM" "PE3: at top level, 24 B: refused once (+ unexpected '}')" "s
 refused pe4 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE4: (mko(5)) of another 8 B struct, refused as mko(5) is (compiled: 65)" "struct Q { a; }\nstruct O { a; }\nstruct H { x; q: Q; z; }\nfn mko(a): O { var o = O { a }; return o; }\nfn main(): i64 { var h = H { 7, (mko(5)), 8 }; return h.x + h.q.a * 10 + h.z; }$E"
 refused pe5 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE5: (mko(4, 9)) of another 16 B struct, refused by name (unexpected '}')" "${PEH}struct O { a; b; }\nfn mko(a, b): O { var q = O { a, b }; return q; }\nfn main(): i64 { var h = H { 7, (mko(4, 9)), 8 }; return h.x; }$E"
 exits pe6 64 "PE6: H { 7, (mkq(4, 9)), 8 } at top level of an 8 B two-u32 Q (unexpected '}')" "struct Q { a: u32; b: u32; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\nvar G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
+# PM (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) a 9-16 B
+# METHOD or OPERATOR result in parentheses as the element was "unexpected '}'" on every target: the destination was
+# armed at the `(`, so the call inside got no temp. `_spi_epk` steps the wrap first. PM1 the filed repro verbatim;
+# the values file's Q42-Q48 run it on A1-A7.
+PMH='struct QE { a; b; }\nstruct HE { x; q: QE; z; }\nimpl QE { fn dupe(self): QE { var q = QE { self.a, self.b }; return q; } }\nfn QE_add(a: QE, b: QE): QE { var q = QE { a.a + b.a, a.b + b.b }; return q; }\n'
+exits pm1 64 "PM1: HE { 7, (q0.dupe()), 8 } / HE { 7, (q0 + q1), 8 } (the filed repro, verbatim: unexpected '}' twice)" "struct QE { a; b; }\nstruct HE { x; q: QE; z; }\nimpl QE { fn dupe(self): QE { var q = QE { self.a, self.b }; return q; } }\nfn QE_add(a: QE, b: QE): QE { var q = QE { a.a + b.a, a.b + b.b }; return q; }\nfn main(): i64 {\n    var q0 = QE { 4, 9 };\n    var q1 = QE { 0, 0 };\n    var m = HE { 7, (q0.dupe()), 8 };      # refused: unexpected '}'  (unwrapped: 64)\n    var n = HE { 7, (q0 + q1), 8 };        # refused: unexpected '}'  (unwrapped: 64)\n    return m.x + m.q.a * 10 + m.q.b + m.z;\n}\nsyscall(60, main());\n"
+exits pm2 128 "PM2: ((q0.dupe())) / ((q0 + q1)), double parentheses" "${PMH}fn he(h: *HE): i64 { return h.x + h.q.a * 10 + h.q.b + h.z; }\nfn main(): i64 { var q0 = QE { 4, 9 }; var q1 = QE { 0, 0 }; var d = HE { 7, ((q0.dupe())), 8 }; var e = HE { 7, ((q0 + q1)), 8 }; return he(&d) + he(&e); }$E"
+refused pm3 "'QE_dupe' returns a struct by value, and a struct result needs storage in a fn's frame" "PM3: at top level, 16 B method: refused by name once" "${PMH}var q0 = QE { 4, 9 };\nvar G = HE { 7, (q0.dupe()), 8 };\nsyscall(60, G.x);\n"
+refused pm4 "'QE_add' returns a struct by value, and a struct result needs storage in a fn's frame" "PM4: at top level, 16 B operator, double-wrapped: refused by name once" "${PMH}var q0 = QE { 4, 9 };\nvar q1 = QE { 0, 0 };\nvar G = HE { 7, ((q0 + q1)), 8 };\nsyscall(60, G.x);\n"
+refused pm5 "'Q3_dupe3' returns a struct by value, and a struct result needs storage in a fn's frame" "PM5: at top level, 24 B method: refused once (+ unexpected '}' before)" "struct Q3 { a; b; c; }\nstruct H3 { x; q: Q3; z; }\nimpl Q3 { fn dupe3(self): Q3 { var q = Q3 { self.a, self.b, self.c }; return q; } }\nvar q3 = Q3 { 1, 4, 9 };\nvar G = H3 { 7, (q3.dupe3()), 8 };\nsyscall(60, G.x);\n"
+refused pm6 "cannot copy 'QO_dupe' into a struct field of a different struct type: 'q'" "PM6: (o.dupe()) of ANOTHER 16 B struct, refused by name (unexpected '}')" "${PMH}struct QO { a; b; }\nimpl QO { fn dupe(self): QO { var q = QO { self.a, self.b }; return q; } }\nfn main(): i64 { var o = QO { 4, 9 }; var m = HE { 7, (o.dupe()), 8 }; return m.x; }$E"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
