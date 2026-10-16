@@ -1943,6 +1943,9 @@ call, method or operator result over 8 bytes has no frame to land in and is refu
 global. Through 6.7.10 the store was the 8-byte word whatever the struct: a zero-size struct took 8
 bytes over the next global, one of 3 to 7 bytes overran the object, one over 8 bytes kept only its first
 8 (a 16-byte one's second field stale), `*p = q` stored the pointer, and `*p += a` added to the first word.
+A call returning several values is no `S` value: `*p = mk();` is refused as `G = mk();` is (*a multi-value
+call 'mk' is not assigned to struct 'P2' - bind it first*; 6.7.13, the user's decision of 2026-10-15) —
+through 6.7.12 it stored the call's first value as the struct's word. A `*i64` still takes that word.
 
 **An untyped binding of a struct-returning operator takes its struct type at every size** (6.7.10,
 the user's decision): `var c = a + b;` with `fn S_add(..): T` declares `c` an inline `T` — `c.f` reads

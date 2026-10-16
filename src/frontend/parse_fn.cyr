@@ -2266,8 +2266,11 @@ fn _mv_decl_src(S, pscale, start): i64 {
 }
 # The struct of an assignment's destination name `noff` when it is a named struct VALUE or handle — a
 # local, a by-value parameter, a global — and not a `*P` (a pointer rebinds to any word); else 0.
+# `*p = v` through a `*S` (`_dst_arms`: no name, the override's struct) copies what `G = v` copies (D4),
+# so a multi-value call into it is refused as into `G` (D26 A, the user's decision, 2026-10-15): it
+# stored the first value as the struct's word. CHANGELOG [6.7.13]
 fn _mv_dst_sid(S, noff): i64 {
-    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: `*p = v`'s destination has no name (`_dst_arms`)
+    if (_agc_ovr_is(noff) == 1) { return _mv_ovr_sid(S); }
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {
@@ -2285,6 +2288,10 @@ fn _mv_dst_sid(S, noff): i64 {
     var gt = GVTYPE(S, gvi);
     if (_mv_named(S, gt) == 0) { return 0; }
     return gt;
+}
+fn _mv_ovr_sid(S): i64 {
+    if (_mv_named(S, 0 - _agc_ovr_t) == 1) { return 0 - _agc_ovr_t; }
+    return 0;
 }
 # `x = f(..);` / `x = b.m(..);`, the source [st, cursor) just parsed (`_pcmpe_struct_assign`, which the
 # statement and a classic-for step reach once `_try_struct_call_assign` has passed the call by — it takes

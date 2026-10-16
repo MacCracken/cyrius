@@ -74,6 +74,13 @@
 # bind it first: ...`, at the call, parentheses transparent; the 9-16 B and over-16 B classes keep their own texts; a
 # `: P1` callee and a one-value callee still run.
 #   N17 `_ret_mv_fwd` without its small-struct arm       -> RED RT1 RT2 RT3 RT4 RT7 RT8 (BUILT), every leg
+#
+# 6.7.13 — AXIS DP: `*p = mk(..);` THROUGH A `p: *S` copies what `G = mk(..);` copies (D4), so a multi-value call is
+# refused into it as into `G` (D26 A, the user's decision, 2026-10-15;
+# issues/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md): it stored the FIRST value as the
+# struct's word (the repro exited 50 on x86_64 / aarch64 / cx / PE: GT2 = {5, 0}) — `is not assigned to struct 'P2'`,
+# at every size, a method, wrapped, a classic-for step and top level; a `*i64` still takes the first value.
+#   N18 `_mv_dst_sid` answering 0 under the override again -> RED DP1-DP9 DPu (BUILT), every leg
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -467,6 +474,45 @@ fn g(): P1 { return one(3); }
 fn f(): i64 { var p: P1 = g(); return p.a; }
 syscall(60, f());'
 runs RT6 7 "control: a one-value callee (an untyped word stays the struct's word)"
+# --- axis DP (6.7.13, D26 A): `*p = mk(..);` through a `p: *S` ---
+# the issue's repro, verbatim
+printf 'struct P2 { x; y; }\nvar GT2 = P2 { 0, 0 };\nfn mv(): (i64, i64) { return (5, 6); }\nfn main(): i64 { var p: *P2 = &GT2; *p = mv(); return GT2.x * 10 + GT2.y; }\nsyscall(60, main());\n' > "$T/DP1.cyr"
+refused DP1 "4:42: a multi-value call 'mv' is not assigned to struct 'P2' - bind it first: \`var a, b = mv(..);\`" "the repro verbatim (it exited 50)"
+row DP2 'struct S3 { a: i8; b: i8; c: i8; }
+fn f(): i64 { var s: S3; var p: *S3 = &s; *p = mk(3); return s.a; }
+syscall(60, f());'
+refused DP2 "a multi-value call 'mk' is not assigned to struct 'S3'" "3 B"
+row DP3 'fn f(): i64 { var q = P1 { 0 }; var p: *P1 = &q; *p = mk(3); return q.a; }
+syscall(60, f());'
+refused DP3 "a multi-value call 'mk' is not assigned to struct 'P1'" "8 B"
+row DP4 'fn f(): i64 { var q = P { 0, 0 }; var p: *P = &q; *p = mk(3); return q.a * 10 + q.b; }
+syscall(60, f());'
+refused DP4 "a multi-value call 'mk' $ASG" "16 B"
+row DP5 'struct Q { a; b; c; }
+fn mk3(a): (i64, i64, i64) { return (a, 1, 2); }
+fn f(): i64 { var q = Q { 0, 0, 0 }; var p: *Q = &q; *p = mk3(3); return q.a; }
+syscall(60, f());'
+refused DP5 "a multi-value call 'mk3' is not assigned to struct 'Q' - bind it first: \`var a, b, c = mk3(..);\`" "24 B, three values"
+row DP6 'fn f(): i64 { var b = B { 0 }; var q = P1 { 0 }; var p: *P1 = &q; *p = b.mk(3); return q.a; }
+syscall(60, f());'
+refused DP6 "a multi-value call 'mk' is not assigned to struct 'P1' - bind it first: \`var a, b = b.mk(..);\`" "a method callee"
+row DP7 'fn f(): i64 { var q = P { 0, 0 }; var p: *P = &q; *p = (mk(3)); return q.a; }
+syscall(60, f());'
+refused DP7 "a multi-value call 'mk' $ASG" "wrapped: \`*p = (mk(3));\`"
+row DP8 'fn f(): i64 { var q = P { 0, 0 }; var p: *P = &q; for (var i = 0; i < 1; *p = mk(3)) { i = i + 1; } return q.a; }
+syscall(60, f());'
+refused DP8 "a multi-value call 'mk' $ASG" "a classic-for step"
+row DP9 'var q = P { 0, 0 };
+var p: *P = &q;
+*p = mk(3);
+syscall(60, q.a);'
+refused DP9 "a multi-value call 'mk' $ASG" "at top level"
+row DPu 'fn f(): i64 { var q = P { 0, 0 }; var p: *P = &q; *p = mku(3); return q.a; }
+syscall(60, f());'
+refused DPu "a multi-value call 'mku' is not assigned to struct 'P' - bind it first: \`var a, b = mku(..);\`" "an undeclared callee pass 1 counted"
+row DP10 'fn f(): i64 { var x = 0; var r: *i64 = &x; *r = mk(3); return x; }
+syscall(60, f());'
+runs DP10 3 "control: \`*r = mk(3);\` through a \`*i64\` takes the first value"
 row SC1 '#inline
 fn two(a, b) { ret2(a, b); }
 fn mp(x): P { var a, b = two(x, x + 1); var p: P = P { a, b }; return p; }
@@ -479,7 +525,7 @@ fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
 syscall(60, f());'
 runs SC2 34 "control: a closure's own ret2 inside a struct fn"
 
-[ "$rows" -ge 63 ] || bad "only $rows rows ran (floor 63)"
+[ "$rows" -ge 74 ] || bad "only $rows rows ran (floor 74)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four"
+echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four; 6.7.13: \`ret2\` in a struct fn (every class), \`return mk(..)\` from an 8 B struct fn and \`*p = mk(..)\` through a \`*S\` refused"
