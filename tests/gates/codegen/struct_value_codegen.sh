@@ -107,6 +107,12 @@
 #      parentheses, `callptr((&mk3), 5)`, is the known callee (`_icall_fti` for the token routes, `_icall_callee` for
 #      the parse): it was unknown, so the result convention was lost — 139 x86 / aarch64, 1 cx, 5 PE (FPw3), `return`
 #      refused, an untyped receive refused at `.a`. FP11 the filed repro verbatim; tcyr W1-W13 on B1-B7
+#      FP20-FP31 (6.7.13, issues/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a),
+#      2026-10-15) a known callee's result takes `.field` / `.method(..)` (`fncall1(&mk3, 5).b`, `callptr(&mk3, 1).dbl().c`,
+#      a `*T` callee's field, the callee wrapped, the statement form), as `mk3(5).b` does: it was "expected ';', got
+#      '.'" (`_icall_chain` after `_icall_result`; a 9-16 B result's temp from `_sc_pre_c`). Top level is refused once by
+#      name, a callee in a variable by name (its result is a word, D31). FP20 / FPw4 the filed repro verbatim; tcyr
+#      FC1-FC14 on B1-B7
 #   EV (6.7.11, the call-arguments lane) under CYRIUS_IR=3, LASE kept a just-stored local's rax image
 #      across EFLADDR's `lea rax, [rbp+d]`, which recorded no IR node, and dropped the reload after it:
 #      `o.with2(x)` / `bs(h, x)` / `var b: B = mk(x)` right after `var x = 5;` passed the aggregate's
@@ -264,6 +270,16 @@
 #   M-PC2 `_icall_fti` without the wrap peel (the token routes)  -> RED 8: FP12 FP13 (139: the argument route), FP15
 #       (refused: the return route), B1-B4 B7; FP11 FP14 FP17 FP19 green (the parse's record carries them)
 #   M-VDF one `assert_eq(` row deleted from vector_call_result_discarded.tcyr -> RED 1: "only 14 rows (floor 15)"
+#   (6.7.13, the receives lane, unit R3, the same procedure, 2026-10-16: issues/2026-10-13-field-of-indirect-call-
+#   struct-result.md; the cross legs build from the tree, so B5 / B6 stay green)
+#   the fix reverted (the lane's previous tip, 1330b9ed)         -> RED 18: FP20-FP24 FP26-FP28 FP30 (expected ';'), FP25
+#       (2 errors), FP29 FP31 (refused 'fncall1' does not return a struct), B1-B4 B7 (the values file refused at FC1),
+#       FPw4
+#   M-FI1 `_icall_chain` answering 0 (no chain)                  -> RED 18: as the fix reverted (FP29 FP31: expected ';')
+#   M-FI2 `_icall_sret` calling `_sc_pre` (no 9-16 B temp)        -> RED 8: FP21 FP22 FP24 (139), B1-B4 (139), B7 (exit 5)
+#   M-FI3 `_call_field` without the fncallN route (statements)   -> RED 7: FP29 FP31, B1-B4 B7 (refused at FC12)
+#   M-FI4 `_icall_chain` without its top-level skip              -> RED 1: FP25 (2 errors)
+#   M-FI5 `_icall_chain` without its unknown-callee refusal      -> RED 2: FP27 FP28 (the refusal names a garbage fn)
 #
 #   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
 #      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
@@ -572,6 +588,22 @@ exits fp16 8 "FP16: s1(fncall1((&mk1), 5)) (8 B: a word, right before too)" "${F
 exits fp17 11 "FP17: var p = callptr((&mk3), 5); p.a + ..; var q = fncall1((&mk2), 5) (untyped: refused at .a before)" "${FPH}fn main() { var p = callptr((&mk3), 5); var q = fncall1((&mk2), 5); return p.a + q.b; }$E"
 exits fp18 26 "FP18: var p: P3 = callptr((fp), 5) through a wrapped variable stays a handle (D31): fn gp(a): *P3" "${FPH}var G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn main() { var fp = &gp; var p: P3 = callptr((fp), 5); p.a = p.a + 0; return G.a + G.b + G.c; }$E"
 refused fp19 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP19: var g: P3 = fncall1((&mk3), 5); at top level, refused by name as FP8 (139 before)" "${FPH}var g: P3 = fncall1((&mk3), 5);\nsyscall(60, g.a);\n"
+# FP20-FP31 (6.7.13, issues/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a), 2026-10-15) —
+# a known callee's result takes `.field` / `.method(..)` as `mk3(5).b` does; it was "expected ';', got '.'" on every
+# target. FP20 the filed repro verbatim (12).
+FPM='impl P2 { fn tot(self): i64 { return self.a + self.b; } }\nimpl P3 { fn tot(self): i64 { return self.a + self.b + self.c; }\n    fn dbl(self): P3 { var r: P3 = P3 { self.a * 2, self.b * 2, self.c * 2 }; return r; } }\nvar G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn sc(a): i64 { return a; }\n'
+exits fp20 12 "FP20: var x = fncall1(&mk3, 5).b; (the filed repro, verbatim: expected ';')" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main(): i64 {\n    var d = mk3(5).b;\n    var x = fncall1(&mk3, 5).b;\n    return d + x;\n}\nsyscall(60, main());\n"
+exits fp21 21 "FP21: fncall1(&mk1, 5).a + callptr(&mk2, 5).b + fncall1(&mk3, 5).c (8 / 16 / 24 B)" "${FPH}fn main() { return fncall1(&mk1, 5).a + callptr(&mk2, 5).b + fncall1(&mk3, 5).c; }$E"
+exits fp22 41 "FP22: fncall1(&mk3, 5).tot() + callptr(&mk3, 1).dbl().c + fncall1(&mk2, 2).tot() (a method, a chain)" "${FPH}${FPM}fn main() { return fncall1(&mk3, 5).tot() + callptr(&mk3, 1).dbl().c + fncall1(&mk2, 2).tot() + 12; }$E"
+exits fp23 17 "FP23: fncall1(&gp, 5).b + callptr(&gp, 1).c (a *P3 callee's field)" "${FPH}${FPM}fn main() { return fncall1(&gp, 5).b + callptr(&gp, 1).c; }$E"
+exits fp24 12 "FP24: fncall1((&mk3), 5).b + callptr(((&mk2)), 5).b (the callee wrapped)" "${FPH}fn main() { return fncall1((&mk3), 5).b + callptr(((&mk2)), 5).b; }$E"
+refused fp25 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP25: var g = fncall1(&mk3, 5).b; at top level, 24 B: refused once" "${FPH}var g = fncall1(&mk3, 5).b;\nsyscall(60, g);\n"
+refused fp26 "'mk2' returns a struct by value, and a struct result needs storage in a fn's frame" "FP26: var g = callptr(&mk2, 5).b; at top level, 16 B: refused once" "${FPH}var g = callptr(&mk2, 5).b;\nsyscall(60, g);\n"
+refused fp27 "cannot take a field of the result of 'fncall1': its callee is a value, not \`&f\`, so the result is a word" "FP27: var fp = &mk3; fncall1(fp, 5).b, a callee in a variable, refused by name (D31)" "${FPH}fn main() { var fp = &mk3; return fncall1(fp, 5).b; }$E"
+refused fp28 "cannot take a field of the result of 'callptr': its callee is a value" "FP28: callptr(fp, 5).tot(), refused by name" "${FPH}${FPM}fn main() { var fp = &mk3; return callptr(fp, 5).tot(); }$E"
+exits fp29 7 "FP29: fncall1(&mk3, 5).tot(); / callptr(&gp, 7).b; as statements (cannot take a field of 'fncall1' before)" "${FPH}${FPM}fn main() { fncall1(&mk3, 5).tot(); callptr(&mk3, 5).dbl().tot(); fncall1(&gp, 7).b; return G.a; }$E"
+refused fp30 "cannot take a field of the result of 'sc': it does not return a struct" "FP30: fncall1(&sc, 5).b, a scalar callee, refused by name" "${FPH}${FPM}fn main() { return fncall1(&sc, 5).b; }$E"
+refused fp31 "cannot assign to a field of a call result: the result is a temporary" "FP31: fncall1(&mk3, 5).b = 1; refused as mk3(5).b = 1; is" "${FPH}fn main() { fncall1(&mk3, 5).b = 1; return 0; }$E"
 
 # EV (6.7.11) — the filed repros verbatim, under CYRIUS_IR=3: a just-stored local after an EFLADDR `lea`.
 exits_ir3 ev1 35 "EV1: o.with2(x) after var x = 5; under CYRIUS_IR=3 (the filed repro: 30 + the low byte of &o)" "struct S8 { v; }\nimpl S8 { fn with2(self: *S8, n): i64 { return self.v * 10 + n; } }\nfn a2(): i64 { var o: S8; o.v = 3; var x = 5; return o.with2(x); }\nsyscall(60, a2());\n"
@@ -588,7 +620,7 @@ TCB=tests/tcyr/crossos/fncall_struct_result.tcyr   # 6.7.11: rows B
 TCC=tests/tcyr/crossos/vector_call_result_discarded.tcyr   # 6.7.12: rows C
 # One B row per `assert_eq(` call (the file defines none); the floor keeps a gutted file from passing.
 NB=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCB")
-FLOORB=61
+FLOORB=75
 if [ "$NB" -lt "$FLOORB" ]; then bad "B: only $NB rows in $TCB (floor $FLOORB) — rows were lost"; fi
 NC=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCC")
 FLOORC=15
@@ -631,6 +663,7 @@ if command -v wine > /dev/null 2>&1; then
     exits_pe fpw1 18 "FPw1: FP1 (the filed repro, verbatim) on PE (wine)" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main() {\n    var p: P3 = fncall1(&mk3, 5);\n    return p.a + p.b + p.c;\n}\nvar r = main();\nsyscall(60, r);\n"
     exits_pe fpw2 8 "FPw2: FP2 (8 B: var p: P1 = fncall1(&mk1, 5);) on PE (wine)" "${FPH}fn main() { var p: P1 = fncall1(&mk1, 5); return p.a; }$E"
     exits_pe fpw3 18 "FPw3: FP11 (the parenthesised callee's filed repro, verbatim) on PE (wine): exit 5 before" "include \"lib/fnptr.cyr\"\nstruct P2 { a; b; }\nstruct P3 { a; b; c; }\nfn mk2(a): P2 { var r: P2 = P2 { a, a + 1 }; return r; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn s3(p: P3) { return p.a + p.b + p.c; }\nfn s2(p: P2) { return p.a + p.b; }\nfn main() { var p: P3 = callptr((&mk3), 5); return p.a + p.b + p.c; }\nvar r = main();\nsyscall(60, r);\n"
+    exits_pe fpw4 12 "FPw4: FP20 (the field-of-indirect filed repro, verbatim) on PE (wine): expected ';' before" "include \"lib/fnptr.cyr\"\nstruct P3 { a; b; c; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn main(): i64 {\n    var d = mk3(5).b;\n    var x = fncall1(&mk3, 5).b;\n    return d + x;\n}\nsyscall(60, main());\n"
     printf '#!/bin/sh\ncp "$1" "$1.exe" || exit 1\ncd "%s" && WINEPREFIX="%s" HOME="%s" XDG_CACHE_HOME="%s/.cache" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1.exe"\n' \
         "$T" "$WP" "$WHM" "$WHM" > "$T/winrun"; chmod +x "$T/winrun"
     TC=$TCB; TN=$NB
@@ -643,7 +676,7 @@ if command -v wine > /dev/null 2>&1; then
     exits_pe vdw3 3 "VDw3: var x = callptr(&mkv, 41, 7); (the filed repro 3, verbatim) on PE (wine)" "include \"lib/fnptr.cyr\"\nfn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nfn run(): i64 {\n    var x = callptr(&mkv, 41, 7);\n    return 3;\n}\nsyscall(60, run());\n"
     TC=$TCC; TN=$NC
     tcyr "C7: vector_call_result_discarded.tcyr, PE (wine)" "$CC" "$T/winrun" CYRIUS_TARGET_WIN=1
-else echo "  SKIP: PE legs FPw1 / FPw2 / FPw3 / B7 / A7 / VDw1-VDw3 / C7 (wine not installed)"; skips=$((skips + 1)); fi
+else echo "  SKIP: PE legs FPw1 / FPw2 / FPw3 / FPw4 / B7 / A7 / VDw1-VDw3 / C7 (wine not installed)"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

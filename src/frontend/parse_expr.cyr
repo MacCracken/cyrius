@@ -964,7 +964,45 @@ fn _icall_sret(S, cfi, beg): i64 {
     _sc_n0 = 0;
     if (beg == _icall_vbeg) { return _icall_vret(S); }
     if (_icall_sfn(S, cfi) == 0) { if (_pe_vret(S, cfi) == 0) { return 0 - 1; } }   # 6.7.12: a Win64 vector's pointer
-    return _sc_pre(S, cfi, _bx_fname(S, cfi), beg);
+    return _sc_pre_c(S, cfi, _bx_fname(S, cfi), beg, beg + 1);   # 6.7.13: + a 9-16 B temp when a chain follows
+}
+# ⛔ 6.7.13 — A KNOWN CALLEE'S RESULT TAKES `.field` AND `.method(..)` (the user's decision D16 (a), 2026-10-15):
+# `fncall1(&mk3, 5).b`, `callptr(&mk3, 5).tot()`, `fncall1((&gp), 5).n`, as `mk3(5).b` (6.6.12) and a method's
+# result (6.6.17) do. The call returned at its `)` and the `.` was "expected ';'". After the call the method arm's
+# chain runs on the result (`_method_chain`: a struct in the temp `_icall_sret` gave it, a `*T` parked, a scalar
+# callee and a top-level struct refused by name); a callee in a variable is unknown, its result a word (D31), so a
+# `.name` on it is refused by name. Cursor past the call's `)`; `beg` the fncallN / callptr token. CHANGELOG [6.7.13]
+fn _icall_chain(S, cfi, t, beg): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    if (cfi < 0) { return _icall_fld_err(S, beg); }
+    if (GINFN(S) != 1) { if (_ret_agg_class(S, cfi) == 2) { _mchain_skip(S); return 1; } }   # `_sc_pre` refused it
+    _method_chain(S, cfi, _bx_fname(S, cfi), beg, t);
+    _cfo = 0;
+    return 1;
+}
+fn _icall_fld_err(S, beg): i64 {
+    if (_panic == 0) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        PRSTR(": cannot take a field of the result of '");
+        if (TOKTYP(S, beg) == 137) { PRSTR("callptr"); }
+        else { PRSTR(S + 0xEC00000 + TOKVAL(S, beg)); }
+        PRSTR("': its callee is a value, not `&f`, so the result is a word\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    _mchain_skip(S);
+    return 1;
+}
+# The statement form `fncall1(&mk3, 5).tot();` (`_call_field` from `_stmt_call_field`, ti the lowered fncallN
+# name): the call as PARSE_STMT lowers it, its chain run by `_icall_chain`. 1.
+fn _icall_stmt_chain(S, ti): i64 {
+    _fncall_expect = ((L64(S + 0xEC00000 + TOKVAL(S, ti)) >> 48) & 0xFF) - 48;
+    STI(S, ti + 2);
+    PINDIRECT_CALL(S);
+    _cfo = 0;
+    return 1;
 }
 # 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
 # parse_decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
@@ -1073,6 +1111,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     }
     _cfo = 0;
     _icall_result(S, cfi, cp_t, cst - 2);   # 6.7.6: the result is not its last argument's struct (an f64: FE)
+    _icall_chain(S, cfi, cp_t, cst - 2);    # 6.7.13 (D16 (a)): `.field` / `.m(..)` on it
     return 0;
 }
 
@@ -2820,6 +2859,7 @@ fn _mret_fld_err(S, fi, noff): i64 {
 fn _call_field(S): i64 {
     var ti = GTI(S) - 1;
     if (_call_dotted(S, ti) == 0) { return 0; }
+    if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
     var sid = 0;

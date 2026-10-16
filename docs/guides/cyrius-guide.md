@@ -1649,6 +1649,12 @@ The callee may sit inside parentheses that wrap the whole callee — `callptr((&
 `fncall1(((&mk)), 5)` — and is the same known callee, at every destination above (6.7.13; through
 6.7.12 a parenthesised `&f` was unknown, so the struct result convention was lost: a SIGSEGV, or
 `return callptr((&mk), a);` refused). `callptr((fp), 5)` is still a callee held in a variable.
+The known callee's result also takes `.field` and `.method(..)`, chained, as `mk(5).b` does (6.7.13, the
+user's decision D16 (a), 2026-10-15): `fncall1(&mk, 5).b`, `callptr(&mk, 1).dbl().c`, `fncall1((&mk), 5).b`,
+`fncall1(&gp, 5).b` through a `*P3` callee, and the statement `fncall1(&mk, 5).total();`. At top level a struct
+result's field is refused by name, as `mk(5).b`'s is, and a callee held in a variable followed by `.name` is refused
+by name (*its callee is a value, not `&f`, so the result is a word*). Through 6.7.12 the `.` was `expected ';',
+got '.'`.
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
