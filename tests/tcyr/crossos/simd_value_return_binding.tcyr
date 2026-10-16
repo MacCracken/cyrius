@@ -69,6 +69,15 @@ fn re2(x, y): f64v2 { return ge2<i64>(x, y); }
 fn re4(x, y): f64v4 { return ge4<i64>(x, y); }
 fn ref4(x, y): f32v4 { return gef<i32>(x, y); }
 
+# --- F (6.7.13, D34 A — the user's decision, 2026-10-15; issues/2026-10-13-vector-dereference-into-vector-local-decision.md):
+#     `var v: V = *p;` / `v = *p;` with `p: *V` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
+#     struct. Refused since 6.7.11 (and through 6.7.10 one word with the high lanes stale: x86_64 210, aarch64 74, cx 98,
+#     PE 146 where 161 is right). Each lane distinct; the copy is a copy (writes to either side stay there). ---
+var GPF: *f64v2 = 0;
+fn dpf_get(p: *f64v2): *f64v2 { return p; }
+fn dpf_par(p: *f64v2): i64 { var v: f64v2 = *p; return load64(&v) * 1000 + load64(&v + 8); }
+fn dpf_par4(p: *f64v4): i64 { var v: f64v4 = mk4(); v = *p; return load64(&v + 16) * 1000 + load64(&v + 24); }
+
 fn main(): i64 {
     var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
     var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
@@ -188,6 +197,60 @@ fn main(): i64 {
     var rf: f32v4 = ref4(9, 10);
     assert_eq(load32(&rf), 9, "return gef<i32>(..) from a f32v4 fn lane0");
     assert_eq(load32(&rf + 12), 110, "return gef<i32>(..) from a f32v4 fn lane3");
+
+    # --- F: the dereference of a `*V` into a value-form vector local (D34 A) ---
+    test_group("F *p of a *V into a value-form vector local");
+    var w2: f64v2 = ge2<i64>(41, 7);
+    var p2: *f64v2 = &w2;
+    var d2: f64v2 = *p2;
+    assert_eq(load64(&d2), 41, "declared f64v2 from *p lane0");
+    assert_eq(load64(&d2 + 8), 7, "declared f64v2 from *p lane1");
+    store64(&d2, 99);
+    assert_eq(load64(&w2), 41, "a copy: writing it leaves the pointee");
+    store64(&w2 + 8, 8);
+    assert_eq(load64(&d2 + 8), 7, "a copy: writing the pointee leaves it");
+    d2 = *p2;
+    assert_eq(load64(&d2), 41, "assigned f64v2 from *p lane0");
+    assert_eq(load64(&d2 + 8), 8, "assigned f64v2 from *p lane1");
+    var dw: f64v2 = (*p2);
+    assert_eq(load64(&dw + 8), 8, "declared from (*p) lane1");
+    assert_eq(dpf_par(&w2), 41008, "a p: *f64v2 parameter's *p, both lanes");
+    GPF = &w2;
+    var dg: f64v2 = *GPF;
+    assert_eq(load64(&dg), 41, "a *V global's *G lane0");
+    assert_eq(load64(&dg + 8), 8, "a *V global's *G lane1");
+    var dc: f64v2 = *dpf_get(p2);
+    assert_eq(load64(&dc + 8), 8, "a : *V call's *f() lane1");
+    var pp2: **f64v2 = &p2;
+    var dd: f64v2 = **pp2;
+    assert_eq(load64(&dd), 41, "**pp of a **f64v2 lane0");
+    assert_eq(load64(&dd + 8), 8, "**pp of a **f64v2 lane1");
+    var two: f64v2[2];
+    store64(&two + 16, 31); store64(&two + 24, 32);
+    var pt: *f64v2 = &two;
+    var dn: f64v2 = *(pt + 1);
+    assert_eq(load64(&dn) * 100 + load64(&dn + 8), 3132, "*(p + 1) is the next vector");
+    var w4: f64v4 = ge4<i64>(1, 2);
+    var p4: *f64v4 = &w4;
+    var d4: f64v4 = *p4;
+    assert_eq(load64(&d4), 1, "declared f64v4 from *p lane0");
+    assert_eq(load64(&d4 + 8), 2, "declared f64v4 from *p lane1");
+    assert_eq(load64(&d4 + 16), 101, "declared f64v4 from *p lane2");
+    assert_eq(load64(&d4 + 24), 102, "declared f64v4 from *p lane3");
+    assert_eq(dpf_par4(p4), 101102, "assigned f64v4 from a parameter's *p lanes 2 and 3");
+    var wf: f32v4 = gef<i32>(1, 2);
+    var pf: *f32v4 = &wf;
+    var df: f32v4 = *pf;
+    assert_eq(load32(&df), 1, "declared f32v4 from *p lane0");
+    assert_eq(load32(&df + 4), 2, "declared f32v4 from *p lane1");
+    assert_eq(load32(&df + 8), 101, "declared f32v4 from *p lane2");
+    assert_eq(load32(&df + 12), 102, "declared f32v4 from *p lane3");
+    var wi: i32v4 = i32v4_make(5, 6, 7, 8);
+    var pi: *i32v4 = &wi;
+    var di: i32v4 = i32v4_make(0, 0, 0, 0);
+    di = *pi;
+    assert_eq(load32(&di) * 1000 + load32(&di + 4) * 100 + load32(&di + 8) * 10 + load32(&di + 12), 5678,
+      "assigned i32v4 from *p, every lane");
 
     var r = assert_summary();
     return r;

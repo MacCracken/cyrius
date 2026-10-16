@@ -6793,7 +6793,8 @@ fn _vrcv_vec(S, ty): i64 {
 # The source at token `ti` of a vector of type `ty`, ended by `term`, when it is that vector: 1 = a
 # by-name call to a fn declared `: ty`, 2 = `fncallN(&f, ..)` / `callptr(&f, ..)` with `f` declared
 # `: ty`, 3 = (6.7.13, D29) a method call `x.m(..)` declared `: ty` (`_vmc_fi`) — inside `_vrcv_k`
-# parentheses, the call alone in them; 0 = any other source.
+# parentheses, the call alone in them; 4 = (6.7.13, D34) a whole dereference `*E` (`_vrcv_dsrc`: its operand's
+# vector is read when it is parsed, `_vrcv_demit`); 0 = any other source.
 fn _vrcv_src(S, ti, ty, term): i64 {
     _vrcv_k = 0;
     var c = ti;
@@ -6813,11 +6814,60 @@ fn _vrcv_src(S, ti, ty, term): i64 {
         r = 3;
         o = c + 3;
     }
-    if (r == 0) { return 0; }
+    if (r == 0) { return _vrcv_dsrc(S, ti, term); }   # 6.7.13 (D34): a whole `*E`
     var x = _call_close(S, o) + 1;   # the token after the call
     if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { return 0; } }
     elif (TOKTYP(S, x) != term) { return 0; }
     return r;
+}
+# ⛔ 6.7.13 (D34 A, the user's decision, 2026-10-15) — `var v: V = *p;` / `v = *p;` WITH `p: *V` COPY THE VECTOR
+# THROUGH THE POINTER, as `var q: T = *p;` copies a struct (6.7.10 decision 6) and as `rd(*pv)` passes pv (D27): `*pv`
+# has one meaning at every destination. Refused since 6.7.11 (the source is no local or call), and through 6.7.10 it
+# stored one word with the high lanes stale (x86_64 210, aarch64 74, cx 98, PE 146 where 161 is right). Kind 4 of
+# `_vrcv_src`: the source at token `ti`, ended by `term`, is ONE dereference `* E` inside any balanced parentheses
+# (`_vrcv_k` of them) and nothing after it — `*p + q` is an operator's operand — by its tokens, as the struct
+# declaration's `_hl_dstar_t` reads it. E's type is read once it is parsed (`_vrcv_demit`). CHANGELOG [6.7.13]
+fn _vrcv_dsrc(S, ti, term): i64 {
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    _vrcv_k = a - ti;
+    return 4;
+}
+# The kind-4 source at the cursor (`_vrcv_k` parentheses, then `*`) into the vector at slot `dst` of type `ty`, named
+# `noff`: E is parsed (rax = the pointer) and its vector read from its step word (6.7.12's bits 48-55: a `*V` local,
+# parameter, capture, field, global, `: *V` call, `pv + n`, `*pp` of a `**V`) — `ty`'s: the 16 / 32 bytes copied
+# through it (a hidden temp holds the pointer); another vector refused by name, as a local of another type is; none (an
+# untyped word): the receive refusal, `verb` its verb. The wrap's `)`s consumed, the cursor on the terminator. 0.
+fn _vrcv_demit(S, dst, ty, verb, noff): i64 {
+    var ti = GTI(S);
+    var k = _vrcv_k;
+    var a = ti + k + 1;
+    STI(S, a);
+    PARSE_FACTOR(S);
+    var vd = _ps_vdesc(_pk_word(S));
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    var pe = GTI(S);
+    _pw_close(S, k);
+    if (vd == 0) { return _vrcv_err(S, ti, verb); }
+    if (0 - vd != ty) { return _vrcv_dbad(S, ti, ty, vd, noff, _hl_lastnm(S, a, pe, TOKVAL(S, a))); }
+    _vec_desc(S, ty);
+    _agc_copy_bytes(S, dst, 0 - 1, _AGC_DREF(h), 0 - 1, GVEC_NSLOTS(S) * 8);
+    return 0;
+}
+# A dereference of another vector (`vd`) into the vector `noff` of type `ty`, reported at token `ti` in the words a
+# local of another type meets (`_AGG_ASSIGN_TYPE_ERR`), naming the operand's last name `snoff`. 0.
+fn _vrcv_dbad(S, ti, ty, vd, noff, snoff): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _AGG_ASSIGN_TYPE_ERR(S, ty, 0 - vd, noff, snoff);
+    STI(S, sv);
+    return 0;
 }
 fn _vrcv_byname(S, c, ty): i64 {
     _vrcv_g = 0;
@@ -6918,7 +6968,8 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     _vec_desc(S, pscale);
     var named = _sci_slots(S, noff, pscale, GVEC_NSLOTS(S));
     STI(S, GTI(S) + 1);   # `=`
-    _vrcv_emit(S, named, pscale, k);
+    if (k == 4) { _vrcv_demit(S, named, pscale, "initialised", noff); }   # 6.7.13 (D34): `*p`
+    else { _vrcv_emit(S, named, pscale, k); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -6957,7 +7008,8 @@ fn _vrcv_asg(S, noff, term): i64 {
         return _vrcv_other(S, term);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
-    _vrcv_emit(S, li, lt, k);
+    if (k == 4) { _vrcv_demit(S, li, lt, "assigned", noff); }   # 6.7.13 (D34): `*p`
+    else { _vrcv_emit(S, li, lt, k); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
     return 1;

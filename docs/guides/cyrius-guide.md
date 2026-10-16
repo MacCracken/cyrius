@@ -1651,11 +1651,21 @@ by-name call is (`vector return type does not match the declared type` / `.. the
 variable`). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type or a call declared to return it .. - got `callptr``): a callee held in a
 variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an unannotated `var v = callptr(fp, ..)` is
-one word), a word (`5`, `load64(&w)`, `&w`, a scalar local or call), `*p`. Through a fn pointer
+one word), a word (`5`, `load64(&w)`, `&w`, a scalar local or call), the dereference of an untyped
+word (`*x`). Through a fn pointer
 held in a variable, give the target an out-pointer and have it store the lanes — `var v: f64v2 =
 mkv(0, 0); var ig = callptr(fp, &v, 41, 7);` — which carries every lane on every target. ⚠ Through
 6.7.12 a method call was refused (*… got `s`*), and the unannotated `var v = callptr(&mkv, ..)` was
 one word: `lanes(v)` was refused on x86_64 / aarch64 / cx and faulted on Windows.
+
+**A dereference of a `*V` is the vector (6.7.13; the user's decision D34, 2026-10-15: A).** `var v: f64v2 =
+*p;` and `v = *p;` with `p: *f64v2` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
+struct — `p` a local, a parameter, a capture, a field, a global, a `: *V` call, `p + n`, inside parentheses
+(`(*p)`), and `**pp` of a `**f64v2`; `v` is a copy (writing either side leaves the other). A `*q` of another
+vector type is refused as a local of that type is — `cannot copy 'q' into a variable of a different
+struct/vector type: 'v'`, the same-size ones too (`*i32v4` into `f64v2`). ⚠ Refused since 6.7.11 (*… got
+`*p`*); through 6.7.10 it stored one word, the high lanes stale (x86_64 210, aarch64 74, cx 98, Windows 146 where
+161 is right).
 
 **An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
 `mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
