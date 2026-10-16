@@ -2412,8 +2412,11 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     var errf = _cbt_tmpfile("wt_err");
     var cfd = 0 - 1;
     if (outf != 0) {
+        # The stdout capture is the caller's scratch: registered before it exists, so a kill while
+        # git runs unlinks it; the caller drops it. CHANGELOG [6.7.13]
+        _cbt_scratch_track(outf);
         cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
-        if (cfd < 0) { return 0 - 1; }
+        if (cfd < 0) { _cbt_scratch_untrack(outf); return 0 - 1; }
     }
     # The kill handler unlinks `wt_err` (the child creates it) and stops git, as for compile()'s
     # compiler; both are dropped once git is reaped and its first line read. CHANGELOG [6.7.13]
@@ -2473,10 +2476,10 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
 fn _dep_wt_out(dir, a1, a2, a3, a4): i64 {
     var tf = _cbt_tmpfile("wt_out");
     var rc = _dep_wt_run(dir, a1, a2, a3, a4, tf);
-    if (rc != 0) { sys_unlink(tf); return 0; }
+    if (rc != 0) { _cbt_scratch_drop(tf); return 0; }
     var nn = 0;
     var buf = file_read_whole(tf, &nn);
-    sys_unlink(tf);
+    _cbt_scratch_drop(tf);
     if (buf == 0 || nn < 0) { return ""; }
     var i = 0;
     while (i < nn && load8(buf + i) != 10 && load8(buf + i) != 13) { i = i + 1; }
@@ -4788,7 +4791,7 @@ fn _dep_report_newer_tags(buf, n): i64 {
         var tf = _cbt_tmpfile("ls_remote");
         var rc = _dep_wt_run(0, "ls-remote", "--tags", "--", git, tf);
         if (rc != 0) {
-            sys_unlink(tf);
+            _cbt_scratch_drop(tf);
             sys_write(STDOUT_FD, " pinned; the remote's tags could not be listed", 46);
             var why = _dep_wt_why;
             if (why != 0) { sys_write(STDOUT_FD, " (", 2); var sw = _shown(why); sys_write(STDOUT_FD, sw, strlen(sw)); sys_write(STDOUT_FD, ")", 1); }
@@ -4796,7 +4799,7 @@ fn _dep_report_newer_tags(buf, n): i64 {
             continue;
         }
         var newer = _dep_newer_tags(tf, mine);
-        sys_unlink(tf);
+        _cbt_scratch_drop(tf);
         if (vec_len(newer) == 0) { println(" pinned; it is the newest version tag"); continue; }
         sys_write(STDOUT_FD, " pinned; newer tags: ", 21);
         var k = 0;

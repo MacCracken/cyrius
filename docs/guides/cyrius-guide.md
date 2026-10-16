@@ -4770,7 +4770,8 @@ the preprocessed `cpp_<pid>`, the `cc_err` capture, the child's `<out>.tmp.<pid>
 output for `cyrius build`), a check's own output — removes the then-empty temp dir and exits
 128+N (143, 130, 129). A file in that dir that is not compile scratch, such as a `cyrius test`
 binary, stays, and so does the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
-forks) and a local-mode resolve's git queries (their `wt_err` capture and the git they run) are
+forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt_err` / `wt_out` /
+`ls_remote` captures and the git they run) are
 stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
 shell) stays ignored. Through 6.7.11 a kill left all three

@@ -66,7 +66,8 @@
 #     dir, its six compilers); an inherited SIG_IGN overridden -> 1 RED (the nohup row).
 #   * (6.7.13) capacity's `cap_err` / compiler and `_dep_wt_run`'s `wt_err` / git child untracked
 #     again (the 6.7.13-open CLI) -> 4 RED (capacity's dir and compiler, the --local git row's dir
-#     and git); their anti-vacuous rows stay GREEN.
+#     and git); their anti-vacuous rows stay GREEN. `_dep_wt_run`'s stdout capture untracked again
+#     (that commit's CLI) -> 2 RED (the rev-parse and ls-remote rows' dirs, holding wt_out / ls_remote).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -537,16 +538,16 @@ for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
     G7GIT=$(command -v git)
     mkdir -p "$T/g7bin"
-    # g7_run <tag> <git subcommand to sleep on>: the --local build in the background, stopped by
+    # g7_run <tag> <git subcommand to sleep on> <verb...>: the verb in the background, stopped by
     # SIGTERM once the stand-in sleeps; leaves the live names in $T/k7-<tag>.live, the exit status
     # in $T/k7-<tag>.rc and "gone" / "running" for the stand-in git in $T/k7-<tag>.cc.
     g7_run() {
-        _gt=$1
-        printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "%s" ] && { echo $$ > "%s/g7.cc"; exec sleep 60; }; done\nexec "%s" "$@"\n' "$2" "$T" "$G7GIT" > "$T/g7bin/git"
+        _gt=$1; _gs=$2; shift 2
+        printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "%s" ] && { echo $$ > "%s/g7.cc"; exec sleep 60; }; done\nexec "%s" "$@"\n' "$_gs" "$T" "$G7GIT" > "$T/g7bin/git"
         chmod +x "$T/g7bin/git"
         rm -f "$T/g7.cc" "$T/p7-$_gt" "$T/k7-$_gt.rc" "$T/k7-$_gt.live" "$T/k7-$_gt.cc"
         ( _kr=0; cd "$P6" && HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 PATH="$T/g7bin:$PATH" TMPDIR="$TB/" \
-            sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" build --local > "$T/o7-$_gt" 2>&1 || _kr=$?
+            sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" "$@" > "$T/o7-$_gt" 2>&1 || _kr=$?
           echo "$_kr" > "$T/k7-$_gt.rc" ) 2>/dev/null &
         _gb=$!
         _gw=0
@@ -562,12 +563,29 @@ if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
             echo gone > "$T/k7-$_gt.cc"
         fi
     }
-    g7_run gci check-ignore
+    g7_run gci check-ignore build --local
     check "a --local build SIGTERM'd in its check-ignore query — git's stderr capture is in flight (anti-vacuous)" yes \
         "$(grep -qx wt_err "$T/k7-gci.live" 2>/dev/null && echo yes || echo no)"
     check "  …the CLI exits 143" 143 "$(cat "$T/k7-gci.rc" 2>/dev/null || echo none)"
     check "  …its private dir is gone (no wt_err left)" 0 "$(k7_dirs gci "$TB")"
     check "  …the git it was running is stopped" gone "$(cat "$T/k7-gci.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    # A query with a stdout capture: the parent creates it (`wt_out` for the checkout's state line,
+    # `ls_remote` for update's tag listing) and the caller unlinks it once read — a SIGTERM while
+    # git ran left it, and the dir, until 6.7.13.
+    g7_run grp rev-parse build --local
+    check "a --local build SIGTERM'd in its rev-parse query — the stdout capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx wt_out "$T/k7-grp.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the CLI exits 143" 143 "$(cat "$T/k7-grp.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no wt_out / wt_err left)" 0 "$(k7_dirs grp "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-grp.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    g7_run gls ls-remote update
+    check "update SIGTERM'd in its ls-remote query — the tag listing's capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx ls_remote "$T/k7-gls.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the CLI exits 143" 143 "$(cat "$T/k7-gls.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no ls_remote / wt_err left)" 0 "$(k7_dirs gls "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-gls.cc")"
     for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 else
     echo "  SKIP (named): axis 7 --local git kill row — git is not installed (axis 6's fixture did not run)"
