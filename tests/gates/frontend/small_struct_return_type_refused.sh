@@ -46,6 +46,15 @@
 #                                                          (`return pass(o);` of a dyn from a `: S1` fn: 2 error lines,
 #                                                          the dyn's own refusal and this one)
 #   real tree                                           -> GREEN (17 refusal rows, 10 acceptance rows)
+# 6.7.13 (D4 (a), measured 2026-10-15; R17-R23, A11-A13):
+#   the tree before it (431793cf)                       -> RED 9: R17-R20 compiled, no diagnostic (u's address as the
+#                                                          S8 / S3); R21 R22 refused in other words ("... two registers
+#                                                          ... got `this expression`", "return must be a bare local
+#                                                          identifier ..."); A11-A13 the address's low byte (192 / 71 / 16)
+#   `_ret_small_ptr` typing by `_hl_psid` again         -> RED 7: R17-R20, A11-A13
+#   `_ret_ptr_src` typing by `_hl_psid` again           -> RED 2: R21 R22 (the old refusals)
+#   `_ret_sid_refuse` without kind 3 (`&u` read `u`, `U8`) -> RED 6: R17-R22 (the message names `u` (a `U8`))
+#   real tree                                           -> GREEN (24 refusal rows, 13 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -209,6 +218,38 @@ fn gq<T>(): *S8 { return GPT; }
 fn gu<T>(): U8 { return GU; }
 fn f(): S8 { GPT = &GS8; GU.u = 7; var p: *S8 = gq<i64>(); p.v = p.v + 1; var u: U8 = gu<i64>(); p.v = p.v + u.u; return p; }'"$E" 49 \
     "$T"'fn f(): S8 { var u: S8; u.v = 49; return u; }'"$E"
+
+echo "=== return &x (6.7.13, the user's decision D4 (a), 2026-10-15): &s of the fn's own struct is the struct ==="
+# `return &s;` is `return s;` (tests/tcyr/crossos/struct_return_address_of.tcyr, every leg: small_struct_handle_line.sh
+# R13a); `&u` of ANOTHER struct is refused by name at every size, as `return u;` is — through 6.7.12 the 8 B form
+# returned u's ADDRESS as the S8 (no diagnostic) and the 16 / 24 B forms were refused in other words.
+# docs/development/issues/2026-10-14-return-address-of-struct-local-decision.md
+refuse "R17 return &u; (u: U8) from : S8" "$MS — got \`&u\` (a \`\\*U8\`)" "$T"'fn f(): S8 { var u: U8; u.u = 3; return &u; }'"$E"
+refuse "R18 return (&GU); (a value global of U8)" "$MS — got \`&GU\` (a \`\\*U8\`)" "$T"'fn f(): S8 { return (&GU); }'"$E"
+refuse "R19 return &p; (p: U8, a by-value parameter)" "$MS — got \`&p\` (a \`\\*U8\`)" "$T"'fn f2(p: U8): S8 { return &p; }
+fn f(): S8 { var u: U8; u.u = 4; return f2(u); }'"$E"
+refuse "R20 return &u; (u: U3) from : S3" "$MS — got \`&u\` (a \`\\*U3\`)" "$T"'fn f(): S3 { var u: U3; u.z = 3; return &u; }'"$E3"
+refuse "R21 return &k; (k: K) from : H (16 B)" "$MS — got \`&k\` (a \`\\*K\`)" 'struct H { a; b; }
+struct K { c; d; }
+fn f(): H { var k: K; k.c = 3; k.d = 4; return &k; }
+fn g(): i64 { var s: H = f(); return s.a; }
+syscall(60, g());
+'
+refuse "R22 return (&k); (k: K, a by-value parameter) from : H (24 B)" "$MS — got \`&k\` (a \`\\*K\`)" 'struct H { a; b; c; }
+struct K { d; e; f; }
+fn f2(k: K): H { return (&k); }
+fn f(): H { var k: K; return f2(k); }
+fn g(): i64 { var s: H = f(); return s.a; }
+syscall(60, g());
+'
+# `&w.u` is no expression at all (6.7.13 D3 (b)): its own refusal, once — the return check adds nothing.
+refuse "R23 return &w.u; (the address of a field)" "the address of a field is not taken" "$T"'fn f(): S8 { var w: W; return &w.u; }'"$E"
+accept "A11 return &u; (u: S8) is the struct" "$T"'fn f(): S8 { var u: S8; u.v = 21; return &u; }'"$E" 21 \
+    "$T"'fn f(): S8 { var u: S8; u.v = 21; return u; }'"$E"
+accept "A12 return (&u); (u: S3) is the struct" "$T"'fn f(): S3 { var u: S3; u.c = 22; return (&u); }'"$E3" 22 \
+    "$T"'fn f(): S3 { var u: S3; u.c = 22; return u; }'"$E3"
+accept "A13 return &p; (p: S8, a by-value parameter)" "$T"'fn f2(p: S8): S8 { return &p; }
+fn f(): S8 { var u: S8; u.v = 23; return f2(u); }'"$E" 23 "$T"'fn f(): S8 { var u: S8; u.v = 23; return u; }'"$E"
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 [ "$fail" -eq 0 ] || exit 1

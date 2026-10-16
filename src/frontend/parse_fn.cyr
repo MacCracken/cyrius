@@ -2729,6 +2729,13 @@ fn _ret_struct_pair(S): i64 {
 # name; else the value is parsed, its pointer parked (`_HTEMP`) and S's bytes copied through it into a frame
 # temp — returned, the cursor on `_ret_term`. -1 = not this shape (cursor kept). Never inside an inline
 # replay, as `_ret_small_cls`. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — `return &s;` IS `return s;` (the user's decision D4 (a), 2026-10-15): the value is typed by the
+# dereference operand typer (`_hl_dpsid`), so `& IDENT` of an inline struct — a local, a by-value parameter,
+# a value global, a captured copy — is the struct it points at, as `bs(&s)` into a by-value parameter is
+# (6.7.10 decision 7): over 8 B it was refused in other words ("... two registers ...", "return must be a
+# bare local identifier ..."), at 8 B or less (`_ret_small_ptr`) the ADDRESS of a dead frame was the
+# struct's word. `&u` of another struct is refused by name (kind 3). A handle's / `*T`'s `&h` is its slot,
+# untyped here. CHANGELOG [6.7.13]
 fn _ret_ptr_src(S): i64 {
     if (GIDEP(S) != 0) { return 0 - 1; }
     if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0 - 1; }   # a dyn / tuple / Str fn: its own arms
@@ -2743,11 +2750,12 @@ fn _ret_ptr_src(S): i64 {
     if (e < 0) { return 0 - 1; }
     var a = _ie_unparen(S, st, e);
     var pe = _ie_pe;
-    var ps = _hl_psid(S, a, pe);
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
-    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, 1); }
+    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
@@ -2894,18 +2902,21 @@ fn _ret_expr_sid(S, st): i64 {
 # (`_hl_psid`) — a `*X` local or parameter, and (6.7.11, issues/2026-10-13-small-struct-return-of-pointer-
 # global-or-call-decision.md) a `*X` global, a call or method declared `: *X`, a `*X` field, pointer
 # arithmetic on one: rax (the pointer) becomes S read through it; X another struct is refused by name.
+# 6.7.13 (D4 (a)): and `& IDENT` of an inline struct (`_hl_dpsid`) — see `_ret_ptr_src`. CHANGELOG [6.7.13]
 fn _ret_small_ptr(S, st): i64 {
     var a = _ie_unparen(S, st, GTI(S));
     var pe = _ie_pe;
-    var ps = _hl_psid(S, a, pe);
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, 1); }
+    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
     _hl_pval_ra(S, ps);
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
-# `*U8`)), 2 a dereference (`*pu` (a `U8`)). Reported at token `ti`; the parse goes on (no cascade).
+# `*U8`)), 2 a dereference (`*pu` (a `U8`)), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
+# token `ti`; the parse goes on (no cascade).
 fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -2914,9 +2925,10 @@ fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
+    if (kind == 3) { PRSTR("&"); }
     PRSTR(S + 0xEC00000 + nm);
     PRSTR("` (a `");
-    if (kind == 1) { PRSTR("*"); }
+    if (kind == 1 || kind == 3) { PRSTR("*"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
     PRSTR("`)\n");
     _had_error = 1;

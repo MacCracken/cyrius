@@ -1,0 +1,113 @@
+# struct_return_address_of.tcyr — 6.7.13 (the user's decision D4 (a), 2026-10-15). `return &s;` in a fn
+# declared `: S`, with `s` an inline struct of S — a local, a by-value parameter, a value global — is
+# `return s;`: the struct `&s` points at, at every size, as `bs(&s)` into a by-value parameter passes the
+# struct (6.7.10 decision 7) and `return GP;` of a `*S` returns its pointee (6.7.11 D1)
+# (docs/development/issues/2026-10-14-return-address-of-struct-local-decision.md).
+#
+# ⛔ THE DEFECT, every release through 6.7.12. `&s` is no `*S` to the return arms' typing, so at 8 B or less
+# the ADDRESS of `s` — a dead frame's, for a local — was the struct's word (`c.v` held `&s`: the filed
+# ra.cyr exited 0 where 1 is right; at 3 B the three fields were the address's low bytes), at 9-16 B it
+# was refused "... is returned in two registers ... got `this expression`" and over 16 B "struct-return
+# fn: return must be a bare local identifier ...". `&u` of ANOTHER struct is refused by name
+# (tests/gates/frontend/small_struct_return_type_refused.sh); a handle's / `*T`'s `&h` is its slot.
+#
+# Each row reads the received struct field by field against hand-computed constants; a global's and an
+# address-passed parameter's rows write the source after the call (a copy, not an alias); the padding row
+# reads the byte after a 3 B struct received from `return &s;` with 0xFF in s's slot (the word's padding
+# is 0: read byte-exact). CROSS-HOST: the copy is the byte copy every backend emits.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+struct Z3 { a: u8; b: u8; c: u8; }   # 3 B — one word in rax, read byte-exact
+struct B8 { v; }                     # 8 B — one word in rax
+struct P2 { x; y; }                  # 16 B — the rax:rdx pair class
+struct P3 { x; y; z; }               # 24 B — the retptr class
+struct O12 { a: i64; b: i32; }       # 12 B — the pair class, odd tail
+
+var G3 = Z3 { 1, 2, 3 };
+var G8 = B8 { 41 };
+var G16 = P2 { 5, 6 };
+var G24 = P3 { 7, 8, 9 };
+
+# A local.
+fn l3(): Z3 { var s: Z3; s.a = 1; s.b = 2; s.c = 3; return &s; }
+fn l8(): B8 { var s: B8; s.v = 41; return &s; }
+fn l16(): P2 { var s: P2; s.x = 5; s.y = 6; return &s; }
+fn l24(): P3 { var s: P3; s.x = 7; s.y = 8; s.z = 9; return &s; }
+fn l12(): O12 { var s: O12; s.a = 4; s.b = 0 - 3; return &s; }
+# Wrapped.
+fn w3(): Z3 { var s: Z3; s.a = 1; s.b = 2; s.c = 3; return (&s); }
+fn w8(): B8 { var s: B8; s.v = 41; return ((&s)); }
+fn w16(): P2 { var s: P2; s.x = 5; s.y = 6; return (&s); }
+fn w24(): P3 { var s: P3; s.x = 7; s.y = 8; s.z = 9; return ((&s)); }
+# A value global.
+fn g3(): Z3 { return &G3; }
+fn g8(): B8 { return &G8; }
+fn g16(): P2 { return &G16; }
+fn g24(): P3 { return (&G24); }
+# A by-value parameter (inline at 8 B or less, address-passed over 8 B: its `&p` is the caller's struct).
+fn p3(p: Z3): Z3 { return &p; }
+fn p8(p: B8): B8 { return &p; }
+fn p16(p: P2): P2 { return &p; }
+fn p24(p: P3): P3 { return (&p); }
+# The padding row: 0xFF across s's slot, then the 3 fields.
+fn z3(): Z3 { var s: Z3; store64(&s, 0 - 1); s.a = 1; s.b = 2; s.c = 3; return &s; }
+fn zdirty(): i64 {
+    var a: i64[16];
+    var i = 0;
+    while (i < 16) { a[i] = 0 - 1; i = i + 1; }
+    return a[15];
+}
+
+fn t_l3() { var c: Z3 = l3(); return c.a * 100 + c.b * 10 + c.c; }
+fn t_l8() { var c: B8 = l8(); return c.v; }
+fn t_l16() { var c: P2 = l16(); return c.x * 10 + c.y; }
+fn t_l24() { var c: P3 = l24(); return c.x * 100 + c.y * 10 + c.z; }
+fn t_l12() { var c: O12 = l12(); return c.a * 10 + c.b; }
+fn t_w3() { var c: Z3 = w3(); return c.a * 100 + c.b * 10 + c.c; }
+fn t_w8() { var c: B8 = w8(); return c.v; }
+fn t_w16() { var c: P2 = w16(); return c.x * 10 + c.y; }
+fn t_w24() { var c: P3 = w24(); return c.x * 100 + c.y * 10 + c.z; }
+fn t_g3() { var c: Z3 = g3(); G3.a = 0; var r = c.a * 100 + c.b * 10 + c.c; G3.a = 1; return r; }
+fn t_g8() { var c: B8 = g8(); G8.v = 0; var r = c.v; G8.v = 41; return r; }
+fn t_g16() { var c: P2 = g16(); G16.x = 0; var r = c.x * 10 + c.y; G16.x = 5; return r; }
+fn t_g24() { var c: P3 = g24(); G24.x = 0; var r = c.x * 100 + c.y * 10 + c.z; G24.x = 7; return r; }
+fn t_p3() { var q: Z3; q.a = 4; q.b = 5; q.c = 6; var c: Z3 = p3(q); q.a = 0; return c.a * 100 + c.b * 10 + c.c; }
+fn t_p8() { var q: B8; q.v = 77; var c: B8 = p8(q); q.v = 0; return c.v; }
+fn t_p16() { var q: P2; q.x = 1; q.y = 2; var c: P2 = p16(q); q.x = 9; return c.x * 10 + c.y; }
+fn t_p24() { var q: P3; q.x = 1; q.y = 2; q.z = 3; var c: P3 = p24(q); q.x = 9; return c.x * 100 + c.y * 10 + c.z; }
+fn t_z3() { zdirty(); var c: Z3 = z3(); return load8(&c + 3) * 1000 + c.a * 100 + c.b * 10 + c.c; }
+# An untyped receive is the struct (6.7.11 D42), and an assignment into an existing local.
+fn t_u16() { var c = l16(); return c.x * 10 + c.y; }
+fn t_a24() { var c: P3; c.x = 0; c.y = 0; c.z = 0; c = l24(); return c.x * 100 + c.y * 10 + c.z; }
+# Straight into a by-value parameter.
+fn tk3(c: Z3): i64 { return c.a * 100 + c.b * 10 + c.c; }
+fn tk16(c: P2): i64 { return c.x * 10 + c.y; }
+fn t_k3() { return tk3(l3()); }
+fn t_k16() { return tk16(g16()); }
+
+assert_eq(t_l3(), 123, "6.7.13 D4: 3 B `return &s;` (a local): the struct, not its address");
+assert_eq(t_l8(), 41, "6.7.13 D4: 8 B `return &s;` (a local): the struct, not its address");
+assert_eq(t_l16(), 56, "6.7.13 D4: 16 B `return &s;` (a local): the struct (was refused)");
+assert_eq(t_l24(), 789, "6.7.13 D4: 24 B `return &s;` (a local): the struct (was refused)");
+assert_eq(t_l12(), 37, "6.7.13 D4: 12 B `return &s;` (a local, the pair class's odd tail): the struct");
+assert_eq(t_w3(), 123, "6.7.13 D4: 3 B `return (&s);`: the struct");
+assert_eq(t_w8(), 41, "6.7.13 D4: 8 B `return ((&s));`: the struct");
+assert_eq(t_w16(), 56, "6.7.13 D4: 16 B `return (&s);`: the struct");
+assert_eq(t_w24(), 789, "6.7.13 D4: 24 B `return ((&s));`: the struct");
+assert_eq(t_g3(), 123, "6.7.13 D4: 3 B `return &G;` (a value global): a copy");
+assert_eq(t_g8(), 41, "6.7.13 D4: 8 B `return &G;` (a value global): a copy");
+assert_eq(t_g16(), 56, "6.7.13 D4: 16 B `return &G;` (a value global): a copy");
+assert_eq(t_g24(), 789, "6.7.13 D4: 24 B `return (&G);` (a value global): a copy");
+assert_eq(t_p3(), 456, "6.7.13 D4: 3 B `return &p;` (a by-value parameter): the struct");
+assert_eq(t_p8(), 77, "6.7.13 D4: 8 B `return &p;` (a by-value parameter): the struct");
+assert_eq(t_p16(), 12, "6.7.13 D4: 16 B `return &p;` (an address-passed by-value parameter): a copy");
+assert_eq(t_p24(), 123, "6.7.13 D4: 24 B `return (&p);` (an address-passed by-value parameter): a copy");
+assert_eq(t_z3(), 123, "6.7.13 D4: 3 B `return &s;` with 0xFF in s's slot: the word's padding 0");
+assert_eq(t_u16(), 56, "6.7.13 D4: 16 B `var c = l16();` (an untyped receive): the struct");
+assert_eq(t_a24(), 789, "6.7.13 D4: 24 B `c = l24();` (an assignment): the struct");
+assert_eq(t_k3(), 123, "6.7.13 D4: 3 B `tk3(l3())` (into a by-value parameter): the struct");
+assert_eq(t_k16(), 56, "6.7.13 D4: 16 B `tk16(g16())` (into a by-value parameter): the struct");
+var r = assert_summary();

@@ -1553,8 +1553,15 @@ Before 6.7.11 a fn of 8 bytes or less returned the POINTER as the struct's word,
 `&GS`; only a `p: *S8` parameter copied, since 6.6.17), and over 8 bytes every form but a `*S` local or
 parameter was a compile error (*… got `GP`*, *identifier is not a local*). A `*U` of another struct is
 refused by name at every size (*… takes a value of that struct, or a pointer to one — got `GU` (a
-`*U`)*). `&s` is not one of these: it is an untyped address (a fn of 8 bytes or less returns it as the
-word).
+`*U`)*).
+
+⚠ **`return &s;` is `return s;` (6.7.13).** `&s` of an inline struct of the fn's struct — a local, a
+by-value parameter, a value global, inside parentheses or not — returns the struct `&s` points at, at
+every size, as `bs(&s)` passes it into a by-value parameter. Through 6.7.12 a fn of 8 bytes or less
+returned the ADDRESS as the struct's word (for a local, a dead frame's), and over 8 bytes it was a
+compile error in other words (*… two registers … got `this expression`*, *return must be a bare local
+identifier …*). `&u` of another struct is refused by name at every size (*… got `&u` (a `*U`)*). A
+handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct.
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,

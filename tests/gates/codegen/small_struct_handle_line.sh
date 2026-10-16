@@ -220,6 +220,11 @@
 #      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
+#   R13a (6.7.13, issues/2026-10-14-return-address-of-struct-local-decision.md, the user's decision D4 (a) of
+#      2026-10-15) tests/tcyr/crossos/struct_return_address_of.tcyr on the same legs (floor 22): `return &s;` from a
+#      fn declared `: S` — s a local, a value global, a by-value parameter, wrapped — is the struct, at 3 / 8 / 12 /
+#      16 / 24 B, a copy, its word's padding 0 (through 6.7.12 the ADDRESS at 8 B or less, refused over 8 B); the
+#      `&u` refusals are small_struct_return_type_refused.sh R17-R23
 #   R14 (6.7.11, issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
 #      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 143): a
 #      struct VALUE into a typed `*S` GLOBAL — a local, a value global, a by-value parameter, a call, a field
@@ -513,6 +518,12 @@
 #                                                      zone's `var Z: S = *gpg<S>();` a handle holding the word
 #                                                      the dereference read)
 #   MP2 `_ret_ptr_record` without the binding       -> RED 7: R12 does not build x7
+# 6.7.13 RETURN-ADDRESS-OF MUTATION LEDGER (2026-10-15, R13a; CYCC=mutant, each a one-change copy of the fixed
+# src built by the fixed compiler):
+# (the a64 / cx legs' compilers are built from the tree's src, so a mutant shows on x86 x4 + PE):
+#   the tree before it (431793cf)                   -> RED 5: R13a does not build (`return &s;` at 16 B refused)
+#   `_ret_ptr_src` typing by `_hl_psid` again       -> RED 5: R13a does not build (the 16 / 24 B rows refused)
+#   `_ret_small_ptr` typing by `_hl_psid` again     -> RED 5: R13a 10 of 22 rows (3 / 8 B: the address's bytes)
 # 6.7.11 SMALL STRUCT RETURN MUTATION LEDGER (2026-10-14, the same method; R13,
 # issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md):
 #   the tree before it (3fc1dbbb)                   -> RED 8: R13 18 of 24 rows x7 (the `*T` local's address), C6
@@ -902,6 +913,20 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R13 $leg: the values file did not build: $(grep '^error' "$D/rc_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NRC passed, 0 failed ($NRC total)" ]; then ok "R13 $leg: $LAST"
     else bad "R13 $leg: exit $RC, '$LAST' (want '$NRC passed, 0 failed ($NRC total)') $(grep -m3 'FAIL' "$D/rc_$n.out" | tr '\n' ' ')"; fi
+done
+
+TRA=tests/tcyr/crossos/struct_return_address_of.tcyr
+[ -f "$TRA" ] || { echo "FAIL: $G: $TRA is missing"; exit 1; }
+NRA=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TRA")
+RAFLOOR=22
+if [ "$NRA" -lt "$RAFLOOR" ]; then echo "FAIL: $G: only $NRA rows in $TRA (floor $RAFLOOR) — rows were lost"; exit 1; fi
+echo "R13a. $TRA ($NRA rows: return &s; from a fn returning S is the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TRA" "$D/ra_$n"
+    if [ "$RC" -eq -1 ]; then bad "R13a $leg: the values file did not build: $(grep '^error' "$D/ra_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NRA passed, 0 failed ($NRA total)" ]; then ok "R13a $leg: $LAST"
+    else bad "R13a $leg: exit $RC, '$LAST' (want '$NRA passed, 0 failed ($NRA total)') $(grep -m3 'FAIL' "$D/ra_$n.out" | tr '\n' ' ')"; fi
 done
 
 TVG=tests/tcyr/crossos/struct_value_into_ptr_global.tcyr
@@ -1760,4 +1785,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
