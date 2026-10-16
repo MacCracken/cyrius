@@ -243,6 +243,7 @@
 #       type in a generic fn": the scan ran past a bodyless generic trait member to the next `{`)
 # 6.7.11 REPAIR 1 (the returns lane; the same recipe):
 #   MRL `_body_ends_in_loop` returns 0 -> R16x BUILDS (a callee ending in `loop { return x; }` captured a stale rdx)
+#   (6.7.13) `_cond_is_one` without its `true` arm -> R16x-true BUILDS
 #   MRA `_prescan_ret_arity` records nothing -> R16y-R16ab BUILD; MRC `_tup_cap_class` without its count arm ->
 #       R16y-R16ab BUILD
 #   MRP `_mret_ret_check` answering 0 -> R16ad BUILDS; MRL2 its late report not yielding to the arms' own refusal ->
@@ -806,6 +807,7 @@ refused r16w "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)"
 # R16x (6.7.11) — a callee whose body ends in an infinite loop no \`break\` leaves is provably one value too
 # (\`_body_ends_in_loop\`): the R12 refusal, where it captured a stale second register.
 refused r16x "$I12 't' with a value that is not a tuple" "R16x: a callee ending in \`loop { return x; }\` (6.7.11: one value, R12)" "fn one(x) { loop { return x; } }\n${F5}    var t: (i64, i64) = one(1);${E5}"
+refused r16xt "$I12 't' with a value that is not a tuple" "R16x-true: a callee ending in \`while (true) { return x; }\` (6.7.13, D27 A)" "fn one(x) { while (true) { return x; } }\n${F5}    var t: (i64, i64) = one(1);${E5}"
 # R16y-R16ab (6.7.11) — an UNDECLARED callee whose every \`return\` is \`(..)\` of one arity returns that many
 # values (pass 1, \`_prescan_ret_arity\`): a capture of another count is refused as a declared one is (it took
 # a stale r8 / dropped one); the matching count still captures.

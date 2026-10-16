@@ -2782,7 +2782,8 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # at top level, a forward-declared `one` included. A body
 #                                     # ending in `loop { }`, `while (1) { }` or
 #                                     # `do { } while (1);` that no `break` leaves ends in its
-#                                     # returns too (6.7.11)
+#                                     # returns too (6.7.11), and `while (true) { }` /
+#                                     # `do { } while (true);` (6.7.13)
 #   var a, b = mk(5);                 # `mk` returns a struct over 16 B: it comes back through a
 #                                     # hidden pointer, not registers, so there is no second word —
 #                                     # `cannot destructure 'mk' - it returns struct 'Q', which is

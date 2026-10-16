@@ -21,7 +21,10 @@
 #           `while (1) { }` and `do { } while (1);` are proved one value as a final `return` is, at fn
 #           scope and at top level; a `break` only in a nested loop / switch, or a closure's `return`,
 #           does not unprove it. A loop a `break` can leave stays silent (the body falls off its end),
-#           and so does a non-literal-1 condition.
+#           and so does a non-literal-1 condition. (6.7.13, D27 A, the user's decision, 2026-10-15) `while (true)
+#           { }` and `do { } while (true);` are proved as their `1` spellings are (the bool literal 1; both
+#           repros of issues/2026-10-13-while-true-ending-fn-not-provably-single-return.md read the seeded 77
+#           on every target), and pass 1's arity record sees them (cnt_while_true).
 #   axis 4  6.7.11 — an UNDECLARED fn whose every `return` is `(..)` of one arity, and whose body is
 #           left only through them, returns that many values (pass 1, `_prescan_ret_arity`): a
 #           destructure binding another count is refused by name (`var q, r, z = dm(17, 5);` bound z
@@ -67,6 +70,8 @@
 # dropped -> ret_inline_one, ret_inline_two refused; the tuple-local arm dropped -> ret_tuple
 # refused (and tuple_checked.sh's A rows); the late report not yielding to the arms' own refusal ->
 # tuple_checked.sh R9n, R9s, R9t, R14n give two errors.
+# 6.7.13 (run 2026-10-15): `_cond_is_one` without its `true` arm -> while_true_end, dowhile_true_end,
+# while_true_top and cnt_while_true build (tuple_checked.sh R16x-true too).
 # 6.7.13 (run 2026-10-15): `_ret2_in3` answering 0 at once -> ret2_in_3, ret2_in_3_gen build, ret2_in_3_next
 # one error line (return_ret2_in_3 stays refused, by the return check); its `_tn_once` dropped -> ret2_in_3_gen
 # two error lines; the latch left set -> ret2_in_3_next one error line (the next statement's lost).
@@ -150,6 +155,13 @@ runs loop_brk  "${TWO5}fn w(x) { loop { if (x > 0) { two(x); break; } return x; 
 runs do_brk    "${TWO5}fn w(x) { var i = 0; do { i = i + 1; if (i > 50) { return i; } if (i > 2) { two(x); break; } } while (1); }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
 runs while_do_brk "${TWO5}fn w(x) { var i = 0; while (1) { do { i = i + 1; } while (i < 3); if (i > x) { two(x); break; } return i; } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n"  27
 runs loop_fwd  "${TWO5}fn w(x) { loop { return two(x); } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
+# 6.7.13 (D27 A): the `true` spellings — both repros verbatim (seeded: they read h's 77), top level, and a loop
+# a `break` leaves (still silent).
+refused while_true_end "fn h(): (i64, i64, i64) { return (1, 77, 88); }\nfn one(x) { while (true) { return x + 1; } }\nfn main(): i64 { var x, y, w = h(); var a, b = one(1); return b; }\nvar r = main(); syscall(60, r);\n" "3:48: multi-value destructure $M2"
+refused dowhile_true_end "fn h(): (i64, i64, i64) { return (1, 77, 88); }\nfn one(x) { do { if (x > 0) { return x + 1; } x = x + 1; } while (true); }\nfn main(): i64 { var x, y, w = h(); var a, b = one(1); return b; }\nvar r = main(); syscall(60, r);\n" "3:48: multi-value destructure $M2"
+refused while_true_top "fn one(x) { while (true) { if (x > 2) { return x; } x = x + 1; } }\nvar a, b = one(1);\nsyscall(60, a + b);\n" "$M2"
+runs while_true_brk "${TWO5}fn w(x) { while (true) { if (x > 0) { two(x); break; } return x; } }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
+runs dowhile_true_brk "${TWO5}fn w(x) { do { if (x > 0) { two(x); break; } return x; } while (true); }\nfn f(): i64 {\n    var a, b = w(2);\n    return a * 10 + b;\n}\nsyscall(60, f());\n" 27
 
 echo "axis 4 - an undeclared fn's provable count is checked as a declared one:"
 DM='fn dm(a, b) { return (a / b, a % b); }\n'
@@ -165,6 +177,7 @@ refused cnt_forward "fn f(): i64 {\n    var q, r, z = later(17, 5);\n    return 
 refused cnt_method 'struct P { x; }\nimpl P { fn dm(self, b) { return (self.x / b, self.x % b); } }\nfn f(): i64 {\n    var p = P { 17 };\n    var q, r, z = p.dm(5);\n    return q;\n}\nsyscall(60, f());\n' "binds 3 names, but 'P_dm' returns 2 values"
 refused cnt_generic 'fn g<T>(a: T) { return (a, a + 1); }\nfn f(): i64 {\n    var q, r, z = g<i32>(5);\n    return q;\n}\nsyscall(60, f());\n' "binds 3 names, but 'g\$i32' returns 2 values"
 refused cnt_loop   "fn dm(a, b) { loop { if (b > 0) { return (a / b, a % b); } b = b + 1; } }\nfn f(): i64 {\n    var q, r, z = dm(17, 5);\n    return q;\n}\nsyscall(60, f());\n" "$C32"
+refused cnt_while_true "fn dm(a, b) { while (true) { if (b > 0) { return (a / b, a % b); } b = b + 1; } }\nfn f(): i64 {\n    var q, r, z = dm(17, 5);\n    return q;\n}\nsyscall(60, f());\n" "$C32"
 refused cnt_reassign "${DM}fn f(): i64 {\n    var q = 0;\n    var r = 0;\n    var z = 0;\n    q, r, z = dm(17, 5);\n    return q;\n}\nsyscall(60, f());\n" "$C32"
 runs cnt_two      "${DM}fn f(): i64 {\n    var q, r = dm(17, 5);\n    return q * 10 + r;\n}\nsyscall(60, f());\n" 32
 runs cnt_three    "${H3}fn f(): i64 {\n    var q, r, s = h3(1);\n    return q * 100 + r * 10 + s;\n}\nsyscall(60, f());\n" 123
@@ -234,7 +247,7 @@ runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsysca
 runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
 refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
 
-if [ "$rows" -lt 87 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 87)"; exit 1; fi
+if [ "$rows" -lt 93 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 93)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

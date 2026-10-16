@@ -14592,9 +14592,12 @@ fn _body_ends_in_loop(S, li, pi, e): i64 {
     if (cb != e - 1) { return 0; }
     return _loop_exits_by_return(S, ob, cb);
 }
-# `( 1 )` at token k: the constant-true condition `while (1)` spells.
+# `( 1 )` at token k: the constant-true condition `while (1)` spells — or `( true )`, the bool
+# literal 1 (token 169; D27 A, the user's decision, 2026-10-15: `while (true) { .. }` and
+# `do { .. } while (true);` end a body in its returns as `while (1)` does). CHANGELOG [6.7.13]
 fn _cond_is_one(S, k): i64 {
     if (TOKTYP(S, k) != 10) { return 0; }
+    if (TOKTYP(S, k + 1) == 169) { if (TOKTYP(S, k + 2) == 11) { return 1; } return 0; }
     if (TOKTYP(S, k + 1) != 1) { return 0; }
     if (TOKVAL(S, k + 1) != 1) { return 0; }
     if (TOKTYP(S, k + 2) != 11) { return 0; }
