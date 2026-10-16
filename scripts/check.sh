@@ -1134,6 +1134,13 @@ _chk_gate "$ROOT/tests/gates/frontend/closure_declared_names_not_captured.sh"
 # + a PE (wine) leg and crossos/untyped_struct_name_copy.tcyr on every leg.
 _chk_gate "$ROOT/tests/gates/frontend/closure_captured_slice_fields.sh"
 
+# 6.7.13: a closure's capture of a narrow scalar local (i8 .. i32, u8 .. u32) copied the slot's whole raw word: a
+# captured `i8` holding -3 read 253 on every target, a positive one the slot's stale upper bytes on aarch64 / cx. The
+# env copy loads it at its width, sign-extended for a signed one; the filed repro and crossos/closure_capture_narrow_
+# scalar.tcyr on x86_64 / IR=3 / aarch64-qemu / cx / PE (wine); async rows (a non-suspending async fn's capture, the
+# suspending async fn's refusal by name).
+_chk_gate "$ROOT/tests/gates/frontend/closure_capture_narrow_scalar.sh"
+
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
 # at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same

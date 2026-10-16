@@ -6031,6 +6031,11 @@ Capture is **by value**: the closure sees the value the variable held at
 construction. Mutating the original afterward does not change what the closure
 returns, and the closure cannot write back to the enclosing variable. Two
 closures built from the same literal have independent environments.
+A narrow scalar local (`i8` .. `i32`, `u8` .. `u32`) is captured as its value — sign-extended for a signed type,
+zero-extended for an unsigned one — exactly as reading it in its own fn gives it, in a nested closure too. ⚠ Through
+6.7.12 the copy took the local's whole 8-byte slot: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 /
+32 bits) on every target, and a positive one could read stale upper bytes (on aarch64 / cx: -249 for 7). A narrow
+parameter was always right. Pinned by `tests/gates/frontend/closure_capture_narrow_scalar.sh`.
 
 Because the environment is heap-allocated, a translation unit that constructs a
 capturing closure must `include "lib/alloc.cyr"` and call `alloc_init()` before
