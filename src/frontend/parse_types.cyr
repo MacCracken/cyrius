@@ -2526,6 +2526,25 @@ fn _gv_pvd_get(vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gv_pvd + vi);
 }
+# 6.7.13: and a value-form vector global's own vector (`var G: f64v2 = 0;` — GVVEC records only its words), a byte per
+# global the same way (the descriptor less 2048), for `*&G` (`_name_vty`, parse_expr.cyr).
+var _gv_vvd = 0;
+fn _gv_vvd_set(vi, vd): i64 {
+    if (_gv_vvd == 0) {
+        if (vd == 0) { return 0; }
+        _gv_vvd = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_vvd + vi, vd);
+    return 0;
+}
+fn _gv_vvd_get(vi): i64 {
+    if (_gv_vvd == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_vvd + vi);
+}
 # 6.7.13: and a `**T` global's pin (`_ek_pin`, bits 56-62), a byte per global the same way.
 var _gv_ppn = 0;
 fn _gv_ppn_set(vi, pn): i64 {
@@ -2682,12 +2701,20 @@ fn _ps_pin(w): i64 {
     if (w <= 0) { return 0; }
     return (w >> 56) & 0x7F;
 }
-fn _pp_intern(S, v, ent): i64 {
+# 6.7.13: a pin also carries its pointee `*S`'s struct (`sid`, 0 for none) — the step word says only sizeof(S), so
+# `**pps` of a `**S` names S through it (`_ppd_note`, parse_expr.cyr): two structs of one size get two pins.
+var _pp_sids = 0;   # a word per pin: the pointee's struct
+fn _pp_intern(S, v, ent, sid): i64 {
     if (v == 0) { return 0; }
-    if (_pp_tab == 0) { _pp_tab = alloc(128 * 16); }
+    if (_pp_tab == 0) {
+        _pp_tab = alloc(128 * 16);
+        _pp_sids = alloc(128 * 8);
+    }
     var i = 1;
     while (i <= _pp_n) {
-        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) { return i; } }
+        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) {
+                if (L64(_pp_sids + i * 8) == sid) { return i; }
+            } }
         i = i + 1;
     }
     if (_pp_n >= 126) {
@@ -2697,6 +2724,7 @@ fn _pp_intern(S, v, ent): i64 {
     _pp_n = _pp_n + 1;
     S64(_pp_tab + _pp_n * 16, v);
     S64(_pp_tab + _pp_n * 16 + 8, ent);
+    S64(_pp_sids + _pp_n * 8, sid);
     return _pp_n;
 }
 # The pin of the pointer annotation whose first `*` is token `ann`: its pointee interned when that pointee is
@@ -2707,8 +2735,21 @@ fn _pp_pin_at(S, ann, si, ent): i64 {
     if (TOKTYP(S, ann) != 8) { return 0; }
     if (TOKTYP(S, ann + 1) != 8) { return 0; }
     var v = _pp_word_at(S, ann + 1, si, ent);
-    if (v < 0) { return _pp_intern(S, v, ent); }
-    return _pp_intern(S, v, 0 - 1);
+    var sid = _pp_psid(S, ann + 1, si, v);   # 6.7.13: the pointee `*S`'s struct
+    if (v < 0) { return _pp_intern(S, v, ent, sid); }
+    return _pp_intern(S, v, 0 - 1, sid);
+}
+# The struct the pointee annotation `*T` at token `a` points at (`_ptr_ann_sid_tp`: a bound T too), the struct being
+# declared for a late `**S` field (`v` < 0), else 0 (a scalar, a vector, a pointer). CHANGELOG [6.7.13]
+fn _pp_psid(S, a, si, v): i64 {
+    if (v < 0) { return si + 1; }
+    return _ptr_ann_sid_tp(S, a);
+}
+# The struct pin `pin`'s pointee `*S` points at, else 0.
+fn _pp_sid(pin): i64 {
+    if (pin <= 0) { return 0; }
+    if (pin > _pp_n) { return 0; }
+    return L64(_pp_sids + pin * 8);
 }
 # The step word of the pointer type whose first `*` is token `a`, the cursor unmoved: `*T`'s as `_ptr_annot`
 # reads it (quiet: the annotation itself reports an unknown T), a pointer's 8 and its own pin, 0 for a T it does

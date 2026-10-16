@@ -252,6 +252,11 @@ fn main(): i64 {
     assert_eq(load32(&di) * 1000 + load32(&di + 4) * 100 + load32(&di + 8) * 10 + load32(&di + 12), 5678,
       "assigned i32v4 from *p, every lane");
 
+    var da: f64v2 = *&w2;
+    assert_eq(load64(&da) * 100 + load64(&da + 8), 4108, "declared from *&w: the dereference of an address-of a vector");
+    d2 = *(&w2);
+    assert_eq(load64(&d2) * 100 + load64(&d2 + 8), 4108, "assigned from *(&w)");
+
     var r = assert_summary();
     return r;
 }

@@ -120,6 +120,23 @@
 #   SVok `rd(&s)` and `rd(ps)` (a typed `*Pt`) exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   M-S1 `_sarg_svec_err` answering 0                        -> RED 16: SV1 on every leg, SV2-SV9, SVw2-SVw5 (compiled)
 #
+# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — A
+# DEREFERENCE THROUGH AN ADDRESS-OF OR A DOUBLE POINTER IS THE VALUE IT NAMES: the filed `rd(*&b)` / `rd(**ppb)` and the
+# struct analogues `take(*&s)` / `take(**pps)` pushed the loaded word as the address (139 / 139 / 139 / cx 253 or 252 /
+# PE 5). `_dlo_vec` types `&x` of a vector local / parameter / capture / global as its `*V` for the dereference only
+# (`_amp_vd`: `&b + n` still steps bytes), `**ppb` is D9 (a)'s step word, and a pin carries its pointee `*S`'s struct
+# so the outer `*` of `**pps` names S (`_ppd_note` / `_dlo_ppsid`).
+#   DR1-DR5 the two filed repros verbatim, the struct analogue verbatim and its `**pps` form, `rd(*(&b))`: exit 42 on
+#      x86_64 / IR=3 / aarch64 / cx / PE; DRY1 / DRY2 / DRYw `rd(*&f)` / `rd(**ppf)` of an f32v4 (A2), DRS1 / DRSw
+#      `take(**ppq)` of another 24-byte struct, DRK `rp(*&b)` into `*Pt` (D31), each refused once
+#   T  `sp_drows` (FLOOR 79): `*&b`, `*(&b)`, `(*&b)`, `**ppb`, `*&w` of an f64v4, a parameter's, a capture's and a
+#      global's `*&`, a write through `*&b`
+#   M-DR1 `_amp_vd` answering 0 (2026-10-16, measured)       -> RED 20: DR1 DR5 on every leg (139 / cx 253 / PE 5), DRY1
+#       DRYw DRK (compiled), T on every leg
+#   M-DR2 `_dlo_ppsid` answering 0                           -> RED 7: DR4 on every leg (139 / cx 252 / PE 5), DRS1 DRSw
+#       (compiled); and struct_arg_type_refused.sh D17 D18, small_struct_handle_line.sh R10 on every leg
+#   M-DR3 `_pp_intern` keyed without the pointee's struct    -> RED 2: DRS1 DRSw (compiled: `**Q3` shares P3's pin)
+#
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
 # x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
@@ -201,7 +218,8 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=68   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`), the captured-vector rows (`sp_crows`, D32)
+FLOOR=79   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`), the captured-vector rows (`sp_crows`, D32),
+           # the deref-through rows (`sp_drows`)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
@@ -509,6 +527,66 @@ printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt {
   'fn main(): i64 { var s: Pt; s.x = 42; s.y = 7; var ps: *Pt = &s; return rd(&s) + rd(ps) - 42; }' \
   'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
 exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
+
+# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
+# dereference of an ADDRESS-OF a vector, or of a `**V` / `**S`, is the vector / the struct: the filed `rd(*&b)` /
+# `rd(**ppb)` and their struct analogues `take(*&s)` / `take(**pps)` pushed the loaded word as the address (139 on
+# x86_64 / IR=3 / aarch64, cx 253 / 252, PE 5). `_dlo_vec` reads `&x` of a vector as its `*V` (`_amp_vd`; `&b + n`
+# itself still steps bytes), `**ppb` by D9 (a)'s step word, and `**pps` of a `**S` by its pin's struct (`_dlo_ppsid`).
+echo "DR. a dereference through an address-of or a double pointer, into \`*V\` / \`*S\`: the value it names (exit 42)"
+cat > "$D/dr1.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    return rd(*&b);            # want 42
+}
+var rc = main();
+syscall(60, rc);
+EOF2
+cat > "$D/dr2.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    var pb: *f64v2 = &b;
+    var ppb: **f64v2 = &pb;
+    return rd(**ppb);          # want 42
+}
+var rc = main();
+syscall(60, rc);
+EOF2
+cat > "$D/dr3.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn main(): i64 {
+    var s: P3; s.a = 1; s.b = 2; s.c = 42;
+    return take(*&s);          # want 42; `var ps: *P3 = &s; var pps: **P3 = &ps; take(**pps)` the same
+}
+var rc = main();
+syscall(60, rc);
+EOF2
+sed 's/    return take(\*&s);          # want 42; `var ps: \*P3 = &s; var pps: \*\*P3 = &ps; take(\*\*pps)` the same/    var ps: *P3 = \&s; var pps: **P3 = \&ps; return take(**pps);/' "$D/dr3.cyr" > "$D/dr4.cyr"
+grep -q 'return take(\*\*pps);' "$D/dr4.cyr" || bad "DR4: the **pps form was not derived from the filed struct analogue"
+sed 's/rd(\*&b);            # want 42/rd(*(\&b));/' "$D/dr1.cyr" > "$D/dr5.cyr"
+grep -q 'rd(\*(&b));' "$D/dr5.cyr" || bad "DR5: the *(&b) form was not derived from the filed repro"
+exit_rows DR1 "$D/dr1.cyr" 42 "rd(*&b): the filed repro, &b passed"
+exit_rows DR2 "$D/dr2.cyr" 42 "rd(**ppb): the filed repro, *ppb passed"
+exit_rows DR3 "$D/dr3.cyr" 42 "take(*&s): the struct analogue, &s passed"
+exit_rows DR4 "$D/dr4.cyr" 42 "take(**pps): the struct analogue, *pps passed"
+exit_rows DR5 "$D/dr5.cyr" 42 "rd(*(&b))"
+DRH="${H}struct Pt { x; y; }\nstruct P3 { a; b; c; }\nstruct Q3 { x; y; z; }\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rp(p: *Pt): i64 { return p.x; }\nfn take(p: *P3): i64 { return p.c; }\n"
+refused DRY1 "DRY1 rd(*&f), f an f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" x86 "cannot pass 'f' $FRAG 'rd'"
+refused DRY2 "DRY2 rd(**ppf), ppf a **f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pf: *f32v4 = &f; var ppf: **f32v4 = &pf; return rd(**ppf) + 1; }\n${E}" x86 "cannot pass 'ppf' $FRAG 'rd'"
+refused DRS1 "DRS1 take(**ppq), ppq a **Q3 (another 24-byte struct, its pin declared after P3's)" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" x86 "cannot pass 'ppq' to a parameter of a different struct type in a call to 'take'"
+refused DRK "DRK rp(*&b) into *Pt: a vector dereference into another pointer kind (D31)" "${DRH}fn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return rp(*&b) + 1; }\n${E}" x86 "cannot pass '*b' $KFRAG 'rp'"
+if [ "$WINE" = 1 ]; then
+    refused DRYw1 "DRYw DRY1 on PE" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" pe "cannot pass 'f' $FRAG 'rd'"
+    refused DRSw1 "DRSw DRS1 on PE" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" pe "cannot pass 'ppq' to a parameter of a different struct type in a call to 'take'"
+fi
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
 cat > "$D/v8.cyr" <<'EOF'

@@ -1061,7 +1061,12 @@ through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written
 `***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. Through 6.7.12 `*pp` was the
 untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
 declaration warned *assigning non-pointer to typed pointer*. A program may name at most 126 distinct
-pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*).
+pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*). **`**pps` of a `pps: **S` is the
+struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S` over 8 B) passes `*pps`, as
+`take(*ps)` passes `ps` — a `**S` local, parameter, field, global or capture, inside parentheses or written `*(*pps)`
+— and a `**Q` of another struct is refused by name (*cannot pass 'ppq' to a parameter of a different struct type*). ⚠
+Through 6.7.12 (and 6.7.13 before this) the word `**pps` read — S's first field — was passed as the address: 139 on
+x86_64 and aarch64, a cx guest fault, exit 5 on Windows.
 Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
 (6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
@@ -1661,7 +1666,7 @@ one word: `lanes(v)` was refused on x86_64 / aarch64 / cx and faulted on Windows
 **A dereference of a `*V` is the vector (6.7.13; the user's decision D34, 2026-10-15: A).** `var v: f64v2 =
 *p;` and `v = *p;` with `p: *f64v2` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
 struct — `p` a local, a parameter, a capture, a field, a global, a `: *V` call, `p + n`, inside parentheses
-(`(*p)`), and `**pp` of a `**f64v2`; `v` is a copy (writing either side leaves the other). A `*q` of another
+(`(*p)`), `**pp` of a `**f64v2`, and `*&w` of a vector `w`; `v` is a copy (writing either side leaves the other). A `*q` of another
 vector type is refused as a local of that type is — `cannot copy 'q' into a variable of a different
 struct/vector type: 'v'`, the same-size ones too (`*i32v4` into `f64v2`). ⚠ Refused since 6.7.11 (*… got
 `*p`*); through 6.7.10 it stored one word, the high lanes stale (x86_64 210, aarch64 74, cx 98, Windows 146 where
@@ -3550,8 +3555,12 @@ D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`
 address is passed (on Win64 the temporary is the call's hidden result pointer, a method's before
 `self`), as a struct call result into `*T` is (6.6.20; through 6.7.12 the method and the explicit
 instance passed lane 0 as the address); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
-a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)` passes a struct's
-pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
+a field, a global, a `: *V` call, `pv + n`, and (6.7.13) `*ppv` of a `**V` — passes `pv` itself, as `take(*p)`
+passes a struct's pointer (6.7.10). **A dereference of an address-of a vector is that vector (6.7.13):**
+`rd(*&b)` and `rd(*(&b))` — `b` a vector local, a parameter, a closure's capture or a vector global — pass `&b`, as
+`rd(b)` does, and `var v: f64v2 = *&w;` copies `w` (*A dereference of a `*V` is the vector*); `&b` itself is still the byte pointer (`&b + 8` is lane
+1). ⚠ Through 6.7.12 `rd(*&b)` and `rd(**ppb)` passed lane 0 as the address (139 on x86_64 and aarch64, a cx guest
+fault, exit 5 on Windows). A call result or a `*` of another vector type is refused with the words above. At
 top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
 a fn's frame - call it inside a fn`. `*f32v8` is a `*V` like the others (`r8(e)` passes `&e`; a
 value-form `v: f32v8` parameter: below). A vector **local** passed to a pointer of

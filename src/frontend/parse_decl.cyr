@@ -4989,6 +4989,7 @@ fn _vecg_size(S, vi, desc): i64 {
     if (n < 1) { return 0; }
     S64(_vars_base + vi * 8, n * 8);
     SVVEC(S, vi, n);
+    _gv_vvd_set(vi, 0 - desc - 2048);   # 6.7.13: its vector, for `*&G`
     return 0;
 }
 # The initializer of a vector global: only a constant 0 (the image is zero) — any other value
@@ -6840,7 +6841,8 @@ fn _vrcv_dsrc(S, ti, term): i64 {
 }
 # The kind-4 source at the cursor (`_vrcv_k` parentheses, then `*`) into the vector at slot `dst` of type `ty`, named
 # `noff`: E is parsed (rax = the pointer) and its vector read from its step word (6.7.12's bits 48-55: a `*V` local,
-# parameter, capture, field, global, `: *V` call, `pv + n`, `*pp` of a `**V`) — `ty`'s: the 16 / 32 bytes copied
+# parameter, capture, field, global, `: *V` call, `pv + n`, `*pp` of a `**V`; `&x` of a vector, `_dop_vd`) — `ty`'s:
+# the 16 / 32 bytes copied
 # through it (a hidden temp holds the pointer); another vector refused by name, as a local of another type is; none (an
 # untyped word): the receive refusal, `verb` its verb. The wrap's `)`s consumed, the cursor on the terminator. 0.
 fn _vrcv_demit(S, dst, ty, verb, noff): i64 {
@@ -6849,7 +6851,7 @@ fn _vrcv_demit(S, dst, ty, verb, noff): i64 {
     var a = ti + k + 1;
     STI(S, a);
     PARSE_FACTOR(S);
-    var vd = _ps_vdesc(_pk_word(S));
+    var vd = _dop_vd(S, a, GTI(S));   # its step word's vector, or `&x` of a vector
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     var pe = GTI(S);

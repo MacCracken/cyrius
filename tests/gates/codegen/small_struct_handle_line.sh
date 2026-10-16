@@ -182,7 +182,7 @@
 # address (SIGSEGV; PE an access violation; cx a guest error). Its runtime half is
 # tests/tcyr/crossos/struct_deref_whole_operand.tcyr (every shape against its 16 B twin, 24 B, `*S` parameters
 # of 1 / 3 / 7 / 8 B, top level):
-#   R10 that file on the same legs as R1, N derived from it (floor 160; 6.7.11: the `z` rows — a dereference
+#   R10 that file on the same legs as R1, N derived from it (floor 168; 6.7.11: the `z` rows — a dereference
 #      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0; 6.7.13: the `zs` / `zv` / `zh` / `zc` / `zq` rows —
 #      a by-value self from a `*S`, a `*S` into a by-value parameter, a handle (and a captured one) by value,
 #      `return q` of a `*S` parameter, at 1..7 B: the word's padding 0, never the frame's old bytes; the `zw`
@@ -190,7 +190,11 @@
 #      rows — a dereference of an address-of, `*(&p)` / `*&p`, at 3 / 8 / 16 / 24 B is the struct p names,
 #      as an argument (a local, a by-value parameter, a global, a capture), into a `*S` parameter, as an
 #      operator's left (dispatched) and right operand, at top level; through 6.7.12 p's first word was passed
-#      as its address — and the guards: a handle's `take(*(&h))`, `*(&x + 8)`)
+#      as its address — and the guards: a handle's `take(*(&h))`, `*(&x + 8)`; 6.7.13 (the vectors lane, issues/2026-
+#      10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md): the `d` rows — `**pp`
+#      of a `**T3` into a `*T3` (a local, wrapped, `*(*pp)`, a parameter, a field, a capture, a top-level global)
+#      and into a by-value H, the struct the pin names; through 6.7.13's structs lane its first field was the
+#      address (139); floor 168. Mutation: `_dlo_ppsid` answering 0 -> RED R10 on every leg (measured 2026-10-16))
 #   R10a (6.7.13, issues/2026-10-14-dereference-of-address-of-struct-faults.md) the two filed repros, verbatim:
 #      `take(*pp) * 10 + take(*(&p))` exits 99 and `var q: P3 = *(&p); return q.c;` exits 9 (139 / 139 on x86_64
 #      and aarch64, a cx guest error, exit 5 on PE through 6.7.12)
@@ -760,7 +764,7 @@ done
 TD=tests/tcyr/crossos/struct_deref_whole_operand.tcyr
 [ -f "$TD" ] || { echo "FAIL: $G: $TD is missing"; exit 1; }
 ND=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TD")
-DFLOOR=160
+DFLOOR=168   # 6.7.13: + the `**pps` rows (the vectors lane's deref-through bite: `d_*`, TDG)
 if [ "$ND" -lt "$DFLOOR" ]; then echo "FAIL: $G: only $ND rows in $TD (floor $DFLOOR) — rows were lost"; exit 1; fi
 
 TF=tests/tcyr/crossos/struct_field_left_operand.tcyr

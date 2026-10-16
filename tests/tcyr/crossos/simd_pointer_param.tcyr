@@ -167,6 +167,34 @@ fn sp_crows(): i64 {
     return 0;
 }
 
+# ⛔ 6.7.13 — a dereference of an ADDRESS-OF a vector, or of a `**V`, is the vector: `rd(*&b)`, `rd(*(&b))` and
+# `rd(**ppb)` into `*V` pass `&b` / `*ppb` (they pushed lane 0 as the address: 139 / cx 253 / PE 5).
+# issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md
+var GDV: f64v2 = 0;
+fn sp_dparam(x: f64v2): i64 { return sp_hi(*&x); }
+fn sp_drows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var pb: *f64v2 = &b;
+    var ppb: **f64v2 = &pb;
+    assert_eq(sp_lo(*&b), 11, "6.7.13: rd(*&b) passes &b, lane 0");
+    assert_eq(sp_hi(*&b), 22, "6.7.13: rd(*&b), lane 1");
+    assert_eq(sp_hi(*(&b)), 22, "6.7.13: rd(*(&b))");
+    assert_eq(sp_hi((*&b)), 22, "6.7.13: rd((*&b))");
+    assert_eq(sp_lo(**ppb), 11, "6.7.13: rd(**ppb) passes *ppb, lane 0");
+    assert_eq(sp_hi(**ppb), 22, "6.7.13: rd(**ppb), lane 1");
+    var w: f64v4 = f64v4_make(1, 2, 3, 44);
+    assert_eq(sp_w3(*&w), 44, "6.7.13: rd(*&w) into *f64v4, lane 3");
+    assert_eq(sp_dparam(b), 22, "6.7.13: rd(*&x), x a value-form parameter");
+    var c = |k| sp_hi(*&b) + k;
+    assert_eq(fncall1(c, 1), 23, "6.7.13: rd(*&b), b a closure's capture");
+    store64(&GDV, 31);
+    store64(&GDV + 8, 32);
+    assert_eq(sp_hi(*&GDV), 32, "6.7.13: rd(*&G), G a vector global");
+    sp_wr(*&b, 77);
+    assert_eq(load64(&b), 77, "6.7.13: a write through rd(*&b) reaches b");
+    return 0;
+}
+
 fn sp_rows(): i64 {
     var b: f64v2 = f64v2_make(11, 22);
     var w: f64v4 = f64v4_make(1, 2, 3, 44);
@@ -224,4 +252,5 @@ sp_rows();
 sp_vrows();
 sp_mrows();
 sp_crows();
+sp_drows();
 var r = assert_summary();

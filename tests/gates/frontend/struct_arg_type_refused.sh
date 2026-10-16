@@ -56,6 +56,11 @@
 #   `_psid_def_note` writes a redefined fn's record    -> RED A9 (a false refusal)
 #   real tree                                          -> GREEN (41 refusal rows, 12 acceptance rows — R4a R4b R13b accept a typed pointer since the user's decision of 2026-10-08)
 #
+# 6.7.13 (the vectors lane; issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-
+# param.md, the struct analogue) — `**ppq` OF A `**Q` IS THE STRUCT AS AN ARGUMENT: D17 `bqp(**ppq)` passes `*ppq`
+# (exit 139 before), D18 a `**Pt` into `*Q` refused by name. Mutation (scratch tree, measured 2026-10-16):
+#   `_dlo_ppsid` answers 0                             -> RED D17 (exit 139) D18 (compiled)
+#
 # 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse_fn.cyr):
 # R18b `gx(b)` flips from a refusal to an acceptance (exit 8, control `gx<Pt>(b)`). What stays: an
 # `x: T` parameter binds T before the struct carrier does (R18c — the literal's i64, so the
@@ -700,6 +705,17 @@ accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) do
     "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(*(&w)) * 10 + gw(*&w); } syscall(60, go());" \
     11 \
     "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(w) * 10 + gw(w); } syscall(60, go());"
+
+# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md, the struct
+# analogue): `**pps` of a `pps: **S` is the struct S as an argument — its pin carries S (`_pp_psid`), the outer `*`
+# reads it (`_dlo_ppsid`) — so `bqp(**ppq)` passes `*ppq` (it pushed Q's first field as the address: 139) and a `**Pt`
+# is refused by name, as `bqp(*pp)` is.
+accept "D17 bqp(**ppq), ppq: **Q into b: *Q passes *ppq" \
+    "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; var ppq: **Q = &pq; return bqp(**ppq) * 10 + bqp((**ppq)); } syscall(60, go());" \
+    77 \
+    "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; return bqp(pq) * 10 + bqp(pq); } syscall(60, go());"
+refuse "D18 bqp(**ppp), ppp: **Pt into b: *Q" "cannot pass 'ppp' $MA 'bqp'" \
+    "${T}fn go(): i64 { ${PQ} var pp: *Pt = &p; var ppp: **Pt = &pp; return bqp(**ppp); } syscall(60, go());"
 
 echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
 # `gw((w))` and `gw((mkw(-6)))` call `gw$i32`, as `gw(w)` / `gw(mkw(-6))` do: the i32 -6 tests negative.
