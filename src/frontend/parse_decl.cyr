@@ -3117,6 +3117,9 @@ fn _tup_elem_val(S, sid, k, infer): i64 {
     _refuse_lossy_pair(S);   # 6.7.7 (B4 review)
     var t0 = GTI(S);
     var asid = _expr_struct_sid(S, t0);
+    # 6.7.13 (D2 (a), 2026-10-15): a whole dereference `*ps` of a `*S` is a struct value (6.7.10 decision 6),
+    # refused by name as `(s, 1)` is, through the argument's arm (`_ess_deref`) — it stored S's first word.
+    if (asid == 0) { asid = _ess_deref(S, t0); }
     if (_tup_elem_bad(S, t0, asid) == 1) { return 0; }
     if (infer == 1) {
         if (_UFV_IS_FLOAT(S) == 1) {

@@ -228,6 +228,7 @@
 #   Mz7 `_tup_ret_wrap` returns 0 -> R9n, R9s, PW5, PW7 (the general text)
 #   Mz7b `_tup_ret_wrap` without its `_pwrap_k` test (any literal right after `return (`) -> R9t (the return text)
 #   Mz8 `_ret_tup_err` without its arity arm -> R14q, R14r (the declaration advice)
+#   Mz9 (6.7.13) `_tup_elem_val` without its `_ess_deref` arm -> R8s-R8x BUILD, R8z BUILT
 # 6.7.7 INTEGRATION (B4 x B6, 2026-10-09; the same recipe, mutants of the merged src/; the I rows and the tcyr on x86):
 #   MI1 `_prescan_params_scan`'s tuple arm and its non-name type arm two `if`s again (the hunk-picked merge) ->
 #       I1, I2, I4, I4b (pass 1 counts `t: (i64, i64), k` as one parameter: B6's two-pass backstop), the tcyr
@@ -636,6 +637,26 @@ refused r08f "$E8 struct 'P'" "R8f: a struct-valued call \`(mk(), 1)\`" "${P}fn 
 refused r08q "$E8 struct 'P'" "R8q: a wrapped struct local \`((p), 1)\`" "${P}${TL}    var p: P;\n    var q = ((p), 1);${TE}"
 refused r08r "$E8 struct 'P'" "R8r: a wrapped struct-valued call \`(((mk())), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (((mk())), 1);${TE}"
 refused r08g "a tuple \`( .. )\` is a value only" "R8g: a nested literal \`((1, 2), 3)\`" "${TL}    var q = ((1, 2), 3);${TE}"
+# R8s-R8x (6.7.13, issues/2026-10-14-dereference-as-tuple-element-stores-first-word.md, the user's D2 (a), 2026-10-15):
+# a whole dereference of a `*S` is a struct value (6.7.10 decision 6), so as an element it is refused by name as
+# `(p, 1)` is (through `_ess_deref`, the argument's arm); through 6.7.12 each compiled and stored S's FIRST WORD.
+# The pointer itself and a field through it are i64s and still compile (R8y).
+DP='struct P { a; b; }\nstruct WP { k; p: *P; }\nvar GX = P { 7, 9 };\nvar GP: *P = &GX;\nfn gp(): *P { return &GX; }\n'
+refused r08s "$E8 struct 'P'" "R8s: a wrapped dereference \`((*ps), 1)\`" "${DP}${TL}    var x: P;\n    var ps: *P = &x;\n    var q = ((*ps), 1);${TE}"
+refused r08t "$E8 struct 'P'" "R8t: a \`: *P\` call's \`(*gp(), 1)\`" "${DP}${TL}    var q = (*gp(), 1);${TE}"
+refused r08u "$E8 struct 'P'" "R8u: a \`*P\` field's \`(1, *w.p)\`" "${DP}${TL}    var w = WP { 0, GP };\n    var q = (1, *w.p);${TE}"
+refused r08v "$E8 struct 'P'" "R8v: a dereference of an address-of \`(*(&x), 1)\`" "${DP}${TL}    var x: P;\n    var q = (*(&x), 1);${TE}"
+refused r08w "$E8 struct 'P'" "R8w: top level \`var G = (*GP, 1);\`" "${DP}var G = (*GP, 1);\nsyscall(60, G.1);\n"
+refused r08x "$E8 struct 'P'" "R8x: a tuple argument \`take((*GP, 1))\`" "${DP}${TL}    return take((*GP, 1));${TE}"
+exits r08y 77 "R8y: \`(ps, 1)\` and \`(ps.a, 1)\` — the pointer and a field through it are i64s" "${DP}fn f(): i64 {\n    var ps: *P = &GX;\n    var q = (ps, 1);\n    var r = (ps.a, 1);\n    var pq: *P = q.0;\n    return pq.b * 10 - 20 + r.0 * q.1;\n}\nsyscall(60, f());\n"
+# The filed repro, verbatim: refused at each element, as `(s, w)` is (two struct values: two refusals), no binary.
+printf 'struct P8 { a; }\nstruct P16 { a; b; }\nfn go(): i64 {\n    var s: P8; s.a = 7;\n    var w: P16; w.a = 5; w.b = 9;\n    var ps: *P8 = &s;\n    var pw: *P16 = &w;\n    var t: (i64, i64) = (*ps, *pw);\n    return t.0 * 10 + t.1;\n}\nsyscall(60, go());\n' > "$T/r08z.cyr"
+build r08z
+if [ "$rc" -eq 0 ]; then bad "R8z: the filed (*ps, *pw) BUILT (75 = each struct's first word)"
+elif [ -s "$T/r08z.bin" ]; then bad "R8z: refused but still emitted a binary"
+elif ! grep -qF "$E8 struct 'P8'" "$T/r08z.err" || ! grep -qF "$E8 struct 'P16'" "$T/r08z.err"; then bad "R8z: want P8 and P16 named: $(grep '^error' "$T/r08z.err" | head -2 | tr '\n' '|')"
+elif [ "$(grep -c '^error' "$T/r08z.err")" -ne 2 ]; then bad "R8z: $(grep -c '^error' "$T/r08z.err") error lines (want 2, one per element)"
+else ok "R8z: the filed (*ps, *pw), verbatim: refused at each element by name, no binary"; fi
 refused r08h "cannot store a value that is not a bool into bool field '1'" "R8h: a non-bool into a bool element" "${TL}    var q: (i64, bool) = (1, 5);${TE}"
 exits r08i 7 "R8i: a \`Str\` handle and a \`*T\` are pointers — i64 elements" "include \"lib/str.cyr\"\n${P}fn f(): i64 {\n    alloc_init();\n    var p: P;\n    p.a = 4;\n    var pp: *P = &p;\n    var s = str_from(\"abc\");\n    var q = (s, pp);\n    return str_len(q.0) + load64(q.1);\n}\nsyscall(60, f());\n"
 printf 'fn f(): i64 {\n    var q: (f64, i64) = (1, 5);\n    return q.1;\n}\nsyscall(60, f());\n' > "$T/r08j.cyr"

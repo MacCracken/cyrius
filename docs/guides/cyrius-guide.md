@@ -1686,7 +1686,10 @@ so the call reached the `Box` base. Since 6.7.8 it infers `T = Pt` and calls `gx
 `bs1(((t)))`, `bs1((mk(7)))` and `bs1((w.t))` are refused as `bs1(t)` is, at every size (6.7.11 — through
 6.7.10 a by-value struct of 8 bytes or less took the wrapped spelling unchecked and read the other
 struct's word; `(t.w)` and `(x) + 1` are values, as without the parentheses). A tuple literal's element
-is read the same way: `((p), 1)` is refused as `(p, 1)` is. An argument with NO struct type stays accepted: `&p` (an address, as
+is read the same way: `((p), 1)` is refused as `(p, 1)` is, and since 6.7.13 so is a whole dereference of a `*P`
+— `(*pp, 1)`, `((*pp), 1)`, `(*gp(), 1)`, `(*w.pp, 1)`, `(*(&p), 1)` — a struct value (the user's decision D2 (a),
+2026-10-15; through 6.7.12 it stored P's first word); `(pp, 1)` and `(pp.a, 1)` are i64s. An argument with NO
+struct type stays accepted: `&p` (an address, as
 `var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
