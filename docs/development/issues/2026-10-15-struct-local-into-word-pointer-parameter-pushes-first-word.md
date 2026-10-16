@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1) and on the slot-open compiler
 (`7f57e532`): the repro below compiles with no diagnostic and faults — x86_64 139, x86_64 `CYRIUS_IR=3` 139, aarch64
 (qemu) 139, cx 253 (a guest fault), PE (wine) 5.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D5 — (a).
 **Discovered:** 2026-10-15, the triage of `2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md` ("also in
 passing, same class but not this issue"), re-measured by the fixfirst lane.
 **Severity:** Medium — compiles clean and faults (or reads through whatever the first field holds), no diagnostic.

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1, after the D27 bite) and on the
 slot-open compiler (`7f57e532`, `build/cycc` 2,223,320 B): the repro below exits 0 on x86_64, x86_64 `CYRIUS_IR=3`,
 aarch64 (qemu), cx (cxvm) and PE (wine), where 38 is right.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-15, the triage of `2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md` ("found
 in passing, not filed on its own"), re-measured by the fixfirst lane, which fixed only the `*f32v8` half (D27).
 **Severity:** Medium — compiles clean and computes a wrong value on every target, no diagnostic; `f32v8` is a

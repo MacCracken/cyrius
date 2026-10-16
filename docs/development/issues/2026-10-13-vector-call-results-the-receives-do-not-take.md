@@ -10,7 +10,8 @@ PE 41 where 161 is right, `lanes(v)` below) and is refused by name since A1; (2)
 binds an untyped word — `lanes(v)` is refused "value-form SIMD arg must be a 16-byte vector" on x86_64 / aarch64 / cx
 and page-faults on PE (exit 5), where `var v = mkv(41, 7);` infers the vector; (3) `return callptr(&mkv, a, b);` from
 a fn declared `: f64v2` is refused by the 6.6.6 return rule ("got `this expression`"), as through a variable.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D29 — A.
 **Discovered:** 2026-10-13, the 6.7.11 callargs lane (unit A1).
 **Severity:** Medium. (1) and (3) are refused loudly (no wrong value); (2) is refused on three targets and crashes
 on PE (`2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md` is that crash's class).

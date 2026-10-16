@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1, after D28's bite) and on the
 slot-open compiler (`7f57e532`): the repro compiles with no diagnostic and exits 10 (G = 5, H = 5: each the first
 field), x86_64. In a fn the same declarations are refused by name (D24, 6.7.11; D28, 6.7.12, for the `&f` call).
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-15, the fixfirst lane, measuring D28's neighbours.
 **Severity:** Low — a silent first-field read at top level; the in-fn spelling is refused by name. A struct over 16 B
 is refused at top level anyway ("returns a struct by value, and a struct result needs storage in a fn's frame").

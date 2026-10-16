@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1) and on the slot-open compiler
 (`7f57e532`): the repro compiles with no diagnostic and exits 42 on x86_64, x86_64 `CYRIUS_IR=3`, aarch64, cx and PE —
 `rd` reads the struct's bytes as an `f64v2`.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D33 — A.
 **Discovered:** 2026-10-15, the fixfirst lane, probing D27's mirror image (D27 refuses a vector into a pointer of
 another kind; a struct into a pointer to a vector is the other direction).
 **Severity:** Low — no fault (the address is a real object's); a type mismatch the compiler does not name, where a

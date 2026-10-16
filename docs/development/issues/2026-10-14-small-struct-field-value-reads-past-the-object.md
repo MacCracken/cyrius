@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane's tree (`l6711-struct`, after `cf5838db` and the
 assignment-from-dereference bite), x86_64 and aarch64 (a `cycc_aarch64` built from `src/main_aarch64.cyr`, run under
 qemu-aarch64): every value row below exits 139, both controls 65.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1), while fixing the same over-read for a DEREFERENCE
 (issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md): the guide's ⚠ note at § *A struct-typed field or
 a `*T` dereference is a LEFT operand too* names this case ("a whole field of 3, 5, 6 or 7 bytes is still loaded as an

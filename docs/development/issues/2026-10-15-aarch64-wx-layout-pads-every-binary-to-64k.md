@@ -1,7 +1,8 @@
 # aarch64 W^X ELF layout pads every executable with up to 64 KiB of zeros — open
 
 **Status:** 🟡 **OPEN**. This is a size cost of a deliberate layout, so it needs a decision (keep it and document it, or narrow it), not a bug fix.
-**Placement:** unpinned — 6.x-line backlog.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D45 — (a) Keep it and document the cost.
 **Discovered:** 2026-10-15, during bannermanor 1.8.1. bannermanor was accounting for a +65,984-byte aarch64 size jump at its 1.5.0 that the x86_64 and AGNOS builds did not show (+4.5 KB each).
 **Severity:** Low. It is a doc mismatch and a papercut: nothing fails, and nothing costs time at run time. The cost is file and download size only, and the padding is never mapped.
 **Affects:** aarch64 Linux ELF executables built with segment-level W^X on (`_wx_active`, the default; `EMITELF_USER`). Measured on the cyrius 6.7.11 release. The code is the same at HEAD `7f57e532`. Its comment dates the layout to v6.3.12.

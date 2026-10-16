@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-15 on the published 6.6.20 (bote 3.3.17's regen). The branch that causes it
 is unchanged at HEAD `65cb14c6` (6.7.12 open).
-**Placement:** unpinned — 6.x-line backlog. Sibling of
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 [`2026-10-12-distlib-records-a-named-deps-transitive-leaf-as-the-bundles-own.md`](./2026-10-12-distlib-records-a-named-deps-transitive-leaf-as-the-bundles-own.md);
 the same tools-lane slot would take both.
 **Discovered:** 2026-10-15, regenerating bote's `dist/` at its 6.6.14 → 6.6.20 pin move (bote 3.3.17).

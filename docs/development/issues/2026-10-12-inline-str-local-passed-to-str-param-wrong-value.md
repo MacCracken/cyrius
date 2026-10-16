@@ -6,7 +6,8 @@
 PE (wine), where 7 is right. `f(&t)` exits 7 on all four. A user struct of the same shape (`struct U { data; len; }`,
 `fn g(s: U) { return s.len; }`) passes right: `g(u)` with `len` 37 gives 37. The installed 6.6.0, 6.6.10, 6.7.0 and
 6.7.9 compilers give 0 on x86_64.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D7 — (1).
 **Discovered:** 2026-10-12, the 6.7.10 B7 synthesis plan (probe S9): its first cstring encoder for `#derive(Serialize)`
 wrapped the C string in a stack `Str` and passed it by name (`str_builder_add_json_str(sb, t)`), which encoded `""`.
 B7-4 passes `&t` instead (its mutant M29 pins it).

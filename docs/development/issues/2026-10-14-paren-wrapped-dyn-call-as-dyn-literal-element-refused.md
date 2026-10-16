@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S7) on x86_64,
 aarch64 (qemu), cx (cxvm) and PE (wine): `H { 7, (pass(o)), 8 }` with `fn pass(o: dyn Show): dyn Show` is refused with
 two errors; `H { 7, pass(o), 8 }` builds and gives 169 (7849 & 255) on all four. The lane base compiler does the same.
-**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D17 — (a).
 compiling — the user's call; or the user keeps the refusal and it is named once.)
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (S7), fixing issues/2026-10-10-paren-wrapped-struct-call-as-nested-
 literal-element-refused.md (a parenthesised FREE struct call as a nested literal element, the user's decision (a),

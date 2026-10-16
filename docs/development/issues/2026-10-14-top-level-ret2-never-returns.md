@@ -4,7 +4,8 @@
 the unit's tree, 2,189,744 B, and the cross compilers built from it). Unit F1 refuses a top-level `return` (the user's
 decision (a), 2026-10-13, `issues/archived/2026-10-12-top-level-return-decision.md`); `ret2` is the same defect through a
 different statement, and it still compiles.
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D20 — A.
 compile today, so the answer is the user's; the precedent is 6.7.11's top-level `return` decision (refused by name,
 `return outside a fn body`) and the 6.6.7 context rules (a top-level `break` / `continue` / `defer` / `?` refused).
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F1 (probing the statements that leave a fn the way `return`

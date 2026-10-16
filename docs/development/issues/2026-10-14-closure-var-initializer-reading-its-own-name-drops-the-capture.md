@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F3: the lane's compiler
 before the unit, 2,189,840 B, and after it, 2,193,936 B) and on the installed 6.6.0 and 6.7.9 compilers: identical
 everywhere.
-**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D35 — A.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F3, while fixing
 `issues/archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md` (a declared name read as a capture). This is the
 opposite direction: a real read DROPPED from the capture set. Outside that issue's filed surface (it names the

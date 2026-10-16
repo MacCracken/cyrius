@@ -8,7 +8,7 @@ a corpus floor. The B rows (fncall_struct_result.tcyr) got one in the 6.7.11 cal
 file's `assert_eq(` count, floor 48, the exact "N passed, 0 failed (N total)" line required); the A rows did not, because
 their count is target-dependent: the file has 152 `assert_eq(` rows but row F21 sits under `#ifdef CYRIUS_TARGET_WIN`, so
 every A leg runs 151 (and no A leg is PE).
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the review of the 6.7.11 callargs lane.
 **Severity:** Low — a gate weakness (no wrong code); pre-existing since the gate's 6.7.6 A rows.
 **Affects:** tests/gates/codegen/struct_value_codegen.sh (6.7.6 onward).

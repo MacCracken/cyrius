@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S6, after the
 tuple-literal refusal of issues/archived/2026-10-08-struct-operator-results.md #4) on x86_64, aarch64 (qemu), cx (cxvm)
 and PE (wine).
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D22 — A.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (S6), while refusing `return (a, b);` in a struct fn.
 **Severity:** Medium — a silent wrong value on code that compiles clean (the retptr is never written, or the
 second value is dropped); the builtin is rarely written in a struct fn.

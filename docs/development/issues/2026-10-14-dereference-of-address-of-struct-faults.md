@@ -6,7 +6,7 @@ with `pp: *P3` passes the struct (9 below). The same dereference spelled through
 one: `take(*(&p))` into `fn take(p: P3)` exits 139 on x86_64 and aarch64 (1 on cx), and `var q: P3 = *(&p);` exits 139 on
 x86_64 / aarch64 (252 on cx) — the struct's first field (1) is used as the struct's address. At 8 B or less the word IS
 the struct, so `take(*(&s))` with `s: S1` gives 9 everywhere.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 callargs lane's review fix (probing `gsz(*(&bi))` for the generic carrier's
 dereference arm, which binds nothing for it: the fault is the same through the base).
 **Severity:** Medium — a SIGSEGV on valid code; the plain spellings (`take(p)`, `take(*pp)`, `var q: P3 = p;`) work.

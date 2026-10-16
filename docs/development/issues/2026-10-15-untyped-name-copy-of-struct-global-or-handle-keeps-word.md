@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.12 fixfirst lane (unit X2) while landing
 D29 (a) (`var q = p;` of a fn-local struct value is a typed copy), measured on the lane tree (8d7bd6b1, x86_64).
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D6 — (b).
 **Severity:** Low — a loud refusal (`q.y`) or a documented fault (`take(q)` of a word into a by-value struct
 parameter); no silent wrong value.
 **Kind:** language (decision).

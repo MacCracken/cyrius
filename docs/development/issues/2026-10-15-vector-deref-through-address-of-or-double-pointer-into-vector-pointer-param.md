@@ -1,7 +1,7 @@
 # A vector dereference through an address-of or a double pointer, `rd(*&b)` / `rd(**ppb)`, into a `*V` parameter still passes lane 0 as the address (D27's `*pv` rule misses an operand with no step word) — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (after D27, `2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md`, which passes `pv` for `rd(*pv)`) and on the slot-open compiler (`7f57e532`, x86_64): each repro compiles with no diagnostic and faults — x86_64 139, x86_64 `CYRIUS_IR=3` 139, aarch64 (qemu) 139, cx 253 (a guest fault), PE (wine) 5. The struct analogues (`take(*&s)` / `take(**pps)` into `p: *P3`) fault the same way (139 / 139 / 139 / cx 252 / PE 5).
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-15, the review of the 6.7.12 fixfirst lane (D27's `*pv` neighbours).
 **Severity:** Medium — compiles clean and faults on every target, no diagnostic; the plain spellings (`rd(&b)`, `rd(b)`, `rd(pb)`, `rd(*pb)`) work.
 **Affects:** every target; a `*` whose operand is an address-of (`*&b`, `*(&b)`) or a dereference (`**ppb`), into a `*V` parameter (and, for structs, into a `*S` parameter).

@@ -5,7 +5,7 @@
 snapshot). Met while fixing 2026-10-12-deps-keeps-a-removed-stdlib-leaf-vendored-and-locked.md: its consumer
 workaround (`rm -rf lib/ && cyrius deps`) and the triage's proposed notice text (`rm lib/vec.cyr && cyrius deps`)
 both leave the row, so the shipped notice names `rm <file> && cyrius deps --lock` instead.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — fail-closed (`deps --verify` and `--locked` both fail), but `--locked`'s remedy is false: the CI
 check stays red after doing exactly what it says, and `--verify` says "the hasher could not read it" about a file
 that is not there.

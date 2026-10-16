@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 returns lane (l6711-returns, after the loop-ending
 repair) on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine): every repro below builds and exits 77, a stale register.
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D27 — A.
 **Severity:** Low — the same missed refusal 6.7.11 closed for `loop { }`, `while (1) { }` and `do { } while (1);`,
 in the `true` spelling; conservative (a missed refusal, never a false one).
 **Discovered:** 2026-10-13, the 6.7.11 returns lane (unit R1), while repairing

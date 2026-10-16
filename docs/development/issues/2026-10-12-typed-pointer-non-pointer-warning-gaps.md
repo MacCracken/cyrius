@@ -4,7 +4,8 @@
 B) on x86_64. Inside a fn, `var x = 3; var q: *i64 = x;` warns "assigning non-pointer to typed pointer". Each shape
 below assigns the same kind of untyped value to a `*T` and compiles with no warning. The installed 6.6.0, 6.6.10,
 6.7.0 and 6.7.9 compilers give the same answers for the two headline shapes.
-**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D18 — (a).
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (the guide's *Pointers* re-verification).
 **Severity:** Low. A missing diagnostic: nothing miscompiles, and the stored word is what was written. A wrong
 typed-pointer binding then goes unflagged.

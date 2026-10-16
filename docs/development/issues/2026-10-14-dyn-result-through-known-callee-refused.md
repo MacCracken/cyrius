@@ -5,7 +5,8 @@ slot-open compiler (`0f733aea`): the same rc 1 and message on both. With `fn mkd
 mkd(&q);` compiles and runs, but `var a: dyn Shape = fncall1(&mkd, &q);` is refused "cannot form dyn Shape from this
 expression". 6.7.11 gave a KNOWN callee (`&f`) the struct-result conventions (`_icall_sret` / `_icall_result`'s
 `_sc_post`), but the dyn-forming receive does not recognise that call as returning a `dyn`.
-**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D15 — (a).
 **Discovered:** 2026-10-14, the review of the 6.7.11 callargs lane (probe review/rev/sr/dy2.cyr).
 **Severity:** Low — a refusal by name with a working spelling (call `mkd(&q)` directly, or bind the result first).
 **Affects:** every release with `dyn` (the indirect call never carried it); every target (frontend).

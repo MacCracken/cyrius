@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — a confirmation for the user, collected 2026-10-15 by the 6.7.12 release-docs pass (the lane drafts
 re-measured on the merged tree). Each item shipped in 6.7.12 and is in CHANGELOG [6.7.12] / ecosystem-migration § 6.7.12.
 Same shape as `archived/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md` (all kept, 2026-10-15).
-**Placement:** 6.7.13 — repair 3: struct values (fixfirst lane; filed from the 6.7.12 release-docs pass, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D36 — Keep (const) · D37 — Keep · D38 — Keep · D39 — clean up, then die by the signal (as before 6.7.12; $? still 128+N) · D40 — Keep (refused by name).
 **Severity:** Medium — code that compiled on 6.7.11 stops compiling, or a tool / CLI result changes; none miscomputes.
 
 ## Items (keep — the item closes — or restore 6.7.11)

@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1, after
 `2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md`'s fix, which gives the call its hidden result pointer
 but leaves the argument's value its first lane) and on the slot-open compiler (`7f57e532`) alike.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D30 — A.
 **Discovered:** 2026-10-15, the fixfirst lane, probing the PE discarded-vector fix's neighbours.
 **Severity:** Medium — PE compiles valid-looking source to a crash with no diagnostic; the other targets refuse it
 with a misleading first line and a cascaded second error. Workaround: bind the result to a vector local first.

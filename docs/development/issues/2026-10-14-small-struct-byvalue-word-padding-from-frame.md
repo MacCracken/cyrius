@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane's tree (`l6711-struct`, `42a0b63a`), x86_64:
 both rows exit 255 (the 0xFF a previous call left in the frame); the dereference control exits 0.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S1). The dereference fix
 (issues/archived/2026-10-12-small-struct-dereference-reads-past-the-object.md) reads a 3 / 5 / 6 / 7 B struct through
 `_hl_pval_ra` — a byte copy into a frame temp, whose word is loaded — and found the temp's other bytes are whatever

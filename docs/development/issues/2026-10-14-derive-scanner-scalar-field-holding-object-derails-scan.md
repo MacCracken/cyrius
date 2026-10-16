@@ -4,7 +4,7 @@
 scanner is generated cyrius, so every target), with the compiler before and after that commit alike: for `P { a: i64;
 b: i64; }` the scanner decodes `{"a":{"q":7,"b":9},"b":4}` with b = 9; the pairs form `P_from_json(bayan_json_parse(..))`
 gives b = 4.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (S7), fixing issues/2026-10-12-derive-scanner-loses-fields-after-
 nested-struct.md — which made the scanner's NESTED-STRUCT arm and its UNKNOWN-KEY arm walk a value whole
 (`_cy_json_skipval`). The scalar arms were outside that issue's filed surface and keep the old behaviour.

@@ -1,7 +1,7 @@
 # x86 ELF DCE stops compacting past 4,096 dead-code runs, and kybernet's `agnos-init` crossed it: 248,440 → 1,574,640 bytes — OPEN
 
 **Status:** 🟡 **OPEN** — the cap is the "WPNR 4,096-run merge" item in `roadmap_6.md`; this file records a shipped consumer binary that hit it.
-**Placement:** unpinned — 6.x-line backlog (with the WPNR 4,096-run merge).
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-15, moving kybernet 1.7.10 from cyrius 6.6.6 to 6.6.20 (and its deps to the tags that pin 6.6.20).
 **Severity:** Low — the binary is correct (the dead code is NOP-filled and never runs), but a release artifact grew 6.3x.
 **Affects:** static x86_64 ELF under `CYRIUS_DCE=1`, any program with more than 4,096 unreachable fns. Measured on 6.6.20. (aarch64 ELF does not compact at all yet, so it NOP-fills either way.)

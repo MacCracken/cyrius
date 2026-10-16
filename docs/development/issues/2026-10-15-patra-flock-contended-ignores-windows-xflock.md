@@ -6,7 +6,7 @@ non-blocking lock with -11, but `lib/patra.cyr`'s `_pt_flock_contended` still re
 so a contended `patra_open` on Windows reads -11 as "no lock can be had" and judges the header unlocked (the pre-6.7.12
 path). Its comments still say "Windows has no flock and returns -1" (`_pt_flock`, `_pt_flock_contended`, `patra_open`),
 and `docs/ecosystem.md`'s patra row says "no flock, so recovery never runs on open".
-**Placement:** 6.7.13 — repair 3: struct values (stdlib (a fold) lane; filed from the 6.7.12 release-docs pass, 2026-10-15) — never 7.x. A fold change: patra's SOURCE repo, a patch release the user tags, then the refold.
+**Placement:** 6.7.13 — repair 3: struct values (a fold patch: patra 1.16.3, which the user tags before the refold; placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — Windows gets no WAL recovery under contention although the lock now exists.
 
 ## Fix

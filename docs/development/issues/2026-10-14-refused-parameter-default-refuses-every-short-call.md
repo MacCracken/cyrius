@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, unit R5) with
 `build/cycc < f.cyr` from the tree root, x86_64.
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — every input is invalid and is refused at the default; the extra lines are a cascade, one per call.
 **Discovered:** 2026-10-14, the 6.7.11 returns lane (unit R5), while repairing shape 9 of
 `2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md` (a refused parameter TYPE dropped the fn's defaults; since

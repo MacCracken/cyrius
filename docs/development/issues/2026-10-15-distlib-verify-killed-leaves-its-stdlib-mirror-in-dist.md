@@ -8,7 +8,7 @@ per-target child's `cpp_<pid>` / `dlverifyout<t>.tmp.<pid>`), but the verify's O
 stdlib snapshot it makes under the PROJECT, `dist/.dlverify-<pid>/lib/` — is not a temp-dir name and is not tracked,
 so a kill leaves it. That issue's filed surface is the temp dir (its acceptance: "an empty `cyrius-<pid>` dir (or
 none)"); this is a second location.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — litter in the project's `dist/` (one stdlib copy per killed run, ~114 files at 6.7.12); a dot
 directory, so `ls` hides it, but `git status` shows it untracked unless `dist/` is ignored, and nothing ever removes
 it (check.sh's reaper only looks under `$TMPDIR`). The next run uses its own pid, so it never collides.

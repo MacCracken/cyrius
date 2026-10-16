@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN — a decision for the user** (what `*p = f()` means when `f` returns several values and `p`
 points at a struct). Measured 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S4), x86_64.
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D26 — A.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S4), implementing
 issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md (decision (a): `*p = v` copies what `G = v` copies —
 "a local, parameter, global, field, call, method or operator result, handle or `*q`"; "an untyped value is stored as

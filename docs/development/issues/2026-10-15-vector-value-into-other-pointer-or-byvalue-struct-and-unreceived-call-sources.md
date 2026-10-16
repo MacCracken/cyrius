@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (unit X1, after the D27 bite, which covers a
 vector LOCAL into another pointer kind and a by-name / `&f` call result and `*pv` into `*V`) and on the slot-open
 compiler (`7f57e532`): every shape below compiles with no diagnostic and faults.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D31 — A.
 **Discovered:** 2026-10-15, the fixfirst lane, probing D27's neighbours beyond the filed surface of
 `2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md` (a named local into `*Pt` / `*i64`, a call result
 and `*pv` into `*V`, `*f32v8`).

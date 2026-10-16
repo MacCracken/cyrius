@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 tools lane (l6712-tools, unit T5, after the D23 bite for
 issues/archived/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md), with that lane's `build/cyrius` and `build/cycc`.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Medium — the same wrong-prototype class the D23 bite closed for `return Ok(..)` / `return pairfn(..)`: a C
 caller of the printed `cyr_val q2(cyr_val x);` reads rax alone, which on the `?` path is the Err TAG, never the payload.
 No memory corruption (a 16-byte register return).

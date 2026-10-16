@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 with the 6.7.11 tools lane's `build/cycc` (the fixpoint of
 l6711-tools @ a3d9837d; the arm below is unchanged since the 6.4.x `Vec<T>` field work).
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D10 — (b).
 **Discovered:** 2026-10-14 by the 6.7.11 tools lane's review of the header struct-return bite. `cyrius header` now
 mirrors today's behaviour (a bare `Vec` field is the file's own `struct Vec` when one is declared above it, else the
 8-byte handle — commit 3624e00f); the compiler's order dependence itself is this issue.

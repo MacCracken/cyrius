@@ -6,7 +6,7 @@ issues/archived/2026-10-14-aarch64-linux-cli-drops-target-selectors.md, D6 — i
 `HOME` / `CYRIUS_HOME`. Met while fixing that issue: D6 refuses `--agnos` and `--target=x86_64-bare-metal-elf` on the
 aarch64 Linux CLI; its triage noted "Not checked: `--win` from an aarch64 Linux host". The combined-target-flags issue
 (D20, 6.7.12) refuses two selectors at once; a single `--win` on this host is outside both.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** High for `--win` (a dropped target selector: the requested PE is not written, an aarch64 ELF named
 `w.exe` is, and the CLI says OK at rc 0 — the 6.6.5 one-argument rule's defect, the class D6 and 6.7.11 refused by name);
 Medium for `--aarch64` / `--target=aarch64-bare-metal-elf` (a named rc 1, never a wrong artifact, but the host's own cycc

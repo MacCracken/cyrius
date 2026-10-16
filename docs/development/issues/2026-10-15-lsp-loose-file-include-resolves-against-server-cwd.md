@@ -5,7 +5,7 @@
 and a CLI built from `cbt/cyrius.cyr` in a throwaway `$HOME/.cyrius/bin`). Met while fixing that issue: its diagnostics
 now resolve a relative file name against the open file's directory (outside a project), but the compile they come from
 does not resolve includes there.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a wrong error in the editor for a loose file (no `cyrius.cyml` above it) whose editor started the
 server somewhere other than the file's directory (an editor's workspace root): every sibling `include` is "cannot open",
 and every name the include declares is then undefined. Inside a project the server runs `cyrius check`, which writes

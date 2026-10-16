@@ -6,7 +6,7 @@ through `fncallN(&f, ..)` / `callptr(&f, ..)` the struct-call hooks when the cal
 (`2026-10-12-struct-result-through-fn-pointer-faults.md`). The same callee in parentheses, `(&mk3)`, is not recognised,
 so the call has no hidden result pointer / pair receive and the struct-typed receive takes a word: `var p: P3 =
 callptr((&mk3), 5);` exits 139 on x86_64 and aarch64, 1 on cx and 5 on PE, where `callptr(&mk3, 5)` gives 18 on all four.
-**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the review of the 6.7.11 callargs lane (probes review/rev/sr/x1-x7).
 **Severity:** Medium — a SIGSEGV / wrong value on valid code; the unwrapped spelling is the working one.
 **Affects:** every release through 6.7.11 (through 6.7.10 the unwrapped spelling faulted too); every target.

@@ -15,6 +15,7 @@ cross-reference the CHANGELOG entry that closed them.
 
 | File | Brief | Resolved in |
 |------|-------|-------------|
+| [`2026-10-15-package-verb-keep-retire-or-ark-writer-decision.md`](./2026-10-15-package-verb-keep-retire-or-ark-writer-decision.md) | `cyrius package`: keep it, retire it, or give it an `.ark` writer? | decided at the 6.7.13 open (no change) |
 | [`2026-10-08-aarch64-native-region-literal-translated-silently.md`](./2026-10-08-aarch64-native-region-literal-translated-silently.md) | Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning | v6.7.12 |
 | [`2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md`](./2026-10-08-arm64-macos-literal-syscall-carries-pipe-fork-fixups.md) | arm64-macOS: a folded literal syscall still carries the pipe / fork post-`svc` fixups (64 B a site, XLAT-3) | v6.7.12 |
 | [`2026-10-08-cli-path-and-reporting-leftovers.md`](./2026-10-08-cli-path-and-reporting-leftovers.md) | CLI leftovers from the 6.7.6 review — path resolution (Windows, symlinked cwd, git ceiling), error counts, `lib sync --dry-run`, `update`, the lock under wine | v6.7.12 |

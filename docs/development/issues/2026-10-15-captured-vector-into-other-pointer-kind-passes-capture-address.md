@@ -1,7 +1,8 @@
 # Inside a closure, a captured vector passed to `p: *Pt` / `p: *i64` passes the capture's address (exit 42), where the same local outside the closure is refused by name under D27 — OPEN
 
 **Status:** 🟡 **OPEN** — a question for the user. Measured 2026-10-15 on the 6.7.12 fixfirst lane (after D27, `2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md`) and on the slot-open compiler (`7f57e532`): both repros compile with no diagnostic and exit 42 on x86_64, x86_64 `CYRIUS_IR=3`, aarch64 (qemu), cx and PE (wine) — the same on the slot-open compiler (x86_64 measured). Outside a closure the lane refuses `ri(b)` / `rp(b)` by name.
-**Placement:** 6.7.13 — repair 3: struct values (vectors lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (vectors lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D32 — A.
 **Discovered:** 2026-10-15, the review of the 6.7.12 fixfirst lane (D27 inside a closure).
 **Severity:** Low — no fault (the address is the capture's real storage, so the callee reads lane 0's value); an inconsistency with D27's refusal, not a wrong value.
 **Kind:** language (decision) — D27's answer (B: "another pointer kind refused by name") against what a capture does today, which is option C's meaning (an address to any typed pointer), the option the user did not pick.

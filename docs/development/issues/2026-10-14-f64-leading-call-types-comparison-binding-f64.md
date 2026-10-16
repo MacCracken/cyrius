@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-14 by the 6.7.11 struct lane (unit S5, issues/archived/2026-10-08-struct-operator-results.md
 #1), reproduced with the lane's compiler (struct worktree after `29d1210e`) and with the tree before it (`93e04937`).
-**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (receives lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a silent wrong value on a narrow shape (a boolean bound from a comparison whose left operand is a
 `: f64` call), plus a false kind-2 warning; workaround: annotate (`var c: i64 = f() < 1.0;`) or compare in an `if`.
 **Affects:** cycc since v6.5.21 (`var x = f();` with `f: f64` types x f64) through the 6.7.11 lane.

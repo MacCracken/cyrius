@@ -6,7 +6,8 @@ src/main_aarch64_macho.cyr`, ad-hoc signed on ecb; `CYRIUS_MACHO=1 build/cycc < 
 same compilers built from the lane's base (6.7.11's behaviour). Met while fixing
 issues/archived/2026-10-10-strict-pin-and-pie-inert-off-linux.md, whose triage noted it "seen in passing, not part of this
 filing"; that issue's decision (D5) refuses `--pie` by name on the Windows CLI only.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D43 — (b) Accept on arm64 (already MH_PIE), refuse on x86_64.
 **Severity:** Medium — a dropped flag that changes the artifact (the 6.6.5 one-argument rule): `cyrius build --pie` from
 the macOS CLI says OK at rc 0 and writes the image a plain build writes, the defect D5 refused on Windows. What `--pie`
 should MEAN there differs by arch, measured from the headers cycc writes: the arm64 Mach-O already sets MH_PIE (mach_header

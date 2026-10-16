@@ -4,7 +4,8 @@
 the resolve: `deps` / `build` now refuse this shape, 2026-10-08-deps-before-lib-sync-stamps-new-pin.md). The two
 other lock writers reach the same lie by another verb. D19 was decided for "deps refuses to re-lock"; extending it
 to these two verbs (or another shape for them) is a decision, so it is filed, not folded in.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D42 — (1) Extend D19 to both writers.
 **Severity:** Medium — the same as the issue D19 closed: the lock's one `cyrius <pin>` trailer names a pin its rows do
 not have, `deps --verify` (113 verified) and `--locked` agree with it, and the next `lib sync --full` refuses under
 "the pin the lock records" (`_libsync_guard` now names these two verbs as the cause, so the advice is right; the

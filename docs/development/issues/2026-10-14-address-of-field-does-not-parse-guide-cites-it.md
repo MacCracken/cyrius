@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN — a decision for the user** (is `&x.f` cyrius: the language grows it, or the guide stops citing
 it). Measured 2026-10-14 on the 6.7.11 struct lane (`l6711-struct`, unit S4) and the installed 6.7.0, 6.7.5 and 6.7.9
 compilers, x86_64: refused by every one.
-**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (structs lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D3 — (b).
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S4), writing `deref_store_struct_copy.tcyr`: a row that
 pointed a `*S` at a struct inside a larger local (`var p: *S3 = &o.s;`) did not compile; the rows now use `&o` (the
 struct is o's first field).

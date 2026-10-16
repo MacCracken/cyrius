@@ -5,7 +5,7 @@
 2026-10-13-cli-killed-mid-compile-leaves-scratch.md (89d4415d / 19160a54), whose filed surface is check / build /
 distlib: those three stop their compiler and leave no dir; `capacity` forks its own compiler outside `compile()` and
 is outside that surface, so it is filed, not folded in.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a developer's own Ctrl-C / SIGTERM of a stats run leaves one file in the CLI's private temp dir
 (check.sh's reaper removes `cap_err` only if it knows the name) and an orphaned compiler that runs to completion.
 **Affects:** `cyrius capacity` since the 6.7.12 kill handler (before it, no verb cleaned up on a signal). The same

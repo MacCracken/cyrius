@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane's tree (`l6711-struct` @ `d2dd38fa`), x86_64.
 The refusal itself is new in 6.7.11 (`85c648c3`, issues/archived/2026-10-08-struct-operator-results.md #6; the lane base said
 "undefined variable 'y'"), so this is wording in the lane's own diagnostic, not a regression.
-**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (closures lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane's review.
 **Severity:** P3 — diagnostic wording only: what compiles and what it computes are unchanged.
 

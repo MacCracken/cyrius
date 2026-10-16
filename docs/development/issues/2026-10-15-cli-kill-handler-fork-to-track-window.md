@@ -4,7 +4,7 @@
 done"), recorded 2026-10-15 by the release-docs pass. TL's kill handler (`cbt/sigclean.cyr`) removes a compile's scratch
 and kills its tracked compiler child on SIGTERM / SIGINT; a signal that lands after `fork` and before the child is
 tracked leaves that child running, and it can recreate `<out>.tmp.<pid>` after the cleanup.
-**Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 release-docs pass, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (tools lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
 **Severity:** Low — a narrow race; the reaper's dead-pid rule covers the dir, not the running child.
 
 ## Fix

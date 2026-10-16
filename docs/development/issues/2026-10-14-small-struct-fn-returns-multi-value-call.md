@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 returns lane (l6711-returns, after unit R2) on
 x86_64, aarch64 (qemu), cx (cxvm) and PE (wine): the repro builds clean and exits 3.
-**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.13 — repair 3: struct values (multivalue lane; re-placed at the 6.7.13 open, 2026-10-15) — never 7.x.
+**Decision (user, 2026-10-15, at the 6.7.13 open):** D25 — A.
 **Severity:** Medium — silent: the struct is built from the call's first value; nothing crashes.
 **Discovered:** 2026-10-14, the 6.7.11 returns lane (unit R2), while repairing
 `2026-10-09-multi-value-call-into-named-struct-slot.md`, whose decision (A, 2026-10-13) refuses a multi-value
