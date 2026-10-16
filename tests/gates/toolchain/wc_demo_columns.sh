@@ -2,7 +2,7 @@
 # wc_demo_columns.sh — 6.7.12. programs/wc.cyr (a demo) prints its three counts so they always
 # parse back, and splits words on the C `isspace` set.
 #
-# THE DEFECT (issues/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md): `print_num`
+# THE DEFECT (issues/archived/2026-10-12-wc-demo-columns-run-together-and-whitespace-set.md): `print_num`
 # padded each count to 8 columns and wrote no separator, so a count of 8 or more digits fused with
 # the one before it — a 10,000,000-byte one-word input printed `       0       110000000` — and
 # `is_ws` took space, tab, LF and CR only, so `a\vb\fc\n` counted 1 word (GNU `wc`: 3).

@@ -1,5 +1,5 @@
 # struct_return_shape_controls.tcyr — 6.7.12. THE ACCEPTED SHAPES BESIDE 6.7.11'S STRUCT-RETURN REFUSALS, ON THE
-# HOSTS (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
+# HOSTS (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
 #
 # 6.7.11's struct lane refused two return shapes by name (issues/archived/2026-10-08-struct-operator-results.md):
 #   #4  a tuple literal `return (a, b[, c]);` in a fn declared to return a named struct (the user's decision (a),

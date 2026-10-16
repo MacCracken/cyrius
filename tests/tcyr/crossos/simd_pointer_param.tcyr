@@ -18,7 +18,7 @@
 # frame temp it is received into, a dereference `*pv` of a `*V` (a local, a parameter, a capture, a field, a
 # global, a `: *V` call, `pv + n`) as pv itself — and `*f32v8` is a `*V` (`r8(e)` passes `&e`). They passed
 # lane 0's bits as the address (139 / 139 / a cx fault / PE 5; x86_64 refused the first two through 6.7.10).
-# Filed: docs/development/issues/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md
+# Filed: docs/development/issues/archived/2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"

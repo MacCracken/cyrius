@@ -11,7 +11,7 @@
 # _asf_arity counts them) and blanks again, as the compiler accepts them, before the `(` test.
 #
 # ROWS (each fixture COMPILES first — a premise; the tool built from programs/ by build/cycc)
-#   1  the filed repro verbatim (issues/2026-10-13-type-audit-skips-generic-fns.md): it exits 3;
+#   1  the filed repro verbatim (issues/archived/2026-10-13-type-audit-skips-generic-fns.md): it exits 3;
 #      `--module=g` reports `g: 2/2 annotated` and `total public fns: 2`
 #   2  shapes: a bounded `fn gb<T: Tr>`, `fn gp<T>` whose parameter is a nested
 #      `Pair<i64, Pair<i64, i64>>` (its `>>` inside the list), two type parameters, a blank

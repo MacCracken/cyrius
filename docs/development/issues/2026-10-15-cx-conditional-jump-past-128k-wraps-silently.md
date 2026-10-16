@@ -7,7 +7,7 @@ growth); the defect is older than the growth (6.6.x's 512 KiB region already hel
 at a wrapped offset. Here cxvm caught it (a negative pc traps since 6.6.12); a wrap that lands inside the code runs
 the wrong instructions with no diagnostic. 6.7.12's 4 MiB code region makes fns this large more reachable.
 **Discovered:** 2026-10-15, the 6.7.12 stdlib lane (unit L2), while growing cx's code region
-(`issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md`): checking which offsets the bigger region can
+(`issues/archived/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md`): checking which offsets the bigger region can
 exceed.
 
 ## Reproduction

@@ -34,7 +34,7 @@
 #      all four; `cyrius run out.cyx`: the cxvm build reads them unset.
 #   S  (6.7.12) the self-host VERIFIERS, `cyrius self` and `cyrius soak 1`, with all four inherited:
 #      both steps of each read all four unset, and soak's test leg (the user's .tcyr through
-#      compile()) keeps all four (issues/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md).
+#      compile()) keeps all four (issues/archived/2026-10-14-cyrius-self-and-soak-inherit-compile-mode-switches.md).
 #   W  (wine) the PE CLI with a PE stub compiler: the cycc_cx self-build reads them unset, and the
 #      user's x.cyr compiled next IN THE SAME PROCESS still sees all four (they were restored); the
 #      cxvm build likewise unset; (6.7.12) `cyrius.exe self` and `cyrius.exe soak 1`: both steps

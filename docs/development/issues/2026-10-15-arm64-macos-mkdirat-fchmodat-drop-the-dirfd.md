@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on ecb (macOS arm64) with a probe cross-built from the 6.7.12
 windows lane's tree (ec058d94). Found while fixing the same shape for `openat` (W2,
-issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md), which this does not cover.
+issues/archived/2026-10-08-embed-open-link-race-pe-macos-arm64.md), which this does not cover.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Medium — silent wrong-directory side effects: `sys_mkdirat(dirfd, "rel", …)` creates `./rel` in the
 CURRENT directory and returns 0; `sys_fchmodat(dirfd, "rel", …)` changes (or fails to find) `./rel`. Any dirfd-relative

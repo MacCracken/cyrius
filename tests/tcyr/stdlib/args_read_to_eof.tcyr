@@ -1,6 +1,6 @@
 # args_read_to_eof.tcyr — lib/args.cyr's Linux read loop and its failure returns (6.7.12).
 #
-# issues/2026-10-14-args-init-truncates-argv-past-2-mib.md: args_init read /proc/self/cmdline
+# issues/archived/2026-10-14-args-init-truncates-argv-past-2-mib.md: args_init read /proc/self/cmdline
 # with ONE sys_read into a 2,097,152-byte buffer, so a longer command line (ARG_MAX follows
 # `ulimit -s`, up to 6 MiB) came back as its first 2 MiB with no error, and a failed open or
 # alloc returned 0 — the same answer as success on macOS. Now `_args_read_all` reads to EOF,

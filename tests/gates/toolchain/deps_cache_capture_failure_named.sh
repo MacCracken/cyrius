@@ -25,7 +25,7 @@
 # same way. An absolute $TMPDIR is the temp base (trailing slashes dropped); a relative one is
 # ignored. (6.7.12: the lock's hasher is IN PROCESS — no sha256sum / shasum / certutil, no
 # capture — so a starved temp dir cannot touch cyrius.lock at all: axes 3, 6, 7 and 9 say so.
-# issues/2026-10-08-cli-path-and-reporting-leftovers.md item 8.)
+# issues/archived/2026-10-08-cli-path-and-reporting-leftovers.md item 8.)
 #
 # AXES (N = a private tmpfs's nr_inodes, mounted over /tmp in a user+mount namespace — the
 # filing's own recipe; the fixture is bind-mounted OUTSIDE /tmp so the mount cannot hide it)

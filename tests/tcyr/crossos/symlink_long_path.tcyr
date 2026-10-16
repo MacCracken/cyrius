@@ -2,7 +2,7 @@
 # past 519 units, on every target; it reads back through the link, its kind is right, and on POSIX
 # readlink returns its target verbatim.
 #
-# ⛔ 6.7.12 — THE DEFECT (issues/2026-10-08-windows-symlink-no-long-path-prefix.md). Windows'
+# ⛔ 6.7.12 — THE DEFECT (issues/archived/2026-10-08-windows-symlink-no-long-path-prefix.md). Windows'
 # `sys_symlink` widened both paths ITSELF (at most 519 units, never `\\?\`-prefixed) and handed
 # them to CreateSymbolicLinkW (reroute 0xF03E), so on a Windows without process-wide long paths a
 # link path over 260 units failed -1 — measured on cass (LongPathsEnabled = 0, Developer Mode on):

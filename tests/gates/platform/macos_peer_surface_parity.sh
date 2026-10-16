@@ -47,7 +47,7 @@
 #      arm -> FAIL axis B ("syscall 332 not routed") — the decline is what keeps it warning-free
 #  10. (6.7.12) delete `fn epoll_event_data` from the x86-macOS peer -> FAIL axis A naming
 #      "fn epoll_event_data" AND axis B (the probe reads it: a reachable undefined fn). The
-#      readers and EPOLL_EVENT_SIZE (issues/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md)
+#      readers and EPOLL_EVENT_SIZE (issues/archived/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md)
 #      sit beside epoll_event_new in both peers; axis B's probe names all three.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

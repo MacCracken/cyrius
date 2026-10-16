@@ -241,7 +241,7 @@
 #       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
 #       does not build: tcyr Q31-Q41)
 #   (6.7.12, the fixfirst lane, the same procedure, 2026-10-15: M-FP10 issues/2026-10-14-scalar-annotation-from-known-
-#   fn-pointer-struct-call-reads-first-field.md; M-VD* issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md)
+#   fn-pointer-struct-call-reads-first-field.md; M-VD* issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md)
 #   M-FP10 `_scv_icall_ann` returning 0 (D28)                    -> RED FP10 (BUILT)
 #   M-VD1 `_pe_vret` answering 0 (no Win64 vector temp anywhere) -> RED 4: VDw1-VDw3 (exit 5), C7 (exit 5); C1-C6
 #       green (SysV / AAPCS64 / cx return a vector in registers)
@@ -255,7 +255,7 @@
 #      vector, at top level) — on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE: "N passed, 0 failed (N total)".
 #      On Win64 no hidden result pointer was passed, so the callee wrote through its first argument (exit 5;
 #      `s.mv(..)` overwrote self). VDw1-VDw3: the filed repros verbatim on PE (exit 3)
-# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): the accepted rows R12 R13 R23-R28 run on ecb / ach / cass / pi as
+# 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): the accepted rows R12 R13 R23-R28 run on ecb / ach / cass / pi as
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr, K2 K3 U2 U3 MP2 as tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

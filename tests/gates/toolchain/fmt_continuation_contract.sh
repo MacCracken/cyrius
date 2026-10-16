@@ -90,7 +90,7 @@ mkp() {   # $1 dir, $2 the src/main.cyr content source
     printf '[package]\nname = "p"\nversion = "0.1.0"\n' > "$1/cyrius.cyml"
     cp "$2" "$1/src/main.cyr"
 }
-# The filed repro (issues/2026-10-12-cyrfmt-check-passes-a-file-cyrfmt-would-reformat.md), verbatim.
+# The filed repro (issues/archived/2026-10-12-cyrfmt-check-passes-a-file-cyrfmt-would-reformat.md), verbatim.
 printf 'fn f(a, b) {\n    return a + b;\n}\nfn main() {\n    f(1,\n        2);\n    return 0;\n}\n' > "$W/x.cyr"
 for shape in x a8 a6 a12; do
     [ -f "$W/$shape.cyr" ] || mk "$W/$shape.cyr" "${shape#a}"

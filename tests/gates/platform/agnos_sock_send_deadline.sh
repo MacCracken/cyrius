@@ -40,7 +40,7 @@
 #   7. "no #109" cached on a dead conn (_agnos_sdl_ok = 2 whatever #48 answered)
 #        -> 2 FAIL, axis 7: the next write on a live conn goes to #48, its deadline unenforced
 #   8. the 6.7.10 loop (#48 only, no ceiling handed over) -> 11 FAIL, axes 4 5 6 7 8
-# 6.7.12 (issues/2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md):
+# 6.7.12 (issues/archived/2026-10-13-agnos-sock-send-deadline-rearm-ceiling-refresh-unpinned.md):
 #   9. rearm=1's ceiling refresh deleted (`left = _agnos_dl_whole_us(tmo_us);` after the re-arm)
 #        -> 1 FAIL, axis 8's dl03 row: ceilings 1000000 750000 750000 750000 … (both gates were
 #           GREEN on it before the row; agnos_tls_deadline.sh still is — it has no stall-then-

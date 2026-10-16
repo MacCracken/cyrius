@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on pi (aarch64 Linux hardware) with the CLI and the native compiler
 cross-built from the 6.7.12 tools lane (l6712-tools, before and after the fix of
-issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md, D6 — identical for these three selectors), throwaway
+issues/archived/2026-10-14-aarch64-linux-cli-drops-target-selectors.md, D6 — identical for these three selectors), throwaway
 `HOME` / `CYRIUS_HOME`. Met while fixing that issue: D6 refuses `--agnos` and `--target=x86_64-bare-metal-elf` on the
 aarch64 Linux CLI; its triage noted "Not checked: `--win` from an aarch64 Linux host". The combined-target-flags issue
 (D20, 6.7.12) refuses two selectors at once; a single `--win` on this host is outside both.

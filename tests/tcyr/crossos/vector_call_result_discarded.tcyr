@@ -7,7 +7,7 @@
 # user argument as that pointer and wrote the vector through it — `mkv(41, 7);` page-faulted writing address 41
 # (exit 5), `s.mv(41, 7);` overwrote `self` (s.k 7 where 1 is right). SysV / AAPCS64 / cx return a vector in
 # registers and were right. Now every such call gets storage (a frame temporary; a hidden global at top level).
-# Filed: docs/development/issues/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md
+# Filed: docs/development/issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/codegen/struct_value_codegen.sh (rows C), on the
 # four hardware hosts by the release gate's cross-OS leg — cass is the leg this file exists for.
 include "lib/syscalls.cyr"

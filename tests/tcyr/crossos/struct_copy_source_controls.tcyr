@@ -1,5 +1,5 @@
 # struct_copy_source_controls.tcyr — 6.7.12. THE DECLARED-TYPE CONTROLS OF THE STRUCT COPY-SOURCE CHECKS, ON THE HOSTS
-# (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
+# (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
 #
 # tests/gates/frontend/struct_copy_source_type_refused.sh refuses a struct copy whose SOURCE is of another struct
 # type — a struct-typed field as a by-value argument (6.6.12 V3), a top-level copy-init from a global or a field

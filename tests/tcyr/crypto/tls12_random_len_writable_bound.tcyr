@@ -5,7 +5,7 @@
 # tls_native_12_master_secret copies the two randoms into `var seed[_TLS12_SEED_LEN]` — 64 bytes on the stack,
 # sized by the const. Through 6.7.11 the copies read the VAR: after `TLS12_RANDOM_LEN = 256` they wrote 512
 # bytes into the 64-byte seed and the program died of SIGSEGV (exit 139, "returned" never printed). Since 6.7.12
-# every read in the TLS stack reads the const (issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md;
+# every read in the TLS stack reads the const (issues/archived/2026-10-11-tls-public-bound-vars-drive-const-storage.md;
 # the public var stays writable and a write is inert — the user's decision D16, 2026-10-15), so the copy is
 # bounded by the storage it fills and the master secret is the one a 32-byte random gives.
 include "lib/tls_native.cyr"

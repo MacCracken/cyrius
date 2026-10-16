@@ -10,7 +10,7 @@
 # lexer's one ELLIPSIS token) is now not counted and the entry reads `name/MIN-`.
 #
 # ROWS (each fixture COMPILES first — a premise; the tool built from programs/ by build/cycc)
-#   1  the filed repro verbatim (issues/2026-10-13-api-surface-variadic-arity.md): it exits 11;
+#   1  the filed repro verbatim (issues/archived/2026-10-13-api-surface-variadic-arity.md): it exits 11;
 #      `--update --scope=project` writes exactly v::two/2, v::va/1-, v::zv/0-
 #   2  shapes: a fixed `fn f(a, b)` stays f/2 and `fn f3(a, b, c)` f3/3; a defaulted fn keeps
 #      MIN-MAX (d/1-2); a tail on its own line after a comment holding a comma (wv/1-); a

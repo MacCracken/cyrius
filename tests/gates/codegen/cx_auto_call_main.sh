@@ -150,7 +150,7 @@ tcyr() {
     done
 }
 
-# 6.7.12 (D13, issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md): the files
+# 6.7.12 (D13, issues/archived/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md): the files
 # whose `main` stopped at the cx guest contract now take honest cx arms, so their counts differ per
 # target. n_tgt FILE TARGET — the assertion lines one target compiles: `#ifdef` / `#ifndef
 # CYRIUS_TARGET_<X>` nest (`#else` flips the innermost), any other macro reads as undefined.

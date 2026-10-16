@@ -1,7 +1,7 @@
 # `TLS_SHA256_CTX_LEN` (a literal public var, no const twin) still sizes the transcript clone copy: raising it smashes the stack — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.12 stdlib lane (unit L3) while fixing
-[the TLS public bound vars](2026-10-11-tls-public-bound-vars-drive-const-storage.md). That filing covers the seven
+[the TLS public bound vars](archived/2026-10-11-tls-public-bound-vars-drive-const-storage.md). That filing covers the seven
 `var X = _X;` twins (all read `_X` since 6.7.12); this var is not a twin, so it was outside its surface.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Low–Medium (the same class as the twins issue: a program that writes a public stdlib var corrupts its own

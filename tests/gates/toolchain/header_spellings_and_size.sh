@@ -61,7 +61,7 @@
 # PATH, cc present; and a PATH without clang), under sh and bash -eo pipefail: the gate exits 77
 # naming H8's guard rows and H11 (no clang: naming H8's clang guard rows and H10's cross-target
 # rows). Mutation: the 6.7.11 gate under the same fake uname exits 0 with PASS, 6 rows unrun.
-# 6.7.12 — H12, A `: stack` ENUM RETURN (issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md,
+# 6.7.12 — H12, A `: stack` ENUM RETURN (issues/archived/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md,
 # D23, the user 2026-10-15): `: Result` / `: Option` / `: Tagged` / an own `enum E: stack` return is
 # cyr_val2 (tag w0, payload w1) under the x86_64 SysV guard — cycc lands the pair in x0:x2 on aarch64
 # (pi and ecb: x1 0, x2 the payload) and rax:rdx on Win64 — and a word signature over a body that
@@ -295,7 +295,7 @@ check "a struct declared after the fn is sized (the whole file is read)" 1 "$(ha
 check "a return annotation on the line after the list's ')'" 1 "$(has o8b 'cyr_val2 ml(cyr_val a);   /* returns B16, 16 B */')"
 # 6.7.12 (D24, the user 2026-10-15): a SIMD vector return is REFUSED by name — it printed `cyr_val`
 # (C reads rax / x0; cycc returns a vector elsewhere, by width and target), and no C11 return type
-# carries one. The filed repro verbatim (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md),
+# carries one. The filed repro verbatim (issues/archived/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md),
 # then every one of the twelve vector names. Mutation: the 6.7.11 word restored → these rows RED.
 printf '%s\n' 'fn rv2(a): f64v2 { var v: f64v2; return v; }' 'fn rv4(): f64v4 { var v: f64v4; return v; }' \
   'fn ri4(): i32v4 { var v: i32v4; return v; }' > vec.cyr
@@ -463,7 +463,7 @@ fi
 # now cyr_val2 (tag w0, payload w1) under the x86_64 SysV guard, a named comment elsewhere; a fn
 # whose signature says a word (none, or `: i64`) but whose body returns the pair — a constructor,
 # or a call of a pair fn of this file (a fixpoint) — is REFUSED by name, rc 1.
-# issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md
+# issues/archived/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md
 echo "H12 — a \`: stack\` enum's pair: modelled when annotated, refused by name when propagated:"
 printf '%s\n' 'include "lib/result.cyr"' 'fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }' > se.cyr
 rc12=0; "$CY" header se.cyr > o12 2> e12 || rc12=$?

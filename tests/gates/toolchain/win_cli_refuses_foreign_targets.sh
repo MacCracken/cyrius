@@ -17,7 +17,7 @@
 # failed only because no cycc_aarch64 ships there). The fix: cbt/cli_args.cyr `_cli_foreign_target`,
 # the first block of `_cli_apply_target`, asks `_cli_host_emits_only()` (`#ifdef CYRIUS_TARGET_WIN` /
 # `CYRIUS_TARGET_MACOS`; 0 on Linux: x86_64 Linux, where src/main.cyr honours the selectors).
-# 6.7.12 (D6, issues/2026-10-14-aarch64-linux-cli-drops-target-selectors.md): the aarch64 Linux CLI's
+# 6.7.12 (D6, issues/archived/2026-10-14-aarch64-linux-cli-drops-target-selectors.md): the aarch64 Linux CLI's
 # forks read CYRIUS_KERNEL alone, so `--agnos` wrote a plain aarch64 ELF and
 # `--target=x86_64-bare-metal-elf` an aarch64 image under an x86_64 kernel line, OK at rc 0 (pi);
 # `_cli_host_emits_no_x86()` (`#ifdef CYRIUS_TARGET_LINUX` + `CYRIUS_ARCH_AARCH64`) refuses those two
@@ -44,7 +44,7 @@
 #      `MZ`); `--target=cx` and `--target=js` reach their own arms (their dry-run lines). wine is not
 #      hardware: the release gate's cass leg (and the .bat probe in the CHANGELOG) is the real
 #      Windows.
-#   6.7.12 (D5, issues/2026-10-10-strict-pin-and-pie-inert-off-linux.md): `--pie` from the Windows CLI
+#   6.7.12 (D5, issues/archived/2026-10-10-strict-pin-and-pie-inert-off-linux.md): `--pie` from the Windows CLI
 #      (cycc.exe has no PIE mode; it wrote the same image as a plain build, rc 0): S4 only the PE CLI
 #      carries the refusal; W11 `build --pie` rc 1, the exact error, no output, nothing compiled;
 #      W12 an existing output untouched. Mutation: the `--pie` test dropped from

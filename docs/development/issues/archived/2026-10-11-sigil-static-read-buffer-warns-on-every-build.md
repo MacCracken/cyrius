@@ -55,7 +55,7 @@ likewise, or kept as it is (2 KB, under the budget). Both warnings go (sigil's s
 advisory's 131,072 B), and 256 KB leaves every TLS consumer's `.bss`. It also ends a coupling seen in passing: the
 buffer's size is the literal 262144 = 4096 × 64, while `SIGIL_CRYPTO_BANKS` (`lib/sigil.cyr:5182`) is a writable
 public `var` of 64 — the TLS bound-var class
-([2026-10-11-tls-public-bound-vars-drive-const-storage.md](../2026-10-11-tls-public-bound-vars-drive-const-storage.md)). Then a sigil release (the user tags it), a
+([2026-10-11-tls-public-bound-vars-drive-const-storage.md](2026-10-11-tls-public-bound-vars-drive-const-storage.md)). Then a sigil release (the user tags it), a
 byte-identical re-vendor, its `docs/ecosystem.md` row, and a cyrius-side row: `include "lib/tls.cyr"` compiles with no
 warning (a gate under `tests/gates/` that greps the stderr of the bare include).
 

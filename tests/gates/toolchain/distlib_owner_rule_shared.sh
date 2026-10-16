@@ -40,7 +40,7 @@
 #      first) — naming the same candidates (the two rules agree). Its reader is the CLI's own
 #      (cbt/srcscan.cyr, compiled here); the rule is re-derived in shell, so it cannot share a
 #      defect with `_distlib_symbol_owner`.
-#   W  issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md's repro verbatim: a bundle
+#   W  issues/archived/2026-10-13-ws-and-ws-server-declare-the-same-constants.md's repro verbatim: a bundle
 #      reading WS_OPEN with nothing declared records `ws` (ws_server.cyr includes ws.cyr and no
 #      longer declares the nine WS_* names, D11 2026-10-15): rc 0, the sidecar is exactly `ws`.
 # MUTATIONS (measured): CYRIUS_BIN=<0f733aea's CLI> (byte-order first restored) -> T RED ("distlib
@@ -271,7 +271,7 @@ if OA=$(run_distlib "$A"); then fail "C: the CLI did not refuse the $AK tie $an 
 echo "$OA" | grep -qF "'$an' is undefined on every target, and more than one stdlib leaf could own it ($ac)" \
     || fail "C: the CLI's refusal for $an does not name the census's candidates ($ac): $(echo "$OA" | grep -i error | head -2)"
 
-# ── W: the WS_* names have one owner (issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md)
+# ── W: the WS_* names have one owner (issues/archived/2026-10-13-ws-and-ws-server-declare-the-same-constants.md)
 WSP=$(mkproj w 'fn orp_a(): i64 { return WS_OPEN; }')
 rc=0; OW=$(run_distlib "$WSP") || rc=$?
 [ "$rc" -eq 0 ] || fail "W: distlib exited $rc for a bundle reading WS_OPEN: $(echo "$OW" | grep -i error | head -3)"

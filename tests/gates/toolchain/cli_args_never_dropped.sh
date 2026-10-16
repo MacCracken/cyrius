@@ -951,7 +951,7 @@ run_in "$FT" "$CY" deps --dry-run
 check "deps --dry-run lists the manifest's [deps.NAME] entries, each with its source" 2 "$(grep -c '^  f[ab]  (skipped: optional, no active feature)$' "$T/out" || true)"
 
 echo "axis 18b — --help and -h on EVERY verb main() dispatches: rc 0 and a usage, nothing written:"
-# 6.7.12 (issues/2026-10-12-init-port-sign-efi-reject-help.md): `cyrius --help` promises that
+# 6.7.12 (issues/archived/2026-10-12-init-port-sign-efi-reject-help.md): `cyrius --help` promises that
 # `cyrius <command> --help` lists that command's flags, and the three RAW-TAIL verbs — init and
 # port (forwarded to cyrius-init), sign-efi (execve'd into cyrsign-efi) — failed it as an unknown
 # flag (rc 1 / 1 / 2). The verb list is axis 0's, DERIVED from the dispatch, so a new verb is

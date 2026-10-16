@@ -3,7 +3,7 @@
 #
 # 6.7.6 gave each public bound a `const _X` twin that sizes its buffers and kept `var X = _X;` for the API; through
 # 6.7.11 lib/tls_native*.cyr still READ the var at ~190 sites, so a program that wrote one drove copies, indexes and
-# allocations over storage the const had sized (issues/2026-10-11-tls-public-bound-vars-drive-const-storage.md).
+# allocations over storage the const had sized (issues/archived/2026-10-11-tls-public-bound-vars-drive-const-storage.md).
 # Since 6.7.12 every read is the const; the vars stay writable and a write is inert (the user's decision D16,
 # 2026-10-15), and TLS_RECORD_MAX_PLAINTEXT is the protocol constant 2^14, not a tunable (D17, 2026-10-15).
 # The filed repro (TLS12_RANDOM_LEN into the PRF seed) is tls12_random_len_writable_bound.tcyr. One row per

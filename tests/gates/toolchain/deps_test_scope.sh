@@ -25,7 +25,7 @@
 #   D11 the test-scope pass walks the root manifest a second time: an unsafe `[deps.a..b]` and an
 #       unclosed `[deps.zz` header are each refused ONCE, and counted once in the summary (`2
 #       errors`, not 4; until 6.7.12 a manifest's count was clamped to 1 and the summary said `1
-#       errors` — issues/2026-10-08-cli-path-and-reporting-leftovers.md item 4)
+#       errors` — issues/archived/2026-10-08-cli-path-and-reporting-leftovers.md item 4)
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:

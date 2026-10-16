@@ -4,7 +4,7 @@
 cross-built from the 6.7.12 tools lane (l6712-tools, the strict-pin fix applied: `CYRIUS_MACHO_ARM=1 cycc_aarch64 <
 src/main_aarch64_macho.cyr`, ad-hoc signed on ecb; `CYRIUS_MACHO=1 build/cycc < src/main_x86_macho.cyr`), and with the
 same compilers built from the lane's base (6.7.11's behaviour). Met while fixing
-issues/2026-10-10-strict-pin-and-pie-inert-off-linux.md, whose triage noted it "seen in passing, not part of this
+issues/archived/2026-10-10-strict-pin-and-pie-inert-off-linux.md, whose triage noted it "seen in passing, not part of this
 filing"; that issue's decision (D5) refuses `--pie` by name on the Windows CLI only.
 **Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Medium — a dropped flag that changes the artifact (the 6.6.5 one-argument rule): `cyrius build --pie` from

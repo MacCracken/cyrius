@@ -28,7 +28,7 @@
 # filing names: decoding the literal first (a `unicode_escape` round trip) made 23 false hits at
 # v6.5.33.
 #
-# 6.7.12 (docs/development/issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md):
+# 6.7.12 (docs/development/issues/archived/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md):
 # N was read only as one integer literal, and only fn locals were recorded, so `var a[BUF]`,
 # `var b[Sz.SMALL]`, `var c[4 + 4]` and a top-level `var g[2]` were never checked (the filed
 # gap.cyr: 0 warnings). A pre-scan now records `const NAME = <literal>;` and each enum member
@@ -275,7 +275,7 @@ check "  (the fixture marks 4 overrun lines and 2 write lines)" "4 2" "$(count "
 check "overrun warnings == the # WO lines" "$CO" "$(warned "$T/scopes.cyr" "$OV")"
 check "write-length warnings == the # WL lines" "$CL" "$(warned "$T/scopes.cyr" "$WL")"
 
-echo "axis K — 6.7.12: N as a const expression; the filed gap.cyr (issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)"
+echo "axis K — 6.7.12: N as a const expression; the filed gap.cyr (issues/archived/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)"
 cat > "$T/gap.cyr" <<'EOF'
 const BUF = 8;
 enum Sz { SMALL = 8; }

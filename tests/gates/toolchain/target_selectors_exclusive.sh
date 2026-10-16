@@ -5,7 +5,7 @@
 # the aarch64 bare-metal image exactly as the --target alone does (the user's decision D20,
 # 2026-10-15).
 #
-# WHY (issues/2026-10-12-combined-target-flags-silently-resolved.md): the four selectors were
+# WHY (issues/archived/2026-10-12-combined-target-flags-silently-resolved.md): the four selectors were
 # independent switches, each read by whatever consumer cared about it, and every pair exited 0
 # with an OK — `--win --aarch64` / `--agnos --aarch64` wrote the plain aarch64 ELF, `--win --agnos`
 # a PE matching neither, `--win --target=x86_64-bare-metal-elf` a PE plus an x86 kernel line,

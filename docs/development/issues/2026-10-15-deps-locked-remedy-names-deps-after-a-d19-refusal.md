@@ -1,7 +1,7 @@
 # `deps --locked` after a D19 pin-move refusal still says "run `cyrius deps` and commit the result", and that command now refuses — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-15 on the 6.7.12 tools lane (l6712-tools @ 88afd900; D19 shipped in
-c72b4e15, issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md). Found by the lane's review. Related, not the same
+c72b4e15, issues/archived/2026-10-08-deps-before-lib-sync-stamps-new-pin.md). Found by the lane's review. Related, not the same
 find: 2026-10-15-deps-keeps-a-lock-row-for-a-file-removed-from-lib.md (staged by this lane) is the same remedy line
 going stale for a different reason (a removed file's row).
 **Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.

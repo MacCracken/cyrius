@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 darwin lane's tree (l6712-darwin @ 66384922) with the
 ELF-aarch64 cross compiler built from it, run under qemu-aarch64. Filed from unit D1, which shipped the warning for
-the filed shape (issues/2026-10-08-aarch64-native-region-literal-translated-silently.md, D1 warn only): a raw
+the filed shape (issues/archived/2026-10-08-aarch64-native-region-literal-translated-silently.md, D1 warn only): a raw
 literal inside a region opened in the call's OWN file. Two neighbouring shapes still renumber silently.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Medium — the wrong syscall runs with no diagnostic (the same defect as the filed issue, in the two

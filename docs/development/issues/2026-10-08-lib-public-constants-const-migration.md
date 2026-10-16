@@ -81,7 +81,7 @@ The census regex above takes literal initialisers only, so it misses the 14 publ
 | `TLS_HANDSHAKE_HEADER_LEN` | lib/tls_native_lowlevel.cyr | 4 |
 | `TLS_SHA384_CTX_LEN` | lib/tls_native_lowlevel.cyr | 208 |
 
-The user's decision D16 (2026-10-15, issues/2026-10-11-tls-public-bound-vars-api-decision.md): until this arc they stay
+The user's decision D16 (2026-10-15, issues/archived/2026-10-11-tls-public-bound-vars-api-decision.md): until this arc they stay
 writable vars, each commented as a read-only mirror of its `_X`, and since 6.7.12 nothing in lib/ reads any of them
 (`lib_buffers_sized_by_const.sh` axis 6 holds all 14), so a write is inert. The arc converts them with the rest: `const
 X = <value>;`, the `_X` twin dropped or kept as an alias, and the same accounting (a consumer that assigns one, takes

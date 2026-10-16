@@ -13,7 +13,7 @@
 # answer for an fd that does not exist). CHANGELOG [6.7.11]
 #
 # 6.7.12 — the same class in the adapter's OTHER slot helpers
-# (issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md): _agnos_sock_bind,
+# (issues/archived/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md): _agnos_sock_bind,
 # _agnos_listen_stash, _agnos_listen_start and _agnos_fd_listen indexed slot `fd & 7` for ANY fd,
 # so lib/net.cyr's agnos sock_bind / sock_listen / sock_accept / sock_connect (and net_connect_nb)
 # stashed into, listened on, accepted from or connected into an unrelated socket's slot with a
@@ -130,7 +130,7 @@ echo "A1 — the filed repro on the tree's lib/:"
 check "A1 a negative fd is no socket; _agnos_fd_conn(-1) -1; sys_close(-1) -1 with slot 7 untouched" \
     "$WANT" "$(run_repro "$R")"
 
-# The 6.7.12 filed repro, VERBATIM (issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md
+# The 6.7.12 filed repro, VERBATIM (issues/archived/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md
 # § Reproduction).
 cat > "$T/repro2.cyr" <<'EOF'
 include "lib/syscalls.cyr"

@@ -54,7 +54,7 @@
 #       -> RED 18: every receiving row does not build on cx (P6 / P7 receive no struct);
 #          cx_crossos_rows_run.sh RED 13 (R5, R6, every R8 file)
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
-# 6.7.12 (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4): P8b runs on ecb / ach / cass / pi in
+# 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): P8b runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

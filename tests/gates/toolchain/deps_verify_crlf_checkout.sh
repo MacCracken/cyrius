@@ -3,7 +3,7 @@
 # `--locked` on a CRLF checkout of a committed lib/ keep the exact-bytes verdict (rc 1) and NAME
 # the cause and its remedy; `cyrius init` / `cyrius port` ship `.gitattributes` with `lib/** -text`.
 #
-# THE DEFECT (issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md). cyrius.lock records the
+# THE DEFECT (issues/archived/2026-10-08-deps-verify-crlf-checkout-mismatch.md). cyrius.lock records the
 # SHA-256 of each lib/ file as `cyrius deps` wrote it (LF). A `git -c core.autocrlf=true clone` —
 # Git for Windows' default — converts lib/ to CRLF, so `--verify` printed `FAIL: lib/x.cyr (hash
 # mismatch)` for every file and `--locked` `its bytes do not match cyrius.lock`, remedied with

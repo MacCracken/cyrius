@@ -148,7 +148,7 @@ fi
 if ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP: axis 5 (wine absent — the cass cross-OS leg runs xflock_two_handle.tcyr on real Windows)"
 else
-    # The filed repro, verbatim (issues/2026-10-08-xflock-windows-lockfileex-not-wired.md).
+    # The filed repro, verbatim (issues/archived/2026-10-08-xflock-windows-lockfileex-not-wired.md).
     cat > "$D/fl.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

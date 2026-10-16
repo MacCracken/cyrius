@@ -306,7 +306,7 @@ refused r9s2 "unknown type 'Nonexist' for parameter 's'" "R9s2: \`fn f(s: Nonexi
 refused r9s3 "unknown type 'Nonexist' for parameter 's'" "R9s3: \`fn f(a, s: Nonexist = 0, b = 3)\` called \`f(1)\`: the unknown type alone" "fn f(a, s: Nonexist = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n" "1:12"
 refused r9s4 "unknown type 'Nonexist' for parameter 's'" "R9s4: ... a forward call" "fn main(): i64 { return f(); }\nfn f(s: Nonexist = 0): i64 { return 7; }\nsyscall(60, main());\n" "2:9"
 refused r9s5 "a slice cannot be a parameter" "R9s5: \`s: slice<u8> = 0\`, two calls short" "fn f(a, s: slice<u8> = 0, b = 3): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1, 0); }\nsyscall(60, main());\n" "1:12"
-# R9s6-R9s8 (6.7.12; issues/2026-10-14-refused-parameter-type-default-cascades-arity-error.md): a parameter TYPE that is
+# R9s6-R9s8 (6.7.12; issues/archived/2026-10-14-refused-parameter-type-default-cascades-arity-error.md): a parameter TYPE that is
 # no type at all (6.7.11's ARG-3: `a: 5`, `a: fn`, `b: "s"`) keeps its default too (`_pd_tok_refused`, the type reader
 # asked quietly) — the default was dropped, so `f()` reported "'f' expects 1 argument, got 0" after the type's refusal.
 # R9s6 the filed repro verbatim. Mutation (2026-10-15, measured) MD9b `_pd_tok_refused` answering 0 -> RED 3: R9s6 R9s7

@@ -1,6 +1,6 @@
 #!/bin/sh
 # cli_path_reporting_leftovers.sh — 6.7.12. The CLI leftovers of the 6.7.6 review
-# (issues/2026-10-08-cli-path-and-reporting-leftovers.md), one row per item, each with a mutation.
+# (issues/archived/2026-10-08-cli-path-and-reporting-leftovers.md), one row per item, each with a mutation.
 #
 #   item 3  `_abs_path(".")` returned `<cwd>/.`, so every path joined onto the consumer's directory
 #           carried a `/./` — `not found in the local path <proj>/./../mono/libs/foo`, and git ran

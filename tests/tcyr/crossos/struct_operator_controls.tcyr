@@ -1,5 +1,5 @@
 # struct_operator_controls.tcyr — 6.7.12. THE ACCEPTED SHAPES OF 6.7.11'S STRUCT-OPERATOR AND STRUCT-BINDING BITES
-# THAT RAN ONLY IN SHELL GATES, ON THE HOSTS (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
+# THAT RAN ONLY IN SHELL GATES, ON THE HOSTS (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4).
 #
 # 6.7.11's struct lane changed what an operator next to a struct means (issues/archived/2026-10-08-struct-operator-
 # results.md, issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md,

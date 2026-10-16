@@ -2,7 +2,7 @@
 # Gate: lib/args.cyr's Linux args_init reads the WHOLE command line — past 2 MiB — and a command
 # line it cannot read is a negative errno, never 0 (6.7.12).
 #
-# THE BUG (issues/2026-10-14-args-init-truncates-argv-past-2-mib.md, filed by cmdit's audit).
+# THE BUG (issues/archived/2026-10-14-args-init-truncates-argv-past-2-mib.md, filed by cmdit's audit).
 # args_init allocated 2,097,152 bytes and read /proc/self/cmdline with ONE sys_read. Linux's
 # ARG_MAX is not 2 MiB: it follows RLIMIT_STACK / 4 (up to 6 MiB), which an unprivileged
 # `ulimit -s unlimited` raises. A longer command line came back as its first 2,097,152 bytes —

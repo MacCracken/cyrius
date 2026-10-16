@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**. Measured 2026-10-15 on the 6.7.12 darwin lane's tree (l6712-darwin @ f60df9df), on ecb (Darwin
 27.0.0 arm64), ach (Darwin 22.6.0 x86_64) and this x86_64 Linux box. Filed from unit D3. That unit made both macOS
-tarballs ship `bin/cyrius-watch.sh` (issues/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's
+tarballs ship `bin/cyrius-watch.sh` (issues/archived/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's
 decision D4, 2026-10-15). Running the newly shipped script on the hosts showed what it builds.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Low. The shipped watcher reports `built N bytes`, but on Apple Silicon the binary dies at its first

@@ -3,7 +3,7 @@
 # own copies. This file includes ONLY lib/ws_server.cyr: every WS_* name still resolves, with
 # RFC 6455's values, and ws.cyr's WS_CONNECTING / WS_RECV_MAX_PAYLOAD arrive with it. Its twin
 # ws_and_ws_server_constants_agree.tcyr includes both files. The tie this ends:
-# issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md. CHANGELOG [6.7.12]
+# issues/archived/2026-10-13-ws-and-ws-server-declare-the-same-constants.md. CHANGELOG [6.7.12]
 include "lib/ws_server.cyr"
 include "lib/assert.cyr"
 

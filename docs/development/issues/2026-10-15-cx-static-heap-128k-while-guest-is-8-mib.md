@@ -6,7 +6,7 @@ region to 4 MiB and cxvm's guest memory 1 MB → 8 MiB).
 **Severity:** Low — a cx program that allocates more than 128 KB stops with the loud, named
 `alloc: cx static heap exhausted (128 KB)` (exit 1), never a silent wrong answer; no file on a cx leg meets it today.
 **Discovered:** 2026-10-15, the review of the 6.7.12 stdlib lane (the D12 bite,
-`issues/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md`). A shape beyond D12's filed surface (the code
+`issues/archived/2026-10-12-cx-codebuf-512k-overflows-yukti-crossos-test.md`). A shape beyond D12's filed surface (the code
 region and cxvm's caps), so filed, not absorbed.
 
 ## Reproduction

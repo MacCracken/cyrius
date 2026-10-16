@@ -5,7 +5,7 @@
 # cyriusly) refuses by name without build/cycc, builds no cross_bins, and installs the DEFAULT
 # build of every tool whatever compile-mode switch the caller's shell holds.
 #
-# THE FILED DEFECT (docs/development/issues/2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md),
+# THE FILED DEFECT (docs/development/issues/archived/2026-10-12-cyriusly-setup-bootstrap-cross-loop-and-env.md),
 # measured on the 6.7.10 slot-open tree:
 #   (a) build/cycc missing: setup ran `sh bootstrap/bootstrap.sh` — which assembles cybs and asm
 #       from the seed and builds no cycc — and carried on: 15 compiles against the missing

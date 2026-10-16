@@ -1,7 +1,7 @@
 # After D19's pin-move refusal, the closure files are already re-vendored at the new pin, so `deps --verify` fails on them while the refusal says only that the lock is unchanged — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-15 on the 6.7.12 tools lane (l6712-tools @ 88afd900; D19 shipped in
-c72b4e15, issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md). The lane's handoff recorded this as a known note
+c72b4e15, issues/archived/2026-10-08-deps-before-lib-sync-stamps-new-pin.md). The lane's handoff recorded this as a known note
 ("the closure files themselves are re-vendored at the new pin before the lock refusal") but did not stage it; the
 review asked for it to be filed.
 **Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.

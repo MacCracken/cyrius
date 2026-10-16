@@ -1,6 +1,6 @@
 # tls13_sh_unoffered_ext.tcyr — 6.7.12: the TLS 1.3 client walks EVERY ServerHello extension.
 #
-# issues/2026-10-08-tls-native-conformance-bite.md item 3. tls_native_client_parse_server_hello
+# issues/archived/2026-10-08-tls-native-conformance-bite.md item 3. tls_native_client_parse_server_hello
 # looked up supported_versions and key_share and never read the rest of the block, so a ServerHello
 # carrying an extension the client never offered parsed TLS_OK (RFC 8446 §4.2: unsupported_extension).
 # Now _tn_client_ext_walk (the HelloRetryRequest walk's rule) refuses one we did not offer with

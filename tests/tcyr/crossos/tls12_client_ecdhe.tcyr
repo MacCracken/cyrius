@@ -23,7 +23,7 @@
 # Pure functions — no socket, no peer, no clock — so it runs on every cross-OS host. The OpenSSL
 # interop legs are tests/gates/platform/tls_native_client_auth_openssl.sh.
 #
-# 6.7.12 (issues/2026-10-08-tls-native-conformance-bite.md items 2, 4 and 6):
+# 6.7.12 (issues/archived/2026-10-08-tls-native-conformance-bite.md items 2, 4 and 6):
 # test_cert_curve_not_offered is the filing's verbatim test — a client listing x25519 + secp256r1
 # refuses a P-384 server certificate (RFC 8422 §5.1; it verified with the key's curve as it came),
 # and one byte after the signature is refused (`plen + 4 + sig_len > body_len` let it through; now

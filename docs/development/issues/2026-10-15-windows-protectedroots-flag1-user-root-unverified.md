@@ -1,7 +1,7 @@
 # Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end — OPEN
 
 **Status:** 🟡 **OPEN** — found by the 6.7.12 windows lane's review (2026-10-15) of unit W3
-(issues/2026-10-08-windows-trust-store-parity-gaps.md, item 1). Nothing is known to be wrong; one shape of the filed
+(issues/archived/2026-10-08-windows-trust-store-parity-gaps.md, item 1). Nothing is known to be wrong; one shape of the filed
 repro has never been executed.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Low — Windows only, a verification gap: if crypt32 did NOT apply flag 1 at `CertOpenStore`, the native

@@ -27,7 +27,7 @@
 # ceiling": 2 FAIL).
 # 6.7.12: axis 13 lib/net.cyr's agnos arms and the adapter's slot helpers refuse an fd that is not
 # a tagged socket fd before any table write or kernel call
-# (issues/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md). Mutants measured: on the
+# (issues/archived/2026-10-13-agnos-net-arms-take-any-fd-for-a-socket-slot.md). Mutants measured: on the
 # 6.7.11 lib/ -> 8 FAIL (every arm Ok but sock_accept's Err(1) after its #57s; six #56, three #57,
 # six #47; slots 7 and 1 re-stashed to ports 9000 / 9002); _agnos_listen_start's guard alone
 # removed -> 2 FAIL (the direct calls issue three #56 and answer 0); net_connect_nb's guard alone

@@ -3,7 +3,7 @@
 # compiler gives, on the URI of the file it names, for every cyrius extension, and checks a
 # project's open file itself.
 #
-# THE DEFECT (issues/2026-10-12-lsp-diagnostics-column-file-and-extensions.md, measured on the 6.7.11
+# THE DEFECT (issues/archived/2026-10-12-lsp-diagnostics-column-file-and-extensions.md, measured on the 6.7.11
 # server): `parse_and_send_diagnostics` read `error:<file>:<line>:` only, skipping the file name
 # unread — cycc prints `error:<file>:<line>:<col>: <msg>`, so the column stayed in the message
 # (`14: undefined variable 'nope' …`) and the range was always characters 0-100; an error in an

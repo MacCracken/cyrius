@@ -1,7 +1,7 @@
 # Windows: a drive-rooted `[deps.X] path` is joined onto the manifest's directory — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.12 tools lane (unit T4) while closing
-`issues/2026-10-08-cli-path-and-reporting-leftovers.md` item 1; reproduced under wine with the PE CLI
+`issues/archived/2026-10-08-cli-path-and-reporting-leftovers.md` item 1; reproduced under wine with the PE CLI
 cross-built from the lane's tree (l6712-tools @ df23b5d6) and with 6.7.11's (a919f439 cbt).
 **Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Low — a Windows project cannot name a local dependency by its drive-rooted absolute

@@ -4,7 +4,7 @@
 # check runs first, the open second, and a directory swapped for a link (a junction on Windows)
 # in between used to be followed on two targets. The open must hold the line by itself.
 #
-# ⛔ 6.7.12 — THE DEFECT (issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md). Linux and x86
+# ⛔ 6.7.12 — THE DEFECT (issues/archived/2026-10-08-embed-open-link-race-pe-macos-arm64.md). Linux and x86
 # macOS walk the path from a handle on the project root with openat(dirfd, component,
 # O_DIRECTORY | O_NOFOLLOW), so a linked directory fails the open. Two targets opened the whole
 # path instead, where O_NOFOLLOW covers the LAST component only:

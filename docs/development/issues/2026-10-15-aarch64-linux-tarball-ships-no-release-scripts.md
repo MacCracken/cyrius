@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**. Read 2026-10-15 from the 6.7.12 darwin lane's tree (l6712-darwin @ f60df9df). Filed from
 unit D3. That unit made both macOS tarballs ship every `cyrius.cyml` `[release] scripts` entry, through the new
-`scripts/release-scripts.sh` (issues/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's decision
+`scripts/release-scripts.sh` (issues/archived/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's decision
 D4, 2026-10-15: ship every [release] script). The same check over the other POSIX tarball builders shows one that
 still ships none.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.

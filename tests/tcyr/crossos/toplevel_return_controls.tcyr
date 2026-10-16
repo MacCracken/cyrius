@@ -10,7 +10,7 @@
 # wine only; the refusal is host-independent, but the accepted controls never ran on pi / cass / the Macs.
 #
 # ⭐ WHY THIS FILE IS IN crossos/: the release gate's cross-OS leg runs only this directory on ecb / ach / cass / pi
-# (issues/2026-10-14-6711-rows-not-run-on-hardware.md item 1). Each row is the gate's C program as an
+# (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 1). Each row is the gate's C program as an
 # assertion, the gate's exit code its expected value: C1 5, C2 5, C3 4, C4 3, C5 10.
 #
 # Under a regression that refuses an in-fn return (the gate's mutant MG) this file does not compile; under one

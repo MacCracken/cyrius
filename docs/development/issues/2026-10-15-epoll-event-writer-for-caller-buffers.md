@@ -4,7 +4,7 @@
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Low — a stdlib surface gap, no live defect: the three sites write the right offset today.
 **Discovered:** 2026-10-15, the 6.7.12 stdlib lane (unit L1), fixing
-`issues/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md`. That filing asked for READERS
+`issues/archived/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md`. That filing asked for READERS
 (`epoll_event_events` / `epoll_event_data` / `EPOLL_EVENT_SIZE`, shipped in 6.7.12) and said async.cyr "could then use
 them too, so the rule lives in one place per arch". The reactor's read site now does; its writes cannot, because the
 only writer, `epoll_event_new`, allocates (the default allocator is a bump allocator with no free, so a per-wait

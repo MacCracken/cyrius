@@ -2,7 +2,7 @@
 # check driver's fmt / lint / doc walks) report a path that is not a directory as an unlistable
 # directory AT ONCE. The Linux lister opened it with O_RDONLY alone, so a FIFO handed to
 # audit_fmt_walk blocked in open(2) until a writer came and the walk never returned
-# (issues/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md); it opens with
+# (issues/archived/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md); it opens with
 # O_RDONLY | O_DIRECTORY | O_CLOEXEC now, and macOS routes through dir_list_checked, which does
 # the same since 6.7.11. The FIFO rows run on Linux and macOS, in a forked child the parent waits
 # 5 s for, so a regression reads RED here rather than hanging the leg (Linux makes the FIFO with

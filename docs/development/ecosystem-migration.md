@@ -34,97 +34,567 @@ does or builds; never a per-repo worklist.*
 
 ### 6.7.12
 
-#### The standard library
+Break 2, repair 2 — the platform release. Each block names its CHANGELOG [6.7.12] bite; the decisions are the user's
+(2026-10-15, D1–D31, and D3's per-thread scope). The changes that went beyond a decision's text are filed for confirmation
+in 6.7.13 (`docs/development/issues/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md`).
 
-**`lib/ws_server.cyr` includes `lib/ws.cyr` (D11, the user 2026-10-15)**
-- `lib/ws_server.cyr` no longer declares its own `WS_OP_CONTINUATION` / `WS_OP_TEXT` / `WS_OP_BINARY` / `WS_OP_CLOSE` /
-  `WS_OP_PING` / `WS_OP_PONG` / `WS_OPEN` / `WS_CLOSING` / `WS_CLOSED` vars: it includes `lib/ws.cyr`, and the nine
-  are ws.cyr's enum constants (same values). `include "lib/ws_server.cyr"` now also brings ws.cyr's client fns (DCE
-  drops the unused ones), `WS_CONNECTING` and `WS_RECV_MAX_PAYLOAD`. With ws_server alone, a write to one of the nine
-  (`WS_OPEN = 5;`: "cannot assign to enum constant 'WS_OPEN'") or its address (`&WS_OPEN`) stops compiling;
-  reading them is unchanged. A program that defines its own `WS_CONNECTING` or a `ws_*` fn beside ws_server now
-  gets the duplicate-definition warning (its own, the last definition, still wins).
-- `cyrius distlib` records `ws` for a bundle that reads a `WS_*` name with neither leaf in its unit (6.7.11 refused it
-  as a tie, "more than one stdlib leaf could own it (ws, ws_server)") — yantra's distlib converges again, its bundle
-  byte-identical.
+#### Language — the fix-first items
 
-**agnos: the net arms take only a tagged socket fd**
-- On agnos, `sock_bind` / `sock_listen` / `sock_accept` / `sock_connect` on an fd that is not one `tcp_socket()`
-  handed out (a failed open's `-1`, a file or stdio fd, `AGNOS_SOCK_TAG + 8` and up) now return `Err(9)` (EBADF) for a
-  negative fd and `Err(88)` (ENOTSOCK) for any other, and `net_connect_nb` returns `_NET_CONN_NB_ERR` — with no
-  table write and no kernel call. They used to act on socket slot `fd & 7` (a `-1` bound, listened, accepted and
-  connected on slot 7) and could answer `Ok`. Linux already answered these errnos; a program that passed only
+#### The language — the fix-first items
+
+The decisions are the user's at the 6.7.12 open (2026-10-15, D27 – D30). "6.7.11's Dn" is the 6.7.11 open's id
+(2026-10-13). Each block names its CHANGELOG [6.7.12] bite.
+
+**FX-1 — a vector value into a `*V` parameter is an address; a vector local into another pointer kind is refused (D27, the user 2026-10-15)**
+- Stops compiling: a vector LOCAL passed to a pointer parameter that is not a pointer to its vector type —
+  `fn rp(p: *Pt)` called `rp(b)`, and `p: *i64`, `p: *u8`, `p: **T` — now "cannot pass 'b' to a parameter that is not
+  a pointer to its vector type in a call to 'rp' - pass &b for its address" (every such argument reported). It passed
+  lane 0's bits as the address and faulted (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows) — except
+  on Windows, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran. Pass `&b` if the callee really reads the
+  vector's bytes through that pointer, or give the parameter the vector's own pointer type (`p: *f64v2`).
+- Stops compiling: at top level, a vector call result into a `*V` parameter — `var r = rd(mkv(42, 7));` — is "'mkv'
+  returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn" (it faulted on
+  every target in 6.7.11; 6.7.10 refused it on x86_64). Move the call into a fn.
+- Stops compiling: a call result or a dereference of ANOTHER vector type into a `*V` — `rd(mkv4(..))` with `mkv4`
+  returning `f64v4` into `p: *f64v2`, `rd(*pq)` with `pq: *f32v4` — is "cannot pass 'mkv4' to a parameter of a
+  different vector type in a call to 'rd'", as a local of another vector type already was (6.7.11); it compiled to a
+  fault. Pass the vector type the parameter names.
+- Starts working (no change needed): `rd(mkv(..))` — by name, wrapped, through `fncallN(&f, ..)` / `callptr(&f, ..)`,
+  in a tail position — and `rd(*pv)` with `pv` a `*V` pass an address (a frame temporary's; `pv` itself) on every
+  target. Through 6.7.11 they compiled to a fault (x86_64 refused them through 6.7.10); the 6.7.11 workaround — bind
+  the vector to a local first, or pass `pv` — still works.
+- `p: *f32v8` is now a pointer to an `f32v8` like the other `*V`: `r8(e)` with a vector local passes `&e` (it passed
+  lane 0 and faulted). A value-form `v: f32v8` parameter is unchanged — it still receives only its first word (filed,
+  6.7.13); pass `*f32v8` until then.
+
+**FX-3 — a known fn-pointer call returning a struct over 8 B into a scalar annotation is refused (D28, the user 2026-10-15)**
+- Stops compiling: inside a fn, `var x: <scalar> = fncallN(&f, ..);` / `= callptr(&f, ..);` — the callee written `&f`,
+  `f` returning a struct over 8 bytes (not `Str`), `<scalar>` any annotation that names no struct (i64, u8, f64,
+  bool, …), the initialiser wrapped or not — is "cannot initialise 'x: i64' from 'f', which returns the struct 'P3' -
+  declare 'x: P3' or bind a field", as `var x: i64 = f(..);` has been since 6.7.11. It read the struct's first field.
+  Declare the struct and read the field: `var p: P3 = fncall1(&mk3, 5); var x = p.a;`. A field of the call itself
+  (`fncall1(&mk3, 5).a`) is not accepted yet ("expected ';', got '.'"; filed, 6.7.13).
+- Unchanged: a struct of 8 bytes or less still gives its word; a callee held in a variable (`var fp = &mk3;
+  callptr(fp, 5)`) is still one word, not refused; a top-level global is not judged. A parenthesised callee
+  (`fncall1((&mk3), 5)`) still compiles and faults (exit 139 on x86_64) — write `&f` unwrapped; it is refused when the
+  parenthesised-callee fix lands (6.7.13).
+
+**FX-5 — an untyped `var q = p;` of a struct value is a typed copy (D29, the user 2026-10-15)**
+- `var q = p;` (or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
+  included) or a closure's captured copy of one, now declares `q` a copy of `p`'s struct, as `var q: P = p;` does.
+  Through 6.7.11 `q` was `p`'s FIRST WORD.
+- Changes what compiles: an arithmetic operator on `q` (`q + n`, `q - n`, `q * n`, …) now dispatches the struct's
+  operator fn (`P_add`, `P_sub`, …) and is refused when there is none (the "undefined function 'P_add'" warning, then
+  "refusing to emit binary with 1 reachable undefined function(s)"); it computed on the first word. Write the field you
+  meant (`p.x + n`), or `load64(&p) + n` for the raw first word.
+- Starts working: `q.y` (read and write; `p` is untouched) in a fn and inside a closure that captures `q` — it was "no
+  struct type in scope for 'q'" ("undefined variable 'q'" in a closure); `take(q)` into a by-value struct parameter
+  passes the struct (it passed the word as an address and faulted).
+- Unchanged — still the first word: `return q;` from an `i64` fn, `raw(q)` into an untyped parameter, `q == 3`. And
+  still a plain word: `var q = pp;` with `pp` a `*T` (an untyped impl `self` is one), `var q = h;` from a handle,
+  `var q = G;` naming a struct global inside a fn, and every top-level `var H = G;`. Annotate (`var q: P = G;`) for a
+  copy of a global.
+- No in-tree `lib/` or corpus code had the shape (an instrumented census found none).
+
+**FX-6 — `var a = 0;` then `var a = 5;` warns (D30, the user 2026-10-15)**
+- A warning only: nothing stops compiling, and no binary or exit code changes. A global first declared `= 0` (or a
+  constant that folds to 0, `= 1 - 1`) and declared again with another value now prints "duplicate symbol 'a'
+  redefined with conflicting value (last definition wins)", as every other differing pair did; the same goes for
+  `var A = 0;` followed by an enum member `A` (it printed the enum-over-var warning, whose text now ends "(computed)").
+- If a pin bump shows it, two files (or a file and a fold) declare one global with different initial values and share
+  one cell — rename one side. A same-value redeclaration stays silent, as documented.
+
+Kept, nothing to migrate: the six 6.7.11 changes that went beyond their decisions' text (D10's flip side, ST-8, RET-2,
+ST-20, GF-12 / GF-16 / GF-2, D4's 8-byte store) are confirmed by D31 (the user, 2026-10-15); the § 6.7.11 blocks stand.
+
+#### Darwin / aarch64
+
+#### Darwin / aarch64
+
+**DW-5 — `sys_sigprocmask` works on macOS, and changes the calling thread's mask (D3, the user 2026-10-15; per-thread, the user 2026-10-15)**
+- On macOS (x86_64 and arm64), `sys_sigprocmask(how, set, oldset)` now returns 0 and changes the calling thread's
+  mask, as on Linux. It is Darwin's `__pthread_sigmask` (329), reached through the private alias 1329.
+- Through 6.7.11 it returned -78 and did nothing. Code that took -78 as "macOS has no signal mask, skip" now really
+  blocks or unblocks. Drop the -78 branch. If the macOS path must stay a no-op, guard it with
+  `#ifdef CYRIUS_TARGET_MACOS` instead of testing the result.
+- `oldset` reads back with its upper 32 bits 0, because Darwin's set is 32 bits.
+- Children started through `lib/process.cyr`'s exec family (`run`, `run_capture`, `spawn`, `exec_*`, `exec_cmd`) on
+  macOS no longer inherit the parent's blocked signal mask: they start with an empty mask, as on Linux since 6.7.9. A
+  SIGINT that a launcher or the program blocked no longer makes the child uninterruptible by it. A child that must keep
+  a signal blocked blocks it itself. Ignored dispositions other than SIGPIPE / SIGXFSZ, such as a `nohup` SIGHUP, are
+  still inherited, as before.
+
+**No block — a new diagnostic, smaller binaries, an added file (nothing that compiled changes what it does):**
+- **DW-1 (D1, the user 2026-10-15: warn only):** an ELF-aarch64 build may now print `raw syscall N inside a
+  native-aarch64 region is renumbered → M (<call>); write 1000+N for native <call>`, or `… no 1000+N alias exists for
+  native <call>`.
+  - It fires where a program writes a native number as a raw literal inside its own `#ifdef CYRIUS_ARCH_AARCH64`,
+    `#ifplat aarch64` or `#ifndef CYRIUS_ARCH_X86` region, and an x86-compat row renumbers that number.
+  - The binary is unchanged. That call has always run the x86 meaning (`syscall(9, …)` ran mmap, not lgetxattr).
+  - To reach the native call, write the `1000+N` alias the warning names, or the stdlib `SYS_*` name / `sys_*`
+    wrapper.
+  - Not judged yet (filed, 6.7.14): a per-arch file included from inside the region, and a constant declared there.
+    Check those by hand.
+- **DW-3 / DW-4:** arm64-macOS and x86-macOS binaries are smaller and behave the same. A literal syscall site carries
+  only its Darwin number and the fixup it needs, and on x86 a run-time syscall number calls a shared stub instead of
+  inlining the 92-row chain.
+- **DW-6 (D4, the user 2026-10-15):** a macOS binary install gains `~/.cyrius/bin/cyrius-watch.sh`. It compiles with
+  raw `cat | cycc`, so on Apple Silicon its output is unsigned and killed at exec (filed, 6.7.14). `cyrius build`
+  ad-hoc signs its output.
+
+#### Windows
+
+#### Windows, the arm64-macOS `openat`, the passwd / group readers (the windows lane)
+
+**WN-1 — `xflock` locks on Windows**
+- Through 6.7.11 `xflock` returned -1 for every op on Windows. It now takes a real lock through kernel32 `LockFileEx` /
+  `UnlockFileEx` on ONE sentinel byte at offset 2^63 − 1 — never the file's data, so reads and writes through every
+  handle keep working while the lock is held, as with flock. Results: 0 when granted; -11 when `LOCK_NB` finds the
+  lock held (`lib/syscalls_windows.cyr` declares no `EAGAIN`, so compare with -11 there); -22 for an op that is not
+  `LOCK_SH` / `LOCK_EX` / `LOCK_UN`; 0 for `LOCK_UN` of a lock this handle does not hold; -1 for any other failure.
+- A blocking `LOCK_EX` / `LOCK_SH` now WAITS while another handle holds a conflicting lock — it returned -1 at once.
+  Code that called `xflock` on Windows expecting an immediate -1 ("no locking here") must pass `LOCK_NB` or expect to
+  block. A held lock converts on one handle (SH ↔ EX) by dropping and re-taking it, as flock's own conversion does (not
+  atomic).
+- patra (folded) takes every lock through `xflock`: on Windows its locks are now real, and its open-time WAL recovery
+  runs when the non-blocking exclusive lock is granted. A CONTENDED open on Windows is still read as "no lock can be
+  had" (patra's `_pt_flock_contended` tests EAGAIN only on Linux / macOS) until patra's own release adopts -11.
+
+**WN-3 — arm64 macOS: `sys_openat` keeps its dirfd; `[embed]` refuses a link at the open**
+- macOS arm64: `sys_openat(dirfd, rel, flags, mode)` — and a raw `syscall(56, dirfd, rel, …)` — now opens `rel`
+  RELATIVE TO `dirfd`, as on Linux and Intel macOS. Through 6.7.11 the dirfd was dropped (56 reached BSD `open`), so
+  `rel` opened against the current directory. Code that passed a real dirfd and relied on cwd-relative answers now gets
+  the dirfd's: pass `AT_FDCWD` (or an absolute path) to mean the cwd. A raw -100 still means the cwd (it is translated
+  to Darwin's -2; the stdlib's `AT_FDCWD` is -2 there already). ⚠ `sys_mkdirat` / `sys_fchmodat` still drop the dirfd
+  on arm64 macOS (filed, 6.7.14) — until then pass an absolute path to them there.
+- `[embed]` / `${file:}` on Windows and macOS arm64: a file reached through a directory link or junction at the moment
+  of the open is refused ("cannot be opened through a link-free path"), as on Linux and Intel macOS. A project that
+  does not race its own build reads the same bytes (the link check already refused a link on the path).
+- New public name on Windows: `win_handle_under(h, root_h)` in `lib/fs_win.cyr` (1 inside, 0 outside, -1 cannot
+  tell). A program that defines its own fn of that name beside the stdlib now gets the duplicate-definition warning
+  (its own, the last definition, still wins).
+
+**WN-4, WN-4r — Windows `xsymlink`: long link paths and long absolute targets; the 0xF03E reroute takes UTF-8**
+- `xsymlink` / `sys_symlink` callers: a link path over 260 units and an absolute target over 260 units now link (they
+  failed -1, and 519+ units were refused before the call). An absolute target (`X:\…`, `\\server\…`) whose full form is
+  248+ units reaches Windows `\\?\`-prefixed (`\\?\UNC\…`), normalized by GetFullPathNameW first — the shared rule
+  every path reroute applies; between 248 and 259 units such a target used to reach Windows as written. A relative
+  target is passed as written (`/` becoming `\`), never made absolute.
+- A direct `syscall(0xF03E, link, target, flags)` caller (none in the tree but `sys_symlink`) must now pass
+  NUL-terminated UTF-8, not UTF-16 — a wide buffer is read as a (short) UTF-8 string. Call `xsymlink` / `sys_symlink`
+  instead.
+
+**WN-6 — Windows native TLS: NotBefore roots, the disallowed CTL, `TLS_CTX_LEN` 632 (D9, the user 2026-10-15)**
+- Windows, native TLS with the system store (`tls_native_set_ca_system`, the default for `tls_connect*`):
+  (a) a server whose chain ends at a NotBefore-distrusted root (props 126 / 127) with a leaf issued BEFORE the date now
+  verifies — it was `TLS_ERR_CERT_INVALID` (the root was refused whole); a leaf issued on or after the date is still
+  refused;
+  (b) a chain through any certificate whose public key the auto-updated disallowed CTL lists, or any certificate in the
+  `Disallowed` store, now fails `TLS_ERR_CERT_INVALID` at any depth — leaf, intermediate or anchor (it was accepted
+  unless it was the root);
+  (c) a present but corrupt or unreadable `DisallowedCertEncodedCtl` makes `tls_native_set_ca_system` answer
+  `TLS_ERR_IO` (no store) — as an unopenable Disallowed store already did;
+  (d) `tls_native_ca_skipped` on Windows is lower by the NotBefore roots (cass 8, was 14).
+- A root Windows would fetch on demand is still not there (D9): add it with `tls_ctx_load_verify_locations` /
+  `tls_native_set_ca_bundle`. A ctx given a caller's bundle has no trust policy and is unaffected by (a)-(c).
+- `TLS_CTX_LEN` is 632 (was 624; `TLS_CTX_OFF_CA_POLICY = 624` is new). Code that sizes a ctx buffer by `TLS_CTX_LEN`
+  keeps working; a hard-coded 624 is 8 bytes short.
+
+**WN-2r — `lib/pwd.cyr` / `lib/grp.cyr` read a uid / gid as one number**
+- macOS: `pwd_getpwuid(0)` / `grp_getgrgid(0)` return root / wheel (they returned `nobody` — Darwin's first records
+  carry uid / gid -2, read as 0), and `pwd_getpwuid(-2)` / `grp_getgrgid(-2)` find `nobody` (they found nothing).
+  Code that worked around the old answer (looked up root by name, or special-cased `nobody` for uid 0 on macOS) can
+  drop the workaround.
+- Every target: an /etc/passwd or /etc/group line whose uid / gid field is not one number (empty, `12a`, `abc`, two
+  signs) is skipped, like a short line — it was read as id 0 (or as its leading digits) and could answer a lookup for
+  uid 0. `grp_getgrouplist` no longer adds a 0 for such a line. A lookup that relied on a malformed line now finds
+  nothing there.
+
+No block for the lane's other bites: WN-2 (the cass triage and D8's full-corpus default — test fixtures, gate scripts and
+docs; nothing a consumer compiles changes); WN-5 (a gate script).
+
+#### The standard library, agnos, cx, TLS
+
+**LIB-1 — `lib/ws_server.cyr` includes `lib/ws.cyr` (D11, the user 2026-10-15)**
+- `lib/ws_server.cyr` no longer declares its own copies of these nine vars: `WS_OP_CONTINUATION`, `WS_OP_TEXT`,
+  `WS_OP_BINARY`, `WS_OP_CLOSE`, `WS_OP_PING`, `WS_OP_PONG`, `WS_OPEN`, `WS_CLOSING` and `WS_CLOSED`. It includes
+  `lib/ws.cyr` instead, and the nine are ws.cyr's enum constants, with the same values.
+- `include "lib/ws_server.cyr"` now also brings ws.cyr's client fns (DCE drops the unused ones), `WS_CONNECTING` and
+  `WS_RECV_MAX_PAYLOAD`.
+- With ws_server alone, two shapes stop compiling: a write to one of the nine (`WS_OPEN = 5;` gives "cannot assign to
+  enum constant 'WS_OPEN'") and taking its address (`&WS_OPEN`). Reading them is unchanged.
+- A program that defines its own `ws_*` fn beside ws_server now gets the duplicate-fn warning ("duplicate fn 'ws_new'
+  (last definition wins; first defined in lib/ws.cyr)"). Its own definition, the last one, still wins.
+- A program's own `WS_CONNECTING` warns only when its value differs from ws.cyr's 0. A same-value copy is silent
+  (measured on the merged tree).
+- `cyrius distlib` now records `ws` for a bundle that reads a `WS_*` name with neither leaf in its unit. 6.7.11 refused
+  that as a tie: "more than one stdlib leaf could own it (ws, ws_server)". yantra's distlib converges again, and its
+  bundle is byte-identical.
+- **Migrate:**
+  - Read the nine names as before.
+  - If you assigned to one or took its address, declare a `var` of your own under another name.
+  - Drop, or rename, a private `WS_CONNECTING` or `ws_*` copy.
+  - Regenerate your `dist/` bundle. The `include "lib/ws.cyr"` workaround in a bundled module is no longer needed, but
+    it is harmless.
+
+**LIB-2 — agnos: the net arms take only a tagged socket fd**
+- These calls now refuse any fd that `tcp_socket()` did not hand out: a failed open's `-1`, a file or stdio fd, and
+  `AGNOS_SOCK_TAG + 8` and up. This is agnos only.
+  - `sock_bind`, `sock_listen`, `sock_accept` and `sock_connect` return `Err(9)` (EBADF) for a negative fd and
+    `Err(88)` (ENOTSOCK) for any other.
+  - `net_connect_nb` returns `_NET_CONN_NB_ERR`.
+  - None of them writes a table or makes a kernel call first.
+- Before, they acted on socket slot `fd & 7` (a `-1` bound, listened, accepted and connected on slot 7) and could
+  answer `Ok`. Linux already answered these errnos.
+- **Migrate:** check a socket open's result before you bind, listen or connect, as on Linux. A program that passed only
   sockets sees no change.
 
-**epoll_event readers: `epoll_event_events` / `epoll_event_data` / `const EPOLL_EVENT_SIZE`**
-- New beside `epoll_event_new` in the x86_64 Linux, aarch64 and x86-macOS peers: read one element of a
-  `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and step by `EPOLL_EVENT_SIZE` (12 on
-  x86_64 and x86-macOS, 16 on aarch64). A hand-gated `load64(ev + 4)` / `load64(ev + 8)` per arch can become
-  `epoll_event_data(ev)`. ⚠ A program that declares its own `EPOLL_EVENT_SIZE` after including `lib/syscalls.cyr`
-  now stops compiling ("'EPOLL_EVENT_SIZE' is already declared as a top-level const") — drop the copy; one that
-  defines its own `epoll_event_data` / `epoll_event_events` gets the duplicate-fn warning (its own, the last, wins).
-  ⚠ A build that includes a second syscall peer beside the one `lib/syscalls.cyr` picks (`lib/syscalls_macos.cyr`
-  in a Linux build, say) stops compiling too ("const 'EPOLL_EVENT_SIZE' is declared twice"; the peers' same-name vars
-  only warned) — include `lib/syscalls.cyr` alone, which selects one peer per target.
-- `lib/async.cyr`'s epoll reactor reads each event at the peer's stride. It read every arch at 16, so on x86_64 the
-  2nd..8th event of one wait were read off by 4, 8, … bytes — a stale or garbage fd (the real one re-reported by the
-  next wait). A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
+**LIB-5 — epoll_event readers: `epoll_event_events` / `epoll_event_data` / `const EPOLL_EVENT_SIZE`**
+- These are new, beside `epoll_event_new` in the x86_64 Linux, aarch64 and x86-macOS peers. They read one element of a
+  `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout. Step through the array by
+  `EPOLL_EVENT_SIZE`: 12 on x86_64 and x86-macOS, 16 on aarch64.
+- A hand-gated `load64(ev + 4)` / `load64(ev + 8)` per arch can become `epoll_event_data(ev)`.
+- ⚠ A program that declares its own `EPOLL_EVENT_SIZE` after including `lib/syscalls.cyr` now stops compiling:
+  "'EPOLL_EVENT_SIZE' is already declared as a top-level const". Drop the copy.
+- A program that defines its own `epoll_event_data` / `epoll_event_events` gets the duplicate-fn warning. Its own
+  definition, the last one, still wins.
+- ⚠ A build that includes a second syscall peer beside the one `lib/syscalls.cyr` picks also stops compiling, with
+  "const 'EPOLL_EVENT_SIZE' is declared twice" (`lib/syscalls_macos.cyr` in a Linux build, for example). The peers'
+  same-name vars only warned. Include `lib/syscalls.cyr` alone: it selects one peer per target.
+- `lib/async.cyr`'s epoll reactor now reads each event at the peer's stride. It read every arch at 16, so on x86_64 the
+  2nd..8th event of one wait were read off by 4, 8, … bytes: a stale or garbage fd, with the real one re-reported by the
+  next wait. A reactor woken by several fds at once now wakes all their waiters from that one wait. aarch64 is
   unchanged.
+- **Migrate:**
+  - Drop any `EPOLL_EVENT_SIZE` you declared.
+  - Never include two `lib/syscalls_*.cyr` peers in one build.
+  - Replace hand-gated `+4` / `+8` reads and a hard-coded 16 stride with the readers. The 16 stride was wrong on x86_64.
 
-**The native TLS stack's public bound vars are inert (D16, D17, the user 2026-10-15)**
-- `TLS_HANDSHAKE_HEADER_LEN`, `TLS_MAX_DIGEST_LEN`, `TLS_RANDOM_LEN`, `TLS_RECORD_MAX_PLAINTEXT`,
-  `TLS12_VERIFY_DATA_LEN`, `TLS12_RANDOM_LEN` and `TLS_SHA384_CTX_LEN` no longer steer the stack: every read in
-  lib/tls_native*.cyr and lib/tls.cyr reads the `_X` const that sizes the storage. They are still writable vars holding
-  the same values (read them freely); a write now changes nothing. Before, a write drove copies, indexes and
-  allocations over const-sized storage — `TLS12_RANDOM_LEN = 256` smashed the PRF seed (SIGSEGV),
-  `TLS12_VERIFY_DATA_LEN` / `TLS_SHA384_CTX_LEN` raised overran the stack.
-- ⚠ `TLS_RECORD_MAX_PLAINTEXT` is the protocol's 2^14, not a knob (D17). A program that LOWERED it no longer gets
-  smaller outgoing fragments (`tls_write`, the handshake-record fragmenter, `tls_native_record_fragment_count`), and
-  no longer refuses a peer's full 2^14-byte records; one that RAISED it no longer seals over-length records (2^14 + 1
-  is `TLS_ERR_RECORD_OVERFLOW`). A real max_fragment_length (RFC 6066) is a feature, not this var.
+**LIB-7 — cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**
+- `cycc_cx` holds 4 MiB of bytecode. It stopped at 512 KiB with a bare `error: codebuf overflow`.
+- Past 4 MiB it refuses by name: `error: cx bytecode exceeds the cx code region (4194304 B): <n> B emitted when fn
+  '<name>' (its code starts at byte <off>) reached it — build this program for a native target`.
+- cxvm's guest memory is 8 MiB (it was 1 MB). cxvm reads a `.cyx` up to that size plus its 8-byte header. Past it, the
+  error is `error: .cyx exceeds cxvm's guest memory (8388608 B of code and data)`.
+- A `.cyx` an older cycc_cx wrote runs unchanged.
+- Guest addresses from 1 MB to 8 MiB are now ordinary memory. They trapped as "guest address out of range".
+- The guest stack starts at 8 MiB, so recursion runs about eight times deeper before "guest stack overflow". The VM
+  stacks hold 524288 entries, so a runaway recursion still meets the guest-stack trap first.
+- `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` stay refused by name. The message no longer cites a 512 KiB
+  `.cyx`.
+- **Migrate:**
+  - A program that compiled for cx needs nothing.
+  - A cx test that relied on a trap at a guest address between 1 MB and 8 MiB must use an address of 8 MiB or more.
+  - A script that matched `codebuf overflow` or `exceeds 1MB cxvm code buffer` must match the new messages.
 
-**`args_init()`: a failure is a negative errno on Linux and Windows (D7, the user 2026-10-15)**
-- `args_init()`'s failure return is a negative errno on Linux and Windows (was 0). Code that treated
-  `args_init() == 0` as "could not read the command line" must test `< 0`; 0 is success on macOS / agnos.
-- A consumer that refused a 2,097,152-byte `_args_len` as "may be truncated" (cmdit 1.3.2's workaround) can drop that
-  check: a longer command line is now read whole.
+**LIB-8 — cx: honest refusals from four wrappers (D13, the user 2026-10-15)**
+- On cx, `cyr_mmap` returns -1, so `mmap_anon` returns 0. Before, it returned a HOST address that the guest could not
+  use: a non-zero pointer whose first access trapped.
+- `sys_pipe`, `sys_fstat` and `sys_unlink` return -38 (-ENOSYS) where they returned -14 (-EFAULT). `sys_pipe` leaves its
+  buffer as it was.
+- `sys_unlink` never removed the file on cx, and it still does not.
+- A cx program that tested `< 0` or `== 0` takes the same branch as before. One that compared against -14 must read -38.
+- Native targets are unchanged: the arms are `CYRIUS_TARGET_CX` only.
+- ⚠ `mmap_stack` (`lib/thread.cyr`) and `fl_alloc` (`lib/freelist.cyr`) still map through a raw `mmap` on cx and return
+  a host address. Measured on the merged tree; not covered by D13's four arms.
+- **Migrate:**
+  - Check `mmap_anon`'s result for 0 on cx, as on every target.
+  - Read -38 where you matched -14.
+  - Do not rely on `sys_unlink` removing a file under cxvm.
 
-**The native TLS client is stricter with non-conformant peers**
-- A 1.3 server that sends an extension the client did not offer (or one its message may not carry), an ALPN protocol
-  outside the client's list, an ECDSA CertificateVerify on the other curve, or a byte after a signature now fails the
-  handshake (`TLS_ERR_HANDSHAKE_FAILED` / `TLS_ERR_AUTHN` / `TLS_ERR_BAD_HANDSHAKE`, the alert sent). A 1.2
-  ServerKeyExchange with a byte after its signature is refused too (`TLS_ERR_BAD_HANDSHAKE`; the 1.2 client sends no
-  alert).
-- A 1.2 client restricted with `tls_native_set_groups` refuses a server whose ECDSA certificate is on an unlisted
-  curve (`TLS_ERR_HANDSHAKE_FAILED`; list the certificate's curve, as OpenSSL requires too).
-- A native 1.2 server refuses a ClientHello with a session id over 32 bytes (`TLS_ERR_BAD_HANDSHAKE`, decode_error).
-- Conformant peers (OpenSSL's 68 interop rows) are unaffected.
+**LIB-11 — the native TLS stack's public bound vars are inert (D16, D17, the user 2026-10-15)**
+- Seven vars no longer steer the stack: `TLS_HANDSHAKE_HEADER_LEN`, `TLS_MAX_DIGEST_LEN`, `TLS_RANDOM_LEN`,
+  `TLS_RECORD_MAX_PLAINTEXT`, `TLS12_VERIFY_DATA_LEN`, `TLS12_RANDOM_LEN` and `TLS_SHA384_CTX_LEN`. Every read in
+  `lib/tls_native*.cyr` and `lib/tls.cyr` now reads the `_X` const that sizes the storage.
+- They are still writable vars holding the same values (LIB-12, D16), so read them freely. A write now changes nothing.
+- Before, a write drove copies, indexes and allocations over const-sized storage:
+  - `TLS12_RANDOM_LEN = 256` smashed the PRF seed (SIGSEGV);
+  - a raised `TLS12_VERIFY_DATA_LEN` or `TLS_SHA384_CTX_LEN` overran the stack.
+- ⚠ `TLS_RECORD_MAX_PLAINTEXT` is the protocol's 2^14, not a knob (D17):
+  - A program that LOWERED it no longer gets smaller outgoing fragments (from `tls_write`, the handshake-record
+    fragmenter and `tls_native_record_fragment_count`), and no longer refuses a peer's full 2^14-byte records.
+  - A program that RAISED it no longer seals over-length records: 2^14 + 1 is `TLS_ERR_RECORD_OVERFLOW`.
+  - A real max_fragment_length (RFC 6066) is a feature, not this var.
+- The 14 public bound vars (these seven, `TLS_AEAD_NONCE_LEN`, `TLS_HKDF_LABEL_BUF_LEN`, `TLOCAL_MAX_SLOTS`,
+  `TLS_REG_MAX`, `SPAWN_ARGV_MAX`, `SPAWN_ENV_MAX`, `KEV_SIZE`) stay vars. Their `const` conversion belongs to the
+  public-constants arc, a later compile break announced at its slot.
+- **Migrate:**
+  - Remove writes to these vars. They no longer do anything.
+  - A program that lowered `TLS_RECORD_MAX_PLAINTEXT` to cap its write size must split its own writes.
 
-#### The cx target
+**LIB-14 — `args_init()`: a failure is a negative errno on Linux and Windows (D7, the user 2026-10-15)**
+- `args_init()`'s failure return is a negative errno on Linux and Windows. It was 0.
+  - Linux returns the open's or the read's -errno, or -12 when a buffer cannot be allocated.
+  - Windows returns -5 when `GetCommandLineW` fails, and -12 when `CommandLineToArgvW` or the blob's alloc fails.
+- Successful returns are unchanged: the bytes read on Linux and Windows, and 0 on macOS / agnos.
+- On Linux a command line longer than 2 MiB is now read whole. Before, it was cut at 2,097,152 bytes with no error, and
+  `argc()` / `argv()` saw only the prefix.
+- **Migrate:**
+  - Code that treated `args_init() == 0` as "could not read the command line" must test `< 0`. 0 is success on macOS
+    and agnos.
+  - A consumer that refused a 2,097,152-byte `_args_len` as "may be truncated" can drop that check (cmdit 1.3.2's
+    workaround is one).
 
-**cx programs up to 4 MiB of bytecode (D12, the user 2026-10-15)**
-- `cycc_cx` holds 4 MiB of bytecode (it stopped at 512 KiB with a bare `error: codebuf overflow`); past it, it refuses
-  by name: `error: cx bytecode exceeds the cx code region (4194304 B): <n> B emitted when fn '<name>' (its code starts
-  at byte <off>) reached it — build this program for a native target`. cxvm's guest memory is 8 MiB (it was 1 MB) and
-  it reads a `.cyx` up to that plus its 8-byte header (`error: .cyx exceeds cxvm's guest memory (8388608 B of code and
-  data)` past it); a `.cyx` an older cycc_cx wrote runs unchanged. Guest addresses from 1 MB to 8 MiB are now ordinary
-  memory (they trapped as "guest address out of range"), and the guest stack starts at 8 MiB, so recursion runs about
-  eight times deeper before "guest stack overflow" (the VM stacks hold 524288 entries, so a runaway recursion still
-  meets the guest-stack trap first). `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` stay refused by name;
-  the message no longer cites a 512 KiB `.cyx`.
+**LIB-15 — the native TLS client is stricter with non-conformant peers**
+- A 1.3 server now fails the handshake, with the alert sent, when it sends any of these:
+  - an extension the client did not offer, or one its message may not carry;
+  - an ALPN protocol outside the client's list;
+  - an ECDSA CertificateVerify on the other curve;
+  - a byte after a signature.
 
-**cx: honest refusals from four wrappers (D13, the user 2026-10-15)**
-- On cx, `cyr_mmap` returns -1, so `mmap_anon` returns 0 — it returned a HOST address the guest could not use (a
-  non-zero pointer; the first access trapped). `sys_pipe` (its buffer left as it was), `sys_fstat` and `sys_unlink`
-  return -38 (-ENOSYS) where they returned -14 (-EFAULT); `sys_unlink` never removed the file on cx and still does
-  not. A cx program that tested `< 0` or `== 0` sees the same branch; one that compared against -14 must read -38.
-  Native targets are unchanged (the arms are `CYRIUS_TARGET_CX` only).
+  The errors are `TLS_ERR_HANDSHAKE_FAILED`, `TLS_ERR_AUTHN` or `TLS_ERR_BAD_HANDSHAKE`.
+- A 1.2 ServerKeyExchange with a byte after its signature is refused too (`TLS_ERR_BAD_HANDSHAKE`). The 1.2 client sends
+  no alert.
+- A 1.2 client restricted with `tls_native_set_groups` refuses a server whose ECDSA certificate is on an unlisted curve
+  (`TLS_ERR_HANDSHAKE_FAILED`).
+- A native 1.2 server refuses a ClientHello whose session id is over 32 bytes (`TLS_ERR_BAD_HANDSHAKE`, decode_error).
+- Conformant peers are unaffected, including OpenSSL's 68 interop rows.
+- **Migrate:**
+  - Fix the peer.
+  - With `tls_native_set_groups`, list the server certificate's curve, as OpenSSL requires too.
+  - A test double that answered with an unsolicited extension or an un-offered ALPN must answer as the RFC says.
+
+**No block:**
+- LIB-3: test-only.
+- LIB-4: `lib/audit_walk.cyr`'s Linux lister on a FIFO now reports the error 20 a regular file already got, instead of
+  blocking for good. A path of 4096+ bytes, or one with an embedded NUL, is -36. Nothing to change.
+- LIB-6: the README and a gate.
+- LIB-9, LIB-14r: docs.
+- LIB-10: tests and the guide's D14 exception.
+- LIB-12: comment-only; covered under LIB-11.
+- LIB-13: D15 keeps `TLS_CA_MAX_ROOTS`; nothing changes.
+- LIB-7r: comments.
+- LIB-16: a gate.
+
+#### Tools and the CLI
+
+#### Tools and the CLI
+
+Each block names its CHANGELOG [6.7.12] bite (the tools lane, TL-*); the decisions are the user's (2026-10-15).
+
+**TL-3 — `cyrius self` and `cyrius soak` verify the default compiler**
+- Both verifiers now run their two self-host steps without `CYRIUS_POISON`, `CYRIUS_BOUNDS`, `CYRIUS_COVERAGE` and
+  `CYRIUS_COVERAGE_FILE`, as `cyrius pulsar` has since 6.7.11. A shell that exports one of them gets a verdict about
+  the default compiler (it was about a mode-built pair), and an exported `CYRIUS_POISON=no` no longer fails a step.
+  `cyrius soak`'s test suite and `.scyr` harnesses are your own compiles and still see the switches. Nothing to change;
+  to self-host a mode build on purpose, run the compiler on `src/main.cyr` directly with the variable set.
+
+**TL-4 — the compiled `cyriusly setup` refuses without `build/cycc`**
+- `cyriusly setup` in a checkout with no `build/cycc` exits 1 before building anything:
+  `error: bootstrap did not produce build/cycc — …`. `bootstrap/bootstrap.sh` builds cybs and asm, never cycc, so
+  restore the tracked compiler with `git checkout build/cycc` and re-run. (`sh scripts/seed-derive-cycc.sh` proves the
+  tracked file descends from the seed; it needs build/cycc to exist.)
+- The tools `setup` builds and installs are the default build whatever the calling shell exports (an exported
+  `CYRIUS_BOUNDS=1` installed a bounds-checked cyrfmt). Its cross-bin loop is gone; `install.sh --refresh-only` builds
+  the cross bins, as before.
+
+**TL-6 — `cyrius package` refuses a missing entry**
+- `cyrius package` with a `[build] entry` that does not exist (or with no manifest and no `src/main.cyr`) exits 1 with
+  `error: no such file: <entry>` — the words `cyrius build` uses — and creates no `build/`. It printed
+  `package ready: build/<out>` at rc 0 with no artifact. Fix the entry path; a real entry builds as before.
+
+**TL-7 — `cyrius tests` is removed (D21)**
+- `cyrius tests [dir]` is an unknown command: `Unknown command: tests`, then
+  ``error: `cyrius tests` was removed at 6.7.12: use `cyrius test <dir>` (`cyrius test tests` for tests/)``, rc 1,
+  before anything resolves or runs (`tests --help` too). Replace it in CI lines and scripts: `cyrius tests <dir>` →
+  `cyrius test <dir>`; a bare `cyrius tests` → `cyrius test tests` (the bare `cyrius test` also runs `[test] files`
+  first, which `cyrius tests` never read).
+
+**TL-8 — `cyrius type-audit` counts generic fns**
+- A public `fn f<T>(..)` is now counted (it was invisible), so type-audit's totals rise and its coverage percentage
+  may drop where generic fns are unannotated; an unannotated one is listed by name. A CI floor on that figure may need
+  annotations or a new floor.
+
+**TL-9 — `cyrius api-surface` writes a variadic fn as `name/MIN-` (D22)**
+- `fn va(n, ...)` is recorded `va/1-` (it was `va/2`), and `fn zv(...)` `zv/0-` (was `zv/1`). A checked-in snapshot
+  that lists a variadic fn reads as changed once: regenerate it with `cyrius api-surface --update` and commit the diff.
+  A tool that parses the arity after `/` meets a trailing `-` on variadic fns (it has met `MIN-MAX` since 6.7.7); the
+  removed-symbol census reads the bare name, as before.
+
+**TL-10 — one emit target per run (D20)**
+- Two target selectors on one command line — any two of `--aarch64`, `--win`, `--agnos`, `--target=<v>` — are refused
+  by name before anything resolves or compiles: `error: --win and --aarch64 select two emit targets; pass one`, rc 1,
+  no output. They exited 0 and built one of them (or neither): `--win --aarch64` wrote the aarch64 ELF,
+  `--aarch64 --target=js` an aarch64 ELF named `.js`. Pass the one you meant. The one accepted pair is
+  `--aarch64 --target=aarch64-bare-metal-elf`, which builds exactly what `--target=aarch64-bare-metal-elf` alone builds.
+  Each single selector's output is byte-identical to 6.7.11's.
+
+**TL-11 — `cyrius deps` names `lib/` files outside the declared footprint**
+- After a successful resolve, `cyrius deps` / `cyrius build` (any resolving verb) print a `note:` on stderr listing
+  every `lib/*.cyr` the resolve did not vendor — a leaf you dropped from `[deps] stdlib`, the module of a dep you
+  removed — while it stays there. Nothing is written or deleted for it. To drop one from lib/ AND cyrius.lock:
+  `rm lib/<file> && cyrius deps --lock` (a plain `cyrius deps`, even after `rm -rf lib/`, keeps the old lock row in a
+  stdlib-only project). A `lib sync --full` project (lib/ holds the whole pinned snapshot) is not told. A script that
+  asserts an empty stderr passes `-q`.
+
+**TL-12 / TL-12r — a pin bump does not re-lock over stale vendored files (D19)**
+- In a project that vendors the whole snapshot (`cyrius lib sync --full`), run `cyrius lib sync --full` FIRST after
+  bumping `[package].cyrius`. Until then `cyrius deps`, `cyrius build` and every resolving verb exit 1 with
+  `error: cyrius.lock not re-locked: [package].cyrius moved from <old> to <new>, …` and the list of lib/ files the new
+  pin's snapshot ships with other bytes; cyrius.lock is left unchanged. Through 6.7.11 they stamped the new pin over the
+  old pin's rows at rc 0, and the next `lib sync --full` refused. The two remedies the refusal names:
+  `cyrius lib sync --full` (moves the files to the new pin and re-locks) or `rm <file> && cyrius deps` (drops them).
+  `--relock` does not bypass the refusal.
+- After that refusal the closure files are already re-vendored at the new pin, so `deps --verify` fails on them until
+  one of the remedies runs (filed for 6.7.13), and `deps --locked` still says "run `cyrius deps`" (filed). Follow the
+  refusal's remedy, not `--locked`'s.
+- A project whose lib/ is only its declared closure is unaffected (it re-locks silently at a pin move).
+- `lib sync`'s refusal summary no longer blames `deps` / `build`. For a lock re-stamped at a moved pin by
+  `deps --lock`, a scoped `lib sync` or a pre-6.7.12 `deps` / `build`, it names `cyrius lib sync --relock`
+  (`cyrius lib sync --full --relock` in a project that vendors the whole snapshot). `deps --lock` and a scoped
+  `lib sync` still stamp a moved pin themselves (filed for 6.7.13): bump the pin with `cyrius lib sync --full` or a
+  plain `cyrius deps`.
+
+**TL-13 — a kept commit pin of a dep's old tag is named (D25)**
+- After a `[deps.NAME] tag` bump, every resolve (`cyrius build` included) and `cyrius deps --locked` print one
+  `note: cyrius.lock keeps NAME@OLD's pin (the manifest declares NAME at NEW), fail-closed; delete cyrius.lock to re-pin`
+  per kept old-tag line. The row stays (fail-closed since 6.6.20, CYRIUS-2026-0030), `--locked` still passes, and
+  nothing written changes. To drop the old row, delete cyrius.lock and run `cyrius deps` (re-pinning every dep); `-q`
+  silences the note.
+
+**TL-14 — `cyrius deps` prints the real error count; `lib sync --dry-run` prints paths**
+- `cyrius deps`'s summary counts every refused section (`2 errors` for two; it printed `1 errors` for any number in one
+  manifest). Exit statuses are unchanged (1 on any error). A script that parsed `N errors` sees the real count.
+- `cyrius lib sync --dry-run` prints `would sync: lib/<file>.cyr` (it printed a number per file).
+- A path joined to the CLI's absolute `.` no longer carries `/./` (error text and git's `-C` argument).
+
+**TL-15 — physical paths under a symlinked working directory**
+- Under a symlinked cwd, an absolute unit spelled with the shell's `$PWD` (`cyrius test $PWD/tests/sub/x.tcyr`) is
+  inside the project and gets its directory's `test.cyml`, as the relative and physical spellings do. A unit that
+  passed only because its `test.cyml` was not read (rare) now runs with it.
+- A local dep reached through a symlink into another repository reports its own state: `(not a git checkout)` when it
+  is not a checkout, no longer the enclosing repository's HEAD and dirt.
+
+**TL-16 — `cyrius update` writes what `cyrius lib sync` writes (D18)**
+- `cyrius update` copies the declared `[deps] stdlib` leaves (with their per-OS peers and the test scope's leaves) from
+  the snapshot of `[package].cyrius` — the plan, lock guard, re-lock and source-repo refusal of `cyrius lib sync` — and
+  writes that version into an existing `.cyrius-toolchain`. It copied every file of `$CYRIUS_HOME/current`'s snapshot,
+  whatever the manifest declared or pinned. A project that relied on update filling lib/ with the whole stdlib runs
+  `cyrius update --full` (or `cyrius lib sync --full`).
+- It reads the manifest's pin, never `current`: that version must be installed (`cyrius install <pin>`; the refusal
+  names it). Update's fallback to a sibling `../cyrius/lib` is gone. Under an unchanged pin, a lock row that disagrees
+  with the installed snapshot is refused as `lib sync` refuses it (reinstall that version).
+- The named-deps half (re-fetch untagged deps, newer tags) is unchanged.
+
+**TL-17 — the lock's SHA-256 is computed in process**
+- Nothing to do: lock bytes are identical. `cyrius deps` no longer runs `sha256sum` / `shasum` / `certutil.exe`, so a
+  CI image does not need one, a full temp dir no longer loses the hash, and `cyrius.exe` under wine writes the lock it
+  did not write. On a host with no hasher on PATH the first lock is written (it was a `cyrius.lock NOT written`
+  warning), and the 6.6.4 snapshot guard checks the pinned snapshot: an unmoved leaf passes, and a leaf that moved
+  under an unchanged pin is refused by name (`… DISAGREE under an unchanged pin`) where every check was refused as
+  `cannot hash` — reinstall that version, as the refusal says.
+
+**TL-18 — cyrius.exe reads its working directory**
+- On Windows, `CYRIUS_TEST_FILE` and `CYRIUS_TEST_DIR` are absolute, drive-rooted paths (they were relative, `.` for
+  the directory); a test that read them as relative must take an absolute path. A drive-rooted unit inside the project
+  (`cyrius test C:\proj\tests\x.tcyr`, `c:/proj/…`) gets its `test.cyml`; a drive-relative `C:x` or a rooted `\x` is
+  still outside the project.
+
+**TL-19 — distlib credits a named dep's included leaves to the dep**
+- A regenerated `dist/<name>.deps` sidecar may shrink: a stdlib leaf that only a named dep's sidecar leaf brings by its
+  own include (`boxed` through `tagged`) is no longer recorded as the bundle's own, and a sidecar left with no leaves is
+  removed (`sidecar: removed dist/<name>.deps (no stdlib leaves remain)`). `cyrius distlib --check` reads a committed
+  bundle that recorded such a leaf as stale: regenerate with `cyrius distlib` and commit dist/.
+
+**TL-20 — `cyrius audit`'s fmt stage asks `cyrfmt --check` (D26)**
+- A source using the accepted 4-space continuation step now passes `cyrius audit`'s fmt stage, as it passes
+  `cyrfmt --check`; nothing that passed starts failing. The formatting contract is unchanged: canonical 2, 4 accepted,
+  deeper rejected, and `cyrius fmt <file>` rewrites an accepted 4 as 2. A CI that wants the canonical form exactly
+  compares `cyrfmt <file>` with the file itself.
+
+**TL-21 — cyrlint sizes const- and enum-sized arrays and checks top-level bare arrays**
+- `cyrius lint` / `cyrlint` (and `cyrius audit`'s lint stage) can report NEW overrun warnings: a constant-offset
+  `load*/store*(&a + K)` past a bare local `var a[N]` whose N is a `const`, an enum constant with a literal value, or
+  `+ - *` over those (N BYTES in a fn, rounded up to 8), and past a top-level bare `var g[N]` (N i64 slots, N × 8 bytes)
+  in any fn whose local or parameter does not shadow the name. A CI step on `--strict` / `--exit-with-count` turns red
+  on them. Each is a real overrun: for slots declare `var a: i64[N]`; mark an intended offset with
+  `# lint: offset-ok` on the call's line.
+
+**TL-22 — `cyrius header` and a `: stack` enum's return (D23)**
+- A public fn returning `: Result`, `: Option`, `: Tagged` (or the file's own `enum E: stack`) is now
+  `cyr_val2 f(..);   /* returns Result: the tag in w0, the payload in w1 */` under
+  `#if defined(__x86_64__) && !defined(_WIN64)`, with a named comment and no prototype on aarch64 (cycc returns the
+  pair in x0:x2, not C's x0:x1) and Win64. C code that called such a fn through the old `cyr_val` prototype read the
+  tag alone: regenerate the header and read `.w0` (the tag) and `.w1` (the payload); on aarch64 and Win64 wrap the fn
+  in one that writes through an out-pointer.
+- A public fn whose signature says a word — no annotation, or a word type such as `: i64` — but whose body returns a
+  stack enum's pair (`return Ok(x);`, or `return g(..);` of such a fn of the same file) makes `cyrius header` exit 1,
+  with ``error: cyrius header: '<f>' returns a `: stack` enum's (tag, payload) pair through '<ctor>(..)', which its
+  signature does not declare …`` on stderr; the rest of the header is still printed. Declare it `: Result` /
+  `: Option` / `: Tagged`, or make it private / `_`-named. A build step `cyrius header f.cyr > f.h` under `set -e` fails
+  there. In this tree that hits lib/result.cyr (`ok_via`, `err_via`) and sources of bayan, mabda, sigil, vani and yukti
+  (their `: i64` / unannotated `_r` and `*_err_*` wrappers).
+
+**TL-23 — `cyrius header` refuses a SIMD vector return (D24)**
+- A public fn returning a vector type (`f64v2`, `f32v4`, the 128-bit integer vectors, `f64v4`, `f32v8`) makes
+  `cyrius header` exit 1 with ``error: cyrius header: '<f>' returns '<type>': a SIMD vector return, which no C11 return
+  type carries; no prototype written``; the rest of the header is still printed. It printed `cyr_val f(..)`, which C
+  read from the wrong register. Mark such a fn private, or generate the header from a file without it. lib/simd.cyr has
+  80 such fns, so `cyrius header lib/simd.cyr` exits 1.
+
+**TL-24 — a signalled `cyrius` cleans up and exits 128+N**
+- A `cyrius` run stopped by SIGTERM, SIGINT or SIGHUP while a compile runs stops the compiler it started, removes its
+  scratch and private temp dir, and EXITS 128+N (143 / 130 / 129) instead of dying by the signal. `$?` reads the same
+  number, but a parent inspecting the wait status sees WIFEXITED, not WIFSIGNALED: bash's "the child died of SIGINT, so
+  stop the script" rule no longer fires for a Ctrl-C'd `cyrius` inside a non-interactive loop. A script that must stop
+  on Ctrl-C checks `[ $? -eq 130 ]` itself. A signal ignored when the CLI starts (nohup) stays ignored; SIGKILL still
+  leaves scratch for check.sh's reaper; Windows is unchanged.
+- A `.tcyr` or tool that includes `cbt/build.cyr` without `cbt/cyrius.cyr` must `include "cbt/sigclean.cyr"` before it
+  (cbt/build.cyr now calls its `_cbt_scratch_track` / `_cbt_child_track`).
+
+**TL-25 — cyrius-lsp diagnostics**
+- Editors now receive publishDiagnostics on the URIs of included files (an error in `inc.cyr` shows in `inc.cyr`, not
+  at the same line of the file you opened), empty lists that clear a file a recompile no longer names, a range that
+  starts at cycc's column, and diagnostics for `.tcyr`, `.bcyr`, `.fcyr`, `.scyr` and `.smcyr`. Nothing to configure.
+- `cyrius check --no-redirect` is new: with `--with-deps`, it checks the given file itself, never `src/main.cyr` in
+  place of a file with no `include`. `--with-deps` alone is unchanged. The server falls back to the old run when the
+  project's pinned CLI predates the flag.
+
+**TL-27 — CRLF checkouts of a committed `lib/` are named (D10)**
+- Nothing that verified changes: rc and verdicts are the same, and a CRLF checkout still fails `deps --verify` and
+  `--locked` (the lock proves the exact bytes). The failure now says so —
+  ``FAIL: lib/x.cyr (hash mismatch — CRLF checkout: add `lib/** -text` to .gitattributes)`` and one `note:` — and when
+  every `--locked` difference is a CRLF checkout, its remedy is the `.gitattributes` line, not "run `cyrius deps`". A
+  project that commits lib/ and runs CI on Windows (Git for Windows defaults to `core.autocrlf=true`) adds
+  `lib/** -text` to `.gitattributes`, commits it, and checks lib/ out again; do not re-lock the converted bytes.
+- `cyrius init` writes a `.gitattributes` holding `lib/** -text` (an in-place init skips an existing one). `cyrius port`
+  creates `.gitattributes`, or appends `lib/** -text` to an existing one that lacks it (its other lines kept).
+
+**TL-28 — the pin drift check on every host; `--pie` refused on Windows (D5)**
+- On Windows and macOS, a build in a project whose `[package] cyrius` pin differs from the compiler's version now
+  prints `warning: cyrius.cyml pins X but cycc is Y — toolchain drift (snapshot may be stale; set
+  CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)`, and a build under `cyrius build --strict-pin` / `CYRIUS_STRICT_PIN=1` FAILS
+  there on drift (rc 1, nothing written), as it always did on Linux. Bump the pin or the toolchain; silence the warning
+  with `CYRIUS_NO_WARN_PIN_DRIFT=1`.
+- `cyrius build --pie` from the Windows CLI is rc 1:
+  `error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no --pie mode …`. It wrote the
+  same image as a plain build; drop the flag. (`--pie` on macOS still writes a plain Mach-O at rc 0 — filed for 6.7.13.)
+
+**TL-30 — the aarch64 Linux CLI refuses `--agnos` and the x86_64 bare-metal target (D6)**
+- On an aarch64 Linux host, `cyrius build --agnos`, `cyrius build --target=x86_64-bare-metal-elf` and
+  `cyrius run --agnos` exit 1 with `error: --agnos is not available from the aarch64 Linux CLI: its cycc emits aarch64
+  only (build agnos / x86_64 bare-metal images on x86_64 Linux)`, nothing written. They wrote an aarch64 binary at rc 0
+  (never the requested artifact). Build agnos and x86_64 bare-metal images on an x86_64 Linux host.
+  `--target=aarch64-bare-metal-elf` is not refused there.
+- The aarch64 Linux CLI's progress line says `[aarch64]` (it said `[x86_64]`); a script that matched the old label
+  changes. ⚠ Not changed yet: `cyrius build --win` on that host still writes an aarch64 ELF named `.exe` at rc 0 (filed,
+  High, 6.7.13) — do not build Windows images there.
+
+No block for the lane's other bites: TL-1 (comment, doc and gate text only; cycc and the CLI byte-identical); TL-2
+(cyrius's own gate names the legs it cannot run); TL-5 (`cyrius init` / `port` / `sign-efi` `--help` and `-h` print
+their usage at rc 0 where they failed; every other `cyrsign-efi` `-` token is still refused); TL-26 (programs/wc.cyr, a
+demo); TL-29 (cyrius's own cross-OS script); TL-31 (cyrius's dead-code floor fixture).
+
+#### Folds
+
+**bayan 1.6.0 (refolded from 1.5.14)**
+- No public fn added, removed or answering differently; `bayan_cyml_parse` is faster (0.39×). Nothing to migrate.
 
 ### 6.7.11
 
 Break 2, repair 1. Each block names its CHANGELOG [6.7.11] bite; the decisions are the user's (2026-10-13, D1–D45).
 The changes that went beyond a decision's text are filed for confirmation in 6.7.12
-(`docs/development/issues/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md`).
+(`docs/development/issues/archived/2026-10-14-6711-behaviour-changes-beyond-the-decisions-text.md`).
 ⛔ **yantra:** its own `cyrius distlib` is refused on the 6.7.11 CLI (`lib/ws.cyr` / `lib/ws_server.cyr` declare the same
 `WS_*` constants, a tie D26 refuses) until 6.7.12 fixes `lib/` — or its bundled module includes `lib/ws.cyr` itself.
 ⚠ **x86_64:** `rd(mkv(..))` / `rd(*pv)` into a `*V` parameter compile and fault in 6.7.11 (refused through 6.7.10; fixed first

@@ -3,7 +3,7 @@
 # a FIFO handed to audit_fmt_walk / audit_lint_walk / audit_doc_walk fails at once — reported as
 # an unlistable directory — instead of blocking the walk forever (6.7.12).
 #
-# THE BUG (issues/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md, met while
+# THE BUG (issues/archived/2026-10-13-audit-walk-linux-lister-opens-without-o-directory.md, met while
 # fixing the dir_list twin, issues/archived/2026-10-13-dir-list-opens-directory-without-o-directory.md).
 # _aw_dir_list_typed — the getdents64 lister of the Linux x86_64 / aarch64 arm, behind the three
 # public walkers — opened `sys_open(str_data(path), O_RDONLY, 0)` and only then called

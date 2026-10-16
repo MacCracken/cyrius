@@ -7,7 +7,7 @@ growth and D13's cx arms).
 cyrius-x guest contract); no attacker crosses a boundary (no ledger id). But an honest guest program can now corrupt
 or kill its own VM by accident where it used to get -EFAULT.
 **Discovered:** 2026-10-15, the 6.7.12 stdlib lane (unit L2), landing D13
-(`issues/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md`: honest cx arms in `cyr_mmap` /
+(`issues/archived/2026-10-14-cx-main-running-tcyr-fail-at-guest-contract-limits.md`: honest cx arms in `cyr_mmap` /
 `sys_pipe` / `sys_fstat` / `sys_unlink`) right after D12 grew cxvm's guest memory 1 MB → 8 MiB.
 
 ## Reproduction

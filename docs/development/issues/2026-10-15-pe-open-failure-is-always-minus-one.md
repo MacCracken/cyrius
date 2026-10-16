@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on real cass (Windows 11) with the 6.7.12 windows lane's tree
 (l6712-windows @ 163d1a85); found by the cass full-corpus triage
-(issues/2026-10-12-cass-full-corpus-failures-untriaged.md, class (c): a real PE defect). Three of the four rows
+(issues/archived/2026-10-12-cass-full-corpus-failures-untriaged.md, class (c): a real PE defect). Three of the four rows
 `tests/tcyr/stdlib/result_stdlib.tcyr` still fails on cass after the lane's fixture fixes are this one (the fourth
 is 2026-10-15-pe-read-failure-reads-as-eof.md).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.

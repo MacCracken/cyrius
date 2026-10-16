@@ -2,7 +2,7 @@
 # epoll_event_new already encoded the per-arch layout (x86_64 packs it — data @4, 12 bytes;
 # aarch64 does not — data @8, 16 bytes), but nothing read one back, so every caller of
 # sys_epoll_wait hand-gated the offset and the stride, and one read x86_64's +4 on aarch64
-# (issues/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md). The peers now offer
+# (issues/archived/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md). The peers now offer
 # epoll_event_events / epoll_event_data and EPOLL_EVENT_SIZE, and lib/async.cyr's reactor reads
 # through them — its stride was 16 on every arch, so on x86_64 the 2nd..8th event of one wait
 # were read off by 4, 8, … bytes. Rows: the round trip everywhere epoll_event_new exists (Linux,

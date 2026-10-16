@@ -8,7 +8,7 @@ and the manifest's `cyrius =` pin differs from the CLI's VERSION: the hermetic g
 pinned slot's binaries. It fails closed (rc 1) when the CLI's own slot is absent; when both slots exist, both checks
 read the CLI's own slot — the bundle is verified against a stdlib that is not the one it pins (rc 0).
 **Discovered:** 2026-10-15, the review of the 6.7.12 stdlib lane — the ws issue's repro
-(`issues/2026-10-13-ws-and-ws-server-declare-the-same-constants.md`) run truly verbatim (pin 6.7.11) on a 6.7.12 CLI
+(`issues/archived/2026-10-13-ws-and-ws-server-declare-the-same-constants.md`) run truly verbatim (pin 6.7.11) on a 6.7.12 CLI
 fails for this reason alone; `vec_new` fails the same way.
 
 ## Reproduction

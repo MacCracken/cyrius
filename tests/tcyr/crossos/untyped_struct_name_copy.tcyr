@@ -3,7 +3,7 @@
 #
 # Through 6.7.11 the untyped declaration took p's FIRST WORD: `q.y` was "no struct type in scope for
 # 'q'" in a fn and "undefined variable 'q'" inside a closure that captured q (the filed repro,
-# issues/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md, half 2),
+# issues/archived/2026-10-11-closure-field-read-of-captured-slice-or-untyped-struct-copy-refused.md, half 2),
 # `take(q)` into a by-value struct parameter passed the word as the struct's address (SIGSEGV), and
 # `q + p` added integers. Now q takes p's type and its own bytes: field reads and writes are the
 # copy's, a closure's snapshot carries the type, and an operator dispatches on it. The source is a

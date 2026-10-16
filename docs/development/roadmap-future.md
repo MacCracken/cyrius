@@ -32,7 +32,7 @@ wrong at the 2026-08-07 pass).
 
 ## DX / cyrlint tooling (watching)
 
-Two static checks, one `cyrlint` bite — **shipped in 6.7.11** (TL-3; [issue](issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md); the rule sizes fn-local literal-N arrays only — the rest is [its follow-up](issues/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)). `programs/cyrlint.cyr` implements
+Two static checks, one `cyrlint` bite — **shipped in 6.7.11** (TL-3; [issue](issues/archived/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md); the rule sizes fn-local literal-N arrays only — the rest is [its follow-up](issues/archived/2026-10-13-cyrlint-overrun-rule-literal-size-and-locals-only.md)). `programs/cyrlint.cyr` implements
 neither (re-checked at the 6.6.20 re-triage). Linter / formatter / LSP evolution is 6.x-line work.
 
 - **Bare-local-array slot-write lint** — warn when a bare `var a[N]` (N *bytes*, rounded to 8) is written past its

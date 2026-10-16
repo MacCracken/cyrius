@@ -2,8 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 tools lane (l6712-tools, unit T5) with that lane's
 `build/cyrius` and `build/cycc`. Named "met in passing" by the 6.7.12 triage of
-issues/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md (its Risk line, with a `: Result` parameter); the
-D24 bite (issues/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md) refuses a vector RETURN only, so the
+issues/archived/2026-10-14-cyrius-header-stack-enum-return-prints-cyr-val.md (its Risk line, with a `: Result` parameter); the
+D24 bite (issues/archived/2026-10-14-cyrius-header-vector-return-prints-cyr-val.md) refuses a vector RETURN only, so the
 argument side is outside both filed surfaces.
 **Placement:** 6.7.13 — repair 3: struct values (tools lane; filed from the 6.7.12 tools lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
 **Severity:** Medium — a generated C header that is wrong for every public fn taking a vector by value: the C caller
