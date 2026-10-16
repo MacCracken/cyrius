@@ -4617,7 +4617,12 @@ error: cyrius.lock not re-locked: [package].cyrius moved from 6.6.6 to 6.6.7, an
     rm <file> && cyrius deps   drops them from lib/ and the lock
 ```
 
-So after a pin bump a full-vendored project runs `cyrius lib sync --full` first. A file the new
+So after a pin bump a full-vendored project runs `cyrius lib sync --full` first. `cyrius deps
+--locked` (CI) at such a bump names the same files and gives the same two ways instead of its usual
+"run `cyrius deps` and commit the result" (6.7.13; it sent CI to the `deps` that refuses):
+`… nothing was written — [package].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file the
+resolve does not vendor that the 6.6.7 snapshot ships with other bytes, so `cyrius deps` will not
+re-lock:`, the files, `Either, then commit the result:` and the two lines above. A file the new
 snapshot does not ship, or ships with the same bytes, does not depend on the pin and is re-locked
 as before; a project whose `lib/` is only its closure re-locks silently, as it always did.
 

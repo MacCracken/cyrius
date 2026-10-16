@@ -26,7 +26,9 @@
 #      it), lib/math.cyr (the same bytes at 6.6.7) or a hand-written lib/mine.cyr (no snapshot
 #      file) — with both remedies; cyrius.lock byte-unchanged; `cyrius build` stops at the same
 #      refusal before compiling;
-#      `lib sync --full` then re-locks at 6.6.7 and verifies. 2c: a lock an older `deps` re-stamped
+#      `lib sync --full` then re-locks at 6.6.7 and verifies. (6.7.13) `deps --locked` at the bump and
+#      after the refused deps exits 1 with D19's remedy naming lib/chrono.cyr — not "run `cyrius
+#      deps`" — and passes once `lib sync --full` has run. 2c: a lock an older `deps` re-stamped
 #      (trailer 6.6.7 over 6.6.6 rows): `lib sync` refuses by name, writes nothing, its summary
 #      names `lib sync --full --relock`, which then verifies. 2d: a closure-only project whose pin
 #      moves re-locks silently (rc 0, trailer 6.6.7, string's row the new hash, no refusal).
@@ -48,6 +50,9 @@
 # 2; refusing every out-of-closure file (no byte compare, no snapshot test) FAILS axis 2 (111 named);
 # the snapshot test alone dropped FAILS axis 2 (lib/mine.cyr named); the unchanged pin not exempt
 # FAILS axis 2e; the summary naming only `--full --relock` (the review's catch) FAILS axis 2f.
+# 6.7.13: --locked's D19 remedy dropped (the old "run `cyrius deps`" line) FAILS axis 2 at both
+# --locked rows; the stale set read from the scratch closure unmapped (every lib/ file out of scope)
+# FAILS the at-the-bump row (lib/string.cyr, still 6.6.6 bytes, named beside chrono).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lib_sync_relocks
@@ -119,6 +124,18 @@ _cy deps --lock > /dev/null 2>&1 && grep -q '  lib/mine.cyr$' "$P/cyrius.lock" |
 _pin 6.6.7
 printf '\n[build]\nentry = "main.cyr"\noutput = "build/m"\n' >> "$P/cyrius.cyml"; printf 'syscall(SYS_EXIT, 0);\n' > "$P/main.cyr"
 cp "$P/cyrius.lock" "$W/a2.lock"; cp "$P/lib/chrono.cyr" "$W/a2.chrono"
+# 6.7.13: `deps --locked` (CI) at the moved pin gives D19's remedy, naming chrono — never "run
+# `cyrius deps`", which refuses here (issues/2026-10-15-deps-locked-remedy-names-deps-after-a-d19-refusal.md)
+_locked_remedy() {   # <tag>: rc 1, the D19 remedy naming lib/chrono.cyr alone, not "run `cyrius deps`"
+    rc=0; _cy deps --locked > "$W/a2l$1.out" 2>&1 || rc=$?
+    { [ "$rc" -eq 1 ] && grep -q '^error: --locked: .*\[package\].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file the resolve does not vendor that the 6.6.7 snapshot ships with other bytes, so `cyrius deps` will not re-lock:$' "$W/a2l$1.out" \
+      && [ "$(grep '^  lib/' "$W/a2l$1.out" | tr -d ' \n')" = "lib/chrono.cyr" ] \
+      && grep -q 'cyrius lib sync --full     moves them to 6.6.7 and re-locks' "$W/a2l$1.out" \
+      && grep -q 'rm <file> && cyrius deps   drops them' "$W/a2l$1.out" \
+      && ! grep -q 'run `cyrius deps`' "$W/a2l$1.out" && cmp -s "$W/a2.lock" "$P/cyrius.lock"; } \
+      || { fail "axis 2 ($1): deps --locked at the moved pin did not give D19's remedy naming lib/chrono.cyr (rc=$rc):"; grep -v '^  differs' "$W/a2l$1.out" | head -4 | sed 's/^/      /'; x=1; }
+}
+_locked_remedy "at the pin bump"
 rc=0; _cy deps > "$W/a2d.out" 2>&1 || rc=$?
 # named: chrono alone — not string (in the closure), math (outside it, the same bytes at 6.6.7) or
 # mine (no snapshot file: pin-independent)
@@ -129,6 +146,7 @@ rc=0; _cy deps > "$W/a2d.out" 2>&1 || rc=$?
   || { fail "axis 2: deps after the pin move did not refuse lib/chrono.cyr by name (rc=$rc):"; head -3 "$W/a2d.out" | sed 's/^/      /'; x=1; }
 cmp -s "$W/a2.lock" "$P/cyrius.lock" || { fail "axis 2: the refused deps rewrote cyrius.lock ($(tail -1 "$P/cyrius.lock"))"; x=1; }
 cmp -s "$W/a2.chrono" "$P/lib/chrono.cyr" || { fail "axis 2: the refused deps wrote lib/chrono.cyr"; x=1; }
+_locked_remedy "after the refused deps"
 rc=0; _cy build > "$W/a2b.out" 2>&1 || rc=$?
 { [ "$rc" -ne 0 ] && grep -q '^error: cyrius.lock not re-locked' "$W/a2b.out" && ! grep -q '^compile ' "$W/a2b.out" \
   && cmp -s "$W/a2.lock" "$P/cyrius.lock"; } \
@@ -140,7 +158,9 @@ rc3=0; _cy deps > "$W/a2x.out" 2>&1 || rc3=$?
   && [ "$(tail -1 "$P/cyrius.lock")" = "$(printf 'cyrius\t6.6.7')" ]; } \
   || { fail "axis 2: lib sync --full (rc=$rc) then deps --verify (rc=$rc2) and deps (rc=$rc3) after the refusal"; x=1; }
 why=$(_hashes_true) || { fail "axis 2: $why"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 2: deps (and build) at a moved pin refuse lib/chrono.cyr by name, lock untouched; lib sync --full then re-locks at 6.6.7"
+rc=0; _cy deps --locked > "$W/a2lz.out" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || { fail "axis 2: deps --locked after the remedy (lib sync --full) fails (rc=$rc):"; tail -2 "$W/a2lz.out" | sed 's/^/      /'; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 2: deps (and build) at a moved pin refuse lib/chrono.cyr by name, lock untouched; deps --locked gives that remedy (at the bump and after the refusal), not 'run cyrius deps'; lib sync --full then re-locks at 6.6.7 and --locked passes"
 
 # ── axis 2c: a lock an older `deps` re-stamped (6.6.17's case) ──────────────────────────────
 x=0
