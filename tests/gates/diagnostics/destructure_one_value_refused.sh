@@ -36,7 +36,8 @@
 #           included — is refused at the fn, so the caller's `b` cannot read a stale rdx (77 seeded, on
 #           every target). The controls compile and run: a forwarded call of the same arity (56), a
 #           wrapped one, an undeclared callee of that arity, a recursive one, a method and a generic,
-#           a tuple local, a closure's and an #inline callee's own returns inside the fn.
+#           a tuple local, a closure's and an #inline callee's own returns inside the fn. (6.7.13) `ret2(a, b)` in
+#           a fn declared with three values is refused the same way (D21 A); in a 2-value fn it runs.
 #   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
@@ -66,6 +67,9 @@
 # dropped -> ret_inline_one, ret_inline_two refused; the tuple-local arm dropped -> ret_tuple
 # refused (and tuple_checked.sh's A rows); the late report not yielding to the arms' own refusal ->
 # tuple_checked.sh R9n, R9s, R9t, R14n give two errors.
+# 6.7.13 (run 2026-10-15): `_ret2_in3` answering 0 at once -> ret2_in_3, ret2_in_3_gen build, ret2_in_3_next
+# one error line (return_ret2_in_3 stays refused, by the return check); its `_tn_once` dropped -> ret2_in_3_gen
+# two error lines; the latch left set -> ret2_in_3_next one error line (the next statement's lost).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: destructure_one_value_refused: cannot cd to $ROOT"; exit 1; }
@@ -205,6 +209,18 @@ runs ret_tuple    'fn f(): (i64, i64) { var t = (3, 4); return t; }\nfn main(): 
 runs ret_closure  'include "lib/alloc.cyr"\nfn f(x): (i64, i64) { alloc_init(); var c = |y| { return y + 1; }; return (fncall1(c, x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
 runs ret_inline_one '#inline\nfn one(x) { return x + 1; }\nfn f(x): (i64, i64) { return (one(x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
 runs ret_inline_two '#inline\nfn two(x) { return (x, 1); }\nfn f(x): (i64, i64, i64) { var a, b = two(x); return (a, b, 3); }\nfn main(): i64 { var a, b, c = f(2); return a * 100 + b * 10 + c; }\nvar r = main(); syscall(60, r);\n' 213
+# 6.7.13 (D21 A, 2026-10-15): `ret2(a, b)` writes two values, so in a fn declared with three it is refused as
+# `return (a, b);` is (issues/2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md; the repro exited
+# 88, the seeded r3, on every target). Once in a generic's instances, in sync; `return ret2(..)` once; a declared
+# 2-value fn's ret2 and a closure's own ret2 inside a 3-value fn still run.
+R3="'f' returns 3 values - return (a, b, c)"
+refused ret2_in_3  "${SEED}fn f(x): (i64, i64, i64) { ret2(x, x + 1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = f(5); return c; }\nvar r = main(); syscall(60, r);\n" "2:28: $R3"
+refused ret2_in_3_gen 'fn f<T>(x: T): (i64, i64, i64) { ret2(x, x + 1); }\nfn main(): i64 { var a, b, c = f<i64>(5); var d, e, g = f<i32>(5); return c; }\nsyscall(60, main());\n' "1:34: $R3"
+refused ret2_in_3_next 'fn f(x): (i64, i64, i64) { ret2(x, x + 1); syscall(60, nosuch); return (1, 2, 3); }\nfn main(): i64 { var a, b, c = f(5); return c; }\nsyscall(60, main());\n' "1:28: $R3" 2
+check "ret2_in_3_next: the next statement's own error" yes "$(grep -qF "1:62: undefined variable 'nosuch'" "$T/ret2_in_3_next.err" && echo yes || echo no)"
+refused return_ret2_in_3 "${SEED}fn f(x): (i64, i64, i64) { return ret2(x, x + 1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = f(5); return c; }\nvar r = main(); syscall(60, r);\n" "2:35: $R3"
+runs ret2_in_2    'fn f(x): (i64, i64) { ret2(x, x + 5); }\nfn main(): i64 { var a, b = f(5); return a + b; }\nsyscall(60, main());\n' 15
+runs ret2_closure_in_3 'include "lib/fnptr.cyr"\nfn f(x): (i64, i64, i64) { var cl = |y| { ret2(y, y + 1); }; var p, q = fncall1(cl, x); return (p, q, 9); }\nfn main(): i64 { var a, b, c = f(5); return a * 100 + b * 10 + c; }\nsyscall(60, main() & 255);\n' 57
 
 echo "axis 6 - \`callptr(fp, ..)\` destructures as \`fncallN\` does:"
 TWO='fn two(a): (i64, i64) { return (a, a + 1); }\n'
@@ -216,7 +232,7 @@ runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsysca
 runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
 refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
 
-if [ "$rows" -lt 81 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 81)"; exit 1; fi
+if [ "$rows" -lt 87 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 87)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

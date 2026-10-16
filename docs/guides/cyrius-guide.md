@@ -2750,6 +2750,8 @@ var hi, lo, bexp = dd_pow10(k);
 #   return (a, b, c);                 # another arity
 #   return one(x);   return mk();     # a one-value callee; a struct callee (a struct is
 #                                     # not multiple values)
+#   ret2(a, b);                       # two values in a fn declared with three (6.7.13): the
+#                                     # caller's third read what an earlier call left
 
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`

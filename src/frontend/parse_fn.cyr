@@ -931,13 +931,29 @@ fn _mret_land(S): i64 {
 # statement, aarch64 / cx branched to itself (a hang). Reported once (`_tn_once`: a global initializer
 # is parsed in two zones) and in sync: the arguments are parsed on and the panic latch is left as it
 # was, so the next statement reports its own errors. 1 = refused: no landing. CHANGELOG [6.7.13]
+# In a fn declared `: (T1, T2, T3)` it writes two of the three values — the caller's third read what
+# an earlier call left in r3 — so it is refused as a two-value `return (a, b);` is there (6.7.11, D17;
+# D21 A, the user's decision, 2026-10-15): "'f' returns 3 values - return (a, b, c)", at the ret2,
+# once (a generic's body is parsed per instance), in sync. The landing is kept (no binary is written).
 fn _ret2_ctx(S, ti): i64 {
-    if (GINFN(S) == 1) { return 0; }
+    if (GINFN(S) == 1) { return _ret2_in3(S, ti); }
     if (_tn_once(S, ti) == 0) { return 1; }
     var p0 = _panic;
     ERR_MSG(S, "ret2 outside a fn body", 22);
     if (p0 == 0) { _panic = 0; }
     return 1;
+}
+fn _ret2_in3(S, ti): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: its definition judged itself
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (GFRN(S, _cur_fn_ix) != 3) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var p0 = _panic;
+    _mret_ret_err(S, ti);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
 }
 
 # ⛔ 6.7.11 — A FN DECLARED `: (T1, T2[, T3])` RETURNS ITS VALUES (the user's decision, 2026-10-13).
