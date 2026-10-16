@@ -3441,11 +3441,13 @@ fn _pd_first_eq(S, op): i64 {
 # `_prescan_params_scan`) and refuses a bad SHAPE there; the end of pass 1 evaluates every default
 # once, in the top context with the parser cursor on its own token — so FINDFN's file scoping and
 # a const's `private` judge it at the definition, and no caller's local is ever visible — and
-# refuses a value its parameter's type does not take (`_pd_sweep`). A refused row has min = max: a
-# call passes every argument. Names are never stored: the definition's tokens hold them. Every
+# refuses a value its parameter's type does not take (`_pd_sweep`). A refused row keeps its min — a
+# call that leaves a refused default to it is not refused a second time, by arity (the default's own
+# refusal stopped the build; the fill pushes 0) — except a fn defined twice (D15), whose calls pass
+# every argument. Names are never stored: the definition's tokens hold them. Every
 # refusal is one line at its token (`_tn_once`), and the parse stays in step. CHANGELOG [6.7.7]
 # Row (alloc'd per definition that declares a default): [0] max = the parameter count, [8] min =
-# the first default's index (max when refused), [16] the list's `(`, [24] flags (1 a refused
+# the first default's index (max for D15), [16] the list's `(`, [24] flags (1 a refused
 # shape: never evaluated; 2 redefined; 4 refused), [32] d0 = the first default's index, then for
 # parameter d0 + j at [40 + j * 56]: its `=` token, its type token (-1 untyped), state (0 new, 1
 # being evaluated, 2 done, 3 refused), kind (0 i64, 1 f64, 2 string, 3 bool), value, float-literal
@@ -3461,12 +3463,12 @@ fn SFPD(fi, row): i64 {
     store64(_fnt_pdflt + fi * 8, row);
     return 0;
 }
-# A row refused: min = max, so its calls pass every argument (`shape` 1: never evaluated).
+# A row refused (`shape` 1: never evaluated). Its min is kept: a short call is not refused again by
+# arity, one error per mistake (6.7.13, issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md).
 fn _pd_refuse_row(row, shape): i64 {
     var f = L64(row + 24) | 4;
     if (shape == 1) { f = f | 1; }
     S64(row + 24, f);
-    S64(row + 8, L64(row));
     return 0;
 }
 
@@ -3532,7 +3534,9 @@ fn _pd_record_at(S, fi, op): i64 {
     S64(row + 24, 0);
     S64(row + 32, max);
     SFPD(fi, row);
-    if (_pd_shape(S, fi, row) == 1) { _pd_refuse_row(row, 1); }
+    # A refused shape: the min is the parameters before the first `=` — D11 / D13 refuse the whole list
+    # before `_pd_shape` lowers it from max. CHANGELOG [6.7.13]
+    if (_pd_shape(S, fi, row) == 1) { _pd_refuse_row(row, 1); S64(row + 8, _pd_req_n(S, op)); }
     return 0;
 }
 # D15: a fn defined twice (fn flag 2048, pass 1) where any definition declares a default — which
@@ -3550,6 +3554,7 @@ fn _pd_redef(S, fi, op, row): i64 {
     var seen = L64(row + 24) & 2;
     S64(row + 24, L64(row + 24) | 2);
     _pd_refuse_row(row, 1);
+    S64(row + 8, max);   # D15: which list a call is checked against is not one thing — every argument
     if (seen != 0) { return 0; }
     var nt = GFDS(S, fi);
     if (_pd_eo(S, nt) == 0) { return 0; }

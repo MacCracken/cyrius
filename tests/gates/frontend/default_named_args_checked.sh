@@ -316,6 +316,33 @@ R9S6=docs/development/issues/repros/2026-10-14-refused-parameter-type-default-ca
 refused r9s6 "expected a type for parameter 'a', got number 5" "R9s6: the filed repro, verbatim — \`fn f(a: 5 = 0)\` called \`f()\`: the type's refusal alone" "$(cat "$R9S6")\n" "2:9"
 refused r9s7 "expected a type for parameter 'a', got fn" "R9s7: \`fn f(a: fn = 0)\` called \`f()\`: the type's refusal alone" "fn f(a: fn = 0): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:9"
 refused r9s8 "expected a type for parameter 'b', got string" "R9s8: \`fn f(a, b: \"s\" = 0, c = 2)\` called \`f(1)\`, twice: the type's refusal alone" "fn f(a, b: \"s\" = 0, c = 2): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1); }\nsyscall(60, main());\n" "1:12"
+# RD1-RD8 (6.7.13; issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md): a refused default VALUE
+# (D2 / D3 / D6-D9 / D16 / D20) or a whole-list refusal (D11 / D13) set the row's min to its max, so every call
+# that left a default to it was refused AGAIN, by arity ("'f' expects 1 argument, got 0"), one line per call — the
+# valid defaults after it lost too. A refused row keeps its min now (`_pd_refuse_row`), and a whole-list refusal
+# lowers it to the parameters before the first `=` (`_pd_record_at`): one error per input, at the default. The
+# filed inputs verbatim. D15 (defined twice) keeps its arity line (RD7); a call over max is still refused (RD8).
+# Mutations (scratch copies of src/, CYCC= each; measured red): MRD1 `_pd_refuse_row` setting min = max again ->
+# RD1-RD3, RD8 (its text back to "expects 3 arguments"); MRD2 `_pd_record_at` without its `_pd_req_n` line -> RD4-RD6; MRD3 `_pd_redef` without its `max` line ->
+# RD7 (the arity line lost).
+refused rd1 "parameter 's' of 'f' is ': bool': its default must be a bool" "RD1: \`fn f(s: bool = 5)\` called \`f()\`: the default's refusal alone" "fn f(s: bool = 5): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:16"
+refused rd2 "parameter 'b' of 'f' is ': bool': its default must be a bool" "RD2: \`fn f(a, b: bool = 5, c = 3)\` called \`f(1)\` and \`f(1, true)\`: one error" "fn f(a, b: bool = 5, c = 3): i64 { return a + c; }\nfn main(): i64 { return f(1) + f(1, true); }\nsyscall(60, main());\n" "1:19"
+refused rd3 "parameter 'p' of 'f' is a struct: it takes no default" "RD3: D9 \`p: Pt = 0\` called \`f(1)\`: one error" "struct Pt { x; y; }\nfn f(a, p: Pt = 0): i64 { return a; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n" "2:17"
+RDT="'m' implements trait 'Tr': its parameters take no defaults (the trait's signature is the contract)"
+refused rd4 "$RDT" "RD4: D13 \`impl Tr for P { fn m(self, b, k = 1) }\` called \`p.m(5)\`: one error" "struct P { a; b; }\ntrait Tr { fn m(self, b); }\nimpl Tr for P { fn m(self, b, k = 1): i64 { return k; } }\nfn main(): i64 { var p = P { 1, 2 }; return p.m(5); }\nsyscall(60, main());\n" "3:33"
+refused rd5 "$RDT" "RD5: D13 with two defaults: one error" "struct P { a; b; }\ntrait Tr { fn m(self, b); }\nimpl Tr for P { fn m(self, b, k = 1, j = 2): i64 { return k; } }\nfn main(): i64 { var p = P { 1, 2 }; return p.m(5); }\nsyscall(60, main());\n" "3:33"
+refused rd6 "$RDT" "RD6: D13 on an \`#inline fn\`: one error" "struct P { a; b; }\ntrait Tr { fn m(self, b); }\nimpl Tr for P { #inline fn m(self, b, k = 1): i64 { return k; } }\nfn main(): i64 { var p = P { 1, 2 }; return p.m(5); }\nsyscall(60, main());\n" "3:41"
+if grep -qF "#inline ignored: fn takes more than 2 parameters" "$T/rd6.err"; then ok "RD6b: ... and its own \`#inline ignored\` warning"; else bad "RD6b: the \`#inline ignored\` warning is gone: $(grep -E '^(error|warning)' "$T/rd6.err" | head -3 | tr '\n' '|')"; fi
+# RD7: D15 — which list a call is checked against is not one thing, so its calls pass every argument (unchanged).
+printf '%b' "fn f(a, b = 2): i64 { return a + b; }\nfn f(a, b = 3): i64 { return a + b; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n" > "$T/rd7.cyr"
+build rd7
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/rd7.err")" -eq 2 ] && grep -qF "<source>:2:4: fn 'f' is defined twice and declares parameter defaults" "$T/rd7.err" && grep -qF "<source>:3: 'f' expects 2 arguments, got 1" "$T/rd7.err"; then ok "RD7: D15 (defined twice) keeps its arity line"
+else bad "RD7: rc $rc: $(grep '^error' "$T/rd7.err" | head -3 | tr '\n' '|')"; fi
+# RD8: a call past the parameter count is still refused beside the default's own refusal.
+printf '%b' "fn f(s: bool = 5, t = 1, u = 2): i64 { return 7; }\nfn main(): i64 { return f(true, 1, 2, 3); }\nsyscall(60, main());\n" > "$T/rd8.cyr"
+build rd8
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/rd8.err")" -eq 2 ] && grep -qF "<source>:1:16: parameter 's' of 'f' is ': bool'" "$T/rd8.err" && grep -qF "<source>:2: 'f' expects 0 to 3 arguments, got 4" "$T/rd8.err"; then ok "RD8: a call over the parameter count is still refused"
+else bad "RD8: rc $rc: $(grep '^error' "$T/rd8.err" | head -3 | tr '\n' '|')"; fi
 # The grammar refusals are reported under --syntax-only (what `cyrius lint` runs) too.
 refused x0a "needs a default: it follows one that has a default" "X0a: R1 under --syntax-only" "fn f(a, b = 1, c): i64 { return a + b + c; }$E" "1:16" "--syntax-only"
 refused x0b "a parameter default cannot hold a block" "X0b: R4 under --syntax-only" "fn f(a, b = if (a > 1) { 2 } else { 3 }): i64 { return a + b; }$E" "1:13" "--syntax-only"
