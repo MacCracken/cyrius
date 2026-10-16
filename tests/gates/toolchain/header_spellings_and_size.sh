@@ -79,6 +79,8 @@
 #   an expression closure's body not skipped                   → H12 FAIL (count, the word row, the oracle)
 #   the call's `)` found by _hdr_close (`<` a bracket)          → H12 FAIL (count, the qx row, the oracle)
 #   the `?` route named as a `return` ('parse(..)')            → H12 FAIL (the filed repro and the 5 refusal rows)
+# 6.7.13 — D37 (issues/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md item 2):
+#   lib/result.cyr's ok_via / err_via back to `: i64`          → H12 FAIL (the result.cyr rows: rc 1, both prototypes)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
 #   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
@@ -508,6 +510,24 @@ for fnp in 'run(cyr_val cmd, cyr_val arg1, cyr_val arg2)' 'run_capture(cyr_val c
     check "lib/process.cyr: ${fnp%%(*} (: Result) is cyr_val2" 1 "$(has o12p "cyr_val2 $fnp;   /* returns Result: the tag in w0, the payload in w1 */")"
 done
 check "lib/process.cyr: no refusal" 0 "$(wc -c < e12p | tr -d ' ')"
+# 6.7.13 (D37 — the user, 2026-10-15: keep D23's reach, and re-annotate lib/result.cyr's wrappers):
+# ok_via / err_via are declared `: Result`, what their bodies return, so cyrius's own lib clears its
+# own verb — rc 0, both cyr_val2 — and a caller compiles byte-identical to the 6.7.12 `: i64`
+# spelling (a copy of lib/ with the two signatures put back), the differential that proved it.
+rcv=0; "$CY" header "$ROOT/lib/result.cyr" > o12v 2> e12v || rcv=$?
+check "lib/result.cyr: exit 0, nothing on stderr (D37)" "0 0" "$rcv $(wc -c < e12v | tr -d ' ')"
+for fnp in 'ok_via(cyr_val a, cyr_val v)' 'err_via(cyr_val a, cyr_val e)'; do
+    check "lib/result.cyr: ${fnp%%(*} (: Result) is cyr_val2" 1 "$(has o12v "cyr_val2 $fnp;   /* returns Result: the tag in w0, the payload in w1 */")"
+done
+mkdir old && cp -R "$ROOT/lib" old/lib
+sed -e 's/^fn ok_via(a, v): Result {$/fn ok_via(a, v): i64 {/' -e 's/^fn err_via(a, e): Result {$/fn err_via(a, e): i64 {/' \
+    "$ROOT/lib/result.cyr" > old/lib/result.cyr
+check "the 6.7.12 copy differs from lib/result.cyr in the two signatures alone" 2 "$(diff "$ROOT/lib/result.cyr" old/lib/result.cyr | grep -c '^> fn [a-z_]*(a, [ve]): i64 {$' || true)"
+cp "$ROOT/tests/tcyr/stdlib/result_allocator_via.tcyr" via.tcyr
+vrc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/via.tcyr" > "$D/via_new" 2> /dev/null) || vrc=$?
+vro=0; (cd "$D/old" && "$ROOT/build/cycc" < "$D/via.tcyr" > "$D/via_old" 2> /dev/null) || vro=$?
+check "a caller (result_allocator_via.tcyr: ok_via, err_via, net.cyr's sock_*_a) compiles byte-identical to the : i64 spelling" \
+    "0 0 same" "$vrc $vro $(cmp -s via_new via_old && echo same || echo differ)"
 cat > pr.cyr <<'EOF'
 include "lib/tagged.cyr"
 enum Sx: stack { Va(v); Vb(); }
