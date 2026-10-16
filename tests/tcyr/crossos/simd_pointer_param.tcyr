@@ -141,6 +141,32 @@ fn sp_mrows(): i64 {
     return 0;
 }
 
+# ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — a closure's captured vector meets the local's argument rules: into a
+# `*V` of its type it passes the capture's address (both lanes are the captured copy's), and into a pointer of another kind
+# it is refused by name, as the local is (D27; the refusals are tests/gates/codegen/simd_pointer_param.sh CR rows).
+# issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-capture-address.md
+fn sp_crows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var w: f64v4 = f64v4_make(1, 2, 3, 44);
+    var f: f32v4 = f32v4_make(5, 6, 7, 88);
+    var c1 = |k| sp_lo(b) * 100 + sp_hi(b) + k;
+    assert_eq(fncall1(c1, 0), 1122, "6.7.13 D32: a captured f64v2 into *f64v2 passes the capture's address, both lanes");
+    var c2 = |k| sp_w3(w) + k;
+    assert_eq(fncall1(c2, 1), 45, "6.7.13 D32: a captured f64v4 into *f64v4, lane 3");
+    var c3 = |k| sp_f4(f) + k;
+    assert_eq(fncall1(c3, 0), 88, "6.7.13 D32: a captured f32v4 into *f32v4, lane 3");
+    var c4 = |k| sp_hi((b)) + k;
+    assert_eq(fncall1(c4, 0), 22, "6.7.13 D32: a captured vector, parenthesised");
+    var s: Sv;
+    s.k = 100;
+    var c5 = |k| s.rdm(b) + k;
+    assert_eq(fncall1(c5, 0), 111, "6.7.13 D32: a captured vector into a method's *V parameter");
+    var c6 = |k| sp_wr(b, 77) + sp_lo(b) + k;
+    assert_eq(fncall1(c6, 0), 77, "6.7.13 D32: a write through *V reaches the closure's captured copy");
+    assert_eq(load64(&b), 11, "6.7.13 D32: ... not the enclosing local (captured by value)");
+    return 0;
+}
+
 fn sp_rows(): i64 {
     var b: f64v2 = f64v2_make(11, 22);
     var w: f64v4 = f64v4_make(1, 2, 3, 44);
@@ -197,4 +223,5 @@ fn sp_fwd(p: *f64v2): i64 { var q = p; return load64(q + 8); }
 sp_rows();
 sp_vrows();
 sp_mrows();
+sp_crows();
 var r = assert_summary();

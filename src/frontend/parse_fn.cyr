@@ -1859,6 +1859,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
     if (li < 0) {
+        if (_sarg_vec_cap(S, fi, argc) == 1) { return 0; }   # 6.7.13 (D32): a captured vector, the local's rules
         if (_push_struct_addr_cap(S, fi, argc) == 1) { return 1; }
         return _push_struct_addr_global(S, fi, argc);
     }
@@ -1899,18 +1900,52 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
 # value-form vector parameter is not this rule: SysV / aarch64 / cx never reach here (the SIMD
 # mask routes it), Win64 takes the address the arm pushes. (A `*V` local's SLTYPE is 0: its value.)
 fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
+    var r = _svp_rule(S, fi, argc, lt);
+    if (r >= 0) { return r; }
+    if (_TARGET_PE == 1) { _sarg_pe_v32(S, fi, argc, lt); }   # 6.7.13
+    return _TARGET_PE;
+}
+# The pointer rules a vector of type `lt` meets as argument `argc` of `fi` (the cursor on its name): a `*V` of its
+# type 1 (the address is passed), another vector type refused by name (A2) and 1; a pointer of another kind (D27) or
+# a by-value struct (D31) refused by name, 0; -1 = no pointer parameter (a value-form vector, a word).
+fn _svp_rule(S, fi, argc, lt): i64 {
     var pv = _pvec_param(S, fi, argc);
     if (pv == 0) {
         if (_pptr_param(S, fi, argc) == 1) { return _vec_kind_err(S, PEEKV(S), fi); }   # 6.7.12 (D27)
         if (_vk_param(S, fi, argc) == 2) { return _vec_val_err(S, 0, PEEKV(S), fi, 2); }   # 6.7.13 (D31): a by-value struct
-        if (_TARGET_PE == 1) { _sarg_pe_v32(S, fi, argc, lt); }   # 6.7.13
-        return _TARGET_PE;
+        return 0 - 1;
     }
     if (pv != 0 - lt) {
         ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
           L64(_fnt_names + fi * 8));
     }
     return 1;
+}
+# ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — A CLOSURE'S CAPTURED VECTOR MEETS THE LOCAL'S ARGUMENT
+# RULES. Inside a closure `|k| ri(b)` / `|k| rp(b)` (`p: *i64` / `p: *Pt`) passed the capture's address and ran (42),
+# where `ri(b)` / `rp(b)` on the local are refused by name (D27): the capture never reached the vector arm
+# (`_CL_CAP_FIELD_IDX` takes a struct capture only), so the value push — a multi-word capture's value is its address —
+# went out unchecked. The name at the cursor, a captured vector (`_cl_cap_vec`), as argument `argc` of an
+# address-passed parameter of `fi`: `_svp_rule` (a `*V` of its type, another vector type, another pointer kind, a
+# by-value struct) — 1, and the caller's value push is the capture's address (`&env[woff]`, right for a `*V`; refused
+# otherwise, no binary). 0 = no captured vector. CHANGELOG [6.7.13]
+fn _sarg_vec_cap(S, fi, argc): i64 {
+    var lt = _cl_cap_vec(S, PEEKV(S));
+    if (lt == 0) { return 0; }
+    _svp_rule(S, fi, argc, lt);
+    return 1;
+}
+# The vector type (its SLTYPE, <= -2048) of the enclosing local `noff` names when a capturing closure's body has
+# captured it, else 0.
+fn _cl_cap_vec(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    if (_cl_cap_find(esl) < 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (_is_simd_any(S, t) == 0) { return 0; }
+    return t;
 }
 # Win64 passes a value-form vector parameter by address (this arm), so the SIMD mask's check never runs there: a
 # 32-byte one (`v: f32v8` / `v: f64v4`) gets it here, by the same words. CHANGELOG [6.7.13]
@@ -2015,10 +2050,10 @@ fn _vec_val_err(S, star, noff, fi, kd): i64 {
     return 0;
 }
 # The same for a whole vector argument to parameter `argc` of `fi` that is not address-passed — a `*i64`, `*u8`,
-# `**T` (D27, a LOCAL), or (6.7.13, D31) a by-value struct of 8 B or less — by its tokens: a vector local
-# (inside any parentheses wrapping the whole argument), or a call declared to return a vector (`_svc_rs`) or a
-# dereference `*p` of a `*V` local / parameter (its step word's vector, `_ps_vdesc`), inside any such parentheses
-# too. The cursor on the argument (`_sarg_byval_small`); nothing is consumed. 1 = refused.
+# `**T` (D27, a LOCAL), or (6.7.13, D31) a by-value struct of 8 B or less — by its tokens: a vector local or (6.7.13,
+# D32) a closure's captured vector (inside any parentheses wrapping the whole argument), or a call declared to return
+# a vector (`_svc_rs`) or a dereference `*p` of a `*V` local / parameter (its step word's vector, `_ps_vdesc`), inside
+# any such parentheses too. The cursor on the argument (`_sarg_byval_small`); nothing is consumed. 1 = refused.
 fn _sarg_vec_other(S, fi, argc): i64 {
     var kd = _vk_param(S, fi, argc);
     if (kd == 0) { return 0; }
@@ -2026,8 +2061,10 @@ fn _sarg_vec_other(S, fi, argc): i64 {
     if (ti >= 0) {
         if (GINFN(S) != 1) { return 0; }
         var li = FINDLOCAL(S, TOKVAL(S, ti));
-        if (li < 0) { return 0; }
-        if (_is_simd_any(S, GLTYPE(S, li)) == 0) { return 0; }
+        var lt = 0;
+        if (li >= 0) { lt = GLTYPE(S, li); }
+        else { lt = _cl_cap_vec(S, TOKVAL(S, ti)); }   # 6.7.13 (D32): a closure's captured vector too
+        if (_is_simd_any(S, lt) == 0) { return 0; }
         if (kd == 1) { return _svo_err(S, ti, 2, TOKVAL(S, ti), fi, kd); }
         return _svo_err(S, ti, 0, TOKVAL(S, ti), fi, kd);
     }

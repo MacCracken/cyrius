@@ -3555,7 +3555,12 @@ parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-v
 struct parameter in a call to 'bv' - a vector is not a struct`. ⚠ Through 6.7.12 each of these
 compiled and passed lane 0's bits as the address or the struct (139 on x86_64 and aarch64, a cx
 guest fault, exit 5 on Win64) — and on Win64 `bv(b)` passed `&b` by accident and ran (42); it now
-stops compiling there too.
+stops compiling there too. **A closure's captured vector follows the local too (6.7.13; the user's decision D32,
+2026-10-15: A):** inside `|k| ..` a captured `b` passed to `p: *f64v2` passes the address of the closure's captured
+copy (a write through `p` reaches that copy, not the enclosing local), a captured vector of another type is refused
+with A2's words, and `|k| ri(b)` / `|k| rp(b)` / a by-value struct are refused with the words above. ⚠ Through 6.7.12
+every captured vector argument passed the capture's address unchecked: `|k| ri(b)` and `|k| rp(b)` ran (42) where the
+same calls on the local were refused.
 
 **A value-form `v: f32v8` parameter is its 32 bytes (6.7.13), as `v: f64v4` is:** two XMM registers
 (SysV), two V registers (aarch64), four cx slots, a 32-byte copy-in through a pointer on Win64. It

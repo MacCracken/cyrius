@@ -96,6 +96,22 @@
 #   M-K3 `_dro_vt_for` arming for a `*V` only                -> RED 6: OK3 on every leg (compiled), OKX x86 / PE (12)
 #   M-K4 `_sarg_vec_ptr` without the by-value struct arm     -> RED 4: OK5 on every leg (compiled; PE 42 again)
 #
+# ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15; issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-
+# capture-address.md) — A CLOSURE'S CAPTURED VECTOR MEETS THE LOCAL'S ARGUMENT RULES. `|k| ri(b)` (`p: *i64`) and `|k|
+# rp(b)` (`p: *Pt`) passed the capture's address and ran (42 on x86_64 / IR=3 / aarch64 / cx / PE), where `ri(b)` /
+# `rp(b)` on the local are refused by name (D27): the capture reached neither vector arm (`_CL_CAP_FIELD_IDX` takes a
+# struct capture only, `_sarg_vec_other` a FINDLOCAL local). `_sarg_vec_cap` (address-passed: `_svp_rule`, the local's
+# `_sarg_vec_ptr` rules) and `_sarg_vec_other`'s capture arm (`_cl_cap_vec`) give it A2, D27 and D31.
+#   CR1 / CR2 the filed repro verbatim (`|k| ri(b)`) and its `|k| rp(b)` twin: one line each on x86_64 / aarch64 / cx / PE
+#   CRX 6 captured-vector arguments in one compile (`*u8`, `**f64v2`, wrapped `*i64` / `*Pt`, a by-value struct over 8 B
+#      and of 8 B or less): 6 lines on x86_64 and PE; CRY1 / CRY2 / CRYw another vector type into `*f64v2` (A2), once
+#   T  `sp_crows` (FLOOR 68): a captured f64v2 / f64v4 / f32v4 into its `*V` (both lanes of the captured copy), wrapped,
+#      a method's parameter, a write through it reaching the copy and not the enclosing local
+#   M-C1 `_sarg_vec_cap` answering 0 (2026-10-16, measured)  -> RED 9: CR2 on every leg (compiled), CRX x86 / PE (4
+#       lines: `rp((b))` / `bv(b)` gone), CRY1 CRY2 CRYw (compiled)
+#   M-C2 `_sarg_vec_other` without the capture arm           -> RED 6: CR1 on every leg (compiled), CRX x86 / PE (2
+#       lines: `ru` / `rpp` / `ri((b))` / `bv1` gone)
+#
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
 # x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
@@ -177,7 +193,7 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=61   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`)
+FLOOR=68   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`), the captured-vector rows (`sp_crows`, D32)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
@@ -389,6 +405,62 @@ for lg in x86 pe; do
     elif [ -s "$D/okx.bin" ]; then bad "OKX $lg: refused, but a binary was written"
     else ok "OKX $lg: 13 vector sources into another pointer kind / a by-value struct, each refused once"; fi
 done
+
+# 6.7.13 (D32 A, the user's decision, 2026-10-15; issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-
+# capture-address.md) — a closure's CAPTURED vector meets the local's argument rules: the filed repro (`|k| ri(b)`, `p:
+# *i64`) and its `|k| rp(b)` twin (`p: *Pt`) passed the capture's address and ran (42 on x86_64 / IR=3 / aarch64 / cx /
+# PE), where `ri(b)` / `rp(b)` on the local are refused by name (D27, R5 / Y12).
+echo "CR. a captured vector into a pointer of another kind: refused by name, once (D32 A)"
+cat > "$D/cr1.src" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+fn rp(p: *Pt): i64 { return p.x; }
+fn ri(p: *i64): i64 { return *p; }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    var c = |k| ri(b) + k;       # outside a closure, ri(b) is refused by name (D27)
+    return fncall1(c, 0);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+sed 's/|k| ri(b) + k;       # outside a closure, ri(b) is refused by name (D27)/|k| rp(b) + k;/' "$D/cr1.src" > "$D/cr2.src"
+grep -q '|k| rp(b) + k;' "$D/cr2.src" || bad "CR2: the rp twin was not derived from the filed repro"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "CR1$lg" "CR1 $lg: the filed repro, |k| ri(b) into *i64" "$(cat "$D/cr1.src")" "$lg" "cannot pass 'b' $KFRAG 'ri' - pass &b for its address"
+    refused "CR2$lg" "CR2 $lg: |k| rp(b) into *Pt" "$(cat "$D/cr2.src")" "$lg" "cannot pass 'b' $KFRAG 'rp' - pass &b for its address"
+done
+# Every rule a vector local meets, on its captured copy: another vector type into `*V` (A2's refusal, which stops the
+# parse as the local's does: one row each, CRY); in ONE compile, another pointer kind (`*u8`, `**f64v2`, wrapped into
+# `*i64` / `*Pt`) and a by-value struct over 8 B and of 8 B or less (D31) — 6 lines, on x86_64 and PE; a captured `*V`
+# of its type compiles (no line).
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'include "lib/fnptr.cyr"' 'struct Pt { x; y; }' 'struct P1 { x; }' \
+  'fn rd(p: *f64v2): i64 { return load64(p); }' 'fn rp(p: *Pt): i64 { return p.x; }' 'fn ri(p: *i64): i64 { return *p; }' \
+  'fn ru(p: *u8): i64 { return load8(p); }' 'fn rpp(p: **f64v2): i64 { return 0; }' 'fn bv(p: Pt): i64 { return p.x; }' \
+  'fn bv1(p: P1): i64 { return p.x; }' \
+  'fn main(): i64 {' '    var b: f64v2 = f64v2_make(42, 7);' \
+  '    var c = |k| ru(b) + rpp(b) + ri((b)) + rp((b)) + bv(b) + bv1(b) + rd(b) + k;' \
+  '    return fncall1(c, 0);' '}' 'syscall(60, main());' > "$D/crx.cyr"
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    rc=0
+    if [ "$lg" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/crx.cyr" > "$D/crx.bin" 2> "$D/crx.err" || rc=$?
+    else timeout 60 "$CC" < "$D/crx.cyr" > "$D/crx.bin" 2> "$D/crx.err" || rc=$?; fi
+    n=$(grep -c '^error' "$D/crx.err" || true)
+    nk=$(grep '^error' "$D/crx.err" | grep -c "$KFRAG\|to a by-value struct parameter in a call to" || true)
+    if [ "$rc" -eq 0 ]; then bad "CRX $lg: compiled - want 6 refusals"
+    elif [ "$n" -ne 6 ] || [ "$nk" -ne 6 ]; then bad "CRX $lg: $n error lines ($nk by name), want 6: $(grep '^error' "$D/crx.err" | head -3 | tr '\n' '|')"
+    elif [ -s "$D/crx.bin" ]; then bad "CRX $lg: refused, but a binary was written"
+    else ok "CRX $lg: 6 captured-vector arguments the local's rules refuse, each once"; fi
+done
+CRH="${H}include \"lib/fnptr.cyr\"\nfn rd(p: *f64v2): i64 { return load64(p); }\n"
+CRY1B="${CRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var c = |k| rd(f) + k; return fncall1(c, 0); }\n${E}"
+refused CRY1 "CRY1 a captured f32v4 into *f64v2 (A2)" "$CRY1B"
+refused CRY2 "CRY2 a captured f64v4 into *f64v2 (A2)" "${CRH}fn main(): i64 { var w: f64v4 = f64v4_make(1, 2, 3, 4); var c = |k| rd(w) + k; return fncall1(c, 0); }\n${E}"
+[ "$WINE" = 1 ] && refused CRYw "CRYw CRY1 on PE" "$CRY1B" pe
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
 cat > "$D/v8.cyr" <<'EOF'
