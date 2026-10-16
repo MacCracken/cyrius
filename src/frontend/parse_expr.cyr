@@ -6374,6 +6374,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
     }
     # ret2(a, b) — return two values in rax:rdx
     if (ptyp == 97) {
+        var r2out = _ret2_ctx(S, GTI(S));      # 6.7.13: refused outside a fn body (no landing)
         _refuse_async_mv_body(S, GTI(S), 2);   # 6.7.11: a Future carries one i64
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
@@ -6386,7 +6387,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         EPOPR(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
-        _mret_land(S);   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
+        if (r2out == 0) { _mret_land(S); }   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.

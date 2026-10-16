@@ -24,6 +24,13 @@
 #          top-level closure body (5), in a closure in a top-level block (5), in an #inline fn called at top level
 #          (4), in a fn defined in a top-level block (3), early returns in a fn defined after top-level code (10)
 #          — on ecb / ach / cass / pi too, as tests/tcyr/crossos/toplevel_return_controls.tcyr (6.7.12)
+#   TR1-TR7 (6.7.13; D20 A, the user's decision, 2026-10-15) a `ret2(a, b)` outside a fn body is refused by name
+#          (`ret2 outside a fn body`), once: it lands as `return (a, b);` does, through the same unpatched jump (x86 /
+#          PE ran on past it — `ret2(6, 7); syscall(60, 9);` exited 9 — aarch64 / cx hung at it). TR1-TR3 the issue's
+#          table verbatim (TR1r its reproduction's file), TR4 a global initializer in both zones, TR5 the parse goes
+#          on (a next builtin call's own error, 2 lines), TR6 --syntax-only, TR7 the control: a ret2 in a fn, a
+#          top-level closure and an #inline fn still runs on every leg (54)
+#          (issues/2026-10-14-top-level-ret2-never-returns.md)
 #
 # MUTATION LEDGER (2026-10-14; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run
 # from that copy with CYCC= it, so the cross legs are built from the mutated src too):
@@ -38,6 +45,12 @@
 #       start with a keyword: its own error lost); P1 green (the resync stops at `var`)
 #   the compiler before this bite (3a7febfb, the lane's G units) -> RED R1-R9 B1-B7 P1-P5 X (each BUILT: x86 / PE
 #       exit the fall-through's value, aarch64 / cx hang at the `return` until `timeout 5`); C1-C5 green
+# 6.7.13 (2026-10-15, the same method):
+#   MR2a the ret2 arm without its `_ret2_ctx` call (no refusal, the landing always recorded) -> RED TR1-TR4b on
+#       every leg (each BUILT: x86 / PE exit 9 / 6, aarch64 / cx "hung (timeout 5)"), TR5 / TR5b (the next
+#       statement's error alone), TR6; TR7 green
+#   MR2b `_ret2_ctx` without its GINFN test (every ret2 refused) -> RED TR7 on every leg; TR1-TR6 green
+#   MR2c `_ret2_ctx` leaving the latch set -> RED TR5 TR5b (the next statement's own error lost)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -198,6 +211,23 @@ exits C3 4 'a return in an #inline fn called at top level' '#inline\nfn four(): 
 exits C4 3 'a return in a fn defined in a top-level block' 'var on = 1;\nif (on == 1) { fn g(): i64 { return 3; } }\nsyscall(60, g());\n'
 exits C5 10 'early returns in a fn defined after top-level code' 'var a = 1;\nwhile (a < 5) { a = a + 1; }\nfn h(n): i64 { if (n > 2) { return n * 2; } return 0; }\nsyscall(60, h(a));\n'
 
+# ── TR (6.7.13): a ret2 outside a fn body ───────────────────────────────────────────────────────────
+MSG="ret2 outside a fn body"
+refused TR1 '`ret2(6, 7); syscall(60, 9);`' 1 '<source>:1:1:' 'ret2(6, 7); syscall(60, 9);\n'
+refused TR1r 'the reproduction'"'"'s file, verbatim' 1 '<source>:1:1:' 'ret2(6, 7);\nsyscall(60, 9);\n'
+refused TR2 '`ret2(6, 7);`' 1 '<source>:1:1:' 'ret2(6, 7);\n'
+refused TR3 'a ret2 in a top-level if block' 1 '<source>:1:26:' 'var a = 1; if (a == 1) { ret2(6, 7); } syscall(60, 9);\n'
+refused TR4 'a global initializer, the declaration zone' 1 '<source>:1:9:' 'var G = ret2(6, 7);\nsyscall(60, 9);\n'
+refused TR4b 'a global initializer after a statement' 1 '<source>:3:9:' 'var z = 1;\nz = 2;\nvar G = ret2(6, 7);\nsyscall(60, 9);\n'
+refused TR5 'a next statement that is a builtin call reports its own error (2 lines)' 2 '<source>:1:1:' 'ret2(6, 7);\nsyscall(60, y);\n'
+p_next TR5b 'the second line is `syscall(60, y);`'"'"'s own error' 'ret2(6, 7);\nsyscall(60, y);\n'
+printf 'var a = 1;\nif (a == 1) { ret2(6, 7); }\nsyscall(60, 9);\n' > "$T/tr6.cyr"
+rc=0; "$CC" --syntax-only < "$T/tr6.cyr" > /dev/null 2> "$T/tr6.err" || rc=$?
+n=$(grep -c '^error' "$T/tr6.err" || true)
+if [ "$rc" -ne 0 ] && [ "$n" -eq 1 ] && grep -qF "$MSG" "$T/tr6.err"; then ok "TR6: --syntax-only refuses it, once"
+else bad "TR6: --syntax-only: rc $rc, $n error lines: $(grep '^error' "$T/tr6.err" | head -2 | tr '\n' '|')"; fi
+exits TR7 54 'a ret2 in a fn, a top-level closure and an #inline fn' 'include "lib/fnptr.cyr"\nfn f(x) { ret2(x, x + 1); }\n#inline\nfn fi(x) { ret2(x * 2, x + 3); }\nfn g(x) { var a, b = fi(x); return a * 10 + b; }\nvar cl = |x| { ret2(x + 1, x + 2); };\nfn main(): i64 { var a, b = f(3); var c, d = fncall1(cl, 1); return a * 10 + b + g(1) + c * 1000 + d * 100; }\nsyscall(60, main() & 255);\n'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips runner(s) missing; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a return outside a fn body refused by name, once, on x86 / aarch64 / cx / PE / cycc_win (R1-R9, B1-B7), the parse goes on (P1-P5), --syntax-only (X); a return in a closure, an #inline fn and a fn in a top-level block still runs on every leg (C1-C5)"
+echo "PASS: $G — a return outside a fn body refused by name, once, on x86 / aarch64 / cx / PE / cycc_win (R1-R9, B1-B7), the parse goes on (P1-P5), --syntax-only (X); a return in a closure, an #inline fn and a fn in a top-level block still runs on every leg (C1-C5); a ret2 outside a fn body refused the same way, once, a ret2 in a fn / closure / #inline fn still runs (TR1-TR7)"

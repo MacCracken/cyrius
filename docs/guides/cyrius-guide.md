@@ -486,7 +486,9 @@ var r = add(20, 22);   # r = 42
   main` (the auto-call). A closure body and an `#inline` fn are fn bodies, so a `return` in one
   is fine anywhere. ⚠ Before 6.7.11 a top-level `return` compiled with no diagnostic and did not
   return: x86_64 and PE ran on past it (`return 6; syscall(60, 9);` exited 9), and aarch64 and cx
-  hung at it.
+  hung at it. `ret2(a, b)` returns as `return (a, b);` does, so it is refused the same way outside a
+  fn body: `ret2 outside a fn body` (6.7.13, the user's decision of 2026-10-15; it compiled and did not
+  return on any target).
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading by arity, so a count mismatch is never intentional). The count must lie between
   the fn's required parameters and all of them: a fn that declares parameter defaults
