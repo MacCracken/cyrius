@@ -90,6 +90,9 @@
 #           warning (the repro, verbatim: 0 and a false kind-1 before); `n + x` keeps kind 2 (D41). Mutations
 #           (2026-10-16, a scratch tree each): `_int_resb` as `_int_res` -> RED the repro and every row but
 #           `add` (exit 0 / wrong, kind 1); `_int_rest` always `_int_res` -> RED mod shl shr sar only.
+#   axis 18 (6.7.13) `var c = f() < 1.0;` with a `: f64` leading call is an integer binding (`_var_rhs_post`): the
+#           repro verbatim exits 1 (3 before: `-c` flipped the sign bit), `0 - c` draws no kind 2, `var x = f() *
+#           2.0;` keeps its f64. The fix reverted (a scratch tree): RED the repro (3), `sub` / `and` (kind 2: 1).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -630,5 +633,22 @@ for spec in 'lt@var c = (n < x) * 3; return c;@3@1@0@0' 'and@var c = (n == 64 &&
     n=$(count "$K2"); [ "$n" = "$w2" ] || bad "axis 17 ($id): kind-2 warning count $n, want $w2"
 done
 
+# --- axis 18 (6.7.13): a comparison bound from a `: f64` leading call is an integer — `0 - c` does not warn ---
+# issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md: `var c = f() < 1.0;` was typed f64 (the leading
+# call's type), so `0 - c` warned kind 2 (and computed -1) and `-c` flipped the sign bit (the repro: exit 3, want 1).
+printf 'fn f(): f64 { return 0.5; }\nfn main(): i64 { var c = f() < 1.0; var n = -c; return n + 2; }\nsyscall(60, main());\n' > "$W/a18_repro.cyr"
+build "$W/a18_repro.cyr"; chmod +x "$W/o" 2>/dev/null || true
+rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+[ "$rc" = 1 ] || bad "axis 18 (the repro, verbatim): exit $rc, want 1"
+for spec in 'sub@var c = f() < 1.0; var n = 0 - c; return n + 2;@1@0' 'and@var k = 1; var c = f() > 0.1 && k == 1; var n = 0 - c; return n + 2;@1@0' \
+            'keep@var x = f() * 2.0; var y = x + x; return f64_to(y);@2@0'; do
+    id=${spec%%@*}; rest=${spec#*@}; stmt=${rest%%@*}; rest=${rest#*@}; want=${rest%%@*}; w2=${rest#*@}
+    printf 'fn f(): f64 { return 0.5; }\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$stmt" > "$W/a18_$id.cyr"
+    build "$W/a18_$id.cyr"; chmod +x "$W/o" 2>/dev/null || true
+    rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+    [ "$rc" = "$want" ] || bad "axis 18 ($id: '$stmt'): exit $rc, want $want"
+    n=$(count "$K2"); [ "$n" = "$w2" ] || { bad "axis 18 ($id): kind-2 warning count $n, want $w2"; sed -n 1,3p "$W/e"; }
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer, a comparison bound from a : f64 call too)"

@@ -166,6 +166,18 @@ fn c_bxor() { var m = 7; var xb = f64_bits3(); var c = (m ^ xb) * 3; return c & 
 fn c_mod() { var m = 64; var xb = f64_bits3(); var c = (m % xb) * 3; return c; }
 fn c_shl() { var m = 7; var xb = f64_bits3(); var c = (m << xb) * 3; return c; }
 fn c_shr() { var m = 64; var xb = f64_bits3(); var c = (m >> xb) * 3; return c; }
+# 6.7.13 (issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md) — `var c = f() < 1.0;` with a `: f64`
+# leading call bound c as an f64 (the leading call's type), so `-c` was a float negation: the sign bit flipped
+# (0x8000000000000001, the repro: 3 where 1 is right) and `0 - c` warned kind 2. The f64 binding holds only
+# while the whole initialiser is still f64 (`_var_rhs_post`): b_lf64 above keeps it.
+fn fhalf(): f64 { return 0.5; }
+fn l_lt() { var c = fhalf() < 1.0; var n = -c; return n; }
+fn l_eq() { var c = fhalf() == 0.5; var n = -c; return n; }
+fn l_le() { var c = fhalf() <= 0.5; var n = -c; return n; }
+fn l_ge() { var c = fhalf() >= 0.5; var n = 0 - c; return n; }
+fn l_and() { var k = 1; var c = fhalf() > 0.1 && k == 1; var n = -c; return n; }
+fn l_andx() { var k = 0; var x: f64 = 2.5; var c = fhalf() > 0.1 && k < x; var n = -c; return n; }
+fn l_keep() { var x = fhalf(); var y = x + 1.5; return f64_to(y); }
 
 # ── sizes 1..7 B (u8 / u16 / u32 compositions): c.f read and written, c + c dispatched ──
 struct Z1 { a: u8; }
@@ -329,6 +341,13 @@ assert_eq(c_bxor(), 12, "(m ^ x) * 3 is an integer (D12 (a))");
 assert_eq(c_mod(), 192, "(m % x) * 3 is an integer (D12 (a))");
 assert_eq(c_shl(), 168, "(m << x) * 3 is an integer (D12 (a))");
 assert_eq(c_shr(), 24, "(m >> x) * 3 is an integer (D12 (a))");
+assert_eq(l_lt(), 0 - 1, "var c = f() < 1.0; -c is -1 (the repro: the sign bit flipped)");
+assert_eq(l_eq(), 0 - 1, "var c = f() == 0.5; -c is -1");
+assert_eq(l_le(), 0 - 1, "var c = f() <= 0.5; -c is -1");
+assert_eq(l_ge(), 0 - 1, "var c = f() >= 0.5; 0 - c is -1");
+assert_eq(l_and(), 0 - 1, "var c = f() > 0.1 && k == 1; -c is -1");
+assert_eq(l_andx(), 0 - 1, "var c = f() > 0.1 && k < x (x: f64); -c is -1 (the compare half)");
+assert_eq(l_keep(), 2, "var x = f(); a whole : f64 call keeps the f64 binding");
 assert_eq(z1(), 28, "1 B: c.a written, c + c");
 assert_eq(z2(), 28, "2 B: c.a written, c + c");
 assert_eq(z3(), 1028, "3 B: c.a written, c + c");

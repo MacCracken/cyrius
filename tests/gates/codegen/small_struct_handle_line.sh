@@ -806,7 +806,7 @@ done
 TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
 [ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
 NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
-BFLOOR=80
+BFLOOR=95
 if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
 echo "R8. $TB ($NB rows: an untyped binding of a whole struct result takes the struct type)"
 for leg in $XLEGS $OTHER; do

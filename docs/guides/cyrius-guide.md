@@ -76,7 +76,10 @@ negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns
 bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
 (v6.5.21), which types `x` from the declared return, as it does (6.7.9) a whole method call
 ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(1).area()`
-with `fn area(self): f64`. It does NOT cover an **untyped**
+with `fn area(self): f64`. A leading `: f64` call types the binding only while the whole
+initialiser is still an f64 (6.7.13): `var x = f() * 2.0;` is an f64, `var c = f() < 1.0;` and
+`var c = f() > 0.1 && k == 1;` are the integer 0 / 1 a comparison is (through 6.7.12 `c` was typed
+f64, so `-c` flipped its sign bit and `0 - c` warned). It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
