@@ -2421,8 +2421,7 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     # The kill handler unlinks `wt_err` (the child creates it) and stops git, as for compile()'s
     # compiler; both are dropped once git is reaped and its first line read. CHANGELOG [6.7.13]
     _cbt_scratch_track(errf);
-    var pid = sys_fork();
-    if (pid > 0) { _cbt_child_track(pid, 0); }
+    var pid = _cbt_fork_tracked(0);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } _cbt_scratch_untrack(errf); return 0 - 1; }
     if (pid == 0) {
         var nfd = sys_open("/dev/null", O_RDONLY, 0);

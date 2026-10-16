@@ -156,6 +156,64 @@ fn _cbt_child_untrack(pid): i64 {
     return 0;
 }
 
+# Test-only: a fn the parent calls between the fork and the track (0 in production), so a row
+# can land a signal inside that window (tests/tcyr/crossos/cli_kill_handler.tcyr scenario E).
+var _cbt_fork_hook = 0;
+
+# Block HUP / INT / TERM, the old mask into `old` (8 bytes). The same bits on Linux and Darwin
+# (Darwin's sys_sigprocmask is the __pthread_sigmask shim); nothing to block on Windows. 0 or an
+# error.
+fn _cbt_sig_hold(old): i64 {
+    var set[8];
+    store64(&set, 0x4003);
+    store64(old, 0);
+    #ifdef CYRIUS_TARGET_LINUX
+    return sys_sigprocmask(SIG_BLOCK, &set, old);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return sys_sigprocmask(SIG_BLOCK, &set, old);
+    #endif
+    return 0;
+}
+
+# Put back the mask `_cbt_sig_hold` saved in `old`.
+fn _cbt_sig_release(old): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    return sys_sigprocmask(SIG_SETMASK, old, 0);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return sys_sigprocmask(SIG_SETMASK, old, 0);
+    #endif
+    return 0;
+}
+
+# Fork a child the kill handler tracks (`fwd` as for `_cbt_child_track`). HUP / INT / TERM are
+# blocked from before the fork until the parent has tracked the pid, so a signal landing in that
+# window is delivered after the track and the handler stops the child (it used to find it
+# untracked and leave it running, free to recreate `<out>.tmp.<pid>`). The child puts the old
+# mask back first: a forked copy of the CLI needs its handler live, and an exec'd tool must not
+# inherit HUP / INT / TERM blocked. Answers the pid (0 in the child), or the fork's -errno with
+# the mask restored. Windows has no fork: -1 there, and every caller arms PE before it.
+# CHANGELOG [6.7.13]
+fn _cbt_fork_tracked(fwd): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
+    var old[8];
+    var hr = _cbt_sig_hold(&old);
+    var pid = sys_fork();
+    if (pid == 0) {
+        if (hr == 0) { _cbt_sig_release(&old); }
+        return 0;
+    }
+    if (pid > 0) {
+        if (_cbt_fork_hook != 0) { fncall0(_cbt_fork_hook); }
+        _cbt_child_track(pid, fwd);
+    }
+    if (hr == 0) { _cbt_sig_release(&old); }
+    return pid;
+}
+
 # Stop child `c` and reap it — only while it is still this process's unreaped child (a WNOHANG wait
 # answers 0), so a pid the main path has already reaped, which the system may have reused, is
 # never signalled.

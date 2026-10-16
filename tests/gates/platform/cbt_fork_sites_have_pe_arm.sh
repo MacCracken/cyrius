@@ -112,6 +112,10 @@
 #   M8  drop soak's `if (src2 != 0)` exit-code check          axis 4 RED (2: no "exited 3",
 #                                                             and "output differs" back)
 #   real tree -> all axes GREEN, 17 sites.
+# (6.7.13) compile(), capacity, the distlib spawn and `_dep_wt_run` fork through
+# `_cbt_fork_tracked(fwd)` (cbt/sigclean.cyr), whose own sys_fork() is armed by `return 0 - 1`
+# on PE; the detector counts each call of it as a site (axis 0's `tracked_unarmed` row), so
+# the four sites stay under axes 1-2 — without that the scan fell to 13 and axis 1's floor went RED.
 #
 # ⚠ THE LEDGER FOUND TWO DEFECTS IN THIS GATE, both of which made a mutant read GREEN, and
 # both are written into the code below rather than quietly fixed: the comment strip ate
@@ -194,7 +198,10 @@ inwin == 1 {
     next
 }
 code ~ /_git_exec_available\(\)/ { armed = 1; hand = hand " _git_exec_available()" }
-code ~ /sys_fork\(\)/ {
+# 6.7.13: `_cbt_fork_tracked(fwd)` (cbt/sigclean.cyr — sys_fork with HUP / INT / TERM blocked until
+# the child is tracked) is a fork site too: compile(), capacity, the distlib spawn and `_dep_wt_run`
+# fork through it, so a call (never its definition) counts exactly as a `sys_fork()` does.
+code ~ /sys_fork\(\)/ || (code ~ /_cbt_fork_tracked\(/ && code !~ /^fn /) {
     pe = "UNARMED"
     if (nd == 1 || armed == 1) { pe = "ok" }
     printf "%s:%d fn=%s pe=%s arm=%s\n", FILENAME, FNR, fname, pe, hand
@@ -240,6 +247,10 @@ fn macos_only(): i64 {
     #endif
     return 0;
 }
+fn tracked_unarmed(): i64 {
+    var pid = _cbt_fork_tracked(0);
+    return pid;
+}
 fn only_prose(): i64 {
     # this comment mentions sys_fork() and must not count
     var s = "sys_fork()";
@@ -247,8 +258,9 @@ fn only_prose(): i64 {
 }
 EOF
 scan "$T/self/a.cyr" > "$T/self/out"
-check "the detector finds exactly the 5 real call sites" 5 "$(grep -c 'fn=' "$T/self/out" || true)"
+check "the detector finds exactly the 6 real call sites" 6 "$(grep -c 'fn=' "$T/self/out" || true)"
 check "  …and flags the unguarded one" 1 "$(grep -c 'fn=unarmed pe=UNARMED' "$T/self/out" || true)"
+check "  …and an unguarded _cbt_fork_tracked() call (6.7.13)" 1 "$(grep -c 'fn=tracked_unarmed pe=UNARMED' "$T/self/out" || true)"
 check "  …and the #ifdef that does not return" 1 "$(grep -c 'fn=ifdef_no_return pe=UNARMED' "$T/self/out" || true)"
 check "  …clears the #ifndef-wrapped fork" 1 "$(grep -c 'fn=in_ifndef pe=ok' "$T/self/out" || true)"
 check "  …clears the returning #ifdef arm" 1 "$(grep -c 'fn=ifdef_returns pe=ok' "$T/self/out" || true)"

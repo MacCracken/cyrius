@@ -1776,8 +1776,7 @@ fn compile(source, output): i64 {
     sys_close(probe_fd);
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var own_err = _cc_own_err_begin();
-    var pid = sys_fork();
-    if (pid > 0) { _cbt_child_track(pid, 0); }   # 6.7.12: the kill handler stops it first
+    var pid = _cbt_fork_tracked(0);   # the kill handler stops it first (6.7.12; no fork-to-track window, 6.7.13)
     if (pid < 0) {
         # 6.6.20 — no child, so no status: say so, and leave nothing behind — the stderr capture
         # (resetting `_cc_stderr_to` for the next compile in this process), the preprocessed

@@ -13,7 +13,8 @@
 # as 1000+N — or falls through to the next line, which exits 91). 64 + a code is a CHILD-side
 # failure. SIGINT is not used: the cross-OS runner starts each test as a `&` job, which ignores
 # it, and the CLI keeps an inherited ignore (scenario C is that contract, on SIGHUP).
-# CHANGELOG [6.7.12]; scenario F (a registered scratch tree) CHANGELOG [6.7.13]
+# CHANGELOG [6.7.12]; scenarios E (the fork-to-track window) and F (a registered scratch tree)
+# CHANGELOG [6.7.13]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -229,6 +230,48 @@ fn _ckh_child_d(): i64 {
     return 0;
 }
 
+# The HUP / INT / TERM bits (0x4003) of this thread's signal mask.
+fn _ckh_mask_bits(): i64 {
+    var none[8];
+    var cur[8];
+    store64(&none, 0);
+    store64(&cur, 0);
+    sys_sigprocmask(SIG_BLOCK, &none, &cur);
+    return load64(&cur) & 0x4003;
+}
+
+# Scenario E's hook, run by `_cbt_fork_tracked` in the parent between the fork and the track: it
+# marks that it ran, waits until the child is running, then sends SIGTERM to its own process.
+fn _ckh_hook_term(): i64 {
+    _ckh_touch(_ckh_path("E", ".hook"));
+    var i = 0;
+    while (i < 200 && _ckh_get(_ckh_path("E", ".pid")) == 0) { _ckh_nap(10); i = i + 1; }
+    sys_kill(sys_getpid(), 15);
+    return 0;
+}
+
+# Scenario E (CHILD): a signal INSIDE the fork-to-track window. `_cbt_fork_tracked` holds HUP /
+# INT / TERM from before the fork until the child is tracked, so the hook's SIGTERM is delivered
+# after the track and the handler stops the child, which would otherwise create `E.late` about
+# 300 ms later. The child records whether it started with HUP / INT / TERM blocked (`E.masked`).
+# CHANGELOG [6.7.13]
+fn _ckh_child_e(): i64 {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var base = _ckh_mask_bits();
+    _cbt_fork_hook = &_ckh_hook_term;
+    var c = _cbt_fork_tracked(0);
+    if (c == 0) {
+        if (_ckh_mask_bits() != base) { _ckh_touch(_ckh_path("E", ".masked")); }
+        _ckh_put(_ckh_path("E", ".pid"), sys_getpid());
+        _ckh_nap(300);
+        _ckh_touch(_ckh_path("E", ".late"));
+        sys_exit(0);
+    }
+    if (c < 0) { sys_exit(64 + 2); }
+    sys_exit(91);   # the hook's SIGTERM never ended this process
+    return 0;
+}
+
 # Scenario F (CHILD): a scratch TREE registered through the slot (the distlib verify's stdlib
 # mirror: two vecs, files and directories parents first) — a forked child that did not register
 # it leaves it alone; this process's SIGTERM removes it, files first, then directories deepest
@@ -275,6 +318,7 @@ fn _ckh_run(which): i64 {
         if (which == 2) { _ckh_child_b(); }
         if (which == 3) { _ckh_child_c(); }
         if (which == 4) { _ckh_child_d(); }
+        if (which == 5) { _ckh_child_e(); }
         if (which == 6) { _ckh_child_f(); }
         sys_exit(90);
     }
@@ -323,6 +367,7 @@ fn main(): i64 {
     #endif
     #ifdef CYRIUS_TARGET_WIN
     assert_eq(_cbt_sig_install(), 0, "the install is inert on Windows (no POSIX signals)");
+    assert_eq(_cbt_fork_tracked(0), 0 - 1, "_cbt_fork_tracked answers -1 on Windows (no fork)");
     #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
@@ -362,6 +407,38 @@ fn main(): i64 {
     sys_unlink(_ckh_path("D", "/cc_err"));
     sys_unlink(_ckh_path("D", "/cpp_4"));
     xrmdir(_ckh_path("D", ""));
+    # E0: _cbt_fork_tracked restores the parent's mask, and the child starts with that mask
+    var mb = _ckh_mask_bits();
+    var ce = _cbt_fork_tracked(0);
+    if (ce == 0) {
+        if (_ckh_mask_bits() != mb) { sys_exit(1); }
+        sys_exit(0);
+    }
+    assert(ce > 0, "E0: _cbt_fork_tracked forked");
+    var tracked = 0;
+    i = 0;
+    while (i < 16) { if (load64(&_cbt_sig_pids + i * 8) == ce) { tracked = 1; } i = i + 1; }
+    assert_eq(tracked, 1, "E0: the child is tracked when the call returns");
+    assert_eq(_ckh_mask_bits(), mb, "E0: the parent's HUP / INT / TERM mask is restored");
+    assert_eq(_ckh_wait(ce), 0, "E0: the child started with the parent's mask (1 if HUP / INT / TERM stayed blocked)");
+    _cbt_child_untrack(ce);
+    # E: a SIGTERM between fork and track
+    var re = _ckh_run(5);
+    var pe = _ckh_get(_ckh_path("E", ".pid"));
+    var pe_gone = 0;
+    if (pe > 0 && sys_kill(pe, 0) != 0) { pe_gone = 1; }
+    assert_eq(re, 143, "E: the SIGTERM raised inside the window -> 128+15");
+    assert_eq(file_exists(_ckh_path("E", ".hook")), 1, "E: the hook ran between fork and track (anti-vacuous)");
+    assert(pe > 0, "E: the child ran (anti-vacuous)");
+    assert_eq(pe_gone, 1, "E: the child was stopped and reaped before the handler exited");
+    assert_eq(file_exists(_ckh_path("E", ".masked")), 0, "E: the child started with HUP / INT / TERM unblocked");
+    _ckh_nap(800);
+    assert_eq(file_exists(_ckh_path("E", ".late")), 0, "E: the child never created its file (the window is closed)");
+    if (pe > 0) { _ckh_gone(pe); }
+    sys_unlink(_ckh_path("E", ".hook"));
+    sys_unlink(_ckh_path("E", ".pid"));
+    sys_unlink(_ckh_path("E", ".masked"));
+    sys_unlink(_ckh_path("E", ".late"));
     # F: a registered scratch tree
     var rf = _ckh_run(6);
     assert_eq(rf, 143, "F: SIGTERM -> 128+15, a forked child having spared the tree (64+11 / 64+12 if not)");

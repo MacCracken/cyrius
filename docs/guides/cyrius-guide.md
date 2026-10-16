@@ -4775,6 +4775,8 @@ forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt
 stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running),
 and a distlib verify's copy of the pinned stdlib in the project, `dist/.dlverify-<pid>/` (with the
 round's `entry.cyr`), is removed too (6.7.13; before, a kill left the ~114-file mirror there).
+A signal that arrives while the CLI is starting one of these children is held until the child is
+tracked, then handled (6.7.13; before, a signal in that window left the child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
 shell) stays ignored. Through 6.7.11 a kill left all three
 names until `scripts/check.sh`'s reaper removed the dead pid's dir. SIGKILL cannot be caught, so

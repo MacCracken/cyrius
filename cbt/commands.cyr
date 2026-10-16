@@ -2828,11 +2828,10 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     # The kill handler unlinks `cap_err` and stops the compiler, as for compile()'s: registered
-    # before the child can create the file, the child tracked straight after the fork, both
+    # before the child can create the file, the child tracked by `_cbt_fork_tracked`, both
     # dropped once it is reaped and read. CHANGELOG [6.7.13]
     _cbt_scratch_track(tmperr);
-    var pid = sys_fork();
-    if (pid > 0) { _cbt_child_track(pid, 0); }
+    var pid = _cbt_fork_tracked(0);
     if (pid < 0) {
         # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
         _cbt_fork_failed("the compiler for capacity stats", pid);
@@ -4024,7 +4023,9 @@ fn _distlib_target_spawn(entry, t, vout, verr): i64 {
     _err("distlib: the per-target sidecar verify cannot run on Windows (no fork) — sidecar NOT written");
     return 0 - 1;
     #endif
-    var pid = sys_fork();
+    # 6.7.12: a forked copy of this CLI — the kill handler forwards the signal, and the child's own
+    # handler stops its compiler and unlinks its scratch. Tracked with no signal window. CHANGELOG [6.7.13]
+    var pid = _cbt_fork_tracked(1);
     if (pid == 0) {
         # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
         # in scope and the compile would succeed no matter how wrong the sidecar is. The
@@ -4048,9 +4049,6 @@ fn _distlib_target_spawn(entry, t, vout, verr): i64 {
         _cbt_scratch_drop(vout);
         sys_exit(crc & 255);
     }
-    # 6.7.12: a forked copy of this CLI — the kill handler forwards the signal, and the child's own
-    # handler stops its compiler and unlinks its scratch.
-    if (pid > 0) { _cbt_child_track(pid, 1); }
     if (pid < 0) {   # 6.6.20 — named here; _distlib_target_collect refuses it
         var fsb = str_builder_new();
         str_builder_add_cstr(fsb, "the sidecar verify's compile for ");

@@ -28,7 +28,8 @@
 #   3  the LSP's two diagnostics spawns (raw cycc outside a project, the `cyrius` wrapper inside
 #      one) log the fork failure instead of publishing silently empty diagnostics.
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
-#      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away.
+#      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away. A
+#      `_cbt_fork_tracked(fwd)` call (6.7.13: the tracked fork, cbt/sigclean.cyr) is a site too.
 #   5  control: without the limit, the same build succeeds (the rows are about the limit).
 #   6  ⭐ an inherited SIGCHLD ignore (`trap '' CHLD; exec cyrius ...` — under it the kernel reaps
 #      every child and wait4 answers ECHILD): the CLI resets SIGCHLD at start-up, so a good
@@ -61,7 +62,7 @@ function flush(   i, v, ok) {
 FNR == 1 { flush(); fname = "" }
 /^fn [A-Za-z_]/ { flush(); fname = $2; sub(/\(.*/, "", fname) }
 { code = $0; gsub(/"[^"]*"/, "", code); sub(/#.*/, "", code); body = body "\n " code }
-code ~ /=[ \t]*sys_fork\(\)/ {
+code ~ /=[ \t]*(sys_fork\(\)|_cbt_fork_tracked\()/ {
     m = code; sub(/^[ \t]*(var[ \t]+)?/, "", m); sub(/[ \t]*=.*/, "", m)
     nf++; fv[nf] = m; fl[nf] = FILENAME ":" FNR
 }
@@ -90,6 +91,11 @@ fn handed_back(): i64 {
     var pid = sys_fork();
     return pid;
 }
+fn tracked_unchecked(): i64 {
+    var tpid = _cbt_fork_tracked(0);
+    if (tpid == 0) { sys_exit(0); }
+    return 0;
+}
 fn prose_only(): i64 {
     # sys_fork() in a comment, and sys_waitpid( too
     var s = "var pid = sys_fork();";
@@ -98,8 +104,9 @@ fn prose_only(): i64 {
 EOF
 awk -f "$W/sites.awk" "$W/self.cyr" > "$W/self.out"
 x=$FAIL
-[ "$(grep -c 'fn=' "$W/self.out")" = 5 ] || fail "axis 0: the detector should report 4 forks + 1 bare wait: $(tr '\n' '|' < "$W/self.out")"
+[ "$(grep -c 'fn=' "$W/self.out")" = 6 ] || fail "axis 0: the detector should report 5 forks + 1 bare wait: $(tr '\n' '|' < "$W/self.out")"
 grep -q 'fn=unchecked pid=pid UNCHECKED' "$W/self.out" || fail "axis 0: the unchecked fork was not flagged"
+grep -q 'fn=tracked_unchecked pid=tpid UNCHECKED' "$W/self.out" || fail "axis 0: an unchecked _cbt_fork_tracked() was not flagged"
 grep -q 'fn=unchecked BARE-WAIT' "$W/self.out" || fail "axis 0: the discarded wait was not flagged"
 grep -q 'fn=checked_lt pid=pid checked' "$W/self.out" || fail "axis 0: a pid < 0 arm was not recognised"
 grep -q 'fn=checked_gt pid=gpid checked' "$W/self.out" || fail "axis 0: a gpid > 0 guard was not recognised"

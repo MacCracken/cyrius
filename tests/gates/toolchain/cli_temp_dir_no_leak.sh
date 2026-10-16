@@ -270,13 +270,14 @@ echo "axis 5 — ⭐ every sys_exit() in cbt/ is child-side or routed through _c
 cat > "$T/exits.awk" <<'AWK'
 # A `sys_exit` is CHILD-side when it sits inside an `if (<v> == 0) { ... }` whose <v> was
 # assigned from `sys_fork()` earlier in the same fn — derived from the source, never a
-# name list (the fork variable is `pid`, `pid2`, `gpid`, `cpid`, ... across cbt/).
+# name list (the fork variable is `pid`, `pid2`, `gpid`, `cpid`, ... across cbt/). Since 6.7.13 a
+# tracked fork is `_cbt_fork_tracked(fwd)` (cbt/sigclean.cyr), which answers as sys_fork() does.
 /^fn [A-Za-z_]/ { fname = $2; sub(/\(.*/, "", fname); depth = 0; child = -1; delete forkv }
 {
     line = $0
     gsub(/"[^"]*"/, "", line)
     if (line !~ /^[ \t]*#(ifdef|ifndef|endif|else|elif)/) { sub(/#.*/, "", line) }
-    if (match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*sys_fork\(\)/)) {
+    if (match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(sys_fork\(\)|_cbt_fork_tracked\()/)) {
         v = substr(line, RSTART, RLENGTH)
         sub(/^var[ \t]+/, "", v); sub(/[ \t]*=.*/, "", v)
         forkv[v] = 1
@@ -335,9 +336,16 @@ fn no_fork_at_all(): i64 {
     sys_exit(3);
     return 0;
 }
+fn tracked_fork(): i64 {
+    var tpid = _cbt_fork_tracked(0);
+    if (tpid == 0) {
+        sys_exit(127);
+    }
+    return 0;
+}
 EOF
 awk -f "$T/exits.awk" "$T/ax5/probe.cyr" > "$T/ax5/out"
-check "  ⭐ ANTI-VACUOUS: a child-side exit is cleared" 3 "$(grep -c ' child$' "$T/ax5/out" || true)"
+check "  ⭐ ANTI-VACUOUS: a child-side exit is cleared (a _cbt_fork_tracked child too, 6.7.13)" 4 "$(grep -c ' child$' "$T/ax5/out" || true)"
 check "  ⭐ ANTI-VACUOUS: an exit AFTER the child block is flagged" 1 \
     "$(grep -c 'fn=after_the_child PARENT' "$T/ax5/out" || true)"
 check "  ⭐ ANTI-VACUOUS: a fork-free exit is flagged" 1 \
