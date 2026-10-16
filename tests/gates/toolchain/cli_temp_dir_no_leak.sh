@@ -64,6 +64,9 @@
 #     stopping children -> 8 RED (each run's compiler still running, the distlib dir and compilers);
 #     distlib's children tracked as exec'd tools (SIGKILLed, not forwarded) -> 2 RED (the distlib
 #     dir, its six compilers); an inherited SIG_IGN overridden -> 1 RED (the nohup row).
+#   * (6.7.13) capacity's `cap_err` / compiler and `_dep_wt_run`'s `wt_err` / git child untracked
+#     again (the 6.7.13-open CLI) -> 4 RED (capacity's dir and compiler, the --local git row's dir
+#     and git); their anti-vacuous rows stay GREEN.
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -516,6 +519,60 @@ for k7v in check build; do
         for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
     done
 done
+# `cyrius capacity` forks its own compiler (CYRIUS_STATS=1, stderr into `cap_err`) outside
+# compile(): until 6.7.13 neither was tracked, so a SIGTERM left `cap_err` (and the dir) behind and
+# the compiler running (issues/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md).
+kill_run cap TERM capacity src/ok.cyr
+check "capacity SIGTERM mid-compile — the live dir holds cap_err and the materialized source (anti-vacuous)" yes \
+    "$(grep -qx cap_err "$T/k7-cap.live" 2>/dev/null && grep -q '^cpp_' "$T/k7-cap.live" && echo yes || echo no)"
+check "  …the CLI exits 143" 143 "$(cat "$T/k7-cap.rc" 2>/dev/null || echo none)"
+check "  …its private dir is gone (no cap_err left)" 0 "$(k7_dirs cap "$TB")"
+check "  …the compiler it was running is stopped" gone "$(cat "$T/k7-cap.cc")"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A local-mode resolve's git queries (`_dep_wt_run`, cbt/deps.cyr) capture git's stderr in `wt_err`,
+# which the child creates: a SIGTERM while git runs left it (and the dir) and git running until
+# 6.7.13. A stand-in `git` first on PATH (`_dep_wt_run` execs `env … git`) records its pid and
+# sleeps on `check-ignore` (no stdout capture: wt_err is the query's only scratch); every other
+# query runs the real git. Runs on axis 6's fixture; named SKIP without git.
+if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
+    G7GIT=$(command -v git)
+    mkdir -p "$T/g7bin"
+    # g7_run <tag> <git subcommand to sleep on>: the --local build in the background, stopped by
+    # SIGTERM once the stand-in sleeps; leaves the live names in $T/k7-<tag>.live, the exit status
+    # in $T/k7-<tag>.rc and "gone" / "running" for the stand-in git in $T/k7-<tag>.cc.
+    g7_run() {
+        _gt=$1
+        printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "%s" ] && { echo $$ > "%s/g7.cc"; exec sleep 60; }; done\nexec "%s" "$@"\n' "$2" "$T" "$G7GIT" > "$T/g7bin/git"
+        chmod +x "$T/g7bin/git"
+        rm -f "$T/g7.cc" "$T/p7-$_gt" "$T/k7-$_gt.rc" "$T/k7-$_gt.live" "$T/k7-$_gt.cc"
+        ( _kr=0; cd "$P6" && HOME="$G6/nohome" CYRIUS_HOME="$H6" CYRIUS_RESOLVED=1 PATH="$T/g7bin:$PATH" TMPDIR="$TB/" \
+            sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" build --local > "$T/o7-$_gt" 2>&1 || _kr=$?
+          echo "$_kr" > "$T/k7-$_gt.rc" ) 2>/dev/null &
+        _gb=$!
+        _gw=0
+        while [ ! -s "$T/g7.cc" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
+        _gp=$(cat "$T/p7-$_gt" 2>/dev/null || true)
+        ls -A "$TB/cyrius-$_gp" > "$T/k7-$_gt.live" 2>/dev/null || : > "$T/k7-$_gt.live"
+        [ -n "$_gp" ] && kill -TERM "$_gp" 2>/dev/null || true
+        { wait "$_gb"; } 2>/dev/null || true
+        _gc=$(cat "$T/g7.cc" 2>/dev/null || true)
+        if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
+            echo running > "$T/k7-$_gt.cc"; kill -KILL "$_gc" 2>/dev/null
+        else
+            echo gone > "$T/k7-$_gt.cc"
+        fi
+    }
+    g7_run gci check-ignore
+    check "a --local build SIGTERM'd in its check-ignore query — git's stderr capture is in flight (anti-vacuous)" yes \
+        "$(grep -qx wt_err "$T/k7-gci.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the CLI exits 143" 143 "$(cat "$T/k7-gci.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no wt_err left)" 0 "$(k7_dirs gci "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-gci.cc")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+else
+    echo "  SKIP (named): axis 7 --local git kill row — git is not installed (axis 6's fixture did not run)"
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
 # rmdir, never a sweep (axis 4's contract, on the kill path): a file in the live dir that is not
 # the compile's survives, and so does the dir; the compile's own names are gone.
 : > "$T/k7-plant.plant"

@@ -2827,11 +2827,17 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     if (cap_rc < 0) { return 1; }
     #endif
     #ifndef CYRIUS_TARGET_WIN
+    # The kill handler unlinks `cap_err` and stops the compiler, as for compile()'s: registered
+    # before the child can create the file, the child tracked straight after the fork, both
+    # dropped once it is reaped and read. CHANGELOG [6.7.13]
+    _cbt_scratch_track(tmperr);
     var pid = sys_fork();
+    if (pid > 0) { _cbt_child_track(pid, 0); }
     if (pid < 0) {
         # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
         _cbt_fork_failed("the compiler for capacity stats", pid);
         if (cap_source != source) { _cbt_scratch_drop(cap_source); }
+        _cbt_scratch_untrack(tmperr);
         return 1;
     }
     if (pid == 0) {
@@ -2865,6 +2871,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         sys_exit(127);
     }
     var cap_status = _cbt_wait_status(pid, "the compiler for capacity stats");   # 6.6.20
+    _cbt_child_untrack(pid);
     # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
     # the preprocessed temp was never removed. Same "we made it" test (the fn returns
     # `source` itself when no prepend was needed).
@@ -2883,7 +2890,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # only, and the caller read that as "no tables near their cap".
     var errbuf = alloc(1048576);
     var errlen = file_read_all(tmperr, errbuf, 1048575);
-    sys_unlink(tmperr);
+    _cbt_scratch_drop(tmperr);
     if (errlen <= 0) {
         _err("no stats output from compiler");
         # v6.6.6 — the Windows reason MOVED, so this says what is actually true now.

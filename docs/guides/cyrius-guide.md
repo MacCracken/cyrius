@@ -4769,8 +4769,11 @@ signal to its per-target children, which clean up their own), unlinks the compil
 the preprocessed `cpp_<pid>`, the `cc_err` capture, the child's `<out>.tmp.<pid>` (beside the
 output for `cyrius build`), a check's own output — removes the then-empty temp dir and exits
 128+N (143, 130, 129). A file in that dir that is not compile scratch, such as a `cyrius test`
-binary, stays, and so does the dir. A signal that was IGNORED when the CLI started (`nohup`, a
-background job of a non-interactive shell) stays ignored. Through 6.7.11 a kill left all three
+binary, stays, and so does the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
+forks) and a local-mode resolve's git queries (their `wt_err` capture and the git they run) are
+stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running).
+A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
+shell) stays ignored. Through 6.7.11 a kill left all three
 names until `scripts/check.sh`'s reaper removed the dead pid's dir. SIGKILL cannot be caught, so
 its leftovers are still the reaper's; on Windows, which has no POSIX signals, nothing is caught.
 
