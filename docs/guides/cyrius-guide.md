@@ -3546,7 +3546,16 @@ parameter that is not a pointer to its vector type in a call to 'rp' - pass &b f
 address (139 on x86_64 and aarch64, a cx guest fault, an access violation on Win64; x86_64 refused
 the `*V` call result and dereference through 6.7.10 by the value-form path's text) — except on
 Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops compiling there too
-(pass `&b`).
+(pass `&b`). **Every vector value follows the local (6.7.13; the user's decision D31, 2026-10-15:
+A):** a call result (`rp(mkv(42, 7))`, `ri(s.mv(..))`, `ri(callptr(&mkv, ..))`) and a `*V`
+dereference (`rp(*pb)`, `ri(*pb)`) into a pointer of another kind are refused with the same words,
+naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a pointer to its vector
+type in a call to 'ri'`); and a vector local, call result or `*pb` passed to a **by-value struct**
+parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-value
+struct parameter in a call to 'bv' - a vector is not a struct`. ⚠ Through 6.7.12 each of these
+compiled and passed lane 0's bits as the address or the struct (139 on x86_64 and aarch64, a cx
+guest fault, exit 5 on Win64) — and on Win64 `bv(b)` passed `&b` by accident and ran (42); it now
+stops compiling there too.
 
 **A value-form `v: f32v8` parameter is its 32 bytes (6.7.13), as `v: f64v4` is:** two XMM registers
 (SysV), two V registers (aarch64), four cx slots, a 32-byte copy-in through a pointer on Win64. It

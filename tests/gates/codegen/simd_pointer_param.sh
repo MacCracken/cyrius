@@ -83,6 +83,18 @@
 #      `*S` receiver, the receiver intact) and `mkg<i64>` / `mkg<i32>` results into `*V` (FLOOR 61)
 #   M-R6 `_svc_rs` without the method arm                    -> RED 12: OK6 on every leg (139 / 139 / 139 / cx 253 /
 #       PE 5), T on every leg (a fault; cx "54 passed, 7 failed")
+# ⛔ 6.7.13 (D31 A, the user's decision, 2026-10-15; the same issue's rows 1-5) — EVERY VECTOR VALUE INTO A POINTER OF
+# ANOTHER KIND, OR INTO A BY-VALUE STRUCT PARAMETER, IS REFUSED BY NAME: a call result (`_svc_kind` for an address-passed
+# parameter, `_sarg_vec_other` otherwise) and a `*V` dereference (`_dro_vt_for` arms, `_dro_vcheck` refuses; `_svo_vderef`
+# by the local's step word otherwise) into `*Pt` / `*i64` with D27's words, a vector local into a by-value struct (`_sarg_vec_ptr`
+# / `_sarg_vec_other`) "a vector is not a struct" — on Win64 too, where row 5 ran by accident (42).
+#   OK1-OK5 the filed rows 1-5 verbatim on x86_64 / aarch64 / cx / PE: one line each, naming `mkv` / `*pb` / `b`
+#   OKX 13 sources in one compile (a method, an explicit instance, callptr, wrapped, `*pb`, a by-value struct of 8 B or
+#      less and over, `**f64v2`, fncall2): 13 lines on x86_64 and PE
+#   M-K1 `_svc_kind` answering 0                             -> RED 6: OK1 on every leg (compiled), OKX x86 / PE (10 lines)
+#   M-K2 `_sarg_vec_other` back to the local only            -> RED 10: OK2 OK4 on every leg (compiled), OKX x86 / PE (6)
+#   M-K3 `_dro_vt_for` arming for a `*V` only                -> RED 6: OK3 on every leg (compiled), OKX x86 / PE (12)
+#   M-K4 `_sarg_vec_ptr` without the by-value struct arm     -> RED 4: OK5 on every leg (compiled; PE 42 again)
 #
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
@@ -344,6 +356,39 @@ printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'var s: S2; re
 printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'return rd(mkg<i64>(42, 7));' > "$D/ok7.cyr"
 exit_rows OK6 "$D/ok6.cyr" 42 "a method result's temp"
 exit_rows OK7 "$D/ok7.cyr" 42 "an explicit instance's temp"
+# 6.7.13 (D31 A, the user's decision, 2026-10-15) — rows 1-5 of the same issue, the filed head and mains verbatim: a vector
+# call result and a `*V` dereference into a pointer of another kind, and a vector local into a by-value struct
+# parameter, each refused by name, once (139 / 139 / 139 / cx 253 / PE 5 before; row 5 PE 42 by accident).
+echo "OK1-OK5. the filed rows 1-5, verbatim: refused by name, once, on x86_64 / aarch64 / cx / PE (D31 A)"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'return rp(mkv(42, 7));' > "$D/ok1.src"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'return ri(mkv(42, 7));' > "$D/ok2.src"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'var b: f64v2 = f64v2_make(42, 7); var pb: *f64v2 = &b; return rp(*pb);' > "$D/ok3.src"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'var b: f64v2 = f64v2_make(42, 7); var pb: *f64v2 = &b; return ri(*pb);' > "$D/ok4.src"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'var b: f64v2 = f64v2_make(42, 7); return bv(b);' > "$D/ok5.src"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "OK1$lg" "OK1 $lg: rp(mkv(42, 7)) into *Pt" "$(cat "$D/ok1.src")" "$lg" "cannot pass 'mkv' $KFRAG 'rp'"
+    refused "OK2$lg" "OK2 $lg: ri(mkv(42, 7)) into *i64" "$(cat "$D/ok2.src")" "$lg" "cannot pass 'mkv' $KFRAG 'ri'"
+    refused "OK3$lg" "OK3 $lg: rp(*pb) into *Pt" "$(cat "$D/ok3.src")" "$lg" "cannot pass '*pb' $KFRAG 'rp'"
+    refused "OK4$lg" "OK4 $lg: ri(*pb) into *i64" "$(cat "$D/ok4.src")" "$lg" "cannot pass '*pb' $KFRAG 'ri'"
+    refused "OK5$lg" "OK5 $lg: bv(b), a vector local into a by-value Pt" "$(cat "$D/ok5.src")" "$lg" "cannot pass 'b' to a by-value struct parameter in a call to 'bv' - a vector is not a struct"
+done
+# Every vector source into every such parameter, in ONE compile: each refused on its own line (no `_panic` latch) — a
+# method / an explicit instance / callptr / a wrapped call / a wrapped `*pb` into `*Pt` / `*i64`, a call / a local /
+# `*pb` into a by-value struct of 8 B or less and over, a local / a call into `**f64v2`, fncall2 into `*Pt`.
+printf '%s\nfn rpp(p: **f64v2): i64 { return 0; }\nstruct P1 { x; }\nfn bv1(p: P1): i64 { return p.x; }\nfn main(): i64 { var s: S2; var b: f64v2 = mkv(42, 7); var pb: *f64v2 = &b;\n  return rp(s.mv(1, 2)) + ri(mkg<i64>(1, 2)) + ri(callptr(&mkv, 1, 2)) + ri((mkv(1, 2))) + ri((*pb)) + bv1(mkv(1, 2)) + bv1(b) + bv1(*pb) + bv(mkv(1, 2)) + bv(*pb) + rpp(b) + rpp(mkv(1, 2)) + rp(fncall2(&mkv, 1, 2));\n}\nsyscall(60, main());\n' "$(printf '%s\ninclude "lib/fnptr.cyr"' "$OKH")" > "$D/okx.cyr"
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    rc=0
+    if [ "$lg" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okx.cyr" > "$D/okx.bin" 2> "$D/okx.err" || rc=$?
+    else timeout 60 "$CC" < "$D/okx.cyr" > "$D/okx.bin" 2> "$D/okx.err" || rc=$?; fi
+    n=$(grep -c '^error' "$D/okx.err" || true)
+    nk=$(grep '^error' "$D/okx.err" | grep -c "$KFRAG\|to a by-value struct parameter in a call to" || true)
+    if [ "$rc" -eq 0 ]; then bad "OKX $lg: compiled - want 13 refusals"
+    elif [ "$n" -ne 13 ] || [ "$nk" -ne 13 ]; then bad "OKX $lg: $n error lines ($nk by name), want 13: $(grep '^error' "$D/okx.err" | head -3 | tr '\n' '|')"
+    elif [ -s "$D/okx.bin" ]; then bad "OKX $lg: refused, but a binary was written"
+    else ok "OKX $lg: 13 vector sources into another pointer kind / a by-value struct, each refused once"; fi
+done
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
 cat > "$D/v8.cyr" <<'EOF'
