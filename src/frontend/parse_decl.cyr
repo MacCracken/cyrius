@@ -1744,6 +1744,7 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
 # (issues/archived/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
 fn _mchain_ptr(S, noff, beg, psid): i64 {
     var h = _ptr_park(S, psid);
+    if (_cpf_try(S, noff, beg, h, psid) == 1) { _cfo = 0; return 1; }   # 6.7.13 (D8 (a)): `o.gp().n = v;`
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # the field / method name
@@ -1867,12 +1868,49 @@ fn _call_ptr_field(S, ti, fi): i64 {
         PARSE_FNCALL(S, TOKVAL(S, ti));
     }
     var h = _ptr_park(S, psid);
+    if (_cpf_try(S, TOKVAL(S, ti), ti, h, psid) == 1) { _cfo = 0; return 1; }   # 6.7.13 (D8 (a)): `gp().n = v;`
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);
     _field_load_on(S, TOKVAL(S, ti), fnoff, ti, h, psid);
     _cfo = 0;
     return 1;
+}
+# ⛔ 6.7.13 — A FIELD OF A `: *T` CALL'S RESULT IS AN LVALUE (the user's decision D8 (a), 2026-10-15): `gp().n = 5;`,
+# `gp().m += 5;`, `gp().h.n = 5;`, `gpg<H>().n = 5;` and `o.gp().n = 5;` store through the returned pointer, as
+# `var p: *H = gp(); p.n = 5;` does — the result is storage that outlives the statement, and the store is the
+# read's twin (6.6.17 `gp().n`, 6.7.11 D43 `o.gp().n`). Each was refused "cannot assign to a field of a call
+# result: the result is a temporary", which stays the answer for a struct returned BY VALUE. The statement forms
+# (`_stmt_call_field`, `_stmt_method_call`) arm `_cpf_st` with the statement's first token; the `*T` arms that park
+# the result (`_call_ptr_field`, `_mchain_ptr`) hand a chain of `.field`s that ends in `=` / `OP=` to the field
+# store's body (`_fst_on`: the address computed once for `OP=`, 6.7.5 B8), which ends the statement. An untyped
+# `var p = gp();` is unchanged. CHANGELOG [6.7.13]
+var _cpf_st = 0 - 1;     # the armed statement's first token (-1: none)
+var _cpf_done = 0 - 1;   # the statement whose store `_cpf_try` made (and ended at its `;`)
+# Receiver `h` (a parked `*T` of struct `psid`, the cursor on its `.`) of the chain beginning at token `beg`, named
+# `noff`: 1 = the armed statement's field store, consumed through its terminator; 0 = not one (nothing consumed).
+fn _cpf_try(S, noff, beg, h, psid): i64 {
+    if (beg != _cpf_st) { return 0; }
+    if (_cpf_asg_at(S, GTI(S)) == 0) { return 0; }
+    var st = _cpf_st;
+    _cpf_st = 0 - 1;   # the value parses as an expression, never as this statement
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field name
+    _fst_on(S, noff, fnoff, h, psid, 5);
+    _cpf_done = st;
+    return 1;
+}
+# 1 = from token `k`, one or more `.name` steps end in `=` or an `op =` pair (`_asg_pair_at`); a `.m(` stops the walk
+# on its `(`, which is neither.
+fn _cpf_asg_at(S, k): i64 {
+    if (_mchain_at(S, k) == 0) { return 0; }
+    while (_mchain_at(S, k) == 1) { k = k + 2; }
+    var t = TOKTYP(S, k);
+    if (t == 4) { return 1; }
+    if (_is_cop_tok(t) == 0) { return 0; }
+    if (TOKTYP(S, k + 1) == 4) { return 1; }
+    return 0;
 }
 # The store path's hop: the new receiver in `_hop_idx` / `_hop_sid`, and the leaf field resolved in
 # it (`_rlf_*`, its type returned). A method there (`n.next.m();` — a statement) is parsed as a
@@ -2331,6 +2369,13 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
+    return _fst_on(S, noff, fnoff, idx, sid, term);
+}
+# PARSE_FIELD_STORE past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's encoding (a local,
+# a capture, a global, a parked pointer), the cursor just past `.name` (`fnoff`): a nested chain, a `*T` hop,
+# `[i]`, `= e` or `OP= e`, stored at the leaf's width, the statement ended at `term`. 6.7.13: a separate entry so
+# a `: *T` call's or method's parked result takes the same body (`_cpf_try`). CHANGELOG [6.7.13]
+fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     var si = sid - 1;
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) {

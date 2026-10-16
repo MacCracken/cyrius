@@ -1,0 +1,77 @@
+# call_ptr_field_store.tcyr — 6.7.13 (the user's decision D8 (a), 2026-10-15) — a field of a `: *T` call's
+# result is an lvalue: `gp().n = 5;` stores through the returned pointer.
+#
+# A call declared `: *H` returns a pointer to storage that outlives the statement, and since 6.6.17 `gp().n`
+# READS through it (6.7.11 D43: a method's `h.get().b` too). The STORE was refused — "cannot assign to a field of
+# a call result: the result is a temporary" — a reason true only for a struct returned BY VALUE (its retptr /
+# rax:rdx temporary), which keeps that refusal (tests/gates/frontend/call_ptr_field_store.sh). Now `=` and
+# `OP=` (the address computed once) through a free call, an explicit generic and a method, down a chain of fields,
+# a `*T` field hop and into a narrow, f64 or struct-typed field, in a fn, in a closure and at top level
+# (issues/2026-10-08-field-store-through-pointer-returning-call-refused.md).
+#
+# CROSS-HOST: the pointer is parked in a frame temp (a hidden global at top level) and the field store's own body
+# addresses it, on each backend. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct I { a; b; }
+struct H { n; m; h: I; c: u8; w: i32; f: f64; p: *I; }
+var buf[96];
+var ibuf[16];
+var CNT = 0;
+
+fn gp(): *H { return &buf; }
+fn gpc(): *H { CNT = CNT + 1; return &buf; }
+fn gpg<T>(): *T { return &buf; }
+fn hp(): *H { var q: *H = &buf; return q; }
+
+struct O { k; }
+fn O_gp(self): *H { return &buf; }
+fn O_gpc(self): *H { CNT = CNT + 1; return &buf; }
+fn H_gi(self): *I { return &ibuf; }
+
+fn reset(): i64 { memset(&buf, 0, 96); memset(&ibuf, 0, 16); CNT = 0; return 0; }
+
+fn s_plain(): i64 { reset(); gp().n = 5; return load64(&buf); }
+fn s_second(): i64 { reset(); gp().m = 6; return load64(&buf) * 10 + load64(&buf + 8); }
+fn s_compound(): i64 { reset(); gp().m = 3; gpc().m += 5; return hp().m * 10 + CNT; }
+fn s_shift(): i64 { reset(); gp().n = 3; gpc().n <<= 4; gpc().n -= 8; return hp().n * 10 + CNT; }
+fn s_chain(): i64 { reset(); gp().h.b = 9; gp().h.a = 4; return hp().h.a * 10 + hp().h.b; }
+fn s_generic(): i64 { reset(); gpg<H>().n = 5; gpg<H>().m += 2; return load64(&buf) * 10 + load64(&buf + 8); }
+fn s_method(): i64 { reset(); var o: O = O { 1 }; o.gp().n = 5; o.gpc().m += 2; return hp().n * 100 + hp().m * 10 + CNT; }
+fn s_narrow(): i64 { reset(); gp().m = 0 - 1; gp().c = 300; gp().w = 0 - 2; var q: *H = gp(); return q.c * 1000 + (q.w + 10) * 10 + (q.m + 2); }
+fn s_float(): i64 { reset(); gp().f = 2.5; gp().f += 1.25; var q: *H = gp(); if (q.f == 3.75) { return 1; } return 0; }
+fn s_rhs(): i64 { reset(); gp().m = 4; gp().n = gp().m + 1; return hp().n; }
+fn s_hop(): i64 { reset(); gp().p = &ibuf; gp().p.b = 7; return load64(&ibuf + 8); }
+fn s_whole(): i64 { reset(); var i: I = I { 1, 2 }; gp().h = i; return hp().h.a * 10 + hp().h.b; }
+fn s_mchain(): i64 { reset(); gp().gi().a = 6; return load64(&ibuf); }
+fn s_closure(): i64 { reset(); var c = |v| { gp().n = v; return 0; }; fncall1(c, 8); return hp().n; }
+fn s_loop(): i64 { reset(); var i = 0; while (i < 4) { gpc().n += i; i = i + 1; } return hp().n * 10 + CNT; }
+
+reset();
+gp().n = 77;                 # at top level: the pointer parked in a hidden global
+var top_n = load64(&buf);
+gp().m += 3;
+var top_m = load64(&buf + 8);
+
+assert_eq(top_n, 77, "gp().n = 77; at top level");
+assert_eq(top_m, 3, "gp().m += 3; at top level");
+assert_eq(s_plain(), 5, "gp().n = 5 (the filed repro's shape)");
+assert_eq(s_second(), 6, "gp().m = 6: the second field, n untouched");
+assert_eq(s_compound(), 81, "gpc().m += 5: 8, the call made once");
+assert_eq(s_shift(), 402, "gpc().n <<= 4; gpc().n -= 8: 40, two calls");
+assert_eq(s_chain(), 49, "gp().h.b = 9 / gp().h.a = 4: a chain of fields");
+assert_eq(s_generic(), 52, "gpg<H>().n = 5; gpg<H>().m += 2: an explicit generic");
+assert_eq(s_method(), 521, "o.gp().n = 5; o.gpc().m += 2: a method, called once");
+assert_eq(s_narrow(), 44081, "u8 300 stores 44, i32 -2, the fields beside untouched");
+assert_eq(s_float(), 1, "gp().f = 2.5; gp().f += 1.25: an f64 field");   # IR3-PRE: an f64 field store through a *T faults under CYRIUS_IR=3 (staged)
+assert_eq(s_rhs(), 5, "gp().n = gp().m + 1");
+assert_eq(s_hop(), 7, "gp().p.b = 7: through the result's *I field");
+assert_eq(s_whole(), 12, "gp().h = i: a struct-typed field copied whole");
+assert_eq(s_mchain(), 6, "gp().gi().a = 6: a method's *I result at the chain's end");
+assert_eq(s_closure(), 8, "gp().n = v inside a closure");
+assert_eq(s_loop(), 64, "gpc().n += i in a loop: 6, one call per iteration");
+var r = assert_summary();

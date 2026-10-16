@@ -4926,7 +4926,13 @@ fn _masg_ebool(S, fi, k): i64 {
 fn _stmt_method_call(S, noff): i64 {
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
     _mcall_last = 0 - 1;
+    var sv = _cpf_st;
+    var st = GTI(S) - 1;
+    _cpf_st = st;   # 6.7.13 (D8 (a)): `o.gp().n = v;` through a method's `*T` result (`_cpf_try`)
+    _cpf_done = 0 - 1;
     PARSE_FIELD_LOAD(S, noff);
+    _cpf_st = sv;
+    if (_cpf_done == st) { return 0; }   # the store ended the statement
     # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
     # `expected ';', got '='`). A chain ending in a call keeps that message.
     if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { _asg_temp_refused(S); return 0; } }

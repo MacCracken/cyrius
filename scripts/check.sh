@@ -1288,6 +1288,13 @@ _chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
 # values file on every leg, the refusals on four compilers, mutation-proven (ledger in header).
 _chk_gate "$ROOT/tests/gates/frontend/inline_str_value.sh"
 
+# 6.7.13 (the struct lane, the user's decision D8 (a), 2026-10-15): a field of a `: *T` call's result is an
+# lvalue — `gp().n = 5;`, `gp().m += 5;` (the address once), `gp().h.n = 5;`, `gpg<H>().n = 5;` and a
+# method's `o.gp().n = 5;` store through the returned pointer; through 6.7.12 each was refused "the result
+# is a temporary", which a struct returned by value keeps. The filed repro and the crossos values file on
+# every leg, the by-value refusals on four compilers, mutation-proven (ledger in header).
+_chk_gate "$ROOT/tests/gates/frontend/call_ptr_field_store.sh"
+
 # 6.6.12 (B04, R3): a `.field` on a CALL RESULT is refused by name wherever it cannot compile — at
 # top level for every return class (no frame to hold the result; each the only error, including
 # the leading declaration block and a struct-typed initialiser), on a callee that returns no

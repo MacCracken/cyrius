@@ -952,7 +952,7 @@ local of any size, a by-value parameter or a global) or a struct-typed field (`r
 used to operate on the struct's first word and never call an overloaded `P_add` (13 where
 `a = a + b` gives 33): write `a = a + b`. Likewise a `bool` (variable or field: its result is not a
 bool — write `b = b && c`), a const or an enum constant, and a field of a call's result
-(`mk(3).n += 1`: the result is a temporary). A handle keeps its pointer arithmetic: `p += 1` on a
+(`mk(3).n += 1`: the result is a temporary; a `: *T` call's `gp().n += 1` is a pointer's, 6.7.13). A handle keeps its pointer arithmetic: `p += 1` on a
 `*T` steps `sizeof(T)`, and a pointer-mode struct variable or a `Str` is an address.
 
 Since 6.7.6 the same refusal covers the other values that are not one integer or float, each of
@@ -1225,7 +1225,12 @@ since 6.7.0, to a nested field of it (`mk(3).v.sum()` calls `Pt_sum` with the fi
 `var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
 (`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
-`expected ';', got '='` until 6.7.5): the result is a temporary.
+`expected ';', got '='` until 6.7.5): the result is a temporary. A call declared `: *Struct` returns
+no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
+2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
+5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`
+does — through 6.7.12 they were refused as a temporary. An untyped `var p = gp();` is still an untyped
+word (`p.n` needs `var p: *H = gp();`).
 
 ⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
 `expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every
@@ -1238,7 +1243,7 @@ value or as a bare statement (since 6.6.17): `var u: Str = s.clone().cat(t);`,
 temporary), so the receiver is untouched. A method declared `: *Struct` is a pointer, as a free
 call's `*Struct` result is: `h.get().b`, `h.get().q.b`, `h.get().m(..)` read and call through it, in
 a fn and at top level (6.7.11; it was refused, "it does not return a struct"), and `h.get().b = 5;`
-is refused as `get2(&h).b = 5;` is. At top level a chain on a struct-returning method is refused by
+stores through it as `get2(&h).b = 5;` does (6.7.13; both were refused as a temporary). At top level a chain on a struct-returning method is refused by
 name, as a call result's field is, and a chain on a method that returns neither a struct nor a
 `*Struct` is `cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17
 the `.` after a method call was `expected ';', got '.'` in every position.
