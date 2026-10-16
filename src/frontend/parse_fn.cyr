@@ -2359,6 +2359,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
+    else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
     EPUSHR(S);
     return 1;
 }

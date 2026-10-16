@@ -1,0 +1,181 @@
+# inline_str_value.tcyr — 6.7.13 (the user's decision D7 (1), 2026-10-15) — an INLINE `Str` is its header's
+# address wherever a `Str` value is taken.
+#
+# A `Str` is a heap handle by name: its slot holds the address of a 16-byte `{ data; len; }` header. A
+# `Str { p, n }` literal (or `var t: Str;`) is an INLINE header on the frame, whose slot is field 0 — and every
+# use of the bare name as a `Str` value took that slot, the `data` word, as the header: `f(t)` into `s: Str`
+# read the length out of whatever followed the string (the filed repro exited 0 where 7 is right, on every
+# target; issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Now `f(t)`, `f((t))`,
+# `str_len(t)`, a method's `Str` parameter, `var h: Str = t;`, `var h = t;` and `h = t;` into a handle take the
+# header's address, with no allocation: `&t` for a local (so `h` is a second handle to t's header), the static
+# address for an inline global, the environment copy's address for a closure's capture. The uses that would let
+# a frame's header outlive the frame are refused by name (tests/gates/frontend/inline_str_value.sh): `return t;`
+# from a fn returning `Str`, a store into a `Str` global, a `Str` field or through a `*Str`. A global's address
+# is static and a capture is a copy in the closure's environment, so neither is refused: those rows are here.
+#
+# CROSS-HOST: the address is EFLADDR / EVADDR on each backend, the tail-call rows check that a frame address
+# laundered through a handle diverts the `jmp` (`_fn_local_addr`). Run on ecb / ach (Mach-O), cass (PE) and pi
+# (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+fn f(s: Str): i64 { return str_len(s); }
+fn f2(k, s: Str): i64 { return str_len(s) + k; }
+fn fd(s: Str): i64 { return load8(str_data(s)); }
+
+struct U { data; len; }
+fn gu(s: U): i64 { return s.len; }
+
+struct O { k; }
+fn O_m(self: *O, s: Str): i64 { return str_len(s) + self.k; }
+
+fn gg<T>(x: T): i64 { return str_len(x); }
+
+struct W { s: Str; n; }
+
+#derive(Serialize)
+struct Rec { name: Str; n; }
+
+var gt: Str = Str { "abcdefg", 7 };
+var GQ: Str = Str { "a\"b", 3 };
+var GH: Str = 0;
+var G_DEF = 0;
+
+# ── the filed table (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) ──────────────────
+fn t_call(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }
+fn t_paren(): i64 { var t: Str = Str { "abcdefg", 7 }; return f((t)); }
+fn t_stdlib(): i64 { var t: Str = Str { "abcdefg", 7 }; return str_len(t); }
+fn t_second(): i64 { var t: Str = Str { "abcdefg", 7 }; return f2(30, t); }
+fn t_global(): i64 { return f(gt); }
+fn t_decl(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = t; return f(h); }
+fn t_asg(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("zz"); h = t; return f(h); }
+fn t_amp(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(&t); }
+fn t_field(): i64 { var t: Str = Str { "abcdefg", 7 }; return t.len; }
+fn t_ctl(): i64 { var u: U = U { "abc", 37 }; return gu(u); }
+fn t_untyped(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = t; return f(h); }
+
+# ── not a tail call: the value inside an expression ─────────────────────────────────────────────────────────
+fn t_twice(): i64 { var t: Str = Str { "abcdefg", 7 }; var r = f(t) + f((t)); return r; }
+fn t_data(): i64 { var t: Str = Str { "xyz", 3 }; var r = fd(t); return r; }
+
+# ── `var h: Str = t;`, `var h = t;`, `h = t;` bind a handle to t's header (no copy) ─────────────────────────
+fn b_decl(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = t; h.len = 3; return t.len * 10 + f(h); }
+fn b_untyped(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = t; h.len = 3; return t.len * 10 + str_len(h); }
+fn b_asg(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = 0; h = t; h.len = 3; return t.len * 10 + f(h); }
+fn b_wrap(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = (t); var k: Str = 0; k = ((t)); return f(h) * 10 + f(k); }
+fn b_param(s: Str): i64 { var t: Str = Str { "abc", 3 }; s = t; return str_len(s); }
+fn b_inline(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = Str { "zz", 2 }; h = t; h.len = 3; return t.len * 10 + f(h); }
+fn b_bare(): i64 { var t: Str; t.data = "abc"; t.len = 3; return f(t); }
+fn b_shadow(): i64 { alloc_init(); var gt: Str = str_from("zz"); return f(gt); }
+
+# ── a global inline `Str`: its static address, wherever it goes ─────────────────────────────────────────────
+fn mkg(): Str { return gt; }
+fn mkgp(): Str { return (gt); }
+fn g_ret(): i64 { var h = mkg(); return f(h) * 10 + f(mkgp()); }
+fn g_decl(): i64 { var h: Str = gt; var k = gt; return f(h) * 10 + f(k); }
+fn g_bind(): i64 { var h: Str = gt; h.len = 3; var r = gt.len; gt.len = 7; return r; }
+fn g_store(): i64 { GH = gt; return f(GH); }
+fn g_field(): i64 { var w: W = W { gt, 1 }; var w2: W = W { 0, 2 }; w2.s = gt; return f(w.s) * 10 + f(w2.s); }
+fn new_w(): *W { return alloc(sizeof(W)); }
+fn new_slot(): *Str { return alloc(8); }
+fn g_heap(): i64 { var p: *W = new_w(); p.s = gt; var ps: *Str = new_slot(); *ps = gt; return f(p.s) * 10 + f(load64(ps)); }
+
+# ── methods, generics, overloads ────────────────────────────────────────────────────────────────────────────
+fn m_self(): i64 { var t: Str = Str { "abcdefg", 7 }; return t.len(); }
+fn m_arg(): i64 { var o: O = O { 30 }; var t: Str = Str { "abcdefg", 7 }; return o.m(t); }
+fn m_gen(): i64 { var t: Str = Str { "abcdefg", 7 }; return gg(t) * 10 + gg<Str>(t); }
+fn m_strlen(): i64 { var t: Str = Str { "abcdefg", 7 }; return strlen(t); }
+fn m_cat(): i64 { var t: Str = Str { "abc", 3 }; var u = str_cat(t, t); return str_len(u); }
+fn fp(p: *Str): i64 { return str_len(p); }
+fn m_ptr(): i64 { var t: Str = Str { "abcdefg", 7 }; return fp(t) * 10 + fp(gt); }
+fn m_eq(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("abcdefg"); return str_eq(h, t) * 10 + str_eq(t, h); }
+
+# ── closures and defer: the capture is a copy in the environment, a defer runs in the frame ─────────────────
+fn c_cap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { return f(t); }; return callptr(c); }
+fn mkc() { var t: Str = Str { "abcdefg", 7 }; return || { return f(t); }; }
+fn smash(a, b, c, d): i64 { var x: i64[16]; var i = 0; while (i < 16) { x[i] = 0 - 1; i = i + 1; } return a + b + c + d + x[3]; }
+fn c_escape(): i64 { var c = mkc(); smash(1, 2, 3, 4); return callptr(c); }
+fn c_bindcap(): i64 {
+    var t: Str = Str { "abcdefg", 7 };
+    var c = || { var h: Str = t; h.len = 3; return str_len(t); };
+    return callptr(c) * 10 + t.len;
+}
+fn c_own(): i64 { var c = || { var t: Str = Str { "abcdefg", 7 }; return f(t); }; return callptr(c); }
+fn d_body(): i64 { var t: Str = Str { "abcdefg", 7 }; defer { G_DEF = f(t); } return 0; }
+fn d_defer(): i64 { d_body(); return G_DEF; }
+
+# ── the encoder that found it: a `Str` field encoded from an inline `Str` ───────────────────────────────────
+fn e_json(): i64 {
+    var t: Str = Str { "a\"b", 3 };
+    var sb = str_builder_new();
+    str_builder_add_json_str(sb, t);
+    var s = str_builder_build(sb);
+    if (str_len(s) != 6) { return 0 - str_len(s); }
+    return memeq(str_data(s), "\"a\\\"b\"", 6);
+}
+fn e_derive(): i64 {
+    var r: Rec = Rec { GQ, 5 };
+    var sb = str_builder_new();
+    Rec_to_json(&r, sb);
+    var s = str_builder_build(sb);
+    var want = "{\"name\":\"a\\\"b\",\"n\":5}";
+    if (str_len(s) != strlen(want)) { return 0 - str_len(s); }
+    return memeq(str_data(s), want, strlen(want));
+}
+
+alloc_init();
+var R_TOP = f(gt);   # at top level, a global inline `Str`
+
+assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
+assert_eq(t_paren(), 7, "f((t))");
+assert_eq(t_stdlib(), 7, "str_len(t), a stdlib `s: Str` parameter");
+assert_eq(t_second(), 37, "f(30, t), t second");
+assert_eq(t_global(), 7, "f(gt), an inline global");
+assert_eq(t_decl(), 7, "var h: Str = t; f(h)");
+assert_eq(t_asg(), 7, "h = t into a handle; f(h)");
+assert_eq(t_amp(), 7, "f(&t), the workaround, unchanged");
+assert_eq(t_field(), 7, "t.len, unchanged");
+assert_eq(t_ctl(), 37, "a user struct U { data; len; } control, unchanged");
+assert_eq(t_untyped(), 7, "var h = t; f(h)");
+assert_eq(t_twice(), 14, "f(t) + f((t)) inside an expression");
+assert_eq(t_data(), 120, "str_data(t) reads t's data ('x')");
+assert_eq(b_decl(), 33, "var h: Str = t binds: h.len = 3 writes t's header");
+assert_eq(b_untyped(), 33, "var h = t binds as the annotated form does");
+assert_eq(b_asg(), 33, "h = t rebinds h to t's header");
+assert_eq(b_wrap(), 77, "var h: Str = (t); k = ((t))");
+assert_eq(b_param(str_from("zzzzz")), 3, "s = t rebinds a by-value Str parameter");
+assert_eq(b_inline(), 73, "h = t between two inline Strs copies the header (h is its own)");
+assert_eq(b_bare(), 3, "var t: Str; (inline, no literal) passes its header");
+assert_eq(b_shadow(), 2, "a local handle named gt shadows the global: its own word");
+assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
+assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
+assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");
+assert_eq(g_store(), 7, "GH = gt into a Str global");
+assert_eq(g_field(), 77, "W { gt, 1 } and w.s = gt into a Str field");
+assert_eq(g_heap(), 77, "p.s = gt and *ps = gt through a pointer");
+assert_eq(m_self(), 7, "t.len(): the method's self");
+assert_eq(m_arg(), 37, "o.m(t): a method's `s: Str` parameter");
+assert_eq(m_gen(), 77, "gg(t) and gg<Str>(t), T = Str");
+assert_eq(m_strlen(), 7, "strlen(t) routes to the Str overload");
+assert_eq(m_cat(), 6, "str_cat(t, t)");
+assert_eq(m_eq(), 11, "str_eq(h, t) and str_eq(t, h)");
+assert_eq(m_ptr(), 77, "fp(t) / fp(gt) into a `p: *Str` parameter: the header's address, as `fp(&t)`");
+assert_eq(c_cap(), 7, "a closure capturing t: f(t) inside");
+assert_eq(c_escape(), 7, "a closure returned out of t's frame: its copy survives");
+assert_eq(c_bindcap(), 37, "var h: Str = t inside a closure binds the closure's copy");
+assert_eq(c_own(), 7, "an inline Str local of a closure body");
+assert_eq(d_defer(), 7, "f(t) in a defer, in t's frame");
+assert_eq(e_json(), 1, "str_builder_add_json_str(sb, t) encodes \"a\\\"b\"");
+assert_eq(e_derive(), 1, "#derive(Serialize): a Str field from an inline global");
+assert_eq(R_TOP, 7, "f(gt) at top level");
+var r = assert_summary();

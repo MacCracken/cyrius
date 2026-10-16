@@ -3989,6 +3989,7 @@ fn _deref_store(S, term): i64 {
             var ti = GTI(S);
             PCMPE(S);
             if (_ek_fk(ed) == 2) { _ifs_bx(S, 2, ti, 0); }   # an f32 element: the field's checks
+            _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
         }
     } elif (ed != 0) {
         _arr_sub_load(S, _ek_lw(ed));   # rax = the element at the address
@@ -4138,7 +4139,8 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var t = _sc_whole(S, st);
     if (t == 0 - 2) {
         if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
-        _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0;   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+        _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st);   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+        _istr_asg(S, noff, st); return 0;   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` handle
     }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch

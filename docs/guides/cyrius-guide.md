@@ -1405,7 +1405,8 @@ A struct value of a different type assigned into a handle is refused
 struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address in `q.x` and left
 `q.y` stale, `a = q` put `q.x`'s value in `a`'s slot so the next `a.x` crashed, and `a = q` from a
 by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
-`Option` and `Tagged` (heap handles by name) are unchanged. Through 6.7.9 a struct of 8 bytes or
+`Option` and `Tagged` (heap handles by name) are unchanged (an inline `Str` assigned into a `Str` handle
+binds it to its header: see *An inline `Str` passes its header*). Through 6.7.9 a struct of 8 bytes or
 less was outside the rule: no struct variable of that size was a handle (the handle line above),
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
 into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct
@@ -2765,6 +2766,36 @@ paths skipped the wrap: the callee received a raw cstring pointer and every
 
 If you would rather not depend on the wrap at all, `f(str_from("abcde"))` is
 always correct and always has been.
+
+### An inline `Str` passes its header (6.7.13)
+
+A `Str` is a heap handle by name: a `Str` variable holds the ADDRESS of a 16-byte `{ data; len; }`
+header (`str_new`, `str_from`). A `Str { p, n }` literal — or `var t: Str;` — is an INLINE header, in
+the frame or, at top level, in the data section. Wherever a `Str` VALUE is taken, its bare name is that
+header's address (the user's decision D7 (1), 2026-10-15), with no allocation:
+
+```cyrius
+fn slen(s: Str): i64 { return str_len(s); }
+fn demo(): i64 {
+    var t: Str = Str { "abcdefg", 7 };
+    var n = slen(t) + str_len((t));   # 7 + 7: `&t` is passed
+    var h: Str = t;                   # a second handle to t's header (`var h = t;` too)
+    h.len = 3;                        # writes t.len
+    return n + t.len;                 # 17
+}
+```
+
+So do `h = t` into a `Str` handle (a rebind), a method's or a generic's `Str` parameter, a `p: *Str`
+parameter (`&t`, as `fp(&t)` passes), and an inline `Str` global (its static address) anywhere. ⛔ A
+frame's inline `Str` cannot outlive the frame, so these are refused by name: `return t;` from a fn returning `Str` (*cannot return the inline Str 't' from a fn
+returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))*),
+and a store into a `Str` global, a `Str` field (a struct literal's too) or through a `*Str` (*cannot store
+the inline Str 't' into a global* / *into a field* / *through a pointer*). Build a `Str` that outlives its
+fn with `str_new(p, n)`. An inline `Str` global is never refused, and a closure that captures `t` holds a
+copy of the header in its environment, which lives as long as the closure. A position that takes no `Str`
+value — an untyped parameter or variable, an untyped fn's `return` — still takes the header's first word.
+Through 6.7.12 every `Str` position took that word: `slen(t)` read the length from the bytes after the
+string (0 for this `t`) on every target, and `var h: Str = t;` was a copy whose own first word was passed.
 
 ## Syscalls
 
