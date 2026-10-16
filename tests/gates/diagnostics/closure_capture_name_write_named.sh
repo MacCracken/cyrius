@@ -11,7 +11,8 @@
 #
 #   W  a write to a captured name: the filed repro verbatim (`x += d`), `x = x + d`, a for init, a for
 #      step (`=` and `+=`), `a, x = two()`, `x -= d`, a nested closure writing the fn's local — each
-#      refused once, naming the capture, no binary
+#      refused once, naming the capture, no binary. The fix-it's local is named from the capture
+#      (`var x_l = x;`, 6.7.13); W9 / W9b: a capture named `y` (the fix-it read `var y = y;`)
 #   U  a name declared nowhere, inside a closure (`y = d`, `y += d`, `a, y = two()`) and after one (a
 #      block's local out of scope), still says `undefined variable 'y'`
 #   C  a write to a captured struct's FIELD (`h.n += d`, the closure's own copy) and a read of a
@@ -21,6 +22,8 @@
 #   M1 `_asg_cap_name` answering 0 (= the tree before)        -> RED W1-W8 (undefined variable)
 #   M2 `_masg_resolve` without its `_asg_cap_name` call       -> RED W6 only
 #   M3 `_asg_undef_report` without its `_asg_cap_name` call   -> RED W1-W5 W7 W8; W6 green
+# 6.7.13 (issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md):
+#   M4 the fix-it's fixed `var y = ` (the tree before)        -> RED W1-W9 W9b (10)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -56,7 +59,8 @@ I='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\
 TWO='fn two(): (i64, i64) { return (1, 2); }\n'
 OPEN='fn main(): i64 {\n    var x = 5;\n    var f = '
 CLOSE='\n    return callptr(f, 2);\n}\nsyscall(60, main());\n'
-CAP="'x' is captured by value; a captured name is not assignable in a closure — copy it into a local (\`var y = x;\`)"
+CAP="'x' is captured by value; a captured name is not assignable in a closure — copy it into a local (\`var x_l = x;\`)"
+CAPY="'y' is captured by value; a captured name is not assignable in a closure — copy it into a local (\`var y_l = y;\`)"
 UND="undefined variable 'y'"
 
 echo "W - a write to a captured name names the capture:"
@@ -69,6 +73,11 @@ refused w5 "$CAP" "W5: a compound for step, for (..; x += 1)" "$(src w5 "${I}${O
 refused w6 "$CAP" "W6: a, x = two()" "$(src w6 "${I}${TWO}${OPEN}|d| { var a = 0; a, x = two(); return a + d; };${CLOSE}")"
 refused w7 "$CAP" "W7: x -= d" "$(src w7 "${I}${OPEN}|d| { x -= d; return x; };${CLOSE}")"
 refused w8 "$CAP" "W8: a nested closure writing the fn's x" "$(src w8 "${I}${OPEN}|d| { var g = |e| { x = e; return e; }; return callptr(g, d); };${CLOSE}")"
+# W9 (6.7.13): issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md verbatim — a capture
+# named `y`. The fix-it named its local `y` always, so it read `var y = y;`: now `var y_l = y;`.
+refused w9 "$CAPY" "W9: a capture named y (the filed repro, verbatim: the fix-it read \`var y = y;\`)" \
+    docs/development/issues/repros/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.cyr
+if grep -qF 'var y = y;' "$T/w9.err"; then bad "W9b: the fix-it still reads \`var y = y;\`"; else ok "W9b: the fix-it is not \`var y = y;\`"; fi
 
 echo "U - a name declared nowhere is still undefined:"
 refused u1 "$UND" "U1: y = d in a closure" "$(src u1 "${I}${OPEN}|d| { y = d; return x; };${CLOSE}")"
@@ -80,8 +89,8 @@ echo "C - a captured struct's field and a read still build:"
 exits c1 7 "C1: h.n += d on a captured struct (the closure's copy)" "$(src c1 "${I}struct H { n; }\nfn main(): i64 {\n    var h = H { 5 };\n    var f = |d| { h.n += d; return h.n; };\n    return callptr(f, 2);\n}\nsyscall(60, main());\n")"
 exits c2 7 "C2: |d| { return x + d; }" "$(src c2 "${I}${OPEN}|d| { return x + d; };${CLOSE}")"
 
-# Floor: 8 W + 4 U + 2 C rows. A gate that ran fewer is broken, not green.
+# Floor: 10 W + 4 U + 2 C rows. A gate that ran fewer is broken, not green.
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-if [ "$rows" -lt 14 ]; then echo "FAIL: $G — only $rows rows ran (floor 14)"; exit 1; fi
+if [ "$rows" -lt 16 ]; then echo "FAIL: $G — only $rows rows ran (floor 16)"; exit 1; fi
 echo "PASS: $G ($rows rows) — a write to a captured name in a closure names the capture; an undefined name stays undefined"
 exit 0

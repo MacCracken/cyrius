@@ -3852,13 +3852,17 @@ fn _asg_undef_report(S, noff): i64 {
 # (guide § Compound assignment). It was reported as "undefined variable 'x'" — though `x` is defined and
 # readable in the same body (issues/archived/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
 # enclosing scope's (`_cl_snap_find`: inside a closure body only) and the refusal named it, at the cursor.
+# The fix-it's local is named from the capture (`var x_l = x;`): a fixed `y` read `var y = y;` for a
+# capture named `y`, a self-initialisation that names the local as the capture. CHANGELOG [6.7.13]
 fn _asg_cap_name(S, noff): i64 {
     if (_cl_snap_find(S, noff) < 0) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var y = ");
+    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("_l = ");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(";`)\n");
     _err_excerpt(S);

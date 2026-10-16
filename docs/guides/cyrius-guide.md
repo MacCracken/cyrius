@@ -917,8 +917,8 @@ change the closure's own copy (it persists from call to call; the enclosing fn's
 and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
 the closure: `x += d`, like `x = x + d`, a `for` init or step and `a, x = f()`, is refused naming the
 capture — ``'x' is captured by value; a captured name is not assignable in a closure — copy it into a
-local (`var y = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
-body). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
+local (`var x_l = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
+body; through 6.7.12 the fix-it's local was always `y`, so a capture named `y` read `var y = y;`). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
 second time). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
