@@ -48,6 +48,21 @@
 #      `*WQ.p`, `f(*Q)`) and after it (`*P`, `(*P)`, `*gp()`, `*(P + 0)`), `G = *P`, a by-value and a `*S`
 #      argument, at top level and in a fn (locals declared and assigned from it, `return *P`, `return
 #      (*P)`): exit 0. Through 6.7.10 `_deref_read` loaded 8 bytes at every size: exit 139 at 1..7 B
+#   PZ (Linux x86_64 + aarch64; 6.7.13, issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md)
+#      a dereference `*p` of a ZERO-SIZE struct at the very end of a mapping as a value — `take(*p)`, `take((*p))`,
+#      `var l: E = *p`, a `*E` argument, in a fn and at top level: exit 65. Through 6.7.12 a zero-size `*p` (its
+#      step 8) kept the 8-byte word load: exit 139
+#   PF (x86_64 plain / CYRIUS_IR=1 / CYRIUS_IR=3 / CYRIUS_DCE=1, aarch64, PE; 6.7.13,
+#      issues/2026-10-14-small-struct-field-value-reads-past-the-object.md) a whole struct-typed FIELD of N =
+#      1..8 i8 fields whose object ends a mapping, in every value use — `ok(w.s)`, `ok((w.s))`, `return w.s`,
+#      `return (w.s)`, `w.s + w.s` (both operands), the chain `a.b.s` (an argument, a return, an operator), an
+#      untyped `var u = w.s` (the word), at top level `var G: S = GW.s` / `var G = GW.s` / `GA.b.s` / `ok(GW.s)` /
+#      `GW.s + GW.s` after the first statement and `var G: S = Q.s` / `ok(Q.s)` in the declaration zone: exit 0.
+#      Through 6.7.12 the leaf load read 8 bytes at 3 / 5 / 6 / 7 B: exit 139. (On PE an offset munmap fails,
+#      so the row there checks the values, not the fault; cx cannot address a host mapping — FP covers it.)
+#   FP (every leg — x86 x4, aarch64, cx, PE; 6.7.13) the same uses of a 1..7 B field whose following bytes are
+#      0xFF, through an inline local, a `*W`, a chain `a.b.s`, a returned field, a value global and at top level
+#      (a typed `var G: S = GV.s` too): the word's bytes past the field are 0 (through 6.7.12 the next bytes)
 #   AS (x86_64, CYRIUS_ASYNC=1 — a mid-body suspend is x86-only so far) an `async fn` body: a
 #      handle, a bind, a by-value argument, a copy into the object and a returned handle across two
 #      awaits — exit 0
@@ -167,13 +182,29 @@
 # address (SIGSEGV; PE an access violation; cx a guest error). Its runtime half is
 # tests/tcyr/crossos/struct_deref_whole_operand.tcyr (every shape against its 16 B twin, 24 B, `*S` parameters
 # of 1 / 3 / 7 / 8 B, top level):
-#   R10 that file on the same legs as R1, N derived from it (floor 78; 6.7.11: the `z` rows — a dereference
-#      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0)
+#   R10 that file on the same legs as R1, N derived from it (floor 160; 6.7.11: the `z` rows — a dereference
+#      of a 3 / 5 / 6 / 7 B struct as a value, its padding 0; 6.7.13: the `zs` / `zv` / `zh` / `zc` / `zq` rows —
+#      a by-value self from a `*S`, a `*S` into a by-value parameter, a handle (and a captured one) by value,
+#      `return q` of a `*S` parameter, at 1..7 B: the word's padding 0, never the frame's old bytes; the `zw`
+#      rows — a whole struct-typed field of 3 / 5 / 6 / 7 B as a value, no byte past it; 6.7.13: the `a`
+#      rows — a dereference of an address-of, `*(&p)` / `*&p`, at 3 / 8 / 16 / 24 B is the struct p names,
+#      as an argument (a local, a by-value parameter, a global, a capture), into a `*S` parameter, as an
+#      operator's left (dispatched) and right operand, at top level; through 6.7.12 p's first word was passed
+#      as its address — and the guards: a handle's `take(*(&h))`, `*(&x + 8)`)
+#   R10a (6.7.13, issues/2026-10-14-dereference-of-address-of-struct-faults.md) the two filed repros, verbatim:
+#      `take(*pp) * 10 + take(*(&p))` exits 99 and `var q: P3 = *(&p); return q.c;` exits 9 (139 / 139 on x86_64
+#      and aarch64, a cx guest error, exit 5 on PE through 6.7.12)
 #   R11 (6.7.11, issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
-#      tests/tcyr/crossos/struct_deref_assign_copy.tcyr on the same legs (floor 76): an ASSIGNMENT from a
+#      tests/tcyr/crossos/struct_deref_assign_copy.tcyr on the same legs (floor 129): an ASSIGNMENT from a
 #      dereference — `l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S` / a handle's pointee, wrapped, `*(p +
 #      0)`, `*gp()`, `*w.p`, through a `*O`, a for step, top level — copies the struct at 3 / 8 / 16 / 24 B
-#      (through 6.7.10 one word; the refusals are struct_copy_source_type_refused.sh's R17-R23)
+#      (through 6.7.10 one word; the refusals are struct_copy_source_type_refused.sh's R17-R23); 6.7.13: the
+#      `a` rows — `var d: S = *(&x)`, `l = *(&x)`, `G = *(&x)`, `o.s = *(&x)`, `q = *(&x)` into a `*S`'s
+#      pointee, `*(&G) = v` / `*&l = v`, `return *(&x)` (and `return *&x + y` dispatched), the source a
+#      by-value parameter or a value global, top level, at 3 / 8 / 16 / 24 B (the refusals: R35-R38 there,
+#      struct_arg_type_refused.sh's D13-D16, struct_copy_type_checked.sh's R26) — and the guards: a handle's
+#      (a local, a capture, a global) and a `*S` parameter's `&h` is its slot, so `var w: S = *(&h)` binds
+#      the object (a handle), never copies the slot's bytes
 #   R12 (6.7.11, issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md)
 #      tests/tcyr/crossos/generic_ptr_struct_source.tcyr on the same legs (floor 72): a GENERIC call declared
 #      `: *T` is a struct source, as `fn gp(): *S` is — the seven filed positions at 8 / 16 / 24 B for
@@ -189,6 +220,11 @@
 #      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
+#   R13a (6.7.13, issues/2026-10-14-return-address-of-struct-local-decision.md, the user's decision D4 (a) of
+#      2026-10-15) tests/tcyr/crossos/struct_return_address_of.tcyr on the same legs (floor 22): `return &s;` from a
+#      fn declared `: S` — s a local, a value global, a by-value parameter, wrapped — is the struct, at 3 / 8 / 12 /
+#      16 / 24 B, a copy, its word's padding 0 (through 6.7.12 the ADDRESS at 8 B or less, refused over 8 B); the
+#      `&u` refusals are small_struct_return_type_refused.sh R17-R23
 #   R14 (6.7.11, issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md, the user's decision
 #      (a) of 2026-10-13) tests/tcyr/crossos/struct_value_into_ptr_global.tcyr on the same legs (floor 143): a
 #      struct VALUE into a typed `*S` GLOBAL — a local, a value global, a by-value parameter, a call, a field
@@ -197,14 +233,17 @@
 #      `GP = gq()` rebind (through 6.7.10 `GP` became the value's first word); the refusals are
 #      tests/gates/frontend/struct_copy_type_checked.sh's R10-R16
 #   R15 (6.7.11, issues/archived/2026-10-11-deref-store-through-struct-pointer-decision.md, the user's decision (a) of
-#      2026-10-13) tests/tcyr/crossos/deref_store_struct_copy.tcyr on the same legs (floor 322): `*p = v` through a
+#      2026-10-13) tests/tcyr/crossos/deref_store_struct_copy.tcyr on the same legs (floor 345): `*p = v` through a
 #      `*S` copies exactly sizeof(S) bytes at 0 / 3 / 4 / 5 / 6 / 7 / 8 / 9 / 16 / 24 B — from a local, a by-value
 #      parameter, a global, a field, a call, a method, an operator, `*q`, a `*S` local (copied, not rebound), a
 #      handle, a `*S` global, a `: *S` call — into a global (the guard byte after it kept) and into a struct inside
 #      a local (its next field kept), through `*GP`, `*(p + 0)`, `*gp()`, `*w.p`, a `*S` parameter, `*self`, a for
 #      step and at top level; an untyped value is the struct's word at sizeof(S) bytes, at most 8 (through 6.7.10
 #      always the 8-byte word: a zero-size or 3..7 B struct overrun, 9..24 B only the first 8 bytes); the
-#      refusals (another struct, `*p OP= v`) are struct_copy_type_checked.sh's R17-R25 / C1-C4
+#      refusals (another struct, `*p OP= v`) are struct_copy_type_checked.sh's R17-R25 / C1-C4; 6.7.13: a zero-size
+#      struct into a struct-typed FIELD (`o.s = GP`, `gp()`, `(GP)`, `mk()`, `5`, through a `*O`, at top level)
+#      stores no byte (through 6.7.12 a word over the neighbour), and a zero-size `*p` as a value reads none — its
+#      word 0, into a `*S` parameter the pointer, `*p + l` dispatches (through 6.7.12 the word at p)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -421,6 +460,50 @@
 #                                                      78 rows x7 (the padding 'D'..'H', every `z` row)
 #   MX2  `_hl_pval_ra` never zeroing its frame temp (`z` ignored) -> RED 7: R10 8 of 78 rows x7 (in a fn, a by-value
 #                                                      argument's and a return's padding 0xFF from the frame)
+# 6.7.13 ZERO-SIZE MUTATION LEDGER (2026-10-15, the same method; R15's `z0_` / `Z0` rows and PZ,
+# issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md):
+#   the tree before it (b13d3598)                   -> RED: R15 19 of 345 rows (x86), PZ exit 139 x86 / aarch64
+#   MZ1 `_fsc_psrc` back on `!= STRUCTSZ`           -> GREEN alone (equivalent: its value fallback then stores
+#                                                      nothing by MZ2's arm); with MZ2 -> RED R15 11 (`o.s = GP`,
+#                                                      `gp()`, `(GP)`, in a fn and at top level, too)
+#   MZ2 PARSE_FIELD_STORE without its size-0 return -> RED R15 5 (`o.s = mk()`, `o.s = 5`, through a `*O`, top level)
+#   MZ3 `_deref_small` without its zero-size arm   -> RED R15 5 (the word 99 after GT0), PZ exit 139
+#   MZ4 `_dlo_park` back on `!= STRUCTSZ`           -> RED R15 3 (`bp0(*p)` the word as the pointer, `*p + l` not
+#                                                      dispatched, top level)
+# 6.7.13 FIELD-VALUE MUTATION LEDGER (2026-10-15, the same method; PF / FP,
+# issues/2026-10-14-small-struct-field-value-reads-past-the-object.md):
+#   the tree before it (b13d3598)                   -> RED: PF 3 / 5 / 6 / 7 B exit 139 (x86, aarch64), FP 3 / 5 / 6 /
+#                                                      7 B on every leg (x86, aarch64, cx, PE: the 0xFF after the
+#                                                      field in the word)
+#   MF1 `_fld_sval_ra` answering 0 (the word load back) -> RED 48: PF 20 (3 / 5 / 6 / 7 B x x86 x4 + aarch64, exit
+#                                                      139), FP 28 (3 / 5 / 6 / 7 B x every leg; PE's PF rows stay
+#                                                      green: its offset munmap fails, so no fault); and R10's 7
+#                                                      `zw` rows (x86: the 0xFF after the field in the padding)
+# 6.7.13 PADDING MUTATION LEDGER (2026-10-15, the same method; R10's `zs` / `zv` / `zh` / `zc` / `zq` rows,
+# issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md):
+#   the tree before it (b13d3598: `_hl_pval_ra` zeroing only for a dereference, `_sptr_param_temp` and
+#   `_hl_cap_val_ra` never) -> RED: R10 19 of 113 rows on x86 / cx / PE (`zs` / `zv` / `zh` at 3 / 5 / 6 / 7 B,
+#                                                      `zq` at 1..7 B: padding 0xFF), 21 on aarch64 (and `zc` at
+#                                                      3 / 5 B, which x86 hides)
+# 6.7.13 DEREFERENCE-OF-ADDRESS-OF MUTATION LEDGER (2026-10-15, R10's / R11's `a` rows and R10a,
+# issues/2026-10-14-dereference-of-address-of-struct-faults.md; a scratch tree with the one change, its compiler
+# built by the fixed one, this gate run with CYCC=that compiler — so the a64 / cx legs, built from the tree's src,
+# stay fixed; the rows alone were run under each mutant on x86 too):
+#   MD1  `_hl_dpsid` answering `_hl_psid` (no `&x` arm) -> RED 20: R10 x86 x4 exit 139, PE exit 5; R10a x86 x4 / PE
+#                                                      (139 / 5, both repros); R11 does not build x5 (`return
+#                                                      *(&x)` over 8 B refused) — and the frontend gates' D13-D16,
+#                                                      R35-R38, R26, A12
+#   MD2  `_hl_amp_sid` taking a handle LOCAL's `&h` as the struct -> RED: R10 `take(*(&h))`, R11 `var w = *(&h)`
+#   MD3  ... a captured handle's                     -> RED: R11's captured-handle guard (6294048 for 5)
+#   MD4  ... a handle GLOBAL's                       -> RED: R11's handle-global guard
+#   MD5  `_hl_dstep` ignoring the `&x` arm's step 1  -> RED: R10 exit 139, R11 does not build, struct_copy_type_
+#                                                      checked.sh R26 / A12, struct_arg_type_refused.sh D15
+#   MD6  `_ret_lopd` without the `*&p` step          -> RED: R11 does not build (`return *&x + y` refused)
+#   MD7  `_dst_struct` refusing `*(&s) OP= v` too    -> RED: struct_copy_type_checked.sh A13 and
+#                                                      field_compound_values.tcyr Q4 (both refused)
+#   EQUIVALENT: `_deref_small`'s `sz >= 8` as `sz == 8` (over 8 B an unparked `*(&p)` value is its first word
+#   either way; the frame temp is sized by `_agg_temp`) and `_hl_amp_sid` without its `_hl_cp` test (a `*T`
+#   local / parameter / capture / global is excluded by the inline / slot-content / span / GVPM tests too)
 # 6.7.11 ASSIGNMENT-FROM-DEREFERENCE MUTATION LEDGER (2026-10-14, the same method; R11,
 # issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md):
 #   the tree before it (cf5838db)                   -> RED 7: R11 42 of 76 rows x7 (one word stored; `q = *p`
@@ -435,6 +518,12 @@
 #                                                      zone's `var Z: S = *gpg<S>();` a handle holding the word
 #                                                      the dereference read)
 #   MP2 `_ret_ptr_record` without the binding       -> RED 7: R12 does not build x7
+# 6.7.13 RETURN-ADDRESS-OF MUTATION LEDGER (2026-10-15, R13a; CYCC=mutant, each a one-change copy of the fixed
+# src built by the fixed compiler):
+# (the a64 / cx legs' compilers are built from the tree's src, so a mutant shows on x86 x4 + PE):
+#   the tree before it (431793cf)                   -> RED 5: R13a does not build (`return &s;` at 16 B refused)
+#   `_ret_ptr_src` typing by `_hl_psid` again       -> RED 5: R13a does not build (the 16 / 24 B rows refused)
+#   `_ret_small_ptr` typing by `_hl_psid` again     -> RED 5: R13a 10 of 22 rows (3 / 8 B: the address's bytes)
 # 6.7.11 SMALL STRUCT RETURN MUTATION LEDGER (2026-10-14, the same method; R13,
 # issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md):
 #   the tree before it (3fc1dbbb)                   -> RED 8: R13 18 of 24 rows x7 (the `*T` local's address), C6
@@ -671,7 +760,7 @@ done
 TD=tests/tcyr/crossos/struct_deref_whole_operand.tcyr
 [ -f "$TD" ] || { echo "FAIL: $G: $TD is missing"; exit 1; }
 ND=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TD")
-DFLOOR=78
+DFLOOR=160
 if [ "$ND" -lt "$DFLOOR" ]; then echo "FAIL: $G: only $ND rows in $TD (floor $DFLOOR) — rows were lost"; exit 1; fi
 
 TF=tests/tcyr/crossos/struct_field_left_operand.tcyr
@@ -751,10 +840,43 @@ for leg in $XLEGS $OTHER; do
     else bad "R10 $leg: exit $RC, '$LAST' (want '$ND passed, 0 failed ($ND total)') $(grep -m3 'FAIL' "$D/dw_$n.out" | tr '\n' ' ')"; fi
 done
 
+# The filed repros, verbatim (issues/2026-10-14-dereference-of-address-of-struct-faults.md).
+cat > "$D/repro_da.cyr" <<'EOF'
+struct P3 { a; b; c; }
+fn take(p: P3): i64 { return p.c; }
+fn go(): i64 {
+    var p: P3; p.a = 1; p.b = 2; p.c = 9;
+    var pp: *P3 = &p;
+    return take(*pp) * 10 + take(*(&p));
+}
+syscall(60, go());
+EOF
+cat > "$D/repro_db.cyr" <<'EOF'
+struct P3 { a; b; c; }
+fn go(): i64 {
+    var p: P3; p.a = 1; p.b = 2; p.c = 9;
+    var q: P3 = *(&p);
+    return q.c;
+}
+syscall(60, go());
+EOF
+echo "R10a. the filed dereference-of-address-of repros, verbatim (take(*(&p)) exit 99; var q: P3 = *(&p) exit 9)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/repro_da.cyr" "$D/rda_$n"
+    if [ "$RC" -eq -1 ]; then bad "R10a $leg: take(*(&p)) did not build: $(grep '^error' "$D/rda_$n.err" | head -1)"
+    elif [ "$RC" -eq 99 ]; then ok "R10a $leg: take(*(&p)) exit 99"
+    else bad "R10a $leg: take(*(&p)) exit $RC, want 99"; fi
+    run_leg "$leg" "$D/repro_db.cyr" "$D/rdb_$n"
+    if [ "$RC" -eq -1 ]; then bad "R10a $leg: var q: P3 = *(&p) did not build: $(grep '^error' "$D/rdb_$n.err" | head -1)"
+    elif [ "$RC" -eq 9 ]; then ok "R10a $leg: var q: P3 = *(&p) exit 9"
+    else bad "R10a $leg: var q: P3 = *(&p) exit $RC, want 9"; fi
+done
+
 TA=tests/tcyr/crossos/struct_deref_assign_copy.tcyr
 [ -f "$TA" ] || { echo "FAIL: $G: $TA is missing"; exit 1; }
 NA=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TA")
-AFLOOR=76
+AFLOOR=129
 if [ "$NA" -lt "$AFLOOR" ]; then echo "FAIL: $G: only $NA rows in $TA (floor $AFLOOR) — rows were lost"; exit 1; fi
 echo "R11. $TA ($NA rows: an assignment from a dereference of a *S copies the struct)"
 for leg in $XLEGS $OTHER; do
@@ -793,6 +915,20 @@ for leg in $XLEGS $OTHER; do
     else bad "R13 $leg: exit $RC, '$LAST' (want '$NRC passed, 0 failed ($NRC total)') $(grep -m3 'FAIL' "$D/rc_$n.out" | tr '\n' ' ')"; fi
 done
 
+TRA=tests/tcyr/crossos/struct_return_address_of.tcyr
+[ -f "$TRA" ] || { echo "FAIL: $G: $TRA is missing"; exit 1; }
+NRA=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TRA")
+RAFLOOR=22
+if [ "$NRA" -lt "$RAFLOOR" ]; then echo "FAIL: $G: only $NRA rows in $TRA (floor $RAFLOOR) — rows were lost"; exit 1; fi
+echo "R13a. $TRA ($NRA rows: return &s; from a fn returning S is the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TRA" "$D/ra_$n"
+    if [ "$RC" -eq -1 ]; then bad "R13a $leg: the values file did not build: $(grep '^error' "$D/ra_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NRA passed, 0 failed ($NRA total)" ]; then ok "R13a $leg: $LAST"
+    else bad "R13a $leg: exit $RC, '$LAST' (want '$NRA passed, 0 failed ($NRA total)') $(grep -m3 'FAIL' "$D/ra_$n.out" | tr '\n' ' ')"; fi
+done
+
 TVG=tests/tcyr/crossos/struct_value_into_ptr_global.tcyr
 [ -f "$TVG" ] || { echo "FAIL: $G: $TVG is missing"; exit 1; }
 NVG=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TVG")
@@ -810,7 +946,7 @@ done
 TDS=tests/tcyr/crossos/deref_store_struct_copy.tcyr
 [ -f "$TDS" ] || { echo "FAIL: $G: $TDS is missing"; exit 1; }
 NDS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TDS")
-DSFLOOR=322
+DSFLOOR=345
 if [ "$NDS" -lt "$DSFLOOR" ]; then echo "FAIL: $G: only $NDS rows in $TDS (floor $DSFLOOR) — rows were lost"; exit 1; fi
 echo "R15. $TDS ($NDS rows: *p = v through a *S copies the struct)"
 for leg in $XLEGS $OTHER; do
@@ -1417,6 +1553,180 @@ for n in 1 2 3 4 5 6 7 8; do
     done
 done
 
+cat > "$D/pz.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct E { }
+fn take(e: E): i64 { return 65; }
+fn takep(e: *E): i64 { return 65; }
+fn pe(): *E {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    syscall(SYS_MUNMAP, m + 4096, 4096);
+    return m + 4096;
+}
+var P: *E = pe();
+fn run(): i64 {
+    var p: *E = pe();
+    if (take(*p) != 65) { return 1; }
+    if (take((*p)) != 65) { return 2; }
+    var l: E = *p;
+    if (takep(*p) != 65) { return 3; }
+    return 65;
+}
+var e = take(*P);
+var G: E = *P;
+if (e == 65) { e = run(); }
+syscall(SYS_EXIT, e);
+EOF
+echo "PZ. a dereference *p of a zero-size struct at the very end of a mapping as a value, in a fn and at top level: no byte read"
+for leg in x86 $( [ -n "$A64" ] && echo a64 ); do
+    run_leg "$leg" "$D/pz.cyr" "$D/pz_$leg"
+    if [ "$RC" -eq -1 ]; then bad "PZ $leg: did not build: $(grep '^error' "$D/pz_$leg.err" | head -1)"
+    elif [ "$RC" -eq 65 ]; then ok "PZ $leg: exit 65"
+    else bad "PZ $leg: exit $RC, want 65 (139 = an 8-byte read past the object; 1..3 the row)"; fi
+done
+
+# PF / FP generators (6.7.13). pf_src N: a struct-typed field of N i8 fields whose object ends a mapping, every value use
+pf_src() {
+    _f=""; _i=0
+    while [ "$_i" -lt "$1" ]; do _f="$_f f$_i: i8;"; _i=$((_i + 1)); done
+    _lf="f$(($1 - 1))"
+    cat <<EOF
+include "lib/syscalls.cyr"
+struct SN {$_f }
+struct WN { n: i8; s: SN; }
+struct AN { k: i8; b: WN; }
+fn ok(s: SN): i64 { if (s.f0 != 65) { return 0; } if (s.$_lf != $((64 + $1))) { return 0; } return 1; }
+fn SN_add(a: SN, b: SN): SN { if (ok(b) == 0) { var z: SN; return z; } return a; }
+fn page_end(n): i64 {
+    var m = syscall(SYS_MMAP, 0, 8192, 3, 0x22, 0 - 1, 0);
+    syscall(SYS_MUNMAP, m + 4096, 4096);
+    var p = m + 4096 - n;
+    var i = 0;
+    while (i < $1) { store8(p + n - $1 + i, 65 + i); i = i + 1; }
+    return p;
+}
+fn rs(w: *WN): SN { return w.s; }
+fn rsp(w: *WN): SN { return (w.s); }
+fn rsa(a: *AN): SN { return a.b.s; }
+var Q: *WN = page_end($(($1 + 1)));
+var GZ1: SN = Q.s;
+var TZ2 = ok(Q.s);
+var GW: *WN = 0;
+var GA: *AN = 0;
+fn infn(): i64 {
+    var w: *WN = page_end($(($1 + 1)));
+    if (ok(w.s) == 0) { return 21; }
+    if (ok((w.s)) == 0) { return 22; }
+    var l1: SN = rs(w);
+    if (ok(l1) == 0) { return 23; }
+    var l2: SN = rsp(w);
+    if (ok(l2) == 0) { return 24; }
+    var l3: SN = w.s + w.s;
+    if (ok(l3) == 0) { return 25; }
+    var a: *AN = page_end($(($1 + 2)));
+    if (ok(a.b.s) == 0) { return 26; }
+    var l4: SN = rsa(a);
+    if (ok(l4) == 0) { return 27; }
+    var l5: SN = a.b.s + a.b.s;
+    if (ok(l5) == 0) { return 28; }
+    var u = w.s;
+    if ((u & 0xFF) != 65) { return 29; }
+    return 0;
+}
+var e = 0;
+if (ok(GZ1) == 0) { e = 1; }
+if (TZ2 == 0) { e = 2; }
+GW = page_end($(($1 + 1)));
+GA = page_end($(($1 + 2)));
+var G1: SN = GW.s;
+if (ok(G1) == 0) { e = 3; }
+var G2 = GW.s;
+if ((G2 & 0xFF) != 65) { e = 4; }
+var G3: SN = GA.b.s;
+if (ok(G3) == 0) { e = 5; }
+if (ok(GW.s) == 0) { e = 6; }
+var G4: SN = GW.s + GW.s;
+if (ok(G4) == 0) { e = 7; }
+if (e == 0) { e = infn(); }
+syscall(SYS_EXIT, e);
+EOF
+}
+# fp_src N: a struct-typed field of N (1..7) i8 fields with 0xFF bytes after it, every value use: the word's
+# bytes past the field are 0
+fp_src() {
+    _f=""; _l=""; _i=0
+    while [ "$_i" -lt "$1" ]; do _f="$_f f$_i: i8;"; _l="$_l $((65 + _i)),"; _i=$((_i + 1)); done
+    _sh=$((8 * $1))
+    cat <<EOF
+struct SN {$_f }
+struct WP { n: i8; s: SN; g: i64; }
+struct AP { k: i8; b: WP; }
+fn padw(s: SN): i64 { if (s.f0 != 65) { return 1000; } return load64(&s) >> $_sh; }
+fn SN_add(a: SN, b: SN): i64 { return padw(a) + padw(b); }
+fn fillw(p): i64 { store8(p, 1); store64(p + $(($1 + 1)), 0 - 1); var i = 0; while (i < $1) { store8(p + 1 + i, 65 + i); i = i + 1; } return 0; }
+fn rs(w: *WP): SN { return w.s; }
+fn rl(): SN { var w: WP; fillw(&w); return w.s; }
+fn rla(): SN { var a: AP; a.k = 1; fillw(&a + 1); return a.b.s; }
+var GV = WP { 1,$_l 0 - 1 };
+var GQ = AP { 1, 1,$_l 0 - 1 };
+fn infn(): i64 {
+    var w: WP;
+    fillw(&w);
+    if (padw(w.s) != 0) { return 21; }
+    if (w.s + w.s != 0) { return 22; }
+    var p: *WP = &w;
+    if (padw(p.s) != 0) { return 23; }
+    if (p.s + p.s != 0) { return 24; }
+    var l1: SN = rs(p);
+    if (padw(l1) != 0) { return 25; }
+    var l2: SN = rl();
+    if (padw(l2) != 0) { return 26; }
+    var a: AP;
+    a.k = 1;
+    fillw(&a + 1);
+    if (padw(a.b.s) != 0) { return 27; }
+    if (a.b.s + a.b.s != 0) { return 28; }
+    var l3: SN = rla();
+    if (padw(l3) != 0) { return 29; }
+    var u = w.s;
+    if ((u >> $_sh) != 0) { return 30; }
+    return 0;
+}
+var e = 0;
+if (padw(GV.s) != 0) { e = 1; }
+if (GV.s + GV.s != 0) { e = 2; }
+if (padw(GQ.b.s) != 0) { e = 3; }
+var G1 = GV.s;
+if ((G1 >> $_sh) != 0) { e = 4; }
+var G2: SN = GV.s;
+if (padw(G2) != 0) { e = 5; }
+if (e == 0) { e = infn(); }
+syscall(60, e);
+EOF
+}
+echo "PF. a whole struct-typed field of 1..8 B whose object ends a mapping, every value use (an argument, a return, an operator's operands, a chain a.b.s, an untyped binding, top level and the declaration zone): no byte past it is read"
+for n in 1 2 3 4 5 6 7 8; do
+    pf_src "$n" > "$D/pf$n.cyr"
+    for leg in $XLEGS $( [ -n "$A64" ] && echo a64 ) $( [ "$WINE" = 1 ] && echo pe ); do
+        lg=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$D/pf$n.cyr" "$D/pf${n}_$lg"
+        if [ "$RC" -eq -1 ]; then bad "PF $n B $leg: did not build: $(grep '^error' "$D/pf${n}_$lg.err" | head -1)"
+        elif [ "$RC" -eq 0 ]; then ok "PF $n B $leg: exit 0"
+        else bad "PF $n B $leg: exit $RC, want 0 (139 = a read past the object; 1..29 the row)"; fi
+    done
+done
+echo "FP. the same uses of a 1..7 B field with 0xFF bytes after it, inline, through a *W, a chain, top level: the word's bytes past the field are 0"
+for n in 1 2 3 4 5 6 7; do
+    fp_src "$n" > "$D/fp$n.cyr"
+    for leg in $XLEGS $OTHER; do
+        lg=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$D/fp$n.cyr" "$D/fp${n}_$lg"
+        if [ "$RC" -eq -1 ]; then bad "FP $n B $leg: did not build: $(grep '^error' "$D/fp${n}_$lg.err" | head -1)"
+        elif [ "$RC" -eq 0 ]; then ok "FP $n B $leg: exit 0"
+        else bad "FP $n B $leg: exit $RC, want 0 (1..30 the row whose padding was not 0)"; fi
+    done
+done
+
 cat > "$D/as.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -1475,4 +1785,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct (R10, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"

@@ -3043,7 +3043,12 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
             op = op + PP_EMIT_STR(out, op, ", _iv);\n");
         }
-        op = op + PP_EMIT_STR(out, op, "}\n");
+        # 6.7.13 — every arm ends by walking the rest of its value whole (`_cy_json_skipval` stops AT a
+        # depth-0 `,` / `}` / `]`): after a well-formed value it moves nothing; an object, an array or a
+        # string where a scalar was expected is skipped, so its inner keys are never read as this
+        # struct's (issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
+        # CHANGELOG [6.7.13]
+        op = op + PP_EMIT_STR(out, op, "_p = _cy_json_skipval(json, _p);\n}\n");
         fi = fi + 1;
     }
     # Skip an unknown key's value WHOLE (6.7.11: it stopped at the first `,` / `}`, at any depth).
@@ -3328,12 +3333,14 @@ fn PP_DBOOL_PAIRS(out, op, off): i64 {
     op = op + PP_EMIT_STR(out, op, ", str_eq_cstr(v, \"true\")); }\n");
     return op;
 }
+# 6.7.13: any other value stores 0 and is left where it starts — the arm's closing `_cy_json_skipval`
+# walks it whole (its own walk to the first `,` / `}` stopped INSIDE an object). CHANGELOG [6.7.13]
 fn PP_DBOOL_SCAN(out, op, off): i64 {
     op = op + PP_EMIT_STR(out, op, "if (memeq(json + _p, \"true\", 4) == 1) { store64(ptr + ");
     op = op + PP_EMIT_INT(out, op, off);
     op = op + PP_EMIT_STR(out, op, ", 1); _p = _p + 4; } else { store64(ptr + ");
     op = op + PP_EMIT_INT(out, op, off);
-    op = op + PP_EMIT_STR(out, op, ", 0); while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
+    op = op + PP_EMIT_STR(out, op, ", 0); }\n");
     return op;
 }
 # 6.7.10 (B7-4) — a `: cstring` field (its type-name cell holds "cstring\0" — one load64; a

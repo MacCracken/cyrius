@@ -1550,6 +1550,7 @@ fn PARSE_FACTOR(S): i64 {
     var _rc = 0;
     if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
+    _addr_field_post(S, _ti0);  # 6.7.13 (D3 (b)): `&x.f` refused by name
     if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
@@ -1937,7 +1938,7 @@ fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
 fn _bx_pcmpe_ret(S): i64 {
     var t = GTI(S);
     if (_ret_small_cls(S) == 1) { _ret_small_val(S, t); }
-    else { PCMPE(S); }
+    else { PCMPE(S); _istr_ret(S, t); }   # 6.7.13 (D7 (1)): an inline `Str` returned
     if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
@@ -2819,7 +2820,14 @@ fn _call_field(S): i64 {
 # CHANGELOG [6.6.12]
 # 6.7.5 (B8): `mk(3).n += 1;` too — refused as `= 1` is, the statement stepped over.
 fn _stmt_call_field(S): i64 {
-    if (_call_field(S) == 0) { return 0; }
+    var sv = _cpf_st;
+    var st = GTI(S) - 1;
+    _cpf_st = st;   # 6.7.13 (D8 (a)): a field of a `: *T` result is stored through it (`_cpf_try`)
+    _cpf_done = 0 - 1;
+    var r = _call_field(S);
+    _cpf_st = sv;
+    if (r == 0) { return 0; }
+    if (_cpf_done == st) { return 1; }   # the store ended the statement
     if (PEEKT(S) == 28) { _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `mk(4).p[i] = v;`
     elif (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -3486,6 +3494,28 @@ fn _sub_more(S): i64 {
 # The PARSE_FACTOR wrapper's postfix `[` (the factor began at token ti0): a `*T` field's or call's
 # element read; every other factor refused by name — `&a[i]` (an address is no base), `a[i][j]`,
 # `(expr)[i]`, a literal.
+# ⛔ 6.7.13 — `&x.f` IS NOT CYRIUS: THE ADDRESS OF A FIELD IS NOT TAKEN (the user's D3 (b), 2026-10-15; issues/
+# 2026-10-14-address-of-field-does-not-parse-guide-cites-it.md). The `&` factor takes `&x` and stopped at the `.`,
+# so the parse failed on the token after it ("expected ')', got '.'") with no word of why. The factor at `ti0` an
+# `&` with a `.` next: refused by name once, as `&a[i]` is (`_sub_post`), its `.f` / `.0` / `.m(..)` steps
+# consumed so the parse stays in step; rax 0. `&E.A` keeps its own refusal (the `&` arm consumed `.A`).
+fn _addr_field_post(S, ti0): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, ti0) != 27) { return 0; }
+    _psub_err(S, ": the address of a field is not taken", 0 - 1, " - write `&x + offset` or reach it through a `*T`", "", 0);
+    while (PEEKT(S) == 41) {
+        var t = TOKTYP(S, GTI(S) + 1);
+        if (t != 2) { if (t != 1) { STI(S, GTI(S) + 1); return _addr_field_val(S); } }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return _addr_field_val(S);
+}
+fn _addr_field_val(S): i64 {
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    return 0;
+}
 fn _sub_post(S, ti0): i64 {
     var ed = 0;
     if (TOKTYP(S, ti0) == 27) {
@@ -4005,9 +4035,11 @@ fn _deref_read(S): i64 {
     PARSE_FACTOR(S);
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
+    var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     if (_deref_small(S, d) == 0) { ELOAD64(S); }
-    SPSC(S, 0);
+    SPSC(S, iw);
+    if (iw > 0) { _PK_MARK(S, iw); }   # the pointee's word is this value's own (`_pk_word`)
     if (pk == 1) { _dlo_note(S, d); }
     return 0;
 }
@@ -4015,27 +4047,32 @@ fn _deref_read(S): i64 {
 # value, 6.7.10 decision 6). Its load read 8 bytes from `p` whatever the struct's size, so a global
 # initialised or assigned from `*p`, a local assigned from it, `f(*p)`, `return *p` and `*p + a` read up
 # to 7 bytes past the object — SIGSEGV when it ends a mapping, else foreign bytes in the word's padding.
-# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_psid`), T a
+# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_dpsid`), T a
 # struct of 1..7 bytes (its step): rax becomes T read byte-exact, its padding 0 (`_hl_pval_ra`), 1; else
 # 0 (the word load). CHANGELOG [6.7.11]
+# A zero-size T (its step 8) reads no byte: rax 0, 1 — its word load read 8 bytes past the object.
+# CHANGELOG [6.7.13]
 fn _deref_small(S, d): i64 {
     var st = _ps_step(GPSC(S));
     if (st < 1) { return 0; }
-    if (st > 7) { return 0; }
-    var sid = _hl_psid(S, d + 1, GTI(S));
+    if (st > 8) { return 0; }
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
-    if (STRUCTSZ(S, sid - 1) != st) { return 0; }
-    _hl_pval_ra(S, sid, 1);
+    var sz = STRUCTSZ(S, sid - 1);
+    if (_hl_dstep(st, sz) == 0) { return 0; }
+    if (sz == 0) { EMOVI(S, 0); return 1; }
+    if (sz >= 8) { return 0; }   # 6.7.13: `*(&p)` of a struct over 8 B steps 1
+    _hl_pval_ra(S, sid);
     return 1;
 }
 # ⛔ 6.7.10 — A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
 # 2026-10-12): `*p + a`, `(*p) + a`, `*gp() * a`, `*w.p - a` with a `*S` operand dispatch `S_add` (etc.)
 # at every size, as a struct variable does — `*p` is a struct value (decision 6). It added the first
 # word, silently. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
-# typed `*S` by the compiler's own typing (`_hl_psid`, its step the struct's size) and an overloadable
+# typed `*S` by the compiler's own typing (`_hl_dpsid`, its step the struct's size) and an overloadable
 # operator follows (past the parentheses wrapping the dereference), the pointer is parked in a hidden
 # temp — the left operand's address, or its struct, is read from it (`_opd_lhs_sv`). 1 = parked. A
 # dereference no operator follows is untouched, unless it starts an address-passed argument or right
@@ -4043,12 +4080,12 @@ fn _deref_small(S, d): i64 {
 fn _dlo_park(S, d): i64 {
     if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
     if (d == _dro_vt) { if (_dlo_vec(S, d) == 1) { return 1; } }   # 6.7.12 (D27)
-    var sid = _hl_psid(S, d + 1, GTI(S));
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
     if (sid <= 0) { return 0; }
     if (sid == _STR_SID(S)) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
-    if (_ps_step(GPSC(S)) != STRUCTSZ(S, sid - 1)) { return 0; }
+    if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }   # 6.7.13: zero-size steps 8, `&x` 1
     _dlo_sid = sid;
     _dlo_h = _HTEMP(S);
     _HTSTORE(S, _dlo_h);
@@ -7427,7 +7464,7 @@ fn _opd_lhs_sv(S, fi): i64 {
 fn _opd_operand(S, fi): i64 {
     if (_opd_k == 1) { return _flo_addr_ra(S, fi); }
     _HTLOAD(S, _dlo_h);
-    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid, 1); }   # 6.7.11: its padding 0, as `_deref_small`'s
+    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid); }   # 6.7.11: its padding 0, as `_deref_small`'s
     return 0;
 }
 # Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).

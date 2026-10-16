@@ -2425,6 +2425,7 @@ fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
     _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
     _gv_pvd_set(vi, _ek_vd(S, ann));   # 6.7.12: a `*V`'s vector
+    _gv_ppn_set(vi, _ek_pin(S, ann));  # 6.7.13: a `**T`'s pointee
     _gv_tn_set(S, vi, ann);   # 6.7.8 (D5)
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
@@ -2525,6 +2526,24 @@ fn _gv_pvd_get(vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gv_pvd + vi);
 }
+# 6.7.13: and a `**T` global's pin (`_ek_pin`, bits 56-62), a byte per global the same way.
+var _gv_ppn = 0;
+fn _gv_ppn_set(vi, pn): i64 {
+    if (_gv_ppn == 0) {
+        if (pn == 0) { return 0; }
+        _gv_ppn = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_ppn + vi, pn);
+    return 0;
+}
+fn _gv_ppn_get(vi): i64 {
+    if (_gv_ppn == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_ppn + vi);
+}
 # ⛔ 6.7.12 (D30) — "a declaration of global `vi` had a constant initializer", a byte per global (zero
 # included). The value alone (`_vgsi_base`) could not say it: 0 there also means "none", so CHKDUPVAL took a
 # prior `var a = 0;` for no constant and `var a = 0; var a = 5;` — two files' `var _shared = 0;` / `= 5;`,
@@ -2557,7 +2576,7 @@ fn _gv_has_lit(pi): i64 {
 fn _gv_ptr_word(S, vi): i64 {
     var vt = GVTYPE(S, vi);
     if (vt >= 0) { return 0; }
-    return _ps_vw(_ps_word(0 - vt, _gv_ped_get(vi)), _gv_pvd_get(vi));
+    return _ps_pw(_ps_vw(_ps_word(0 - vt, _gv_ped_get(vi)), _gv_pvd_get(vi)), _gv_ppn_get(vi));
 }
 fn _gv_ptr_sid(S, vi): i64 {
     if (_gv_psid == 0) { return 0; }
@@ -2642,6 +2661,88 @@ fn _ps_vdesc(w): i64 {
     if (vd == 0) { return 0; }
     return vd + 2048;
 }
+# ⛔ 6.7.13 — THE STEP WORD NAMES A POINTER POINTEE (D9 (a), the user 2026-10-15: `*pp` of a `pp: **T` is a
+# `*T`). A `**T` stepped a pointer's 8 and said nothing more, so `*pp` was an untyped word: `*pp + 1` stepped one
+# byte, `**pp` through a narrow T read 8 bytes and `var q: *T = *pp;` warned "assigning non-pointer to typed
+# pointer". The pointee's own step word (`*T`'s: sizeof(T), T's kind, a vector) is interned in `_pp_tab` (alloc()'d,
+# no heap region) and its index (1..126, the pin) rides bits 56-62 — above the vector, so every reader of the step,
+# the kind (40-47) or the vector (48-55) is unchanged and the word stays positive. A `**T` local, parameter,
+# capture, field, global and `: **T` return carry it, `pp + n` keeps it, and `_deref_read` (parse_expr.cyr) gives
+# `*pp` the pointee's word (`_pp_inner`). A `***T`'s pointee is a `**T` whose own pointee is pinned the same way. A
+# field `**S` naming the struct being declared pins S's token (`0 - ti - 1`: its size is not known yet), sized at
+# the dereference as `_fld_ps_get` sizes a late `*S`, under the field's binding. CHANGELOG [6.7.13]
+var _pp_tab = 0;    # 2 words per pin (1..126): the pointee's step word (or 0 - T's token - 1), its field entry (-1)
+var _pp_n = 0;
+var _pp_late = 0;   # set when `_pp_word_at` pinned a late `**S` (the field records its binding)
+fn _ps_pw(w, pin): i64 {
+    if (w <= 0) { return w; }
+    return w | (pin << 56);
+}
+fn _ps_pin(w): i64 {
+    if (w <= 0) { return 0; }
+    return (w >> 56) & 0x7F;
+}
+fn _pp_intern(S, v, ent): i64 {
+    if (v == 0) { return 0; }
+    if (_pp_tab == 0) { _pp_tab = alloc(128 * 16); }
+    var i = 1;
+    while (i <= _pp_n) {
+        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) { return i; } }
+        i = i + 1;
+    }
+    if (_pp_n >= 126) {
+        ERR_MSG(S, "too many pointer-to-pointer pointee types (max 126)", 51);
+        return 0;
+    }
+    _pp_n = _pp_n + 1;
+    S64(_pp_tab + _pp_n * 16, v);
+    S64(_pp_tab + _pp_n * 16 + 8, ent);
+    return _pp_n;
+}
+# The pin of the pointer annotation whose first `*` is token `ann`: its pointee interned when that pointee is
+# itself a pointer (`**T`, `***T`), else 0. A field passes its struct `si` and pool entry `ent` (else -1).
+fn _ek_pin(S, ann): i64 { return _pp_pin_at(S, ann, 0 - 1, 0 - 1); }
+fn _pp_pin_at(S, ann, si, ent): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 8) { return 0; }
+    var v = _pp_word_at(S, ann + 1, si, ent);
+    if (v < 0) { return _pp_intern(S, v, ent); }
+    return _pp_intern(S, v, 0 - 1);
+}
+# The step word of the pointer type whose first `*` is token `a`, the cursor unmoved: `*T`'s as `_ptr_annot`
+# reads it (quiet: the annotation itself reports an unknown T), a pointer's 8 and its own pin, 0 for a T it does
+# not read (a slice, a tuple: refused by the annotation).
+fn _pp_word_at(S, a, si, ent): i64 {
+    var t = TOKTYP(S, a + 1);
+    if (t == 8) { return _ps_pw(8, _pp_pin_at(S, a, si, ent)); }
+    if (t != 2) { if (t != 105) { return 0; } }
+    if (si >= 0) { if (t == 2) { if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) {
+                _pp_late = 1;
+                return 0 - (a + 2);
+            } } }
+    var sv = GTI(S);
+    STI(S, a + 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    return _ps_vw(_ps_word(ps, _ek_of_ptr_ann(S, a)), _ek_vd(S, a));
+}
+# The pointee word a dereference of step word `w` reads: its pin's (a late `**S` sized now), else 0.
+fn _pp_inner(S, w): i64 {
+    var p = _ps_pin(w);
+    if (p == 0) { return 0; }
+    if (p > _pp_n) { return 0; }
+    var v = L64(_pp_tab + p * 16);
+    if (v >= 0) { return v; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, L64(_pp_tab + p * 16 + 8));
+    var sv = GTI(S);
+    STI(S, 0 - v - 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return ps;
+}
 # Two branches' words: the same word, else the shared step without a kind, else 0 (no step).
 fn _ps_merge(a, b): i64 {
     if (a == b) { return a; }
@@ -2661,10 +2762,11 @@ fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
 fn _sl_ptr_ed(S, li, ann): i64 {
     var ed = _ek_of_ptr_ann(S, ann);
     var vd = _ek_vd(S, ann);   # 6.7.12: a `*V`'s vector
-    if (ed == 0) { if (vd == 0) { return 0; } }
+    var pn = _ek_pin(S, ann);  # 6.7.13: a `**T`'s pointee
+    if (ed == 0) { if (vd == 0) { if (pn == 0) { return 0; } } }
     var w = GSLICE_W(S, li);
     if (w > 0 - 0x7E01) { return 0; }
-    SSLICE_W(S, li, 0 - 0x7E00 - _ps_vw(_ps_word(0 - w - 0x7E00, ed), vd));
+    SSLICE_W(S, li, 0 - 0x7E00 - _ps_pw(_ps_vw(_ps_word(0 - w - 0x7E00, ed), vd), pn));
     return 0;
 }
 # The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
@@ -2801,6 +2903,7 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume ':'
     var ed = _ek_of_ptr_ann(S, GTI(S));     # 6.7.8 (C2-3a): T's kind rides the step (`_ps_word`)
     var vd = _ek_vd(S, GTI(S));             # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
+    var ann = GTI(S);
     var ps = _fld_ptr_late(S);
     if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
@@ -2809,8 +2912,11 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    S64(_fld_ps + ent * 8, _ps_vw(_ps_word(ps, ed), vd));   # a late struct T (`0 - token`) keeps its form
+    _pp_late = 0;
+    var pn = _pp_pin_at(S, ann, si, ent);   # 6.7.13: a `**T`'s pointee (a `**S` of this struct pinned late)
+    S64(_fld_ps + ent * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
+    elif (_pp_late == 1) { _fld_pb_note(S, ent, si); }
     return 0;
 }
 # ⛔ 6.6.20 — the binding a late `*S<..>` field is re-read under. `_fld_ps_get` / `_fld_ptr_sid`
@@ -2914,10 +3020,11 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
     }
     var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
     var vd = _ek_vd(S, GTI(S));           # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
+    var pn = _ek_pin(S, GTI(S));          # 6.7.13: a `**T`'s pointee
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
-    S64(_fn_rps + fi * 8, _ps_vw(_ps_word(ps, ed), vd));
+    S64(_fn_rps + fi * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
     return 0;
 }
@@ -3996,6 +4103,23 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
     return 0;
 }
 
+# A bare `Vec` field (no `<T>`; struct and union): the file's own `struct Vec` / `union Vec` when it is
+# declared ABOVE the field, else lib's 8-byte handle. Declared BELOW it is refused by name, as any field
+# type declared after its use is (6.6.10): it was silently the handle there, so one text had two layouts
+# (D10 (b), the user 2026-10-15). The cursor is past the name. CHANGELOG [6.7.13]
+fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
+    var bsid = FINDSTRUCT(S, tnoff);
+    if (bsid == si + 1) { return _add_named_field(S, si, fnoff, tnoff); }   # `struct Vec { v: Vec; }`: refused, not a SIGSEGV
+    if (bsid == 0) {
+        if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
+                ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));
+                _panic = 0;
+            } }
+    }
+    ADDFIELDTYPED(S, si, fnoff, bsid);
+    return 0;
+}
+
 # ⛔ 6.7.10 (B7) — u8 / u16 / u32 / f32 FIELDS ARE THEIR WIDTHS (the user's decision, 2026-10-08:
 # packed, no padding — the rule i8 / i16 / i32 fields follow). A u8..u32 field is `0 - width`
 # (the i8..i32 encoding, so FIELDSZ / FIELDOFF / STRUCTSZ / every store take the width) plus the
@@ -4454,8 +4578,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             var _vsent = MKVEC(S, elemc);
                             ADDFIELDTYPED(S, si, fnoff, _vsent);
                         } else {
-                            var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
-                            ADDFIELDTYPED(S, si, fnoff, _bsid);
+                            _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                         }
                     } elif (fscalar > 0) {
                         # Store as negative width for sized scalars, 0 for i64 (default)
@@ -4527,8 +4650,7 @@ fn PARSE_UNION_DEF(S): i64 {
                         var _vsent = MKVEC(S, elemc);
                         ADDFIELDTYPED(S, si, fnoff, _vsent);
                     } else {
-                        var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
-                        ADDFIELDTYPED(S, si, fnoff, _bsid);
+                        _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                     }
                 } elif (fscalar > 0) {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }

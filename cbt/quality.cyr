@@ -1653,11 +1653,13 @@ fn _hdr_type_size(b, len, p, depth): i64 {
     if (q < len && load8(b + q) == 60) { targs = 1; _hdr_tend = _hdr_skip_targs(b, q, len); }
     # `Vec<T>` is its 8-byte handle; a bare `Vec` is the file's own `struct Vec` when one is declared
     # ABOVE the field (the compiler's FINDSTRUCT there), else the handle. CHANGELOG [6.7.11]
+    # Declared BELOW the field, cycc refuses it (D10 (b)), so no size is guessed. CHANGELOG [6.7.13]
     if (_hdr_is(b, p, n, "Vec", 3) == 1) {
         if (targs == 1) { return 8; }
         var rv = _hdr_decl_find(b, p, n);
         if (rv == 0) { return 8; }
-        if (load64(rv) > p) { return 8; }
+        if (load64(rv + 16) == 3) { return 8; }   # an enum `Vec`: cycc's field is the handle
+        if (load64(rv) > p) { return _hdr_fail("the file's own struct Vec declared below its use, which cycc refuses", p, ie); }
     }
     if (_hdr_is(b, p, n, "Str", 3) == 1) { return 8; }   # a Str FIELD is its handle
     if (targs == 1) { return _hdr_fail("a generic struct instance, which this scanner cannot size", p, _hdr_tend); }

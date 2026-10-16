@@ -120,6 +120,13 @@
 #   no whole-dereference test (`_gz_split`)            -> RED D12 (`*tp + 1` refused as `tp`)
 #   real tree                                          -> GREEN (63 refusal rows, 27 acceptance rows)
 #
+# 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF, `*(&t)` / `*&t`, IS THE STRUCT `t` NAMES (issues/2026-10-14-dereference-of-
+# address-of-struct-faults.md): another struct's into a by-value parameter is refused by name at 8 B (D13, D14 at top
+# level) and over 8 B (D15), and a generic carrier binds T through it (D16; 22 through 6.7.12, the base's layout).
+# Mutation (2026-10-15): `_hl_dpsid` answering `_hl_psid` -> RED 4: D13-D15 compiled, D16 exit 22; `_hl_dstep`
+# ignoring the `&x` arm's step -> RED D15.
+#   real tree                                          -> GREEN (70 refusal rows, 33 acceptance rows)
+#
 # 6.7.11 (the lane's review) — THE TWO SPELLINGS ABOVE BIND A GENERIC CARRIER'S T AS THEIR PLAIN ONES DO
 # (`_gsc_wrap` / `_gsc_deref`, out of `_gsc_arg`): the struct-carrier inference read neither a whole-argument
 # wrap nor `* E`, so `gw((w))`, `gw((mkw(6)))` and `gw(*wp)` with `fn gw<T>(w: W1<T>)`, `w: W1<i32>` reached
@@ -151,6 +158,20 @@
 #   `_ic_call_rs` without the instance's struct return -> RED R18j (refused naming `g$Box`)
 #   `_gsc_arg` / `_gen_arg_whole` without the `<` arm  -> RED R18j (refused: the struct type / the stub)
 #   real tree                                          -> GREEN (67 refusal rows, 32 acceptance rows)
+#
+# 6.7.13 — A STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (the user's decision D5 (a), 2026-10-15;
+# issues/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): `ri(s)` with `p: *i64` / `*u8` /
+# `**i64` / `*f64`, s an inline local (8 / 16 B), a by-value parameter, an inline global (a fn, top level), a capture,
+# wrapped, a `*T` with T = i64, a method's parameter — "cannot pass 's' to a parameter that is not a pointer to its
+# struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse_fn.cyr); P1 the filed repro
+# verbatim, P2-P16, P17 a `*Str` keeps 6.7.3's refusal; PK1 a handle, `&s`, a `*Pt`, `*Pt <- s`, an untyped parameter and `rg(s)` pass; PK2 a `Str` compiles.
+# Mutations (each a scratch copy of the tree with the one change, this gate run with its compiler; 2026-10-15):
+#   the tree before it (8abca341)                      -> RED 16: P1-P16 (each compiled)
+#   `_sarg_byval_small` without the call               -> RED 16: P1-P16
+#   `_sarg_struct_other` taking any struct-typed name (`_hl_name_ty`, no inline test) -> RED 2: PK1 (the handle
+#                                                         refused), PK2 (the `Str` refused)
+#   `_sarg_struct_other` without its `GFPSID` test     -> RED 1: P17 (2 errors: + this refusal)
+#   real tree                                          -> GREEN (87 refusal rows, 35 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -665,6 +686,21 @@ accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
     10 \
     "${T}fn go(): i64 { var s: S1; s.u = 10; return bs1(s); } syscall(60, go());"
 
+# 6.7.13 (issues/2026-10-14-dereference-of-address-of-struct-faults.md): a dereference of an ADDRESS-OF, `*(&u)` /
+# `*&u`, is the struct `u` names, so another struct's is refused by name as `take8(u)` is (through 6.7.12 the 8 B
+# row compiled and passed U's bytes, the 16 B row SIGSEGV'd: the first word passed as the address), and a generic
+# carrier binds T through it as `gw(w)` does (139 through 6.7.12).
+refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass 't' $MA 'bs1'" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(*(&t)); } syscall(60, go());"
+refuse "D14 bs1(*&t) at top level" "cannot pass 'GT1' $MA 'bs1'" \
+    "${T}var GT1 = T1 { 9 }; var r = bs1(*&GT1); syscall(60, r);"
+refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass 'p' $MA 'bq'" \
+    "${T}fn go(): i64 { ${PQ} return bq(*(&p)); } syscall(60, go());"
+accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) does" \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(*(&w)) * 10 + gw(*&w); } syscall(60, go());" \
+    11 \
+    "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(w) * 10 + gw(w); } syscall(60, go());"
+
 echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
 # `gw((w))` and `gw((mkw(-6)))` call `gw$i32`, as `gw(w)` / `gw(mkw(-6))` do: the i32 -6 tests negative.
 accept "G1 gw((w)), gw(((w))), gw((mkw(-6))), gw((GW)) bind T = i32" \
@@ -690,6 +726,87 @@ refuse "G4 gw(*tp) with tp: *T1" "cannot pass 'tp' $MA 'gw'" \
 # A tuple literal is not a wrap of its first element: no T from `b`, the literal's refusal names the base.
 refuse "G5 gx((b, 3)): the tuple literal's refusal, naming the base" "this parameter of 'gx' is not a tuple" \
     "${T}fn go(): i64 { var b: Box<Pt>; b.n = 8; return gx((b, 3)); } syscall(60, go());"
+
+echo "=== 6.7.13 (D5 (a)): a struct value into a pointer of another kind (\`*i64\`, \`*u8\`, \`**T\`, \`*f64\`) ==="
+# The filed repro, verbatim (issues/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): it
+# compiled with no diagnostic and pushed s's first field, 42, as the address — x86_64 139, aarch64 139, cx 253, PE 5.
+# The user's decision D5 (a), 2026-10-15: refused by name, as D27 refuses a vector there and 6.7.3 a struct of
+# another type into a `*S`. Every row below compiled (and faulted, or read through the first word) through 6.7.12.
+MW="to a parameter that is not a pointer to its struct type in a call to"
+refuse "P1 the filed repro, verbatim: ri(s), p: *i64" "cannot pass 's' $MW 'ri' - pass &s for its address" \
+    'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn ri(p: *i64): i64 { return *p; }
+fn main(): i64 {
+    var s: Pt;
+    s.x = 42;
+    s.y = 7;
+    return ri(s);
+}
+var rc = main();
+syscall(60, rc);
+'
+WP='include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+struct P8 { x; }
+var GW = Pt { 42, 7 };
+var GW8 = P8 { 42 };
+fn ri(p: *i64): i64 { return load64(p); }
+fn ru(p: *u8): i64 { return load8(p); }
+fn rpp(p: **i64): i64 { return 42; }
+fn rf(p: *f64): i64 { return load64(p); }
+fn rg<T>(p: *T): i64 { return load64(p); }
+fn rl(p: *i64): i64 { return 0; }
+fn rsp(p: *Str): i64 { return 42; }
+impl Q { fn rd(self, p: *i64): i64 { return load64(p); } }
+'
+refuse "P2 ru(s), p: *u8 (16 B local)" "cannot pass 's' $MW 'ru'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return ru(s); } syscall(60, go());"
+refuse "P3 rpp(s), p: **i64" "cannot pass 's' $MW 'rpp'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return rpp(s); } syscall(60, go());"
+refuse "P4 rf(s), p: *f64" "cannot pass 's' $MW 'rf'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return rf(s); } syscall(60, go());"
+refuse "P5 ri(s), an 8 B local" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn go(): i64 { var s: P8; s.x = 42; return ri(s); } syscall(60, go());"
+refuse "P6 ru(s), an 8 B local into *u8" "cannot pass 's' $MW 'ru'" \
+    "${T}${WP}fn go(): i64 { var s: P8; s.x = 42; return ru(s); } syscall(60, go());"
+refuse "P7 ri(s), s a by-value parameter (16 B)" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn f(s: Pt): i64 { return ri(s); } fn go(): i64 { var s: Pt; s.x = 42; return f(s); } syscall(60, go());"
+refuse "P8 ri(s), s a by-value parameter (8 B)" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn f(s: P8): i64 { return ri(s); } fn go(): i64 { var s: P8; s.x = 42; return f(s); } syscall(60, go());"
+refuse "P9 ri(GW), an inline global in a fn" "cannot pass 'GW' $MW 'ri' - pass &GW for its address" \
+    "${T}${WP}fn go(): i64 { return ri(GW); } syscall(60, go());"
+refuse "P10 ri(GW8), an 8 B inline global at top level" "cannot pass 'GW8' $MW 'ri'" \
+    "${T}${WP}var r = ri(GW8); syscall(60, r);"
+refuse "P11 ri(s), a closure capture (16 B)" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; var c = || { return ri(s); }; return callptr(c); } syscall(60, go());"
+refuse "P12 ri(s), a closure capture (8 B)" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn go(): i64 { var s: P8; s.x = 42; var c = || { return ri(s); }; return callptr(c); } syscall(60, go());"
+refuse "P13 ri((s))" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return ri((s)); } syscall(60, go());"
+refuse "P14 ri(((s))), 8 B" "cannot pass 's' $MW 'ri'" \
+    "${T}${WP}fn go(): i64 { var s: P8; s.x = 42; return ri(((s))); } syscall(60, go());"
+refuse "P15 rg<i64>(s), T = i64" "cannot pass 's' $MW 'rg'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return rg<i64>(s); } syscall(60, go());"
+refuse "P16 q.rd(s), a method's pointer parameter" "cannot pass 's' $MW 'Q_rd'" \
+    "${T}${WP}fn go(): i64 { var q: Q; var s: Pt; s.x = 42; return q.rd(s); } syscall(60, go());"
+# A `*Str` parameter records the struct Str: another struct into it keeps 6.7.3's refusal, once (not two).
+refuse "P17 rsp(s), p: *Str (6.7.3's words, once)" "cannot pass 's' $MA 'rsp'" \
+    "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return rsp(s); } syscall(60, go());"
+# Controls: a handle's and a Str's word IS the address; `&s` and a `*Pt` pass the address; `*Pt` takes `&s` (6.6.20);
+# an untyped parameter takes the word (not this rule); `rg(s)` infers T = Pt (a `*Pt`).
+accept "PK1 a handle, &s, a *Pt local, *Pt <- s, an untyped parameter, rg(s), into *i64" \
+    "${T}${WP}fn rpt(p: *Pt): i64 { return p.x; } fn rw(p): i64 { return p; }
+fn go(): i64 { alloc_init(); var h: Pt = alloc(16); h.x = 42; var s: Pt; s.x = 42; var ps: *Pt = &s;
+  return ri(h) + ri(&s) + ri(ps) + rpt(s) + rw(s) + rg(s) - 210; }
+syscall(60, go());" \
+    42 \
+    "${T}fn go(): i64 { return 42; } syscall(60, go());"
+# A `Str` is no struct value here (`_dx_plain`): it compiles as before (what its word is, the inline-Str item decides).
+compiles "PK2 a Str local into *i64 / *u8 is not refused" \
+    "${T}${WP}fn go(): i64 { alloc_init(); var s = str_from(\"hello\"); return rl(s) + ru(s); } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

@@ -29,12 +29,31 @@
 # (a kernel build names a constant-condition global as late). (The three peephole-tracker resets and the
 # SESVAR / `_esv_name` reset are defensive: no row kills them.) FE, 2026-10-08: `_ie_kind` without its
 # `_W128_IS` refusal -> V8-V12 BUILD (V13 green).
+# 6.7.13 (D rows; issues/2026-10-14-dereference-as-if-expression-branch.md, the user's D1 (a)): a whole dereference
+# of a `*S` branch is a struct value — refused over 8 B (D1-D6, D8 the filed shape once per branch), mixed struct
+# types refused (D7), a vector dereference left alone (D9), an operator on one an integer (D11), and the runtime
+# half tests/tcyr/crossos/if_expr_struct_deref.tcyr on every leg (D10). Mutations (2026-10-15, CYCC=the mutant;
+# the a64 / cx legs build from the tree's src and stay fixed): `_ie_struct_sid` without its dereference arm -> RED
+# D1-D8 BUILD, D10 does not build x5 (`{ *p } else { s }` refused); `_gz_bty` without kind 7 -> RED D10 x5 (the
+# declaration zone misreads `var G: S3 = if (K) { *GP } else { GQ };`); `_ie_deref_sid` without the
+# whole-dereference test (`_gz_split`) -> RED D11.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: if_expr_checked: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: if_expr_checked: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# D10's PE leg: a PRIVATE wine prefix and HOME under $T (never ~/.wine or the user's ~/.cache), torn down with its
+# server dir on exit — the defer_every_return_path.sh helper.
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0
 ok()  { echo "  ok   $1"; }
@@ -145,5 +164,68 @@ exits a16 132 "A16: Str handles are pointer words (not a struct value)" 'include
 exits a17 66 "A17: a #derive member value with a comment holding a quote keeps the members after it" "${INC}const K = 3;\n#derive(Serialize)\nenum E8 {\n    A8 = if (K > 2) {   # it's big\n        1\n    } else { 2 };\n    B8 = 5;\n}\nfn main(): i64 { alloc_init(); var sb = str_builder_new(); E8_to_json(5, sb); var s = str_builder_build(sb); return load8(str_data(s) + 1); }\nsyscall(60, main());\n"
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
+
+# 6.7.13 (issues/2026-10-14-dereference-as-if-expression-branch.md) — A STRUCT DEREFERENCE AS A BRANCH IS A STRUCT
+# VALUE (`_ie_deref_sid`, parse_ctrl.cyr; the declaration zone's `_gz_bty` reads it alike). Over 8 B it is refused
+# as any struct value over 8 B is — branch on the pointer (the user's D1 (a), 2026-10-15); through 6.7.12 each D row
+# compiled (an integer branch, the word `*p` read) and `var v: S = if (c) { *p } else { *q };` SIGSEGV'd.
+DS='struct P16 { a; b; }\nstruct P24 { a; b; c; }\nstruct W24 { k; p: *P24; }\nvar G16 = P16 { 5, 6 };\nfn gp16(): *P16 { return &G16; }\n'
+refused d01 "$BIG: struct 'P16'" "D1: { *p } else { 0 }, a 16-byte struct" "${DS}fn f(c): i64 { var t = P16 { 5, 6 }; var p: *P16 = &t; var x = if (c) { *p } else { 0 }; return 0; }\nsyscall(60, f(1));\n"
+refused d02 "$BIG: struct 'P24'" "D2: { 0 } else { (*p) }, a 24-byte struct" "${DS}fn f(c): i64 { var t = P24 { 5, 6, 7 }; var p: *P24 = &t; var x = if (c) { 0 } else { (*p) }; return 0; }\nsyscall(60, f(1));\n"
+refused d03 "$BIG: struct 'P16'" "D3: { *gp() } else { 0 }" "${DS}fn f(c): i64 { var x = if (c) { *gp16() } else { 0 }; return 0; }\nsyscall(60, f(1));\n"
+refused d04 "$BIG: struct 'P24'" "D4: { *w.p } else { 0 }, a *T field" "${DS}fn f(c): i64 { var t = P24 { 5, 6, 7 }; var w = W24 { 0, &t }; var x = if (c) { *w.p } else { 0 }; return 0; }\nsyscall(60, f(1));\n"
+refused d05 "$BIG: struct 'P16'" "D5: { *(&t) } else { 0 }, a dereference of an address-of" "${DS}fn f(c): i64 { var t = P16 { 5, 6 }; var x = if (c) { *(&t) } else { 0 }; return 0; }\nsyscall(60, f(1));\n"
+refused d06 "$BIG: struct 'P16'" "D6: top level, var G = if (K) { *GP } else { 0 }" "${DS}var K = 1;\nvar GP: *P16 = &G16;\nvar G = if (K == 1) { *GP } else { 0 };\nsyscall(60, 0);\n"
+refused d07 "$MIX: struct 'U1' here, struct 'S1' before it" "D7: { *ps } else { *pu }, two small struct types (as R17)" 'struct S1 { v; }\nstruct U1 { w; }\nfn f(c): i64 { var s: S1; s.v = 1; var u: U1; u.w = 2; var ps: *S1 = &s; var pu: *U1 = &u; var z = if (c) { *ps } else { *pu }; return 0; }\nsyscall(60, f(1));\n'
+# The filed two-dereference shape over 8 B (16 B, the issue's third struct): refused, no binary — once per branch,
+# as `{ t } else { s }` is.
+printf 'struct S { a; b; }\nfn main(): i64 { var k = 1; var s: S; s.a = 1; var t: S; t.a = 5; var p: *S = &t; var q: *S = &s; var v: S = if (k == 1) { *p } else { *q }; return v.a; }\nsyscall(60, main());\n' > "$T/d08.cyr"
+build d08
+if [ "$rc" -eq 0 ]; then bad "D8: var v: S = if (k == 1) { *p } else { *q } (16 B) BUILT"
+elif [ -s "$T/d08.bin" ]; then bad "D8: refused but still emitted a binary"
+elif [ "$(grep -c "$BIG: struct 'S'" "$T/d08.err")" -ne 2 ]; then bad "D8: want the over-8-bytes refusal once per branch: $(grep '^error' "$T/d08.err" | head -2 | tr '\n' '|')"
+else ok "D8: the filed { *p } else { *q } at 16 B is refused at each branch, no binary"; fi
+# A vector dereference is no struct (its operand types 0): the struct arm leaves `*pv` as before — an integer
+# branch, lane 0's word — and does not take it as a struct value.
+exits d09 42 "D9: { *pa } else { *pb } with *f64v2 operands: untouched by the struct arm (lane 0, as before)" 'include "lib/syscalls.cyr"\ninclude "lib/simd.cyr"\nfn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var b: f64v2 = f64v2_make(5, 6); var pa: *f64v2 = &a; var pb: *f64v2 = &b; var c = 1; var x = if (c == 1) { *pa } else { *pb }; return x; }\nsyscall(60, main());\n'
+# Not one whole dereference: `*p + 1` is its operator fn's result (an i64 here, 6.7.10 decision 11), so the
+# branch is an integer beside `0`, as before.
+exits d11 16 "D11: { *p + 1 } else { 0 } with S1_add returning i64: an integer branch" 'struct S1 { v; }\nfn S1_add(a: S1, b): i64 { return a.v + b; }\nfn f(c): i64 { var t: S1; t.v = 15; var p: *S1 = &t; var x = if (c) { *p + 1 } else { 0 }; return x; }\nsyscall(60, f(1));\n'
+# The runtime half at 1 / 3 / 8 B, on every leg this box can run (aarch64 / cx compilers built from this tree).
+TI=tests/tcyr/crossos/if_expr_struct_deref.tcyr
+NI=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TI")
+if [ "$NI" -lt 17 ]; then bad "D10: only $NI rows in $TI (floor 17) — rows were lost"; fi
+legs="x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1"
+if command -v qemu-aarch64 > /dev/null 2>&1 && "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then
+    chmod +x "$T/cc_a64"; legs="$legs a64"
+else echo "  SKIP D10 aarch64: qemu-aarch64 or src/main_aarch64.cyr unavailable"; fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ]; then
+    chmod +x "$T/cc_cx" "$T/cxvm"; legs="$legs cx"
+else bad "D10 cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+if command -v wine > /dev/null 2>&1; then legs="$legs pe"; else echo "  SKIP D10 PE: wine not installed"; fi
+for leg in $legs; do
+    out="$T/d10.$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')"
+    rc=0
+    case "$leg" in
+        x86)   "$CC" < "$TI" > "$out" 2> /dev/null || rc=$? ;;
+        x86:*) env "${leg#x86:}" "$CC" < "$TI" > "$out" 2> /dev/null || rc=$? ;;
+        a64)   "$T/cc_a64" < "$TI" > "$out" 2> /dev/null || rc=$? ;;
+        cx)    "$T/cc_cx" < "$TI" > "$out" 2> /dev/null || rc=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 "$CC" < "$TI" > "$out.exe" 2> /dev/null || rc=$? ;;
+    esac
+    if [ "$rc" -ne 0 ]; then bad "D10 $leg: $TI did not build"; continue; fi
+    got=0
+    case "$leg" in
+        x86|x86:*) chmod +x "$out"; timeout 60 "$out" > "$out.out" 2>&1 || got=$? ;;
+        a64) chmod +x "$out"; ( cd "$T" && ulimit -c 0 && timeout 120 qemu-aarch64 "$out" ) > "$out.out" 2>&1 || got=$? ;;
+        cx)  timeout 120 "$T/cxvm" < "$out" > "$out.out" 2>&1 || got=$? ;;
+        pe)  ( cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$out.exe" ) > "$out.out" 2> /dev/null || got=$? ;;
+    esac
+    last=$(tail -1 "$out.out" | tr -d '\r')
+    if [ "$got" -eq 0 ] && [ "$last" = "$NI passed, 0 failed ($NI total)" ]; then ok "D10 $leg: $last"
+    else bad "D10 $leg: exit $got, '$last' $(grep -m2 'FAIL' "$out.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: if_expr_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: if_expr_checked — the if-expression's refusals (R) and its values (A)"
+echo "PASS: if_expr_checked — the if-expression's refusals (R) and its values (A); a struct dereference branch (D)"

@@ -61,6 +61,12 @@
 #   the tree before it (ac419c94)                          -> RED 15: R17-R25 and C1-C4 not refused, A10 42, A11 0
 #   M9a `_dst_struct` answering 0                          -> RED 15 (the same rows)
 #   M9b `_dst_struct` without the compound refusal         -> RED 4: C1-C4
+#
+# 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF IS THE STRUCT IT NAMES (issues/2026-10-14-dereference-of-address-of-struct-
+# faults.md): `*(&l) = q` of another struct is refused by name (R26), `*(&l) = v` / `*&G = v` copy the whole struct
+# (A12; through 6.7.12 one word, l.z stale), and `*(&s) OP= v` keeps 6.7.5's first-word op (A13 — not this fix's).
+# Mutations (2026-10-15, the same method): `_hl_dpsid` answering `_hl_psid` -> RED R26 A12; `_hl_dstep` ignoring the
+# `&x` arm's step -> RED R26 A12; `_dst_struct` refusing `*(&s) OP= v` too -> RED A13.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -253,6 +259,12 @@ var GT = S1{0};
 fn main(): i64 { var q: T1 = T1{7}; var p: *S1 = &GT; *p = q; return GT.x; }
 var r = main(); syscall(60, r);
 '
+# R26 (6.7.13, issues/2026-10-14-dereference-of-address-of-struct-faults.md) — `*(&l) = q`: a dereference of an
+# address-of is the struct `l` names, so a struct of another type is refused by name as `l = q` is (through 6.7.12
+# it stored q's address into l's first field).
+refuse "R26 *(&l) = q  (another struct)" "$P3Q3"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var l: P3 = P3{0,0,0}; *(&l) = q; return l.x; }
+var r = main(); syscall(60, r);
+'
 # C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
 CMSG="compound assignment to the struct"
 crefuse() {  # $1 label  $2 source
@@ -395,6 +407,21 @@ fn run(): i64 { var l: E; var p: *E = &G; return 0; }
 var rr = run();
 syscall(60, N1);
 '
+# A12 / A13 (6.7.13) — `*(&l) = v` / `*&G = v` copy the struct `l` / `G` names (through 6.7.12 one word: l.z
+# stale); `*(&s) OP= v` is not this fix's — it keeps 6.7.5's word op on the first word (the `OP=` of a
+# dereference of an address-of is not refused like `*p OP= v` through a `*S`; field_compound_values.tcyr Q4).
+accept "A12 *(&l) = v, *&G = v copy the struct" "$P3Q3"'var G: P3 = P3{0,0,0};
+fn main(): i64 { var v: P3 = P3{1,2,3}; var l: P3 = P3{0,0,0}; *(&l) = v; *&G = v; v.z = 0; return l.z * 10 + G.z; }
+var r = main(); syscall(60, r);
+' 33 "$P3Q3"'var G: P3 = P3{0,0,0};
+fn main(): i64 { var v: P3 = P3{1,2,3}; var l: P3 = P3{0,0,0}; l.z = v.z; G.z = v.z; return l.z * 10 + G.z; }
+var r = main(); syscall(60, r);
+'
+accept "A13 *(&s) += 10 keeps the first-word op" "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; *(&s) += 10; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+' 134 "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; s.x = s.x + 10; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+'
 # A7 — a SCALAR source is a different rule (a warning, since before 6.6.6) and must not have
 # been swept into the new error. Checked directly rather than through accept(): the point is
 # the absence of the refusal, and the value it stores is the pre-existing behaviour.
@@ -415,8 +442,8 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 29 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 29)"; fail=$((fail+1)); }
-[ "$naccept" -ge 11 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 11)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 30 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 30)"; fail=$((fail+1)); }
+[ "$naccept" -ge 13 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 13)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
 # and every refusal row would report "not refused", which is loud; this says why.

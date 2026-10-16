@@ -1,0 +1,260 @@
+# double_pointer_deref_step.tcyr — 6.7.13 (the user's decision D9 (a), 2026-10-15) — `*pp` of a `pp: **T` is a
+# `*T`: `*pp + n` steps n elements, `var q: *T = *pp;` is silent, and `**pp` through a narrow T (`**u8`, `**i32`)
+# reads and writes the element.
+#
+# A `**T` stepped a pointer's 8 and said nothing about its pointee, so `*pp` was an untyped word: `*(*pp + 1)`
+# read 8 bytes one BYTE past the pointee (the filed repro exited 1 on x86_64 and aarch64), `**pp` read 8 bytes
+# whatever T was, and `var q: *T = *pp;` warned "assigning non-pointer to typed pointer"
+# (issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md). The pointee's step word now rides the
+# `**T`'s (its pin, bits 56-62): a local, a parameter, a closure capture, a global, a field, a `: **T` return, a
+# generic instance's, `pp + n`, a `***T` (whose `*ppp` is a `**T`), a field `**S` of the struct being declared
+# (sized when it is dereferenced), a `**f64v2` (its `*ppv` a `*f64v2`: `rd(**ppv)` passes the pointer, D27).
+#
+# CROSS-HOST: frontend typing, but the element reads and writes are each backend's narrow loads and stores. Run
+# on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/simd.cyr"
+include "lib/assert.cyr"
+
+struct Node { val; kids: **Node; n; }
+struct H { k; pp: **i64; p8: **u8; }
+
+var GA: i64[3];
+var GP: *i64 = 0;
+
+# The filed repro's two fns, verbatim but for the names (its `main` is dp_filed).
+fn second(pp: **i64): i64 { return *(*pp + 1); }
+fn dp_filed(): i64 {
+    var a: i64[2];
+    store64(&a, 5);
+    store64(&a + 8, 42);
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var q: *i64 = *pp;          # warns: assigning non-pointer to typed pointer
+    if (*(q + 1) != 42) { return 3; }
+    if (*(*pp + 1) != 42) { return 1; }   # a `**i64` local: `*pp + 1` steps one byte
+    if (second(pp) != 42) { return 2; }   # a `**i64` parameter (6.7.11): the same
+    return 0;
+}
+
+fn gsec<T>(pp: **T): i64 { return *(*pp + 1); }
+fn sp_hi(p: *f64v2): i64 { var q = p; return load64(q + 8); }
+fn bytes_of(pp: **i64): i64 { var b = *pp + 1; var a = *pp; return b - a; }   # untyped copies: the byte distance
+
+fn r_local(): i64 {
+    var a: i64[3];
+    a[0] = 5; a[1] = 42; a[2] = 77;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    return *(*pp + 1) * 100 + *(*pp + 2) - 77 + (*pp + 2 - *pp);   # 4200 + 77 - 77 + 2
+}
+fn r_bytes(): i64 {
+    var a: i64[2];
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    return bytes_of(pp);
+}
+fn r_diff(): i64 {
+    var a: i64[4];
+    var p: *i64 = &a;
+    var p3: *i64 = p + 3;
+    var pp: **i64 = &p;
+    var qq: **i64 = &p3;
+    return *qq - *pp;
+}
+fn r_ppadd(): i64 {   # `pp + 1` keeps the pin: its dereference is still a `*i64`
+    var a: i64[3];
+    a[2] = 9;
+    var ps: i64[2];
+    store64(&ps, &a); store64(&ps + 8, &a);
+    var pp: **i64 = &ps;
+    return *(*(pp + 1) + 2);
+}
+fn r_bind(): i64 {
+    var a: i64[2];
+    a[1] = 31;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var q: *i64 = *pp;
+    q = *pp;
+    return *(q + 1);
+}
+fn r_field(): i64 {
+    var a: i64[2];
+    a[1] = 61;
+    var p: *i64 = &a;
+    var h: H;
+    h.pp = &p;
+    var hp: *H = &h;
+    return *(*h.pp + 1) + *(*hp.pp + 1);
+}
+fn r_triple(): i64 {
+    var a: i64[2];
+    a[0] = 5; a[1] = 42;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var ppp: ***i64 = &pp;
+    var x = *ppp + 1;   # a `**i64` steps a pointer's 8
+    var y = *ppp;
+    return *(**ppp + 1) * 100 + ***ppp + (x - y);   # 4200 + 5 + 8
+}
+fn r_u8(): i64 {
+    var b: u8[4];
+    b[0] = 255; b[1] = 1; b[2] = 2; b[3] = 3;
+    var p8: *u8 = &b;
+    var pp8: **u8 = &p8;
+    return **pp8 * 10 + *(*pp8 + 2);   # 2552: the element, not the word 0x030201FF
+}
+fn r_u8_store(): i64 {
+    var b: u8[4];
+    b[0] = 255; b[1] = 1; b[2] = 2; b[3] = 3;
+    var p8: *u8 = &b;
+    var pp8: **u8 = &p8;
+    **pp8 = 9;          # one byte
+    **pp8 += 1;
+    return b[0] * 1000 + b[1] * 100 + b[2] * 10 + b[3];   # 10123
+}
+fn r_i32(): i64 {
+    var e: i32[2];
+    e[0] = 0 - 5; e[1] = 7;
+    var p32: *i32 = &e;
+    var pp32: **i32 = &p32;
+    if (**pp32 != 0 - 5) { return 1; }       # sign-extended, 4 bytes
+    if (*(*pp32 + 1) != 7) { return 2; }
+    **pp32 += 3;                             # 4 bytes: e[1] untouched
+    if (e[0] != 0 - 2) { return 3; }
+    if (e[1] != 7) { return 4; }
+    return 0;
+}
+fn r_param32(pp: **i32): i64 { return *(*pp + 1); }
+fn r_p32(): i64 { var e: i32[2]; e[1] = 23; var p: *i32 = &e; return r_param32(&p); }
+fn r_closure(): i64 {
+    var a: i64[2];
+    a[1] = 47;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var c = || { return *(*pp + 1); };
+    return callptr(c);
+}
+fn r_generic(): i64 {
+    var a: i64[2];
+    a[1] = 42;
+    var p: *i64 = &a;
+    var e: i32[2];
+    e[1] = 7;
+    var p32: *i32 = &e;
+    return gsec<i64>(&p) * 10 + gsec<i32>(&p32);   # 427
+}
+fn r_node(): i64 {
+    var arr: Node[2];
+    var kids: *Node = &arr;
+    var n0: Node;
+    n0.kids = &kids;
+    var x = *n0.kids + 1;   # a Node steps sizeof(Node), 24 (8 while the field was declared)
+    var y = *n0.kids;
+    return x - y;
+}
+fn r_compound(): i64 {   # `*pp += n` steps the pointee as `*pp = *pp + n` does
+    var a: i64[4];
+    a[3] = 13;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    *pp += 3;
+    var x = *p;
+    *pp -= 2;
+    var u = p;
+    var w = &a;
+    var h: H;
+    h.pp = &p;
+    *h.pp += 1;
+    var u2 = p;
+    for (var i = 0; i < 1; *pp -= 1) { i = i + 1; }
+    var u3 = p;
+    return x * 1000 + (u - w) * 10 + (u2 - w) / 8 + (u3 - w);   # 13000 + 80 + 2 + 8
+}
+fn r_ifexpr(): i64 {
+    var a: i64[3];
+    a[2] = 22;
+    var p: *i64 = &a;
+    var pp: **i64 = &p;
+    var qq: **i64 = &p;
+    var c = 1;
+    return *(if (c == 1) { *pp } else { *qq } + 2);
+}
+struct Bx<T> { v: T; w: T; }
+fn r_box(): i64 {
+    var bs: Bx<i32>[3];
+    var p: *Bx<i32> = &bs;
+    var pp: **Bx<i32> = &p;
+    var x = *pp + 1;   # sizeof(Bx<i32>), 8
+    var y = *pp;
+    return x - y;
+}
+fn r_f32(): i64 {
+    var f: f32[2];
+    store32(&f, 0x40200000);   # 2.5
+    var p: *f32 = &f;
+    var pp: **f32 = &p;
+    var one: f32 = 1.0;
+    var g: f32 = **pp + one;   # an f32 add: 3.5
+    return load32(&g);
+}
+fn r_vec(): i64 {
+    var two: f64v2[2];
+    var pt: *f64v2 = &two;
+    var ppt: **f64v2 = &pt;
+    var x = *ppt + 1;   # 16
+    var y = *ppt;
+    var b: f64v2 = f64v2_make(11, 22);
+    var pb: *f64v2 = &b;
+    var ppb: **f64v2 = &pb;
+    var q: *f64v2 = *ppb;
+    return (x - y) * 100 + sp_hi(**ppb) - load64(q);   # 1600 + 22 - 11
+}
+
+GP = &GA;
+GA[0] = 3; GA[1] = 4; GA[2] = 5;
+# A `**T` global past the first statement (a declaration-zone one does not parse yet: issues/2026-10-14-declaration-
+# zone-pointer-annotation-replay-reads-one-star.md, placed 6.7.14).
+var GPP: **i64 = &GP;
+var GPPP: ***i64 = &GPP;
+var TQ = *(*GPP + 2);   # top level: a `**i64` global
+var TQ2: *i64 = *GPP;   # silent
+*GPP += 2;              # top level: steps 16 bytes
+var TQ3 = **GPP;
+*GPP -= 2;
+fn gpp(): **i64 { return GPP; }
+fn r_global(): i64 { var q: *i64 = *GPP; return *(*GPP + 1) * 10 + *(q + 2); }
+fn r_ret(): i64 { return *(*gpp() + 2); }
+fn r_gtriple(): i64 { return *(**GPPP + 1); }
+
+assert_eq(dp_filed(), 0, "the filed repro: *(*pp + 1) and second(pp) read the second element (it exited 1)");
+assert_eq(r_local(), 4202, "a **i64 local: *pp + 1 / + 2 step elements, *pp + 2 - *pp is 2");
+assert_eq(r_bytes(), 8, "untyped copies of *pp + 1 and *pp are 8 bytes apart");
+assert_eq(r_diff(), 3, "*qq - *pp of two **i64 is an element count");
+assert_eq(r_ppadd(), 9, "pp + 1 keeps the pointee: *(*(pp + 1) + 2)");
+assert_eq(r_bind(), 31, "var q: *i64 = *pp; q = *pp;");
+assert_eq(r_global(), 45, "a **i64 global: *(*GPP + 1), var q: *i64 = *GPP");
+assert_eq(TQ, 5, "a **i64 global at top level");
+assert_eq(*(TQ2 + 1), 4, "var TQ2: *i64 = *GPP; at top level");
+assert_eq(TQ3, 5, "*GPP += 2 at top level steps two elements");
+assert_eq(r_field(), 122, "a **i64 field, through a struct and a *H");
+assert_eq(r_ret(), 5, "a : **i64 return: *(*gpp() + 2)");
+assert_eq(r_triple(), 4213, "a ***i64: **ppp is a *i64, *ppp a **i64 (steps 8), ***ppp the element");
+assert_eq(r_gtriple(), 4, "a ***i64 global");
+assert_eq(r_u8(), 2552, "**pp through a **u8 reads one byte; *(*pp8 + 2) steps bytes");
+assert_eq(r_u8_store(), 10123, "**pp8 = 9 and **pp8 += 1 write one byte");
+assert_eq(r_i32(), 0, "**pp through a **i32: 4 bytes sign-extended, += at 4 bytes");
+assert_eq(r_p32(), 23, "a **i32 parameter: *(*pp + 1) steps 4");
+assert_eq(r_closure(), 47, "a captured **i64");
+assert_eq(r_generic(), 427, "a generic fn's **T at i64 and i32");
+assert_eq(r_node(), 24, "a **Node field of Node itself: *n.kids + 1 steps the whole struct");
+assert_eq(r_compound(), 13090, "*pp += 3 / -= 2, *h.pp += 1 and a for step's *pp -= 1 step elements");
+assert_eq(r_ifexpr(), 22, "an if-expression of two *pp branches is the *i64");
+assert_eq(r_box(), 8, "a **Bx<i32>: *pp + 1 steps the instance's size");
+assert_eq(r_f32(), 0x40600000, "**pp through a **f32 is the f32 element: **pp + one is an f32 add");
+assert_eq(r_vec(), 1611, "a **f64v2: *ppt + 1 steps 16, var q: *f64v2 = *ppb, sp_hi(**ppb) passes the pointer");
+var r = assert_summary();

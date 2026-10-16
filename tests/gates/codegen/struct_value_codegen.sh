@@ -236,7 +236,7 @@
 #   M-R2 `_pair_ret_call_ok` without its `_call_ends_at` test   -> RED R16-R22 (BUILT); R23-R26 green
 #   M-MP1 `_method_chain` without its `_mchain_ptr` arm (= the tree before) -> RED MP1 MP2 (refused 'it does not
 #       return a struct'), MP3 (refused, but as 'it does not return a struct'), A1-A7 (the values file does not build:
-#       tcyr MP1-MP16); MP4 MP5 green
+#       tcyr MP1-MP16); MP4 MP5 green  [MP3 is an acceptance since 6.7.13 (D8 (a)): refused there by any message]
 #   M-PE1 `_spi_src` without its `_spi_pcall` arm (= the tree before) -> RED PE1 (unexpected '}'), PE2 (refused, but
 #       as unexpected '}'), PE3 (2 error lines), PE4 (BUILT: 65), PE5 (unexpected '}'), PE6, A1-A7 (the values file
 #       does not build: tcyr Q31-Q41)
@@ -494,12 +494,13 @@ exits r26 141 "R26: var k = p.x; return mk2(k); (a tail call after a statement) 
 # MP (6.7.11, issues/archived/2026-10-10-field-of-method-pointer-result-refused.md; the user's decision (a), 2026-10-13) a
 # METHOD's `*T` result takes `.field` / `.m(..)` / a deeper chain, as a free call's has since 6.6.17 — it was "cannot
 # take a field of the result of 'H_get': it does not return a struct" (`_mchain_ptr`; the values file's MP rows, in
-# a fn, at top level, through a dyn and a generic method, on A1-A7). The store through it stays refused, now as the
-# free call's is (the 6.7.12 store issue); a method returning no struct and no `*T` keeps its refusal.
+# a fn, at top level, through a dyn and a generic method, on A1-A7). 6.7.13 (the user's decision D8 (a), 2026-10-15): the
+# store through it writes the pointee, as the free call's does (issues/2026-10-08-field-store-through-pointer-returning-
+# call-refused.md; it was refused "the result is a temporary"); a method returning no struct and no `*T` keeps its refusal.
 MPH='struct P { a; b; }\nstruct H { p: *P; }\n'
 exits_file mp1 44 "MP1: var y = h.get().b; (the filed repro, verbatim: refused)" docs/development/issues/repros/2026-10-10-field-of-method-pointer-result-refused.cyr
 exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.get().b * 10 + h.get().a; }\nimpl H { fn get(self): *P { return self.p; } }$E"
-refused mp3 'cannot assign to a field of a call result: the result is a temporary' "MP3: h.get().b = 5; stays refused, as get2(&h).b = 5; is (6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
+exits mp3 5 "MP3: h.get().b = 5; stores through the method's *P result (6.7.13 D8 (a); refused through 6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
 refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
 refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
 # PE (6.7.11, issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision

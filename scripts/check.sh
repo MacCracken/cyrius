@@ -1279,6 +1279,22 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_arg_type_refused.sh"
 # mutation-proven (ledger in header). The runtime half: struct_ptrmode_return_copy.tcyr (crossos).
 _chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
 
+# 6.7.13 (the struct lane, the user's decision D7 (1), 2026-10-15): an INLINE `Str` (`Str { .. }`) is its
+# header's address wherever a `Str` value is taken — a `Str` parameter, `var h: Str = t;` /
+# `var h = t;` (a handle bound to t's header) and `h = t` into a handle; through 6.7.12 each took the
+# `data` word as the header (the filed `f(t)` exited 0 where 7 is right, on every target). `return t;`
+# from a fn returning `Str` and a store into a `Str` global, field or through a `*Str` are refused by
+# name (the header would dangle); a global's or a capture's is not. The filed repro and the crossos
+# values file on every leg, the refusals on four compilers, mutation-proven (ledger in header).
+_chk_gate "$ROOT/tests/gates/frontend/inline_str_value.sh"
+
+# 6.7.13 (the struct lane, the user's decision D8 (a), 2026-10-15): a field of a `: *T` call's result is an
+# lvalue — `gp().n = 5;`, `gp().m += 5;` (the address once), `gp().h.n = 5;`, `gpg<H>().n = 5;` and a
+# method's `o.gp().n = 5;` store through the returned pointer; through 6.7.12 each was refused "the result
+# is a temporary", which a struct returned by value keeps. The filed repro and the crossos values file on
+# every leg, the by-value refusals on four compilers, mutation-proven (ledger in header).
+_chk_gate "$ROOT/tests/gates/frontend/call_ptr_field_store.sh"
+
 # 6.6.12 (B04, R3): a `.field` on a CALL RESULT is refused by name wherever it cannot compile — at
 # top level for every return class (no frame to hold the result; each the only error, including
 # the leading declaration block and a struct-typed initialiser), on a callee that returns no
@@ -2550,6 +2566,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.13 (D3 (b)) — `&x.f`, the address of a struct field, is refused by name once (it failed to parse with no
+# word of why: "expected ')', got '.'"), its steps consumed so the parse stays in step; `&E.V`, `&o`, `&o + 8` stay.
+_chk_gate "$ROOT/tests/gates/frontend/address_of_field_refused.sh"
 # 6.7.8 (C2-1b) — a slice read `s[i]` is a whole value as a left operand: a constant index armed the
 # constant folder (`return s[0] + 10;` exited 134, `s[1] * 2` SIGSEGV'd), a `*T` / struct index left
 # its step / type. x86 (plain, IR=1, IR=3, DCE=1), aarch64, cx, PE legs; mutation ledger in the header.

@@ -13,6 +13,8 @@
 #   A  unknown struct field type               -> refused, names the type and the field
 #   B  unknown union field type                -> refused by name
 #   C  a struct declared BELOW its field use   -> "declare it before 'A'" (struct and union)
+#   C3 (6.7.13) a bare `Vec` field whose own `struct Vec` / `union Vec` is declared BELOW it -> C's
+#      refusal (it was silently the 8-byte handle; D10 (b)); above it the struct, none the handle
 #   D  Vec<Unknown> element                    -> refused by name
 #   E  i16v8 / f64v2 as a field type           -> refused as a vector type
 #   F  `i8x` (a scalar-name prefix)            -> refused by name
@@ -46,9 +48,10 @@
 #      target: the same four errors
 #
 # Mutations: make `_refuse_field_type` return without reporting -> A-G RED (rc 0). Drop the
-# `_declared_later` arm -> C RED (refused as "unknown"). Drop `_field_scalar_width` from the
+# `_declared_later` arm -> C RED (refused as "unknown"). `_bare_vec_field` without its refusal (6.7.13) ->
+# C3's four refusal rows and the vb-vq row RED (vb prints 16, vu 8: built; measured). Drop `_field_scalar_width` from the
 # ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error). Drop the
-# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139). Make `_fsc_src`
+# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139); `_bare_vec_field`'s (6.7.13) -> j4 / j5 RED. Make `_fsc_src`
 # (parse_decl.cyr) return 0 -> K RED (rc 0).
 # V (6.7.11; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run from that copy
 # with CYCC= it, 2026-10-14; each measured):
@@ -96,6 +99,48 @@ refused c1 "struct field type 'B' is declared after its use; declare it before '
 printf 'union A { b: B; x: i64; }\nunion B { p; q; }\nsyscall(60, sizeof(A));\n' > "$T/c2.cyr"
 refused c2 "struct field type 'B' is declared after its use; declare it before 'A'" "C: a union field type declared below"
 
+# C3 (6.7.13, D10 (b), the user 2026-10-15; issues/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md):
+# a bare `Vec` field follows C's rule. With the file's own `struct Vec` / `union Vec` declared BELOW
+# the field it was silently lib's 8-byte handle (16 B for the filed Ray, 48 B with the same struct Vec
+# above it); it is refused with C's words — one error per field, no binary. Declared above it is
+# that struct; with no Vec of the file's own, the handle. The filed script's three files verbatim.
+PZ='fn pz(n): i64 { var d[24]; var i = 22; store8(&d + 23, 10); if (n == 0) { store8(&d + i, 48); i = i - 1; } while (n > 0) { store8(&d + i, 48 + n % 10); n = n / 10; i = i - 1; } syscall(1, 1, &d + i + 1, 23 - i); return 0; }'
+printf '%s\n' 'struct Vec { x; y; z; }' 'struct Ray { o: Vec; d: Vec; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/va.cyr"
+printf '%s\n' 'struct Ray { o: Vec; d: Vec; }' 'struct Vec { x; y; z; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vb.cyr"
+printf '%s\n' 'struct Ray { o: Q; d: Q; }' 'struct Q { x; y; z; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vq.cyr"
+printf '%s\n' 'struct Ray { o: Vec; d: Vec; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vn.cyr"
+printf '%s\n' 'union Ray { o: Vec; d: Vec; }' 'struct Vec { x; y; z; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vu.cyr"
+printf '%s\n' 'struct Vec { x; y; z; }' 'union Ray { o: Vec; d: Vec; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vua.cyr"
+printf '%s\n' 'union Ray { o: Vec; d: Vec; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vun.cyr"
+printf '%s\n' 'struct Ray { o: Vec; n; }' 'union Vec { x; y; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vbu.cyr"
+printf '%s\n' 'struct W<T> { o: Vec; d: T; }' 'struct Vec { x; y; z; }' "$PZ" 'pz(sizeof(W<i64>));' 'syscall(60, 0);' > "$T/vbg.cyr"
+printf '%s\n' 'struct Ray { o: Vec; d: Vec<i64>; }' 'enum Vec { VA; }' "$PZ" 'pz(sizeof(Ray));' 'syscall(60, 0);' > "$T/vnf.cyr"
+prints() {   # <name> <want> <what>: builds, prints <want>, exits 0
+    build "$1"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; out=$("$T/$1.bin") || got=$?
+    if [ "$got" -eq 0 ] && [ "$out" = "$2" ]; then ok "$3: prints $out"; else bad "$3: prints '$out' exit $got, want $2"; fi
+}
+vbelow() {   # <name> <struct name> <errors> <what>: refused by name, <errors> error lines, no binary
+    build "$1"
+    n=$(grep -c '^error' "$T/$1.err")
+    m=$(grep -c "^error:.*struct field type 'Vec' is declared after its use; declare it before '$2'" "$T/$1.err")
+    if [ "$rc" -ne 0 ] && [ "$n" -eq "$3" ] && [ "$m" -eq "$3" ] && [ ! -s "$T/$1.bin" ]; then ok "$4: refused by name ($n error(s)), no binary"
+    else bad "$4: rc $rc, $n error(s) ($m by name), binary $(wc -c < "$T/$1.bin") B: $(grep '^error' "$T/$1.err" | head -1)"; fi
+}
+prints va 48 "C3: the filed va (struct Vec above Ray): two 24 B fields"
+vbelow vb Ray 2 "C3: the filed vb (struct Vec below Ray; it printed 16)"
+refused vq "struct field type 'Q' is declared after its use; declare it before 'Ray'" "C3: the filed vq (any other name below) unchanged"
+if [ "$(grep -c '^error' "$T/vq.err")" -eq "$(grep -c '^error' "$T/vb.err")" ]; then ok "C3: vb and vq report alike (one error per field)"
+else bad "C3: vb $(grep -c '^error' "$T/vb.err") error(s), vq $(grep -c '^error' "$T/vq.err")"; fi
+prints vn 16 "C3: no struct Vec of the file's own: two 8 B handles"
+vbelow vu Ray 2 "C3: a union's bare Vec, struct Vec below (it printed 8)"
+prints vua 24 "C3: a union's bare Vec, struct Vec above: the 24 B struct"
+prints vun 8 "C3: a union's bare Vec, no Vec of the file's own: the 8 B handle"
+vbelow vbu Ray 1 "C3: a \`union Vec\` declared below a struct's bare Vec"
+vbelow vbg W 1 "C3: a generic struct's bare Vec, struct Vec below"
+prints vnf 16 "C3: an enum Vec below is no struct Vec: the handle"
+
 printf 'struct X { v: Vec<Nope>; }\nsyscall(60, sizeof(X));\n' > "$T/d.cyr"
 refused d "unknown type 'Nope' for struct field 'v'" "D: Vec<unknown> element"
 
@@ -139,6 +184,12 @@ printf 'struct Node { next: Node; val; }\nsyscall(60, sizeof(Node));\n' > "$T/j1
 refused j1 "field 'next' makes a struct contain itself: 'Node'" "J: a struct containing itself"
 printf 'union UN { next: UN; val; }\nsyscall(60, sizeof(UN));\n' > "$T/j2.cyr"
 refused j2 "field 'next' makes a struct contain itself: 'UN'" "J: a union containing itself"
+# 6.7.13: a bare `Vec` field of the file's own `struct Vec` / `union Vec` (its own arm, `_bare_vec_field`)
+# SIGSEGV'd the compiler (rc 139) the same way
+printf 'struct Vec { x; v: Vec; }\nsyscall(60, sizeof(Vec));\n' > "$T/j4.cyr"
+refused j4 "field 'v' makes a struct contain itself: 'Vec'" "J: a struct Vec containing a bare Vec"
+printf 'union Vec { x; v: Vec; }\nsyscall(60, sizeof(Vec));\n' > "$T/j5.cyr"
+refused j5 "field 'v' makes a struct contain itself: 'Vec'" "J: a union Vec containing a bare Vec"
 printf 'struct Tree { kids: Vec<Tree>; val; }\nsyscall(60, sizeof(Tree));\n' > "$T/j3.cyr"
 exits j3 16 "J: Vec<Self> (a handle) still builds"
 

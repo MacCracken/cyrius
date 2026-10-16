@@ -60,7 +60,8 @@ impl S0 {
     fn put(self, l: S0): i64 { *self = l; return 0; }
     fn putp(self: *S0, l: S0): i64 { *self = l; return 0; }
 }
-fn S0_add(l: S0, r: S0): S0 { var t: S0;  return t; }
+var ZHIT0 = 0;
+fn S0_add(l: S0, r: S0): S0 { var t: S0; ZHIT0 = ZHIT0 + 1; return t; }
 fn c0(): i64 { var r = val0(&GT0) + (GZ0 != 99) * 1000000000; zero0(&GT0); return r; }
 fn d0_l(): i64 { var p: *S0 = &GT0; var l = S0 { }; *p = l; zero0(&l); return c0(); }
 fn d0_byv(l: S0): i64 { var p: *S0 = &GT0; *p = l; zero0(&l); return c0(); }
@@ -93,6 +94,31 @@ fn d0_for(): i64 {
     zero0(&l);
     return c0();
 }
+
+# ── 6.7.13: a zero-size struct into a struct-typed FIELD, and a zero-size `*p` as a VALUE, move no byte
+# (issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md). Through 6.7.12 `o.s = GP`,
+# `o.s = gp()`, `o.s = (GP)`, `o.s = mk()` and `o.s = 5` stored an 8-byte word over the field's neighbour (0 where
+# 77 is right), and `*p` as a value loaded the word at p — 8 bytes past the object: `tw0(*p)` saw the guard byte
+# after GT0 (99), `bp0(*p)` into a `*S0` parameter got that word as the pointer, `*p + l` did not dispatch
+# (a SIGSEGV at the end of a mapping: tests/gates/codegen/small_struct_handle_line.sh PZ). Now the word is 0, the
+# pointer p, and `S0_add` is called, as at every other size.
+struct OZ0 { s: S0; n; }
+fn tw0(e: S0): i64 { return load64(&e); }
+fn bp0(q: *S0): i64 { if (q == &GT0) { return 1; } return 0; }
+fn z0_fg(): i64 { var o: OZ0; o.n = 77; o.s = GP0; return o.n; }
+fn z0_fc(): i64 { var o: OZ0; o.n = 77; o.s = gp0(); return o.n; }
+fn z0_fw(): i64 { var o: OZ0; o.n = 77; o.s = (GP0); return o.n; }
+fn z0_fm(): i64 { var o: OZ0; o.n = 77; o.s = mk0(); return o.n; }
+fn z0_f5(): i64 { var o: OZ0; o.n = 77; o.s = 5; return o.n; }
+fn z0_fq(): i64 { var o: OZ0; o.n = 77; var q: *S0 = &GT0; o.s = q; return o.n; }
+fn z0_fd(): i64 { var o: OZ0; o.n = 77; o.s = *GP0; return o.n; }
+fn z0_po(): i64 { var b = OZ0 { 77 }; var o: *OZ0 = &b; o.s = gp0(); o.s = mk0(); return b.n; }
+fn z0_tw(): i64 { var p: *S0 = &GT0; return tw0(*p); }
+fn z0_tp(): i64 { var p: *S0 = &GT0; return tw0((*p)); }
+fn z0_tc(): i64 { return tw0(*gp0()); }
+fn z0_l(): i64 { var p: *S0 = &GT0; var a = 77; var l: S0 = *p; var b = 77; return a + b - 77 + tw0(l) * 0; }
+fn z0_bp(): i64 { var p: *S0 = &GT0; return bp0(*p); }
+fn z0_op(): i64 { var p: *S0 = &GT0; var l = S0 { }; ZHIT0 = 0; var r: S0 = *p + l; return ZHIT0; }
 
 # ── 3 B ──
 struct S3 { a: u8; b: u8; c: u8; }
@@ -516,6 +542,18 @@ fn dH_q(): i64 { var p: *SH = &GTH; var x = SH { 1, 2 }; var q: *SH = &x; *p = q
 fn dH_h(): i64 { var p: *SH = &GTH; var x = SH { 1, 2 }; var h: SH = &x; *p = h; zeroH(&x); return cH(); }
 fn dH_gq(): i64 { var p: *SH = &GTH; *p = GQH; zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
 fn dH_cq(): i64 { var p: *SH = &GTH; *p = gqH(); zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
+# 6.7.13 (D11 (a), the user 2026-10-15): the reading kept — an untyped value is the struct's word, at most 8
+# bytes; a struct over 8 B keeps the rest. The filed repro verbatim (its `main` as dw_main):
+# issues/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md — 72 (70 would be the
+# zero-extended reading the user declined).
+struct S { a; b; }
+fn dw_main(): i64 {
+    var s = S { 1, 2 };
+    var p: *S = &s;
+    *p = 7;
+    return s.a * 10 + s.b;
+}
+fn dw_zero(): i64 { var s = S { 1, 2 }; var p: *S = &s; *p = 0; return s.a * 10 + s.b; }
 fn dH_ut(): i64 { var p: *SH = &GTH; fillee(&GTH, 16); var x = UW; *p = x; var r = ub(&GTH, 16, 99); zeroH(&GTH); return r; }
 fn dH_loc(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; var l = SH { 1, 2 }; *p = l; zeroH(&l); return valH(p) + (o.g != 99) * 1000000000; }
 fn dH_locc(): i64 { var o = OH { 0, 0, 99 }; var p: *SH = &o; *p = mkH(); return valH(p) + (o.g != 99) * 1000000000; }
@@ -936,6 +974,22 @@ var txT = UW;
 var RTu = ub(&TTT, 24, 99);
 zeroT(&TTT);
 
+var GOZ = OZ0 { 77 };
+GOZ.s = GP0;
+var Z0a = GOZ.n;
+GOZ.s = gp0();
+var Z0b = GOZ.n;
+GOZ.s = (GP0);
+var Z0c = GOZ.n;
+GOZ.s = mk0();
+var Z0d = GOZ.n;
+GOZ.s = 5;
+var Z0e = GOZ.n;
+var Z0f = tw0(*GP0);
+var Z0g = tw0((*GP0));
+var Z0h = bp0(*GP0);
+var Z0l: S0 = *GP0;
+
 var v0 = S0 { };
 assert_eq(d0_l(), 0, "0 B: *p = l (the guard after the struct kept)");
 assert_eq(d0_byv(v0), 0, "0 B: *p = l from a by-value parameter");
@@ -1224,6 +1278,8 @@ assert_eq(dH_loc(), 12, "16 B: *p = l into a struct inside a local (its next fie
 assert_eq(dH_locc(), 12, "16 B: *p = mk() into a struct inside a local");
 assert_eq(dH_locd(), 12, "16 B: *p = *q into a struct inside a local");
 assert_eq(dH_locu(), 1, "16 B: *p = x (untyped) into a struct inside a local");
+assert_eq(dw_main(), 72, "16 B: the filed *p = 7 (D11 (a)): the word into a, b kept");
+assert_eq(dw_zero(), 2, "16 B: *p = 0 (D11 (a)): a cleared, b kept");
 assert_eq(dH_P(), 12, "16 B: *GP = l (a *S global operand)");
 assert_eq(dH_ar(), 12, "16 B: *(p + 0) = l");
 assert_eq(dH_cl(), 12, "16 B: *gp() = l");
@@ -1268,4 +1324,27 @@ assert_eq(RTb, 123, "24 B: top level, *P = W.s");
 assert_eq(RTc, 123, "24 B: top level, *P = *Q");
 assert_eq(RTd, 123, "24 B: top level, *P = Q (a *S global: copied, P kept)");
 assert_eq(RTu, 1, "24 B: top level, *P = x (untyped), byte-exact");
+assert_eq(z0_fg(), 77, "0 B: o.s = GP (a *S global) into a field: its neighbour untouched");
+assert_eq(z0_fc(), 77, "0 B: o.s = gp() (a : *S call) into a field");
+assert_eq(z0_fw(), 77, "0 B: o.s = (GP) into a field");
+assert_eq(z0_fm(), 77, "0 B: o.s = mk() (a by-value call result) into a field");
+assert_eq(z0_f5(), 77, "0 B: o.s = 5 (an untyped value) into a field: no byte stored");
+assert_eq(z0_fq(), 77, "0 B: o.s = q (a *S local) into a field (the control)");
+assert_eq(z0_fd(), 77, "0 B: o.s = *GP into a field (the control)");
+assert_eq(z0_po(), 77, "0 B: o.s = gp(), o.s = mk() through a *O");
+assert_eq(z0_tw(), 0, "0 B: f(*p) into a by-value parameter: no byte read, its word 0");
+assert_eq(z0_tp(), 0, "0 B: f((*p))");
+assert_eq(z0_tc(), 0, "0 B: f(*gp())");
+assert_eq(z0_l(), 77, "0 B: var l: S0 = *p: no byte moved");
+assert_eq(z0_bp(), 1, "0 B: f(*p) into a *S parameter: the pointer p");
+assert_eq(z0_op(), 1, "0 B: *p + l: S0_add dispatched");
+assert_eq(Z0a, 77, "0 B: top level, G.s = GP into a field");
+assert_eq(Z0b, 77, "0 B: top level, G.s = gp()");
+assert_eq(Z0c, 77, "0 B: top level, G.s = (GP)");
+assert_eq(Z0d, 77, "0 B: top level, G.s = mk()");
+assert_eq(Z0e, 77, "0 B: top level, G.s = 5");
+assert_eq(Z0f, 0, "0 B: top level, f(*GP): its word 0");
+assert_eq(Z0g, 0, "0 B: top level, f((*GP))");
+assert_eq(Z0h, 1, "0 B: top level, f(*GP) into a *S parameter: the pointer");
+assert_eq(TZ0, 99, "0 B: top level, var G: S0 = *GP: the guard after the object untouched");
 var r = assert_summary();

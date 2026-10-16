@@ -1841,12 +1841,18 @@ fn _pptr_param(S, fi, k): i64 {
 # pushed `&b` by accident, 42): a vector is no `*Pt`, as a struct of another type is no `*S` (6.7.3). The
 # name `noff` as an argument of `fi`; 0 (the value push keeps the parse in step, no binary is written).
 fn _vec_kind_err(S, noff, fi): i64 {
+    return _agg_kind_err(S, noff, fi, "vector");
+}
+# ... `kind` "vector" or "struct" (6.7.13 D5 (a), `_sarg_struct_other`).
+fn _agg_kind_err(S, noff, fi, kind): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("' to a parameter that is not a pointer to its vector type in a call to '");
+    PRSTR("' to a parameter that is not a pointer to its ");
+    PRSTR(kind);
+    PRSTR(" type in a call to '");
     PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
     PRSTR("' - pass &");
     PRSTR(S + 0xEC00000 + noff);
@@ -1860,18 +1866,8 @@ fn _vec_kind_err(S, noff, fi): i64 {
 # Nothing is consumed.
 fn _sarg_vec_other(S, fi, argc): i64 {
     if (GINFN(S) != 1) { return 0; }
-    var ti = GTI(S);
-    if (TOKTYP(S, ti) == 10) {
-        var k = _pwrap_k(S, ti);
-        var e = TOKTYP(S, _pw_end);
-        if (e != 31) { if (e != 11) { return 0; } }
-        ti = ti + k;
-        if (TOKTYP(S, ti + 1) != 11) { return 0; }
-    } else {
-        var nx = TOKTYP(S, ti + 1);
-        if (nx != 31) { if (nx != 11) { return 0; } }
-    }
-    if (TOKTYP(S, ti) != 2) { return 0; }
+    var ti = _sarg_wname(S);
+    if (ti < 0) { return 0; }
     var li = FINDLOCAL(S, TOKVAL(S, ti));
     if (li < 0) { return 0; }
     if (_is_simd_any(S, GLTYPE(S, li)) == 0) { return 0; }
@@ -1879,6 +1875,46 @@ fn _sarg_vec_other(S, fi, argc): i64 {
     var sv = GTI(S);
     STI(S, ti);
     _vec_kind_err(S, TOKVAL(S, ti), fi);
+    STI(S, sv);
+    return 1;
+}
+# The name token of a whole argument at the cursor that is one name, inside any parentheses that wrap all of
+# it, ending at `,` / `)`; -1 for any other shape.
+fn _sarg_wname(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        var e = TOKTYP(S, _pw_end);
+        if (e != 31) { if (e != 11) { return 0 - 1; } }
+        ti = ti + k;
+        if (TOKTYP(S, ti + 1) != 11) { return 0 - 1; }
+    } else {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    }
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    return ti;
+}
+# ⛔ 6.7.13 — A STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (the user's decision D5 (a),
+# 2026-10-15). `ri(s)` with `p: *i64` (`*u8`, `*f64`, `**T`, any `*T` whose T is no struct) and `s` an inline
+# struct — a local, a by-value parameter, a value global, a closure's captured copy, any size — pushed s's
+# first word as the address (139 on x86_64 / aarch64, a cx guest fault, exit 5 on PE): a struct is no `*i64`,
+# as a vector is not (D27) and a struct of another type is no `*S` (6.7.3). The whole argument at the cursor
+# (`_sarg_wname`) to parameter `argc` of `fi`, a pointer (`_pptr_param`) that is not address-passed (the
+# caller, `_sarg_byval_small`) and records no struct (a `*Str` is the struct check's, 6.7.3). The name is an
+# inline struct as `&` reads one (`_hl_amp_sid`): a handle, a `*T` and a `Str` (their word is the address)
+# pass as before. 1 = refused: nothing consumed, the value push keeps the parse in step, no binary is
+# written. CHANGELOG [6.7.13]
+fn _sarg_struct_other(S, fi, argc): i64 {
+    var ti = _sarg_wname(S);
+    if (ti < 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_hl_amp_sid(S, noff) <= 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    if (GFPSID(S, fi, argc) > 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _agg_kind_err(S, noff, fi, "struct");
     STI(S, sv);
     return 1;
 }
@@ -2312,7 +2348,9 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
 # POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
-    _sarg_vec_other(S, fi, argc);   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
+    if (_sarg_vec_other(S, fi, argc) == 0) {   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
+        _sarg_struct_other(S, fi, argc);       # 6.7.13 (D5 (a)): ... and a struct value
+    }
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
@@ -2321,6 +2359,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
     _sarg_type_err(S, fi, argc, asid, _ess_nm);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
+    else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
     EPUSHR(S);
     return 1;
 }
@@ -2387,7 +2426,7 @@ fn _ess_wrap(S, st): i64 {
 # compiled and passed U8's bytes (the user's decision, 2026-10-13: refuse by name; `take8(pu)` keeps the
 # 2026-10-08 pointer rule). After the argument's parse, [st, cursor) is one `* E` inside any balanced
 # parentheses, nothing after it (`*pu + a` is an operator's operand), E typed `*U` by the compiler's own
-# typing (`_hl_psid`): U, `_ess_nm` the operand's last name (`*gp()` -> `gp`, `*w.pu` -> `pu`); else 0.
+# typing (`_hl_dpsid`): U, `_ess_nm` the operand's last name (`*gp()` -> `gp`, `*w.pu` -> `pu`); else 0.
 # Reads tokens only: the emission is unchanged. CHANGELOG [6.7.11]
 fn _ess_deref(S, st): i64 {
     var a = _ie_unparen(S, st, GTI(S));
@@ -2395,7 +2434,7 @@ fn _ess_deref(S, st): i64 {
     if (pe - a < 2) { return 0; }
     if (TOKTYP(S, a) != 8) { return 0; }
     if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
-    var u = _hl_psid(S, a + 1, pe);
+    var u = _hl_dpsid(S, a + 1, pe);
     if (u <= 0) { return 0; }
     _ess_nm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));   # 6.7.11: `*gu<U>()` names `gu`
     return u;
@@ -2729,6 +2768,13 @@ fn _ret_struct_pair(S): i64 {
 # name; else the value is parsed, its pointer parked (`_HTEMP`) and S's bytes copied through it into a frame
 # temp — returned, the cursor on `_ret_term`. -1 = not this shape (cursor kept). Never inside an inline
 # replay, as `_ret_small_cls`. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — `return &s;` IS `return s;` (the user's decision D4 (a), 2026-10-15): the value is typed by the
+# dereference operand typer (`_hl_dpsid`), so `& IDENT` of an inline struct — a local, a by-value parameter,
+# a value global, a captured copy — is the struct it points at, as `bs(&s)` into a by-value parameter is
+# (6.7.10 decision 7): over 8 B it was refused in other words ("... two registers ...", "return must be a
+# bare local identifier ..."), at 8 B or less (`_ret_small_ptr`) the ADDRESS of a dead frame was the
+# struct's word. `&u` of another struct is refused by name (kind 3). A handle's / `*T`'s `&h` is its slot,
+# untyped here. CHANGELOG [6.7.13]
 fn _ret_ptr_src(S): i64 {
     if (GIDEP(S) != 0) { return 0 - 1; }
     if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0 - 1; }   # a dyn / tuple / Str fn: its own arms
@@ -2743,11 +2789,26 @@ fn _ret_ptr_src(S): i64 {
     if (e < 0) { return 0 - 1; }
     var a = _ie_unparen(S, st, e);
     var pe = _ie_pe;
-    var ps = _hl_psid(S, a, pe);
+    var af = _ret_addr_field(S, a);   # 6.7.13 (D3 (b)): `&w.s`, refused once
+    if (af >= 0) { return af; }
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
-    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, 1); }
+    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    PCMPE(S);
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return _ret_ptr_copy(S, h);
+}
+# `return &w.s;` (`a` the value's `&`, a `.` two tokens on): the address of a field, which D3 (b) refuses by
+# name — parsed here (`_addr_field_post`: once, the parse in step), so the pair class's "two registers" and the
+# retptr class's "bare local identifier" refusals never run beside it or in its place (8 B and less parse it in
+# PCMPE already). Handled as a pointer value; no binary follows the error. -1 = not this shape. CHANGELOG [6.7.13]
+fn _ret_addr_field(S, a): i64 {
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (TOKTYP(S, a + 2) != 41) { return 0 - 1; }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
@@ -2894,18 +2955,21 @@ fn _ret_expr_sid(S, st): i64 {
 # (`_hl_psid`) — a `*X` local or parameter, and (6.7.11, issues/2026-10-13-small-struct-return-of-pointer-
 # global-or-call-decision.md) a `*X` global, a call or method declared `: *X`, a `*X` field, pointer
 # arithmetic on one: rax (the pointer) becomes S read through it; X another struct is refused by name.
+# 6.7.13 (D4 (a)): and `& IDENT` of an inline struct (`_hl_dpsid`) — see `_ret_ptr_src`. CHANGELOG [6.7.13]
 fn _ret_small_ptr(S, st): i64 {
     var a = _ie_unparen(S, st, GTI(S));
     var pe = _ie_pe;
-    var ps = _hl_psid(S, a, pe);
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, 1); }
-    _hl_pval_ra(S, ps, 1);
+    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    _hl_pval_ra(S, ps);
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
-# `*U8`)), 2 a dereference (`*pu` (a `U8`)). Reported at token `ti`; the parse goes on (no cascade).
+# `*U8`)), 2 a dereference (`*pu` (a `U8`)), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
+# token `ti`; the parse goes on (no cascade).
 fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -2914,9 +2978,10 @@ fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
+    if (kind == 3) { PRSTR("&"); }
     PRSTR(S + 0xEC00000 + nm);
     PRSTR("` (a `");
-    if (kind == 1) { PRSTR("*"); }
+    if (kind == 1 || kind == 3) { PRSTR("*"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
     PRSTR("`)\n");
     _had_error = 1;
@@ -3068,9 +3133,15 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
     STI(S, sv);
     return 0;
 }
+# The struct slot `li` points at (struct `sid`), copied byte-exact into an inline frame temp; its field-0
+# slot. Under 8 B the temp's word is what a by-value consumer loads (`return q` of a `*S` parameter, a
+# handle passed by value), so it is zeroed first: the padding is 0, never the frame's old bytes.
+# CHANGELOG [6.7.13]
 fn _sptr_param_temp(S, li, sid): i64 {
     var t = _agg_temp(S, sid);
-    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, STRUCTSZ(S, sid - 1));
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz < 8) { EMOVI(S, 0); EFLSTORE(S, t); }
+    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, sz);
     return t;
 }
 
@@ -5544,7 +5615,7 @@ fn _scv_restore(d): i64 {
 # (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). CHANGELOG [6.7.11]
 fn _scv_arm(S, pscale, ext): i64 {
     var d = _scv_save();
-    _scv_icall_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`
+    _scv_top_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`; 6.7.13: + top level
     _scv_pk = 0;
     _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {
@@ -6073,12 +6144,13 @@ fn _icall_ret(S): i64 {
 # `*T` dereference as the left operand dispatches (decision 11), as `return s + a;` with a struct
 # variable does, so its result takes the operator receive. 1 = the operand at token `b` — a name or
 # call, then `.field` / `.method(..)` steps, ending in a struct-typed field (`_hl_pchain`: a value, no
-# `*T`); or `*` and a `*T`-typed name, chain or parenthesised operand (`_hl_psid`) — is followed by an
-# operator that dispatches. Anything else keeps its own return path (and its own refusal).
+# `*T`); or `*` and a `*T`-typed name, chain or parenthesised operand (`_hl_dpsid`; `*&p` too) — is
+# followed by an operator that dispatches. Anything else keeps its own return path (and its own refusal).
 fn _ret_lopd(S, b): i64 {
     var i = b;
     if (TOKTYP(S, b) == 8) { i = b + 1; }
     if (TOKTYP(S, i) == 10) { i = _call_close(S, i) + 1; }
+    elif (TOKTYP(S, i) == 27) { i = i + 2; }   # 6.7.13: `*&p + a` (`_hl_dpsid` types `&p`)
     elif (TOKTYP(S, i) == 2) {
         var o = _gcall_open(S, i);
         if (o >= 0) { i = _call_close(S, o) + 1; } else { i = i + 1; }
@@ -6089,7 +6161,7 @@ fn _ret_lopd(S, b): i64 {
     } else { return 0; }
     if (_is_op_dispatch_tok(TOKTYP(S, i)) == 0) { return 0; }
     if (TOKTYP(S, b) == 8) {
-        if (_hl_psid(S, b + 1, i) > 0) { return 1; }
+        if (_hl_dpsid(S, b + 1, i) > 0) { return 1; }
         return 0;
     }
     if (_hl_pchain(S, b, i) <= 0) { return 0; }
@@ -10960,7 +11032,8 @@ fn _mark_ptr_param(S): i64 {
         ps = _ptr_step_peek(S, 0 - 1, 1);
         ed = _ek_at(S, GTI(S));
     }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1)));   # 6.7.12: a `*V`'s vector
+    var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _ek_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
@@ -12198,7 +12271,7 @@ fn _gsc_wrap(S, a): i64 {
 fn _gsc_deref(S, a): i64 {
     var e = _arg_next(S, a);
     if (_gz_split(S, a, e) != 0 - 1) { return 0; }
-    return _hl_psid(S, a + 1, e);
+    return _hl_dpsid(S, a + 1, e);
 }
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field

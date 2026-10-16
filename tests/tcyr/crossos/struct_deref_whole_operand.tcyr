@@ -211,6 +211,95 @@ fn zret3(): i64 { zdirty(); var l: Z3 = zr3(); return load8(&l + 3) * 100000 + l
 fn zret5(): i64 { zdirty(); var l: Z5 = zr5(); return load8(&l + 5) * 100000 + l.b; }
 fn zret6(): i64 { zdirty(); var l: Z6 = zr6(); return load8(&l + 6) * 100000 + l.c; }
 fn zret7(): i64 { zdirty(); var l: Z7 = zr7(); return load8(&l + 7) * 100000 + l.c; }
+# ── 6.7.13: the word a struct under 8 B travels in has no bytes but the struct's
+# (issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md). A by-value `self` from a `*S`, a `*S`
+# into a by-value parameter, `return q` of a `*S` parameter and a handle passed by value copied a 3 / 5 / 6 / 7 B
+# struct into a frame temp that was never cleared: the word's padding was the frame's old 0xFF (exit 255 where
+# 0 is right). The `zs` / `zv` / `zh` / `zc` / `zq` rows at 1..7 B, after zdirty(): the padding 0, the last
+# field the struct's. 1 / 2 / 4 B are one load (no temp) but for `return q`, whose temp was loaded whole.
+struct Z1 { a: i8; }
+struct Z2 { a: i8; b: i8; }
+struct Z4 { a: i16; b: i16; }
+var PZ1: *Z1 = &ZB;
+var PZ2: *Z2 = &ZB;
+var PZ4: *Z4 = &ZB;
+fn zp1(s: Z1): i64 { return load8(&s + 1) * 100000 + s.a; }
+fn zp2(s: Z2): i64 { return load8(&s + 2) * 100000 + s.b; }
+fn zp4(s: Z4): i64 { return load8(&s + 4) * 100000 + s.b; }
+fn Z1_pad(self: Z1): i64 { return load8(&self + 1) * 100000 + self.a; }
+fn Z2_pad(self: Z2): i64 { return load8(&self + 2) * 100000 + self.b; }
+fn Z3_pad(self: Z3): i64 { return load8(&self + 3) * 100000 + self.c; }
+fn Z4_pad(self: Z4): i64 { return load8(&self + 4) * 100000 + self.b; }
+fn Z5_pad(self: Z5): i64 { return load8(&self + 5) * 100000 + self.b; }
+fn Z6_pad(self: Z6): i64 { return load8(&self + 6) * 100000 + self.c; }
+fn Z7_pad(self: Z7): i64 { return load8(&self + 7) * 100000 + self.c; }
+# a by-value self from a *S receiver
+fn zs1(p: *Z1): i64 { return p.pad(); }
+fn zs2(p: *Z2): i64 { return p.pad(); }
+fn zs3(p: *Z3): i64 { return p.pad(); }
+fn zs4(p: *Z4): i64 { return p.pad(); }
+fn zs5(p: *Z5): i64 { return p.pad(); }
+fn zs6(p: *Z6): i64 { return p.pad(); }
+fn zs7(p: *Z7): i64 { return p.pad(); }
+# a *S into a by-value S parameter
+fn zv1(p: *Z1): i64 { return zp1(p); }
+fn zv2(p: *Z2): i64 { return zp2(p); }
+fn zv3(p: *Z3): i64 { return zp3(p); }
+fn zv4(p: *Z4): i64 { return zp4(p); }
+fn zv5(p: *Z5): i64 { return zp5(p); }
+fn zv6(p: *Z6): i64 { return zp6(p); }
+fn zv7(p: *Z7): i64 { return zp7(p); }
+# `return q;` of a *S parameter, received
+fn zf1(q: *Z1): Z1 { return q; }
+fn zf2(q: *Z2): Z2 { return q; }
+fn zf3(q: *Z3): Z3 { return q; }
+fn zf4(q: *Z4): Z4 { return q; }
+fn zf5(q: *Z5): Z5 { return q; }
+fn zf6(q: *Z6): Z6 { return q; }
+fn zf7(q: *Z7): Z7 { return q; }
+fn zq1(): i64 { zdirty(); var l: Z1 = zf1(PZ1); return load8(&l + 1) * 100000 + l.a; }
+fn zq2(): i64 { zdirty(); var l: Z2 = zf2(PZ2); return load8(&l + 2) * 100000 + l.b; }
+fn zq3(): i64 { zdirty(); var l: Z3 = zf3(PZ3); return load8(&l + 3) * 100000 + l.c; }
+fn zq4(): i64 { zdirty(); var l: Z4 = zf4(PZ4); return load8(&l + 4) * 100000 + l.b; }
+fn zq5(): i64 { zdirty(); var l: Z5 = zf5(PZ5); return load8(&l + 5) * 100000 + l.b; }
+fn zq6(): i64 { zdirty(); var l: Z6 = zf6(PZ6); return load8(&l + 6) * 100000 + l.c; }
+fn zq7(): i64 { zdirty(); var l: Z7 = zf7(PZ7); return load8(&l + 7) * 100000 + l.c; }
+# a handle (a struct local initialised from an address) passed by value
+fn zh1(): i64 { var h: Z1 = zsrc(); return zp1(h); }
+fn zh2(): i64 { var h: Z2 = zsrc(); return zp2(h); }
+fn zh3(): i64 { var h: Z3 = zsrc(); return zp3(h); }
+fn zh4(): i64 { var h: Z4 = zsrc(); return zp4(h); }
+fn zh5(): i64 { var h: Z5 = zsrc(); return zp5(h); }
+fn zh6(): i64 { var h: Z6 = zsrc(); return zp6(h); }
+fn zh7(): i64 { var h: Z7 = zsrc(); return zp7(h); }
+# a captured handle passed by value, inside a closure
+fn zc1(): i64 { var h: Z1 = zsrc(); var c = || zp1(h); return callptr(c); }
+fn zc2(): i64 { var h: Z2 = zsrc(); var c = || zp2(h); return callptr(c); }
+fn zc3(): i64 { var h: Z3 = zsrc(); var c = || zp3(h); return callptr(c); }
+fn zc4(): i64 { var h: Z4 = zsrc(); var c = || zp4(h); return callptr(c); }
+fn zc5(): i64 { var h: Z5 = zsrc(); var c = || zp5(h); return callptr(c); }
+fn zc6(): i64 { var h: Z6 = zsrc(); var c = || zp6(h); return callptr(c); }
+fn zc7(): i64 { var h: Z7 = zsrc(); var c = || zp7(h); return callptr(c); }
+# ── 6.7.13: a whole struct-typed FIELD of 3 / 5 / 6 / 7 B as a value reads the field, no byte past it
+# (issues/2026-10-14-small-struct-field-value-reads-past-the-object.md): through 6.7.12 its leaf load read the
+# 8-byte word, so the bytes after the field (0xFF here) landed in the word's padding. The `zw` rows: an argument
+# from a value global's field, through a `*W`, `return w.s`, the left operand of an integer-result operator, and
+# at top level.
+struct ZW3 { n: i8; s: Z3; g: i64; }
+struct ZW5 { n: i8; s: Z5; g: i64; }
+struct ZW6 { n: i8; s: Z6; g: i64; }
+struct ZW7 { n: i8; s: Z7; g: i64; }
+var GW3 = ZW3 { 1, 65, 66, 67, 0 - 1 };
+var GW5 = ZW5 { 1, 0x44434241, 69, 0 - 1 };
+var GW6 = ZW6 { 1, 0x4241, 0x4443, 0x4645, 0 - 1 };
+var GW7 = ZW7 { 1, 0x44434241, 0x4645, 71, 0 - 1 };
+fn Z3_sub(a: Z3, b: Z3): i64 { return load8(&a + 3) * 100000 + a.c; }
+fn zw3(): i64 { return zp3(GW3.s); }
+fn zw5(): i64 { var p: *ZW5 = &GW5; return zp5(p.s); }
+fn zr6w(p: *ZW6): Z6 { return p.s; }
+fn zw6(): i64 { var l: Z6 = zr6w(&GW6); return load8(&l + 6) * 100000 + l.c; }
+fn zw7(): i64 { var p: *ZW7 = &GW7; return zp7((p.s)); }
+fn zwo(): i64 { var p: *ZW3 = &GW3; return p.s - p.s; }
 fn zarg3(): i64 { return zp3(*PZ3); }
 fn zarg5(): i64 { return zp5((*PZ5)); }
 fn zarg6(): i64 { return zp6(*PZ6); }
@@ -221,7 +310,69 @@ var GZ6: Z6 = *(PZ6 + 0);
 var GZ7: Z7 = *PZ7;
 var TZ3 = zp3(*PZ3);
 var TZ7 = zp7((*PZ7));
+# ── 6.7.13: a dereference of an ADDRESS-OF, `*(&p)` / `*&p`, is the struct `p` names
+# (issues/2026-10-14-dereference-of-address-of-struct-faults.md). Through 6.7.12 the dereference consumers typed
+# their operand by `_hl_psid`, which answers 0 for `&x`, so `take(*(&p))` into a by-value struct over 8 B pushed
+# p's FIRST WORD as its address (SIGSEGV on x86_64 / aarch64, a cx guest error, exit 5 on PE) and under 8 B the
+# word load read past the struct. The `a` rows at 3 / 8 / 16 / 24 B (A3, S8, H, T3), each the constant the
+# matching `*p` row gives: a local (`*(&p)` and `*&p`), a by-value parameter (address-passed over 8 B), a value
+# global, a closure capture; into a `*S` parameter the struct itself (a write reaches it); an operator's left
+# operand (dispatched) and right operand; at top level, in the declaration zone and after it. The guards: a
+# handle's `&h` is its slot (the guide's handle line), so `*(&h)` is the word the slot holds; `*(&x + 8)` is
+# the word at that byte address (6.7.11 D15: `&x + n` is a byte pointer).
+struct A3 { a: u8; b: u8; c: u8; }
+fn takea3(s: A3): i64 { return s.a + (s.b - 7) * 1000 + (s.c - 9) * 100000; }
+fn bpa3(p: *A3): i64 { p.a = p.a + 1; return p.a; }
+fn A3_sub(a: A3, b: A3): i64 { return a.a * 10 - b.a - (b.c - 9) * 1000; }
+var GA3 = A3 { 5, 7, 9 };
+# by value: take(*(&p)) * 10 + take(*&p) = 55
+fn a_loc_3() { var p = A3 { 5, 7, 9 }; return takea3(*(&p)) * 10 + takea3(*&p); }
+fn a_loc_8() { var p = S8 { 5 }; return take8(*(&p)) * 10 + take8(*&p); }
+fn a_loc_h() { var p = H { 5, 7 }; return takeh(*(&p)) * 10 + takeh(*&p); }
+fn a_loc_w() { var p = T3 { 5, 7, 9 }; return take3(*(&p)) * 10 + take3(*&p); }
+# a by-value parameter (over 8 B its slot holds the struct's address, and `&q` is the struct: 6.6.6)
+fn a_prm_3(q: A3) { return takea3(*(&q)); }
+fn a_prm_8(q: S8) { return take8(*(&q)); }
+fn a_prm_h(q: H) { return takeh(*(&q)); }
+fn a_prm_w(q: T3) { return take3((*(&q))); }
+# a value global, a closure capture
+fn a_glo_3() { return takea3(*(&GA3)); }
+fn a_glo_8() { return take8(*(&GX8)); }
+fn a_glo_h() { return takeh(*&GXH); }
+fn a_glo_w() { return take3(*(&GX3)); }
+fn a_cap_3() { var p = A3 { 5, 7, 9 }; var c = || takea3(*(&p)); return callptr(c); }
+fn a_cap_h() { var p = H { 5, 7 }; var c = || takeh(*(&p)); return callptr(c); }
+fn a_cap_w() { var p = T3 { 5, 7, 9 }; var c = || take3(*&p); return callptr(c); }
+# into a `*S` parameter: the struct itself, the write reaches it (r * 10 + the field = 66)
+fn a_sp_1() { var y: S1; y.a = 5; var r = bp1(*&y); return r * 10 + y.a; }
+fn a_sp_3() { var y = A3 { 5, 7, 9 }; var r = bpa3(*(&y)); return r * 10 + y.a; }
+fn a_sp_7() { var y: S7; y.a = 1; y.b = 2; y.c = 5; var r = bp7(*(&y)); return r * 10 + y.c; }
+fn a_sp_8() { var y = S8 { 5 }; var r = bp8(*(&y)); return r * 10 + y.v; }
+fn a_sp_h() { var y = H { 5, 7 }; var r = bph(*(&y)); return r * 10 + y.v; }
+fn a_sp_w() { var y = T3 { 5, 7, 9 }; var r = bp3w(*(&y)); return r * 10 + y.x; }
+# an operator's LEFT operand dispatches (`*(&p) - a` = 41) and its RIGHT operand is the struct (`a - *(&p)` = 85)
+fn a_lop_3() { var p = A3 { 5, 7, 9 }; var a = A3 { 9, 0, 9 }; return *(&p) - a; }
+fn a_lop_8() { var p = S8 { 5 }; var a = S8 { 9 }; return *(&p) - a; }
+fn a_lop_h() { var p = H { 5, 7 }; var a = H { 9, 7 }; return (*&p) - a; }
+fn a_lop_w() { var p = T3 { 5, 7, 9 }; var a = T3 { 9, 0, 9 }; return *(&p) - a; }
+fn a_rop_3() { var p = A3 { 5, 7, 9 }; var a = A3 { 9, 0, 0 }; return a - *(&p); }
+fn a_rop_8() { var p = S8 { 5 }; var a = S8 { 9 }; return a - *(&p); }
+fn a_rop_h() { var p = H { 5, 7 }; var a = H { 9, 0 }; return a - *&p; }
+fn a_rop_w() { var p = T3 { 5, 7, 9 }; var a = T3 { 9, 0, 0 }; return a - (*(&p)); }
+fn a_radd_w() { var a = T3 { 9, 0, 0 }; var x = T3 { 5, 7, 9 }; var q: T3 = a + *(&x); return q.x + (q.y - 7) * 1000 + (q.z - 9) * 100000; }
+# the guards: a handle's `*(&h)` is its slot's word, the struct's address (passed as such over 8 B), and
+# `*(&x + 8)` the word at x + 8
+fn a_hdl_w() { var h: T3 = gp3(); return take3(*(&h)); }
+fn a_off_w() { var x = T3 { 5, 7, 9 }; return *(&x + 8); }
+var TAA3 = takea3(*(&GA3));
+var TAAH = takeh(*&GXH);
+var TAS8 = GA8 - *(&GX8);
+var TAL3 = *(&GA3) - GA3;
 alloc_init();
+var TBA3 = takea3((*(&GA3)));
+var TBAW = take3(*(&GX3));
+var TBSH = GAH - *(&GXH);
+var TBLW = *&GX3 - GX3;
 var TB8 = take8((*GP8));
 var TBH = takeh((*GPH));
 var TU8 = GA8 - (*GP8);
@@ -232,6 +383,8 @@ var LZ6: Z6 = *PZ6;
 var LZ7: Z7 = *(PZ7 + 0);
 var UZ3 = zp3((*PZ3));
 var UZ7 = zp7(*PZ7);
+var TW3 = zp3(GW3.s);
+var TW7 = zp7(GW7.s);
 
 assert_eq(f_loc_8(), 5, "take(*p): a *S local's struct, by value");
 assert_eq(f_loc_8(), f_loc_h(), "  = its 16 B twin");
@@ -315,4 +468,119 @@ assert_eq(zret3(), 67, "3 B: return *p, received");
 assert_eq(zret5(), 69, "5 B: return (*p)");
 assert_eq(zret6(), 17989, "6 B: return *(p + 0)");
 assert_eq(zret7(), 71, "7 B: return *p");
+zdirty();
+assert_eq(zs1(PZ1), 65, "1 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs2(PZ2), 66, "2 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs3(PZ3), 67, "3 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs4(PZ4), 17475, "4 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs5(PZ5), 69, "5 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs6(PZ6), 17989, "6 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zs7(PZ7), 71, "7 B: p.pad(): a by-value self from a *S: its padding 0");
+zdirty();
+assert_eq(zv1(PZ1), 65, "1 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv2(PZ2), 66, "2 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv3(PZ3), 67, "3 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv4(PZ4), 17475, "4 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv5(PZ5), 69, "5 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv6(PZ6), 17989, "6 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zv7(PZ7), 71, "7 B: f(p): a *S into a by-value parameter: its padding 0");
+zdirty();
+assert_eq(zh1(), 65, "1 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh2(), 66, "2 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh3(), 67, "3 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh4(), 17475, "4 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh5(), 69, "5 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh6(), 17989, "6 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zh7(), 71, "7 B: f(h): a handle by value: its padding 0");
+zdirty();
+assert_eq(zc1(), 65, "1 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc2(), 66, "2 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc3(), 67, "3 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc4(), 17475, "4 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc5(), 69, "5 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc6(), 17989, "6 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zc7(), 71, "7 B: || f(h): a captured handle by value: its padding 0");
+zdirty();
+assert_eq(zw3(), 67, "3 B: f(G.s), a struct-typed field: no byte past it, its padding 0");
+zdirty();
+assert_eq(zw5(), 69, "5 B: f(p.s) through a *W");
+zdirty();
+assert_eq(zw6(), 17989, "6 B: return p.s, received");
+zdirty();
+assert_eq(zw7(), 71, "7 B: f((p.s))");
+zdirty();
+assert_eq(zwo(), 67, "3 B: p.s - p.s, the field as an operator's left operand");
+assert_eq(TW3, 67, "3 B: f(G.s) at top level");
+assert_eq(TW7, 71, "7 B: f(G.s) at top level");
+assert_eq(zq1(), 65, "1 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq2(), 66, "2 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq3(), 67, "3 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq4(), 17475, "4 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq5(), 69, "5 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq6(), 17989, "6 B: return q of a *S parameter, received: its padding 0");
+assert_eq(zq7(), 71, "7 B: return q of a *S parameter, received: its padding 0");
+assert_eq(a_loc_3(), 55, "3 B: take(*(&p)), take(*&p): a local's struct, by value");
+assert_eq(a_loc_8(), 55, "8 B: take(*(&p)), take(*&p)");
+assert_eq(a_loc_h(), 55, "16 B: take(*(&p)), take(*&p): the struct, not its first word as the address");
+assert_eq(a_loc_w(), 55, "24 B: take(*(&p)), take(*&p)");
+assert_eq(a_prm_3(GA3), 5, "3 B: take(*(&q)), q a by-value parameter");
+assert_eq(a_prm_8(GX8), 5, "8 B: take(*(&q)), q a by-value parameter");
+assert_eq(a_prm_h(GXH), 5, "16 B: take(*(&q)), q an address-passed by-value parameter");
+assert_eq(a_prm_w(GX3), 5, "24 B: take((*(&q))), q an address-passed by-value parameter");
+assert_eq(a_glo_3(), 5, "3 B: take(*(&G)), a value global");
+assert_eq(a_glo_8(), 5, "8 B: take(*(&G))");
+assert_eq(a_glo_h(), 5, "16 B: take(*&G)");
+assert_eq(a_glo_w(), 5, "24 B: take(*(&G))");
+assert_eq(a_cap_3(), 5, "3 B: || take(*(&p)), a closure capture");
+assert_eq(a_cap_h(), 5, "16 B: || take(*(&p)), a closure capture");
+assert_eq(a_cap_w(), 5, "24 B: || take(*&p), a closure capture");
+assert_eq(a_sp_1(), 66, "1 B: bp(*&y) into a *S: the struct itself, the write reaches it");
+assert_eq(a_sp_3(), 66, "3 B: bp(*(&y)) into a *S");
+assert_eq(a_sp_7(), 66, "7 B: bp(*(&y)) into a *S");
+assert_eq(a_sp_8(), 66, "8 B: bp(*(&y)) into a *S");
+assert_eq(a_sp_h(), 66, "16 B: bp(*(&y)) into a *S");
+assert_eq(a_sp_w(), 66, "24 B: bp(*(&y)) into a *S");
+assert_eq(a_lop_3(), 41, "3 B: *(&p) - a dispatches S_sub");
+assert_eq(a_lop_8(), 41, "8 B: *(&p) - a dispatches S_sub");
+assert_eq(a_lop_h(), 41, "16 B: (*&p) - a dispatches S_sub");
+assert_eq(a_lop_w(), 41, "24 B: *(&p) - a dispatches S_sub");
+assert_eq(a_rop_3(), 85, "3 B: a - *(&p), the right operand is the struct");
+assert_eq(a_rop_8(), 85, "8 B: a - *(&p)");
+assert_eq(a_rop_h(), 85, "16 B: a - *&p");
+assert_eq(a_rop_w(), 85, "24 B: a - (*(&p))");
+assert_eq(a_radd_w(), 32, "24 B: var q: T3 = a + *(&x), a struct result");
+assert_eq(a_hdl_w(), 5, "guard: take(*(&h)), h a handle: the word its slot holds, the address (its &h is the slot)");
+assert_eq(a_off_w(), 7, "guard: *(&x + 8) is the word at that byte address");
+assert_eq(TAA3, 5, "3 B: take(*(&G)) at top level, the declaration zone");
+assert_eq(TAAH, 5, "16 B: take(*&G) at top level, the declaration zone");
+assert_eq(TAS8, 85, "8 B: A - *(&G) at top level, the declaration zone");
+assert_eq(TAL3, 45, "3 B: *(&G) - A at top level dispatches, the declaration zone");
+assert_eq(TBA3, 5, "3 B: take((*(&G))) at top level, after the first statement");
+assert_eq(TBAW, 5, "24 B: take(*(&G)) at top level");
+assert_eq(TBSH, 85, "16 B: A - *(&G) at top level");
+assert_eq(TBLW, 45, "24 B: *&G - A at top level dispatches");
 var r = assert_summary();
