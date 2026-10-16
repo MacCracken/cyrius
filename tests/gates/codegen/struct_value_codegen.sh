@@ -83,7 +83,7 @@
 #      (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element (`H { 7, (mkq(4,
 #      9)), 8 }`) was a scalar for the nested struct's first leaf: "unexpected '}'" at 16 / 24 B and 8 B with two
 #      leaves. It is the element the unwrapped call is (`_spi_pcall`), its refusals the unwrapped call's
-#   PM (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) and a
+#   PM (6.7.13, issues/archived/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) and a
 #      9-16 B METHOD or OPERATOR result in parentheses (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`): "unexpected '}'"
 #      on every target. The element steps its whole wrap before it arms (`_spi_epk`); a wrapped struct-typed field
 #      `(h.q)` with it (tcyr Q47). PM1 the repro verbatim, PM3-PM5 top level once by name, PM6 another struct
@@ -103,11 +103,11 @@
 #      prefix), each requiring "N passed, 0 failed (N total)" with N derived from the file (one row per
 #      `assert_eq(`, floor 48). PE has code of its own (`_icall_sret` runs after its callee push, and the
 #      result pointer is counted into ECALLPTR_PE's argc), so FPw1 / FPw2 run FP1 / FP2 there too
-#      FP11-FP19 (6.7.13, issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) the callee in
+#      FP11-FP19 (6.7.13, issues/archived/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) the callee in
 #      parentheses, `callptr((&mk3), 5)`, is the known callee (`_icall_fti` for the token routes, `_icall_callee` for
 #      the parse): it was unknown, so the result convention was lost — 139 x86 / aarch64, 1 cx, 5 PE (FPw3), `return`
 #      refused, an untyped receive refused at `.a`. FP11 the filed repro verbatim; tcyr W1-W13 on B1-B7
-#      FP20-FP31 (6.7.13, issues/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a),
+#      FP20-FP31 (6.7.13, issues/archived/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a),
 #      2026-10-15) a known callee's result takes `.field` / `.method(..)` (`fncall1(&mk3, 5).b`, `callptr(&mk3, 1).dbl().c`,
 #      a `*T` callee's field, the callee wrapped, the statement form), as `mk3(5).b` does: it was "expected ';', got
 #      '.'" (`_icall_chain` after `_icall_result`; a 9-16 B result's temp from `_sc_pre_c`). Top level is refused once by
@@ -281,7 +281,7 @@
 #   M-FI4 `_icall_chain` without its top-level skip              -> RED 1: FP25 (2 errors)
 #   M-FI5 `_icall_chain` without its unknown-callee refusal      -> RED 2: FP27 FP28 (the refusal names a garbage fn)
 #   M-FI6 `_icall_fld_err` without its --syntax-only test        -> RED 1: FP32 (the two chains refused by name)
-#   (6.7.13, the vectors lane, issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md, the same procedure, 2026-10-16:
+#   (6.7.13, the vectors lane, issues/archived/2026-10-14-struct-value-codegen-a-rows-no-floor.md, the same procedure, 2026-10-16:
 #   the values file mutated in a scratch copy, the gate run there with this tree's compiler)
 #   M-AF1 one `assert_eq(` row deleted from struct_value_codegen.tcyr -> RED 1: "only 219 rows (floor 220)"; A1-A7
 #       green (each leg requires the derived count, which is the mutant's)
@@ -557,7 +557,7 @@ refused pe3 "$PEM" "PE3: at top level, 24 B: refused once (+ unexpected '}')" "s
 refused pe4 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE4: (mko(5)) of another 8 B struct, refused as mko(5) is (compiled: 65)" "struct Q { a; }\nstruct O { a; }\nstruct H { x; q: Q; z; }\nfn mko(a): O { var o = O { a }; return o; }\nfn main(): i64 { var h = H { 7, (mko(5)), 8 }; return h.x + h.q.a * 10 + h.z; }$E"
 refused pe5 "cannot copy 'mko' into a struct field of a different struct type: 'q'" "PE5: (mko(4, 9)) of another 16 B struct, refused by name (unexpected '}')" "${PEH}struct O { a; b; }\nfn mko(a, b): O { var q = O { a, b }; return q; }\nfn main(): i64 { var h = H { 7, (mko(4, 9)), 8 }; return h.x; }$E"
 exits pe6 64 "PE6: H { 7, (mkq(4, 9)), 8 } at top level of an 8 B two-u32 Q (unexpected '}')" "struct Q { a: u32; b: u32; }\nstruct H { x; q: Q; z; }\nfn mkq(a, b): Q { var q = Q { a, b }; return q; }\nvar G = H { 7, (mkq(4, 9)), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
-# PM (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) a 9-16 B
+# PM (6.7.13, issues/archived/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) a 9-16 B
 # METHOD or OPERATOR result in parentheses as the element was "unexpected '}'" on every target: the destination was
 # armed at the `(`, so the call inside got no temp. `_spi_epk` steps the wrap first. PM1 the filed repro verbatim;
 # the values file's Q42-Q48 run it on A1-A7.
@@ -585,7 +585,7 @@ refused fp9 "fn return struct-id differs from declared var type" "FP9: var q: Q3
 # 6.7.12 (D28): into an annotation that names no struct it is refused as the direct call is (D24); the rows and the
 # other legs are tests/gates/frontend/struct_receive_inference_checked.sh FP0-FP10.
 refused fp10 "cannot initialise 'n: i64' from 'mk3', which returns the struct 'P3' - declare 'n: P3' or bind a field" "FP10: var n: i64 = fncall1(&mk3, 5); (D28: P3.a read, exit 5)" "${FPH}fn main() { var n: i64 = fncall1(&mk3, 5); return n; }$E"
-# FP11-FP18 (6.7.13, issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) — the callee in
+# FP11-FP18 (6.7.13, issues/archived/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md) — the callee in
 # parentheses, `(&mk3)`, is the known callee `&mk3` is (`_icall_fti`, `_icall_callee`): it was unknown, so the call had
 # no hidden result pointer / pair receive (139 x86 / aarch64, 1 cx, 5 PE). FP11 the filed repro verbatim.
 exits fp11 18 "FP11: var p: P3 = callptr((&mk3), 5); (the filed repro, verbatim: 139)" "include \"lib/fnptr.cyr\"\nstruct P2 { a; b; }\nstruct P3 { a; b; c; }\nfn mk2(a): P2 { var r: P2 = P2 { a, a + 1 }; return r; }\nfn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }\nfn s3(p: P3) { return p.a + p.b + p.c; }\nfn s2(p: P2) { return p.a + p.b; }\nfn main() { var p: P3 = callptr((&mk3), 5); return p.a + p.b + p.c; }\nvar r = main();\nsyscall(60, r);\n"
@@ -597,7 +597,7 @@ exits fp16 8 "FP16: s1(fncall1((&mk1), 5)) (8 B: a word, right before too)" "${F
 exits fp17 11 "FP17: var p = callptr((&mk3), 5); p.a + ..; var q = fncall1((&mk2), 5) (untyped: refused at .a before)" "${FPH}fn main() { var p = callptr((&mk3), 5); var q = fncall1((&mk2), 5); return p.a + q.b; }$E"
 exits fp18 26 "FP18: var p: P3 = callptr((fp), 5) through a wrapped variable stays a handle (D31): fn gp(a): *P3" "${FPH}var G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn main() { var fp = &gp; var p: P3 = callptr((fp), 5); p.a = p.a + 0; return G.a + G.b + G.c; }$E"
 refused fp19 "'mk3' returns a struct by value, and a struct result needs storage in a fn's frame" "FP19: var g: P3 = fncall1((&mk3), 5); at top level, refused by name as FP8 (139 before)" "${FPH}var g: P3 = fncall1((&mk3), 5);\nsyscall(60, g.a);\n"
-# FP20-FP31 (6.7.13, issues/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a), 2026-10-15) —
+# FP20-FP31 (6.7.13, issues/archived/2026-10-13-field-of-indirect-call-struct-result.md; the user's decision D16 (a), 2026-10-15) —
 # a known callee's result takes `.field` / `.method(..)` as `mk3(5).b` does; it was "expected ';', got '.'" on every
 # target. FP20 the filed repro verbatim (12).
 FPM='impl P2 { fn tot(self): i64 { return self.a + self.b; } }\nimpl P3 { fn tot(self): i64 { return self.a + self.b + self.c; }\n    fn dbl(self): P3 { var r: P3 = P3 { self.a * 2, self.b * 2, self.c * 2 }; return r; } }\nvar G: P3 = P3 { 0, 0, 0 };\nfn gp(a): *P3 { G.a = a; G.b = a + 1; G.c = a + 10; return &G; }\nfn sc(a): i64 { return a; }\n'
@@ -627,7 +627,7 @@ exits_ir3 ev3 35 "EV3: bs(h, x), a 16 B by-value struct, under CYRIUS_IR=3 (the 
 exits_ir3 ev4 5 "EV4: var b: B = mk(x), a 24 B result, under CYRIUS_IR=3 (the filed repro: varies)" "struct B { a; b; c; }\nfn mk(n): B { var k: B; k.a = n; k.b = 0; k.c = 0; return k; }\nfn g(): i64 { var x = 5; var b: B = mk(x); return b.a; }\nsyscall(60, g());\n"
 
 TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
-# 6.7.13 (issues/2026-10-14-struct-value-codegen-a-rows-no-floor.md): the A rows carry a floor and each leg requires
+# 6.7.13 (issues/archived/2026-10-14-struct-value-codegen-a-rows-no-floor.md): the A rows carry a floor and each leg requires
 # the derived count exactly, as B and C do. NA counts the `assert_eq(` rows outside `#ifdef CYRIUS_TARGET_WIN` blocks
 # (A1-A6), NAW every row (A7, PE). Counts are derived: the struct lanes keep adding rows (raise FLOORA with them).
 NA=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/{s=1; next} /^[[:space:]]*#endif/{s=0; next} /^[[:space:]]*#/{next} !s && /assert_eq\(/{n++} END{print n+0}' "$TCA")

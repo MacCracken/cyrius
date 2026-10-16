@@ -1,7 +1,7 @@
 # A top-level `.field` / `.m()` on a method result over 16 B is refused twice — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.13 receives lane (unit R3) while fixing
-issues/2026-10-13-field-of-indirect-call-struct-result.md (D16 (a)), whose known-callee chain had the same shape and
+issues/archived/2026-10-13-field-of-indirect-call-struct-result.md (D16 (a)), whose known-callee chain had the same shape and
 is refused once (its `_icall_chain` skips the second report). The method arm is unchanged by that fix. x86_64, the
 lane tree (`build/cycc` 2,278,280 B); the frontend's, so every target.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

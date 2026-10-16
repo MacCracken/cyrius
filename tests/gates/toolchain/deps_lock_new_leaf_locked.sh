@@ -238,7 +238,7 @@ rm -f "$P8/lib/dangle.cyr"
 [ "$x" = 0 ] && echo "  ok: axis 8: with no hasher on PATH the first lock is written and a new leaf re-locks (in-process hash); an unreadable file makes the first-lock write a named warning — deps/build succeed — and --lock fails hard"
 
 # ── axis 9: a lock row for a file removed from lib/ (6.7.13) ───────────────────────────
-# issues/2026-10-15-deps-keeps-a-lock-row-for-a-file-removed-from-lib.md, the filing's repro
+# issues/archived/2026-10-15-deps-keeps-a-lock-row-for-a-file-removed-from-lib.md, the filing's repro
 # verbatim (pin "6.7.12", a snapshot of this tree's lib/): `rm lib/vec.cyr` after dropping vec from
 # the manifest left its lock row through every stdlib-only `cyrius deps` (the lock was written
 # only for `_must` or a new leaf), so --verify ("cannot hash: the hasher could not read it") and

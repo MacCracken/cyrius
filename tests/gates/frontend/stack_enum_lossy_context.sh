@@ -1053,7 +1053,7 @@ EOF
 # (rc 139 on x86 and aarch64, 1 on cx, 5 on PE — the issue's repro, TD1, verbatim) and `var q =
 # p.ddiv(d);` kept the tag (exit 1). Each default the impl does not override is scanned under the entry
 # registered for that impl (`_pair_scan_defaults`, read only), in the same rounds.
-# (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
+# (issues/archived/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
 # Mutation (a scratch copy of src/, CYCC= it; measured red): MTD `_pair_prescan_impls` without its
 # `_pair_scan_defaults` call -> TD1 (rc 139; the gate stops at its first red — TD2 BUILDS, TD3 / TD4 /
 # TD6 rc 139 when run alone).
@@ -1143,7 +1143,7 @@ EOF
 # pair-returning: `main` (which returns one value, v) was refused "bind both" at `var x = main();` (the
 # issue's repro, IR1, verbatim) and warned "a SINGLE value here". The `return` arm marks nothing inside a
 # replay now; the replayed fn's own entry carries its flag (IR5b).
-# (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md)
+# (issues/archived/2026-10-14-inline-replayed-pair-return-flags-the-caller.md)
 # Mutation (a scratch copy of src/, CYCC= it; measured red): MIR `_PARSE_RETURN_ARMS` without its
 # `GIDEP == 0` guard -> IR1 ("bind both" at `main()`; the gate stops at its first red — IR2 and IR4 red
 # when run alone).
@@ -1514,7 +1514,7 @@ EOF
 # and an argument keeps the tag as `g(mk(7))` does (D22). The token passes peel the same wrap
 # (`_pair_unwrap`): `return (mk(x));` forwards a pair in either order. A wrap that is not ONE whole call
 # — `(3) + (mk(7))`, a boxed / one-value call — is untouched.
-# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
+# (issues/archived/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
 # Mutations (scratch trees, run 2026-10-15, measured red): MPW1 `_callee_returns_pair_at` without
 # `_pair_unwrap` -> PW1 (rc 139; the gate stops there — the axis run alone: PW2r, PW2-PW13b and PW15
 # red); MPW2 `_refuse_lossy_pair` scanning for `?` from the token after the value's first again -> PW15

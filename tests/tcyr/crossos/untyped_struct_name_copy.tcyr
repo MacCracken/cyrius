@@ -16,7 +16,7 @@
 # inline struct global, is a copy of it, as `var q: P = G;` is (6.6.5) — at 3 / 8 / 16 / 24 B, wrapped, written
 # without touching G, passed by value, an operator's operand, captured, inside a closure, in a loop. Through
 # 6.7.12 q was G's first word: `q.y` "no struct type in scope for 'q'", `tk(q)` SIGSEGV
-# (issues/2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md). A HANDLE keeps the word (a
+# (issues/archived/2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md). A HANDLE keeps the word (a
 # local, a global, a local named G that shadows the global), as a `*T` does; a local named G is a local copy.
 #
 # CROSS-HOST: the copy is the copy-init's per-chunk address + load / store (8/4/2/1 bytes) or, at 8 B

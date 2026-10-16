@@ -34,5 +34,5 @@ records none), so nothing checks that the parameter is a vector. SysV / AAPCS64 
 
 On PE, a struct value (local, by-value parameter, global, call result, `*ps`) into a value-form vector parameter
 (`_pvf_param`) is refused with the SysV words — the mirror of D27's "a vector is not a `*Pt`" and the issue
-`2026-10-15-struct-into-vector-pointer-parameter-accepted.md` (D33, a struct into `*V`). Rows on PE beside
+`archived/2026-10-15-struct-into-vector-pointer-parameter-accepted.md` (D33, a struct into `*V`). Rows on PE beside
 simd_pointer_param.sh's VZ rows.

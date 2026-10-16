@@ -4,7 +4,7 @@
 # A narrow local's frame slot holds its value only in its low 1 / 2 / 4 bytes, and the closure's env copy took the
 # slot's whole raw word: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on every target,
 # and on aarch64 / cx a positive one read the stale upper bytes of a slot a previous call left dirty (-249 for 7)
-# (docs/development/issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). The env copy now
+# (docs/development/issues/archived/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). The env copy now
 # loads the local at its width (`_cl_cap_narrow`, src/frontend/parse_expr.cyr), as reading the local in its own fn
 # does. Each row runs after `dirty()` has left the stack it reuses all-ones; a nested closure reads the outer
 # closure's copy, and a narrow local of a closure BODY captured by an inner closure takes the same copy. A narrow

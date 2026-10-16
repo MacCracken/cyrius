@@ -7,7 +7,7 @@ f32v8 bite gave `f32v8` its parameter class, `_classify_param_type` 10, which re
 as the other three do).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane, checking what the f32v8 parameter class changes
-(`2026-10-15-value-form-f32v8-parameter-receives-one-word.md`).
+(`archived/2026-10-15-value-form-f32v8-parameter-receives-one-word.md`).
 **Severity:** Low — a name collision with the stdlib's own vector types, refused by a (misleading) message, never a wrong
 value. ⚠ Behaviour change in 6.7.13: a `struct f32v8` used as a VALUE parameter type compiled through 6.7.12 (it was
 the struct) and is now refused like `struct f32v4`'s; as a `*f32v8` parameter it is still the struct's pointer.

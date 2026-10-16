@@ -6,7 +6,7 @@ branch fix in progress) and on its base (the lane's commit before it): identical
 **Severity:** Medium — compiles clean with no diagnostic and silently drops the other lanes; the plain spelling
 `if (c) { a } else { b }` with vector names is refused by name. Not a security id (the developer's own source).
 **Discovered:** 2026-10-15, the 6.7.13 structs lane (unit S2), giving the if-expression a struct-dereference arm
-(issues/2026-10-14-dereference-as-if-expression-branch.md): the brief asked for a `*pv` row to show the arm skips a
+(issues/archived/2026-10-14-dereference-as-if-expression-branch.md): the brief asked for a `*pv` row to show the arm skips a
 vector dereference; it does, and the row shows what the branch is today.
 
 ## Reproduction

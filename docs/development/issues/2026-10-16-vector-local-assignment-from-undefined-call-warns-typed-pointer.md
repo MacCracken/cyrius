@@ -6,7 +6,7 @@ bite, the lane handoff's V4 notes). Pre-existing; the refusal-hint bite routes t
 assignment path (the lane base printed the vector-local refusal with the out-pointer hint instead).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, the review of the 6.7.13 vectors lane
-(issues/2026-10-14-vector-local-refusal-hint-every-source.md).
+(issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md).
 **Severity:** Low — a wrong warning before the right errors (the undefined-function lines); no binary is written.
 **Kind:** bug (diagnostic).
 

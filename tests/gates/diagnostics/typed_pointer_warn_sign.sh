@@ -261,7 +261,7 @@ if [ "$crc" -ne 0 ] && grep -q "pointer difference of pointers with different el
     echo "  ok axis 11: *i64 - *u8 is refused by name"
 else echo "  FAIL axis 11: *i64 - *u8 was not refused by name (rc $crc)"; fail=1; fi
 
-# --- axis 12 (6.7.13, the user's decision D18 (a), 2026-10-15; issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md) ---
+# --- axis 12 (6.7.13, the user's decision D18 (a), 2026-10-15; issues/archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md) ---
 # The warning at EVERY `*T` site, the literal 0 exempt. It was missing for a declaration-zone `*T` global (replayed
 # by EMIT_GVAR_INITS, or baked when it folds) and for an assignment to a `*T` local or `p: *T` parameter of a scalar T;
 # and `= 0` / `p = 0` (a null pointer) warned where the warning fired at all. P1-P3: the filed commands verbatim

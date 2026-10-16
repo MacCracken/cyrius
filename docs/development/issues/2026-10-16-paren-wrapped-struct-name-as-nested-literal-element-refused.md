@@ -7,7 +7,7 @@ refuse it alike (frontend).
 **Severity:** Low — valid source refused loudly (the reason is wrong: an "unexpected '}'"); no wrong value. Workaround:
 drop the parentheses.
 **Discovered:** 2026-10-16, the receives lane, repairing
-`issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md` (whose filed surface is
+`issues/archived/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md` (whose filed surface is
 a wrapped method / operator result; its fix also made a wrapped struct-typed FIELD `(h.q)` an element). Guide
 § Parentheses: a wrap around a whole struct source is transparent "for every source shape — a name, a field, a call,
 a method or an operator result — into every struct destination", the nested literal element included.

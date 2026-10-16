@@ -785,7 +785,7 @@ fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
 # every target, and stale upper bytes came along (a positive one read -249 on aarch64 / cx). Rax = local `base`'s value
 # at its width, sign-extended for a signed one, as the local-read arm loads it (`EFLLOAD_W`): the env word holds the
 # value, so `_cl_cap_load`'s ELOAD64 and a nested closure's re-copy read it right
-# (issues/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). 1 = loaded. CHANGELOG [6.7.13]
+# (issues/archived/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). 1 = loaded. CHANGELOG [6.7.13]
 fn _cl_cap_narrow(S, base): i64 {
     var lt = _load_lt(S, base);
     if (lt <= 0) { return 0; }

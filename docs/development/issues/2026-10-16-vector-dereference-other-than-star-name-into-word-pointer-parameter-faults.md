@@ -10,7 +10,7 @@ refused by name on all five (`cannot pass '*ppb' to a parameter that is not a po
 **Kind:** bug — D31 A (the user, 2026-10-15: every vector value into a pointer of another kind is refused by name)
 already decides it; the not-address-passed arm recognises only one spelling of the dereference.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane (V3), beside the deref-through bite
-(issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md), which makes
+(issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md), which makes
 `rp(*&b)` refused by the shared park (`_dlo_vec`) and leaves `ri(*&b)` here.
 
 ## Reproduction

@@ -30,7 +30,7 @@
 #          table verbatim (TR1r its reproduction's file), TR4 a global initializer in both zones, TR5 the parse goes
 #          on (a next builtin call's own error, 2 lines), TR6 --syntax-only, TR7 the control: a ret2 in a fn, a
 #          top-level closure and an #inline fn still runs on every leg (54)
-#          (issues/2026-10-14-top-level-ret2-never-returns.md)
+#          (issues/archived/2026-10-14-top-level-ret2-never-returns.md)
 #
 # MUTATION LEDGER (2026-10-14; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run
 # from that copy with CYCC= it, so the cross legs are built from the mutated src too):

@@ -26,7 +26,7 @@
 #   P8   a `: P2` fn's `return (x, 2);` — refused since 6.7.11 (a tuple is not the struct: the user's
 #        decision, issues/archived/2026-10-08-struct-operator-results.md #4), on cx as natively, once
 #                                                                P8b its `ret2(x, 2);` — refused since 6.7.13 (D22 A,
-#        the user's decision, 2026-10-15: issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md;
+#        the user's decision, 2026-10-15: issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md;
 #        through 6.7.12 it was received as `var p: P2 = mr(4);`, 42 by the registers' coincidence), on cx as natively, once
 #   P9   a 13-argument callee returning a pair (arguments 11 and 12 ride r14 / r15, the emitters'
 #        temps)                                                  P10 a pair call as the 13th argument

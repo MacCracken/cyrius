@@ -2,7 +2,7 @@
 # tests/gates/frontend/address_of_field_refused.sh — 6.7.13
 #
 # `&x.f` — THE ADDRESS OF A STRUCT FIELD — IS NOT CYRIUS: refused by name (the user's D3 (b), 2026-10-15;
-# issues/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md). Through 6.7.12 the `&` factor took `&x`
+# issues/archived/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md). Through 6.7.12 the `&` factor took `&x`
 # and stopped at the `.`, so the parse failed on the token after it — `expected ')', got '.'` (`expected ';'` in a
 # declaration) — with no word of why, while the guide cited `load64(&s.f)` and `&h.f` as expressions. Now the
 # factor refuses it once, as `&a[i]` is (`_addr_field_post`, src/frontend/parse_expr.cyr), consumes its `.f` /

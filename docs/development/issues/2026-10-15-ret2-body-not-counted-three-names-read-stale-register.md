@@ -7,7 +7,7 @@ f980a663 and its parent 68d421a8 alike) on x86_64, aarch64 (qemu), cx (cxvm) and
 left in the third return register (88 seeded, every target); the same symptom 6.7.11's pass-1 count closed for the
 `return (a, b);` spelling.
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane (M4), while pinning D23 B's rows for
-issues/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md (whose triage read "the count is already
+issues/archived/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md (whose triage read "the count is already
 enforced by pass 1" — true of a `return (1, 2);` body only). The gap is not scalar-specific: an undeclared `ret2` fn,
 the legacy idiom the guide § Multi-Return shows, has it too, so it is outside that issue's filed surface.
 

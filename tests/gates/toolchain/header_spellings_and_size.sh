@@ -74,12 +74,12 @@
 #   one propagation round, in file order (no fixpoint)         → H12 FAIL (early, gw: callees defined below)
 #   a closure's body not skipped                               → H12 FAIL (count, the word row, the oracle)
 #   a nullary variant (None(), Vb()) counted as a pair         → H12 FAIL (count, the word row, the oracle)
-# 6.7.13 — H12's `?` route (issues/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md):
+# 6.7.13 — H12's `?` route (issues/archived/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md):
 #   no `?` route (6.7.12's _hdr_body_pair)                     → H12 FAIL (9: the filed repro's 2, count, 5 refusal rows, the oracle)
 #   an expression closure's body not skipped                   → H12 FAIL (count, the word row, the oracle)
 #   the call's `)` found by _hdr_close (`<` a bracket)          → H12 FAIL (count, the qx row, the oracle)
 #   the `?` route named as a `return` ('parse(..)')            → H12 FAIL (the filed repro and the 5 refusal rows)
-# 6.7.13 — D37 (issues/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md item 2):
+# 6.7.13 — D37 (issues/archived/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md item 2):
 #   lib/result.cyr's ok_via / err_via back to `: i64`          → H12 FAIL (the result.cyr rows: rc 1, both prototypes)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
@@ -323,7 +323,7 @@ rcv12=0; "$CY" header v12.cyr > o8w 2> e8w || rcv12=$?
 check "all twelve vector types refused, a scalar fn beside them kept, exit 1" "12 1 1" "$(grep -c "returns '[a-z0-9]*': a SIMD vector return, which no C11 return type carries; no prototype written" e8w || true) $(has o8w 'cyr_val keep(cyr_val a);') $rcv12"
 # 6.7.13: a SIMD vector PARAMETER is refused the same way — cycc receives it in xmm / v, the
 # prototype said `cyr_val v` (C passes it in rdi / x0). The filed repro verbatim
-# (issues/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md), then f64v4 / i32v4 and a
+# (issues/archived/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md), then f64v4 / i32v4 and a
 # vector second; a `: Result` / `: Option` parameter (one word, its tag) and a `*f64v2` (a
 # pointer) stay `cyr_val`. Mutation: `_hdr_vparam` answering 0 (6.7.12) → these rows RED.
 printf 'fn pv(v: f64v2): i64 { return 0; }\nfn pr(r: Result): i64 { return r; }\n' > pv.cyr
@@ -617,7 +617,7 @@ check "a file's own \`enum E: stack\` annotation is cyr_val2, a plain enum's a w
 printf '%s\n' 'fn Some(x) { return x; }' 'fn u(x) { return Some(x); }' > shadow.cyr
 "$CY" header shadow.cyr > o12d 2> e12d || :
 check "a file's own fn named like a stdlib constructor decides (no refusal)" "1 0" "$(has o12d 'cyr_val u(cyr_val x);') $(wc -c < e12d | tr -d ' ')"
-# 6.7.13 — THE `?` ROUTE (issues/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md): a `?` on
+# 6.7.13 — THE `?` ROUTE (issues/archived/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md): a `?` on
 # a pair call returns the callee's pair on its Err path and marks the enclosing fn pair-returning
 # (the compiler's third route to GFLG 256), and the header printed `cyr_val q2(..)`. The filed
 # repro verbatim, then the shapes; cycc's "bind both" refusal is the oracle again.

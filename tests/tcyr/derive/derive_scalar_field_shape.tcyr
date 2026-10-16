@@ -1,5 +1,5 @@
 # derive_scalar_field_shape.tcyr — 6.7.13: the `#derive` scanner `T_from_json_str` walks a SCALAR field's
-# value whole (issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
+# value whole (issues/archived/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
 #
 # Through 6.7.12 the scanner's scalar arms — a typed integer, an untyped field, f64 / f32, bool, Str, cstring —
 # took their own token and stopped: on an object or array value the cursor stayed at its `{` / `[` (the bool

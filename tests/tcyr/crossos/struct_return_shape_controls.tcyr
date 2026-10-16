@@ -21,7 +21,7 @@
 # shapes and values are the gate's. The crossing's other shapes are carried by
 # crossos/struct_pair_multi_value_crossing.tcyr, the struct-operator values by crossos/struct_value_codegen.tcyr.
 # 6.7.13: `ret2(a, b)` in a fn declared to return a named struct is refused in every class
-# (issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md; the refusal rows are
+# (issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md; the refusal rows are
 # tests/gates/frontend/multi_value_into_named_struct.sh SR*), so the four rows that produced the pair with it
 # produce it with `return p;` — the same values, the struct's own return path.
 include "lib/assert.cyr"

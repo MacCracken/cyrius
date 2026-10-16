@@ -165,7 +165,7 @@
 #   real tree                                          -> GREEN (67 refusal rows, 32 acceptance rows)
 #
 # 6.7.13 — A STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (the user's decision D5 (a), 2026-10-15;
-# issues/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): `ri(s)` with `p: *i64` / `*u8` /
+# issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): `ri(s)` with `p: *i64` / `*u8` /
 # `**i64` / `*f64`, s an inline local (8 / 16 B), a by-value parameter, an inline global (a fn, top level), a capture,
 # wrapped, a `*T` with T = i64, a method's parameter — "cannot pass 's' to a parameter that is not a pointer to its
 # struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse_fn.cyr); P1 the filed repro
@@ -691,7 +691,7 @@ accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
     10 \
     "${T}fn go(): i64 { var s: S1; s.u = 10; return bs1(s); } syscall(60, go());"
 
-# 6.7.13 (issues/2026-10-14-dereference-of-address-of-struct-faults.md): a dereference of an ADDRESS-OF, `*(&u)` /
+# 6.7.13 (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md): a dereference of an ADDRESS-OF, `*(&u)` /
 # `*&u`, is the struct `u` names, so another struct's is refused by name as `take8(u)` is (through 6.7.12 the 8 B
 # row compiled and passed U's bytes, the 16 B row SIGSEGV'd: the first word passed as the address), and a generic
 # carrier binds T through it as `gw(w)` does (139 through 6.7.12).
@@ -706,7 +706,7 @@ accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) do
     11 \
     "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(w) * 10 + gw(w); } syscall(60, go());"
 
-# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md, the struct
+# 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md, the struct
 # analogue): `**pps` of a `pps: **S` is the struct S as an argument — its pin carries S (`_pp_psid`), the outer `*`
 # reads it (`_dlo_ppsid`) — so `bqp(**ppq)` passes `*ppq` (it pushed Q's first field as the address: 139) and a `**Pt`
 # is refused by name, as `bqp(*pp)` is.
@@ -744,7 +744,7 @@ refuse "G5 gx((b, 3)): the tuple literal's refusal, naming the base" "this param
     "${T}fn go(): i64 { var b: Box<Pt>; b.n = 8; return gx((b, 3)); } syscall(60, go());"
 
 echo "=== 6.7.13 (D5 (a)): a struct value into a pointer of another kind (\`*i64\`, \`*u8\`, \`**T\`, \`*f64\`) ==="
-# The filed repro, verbatim (issues/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): it
+# The filed repro, verbatim (issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): it
 # compiled with no diagnostic and pushed s's first field, 42, as the address — x86_64 139, aarch64 139, cx 253, PE 5.
 # The user's decision D5 (a), 2026-10-15: refused by name, as D27 refuses a vector there and 6.7.3 a struct of
 # another type into a `*S`. Every row below compiled (and faulted, or read through the first word) through 6.7.12.

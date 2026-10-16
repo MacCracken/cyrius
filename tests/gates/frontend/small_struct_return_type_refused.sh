@@ -237,7 +237,7 @@ echo "=== return &x (6.7.13, the user's decision D4 (a), 2026-10-15): &s of the 
 # `return &s;` is `return s;` (tests/tcyr/crossos/struct_return_address_of.tcyr, every leg: small_struct_handle_line.sh
 # R13a); `&u` of ANOTHER struct is refused by name at every size, as `return u;` is — through 6.7.12 the 8 B form
 # returned u's ADDRESS as the S8 (no diagnostic) and the 16 / 24 B forms were refused in other words.
-# docs/development/issues/2026-10-14-return-address-of-struct-local-decision.md
+# docs/development/issues/archived/2026-10-14-return-address-of-struct-local-decision.md
 refuse "R17 return &u; (u: U8) from : S8" "$MS — got \`&u\` (a \`\\*U8\`)" "$T"'fn f(): S8 { var u: U8; u.u = 3; return &u; }'"$E"
 refuse "R18 return (&GU); (a value global of U8)" "$MS — got \`&GU\` (a \`\\*U8\`)" "$T"'fn f(): S8 { return (&GU); }'"$E"
 refuse "R19 return &p; (p: U8, a by-value parameter)" "$MS — got \`&p\` (a \`\\*U8\`)" "$T"'fn f2(p: U8): S8 { return &p; }

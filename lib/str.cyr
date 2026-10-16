@@ -171,7 +171,7 @@ fn str_builder_add_json_str(sb, s: Str): i64 {
 # `agnosys_json_emit_cstr_or_null` shape byte for byte, without its Str header allocation.
 # `#derive(Serialize)` writes a `: cstring` field through it. The Str is a 16-byte stack cell
 # passed by ADDRESS (`&t`): a `Str` local passed by name reaches an `s: Str` parameter as its
-# data word (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). CHANGELOG [6.7.10]
+# data word (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). CHANGELOG [6.7.10]
 fn str_builder_add_json_cstr(sb, p): i64 {
     if (p == 0) { return str_builder_add_cstr(sb, "null"); }
     var t[16];

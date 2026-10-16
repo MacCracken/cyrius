@@ -378,7 +378,7 @@ fn sT_bv(l: DT, p: *DT): i64 { l = *p; return l.a * 100 + l.b * 10 + l.c; }
 fn sT_byv(): i64 { var x = DT { 5, 8, 9 }; var z = DT { 0, 0, 0 }; var r = sT_bv(z, &x); return r + (z.a * 100 + z.b * 10 + z.c) * 1000; }
 
 # ── 6.7.13: a dereference of an ADDRESS-OF, `*(&x)` / `*&x`, is the struct `x` names
-# (issues/2026-10-14-dereference-of-address-of-struct-faults.md): through 6.7.12 `_hl_psid` answered 0 for `&x`, so
+# (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md): through 6.7.12 `_hl_psid` answered 0 for `&x`, so
 # `var d: S = *(&x);` over 8 B was a HANDLE holding x's first field as its address (SIGSEGV), `l = *(&x)` / `G =
 # *(&x)` / `o.s = *(&x)` stored that one word, and `return *(&x)` over 8 B was refused. The `a` rows at 3 / 8 / 16 /
 # 24 B, the source written after the copy (a copy, not an alias): a declaration, a local, a global and a field

@@ -49,7 +49,7 @@
 #      struct-result.md) the callee in parentheses, `rd(callptr((&mkv), 42, 2))` (139 / 139 / 0 / 5 before: an unknown
 #      callee's lane bits as the address), as the known callee it is (`_icall_fti`, `_svc_rs`)
 #
-# 6.7.13 (issues/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a VALUE-form `v: f32v8` parameter is its
+# 6.7.13 (issues/archived/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a VALUE-form `v: f32v8` parameter is its
 # 32 bytes, as `v: f64v4` is. `_classify_param_type` had no class for f32v8, so it was one integer word and the caller
 # pushed lane 0's (`load32(&v + 8)` read 0 on x86_64 / IR=3 / aarch64 / cx / PE; 38 is right). Class 10 takes f64v4's
 # 32-byte routing in both scans (mask code 2; Win64's 32-byte copy-in); the mask has no fourth code, so the argument
@@ -75,7 +75,7 @@
 #       IR=3 / DCE / aarch64 / cx ("value-form SIMD arg must be a 16-byte vector": the replay took f32v8 for a
 #       16-byte one), VY3 (that text); V8 / T2 PE green (Win64 does not replay a vector-parameter fn)
 #
-# 6.7.13 (issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows 6-7):
+# 6.7.13 (issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows 6-7):
 # a vector METHOD result into `*V` passes a temp's address, as a by-name call's does (D27) — `_svc_rs` takes `x.m(..)`
 # (`_vmc_fi`, the D29 method recogniser); on Win64 the method's hidden result pointer is that temp, before `self`.
 # Row 7 (an explicit instance) is the explicit-instance bite's (`_vcall_fi`).
@@ -114,7 +114,7 @@
 #   M-C2 `_sarg_vec_other` without the capture arm           -> RED 6: CR1 on every leg (compiled), CRX x86 / PE (2
 #       lines: `ru` / `rpp` / `ri((b))` / `bv1` gone)
 #
-# ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/2026-10-15-struct-into-vector-pointer-parameter-accepted.md)
+# ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/archived/2026-10-15-struct-into-vector-pointer-parameter-accepted.md)
 # — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME (a `*V` records no struct, so `_sarg_type_err` compared
 # nothing: `_sarg_svec_err`): the filed `rd(s)` read the struct's bytes as the vector (42 on every leg, silently).
 #   SV1 the filed repro verbatim: one line on x86_64 / aarch64 / cx / PE; SV2-SV9 a call result, `*ps`, a global, a
@@ -122,7 +122,7 @@
 #   SVok `rd(&s)` and `rd(ps)` (a typed `*Pt`) exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   M-S1 `_sarg_svec_err` answering 0                        -> RED 16: SV1 on every leg, SV2-SV9, SVw2-SVw5 (compiled)
 #
-# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — A
+# 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — A
 # DEREFERENCE THROUGH AN ADDRESS-OF OR A DOUBLE POINTER IS THE VALUE IT NAMES: the filed `rd(*&b)` / `rd(**ppb)` and the
 # struct analogues `take(*&s)` / `take(**pps)` pushed the loaded word as the address (139 / 139 / 139 / cx 253 or 252 /
 # PE 5). `_dlo_vec` types `&x` of a vector local / parameter / capture / global as its `*V` for the dereference only
@@ -387,7 +387,7 @@ if [ "$WINE" = 1 ]; then
     refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
 
-# 6.7.13 — rows 6-7 of issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md,
+# 6.7.13 — rows 6-7 of issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md,
 # the filed head and mains verbatim: a vector METHOD result and an explicit-instance result into `*f64v2` (D27's own rule
 # once the sources are typed; 139 / 139 / 139 / cx 253 / PE 5 before — row 7 is the explicit-instance bite's).
 OKH='include "lib/syscalls.cyr"
@@ -496,7 +496,7 @@ refused CRY1 "CRY1 a captured f32v4 into *f64v2 (A2)" "$CRY1B"
 refused CRY2 "CRY2 a captured f64v4 into *f64v2 (A2)" "${CRH}fn main(): i64 { var w: f64v4 = f64v4_make(1, 2, 3, 4); var c = |k| rd(w) + k; return fncall1(c, 0); }\n${E}"
 [ "$WINE" = 1 ] && refused CRYw "CRYw CRY1 on PE" "$CRY1B" pe
 
-# 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/2026-10-15-struct-into-vector-pointer-parameter-accepted.md) —
+# 6.7.13 (D33 A, the user's decision, 2026-10-15; issues/archived/2026-10-15-struct-into-vector-pointer-parameter-accepted.md) —
 # A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME, the mirror of 6.7.3 / A2 / D27: the filed `rd(s)` (`s: Pt`,
 # `p: *f64v2`) passed the struct's address and the callee read its bytes as the vector (42 on x86_64 / IR=3 / aarch64 /
 # cx / PE). `rd(&s)` and a typed `*Pt` pointer convert freely, as ever.
@@ -536,7 +536,7 @@ printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt {
   'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
 exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
 
-# 6.7.13 (issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
+# 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
 # dereference of an ADDRESS-OF a vector, or of a `**V` / `**S`, is the vector / the struct: the filed `rd(*&b)` /
 # `rd(**ppb)` and their struct analogues `take(*&s)` / `take(**pps)` pushed the loaded word as the address (139 on
 # x86_64 / IR=3 / aarch64, cx 253 / 252, PE 5). `_dlo_vec` reads `&x` of a vector as its `*V` (`_amp_vd`; `&b + n`

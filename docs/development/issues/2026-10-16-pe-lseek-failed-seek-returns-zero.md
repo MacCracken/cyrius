@@ -1,7 +1,7 @@
 # Windows `xlseek` / `sys_lseek`: a FAILED seek returns 0 — the PE reroute ignores `SetFilePointerEx`'s BOOL and hands back its pre-zeroed output slot — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.13 stdlib lane (unit L1) while running patra 1.16.3's suite on real
-cass for issues/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (built against the lane's tree, l6713-stdlib
+cass for issues/archived/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (built against the lane's tree, l6713-stdlib
 from f59668ad): six patra rows fail on Windows only, with the 6.7.12 lib and with the fixed one alike. Measured with the
 probe below under wine and on cass (Windows 11, `C:\cyrius-tests`).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.13 stdlib lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

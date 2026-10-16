@@ -46,7 +46,7 @@
 # has no `fn` in its impl block, so the 6.7.11 walk never saw it: `r.ddv(d)?` above `trait Dd` + `impl Dd
 # for Rt { }` was boxed (rc 139 / cx 1 / PE 5). MUTATION: `_pair_prescan_impls` without its
 # `_pair_scan_defaults` call -> rc 139 (the first `mt_` row).
-# (issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
+# (issues/archived/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md)
 #
 # 6.7.13 — PARENTHESES AROUND A WHOLE PAIR CALL (the `pw_*` rows; the user's decision D19 A, 2026-10-15).
 # The pair check read the wrap's `(` as no call, so `var v = (p.div(d))?;` took the boxed `?` (rc 139 on x86
@@ -54,7 +54,7 @@
 # call, at depth 2, into an assignment, and `return (p.div(d));` forwarding the pair to a caller ABOVE it.
 # MUTATIONS: `_callee_returns_pair_at` without `_pair_unwrap` -> rc 139 (the first `pw_` row);
 # `_tok_ret_callee` without it -> rc 139 (`pw_fwd`).
-# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
+# (issues/archived/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md)
 #
 # CROSS-HOST because the pair is the per-target two-register return (rax:rdx / x0:x1 / the cx
 # pair), `self` is passed by address from five receiver storages, and a propagated Err

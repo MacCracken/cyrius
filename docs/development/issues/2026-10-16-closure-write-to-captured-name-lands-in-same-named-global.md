@@ -5,7 +5,7 @@ and on the installed 6.7.2, 6.7.5, 6.7.9 and 6.7.12 compilers: identical everywh
 tree's lib/ uses `const`).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.13 receives-lane triage of
-`issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md` ("met in passing, not filed"); filed 2026-10-16
+`issues/archived/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md` ("met in passing, not filed"); filed 2026-10-16
 by unit R4 after re-measuring it.
 **Severity:** High — a silent wrong value: source the 6.7.11 rule refuses ("a captured name is not assignable in a
 closure") compiles when a global has the name, and the store goes to the global while reads in the same body see the

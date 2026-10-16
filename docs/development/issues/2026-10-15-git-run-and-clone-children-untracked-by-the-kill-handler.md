@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-15 on the 6.7.13 tools lane (l6713-tools @ 86ab0dc7, the CLI built from
 `cbt/cyrius.cyr` by the tree's `build/cycc`). Met while fixing
-2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md, which tracked `cmd_capacity`'s compiler and
+archived/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md, which tracked `cmd_capacity`'s compiler and
 `_dep_wt_run`'s git child and captures (and, as a quick repair, `_dep_wt_run`'s stdout capture). The triage named
 these two sites "outside the filed surface, met in passing"; they are the same untracked-child class.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

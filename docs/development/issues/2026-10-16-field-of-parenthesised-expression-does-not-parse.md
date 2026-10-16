@@ -6,7 +6,7 @@ tree (x86_64, aarch64, cx, PE: refused alike, frontend) and with the lane base (
 **Severity:** Low — valid-looking source refused loudly, with a diagnostic that does not name the construct; no wrong
 value. Workaround: drop the parentheses (`s.a`, `mk1().a`) or bind first.
 **Discovered:** 2026-10-16, the receives lane, probing the 8 B wrapped receive
-(`issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md`): `var x = (mk1()).a;`.
+(`issues/archived/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md`): `var x = (mk1()).a;`.
 
 ## Reproduction
 

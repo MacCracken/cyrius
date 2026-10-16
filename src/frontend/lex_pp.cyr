@@ -3046,7 +3046,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         # 6.7.13 — every arm ends by walking the rest of its value whole (`_cy_json_skipval` stops AT a
         # depth-0 `,` / `}` / `]`): after a well-formed value it moves nothing; an object, an array or a
         # string where a scalar was expected is skipped, so its inner keys are never read as this
-        # struct's (issues/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
+        # struct's (issues/archived/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
         # CHANGELOG [6.7.13]
         op = op + PP_EMIT_STR(out, op, "_p = _cy_json_skipval(json, _p);\n}\n");
         fi = fi + 1;

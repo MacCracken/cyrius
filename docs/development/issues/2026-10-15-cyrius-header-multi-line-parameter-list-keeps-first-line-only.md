@@ -1,7 +1,7 @@
 # `cyrius header` keeps only the first line of a multi-line parameter list, which drops parameters and misses a vector parameter on a continuation line — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 tools review (the vector-parameter refusal of
-issues/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md does not see a parameter on a continuation line).
+issues/archived/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md does not see a parameter on a continuation line).
 Re-measured by the tools lane's fix step with the lane's build/cyrius and build/cycc (l6713-tools @ 815cd500). It
 predates the lane: the base CLI at b13d3598 prints the same prototypes.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

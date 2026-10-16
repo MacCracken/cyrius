@@ -1,7 +1,7 @@
 # cyrius-lsp: a loose file now reports the pin-redirect error of the project the server's working directory sits in — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 tools review of 67516853 (the fix for
-issues/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md). Re-measured by the tools lane's fix step
+issues/archived/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md). Re-measured by the tools lane's fix step
 with the lane's build/cyrius-lsp, build/cycc and build/cyrius (l6713-tools @ 815cd500), against a base server and CLI
 built from b13d3598.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

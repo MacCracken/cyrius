@@ -5,7 +5,7 @@
 # `Str { p, n }` literal is an INLINE header on the frame, whose slot is field 0 — and every
 # use of the bare name as a `Str` value took that slot, the `data` word, as the header: `f(t)` into `s: Str`
 # read the length out of whatever followed the string (the filed repro exited 0 where 7 is right, on every
-# target; issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Now `f(t)`, `f((t))`,
+# target; issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Now `f(t)`, `f((t))`,
 # `str_len(t)`, a method's `Str` parameter, `var h: Str = t;`, `var h = t;` and `h = t;` into a handle take the
 # header's address, with no allocation: `&t` for a local (so `h` is a second handle to t's header), the static
 # address for an inline global, the environment copy's address for a closure's capture. The uses that would let
@@ -53,7 +53,7 @@ var GQ: Str = Str { "a\"b", 3 };
 var GH: Str = 0;
 var G_DEF = 0;
 
-# ── the filed table (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) ──────────────────
+# ── the filed table (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) ──────────────────
 fn t_call(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }
 fn t_paren(): i64 { var t: Str = Str { "abcdefg", 7 }; return f((t)); }
 fn t_stdlib(): i64 { var t: Str = Str { "abcdefg", 7 }; return str_len(t); }

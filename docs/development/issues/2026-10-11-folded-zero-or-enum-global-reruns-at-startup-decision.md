@@ -9,7 +9,7 @@ on x86_64 and cx and 8 on aarch64 (Q = INT_MIN); the non-zero literal control C 
 [the const-init redundant store](2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md), the same
 replay) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9's
-[cx folded-global fix](2026-10-09-cx-folded-global-reevaluated-int-min-div.md).
+[cx folded-global fix](archived/2026-10-09-cx-folded-global-reevaluated-int-min-div.md).
 **Severity:** Low — a program must spell a trapping division in a global initializer; but the same source crashes on
 two targets and runs on a third.
 **Affects:** cycc 6.6.20 (the fold's −1 rewrite; the store kept, documented) – 6.7.9; x86_64 (ELF, Mach-O, PE) and cx

@@ -90,7 +90,7 @@ the name, width and offset table, which is why a single comment corrupts every l
 the loads come out at the wrong widths.
 
 This is **not** the path
-[`archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md`](archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md)
+[`archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md`](2026-09-19-lexer-attribute-prefix-swallows-comments.md)
 fixed at 6.6.6. That one was a comment that *starts with an attribute name* (`#ioctl …`), in the
 main lexer. This bug fires on any comment text, and 6.6.6 still shows it. Nor is it the 6.6.6
 `#derive(Serialize)` word-boundary change.

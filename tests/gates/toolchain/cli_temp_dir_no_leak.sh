@@ -581,7 +581,7 @@ fi
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # `cyrius capacity` forks its own compiler (CYRIUS_STATS=1, stderr into `cap_err`) outside
 # compile(): until 6.7.13 neither was tracked, so a SIGTERM left `cap_err` (and the dir) behind and
-# the compiler running (issues/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md).
+# the compiler running (issues/archived/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md).
 kill_run cap TERM capacity src/ok.cyr
 check "capacity SIGTERM mid-compile — the live dir holds cap_err and the materialized source (anti-vacuous)" yes \
     "$(grep -qx cap_err "$T/k7-cap.live" 2>/dev/null && grep -q '^cpp_' "$T/k7-cap.live" && echo yes || echo no)"
@@ -709,7 +709,7 @@ if [ -d "$D7/home/versions/$V7/lib" ]; then
     check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-dl.rc" 2>/dev/null || echo none)"
     check "  …its private dir is gone (no cpp_ / dlverify* left by the parent or a child)" 0 "$(k7_dirs dl "$TB")"
     # 6.7.13: the mirror is a scratch TREE the handler removes (cbt/sigclean.cyr `_cbt_sig_tree_set`);
-    # until then a kill left all of it (issues/2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md).
+    # until then a kill left all of it (issues/archived/2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md).
     check "  …and no dist/.dlverify-<pid> mirror is left in the project" 0 "$(ls -d "$D7K/p/dist"/.dlverify-* 2>/dev/null | wc -l | tr -d ' ')"
     nrun=0
     for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null; }; done

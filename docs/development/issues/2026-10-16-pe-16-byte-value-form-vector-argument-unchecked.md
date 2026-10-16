@@ -6,7 +6,7 @@ x86_64 `CYRIUS_IR=1` / `CYRIUS_IR=3` / `CYRIUS_DCE=1`, aarch64 (qemu) and cx (cx
 callee reads whatever bytes sit at the argument's address.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane, the value-form f32v8 parameter bite
-(`2026-10-15-value-form-f32v8-parameter-receives-one-word.md`), whose filed rows required the 32-byte half of this
+(`archived/2026-10-15-value-form-f32v8-parameter-receives-one-word.md`), whose filed rows required the 32-byte half of this
 check on PE (an f64v4 local into `v: f32v8` and the reverse) — that half landed with it (`_sarg_pe_v32`); the 16-byte
 parameters are beyond that issue's filed surface.
 **Severity:** Medium — compiles clean on one target only and computes a wrong value (or reads past a 16-byte local into

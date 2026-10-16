@@ -1,7 +1,7 @@
 # A struct-typed field, a struct call result or a struct dereference passed to a word-pointer parameter (`ri(w.s)`, `ri(mk())`, `ri(*pp)` with `p: *i64`) pushes its first word as the address — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 structs lane (unit S3) while landing D5 (a)
-(issues/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md: a struct NAME — an inline local, a
+(issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md: a struct NAME — an inline local, a
 by-value parameter, a value global, a capture — into a `*T` whose T is no struct is refused by name). Measured on the
 lane tree after that bite, x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
@@ -9,7 +9,7 @@ lane tree after that bite, x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine).
 **Kind:** language — D5 (a)'s rule ("a struct value into a pointer of another kind is refused by name") stated for
 the name shapes the filing listed; whether it reaches the other struct VALUE shapes (a field, a call, a method /
 operator result, a dereference) is the same question at the remaining sources. (D27 left the vector twin's call
-and dereference sources to 2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md.)
+and dereference sources to archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md.)
 
 ## Repro
 

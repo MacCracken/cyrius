@@ -102,7 +102,7 @@ redundant is a one-line question at the open). In `_emit_js`, check the compiler
 Gate rows (a `tests/gates/toolchain/` script): each pair from the repro rc 1 with the named error and no output file;
 each single selector unchanged (byte-identical outputs to today); `--aarch64 --target=js` rc 1 without reading stdin.
 Mutation: drop the check → the pair rows go RED. This is the host-independent half of
-[the Windows CLI target selectors](archived/2026-10-10-windows-cli-drops-target-selectors.md), which refuses selectors the
+[the Windows CLI target selectors](2026-10-10-windows-cli-drops-target-selectors.md), which refuses selectors the
 PE-hosted CLI cannot honour in the same function; the two can share one bite or sit as adjacent bites in the lane.
 
 ## Consumer-side workaround

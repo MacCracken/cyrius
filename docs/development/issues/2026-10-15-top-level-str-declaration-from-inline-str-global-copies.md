@@ -1,7 +1,7 @@
 # A top-level `var H: Str = gt;` (gt an inline `Str` global) copies the header where the same declaration in a fn binds to it; an untyped top-level `var H = gt;` keeps the `data` word — OPEN
 
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S4) while landing
-D7 (1) (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md), which makes `var h: Str = gt;` and
+D7 (1) (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md), which makes `var h: Str = gt;` and
 `var h = gt;` IN A FN a handle bound to `gt`'s header (no copy). Measured on the lane tree after that bite, x86_64.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low (annotated: a copy where a bind is the in-fn rule — values agree until one side is written) /

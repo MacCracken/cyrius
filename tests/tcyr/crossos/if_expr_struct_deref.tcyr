@@ -1,5 +1,5 @@
 # if_expr_struct_deref.tcyr — 6.7.13. A STRUCT DEREFERENCE AS AN IF-EXPRESSION BRANCH IS A STRUCT VALUE
-# (issues/2026-10-14-dereference-as-if-expression-branch.md; 6.7.10 decision 6: `*p` is a struct value at every
+# (issues/archived/2026-10-14-dereference-as-if-expression-branch.md; 6.7.10 decision 6: `*p` is a struct value at every
 # size; 6.7.11 D42: an if-expression of 8 B or less is one).
 #
 # ⛔ THROUGH 6.7.12 the if-expression typed a branch by its shape (a name, a whole call, a method / operator

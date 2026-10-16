@@ -22,7 +22,7 @@ a STRUCT result (in its temp); any other result is refused with "it does not ret
 `*P` return is known (the same table the free arm reads), so the refusal is a missing arm, and its text is wrong.
 The direct spelling of the same method (`H_get(h).b`) is a free call and works.
 
-Related, not the same defect: [`gp().n = 5` refused](../2026-10-08-field-store-through-pointer-returning-call-refused.md)
+Related, not the same defect: [`gp().n = 5` refused](2026-10-08-field-store-through-pointer-returning-call-refused.md)
 — the STORE through a free call's `*T` result (6.7.12).
 
 ## Reproduction

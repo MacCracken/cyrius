@@ -7,7 +7,7 @@
 # rax:rdx temporary), which keeps that refusal (tests/gates/frontend/call_ptr_field_store.sh). Now `=` and
 # `OP=` (the address computed once) through a free call, an explicit generic and a method, down a chain of fields,
 # a `*T` field hop and into a narrow, f64 or struct-typed field, in a fn, in a closure and at top level
-# (issues/2026-10-08-field-store-through-pointer-returning-call-refused.md).
+# (issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md).
 #
 # CROSS-HOST: the pointer is parked in a frame temp (a hidden global at top level) and the field store's own body
 # addresses it, on each backend. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.

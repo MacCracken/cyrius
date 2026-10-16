@@ -140,7 +140,7 @@ _pin 6.6.7
 printf '\n[build]\nentry = "main.cyr"\noutput = "build/m"\n' >> "$P/cyrius.cyml"; printf 'syscall(SYS_EXIT, 0);\n' > "$P/main.cyr"
 cp "$P/cyrius.lock" "$W/a2.lock"; cp "$P/lib/chrono.cyr" "$W/a2.chrono"; cp "$P/lib/string.cyr" "$W/a2.string"
 # 6.7.13: `deps --locked` (CI) at the moved pin gives D19's remedy, naming chrono — never "run
-# `cyrius deps`", which refuses here (issues/2026-10-15-deps-locked-remedy-names-deps-after-a-d19-refusal.md)
+# `cyrius deps`", which refuses here (issues/archived/2026-10-15-deps-locked-remedy-names-deps-after-a-d19-refusal.md)
 _locked_remedy() {   # <tag>: rc 1, the D19 remedy naming lib/chrono.cyr alone, not "run `cyrius deps`"
     rc=0; _cy deps --locked > "$W/a2l$1.out" 2>&1 || rc=$?
     { [ "$rc" -eq 1 ] && grep -q '^error: --locked: .*\[package\].cyrius moved from 6.6.6 to 6.6.7, and lib/ holds 1 file the resolve does not vendor that the 6.6.7 snapshot ships with other bytes, so `cyrius deps` will not re-lock:$' "$W/a2l$1.out" \
@@ -152,7 +152,7 @@ _locked_remedy() {   # <tag>: rc 1, the D19 remedy naming lib/chrono.cyr alone, 
 }
 _locked_remedy "at the pin bump"
 # 6.7.13 (D42): the two other lock writers are held to D19 at the move
-# (issues/2026-10-15-deps-lock-and-scoped-lib-sync-restamp-a-moved-pin.md). The bare `--lock`
+# (issues/archived/2026-10-15-deps-lock-and-scoped-lib-sync-restamp-a-moved-pin.md). The bare `--lock`
 # vendored nothing, so every lib/ file 6.6.7 ships with other bytes is named — chrono and string,
 # not math (the same bytes) or mine (no snapshot file) — and its first way is `cyrius deps`; the
 # scoped `lib sync` names chrono alone (string is in its subset) before it copies anything.
@@ -188,7 +188,7 @@ cmp -s "$W/a2.lock" "$P/cyrius.lock" || { fail "axis 2: the refused deps rewrote
 cmp -s "$W/a2.chrono" "$P/lib/chrono.cyr" || { fail "axis 2: the refused deps wrote lib/chrono.cyr"; x=1; }
 # 6.7.13 (D41): refused BEFORE Phase 1 writes — string (in the closure, moved at 6.6.7) is not
 # re-vendored, so lib/ is the old pin's throughout and `deps --verify` stays green
-# (issues/2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md)
+# (issues/archived/2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md)
 cmp -s "$W/a2.string" "$P/lib/string.cyr" || { fail "axis 2: the refused deps re-vendored lib/string.cyr at 6.6.7 (D41: refused before anything is written)"; x=1; }
 [ "$(_libsum)" = "$lib0" ] || { fail "axis 2: the refused deps changed lib/"; x=1; }
 rc=0; _cy deps --verify > "$W/a2dv.out" 2>&1 || rc=$?

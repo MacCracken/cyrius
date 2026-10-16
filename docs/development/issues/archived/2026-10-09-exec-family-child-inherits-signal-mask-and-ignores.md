@@ -79,7 +79,7 @@ The fork sites in `lib/process.cyr` (6.7.6):
   deadline, `setsid`; it touches neither the mask nor any disposition.
 - `spawn` `:748` calls nothing between `fork` and `_exec3`.
 
-The 2026-08-05 filing ([`archived/2026-08-05-syscalls-has-signal-ignore-but-no-way-back-to-sig-dfl.md`](archived/2026-08-05-syscalls-has-signal-ignore-but-no-way-back-to-sig-dfl.md))
+The 2026-08-05 filing ([`archived/2026-08-05-syscalls-has-signal-ignore-but-no-way-back-to-sig-dfl.md`](2026-08-05-syscalls-has-signal-ignore-but-no-way-back-to-sig-dfl.md))
 added `signal_default` (6.5.7). That lets a consumer reset a child it forks itself. A child the exec family forks is
 not the consumer's to reach.
 

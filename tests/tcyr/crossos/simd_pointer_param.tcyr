@@ -114,7 +114,7 @@ fn sp_vrows(): i64 {
 }
 
 # ⛔ 6.7.13 — a vector METHOD result and an explicit-instance result into `*V` (D27's call-result rule once the sources
-# are typed: issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows
+# are typed: issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows
 # 6-7): `rd(s.mv(42, 7))` and `rd(mkg<i64>(42, 7))` pushed lane 0 as the address (139 / cx 253 / PE 5; PE 7 for the
 # method). On Win64 the method's hidden result pointer is the temp's, before `self`, which must stay intact.
 struct Smv { k; j; }
@@ -146,7 +146,7 @@ fn sp_mrows(): i64 {
 # ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — a closure's captured vector meets the local's argument rules: into a
 # `*V` of its type it passes the capture's address (both lanes are the captured copy's), and into a pointer of another kind
 # it is refused by name, as the local is (D27; the refusals are tests/gates/codegen/simd_pointer_param.sh CR rows).
-# issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-capture-address.md
+# issues/archived/2026-10-15-captured-vector-into-other-pointer-kind-passes-capture-address.md
 fn sp_crows(): i64 {
     var b: f64v2 = f64v2_make(11, 22);
     var w: f64v4 = f64v4_make(1, 2, 3, 44);
@@ -171,7 +171,7 @@ fn sp_crows(): i64 {
 
 # ⛔ 6.7.13 — a dereference of an ADDRESS-OF a vector, or of a `**V`, is the vector: `rd(*&b)`, `rd(*(&b))` and
 # `rd(**ppb)` into `*V` pass `&b` / `*ppb` (they pushed lane 0 as the address: 139 / cx 253 / PE 5).
-# issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md
+# issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md
 var GDV: f64v2 = 0;
 fn sp_dparam(x: f64v2): i64 { return sp_hi(*&x); }
 fn sp_drows(): i64 {

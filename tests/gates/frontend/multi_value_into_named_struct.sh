@@ -54,7 +54,7 @@
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
 #
 # 6.7.13 — AXIS SR: `ret2(a, b)` IN A FN DECLARED TO RETURN A NAMED STRUCT IS REFUSED IN EVERY CLASS (D22 A, the
-# user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), as the
+# user's decision, 2026-10-15; issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), as the
 # tuple literal `return (a, b);` is since 6.7.11 (D39): over 16 B the result pointer was never written (the
 # repro read 0 on x86_64 / aarch64 / cx / PE), at 8 B or less the second value was dropped (1), at 9-16 B the
 # words came back by ABI coincidence (the C2 control's old producer). Once (a generic's instances), in sync (the
@@ -71,7 +71,7 @@
 #
 # 6.7.13 — AXIS RT: `return mk(..);` OF A MULTI-VALUE CALL IN A FN RETURNING A STRUCT OF 8 B OR LESS is refused by
 # name, the fifth destination (D25 A, the user's decision, 2026-10-15;
-# issues/2026-10-14-small-struct-fn-returns-multi-value-call.md): the call's FIRST value was returned as the struct's
+# issues/archived/2026-10-14-small-struct-fn-returns-multi-value-call.md): the call's FIRST value was returned as the struct's
 # word (the repro exited 3 on x86_64 / aarch64 / cx / PE) — `a multi-value call 'mk' is not returned as struct 'P1' -
 # bind it first: ...`, at the call, parentheses transparent; the 9-16 B and over-16 B classes keep their own texts; a
 # `: P1` callee and a one-value callee still run.
@@ -79,7 +79,7 @@
 #
 # 6.7.13 — AXIS DP: `*p = mk(..);` THROUGH A `p: *S` copies what `G = mk(..);` copies (D4), so a multi-value call is
 # refused into it as into `G` (D26 A, the user's decision, 2026-10-15;
-# issues/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md): it stored the FIRST value as the
+# issues/archived/2026-10-14-multi-value-call-stored-through-struct-pointer-decision.md): it stored the FIRST value as the
 # struct's word (the repro exited 50 on x86_64 / aarch64 / cx / PE: GT2 = {5, 0}) — `is not assigned to struct 'P2'`,
 # at every size, a method, wrapped, a classic-for step and top level; a `*i64` still takes the first value.
 #   N18 `_mv_dst_sid` answering 0 under the override again -> RED DP1-DP9 DPu (BUILT), every leg
@@ -382,7 +382,7 @@ runs C6 7 "control: a \`Str\` handle parameter takes a word"
 
 # --- axis SR (6.7.13, D22 A): `ret2(a, b)` in a fn declared to return a named struct, every class ---
 R2S="returns that struct — \`ret2\` writes two values"
-# the issue's two repros, verbatim (issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md)
+# the issue's two repros, verbatim (issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md)
 printf 'struct P3 { x; y; z; }\nfn f(a, b): P3 { ret2(a, b); }\nfn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }\nsyscall(60, main());\n' > "$T/SR1.cyr"
 refused SR1 "2:18: a fn returning the struct \`P3\` $R2S" "repro 1 verbatim: over 16 B (it read 0, the result pointer never written)"
 printf 'struct S8 { v; }\nfn f(a, b): S8 { ret2(a, b); }\nfn main(): i64 { var q: S8 = f(1, 2); return q.v; }\nsyscall(60, main());\n' > "$T/SR2.cyr"

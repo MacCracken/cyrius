@@ -244,7 +244,7 @@ refuse "R22 step a = *pu, 8 B" "cannot copy 'pu' $MV: 'a'" \
 refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
 
-# 6.7.13 (issues/2026-10-14-dereference-of-address-of-struct-faults.md): `*(&u)` / `*&u` is the struct `u` names, so
+# 6.7.13 (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md): `*(&u)` / `*&u` is the struct `u` names, so
 # a declaration or an assignment from another struct's is refused by name, as from `u` itself. Through 6.7.12 the
 # 16 B declaration SIGSEGV'd (a handle holding u's first field) and the 8 B rows compiled clean.
 refuse "R35 var l: Pt = *(&q), a Q" "cannot copy 'q' $MV: 'l'" \

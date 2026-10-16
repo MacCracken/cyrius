@@ -1,7 +1,7 @@
 # The aarch64 Linux CLI resolves `[deps.X] target = "x86_64"` and skips `target = "aarch64"` on a plain build — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 tools lane (unit T1) while fixing
-issues/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md; measured
+issues/archived/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md; measured
 under qemu-aarch64 with the aarch64 Linux CLI cross-built from the lane's tree (l6713-tools @ e892f018) and from its
 base (b13d3598): the same result on both.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

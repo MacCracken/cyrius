@@ -50,7 +50,7 @@
 #      W12 an existing output untouched. Mutation: the `--pie` test dropped from
 #      `_cli_foreign_target` -> W11 W12 RED; `_cli_host_refuses_pie` answering on every host -> S2
 #      S3 S4 RED (and every Linux / macOS `--pie` build refused).
-#   6.7.13 (issues/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md):
+#   6.7.13 (issues/archived/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md):
 #      on the aarch64 Linux CLI `--win` wrote an aarch64 ELF named `.exe` at rc 0 (its compiler reads
 #      no CYRIUS_TARGET_WIN), and `--aarch64` / `--target=aarch64-bare-metal-elf` looked for the
 #      x86_64-hosted cycc_aarch64 and failed (pi). `--win` is refused by name there
@@ -62,7 +62,7 @@
 #      aarch64 kernel line; A9 the D20 pair `--aarch64 --target=aarch64-bare-metal-elf` writes A8's
 #      image byte for byte; A10 `run --aarch64` execs the program itself, not /usr/bin/qemu-aarch64
 #      (no qemu on an aarch64 host: pi exited 127 with no output once the compile succeeded).
-#   6.7.13 (D43, issues/2026-10-15-macos-cli-pie-inert-mach-o-compilers-read-no-cyrius-pie.md): neither
+#   6.7.13 (D43, issues/archived/2026-10-15-macos-cli-pie-inert-mach-o-compilers-read-no-cyrius-pie.md): neither
 #      Mach-O compiler reads CYRIUS_PIE, so `cyrius build --pie` on macOS wrote the plain build's image
 #      at rc 0. The x86_64 macOS CLI refuses it by name (a fixed-address Mach-O, no MH_PIE mode); the
 #      arm64 one accepts it as met (every image MH_PIE, flags 0x00200084). S4 the PE and x86_64 Mach-O

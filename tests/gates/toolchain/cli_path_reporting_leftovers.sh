@@ -35,7 +35,7 @@
 #           under wine, which has no certutil, `cyrius deps` printed `warning: cyrius.lock NOT
 #           written — cannot hash lib/alloc.cyr (and 15 more)` and wrote no lock. The SHA-256 is
 #           computed in process now, byte-identical to sha256sum (no existing lock churns).
-#   W9      6.7.13 (issues/2026-10-15-windows-drive-rooted-dep-path-joined-onto-manifest-dir.md): on
+#   W9      6.7.13 (issues/archived/2026-10-15-windows-drive-rooted-dep-path-joined-onto-manifest-dir.md): on
 #           cyrius.exe `_dep_join_path` took only a leading `/` as absolute, so a drive-rooted
 #           `[deps.X] path = "C:/deps/foo"` was joined onto the manifest's directory (`… not found in
 #           the local path C:\proj/C:/deps/foo`). A drive-rooted or `\`-led path is taken as given now.

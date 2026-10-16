@@ -89,7 +89,7 @@ fn passthru4(v: f64v4, s): f64v4 {
     return r;
 }
 
-# --- axis 7 (6.7.13, issues/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a value-form
+# --- axis 7 (6.7.13, issues/archived/2026-10-15-value-form-f32v8-parameter-receives-one-word.md): a value-form
 #     `v: f32v8` parameter is its 32 bytes, as `v: f64v4` is — it had no parameter class, so it was one
 #     integer word and the caller pushed lane 0's (`load32(&v + 8)` read 0 on every target). The filed
 #     repro's fn verbatim (flat: the inline-replay path), then real calls (an `if` body: not inlined). ---

@@ -2126,7 +2126,7 @@ fn _fld_leaf_load(S, beg, idx, sid): i64 {
     return 0;
 }
 # ⛔ 6.7.13 — A WHOLE STRUCT-TYPED FIELD OF 3, 5, 6 OR 7 BYTES AS A VALUE READS THE STRUCT, NO BYTE PAST IT
-# (issues/2026-10-14-small-struct-field-value-reads-past-the-object.md), as a dereference does since 6.7.11.
+# (issues/archived/2026-10-14-small-struct-field-value-reads-past-the-object.md), as a dereference does since 6.7.11.
 # Its leaf load read the 8-byte word at the field's address, so `take(w.s)`, `return w.s`, `w.s + a` and a
 # top-level `var G: S3 = GW.s` read up to 5 bytes past the object — SIGSEGV when it ended a mapping. The leaf
 # `_resolve_leaf_field` published, of base `idx` / `sid` at `_rlf_off`, no `Str` hop: a plain struct of 3 / 5
@@ -5723,7 +5723,7 @@ fn _gvi_scalar(S): i64 {
 # replayed by EMIT_GVAR_INITS, or baked into the image when it folds — `_tp_warn_gv`, `_tp_warn_baked`) and an
 # assignment to a `*T` local or `p: *T` parameter of a scalar T (parse.cyr: the slot's typed-pointer bit) never
 # warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every site,
-# as the kind-0 compare-mix warning exempts it (issues/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
+# as the kind-0 compare-mix warning exempts it (issues/archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
 # CHANGELOG [6.7.13]
 # 1 = the initialiser / right-hand side at token `st` is the literal 0 and nothing else.
 fn _tp_null(S, st): i64 {

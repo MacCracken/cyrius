@@ -89,4 +89,4 @@ shapes; the refusal follows the guide's § Parentheses rule (a wrap is transpare
 
 D4 (user, 2026-10-13) reads "an untyped value is stored as the struct's word at sizeof(S) bytes"; it shipped as
 min(sizeof(S), 8): `*p = 7` into a 16 B S leaves bytes 8..15 untouched. Filed separately as
-[the untyped store through a struct pointer over 8 bytes](../2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md).
+[the untyped store through a struct pointer over 8 bytes](2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md).

@@ -8,7 +8,7 @@ compiler (V1) alike.
 **Discovered:** 2026-10-16, the vectors lane (V2). D30's PE parity arm (`_sarg_pe_vword`, parse_fn.cyr) refuses a WORD
 pushed to a Win64 value-form parameter (the filing's pw.cyr), but a dereference never reaches it: `_try_push_struct_addr_arg`
 sends a leading `*` to `_sarg_deref` → `_push_struct_expr_arg`, which pushes the value it read (lane 0) itself. Related
-decision: D34 (`2026-10-13-vector-dereference-into-vector-local-decision.md`: `var v: f64v2 = *p;` copies the vector
+decision: D34 (`archived/2026-10-13-vector-dereference-into-vector-local-decision.md`: `var v: f64v2 = *p;` copies the vector
 through the pointer) — a value-form parameter is the callee's vector local, so the same question reaches here.
 
 ## Reproduction

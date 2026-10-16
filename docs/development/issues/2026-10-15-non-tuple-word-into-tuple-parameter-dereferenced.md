@@ -10,7 +10,7 @@ access violation 5), or reads memory through a small integer.
 it may today (the R17 header in src/frontend/parse_fn.cyr: "`g(f() + 1)` is an integer, which the struct rule passes
 as an address as it does any untyped value"), while the tuple VARIABLE refuses the same values.
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane's review (probes review/rev/g/c.cyr, e.cyr, i.cyr), beside
-6.7.13's R17 fix (issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md).
+6.7.13's R17 fix (issues/archived/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md).
 
 ## Reproduction
 

@@ -2,7 +2,7 @@
 # declared `: S`, with `s` an inline struct of S — a local, a by-value parameter, a value global — is
 # `return s;`: the struct `&s` points at, at every size, as `bs(&s)` into a by-value parameter passes the
 # struct (6.7.10 decision 7) and `return GP;` of a `*S` returns its pointee (6.7.11 D1)
-# (docs/development/issues/2026-10-14-return-address-of-struct-local-decision.md).
+# (docs/development/issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
 #
 # ⛔ THE DEFECT, every release through 6.7.12. `&s` is no `*S` to the return arms' typing, so at 8 B or less
 # the ADDRESS of `s` — a dead frame's, for a local — was the struct's word (`c.v` held `&s`: the filed

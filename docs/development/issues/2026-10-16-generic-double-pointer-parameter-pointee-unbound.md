@@ -8,7 +8,7 @@ identically on the V3 base for the step (unchanged by V3).
 **Kind:** bug — D9 (a) (the user, 2026-10-15) decides `*pp` of a `**T` is a `*T`; a generic instance's parameter misses
 the binding.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane (V3), probing the `**pps` struct typing beyond the filed local
-(issues/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md).
+(issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md).
 
 ## Reproduction
 

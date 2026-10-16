@@ -45,7 +45,7 @@ fn mk4(): f64v4 {
     return r;
 }
 
-# --- E (6.7.13, issues/2026-10-14-explicit-instance-vector-result-not-received.md): an EXPLICIT-INSTANCE generic call
+# --- E (6.7.13, issues/archived/2026-10-14-explicit-instance-vector-result-not-received.md): an EXPLICIT-INSTANCE generic call
 #     `g<T>(..)` is a by-name call declared to return its vector. Every receive tested `IDENT (`, so the assignment
 #     was refused, the declaration dropped its annotation (a one-word local: the high lanes garbage, silently) and
 #     `return g<T>(..)` was refused. Raw lane bits, each lane distinct; `<i32>` is a real instance, `<i64>` the
@@ -69,7 +69,7 @@ fn re2(x, y): f64v2 { return ge2<i64>(x, y); }
 fn re4(x, y): f64v4 { return ge4<i64>(x, y); }
 fn ref4(x, y): f32v4 { return gef<i32>(x, y); }
 
-# --- F (6.7.13, D34 A — the user's decision, 2026-10-15; issues/2026-10-13-vector-dereference-into-vector-local-decision.md):
+# --- F (6.7.13, D34 A — the user's decision, 2026-10-15; issues/archived/2026-10-13-vector-dereference-into-vector-local-decision.md):
 #     `var v: V = *p;` / `v = *p;` with `p: *V` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
 #     struct. Refused since 6.7.11 (and through 6.7.10 one word with the high lanes stale: x86_64 210, aarch64 74, cx 98,
 #     PE 146 where 161 is right). Each lane distinct; the copy is a copy (writes to either side stay there). ---

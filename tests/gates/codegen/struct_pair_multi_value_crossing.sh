@@ -68,7 +68,7 @@
 #   M11 `_refuse_struct_tuple_return` answering 0                        -> RED X1 X9 (BUILT, every leg)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): X8 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr.
-# 6.7.13 (D22 A, the user's decision, 2026-10-15; issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md;
+# 6.7.13 (D22 A, the user's decision, 2026-10-15; issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md;
 # M3-M5 retired with ESTRUCT_PAIR_HI_SYNC, removed in its own commit after the refusal: nothing compiling lands there):
 # `ret2(a, b)` in a fn declared `: P` is refused in every class, as the tuple literal is — so direction A has no
 # producer left in a program that compiles. X2 pins the refusal on the three compilers (the SR rows of

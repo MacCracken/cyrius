@@ -48,12 +48,12 @@
 #      `*WQ.p`, `f(*Q)`) and after it (`*P`, `(*P)`, `*gp()`, `*(P + 0)`), `G = *P`, a by-value and a `*S`
 #      argument, at top level and in a fn (locals declared and assigned from it, `return *P`, `return
 #      (*P)`): exit 0. Through 6.7.10 `_deref_read` loaded 8 bytes at every size: exit 139 at 1..7 B
-#   PZ (Linux x86_64 + aarch64; 6.7.13, issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md)
+#   PZ (Linux x86_64 + aarch64; 6.7.13, issues/archived/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md)
 #      a dereference `*p` of a ZERO-SIZE struct at the very end of a mapping as a value — `take(*p)`, `take((*p))`,
 #      `var l: E = *p`, a `*E` argument, in a fn and at top level: exit 65. Through 6.7.12 a zero-size `*p` (its
 #      step 8) kept the 8-byte word load: exit 139
 #   PF (x86_64 plain / CYRIUS_IR=1 / CYRIUS_IR=3 / CYRIUS_DCE=1, aarch64, PE; 6.7.13,
-#      issues/2026-10-14-small-struct-field-value-reads-past-the-object.md) a whole struct-typed FIELD of N =
+#      issues/archived/2026-10-14-small-struct-field-value-reads-past-the-object.md) a whole struct-typed FIELD of N =
 #      1..8 i8 fields whose object ends a mapping, in every value use — `ok(w.s)`, `ok((w.s))`, `return w.s`,
 #      `return (w.s)`, `w.s + w.s` (both operands), the chain `a.b.s` (an argument, a return, an operator), an
 #      untyped `var u = w.s` (the word), at top level `var G: S = GW.s` / `var G = GW.s` / `GA.b.s` / `ok(GW.s)` /
@@ -196,7 +196,7 @@
 #      of a `**T3` into a `*T3` (a local, wrapped, `*(*pp)`, a parameter, a field, a capture, a top-level global)
 #      and into a by-value H, the struct the pin names; through 6.7.13's structs lane its first field was the
 #      address (139); floor 168. Mutation: `_dlo_ppsid` answering 0 -> RED R10 on every leg (measured 2026-10-16))
-#   R10a (6.7.13, issues/2026-10-14-dereference-of-address-of-struct-faults.md) the two filed repros, verbatim:
+#   R10a (6.7.13, issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md) the two filed repros, verbatim:
 #      `take(*pp) * 10 + take(*(&p))` exits 99 and `var q: P3 = *(&p); return q.c;` exits 9 (139 / 139 on x86_64
 #      and aarch64, a cx guest error, exit 5 on PE through 6.7.12)
 #   R11 (6.7.11, issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md)
@@ -225,7 +225,7 @@
 #      a generic `: *T` call, wrapped, or a dereference of one, at 3 / 8 / 16 / 24 B: the struct E points at, a
 #      copy (through 6.7.10 the pointer at 3 / 8 B, refused over 8 B); the refusals are
 #      tests/gates/frontend/small_struct_return_type_refused.sh and struct_result_type_refused.sh PU
-#   R13a (6.7.13, issues/2026-10-14-return-address-of-struct-local-decision.md, the user's decision D4 (a) of
+#   R13a (6.7.13, issues/archived/2026-10-14-return-address-of-struct-local-decision.md, the user's decision D4 (a) of
 #      2026-10-15) tests/tcyr/crossos/struct_return_address_of.tcyr on the same legs (floor 22): `return &s;` from a
 #      fn declared `: S` — s a local, a value global, a by-value parameter, wrapped — is the struct, at 3 / 8 / 12 /
 #      16 / 24 B, a copy, its word's padding 0 (through 6.7.12 the ADDRESS at 8 B or less, refused over 8 B); the
@@ -466,7 +466,7 @@
 #   MX2  `_hl_pval_ra` never zeroing its frame temp (`z` ignored) -> RED 7: R10 8 of 78 rows x7 (in a fn, a by-value
 #                                                      argument's and a return's padding 0xFF from the frame)
 # 6.7.13 ZERO-SIZE MUTATION LEDGER (2026-10-15, the same method; R15's `z0_` / `Z0` rows and PZ,
-# issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md):
+# issues/archived/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md):
 #   the tree before it (b13d3598)                   -> RED: R15 19 of 345 rows (x86), PZ exit 139 x86 / aarch64
 #   MZ1 `_fsc_psrc` back on `!= STRUCTSZ`           -> GREEN alone (equivalent: its value fallback then stores
 #                                                      nothing by MZ2's arm); with MZ2 -> RED R15 11 (`o.s = GP`,
@@ -476,7 +476,7 @@
 #   MZ4 `_dlo_park` back on `!= STRUCTSZ`           -> RED R15 3 (`bp0(*p)` the word as the pointer, `*p + l` not
 #                                                      dispatched, top level)
 # 6.7.13 FIELD-VALUE MUTATION LEDGER (2026-10-15, the same method; PF / FP,
-# issues/2026-10-14-small-struct-field-value-reads-past-the-object.md):
+# issues/archived/2026-10-14-small-struct-field-value-reads-past-the-object.md):
 #   the tree before it (b13d3598)                   -> RED: PF 3 / 5 / 6 / 7 B exit 139 (x86, aarch64), FP 3 / 5 / 6 /
 #                                                      7 B on every leg (x86, aarch64, cx, PE: the 0xFF after the
 #                                                      field in the word)
@@ -485,13 +485,13 @@
 #                                                      green: its offset munmap fails, so no fault); and R10's 7
 #                                                      `zw` rows (x86: the 0xFF after the field in the padding)
 # 6.7.13 PADDING MUTATION LEDGER (2026-10-15, the same method; R10's `zs` / `zv` / `zh` / `zc` / `zq` rows,
-# issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md):
+# issues/archived/2026-10-14-small-struct-byvalue-word-padding-from-frame.md):
 #   the tree before it (b13d3598: `_hl_pval_ra` zeroing only for a dereference, `_sptr_param_temp` and
 #   `_hl_cap_val_ra` never) -> RED: R10 19 of 113 rows on x86 / cx / PE (`zs` / `zv` / `zh` at 3 / 5 / 6 / 7 B,
 #                                                      `zq` at 1..7 B: padding 0xFF), 21 on aarch64 (and `zc` at
 #                                                      3 / 5 B, which x86 hides)
 # 6.7.13 DEREFERENCE-OF-ADDRESS-OF MUTATION LEDGER (2026-10-15, R10's / R11's `a` rows and R10a,
-# issues/2026-10-14-dereference-of-address-of-struct-faults.md; a scratch tree with the one change, its compiler
+# issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md; a scratch tree with the one change, its compiler
 # built by the fixed one, this gate run with CYCC=that compiler — so the a64 / cx legs, built from the tree's src,
 # stay fixed; the rows alone were run under each mutant on x86 too):
 #   MD1  `_hl_dpsid` answering `_hl_psid` (no `&x` arm) -> RED 20: R10 x86 x4 exit 139, PE exit 5; R10a x86 x4 / PE
@@ -845,7 +845,7 @@ for leg in $XLEGS $OTHER; do
     else bad "R10 $leg: exit $RC, '$LAST' (want '$ND passed, 0 failed ($ND total)') $(grep -m3 'FAIL' "$D/dw_$n.out" | tr '\n' ' ')"; fi
 done
 
-# The filed repros, verbatim (issues/2026-10-14-dereference-of-address-of-struct-faults.md).
+# The filed repros, verbatim (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md).
 cat > "$D/repro_da.cyr" <<'EOF'
 struct P3 { a; b; c; }
 fn take(p: P3): i64 { return p.c; }

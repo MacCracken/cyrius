@@ -194,7 +194,7 @@ if grep -q "^error:<source>:2:14: undefined variable 'nope'" "$W/r10a" && ! grep
 else fail "R10 with the flag: $(tr '\n' ' ' < "$W/r10a") / without: $(head -1 "$W/r10b")"; fi
 
 # ── R11-R15 (6.7.13): a loose file in a subdirectory of the server's working directory ─────────
-# issues/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md. cycc tries an include
+# issues/archived/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md. cycc tries an include
 # against its working directory and then the entry's directory — the latter only through the
 # `#@incdir` line the CLI writes. The server ran cycc on the file itself from its own working
 # directory, so `include "inc.cyr"` beside a loose file was "cannot open" unless the editor started

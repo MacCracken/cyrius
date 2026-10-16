@@ -5,7 +5,7 @@
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low — a cascade diagnostic beside the right one; the line is refused either way.
 **Discovered:** 2026-10-16, the receives lane's review of the D13 bite (6ab2a9c8, issues/
-2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). The free call's cascade predates the
+archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). The free call's cascade predates the
 lane (6.7.11's D24); D13 extends it to a method and an operator. A family member of
 `2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md` (the cascade class), filed for this site.
 

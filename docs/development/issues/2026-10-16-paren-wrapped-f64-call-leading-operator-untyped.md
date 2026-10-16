@@ -6,7 +6,7 @@
 **Severity:** Low — a wrong value, but the line that uses it draws a kind-1 warning ("integer arithmetic with an f64
 right operand").
 **Discovered:** 2026-10-16, the receives lane's review of the 92b35796 bite (issues/
-2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md), which made a wrapped `: f64` call that is the
+archived/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md), which made a wrapped `: f64` call that is the
 WHOLE initialiser (`var x = (f());`) bind an f64. A wrapped leading call followed by an operator is outside that
 surface.
 

@@ -9,7 +9,7 @@ outside the closure compile, and a closure reading `p.y` of a captured TYPED str
 and runs (exit 5). The installed 6.6.0, 6.7.0 and 6.7.8 compilers refuse both the same way.
 **Placement:** 6.7.12 — repair 2: the platform release (fixfirst lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
 **Decision (user, 2026-10-15, at the 6.7.12 open):** D29 (fork) — (a) an untyped `var q = p;` is a typed copy.
-beside [the declared-name pre-scan](archived/2026-10-11-closure-prescan-reads-declared-names-as-captures.md)) — placed
+beside [the declared-name pre-scan](2026-10-11-closure-prescan-reads-declared-names-as-captures.md)) — placed
 2026-10-11 — never 7.x.
 **Discovered:** 2026-10-11 during 6.7.9 crit bite 12.
 **Severity:** Low — a loud refusal of valid source, with a message that names the wrong thing (the name IS defined

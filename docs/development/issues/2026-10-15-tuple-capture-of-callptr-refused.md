@@ -6,7 +6,7 @@ review-fix step) and on the lane base b13d3598: identical refusal, x86_64, aarch
 **Severity:** Low — refused loudly at compile time; the workaround is `fncall1(fp, ..)` (lib/fnptr.cyr) or the
 destructure `var a, b = callptr(fp, ..);`. No wrong value.
 **Kind:** gap — the tuple capture's call recognition has no `callptr` arm. 6.7.13 (fe98679b,
-issues/2026-10-13-destructure-of-callptr-refused.md) taught the DESTRUCTURE `callptr(` — that issue's filed surface —
+issues/archived/2026-10-13-destructure-of-callptr-refused.md) taught the DESTRUCTURE `callptr(` — that issue's filed surface —
 and the guide's Multi-Return list names `callptr` as a call; the typed tuple capture is the sibling spelling.
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane's review (probes review/rev/i5/c.cyr, d.cyr).
 

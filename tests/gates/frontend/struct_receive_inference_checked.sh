@@ -81,7 +81,7 @@
 # receive runs only in a fn; D28's `_scv_icall_ann` was fn-only). `_scv_gcall_ann` / `_scv_icall_ann` (parse_decl.cyr,
 # through `_scv_top_ann` from `_scv_arm` and `_gvi_expr`) refuse it with D24's words, once (a bool's check not run
 # again); over 16 B keeps its one no-frame refusal (`_scv_top_big`), 8 B or less and a `Str` keep the word
-# (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md). TL0 the repro verbatim; TL1-TL14 the zone /
+# (issues/archived/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md). TL0 the repro verbatim; TL1-TL14 the zone /
 # after a first statement x the direct, wrapped and `&f` forms, a redeclared global, `: u8` / `: f64` / `: cstring` /
 # `: bool` (TL15 TL16 wrapped: once), a generic callee; TLK1 a struct annotation (no frame), TLK2 24 B (one error),
 # TLK3 the 8 B / `Str` runs. (Each mutant: a scratch copy of the tree with the one change, this gate run from it.)
@@ -101,7 +101,7 @@
 # word, narrowed (the filed repro exited 77 on every target), and a `: bool` was "not a bool". `_scv_rec_ann`
 # (parse_decl.cyr; PARSE_VAR after the initialiser's parse, and the declaration zone's `_gvi_scalar`) reads the
 # struct-result record (`_sc_whole`) and refuses with D24's words through the shared `_rcv_ann_refuse`, naming the fn
-# (issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). SA0 the repro verbatim;
+# (issues/archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). SA0 the repro verbatim;
 # SA1-SA13 a 16 B / 24 B method and a 16 B / 24 B operator into i64 / u8 / f64 / bool; SA14 SA15 SA24 wrapped; SA16 a
 # generic method; SA17 a closure; SA18 SA22 `: cstring` (SA22: the annotation stands, `x.b` the second error); SA19 a
 # chain; SA20 a generic instance (T = i32); SA21 `x.b` the second error; SA23 an initialiser refused inside is not
@@ -126,7 +126,7 @@
 # 139 / 139 / 14 / 5 for `*P2`, 77 for `*i64`). PARSE_VAR's receive is gated on `pscale <= 0`; `_rcv_ptr_ann` takes the
 # free call (wrapped, generic), `_scv_icall_ann` the known `&f` call and `_scv_rec_ann` a method / operator, each through
 # `_rcv_ann_refuse` with the pointer remedy, the typed-pointer warning silenced on the refused line (`_ptr_refd_ti`)
-# (issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md). PT0 PT00 the two repros verbatim; PT1-PT9
+# (issues/archived/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md). PT0 PT00 the two repros verbatim; PT1-PT9
 # `*u8` / `*P3` / `*i64` at 16 and 24 B, wrapped, a generic callee, a closure, `*T` in a generic fn; PT10-PT13 `&f`
 # (`fncall0`, `callptr`, the callee wrapped, the call wrapped; PT10's refusal at the callee's name, as D28's); PT14-PT18
 # a method, an operator, wrapped, a generic method; controls PTK1 PTK2 (8 B keeps its word AND the warning), PTK3
@@ -360,7 +360,7 @@ rowf FPK4 'fn f(): i64 { var x = callptr((&mk3)); var y = fncall0(((&mkp))); var
 runs FPK4 34 "control: an untyped receive of a wrapped known callee is the struct; 8 B into \`: i64\` its word"
 
 # --- D24 at top level (6.7.13; 6.7.12's D28, "D24 at every path"): the declaration zone and after a first statement ---
-# The filed repro, verbatim (issues/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md): exit 10 before.
+# The filed repro, verbatim (issues/archived/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md): exit 10 before.
 cat > "$T/TL0.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/fnptr.cyr"
@@ -442,7 +442,7 @@ rowt TL18 after 'var G: bool = fncall1(((&mk2)), 5);'
 refused TL18 "cannot initialise 'G: bool' $MT" "after a first statement: \`fncall1(((&mk2)), 5)\` into \`: bool\` (once)"
 
 # --- D13 (6.7.13; the user, 2026-10-15): D24 reaches a METHOD or OPERATOR result, in a fn and at top level ---
-# (issues/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md) The filed repro, verbatim:
+# (issues/archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md) The filed repro, verbatim:
 # exit 77 on x86_64 / aarch64 / cx / PE before (x = 333, y = 77); now both declarations are refused by name.
 cat > "$T/SA0.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -582,7 +582,7 @@ rowm SAK6 "fn f(): i64 { $MB var x: bool = b.mk1(); return 0; }"
 refused SAK6 "cannot initialize bool 'x' with a value that is not a bool" "control: an 8 B method into \`: bool\` keeps the bool check"
 
 # --- D14 (6.7.13; the user, 2026-10-15): a by-value struct over 8 B into a POINTER annotation, refused by name ---
-# (issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md) The two filed repros, verbatim: they compiled
+# (issues/archived/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md) The two filed repros, verbatim: they compiled
 # under "assigning non-pointer to typed pointer" and exited 139 on x86_64 / aarch64, 14 on cx, 5 on PE (`*P2`), and 77
 # on all four (`*i64`, the struct's first word held as an address); now each is refused once, with no warning.
 cat > "$T/PT0.cyr" <<'EOF'
@@ -692,7 +692,7 @@ row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); ret
 runs A1 34 "\`((mkp()))\`, \`(mk3())\`, \`((mk3()))\` into by-value parameters"
 cp tests/tcyr/crossos/struct_receive_paren_call.tcyr "$T/A2.cyr"
 runs A2 0 "tests/tcyr/crossos/struct_receive_paren_call.tcyr (fn scope, a closure, a generic; 16 B and 24 B; 6.7.13: 8 B)"
-# 6.7.13 (issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md): the issue's two repros,
+# 6.7.13 (issues/archived/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md): the issue's two repros,
 # verbatim — the 8 B free call (`x.a` refused before: "no struct type in scope for 'x'") and the 16 B method
 # (139 / 139 / 1 / 5 through 6.7.10; D42 fixed it in 6.7.11, pinned here).
 cat > "$T/A3.cyr" <<'EOF'

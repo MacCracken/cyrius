@@ -604,7 +604,7 @@ elif ! cmp -s "$W/a16_on" "$W/a16_off"; then bad "axis 16: the warned binary dif
 elif [ "$n" != 10 ]; then bad "axis 16: the combined program draws $n kind-2 warnings, want 10"; fi
 
 # --- axis 17 (6.7.13): a comparison, `&&` / `||` and `& | ^ % << >> >>>` give an INTEGER — no f64 type left ---
-# issues/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md; `& | ^ % << >> >>>` the user's
+# issues/archived/2026-10-14-integer-comparison-result-keeps-f64-right-operand-type.md; `& | ^ % << >> >>>` the user's
 # decision D12 (a), 2026-10-15. With an f64 RIGHT operand the result kept the f64 type, so the next `*` took
 # the f64 arm (the repro: exit 0, want 3) with a false kind-1 warning naming the wrong mix. Each row is one
 # program, built and run on x86_64: <id>@<statements>@<exit>@<kind-0>@<kind-1>@<kind-2> warnings. `x` holds
@@ -634,7 +634,7 @@ for spec in 'lt@var c = (n < x) * 3; return c;@3@1@0@0' 'and@var c = (n == 64 &&
 done
 
 # --- axis 18 (6.7.13): a comparison bound from a `: f64` leading call is an integer — `0 - c` does not warn ---
-# issues/2026-10-14-f64-leading-call-types-comparison-binding-f64.md: `var c = f() < 1.0;` was typed f64 (the leading
+# issues/archived/2026-10-14-f64-leading-call-types-comparison-binding-f64.md: `var c = f() < 1.0;` was typed f64 (the leading
 # call's type), so `0 - c` warned kind 2 (and computed -1) and `-c` flipped the sign bit (the repro: exit 3, want 1).
 printf 'fn f(): f64 { return 0.5; }\nfn main(): i64 { var c = f() < 1.0; var n = -c; return n + 2; }\nsyscall(60, main());\n' > "$W/a18_repro.cyr"
 build "$W/a18_repro.cyr"; chmod +x "$W/o" 2>/dev/null || true

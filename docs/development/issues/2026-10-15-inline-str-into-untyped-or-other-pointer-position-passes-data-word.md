@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S4) while landing
 D7 (1) (an inline `Str` is its header's address wherever a `Str` value is taken,
-issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Measured on the lane tree after that bite
+issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Measured on the lane tree after that bite
 (x86_64; the positions are frontend shapes, the same on every target).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Medium — silent: the callee reads the string's bytes as the header (`h.eq(t)` 0 where 1 is right).

@@ -259,7 +259,7 @@ var GT = S1{0};
 fn main(): i64 { var q: T1 = T1{7}; var p: *S1 = &GT; *p = q; return GT.x; }
 var r = main(); syscall(60, r);
 '
-# R26 (6.7.13, issues/2026-10-14-dereference-of-address-of-struct-faults.md) — `*(&l) = q`: a dereference of an
+# R26 (6.7.13, issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md) — `*(&l) = q`: a dereference of an
 # address-of is the struct `l` names, so a struct of another type is refused by name as `l = q` is (through 6.7.12
 # it stored q's address into l's first field).
 refuse "R26 *(&l) = q  (another struct)" "$P3Q3"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var l: P3 = P3{0,0,0}; *(&l) = q; return l.x; }

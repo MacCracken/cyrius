@@ -8,7 +8,7 @@ PE (wine), identically on all four.
 the C-string idiom), which D18 (a) widened from one site to three; plus a second (warning) diagnostic beside a refusal.
 Nothing miscompiles. The census at the D18 bite (lib / cbt / programs / .tcyr) found no hit.
 **Discovered:** 2026-10-16, the receives lane's review of the D18 bite (fd3d5e61, issues/
-2026-10-12-typed-pointer-non-pointer-warning-gaps.md). That issue's filed surface is which `*T` SITES warn (decided
+archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md). That issue's filed surface is which `*T` SITES warn (decided
 D18 (a): every site, the literal 0 exempt); which VALUES count as non-pointers is outside it.
 
 ## Reproduction

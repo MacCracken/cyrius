@@ -1,14 +1,14 @@
 # A fn that returns a `: stack` pair only through `?` is not a pair to a caller ABOVE it: `qb(x)?` SIGSEGVs, `var v = qb(x);` binds the tag — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 tools lane (unit T1) while giving `cyrius header` the `?`
-route (issues/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md): the header's file-local fixpoint
+route (issues/archived/2026-10-15-cyrius-header-misses-a-pair-propagated-by-question-mark.md): the header's file-local fixpoint
 refuses `qa` below, and cycc's own "bind both" oracle disagreed for exactly the fn whose pair callee is defined after
 it. Measured with the slot-open compiler (build/cycc at b13d3598) on x86_64 and with the tree's cycc_aarch64 under
 qemu-aarch64.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** High — valid `?` code compiles clean and crashes at run time with no diagnostic (rc 139 on x86_64 and
 aarch64), and the single bind keeps the tag in silence where the same program with the definitions swapped is refused
-"bind both". The same class as issues/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md (a trait
+"bind both". The same class as issues/archived/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md (a trait
 default method) and the archived 2026-10-10-pair-method-defined-after-use-not-flagged.md (impl methods, D23), for a
 plain top-level fn whose ONLY pair route is a `?`.
 **Affects:** cycc since `?` learned the pair form (v6.6.0), every target (the pair flag is shared frontend state).

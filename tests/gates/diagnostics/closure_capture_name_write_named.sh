@@ -22,7 +22,7 @@
 #   M1 `_asg_cap_name` answering 0 (= the tree before)        -> RED W1-W8 (undefined variable)
 #   M2 `_masg_resolve` without its `_asg_cap_name` call       -> RED W6 only
 #   M3 `_asg_undef_report` without its `_asg_cap_name` call   -> RED W1-W5 W7 W8; W6 green
-# 6.7.13 (issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md):
+# 6.7.13 (issues/archived/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md):
 #   M4 the fix-it's fixed `var y = ` (the tree before)        -> RED W1-W9 W9b (10)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -73,7 +73,7 @@ refused w5 "$CAP" "W5: a compound for step, for (..; x += 1)" "$(src w5 "${I}${O
 refused w6 "$CAP" "W6: a, x = two()" "$(src w6 "${I}${TWO}${OPEN}|d| { var a = 0; a, x = two(); return a + d; };${CLOSE}")"
 refused w7 "$CAP" "W7: x -= d" "$(src w7 "${I}${OPEN}|d| { x -= d; return x; };${CLOSE}")"
 refused w8 "$CAP" "W8: a nested closure writing the fn's x" "$(src w8 "${I}${OPEN}|d| { var g = |e| { x = e; return e; }; return callptr(g, d); };${CLOSE}")"
-# W9 (6.7.13): issues/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md verbatim — a capture
+# W9 (6.7.13): issues/archived/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md verbatim — a capture
 # named `y`. The fix-it named its local `y` always, so it read `var y = y;`: now `var y_l = y;`.
 refused w9 "$CAPY" "W9: a capture named y (the filed repro, verbatim: the fix-it read \`var y = y;\`)" \
     docs/development/issues/repros/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.cyr

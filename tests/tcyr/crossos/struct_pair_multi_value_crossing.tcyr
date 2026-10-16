@@ -29,7 +29,7 @@
 # producers here said `ret2(x, y)`, which lands through the same multi-value arm (`_mret_land`), and the
 # refusal is tests/gates/codegen/struct_value_codegen.sh's rows R8-R14. 6.7.13: `ret2(x, y)` in a fn declared
 # `: Pr` is refused too, in every class (D22 A, the user's decision, 2026-10-15;
-# issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), so repro A — a multi-value
+# issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md), so repro A — a multi-value
 # producer received as the struct — has no producer left: its rows take the struct pair through each path
 # (an assignment, a forward, a method, a defer, a generic instance) from a `return p;` producer, the ret2
 # controls name an undeclared multi-value fn, and the refusal is

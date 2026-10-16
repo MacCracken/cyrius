@@ -290,7 +290,7 @@
 #        leg and k (`<bounds>:5:1: expected ';'`)
 #
 #   KC  (6.7.13, the user's decision D15, 2026-10-15) a known `&f` callee is a dyn source as the direct call is
-#       (issues/2026-10-14-dyn-result-through-known-callee-refused.md): KC1 the filed repro verbatim (refused "cannot
+#       (issues/archived/2026-10-14-dyn-result-through-known-callee-refused.md): KC1 the filed repro verbatim (refused "cannot
 #       form dyn Shape from this expression" on x86_64 / aarch64 / cx / PE before, 18 now); KC2 `callptr`, the callee
 #       wrapped, the call wrapped; KC3 a `*Sq`-returning known callee forms; KC4 an assignment, an argument, a field
 #       store, a `return`; KC5 a callee held in a variable stays refused (FP6, D31); KC6 a known callee returning i64
@@ -302,7 +302,7 @@
 #                                                                         aarch64, PE and IX3 (dyn_objects refused)
 #   M-KC2 `_dyn_icall` under the `t == 2` arm (callptr is token 137)   -> KC2-KC4, CW, the A and IX3 dyn_objects legs
 #   PW  (6.7.13, the user's decision D17 (a), 2026-10-15) a dyn-returning call in parentheses is a struct literal's dyn
-#       element, as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md):
+#       element, as the unwrapped call is (issues/archived/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md):
 #       PW1 the filed repro verbatim (refused before, 169 now); PW2 double parentheses; PW3 a wrapped dyn method result;
 #       PW4 / PW5 at top level, wrapped and not, refused once by name (the element's no-frame refusal marks the call, so
 #       V4's "a dyn Show result used as a value" at the same call is not a second report). aarch64 / cx / PE:
@@ -721,7 +721,7 @@ PL='    var y1: dyn Show = pass(o);\n    if (dw(y1) != 49) { return 1; }\n    va
 exits p01 42 "P1-P21: var (annotated, wrapped, inferred), assignment (bare, wrapped), field store (bare, wrapped), argument (bare, wrapped), struct-literal element, a method result (var / wrapped / inferred / assignment / argument), return (wrapped, non-tail in a \`defer\` fn, after a tail call), a nested call, a closure capture, \`secret var\` — each takes the dyn whole" "${PB}${PL}${ME}"
 
 # ── KC (6.7.13, D15 — the user, 2026-10-15): a known `&f` callee declared `: dyn Tr` is a dyn source, as the direct
-# call is (issues/2026-10-14-dyn-result-through-known-callee-refused.md). `fncall1(&mkd, &q)` was refused "cannot form
+# call is (issues/archived/2026-10-14-dyn-result-through-known-callee-refused.md). `fncall1(&mkd, &q)` was refused "cannot form
 # dyn Shape from this expression" where `mkd(&q)` copies; `_dyn_icall` (parse_types.cyr) reads it as that call.
 # KC1 the filed repro verbatim (exit 18 on x86_64 here; aarch64 / cx / PE: dyn_objects.tcyr §known, the A legs).
 KH='include "lib/fnptr.cyr"\ntrait Shape { fn area(self): i64; }\nstruct Sq { s; }\nstruct HS { a; o: dyn Shape; b; }\nimpl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }\nfn mkd(p: *Sq): dyn Shape { var o: dyn Shape = p; return o; }\nfn mkp(p: *Sq): *Sq { return p; }\nfn mki(p: *Sq): i64 { return 5; }\nfn take(o: dyn Shape): i64 { return o.area(); }\n'
@@ -733,7 +733,7 @@ refused kc5 "cannot form dyn Shape from this expression" "KC5: a callee held in 
 refused kc6 "cannot form dyn Shape from this expression" "KC6: a known callee returning \`i64\` stays refused" "${KH}fn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mki, &q); return 0; }\nsyscall(60, run());\n"
 refused kc7 "'mkd' returns a struct by value, and a struct result needs storage in a fn's frame" "KC7: at top level the call refuses itself, once, as \`mkd(&Q0)\` does (TY2b)" "${KH}var Q0 = Sq { 3 };\nvar G: dyn Shape = fncall1(&mkd, &Q0);\nsyscall(60, 0);\n"
 # ── PW (6.7.13, D17 (a) — the user, 2026-10-15): a dyn-returning call in parentheses is a struct literal's dyn element,
-# as the unwrapped call is (issues/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md). `H { 7,
+# as the unwrapped call is (issues/archived/2026-10-14-paren-wrapped-dyn-call-as-dyn-literal-element-refused.md). `H { 7,
 # (pass(o)), 8 }` was refused twice at the lane base ("a dyn Show result used as a value", then "a struct literal does
 # not form a dyn"), once after 6.7.13's wrapped pair element; `_spi_call` declined a wrapped dyn result. PW1 the filed
 # repro verbatim (169); aarch64 / cx / PE: dyn_objects.tcyr §literal, the A legs.

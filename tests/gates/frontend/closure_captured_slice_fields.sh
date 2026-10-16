@@ -61,7 +61,7 @@
 #
 # 6.7.13 (the user's decision D6 (b), 2026-10-15): D29 reaches a struct GLOBAL — `var q = G;` in a fn, G an
 # inline struct global, is a copy of it, as `var q: P = G;` is; a HANDLE keeps the word (`_uci_glob`, beside
-# `_uci_ps`; issues/2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md). Q10 / Q11 the filed
+# `_uci_ps`; issues/archived/2026-10-15-untyped-name-copy-of-struct-global-or-handle-keeps-word.md). Q10 / Q11 the filed
 # repros 1 and 2 verbatim (refused "no struct type in scope for 'q'" / exit 139 through 6.7.12), Q12-Q18 a write
 # leaving G, 8 B, wrapped, `q + G` dispatched, inside a closure, captured, a local named G (a local copy); QK7-QK9
 # a handle local, a handle global and a local handle named G keep the word, QK10 a captured local handle named G

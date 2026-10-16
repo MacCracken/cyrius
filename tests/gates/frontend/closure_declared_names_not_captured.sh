@@ -206,7 +206,7 @@ run_row() {
 }
 
 # The filed repros, verbatim. RP: rows I1 / C1 / M1 carry its three closures (exit 22). RV1 / RV2:
-# issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md's two (6.7.13):
+# issues/archived/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md's two (6.7.13):
 # RV1 exits 6; RV1g is RV1 with its commented line swapped in (the filing's g variant), 67; RV2 has no
 # lib/alloc.cyr, so the read it makes is refused AS A CAPTURE (the user's decision D35 A, 2026-10-15).
 RPD="$ROOT/docs/development/issues/repros"

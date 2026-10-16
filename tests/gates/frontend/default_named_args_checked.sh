@@ -316,7 +316,7 @@ R9S6=docs/development/issues/repros/2026-10-14-refused-parameter-type-default-ca
 refused r9s6 "expected a type for parameter 'a', got number 5" "R9s6: the filed repro, verbatim — \`fn f(a: 5 = 0)\` called \`f()\`: the type's refusal alone" "$(cat "$R9S6")\n" "2:9"
 refused r9s7 "expected a type for parameter 'a', got fn" "R9s7: \`fn f(a: fn = 0)\` called \`f()\`: the type's refusal alone" "fn f(a: fn = 0): i64 { return 7; }\nfn main(): i64 { return f(); }\nsyscall(60, main());\n" "1:9"
 refused r9s8 "expected a type for parameter 'b', got string" "R9s8: \`fn f(a, b: \"s\" = 0, c = 2)\` called \`f(1)\`, twice: the type's refusal alone" "fn f(a, b: \"s\" = 0, c = 2): i64 { return 7; }\nfn main(): i64 { return f(1) + f(1); }\nsyscall(60, main());\n" "1:12"
-# RD1-RD8 (6.7.13; issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md): a refused default VALUE
+# RD1-RD8 (6.7.13; issues/archived/2026-10-14-refused-parameter-default-refuses-every-short-call.md): a refused default VALUE
 # (D2 / D3 / D6-D9 / D16 / D20) or a whole-list refusal (D11 / D13) set the row's min to its max, so every call
 # that left a default to it was refused AGAIN, by arity ("'f' expects 1 argument, got 0"), one line per call — the
 # valid defaults after it lost too. A refused row keeps its min now (`_pd_refuse_row`), and a whole-list refusal

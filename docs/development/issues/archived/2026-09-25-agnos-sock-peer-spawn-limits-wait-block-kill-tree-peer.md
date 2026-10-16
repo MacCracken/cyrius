@@ -142,5 +142,5 @@ The spawn flags / error codes / `#62` ops filing
 ## Precedent
 
 Same kernel-mints-it / cyrius-owns-the-peer split as
-[`archived/2026-09-01-agnos-sys-statfs-103-peer.md`](archived/2026-09-01-agnos-sys-statfs-103-peer.md) and the
+[`archived/2026-09-01-agnos-sys-statfs-103-peer.md`](2026-09-01-agnos-sys-statfs-103-peer.md) and the
 1.57.6 filing above.

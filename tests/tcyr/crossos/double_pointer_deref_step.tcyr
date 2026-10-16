@@ -5,7 +5,7 @@
 # A `**T` stepped a pointer's 8 and said nothing about its pointee, so `*pp` was an untyped word: `*(*pp + 1)`
 # read 8 bytes one BYTE past the pointee (the filed repro exited 1 on x86_64 and aarch64), `**pp` read 8 bytes
 # whatever T was, and `var q: *T = *pp;` warned "assigning non-pointer to typed pointer"
-# (issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md). The pointee's step word now rides the
+# (issues/archived/2026-10-13-double-pointer-dereference-is-an-untyped-word.md). The pointee's step word now rides the
 # `**T`'s (its pin, bits 56-62): a local, a parameter, a closure capture, a global, a field, a `: **T` return, a
 # generic instance's, `pp + n`, a `***T` (whose `*ppp` is a `**T`), a field `**S` of the struct being declared
 # (sized when it is dereferenced), a `**f64v2` (its `*ppv` a `*f64v2`: `rd(**ppv)` passes the pointer, D27).

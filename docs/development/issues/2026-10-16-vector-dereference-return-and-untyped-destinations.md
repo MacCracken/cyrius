@@ -1,7 +1,7 @@
 # `*p` of a `*V` at the destinations D34 did not name: `return *p;` from a `: f64v2` fn is refused, and an untyped `var v = *p;` binds one word (lane 0) — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V3, after the D34 bite,
-issues/2026-10-13-vector-dereference-into-vector-local-decision.md, which made `var v: f64v2 = *p;` / `v = *p;` copy the
+issues/archived/2026-10-13-vector-dereference-into-vector-local-decision.md, which made `var v: f64v2 = *p;` / `v = *p;` copy the
 vector through the pointer). Both shapes behave as on the lane base (unchanged by D34).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low — (1) is a refusal by name (no wrong value); (2) is silent: `v` is one untyped word, so a read of a

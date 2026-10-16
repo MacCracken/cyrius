@@ -1,7 +1,7 @@
 # `#inline` on an `async fn` is silently a no-op: no "#inline ignored" warning — OPEN
 
 **Status:** 🟡 **OPEN**. Found 2026-10-11 while fixing
-[`2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md`](2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md)
+[`2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md`](archived/2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md)
 (6.7.9, the critical lane's bite 15). Its gate row N3 puts `#inline` on coroutines. Reproduced on that lane's tip and
 with the installed 6.7.8 compiler (older installed compilers cannot compile the tree's current `lib/`). It was not fixed
 in that bite: the fix adds a warning to builds that compile with no warning today, and it touches the fn-definition

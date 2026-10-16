@@ -266,7 +266,7 @@
 #   MV3 `_param_type_step` without its check -> R3t, R3v BUILD; MV4 `_pty_name` without it -> R3v2 BUILDS
 #   MV7 `_gen_ann_sid` without its check -> R3q, R3r, R3s, R3w, R3x, R3z BUILD (the `*Vec` / parameter rows stay red)
 # 6.7.13 REPAIR 3 (the multivalue lane, unit M1; a one-edit copy of src/, its compiler built by the fixed one, this gate
-# run with CYCC= the mutant; issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md):
+# run with CYCC= the mutant; issues/archived/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md):
 #   MU1 `_tup_arg_call` back to the declared-only guard (`GFRS != MULTIRET_SID`) -> R17u1, R17u3 BUILD
 #   MU2 `_tup_arg_mrc` back to the declared-only guard -> R17u2 BUILDS
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
@@ -515,7 +515,7 @@ refused r17e "a multi-value call 'mk' $R17" "R17e: an explicit generic \`mk<i64>
 refused r17f "a multi-value call 'mk' $R17" "R17f: \`take((mk(3)))\`, parenthesised" "${MK}${TK}fn f(): i64 { return take((mk(3))); }\nsyscall(60, f());\n"
 refused r17g "a multi-value call 'B_mk' $R17" "R17g: a method \`take(b.mk(3))\`" "struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\n${TK}fn f(): i64 {\n    var b: B;\n    b.v = 1;\n    return take(b.mk(3));\n}\nsyscall(60, f());\n"
 refused r17h "a multi-value call 'P_add' $R17" "R17h: an operator \`take(p + q)\`" "${P}fn P_add(a: P, b: P): (i64, i64) { return (a.a + b.a, a.b + b.b); }\n${TK}fn f(): i64 {\n    var p = P { 1, 2 };\n    var q = P { 3, 4 };\n    return take(p + q);\n}\nsyscall(60, f());\n"
-# R17u (6.7.13, issues/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md): an UNDECLARED
+# R17u (6.7.13, issues/archived/2026-10-14-undeclared-multi-value-call-into-tuple-parameter-crashes.md): an UNDECLARED
 # callee whose every return is \`(a, b)\` (counted by 6.7.11's pass 1, \`_mv_callee\`) is a multi-value call too — its
 # first value was pushed as the tuple's address (x86 / aarch64 rc 139, cx guest error 1, PE 5). The repros verbatim.
 MKU='fn mku(a) { return (a, a + 1); }\n'
@@ -651,7 +651,7 @@ refused r08f "$E8 struct 'P'" "R8f: a struct-valued call \`(mk(), 1)\`" "${P}fn 
 refused r08q "$E8 struct 'P'" "R8q: a wrapped struct local \`((p), 1)\`" "${P}${TL}    var p: P;\n    var q = ((p), 1);${TE}"
 refused r08r "$E8 struct 'P'" "R8r: a wrapped struct-valued call \`(((mk())), 1)\`" "${P}fn mk(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${TL}    var q = (((mk())), 1);${TE}"
 refused r08g "a tuple \`( .. )\` is a value only" "R8g: a nested literal \`((1, 2), 3)\`" "${TL}    var q = ((1, 2), 3);${TE}"
-# R8s-R8x (6.7.13, issues/2026-10-14-dereference-as-tuple-element-stores-first-word.md, the user's D2 (a), 2026-10-15):
+# R8s-R8x (6.7.13, issues/archived/2026-10-14-dereference-as-tuple-element-stores-first-word.md, the user's D2 (a), 2026-10-15):
 # a whole dereference of a `*S` is a struct value (6.7.10 decision 6), so as an element it is refused by name as
 # `(p, 1)` is (through `_ess_deref`, the argument's arm); through 6.7.12 each compiled and stored S's FIRST WORD.
 # The pointer itself and a field through it are i64s and still compile (R8y).

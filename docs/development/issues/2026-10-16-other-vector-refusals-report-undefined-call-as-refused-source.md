@@ -1,7 +1,7 @@
 # The vector return, the value-form vector argument and a wrapped vector-local source report a call to a missing fn as a refused source — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V4, x86_64; the lane's compiler after the
-refusal-hint fix). 6.7.13 (issues/2026-10-14-vector-local-refusal-hint-every-source.md) leaves a call `name(..)` naming
+refusal-hint fix). 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md) leaves a call `name(..)` naming
 no fn to the undefined-function path when it is the source of a value-form vector LOCAL (`var v: f64v2 =
 f64v2_splat(1.0);`, `v = f64v2_splat(1.0);`). Three neighbouring vector destinations still report such a call as a
 refused source of their own — ahead of the undefined-function warning, or (the argument) instead of it.

@@ -1,7 +1,7 @@
 # patra's suite opens `/dev/null` for its failed-sync rows: on Windows the open fails and two rows fail — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.13 stdlib lane (unit L1) while running patra 1.16.3's suite on real
-cass for issues/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (suite built by the lane's tree,
+cass for issues/archived/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (suite built by the lane's tree,
 l6713-stdlib from f59668ad, against the vendored `lib/patra.cyr` = patra's `dist/patra.cyr` at 1.16.3). The same two
 rows fail with the 6.7.12 lib and with the 6.7.13 one; Linux passes them.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.13 stdlib lane, placed at the 6.7.13 integration, 2026-10-16; a fold patch: patra's own suite, `tests/tcyr/patra.tcyr` — not the shipped `dist/`) — never 7.x.

@@ -99,7 +99,7 @@ refused c1 "struct field type 'B' is declared after its use; declare it before '
 printf 'union A { b: B; x: i64; }\nunion B { p; q; }\nsyscall(60, sizeof(A));\n' > "$T/c2.cyr"
 refused c2 "struct field type 'B' is declared after its use; declare it before 'A'" "C: a union field type declared below"
 
-# C3 (6.7.13, D10 (b), the user 2026-10-15; issues/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md):
+# C3 (6.7.13, D10 (b), the user 2026-10-15; issues/archived/2026-10-14-bare-vec-field-layout-depends-on-declaration-order.md):
 # a bare `Vec` field follows C's rule. With the file's own `struct Vec` / `union Vec` declared BELOW
 # the field it was silently lib's 8-byte handle (16 B for the filed Ray, 48 B with the same struct Vec
 # above it); it is refused with C's words — one error per field, no binary. Declared above it is

@@ -23,7 +23,7 @@
 #           does not unprove it. A loop a `break` can leave stays silent (the body falls off its end),
 #           and so does a non-literal-1 condition. (6.7.13, D27 A, the user's decision, 2026-10-15) `while (true)
 #           { }` and `do { } while (true);` are proved as their `1` spellings are (the bool literal 1; both
-#           repros of issues/2026-10-13-while-true-ending-fn-not-provably-single-return.md read the seeded 77
+#           repros of issues/archived/2026-10-13-while-true-ending-fn-not-provably-single-return.md read the seeded 77
 #           on every target), and pass 1's arity record sees them (cnt_while_true).
 #   axis 4  6.7.11 — an UNDECLARED fn whose every `return` is `(..)` of one arity, and whose body is
 #           left only through them, returns that many values (pass 1, `_prescan_ret_arity`): a
@@ -42,17 +42,17 @@
 #           a tuple local, a closure's and an #inline callee's own returns inside the fn. (6.7.13) `ret2(a, b)` in
 #           a fn declared with three values is refused the same way (D21 A); in a 2-value fn it runs.
 #           (6.7.13, D28 C, the user's decision, 2026-10-15) A body that reaches its `}` returns 0 for every
-#           value, nothing refused (issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro
+#           value, nothing refused (issues/archived/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro
 #           read the seeded 77 on every target): the repro verbatim (0), three values, a defer (it runs, the
 #           values stay 0), an f64 pair, an #inline replay; the return taken, an if / else whose arms both
 #           return (34) and a `while (1)` end (42) are unchanged.
 #           (6.7.13, D23 B, the user's decision, 2026-10-15) A sync fn declared ONE type may return several
-#           values — kept and documented (issues/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md):
+#           values — kept and documented (issues/archived/2026-10-14-scalar-declared-fn-returning-multi-value-literal.md):
 #           the issue's two programs verbatim (1: a one-name bind keeps the first value; 12) and its ret2 form
 #           (1) run; pass 1 counts a `return (a, b);` body, so three names from `: i64` / `: f64` and a 3-tuple
 #           capture are refused; a `: f64` fn's values are each an f64 (3.0); a `: bool` fn's first value is
 #           checked as its bool.
-#   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
+#   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/archived/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
 #           three names are accepted as `fncall1`'s are (an unknown callee is not judged, D31); `callptr(..) + 1`
@@ -240,7 +240,7 @@ runs ret_closure  'include "lib/alloc.cyr"\nfn f(x): (i64, i64) { alloc_init(); 
 runs ret_inline_one '#inline\nfn one(x) { return x + 1; }\nfn f(x): (i64, i64) { return (one(x), 2); }\nfn main(): i64 { var a, b = f(3); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n' 42
 runs ret_inline_two '#inline\nfn two(x) { return (x, 1); }\nfn f(x): (i64, i64, i64) { var a, b = two(x); return (a, b, 3); }\nfn main(): i64 { var a, b, c = f(2); return a * 100 + b * 10 + c; }\nvar r = main(); syscall(60, r);\n' 213
 # 6.7.13 (D21 A, 2026-10-15): `ret2(a, b)` writes two values, so in a fn declared with three it is refused as
-# `return (a, b);` is (issues/2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md; the repro exited
+# `return (a, b);` is (issues/archived/2026-10-13-ret2-in-three-value-fn-leaves-third-register-stale.md; the repro exited
 # 88, the seeded r3, on every target). Once in a generic's instances, in sync; `return ret2(..)` once; a declared
 # 2-value fn's ret2 and a closure's own ret2 inside a 3-value fn still run.
 R3="'f' returns 3 values - return (a, b, c)"

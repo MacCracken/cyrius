@@ -1,7 +1,7 @@
 # A struct-typed FIELD passed to a `*V` parameter (`rd(w.s)`, `s: Pt`, `p: *f64v2`) is accepted silently, where D33 refuses the same struct from a local, a call, `*ps`, a global or a capture — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V3, after the D33 bite,
-issues/2026-10-15-struct-into-vector-pointer-parameter-accepted.md): the repro compiles with no diagnostic and exits 42
+issues/archived/2026-10-15-struct-into-vector-pointer-parameter-accepted.md): the repro compiles with no diagnostic and exits 42
 on x86_64, x86_64 `CYRIUS_IR=3`, aarch64 (qemu), cx and PE (wine) — `rd` reads the field's struct bytes as an `f64v2`.
 The lane base (before D33) gives the same 42 on all five.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

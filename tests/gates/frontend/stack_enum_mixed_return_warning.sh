@@ -182,7 +182,7 @@ fn h<T>(p: T, x) { if (x > 5) { return Ok(5); } return p.div(1); }
 fn f(x) { var p: Pt; p.x = x; p.y = 0; var t, v = h(p, x); return Ok(v); }"
 
 # 6.7.13: a caller of an inline-replayed pair generic returns ONE value — the replayed `return Ok(v);` is the
-# call's value, not the caller's (issues/2026-10-14-inline-replayed-pair-return-flags-the-caller.md: it warned
+# call's value, not the caller's (issues/archived/2026-10-14-inline-replayed-pair-return-flags-the-caller.md: it warned
 # "a SINGLE value here" on main's `return v;`). MIR (the `GIDEP == 0` guard dropped) -> ir_replay red on both.
 printf '%s\n%s\n' "$H" 'fn gg<T>(v: T) { return Ok(v); }
 fn main(): i64 { var t, v = gg<i64>(7); return v; }
@@ -197,7 +197,7 @@ sys_exit(mid(3));' > "$T/ir_replay_q.cyr"
 # value here"), a fn whose only return is `return (h(x));` is a forwarder (flagged by PARSE_RETURN's
 # peel, it would warn on its sole return), and a closure's wrapped `return` / `?` makes it pair-returning
 # (its plain `return 0;` went unwarned); a wrapped ONE value, `(x)` or `(gid<i32>(x))`, still warns.
-# (issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md) Mutations (scratch trees,
+# (issues/archived/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md) Mutations (scratch trees,
 # run 2026-10-15, each red on x86 and aarch64): `_ret_is_variant` without `_pair_unwrap` -> pw_beside,
 # pw_m_beside, pw_depth2, pw_sole; `_tok_ret_callee` without it -> pw_cl_mixed, pw_cl_q; `_tok_q_is_pair`
 # without its wrap arm -> pw_cl_q.

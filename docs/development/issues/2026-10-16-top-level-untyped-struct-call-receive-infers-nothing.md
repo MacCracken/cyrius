@@ -6,7 +6,7 @@
 **Severity:** Medium — the 9-16 B row is silent: an untyped top-level receive of a struct result holds its first word
 with no diagnostic, where the annotated declaration is refused. The 8 B row is a refusal of valid code (Low).
 **Discovered:** 2026-10-16, the receives lane's review of the 92b35796 bite (issues/
-2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md). That issue's filed surface is an untyped
+archived/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md). That issue's filed surface is an untyped
 receive IN A FN; top level is outside it.
 
 ## Reproduction

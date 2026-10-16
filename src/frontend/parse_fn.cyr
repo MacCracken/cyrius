@@ -2203,7 +2203,7 @@ fn _sarg_vec_call(S, fi, argc, tail): i64 {
 # to return one — by name (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too, read past its `<..>`),
 # `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`), or (6.7.13) a method `x.m(..)` (`_vmc_fi`): D27's `*V`
 # rule for every call declared to return the vector — `rd(s.mv(42, 7))` pushed lane 0 as the address (139 / cx
-# 253 / PE 5; issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md
+# 253 / PE 5; issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md
 # row 6); else 0.
 fn _svc_rs(S, ti): i64 {
     var rs = _icall_rs_at(S, ti);
@@ -3816,7 +3816,7 @@ fn SFPD(fi, row): i64 {
     return 0;
 }
 # A row refused (`shape` 1: never evaluated). Its min is kept: a short call is not refused again by
-# arity, one error per mistake (6.7.13, issues/2026-10-14-refused-parameter-default-refuses-every-short-call.md).
+# arity, one error per mistake (6.7.13, issues/archived/2026-10-14-refused-parameter-default-refuses-every-short-call.md).
 fn _pd_refuse_row(row, shape): i64 {
     var f = L64(row + 24) | 4;
     if (shape == 1) { f = f | 1; }

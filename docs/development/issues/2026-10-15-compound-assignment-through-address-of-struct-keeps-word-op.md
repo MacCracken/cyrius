@@ -7,7 +7,7 @@
 **Severity:** Low — a rule split, not a wrong value: the word op is what 6.7.5 specified and a crossos row pins it.
 Not a security id (the developer's own source).
 **Discovered:** 2026-10-15, the 6.7.13 structs lane (unit S2), fixing
-issues/2026-10-14-dereference-of-address-of-struct-faults.md: routing `_dst_struct` (parse.cyr) through the new
+issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md: routing `_dst_struct` (parse.cyr) through the new
 `_hl_dpsid` typed `*(&s)` as the struct `s`, which made `*(&s) += 10` hit 6.7.11's compound refusal and broke
 `tests/tcyr/crossos/field_compound_values.tcyr` row Q4 ("Q4: through &h (its first word)"). That is a newly
 refused shape beyond the filed issue's surface, so the fix keeps the old behaviour (`_dst_struct` returns 0 for an

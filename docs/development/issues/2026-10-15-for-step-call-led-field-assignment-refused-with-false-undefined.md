@@ -1,7 +1,7 @@
 # A for step `gp().n += 1` (a field of a call's result) is refused "expected '=', got '('" plus a false "undefined variable 'gp'" — the statement form stores through a `: *T` result since 6.7.13 (D8 (a)) — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 structs lane (unit S4) while landing D8 (a) (a field of a `: *T`
-call's result is an lvalue, issues/2026-10-08-field-store-through-pointer-returning-call-refused.md). Measured on the
+call's result is an lvalue, issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md). Measured on the
 lane tree after that bite, x86_64 / aarch64 / cx / PE (the frontend's, all four equal).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low — refused code, but with a false second error ("undefined variable 'gp'" for a fn that is defined),

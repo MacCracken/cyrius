@@ -212,7 +212,7 @@ fn zret5(): i64 { zdirty(); var l: Z5 = zr5(); return load8(&l + 5) * 100000 + l
 fn zret6(): i64 { zdirty(); var l: Z6 = zr6(); return load8(&l + 6) * 100000 + l.c; }
 fn zret7(): i64 { zdirty(); var l: Z7 = zr7(); return load8(&l + 7) * 100000 + l.c; }
 # ── 6.7.13: the word a struct under 8 B travels in has no bytes but the struct's
-# (issues/2026-10-14-small-struct-byvalue-word-padding-from-frame.md). A by-value `self` from a `*S`, a `*S`
+# (issues/archived/2026-10-14-small-struct-byvalue-word-padding-from-frame.md). A by-value `self` from a `*S`, a `*S`
 # into a by-value parameter, `return q` of a `*S` parameter and a handle passed by value copied a 3 / 5 / 6 / 7 B
 # struct into a frame temp that was never cleared: the word's padding was the frame's old 0xFF (exit 255 where
 # 0 is right). The `zs` / `zv` / `zh` / `zc` / `zq` rows at 1..7 B, after zdirty(): the padding 0, the last
@@ -281,7 +281,7 @@ fn zc5(): i64 { var h: Z5 = zsrc(); var c = || zp5(h); return callptr(c); }
 fn zc6(): i64 { var h: Z6 = zsrc(); var c = || zp6(h); return callptr(c); }
 fn zc7(): i64 { var h: Z7 = zsrc(); var c = || zp7(h); return callptr(c); }
 # ── 6.7.13: a whole struct-typed FIELD of 3 / 5 / 6 / 7 B as a value reads the field, no byte past it
-# (issues/2026-10-14-small-struct-field-value-reads-past-the-object.md): through 6.7.12 its leaf load read the
+# (issues/archived/2026-10-14-small-struct-field-value-reads-past-the-object.md): through 6.7.12 its leaf load read the
 # 8-byte word, so the bytes after the field (0xFF here) landed in the word's padding. The `zw` rows: an argument
 # from a value global's field, through a `*W`, `return w.s`, the left operand of an integer-result operator, and
 # at top level.
@@ -311,7 +311,7 @@ var GZ7: Z7 = *PZ7;
 var TZ3 = zp3(*PZ3);
 var TZ7 = zp7((*PZ7));
 # ── 6.7.13: a dereference of an ADDRESS-OF, `*(&p)` / `*&p`, is the struct `p` names
-# (issues/2026-10-14-dereference-of-address-of-struct-faults.md). Through 6.7.12 the dereference consumers typed
+# (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md). Through 6.7.12 the dereference consumers typed
 # their operand by `_hl_psid`, which answers 0 for `&x`, so `take(*(&p))` into a by-value struct over 8 B pushed
 # p's FIRST WORD as its address (SIGSEGV on x86_64 / aarch64, a cx guest error, exit 5 on PE) and under 8 B the
 # word load read past the struct. The `a` rows at 3 / 8 / 16 / 24 B (A3, S8, H, T3), each the constant the

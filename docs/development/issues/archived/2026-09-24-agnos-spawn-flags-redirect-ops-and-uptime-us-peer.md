@@ -123,5 +123,5 @@ then — the 1.56.55 precedent).
 ## Precedent
 
 Same kernel-mints-it / cyrius-owns-the-peer split as
-[`archived/2026-08-06-chan-endow-peer-and-spawn-path-env-arity.md`](archived/2026-08-06-chan-endow-peer-and-spawn-path-env-arity.md)
-and [`archived/2026-09-01-agnos-sys-statfs-103-peer.md`](archived/2026-09-01-agnos-sys-statfs-103-peer.md).
+[`archived/2026-08-06-chan-endow-peer-and-spawn-path-env-arity.md`](2026-08-06-chan-endow-peer-and-spawn-path-env-arity.md)
+and [`archived/2026-09-01-agnos-sys-statfs-103-peer.md`](2026-09-01-agnos-sys-statfs-103-peer.md).

@@ -1,7 +1,7 @@
 # A user struct named `Result`, `Option` or `Tagged` is a heap handle by NAME: its inline value into its by-value parameter passes the first field as the handle (SIGSEGV on every target) — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 structs lane (unit S4), probing the other by-name types the
-inline-`Str` issue never probed (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md: "`Result` /
+inline-`Str` issue never probed (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md: "`Result` /
 `Option` / `Tagged` (the other by-name types) were not probed"). Measured on the lane tree after D7 (1) and on its
 base (44ab2052), x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.

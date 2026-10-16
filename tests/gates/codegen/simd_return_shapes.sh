@@ -95,7 +95,7 @@
 # parameter; f64v2 / f32v4 / i32v4 / f64v4, declaration and assignment, and the guide's out-pointer
 # workaround) and Y (refused once, by name, no artifact — Y1 is the filed repro verbatim) on all four
 # legs; tests/tcyr/crossos/simd_indirect_receive.tcyr is the same table for the release gate's hosts.
-# 6.7.13 (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md): V10 — the callee in parentheses,
+# 6.7.13 (issues/archived/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md): V10 — the callee in parentheses,
 # `callptr((&mk2), 4, 1)`, is the known callee (`_icall_fti`): it was refused as a callee in a variable is.
 # MUTATION LEDGER (6.7.11 — a scratch copy of the tree, the one change, rebuilt, run as CYCC=<mutant>):
 #   MV1 `_vrcv_decl` never declaring                       -> RED V1 V3 V5 V7 on all four legs (refused: the declaration
@@ -109,7 +109,7 @@
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): A7 runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_return_shape_controls.tcyr (6.7.13: its producer says `return p;`, as here).
 #
-# ⛔ 6.7.13 (the vectors lane, issues/2026-10-14-explicit-instance-vector-result-not-received.md) — AN
+# ⛔ 6.7.13 (the vectors lane, issues/archived/2026-10-14-explicit-instance-vector-result-not-received.md) — AN
 # EXPLICIT-INSTANCE GENERIC CALL `mkg<i64>(41, 7)` IS A BY-NAME CALL DECLARED TO RETURN ITS VECTOR. Every receive tested `IDENT (`: the
 # assignment `v = mkg<i64>(41, 7);` was refused (".. got `mkg`"), the declaration `var v: f64v2 = mkg<i64>(..)` lost its
 # annotation (PARSE_VAR's struct lookahead reset it: `_gen_decl_check` answered 0 for a vector), so the local was one
@@ -166,7 +166,7 @@
 # Q3 runs on win64 too since D30 (simd_pointer_param.sh's VZ4: a word into Win64's value-form parameter is refused);
 # M-VC3 there (`_sarg_pe_vword` answering 0) -> RED win64 Q3 here.
 #
-# ⛔ 6.7.13 (D34 A, the user's decision, 2026-10-15; issues/2026-10-13-vector-dereference-into-vector-local-decision.md) —
+# ⛔ 6.7.13 (D34 A, the user's decision, 2026-10-15; issues/archived/2026-10-13-vector-dereference-into-vector-local-decision.md) —
 # `var v: V = *p;` / `v = *p;` WITH `p: *V` COPY THE VECTOR THROUGH THE POINTER, as `var q: T = *p;` copies a struct
 # (6.7.10 decision 6): `_vrcv_src` kind 4 (`_vrcv_dsrc`: a whole `* E`, any wrap), `_vrcv_demit` (E parsed, its step
 # word's vector read: `ty`'s copied through a hidden temp; another vector refused by name; an untyped word keeps the
@@ -181,7 +181,7 @@
 #       words), K1 K2 on all four (the receive refusal, not the copy's words)
 #   M-D2 `_vrcv_demit` without the vector-type test          -> RED 8: K1 K2 on all four legs (compiled)
 #
-# ⛔ 6.7.13 (issues/2026-10-14-vector-local-refusal-hint-every-source.md) — THE RECEIVE'S REFUSAL NAMES WHAT IT REFUSES. Since
+# ⛔ 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md) — THE RECEIVE'S REFUSAL NAMES WHAT IT REFUSES. Since
 # 6.7.11 every refusal ended "; through a fn pointer held in a variable, give the target an out-pointer" (`= 5`,
 # `= load64(&w)`, `= &w`), and a call to a fn that does not exist (`var v: f64v2 = f64v2_splat(1.0);`, no include) was
 # reported as a refused source ahead of the undefined-function warnings. The hint now follows a whole fncallN / callptr
@@ -657,7 +657,7 @@ k_msg() {
     K4) echo "a value-form vector local is assigned only from";;
     esac
 }
-# ---- 6.7.13 (issues/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
+# ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
 HINT="through a fn pointer held in a variable, give the target an out-pointer"

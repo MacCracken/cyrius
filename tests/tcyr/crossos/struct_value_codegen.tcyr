@@ -393,7 +393,7 @@ fn q_elems(): i64 {
     q_elems_mo();
     return 0;
 }
-# Q42+ (6.7.13, issues/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) — a
+# Q42+ (6.7.13, issues/archived/2026-10-14-paren-wrapped-pair-method-or-operator-as-nested-literal-element-refused.md) — a
 # 9-16 B METHOD or OPERATOR result in parentheses as the element (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`) was
 # "unexpected '}'": the destination is armed inside the wrap now (`_spi_epk`), as for every other destination.
 impl QE { fn dupe(self): QE { var q = QE { self.a, self.b }; return q; } }

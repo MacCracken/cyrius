@@ -17,7 +17,7 @@ here.
 `t7(py)`, `t7(&s)`, `t1(pb + n)`, and an if-expression whose branches share a step.
 **Affects:** the 6.7.10 tree (B7-1b's tail); every target (frontend state). Before 6.7.10 every pointer here was
 passed as the address
-([`2026-10-11-typed-pointer-into-small-byvalue-struct-param.md`](archived/2026-10-11-typed-pointer-into-small-byvalue-struct-param.md),
+([`2026-10-11-typed-pointer-into-small-byvalue-struct-param.md`](2026-10-11-typed-pointer-into-small-byvalue-struct-param.md),
 fixed by B7-1b and still in `issues/` until slot close). The one-byte struct pointer (`*B1`) exists only since 6.7.10's
 packed narrow fields: a `struct B1 { a: u8; }` was 8 B on 6.7.9.
 

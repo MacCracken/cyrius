@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: a field of a `: *T` call's result is an lvalue — `gp().n = 5;` stores through the returned pointer (6.7.13,
-# the user's decision D8 (a), 2026-10-15; issues/2026-10-08-field-store-through-pointer-returning-call-refused.md).
+# the user's decision D8 (a), 2026-10-15; issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md).
 #
 # THE DEFECT (measured on the 6.7.13 structs lane before the fix, 0d09e732, every target): with `fn gp(): *H`,
 #     gp().n = 5;   gp().m += 5;   gp().h.n = 5;   gpg<H>().n = 5;   o.gp().n = 5;

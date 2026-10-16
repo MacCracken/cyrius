@@ -6,7 +6,7 @@
 **Severity:** Medium — silent wrong value: the scalar holds the struct's first word (narrowed to its width); no
 diagnostic, nothing crashes.
 **Discovered:** 2026-10-16, the receives lane's review of the D13 bite (6ab2a9c8, issues/
-2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). D24 (6.7.11, the free call) and D13
+archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). D24 (6.7.11, the free call) and D13
 (6.7.13, a method / operator) refuse a scalar ANNOTATION's initialiser; their filed surface is the declaration. The
 assignment is outside it, so it was left as found, here.
 

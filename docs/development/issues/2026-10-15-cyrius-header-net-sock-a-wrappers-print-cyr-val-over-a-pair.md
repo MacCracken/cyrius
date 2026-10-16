@@ -1,7 +1,7 @@
 # `cyrius header lib/net.cyr` prints `cyr_val sock_send_a(..)` / `cyr_val sock_recv_a(..)`, rc 0, for two `: i64` fns that return lib/result.cyr's pair — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 tools lane (unit T4) while applying D37 (lib/result.cyr's
-`ok_via` / `err_via` re-annotated `: Result`; issues/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md
+`ok_via` / `err_via` re-annotated `: Result`; issues/archived/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md
 item 2). Measured with the lane's build/cyrius and build/cycc (l6713-tools @ d0c220dc).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low — a generated C header that is silently wrong for two public stdlib fns: a C caller reads the tag

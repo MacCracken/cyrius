@@ -7,7 +7,7 @@ commit) with compilers built from that tree: x86_64, aarch64 (qemu), cx (cxvm), 
 prints the Str header's bytes); the method form is refused loudly. Workaround: drop the parentheses, or annotate
 (`var s: Str = (mks());`).
 **Discovered:** 2026-10-16, the receives lane, while repairing
-`issues/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md` (the 8 B half), whose filed surface
+`issues/archived/2026-10-14-paren-wrapped-call-untyped-receive-8b-call-and-16b-method.md` (the 8 B half), whose filed surface
 is a struct of 8 B or less; a `Str` is 16 B and was left as the brief's plan says ("over 8 B the receive takes it").
 
 ## Reproduction

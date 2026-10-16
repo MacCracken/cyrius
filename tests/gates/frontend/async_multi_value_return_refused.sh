@@ -39,7 +39,7 @@
 #   M7 `_ret_tup_ok` reporting T5 for a declared async fn   -> RED DT (2 errors: + "cannot return tuple 't'")
 #
 # 6.7.13 — AXIS F: `return h(..);` FORWARDING A MULTI-VALUE CALL in such a body is the third spelling of the loss
-# (D24 A, the user's decision, 2026-10-15; issues/2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md):
+# (D24 A, the user's decision, 2026-10-15; issues/archived/2026-10-14-async-fn-forwarding-multi-value-call-loses-second-value.md):
 # the repro built clean and exited 19 on x86_64 / aarch64 / cx / PE (the memoised 1, then h's 9 from rethi()). The
 # callee declared `: (T1, T2[, T3])`, counted by pass 1, a method or a generic instance, parentheses around the whole
 # call transparent — refused with the same text, at the forwarded call (`_ret_mv_fwd`, PARSE_RETURN). Wherever the

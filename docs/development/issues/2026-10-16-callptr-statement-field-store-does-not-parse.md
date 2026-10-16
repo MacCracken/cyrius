@@ -5,7 +5,7 @@
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Low — a valid statement is refused with a parse error that does not name the rule; no wrong code.
 **Discovered:** 2026-10-16, the receives lane's review of the D16 bite (5a73a702 + 389e715d, issues/
-2026-10-13-field-of-indirect-call-struct-result.md). D16's filed surface is READING `.field` / `.method(..)` of a
+archived/2026-10-13-field-of-indirect-call-struct-result.md). D16's filed surface is READING `.field` / `.method(..)` of a
 known callee's result; a store through it in statement position is outside it.
 
 ## Reproduction

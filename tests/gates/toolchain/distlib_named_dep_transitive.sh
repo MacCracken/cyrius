@@ -139,7 +139,7 @@ if [ "$rc" -eq 0 ] && [ "$(cat "$W/d5.sc")" = "boxed" ] && grep -q "boxed record
 else bad "D5 (rc=$rc, sidecar: $(cat "$W/d5.sc")): $(grep -E "recorded|named dep's|error" "$W/d5.out" | head -2)"; fi
 
 # ── K: a named dep whose thin profile of a leaf the bundle declares was not vendored (6.7.13) ──
-# issues/2026-10-15-bote-distlib-kept-fold-over-thin-profile-records-named-deps-need.md. `nd`'s
+# issues/archived/2026-10-15-bote-distlib-kept-fold-over-thin-profile-records-named-deps-need.md. `nd`'s
 # manifest selects a thin `[deps.<L>]` profile; the bundle declares <L> in `[deps] stdlib`, so
 # `cyrius deps` keeps the fold (6.6.11 S2: "'<L>' is a stdlib leaf here") and the fold stands in
 # for the profile. nd's sidecar lists nothing (its profile's requires block carried its needs), so

@@ -1,7 +1,7 @@
 # `t = a;` with `t` an inline `Str` and `a` a `Str` handle stores the handle word into `t.data` (a pun), where `t = u` between two inline `Str`s copies the header — whether `var t: Str;` (no initialiser) joins D7 (1) waits on it — OPEN
 
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S4): landing D7
-(1) (issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) on every inline `Str` local — the
+(1) (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) on every inline `Str` local — the
 uninitialised `var t: Str;` included — turned tests/tcyr/crossos/struct_ptrmode_assign_copy.tcyr's 6.6.16 row "the
 inline Str pun keeps the handle" red (got 16, expected 5). The lane's review (2026-10-16) found the widening past D7
 (1)'s wording (`var t: Str = Str { .. }`); the review fix (structs lane, 2026-10-16) keeps the bare `var t: Str;` —

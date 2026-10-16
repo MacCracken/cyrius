@@ -109,7 +109,7 @@ fn mv_after_block(): i64 {
 }
 
 # ── 6.7.13: a declaration's initializer reads the ENCLOSING name it declares (the global `a` exists) ──
-# issues/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md: the pre-scan
+# issues/archived/2026-10-14-closure-var-initializer-reading-its-own-name-drops-the-capture.md: the pre-scan
 # shadowed a `var` (and a destructure's first name) from the name, so its initializer read the global.
 fn vi_single(): i64 { var a = 5; var cl = |n| { var a = a + n; return a; }; return fncall1(cl, 1); }
 fn vi_mvar(): i64 { var a = 5; var cl = |n| { var a, b = tw(a + n); return a * 10 + b; }; return fncall1(cl, 1); }
@@ -127,7 +127,7 @@ fn vi_after(): i64 {
 }
 
 # ── 6.7.13: a nested closure's parameters are its own (globals `m` / `q` exist) ─────────────────
-# issues/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md: the outer pre-scan read a
+# issues/archived/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md: the outer pre-scan read a
 # nested literal's parameter `m` as a capture of the enclosing `m`.
 fn np_f(): i64 { var m = 5; var cl = |n| { var g = |m| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }
 fn np_h(): i64 { var m = 5; var cl = |n| { var g = |m| { return m * 2; }; return fncall1(g, n); }; return fncall1(cl, 3); }

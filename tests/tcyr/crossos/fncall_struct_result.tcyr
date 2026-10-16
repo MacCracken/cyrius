@@ -190,7 +190,7 @@ fn known() {
 
 # 6.7.13 — the callee in parentheses, `(&mk3)`, is the same known callee (it was unknown: no hidden
 # result pointer, no pair receive — SIGSEGV on x86_64 / aarch64, a guest error on cx, exit 5 on PE;
-# issues/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md). A wrapped variable stays a
+# issues/archived/2026-10-14-parenthesised-fn-pointer-callee-loses-struct-result.md). A wrapped variable stays a
 # word (D31): W13.
 fn rv3w(a): P3 { return callptr((&mk3), a); }
 fn rv2w(a): P2 { return fncall1(((&mk2)), a); }
@@ -225,7 +225,7 @@ fn wrapped() {
 }
 
 # 6.7.13 — a known callee's result takes `.field` and `.method(..)`, as `mk3(5).b` does (the user's decision D16 (a),
-# 2026-10-15; issues/2026-10-13-field-of-indirect-call-struct-result.md): it was "expected ';', got '.'" on every target.
+# 2026-10-15; issues/archived/2026-10-13-field-of-indirect-call-struct-result.md): it was "expected ';', got '.'" on every target.
 var GN = 0;
 impl P2 { fn tot(self): i64 { return self.a + self.b; } }
 impl P3 {

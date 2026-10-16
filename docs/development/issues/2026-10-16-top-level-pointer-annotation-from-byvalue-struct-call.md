@@ -6,7 +6,7 @@ compilers built from that tree: x86_64, aarch64 (qemu), cx (cxvm), PE (wine).
 **Severity:** Medium — the after-the-first-statement shapes compile with only a warning and crash (`*P2`) or hold a
 value as an address (`*i64`); the zone's method shape compiles with no diagnostic at all.
 **Discovered:** 2026-10-16, the receives lane, while repairing
-`issues/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md` (D14 (A), the user, 2026-10-15). That issue's
+`issues/archived/2026-10-14-pointer-annotated-local-from-byvalue-struct-call.md` (D14 (A), the user, 2026-10-15). That issue's
 filed surface (its repros and its rows) is a declaration INSIDE a fn; D14 was applied there (free, wrapped, generic,
 method, operator and known `&f` paths). Top level is outside it, so it was left as found, here.
 

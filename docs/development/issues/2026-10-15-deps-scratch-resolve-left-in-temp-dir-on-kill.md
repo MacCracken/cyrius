@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-15 on the 6.7.13 tools lane (l6713-tools @ 5c62424a, the CLI built from
 `cbt/cyrius.cyr` by the tree's `build/cycc`). Met while implementing
-2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md (D41): its pin-move dry pass resolves into
+archived/2026-10-15-d19-refusal-leaves-closure-files-revendored-at-the-new-pin.md (D41): its pin-move dry pass resolves into
 a private scratch the way `--locked` does (`_cbt_tmpfile(...)` + `/lib`, `_dep_vendor_mode = 0`), and inherits the
 same gap. Not repaired in that bite: the scratch is written by the resolver's ordinary copy path
 (`_dep_copy_file`: mkdir -p, then an `_aw_open` sibling temp renamed into place), none of which is recorded BEFORE it

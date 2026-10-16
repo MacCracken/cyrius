@@ -174,7 +174,7 @@ fn main(): i64 {
     assert_eq(cb, 4, "forwarded callptr (callee unknown): second value");
 
     # 8. 6.7.13 — `callptr(fp, ..)` destructures as `fncallN` does (it was refused "multi-value destructure
-    # needs a call on the right-hand side"; issues/2026-10-13-destructure-of-callptr-refused.md): every value
+    # needs a call on the right-hand side"; issues/archived/2026-10-13-destructure-of-callptr-refused.md): every value
     # read after an INDIRECT call, SEEDED as section 7 is. MUTATION: `_dt_rhs_check_t` without its `callptr`
     # line -> the file does not build.
     var cfp = &mr_pair;
@@ -193,7 +193,7 @@ fn main(): i64 {
     assert_eq(y3, 42, "callptr destructure arity 3: third value");
 
     # 9. 6.7.13 — off the end of a fn declared `: (T1, T2[, T3])` every value is 0 (D28 C, the user's decision,
-    # 2026-10-15; issues/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro read the seeded 77 on
+    # 2026-10-15; issues/archived/2026-10-13-declared-multi-value-fn-falls-off-its-end.md: the repro read the seeded 77 on
     # every target). SEEDED as section 7 is, so a value left stale reads 77 / 78 (7.0 for the f64 pair).
     # MUTATION (run 2026-10-15): `_mret_falloff` answering 0 -> 9 rows fail on x86 (the stale 77 / 78 / 7.0);
     # `_mret_falloff_fi` answering 0 -> the #inline row (4077: 40, 77).

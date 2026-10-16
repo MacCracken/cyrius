@@ -96,7 +96,7 @@ fn d0_for(): i64 {
 }
 
 # ── 6.7.13: a zero-size struct into a struct-typed FIELD, and a zero-size `*p` as a VALUE, move no byte
-# (issues/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md). Through 6.7.12 `o.s = GP`,
+# (issues/archived/2026-10-14-zero-size-struct-into-field-or-dereference-value-moves-a-word.md). Through 6.7.12 `o.s = GP`,
 # `o.s = gp()`, `o.s = (GP)`, `o.s = mk()` and `o.s = 5` stored an 8-byte word over the field's neighbour (0 where
 # 77 is right), and `*p` as a value loaded the word at p — 8 bytes past the object: `tw0(*p)` saw the guard byte
 # after GT0 (99), `bp0(*p)` into a `*S0` parameter got that word as the pointer, `*p + l` did not dispatch
@@ -544,7 +544,7 @@ fn dH_gq(): i64 { var p: *SH = &GTH; *p = GQH; zeroH(&GLH); var r = cH(); setH(&
 fn dH_cq(): i64 { var p: *SH = &GTH; *p = gqH(); zeroH(&GLH); var r = cH(); setH(&GLH); return r; }
 # 6.7.13 (D11 (a), the user 2026-10-15): the reading kept — an untyped value is the struct's word, at most 8
 # bytes; a struct over 8 B keeps the rest. The filed repro verbatim (its `main` as dw_main):
-# issues/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md — 72 (70 would be the
+# issues/archived/2026-10-14-untyped-store-through-struct-pointer-over-8-bytes-reading.md — 72 (70 would be the
 # zero-extended reading the user declined).
 struct S { a; b; }
 fn dw_main(): i64 {

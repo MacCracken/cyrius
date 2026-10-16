@@ -29,7 +29,7 @@
 # (a kernel build names a constant-condition global as late). (The three peephole-tracker resets and the
 # SESVAR / `_esv_name` reset are defensive: no row kills them.) FE, 2026-10-08: `_ie_kind` without its
 # `_W128_IS` refusal -> V8-V12 BUILD (V13 green).
-# 6.7.13 (D rows; issues/2026-10-14-dereference-as-if-expression-branch.md, the user's D1 (a)): a whole dereference
+# 6.7.13 (D rows; issues/archived/2026-10-14-dereference-as-if-expression-branch.md, the user's D1 (a)): a whole dereference
 # of a `*S` branch is a struct value — refused over 8 B (D1-D6, D8 the filed shape once per branch), mixed struct
 # types refused (D7), a vector dereference left alone (D9), an operator on one an integer (D11), and the runtime
 # half tests/tcyr/crossos/if_expr_struct_deref.tcyr on every leg (D10). Mutations (2026-10-15, CYCC=the mutant;
@@ -165,7 +165,7 @@ exits a17 66 "A17: a #derive member value with a comment holding a quote keeps t
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
 
-# 6.7.13 (issues/2026-10-14-dereference-as-if-expression-branch.md) — A STRUCT DEREFERENCE AS A BRANCH IS A STRUCT
+# 6.7.13 (issues/archived/2026-10-14-dereference-as-if-expression-branch.md) — A STRUCT DEREFERENCE AS A BRANCH IS A STRUCT
 # VALUE (`_ie_deref_sid`, parse_ctrl.cyr; the declaration zone's `_gz_bty` reads it alike). Over 8 B it is refused
 # as any struct value over 8 B is — branch on the pointer (the user's D1 (a), 2026-10-15); through 6.7.12 each D row
 # compiled (an integer branch, the word `*p` read) and `var v: S = if (c) { *p } else { *q };` SIGSEGV'd.

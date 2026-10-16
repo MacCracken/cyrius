@@ -1,7 +1,7 @@
 # `return &h;` in a fn returning `S`, with `h` a handle, a `*S` local or an untyped `self`: at 8 B or less the slot's ADDRESS is the struct's word; over 8 B refused in other words — OPEN
 
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S3) while landing
-D4 (a) (`return &s;` of an inline struct is `return s;`, issues/2026-10-14-return-address-of-struct-local-decision.md).
+D4 (a) (`return &s;` of an inline struct is `return s;`, issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
 Measured on the lane tree after that bite, x86_64 / aarch64 (qemu) / cx / PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
 **Severity:** Medium — silent at 8 B or less: the caller reads a stack address (the slot of a dead frame's handle or

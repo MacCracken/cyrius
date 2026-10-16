@@ -6,7 +6,7 @@ compilers of a673123d and the lane tip 68d421a8 alike) on x86_64, aarch64 (qemu)
 **Severity:** Medium — a silent wrong value on code that compiles clean (the caller's vector holds whatever the vector
 return registers / the PE result pointer held); `ret2` in a vector fn is rare.
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane (M3), while refusing `ret2(a, b)` in a fn returning a named
-struct (issues/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md, D22 A) — the vector class is outside
+struct (issues/archived/2026-10-14-ret2-in-struct-returning-fn-takes-multi-value-path.md, D22 A) — the vector class is outside
 that issue's filed surface (named structs).
 
 ## Reproduction

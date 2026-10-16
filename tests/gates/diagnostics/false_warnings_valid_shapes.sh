@@ -129,14 +129,14 @@ syscall(60, main());
 EOF
 chk "P2 (control: int, another struct's global, i64 field, i64 method)" p2.cyr "assigning non-pointer to typed pointer" 4
 
-# D (6.7.13, D9 (a), the user 2026-10-15; issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md):
+# D (6.7.13, D9 (a), the user 2026-10-15; issues/archived/2026-10-13-double-pointer-dereference-is-an-untyped-word.md):
 # `*pp` of a `pp: **T` is a `*T`, so `var q: *T = *pp;` and `q = *pp;` are silent — a `**i64` local, parameter,
 # global (in a fn and at top level), field and `: **i64` call, and a `***i64`'s `**ppp`. It warned "assigning
 # non-pointer to typed pointer" at each (the filed repro: line 9). D2 (controls): `**pp` (the i64 element) and an
 # integer still warn — one each. D3: `*pp - b` with `b: *u8` is a pointer difference of two element sizes now,
 # refused by name (it was a byte count of an untyped word). Mutation: `_pp_inner` answering 0 -> D0, D1 RED (the
 # warnings return; D0's repro exits 1) and D3 RED (it compiles).
-DR="$ROOT/docs/development/issues/2026-10-13-double-pointer-dereference-is-an-untyped-word.md"
+DR="$ROOT/docs/development/issues/archived/2026-10-13-double-pointer-dereference-is-an-untyped-word.md"
 if [ -f "$DR" ]; then
   awk '/^```cyrius$/ { f = 1; next } /^```$/ { if (f) exit } f' "$DR" > "$D/d0.cyr"
   chk "D0 (the filed repro verbatim: silent, exit 0)" d0.cyr "assigning non-pointer to typed pointer" 0 0

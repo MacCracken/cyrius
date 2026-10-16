@@ -9,7 +9,7 @@ rule already reads as the tag (`x = 3 + f();`); the question is which rule a red
 **Kind:** language — a decision for the user: is a parenthesised whole VALUE that starts with a pair call judged by
 the 6.7.7 first-call rule ("A store is judged by the call it starts with, so `h.n = f() + 1;` … are refused")?
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane, unit M2, writing the rows for
-`issues/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md` (D19 A). D19 made parentheses around a
+`issues/archived/2026-10-14-paren-wrapped-stack-pair-call-escapes-every-pair-check.md` (D19 A). D19 made parentheses around a
 whole pair CALL transparent (`(f(7))`, `((f(7)))`, `(f(7)) + 1`); a wrap that holds more than the call — `(f(7) + 1)`
 — is outside that decision's question and was left as it was.
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: an INLINE `Str` is its header's address wherever a `Str` value is taken (6.7.13, the user's
-# decision D7 (1), 2026-10-15; issues/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md).
+# decision D7 (1), 2026-10-15; issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md).
 #
 # THE DEFECT (measured on the 6.7.13 structs lane before the fix, 44ab2052, x86_64 / aarch64 under qemu /
 # cx under cxvm / PE under wine, all four equal): a `Str` is a heap handle by name — its slot holds the
