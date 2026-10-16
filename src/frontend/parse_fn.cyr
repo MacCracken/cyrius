@@ -2052,8 +2052,11 @@ fn _sarg_vec_call(S, fi, argc, tail): i64 {
     return 1;
 }
 # The vector (its descriptor, negative) the WHOLE argument at token `ti` returns when it is a call declared
-# to return one — by name (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too, read past its `<..>`), or
-# `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`); else 0.
+# to return one — by name (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too, read past its `<..>`),
+# `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`), or (6.7.13) a method `x.m(..)` (`_vmc_fi`): D27's `*V`
+# rule for every call declared to return the vector — `rd(s.mv(42, 7))` pushed lane 0 as the address (139 / cx
+# 253 / PE 5; issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md
+# row 6); else 0.
 fn _svc_rs(S, ti): i64 {
     var rs = _icall_rs_at(S, ti);
     var o = ti + 1;
@@ -2062,9 +2065,14 @@ fn _svc_rs(S, ti): i64 {
         _svc_nm = TOKVAL(S, _icall_open_at(S, ti) + 2);
     } else {
         var vf = _vcall_fi(S, ti);
-        if (vf < 0) { return 0; }
         _svc_k = 1;
         _svc_nm = TOKVAL(S, ti);
+        if (vf < 0) {   # 6.7.13: a method `x.m(..)` declared to return a vector (`_vmc_fi`; `_vrcv_emit` kind 3)
+            vf = _vmc_fi(S, ti);
+            if (vf < 0) { return 0; }
+            _svc_k = 3;
+            _svc_nm = TOKVAL(S, ti + 2);
+        }
         rs = GFRS(S, vf);
         o = _vcall_o;
     }

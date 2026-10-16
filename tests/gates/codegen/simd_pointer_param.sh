@@ -73,6 +73,17 @@
 #       IR=3 / DCE / aarch64 / cx ("value-form SIMD arg must be a 16-byte vector": the replay took f32v8 for a
 #       16-byte one), VY3 (that text); V8 / T2 PE green (Win64 does not replay a vector-parameter fn)
 #
+# 6.7.13 (issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md rows 6-7):
+# a vector METHOD result into `*V` passes a temp's address, as a by-name call's does (D27) — `_svc_rs` takes `x.m(..)`
+# (`_vmc_fi`, the D29 method recogniser); on Win64 the method's hidden result pointer is that temp, before `self`.
+# Row 7 (an explicit instance) is the explicit-instance bite's (`_vcall_fi`).
+#   OK6 / OK7 the filed rows 6 and 7 verbatim (head + main): exit 42 on x86_64 / IR=3 / aarch64 / cx / PE (139 / 139 /
+#      139 / cx 253 / PE 5 before)
+#   T  `sp_mrows`: a method result (both lanes, wrapped, f64v4, a generic method's, as a method's argument, through a
+#      `*S` receiver, the receiver intact) and `mkg<i64>` / `mkg<i32>` results into `*V` (FLOOR 61)
+#   M-R6 `_svc_rs` without the method arm                    -> RED 12: OK6 on every leg (139 / 139 / 139 / cx 253 /
+#       PE 5), T on every leg (a fault; cx "54 passed, 7 failed")
+#
 # MUTATION LEDGER (2026-10-15, 6.7.12; each change alone in the tree, this gate run with CYCC=<its 2-stage
 # mutant>; measured):
 #   M4  `_sarg_vec_call` answers 0 (no call-result arm)    -> RED 15: R4 (139 / 139 / 139 / cx 253 / PE 5),
@@ -131,7 +142,7 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=51
+FLOOR=61   # 6.7.13: + the method / explicit-instance rows (`sp_mrows`)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
@@ -287,6 +298,26 @@ if [ "$WINE" = 1 ]; then
     refused Yw2c "Yw2 Y12 on PE" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" pe "$KFRAG"
     refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
+
+# 6.7.13 — rows 6-7 of issues/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md,
+# the filed head and mains verbatim: a vector METHOD result and an explicit-instance result into `*f64v2` (D27's own rule
+# once the sources are typed; 139 / 139 / 139 / cx 253 / PE 5 before — row 7 is the explicit-instance bite's).
+OKH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Pt { x; y; }
+struct S2 { k; }
+impl S2 { fn mv(self, a, b): f64v2 { return f64v2_make(a, b); } }
+fn rp(p: *Pt): i64 { return p.x; }
+fn ri(p: *i64): i64 { return *p; }
+fn bv(p: Pt): i64 { return p.x; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn mkv(a, b): f64v2 { return f64v2_make(a, b); }
+fn mkg<T>(a: T, b: T): f64v2 { return f64v2_make(a, b); }'
+echo "OK6-OK7. the filed rows 6-7, verbatim: \`rd(s.mv(42, 7))\` and \`rd(mkg<i64>(42, 7))\` into \`p: *f64v2\` (exit 42)"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'var s: S2; return rd(s.mv(42, 7));' > "$D/ok6.cyr"
+printf '%s\nfn main(): i64 { %s }\nsyscall(60, main());\n' "$OKH" 'return rd(mkg<i64>(42, 7));' > "$D/ok7.cyr"
+exit_rows OK6 "$D/ok6.cyr" 42 "a method result's temp"
+exit_rows OK7 "$D/ok7.cyr" 42 "an explicit instance's temp"
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"
 cat > "$D/v8.cyr" <<'EOF'

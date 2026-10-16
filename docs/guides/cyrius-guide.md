@@ -3530,9 +3530,11 @@ registers (SysV / aarch64 / cx) or a by-pointer copy (Win64).
 
 **A vector value that is not a named local passes an address too (6.7.12; the user's decision
 D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
-`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))` — is received into a frame temporary whose
-address is passed (on Win64 the temporary is the call's hidden result pointer), as a struct call
-result into `*T` is (6.6.20); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
+`rd(fncall2(&mkv, ..))`, `rd(callptr(&mkv, ..))`, and (6.7.13) an explicit instance
+`rd(mkg<i64>(42, 7))` and a method `rd(s.mv(42, 7))` — is received into a frame temporary whose
+address is passed (on Win64 the temporary is the call's hidden result pointer, a method's before
+`self`), as a struct call result into `*T` is (6.6.20; through 6.7.12 the method and the explicit
+instance passed lane 0 as the address); a dereference `rd(*pv)` of a `*V` — a local, a parameter, a capture,
 a field, a global, a `: *V` call, `pv + n` — passes `pv` itself, as `take(*p)` passes a struct's
 pointer (6.7.10). A call result or a `*` of another vector type is refused with the words above. At
 top level there is no frame: `'mkv' returns a vector by value, and a vector result needs storage in
