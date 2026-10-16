@@ -2169,7 +2169,7 @@ fn _sarg_struct_other(S, fi, argc): i64 {
 # hidden result pointer), whose address is pushed (`_sarg_escapes`: a tail call diverts). A vector of another
 # type is refused with A2's words; at top level there is no frame (a value-form vector is a local): refused by
 # name, as a struct result is there. 1 = pushed; 0 = not this arm, or refused (the value push follows).
-var _svc_k = 0;    # `_svc_rs`'s source kind for `_vrcv_emit`: 1 by name, 2 through `&f`
+var _svc_k = 0;    # `_svc_rs`'s source kind for `_vrcv_emit`: 1 by name (an explicit instance too), 2 through `&f`, 3 a method (`_vmc_fi`; 6.7.13)
 var _svc_nm = 0;   # ... and the callee's name
 # 6.7.13 (D30 A): and on Win64 a VALUE-form vector parameter, which is passed by address there: the temp is the call's
 # hidden result pointer and its address is what the callee copies in (`lanes(mkv(4, 2))` passed lane 0 as the
