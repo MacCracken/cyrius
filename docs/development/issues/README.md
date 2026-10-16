@@ -434,7 +434,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [An inline `Str`'s header escapes its frame through a handle bound to it: `var h: Str = t; return h;` / `G = h` compile with no refusal and the returned handle dangles](2026-10-16-inline-str-header-escapes-through-bound-handle.md)
 - [`**pp` through a `**S` is no struct value: `take(**pp)` into a by-value `S`, `var t: S = **pp;` fault, and `**pp` of a 3-byte struct reads 8 bytes](2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md)
 
-**6.7.15 — the full security audit + the refactor / optimization review** (2)
+**6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (0)
+
+
+**6.7.16 — the full security audit + the refactor / optimization review** (2)
 
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)

@@ -2,7 +2,7 @@
 
 **Filed:** 2026-10-13 from klug 0.2.1 (the audit pass of its 6.6.6 → 6.6.20 pin bump)
 **Status:** 🟡 **PROPOSED** — an ergonomics gap with measured consumer workarounds, not a capability gap.
-**Placement:** later in the 6.7.x line — after Break 2 (6.7.12 – 6.7.14) and the 6.7.15 audit; its release is set when the review follow-ups are (the user, 2026-10-15: "keep proposals for later in 6.7.x line").
+**Placement:** later in the 6.7.x line — after Break 2 (6.7.11 – 6.7.15) and the 6.7.16 audit; its release is set when the review follow-ups are (the user, 2026-10-15: "keep proposals for later in 6.7.x line").
 **Severity:** Quality-of-life. Nobody is blocked, but every consumer that writes a long message, help text or test
 fixture has to choose between a lint warning, a `#skip-lint` that mutes every rule on the line, text assembled at run
 time, or wording cut down to fit the column.
