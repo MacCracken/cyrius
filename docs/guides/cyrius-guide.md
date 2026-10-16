@@ -7701,7 +7701,12 @@ CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
 
 PIE is a Linux ELF mode. The Windows CLI refuses `--pie` by name — `error: --pie is not available
 from the Windows CLI: cycc.exe emits PE only, which has no --pie mode …`, rc 1, nothing written —
-since 6.7.12; before, cycc.exe ignored it and wrote the same image as a plain build.
+since 6.7.12; before, cycc.exe ignored it and wrote the same image as a plain build. On macOS
+(6.7.13, decision D43) the arm64 CLI accepts `--pie` as already met: every arm64 Mach-O cycc writes
+is position-independent (`MH_PIE` set, mach_header flags `0x00200084`), so the image is the plain
+build's. The x86_64 macOS CLI refuses it by name, rc 1, nothing written — `error: --pie is not
+available from the macOS x86_64 CLI: its cycc writes a fixed-address Mach-O (no MH_PIE mode)`.
+Through 6.7.12 both Macs passed `CYRIUS_PIE=1` to a compiler that reads none and said OK at rc 0.
 
 Non-PIE output is **byte-identical** across all corpus inputs — the feature
 is fully opt-in and inert when disabled (v6.1.5 vs v6.1.6 differential = zero

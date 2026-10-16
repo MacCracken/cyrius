@@ -318,8 +318,9 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "build") == 1) {
         println("");
         println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
-        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1; Linux ELF —");
-        println("                     the Windows CLI refuses it)");
+        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1; Linux ELF, and");
+        println("                     arm64 macOS, whose Mach-O is always PIE — the Windows and x86_64");
+        println("                     macOS CLIs refuse it)");
         println("  --dce              dead-code elimination for this build (CYRIUS_DCE=1; [build] dce)");
         println("  --bounds           the bounds-checked mode (CYRIUS_BOUNDS=1; [build] bounds; a #bounds");
         println("                     line in the entry file's leading block is the lowest rung)");
@@ -785,6 +786,11 @@ fn _cli_host_refuses(flag, x86): i64 {
 # (PE has no position-independent mode here; DYNAMIC_BASE would need a .reloc section cycc does not
 # emit), so `cyrius build --pie` wrote the same image as a plain build at rc 0. Refused by name, as
 # a target the host cannot emit is (6.7.11). 1 after naming it, else 0. CHANGELOG [6.7.12]
+# 6.7.13 (D43, the user 2026-10-15) — the macOS CLIs: neither Mach-O compiler reads CYRIUS_PIE. The
+# x86_64 one writes a fixed-address Mach-O (no MH_PIE), so `--pie` dropped a real request at rc 0
+# and is refused by name there. The arm64 one sets MH_PIE in every image (emit_arm64.cyr, flags
+# 0x00200084), so `--pie` is already met and accepted. CYRIUS_ARCH_AARCH64, never CYRIUS_ARCH_X86:
+# the x86 cross compiler predefines X86 even when it builds the arm64 CLI. CHANGELOG [6.7.13]
 fn _cli_host_refuses_pie(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var msg = "error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no";
@@ -792,6 +798,15 @@ fn _cli_host_refuses_pie(): i64 {
     msg = " --pie mode (a position-independent executable is a Linux ELF)\n";
     sys_write(STDERR_FD, msg, strlen(msg));
     return 1;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
+    var mmsg = "error: --pie is not available from the macOS x86_64 CLI: its cycc writes a fixed-address";
+    sys_write(STDERR_FD, mmsg, strlen(mmsg));
+    mmsg = " Mach-O (no MH_PIE mode)\n";
+    sys_write(STDERR_FD, mmsg, strlen(mmsg));
+    return 1;
+    #endif
     #endif
     return 0;
 }

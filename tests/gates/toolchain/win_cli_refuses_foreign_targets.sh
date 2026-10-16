@@ -45,8 +45,8 @@
 #      hardware: the release gate's cass leg (and the .bat probe in the CHANGELOG) is the real
 #      Windows.
 #   6.7.12 (D5, issues/archived/2026-10-10-strict-pin-and-pie-inert-off-linux.md): `--pie` from the Windows CLI
-#      (cycc.exe has no PIE mode; it wrote the same image as a plain build, rc 0): S4 only the PE CLI
-#      carries the refusal; W11 `build --pie` rc 1, the exact error, no output, nothing compiled;
+#      (cycc.exe has no PIE mode; it wrote the same image as a plain build, rc 0): S4 the PE CLI
+#      carries a refusal (S4b the Windows text); W11 `build --pie` rc 1, the exact error, no output, nothing compiled;
 #      W12 an existing output untouched. Mutation: the `--pie` test dropped from
 #      `_cli_foreign_target` -> W11 W12 RED; `_cli_host_refuses_pie` answering on every host -> S2
 #      S3 S4 RED (and every Linux / macOS `--pie` build refused).
@@ -62,6 +62,12 @@
 #      aarch64 kernel line; A9 the D20 pair `--aarch64 --target=aarch64-bare-metal-elf` writes A8's
 #      image byte for byte; A10 `run --aarch64` execs the program itself, not /usr/bin/qemu-aarch64
 #      (no qemu on an aarch64 host: pi exited 127 with no output once the compile succeeded).
+#   6.7.13 (D43, issues/2026-10-15-macos-cli-pie-inert-mach-o-compilers-read-no-cyrius-pie.md): neither
+#      Mach-O compiler reads CYRIUS_PIE, so `cyrius build --pie` on macOS wrote the plain build's image
+#      at rc 0. The x86_64 macOS CLI refuses it by name (a fixed-address Mach-O, no MH_PIE mode); the
+#      arm64 one accepts it as met (every image MH_PIE, flags 0x00200084). S4 the PE and x86_64 Mach-O
+#      CLIs carry a refusal, the arm64 Mach-O, Linux and aarch64 Linux ones none; S4b each its own
+#      text. (A Mach-O cannot run here: ach ran the refusal, ecb the accepted build — the CHANGELOG.)
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -80,6 +86,8 @@
 #           M11 `_cli_host_refuses_win` answering on every host                       RED: S5, S6, W8
 #           M12 find_tools without `_cc_arm = _cc` on aarch64 Linux (6.7.12)          RED: A7, A8, A9
 #           M13 run_binary_timed's qemu exec without its CYRIUS_ARCH_AARCH64 guard    RED: A10
+#   D43:    M14 `_cli_host_refuses_pie` without its CYRIUS_TARGET_MACOS arm           RED: S4, S4b
+#           M15 the macOS arm without its CYRIUS_ARCH_AARCH64 guard (D43 (a))         RED: S4
 set -u
 G=win_cli_refuses_foreign_targets
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -110,6 +118,8 @@ MACWHY="the macOS CLI: cycc emits Mach-O only"
 TAIL="(build agnos / bare-metal images on Linux)"
 PIEWHY="error: --pie is not available from the Windows CLI: cycc.exe emits PE only, which has no"
 PIEFULL="$PIEWHY --pie mode (a position-independent executable is a Linux ELF)"
+PIEANY="error: --pie is not available from the "
+MACPIEWHY="error: --pie is not available from the macOS x86_64 CLI: its cycc writes a fixed-address"
 # has FILE TEXT -> yes / no (a fixed-string search of the binary)
 has() { if grep -aqF "$2" "$1" 2> /dev/null; then echo yes; else echo no; fi; }
 magic() { if [ -f "$1" ]; then od -An -tx1 -N4 "$1" | tr -d ' \n'; else echo none; fi; }
@@ -143,9 +153,12 @@ check "S1 the PE CLI names the Windows refusal" "yes yes no" \
 check "S2 the Mach-O CLIs (x86_64, arm64) name the macOS refusal" "yes yes no no" \
     "$(has "$T/cyrius_macho_x86" "$MACWHY") $(has "$T/cyrius_macho_arm" "$MACWHY") $(has "$T/cyrius_macho_x86" "$WINWHY") $(has "$T/cyrius_macho_arm" "$WINWHY")"
 check "S3 the Linux CLI carries neither" "no no" "$(has "$T/lin/cyrius" "$WINWHY") $(has "$T/lin/cyrius" "$MACWHY")"
-# 6.7.12 (D5): `--pie` is refused by the Windows CLI only — cycc.exe has no PIE mode
-check "S4 only the PE CLI carries the --pie refusal" "yes no no no" \
-    "$(has "$T/cyrius.exe" "$PIEWHY") $(has "$T/lin/cyrius" "$PIEWHY") $(has "$T/cyrius_macho_x86" "$PIEWHY") $(has "$T/cyrius_macho_arm" "$PIEWHY")"
+# 6.7.12 (D5): `--pie` is refused by the Windows CLI — cycc.exe has no PIE mode; 6.7.13 (D43): and by
+# the x86_64 macOS CLI (a fixed-address Mach-O), never by the arm64 one (its Mach-O is always MH_PIE)
+check "S4 the PE and x86_64 Mach-O CLIs carry a --pie refusal; the arm64 Mach-O, Linux and aarch64 Linux ones none" "yes yes no no no" \
+    "$(has "$T/cyrius.exe" "$PIEANY") $(has "$T/cyrius_macho_x86" "$PIEANY") $(has "$T/cyrius_macho_arm" "$PIEANY") $(has "$T/lin/cyrius" "$PIEANY") $(has "$T/a64/cyrius" "$PIEANY")"
+check "S4b each its own text: the PE the Windows one, the x86_64 Mach-O the macOS x86_64 one" "yes no yes no" \
+    "$(has "$T/cyrius.exe" "$PIEWHY") $(has "$T/cyrius_macho_x86" "$PIEWHY") $(has "$T/cyrius_macho_x86" "$MACPIEWHY") $(has "$T/cyrius.exe" "$MACPIEWHY")"
 
 # 6.7.12 (D6): the aarch64 Linux CLI's refusal is its own
 check "S5 only the aarch64 Linux CLI carries the aarch64 refusal" "yes yes no no no no" \
