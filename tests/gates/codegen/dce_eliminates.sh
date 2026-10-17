@@ -281,5 +281,36 @@ loser8 "x86 CYRIUS_WX=0" "$T/stage1" x86 CYRIUS_WX=0
 if command -v qemu-aarch64 > /dev/null 2>&1; then loser8 aarch64 "$T/cc_a64" a64
 else echo "  SKIP dce_eliminates axis8 aarch64 leg: qemu-aarch64 not installed"; fi
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing"
+# ── axis 9 — 6.7.14: a `#naked` redefinition past 49,152 recorded rel32 sources ──────────────
+# EFNREDIRECT (x86/emit.cyr) registers the redirect's rel32 once: a `#naked` body opens with the
+# defer-init jump whose rel32 is already recorded at those bytes, so it scans the registry first.
+# The scan read the fixed S + 0x60000, and past 49,152 sources the registry lives in alloc'd
+# storage (6.6.20) — the fixed region read beyond it is the run registry, so the naked body's own
+# record was missed, the rel32 registered twice and repaired twice: 50,100 sources ahead of the
+# filed `#naked` shape (fn_redefinition_binds_last.sh's naked_dce) exited 132, not 1. Mutation:
+# the scan back on S + 0x60000 -> RED 9 (132).
+awk 'BEGIN {
+    print "fn inc(x): i64 { return x + 1; }"
+    for (f = 0; f < 100; f++) {
+        printf "fn g%d(r): i64 {\n", f
+        for (k = 0; k < 501; k++) { print "    r = inc(r);" }
+        print "    return r;"
+        print "}"
+    }
+    print "#naked"
+    print "fn g(): i64 { asm { 0xB8; 0x02; 0x00; 0x00; 0x00; 0xC3; } }"
+    print "fn d1(): i64 { var a = 1; var b = 2; var c = a + b; return c * 7 + 3; }"
+    print "fn d2(): i64 { var a = 4; var b = 5; var c = a * b; return c - 9; }"
+    print "fn h(): i64 { var x = g(); return x; }"
+    print "#naked"
+    print "fn g(): i64 { asm { 0xB8; 0x01; 0x00; 0x00; 0x00; 0xC3; } }"
+    print "syscall(60, h());"
+}' > "$T/nk.cyr"
+[ "$(grep -c 'inc(r)' "$T/nk.cyr")" -gt 49152 ] || { echo "FAIL dce_eliminates axis9: the probe no longer has more than 49,152 rel32 sources"; exit 1; }
+CYRIUS_DCE=1 "$T/stage1" < "$T/nk.cyr" > "$T/nk" 2> "$T/nk.err" || { echo "FAIL dce_eliminates axis9: the probe did not compile: $(grep -m1 error "$T/nk.err")"; exit 1; }
+grep -q 'bytes of dead code eliminated' "$T/nk.err" || { echo "FAIL dce_eliminates axis9: nothing was eliminated, so the redirect did not move: $(cat "$T/nk.err")"; exit 1; }
+chmod +x "$T/nk"; got=0; "$T/nk" || got=$?
+[ "$got" = 1 ] || { echo "FAIL dce_eliminates axis9: a #naked redefinition past 49,152 sources exits $got under CYRIUS_DCE=1, want 1 — its rel32 was repaired twice"; exit 1; }
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing, a #naked redirect past 49,152 sources repaired once"
 exit 0
