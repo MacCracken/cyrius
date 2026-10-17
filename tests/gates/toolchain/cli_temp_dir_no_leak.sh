@@ -83,6 +83,11 @@
 #     TERM at fsck / rev-parse / ls-files); the clone with fwd 0 -> 2 RED (no TERM, the partial clone
 #     left); `_git_run`'s outf untracked -> 1 RED (rev-parse's git_rev_out); `git_err` untracked ->
 #     3 RED; the verify's index / lock / outf untracked -> 1 RED (ls-files' dep_verify_index).
+#   * (6.7.14, axis 7's scratch-resolve rows) the CLI before `_dep_scr_*` -> 4 RED (--locked's dir,
+#     the dry pass's dir, the mid-copy dir, the planted-file row's 16 leftovers); the sibling temp
+#     not named before `_aw_open` -> 1 RED (the mid-copy row's .cyrtmp); the dry pass not recorded
+#     -> 1 RED; every mkdir-p prefix recorded, not only the root and below -> the temp base itself
+#     removed (RED, and every later run then fails to start under it).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -891,6 +896,109 @@ else
     echo "  SKIP (named): axis 7 deps git-children rows — git is not installed"
     K7_SKIPS=$((K7_SKIPS + 1))
 fi
+# A scratch resolve killed mid-way (6.7.14): `deps --locked` resolves into <tmp>/locked-deps and, at a
+# moved pin, `deps` first dry-runs into <tmp>/pin-move-deps; a SIGTERM there left the whole scratch
+# (16 files for this two-leaf project) and so the dir. The resolver now records each directory and
+# file of the scratch before it exists (cbt/deps.cyr `_dep_scr_*`), in the handler's scratch-tree
+# slot. The stand-in git (no real git needed) records its pid and sleeps in the named dep's clone,
+# after Phase 1 has copied the stdlib leaves into the scratch.
+# (issues/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md)
+G9="$T/g9"
+mkdir -p "$G9/bin" "$G9/p/lib" "$G9/home/versions/6.6.6" "$G9/home/versions/6.6.7"
+printf '#!/bin/sh\necho $$ > "%s/g9.cc"\nexec sleep 60\n' "$T" > "$G9/bin/git"
+chmod +x "$G9/bin/git"
+cp -R "$ROOT/lib" "$G9/home/versions/6.6.6/lib"
+cp -R "$ROOT/lib" "$G9/home/versions/6.6.7/lib"
+echo '# 6.6.7' >> "$G9/home/versions/6.6.7/lib/string.cyr"   # a second snapshot whose string.cyr differs
+echo 6.6.6 > "$G9/home/current"
+cp "$ROOT/lib/string.cyr" "$G9/p/lib/"
+# g9_run <tag> <pin> <lock text after its first line> <until: "clone" | a file pattern> <verb...>:
+# the CLI on $G9/p in the background; once the stand-in git sleeps (or, for a pattern, once a file
+# matching it is in flight) the scratch's names are listed in $T/k7-<tag>.live (paths under the
+# CLI's dir), the CLI is SIGTERM'd and waited for.
+g9_run() {
+    _g9t=$1; _g9p=$2; _g9l=$3; _g9u=$4; shift 4
+    printf '[package]\nname = "r"\nversion = "0.0.1"\ncyrius = "%s"\n\n[deps]\nstdlib = ["syscalls", "string"]\n\n[deps.foo]\ngit = "https://example.invalid/foo"\ntag = "1.0.0"\nmodules = ["dist/foo.cyr"]\n' "$_g9p" > "$G9/p/cyrius.cyml"
+    printf 'x\n%s' "$_g9l" > "$G9/p/cyrius.lock"
+    cp "$G9/p/cyrius.lock" "$T/g9.lock0"
+    rm -f "$T/g9.cc" "$T/p7-$_g9t" "$T/k7-$_g9t.rc" "$T/k7-$_g9t.live" "$T/k7-$_g9t.cc"
+    ( _kr=0; cd "$G9/p" && PATH="$G9/bin:$PATH" HOME="$G9/nohome" CYRIUS_HOME="$G9/home" CYRIUS_RESOLVED=1 \
+        CYRIUS_NO_WARN_PIN_DRIFT=1 TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_g9t" "$CYRIUS" "$@" > "$T/o7-$_g9t" 2>&1 || _kr=$?
+      echo "$_kr" > "$T/k7-$_g9t.rc" ) 2>/dev/null &
+    _g9b=$!
+    _gw=0
+    while [ "$_gw" -lt 600 ]; do
+        _g9q=$(cat "$T/p7-$_g9t" 2>/dev/null || true)
+        if [ "$_g9u" = clone ]; then [ -s "$T/g9.cc" ] && break
+        elif [ -n "$_g9q" ] && find "$TB/cyrius-$_g9q" -name "$_g9u" 2>/dev/null | grep -q .; then break; fi
+        sleep 0.05; _gw=$((_gw + 1))
+    done
+    _g9q=$(cat "$T/p7-$_g9t" 2>/dev/null || true)
+    ( cd "$TB/cyrius-$_g9q" 2>/dev/null && find . -mindepth 1 ) > "$T/k7-$_g9t.live" 2>/dev/null || : > "$T/k7-$_g9t.live"
+    if [ "${G9_PLANT:-0}" = 1 ] && [ -d "$TB/cyrius-$_g9q/locked-deps/lib" ]; then : > "$TB/cyrius-$_g9q/locked-deps/lib/gate_keepme"; fi
+    [ -n "$_g9q" ] && kill -TERM "$_g9q" 2>/dev/null || true
+    { wait "$_g9b"; } 2>/dev/null || true
+    _g9c=$(cat "$T/g9.cc" 2>/dev/null || true)
+    if [ -n "$_g9c" ] && kill -0 "$_g9c" 2>/dev/null; then
+        echo running > "$T/k7-$_g9t.cc"; kill -KILL "$_g9c" 2>/dev/null
+    else
+        echo gone > "$T/k7-$_g9t.cc"
+    fi
+}
+# the project's own lib/ and cyrius.lock, as the run found them
+g9_same() { cmp -s "$ROOT/lib/string.cyr" "$G9/p/lib/string.cyr" && cmp -s "$T/g9.lock0" "$G9/p/cyrius.lock" && echo yes || echo no; }
+g9_run g9l 6.6.6 "" clone deps --locked
+nl9=$(grep -c '^\./locked-deps/lib/.*\.cyr$' "$T/k7-g9l.live" 2>/dev/null || true)
+check "deps --locked SIGTERM'd mid-resolve — its scratch resolve is in flight (anti-vacuous: ${nl9:-0} leaves under <tmp>/locked-deps/lib)" yes \
+    "$([ "${nl9:-0}" -ge 5 ] && echo yes || echo no)"
+check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9l.rc" 2>/dev/null || echo none)"
+check "  …its private dir is gone (no locked-deps/ left)" 0 "$(k7_dirs g9l "$TB")"
+check "  …and nothing above the scratch was removed (the temp base, empty now, stays)" yes "$([ -d "$TB" ] && echo yes || echo no)"
+check "  …the project's lib/ and cyrius.lock are untouched" yes "$(g9_same)"
+check "  …the git clone it was running is stopped" gone "$(cat "$T/k7-g9l.cc")"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+g9_run g9m 6.6.7 "$(printf 'cyrius\t6.6.6')" clone deps
+nl9=$(grep -c '^\./pin-move-deps/lib/.*\.cyr$' "$T/k7-g9m.live" 2>/dev/null || true)
+check "deps at a moved pin SIGTERM'd in its dry pass — the scratch is in flight (anti-vacuous: ${nl9:-0} leaves under <tmp>/pin-move-deps/lib)" yes \
+    "$([ "${nl9:-0}" -ge 5 ] && echo yes || echo no)"
+check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9m.rc" 2>/dev/null || echo none)"
+check "  …its private dir is gone (no pin-move-deps/ left)" 0 "$(k7_dirs g9m "$TB")"
+check "  …the project's lib/ and cyrius.lock are untouched" yes "$(g9_same)"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# Mid-COPY: the snapshot's string.cyr is a FIFO the gate writes one line into and holds open, so the
+# resolver sits in its read with `_aw_open`'s sibling temp (`string.cyr.cyrtmp.<pid>.<n>`) created
+# and the destination not yet renamed into place. Held READ-WRITE: the resolver opens it three
+# times (file_exists, _file_size, the copy), and a write-only holder could write while none of
+# those was open and die of SIGPIPE.
+S9="$G9/home/versions/6.6.6/lib/string.cyr"
+mv "$S9" "$S9.real"
+if mkfifo "$S9" 2>/dev/null; then
+    ( exec 7<> "$S9"; printf 'fn g9_s(): i64 { return 1; }\n' >&7; exec sleep 60 ) 2>/dev/null &
+    k9w=$!
+    g9_run g9t 6.6.6 "" 'string.cyr.cyrtmp.*' deps --locked
+    check "deps --locked SIGTERM'd mid-copy — the copy's sibling temp is in flight (anti-vacuous)" yes \
+        "$(grep -q '^\./locked-deps/lib/string\.cyr\.cyrtmp\.' "$T/k7-g9t.live" 2>/dev/null && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9t.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no .cyrtmp left)" 0 "$(k7_dirs g9t "$TB")"
+    kill "$k9w" 2>/dev/null; { wait "$k9w"; } 2>/dev/null
+    rm -f "$S9"
+else
+    echo "  SKIP (named): axis 7 deps --locked mid-copy row — mkfifo failed on this host"
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
+mv "$S9.real" "$S9"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# rmdir only (axis 4's contract): a foreign file in the scratch's lib/ survives, with its directories,
+# and is the only file left.
+G9_PLANT=1
+g9_run g9k 6.6.6 "" clone deps --locked
+G9_PLANT=0
+K9D="$TB/cyrius-$(cat "$T/p7-g9k" 2>/dev/null || echo none)"
+check "deps --locked SIGTERM'd with a foreign file in its scratch lib/: the file survives, with its directories" yes \
+    "$([ -f "$K9D/locked-deps/lib/gate_keepme" ] && echo yes || echo no)"
+check "  …and it is the only file left (the scratch's own are unlinked)" gate_keepme \
+    "$( (cd "$K9D" 2>/dev/null && find . -type f) | sed 's|.*/||' | tr '\n' ' ' | sed 's/ $//')"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # rmdir, never a sweep (axis 4's contract, on the kill path): a file in the live dir that is not
 # the compile's survives, and so does the dir; the compile's own names are gone.
 : > "$T/k7-plant.plant"

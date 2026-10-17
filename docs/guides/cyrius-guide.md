@@ -5139,7 +5139,10 @@ round's `entry.cyr`), is removed too (6.7.13; before, a kill left the ~114-file 
 `git_err`, `git_rev_out` and `dep_verify_*` captures and private index) and `git clone` — is sent
 the signal and waited for, so git runs its own cleanup: a killed clone removes its partial
 directory from the dep cache (6.7.14; before, a kill left the captures and git running, and a
-clone went on to create the cache after the CLI had died).
+clone went on to create the cache after the CLI had died). The scratch resolve of `cyrius deps
+--locked` (`<tmp>/locked-deps/`) and of the dry pass a resolve at a moved pin runs first
+(`<tmp>/pin-move-deps/`) is removed too, a copy's half-written sibling temp included (6.7.14;
+before, a kill left the whole scratch, so the temp dir stayed).
 A signal that arrives while the CLI is starting one of these children is held until the child is
 tracked, then handled (6.7.13; before, a signal in that window left the child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive

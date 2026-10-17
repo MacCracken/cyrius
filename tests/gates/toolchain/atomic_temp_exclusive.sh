@@ -30,8 +30,11 @@
 #      intact; cyrfmt --write likewise rc != 0 with the source byte-for-byte
 #   4  control: no plant -> deps --lock writes the lock and leaves no temp behind
 #   5  STATIC: `_io_tmp_name` (the predictable name) is called only by `_io_tmp_open` and by
-#      cyriusly's `_relink_atomic` (symlink(2), which never follows and fails on a taken name);
-#      a new caller fails, and so does an allowlist entry matching no live site. Self-tested.
+#      cyriusly's `_relink_atomic` (symlink(2), which never follows and fails on a taken name),
+#      and — since 6.7.14 — by cbt/deps.cyr's `_dep_scr_next_tmp`, which only NAMES the temp the
+#      next `_aw_open` creates (the counter put back; nothing opened) so a scratch resolve can
+#      record it for the kill handler before it exists; a new caller fails, and so does an
+#      allowlist entry matching no live site. Self-tested.
 #
 # MUTATION LEDGER (2026-10-07, 6.6.20, each in a scratch copy of the tree):
 #   a. `_io_tmp_open` opening O_WRONLY|O_CREAT|O_TRUNC (no O_EXCL|O_NOFOLLOW)  -> axes 1, 2, 3 RED
@@ -139,7 +142,8 @@ nl=$(grep -c '  lib/mod_[0-9]\.cyr$' "$C/cyrius.lock" 2>/dev/null || echo 0)
 
 # ── axis 5: STATIC — who calls the predictable-name builder ──
 ALLOW='lib/io.cyr|_io_tmp_open|creates every candidate O_CREAT|O_EXCL|O_NOFOLLOW and skips a taken name
-programs/cyriusly.cyr|_relink_atomic|symlink(2) at the name: it never follows a final link and fails on a taken name'
+programs/cyriusly.cyr|_relink_atomic|symlink(2) at the name: it never follows a final link and fails on a taken name
+cbt/deps.cyr|_dep_scr_next_tmp|names the temp the next _aw_open creates, counter put back, nothing opened: the kill handler records it before it exists (6.7.14)'
 cat > "$W/callers.awk" <<'AWK'
 # prints "<FILE>|<enclosing fn>" for each non-comment call of _io_tmp_name(
 /^[ \t]*fn [A-Za-z_0-9]+[ \t]*\(/ { f = $0; sub(/^[ \t]*fn[ \t]+/, "", f); sub(/[ \t]*\(.*/, "", f) }
@@ -170,7 +174,7 @@ a5=$st
 [ "$nfile" -ge 200 ] || { fail "axis 5: scanned $nfile files (floor 200) — the scan read nothing"; a5=1; }
 [ -z "$bad" ] || { echo "$bad" | sed "s/^/FAIL: $NAME: axis 5: a new caller of the predictable temp name (create it through _io_tmp_open): /"; FAIL=1; a5=1; }
 [ -z "$dead" ] || { echo "$dead" | sed "s/^/FAIL: $NAME: axis 5: allowlist entry matches no live site (remove it): /"; FAIL=1; a5=1; }
-[ "$a5" = 0 ] && echo "  ok: axis 5: _io_tmp_name is called only by _io_tmp_open and cyriusly's symlink relink ($nfile files scanned; detector self-tested)"
+[ "$a5" = 0 ] && echo "  ok: axis 5: _io_tmp_name is called only by _io_tmp_open, cyriusly's symlink relink and deps.cyr's name-only _dep_scr_next_tmp ($nfile files scanned; detector self-tested)"
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: $NAME"; exit 1; fi
 echo "PASS $NAME (a name planted at a crash-safe replace's temp is never followed or truncated: cyrfmt --write and cyrius deps --lock skip it, refuse by name when every name is taken, and only the exclusive creator builds the name)"

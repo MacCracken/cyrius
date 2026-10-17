@@ -1,0 +1,160 @@
+# cli_scratch_resolve_kill.tcyr — CROSS-HOST: a killed scratch resolve leaves nothing (6.7.14).
+# `cyrius deps --locked` and the pin-move dry pass resolve into a private scratch under the CLI's
+# temp dir; while one runs, cbt/deps.cyr's `_dep_copy_file` records each directory it is about to
+# create at or under the scratch root (never one above it) and each file — the destination and
+# `_aw_open`'s sibling temp, named before it exists (`_dep_scr_next_tmp`) — in the kill handler's
+# scratch-tree slot. Every host: the directory filter and the slot (pure logic). POSIX (ecb, ach,
+# pi, x86_64 Linux): the records a real copy leaves, the temp-name prediction against `_aw_open`,
+# and a forked CHILD that resolves two files into a scratch and SIGTERMs itself — it dies by
+# SIGTERM with the scratch removed and its parent directory kept. CHANGELOG [6.7.14]
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+include "src/version_str.cyr"
+include "cbt/core.cyr"
+include "cbt/cli_args.cyr"
+include "cbt/manifest.cyr"
+include "cbt/sigclean.cyr"
+include "cbt/build.cyr"
+include "cbt/commands.cyr"
+include "cbt/project.cyr"
+include "cbt/quality.cyr"
+include "cbt/deps.cyr"
+include "cbt/pulsar.cyr"
+
+alloc_init();
+
+# 1 when cstr `s` is in vec `v`, else 0.
+fn _csk_has(v, s): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (_cstr_eq(vec_get(v, i), s) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Every host: which directories a scratch rooted at "C:/x/scr" records.
+_dep_scr_begin("C:/x/scr");
+var slot_mine = 0;
+if (_cbt_sig_tree_files == _dep_scr_files && _cbt_sig_tree_dirs == _dep_scr_dirs) { slot_mine = 1; }
+assert_eq(slot_mine, 1, "the scratch's two vecs sit in the kill handler's scratch-tree slot");
+_dep_scr_dir("C:");
+_dep_scr_dir("C:/x");
+_dep_scr_dir("C:/x/scr");
+_dep_scr_dir("C:/x/scr/lib");
+_dep_scr_dir("C:/x/scr/lib");
+_dep_scr_dir("C:/x/scrap");
+_dep_scr_dir("C:/x/scrap/lib");
+_dep_scr_dir("C:/x/scr/lib/fam");
+assert_eq(vec_len(_dep_scr_dirs), 3, "the root and two levels under it are recorded, each once");
+assert_eq(_csk_has(_dep_scr_dirs, "C:/x"), 0, "a directory above the root is never recorded");
+assert_eq(_csk_has(_dep_scr_dirs, "C:/x/scrap"), 0, "a sibling sharing the root's spelling is not under it");
+assert_streq(vec_get(_dep_scr_dirs, 0), "C:/x/scr", "parents first: the root");
+assert_streq(vec_get(_dep_scr_dirs, 2), "C:/x/scr/lib/fam", "…its deepest directory last");
+_dep_scr_end();
+assert_eq(_cbt_sig_tree_files, 0, "_dep_scr_end clears the slot");
+assert_eq(_dep_scr_dirs, 0, "…and stops recording");
+_dep_scr_dir("C:/x/scr/lib");
+assert_eq(_dep_scr_dirs, 0, "a directory met with no scratch running is not recorded");
+
+#ifndef CYRIUS_TARGET_WIN
+# "/tmp/" "csk.<parent pid><suffix>" — a fresh arena string, per process (gates_never_write_tree.sh
+# axis 6 reads a whole "/tmp/<name>" literal as a fixed name).
+var _csk_parent = sys_getpid();
+fn _csk_path(suffix): i64 {
+    var p = alloc(96);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, "csk.", 4);
+    var o = 9 + fmt_int_buf(_csk_parent, p + 9);
+    memcpy(p + o, suffix, strlen(suffix));
+    store8(p + o + strlen(suffix), 0);
+    return p;
+}
+
+# The status of child `c`: its exit code, or 1000 + the signal that ended it.
+fn _csk_wait(c): i64 {
+    var st[8];
+    store64(&st, 0);
+    var w = sys_waitpid(c, &st, 0);
+    while (w == 0 - 4) { w = sys_waitpid(c, &st, 0); }
+    if (w != c) { return 0 - 1; }
+    var s = load32(&st);
+    if (WIFEXITED(s) == 1) { return WEXITSTATUS(s); }
+    return 1000 + (s & 127);
+}
+
+var src = _csk_path(".src");
+file_write_all(src, "fn csk(): i64 { return 1; }\n", 28);
+var par = _csk_path("");
+xmkdir(par, 448);
+
+# The temp `_aw_open` creates is the one named before it (and naming it spends no counter).
+var pf = _csk_path("/pred.cyr");
+var t1 = _dep_scr_next_tmp(pf);
+var t2 = _dep_scr_next_tmp(pf);
+var ah = _aw_open(pf);
+assert_streq(t1, t2, "naming the next temp twice gives one name (the counter is put back)");
+assert(ah != 0, "_aw_open opened its temp");
+if (ah != 0) {
+    assert_streq(load64(ah + 8), t1, "_aw_open's temp is the one _dep_scr_next_tmp named");
+    _aw_abort(ah);
+}
+
+# A real copy into a scratch under `par`: the records, parents first, nothing above the root.
+var root = _csk_path("/scr");
+_dep_scr_begin(root);
+var dst = _cat2(root, "/lib/fam/x.cyr");
+var cr = _dep_copy_file(src, dst);
+assert_eq(cr, 0, "the copy into the scratch succeeded");
+assert_eq(vec_len(_dep_scr_dirs), 3, "its directories are recorded: root, lib, lib/fam");
+assert_eq(_csk_has(_dep_scr_dirs, par), 0, "the directory holding the root is not recorded");
+assert_eq(_csk_has(_dep_scr_files, dst), 1, "the destination is recorded");
+var tmp_rec = 0;
+var fi = 0;
+while (fi < vec_len(_dep_scr_files)) {
+    var fp = vec_get(_dep_scr_files, fi);
+    if (strlen(fp) > strlen(dst) && memeq(fp, dst, strlen(dst)) == 1) { tmp_rec = fp; }
+    fi = fi + 1;
+}
+assert(tmp_rec != 0, "the sibling temp is recorded");
+if (tmp_rec != 0) { assert_eq(file_exists(tmp_rec), 0, "…and is gone once renamed into place"); }
+assert_eq(file_exists(dst), 1, "the destination exists");
+_dep_rm_tree(root);
+_dep_scr_end();
+
+# The kill: a CHILD resolves two files into a scratch, then SIGTERMs itself.
+var root2 = _csk_path("/scr2");
+var c = sys_fork();
+if (c == 0) {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    _dep_scr_begin(root2);
+    if (_dep_copy_file(src, _cat2(root2, "/lib/a.cyr")) != 0) { sys_exit(64 + 2); }
+    if (_dep_copy_file(src, _cat2(root2, "/lib/fam/b.cyr")) != 0) { sys_exit(64 + 2); }
+    sys_kill(sys_getpid(), 15);
+    sys_exit(91);
+}
+var rc2 = _csk_wait(c);
+assert_eq(rc2, 1015, "the CHILD dies by SIGTERM after its handler ran (64+N: a setup failure)");
+assert_eq(file_exists(_cat2(root2, "/lib/fam/b.cyr")), 0, "its scratch's files are unlinked");
+assert_eq(file_exists(root2), 0, "…and its directories removed, the root included");
+assert_eq(file_exists(par), 1, "the directory holding the root stays");
+_dep_rm_tree(root2);
+_dep_rm_tree(par);
+sys_unlink(src);
+#endif
+#endif
+#endif
+var r = assert_summary();
+syscall(SYS_EXIT, r);

@@ -22,6 +22,19 @@ var _dep_linkdest_reported = 0;
 # top of the vendoring commands only.
 var _dep_vendor_mode = 0;
 
+# 6.7.14 — A KILLED SCRATCH RESOLVE LEAVES NOTHING. `--locked` (into `<tmp>/locked-deps`) and the
+# pin-move dry pass (into `<tmp>/pin-move-deps`) resolve into a private scratch under the CLI's temp
+# dir, and a SIGTERM mid-resolve left all of it there (the handler's rmdir of the temp dir then
+# failed). While one runs, `_dep_copy_file` records each directory it is about to create at or under
+# the scratch root and each file — the destination and `_aw_open`'s sibling temp — before it can
+# exist, in two vecs registered through the kill handler's scratch-tree slot (cbt/sigclean.cyr
+# `_cbt_sig_tree_set`), so the handler unlinks them and removes the directories, rmdir only. The
+# slot is single: its other user, distlib's stdlib mirror, is made inside the verify, after the
+# startup resolve has ended, so the two never overlap in one process. CHANGELOG [6.7.14]
+var _dep_scr_root = 0;      # the scratch root (a cstr), 0 when no scratch resolve runs
+var _dep_scr_files = 0;     # vec of cstr: every file the scratch resolve can have created
+var _dep_scr_dirs = 0;      # vec of cstr: its directories, parents first
+
 # 6.7.6 (lane C) — the walk's state for the local-mode rule (see "LOCAL MODE" below). Declared up
 # here, above every use (a global declared below its use is not visible).
 var _dep_local_from = 0;    # what switched local mode on: "--local" or "CYRIUS_LOCAL"
@@ -275,6 +288,62 @@ fn _files_identical(a, b): i64 {
     return same;
 }
 
+# Start recording the scratch resolve into `root` for the kill handler (see `_dep_scr_root`).
+fn _dep_scr_begin(root): i64 {
+    _dep_scr_files = vec_new();
+    _dep_scr_dirs = vec_new();
+    _dep_scr_root = root;
+    _cbt_sig_tree_set(_dep_scr_files, _dep_scr_dirs);
+    return 0;
+}
+
+# Stop recording, once the scratch has been removed (a kill during the removal re-walks the vecs).
+fn _dep_scr_end(): i64 {
+    if (_dep_scr_root == 0) { return 0; }
+    _cbt_sig_tree_set(0, 0);
+    _dep_scr_root = 0;
+    _dep_scr_files = 0;
+    _dep_scr_dirs = 0;
+    return 0;
+}
+
+# Record directory `p` (a prefix the mkdir-p walk is about to create; a buffer it reuses, so a copy
+# is kept) when it is the scratch root or under it and not yet recorded — never one above the root
+# (the CLI's temp dir, $TMPDIR, …), which the handler must not remove.
+fn _dep_scr_dir(p): i64 {
+    if (_dep_scr_dirs == 0) { return 0; }
+    var rl = strlen(_dep_scr_root);
+    var pl = strlen(p);
+    if (pl < rl) { return 0; }
+    if (memeq(p, _dep_scr_root, rl) == 0) { return 0; }
+    if (pl > rl && load8(p + rl) != 47) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_scr_dirs)) {
+        if (_cstr_eq(vec_get(_dep_scr_dirs, i), p) == 1) { return 0; }
+        i = i + 1;
+    }
+    var c = alloc(pl + 1);
+    memcpy(c, p, pl);
+    store8(c + pl, 0);
+    vec_push(_dep_scr_dirs, c);
+    return 0;
+}
+
+# Record file `p` (a cstr that stays valid) before it can exist.
+fn _dep_scr_file(p): i64 {
+    if (_dep_scr_files != 0) { vec_push(_dep_scr_files, p); }
+    return 0;
+}
+
+# The sibling temp the next `_aw_open(dst)` creates (lib/io.cyr `_io_tmp_name`: pid + the next
+# counter value), named without spending the counter.
+fn _dep_scr_next_tmp(dst): i64 {
+    var c = _io_atomic_ctr;
+    var t = _io_tmp_name(dst);
+    _io_atomic_ctr = c;
+    return t;
+}
+
 fn _dep_copy_file(src, dst): i64 {
     # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
     # so any change that preserves file length was never vendored while `lib sync`
@@ -355,6 +424,7 @@ fn _dep_copy_file(src, dst): i64 {
         if (load8(dst + pi) == 47) {   # '/'
             memcpy(prefix_buf, dst, pi);
             store8(prefix_buf + pi, 0);
+            _dep_scr_dir(prefix_buf);   # 6.7.14: a scratch resolve records it before it exists
             sys_mkdir(prefix_buf, 0x1ED);
         }
         pi = pi + 1;
@@ -367,6 +437,14 @@ fn _dep_copy_file(src, dst): i64 {
         return 1;
     }
     # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
+    # A scratch resolve records the destination and the sibling temp before they exist; a temp
+    # name `_aw_open` had to skip (one was taken) is recorded once it is known. CHANGELOG [6.7.14]
+    var stmp = 0;
+    if (_dep_scr_files != 0) {
+        _dep_scr_file(dst);
+        stmp = _dep_scr_next_tmp(dst);
+        _dep_scr_file(stmp);
+    }
     var dh = _aw_open(dst);
     if (dh == 0) {
         sys_close(sfd);
@@ -374,6 +452,9 @@ fn _dep_copy_file(src, dst): i64 {
         _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
+    }
+    if (stmp != 0) {
+        if (_cstr_eq(load64(dh + 8), stmp) == 0) { _dep_scr_file(load64(dh + 8)); }
     }
     # Stream copy in 32KB chunks — handles files of any size
     var buf = alloc(32768);
@@ -4162,6 +4243,7 @@ fn cmd_deps(): i64 {
             _dep_rm_tree(locked_root);
             _dep_vroot = _cat2(locked_root, "/lib");
             _dep_vendor_mode = 0;        # a private scratch under this run's own temp dir
+            _dep_scr_begin(locked_root); # 6.7.14: a kill removes it (_deps_finish ends it)
         }
     } elif (_dep_local_on == 1) {
         _dep_local_active = _dep_local_prescan(buf, n, _consumer_dir, 0, 0, vec_new());
@@ -4309,6 +4391,7 @@ fn _deps_pin_move_dry(buf, n, cdir): i64 {
     _dep_rm_tree(root);
     _dep_vroot = _cat2(root, "/lib");
     _dep_vendor_mode = 0;            # a private scratch under this run's own temp dir
+    _dep_scr_begin(root);            # 6.7.14: a kill removes it
     _dep_dry_drop = vec_new();
     _dep_dry_fetched = vec_new();
     var po = _progress_open;
@@ -4326,6 +4409,7 @@ fn _deps_pin_move_dry(buf, n, cdir): i64 {
     }
     _dep_dry_drop = 0;
     _dep_rm_tree(root);
+    _dep_scr_end();
     _dep_vroot = "lib";
     _dep_vendor_mode = 1;
     _deps_pass_reset();
@@ -4427,6 +4511,7 @@ fn _deps_finish(errors, copied, locked_root): i64 {
         if (keep == 1) { _dep_overlay_env(_dep_vroot); }
         else {
             _dep_rm_tree(locked_root);
+            _dep_scr_end();          # 6.7.14: the private scratch's record, once it is gone
             _dep_vroot = "lib";
         }
         _dep_vendor_mode = 1;
