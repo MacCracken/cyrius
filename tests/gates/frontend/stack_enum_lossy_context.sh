@@ -1718,8 +1718,9 @@ EOF
 # (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md)
 # LEGS: x86_64, aarch64 (cross, qemu-aarch64), cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, a private
 # prefix), the cross compilers built from this tree by $CC. A missing tool is a SKIP that names it.
+# QF9 an inherited trait default and QF10 a dyn formed above the impl share the scan too (QF10: it compiled).
 # Mutation (a scratch copy of the tree with the `?` arm dropped, CYCC= its compiler): RED at QF1 — it
-# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 red on every leg, QF3 QF4 QF6 green.
+# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 QF9 QF10 red on every leg, QF3 QF4 QF6 green.
 QFR=docs/development/issues/repros/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged
 WP="$T/wine"
 WHM="$T/whome"
@@ -1832,6 +1833,37 @@ fn main(): i64 { var p = Pt { 0 - 3, 0 }; return usem(p); }
 syscall(60, main());
 EOF
 qf_refuse "var v = p.qm(); above the impl" axisQF8 "4:29"
+# An inherited trait DEFAULT whose only route is `?`, used above its trait (`_pair_scan_defaults` shares the scan).
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.dq()?; return Ok(v + 1); }
+trait Dq { fn dq(self) { var v = parse(self.x)?; return v; } }
+impl Dq for Pt { }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; var t, v = usem(p); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "p.dq()? above the trait whose default's only route is ?" axisQF9 13
+# A dyn formed ABOVE the impl whose slot's only route is `?` (`_dyn_slot_pair` shares the scan): refused as the
+# impl above it is — it compiled, and the call through the dyn read the slot's pair as the trait's one value.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+trait T2 { fn sh(self): i64; }
+struct P { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(); }
+impl T2 for P { fn sh(self): i64 { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = P { 0 - 3, 0 }; return f(&p); }
+syscall(60, main());
+EOF
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisQF10 ($leg): a dyn formed above the impl whose slot's only pair route is ? COMPILED"; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 1 ] || ! grep -q "^error:<source>:5:36: cannot form dyn T2 from P - its method 'sh' .*returns a \`: stack\` pair" "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisQF10 ($leg): want ONE 'cannot form dyn T2 from P' error at 5:36:"
+        grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+    fi
+done
 if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 
 echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14)'
