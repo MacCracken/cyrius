@@ -967,6 +967,7 @@ fn _mret_zero(S, fi): i64 {
 fn _ret2_ctx(S, ti): i64 {
     if (GINFN(S) == 1) {
         _ret2_in_struct(S, ti);
+        _ret2_in_vector(S, ti);   # 6.7.14 (D43)
         return _ret2_in3(S, ti);
     }
     if (_tn_once(S, ti) == 0) { return 1; }
@@ -1002,6 +1003,29 @@ fn _ret2_in_struct(S, ti): i64 {
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
     PRSTR("` returns that struct — `ret2` writes two values\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
+    return 0;
+}
+
+# ... in a fn declared to return a vector (`: f64v2`, `f32v4`, `f64v4`, `i32v4`, ..): its result is the vector
+# registers (on Win64 the result pointer), never rax:rdx, so it is refused by the 6.6.6 vector rule's text, as
+# `return (a, b);` and `return ret2(..);` there are (D43, the user's decision, 2026-10-16) — the caller read the
+# vector registers' leftovers (0; 41 on cx). Named `ret2` (`_refuse_simd_return` names the cursor's token), at
+# the ret2, once, in sync. `return ret2(..);` is that return's own refusal; a closure's ret2 is the closure's,
+# an #inline replay's its callee's. CHANGELOG [6.7.14]
+fn _ret2_in_vector(S, ti): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (TOKTYP(S, ti - 1) == 33) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `ret2`\n");
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync

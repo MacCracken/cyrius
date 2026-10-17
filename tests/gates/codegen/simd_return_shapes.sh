@@ -200,6 +200,20 @@
 #   M-H3 `_vrcv_fptr` without its `&f` test         -> RED 4: H8 on all four legs
 #   M-H4 `_vrcv_nofn` taking FINDFN < 0 only        -> RED 4: H5 on all four legs (the declaration asks after the
 #       parse, which registered the name: only the definition stamp `GFDS` tells it from a declared fn)
+#
+# ⛔ 6.7.14 (D43, the user's decision, 2026-10-16; issues/2026-10-15-ret2-in-vector-returning-fn-compiles.md) — `ret2(a, b)`
+# AS A STATEMENT IN A VECTOR-RETURNING FN IS REFUSED by the 6.6.6 rule's text, as `return (a, b);` (X10) and
+# `return ret2(..);` there are: it loaded rax:rdx where the caller reads the vector registers (Win64: the result
+# pointer), so the caller's vector held their leftovers — 0 on x86_64 / aarch64 / PE, 41 on cx, where {41, 7} is
+# right. `_ret2_in_vector` (beside D22's `_ret2_in_struct`), at the ret2, once, in sync, named "got `ret2`". Rows T
+# (refused once, the message naming `ret2`, no artifact; every leg): T1 the filed repro verbatim (f64v2), T2 f64v4,
+# T3 f32v4, T4 i32v4, T5 a generic's two instances (once), T6 a ret2 on one path only, T7 a `return ret2(..);` (the
+# return's own refusal, once: "got `this expression`"). Rows U (run, 83, every leg): U1 a closure's own ret2 inside a
+# vector fn, U2 an #inline fn's ret2 replayed there — each that fn's, as D22's carve-out.
+#   M-R1 the tree before (b773a56a)                   -> RED 24: T1-T6 on all four legs (built)
+#   M-R2 `_ret2_in_vector` without its GIDEP guard     -> RED 4: U2 on all four legs (refused)
+#   M-R3 `_ret2_in_vector` without its `return` test    -> RED 4: T7 on all four legs (two error lines)
+#   M-R4 `_ret2_in_vector` without its `_tn_once`       -> RED 4: T5 on all four legs (two error lines)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -720,6 +734,57 @@ h_got() {  # what the refusal names
     H10) echo '*x';; H11) echo '(...)';; *) echo '';;
     esac
 }
+# ---- 6.7.14 (D43): `ret2` in a vector-returning fn (rows T refused once, rows U run) ----------
+t_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    T1) printf '%s' 'fn v(): f64v2 { ret2(41, 7); }
+fn main(): i64 { var x: f64v2 = v(); return load64(&x) + load64(&x + 8); }
+var r = main(); syscall(60, r);
+' ;;
+    T2) printf '%s' 'fn v(): f64v4 { ret2(41, 7); }
+fn main(): i64 { var x: f64v4 = v(); return load64(&x) + load64(&x + 8); }
+var r = main(); syscall(60, r);
+' ;;
+    T3) printf '%s' 'fn v(): f32v4 { ret2(41, 7); }
+fn main(): i64 { var x: f32v4 = v(); return load32(&x) + load32(&x + 4); }
+var r = main(); syscall(60, r);
+' ;;
+    T4) printf '%s' 'fn v(): i32v4 { ret2(41, 7); }
+fn main(): i64 { var x: i32v4 = v(); return load32(&x) + load32(&x + 4); }
+var r = main(); syscall(60, r);
+' ;;
+    T5) printf '%s' 'fn bad<T>(a: T): f64v2 { ret2(a, 7); }
+fn main(): i64 { var v: f64v2 = bad<i64>(41); var w: f64v2 = bad<i32>(41); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
+    T6) printf '%s' 'fn bad(x): f64v2 { if (x > 0) { ret2(41, 7); } var v: f64v2; return v; }
+fn main(): i64 { var v: f64v2 = bad(1); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
+    T7) printf '%s' 'fn v(): f64v2 { return ret2(41, 7); }
+fn main(): i64 { var x: f64v2 = v(); return load64(&x) + load64(&x + 8); }
+var r = main(); syscall(60, r);
+' ;;
+    esac
+}
+T_ROWS="T1 T2 T3 T4 T5 T6 T7"
+t_got() { case "$1" in T7) echo 'this expression';; *) echo 'ret2';; esac; }
+u_src() {  # $1 row id -> source on stdout; each exits 83 (41 + 42) when right
+    case "$1" in
+    U1) printf '%s' 'include "lib/fnptr.cyr"
+fn good(x): f64v2 { var cl = |y| { ret2(y, y + 1); }; var a, b = fncall1(cl, x); var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn main(): i64 { var v: f64v2 = good(41); return load64(&v) + load64(&v + 8); }
+var r = main(); syscall(60, r);
+' ;;
+    U2) printf '%s' '#inline
+fn two(x) { ret2(x, x + 1); }
+fn good(x): f64v2 { var a, b = two(x); var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn main(): i64 { var v: f64v2 = good(41); return load64(&v) + load64(&v + 8); }
+var r = main(); syscall(60, r);
+' ;;
+    esac
+}
+U_ROWS="U1 U2"
 # Every Q row on all four legs: Q3's refusal is the value-form argument's, which PE's address-passed parameter runs since
 # D30 (`_sarg_pe_vword`; it took lane 0 as the address before: exit 5).
 q_legs() { echo "host cx aarch64 win64"; }
@@ -958,6 +1023,40 @@ refuse_h_all() {  # $1 leg label  $2 compiler
     done
 }
 
+# 6.7.14 (D43): rows T refused once, naming what they refuse, no artifact; rows U built and run (83).
+refuse_t_all() {  # $1 leg label  $2 compiler
+    for row in $T_ROWS; do
+        t_src "$row" > "$W/t.cyr"
+        rc=0
+        "$2" < "$W/t.cyr" > "$W/t.out" 2>"$W/t.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        ne=$(grep -c '^error' "$W/t.err" 2>/dev/null || true)
+        tg="$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`$(t_got "$row")\`"
+        if ! grep -qF -e "$tg" "$W/t.err" 2>/dev/null; then
+            bad "$1 $row: not refused as '...got \`$(t_got "$row")\`' (rc=$rc, first line: $(head -1 "$W/t.err" 2>/dev/null))"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1)"
+        elif [ -s "$W/t.out" ]; then
+            bad "$1 $row: reported but still emitted an artifact"
+        else
+            good "$1 $row refused once"
+        fi
+    done
+}
+accept_u_all() {  # $1 leg label  $2 compiler  $3 runner fn name
+    for row in $U_ROWS; do
+        u_src "$row" > "$W/u.cyr"
+        rc=0
+        "$2" < "$W/u.cyr" > "$W/u.out" 2>"$W/u.err" || rc=$?
+        naccept=$((naccept+1))
+        if ! [ -s "$W/u.out" ]; then bad "$1 $row: produced no artifact (rc=$rc: $(grep -m1 '^error' "$W/u.err" 2>/dev/null))"; continue; fi
+        chmod +x "$W/u.out"
+        got=0
+        ( ulimit -c 0; "$3" "$W/u.out" ) >/dev/null 2>&1 || got=$?
+        if [ "$got" = 83 ]; then good "$1 $row = 83"; else bad "$1 $row = $got, want 83"; fi
+    done
+}
+
 hostr() { timeout 60 "$1"; }
 echo "host x86_64:"
 refuse_all host "$CC"
@@ -974,6 +1073,8 @@ accept_p_all host "$CC" hostr
 accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
 refuse_h_all host "$CC"
+refuse_t_all host "$CC"
+accept_u_all host "$CC" hostr
 
 echo "cx (cxvm):"
 if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ] \
@@ -991,6 +1092,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_p_all cx "$W/cycc_cx" cxr
     refuse_k_all cx "$W/cycc_cx"
     refuse_h_all cx "$W/cycc_cx"
+    refuse_t_all cx "$W/cycc_cx"
+    accept_u_all cx "$W/cycc_cx" cxr
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -1011,6 +1114,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_p_all aarch64 "$W/cycc_a64" a64r
         refuse_k_all aarch64 "$W/cycc_a64"
         refuse_h_all aarch64 "$W/cycc_a64"
+        refuse_t_all aarch64 "$W/cycc_a64"
+        accept_u_all aarch64 "$W/cycc_a64" a64r
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -1036,6 +1141,8 @@ if command -v wine > /dev/null 2>&1; then
         accept_p_all win64 "$W/cycc_win" wr_
         refuse_k_all win64 "$W/cycc_win"
         refuse_h_all win64 "$W/cycc_win"
+        refuse_t_all win64 "$W/cycc_win"
+        accept_u_all win64 "$W/cycc_win" wr_
     else
         bad "win64 leg: could not build src/main_win.cyr"
     fi
@@ -1047,7 +1154,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS; echo $#)   # 6.7.13: + Q, K, H (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -1062,11 +1169,12 @@ na_floor=$((na_floor + $(set -- $V_ROWS; echo $#) * 2))   # 6.7.11: every V row 
 na_floor=$((na_floor + $(set -- $E_ROWS; echo $#) * 3))   # 6.7.13: every E row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $C_ROWS; echo $#) * 3))   # 6.7.13 (D29): every C row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $P_ROWS; echo $#) * 3))   # 6.7.13 (D34): every P row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $U_ROWS; echo $#) * 2))   # 6.7.14 (D43): every U row on host + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS $T_ROWS $U_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

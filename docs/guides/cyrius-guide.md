@@ -1775,7 +1775,10 @@ look reasonable:
   9-16 byte *struct*, not of a vector. It stays legal for the scalar multi-value `var a, b =
   f();` form; a fn returning a named struct refuses it too since 6.7.11 (a tuple is another
   type — [Returning a struct by value](#returning-a-struct-by-value-v666)). To build a vector,
-  store the lanes into a local and return the local.
+  store the lanes into a local and return the local. The builtin `ret2(a, b);` is the same pair, so
+  it is refused in a vector fn too, by the same text (*… got `ret2`*; 6.7.14, the user's decision of
+  2026-10-16): through 6.7.13 it compiled and the caller's vector held whatever the vector registers
+  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
   wrong lane on Windows.
