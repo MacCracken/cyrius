@@ -53,6 +53,8 @@ var _ts_eku_nb = 1735689600;
 var _TS_EKU_NOW = 1893456000;   # 2030-01-01: inside the eku fixtures' 2025 .. 2049 window
 var _ts_dn = 0;            # DigiNotar Root CA (SHA-1 c060ed44...), DER, 1422 bytes: distrusted by Windows
 var _ts_dn_len = 1422;     # through the disallowed CTL (6.7.12)
+var _ts_dm = 0;            # DarkMatter Secure CA (QuoVadis Root CA 2 G3, 2017; SHA-256 a25a1954...), DER,
+var _ts_dm_len = 1767;     # 1767 bytes, sha384WithRSA: distrusted by Windows through the CTL's 48-byte form
 
 # Base64 (RFC 4648) of src[0..n) into out; returns the length written.
 fn _ts_b64(src, n, out): i64 {
@@ -303,6 +305,44 @@ fn _tp_deny_keys(a, b): i64 {
     return _tn_pol_new(n, keys, 0, 0, 0, 0);
 }
 
+# The SHA-384 of the tbsCertificate TLV of the DER certificate `der`, whatever its signature algorithm
+# — the test's own reading (the outer SEQUENCE's header, then its first element's whole TLV).
+fn _tp_tbs384(der): i64 {
+    var p = 2;
+    var b1 = load8(der + 1) & 0xFF;
+    if (b1 > 0x80) { p = 2 + (b1 & 0x7F); }
+    var b2 = load8(der + p + 1) & 0xFF;
+    var hl = 2;
+    var n = b2;
+    if (b2 == 0x81) {
+        n = load8(der + p + 2) & 0xFF;
+        hl = 3;
+    }
+    if (b2 == 0x82) {
+        n = ((load8(der + p + 2) & 0xFF) << 8) | (load8(der + p + 3) & 0xFF);
+        hl = 4;
+    }
+    var h = alloc(48);
+    sha384(der + p, hl + n, h);
+    return h;
+}
+
+# A policy that distrusts the TBS SHA-384s of the certificates `a` and `b` (parsed; 0 = none) — the
+# disallowed CTL's 48-byte form (6.7.14).
+fn _tp_deny_tbs(a, b): i64 {
+    var hs = alloc(96);
+    var n = 0;
+    if (a != 0) {
+        memcpy(hs, _tp_tbs384(load64(a)), 48);
+        n = 1;
+    }
+    if (b != 0) {
+        memcpy(hs + n * 48, _tp_tbs384(load64(b)), 48);
+        n = n + 1;
+    }
+    return _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), n, hs);
+}
+
 # A policy that distrusts the certificate `c` (parsed) byte for byte.
 fn _tp_deny_cert(c): i64 {
     var l = alloc(16);
@@ -376,6 +416,21 @@ fn test_policy_deny_rows(): i64 {
     assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(ica)), TLS_ERR_CERT_INVALID,
       "the intermediate denied byte for byte (the Disallowed store's form): refused");
     assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(other)), TLS_OK, "an unrelated certificate denied: verifies");
+    # 6.7.14: the CTL's other form, the SHA-384 of a SHA-384-signed certificate's TBS. The leaf, the
+    # intermediate and the cross-signed root are sha384WithRSA; the anchor is sha256WithRSA.
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(ica, 0)), TLS_ERR_CERT_INVALID,
+      "the INTERMEDIATE's TBS SHA-384 denied (6.7.14): refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(xr, 0)), TLS_ERR_CERT_INVALID,
+      "the cross-signed root's TBS SHA-384 denied: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(leaf, 0)), TLS_ERR_CERT_INVALID,
+      "the LEAF's TBS SHA-384 denied: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, ica)), TLS_ERR_CERT_INVALID,
+      "the intermediate's TBS SHA-384 second in the list: refused");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, 0)), TLS_OK, "an unrelated TBS SHA-384 denied: verifies");
+    if (anchor != 0) {
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(anchor, 0)), TLS_OK,
+          "the SHA-256-signed anchor's TBS SHA-384 listed: verifies (only a SHA-384-signed certificate is judged)");
+    }
     # A caller's own bundle carries no system policy: installing one clears it.
     var c = tls_native_new_client("www.microsoft.com", 17);
     store64(c + TLS_CTX_OFF_CA_POLICY, _tp_deny_keys(ica, 0));
@@ -410,6 +465,47 @@ fn test_ctl_identifier_row(): i64 {
     assert_eq(tls_native_set_ca_bundle(c, _ts_dn, _ts_dn_len, 1), TLS_OK, "a set of DigiNotar Root CA alone");
     assert_eq(_tn_pol_der_denied(pol, _ts_dn, _ts_dn_len), 1, "a policy holding that entry denies it");
     assert_eq(_tn_pol_der_denied(pol, _ts_p256, _ts_p256_len), 0, "  and not an unrelated certificate");
+    return 0;
+}
+
+# Every target: the disallowed CTL's 48-byte identifier is the SHA-384 of a SHA-384-signed certificate's
+# tbsCertificate (crypt32's signature hash, prop 15). The six on cass are the six DarkMatter
+# intermediates QuoVadis issued in 2016-2017 (sha384WithRSA, found by hashing the CCADB's CA
+# certificates); measured on cass (2026-10-16), Windows' chain engine reports each
+# CERT_TRUST_IS_EXPLICIT_DISTRUST with both Disallowed stores empty, and the CTL lists none of their
+# public keys. This is one of them, DarkMatter Secure CA (2017).
+fn test_ctl_tbs_row(): i64 {
+    test_group("the disallowed CTL's 48-byte identifier is the SHA-384 of a SHA-384-signed certificate's TBS (6.7.14)");
+    # The CTL's six 48-byte entries, in its order (cass and the public disallowedcert.stl of 2025-09-04).
+    var six = hex_decode("6e5ba5a2e61bd0d3831c2caa33ae7ce5c95e92abf0592ff8038ccdbc6b4be61d3718d1308fe489209d2b283ce4bf8e25e0204e0f7ba06e1f75608be1bd6267c5e0b61364cc3b4e871f6210547d0bb836da996da1d5496b14b19b4b695eaf6a57dc820ca48d97355f2802fd38413783c01d3c3b8d02aad00709e66d5b5bee7db02184e6ba2571941f9525f8ab68e93c6da1a13d594d27718794367ff3db7100403971f686857d11b811d0be96ba0cc0756a2d3e64aecfe6af08584488b6f96f34e205022402a5a94315cb9d573bcea9d112f159a55f0c9d26ea79e087b4aa27513e6048b0088eec5e0fe60ac52dc532604fc605c322f76f4d655179db89629f3928c36d92b63f609bdd58294387986e121482541b3fc246ab9bfdc1d6e4fef7a3", 576);
+    var h = alloc(48);
+    assert_eq(_tn_tbs_sha384(_ts_dm, _ts_dm_len, h), 1, "DarkMatter Secure CA is SHA-384-signed: its TBS is hashed");
+    assert_eq(memeq(h, six, 48), 1, "  its TBS SHA-384 is the CTL's first entry, 6e5ba5a2 e61bd0d3 ... e4bf8e25");
+    assert_eq(memeq(h, _tp_tbs384(_ts_dm), 48), 1, "  and the test's own reading of the TBS agrees");
+    var pol = _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), 6, six);
+    assert_eq(_tn_pol_der_denied(pol, _ts_dm, _ts_dm_len), 1,
+      "a policy holding the CTL's six 48-byte entries denies it");
+    assert_eq(_tn_pol_der_denied(pol, _ts_mi, _ts_mi_len), 0,
+      "  and not another SHA-384-signed CA (Microsoft TLS G2 RSA CA OCSP 04)");
+    assert_eq(_tn_pol_der_denied(pol, _ts_p256, _ts_p256_len), 0, "  nor an unrelated certificate");
+    # Only a SHA-384-signed certificate has that hash: the P-256 fixture (ecdsa-with-SHA256) is not
+    # judged even when the SHA-384 of its TBS is listed ...
+    assert_eq(_tn_tbs_sha384(_ts_p256, _ts_p256_len, h), 0, "an ecdsa-with-SHA256 certificate has no SHA-384 TBS hash");
+    var p2 = _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), 1, _tp_tbs384(_ts_p256));
+    assert_eq(_tn_pol_der_denied(p2, _ts_p256, _ts_p256_len), 0, "  the SHA-384 of its TBS listed: not denied");
+    # ... and the same bytes labelled ecdsa-with-SHA384 (the outer signatureAlgorithm's last OID byte,
+    # 02 -> 03; nothing here verifies the signature) are.
+    var e = alloc(_ts_p256_len);
+    memcpy(e, _ts_p256, _ts_p256_len);
+    assert_eq(load8(e + 310) & 0xFF, 2, "the fixture's outer signatureAlgorithm ends ecdsa-with-SHA256's 02");
+    store8(e + 310, 3);
+    assert_eq(_tn_tbs_sha384(e, _ts_p256_len, h), 1, "relabelled ecdsa-with-SHA384: its TBS is hashed");
+    assert_eq(_tn_pol_der_denied(p2, e, _ts_p256_len), 1, "  and the listed hash denies it");
+    # A certificate whose shape cannot be read while TBS hashes are listed is not judged, so not trusted.
+    assert_eq(_tn_tbs_sha384(_ts_dm, 40, h), 0 - 1, "a truncated certificate: no shape (-1)");
+    assert_eq(_tn_pol_der_denied(pol, _ts_dm, 40), 2, "  with TBS hashes listed: cannot be judged (2)");
+    assert_eq(_tn_pol_der_denied(_tn_pol_new(0, 0, 0, 0, 0, 0), _ts_dm, 40), 0,
+      "  with none listed it is never hashed: 0");
     return 0;
 }
 
@@ -589,7 +685,9 @@ var _ts_ctl_present = 0;            # 1 when the registry holds DisallowedCertEn
 var _ts_ctl_n = 0;                  # its entries,
 var _ts_ctl_n16 = 0;                # those of 16 bytes (the public-key MD5s),
 var _ts_ctl_keys = 0;               # copied (16 B each)
-var _ts_ctl_n48 = 0;                # and those of 48 bytes (a form not applied; see the library's header)
+var _ts_ctl_n48 = 0;                # those of 48 bytes (a SHA-384-signed certificate's TBS SHA-384, 6.7.14),
+var _ts_ctl_tbs = 0;                # copied (48 B each),
+var _ts_ctl_nx = 0;                 # and those of any other length (not applied)
 
 # Read the CTL through advapi32 + crypt32 directly, into the _ts_ctl_* cells. 1, or 0 when it is
 # present but cannot be read.
@@ -617,6 +715,7 @@ fn _ts_ctl_read(): i64 {
     _ts_ctl_n = load32(info + 96);
     var ents = load64(info + 104);
     _ts_ctl_keys = alloc(_ts_ctl_n * 16 + 16);
+    _ts_ctl_tbs = alloc(_ts_ctl_n * 48 + 48);
     var i = 0;
     while (i < _ts_ctl_n) {
         var l = load32(ents + i * 32);
@@ -624,10 +723,26 @@ fn _ts_ctl_read(): i64 {
             memcpy(_ts_ctl_keys + _ts_ctl_n16 * 16, load64(ents + i * 32 + 8), 16);
             _ts_ctl_n16 = _ts_ctl_n16 + 1;
         }
-        if (l == 48) { _ts_ctl_n48 = _ts_ctl_n48 + 1; }
+        if (l == 48) {
+            memcpy(_ts_ctl_tbs + _ts_ctl_n48 * 48, load64(ents + i * 32 + 8), 48);
+            _ts_ctl_n48 = _ts_ctl_n48 + 1;
+        }
+        if (l != 16) {
+            if (l != 48) { _ts_ctl_nx = _ts_ctl_nx + 1; }
+        }
         i = i + 1;
     }
     return 1;
+}
+
+# 1 when the 48 bytes at h are one of the CTL's TBS SHA-384 entries.
+fn _ts_ctl_lists_tbs(h): i64 {
+    var i = 0;
+    while (i < _ts_ctl_n48) {
+        if (memeq(_ts_ctl_tbs + i * 48, h, 48) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 # 1 when the 16 bytes at h are one of the CTL's public-key entries.
@@ -706,8 +821,13 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
     var nb_ok = 0;                      # ... in the bundle AND carrying that bound in the policy
     var ctl_out = 0;                    # roots the CTL's public-key entries keep out
     var keydiff = 0;                    # roots whose key MD5 the library computes differently from crypt32
+    var n384 = 0;                       # roots crypt32 gives a 48-byte signature hash (prop 15): SHA-384-signed
+    var sigdiff = 0;                    # roots whose TBS SHA-384 the library judges differently from crypt32
+    var sigunread = 0;                  # roots whose prop 15 crypt32 could not give
     var h = alloc(64);
     var kid = alloc(64);                # crypt32's key MD5 (prop 25) of the current root
+    var sig = alloc(64);                # crypt32's signature hash (prop 15) of the current root
+    var th = alloc(64);                 # the library's TBS SHA-384 of it
     var pem = alloc(65536);
     c = callptr(en, root, 0);
     while (c != 0) {
@@ -726,6 +846,25 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
                 if (memeq(h, kid, 16) != 1) { keydiff = keydiff + 1; }
             }
         }
+        # 6.7.14: the CTL's other identifier, the signature hash (CERT_SIGNATURE_HASH_PROP_ID, 15) — the
+        # TBS hashed with the certificate's own signature digest. The library hashes exactly the
+        # SHA-384-signed ones, and must agree with crypt32 on every one.
+        var sn = _ts_prop(&fns, c, 15);
+        if (sn == 48) { memcpy(sig, _ts_pbuf, 48); }
+        var tr = _tn_tbs_sha384(der, dlen, th);
+        if (sn < 0) { sigunread = sigunread + 1; }
+        if (sn == 48) {
+            n384 = n384 + 1;
+            if (tr != 1) { sigdiff = sigdiff + 1; }
+            if (tr == 1) {
+                if (memeq(th, sig, 48) != 1) { sigdiff = sigdiff + 1; }
+            }
+        }
+        if (sn >= 0) {
+            if (sn != 48) {
+                if (tr != 0) { sigdiff = sigdiff + 1; }
+            }
+        }
         var x = _ts_expect(&fns, c, pu);
         var xb = _ts_xbound;
         if (x != 0) {
@@ -734,6 +873,14 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
         if (x != 0) {
             if (kn == 16) {
                 if (_ts_ctl_lists(kid) == 1) {
+                    x = 0;
+                    ctl_out = ctl_out + 1;
+                }
+            }
+        }
+        if (x != 0) {
+            if (sn == 48) {
+                if (_ts_ctl_lists_tbs(sig) == 1) {
                     x = 0;
                     ctl_out = ctl_out + 1;
                 }
@@ -782,16 +929,23 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
     fmt_int(ctl_out);
     syscall(1, 1, " kept out by the CTL; ", 22);
     fmt_int(nb_tls);
-    syscall(1, 1, " taken with a NotBefore bound\n", 30);
+    syscall(1, 1, " taken with a NotBefore bound; ", 31);
+    fmt_int(n384);
+    syscall(1, 1, " SHA-384-signed (prop 15 of 48 bytes, ", 38);
+    fmt_int(sigunread);
+    syscall(1, 1, " with no prop 15)\n", 18);
     assert_gt(total, 0, "the ROOT store has certificates");
     assert_gt(want_in, 0, "some are TLS roots");
     assert_eq(keydiff, 0, "the library's key MD5 equals crypt32's (prop 25) for every ROOT certificate");
+    assert_eq(sigdiff, 0,
+      "the library's TBS SHA-384 is crypt32's prop 15 for each SHA-384-signed ROOT certificate, and hashes no other");
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
     assert_eq(_ts_blocks(bundle, blen), want_in, "the bundle holds exactly those");
     assert_eq(nb_ok, nb_tls, "every root whose NotBefore distrust covers TLS is in it WITH its bound (D9)");
     assert_eq(load64(pol + 32), nb_tls, "  and the policy carries exactly those bounds");
     assert_eq(refused, want_ref, "the roots the policy refuses are the refused count");
     assert_eq(load64(pol), _ts_ctl_n16, "the policy carries the CTL's public-key entries, every one");
+    assert_eq(load64(pol + 48), _ts_ctl_n48, "  and its SHA-384 TBS entries, every one (6.7.14)");
     assert_eq(load64(pol + 16), nd, "  and the Disallowed store's certificates");
     return 0;
 }
@@ -804,17 +958,22 @@ fn test_store_policy(): i64 {
     fmt_int(_ts_ctl_n);
     syscall(1, 1, " entries, ", 10);
     fmt_int(_ts_ctl_n16);
-    syscall(1, 1, " public-key MD5s applied, ", 26);
+    syscall(1, 1, " public-key MD5s + ", 19);
     fmt_int(_ts_ctl_n48);
-    syscall(1, 1, " of 48 bytes not applied\n", 25);
+    syscall(1, 1, " SHA-384 TBS hashes applied, ", 29);
+    fmt_int(_ts_ctl_nx);
+    syscall(1, 1, " of other lengths not applied\n", 30);
     assert_neq(_tn_ca_sys_pol, 0, "the system set was published with a trust policy");
     if (_tn_ca_sys_pol == 0) { return 0; }
     if (_ts_ctl_present == 1) {
         assert_gt(_ts_ctl_n16, 0, "present: it lists public keys (cass: 82 of 88)");
         assert_gt(load64(_tn_ca_sys_pol), 0, "  and the system set's policy carries them");
+        assert_eq(load64(_tn_ca_sys_pol + 48), _ts_ctl_n48,
+          "  and every 48-byte entry, as a SHA-384 TBS hash (cass: 6 of 88; 6.7.14)");
     }
     if (_ts_ctl_present == 0) {
         assert_eq(load64(_tn_ca_sys_pol), 0, "absent: the policy lists no key, and the store still loads");
+        assert_eq(load64(_tn_ca_sys_pol + 48), 0, "  and no TBS hash");
     }
     test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
     _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused, _tn_ca_sys_pol);
@@ -851,6 +1010,8 @@ var _tm_nkeys = 0;      # the row's trust-policy deny keys (16 B each) and deny 
 var _tm_keys = 0;       # what the disallowed CTL and the Disallowed store hand the export (6.7.12)
 var _tm_ncerts = 0;
 var _tm_certs = 0;
+var _tm_ntbs = 0;       # and its deny TBS SHA-384s (48 B each; the CTL's other form, 6.7.14)
+var _tm_tbs = 0;
 var _tm_bound = 0;      # the issuance bound the last export recorded for the row's certificate (got 3)
 
 var _TM_SA = "300a06082b06010505070301";                            # [serverAuth]
@@ -868,6 +1029,7 @@ fn _tm_reset(): i64 {
     _tm_n = 0;
     _tm_nkeys = 0;
     _tm_ncerts = 0;
+    _tm_ntbs = 0;
     return 0;
 }
 
@@ -951,7 +1113,7 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         var buf = alloc(cap);
         var nref[8];
         store64(&nref, 0 - 1);
-        var pol = _tn_pol_new(_tm_nkeys, _tm_keys, _tm_ncerts, _tm_certs, 0, 0);
+        var pol = _tn_pol_set_tbs384(_tn_pol_new(_tm_nkeys, _tm_keys, _tm_ncerts, _tm_certs, 0, 0), _tm_ntbs, _tm_tbs);
         var total = _tn_w_export(fns, root, dis, buf, cap, &nref, _tm_pu, pol);
         var r = load64(&nref);
         var nb = load64(pol + 32);
@@ -1033,6 +1195,29 @@ fn test_policy_rows(): i64 {
     _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
     _tm_with(126, _TM_DATE);
     assert_eq(_tm_run(&fns, 0, cap), 0, "a NotBefore root whose key is listed: excluded, no bound");
+    # 6.7.14: the CTL's TBS SHA-384s keep a SHA-384-signed root out the same way. The row's certificate
+    # is the cross-signed Microsoft TLS RSA Root G2 (sha384WithRSA); the P-256 fixture root is
+    # ecdsa-with-SHA256, so a listed SHA-384 of its TBS is not its signature hash.
+    var pem0 = _tm_pem;
+    var pem0_len = _tm_pem_len;
+    _tm_cert = _ts_mr;
+    _tm_cert_len = _ts_mr_len;
+    _tm_pem = alloc(4096);
+    _tm_pem_len = _ts_pem(_tm_pem, _ts_mr, _ts_mr_len);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a SHA-384-signed root, no property: exported");
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs384(_ts_mr);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "  its TBS SHA-384 in the CTL's list: excluded, not counted (6.7.14)");
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs384(_ts_mi);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-384 in the CTL's list: exported");
+    _tm_cert = _ts_p256;
+    _tm_cert_len = _ts_p256_len;
+    _tm_pem = pem0;
+    _tm_pem_len = pem0_len;
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs384(_ts_p256);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "the ecdsa-with-SHA256 fixture with the SHA-384 of its TBS listed: exported");
     # The purposes allow-list (prop 9).
     _tm_with(9, _TM_CS);
     assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
@@ -1363,6 +1548,7 @@ fn main(): i64 {
     _ts_eku_root = hex_decode("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);
     _ts_eku_leaf = hex_decode("308201ac30820151a0030201020202100b300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100bd0c7b53f3770f5bfd09fe63cacd9c6ceefddc676413f1a942c29c4a5854d241022100958dfd9011a1da93bb80788723bd6f30224b6543e3ee1453cb623c3fb32bc42e", 864);
     _ts_dn = hex_decode("3082058a30820372a00302010202100c76da9c910c4e2c9efe15d058933c4c300d06092a864886f70d0101050500305f310b3009060355040613024e4c31123010060355040a1309446967694e6f746172311a301806035504031311446967694e6f74617220526f6f742043413120301e06092a864886f70d0109011611696e666f40646967696e6f7461722e6e6c301e170d3037303531363137313933365a170d3235303333313138313932315a305f310b3009060355040613024e4c31123010060355040a1309446967694e6f746172311a301806035504031311446967694e6f74617220526f6f742043413120301e06092a864886f70d0109011611696e666f40646967696e6f7461722e6e6c30820222300d06092a864886f70d01010105000382020f003082020a0282020100acb058c100bdd821080b2b9afe6e5630059f1b779010415cc30d8711778e81f1ca7ce98c6aed387435bbdadff9bbc00937b49673817d331a9839f7936f957f3db9b17587ba5148e88b703e9504c5d8b6c316d988b0b1871d70da86b40f148b7acf10d17436a2127b77864a79e67bdf021168a54e86ae34589b2413785622251e018b4b5171fb82cc599669885a6853c5b90d0237cb4bbc664a907e2a0b0507ed165f559075d846c91b83e208bef123cc991dd62a0f8320155827822efae222c249b1b901816a9d6d9d407768764e212a6d8440854e76997c82f3f3b70259d426011b8edfad5306d1ae18dde2b23acbd788388eac5b29b919d398f91803cf488286660b1b690fc9eb38887a261a054c92d724d496f2ac522da347d552f63ffece840670a6aa3ea2f2b656341857a2e4816de7caf06ad3c7916b0283417c15ef6b9a645ee3d03ce5b1eb7b5d86fbcbe67749cda365dcf7b99cb8e40b5f93cfcc301a321cce1c6395a5f9eae1748b9ee92ba9307ba0181f0e180be55ba9d3d16c1e07678f914ba98abcd266aa930188b291fa315cd5a6c1520809cd0a63a2d322a6e8a1d9390697f56e8d02908c147b3f80cd1b9cbac4587223afb6569fc67a423329073f82c9e61f050dcd4c28368bd3c83e1cc688ef5eee8964e91debda897e32a669d1ddcc889fd1d0c96621dc0667c5947a9a6d624c7dcce06480b29e478ea30203010001a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e041604148868bfe08e35c43b386b62f7283b8481c80cd74d300d06092a864886f70d010105050003820201003b028dcb3c30e86ea0adf273b35f9e25130405d3f6e38bbb0b79ce53dee496c5d1af73bcd5c3d040557c407fcd1b5f09d5f27c9f681dbb5dce7a39c28cd6987bc58355a8d57d40cae01ef7895e635da113c25d8ab68a7c00f323c3ed855f7176f06863aa45213948617836dcf14393d425c7f28065e153027551fc7a3aef37ab8428570cd8d4d499566ce3a2fe5984b431e833f86494945197ab39c54beddadd800b6f7c290dc48e8a720de75314b260413d849131683d2744dbe5def4fa6345c84c3e98f53f41ba4ecb370dba6698f1ddcb9f5cf75436826b2cbc13619742f878bbccc8a29fcaf068bd6b1db2df8d6f079dda8e67c7471ecab9bf2a4291b7635366f142a3e1f45a4d586bb5e4a433ad5c701ddce0f2eb7314919a03c1ea0065bc07fccf1211222caea0bd3ae0a22ad859e929d31835a4ac115f19b5b51bff224a5cc67ae417ef20a9a7f43fad8aa79a04259d0eca37e650fd8c4229049aecb9cf4b72bde20836af232f62e5ca01d370db7c82232c16310cc63607907ab11f6758c43b585989b08c8c50b3d886cb68a3c40ae7694b20cec11e564b95a92368d830d8c3ebb05551cde5fd2bb8f5bb119f5354f634198c790936ca611725170b8298730c7774c3d50dc7a8124cc7a75471472e2c1a7dc9e32b3b48de2784a76336b37d8fa06439240d3d7b87af665c741b4b73b2e58cf08699b8e5c5df84c1b7eb", 2844);
+    _ts_dm = hex_decode("308206e3308204cba0030201020214627a61b10e7f5f27be3beb5e94cf7ff448dee1c5300d06092a864886f70d01010c05003048310b300906035504061302424d31193017060355040a131051756f5661646973204c696d69746564311e301c0603550403131551756f566164697320526f6f742043412032204733301e170d3137303431393138323733315a170d3235303431393138323733315a3045310b300906035504061302414531173015060355040a0c0e4461726b4d6174746572204c4c43311d301b06035504030c144461726b4d61747465722053656375726520434130820222300d06092a864886f70d01010105000382020f003082020a0282020100932f2e6d82b33753c3d78053bc01ab4c3acea9d90e738ee7d68c259108493ff5c83551a0e21e6275dae344f5f9e1206754eb2085b5beeff411cb0b4b184753c666fa60dc7413dc927e4f73d7ec99f64238e9be1fb7d600c46e8f460c4cf81ff5d9e7b16f10f9f1e09d46e504e3a0bda58432dcbe896e71112988d3241d51e0eacce74b505ea792f8ed991bf2b12889194579db2c0b5b3b87531574c40216137dcd4729fcb54a2b93f9d07a92f6ccda8be995657d1d3a153c7acabe904aca008ff9343cd4ff865d4bac3e0027c594e511ad4ce6940a8317897e6109a1552c87114fcfbc1aaef3333dfb8f941945b1c3339022a9198752dba860337292d14e75bee3c5e88773a5eadd91ae6307a7e5b6df305160bc66e650112aeb65b32433e17a7d15204550df8eff0131b2f786a3a9fffaaa3ad8eae4af8958576a2247297b681b45a189db34acf9aa31d7b53f4a6477e9c40c755f92a472543a4410bcebe9e98a273312cd8fb59f2a144ed41f36710de629607e033239fd030cd268c15b7784c6bea25d1fb0c2438e82fcfd8a27f259dca3cbba92592fd348652ec1d5c27707875ed8b4a429c5ddb3eff6c5c8ea361e94e5bd089c040e2b1ff1df7e6841c2aa05940dd340b4a5667fb37b24fcb289e3198398d390068d7810d9be73625e46bb27ddf20bacdb38b196353f33eafbeb2597ef41b3c0f9649d62070271828895290203010001a38201c6308201c230120603551d130101ff040830060101ff02010030590603551d2004523050303a060b6086100101072302020102302b302906082b06010505070201161d68747470733a2f2f63612e6461726b6d61747465722e61652f694350533008060667810c0102023008060667810c010203307106082b0601050507010104653063302a06082b06010505073001861e687474703a2f2f6f6373702e71756f7661646973676c6f62616c2e636f6d303506082b060105050730028629687474703a2f2f636163657274732e6461726b6d61747465722e61652f71767263613267332e637274300e0603551d0f0101ff04040302018630270603551d250420301e06082b0601050507030106082b0601050507030206082b06010505070309301f0603551d23041830168014ede76f765abf60ec495bc6a577bb7216719bc43d30650603551d1f045e305c302ca02aa0288626687474703a2f2f63726c312e6461726b6d61747465722e61652f71767263613267332e63726c302ca02aa0288626687474703a2f2f63726c322e6461726b6d61747465722e61652f71767263613267332e63726c301d0603551d0e04160414a250a470cb3bb5ca61942713963a7476aa9dec34300d06092a864886f70d01010c0500038202010072e3c533022bcdb491bc65ca95adb590feeeacf19592121e85fb5864bf43a849ad563c8565d5407d0983d567bfb4d36272d37ec79ed4ac1d6295c6f2065db9362fb5d00673f678173d345676faa5157789af40c5c0563402f98045e2a54940846f7efc22d7f41253e71cb2f1e08492760b54e51b5c9fc2546e098c17b8f1140b16dce0ed1700666fea26cf9c07c786469ab485ca2d184fc0a7812b895481f3e1a17b6067fc8b02e32f9285dee0c90e1bf14cf03f7b8db4f1329a2f642481b9464b1ddac3a1ac1993928595f89888b452213bf4503550fb8681529e81a543dba9ac3853c328e0b9e06e4c49b218cf5344ccab10897bc655556d44911b8c614bf878939e7a3d72e2d2e85e2de5fb090fa33b1ad9223475da1b2ec7e7442e10b725b1109aea738bb987415b3f43a7e250a62898679274f8356741d8b284cc72d69945209605c28ada7272422f47e17fb5221150406dd91bc15a2167a0187a9a6c7250426cbbf96feb9af9e6b04c766f9f9fdb6805fc639558eff41c9433b1dc6d731d92f300196536fcfa691dd04298e4c13dd9d567023a99a04c522f03d64c6bfd80b37f3166ad501dbafa1714cfb243be8d2abc747ff49c22f2a98b1ecf0789df8d1e592896252c097c9f810ed556fafa57a85f3a40e8554b310e8c3761173faa62795a704b9d97a1d819e3ca75aa20c17c80b037b68f995a4897cbd4d58098c7", 3534);
     _ts_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
     _ts_ms = hex_decode("308209aa30820792a003020102021343000253929e1c999055f04653000000025392300d06092a864886f70d01010c05003057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f435350203034301e170d3236303132323139353532315a170d3237303131373139353532315a3068310b3009060355040613025553310b30090603550408130257413110300e060355040713075265646d6f6e64311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e311a3018060355040313117777772e6d6963726f736f66742e636f6d30820122300d06092a864886f70d01010105000382010f003082010a0282010100c182c8a381c46bbd1d574788af700850f3d425f3c8a4d3c5a1823427d663cdbb124d18c2f7441dd982441d0b184775fb8160619e133a19b677cf8cde1bda03fcd179ae6727bf928f38dad7a101af8983fbd4edc5549742839598c88ad1a26607cd4ef78910f8c02a5af8cfbcc7aec665d5238809c7dabad3423e83e6224b300743e06b8f94f7b1efc5937f49c29841391e34dbbc208e84795c1d6b2fff0c8a4a247b0ee7af82f5f7330123846d14525e447b9592cb08a196cb444970379507ffacde78113a99cda88b48c8b71b89a72ed8e04094bd5e4ad9f19ed2f4ef2b7f643ccc6133b2657ee978a58ae4f48bb1db15aee59b502d361dc76af8f091f73dfb0203010001a382055c308205583082017f060a2b06010401d6790204020482016f0482016b016900750044c2bd0ce9140e64a5c94a01930a5aa1bb35970e00ee111689682a1c44d7b5660000019be74fd2250000040300463044022069b43f39dcca47688cd4739e6a3636f1d7a40f139583f20b0126c02ff6fbae6c022034ab4e7fb41c762b278a705b7a575da0ce6533a92c004cc8c20e40d97559ebc90077001c9f682ce9faf0456950f81b968a87dddb3210d84ce6c8b2e382524ac4cf599f0000019be74fd20a0000040300483046022100da07cd98a5adbcfa707ec35cf5cc8960ce4cf2ac8b4151be09d025a637dab529022100f544180ac6206624fa201eec7bc7b2043ba6c992c27caa960bfa11563813f4ee007700d6d58da9d01753f36a4aa0c7574902afebc7dc2cd38cd9f764c80c89191e9f020000019be74fd1cb0000040300483046022100dabe9fd11acfa36c4e7bd1b4d19ebc0b5ded9b4ccd992d2b934c4a9bc7990a25022100c605090339d63e44b41d6076ce1eb743c1fb08aca2b2bc02286b89026dbd3adb301b06092b060104018237150a040e300c300a06082b06010505070301303c06092b0601040182371507042f302d06252b060104018237150887bdd71b81e7eb4682819d2e8ed00c87f0da1d5d81b5dd50859ffd750201640201213082010b06082b060105050701010481fe3081fb306106082b060105050730028655687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274306706082b06010505073002865b687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370301d0603551d0e0416041452c8583a1d6912533da5b7b08b5c79b934cf8e64300e0603551d0f0101ff0404030205a03081990603551d1104819130818e821377777771612e6d6963726f736f66742e636f6d82117777772e6d6963726f736f66742e636f6d8218737461746963766965772e6d6963726f736f66742e636f6d8211692e732d6d6963726f736f66742e636f6d820d6d6963726f736f66742e636f6d8211632e732d6d6963726f736f66742e636f6d8215707269766163792e6d6963726f736f66742e636f6d300c0603551d130101ff040230003081f10603551d1f0481e93081e63081e3a081e0a081dd866c687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c866d687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c30660603551d20045f305d3051060c2b0601040182374c837d01013041303f06082b060105050702011633687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f446f63732f5265706f7369746f72792e68746d3008060667810c010202301f0603551d23041830168014540cbcec18f77df103e284be34644467cf751f6530130603551d25040c300a06082b06010505070301300d06092a864886f70d01010c050003820201004d2e64bb7e6b4eef4a619c609e4d47c4e2506881a53257623e1370e23643ac56e6552b84d38ff27cd78c57cd7d92f103c7ca1b8c4ac8d9da0893825fbfb8f6f20881241547a2326dcbe19300a3cf840fa7fbc74ad4920d1cf53addde9f79e48046a4dbf536470ce338a19eb4b0b0d967e0a0337776013e17bd910622b3fcfddaa462e5a39ab5433cff36826c7dfe9c51fffbc256b4e5547c93409a636c541418fa5553c21aa08f0f0d61f8a7b4572bcd97e0dcc41731be2b7ccd6d9371175a9c7d81a93158fc49ccd6f30a1aaa56522ec980715bafd6178aa4d90114a466305bb72ad0628069447031e74df3e154d627bef605fef0b3f4712406f2cb04d44186ef72bd39f799dc4f67e8638b69a1d74f6be246d5ccdac4020609a01fe0e37e13629939aa79ee88b6d3ee827a0a2071592906a11e6e89213f430513048f167e8fcb11c6d44b3b497aaaaac6dbc6e0335e32a82e558f73fb4be1e3070a5f354fe759cf23400a78bc5fa527065fe1760aef6a017d7de3a3020c7681f5f622b99f25f4a9240ef0df5c2a177b6e9917daec5614c497a6823e0b7f97527fdb8636b345882313a8bb7f232e4068d248e07acc46a9d7307763303e2809f9c2e73bd7a386afe9de490b2b627b42c0afab5c3b26191eb5030dad5a950b2f4f90b2465fc11dace5b4b6ce7ad0126ccb1bd52656a0ea67e6b060c5d2a9227d441b78a17880c2", 4956);
     _ts_mi = hex_decode("308207b8308205a0a0030201020213330000000b13e5667d4a9b558000000000000b300d06092a864886f70d01010c05003051310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e31223020060355040313194d6963726f736f667420544c532052534120526f6f74204732301e170d3235303830313230303235395a170d3239303630333230303235395a3057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f43535020303430820222300d06092a864886f70d01010105000382020f003082020a02820201009c3a24085a1892f29ed560cde2e6fb8047db44ae2bdd6d107021154529aad2c7dce6c442b1a08d52e04f5c395506364d17c1586634e285529fe2a4fec6dec2c23b86bfcaad872906eb1d491d5f81dbb7a4ac561ad61287fd5f4049e2a00c6a84c64e6fdf24b89a95745a597fade93c13157840ccecdaef88364a90deea630794c3836a1aae98e6f164805a296704e856f421a6c5468dc8dd02abbc06f06c477823bb38b0bbfb4d71b0df22c37f1a7ef99daa412ad1de68dd9574253866c91611c5593d2ab168b9933b66e83ce1fca7ff2c6b50e0c0b9c8717393b177bfedaa4d0e0a55db139c72e069ad814cda23f906cb3fed428a868c0dd20c1525d08668eb7856aa2e5c08b34d33804eee353c2fc37a7dc16672606890f4ebf608ec13d789925f5c52f4879578b136e1b342536e3a373707c873751ebb5d6e67c99a7ccb4af3c6cdf04ef586fb143519463d97867264dd4336efd4578200220ca33aedb3657065f982a5bab8d2eac0688a3537a040f5fe028966a830f89447625747b27b9b8cc795bceb9af6c68c4489db16e61efde789fc81353530ea2f7d896452b3461934e33b574f0a182031efc5fdb9b127f6975935fb0ac244d6d0b2ed554d1d57487512d7f29860169ec4069cd4ae7e2e65c753e422251830636a9057c594b4f7e54d4c0d54c71fa93d4d0a460962d0232251e38e374cc5f40140990582d3a2b0530203010001a38202813082027d300e0603551d0f0101ff040403020186301006092b06010401823715010403020100301d0603551d0e04160414540cbcec18f77df103e284be34644467cf751f6530130603551d20040c300a3008060667810c01020230130603551d25040c300a06082b06010505070301301906092b0601040182371402040c1e0a0053007500620043004130120603551d130101ff040830060101ff020100301f0603551d23041830168014de918648b7a1315931f14b5f07a9dc8879daa8763081ab0603551d1f0481a33081a030819da0819aa081978649687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c864a687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c3082011006082b06010505070101048201023081ff306306082b060105050730028657687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274306906082b06010505073002865d687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370300d06092a864886f70d01010c050003820201007c4871c2b6c045ab740fc63f49e2fc0fd675fdcd50d1e04bb3b3d1a8995ffe5d350d6c0bddd0ad6160188938e2f0b735d2b5213a0c0e5899387cd4d7dd024dd4dcf5ee90e37b6793a8acd41b50bbc54fe6d3f1b51ef0ff99bc2333b0c8a8a627d6d15bed6f14de4b071a0c50fd0edfbeeb4fb29810cb222ae61dd74ba7ae15d10136090b86434f4ee7c57e5ca36b832e493e9488998b52d3963f7198242f3782fa6c74f2bcdb0621bbb85067702415b60b228ff7b927e4037c8495b76604a99255c2bd11c7210a727f65c060a65049e9f62348203a8e9226a8178c98af14a73dce4cadc08e8c3c44f17ffb13f914d77b333d105e64e7273d0c4ce271d766ceaef74eb664ba542bb7fd03d798679837b20a6320e5b0fbd8a48d3a2e42229a22f42655833015c7a242b3bfd036c53652a773677a736e54acbce989d8a5eb1f6dac2750c4c8ebd41c54294dbbb6deabd7c7f11f1464ba7f473165ef797d14c4f019e48076e73b28009b446f2457f507dc8e5ab400589756b10bfa087571de1b53c8eebdf0ab224cbd6bba5d8a44593c246baabce97d8b5f4a4dd78c54b0ab769b80284d457465106021f98e795fda92fb178400dbc4ae8259813c27779e56f707c8bdbe3d91c5978ae69c0f591658486c7da41632ed16c92da796f5e4fdc5cf65a4ddd700e8c90ef49db2a40280cc1bf028ebb03177349ec3ccd7c89b36bbc525e2", 3960);
@@ -1374,6 +1560,7 @@ fn main(): i64 {
     test_real_chain();
     test_policy_deny_rows();
     test_ctl_identifier_row();
+    test_ctl_tbs_row();
     test_policy_bound_rows();
     #ifdef CYRIUS_TARGET_WIN
     test_store_policy();
