@@ -8778,6 +8778,16 @@ fn _bnd_check_struct(S, si, c0, c1): i64 {
     return _bnd_check(S, 0 - 1 - si, c0, c1);
 }
 
+# 6.7.14: the forwarding half of `_bnd_base_bad` (`_bbs_fwd_bad`).
+var _bnd_has = 0;    # 1 once a fn has a real bound (`_fnt_bnd` is alloc'd for every generic's "no bound" mark)
+var _bbs_fwd = 0;    # fi + 1 of the generic the judged fn forwards T to whose base is bad, 0 = none
+var _bbs_root = 0;   # fi + 1 of the generic at the end of that chain, whose own bound (or bounded struct) fails
+var _bbf_vis = 0;    # the generics one judgement has visited (alloc'd, grown), `_bbf_n` of them
+var _bbf_n = 0;
+var _bbf_cap = 0;
+var _bbf_dep = 0;    # the judgement's recursion depth
+var _bbf_t = 0;      # the scan tables the judgement scans with, swapped with the stub scan's (`_bbf_swap`)
+
 # ── the contract, at the definition (pass 1) ────────────────────────────────────────────────
 fn _bnr_add(S, name, slot, isptr): i64 {
     if (_bnr_tab == 0) { _bnr_tab = alloc(64 * 24); _bnr_cap = 64; }
@@ -8935,6 +8945,7 @@ fn _bnd_fn_record(S, fi, tp, open): i64 {
     var blk = _bnd_make(S, tp);
     if (blk == 0) { SFBND(S, fi, 1); return 0; }
     SFBND(S, fi, blk);
+    _bnd_has = 1;
     _bnd_sites(S, fi, open);
     return 0;
 }
@@ -8980,8 +8991,15 @@ fn _meth_fn_at(S, sid, mnoff, mti): i64 {
 # and i64 fails that struct's bound. Without the second half, `fn mk<T>(x: T): Box<T>` was refused
 # at its definition although only `mk(5)` is wrong. Not cached: struct bounds are known only once
 # pass 1 has registered every struct; and a program with no bound never gets past the first test.
+# ⛔ 6.7.14 — AND WHEN IT FORWARDS ITS T TO A GENERIC WHOSE BASE IS NOT A VALID i64 INSTANCE
+# (`_bbs_fwd_bad`): `fn o<T>(x: T) { return gb(x); }` with `fn gb<T: Show>` and only `impl Show for f64`.
+# The stub scan counted that forward a struct use, so `o`'s base was the stub, which has no scalar
+# instance: `o(h)` / `o<f64>(h)` were refused "uses its type parameter as a struct" with a note naming
+# i64. A bound-bad base is bad at i64 only: now `o`'s base is skipped the same way, `o(h)` calls `o$f64`,
+# and `o(3)` is refused naming the forward and the impl i64 lacks (`_refuse_bnd_fwd`). CHANGELOG [6.7.14]
 fn _bnd_base_bad(S, fi): i64 {
     _bbs_why = 0;
+    _bbs_fwd = 0;
     if (fi < 0) { return 0; }
     if (_fnt_bnd == 0) { if (_st_bnd == 0) { return 0; } }
     var tp = GFTP(S, fi);
@@ -8992,7 +9010,13 @@ fn _bnd_base_bad(S, fi): i64 {
         if (_bnd_fail(S, blk, 0, 0 - 8) >= 0) { return 1; }
         if (_bnd_fail(S, blk, 1, 0 - 8) >= 0) { return 1; }
     }
-    if (_st_bnd == 0) { return 0; }
+    if (_st_bnd != 0) { if (_bbs_struct(S, fi, tp) == 1) { return 1; } }
+    if (_bnd_has == 0) { if (_st_bnd == 0) { return 0; } }
+    return _bbs_fwd_bad(S, fi);
+}
+# 1 iff generic fi's definition instantiates a bounded generic struct with its own type parameter and
+# i64 fails that struct's bound (`_bbs_why` = the struct).
+fn _bbs_struct(S, fi, tp): i64 {
     var i = _gen_def_open(S, fi);
     if (i < 0) { return 0; }
     var n = GTCNT(S);
@@ -9045,10 +9069,83 @@ fn _bbs_targs(S, fi, tp, fs, j): i64 {
     }
     return 0;
 }
+# 1 iff generic fi forwards its T — a whole T-typed name in a carrying position, a struct carrier, or
+# `<T>` (the stub scan's mode 2, `_gs_use`) — to a generic whose base `_bnd_base_bad` judges bad
+# (`_bbs_fwd` = that generic + 1; `_bbs_root` = + 1 of the one whose own bound or bounded struct fails).
+# A stub fi is the stub's (its base is skipped, every scalar call refused by `_refuse_gen_stub`). Each
+# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends.
+fn _bbs_fwd_bad(S, fi): i64 {
+    if ((GFGM(S, fi) & 3) != 0) { return 0; }
+    if (_bbf_dep == 0) { _bbf_n = 0; }
+    if (_bbf_dep > 64) { return 0; }
+    _bbf_push(fi);
+    var lo = _bbf_n;
+    _bbf_scan(S, fi);
+    var hi = _bbf_n;
+    _bbf_dep = _bbf_dep + 1;
+    var r = 0;
+    var k = lo;
+    while (k < hi) {
+        var g = L64(_bbf_vis + k * 8);
+        if (_bnd_base_bad(S, g) == 1) {
+            if (_bbs_fwd == 0) { _bbs_root = g + 1; }
+            _bbs_fwd = g + 1;
+            r = 1;
+            k = hi;
+        }
+        k = k + 1;
+    }
+    _bbf_dep = _bbf_dep - 1;
+    return r;
+}
+# Add generic g to the judgement's visited list (once).
+fn _bbf_push(g): i64 {
+    var k = 0;
+    while (k < _bbf_n) {
+        if (L64(_bbf_vis + k * 8) == g) { return 0; }
+        k = k + 1;
+    }
+    if (_bbf_vis == 0) { _bbf_vis = alloc(64 * 8); _bbf_cap = 64; }
+    if (_bbf_n >= _bbf_cap) { _bbf_vis = _tab_grow(_bbf_vis, _bbf_cap); _bbf_cap = _bbf_cap * 2; }
+    S64(_bbf_vis + _bbf_n * 8, g);
+    _bbf_n = _bbf_n + 1;
+    return 0;
+}
+# The refusal for a scalar call (or `&g`) of generic fi whose base forwards its T to a bad base: the
+# forward, then a note naming what the chain's last generic needs.
+fn _refuse_bnd_fwd(S, fi, noff): i64 {
+    if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
+    var r = _bbs_root - 1;
+    if (r < 0) { return 0; }
+    if (_bbs_why > 0) {
+        PRSTR("  note: '");
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+        PRSTR("' instantiates the bounded generic struct '");
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+        PRSTR("' with its type parameter, and i64 does not satisfy its bound\n");
+        return 0;
+    }
+    var blk = GFBND(S, r);
+    var slot = 0;
+    var tx = _bnd_fail(S, blk, 0, 0 - 8);
+    if (tx < 0) { slot = 1; tx = _bnd_fail(S, blk, 1, 0 - 8); }
+    if (tx < 0) { return 0; }
+    PRSTR("  note: the bound on type parameter '");
+    PRSTR(S + 0xEC00000 + (((GFTP(S, r) >> (slot * 32)) & 0xFFFFFFFF) - 1));
+    PRSTR("' of '");
+    PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+    PRSTR("' needs `impl ");
+    PRSTR(S + 0xEC00000 + L64(_tr_tab + tx * 32));
+    PRSTR(" for i64`, and there is none\n");
+    return 0;
+}
 # The refusal for a scalar call (or `&g`) of generic fi whose base is not a valid i64 instance:
 # its own bound (reported by `_bnd_check_fn`), or a bounded struct it instantiates with its T.
 fn _refuse_bnd_base(S, fi, noff): i64 {
     if (_bnd_check_fn(S, fi, 0 - 8, 0 - 8) == 1) { return 0; }
+    if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
     ERR_IDENT(S, "generic ", noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
@@ -12203,6 +12300,30 @@ fn _gcr_has(noff): i64 {
     }
     return 0;
 }
+# 6.7.14: `_bbs_fwd_bad`'s scan of fi (mode 2) runs on its own tables, swapped in and back out, so a scan
+# in progress keeps its own (`_bnd_base_bad` is called from the call paths, not from a scan, today).
+fn _bbf_scan(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    _bbf_swap();
+    _gs_params(S, fi, o);
+    var b = _gs_body_open(S, _gs_at);
+    if (b >= 0) { _gs_scan(S, fi, b, 2); }
+    _bbf_swap();
+    return 0;
+}
+fn _bbf_swap(): i64 {
+    if (_bbf_t == 0) { _bbf_t = alloc(64); var z = 0; while (z < 8) { S64(_bbf_t + z * 8, 0); z = z + 1; } }
+    var a = _gsn; _gsn = L64(_bbf_t); S64(_bbf_t, a);
+    a = _gsn_n; _gsn_n = L64(_bbf_t + 8); S64(_bbf_t + 8, a);
+    a = _gsn_cap; _gsn_cap = L64(_bbf_t + 16); S64(_bbf_t + 16, a);
+    a = _gcr; _gcr = L64(_bbf_t + 24); S64(_bbf_t + 24, a);
+    a = _gcr_n; _gcr_n = L64(_bbf_t + 32); S64(_bbf_t + 32, a);
+    a = _gcr_cap; _gcr_cap = L64(_bbf_t + 40); S64(_bbf_t + 40, a);
+    a = _gs_open; _gs_open = L64(_bbf_t + 48); S64(_bbf_t + 48, a);
+    a = _gs_at; _gs_at = L64(_bbf_t + 56); S64(_bbf_t + 56, a);
+    return 0;
+}
 # A carrier `name: [*]G<..>` (token ti on G's name): its entries, one per slot a type parameter of fi
 # takes whole.
 fn _gcr_note(S, fi, noff, ti): i64 {
@@ -12430,6 +12551,7 @@ fn _gs_body_open(S, i): i64 {
 }
 # Walk the body from token i (just past its `{`) to the matching `}`. mode 0: 1 iff a T-typed name
 # is used as a struct. mode 1: 1 iff the body forwards a T-typed value, or T, to a stub generic.
+# mode 2 (6.7.14): every generic the body forwards its T to, pushed for `_bbs_fwd_bad`; answers 0.
 fn _gs_scan(S, fi, i, mode): i64 {
     var n = GTCNT(S);
     var d = 1;
@@ -12474,16 +12596,26 @@ fn _gs_use(S, fi, i, mode): i64 {
         return _gs_cfield(S, i);   # 6.7.11: `b.v.y` through a struct carrier
     }
     if (nx != 19 && nx != 10) { return 0; }
-    if (nx == 10) { if (_gs_mfwd(S, fi, i) == 1) { return 1; } }   # 6.7.11: `p.pick(t)`
+    if (nx == 10) { if (_gs_mfwd(S, fi, i, mode) == 1) { return 1; } }   # 6.7.11: `p.pick(t)`
     var cfi = FINDFN(S, TOKVAL(S, i));
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
-    if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }   # 6.7.1: a bounded one too
-    if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
+    # 6.7.14: only a STUB callee makes the forwarder a stub; one whose base is bad only for its bound
+    # (6.7.1 counted it too) makes the forwarder's base bad at i64 alone — `_bnd_base_bad`, mode 2.
+    if (mode == 1) { if ((GFGM(S, cfi) & 3) == 0) { return 0; } }
+    var f = 0;
+    if (nx == 19) { f = _gs_targs_fwd(S, fi, i + 2); }
+    else { f = _gs_fwd_any(S, fi, cfi, i + 1, 0); }
+    if (mode == 2) { if (f == 1) { _bbf_push(cfi); } return 0; }
+    return f;
+}
+# 1 iff the call to cfi whose `(` is at `open` passes fi's T: a bare T-typed name in a direct carrying
+# position (`_gs_arg_named`), or a carrier in a struct-carrier position (`_gs_fwd_carr`, 6.7.14).
+fn _gs_fwd_any(S, fi, cfi, open, mth): i64 {
     var m = GFGM(S, cfi);
-    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 0) == 1) { return 1; }
-    if (_gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 0) == 1) { return 1; }
-    return _gs_fwd_carr(S, fi, cfi, i + 1, 0);   # 6.7.14: `gx(b)`, `gx(mk1(x))`
+    if (_gs_arg_named(S, cfi, open, (m >> 8) & 255, mth) == 1) { return 1; }
+    if (_gs_arg_named(S, cfi, open, (m >> 16) & 255, mth) == 1) { return 1; }
+    return _gs_fwd_carr(S, fi, cfi, open, mth);   # 6.7.14: `gx(b)`, `gx(mk1(x))`
 }
 # ⛔ 6.7.14 — A FORWARD THROUGH A STRUCT CARRIER. Mode 1 followed a T-typed name only in a callee's DIRECT
 # carrying position, so a body passing its T inside a carrier into a stub `fn gx<T>(b: Box<T>)` — `gx(b)` with
@@ -12541,15 +12673,14 @@ fn _gs_carries(S, fi, a, dep): i64 {
 # (`_mcall_gen`), so the forwarding generic's i64 base — emitted eagerly — was refused at its definition,
 # however it was called. The callee is the parser's (`_meth_fn_at`) for x's struct, typed by scope from
 # the tokens (`_tok_name_sid`; an untyped impl `self` by pass 1's GFISELF). CHANGELOG [6.7.11]
-fn _gs_mfwd(S, fi, i): i64 {
+fn _gs_mfwd(S, fi, i, mode): i64 {
     var cfi = _gs_mcallee(S, fi, i);
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
-    if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }
-    var m = GFGM(S, cfi);
-    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 1) == 1) { return 1; }
-    if (_gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 1) == 1) { return 1; }
-    return _gs_fwd_carr(S, fi, cfi, i + 1, 1);   # 6.7.14: `p.pick(b)`, `b: Box<T>`
+    if (mode == 1) { if ((GFGM(S, cfi) & 3) == 0) { return 0; } }   # 6.7.14: a stub only (`_gs_use`)
+    var f = _gs_fwd_any(S, fi, cfi, i + 1, 1);   # 6.7.14: and `p.pick(b)`, `b: Box<T>`
+    if (mode == 2) { if (f == 1) { _bbf_push(cfi); } return 0; }
+    return f;
 }
 # The fn a method call `x.m(` reaches, its name at token i, or -1. x is a single name, a field chain
 # `h.p` / `h.q.p` or a call result `mk()` / `h.gp()` (`_gs_recv_sid`): a forwarder `h.p.pick(t)` /
