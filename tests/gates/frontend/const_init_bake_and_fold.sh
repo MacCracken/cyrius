@@ -27,6 +27,20 @@
 #   V1-V2  what the replay's parse reports is still reported: another file's private const (`'PC' is private to its
 #          file`), a `*T` global's "assigning non-pointer to typed pointer", a bool global's refusal
 #
+# Item 2 — the run-time fold arms (parse_expr.cyr `_PARSE_TERM_IMPL` / `_PEXPR_IMPL`) take a constant NAME on the
+# right (and `+ - & | ^` a constant term): `2 * C` was `mov eax,2; push rax; mov eax,5; pop rcx; imul rcx`, `1 + C`
+# an add, `2 + C * 3` an add of the folded `C * 3`.
+#   F1-F15 each `return <expr>;` is BYTE-IDENTICAL to `return <its value>;` — on x86_64, and with the tree's aarch64
+#          and cx compilers: `2 * C` (the filed shape), `1 + C`, `2 + C * 3`, `2 * E.A`, `2 * A`, `2 * B * C`,
+#          `20 / C`, `1 << C`, `64 >> C`, `1 | C`, `7 & C`, `1 ^ C`, `9 - C`, a local const `3 * L`, and the
+#          literal term `2 + 5 * 3`
+#   F16-F21 values on every leg, the folded and the not folded: a negative const, a local var hiding the const,
+#          `>>>` (never folded), `*%` in a name's term, a result under zero, `2 * (C)`; V3 another file's private
+#          const on the right is still refused
+#
+# MUTATION (item 2, measured): _cf_fac_at reading a literal only (its name arms gone) -> 42 red: F1-F14 on x86_64,
+# aarch64 and cx (F15, the literal term, still folds); _cf_can's term arm gone -> 21 red: F2, F3, F10-F13, F15 on
+# the three legs (the `* / << >>` arms F1, F4-F9, F14 still fold their factor).
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 23 red: S0-S7, K1, O11 / O12 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -96,7 +110,13 @@ O11|9|const C = 5;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G 
 O12|9|fn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 0;\nsyscall(60, G);\n
 D1|5|var R = (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1);\nsyscall(60, R + 5);\n
 D2|8|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar Q = (0 - CF_MAX - 1) / (0 - 1);\nsyscall(60, (Q >> 63) + 7);\n
-D3|3|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar R = (0 - CF_MAX - 1) % (0 - 1);\nsyscall(60, R + 3);\n"
+D3|3|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar R = (0 - CF_MAX - 1) % (0 - 1);\nsyscall(60, R + 3);\n
+F16|250|const N = 0 - 3;\nfn f(): i64 { return 2 * N; }\nsyscall(60, f() & 255);\n
+F17|14|const C = 5;\nfn f(): i64 { var C = 7; return 2 * C; }\nsyscall(60, f());\n
+F18|4|const C = 5;\nfn f(): i64 { return 2 + C >>> 1; }\nsyscall(60, f());\n
+F19|22|const C = 5;\nfn f(): i64 { return 2 + C *% 4; }\nsyscall(60, f());\n
+F20|206|const C = 5;\nfn f(): i64 { return 100 - C * 30; }\nsyscall(60, f() & 255);\n
+F21|10|const C = 5;\nfn f(): i64 { return 2 * (C); }\nsyscall(60, f());\n"
 
 # leg NAME COMPILER RUNNER... — every row compiled by COMPILER and run (RUNNER prefix; "cx" runs the .cyx on cxvm).
 leg() {
@@ -126,6 +146,35 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
 else echo "  SKIP: const_init_bake_and_fold aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
 nf=$(wc -l < "$W/fails" | tr -d ' '); nr=$(wc -l < "$W/rows" | tr -d ' ')
 fail=$((fail + nf)); rows=$((rows + nr))
+
+# F — item 2: a constant on the right folds. fold ID COMPILER LEG EXPR VALUE: `return EXPR;` and `return VALUE;`
+# compile to the same bytes.
+FH='const C = 5;\nenum E { A = 3; B = 9; }\n'
+fold() {
+  printf '%b' "${FH}fn f(): i64 { $4 }\nsyscall(60, f() & 255);\n" > "$W/f.$3.$1.cyr"
+  printf '%b' "${FH}fn f(): i64 { return $5; }\nsyscall(60, f() & 255);\n" > "$W/f.$3.$1.l.cyr"
+  if "$2" < "$W/f.$3.$1.cyr" > "$W/f.$3.$1" 2> /dev/null && "$2" < "$W/f.$3.$1.l.cyr" > "$W/f.$3.$1.l" 2> /dev/null; then
+    cmp -s "$W/f.$3.$1" "$W/f.$3.$1.l" || bad "$3 $1: \`$4\` is not folded to $5 (not byte-identical to \`return $5;\`)"
+  else bad "$3 $1: compile failed"; fi
+}
+foldset() {
+  for spec in 'F1~return 2 * C;~10' 'F2~return 1 + C;~6' 'F3~return 2 + C * 3;~17' 'F4~return 2 * E.A;~6' \
+              'F5~return 2 * A;~6' 'F6~return 2 * B * C;~90' 'F7~return 20 / C;~4' 'F8~return 1 << C;~32' \
+              'F9~return 64 >> C;~2' 'F10~return 1 | C;~5' 'F11~return 7 & C;~5' 'F12~return 1 ^ C;~4' \
+              'F13~return 9 - C;~4' 'F14~const L = 4; return 3 * L;~12' 'F15~return 2 + 5 * 3;~17'; do
+    id=${spec%%~*}; rest=${spec#*~}; ex=${rest%%~*}; val=${rest#*~}
+    rows=$((rows + 1)); fold "$id" "$1" "$2" "$ex" "$val"
+  done
+}
+foldset "$CC" x86_64
+[ -x "$W/cycc_a64" ] && foldset "$W/cycc_a64" aarch64
+[ -x "$W/cycc_cx" ] && foldset "$W/cycc_cx" cx
+rows=$((rows + 1))
+mkdir -p "$W/v3/lib"
+printf 'private\nconst PC = 5;\npublic fn pv(): i64 { return PC; }\n' > "$W/v3/lib/sec.cyr"
+printf 'include "lib/sec.cyr"\nfn f(): i64 { return 2 * PC; }\nsyscall(60, f());\n' > "$W/v3/m.cyr"
+rc=0; (cd "$W/v3" && "$CC" < m.cyr > m.bin 2> m.err) || rc=$?
+[ "$rc" -ne 0 ] && grep -q "'PC' is private to its file" "$W/v3/m.err" || bad "V3: \`2 * PC\` (another file's private const) was not refused (rc $rc)"
 
 # V — the replay's own reports for these entries are kept.
 rows=$((rows + 1))

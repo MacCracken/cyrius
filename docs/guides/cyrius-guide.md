@@ -6209,7 +6209,8 @@ fn f(v): i64 {
 ```
 
 - **A `const` has no storage.** Every use is its value — an integer folds like an enum
-  constant, an f64 is its float literal, a string is its literal (passed where a `Str` is
+  constant, on either side of an operator (6.7.14: `2 * N`, `1 + N` and `2 + N * 3` were a
+  run-time multiply / add where `N * 2` folded; the values never differed), an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
   (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
   const context alike (6.7.14: it was blamed on a missing struct declaration). A statement that

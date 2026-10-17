@@ -6801,6 +6801,139 @@ var _cfv = 0;
 var _cfp = 0;
 var _cfo = 0;
 
+# ⛔ 6.7.14 — THE RUN-TIME FOLD TAKES A CONSTANT NAME ON THE RIGHT (issues/2026-10-08-const-init-redundant-store-and-
+# unfolded-const-operand.md item 2). An arm folded `K op L` (K armed by its factor: `_cfo`, `_cfv`, `_cfp`) only when
+# L was a literal TOKEN, so `C * 2` was one mov and `2 * C` a run-time imul, `1 + C` an add, `2 + C * 3` an add of
+# the folded `C * 3` (x86_64: `mov eax,2; push rax; mov eax,5; pop rcx; imul rcx`). The `* / << >>` arms read their
+# right factor with `_cf_fac_at`, which reads a literal or a NAME the factor loads as an integer constant — a local
+# or top-level integer const, an enum constant bare or qualified, no local, capture or other file's private global
+# in the way — without emitting; the `+ - & | ^` arms read the right TERM with `_cf_term_at`, folded by the `* / <<
+# >>` arms' own rules. Each arm keeps its windows, so a value folds where the same expression with the value
+# written out does; values are unchanged, the code is smaller. (A literal followed by a term operator the old test
+# did not list — `*%`, `*|`, `*?`, `>>>` — keeps its old reading.) CHANGELOG [6.7.14]
+var _cf_v = 0;   # the value _cf_fac_at / _cf_term_at read
+var _cf_e = 0;   # the token after it
+fn _cf_fac(S): i64 { return _cf_fac_at(S, GTI(S)); }
+fn _cf_fac_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 1) { _cf_v = TOKVAL(S, ti); _cf_e = ti + 1; return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 41) { return _cf_qual_at(S, ti); }
+    if (_cf_tail(TOKTYP(S, ti + 1)) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_lc_n > 0) {
+        var lc = _lc_find(S, noff);
+        if (lc >= 0) {
+            var le = _lc_tab + lc * 48;
+            if (L64(le + 24) != 0) { return 0; }   # an f64 / string / bool local const
+            _cf_v = L64(le + 32);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    return _cf_gconst(S, _findvar_core(S, noff), ti, ti + 1);
+}
+# `E.A` at `ti`: the variant's value, as the factor's qualified arm folds it (a variable's `.field` is not).
+fn _cf_qual_at(S, ti): i64 {
+    if (TOKTYP(S, ti + 2) != 2) { return 0; }
+    if (_cf_tail(TOKTYP(S, ti + 3)) == 0) { return 0; }
+    var bnoff = TOKVAL(S, ti);
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, bnoff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    if (_findvar_core(S, bnoff) >= 0) { return 0; }
+    return _cf_gconst(S, _enum_variant_in(S, bnoff, TOKVAL(S, ti + 2)), ti, ti + 3);
+}
+# Global slot `vi` (named at token `ti`, its factor ending before token `e`) as an integer constant.
+fn _cf_gconst(S, vi, ti, e): i64 {
+    if (vi < 0) { return 0; }
+    if (_gvk_name_ok(S, ti) == 0) { return 0; }   # another file's private global: the factor refuses it
+    if (GVTYPE(S, vi) != 0) { return 0; }
+    if (_cst_vkind(S, vi) >= 2) { return 0; }    # an f64 / string / bool const (_cst_read_global)
+    if (GVECP(S, vi) != 1) { return 0; }
+    _cf_v = L64(_vecv_base + vi * 8);
+    _cf_e = e;
+    return 1;
+}
+# 0 = the token after a name makes it more than a value: a call, a field or range, a subscript, type
+# arguments, a literal, a `?`.
+fn _cf_tail(t): i64 {
+    if (t == 10 || t == 41 || t == 28) { return 0; }
+    if (t == 19 || t == 13 || t == 124) { return 0; }
+    return 1;
+}
+# The right operand of `+ - & | ^` (cursor on it, `_cfo` armed): 1 = foldable, `_cf_v` its value, `_cf_e` the token
+# after. A literal not followed by `* / % << >>` is read as before; a literal followed by one, or a name, is the
+# term `_cf_term_at` folds.
+fn _cf_can(S): i64 {
+    if (_cfo != 1) { return 0; }
+    var ti = GTI(S);
+    var t = TOKTYP(S, ti);
+    if (t == 1) {
+        if (_cf_excl(TOKTYP(S, ti + 1)) == 0) {
+            _cf_v = TOKVAL(S, ti);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    } elif (t != 2) { return 0; }
+    return _cf_term_at(S, ti);
+}
+fn _cf_excl(nt): i64 {
+    if (nt == 8 || nt == 9 || nt == 34) { return 1; }
+    if (nt == 38 || nt == 39) { return 1; }
+    return 0;
+}
+# A term at `ti` that PARSE_TERM folds to one value: its first factor armed (0 .. 0xFFFF, as the factor arms it)
+# when an operator follows, each `*` (`*%`), `/`, `<<`, `>>` folded by its arm's rule. 0 at anything else.
+fn _cf_term_at(S, ti): i64 {
+    if (_cf_fac_at(S, ti) == 0) { return 0; }
+    var v = _cf_v;
+    var e = _cf_e;
+    var t = TOKTYP(S, e);
+    if (_cf_termop(t) == 1) {
+        if (v < 0 || v >= 0x10000) { return 0; }
+    }
+    while (_cf_termop(t) == 1) {
+        if (_cf_fac_at(S, e + 1) == 0) { return 0; }
+        e = _cf_e;
+        v = _cf_op(t, v, _cf_v);
+        if (_cf_opok == 0) { return 0; }
+        t = TOKTYP(S, e);
+    }
+    if (t == 34 || t == 152 || t == 124) { return 0; }   # `%`, `>>>`, `?`: never folded
+    if (t == 120 || t == 121) { return 0; }               # `*|`, `*?`: calls
+    _cf_v = v;
+    _cf_e = e;
+    return 1;
+}
+fn _cf_termop(t): i64 {
+    if (t == 8 || t == 119 || t == 9) { return 1; }
+    if (t == 38 || t == 39) { return 1; }
+    return 0;
+}
+# `v op crv` as the arm folds it; `_cf_opok` 0 where the arm emits the operation instead.
+var _cf_opok = 0;
+fn _cf_op(t, v, crv): i64 {
+    _cf_opok = 1;
+    if (t == 8 || t == 119) {
+        if (crv == 0) { return 0; }
+        if (crv == 1) { return v; }
+        if (crv > 0) { if (v * crv >= 0) { return v * crv; } }
+        _cf_opok = 0;
+        return 0;
+    }
+    if (crv > 0) { if (crv < 0x10000) {
+            var r = 0;
+            if (t == 9) { r = v / crv; }
+            elif (t == 38) { r = v << crv; }
+            else { r = v >> crv; }
+            if (r > 0) { if (r < 0x10000) { return r; } }
+        } }
+    _cf_opok = 0;
+    return 0;
+}
+
 # v5.6.7 O2 strength-reduction helper: if the next token is an
 # integer literal whose value is a positive power of two (2, 4, 8,
 # …, 2^63 — well, up to 2^62 since 2^63 is signed-negative), emit
@@ -7270,14 +7403,14 @@ fn _PARSE_TERM_IMPL(S): i64 {
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
-                    if (PEEKT(S) == 1) {
-                        var crv = PEEKV(S);
-                        if (crv == 0) { STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, 0); _cfv = 0; }
-                        elif (crv == 1) { STI(S, GTI(S) + 1); }
+                    if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, 0); _cfv = 0; }
+                        elif (crv == 1) { STI(S, _cf_e); }
                         elif (crv > 0) {
                             var cfr = _cfv * crv;
                             if (cfr >= 0) {
-                                STI(S, GTI(S) + 1);
+                                STI(S, _cf_e);
                                 SCP(S, _cfp);
                                 EMOVI(S, cfr);
                                 _cfv = cfr;
@@ -7329,12 +7462,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
                 else {
-                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                            var crv = PEEKV(S);
+                    if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                            var crv = _cf_v;
                             if (crv > 0) { if (crv < 0x10000) {
                                     var cfr = _cfv / crv;
                                     if (cfr > 0) { if (cfr < 0x10000) {
-                                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                         } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
                                     else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                                 } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
@@ -7349,12 +7482,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 }
                 else { if (typ == 38) {
                         STI(S, GTI(S) + 1);
-                        if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                var crv = PEEKV(S);
+                        if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                var crv = _cf_v;
                                 if (crv > 0) { if (crv < 0x10000) {
                                         var cfr = _cfv << crv;
                                         if (cfr > 0) { if (cfr < 0x10000) {
-                                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                             } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
                                         else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; }
                                     } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
@@ -7364,12 +7497,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     }
                     else { if (typ == 39) {
                             STI(S, GTI(S) + 1);
-                            if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                    var crv = PEEKV(S);
+                            if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                    var crv = _cf_v;
                                     if (crv > 0) { if (crv < 0x10000) {
                                             var cfr = _cfv >> crv;
                                             if (cfr > 0) { if (cfr < 0x10000) {
-                                                    STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                    STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                 } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
                                             else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
                                         } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
@@ -8062,21 +8195,15 @@ fn _PEXPR_IMPL(S): i64 {
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
             else {
-                # Fold only if right side is a plain literal (not followed by * / % << >>)
-                var add_can_fold = 0;
-                if (_cfo == 1) { if (PEEKT(S) == 1) {
-                        var nt = TOKTYP(S, GTI(S) + 1);
-                        if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                            add_can_fold = 1;
-                                        } } } } }
-                    } }
+                # Fold a constant right term (6.7.14: a name, or a literal's whole term — _cf_can)
+                var add_can_fold = _cf_can(S);
                 if (add_can_fold == 1) {
-                    var crv = PEEKV(S);
-                    if (crv == 0) { STI(S, GTI(S) + 1); }
+                    var crv = _cf_v;
+                    if (crv == 0) { STI(S, _cf_e); }
                     elif (crv > 0) {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
-                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                         } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
                     }
                     else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
@@ -8091,20 +8218,14 @@ fn _PEXPR_IMPL(S): i64 {
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
                 else {
-                    var sub_can_fold = 0;
-                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                            var nt = TOKTYP(S, GTI(S) + 1);
-                            if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                sub_can_fold = 1;
-                                            } } } } }
-                        } }
+                    var sub_can_fold = _cf_can(S);   # 6.7.14
                     if (sub_can_fold == 1) {
-                        var crv = PEEKV(S);
-                        if (crv == 0) { STI(S, GTI(S) + 1); }
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); }
                         elif (crv > 0) {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
-                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                             } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                         }
                         else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
@@ -8163,19 +8284,13 @@ fn _PEXPR_IMPL(S): i64 {
                             else { if (typ == 27) {
                                     # AMPERSAND — binary AND
                                     STI(S, GTI(S) + 1);
-                                    var and_can_fold = 0;
-                                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                            var nt = TOKTYP(S, GTI(S) + 1);
-                                            if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                and_can_fold = 1;
-                                                            } } } } }
-                                        } }
+                                    var and_can_fold = _cf_can(S);   # 6.7.14
                                     if (and_can_fold == 1) {
-                                        var crv = PEEKV(S);
+                                        var crv = _cf_v;
                                         if (crv > 0) { if (crv < 0x10000) {
                                                 var cfr = _cfv & crv;
                                                 if (cfr > 0) { if (cfr < 0x10000) {
-                                                        STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                        STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                     } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
                                                 else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
                                             } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
@@ -8185,19 +8300,13 @@ fn _PEXPR_IMPL(S): i64 {
                                 else { if (typ == 35) {
                                         # PIPE — binary OR
                                         STI(S, GTI(S) + 1);
-                                        var or_can_fold = 0;
-                                        if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                                var nt = TOKTYP(S, GTI(S) + 1);
-                                                if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                    or_can_fold = 1;
-                                                                } } } } }
-                                            } }
+                                        var or_can_fold = _cf_can(S);   # 6.7.14
                                         if (or_can_fold == 1) {
-                                            var crv = PEEKV(S);
+                                            var crv = _cf_v;
                                             if (crv > 0) { if (crv < 0x10000) {
                                                     var cfr = _cfv | crv;
                                                     if (cfr > 0) { if (cfr < 0x10000) {
-                                                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                         } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
                                                     else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
                                                 } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
@@ -8207,19 +8316,13 @@ fn _PEXPR_IMPL(S): i64 {
                                     else { if (typ == 36) {
                                             # CARET — binary XOR
                                             STI(S, GTI(S) + 1);
-                                            var xor_can_fold = 0;
-                                            if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                                    var nt = TOKTYP(S, GTI(S) + 1);
-                                                    if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                        xor_can_fold = 1;
-                                                                    } } } } }
-                                                } }
+                                            var xor_can_fold = _cf_can(S);   # 6.7.14
                                             if (xor_can_fold == 1) {
-                                                var crv = PEEKV(S);
+                                                var crv = _cf_v;
                                                 if (crv > 0) { if (crv < 0x10000) {
                                                         var cfr = _cfv ^ crv;
                                                         if (cfr > 0) { if (cfr < 0x10000) {
-                                                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                             } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
                                                         else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
                                                     } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
