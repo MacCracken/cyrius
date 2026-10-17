@@ -1293,6 +1293,8 @@ _chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
 # from a fn returning `Str` and a store into a `Str` global, field or through a `*Str` are refused by
 # name (the header would dangle); a global's or a capture's is not. The filed repro and the crossos
 # values file on every leg, the refusals on four compilers, mutation-proven (ledger in header).
+# 6.7.14 (D20 (a), 2026-10-16): `t = a` into an inline `Str` from a `Str` handle (a name, a `: Str` call or
+# method, a `Str` field) copies the header (it stored the handle into t.data), and a bare `var t: Str;` is D7 (1)'s.
 _chk_gate "$ROOT/tests/gates/frontend/inline_str_value.sh"
 
 # 6.7.13 (the struct lane, the user's decision D8 (a), 2026-10-15): a field of a `: *T` call's result is an
@@ -2790,6 +2792,10 @@ _chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
 # filed repro, 220 rows against their 16 B twins, the compile rows, a 7 B handle ending a mapping and an
 # async body, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/small_struct_handle_line.sh"
+# 6.7.14 — a program's own `struct Result` / `Option` / `Tagged` is a plain struct (it was the stdlib's
+# handle by name: its by-value parameter took the first field, SIGSEGV), the stdlib's stay byte-identical:
+# the filed repro, the cmp rows and 29 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/struct_named_like_stdlib_handle.sh"
 # 6.7.10 (B7-2) — u8 / u16 / u32 / f32 struct fields are their widths (packed): 199 rows (sizeof /
 # offsets, zero-extension and wrap, the by-value class sweep at every size 1..17 and 20), the
 # redefinition warnings, the dyn / top-level refusals that follow the size, the derive's layout,

@@ -14,9 +14,11 @@
 # PARSE_FIELD_STORE's body, `_fst_on`). A by-value result keeps the refusal; an untyped `var p = gp();` is unchanged.
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/call_ptr_field_store.tcyr (its row count derived, floor
-# 17) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3 without its IR3-PRE row, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
+# 34) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
 # not hardware), cx (cxvm) and PE (wine, a private prefix); X1-X6 refused (the message first, ONE `^error`, no
-# warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K3 controls that compile and run on every leg.
+# warning, no binary) on the x86_64, aarch64, cx and PE compilers; T0-T5 (6.7.14) a top-level by-value call's
+# field assignment refused once, by the no-frame refusal; F0-F6 (6.7.14) the same as a classic-for step (F0 the filed
+# repro, runs; F1-F4 refused once; F5 F6 no assignment, "expected '='"); K1-K3 controls that compile and run on every leg.
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -30,8 +32,15 @@
 #   p7 `_stmt_method_call` without its done return -> RED 7: R1 x7 ("expected ';'": the store had ended it)
 #   p8 `_stmt_call_field` without its done return  -> RED 26: R0, R1, K1-K3 ("expected ';', got return")
 #   real tree                                       -> GREEN
-# (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and a for
-# step's call chain is refused before any `*T` arm runs.)
+#   (6.7.14, 2026-10-17, the same procedure) `_stmt_call_field` without its `_tsc_n` skip -> RED 12: T0-T2 x4
+#                                                     (2 error lines: the no-frame refusal, then "the result is a temporary")
+#   the statement forms of the T0-T2 commit (54da1380: the skip on `=` / `OP=` only, no method arm) -> RED 12: T3-T5 x4
+#   `_for_step_replay` without its `_step_call_field` arm -> RED 27: R1 x7 ("expected '=', got '('"), F0-F4 x4
+#   `_cpf_try` ending every store at `;` (no `_cpf_step` term) -> RED 11: R1 x7, F0 x4 ("expected ';', got ')'")
+#   `_cpf_try` disarming `_cpf_step` on any store              -> RED 7: R1 x7 (st_nested: the store inside the step's
+#                                                     call disarmed the step, "expected ';', got ')'")
+# (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and since
+# 6.7.14 a for step arms its own too, `_step_call_field`.)
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -156,17 +165,14 @@ runs R0 5 "the filed repro: gp().n = 5; through \`fn gp(): *H\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/call_ptr_field_store.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=17
+FLOOR=34
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
-# Under CYRIUS_IR=3 the row marked IR3-PRE is left out: an f64 field store through a `*T` faults there before this fix
-# too (`var q: *H = &buf; q.f = 2.5;`: SIGSEGV with the 6.7.13 lane's base compiler) — a pre-existing IR=3 defect, filed.
-grep -v 'IR3-PRE' "$TC" > "$T/R1i.cyr"
-NI=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$T/R1i.cyr")
+# Every leg runs every row, CYRIUS_IR=3 included: its f64 row (`gp().f = 2.5;`) faulted there until the float literal's
+# movabs was recorded IR-opaque (CHANGELOG [6.7.14]).
 rows=$((rows + 1))
 for leg in $XLEGS $OLEGS; do
     f=R1; n=$N
-    [ "$leg" = "x86_64:CYRIUS_IR=3" ] && { f=R1i; n=$NI; }
     compile "$leg" $f
     if [ "$crc" -ne 0 ] || [ ! -s "$T/$f.$leg" ]; then bad "R1 $TC ($leg): did not build: $(grep '^error' "$T/$f.$leg.err" | head -1 || true)"; continue; fi
     execute "$leg" $f
@@ -202,6 +208,73 @@ refused X5 "no struct type in scope for 'p'" "an untyped \`var p = gp();\` is un
 row X6 'fn go(): i64 { gi().n = 5; return 0; }'
 refused X6 "cannot take a field of the result of 'gi': it does not return a struct" "a \`: *i64\` result is no struct"
 
+# --- T (6.7.14, issues/2026-10-15-toplevel-by-value-call-field-store-two-errors.md): at top level a by-value call's
+# field assignment is ONE error, the no-frame refusal — it was that plus "the result is a temporary". In a fn the
+# temporary stays the one error (X1 X2). T0 is the filed repro verbatim.
+NS="returns a struct by value, and a struct result needs storage in a fn's frame"
+cat > "$T/T0.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+fn mk(): H { var h: H; h.n = 1; return h; }
+mk().n = 5;
+syscall(60, 0);
+EOF2
+refused T0 "'mk' $NS" "the filed repro: top-level \`mk().n = 5;\`, one error"
+row T1 'fn go(): i64 { return 0; }
+mk().n += 1;'
+refused T1 "'mk' $NS" "top-level \`mk().n += 1;\`, one error"
+row T2 'fn go(): i64 { return 0; }
+mk8().a = 5;'
+refused T2 "'mk8' $NS" "top-level \`mk8().a = 5;\`, an 8 B result, one error"
+# T3-T5: the same statement's other spellings (found beside the filing): a subscript of the result's `*T` field (the
+# second error was a false "cannot subscript field 'p': it is not a *T field") and a method returning by value.
+row T3 'struct HP { n; p: *i64; }
+fn mkp(): HP { var h: HP; h.n = 1; h.p = &buf; return h; }
+fn go(): i64 { return 0; }
+mkp().p[0] = 5;'
+refused T3 "'mkp' $NS" "top-level \`mkp().p[0] = 5;\`, one error"
+row T4 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+o.mk().n = 5;'
+refused T4 "'O_mk' $NS" "top-level \`o.mk().n = 5;\`, a method, one error"
+row T5 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+o.mk().n += 1;'
+refused T5 "'O_mk' $NS" "top-level \`o.mk().n += 1;\`, one error"
+
+# --- F (6.7.14, issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): a classic-for
+# step is the statement's assignment — through a `: *T` result it stores (F0, the filed repro verbatim; the values
+# file's st_ rows), a by-value result is the statement's refusal, ONCE (it was "expected '=', got '('" — through
+# 6.7.13 also a false "undefined variable 'gp'"); a step with no `=` keeps "expected '='".
+cat > "$T/F0.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+var buf[16];
+fn gp(): *H { return &buf; }
+fn mk(): H { var h: H; h.n = 1; return h; }
+fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n += 1) { i = i + 1; } return load64(&buf); }
+syscall(60, go());
+EOF2
+runs F0 3 "the filed repro: for step gp().n += 1 stores 3"
+row F1 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return i; }'
+refused F1 "$MT" "for step \`mk().n += 1\`, a by-value result, one error"
+row F2 'fn go(): i64 { var o: O = O { 1 }; var i = 0; for (i = 0; i < 3; o.mk().n = 1) { i = i + 1; } return i; }'
+refused F2 "$MT" "for step \`o.mk().n = 1\`, a method returning by value, one error"
+row F3 'fn go(): i64 { return 0; }
+var I = 0;
+for (I = 0; I < 3; mk().n += 1) { I = I + 1; }'
+refused F3 "'mk' $NS" "top-level for step \`mk().n += 1\`: the no-frame refusal, one error"
+row F4 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+var I = 0;
+for (I = 0; I < 3; o.mk().n = 1) { I = I + 1; }'
+refused F4 "'O_mk' $NS" "top-level for step \`o.mk().n = 1\`: the no-frame refusal, one error"
+row F5 'fn f(): i64 { return 0; }
+fn go(): i64 { var i = 0; for (i = 0; i < 3; f()) { i = i + 1; } return i; }'
+refused F5 "expected '=', got '('" "for step \`f()\`, a call, keeps its refusal"
+row F6 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n) { i = i + 1; } return i; }'
+refused F6 "expected '=', got '('" "for step \`gp().n\`, no assignment, keeps its refusal"
+
 # --- K: controls ---
 row K1 'fn go(): i64 { gpb().n = 5; return load64(&buf); }
 fn gpb(): *H { return &buf; }'
@@ -212,7 +285,7 @@ runs K2 6 "the store in a generic body, two instances"
 row K3 'fn go(): i64 { gp().n = fncall0(|| { gp().m = 2; return 3; }); return load64(&buf) * 10 + load64(&buf + 8); }'
 runs K3 32 "a closure in the value storing through its own call"
 
-FLOOR_ROWS=11
+FLOOR_ROWS=24
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

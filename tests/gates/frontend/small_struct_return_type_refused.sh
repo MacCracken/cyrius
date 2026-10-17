@@ -70,6 +70,18 @@
 #                                                          values file does not build)
 #   real tree                                           -> GREEN (27 refusal rows, 26 acceptance rows — floor 26 —
 #                                                          and 12 builds)
+# 6.7.14 (D19 (a), measured 2026-10-17; R24-R39, A14; CYCC=the mutant, a one-edit copy of parse_fn.cyr built by the
+# fixed compiler — the aarch64 / cx legs build from the tree's src and stay fixed):
+#   the lane before it (0d225f0c)                       -> RED 25: R24-R32 x86_64 / PE (8 B: compiled, the slot's
+#                                                          address the struct's word; 16 / 24 B: the classes' own
+#                                                          refusals), R33-R39
+#   `_ret_ptr_src` without its `_ret_slot_amp` arm      -> RED 15: R25 R26 R28 R29 R31 R32 x86_64 / PE, R34-R36
+#   `_ret_small_ptr` without it                         -> RED 10: R24 R27 R30 x86_64 / PE, R33 R37 R38 R39
+#   `_ret_slot_amp` taking no `*T` (`_hl_cp` 1)          -> RED 16: R27-R32 x86_64 / PE, R34-R37
+#   `_ret_slot_amp` without its inline test             -> RED 9: R17-R22 (this wording), A11-A13 (refused)
+#   (`_hl_amp_sid`)
+#   `_ret_slot_refuse` without `_tn_once`               -> RED 1: R39 (once per generic instance)
+#   real tree                                           -> GREEN (43 refusal rows — floor 43 — and 27 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -296,6 +308,85 @@ refuse4 "R23d return (&w.s); from : S16 (16 B)" "the address of a field is not t
 fn g(): i64 { var s: S16 = f(); return s.v; }
 syscall(60, g());
 '
+echo "=== return &q (6.7.14, the user's decision D19 (a), 2026-10-16): a handle's / *T's / untyped self's &q is its slot ==="
+# `&q` of a handle, a `*T` or an untyped `self` is the address of q's own slot (the handle line), no pointer to a struct:
+# refused by name at every size, ONE error at the `&`. Through 6.7.13 the 8 B form returned the slot's address as the
+# struct's word (a dead frame's address read as c.v) and the 16 / 24 B forms were refused in other words ("... two
+# registers ... got `this expression`", "return must be a bare local identifier ..."). Each of the handle / `*S` local /
+# untyped `self` rows on the four compilers. docs/development/issues/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md
+SLOT='is the address of'
+refuse4 "R24 the filed repro verbatim (a handle, 8 B)" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+fn h(): S8 { var q: S8 = alloc(8); q.v = 3; return &q; }
+fn main(): i64 { alloc_init(); var c: S8 = h(); return c.v == 3; }
+syscall(60, main());
+'
+HQ='include "lib/alloc.cyr"
+struct S16 { v; w; }
+struct S24 { v; w; x; }
+'
+refuse4 "R25 return &q; (a handle) from : S16" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" "$HQ"'fn h(): S16 { var q: S16 = alloc(16); q.v = 3; return &q; }
+fn main(): i64 { alloc_init(); var c: S16 = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R26 return &q; (a handle) from : S24" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" "$HQ"'fn h(): S24 { var q: S24 = alloc(24); q.v = 3; return &q; }
+fn main(): i64 { alloc_init(); var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R27 return &p; (p: *S8, a local) from : S8" "$MS — \`&p\` $SLOT p's slot, not a struct — return p" "$T"'fn f(): S8 { var s: S8; s.v = 3; var p: *S8 = &s; return &p; }'"$E"
+refuse4 "R28 return &p; (p: *S16, a local) from : S16" "$MS — \`&p\` $SLOT p's slot, not a struct — return p" "$HQ"'fn h(): S16 { var s: S16; s.v = 3; var p: *S16 = &s; return &p; }
+fn main(): i64 { var c: S16 = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R29 return &p; (p: *S24, a local) from : S24" "$MS — \`&p\` $SLOT p's slot, not a struct — return p" "$HQ"'fn h(): S24 { var s: S24; s.v = 3; var p: *S24 = &s; return &p; }
+fn main(): i64 { var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R30 return &self; (an untyped self) from : S8" "$MS — \`&self\` $SLOT self's slot, not a struct — return self" 'struct S8 { v; }
+impl S8 { fn cp(self): S8 { return &self; } }
+fn main(): i64 { var s: S8; s.v = 3; var c: S8 = s.cp(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R31 return &self; (an untyped self) from : S16" "$MS — \`&self\` $SLOT self's slot, not a struct — return self" 'struct S16 { v; w; }
+impl S16 { fn cp(self): S16 { return &self; } }
+fn main(): i64 { var s: S16; s.v = 3; var c: S16 = s.cp(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R32 return &self; (an untyped self) from : S24" "$MS — \`&self\` $SLOT self's slot, not a struct — return self" 'struct S24 { v; w; x; }
+impl S24 { fn cp(self): S24 { return &self; } }
+fn main(): i64 { var s: S24; s.v = 3; var c: S24 = s.cp(); return c.v; }
+syscall(60, main());
+'
+# ... wrapped, a `*S` parameter, a `*S` global, a typed `self: *S`, a `*U` of another struct, a handle global (x86_64).
+refuse "R33 return (&q); (a handle, wrapped) from : S8" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" "$T"'fn f(): S8 { var q: S8 = alloc(8); q.v = 3; return (&q); }'"$E"
+refuse "R34 return &p; (p: *S16, a parameter) from : S16" "$MS — \`&p\` $SLOT p's slot, not a struct — return p" "$HQ"'fn h2(p: *S16): S16 { return &p; }
+fn main(): i64 { var s: S16; s.v = 3; var c: S16 = h2(&s); return c.v; }
+syscall(60, main());
+'
+refuse "R35 return &GP; (GP: *S24, a global) from : S24" "$MS — \`&GP\` $SLOT GP's slot, not a struct — return GP" "$HQ"'var GS: S24 = S24 { 3, 4, 5 };
+var GP: *S24 = &GS;
+fn h(): S24 { return &GP; }
+fn main(): i64 { var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse "R36 return &self; (self: *S16, typed) from : S16" "$MS — \`&self\` $SLOT self's slot, not a struct — return self" 'struct S16 { v; w; }
+impl S16 { fn cp(self: *S16): S16 { return &self; } }
+fn main(): i64 { var s: S16; s.v = 3; var c: S16 = s.cp(); return c.v; }
+syscall(60, main());
+'
+refuse "R37 return &pu; (pu: *U8, another struct) from : S8" "$MS — \`&pu\` $SLOT pu's slot, not a struct — return pu" "$T"'fn f(): S8 { var u: U8; var pu: *U8 = &u; return &pu; }'"$E"
+refuse "R38 return &GUH; (a handle global of U8) from : S8" "$MS — \`&GUH\` $SLOT GUH's slot, not a struct — return GUH" "$T"'fn f(): S8 { return &GUH; }'"$E"
+# A generic fn's base and its three instances parse the same `return &q;`: reported once.
+refuse "R39 return &q; in a generic fn, three instances" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+fn h<T>(x: T): S8 { var q: S8 = alloc(8); q.v = x; return &q; }
+fn main(): i64 { alloc_init(); var c: S8 = h(3); var d: S8 = h<i32>(4); var e: S8 = h<i16>(5); return c.v; }
+syscall(60, main());
+'
+accept "A14 return q; (q a handle: the advice) is the struct" "$T"'fn f(): S8 { var q: S8 = alloc(8); q.v = 24; return q; }'"$E" 24 \
+    "$T"'fn f(): S8 { var u: S8; u.v = 24; return u; }'"$E"
 accept "A11 return &u; (u: S8) is the struct" "$T"'fn f(): S8 { var u: S8; u.v = 21; return &u; }'"$E" 21 \
     "$T"'fn f(): S8 { var u: S8; u.v = 21; return u; }'"$E"
 accept "A12 return (&u); (u: S3) is the struct" "$T"'fn f(): S3 { var u: S3; u.c = 22; return (&u); }'"$E3" 22 \
@@ -417,7 +508,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 27 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 27) — rows were lost"; exit 1; }
-[ "$naccept" -ge 26 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 26) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 43 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 43) — rows were lost"; exit 1; }
+[ "$naccept" -ge 27 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 27) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

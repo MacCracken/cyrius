@@ -378,6 +378,7 @@ fn _ie_struct_sid(S, bti): i64 {
     if (TOKTYP(S, a) == 8) {   # 6.7.13: a whole dereference `*p` of a `*S` (`_ie_deref_sid`)
         var ds = _ie_deref_sid(S, a, b);
         if (ds > 0) { return ds; }
+        if (_dvd_whole(S, a, b) == 1) { return 0 - 1; }   # 6.7.14: of a `*V`, a vector value
     }
     if (b == a + 1) {
         if (TOKTYP(S, a) == 2) {
@@ -906,6 +907,7 @@ fn _for_step_replay(S): i64 {
         if (mc == 0) { return PARSE_FIELD_STORE(S, noff, 11); }
     }
     if (_step_call_sub(S, noff) == 1) { return 0; }   # 6.7.8 (C2-4b): `f()[i] += 1`, `o.m()[i] = v`
+    if (_step_call_field(S, noff) == 1) { return 0; }   # 6.7.14: `gp().n += 1`, `o.gp().n = v`
     # 6.7.8: `a[i] OP= v` leaves its terminator to the caller (the statement checks `;`): check the
     # step's `)` — `a[0] += 1 2` built silently. CHANGELOG [6.7.8]
     if (_arr_sub_assign(S, noff) == 1) {

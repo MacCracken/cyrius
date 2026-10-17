@@ -63,6 +63,10 @@
 #      field's ADDRESS: an ASLR-dependent exit where 37 is right), and a struct local's `lea rcx` after a
 #      dead store (`var u = 0; u = h.name;` read through the previous field access's rcx: 8 where 41 is
 #      right, past the struct for `u = h.k`, SIGSEGV for a Str field). Every other leg was right.
+#   V  (6.7.14) under CYRIUS_IR=3 (A3), a float literal's `movabs rax, imm64` recorded no IR node, so LASE
+#      kept the local loaded before it as rax and dropped the reload after it: `q.f = 2.5;` through a `*T`
+#      local stored through the literal's bits (SIGSEGV where 1 is right) and `g(2.5, a)` passed 2.5's bits
+#      as `a` (0 where 7 is right; `g2(a, 0.5, a)` 40 where 44 is). Every other leg was right.
 #   MP (6.7.11, the user's decision (a), 2026-10-13) a METHOD's `*T` result takes `.field`, `.m(..)` and a
 #      deeper chain, as a free call's `*T` result has since 6.6.17: `h.get().b` was refused ("cannot take a
 #      field of the result of 'H_get': it does not return a struct"). The pointer is parked as a receiver
@@ -733,6 +737,27 @@ fn wfields(): i64 {
     return 0;
 }
 
+# V — a float literal CYRIUS_IR=3 could not see (the gate's A3 leg): the local loaded before the movabs
+# was taken as still in rax after it. Each shape is its own fn: the load, the literal and the reload
+# must be adjacent.
+struct VH { n; m; f: f64; }
+var vbuf[32];
+fn v_g(x: f64, y): i64 { return y; }
+fn v_g2(y, x: f64, z): i64 { return y * 10 + z; }
+fn v_store(): i64 { var q: *VH = &vbuf; q.f = 2.5; return 1; }
+fn v_bits(): i64 { var q: *VH = &vbuf; q.f = 2.5; if (load64(&vbuf + 16) == 0x4004000000000000) { return 1; } return 0; }
+fn v_arg(): i64 { var a = 7; return v_g(2.5, a); }
+fn v_mid(): i64 { var a = 4; return v_g2(a, 0.5, a); }
+fn v_loc(): i64 { var q: *VH = &vbuf; q.n = 3; var x: f64 = 1.25; q.m = 9; return q.n * 10 + q.m; }
+fn flits(): i64 {
+    assert_eq(v_store(), 1, "V1: var q: *VH = &vbuf; q.f = 2.5; (IR=3: SIGSEGV)");
+    assert_eq(v_bits(), 1, "V2: q.f = 2.5; stores 2.5's bits at the field");
+    assert_eq(v_arg(), 7, "V3: g(2.5, a) after var a = 7; (IR=3: 0)");
+    assert_eq(v_mid(), 44, "V4: g2(a, 0.5, a): the literal between two reads of a (IR=3: 40)");
+    assert_eq(v_loc(), 39, "V5: var x: f64 = 1.25; between two stores through q (a control)");
+    return 0;
+}
+
 # K — an integer operator's result is an integer (no dispatch on its right operand's struct).
 include "lib/overflow.cyr"
 struct KN { x; y; z; }
@@ -918,6 +943,7 @@ fn rows(): i64 {
     strs();
     eladdr();
     wfields();
+    flits();
     flags();
     intrinsics();
     assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");

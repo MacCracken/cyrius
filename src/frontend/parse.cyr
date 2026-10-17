@@ -3441,7 +3441,10 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     # a `Box<Pt>` (the field argument infers T = i64) is refused by name. CHANGELOG [6.6.11]
     if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
     var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return _hl_call_into(S, fi, n, term); }   # 6.7.10 (B7-1): into a handle
+    if (cls == 0) {
+        if (_istr_call(S, fi, n, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `: Str` call into an inline `Str`
+        return _hl_call_into(S, fi, n, term);   # 6.7.10 (B7-1): into a handle
+    }
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -3966,11 +3969,7 @@ fn _dst_struct(S, term, d): i64 {
     if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
     if (PEEKT(S) != 4) {
-        if (_hl_damp == 1) { return 0; }   # 6.7.13: `*(&s) OP= v` keeps 6.7.5's word op (not this fix's)
-        if (_asg_pair_at(S) == 1) {
-            _err_in_sync(S, "compound assignment to the struct ", nm,
-              " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
-        }
+        if (_asg_pair_at(S) == 1) { _dst_cop_err(S, nm); }
         return 0;
     }
     STI(S, GTI(S) + 1);   # `=`
@@ -3981,6 +3980,19 @@ fn _dst_struct(S, term, d): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
+# s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
+# first word, through 6.7.13. CHANGELOG [6.7.14]
+fn _dst_cop_err(S, nm): i64 {
+    if (_hl_damp == 1) {
+        _err_in_sync(S, "compound assignment to struct ", nm,
+          " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+        return 0;
+    }
+    _err_in_sync(S, "compound assignment to the struct ", nm,
+      " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
+    return 0;
 }
 # The statement's assignment arms (`_PARSE_STMT_IMPL`'s order) with the parked pointer `h` as their destination
 # `nm` (`_agc_ovr`). 1 = a copy (`term` consumed); 0 = the value is in rax, the cursor on `term`.
@@ -4217,6 +4229,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var t = _sc_whole(S, st);
     if (t == 0 - 2) {
         if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
+        if (_istr_hcp(S, noff, st, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `Str` method result / field
         _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st);   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
         _istr_asg(S, noff, st); return 0;   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` handle
     }
@@ -4419,6 +4432,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     var dst_gv = _agc_gvi;
     var lt = _agc_t;
     var snslots = _agc_src_operand(S, src_noff);   # 6.6.13: a closure capture too
+    if (snslots == 0) { snslots = _istr_hop(S, lt, dh, src_noff); }   # 6.7.14 (D20 (a)): a `Str` handle
     if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
@@ -5011,12 +5025,14 @@ fn _stmt_method_call(S, noff): i64 {
     var st = GTI(S) - 1;
     _cpf_st = st;   # 6.7.13 (D8 (a)): `o.gp().n = v;` through a method's `*T` result (`_cpf_try`)
     _cpf_done = 0 - 1;
+    var tn = _tsc_n;
     PARSE_FIELD_LOAD(S, noff);
     _cpf_st = sv;
     if (_cpf_done == st) { return 0; }   # the store ended the statement
     # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
-    # `expected ';', got '='`). A chain ending in a call keeps that message.
-    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { _asg_temp_refused(S); return 0; } }
+    # `expected ';', got '='`). A chain ending in a call keeps that message. 6.7.14: at top level the
+    # by-value method refused itself (`_tsc_n` moved), the one error. CHANGELOG [6.7.14]
+    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }

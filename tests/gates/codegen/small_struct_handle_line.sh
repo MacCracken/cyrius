@@ -100,6 +100,10 @@
 # (every pointer form and consumer against its 16 B twin, the untyped boundary, sizes 1..8 B, top level):
 #   R3 that file on the same legs as R1, N derived from it (floor 69)
 #   R4 the filed repro, VERBATIM: exit 111 on the same legs (0 = each callee read the pointer's bits)
+#   R4n (6.7.14) `bs(n + &X)` with a narrow `n` is the pointer `bs(&X + n)` is (6.7.11's `n + &x` rule, the
+#      user's decision 2026-10-13): the filed repro, VERBATIM — exit 77 on the same legs (78 = `n + &X` read as
+#      a value; issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md); R3's
+#      `n_` rows carry every shape (i8 / i16 / i32 / u8 locals and parameters, `&s`, an operand, top level)
 #   PP (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping passed by value — a `*T`
 #      local, a `: *S7` call, an operator's right operand, a `*S7` global, a closure, and at TOP LEVEL
 #      (a hidden global temp) — exit 0, no byte past the object read
@@ -254,6 +258,14 @@
 #      struct into a struct-typed FIELD (`o.s = GP`, `gp()`, `(GP)`, `mk()`, `5`, through a `*O`, at top level)
 #      stores no byte (through 6.7.12 a word over the neighbour), and a zero-size `*p` as a value reads none — its
 #      word 0, into a `*S` parameter the pointer, `*p + l` dispatches (through 6.7.12 the word at p)
+#   R16 (6.7.14, issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md) `**pp` through a `**S` is
+#      the struct value `*p` is: tests/tcyr/crossos/double_pointer_struct_value.tcyr on the same legs (floor 31) — a
+#      declaration copy (wrapped, `*(*pp)`), a by-value argument (3 / 8 / 16 B), an operator's left operand, a `**S`
+#      local, parameter, field, `: **S` call, global, capture, `***S`, `**(pp + 0)`, `return **pp`, an if-expression
+#      branch, `l = **pp`, `**pp = u` copies, top level; `*pp` as the `*S` D9 (a) made it (`return *pp`, `l = *pp + 0`);
+#      R16a-R16c the filed repros VERBATIM: exit 4 (take(**pp), green since 6.7.13's VC-11), 4 (`var t: P = **pp;`:
+#      139 / 139 / cx 0 / PE 5 through 6.7.13), 11 (a 3-byte `**ppc` byte-exact: 10 through 6.7.13); the refusals
+#      (another struct, `**pp OP= v`) are struct_copy_type_checked.sh's R27 / R28 / C5 / C6
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -347,6 +359,19 @@
 #                                                      SIGILL, cxvm out of range), PP x2
 #   MB9 `_sarg_byval_small` without `_hl_byval_arg`  -> RED 16: R3 5 of 69 rows x7, R4 exit 0 x7, PP x2 (and
 #                                                      B1-B4)
+# 6.7.14 NARROW + ADDRESS-OF MUTATION LEDGER (2026-10-17, the gate run as CYCC=<the mutant>):
+#   MN1 `_hl_rcarry` without `_hl_amp_var` (the fix reverted) -> RED R3 x7 (14 of 102 rows: the `n_` rows but
+#                                                      the parameters, the tail call, the capture, the boundary
+#                                                      and top level, which a narrow LOCAL never reaches), R4n
+#                                                      exit 78 x7 (cxvm 14)
+# 6.7.14 DOUBLE-POINTER MUTATION LEDGER (2026-10-17, the same method; R16):
+#   MP1 `_hl_psid` without the `*E` arm (the fix reverted) -> RED 21: R16 x7 (the file does not build: `return
+#                                                      **pp;` / `return *pp;` refused as no struct value, the 8 B
+#                                                      branch "differ in type"), R16b x7 (139 x5, cxvm 0, PE 5),
+#                                                      R16c x7 (10); R16a green (6.7.13's VC-11)
+#   MP2 `_hl_pw` without its `*E` (`_pp_inner`) arm -> RED 7: R16 x7 (`***ppp`: SIGSEGV, cxvm the word)
+#   MP3 `_hl_cw` without its field arm               -> RED 7: R16 x7 (`**w.pp`: SIGSEGV, cxvm the word)
+#   MP4 `_hl_cw` without its generic arm (`_gen_call_word`) -> RED 7: R16 x7 (`**gq<i64>(1)`: SIGSEGV, cxvm the word)
 # B7-1c MUTATION LEDGER (2026-10-12, the same method):
 #   the B7-1b tree (d046368e, no *T operand)          -> RED 14: R5 x7 (`l = p` held the pointer, then
 #                                                      `q = r` rebound q: SIGSEGV x86 x4 / aarch64, cxvm out of
@@ -510,7 +535,8 @@
 #                                                      checked.sh R26 / A12, struct_arg_type_refused.sh D15
 #   MD6  `_ret_lopd` without the `*&p` step          -> RED: R11 does not build (`return *&x + y` refused)
 #   MD7  `_dst_struct` refusing `*(&s) OP= v` too    -> RED: struct_copy_type_checked.sh A13 and
-#                                                      field_compound_values.tcyr Q4 (both refused)
+#                                                      field_compound_values.tcyr Q4 (both refused) — the rule
+#                                                      since 6.7.14 (D17 (a)): both are refusal rows there now
 #   EQUIVALENT: `_deref_small`'s `sz >= 8` as `sz == 8` (over 8 B an unparked `*(&p)` value is its first word
 #   either way; the frame temp is sized by `_agg_temp`) and `_hl_amp_sid` without its `_hl_cp` test (a `*T`
 #   local / parameter / capture / global is excluded by the inline / slot-content / span / GVPM tests too)
@@ -621,7 +647,7 @@ if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GF
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
 NP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TP")
-PFLOOR=69
+PFLOOR=102   # 6.7.14: + the `n + &x` rows
 if [ "$NP" -lt "$PFLOOR" ]; then echo "FAIL: $G: only $NP rows in $TP (floor $PFLOOR) — rows were lost"; exit 1; fi
 TQ=tests/tcyr/crossos/small_struct_pointer_copy.tcyr
 [ -f "$TQ" ] || { echo "FAIL: $G: $TQ is missing"; exit 1; }
@@ -756,6 +782,29 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R4 $leg: did not build: $(grep '^error' "$D/r4_$n.err" | head -1)"
     elif [ "$RC" -eq 111 ]; then ok "R4 $leg: exit 111"
     else bad "R4 $leg: exit $RC, want 111"; fi
+done
+
+# 6.7.14 — the filed narrow + address-of repro, verbatim
+# (issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md).
+cat > "$D/repro_n.cyr" <<'EOF'
+struct B8 { v; }
+fn bs(b: B8): i64 { return b.v; }
+var X[2];
+fn go(): i64 {
+    store64(&X, 5);
+    store64(&X + 8, 7);
+    var n: i32 = 8;
+    return bs(&X + n) * 10 + bs(n + &X);
+}
+syscall(60, go());
+EOF
+echo "R4n. the filed narrow + address-of repro, verbatim (exit 77; 78 = \`bs(n + &X)\` read the address as the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/repro_n.cyr" "$D/r4n_$n"
+    if [ "$RC" -eq -1 ]; then bad "R4n $leg: did not build: $(grep '^error' "$D/r4n_$n.err" | head -1)"
+    elif [ "$RC" -eq 77 ]; then ok "R4n $leg: exit 77"
+    else bad "R4n $leg: exit $RC, want 77"; fi
 done
 
 echo "R5. $TQ ($NQ rows: struct copies through a *T of 8 B or less)"
@@ -965,6 +1014,70 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R15 $leg: the values file did not build: $(grep '^error' "$D/ds_$n.err" | head -1)"
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NDS passed, 0 failed ($NDS total)" ]; then ok "R15 $leg: $LAST"
     else bad "R15 $leg: exit $RC, '$LAST' (want '$NDS passed, 0 failed ($NDS total)') $(grep -m3 'FAIL' "$D/ds_$n.out" | tr '\n' ' ')"; fi
+done
+
+TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
+[ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
+NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
+PSFLOOR=31
+if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
+echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TPS" "$D/ps_$n"
+    if [ "$RC" -eq -1 ]; then bad "R16 $leg: the values file did not build: $(grep '^error' "$D/ps_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NPS passed, 0 failed ($NPS total)" ]; then ok "R16 $leg: $LAST"
+    else bad "R16 $leg: exit $RC, '$LAST' (want '$NPS passed, 0 failed ($NPS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
+done
+# The three filed repros, verbatim (issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md).
+cat > "$D/repro_pp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x; y; }
+fn take(v: P): i64 { return v.y; }
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    return take(**pp);         # want 4
+}
+syscall(60, main());
+EOF
+cat > "$D/repro_pp2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x; y; }
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var t: P = **pp;           # want a copy of s: t.y 4
+    return t.y;
+}
+syscall(60, main());
+EOF
+cat > "$D/repro_pp3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct C3 { a: u8; b: u8; c: u8; }
+var G: u8[8];
+fn main(): i64 {
+    store64(&G, 0x7766554433020100 + 0x0000000000010203 - 0x0000000000020100);
+    var pc: *C3 = &G;
+    var ppc: **C3 = &pc;
+    var w = **ppc;             # a 3-byte struct value: want 0x010203's bytes only (66051), its padding 0
+    var v = *pc;               # the same through the *C3 (6.7.11): byte-exact
+    return (w == v) + 10 * (v == 0x010203);
+}
+syscall(60, main());
+EOF
+for rw in a:1:4 b:2:4 c:3:11; do
+    rs=${rw%%:*}; rn=${rw#*:}; rw=${rn#*:}; rn=${rn%%:*}
+    echo "R16$rs. the filed double-pointer repro $rn, verbatim (exit $rw)"
+    for leg in $XLEGS $OTHER; do
+        n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$D/repro_pp$rn.cyr" "$D/rpp${rn}_$n"
+        if [ "$RC" -eq -1 ]; then bad "R16$rs $leg: did not build: $(grep '^error' "$D/rpp${rn}_$n.err" | head -1)"
+        elif [ "$RC" -eq "$rw" ]; then ok "R16$rs $leg: exit $rw"
+        else bad "R16$rs $leg: exit $RC, want $rw"; fi
+    done
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -1795,4 +1908,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c)"

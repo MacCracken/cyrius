@@ -26,17 +26,47 @@
 #     cannot store the inline Str 't' into a global / into a field / through a pointer - ... (store a handle: ...)
 # A global's address is static and a capture is a copy in the closure's environment, so neither is refused
 # (a closure returned out of t's frame keeps its copy: K4); a `defer` runs in the frame. A position that takes
-# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6). A `var t: Str;` declared
-# with NO initialiser is outside the decision (worded for `var t: Str = Str { .. }`): its bare name stays its
-# first word, as through 6.7.12, so 6.6.16's pun `t = a; str_len(t)` reads a's string (U1, U2; the review fix,
-# 2026-10-16 — the lane had widened D7 (1) to it and the pun read t's unwritten length: 0 where 5 is right).
+# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6).
+#
+# 6.7.14 (the user's decision D20 (a), 2026-10-16; issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md):
+# `t = a` with t an inline `Str` and a a `Str` HANDLE — a local, a parameter, a global, a call or method declared
+# `: Str`, a `Str` field — copies the 16-byte header a points at, as `t = u` between inline `Str`s does; through
+# 6.7.13 it stored a's address into t.data and left t.len stale (6.6.16's pun: `var t: Str; t = a; return t.len;`
+# read the frame's old bytes). So a bare `var t: Str;` (no initialiser) joins D7 (1): `f(t)` passes its header
+# and `return t;` from a fn returning `Str` is refused (X3, restored), where 6.7.13's review fix had kept it
+# outside the decision (its bare name its first word). An untyped source keeps the one-word store (K8).
+#
+# 6.7.14 (the user's decision D23 (b), 2026-10-16; issues/2026-10-16-inline-str-header-escapes-through-bound-
+# handle.md): the refusals stay by name — a handle bound to a frame's t (`var h: Str = t; return h;`, `G = h`) is
+# `&t` and dangles as `var p = &t; return p;` does; the guide says so, and D23a pins that it compiles clean.
+#
+# 6.7.14 (the user's decision D18 (c), 2026-10-16; issues/2026-10-15-inline-str-into-untyped-or-other-pointer-
+# position-passes-data-word.md): only where a type says `Str`. lib/str.cyr types the `Str` methods' operand —
+# `Str_eq` / `Str_cat` `other`, `Str_contains` `needle`, `Str_starts_with` `prefix`, `Str_ends_with` `suffix` —
+# `Str`, so `h.eq(t)` passes t's header (D18a, the filed repro: 1, was 0) and a string literal argument is passed
+# as a `Str` (`h.eq("abc")` 1, was 0); a handle argument compiles byte-identical to the untyped methods (CMP). `var
+# p: *Str = t;` takes the header as a `p: *Str` parameter does (the crossos q_* rows). fncallN, callptr, a vec, a
+# tuple element and an untyped if-expression branch keep the word (K9).
+#
+# 6.7.14 (the user's decisions D21 (a) and D22 (b), 2026-10-16; issues/2026-10-15-top-level-str-declaration-from-
+# inline-str-global-copies.md): a top-level `var H: Str = gt;` (gt an inline `Str` global) binds a handle global to
+# gt's static header, as the same line in a fn does — in the declaration zone (D21a, the filed repro: 33, was 37)
+# and after the first statement (D21b: 33, was 37); a `var P: *Str = gt;` in the zone takes the same address (the
+# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below"). The untyped `var H =
+# gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned; D22b `H == load64(&gt)`).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
-# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X2 and X4-X13 refused (the message first, ONE
-# `^error`, no warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K7 controls that compile and
-# run on every leg; U1-U2 a bare `var t: Str;` keeps its word on every leg; AS1 an inline `Str` in an
-# `async fn` across awaits (x86_64, CYRIUS_ASYNC=1).
+# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
+# warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
+# leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
+# every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
+# unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
+# (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
+# statement (33), D21c a source declared below stays refused, D22a / D22b the untyped top-level declaration's word
+# (0; 1); CMP a handle into the retyped methods builds byte-identical to the
+# untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
+# (x86_64, CYRIUS_ASYNC=1).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its
 # tcyr) with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that
@@ -61,6 +91,37 @@
 #   n11 `_istr_bare` / `_istr_bare_cap` answer 0   -> RED 15: R1 x7 (the five u_* rows), U1 x4, U2 x4 (t's unwritten
 #                                                     length: 224 / 24 / 0 / 0 and 1 / 0 / 0 / 1)
 #   n12 `_istr_cpmark` returns at once             -> RED 7: R1 x7 (u_copy 22, u_cap 22: the copy read its length)
+#   (n11 / n12 retired with the marks by 6.7.14's D20 (a): the bare declaration is D7 (1)'s.)
+#   2026-10-17 (6.7.14, D20 (a); the same scratch-copy method):
+#   d1 the lane before D20 (c778c9817)             -> RED 22: R1 x7 (17 rows: b_bare, u_copy, the h_* copies — 22 the
+#                                                     pun, t.len stale), X3 x4 (compiled), D20b x7 (0), D20c x4
+#                                                     (224 / 24 / 0 / 0)
+#   d2 `_istr_hop` answers 0 (no handle name)      -> RED 21: R1 x7 (8 rows: a local, parameter, global, `(a)`, a for
+#                                                     step, an inline global, top level), D20a x7 (0), D20b x7 (0)
+#   d3 `_istr_call` answers 0 (no `: Str` call)    -> RED 7: R1 x7 (h_gen 22: a generic call; a plain call is typed
+#                                                     by `_istr_hcp` too)
+#   d4 `_istr_hcp` answers 0 (no method / field)   -> RED 7: R1 x7 (h_meth, h_field, h_fieldp)
+#   2026-10-17 (6.7.14, D18 (c)):
+#   e1 the lane before D18 (0807784c2: untyped      -> RED 26: R1 x7 (h.eq(t) 0, then h.cat(t) read "abcdefg" as a
+#      methods, no `*Str` declaration arm)              header: SIGSEGV x5, cx 12 rows, a PE crash), D18a x7 (0),
+#                                                     D18b x4 (0), D18c x8 (warned; 0)
+#   e2 `_istr_pdecl` answers 0                      -> RED 19: R1 x7 (q_ptr 73, q_pglob 33, q_pbare 5, the top-level
+#                                                     `*Str`, and two encoder rows the wild `p.len = 3` corrupted),
+#                                                     D18b x4, D18c x8
+#   e3 `_istr_pdecl` without its SPSC              -> RED 4: D18c x4 (warned "assigning non-pointer to typed pointer")
+#   e4 lib/str.cyr's five methods untyped again     -> RED 14: R1 x7, D18a x7 (0)
+#   2026-10-17 (6.7.14, D21 (a)):
+#   f1 the lane before D21 (11dc74b46)             -> RED 21: R1 x7 (HL, HZ: a copy, 7; HZ2 / PZ: the word), D21a x7
+#                                                     (37), D21b x7 (37)
+#   f2 `_istr_gz` answers 0 (the zone replay)      -> RED 14: R1 x7 and D21a x7 refused "declared below" (pass 1 made
+#                                                     H a handle, the replay's copy path refuses it)
+#   f3 `_istr_gsrc` answers 0 (pass 1 inline)      -> RED 14: R1 x7 (z_bind, z_wrap), D21a x7 (37: copied)
+#   f4 `_istr_src` after the top-level arm again   -> RED 14: R1 x7 (R_TOP5: a copy), D21b x7 (37)
+#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built)
+#   2026-10-17 (6.7.14, D22 (b), the pins):
+#   g1 `_uci_ps` answers at top level (D22's (a))  -> RED 7: R1 x7 (R_TOP6: `var UL = gz;` after a statement became
+#                                                     gz's handle); the zone's D22a / D22b pin the replay's untyped
+#                                                     path, which offers no handle to mutate to
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -183,7 +244,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=47
+FLOOR=83
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -217,6 +278,9 @@ refused X1 "$MR" "the filed table's \`return t;\` from \`fn mk(): Str\` (was 0)"
 row X2 'fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; return ((t)); }
 fn go(): i64 { return f(mk()); }'
 refused X2 "$MR" "\`return ((t));\`"
+row X3 'fn mk(): Str { var t: Str; t.data = "abc"; t.len = 3; return t; }
+fn go(): i64 { return f(mk()); }'
+refused X3 "$MR" "\`var t: Str;\` (inline, no literal) returned (D20 (a); 6.7.13 compiled it, the first word)"
 row X4 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = t; return f(G); }'
 refused X4 "$MG" "\`G = t;\` into a Str global"
 row X5 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = (t); return 0; }'
@@ -259,13 +323,194 @@ runs K6 3 "an untyped global keeps the word"
 row K7 'fn mk(): Str { var h = str_from("abcde"); return h; }
 fn go(): i64 { return f(mk()); }'
 runs K7 5 "a Str handle returned from a fn returning Str"
+row K8 'fn go(): i64 { var a = str_from("abcde"); var x = 0; x = a; var t: Str = Str { "zz", 2 }; t = x; return t.len * 10 + f(t); }'
+runs K8 22 "an untyped source into an inline Str keeps the one-word store (t.len stays 2)"
 
-# --- U: `var t: Str;` with no initialiser keeps its first word (outside D7 (1)), as through 6.7.12 ---
+row K9 'fn id(x): i64 { return x; }
+fn go(): i64 {
+    var t: Str = Str { "abcdefg", 7 };
+    var w = load64(&t);
+    var h = str_from("zz");
+    var v = vec_new();
+    vec_push(v, t);
+    var x = (t, 1);
+    var c = 1;
+    var b = if (c == 1) { t } else { h };
+    var n = 0;
+    if (fncall1(&id, t) == w) { n = n + 1; }
+    if (callptr(&id, t) == w) { n = n + 1; }
+    if (vec_get(v, 0) == w) { n = n + 1; }
+    if (x.0 == w) { n = n + 1; }
+    if (b == w) { n = n + 1; }
+    return n;
+}'
+runs K9 5 "untyped positions keep t's data word: fncall1, callptr, a vec, a tuple element, an if-expression branch (D18 (c))"
+
+# --- D23: a handle BOUND to a frame's inline Str escapes as `&t` does — it compiles, no diagnostic (D23 (b), documented) ---
+cat > "$T/D23a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+fn smash(): i64 { var a: i64[32]; var i = 0; while (i < 32) { a[i] = 0; i = i + 1; } return a[3]; }
+fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; var h: Str = t; return h; }
+fn main() { var h = mk(); smash(); return f(h); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D23a
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D23a.$leg" ]; then bad "D23a ($leg): the bound handle's \`return h;\` did not build (rc $crc): $(grep '^error' "$T/D23a.$leg.err" | head -1 || true)"
+    elif grep -qE '^(error|warning)' "$T/D23a.$leg.err"; then bad "D23a ($leg): a diagnostic: $(grep -E '^(error|warning)' "$T/D23a.$leg.err" | head -1)"
+    else ok "D23a the filed repro: \`var h: Str = t; return h;\` compiles clean ($leg) — it dangles as \`&t\` does"; fi
+done
+
+# --- U: a bare `var t: Str;` assigned a Str handle reads its OWN header, the handle's copied (D20 (a)) ---
 row U1 'fn go(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }'
-runs U1 5 "\`var t: Str; t = a; str_len(t)\` — the 6.6.16 pun reads a's string (the lane read t's unwritten length)"
+runs U1 5 "\`var t: Str; t = a; str_len(t)\` — t's own header, a's copied (6.7.13 read a's string through the pun)"
 row U2 'fn g(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t = str_from("de"); } return str_len(t); }
 fn go(): i64 { return g(1); }'
-runs U2 3 "\`var t: Str;\` assigned in one branch (the lane read t's unwritten length)"
+runs U2 3 "\`var t: Str;\` assigned in one branch"
+
+# --- D20: the filed repro (issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md), verbatim, and its rows ---
+cat > "$T/D20a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn main() {
+    alloc_init();
+    var a = str_from("abcde");
+    var t: Str;
+    t = a;
+    return str_len(t);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D20a 5 "the filed repro: \`var t: Str; t = a; str_len(t)\` (5 through t's own header)" "$XLEGS $OLEGS"
+sed 's/return str_len(t);/return t.len;/' "$T/D20a.cyr" > "$T/D20b.cyr"
+runs D20b 5 "the filed repro's \`return t.len;\` (the pun left t.len unwritten)" "$XLEGS $OLEGS"
+row D20c 'fn go(): i64 { var t: Str; t = str_from("hello"); var h: Str = Str { "zz", 2 }; h = t; return str_len(h); }'
+runs D20c 5 "the filed row 3: \`h = t\` copies t's header, a's copied into t (6.7.13: t's unwritten length)"
+
+# --- D18: the filed repro (issues/2026-10-15-inline-str-into-untyped-or-other-pointer-position-passes-data-word.md), verbatim ---
+cat > "$T/D18a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main() {
+    alloc_init();
+    var t: Str = Str { "abcdefg", 7 };
+    var h = str_from("abcdefg");
+    return h.eq(t);          # Str_eq(self, other): `other` is untyped
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D18a 1 "the filed repro: \`h.eq(t)\` — Str_eq's \`other: Str\` takes t's header (was 0)" "$XLEGS $OLEGS"
+row D18b 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = t; return str_len(p); }'
+runs D18b 7 "the filed table's \`var p: *Str = t; str_len(p)\` (was the data word)"
+# D18c: `var p: *Str = gt;` is the header's address, so it is not warned "assigning non-pointer to typed pointer"
+# (6.7.13 warned: the factor leaves an inline global's scale 0).
+row D18c 'fn go(): i64 { var p: *Str = gt; return str_len(p); }'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D18c
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D18c.$leg" ]; then bad "D18c ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/D18c.$leg.err"; then bad "D18c ($leg): warned: $(grep '^warning' "$T/D18c.$leg.err" | head -1)"
+    else ok "D18c \`var p: *Str = gt;\` ($leg): no warning"; fi
+done
+runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
+
+# --- D21 / D22: the filed repros 1 and 2 (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
+cat > "$T/D21a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var gt: Str = Str { "abcdefg", 7 };
+var H: Str = gt;
+fn main() { H.len = 3; return f(H) * 10 + gt.len; }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D21a 33 "the filed repro 1: a zone \`var H: Str = gt;\` binds gt's header (was 37, a copy)" "$XLEGS $OLEGS"
+sed 's/^var H: Str = gt;$/alloc_init();\nvar H: Str = gt;/' "$T/D21a.cyr" > "$T/D21b.cyr"
+runs D21b 33 "the same after a first top-level statement (was 37)" "$XLEGS $OLEGS"
+cat > "$T/D21c.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var H: Str = gt;
+var gt: Str = Str { "abcdefg", 7 };
+fn main() { return f(H); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+refused D21c "cannot copy-init 'H' from a global declared below it (declare the source first): 'gt'" "gt declared below H stays refused"
+cat > "$T/D22a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var gt: Str = Str { "abcdefg", 7 };
+var H = gt;
+fn main() { return f(H); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D22a 0 "the filed repro 2: an untyped top-level \`var H = gt;\` keeps gt's first word (D22 (b), unchanged)" "$XLEGS $OLEGS"
+sed 's/^fn main() { return f(H); }$/fn main() { if (H == load64(\&gt)) { return 1; } return 2; }/' "$T/D22a.cyr" > "$T/D22b.cyr"
+runs D22b 1 "\`var H = gt;\` at top level is gt's first word (H == load64(&gt))"
+
+# --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
+rows=$((rows + 1))
+cat > "$T/CMP.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn main(): i64 {
+    alloc_init();
+    var h = str_from("abcdefg");
+    var k = str_from("cde");
+    var n = h.eq(k) + h.contains(k) + h.starts_with(k) + h.ends_with(k);
+    return n * 100 + str_len(h.cat(k));
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+mkdir -p "$T/untyped"
+cp -r lib "$T/untyped/lib"
+sed -i -e 's/^fn Str_eq(self, other: Str)/fn Str_eq(self, other)/' -e 's/^fn Str_cat(self, other: Str)/fn Str_cat(self, other)/' \
+    -e 's/^fn Str_contains(self, needle: Str)/fn Str_contains(self, needle)/' \
+    -e 's/^fn Str_starts_with(self, prefix: Str)/fn Str_starts_with(self, prefix)/' \
+    -e 's/^fn Str_ends_with(self, suffix: Str)/fn Str_ends_with(self, suffix)/' "$T/untyped/lib/str.cyr"
+if [ "$(grep -cE '^fn Str_(eq|cat|contains|starts_with|ends_with)\(self, [a-z]+\)' "$T/untyped/lib/str.cyr")" != 5 ]; then
+    bad "CMP: the untyped copy of lib/str.cyr does not hold the five untyped methods (lib/str.cyr changed?)"
+else
+    for leg in x86_64 pe; do
+        compile "$leg" CMP
+        cp "$T/CMP.$leg" "$T/CMP.$leg.typed"
+        crc2=0
+        case $leg in
+            x86_64) (cd "$T/untyped" && timeout 60 "$CC" < "$T/CMP.cyr" > "$T/CMP.$leg.untyped" 2> /dev/null) || crc2=$? ;;
+            pe)     (cd "$T/untyped" && CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/CMP.cyr" > "$T/CMP.$leg.untyped" 2> /dev/null) || crc2=$? ;;
+        esac
+        if [ "$crc" -ne 0 ] || [ "$crc2" -ne 0 ]; then bad "CMP ($leg): did not build (rc $crc / $crc2)"
+        elif cmp -s "$T/CMP.$leg.typed" "$T/CMP.$leg.untyped"; then ok "CMP ($leg): a handle into the typed methods builds byte-identical"
+        else bad "CMP ($leg): the typed methods changed a handle argument's code"; fi
+    done
+    if [ "$QEMU" -eq 1 ]; then
+        compile aarch64 CMP
+        crc2=0; (cd "$T/untyped" && timeout 60 "$A64" < "$T/CMP.cyr" > "$T/CMP.a64.untyped" 2> /dev/null) || crc2=$?
+        if [ "$crc" -eq 0 ] && [ "$crc2" -eq 0 ] && cmp -s "$T/CMP.aarch64" "$T/CMP.a64.untyped"; then ok "CMP (aarch64): byte-identical"
+        else bad "CMP (aarch64): differs or did not build (rc $crc / $crc2)"; fi
+    fi
+    if [ "$CX" -eq 1 ]; then
+        compile cx CMP
+        crc2=0; (cd "$T/untyped" && timeout 60 "$CXC" < "$T/CMP.cyr" > "$T/CMP.cx.untyped" 2> /dev/null) || crc2=$?
+        if [ "$crc" -eq 0 ] && [ "$crc2" -eq 0 ] && cmp -s "$T/CMP.cx" "$T/CMP.cx.untyped"; then ok "CMP (cx): byte-identical"
+        else bad "CMP (cx): differs or did not build (rc $crc / $crc2)"; fi
+    fi
+fi
+runs CMP 110 "the handle program runs: (eq 0 + contains 1 + starts 0 + ends 0) * 100 + the cat's 10" "x86_64"
 
 # --- AS1: an inline Str in an async fn (the coroutine's heap frame), across awaits ---
 if [ -f lib/async.cyr ]; then
@@ -273,7 +518,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=24
+FLOOR_ROWS=42
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

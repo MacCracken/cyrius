@@ -31,7 +31,7 @@
 # 6.7.11 (the e_ rows): the two edges B7-1b left — an if-expression whose every branch is a pointer, of
 # any steps, and an integer on the left of a one-byte struct pointer (decision 1(b) extended, the user's
 # decision 2026-10-13) — pass the struct too; a pointer beside a value in an if-expression stays a value.
-# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (MB1 .. MB9), which runs this file
+# Mutation ledger: tests/gates/codegen/small_struct_handle_line.sh (MB1 .. MB9, 6.7.14 MN1), which runs this file
 # on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine).
 # CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
 include "lib/assert.cyr"
@@ -348,6 +348,37 @@ fn e_left_8() {
     return take8(n + sp);
 }
 
+# ── 6.7.14: `n + &x` with a narrow `n` (issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md) ──
+# 6.7.11 (the user's decision, 2026-10-13, guide § Pointers): `n + &x` is the pointer `&x + n` is. The by-value
+# argument's right-carry (`_hl_rcarry`) asked only for a `*T` struct pointer right of the last `+`, so a narrow
+# left `n` (i8 / i16 / i32 / u8) made `take8(n + &x)` a value: the callee read the address's bits as its struct
+# (the filed repro 78 where 77 is right, every target). `&x` of a variable — a local, a parameter, a capture, a
+# global — carries the pointer now; `n + 5` stays the struct's word.
+var NX: i64[2];
+fn n_i8() { var n: i8 = 8; return take8(&NX + n) * 10 + take8(n + &NX); }
+fn n_i16() { var n: i16 = 8; return take8(&NX + n) * 10 + take8(n + &NX); }
+fn n_i32() { var n: i32 = 8; return take8(&NX + n) * 10 + take8(n + &NX); }
+fn n_u8() { var n: u8 = 8; return take8(&NX + n) * 10 + take8(n + &NX); }
+fn n_pi8(n: i8) { var r = take8(n + &NX); return r; }
+fn n_pi16(n: i16) { var r = take8(n + &NX); return r; }
+fn n_pi32(n: i32) { var r = take8(n + &NX); return r; }
+fn n_pu8(n: u8) { var r = take8(n + &NX); return r; }
+fn n_tail(n: i32) { return take8(n + &NX); }
+fn n_local_8() { var s: S8; s.v = 5; var n: i32 = 0; return take8(n + &s); }
+fn n_local_h() { var s: H; s.v = 5; s.w = 0; var n: i32 = 0; return takeh(n + &s); }
+fn n_two_8() { var t: Two8; t.a.v = 4; t.b.v = 5; var n: i32 = 8; return take8(n + &t) * 10 + take8(&t + n); }
+fn n_two_h() { var t: TwoH; t.a.v = 4; t.a.w = 0; t.b.v = 5; t.b.w = 0; var n: i32 = 16; return takeh(n + &t) * 10 + takeh(&t + n); }
+fn n_wrap_8() { var s: S8; s.v = 5; var n: i16 = 0; return take8((n + &s)) * 100 + take8(n + (&s)) * 10 + take8(((n) + &s)); }
+fn n_par_8(p: S8) { var n: i32 = 0; return take8(n + &p); }
+fn n_op_8() { var s: S8; s.v = 5; var o: S8; o.v = 3; var n: i32 = 0; return o + (n + &s); }
+fn n_op_h() { var s: H; s.v = 5; s.w = 0; var o: H; o.v = 3; o.w = 0; var n: i32 = 0; return o + (n + &s); }
+fn n_marg_8() { var s: S8; s.v = 5; var o: S8; o.v = 3; var n: i32 = 0; return o.with(n + &s); }
+fn n_cap_8() { var s: S8; s.v = 5; var n: i32 = 0; var f = |d| take8(n + &s) + d; return callptr(f, 0); }
+fn n_b3() { var b: B3; b.a = 1; b.b = 0 - 2; b.c = 3; var n: u8 = 0; return t3(n + &b); }
+fn n_value() { var n: i32 = 2; return take8(n + 5) * 10 + t4(n + 5); }
+var TNI: i32 = 0;
+var TNX = take8(TNI + &G8);
+
 assert_eq(a_local_8(), 5, "a *T local passes its struct");
 assert_eq(a_local_8(), a_local_h(), "  = its 16 B twin");
 assert_eq(a_amp_8(), 5, "&s passes the struct");
@@ -433,4 +464,30 @@ assert_eq(e_left_1(), 21311, "6.7.11 an integer left of a *B1: m + pb, 0 + pb, n
 assert_eq(e_left_chain(), 13, "6.7.11 a chain: n - 2 + pb (n: i32), m + 1 + pb");
 assert_eq(e_left_2(), 2 * (0 - 300), "6.7.11 m + pb2 and n + pb2 (n: i32) into a 2 B struct");
 assert_eq(e_left_8(), 5, "6.7.11 8 B: n + sp (n: i32)");
+store64(&NX, 5);
+store64(&NX + 8, 7);
+assert_eq(n_i8(), 77, "6.7.14 &X + n and n + &X (n: i8)");
+assert_eq(n_i16(), 77, "6.7.14 &X + n and n + &X (n: i16)");
+assert_eq(n_i32(), 77, "6.7.14 &X + n and n + &X (n: i32)");
+assert_eq(n_u8(), 77, "6.7.14 &X + n and n + &X (n: u8)");
+assert_eq(n_pi8(8), 7, "6.7.14 n + &X, n an i8 parameter");
+assert_eq(n_pi16(8), 7, "6.7.14 n + &X, n an i16 parameter");
+assert_eq(n_pi32(8), 7, "6.7.14 n + &X, n an i32 parameter");
+assert_eq(n_pu8(8), 7, "6.7.14 n + &X, n a u8 parameter");
+assert_eq(n_tail(8), 7, "6.7.14 n + &X in a tail call");
+assert_eq(n_local_8(), 5, "6.7.14 n + &s, s a struct local");
+assert_eq(n_local_8(), n_local_h(), "  = its 16 B twin");
+assert_eq(n_two_8(), 55, "6.7.14 n + &t and &t + n into the second struct");
+assert_eq(n_two_8(), n_two_h(), "  = its 16 B twin");
+assert_eq(n_wrap_8(), 555, "6.7.14 (n + &s), n + (&s), ((n) + &s)");
+assert_eq(n_par_8(G8), 5, "6.7.14 n + &p, p a by-value parameter");
+assert_eq(n_op_8(), 35, "6.7.14 an operator's right operand o + (n + &s)");
+assert_eq(n_op_8(), n_op_h(), "  = its 16 B twin");
+assert_eq(n_marg_8(), 35, "6.7.14 a method's argument o.with(n + &s)");
+assert_eq(n_cap_8(), 5, "6.7.14 n + &s of captures in a closure body");
+assert_eq(n_b3(), 9803, "6.7.14 3 B: n + &b (n: u8)");
+assert_eq(n_value(), 77, "6.7.14 boundary: n + 5 stays the struct's word");
+assert_eq(TNX, 5, "6.7.14 top level, the declaration zone: TNI + &G8 (TNI: i32)");
+var TNI8: i32 = 8;
+assert_eq(take8(TNI8 + &NX), 7, "6.7.14 top level after a statement: TNI8 + &NX");
 var r = assert_summary();

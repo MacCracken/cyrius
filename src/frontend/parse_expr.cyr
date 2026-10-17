@@ -3038,10 +3038,14 @@ fn _stmt_call_field(S): i64 {
     var st = GTI(S) - 1;
     _cpf_st = st;   # 6.7.13 (D8 (a)): a field of a `: *T` result is stored through it (`_cpf_try`)
     _cpf_done = 0 - 1;
+    var tn = _tsc_n;
     var r = _call_field(S);
     _cpf_st = sv;
     if (r == 0) { return 0; }
     if (_cpf_done == st) { return 1; }   # the store ended the statement
+    # 6.7.14: at top level the by-value call refused itself (`_tsc_n` moved): that is the one error, whatever
+    # follows (`= v`, `OP= v`, `.p[i] = v`). CHANGELOG [6.7.14]
+    if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
     if (PEEKT(S) == 28) { _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `mk(4).p[i] = v;`
     elif (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -3801,6 +3805,64 @@ fn _step_call_sub(S, noff): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     return 1;
 }
+# ⛔ 6.7.14 — THE CLASSIC-FOR STEP `gp().n += 1` / `o.gp().n = v` (a field of a call's result, cursor past the first
+# name `noff`) is the statement's assignment, ending at the step's `)`: through a `: *T` result it stores through the
+# pointer (6.7.13's D8 (a), `_cpf_try` armed with `_cpf_step`), a by-value result is the statement's "the result is
+# a temporary", once (the top-level no-frame refusal alone, `_tsc_n`). The step fell to `_for_step_assign` and was
+# "expected '=', got '('" (6.7.5's rule: every assignment a statement takes is a step). Twin of `_stmt_call_field`
+# and `_stmt_method_call`. 1 = the step, stored or refused; 0 = not that shape, cursor untouched (a step with no `=`,
+# `gp().n` or `o.inc()`, keeps "expected '='"). CHANGELOG [6.7.14]
+fn _step_call_field(S, noff): i64 {
+    if (_step_asg_at(S) == 0) { return 0; }
+    var st = GTI(S) - 1;
+    var dot = 0;
+    if (PEEKT(S) == 41) { dot = 1; }
+    elif (_call_dotted(S, st) == 0) { return 0; }
+    var sv = _cpf_st;
+    var svs = _cpf_step;
+    _cpf_st = st;
+    _cpf_step = st;
+    _cpf_done = 0 - 1;
+    var tn = _tsc_n;
+    var r = 1;
+    if (dot == 1) { _mcall_last = 0 - 1; PARSE_FIELD_LOAD(S, noff); }
+    else { r = _call_field(S); }
+    _cpf_st = sv;
+    _cpf_step = svs;
+    if (r == 0) { STI(S, st + 1); return 0; }
+    return _step_cf_tail(S, st, tn, dot);
+}
+# `_step_call_field` after its call chain: the store ended the step, or the rest is refused once.
+fn _step_cf_tail(S, st, tn, dot): i64 {
+    if (_cpf_done == st) { return 1; }   # the store ended the step at its `)`
+    if (_tsc_n != tn) { return 1; }      # the call refused itself (top level): the one error
+    if (dot == 0) { if (PEEKT(S) == 28) { _stmt_call_sub(S); } }   # `mk(4).p[i] = v`, as the statement
+    if (_asg_pair_at(S) == 1) { if (_mcall_last < 0 || dot == 0) { _asg_temp_refused(S); return 1; } }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    return 1;
+}
+# 1 = the step from the cursor to the for's `)` holds an `=` outside parentheses: an assignment (`=` or `OP =`).
+# Inside parentheses anything may stand (an argument's closure, its `{ .. ; }`).
+fn _step_asg_at(S): i64 {
+    var i = GTI(S);
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { d = d + 1; }
+        elif (t == 11) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        }
+        elif (t == 12) { return 0; }
+        elif (d == 0) {
+            if (t == 4) { return 1; }
+            if (t == 13 || t == 5) { return 0; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
 
 # The three factor arms below live out of _PARSE_FACTOR_IMPL, whose body sits at cybs's silent
 # per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work
@@ -4265,6 +4327,7 @@ fn _deref_read(S): i64 {
     if (ed != 0) { return _esub_load(S, ed); }
     var ow = _pk_word(S);
     var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
+    var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.14: a `*V`'s vector, for an if-expression branch
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     if (_deref_small(S, d) == 0) { ELOAD64(S); }
     SPSC(S, iw);
@@ -4272,8 +4335,31 @@ fn _deref_read(S): i64 {
         _PK_MARK(S, iw);   # the pointee's word is this value's own (`_pk_word`)
         _ppd_note(S, d, ow);   # 6.7.13: and its struct, for `**pps`
     }
+    if (vd != 0) { _dvd_note(S, d); }
     if (pk == 1) { _dlo_note(S, d); }
     return 0;
+}
+# ⛔ 6.7.14 — A VECTOR DEREFERENCE IS A VECTOR VALUE AS AN IF-EXPRESSION BRANCH (6.7.13's D34: `*pv` of a `*V` is the
+# vector), so `if (c) { *pa } else { *pb }` is refused as `{ a } else { b }` is — it compiled to lane 0's word, the
+# value `_deref_read` loads (issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md). The load
+# replaces the operand's step word, so the dereference at `d` whose operand names a vector (`_dop_vd`: its step word,
+# or `*&w`) notes its span and the code pointer after it; `_ie_struct_sid` matches a whole `* E` branch against it
+# (`_dvd_whole`: nothing emitted since). CHANGELOG [6.7.14]
+var _dvd_beg = 0 - 1;   # the dereference's `*`
+var _dvd_end = 0 - 1;   # the token after its operand
+var _dvd_cp = 0 - 1;    # the code pointer after its load
+fn _dvd_note(S, d): i64 {
+    _dvd_beg = d;
+    _dvd_end = GTI(S);
+    _dvd_cp = GCP(S);
+    return 0;
+}
+# 1 = [a, b) is exactly the vector dereference `_dvd_note` recorded last, nothing emitted since.
+fn _dvd_whole(S, a, b): i64 {
+    if (_dvd_cp != GCP(S)) { return 0; }
+    if (a != _dvd_beg) { return 0; }
+    if (b != _dvd_end) { return 0; }
+    return 1;
 }
 # ⛔ 6.7.11 — A DEREFERENCE OF A STRUCT UNDER 8 BYTES READS THE STRUCT, NOT A WORD (`*p` is a struct
 # value, 6.7.10 decision 6). Its load read 8 bytes from `p` whatever the struct's size, so a global

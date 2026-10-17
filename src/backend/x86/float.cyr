@@ -165,7 +165,12 @@ fn EMIT_F32_BINOP(S, fop): i64 {
 # ⛔ 6.6.10 — this was movabs/cvtsi2sd/movabs/cvtsi2sd/divsd over an i64 numer/denom pair:
 # garbage past 18 fraction digits or a 2^63 digit string, and a double rounding that put
 # 16-18 digit literals 1 ulp off. CHANGELOG [6.6.10]
+# IR-opaque (IR_RAW_EMIT), as EF32_FROM / EF32_TO: unrecorded, CYRIUS_IR=3's LASE saw rax
+# unchanged across the movabs and dropped the reload after it (`q.f = 2.5` stored through the
+# literal's bits). RAW_EMIT, not LOAD_IMM: const-fold must not read float bits as an integer.
+# CHANGELOG [6.7.14]
 fn EMIT_FLOAT_LIT(S, fval): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
     E2(S, 0xB848); E8(S, FLIT_NUM(fval));   # movabs rax, imm64
     return 0;
 }

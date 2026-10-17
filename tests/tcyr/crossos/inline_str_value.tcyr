@@ -12,8 +12,12 @@
 # a frame's header outlive the frame are refused by name (tests/gates/frontend/inline_str_value.sh): `return t;`
 # from a fn returning `Str`, a store into a `Str` global, a `Str` field or through a `*Str`. A global's address
 # is static and a capture is a copy in the closure's environment, so neither is refused: those rows are here.
-# A `var t: Str;` declared with NO initialiser is outside the decision (worded for `var t: Str = Str { .. }`):
-# its bare name stays its first word, so 6.6.16's pun `t = a; str_len(t)` reads a's string (the u_* rows).
+# Since 6.7.14 (the user's decision D20 (a), 2026-10-16) a bare `var t: Str;` is an inline `Str` under D7 (1) too
+# (the b_bare / u_* rows), and `t = a` — an inline `Str` <- a `Str` HANDLE: a local, a parameter, a global, a
+# call or method declared `: Str`, a `Str` field — copies the header a points at (the h_* rows), as `t = u`
+# between two inline `Str`s does: through 6.7.13 it stored a's address into t.data and left t.len stale (6.6.16's
+# pun, which `str_len(t)` read back through t.data for a bare t). An untyped source keeps the one-word store
+# (tests/gates/frontend/inline_str_value.sh K8).
 #
 # CROSS-HOST: the address is EFLADDR / EVADDR on each backend, the tail-call rows check that a frame address
 # laundered through a handle diverts the `jmp` (`_fn_local_addr`). Run on ecb / ach (Mach-O), cass (PE) and pi
@@ -52,6 +56,18 @@ var gt: Str = Str { "abcdefg", 7 };
 var GQ: Str = Str { "a\"b", 3 };
 var GH: Str = 0;
 var G_DEF = 0;
+var GA: Str = 0;                       # a Str handle global (set at top level)
+var gi: Str = Str { "zz", 2 };         # an inline Str global the h_ginl row copies into
+var gi2: Str = Str { "zz", 2 };        # ... and the top-level rows
+var gi3: Str = Str { "zz", 2 };
+# ── top level: `var H: Str = gz;` is a handle to gz's header in the declaration zone and after the first statement
+#    (6.7.14, D21 (a)); `var P: *Str = gz;` takes the same address; an untyped `var U = gz;` keeps the word (D22 (b))
+var gz: Str = Str { "abcdefg", 7 };
+var HZ: Str = gz;
+var HZ2: Str = ((gz));
+var HZ3: Str = gz;
+var PZ: *Str = gz;
+var UZ = gz;
 
 # ── the filed table (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) ──────────────────
 fn t_call(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }
@@ -79,12 +95,55 @@ fn b_param(s: Str): i64 { var t: Str = Str { "abc", 3 }; s = t; return str_len(s
 fn b_inline(): i64 { var t: Str = Str { "abcdefg", 7 }; var h: Str = Str { "zz", 2 }; h = t; h.len = 3; return t.len * 10 + f(h); }
 fn b_shadow(): i64 { alloc_init(); var gt: Str = str_from("zz"); return f(gt); }
 
-# ── `var t: Str;` with no initialiser keeps its first word, as through 6.7.12 (and so does a copy of it) ─────
+# ── a bare `var t: Str;` is an inline `Str` under D7 (1) (6.7.14, D20 (a)): its header's address, bound or copied ──
+fn b_bare(): i64 { var t: Str; t.data = "abc"; t.len = 3; return f(t); }
 fn u_pun(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }
 fn u_branch(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t = str_from("de"); } return str_len(t); }
-fn u_copy(): i64 { var t: Str; t = str_from("hello"); var h: Str = t; var k = t; return f(h) * 10 + f(k); }
+fn u_copy(): i64 { var t: Str; t = str_from("hello"); var h: Str = t; var k = t; h.len = 4; return f(t) * 10 + f(k); }
 fn u_cap(): i64 { var t: Str; t = str_from("hello"); var c = || { var h: Str = t; return f(h); }; return callptr(c); }
-fn u_reuse(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }   # the slot a u_* fn marked: a literal again
+fn u_reuse(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }   # a literal Str in a slot a bare one used
+
+# ── `t = a`, an inline `Str` <- a `Str` handle, copies a's header (6.7.14, D20 (a)) ──────────────────────────
+fn gs<T>(x: T): Str { return str_from("abcde"); }
+fn h_len(): i64 { var a = str_from("abcde"); var t: Str; t = a; return t.len; }
+fn h_copy(): i64 { var a = str_from("abcde"); var t: Str; t = a; a.len = 2; return t.len * 10 + str_len(a); }
+fn h_row3(): i64 { var t: Str; t = str_from("hello"); var h: Str = Str { "zz", 2 }; h = t; return str_len(h); }
+fn h_lit(): i64 { var a = str_from("abcde"); var t: Str = Str { "zz", 2 }; t = a; return t.len * 10 + f(t); }
+fn h_param(s: Str): i64 { var t: Str; t = s; return t.len * 10 + f(t); }
+fn h_global(): i64 { var t: Str = Str { "zz", 2 }; t = GA; return t.len * 10 + f(t); }
+fn h_call(): i64 { var t: Str = Str { "zz", 2 }; t = str_from("abcde"); return t.len * 10 + f(t); }
+fn h_gen(): i64 { var t: Str = Str { "zz", 2 }; t = gs<i64>(1); return t.len * 10 + f(t); }
+fn h_meth(): i64 { var h = str_from("abcde"); var t: Str; t = h.clone(); var u: Str; u = h.sub(1, 3); return t.len * 10 + f(u); }
+fn h_field(): i64 { var w: W = W { str_from("abcde"), 1 }; var t: Str; t = w.s; return t.len * 10 + f(t); }
+fn h_fieldp(): i64 { var p: *W = new_w(); p.s = str_from("abcde"); var t: Str; t = p.s; return t.len * 10 + f(t); }
+fn h_wrap(): i64 { var a = str_from("abcde"); var t: Str; t = (a); var u: Str; u = ((str_from("xyz"))); return t.len * 10 + f(u); }
+fn h_step(): i64 { var a = str_from("abcde"); var t: Str; var i = 0; for (i = 0; i < 1; t = a) { i = i + 1; } return t.len * 10 + f(t); }
+fn h_cap(): i64 { var a = str_from("abcde"); var c = || { var t: Str = Str { "zz", 2 }; t = a; return t.len * 10 + f(t); }; return callptr(c); }
+fn h_ginl(): i64 { var a = str_from("abcde"); gi = a; a.len = 1; return gi.len * 10 + f(gi); }
+
+# ── a `Str` method's operand (lib/str.cyr types it since 6.7.14, D18 (c)) and a `*Str` declaration take the header ──
+fn q_eq(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("abcdefg"); return h.eq(t); }
+fn q_cat(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("abcdefg"); return str_len(h.cat(t)); }
+fn q_has(): i64 {
+    var n: Str = Str { "cde", 3 };
+    var p: Str = Str { "abc", 3 };
+    var s: Str = Str { "efg", 3 };
+    var h = str_from("abcdefg");
+    return h.contains(n) * 100 + h.starts_with(p) * 10 + h.ends_with(s);
+}
+fn q_not(): i64 { var t: Str = Str { "abcdefz", 7 }; var x: Str = Str { "xyz", 3 }; var h = str_from("abcdefg"); return h.eq(t) + h.contains(x) + h.starts_with(x) + h.ends_with(x); }
+fn q_glob(): i64 { var h = str_from("abcdefg"); return h.eq(gt) * 10 + h.contains(gt); }
+fn q_lit(): i64 { var h = str_from("abcdefg"); return h.eq("abcdefg") * 1000 + h.contains("cde") * 100 + h.starts_with("abc") * 10 + h.ends_with("efg"); }
+fn q_catl(): i64 { var h = str_from("abcdefg"); return str_len(h.cat("xy")); }
+fn q_ptr(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = t; p.len = 3; return t.len * 10 + str_len(p); }
+fn q_pglob(): i64 { var p: *Str = gt; var q: *Str = (gt); return str_len(p) * 10 + str_len(q); }
+fn q_pbare(): i64 { var t: Str; t = str_from("abcde"); var p: *Str = (t); p.len = 2; return t.len; }
+fn q_pcap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = t; return str_len(p); }; return callptr(c); }
+
+fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
+fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
+fn z_word(): i64 { if (UZ == load64(&gz)) { return 1; } return 0; }
+fn z_rebind(): i64 { HZ3 = str_from("xy"); return f(HZ3) * 10 + gz.len; }
 
 # ── a global inline `Str`: its static address, wherever it goes ─────────────────────────────────────────────
 fn mkg(): Str { return gt; }
@@ -143,6 +202,20 @@ fn e_derive(): i64 {
 
 alloc_init();
 var R_TOP = f(gt);   # at top level, a global inline `Str`
+GA = str_from("abcde");
+gi2 = GA;                    # at top level: an inline Str global <- a Str handle global
+var R_TOP2 = gi2.len * 10 + f(gi2);
+gi3 = str_from("xyz");       # ... <- a `: Str` call
+var R_TOP3 = gi3.len * 10 + f(gi3);
+var P_TOP: *Str = gt;        # a `*Str` declaration after the first statement: gt's static address (D18 (c))
+var R_TOP4 = str_len(P_TOP);
+var HL: Str = gz;            # after the first statement: a handle to gz's header (D21 (a))
+HL.len = 4;
+var R_TOP5 = gz.len;
+gz.len = 7;
+var UL = gz;                 # an untyped top-level declaration keeps gz's first word (D22 (b))
+var R_TOP6 = 0;
+if (UL == load64(&gz)) { R_TOP6 = 1; }
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
 assert_eq(t_paren(), 7, "f((t))");
@@ -164,12 +237,39 @@ assert_eq(b_wrap(), 77, "var h: Str = (t); k = ((t))");
 assert_eq(b_param(str_from("zzzzz")), 3, "s = t rebinds a by-value Str parameter");
 assert_eq(b_inline(), 73, "h = t between two inline Strs copies the header (h is its own)");
 assert_eq(b_shadow(), 2, "a local handle named gt shadows the global: its own word");
-assert_eq(u_pun(), 5, "var t: Str; t = a; str_len(t) — the 6.6.16 pun reads a's string");
+assert_eq(b_bare(), 3, "var t: Str; (inline, no literal) passes its header (D20 (a))");
+assert_eq(u_pun(), 5, "var t: Str; t = a; str_len(t) reads t's own header, a's copied");
 assert_eq(u_branch(1), 3, "var t: Str; assigned in one branch (then)");
 assert_eq(u_branch(0), 2, "var t: Str; assigned in one branch (else)");
-assert_eq(u_copy(), 55, "var h: Str = t; / var k = t; of a bare t keep the first word");
-assert_eq(u_cap(), 5, "var h: Str = t; of a captured bare t keeps the first word");
+assert_eq(u_copy(), 44, "var h: Str = t; / var k = t; of a bare t bind its header (h.len = 4 writes t.len)");
+assert_eq(u_cap(), 5, "var h: Str = t; of a captured bare t binds the environment's copy");
 assert_eq(u_reuse(), 7, "a literal Str in a slot an earlier fn's bare Str used");
+assert_eq(h_len(), 5, "var t: Str; t = a; t.len is a's length (the pun left it unwritten)");
+assert_eq(h_copy(), 52, "t = a is a copy: a write to a leaves t");
+assert_eq(h_row3(), 5, "t = str_from(..); h = t between inline Strs: h has t's header");
+assert_eq(h_lit(), 55, "a literal-declared inline Str <- a Str handle local");
+assert_eq(h_param(str_from("abcde")), 55, "<- a `s: Str` parameter");
+assert_eq(h_global(), 55, "<- a Str handle global");
+assert_eq(h_call(), 55, "<- a `: Str` call");
+assert_eq(h_gen(), 55, "<- a generic `: Str` call");
+assert_eq(h_meth(), 53, "<- a method's `: Str` result (h.clone(), h.sub(1, 3))");
+assert_eq(h_field(), 55, "<- a `Str` field of a local");
+assert_eq(h_fieldp(), 55, "<- a `Str` field through a `*W`");
+assert_eq(h_wrap(), 53, "t = (a); u = ((str_from(..)))");
+assert_eq(h_step(), 55, "a for step t = a");
+assert_eq(h_cap(), 55, "a closure's own inline Str <- a captured Str handle");
+assert_eq(h_ginl(), 55, "an inline Str global <- a Str handle local (a copy: a.len = 1 after)");
+assert_eq(q_eq(), 1, "h.eq(t): Str_eq's `other: Str` takes t's header (D18 (c); 0 through 6.7.13)");
+assert_eq(q_cat(), 14, "h.cat(t): Str_cat's `other: Str`");
+assert_eq(q_has(), 111, "h.contains(n) / h.starts_with(p) / h.ends_with(s)");
+assert_eq(q_not(), 0, "the same methods answer 0 for strings that differ");
+assert_eq(q_glob(), 11, "h.eq(gt) / h.contains(gt): an inline global's static address");
+assert_eq(q_lit(), 1111, "a string literal into the typed methods is a Str (each was 0 through 6.7.13)");
+assert_eq(q_catl(), 9, "h.cat(\"xy\") (3 through 6.7.13)");
+assert_eq(q_ptr(), 33, "var p: *Str = t; takes t's header: p.len = 3 writes t.len (D18 (c))");
+assert_eq(q_pglob(), 77, "var p: *Str = gt; / = (gt);");
+assert_eq(q_pbare(), 2, "var p: *Str = (t); of a bare t binds its header");
+assert_eq(q_pcap(), 7, "var p: *Str = t; inside a closure: the environment's copy");
 assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
 assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
 assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");
@@ -191,4 +291,13 @@ assert_eq(d_defer(), 7, "f(t) in a defer, in t's frame");
 assert_eq(e_json(), 1, "str_builder_add_json_str(sb, t) encodes \"a\\\"b\"");
 assert_eq(e_derive(), 1, "#derive(Serialize): a Str field from an inline global");
 assert_eq(R_TOP, 7, "f(gt) at top level");
+assert_eq(R_TOP2, 55, "top level: an inline Str global <- a Str handle global");
+assert_eq(R_TOP3, 33, "top level: an inline Str global <- a `: Str` call");
+assert_eq(R_TOP4, 7, "top level: var P: *Str = gt; (after the first statement)");
+assert_eq(R_TOP5, 4, "top level after a statement: var HL: Str = gz; HL.len = 4 writes gz.len (D21 (a); a copy through 6.7.13)");
+assert_eq(R_TOP6, 1, "top level after a statement: an untyped var UL = gz; keeps gz's first word (D22 (b))");
+assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
+assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
+assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");
+assert_eq(z_rebind(), 27, "HZ3 = str_from(..) rebinds the handle global: gz is untouched");
 var r = assert_summary();

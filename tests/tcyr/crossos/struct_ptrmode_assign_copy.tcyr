@@ -489,8 +489,12 @@ fn decl_alias() {
     a.x = 1;
     return q.x * 10 + q.y;
 }
-# The inline Str pun: `var t: Str; t = a;` keeps the handle, so str_len(t) reads a's string.
+# `var t: Str; t = a;` (an inline Str <- a Str handle) copies a's header since 6.7.14 (the user's D20 (a),
+# 2026-10-16), so str_len(t) reads t's OWN header; through 6.7.13 it stored a into t.data and str_len(t) read
+# a's string through that pun. Both read 5 here; the copy is told from the pun by `t.len` (5, the pun left it
+# unwritten) and by a write to a after the copy (t does not move).
 fn str_inline_pun() { var a = str_from("abcde"); var t: Str; t = a; return str_len(t); }
+fn str_inline_copy() { var a = str_from("abcde"); var t: Str; t = a; a.len = 2; return t.len * 10 + str_len(a); }
 fn str_rebind() { var a: Str = str_from("abcde"); var b: Str = str_from("xy"); b = a; return str_len(b); }
 # ⛔ 6.7.10 (the handle line): a <= 8 B struct local initialised from an address is a HANDLE, as a
 # wide one is, and both directions copy through it — the writes after the copy show it is no alias,
@@ -563,7 +567,8 @@ assert_eq(tptr_tptr(), 1254, "a = b between two *Pt parameters: a rebind");
 assert_eq(handle_from_untyped_ptr(), 34, "a handle <- an untyped pointer binds");
 assert_eq(handle_from_str_call(), 4, "a handle <- a Str-returning call binds");
 assert_eq(decl_alias(), 16, "the declaration var q: Pt = a; is an alias");
-assert_eq(str_inline_pun(), 5, "the inline Str pun keeps the handle");
+assert_eq(str_inline_pun(), 5, "var t: Str; t = a; copies a's header: str_len(t) reads t's own (D20 (a))");
+assert_eq(str_inline_copy(), 52, "inline Str <- Str handle is a copy: t.len 5, and a write to a leaves t");
 assert_eq(str_rebind(), 5, "Str <- Str is a rebind");
 assert_eq(small_inl_from_ptr(), 5, "<= 8 B struct, inline <- handle: a copy (6.7.10)");
 assert_eq(small_ptr_from_inl(), 5, "<= 8 B struct, handle <- inline: copied into the heap object (6.7.10)");

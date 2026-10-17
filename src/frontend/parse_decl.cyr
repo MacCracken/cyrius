@@ -926,9 +926,9 @@ fn _var_rhs_msid(S, ti): i64 {
 # peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
 # result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
-fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
+fn _var_rhs_post(S, sid0, pscale, sl, start, ann): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
-    _istr_decl(S, pscale, start);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header
+    _istr_decl(S, pscale, start, ann);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header; 6.7.14: `*Str`
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
@@ -2049,17 +2049,23 @@ fn _call_ptr_field(S, ti, fi): i64 {
 # `var p = gp();` is unchanged. CHANGELOG [6.7.13]
 var _cpf_st = 0 - 1;     # the armed statement's first token (-1: none)
 var _cpf_done = 0 - 1;   # the statement whose store `_cpf_try` made (and ended at its `;`)
+var _cpf_step = 0 - 1;   # 6.7.14: the armed classic-for step's first token: its store ends at the for's `)`
 # Receiver `h` (a parked `*T` of struct `psid`, the cursor on its `.`) of the chain beginning at token `beg`, named
 # `noff`: 1 = the armed statement's field store, consumed through its terminator; 0 = not one (nothing consumed).
+# 6.7.14: armed by a for step (`_step_call_field`), the terminator is the step's `)`. `_cpf_step` is left as it is:
+# a statement inside the step's call (`gp2(fncall0(|| { gp().m = 2; .. })).n += 1`) stores first, and the step,
+# still armed, then ends at its `)`. CHANGELOG [6.7.14]
 fn _cpf_try(S, noff, beg, h, psid): i64 {
     if (beg != _cpf_st) { return 0; }
     if (_cpf_asg_at(S, GTI(S)) == 0) { return 0; }
     var st = _cpf_st;
+    var term = 5;
+    if (st == _cpf_step) { term = 11; }
     _cpf_st = 0 - 1;   # the value parses as an expression, never as this statement
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # the field name
-    _fst_on(S, noff, fnoff, h, psid, 5);
+    _fst_on(S, noff, fnoff, h, psid, term);
     _cpf_done = st;
     return 1;
 }
@@ -6575,6 +6581,7 @@ fn _gci_inline(S, sid, ann): i64 {
     var ts = _tup_gci(S, sid, ann);
     if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
+    if (_istr_gsrc(S, sid) == 1) { return 0; }   # 6.7.14 (D21 (a)): `var H: Str = gt;` is a handle
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (_dyn_is(S, sid) == 1) { return sid; }   # 6.7.8 (D5): a dyn global is always inline (formed or copied)
     if (_gz_star(S, GTI(S), sid) == 1) { return sid; }   # 6.7.10 (B7-1g): `*p` is a struct value
@@ -6655,6 +6662,7 @@ fn _gci_take_in(S, sid, k): i64 {
 # to put A's first word in B (SIGSEGV on `B.x`). That disagreement is refused by name — never the
 # value store. CHANGELOG [6.6.12]
 fn _gci_init(S, dgv, gps, dnoff): i64 {
+    if (_istr_gz(S, dgv, gps) == 1) { return 1; }   # 6.7.14 (D21 (a), D18 (c)): an inline `Str` global's address
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var ss = _gci_src(S, GTI(S));
@@ -6746,8 +6754,8 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     _sci_sval = 0;   # 6.7.10 (B7-1): never a stale answer for this declaration
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
+    if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
-    if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
     var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
     if (ci_pk < 0) {
@@ -6842,7 +6850,6 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         nslots = aligned / 8;
     }
     var named = _sci_slots(S, noff, pscale, nslots);
-    if (ci_dr == 0) { _istr_cpmark(S, named, pscale, TOKVAL(S, ci_ti)); }   # 6.7.13: a bare `Str`'s copy
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
@@ -6944,7 +6951,8 @@ fn _uci_cap(S, snoff): i64 {
 }
 # ⛔ 6.7.13 — AN INLINE `Str` IS ITS HEADER'S ADDRESS WHERE A `Str` VALUE IS TAKEN (the user's decision D7 (1),
 # 2026-10-15). A `Str` is a heap handle by name — its slot holds a 16 B header's address — but `var t: Str = Str {
-# p, 7 };` is an INLINE header whose slot is field 0, so `f(t)` into `s: Str`, `str_len(t)`, `var
+# p, 7 };` (or, since 6.7.14, a bare `var t: Str;` — D20 (a)) is an INLINE header whose slot is field 0, so `f(t)`
+# into `s: Str`, `str_len(t)`, `var
 # h: Str = t;`, `var h = t;` and `h = t;` into a handle took the `data` word as the header (str_len 0 where 7 is
 # right, on every target). Each takes the header's address now, with no allocation: `&t` for a local, the static
 # address for an inline global, and a closure's captured copy is already its environment words' address (6.6.5).
@@ -6972,7 +6980,6 @@ fn _istr_name(S, noff): i64 {
         if (li >= 0) {
             if (GLTYPE(S, li) != 0 - ss) { return 0; }
             if (GLAGG(S, li) == 0) { return 0; }
-            if (_istr_bare(S, li) == 1) { return 0; }
             _istr_ix = li;
             return 1;
         }
@@ -6992,46 +6999,7 @@ fn _istr_cap(S, noff, ss): i64 {
     if (_cl_snap_type(esl) != 0 - ss) { return 0; }
     if (_cl_snap_ptrp(esl) == 1) { return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
-    if (_istr_bare_cap(esl) == 1) { return 0; }
     return 3;
-}
-# ⛔ `var t: Str;` with NO initialiser is outside D7 (1), which is worded for `var t: Str = Str { .. }`: `t = a`
-# with `a` a handle stores the handle into t's first word (6.6.16's pun), and `str_len(t)` / `f(t)` / `h = t` /
-# `var h: Str = t;` read a's string through that word, as through 6.7.12. Whether `t = a` copies the header (and
-# the bare declaration joins D7 (1)) is an open question. Its slot is marked 2 in the per-slot byte table
-# `_lfi_base` (util.cyr: cleared as SFLC hands the slot out, saved with a closure's snapshot), and the two rungs
-# above answer 0 for it. CHANGELOG [6.7.13]
-fn _istr_unset(S, li, sid): i64 {
-    if (sid != _STR_SID(S)) { return 0; }
-    SLFI(S, li, 2);
-    return 0;
-}
-# 1 = local slot `li` is such a `var t: Str;`.
-fn _istr_bare(S, li): i64 {
-    if (_lfi_base == 0) { return 0; }
-    if (li < 0) { return 0; }
-    if (li >= 16384) { return 0; }
-    if (load8(_lfi_base + li) == 2) { return 1; }
-    return 0;
-}
-# 1 = enclosing slot `esl` of the closure snapshot is one (the snapshot's byte segment, `_cl_save_locals`).
-fn _istr_bare_cap(esl): i64 {
-    if (_lfi_base == 0) { return 0; }
-    if (_cl_snap == 0) { return 0; }
-    if (esl < 0) { return 0; }
-    if (load8(_cl_snap + _cl_snap_n * 32 + esl) == 2) { return 1; }
-    return 0;
-}
-# `var h: Str = t;` / `var h = t;` copying such a `t` (a local, or a closure's capture of one) into the new
-# inline slot `named`: h is marked too, so `f(h)` takes h's first word as through 6.7.12.
-fn _istr_cpmark(S, named, pscale, noff): i64 {
-    if (0 - pscale != _STR_SID(S)) { return 0; }
-    var li = FINDLOCAL(S, noff);
-    var b = 0;
-    if (li >= 0) { b = _istr_bare(S, li); }
-    elif (_hl_capn(S, noff) == 1) { b = _istr_bare_cap(_cl_snap_find(S, noff)); }
-    if (b == 1) { SLFI(S, named, 2); }
-    return 0;
 }
 # rax = the header's address for `_istr_at`'s answer `k` (a capture's value already is). A frame's escapes into
 # a value as `&t` does (`_fn_local_addr`: a later tail call is an ordinary call — the `jmp` would free it).
@@ -7067,12 +7035,35 @@ fn _istr_src(S, pscale): i64 {
     if (_istr_name(S, TOKVAL(S, GTI(S) + 1 + pk)) == 0) { return 0; }
     return 1;
 }
-# PARSE_VAR's initialiser just parsed from `start` into a `Str` declaration: the header's address.
-fn _istr_decl(S, pscale, start): i64 {
+# PARSE_VAR's initialiser just parsed from `start` into a `Str` declaration — or, since 6.7.14, a `*Str` one (`ann`
+# the annotation's first token, `_istr_pann`; the user's D18 (c), 2026-10-16: `var p: *Str = t;` takes the header,
+# as a `p: *Str` parameter does — it took t's data word): the header's address.
+fn _istr_decl(S, pscale, start, ann): i64 {
+    if (pscale > 0) { return _istr_pdecl(S, pscale, start, ann); }
     if (pscale >= 0) { return 0; }
     if (0 - pscale != _STR_SID(S)) { return 0; }
     _istr_ra(S, _istr_at(S, start, GTI(S)));
     return 0;
+}
+# The `*Str` arm: the header's address, typed as the declaration's pointer (`ps` its step), so the declaration does
+# not warn "assigning non-pointer to typed pointer" about an inline global's (the factor leaves its scale 0).
+fn _istr_pdecl(S, ps, start, ann): i64 {
+    if (_istr_pann(S, ann) == 0) { return 0; }
+    var k = _istr_at(S, start, GTI(S));
+    if (k == 0) { return 0; }
+    _istr_ra(S, k);
+    SPSC(S, ps);
+    return 0;
+}
+# 1 = the annotation at token `ann` is `*Str` (one `*`, then the name of the `Str` struct).
+fn _istr_pann(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 2) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, ann + 1)) != ss) { return 0; }
+    return 1;
 }
 # `name = <src>` just parsed from `st` (`_pcmpe_struct_assign`), `dnoff` a `Str` handle — a local or a by-value
 # parameter (rebound to the header) or a global (refused from a frame's `Str`). An inline destination copied
@@ -7158,6 +7149,116 @@ fn _istr_dsto(S, d, ti): i64 {
           " through a pointer - its header lives in this frame and would dangle (store a handle: str_new(data, len))");
     }
     return _istr_ra(S, r);
+}
+# ⛔ 6.7.14 — AN INLINE `Str` TAKES A COPY OF A `Str` HANDLE'S HEADER (the user's decision D20 (a), 2026-10-16). `t = a`
+# with t an inline `Str` (a literal-declared or bare local, an inline global) and a a `Str` HANDLE stored a's address
+# into t.data and left t.len stale (6.6.16's pun): 6.6.16 C2 copies the struct a handle points at into an inline
+# struct, but excluded `Str` by name (`_agc_plain_big`) because a handle is rebound by every assignment — which an
+# inline `Str` cannot be. It copies the header a points at now, as `t = u` between inline `Str`s does: a handle local,
+# parameter or global (`_istr_hop`), a call declared `: Str` (`_istr_call`), a method's result or a `Str` field
+# (`_istr_hcp`). An untyped source keeps the one-word store, as for every inline struct. CHANGELOG [6.7.14]
+# `t = snoff;` (`_try_aggregate_copy_assign`, the source no operand) with `dt` an inline `Str` (`dh` 0): a `Str` handle
+# local or parameter (`_agc_pp` 2) or global (the deref band) is the source the copy goes through — its span; else 0.
+fn _istr_hop(S, dt, dh, snoff): i64 {
+    if (dh == 1) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (dt != 0 - ss) { return 0; }
+    var d = _istr_dst(S, snoff);
+    if (d == 0) { return 0; }
+    _agc_t = dt;
+    _agc_pp = 0;
+    _agc_li = 0 - 1;
+    _agc_gvi = 0 - 1;
+    if (d == 1) {
+        _agc_li = FINDLOCAL(S, snoff);
+        _agc_pp = 2;
+    } else { _agc_gvi = 0 - 1000 - _findvar_core(S, snoff); }
+    return AGG_NSLOTS(S, dt);
+}
+# 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override).
+fn _istr_inl_dst(S, n): i64 {
+    if (n < 2) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_agc_t != 0 - ss) { return 0; }
+    if (_agc_hdl() == 1) { return 0; }
+    if (_agc_pp != 0) { return 0; }
+    return 1;
+}
+# `t = f(..);` (`_try_struct_call_assign`, `_agc_operand` just ran on t, `n` its span), `fi` declared `: Str` (its
+# handle in rax): when t is an inline `Str`, the call parsed and its header copied into t (1, `term` consumed); else 0.
+fn _istr_call(S, fi, n, term): i64 {
+    if (_istr_inl_dst(S, n) == 0) { return 0; }
+    if (GFRS(S, fi) != _STR_SID(S)) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    PCMPE(S);
+    return _istr_rax_into(S, dli, dgv, term);
+}
+# `t = <src>` just parsed from `st` (`_pcmpe_struct_assign`, no other arm took it): a method's `: Str` result or a `Str`
+# field (`_istr_hsrc`) into an inline `Str` t — its header copied (1, `term` consumed); else 0.
+fn _istr_hcp(S, noff, st, term): i64 {
+    if (_istr_inl_dst(S, _agc_operand(S, noff)) == 0) { return 0; }
+    if (_istr_hsrc(S, st) == 0) { return 0; }
+    return _istr_rax_into(S, _agc_li, _agc_gvi, term);
+}
+# 1 = the source [st, cursor) is a whole `Str` field read (`_fls_whole`), or a chain of two or more tokens ending in a
+# call or method declared `: Str` (`_hl_pchain`: the struct value `Str`, no `*Str`). A name is `_istr_hop`'s.
+fn _istr_hsrc(S, st): i64 {
+    if (_fls_whole(S, st) == 1) { return 1; }
+    var a = _ie_unparen(S, st, GTI(S));
+    var e = _ie_pe;
+    if (e <= a + 1) { return 0; }
+    if (_hl_pchain(S, a, e) != _STR_SID(S)) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return 1;
+}
+# rax = a `Str` header's address: parked in a hidden temp (a frame slot; a hidden global at top level) and the header
+# copied through it into the inline `Str` `dli` / `dgv`. 1, `term` consumed.
+fn _istr_rax_into(S, dli, dgv, term): i64 {
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    var nb = STRUCTSZ(S, _STR_SID(S) - 1);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, nb); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), nb); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
+# ⛔ 6.7.14 — A TOP-LEVEL `var H: Str = gt;` BINDS A HANDLE TO gt's HEADER, AS THE SAME LINE IN A FN DOES (the user's
+# decision D21 (a), 2026-10-16): gt (an inline `Str` global, `var gt: Str = Str { .. };`) has a static address, so H
+# is a handle global (8 bytes) holding it — `H.len = 3` writes gt.len — in the declaration zone and after the first
+# statement alike. Both made H an inline 16-byte COPY of gt (`_gci_inline` / `_gci_init`, `_gci_toplevel`). A `var P:
+# *Str = gt;` in the zone takes the same address, as after the first statement (6.7.14's D18 (c)). The untyped `var
+# H = gt;` keeps gt's first word at top level (the user's D22 (b): 6.7.13's D6 (b) — an untyped global keeps the
+# word). CHANGELOG [6.7.14]
+# Pass 1, cursor on the RHS: 1 = `sid` is `Str` and the RHS a whole name (inside any wrap) of an inline `Str` global.
+fn _istr_gsrc(S, sid): i64 {
+    if (sid != _STR_SID(S)) { return 0; }
+    var pk = _sci_pname(S, GTI(S));
+    if (pk < 0) { return 0; }
+    if (_istr_name(S, TOKVAL(S, GTI(S) + pk)) != 2) { return 0; }
+    return 1;
+}
+# The zone replay, cursor on the RHS (`gps` the annotation's; a `*Str` reads 0, so its tokens are asked): such a
+# `Str` / `*Str` declaration stores the global's static address into `dgv` (1, the cursor left on the `;`); else 0.
+fn _istr_gz(S, dgv, gps): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (gps != 0 - ss) {
+        if (gps != 0) { return 0; }
+        if (TOKTYP(S, GTI(S) - 4) != 49) { return 0; }
+        if (_istr_pann(S, GTI(S) - 3) == 0) { return 0; }
+    }
+    if (_istr_gsrc(S, ss) == 0) { return 0; }
+    if (gps != 0) { if (dgv >= 0) { if (_istr_ix > dgv) { return 0; } } }   # declared below H: `_gci_below` refuses it
+    var pk = _sci_pname(S, GTI(S));
+    _istr_ra(S, 2);
+    if (dgv >= 0) { _gvi_store(S, dgv); }
+    STI(S, GTI(S) + 1 + 2 * pk);   # the name and its wrap: the cursor on `;`
+    return 1;
 }
 # The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then
 # the named slot, SLTYPE = the declared type), after the duplicate-name check. Returns the named slot.
@@ -8468,7 +8569,6 @@ fn PARSE_VAR(S): i64 {
         SLAGG(S, sv_named, sv_nslots);   # 6.6.5: `var p: T;` is inline, at EVERY width and on every target
         SLTYPE(S, sv_named, 0 - sv_sid);
         SFLC(S, sv_named + 1);
-        _istr_unset(S, sv_named, sv_sid);   # 6.7.13: `var t: Str;` keeps its word (see `_istr_bare`)
         STI(S, GTI(S) + 1);   # consume ';'
         return 0;
     }
@@ -8973,7 +9073,7 @@ fn PARSE_VAR(S): i64 {
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
     _decl_float_init(S, lfloat, scv_start);
-    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start);   # 6.7.9; 6.7.10
+    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start, ann_ti);   # 6.7.9; 6.7.10
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);
@@ -9434,7 +9534,8 @@ fn _hl_ie_ptr(S, b, e): i64 {
 }
 # Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the left side of the
 # chain's last `+` / `-` carried it — but a `*T` struct pointer on the RIGHT of a `+` carries it (6.7.11,
-# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is); a primary that reads an
+# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is), and so does `&x` of a
+# variable (6.7.14: `n + &x` is the pointer `&x + n` is); a primary that reads an
 # i8 / i16 / i32 local (a bare name, an if-expression's branch) is a value, any other (`&s`, `pb`,
 # `mk1p()`, `h.p` of a `*T` step 1) an address.
 fn _hl_p1(S, a, e): i64 {
@@ -9461,11 +9562,30 @@ fn _hl_lastop(S, k, e): i64 {
     }
     return k;
 }
-# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`).
+# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`),
+# or is `&x` of a variable (`_hl_amp_var`, 6.7.14).
 fn _hl_rcarry(S, k, e): i64 {
     var t = TOKTYP(S, k);
     if (t != 6) { if (t != 113) { return 0; } }
     if (_hl_psid(S, k + 1, e) > 0) { return 1; }
+    return _hl_amp_var(S, k + 1, e);
+}
+# ⛔ 6.7.14 — `n + &x` IS THE POINTER `&x + n` IS (6.7.11, the user's decision of 2026-10-13, guide § Pointers)
+# as a by-value argument too. 1 = [a, e), inside balanced parentheses, is exactly `& IDENT` naming a variable — a
+# local or parameter, a closure capture, a global (`&f` of a fn has no step). The right-carry asked `_hl_psid`
+# alone, which answers 0 for `&x`, so a narrow left `n` made `bs(n + &x)` a value: the callee read the address's
+# bits as its struct (78 where 77 is right, every target). CHANGELOG [6.7.14]
+fn _hl_amp_var(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    var nm = TOKVAL(S, b + 1);
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, nm) >= 0) { return 1; }
+        if (_hl_capn(S, nm) == 1) { return 1; }
+    }
+    if (_findvar_core(S, nm) >= 0) { return 1; }
     return 0;
 }
 # The first `+` / `-` (`+%` / `-%` too) of [a, e) outside any bracket, past its first token, else -1.
@@ -10173,8 +10293,9 @@ fn _hl_dx_src(S): i64 {
 }
 # The struct a `*T`-typed expression [a, e) points at — a `*T` local, parameter, closure capture or global,
 # a call or a method declared `: *T`, a `*T` field, at the end of any chain of fields and methods, inside
-# balanced parentheses, or pointer arithmetic on one (`p + n`, `n + p`, `p - n`) — else 0: an untyped
-# value, a `*i64`, a struct value, `&x`, an index, a generic call, or a shape this reader does not type.
+# balanced parentheses, or pointer arithmetic on one (`p + n`, `n + p`, `p - n`), or (6.7.14) a dereference
+# `*E` of a `**S` (`_hl_dref_psid`) — else 0: an untyped value, a `*i64`, a struct value, `&x`, an index, a
+# generic call, or a shape this reader does not type.
 fn _hl_psid(S, a, e): i64 {
     a = _ie_unparen(S, a, e);
     e = _ie_pe;
@@ -10191,9 +10312,100 @@ fn _hl_psid(S, a, e): i64 {
         return _hl_psid(S, a, k);
     }
     if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    if (TOKTYP(S, a) == 8) { return _hl_dref_psid(S, a + 1, e); }   # 6.7.14: `*pp` of a `**S`
     var t = _hl_pchain(S, a, e);
     if (_hl_cp != 1) { return 0; }
     return t;
+}
+# ⛔ 6.7.14 — `*pp` OF A `**S` IS A `*S` TO THE TYPED-POINTER READER TOO, so `**pp` is the struct value `*p` is
+# (6.7.10 decision 6) at every dereference consumer. 6.7.13's D9 (a) typed `*pp` by its step word (the pointee's,
+# `_pp_inner`), but `_hl_psid` reads tokens and answered 0 for an operand starting with `*`: `var t: P = **pp;`
+# bound a handle to P's first field (SIGSEGV), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word and
+# `**pp += 10` added to it. The operand E [a, e) of the inner `*`: its step word by its tokens (`_hl_pw`), whose pin
+# names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
+fn _hl_dref_psid(S, a, e): i64 {
+    var sid = _pp_sid(_ps_pin(_hl_pw(S, a, e)));
+    _hl_cp = 0;
+    if (sid <= 0) { return 0; }
+    _hl_cp = 1;
+    return sid;
+}
+# The step word of the pointer expression [a, e) by its tokens: a name (a local or parameter, a closure capture, a
+# global — its slot / snapshot / global word), a whole call or method declared `: *T` / `: **T` (`_fn_rps`), a chain
+# ending in a `*T` / `**T` field (`_fld_ps_get`), inside balanced parentheses, pointer arithmetic on one (`pp + n`
+# keeps pp's word), or a dereference `*E` of a `***T` (its pin's pointee word, `_pp_inner`); a generic call's under
+# the binding it instantiates with (`_gen_call_word`). 0 = none.
+fn _hl_pw(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    if (a >= e) { return 0; }
+    var k = _hl_addop(S, a, e);
+    if (k > a) {
+        var r = _hl_pw(S, k + 1, e);
+        if (TOKTYP(S, k) == 6 || TOKTYP(S, k) == 113) {
+            var l = _hl_pw(S, a, k);
+            if (l > 0) { return l; }
+            return r;
+        }
+        if (r > 0) { return 0; }   # `pp - qq` is a distance
+        return _hl_pw(S, a, k);
+    }
+    if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    if (TOKTYP(S, a) == 8) { return _pp_inner(S, _hl_pw(S, a + 1, e)); }
+    return _hl_cw(S, a, e);
+}
+# ... of a name or a chain [b, e) (`_hl_pchain`'s shapes): its last step's declared word.
+fn _hl_cw(S, b, e): i64 {
+    if (TOKTYP(S, b) != 2) { return 0; }
+    var dot = _hl_lastdot(S, b, e);
+    if (dot < 0) {
+        var o = _gcall_open(S, b);
+        if (o < 0) {
+            if (e != b + 1) { return 0; }
+            return _hl_name_pw(S, TOKVAL(S, b));
+        }
+        if (_call_close(S, o) != e - 1) { return 0; }
+        var fi = FINDFN(S, TOKVAL(S, b));
+        if (fi < 0) { return 0; }
+        if (GFTP(S, fi) != 0) { return _gen_call_word(S, b, o, fi); }   # `g<..>(` / `g(` declared `: **T`
+        return _fn_ret_ps(fi);
+    }
+    var t = _hl_pchain(S, b, dot);
+    if (t <= 0) { return 0; }
+    if (TOKTYP(S, dot + 1) != 2) { return 0; }
+    if (TOKTYP(S, dot + 2) == 10) {
+        if (_call_close(S, dot + 2) != e - 1) { return 0; }
+        return _fn_ret_ps(_meth_fn_at(S, t, TOKVAL(S, dot + 1), dot + 1));
+    }
+    if (e != dot + 2) { return 0; }
+    var fi2 = FINDFIELD(S, t - 1, TOKVAL(S, dot + 1));
+    if (fi2 < 0) { return 0; }
+    return _fld_ps_get(S, t - 1, fi2);
+}
+# The last `.` of [b, e) outside every bracket, else -1.
+fn _hl_lastdot(S, b, e): i64 {
+    var d = 0;
+    var r = 0 - 1;
+    var i = b;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        elif (d == 0) { if (t == 41) { r = i; } }
+        i = i + 1;
+    }
+    return r;
+}
+# The step word name `noff` carries where the parser resolves it: a local or parameter, a closure capture, a global.
+fn _hl_name_pw(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _slot_ptr_word(S, li); }
+        if (_hl_capn(S, noff) == 1) { return _cl_snap_ptr_word(_cl_snap_find(S, noff)); }
+    }
+    var gvi = _findvar_core(S, noff);
+    if (gvi < 0) { return 0; }
+    return _gv_ptr_word(S, gvi);
 }
 # ⛔ 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF IS THE STRUCT IT NAMES: `*(&p)` / `*&p` is the struct value `p`
 # is (6.7.10 decision 6, with decision 7's reading of `&c` as a pointer to c). `_hl_psid` answers 0 for `&x`,
@@ -10363,25 +10575,47 @@ fn _gen_call_psid(S, b, o, fi): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     var ann = _gen_ret_ann(S, fi);
     if (ann < 0) { return 0; }
-    var c0 = 0 - 8;
-    var c1 = 0;
+    _gen_call_targs(S, b, o, fi);
+    return _gen_ann_bound(S, fi, ann, _gct_c0, _gct_c1);
+}
+# The binding the call at token `b` (its `(` at `o`, `fi` the base) instantiates with — its explicit type arguments,
+# or those its arguments infer — into `_gct_c0` / `_gct_c1`. Shared by the two readers of a generic call's `: *T`.
+var _gct_c0 = 0;
+var _gct_c1 = 0;
+fn _gen_call_targs(S, b, o, fi): i64 {
+    _gct_c0 = 0 - 8;
+    _gct_c1 = 0;
     if (o != b + 1) {
         var sv = GTI(S);
         var sv_gt = _ta_pending_gt;
         _ta_pending_gt = 0;
         STI(S, b + 2);
-        c0 = _parse_one_type_arg(S);
-        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        _gct_c0 = _parse_one_type_arg(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gct_c1 = _parse_one_type_arg(S); }
         _ta_pending_gt = sv_gt;
         STI(S, sv);
     } else {
         var sg = _gi_sc;
         _gi_sc = 0;
-        c0 = _gen_infer_tp(S, fi, o, 0);
-        c1 = _gen_infer_tp(S, fi, o, 1);
+        _gct_c0 = _gen_infer_tp(S, fi, o, 0);
+        _gct_c1 = _gen_infer_tp(S, fi, o, 1);
         _gi_sc = sg;
     }
-    return _gen_ann_bound(S, fi, ann, c0, c1);
+    return 0;
+}
+# 6.7.14 — the step word of that call's `: *T` / `: **T` return under the binding it instantiates with (`_pp_word_at`:
+# a `**T`'s pin names its pointee), as its instance records it; 0 for any other return. `_hl_cw`'s generic call, so
+# `**gq<P>()` of a `: **S` is the struct value too. CHANGELOG [6.7.14]
+fn _gen_call_word(S, b, o, fi): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var ann = _gen_ret_ann(S, fi);
+    if (ann < 0) { return 0; }
+    _gen_call_targs(S, b, o, fi);
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _bind_generic_call(S, fi, _gct_c0, _gct_c1);
+    var w = _pp_word_at(S, ann, 0 - 1, 0 - 1);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return w;
 }
 # The struct the `*T` annotation at `ann` names with fn `fi`'s type parameters bound to `c0` / `c1` (the
 # binding in force put back after).
