@@ -1464,7 +1464,10 @@ A GENERIC call declared `: *T` is such a source too (6.7.11), with T bound by it
 inferred from its arguments: `l = gp<S>()`, `var q: S = *gp<S>()`, `take(*gp<S>())`, `a - *gp<S>()` and
 `gp<S>().v` read the `S` it points at, as `fn gp(): *S` does; a `*U` instance is refused by name (naming
 the call). Through 6.7.10 the instance recorded T's step but not its struct: the pointer word was stored,
-the dereferences faulted, and `gp<S>().v` was refused.
+the dereferences faulted, and `gp<S>().v` was refused. `var h: S = gp<S>();` (or an inferred `gp(s)`) in a fn
+is a handle to that `S`, as from `fn gp(): *S` — and so is a generic call returning an untyped value; through
+6.7.13 a generic callee dropped the annotation, `h` was an untyped word and `h.v` was refused *no struct type
+in scope for 'h'* (6.7.14).
 A `*T` GLOBAL is a copy destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
 struct value `l` — a variable, a by-value parameter, a call, a field `w.s`, `*p`, a method, an operator
 result — into the struct `GP` points at, as `q = l` does through a `*T` local or parameter, in a fn, at top

@@ -19,7 +19,8 @@
 # top level (a declaration-zone `var Z: S = *gpg<S>();`, statements, a field of the call).
 # (`gpi(&G)` is not here: `&G` infers T = i64 for a `*T` parameter, so it runs the i64 base — no `*S`.)
 # 6.7.14: the same generics called inside fns that RETURN a struct by value (8 / 16 / 24 B), T a struct or a
-# scalar, a one-call body and a global body — a replayed `return` is the callee's (`rcall`, `rz16`, `rz24`).
+# scalar, a one-call body and a global body — a replayed `return` is the callee's (`rcall`, `rz16`, `rz24`). And
+# `var h: S = gpg<S>();` in a fn is a handle to the struct the call points at (`hb*`).
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R12 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -598,6 +599,20 @@ fn rz16v(): i64 { var z: S16 = rz16(); return rd16(z); }
 fn rz24v(): i64 { var z: S24 = rz24(); return rd24(z); }
 fn rpass(): i64 { return rd16(rc16s()) * 1000 + rd24(rc24s()); }
 
+# ── 6.7.14: `var h: S = gpg<S>();` in a fn — the annotated local is a HANDLE to the struct the call points at ──
+# (the 6.7.10 handle line: a call returning a `*T` binds a handle, as the non-generic `fn gp(): *S` does). Through
+# 6.7.13 the annotation was dropped for a generic callee: `h` was an untyped word and `h.v = 6` was refused "no struct
+# type in scope for 'h'". Explicit at 8 / 16 / 24 B, inferred through `gpi(p)` / `gpv(G)`, and h's uses that name no
+# field: `var c: S = h;` binds a second handle, `take16(h)` passes the struct h points at.
+# issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md
+fn hb8(): i64 { var h: S8 = gpg<S8>(); h.v = 6; var k = G8.v * 10 + h.v; unpoke(); return k; }
+fn hb16(): i64 { var h: S16 = gpg<S16>(); h.v = 6; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hb24(): i64 { var h: S24 = gpg<S24>(); h.v = 6; var k = G24.v * 100 + h.w * 10 + h.x; unpoke(); return k; }
+fn hbi(): i64 { var p: *S16 = &G16; var h: S16 = gpi(p); h.v = 6; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hbv(): i64 { var h: S24 = gpv(G24); h.v = 6; var k = G24.v * 100 + h.w * 10 + h.x; unpoke(); return k; }
+fn hbc(): i64 { var h: S16 = gpg<S16>(); var c: S16 = h; c.v = 7; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hbt(): i64 { var h: S24 = gpg<S24>(); var g: S16 = gpv(G16); return take16(g) * 1000 + rd24(h); }
+
 # ── top level: a declaration-zone `var Z: S = *gpg<S>();`, then statements ──
 var Z16: S16 = *gpg<S16>();
 var Z24: S24 = *gpg<S24>();
@@ -690,4 +705,11 @@ assert_eq(rcall(), 127, "6.7.14: gpg<S16 / S24 / i32 / i16>() and gpa<S8>() insi
 assert_eq(rz16v(), 104, "6.7.14: return gsize(sizeof(T)); replayed in a : S16 fn (8, 24)");
 assert_eq(rz24v(), 2564, "6.7.14: ... in a : S24 fn (24, 16, 4)");
 assert_eq(rpass(), 38581, "6.7.14: rc16s() / rc24s() passed straight to rd16 / rd24");
+assert_eq(hb8(), 66, "6.7.14: var h: S8 = gpg<S8>(); h.v = 6 writes G8 (a handle, not an untyped word)");
+assert_eq(hb16(), 68, "6.7.14: var h: S16 = gpg<S16>(); h.v = 6 writes G16");
+assert_eq(hb24(), 683, "6.7.14: var h: S24 = gpg<S24>(); h.v = 6 writes G24");
+assert_eq(hbi(), 68, "6.7.14: var h: S16 = gpi(p) (inferred, p: *S16) is a handle");
+assert_eq(hbv(), 683, "6.7.14: var h: S24 = gpv(G24) (inferred, by value) is a handle");
+assert_eq(hbc(), 78, "6.7.14: var c: S16 = h binds a second handle (c.v = 7 writes G16)");
+assert_eq(hbt(), 58583, "6.7.14: take16(g) / rd24(h) pass the struct the handle points at");
 var r = assert_summary();
