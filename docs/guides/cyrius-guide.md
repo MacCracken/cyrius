@@ -79,7 +79,9 @@ ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(
 with `fn area(self): f64`. A leading `: f64` call types the binding only while the whole
 initialiser is still an f64 (6.7.13): `var x = f() * 2.0;` is an f64, `var c = f() < 1.0;` and
 `var c = f() > 0.1 && k == 1;` are the integer 0 / 1 a comparison is (through 6.7.12 `c` was typed
-f64, so `-c` flipped its sign bit and `0 - c` warned). It does NOT cover an **untyped**
+f64, so `-c` flipped its sign bit and `0 - c` warned). The leading call may be in parentheses (6.7.14):
+`var x = (f()) * 2.0;` is an f64 and `var c = (f()) < 1.0;` an integer, as without them (`x` was an untyped
+word holding the product's bits). It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare

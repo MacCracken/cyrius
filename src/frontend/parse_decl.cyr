@@ -7699,16 +7699,20 @@ fn _var_rhs_csid(S, ti): i64 {
 # 6.7.8 V4d's refusal), or a `: f64` call's -9 (judged after the parse, as `var x = f();` is); else 0.
 # CHANGELOG [6.7.13]
 # 6.7.14 — and a `Str` handle, as `var t = mks();` is typed (v5.10.4): the wrapped one was an untyped word, so
-# `println(s)` took the integer overload and `s.len()` was refused. CHANGELOG [6.7.14]
+# `println(s)` took the integer overload and `s.len()` was refused. And a `: f64` call's -9 whatever follows the
+# wrap: `var a = (f()) * 2.0;` was an untyped word, where `f() * 2.0` is an f64 — `_var_rhs_post` drops it when
+# the whole initialiser is no longer an f64 (a comparison, `&&`, `& | ^ % << >>`); a struct still needs the `;`.
+# CHANGELOG [6.7.14]
 fn _var_rhs_wsid(S, ti): i64 {
     var k = _pwrap_name(S, ti);
     if (k == 0) { return 0; }
-    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    var e = TOKTYP(S, _pw_end);
     if (_rcv_iscall(S, ti + k, k) == 0) { return 0; }
     var fi = _gen_resolve_call(S, ti + k);
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs == 0 - 9) { return rs; }
+    if (e != 5) { return 0; }
     if (rs <= 0) { return 0; }
     if (rs > 2047) { return 0; }
     if (rs == _STR_SID(S)) { return rs; }

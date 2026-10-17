@@ -272,6 +272,15 @@ prints() {
         else bad "$1 $3 ($leg): printed [$o], want [$2]"; fi
     done
 }
+# quiet <name> <what>: the last compile of <name> on every leg printed no `^warning`
+quiet() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        [ -f "$T/$1.$leg.err" ] || compile "$leg" "$1"
+        if grep -q '^warning' "$T/$1.$leg.err"; then bad "$1 $2 ($leg): $(grep '^warning' "$T/$1.$leg.err" | head -1)"
+        else ok "$1 $2 ($leg): no warning"; fi
+    done
+}
 REPA=docs/development/issues/repros/2026-10-10-struct-receive-inference-a-parenthesised-call.cyr
 REPB=docs/development/issues/repros/2026-10-10-struct-receive-inference-b-scalar-annotation.cyr
 [ -f "$REPA" ] && [ -f "$REPB" ] || { echo "FAIL: $G: the issue's repro files are missing"; exit 1; }
@@ -879,7 +888,21 @@ runs WS1 55 "the filed repro's \`return s.len() * 10 + t.len();\` form (refused 
 sed 's/var s = (mks());/var s = ((mks()));/' "$T/WS1.cyr" > "$T/WS2.cyr"
 runs WS2 55 "\`var s = ((mks()));\`, two wraps"
 
-[ "$rows" -ge 162 ] || bad "only $rows rows ran (floor 162)"
+# 6.7.14 — A WRAPPED `: f64` CALL BEFORE AN OPERATOR (issues/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.md).
+# `var a = (f()) * 2.0;` bound an untyped word holding the product's bits, where `var a = f() * 2.0;` and (6.7.13) `var a =
+# (f());` bind an f64: the filed repro's `a + 1.5` added integers under "integer arithmetic with an f64 right operand",
+# exit 0 on all four. `_var_rhs_wsid` gives the wrapped leading call's -9 whatever follows the wrap, and `_var_rhs_post`
+# keeps it only while the whole initialiser is an f64 (a comparison, `&&`, D12's `& | ^ % << >>` stay integers: tcyr
+# wf64_*, through A2). WF0 the filed repro verbatim: exit 6, and (a second row) no warning.
+#   N35 `_var_rhs_wsid` with the `;` test before the f64 return (2026-10-17) -> RED 12: WF0 x2 (exit 0; the warning)
+#                                                           A2 (wf64_op wf64_2) x4 legs; the rest green
+REPF64=docs/development/issues/repros/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.cyr
+[ -f "$REPF64" ] || { echo "FAIL: $G: $REPF64 is missing"; exit 1; }
+cp "$REPF64" "$T/WF0.cyr"
+runs WF0 6 "the filed repro verbatim: \`var a = (f()) * 2.0;\` is an f64 (exit 0 before)"
+quiet WF0 "the filed repro: no \"integer arithmetic with an f64 right operand\""
+
+[ "$rows" -ge 164 ] || bad "only $rows rows ran (floor 164)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str (6.7.14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14)"
