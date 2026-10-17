@@ -79,6 +79,70 @@ fn w8_cl(): i64 { var f = |k| { var x = (mk1()); return x.a + k; }; return fncal
 fn w16_m(): i64 { var b = Q { 1, 2 }; var x = (b.mkm()); return dq(x); }
 fn wf64(): i64 { var x = (fh()); var y = x + 1.0; var z = fh() + 1.0; if (y == z) { return 1; } return 0; }
 fn wexpr(): i64 { var x = (1 + 2); return x; }
+# 6.7.14 (issues/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.md): `var a = (f()) * 2.0;` was an untyped word
+# holding the product's bits, where `f() * 2.0` is an f64 — `a + 1.5` then added integers. The wrapped leading `: f64`
+# call types the binding as the unwrapped one does, while the whole initialiser is still an f64: a comparison and
+# 6.7.13 D12's `& | ^ % << >>` stay integers (`-c` integer negation, `b - 1` integer subtraction).
+fn wf64_op(): i64 { var a = (fh()) * 2.0; var y = a + 1.5; return f64_to(y); }
+fn wf64_2(): i64 { var a = ((fh())) + 1.0; var y = a + 1.5; return f64_to(y); }
+fn wf64_lt(): i64 { var c = (fh()) * 2.0 < 1.0; return -c; }
+fn wf64_gt(): i64 { var c = ((fh())) * 2.0 > 1.0; return -c; }
+fn wf64_and(): i64 { var b = (fh()) & 1; return b - 1; }
+# --- 6.7.14: a `Str` handle (issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md) ---
+# `var s = (mks());` with `mks(): Str` bound an untyped word, where `var t = mks();` is a Str (v5.10.4): `println(s)`
+# took the cstring overload and printed the header's bytes, `s.len()` was "no struct type in scope for 's'". The
+# wrapped Str is typed as the unwrapped one is (`_var_rhs_wsid`). `who` routes on the argument's type: 2 = a Str.
+fn mks(): Str { return str_from("abcde"); }
+fn who(s: cstring): i64 { return 1; }
+fn who_str(s: Str): i64 { return 2; }
+fn who_int(n: i64): i64 { return 3; }
+fn ws(): i64 { var s = (mks()); return s.len(); }
+fn ws_2(): i64 { var s = ((mks())); return s.len(); }
+fn ws_fn(): i64 { var s = (mks()); var t = ((mks())); return str_len(s) * 10 + str_len(t); }
+fn ws_ov(): i64 { var s = (mks()); var t = ((mks())); return who(s) * 10 + who(t); }
+fn ws_cl(): i64 { var f = |k| { var s = (mks()); return s.len() + k; }; return fncall1(f, 0); }
+fn ws_u(): i64 { var t = mks(); return who(t) * 10 + t.len(); }
+# --- 6.7.14 (the user's decision D24 (a), 2026-10-16): a `.field` / `.m()` AFTER the parentheses ---
+# `(s).a` and `(mk1()).a` were "expected ';', got '.'": the parenthesised factor returned at its `)`. The wrap
+# around a struct value is transparent there too (issues/2026-10-16-field-of-parenthesised-expression-does-not-
+# parse.md): a name, a `*T` and `*p`, a free call (8 / 16 / 24 B, `Str`), a method, an operator, a known `&f`, a
+# struct-typed field, a `: *T` call — and a `.m()` / a chain on any of them, as a value and as a statement.
+struct QO { a; b; }
+struct HQ { n; q: Q; }
+impl P1 { fn m(self): i64 { return self.a + 1; } }
+fn QO_add(x: QO, y: QO): QO { var r: QO; r.a = x.a + y.a; r.b = x.b + y.b; return r; }
+var GQ = Q { 3, 4 };
+var GP1 = P1 { 33 };
+fn gq(): *Q { return &GQ; }
+fn pf_name(): i64 { var s = P1 { 33 }; return (s).a; }
+fn pf_name2(): i64 { var s = P1 { 33 }; return ((s)).a; }
+fn pf_ptr(): i64 { var s = P1 { 33 }; var p: *P1 = &s; return (p).a; }
+fn pf_deref(): i64 { var s = P1 { 33 }; var p: *P1 = &s; return (*p).a; }
+fn pf_meth(): i64 { var s = P1 { 32 }; return (s).m(); }
+fn pf_c8(): i64 { return (mk1()).a; }
+fn pf_c16(): i64 { return (mk()).a * 10 + ((mk())).b; }
+fn pf_c24(): i64 { return (mk3()).a * 10 + (mk3()).b + (mk3()).c - 7; }
+fn pf_m16(): i64 { var b = Q { 1, 2 }; return (b.mkm()).a * 10 + (b.mkm()).b; }
+fn pf_op(): i64 { var x = QO { 1, 2 }; var y = QO { 2, 2 }; return (x + y).a * 10 + (x + y).b; }
+fn pf_fld(): i64 { var h: HQ; h.n = 1; h.q.a = 3; h.q.b = 4; return (h.q).a * 10 + ((h).q).b; }
+fn pf_gptr(): i64 { return (gq()).a * 10 + (gq()).b; }
+fn pf_icall(): i64 { return (fncall0(&mk3)).a * 10 + (callptr(&mk3)).b + (fncall0(&mk3)).c - 7; }
+fn pf_str(): i64 { return (mks()).len(); }
+fn pf_glob(): i64 { return (GP1).a; }
+fn pf_chain(): i64 { var b = Q { 1, 2 }; return (b).mkm().a * 10 + (b.mkm()).mkm().b; }
+fn pf_stmt(): i64 { var s = P1 { 32 }; (s).m(); (mk1()).a; return (s).a + 1; }
+fn pf_cl(): i64 { var f = |k| { var s = P1 { 33 }; return (s).a + k; }; return fncall1(f, 0); }
+fn pf_recv(): i64 { var b = Q { 1, 2 }; var x: Q = (b).mkm(); return dq(x); }
+var GPF = (GP1).a;
+# --- 6.7.14 (the user's decision D29 (a), 2026-10-16): an untyped TOP-LEVEL whole call binds its 8 B struct ---
+# `var x = mk1();` / `(mk1())` at top level inferred nothing: `x.a` was "no struct type in scope for 'x'" (an untyped
+# global kept the word; issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md). The declaration zone's
+# globals are typed at the end of pass 1, before a fn body reads them (`tu_read`); after the first statement (TA*, below)
+# PARSE_VAR's global arm types them.
+var TU1 = mk1();
+var TU2 = (mk1());
+var TU3 = ((mk8()));
+fn tu_read(): i64 { return TU1.a + d1(TU2); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -111,5 +175,50 @@ assert_eq(w8_cl(), 33, "var x = (mk1()); in a closure");
 assert_eq(w16_m(), 34, "var x = (b.mkm()); dq(x), a 16 B method (D42: 139 through 6.7.10)");
 assert_eq(wf64(), 1, "var x = (fh()); a : f64 call types x f64, as var x = fh(); does");
 assert_eq(wexpr(), 3, "var x = (1 + 2); stays an untyped 3");
+test_group("6.7.14: a wrapped f64 call before an operator");
+assert_eq(wf64_op(), 6, "var a = (fh()) * 2.0; is an f64 (the filed repro's shape: 0 before)");
+assert_eq(wf64_2(), 5, "var a = ((fh())) + 1.0; is an f64");
+assert_eq(wf64_lt(), 0, "var c = (fh()) * 2.0 < 1.0; stays an integer 0 (-c is not -0.0)");
+assert_eq(wf64_gt(), 0 - 1, "var c = ((fh())) * 2.0 > 1.0; stays an integer 1");
+assert_eq(wf64_and(), 0 - 1, "var b = (fh()) & 1; stays an integer (D12)");
+test_group("6.7.14: a Str handle");
+assert_eq(ws(), 5, "var s = (mks()); s.len() (refused before)");
+assert_eq(ws_2(), 5, "var s = ((mks())); s.len()");
+assert_eq(ws_fn(), 55, "(mks()) / ((mks())) then str_len(s)");
+assert_eq(ws_ov(), 22, "(mks()) / ((mks())) route to who_str (11 before: the cstring base)");
+assert_eq(ws_cl(), 5, "var s = (mks()); in a closure");
+assert_eq(ws_u(), 25, "control: var t = mks(); (unwrapped)");
+
+test_group("6.7.14 (D24): a .field / .m() after the parentheses");
+assert_eq(pf_name(), 33, "(s).a (the filed repro's shape)");
+assert_eq(pf_name2(), 33, "((s)).a");
+assert_eq(pf_ptr(), 33, "(p).a, p a *P1");
+assert_eq(pf_deref(), 33, "(*p).a");
+assert_eq(pf_meth(), 33, "(s).m()");
+assert_eq(pf_c8(), 33, "(mk1()).a, 8 B");
+assert_eq(pf_c16(), 34, "(mk()).a / ((mk())).b, 16 B");
+assert_eq(pf_c24(), 34, "(mk3()).a / .b / .c, 24 B (a temp)");
+assert_eq(pf_m16(), 34, "(b.mkm()).a, a method's result");
+assert_eq(pf_op(), 34, "(x + y).a, an operator's result");
+assert_eq(pf_fld(), 34, "(h.q).a / ((h).q).b, a struct-typed field");
+assert_eq(pf_gptr(), 34, "(gq()).a, a : *Q call");
+assert_eq(pf_icall(), 34, "(fncall0(&mk3)).a / (callptr(&mk3)).b, a known callee");
+assert_eq(pf_str(), 5, "(mks()).len(), a Str");
+assert_eq(pf_glob(), 33, "(GP1).a, a global");
+assert_eq(pf_chain(), 34, "(b).mkm().a / (b.mkm()).mkm().b, chains");
+assert_eq(pf_stmt(), 33, "(s).m(); (mk1()).a; as statements");
+assert_eq(pf_cl(), 33, "(s).a in a closure");
+assert_eq(pf_recv(), 34, "var x: Q = (b).mkm(); a struct destination");
+assert_eq(GPF, 33, "var GPF = (GP1).a; at top level");
+
+test_group("6.7.14 (D29): an untyped top-level whole call binds its 8 B struct");
+assert_eq(TU1.a, 33, "the declaration zone: var TU1 = mk1(); TU1.a (refused before)");
+assert_eq(TU2.a, 33, "the declaration zone: var TU2 = (mk1());");
+assert_eq(TU3.a + TU3.b, 33, "the declaration zone: var TU3 = ((mk8())); two u32 fields");
+assert_eq(tu_read(), 66, "a fn body reads TU1.a and passes TU2 by value");
+var TA1 = mk1();
+var TA2 = (mk8());
+assert_eq(TA1.a + d1(TA1), 66, "after a statement: var TA1 = mk1(); TA1.a, d1(TA1)");
+assert_eq(TA2.a + TA2.b, 33, "after a statement: var TA2 = (mk8());");
 
 var r = assert_summary();

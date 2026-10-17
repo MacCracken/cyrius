@@ -131,7 +131,7 @@
 # (`fncall0`, `callptr`, the callee wrapped, the call wrapped; PT10's refusal at the callee's name, as D28's); PT14-PT18
 # a method, an operator, wrapped, a generic method; controls PTK1 PTK2 (8 B keeps its word AND the warning), PTK3
 # (`x = mkp();` into a `*P2` local copies through it), PTK4 (the remedy), PTK5 (a `Str` into `*Str`). Top level is
-# outside the filed surface (staged: 2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md).
+# taken by 6.7.14's D28 (PTT rows, below).
 #   N25 the tree before it (6ab2a9c8)                    -> RED 80: PT0 PT00 PT1-PT18 x4 (BUILT with the warning)
 #   N26 `_rcv_ptr_ann` returns 0                         -> RED 44: PT0 PT00 PT1-PT9 x4
 #   N27 `_scv_icall_ann` without its pointer arm         -> RED 1: PT10's column (`_scv_rec_ann` still refuses the `&f`
@@ -158,6 +158,29 @@
 # refused as through 6.7.13, not bound as a handle on the scalar (GHT1-GHT4; GHT5 the struct-instance control).
 #   N33 `_gen_decl_reset` without its `_gen_ret_tp` test (2026-10-17) -> RED 16: GHT1-GHT4 x4 legs (BUILT: a handle on
 #                                                           the scalar, SIGSEGV at run time); GHT5 and the rest green
+#
+# 6.7.14 — D28 (the user, 2026-10-16): D14 AT TOP LEVEL, every `*T` and every path. `var X: *P2 = mkp();` (`= B.mk();`,
+# `= A + C;`, `= callptr(&mkp);`, `*i64`, `*u8`) after the first statement compiled under the typed-pointer warning and
+# stored the struct's first word as the pointer (the filed repro: 139 / 139 / 14 / 5); in the declaration zone the free
+# and `&f` calls were refused with D24's scalar remedy (the replay gives a pointer annotation `gps` 0) and a method /
+# operator result compiled under the warning (issues/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md).
+# `_scv_gcall_ann` takes a pointer annotation with D14's remedy, `_scv_icall_ann` and `_scv_rec_ann` lose their in-a-fn
+# gates, the zone's `_gvi_scalar` passes the pointer (`_gvi_ptr_ann`), and PARSE_VAR's warning stays quiet on a line
+# refused inside its initialiser (`_tp_warn_decl`: a top-level 24 B call, whose one refusal is the no-frame one).
+# PTT0 PTT0z PTT0m the three filed repros verbatim; PTT1-PTT10 x {zone, after}: free, wrapped, `fncall1`, a wrapped
+# `callptr((&mk2), ..)`, `**P2`, a generic, a method, a wrapped method, an operator, a generic method; PTT11-PTT13 24 B
+# (one no-frame refusal, no warning); PTT14 after an earlier error (still no warning); PTTK1-PTTK3 8 B and `Str` keep
+# their word and the warning.
+#   N36 the tree before it (R3's tip, c5c4a165)          -> RED 110: every PTT row x4 legs but PTT11zone-PTT13zone and
+#                                                           PTT14zone (the zone was quiet there); the PTT3 / PTT14 checks
+#   N37 `_scv_gcall_ann` without its pointer arm         -> RED 49: PTT0 PTT0z PTT1 PTT2 PTT5 PTT6 PTT14 x {zone, after}
+#   N38 `_scv_icall_ann` with its in-a-fn `*T` gate      -> RED 1: PTT3's column (`_scv_rec_ann` refuses the `&f` call
+#                                                           from its record, at `fncall1`)
+#   N39 `_scv_rec_ann` with its in-a-fn `*T` gate        -> RED 36: PTT0m PTT7-PTT10 x {zone, after}
+#   N40 `_gvi_scalar` passing 0 (no `_gvi_ptr_ann`)      -> RED 49: PTT0z PTT0m PTT1zone-PTT10zone (D24's remedy, or built)
+#   N41 `_tp_warn_decl` without its `_scv_err` test      -> RED 12: PTT11after-PTT13after (a warning beside the no-frame
+#                                                           refusal)
+#   N42 `_scv_gcall_ann` without `_ptr_refd_ti`          -> RED 4: PTT14after (after an earlier error `_scv_err` cannot tell)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -248,6 +271,37 @@ runs() {
                          WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
         esac
         if [ "$got" = "$2" ]; then ok "$1 $3 ($leg): exit $got"; else bad "$1 $3 ($leg): exit $got, want $2"; fi
+    done
+}
+# prints <name> <want> <what>: compiles clean, exits 0 and prints exactly <want> (its lines joined by `|`) on every leg
+prints() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        [ "$leg" = pe ] && [ "$WINE" -eq 0 ] && continue
+        compile "$leg" "$1"
+        if [ "$crc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$1 $3 ($leg): did not build (rc $crc): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"; continue; fi
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 30 "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            cx)      timeout 60 "$T/cxvm" < "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            pe)      cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > "$T/$1.$leg.out" 2> /dev/null) || got=$? ;;
+        esac
+        o=$(tr -d '\r' < "$T/$1.$leg.out" | tr '\n' '|')
+        if [ "$got" != 0 ]; then bad "$1 $3 ($leg): exit $got, want 0"
+        elif [ "$o" = "$2" ]; then ok "$1 $3 ($leg): printed [$o]"
+        else bad "$1 $3 ($leg): printed [$o], want [$2]"; fi
+    done
+}
+# quiet <name> <what>: the last compile of <name> on every leg printed no `^warning`
+quiet() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        [ -f "$T/$1.$leg.err" ] || compile "$leg" "$1"
+        if grep -q '^warning' "$T/$1.$leg.err"; then bad "$1 $2 ($leg): $(grep '^warning' "$T/$1.$leg.err" | head -1)"
+        else ok "$1 $2 ($leg): no warning"; fi
     done
 }
 REPA=docs/development/issues/repros/2026-10-10-struct-receive-inference-a-parenthesised-call.cyr
@@ -705,6 +759,69 @@ syscall(60, f());
 EOF
 runs PTK5 34 "control: a \`Str\` result into \`*Str\` keeps its handle (a \`Str\` is one word)"
 
+# --- D28 (6.7.14; the user, 2026-10-16: D14 at top level, every `*T` and every path) ---
+# (issues/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md) The three filed repros, verbatim: after the
+# first statement `var X: *P2 = mkp();` compiled under the typed-pointer warning and exited 139 / 139 / 14 / 5; in the
+# declaration zone the free call was refused with D24's scalar remedy ("or bind a field") and the method compiled
+# (warned) and faulted. Now each is refused once in D14's words, with no warning.
+REPT=docs/development/issues/repros/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call
+[ -f "$REPT.cyr" ] && [ -f "$REPT-zone.cyr" ] && [ -f "$REPT-zone-method.cyr" ] || { echo "FAIL: $G: $REPT*.cyr missing"; exit 1; }
+cp "$REPT.cyr" "$T/PTT0.cyr"
+refused PTT0 "cannot initialise 'X: *P2' from 'mkp', which returns the struct 'P2' - declare 'X: P2' and take \`&X\`" \
+    "D28's repro 1 verbatim: after the first statement (warning + 139 before)"
+cp "$REPT-zone.cyr" "$T/PTT0z.cyr"
+refused PTT0z "cannot initialise 'X: *P2' from 'mkp', which returns the struct 'P2' - declare 'X: P2' and take \`&X\`" \
+    "D28's repro 2 verbatim: the declaration zone (D24's \"or bind a field\" before)"
+cp "$REPT-zone-method.cyr" "$T/PTT0m.cyr"
+refused PTT0m "cannot initialise 'X: *Q' from 'Q_mk', which returns the struct 'Q' - declare 'X: Q' and take \`&X\`" \
+    "D28's repro 3 verbatim: a method in the declaration zone (warning + 139 before)"
+PGT="from 'mk2', which returns the struct 'P2' - declare 'G: P2' and take \`&G\`"
+PGQ="from 'Q_mk', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`"
+PGA="from 'Q_add', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`"
+for zw in zone after; do
+    rowt "PTT1$zw" $zw 'var G: *P2 = mk2(5);'
+    refused "PTT1$zw" "cannot initialise 'G: *P2' $PGT" "top level ($zw): a 16 B free call into \`*P2\`"
+    rowt "PTT2$zw" $zw 'var G: *i64 = (mk2(5));'
+    refused "PTT2$zw" "cannot initialise 'G: *i64' $PGT" "top level ($zw): wrapped, into \`*i64\`"
+    rowt "PTT3$zw" $zw 'var G: *u8 = fncall1(&mk2, 5);'
+    refused "PTT3$zw" "cannot initialise 'G: *u8' $PGT" "top level ($zw): \`fncall1(&mk2, 5)\` into \`*u8\`"
+    rowt "PTT4$zw" $zw 'var G: *P2 = (callptr((&mk2), 5));'
+    refused "PTT4$zw" "cannot initialise 'G: *P2' $PGT" "top level ($zw): a wrapped \`callptr((&mk2), 5)\`"
+    rowt "PTT5$zw" $zw 'var G: **P2 = mk2(5);'
+    refused "PTT5$zw" "cannot initialise 'G: **P2' $PGT" "top level ($zw): \`**P2\`"
+    rowt "PTT6$zw" $zw 'var G: *i64 = mkg<i64>(5);'
+    refused "PTT6$zw" "cannot initialise 'G: *i64' from 'mkg', which returns the struct 'P2' - declare 'G: P2' and take \`&G\`" "top level ($zw): a generic callee"
+    rowz "PTT7$zw" $zw 'var G: *Q = B.mk();'
+    refused "PTT7$zw" "cannot initialise 'G: *Q' $PGQ" "top level ($zw): a 16 B method into \`*Q\`"
+    rowz "PTT8$zw" $zw 'var G: *i64 = (B.mk());'
+    refused "PTT8$zw" "cannot initialise 'G: *i64' $PGQ" "top level ($zw): a wrapped method into \`*i64\`"
+    rowz "PTT9$zw" $zw 'var G: *u8 = A + C;'
+    refused "PTT9$zw" "cannot initialise 'G: *u8' $PGA" "top level ($zw): an operator into \`*u8\`"
+    rowz "PTT10$zw" $zw 'var G: *Q = B.mkg(7);'
+    refused "PTT10$zw" "cannot initialise 'G: *Q' from 'Q_mkg', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`" "top level ($zw): a generic method"
+    rowt "PTT11$zw" $zw 'var G: *P3 = mk3(5);'
+    refused "PTT11$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "top level ($zw): 24 B keeps its one no-frame refusal (no D14, no warning)"
+    rowz "PTT12$zw" $zw 'var G: *i64 = B.mk3();'
+    refused "PTT12$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "top level ($zw): a 24 B method, the one no-frame refusal"
+    rowt "PTT13$zw" $zw 'var G: *P3 = callptr(&mk3, 5);'
+    refused "PTT13$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "top level ($zw): a 24 B \`callptr(&mk3, 5)\`, the one no-frame refusal"
+    rowt "PTT14$zw" $zw 'var E = nope;
+var G: *P2 = mk2(5);'
+    refused "PTT14$zw" "undefined variable 'nope'" "top level ($zw): after an earlier error the refusal still says no warning" 2
+    rowt "PTTK1$zw" $zw 'var G: *P1 = mk1(5);'
+    warned "PTTK1$zw" 0 "control, top level ($zw): an 8 B struct into \`*P1\` keeps its word and the warning"
+    rowz "PTTK2$zw" $zw 'var G: *Q1 = B.mk1();'
+    warned "PTTK2$zw" 0 "control, top level ($zw): an 8 B method into \`*Q1\` keeps its word and the warning"
+done
+if grep -q '^error:<source>:[0-9]*:23: cannot initialise' "$T/PTT3after.x86_64.err" && grep -q '^error:<source>:[0-9]*:23: cannot initialise' "$T/PTT3zone.x86_64.err"; then
+    ok "PTT3 the top-level refusal sits at the callee's name (\`mk2\`, column 23), as in a fn (PT10)"
+else bad "PTT3 the top-level refusal is not at the callee's name: $(grep '^error' "$T/PTT3after.x86_64.err" "$T/PTT3zone.x86_64.err" | head -2)"; fi
+if grep -qF "cannot initialise 'G: *P2' $PGT" "$T/PTT14after.x86_64.err" && grep -qF "cannot initialise 'G: *P2' $PGT" "$T/PTT14zone.x86_64.err"; then
+    ok "PTT14 the D14 refusal is the second error, after the earlier one"
+else bad "PTT14 the D14 refusal is missing after the earlier error"; fi
+printf '%s\nalloc_init();\nvar S: *Str = mks();\nvar T: *Str = (fncall0(&mks));\nsyscall(60, str_len(S) + str_len(T) + 24);\n' "$TH" > "$T/PTTK3.cyr"
+warned PTTK3 34 "control: after the first statement a \`Str\` into \`*Str\` keeps its handle and the warning, as in a fn"
+
 # --- (a): wrapped calls, run ---
 row A1 'fn f(): i64 { var x = ((mkp())); var y = (mk3()); var z = ((mk3())); return dq(x) + dq3(y) + dq3(z) - 68; }'
 runs A1 34 "\`((mkp()))\`, \`(mk3())\`, \`((mk3()))\` into by-value parameters"
@@ -840,7 +957,116 @@ refused GHT4 "no struct type in scope for 'a'" "\`var a: P3 = gid(w.v);\` (a fie
 ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
 runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 
-[ "$rows" -ge 159 ] || bad "only $rows rows ran (floor 159)"
+
+# 6.7.14 — A WRAPPED `Str` CALL IS A Str (issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md). `var s =
+# (mks());` with `fn mks(): Str` bound an untyped word, where `var t = mks();` is a Str (v5.10.4): `println(s)` took the
+# cstring overload and printed the header's bytes (the filed repro: `P`, a backquote line, then `abcde`), and `s.len()`
+# was "no struct type in scope for 's'". `_var_rhs_wsid` types the wrapped Str as the unwrapped peek does. WS0 the filed
+# repro verbatim; WS1 its `s.len()` form; WS2 `((mks()))`; tcyr ws* through A2.
+#   N34 `_var_rhs_wsid` without its Str test (2026-10-17) -> RED 16: WS0 (printed garbage) WS1 WS2 A2 x4 legs (refused:
+#                                                           no struct type in scope for 's'); the rest green
+REPS=docs/development/issues/repros/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.cyr
+[ -f "$REPS" ] || { echo "FAIL: $G: $REPS is missing"; exit 1; }
+cp "$REPS" "$T/WS0.cyr"
+prints WS0 "abcde|abcde|" "the filed repro verbatim: \`var s = (mks()); println(s);\` prints abcde, as \`var t = mks();\` does"
+sed 's/return 0; }$/return s.len() * 10 + t.len(); }/' "$REPS" > "$T/WS1.cyr"
+runs WS1 55 "the filed repro's \`return s.len() * 10 + t.len();\` form (refused before: no struct type in scope for 's')"
+sed 's/var s = (mks());/var s = ((mks()));/' "$T/WS1.cyr" > "$T/WS2.cyr"
+runs WS2 55 "\`var s = ((mks()));\`, two wraps"
+
+# 6.7.14 — A WRAPPED `: f64` CALL BEFORE AN OPERATOR (issues/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.md).
+# `var a = (f()) * 2.0;` bound an untyped word holding the product's bits, where `var a = f() * 2.0;` and (6.7.13) `var a =
+# (f());` bind an f64: the filed repro's `a + 1.5` added integers under "integer arithmetic with an f64 right operand",
+# exit 0 on all four. `_var_rhs_wsid` gives the wrapped leading call's -9 whatever follows the wrap, and `_var_rhs_post`
+# keeps it only while the whole initialiser is an f64 (a comparison, `&&`, D12's `& | ^ % << >>` stay integers: tcyr
+# wf64_*, through A2). WF0 the filed repro verbatim: exit 6, and (a second row) no warning.
+#   N35 `_var_rhs_wsid` with the `;` test before the f64 return (2026-10-17) -> RED 12: WF0 x2 (exit 0; the warning)
+#                                                           A2 (wf64_op wf64_2) x4 legs; the rest green
+REPF64=docs/development/issues/repros/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.cyr
+[ -f "$REPF64" ] || { echo "FAIL: $G: $REPF64 is missing"; exit 1; }
+cp "$REPF64" "$T/WF0.cyr"
+runs WF0 6 "the filed repro verbatim: \`var a = (f()) * 2.0;\` is an f64 (exit 0 before)"
+quiet WF0 "the filed repro: no \"integer arithmetic with an f64 right operand\""
+
+# 6.7.14 — D29 (a) / D30 (a) (the user, 2026-10-16): AN UNTYPED TOP-LEVEL `var x = mk1(30);` BINDS THE STRUCT
+# (issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md). The initialiser one whole free call, wrapped
+# or not, in the declaration zone or after the first statement: of 8 B or less x is the struct (`x.a` was "no struct type
+# in scope for 'x'"); of 9-16 B it is refused as `var x: P2 = mk2(30);` is ("needs storage in a fn's frame"; it held the
+# first word silently: the filed repro exited 33); over 16 B the call's own refusal is the one error (the "no struct
+# type in scope" after it is gone). `_gu_late` (PARSE_VAR's global arm), `_gu_sweep` (the zone, the end of pass 1) and the
+# zone replay's `_gu_refuse`. TU0 TU0b the filed repros verbatim; TU1-TU7 x {zone, after a first statement}: 8 B plain /
+# wrapped / twice wrapped, 16 B plain / wrapped (`G.b` used), 24 B plain / wrapped (`G.c` used); TU8 `G + G` dispatches
+# `P1_add`, TU9 `G + 1` with no `P1_add` is refused; TU10 a refusal inside the initialiser is the one error; TU11 the
+# callee declared below; TU12 a fn body reads `G.a` and passes G by value; TU13 `var Y: P1 = G;`; TUK1 a `Str` stays the
+# handle it was; TUK2 a 16 B method keeps the word (SATK2).
+#   N43 the tree before it (63aa1cb8)                    -> RED 102: TU0 TU0b TU1-TU8 TU11-TU13 x {zone, after} x4 legs
+#                                                           (refused / built / two errors), TU9 x2 (x86_64), A2 x4 (the
+#                                                           tcyr's TU* / TA* rows); TU10 TUK1 green
+#   N44 `_gu_sweep` returns 0 (the zone)                 -> RED 53: TU0 TU1zone-TU8zone TU11zone-TU13zone x4, TU9zone, A2
+#                                                           x4 (TU0b green: its replay refusal stands, nothing reads `x.a`)
+#   N45 `_gu_late` keeping `pscale` (after a statement)  -> RED 49: TU1after-TU8after TU11after-TU13after x4, TU9after, A2 x4
+#   N46 `_gvi_scalar` without `_gu_refuse`               -> RED 12: TU0b TU4zone TU5zone x4 (built)
+#   N47 `_gu_refuse` without its `_scv_err` test         -> RED 8: TU10zone TU10after x4 (two errors)
+REPU=docs/development/issues/repros/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing
+[ -f "$REPU.cyr" ] && [ -f "$REPU-16b.cyr" ] || { echo "FAIL: $G: $REPU*.cyr missing"; exit 1; }
+cp "$REPU.cyr" "$T/TU0.cyr"
+runs TU0 33 "D29's repro verbatim: \`var x = mk1(30); syscall(60, x.a);\` in the zone (refused before: no struct type in scope)"
+cp "$REPU-16b.cyr" "$T/TU0b.cyr"
+refused TU0b "'mk2' returns a struct by value, and a struct result needs storage in a fn's frame" \
+    "D30's repro verbatim: \`var x = mk2(30);\` (16 B) refused once (33, the first word, silently before)"
+MNF="returns a struct by value, and a struct result needs storage in a fn's frame"
+# rowu <name> <zone|after> <declarations> <exit expression>: after = behind a first statement (`Z = 1;`, `$TS`)
+rowu() {
+    if [ "$2" = zone ]; then printf '%s\n%s\nsyscall(60, %s);\n' "$TH" "$3" "$4" > "$T/$1.cyr"
+    else printf '%s\n%s\n%s\nsyscall(60, %s);\n' "$TH" "$TS" "$3" "$4" > "$T/$1.cyr"; fi
+}
+for zw in zone after; do
+    rowu "TU1$zw" $zw 'var G = mk1(33);' 'G.a'
+    runs "TU1$zw" 33 "top level ($zw): \`var G = mk1(33);\` is the 8 B struct (\`G.a\`)"
+    rowu "TU2$zw" $zw 'var G = (mk1(33));' 'G.a'
+    runs "TU2$zw" 33 "top level ($zw): \`var G = (mk1(33));\`"
+    rowu "TU3$zw" $zw 'var G = ((mk1(30)));
+var H = mk1(3);' 'G.a + H.a'
+    runs "TU3$zw" 33 "top level ($zw): \`((mk1(30)))\` beside a plain one"
+    rowu "TU4$zw" $zw 'var G = mk2(5);' 'G.a'
+    refused "TU4$zw" "'mk2' $MNF" "top level ($zw): \`var G = mk2(5);\` (16 B) refused once, \`G.a\` no second error"
+    rowu "TU5$zw" $zw 'var G = (mk2(5));' 'G.b'
+    refused "TU5$zw" "'mk2' $MNF" "top level ($zw): \`var G = (mk2(5));\` refused once"
+    rowu "TU6$zw" $zw 'var G = mk3(5);' 'G.c'
+    refused "TU6$zw" "'mk3' $MNF" "top level ($zw): 24 B, the call's one refusal (no 'no struct type in scope' after it)"
+    rowu "TU7$zw" $zw 'var G = ((mk3(5)));' 'G.a'
+    refused "TU7$zw" "'mk3' $MNF" "top level ($zw): 24 B wrapped, one error"
+    rowu "TU8$zw" $zw 'fn P1_add(l: P1, r: P1): P1 { var q: P1; q.a = l.a + r.a; return q; }
+var G = mk1(17);
+var K: P1 = G + G;' 'K.a - 1'
+    runs "TU8$zw" 33 "top level ($zw): \`G + G\` dispatches \`P1_add\`"
+    rowu "TU9$zw" $zw 'var G = mk1(17);
+var K = G + 1;' '0'
+    rows=$((rows + 1))
+    compile x86_64 "TU9$zw"
+    if [ "$crc" -ne 0 ] && grep -q "undefined function 'P1_add'" "$T/TU9$zw.x86_64.err" && [ ! -s "$T/TU9$zw.x86_64" ]; then
+        ok "TU9$zw top level ($zw): \`G + 1\` with no \`P1_add\` is refused (it added to the word before)"
+    else bad "TU9$zw top level ($zw): \`G + 1\` was not refused for want of \`P1_add\` (rc $crc)"; fi
+    rowu "TU10$zw" $zw 'var G = mk2(nope);' '0'
+    refused "TU10$zw" "undefined variable 'nope'" "top level ($zw): a refusal inside the initialiser is the one error"
+    rowu "TU12$zw" $zw 'var G = mk1(30);
+fn f(): i64 { return G.a + d1(G); }
+fn d1(p: P1): i64 { return p.a; }' 'f() - 27'
+    runs "TU12$zw" 33 "top level ($zw): a fn body reads \`G.a\` and passes G by value"
+    rowu "TU13$zw" $zw 'var G = mk1(33);
+var Y: P1 = G;' 'Y.a'
+    runs "TU13$zw" 33 "top level ($zw): \`var Y: P1 = G;\` copies it"
+done
+printf 'include "lib/syscalls.cyr"\nstruct P1 { a; }\nvar G = mkb(30);\nfn mkb(a): P1 { var r: P1 = P1 { a + 3 }; return r; }\nsyscall(60, G.a);\n' > "$T/TU11zone.cyr"
+runs TU11zone 33 "the declaration zone: the callee declared below the global"
+printf 'include "lib/syscalls.cyr"\nstruct P1 { a; }\nvar Z = 0;\nZ = 1;\nvar G = mkb(30);\nsyscall(60, G.a);\nfn mkb(a): P1 { var r: P1 = P1 { a + 3 }; return r; }\n' > "$T/TU11after.cyr"
+runs TU11after 33 "after a statement: the callee declared below the global"
+rowu TUK1 after 'alloc_init();
+var S = mks();
+var R = (mks());' 'str_len(S) + str_len(R) + 24'
+runs TUK1 34 "control: an untyped \`Str\` call at top level stays the handle (\`str_len(S)\`, wrapped too)"
+
+[ "$rows" -ge 229 ] || bad "only $rows rows ran (floor 229)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14)"

@@ -40,6 +40,14 @@
 #          bare statement (C2), refused once with the rest of the chain skipped; in a fn, on a
 #          method that returns no struct (C3), named. On 6.6.16 all three were "expected ';' /
 #          ')', got '.'".
+#   C4-C10 (6.7.14, issues/archived/2026-10-16-toplevel-method-chain-over-16b-refused-twice.md) a chain on a
+#          result OVER 16 B at top level is refused ONCE: the call's own `_sc_pre` refuses it, and
+#          `_method_chain` said it again (two errors for `b0.mk().b`, two columns apart). C4 the filed
+#          repro verbatim (one error per line: the method on line 6, the free call on line 7); C5 a dyn
+#          method; C6 a 9-16 B method (control: `_sc_pre` records it without a temp, the chain refuses
+#          once); C7 `.tot()` on the result; C8 the statement form; C9 / C10 a known `&f` callee
+#          (`fncall1(&mk3, 5).b`, `callptr(&mk3, 5).tot()`: D16's rows, whose own skip in `_icall_chain`
+#          is now `_method_chain`'s).
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -59,6 +67,9 @@
 #   no `_stmt_explicit_generic` call in PARSE_STMT          -> RED G1, G2, G3
 #   `_stmt_explicit_generic` without `_must_use_warn`       -> RED G3
 #   real tree                                               -> GREEN
+# 6.7.14 (C4-C10):
+#   `_method_chain`'s top-level arm without its `_ret_agg_class` test (the tree before, less
+#     `_icall_chain`'s own skip)                            -> RED C4 C5 C7 C8 C9 C10 (two errors); C6 green
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -183,6 +194,74 @@ fn m(): i64 { var p = Pt { 1, 2 }; return p.sx().y; }
 var r = m(); syscall(60, r);
 " "" one
 
+echo "a chain on a result over 16 B at top level, refused once (6.7.14):"
+printf '%s' 'struct P3 { a; b; c; }
+struct B { k; }
+impl B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+var b0: B = B { 1 };
+var g = b0.mk().b;
+var h = mk3(5).b;
+syscall(60, g + h);
+' > "$D/c4.cyr"
+rc=0; cat "$D/c4.cyr" | "$CC" > "$D/c4.bin" 2>"$D/c4.err" || rc=$?
+n=$(grep -c '^error:' "$D/c4.err" || true)
+n6=$(grep -c "^error:<source>:6:[0-9]*: 'B_mk' $MT" "$D/c4.err" || true)
+n7=$(grep -c "^error:<source>:7:[0-9]*: 'mk3' $MT" "$D/c4.err" || true)
+if [ "$rc" != 0 ] && [ ! -s "$D/c4.bin" ] && [ "$n" = 2 ] && [ "$n6" = 1 ] && [ "$n7" = 1 ]; then
+    printf '  ok(refused): C4 (the filed repro: one error per line)
+'; pass=$((pass+1))
+else
+    printf '  FAIL: C4     rc=%s, %s error lines (line 6: %s, line 7: %s), want 2 (1 + 1)
+' "$rc" "$n" "$n6" "$n7"
+    fail=$((fail+1))
+fi
+refuse C5 "'dyn Mk.mk' $MT" 'struct P3 { a; b; c; }
+struct B { k; }
+trait Mk { fn mk(self): P3; }
+impl Mk for B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
+var b0: B = B { 1 };
+var d: dyn Mk = &b0;
+var g = d.mk().b;
+syscall(60, g);
+' "" one
+refuse C6 "'B_mk' $MT" 'struct P2 { a; b; }
+struct B { k; }
+impl B { fn mk(self): P2 { var r: P2 = P2 { 1, 2 }; return r; } }
+var b0: B = B { 1 };
+var g = b0.mk().b;
+syscall(60, g);
+' "" one
+refuse C7 "'B_mk' $MT" 'struct P3 { a; b; c; }
+struct B { k; }
+impl B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
+impl P3 { fn tot(self): i64 { return self.a + self.b + self.c; } }
+var b0: B = B { 1 };
+var g = b0.mk().tot();
+syscall(60, g);
+' "" one
+refuse C8 "'B_mk' $MT" 'struct P3 { a; b; c; }
+struct B { k; }
+impl B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
+var b0: B = B { 1 };
+var r = 0;
+b0.mk().b;
+syscall(60, r);
+' "" one
+refuse C9 "'mk3' $MT" 'include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+var g = fncall1(&mk3, 5).b;
+syscall(60, g);
+' "" one
+refuse C10 "'mk3' $MT" 'include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+impl P3 { fn tot(self): i64 { return self.a + self.b + self.c; } }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+var g = callptr(&mk3, 5).tot();
+syscall(60, g);
+' "" one
+
 echo "in a fn — named refusals:"
 refuse A1 "cannot assign to a field of a call result: the result is a temporary" "${T}fn m(): i64 { mk8(1).a = 5; return 0; }
 var r = m(); syscall(60, r);
@@ -230,5 +309,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 18 ] || { echo "FAIL: call_result_field: only $pass of the 18 rows passed"; exit 1; }
+[ "$pass" -ge 28 ] || { echo "FAIL: call_result_field: only $pass of the 28 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]

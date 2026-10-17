@@ -1,0 +1,44 @@
+# pair_question_forward.tcyr — 6.7.14. A FN WHOSE ONLY `: stack` PAIR ROUTE IS `f(..)?` IS A PAIR ABOVE ITS
+# DEFINITION TOO (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md).
+#
+# ⛔ THE DEFECT. Pass 1's pair scan (`_pair_body_scan`) followed `return f(..)` only, so a fn whose pair came
+# from `var v = parse(x)?;` alone was flagged when pass 2 reached its body: a caller ABOVE it took `qb(x)?` as the
+# BOXED `?` and dereferenced the tag (139 on x86_64 and aarch64, 1 on cx, 5 on PE). A `?` on a pair call is a pair
+# route in the scan now, so the order of the definitions no longer decides it.
+#
+# ⚠ WHY crossos/: the pair is each target's return-register pair, and `?` re-emits both halves on its Err path;
+# this file runs on pi, ecb, ach and cass at the release gate. The single bind's refusal ("bind both") is
+# tests/gates/frontend/stack_enum_lossy_context.sh axis QF, on x86_64 / qemu-aarch64 / cxvm / wine.
+#
+# Each callee's other exit is `return QSkip();`, a nullary variant — the whole value, and no pair route of its
+# own — so `?` is the only route and nothing warns.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum QR: stack { QOk(v); QErr(e); QSkip(); }
+struct Pt { x; y; }
+
+fn _qparse(x) { if (x > 0) { return QOk(x * 2); } return QErr(0 - x); }
+
+# Every caller sits ABOVE the fn it calls.
+fn _qa(x) { var v = _qb(x)?; return QOk(v + 100); }
+fn _qb(x) { var v = _qparse(x)?; return QSkip(); }
+fn _qm_use(p: Pt) { var v = p.qm()?; return QOk(v + 100); }
+impl Pt { fn qm(self) { var v = _qparse(self.x)?; return QSkip(); } }
+
+fn _g_forward(): i64 {
+    var t, v = _qa(0 - 3);
+    assert_eq(t, 1, "an Err through _qb(x)? above _qb keeps its tag");
+    assert_eq(v, 3, "... and its payload");
+    var t2, v2 = _qa(5);
+    assert_eq(t2, 2, "_qb's own variant comes back through ? (its tag, not a dereference)");
+    var p = Pt { 0 - 4, 0 };
+    var t3, v3 = _qm_use(p);
+    assert_eq(t3, 1, "an Err through p.qm()? above its impl keeps its tag");
+    assert_eq(v3, 4, "... and its payload");
+    return 0;
+}
+
+var _a = _g_forward();
+var r = assert_summary();

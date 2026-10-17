@@ -1,0 +1,9 @@
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn main(): i64 {
+    var x: i64 = 0;
+    x = mkp();
+    return x;
+}
+syscall(60, main());

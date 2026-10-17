@@ -1706,5 +1706,266 @@ fn main(): i64 {
 syscall(60, main());
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
+# ── axis QF — 6.7.14: A FN WHOSE ONLY PAIR ROUTE IS `?`, USED ABOVE ITS DEFINITION ────────────────
+# ⛔ A fn becomes pair-returning three ways: `return Ctor(..)`, `return pairfn(..)` and a `?` on a pair
+# call. `_pair_body_scan` followed the two `return` routes only, so `fn qb(x) { var v = parse(x)?; .. }`
+# was flagged when pass 2 reached its body: every caller ABOVE it read `qb(x)` as one value — `qb(x)?`
+# took the BOXED lowering and dereferenced the tag (QF1, the issue's repro verbatim: 139 / 139 / 10 / 5 —
+# x86_64 / aarch64 / cx / PE) and `var v = qb(x);` kept the Err tag in silence (QF2: 1 on every leg),
+# where the same programs with qb above qa were refused "bind both". The scan now answers 1 for a `?`
+# whose call is a pair (`_tok_q_is_pair`, the mixed-return pass's own test), in the same rounds, so the
+# verdict no longer depends on the definition order (QF1-QF4); impl methods share the scan (QF7, QF8).
+# (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md)
+# LEGS: x86_64, aarch64 (cross, qemu-aarch64), cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, a private
+# prefix), the cross compilers built from this tree by $CC. A missing tool is a SKIP that names it.
+# QF9 an inherited trait default and QF10 a dyn formed above the impl share the scan too (QF10: it compiled).
+# Mutation (a scratch copy of the tree with the `?` arm dropped, CYCC= its compiler): RED at QF1 — it
+# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 QF9 QF10 QF12 red on every leg, QF3 QF4 QF6 QF11
+# green. QF11 (a closure's own `?`): with `_pair_body_scan`'s `|` / `||` arm dropped, RED (refused "bind both").
+QFR=docs/development/issues/repros/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
+QLEGS="x86_64 pe"
+qskips=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    "$CC" < src/main_aarch64.cyr > "$T/qf_a64" 2> /dev/null && [ -s "$T/qf_a64" ] \
+        || { echo "FAIL stack_enum_lossy_context axisQF: src/main_aarch64.cyr did not build"; exit 1; }
+    chmod +x "$T/qf_a64"; QLEGS="$QLEGS aarch64"
+else echo "  SKIP stack_enum_lossy_context axisQF: the aarch64 leg — qemu-aarch64 not installed"; qskips=$((qskips + 1)); fi
+"$CC" < src/main_cx.cyr > "$T/qf_cx" 2> /dev/null && [ -s "$T/qf_cx" ] && "$CC" < programs/cxvm.cyr > "$T/qf_vm" 2> /dev/null && [ -s "$T/qf_vm" ] \
+    || { echo "FAIL stack_enum_lossy_context axisQF: src/main_cx.cyr or programs/cxvm.cyr did not build"; exit 1; }
+chmod +x "$T/qf_cx" "$T/qf_vm"; QLEGS="$QLEGS cx"
+QWINE=0
+if command -v wine > /dev/null 2>&1; then QWINE=1
+else echo "  SKIP stack_enum_lossy_context axisQF: the PE run leg — wine not installed (the PE refusals still run)"; qskips=$((qskips + 1)); fi
+_qf_cc() {
+    case $1 in
+        x86_64)  "$CC" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        aarch64) "$T/qf_a64" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        cx)      "$T/qf_cx" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+    esac
+}
+# qf_refuse <label> <axis> <line:col> — $T/q.cyr refused on every leg: ONE `bind both` error, at line:col
+qf_refuse() {
+    for leg in $QLEGS; do
+        if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context $2 ($leg): $1 COMPILED — the forward pair is read as one value."; exit 1; fi
+        _n=$(grep -c '^error' "$T/q.$leg.err")
+        if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$3: .*bind both" "$T/q.$leg.err"; then
+            echo "FAIL stack_enum_lossy_context $2 ($leg): $1 — want ONE 'bind both' error at $3, got $_n:"
+            grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+        fi
+    done
+}
+# qf_run <label> <axis> <exit> — $T/q.cyr compiles and exits <exit> on every leg
+qf_run() {
+    for leg in $QLEGS; do
+        _qf_cc "$leg" && [ -s "$T/q.$leg" ] || { echo "FAIL stack_enum_lossy_context $2 ($leg): $1 was REFUSED:"; grep -E '^error' "$T/q.$leg.err" | head -2 | sed 's/^/    /'; exit 1; }
+        chmod +x "$T/q.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 30 "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/qf_vm" < "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$QWINE" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/q.$leg" "$T/q.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./q.exe > /dev/null 2>&1) || got=$? ;;
+        esac
+        [ "$got" -eq "$3" ] || { echo "FAIL stack_enum_lossy_context $2 ($leg): $1 ran but gave ${got}, expected $3"; exit 1; }
+    done
+}
+# The two filed repros verbatim (qb BELOW qa), then each with lines 3 and 4 swapped (qb ABOVE qa).
+cp "$QFR.cyr" "$T/q.cyr"
+qf_refuse "the issue's repro verbatim: qb(x)? above qb, var z = qa(5);" axisQF1 "5:7"
+cp "$QFR-single-bind.cyr" "$T/q.cyr"
+qf_refuse "the issue's single-bind repro verbatim: var v = qb(x); above qb" axisQF2 "3:18"
+awk 'NR == 3 { h = $0; next } NR == 4 { print; print h; next } { print }' "$QFR.cyr" > "$T/q.cyr"
+qf_refuse "the repro with qb above qa (unchanged)" axisQF3 "5:7"
+awk 'NR == 3 { h = $0; next } NR == 4 { print; print h; next } { print }' "$QFR-single-bind.cyr" > "$T/q.cyr"
+qf_refuse "the single bind with qb above qa (unchanged)" axisQF4 "4:18"
+# The Err path through the forward `?` chain: (1, 3) reaches main's destructure — it dereferenced the tag.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn qa(x) { var v = qb(x)?; return Ok(v); }
+fn qb(x) { var v = parse(x)?; return v; }
+fn main(): i64 { var t, v = qa(0 - 3); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "an Err propagated through qb(x)? above qb" axisQF5 13
+# ANTI-OVER-REACH: a `?` on a one-value (boxed) call flags nothing — qb below its single bind runs (11 + 3 * 2).
+cat > "$T/q.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+enum BR { BOk(v); BErr(e); }
+fn bp(x) { if (x > 0) { return BOk(x * 2); } return BErr(0 - x); }
+fn qa(x) { var r = qb(x); return load64(r + 8); }
+fn qb(x) { var v = bp(x)?; return BOk(v + 1); }
+fn main(): i64 { alloc_init(); return qa(5) + qa(0 - 3) * 2; }
+syscall(60, main());
+EOF
+qf_run "a ? on a boxed call below its single bind is one value" axisQF6 17
+# An impl method whose only pair route is `?`, used above its impl: `?` propagates, the single bind is refused.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.qm()?; return Ok(v + 1); }
+impl Pt { fn qm(self) { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; var t, v = usem(p); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "p.qm()? above the impl whose qm's only pair route is ?" axisQF7 13
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.qm(); return v; }
+impl Pt { fn qm(self) { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; return usem(p); }
+syscall(60, main());
+EOF
+qf_refuse "var v = p.qm(); above the impl" axisQF8 "4:29"
+# An inherited trait DEFAULT whose only route is `?`, used above its trait (`_pair_scan_defaults` shares the scan).
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.dq()?; return Ok(v + 1); }
+trait Dq { fn dq(self) { var v = parse(self.x)?; return v; } }
+impl Dq for Pt { }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; var t, v = usem(p); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "p.dq()? above the trait whose default's only route is ?" axisQF9 13
+# A dyn formed ABOVE the impl whose slot's only route is `?` (`_dyn_slot_pair` shares the scan): refused as the
+# impl above it is — it compiled, and the call through the dyn read the slot's pair as the trait's one value.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+trait T2 { fn sh(self): i64; }
+struct P { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(); }
+impl T2 for P { fn sh(self): i64 { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = P { 0 - 3, 0 }; return f(&p); }
+syscall(60, main());
+EOF
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisQF10 ($leg): a dyn formed above the impl whose slot's only pair route is ? COMPILED"; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 1 ] || ! grep -q "^error:<source>:5:36: cannot form dyn T2 from P - its method 'sh' .*returns a \`: stack\` pair" "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisQF10 ($leg): want ONE 'cannot form dyn T2 from P' error at 5:36:"
+        grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+    fi
+done
+# ANTI-OVER-REACH: a CLOSURE's `?` is the closure's own — an expression body (`|a| parse(a)?`, `|| parse(1)?`, a
+# literal as a call argument) as a block body is (`_tok_closure_expr_end`): the enclosing fn stays one value. The
+# scan read it as the enclosing fn's, so each single bind above was refused "bind both" (the 6.7.14 receives
+# lane gate: tests/gates/toolchain/header_spellings_and_size.sh's qce / qcz); the lane base built it, 21.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn id2(f, b) { return b; }
+fn main(): i64 { var a = qe(5); var b = qz(5); var c = qa(5); return a + b + c; }
+fn qe(x) { var f = |a| parse(a)?; return x + 1; }
+fn qz(x) { var f = || parse(1)?; return x + 2; }
+fn qa(x) { var w = id2(|a| parse(a)?, x + 3); return w; }
+syscall(60, main());
+EOF
+qf_run "a closure's own ? (|a| expr, || expr, an argument) above its fn: one value" axisQF11 21
+# ... and the fn's OWN `?` after a closure's expression body, a `|` and a `||` still makes it a pair.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn main(): i64 { var v = qc(5); return v; }
+fn qc(x) { var f = |a| a + 1; var y = (x | 1) || 0; var v = parse(x)?; return v; }
+syscall(60, main());
+EOF
+qf_refuse "var v = qc(5); above qc, its own ? after a closure, a | and a ||" axisQF12 "3:24"
+# ── axis PV — 6.7.14: PARENTHESES AROUND THE WHOLE VALUE ARE TRANSPARENT TO THE FIRST-CALL RULE (D46) ──────
+# ⛔ The user's decision of 2026-10-16 (D46): a store is judged by the call it starts with (6.7.7), and a redundant
+# outer wrap does not select another rule. `var v = (f(7) + 1);`, `h.a = (f(7) + 1);`, `x = (f(7) * 2);` kept the
+# tag in silence (the filed repro exited 110 on x86_64 / aarch64 / cx / PE) where the unwrapped spelling is refused
+# "bind both": 6.7.13's D19 A (axis PW) peeled a wrap around the call ALONE. `_pair_vwrap` peels parentheses around the
+# whole value (closing right before `;` `)` `,` `}`, no tuple literal) and asks about the inside's first token, at
+# the two refusal sites only (`_refuse_lossy_pair`, `_refuse_single_pair_bind`) — every store, both top-level
+# zones, a for step, a struct-literal element, an if-expression branch. `x = (32 + f(7));` keeps the tag (the
+# operand rule, unchanged), `(f(7)? + 1)` propagates (`?` scanned from the inside), `(f(7) + 1) * 2` is no whole
+# wrap. (issues/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) The legs are axis QF's.
+# Mutations (scratch trees, CYCC= the mutant, each row run alone on every leg, run 2026-10-17): the tree before
+# (0e9a612d) -> PV1 PV3-PV11 (each built; PV4's `((f(7)) + 1)` too, which 6.7.13's D19 does not peel); `_refuse_lossy_pair`
+# without `_pair_vwrap` -> PV1 PV7-PV11; `_refuse_single_pair_bind` without it -> PV1 PV3-PV6; `_pair_vwrap_q`
+# without its tuple-literal test -> PV13; without its value-end test -> PV14; the q outer parentheses counted
+# as all m (the run of `)` after the call ignored) -> PV4; the tree before -> PV15 accepted (--syntax-only, x86_64).
+cat > "$T/q.cyr" <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+struct P { a; b; }
+fn t1(): i64 { var v = (f(7) + 1); return v; }
+fn t2(): i64 { var h: P; h.a = (f(7) + 1); return h.a; }
+fn t3(): i64 { var x = 0; x = (f(7) * 2); return x; }
+syscall(60, t1() * 100 + t2() * 10 + t3());
+EOF
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisPV1 ($leg): the issue's repro verbatim COMPILED — each wrapped value kept the tag."; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 3 ] || ! grep -q '^error:<source>:4:22: .*bind both' "$T/q.$leg.err" \
+        || ! grep -q '^error:<source>:5:32: .*bind both' "$T/q.$leg.err" || ! grep -q '^error:<source>:6:31: .*bind both' "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisPV1 ($leg): the issue's repro verbatim — want 'bind both' at 4:22, 5:32 and 6:31, got:"
+        grep -E '^error' "$T/q.$leg.err" | head -4 | sed 's/^/    /'; exit 1
+    fi
+done
+PVH='enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { if (x > 5) { return RErr(x); } return ROk(x); }
+struct P { a; b; }'
+printf '%s\nfn t(): i64 { var x = 0; x = (32 + f(7)); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_run "x = (32 + f(7)); keeps the tag, as x = 32 + f(7); does (the operand rule)" axisPV2 33
+printf '%s\nfn t(): i64 { var v = ((f(7) + 1)); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = ((f(7) + 1)); two wraps around the value" axisPV3 "4:21"
+printf '%s\nfn t(): i64 { var v = ((f(7)) + 1); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = ((f(7)) + 1); the inside judged as (f(7)) + 1 is (6.7.13's D19)" axisPV4 "4:21"
+printf '%s\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = (f(7) + 1); in the declaration zone" axisPV5 "4:7"
+printf '%s\nsyscall(1, 1, "", 0);\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = (f(7) + 1); after the first statement" axisPV6 "5:7"
+printf '%s\nfn t(): i64 { var x = 0; for (var i = 0; i < 1; x = (f(7) + 1)) { i = i + 1; } return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "a classic-for step x = (f(7) + 1)" axisPV7 "4:53"
+printf '%s\nfn t(): i64 { var p = P { (f(7) + 1), 3 }; return p.a; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "P { (f(7) + 1), 3 }, a struct-literal element" axisPV8 "4:27"
+printf '%s\nfn t(): i64 { var x = 0; x += (f(7) * 2); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "x += (f(7) * 2), a compound store" axisPV9 "4:31"
+printf '%s\nstruct Q { v; }\nimpl Q { fn m(self) { return ROk(self.v); } }\nfn t(): i64 { var q: Q; q.v = 4; var w: i64[2]; w[0] = (q.m() + 1); return w[0]; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "w[0] = (q.m() + 1), a method's pair into an element" axisPV10 "6:56"
+printf '%s\nfn t(): i64 { var c = 1; var x = if (c) { (f(7) + 1) } else { 0 }; return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "an if-expression branch { (f(7) + 1) }" axisPV11 "4:43"
+# `?` inside the wrap consumes the pair: t(3) is (0, 4 + 3 - 3), t(9) propagates (1, 9): 40 + 1009 = 1049 % 256.
+printf '%s\nfn t(y) { var x = 0; x = (f(y)? + 1); var v = ((f(y))? * 1); return ROk(x + v - y); }\nfn u(): i64 { var a, b = t(3); var c, d = t(9); return a * 100 + b * 10 + c * 1000 + d; }\nsyscall(60, u() %% 256);\n' "$PVH" > "$T/q.cyr"
+qf_run "x = (f(y)? + 1); and ((f(y))? * 1) propagate" axisPV12 25
+# A tuple literal is no wrap: its own refusal stands (R9), not "bind both" at its `(`.
+printf '%s\nfn t(): i64 { var x = 0; store64(&x, (f(7), 3)); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisPV13 ($leg): store64(&x, (f(7), 3)) COMPILED"; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 1 ] || ! grep -q '^error:<source>:4:38: a tuple `( .. )` is a value only' "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisPV13 ($leg): want the tuple literal's own refusal at 4:38, got:"
+        grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+    fi
+done
+# (f(7) + 1) * 2 is no whole wrap — the value is `(..) * 2`, not judged by the call (unchanged): (1 + 1) * 2.
+printf '%s\nfn t(): i64 { var x = (f(7) + 1) * 2; return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_run "var x = (f(7) + 1) * 2; is no whole wrap (unchanged)" axisPV14 4
+# --syntax-only (cyrius lint's pre-pass) refuses it too, as axisPW10d's wrapped call (the tree before accepted it).
+synonly_refuse axisPV15 "(f(7) + 1);" <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+fn k(): i64 { var x = 0; x = (f(7) + 1); return x; }
+EOF
+if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14) · parentheses around the whole value are transparent to the first-call rule: each wrapped store refused, `(f()? + 1)` propagating, an operand keeping the tag (6.7.14)'
 exit 0

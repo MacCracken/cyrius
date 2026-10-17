@@ -1,0 +1,12 @@
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+struct P2 { a; b; }
+var G: P2 = P2 { 11, 22 };
+fn gp(): *P2 { return &G; }
+fn main(): i64 {
+    var w: *P2 = fncall0(&gp);
+    var x: *P2 = gp();
+    return w.b + x.a;
+}
+syscall(60, main());

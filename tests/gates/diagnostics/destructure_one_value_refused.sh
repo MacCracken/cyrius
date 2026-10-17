@@ -58,6 +58,38 @@
 #           three names are accepted as `fncall1`'s are (an unknown callee is not judged, D31); `callptr(..) + 1`
 #           is still refused. MUTATION: `_dt_rhs_check_t` without its `callptr` line -> cp_repro, cp_assign,
 #           cp_for, cp_zone, cp_top, cp_three refused.
+#   axis 7  6.7.14 (D42, the user's decision, 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
+#           (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md: every filed shape read the
+#           seeded 88 on x86_64 / aarch64 / cx / PE). A `ret2(..);` statement and `return ret2(..);` are two-value
+#           exits, and a body may end in `ret2(..);` or in an if / elif / else whose every arm ends in an exit, so
+#           `var a, b, c = g2();` and a 3-tuple capture are refused by the existing text — the five filed shapes,
+#           a `ret2` beside a `return (a, b);`, an elif chain, an if / else of `return (a, b);` arms (left only
+#           through them: the same rule), both top-level zones, a forward callee, a method, a generic, `a, b, c =`;
+#           the count is read wherever a `return (a, b);` fn's is (a struct argument, a 3-value forward). The
+#           two-name bind (the guide's `divmod_old`), a one-name bind + `rethi()`, a `ret2` inside an expression
+#           and a body that can fall off its end stay as they were. Every row on x86_64, aarch64 (cross; qemu),
+#           cx (cxvm) and PE (wine, a private prefix); a missing tool is a SKIP that names it.
+#           MUTATIONS (scratch trees, run 2026-10-17, CYCC= the mutant): the tree before (c4930b46) -> every r2_
+#           refusal but the r2_control BUILDS (16); `_prescan_ret_arity`'s ret2 arm back to the bail -> the same less
+#           r2_ret and r2_ifelse_ret (14); `_ret_stmt_arity` without its ret2 arm -> r2_ret; `_ar_exits` without its
+#           `ret2(..);` tail -> the bail's 14 less r2_mid; without its if / else arm -> r2_mixed r2_elif
+#           r2_ifelse_ret; `_ret2_stmt` accepting any ret2 -> r2_expr refused.
+#   axis 8  6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
+#           the destructure (issues/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
+#           call on the right-hand side" twice on x86_64 / aarch64 / cx / PE; unwrapped it exits 41). `_dt_wrap_k` (k `(`,
+#           one call, k `)`, then the terminator): the issue's program verbatim (41), `((..))`, the assignment `c, d =
+#           (..);`, a for step, both top-level zones, `callptr`, a method and an explicit generic, f64 bindings typed
+#           through the wrap, a wrapped destructure inside a closure among the wrapped call's arguments (each wrap's
+#           count is its own). Still refused, by the same text at the call: `(f(7)) + 1` and `(two(7) + 1)` ("needs a
+#           call", in a fn and in the zone), a declared-arity mismatch, an undeclared count, a one-value callee and a
+#           struct callee of `a, b = (..)`. Every row on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
+#           MUTATIONS (scratch trees, run 2026-10-17, CYCC= the mutant, every leg): the tree before (79b72c77) -> every
+#           pw_ run row refused ("needs a call"), and pw_arity3 pw_count3 pw_one pw_zone_arity pw_masg_arity
+#           pw_masg_struct by that text, not their own; `_dt_wrap_k` answering 0 -> the same; PARSE_VAR without its
+#           `_pw_close` -> pw_repro pw_double pw_top pw_callptr pw_method pw_f64 pw_nested; `_masg_stmt` without it ->
+#           pw_assign (a for step's replay ends at its own `)`, so pw_for holds either way); the zone replay without it
+#           -> pw_zone; `_dt_wterm` answering `term` -> the before-tree's rows less pw_for (a for step's terminator is
+#           `)` already).
 #
 # MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
 # while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
@@ -286,7 +318,126 @@ runs cp_top    "${TWO}var fp = 0;\nfp = &two;\nvar c, d = callptr(fp, 5);\nsysca
 runs cp_three  'include "lib/fnptr.cyr"\nfn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var a, b, c = fncall1(fp, 5);\n    var x, y, z = callptr(fp, 5);\n    return a + b + c + x + y + z;\n}\nsyscall(60, main());\n' 36
 refused cp_arith "${TWO}fn main(): i64 {\n    var fp = &two;\n    var c, d = callptr(fp, 5) + 1;\n    return c + d;\n}\nsyscall(60, main());\n" "multi-value destructure needs a call on the right-hand side"
 
-if [ "$rows" -lt 110 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 110)"; exit 1; fi
+echo "axis 7 - \`ret2(a, b)\` is two values to pass 1's count (D42), on every target:"
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
+skips=0
+LG7="x86_64 pe"
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < src/main_aarch64.cyr > "$T/x_a64" 2> /dev/null && [ -s "$T/x_a64" ]; then chmod +x "$T/x_a64"; LG7="$LG7 aarch64"
+    else check "axis 7: src/main_aarch64.cyr builds" 0 1; fi
+else echo "  SKIP axis 7's aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/x_cx" 2> /dev/null && [ -s "$T/x_cx" ] && "$CC" < programs/cxvm.cyr > "$T/x_vm" 2> /dev/null && [ -s "$T/x_vm" ]; then
+    chmod +x "$T/x_cx" "$T/x_vm"; LG7="$LG7 cx"
+else check "axis 7: src/main_cx.cyr and programs/cxvm.cyr build" 0 1; fi
+WINE7=0
+if command -v wine > /dev/null 2>&1; then WINE7=1
+else echo "  SKIP axis 7's PE run leg — wine not installed (the PE refusals still run)"; skips=$((skips + 1)); fi
+_cc7() {   # <leg> <name>: $T/<name>.<leg> (+ .err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        aarch64) "$T/x_a64" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        cx)      "$T/x_cx" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+    esac
+}
+# refused7 <name> <source> <fragment>: refused once on every leg, naming <fragment>, no binary
+refused7() {
+    rows=$((rows + 1))
+    printf '%b' "$2" > "$T/$1.cyr"
+    for leg in $LG7; do
+        _cc7 "$leg" "$1"
+        check "$1 ($leg): exits 1" 1 "$rc"
+        check "$1 ($leg): names it" yes "$(grep -qF -- "$3" "$T/$1.$leg.err" && echo yes || echo no)"
+        check "$1 ($leg): error lines" 1 "$(grep -c '^error' "$T/$1.$leg.err")"
+        check "$1 ($leg): emits no binary" 0 "$(wc -c < "$T/$1.$leg" | tr -d ' ')"
+    done
+}
+# runs7 <name> <source> <exit>: compiles and exits <exit> on every leg
+runs7() {
+    rows=$((rows + 1))
+    printf '%b' "$2" > "$T/$1.cyr"
+    for leg in $LG7; do
+        _cc7 "$leg" "$1"
+        check "$1 ($leg): compiles" 0 "$rc"
+        [ "$rc" -eq 0 ] || continue
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 30 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/x_vm" < "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$WINE7" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
+        esac
+        check "$1 ($leg): exits $3" "$3" "$got"
+    done
+}
+H88='fn h(): (i64, i64, i64) { return (1, 77, 88); }\n'
+G32="multi-value destructure binds 3 names, but 'g2' returns 2 values"
+# The issue's repro verbatim, then its table's rows (each seeded: h leaves 88 in the third register).
+refused7 r2_repro  "${H88}fn g2() { ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_i64    "${H88}fn g2(): i64 { ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_ret    "${H88}fn g2(): i64 { return ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_tup3   "${H88}fn g2() { ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(); return t.2; }\nsyscall(60, main());\n" "3:62: cannot capture 'g2' into tuple (i64, i64, i64) - it returns 2 values"
+refused7 r2_mixed  "${H88}fn g2(x) { if (x > 0) { ret2(1, 2); } else { return (3, 4); } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_control "${H88}fn g2() { return (1, 2); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_mid    "fn g2(x) { if (x > 0) { ret2(x, 1); } return (x, 2); }\nfn main(): i64 { var a, b, c = g2(1); return a; }\nsyscall(60, main());\n" "$G32"
+refused7 r2_elif   "fn g2(x) { if (x > 1) { ret2(x, 1); } elif (x > 0) { return (x, 2); } else { ret2(x, 3); } }\nfn main(): i64 { var a, b, c = g2(1); return a; }\nsyscall(60, main());\n" "$G32"
+refused7 r2_ifelse_ret "fn g2(x) { if (x > 0) { return (x, 1); } else { return (x, 2); } }\nfn main(): i64 { var a, b, c = g2(1); return a; }\nsyscall(60, main());\n" "$G32"
+refused7 r2_top_decl "fn g2(x) { ret2(x, 1); }\nvar a, b, c = g2(5);\nsyscall(60, a);\n" "2:15: $G32"
+refused7 r2_top_late "fn g2(x) { ret2(x, 1); }\nvar z = 0;\nz = 1;\nvar a, b, c = g2(5);\nsyscall(60, a);\n" "4:15: $G32"
+refused7 r2_forward "fn main(): i64 { var a, b, c = later(5); return a; }\nsyscall(60, main());\nfn later(x) { ret2(x, 1); }\n" "binds 3 names, but 'later' returns 2 values"
+refused7 r2_method "struct P { x; }\nimpl P { fn dm(self) { ret2(self.x, 1); } }\nfn main(): i64 { var p = P { 4 }; var a, b, c = p.dm(); return a; }\nsyscall(60, main());\n" "binds 3 names, but 'P.dm' returns 2 values"
+refused7 r2_generic "fn g<T>(a: T) { ret2(a, a + 1); }\nfn main(): i64 { var a, b, c = g<i32>(5); return a; }\nsyscall(60, main());\n" "binds 3 names, but 'g<i32>' returns 2 values"
+refused7 r2_reassign "fn g2(x) { ret2(x, 1); }\nfn main(): i64 { var a = 0; var b = 0; var c = 0; a, b, c = g2(5); return a; }\nsyscall(60, main());\n" "$G32"
+# Read wherever a `return (a, b);` fn's count is: a struct argument (it faulted: the first value taken as the
+# struct's address) and a 3-value fn forwarding it (its third value was stale).
+refused7 r2_struct_arg "struct P { a; b; }\nfn take(p: P): i64 { return p.a * 10 + p.b; }\nfn g2(x) { ret2(x, 1); }\nfn main(): i64 { return take(g2(4)); }\nsyscall(60, main());\n" "a multi-value call 'g2' is not a struct 'P' argument"
+refused7 r2_fwd3 "fn g2(x) { ret2(x, 1); }\nfn f(x): (i64, i64, i64) { return g2(x); }\nfn main(): i64 { var a, b, c = f(4); return a; }\nsyscall(60, main());\n" "'f' returns 3 values - return (a, b, c)"
+# Unchanged: two names, one name + rethi() and the 2-tuple capture (the guide's divmod_old; 123132 % 256),
+# a `ret2` inside an expression, a body that can fall off its end (no else), a 2-value forward.
+runs7 r2_two "fn divmod_old(a, b) { ret2(a / b, a % b); }\nfn main(): i64 { var q, r = divmod_old(17, 5); var q2 = divmod_old(10, 3); var r2 = rethi(); var t: (i64, i64) = divmod_old(9, 4); return q * 10 + r + q2 * 1000 + r2 * 100 + t.0 * 10000 + t.1 * 100000; }\nsyscall(60, main() % 256);\n" 252
+runs7 r2_expr "fn g2() { var z = ret2(1, 2); }\nfn main(): i64 { var a, b, c = g2(); return a * 10 + b; }\nsyscall(60, main());\n" 12
+runs7 r2_noelse "fn g2(x) { if (x > 0) { ret2(x, 1); } }\nfn main(): i64 { var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
+runs7 r2_fwd2 "fn g2(x) { ret2(x, 1); }\nfn f(x): (i64, i64) { return g2(x); }\nfn main(): i64 { var a, b = f(4); return a * 10 + b; }\nsyscall(60, main());\n" 41
+
+echo "axis 8 - parentheses around the whole call are transparent to the destructure (D45), on every target:"
+TWO8='fn two(x): (i64, i64) { return (x, x + 1); }\n'
+NC8="multi-value destructure needs a call on the right-hand side"
+# The issue's program verbatim (a \`: stack\` pair and a declared pair, each wrapped: 17 + 34 - 10 = 41).
+runs7 pw_repro "enum Res: stack { ROk(v); RErr(e); }\nfn f(x) { return ROk(x); }\nfn two(x): (i64, i64) { return (x, x + 1); }\nfn t1(): i64 { var a, b = (f(7)); return a * 10 + b; }\nfn t2(): i64 { var c, d = (two(3)); return c * 10 + d; }\nsyscall(60, t1() + t2());\n" 41
+runs7 pw_double "${TWO8}fn t(): i64 { var c, d = ((two(3))); return c * 10 + d; }\nsyscall(60, t());\n" 34
+runs7 pw_assign "${TWO8}fn t(): i64 { var c = 0; var d = 0; c, d = (two(3)); return c * 10 + d; }\nsyscall(60, t());\n" 34
+runs7 pw_for "${TWO8}fn t(): i64 { var c = 0; var d = 0; for (var i = 0; i < 2; c, d = (two(i))) { i = i + 1; } return c * 10 + d; }\nsyscall(60, t());\n" 23
+runs7 pw_zone "${TWO8}var a, b = (two(3));\nsyscall(60, a * 10 + b);\n" 34
+runs7 pw_top "${TWO8}syscall(1, 1, \"\", 0);\nvar a, b = ((two(3)));\nsyscall(60, a * 10 + b);\n" 34
+runs7 pw_callptr "${TWO8}fn t(): i64 { var fp = &two; var a, b = (callptr(fp, 5)); return a * 10 + b; }\nsyscall(60, t());\n" 56
+runs7 pw_method "struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\nfn g<T>(a: T): (i64, i64) { return (a, a + 1); }\nfn t(): i64 { var b: B; b.v = 3; var c, d = (b.mk(4)); var e, f = (g<i64>(5)); return c * 10 + d + e * 100 + f * 1000; }\nsyscall(60, t() % 256);\n" 147
+runs7 pw_f64 "fn ff(x): (f64, f64) { return (1.5, 2.25); }\nfn t(): i64 { var a, b = (ff(1)); var s: f64 = a + b; if (s == 3.75) { return 7; } return 1; }\nsyscall(60, t());\n" 7
+runs7 pw_nested "include \"lib/fnptr.cyr\"\n${TWO8}fn t(): i64 { var a, b = (two(fncall0(|| { var c, d = (two(1)); return c * 10 + d; }))); return a + b; }\nsyscall(60, t());\n" 25
+refused7 pw_operand "enum Res: stack { ROk(v); RErr(e); }\nfn f(x) { return ROk(x); }\nfn t(): i64 { var a, b = (f(7)) + 1; return a * 10 + b; }\nsyscall(60, t());\n" "3:26: $NC8"
+refused7 pw_inner_op "${TWO8}fn t(): i64 { var a, b = (two(7) + 1); return a * 10 + b; }\nsyscall(60, t());\n" "2:26: $NC8"
+refused7 pw_zone_op "${TWO8}var a, b = (two(7)) + 1;\nsyscall(60, a);\n" "2:12: $NC8"
+refused7 pw_arity3 "fn three(x): (i64, i64, i64) { return (x, x, x); }\nfn t(): i64 { var a, b = (three(7)); return a * 10 + b; }\nsyscall(60, t());\n" "2:27: multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_count3 "fn dm(a, b) { return (a / b, a % b); }\nfn t(): i64 { var a, b, c = (dm(7, 2)); return a; }\nsyscall(60, t());\n" "2:30: multi-value destructure binds 3 names, but 'dm' returns 2 values"
+refused7 pw_one "fn one(x) { return x; }\nfn t(): i64 { var a, b = ((one(7))); return a; }\nsyscall(60, t());\n" "binds 2 names, but 'one' returns 1 value"
+refused7 pw_zone_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nvar a, b = (three(7));\nsyscall(60, a);\n" "2:13: multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_masg_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nfn t(): i64 { var a = 0; var b = 0; a, b = (three(1)); return a; }\nsyscall(60, t());\n" "multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_masg_struct "struct P { a; b; c; }\nfn mkp(): P { var p: P; p.a = 5; return p; }\nfn t(): i64 { var a = 0; var b = 0; a, b = (mkp()); return a; }\nsyscall(60, t());\n" "cannot re-assign from 'mkp' - it returns struct 'P', not multiple values"
+
+if [ "$rows" -lt 150 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 150)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
+if [ "$skips" -gt 0 ]; then echo "SKIP: destructure_one_value_refused - $skips leg(s) of axis 7 could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"
 exit 0

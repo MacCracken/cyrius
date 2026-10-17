@@ -278,6 +278,25 @@ refused r15 "fn 'f' is defined twice and declares parameter defaults" "R15: a re
 refused r15b "fn 'f' is defined twice and declares parameter defaults" "R15b: the defaults on the second definition" "fn f(a, b): i64 { return a * b; }\nfn f(a, b = 1): i64 { return a + b; }$E" "2:4"
 exits r17 56 "R17: a fn inside a top-level block takes defaults (pass 1 records it): a call above the block" 'var r = g(5, 6);\nif (1 == 1) {\n    fn g(a, b = 1): i64 { return a * 10 + b; }\n}\nsyscall(60, r);\n'
 refused r18 "a closure's parameters take no defaults" "R18: a closure parameter default" "fn main(): i64 { var c = |a, b = 1| a + b; return 0; }\nsyscall(60, main());\n" "1:32"
+# R18t-R18z (6.7.14, issues/archived/2026-10-16-typed-closure-parameter-refusal-cascades.md): a TYPED closure parameter is
+# refused by the rule at its `:`, the type stepped over as D18 steps over a default (`_cl_typed_refuse`, parse_fn.cyr).
+# It was "expected unknown, got ':'" + "undefined variable 'i64'" (the type parsed as the body), five errors for a
+# block body, and nested beside an enclosing `m` the pre-scan captured `m` ("needs lib/alloc.cyr"). Mutations: the
+# loop without `_cl_param_tail`'s `:` arm -> RED R18t-R18z ("expected '|', got ':'" and the cascade); `_cl_lit_end`
+# without its `:` step -> RED R18u (the capture: 2 lines).
+TY="a closure's parameters are untyped — drop \`: T\`"
+refused r18t "$TY" "R18t: |m: i64| (the filed repro, verbatim)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m: i64| m + 1; return fncall1(g, 4); }\nsyscall(60, f());\n' "2:25"
+refused r18u "$TY" "R18u: nested beside an enclosing m (no capture of it)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var m = 3; var h = |n| { var g = |m: i64| m + 1; return fncall1(g, n); }; return fncall1(h, 4); }\nsyscall(60, f());\n' "2:50"
+refused r18v "$TY" "R18v: |a, b: i64|" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |a, b: i64| a + b; return fncall2(g, 4, 5); }\nsyscall(60, f());\n' "2:28"
+refused r18w "$TY" "R18w: |m: Map<i64, i64>, k| (a type argument list's comma)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m: Map<i64, i64>, k| m + k; return fncall2(g, 4, 5); }\nsyscall(60, f());\n' "2:25"
+refused r18x "$TY" "R18x: a block body (it was five errors)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m: i64| { var t = m + 1; return t; }; return fncall1(g, 4); }\nsyscall(60, f());\n' "2:25"
+refused r18y "$TY" "R18y: |m: i64 = 3| (the type's refusal covers the default)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m: i64 = 3| m + 1; return fncall1(g, 4); }\nsyscall(60, f());\n' "2:25"
+printf '%b' 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m: i64, k: *u8| m + k; return fncall2(g, 4, 5); }\nsyscall(60, f());\n' > "$T/r18z.cyr"
+build r18z
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/r18z.err")" -eq 2 ] && [ "$(grep -cF "$TY" "$T/r18z.err")" -eq 2 ]; then
+    ok "R18z: two typed parameters, one error each (as two defaults are)"
+else bad "R18z: rc $rc, want 2 errors naming the rule: $(grep '^error' "$T/r18z.err" | tr '\n' '|')"; fi
+exits r18c 5 "R18c: |m| (untyped, the control)" 'include "lib/fnptr.cyr"\nfn f(): i64 { var g = |m| m + 1; return fncall1(g, 4); }\nsyscall(60, f());\n'
 refused r20 "a parameter default is one constant expression, ending at ',' or ')'" "R20: a default that is not one expression" "fn f(a, b = 1 2): i64 { return a + b; }$E" "1:15"
 refused r16 "the default of parameter 'b' of 'cf' is defined in terms of itself" "R16: a default defined in terms of itself (a const fn filling its own default)" "const fn cf(a, b = cf(1)): i64 { return a + b; }$E" "1:20"
 refused r19 "operator fn 'V2_add' declares a parameter default: an operator passes exactly its two operands" "R19: an operator fn that declares a default (an operator passes exactly two operands)" "struct V2 { x; y; }\nfn V2_add(a, b, k = 1): i64 { return k; }\nfn main(): i64 { var a = V2 { 1, 2 }; var b = V2 { 3, 4 }; var c = a + b; return c; }\nsyscall(60, main());\n" "2:19"

@@ -1,0 +1,8 @@
+struct QE { a; b; }
+struct HE { x; q: QE; z; }
+fn main(): i64 {
+    var q0 = QE { 4, 9 };
+    var h = HE { 7, (q0), 8 };
+    return h.x + h.q.a * 10 + h.q.b + h.z;
+}
+syscall(60, main());

@@ -45,8 +45,10 @@
 #         arity / class mismatch, a closure, an `async fn`, `return h.p;`
 #      R15 `f().0` on a multi-value call: the refusal says how to read the values
 #      R16 a capture refused: a struct / vector callee, an arity or element-class disagreement, > 3 elements, a
-#         `: f64` callee into a non-f64 element, an unchecked callee into a bool element; a one-value callee, a
-#         wrapped call, `f()?`, `callptr` and a call that is not the whole value are R12 ("not a tuple")
+#         `: f64` callee into a non-f64 element, an unchecked callee into a bool element; a one-value callee,
+#         `f()?` and a call that is not the whole value are R12 ("not a tuple"); R16cp (6.7.14) `callptr(fp, ..)`
+#         captured in every spelling, its callee unknown; R16pw (6.7.14, D45) parentheses around the whole call
+#         are transparent (R16l, R16q and R19d were refusals until then)
 #      R17i-l a multi-value call stored into a tuple FIELD: bind it first
 #      R18 `a, b = f()` targets that are no plain variable, > 3, a duplicate, a const / enum constant, a struct /
 #         tuple / vector / array / u128 / slice / f32 target, a bool target from a non-bool value, an undefined
@@ -90,7 +92,8 @@
 #      (wine, a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
 #   B4 review (2026-10-09):
 #      ZG the declaration zone's pass 1 reads `name<..>(` by its tokens (a generic declared below): ZG1 / ZG2 one
-#         value, ZG3 / ZG4 a wrapped call refused (it stored one word), ZG5 / ZG6 a literal holding one is
+#         value, ZG3 a wrapped one-value call refused (it stored one word), ZG4 (6.7.14, D45) a wrapped multi-value
+#         call captured (it stored one word, then was refused until 6.7.14), ZG5 / ZG6 a literal holding one is
 #         `(i64, i64)`, ZG7 / ZG8 a capture of one; ZG9 a non-tuple annotation registers no tuple; ZG10 / ZG11 a
 #         `<` comparison spelled like a type list refused by name where the two readings disagree
 #      R8k-R8p a `: stack` pair as a literal element (a one-slot store, T5b's rule): refused; `f(x)?` consumes it
@@ -315,6 +318,66 @@ exits() {   # <name> <want> <what> <source>
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 P='struct P { a; b; }\n'
+# 6.7.14 — ROWS ON EVERY TARGET: `refused4` / `exits4` compile (and run) a row on x86_64, aarch64 (cross; qemu),
+# cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, the private prefix), the cross compilers built from this tree by
+# $CC on first use. A missing tool is a SKIP that names it.
+X4=0
+X4L="x86_64 pe"
+_x4_init() {
+    [ "$X4" -eq 1 ] && return 0
+    X4=1
+    if command -v qemu-aarch64 > /dev/null 2>&1; then
+        if "$CC" < src/main_aarch64.cyr > "$T/x4_a64" 2> /dev/null && [ -s "$T/x4_a64" ]; then chmod +x "$T/x4_a64"; X4L="$X4L aarch64"
+        else bad "the 4-leg rows: src/main_aarch64.cyr did not build"; fi
+    else echo "  SKIP the 4-leg rows' aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+    if "$CC" < src/main_cx.cyr > "$T/x4_cx" 2> /dev/null && [ -s "$T/x4_cx" ] && "$CC" < programs/cxvm.cyr > "$T/x4_vm" 2> /dev/null && [ -s "$T/x4_vm" ]; then
+        chmod +x "$T/x4_cx" "$T/x4_vm"; X4L="$X4L cx"
+    else bad "the 4-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+    X4W=0
+    if command -v wine > /dev/null 2>&1; then X4W=1
+    else echo "  SKIP the 4-leg rows' PE run leg — wine not installed (the PE refusals still run)"; skips=$((skips + 1)); fi
+}
+_x4_cc() {   # <leg> <name>: $T/<name>.<leg> (+ .<leg>.err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$T/x4_a64" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        cx)      timeout 60 "$T/x4_cx" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+    esac
+}
+refused4() {   # <name> <message fragment> <what> <source>: refused once on every leg, no binary
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        n=$(grep -c '^error' "$T/$1.$leg.err")
+        if [ "$rc" -eq 0 ]; then bad "$3 ($leg): BUILT (rc 0)"
+        elif ! grep -qF "$2" "$T/$1.$leg.err"; then bad "$3 ($leg): refused, but not as expected: $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        elif [ "$n" -ne 1 ]; then bad "$3 ($leg): $n error lines (want 1): $(grep '^error' "$T/$1.$leg.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$T/$1.$leg" ]; then bad "$3 ($leg): refused, but a binary was written"
+        else ok "$3 ($leg): refused once"; fi
+    done
+}
+exits4() {   # <name> <want> <what> <source>: compiles and exits <want> on every leg
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        if [ "$rc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$3 ($leg): rc $rc: $(grep '^error' "$T/$1.$leg.err" | head -1)"; continue; fi
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 10 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/x4_vm" < "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$X4W" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
+        esac
+        if [ "$got" -eq "$2" ]; then ok "$3 ($leg): exit $got"; else bad "$3 ($leg): exit $got, want $2"; fi
+    done
+}
 
 # ── L: the lexer ─────────────────────────────────────────────────────────────────────────────────
 # L1: every range whose upper bound is a digit run — after a number, an IDENT, `)` and `]`. Its second
@@ -524,6 +587,30 @@ refused r17u2 "a multi-value call 'B_mku' $R17" "R17u2: a method \`take(b.mku(3)
 refused r17u3 "a multi-value call 'mk3' is not a tuple argument - bind it first: \`var t: (i64, i64, i64) = mk3(..);\`" "R17u3: a counted 3-value callee into \`(i64, i64, i64)\`" 'fn mk3(a) { return (a, a + 1, a + 2); }\nfn take(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }\nfn f(): i64 { return take(mk3(1)); }\nsyscall(60, f());\n'
 exits r17u4 45 "R17u4: a mixed-arity undeclared callee is not judged (its one-value path hands a tuple's address)" "var G: (i64, i64) = (4, 5);\nfn mkm(a) { if (a == 0) { return (1, 2); } return &G; }\n${TK}fn f(): i64 { return take(mkm(1)); }\nsyscall(60, f());\n"
 refused r17u5 "a multi-value call 'mk' $R17" "R17u5: the declared callee, the same text (control)" "${MK}${TK}fn f(): i64 { return take(mk(3)); }\nsyscall(60, f());\n"
+# R17v (6.7.14, D44, the user's decision of 2026-10-16; issues/2026-10-15-non-tuple-word-into-tuple-parameter-dereferenced.md)
+# — what can never be a tuple's address is refused into a tuple parameter: an integer literal (`_tup_arg_lit`, its own
+# words) and a call returning several values from a fn declared ONE scalar, which pass 1 counted (6.7.13's D23 B
+# shape; `_mv_callee_any`), R17's words — each compiled and the callee read through the value (139 / 139 / 1 / 5 on
+# x86_64 / aarch64 / cx / PE). An untyped word stays the address (R17v9: `take(&t)`, `take(u)`, `take(mk())` run on
+# every leg). `take(one(3))` — a one-value call — is a word like those and still compiles and crashes (the decision:
+# the caller's to make it an address), so it has no row. Every row on all four legs.
+# Mutations (scratch trees, run 2026-10-17, CYCC= the mutant): the tree before (6d54e86c) -> R17v1-R17v8, R17v10,
+# R17v11 BUILD on every leg; `_tup_arg_call` back to `_mv_callee` -> R17v2, R17v3, R17v6; `_tup_arg_mrc` back to
+# `_mv_callee` -> R17v4, R17v5; `_sc_post_small` noting `_mv_callee` only -> R17v4, R17v5; `_try_push_struct_addr_arg`
+# without its `_tup_arg_lit` call -> R17v1, R17v7, R17v8, R17v10, R17v11; `_tup_arg_lit` without its generic skip ->
+# R4c (two error lines: its `g(3, 0)`'s literal reported beside the generic's own tuple-parameter refusal).
+LIT="cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple"
+refused4 r17v1 "2:27: $LIT" "R17v1: the issue's \`take(5)\` verbatim" 'fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(5); }\nsyscall(60, f());\n'
+refused4 r17v2 "3:27: a multi-value call 'g2' $R17" "R17v2: the issue's \`take(g2(3))\`, \`g2\` declared \`: i64\`, verbatim" 'fn g2(a): i64 { return (a, a + 1); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v3 "a multi-value call 'g2' $R17" "R17v3: ... \`g2\`'s values from \`ret2\` (counted since 6.7.14)" 'fn g2(a): i64 { ret2(a, a + 1); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v4 "a multi-value call 'X_g2' is not a tuple argument" "R17v4: a method \`take(x.g2(3))\` declared \`: i64\`" 'struct X { v; }\nimpl X { fn g2(self, a): i64 { return (a, a + 1); } }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var x = X { 0 }; return take(x.g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v5 "a multi-value call 'P_add' is not a tuple argument" "R17v5: an operator \`take(p + q)\`, \`P_add\` declared \`: i64\`" "${P}fn P_add(a: P, b: P): i64 { return (a.a + b.a, a.b + b.b); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var p = P { 1, 2 }; var q = P { 3, 4 }; return take(p + q); }\nsyscall(60, f());\n"
+refused4 r17v6 "a multi-value call 'g2' is not a tuple argument - bind it first: \`var t: (f64, f64) = g2(..);\`" "R17v6: a \`: f64\` callee's two values into \`(f64, f64)\`" 'fn g2(x): f64 { return (f64_from(x), f64_from(x + 1)); }\nfn take(t: (f64, f64)): i64 { return f64_to(t.0) * 10 + f64_to(t.1); }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v7 "2:29: $LIT" "R17v7: \`take((5))\`, wrapped" 'fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var a = take((5)); return a; }\nsyscall(60, f());\n'
+refused4 r17v8 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'take2'" "R17v8: the second argument, \`take2(1, 0x10)\` at top level" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nsyscall(60, take2(1, 0x10));\n'
+exits4 r17v9 34 "R17v9: an untyped word is the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\` (\`mk\`: i64 returning an alloc)" 'include "lib/alloc.cyr"\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; return take(&t) + take(u) + take(mk()) - 68; }\nsyscall(60, f());\n'
+refused4 r17v10 "$LIT" "R17v10: an \`#inline\` callee" '#inline\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(5) + 1; }\nsyscall(60, f());\n'
+refused4 r17v11 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'X.take'" "R17v11: a method's tuple parameter, \`x.take(5)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(5); }\nsyscall(60, f());\n'
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"
@@ -800,8 +887,8 @@ refused r15a "$R15" "R15a: \`return mk(1).0;\`" "${MK}fn f(): i64 { return mk(1)
 refused r15b "$R15" "R15b: in an operand" "${MK}fn f(): i64 { var x = mk(1).0 + 1; return x; }\nsyscall(60, f());\n"
 refused r15c "it returns 2 values - bind them first, \`var t: (i64, f64) = B_mk(..);\`" "R15c: a method's result (its declared values spelled)" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
 # R16 — a capture refused, mirroring the destructure. Its own texts for a callee class or element that
-# disagrees; a one-value callee, a wrapped call, \`f()?\`, \`callptr\` or any other value is no capture at
-# all — the tuple's "not a tuple" refusal (R12).
+# disagrees; a one-value callee, \`f()?\` or any other value is no capture at all — the tuple's "not a tuple"
+# refusal (R12). (\`callptr\` was R16o until 6.7.14: R16cp. A wrapped call was R16l / R16q until 6.7.14: R16pw.)
 refused r16a "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16a: an f64 value into an i64 element" "${MK}${MF}${F5}    var t: (i64, i64) = mkf(1);${E5}"
 refused r16b "${CAP}mk' into tuple (f64, f64) - it returns 2 values, (i64, i64)" "R16b: an i64 value into an f64 element" "${MK}${F5}    var t: (f64, f64) = mk(1);${E5}"
 refused r16c "${CAP}mk' into tuple (bool, i64) - it returns 2 values, (i64, i64)" "R16c: a non-bool value into a bool element" "${MK}${F5}    var t: (bool, i64) = mk(1);${E5}"
@@ -813,12 +900,11 @@ refused r16h "${CAP}vv' into tuple (i64, i64) - it returns a vector, not a tuple
 refused r16i "${CAP}mf2' into tuple (i64, f64) - it is declared \`: f64\`, so every value it returns is an f64" "R16i: a \`: f64\` callee into an i64 element" "fn mf2(a): f64 { ret2(a, a); }\n${F5}    var t: (i64, f64) = mf2(1);${E5}"
 refused r16j "${CAP}dm' into tuple (bool, i64) - element 0 is a bool, and the call does not declare that value bool" "R16j: an undeclared callee into a bool element" "fn dm(a, b) { return (a / b, a % b); }\n${F5}    var t: (bool, i64) = dm(1, 2);${E5}"
 refused r16k "$I12 't' with a value that is not a tuple" "R16k: a provably one-value callee (the R12 refusal)" "fn one(x) { return x; }\n${F5}    var t: (i64, i64) = one(1);${E5}"
-refused r16l "$I12 't' with a value that is not a tuple" "R16l: a wrapped call \`(mk(1))\` (the destructure refuses it too)" "${MK}${F5}    var t: (i64, i64) = (mk(1));${E5}"
+exits4 r16l 12 "R16l: a wrapped call \`(mk(1))\` captures (6.7.14, D45: it was R12)" "${MK}fn f(): i64 {\n    var t: (i64, i64) = (mk(1));\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
 refused r16m "$I12 't' with a value that is not a tuple" "R16m: \`f()?\` (one value)" "enum Res: stack { Ok(v); Err(e); }\nfn sok(x) { return Ok(x); }\nfn g(): i64 { var t: (i64, i64) = sok(1)?; return Ok(t.0); }\nsyscall(60, 0);\n"
 refused r16n "$I12 't' with a value that is not a tuple" "R16n: a call that is not the whole value" "${MK}${F5}    var t: (i64, i64) = mk(1) + 1;${E5}"
-refused r16o "$I12 't' with a value that is not a tuple" "R16o: \`callptr\`" "${MK}${F5}    var p = 0;\n    var t: (i64, i64) = callptr(p, 1);${E5}"
 refused r16p "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16p: \`t = f();\` into an existing tuple" "${MK}${MF}${F5}    var t: (i64, i64);\n    t = mkf(1);${E5}"
-refused r16q "$A12 't'" "R16q: \`t = (mk(1));\`, wrapped (R12)" "${MK}${F5}    var t: (i64, i64);\n    t = (mk(1));${E5}"
+exits4 r16q 12 "R16q: \`t = (mk(1));\`, wrapped, captures (6.7.14, D45: it was R12)" "${MK}fn f(): i64 {\n    var t: (i64, i64);\n    t = (mk(1));\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
 refused r16r "${CAP}mk' into tuple (i64, f64) - it returns 2 values, (i64, i64)" "R16r: a declaration-zone capture (the replay judges the callee)" "${MK}var G: (i64, f64) = mk(1);\nsyscall(60, 0);\n"
 refused r16s "$I12 'G' with a value that is not a tuple" "R16s: a zone capture of a one-value callee (pass 1 registered it inline)" "fn one(x) { return x; }\nvar G: (i64, i64) = one(1);\nsyscall(60, 0);\n"
 refused r16t "${CAP}mk' into tuple (i64, i64, i64) - it returns 2 values, (i64, i64)" "R16t: a global capture after the first statement" "${MK}syscall(1, 1, \"\", 0);\nvar G: (i64, i64, i64) = mk(1);\nsyscall(60, 0);\n"
@@ -841,6 +927,69 @@ exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) s
 # R16ad (6.7.11) — the triage's capture of a declared \`: (i64, i64)\` fn that returns ONE value: its \`u.1\` was
 # a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
 refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
+# R16r2 (6.7.14, D42, the user's decision of 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
+# (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md): a 3-tuple capture of a fn left only
+# through `ret2(..);` / `return ret2(..);` is refused as R16y's `return (a, b);` fn is (`t.2` read the seeded 88 on
+# every target); the 2-tuple capture still runs. Mutations (scratch trees, run 2026-10-17): the tree before
+# (c4930b46) -> R16r2a-R16r2d BUILD on every leg; `_prescan_ret_arity`'s ret2 arm back to the bail, or `_ar_exits`
+# without its `ret2(..);` tail -> R16r2a, R16r2c, R16r2d BUILD; `_ret_stmt_arity` without its ret2 arm -> R16r2b.
+H88='fn h(): (i64, i64, i64) { return (1, 77, 88); }\n'
+refused4 r16r2a "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2a: the issue's 3-tuple capture of a \`ret2(1, 2);\` fn" "${H88}fn g2() { ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(); return t.2; }\nsyscall(60, main());\n"
+refused4 r16r2b "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2b: ... of \`return ret2(1, 2);\` in a \`: i64\` fn" "${H88}fn g2(): i64 { return ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(); return t.2; }\nsyscall(60, main());\n"
+refused4 r16r2c "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2c: a declaration-zone capture" "fn g2(x) { ret2(x, 1); }\nvar G: (i64, i64, i64) = g2(4);\nsyscall(60, 0);\n"
+refused4 r16r2d "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2d: \`t = g2(..);\` into an existing 3-tuple" "fn g2(x) { ret2(x, 1); }\n${F5}    var t: (i64, i64, i64);\n    t = g2(4);${E5}"
+exits4 r16r2e 41 "R16r2e: \`var t: (i64, i64) = g2(4);\` (the matching count) still captures" "fn g2(x) { ret2(x, 1); }\nfn main(): i64 { var t: (i64, i64) = g2(4); return t.0 * 10 + t.1; }\nsyscall(60, main());\n"
+# R16cp (6.7.14) — \`callptr(fp, ..)\` IS A CALL TO THE CAPTURE, as to the destructure since 6.7.13 (\`_dt_call_open_cp\`;
+# issues/2026-10-15-tuple-capture-of-callptr-refused.md): its callee is unknown, so its count is not judged — as for
+# \`fncallN\`, its lowering, which already captured. Each spelling was R12 "not a tuple" on every target (R16o until
+# 6.7.14). Mutations (scratch trees, the gate run from each, every leg; run 2026-10-17): the tree before (0d0a054d) ->
+# R16cpa-R16cpf refused, R16cpj R16cpk the R12 text, A1-A7 (TV_CP); \`_tup_cap_check\` back to \`_dt_call_open\` ->
+# R16cpa-R16cpf, R16cpj, R16cpk, A1-A7; \`_tup_gci_call\` back, or \`_gvi_cap_tok\` without its \`callptr\` arm -> R16cpb,
+# A1-A7; \`_tup_asg\` without its \`callptr\` arm -> R16cpd, R16cpe, A1-A7; \`_tcap_callee_pr\` without it -> R16cpj,
+# R16cpk (no callee named).
+CPT='fn two(a): (i64, i64) { return (a, a + 1); }\n'
+exits4 r16cpa 6 "R16cpa: the issue's \`var t: (i64, i64) = callptr(fp, 5);\` verbatim" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+exits4 r16cpb 56 "R16cpb: a declaration-zone \`var G: (i64, i64) = callptr(fp, 5);\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = callptr(fp, 5);\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16cpc 56 "R16cpc: ... a global after the first statement" "${CPT}var fp = &two;\nsyscall(1, 1, \"\", 0);\nvar G: (i64, i64) = callptr(fp, 5);\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16cpd 6 "R16cpd: \`t = callptr(fp, 5);\` into an existing tuple" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64);\n    t = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+exits4 r16cpe 112 "R16cpe: \`G = callptr(fp, 5);\` at top level, and a classic-for step \`t = callptr(fp, i)\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = (0, 0);\nG = callptr(fp, 5);\nfn f(): i64 {\n    var t: (i64, i64);\n    for (var i = 0; i < 2; t = callptr(fp, i)) { i = i + 1; }\n    return t.0 * 10 + t.1;\n}\nsyscall(60, G.0 * 10 + G.1 + f() + 33);\n"
+exits4 r16cpf 67 "R16cpf: a 3-tuple through \`callptr\`" "fn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var t: (i64, i64, i64) = callptr(fp, 5);\n    return t.0 * 100 + t.1 * 10 + t.2;\n}\nsyscall(60, main() - 500);\n"
+refused4 r16cpg "$I12 't' with a value that is not a tuple" "R16cpg: \`callptr(fp, 5) + 1\` is no capture (R12)" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = callptr(fp, 5) + 1;\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cph "$A12 't'" "R16cph: ... \`t = callptr(fp, 5) + 1;\`" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = (0, 0);\n    t = callptr(fp, 5) + 1;\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cpi "$I12 'G' with a value that is not a tuple" "R16cpi: ... a declaration-zone \`= callptr(fp, 5) + 1;\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = callptr(fp, 5) + 1;\nsyscall(60, G.1);\n"
+refused4 r16cpj "${CAP}callptr' into tuple (bool, i64) - element 0 is a bool, and the call does not declare that value bool" "R16cpj: an unknown callee into a bool element (as \`fncall1\`'s)" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (bool, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cpk "${CAP}callptr' into tuple (i64, i64, i64, i64) - a call returns at most 3 values" "R16cpk: 4 elements" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64, i64, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+# R16pw (6.7.14, D45, the user's decision of 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to the
+# capture, as to the destructure (destructure_one_value_refused.sh axis 8) and every other consumer of a whole call
+# (issues/2026-10-15-paren-wrapped-call-destructure-refused.md: \`var t: (i64, i64) = (two(3));\` was "not a tuple" on
+# x86_64 / aarch64 / cx / PE). \`_tup_cap_check\` steps into k parentheses wrapping ONE call (\`_dt_wrap_k\`) and the
+# caller closes them after the call (\`_tcap_k\`), so the capture compiles as the unwrapped one does. Still refused
+# by their own texts: a wrapped one-value callee (R12), a class disagreement (at the call), a wrap holding more than
+# the call or followed by more (R12). Mutations (scratch trees, the gate run from each, every leg, run 2026-10-17):
+# the tree before (79b72c77) -> R16l, R16q, R19d, ZG4, R16pwa-R16pwh refused, R16pwj R16pwm R16pwo the R12 text,
+# A1-A7; \`_dt_wrap_k\` answering 0 -> the same less the assignments (R16q, R16pwd, R16pwe, R16pwo: \`_asg_paren\`
+# peels those); \`_tup_cap_check\` without its \`_dt_wrap_in\` -> R16l, R16pwa-R16pwc, R16pwf-R16pwh, R16pwj, R16pwm,
+# ZG4, A1-A7; \`_tup_gci_call\` without its wrap arm, or \`_gvi_cap_tok\` without it -> ZG4, R16pwb, R16pwm, A1-A7;
+# \`_tup_var_cap\` without its \`_pw_close\` -> R16l, R16pwa, R16pwc, R16pwf-R16pwh, A1-A7; \`_gvi_tup_cap\` without
+# it -> ZG4, R16pwb, A1-A7; the 6.7.7 \`_asg_wrapd\` guard back in \`_tup_asg_call\` -> R16q, R16pwd, R16pwe,
+# R16pwo, A1-A7.
+PWT='fn two(x): (i64, i64) { return (x, x + 1); }\n'
+exits4 r16pwa 34 "R16pwa: the issue's capture \`var t: (i64, i64) = (two(3));\`" "${PWT}fn f(): i64 {\n    var t: (i64, i64) = (two(3));\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
+exits4 r16pwb 34 "R16pwb: a declaration-zone \`var G: (i64, i64) = (two(3));\`" "${PWT}var G: (i64, i64) = (two(3));\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16pwc 34 "R16pwc: ... after the first statement, \`((two(3)))\`" "${PWT}syscall(1, 1, \"\", 0);\nvar G: (i64, i64) = ((two(3)));\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16pwd 79 "R16pwd: \`t = (two(3));\` in a fn and \`G = ((two(4)));\` at top level" "${PWT}var G: (i64, i64) = (0, 0);\nG = ((two(4)));\nfn f(): i64 {\n    var t: (i64, i64) = (0, 0);\n    t = (two(3));\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f() + G.0 * 10 + G.1);\n"
+exits4 r16pwe 23 "R16pwe: a classic-for step \`t = (two(i))\`" "${PWT}fn f(): i64 {\n    var t: (i64, i64);\n    for (var i = 0; i < 2; t = (two(i))) { i = i + 1; }\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
+exits4 r16pwf 17 "R16pwf: a wrapped \`: stack\` pair captured as the unwrapped one is (tag 1, payload 7)" "enum Res: stack { ROk(v); RErr(e); }\nfn sf(x) { return RErr(x); }\nfn f(): i64 {\n    var t: (i64, i64) = (sf(7));\n    return t.0 * 10 + t.1;\n}\nsyscall(60, f());\n"
+exits4 r16pwg 61 "R16pwg: \`(callptr(fp, 5))\`, a method \`(b.mk(4))\` and an explicit generic \`(g<i64>(1))\`" "${PWT}struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\nfn g<T>(a: T): (i64, i64) { return (a, a + 1); }\nfn f(): i64 {\n    var fp = &two;\n    var b: B;\n    b.v = 3;\n    var t: (i64, i64) = (callptr(fp, 5));\n    var u: (i64, i64) = (b.mk(4));\n    var w: (i64, i64) = (g<i64>(1));\n    return t.0 * 10 + t.1 - u.0 + u.1 - w.1;\n}\nsyscall(60, f() + 4);\n"
+exits4 r16pwh 67 "R16pwh: a 3-tuple \`((three(5)))\`" "fn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn f(): i64 {\n    var t: (i64, i64, i64) = ((three(5)));\n    return t.0 * 100 + t.1 * 10 + t.2 - 500;\n}\nsyscall(60, f());\n"
+refused4 r16pwi "$I12 't' with a value that is not a tuple" "R16pwi: a wrapped one-value callee \`(one(1))\` (R12, as unwrapped)" "fn one(x) { return x; }\n${F5}    var t: (i64, i64) = (one(1));${E5}"
+refused4 r16pwj "3:26: ${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16pwj: a class disagreement through the wrap, at the call" "${MF}fn f(): i64 {\n    var t: (i64, i64) = (mkf(1));\n    return t.0;\n}\nsyscall(60, f());\n"
+refused4 r16pwk "$I12 't' with a value that is not a tuple" "R16pwk: \`(two(1)) + 1\` and \`(two(1) + 1)\` are values (R12)" "${PWT}${F5}    var t: (i64, i64) = (two(1)) + 1;${E5}"
+refused4 r16pwl "$I12 't' with a value that is not a tuple" "R16pwl: ... \`(two(1) + 1)\`" "${PWT}${F5}    var t: (i64, i64) = (two(1) + 1);${E5}"
+refused4 r16pwm "2:22: ${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16pwm: a declaration-zone class disagreement through the wrap" "${MF}var G: (i64, i64) = (mkf(3));\nsyscall(60, G.0);\n"
+refused4 r16pwn "$I12 'G' with a value that is not a tuple" "R16pwn: a declaration-zone wrapped one-value callee (R12)" "fn one(x) { return x; }\nvar G: (i64, i64) = (one(3));\nsyscall(60, G.0);\n"
+refused4 r16pwo "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16pwo: \`t = (mkf(1));\`, a class disagreement" "${MF}${F5}    var t: (i64, i64) = (0, 0);\n    t = (mkf(1));${E5}"
+refused4 r16pwp "$A12 't'" "R16pwp: \`t = (one(1));\` (R12)" "fn one(x) { return x; }\n${F5}    var t: (i64, i64) = (0, 0);\n    t = (one(1));${E5}"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base
@@ -852,7 +1001,7 @@ ZH='var H = 77;\n'
 exits zg1 12 "ZG1: \`var G = (pk<i64, i64>(1, 2));\`, \`pk\` declared below, is one value" "var G = (pk<i64, i64>(1, 2));\n${ZH}${ZPK}fn main(): i64 { return G + H - 77; }\nsyscall(60, main());\n"
 exits zg2 12 "ZG2: ... \`var G: i64 = (pk<i64, i64>(1, 2));\`" "var G: i64 = (pk<i64, i64>(1, 2));\n${ZH}${ZPK}fn main(): i64 { return G + H - 77; }\nsyscall(60, main());\n"
 refused zg3 "$I12 'G' with a value that is not a tuple" "ZG3: \`var G: (i64, i64) = (pk<i64, i64>(1, 2));\`, a wrapped one-value call (it stored (12, 0))" "var G: (i64, i64) = (pk<i64, i64>(1, 2));\n${ZH}${ZPK}fn main(): i64 { return G.0 * 10 + G.1 + H - 77; }\nsyscall(60, main());\n"
-refused zg4 "$I12 'G' with a value that is not a tuple" "ZG4: ... a wrapped multi-value call (it stored (1, 0))" "var G: (i64, i64) = (pk2<i64, i64>(1, 2));\n${ZH}fn pk2<A, B>(a: A, b: B): (i64, i64) { return (a, b); }\nfn main(): i64 { return G.0 * 10 + G.1 + H - 77; }\nsyscall(60, main());\n"
+exits zg4 12 "ZG4: ... a wrapped multi-value call captures (6.7.14, D45; it stored (1, 0), then was R12)" "var G: (i64, i64) = (pk2<i64, i64>(1, 2));\n${ZH}fn pk2<A, B>(a: A, b: B): (i64, i64) { return (a, b); }\nfn main(): i64 { return G.0 * 10 + G.1 + H - 77; }\nsyscall(60, main());\n"
 exits zg5 135 "ZG5: \`var G = (pk<i64, i64>(1, 2), 3);\` is (i64, i64): a tuple argument and a copy" "var G = (pk<i64, i64>(1, 2), 3);\n${ZH}${ZPK}fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn main(): i64 {\n    var u: (i64, i64) = G;\n    return take(G) + u.0 + H - 77;\n}\nsyscall(60, main());\n"
 refused zg6 "unknown field '2' on struct '(i64, i64)'" "ZG6: ... and \`G.2\` names no element" "var G = (pk<i64, i64>(1, 2), 3);\n${ZH}${ZPK}fn main(): i64 {\n    G.2 = 5;\n    return H;\n}\nsyscall(60, main());\n"
 exits zg7 56 "ZG7: a capture \`var G: (i64, i64) = g2<i64>(5);\`, \`g2\` declared below" "var G: (i64, i64) = g2<i64>(5);\n${ZH}fn g2<T>(a: T): (i64, i64) { return (a, a + 1); }\nfn main(): i64 { return G.0 * 10 + G.1 + H - 77; }\nsyscall(60, main());\n"
@@ -899,7 +1048,7 @@ R19="multi-value destructure needs a call on the right-hand side"
 refused r19a "$R19" "R19a: \`a, b = 5;\`" "${MK}${F5V}    a, b = 5;${E5}"
 refused r19b "$R19" "R19b: \`a, b = (b, a);\` (a literal is no call)" "${MK}${F5V}    a, b = (b, a);${E5}"
 refused r19c "$R19" "R19c: \`a, b = t;\`" "${MK}${F5V}    var t = (1, 2);\n    a, b = t;${E5}"
-refused r19d "$R19" "R19d: a wrapped call" "${MK}${F5V}    a, b = (mk(1));${E5}"
+exits4 r19d 12 "R19d: a wrapped call re-assigns (6.7.14, D45: it was \"needs a call\")" "${MK}${F5V}    a, b = (mk(1));\n    return a * 10 + b;\n}\nsyscall(60, f());\n"
 refused r19e "$R19" "R19e: a call that is not the whole value" "${MK}${F5V}    a, b = mk(1) + 1;${E5}"
 refused r19f "multi-value destructure binds 2 names, but 'one' returns 1 value" "R19f: a provably one-value callee" "fn one(x) { return x; }\n${F5V}    a, b = one(1);${E5}"
 refused r19g "multi-value destructure count does not match the fn's declared return arity" "R19g: a declared-arity mismatch" "fn mk3(a): (i64, i64, i64) { return (a, a, a); }\n${F5V}    a, b = mk3(1);${E5}"

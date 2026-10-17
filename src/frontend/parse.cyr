@@ -886,6 +886,9 @@ fn _tok_body_open(S, i): i64 {
 # flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
 # refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
 # method whose body pass 2 has not reached (`_dyn_slot_pair`, parse_types.cyr).
+# ⛔ 6.7.14 — A `?` ON A PAIR CALL IS A PAIR ROUTE TOO (`_tok_q_is_pair`): pass 2 flags the fn 256
+# at its `?`, so a fn whose only pair route was a `?` was a pair only BELOW its definition — a
+# caller above took `qb(x)?` as boxed (rc 139) and `var v = qb(x);` kept the tag. CHANGELOG [6.7.14]
 fn _pair_body_scan(S, a, j): i64 {
     var n = GTCNT(S);
     var bd = 0;
@@ -905,9 +908,32 @@ fn _pair_body_scan(S, a, j): i64 {
             var rf = _tok_ret_callee(S, a, k + 1);   # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
             if (rf >= 0) { if ((GFLG(S, rf) & 256) != 0) { return 1; } }
         }
+        elif (t == 124) {                 # `f(..)?` on a pair: pass 2's `?` flag, seen before the body
+            if (_tok_q_is_pair(S, a, k) == 1) { return 1; }   # CHANGELOG [6.7.14]
+        }
+        elif (t == 35 || t == 54) {       # a brace-less closure's `?` is its own
+            var ce = _tok_closure_expr_end(S, k);
+            if (ce > k) { k = ce - 1; }
+        }
         k = k + 1;
     }
     return 0;
+}
+# The token that ends the EXPRESSION body of the closure literal whose `|` / `||` is token k (its depth-0 `;`
+# `,` or unmatched closer, `_tok_expr_end`), or -1: k opens no literal (`_cl_lit_pos`, `_cl_lit_end`: a bitwise
+# or / logical or follows an operand), or the body is a block (`_skip_nested_body` steps over that). Since the `?`
+# counts as a pair route, `fn qce(x) { var f = |a| parse(a)?; .. }` was flagged pair-returning by the closure's
+# own `?` — "bind both" at `var z = qce(5);`, and a mixed-return warning at its plain `return`. CHANGELOG [6.7.14]
+fn _tok_closure_expr_end(S, k): i64 {
+    if (_cl_lit_pos(S, k) == 0) { return 0 - 1; }
+    var b = k + 1;
+    if (TOKTYP(S, k) == 35) {
+        var e = _cl_lit_end(S, k);
+        if (e < 0) { return 0 - 1; }
+        b = e + 1;
+    }
+    if (TOKTYP(S, b) == 13) { return 0 - 1; }
+    return _tok_expr_end(S, b);
 }
 
 # v6.6.0 — MIXED RETURNS IN A PAIR-RETURNING FN. The class that cost 19 silent defects in one
@@ -1301,10 +1327,52 @@ fn _call_is_propagated(S, ti): i64 {
 # (a generic callee is instantiated there, inline: earlier would move its bytes). CHANGELOG [6.7.7]
 # 6.7.13: the `?` is looked for from the value's first token — a wrap's `(` scans to the `)` that
 # closes it, so `x = (f(7))?;` propagates (from `f` the scan stopped at the inner `)`). CHANGELOG [6.7.13]
+# 6.7.14 (D46): a wrap around the whole value is transparent too — the inside is judged (`_pair_vwrap`).
 fn _refuse_lossy_pair(S): i64 {
-    if (_callee_returns_pair(S) == 0) { return 0; }
-    if (_call_is_propagated(S, GTI(S)) == 1) { return 0; }
+    var vi = _pair_vwrap(S, GTI(S));
+    if (vi < 0) { vi = GTI(S); }
+    if (_callee_returns_pair_at(S, vi) == 0) { return 0; }
+    if (_call_is_propagated(S, vi) == 1) { return 0; }
     return _pair_refuse_in_sync(S);
+}
+# ⛔ 6.7.14 (D46, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE VALUE ARE TRANSPARENT TO
+# THE FIRST-CALL RULE (6.7.7: a store is judged by the call it starts with). `var v = (f(7) + 1);`,
+# `h.a = (f(7) + 1);` and `x = (f(7) * 2);` kept the tag in silence where `var v = f(7) + 1;` is refused
+# "bind both": 6.7.13's D19 A peeled a wrap around the call ALONE (`_pair_unwrap`). The value at token
+# `st`: when q parentheses wrap all of it — the outermost closing right before what ends a value (`;`,
+# `)`, `,` or `}`), no tuple literal — and the inside starts with a call, alone or in parentheses around
+# it alone (`((f(7)) + 1)`), the inside's first token, which the refusal asks about (`?` scanned from
+# there: `(f(7)? + 1)` propagates); else -1: `(3 + f(7))` starts with no call (the operand rule, the
+# tag kept as `3 + f(7)` keeps it), `(f(7) + 1) * 2` is no whole wrap. The call by its shape, as
+# `_pair_unwrap` reads it. Linear: the call's close, the run of `)` after it, one `_call_close` from
+# the innermost whole wrap (the outer ones close in the run after it). Asked at the refusal sites
+# only — never in `_callee_returns_pair_at`, which also feeds `_tpair`. CHANGELOG [6.7.14]
+fn _pair_vwrap(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0 - 1; }
+    var a = st;
+    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    var o = _pair_ret_open(S, a);
+    if (o < 0) { if (_tok_method_open(S, a) == 1) { o = a + 3; } }
+    if (o < 0) { return 0 - 1; }
+    var e = _call_close(S, o) + 1;
+    var m = a - st;
+    var r = 0;
+    while (r < m) {
+        if (TOKTYP(S, e + r) != 11) { break; }
+        r = r + 1;
+    }
+    if (r == m) { return 0 - 1; }   # parentheses around the call alone: 6.7.13's D19 (`_pair_unwrap`)
+    return _pair_vwrap_q(S, st, m - r);
+}
+# ... the q outer parentheses at `st` wrap the whole value: the inside's first token, else -1.
+fn _pair_vwrap_q(S, st, q): i64 {
+    var x = _call_close(S, st + q - 1);
+    if (_pair_unwrap_k(S, x + 1, q - 1, st) < 0) { return 0 - 1; }
+    var t = TOKTYP(S, x + q);
+    if (t != 5) { if (t != 11) { if (t != 31) { if (t != 14) { return 0 - 1; } } } }
+    if (_tup_commas(S, st + q - 1) != 0) { return 0 - 1; }   # a tuple literal, no wrap
+    return st + q;
 }
 # The two refusals' report. It is made IN SYNC — the statement parses on to its own end — so the
 # panic latch it sets (silencing what the same statement would add about the same value: a bool
@@ -1340,10 +1408,13 @@ fn _stmt_resync(S, before): i64 {
 # on `GINFN == 1`, so a global `var v = mk();` kept the tag and lost the payload silently (`Ok(42)`
 # exited 0), in the declaration zone (EMIT_GVAR_INITS' `_gvi_expr`) and after the first statement
 # (PARSE_VAR) alike. The fn-body rule and wording, everywhere. CHANGELOG [6.7.6]
+# 6.7.14 (D46): `var v = (f(7) + 1);` is judged by its inside, as `var v = f(7) + 1;` (`_pair_vwrap`).
 fn _refuse_single_pair_bind(S): i64 {
     if (PEEKT(S) != 4) { return 0; }
-    if (_callee_returns_pair_at(S, GTI(S) + 1) == 0) { return 0; }
-    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    var vi = _pair_vwrap(S, GTI(S) + 1);
+    if (vi < 0) { vi = GTI(S) + 1; }
+    if (_callee_returns_pair_at(S, vi) == 0) { return 0; }
+    if (_call_is_propagated(S, vi) == 1) { return 0; }
     return _pair_refuse_in_sync(S);
 }
 
@@ -3445,6 +3516,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
         if (_istr_call(S, fi, n, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `: Str` call into an inline `Str`
         return _hl_call_into(S, fi, n, term);   # 6.7.10 (B7-1): into a handle
     }
+    if (_agc_t == 0) { if (_asa_call(S, noff, fi, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -3875,22 +3947,23 @@ fn _asg_cap_name(S, noff): i64 {
     _had_error = 1;
     return 1;
 }
-# `x = v;` in a closure whose `x` is a CAPTURE (cursor on the `=`, `ti` the name): a capture is not
-# assigned in its closure, so this is the statement's capture refusal (`_asg_cap_name`) — reported at
-# the name, before the value is parsed, and the value skipped as a refused lvalue's is. Parsed as a
-# value first, a whole tuple `u` in `t = u;` was refused too, and the caret sat on the `;`.
-# 1 = refused. CHANGELOG [6.7.11]
-fn _asg_capture_refused(S, noff, ti): i64 {
+# ⛔ 6.7.14 — A WRITE TO A CAPTURED NAME IS REFUSED BEFORE ANY GLOBAL IS LOOKED UP, the order a read
+# resolves the name in (a capture, then a global). The write arms resolved local, then GLOBAL, then
+# capture, so with a global of the name `y += d`, `y = y + d`, a classic-for init or step and
+# `a, y = f()` in a closure compiled and stored into the GLOBAL while reads in the same body saw the
+# capture — a silent wrong value. Asked before the value is parsed: by `_asg_lvalue_at` (the statement
+# arm, the for init and step) and by `_masg_resolve`. 1 = `noff` is a capture (inside a closure body:
+# not the closure's own local, one of the enclosing scope's) and the refusal (`_asg_cap_name`) named it
+# at token `ti`. CHANGELOG [6.7.14]
+fn _asg_cap_first(S, noff, ti): i64 {
     if (_syntax_only == 1) { return 0; }
     if (GINFN(S) == 0) { return 0; }
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
-    if (FINDVAR(S, noff) >= 0) { return 0; }
     if (_cl_snap_find(S, noff) < 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    _asg_undef_report(S, noff);
+    _asg_cap_name(S, noff);
     STI(S, sv);
-    _cst_skip_decl(S);
     return 1;
 }
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
@@ -4237,6 +4310,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
     if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
+    if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
@@ -4246,6 +4320,221 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
+}
+
+# ⛔ 6.7.14 — D24 AT AN ASSIGNMENT (the user's decision D27 (a), 2026-10-16). `x = mkp();` / `x = b.mk();` / `x = a + c;`
+# / `x = fncall0(&mkp);` (a classic-for step too) with the struct result over 8 B and `x` a SCALAR — a local, a
+# parameter or a global declared `: i64`, `: u8`, `: f64`, any annotation that names no struct — stored the
+# struct's first word, narrowed (the filed repros exited 77, 333 mod 256), silently, where `var x: i64 = mkp();` is
+# refused (6.7.11's D24, 6.7.13's D13). Refused with D24's words, "cannot assign 'x: i64' from 'mkp', which returns
+# the struct 'Q' - declare 'x: Q' or bind a field", at the call, the destination's annotation judged as the
+# declaration's is (`_rcv_ann_refuse`). A struct of 8 B or less and a `Str` keep their word; a `: bool` keeps its own
+# refusal (*not a bool*); an untyped destination has no annotation to judge; a top-level call over 16 B is refused
+# already (no frame), once. 1 = refused, the statement parsed to `term` and consumed. CHANGELOG [6.7.14]
+fn _asa_call(S, noff, fi, term): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (_scv_top_big(S, sid) == 1) { return 0; }
+    var ti = GTI(S);
+    if (_asa_refuse(S, noff, ti - 1, ti, TOKVAL(S, ti), sid) == 0) { return 0; }
+    PCMPE(S);
+    return _asa_term(S, term);
+}
+# ... a method / operator / known `&f` result the struct record spans (`_pcmpe_struct_assign`, `st` the source's
+# first token, the cursor on `term`).
+fn _asa_rec(S, noff, st, term): i64 {
+    if (_asa_refuse(S, noff, st - 1, _sc_beg, _sc_fn, _sc_sid) == 0) { return 0; }
+    return _asa_term(S, term);
+}
+fn _asa_term(S, term): i64 {
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
+# for back from token `from`: 1 = refused.
+fn _asa_refuse(S, noff, from, ti, fnoff, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    var a = _asa_ann(S, noff, from);
+    if (a <= 0) { return 0; }
+    if (_asa_scalar(S, a) == 0) { return 0; }
+    _rcv_asg_e = _asa_end(S, a);
+    var r = _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
+    _rcv_asg_e = 0 - 1;
+    return r;
+}
+# 1 = the annotation at token `a` names a scalar D24 judges: an integer, a float, an 8-byte handle (an enum,
+# `cstring`, `Result`, `Vec`, a type parameter) or `u128` — not `bool` (its own refusal), not an array element.
+fn _asa_scalar(S, a): i64 {
+    if (TOKTYP(S, a + 1) == 28) { return 0; }
+    if (TOKTYP(S, a) == 105) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var c = _tn_resolve_at(S, a);
+    var k = _tn_class(c);
+    if (k < 1) { return 0; }
+    if (k > 4) { return 0; }
+    if (k == 4) { if (_tn_val(c) == 1) { return 0; } }
+    return 1;
+}
+# The token the annotation starting at `q` ends at: its declaration's `=` / `;`, a parameter's `,` / `)`
+# (`Map<K, V>` one type: `<` / `>` count as brackets).
+fn _asa_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (d == 0) { if (t == 4 || t == 5 || t == 31) { return q; } }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d + _cl_ang_step(t);
+        if (d < 0) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The annotation's first token of the declaration that binds the assignment's destination `noff`, read from the
+# tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter)
+# or none found. A local's: the nearest binding of the name back from token `from` in a scope enclosing it (a closed
+# `{ }` / `( )` / `[ ]` is stepped over; an enclosing for body's header init is in scope, `_asa_for_hdr`), else its
+# fn's parameter; a global's: the same walk, else its first top-level declaration.
+fn _asa_ann(S, noff, from): i64 {
+    var loc = 0;
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { loc = 1; } }
+    if (loc == 0) { if (FINDVAR(S, noff) < 0) { return 0; } }
+    var a = _asa_back(S, noff, from, loc);
+    if (a >= 0) { return a; }
+    if (loc == 1) { return 0; }
+    return _asa_top(S, noff);
+}
+# `lb` = 1 while the last `{` walked back over opened a scope enclosing `from` (a for-in body: its name is bound).
+# A local's walk ends at its fn's `fn` (the parameters) or at a closure body's `{` (an untyped parameter). -1 = none.
+fn _asa_back(S, noff, k, loc): i64 {
+    var d = 0;
+    var lb = 0;
+    while (k >= 1) {
+        var t = TOKTYP(S, k);
+        if (t == 14 || t == 11 || t == 29) { d = d + 1; }
+        elif (t == 13 || t == 10 || t == 28) {
+            if (d > 0) {
+                d = d - 1;
+                if (t == 13) { lb = 0; }
+            } elif (t == 13) {
+                lb = 1;
+                if (loc == 1) { if (_tok_is_closure_body(S, k) == 1) { return 0; } }
+                var h = _asa_for_hdr(S, noff, k);
+                if (h != 0 - 2) { return h; }
+            }
+        } elif (d == 0) {
+            if (t == 32) { if (loc == 1) { return _asa_prm(S, noff, k); } }
+            if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var r = _asa_bind(S, k, lb);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
+}
+# A classic-for header's init declares into its body's scope, though the walk steps over the header as a closed
+# `( )`: when the enclosing `{` at token `k` is a `for (..)` body, the init's binding of `noff` (`for (var x: u8 = 0;
+# ..) { x = mkp(); }`) is the destination's declaration — its annotation, 0 = untyped (it shadows an outer `x: i64`).
+# -2 = not a for body, or its init binds no `noff`: the walk goes on. CHANGELOG [6.7.14]
+fn _asa_for_hdr(S, noff, k): i64 {
+    if (TOKTYP(S, k - 1) != 11) { return 0 - 2; }
+    var o = k - 2;
+    var d = 0;
+    while (o >= 1) {
+        var t = TOKTYP(S, o);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            if (d == 0) { break; }
+            d = d - 1;
+        }
+        o = o - 1;
+    }
+    if (o < 1) { return 0 - 2; }
+    if (TOKTYP(S, o - 1) != 55) { return 0 - 2; }
+    var j = o + 1;
+    d = 0;
+    while (j < k) {
+        var u = TOKTYP(S, j);
+        if (u == 10 || u == 13 || u == 28) { d = d + 1; }
+        elif (u == 11 || u == 14 || u == 29) { d = d - 1; }
+        elif (d == 0) {
+            if (u == 5) { return 0 - 2; }
+            if (u == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) {
+                    var r = _asa_bind(S, j, 0);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        j = j + 1;
+    }
+    return 0 - 2;
+}
+# The name at token `k`, met on the walk: -2 when it binds nothing there; else the annotation (0 = none).
+fn _asa_bind(S, k, lb): i64 {
+    var p = TOKTYP(S, k - 1);
+    if (p == 3) {
+        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+        return 0;
+    }
+    if (p == 55) { if (TOKTYP(S, k + 1) == 76) { if (lb == 1) { return 0; } } }   # `for name in ..`
+    if (p == 31) { if (_asa_dlist(S, k) == 1) { return 0; } }                      # `var a, name = f();`
+    return 0 - 2;
+}
+fn _asa_dlist(S, k): i64 {
+    var j = k - 1;
+    while (j >= 2) {
+        if (TOKTYP(S, j) != 31) { return 0; }
+        if (TOKTYP(S, j - 1) != 2) { return 0; }
+        if (TOKTYP(S, j - 2) == 3) { return 1; }
+        j = j - 2;
+    }
+    return 0;
+}
+# The parameter `noff` of the fn whose `fn` is token `k`: its annotation (0 = untyped or not one).
+fn _asa_prm(S, noff, k): i64 {
+    var n = GTCNT(S);
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { break; }
+        if (t == 13) { return 0; }
+        k = k + 1;
+    }
+    var d = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (d == 0) { return 0; }
+        d = d + _cl_ang_step(t);
+        if (d == 1) { if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var p = TOKTYP(S, k - 1);
+                    if (p == 10 || p == 31) {
+                        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+                        return 0;
+                    }
+                } } }
+        k = k + 1;
+    }
+    return 0;
+}
+# A global's first top-level declaration (outside every `{ }` / `( )` / `[ ]`).
+fn _asa_top(S, noff): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var k = 1;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13 || t == 10 || t == 28) { d = d + 1; }
+        elif (t == 14 || t == 11 || t == 29) { d = d - 1; }
+        elif (d == 0) { if (t == 2) { if (TOKTYP(S, k - 1) == 3) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                        return _asa_bind(S, k, 0);
+                    } } } }
+        k = k + 1;
+    }
+    return 0;
 }
 
 # ⛔ 6.7.6 — `u = (j);`, `w = (z.k);`, `w = (mk(5));`, `w = (j.dup());` into a struct variable (and
@@ -4261,13 +4550,10 @@ fn _asg_paren(S, noff, term, which): i64 {
     var k = _pwrap_k(S, st);
     if (TOKTYP(S, _pw_end) != term) { return 0 - 1; }
     STI(S, st + k);
-    var wsv = _asg_wrapd;
-    _asg_wrapd = st + k;   # 6.7.7 (T5): `t = (f())` is no capture (the destructure refuses `(f())`)
     var r = 0;
     if (which == 0) { r = _try_aggregate_copy_assign(S, noff, 11); }
     elif (which == 1) { r = _try_struct_call_assign(S, noff, 11); }
     else { r = _pcmpe_struct_assign(S, noff, 11); }
-    _asg_wrapd = wsv;
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
         if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
@@ -4303,6 +4589,7 @@ fn _asg_struct_dst(S, noff): i64 {
 # the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
 fn _tup_asg(S, noff, term): i64 {
     if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
+    if (PEEKT(S) == 137) { return _tup_asg_call(S, noff, term); }   # 6.7.14: `t = callptr(..);`
     if (PEEKT(S) != 10) { return 0; }
     var st = GTI(S);
     var lp = _tup_lit_at(S, st);
@@ -4341,21 +4628,21 @@ fn _tup_asg(S, noff, term): i64 {
 # top level too (no temp: the values go from the registers straight into the slots, every one read
 # before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
 # `_tup_cap_check`'s (parse_decl.cyr), the destructure's: a refused callee is reported and skipped.
-# Not inside a wrap — `t = (f())` is a value, refused as the destructure refuses `(f())` (R12):
-# `_asg_paren` records the wrapped source's first token. 1 = done (`term` consumed).
-var _asg_wrapd = 0 - 1;
+# Inside a wrap too — `t = (f());` (6.7.14, D45: it was R12, as the destructure refused `(f())`): the
+# whole-value wrap is `_asg_paren`'s, which runs this on its inside. 1 = done (`term` consumed).
 fn _tup_asg_call(S, noff, term): i64 {
-    if (_asg_wrapd == GTI(S)) { return 0; }
     var sid = _tup_dst_sid(S, noff);
     if (sid == 0) { return 0; }
     var c = _tup_cap_check(S, sid, term);
     if (c == 0) { return 0; }
+    var k = _tcap_k;
     _agc_operand(S, noff);
     var gv = _agc_gvi;
     var idx = gv;
     if (_agc_li >= 0) { idx = 0 - 2 - _agc_li; }
     if (c == 1) {
         PCMPE(S);
+        _pw_close(S, k);
         if (idx != 0 - 1) {
             var n = GETFCOUNT(S, sid - 1);
             _tup_drain_push(S, n);
@@ -4795,14 +5082,16 @@ fn _masg_stmt(S, term): i64 {
     var x1 = _masg_target(S, t0, 1);
     var x2 = 0 - 1;
     if (n == 3) { x2 = _masg_target(S, t0, 2); }
-    _dt_rhs_check_t(S, term);
+    var wk = _dt_peel(S, term);   # 6.7.14 (D45): `a, b = (f());`, closed after the call
     var fi = _dt_call_fn(S);
     if (_masg_callee(S, fi, n) == 1) {
         _masg_skip(S);
+        _pw_close(S, wk);
         return _masg_end(S, term);
     }
     _masg_bools(S, t0, n, fi);
     PCMPE(S);
+    _pw_close(S, wk);
     _tup_drain_push(S, n);
     if (n == 3) {
         EPOPR(S);
@@ -4940,10 +5229,10 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
             return li;
         }
     }
+    if (_panic == 0) { if (_asg_cap_first(S, nm, GTI(S)) == 1) { return 0 - 1; } }   # 6.7.11: a capture; 6.7.14: before a global
     var gi = FINDVAR(S, nm);
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
-        if (_panic == 0) { if (_asg_cap_name(S, nm) == 1) { return 0 - 1; } }   # 6.7.11: a capture
         if (_ce_name_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it
         ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
         _gv_note_blockscoped(S, nm);
@@ -5547,6 +5836,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
     # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
     # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
     # error, which the filing recorded as diagnostics-only and was not.
+    if (typ == 137) { if (_stmt_callptr_field(S) == 1) { return 0; } }   # 6.7.14: `callptr(&gp, 5).b = 40;`
     if (typ >= 136) { if (typ <= 137) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
     # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
@@ -5636,7 +5926,6 @@ fn _PARSE_STMT_IMPL(S): i64 {
         _asg_ufv = 0 - 1;
         _asg_tup_refd = 0;
         if (compound_op == 0) {
-            if (PEEKT(S) == 4) { if (_asg_capture_refused(S, noff, GTI(S) - 1) == 1) { return 0; } }   # 6.7.11
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
@@ -5700,7 +5989,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
                 # the literal 0 is a null reset, never warned (`_tp_warn`).
                 if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
-                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
+                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_l(S, _asg_ti, idx); } }
                 }
             }
         }
@@ -5730,7 +6019,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
-                if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } }
+                if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_g(S, _asg_ti, idx); } }
             }
             _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
@@ -5741,6 +6030,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         return 0;
     }
     if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
+    if (_stmt_paren_field(S) == 1) { return 0; }   # 6.7.14 (D24 (a)): `(s).m();`, `(s).a = v;` refused
     ERR(S);
     return 0;
 }

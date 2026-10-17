@@ -1,0 +1,10 @@
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+fn f(): f64 { return f64_from(5) / f64_from(2); }
+fn main(): i64 {
+    var a = fncall0(&f);
+    var y = a + 1.5;
+    return f64_to(y);
+}
+syscall(60, main());

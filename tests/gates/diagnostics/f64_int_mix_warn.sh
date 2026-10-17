@@ -650,5 +650,31 @@ for spec in 'sub@var c = f() < 1.0; var n = 0 - c; return n + 2;@1@0' 'and@var k
     n=$(count "$K2"); [ "$n" = "$w2" ] || { bad "axis 18 ($id): kind-2 warning count $n, want $w2"; sed -n 1,3p "$W/e"; }
 done
 
+# --- axis 19 (6.7.14, the user's decision D25 (a), 2026-10-16): a known `&f` callee's `: f64` is an f64 ---
+# issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md: `var a = fncall0(&f); var y = a + 1.5;` with `f: f64`
+# bound an untyped word (the f64 was kept only when the last ARGUMENT was an f64, 6.7.6), so `a + 1.5` was an integer
+# add under kind 2, "integer arithmetic with an f64 right operand" (the repro exited 0). Now an f64 whatever the
+# arguments, as `f()` is; a callee held in a variable stays a word (D31) and keeps the warning.
+#   the fix reverted (the lane's D27 commit)                -> RED a19 the repro (exit 0, kind 2), cp, arg, wrap
+#   `_var_rhs_post` without `_var_rhs_if64`                  -> RED a19 the repro, cp, wrap (kind 2: the binding a word)
+F19='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn f(): f64 { return f64_from(5) / f64_from(2); }\nfn fh(x: i64): f64 { return f64_from(x) / f64_from(2); }\n'
+build docs/development/issues/repros/2026-10-16-known-callee-pointer-or-f64-result-untyped-f64.cyr; chmod +x "$W/o" 2>/dev/null || true
+rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+[ "$rc" = 4 ] || bad "axis 19 (the repro, verbatim): exit $rc, want 4"
+n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 19 (the repro, verbatim): kind-2 warning count $n, want 0"
+for spec in 'cp@var a = callptr(&f); var y = a + 1.5; return f64_to(y);@4@0' \
+            'arg@var y = fncall1(&fh, 9) * 2.0; return f64_to(y);@9@0' \
+            'wrap@var a = (fncall0(&f)); var y = a + 1.5; return f64_to(y);@4@0' \
+            'cmp@var c = fncall0(&f) < 3.0; var n = 0 - c; return n + 2;@1@0' \
+            'var@var fp = &f; var a = fncall0(fp); var y = a + 1.5; return f64_to(y);@0@1'; do
+    id=${spec%%@*}; rest=${spec#*@}; stmt=${rest%%@*}; rest=${rest#*@}; want=${rest%%@*}; w2=${rest#*@}
+    printf "${F19}"'fn main(): i64 { %s }\nsyscall(60, main());\n' "$stmt" > "$W/a19_$id.cyr"
+    build "$W/a19_$id.cyr"; chmod +x "$W/o" 2>/dev/null || true
+    rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+    [ "$rc" = "$want" ] || bad "axis 19 ($id: '$stmt'): exit $rc, want $want"
+    n=$(count "$K2"); [ "$n" = "$w2" ] || { bad "axis 19 ($id): kind-2 warning count $n, want $w2"; sed -n 1,3p "$W/e"; }
+    n=$(count "$K1"); [ "$n" = 0 ] || bad "axis 19 ($id): kind-1 warning count $n, want 0"
+done
+
 [ "$fail" = 0 ] || exit 1
 echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer, a comparison bound from a : f64 call too)"

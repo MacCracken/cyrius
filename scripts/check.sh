@@ -1318,6 +1318,13 @@ _chk_gate "$ROOT/tests/gates/frontend/call_ptr_field_store.sh"
 # generic warns. 18 rows.
 _chk_gate "$ROOT/tests/gates/frontend/call_result_field.sh"
 
+# 6.7.14 (the receives lane, the user's decision D24 (a), 2026-10-16): a `.field` / `.m(..)` after parentheses around
+# a struct value reads it as unwrapped — `(s).a`, `((s)).a`, `(p).a`, `(*p).a`, `(s).m()`, `(mk1()).a`, `(mk3(5)).b`, a
+# method / operator / known `&f` / `: *T` result, a struct-typed field, and the statement `(s).m();` (each was
+# "expected ';', got '.'" or "unexpected '('"); a non-struct inside, a store `(s).a = v;` and a top-level struct
+# result refused once by name. The filed repro and the crossos values file on every leg, mutation-proven (header).
+_chk_gate "$ROOT/tests/gates/frontend/paren_field_access.sh"
+
 # 6.6.12 (B20, R4): array subscripts `a[i]`, `a[i] = v`, `a[i] OP= v` on `var a: T[N]`. Before
 # 6.6.12 the language had no subscript at all (`expected ';', got '['`). Axis 1: fifteen refusals by
 # name (four bare `var a[N]` shapes, a scalar, a pointer, a `stack var`, a u128 element, an

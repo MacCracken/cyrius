@@ -64,6 +64,11 @@ var TV_CN = 61;
 # ... and with an explicit generic DECLARED BELOW (pass 1 reads `name<..>(` by its tokens): a capture,
 # and a literal whose generic call's `<A, B>` holds no tuple comma — `(i64, i64)`, not three elements.
 var TV_C2: (i64, i64) = tv_g2<i64>(5);
+# ... and through `callptr` (6.7.14: a call to the capture, as to the destructure).
+var TV_CP: (i64, i64) = callptr(&tv_m2, 4);
+# ... and inside parentheses that wrap the whole call (6.7.14, D45: transparent), a capture and a destructure.
+var TV_PW: (i64, i64) = (tv_m2(5));
+var TV_PA, TV_PB = ((tv_m2(3)));
 var TV_L6 = (tv_pk<i64, i64>(1, 2), 3);
 
 # --- types ---
@@ -557,6 +562,22 @@ fn tv_capture(): i64 {
     assert_eq(TV_CN, 61, "the global after a zone capture is intact after `G.1 = 9`");
     TV_C1 = tv_m2(1);
     assert_eq(TV_C1.0 * 10 + TV_C1.1, 15, "`G = f();` into a global, in a fn");
+    var cpf = &tv_m2;
+    var cq: (i64, i64) = callptr(cpf, 2);
+    assert_eq(cq.0 * 10 + cq.1, 26, "`callptr(fp, ..)` captured, as `fncall1(fp, ..)` is (6.7.14)");
+    cq = callptr(cpf, 3);
+    assert_eq(cq.0 * 10 + cq.1, 37, "... re-captured, `t = callptr(..);`");
+    assert_eq(TV_CP.0 * 10 + TV_CP.1, 48, "... a declaration-zone capture");
+    var pw: (i64, i64) = (tv_m2(6));
+    assert_eq(pw.0 * 10 + pw.1, 70, "parentheses around the whole call are transparent: `(f(..))` captures (6.7.14)");
+    pw = ((tv_m2(1)));
+    assert_eq(pw.0 * 10 + pw.1, 15, "... re-captured, `t = ((f(..)));`");
+    var pa, pb = (tv_m2(2));
+    assert_eq(pa * 10 + pb, 26, "... destructured, `var a, b = (f(..));`");
+    pa, pb = (callptr(cpf, 4));
+    assert_eq(pa * 10 + pb, 48, "... re-assigned, `a, b = (callptr(..));`");
+    assert_eq(TV_PW.0 * 10 + TV_PW.1, 59, "... a declaration-zone capture");
+    assert_eq(TV_PA * 10 + TV_PB, 37, "... a declaration-zone destructure");
     return 0;
 }
 fn tv_m2later(x): (i64, i64) { return (x, x * 2); }

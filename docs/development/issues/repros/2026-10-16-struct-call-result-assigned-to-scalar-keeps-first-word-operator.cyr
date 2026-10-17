@@ -1,0 +1,15 @@
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn Q_add(l: *Q, r: *Q): Q { var q: Q; q.a = l.a + r.a; q.b = l.b + r.b; return q; }
+var G: i64 = 0;
+fn main(): i64 {
+    var a = Q { 300, 2 };
+    var c = Q { 33, 2 };
+    var x: i64 = 0;
+    x = a + c;
+    var y: u8 = 0;
+    y = a + c;
+    G = a + c;
+    return x - 333 + y + G - 333;
+}
+syscall(60, main());

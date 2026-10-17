@@ -17,6 +17,12 @@
 #      block's local out of scope), still says `undefined variable 'y'`
 #   C  a write to a captured struct's FIELD (`h.n += d`, the closure's own copy) and a read of a
 #      captured name still build and run
+#   G  6.7.14 (issues/archived/2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.md) — the W shapes
+#      with a GLOBAL of the captured name: each write arm looked the global up before asking for a capture,
+#      so the write compiled and stored into the GLOBAL while the read beside it saw the capture (the
+#      filed repro exited 52). Each is refused once, as without the global (`_asg_cap_first`, parse.cyr,
+#      asked from `_asg_lvalue_at` and `_masg_resolve` before any global lookup). GC: a closure that sees
+#      no enclosing `x` writes the global (legal), and a closure-local `var x` shadowing both writes its own.
 #
 # MUTATION LEDGER (2026-10-14, a scratch copy of the tree rebuilt with the one change, run as CYCC=<mutant>):
 #   M1 `_asg_cap_name` answering 0 (= the tree before)        -> RED W1-W8 (undefined variable)
@@ -24,6 +30,10 @@
 #   M3 `_asg_undef_report` without its `_asg_cap_name` call   -> RED W1-W5 W7 W8; W6 green
 # 6.7.13 (issues/archived/2026-10-14-captured-name-refusal-fixit-reads-var-y-equals-y.md):
 #   M4 the fix-it's fixed `var y = ` (the tree before)        -> RED W1-W9 W9b (10)
+# 6.7.14 (issues/archived/2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.md):
+#   M5 `_asg_cap_first` answering 0                         -> RED G0-G9 (10: built) + W6 (`undefined variable`)
+#   M6 `_masg_resolve` asking after FINDVAR (6.7.11's order)  -> RED G6 only
+#   M7 `_asg_lvalue_at` without its `_asg_cap_first` call     -> RED G0-G5 G7-G9; W1-W9 green (the no-global fallback)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -89,8 +99,27 @@ echo "C - a captured struct's field and a read still build:"
 exits c1 7 "C1: h.n += d on a captured struct (the closure's copy)" "$(src c1 "${I}struct H { n; }\nfn main(): i64 {\n    var h = H { 5 };\n    var f = |d| { h.n += d; return h.n; };\n    return callptr(f, 2);\n}\nsyscall(60, main());\n")"
 exits c2 7 "C2: |d| { return x + d; }" "$(src c2 "${I}${OPEN}|d| { return x + d; };${CLOSE}")"
 
-# Floor: 10 W + 4 U + 2 C rows. A gate that ran fewer is broken, not green.
+echo "G - a same-named GLOBAL does not take the write (6.7.14):"
+GX='var x = 100;\n'
+GEND='\n    return callptr(f, 2);\n}\nfn g(): i64 { return x; }\nvar r = main();\nsyscall(60, r * 10 + (g() - 100));\n'
+refused g0 "$CAPY" "G0: the filed repro, verbatim (y += d beside a global y: built, exit 52)" \
+    docs/development/issues/repros/2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.cyr
+refused g1 "$CAP" "G1: x += d" "$(src g1 "${I}${GX}${OPEN}|d| { x += d; return x; };${GEND}")"
+refused g2 "$CAP" "G2: x = x + d (built, exit 213)" "$(src g2 "${I}${GX}${OPEN}|d| { x = x + d; return x; };${GEND}")"
+refused g3 "$CAP" "G3: a for init, for (x = 0; ..)" "$(src g3 "${I}${GX}${OPEN}|d| { var i = 0; for (x = 0; i < d; i = i + 1) { } return d; };${GEND}")"
+refused g4 "$CAP" "G4: a for step, for (..; x = x + 1)" "$(src g4 "${I}${GX}${OPEN}|d| { for (var i = 0; i < d; x = x + 1) { i = i + 1; } return d; };${GEND}")"
+refused g5 "$CAP" "G5: a compound for step, for (..; x += 1)" "$(src g5 "${I}${GX}${OPEN}|d| { for (var i = 0; i < d; x += 1) { i = i + 1; } return d; };${GEND}")"
+refused g6 "$CAP" "G6: a, x = two()" "$(src g6 "${I}${GX}${TWO}${OPEN}|d| { var a = 0; a, x = two(); return a + d; };${GEND}")"
+refused g7 "$CAP" "G7: x -= d" "$(src g7 "${I}${GX}${OPEN}|d| { x -= d; return x; };${GEND}")"
+refused g8 "$CAP" "G8: a nested closure writing the fn's x" "$(src g8 "${I}${GX}${OPEN}|d| { var h = |e| { x = e; return e; }; return callptr(h, d); };${GEND}")"
+refused g9 "$CAP" "G9: x = 9 (built, exit 215)" "$(src g9 "${I}${GX}${OPEN}|d| { x = 9; return x; };${GEND}")"
+# GC1: no enclosing x — the closure's x IS the global: 102 + 5 returned, the global 100 -> 102: 107 + 2.
+exits gc1 109 "GC1: a closure that sees no enclosing x writes the global x" "$(src gc1 "${I}${GX}fn main(): i64 {\n    var k = 5;\n    var f = |d| { x += d; return x + k; };\n    return callptr(f, 2);\n}\nfn g(): i64 { return x; }\nvar r = main();\nsyscall(60, r + (g() - 100));\n")"
+# GC2: the closure's own x shadows the capture and the global: 1 + 2 returned, the global untouched: 30.
+exits gc2 30 "GC2: a closure-local var x shadowing both writes its local" "$(src gc2 "${I}${GX}${OPEN}|d| { var x = 1; x += d; return x; };${GEND}")"
+
+# Floor: 10 W + 4 U + 2 C + 10 G + 2 GC rows. A gate that ran fewer is broken, not green.
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-if [ "$rows" -lt 16 ]; then echo "FAIL: $G — only $rows rows ran (floor 16)"; exit 1; fi
+if [ "$rows" -lt 28 ]; then echo "FAIL: $G — only $rows rows ran (floor 28)"; exit 1; fi
 echo "PASS: $G ($rows rows) — a write to a captured name in a closure names the capture; an undefined name stays undefined"
 exit 0

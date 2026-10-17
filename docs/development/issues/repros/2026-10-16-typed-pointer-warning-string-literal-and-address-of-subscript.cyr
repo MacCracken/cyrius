@@ -1,0 +1,9 @@
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var s: *u8 = "abc";
+    var t: *u8 = 0;
+    t = "xyz";
+    return load8(s + 1) + load8(t);
+}
+var ec = main();
+syscall(60, ec);

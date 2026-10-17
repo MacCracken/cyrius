@@ -76,7 +76,8 @@
 # NON-parameter name still captured through both levels (KP1 / KP2), a bitwise `|` after a name, a
 # `)` and a number beside a literal (KP3-KP5: reading one as a literal would DROP the capture between
 # its bars), a `||` thunk (KP6 / KP7), a sibling literal reading the enclosing name (KP8), a typed
-# `|m: i64|` (KP9: refused by the parser at the `:`, as before — a closure's parameters are untyped),
+# `|m: i64|` (KP9: refused by the parser at the `:`, as before — a closure's parameters are untyped; 6.7.14: by
+# that rule's name, it was "expected '|', got ':'"),
 # the enclosing name read after a block-bodied and an expression-bodied literal (KP10 / KP11: the
 # shadow ends with the literal). RN: the filed repro verbatim (26).
 #   m9  the pre-fix src (this bite's base)          -> RED P1-P6 RN, every leg (21)
@@ -165,7 +166,7 @@ KP5|r|1|fn f(): i64 { var q = 6; var cl = |n| n | q | 0; return fncall1(cl, 1); 
 KP6|a|6|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var t = || m + n; return fncall0(t); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KP7|r|2|fn f(): i64 { var m = 5; var cl = |n| { var t = || m + 1; return fncall0(t) + n; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KP8|a|13|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var g = |k| m + k; var h = |m| m * 2; return fncall1(g, n) + fncall1(h, n) + m; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
-KP9|x|got ':'|fn f(): i64 { var m = 5; var cl = |n| { var g = |m: i64| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
+KP9|x|a closure's parameters are untyped|fn f(): i64 { var m = 5; var cl = |n| { var g = |m: i64| m + 1; return fncall1(g, n); }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KP10|a|7|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| { var h = |m| { return m * 2; }; return fncall1(h, n) + m; }; return fncall1(cl, 1); }\nsyscall(60, f());\n
 KP11|a|51|var m = 100;\nfn f(): i64 { alloc_init(); var m = 5; var cl = |n| fncall2(|m, k| m * 10 + k, m, n); return fncall1(cl, 1); }\nsyscall(60, f());\n
 ROWS

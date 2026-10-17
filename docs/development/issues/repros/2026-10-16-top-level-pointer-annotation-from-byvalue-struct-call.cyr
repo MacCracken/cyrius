@@ -1,0 +1,7 @@
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+fn mkp(): P2 { var p: P2; p.a = 333; p.b = 3; return p; }
+var Z = 0;
+Z = 1;
+var X: *P2 = mkp();
+syscall(60, X.b);

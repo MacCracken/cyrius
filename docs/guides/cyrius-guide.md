@@ -79,7 +79,9 @@ ending the initialiser: `var a = p.area();`, `w.v.area()`, `p.me().area()`, `mk(
 with `fn area(self): f64`. A leading `: f64` call types the binding only while the whole
 initialiser is still an f64 (6.7.13): `var x = f() * 2.0;` is an f64, `var c = f() < 1.0;` and
 `var c = f() > 0.1 && k == 1;` are the integer 0 / 1 a comparison is (through 6.7.12 `c` was typed
-f64, so `-c` flipped its sign bit and `0 - c` warned). It does NOT cover an **untyped**
+f64, so `-c` flipped its sign bit and `0 - c` warned). The leading call may be in parentheses (6.7.14):
+`var x = (f()) * 2.0;` is an f64 and `var c = (f()) < 1.0;` an integer, as without them (`x` was an untyped
+word holding the product's bits). It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
@@ -957,7 +959,9 @@ the closure: `x += d`, like `x = x + d`, a `for` init or step and `a, x = f()`, 
 capture — ``'x' is captured by value; a captured name is not assignable in a closure — copy it into a
 local (`var x_l = x;`)`` (6.7.11; it said `undefined variable 'x'`, though `x` is readable in the same
 body; through 6.7.12 the fix-it's local was always `y`, so a capture named `y` read `var y = y;`). `x = v` is reported at `x`, before `v` is parsed (6.7.11: a whole tuple `v` was refused a
-second time). It works in a statement, at
+second time). The refusal holds when a GLOBAL has the name too: in the closure the name is the
+capture, which a read finds first. Through 6.7.13 every write shape above compiled when a global
+`x` existed and stored into the GLOBAL, while a read of `x` in the same body saw the capture (6.7.14). It works in a statement, at
 top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
@@ -1161,7 +1165,8 @@ is an integer, never a pointer: `w - q` is `n - p`, `w + q` steps `q`'s `sizeof(
 of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
 different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
-only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
+only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is — and through a fn pointer only
+when the callee is written `&f` (6.7.14: `fncall0(&gp) + 1` steps one `T`, as `gp() + 1`). So is every other value
 computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
 the saturating / checked `+| +? -| -?` (integer operators: `q +| 1` adds one byte, and the sum is
 no pointer), unary `-` / `~`, `p?`, `await f`, an operator fn's result (unless the operator fn declares `: *T`:
@@ -1179,7 +1184,11 @@ after the first top-level statement and in the declaration zone, and an assignme
 global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
-fn and the assignment to a `*Struct` local or a `*T` global warned on it).
+fn and the assignment to a `*Struct` local or a `*T` global warned on it). A string literal alone into a byte pointer
+is its address and never warns either (6.7.14): `var s: *u8 = "abc";`, `t = "xyz";`, a `*i8`, a parameter, a global, in
+the declaration zone (through 6.7.13 each warned); into any other `*T` (`*i64`, a one-byte struct's `*B`) it still
+warns. A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
 `*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
@@ -1594,7 +1603,15 @@ or `((mk(9)))`: parentheses around the whole call are transparent (6.7.11; befor
 struct's first word, `x.z` was refused and `take(x)` passed that word as the struct's address —
 a crash), at every size since 6.7.13: `var x = (mk1());` with `mk1` returning an 8-byte struct is
 that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());` with `f` returning
-`: f64` is an f64, as `var x = f();` is. An annotation that names no struct is never replaced by the callee's struct:
+`: f64` is an f64, as `var x = f();` is. In a fn, `var s = (mks());` with `mks` returning `Str` is a `Str`, as
+`var s = mks();` is (6.7.14; it was an untyped word: `println(s)` printed the header's bytes and `s.len()`
+was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's decisions D29 (a) and D30 (a),
+2026-10-16): at top level — in the declaration zone or after the first statement, wrapped or not — `var x =
+mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
+scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none), and one of 9-16 bytes is refused as
+`var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
+through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. A
+method or operator result, a `Str` and a name keep the word at top level. An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 
@@ -1619,6 +1636,20 @@ same (6.7.13; the user's decision D13, 2026-10-15): `var x: i64 = b.mk();` and `
 the operator fn returning a struct over 8 bytes are refused with the same words, naming that fn (a
 method by its compiler name, `Q_mk`). Through 6.7.12 they kept the struct's first word, narrowed
 (`y` held 77 of 333), and a `: bool` was refused as *not a bool*.
+An ASSIGNMENT is judged the same (6.7.14; the user's decision D27, 2026-10-16): `x = mk(9);`, `x = b.mk();`,
+`x = a + c;`, `x = fncall1(&mk, 9);` — in a classic `for` init or step too, in parentheses, in a fn or at top
+level — into a local (a classic `for` header's `var x: u8` too, in the loop's body), a parameter or a global
+declared `: i64`, `: u8`, `: f64`, `: cstring`, any annotation that names no struct, from a struct over 8 bytes, is
+refused with the declaration's words:
+
+```
+error: cannot assign 'x: i64' from 'mk', which returns the struct 'P3' - declare 'x: P3' or bind a field
+```
+
+Through 6.7.13 it stored the struct's first word, narrowed, silently. A struct of 8 bytes or less and a
+`Str` keep their word, as in the declaration; a `: bool` keeps its own refusal (*not a bool*); an untyped
+destination (`var x = 0;`, a `for (var x = 0; ..)` shadowing an outer `x: i64`) has no annotation to judge and keeps
+the word; bind a field (`x = mk(9).z;`) or declare the struct.
 A pointer annotation names no struct value either (6.7.13; the user's decision D14, 2026-10-15):
 inside a fn, `var x: *P2 = mkp();` — or `*i64`, `*u8`, any `*T` — with `mkp` returning a struct over
 8 bytes is refused, directly, in parentheses, through a generic, a known `&f`, a method or an
@@ -1631,7 +1662,12 @@ error: cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - de
 Through 6.7.12 it compiled with only *assigning non-pointer to typed pointer* and stored the struct's
 first word as the pointer (`x.b` faulted; a `*i64` held 333). A struct of 8 bytes or less still
 stores its one word, with that warning, as a scalar keeps it; `x = mkp();` into a `*P2` local copies
-through it, unchanged.
+through it, unchanged. A global declaration is judged the same (6.7.14; the user's decision D28,
+2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
+every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
+after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was
+refused in a scalar's words (*or bind a field*) and a method or operator result compiled. Over 16 bytes a
+top-level call keeps its one refusal (a struct result needs a fn's frame).
 
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
@@ -1741,7 +1777,10 @@ user's decision D16 (a), 2026-10-15): `fncall1(&mk, 5).b`, `callptr(&mk, 1).dbl(
 `fncall1(&gp, 5).b` through a `*P3` callee, and the statement `fncall1(&mk, 5).total();`. At top level a struct
 result's field is refused by name, as `mk(5).b`'s is, and a callee held in a variable followed by `.name` is refused
 by name (*its callee is a value, not `&f`, so the result is a word*). Through 6.7.12 the `.` was `expected ';',
-got '.'`.
+got '.'`. A statement storing into a field of the result — `fncall1(&gp, 5).b = 40;`, `+= 40` — stores through a
+`*T` callee's result and is refused by name for a by-value one (*cannot assign to a field of a call result: the
+result is a temporary*), whichever spelling: through 6.7.13 the `callptr(&gp, 5).b = 40;` statement was `expected
+';', got '='` (6.7.14).
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the
@@ -1760,7 +1799,10 @@ look reasonable:
   9-16 byte *struct*, not of a vector. It stays legal for the scalar multi-value `var a, b =
   f();` form; a fn returning a named struct refuses it too since 6.7.11 (a tuple is another
   type — [Returning a struct by value](#returning-a-struct-by-value-v666)). To build a vector,
-  store the lanes into a local and return the local.
+  store the lanes into a local and return the local. The builtin `ret2(a, b);` is the same pair, so
+  it is refused in a vector fn too, by the same text (*… got `ret2`*; 6.7.14, the user's decision of
+  2026-10-16): through 6.7.13 it compiled and the caller's vector held whatever the vector registers
+  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own.
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
   wrong lane on Windows.
@@ -2071,10 +2113,20 @@ call's word even from another struct (refused by name now, as the unwrapped call
 Until 6.7.13 a 9-16 byte METHOD or OPERATOR result in parentheses as a nested literal element
 (`H { 7, (q.dup()), 8 }`, `(q + r)`) and a wrapped struct-typed field (`H { 7, (h.q), 8 }`) were
 *unexpected '}'* too; they are the element the unwrapped source is now, refused by name where it is
-(another struct, no frame at top level). So is a dyn-returning call in parentheses as a `dyn` field's
+(another struct, no frame at top level). Until 6.7.14 so was a struct NAME in parentheses as the element
+(`H { 7, (q0), 8 }`, `((q0))`, a global `(G)`, in a fn or at top level): it is the element `q0` is, and
+another struct's name is refused by name, as unwrapped. So is a dyn-returning call in parentheses as a `dyn` field's
 element (`H { 7, (pass(o)), 8 }`, 6.7.13, the user's decision D17 (a), 2026-10-15; it was refused: *a struct
 literal does not form a dyn*); at top level the element is refused once, by name (no frame). The untyped
 `var x = (pass(o));` stays refused: a dyn result goes only into a dyn.
+A `.field` or `.m(..)` written AFTER the parentheses sees through them too (6.7.14; the user's decision D24,
+2026-10-16):
+`(s).a`, `((s)).a`, `(p).a` and `(*p).a` for a `*S`, `(s).m()`, `(mk1()).a`, `(mk3(5)).b`, `(b.mk()).b`,
+`(x + y).b` with a struct operator, `(h.q).b` for a struct-typed field and `(gp()).a` for a `: *S` call read
+the field or call the method exactly as without them, chains included, and `(s).m();` is a statement — each
+was *expected ';', got '.'* (a statement *unexpected '('*). Parentheses around a value that is no struct
+(`(x + 1).a`) are refused by name, a store through them (`(s).a = v;`, `(s).a += v;`) is refused by name
+(write `s.a = v`), and at top level a struct result is refused once (no frame), as without them.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
@@ -2232,7 +2284,8 @@ form does and as a single method and the same chain over 8 bytes always did. Thr
 untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the word (now it dispatches
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
-annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
+annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word (a whole free call
+excepted since 6.7.14, above).
 
 **So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
 (or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
@@ -2261,13 +2314,16 @@ Str's 16-byte header and past it.
 
 The result of a name intrinsic — `mulh64(..)`, `fncall0`..`fncall8(..)`, `callptr(..)` — is an
 untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a struct adds 1. Before
-6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. The one case
-where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
-and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
-it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
-is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`. Since 6.7.11
-an `&f` callee that returns a struct by value makes the result that struct, as `f(..)`'s is (see
-*Returning a struct by value*).
+6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. When the callee
+is written `&f` — a KNOWN callee — the result is typed as the direct call `f(..)`'s: a struct by
+value makes it that struct (6.7.11; see *Returning a struct by value*), and (6.7.14; the user's
+decisions D25 and D26, 2026-10-16) a `: f64` makes it an f64 whatever the arguments
+(`var a = fncall0(&f); a + 1.5` and `fncall1(&dbl, 3) * 2.0` are f64 operations, and `var a =
+fncall0(&f);` binds an f64), a `: *T` makes it a `*T`: `fncall0(&gp) + 1` steps one `T`, as
+`gp() + 1` does, and `var w: *P2 = fncall0(&gp);` does not warn. Through 6.7.13 both were an untyped
+word (the f64 only when the last argument was an f64, 6.7.6's rule): `a + 1.5` added integers and
+`fncall0(&gp) + 1` moved one byte. Through a variable or a closure the callee is unknown and the
+result is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
 
 ## Strings
 
@@ -3107,13 +3163,16 @@ var hi, lo, bexp = dd_pow10(k);
 #   fn g2(): i64 { return (1, 2); }   # `ret2(1, 2);` likewise
 # The declared type types each value: a `: f64` fn's values are each an f64 (its bindings are f64,
 # and `var t: (i64, i64) = g(..);` is refused), and a `: bool` fn's first value is checked as its
-# bool. Pass 1 counts it as it counts an undeclared fn (every `return` `(a, b)`, the body left only
-# through them), so `var a, b, c = g2();` and a 3-tuple capture are refused. A one-name bind,
+# bool. Pass 1 counts it as it counts an undeclared fn (every `return` `(a, b)` — or `ret2(a, b)`,
+# 6.7.14 — the body left only through them), so `var a, b, c = g2();` and a 3-tuple capture are refused. A one-name bind,
 # `var a = g2();`, keeps the first value, as for any multi-value callee (`rethi()` reads the second).
 
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
 # was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
+# Parentheses around the whole call are transparent: `var a, b = (f(7));`, `a, b = ((f()));`, a for
+# step and both top-level zones destructure as unwrapped (6.7.14, the user's decision of 2026-10-16;
+# they were refused "needs a call"). `(f(7)) + 1` and `(f(7) + 1)` are not one call.
 # These are rejected rather than silently reading whatever rdx held:
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
@@ -3121,6 +3180,12 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
+#   var a, b, c = divmod_old(17, 5);  # ...and `ret2(a, b);` / `return ret2(a, b);` are two-value
+#                                     # exits too (6.7.14, the user's decision of 2026-10-16): a
+#                                     # body left only through them — ending in one, or in an
+#                                     # if / elif / else whose every arm ends in an exit — returns 2
+#                                     # values (the third name read a stale register). A `ret2`
+#                                     # inside an expression is not counted
 #   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
 #                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
 #                                     # (6.7.11, kept by the user 2026-10-15; through 6.7.10 the
@@ -3193,6 +3258,14 @@ where a struct's first word would stand in for it as one value, a tuple is refus
 tuple types are the same type exactly when their element lists are equal: `(i64,i64)` and
 `(i64, i64)` copy into each other, and a copy between any other pair is the struct copy's type
 error. Diagnostics name a tuple by its spelling, `(i64, f64)`.
+
+A tuple parameter takes the tuple's ADDRESS, so an untyped word passed to one — `take(&t)`, a
+variable `u = &t`, a call `mk()` declared `: i64` that returns an address — is that address, as an
+untyped value is a struct parameter's (a tuple has no `*T` spelling, so this is the way to pass one
+by pointer). What can never be an address is refused (6.7.14, the user's decision of 2026-10-16): an
+integer literal, `take(5)`, and a call returning several values, `take(g2(3))` — a fn declared one
+scalar whose `return (a, b)` / `ret2` pass 1 counted too. A one-value call such as `take(one(3))` is
+a word like any other and is passed as the address; it is the caller's to make it one.
 
 **Where the type goes.** A `var` (a local, or a global in either zone), a parameter, a struct
 field, and a fn's multi-value return `: (T1, T2)` / `: (T1, T2, T3)`:
@@ -3276,7 +3349,11 @@ fn capture(): i64 {
 ```
 
 The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
-one whole call — `f(..)`, `g<T>(..)` or `x.m(..)` — and nothing around it. A callee declared
+one whole call — `f(..)`, `g<T>(..)`, `x.m(..)`, or a call through a fn pointer, `fncallN(fp, ..)` or
+`callptr(fp, ..)` (6.7.14: `var t: (i64, i64) = callptr(fp, 5);`, `t = callptr(..)` and a global's were
+refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it but
+parentheses around the whole call, which are transparent: `var t: (i64, i64) = (two(3));`, `t = ((two(3)));` and a
+global's capture it as unwrapped (6.7.14, the user's decision of 2026-10-16; they were refused "not a tuple"). A callee declared
 `: (T1, T2[, T3])` is checked element by element: its arity must equal the tuple's, an `f64`
 element takes an `f64` value, a `bool` element a declared `bool`, an `i64` element any other
 value. A callee that declares no values — an undeclared `return (a, b)`, `ret2`, a `: stack`
@@ -3360,8 +3437,9 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
-| `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
-| `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
+| `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `take(5)` into a tuple parameter (an integer literal; 6.7.14) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
@@ -5753,10 +5831,17 @@ is_ok(f());              # ✓ a single ARGUMENT receives the tag (above) — an
 
 A store is judged by the call it starts with, so `h.n = f() + 1;` and `P { f() + 1, 3 }` are refused
 too; an argument (`g(f())`) and an operand anywhere else (`f() == 0`, `return f() + 1;`) read the tag,
-by the single-argument rule above (the user's decision, 2026-10-13).
+by the single-argument rule above (the user's decision, 2026-10-13). Parentheses around the whole value
+change nothing (6.7.14, the user's decision of 2026-10-16): `var v = (f() + 1);`, `h.n = ((f() * 2));`
+and `P { (f() + 1), 3 }` are refused as their unwrapped spelling is — through 6.7.13 they kept the tag in
+silence — while `x = (3 + f());` keeps the tag as `x = 3 + f();` does, `x = (f()? + 1);` propagates, and
+`(f() + 1) * 2` is not a wrap around the whole value.
 
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
-binding it one-wide there is caught too.
+binding it one-wide there is caught too — and through `?`: a fn whose body propagates a pair with
+`f(..)?` returns one, wherever it is defined (a closure's `?` in it, `|a| parse(a)?`, is the closure's
+own) (6.7.14 — a fn whose ONLY pair route was a `?`, defined
+below its caller, was read there as one value: `qb(x)?` crashed and `var v = qb(x);` kept the tag).
 
 `f` is any call spelling: an explicit generic `g<T>(..)` and a method `p.m(..)` are refused,
 destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
@@ -6222,6 +6307,13 @@ var g_dbl = |x| { var y = x * 2; return y; };     # … or as a top-level `var`
 ```
 
 The body may be a single expression or a `{ … }` block (with `return`).
+
+A closure's parameters are untyped words (it is called through `fncallN` / `callptr`): a
+type on one is refused at its `:`, once per parameter — `|m: i64| m + 1` is ``a closure's
+parameters are untyped — drop `: T` ``, as `|a, b = 1|` is `a closure's parameters take no
+defaults`. Through 6.7.13 a type there was `expected unknown, got ':'`, then the type parsed as
+the body (`undefined variable 'i64'`), and a nested literal beside an enclosing `m` was
+refused for a capture of it as well (6.7.14).
 
 A closure literal is also a legal top-level initializer, including the `{ block }`
 form. Call it with `fncallN` or `callptr`, inside a function or at top level: since

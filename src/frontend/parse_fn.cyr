@@ -967,6 +967,7 @@ fn _mret_zero(S, fi): i64 {
 fn _ret2_ctx(S, ti): i64 {
     if (GINFN(S) == 1) {
         _ret2_in_struct(S, ti);
+        _ret2_in_vector(S, ti);   # 6.7.14 (D43)
         return _ret2_in3(S, ti);
     }
     if (_tn_once(S, ti) == 0) { return 1; }
@@ -1002,6 +1003,29 @@ fn _ret2_in_struct(S, ti): i64 {
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
     PRSTR("` returns that struct — `ret2` writes two values\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
+    return 0;
+}
+
+# ... in a fn declared to return a vector (`: f64v2`, `f32v4`, `f64v4`, `i32v4`, ..): its result is the vector
+# registers (on Win64 the result pointer), never rax:rdx, so it is refused by the 6.6.6 vector rule's text, as
+# `return (a, b);` and `return ret2(..);` there are (D43, the user's decision, 2026-10-16) — the caller read the
+# vector registers' leftovers (0; 41 on cx). Named `ret2` (`_refuse_simd_return` names the cursor's token), at
+# the ret2, once, in sync. `return ret2(..);` is that return's own refusal; a closure's ret2 is the closure's,
+# an #inline replay's its callee's. CHANGELOG [6.7.14]
+fn _ret2_in_vector(S, ti): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (TOKTYP(S, ti - 1) == 33) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `ret2`\n");
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
@@ -1966,6 +1990,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
     # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
     if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
+    if (PEEKT(S) == 1) { _tup_arg_lit(S, fi, argc); }   # 6.7.14 (D44): `take(5)`, refused; pushed as before
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -2508,8 +2533,35 @@ fn _tup_arg_call(S, fi, argc): i64 {
     if (_call_dotted(S, ti) == 1) { return 0; }
     if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
     var cfi = _gen_resolve_call(S, ti);
-    if (_mv_callee(S, cfi) == 0) { return 0; }   # declared or counted (6.7.11 pass 1). CHANGELOG [6.7.13]
+    if (_mv_callee_any(S, cfi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
     return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
+}
+# ⛔ 6.7.14 — AN INTEGER LITERAL IS NO TUPLE (D44, the user's decision, 2026-10-16). `take(5)` pushed 5 as the
+# tuple's address and the callee read through it (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE), where the
+# tuple VARIABLE refuses it ("cannot initialize tuple 't' with a value that is not a tuple"). Refused by name at
+# the literal — a whole argument, inside any parentheses (`_sarg_paren` peels them) — in sync: the caller pushes
+# it as before and `_had_error` withholds the binary. Any other untyped word (`&t`, a name, a one-value call) is
+# still the address, as for a struct parameter: a tuple has no `*T` spelling. CHANGELOG [6.7.14]
+fn _tup_arg_lit(S, fi, argc): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
+    if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
+    PRSTR("cannot pass an integer to tuple parameter ");
+    var pn = _bx_pname(S, fi, argc);
+    if (pn >= 0) {
+        _dyn_pq(S, pn);
+        PRSTR(" ");
+    }
+    _dyn_ps(S, ps);
+    PRSTR(" of ");
+    _dyn_pq(S, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR(" - it takes a tuple");
+    _dyn_eend(S);
+    return 1;
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
 # stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
@@ -2528,7 +2580,7 @@ fn _mrc_note(S, fi, noff, beg): i64 {
 fn _tup_arg_mrc(S, fi, argc, st): i64 {
     if (_mrc_beg != st) { return 0; }
     if (_mrc_end != GTI(S)) { return 0; }
-    if (_mv_callee(S, _mrc_fi) == 0) { return 0; }   # declared or counted. CHANGELOG [6.7.13]
+    if (_mv_callee_any(S, _mrc_fi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
     return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
@@ -2581,6 +2633,20 @@ fn _mv_callee(S, fi): i64 {
     var rs = GFRS(S, fi);
     if (rs == MULTIRET_SID) { return 1; }
     if (rs != 0) { return 0; }
+    if (_fn_ret_arity(S, fi) != 0) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.14 — ... and, for a TUPLE parameter (R17), a fn declared ONE scalar (`: i64`, `: f64`, `: bool`,
+# `: i32` ..) that pass 1 counted returning several values (6.7.13's D23 B keeps it): `take(g2(3))` with
+# `fn g2(a): i64 { return (a, a + 1); }` pushed the first value as the tuple's address (139 / 139 / 1 / 5).
+# Refused as the undeclared callee is (D44, the user's decision, 2026-10-16). `_mv_callee` itself stays
+# keyed on an undeclared return: a named struct's `: P` crossing reads it. CHANGELOG [6.7.14]
+fn _mv_callee_any(S, fi): i64 {
+    if (_mv_callee(S, fi) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) { return 0; }        # a named struct
+    if (rs < 0 - 9) { return 0; }    # a handle (Result / Option / Tagged / cstring) or a vector
     if (_fn_ret_arity(S, fi) != 0) { return 1; }
     return 0;
 }
@@ -4251,19 +4317,50 @@ fn _pd_trait_refuse(S, tx, p, op): i64 {
 fn _pd_cl_refuse(S): i64 {
     var ti = GTI(S);
     _pd_say(S, ti, "a closure's parameters take no defaults");
-    var q = ti + 1;
+    STI(S, _cl_ptail_end(S, ti + 1, 0));
+    return 0;
+}
+# ⛔ 6.7.14 — A TYPED CLOSURE PARAMETER IS REFUSED BY THE RULE, ONCE (cursor on the `:`): a closure's parameters are
+# untyped (it is reached only through fncallN / callptr, whose arguments are words). `|m: i64|` was "expected '|',
+# got ':'", then the type parsed as the body ("undefined variable 'i64'"), and nested beside an enclosing `m` the
+# pre-scan took `m` for a capture ("needs lib/alloc.cyr"). Now named at the `:`, the type stepped over to the `,` /
+# `|` that ends it, as D18 steps over a default; the pre-scan reads `m: T` as the parser does (`_cl_lit_end`).
+# CHANGELOG [6.7.14]
+fn _cl_typed_refuse(S): i64 {
+    var ti = GTI(S);
+    _pd_say(S, ti, "a closure's parameters are untyped — drop `: T`");
+    STI(S, _cl_ptail_end(S, ti + 1, 1));
+    return 0;
+}
+# The closure parameter loop, cursor past a parameter's name: a default (D18) or a type (6.7.14) refused.
+fn _cl_param_tail(S): i64 {
+    if (PEEKT(S) == 4) { return _pd_cl_refuse(S); }
+    if (PEEKT(S) == 49) { return _cl_typed_refuse(S); }
+    return 0;
+}
+# From token `q`, a refused parameter tail's end: the `,` or `|` at depth 0, the end of file, or an unmatched closer.
+# `ang` 1 (a type) counts `<` / `>` (`>>`, `>>>`) as brackets too, so `Map<K, V>` is one type; a default's value
+# (`ang` 0) does not, where `<` compares.
+fn _cl_ptail_end(S, q, ang): i64 {
     var d = 0;
     var n = GTCNT(S);
     while (q < n) {
         var t = TOKTYP(S, q);
-        if (t == 12) { break; }
-        if (d == 0) { if (t == 31 || t == 35) { break; } }
+        if (t == 12) { return q; }
+        if (d == 0) { if (t == 31 || t == 35) { return q; } }
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         if (t == 11 || t == 29 || t == 14) { d = d - 1; }
-        if (d < 0) { break; }
+        if (ang == 1) { d = d + _cl_ang_step(t); }
+        if (d < 0) { return q; }
         q = q + 1;
     }
-    STI(S, q);
+    return q;
+}
+fn _cl_ang_step(t): i64 {
+    if (t == 19) { return 1; }
+    if (t == 20) { return 0 - 1; }
+    if (t == 39) { return 0 - 2; }
+    if (t == 152) { return 0 - 3; }
     return 0;
 }
 # Pass 2, a definition pass 1 did not record (`_PARSE_FN_DEF_IMPL`'s else-branch; `op` its `(`):
@@ -6166,7 +6263,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
-    if (_mv_callee(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one
+    if (_mv_callee_any(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one; 6.7.14: a counted `: i64`
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     _sc_beg = beg;
@@ -11317,7 +11414,10 @@ fn _asg_lvalue_refused(S, noff): i64 {
 # "undefined variable 'L'"). 1 = refused. CHANGELOG [6.7.14]
 fn _asg_lvalue_at(S, noff): i64 {
     if (_slit_stmt(S, noff) == 1) { return 1; }   # 6.7.14 (D12 (a)): a statement `P { .. };`
-    if (_asg_pair_at(S) == 1) { return _asg_lvalue_refused(S, noff); }
+    if (_asg_pair_at(S) == 1) {
+        if (_asg_lvalue_refused(S, noff) == 1) { return 1; }
+        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse.cyr)
+    }
     if (_asg_lvalue_is(S, noff) == 0) { return 0; }
     ERR_EXPECT(S, 4);
     return 1;
@@ -16043,6 +16143,10 @@ fn _pre_body_open(S): i64 {
 # the tuple capture likewise — the destructure (`_dt_arity_check`) and the capture
 # (`_tup_cap_class`) refuse a different count by name. Conservative: any other return leaves it
 # unrecorded. Cursor: not moved. CHANGELOG [6.7.11]
+# ⛔ 6.7.14 — `ret2(a, b)` IS TWO VALUES TOO (D42, the user's decision of 2026-10-16): a `ret2(..);`
+# statement and `return ret2(..);` are two-value exits, and a body may also end in `ret2(..);` or in
+# an if / elif / else whose every arm ends in an exit (`_ar_exits`). `var a, b, c = g2();` on such a
+# fn bound c to a stale register. A `ret2` inside an expression still leaves it unrecorded.
 fn _prescan_ret_arity(S, fi): i64 {
     SFLG(S, fi, GFLG(S, fi) & (0 - 196609));
     if (GFRS(S, fi) == MULTIRET_SID) { return 0; }
@@ -16057,17 +16161,23 @@ fn _prescan_ret_arity(S, fi): i64 {
             var sk = _skip_nested_body(S, j);
             if (sk >= 0) { j = sk; }
         }
-        elif (u == 97 || u == 48 || u == 124) { return 0; }   # ret2, asm, `?`
+        elif (u == 97) {                  # 6.7.14: a `ret2(..);` statement — two values
+            if (_ret2_stmt(S, j) == 0) { return 0; }
+            if (ar == 3) { return 0; }
+            ar = 2;
+        }
+        elif (u == 48 || u == 124) { return 0; }   # asm, `?`
         elif (u == 33) {
             var a = _ret_stmt_arity(S, j);
             if (a == 0) { return 0; }
             if (ar != 0 && a != ar) { return 0; }
             ar = a;
+            if (TOKTYP(S, j + 1) == 97) { j = j + 1; }   # `return ret2(..);`: its ret2 is this exit
         }
         j = j + 1;
     }
     if (ar == 0) { return 0; }
-    if (_body_ends_in_return(S, i, e) == 0) { return 0; }
+    if (_ar_exits(S, i, e) == 0) { return 0; }
     if (ar == 2) { SFLG(S, fi, GFLG(S, fi) | 65536); }
     else { SFLG(S, fi, GFLG(S, fi) | 131072); }
     return 0;
@@ -16076,6 +16186,11 @@ fn _prescan_ret_arity(S, fi): i64 {
 # PARSE_RETURN's multi-value arm counts them, read by shape (`_tup_p1`: pass 1 has not declared a
 # generic named below).
 fn _ret_stmt_arity(S, k): i64 {
+    if (TOKTYP(S, k + 1) == 97) {   # 6.7.14: `return ret2(..);` is two values (D42)
+        if (TOKTYP(S, k + 2) != 10) { return 0; }
+        if (TOKTYP(S, _call_close(S, k + 2) + 1) != 5) { return 0; }
+        return 2;
+    }
     if (TOKTYP(S, k + 1) != 10) { return 0; }
     var sv = _tup_p1;
     _tup_p1 = 1;
@@ -16091,6 +16206,66 @@ fn _fn_ret_arity(S, fi): i64 {
     if ((fl & 65536) != 0) { return 2; }
     if ((fl & 131072) != 0) { return 3; }
     return 0;
+}
+# 6.7.14 — 1 = the `ret2` at token k is a whole statement: it starts one (`;` `{` `}` before it) and
+# its `(..)` is followed by the `;` (D42). Anything else is a `ret2` inside an expression.
+fn _ret2_stmt(S, k): i64 {
+    var p = TOKTYP(S, k - 1);
+    if (p != 5 && p != 13 && p != 14) { return 0; }
+    if (TOKTYP(S, k + 1) != 10) { return 0; }
+    if (TOKTYP(S, _call_close(S, k + 1) + 1) != 5) { return 0; }
+    return 1;
+}
+# 6.7.14 — 1 = the block `{` at o .. `}` at e is left only through an exit `_prescan_ret_arity`
+# counts: it ends in a `return` or an infinite loop (`_body_ends_in_return`), in a `ret2(..);`
+# statement, or in an if / elif / else chain whose every arm ends so (`_ar_ifelse`). (D42)
+fn _ar_exits(S, o, e): i64 {
+    if (_body_ends_in_return(S, o, e) == 1) { return 1; }
+    if (TOKTYP(S, e - 1) == 5) {
+        if (TOKTYP(S, e - 2) != 11) { return 0; }
+        var q = _tok_open_back(S, e - 2);
+        if (q > o + 1) { if (TOKTYP(S, q - 1) == 97) { return _ret2_stmt(S, q - 1); } }
+        return 0;
+    }
+    if (TOKTYP(S, e - 1) != 14) { return 0; }
+    var b = _tok_brace_back(S, e - 1);
+    if (b <= o) { return 0; }
+    if (TOKTYP(S, b - 1) != 23) { return 0; }   # the last arm is an `else { .. }`
+    if (_ar_exits(S, b, e - 1) == 0) { return 0; }
+    return _ar_ifelse(S, o, b - 2);
+}
+# The arm whose block closes at token c, and every arm before it in its if / elif chain, end in an
+# exit (`_ar_exits`), and the chain's `if` starts a statement of the block opened at o.
+fn _ar_ifelse(S, o, c): i64 {
+    if (TOKTYP(S, c) != 14) { return 0; }
+    var b = _tok_brace_back(S, c);
+    if (b <= o) { return 0; }
+    if (_ar_exits(S, b, c) == 0) { return 0; }
+    if (TOKTYP(S, b - 1) != 11) { return 0; }
+    var q = _tok_open_back(S, b - 1);
+    if (q <= o + 1) { return 0; }
+    var k = q - 1;
+    var t = TOKTYP(S, k);
+    if (t == 50) { return _ar_ifelse(S, o, k - 1); }   # `elif (..) { .. }`
+    if (t != 15) { return 0; }
+    t = TOKTYP(S, k - 1);
+    if (t == 5 || t == 13 || t == 14) { return 1; }
+    return 0;
+}
+# The `{` matching the `}` at token c, or -1.
+fn _tok_brace_back(S, c): i64 {
+    var d = 0;
+    var k = c;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 14) { d = d + 1; }
+        elif (t == 13) {
+            d = d - 1;
+            if (d == 0) { return k; }
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
 }
 # 1 = the body `{` at `o` .. `}` at `e` can be left only through a `return`: its LAST statement is a
 # `return`, or (6.7.11) an infinite loop no `break` leaves (`_body_ends_in_loop`). A body that can

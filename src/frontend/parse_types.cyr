@@ -2954,6 +2954,9 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
 # value as well ("assigning non-pointer to typed pointer" about a type its line refused). The step
 # stays, so the variable's uses say nothing more. CHANGELOG [6.7.11]
 var _ptr_refd_ti = 0 - 1;
+# 6.7.14 — the token where the last `&a[i]` was refused (`_sub_post`, parse_expr.cyr): a `*T` destination whose value
+# spans it is not warned about that value too (`_tp_warn`). CHANGELOG [6.7.14]
+var _tp_refd_at = 0 - 1;
 fn _ptr_annot(S, vnoff, quiet): i64 {
     var ti0 = GTI(S);
     var n = 0;
