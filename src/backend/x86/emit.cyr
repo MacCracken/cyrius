@@ -3725,7 +3725,8 @@ fn EMOVEFILEEX_PE(S): i64 {
 }
 
 # 6.7.12 — '/' → '\' over the wide string at rdi, in place (rdi kept). An NT reparse target does
-# not read '/' as a separator (the stdlib's `_win_widen_n` made the same swap before 6.7.12).
+# not read '/' as a separator (the stdlib's former `_win_widen_n`, removed 6.7.14, made the same
+# swap before 6.7.12). CHANGELOG [6.7.14]
 fn _pe_wp_slashes(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xF8);              # mov rax, rdi
     var top = GCP(S);
