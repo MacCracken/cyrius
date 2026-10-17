@@ -8752,6 +8752,9 @@ fn _bnd_check(S, g, c0, c1): i64 {
         if (tx >= 0) {
             if (_bnd_quiet == 1) { if (g < 0) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = 0 - g; } } return 1; }
             if (_bnd_memo_seen(g, c0, c1) == 1) { return 1; }
+            # 6.7.14: a refusal the panic latch swallows prints nothing — its note alone, after an earlier
+            # error in the statement (`gs(5) + gb(3)`), named a bound the reader was never shown. CHANGELOG [6.7.14]
+            if (_panic == 1) { return 1; }
             ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32));
             syscall(SYS_WRITE, 2, "  note: the bound on type parameter '", 37);
             PRSTR(S + 0xEC00000 + (((tp >> (slot * 32)) & 0xFFFFFFFF) - 1));
