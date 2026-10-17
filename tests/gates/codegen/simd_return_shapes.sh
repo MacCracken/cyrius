@@ -201,6 +201,18 @@
 #   M-H3 `_vrcv_fptr` without its `&f` test         -> RED 4: H8 on all four legs
 #   M-H4 `_vrcv_nofn` taking FINDFN < 0 only        -> RED 4: H5 on all four legs (the declaration asks after the
 #       parse, which registered the name: only the definition stamp `GFDS` tells it from a declared fn)
+# 6.7.14 (issues/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md) — A CALL NAMING NO FN IS THE
+# UNDEFINED-FUNCTION PATH'S AT THE OTHER VECTOR DESTINATIONS TOO, inside parentheses as well (`_vrcv_nofnw`): the wrapped
+# local source `var v: f64v2 = (f64v2_splat(1.0));` printed "got `(...)`" and `return f64v2_splat(1.0);` from a vector fn
+# "got `f64v2_splat`" (the 6.6.6 rule), each ahead of the undefined-function warnings, on all four legs. Rows H (undef):
+#   H12 the filed wrapped local verbatim, H13 its `v = (..)` twin, H14 `return f64v2_splat(1.0);` from a vector fn the
+#   program calls (the tail arm diverts it to the rule), H15 `return (f64v2_splat(1.0));` — the undefined-function lines
+#   alone; H16 the filed return repro verbatim (its fn never called: x86_64 / aarch64 / PE build it with the warning
+#   alone, as the unwrapped local, cx refuses an unresolved call) — no vector-return line, the warning, on every leg.
+#   (The value-form argument's half: simd_pointer_param.sh, rows VU.)
+#   M-U1 `_vrcv_nofnw` answering 0 (measured)       -> RED 24: H5 H12-H16 on all four legs (the refusal's line came
+#       back; H5 too: the declaration asks `_vrcv_nofnw` now)
+#   M-U2 `_ret_vec_rule` without its `_vrcv_nofnw` test (measured) -> RED 12: H14-H16 on all four legs
 #
 # ⛔ 6.7.14 (D43, the user's decision, 2026-10-16; issues/2026-10-15-ret2-in-vector-returning-fn-compiles.md) — `ret2(a, b)`
 # AS A STATEMENT IN A VECTOR-RETURNING FN IS REFUSED by the 6.6.6 rule's text, as `return (a, b);` (X10) and
@@ -719,12 +731,31 @@ syscall(60, run());
     H11) printf '%s' "$HH"'fn run(): i64 { var fp = &mkv; var v: f64v2 = (callptr(fp, 41, 7)); return lanes(v); }
 syscall(60, run());
 ' ;;
+    H12) printf '%s' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 { var v: f64v2 = (f64v2_splat(1.0)); return lanes(v); }
+syscall(60, run());
+' ;;
+    H13) printf '%s' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 { var v: f64v2; v = ((f64v2_splat(1.0))); return lanes(v); }
+syscall(60, run());
+' ;;
+    H14) printf '%s' 'fn bad(): f64v2 { return f64v2_splat(1.0); }
+fn run(): i64 { var v: f64v2 = bad(); return load64(&v); }
+syscall(60, run());
+' ;;
+    H15) printf '%s' 'fn bad(a): f64v2 { if (a > 0) { return (f64v2_splat(1.0)); } var w: f64v2; return w; }
+fn run(): i64 { var v: f64v2 = bad(1); return load64(&v); }
+syscall(60, run());
+' ;;
+    H16) printf '%s' 'fn bad(): f64v2 { return f64v2_splat(1.0); }
+syscall(60, 1);
+' ;;
     esac
 }
-H_ROWS="H1 H2 H3 H4 H5 H6 H7 H8 H9 H10 H11"
+H_ROWS="H1 H2 H3 H4 H5 H6 H7 H8 H9 H10 H11 H12 H13 H14 H15"
 h_kind() {  # undef = the undefined-function path alone; hint = refused with the hint; plain = refused without it
     case "$1" in
-    H5|H9) echo undef;;
+    H5|H9|H12|H13|H14|H15) echo undef;;
     H4|H7|H11) echo hint;;
     *) echo plain;;
     esac
@@ -1005,6 +1036,7 @@ refuse_h_all() {  # $1 leg label  $2 compiler
             bad "$1 $row: $ne error lines (want 1; first: $(head -1 "$W/h.err" 2>/dev/null))"
         elif [ "$hk" = undef ]; then
             if [ "$nv" != 0 ]; then bad "$1 $row: the receive refused a call naming no fn ($(grep -m1 "$MSGV" "$W/h.err" | cut -c1-120))"
+            elif grep -qF "$MSG" "$W/h.err"; then bad "$1 $row: the return rule refused a call naming no fn"
             elif ! grep -qF "undefined function 'f64v2_splat'" "$W/h.err"; then bad "$1 $row: no undefined-function warning"
             elif ! grep -qF "refusing to emit" "$W/h.err"; then bad "$1 $row: no refusing-to-emit line"
             else good "$1 $row: the undefined-function path alone"; fi
@@ -1022,6 +1054,20 @@ refuse_h_all() {  # $1 leg label  $2 compiler
             good "$1 $row refused once ($hk)"
         fi
     done
+}
+
+# 6.7.14: row H16, the filed return repro verbatim — its fn is never called, so x86_64 / aarch64 / PE build it with the
+# undefined-function warning alone (as the unwrapped local does) and cx refuses the unresolved call: on every leg no
+# `error:<source>` line, no vector-return line, and the warning.
+undef_ret_all() {  # $1 leg label  $2 compiler
+    h_src H16 > "$W/h16.cyr"
+    rc=0
+    "$2" < "$W/h16.cyr" > "$W/h16.out" 2>"$W/h16.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    if grep -qF "$MSG" "$W/h16.err"; then bad "$1 H16: the return rule refused a call naming no fn (rc=$rc)"
+    elif grep -q '^error:<source>' "$W/h16.err"; then bad "$1 H16: an error at the source: $(grep -m1 '^error:<source>' "$W/h16.err" | cut -c1-120)"
+    elif ! grep -qF "undefined function 'f64v2_splat'" "$W/h16.err"; then bad "$1 H16: no undefined-function warning (rc=$rc)"
+    else good "$1 H16: the undefined-function warning alone (rc=$rc)"; fi
 }
 
 # 6.7.14 (D43): rows T refused once, naming what they refuse, no artifact; rows U built and run (83).
@@ -1074,6 +1120,7 @@ accept_p_all host "$CC" hostr
 accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
 refuse_h_all host "$CC"
+undef_ret_all host "$CC"
 refuse_t_all host "$CC"
 accept_u_all host "$CC" hostr
 
@@ -1093,6 +1140,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_p_all cx "$W/cycc_cx" cxr
     refuse_k_all cx "$W/cycc_cx"
     refuse_h_all cx "$W/cycc_cx"
+undef_ret_all cx "$W/cycc_cx"
     refuse_t_all cx "$W/cycc_cx"
     accept_u_all cx "$W/cycc_cx" cxr
 else
@@ -1115,6 +1163,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_p_all aarch64 "$W/cycc_a64" a64r
         refuse_k_all aarch64 "$W/cycc_a64"
         refuse_h_all aarch64 "$W/cycc_a64"
+undef_ret_all aarch64 "$W/cycc_a64"
         refuse_t_all aarch64 "$W/cycc_a64"
         accept_u_all aarch64 "$W/cycc_a64" a64r
     else
@@ -1142,6 +1191,7 @@ if command -v wine > /dev/null 2>&1; then
         accept_p_all win64 "$W/cycc_win" wr_
         refuse_k_all win64 "$W/cycc_win"
         refuse_h_all win64 "$W/cycc_win"
+undef_ret_all win64 "$W/cycc_win"
         refuse_t_all win64 "$W/cycc_win"
         accept_u_all win64 "$W/cycc_win" wr_
     else
@@ -1155,7 +1205,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -1174,7 +1224,7 @@ na_floor=$((na_floor + $(set -- $U_ROWS; echo $#) * 2))   # 6.7.14 (D43): every 
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS $T_ROWS $U_ROWS; do
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS; do
     if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.

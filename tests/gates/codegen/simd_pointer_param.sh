@@ -1118,6 +1118,77 @@ if [ "$WINE" = 1 ]; then
     done
 fi
 
+# ⛔ 6.7.14 — A CALL NAMING NO FN INTO A VALUE-FORM VECTOR PARAMETER IS THE UNDEFINED-FUNCTION PATH'S: `lanes(f64v2_splat(1.0))`
+# with lib/simd.cyr not included printed "a value-form vector argument to 'lanes' is .. - got `f64v2_splat`" and NO
+# undefined-function line at all (the argument was skipped unparsed, so the call never registered and the missing
+# include was never named), on x86_64 / aarch64 / cx / PE. `_sar_none` (and Win64's `_sarg_pe_vform`) leave such an
+# argument, inside any parentheses (`_vrcv_nofnw`), to the value parse: the undefined-function warning and the leg's
+# refusing line, no D30 line, no binary (under --allow-undef it builds and the call traps, as through 6.7.10).
+# Filed: docs/development/issues/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md (the return
+# and the wrapped local: simd_return_shapes.sh, rows H12-H16)
+#   VU1 the filed repro verbatim; VU2 wrapped `lanes((f64v2_splat(1.0)))`; VU3 an `#inline` fn's `li(f64v2_splat(1.0))`
+#      (the inline replay); VU4 between integers `l3(1, f64v2_splat(1.0), 2)`; VU5 an f64v4 parameter's
+#      `l4(f64v4_splat(1.0))` — each on x86_64 / aarch64 / cx / PE: no D30 line, the undefined-function warning, one
+#      `error` line (the refusing-to-emit line; cx's unresolved-call one), no binary
+#   VUK `lanes(5)` and `lanes((5))` stay refused by the D30 words, once each, on the same legs (the control)
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V3; the change alone in a scratch copy of the tree, this gate run
+#   there with CYCC=<its 2-stage mutant>; measured):
+#   M-VU1 `_vrcv_nofnw` answering 0                          -> RED 20: VU1-VU5 on all four legs (the D30 line, no
+#       undefined-function line); VUK green
+#   M-VU2 `_sarg_pe_vform` without its `_vrcv_nofnw` test     -> RED 5: VU1-VU5 pe
+VUH='fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn l3(a, x: f64v2, b): i64 { return load64(&x) * 10 + load64(&x + 8) + a + b; }
+fn l4(x: f64v4): i64 { return load64(&x); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x); }
+'
+printf '%s\n' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }' \
+  'fn run(): i64 { return lanes(f64v2_splat(1.0)); }' 'syscall(60, run());' > "$D/vu1.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'lanes((f64v2_splat(1.0)))' > "$D/vu2.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'li(f64v2_splat(1.0))' > "$D/vu3.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'l3(1, f64v2_splat(1.0), 2)' > "$D/vu4.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'l4(f64v4_splat(1.0))' > "$D/vu5.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'lanes(5) + lanes((5))' > "$D/vuk.cyr"
+VUM="a value-form vector argument to"
+# undef_arg <name> <what> <src> <leg> <fn>: refused on <leg> by the undefined-function path alone
+undef_arg() {
+    rc=0
+    case "$4" in
+        pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        a64) timeout 60 "$A64" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        cx)  timeout 60 "$CXCC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        *)   timeout 60 "$CC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+    esac
+    n=$(grep -c '^error' "$D/$1.err" || true)
+    if grep -qF "$VUM" "$D/$1.err"; then bad "$2: the D30 refusal: $(grep -m1 "$VUM" "$D/$1.err" | cut -c1-110)"
+    elif ! grep -qF "undefined function '$5'" "$D/$1.err"; then bad "$2: no undefined-function line for '$5' (rc $rc)"
+    elif [ "$rc" -eq 0 ]; then bad "$2: compiled (rc 0)"
+    elif [ "$n" -ne 1 ]; then bad "$2: $n error lines, want 1: $(grep '^error' "$D/$1.err" | head -2 | tr '\n' '|')"
+    elif [ -s "$D/$1.bin" ]; then bad "$2: refused, but a binary was written"
+    else ok "$2: the undefined-function path alone"; fi
+}
+echo "VU. a call naming no fn into a value-form parameter: the undefined-function path names it (6.7.14)"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    undef_arg "VU1$lg" "VU1 $lg: lanes(f64v2_splat(1.0)), the filed repro" "$D/vu1.cyr" "$lg" f64v2_splat
+    undef_arg "VU2$lg" "VU2 $lg: lanes((f64v2_splat(1.0)))" "$D/vu2.cyr" "$lg" f64v2_splat
+    undef_arg "VU3$lg" "VU3 $lg: li(f64v2_splat(1.0)), an #inline fn" "$D/vu3.cyr" "$lg" f64v2_splat
+    undef_arg "VU4$lg" "VU4 $lg: l3(1, f64v2_splat(1.0), 2)" "$D/vu4.cyr" "$lg" f64v2_splat
+    undef_arg "VU5$lg" "VU5 $lg: l4(f64v4_splat(1.0)), an f64v4 parameter" "$D/vu5.cyr" "$lg" f64v4_splat
+    rc=0
+    case "$lg" in
+        pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        a64) timeout 60 "$A64" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        cx)  timeout 60 "$CXCC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        *)   timeout 60 "$CC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+    esac
+    n=$(grep -c '^error' "$D/vuk$lg.err" || true)
+    nv=$(grep '^error' "$D/vuk$lg.err" | grep -cF "$VUM" || true)
+    if [ "$rc" -eq 0 ] || [ "$n" -ne 2 ] || [ "$nv" -ne 2 ] || [ -s "$D/vuk$lg.bin" ]; then
+        bad "VUK $lg: lanes(5) + lanes((5)): rc $rc, $n error lines ($nv D30), want 2 D30 lines and no binary"
+    else ok "VUK $lg: lanes(5) and lanes((5)) refused once each (the D30 words)"; fi
+done
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -1158,4 +1229,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU)"

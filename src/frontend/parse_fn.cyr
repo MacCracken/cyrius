@@ -69,11 +69,7 @@ var _sar_lcl = 0;   # 1 = `_sar_take` took a local: its own slot, nothing copied
 fn _inl_simd_arg(S, dst_slot, w, want_t, fi): i64 {
     var ti = GTI(S);
     var alli = _sar_take(S, fi, _vf_cls(S, want_t), 0 - want_t, dst_slot);
-    if (alli == 0 - 2) {
-        _sar_err(S, ti, fi);
-        STI(S, _arg_next(S, ti));
-        return 0;
-    }
+    if (alli == 0 - 2) { return _sar_none(S, ti, fi); }
     if (_sar_lcl == 0) { return 0; }   # received into the slot, or refused
     # v6.5.66 — bracket the copy so it can be NOP'd out later if nothing reads the slot.
     #
@@ -1493,9 +1489,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     # and the MULTI-RETURN arm (~line 909, `_refuse_vector_tuple_return`). Before adding a
     # fourth check here, enumerate the early returns above it again — they are the paths this
     # one cannot see. See `_refuse_simd_return`. CHANGELOG [6.6.6]
-    if (_cur_fn_returns_vector(S) == 1) {
-        if (_simd_ret_call_ok(S) == 0) { _refuse_simd_return(S); }
-    }
+    _ret_vec_rule(S);
     if (_ret_vicall_pe(S) == 1) { return 0; }   # 6.7.13 (D29): `return callptr(&f, ..);` on Win64
     # v6.4.31: `return <simd_call>(args);` on Win64 PE — a SIMD-returning fn
     # whose return expression is itself a SIMD-returning call (e.g.
@@ -2120,8 +2114,9 @@ fn _cl_cap_vec(S, noff): i64 {
 # (`_spv_one`: a local or a captured vector, checked by the class rule in SysV's words — `_simd_arg_typecheck`, which
 # refuses a non-vector local too — and its address pushed; a `*V` dereference, its pointer; a vector call,
 # `_sarg_vec_call`'s, whose refusal skips the argument as `_sar_vcall`'s does); anything else is refused by name
-# (`_sar_err`), skipped to its `,` / `)` and 0 pushed — one line, no binary. 1 = pushed, -1 = no Win64 value-form
-# parameter. It folds 6.7.13's `_sarg_pe_v32` (the 32-byte check) and `_sarg_pe_vword` (D30's word refusal).
+# (`_sar_err`), skipped to its `,` / `)` and 0 pushed — one line, no binary; a call naming no fn (6.7.14) is left to
+# the value push (0), as `_sar_none` leaves it. 1 = pushed, -1 = no Win64 value-form parameter. It folds 6.7.13's
+# `_sarg_pe_v32` (the 32-byte check) and `_sarg_pe_vword` (D30's word refusal).
 # 6.7.14 (D33 A, the user's decision, 2026-10-16): an address-of `&w` is refused there too, with the other targets'
 # words — Win64 alone passed it (the by-address ABI copied the vector it pointed at: 42), x86_64 / aarch64 / cx refuse
 # it, and `var v: f64v2 = &w;` is refused on every target; `&` converts into a POINTER parameter (6.7.12's D27 B), not
@@ -2142,6 +2137,7 @@ fn _sarg_pe_vform(S, fi, argc, tail): i64 {
         }
         STI(S, ti);
     }
+    if (_vrcv_nofnw(S, ti, _arg_next(S, ti)) == 1) { return 0; }   # 6.7.14: the value push, as `_sar_none`
     _sar_err(S, ti, fi);
     return _spv_skip(S, ti);
 }
@@ -5792,9 +5788,19 @@ fn _sar_src(S, fi, cls, want): i64 {
     var ti = GTI(S);
     var r = _sar_take(S, fi, cls, want, 0 - 1);
     if (r != 0 - 2) { return r; }
-    _sar_err(S, ti, fi);
-    STI(S, _arg_next(S, ti));
+    _sar_none(S, ti, fi);
     return 0 - 1;
+}
+# The value-form vector argument at token `ti` (the cursor) that no source arm took: refused by name (`_sar_err`) — or
+# (6.7.14) a call naming no fn, inside any parentheses (`_vrcv_nofnw`), left to the value parse, so the call registers
+# and the undefined-function path names it (no binary: its error; under --allow-undef the call traps), where "got
+# `f64v2_splat`" was the only line — and skipped to its `,` / `)`. Shared with the inline replay. 0.
+fn _sar_none(S, ti, fi): i64 {
+    var e = _arg_next(S, ti);
+    if (_vrcv_nofnw(S, ti, e) == 1) { PCMPE(S); }
+    else { _sar_err(S, ti, fi); }
+    STI(S, e);
+    return 0;
 }
 # ⛔ 6.7.14 — PARENTHESES WRAPPING A WHOLE VALUE-FORM VECTOR ARGUMENT ARE TRANSPARENT, as for every other aggregate
 # destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
@@ -7168,6 +7174,17 @@ fn _cur_fn_returns_vector(S): i64 {
     if (_is_simd128(S, _cur_fn_ret_scalar) == 1) { return 1; }
     if (_is_simd256(S, _cur_fn_ret_scalar) == 1) { return 1; }
     return 0;
+}
+# The 6.6.6 rule at the return value of a vector-returning fn (cursor on it), PARSE_RETURN's site: refused unless a call
+# declared to return this vector — and (6.7.14) unless it starts with a call naming no fn, inside any parentheses
+# (`_vrcv_nofnw`): the undefined-function path names that one, as the vector local's receive leaves it since 6.7.13
+# ("got `f64v2_splat`" came first). The tail arm diverts such a call here (`_tc_frame_divert`). CHANGELOG [6.7.14]
+fn _ret_vec_rule(S): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    if (_simd_ret_call_ok(S) == 1) { return 0; }
+    var ti = GTI(S);
+    if (_vrcv_nofnw(S, ti, _gz_end(S, ti)) == 1) { return 0; }
+    return _refuse_simd_return(S);
 }
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }

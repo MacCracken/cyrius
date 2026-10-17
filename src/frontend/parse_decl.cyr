@@ -7778,13 +7778,13 @@ fn _vrcv_ity(S, ti): i64 {
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
 # scalar path, so not a source the receives take: refused by name, once — not after the initialiser
 # refused itself (`_scv_err`; `_panic` in `_vrcv_err`), nor for a by-name call declared to return
-# another vector (refused before the parse), nor (6.7.13) for a call naming no fn (`_vrcv_nofn`).
+# another vector (refused before the parse), nor (6.7.13) for a call naming no fn (`_vrcv_nofn`; 6.7.14: wrapped too).
 fn _vrcv_decl_err(S, pscale, start): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_vrcv_vcall(S, start) == 1) { return 0; }
-    if (_vrcv_nofn(S, start) == 1) { return 0; }   # 6.7.13: the undefined-function path names it
+    if (_vrcv_nofnw(S, start, GTI(S)) == 1) { return 0; }   # 6.7.13: the undefined-function path's (6.7.14: wrapped)
     return _vrcv_err(S, start, "initialised", _vrcv_fptr(S, start, GTI(S)));
 }
 # `v = <src>` with `v` a local (cursor on the source, `term` ending it): into a value-form vector, an
@@ -7810,8 +7810,8 @@ fn _vrcv_asg(S, noff, term): i64 {
 }
 # The assigned source that is no vector: a by-name call declared to return one, and (6.7.13) a call
 # naming no fn (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
-# — once: not when its own parse reported (a vector global's read, `_vecg_refuse`) — and the statement
-# consumed (1).
+# — once: not when its own parse reported (a vector global's read, `_vecg_refuse`), nor (6.7.14) for a wrapped call
+# naming no fn, which the parse registered — and the statement consumed (1).
 fn _vrcv_other(S, term): i64 {
     var ti = GTI(S);
     if (_vrcv_vcall(S, ti) == 1) { return 0 - 1; }
@@ -7819,6 +7819,7 @@ fn _vrcv_other(S, term): i64 {
     var he = _had_error;
     PCMPE(S);
     if (he == 0) { if (_had_error == 1) { he = 2; } }
+    if (_vrcv_nofnw(S, ti, GTI(S)) == 1) { he = 2; }   # 6.7.14: wrapped, the parse registered it
     if (he != 2) { _vrcv_err(S, ti, "assigned", _vrcv_fptr(S, ti, GTI(S))); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
@@ -7865,6 +7866,15 @@ fn _vrcv_nofn(S, ti): i64 {
     if (GFDS(S, fi) != 0) { return 0; }
     if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
     return 1;
+}
+# ⛔ 6.7.14 — A CALL NAMING NO FN IS THE UNDEFINED-FUNCTION PATH'S AT EVERY VECTOR DESTINATION, inside parentheses too.
+# 6.7.13 left `var v: f64v2 = f64v2_splat(1.0);` (no include) to that path, but the wrapped `= (f64v2_splat(1.0))`,
+# `return f64v2_splat(1.0);` from a vector fn and the value-form argument `lanes(f64v2_splat(1.0))` were reported as a
+# refused source of their own ("got `(...)`" / "got `f64v2_splat`") ahead of the undefined-function lines — the argument
+# instead of them, so the missing include was never named. 1 = the source [a, b), inside any parentheses wrapping all
+# of it (`_ie_unparen`), starts with such a call (`_vrcv_nofn`). CHANGELOG [6.7.14]
+fn _vrcv_nofnw(S, a, b): i64 {
+    return _vrcv_nofn(S, _ie_unparen(S, a, b));
 }
 # 1 = the source [ti, e), inside any parentheses, is one whole call through fncallN / callptr (`_icall_open_at`)
 # whose callee is not written `&f` (`_icall_fti`: `&f` inside any parentheses is the known callee) — a fn pointer

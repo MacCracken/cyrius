@@ -1827,11 +1827,13 @@ out-pointer` — give the target an out-pointer and have it store the lanes — 
 mkv(0, 0); var ig = callptr(fp, &v, 41, 7);` — which carries every lane on every target. A call to a
 fn that does not exist (`var v: f64v2 = f64v2_splat(1.0);` without `include "lib/simd.cyr"`) is no
 refused source: the undefined-function diagnostic names it (`undefined function 'f64v2_splat'`, then
-`refusing to emit binary ..`), as at any other destination. ⚠ Through 6.7.12 a method call was
-refused (*… got `s`*), and the unannotated `var v = callptr(&mkv, ..)` was one word: `lanes(v)` was
-refused on x86_64 / aarch64 / cx and faulted on Windows; 6.7.11 and 6.7.12 printed the out-pointer
-advice for every source and reported a call to a missing fn as a refused source (*… got
-`f64v2_splat`*) ahead of the undefined-function lines.
+`refusing to emit binary ..`), as at any other destination — inside parentheses too, and (6.7.14) as a
+vector fn's `return` value and a value-form vector argument (`lanes(f64v2_splat(1.0))`). ⚠ Through
+6.7.12 a method call was refused (*… got `s`*), and the unannotated `var v = callptr(&mkv, ..)` was one
+word: `lanes(v)` was refused on x86_64 / aarch64 / cx and faulted on Windows; 6.7.11 and 6.7.12 printed
+the out-pointer advice for every source and reported a call to a missing fn as a refused source (*…
+got `f64v2_splat`*) ahead of the undefined-function lines — and 6.7.13 still did for the wrapped source
+(*… got `(...)`*) and the `return`, and refused the argument with no undefined-function line at all.
 
 **A dereference of a `*V` is the vector (6.7.13; the user's decision D34, 2026-10-15: A).** `var v: f64v2 =
 *p;` and `v = *p;` with `p: *f64v2` copy the 16 / 32 bytes through the pointer, as `var q: T = *p;` copies a
