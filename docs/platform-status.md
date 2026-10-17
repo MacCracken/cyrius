@@ -95,7 +95,9 @@ kernel for anything the cxvm process may do.** What it does and does not guarant
   trapped), behind a non-zero pointer a null check passed. `sys_pipe` (its fd buffer left as it
   was), `sys_fstat` and `sys_unlink` answer -ENOSYS (-38): their buffers and paths are guest
   offsets, which the host answered with -EFAULT (and `sys_unlink` left the file). `thread_create`
-  answers 0 (6.6.11). Every other pointer-taking wrapper still reaches the host untranslated.
+  answers 0 (6.6.11). The two raw mmap paths D13 missed take the same -1 (6.7.14): `mmap_stack`
+  (lib/thread.cyr) and the freelist's mapping, so `fl_alloc` answers 0 instead of faulting the VM on
+  a host address. Every other pointer-taking wrapper still reaches the host untranslated.
 - **Control flow:** `callind` traps a non-positive target (v6.5.13), a negative pc traps (6.6.12),
   and a program counter at or past the end of the image halts the run.
 

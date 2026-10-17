@@ -44,6 +44,11 @@
 #       refusal exactly: -38 three times, the pipe buffer untouched, cyr_mmap -1, mmap_anon 0 (W3).
 #       ⚠ The repro's open(2) is translated and creates `_cx_probe.bin`; unlink refuses on cx (D13), so
 #       the file stays — cxvm runs it in $T.
+#   M1-M2 (6.7.14, issues/2026-10-15-cx-raw-mmap-paths-return-host-address.md) the two raw mmap paths
+#       D13 missed: natively mmap_stack, fl_alloc(64), fl_alloc(8192) and _fl_mmap map writable memory
+#       (M1, exit 33); on cx mmap_stack and _fl_mmap answer exactly -1 and both fl_allocs 0, with no
+#       cxvm fault line (M2, exit 30). Before: cx mmap_stack > 0 (a host address) and fl_alloc(64)
+#       faulted `cxvm: guest address out of range: <host address>`.
 # Anti-vacuous: the native leg of every row is its control, each .tcyr count is derived from its
 # source and held to a floor, and the row count is checked.
 # MUTATION LEDGER (6.7.12, D13; the real tree green 40/40) — each against the tree's lib/ copy:
@@ -52,6 +57,10 @@
 #       legs (that lib/ predates this lane's EPOLL_EVENT_SIZE, a build error — not this row's signal)
 #   MD2 sys_pipe's cx arm alone removed -> RED 3: T7 cx and T8 cx (-14), W3 cx (bit 1)
 #   MD3 cyr_mmap's cx arm alone removed -> RED 2: T4 cx (cyr_mmap answered 0, not -1), W3 cx (bit 16)
+# MUTATION LEDGER (6.7.14, the raw mmap arms; the real tree green 42/42):
+#   MM1 lib/thread.cyr mmap_stack's cx arm removed -> RED 1: M2 (the host address it answered faults
+#       the row's store: `cxvm: guest address out of range: 1398…`)
+#   MM2 lib/freelist.cyr _fl_mmap's cx arm removed -> RED 1: M2 (fl_alloc(64) faults the same way)
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and — unless CYCC_CX is set — the cx
 # compiler from THIS tree's src/main_cx.cyr, and cxvm from programs/cxvm.cyr (CXVM overrides it).
@@ -276,8 +285,37 @@ build_run cx "$T/w3.cyr" "$T/w3.c.out"
 if [ "$RC" = 0 ]; then ok "W3 (cx): sys_pipe / sys_fstat / sys_unlink answer -38, the fd buffer untouched, cyr_mmap -1, mmap_anon 0"
 else bad "W3 (cx): exit $RC (a bitmask: 1 pipe, 2 its buffer, 4 fstat, 8 unlink, 16 cyr_mmap, 32 mmap_anon)"; fi
 
-WANT=40
+# ── M1-M2 (6.7.14, issues/2026-10-15-cx-raw-mmap-paths-return-host-address.md): the two raw
+# `syscall(SYS_MMAP)` paths D13 missed — lib/thread.cyr mmap_stack and lib/freelist.cyr _fl_mmap —
+# take the same cx arm (-1). A bitmask: 1 mmap_stack mapped (and its first word writable), 2 it
+# answered exactly -1, 4 fl_alloc(64) == 0, 8 fl_alloc(8192) (the large path) == 0, 16 _fl_mmap
+# answered exactly -1, 32 _fl_mmap mapped, 64 a store did not read back. Exactly -1 pins the lib arms
+# themselves: cxvm answers mmap(9) -38 since 6.7.14 (D55), which would also fail the callers.
+cat > "$T/m1.cyr" <<'EOF'
+include "lib/thread.cyr"
+include "lib/freelist.cyr"
+var s = mmap_stack(4096);
+var a = fl_alloc(64);
+var b = fl_alloc(8192);
+var f = _fl_mmap(4096);
+var r = 0;
+if (s > 0) { r = r | 1; store64(s, 7); if (load64(s) != 7) { r = r | 64; } }
+if (s == 0 - 1) { r = r | 2; }
+if (a == 0) { r = r | 4; } else { store64(a, 9); if (load64(a) != 9) { r = r | 64; } }
+if (b == 0) { r = r | 8; } else { store64(b + 8184, 11); if (load64(b + 8184) != 11) { r = r | 64; } }
+if (f == 0 - 1) { r = r | 16; }
+if (f > 0) { r = r | 32; }
+syscall(60, r);
+EOF
+build_run native "$T/m1.cyr" "$T/m1.n.out"
+if [ "$RC" = 33 ]; then ok "M1 (native): mmap_stack, fl_alloc(64), fl_alloc(8192) and _fl_mmap map writable memory (33)"
+else bad "M1 (native): exit $RC, want 33 (1 stack, 32 _fl_mmap; 4 / 8 an fl_alloc refused, 64 a store lost)"; fi
+build_run cx "$T/m1.cyr" "$T/m1.c.out"
+if [ "$RC" = 30 ] && ! grep -q '^cxvm:' "$T/m1.c.out"; then ok "M2 (cx): mmap_stack -1, fl_alloc(64) and fl_alloc(8192) 0, _fl_mmap -1, no cxvm fault (30)"
+else bad "M2 (cx): exit $RC, want 30 (1: mmap_stack handed back a host address; a fault line means fl_alloc stored through one) $(grep -m1 '^cxvm:' "$T/m1.c.out")"; fi
+
+WANT=42
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, and the seven that met the cx guest contract pass there with honest refusals (cyr_mmap -1, sys_pipe / sys_fstat / sys_unlink -38) and named SKIPs; the wrapper repro traps at guest 0, never a host address"
+echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, and the seven that met the cx guest contract pass there with honest refusals (cyr_mmap -1, sys_pipe / sys_fstat / sys_unlink -38) and named SKIPs; the wrapper repro traps at guest 0, never a host address; mmap_stack and _fl_mmap answer -1 on cx (fl_alloc 0), natively they map"
 exit 0
