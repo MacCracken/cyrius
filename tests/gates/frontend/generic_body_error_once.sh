@@ -25,6 +25,12 @@
 #   V   instance-dependent messages at one token: `return v.zz;` called at I, J, I — "unknown field 'zz' on struct
 #       'I'" and "... 'J'", one each
 #   C   the latch is per token: `i += 1 2; i += 1 3;` in a plain fn reports both
+#   S1-S4 a generic STRUCT is parsed again per instance: an unknown field type (`b: nosuch`), an unknown Vec element
+#       (`v: Vec<nosuch>`, the field's own refusal) and `b: i32x` (the prefix note too) in `W<T>` instantiated three
+#       times give one error and each note once (the review of 3bf60734: 1 error + 4 / 4 / 8 orphan notes); S4 a
+#       plain struct's note, the control
+#   B   a bound refusal at one token in two instances of the enclosing generic (`gb<T>(x)` in `o<i32>`, `o<i16>`):
+#       one error, one note (the second instance's note printed orphaned)
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run with
 # CYCC= it):
@@ -33,6 +39,10 @@
 #   ME2 `_gv_note_blockscoped` without its `_err_quiet` test -> RED N (the note three times, the error once)
 #   ME3 `_ie_no_else` without its `_err_quiet` test -> RED E3 (the note twice, the error once)
 #   ME4 the identity without the message (`_err_once(S, 0)` in ERR_IDENT) -> RED V (J's line swallowed)
+#   ME5 (2026-10-17) `_refuse_field_type`'s notes without their `_err_quiet` test -> RED S1 S2 (the note 4 times), S3
+#       (each note 4 times); S4 green. `_vec_elem_refuse`'s notes carry the same test, but no row reaches them as a
+#       repeat: `_tn_once` and the panic test return before its error (the test is the guard, not a reachable path)
+#   ME6 (2026-10-17) `_bnd_check`'s note without its `_err_quiet` test -> RED B (the note twice)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -134,6 +144,40 @@ echo "V. different messages at one token both print"
 body V 'fn g<T>(v: T): i64 { return v.zz; }' 'var x = I { 1, 2 }; var y = J { 3 }; return g(x) + g(y) + g(x);'
 erows V "$D/V.cyr" 2 "v.zz at I, J, I" "unknown field 'zz' on struct 'I'" "unknown field 'zz' on struct 'J'"
 
+# nrow <id> <want> <fragment> <what>: exactly <want> lines of $D/<id>.err hold <fragment>
+nrow() {
+    nn=$(grep -cF "$3" "$D/$1.err" || true)
+    if [ "$nn" -eq "$2" ]; then ok "$1: $4 ($nn)"; else bad "$1: $4: $nn line(s), want $2"; fi
+}
+echo "S. a generic STRUCT's field notes follow their error: once (the struct is parsed again per instance)"
+SFN='note: a field type is a struct or union declared above it'
+SPN="note: 'i32x' is not 'i32'"
+printf 'struct Pt { x; y; }\nstruct W<T> { a: T; b: nosuch; }\nfn main(): i64 { var a: W<i32>; var b: W<Pt>; var c: W<i16>; return 0; }\nsyscall(60, main());\n' > "$D/S1.cyr"
+erows S1 "$D/S1.cyr" 1 "an unknown field type in W<T>, three instances" "unknown type 'nosuch' for struct field 'b'"
+nrow S1 1 "$SFN" "its note once (an orphan per repeat before the fix: 1 error, 4 notes)"
+printf 'include "lib/vec.cyr"\nstruct Pt { x; y; }\nstruct W<T> { a: T; v: Vec<nosuch>; }\nfn main(): i64 { var a: W<i32>; var b: W<Pt>; var c: W<i16>; return 0; }\nsyscall(60, main());\n' > "$D/S2.cyr"
+erows S2 "$D/S2.cyr" 1 "an unknown Vec element in W<T>, three instances" "unknown type 'nosuch' for struct field 'v'"
+nrow S2 1 "$SFN" "its note once"
+printf 'struct Pt { x; y; }\nstruct W<T> { a: T; b: i32x; }\nfn main(): i64 { var a: W<i32>; var b: W<Pt>; var c: W<i16>; return 0; }\nsyscall(60, main());\n' > "$D/S3.cyr"
+erows S3 "$D/S3.cyr" 1 "i32x in W<T>, three instances" "unknown type 'i32x' for struct field 'b'"
+nrow S3 1 "$SPN" "its prefix note once"
+nrow S3 1 "$SFN" "its field-type note once"
+printf 'struct W { a; b: nosuch; }\nfn main(): i64 { var a: W; return 0; }\nsyscall(60, main());\n' > "$D/S4.cyr"
+erows S4 "$D/S4.cyr" 1 "control: an unknown field type in a plain struct" "unknown type 'nosuch' for struct field 'b'"
+nrow S4 1 "$SFN" "control: its note"
+
+echo "B. a bound refusal's note follows its error: once (the same refusal in another instance is a repeat)"
+cat > "$D/B.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+fn gb<T: Show>(x: T): i64 { return 1; }
+fn o<T>(x: T): i64 { return gb<T>(x); }
+fn f(): i64 { var a: i32 = 3; var b: i16 = 4; return o<i32>(a) + o<i16>(b); }
+syscall(60, f());
+XEOF
+erows B "$D/B.cyr" 1 "gb<T>(x) in o<i32> and o<i16>" "generic 'gb': its type argument does not implement trait 'Show'"
+nrow B 1 "note: the bound on type parameter 'T' needs" "its note once (the i16 instance's printed orphaned before the fix)"
+
 echo "C. the latch is per token"
 cat > "$D/c.cyr" <<'XEOF'
 fn f(): i64 { var i = 0; i += 1 2; i += 1 3; return i; }
@@ -142,4 +186,4 @@ XEOF
 erows C "$D/c.cyr" 2 "two junk steps in a plain fn" "got number 2" "got number 3"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V) and the per-token control (C)"
+echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C)"

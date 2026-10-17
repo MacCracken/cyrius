@@ -4152,8 +4152,12 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
         ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", snoff);
     } else {
         ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
-        _tn_prefix_note(S, tnoff);   # 6.6.16
-        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
+        # 6.7.14: a generic struct's fields are parsed again per instance, and the error latch prints a
+        # repeat as nothing — its notes stay quiet with it (`_err_quiet`), never orphaned. CHANGELOG [6.7.14]
+        if (_err_quiet == 0) {
+            _tn_prefix_note(S, tnoff);   # 6.6.16
+            PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
+        }
     }
     _panic = 0;
     return 0;
@@ -4382,10 +4386,12 @@ fn _vec_elem_refuse(S, ti, vnoff, c): i64 {
         ERR_IDENT(S, "type ", noff, " is declared after its use; declare it above the first use", 0 - 1);
     } else {
         ERR_IDENT(S, "unknown type ", noff, tail, vnoff);
-        _tn_prefix_note(S, noff);
-        PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
-        PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
-        PRSTR(" (missing include?)\n");
+        if (_err_quiet == 0) {   # 6.7.14: a repeat the error latch printed as nothing keeps its notes quiet
+            _tn_prefix_note(S, noff);
+            PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
+            PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
+            PRSTR(" (missing include?)\n");
+        }
     }
     STI(S, sv);
     _panic = 0;
