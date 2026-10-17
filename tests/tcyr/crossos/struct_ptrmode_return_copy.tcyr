@@ -225,8 +225,8 @@ fn t24j() { s24(); var c: P3 = r24j(); GS24.x = 0; GS24.z = 0; return c.x * 100 
 fn t24k() { s24(); var c: P3 = r24k(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
 fn t24l() { s24(); var c: P3 = r24l(); GS24.x = 0; GS24.z = 0; return c.x * 100 + c.y * 10 + c.z; }
 # a generic call declared `: *T` (6.7.11: a struct source) at 8 / 16 B, and the 3 B padding through a global.
-# (`gpg`'s `var` keeps it off the inline replay, whose `return` is judged by the CALLER's struct class —
-# staged from this lane: 2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md.)
+# (`gpg`'s `var` keeps it off the inline replay; a replayed `return` is the callee's since 6.7.14 — those rows
+# are generic_ptr_struct_source.tcyr's.)
 var GPA = 0;
 fn gpg<T>(): *T { var r = GPA; return r; }
 fn r8gen(): B8 { return gpg<B8>(); }

@@ -20,6 +20,10 @@
 #      `mkfh().p`, a `: *P` call, a method call `h.gp()`, a generic's `: P`) — F10-F18, the 6.7.11
 #      review
 #   K  scalars into a generic method that has an i64 instance are unchanged
+#   X  (6.7.14, the user's D7 (a), 2026-10-16) explicit type arguments, as on the free spelling: `p.id<f64>(h)`,
+#      `var xa = p.id<f64>(h);` (an f64), a chain `w.v.id<f64>(h)`, struct type arguments of 8 / 16 / 24 B (a
+#      receive, an annotation, a return), a bounded member, two type parameters, a `*P` receiver, a statement,
+#      `p.pick<T>(t)` in a generic, `p.k<i64>(9)` — it was refused "unknown field 'id'" + "undefined variable"
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -95,6 +99,43 @@ fn o6<T>(p: P, t: T): i64 {
     return p.pick(u);
 }
 fn add1(x: i64): i64 { return x + 1; }
+# 6.7.14 (D7 (a)): explicit type arguments on the method spelling.
+struct WP { v: P; k; }
+fn ox<T>(p: P, t: T): i64 { return p.pick<T>(t); }
+fn rx(p: P, t: T2): T2 { return p.id<T2>(t); }
+fn rq(p: P, t: Q): Q { return p.id<Q>(t); }
+fn run_x(): i64 {
+    var p = P { 5 };
+    var q = Q { 1, 7, 3 };
+    var r = R { 4 };
+    var t = T2 { 6, 8 };
+    var pp: *P = &p;
+    var wp: WP;
+    wp.v = p;
+    wp.k = 0;
+    var h: f64 = 1.5;
+    var xa = p.id<f64>(h);
+    assert_eq(xa * 2.0 == 3.0, 1, "X1: var xa = p.id<f64>(h); is an f64 (was refused: unknown field 'id')");
+    assert_eq(p.id<f64>(h) * 2.0 == 3.0, 1, "X2: p.id<f64>(h) in an expression is an f64");
+    var xb = wp.v.id<f64>(h);
+    assert_eq(xb * 2.0 == 3.0, 1, "X3: a chain wp.v.id<f64>(h)");
+    assert_eq(p.pick<Q>(q), 7, "X4: p.pick<Q>(q), a 24 B struct type argument");
+    var xc = p.id<Q>(q);
+    assert_eq(xc.c, 3, "X5: var xc = p.id<Q>(q); (24 B)");
+    var xd: T2 = p.id<T2>(t);
+    assert_eq(xd.y, 8, "X6: var xd: T2 = p.id<T2>(t); (16 B)");
+    var xe = p.id<R>(r);
+    assert_eq(xe.x, 4, "X7: var xe = p.id<R>(r); (8 B)");
+    assert_eq(rx(p, t).y + rq(p, q).c, 11, "X8: return p.id<T2>(t); / return p.id<Q>(t); (16 / 24 B returns)");
+    assert_eq(p.bm<Q>(q), 11, "X9: a bounded member, p.bm<Q>(q)");
+    assert_eq(p.bm<i64>(2), 107, "X10: the same at i64, p.bm<i64>(2)");
+    assert_eq(p.two<R, Q>(r, q), 16, "X11: two type parameters, p.two<R, Q>(r, q)");
+    assert_eq(pp.pick<Q>(q), 7, "X12: a *P receiver");
+    p.id<f64>(h);
+    assert_eq(ox(p, q), 7, "X13: p.pick<T>(t) inside a generic (and a statement p.id<f64>(h); before it)");
+    assert_eq(p.k<i64>(9), 14, "X14: p.k<i64>(9), the i64 base");
+    return 0;
+}
 
 fn run(): i64 {
     var p = P { 5 };
@@ -175,5 +216,6 @@ fn run(): i64 {
     return 0;
 }
 var r0 = run();
+var r1 = run_x();
 var rr = assert_summary();
 syscall(60, rr);

@@ -140,6 +140,24 @@
 #   N29 `_rcv_ptr_ann` without `_ptr_refd_ti`            -> RED 44: PT0 PT00 PT1-PT9 x4 (a warning beside the refusal)
 #   N30 `_rcv_ptr_ann` without the wrap peel             -> RED 8: PT5 PT6 x4
 #   N31 `_scv_rec_ann` without `_ptr_refd_ti`            -> RED 20: PT14-PT18 x4 (a warning beside the refusal)
+#
+# 6.7.14 — A GENERIC `: *T` CALL INTO AN ANNOTATED LOCAL IS A HANDLE. `var h: S = gpg<S>();` (`fn gpg<T>(): *T`) dropped its
+# `S`: PARSE_VAR's B-explicit reset (`pscale = 0`, re-derive the receive from the callee) ran for every generic callee
+# the struct check (`_gen_decl_check`) did not keep, and that check answers 0 for a return that is no struct by value
+# (`: *T` records GFRS -8). `h` was an untyped word, `h.v = 6` "no struct type in scope for 'h'" (the filed repro:
+# 68 / refused / 8). `_gen_decl_reset` (parse_decl.cyr) resets only for a generic returning a struct BY VALUE, so the
+# local keeps `S` and binds the handle, as the non-generic `fn gp(): *S` does (the 6.7.10 handle line)
+# (issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md). GH0a-GH0c the filed loop's three
+# programs; GH1 GH2 inferred; GH3-GH5 uses that name no field; GH6 GH7 24 / 8 B; GH8 an untyped-value return; GH9 a
+# refused type argument reported once; GHK1-GHK4 a by-value generic receive and the 6.6.11 mismatch unchanged.
+#   N32 `_gen_decl_reset` without its GFRS test (2026-10-16) -> RED 28: GH0b GH1 GH2 GH6 GH7 GH8 x4 legs (refused: no
+#                                                           struct type in scope for 'h'), GH9 x4 (3 errors); GH3-GH5 green
+#                                                           (the untyped word held the same address: they pin that the
+#                                                           handle's uses stay right), GH0a GH0c GHK1-GHK4 green
+# A generic returning its own `: T` keeps the reset (`_gen_ret_tp`): at a scalar instance the struct-annotated local is
+# refused as through 6.7.13, not bound as a handle on the scalar (GHT1-GHT4; GHT5 the struct-instance control).
+#   N33 `_gen_decl_reset` without its `_gen_ret_tp` test (2026-10-17) -> RED 16: GHT1-GHT4 x4 legs (BUILT: a handle on
+#                                                           the scalar, SIGSEGV at run time); GHT5 and the rest green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -750,7 +768,79 @@ refused D2 "a dyn Show result $RV" "a dyn: \`var y: i64 = pass(o);\` keeps V4n"
 printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\nsyscall(60, 0);\n' "$DH" > "$T/D3.cyr"
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
-[ "$rows" -ge 138 ] || bad "only $rows rows ran (floor 138)"
+# --- 6.7.14: a GENERIC call declared `: *T` into an annotated local is a handle (the 6.7.10 handle line) ---
+# issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md: the B-explicit reset dropped the
+# annotation of every generic receive the struct check did not keep — a `: *T` (GFRS -8) or scalar return included —
+# so `var h: S = gpg<S>();` declared an untyped word and `h.v = 6` was refused "no struct type in scope for 'h'".
+# `_gen_decl_reset` resets only for a generic returning a struct BY VALUE.
+GHS='struct S { v; w; }
+var GS = S { 5, 8 };'
+gh() { printf '%s\n%s\nsyscall(60, f());\n' "$GHS" "$2" > "$T/$1.cyr"; }
+# the filed repro's loop, its three programs verbatim
+gh GH0a 'fn gp(): *S { return &GS; }
+fn f(): i64 { var h: S = gp(); h.v = 6; return GS.v * 10 + h.w; }'
+runs GH0a 68 "the filed repro, row 1: the non-generic \`fn gp(): *S\` (a handle)"
+gh GH0b 'fn gpg<T>(): *T { return &GS; }
+fn f(): i64 { var h: S = gpg<S>(); h.v = 6; return GS.v * 10 + h.w; }'
+runs GH0b 68 "the filed repro, row 2: \`var h: S = gpg<S>();\` is a handle (refused before: no struct type in scope for 'h')"
+gh GH0c 'fn gpg<T>(): *T { return &GS; }
+fn f(): i64 { var h: *S = gpg<S>(); return h.w; }'
+runs GH0c 8 "the filed repro, row 3: control \`var h: *S = gpg<S>();\`"
+gh GH1 'fn gpg<T>(x: T): *T { return &GS; }
+fn f(): i64 { var s = S { 1, 2 }; var h: S = gpg(s); h.v = 6; return GS.v * 10 + h.w; }'
+runs GH1 68 "inferred \`var h: S = gpg(s);\` (\`x: T\`, a struct argument)"
+gh GH2 'fn gpg<T>(p: *T): *T { return &GS; }
+fn f(): i64 { var s = S { 1, 2 }; var h: S = gpg(&s); h.v = 6; return GS.v * 10 + h.w; }'
+runs GH2 68 "inferred \`var h: S = gpg(&s);\` (\`p: *T\`)"
+gh GH3 'fn gpg<T>(): *T { return &GS; }
+fn f(): i64 { var h: S = gpg<S>(); var c: S = h; c.v = 7; return GS.v * 10 + c.w; }'
+runs GH3 78 "\`var c: S = h;\` binds a second handle to the struct h points at"
+gh GH4 'fn gpg<T>(): *T { return &GS; }
+fn take(s: S): i64 { return s.v * 10 + s.w; }
+fn f(): i64 { var h: S = gpg<S>(); return take(h); }'
+runs GH4 58 "\`take(h)\` into a by-value \`s: S\` passes the struct h points at"
+gh GH5 'fn gpg<T>(): *T { return &GS; }
+fn takep(p: *S): i64 { p.v = 9; return p.w; }
+fn f(): i64 { var h: S = gpg<S>(); return takep(h) * 10 + GS.v; }'
+runs GH5 89 "\`takep(h)\` into a \`p: *S\` passes the pointer"
+printf 'struct S3 { v; w; u; }\nvar GS = S3 { 5, 8, 1 };\nfn gpg<T>(): *T { return &GS; }\nfn f(): i64 { var h: S3 = gpg<S3>(); h.u = 6; return GS.u * 10 + h.w; }\nsyscall(60, f());\n' > "$T/GH6.cyr"
+runs GH6 68 "24 B: \`var h: S3 = gpg<S3>();\`"
+printf 'struct S1 { v; }\nvar GS = S1 { 5 };\nfn gpg<T>(): *T { return &GS; }\nfn f(): i64 { var h: S1 = gpg<S1>(); h.v = 6; return GS.v * 10 + h.v; }\nsyscall(60, f());\n' > "$T/GH7.cyr"
+runs GH7 66 "8 B: \`var h: S1 = gpg<S1>();\`"
+gh GH8 'fn gi<T>(): i64 { return &GS; }
+fn f(): i64 { var h: S = gi<S>(); h.v = 6; return GS.v * 10 + h.w; }'
+runs GH8 68 "a generic returning an untyped value is a handle, as the non-generic \`fn gi(): i64\` is"
+gh GH9 'fn gpg<T>(): *T { return &GS; }
+fn f(): i64 { var h: S = gpg<Zork>(); h.v = 6; return GS.v * 10 + h.w; }'
+refused GH9 "unknown type 'Zork' as a type argument" "\`gpg<Zork>()\` is refused once (h keeps S: no 'no struct type in scope' after it)"
+# controls: a generic returning a struct BY VALUE keeps today's receive (the reset re-derives it from the callee)
+printf 'struct Box<T> { v: T; n; }\nstruct Pt { x; y; }\nfn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 3; return b; }\nfn f(): i64 { var p = Pt { 4, 5 }; var r: Box<Pt> = mk<Pt>(p); var q: Box<Pt> = mk(p); return r.v.x * 10 + q.v.y + r.n * 100; }\nsyscall(60, f() - 300);\n' > "$T/GHK1.cyr"
+runs GHK1 45 "control: \`var r: Box<Pt> = mk<Pt>(p);\` / \`= mk(p);\` (24 B by value) receive"
+printf 'struct S { v; w; }\nfn mks<T>(x: T): S { var s = S { x, 7 }; return s; }\nfn f(): i64 { var r: S = mks<i64>(4); var q: S = mks(3); return r.v * 10 + q.w + q.v; }\nsyscall(60, f());\n' > "$T/GHK2.cyr"
+runs GHK2 50 "control: a generic returning a 16 B struct by value"
+printf 'struct S3 { v; w; u; }\nfn mks<T>(x: T): S3 { var s = S3 { x, 7, 1 }; return s; }\nfn f(): i64 { var r: S3 = mks<i64>(4); var q: S3 = mks(3); return r.v * 10 + q.w + q.v + r.u; }\nsyscall(60, f());\n' > "$T/GHK3.cyr"
+runs GHK3 51 "control: a generic returning a 24 B struct by value"
+printf 'struct Box<T> { v: T; n; }\nstruct Pt { x; y; }\nfn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 3; return b; }\nfn f(): i64 { var p = Pt { 4, 5 }; var r: Box<Pt> = mk(p.x); return r.n; }\nsyscall(60, f());\n' > "$T/GHK4.cyr"
+refused GHK4 "fn return struct-id differs from declared var type" "control: the 6.6.11 mismatch \`var r: Box<Pt> = mk(p.x);\` (Box<i64>) is still refused"
+# a generic returning its own `: T` keeps the reset: its instance decides what it returns, and a SCALAR instance received
+# into a struct-annotated local is refused as through 6.7.13 (with the reset skipped it compiled as a handle on that
+# scalar and SIGSEGV'd)
+GHT='struct P3 { x; y; z; }
+struct W { n; v: P3; }
+fn gid<T>(x: T): T { return x; }'
+ght() { printf '%s\n%s\nsyscall(60, f());\n' "$GHT" "$2" > "$T/$1.cyr"; }
+ght GHT1 'fn f(): i64 { var a: P3 = gid(5); return a.z; }'
+refused GHT1 "no struct type in scope for 'a'" "\`var a: P3 = gid(5);\` (\`: T\` at i64) stays refused"
+ght GHT2 'fn f(): i64 { var a: P3 = gid<i32>(5); return a.z; }'
+refused GHT2 "no struct type in scope for 'a'" "\`var a: P3 = gid<i32>(5);\` (an explicit scalar instance) stays refused"
+ght GHT3 'fn f(): i64 { var h: f64 = 1.5; var a: P3 = gid(h); return a.z; }'
+refused GHT3 "no struct type in scope for 'a'" "\`var a: P3 = gid(h);\` (\`h: f64\`) stays refused"
+ght GHT4 'fn f(): i64 { var w: W; var a: P3 = gid(w.v); return a.z; }'
+refused GHT4 "no struct type in scope for 'a'" "\`var a: P3 = gid(w.v);\` (a field chain infers i64, the whole-argument rule) stays refused"
+ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
+runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
+
+[ "$rows" -ge 159 ] || bad "only $rows rows ran (floor 159)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14)"

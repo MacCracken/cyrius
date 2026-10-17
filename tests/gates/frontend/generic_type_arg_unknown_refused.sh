@@ -54,6 +54,63 @@
 #      a field typed `Box<T>` one hop down (`o.inner.v.y`, out of the scan's reach) builds through the
 #      documented `var t: T = o.inner.v;` (CF6). The runtime rows are generic_struct_inference.tcyr G12.
 #      Filed: docs/development/issues/archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md
+#      CF7-CF8 (6.7.14) the stub scan's tables grow: the struct-carrier table (`_gcr`) and the T-typed
+#      names (`_gsn`) held 64 entries per generic and dropped the 65th without a word, so a later carrier's
+#      `z.v.y` failed "expected ';', got '.'" and a later T-typed local's `z.y` "no struct type in scope
+#      for 'z'". CF7 the filed repro (a parameter, 63 `var cN: Box<T>;`, then `z`): exit 44; CF7b 130
+#      carriers (two growths): 44; CF8 a parameter, 65 `var cN: T = b;`, then `z.y`: 44; CF8b 130: 44.
+#      The bounded receivers' table (`_bnr_tab`) is trait_bounds_checked.sh's B1.
+#      Filed: docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
+#   FC (6.7.14) a generic forwarding its T INSIDE A STRUCT CARRIER into a stub generic is a stub too: the scan's
+#      forwarding mode followed a T-typed name only in the callee's direct carrying position, so `gx(mk1(x))` and
+#      `gx(b)` (`b: Box<T>`) into `fn gx<T>(b: Box<T>)` (whose `b.v.y` makes it a stub) left the forwarder an i64
+#      base, refused at its definition naming 'gx', called or not. The callee's struct-carrier positions are
+#      followed now, given a carrier's name or a generic call carrying T (`_gs_fwd_carr` / `_gs_carries`). FC0 the
+#      filed repro verbatim (12); FC1 the local form; FC2 `outer<Pt>(p)`; FC3 / FC3b `outer(5)` refused naming
+#      'outer'; FC4 a control into a non-stub carrier generic (its base runs); FC5 the method spelling; FC6
+#      `mk1<T>(x)`, a nested `wrap(b)`, two levels; FC7 the definition alone. The runtime rows on every target are
+#      generic_forward_tparam.tcyr. Filed: docs/development/issues/2026-10-14-generic-forwarding-carrier-into-stub-
+#      generic-refused.md
+#      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
+#      MFC1 no carrier positions (the bite reverted) -> RED 8: FC0-FC3b, FC5-FC7 (each refused naming 'gx');
+#      MFC2 `_gs_carries` without its call arm (carrier names only) -> RED 6: FC0 FC2 FC3 FC5 FC6 FC7; MFC3 `_gs_mfwd`
+#      without `_gs_fwd_carr` -> RED 1: FC5
+#   NN (6.7.14) a type argument that is NO NAME — `Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`, `Box<"s">`, `id<*Pt>`,
+#      `Box<>`, `Box<true>`: its token's VALUE was read as a name-pool offset ("unknown type 'truct'" / "'struct'" /
+#      "'num'" / "'enum'", a string SIGSEGV'd the compiler), the caret one token late, the call's `+ 2>(3)` left to the
+#      statement ("expected ';'", "expected '}'" at EOF), a signature's twice (pass 1 and pass 2). `_targ_not_name`
+#      refuses it once at the token ("a type argument is a type name, got number 1"; "u128 cannot be a type
+#      argument ..."), steps the argument to its `,` / `>` and reads it as i64. NN0 the filed repro verbatim; NN1-NN8
+#      the other tokens and positions; a control. Filed: docs/development/issues/2026-10-14-type-argument-non-name-
+#      reported-with-garbage-name.md
+#      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
+#      MNN1 `_parse_one_type_arg` without the non-name arm -> RED 9: NN0-NN8 (the garbage names, the cascade, a
+#      signature's twice); MNN2 `_targ_skip_arg` stepping one token -> RED 5: NN0 NN4-NN7 (the cascade); MNN3
+#      `_targ_skip_arg` reading a `>` inside `( .. )` as a close -> RED 1: NN5 ("expected '=', got ')'")
+#   UG (6.7.14, the user's D2 (a), 2026-10-16) `Name<..>` AS A TYPE ARGUMENT, Name no type: the `<` arm of
+#      `_parse_one_type_arg` skipped the list and read class 0, "unbound" — the i64 base: `g<Nonexist<u8>>(0)` ran the
+#      base and `var c: Box<Nonexist<u8>>;` declared the base Box (the filed repro exited 11), while `g<Nonexist>(0)`
+#      was refused; `h<T<u8>>` inside a generic reached h's base. `_targ_bad_gen` refuses each once, at the name —
+#      "unknown type 'Nonexist' as a type argument (...)", "a type parameter takes no type arguments: 'T'" — skips the
+#      list and reads i64. UG0 the filed repro verbatim; UG1-UG8 the positions (nested, a type parameter in a call /
+#      a field / a local, Two<..>'s either argument, sizeof, a field, a global, two calls, a generic body with three
+#      instances); a control (Vec<..>, a generic struct declared below, a forwarded Box<T>, Box<Box<Pt>>). The built-in
+#      slice's word form is slice_position_refused.sh's K3 (D3 (a)).
+#      Filed: docs/development/issues/2026-10-10-unknown-generic-name-accepted-as-type-argument.md
+#      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
+#      MUG1 `_parse_one_type_arg` without the `_targ_bad_gen` call -> RED 9: UG0-UG8 (each BUILT); MUG2
+#      `_targ_bad_gen` without its type-parameter arm -> RED 2: UG2 UG3 ("unknown type 'T'"); MUG3
+#      `_targ_bad_gen` reporting without `_tn_once` -> RED 1: UG8 (three lines, one per instance)
+#   SG (6.7.14, the user's D6 (a), 2026-10-16) A SIGNATURE'S GENERIC STRUCT READS ITS TYPE ARGUMENTS AT THE DEFINITION:
+#      `_gtype_sid` kept the base when an argument did not resolve, so `fn gm(m: Mp<K, V>, b)` (K / V declared nowhere)
+#      compiled as the base `Mp`, `m: Box<Zork>` took a `Box<i64>`, while `var m: Mp<K, V>;` was refused. PARSE_FN_DEF's
+#      pass 2 reads a parameter's and a return's list as a local's annotation does, minting nothing (`_gtype_sid_def`
+#      -> `_targ_chk`). SG0 the filed repro verbatim (once, naming 'K'); SG1-SG7 Mp<Nonexist, i64>, *Mp<K, V>, : Mp<K, V>,
+#      m: Box<Zork> called with a Box<i64>, nested and a method's, a generic's own signature with three instances (once),
+#      a fn called above its definition; a control (a generic's own K, V; a struct declared below the fns).
+#      Filed: docs/development/issues/2026-10-09-undeclared-generic-type-arguments-accepted.md
+#      Mutant (2026-10-16, a one-edit scratch copy of the tree, its 2-stage cycc, this gate run from it): MSG1
+#      `_gtype_sid_def` without its `_targ_chk` call -> RED 8: SG0-SG7 (each BUILT, as on the compiler before it)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -78,6 +135,9 @@
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
 #   6.7.11: `_gs_use` mode 0 without `_gs_cfield` -> CF1 / CF5 RED (the definition fails), CF2-CF4
 #   RED (refused, but by the parse error, not by name)
+#   6.7.14 (a one-edit scratch copy of the tree each, its 2-stage mutant cycc, this gate run from it):
+#   `_gcr_add` dropping at 64 again -> CF7 / CF7b RED ("expected ';', got '.'"), CF8 green;
+#   `_gsn_add` dropping at 64 again -> CF8 / CF8b RED ("no struct type in scope for 'z'"), CF7 green
 #   (review) `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
 #   `_refuse_toplevel_pair_arg` on FINDFN -> P RED (BUILT)
 # The runtime halves (inference on every path, signature types) are mutation-proven by
@@ -308,5 +368,239 @@ exits cf5 5 "CF5: the definition alone, never called"
 printf 'struct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nstruct Out<T> { inner: Box<T>; k; }\nfn gd<T>(o: Out<T>): i64 { var t: T = o.inner.v; return t.y; }\nfn go(): i64 { var o: Out<Pt>; o.inner.v.x = 1; o.inner.v.y = 6; o.k = 2; return gd(o); }\nsyscall(60, go());\n' > "$T/cf6.cyr"
 exits cf6 6 "CF6: one hop down (o.inner.v), through the documented T-typed local"
 
+# CF7-CF8 (6.7.14): more than 64 carriers / T-typed names in one generic. `cfgen <name> <n> <decl>`:
+# `gy<T>(b: <param>)` with <n> locals `var cN<decl>`, then `var z<decl> = b;`; the body's last line is $CFR.
+cfgen() {
+    { printf 'include "lib/syscalls.cyr"\nstruct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nfn gy<T>(b: %s): i64 {\n' "$CFP"
+      k=1; while [ "$k" -le "$2" ]; do printf '    var c%d%s;\n' "$k" "$3"; k=$((k + 1)); done
+      printf '    var z%s = b;\n    %s\n}\n%s\nsyscall(60, main());\n' "$CFZ" "$CFR" "$CFM"; } > "$T/$1.cyr"
+}
+CFP='Box<T>'; CFZ=': Box<T>'; CFR='return z.v.y;'
+CFM='fn main(): i64 { var b: Box<Pt>; b.v.x = 3; b.v.y = 44; b.n = 1; return gy(b); }'
+cfgen cf7 63 ': Box<T>'
+exits cf7 44 "CF7: the filed repro — a parameter, 63 \`var cN: Box<T>;\` carriers, then \`z.v.y\` (the 65th was dropped)"
+cfgen cf7b 130 ': Box<T>'
+exits cf7b 44 "CF7b: 130 carriers (the table grows twice)"
+CFP='T'; CFZ=': T'; CFR='return z.y;'
+CFM='fn main(): i64 { var p: Pt; p.x = 3; p.y = 44; return gy(p); }'
+cfgen cf8 65 ': T = b'
+exits cf8 44 "CF8: a parameter, 65 \`var cN: T = b;\` T-typed locals, then \`z.y\`"
+cfgen cf8b 130 ': T = b'
+exits cf8b 44 "CF8b: 130 T-typed locals (the table grows twice)"
+
+# ── 6.7.14: a generic forwarding its T inside a struct carrier into a stub generic ─────────────────
+cat > "$T/fc0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn gx<T>(b: Box<T>): i64 { return b.n + b.v.y; }
+fn outer<T>(x: T): i64 { return gx(mk1(x)); }
+fn go(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    return outer(p);
+}
+syscall(60, go());
+EOF
+exits fc0 12 "FC0: the filed repro, verbatim (outer(p) -> gx(mk1(x)), 8 + 4)"
+FCH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn gx<T>(b: Box<T>): i64 { return b.n + b.v.y; }'
+FCP='var p: Pt; p.x = 3; p.y = 4;'
+fcmk() {   # <name> <decls> <go body>
+    printf '%s\n%s\nfn go(): i64 { %s }\nsyscall(60, go());\n' "$FCH" "$2" "$3" > "$T/$1.cyr"
+}
+FCL='fn outer<T>(x: T): i64 { var b: Box<T> = mk1(x); return gx(b); }'
+fcmk fc1 "$FCL" "$FCP return outer(p);"
+exits fc1 12 "FC1: the carrier spelled as a local, \`var b: Box<T> = mk1(x); return gx(b);\`"
+fcmk fc2 'fn outer<T>(x: T): i64 { return gx(mk1(x)); }' "$FCP return outer<Pt>(p);"
+exits fc2 12 "FC2: outer<Pt>(p), explicit"
+fcmk fc3 'fn outer<T>(x: T): i64 { return gx(mk1(x)); }' 'return outer(5);'
+stubref fc3 outer "FC3: outer(5) — the forwarder is a stub, refused naming it"
+fcmk fc3b "$FCL" 'return outer(5);'
+stubref fc3b outer "FC3b: the local form, outer(5)"
+fcmk fc4 'fn gn<T>(b: Box<T>): i64 { return b.n + 1; }
+fn outer<T>(x: T): i64 { return gn(mk1(x)); }' "$FCP return outer(p) * 10 + outer(5);"
+exits fc4 99 "FC4: control — a forwarder into a NON-stub carrier generic keeps its i64 base (outer(5) runs)"
+fcmk fc5 'struct P { a; }
+impl P { fn pick<T>(self, b: Box<T>): i64 { return self.a + b.v.y; } }
+fn om<T>(q: P, x: T): i64 { var b: Box<T> = mk1(x); return q.pick(b); }
+fn om2<T>(q: P, x: T): i64 { return q.pick(mk1(x)); }' "$FCP var q: P = P { 10 }; return om(q, p) + om2(q, p);"
+exits fc5 28 "FC5: the method spelling, q.pick(b) / q.pick(mk1(x)) into a stub generic method"
+fcmk fc6 'fn wrap<T>(b: Box<T>): Box<T> { var c: Box<T> = b; c.n = 9; return c; }
+fn o1<T>(x: T): i64 { return gx(mk1<T>(x)); }
+fn o2<T>(x: T): i64 { var b: Box<T> = mk1(x); return gx(wrap(b)); }
+fn o3<T>(x: T): i64 { return o1(x) + 100; }' "$FCP return o1(p) + o2(p) + o3(p);"
+exits fc6 137 "FC6: gx(mk1<T>(x)) 12 + gx(wrap(b)) 13 + a two-level o3 -> o1 112"
+fcmk fc7 'fn outer<T>(x: T): i64 { return gx(mk1(x)); }' 'return 7;'
+exits fc7 7 "FC7: the definition alone, never called (it was refused there)"
+
+# ── 6.7.14: a type argument that is no name ────────────────────────────────────────────────────
+# `errs <name> <n> <what> <line>...`: refused with exactly <n> `^error` lines, each <line> among them (grep -F).
+errs() {
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    k=$(grep -c '^error' "$T/$nm.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$rc" -ne 1 ]; then bad "$what: the compiler died (rc $rc)"; return; fi
+    if [ "$k" -ne "$want" ]; then bad "$what: $k error lines (want $want): $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    for l in "$@"; do
+        if ! grep -qF -- "$l" "$T/$nm.err"; then bad "$what: no line '$l': $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    done
+    ok "$what: refused, $k error line(s) as wanted"
+}
+NM="a type argument is a type name, got"
+U1="u128 cannot be a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+cat > "$T/nn0.cyr" <<'EOF'
+struct Box<T> { v: T; }
+fn id<T>(x: T): T { return x; }
+fn main(): i64 {
+    var a: Box<1 + 2>;
+    var b: Box<u128>;
+    return id<1 + 2>(3);
+}
+syscall(60, main());
+EOF
+errs nn0 3 "NN0: the filed repro verbatim — one error per argument, at its token, no cascade (was 'truct' / 'struct' x3 + 2)" \
+    "error:<source>:4:16: $NM number 1" "error:<source>:5:16: $U1" "error:<source>:6:15: $NM number 1"
+NNH='struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+fn id<T>(x: T): T { return x; }'
+nn() { printf '%s\n%s\nsyscall(60, 7);\n' "$NNH" "$2" > "$T/$1.cyr"; }
+nn nn1 'fn f(): i64 { var a: Box<"s">; return 0; }'
+errs nn1 1 "NN1: Box<\"s\"> (its string offset read as a name: a garbage name, or the compiler died, rc 139)" "$NM string"
+nn nn2 'fn f(x: Box<1>): i64 { return 0; }'
+errs nn2 1 "NN2: a parameter's Box<1>, once (twice: pass 1 and pass 2)" "error:<source>:5:13: $NM number 1"
+nn nn3 'fn g<T>(x: T): *Box<1> { return 0; }
+fn h(): i64 { var a = g(1); var b = g<i32>(2); return 0; }'
+errs nn3 1 "NN3: a generic's *Box<1> return with two instances, once (three times)" "$NM number 1"
+nn nn4 'fn f(): i64 { var a: Two<1 + 2, 3>; var b: Two<i32, 1>; return 0; }'
+errs nn4 3 "NN4: Two<1 + 2, 3> and Two<i32, 1> — each argument once" \
+    "error:<source>:5:26: $NM number 1" "error:<source>:5:33: $NM number 3" "error:<source>:5:53: $NM number 1"
+nn nn5 'fn f(): i64 { var a: Box<1 + (2 > 1)>; var b: Box<Box<1>>; var c: Two<Box<1>, i32>; return sizeof(Two<Box<1>, i32>); }'
+errs nn5 4 "NN5: a comparison inside parentheses, a nested Box<Box<1>> (its >>), Two<Box<1>, i32>, sizeof(..) — no cascade" \
+    "error:<source>:5:26: $NM number 1"
+nn nn6 'fn f(): i64 { var p: Pt; return id<1 + 2>(3) + id<i32>(3) + id<*Pt>(p) + id<>(4); }'
+errs nn6 3 "NN6: id<1 + 2>(3), id<*Pt>(p), id<>(4) in one expression" "$NM number 1" "$NM '*'" "$NM '>'"
+nn nn7 'fn f(): i64 { var a: Box<true>; var b: Box<fn>; var c: Box<-1>; return 0; }'
+errs nn7 3 "NN7: Box<true>, Box<fn>, Box<-1>" "$NM true" "$NM fn" "$NM '-'"
+nn nn8 'fn f(): i64 { return id<u128>(3); }'
+errs nn8 1 "NN8: id<u128>(3), by its text, once (twice)" "$U1"
+printf '%s\nfn main(): i64 { var a: Box<i64>; a.n = 3; var b: Two<Pt, i32>; b.b = 4; return a.n + b.b + id<i32>(3) + sizeof(Box<i16>) - 20; }\nsyscall(60, main());\n' "$NNH" > "$T/nnk.cyr"
+exits nnk 0 "NN control: Box<i64>, Two<Pt, i32>, id<i32>(3), sizeof(Box<i16>) (10) unchanged"
+
+# ── 6.7.14: `Name<..>` as a type argument, Name no type (the user's D2 (a), 2026-10-16) ──────────
+UK="unknown type 'Nonexist' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+TPA="a type parameter takes no type arguments: 'T'"
+cp docs/development/issues/repros/2026-10-10-unknown-generic-name-accepted-as-type-argument.cyr "$T/ug0.cyr" 2> /dev/null \
+    || { bad "UG0: the filed repro is missing"; : > "$T/ug0.cyr"; }
+errs ug0 2 "UG0: the filed repro verbatim — both lines refused by name, once each, at the name (it ran the i64 base: exit 11)" \
+    "error:<source>:6:16: $UK" "error:<source>:8:14: $UK"
+UGH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }'
+ug() { printf '%s\n%s\nsyscall(60, 7);\n' "$UGH" "$2" > "$T/$1.cyr"; }
+ug ug1 'fn f(): i64 { var c: Box<Box<Nonexist<u8>>>; c.n = 3; return c.n; }'
+errs ug1 1 "UG1: nested, Box<Box<Nonexist<u8>>> (its >>> closes three lists)" "error:<source>:5:30: $UK"
+ug ug2 'fn h<T>(x): i64 { return sizeof(T); }
+fn g<T>(x): i64 { return h<T<u8>>(0); }
+fn f(): i64 { return g<Pt>(0) + g<i32>(0) + g(1); }'
+errs ug2 1 "UG2: h<T<u8>>(0) inside a generic, with three instances — once (g\$Pt reached h's base)" "error:<source>:6:28: $TPA"
+ug ug3 'struct W<T> { b: Box<T<u8>>; k; }
+fn g<T>(x): i64 { var q: Box<T<i32>>; return 0; }
+fn f(): i64 { var w: W<Pt>; return g<Pt>(0) + sizeof(W<Pt>); }'
+errs ug3 2 "UG3: a type parameter given arguments in a generic struct's field and a generic's local — once each" \
+    "error:<source>:5:22: $TPA" "error:<source>:6:30: $TPA"
+ug ug4 'fn f(): i64 { var t: Two<Nonexist<u8>, i32>; var u: Two<i32, Nonexist<Box<i64>>>; return sizeof(Box<Nonexist<u8>>); }'
+errs ug4 3 "UG4: either argument of Two<..>, a nested list inside the skipped one, sizeof(..)" \
+    "error:<source>:5:26: $UK" "error:<source>:5:62: $UK" "error:<source>:5:101: $UK"
+ug ug5 'struct H { b: Box<Nonexist<u8>>; n; }'
+errs ug5 1 "UG5: a struct field's Box<Nonexist<u8>>" "error:<source>:5:19: $UK"
+ug ug6 'fn f(): i64 { return 0; }
+var GB: Box<Nonexist<u8>> = 0;'
+errs ug6 1 "UG6: a global's Box<Nonexist<u8>>" "error:<source>:6:13: $UK"
+ug ug7 'fn g<T>(x): i64 { return sizeof(T); }
+fn f(): i64 { var a = g<Nonexist<u8>>(0); return a + g<Nonexist<i64>>(1); }'
+errs ug7 2 "UG7: two explicit calls in two statements — once each, no instance minted, no cascade" \
+    "error:<source>:6:25: $UK" "error:<source>:6:56: $UK"
+ug ug8 'fn g<T>(x): i64 { var c: Box<Nonexist<T>>; return sizeof(T); }
+fn f(): i64 { return g<Pt>(0) + g<i32>(0) + g(1); }'
+errs ug8 1 "UG8: a generic body's Box<Nonexist<T>> with three instances — once (the base and each instance re-read it)" "error:<source>:5:30: $UK"
+cat > "$T/ugk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }
+fn h<T>(x): i64 { return g<Box<T>>(0); }
+fn main(): i64 {
+    var b: Box<Box<Pt>>;
+    b.v.v.y = 2;
+    return g<Vec<i64>>(0) + g<Later<i32>>(0) * 10 + h<Pt>(0) * 100 + b.v.v.y * 1000 + sizeof(Box<Box<Pt>>) * 10000;
+}
+struct Later<T> { a: T; b: T; }
+syscall(60, (main() - 322168) / 100000);
+EOF
+exits ugk 0 "UG control: g<Vec<i64>>(0) 8, g<Later<i32>> (declared below) 16, h<Pt> forwarding g<Box<T>> 32, Box<Box<Pt>> 32 B, unchanged"
+
+# ── 6.7.14: a signature's generic struct reads its type arguments at the definition (the user's D6 (a)) ─────
+TA="as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+cat > "$T/sg0.cyr" <<'EOF'
+struct Mp<K, V> { k: K; v: V; }
+fn gm(m: Mp<K, V>, b) { return b; }
+syscall(60, 0);
+EOF
+errs sg0 1 "SG0: the filed repro verbatim — refused once, naming 'K' (it compiled, rc 0)" "error:<source>:2:14: unknown type 'K' $TA"
+SGH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Mp<K, V> { k: K; v: V; }'
+sg() { printf '%s\n%s\nsyscall(60, 0);\n' "$SGH" "$2" > "$T/$1.cyr"; }
+sg sg1 'fn gm(m: Mp<Nonexist, i64>, b) { return b; }'
+errs sg1 1 "SG1: a parameter's Mp<Nonexist, i64>" "error:<source>:5:21: unknown type 'Nonexist' $TA"
+sg sg2 'fn gm(m: *Mp<K, V>, b) { return b; }'
+errs sg2 1 "SG2: a parameter's *Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+sg sg3 'fn gm(b): Mp<K, V> { var m: Mp<i64, i64>; return m; }'
+errs sg3 1 "SG3: a return's : Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+sg sg4 'fn gm(m: Box<Zork>): i64 { return m.n; }
+fn f(): i64 { var b: Box<i64>; b.n = 3; return gm(b); }'
+errs sg4 1 "SG4: m: Box<Zork>, called with a Box<i64> (it took it)" "error:<source>:5:18: unknown type 'Zork' $TA"
+sg sg5 'fn ga(m: Box<Box<Zork>>): i64 { return 0; }
+fn gb(m: Mp<Box<Zork>, i64>): i64 { return 0; }
+impl Pt { fn mm(self, m: Box<Zork>): i64 { return 0; } }'
+errs sg5 3 "SG5: nested Box<Box<Zork>>, Mp<Box<Zork>, i64>, a method's Box<Zork> — once each" \
+    "error:<source>:5:22: unknown type 'Zork' $TA" "error:<source>:6:21: unknown type 'Zork' $TA" "error:<source>:7:34: unknown type 'Zork' $TA"
+sg sg6 'fn gm<T>(m: *Box<T>, n: *Mp<T, Zork>): i64 { return sizeof(T); }
+fn f(): i64 { return gm<Pt>(0, 0) + gm<i32>(0, 0) + gm(0, 0); }'
+errs sg6 1 "SG6: a generic's own signature, Zork not its type parameter, three instances — once" "error:<source>:5:36: unknown type 'Zork' $TA"
+sg sg7 'fn f(): i64 { return gm(0); }
+fn gm(m: *Box<Zork>): i64 { return 0; }'
+errs sg7 1 "SG7: a fn called above its definition (pass 1 read the signature first)" "error:<source>:6:19: unknown type 'Zork' $TA"
+cat > "$T/sgk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Mp<K, V> { k: K; v: V; }
+fn gm<K, V>(m: Mp<K, V>, b): i64 { return m.v + b + sizeof(K); }
+fn gk(m: Box<Later>): i64 { return m.v.a + m.n; }
+fn gr(a): Box<Later> { var r: Box<Later>; r.v.a = a; r.n = 1; return r; }
+fn gp(m: *Box<Later>): i64 { return m.n; }
+fn main(): i64 {
+    var m: Mp<Pt, i64>;
+    m.v = 3;
+    var b: Box<Later>;
+    b.v.a = 5; b.n = 7;
+    var r = gr(9);
+    return gm(m, 2) + gk(b) + gp(&b) + r.v.a;
+}
+struct Later { a; }
+syscall(60, main());
+EOF
+exits sgk 49 "SG control: a generic's own fn gm<K, V>(m: Mp<K, V>, b) (21), Box<Later> / *Box<Later> parameters and a : Box<Later> return with Later declared below the fns (12 + 7 + 9)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14)"

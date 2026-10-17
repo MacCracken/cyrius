@@ -45,6 +45,15 @@
 #      temp); Yw2 the Y10-Y12 refusals on PE
 #   Y13a / Y13c / Yw2d Y13 on aarch64, cx and PE (6.7.13, D40 — the user 2026-10-15: keep the top-level
 #      refusal; 6.7.11 compiled it to a fault, 139 on x86_64 and aarch64)
+#   Y14-Y22 (6.7.14, issues/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md) an explicit generic call
+#      whose own type argument is refused is reported ONCE: Y14 the filed repro verbatim `g<f64v2>(b)` (+ D27 "in a
+#      call to 'g$i'" before) on x86_64 / aarch64 / cx / PE; Y15 `g<Zork>(b)` (once before too); Y16-Y22 a token that
+#      is no name, a slice, a tuple, a nested `Box<f64v2>`, the second argument, u128 with `*pb`, a vector call result
+#      (each + D27 / D31 before); Y14k the control `g<i32>(&x)` / `g<Pt>(&p)` on every leg
+#   M-TA1 `_explicit_generic_call` without the `_ta_refd` test (2026-10-16) -> RED 11: Y14 Y14a Y14c Y14p Y16-Y22
+#       (two or three error lines); Y15 Y14k green
+#   M-TA2 `_gen_call_refd` without its panic latch     -> RED 5: Y16-Y18 Y21 Y22 (+ D27 / D31 on the base 'g'); Y14
+#       Y15 Y19 Y20 green (their refusal sets the latch itself)
 #   T  also carries the D27 rows (`sp_vrows`); 6.7.13 (issues/2026-10-14-parenthesised-fn-pointer-callee-loses-
 #      struct-result.md) the callee in parentheses, `rd(callptr((&mkv), 42, 2))` (139 / 139 / 0 / 5 before: an unknown
 #      callee's lane bits as the address), as the known callee it is (`_icall_fti`, `_svc_rs`)
@@ -386,6 +395,31 @@ if [ "$WINE" = 1 ]; then
     refused Yw2c "Yw2 Y12 on PE" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" pe "$KFRAG"
     refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
+# 6.7.14 (issues/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md): an explicit call whose own type
+# argument is refused mints no instance and is reported once. The refused `f64v2` read as i64 minted `g$i`, whose parse
+# cleared the panic latch, so D27 judged `b` against its `p: *i64` too (a second line naming `g$i`); a refusal that sets
+# no latch (a tuple, a slice, a token that is no name, u128) met D27 / D31 on the base `g`. `_ta_refd` (set by every
+# type-argument refusal, cleared when the list opens) sends the call to `_gen_call_refd`: the base, its arguments
+# consumed and not judged.
+echo "Y14-Y22. an explicit generic call with a refused type argument: refused once (D27 not after it)"
+GTH="${H}struct Pt { x; y; }\nstruct Box<T> { v: T; }\nfn g<T>(p: *T): i64 { return load64(p); }\nfn g2<T, U>(p: *T, q: *U): i64 { return load64(p); }\nfn mkv(): f64v2 { return f64v2_make(1, 2); }\n"
+GTF="generic type-args must be a scalar (i8/i16/i32/i64) or a struct"
+Y14B="${H}fn g<T>(p: *T): i64 { return load64(p); }\nfn main(): i64 {\n    var b: f64v2 = f64v2_make(42, 7); return g<f64v2>(b);\n}\n${E}"
+refused Y14 "Y14 the filed repro verbatim, g<f64v2>(b) (+ D27 naming g\$i before)" "$Y14B" x86 "$GTF"
+[ -n "$A64" ] && refused Y14a "Y14 on aarch64" "$Y14B" a64 "$GTF"
+[ -n "$CXCC" ] && refused Y14c "Y14 on cx" "$Y14B" cx "$GTF"
+refused Y14p "Y14 on PE" "$Y14B" pe "$GTF"
+gty() { refused "$1" "$2" "${GTH}fn main(): i64 {\n    var x = 3; var b: f64v2 = f64v2_make(42, 7); var pb: *f64v2 = &b; return $3;\n}\n${E}" x86 "$4"; }
+gty Y15 "Y15 g<Zork>(b)" 'g<Zork>(b)' "unknown type 'Zork' as a type argument"
+gty Y16 "Y16 g<1>(b), a type argument that is no name (+ D27 naming g before)" 'g<1>(b)' "a type argument is a type name, got number 1"
+gty Y17 "Y17 g<[u8]>(b), a slice (+ D27 before)" 'g<[u8]>(b)' "a slice cannot be a type argument"
+gty Y18 "Y18 g<(i64, i64)>(b), a tuple (+ D27 before)" 'g<(i64, i64)>(b)' "a tuple type cannot be a type argument"
+gty Y19 "Y19 g<Box<f64v2>>(b), nested (+ D27 naming g\$Box\$i before)" 'g<Box<f64v2>>(b)' "$GTF"
+gty Y20 "Y20 g2<i32, f64v2>(b, b), the second argument (+ D27 twice before)" 'g2<i32, f64v2>(b, b)' "$GTF"
+gty Y21 "Y21 g<u128>(*pb), a dereference (+ D31 before)" 'g<u128>(*pb)' "u128 cannot be a type argument"
+gty Y22 "Y22 g<1>(mkv()), a vector call result (+ D31 before)" 'g<1>(mkv())' "a type argument is a type name, got number 1"
+printf '%b' "${GTH}fn main(): i64 {\n    var x = 3; var p = Pt { 1, 2 }; return g<i32>(&x) + g<Pt>(&p) * 10 - 13;\n}\n${E}" > "$D/y14k.cyr"
+exit_rows Y14k "$D/y14k.cyr" 0 "control: g<i32>(&x) + g<Pt>(&p) * 10 - 13"
 
 # 6.7.13 — rows 6-7 of issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md,
 # the filed head and mains verbatim: a vector METHOD result and an explicit-instance result into `*f64v2` (D27's own rule
@@ -702,4 +736,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22)"

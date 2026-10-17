@@ -18,6 +18,10 @@
 # through a two-parameter generic, from inside another generic's instance (`gpg<T>()` with T bound), and at
 # top level (a declaration-zone `var Z: S = *gpg<S>();`, statements, a field of the call).
 # (`gpi(&G)` is not here: `&G` infers T = i64 for a `*T` parameter, so it runs the i64 base — no `*S`.)
+# 6.7.14: the same generics called inside fns that RETURN a struct by value (8 / 16 / 24 B), T a struct or a
+# scalar, a one-call body and a global body — a replayed `return` is the callee's (`rcall`, `rz16`, `rz24`). And
+# `var h: S = gpg<S>();` in a fn is a handle to the struct the call points at (`hb*`); a generic declared
+# `: *Box<T>` compiles and its call is a `*Box<..>` (`pb*`).
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R12 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -554,6 +558,76 @@ fn outer<T>(): i64 {
     unpoke();
     return r;
 }
+# ── 6.7.14: the generic called inside a fn that RETURNS a struct by value ──
+# gpg's body is REPLAYED at the call, inside the caller; its `return` met the CALLER's struct-return class, so
+# a 9-16 B or 24 B enclosing fn refused it ("... two registers ... got `gsel`", "return must be a bare local
+# identifier ..."; `return GPA;` "... got `GPA`" / "identifier is not a local"). The callee's return is its own:
+# T a struct or a scalar, a one-call body and a global body, 8 / 16 / 24 B enclosing fns.
+# issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
+var GPA = 0;
+fn gpa<T>(): *T { return GPA; }
+fn gsize(n: i64): i64 { return n; }
+fn gsz<T>(): i64 { return gsize(sizeof(T)); }
+fn rc8(): S8 { var q: *S16 = gpg<S16>(); var t: S8; t.v = q.v * 10 + q.w; return t; }
+fn rc16s(): S16 { var q: *S24 = gpg<S24>(); var t: S16; t.v = q.x; t.w = q.w; return t; }
+fn rc16i(): S16 { var a = gpg<i32>(); var t: S16; t.v = load64(a); t.w = 7; return t; }
+fn rc24s(): S24 { var q: *S16 = gpg<S16>(); var t: S24; t.v = q.v; t.w = q.w; t.x = 1; return t; }
+fn rc24i(): S24 { var a = gpg<i16>(); var t: S24; t.v = load64(a); t.w = 0; t.x = 2; return t; }
+fn rg16(): S16 { var q: *S8 = gpa<S8>(); var t: S16; t.v = q.v; t.w = 4; return t; }
+fn rg24(): S24 { var q: *S8 = gpa<S8>(); var t: S24; t.v = q.v; t.w = 1; t.x = 2; return t; }
+fn rz16(): S16 { var t: S16; t.v = gsz<S8>(); t.w = gsz<S24>(); return t; }
+fn rz24(): S24 { var t: S24; t.v = gsz<S24>(); t.w = gsz<S16>(); t.x = gsz<i32>(); return t; }
+fn rcall(): i64 {
+    GPA = &G8;
+    var k = 0;
+    var c8: S8 = rc8();
+    if (c8.v == 58) { k = k + 1; }
+    var c16s: S16 = rc16s();
+    if (rd16(c16s) == 38) { k = k + 2; }
+    var c16i: S16 = rc16i();
+    if (rd16(c16i) == 57) { k = k + 4; }
+    var c24s: S24 = rc24s();
+    if (rd24(c24s) == 581) { k = k + 8; }
+    var c24i: S24 = rc24i();
+    if (rd24(c24i) == 502) { k = k + 16; }
+    var g16: S16 = rg16();
+    if (rd16(g16) == 54) { k = k + 32; }
+    var g24: S24 = rg24();
+    if (rd24(g24) == 512) { k = k + 64; }
+    return k;
+}
+fn rz16v(): i64 { var z: S16 = rz16(); return rd16(z); }
+fn rz24v(): i64 { var z: S24 = rz24(); return rd24(z); }
+fn rpass(): i64 { return rd16(rc16s()) * 1000 + rd24(rc24s()); }
+
+# ── 6.7.14: `var h: S = gpg<S>();` in a fn — the annotated local is a HANDLE to the struct the call points at ──
+# (the 6.7.10 handle line: a call returning a `*T` binds a handle, as the non-generic `fn gp(): *S` does). Through
+# 6.7.13 the annotation was dropped for a generic callee: `h` was an untyped word and `h.v = 6` was refused "no struct
+# type in scope for 'h'". Explicit at 8 / 16 / 24 B, inferred through `gpi(p)` / `gpv(G)`, and h's uses that name no
+# field: `var c: S = h;` binds a second handle, `take16(h)` passes the struct h points at.
+# issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md
+fn hb8(): i64 { var h: S8 = gpg<S8>(); h.v = 6; var k = G8.v * 10 + h.v; unpoke(); return k; }
+fn hb16(): i64 { var h: S16 = gpg<S16>(); h.v = 6; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hb24(): i64 { var h: S24 = gpg<S24>(); h.v = 6; var k = G24.v * 100 + h.w * 10 + h.x; unpoke(); return k; }
+fn hbi(): i64 { var p: *S16 = &G16; var h: S16 = gpi(p); h.v = 6; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hbv(): i64 { var h: S24 = gpv(G24); h.v = 6; var k = G24.v * 100 + h.w * 10 + h.x; unpoke(); return k; }
+fn hbc(): i64 { var h: S16 = gpg<S16>(); var c: S16 = h; c.v = 7; var k = G16.v * 10 + h.w; unpoke(); return k; }
+fn hbt(): i64 { var h: S24 = gpg<S24>(); var g: S16 = gpv(G16); return take16(g) * 1000 + rd24(h); }
+
+# ── 6.7.14: a generic declared `: *Box<T>` — a pointer to a generic struct of its own T ──
+# `fn mkp<T>(x: T): *Box<T>` was refused at its definition, called or not ("unknown type 'T' as a type argument",
+# twice): the base's return was read with T unbound. The base reads it as `*Box` (T -> i64, as its body binds), and
+# each instance as its own `*Box$S16`, which a `*Box<T>` carrier (`gnb(mkp(..))`) infers from.
+# issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md
+struct Box<T> { v: T; n; }
+fn mkp<T>(x: T): *Box<T> { var b: *Box<T> = alloc(sizeof(T) + 8); b.v = x; b.n = 8; return b; }
+fn gnb<T>(b: *Box<T>): i64 { return b.n * 10 + sizeof(T); }
+fn pb1(): i64 { return gnb(mkp(G16)); }
+fn pb2(): i64 { return mkp<S16>(G16).n * 100 + mkp<S16>(G16).v.w; }
+fn pb3(): i64 { var q: *Box<S24> = mkp(G24); return q.n * 100 + q.v.w * 10 + q.v.x; }
+fn pb4(): i64 { return mkp(5).n * 10 + mkp(5).v; }
+fn pb5(): i64 { var q: *Box<S8> = mkp<S8>(G8); q.v.v = 9; return q.v.v * 10 + G8.v + gnb(q) * 100; }
+
 # ── top level: a declaration-zone `var Z: S = *gpg<S>();`, then statements ──
 var Z16: S16 = *gpg<S16>();
 var Z24: S24 = *gpg<S24>();
@@ -642,4 +716,20 @@ assert_eq(TZ, 58583, "top level: var Z: S = *gpg<S>() in the declaration zone co
 assert_eq(TT, 58583, "top level: G = gpg<S16>(), G = *gpg<S24>() copy");
 assert_eq(TS, 1583, "top level: o.s = gpg<S24>() into a field copies; the guard kept");
 assert_eq(TV, 83, "top level: gpg<S16>().w, gpg<S24>().x");
+assert_eq(rcall(), 127, "6.7.14: gpg<S16 / S24 / i32 / i16>() and gpa<S8>() inside : S8 / S16 / S24 fns (the bit that is missing names the row)");
+assert_eq(rz16v(), 104, "6.7.14: return gsize(sizeof(T)); replayed in a : S16 fn (8, 24)");
+assert_eq(rz24v(), 2564, "6.7.14: ... in a : S24 fn (24, 16, 4)");
+assert_eq(rpass(), 38581, "6.7.14: rc16s() / rc24s() passed straight to rd16 / rd24");
+assert_eq(hb8(), 66, "6.7.14: var h: S8 = gpg<S8>(); h.v = 6 writes G8 (a handle, not an untyped word)");
+assert_eq(hb16(), 68, "6.7.14: var h: S16 = gpg<S16>(); h.v = 6 writes G16");
+assert_eq(hb24(), 683, "6.7.14: var h: S24 = gpg<S24>(); h.v = 6 writes G24");
+assert_eq(hbi(), 68, "6.7.14: var h: S16 = gpi(p) (inferred, p: *S16) is a handle");
+assert_eq(hbv(), 683, "6.7.14: var h: S24 = gpv(G24) (inferred, by value) is a handle");
+assert_eq(hbc(), 78, "6.7.14: var c: S16 = h binds a second handle (c.v = 7 writes G16)");
+assert_eq(hbt(), 58583, "6.7.14: take16(g) / rd24(h) pass the struct the handle points at");
+assert_eq(pb1(), 96, "6.7.14: gnb(mkp(G16)) — a *Box<T> carrier given a *Box<T>-returning generic call (n 8, T = S16)");
+assert_eq(pb2(), 808, "6.7.14: mkp<S16>(G16).n, .v.w through the explicit instance's *Box<S16>");
+assert_eq(pb3(), 883, "6.7.14: var q: *Box<S24> = mkp(G24) reads its fields");
+assert_eq(pb4(), 85, "6.7.14: mkp(5).n, .v — the i64 base, *Box");
+assert_eq(pb5(), 8895, "6.7.14: *Box<S8> from mkp<S8>(G8): a copy of G8 in the box (G8 untouched), gnb(q) 88");
 var r = assert_summary();

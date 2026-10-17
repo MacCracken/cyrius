@@ -311,6 +311,11 @@ var _inst_conc1 = 0;
 # token (39), not two `>`. When a nested type-arg close consumes a `>>`, it closes the
 # INNER level and OWES one `>` to the outer level — tracked here (see _consume_gt).
 var _ta_pending_gt = 0;
+# 6.7.14: 1 once a type argument has been refused (by name, as a vector / special, a tuple, a slice, a token that is
+# no name) since the explicit-call list `_explicit_generic_call` last opened, which reads and clears it.
+var _ta_refd = 0;
+# 6.7.14 (D5): 1 while `_targ_chk` reads a type-argument list without instantiating it (a Vec element's own `<..>`).
+var _ta_chk = 0;
 # v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
 # cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
 # has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds
@@ -1526,6 +1531,7 @@ var _bs_tab = 0;       # bounded call sites (4 words): method-name token, trait,
 var _bs_n = 0;
 var _bnr_tab = 0;      # `_bnd_sites`' receivers (3 words): name, type-parameter slot, `*T`
 var _bnr_n = 0;
+var _bnr_cap = 0;      # 6.7.14: its capacity, doubled when full (`_tab_grow`, parse_fn.cyr)
 var _bnd_memo = 0;     # refusals reported (3 words): generic (fn, or -1 - struct), conc0, conc1
 var _bnd_memo_n = 0;
 var _bbs_why = 0;   # the bounded struct `_bnd_base_bad` found (sid), 0 = the fn's own bound
@@ -2998,7 +3004,7 @@ fn _err_excerpt(S): i64 {
 }
 
 fn ERRDUPVAR(S): i64 {
-    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_once(S, 5) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat (`_err_dup`)
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": duplicate variable\n", 21);
@@ -3034,7 +3040,7 @@ fn WARN_AT(S, ti, msg, len): i64 {
 }
 
 fn ERR(S): i64 {
-    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_once(S, 1) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat (`_err_dup`)
     var typ = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -3097,7 +3103,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
 }
 
 fn ERR_EXPECT(S, expected_type): i64 {
-    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_once(S, expected_type * 8 + 2) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat
     var got = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -3174,7 +3180,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
 # `tail` = 0 for none; `noff2` = -1 for none (else a second name, quoted).
 # CHANGELOG [6.5.19].
 fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
-    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }   # 6.7.14
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": ", 2);
@@ -3196,7 +3202,7 @@ fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
 }
 
 fn ERR_MSG(S, msg, len): i64 {
-    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_once(S, (msg * 31 + len) * 8 + 4) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": ", 2);
@@ -3205,6 +3211,96 @@ fn ERR_MSG(S, msg, len): i64 {
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
+    return 0;
+}
+
+# The undefined-name report the read, the assignment, `&x` and a `.field` base share: "undefined variable
+# 'x'" + `tail` at the cursor, and its excerpt. No panic latch (each undefined name of a statement is
+# reported, as before); once per token (`_err_dup`). 1 = printed. CHANGELOG [6.7.14]
+fn ERR_UNDEF(S, noff, tail): i64 {
+    _had_error = 1;
+    if (_err_dup(S, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
+    _err_quiet = 0;
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'", 1);
+    PRSTR(tail);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    return 1;
+}
+
+# ⛔ 6.7.14 — AN ERROR IS PRINTED ONCE PER TOKEN AND MESSAGE. A generic fn's body is parsed for its base and
+# again for every instance, and an inline replay re-parses a body, so a plain error in it was printed by
+# every parse that reached it: `i += 1 2;` in a generic called at three types printed "expected ';'" three
+# times, `return zz;` three times for two calls. The emitters (ERR, ERR_EXPECT, ERR_IDENT, ERR_MSG,
+# ERRDUPVAR, ERR_UNDEF) record each report as (its token, its identity — the emitter and what its message
+# names, which determine the text) and print a repeat as nothing: `_had_error` and the panic latch are set
+# as before, and `_err_quiet` keeps the caller's note quiet with it. A table of its own, apart from
+# `_tn_once`'s byte map (parse_types.cyr), so a type-name refusal and a different later error at the same
+# token both print, and two different errors in one body each print once. CHANGELOG [6.7.14]
+var _edup = 0;       # (token + 1, identity) pairs, open addressing; alloc'd at the first report
+var _edup_cap = 0;   # its slots, a power of two
+var _edup_n = 0;     # the slots in use
+var _err_quiet = 0;  # 1: the last emitter printed nothing (the panic latch, or a repeat) — its note stays quiet
+# The emitters' head: 0 = print nothing (the panic latch holds, or this report at the cursor's token was
+# printed already: `_had_error` and the latch are set as the print would have), 1 = print it.
+fn _err_once(S, id): i64 {
+    if (_panic == 1) { _err_quiet = 1; return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    if (_err_dup(S, id) == 1) {
+        _had_error = 1;
+        _panic = 1;
+        _err_quiet = 1;
+        return 0;
+    }
+    _err_quiet = 0;
+    return 1;
+}
+# 1 = a report of identity `id` was printed at the cursor's token already; else it is recorded: 0.
+fn _err_dup(S, id): i64 {
+    if (_edup == 0) {
+        _edup_cap = 256;
+        _edup = alloc(_edup_cap * 16);
+        _edup_n = 0;
+        if (_edup == 0) { return 0; }
+    }
+    if (_edup_n * 2 >= _edup_cap) { _edup_grow(); }
+    return _edup_put(GTI(S) + 1, id);
+}
+# 1 when the pair (k, id) is in the table, else it is added: 0.
+fn _edup_put(k, id): i64 {
+    var m = _edup_cap - 1;
+    var h = (k * 40503 + id * 31) & m;
+    var go = 1;
+    while (go == 1) {
+        var e = _edup + h * 16;
+        var ek = L64(e);
+        if (ek == 0) {
+            S64(e, k);
+            S64(e + 8, id);
+            _edup_n = _edup_n + 1;
+            return 0;
+        }
+        if (ek == k) { if (L64(e + 8) == id) { return 1; } }
+        h = (h + 1) & m;
+    }
+    return 0;
+}
+# The table copied into one twice its size.
+fn _edup_grow(): i64 {
+    var old = _edup;
+    var oc = _edup_cap;
+    _edup_cap = oc * 2;
+    _edup = alloc(_edup_cap * 16);
+    _edup_n = 0;
+    var i = 0;
+    while (i < oc) {
+        var e = old + i * 16;
+        if (L64(e) != 0) { _edup_put(L64(e), L64(e + 8)); }
+        i = i + 1;
+    }
     return 0;
 }
 

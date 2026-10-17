@@ -36,6 +36,18 @@
 #      are refused naming o1 and P_fwd (S8: two errors, one each) and their struct calls compile (the
 #      tcyr's F rows); `p.bm(r)` with no `impl Show for R` is refused by the bound, its note naming R
 #      (S9; it ran the i64 base) — x86_64; S1 also through the aarch64 / cx / PE compilers (S7)
+#   E  (6.7.14, the user's D7 (a), 2026-10-16) EXPLICIT TYPE ARGUMENTS ON A METHOD CALL, as on its free spelling:
+#      `p.id<f64>(h)` was refused "unknown field 'id' on struct 'P'" + "undefined variable 'f64'" (the `<` read as
+#      less-than). `.m<..>(` where m is no field and a generic method of the receiver's struct (`_mtargs_at`)
+#      reads the list as `_explicit_generic_call` does and enters the method arm on that instance
+#      (`_meth_targs`); `var a = p.id<f64>(h);` is an f64 (`_mchain_targs`), and the chain, a statement, a
+#      struct return and the stub scan (`p.pick<T>(t)` in a generic) take the shape. E0 the filed repro
+#      verbatim (exit 0); E1 the chain `w.v.id<f64>(h)` and a statement; E2 struct type arguments of 8 / 16 /
+#      24 B (receive, annotation, assignment, argument, chain, return); E3 a bounded member `p.bm<f64>(h)`; E4 a
+#      field still wins: `p.n < k`, and `q.id < k` where `id` is a field AND a generic method — every leg;
+#      refusals, once each (x86_64): E5 `p.pick<i64>(9)` naming P_pick with the stub text, E6 `p.bm<i64>(3)` by
+#      the bound with one note naming `impl Show for i64`, E7 `p.id<Zork>(h)` "unknown type 'Zork' as a type
+#      argument". Filed: docs/development/issues/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md
 #   T  tests/tcyr/crossos/generic_method_struct_arg.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -72,6 +84,24 @@
 #       arm (`h.gp().pick(t)`)                        (F17's of_m refused at its definition)
 #   M10 (review) `_gs_ret_sid` answering 0 for a     -> RED T: the file does not build on any leg
 #       generic callee (`mkfg(t).pick(t)`)            (F18's of_g refused at its definition)
+# 6.7.14 (D7 (a); 2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it with
+# CYCC= it — the aarch64 / cx legs build their compilers from the tree's own src, so a mutant shows on x86_64 / IR /
+# PE):
+#   ME1 `_field_load_on` without the `_meth_targs`  -> RED E0-E3 (did not build: "unknown field 'id'"), E5-E7 (two
+#       call (the field miss reports)                 errors each), T (the file does not build)
+#   ME2 `_mtargs_at` without its field test         -> GREEN: `_field_load_on` looks a field up before
+#                                                     `_meth_targs` on every path, so the field still wins
+#                                                     (E4); the test keeps a chain's comparison
+#                                                     (`w.q.id < k && f > (0)`) on the inline field walk — the
+#                                                     corpus differential is its guard, no row
+#   ME3 `_var_rhs_mchain` without `_mchain_targs`   -> RED E0 / E1 (exit 1: `a` an untyped word), T (X1 / X3)
+#   ME4 `_rlf_more` / `_fld_meth_inline` without    -> RED E1 (did not build: "unknown field 'id'" on the
+#       `_mtargs_at` (no chain)                       chain's leaf), T (the file does not build)
+#   ME5 the stub scan's method arm without the      -> RED T (the file does not build: X13's `ox` refused at
+#       `<T>` forward (`_gs_mfwd` reads args only)    its definition, naming P_pick)
+#   ME6 `_ret_expr_head` without `x.m<..>(`         -> RED E2 (did not build: "a fn returning the 9-16 byte
+#                                                     struct `Pt` ..."), T (X8)
+#   ME7 `_stmt_dot_chain_call` without `.m<..>(`    -> RED E1 (the statements: "unknown field 'id'"), T (X13)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -103,7 +133,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-method-call-runs-i64-base.c
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=49
+FLOOR=63
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -355,6 +385,147 @@ for leg in $OTHER; do
     esac
 done
 
+echo "E. explicit type arguments on a method call (6.7.14, D7 (a)): bound as the free spelling binds them"
+cat > "$D/e0.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P { a; }
+impl P {
+    fn id<V>(self, x: V): V { return x; }
+}
+fn main(): i64 {
+    var p: P = P { 1 };
+    var h: f64 = 1.5;
+    var a = p.id<f64>(h);
+    if (a * 2.0 != 3.0) { return 1; }
+    return 0;
+}
+syscall(60, main());
+XEOF
+xr E0 "$D/e0.cyr" 0 "the filed repro, var a = p.id<f64>(h); a * 2.0"
+cat > "$D/e1.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P { a; n; }
+struct W { v: P; k; }
+struct Nd { next: *P; z; }
+impl P { fn id<V>(self, x: V): V { return x; } }
+fn main(): i64 {
+    var p: P = P { 1, 2 };
+    var h: f64 = 1.5;
+    var w: W;
+    w.v = p;
+    w.k = 3;
+    var nd: Nd;
+    nd.next = &p;
+    nd.z = 0;
+    var pp: *P = &p;
+    var a = w.v.id<f64>(h);
+    var b = nd.next.id<f64>(h);
+    var c = pp.id<f64>(h);
+    w.v.id<f64>(h);
+    p.id<f64>(h);
+    if (a * 2.0 != 3.0) { return 1; }
+    if (b + c != 3.0) { return 2; }
+    if (w.v.id<f64>(h) * 2.0 != 3.0) { return 3; }
+    return 21;
+}
+syscall(60, main());
+XEOF
+xr E1 "$D/e1.cyr" 21 "w.v.id<f64>(h), nd.next.id<f64>(h) through a *P field, pp.id<f64>(h), and as statements"
+cat > "$D/e2.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P8 { a: i32; b: i32; }
+struct Pt { x; y; }
+struct P3 { a; b; c; }
+struct P { k; }
+impl P { fn id<V>(self, x: V): V { return x; } }
+fn t8(v: P8): i64 { return v.b; }
+fn t16(v: Pt): i64 { return v.y; }
+fn t24(v: P3): i64 { return v.c; }
+fn r8(p: P, v: P8): P8 { return p.id<P8>(v); }
+fn r16(p: P, v: Pt): Pt { return p.id<Pt>(v); }
+fn r24(p: P, v: P3): P3 { return p.id<P3>(v); }
+fn main(): i64 {
+    var p: P = P { 1 };
+    var v8: P8 = P8 { 1, 2 };
+    var v16: Pt = Pt { 1, 3 };
+    var v24: P3 = P3 { 1, 2, 4 };
+    var a = p.id<P8>(v8);
+    var b: Pt = p.id<Pt>(v16);
+    var c: P3 = P3 { 0, 0, 0 };
+    c = p.id<P3>(v24);
+    var s = a.b + b.y + c.c;
+    s = s + t8(p.id<P8>(v8)) + t16(p.id<Pt>(v16)) + t24(p.id<P3>(v24));
+    s = s + p.id<Pt>(v16).y + r8(p, v8).b + r16(p, v16).y + r24(p, v24).c;
+    return s;
+}
+syscall(60, main());
+XEOF
+xr E2 "$D/e2.cyr" 30 "8 / 16 / 24 B type arguments: receive, annotation, assignment, argument, chain, return (9 + 9 + 12)"
+cat > "$D/e3.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct P { a; }
+impl P { fn bm<V: Show>(self, x: V): i64 { return self.a + x.show(); } }
+fn main(): i64 {
+    var p: P = P { 1 };
+    var h: f64 = 1.5;
+    return p.bm<f64>(h);
+}
+syscall(60, main());
+XEOF
+xr E3 "$D/e3.cyr" 6 "a bounded generic method, p.bm<f64>(h) (impl Show for f64 only)"
+cat > "$D/e4.cyr" <<'XEOF'
+include "lib/syscalls.cyr"
+struct P { a; n; }
+struct Q { id; }
+struct WQ { q: Q; n; }
+impl P { fn id<V>(self, x: V): V { return x; } }
+impl Q { fn id<V>(self, x: V): V { return x; } }
+fn main(): i64 {
+    var p: P = P { 1, 2 };
+    var q: Q = Q { 2 };
+    var k = 3;
+    var f = 1;
+    var r = 0;
+    if (p.n < k) { r = r + 10; }
+    if (q.id < k) { r = r + 20; }
+    if (q.id < f) { r = r + 100; }
+    var w: WQ;
+    w.q = q;
+    w.n = 0;
+    if (q.id < k && f > (0)) { r = r + 100; }
+    if (w.q.id < k && f > (0)) { r = r + 100; }
+    return r;
+}
+syscall(60, main());
+XEOF
+xr E4 "$D/e4.cyr" 230 "p.n < k, q.id < k, q.id < k && f > (0) and w.q.id < k && f > (0) (the \`.m<..>(\` token shape) where id is a field AND a generic method: the field wins"
+ME='include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct P { v; }
+impl P {
+    fn pick<V>(self, w: V): i64 { return w.b; }
+    fn bm<V: Show>(self, v: V): i64 { return v.show(); }
+    fn id<V>(self, x: V): V { return x; }
+}'
+# erow <id> <expr> <fragment> <what>: refused with exactly one error, containing <fragment>
+erow() {
+    printf '%s\nfn main(): i64 {\n    var p = P { 5 };\n    var h: f64 = 1.5;\n    return %s;\n}\nsyscall(60, main());\n' "$ME" "$2" > "$D/$1.cyr"
+    erc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || erc=$?
+    ne=$(grep -c '^error' "$D/$1.err" || true)
+    if [ "$erc" -eq 0 ]; then bad "$1: $4 compiled (want it refused)"
+    elif [ "$ne" -ne 1 ]; then bad "$1: $4: $ne errors, want 1: $(grep '^error' "$D/$1.err" | tr '\n' ' ')"
+    elif grep -qF "$3" "$D/$1.err"; then ok "$1: $4 is refused once: $3"
+    else bad "$1: $4: not refused as '$3': $(grep '^error' "$D/$1.err")"; fi
+}
+erow E5 'p.pick<i64>(9)' "generic 'P_pick' $STUB" "p.pick<i64>(9), a stub's scalar binding"
+erow E6 'p.bm<i64>(3)' "generic 'P_bm': its type argument does not implement trait 'Show'" "p.bm<i64>(3), only impl Show for f64"
+if [ "$(grep -c 'needs `impl Show for i64`' "$D/E6.err")" -eq 1 ]; then ok "E6: one note naming impl Show for i64"
+else bad "E6: not one note naming impl Show for i64: $(tr '\n' ' ' < "$D/E6.err")"; fi
+erow E7 'p.id<Zork>(h)' "unknown type 'Zork' as a type argument" "p.id<Zork>(h)"
+
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -366,4 +537,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

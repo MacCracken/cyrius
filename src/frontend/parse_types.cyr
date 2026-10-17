@@ -3071,17 +3071,37 @@ var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_fi
 # reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
 # return type sits between them, so every instance recorded the unbound T's i64 step (8) and
 # `gr<i32>(..) + 1` stepped 8. The binding in force is put back after. CHANGELOG [6.6.20]
+# ⛔ 6.7.14 — and the BASE's under the base's: T -> i64, as PARSE_FN_DEF binds the base body. Read unbound, the
+# `T` of `fn mkp<T>(x: T): *Box<T>` was refused as a type argument ("unknown type 'T'"), in pass 1 and again in
+# pass 2, so the definition never compiled; a bare `*T` is the i64 step either way. CHANGELOG [6.7.14]
+fn _ret_ptr_base_bind(S, fi): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    _bind_generic_call(S, fi, 0 - 8, 0 - 8);
+    return 0;
+}
+# The struct a `: *T` return points at (cursor on the `*`), as `_ptr_ann_sid_tp`. ⛔ 6.7.14 — pass 1 (`quiet`) reads a
+# `*G<..>` only when its arguments resolve (`_targs_resolvable`, as `_ptr_step_peek` sizes it): read unresolved, the
+# type-argument refusal ran in pass 1 AND in pass 2, so `: *Box<Zork>` was reported twice. Pass 2 reads and refuses
+# it. CHANGELOG [6.7.14]
+fn _ret_ptr_sid(S, quiet): i64 {
+    var ti = GTI(S);
+    if (quiet == 1) { if (TOKTYP(S, ti + 2) == 19) { if (_targs_resolvable(S, ti + 3) == 0) { return 0; } } }
+    return _ptr_ann_sid_tp(S, ti);
+}
 fn _ret_ptr_annot(S, fi, quiet): i64 {
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
                 _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
             } } }
+    _ret_ptr_base_bind(S, fi);
     _ret_ptr_record(S, fi, quiet);
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return 0;
 }
 fn _ret_ptr_record(S, fi, quiet): i64 {
-    var psid = _ptr_ann_sid_tp(S, GTI(S));   # 6.7.11: T bound to a struct too
+    var psid = _ret_ptr_sid(S, quiet);       # 6.7.11: T bound to a struct too
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
         S64(_fn_rpsid + fi * 8, psid);
@@ -4132,8 +4152,12 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
         ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", snoff);
     } else {
         ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
-        _tn_prefix_note(S, tnoff);   # 6.6.16
-        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
+        # 6.7.14: a generic struct's fields are parsed again per instance, and the error latch prints a
+        # repeat as nothing — its notes stay quiet with it (`_err_quiet`), never orphaned. CHANGELOG [6.7.14]
+        if (_err_quiet == 0) {
+            _tn_prefix_note(S, tnoff);   # 6.6.16
+            PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
+        }
     }
     _panic = 0;
     return 0;
@@ -4237,6 +4261,7 @@ fn _vec_field_elem(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume the element type name
     var elemc = _vec_elem_code(S, si, fnoff, etoff);
     _ta_pending_gt = 0;
+    if (PEEKT(S) == 19) { _vec_el_args(S, GTI(S) - 1, fnoff); }   # 6.7.14 (D4 / D5)
     if (PEEKT(S) == 19) { _ta_pending_gt = _skip_targ_list(S); }
     if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return elemc; }
     if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
@@ -4304,7 +4329,10 @@ fn _vec_ann_list(S, vnoff): i64 {
     if (_vec_ann_at(S, ti) == 1) { p = _vec_ann_list(S, vnoff); }
     else {
         if (_vec_elem_ok(S, ti, vnoff) == 0) { return 0 - 1; }
-        if (PEEKT(S) == 19) { p = _skip_targ_list(S); }
+        if (PEEKT(S) == 19) {
+            _vec_el_args(S, ti, vnoff);   # 6.7.14 (D5): a generic element's own `<..>`
+            p = _skip_targ_list(S);
+        }
     }
     if (p < 0) { return p; }
     if (p > 0) { return p - 1; }
@@ -4315,6 +4343,20 @@ fn _vec_ann_list(S, vnoff): i64 {
     if (t == 152) { return 2; }
     _vec_tok_err(S, GTI(S) - 1, vnoff, "'>' after the Vec element type");
     return 0 - 1;
+}
+# ⛔ 6.7.14 (D4 / D5) — A Vec element's own `<..>` (the element name at token `ti`, its `<` after it; `vnoff` the
+# declared name or -1): read, not consumed. A nested `Vec<..>` is checked as the annotation is (a field's
+# `items: Vec<Vec<nosuch>>` was skipped unread); a generic struct's list is read as that struct's annotation reads
+# it, instantiating nothing (`_targ_chk`): `Vec<Box<nosuch>>`, `Vec<Box<(i64, i64)>>`. Any other element's list is
+# skipped as a non-generic `Pt<..>` annotation's is. CHANGELOG [6.7.14]
+fn _vec_el_args(S, ti, vnoff): i64 {
+    if (_vec_ann_at(S, ti) == 1) { _vec_ann_chk(S, ti, vnoff); return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var es = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (es <= 0) { return 0; }
+    if (GSTP(S, es - 1) == 0) { return 0; }
+    _targ_chk(S, ti + 1);
+    return 0;
 }
 # The element name at token `ti`: 1 when it is one (see above), else refused by name and 0.
 fn _vec_elem_ok(S, ti, vnoff): i64 {
@@ -4344,10 +4386,12 @@ fn _vec_elem_refuse(S, ti, vnoff, c): i64 {
         ERR_IDENT(S, "type ", noff, " is declared after its use; declare it above the first use", 0 - 1);
     } else {
         ERR_IDENT(S, "unknown type ", noff, tail, vnoff);
-        _tn_prefix_note(S, noff);
-        PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
-        PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
-        PRSTR(" (missing include?)\n");
+        if (_err_quiet == 0) {   # 6.7.14: a repeat the error latch printed as nothing keeps its notes quiet
+            _tn_prefix_note(S, noff);
+            PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
+            PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
+            PRSTR(" (missing include?)\n");
+        }
     }
     STI(S, sv);
     _panic = 0;
@@ -4792,6 +4836,7 @@ fn _gv_blockscoped(S, noff): i64 {
 }
 fn _gv_note_blockscoped(S, noff): i64 {
     _bx_undef_ti = GTI(S);   # 6.7.3: every undefined-name report passes here; a bool check skips a value holding it
+    if (_err_quiet == 1) { return 0; }   # 6.7.14: its error printed nothing (a repeat, or the panic latch)
     _pd_c14_note(S);         # 6.7.7 (B6): `syscall(n: 60, ..)` — a named argument to a builtin
     var k = _gv_blockscoped(S, noff);
     if (k == 0) { return 0; }

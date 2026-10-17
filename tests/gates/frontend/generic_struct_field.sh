@@ -42,6 +42,16 @@
 #   MP3 `_call_ptr_field` without the explicit `g<..>(` arm -> RED 3: P6, PF1, PF2 refused (PF3, inferred,
 #                                                       stays green; the tcyr does not build)
 #   MP4 `_hl_lastnm` without the type-argument skip -> RED 8: PR1-PR7 name 'U', PB names 'S'
+#
+#   PG (6.7.14, issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) a generic declared `: *Box<T>`:
+#      the filed repro verbatim (exit 3; refused twice, "unknown type 'T' as a type argument"), `gp(mkp(p))` 8,
+#      `mkp<Pt>(p).n` 8, `var q: *Box<Pt> = mkp(p); q.v.y` 7, `mkp(5).n` 8; an unknown `: *Box<Zork>` refused once,
+#      generic or not (twice before); a struct declared below the fn as its type argument compiles (pass 1 refused it).
+#      `_ret_ptr_annot` binds the base's T -> i64 (`_ret_ptr_base_bind`); pass 1 reads a `*G<..>` return only when its
+#      arguments resolve (`_ret_ptr_sid`). The values on every leg: generic_ptr_struct_source.tcyr `pb*`.
+#   MG1 `_ret_ptr_base_bind` returns 0 (2026-10-16)  -> RED 5: PG0-PG4 (refused: unknown type 'T'; the tcyr
+#                                                       does not build)
+#   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -161,5 +171,47 @@ syscall(60, main());'
 printf 'struct S { v; w; }\nvar GS = S { 5, 8 };\nvar Z: S = *gpg<S>();\nfn gpg<T>(): *T { return &GS; }\nfn main(): i64 { return Z.v * 10 + Z.w; }\nsyscall(60, main());\n' > "$T/pb.cyr"
 refused_once pb "cannot copy-init 'Z' from a dereference of a global or fn declared below it (declare it first): 'gpg'" "PB: var Z: S = *gpg<S>() above gpg"
 
+# PG — 6.7.14: a generic declared `: *Box<T>` (issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md).
+# The filed repro, verbatim; its rows; an unknown type argument in a `: *G<..>` return refused once (pass 1 reads it
+# only when its arguments resolve, as it sizes it — it reported in pass 1 AND pass 2); and so a struct declared below
+# the fn, which pass 1 does not know yet, is no longer refused there (as `: *Later` never was).
+cat > "$T/pg0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn mkp<T>(x: T): *Box<T> { return 0; }
+syscall(60, 3);
+EOF
+exits pg0 3 "PG0: the filed repro verbatim, fn mkp<T>(x: T): *Box<T> (refused twice before)"
+PGH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn mkp<T>(x: T): *Box<T> { var b: *Box<T> = alloc(32); b.v = x; b.n = 8; return b; }'
+pgrow() {   # <name> <want exit> <what> <rest>
+    printf '%s\n%s\nsyscall(60, main());\n' "$PGH" "$4" > "$T/$1.cyr"
+    exits "$1" "$2" "$3"
+}
+pgrow pg1 8 "PG1: gp(mkp(p)) — a *Box<T> carrier given the *Box<T> call" \
+  'fn gp<T>(b: *Box<T>): i64 { return b.n; }
+fn main(): i64 { var p = Pt { 6, 7 }; return gp(mkp(p)); }'
+pgrow pg2 8 "PG2: mkp<Pt>(p).n" 'fn main(): i64 { var p = Pt { 6, 7 }; return mkp<Pt>(p).n; }'
+pgrow pg3 7 "PG3: var q: *Box<Pt> = mkp(p); q.v.y" \
+  'fn main(): i64 { var p = Pt { 6, 7 }; var q: *Box<Pt> = mkp(p); return q.v.y; }'
+pgrow pg4 8 "PG4: mkp(5).n (the i64 base)" 'fn main(): i64 { return mkp(5).n; }'
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nfn mkz<T>(x: T): *Box<Zork> { return 0; }\nsyscall(60, 3);\n' > "$T/pg5.cyr"
+refused_once pg5 "unknown type 'Zork' as a type argument" "PG5: fn mkz<T>(x: T): *Box<Zork> (twice before)"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nfn mkz(x): *Box<Zork> { return 0; }\nsyscall(60, 3);\n' > "$T/pg6.cyr"
+refused_once pg6 "unknown type 'Zork' as a type argument" "PG6: fn mkz(x): *Box<Zork> (twice before)"
+cat > "$T/pg7.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn mk(): *Box<Later> { var b: *Box<Later> = alloc(64); b.v.y = 7; b.n = 2; return b; }
+struct Later { x; y; }
+fn main(): i64 { var q: *Box<Later> = mk(); return q.v.y * 10 + mk().n; }
+syscall(60, main());
+EOF
+exits pg7 72 "PG7: fn mk(): *Box<Later> with Later declared below it (pass 1 refused it 'unknown type')"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), and a generic call declared : *T is a struct source (P, PF, PR, PB)"
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), and a generic declared : *Box<T> compiles (PG)"

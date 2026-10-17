@@ -13,6 +13,10 @@
 # compile — and forwarding generics defined in REVERSE order (outer above its callee), whose stub
 # facts are now recorded in pass 1.
 #
+# 6.7.14: forwarding T INSIDE A STRUCT CARRIER into a stub generic (`gx(mk1(x))`, `gx(b)` with `b: Box<T>`,
+# `gx(mk1<T>(x))`, a nested `gx(wrap(b))`, a method `q.pick(b)`) makes the forwarder a stub too; through
+# 6.7.13 its i64 base was emitted and its definition refused, naming gx, called or not.
+#
 # ⚠ CROSS-HOST because the instance is a by-value struct-param fn emitted inline (jumped over) in
 # the enclosing body by each backend; the fix is in the front end, the code it selects is not.
 include "lib/assert.cyr"
@@ -49,6 +53,36 @@ fn top_inf<T>(p: T): i64 { return mid_inf(p) + 1000; }
 fn mid_inf<T>(p: T): i64 { var r = inner_loop(p); return r + 100; }
 fn flat_inf<T>(p: T): i64 { return inner_flat(p) + 2; }
 
+# 6.7.14: T forwarded inside a struct carrier into a stub generic (gx reads b.v.y).
+struct Box<T> { v: T; n; }
+struct Pk { a; }
+impl Pk { fn pick<T>(self, b: Box<T>): i64 { return self.a + b.v.y; } }
+fn cmk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn cwrap<T>(b: Box<T>): Box<T> { var c: Box<T> = b; c.n = 9; return c; }
+fn cgx<T>(b: Box<T>): i64 { return b.n + b.v.y; }
+fn cgn<T>(b: Box<T>): i64 { return b.n + 1; }
+fn cf_call<T>(x: T): i64 { return cgx(cmk(x)); }
+fn cf_local<T>(x: T): i64 { var b: Box<T> = cmk(x); return cgx(b); }
+fn cf_targ<T>(x: T): i64 { return cgx(cmk<T>(x)); }
+fn cf_nest<T>(x: T): i64 { var b: Box<T> = cmk(x); return cgx(cwrap(b)); }
+fn cf_two<T>(x: T): i64 { return cf_call(x) + 100; }
+fn cf_meth<T>(q: Pk, x: T): i64 { var b: Box<T> = cmk(x); return q.pick(b) + q.pick(cmk(x)); }
+fn cf_plain<T>(x: T): i64 { return cgn(cmk(x)); }
+
+fn run_carriers(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    var q: Pk = Pk { 10 };
+    assert_eq(cf_call(p), 12, "FC1: gx(mk1(x)) inside the forwarder (its definition was refused)");
+    assert_eq(cf_call<Pt>(p), 12, "FC2: the same, explicit outer<Pt>(p)");
+    assert_eq(cf_local(p), 12, "FC3: the carrier as a local, var b: Box<T> = mk1(x); gx(b)");
+    assert_eq(cf_targ(p), 12, "FC4: gx(mk1<T>(x))");
+    assert_eq(cf_nest(p), 13, "FC5: a nested generic call, gx(wrap(b))");
+    assert_eq(cf_two(p), 112, "FC6: two levels of forwarding");
+    assert_eq(cf_meth(q, p), 28, "FC7: the method spelling, q.pick(b) / q.pick(mk1(x))");
+    assert_eq(cf_plain(p) * 10 + cf_plain(5), 99, "FC8: control - into a non-stub carrier generic, the i64 base runs");
+    return 0;
+}
+
 fn run_structs(a): i64 {
     var p: Pt; p.x = a; p.y = 3;
     assert_eq(outer_loop<Pt>(p), 16, "forwarded T -> a looping struct generic (was 2: the dead stub)");
@@ -65,6 +99,7 @@ fn run_structs(a): i64 {
 fn main(): i64 {
     alloc_init();
     run_structs(2);
+    run_carriers();
     assert_eq(fwd<i64>(4), 10, "forwarded T = i64 calls the base");
     assert_eq(fwd<i32>(5), 12, "forwarded T = i32 calls the instance");
     assert_eq(fwd(20), 42, "inferred call of a forwarding generic");
