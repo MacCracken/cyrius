@@ -474,15 +474,35 @@ fn _tn_sh_is_tls13(sh, sh_len): i64 {
     return 0;
 }
 
-# Client: parse a TLS 1.2 ServerHello (RFC 5246 §7.4.1.3). Validates
-# the legacy_version (0x0303), asserts supported_versions is ABSENT
+# Client: parse a TLS 1.2 ServerHello (RFC 5246 §7.4.1.3) answering the
+# ClientHello this ctx built (tls_native_12_build_client_hello, buffered
+# at CH_BUF). Validates the legacy_version (0x0303), caps the session id
+# at 32 bytes (SessionID<0..32>), asserts supported_versions is ABSENT
 # (its presence means a 1.3 server — a protocol error on this path),
-# validates the secure-renegotiation echo (RFC 5746), and reverse-maps
-# the chosen wire ciphersuite to the internal AEAD identity (rejecting
-# unsupported), storing the identity at OFF_CIPHER plus the server
-# random and version 0x0303. (No RFC 8446 §4.1.3 downgrade-sentinel
-# check — a 1.2-pinned client never offered 1.3, so there is nothing to
-# downgrade from.) Returns TLS_OK or a negative TLS_ERR_* (ctx → ERROR).
+# walks every extension (_tn_client_ext_walk: one our ClientHello did
+# not carry, or one carried twice, is refused), validates the
+# secure-renegotiation echo (RFC 5746) and the ALPN answer
+# (_tn_client_alpn_answer: exactly one name we offered), and
+# reverse-maps the chosen wire ciphersuite to the internal AEAD identity
+# (rejecting unsupported), storing the identity at OFF_CIPHER plus the
+# server random and version 0x0303. (No RFC 8446 §4.1.3
+# downgrade-sentinel check — a 1.2-pinned client never offered 1.3, so
+# there is nothing to downgrade from.) Returns TLS_OK or a negative
+# TLS_ERR_* (ctx → ERROR) with the alert for the server recorded
+# (_tn_hs_refuse; tls_native_connect_12 sends it): malformed, a session
+# id over 32 bytes or a non-empty extended_master_secret echo
+# (decode_error); a message other than a ServerHello
+# (unexpected_message); a version other than 0x0303
+# (protocol_version); an extension we did not offer, supported_versions
+# included (unsupported_extension); a suite we did not offer, a
+# non-null compression method, an extension carried twice, an ALPN
+# protocol we did not offer (illegal_parameter); a renegotiation_info
+# that is not empty (handshake_failure, RFC 5746 §3.4).
+# ⛔ 6.7.14 — WHY. This looked up supported_versions, renegotiation_info,
+# extended_master_secret and ALPN and accepted the rest of the block — an
+# unsolicited extension, an ALPN answer to no offer or naming a protocol
+# not offered, a 33-byte session id — and recorded no alert for any
+# refusal. CHANGELOG [6.7.14]
 fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
@@ -491,13 +511,15 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(sh, sh_len, &ht, &blen) < 0) {
-        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
-    if (ht != TLS_HS_SERVER_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (_TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (ht != TLS_HS_SERVER_HELLO) { return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE); }
+    if (_TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) {
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
+    }
     var body = sh + _TLS_HANDSHAKE_HEADER_LEN;
-    if (blen < 2 + 32 + 1 + 2 + 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (_tn_be16_r(body) != 0x0303) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (blen < 2 + 32 + 1 + 2 + 1) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    if (_tn_be16_r(body) != 0x0303) { return _tn_hs_refuse(ctx, TLS_AD_PROTOCOL_VERSION, TLS_ERR_PROTOCOL); }
     var rnd = body + 2;
     # No RFC 8446 §4.1.3 downgrade-sentinel check here: this path is only
     # reached on a 1.2-pinned client (max_ver==1.2), which never offered
@@ -510,16 +532,19 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
     var pos = 2 + 32;
     var sid_len = load8(body + pos) & 0xFF;
+    if (sid_len > 32) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     pos = pos + 1 + sid_len;
-    if (pos + 2 + 1 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (pos + 2 + 1 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var wire = _tn_be16_r(body + pos);
     pos = pos + 2;
     var comp = load8(body + pos) & 0xFF;
     pos = pos + 1;
-    if (comp != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (comp != 0) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_PROTOCOL); }
     var identity = tls_native_12_cipher_aead_identity(wire);
-    if (identity < 0) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
-    if (tls_native_12_cipher_supported(wire) != 1) { return _tn_ctx_fail(ctx, TLS_ERR_CIPHER_NOT_SUPPORTED); }
+    if (identity < 0) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED); }
+    if (tls_native_12_cipher_supported(wire) != 1) {
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED);
+    }
     # EMS (RFC 7627): the client always offered it (flag set to 1 in
     # build_client_hello). Default to legacy fallback — clear the flag now, then
     # set it back to 1 only if the server echoes the extension below. A legacy
@@ -527,25 +552,29 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     store64(ctx + TLS_CTX_OFF_USE_EMS, 0);
     # Extensions: supported_versions MUST be absent (else a 1.3 server).
     if (pos < blen) {
-        if (pos + 2 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        if (pos + 2 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
         var ext_total = _tn_be16_r(body + pos);
         pos = pos + 2;
-        if (pos + ext_total > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        if (pos + ext_total > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
         var dp = 0;
         var dl = 0;
         var sv = _tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_VERSIONS, &dp, &dl);
-        if (sv == 0 - 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-        if (sv == 1) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+        if (sv == 0 - 1) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+        if (sv == 1) { return _tn_hs_refuse(ctx, TLS_AD_UNSUPPORTED_EXTENSION, TLS_ERR_PROTOCOL); }
+        # Every extension: one the 1.2 ClientHello we sent did not carry is unsupported_extension
+        # (RFC 5246 §7.4.1.4: the client MUST abort), one carried twice illegal_parameter.
+        # CHANGELOG [6.7.14]
+        var xw = _tn_client_ext_walk(ctx, body + pos, ext_total, 2);
+        if (xw != TLS_OK) { return xw; }
         # Secure renegotiation (RFC 5746 §3.4): on an initial handshake the
         # server's renegotiation_info, if present, MUST carry an empty
         # renegotiated_connection (a single 0x00 length byte).
         var rp = 0;
         var rl2 = 0;
         var rn = _tn_find_ext(body + pos, ext_total, TLS_EXT_RENEGOTIATION_INFO, &rp, &rl2);
-        if (rn == 0 - 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
         if (rn == 1) {
-            if (rl2 != 1) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
-            if ((load8(rp) & 0xFF) != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+            if (rl2 != 1) { return _tn_hs_refuse(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_PROTOCOL); }
+            if ((load8(rp) & 0xFF) != 0) { return _tn_hs_refuse(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_PROTOCOL); }
         }
         # Extended Master Secret echo (RFC 7627 §5.1): a present echo MUST be
         # empty; record EMS active. Absent → leave the flag at 0 (legacy
@@ -554,17 +583,14 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
         var ep = 0;
         var el = 0;
         var ems = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
-        if (ems == 0 - 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
         if (ems == 1) {
-            if (el != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+            if (el != 0) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_PROTOCOL); }
             store64(ctx + TLS_CTX_OFF_USE_EMS, 1);
         }
-        # ALPN selection (RFC 7301): the 1.2 server returns it in the SH.
-        var alpn_ad = 0;
-        var alpn_al = 0;
-        if (_tn_find_ext(body + pos, ext_total, TLS_EXT_ALPN, &alpn_ad, &alpn_al) == 1) {
-            _tn_store_alpn_selected(ctx, alpn_ad, alpn_al);
-        }
+        # ALPN selection (RFC 7301): the 1.2 server returns it in the SH — exactly one name we
+        # offered (_tn_client_alpn_answer). CHANGELOG [6.7.14]
+        var aw = _tn_client_alpn_answer(ctx, body + pos, ext_total);
+        if (aw != TLS_OK) { return aw; }
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, identity);
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
@@ -1597,7 +1623,10 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
         fdone = _tn_flight_complete(fbuf, flen, TLS_HS_SERVER_HELLO_DONE);
     }
     var cf = _tn_12_client_consume_flight(ctx, fbuf, flen);
-    if (cf < 0) { return _tn_ctx_fail(ctx, cf); }
+    if (cf < 0) {
+        _tn_send_hs_alert(ctx, sock_fd);               # the alert a refused ServerHello recorded (6.7.14)
+        return _tn_ctx_fail(ctx, cf);
+    }
     var group = load64(ctx + TLS_CTX_OFF_GROUP);
     var pm_len = _tn_12_client_premaster(ctx);
     if (pm_len < 0) { return _tn_ctx_fail(ctx, pm_len); }
@@ -1962,18 +1991,16 @@ fn tls_native_set_alpn(ctx, protos, protos_len): i64 {
     return TLS_OK;
 }
 
-# Parse a server-sent ALPN extension body (RFC 7301 §3.1: a 2-byte
-# ProtocolNameList length, then exactly ONE 1-byte-len-prefixed protocol)
-# and store the selected protocol on the ctx as [u8 len][proto]. `ext_data`
-# points at the extension_data; `ext_len` is its length. Lenient: a malformed
-# ALPN ext is ignored (selected stays unset). Returns TLS_OK always.
+# Store a server-sent ALPN extension body's protocol (RFC 7301 §3.1: a 2-byte
+# ProtocolNameList length, then exactly ONE 1-byte-len-prefixed protocol) on
+# the ctx as [u8 len][proto]. `ext_data` points at the extension_data;
+# `ext_len` is its length. A body that is not exactly one well-formed name
+# (_tn_alpn_answer_ok) stores nothing — the client refuses it first
+# (_tn_client_alpn_answer, decode_error); 6.7.12 stored the first name of a
+# list of two. Returns TLS_OK always. CHANGELOG [6.7.14]
 fn _tn_store_alpn_selected(ctx, ext_data, ext_len): i64 {
-    if (ext_len < 3) { return TLS_OK; }
-    var list_len = _tn_be16_r(ext_data);
-    if (list_len + 2 > ext_len) { return TLS_OK; }
+    if (_tn_alpn_answer_ok(ext_data, ext_len) != 1) { return TLS_OK; }
     var plen = load8(ext_data + 2) & 0xFF;
-    if (plen == 0) { return TLS_OK; }
-    if (plen + 1 > list_len) { return TLS_OK; }
     var sel = _tn_alloc(ctx, 1 + plen);
     if (sel == 0) { return TLS_OK; }
     store8(sel, plen);
