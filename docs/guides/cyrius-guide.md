@@ -480,9 +480,21 @@ var r = add(20, 22);   # r = 42
   (`f64v2`, `f64v4`, `f32v4`, `i32v4`) beside 14 or more integer arguments overwrote the 14th
   one there, because cx's vector registers were integer argument registers from that point.
 - Forward calls work (functions can call functions defined later)
-- Relaxed ordering: functions can appear after top-level statements. A `struct`, `enum`, `trait`
-  or `impl` cannot — they belong to the declaration section, before the first top-level statement
-  (one after it is `unexpected struct` / `enum` / `trait` / `impl`).
+- Relaxed ordering: functions can appear after top-level statements — a `fn` of any kind, `async fn`
+  included (6.7.14; it was `expected identifier, got reserved keyword 'fn'`) — and so can `const` and
+  `var`. A `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `use` or `pub` / `public` declaration
+  cannot: they belong to the declaration section, before the first top-level statement. One after it
+  is one error naming the rule and the statement's line (6.7.14, the user's decisions D13 (a) and D14
+  (a), 2026-10-16):
+
+  ```text
+  error:<source>:4:1: an `impl` declaration must come before the first top-level statement (line 3)
+  ```
+
+  An `include` of a file that declares one is reported at the include's own line (`an include of a
+  file that declares a `struct` (lib/str.cyr:24) must come before ...`). Through 6.7.13 each was
+  `unexpected struct` (`union`: `expected ';', got union`) followed by up to three invented errors, and
+  the include's failed inside the included file.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
@@ -2651,7 +2663,7 @@ fn demo(): i64 {
   parameter count, and a required method left out are compile errors naming the trait. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
-  statements.
+  statements. One after it is one error by name (6.7.14; see *Functions*).
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type

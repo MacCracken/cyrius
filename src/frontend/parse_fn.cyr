@@ -16098,6 +16098,7 @@ fn _tl_pass1(S, objok): i64 {
     STI(S, 0);
     var go = 1;
     while (go == 1) { go = _tl_scan1(S, objok); }
+    _tl_stmt1 = GTI(S);   # 6.7.14: the first top-level statement (`_decl_late` names its line)
     # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
     _prescan_tail(S);
     SMOD(S, 0);
@@ -16110,6 +16111,195 @@ fn _tl_pass1(S, objok): i64 {
     _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
     _cov_pass1(S);    # 6.7.10 (P5B-1): the execution-coverage mode, likewise (parse_cov.cyr)
     _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
+    return 0;
+}
+
+# ⛔ 6.7.14 — A DECLARATION AFTER THE FIRST TOP-LEVEL STATEMENT IS ONE ERROR BY NAME (the user's decision D13 (a),
+# 2026-10-16: the guide's rule). Pass 1 registers declarations up to the first statement (`_tl_scan1`); after it
+# PARSE_PROG takes a `fn` of any kind, a `const` and a `var`. A `struct`, `enum`, `union`, `trait`, `impl`, `mod`,
+# `use` or `pub` / `public` there reached PARSE_STMT: "unexpected struct" (`union`: "expected ';', got union") and up
+# to three invented errors, the statement resync re-entering its braces; an `include` of a file declaring one failed
+# inside that file ("lib/str.cyr:24:1: unexpected struct" + three). Now one error naming the rule and the first
+# statement's line, and the declaration stepped (`_dl_skip`); one inside a file whose `include` follows the statement
+# is reported at that include line, the rest of the inclusion stepped (its fns would use what it declares). Module
+# scope only (`_pp_depth` 1): a block's or a fn body's statement keeps its own errors. CHANGELOG [6.7.14]
+var _tl_stmt1 = 0 - 1;   # the first top-level statement's first token (`_tl_pass1`), -1 before pass 1
+fn _decl_late(S): i64 {
+    if (GINFN(S) != 0) { return 0; }
+    if (_pp_depth != 1) { return 0; }
+    if (_dl_kind(PEEKT(S)) == 0) { return 0; }
+    if (_tl_stmt1 < 0) { return 0; }
+    var ti = GTI(S);
+    var l1 = GTLINE(S, ti);
+    var f1 = FM_SITE(S, l1);
+    var f0 = FM_SITE(S, GTLINE(S, _tl_stmt1));
+    var n0 = _fm_site_line;
+    if (f1 != f0) { if (_dl_incl(S, l1, f0, n0) == 1) { return 1; } }
+    _dl_report(S, ti, f1, f0, n0);
+    _dl_skip(S);
+    _dl_derived(S);
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# A `#derive`d struct / enum: the preprocessor writes its generated fns onto the expanded line of the closing `}`
+# (v6.5.20, PP_DERIVE_SERIALIZE). They are the refused type's, so a `fn` / `public fn` the declaration's line still
+# holds is stepped with the rest of that line (the derive's `#assert sizeof(Q)` was "unknown type 'Q'", an enum's
+# `public` codec a second refusal).
+fn _dl_derived(S): i64 {
+    if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
+    var ln = GTLINE(S, GTI(S) - 1);
+    while (PEEKT(S) != 12) {
+        if (GTLINE(S, GTI(S)) != ln) { return 0; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# 1 = token type `t` opens a declaration the rule keeps before the first statement.
+fn _dl_kind(t): i64 {
+    if (t == 40 || t == 60 || t == 101 || t == 167) { return 1; }   # struct enum union trait
+    if (t == 77 || t == 72 || t == 74 || t == 73) { return 1; }     # impl mod use pub / public
+    return 0;
+}
+# "a `struct` declaration must come before the first top-level statement (line 2)", at the keyword `ti`; the
+# statement's file is named too when it is another (`f0` != `f1`).
+fn _dl_report(S, ti, f1, f0, n0): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": ");
+    _dl_art_kw(S, ti);
+    PRSTR(" declaration must come before the first top-level statement (");
+    _dl_where(S, f1, f0, n0);
+    PRSTR(")\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# "a `struct`" / "an `impl`": the keyword as the source spells it (`pub` or `public`).
+fn _dl_art_kw(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 60 || t == 77) { PRSTR("an `"); } else { PRSTR("a `"); }
+    var p = S + 0x459D000 + GTOFF(S, ti);
+    var n = 0;
+    while (ISALNUM(load8(p + n)) == 1) { n = n + 1; }
+    if (n == 0) { PRSTR(TOKNAME(t)); } else { syscall(SYS_WRITE, 2, p, n); }
+    PRSTR("`");
+    return 0;
+}
+# "line 2", or "lib/x.cyr:2" when the first statement sits in another file than the one reporting.
+fn _dl_where(S, f1, f0, n0): i64 {
+    if (f1 == f0) { PRSTR("line "); }
+    elif (f0 >= 0) { PRSTR(S + 0x721000 + f0); PRSTR(":"); }
+    PRNUM(n0);
+    return 0;
+}
+# The declaration at expanded line `l1` sits in an inclusion of another file than the first statement's (`f0`): when
+# that file resumes after it — the include's own line is that resume's base less one — the include is reported
+# there, once, and the rest of the inclusion is stepped. 0 = no such resume (the statement is in a file that ended
+# before: the caller reports the declaration itself).
+fn _dl_incl(S, l1, f0, n0): i64 {
+    if (f0 < 0) { return 0; }
+    var cnt = load64(S + 0x71A000);
+    var i = 0;
+    while (i < cnt) {
+        if (load64(S + 0x71A040 + i * 24) > l1) {
+            if (load64(S + 0x71A040 + i * 24 + 16) == f0) { return _dl_incl_at(S, l1, i, f0, n0); }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dl_incl_at(S, l1, e, f0, n0): i64 {
+    var ti = GTI(S);
+    if (_panic == 0) {
+        PRSTR("error:");
+        PRSTR(S + 0x721000 + f0);
+        PRSTR(":");
+        PRNUM((load64(S + 0x71A040 + e * 24 + 8) >> 32) - 1);
+        PRSTR(":1: an include of a file that declares ");
+        _dl_art_kw(S, ti);
+        PRSTR(" (");
+        FM_LOOKUP(S, l1);
+        PRSTR(") must come before the first top-level statement (line ");
+        PRNUM(n0);
+        PRSTR(")\n");
+        _had_error = 1;
+    }
+    var st = load64(S + 0x71A040 + e * 24);
+    while (PEEKT(S) != 12) {
+        if (GTLINE(S, GTI(S)) >= st) { break; }
+        STI(S, GTI(S) + 1);
+    }
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ⚠ The fns a refused declaration would have defined — a `pub fn`, an impl's methods (`T_m`), a `use` alias, the free
+# fns of a refused inclusion or of a derive's line — are entered as REPORTED (offset -2, `_nested_fn_mark`'s rule), so
+# a call of one adds no "undefined function" + "refusing to emit binary" to the one error. A fn defined elsewhere is
+# untouched (its offset is no longer -1, or its definition writes it).
+fn _dl_quiet(S, a, e): i64 {
+    var isid = 0;
+    var d = 0;
+    var i = a;
+    while (i < e) {
+        var k = TOKTYP(S, i);
+        if (k == 77) { if (d == 0) { isid = _dl_impl_sid(S, i); } }
+        if (k == 13) { d = d + 1; }
+        if (k == 14) { d = d - 1; if (d <= 0) { isid = 0; } }
+        if (k == 32) { if (TOKTYP(S, i + 1) == 2) { _dl_fn_at(S, i, d, isid); } }
+        i = i + 1;
+    }
+    if (TOKTYP(S, a) == 74) { if (TOKTYP(S, e - 2) == 2) { _dl_fn_quiet(S, TOKVAL(S, e - 2), a, 0); } }   # `use m.f;`
+    return 0;
+}
+fn _dl_fn_at(S, i, d, isid): i64 {
+    var n = TOKVAL(S, i + 1);
+    if (d == 0) { return _dl_fn_quiet(S, n, i, 0); }
+    if (d != 1) { return 0; }
+    if (isid <= 0) { return 0; }
+    var mn = BUILD_METHOD_NAME(S, isid - 1, n);
+    if (mn == GNPOS(S)) { var l = 0; while (load8(S + 0xEC00000 + mn + l) != 0) { l = l + 1; } SNPOS(S, mn + l + 1); }
+    return _dl_fn_quiet(S, mn, i, ((L64(S + 0x1A6018 + (isid - 1) * 8) + 1) << 32) | n);
+}
+# `impl T {` / `impl Tr for T {` at token `i`: T's struct id, 0 when T names none.
+fn _dl_impl_sid(S, i): i64 {
+    var n = i + 1;
+    if (TOKTYP(S, i + 2) == 55) { n = i + 3; }
+    if (TOKTYP(S, n) != 2) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, n));
+    if (sid < 0) { return 0; }
+    return sid;
+}
+fn _dl_fn_quiet(S, noff, kw, meth): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
+    S64(_fnt_offsets + fi * 8, 0 - 2);
+    if (GFFI(S, fi) == 0) { SFFI(S, fi, FM_FILEID(S, GTLINE(S, kw)) + 1); }
+    if (meth != 0) { if (GFMETH(S, fi) == 0) { SFMETH(S, fi, meth); } }   # named `T.m`, as a call would
+    return 0;
+}
+# Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
+# first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
+fn _dl_skip(S): i64 {
+    var semi = 0;
+    var t = PEEKT(S);
+    if (t == 72 || t == 74) { semi = 1; }
+    if (t == 73) {
+        var t2 = TOKTYP(S, GTI(S) + 1);
+        if (t2 == 3 || t2 == 168 || t2 == 72 || t2 == 74) { semi = 1; }
+    }
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var k = PEEKT(S);
+        STI(S, GTI(S) + 1);
+        if (k == 10 || k == 28 || k == 13) { d = d + 1; }
+        if (k == 11 || k == 29 || k == 14) { d = d - 1; }
+        if (d <= 0) {
+            if (k == 5) { return 0; }
+            if (k == 14) { if (semi == 0) { return 0; } }
+        }
+    }
     return 0;
 }
 

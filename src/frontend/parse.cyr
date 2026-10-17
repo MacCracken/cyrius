@@ -5102,6 +5102,17 @@ fn _nested_fn_encl(S): i64 {
 # Called by PARSE_PROG's `fn` arm, the end of _PARSE_STMT_IMPL (`async fn`, and the statement
 # positions that bypass PARSE_PROG: a switch case body, `@unsafe { }`) and the generic stub-body
 # skip in PARSE_FN_DEF.
+# 6.7.14 — `async fn` AFTER THE FIRST TOP-LEVEL STATEMENT IS A FUNCTION, as a `fn` there is (the user's decision
+# D14 (a), 2026-10-16; the guide: "functions can appear after top-level statements"). PARSE_PROG's relaxed-ordering
+# arm admitted it (`_IS_FN_KW`) and pass 1 prescans it, but only `const`'s prefix was consumed, so PARSE_FN_DEF took
+# `async` for its `fn` and `fn` for the name: "expected identifier, got reserved keyword 'fn'". The prefix is taken
+# as pass 2's `_tl_scan2_def` takes it, after `_refuse_nested_fn` (whose `async fn` refusal reads the prefix itself).
+fn _tl_async_prefix(S): i64 {
+    if (PEEKT(S) != 134) { return 0; }
+    _pending_async = 1;
+    STI(S, GTI(S) + 1);
+    return 0;
+}
 fn _refuse_nested_fn(S): i64 {
     if (GINFN(S) != 1) { return 0; }
     var kw = GTI(S);
@@ -5129,6 +5140,7 @@ fn _refuse_nested_fn(S): i64 {
 }
 
 fn PARSE_STMT(S): i64 {
+    if (_decl_late(S) == 1) { return 0; }   # 6.7.14 (D13 (a)): a declaration after the first statement
     var before = GTI(S);
     # v6.5.19 (the define-body copy overflow bug): this wrapper is already the one place every statement descent
     # passes through, which makes it the natural home for the depth bound too. See
@@ -5746,6 +5758,7 @@ fn PARSE_PROG(S): i64 {
                         # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
                         # relaxed-ordering arm below is for top-level code only (GINFN == 0).
                         if (_refuse_nested_fn(S) == 0) {
+                            _tl_async_prefix(S);   # 6.7.14 (D14 (a)): `async fn` too
                             # fn definition inside top-level code (relaxed ordering)
                             # Emit jmp over fn body, compile fn, patch jmp
                             # v6.6.4: this loop never parses `public` (a `public` after

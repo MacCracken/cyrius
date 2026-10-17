@@ -2263,6 +2263,10 @@ _chk_gate "$ROOT/tests/gates/frontend/call_site_callee_spelling.sh"
 # `+%`, `...`, `?`, `@unsafe`, a float literal, ..) said "got unknown". The issue's derivation over
 # the lexer and the three TOKNAME tables, and its 25-row loop. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/tokname_every_emitted_token.sh"
+# 6.7.14 — a `struct` / `enum` / `union` / `trait` / `impl` / `mod` / `use` / `pub` declaration after the first
+# top-level statement is ONE error naming the rule and the statement's line (D13 (a)), an include of a file declaring
+# one at the include's line; an `async fn` there is a function (D14 (a)). Mutation in the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
 
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
