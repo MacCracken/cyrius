@@ -2250,6 +2250,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/false_warnings_valid_shapes.sh"
 # directive); #must_use and #pure's #io / #alloc checks reach the dot call `p.m(..)`.
 _chk_gate "$ROOT/tests/gates/diagnostics/attribute_lands_on_its_item.sh"
 
+# 6.7.14 — every token number the lexer emits has a name: 24 operator / literal tokens (`<=`, `&&`,
+# `+%`, `...`, `?`, `@unsafe`, a float literal, ..) said "got unknown". The issue's derivation over
+# the lexer and the three TOKNAME tables, and its 25-row loop. Mutation in the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/tokname_every_emitted_token.sh"
+
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
 # and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and

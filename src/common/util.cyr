@@ -2199,6 +2199,40 @@ fn TOKNAME_BUILTIN(typ): i64 {
     return 0;
 }
 
+# The operator and literal tokens TOKNAME's own table never named: every one printed "got unknown"
+# (`var x <= 1;` -> "expected '=', got unknown"). A SEPARATE fn for the same reason as
+# TOKNAME_BUILTIN (cybs's per-fn string-literal ceiling), and NOT in TOKNAME_BUILTIN, because
+# IS_KEYWORD_TOK derives the reserved set from that table and none of these is a name. Spellings
+# from the lexer's operator chain (lex.cyr); tests/gates/diagnostics/tokname_every_emitted_token.sh
+# fails on any token number the lexer emits that no table names. CHANGELOG [6.7.14]
+fn TOKNAME_OP(typ): i64 {
+    if (typ == 21) { return "'<='"; }
+    if (typ == 22) { return "'>='"; }
+    if (typ == 27) { return "'&'"; }
+    if (typ == 34) { return "'%'"; }
+    if (typ == 35) { return "'|'"; }
+    if (typ == 36) { return "'^'"; }
+    if (typ == 37) { return "'~'"; }
+    if (typ == 38) { return "'<<'"; }
+    if (typ == 39) { return "'>>'"; }
+    if (typ == 53) { return "'&&'"; }
+    if (typ == 54) { return "'||'"; }
+    if (typ == 61) { return "float literal"; }
+    if (typ == 112) { return "'...'"; }
+    if (typ == 113) { return "'+%'"; }
+    if (typ == 114) { return "'+|'"; }
+    if (typ == 115) { return "'+?'"; }
+    if (typ == 116) { return "'-%'"; }
+    if (typ == 117) { return "'-|'"; }
+    if (typ == 118) { return "'-?'"; }
+    if (typ == 119) { return "'*%'"; }
+    if (typ == 120) { return "'*|'"; }
+    if (typ == 121) { return "'*?'"; }
+    if (typ == 123) { return "'@unsafe'"; }
+    if (typ == 124) { return "'?'"; }
+    return 0;
+}
+
 fn TOKNAME(typ): i64 {
     if (typ == 1) { return "number"; }
     if (typ == 2) { return "identifier"; }
@@ -2286,7 +2320,9 @@ fn TOKNAME(typ): i64 {
     # README/CLAUDE.md said 67 — THREE live counts for one set. The number is deleted rather
     # than corrected: it has no reader that can check it, and re-stamping only restarts the
     # clock. Derive it (`grep -cE 'if \(typ == [0-9]+\)'` over TOKNAME_BUILTIN) when needed.
-    var bn = TOKNAME_BUILTIN(typ);
+    var bn = TOKNAME_OP(typ);
+    if (bn != 0) { return bn; }
+    bn = TOKNAME_BUILTIN(typ);
     if (bn != 0) { return bn; }
     return "unknown";
 }
