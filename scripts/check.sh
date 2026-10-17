@@ -2414,6 +2414,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`. 6.7.13 — and
 # a fold `cyrius deps` kept over a named dep's thin profile (6.6.11 S2) is that dep's need too.
 _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
+# 6.7.14 — distlib's sidecar verify and bundle self-check read the PINNED stdlib (versions/<pin>/lib)
+# through the compiler's lib/ overlay, not the CLI's own version slot; ./lib and an overlay the run
+# set (--locked, no vendored lib/) still win.
+_chk_gate "$ROOT/tests/gates/toolchain/distlib_reads_pinned_stdlib.sh"
 # 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
 # core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
 # read as LF hash to the locked value is named `CRLF checkout: add \`lib/** -text\` to .gitattributes`
