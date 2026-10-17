@@ -251,6 +251,13 @@ got=0; timeout 20 "$T/cxvm" < "$T/g.cyx" || got=$?
 # them (lib/syscalls.cyr ahead of the source): both report it dead and exit 1 (the winner ran), on
 # x86 W^X, CYRIUS_WX=0 and aarch64. Mutation (6.7.14): `_dce_in_loser` returning 0 -> RED 8 (a.cyr
 # reports 0). issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+# 8b (review fix): under CYRIUS_IR=3 the seam's wp_compact moves the code BEFORE FIXUP's seed pass
+# reads the recorded ranges, so they move with it (ir.cyr _wp_fnr_shift). Left pre-move, a range
+# lay over whatever moved into it: a.cyr's `only_in_loser` was not dead (0), and live code was —
+# fn_redefinition_last_wins.tcyr listed `rd_kp` / `rd_kv62` dead and its CYRIUS_IR=3 CYRIUS_DCE=1
+# binary died on the ud2 sentinel (132, not 27/27), a top-level `helper()` after a loser was taken
+# for a losing-body call (`dead: helper`, 132, not 38). Mutation: the `_wp_fnr_shift` call dropped
+# -> RED 8b on all three.
 cat > "$T/a.cyr" <<'EOF'
 fn only_in_loser() { return 42; }
 fn f() { return only_in_loser(); }
@@ -278,8 +285,30 @@ loser8() {   # <leg> <compiler> <run: x86|a64> [ENV=V...]
 }
 loser8 "x86 W^X" "$T/stage1" x86
 loser8 "x86 CYRIUS_WX=0" "$T/stage1" x86 CYRIUS_WX=0
+loser8 "x86 CYRIUS_IR=3" "$T/stage1" x86 CYRIUS_IR=3
 if command -v qemu-aarch64 > /dev/null 2>&1; then loser8 aarch64 "$T/cc_a64" a64
 else echo "  SKIP dce_eliminates axis8 aarch64 leg: qemu-aarch64 not installed"; fi
+CYRIUS_IR=3 CYRIUS_DCE=1 "$T/stage1" < "$R/tests/tcyr/crossos/fn_redefinition_last_wins.tcyr" > "$T/rd8" 2> "$T/rd8.err" || {
+  echo "FAIL dce_eliminates axis8b: fn_redefinition_last_wins.tcyr did not compile under CYRIUS_IR=3 CYRIUS_DCE=1: $(grep -m1 error "$T/rd8.err")"; exit 1; }
+grep -q 'wp-compact: ' "$T/rd8.err" || { echo "FAIL dce_eliminates axis8b: the IR=3 seam compacted nothing, so the row proves nothing"; exit 1; }
+chmod +x "$T/rd8"; got=0; "$T/rd8" > "$T/rd8.out" 2>&1 || got=$?
+[ "$got" = 0 ] || { echo "FAIL dce_eliminates axis8b: fn_redefinition_last_wins.tcyr under CYRIUS_IR=3 CYRIUS_DCE=1 exits $got, want 0 — a stale losing-body range dropped a live fn"; exit 1; }
+top8() {   # <statements in pre> <the fn that must stay live> <want exit> [ENV=V...]
+  n8=$1; f8=$2; w8=$3; shift 3
+  { echo 'var q = 0;'; echo 'fn helper(): i64 { q = 5; return 5; }'; echo 'fn pre(x): i64 {'; echo '    var r = x;'
+    i=0; while [ $i -lt "$n8" ]; do echo '    r = r + 3 * 4;'; i=$((i + 1)); done
+    echo '    return r;'; echo '}'; echo 'fn f(): i64 { return 2; }'; echo 'fn f(): i64 { return 1; }'
+    echo 'helper();'; echo 'var r = f() + pre(0) + q;'; echo 'syscall(60, r & 255);'; } > "$T/t8.cyr"
+  env CYRIUS_IR=3 CYRIUS_DCE=1 CYRIUS_DCE_VERBOSE=1 "$@" "$T/stage1" < "$T/t8.cyr" > "$T/t8" 2> "$T/t8.err" || {
+    echo "FAIL dce_eliminates axis8b ($n8 statements $*): did not compile: $(grep -m1 error "$T/t8.err")"; exit 1; }
+  if grep -q "^  dead: $f8\$" "$T/t8.err"; then echo "FAIL dce_eliminates axis8b ($n8 statements $*): $f8 is listed dead, but top-level code after the loser calls it"; exit 1; fi
+  chmod +x "$T/t8"; got=0; "$T/t8" || got=$?
+  [ "$got" = "$w8" ] || { echo "FAIL dce_eliminates axis8b ($n8 statements $*): exits $got, want $w8 — a live fn was removed"; exit 1; }
+}
+top8 24 helper 38
+top8 24 helper 38 CYRIUS_WX=0
+top8 40 pre 230
+top8 40 pre 230 CYRIUS_WX=0
 
 # ── axis 9 — 6.7.14: a `#naked` redefinition past 49,152 recorded rel32 sources ──────────────
 # EFNREDIRECT (x86/emit.cyr) registers the redirect's rel32 once: a `#naked` body opens with the
@@ -398,5 +427,5 @@ while [ $a -le 5 ]; do
   a=$((a + 1))
 done
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing, a #naked redirect past 49,152 sources repaired once, an E8 inside an immediate is no call (a raw asm block and a jump table keep the byte scan)"
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing (its range moved by the CYRIUS_IR=3 seam too), a #naked redirect past 49,152 sources repaired once, an E8 inside an immediate is no call (a raw asm block and a jump table keep the byte scan)"
 exit 0

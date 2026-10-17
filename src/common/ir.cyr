@@ -1745,6 +1745,23 @@ fn _wp_data_fix(S, pcoff, praw, dshift): i64 {
     return 0;
 }
 
+# The redefined fns' losing bodies (`_fnr_add`, util.cyr) move like the fn ranges. The CYRIUS_IR=3
+# seam compacts BEFORE FIXUP's dead-code seed pass asks `_dce_in_loser` about them: left
+# pre-move, a range lay over whatever moved into it (the winner's redirect jump, a top-level
+# call after the loser), whose calls were then taken as no roots and live fns removed. CHANGELOG [6.7.14]
+fn _wp_fnr_shift(S): i64 {
+    var i = 0;
+    while (i < _fnr_n) {
+        var a = _fnr_base + i * 16;
+        var lo = L64(a);
+        S64(a, lo - _wp_shift(S, lo));
+        var hi = L64(a + 8);
+        S64(a + 8, hi - _wp_shift(S, hi));
+        i = i + 1;
+    }
+    return 0;
+}
+
 # Zero the gap between the moved code's end and the new code end, then set it.
 fn _wp_pad_to(S, wp, ncp): i64 {
     var z = wp;
@@ -1909,6 +1926,7 @@ fn wp_compact(S): i64 {
         if (fend > 0) { S64(_fnt_codeend + qi * 8, fend - _wp_shift(S, fend)); }
         qi = qi + 1;
     }
+    _wp_fnr_shift(S);   # the losing bodies' ranges, read by FIXUP's seed pass after the seam
     # Stage 4 — switch jump tables. A table is DATA living inside `.text`, holding
     # `target_cp - table_cp` deltas; both ends move independently, so each entry is
     # recomputed from scratch rather than adjusted by one delta — the same argument
