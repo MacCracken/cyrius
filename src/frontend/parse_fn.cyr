@@ -15963,6 +15963,10 @@ fn _pre_body_open(S): i64 {
 # the tuple capture likewise — the destructure (`_dt_arity_check`) and the capture
 # (`_tup_cap_class`) refuse a different count by name. Conservative: any other return leaves it
 # unrecorded. Cursor: not moved. CHANGELOG [6.7.11]
+# ⛔ 6.7.14 — `ret2(a, b)` IS TWO VALUES TOO (D42, the user's decision of 2026-10-16): a `ret2(..);`
+# statement and `return ret2(..);` are two-value exits, and a body may also end in `ret2(..);` or in
+# an if / elif / else whose every arm ends in an exit (`_ar_exits`). `var a, b, c = g2();` on such a
+# fn bound c to a stale register. A `ret2` inside an expression still leaves it unrecorded.
 fn _prescan_ret_arity(S, fi): i64 {
     SFLG(S, fi, GFLG(S, fi) & (0 - 196609));
     if (GFRS(S, fi) == MULTIRET_SID) { return 0; }
@@ -15977,17 +15981,23 @@ fn _prescan_ret_arity(S, fi): i64 {
             var sk = _skip_nested_body(S, j);
             if (sk >= 0) { j = sk; }
         }
-        elif (u == 97 || u == 48 || u == 124) { return 0; }   # ret2, asm, `?`
+        elif (u == 97) {                  # 6.7.14: a `ret2(..);` statement — two values
+            if (_ret2_stmt(S, j) == 0) { return 0; }
+            if (ar == 3) { return 0; }
+            ar = 2;
+        }
+        elif (u == 48 || u == 124) { return 0; }   # asm, `?`
         elif (u == 33) {
             var a = _ret_stmt_arity(S, j);
             if (a == 0) { return 0; }
             if (ar != 0 && a != ar) { return 0; }
             ar = a;
+            if (TOKTYP(S, j + 1) == 97) { j = j + 1; }   # `return ret2(..);`: its ret2 is this exit
         }
         j = j + 1;
     }
     if (ar == 0) { return 0; }
-    if (_body_ends_in_return(S, i, e) == 0) { return 0; }
+    if (_ar_exits(S, i, e) == 0) { return 0; }
     if (ar == 2) { SFLG(S, fi, GFLG(S, fi) | 65536); }
     else { SFLG(S, fi, GFLG(S, fi) | 131072); }
     return 0;
@@ -15996,6 +16006,11 @@ fn _prescan_ret_arity(S, fi): i64 {
 # PARSE_RETURN's multi-value arm counts them, read by shape (`_tup_p1`: pass 1 has not declared a
 # generic named below).
 fn _ret_stmt_arity(S, k): i64 {
+    if (TOKTYP(S, k + 1) == 97) {   # 6.7.14: `return ret2(..);` is two values (D42)
+        if (TOKTYP(S, k + 2) != 10) { return 0; }
+        if (TOKTYP(S, _call_close(S, k + 2) + 1) != 5) { return 0; }
+        return 2;
+    }
     if (TOKTYP(S, k + 1) != 10) { return 0; }
     var sv = _tup_p1;
     _tup_p1 = 1;
@@ -16011,6 +16026,66 @@ fn _fn_ret_arity(S, fi): i64 {
     if ((fl & 65536) != 0) { return 2; }
     if ((fl & 131072) != 0) { return 3; }
     return 0;
+}
+# 6.7.14 — 1 = the `ret2` at token k is a whole statement: it starts one (`;` `{` `}` before it) and
+# its `(..)` is followed by the `;` (D42). Anything else is a `ret2` inside an expression.
+fn _ret2_stmt(S, k): i64 {
+    var p = TOKTYP(S, k - 1);
+    if (p != 5 && p != 13 && p != 14) { return 0; }
+    if (TOKTYP(S, k + 1) != 10) { return 0; }
+    if (TOKTYP(S, _call_close(S, k + 1) + 1) != 5) { return 0; }
+    return 1;
+}
+# 6.7.14 — 1 = the block `{` at o .. `}` at e is left only through an exit `_prescan_ret_arity`
+# counts: it ends in a `return` or an infinite loop (`_body_ends_in_return`), in a `ret2(..);`
+# statement, or in an if / elif / else chain whose every arm ends so (`_ar_ifelse`). (D42)
+fn _ar_exits(S, o, e): i64 {
+    if (_body_ends_in_return(S, o, e) == 1) { return 1; }
+    if (TOKTYP(S, e - 1) == 5) {
+        if (TOKTYP(S, e - 2) != 11) { return 0; }
+        var q = _tok_open_back(S, e - 2);
+        if (q > o + 1) { if (TOKTYP(S, q - 1) == 97) { return _ret2_stmt(S, q - 1); } }
+        return 0;
+    }
+    if (TOKTYP(S, e - 1) != 14) { return 0; }
+    var b = _tok_brace_back(S, e - 1);
+    if (b <= o) { return 0; }
+    if (TOKTYP(S, b - 1) != 23) { return 0; }   # the last arm is an `else { .. }`
+    if (_ar_exits(S, b, e - 1) == 0) { return 0; }
+    return _ar_ifelse(S, o, b - 2);
+}
+# The arm whose block closes at token c, and every arm before it in its if / elif chain, end in an
+# exit (`_ar_exits`), and the chain's `if` starts a statement of the block opened at o.
+fn _ar_ifelse(S, o, c): i64 {
+    if (TOKTYP(S, c) != 14) { return 0; }
+    var b = _tok_brace_back(S, c);
+    if (b <= o) { return 0; }
+    if (_ar_exits(S, b, c) == 0) { return 0; }
+    if (TOKTYP(S, b - 1) != 11) { return 0; }
+    var q = _tok_open_back(S, b - 1);
+    if (q <= o + 1) { return 0; }
+    var k = q - 1;
+    var t = TOKTYP(S, k);
+    if (t == 50) { return _ar_ifelse(S, o, k - 1); }   # `elif (..) { .. }`
+    if (t != 15) { return 0; }
+    t = TOKTYP(S, k - 1);
+    if (t == 5 || t == 13 || t == 14) { return 1; }
+    return 0;
+}
+# The `{` matching the `}` at token c, or -1.
+fn _tok_brace_back(S, c): i64 {
+    var d = 0;
+    var k = c;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 14) { d = d + 1; }
+        elif (t == 13) {
+            d = d - 1;
+            if (d == 0) { return k; }
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
 }
 # 1 = the body `{` at `o` .. `}` at `e` can be left only through a `return`: its LAST statement is a
 # `return`, or (6.7.11) an infinite loop no `break` leaves (`_body_ends_in_loop`). A body that can

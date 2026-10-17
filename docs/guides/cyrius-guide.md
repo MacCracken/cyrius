@@ -3099,8 +3099,8 @@ var hi, lo, bexp = dd_pow10(k);
 #   fn g2(): i64 { return (1, 2); }   # `ret2(1, 2);` likewise
 # The declared type types each value: a `: f64` fn's values are each an f64 (its bindings are f64,
 # and `var t: (i64, i64) = g(..);` is refused), and a `: bool` fn's first value is checked as its
-# bool. Pass 1 counts it as it counts an undeclared fn (every `return` `(a, b)`, the body left only
-# through them), so `var a, b, c = g2();` and a 3-tuple capture are refused. A one-name bind,
+# bool. Pass 1 counts it as it counts an undeclared fn (every `return` `(a, b)` — or `ret2(a, b)`,
+# 6.7.14 — the body left only through them), so `var a, b, c = g2();` and a 3-tuple capture are refused. A one-name bind,
 # `var a = g2();`, keeps the first value, as for any multi-value callee (`rethi()` reads the second).
 
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
@@ -3113,6 +3113,12 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
+#   var a, b, c = divmod_old(17, 5);  # ...and `ret2(a, b);` / `return ret2(a, b);` are two-value
+#                                     # exits too (6.7.14, the user's decision of 2026-10-16): a
+#                                     # body left only through them — ending in one, or in an
+#                                     # if / elif / else whose every arm ends in an exit — returns 2
+#                                     # values (the third name read a stale register). A `ret2`
+#                                     # inside an expression is not counted
 #   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
 #                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
 #                                     # (6.7.11, kept by the user 2026-10-15; through 6.7.10 the

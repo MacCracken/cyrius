@@ -841,6 +841,78 @@ exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) s
 # R16ad (6.7.11) — the triage's capture of a declared \`: (i64, i64)\` fn that returns ONE value: its \`u.1\` was
 # a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
 refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
+# 6.7.14 — ROWS ON EVERY TARGET: `refused4` / `exits4` compile (and run) a row on x86_64, aarch64 (cross; qemu),
+# cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, the private prefix), the cross compilers built from this tree by
+# $CC on first use. A missing tool is a SKIP that names it.
+X4=0
+X4L="x86_64 pe"
+_x4_init() {
+    [ "$X4" -eq 1 ] && return 0
+    X4=1
+    if command -v qemu-aarch64 > /dev/null 2>&1; then
+        if "$CC" < src/main_aarch64.cyr > "$T/x4_a64" 2> /dev/null && [ -s "$T/x4_a64" ]; then chmod +x "$T/x4_a64"; X4L="$X4L aarch64"
+        else bad "the 4-leg rows: src/main_aarch64.cyr did not build"; fi
+    else echo "  SKIP the 4-leg rows' aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+    if "$CC" < src/main_cx.cyr > "$T/x4_cx" 2> /dev/null && [ -s "$T/x4_cx" ] && "$CC" < programs/cxvm.cyr > "$T/x4_vm" 2> /dev/null && [ -s "$T/x4_vm" ]; then
+        chmod +x "$T/x4_cx" "$T/x4_vm"; X4L="$X4L cx"
+    else bad "the 4-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+    X4W=0
+    if command -v wine > /dev/null 2>&1; then X4W=1
+    else echo "  SKIP the 4-leg rows' PE run leg — wine not installed (the PE refusals still run)"; skips=$((skips + 1)); fi
+}
+_x4_cc() {   # <leg> <name>: $T/<name>.<leg> (+ .<leg>.err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$T/x4_a64" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        cx)      timeout 60 "$T/x4_cx" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+    esac
+}
+refused4() {   # <name> <message fragment> <what> <source>: refused once on every leg, no binary
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        n=$(grep -c '^error' "$T/$1.$leg.err")
+        if [ "$rc" -eq 0 ]; then bad "$3 ($leg): BUILT (rc 0)"
+        elif ! grep -qF "$2" "$T/$1.$leg.err"; then bad "$3 ($leg): refused, but not as expected: $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        elif [ "$n" -ne 1 ]; then bad "$3 ($leg): $n error lines (want 1): $(grep '^error' "$T/$1.$leg.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$T/$1.$leg" ]; then bad "$3 ($leg): refused, but a binary was written"
+        else ok "$3 ($leg): refused once"; fi
+    done
+}
+exits4() {   # <name> <want> <what> <source>: compiles and exits <want> on every leg
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        if [ "$rc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$3 ($leg): rc $rc: $(grep '^error' "$T/$1.$leg.err" | head -1)"; continue; fi
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 10 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/x4_vm" < "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$X4W" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
+        esac
+        if [ "$got" -eq "$2" ]; then ok "$3 ($leg): exit $got"; else bad "$3 ($leg): exit $got, want $2"; fi
+    done
+}
+# R16r2 (6.7.14, D42, the user's decision of 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
+# (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md): a 3-tuple capture of a fn left only
+# through `ret2(..);` / `return ret2(..);` is refused as R16y's `return (a, b);` fn is (`t.2` read the seeded 88 on
+# every target); the 2-tuple capture still runs. Mutations (scratch trees, run 2026-10-17): the tree before
+# (c4930b46) -> R16r2a-R16r2d BUILD on every leg; `_prescan_ret_arity`'s ret2 arm back to the bail, or `_ar_exits`
+# without its `ret2(..);` tail -> R16r2a, R16r2c, R16r2d BUILD; `_ret_stmt_arity` without its ret2 arm -> R16r2b.
+H88='fn h(): (i64, i64, i64) { return (1, 77, 88); }\n'
+refused4 r16r2a "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2a: the issue's 3-tuple capture of a \`ret2(1, 2);\` fn" "${H88}fn g2() { ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(); return t.2; }\nsyscall(60, main());\n"
+refused4 r16r2b "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2b: ... of \`return ret2(1, 2);\` in a \`: i64\` fn" "${H88}fn g2(): i64 { return ret2(1, 2); }\nfn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(); return t.2; }\nsyscall(60, main());\n"
+refused4 r16r2c "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2c: a declaration-zone capture" "fn g2(x) { ret2(x, 1); }\nvar G: (i64, i64, i64) = g2(4);\nsyscall(60, 0);\n"
+refused4 r16r2d "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2d: \`t = g2(..);\` into an existing 3-tuple" "fn g2(x) { ret2(x, 1); }\n${F5}    var t: (i64, i64, i64);\n    t = g2(4);${E5}"
+exits4 r16r2e 41 "R16r2e: \`var t: (i64, i64) = g2(4);\` (the matching count) still captures" "fn g2(x) { ret2(x, 1); }\nfn main(): i64 { var t: (i64, i64) = g2(4); return t.0 * 10 + t.1; }\nsyscall(60, main());\n"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base
