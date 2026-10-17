@@ -38,6 +38,9 @@
 #       K2f (review) the flip side: a fn-local `slice<u8>` there is the struct, so the built-in's `.len` on it is
 #       refused (it compiled through 6.7.10); K2g the `[u8]` respelling runs (14);
 #       tests/tcyr/crossos/user_struct_named_slice.tcyr runs the shapes on every fork
+#       K2h (6.7.14) a program's own GENERIC `struct slice<T>` as a `*slice<i64>` and a by-value `slice<i64>`
+#       parameter: exit 5 — the one row that reaches `_sl_ann_at`'s FINDSTRUCT test (K2's bare `slice` has no
+#       `<`, so `_sl_ann_at` answers 0 before it; issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
 #   X   --syntax-only (cyrius lint's pre-pass) reports a slice parameter, once (a grammar refusal)
 #   R12 a captured slice subscripted in a closure (read, store); R13 a struct / u128 element store;
 #       R13b `OP=` on an f64 / f32 / bool element (the slice read is an untyped word); R10 a non-bool
@@ -74,6 +77,9 @@
 #         CYCC= it) `_sl_word_builtin` without its FINDSTRUCT test -> RED K2b K2c K2d (the built-in slot again: each
 #         refused, as through 6.7.10) and K2f (compiled: the built-in's `.len`, review); K1-K4, K2e and K2g green
 #         (K2e declares no fn-local of the type: it compiled before)
+#   MSA   (6.7.14; a one-edit copy of the tree, its 2-stage mutant cycc, this gate run from it with CYCC= it)
+#         `_sl_ann_at` without its FINDSTRUCT test -> RED K2h (the pointer and the by-value parameter each
+#         refused as the built-in slice); every other row green (K2's bare `slice` never reaches the test)
 #   (C2 review) the value file before it (its SPAWN rows expected only the default-mode line) -> RED Wh
 #         (8 checks)
 #   the C2-5 compiler (+ the IR=3 slice-read repair; before this bite) -> RED SR S1-S6 X R12 R13 R13b
@@ -239,6 +245,11 @@ refused k2f "unknown field 'len' on struct 'slice'" "K2f: \`struct slice\` decla
     "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: slice<u8> = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
 exits k2g 14 "K2g: ... respelled \`var s: [u8] = 0;\` it is the built-in slice (7 + 7)" \
     "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: [u8] = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
+# K2h (6.7.14): a program's own GENERIC `struct slice<T>` as a pointer parameter and a by-value parameter —
+# the shape that reaches `_sl_ann_at`'s FINDSTRUCT test (K2's bare `slice` is answered before it: no `<`).
+# (issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
+exits k2h 5 "K2h: a generic \`struct slice<T>\` as a \`*slice<i64>\` and a by-value \`slice<i64>\` parameter" \
+    'struct slice<T> { a: T; n; }\nfn f(p: *slice<i64>): i64 { return p.a; }\nfn g(s: slice<i64>): i64 { return s.n; }\nvar B: i64[2];\nstore64(&B, 5);\nstore64(&B + 8, 2);\nsyscall(60, f(&B));\n'
 exits k3 8 "K3: \`g<slice<u8>>(0)\` compiles as before (an unbound type argument, 6.7.7 — reported, unchanged)" \
     "${SL}fn g<T>(x: T): i64 { return sizeof(T); }\nfn f(): i64 { return g<slice<u8>>(0); }\nsyscall(60, f());\n"
 exits k4 12 "K4: fn-local \`[T]\` / \`slice<T>\` / \`[*T]\` / \`[u128]\` / \`[T]\` at a generic T still declare" \
