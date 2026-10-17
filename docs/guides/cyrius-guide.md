@@ -6501,7 +6501,10 @@ too, and the second call ran the first's body). A two-parameter instance is
 bracketed: `g2<P<R>, i32>` is `g2$<P$R>$i32` and `g2<P, R<i32>>` is `g2$P$<R$i32>`
 (6.7.14: both were `g2$P$R$i32`, so the second call ran the first's body and
 `Two<P, R<i32>>` took `Two<P<R>, i32>`'s layout). A one-parameter name needs no
-bracket (`Box$P$R`). These names are what a diagnostic and a coverage dump show.
+bracket (`Box$P$R`). These names are what a diagnostic and a coverage dump show. The base
+and every instance parse the same body, but an error in it is reported once, at its token
+(6.7.14; through 6.7.13 it was printed once per instance — `i += 1 2;` in a generic called at
+three types printed its *expected ';'* three times — and a note after it with each).
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`

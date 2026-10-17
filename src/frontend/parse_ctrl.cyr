@@ -258,6 +258,7 @@ fn _ie_arm(S, st): i64 {
 }
 fn _ie_no_else(S): i64 {
     ERR_MSG(S, "an if expression needs an else - its value must come from every path", 68);
+    if (_err_quiet == 1) { return 0; }   # 6.7.14: a repeat printed nothing, nor does its note
     PRSTR("  note: at the start of a statement, `if` is the if statement\n");
     return 0;
 }

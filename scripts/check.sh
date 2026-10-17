@@ -2702,6 +2702,11 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # `: *S` call and a struct value, the refusals, and the tcyr's PB group, x86 / IR / aarch64 / cx / PE.
 # Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_ptr_param_infer.sh"
+# 6.7.14 — an error inside a generic body is printed once, not once per instance (and inline replay): the
+# util.cyr emitters and the shared undefined-name report record (token, identity) and print a repeat as
+# nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,
+# the block-scope note, instance-dependent messages and a per-token control. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_body_error_once.sh"
 # 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
 # the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
 # return — x86 / PE ran on past it, aarch64 / cx hung at it. The issue's table, the blocks, and the
