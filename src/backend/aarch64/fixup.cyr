@@ -726,6 +726,13 @@ fn EMITELF(S): i64 {
     # (0x10000), so the data file offset aligns to 64 KB; the 2 MB data vaddr is a
     # multiple of 64 KB, so p_vaddr ≡ p_offset (mod p_align). dbase MUST equal FIXUP's
     # _wx_data_vaddr(base + text_foff, cp).
+    # The cost is file bytes: the 0-64 KB between the code's end and data_foff are zeros
+    # outside both LOADs' filesz, so a W^X executable is at least ~64 KB (one line,
+    # `syscall(60, 7);`: 65,888 B; 520 B with CYRIUS_WX=0) and its size moves in 64 KB
+    # steps — read code growth from the code LOAD's filesz, not the file size. It is the
+    # price of exact W^X on 4, 16 and 64 KB-page arm64 kernels: the loader maps whole
+    # pages, and only a 64 KB-aligned data offset keeps the code's last page and the
+    # data's first apart on all three (6.7.13's D45 keeps it). CHANGELOG [6.7.14]
     var base = 0x400000;
     var etype = 2;
     if (_pie_mode == 1) { base = 0; etype = 3; }

@@ -80,8 +80,10 @@ fn _wx_active(S): i64 {
 # agnos loader uses 2 MB pages, so 2 MB alignment guarantees the permission split
 # isn't lost to a shared page. The file offset only needs 4 KB alignment (p_align
 # 0x1000): p_vaddr ≡ p_offset (mod 0x1000) holds since both are ≥4 KB-aligned, so the
-# virtual gap (≤2 MB) costs near-zero file bytes. entry = base + 120 (== _entry_base
-# for userland), so FIXUP and EMITELF_USER compute the SAME dbase.
+# virtual gap (≤2 MB) costs at most 4 KB of zero file padding — on x86's 4 KB p_align
+# only: aarch64's 64 KB p_align costs up to 64 KB (its EMITELF_USER; CHANGELOG [6.7.14]).
+# entry = base + 120 (== _entry_base for userland), so FIXUP and EMITELF_USER compute the
+# SAME dbase.
 fn _wx_data_vaddr(S, entry, cp): i64 {
     return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }

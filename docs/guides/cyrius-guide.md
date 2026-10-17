@@ -7268,6 +7268,20 @@ sh tests/gates/memory/heapmap.sh              # Heap map overlap detection
 qemu-system-x86_64 -kernel build/kernel -serial stdio -display none
 ```
 
+### Executable size and W^X
+
+A Linux executable is W^X by default (v6.3.12): the code is one `R E` `PT_LOAD` and the data
+another, `RW `, at a fresh 2 MB-aligned address; `CYRIUS_WX=0` opts out (one `RWE` segment). The
+data segment's file offset is aligned to the target's `p_align`, and the bytes between the end of
+the code and it are zeros outside both segments' file sizes. On x86_64 (`p_align` 4 KB) that is
+under 4 KB: `syscall(60, 7);` builds to 4,448 B. On aarch64 `p_align` is 64 KB, so an aarch64 W^X
+executable is at least ~64 KB (`syscall(60, 7);`: 65,888 B; 520 B with `CYRIUS_WX=0`) and its size
+moves in 64 KB steps — a small code change that crosses a 64 KB boundary adds 64 KB to the file.
+That is the price of exact W^X on 4, 16 and 64 KB-page arm64 kernels: the loader maps whole pages,
+and only a 64 KB-aligned data offset keeps the code's last page and the data's first apart on all
+three. It is kept (6.7.13's D45). To read how much code an aarch64 build gained, read the code
+`LOAD`'s `FileSiz` (`readelf -l -W <bin> | grep LOAD`), not the file size.
+
 ## Targeting Windows (PE) (v6.1.16+)
 
 Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from Linux or macOS via

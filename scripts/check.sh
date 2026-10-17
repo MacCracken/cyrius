@@ -2841,6 +2841,11 @@ _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 # SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
 _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
 
+# 6.7.14 — the aarch64 W^X layout 6.7.13's D45 keeps: two LOADs, the data at a 64 KB-aligned file
+# offset (0x10000 for a one-line program, zero pad before it, p_align 0x10000), the 64 KB step past
+# 64 KB of code, one RWE LOAD under CYRIUS_WX=0; qemu legs SKIP by name. Cross-builds with $CYCC.
+_chk_gate "$ROOT/tests/gates/platform/aarch64_wx_layout_64k.sh"
+
 # 6.7.12 (D1) — a raw syscall literal inside a native-aarch64 region that a compat row renumbers
 # is warned (the number it becomes, what that runs, and the 1000+N spelling or none) and still
 # translated: the filed repro verbatim (qemu exit stays 22), the 1009 control, 39 → 1039, no-row
