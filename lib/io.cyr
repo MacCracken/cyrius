@@ -867,13 +867,14 @@ fn _io_tmp_open(path, fdp): i64 {
     return 0;
 }
 
-# Did an exclusive create of `tmp` fail because the NAME exists? Linux and macOS answer -EEXIST
-# (17 on both); Windows (CREATE_NEW) and agnos (AO_EXCL) refuse with a bare -1, so there the name
-# is asked, not following a final link (_io_name_exists). Any other failure is not retried.
+# Did an exclusive create of `tmp` fail because the NAME exists? Linux, macOS and (since 6.7.14)
+# Windows answer -EEXIST (17) for a file or a link; agnos (AO_EXCL) refuses with a bare -1 and
+# Windows' CREATE_NEW over a DIRECTORY with -EACCES (-13), so for those the name is asked, not
+# following a final link (_io_name_exists). Any other failure is not retried. CHANGELOG [6.7.14]
 fn _io_tmp_taken(tmp, rc): i64 {
     if (rc == 0 - 17) { return 1; }
     #ifdef CYRIUS_TARGET_WIN
-    if (rc == 0 - 1) { return _io_name_exists(tmp); }
+    if (rc == 0 - 13) { return _io_name_exists(tmp); }
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     if (rc == 0 - 1) { return _io_name_exists(tmp); }
@@ -1285,14 +1286,16 @@ fn _io_contain_refusal(who): i64 {
 #     before it CREATE_NEW RESOLVED a dangling symlink and created its target.
 #   · AGNOS: AO_CREAT|AO_EXCL (kernel 1.56.56; file_open maps O_EXCL since 6.6.4). 6.6.9
 #     replaced the non-atomic `file_exists` pre-check that stood here since 6.4.58.
-# Windows and agnos answer a refusal with a bare -1 (no -errno convention), so on those
-# the refusal is CLASSIFIED afterwards: if the name now exists (not following a link) the
-# answer is -17. That check only names the error; it cannot let a create through.
-# CHANGELOG [6.6.9]
+# agnos answers a refusal with a bare -1 (no -errno convention), so there the refusal is
+# CLASSIFIED afterwards: if the name now exists (not following a link) the answer is -17. That
+# check only names the error; it cannot let a create through. Windows answers -17 itself since
+# 6.7.14 (EOPEN_PE maps GetLastError) for a file or a link — but CREATE_NEW over an existing
+# DIRECTORY fails with ERROR_ACCESS_DENIED there (-13; measured on Windows 11 — wine says
+# ERROR_FILE_EXISTS), so a -13 is classified the same way. CHANGELOG [6.6.9] [6.7.14]
 fn file_create_exclusive(path, mode): i64 {
     var fd = file_open(path, O_WRONLY | O_CREAT | O_EXCL, mode);
     #ifdef CYRIUS_TARGET_WIN
-    if (fd == 0 - 1) {
+    if (fd == 0 - 13) {
         if (_io_name_exists(path) == 1) { return 0 - 17; }
     }
     #endif
@@ -1305,9 +1308,10 @@ fn file_create_exclusive(path, mode): i64 {
 }
 
 # Does `path` name anything — a file, a directory or a symlink (dangling or not)? Not
-# following a final link, which is what O_EXCL's EEXIST means. Only file_create_exclusive's
-# error classification uses it, and only on the two targets whose refusal is a bare -1
-# (Windows, agnos); elsewhere it answers 0 and is never called.
+# following a final link, which is what O_EXCL's EEXIST means. Only the exclusive-create error
+# classification uses it (file_create_exclusive, _io_tmp_taken), and only on the two targets
+# whose refusal does not say EEXIST (agnos's bare -1; Windows' -EACCES for a directory);
+# elsewhere it answers 0 and is never called.
 fn _io_name_exists(path): i64 {
     #ifdef CYRIUS_TARGET_WIN
     # GetFileAttributesW does not follow a final reparse point: a dangling link answers.

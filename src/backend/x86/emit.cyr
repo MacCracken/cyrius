@@ -1825,17 +1825,18 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
 }
 
 # 6.7.14 — A FAILED kernel32 FILE CALL ANSWERS A NEGATIVE ERRNO, as on Linux and macOS.
-# ReadFile / WriteFile / SetFilePointerEx return a BOOL, and the reroutes handed back the count /
-# the new offset without looking: a failed read read as end of file, a failed write as 0 bytes
-# written, a failed seek as a seek to offset 0. EREAD_PE, EWRITE_PE and ELSEEK_PE now keep their
-# success answer and, on failure, `call` ONE shared stub (`_pe_w32_errno_site`, 13 bytes a site)
-# that calls GetLastError and maps the Win32 code through ONE table into -errno in rax.
+# ReadFile / WriteFile / SetFilePointerEx return a BOOL and CreateFileW INVALID_HANDLE_VALUE, and
+# the reroutes handed back the count / the new offset / -1 without looking: a failed read read as
+# end of file, a failed write as 0 bytes written, a failed seek as a seek to offset 0, and every
+# failed open was -1 (so never IoNotFound). EREAD_PE, EWRITE_PE, ELSEEK_PE and EOPEN_PE now keep
+# their success answer and, on failure, `call` ONE shared stub (`_pe_w32_errno_site`, 13 bytes a
+# site) that calls GetLastError and maps the Win32 code through ONE table into -errno in rax.
 # Inlined, the table cost ~230 bytes per reroute — measured +156,672 B (+6.4 %) on cycc_win.exe,
 # which has ~670 reroutes — so it is emitted once, after EEXIT, by EPE_ERRNO_STUBS (every x86
 # driver, beside EMACHO_SYSX_STUBS), the way the x86 Mach-O translation stubs are (6.7.12, XLAT-2):
 # a site is a `call .` placeholder kept in the whole-program disp32 registry, because the per-fn
 # NOP compaction moves code after it is emitted, and FIXUP asserts every placeholder was patched
-# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek) and ReadFile's (class
+# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek, open) and ReadFile's (class
 # 1), which calls the table and then applies its end-of-file codes (`_pe_w32_read_rows`).
 # The table is straight-line `cmp ecx, code; cmove eax, edx` rows: edx holds an errno ahead of its
 # codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
@@ -4082,6 +4083,13 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateFileW]
     _pe_iat_fixup_add(S, GCP(S), cf_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    # 6.7.14: INVALID_HANDLE_VALUE answers -errno through GetLastError (ERROR_FILE_NOT_FOUND is
+    # -2, ERROR_FILE_EXISTS -17, ...); it was -1 for every failure. The refused-widen jump lands
+    # AFTER this, so a path that was never passed to CreateFileW keeps its -1 and no stale
+    # GetLastError is read. CHANGELOG [6.7.14]
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0xFF); # cmp rax, -1
+    EB(S, 0x75); EB(S, 0x05);                           # jne +5 (a handle)
+    _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
     _pe_j_land(S, out);
     _pe_path_unframe(S);
     return 0;

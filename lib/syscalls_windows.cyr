@@ -156,14 +156,16 @@ enum OFlags {
     # the file it named. The map now (EOPEN_PE's `_pe_open_attr_flags` + `sys_open` below):
     #   · O_CREAT|O_EXCL → CREATE_NEW + FILE_FLAG_OPEN_REPARSE_POINT. CREATE_NEW never opens
     #     an existing object, so the flag cannot make it open a link; the name exists, so the
-    #     create fails. Race-free, no check. (The raw syscall gets this too.)
+    #     create fails: -EEXIST (-17), or -EACCES (-13) when the name is a directory (Windows
+    #     answers ERROR_ACCESS_DENIED there; file_create_exclusive classifies it). Race-free, no
+    #     check. (The raw syscall gets this too.)
     #   · O_NOFOLLOW → FILE_FLAG_OPEN_REPARSE_POINT, then `sys_open` asks the OPENED HANDLE
     #     (GetFileInformationByHandleEx, FileAttributeTagInfo): a NAME-SURROGATE reparse point
     #     (symlink, junction) is closed and refused with -ELOOP (-40). A junction or a link to a
     #     DIRECTORY is a directory object that CreateFileW refuses without BACKUP_SEMANTICS —
     #     before there is a handle to ask — so a FAILED O_NOFOLLOW open asks the name why, with a
     #     read-only O_DIRECTORY|O_NOFOLLOW probe that only picks the errno (-40 for a surrogate,
-    #     -21 for a real directory under write access, else the original -1). Any OTHER reparse
+    #     -21 for a real directory under write access, else the open's own -errno). Any OTHER reparse
     #     point (OneDrive placeholder, dedup) is reopened normally, as the default taken
     #     2026-09-27 says — those are files, not redirections — and that reopen by name must be
     #     the SAME FILE as the verified handle (file id), or it is refused. With O_TRUNC the open
@@ -173,7 +175,8 @@ enum OFlags {
     #     plus the handle check: a non-directory is -ENOTDIR (-20), a directory opened for
     #     writing (or with O_CREAT/O_TRUNC) is -EISDIR (-21). BACKUP_SEMANTICS is NEVER set
     #     without O_DIRECTORY: it would let O_WRONLY open a directory, so a plain open() of a
-    #     directory stays -1 on Windows (fail-closed; Linux answers a read fd).
+    #     directory stays refused on Windows: -EACCES (-13) since 6.7.14, -1 before (fail-closed;
+    #     Linux answers a read fd).
     # ⚠ The refusals live in `sys_open` (every stdlib open funnels through it). A RAW
     # `syscall(2, p, O_NOFOLLOW, 0)` still never follows a link — the attribute word is the
     # emitter's — but it hands back the LINK's handle instead of -40, and O_TRUNC on it
@@ -217,7 +220,11 @@ fn sys_read(fd, buf, count) {
 # Win32 `dwDesiredAccess` + `dwCreationDisposition` +
 # `dwFlagsAndAttributes` inside the reroute. `mode` has no Win32
 # equivalent and is dropped. Returns a handle usable by
-# sys_read/write/close, or a negative value: -1 for a Win32 failure,
+# sys_read/write/close, or a negative errno: CreateFileW's failure mapped
+# by the reroute since 6.7.14 (-2 not found, -13 access denied — a plain
+# open of a directory too —, -17 exists for O_CREAT|O_EXCL, -22, -36 ...;
+# -1 for a Win32 code with no POSIX peer and for a path that cannot be
+# widened; until 6.7.14 every failure was -1),
 # -40 (-ELOOP) for O_NOFOLLOW on a symlink or junction (to a file or a
 # directory), -20 (-ENOTDIR) / -21 (-EISDIR) for O_DIRECTORY, and -21 for
 # O_NOFOLLOW with write access / O_CREAT / O_TRUNC on a real directory

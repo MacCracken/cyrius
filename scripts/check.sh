@@ -2794,6 +2794,16 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 # under wine too, bounded. Hardware: that .tcyr's threaded rows on cass (red there on 6.7.12).
 _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 
+# 6.7.14 (platform lane, P1) — a FAILED ReadFile / WriteFile / SetFilePointerEx / CreateFileW
+# answers -errno on PE through ONE GetLastError table (a shared stub after EEXIT); it read as end
+# of file / 0 bytes written / a seek to 0 / -1. Axes: the three crossos .tcyr natively (the POSIX
+# oracle); every read / write / seek / open IAT call is followed by its failure check and a call to
+# the shared stub (literal and var-held routes); the stub's rows map exactly the documented Win32
+# codes and ReadFile's keeps 109 / 38 as 0; lib/io.cyr classifies Windows' -13 over a directory;
+# the filed repros and the .tcyr under wine. Hardware: the same .tcyr on cass. Whole-gate SKIP is
+# exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
+
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
 # outside the project on Windows and on macOS arm64, where it used to open the whole path (the
 # name check then the open: a junction planted in between was followed). Axes: 0xF04E

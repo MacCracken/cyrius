@@ -7369,6 +7369,24 @@ Opening files routes to Windows' `CreateFileW`; reading/writing use the real
 `ReadFile`/`WriteFile` (via 0xF001/0xF002 PE reroutes and the POSIX syscall
 interface dispatching them). Paths are widened from UTF-8 to UTF-16LE at call time.
 
+A failure answers a **negative errno**, as on Linux (6.7.14): when `CreateFileW`, `ReadFile`,
+`WriteFile` or `SetFilePointerEx` fails, the reroute reads `GetLastError` and maps it through one
+table — `ERROR_FILE_NOT_FOUND` / `ERROR_PATH_NOT_FOUND` -2 (so `file_open_r` says `IoNotFound`),
+`ERROR_ACCESS_DENIED` / sharing and lock violations -13, `ERROR_INVALID_HANDLE` -9,
+`ERROR_FILE_EXISTS` -17, `ERROR_INVALID_PARAMETER` / `ERROR_NEGATIVE_SEEK` -22, a closed pipe -32,
+a full disk -28, a name too long -36; a code with no POSIX peer is -1. A read that reaches the
+end is 0, and so is a read from a pipe whose writer closed (`ERROR_BROKEN_PIPE`), which is how a
+piped stdin ends. Before 6.7.14 a failed read answered 0 — end of file — a failed write 0 bytes
+written, a failed seek 0 (a seek to the start, while the file pointer did not move), and every
+failed open -1.
+
+| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
+|---|---|---|---|
+| `file_read(-999, buf, 16)` | -9 | 0 (end of file) | -9 |
+| `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
+| `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
+| `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
+
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
 were read, so `O_TRUNC` silently did not truncate and `O_APPEND` silently
@@ -7399,7 +7417,7 @@ Windows, Linux, macOS and aarch64:
 
 | Flags | Linux | Windows (v6.6.9) |
 |---|---|---|
-| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | refused (`file_open` -1, `file_create_exclusive` -17); the link's target is never created |
+| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: `file_open` -13 (`CreateFileW` says `ERROR_ACCESS_DENIED`), `file_create_exclusive` -17 |
 | `O_NOFOLLOW` on a symlink or junction (to a file or a directory) | -40 (-62 macOS) | -40; the target is never opened or truncated |
 | `O_NOFOLLOW` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
 | `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally (the reopen must be the same file) |
@@ -7421,8 +7439,8 @@ handle by file id and refused if the name changed in between. The refusals live 
 which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
 a link, but hands back the link's own handle instead of -40.
 
-⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -1
-on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
+⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -13
+(-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
 `O_DIRECTORY` — set always, it would let `O_WRONLY` open a directory.
 
 Before v6.6.9 all three flags were accepted and ignored: `O_CREAT|O_EXCL` over a dangling

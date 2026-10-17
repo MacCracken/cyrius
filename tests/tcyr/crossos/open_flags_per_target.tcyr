@@ -190,12 +190,9 @@ fn main(): i64 {
     assert_eq(xsymlink(absent, dng), 0, "a DANGLING symlink fixture");
     assert_eq(is_symlink(str_from(dng)), 1, "is_symlink(dangling link) is 1");
     var e1 = file_open(dng, O_WRONLY | O_CREAT | O_EXCL, 420);
-    #ifdef CYRIUS_TARGET_WIN
-    assert_eq(e1, 0 - 1, "O_CREAT|O_EXCL over a dangling link is refused (a bare -1 from CreateFileW)");
-    #endif
-    #ifndef CYRIUS_TARGET_WIN
+    # 6.7.14: Windows too — EOPEN_PE maps CreateFileW's ERROR_FILE_EXISTS through GetLastError;
+    # it was a bare -1. CHANGELOG [6.7.14]
     assert_eq(e1, 0 - 17, "O_CREAT|O_EXCL over a dangling link is -EEXIST");
-    #endif
     if (e1 >= 0) { sys_close(e1); }
     assert_eq(_fsize(absent), 0 - 1, "…and the link's target was NOT created (it was, on Windows)");
     var e2 = file_create_exclusive(dng, 420);
@@ -284,8 +281,10 @@ fn main(): i64 {
     # FILE_FLAG_BACKUP_SEMANTICS, which is set for O_DIRECTORY ONLY — set always, it would let
     # O_WRONLY open a directory. So a plain open of a directory stays refused on Windows (Linux
     # hands back a read fd). Fail-closed, and pinned so BACKUP_SEMANTICS never goes unconditional.
+    # 6.7.14: the refusal is -EACCES (CreateFileW's ERROR_ACCESS_DENIED through GetLastError); it
+    # was a bare -1. Asserted as a refusal, `< 0`. CHANGELOG [6.7.14]
     var pd = file_open(dir, O_RDONLY, 0);
-    assert_eq(pd, 0 - 1, "Windows: a plain O_RDONLY open of a directory stays refused");
+    assert_eq(pd < 0, 1, "Windows: a plain O_RDONLY open of a directory stays refused (-13)");
     if (pd >= 0) { sys_close(pd); }
     #endif
 
