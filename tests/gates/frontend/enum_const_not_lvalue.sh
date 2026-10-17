@@ -15,7 +15,10 @@
 # N11, N12 BUILD and N8-N10 refused only as "undefined variable 'E'"; `_enum_lv_refuse` answering
 # 0 -> N1-N9, N11, N12 BUILD; `_asg_lvalue_refused` without its local early-out -> C1 refused;
 # `_addr_lvalue_refused` without the closure-capture rung -> C2 refused; `_for_step_assign`
-# without its check -> N6, N7 BUILD (and const_checked's L5, L6).
+# without its check -> N6, N7 BUILD (and const_checked's L5, L6). 6.7.14 (run 2026-10-16): the compiler before
+# the bare-const bite (abeb7839) -> B1-B6 RED ("cannot assign to enum constant 'A'"); N1-N12, C1-C4 green.
+# `_asg_lvalue_at` always refusing -> B1, B2, B5, B6 RED; `_enum_qual_store_refused` without its
+# `_asg_pair_at` test -> B3, B4 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -60,10 +63,19 @@ refused n10 "$AD" "N10: &E.A" "${EN}"'fn main(): i64 { var p = &E.A; return 0; }
 refused n11 "cannot take the address of enum constant 'Okv'" "N11: &Okv of a payload variant" 'include "lib/alloc.cyr"\nenum R { Okv(v); Errv(e); }\nfn main(): i64 { var p = &Okv; return 0; }\nsyscall(60, main());\n'
 refused n12 "cannot assign to enum constant 'Sv'" "N12: Sv = 3 on a stack-enum variant" 'enum S: stack { Sv(x); Sn(); }\nfn main(): i64 { Sv = 3; return 0; }\nsyscall(60, main());\n'
 
+# B (6.7.14) — naming an enum constant WITHOUT assigning (`A;`, `A + 1;`, `E.A;`, `E.A + 1;`, a for step `A`)
+# is the syntax error a variable gets there, "expected '='", once (issues/2026-10-08-bare-const-statement-
+# reported-as-assignment.md); it was "cannot assign to enum constant 'A'". N1-N9 keep the refusal.
+refused b1 "2:19: expected '=', got ';'" "B1: A; in a fn" "${EN}"'fn main(): i64 { A; return 0; }\nsyscall(60, main());\n'
+refused b2 "2:20: expected '=', got '+'" "B2: A + 1; in a fn" "${EN}"'fn main(): i64 { A + 1; return 0; }\nsyscall(60, main());\n'
+refused b3 "2:21: expected '=', got ';'" "B3: E.A;" "${EN}"'fn main(): i64 { E.A; return 0; }\nsyscall(60, main());\n'
+refused b4 "2:22: expected '=', got '+'" "B4: E.A + 1;" "${EN}"'fn main(): i64 { E.A + 1; return 0; }\nsyscall(60, main());\n'
+refused b5 "2:53: expected '=', got ')'" "B5: a for step A" "${EN}"'fn main(): i64 { var n = 0; for (var i = 0; i < 3; A) { i = i + 1; n = n + 1; } return n; }\nsyscall(60, main());\n'
+refused b6 "2:2: expected '=', got ';'" "B6: A; at top level" "${EN}"'A;\nsyscall(60, 0);\n'
 exits c1 8 "C1: a local named like an enum constant is a variable" "${EN}"'fn main(): i64 { var A = 1; A = 7; A += 1; var p = &A; return load64(p); }\nsyscall(60, main());\n'
 exits c2 10 "C2: &A in a closure is the capture" 'include "lib/alloc.cyr"\n'"${EN}"'fn main(): i64 { var A = 1; var c = |x| { var p = &A; return load64(p) + x; }; return fncall1(c, 9); }\nsyscall(60, main());\n'
 exits c3 88 "C3: a later top-level var A is a variable (last definition wins)" "${EN}"'var A = 3;\nfn main(): i64 { A = 7; A += 1; var p = &A; return load64(p) * 10 + A; }\nsyscall(60, main());\n'
 exits c4 15 "C4: reads of A and E.A, an array size, a for step on a var" "${EN}"'var g[A];\nfn main(): i64 { var s = 0; for (var i = 0; i < E.A; i += 1) { s = s + 1; } return s + A + E.A; }\nsyscall(60, main());\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: enum_const_not_lvalue — $fails row(s) red"; exit 1; fi
-echo "PASS: enum_const_not_lvalue — an enum constant is not an lvalue (N: =, OP=, & — bare, qualified, top level, a for step), and its namesakes stay variables (C)"
+echo "PASS: enum_const_not_lvalue — an enum constant is not an lvalue (N: =, OP=, & — bare, qualified, top level, a for step), naming one without assigning is expected '=' (B), and its namesakes stay variables (C)"

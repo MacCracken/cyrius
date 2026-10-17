@@ -51,6 +51,10 @@
 #      caller const — builds with its value (each refused "'L' is already declared in this scope"
 #      before), a nested-block call and calls in two fns as before; the replay's const stays invisible
 #      after the call (R10); the nine values again on aarch64 under qemu (R-a64)
+#   B  (6.7.14) a statement or a for step naming a const or an enum constant without `=` / `op =` — `N;`,
+#      `N + 1;`, `N == 5;`, `GREEN;`, `Color.GREEN;`, a local const `L;`, a step `N` — is "expected '='", once
+#      (it was "cannot assign to const 'N'"); B9 the variable it now matches, B10 / B11 a real assignment's
+#      lvalue refusal kept
 #   F  (6.7.14) a field access in a const fn, or on a const, is refused once by its own rule: a field store /
 #      read on a const fn's local or parameter ("a field is not in a const fn: ...", at the `.`; the run-time
 #      compile of the refused body no longer adds "no struct type in scope for 'a'"), a store / read on a
@@ -95,6 +99,10 @@
 # slot-open compiler the same); restoring without clearing -> S17 RED. PARSE_FNCALL's replay ending
 # with a bare `SSDEP` (no `_inl_scope_end`) -> R1, R2, R5-R7, R9 RED (refused, as on the slot-open
 # compiler; the aarch64 leg is built from the tree's src/, so a mutant there reddens R-a64 the same).
+# B (run 2026-10-16): the compiler before the bite (abeb7839) -> B0-B8 RED ("cannot assign to ..."; B6 too);
+# `_asg_lvalue_at` without its `_asg_pair_at` test (always the refusal) -> B0-B3, B5, B6 RED; `_asg_lvalue_at`
+# falling through to the statement's own `expected '='` (no report, no step-over) -> B6 RED (a second error,
+# "undefined variable 'L'"); `_enum_qual_store_refused` without its `_asg_pair_at` test -> B4, B7, B8 RED.
 # F (run 2026-10-16): the compiler before the bite (0095e161) -> F1-F13 RED (F14 / F15 green); `_ce_fld_refused`
 # answering 0 -> F1-F3, F9-F13 RED; `_cst_fld_at` answering 0 -> F4-F8 RED; `_ce_fld_said` never standing down
 # -> F2, F3 RED (the run-time body's "no struct type in scope for 'a'"); the read refused without
@@ -377,8 +385,35 @@ refusedn f12 1 "F12: a const fn's parameter, p.x" "const fn f(p) {\n    return p
 refusedn f13 1 "F13: a local const in a local const's value, const M = L.x;" "fn main() {\n    const L = 5;\n    const M = L.x;\n    return M;\n}\nvar r = main();\n" "3:16: const 'L' has no fields - $FS"
 exits f14 12 "F14: control — a local const L beside a global struct L: L.x stores and reads the global's field, as before" 'struct P { x; y; }\nvar L = P { 0, 0 };\nfn main() {\n    const L = 5;\n    L.x = 7;\n    return L.x + L;\n}\nsyscall(60, main());\n'
 exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
+# B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
+# syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
+# (issues/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
+# L5 / L6 above keep the lvalue refusal for a real `N = ..` / `N += ..`; enum_const_not_lvalue.sh N1-N9 too.
+cat > "$T/b0.cyr" <<'EOF'
+const N = 5;
+enum Color { RED, GREEN }
+fn main(): i64 {
+    N;              # also: N + 1;  N == 5;  GREEN;  Color.GREEN;  for (i = 0; i < 3; N) { }
+    return 0;
+}
+syscall(60, main());
+EOF
+refusedf b0 1 "B0: the filed repro, N; (was \"cannot assign to const 'N'\")" "4:6: expected '=', got ';'"
+BH='const N = 5;\nenum Color { RED, GREEN }\nfn main(): i64 {\n    '
+BT='\n    return 0;\n}\nsyscall(60, main());\n'
+refusedn b1 1 "B1: N + 1;" "${BH}N + 1;${BT}" "4:7: expected '=', got '+'"
+refusedn b2 1 "B2: N == 5;" "${BH}N == 5;${BT}" "4:7: expected '=', got '=='"
+refusedn b3 1 "B3: GREEN; (was \"cannot assign to enum constant\")" "${BH}GREEN;${BT}" "4:10: expected '=', got ';'"
+refusedn b4 1 "B4: Color.GREEN;" "${BH}Color.GREEN;${BT}" "4:16: expected '=', got ';'"
+refusedn b5 1 "B5: a for step N" "${BH}var i = 0; for (i = 0; i < 3; N) { }${BT}" "4:36: expected '=', got ')'"
+refusedn b6 1 "B6: a local const, const L = 3; L; (no \"undefined variable 'L'\" after it)" "${BH}const L = 3; L;${BT}" "4:19: expected '=', got ';'"
+refusedn b7 1 "B7: Color.GREEN + 1;" "${BH}Color.GREEN + 1;${BT}" "4:17: expected '=', got '+'"
+refusedn b8 1 "B8: a for step Color.GREEN" "${BH}var i = 0; for (i = 0; i < 3; Color.GREEN) { }${BT}" "4:46: expected '=', got ')'"
+refusedn b9 1 "B9: control — a variable, var x = 1; x;" "${BH}var x = 1; x;${BT}" "4:17: expected '=', got ';'"
+refusedn b10 1 "B10: control — Color.GREEN = 1 keeps the lvalue refusal" "${BH}Color.GREEN = 1;${BT}" "4:17: cannot assign to enum constant 'GREEN'"
+refusedn b11 1 "B11: control — a for step N += 1 keeps the lvalue refusal" "${BH}var i = 0; for (i = 0; i < 3; N += 1) { }${BT}" "4:37: cannot assign to const 'N'"
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), and a field on a const fn's local or on a const names its rule once (F)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), and a bare const statement is expected '=' (B)"

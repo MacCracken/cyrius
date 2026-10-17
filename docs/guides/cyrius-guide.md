@@ -5487,7 +5487,9 @@ var c2 = Color.BLUE;                 # Namespaced access (v1.11.0+)
 that writes one. Every read of `RED` is its declared value, so before 6.7.3 such a write changed
 nothing a read could see, and `&RED` handed out a dead copy. `&Ctor` of a payload variant is
 refused the same way (it was never the constructor's address). A local `var RED`, a closure's
-capture of one, or a later top-level `var RED` is its own variable and stays assignable.
+capture of one, or a later top-level `var RED` is its own variable and stays assignable. A
+statement that only names one (`RED;`, `Color.RED + 1;`, a `for` step `RED`) assigns nothing: it is
+the syntax error any name gets there, `expected '='` (6.7.14; it said "cannot assign to enum constant").
 
 ## Sum Types & Tagged Unions (v5.8.21+)
 
@@ -6212,7 +6214,9 @@ fn f(v): i64 {
   constant, an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
   (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
-  const context alike (6.7.14: it was blamed on a missing struct declaration).
+  const context alike (6.7.14: it was blamed on a missing struct declaration). A statement that
+  only names it (`N;`, `N + 1;`, a `for` step `N`) assigns nothing: it is the syntax error any
+  name gets there, `expected '='` (6.7.14; it said "cannot assign to const 'N'").
   It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
 - **Top level and inside fns.** Top-level consts are found by one pre-scan, so they may be used
   above their declaration and in any order (a const defined in terms of itself is refused);

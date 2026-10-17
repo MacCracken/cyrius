@@ -10844,6 +10844,28 @@ fn _asg_lvalue_refused(S, noff): i64 {
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
     return _enum_lv_refuse(S, vi, noff, "cannot assign to enum constant ");
 }
+# ⛔ 6.7.14 — the lvalue refusal where an assignment FOLLOWS the name (`=` or an `op =` pair, nothing
+# consumed). A statement or a classic-for step naming a const or an enum constant without one — `N;`,
+# `N + 1;`, `N == 5;`, `GREEN;`, a step `N` — was refused "cannot assign to const 'N'" though nothing was
+# assigned; it is the syntax error a variable gets there, "expected '=', got ';'", reported here so the
+# caller steps the statement over as after the refusal (a local const `L;` parsed on and added
+# "undefined variable 'L'"). 1 = refused. CHANGELOG [6.7.14]
+fn _asg_lvalue_at(S, noff): i64 {
+    if (_asg_pair_at(S) == 1) { return _asg_lvalue_refused(S, noff); }
+    if (_asg_lvalue_is(S, noff) == 0) { return 0; }
+    ERR_EXPECT(S, 4);
+    return 1;
+}
+# 1 = `noff` here is what `_asg_lvalue_refused` refuses (a const, or an enum constant no local hides),
+# nothing printed. Its lookups, in its order.
+fn _asg_lvalue_is(S, noff): i64 {
+    if (_cst_n > 0 || _lc_n > 0) { if (_cst_named(S, noff) == 1) { return 1; } }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVENUMID(S, vi) == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    return 1;
+}
 # `&name` (cursor past the name): the address-of ladder's own order — local, closure capture,
 # global — then the qualified `&E.A` when no global of that name exists.
 fn _addr_lvalue_refused(S, noff): i64 {
@@ -10869,11 +10891,14 @@ fn _enum_qual_lv_refuse(S, bnoff, what): i64 {
     return _enum_lv_refuse(S, vi, vn, what);
 }
 # PARSE_FIELD_STORE, base `bnoff` naming no variable, `.vn` consumed: `E.A = ..` / `E.A OP= ..` on
-# a variant of an enum named E is refused as `A = ..` is, and the statement stepped over.
+# a variant of an enum named E is refused as `A = ..` is, and the statement stepped over. 6.7.14: with no
+# assignment after it (`E.A;`, `E.A + 1;`) it is the syntax error `A;` is, "expected '='" (it said
+# "cannot assign to enum constant 'A'").
 fn _enum_qual_store_refused(S, bnoff, vn): i64 {
     var vi = _enum_variant_in(S, bnoff, vn);
     if (vi < 0) { return 0; }
-    _enum_lv_refuse(S, vi, vn, "cannot assign to enum constant ");
+    if (_asg_pair_at(S) == 1) { _enum_lv_refuse(S, vi, vn, "cannot assign to enum constant "); }
+    else { ERR_EXPECT(S, 4); }
     _cst_skip_decl(S);   # the rest of the statement, to its `;`
     return 1;
 }

@@ -5593,8 +5593,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
         # assignment or compound assignment: already consumed IDENT
         # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
-        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr).
-        if (_asg_lvalue_refused(S, noff) == 1) {
+        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr). 6.7.14: only before an
+        # `=` / `op =` (_asg_lvalue_at).
+        if (_asg_lvalue_at(S, noff) == 1) {
             _cst_skip_decl(S);   # the rest of the statement, to its `;`
             return 0;
         }
