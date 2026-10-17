@@ -3062,12 +3062,14 @@ fn _err_in_sync(S, msg, noff, tail): i64 {
 fn _explicit_generic_call(S, noff, fi): i64 {
     STI(S, GTI(S) + 1);                 # consume `<`
     _ta_pending_gt = 0;
+    _ta_refd = 0;
     # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
     # type-args instantiate → their instance sid; `>>` tail handled).
     var _ta_conc = _parse_one_type_arg(S);
     var _ta_conc1 = 0;
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
     _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
+    if (_ta_refd == 1) { return _gen_call_refd(S, noff); }   # 6.7.14
     # Call the base (the all-i64 instance) only when EVERY arg is i64.
     var _ta_do = 0;
     if (_ta_conc != 0 - 8) { _ta_do = 1; }
@@ -3102,6 +3104,20 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_spec == 0 - 4) { _ta_explicit = 2; }
     if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
     else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+# ⛔ 6.7.14 — AN EXPLICIT CALL WHOSE OWN TYPE ARGUMENT WAS REFUSED (`g<f64v2>(b)`, `g<1>(b)`, `g<[u8]>(b)`) mints no
+# instance: the refused argument read as i64 minted `g$i`, whose parse cleared the panic latch, so its arguments were
+# judged against `p: *i64` too — a second error, D27's "cannot pass 'b' ... in a call to 'g$i'". The base is called the
+# way 6.7.11's refused bound is (`_ta_explicit` 2: not re-inferred, not judged as a stub or a bound), its arguments
+# consumed. The latch is `_ta_refd`, cleared when this call's list opens. CHANGELOG [6.7.14]
+fn _gen_call_refd(S, noff): i64 {
+    _ta_refd = 0;
+    _ta_explicit = 2;
+    var p0 = _panic;
+    _panic = 1;   # the arguments are consumed, not judged: the call's one error is its type argument's
+    PARSE_FNCALL(S, noff);
+    _panic = p0;
     return 0;
 }
 # ⛔ 6.6.17 — A CALL'S RESULT CARRIED ITS LAST ARGUMENT'S POINTER SCALE. The arguments are parsed

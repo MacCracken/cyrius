@@ -13548,6 +13548,7 @@ fn _consume_gt(S): i64 {
 # silently miscompiling. Scalars and struct type-args are unaffected.
 fn _reject_special_type_arg(S, c): i64 {
     if (c <= 0 - 16) {
+        _ta_refd = 1;   # 6.7.14
         ERR_MSG(S, "generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported", 121);
     }
     return 0;
@@ -13576,6 +13577,7 @@ fn _type_arg_leaf(S, noff): i64 {
 # a type argument picks a WIDTH and a layout, so an alias that silently chose one is the bug this
 # replaced. An enum gets its own line: its values are i64, and "unknown type" reads as a typo.
 fn _refuse_type_arg_name(S, noff): i64 {
+    _ta_refd = 1;   # 6.7.14
     if (_dyn_bare_nm != 0) { if (noff == _dyn_bare_nm - 1) { return 0; } }   # 6.7.8: T3 named it
     if (_is_enum_name(S, noff) == 1) {
         ERR_IDENT(S, "", noff, " is an enum, not a type argument — enum values are i64; write i64", 0 - 1);
@@ -13601,9 +13603,10 @@ fn _enum_id_of(S, noff): i64 {
 }
 
 fn _parse_one_type_arg(S): i64 {
-    if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); return 0 - 8; }   # 6.7.7 (R3)
+    if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); _ta_refd = 1; return 0 - 8; }   # 6.7.7 (R3)
     if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): `g<[u8]>` was "unknown type 'enum' as a type argument"
         _sl_err(S, GTI(S), "a slice cannot be a type argument (6.7.8: slices are fn-locals)", "");
+        _ta_refd = 1;
         _sl_ann_skip(S);
         return 0 - 8;
     }
@@ -13639,6 +13642,7 @@ fn _parse_one_type_arg(S): i64 {
 fn _targ_not_name(S): i64 {
     var ti = GTI(S);
     var t = TOKTYP(S, ti);
+    _ta_refd = 1;
     if (t == 105) {
         _dyn_err(S, ti, "u128 cannot be a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)", 0, 0 - 1, 0);
     } elif (_dyn_ebeg(S, ti) == 1) {

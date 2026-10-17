@@ -6445,7 +6445,11 @@ it (v6.6.8; an enum's values are i64, so write `i64`). A token that is no name a
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses
 on (6.7.14; before, the token's value was read as a name — *unknown type 'truct'* — and a
-call's `+ 2>(3)` cascaded).
+call's `+ 2>(3)` cascaded). An explicit call whose type argument is refused — any of the
+above, a vector or `Option` (*generic type-args must be a scalar … or a struct*), a tuple, a
+slice — reports that one error: no instance is minted and its arguments are not judged
+(6.7.14; `g<f64v2>(b)` with `fn g<T>(p: *T)` also refused `b` against a minted `g$i`'s
+`p: *i64`).
 
 **Monomorphization.** Cyrius is i64-everywhere (ADR-002), so a generic
 definition's base *is* its i64 instantiation: the body is emitted once with
