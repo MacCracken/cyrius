@@ -38,10 +38,11 @@ four legs (`for H in ecb ach cass pi`) start in the background beside `check.sh`
 report `SELFHOST_OK` + `LIBTEST_OK` over the `crossos/` subset — **267** files; DERIVE it with
 `find tests/tcyr/crossos -name '*.tcyr' | wc -l`.
 
-⚠ **`LIBTEST_OK` is the full corpus on `ecb`, `ach` and `pi`, the `tests/tcyr/crossos/` subset on
-`cass`** (6.7.12, D8: a host runs the whole corpus by default once its full run is at zero —
-`CO_FULL_HOSTS` in `scripts/cross-os-selfhost.sh`), and the gate prints its own numerator /
-denominator so a subset never reads as the whole. `CYRIUS_CROSS_OS_FULL=1 sh
+⚠ **`LIBTEST_OK` is the full corpus on all four hosts** — `ecb`, `ach` and `pi` from 6.7.12, `cass`
+from 6.7.14 (6.7.12, D8: a host runs the whole corpus by default once its full run is at zero —
+`CO_FULL_HOSTS` in `scripts/cross-os-selfhost.sh`; `CYRIUS_CROSS_OS_FULL=0` forces the
+`tests/tcyr/crossos/` subset), and the gate prints its own numerator / denominator so a subset never
+reads as the whole. `CYRIUS_CROSS_OS_FULL=1 sh
 scripts/cross-os-selfhost.sh <host>` runs the whole corpus on any host. Measured on real hardware
 on the 6.7.12 windows lane's tree (2026-10-15, 590 tcyr): **590 / 590** on `pi`; **589 / 590** on
 `ecb` and `ach` (`platform/pwd_grp.tcyr` — the stdlib's passwd / group readers parsed Darwin's uid -2
