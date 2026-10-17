@@ -5528,9 +5528,10 @@ fn _gvk_warn(S, sti): i64 {
 # stores write (EMIT_STRUCT_FIELD_W: a float literal is its binary64 bits in an f64 field, its
 # binary32 bits zero-extended in an f32 field).
 # Nested struct fields are walked into, as _spi_fields walks them (a constant into a nested field is
-# its first leaf). Not baked: a union, a Str / Vec / u128 leaf, a name or call (a whole struct value
-# is one), a string, a named-field list — anything the walk does not fully understand. Reads tokens
-# only (the cursor and the diagnostics are the replay's). Entry `gi` is marked baked (2).
+# its first leaf); a named-field list by its names (_spc_nfields). Not baked: a union, a Str / Vec /
+# u128 leaf, a name or call (a whole struct value is one), a string — anything the walk does not fully
+# understand. Reads tokens only (the cursor and the diagnostics are the replay's). Entry `gi` is
+# marked baked (2).
 fn _spc_try(S, gi, idx, sid): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
     if (_spc_walk(S, sid, 0) == 0) { return 0; }
@@ -5543,10 +5544,48 @@ fn _spc_try(S, gi, idx, sid): i64 {
 fn _spc_walk(S, sid, d): i64 {
     _spc_ti = GTI(S);
     _spc_ok = 1;
-    _spc_fields(S, sid - 1, 0, d);
+    if (_spc_named(S) == 1) { _spc_nfields(S, sid - 1, d); }
+    else { _spc_fields(S, sid - 1, 0, d); }
     if (_spc_ok == 0) { return 0; }
     if (TOKTYP(S, _spc_ti) != _spc_cl) { return 0; }
     return 1;
+}
+# A named-field list (`name: value`, any order — _STRUCT_INIT_BODY's test): each leaf at its field's FIELDOFF, as the
+# replay stores it. Not baked: a nested struct field (the replay refuses it in this form), an unknown or repeated name,
+# a field left out — the replay reports those. A `kernel;` build's named literal was left to the late replay, so its
+# program read zeros where the positional form read the values. CHANGELOG [6.7.14]
+fn _spc_named(S): i64 {
+    if (TOKTYP(S, _spc_ti) != 2) { return 0; }
+    if (TOKTYP(S, _spc_ti + 1) != 49) { return 0; }
+    return 1;
+}
+fn _spc_nfields(S, si, d): i64 {
+    if (ISUNION(S, si) == 1) { _spc_ok = 0; return 0; }
+    var fc = GETFCOUNT(S, si);
+    var seen = 0;
+    var n = 0;
+    while (_spc_named(S) == 1) {
+        var fi = _spc_fidx(S, si, fc, TOKVAL(S, _spc_ti));
+        if (fi < 0 || fi > 62) { _spc_ok = 0; return 0; }
+        if ((seen & (1 << fi)) != 0) { _spc_ok = 0; return 0; }
+        seen = seen | (1 << fi);
+        if (_spi_is_nested(S, GETFTYPE(S, si, fi)) == 1) { _spc_ok = 0; return 0; }
+        _spc_ti = _spc_ti + 2;
+        _spc_leaf(S, si, fi, FIELDOFF(S, si, fi), d);
+        if (_spc_ok == 0) { return 0; }
+        n = n + 1;
+    }
+    if (n != fc) { _spc_ok = 0; }
+    return 0;
+}
+# The field of struct `si` named by the string at `noff`, or -1.
+fn _spc_fidx(S, si, fc, noff): i64 {
+    var fi = 0;
+    while (fi < fc) {
+        if (STREQTOK(S, GETFNAME(S, si, fi), noff) == 1) { return fi; }
+        fi = fi + 1;
+    }
+    return 0 - 1;
 }
 fn _spc_fields(S, si, base, d): i64 {
     if (ISUNION(S, si) == 1) { _spc_ok = 0; return 0; }
@@ -5631,6 +5670,16 @@ fn _gvi_ann(S, slot): i64 {
         return 0 - GVTYPE(S, slot);
     }
     return 0 - sid;
+}
+# A declaration-zone struct literal's fields, named or positional, as PARSE_STRUCT_INIT reads them (into the
+# global: no frame slot). The replay called the positional walk itself, so the named form the guide teaches,
+# `var p = P { a: 1, b: 2 };`, was "undefined variable 'a'" before the first statement. CHANGELOG [6.7.14]
+fn _gvi_struct_body(S, idx, sid): i64 {
+    var sv = _sl_base_li;
+    _sl_base_li = 0 - 1;
+    _STRUCT_INIT_BODY(S, idx, sid);
+    _sl_base_li = sv;
+    return 0;
 }
 # Every leading `*` of the annotation, as pass 1's `_ptr_annot` steps them: 1 = there was one. It read
 # one, so `**i64` left the cursor on `i64` and `*( .. )` inside its parentheses ("expected '='"). CHANGELOG [6.7.14]
@@ -5939,7 +5988,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 # (R5, v6.4.15) — this global-init REPLAY was the parallel copy
                 # that had to take the fix separately.
                 _spc_try(S, gi, idx, sid);   # 6.6.16 (C6): an all-constant literal is baked
-                _emit_struct_positional_init(S, idx, sid);
+                _gvi_struct_body(S, idx, sid);   # 6.7.14: named or positional
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
                 _gv_slvar(S, idx);

@@ -1,0 +1,59 @@
+# zone_named_struct_literal.tcyr — a NAMED-field struct literal initialises a declaration-zone global (6.7.14).
+#
+# THE DEFECT (measured back to cc5 5.11.69, every target). The declaration zone (top level, before the first
+# top-level statement) is replayed by EMIT_GVAR_INITS, whose struct-literal arm called the POSITIONAL walk
+# itself: `var p = P { a: 1, b: 2 };` parsed `a` as an expression — "undefined variable 'a'" + "unexpected
+# ':'", no binary — while the same literal in a fn or after the first statement compiled. The guide's own
+# Structs example (`var q = Point { x: 10, y: 20 };`) failed as written. The replay now reads the literal
+# through _STRUCT_INIT_BODY, as PARSE_STRUCT_INIT does, and an all-constant named literal is baked into the
+# image like a positional one (_spc_nfields: a `kernel;` build's program sees it).
+# (issues/2026-10-09-declaration-zone-named-struct-literal-refused.md)
+#
+# WHY A CROSS-HOST TEST: the replay's stores (and the baked image) are emitted per backend — x86_64 ELF,
+# Mach-O, PE, aarch64, cx. On a compiler without the fix this file does not compile.
+include "lib/assert.cyr"
+
+struct ZnP { a; b; }
+struct ZnPoint { x; y; }
+struct ZnN { a: i8; b: i16; c: i32; d: i64; }
+struct ZnF { x: f64; y: f32; n: i16; }
+enum ZnE { ZN_A = 4; ZN_B = 9; }
+
+# n1, the filed repro.
+var znp = ZnP { a: 1, b: 2 };
+# The annotated form, fields out of order.
+var znq: ZnP = ZnP { b: 2, a: 1 };
+# g816, the guide's Structs example as written.
+var zgp = ZnPoint { 10, 20 };
+var zgq = ZnPoint { x: 10, y: 20 };
+var zgsum = zgp.x + zgp.y;
+# Narrow fields, out of order, then a neighbour: each leaf at its own width and offset.
+var znn = ZnN { d: 0x0102030405060708, c: 0x11223344, b: 0x5566, a: 0x77 };
+var znafter = 99;
+# Float fields (f64 bits, f32 rounded) and enum constants.
+var znf = ZnF { n: 3, y: 1.5, x: 2.5 };
+var zne = ZnP { b: ZnE.ZN_B + 1, a: ZN_A * 2 };
+# A run-time element (not baked: stored by the replay).
+fn zn_six(): i64 { return 6; }
+var znr = ZnP { b: zn_six(), a: 1 };
+
+assert_eq(znp.a, 1, "n1: a");
+assert_eq(znp.b, 2, "n1: b (the filed exit 2)");
+assert_eq(znq.a, 1, "annotated: a");
+assert_eq(znq.b, 2, "annotated: b");
+assert_eq(zgsum + zgq.y, 50, "g816: the guide example exits 50");
+assert_eq(zgq.x, 10, "g816: q.x");
+assert_eq(znn.a, 0x77, "narrow i8 field");
+assert_eq(znn.b, 0x5566, "narrow i16 field");
+assert_eq(znn.c, 0x11223344, "narrow i32 field");
+assert_eq(znn.d, 0x0102030405060708, "i64 field");
+assert_eq(znafter, 99, "the next global is intact");
+assert_eq(load64(&znf), 0x4004000000000000, "f64 field: 2.5's bits");
+assert_eq(load32(&znf + 8), 0x3FC00000, "f32 field: 1.5's binary32 bits");
+assert_eq(znf.n, 3, "i16 field after the floats");
+assert_eq(zne.a, 8, "enum constant expression ZN_A * 2");
+assert_eq(zne.b, 10, "qualified enum constant ZnE.ZN_B + 1");
+assert_eq(znr.a, 1, "run-time element literal: a");
+assert_eq(znr.b, 6, "run-time element literal: b = zn_six()");
+
+var r = assert_summary();

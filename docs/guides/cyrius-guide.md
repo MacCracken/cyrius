@@ -1201,11 +1201,9 @@ var a = Point { 1, 2 };
 var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
 
-⚠ Known defect (6.7.9): the **named** literal is refused in the declaration section — at top level
-before the first top-level statement, `var q = Point { x: 10, y: 20 };` reports `undefined variable
-'x'`. It works inside a fn and after the first top-level statement; in the declaration section,
-write the positional form (`Point { 10, 20 }`). Tracked in `docs/development/issues/` (the declaration-zone named struct
-literal).
+Both forms initialise a global anywhere at top level and a local in a fn. Before 6.7.14 the **named**
+form was refused in the declaration section (top level, before the first top-level statement):
+`undefined variable 'x'`.
 
 A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
 section says about a struct value holds for it. See [Tuples](#tuples).
