@@ -46,7 +46,8 @@
 #      R15 `f().0` on a multi-value call: the refusal says how to read the values
 #      R16 a capture refused: a struct / vector callee, an arity or element-class disagreement, > 3 elements, a
 #         `: f64` callee into a non-f64 element, an unchecked callee into a bool element; a one-value callee, a
-#         wrapped call, `f()?`, `callptr` and a call that is not the whole value are R12 ("not a tuple")
+#         wrapped call, `f()?` and a call that is not the whole value are R12 ("not a tuple"); R16cp (6.7.14)
+#         `callptr(fp, ..)` captured in every spelling, its callee unknown
 #      R17i-l a multi-value call stored into a tuple FIELD: bind it first
 #      R18 `a, b = f()` targets that are no plain variable, > 3, a duplicate, a const / enum constant, a struct /
 #         tuple / vector / array / u128 / slice / f32 target, a bool target from a non-bool value, an undefined
@@ -884,8 +885,8 @@ refused r15a "$R15" "R15a: \`return mk(1).0;\`" "${MK}fn f(): i64 { return mk(1)
 refused r15b "$R15" "R15b: in an operand" "${MK}fn f(): i64 { var x = mk(1).0 + 1; return x; }\nsyscall(60, f());\n"
 refused r15c "it returns 2 values - bind them first, \`var t: (i64, f64) = B_mk(..);\`" "R15c: a method's result (its declared values spelled)" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
 # R16 — a capture refused, mirroring the destructure. Its own texts for a callee class or element that
-# disagrees; a one-value callee, a wrapped call, \`f()?\`, \`callptr\` or any other value is no capture at
-# all — the tuple's "not a tuple" refusal (R12).
+# disagrees; a one-value callee, a wrapped call, \`f()?\` or any other value is no capture at all — the
+# tuple's "not a tuple" refusal (R12). (\`callptr\` was R16o until 6.7.14: R16cp.)
 refused r16a "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16a: an f64 value into an i64 element" "${MK}${MF}${F5}    var t: (i64, i64) = mkf(1);${E5}"
 refused r16b "${CAP}mk' into tuple (f64, f64) - it returns 2 values, (i64, i64)" "R16b: an i64 value into an f64 element" "${MK}${F5}    var t: (f64, f64) = mk(1);${E5}"
 refused r16c "${CAP}mk' into tuple (bool, i64) - it returns 2 values, (i64, i64)" "R16c: a non-bool value into a bool element" "${MK}${F5}    var t: (bool, i64) = mk(1);${E5}"
@@ -900,7 +901,6 @@ refused r16k "$I12 't' with a value that is not a tuple" "R16k: a provably one-v
 refused r16l "$I12 't' with a value that is not a tuple" "R16l: a wrapped call \`(mk(1))\` (the destructure refuses it too)" "${MK}${F5}    var t: (i64, i64) = (mk(1));${E5}"
 refused r16m "$I12 't' with a value that is not a tuple" "R16m: \`f()?\` (one value)" "enum Res: stack { Ok(v); Err(e); }\nfn sok(x) { return Ok(x); }\nfn g(): i64 { var t: (i64, i64) = sok(1)?; return Ok(t.0); }\nsyscall(60, 0);\n"
 refused r16n "$I12 't' with a value that is not a tuple" "R16n: a call that is not the whole value" "${MK}${F5}    var t: (i64, i64) = mk(1) + 1;${E5}"
-refused r16o "$I12 't' with a value that is not a tuple" "R16o: \`callptr\`" "${MK}${F5}    var p = 0;\n    var t: (i64, i64) = callptr(p, 1);${E5}"
 refused r16p "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16p: \`t = f();\` into an existing tuple" "${MK}${MF}${F5}    var t: (i64, i64);\n    t = mkf(1);${E5}"
 refused r16q "$A12 't'" "R16q: \`t = (mk(1));\`, wrapped (R12)" "${MK}${F5}    var t: (i64, i64);\n    t = (mk(1));${E5}"
 refused r16r "${CAP}mk' into tuple (i64, f64) - it returns 2 values, (i64, i64)" "R16r: a declaration-zone capture (the replay judges the callee)" "${MK}var G: (i64, f64) = mk(1);\nsyscall(60, 0);\n"
@@ -937,6 +937,26 @@ refused4 r16r2b "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R1
 refused4 r16r2c "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2c: a declaration-zone capture" "fn g2(x) { ret2(x, 1); }\nvar G: (i64, i64, i64) = g2(4);\nsyscall(60, 0);\n"
 refused4 r16r2d "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2d: \`t = g2(..);\` into an existing 3-tuple" "fn g2(x) { ret2(x, 1); }\n${F5}    var t: (i64, i64, i64);\n    t = g2(4);${E5}"
 exits4 r16r2e 41 "R16r2e: \`var t: (i64, i64) = g2(4);\` (the matching count) still captures" "fn g2(x) { ret2(x, 1); }\nfn main(): i64 { var t: (i64, i64) = g2(4); return t.0 * 10 + t.1; }\nsyscall(60, main());\n"
+# R16cp (6.7.14) — \`callptr(fp, ..)\` IS A CALL TO THE CAPTURE, as to the destructure since 6.7.13 (\`_dt_call_open_cp\`;
+# issues/2026-10-15-tuple-capture-of-callptr-refused.md): its callee is unknown, so its count is not judged — as for
+# \`fncallN\`, its lowering, which already captured. Each spelling was R12 "not a tuple" on every target (R16o until
+# 6.7.14). Mutations (scratch trees, the gate run from each, every leg; run 2026-10-17): the tree before (0d0a054d) ->
+# R16cpa-R16cpf refused, R16cpj R16cpk the R12 text, A1-A7 (TV_CP); \`_tup_cap_check\` back to \`_dt_call_open\` ->
+# R16cpa-R16cpf, R16cpj, R16cpk, A1-A7; \`_tup_gci_call\` back, or \`_gvi_cap_tok\` without its \`callptr\` arm -> R16cpb,
+# A1-A7; \`_tup_asg\` without its \`callptr\` arm -> R16cpd, R16cpe, A1-A7; \`_tcap_callee_pr\` without it -> R16cpj,
+# R16cpk (no callee named).
+CPT='fn two(a): (i64, i64) { return (a, a + 1); }\n'
+exits4 r16cpa 6 "R16cpa: the issue's \`var t: (i64, i64) = callptr(fp, 5);\` verbatim" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+exits4 r16cpb 56 "R16cpb: a declaration-zone \`var G: (i64, i64) = callptr(fp, 5);\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = callptr(fp, 5);\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16cpc 56 "R16cpc: ... a global after the first statement" "${CPT}var fp = &two;\nsyscall(1, 1, \"\", 0);\nvar G: (i64, i64) = callptr(fp, 5);\nsyscall(60, G.0 * 10 + G.1);\n"
+exits4 r16cpd 6 "R16cpd: \`t = callptr(fp, 5);\` into an existing tuple" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64);\n    t = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+exits4 r16cpe 112 "R16cpe: \`G = callptr(fp, 5);\` at top level, and a classic-for step \`t = callptr(fp, i)\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = (0, 0);\nG = callptr(fp, 5);\nfn f(): i64 {\n    var t: (i64, i64);\n    for (var i = 0; i < 2; t = callptr(fp, i)) { i = i + 1; }\n    return t.0 * 10 + t.1;\n}\nsyscall(60, G.0 * 10 + G.1 + f() + 33);\n"
+exits4 r16cpf 67 "R16cpf: a 3-tuple through \`callptr\`" "fn three(a): (i64, i64, i64) { return (a, a + 1, a + 2); }\nfn main(): i64 {\n    var fp = &three;\n    var t: (i64, i64, i64) = callptr(fp, 5);\n    return t.0 * 100 + t.1 * 10 + t.2;\n}\nsyscall(60, main() - 500);\n"
+refused4 r16cpg "$I12 't' with a value that is not a tuple" "R16cpg: \`callptr(fp, 5) + 1\` is no capture (R12)" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = callptr(fp, 5) + 1;\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cph "$A12 't'" "R16cph: ... \`t = callptr(fp, 5) + 1;\`" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64) = (0, 0);\n    t = callptr(fp, 5) + 1;\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cpi "$I12 'G' with a value that is not a tuple" "R16cpi: ... a declaration-zone \`= callptr(fp, 5) + 1;\`" "${CPT}var fp = &two;\nvar G: (i64, i64) = callptr(fp, 5) + 1;\nsyscall(60, G.1);\n"
+refused4 r16cpj "${CAP}callptr' into tuple (bool, i64) - element 0 is a bool, and the call does not declare that value bool" "R16cpj: an unknown callee into a bool element (as \`fncall1\`'s)" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (bool, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
+refused4 r16cpk "${CAP}callptr' into tuple (i64, i64, i64, i64) - a call returns at most 3 values" "R16cpk: 4 elements" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64, i64, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
 # ZG (B4 review) — THE DECLARATION ZONE READS A GENERIC CALL BY ITS TOKENS. Pass 1 sizes a zone global before
 # the fns below it are declared, and read `pk<i64, i64>(..)` with `pk` declared below as a comparison: the comma
 # between its type arguments was a tuple comma there and none in the replay. ZG1 / ZG2 compiled before tuples (base

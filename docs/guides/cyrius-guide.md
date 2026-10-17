@@ -3285,7 +3285,9 @@ fn capture(): i64 {
 ```
 
 The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
-one whole call — `f(..)`, `g<T>(..)` or `x.m(..)` — and nothing around it. A callee declared
+one whole call — `f(..)`, `g<T>(..)`, `x.m(..)`, or a call through a fn pointer, `fncallN(fp, ..)` or
+`callptr(fp, ..)` (6.7.14: `var t: (i64, i64) = callptr(fp, 5);`, `t = callptr(..)` and a global's were
+refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it. A callee declared
 `: (T1, T2[, T3])` is checked element by element: its arity must equal the tuple's, an `f64`
 element takes an `f64` value, a `bool` element a declared `bool`, an `i64` element any other
 value. A callee that declares no values — an undeclared `return (a, b)`, `ret2`, a `: stack`

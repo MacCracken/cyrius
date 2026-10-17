@@ -4476,6 +4476,7 @@ fn _asg_struct_dst(S, noff): i64 {
 # the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
 fn _tup_asg(S, noff, term): i64 {
     if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
+    if (PEEKT(S) == 137) { return _tup_asg_call(S, noff, term); }   # 6.7.14: `t = callptr(..);`
     if (PEEKT(S) != 10) { return 0; }
     var st = GTI(S);
     var lp = _tup_lit_at(S, st);

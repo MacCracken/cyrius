@@ -3649,7 +3649,7 @@ fn _tup_cap_single(S, fi): i64 {
 # cursor kept); 1 = a capture (the call is the cursor's); 2 = a refused one, reported and the call
 # skipped (cursor on `term`), so the caller still declares / leaves the tuple and the parse goes on.
 fn _tup_cap_check(S, sid, term): i64 {
-    var o = _dt_call_open(S);
+    var o = _dt_call_open_cp(S);   # 6.7.14: `callptr(..)` too. CHANGELOG [6.7.14]
     if (o < 0) { return 0; }
     var e = _call_close(S, o) + 1;
     if (TOKTYP(S, e) != term) { return 0; }
@@ -3710,11 +3710,11 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (sid == 0) {
         w = "multiple values";
         PRSTR(": cannot re-assign from '");
-        PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+        _tcap_callee_pr(S, ct);
         PRSTR("'");
     } else {
         PRSTR(": cannot capture '");
-        PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+        _tcap_callee_pr(S, ct);
         PRSTR("' into tuple ");
         PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     }
@@ -3750,6 +3750,12 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     _err_excerpt(S);
     _had_error = 1;
     return 2;
+}
+# The capture's callee as written: its name, or `callptr` (6.7.14: a builtin token, no name).
+fn _tcap_callee_pr(S, ct): i64 {
+    if (TOKTYP(S, ct) == 137) { PRSTR("callptr"); return 0; }
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    return 0;
 }
 # THE DRAIN, right after the call (its first value in rax): every value pushed BEFORE any store — rax,
 # rdx, then r3 for a third (`EMOVRA_RDX` leaves r3 intact) — so nothing clobbers rdx / r3 first.
@@ -6090,13 +6096,19 @@ fn _gvi_pair_bind(S): i64 {
     STI(S, sv);
     return 0;
 }
+# A capture's first token: a name, or `callptr` (6.7.14; `_dt_call_open_cp`). CHANGELOG [6.7.14]
+fn _gvi_cap_tok(S): i64 {
+    if (PEEKT(S) == 2) { return 1; }
+    if (PEEKT(S) == 137) { return 1; }
+    return 0;
+}
 # 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
 # global inline, `_tup_gci`): its constant elements baked into the image (`_spc_try`, the struct
 # literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
 # (`;` consumed), 0 = not a whole literal (the replay goes on).
 fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     if (_gvi_dyn(S, gi, idx, gps, sti) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in place
-    if (PEEKT(S) == 2) {   # 6.7.7 (T5): a capture
+    if (_gvi_cap_tok(S) == 1) {   # 6.7.7 (T5): a capture
         if (_gvi_tup_cap(S, gi, idx, gps, sti, noff) == 1) { return 1; }
         return _gvi_tup_odd(S, gi, idx, gps, sti, noff);
     }
@@ -6683,7 +6695,7 @@ fn _tup_gci_in(S, sid, ann): i64 {
 # below): the tuple, else -1.
 fn _tup_gci_call(S, sid): i64 {
     if (_tup_is(S, sid) == 0) { return 0 - 1; }
-    var o = _dt_call_open(S);
+    var o = _dt_call_open_cp(S);   # 6.7.14: `callptr(..)` too. CHANGELOG [6.7.14]
     if (o < 0) { return 0 - 1; }
     if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0 - 1; }
     return sid;
@@ -8104,10 +8116,7 @@ fn _rcv_ann_pr(S, ann, eq): i64 {
 fn _dt_rhs_check(S): i64 { return _dt_rhs_check_t(S, 5); }
 # ... ending at `term` (6.7.7, T5: `;`, or a classic-for step's `)` for `a, b = f()`).
 fn _dt_rhs_check_t(S, term): i64 {
-    var sc = _dt_call_open(S);
-    # 6.7.13: `callptr(fp, ..)` is a call (the guide's Multi-Return list names it), lowered as `fncallN`:
-    # no fn to judge its count by (`_dt_call_fn` answers -1). CHANGELOG [6.7.13]
-    if (sc < 0) { if (PEEKT(S) == 137) { if (TOKTYP(S, GTI(S) + 1) == 10) { sc = GTI(S) + 1; } } }
+    var sc = _dt_call_open_cp(S);   # 6.7.13: `callptr(fp, ..)` too. CHANGELOG [6.7.13]
     if (sc < 0) {
         ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         sc = GTI(S) + 1;
@@ -8241,6 +8250,16 @@ fn _dt_call_open(S): i64 {
     var o = _tup_gopen(S, ti);   # 6.7.7 (B4 review): `_gcall_open`, but by its tokens in the zone's pass 1
     if (o >= 0) { return o; }
     if (_tok_method_open(S, ti) == 1) { return ti + 3; }
+    return 0 - 1;
+}
+# ... or `callptr(fp, ..)`, the multi-value call the destructure and the tuple capture take (the guide's
+# Multi-Return list names it; `fncallN`, its lowering, already captured): a call whose callee is unknown
+# (`_dt_call_fn` answers -1), so its count is not judged. 6.7.13 gave the destructure this arm; the
+# capture (`var t: T = callptr(..)`, `t = ..`, both top-level zones) was "not a tuple". CHANGELOG [6.7.14]
+fn _dt_call_open_cp(S): i64 {
+    var o = _dt_call_open(S);
+    if (o >= 0) { return o; }
+    if (PEEKT(S) == 137) { if (TOKTYP(S, GTI(S) + 1) == 10) { return GTI(S) + 1; } }
     return 0 - 1;
 }
 # ...and the fn it REACHES, whose return types type the bindings: a generic's instance
