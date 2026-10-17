@@ -1868,14 +1868,14 @@ done
 # ⛔ The user's decision of 2026-10-16 (D46): a store is judged by the call it starts with (6.7.7), and a redundant
 # outer wrap does not select another rule. `var v = (f(7) + 1);`, `h.a = (f(7) + 1);`, `x = (f(7) * 2);` kept the
 # tag in silence (the filed repro exited 110 on x86_64 / aarch64 / cx / PE) where the unwrapped spelling is refused
-# "bind both": D19 A (axis PW) peeled a wrap around the call ALONE. `_pair_vwrap` peels parentheses around the
+# "bind both": 6.7.13's D19 A (axis PW) peeled a wrap around the call ALONE. `_pair_vwrap` peels parentheses around the
 # whole value (closing right before `;` `)` `,` `}`, no tuple literal) and asks about the inside's first token, at
 # the two refusal sites only (`_refuse_lossy_pair`, `_refuse_single_pair_bind`) — every store, both top-level
 # zones, a for step, a struct-literal element, an if-expression branch. `x = (32 + f(7));` keeps the tag (the
 # operand rule, unchanged), `(f(7)? + 1)` propagates (`?` scanned from the inside), `(f(7) + 1) * 2` is no whole
 # wrap. (issues/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) The legs are axis QF's.
 # Mutations (scratch trees, CYCC= the mutant, each row run alone on every leg, run 2026-10-17): the tree before
-# (0e9a612d) -> PV1 PV3-PV11 (each built; PV4's `((f(7)) + 1)` too, which D19 does not peel); `_refuse_lossy_pair`
+# (0e9a612d) -> PV1 PV3-PV11 (each built; PV4's `((f(7)) + 1)` too, which 6.7.13's D19 does not peel); `_refuse_lossy_pair`
 # without `_pair_vwrap` -> PV1 PV7-PV11; `_refuse_single_pair_bind` without it -> PV1 PV3-PV6; `_pair_vwrap_q`
 # without its tuple-literal test -> PV13; without its value-end test -> PV14; the q outer parentheses counted
 # as all m (the run of `)` after the call ignored) -> PV4; the tree before -> PV15 accepted (--syntax-only, x86_64).
@@ -1904,7 +1904,7 @@ qf_run "x = (32 + f(7)); keeps the tag, as x = 32 + f(7); does (the operand rule
 printf '%s\nfn t(): i64 { var v = ((f(7) + 1)); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
 qf_refuse "var v = ((f(7) + 1)); two wraps around the value" axisPV3 "4:21"
 printf '%s\nfn t(): i64 { var v = ((f(7)) + 1); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
-qf_refuse "var v = ((f(7)) + 1); the inside judged as (f(7)) + 1 is (D19)" axisPV4 "4:21"
+qf_refuse "var v = ((f(7)) + 1); the inside judged as (f(7)) + 1 is (6.7.13's D19)" axisPV4 "4:21"
 printf '%s\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"
 qf_refuse "var v = (f(7) + 1); in the declaration zone" axisPV5 "4:7"
 printf '%s\nsyscall(1, 1, "", 0);\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"

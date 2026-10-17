@@ -1342,7 +1342,7 @@ fn _pair_vwrap(S, st): i64 {
         if (TOKTYP(S, e + r) != 11) { break; }
         r = r + 1;
     }
-    if (r == m) { return 0 - 1; }   # parentheses around the call alone: D19's (`_pair_unwrap`)
+    if (r == m) { return 0 - 1; }   # parentheses around the call alone: 6.7.13's D19 (`_pair_unwrap`)
     return _pair_vwrap_q(S, st, m - r);
 }
 # ... the q outer parentheses at `st` wrap the whole value: the inside's first token, else -1.
