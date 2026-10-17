@@ -3867,7 +3867,12 @@ a global — is refused once, by name: `a value-form vector argument to 'lanes' 
 or a call declared to return it (..) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
 refused as on the other targets (`value-form SIMD arg must be a 16-byte vector`), a pointer word
 holding a vector's address too (`var pv: *f64v2 = &w; lanes(pv)`, `var p = &w; lanes(p)`) — pass
-the vector local, `lanes(w)`. ⚠ Through 6.7.12 a call result was refused on x86_64 / aarch64 / cx
+the vector local, `lanes(w)`. Win64 takes exactly these sources (6.7.14): a vector local of another
+type into a 16-byte parameter (an f64v4 or an f32v8 into `x: f64v2`, an f64v2 into `x: f32v4`) and a
+struct local are refused with the class words above (`.. must be a 16-byte vector`, `.. type mismatch
+(callee expects f32v4)`), a struct call result, `*ps` and an expression led by a name (`lanes(q +
+1)`) with the `got ..` words — through 6.7.13 they compiled there and the callee read whatever bytes
+the address held (or the expression's value as the address). ⚠ Through 6.7.12 a call result was refused on x86_64 / aarch64 / cx
 with `value-form SIMD arg: IDENT not found as a local` and a cascaded second error (`expected ';',
 got number 4`), and on Win64 it compiled to a page fault (lane 0 taken as the vector's address) — as
 did the word local there; the pointer word ran there (Win64 passes the parameter by address, so the

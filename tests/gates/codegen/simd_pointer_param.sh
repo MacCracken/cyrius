@@ -63,7 +63,7 @@
 # pushed lane 0's (`load32(&v + 8)` read 0 on x86_64 / IR=3 / aarch64 / cx / PE; 38 is right). Class 10 takes f64v4's
 # 32-byte routing in both scans (mask code 2; Win64's 32-byte copy-in); the mask has no fourth code, so the argument
 # check reads the parameter's own type from the definition (`_pv32_param`), on Win64's address push too
-# (`_sarg_pe_v32`).
+# (`_sarg_pe_v32`; 6.7.14: folded into `_sarg_pe_vform`, the Win64 value-form gate below).
 #   V8  the filed repro verbatim: exit 38 on x86_64 / IR=3 / aarch64 / cx / PE (0 before)
 #   VY1 / VY2 an f64v4 local into `v: f32v8`, an f32v8 local into `v: f64v4`: one error line, "value-form SIMD arg type
 #      mismatch (callee expects f32v8 / f64v4)"; VYw1 / VYw2 the same on PE (both compiled there: Win64 checked no
@@ -155,7 +155,8 @@
 # the call into a frame temp the vector second pass loads (`_sar_src` / `_sar_vcall`); the inline replay receives it
 # into the parameter's slots (`_inl_simd_arg`); Win64 passes the temp's address (`_sarg_vec_call` for a value-form
 # parameter, `_pvf_param`). Any other source that is no local is refused once by name, the argument skipped (no
-# cascade), and on PE a word into a value-form parameter is refused as on the other three (`_sarg_pe_vword`, pw.cyr).
+# cascade), and on PE a word into a value-form parameter is refused as on the other three (`_sarg_pe_vword`, pw.cyr;
+# 6.7.14: folded into `_sarg_pe_vform`).
 #   VC1 / VC2 the filed repro verbatim (42) and `f64v2_add(a, mkv(3, 4))` (46) on x86_64 / IR=3 / aarch64 / cx / PE
 #   VZ1-VZ4 on x86_64 / aarch64 / cx / PE, each one line: a call of another vector type (A2's words), a top-level call
 #      (D40's words), `lanes(5)` (no 'expected ;'), pw.cyr's word local ("must be a 16-byte vector"; PE compiled it: 5)
@@ -696,6 +697,73 @@ if [ "$WINE" = 1 ]; then
         "${VCH}fn main(): i64 { return lanes(nosuch); }\n${E}" pe "$VZ3F"
 fi
 
+# ⛔ 6.7.14 — ON WIN64 A VALUE-FORM VECTOR PARAMETER TAKES WHAT SYSV'S `_sar_src` TAKES (`_sarg_pe_vform`): the struct
+# arms took its argument there (Win64 passes it by address, under the struct mask), so a vector local of another type
+# compiled and the callee read garbage, where x86_64 / aarch64 / cx
+# refuse each by name. Filed: docs/development/issues/2026-10-16-pe-16-byte-value-form-vector-argument-unchecked.md
+#   VYw3-VYw5 the first issue's three probes on PE (an f64v4 / an f64v2 / an f32v8 local into v: f64v2 / v: f32v4 /
+#      v: f64v2: PE exited 2 / 0 / 3): exactly x86_64's one error line, word for word
+#   VYwk the control: an f64v2 local into v: f64v2 exits 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane; each change alone in a scratch copy of the tree, this gate run
+#   there with CYCC=<its 2-stage mutant>; measured):
+#   M-PV0 the fix reverted (6.7.13's `_sarg_pe_v32` / `_sarg_pe_vword`) -> RED 3: VYw3-VYw5 (PE compiled)
+#   M-PV1 `_sarg_pe_vform` answering -1                         -> RED 9: VYw3-VYw5, and VYw1 VYw2 VZ3pe VZ4pe (compiled:
+#       the 32-byte check and D30's word refusal are folded into it), VZw1 VZw2 (the value parse's own line); and
+#       simd_return_shapes.sh win64 Q3
+#   M-PV2 its local arm without `_simd_arg_typecheck`           -> RED 6: VYw1 VYw2 VYw3-VYw5 VZ4pe (compiled); and
+#       simd_return_shapes.sh win64 Q3
+#   M-PV3 `_spv_skip` parsing the refused argument (no skip)    -> RED 2: VZw1 VZw2 (two error lines each)
+# pe_same <name> <what> <src-file> <lines>: x86_64 and PE both refuse <src-file>, PE's error lines are x86_64's word for
+# word (line:col included), there are <lines> of them, and PE writes no binary
+pe_same() {
+    rx=0; rp=0
+    timeout 60 "$CC" < "$3" > "$D/$1.x86" 2> "$D/$1.x86.err" || rx=$?
+    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$3" > "$D/$1.exe" 2> "$D/$1.pe.err" || rp=$?
+    grep '^error' "$D/$1.x86.err" > "$D/$1.x86.e" || true
+    grep '^error' "$D/$1.pe.err" > "$D/$1.pe.e" || true
+    nx=$(wc -l < "$D/$1.x86.e"); np=$(wc -l < "$D/$1.pe.e")
+    if [ "$rx" -eq 0 ] || [ "$nx" -ne "$4" ]; then bad "$2: x86_64 rc $rx, $nx error lines (want $4) — the reference moved"
+    elif [ "$rp" -eq 0 ]; then bad "$2: PE compiled (rc 0) — want x86_64's refusal: $(head -1 "$D/$1.x86.e")"
+    elif ! cmp -s "$D/$1.x86.e" "$D/$1.pe.e"; then bad "$2: PE's $np error lines differ from x86_64's $nx: $(head -2 "$D/$1.pe.e" | tr '\n' '|')"
+    elif [ -s "$D/$1.exe" ]; then bad "$2: PE refused, but a binary was written"
+    else ok "$2: $np line(s), x86_64's words"; fi
+}
+cat > "$D/vyw3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v + 8); }
+fn main(): i64 { var e: f64v4 = f64v4_make(1, 2, 3, 4); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vyw4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f32v4): i64 { if (load32(&v) == 9) { return 0; } return load32(&v + 4); }
+fn main(): i64 { var e: f64v2 = f64v2_make(5, 7); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vyw5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v + 8); }
+fn main(): i64 { var e: f32v8 = f32v8_make(1, 2, 3, 4, 5, 6, 7, 8); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vywk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v) * 10 + load64(&v + 8); }
+fn main(): i64 { var e: f64v2; store64(&e, 4); store64(&e + 8, 2); return g(e); }
+syscall(60, main());
+EOF
+echo "VYw. Win64's value-form vector parameter takes what SysV's takes (6.7.14)"
+exit_rows VYwk "$D/vywk.cyr" 42 "an f64v2 local into v: f64v2"
+if [ "$WINE" = 1 ]; then
+    pe_same VYw3 "VYw3 pe: an f64v4 local into v: f64v2 (PE exited 2)" "$D/vyw3.cyr" 1
+    pe_same VYw4 "VYw4 pe: an f64v2 local into v: f32v4 (PE exited 0)" "$D/vyw4.cyr" 1
+    pe_same VYw5 "VYw5 pe: an f32v8 local into v: f64v2 (PE exited 3)" "$D/vyw5.cyr" 1
+fi
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -736,4 +804,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5)"
