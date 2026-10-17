@@ -4161,6 +4161,11 @@ impl Acct {
 }
 ```
 
+`#pure`'s check holds wherever the callee is defined: an `#io` / `#alloc` fn BELOW its `#pure`
+caller — a plain call, `return wr();`, a method of an `impl` further down — warns as one above
+it does (6.7.14; through 6.7.13 only `#deprecated` was recorded ahead of its definition, so a
+later callee was silent).
+
 `#assert EXPR, "message";` checks a compile-time fact and stops the build
 with `#assert failed: message` when it does not hold. EXPR is any const expression
 (6.7.2 — [Constants and `const fn`](#constants-and-const-fn-672)): literals, consts, enum

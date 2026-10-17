@@ -2249,6 +2249,9 @@ _chk_gate "$ROOT/tests/gates/diagnostics/false_warnings_valid_shapes.sh"
 # top-level statement mints in between, and on an impl method (whose body refused every
 # directive); #must_use and #pure's #io / #alloc checks reach the dot call `p.m(..)`.
 _chk_gate "$ROOT/tests/gates/diagnostics/attribute_lands_on_its_item.sh"
+# 6.7.14 — #pure's #io / #alloc check sees a callee defined LATER (pass 1 records the pair, as it
+# records #deprecated): plain, tail and method calls, after a statement, in a block. Mutations in the header.
+_chk_gate "$ROOT/tests/gates/frontend/pure_effect_later_callee.sh"
 
 # 6.7.14 — every token number the lexer emits has a name: 24 operator / literal tokens (`<=`, `&&`,
 # `+%`, `...`, `?`, `@unsafe`, a float literal, ..) said "got unknown". The issue's derivation over

@@ -36,6 +36,12 @@ var _deprecated_msg_pending = 0;
 # is the `_pub_pending` defect (see `_prescan_fn_sig`). CHANGELOG [6.6.16]
 var _pre_dep_pending = 0;
 var _pre_dep_msg = 0;
+# 6.7.14 — pass 1's own `#io` / `#alloc` pair, the same rule: `_tl_arm1` arms it where pass 1
+# steps the token, `_prescan_eff_take` ORs fn_flags bits 16 / 32 onto the fn `_prescan_fn_sig`
+# registers, so #pure's check (`_pure_effect_warn`) sees a callee defined further down.
+# CHANGELOG [6.7.14]
+var _pre_io_pending = 0;
+var _pre_alloc_pending = 0;
 
 # v5.8.20: pending fn-attribute flags for the next `fn` definition.
 # Lexer tokens 125 / 126 / 127 (#pure / #io / #alloc) set the

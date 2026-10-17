@@ -15028,6 +15028,7 @@ fn _prescan_fn_sig(S): i64 {
         # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
+        _prescan_eff_take(S, fi);               # 6.7.14: and `#io` / `#alloc`, for #pure's check
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
         if (_pcfn == 1) { SFCFN(S, fi, 1); }    # 6.7.2 (C1): a const context may call it
         if (_ptp != 0) { _bnd_fn_record(S, fi, _ptp, GTI(S)); }   # 6.7.1 (C3): bounds + bounded sites, BEFORE the stub scan reads them
@@ -15061,7 +15062,7 @@ fn _prescan_fn_sig(S): i64 {
         _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
         _prescan_ret_arity(S, fi);    # 6.7.11
-    } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
+    } else { _pre_attr_drop(); }        # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
     return 0;
@@ -15351,6 +15352,25 @@ fn _prescan_dep_take(S, fi): i64 {
     return 0;
 }
 
+# 6.7.14 — the same hand-over for `#io` / `#alloc` (bits 16 / 32, armed by `_tl_arm1`), which
+# PARSE_FN_DEF ORs again: #pure's check read them at the call, so a callee defined BELOW its
+# `#pure` caller (a plain call, a tail call, an impl method) warned nothing. CHANGELOG [6.7.14]
+fn _prescan_eff_take(S, fi): i64 {
+    if (_pre_io_pending == 1) { SFLG(S, fi, GFLG(S, fi) | 16); }
+    if (_pre_alloc_pending == 1) { SFLG(S, fi, GFLG(S, fi) | 32); }
+    _pre_io_pending = 0;
+    _pre_alloc_pending = 0;
+    return 0;
+}
+
+# Pass 1's pending attributes dropped where no fn takes them (never carried into pass 2).
+fn _pre_attr_drop(): i64 {
+    _pre_dep_pending = 0;
+    _pre_io_pending = 0;
+    _pre_alloc_pending = 0;
+    return 0;
+}
+
 # ⛔ 6.6.10 — A TYPE THAT NAMES A GENERIC STRUCT INSTANCE IN A SIGNATURE (`: Box<Pt>`, and
 # `: Box<T>` in a generic's instance) was classified by its BASE name and the `<..>` skipped. As a
 # return type the fn returned the base `Box` — whose `v: T` is an 8-byte i64 — while its caller
@@ -15489,6 +15509,7 @@ fn _tl_directive(S, arm): i64 {
     if (t == 124) { _tl_deprecated(S, arm); return 1; }
     if (_tl_flag_tok(t) == 0) { return 0; }
     if (arm == 1) { _tl_arm(t); }
+    else { _tl_arm1(t); }   # 6.7.14: pass 1's own `#io` / `#alloc` pair
     STI(S, GTI(S) + 1);
     return 1;
 }
@@ -15515,6 +15536,14 @@ fn _tl_arm(t): i64 {
     if (t == 126) { _io_pending = 1; }
     if (t == 127) { _alloc_pending = 1; }
     if (t == 163) { _inline_pending = 1; }
+    return 0;
+}
+
+# Pass 1's arm: only `#io` / `#alloc`, into the pass-1 pair (`_prescan_eff_take`), never the
+# pass-2 flags above — a flag carried across the pass boundary is the `_pub_pending` defect.
+fn _tl_arm1(t): i64 {
+    if (t == 126) { _pre_io_pending = 1; }
+    if (t == 127) { _pre_alloc_pending = 1; }
     return 0;
 }
 
@@ -15789,9 +15818,10 @@ fn _prescan_skip_stmt(S): i64 {
             if (_prescan_block_fn(S, dep) == 1) { continue; }
         }
         # An attribute group before such a fn: `#deprecated("…")` is RECORDED for it, as the
-        # top-level loop does, so a call parsed before the definition still warns. The one-token
-        # attributes (`#pure` `#inline` …) need nothing in pass 1 and are skipped as tokens.
+        # top-level loop does, so a call parsed before the definition still warns; so are `#io` /
+        # `#alloc` (6.7.14). The other one-token attributes need nothing in pass 1.
         if (t == 124) { if (dep >= 1) { _tl_deprecated(S, 0); continue; } }
+        if (dep >= 1) { _tl_arm1(t); }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
         if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
         STI(S, GTI(S) + 1);
@@ -15835,7 +15865,7 @@ fn _prescan_tail(S): i64 {
     _pub_pending = 0;
     _prescan_tail_loop(S);
     _pub_pending = 0;
-    _pre_dep_pending = 0;                # the end of pass 1: nothing may carry into pass 2
+    _pre_attr_drop();                    # the end of pass 1: nothing may carry into pass 2
     SMOD(S, svmod);
     STI(S, sv);
     _gz_sweep(S);   # 6.7.10 (B7-1g): every fn is registered — the zone's small struct globals judged
@@ -15855,14 +15885,14 @@ fn _prescan_tail_loop(S): i64 {
         # the point. CHANGELOG [6.6.5]
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
         elif (t == 14) { _tl_stray_brace(S); go = 0; }   # an unmatched '}' — refused (6.7.9)
-        elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
+        elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { _tl_arm1(t); STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
         # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. Since 6.6.17 that fn
         # is prescanned (`_prescan_block_fn`), which takes the pending itself; whatever is left
         # is dropped here rather than let it land on the NEXT top-level fn — the one pass 2
         # leaves unmarked, whose every call would then warn falsely.
-        elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
+        elif (_prescan_skip_stmt(S) == 1) { _pre_attr_drop(); }
     }
     return 0;
 }
