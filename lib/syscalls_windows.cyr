@@ -370,7 +370,10 @@ fn sys_close(fd) {
 
 # Seek within `fd`. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
 # Rerouted to kernel32!SetFilePointerEx (the 64-bit-capable form).
-# Returns the new offset or -1 on failure.
+# Returns the new offset, or a negative errno when the seek fails: -22
+# for a position before 0 (ERROR_NEGATIVE_SEEK) or a bad `whence`, -9
+# for a bad handle, as on Linux. The position is unchanged then. Until
+# 6.7.14 a failed seek answered 0. CHANGELOG [6.7.14]
 fn sys_lseek(fd, offset, whence) {
     return syscall(SYS_LSEEK, fd, offset, whence);
 }

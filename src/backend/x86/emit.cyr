@@ -1825,17 +1825,17 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
 }
 
 # 6.7.14 — A FAILED kernel32 FILE CALL ANSWERS A NEGATIVE ERRNO, as on Linux and macOS.
-# ReadFile / WriteFile return a BOOL, and the reroutes handed back the byte count without looking
-# (both APIs zero it before they fail): a failed read read as end of file and a failed write as 0
-# bytes written. EREAD_PE and EWRITE_PE now keep their success answer and, on failure, `call` ONE
-# shared stub (`_pe_w32_errno_site`, 13 bytes a site) that calls GetLastError and maps the Win32
-# code through ONE table into -errno in rax — the table the other kernel32 file reroutes share.
+# ReadFile / WriteFile / SetFilePointerEx return a BOOL, and the reroutes handed back the count /
+# the new offset without looking: a failed read read as end of file, a failed write as 0 bytes
+# written, a failed seek as a seek to offset 0. EREAD_PE, EWRITE_PE and ELSEEK_PE now keep their
+# success answer and, on failure, `call` ONE shared stub (`_pe_w32_errno_site`, 13 bytes a site)
+# that calls GetLastError and maps the Win32 code through ONE table into -errno in rax.
 # Inlined, the table cost ~230 bytes per reroute — measured +156,672 B (+6.4 %) on cycc_win.exe,
 # which has ~670 reroutes — so it is emitted once, after EEXIT, by EPE_ERRNO_STUBS (every x86
 # driver, beside EMACHO_SYSX_STUBS), the way the x86 Mach-O translation stubs are (6.7.12, XLAT-2):
 # a site is a `call .` placeholder kept in the whole-program disp32 registry, because the per-fn
 # NOP compaction moves code after it is emitted, and FIXUP asserts every placeholder was patched
-# (`_pew_stubs_drained`). Two stubs: the table (class 0: write) and ReadFile's (class
+# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek) and ReadFile's (class
 # 1), which calls the table and then applies its end-of-file codes (`_pe_w32_read_rows`).
 # The table is straight-line `cmp ecx, code; cmove eax, edx` rows: edx holds an errno ahead of its
 # codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
@@ -3144,9 +3144,10 @@ fn ETLSSET_PE(S): i64 {
 # SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod).
 # Stack on entry (top→bottom): [whence] [offset] [fd] [sc_nr=8].
 # Frame is 0x30: shadow (32 B) + new-position output slot at
-# [rsp+0x28] + 8 B align pad. Returns the new file position (or -1
-# packed as 0xFFFFFFFF if the API returned 0 for failure — callers
-# should range-check if distinguishing from a valid offset of -1).
+# [rsp+0x28] + 8 B align pad. Returns the new file position, or -errno when SetFilePointerEx
+# returns FALSE (`_pe_w32_errno_site`: a seek before offset 0 is ERROR_NEGATIVE_SEEK, -22 as on
+# Linux; a bad handle -9). Until 6.7.14 the BOOL was not read and a failed seek answered the
+# pre-zeroed slot — a seek to 0 — while the file pointer stayed where it was. CHANGELOG [6.7.14]
 fn ELSEEK_PE(S): i64 {
     var _xfr = _pe_fixed_frame(0x30, 4);   # 6.6.5: 0x30 + depth parity (see _pe_fixed_frame)
     _pe_ensure_seekfp(S);
@@ -3171,8 +3172,11 @@ fn ELSEEK_PE(S): i64 {
     _pe_iat_fixup_add(S, GCP(S), spe_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
-    # Return the new offset (always 64-bit — LARGE_INTEGER in slot).
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28]
+    # Return the new offset (always 64-bit — LARGE_INTEGER in slot) when the BOOL is TRUE.
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28] (flags kept)
+    EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the new offset)
+    _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x30 (+ parity pad)
     return 0;
 }
