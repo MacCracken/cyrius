@@ -29,6 +29,7 @@
 #   * make `_arr_desc` answer 8 for `ew <= 0` (a bare array read as i64 slots)
 #     -> axis 1's four bare rows RED (they compile).
 #   * drop `if (w < 0) { _IR_REC0(S, IR_RAW_EMIT); }` in _arr_sub_load -> axis 3's IR=3 row RED.
+#     (Since 6.7.14 the record is x86 EFIELD_LOAD_W's `width < 0` arm; dropping it -> axis 3 RED, measured.)
 #   * drop " - its element is a struct, pointer, enum, string or vector" from the typed-array
 #     refusal in _sub_refuse -> axis 1's two struct naming rows RED (6.7.8, measured).
 #   * 6.7.8 (C2-4a): `_sub_bare` answering 0 -> the five bare rows RED (the untyped-name text); a

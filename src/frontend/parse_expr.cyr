@@ -3405,10 +3405,8 @@ fn _sub_bare(S, noff, k, ix): i64 {
 # (`_ek_lw`, negative = signed).
 fn _arr_sub_load(S, w): i64 {
     EMOVCA(S);
-    # x86's EFIELD_LOAD_W records its raw bytes for widths 1/2/4 only, so a signed (negative)
-    # width reached the IR unrecorded and CYRIUS_IR=3 rewrote around it (`b[2]` of an i8 read
-    # wrong). Record it here; a second record for the other backends is harmless.
-    if (w < 0) { _IR_REC0(S, IR_RAW_EMIT); }
+    # x86's EFIELD_LOAD_W records the signed (negative) widths itself since 6.7.14, so this load
+    # needs no record of its own (it took one in 6.6.12, when only 1 / 2 / 4 were). CHANGELOG [6.7.14]
     EFIELD_LOAD_W(S, w);
     # EADDR left `_flags_reflect_rax` set and a load does not write the flags: without this a
     # following `if (a[i])` would branch on the ADDRESS (see parse_ctrl.cyr ETESTAZ).
