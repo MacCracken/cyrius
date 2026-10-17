@@ -15,7 +15,7 @@
 #   5. `cyrius test` of a .tcyr sees the embed.
 #   6. a 2,000,000-byte random embed + stdlib + 3,000 other literals builds and round-trips, in
 #      under 2x the time of the SAME bytes as a hand-written module included LAST (the consumer
-#      generators' placement). The prelude puts the embed FIRST, where cycc's linear interning
+#      generators' placement) — the best of 3 alternating samples of each (6.7.14). The prelude puts the embed FIRST, where cycc's linear interning
 #      scan made every later literal re-scan 2 MB (measured 12.4 s vs 0.87 s before B0b) — so this
 #      also guards B0b's interning index at the CLI level.
 #   7. near the pool: a 2,097,150-byte embed (the per-file cap) COMPILES and its length is right,
@@ -123,16 +123,33 @@ head -c 2000000 /dev/urandom > "$P/data/big.bin"
       if (c == 34) printf "\\\""; else if (c == 92) printf "\\\\"; else if (c >= 32 && c <= 126) printf "%c", c; else printf "\\x%02x", c }'
   printf '";\n}\nfn BIG_len(): i64 { return 2000000; }\n'; } > "$P/big_mod.cyr"
 { cat "$W/body"; printf 'include "big_mod.cyr"\nsyscall(60, 0);\n'; } > "$P/base.cyr"
-printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
-t0=$(date +%s%N); br; t1=$(date +%s%N)
-base_ms=$(( (t1 - t0) / 1000000 ))
-cmp -s "$P/data/big.bin" "$W/got" || fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"
-mf big.cyr 'BIG = "data/big.bin"'
-t0=$(date +%s%N); br; t1=$(date +%s%N)
-emb_ms=$(( (t1 - t0) / 1000000 ))
-cmp -s "$P/data/big.bin" "$W/got" || fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"
-[ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms, the same bytes included last ${base_ms} ms — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
-[ "$FAIL" = "$x" ] && echo "  ok axis 6: 2,000,000 B + stdlib + 3,000 literals round-trips; ${emb_ms} ms vs ${base_ms} ms hand-written-last"
+# 6.7.14: each build is timed N6 times, alternating (base, embed, base, embed, ...), and the
+# MINIMUM of each is compared. One sample of each crossed the bound under host load (load 13-19:
+# 1697 vs 693 ms, and the slot-open tree once in three at load ~6) — the margin over the quiet
+# ~1.77 ratio is ~12 % of one sample. A scheduling hiccup lengthens a sample, never shortens it, so
+# the minimum is the build's own cost; the regression guarded (B0b's index reverted) is ~14x, so
+# min-of-N keeps full sensitivity. The bound is unchanged.
+# Mutation (6.7.14): `_lex_intern` always taking `_lex_intern_scan` (B0b reverted) -> RED.
+# issues/2026-10-15-embed-build-axis6-single-sample-timing-flakes-under-load.md
+N6=3
+base_ms=0; emb_ms=0; base_all=""; emb_all=""; i6=0
+while [ $i6 -lt $N6 ]; do
+    printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
+    t0=$(date +%s%N); br; t1=$(date +%s%N)
+    ms=$(( (t1 - t0) / 1000000 )); base_all="$base_all $ms"
+    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"; break; }
+    { [ "$base_ms" = 0 ] || [ "$ms" -lt "$base_ms" ]; } && base_ms=$ms
+    mf big.cyr 'BIG = "data/big.bin"'
+    t0=$(date +%s%N); br; t1=$(date +%s%N)
+    ms=$(( (t1 - t0) / 1000000 )); emb_all="$emb_all $ms"
+    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"; break; }
+    { [ "$emb_ms" = 0 ] || [ "$ms" -lt "$emb_ms" ]; } && emb_ms=$ms
+    i6=$((i6 + 1))
+done
+if [ "$FAIL" = "$x" ]; then
+    [ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms (the best of${emb_all}), the same bytes included last ${base_ms} ms (the best of${base_all}) — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
+fi
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: 2,000,000 B + stdlib + 3,000 literals round-trips; ${emb_ms} ms vs ${base_ms} ms hand-written-last (the best of $N6 alternating: embed${emb_all}, last${base_all})"
 
 # ── axis 7: the per-file cap compiles ────────────────────────────────────────────────────
 x=$FAIL
