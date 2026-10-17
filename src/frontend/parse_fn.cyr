@@ -3265,6 +3265,7 @@ fn _ret_ptr_src(S): i64 {
     var pe = _ie_pe;
     var af = _ret_addr_field(S, a);   # 6.7.13 (D3 (b)): `&w.s`, refused once
     if (af >= 0) { return af; }
+    if (_ret_slot_amp(S, a, pe) == 1) { return _ret_park_copy(S); }   # 6.7.14 (D19 (a)): `&h`, a slot
     var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0 - 1; }
@@ -3283,10 +3284,53 @@ fn _ret_ptr_src(S): i64 {
 fn _ret_addr_field(S, a): i64 {
     if (TOKTYP(S, a) != 27) { return 0 - 1; }
     if (TOKTYP(S, a + 2) != 41) { return 0 - 1; }
+    return _ret_park_copy(S);
+}
+# The value parsed as a pointer, parked (`_HTEMP`) and the fn's struct copied through it into a temp: the temp.
+fn _ret_park_copy(S): i64 {
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     return _ret_ptr_copy(S, h);
+}
+# ⛔ 6.7.14 — `return &q;` IN A FN RETURNING THE STRUCT S, WITH q A HANDLE, A `*T` OR AN UNTYPED `self`, IS REFUSED
+# BY NAME AT EVERY SIZE (the user's D19 (a), 2026-10-16; issues/2026-10-15-return-address-of-handle-or-pointer-in-
+# struct-fn.md): `&q` is the address of q's own slot (the handle line, 6.7.10 decision 5), no pointer to a struct —
+# 6.7.13's D4 (a) reads `&s` as the struct only for an inline s (`_hl_amp_sid`). At 8 B or less the slot's address
+# was the struct's word (the caller read a dead frame's address as its field); over 8 B the class's own refusal ran,
+# naming nothing. The value [a, pe), inside any parentheses, exactly `& IDENT` with IDENT a struct-typed local,
+# parameter, capture or global whose `&` is its slot — a `*T` (an untyped `self` is one), or a handle of a plain
+# struct: refused at the `&`, once (`_ret_slot_refuse`), before the classes' refusals. 1 = refused. CHANGELOG [6.7.14]
+fn _ret_slot_amp(S, a, pe): i64 {
+    if (pe != a + 2) { return 0; }
+    if (TOKTYP(S, a) != 27) { return 0; }
+    if (TOKTYP(S, a + 1) != 2) { return 0; }
+    var noff = TOKVAL(S, a + 1);
+    var t = _hl_name_ty(S, noff);
+    if (t <= 0) { return 0; }
+    if (_hl_cp == 0) {
+        if (_dx_plain(S, t) == 0) { return 0; }   # a `Str` / tuple / dyn name: not this rule
+        if (_hl_amp_sid(S, noff) > 0) { return 0; }   # an inline struct: D4 (a)'s struct
+    }
+    _ret_slot_refuse(S, a, noff);
+    return 1;
+}
+fn _ret_slot_refuse(S, ti, noff): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": a fn returning the struct `");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    PRSTR("` takes a value of that struct, or a pointer to one — `&");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("` is the address of ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("'s slot, not a struct — return ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("\n");
+    _had_error = 1;
+    return 0;
 }
 # The struct the pointer parked in frame slot `h` points at, copied byte-exact into a temp of the fn's
 # struct: the temp.
@@ -3433,6 +3477,7 @@ fn _ret_expr_sid(S, st): i64 {
 fn _ret_small_ptr(S, st): i64 {
     var a = _ie_unparen(S, st, GTI(S));
     var pe = _ie_pe;
+    if (_ret_slot_amp(S, a, pe) == 1) { return 0; }   # 6.7.14 (D19 (a)): `&h` of a handle / `*T`, a slot
     var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }

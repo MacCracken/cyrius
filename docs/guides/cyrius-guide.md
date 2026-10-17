@@ -1705,7 +1705,13 @@ returned the ADDRESS as the struct's word (for a local, a dead frame's), and ove
 compile error in other words (*… two registers … got `this expression`*, *return must be a bare local
 identifier …*). `&u` of another struct is refused by name at every size (*… got `&u` (a `*U`)*), and
 `return &w.s;` — the address of a field — with the one message `&x.f` gets anywhere (*the address of a field
-is not taken …*), at every size. A handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct.
+is not taken …*), at every size. A handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct,
+so `return &q;` with `q` a handle, a `*T` (a local, a parameter, a global) or an untyped `self` is refused by name at
+every size (*… — `&q` is the address of q's slot, not a struct — return q*; write `return q;`, which returns the
+struct it points at) — since 6.7.14, the user's D19 (a) of 2026-10-16. Through 6.7.13 a fn of 8 bytes or less
+returned the slot's address as the struct's word (the caller read a dead frame's address as its field), and over 8
+bytes it was refused in other words (*… two registers … got `this expression`*, *return must be a bare local
+identifier …*).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
