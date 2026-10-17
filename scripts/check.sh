@@ -2843,6 +2843,9 @@ _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
 # translated: the filed repro verbatim (qemu exit stays 22), the 1009 control, 39 → 1039, no-row
 # and outside-region silence, enum constants / included files / the stdlib silent, and the
 # repro's binary byte-identical to its region-free twin. qemu legs SKIP by name.
+# 6.7.14 (D61) — the region carries through include (a per-arch file included under the guard is
+# judged), an enum / const DECLARED in a region is judged where it was declared, and every lib/*.cyr
+# built for aarch64 stays at zero warnings; the 6.7.14 filed repro verbatim (axis 11).
 _chk_gate "$ROOT/tests/gates/platform/native_region_literal_warns.sh"
 
 # 6.7.12 (D2) — the x86 Mach-O twin of esysxlat_fold: a literal syscall number folds its

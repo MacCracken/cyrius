@@ -24,6 +24,7 @@ enum SysNr {
     SYS_CLOSE = 3;
     SYS_STAT = 4;
     SYS_FSTAT = 5;
+    SYS_POLL = 7;           # 6.7.14: fd_wait_ready's number, named (the native-region warning)
     SYS_LSEEK = 8;
     SYS_MMAP = 9;
     # v6.6.4: was a raw 73 in lib/io.cyr, and a raw NATIVE 32 on its aarch64 arm that the

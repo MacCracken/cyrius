@@ -2059,16 +2059,22 @@ fn _esx_body_x16(cb, bs, be): i64 {
 # In a region compiled only for aarch64 a raw number reads as the native one (6.6.12 silences the
 # "this is x86 <name>" warning there for that reason), but the chain matches NUMBERS: when the
 # native number is also an x86-compat row SOURCE it is renumbered, so `syscall(9, ..)` meant as
-# lgetxattr ran mmap with no diagnostic. The literal is STILL translated — the user's decision
-# (D1, 2026-10-15): warn only, so no program changes behaviour — and the warning names both ends
-# and the spelling that reaches the native call: the private alias 1000+N when the band has a
-# row for it, derived by running the same chain with 1000+N (never a parallel list).
-# Judged: a single integer-literal token as the number (a `SYS_*` constant is the stdlib's or the
-# author's chosen spelling, and the stdlib's renumber by design) inside a region opened in the
-# call's OWN file (`_esx_region_here` — the stdlib's shared syscall files sit inside
-# lib/syscalls.cyr's aarch64 region and deliberately write x86 numbers, the frame rule
-# tests/gates/platform/raw_syscall_literals_routed.sh applies). Numbers >= 1000 are the band itself.
-# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12]
+# lgetxattr ran mmap with no diagnostic. The number is STILL translated — the user's decision
+# (6.7.12's D1, 2026-10-15): warn only, so no program changes behaviour — and the warning names
+# both ends and the spelling that reaches the native call: the private alias 1000+N when the band
+# has a row for it, derived by running the same chain with 1000+N (never a parallel list).
+# Judged (`_esx_raw_lit_call`), the number spelled as ONE token:
+#   · an integer literal, inside a native-aarch64 region at the call — the region CARRIES
+#     THROUGH `include` (6.7.14, D61, the user, 2026-10-16), the rule PP_A64_NATIVE_AT gives the
+#     6.6.12 x86-name check: a per-arch file included under the guard is under it. The stdlib's
+#     shared syscall files sit inside lib/syscalls.cyr's aarch64 region and spell their
+#     deliberate x86 numbers through `SYS_*` names (guide rules 1-2), so they stay silent;
+#   · an enum constant or a top-level const (bare, or `Enum.NAME`) DECLARED inside a region
+#     opened in its declaring file (6.7.14): the author's own native number, e.g. `NR_UMOUNT2 =
+#     39` under the guard. The stdlib peers' x86-numbered `SYS_*` (SYS_FSYNC = 74 → 82) sit at
+#     their file's top level, so their renumbering by design stays silent. A fn-local const is
+#     not judged. Numbers >= 1000 are the band itself.
+# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14]
 fn _esx_native_warn(S, p, en, lit): i64 {
     if (lit >= 1000) { return 0; }
     var cb = _codebuf_base;
@@ -2076,15 +2082,27 @@ fn _esx_native_warn(S, p, en, lit): i64 {
     if (cur == lit) { return 0; }
     var kw = _esx_raw_lit_call(S);
     if (kw < 0) { return 0; }
-    if (_esx_region_here(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
+    if (_esx_rl_vi >= 0) {
+        if (_esx_decl_in_region(S, _esx_rl_vi) == 0) { return 0; }
+    } else {
+        if (_esx_region_at(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
+    }
     var al = 1000 + lit;
     var hasal = 0;
     if (_esx_walk(cb, p, en, al, 0 - 1) == lit) { hasal = 1; }
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head_at(S, kw);
-    PRSTR(": raw syscall ");
-    PRNUM(lit);
-    PRSTR(" inside a native-aarch64 region is renumbered → ");
+    if (_esx_rl_vi >= 0) {
+        PRSTR(": syscall constant ");
+        PRSTR(S + 0xEC00000 + _esx_rl_noff);
+        PRSTR(" = ");
+        PRNUM(lit);
+        PRSTR(", declared inside a native-aarch64 region, is renumbered → ");
+    } else {
+        PRSTR(": raw syscall ");
+        PRNUM(lit);
+        PRSTR(" inside a native-aarch64 region is renumbered → ");
+    }
     PRNUM(cur);
     var cn = _SYSX_A64(cur);
     if (cn != 0) { PRSTR(" ("); PRSTR(cn); PRSTR(")"); }
@@ -2098,8 +2116,13 @@ fn _esx_native_warn(S, p, en, lit): i64 {
 }
 
 # The token index of `syscall` when the call that just closed (the cursor is one past its `)`)
-# passes its number as ONE integer-literal token; -1 for anything else.
+# passes its number as ONE token — an integer literal (_esx_rl_vi = -1), or a name that folded
+# from an enum constant / a top-level const (_esx_rl_vi = its var slot, _esx_rl_noff = its name;
+# `Enum.NAME` too) — else -1.
+var _esx_rl_vi = 0 - 1;
+var _esx_rl_noff = 0;
 fn _esx_raw_lit_call(S): i64 {
+    _esx_rl_vi = 0 - 1;
     var ti = GTI(S) - 1;
     if (ti < 2) { return 0 - 1; }
     if (TOKTYP(S, ti) != 11) { return 0 - 1; }
@@ -2115,81 +2138,167 @@ fn _esx_raw_lit_call(S): i64 {
     }
     if (ti < 1) { return 0 - 1; }
     if (TOKTYP(S, ti - 1) != 24) { return 0 - 1; }   # `syscall`
-    if (TOKTYP(S, ti + 1) != 1) { return 0 - 1; }    # an integer literal
-    var nx = TOKTYP(S, ti + 2);
-    if (nx == 31) { return ti - 1; }                 # `,`
-    if (nx == 11) { return ti - 1; }                 # `)`
-    return 0 - 1;
+    var t1 = TOKTYP(S, ti + 1);
+    if (t1 == 1) {                                   # an integer literal
+        if (_esx_arg_end(TOKTYP(S, ti + 2)) == 1) { return ti - 1; }
+        return 0 - 1;
+    }
+    if (t1 != 2) { return 0 - 1; }                   # else a name
+    var vi = 0 - 1;
+    if (_esx_arg_end(TOKTYP(S, ti + 2)) == 1) {
+        vi = _esx_const_slot(S, TOKVAL(S, ti + 1));
+        _esx_rl_noff = TOKVAL(S, ti + 1);
+    }
+    if (TOKTYP(S, ti + 2) == 41) {                    # `Enum.NAME`
+        if (TOKTYP(S, ti + 3) == 2) {
+            if (_esx_arg_end(TOKTYP(S, ti + 4)) == 1) {
+                vi = _enum_variant_in(S, TOKVAL(S, ti + 1), TOKVAL(S, ti + 3));
+                _esx_rl_noff = TOKVAL(S, ti + 3);
+            }
+        }
+    }
+    if (vi < 0) { return 0 - 1; }
+    _esx_rl_vi = vi;
+    return ti - 1;
+}
+# 1 iff token type t ends a call's first argument (`,` or `)`).
+fn _esx_arg_end(t): i64 {
+    if (t == 31) { return 1; }
+    if (t == 11) { return 1; }
+    return 0;
+}
+# The var slot a bare name `noff` folded from — a top-level const or an enum constant — or -1
+# when it named a fn-local const or a local (the factor's own order: those come first).
+fn _esx_const_slot(S, noff): i64 {
+    if (_lc_n > 0) { if (_lc_find(S, noff) >= 0) { return 0 - 1; } }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0 - 1; } }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 1; }
+    if (GVECP(S, vi) != 1) { return 0 - 1; }
+    return vi;
 }
 
-# 1 iff expanded-source offset `off` sits inside a native-aarch64 region (`#@a+` / `#@a-`, the
-# marks PP_A64_NATIVE_AT reads) opened in the SAME file as `off`: the region depth there minus
-# the depth at that file's `#@file` entry marker. A re-anchor of the current file changes
-# nothing, a marker naming the includer is a RESUME (pop), any other name is an ENTRY (push).
-# Incremental: syscall sites arrive in source order, so the scan resumes where the last call
-# stopped (PP_A64_NATIVE_AT rescans from 0, linear per call — fine for a rare warning, quadratic
-# for a test made at every renumbered literal). A backward offset restarts from 0. An include
-# nesting past 64 levels answers 0 for the rest of the compile (silence, never a false warning).
-var _esx_rg_i = 0;
-var _esx_rg_st = 0;
-var _esx_rg_bol = 1;
-var _esx_rg_dep = 0;
-var _esx_rg_sp = 0;
-var _esx_rg_ovf = 0;
-var _esx_rg_stk = 0;     # alloc()'d {name offset, name length, entry depth}, 24 B each, 64 deep
-fn _esx_region_here(S, off): i64 {
+# 1 iff expanded-source offset `off` (a call site) sits inside a native-aarch64 region — the
+# `#@a+` / `#@a-` marks PP_A64_NATIVE_AT reads, a region in an includer carrying into the files
+# it includes (6.7.14, D61). Incremental: syscall sites arrive in source order, so the scan
+# resumes where the last call stopped (PP_A64_NATIVE_AT rescans from 0, linear per call).
+var _esx_rgc = 0;
+fn _esx_region_at(S, off): i64 {
+    if (_esx_rgc == 0) {
+        _esx_rgc = _esx_rg_new();
+        if (_esx_rgc == 0) { return 0; }
+    }
+    _esx_rg_scan(S, _esx_rgc, off);
+    if (load64(_esx_rgc + 24) > 0) { return 1; }
+    return 0;
+}
+
+# 1 iff var slot vi's declaration (`_vdecl_base`, recorded at registration) sits inside a
+# native-aarch64 region opened in the SAME file as the declaration — the frame rule
+# tests/gates/platform/raw_syscall_literals_routed.sh applies, so a constant a peer declares at
+# its file's top level is not judged by lib/syscalls.cyr's region. Every slot up to vi is
+# judged once, in slot order (= declaration order), by a second scanner, and cached: one
+# forward pass however the call sites order their constants.
+var _esx_rgd = 0;
+var _esx_dv = 0;        # alloc()'d per-slot verdict: 0 not yet judged, 1 outside, 2 inside
+var _esx_dv_next = 0;
+fn _esx_decl_in_region(S, vi): i64 {
+    if (_vdecl_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (_esx_dv == 0) {
+        _esx_dv = alloc(1048576);
+        if (_esx_dv == 0) { return 0; }
+    }
+    if (_esx_rgd == 0) {
+        _esx_rgd = _esx_rg_new();
+        if (_esx_rgd == 0) { return 0; }
+    }
+    while (_esx_dv_next <= vi) {
+        var o = load32(_vdecl_base + _esx_dv_next * 4);
+        if (o > 0) {
+            _esx_rg_scan(S, _esx_rgd, o - 1);
+            store8(_esx_dv + _esx_dv_next, 1 + _esx_rg_local(_esx_rgd));
+        }
+        _esx_dv_next = _esx_dv_next + 1;
+    }
+    if (load8(_esx_dv + vi) == 2) { return 1; }
+    return 0;
+}
+
+# A region scanner (alloc()'d, 56 B): +0 the offset reached, +8 the lexer state, +16 at a line
+# start, +24 the region depth, +32 the include-stack depth, +40 the stack overflowed, +48 the
+# stack — {name offset, name length, entry depth}, 24 B each, 64 deep. A re-anchor of the
+# current file changes nothing, a `#@file` marker naming the includer is a RESUME (pop), any
+# other name is an ENTRY (push). A backward offset restarts from 0. An include nesting past 64
+# levels answers "outside" for a file-local question for the rest of the compile (silence,
+# never a false warning).
+fn _esx_rg_new(): i64 {
+    var rb = alloc(56);
+    if (rb == 0) { return 0; }
+    var stk = alloc(64 * 24);
+    if (stk == 0) { return 0; }
+    _esx_rg_reset(rb);
+    store64(rb + 48, stk);
+    return rb;
+}
+fn _esx_rg_reset(rb): i64 {
+    store64(rb, 0); store64(rb + 8, 0); store64(rb + 16, 1);
+    store64(rb + 24, 0); store64(rb + 32, 0); store64(rb + 40, 0);
+    return 0;
+}
+fn _esx_rg_scan(S, rb, off): i64 {
     var base = S + 0x459D000;
     var n = GBL(S);
     if (off > n) { off = n; }
-    if (_esx_rg_stk == 0) {
-        _esx_rg_stk = alloc(64 * 24);
-        if (_esx_rg_stk == 0) { return 0; }
-    }
-    if (off < _esx_rg_i) {
-        _esx_rg_i = 0; _esx_rg_st = 0; _esx_rg_bol = 1;
-        _esx_rg_dep = 0; _esx_rg_sp = 0; _esx_rg_ovf = 0;
-    }
-    var i = _esx_rg_i;
-    var st = _esx_rg_st;
-    var bol = _esx_rg_bol;
+    if (off < load64(rb)) { _esx_rg_reset(rb); }
+    var i = load64(rb);
+    var st = load64(rb + 8);
+    var bol = load64(rb + 16);
     while (i < off) {
         var c = load8(base + i);
         if (bol == 1 && c == 35) {
             if (PP_LEXST_INSTR(st) == 0) {
                 var m = PP_A64_MARK(base, i, n);
-                if (m == 1) { _esx_rg_dep = _esx_rg_dep + 1; }
-                if (m == 2) { if (_esx_rg_dep > 0) { _esx_rg_dep = _esx_rg_dep - 1; } }
+                if (m == 1) { store64(rb + 24, load64(rb + 24) + 1); }
+                if (m == 2) { if (load64(rb + 24) > 0) { store64(rb + 24, load64(rb + 24) - 1); } }
             }
-            if (PP_NEUT_BOLMARK(base, i, n) == 1) { _esx_rg_file(base, i + 8, n); }
+            if (PP_NEUT_BOLMARK(base, i, n) == 1) { _esx_rg_file(rb, base, i + 8, n); }
         }
         if (c == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, c); }
         if (c == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
     }
-    _esx_rg_i = i; _esx_rg_st = st; _esx_rg_bol = bol;
-    if (_esx_rg_ovf == 1) { return 0; }
+    store64(rb, i); store64(rb + 8, st); store64(rb + 16, bol);
+    return 0;
+}
+# 1 iff the scanner stands inside a region opened in its current file: the depth there minus
+# the depth at that file's `#@file` entry marker.
+fn _esx_rg_local(rb): i64 {
+    if (load64(rb + 40) == 1) { return 0; }
+    var sp = load64(rb + 32);
     var d0 = 0;
-    if (_esx_rg_sp > 0) { d0 = load64(_esx_rg_stk + (_esx_rg_sp - 1) * 24 + 16); }
-    if (_esx_rg_dep > d0) { return 1; }
+    if (sp > 0) { d0 = load64(load64(rb + 48) + (sp - 1) * 24 + 16); }
+    if (load64(rb + 24) > d0) { return 1; }
     return 0;
 }
 # A `#@file "<name>"` marker whose name starts at `base + ns`: re-anchor, resume or entry.
-fn _esx_rg_file(base, ns, n): i64 {
+fn _esx_rg_file(rb, base, ns, n): i64 {
     var ne = ns;
     while (ne < n && load8(base + ne) != 34 && load8(base + ne) != 10) { ne = ne + 1; }
-    var sp = _esx_rg_sp;
-    if (sp > 0) { if (_esx_rg_same(base, sp - 1, ns, ne) == 1) { return 0; } }
-    if (sp > 1) { if (_esx_rg_same(base, sp - 2, ns, ne) == 1) { _esx_rg_sp = sp - 1; return 0; } }
-    if (sp >= 64) { _esx_rg_ovf = 1; return 0; }
-    store64(_esx_rg_stk + sp * 24, ns);
-    store64(_esx_rg_stk + sp * 24 + 8, ne - ns);
-    store64(_esx_rg_stk + sp * 24 + 16, _esx_rg_dep);
-    _esx_rg_sp = sp + 1;
+    var sp = load64(rb + 32);
+    var stk = load64(rb + 48);
+    if (sp > 0) { if (_esx_rg_same(stk, base, sp - 1, ns, ne) == 1) { return 0; } }
+    if (sp > 1) { if (_esx_rg_same(stk, base, sp - 2, ns, ne) == 1) { store64(rb + 32, sp - 1); return 0; } }
+    if (sp >= 64) { store64(rb + 40, 1); return 0; }
+    store64(stk + sp * 24, ns);
+    store64(stk + sp * 24 + 8, ne - ns);
+    store64(stk + sp * 24 + 16, load64(rb + 24));
+    store64(rb + 32, sp + 1);
     return 0;
 }
-fn _esx_rg_same(base, k, ns, ne): i64 {
-    var o = load64(_esx_rg_stk + k * 24);
-    var l = load64(_esx_rg_stk + k * 24 + 8);
+fn _esx_rg_same(stk, base, k, ns, ne): i64 {
+    var o = load64(stk + k * 24);
+    var l = load64(stk + k * 24 + 8);
     if (l != ne - ns) { return 0; }
     var j = 0;
     while (j < l) {

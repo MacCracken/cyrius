@@ -10436,6 +10436,7 @@ fn _cst_record(S, p, ini): i64 {
     S64(_varn_base + vcnt * 8, name);
     S64(_vars_base + vcnt * 8, 0);
     SVECP(S, vcnt, 2);
+    SVDECL(S, vcnt, p + 1);   # 6.7.14: where it was declared (the native-region warning)
     _vcst_set(S, vcnt, _cst_n + 1);
     SVCNT(S, vcnt + 1);
     var ispub = 0;

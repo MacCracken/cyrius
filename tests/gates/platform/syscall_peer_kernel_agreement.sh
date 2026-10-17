@@ -43,6 +43,8 @@
 #      line with the macOS arm contributing nothing; now FAIL "only 0 SYS_* declarations
 #      parsed from the macOS peer". The macOS arm is the one that caught a planted
 #      SYS_FTRUNCATE = 78, so a silent zero there is not a skip, it is a false green.
+#   6. (6.7.14) drop a64_call's poll pair (every name must land on itself) -> FAIL "SYS_POLL =
+#      7 ... resolves to ppoll, not poll"; map poll -> "pselect6" instead -> FAIL the same row.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -110,6 +112,13 @@ FILENAME == ARGV[5] { decl("a"); next }
 FILENAME == ARGV[6] { decl("m"); next }
 FILENAME == ARGV[7] { decl("w"); next }
 function kname(n,   s) { s = tolower(n); sub(/^sys_/, "", s); return s }
+# 6.7.14 — the aarch64 call the row of an intended x86 number lands on, for the two rows that
+# ARG-EXTEND an x86 call aarch64 dropped into the call that replaced it: 7 -> 73 turns the poll
+# int ms into a ppoll timespec (NULL sigmask), 232 -> 22 hands epoll_pwait a NULL sigmask. The name
+# the peer declares is the x86 call (SYS_POLL, SYS_EPOLL_WAIT: fd_wait_ready and sys_epoll_wait
+# spell their x86 numbers by name, guide rule 2), so the kernel name to expect is its
+# replacement. Named pairs only; every other row must land on the declared name itself.
+function a64_call(k) { if (k == "poll") return "ppoll"; if (k == "epoll_wait") return "epoll_pwait"; return k }
 
 # ── EVERY allow-list entry is a reviewable CLAIM with its reason, never a way to silence a
 # number. Keep it to the two structural rules plus the one named deviation.
@@ -141,7 +150,7 @@ END {
     # ── axis A2: the aarch64 peer, with its three legitimate spellings ──────────────
     for (n in ap) if (!allowed("A64", n, ap[n])) { k = kname(n); v = ap[n]
         if (v >= 1000)                                    { w = v - 1000; ok = ((w in ka) && ka[w] == k); why = sprintf("private alias -> native %d", w) }
-        else if ((n in xp) && xp[n] == v && (v in rt))    { ok = ((rt[v] in ka) && ka[rt[v]] == k); why = sprintf("intended x86 number, ESYSXLAT routes %d -> %d", v, rt[v]) }
+        else if ((n in xp) && xp[n] == v && (v in rt))    { ok = ((rt[v] in ka) && ka[rt[v]] == a64_call(k)); why = sprintf("intended x86 number, ESYSXLAT routes %d -> %d", v, rt[v]) }
         else if (v in rt)                                 { ok = 0; why = sprintf("read as native, but ESYSXLAT REWRITES %d -> %d before the svc", v, rt[v]); got = (rt[v] in ka) ? ka[rt[v]] : "an unassigned number" }
         else                                              { ok = ((v in ka) && ka[v] == k); why = "native aarch64 number"; got = (v in ka) ? ka[v] : "an unassigned number" }
         if (v >= 1000) { got = ((v - 1000) in ka) ? ka[v - 1000] : "an unassigned number" }

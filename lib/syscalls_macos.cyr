@@ -41,6 +41,7 @@ enum SysNr {
     SYS_CLOSE = 3;
     SYS_STAT = 4;
     SYS_FSTAT = 5;
+    SYS_POLL = 7;                 # 6.7.14: routed 7 → BSD poll 230 (fd_wait_ready, the macOS sleeps)
     SYS_LSEEK = 8;
     SYS_MMAP = 9;
     SYS_BRK = 12;

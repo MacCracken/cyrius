@@ -7943,14 +7943,32 @@ The rules, in order:
    renumbered → 222 (mmap); write 1009 for native lgetxattr`, or `no 1000+N alias exists for
    native …` when the private band (below) has no row for it. The number is still translated
    (the user's decision, 2026-10-15: warn only — no program changes behaviour). The warning
-   judges a number written as one integer literal, inside a region opened in the call's own
-   file: a `SYS_*` or `enum` constant is not judged (the stdlib's renumber by design), and
-   neither is a file `include`d from inside a region (the stdlib's shared syscall files sit in
-   `lib/syscalls.cyr`'s aarch64 region and deliberately write x86 numbers). ⚠ This applies to a **variable** syscall number too — the chain
+   judges a number spelled as one token:
+   - **an integer literal inside a region at the call — and the region carries through
+     `include`** (since 6.7.14, the user's decision, 2026-10-16). A per-arch file `include`d
+     from inside `#ifdef CYRIUS_ARCH_AARCH64` is under that guard, so its raw `syscall(9, …)`
+     is warned, naming the included file — the rule the 6.6.12 x86-name report above already
+     used. (Until 6.7.14 only a region opened in the call's own file counted, and such a file
+     ran mmap silently.) The stdlib's shared syscall files sit inside `lib/syscalls.cyr`'s
+     aarch64 region, so they spell their deliberate x86 numbers through `SYS_*` names (rule 2:
+     `SYS_POLL` 7, `SYS_EPOLL_WAIT` 232), never raw — a program that includes the stdlib
+     prints none of these warnings;
+   - **an `enum` constant or a top-level `const`** (bare, or `Enum.NAME`) **DECLARED inside a
+     region opened in its own file** (since 6.7.14): it is the author's native number, as much
+     as a literal is — `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64
+     region, is renumbered → 172 (getpid); write 1039 for native umount2`. A constant is judged
+     where it is DECLARED, not where it is used: one declared at a file's top level is not
+     judged — the stdlib peers' `SYS_*` renumber by design (`SYS_FSYNC = 74` → 82), and the
+     peers are included from inside `lib/syscalls.cyr`'s region. A fn-local `const` is not
+     judged.
+
+   ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
    exactly as a literal would be. ⚠ It also applies to a `SYS_*` you declare in your OWN
    `enum` — measured at v6.6.5, `lib/yukti.cyr` declares `SYS_STATFS = 43` under exactly this
-   guard and the `43 → 202` socket row makes every call `accept()`. ⭐ v6.6.6 gave that call
+   guard and the `43 → 202` socket row makes every call `accept()` (since 6.7.14 each
+   `syscall(SYS_STATFS, …)` against such a declaration is warned, by the declared-constant
+   rule above). ⭐ v6.6.6 gave that call
    the name it was missing: both Linux peers now declare `SYS_STATFS = 137` / `SYS_FSTATFS =
    138` (the x86 numbers, per rule 2) with `ESYSXLAT` rows `137→43` and `138→44`, plus
    `sys_statfs` / `sys_fstatfs` wrappers and Darwin routes `137→345` / `138→346`. A consumer
