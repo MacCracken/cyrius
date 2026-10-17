@@ -44,11 +44,12 @@
 # p: *Str = t;` takes the header as a `p: *Str` parameter does (the crossos q_* rows). fncallN, callptr, a vec, a
 # tuple element and an untyped if-expression branch keep the word (K9).
 #
-# 6.7.14 (the user's decision D21 (a), 2026-10-16; issues/2026-10-15-top-level-str-declaration-from-
+# 6.7.14 (the user's decisions D21 (a) and D22 (b), 2026-10-16; issues/2026-10-15-top-level-str-declaration-from-
 # inline-str-global-copies.md): a top-level `var H: Str = gt;` (gt an inline `Str` global) binds a handle global to
 # gt's static header, as the same line in a fn does — in the declaration zone (D21a, the filed repro: 33, was 37)
 # and after the first statement (D21b: 33, was 37); a `var P: *Str = gt;` in the zone takes the same address (the
-# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below").
+# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below"). The untyped `var H =
+# gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned; D22b `H == load64(&gt)`).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
@@ -58,8 +59,8 @@
 # every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
 # unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
-# statement (33), D21c a source declared below stays refused; CMP a handle into the retyped methods builds
-# byte-identical to the
+# statement (33), D21c a source declared below stays refused, D22a / D22b the untyped top-level declaration's word
+# (0; 1); CMP a handle into the retyped methods builds byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
 #
@@ -113,6 +114,10 @@
 #   f3 `_istr_gsrc` answers 0 (pass 1 inline)      -> RED 14: R1 x7 (z_bind, z_wrap), D21a x7 (37: copied)
 #   f4 `_istr_src` after the top-level arm again   -> RED 14: R1 x7 (R_TOP5: a copy), D21b x7 (37)
 #   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built)
+#   2026-10-17 (6.7.14, D22 (b), the pins):
+#   g1 `_uci_ps` answers at top level (D22's (a))  -> RED 7: R1 x7 (R_TOP6: `var UL = gz;` after a statement became
+#                                                     gz's handle); the zone's D22a / D22b pin the replay's untyped
+#                                                     path, which offers no handle to mutate to
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -235,7 +240,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=81
+FLOOR=83
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -394,7 +399,7 @@ for leg in $(legs); do
 done
 runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
 
-# --- D21: the filed repro 1 (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
+# --- D21 / D22: the filed repros 1 and 2 (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -419,6 +424,19 @@ var r = main();
 syscall(SYS_EXIT, r);
 EOF
 refused D21c "cannot copy-init 'H' from a global declared below it (declare the source first): 'gt'" "gt declared below H stays refused"
+cat > "$T/D22a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var gt: Str = Str { "abcdefg", 7 };
+var H = gt;
+fn main() { return f(H); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D22a 0 "the filed repro 2: an untyped top-level \`var H = gt;\` keeps gt's first word (D22 (b), unchanged)" "$XLEGS $OLEGS"
+sed 's/^fn main() { return f(H); }$/fn main() { if (H == load64(\&gt)) { return 1; } return 2; }/' "$T/D22a.cyr" > "$T/D22b.cyr"
+runs D22b 1 "\`var H = gt;\` at top level is gt's first word (H == load64(&gt))"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -477,7 +495,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=39
+FLOOR_ROWS=41
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
