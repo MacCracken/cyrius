@@ -4643,7 +4643,7 @@ fn _must_use_warn(S, noff): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
-            PRSTR(S + 0xEC00000 + noff);
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, _mu_fi, noff));   # 6.7.14: `S.m`, `g<i32>`
             syscall(SYS_WRITE, 2, "' is discarded\n", 15);
         }
     }

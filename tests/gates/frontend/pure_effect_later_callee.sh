@@ -44,7 +44,7 @@ row() {
   [ "$x" -eq "$2" ] || bad "$1: exit $x, expected $2"
 }
 
-row P1 5 "7:26: #pure fn calls #io fn 'wr'|7:42: #pure fn calls #alloc fn 'grab'|9:25: #pure fn calls #io fn 'wr'|11:33: #pure fn calls #io fn 'A_m'|" <<'EOF'
+row P1 5 "7:26: #pure fn calls #io fn 'wr'|7:42: #pure fn calls #alloc fn 'grab'|9:25: #pure fn calls #io fn 'wr'|11:33: #pure fn calls #io fn 'A.m'|" <<'EOF'
 # 2026-10-08 — `#pure`'s #io / #alloc check misses a callee defined LATER.
 # Expected: four warnings — f calls #io 'wr' and #alloc 'grab', g tail-calls #io 'wr',
 #   h calls #io method 'A_m'. Actual (6.7.6): none. Moving the callees above the #pure fns
@@ -67,7 +67,7 @@ impl A {
 fn main(): i64 { var a: A; a.v = 0; return f() + g() + h(&a); }
 syscall(60, main());
 EOF
-row P2 5 "11:26: #pure fn calls #io fn 'wr'|11:42: #pure fn calls #alloc fn 'grab'|13:25: #pure fn calls #io fn 'wr'|15:33: #pure fn calls #io fn 'A_m'|" <<'EOF'
+row P2 5 "11:26: #pure fn calls #io fn 'wr'|11:42: #pure fn calls #alloc fn 'grab'|13:25: #pure fn calls #io fn 'wr'|15:33: #pure fn calls #io fn 'A.m'|" <<'EOF'
 struct A { v; }
 #io
 fn wr(): i64 { syscall(1, 1, "x", 1); return 1; }
@@ -107,7 +107,7 @@ if (r == 0) {
 }
 syscall(60, f());
 EOF
-row P5 1 "4:33: #pure fn calls #io fn 'A_m'|" <<'EOF'
+row P5 1 "4:33: #pure fn calls #io fn 'A.m'|" <<'EOF'
 struct A { v; }
 trait Tr { fn m(self): i64; }
 #pure

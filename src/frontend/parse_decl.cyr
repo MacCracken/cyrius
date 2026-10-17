@@ -1320,7 +1320,7 @@ fn _tup_fsc_call(S, ft, term): i64 {
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
     _tamv_fld = 1;
-    if (_tok_method_open(S, GTI(S)) == 1) { _tup_arg_mv_err(S, GTI(S), ft, L64(_fnt_names + fi * 8), 0); }
+    if (_tok_method_open(S, GTI(S)) == 1) { _tup_arg_mv_err(S, GTI(S), ft, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), 0); }
     else { _tup_arg_mv_err(S, GTI(S), ft, PEEKV(S), "(..)"); }
     _tamv_fld = 0;
     return 1;
@@ -2048,6 +2048,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             # (`Q7_seven` for a call to `q.nosuch()`). Commit it before REGFN.
             if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
             mfi = REGFN(S, mname);
+            _fn_meth_note(S, mfi, L64(S + 0x1A6018 + si * 8), fnoff);   # 6.7.14: named `T.m` by its diagnostics
         }
         mfi = _mcall_gen(S, mfi, GTI(S), sid, 1);   # 6.7.11: the instance its arguments bind
         mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
@@ -7839,7 +7840,7 @@ fn _dt_zone_check(S, n): i64 {
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
     if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
-        return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, L64(_fnt_names + fi * 8), " result - a dyn is one value: bind it to one name");
+        return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " result - a dyn is one value: bind it to one name");
     }
     if (rs == MULTIRET_SID) {
         if (GFRN(S, fi) != n) {
@@ -7862,9 +7863,9 @@ fn _dt_arity_check(S, fi, n): i64 {
 }
 fn _dt_one_err(S, fi, n): i64 {
     if (n == 3) {
-        ERR_IDENT(S, "multi-value destructure binds 3 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+        ERR_IDENT(S, "multi-value destructure binds 3 names, but ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
     } else {
-        ERR_IDENT(S, "multi-value destructure binds 2 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+        ERR_IDENT(S, "multi-value destructure binds 2 names, but ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
     }
     return 0;
 }
@@ -7914,7 +7915,7 @@ fn _dt_count_err(S, fi, n, ar): i64 {
     if (n == 3) { head = "multi-value destructure binds 3 names, but "; }
     var tail = " returns 2 values - bind 2 names: `var a, b = f(..);`";
     if (ar == 3) { tail = " returns 3 values - bind 3 names: `var a, b, c = f(..);`"; }
-    ERR_IDENT(S, head, L64(_fnt_names + fi * 8), tail, 0 - 1);
+    ERR_IDENT(S, head, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), tail, 0 - 1);
     return 0;
 }
 

@@ -105,7 +105,7 @@ PA="cannot pass a value that is not a bool to bool parameter 'b' of 'f'"
 refused w37 "$PA" "W37: f(1)"                             'fn f(b: bool): i64 { return b; }\nfn main(): i64 { return f(1); }\nsyscall(60, main());\n'
 refused w38 "$PA" "W38: f(x), x untyped"                  'fn f(b: bool): i64 { return b; }\nfn main(): i64 { var x = 3; return f(x); }\nsyscall(60, main());\n'
 refused w39 "$PA" "W39: a tail call return f(n, 5)"       'fn f(n, b: bool): i64 { return n + b; }\nfn g(n): i64 { return f(n, 5); }\nsyscall(60, g(1));\n'
-refused w40 "to bool parameter 'v' of 'P_set'" "W40: a method p.set(1)" 'struct P { a; }\nimpl P { fn set(self, v: bool): i64 { return v; } }\nfn main(): i64 { var p: P; return p.set(1); }\nsyscall(60, main());\n'
+refused w40 "to bool parameter 'v' of 'P.set'" "W40: a method p.set(1)" 'struct P { a; }\nimpl P { fn set(self, v: bool): i64 { return v; } }\nfn main(): i64 { var p: P; return p.set(1); }\nsyscall(60, main());\n'
 refused w41 "to bool parameter 'b' of 'later'" "W41: a forward call" 'fn main(): i64 { return later(2); }\nfn later(b: bool): i64 { return b; }\nsyscall(60, main());\n'
 refused w42 "to bool parameter 'b' of 'inl'" "W42: an #inline fn's argument" '#inline\nfn inl(b: bool): i64 { return b + 1; }\nfn main(): i64 { return inl(4); }\nsyscall(60, main());\n'
 refused w43 "to bool parameter 'b' of 'id'" "W43: a generic fn's bool parameter" 'fn id<T>(x: T, b: bool): T { return x; }\nfn main(): i64 { return id(3, 7); }\nsyscall(60, main());\n'
@@ -124,7 +124,7 @@ refused w53 "a bool array's element takes a boolean value" "W53: a bool[N] list 
 SL="a struct literal cannot initialize a bool"
 refused w54 "$SL" "W54: var b: bool = P { 7, true }"      'struct P { a; on: bool; }\nfn main(): i64 { var b: bool = P { 7, true }; return b; }\nsyscall(60, main());\n'
 refused w55 "$SL" "W55: a global var G: bool = P { 7, true }" 'struct P { a; on: bool; }\nvar G: bool = P { 7, true };\nsyscall(60, G);\n'
-refused w56 "to bool parameter 'b' of 'P_add'" "W56: an operator's operand into its fn's bool parameter (p + 5)" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + 5; }\nsyscall(60, main());\n'
+refused w56 "to bool parameter 'b' of 'P.add'" "W56: an operator's operand into its fn's bool parameter (p + 5)" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + 5; }\nsyscall(60, main());\n'
 refused w57 "$RT" "W57: a tuple return (5, 1) from a single-value bool fn" 'fn g(): bool { return (5, 1); }\nfn main(): i64 { return g(); }\nsyscall(60, main());\n'
 refused w58 "undefined variable 'zz'" "W58: an undefined name in the value is reported once (no bool cascade)" "$M var b: bool = false; b = zz; return b; }$E"
 # W59 (a bool[N] element `1 < 2` refused as not a constant) is A16 since 6.7.4: a list element is a const context

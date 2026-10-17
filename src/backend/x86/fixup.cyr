@@ -819,7 +819,7 @@ fn FIXUP(S): i64 {
                     if (u59_lb == 0) { u59_skip = 1; }
                 }
                 if (u59_skip == 0) {
-                    var u59_ufnoff = L64(_fnt_names + u59_uidx * 8);
+                    var u59_ufnoff = _fn_src_name(S, u59_uidx, L64(_fnt_names + u59_uidx * 8));   # 6.7.14: `S.nope`
                     syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
                     var u59_unptr = S + 0xEC00000 + u59_ufnoff;
                     var u59_unlen = 0;

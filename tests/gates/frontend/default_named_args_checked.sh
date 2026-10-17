@@ -373,7 +373,7 @@ r24() {   # <label> <repro> <expected error lines, '|'-separated>
     else ok "$1: refused exactly as the same calls below their callees are"; fi
 }
 [ -f "$R24D/2026-10-09-forward-call-arity-unchecked.cyr" ] || bad "R24: the issue's repro is missing"
-r24 "R24 (F2): forward calls — plain, too few, a method, a tail call" 2026-10-09-forward-call-arity-unchecked.cyr "error:<source>:12: 'g' expects 1 argument, got 2|error:<source>:16: 'g' expects 1 argument, got 2|error:<source>:17: 'h' expects 3 arguments, got 2|error:<source>:18: 'P_m' expects 2 arguments, got 3|"
+r24 "R24 (F2): forward calls — plain, too few, a method, a tail call" 2026-10-09-forward-call-arity-unchecked.cyr "error:<source>:12: 'g' expects 1 argument, got 2|error:<source>:16: 'g' expects 1 argument, got 2|error:<source>:17: 'h' expects 3 arguments, got 2|error:<source>:18: 'P.m' expects 1 argument, got 2|"
 r24 "R24b (F2): a forward call to a fn inside a top-level block" 2026-10-09-forward-call-arity-unchecked-toplevel-block.cyr "error:<source>:6: 'g' expects 1 argument, got 2|"
 # R24c: pass 1 counts a parameter whose type token is not a name (`u128`, `*u128`, the `fn` of
 # `*fn`): it stopped there, so a RIGHT-count forward call was refused ("'g' expects 1 argument").

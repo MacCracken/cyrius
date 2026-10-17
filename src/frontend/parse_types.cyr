@@ -2114,7 +2114,7 @@ fn _dyn_call(S, fnoff, beg, idx, sid): i64 {
     else { _dyn_call_top(S, pf, beg, idx, sid, j); }
     var t = _dyc_t;
     var pn = L64(_fnt_names + pf * 8);
-    _CHECK_ARITY(S, ln, pn, pf, na + 1, 0);   # C7 (`self` counted, as the method form counts it)
+    _check_arity_p0(S, ln, pn, pf, na + 1, 0, 1);   # C7 (`self` counted, as the method form counts it; 6.7.14: not in the message)
     SESTYPE(S, 0);
     _sc_post(S, pf, pn, beg, t);
     _call_ret_marks(S, pf);

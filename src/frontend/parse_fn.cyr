@@ -1244,14 +1244,14 @@ fn _PARSE_RETURN_ARMS(S): i64 {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-                                    PRSTR(S + 0xEC00000 + tcnoff);
+                                    PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-                                    PRSTR(S + 0xEC00000 + tcnoff);
+                                    PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                             }
@@ -1668,6 +1668,136 @@ fn _TYPE_CHECK_ENABLED(): i64 {
 # from `_str` / `_int` / `_cstr` suffixes on sibling fns.
 # See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
 
+# ⛔ 6.7.14 — A CALL-SITE DIAGNOSTIC NAMES ITS CALLEE AS THE SOURCE SPELLS IT. The fn table holds a method as its
+# mangled `T_m` (`T_Tr_m` when two traits give T an `m`) and a generic call as its instance `g$i32`, and the call-site
+# messages printed that: "in a call to 'S_ri'", "'S_two' expects 2 arguments, got 3", "'g$i32' is deprecated",
+# "undefined function 'S_nope'". The spelling to print for fn `fi`, which the site names `noff`: a method `T.m` (its
+# record, GFMETH), a generic instance its base's spelling and `<..>` its type arguments (GFIC, the instance's own
+# record; a struct instance among them `Box<i64>`, `_sinst`), anything else `noff` itself — and `noff` whenever the
+# site names something other than fi's own name (an alias). Written at GNPOS uncommitted, as BUILD_METHOD_NAME's
+# lookup scratch is: the caller prints it before anything else is minted. CHANGELOG [6.7.14]
+fn _fn_src_name(S, fi, noff): i64 {
+    if (fi < 0) { return noff; }
+    var nm = L64(_fnt_names + fi * 8);
+    if (noff != nm) { if (STREQ(S, noff, nm) == 0) { return noff; } }
+    var mr = GFMETH(S, fi);
+    var c0 = GFIC(S, fi, 0);
+    if (mr == 0) { if (c0 == 0) { return noff; } }
+    NPOS_GUARD(S, 1024);
+    var b = GNPOS(S);
+    var lim = b + 960;
+    var wp = b;
+    if (mr != 0) {
+        wp = _fsn_put(S, wp, (mr >> 32) - 1, lim, 1);
+        wp = _fsn_lit(S, wp, ".", lim);
+        wp = _fsn_put(S, wp, mr & 0xFFFFFFFF, lim, 1);
+    } else { wp = _fsn_put(S, wp, nm, lim, 1); }
+    if (c0 != 0) { wp = _fsn_targs(S, wp, c0, GFIC(S, fi, 1), lim, 0); }
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# The name at pool offset `noff` written at `wp` (up to its first `$` when `cut` is 1), bounded by `lim`.
+fn _fsn_put(S, wp, noff, lim, cut): i64 {
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff);
+    while (c != 0) {
+        if (cut == 1) { if (c == 36) { return wp; } }
+        if (wp >= lim) { return wp; }
+        store8(S + 0xEC00000 + wp, c);
+        wp = wp + 1;
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    return wp;
+}
+# A literal string written at `wp`, bounded by `lim`.
+fn _fsn_lit(S, wp, str, lim): i64 {
+    var i = 0;
+    while (load8(str + i) != 0) {
+        if (wp >= lim) { return wp; }
+        store8(S + 0xEC00000 + wp, load8(str + i));
+        wp = wp + 1;
+        i = i + 1;
+    }
+    return wp;
+}
+# `<c0>` or `<c0, c1>`: an instance's type arguments as written (`depth` bounds a nested struct instance).
+fn _fsn_targs(S, wp, c0, c1, lim, depth): i64 {
+    wp = _fsn_lit(S, wp, "<", lim);
+    wp = _fsn_conc(S, wp, c0, lim, depth);
+    if (c1 != 0) {
+        wp = _fsn_lit(S, wp, ", ", lim);
+        wp = _fsn_conc(S, wp, c1, lim, depth);
+    }
+    return _fsn_lit(S, wp, ">", lim);
+}
+# One type argument `c` (a scalar code, a vector sentinel, a 1-based struct id) as the source spells it.
+fn _fsn_conc(S, wp, c, lim, depth): i64 {
+    if (c > 0) {
+        var sn = L64(S + 0x1A6018 + (c - 1) * 8);
+        var g = _sinst_base(c);
+        if (g <= 0) { return _fsn_put(S, wp, sn, lim, 0); }
+        if (depth >= 4) { return _fsn_put(S, wp, sn, lim, 0); }
+        wp = _fsn_put(S, wp, sn, lim, 1);
+        return _fsn_targs(S, wp, _sinst_conc(S, c, g, 0), _sinst_conc(S, c, g, 1), lim, depth + 1);
+    }
+    if (c <= 0 - 2048) { return _fsn_vec(S, wp, (0 - c) - 2048, lim); }
+    return _fsn_lit(S, wp, _fsn_scalar(c), lim);
+}
+fn _fsn_scalar(c): i64 {
+    if (c == 0 - 8) { return "i64"; }
+    if (c == 0 - 9) { return "f64"; }
+    if (c == 0 - 4) { return "i32"; }
+    if (c == 0 - 2) { return "i16"; }
+    if (c == 0 - 1) { return "i8"; }
+    if (c == 0 - 16) { return "Result"; }
+    if (c == 0 - 17) { return "Option"; }
+    if (c == 0 - 18) { return "Tagged"; }
+    if (c == 0 - 19) { return "cstring"; }
+    return "?";
+}
+# A vector type from its descriptor (`_vec_desc`'s packing): f / i / u, the lane bits, `v`, the lane count.
+fn _fsn_vec(S, wp, desc, lim): i64 {
+    var k = "u";
+    if ((desc & 1) == 1) { k = "f"; }
+    elif ((desc & 2) == 2) { k = "i"; }
+    wp = _fsn_lit(S, wp, k, lim);
+    wp = _fsn_num(S, wp, 8 << ((desc >> 2) & 7), lim);
+    wp = _fsn_lit(S, wp, "v", lim);
+    return _fsn_num(S, wp, 1 << ((desc >> 5) & 7), lim);
+}
+# A number below 100 written in decimal.
+fn _fsn_num(S, wp, n, lim): i64 {
+    if (wp + 2 >= lim) { return wp; }
+    if (n >= 10) { store8(S + 0xEC00000 + wp, 48 + n / 10); wp = wp + 1; }
+    store8(S + 0xEC00000 + wp, 48 + n % 10);
+    return wp + 1;
+}
+# The method record for fn `fi` just registered at a definition inside an impl (pass 1: `_impl_tnoff` is the
+# impl's type, token `nti` the method's own name), or at a call `x.m(..)` of type name `tn` (`_mcall_note`).
+fn _fn_meth_note(S, fi, tn, mn): i64 {
+    if (fi < 0) { return 0; }
+    SFMETH(S, fi, ((tn + 1) << 32) | mn);
+    return 0;
+}
+fn _prescan_meth_note(S, fi, nti): i64 {
+    if (_impl_tnoff == 0) { return 0; }
+    if (TOKTYP(S, nti) != 2) { return 0; }
+    return _fn_meth_note(S, fi, _impl_tnoff, TOKVAL(S, nti));
+}
+
+# 6.7.14 — 1 while a METHOD form's arity is judged (`o.m(..)`, a dyn call): `self` is no argument as written, so
+# the message counts without it — "'S.two' expects 1 argument, got 2" for `s.two(1, 2)` (it said "'S_two' expects 2
+# arguments, got 3"). The free spelling `S_two(&s, 1, 2)` counts its `&s`, as written; a method declaring no
+# parameter at all (`o.zero()` on `fn zero()`) keeps the receiver in the count, the one extra. CHANGELOG [6.7.14]
+var _ar_self = 0;
+fn _check_arity_p0(S, line, noff, fi, argc, need_off, p0): i64 {
+    _ar_self = p0;
+    _CHECK_ARITY(S, line, noff, fi, argc, need_off);
+    _ar_self = 0;
+    return 0;
+}
+
 # ⭐ THE CALL-SITE ARITY CHECK (v6.2.41; an error since v6.5.1), shared by every call path — the one
 # marshaller (PARSE_FNCALL, the method form, the struct-valued receives), the inline replay, the
 # tail arm and the operator dispatches — so the diagnostic is one. A count mismatch is never
@@ -1707,14 +1837,19 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, line);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # 6.7.14: `S.two`, `g<i32>`
     syscall(SYS_WRITE, 2, "' expects ", 10);
+    var sf = _ar_self;    # 6.7.14: a method form counts as written, without `self` —
+    if (pc == 0) { sf = 0; }   # unless the method takes no parameter: then the receiver is the extra one
+    mn = mn - sf;
+    if (mn < 0) { mn = 0; }
+    pc = pc - sf;
     if (mn != pc) { PRNUM(mn); syscall(SYS_WRITE, 2, " to ", 4); }   # 6.7.7: "1 to 3 arguments"
     PRNUM(pc);
     syscall(SYS_WRITE, 2, " argument", 9);
     if (pc != 1 || mn != pc) { syscall(SYS_WRITE, 2, "s", 1); }
     syscall(SYS_WRITE, 2, ", got ", 6);
-    PRNUM(argc);
+    PRNUM(argc - sf);
     syscall(SYS_WRITE, 2, "\n", 1);
     _had_error = 1;
     return 0;
@@ -1739,7 +1874,7 @@ fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
     var ps = GFPSID(S, fi, argc);
     if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff); }   # 6.7.13 (D33): a `*V` records no struct
     if (ps == asid) { return 0; }
-    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter of a different struct type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     return 1;
 }
 # ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15) — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME. `rd(s)`
@@ -1752,7 +1887,7 @@ fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
 fn _sarg_svec_err(S, fi, argc, anoff): i64 {
     if (_pvec_param(S, fi, argc) == 0) { return 0; }
     ERR_IDENT(S, "cannot pass ", anoff, " to a parameter that is a pointer to a vector type in a call to ",
-      L64(_fnt_names + fi * 8));
+      _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     return 1;
 }
 # The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,
@@ -1930,7 +2065,7 @@ fn _svp_rule(S, fi, argc, lt): i64 {
     }
     if (pv != 0 - lt) {
         ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
-          L64(_fnt_names + fi * 8));
+          _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     }
     return 1;
 }
@@ -2016,7 +2151,7 @@ fn _agg_kind_err(S, noff, fi, kind): i64 {
     PRSTR("' to a parameter that is not a pointer to its ");
     PRSTR(kind);
     PRSTR(" type in a call to '");
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     PRSTR("' - pass &");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(" for its address\n");
@@ -2055,7 +2190,7 @@ fn _vec_val_err(S, star, noff, fi, kd): i64 {
     PRSTR(S + 0xEC00000 + noff);
     if (kd == 2) { PRSTR("' to a by-value struct parameter in a call to '"); }
     else { PRSTR("' to a parameter that is not a pointer to its vector type in a call to '"); }
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     if (kd == 2) { PRSTR("' - a vector is not a struct\n"); }
     else { PRSTR("'\n"); }
     _err_excerpt(S);
@@ -2186,7 +2321,7 @@ fn _sarg_vec_call(S, fi, argc, tail): i64 {
     elif (0 - rs == pv) { ok = 1; }
     if (ok == 0) {
         ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ",
-          L64(_fnt_names + fi * 8));
+          _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
         return 0;
     }
     if (GINFN(S) != 1) { return _svc_toplevel_err(S); }
@@ -2300,7 +2435,7 @@ fn _dro_vcheck(S, fi, k, nm): i64 {
     var pv = _pvec_param(S, fi, k);
     if (pv == _dlo_sid) { return 0; }
     if (pv == 0) { return _svo_err(S, _dlo_beg, 1, nm, fi, _vk_param(S, fi, k)); }   # 6.7.13 (D31)
-    ERR_IDENT(S, "cannot pass ", nm, " to a parameter of a different vector type in a call to ", L64(_fnt_names + fi * 8));
+    ERR_IDENT(S, "cannot pass ", nm, " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     return 1;
 }
 
@@ -2597,10 +2732,10 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
     var ps = GFPSID(S, fi, argc);
     var ok = 1;
     if (_tup_is(S, ps) == 0) {
-        _tup_err(S, lp, "a tuple literal is passed only to a tuple parameter - this parameter of ", L64(_fnt_names + fi * 8), " is not a tuple");
+        _tup_err(S, lp, "a tuple literal is passed only to a tuple parameter - this parameter of ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " is not a tuple");
         ok = 0;
     } elif (GINFN(S) != 1) {
-        _tup_err(S, lp, "a tuple literal argument at top level has no frame to be built in - call ", L64(_fnt_names + fi * 8), " inside a fn");
+        _tup_err(S, lp, "a tuple literal argument at top level has no frame to be built in - call ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " inside a fn");
         ok = 0;
     } elif (_tup_lit_shape(S, lp, ps) == 0) { ok = 0; }
     if (ok == 0) {
@@ -3863,6 +3998,14 @@ fn _pd_pof(S, pnoff, fi): i64 {
     _pd_q(S, _bx_fname(S, fi));
     return 0;
 }
+# The same at a call (C3, C4, C6): the callee as the source spells it (`_fn_src_name`, 6.7.14).
+fn _pd_pofc(S, pnoff, fi): i64 {
+    PRSTR("parameter ");
+    _pd_q(S, pnoff);
+    PRSTR(" of ");
+    _pd_q(S, _fn_src_name(S, fi, _bx_fname(S, fi)));
+    return 0;
+}
 
 # ── pass 1: the record ──────────────────────────────────────────────────────────────────────
 # Definition fi, whose list's `(` is token `op` (cursor-free; `_prescan_params_scan` has just
@@ -4493,7 +4636,7 @@ fn _pd_icall_short(S, cfi, argc, ti): i64 {
     if (argc >= L64(row)) { return 0; }
     if (_pd_eo(S, ti) == 0) { return 0; }
     PRSTR("a call through a fn pointer passes every argument: ");
-    _pd_q(S, _bx_fname(S, cfi));
+    _pd_q(S, _fn_src_name(S, cfi, _bx_fname(S, cfi)));
     PRSTR(" takes ");
     PRNUM(L64(row));
     PRSTR(" (defaults fill only direct calls)");
@@ -4594,7 +4737,7 @@ fn _pd_ncallee(S, fi, noff, lb): i64 {
     if (_gen_def_open(S, fi) < 0) {
         if (_syntax_only == 1) { return 2; }
         if (_pd_eo(S, lb) == 1) {
-            _pd_q(S, noff);
+            _pd_q(S, _fn_src_name(S, fi, noff));
             PRSTR(" takes no named arguments: it has no declared parameter list");
             _pd_ec(S, lb);
         }
@@ -4602,7 +4745,7 @@ fn _pd_ncallee(S, fi, noff, lb): i64 {
     }
     if (GFVA(S, fi) != 0) {
         if (_pd_eo(S, lb) == 1) {
-            _pd_q(S, noff);
+            _pd_q(S, _fn_src_name(S, fi, noff));
             PRSTR(" is variadic: its arguments are positional");
             _pd_ec(S, lb);
         }
@@ -4610,7 +4753,7 @@ fn _pd_ncallee(S, fi, noff, lb): i64 {
     }
     if ((GFLG(S, fi) & 2048) != 0) {
         if (_pd_eo(S, lb) == 1) {
-            _pd_q(S, noff);
+            _pd_q(S, _fn_src_name(S, fi, noff));
             PRSTR(" is defined twice: name its arguments only on a fn defined once");
             _pd_ec(S, lb);
         }
@@ -4627,7 +4770,7 @@ fn _pd_nscan(S, fi, noff, p, st): i64 {
     var max = L64(_fnt_params + fi * 8);
     var lb = GTI(S);
     if (p > max) {
-        _CHECK_ARITY(S, load64(st + 32), noff, fi, p + _pd_nargs(S, lb), 1);
+        _check_arity_p0(S, load64(st + 32), noff, fi, p + _pd_nargs(S, lb), 1, load64(st + 24));
         return 1;
     }
     var tb = alloc(max * 24 + 24);
@@ -4637,7 +4780,7 @@ fn _pd_nscan(S, fi, noff, p, st): i64 {
     var last = 0 - 1;
     var n = GTCNT(S);
     while (q < n) {
-        if (_pd_label_at(S, q) == 0) { return _pd_c5(S, q, noff); }
+        if (_pd_label_at(S, q) == 0) { return _pd_c5(S, q, _fn_src_name(S, fi, noff)); }
         var pi = _pd_index(S, fi, TOKVAL(S, q));
         if (pi < 0) { return _pd_c2(S, q, fi, noff, load64(st + 24)); }
         if (pi < p) { return _pd_c4(S, q, fi, noff, pi, load64(st + 24)); }
@@ -4681,7 +4824,7 @@ fn _pd_nargs(S, q): i64 {
 # `self`). Returns 1.
 fn _pd_c2(S, q, fi, noff, p0): i64 {
     if (_pd_eo(S, q) == 0) { return 1; }
-    _pd_q(S, noff);
+    _pd_q(S, _fn_src_name(S, fi, noff));
     PRSTR(" has no parameter named ");
     _pd_q(S, TOKVAL(S, q));
     var max = L64(_fnt_params + fi * 8);
@@ -4702,7 +4845,7 @@ fn _pd_c2(S, q, fi, noff, p0): i64 {
 # C3 a parameter named twice. Returns 1.
 fn _pd_c3(S, q, fi): i64 {
     if (_pd_eo(S, q) == 0) { return 1; }
-    _pd_pof(S, TOKVAL(S, q), fi);
+    _pd_pofc(S, TOKVAL(S, q), fi);
     PRSTR(" is named twice");
     _pd_ec(S, q);
     return 1;
@@ -4720,7 +4863,7 @@ fn _pd_c5(S, q, noff): i64 {
 fn _pd_c6(S, q, fi, k): i64 {
     if (_pd_eo(S, q) == 0) { return 1; }
     PRSTR("missing argument for ");
-    _pd_pof(S, _bx_pname(S, fi, k), fi);
+    _pd_pofc(S, _bx_pname(S, fi, k), fi);
     PRSTR(" (it has no default)");
     _pd_ec(S, q);
     return 1;
@@ -4734,7 +4877,7 @@ fn _pd_c4(S, q, fi, noff, pi, p0): i64 {
             _pd_ec(S, q);
             return 1;
         } }
-    _pd_pof(S, TOKVAL(S, q), fi);
+    _pd_pofc(S, TOKVAL(S, q), fi);
     PRSTR(" is given by position and by name");
     _pd_ec(S, q);
     return 1;
@@ -4853,7 +4996,7 @@ fn _pd_route_named(S, fi, noff): i64 {
     var lb = _pd_first_label(S, GTI(S));
     if (_pd_eo(S, lb) == 1) {
         PRSTR("a call with named arguments cannot be overload-routed: ");
-        _pd_q(S, noff);
+        _pd_q(S, _fn_src_name(S, fi, noff));
         PRSTR(" has a routed sibling - call the one you mean");
         _pd_ec(S, lb);
     }
@@ -5300,7 +5443,7 @@ fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
     else { syscall(SYS_WRITE, 2, ": passing a Str's data pointer '", 32); }
     _sca_print_arg(S);
     syscall(SYS_WRITE, 2, "' to '", 6);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
     syscall(SYS_WRITE, 2, "' which expects a cstring", 25);
     if (k == 1) { syscall(SYS_WRITE, 2, " (a Str is a {data, len} header, not a char*)\n", 46); }
     else { syscall(SYS_WRITE, 2, " (a Str's bytes are not NUL-terminated at its length)\n", 54); }
@@ -5341,7 +5484,7 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
     syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
     PRNUM(PEEKV(S));
     syscall(SYS_WRITE, 2, " to '", 5);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
     syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
     syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
     _had_error = 1;
@@ -5406,7 +5549,7 @@ fn _sar_vcall(S, fi, cls, want, dst): i64 {
     if (rs == 0) { return 0 - 2; }
     var bad = 0;
     if (_sar_vok(S, cls, rs, want) == 0) {
-        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ", L64(_fnt_names + fi * 8));
+        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
         bad = 1;
     } elif (GINFN(S) != 1) {
         _svc_toplevel_err(S);
@@ -5449,7 +5592,7 @@ fn _sar_err(S, ti, fi): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": a value-form vector argument to '");
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     PRSTR("' is a local of its type or a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) - got `");
     _vrcv_offender(S, ti);
     PRSTR("`\n");
@@ -5544,7 +5687,7 @@ fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
     } else {
         # 6.7.14: a missing `)` leaves a `;` / `}` / statement keyword in place, and an unclosed list
         # has no argument count to judge (`g(1;` also said "'g' expects 2 arguments, got 1").
-        if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, line, noff, fi, uarg, 1); }   # `uarg` counts `self`, as `_fnt_params` does
+        if (_expect_step(S, 11) == 1) { _check_arity_p0(S, line, noff, fi, uarg, 1, p0); }   # `uarg` counts `self`, as `_fnt_params` does (the message does not, 6.7.14)
         _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
     }
     var n = load64(&st);
@@ -6262,7 +6405,7 @@ fn _fla_addr(S, fi, argc, tail): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
     if (ps > 0) { if (ps != _fla_ft) {
-            ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
             return 0;
         } }
     if (_fsc_src_in_frame(S) == 1) { _sarg_escapes(fi, argc, tail); }   # 6.6.20
@@ -6966,7 +7109,7 @@ fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
     syscall(SYS_WRITE, 2, "' is deprecated", 15);
     var _dep_msg = GFDM(S, fi);
     if (_dep_msg != 0) {
@@ -7008,6 +7151,7 @@ fn _dep_seen(ti, fi): i64 {
 fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
     if (spec < 0) { return 0; }
     SFIC(S, spec, c0, c1);
+    if (GFMETH(S, base_fi) != 0) { SFMETH(S, spec, GFMETH(S, base_fi)); }   # 6.7.14: `P.id<f64>`
     if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
     SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 196608));   # 6.7.11: its arity record
     return 0;
@@ -7136,7 +7280,7 @@ fn _vis_check(S, fi, noff, ti): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
@@ -7217,7 +7361,7 @@ fn _vis_report_late(S, fi, caller, ti): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
@@ -7308,14 +7452,14 @@ fn _pure_effect_warn(S, fi, noff): i64 {
         syscall(SYS_WRITE, 2, "warning:", 8);
         _err_head(S);
         syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     if (fl & 32 != 0) {
         syscall(SYS_WRITE, 2, "warning:", 8);
         _err_head(S);
         syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     return 0;
@@ -13087,6 +13231,13 @@ fn _sinst_note(S, inst, base, c0, c1): i64 {
     S64(e + 16, c1);
     return 0;
 }
+# The generic struct whose instance struct `c` is (its 1-based id, as `_sinst_conc` takes it), else 0.
+fn _sinst_base(c): i64 {
+    if (c <= 0) { return 0; }
+    if (c > 1024) { return 0; }
+    if (_sinst == 0) { return 0; }
+    return L64(_sinst + (c - 1) * 24);
+}
 # The type argument in `slot` of struct c when c is an instance of the generic struct g, else 0.
 fn _sinst_conc(S, c, g, slot): i64 {
     if (c <= 0) { return 0; }
@@ -13108,7 +13259,7 @@ fn _sinst_conc(S, c, g, slot): i64 {
 # CHANGELOG [6.7.7]
 fn _gen_tup_bind(S, fi, a, c): i64 {
     if (_syntax_only == 1) { return c; }
-    _tup_err(S, a, "a tuple cannot bind a type parameter: ", L64(_fnt_names + fi * 8), " is generic - pass an element (`t.0`), or take the tuple in a fn that is not generic");
+    _tup_err(S, a, "a tuple cannot bind a type parameter: ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " is generic - pass an element (`t.0`), or take the tuple in a fn that is not generic");
     _panic = 1;
     return 0 - 8;
 }
@@ -15043,6 +15194,7 @@ fn _prescan_fn_sig(S): i64 {
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
         _prescan_eff_take(S, fi);               # 6.7.14: and `#io` / `#alloc`, for #pure's check
+        _prescan_meth_note(S, fi, start_ti + 1);   # 6.7.14: an impl method's `T.m`, for the diagnostics
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
         if (_pcfn == 1) { SFCFN(S, fi, 1); }    # 6.7.2 (C1): a const context may call it
         if (_ptp != 0) { _bnd_fn_record(S, fi, _ptp, GTI(S)); }   # 6.7.1 (C3): bounds + bounded sites, BEFORE the stub scan reads them
@@ -15495,7 +15647,7 @@ fn _warn_undefined_prepass(S): i64 {
     while (wfi < wfc) {
         if (L64(_fnt_offsets + wfi * 8) < 0 && GFFI(S, wfi) == 0) {
             syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-            PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, wfi, L64(_fnt_names + wfi * 8)));   # 6.7.14: `S.nope`
             syscall(SYS_WRITE, 2, "'\n", 2);
             _tr_undef_note(S, L64(_fnt_names + wfi * 8));   # 6.7.0: an ambiguous trait method
         }

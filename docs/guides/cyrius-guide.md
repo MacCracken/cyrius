@@ -2654,7 +2654,11 @@ fn demo(): i64 {
   an `m`, the plain `T_m` / `p.m()` is ambiguous and refused (the error names a qualified spelling)
   — call `T_A_m(p)` or `T_B_m(p)`. Inside an impl or default of one of those traits, `self.m()`
   means that trait's own. An inherent `m` keeps the plain name: `p.m()` picks it, the trait's is
-  `T_Trait_m`.
+  `T_Trait_m`. A **diagnostic at a call** names a method `T.m` (either spelling of the call, the
+  trait-qualified one too) and a generic call `g<i32>` (6.7.14; through 6.7.13 they printed the
+  mangled `T_m` / `g$i32`): `'Point.norm1' expects 0 arguments, got 1` for `p.norm1(5)` — a method
+  call's count is the arguments in its parentheses, without `self`; `Point_norm1(&p, 5)` counts the
+  `&p` it writes ("expects 1 argument, got 2").
 - **`self`.** Untyped, it is a `*T`: fields read and write through it (`self.x = 1` changes the
   receiver). Arithmetic on it is refused, because a `*T` steps `sizeof(T)` and `load64(self + 8)`
   would otherwise silently mean something new — write `self.field`, or declare `self: *T` when you
@@ -2798,8 +2802,8 @@ before the arguments run. Refused by name:
 - a member the trait declares without an untyped `self` first (no parameter, or `self: T`);
 - a variadic member, and one returning multiple values or a vector;
 - **named arguments** — a call through a dyn passes them by position;
-- the wrong count, in every call's words (`'dyn Shape.area' expects 1 argument, got 2` — `self`
-  counted).
+- the wrong count, in every method call's words (`'dyn Shape.area' expects 0 arguments, got 1` for
+  `o.area(5)` — the arguments as written, without `self`, since 6.7.14; it counted `self` before).
 
 **The two words are opaque.** A dyn is not a value and has no fields: a dyn used as a value (an
 operator, `if (o)`, `print(o)`, an untyped argument, `var x = o;`), `&o`, `o.data` / `o.vtable`, a

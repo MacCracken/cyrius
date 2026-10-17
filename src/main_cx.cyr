@@ -427,7 +427,7 @@ while (ufi < GFCNT(S)) {
                 syscall(SYS_WRITE, 2, "error: undefined function(s) called (cx backend):\n", 50);
             }
             syscall(SYS_WRITE, 2, "  - ", 4);
-            PRSTR(S + 0xEC00000 + L64(_fnt_names + uidx * 8));
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, uidx, L64(_fnt_names + uidx * 8)));   # 6.7.14: `S.nope`
             syscall(SYS_WRITE, 2, "\n", 1);
             cx_undef = cx_undef + 1;
         }

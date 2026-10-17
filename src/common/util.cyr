@@ -1057,6 +1057,13 @@ fn GFIC(S, fi, k): i64 { if (_fnt_instconc == 0) { return 0; } if (fi < 0) { ret
 var _fnt_iself = 0;
 fn GFISELF(S, fi): i64 { if (_fnt_iself == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_iself + fi * 8); }
 fn SFISELF(S, fi, v): i64 { if (_fnt_iself == 0) { _fnt_iself = alloc(131072 * 8); } S64(_fnt_iself + fi * 8, v); return 0; }
+# 6.7.14 — a METHOD's source spelling, for the call-site diagnostics (`_fn_src_name`, parse_fn.cyr):
+# ((its type's name + 1) << 32) | its own name, 0 = no method. Pass 1 records an impl's definitions, the
+# method arm a name a call registered (`s.nope()`), a generic instance its base's. Lazy at the max fn cap
+# like _fnt_iself; nothing but a diagnostic reads it. CHANGELOG [6.7.14]
+var _fnt_meth = 0;
+fn GFMETH(S, fi): i64 { if (_fnt_meth == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_meth + fi * 8); }
+fn SFMETH(S, fi, v): i64 { if (_fnt_meth == 0) { _fnt_meth = alloc(131072 * 8); } S64(_fnt_meth + fi * 8, v); return 0; }
 fn SFIC(S, fi, c0, c1): i64 {
     if (_fnt_instconc == 0) { _fnt_instconc = alloc(131072 * 16); }
     S64(_fnt_instconc + fi * 16, c0);

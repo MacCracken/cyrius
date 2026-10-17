@@ -221,7 +221,7 @@ paxis() {
     _n=$1; _want=$2; _sym=$3; _body=$4; _envv=$5
     printf '%s%s\n' "$PPRE" "$_body" > "$T/paths/$_n.cyr"
     ( cd "$T/paths" && env $_envv "$CC" < "$_n.cyr" > "$_n.bin" 2> "$_n.err" ) || true
-    _got=$(grep -c "'$_sym' is private to its file" "$T/paths/$_n.err" || true)
+    _got=$(grep -cF "'$_sym' is private to its file" "$T/paths/$_n.err" || true)
     if [ "$_got" != "$_want" ]; then
         echo "  FAIL: visibility-private [$_n]: expected $_want x \"'$_sym' is private\", got $_got"; head -2 "$T/paths/$_n.err" | sed 's/^/      /'; fail=1
     fi
@@ -235,7 +235,7 @@ paxis amp_fncall  1 hid_fn 'fn main(): i64 { return fncall1(&hid_fn, 1); }'
 paxis amp_pub     0 pub_fn 'fn main(): i64 { var f = &pub_fn; return callptr(f, 1); }'
 paxis amp_same    0 hid_fn 'fn main(): i64 { return pub_same_amp(); }'
 # `s.method()` — its own call emitter (parse_decl.cyr method path)
-paxis method      1 HidPair_hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
+paxis method      1 HidPair.hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
 # struct receives that emit their own call
 paxis asv_typed   1 hid_big  'fn main(): i64 { var s: HidBig = hid_big(); return s.c; }'
 paxis asp_typed   1 hid_pair 'fn main(): i64 { var s: HidPair = hid_pair(); return s.b; }'
@@ -253,8 +253,8 @@ paxis lx_v2_ret   1 hid_v2 'fn w(): f64v2 { return hid_v2(); } fn main(): i64 { 
 # generic instances: a PUBLIC generic in a private file must build at a non-i64 type
 # from another file (the instance inherited the FILE default and was refused), while
 # a private generic's instance must still be refused.
-paxis pgen_i32    0 'pgen$i32' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
-paxis gen_i32     1 '_gen$i32' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
+paxis pgen_i32    0 'pgen<i32>' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
+paxis gen_i32     1 '_gen<i32>' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
 # top-level arrays: PARSE_GVAR_ARR never stamped them (guide: "every fn and global var")
 paxis arr_name    1 _hid_arr 'fn main(): i64 { return load64(&_hid_arr); }'
 paxis arr_u8      1 _hid_u8  'fn main(): i64 { return load8(&_hid_u8); }'
@@ -295,7 +295,7 @@ pfwd() {
     _n=$1; _want=$2; _sym=$3; _body=$4; _envv=$5
     printf '%s%s\n%s' "$FPRE" "$_body" "$FINC" > "$T/paths/f_$_n.cyr"
     ( cd "$T/paths" && env $_envv "$CC" < "f_$_n.cyr" > "f_$_n.bin" 2> "f_$_n.err" ) || true
-    _got=$(grep -c "'$_sym' is private to its file" "$T/paths/f_$_n.err" || true)
+    _got=$(grep -cF "'$_sym' is private to its file" "$T/paths/f_$_n.err" || true)
     if [ "$_got" != "$_want" ]; then
         echo "  FAIL: visibility-private [fwd:$_n]: expected $_want x \"'$_sym' is private\", got $_got"; head -2 "$T/paths/f_$_n.err" | sed 's/^/      /'; fail=1
     fi
@@ -306,7 +306,7 @@ pfwd amp_infn    1 hid_fn 'fn main(): i64 { var f = &hid_fn; return callptr(f, 1
 pfwd amp_top     1 hid_fn 'var g = &hid_fn; fn main(): i64 { return fncall1(g, 1); }'
 pfwd amp_fncall  1 hid_fn 'fn main(): i64 { return fncall1(&hid_fn, 1); }'
 pfwd amp_pub     0 pub_fn 'fn main(): i64 { var f = &pub_fn; return callptr(f, 1); }'
-pfwd method      1 HidPair_hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
+pfwd method      1 HidPair.hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
 pfwd asv_typed   1 hid_big  'fn main(): i64 { var s: HidBig = hid_big(); return s.c; }'
 pfwd asp_typed   1 hid_pair 'fn main(): i64 { var s: HidPair = hid_pair(); return s.b; }'
 pfwd asp_infer   1 hid_pair 'fn main(): i64 { var s = hid_pair(); return s.b; }'
@@ -314,8 +314,8 @@ pfwd asv_pub     0 hid_big  'fn main(): i64 { var s: HidBig = pub_big(); return 
 pfwd pe_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }' CYRIUS_TARGET_WIN=1
 pfwd pe_v2_ret   1 hid_v2 'fn w(): f64v2 { return hid_v2(); } fn main(): i64 { var v: f64v2 = w(); return 0; }' CYRIUS_TARGET_WIN=1
 pfwd lx_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }'
-pfwd gen_i32     1 '_gen$i32' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
-pfwd pgen_i32    0 'pgen$i32' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
+pfwd gen_i32     1 '_gen<i32>' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
+pfwd pgen_i32    0 'pgen<i32>' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
 pfwd arr_name    1 _hid_arr 'fn main(): i64 { return load64(&_hid_arr); }'
 pfwd arr_pub     0 pub_arr  'fn main(): i64 { store64(&pub_arr, 5); return load64(&pub_arr); }'
 pfwd gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'

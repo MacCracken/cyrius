@@ -2255,6 +2255,9 @@ _chk_gate "$ROOT/tests/gates/frontend/pure_effect_later_callee.sh"
 # 6.7.14 — `#inline` on an `async fn` is warned (its body runs through its Future; nothing names
 # `f$impl`), by name, once; the binary is unchanged. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/frontend/inline_async_warned.sh"
+# 6.7.14 — a call-site diagnostic names its callee as the source spells it: a method `S.ri` (it printed the
+# mangled `S_ri`), a generic call `g<i32>` (`g$i32`); a method form's arity counts as written, without `self`.
+_chk_gate "$ROOT/tests/gates/frontend/call_site_callee_spelling.sh"
 
 # 6.7.14 — every token number the lexer emits has a name: 24 operator / literal tokens (`<=`, `&&`,
 # `+%`, `...`, `?`, `@unsafe`, a float literal, ..) said "got unknown". The issue's derivation over
