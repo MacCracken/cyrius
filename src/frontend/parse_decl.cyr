@@ -5603,6 +5603,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold_b(S, vcnt, sti, ann_bool);   # 6.6.6: a redeclaration reuses the global's slot; 6.7.14: + bool
     _gz_reg(S, gvi, is_struct, ssid, ann_sid, rhs_ti);   # 6.7.10 (B7-1g): judged at the end of pass 1
+    _gu_reg(S, gvi, ann_ti + is_struct, rhs_ti);         # 6.7.14 (D29 / D30): an untyped whole call, typed there
     _GVAR_VIS(S, gvi, sti);
     _gv_last_marks(S, gvi, ann_bool, ann_scalar, ann_ti);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer and u128 marks
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
@@ -6204,6 +6205,7 @@ fn _gvi_scalar(S): i64 {
     _scv_err = 0;
     if (he == 0) { _scv_err = _had_error; }
     _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
+    if (_gu_untyped(S, st) == 1) { _gu_refuse(S, _gu_sid(S, st)); }   # 6.7.14 (D30): `var x = mk2(30);`
     return 0;
 }
 # 6.7.14 (D28 (a)) — 1 = the zone declaration whose initialiser starts at `st` is annotated `*T` (`**T`, any number of
@@ -9227,6 +9229,7 @@ fn PARSE_VAR(S): i64 {
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
+        if (ann_ti == 0) { pscale = _gu_late(S, pscale, scv_start); }   # 6.7.14 (D29 / D30): `var x = mk1();`
         var vcnt = GVCNT(S);
         S64(_varn_base + vcnt * 8, noff);
         if (lfloat != 0) {
@@ -9672,6 +9675,7 @@ fn _gz_reg(S, gvi, lit, ssid, asid, ti): i64 {
 # (`= G1`, `G1 + G2`), and a handle is never a value, so the walk repeats until nothing changes (a slot
 # only goes 2 -> 1; the cursor is put back).
 fn _gz_sweep(S): i64 {
+    _gu_sweep(S);   # 6.7.14 (D29): first — a judgment below can read one (`var G: S1 = X;`)
     if (_gz_v == 0) { return 0; }
     var sv = GTI(S);
     var n = vec_len(_gz_v);
@@ -10092,6 +10096,117 @@ fn _gz_late(S, sid, start): i64 {
     if (_tup_is(S, sid) == 1) { return 2; }
     if (_gz_truth(S, start, sid) == 1) { return 2; }
     return 1;
+}
+# ⛔ 6.7.14 — AN UNTYPED TOP-LEVEL `var x = mk1(30);` BINDS THE STRUCT (the user's decisions D29 (a) and D30 (a),
+# 2026-10-16: decision 12 — a whole struct result binds the struct at every size — and decision 5, one rule for locals
+# and globals). The initialiser one whole free call, inside any parentheses up to its `;` (`(mk1(30))`), a generic's
+# instance too, returning a struct by value: of 8 B or less the global is that struct, inline (`x.a` was "no struct
+# type in scope for 'x'"; `x + 1` dispatches `P1_add`, refused when there is none); of 9-16 B it is refused as `var x:
+# P2 = mk2(30);` is, "'mk2' returns a struct by value, and a struct result needs storage in a fn's frame" (it held
+# the first word, silently); over 16 B the call refuses itself (no frame) and the global takes the struct, so `x.a`
+# adds no second error. After the first statement PARSE_VAR's global arm types it (`_gu_late`); in the declaration
+# zone, where fns below are not yet registered and fn bodies read the global before its replay, the end of pass 1
+# does (`_gu_sweep`, from the tokens as `_gz_sweep` reads them) and the replay refuses (`_gvi_scalar`). A `Str` stays
+# a handle routed by its call (6.7.13's D6 (b) / 6.7.14's D22 (b): no other untyped top-level declaration takes a
+# type), a dyn its own refusals; a method / operator result keeps the word. CHANGELOG [6.7.14]
+var _gu_c = 0;    # the call's name token (`_gu_sid`), where the refusal reports
+var _gu_v = 0;    # the declaration zone's untyped whole-call globals: (slot, initialiser token) pairs
+# The struct a top-level untyped declaration's initialiser at `start` binds (0 for none), resolved as the receive
+# resolves it (`_gen_resolve_call`, a dedup hit after the parse).
+fn _gu_sid(S, start): i64 {
+    var c = _gu_call(S, start);
+    if (c < 0) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }
+    return _gu_ok(S, GFRS(S, fi));
+}
+# The name token of the one whole free call the initialiser at `start` is (inside any wrap, up to its `;`); else -1.
+fn _gu_call(S, start): i64 {
+    var k = _rcv_peel(S, start, 0);
+    var c = start + k;
+    if (TOKTYP(S, c) != 2) { return 0 - 1; }
+    if (_rcv_iscall(S, c, k) == 0) { return 0 - 1; }
+    _gu_c = c;
+    return c;
+}
+# `rs` (a call's return) as the struct an untyped global binds: a struct by value, not a `Str`, a dyn or a tuple.
+fn _gu_ok(S, rs): i64 {
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    if (rs == _STR_SID(S)) { return 0; }
+    if (_dyn_is(S, rs) == 1) { return 0; }
+    if (_tup_is(S, rs) == 1) { return 0; }
+    return rs;
+}
+# D30: a 9-16 B result has no storage at top level — refused at the call's name, once (not after a refusal inside the
+# initialiser, `_scv_err`; over 16 B the call refused itself). The cursor is kept.
+fn _gu_refuse(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz <= 8) { return 0; }
+    if (sz > 16) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, _gu_c);
+    _refuse_toplevel_struct_call(S, TOKVAL(S, _gu_c));
+    STI(S, sv);
+    return 1;
+}
+# PARSE_VAR's global arm (after the first statement), the untyped initialiser at `start` parsed: `0 - sid` for the
+# struct the global binds (registered as `var x: S = ..` is), else `pscale` as it was.
+fn _gu_late(S, pscale, start): i64 {
+    if (pscale != 0) { return pscale; }
+    var sid = _gu_sid(S, start);
+    if (sid <= 0) { return 0; }
+    _gu_refuse(S, sid);
+    return 0 - sid;
+}
+# 1 = the declaration-zone replay's initialiser at `st` is an untyped `var NAME = ` one's.
+fn _gu_untyped(S, st): i64 {
+    if (TOKTYP(S, st - 1) != 4) { return 0; }
+    if (TOKTYP(S, st - 2) != 2) { return 0; }
+    if (TOKTYP(S, st - 3) != 3) { return 0; }
+    return 1;
+}
+# PARSE_GVAR_REG: an untyped (`typed` 0), non-literal declaration whose initialiser at `ti` may be a call is noted.
+fn _gu_reg(S, gvi, typed, ti): i64 {
+    if (typed != 0) { return 0; }
+    if (ti <= 0) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t != 2) { if (t != 10) { return 0; } }
+    if (_gu_v == 0) { _gu_v = vec_new(); }
+    vec_push(_gu_v, gvi);
+    vec_push(_gu_v, ti);
+    return 0;
+}
+# The end of pass 1: each noted global whose initialiser is one whole free call returning a struct takes it — inline
+# of 8 B or less, else a handle (refused at the replay, or by the call). The struct is read from the tokens
+# (`_gz_call_rs`: a generic's fixed or bound `: T` return; a generic struct's instance, not made before pass 2, is not
+# typed here). The cursor is put back.
+fn _gu_sweep(S): i64 {
+    if (_gu_v == 0) { return 0; }
+    var sv = GTI(S);
+    var n = vec_len(_gu_v);
+    var i = 0;
+    while (i < n) {
+        var gvi = vec_get(_gu_v, i);
+        var c = _gu_call(S, vec_get(_gu_v, i + 1));
+        if (c >= 0) {
+            var sid = _gu_ok(S, _gz_call_rs(S, c));
+            if (_gz_gb > 0) { sid = 0; }
+            if (sid > 0) { _gu_type(S, gvi, sid); }
+        }
+        i = i + 2;
+    }
+    STI(S, sv);
+    return 0;
+}
+fn _gu_type(S, gvi, sid): i64 {
+    SVTYPE(S, gvi, sid);
+    if (STRUCTSZ(S, sid - 1) > 8) { SVPM(S, gvi, 1); return 0; }
+    SVPM(S, gvi, 2);
+    return 0;
 }
 # ⛔ 6.7.10 (B7-1g) — 1 = global `gvi` is a struct HANDLE of 8 B or less (GVPM 1, a struct type). No
 # global was one before the handle line (every struct global of 8 B or less was inline), so each

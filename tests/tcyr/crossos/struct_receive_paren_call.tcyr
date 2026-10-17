@@ -134,6 +134,15 @@ fn pf_stmt(): i64 { var s = P1 { 32 }; (s).m(); (mk1()).a; return (s).a + 1; }
 fn pf_cl(): i64 { var f = |k| { var s = P1 { 33 }; return (s).a + k; }; return fncall1(f, 0); }
 fn pf_recv(): i64 { var b = Q { 1, 2 }; var x: Q = (b).mkm(); return dq(x); }
 var GPF = (GP1).a;
+# --- 6.7.14 (the user's decision D29 (a), 2026-10-16): an untyped TOP-LEVEL whole call binds its 8 B struct ---
+# `var x = mk1();` / `(mk1())` at top level inferred nothing: `x.a` was "no struct type in scope for 'x'" (an untyped
+# global kept the word; issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md). The declaration zone's
+# globals are typed at the end of pass 1, before a fn body reads them (`tu_read`); after the first statement (TA*, below)
+# PARSE_VAR's global arm types them.
+var TU1 = mk1();
+var TU2 = (mk1());
+var TU3 = ((mk8()));
+fn tu_read(): i64 { return TU1.a + d1(TU2); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -201,5 +210,15 @@ assert_eq(pf_stmt(), 33, "(s).m(); (mk1()).a; as statements");
 assert_eq(pf_cl(), 33, "(s).a in a closure");
 assert_eq(pf_recv(), 34, "var x: Q = (b).mkm(); a struct destination");
 assert_eq(GPF, 33, "var GPF = (GP1).a; at top level");
+
+test_group("6.7.14 (D29): an untyped top-level whole call binds its 8 B struct");
+assert_eq(TU1.a, 33, "the declaration zone: var TU1 = mk1(); TU1.a (refused before)");
+assert_eq(TU2.a, 33, "the declaration zone: var TU2 = (mk1());");
+assert_eq(TU3.a + TU3.b, 33, "the declaration zone: var TU3 = ((mk8())); two u32 fields");
+assert_eq(tu_read(), 66, "a fn body reads TU1.a and passes TU2 by value");
+var TA1 = mk1();
+var TA2 = (mk8());
+assert_eq(TA1.a + d1(TA1), 66, "after a statement: var TA1 = mk1(); TA1.a, d1(TA1)");
+assert_eq(TA2.a + TA2.b, 33, "after a statement: var TA2 = (mk8());");
 
 var r = assert_summary();

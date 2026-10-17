@@ -1589,7 +1589,13 @@ a crash), at every size since 6.7.13: `var x = (mk1());` with `mk1` returning an
 that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());` with `f` returning
 `: f64` is an f64, as `var x = f();` is. In a fn, `var s = (mks());` with `mks` returning `Str` is a `Str`, as
 `var s = mks();` is (6.7.14; it was an untyped word: `println(s)` printed the header's bytes and `s.len()`
-was refused). An annotation that names no struct is never replaced by the callee's struct:
+was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's decisions D29 (a) and D30 (a),
+2026-10-16): at top level — in the declaration zone or after the first statement, wrapped or not — `var x =
+mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
+scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none), and one of 9-16 bytes is refused as
+`var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
+through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. A
+method or operator result, a `Str` and a name keep the word at top level. An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 
@@ -2239,7 +2245,8 @@ form does and as a single method and the same chain over 8 bytes always did. Thr
 untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the word (now it dispatches
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
-annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word.
+annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word (a whole free call
+excepted since 6.7.14, above).
 
 **So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
 (or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
