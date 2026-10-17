@@ -3013,13 +3013,17 @@ fn demo(): i64 {
 So do `h = t` into a `Str` handle (a rebind), a method's or a generic's `Str` parameter — the stdlib's
 `h.eq(t)`, `h.cat(t)`, `h.contains(t)`, `h.starts_with(t)` and `h.ends_with(t)` among them, whose operand
 `lib/str.cyr` types `Str` since 6.7.14 (so a string literal there is passed as a `Str`: `h.eq("abc")` is 1;
-through 6.7.13 both read garbage) — a `p: *Str` parameter (`&t`, as `fp(&t)` passes) and, since 6.7.14, a
+through 6.7.13 the untyped operand read an inline `Str`'s data word, or a literal's bytes, as the header) — a
+`p: *Str` parameter (`&t`, as `fp(&t)` passes) and, since 6.7.14, a
 `var p: *Str = t;` declaration, and an inline `Str` global (its static address) anywhere. ⛔ A
 frame's inline `Str` cannot outlive the frame, so these are refused by name: `return t;` from a fn returning `Str` (*cannot return the inline Str 't' from a fn
 returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))*),
 and a store into a `Str` global, a `Str` field (a struct literal's too) or through a `*Str` (*cannot store
-the inline Str 't' into a global* / *into a field* / *through a pointer*). Build a `Str` that outlives its
-fn with `str_new(p, n)`. An inline `Str` global is never refused, and a closure that captures `t` holds a
+the inline Str 't' into a global* / *into a field* / *through a pointer*). The refusals are by NAME: a
+handle bound to the frame's `t` (`var h: Str = t;`, `var h = t;`, `h = t`, `var p: *Str = t;`) holds t's
+header address — `&t` — and dangles when the frame dies exactly as `var p = &t; return p;` does, so `return
+h;` and `G = h` compile with no diagnostic (the user's decision D23 (b), 2026-10-16). Build a `Str` that
+outlives its fn with `str_new(p, n)`. An inline `Str` global is never refused, and a closure that captures `t` holds a
 copy of the header in its environment, which lives as long as the closure. A position that takes no `Str`
 value — an untyped parameter or variable (`fncall1(&f, t)`, `callptr(&f, t)`, `vec_push(v, t)`), a tuple
 element, an untyped if-expression branch, an untyped fn's `return` — still takes the header's first word:

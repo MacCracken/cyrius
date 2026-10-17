@@ -36,6 +36,10 @@
 # and `return t;` from a fn returning `Str` is refused (X3, restored), where 6.7.13's review fix had kept it
 # outside the decision (its bare name its first word). An untyped source keeps the one-word store (K8).
 #
+# 6.7.14 (the user's decision D23 (b), 2026-10-16; issues/2026-10-16-inline-str-header-escapes-through-bound-
+# handle.md): the refusals stay by name — a handle bound to a frame's t (`var h: Str = t; return h;`, `G = h`) is
+# `&t` and dangles as `var p = &t; return p;` does; the guide says so, and D23a pins that it compiles clean.
+#
 # 6.7.14 (the user's decision D18 (c), 2026-10-16; issues/2026-10-15-inline-str-into-untyped-or-other-pointer-
 # position-passes-data-word.md): only where a type says `Str`. lib/str.cyr types the `Str` methods' operand —
 # `Str_eq` / `Str_cat` `other`, `Str_contains` `needle`, `Str_starts_with` `prefix`, `Str_ends_with` `suffix` —
@@ -342,6 +346,25 @@ fn go(): i64 {
 }'
 runs K9 5 "untyped positions keep t's data word: fncall1, callptr, a vec, a tuple element, an if-expression branch (D18 (c))"
 
+# --- D23: a handle BOUND to a frame's inline Str escapes as `&t` does — it compiles, no diagnostic (D23 (b), documented) ---
+cat > "$T/D23a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+fn smash(): i64 { var a: i64[32]; var i = 0; while (i < 32) { a[i] = 0; i = i + 1; } return a[3]; }
+fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; var h: Str = t; return h; }
+fn main() { var h = mk(); smash(); return f(h); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D23a
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D23a.$leg" ]; then bad "D23a ($leg): the bound handle's \`return h;\` did not build (rc $crc): $(grep '^error' "$T/D23a.$leg.err" | head -1 || true)"
+    elif grep -qE '^(error|warning)' "$T/D23a.$leg.err"; then bad "D23a ($leg): a diagnostic: $(grep -E '^(error|warning)' "$T/D23a.$leg.err" | head -1)"
+    else ok "D23a the filed repro: \`var h: Str = t; return h;\` compiles clean ($leg) — it dangles as \`&t\` does"; fi
+done
+
 # --- U: a bare `var t: Str;` assigned a Str handle reads its OWN header, the handle's copied (D20 (a)) ---
 row U1 'fn go(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }'
 runs U1 5 "\`var t: Str; t = a; str_len(t)\` — t's own header, a's copied (6.7.13 read a's string through the pun)"
@@ -495,7 +518,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=41
+FLOOR_ROWS=42
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
