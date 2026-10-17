@@ -146,9 +146,12 @@ if [ -z "$LIBTEST" ] && [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST="cr
 # 6.7.12 windows lane's triage (590 tcyr) pi 590/590, ecb and ach 589/590 — platform/pwd_grp.tcyr,
 # lib/pwd.cyr + lib/grp.cyr parsing Darwin's uid -2 as 0, fixed in the same release, so ecb and ach
 # are on the list — and cass 589/590 — stdlib/result_stdlib.tcyr, two filed PE defects (open is -1
-# for every failure; a failed ReadFile reads as EOF). cass joins when they are fixed.
-# CHANGELOG [6.7.12]
-CO_FULL_HOSTS="ecb ach pi"
+# for every failure; a failed ReadFile reads as EOF). CHANGELOG [6.7.12]
+# 6.7.14 — CASS JOINS: those two are fixed (the PE read / write / open / seek reroutes answer
+# -errno through GetLastError), and cass ran the whole corpus at zero failures — 627 / 627 on the
+# platform lane's tree, CYRIUS_CROSS_OS_FULL=1. All four hosts run the full corpus now.
+# CHANGELOG [6.7.14]
+CO_FULL_HOSTS="ecb ach pi cass"
 if [ -n "$LIBTEST" ] && [ -z "${CYRIUS_CROSS_OS_FULL+x}" ]; then
   case " $CO_FULL_HOSTS " in
     *" $HOST "*) CYRIUS_CROSS_OS_FULL=1 ;;

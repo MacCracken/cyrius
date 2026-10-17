@@ -99,16 +99,13 @@ jobs:
           STAGE="cyrius-${VER}-x86_64-linux"
           mkdir -p "$STAGE/bin" "$STAGE/lib"
 
-          # Bins + scripts from cyrius.cyml [release] (v5.4.18 unified source).
+          # Every cyrius.cyml [release] scripts entry, through the one helper every POSIX tarball uses: the
+          # CLI shims in scripts/shims/ first, then scripts/, and a listed entry found in neither FAILS the
+          # step (the scripts/-only lookup skipped cyrius-repl.sh silently: 6.7.9). CHANGELOG [6.7.14]
+          sh scripts/release-scripts.sh "$STAGE/bin"
+
+          # Bins from cyrius.cyml [release] (v5.4.18 unified source).
           BINS=$(awk -v k="bins" '
-              /^\[release\]/ { in_r = 1; next }
-              in_r && /^\[/ { exit }
-              in_r && $1 == k {
-                  sub(/^[^=]+= \[/, ""); sub(/\].*$/, "")
-                  gsub(/[",]/, " "); gsub(/ +/, " ")
-                  sub(/^ +/, ""); sub(/ +$/, ""); print; exit
-              }' cyrius.cyml)
-          SCRIPTS=$(awk -v k="scripts" '
               /^\[release\]/ { in_r = 1; next }
               in_r && /^\[/ { exit }
               in_r && $1 == k {
@@ -138,19 +135,6 @@ jobs:
           # step instead of shipping a tarball without it. CHANGELOG [6.7.10]
           cp "build/cycc_cx" "$STAGE/bin/"
           cp bootstrap/asm "$STAGE/bin/"
-          # The CLI shims live in scripts/shims/ (v5.11.69), the user-facing scripts flat in scripts/:
-          # look in shims/ first, as install.sh does, and FAIL on a listed script found in neither —
-          # the scripts/-only lookup skipped cyrius-repl.sh silently. CHANGELOG [6.7.9]
-          for script in $SCRIPTS; do
-            if [ -f "scripts/shims/$script" ]; then
-              cp "scripts/shims/$script" "$STAGE/bin/"
-            elif [ -f "scripts/$script" ]; then
-              cp "scripts/$script" "$STAGE/bin/"
-            else
-              echo "ERROR: cyrius.cyml [release] scripts lists $script, found in neither scripts/shims/ nor scripts/"
-              exit 1
-            fi
-          done
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*
           # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin — bin/cyriusly here is the COMPILED binary, whose
@@ -219,20 +203,40 @@ jobs:
           STAGE="cyrius-${VER}-aarch64-linux"
           mkdir -p "$STAGE/bin" "$STAGE/lib"
 
-          cp build/cycc_aarch64 "$STAGE/bin/cycc"
-          # cyrsign (Ed25519 release verifier) built for aarch64 via the cross-
-          # compiler so install/upgrade can verify signatures here too (the release-signing hardening item,
-          # v6.2.31). Fail loud if it isn't a real aarch64 ELF.
-          cat programs/cyrsign.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrsign"
-          file "$STAGE/bin/cyrsign" | grep -q "ARM aarch64" || { echo "ERROR: cyrsign not aarch64"; file "$STAGE/bin/cyrsign"; exit 1; }
-          # Build cyrius tool for aarch64 tarball (x86 binary — runs on host for cross builds)
-          if [ -f "build/cyrius" ]; then cp build/cyrius "$STAGE/bin/"; fi
-          # v6.2.40: native scaffolder, cross-built for aarch64 (matches
-          # cycc/cyrsign in this tarball). Replaces the retired
-          # cyrius-init.sh shim. Fail loud if it isn't a real aarch64 ELF.
-          cat programs/cyrius-init.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrius-init"
-          file "$STAGE/bin/cyrius-init" | grep -q "ARM aarch64" || { echo "ERROR: cyrius-init not aarch64"; file "$STAGE/bin/cyrius-init"; exit 1; }
-          cp scripts/cyriusly "$STAGE/bin/"
+          # Every cyrius.cyml [release] scripts entry, as every POSIX tarball ships them (6.7.12's D4): this
+          # step shipped none, so a binary install had no cyrius-repl.sh (`cyrius repl`), cyrius-watch.sh or
+          # cyrius-prompt-info. First, so an entry with no file fails before anything compiles. CHANGELOG [6.7.14]
+          sh scripts/release-scripts.sh "$STAGE/bin"
+
+          # Every cyrius.cyml [release] bins entry, built for aarch64 by the native compiler of the step above
+          # and arch-checked: the user's D59 (2026-10-16). This step shipped cycc, cyrsign, cyrius-init and the
+          # cyriusly shell script, and copied build/cyrius only `if [ -f ]` (a file this job never builds), so an
+          # aarch64 binary install had no `cyrius` CLI (no build, test or repl) and none of cyrfmt, cyrlint,
+          # cyrdoc, cyrius-lsp and the rest. The list is the manifest's, read as the x86_64 job reads it, and an
+          # entry with no source fails the step. cybs is the one entry not built: it is the x86_64 assembly the
+          # seed assembles (bootstrap/cybs.cyr) and has no aarch64 form. bin/cyriusly is the compiled version
+          # manager, as on x86_64; its shell twin is scripts/cyriusly below. CHANGELOG [6.7.14]
+          BINS=$(awk -v k="bins" '
+              /^\[release\]/ { in_r = 1; next }
+              in_r && /^\[/ { exit }
+              in_r && $1 == k {
+                  sub(/^[^=]+= \[/, ""); sub(/\].*$/, "")
+                  gsub(/[",]/, " "); gsub(/ +/, " ")
+                  sub(/^ +/, ""); sub(/ +$/, ""); print; exit
+              }' cyrius.cyml)
+          [ -n "$BINS" ] || { echo "ERROR: cyrius.cyml has no [release] bins list (or it parsed to nothing)"; exit 1; }
+          for bin in $BINS; do
+            case "$bin" in
+              cybs) continue ;;
+              cycc) cp build/cycc_aarch64 "$STAGE/bin/cycc" ;;
+              cyrius) cat cbt/cyrius.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrius" ;;
+              *)
+                [ -f "programs/$bin.cyr" ] || { echo "ERROR: cyrius.cyml [release] bins lists $bin, and programs/$bin.cyr does not exist"; exit 1; }
+                cat "programs/$bin.cyr" | ./build/cycc_aarch64 > "$STAGE/bin/$bin"
+                ;;
+            esac
+            file "$STAGE/bin/$bin" | grep -q "ARM aarch64" || { echo "ERROR: $bin not aarch64"; file "$STAGE/bin/$bin"; exit 1; }
+          done
           chmod +x "$STAGE/bin"/*
           # 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too, so every POSIX slot has the one layout
           # scripts/verify-store.sh judges (see the x86_64 job)

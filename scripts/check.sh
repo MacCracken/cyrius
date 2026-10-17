@@ -1720,6 +1720,21 @@ _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
 # scripts/release-scripts.sh, which fails on a listed entry it cannot find (the user's D4).
 _chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
 
+# 6.7.14 — all four POSIX tarball builders (release.yml's x86_64 and aarch64 Linux steps, both
+# macOS builders) stage [release] scripts through that one helper: the aarch64 step shipped none
+# (no `cyrius repl` on a binary install), and the x86_64 step carried its own parse. Static.
+_chk_gate "$ROOT/tests/gates/toolchain/release_tarballs_ship_release_scripts.sh"
+
+# 6.7.14 — the aarch64-linux tarball ships every [release] bin, built for aarch64 (the user's D59):
+# release.yml's aarch64 step, run in a scratch checkout, ships each bin but cybs as an AArch64 ELF
+# (it shipped cycc, cyrsign, cyrius-init and the cyriusly script: no `cyrius` CLI on an ARM install).
+_chk_gate "$ROOT/tests/gates/toolchain/aarch64_tarball_ships_release_bins.sh"
+
+# 6.7.14 — scripts/cyrius-watch.sh builds through `cyrius build` (the user's D60): the bare
+# `cat | cycc` it ran failed an entry-relative include, hid the diagnostic, emptied the output on
+# a failed build, and on Apple Silicon wrote an unsigned binary that was killed at launch.
+_chk_gate "$ROOT/tests/gates/toolchain/cyrius_watch_builds_like_build.sh"
+
 # 6.6.20 — two selectors started in ONE worktree both rebuild build/cyrius_check without
 # colliding: the driver compiles into a per-run side file (`.new.<pid>`), not one fixed name.
 _chk_gate "$ROOT/tests/gates/toolchain/check_concurrent_selectors_one_tree.sh"
@@ -2848,6 +2863,16 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 # under wine too, bounded. Hardware: that .tcyr's threaded rows on cass (red there on 6.7.12).
 _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 
+# 6.7.14 (platform lane, P1) — a FAILED ReadFile / WriteFile / SetFilePointerEx / CreateFileW
+# answers -errno on PE through ONE GetLastError table (a shared stub after EEXIT); it read as end
+# of file / 0 bytes written / a seek to 0 / -1. Axes: the three crossos .tcyr natively (the POSIX
+# oracle); every read / write / seek / open IAT call is followed by its failure check and a call to
+# the shared stub (literal and var-held routes); the stub's rows map exactly the documented Win32
+# codes and ReadFile's keeps 109 / 38 as 0; lib/io.cyr classifies Windows' -13 over a directory;
+# the filed repros and the .tcyr under wine. Hardware: the same .tcyr on cass. Whole-gate SKIP is
+# exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
+
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
 # outside the project on Windows and on macOS arm64, where it used to open the whole path (the
 # name check then the open: a junction planted in between was followed). Axes: 0xF04E
@@ -2892,6 +2917,9 @@ _chk_gate "$ROOT/tests/gates/platform/aarch64_wx_layout_64k.sh"
 # translated: the filed repro verbatim (qemu exit stays 22), the 1009 control, 39 → 1039, no-row
 # and outside-region silence, enum constants / included files / the stdlib silent, and the
 # repro's binary byte-identical to its region-free twin. qemu legs SKIP by name.
+# 6.7.14 (D61) — the region carries through include (a per-arch file included under the guard is
+# judged), an enum / const DECLARED in a region is judged where it was declared, and every lib/*.cyr
+# built for aarch64 stays at zero warnings; the 6.7.14 filed repro verbatim (axis 11).
 _chk_gate "$ROOT/tests/gates/platform/native_region_literal_warns.sh"
 
 # 6.7.12 (D2) — the x86 Mach-O twin of esysxlat_fold: a literal syscall number folds its

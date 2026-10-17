@@ -72,8 +72,8 @@
 # handle for the name cut to 260 units (wine, measured at 6.6.10) — a silent write to the wrong
 # file. They now share ONE sequence (`_pe_widen_path`): MultiByteToWideChar(CP_UTF8,
 # MB_ERR_INVALID_CHARS) — refuse, never guess — then GetFullPathNameW + a `\\?\` prefix at 248+
-# units, in a probed frame. The stdlib's own widens (`_win_widen_n`) decode the same way and are
-# bounded by the Str's length. Two more axes:
+# units, in a probed frame. The stdlib's former widen (`_win_widen_n`, removed 6.7.14: no caller
+# after 6.7.12) decoded the same way, bounded by the Str's length. Two more axes:
 #   axis 2b PATH-ENCODING SHAPE (always, needs objdump), on the PE build of
 #           tests/tcyr/crossos/pe_path_utf8_long.tcyr, which reaches all seven emitters. Every
 #           call through the IAT slot of CreateFileW / CreateDirectoryW / DeleteFileW /

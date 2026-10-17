@@ -1,6 +1,7 @@
 #!/bin/sh
 # native_region_literal_warns.sh — 6.7.12: a raw syscall literal inside a native-aarch64 region
 # that an ESYSXLAT x86-compat row RENUMBERS is warned at compile time, and still translated.
+# 6.7.14: the region carries through `include`, and a constant DECLARED inside one is judged too.
 #
 # THE DEFECT (filed 2026-10-08, docs/development/issues/2026-10-08-aarch64-native-region-literal-
 # translated-silently.md). In a region compiled only for aarch64 (`#ifdef CYRIUS_ARCH_AARCH64`,
@@ -9,47 +10,76 @@
 # `syscall(9, …)` meant as lgetxattr is renumbered to mmap (9 → 222) and `syscall(39, …)` meant as
 # umount2 returns a PID (39 → 172 getpid). No warning, a clean build, the wrong call.
 #
-# THE DECISION (D1, the user, 2026-10-15): WARN ONLY — the literal is still translated, so no
+# THE DECISION (6.7.12's D1, the user, 2026-10-15): WARN ONLY — the literal is still translated, so no
 # program changes behaviour. The warning names the number it becomes, what that runs, and the
 # spelling that reaches the native call: `1000+N` when the private band has a row for it (derived
 # by running the same chain with 1000+N), else that no alias exists.
 #
-# WHAT IS JUDGED (src/backend/aarch64/emit.cyr `_esx_native_warn`): a single integer-literal token
-# as the number, inside a region opened in the call's OWN file. A `SYS_*` / enum constant is not a
-# raw literal (the stdlib's own constants renumber by design: SYS_FSYNC = 74 → 82), and a file
-# INCLUDED from inside a region is not judged by its includer's region — the stdlib's shared
-# syscall files sit inside lib/syscalls.cyr's aarch64 region and deliberately write x86 numbers
-# (fd_wait_ready's raw 7, sys_epoll_wait's raw 232), the frame rule
-# raw_syscall_literals_routed.sh applies to lib/.
+# WHAT IS JUDGED (src/backend/aarch64/emit.cyr `_esx_native_warn`), the number spelled as ONE token:
+#   · an integer literal inside a native-aarch64 region at the call. ⛔ 6.7.14 (D61, the user,
+#     2026-10-16: "Yes: the region carries through include") — a region in an includer carries
+#     into the files it includes, the rule PP_A64_NATIVE_AT gives the 6.6.12 x86-name check, so a
+#     per-arch file included under the guard and written with native numbers is warned (6.7.12
+#     judged only a region opened in the call's own file, and that file's `syscall(9, …)` ran mmap
+#     silently: issues/2026-10-15-native-region-warning-misses-included-files-and-author-
+#     constants.md). The stdlib's shared syscall files, inside lib/syscalls.cyr's aarch64 region,
+#     spell their deliberate x86 numbers through `SYS_*` names (fd_wait_ready's SYS_POLL,
+#     sys_epoll_wait's SYS_EPOLL_WAIT — raw literals until 6.7.14), so they stay silent;
+#   · ⛔ 6.7.14 — an enum constant or a top-level const (bare, or `Enum.NAME`) DECLARED inside a
+#     region opened in its declaring file: the author's own native number (`NR_UMOUNT2 = 39` under
+#     the guard ran getpid silently). The stdlib's own constants renumber BY DESIGN (SYS_FSYNC =
+#     74 → 82) and sit at their peer file's top level, so they are not judged; neither is a
+#     constant declared OUTSIDE a region and used inside one. A fn-local const is not judged.
 #
-#   axis 1  the filed repro VERBATIM: one warning naming 9 → 222 (mmap) and 1009 for native
+#   axis 1  the 6.7.12 filed repro VERBATIM: one warning naming 9 → 222 (mmap) and 1009 for native
 #           lgetxattr; under qemu-aarch64 it still exits 22 (mmap ran: warn only)
 #   axis 2  the 1009 control: silent, exits 0 under qemu (native lgetxattr → -ENOENT)
 #   axis 3  syscall(39) in a region names 172 (getpid) and 1039 for native umount2
 #   axis 4  the same literal OUTSIDE a region prints no new warning
 #   axis 5  a region literal with no ELF row (134, a pass-through) stays silent
 #   axis 6  no alias: raw 1 in a region says no 1000+N alias exists for native io_destroy
-#   axis 7  an enum constant in a region, and a file included from inside a region, stay silent;
-#           a region in the includer AFTER that include still warns (the file stack resumes)
+#   axis 7  constants and includes: an enum constant declared OUTSIDE a region and used inside
+#           stays silent; one declared INSIDE warns, bare and as `Enum.NAME`, and so does a
+#           top-level const; a file included from inside a region IS judged by it (its raw 9
+#           warns, naming the included file), and a region in the includer after that include
+#           still warns (the file stack resumes); a constant declared at the top level of a file
+#           included from inside a region stays silent (the stdlib peers' shape)
 #   axis 8  warn only: the repro's binary is byte-identical to the same source with its region
 #           lines blanked (the warning changes nothing that is emitted)
 #   axis 9  a stdlib hello (syscalls + alloc + io) builds for aarch64 with zero of these warnings
 #           (syscall_xlat_generated.sh axes 2/7/8 hold the CLI and cycc's own aarch64 source to
 #           zero `raw syscall` warnings, which covers this text too)
+#   axis 10 every lib/*.cyr that builds on its own builds for aarch64 with zero of these warnings
+#           (floor 85 files: a sweep that compiles nothing is not a sweep)
+#   axis 11 the 6.7.14 filed repro VERBATIM (src/arch_aarch64.cyr included under the guard, an
+#           enum constant declared in the region): two warnings, 9 → 222 in the included file and
+#           NR_UMOUNT2 = 39 → 172; its binary is byte-identical to the region-free twin's and
+#           under qemu it still exits 1 (warn only)
 #
-# MUTATION LEDGER (measured 6.7.12 on the emitter, restored after each; the gate stops at its
-# first red axis, so a later one is measured separately):
+# MUTATION LEDGER (measured on the emitter, restored after each; the gate stops at its first red
+# axis, so a later one is measured separately):
 #   (a) no warning (`_esx_native_warn` returns at entry)          -> axis 1 FAILS (0 warnings)
-#   (b) the region test is PP_A64_NATIVE_AT (the includer's region
-#       counts)                                                     -> axis 7 FAILS (inc/arm.cyr
-#                                                                      warned); axis 9 too: the
-#                                                                      stdlib hello prints 2
-#                                                                      (fd_wait_ready's 7,
-#                                                                      sys_epoll_wait's 232)
-#   (c) the raw-literal test dropped (any folded number)            -> axis 7 FAILS (the enum
-#                                                                      constant warned)
+#   (b) 6.7.14: the call-site region test file-local again
+#       (`_esx_region_at` answers `_esx_rg_local`)                   -> axis 7 FAILS (inc/arm.cyr
+#                                                                      not warned); axis 11 too
+#   (c) 6.7.14: a constant judged where it is USED (the call-site
+#       region) instead of where it was declared                    -> axis 7 FAILS (the enum
+#                                                                      declared outside warned)
 #   (d) the alias derived as "1000+N fits the cmp" instead of by
 #       running the chain                                           -> axis 6 FAILS (write 1001)
+#   (e) 6.7.14: a name never judged (`_esx_raw_lit_call` answers -1
+#       for a name)                                                 -> axis 7 FAILS (the enum
+#                                                                      declared inside silent)
+#   (f) 6.7.14: the declaration judged by the INHERITED region
+#       (`_esx_decl_in_region` reads depth > 0)                     -> axis 7 FAILS (the included
+#                                                                      file's top-level constant
+#                                                                      warned); axis 9 too: the
+#                                                                      peers' SYS_* warn
+#   (g) 6.7.14: the frontend record dropped (no SVDECL in
+#       PARSE_ENUM_DEF)                                             -> axis 7 FAILS (the enum
+#                                                                      declared inside silent)
+#   (h) 6.7.14: fd_wait_ready back to a raw 7                       -> axis 9 FAILS (1 warning,
+#                                                                      lib/syscalls_linux_common.cyr)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -131,18 +161,32 @@ grep -q 'raw syscall 1 inside a native-aarch64 region is renumbered → 64 (writ
   || fail "axis 6: raw 1 in an #ifplat aarch64 region does not say no 1000+N alias exists: $(cat "$T/noal.err")"
 echo "  axis 6: raw 1 in an #ifplat region: no 1000+N alias exists for native io_destroy"
 
-# ── axis 7: not a raw literal, or not this file's region ────────────────────────────
+# ── axis 7: constants and includes ──────────────────────────────────────────────────
 printf '%s\n' 'enum MyNr { MY_LGX = 9; }' 'fn f(): i64 {' '    var r = 0;' '#ifdef CYRIUS_ARCH_AARCH64' '    r = syscall(MY_LGX, "/x", "user.x", 0, 0);' '#endif' '    return r;' '}' 'var x = f();' 'syscall(60, 0);' > "$T/en.cyr"
 _cc en
-[ "$(_nw en)" = 0 ] || fail "axis 7: an enum-constant number in a region warned (not a raw literal): $(cat "$T/en.err")"
+[ "$(_nw en)" = 0 ] || fail "axis 7: an enum constant declared OUTSIDE a region warned where it is used inside one: $(cat "$T/en.err")"
+printf '%s\n' '#ifdef CYRIUS_ARCH_AARCH64' 'enum ArchNr { NR_UMOUNT2 = 39; NR_LGX = 9; }' 'const NR_PIVOT = 41;' '#endif' 'fn f(): i64 {' '    var r = 0;' '#ifdef CYRIUS_ARCH_AARCH64' '    r = syscall(NR_UMOUNT2, "/x", 0);' '    r = syscall(ArchNr.NR_LGX, "/x", "user.x", 0, 0);' '    r = syscall(NR_PIVOT, "/x", "/y");' '#endif' '    return r;' '}' 'var x = f();' 'syscall(60, 0);' > "$T/enin.cyr"
+_cc enin
+[ "$(_nw enin)" = 3 ] || fail "axis 7: constants declared INSIDE a region printed $(_nw enin) warnings, want 3 (bare, Enum.NAME, const): $(cat "$T/enin.err")"
+grep -q '^warning:<source>:8:.*syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64 region, is renumbered → 172 (getpid); write 1039 for native umount2' "$T/enin.err" \
+  || fail "axis 7: the bare enum constant declared in the region does not name NR_UMOUNT2 = 39 → 172 and 1039: $(cat "$T/enin.err")"
+grep -q '^warning:<source>:9:.*syscall constant NR_LGX = 9, declared inside .* → 222 (mmap); write 1009 for native lgetxattr' "$T/enin.err" \
+  || fail "axis 7: the Enum.NAME spelling does not warn on line 9: $(cat "$T/enin.err")"
+grep -q '^warning:<source>:10:.*syscall constant NR_PIVOT = 41, declared inside ' "$T/enin.err" \
+  || fail "axis 7: the top-level const declared in the region does not warn on line 10: $(cat "$T/enin.err")"
 mkdir -p "$T/inc"
 printf '%s\n' 'fn armf(): i64 { return syscall(9, "/x", "user.x", 0, 0); }' > "$T/inc/arm.cyr"
 printf '%s\n' '#ifdef CYRIUS_ARCH_AARCH64' 'include "inc/arm.cyr"' '#endif' 'fn g(): i64 {' '#ifndef CYRIUS_ARCH_X86' '    return syscall(39, 0, 0);' '#endif' '    return 0;' '}' 'var x = g();' 'syscall(60, 0);' > "$T/incl.cyr"
 _cc incl
-[ "$(_nw incl)" = 1 ] || fail "axis 7: the include probe printed $(_nw incl) warnings, want 1 (the includer's own region only): $(cat "$T/incl.err")"
+[ "$(_nw incl)" = 2 ] || fail "axis 7: the include probe printed $(_nw incl) warnings, want 2 (the included file's raw 9 and the includer's own 39): $(cat "$T/incl.err")"
+grep -q '^warning:inc/arm.cyr:1:.*raw syscall 9 inside a native-aarch64 region is renumbered → 222 (mmap)' "$T/incl.err" \
+  || fail "axis 7: the file included from inside a region was not judged by it (D61): $(cat "$T/incl.err")"
 grep -q '^warning:<source>:6:.*raw syscall 39 ' "$T/incl.err" || fail "axis 7: the includer's region after the include did not warn on its raw 39 (the file stack did not resume): $(cat "$T/incl.err")"
-grep -q 'inc/arm.cyr' "$T/incl.err" && fail "axis 7: a file included from inside a region was judged by its includer's region: $(cat "$T/incl.err")"
-echo "  axis 7: an enum constant and an included file stay silent; the includer's own region after the include warns"
+printf '%s\n' 'enum PeerNr { PEER_FSYNC = 74; }' 'fn peer_sync(fd): i64 { return syscall(PEER_FSYNC, fd); }' > "$T/inc/peer.cyr"
+printf '%s\n' '#ifdef CYRIUS_ARCH_AARCH64' 'include "inc/peer.cyr"' '#endif' 'var x = peer_sync(0 - 1);' 'syscall(60, 0);' > "$T/peer.cyr"
+_cc peer
+[ "$(_nw peer)" = 0 ] || fail "axis 7: a constant declared at the top level of a file included from inside a region warned (the stdlib peers' shape: their x86-numbered SYS_* renumber by design): $(cat "$T/peer.err")"
+echo "  axis 7: a constant declared outside a region stays silent; declared inside it warns (bare, Enum.NAME, const); an included file is judged by its includer's region; a peer-shaped constant stays silent"
 
 # ── axis 8: warn only — nothing emitted changes ─────────────────────────────────────
 sed 's/^#ifdef CYRIUS_ARCH_AARCH64$//; s/^#endif$//' "$REPRO" > "$T/flat.cyr"
@@ -159,4 +203,60 @@ rc=0; (cd "$ROOT" && "$T/cca" < "$T/hello.cyr" > "$T/hello.bin" 2> "$T/hello.err
 [ "$(_nw hello)" = 0 ] || fail "axis 9: the stdlib hello prints native-region warnings — a false positive on lib/: $(grep 'native-aarch64 region' "$T/hello.err" | head -3)"
 echo "  axis 9: a stdlib hello (syscalls + alloc + io) builds for aarch64 with zero native-region warnings"
 
-echo "PASS native_region_literal_warns (a raw region literal a compat row renumbers is warned, with its 1000+N spelling or none; still translated; constants, included files and the stdlib stay silent)"
+# ── axis 10: every lib/*.cyr stays silent ───────────────────────────────────────────
+mkdir -p "$T/lib10"
+nb=0; nl=0; nwl=0
+for f in "$ROOT"/lib/*.cyr; do
+    b=$(basename "$f" .cyr)
+    nl=$((nl + 1))
+    printf 'include "lib/%s.cyr"\nsyscall(60, 0);\n' "$b" > "$T/lib10/$b.cyr"
+    rc=0; (cd "$ROOT" && "$T/cca" < "$T/lib10/$b.cyr" > "$T/lib10/$b.bin" 2> "$T/lib10/$b.err") || rc=$?
+    if [ "$rc" = 0 ] && [ -s "$T/lib10/$b.bin" ]; then nb=$((nb + 1)); fi
+    w=$(grep -c 'inside a native-aarch64 region' "$T/lib10/$b.err" || true)
+    if [ "$w" != 0 ]; then nwl=$((nwl + w)); echo "    lib/$b.cyr: $(grep 'inside a native-aarch64 region' "$T/lib10/$b.err" | head -2)"; fi
+done
+[ "$nb" -ge 85 ] || fail "axis 10: only $nb of $nl lib/*.cyr built for aarch64 on their own (floor 85) — the sweep judged too little"
+[ "$nwl" = 0 ] || fail "axis 10: $nwl native-region warning(s) across lib/*.cyr — a false positive on the stdlib"
+echo "  axis 10: $nb of $nl lib/*.cyr build for aarch64 on their own, with zero native-region warnings"
+
+# ── axis 11: the 6.7.14 filed repro, verbatim ───────────────────────────────────────
+mkdir -p "$T/r14/src"
+printf '%s\n' '# a per-arch file, included only on aarch64 — written with NATIVE numbers' \
+  'fn arch_lgetxattr(path, name): i64 { return syscall(9, path, name, 0, 0); }' > "$T/r14/src/arch_aarch64.cyr"
+cat > "$T/r14/main.cyr" <<'REPRO14'
+#ifdef CYRIUS_ARCH_AARCH64
+include "src/arch_aarch64.cyr"
+enum ArchNr { NR_UMOUNT2 = 39; }
+fn arch_umount(path): i64 { return syscall(NR_UMOUNT2, path, 0); }
+#endif
+fn main(): i64 {
+    var a = arch_lgetxattr("/nonexistent", "user.x");   # native lgetxattr: -2 (ENOENT)
+    var b = arch_umount("/nonexistent");                # native umount2: -2 (ENOENT)
+    if (a != 0 - 2) { return 1; }                      # 9 ran mmap: -22
+    if (b != 0 - 2) { return 2; }                      # 39 ran getpid: a PID
+    return 0;
+}
+syscall(60, main());
+REPRO14
+sed 's/^#ifdef CYRIUS_ARCH_AARCH64$//; s/^#endif$//' "$T/r14/main.cyr" > "$T/r14/flat.cyr"
+rc=0; (cd "$T/r14" && "$T/cca" < main.cyr > m.bin 2> m.err) || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/r14/m.bin" ] || fail "axis 11: the 6.7.14 repro did not compile (rc $rc): $(head -3 "$T/r14/m.err")"
+rc=0; (cd "$T/r14" && "$T/cca" < flat.cyr > f.bin 2> f.err) || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/r14/f.bin" ] || fail "axis 11: the region-free twin did not compile (rc $rc): $(head -3 "$T/r14/f.err")"
+n14=$(grep -c 'inside a native-aarch64 region' "$T/r14/m.err" || true)
+[ "$n14" = 2 ] || fail "axis 11: the 6.7.14 repro printed $n14 native-region warnings, want 2: $(cat "$T/r14/m.err")"
+grep -q '^warning:src/arch_aarch64.cyr:2:.*raw syscall 9 inside a native-aarch64 region is renumbered → 222 (mmap); write 1009 for native lgetxattr' "$T/r14/m.err" \
+  || fail "axis 11: the included per-arch file's raw 9 is not warned: $(cat "$T/r14/m.err")"
+grep -q '^warning:<source>:4:.*syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64 region, is renumbered → 172 (getpid); write 1039 for native umount2' "$T/r14/m.err" \
+  || fail "axis 11: the author's constant is not warned: $(cat "$T/r14/m.err")"
+cmp -s "$T/r14/m.bin" "$T/r14/f.bin" || fail "axis 11: the repro's binary differs from its region-free twin — the warning changed what is emitted"
+if [ "$QEMU" = 1 ]; then
+    chmod +x "$T/r14/m.bin"
+    r14=0; (cd "$T/r14" && timeout 30 qemu-aarch64 ./m.bin > /dev/null 2>&1) || r14=$?
+    [ "$r14" = 1 ] || fail "axis 11: the 6.7.14 repro exits $r14 under qemu, want 1 — warn only: the 9 must still run mmap"
+    echo "  axis 11: the 6.7.14 filed repro warns twice (the included file's 9, NR_UMOUNT2), emits what its region-free twin does and still exits 1 under qemu"
+else
+    echo "  axis 11: the 6.7.14 filed repro warns twice and emits what its region-free twin does — its qemu run SKIPPED: qemu-aarch64 absent"
+fi
+
+echo "PASS native_region_literal_warns (a raw region literal a compat row renumbers is warned — a region carrying through include — and so is a constant declared in one, with its 1000+N spelling or none; still translated; constants declared outside, peer-shaped constants and the whole stdlib stay silent)"

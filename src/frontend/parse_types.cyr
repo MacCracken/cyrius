@@ -3969,6 +3969,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # reroute). CHANGELOG [6.6.8]
                 S64(_vecv_base + vcnt * 8, val);
                 SVECP(S, vcnt, 1);
+                SVDECL(S, vcnt, vti);   # 6.7.14: where it was declared (the native-region warning)
                 # v5.8.22 bite #1 — tag variant with parent enum-id +
                 # bump per-enum variant count. Both keyed for the future
                 # exhaustive-match consumer; no read site yet so this

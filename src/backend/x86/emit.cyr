@@ -1827,6 +1827,198 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (fd IS the handle)
     return 0;                                            # .ready: rcx = HANDLE
 }
+
+# 6.7.14 — A FAILED kernel32 FILE CALL ANSWERS A NEGATIVE ERRNO, as on Linux and macOS.
+# ReadFile / WriteFile / SetFilePointerEx return a BOOL and CreateFileW INVALID_HANDLE_VALUE, and
+# the reroutes handed back the count / the new offset / -1 without looking: a failed read read as
+# end of file, a failed write as 0 bytes written, a failed seek as a seek to offset 0, and every
+# failed open was -1 (so never IoNotFound). EREAD_PE, EWRITE_PE, ELSEEK_PE and EOPEN_PE now keep
+# their success answer and, on failure, `call` ONE shared stub (`_pe_w32_errno_site`, 13 bytes a
+# site) that calls GetLastError and maps the Win32 code through ONE table into -errno in rax.
+# Inlined, the table cost ~230 bytes per reroute — measured +156,672 B (+6.4 %) on cycc_win.exe,
+# which has ~670 reroutes — so it is emitted once, after EEXIT, by EPE_ERRNO_STUBS (every x86
+# driver, beside EMACHO_SYSX_STUBS), the way the x86 Mach-O translation stubs are (6.7.12, XLAT-2):
+# a site is a `call .` placeholder kept in the whole-program disp32 registry, because the per-fn
+# NOP compaction moves code after it is emitted, and FIXUP asserts every placeholder was patched
+# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek, open) and ReadFile's (class
+# 1), which calls the table and then applies its end-of-file codes (`_pe_w32_read_rows`).
+# The table is straight-line `cmp ecx, code; cmove eax, edx` rows: edx holds an errno ahead of its
+# codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
+# the answer before 6.7.14. A stub clobbers rcx and rdx (volatile across the Win32 call the
+# reroute just made) and nothing in the caller's frame. CHANGELOG [6.7.14]
+var _pew_sl = 0;     # alloc()'d list of {registry index, class} pairs, 16 B each
+var _pew_ns = 0;
+var _pew_scap = 0;
+
+# At a reroute's failure point, rsp as it was for the failed call (16-aligned): `call <stub>`,
+# class 0 (the table) or 1 (ReadFile's, entered with the byte count in eax).
+fn _pe_w32_errno_site(S, cls): i64 {
+    _pe_ensure_getlasterr(S);
+    if (_pew_ns >= _pew_scap) { _pew_grow(); }
+    EB(S, 0xE8);                                        # call rel32
+    var wi = _wpjs_n;
+    _wpjs_add_raw(S, GCP(S));
+    if (_wpjs_n != wi + 1) {
+        PRSTR("error: PE errno stub sites: the disp32 registry could not grow\n");
+        syscall(SYS_EXIT, 1);
+    }
+    EB(S, 0xFB); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); # -5: `call .`, the placeholder
+    store64(_pew_sl + _pew_ns * 16, wi);
+    store64(_pew_sl + _pew_ns * 16 + 8, cls);
+    _pew_ns = _pew_ns + 1;
+    return 0;
+}
+fn _pew_grow(): i64 {
+    var nc = _pew_scap * 2;
+    if (nc < 64) { nc = 64; }
+    var nl = alloc(nc * 16);
+    if (nl == 0) { PRSTR("error: PE errno stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+    var i = 0;
+    while (i < _pew_ns * 2) { store64(nl + i * 8, load64(_pew_sl + i * 8)); i = i + 1; }
+    _pew_sl = nl;
+    _pew_scap = nc;
+    return 0;
+}
+
+# Called by every x86 driver after EEXIT, beside EMACHO_SYSX_STUBS (a no-op with no site): the
+# stubs sit outside every fn's range, so the DCE NOP-fill never reaches one and nothing falls into
+# one (EEXIT does not return). Patched before the DCE byte-scan, like the Mach-O stubs.
+fn EPE_ERRNO_STUBS(S): i64 {
+    if (_pew_ns == 0) { return 0; }
+    var t = _pew_stub_table(S);
+    var r = 0 - 1;
+    var i = 0;
+    while (i < _pew_ns) {
+        var stub = t;
+        if (load64(_pew_sl + i * 16 + 8) == 1) {
+            if (r < 0) { r = _pew_stub_read(S, t); }
+            stub = r;
+        }
+        _pew_patch(S, load64(_pew_sl + i * 16), stub);
+        i = i + 1;
+    }
+    _pew_ns = 0;
+    return 0;
+}
+
+# The table. Entered by `call` from a 16-aligned rsp, so rsp is 8 mod 16 here: `sub rsp, 0x28`
+# aligns the GetLastError call and gives it its 32-byte shadow space. Returns with ecx = the Win32
+# code, for ReadFile's stub.
+fn _pew_stub_table(S): i64 {
+    var at = GCP(S);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetLastError]
+    _pe_iat_fixup_add(S, GCP(S), _pe_getlasterr_get());
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    EB(S, 0x89); EB(S, 0xC1);                           # mov ecx, eax (the Win32 code)
+    EB(S, 0xB8); EDISP32(S, 1);                         # mov eax, 1 (unmapped: -1)
+    _pe_w32_errno_rows_a(S);
+    _pe_w32_errno_rows_b(S);
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);              # neg rax
+    EB(S, 0xC3);                                        # ret
+    return at;
+}
+
+# ReadFile's: entered with eax = the byte count (EREAD_PE loaded it), parked at [rsp+0x20] of
+# this stub's own frame across the table call.
+fn _pew_stub_read(S, t): i64 {
+    var at = GCP(S);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28 (aligned again)
+    EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], eax (the count)
+    EB(S, 0xE8);                                        # call the table
+    _wpjs_add_raw(S, GCP(S));
+    var rel = t - GCP(S) - 4;
+    EDISP32(S, rel);
+    _pe_w32_read_rows(S);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    EB(S, 0xC3);                                        # ret
+    return at;
+}
+
+fn _pew_patch(S, wi, stub): i64 {
+    var site = L64(_wpjs_base + wi * 8);
+    var a = _codebuf_base + site;
+    if (load8(a - 1) != 0xE8 || load32(a) != 0xFFFFFFFB) {
+        PRSTR("error: internal: PE errno stub site at code offset ");
+        PRNUM(site);
+        PRSTR(" is no longer its call placeholder (did a pass move code without the registry?)\n");
+        syscall(SYS_EXIT, 1);
+    }
+    var rel = stub - site - 4;
+    store8(a, rel & 0xFF);
+    store8(a + 1, (rel >> 8) & 0xFF);
+    store8(a + 2, (rel >> 16) & 0xFF);
+    store8(a + 3, (rel >> 24) & 0xFF);
+    return 0;
+}
+fn _pew_stubs_drained(): i64 {
+    if (_pew_ns != 0) {
+        PRSTR("error: internal: ");
+        PRNUM(_pew_ns);
+        PRSTR(" PE errno stub site(s) reached FIXUP unpatched");
+        PRSTR(" — this driver never called EPE_ERRNO_STUBS\n");
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
+# mov edx, errno — the value the rows after it select.
+fn _pe_w32_e(S, errno): i64 {
+    EB(S, 0xBA); EDISP32(S, errno);                     # mov edx, errno
+    return 0;
+}
+
+# cmp ecx, code; cmove eax, edx — one Win32 code.
+fn _pe_w32_c(S, code): i64 {
+    if (code < 128) {
+        EB(S, 0x83); EB(S, 0xF9); EB(S, code);          # cmp ecx, imm8
+    } else {
+        EB(S, 0x81); EB(S, 0xF9); EDISP32(S, code);     # cmp ecx, imm32
+    }
+    EB(S, 0x0F); EB(S, 0x44); EB(S, 0xC2);              # cmove eax, edx
+    return 0;
+}
+
+fn _pe_w32_errno_rows_a(S): i64 {
+    _pe_w32_e(S, 2);                                    # ENOENT
+    _pe_w32_c(S, 2);                                    #   ERROR_FILE_NOT_FOUND
+    _pe_w32_c(S, 3);                                    #   ERROR_PATH_NOT_FOUND
+    _pe_w32_c(S, 15);                                   #   ERROR_INVALID_DRIVE
+    _pe_w32_c(S, 123);                                  #   ERROR_INVALID_NAME
+    _pe_w32_c(S, 161);                                  #   ERROR_BAD_PATHNAME
+    _pe_w32_e(S, 13);                                   # EACCES
+    _pe_w32_c(S, 5);                                    #   ERROR_ACCESS_DENIED
+    _pe_w32_c(S, 32);                                   #   ERROR_SHARING_VIOLATION
+    _pe_w32_c(S, 33);                                   #   ERROR_LOCK_VIOLATION
+    _pe_w32_e(S, 9);                                    # EBADF
+    _pe_w32_c(S, 6);                                    #   ERROR_INVALID_HANDLE
+    _pe_w32_e(S, 12);                                   # ENOMEM
+    _pe_w32_c(S, 8);                                    #   ERROR_NOT_ENOUGH_MEMORY
+    _pe_w32_c(S, 14);                                   #   ERROR_OUTOFMEMORY
+    _pe_w32_e(S, 17);                                   # EEXIST
+    _pe_w32_c(S, 80);                                   #   ERROR_FILE_EXISTS
+    _pe_w32_c(S, 183);                                  #   ERROR_ALREADY_EXISTS
+    return 0;
+}
+
+fn _pe_w32_errno_rows_b(S): i64 {
+    _pe_w32_e(S, 22);                                   # EINVAL
+    _pe_w32_c(S, 87);                                   #   ERROR_INVALID_PARAMETER
+    _pe_w32_c(S, 131);                                  #   ERROR_NEGATIVE_SEEK
+    _pe_w32_e(S, 32);                                   # EPIPE
+    _pe_w32_c(S, 109);                                  #   ERROR_BROKEN_PIPE
+    _pe_w32_c(S, 232);                                  #   ERROR_NO_DATA (the pipe is being closed)
+    _pe_w32_e(S, 28);                                   # ENOSPC
+    _pe_w32_c(S, 112);                                  #   ERROR_DISK_FULL
+    _pe_w32_e(S, 39);                                   # ENOTEMPTY
+    _pe_w32_c(S, 145);                                  #   ERROR_DIR_NOT_EMPTY
+    _pe_w32_e(S, 36);                                   # ENAMETOOLONG
+    _pe_w32_c(S, 206);                                  #   ERROR_FILENAME_EXCED_RANGE
+    _pe_w32_e(S, 20);                                   # ENOTDIR
+    _pe_w32_c(S, 267);                                  #   ERROR_DIRECTORY
+    return 0;
+}
 fn EWRITE_PE(S): i64 {
     var _xfr = _pe_fixed_frame(0x40, 4);   # 6.6.5: 0x40 + depth parity (see _pe_fixed_frame)
     _pe_ensure_stdio(S);
@@ -1877,7 +2069,13 @@ fn EWRITE_PE(S): i64 {
     # stack garbage and the 64-bit load returned a huge bogus
     # count, breaking every PE caller's write loop. See EREAD_PE
     # comment for full diagnosis.
-    EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28]
+    # 6.7.14: only when WriteFile returned TRUE — a FALSE BOOL (a bad handle, a closed pipe, a
+    # full disk) answers -errno through the shared GetLastError stub (`_pe_w32_errno_site`); it
+    # read as 0 bytes written. CHANGELOG [6.7.14]
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28] (flags kept)
+    EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the count)
+    _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
@@ -2054,8 +2252,33 @@ fn EREAD_PE(S): i64 {
     # rax on x86_64, so the upper 4 bytes are guaranteed zero
     # regardless of stack state. One byte shorter than the 64-bit
     # form, too.
-    EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28]
+    # 6.7.14: only when ReadFile returned TRUE. A FALSE BOOL read as 0 — end of file — for a
+    # bad handle or any other failure; it now answers -errno through ReadFile's GetLastError stub
+    # (`_pe_w32_errno_site` class 1), except the codes that ARE end of file or a delivered read
+    # (`_pe_w32_read_rows`). CHANGELOG [6.7.14]
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28] (flags kept)
+    EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the count)
+    _pe_w32_errno_site(S, 1);                           # call <read stub>: eax = count in, rax out
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
+    return 0;
+}
+
+# A failed ReadFile that is not an error (6.7.14), in ReadFile's stub after the table (ecx = the
+# Win32 code, the count parked at [rsp+0x20]):
+# ERROR_BROKEN_PIPE (109) is a pipe whose writer closed and ERROR_HANDLE_EOF (38) end of file —
+# both 0, the end, as `type x | cycc.exe`'s stdin and lib/process_win.cyr's drains end; and
+# ERROR_MORE_DATA (234) is a message-mode pipe read that DID deliver its count. 64-bit cmoves, so
+# a row that does not match leaves the negative errno whole. CHANGELOG [6.7.14]
+fn _pe_w32_read_rows(S): i64 {
+    EB(S, 0x31); EB(S, 0xD2);                           # xor edx, edx
+    EB(S, 0x83); EB(S, 0xF9); EB(S, 109);               # cmp ecx, 109 (ERROR_BROKEN_PIPE)
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0x44); EB(S, 0xC2); # cmove rax, rdx
+    EB(S, 0x83); EB(S, 0xF9); EB(S, 38);                # cmp ecx, 38 (ERROR_HANDLE_EOF)
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0x44); EB(S, 0xC2); # cmove rax, rdx
+    EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov edx, [rsp+0x20] (the count)
+    EB(S, 0x81); EB(S, 0xF9); EDISP32(S, 234);          # cmp ecx, 234 (ERROR_MORE_DATA)
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0x44); EB(S, 0xC2); # cmove rax, rdx
     return 0;
 }
 
@@ -2926,9 +3149,10 @@ fn ETLSSET_PE(S): i64 {
 # SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod).
 # Stack on entry (top→bottom): [whence] [offset] [fd] [sc_nr=8].
 # Frame is 0x30: shadow (32 B) + new-position output slot at
-# [rsp+0x28] + 8 B align pad. Returns the new file position (or -1
-# packed as 0xFFFFFFFF if the API returned 0 for failure — callers
-# should range-check if distinguishing from a valid offset of -1).
+# [rsp+0x28] + 8 B align pad. Returns the new file position, or -errno when SetFilePointerEx
+# returns FALSE (`_pe_w32_errno_site`: a seek before offset 0 is ERROR_NEGATIVE_SEEK, -22 as on
+# Linux; a bad handle -9). Until 6.7.14 the BOOL was not read and a failed seek answered the
+# pre-zeroed slot — a seek to 0 — while the file pointer stayed where it was. CHANGELOG [6.7.14]
 fn ELSEEK_PE(S): i64 {
     var _xfr = _pe_fixed_frame(0x30, 4);   # 6.6.5: 0x30 + depth parity (see _pe_fixed_frame)
     _pe_ensure_seekfp(S);
@@ -2953,8 +3177,11 @@ fn ELSEEK_PE(S): i64 {
     _pe_iat_fixup_add(S, GCP(S), spe_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
-    # Return the new offset (always 64-bit — LARGE_INTEGER in slot).
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28]
+    # Return the new offset (always 64-bit — LARGE_INTEGER in slot) when the BOOL is TRUE.
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28] (flags kept)
+    EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the new offset)
+    _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x30 (+ parity pad)
     return 0;
 }
@@ -3502,7 +3729,8 @@ fn EMOVEFILEEX_PE(S): i64 {
 }
 
 # 6.7.12 — '/' → '\' over the wide string at rdi, in place (rdi kept). An NT reparse target does
-# not read '/' as a separator (the stdlib's `_win_widen_n` made the same swap before 6.7.12).
+# not read '/' as a separator (the stdlib's former `_win_widen_n`, removed 6.7.14, made the same
+# swap before 6.7.12). CHANGELOG [6.7.14]
 fn _pe_wp_slashes(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xF8);              # mov rax, rdi
     var top = GCP(S);
@@ -3860,6 +4088,13 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateFileW]
     _pe_iat_fixup_add(S, GCP(S), cf_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    # 6.7.14: INVALID_HANDLE_VALUE answers -errno through GetLastError (ERROR_FILE_NOT_FOUND is
+    # -2, ERROR_FILE_EXISTS -17, ...); it was -1 for every failure. The refused-widen jump lands
+    # AFTER this, so a path that was never passed to CreateFileW keeps its -1 and no stale
+    # GetLastError is read. CHANGELOG [6.7.14]
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0xFF); # cmp rax, -1
+    EB(S, 0x75); EB(S, 0x05);                           # jne +5 (a handle)
+    _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
     _pe_j_land(S, out);
     _pe_path_unframe(S);
     return 0;

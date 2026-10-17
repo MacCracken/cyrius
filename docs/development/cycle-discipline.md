@@ -73,17 +73,21 @@ Five steps, fail-fast, in this order (`--quick` runs 1–3 only and is NOT relea
 
 - [ ] **1** self-host fixpoint byte-identical (and `build/cycc == cycc(src)`) · **2** seed-derive (`seed→cybs→cycc`) byte-identical
 - [ ] **3** check.sh all-green (record N) — the gate checks check.sh's **exit status**, not just its `N passed, 0 failed` line, because the shell gates run *after* the check binary and its summary does not cover them
-- [ ] **4** cross-OS on all **four** hosts, sequentially — **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — each `SELFHOST_OK` **and** `tests/tcyr/crossos/` `LIBTEST_OK` on REAL hardware
+- [ ] **4** cross-OS on all **four** hosts — **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — each `SELFHOST_OK` **and** `LIBTEST_OK` on REAL hardware, on the corpus `scripts/cross-os-selfhost.sh` selects for the host: the whole tcyr corpus on every host in its `CO_FULL_HOSTS` (all four since 6.7.14), `tests/tcyr/crossos/` elsewhere
 - [ ] **5** bench recorded (self_compile ms + cycc B) — non-blocking, but the number goes in the CHANGELOG
 
 `ach` is a **first-class gate host, not a tail** — it was added to this loop at v6.4.59 after
 the Intel-Mac toolchain rotted ungated for ~2.5 minors (`scripts/release-gate.sh` step 4 is a flat
-`for H in ecb ach cass pi`). Step 4 runs the `tests/tcyr/crossos/` SUBDIRECTORY (the `vr01_`
-filename glob it used until v6.5.11 is retired) and **prints its own coverage** —
-"corpus: N of M tcyr selected by subdir" — so a subset can no longer read as authoritative;
-`CYRIUS_CROSS_OS_FULL=1` runs the whole corpus instead (opt-in: ~75 s on ecb, and the blind
-region still holds known platform gaps, so defaulting to full would wedge every release behind
-a separate arc).
+`for H in ecb ach cass pi`; the four legs start beside check.sh and step 4 waits for them,
+`CYRIUS_GATE_SERIAL=1` walks them one at a time). Step 4 passes the `tests/tcyr/crossos/`
+SUBDIRECTORY (the `vr01_` filename glob it used until v6.5.11 is retired), and
+`scripts/cross-os-selfhost.sh` picks the corpus per host: a host in its `CO_FULL_HOSTS` runs the
+WHOLE tcyr corpus instead (6.7.12's D8 — ecb, ach and pi from 6.7.12, cass from 6.7.14, when its
+full run reached zero), so today every host runs every `tests/tcyr` file. Each leg **prints its
+own coverage** — "corpus: ALL N of M tcyr", or "N of M tcyr selected by subdir" on a host off the
+list — so a subset can no longer read as authoritative. `CYRIUS_CROSS_OS_FULL=0` forces the
+`crossos/` subset (`=1` the whole corpus on any host). A host joins `CO_FULL_HOSTS` only when its
+full run is at zero failures: a known failure there turns every release gate red.
 
 **Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
 - [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep

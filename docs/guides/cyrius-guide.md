@@ -7613,6 +7613,24 @@ Opening files routes to Windows' `CreateFileW`; reading/writing use the real
 `ReadFile`/`WriteFile` (via 0xF001/0xF002 PE reroutes and the POSIX syscall
 interface dispatching them). Paths are widened from UTF-8 to UTF-16LE at call time.
 
+A failure answers a **negative errno**, as on Linux (6.7.14): when `CreateFileW`, `ReadFile`,
+`WriteFile` or `SetFilePointerEx` fails, the reroute reads `GetLastError` and maps it through one
+table — `ERROR_FILE_NOT_FOUND` / `ERROR_PATH_NOT_FOUND` -2 (so `file_open_r` says `IoNotFound`),
+`ERROR_ACCESS_DENIED` / sharing and lock violations -13, `ERROR_INVALID_HANDLE` -9,
+`ERROR_FILE_EXISTS` -17, `ERROR_INVALID_PARAMETER` / `ERROR_NEGATIVE_SEEK` -22, a closed pipe -32,
+a full disk -28, a name too long -36; a code with no POSIX peer is -1. A read that reaches the
+end is 0, and so is a read from a pipe whose writer closed (`ERROR_BROKEN_PIPE`), which is how a
+piped stdin ends. Before 6.7.14 a failed read answered 0 — end of file — a failed write 0 bytes
+written, a failed seek 0 (a seek to the start, while the file pointer did not move), and every
+failed open -1.
+
+| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
+|---|---|---|---|
+| `file_read(-999, buf, 16)` | -9 | 0 (end of file) | -9 |
+| `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
+| `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
+| `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
+
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
 were read, so `O_TRUNC` silently did not truncate and `O_APPEND` silently
@@ -7643,7 +7661,7 @@ Windows, Linux, macOS and aarch64:
 
 | Flags | Linux | Windows (v6.6.9) |
 |---|---|---|
-| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | refused (`file_open` -1, `file_create_exclusive` -17); the link's target is never created |
+| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: `file_open` -13 (`CreateFileW` says `ERROR_ACCESS_DENIED`), `file_create_exclusive` -17 |
 | `O_NOFOLLOW` on a symlink or junction (to a file or a directory) | -40 (-62 macOS) | -40; the target is never opened or truncated |
 | `O_NOFOLLOW` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
 | `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally (the reopen must be the same file) |
@@ -7665,8 +7683,8 @@ handle by file id and refused if the name changed in between. The refusals live 
 which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
 a link, but hands back the link's own handle instead of -40.
 
-⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -1
-on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
+⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -13
+(-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
 `O_DIRECTORY` — set always, it would let `O_WRONLY` open a directory.
 
 Before v6.6.9 all three flags were accepted and ignored: `O_CREAT|O_EXCL` over a dangling
@@ -8169,14 +8187,32 @@ The rules, in order:
    renumbered → 222 (mmap); write 1009 for native lgetxattr`, or `no 1000+N alias exists for
    native …` when the private band (below) has no row for it. The number is still translated
    (the user's decision, 2026-10-15: warn only — no program changes behaviour). The warning
-   judges a number written as one integer literal, inside a region opened in the call's own
-   file: a `SYS_*` or `enum` constant is not judged (the stdlib's renumber by design), and
-   neither is a file `include`d from inside a region (the stdlib's shared syscall files sit in
-   `lib/syscalls.cyr`'s aarch64 region and deliberately write x86 numbers). ⚠ This applies to a **variable** syscall number too — the chain
+   judges a number spelled as one token:
+   - **an integer literal inside a region at the call — and the region carries through
+     `include`** (since 6.7.14, the user's decision, 2026-10-16). A per-arch file `include`d
+     from inside `#ifdef CYRIUS_ARCH_AARCH64` is under that guard, so its raw `syscall(9, …)`
+     is warned, naming the included file — the rule the 6.6.12 x86-name report above already
+     used. (Until 6.7.14 only a region opened in the call's own file counted, and such a file
+     ran mmap silently.) The stdlib's shared syscall files sit inside `lib/syscalls.cyr`'s
+     aarch64 region, so they spell their deliberate x86 numbers through `SYS_*` names (rule 2:
+     `SYS_POLL` 7, `SYS_EPOLL_WAIT` 232), never raw — a program that includes the stdlib
+     prints none of these warnings;
+   - **an `enum` constant or a top-level `const`** (bare, or `Enum.NAME`) **DECLARED inside a
+     region opened in its own file** (since 6.7.14): it is the author's native number, as much
+     as a literal is — `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64
+     region, is renumbered → 172 (getpid); write 1039 for native umount2`. A constant is judged
+     where it is DECLARED, not where it is used: one declared at a file's top level is not
+     judged — the stdlib peers' `SYS_*` renumber by design (`SYS_FSYNC = 74` → 82), and the
+     peers are included from inside `lib/syscalls.cyr`'s region. A fn-local `const` is not
+     judged.
+
+   ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
    exactly as a literal would be. ⚠ It also applies to a `SYS_*` you declare in your OWN
    `enum` — measured at v6.6.5, `lib/yukti.cyr` declares `SYS_STATFS = 43` under exactly this
-   guard and the `43 → 202` socket row makes every call `accept()`. ⭐ v6.6.6 gave that call
+   guard and the `43 → 202` socket row makes every call `accept()` (since 6.7.14 each
+   `syscall(SYS_STATFS, …)` against such a declaration is warned, by the declared-constant
+   rule above). ⭐ v6.6.6 gave that call
    the name it was missing: both Linux peers now declare `SYS_STATFS = 137` / `SYS_FSTATFS =
    138` (the x86 numbers, per rule 2) with `ESYSXLAT` rows `137→43` and `138→44`, plus
    `sys_statfs` / `sys_fstatfs` wrappers and Darwin routes `137→345` / `138→346`. A consumer

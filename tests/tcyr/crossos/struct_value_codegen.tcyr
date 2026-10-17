@@ -130,7 +130,7 @@ fn f_faddr(): i64 { var y = bits(3); y = y - 3; if (&f_str) { return 1; } return
 fn f_gaddr(): i64 { var y = bits(3); y = y - 3; if (&GB8) { return 1; } return 0; }
 fn f_floor(k): i64 { if (f64_floor(k + 0)) { return 1; } return 0; }
 #ifdef CYRIUS_TARGET_WIN
-fn f_seek(w): i64 { if (syscall(8, 1, 0, w + 1)) { return 1; } return 0; }
+fn f_seek(fd, w): i64 { if (syscall(8, fd, 0, w + 1)) { return 1; } return 0; }
 #endif
 
 fn flags(): i64 {
@@ -156,7 +156,15 @@ fn flags(): i64 {
     assert_eq(f_gaddr(), 1, "F19: if (&global) after y = y - 3");
     assert_eq(f_floor(0x3FE0000000000000), 0, "F20: if (f64_floor(0.5 + 0)) is 0.0");
     #ifdef CYRIUS_TARGET_WIN
-    assert_eq(f_seek(0 - 1), 0, "F21: if (syscall(8, 1, 0, w + 1)): the PE lseek reroute's 0");
+    # 6.7.14: a REAL handle seeked to 0, so the reroute's 0 is a success. The row seeked fd 1, a
+    # std fd ELSEEK_PE passes as a raw HANDLE: that seek FAILS, and read as 0 only while the
+    # reroute ignored SetFilePointerEx's BOOL — it is -9 now, which `if` reads as true with or
+    # without the test this row exists to pin. CHANGELOG [6.7.14]
+    var sk = test_scratch("svc_f21_seek");
+    var sfd = sys_open(sk, O_RDWR | O_CREAT | O_TRUNC, 420);
+    assert_eq(f_seek(sfd, 0 - 1), 0, "F21: if (syscall(8, fd, 0, w + 1)): the PE lseek reroute's 0");
+    sys_close(sfd);
+    sys_unlink(sk);
     #endif
     return 0;
 }

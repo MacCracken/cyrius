@@ -297,8 +297,8 @@ fi
 # is caught here, not by ports.
 #
 # 6.7.12 (D8, the user, 2026-10-15): the hosts in cross-os-selfhost.sh's CO_FULL_HOSTS (ecb,
-# ach, pi; cass joins when its full run reaches zero) run the WHOLE tcyr corpus for the same
-# call — the policy lives in that script so `cyrius audit` runs the identical leg.
+# ach, pi, and cass since 6.7.14, when its full run reached zero) run the WHOLE tcyr corpus for the
+# same call — the policy lives in that script so `cyrius audit` runs the identical leg.
 # v6.5.11: the selector is the SUBDIRECTORY tests/tcyr/crossos (it was the filename
 # prefix "vr01_"). A directory is checked for existence and cannot silently under-match;
 # cross-os-selfhost.sh additionally cross-checks the remote's ran-count against the count

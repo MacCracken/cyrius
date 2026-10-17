@@ -122,8 +122,9 @@ to active PASS as the slot closed. Narrow-scope gates never
 skip; they always run and must pass. As of v5.6.43, all three
 broad-scope gates are active. Today the broad scope is proven on real
 hardware by step 4 of `scripts/release-gate.sh`: `ecb`, `ach`, `cass`
-and `pi` each self-host `cycc` byte-identical and run the
-`tests/tcyr/crossos/` suite before every release.
+and `pi` each self-host `cycc` byte-identical and run the whole
+`tests/tcyr` corpus before every release (`scripts/cross-os-selfhost.sh`'s
+`CO_FULL_HOSTS`: all four hosts since 6.7.14).
 
 ## Source layout
 

@@ -1,0 +1,60 @@
+# pe_open_failure_errno.tcyr — 6.7.14: a FAILED open answers the errno that names the failure on
+# every target, Windows included, so `file_open_r` can say IoNotFound there.
+#
+# ⛔ THE DEFECT (issues/2026-10-15-pe-open-failure-is-always-minus-one.md). EOPEN_PE
+# (src/backend/x86/emit.cyr) returned CreateFileW's INVALID_HANDLE_VALUE, -1, for EVERY failure
+# and never read GetLastError, so a portable caller could not tell "not there" from "access
+# denied": `_io_errno_to_iorr(1)` is IoOther, and result_stdlib.tcyr's three IoNotFound rows
+# failed on cass. Measured on real cass and under wine: the filed repro exited 1 (Linux 2).
+#
+# THE FIX. On INVALID_HANDLE_VALUE the reroute calls the shared GetLastError stub
+# (`_pe_w32_errno_site`, the table the read / write / seek reroutes use): ERROR_FILE_NOT_FOUND
+# (2) and ERROR_PATH_NOT_FOUND (3) are -ENOENT, ERROR_FILE_EXISTS (80) -EEXIST, ERROR_ACCESS_DENIED
+# (5) -EACCES. ⚠ One Windows answer differs from Linux and is classified in lib/io.cyr instead:
+# CREATE_NEW over an existing DIRECTORY fails with ERROR_ACCESS_DENIED on Windows 11 (wine says
+# ERROR_FILE_EXISTS), so file_create_exclusive asks the name and answers -17 as every other target
+# does — the last group pins that. CHANGELOG [6.7.14]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("opening a missing file is -ENOENT (the filed repro)");
+var fd = file_open("no_such_file_w1.txt", O_RDONLY, 0);
+assert_eq(fd, 0 - 2, "file_open(missing, O_RDONLY) is -2 (Windows answered -1)");
+var fd2 = file_open("no_such_dir_w1/x.txt", O_RDONLY, 0);
+assert_eq(fd2, 0 - 2, "a missing directory component is -2 too (ERROR_PATH_NOT_FOUND on Windows)");
+var or_tag, orv = file_open_r("no_such_file_w1.txt", O_RDONLY, 0);
+assert_eq(is_err_result(or_tag), 1, "file_open_r(missing) is Err");
+assert_eq(orv, IoNotFound, "...and its payload is IoNotFound (Windows said IoOther)");
+
+test_group("O_CREAT|O_EXCL over an existing name is -EEXIST");
+var f = test_scratch("pe_open_errno_f.txt");
+xunlink(f);
+var c = file_open(f, O_WRONLY | O_CREAT | O_EXCL, 420);
+assert_eq(c >= 0, 1, "the exclusive create of an absent name succeeds");
+if (c >= 0) { file_write(c, "x", 1); file_close(c); }
+var e = file_open(f, O_WRONLY | O_CREAT | O_EXCL, 420);
+assert_eq(e, 0 - 17, "a second O_CREAT|O_EXCL is -17 (Windows answered -1)");
+if (e >= 0) { file_close(e); }
+assert_eq(file_create_exclusive(f, 420), 0 - 17, "file_create_exclusive over the file is -17");
+
+test_group("file_create_exclusive over an existing DIRECTORY is -EEXIST on every target");
+var d = test_scratch("pe_open_errno_d");
+xrmdir(d);
+assert_eq(xmkdir(d, 493), 0, "the directory fixture");
+var x = file_create_exclusive(d, 420);
+assert_eq(x, 0 - 17, "file_create_exclusive(dir) is -17 (Windows' CreateFileW says ACCESS_DENIED)");
+if (x >= 0) { file_close(x); }
+var raw = file_open(d, O_WRONLY | O_CREAT | O_EXCL, 420);
+assert_eq(raw < 0, 1, "the raw O_CREAT|O_EXCL over it is refused (-17; -13 on Windows)");
+if (raw >= 0) { file_close(raw); }
+xrmdir(d);
+xunlink(f);
+
+var r = assert_summary();

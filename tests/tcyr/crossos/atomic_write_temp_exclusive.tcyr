@@ -12,9 +12,10 @@
 #
 # THE FIX. `_io_tmp_open` creates each candidate O_CREAT|O_EXCL|O_NOFOLLOW: a taken name — a file,
 # a symlink, a dangling one — is never opened, and the next name is tried; 64 taken in a row is
-# -EEXIST with `path` left as it was. Linux and macOS refuse with -EEXIST; Windows (CREATE_NEW)
-# and agnos (AO_EXCL) with a bare -1 that is classified by asking the name — a regression in that
-# classification shows here as a FAILED write, which is why this runs on every cross-OS host.
+# -EEXIST with `path` left as it was. Linux, macOS and (since 6.7.14, EOPEN_PE reading
+# GetLastError) Windows refuse with -EEXIST; agnos (AO_EXCL) with a bare -1, and Windows'
+# CREATE_NEW over a DIRECTORY with -EACCES, both classified by asking the name — a regression in
+# that classification shows here as a FAILED write, which is why this runs on every cross-OS host.
 #
 # The test predicts the next temp name with `_io_tmp_name` and steps the counter back, so the
 # fixture sits exactly where the next write will look first. Every name is per-process.
@@ -148,6 +149,17 @@ fn main(): i64 {
     assert_eq(_absent(absent), 1, "the dangling link's target was NOT created");
     assert_eq(_content_is(path, "second"), 1, "`path` holds the new bytes");
     xunlink(dng);
+
+    # 6.7.14: Windows' CREATE_NEW over a directory fails with ERROR_ACCESS_DENIED (-13 since the
+    # open reroute reads GetLastError; wine says ERROR_FILE_EXISTS), so _io_tmp_taken classifies a
+    # -13 by asking the name — without it the write failed with -13 instead of moving on.
+    # CHANGELOG [6.7.14]
+    test_group("a DIRECTORY planted at the next temp name is skipped");
+    var dtmp = _next_tmp(path);
+    assert_eq(xmkdir(dtmp, 493), 0, "directory fixture at the next temp name");
+    assert_eq(file_write_atomic(path, "dir-skip", 8), 0, "file_write_atomic succeeds (the next name is used)");
+    assert_eq(_content_is(path, "dir-skip"), 1, "`path` holds the new bytes");
+    assert_eq(xrmdir(dtmp), 0, "the planted directory is left where it was (and removes)");
 
     test_group("a FILE planted at the next temp names is neither truncated nor renamed");
     var names = alloc(64 * 8);

@@ -129,6 +129,11 @@ enum SysNr {
     # the x86 ppoll number (271) is not a usable escape — so this takes the >=1000 band.
     # → sys_ppoll (6.7.9; the x86 peer's SYS_PPOLL is 271) and sys_pause (NULL fds, NULL timeout).
     SYS_PPOLL = 1073;       # private alias → ESYSXLAT 1073→73 (a64)
+    # 6.7.14 — the x86 poll NUMBER, by name (guide rule 2): ESYSXLAT 7 → ppoll 73 converts the int
+    # ms to a timespec (aarch64 has no poll; native 7 is fsetxattr), Darwin routes 7 → BSD poll
+    # 230. lib/syscalls_linux_common.cyr's fd_wait_ready and the macOS sleeps issue it from inside
+    # lib/syscalls.cyr's aarch64 region, where a raw 7 is warned as a native number (D61).
+    SYS_POLL = 7;           # x86 poll → ESYSXLAT 7→73 (ppoll, ms → timespec)
 
     # Directory + cwd
     SYS_GETCWD = 17;
@@ -209,6 +214,9 @@ enum SysNr {
     SYS_EPOLL_CREATE1 = 20;
     SYS_EPOLL_CTL = 21;
     SYS_EPOLL_PWAIT = 1022; # v6.5.37: private alias — native 22 is eaten by x86 pipe(22)->59
+    # 6.7.14 — the x86 epoll_wait NUMBER, by name (guide rule 2), for sys_epoll_wait below: a raw
+    # 232 inside lib/syscalls.cyr's aarch64 region is warned as a native number (D61).
+    SYS_EPOLL_WAIT = 232;   # x86 epoll_wait → ESYSXLAT 232→22 (epoll_pwait, NULL sigmask)
 
     # Timers + waitid
     SYS_TIMERFD_CREATE = 85;
@@ -902,8 +910,10 @@ fn epoll_event_data(ev): i64 { return load64(ev + 8); }
 # which ESYSXLAT rewrites to pipe2(x0, 0). Issuing raw 22 here therefore ran
 # pipe2(epfd, 0) → -EFAULT, so the epoll reactor NEVER worked on aarch64 (the async
 # gates only run on x86; caught on real pi hardware). Issue the x86 epoll_wait number
-# (232) instead; ESYSXLAT arg-extends it to epoll_pwait(...,NULL sigmask,0). The x86
-# sibling issues 232 natively, so the wrapper surface matches. See CHANGELOG [6.4.42].
+# (232, SYS_EPOLL_WAIT — named since 6.7.14: a raw literal in lib/syscalls.cyr's aarch64
+# region is warned as a native number, D61) instead; ESYSXLAT arg-extends it to
+# epoll_pwait(...,NULL sigmask,0). The x86 sibling issues 232 natively, so the wrapper surface
+# matches. See CHANGELOG [6.4.42].
 # v6.6.8: -ENOSYS on arm64-macOS — Darwin has no epoll (kqueue is a different API, see
 # sys_kqueue below), and the raw 232 reached Darwin unrouted. It was invisible to both route
 # gates: macho_route_parity reads only `syscall(SYS_*` names and raw_syscall_literals_routed
@@ -912,7 +922,7 @@ fn sys_epoll_wait(epfd, events, maxevents, timeout): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 0 - 78;
     #else
-    return syscall(232, epfd, events, maxevents, timeout);
+    return syscall(SYS_EPOLL_WAIT, epfd, events, maxevents, timeout);
     #endif
 }
 

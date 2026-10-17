@@ -1,0 +1,55 @@
+# lseek_failed_seek.tcyr — 6.7.14: a FAILED seek answers a negative errno on every target,
+# Windows included, and leaves the file position where it was.
+#
+# ⛔ THE DEFECT (issues/2026-10-16-pe-lseek-failed-seek-returns-zero.md). ELSEEK_PE
+# (src/backend/x86/emit.cyr) zeroed SetFilePointerEx's output slot, made the call and returned
+# the slot without reading the BOOL, so on Windows a seek that FAILED answered 0 — a successful
+# seek to offset 0 — while the file pointer stayed put. Every `xlseek(...) < 0` test was dead, and
+# the caller's next write landed at the OLD position: patra's WAL replay of a page that cannot be
+# sought "restored" it over whatever the position was and reported success (six patra rows on
+# cass). Measured on real cass and under wine: the filed probe printed 0 4 0 4 (Linux -22 4 -22 4).
+#
+# THE FIX. On a FALSE BOOL the reroute calls the shared GetLastError stub (`_pe_w32_errno_site`,
+# the table the read / write / open reroutes use): ERROR_NEGATIVE_SEEK (131) and
+# ERROR_INVALID_PARAMETER (87) are -EINVAL (-22), as Linux and macOS answer a negative resulting
+# offset or a bad whence, and ERROR_INVALID_HANDLE (6) is -EBADF (-9). The probe is the filed one,
+# its file named per process (test_scratch). CHANGELOG [6.7.14]
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("a seek before offset 0 fails with -EINVAL and the position stays (the filed probe)");
+var p = test_scratch("lseek_neg.tmp");
+var fd = file_open(p, O_RDWR | O_CREAT | O_TRUNC, 420);
+assert_eq(fd >= 0, 1, "the fixture opens");
+assert_eq(file_write(fd, "abcdefgh", 8), 8, "8 bytes written");
+var r1 = xlseek(fd, 0 - 1, 0);      # SEEK_SET to -1: must fail
+var r2 = xlseek(fd, 4, 0);
+var r3 = xlseek(fd, 0 - 100, 1);    # SEEK_CUR to 4 - 100: must fail
+var r4 = xlseek(fd, 0, 1);
+assert_eq(r1, 0 - 22, "SEEK_SET to -1 is -22 (Windows answered 0)");
+assert_eq(r2, 4, "SEEK_SET to 4 is 4");
+assert_eq(r3, 0 - 22, "SEEK_CUR to 4 - 100 is -22 (Windows answered 0)");
+assert_eq(r4, 4, "the position after the failed seeks is still 4");
+
+test_group("the next write lands at the kept position, not at 0");
+var w = file_write(fd, "XY", 2);
+assert_eq(w, 2, "2 bytes written at the kept position");
+assert_eq(xlseek(fd, 0, 0), 0, "rewind");
+var b[16];
+assert_eq(file_read(fd, &b, 16), 8, "the file still holds 8 bytes");
+assert_eq(load8(&b), 97, "byte 0 is still 'a'");
+assert_eq(load8(&b + 4), 88, "byte 4 is the 'X' written after the failed seeks");
+
+test_group("a bad whence is -EINVAL, a bad descriptor -EBADF");
+assert_eq(xlseek(fd, 0, 7), 0 - 22, "whence 7 is -22");
+assert_eq(xlseek(0 - 999, 0, 0), 0 - 9, "a seek on fd -999 is -9 (Windows answered 0)");
+
+file_close(fd);
+xunlink(p);
+
+var r = assert_summary();

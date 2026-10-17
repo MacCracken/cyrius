@@ -1,0 +1,116 @@
+# at_family_dirfd_relative.tcyr — 6.7.14: `sys_mkdirat` and `sys_fchmodat` act on a name
+# RELATIVE TO THE DIRFD they are given, on every target that has them, and AT_FDCWD still means
+# the current directory.
+#
+# ⛔ THE DEFECT (issues/2026-10-15-arm64-macos-mkdirat-fchmodat-drop-the-dirfd.md). On arm64
+# macOS the ESYSXLAT rows (src/backend/aarch64/emit.cyr) reached BSD mkdir 136 / chmod 15 with
+# the dirfd shifted out, so `sys_mkdirat(dirfd, "sub", …)` made ./sub in the CURRENT directory
+# and returned 0, and `sys_fchmodat(dirfd, "f", …)` changed (or failed to find) ./f. Measured on
+# ecb: the filed repro exited 101 (x86_64 Linux 243). The rows now reach Darwin mkdirat 475 /
+# fchmodat 467 with the dirfd kept (`_esx_arm_atfd`, Linux's AT_FDCWD -100 translated to Darwin's
+# -2), as openat has since 6.7.12. The filed repro is group 1-2's rows; the cwd decoy in group 2
+# is what tells a chmod of the wrong file from a chmod of the right one. CHANGELOG [6.7.14]
+#
+# Windows has no at-family wrappers, cx serves no mkdirat / fchmodat (a host call handed a guest
+# pointer) and agnos has neither: those three SKIP by name. Fixtures are per-pid names in the cwd
+# (test_scratch), removed at the end; removing them is itself a row.
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_CX
+#ifndef CYRIUS_TARGET_AGNOS
+include "lib/io.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fs.cyr"
+
+# "<a>/<b>", NUL-terminated.
+fn _af_join(a, b): i64 {
+    var al = strlen(a);
+    var bl = strlen(b);
+    var out = alloc(al + bl + 2);
+    memcpy(out, a, al);
+    store8(out + al, 47);
+    memcpy(out + al + 1, b, bl);
+    store8(out + al + 1 + bl, 0);
+    return out;
+}
+
+# The rwx bits of `path` as stat reads them, or -1.
+fn _af_mode(path): i64 {
+    var st[144];
+    if (xstat(path, &st) != 0) { return 0 - 1; }
+    return load32(&st + STAT_MODE) & 0x1FF;
+}
+
+fn _af_rows(): i64 {
+    var root = test_scratch("mkat_root");
+    var sub = test_scratch("mkat_sub");
+    var fname = test_scratch("mkat_f");
+    var cwdsub = test_scratch("mkat_cwd");
+    var rsub = _af_join(root, sub);
+    var rfile = _af_join(root, fname);
+
+    test_group("mkdirat under a real dirfd lands under it (the filed repro)");
+    assert_eq(xmkdir(root, 493), 0, "premise: the fixture root was created");
+    var dfd = file_open(root, O_RDONLY | O_DIRECTORY, 0);
+    assert_gte(dfd, 0, "premise: the root opens as a directory");
+    assert_eq(sys_mkdirat(dfd, sub, 493), 0, "sys_mkdirat(dirfd, sub) is 0");
+    assert_eq(is_dir(str_from(rsub)), 1, "<root>/<sub> is a directory");
+    assert_eq(is_dir(str_from(sub)), 0, "nothing named <sub> appeared in the cwd (arm64 macOS made ./<sub>)");
+
+    test_group("fchmodat on a dirfd-relative name changes that file, not the cwd's namesake");
+    assert_eq(file_write_all(rfile, "x", 1), 1, "premise: <root>/<f> written");
+    assert_eq(file_write_all(fname, "decoy", 5), 5, "premise: a decoy <f> in the cwd");
+    assert_eq(sys_chmod(rfile, 420), 0, "premise: <root>/<f> is 0644");
+    assert_eq(sys_chmod(fname, 420), 0, "premise: the decoy is 0644");
+    assert_eq(sys_fchmodat(dfd, fname, 256, 0), 0, "sys_fchmodat(dirfd, f, 0400, 0) is 0");
+    assert_eq(_af_mode(rfile), 256, "<root>/<f> reads back 0400");
+    assert_eq(_af_mode(fname), 420, "the cwd decoy keeps 0644 (arm64 macOS chmod-ed it)");
+
+    test_group("AT_FDCWD still means the current directory");
+    assert_eq(sys_mkdirat(AT_FDCWD, cwdsub, 493), 0, "sys_mkdirat(AT_FDCWD, name) is 0");
+    assert_eq(is_dir(str_from(cwdsub)), 1, "the name is a directory in the cwd");
+    assert_eq(sys_fchmodat(AT_FDCWD, fname, 384, 0), 0, "sys_fchmodat(AT_FDCWD, decoy, 0600, 0) is 0");
+    assert_eq(_af_mode(fname), 384, "the cwd decoy reads back 0600");
+
+    test_group("the fixtures are removed");
+    file_close(dfd);
+    assert_eq(xrmdir(rsub), 0, "<root>/<sub> removed");
+    assert_eq(xunlink(rfile), 0, "<root>/<f> removed");
+    assert_eq(xrmdir(root), 0, "the root removed");
+    assert_eq(xunlink(fname), 0, "the decoy removed");
+    assert_eq(xrmdir(cwdsub), 0, "the cwd directory removed");
+    return 0;
+}
+#endif
+#endif
+#endif
+
+alloc_init();
+var _armed = 0;
+#ifdef CYRIUS_TARGET_WIN
+println("SKIP: windows has no at-family wrappers (sys_mkdirat / sys_fchmodat)");
+_armed = 1;
+#endif
+#ifdef CYRIUS_TARGET_CX
+println("SKIP: cx serves no mkdirat / fchmodat - the dirfd rows are native");
+_armed = 1;
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+println("SKIP: agnos has no at-family wrappers (sys_mkdirat / sys_fchmodat)");
+_armed = 1;
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_CX
+#ifndef CYRIUS_TARGET_AGNOS
+_af_rows();
+_armed = 1;
+#endif
+#endif
+#endif
+assert_eq(_armed, 1, "a target arm ran: the dirfd rows, or a SKIP by name (0 = this test compiled into nothing)");
+
+var r = assert_summary();

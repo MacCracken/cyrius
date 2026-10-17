@@ -1799,6 +1799,10 @@ if (_epi_km == 3 || _epi_km == 2) {
 # their placeholders patched — after EEXIT, before the IR passes and FIXUP (which asserts it ran).
 # A no-op with no such site. CHANGELOG [6.7.12]
 EMACHO_SYSX_STUBS(S);
+# 6.7.14: the PE GetLastError -> -errno stubs a failed kernel32 file reroute calls, then their
+# placeholders patched — same placement, same FIXUP assert. A no-op with no such site.
+# CHANGELOG [6.7.14]
+EPE_ERRNO_STUBS(S);
 
 # cycc: IR stats/dump
 if (IR_ENABLED(S) == 1) {

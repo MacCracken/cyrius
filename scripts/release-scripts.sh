@@ -7,11 +7,13 @@
 # while the source install and the Linux x86_64 tarball shipped all three. The user's decision D4
 # (2026-10-15): ship every entry. CHANGELOG [6.7.12]
 #
-# The lookup and the parse are release.yml's (the x86_64 Linux tarball) and install.sh's
-# (_parse_release_array): the CLI shims live in scripts/shims/, the user-facing scripts flat in
-# scripts/ — shims/ first. Every entry is checked before anything is copied, and a listed entry
-# found in neither place, or a list that parses to nothing, FAILS: a skipped entry is a tarball
-# that silently ships less than the manifest says.
+# Every POSIX tarball builder calls it: release.yml's x86_64 and aarch64 Linux steps (since 6.7.14:
+# the x86_64 step carried its own copy of this parse, the aarch64 step shipped no entry) and both
+# macOS builders. The parse is install.sh's (_parse_release_array): the CLI shims live in
+# scripts/shims/, the user-facing scripts flat in scripts/ — shims/ first. Every entry is checked
+# before anything is copied, and a listed entry found in neither place, or a list that parses to
+# nothing, FAILS: a skipped entry is a tarball that silently ships less than the manifest says.
+# CHANGELOG [6.7.14]
 set -e
 DEST="${1:?usage: release-scripts.sh <stage-bin-dir>}"
 # The same override release-lib.sh and install.sh's _parse_release_array honour.

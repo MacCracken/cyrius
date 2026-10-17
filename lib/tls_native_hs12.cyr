@@ -2392,12 +2392,14 @@ fn _tn_ca_read(buf, cap, refused, ppol, purpose): i64 {
 #     store's certificates, and _tn_verify_chain refuses a leaf, and skips a CA, that either names; a
 #     root either names is not exported. A CTL value that is present but cannot be read or parsed makes
 #     the whole store unusable, as the Disallowed store does; an absent one (wine) is an empty list.
-# ⚠ NOT "never trusts more than Windows" in every case. The CTL's identifiers are not certificate
-# hashes: its 16-byte entries (82 of 88 on cass) are the MD5 of a certificate's public key (_TN_POL_LEN),
-# and its 48-byte entries (6 on cass) use a form this could not establish against a certificate Windows
-# distrusts, so they are NOT applied (issue 2026-10-15-windows-disallowed-ctl-48-byte-entries). The other
-# way, roots Windows would fetch on demand (automatic root update) are not in the store, so those
-# servers fail closed here — deliberately (D9, 6.7.12): the stdlib takes no network action of its own.
+#     The CTL's identifiers are not certificate hashes but crypt32's two distrust keys (_TN_POL_LEN):
+#     a 16-byte entry (82 of 88 on cass) is the MD5 of a certificate's public key (prop 25), and since
+#     6.7.14 a 48-byte entry (6 on cass) is the SHA-384 of a SHA-384-signed certificate's
+#     tbsCertificate (its signature hash, prop 15) — both applied. An entry of any other length (none
+#     on cass) is not.
+# ⚠ NOT "never trusts more than Windows" in every case: roots Windows would fetch on demand (automatic
+# root update) are not in the store, so those servers fail closed here — deliberately (D9, 6.7.12): the
+# stdlib takes no network action of its own.
 # Each root is written into `buf` as a PEM block, so `_tn_ca_buf` is the same thing on every target
 # (the system bundle, PEM) and _tn_ca_parse_set counts what it cannot parse exactly as for a file.
 # HOW: crypt32 is loaded at first use with LoadLibraryExA(LOAD_LIBRARY_SEARCH_SYSTEM32), resolved
@@ -2734,11 +2736,16 @@ fn _tn_w_widen(s, w, cap): i64 {
     return 1;
 }
 
-# The public-key entries of the parsed disallowed CTL `ctl` (a PCCTL_CONTEXT), copied: 16 bytes each,
-# their count stored at `pn`; 0 when it has none, -1 when it is not a list of this kind (its
-# SubjectAlgorithm is not szOID_DISALLOWED_HASH) or a copy cannot be allocated. Entries of any other
-# length are not applied — see the store header (6.7.12).
-fn _tn_w_ctl_copy(ctl, pn): i64 {
+# The entries of the parsed disallowed CTL `ctl` (a PCCTL_CONTEXT), copied: the 16-byte public-key
+# MD5s are returned (0 when it has none) with their count at `pn`, and the 48-byte signature hashes
+# (the SHA-384 of a SHA-384-signed certificate's tbsCertificate) are stored at `pt` (0 when none) with
+# their count at `pnt`. -1 when it is not a list of this kind (its SubjectAlgorithm is not
+# szOID_DISALLOWED_HASH) or a copy cannot be allocated. An entry of any other length is not applied —
+# see the store header. CHANGELOG [6.7.12], [6.7.14]
+fn _tn_w_ctl_copy(ctl, pn, pt, pnt): i64 {
+    store64(pn, 0);
+    store64(pt, 0);
+    store64(pnt, 0);
     var info = load64(ctl + 24);                    # CTL_CONTEXT.pCtlInfo
     if (info == 0) { return 0 - 1; }
     var oid = load64(info + 72);                    # CTL_INFO.SubjectAlgorithm.pszObjId
@@ -2747,35 +2754,49 @@ fn _tn_w_ctl_copy(ctl, pn): i64 {
     if (memeq(oid, "1.3.6.1.4.1.311.10.11.15", 24) != 1) { return 0 - 1; }
     var ne = load32(info + 96);                     # cCTLEntry
     var ents = load64(info + 104);                  # rgCTLEntry: CTL_ENTRY, 32 B each
+    var tbs = _tn_w_ctl_take(ents, ne, 48, pnt);
+    if (tbs < 0) { return 0 - 1; }
+    store64(pt, tbs);
+    return _tn_w_ctl_take(ents, ne, 16, pn);
+}
+
+# The `ne` CTL entries at `ents` whose SubjectIdentifier is exactly `len` bytes, copied back to back
+# into one allocation (returned; 0 when there are none) with their count at `pn`; -1 on OOM.
+fn _tn_w_ctl_take(ents, ne, len, pn): i64 {
+    store64(pn, 0);
     var m = 0;
     var i = 0;
     while (i < ne) {
-        if (load32(ents + i * 32) == 16) { m = m + 1; }   # SubjectIdentifier.cbData
+        if (load32(ents + i * 32) == len) { m = m + 1; }    # SubjectIdentifier.cbData
         i = i + 1;
     }
     if (m == 0) { return 0; }
-    var keys = alloc(m * 16);
-    if (keys == 0) { return 0 - 1; }
+    var out = alloc(m * len);
+    if (out == 0) { return 0 - 1; }
     var k = 0;
     i = 0;
     while (i < ne) {
-        if (load32(ents + i * 32) == 16) {
-            memcpy(keys + k * 16, load64(ents + i * 32 + 8), 16);
+        if (load32(ents + i * 32) == len) {
+            memcpy(out + k * len, load64(ents + i * 32 + 8), len);
             k = k + 1;
         }
         i = i + 1;
     }
     store64(pn, m);
-    return keys;
+    return out;
 }
 
-# The auto-updated disallowed CTL's public-key entries (HKLM\SOFTWARE\Microsoft\SystemCertificates\
+# The auto-updated disallowed CTL's entries (HKLM\SOFTWARE\Microsoft\SystemCertificates\
 # AuthRoot\AutoUpdate, value DisallowedCertEncodedCtl, through advapi32!RegGetValueW and
-# crypt32!CertCreateCTLContext, both loaded from System32 like crypt32 above): the copied keys with
-# their count at `pn`, 0 when the value is absent (none listed — wine has none), -1 when it is present
-# but cannot be read or parsed: the caller then fails the whole store closed. CHANGELOG [6.7.12]
-fn _tn_w_ctl_keys(pn): i64 {
+# crypt32!CertCreateCTLContext, both loaded from System32 like crypt32 above), as _tn_w_ctl_copy
+# splits them: the copied public-key MD5s with their count at `pn`, the signature hashes at `pt` with
+# their count at `pnt`. 0 (and no hashes) when the value is absent (none listed — wine has none), -1
+# when it is present but cannot be read or parsed: the caller then fails the whole store closed.
+# CHANGELOG [6.7.12], [6.7.14]
+fn _tn_w_ctl_keys(pn, pt, pnt): i64 {
     store64(pn, 0);
+    store64(pt, 0);
+    store64(pnt, 0);
     var k = syscall(0xF013, "kernel32.dll");
     if (k == 0) { return 0 - 1; }
     var ll = syscall(0xF014, k, "LoadLibraryExA");
@@ -2808,7 +2829,7 @@ fn _tn_w_ctl_keys(pn): i64 {
     if (r != 0) { return 0 - 1; }
     var ctl = callptr(mk, _TN_W_ENC, raw, load32(&cb));
     if (ctl == 0) { return 0 - 1; }
-    var keys = _tn_w_ctl_copy(ctl, pn);
+    var keys = _tn_w_ctl_copy(ctl, pn, pt, pnt);
     callptr(fr, ctl);
     return keys;
 }
@@ -2850,16 +2871,20 @@ fn _tn_w_store_ders(fns, st, pn): i64 {
 }
 
 # The trust policy Windows' explicit distrust gives the system set (_tn_pol_new): the disallowed CTL's
-# public-key entries and the Disallowed store `dis`'s certificates; bounds are added by the export.
-# 0 when either cannot be read (the store then fails closed).
+# public-key entries and signature hashes, and the Disallowed store `dis`'s certificates; bounds are
+# added by the export. 0 when either cannot be read (the store then fails closed).
 fn _tn_w_store_policy(fns, dis): i64 {
     var nk = 0;
-    var keys = _tn_w_ctl_keys(&nk);
+    var tbs = 0;
+    var nt = 0;
+    var keys = _tn_w_ctl_keys(&nk, &tbs, &nt);
     if (keys < 0) { return 0; }
     var nc = 0;
     var certs = _tn_w_store_ders(fns, dis, &nc);
     if (certs < 0) { return 0; }
-    return _tn_pol_new(nk, keys, nc, certs, 0, 0);
+    var pol = _tn_pol_new(nk, keys, nc, certs, 0, 0);
+    if (pol == 0) { return 0; }
+    return _tn_pol_set_tbs384(pol, nt, tbs);
 }
 
 # The Windows system store for _tn_ca_read: every root Windows trusts as an anchor for `purpose`, as
@@ -3098,16 +3123,25 @@ fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
 #     CERT_SUBJECT_PUBLIC_KEY_MD5_HASH_PROP_ID, 25), and the chain engine reports DigiNotar
 #     CERT_TRUST_IS_EXPLICIT_DISTRUST with the Disallowed store empty; the eleven Fina 1.1.1.1
 #     certificates of 2025 match the same way. So every certificate on that KEY is distrusted.
+#   - DENY TBS HASHES (6.7.14): 48-byte SHA-384s of a SHA-384-signed certificate's tbsCertificate (the
+#     whole TLV), crypt32's signature hash (CERT_SIGNATURE_HASH_PROP_ID 15: the to-be-signed part hashed
+#     with the certificate's own signature digest). The CTL's 48-byte entries are exactly that —
+#     measured on cass (2026-10-16): its six are the six DarkMatter intermediates QuoVadis issued in
+#     2016-2017 (sha384WithRSA), whose public-key MD5s it does not list, and the chain engine reports
+#     each CERT_TRUST_IS_EXPLICIT_DISTRUST with the Disallowed store empty. Only a certificate signed
+#     with sha384WithRSAEncryption or ecdsa-with-SHA384 has such a hash; any other is not judged by them.
 #   - DENY CERTS: certificates distrusted byte for byte (the Disallowed store's), [der ptr][der len].
 #   - BOUNDS: a root whose root-program NotBefore distrust (CERT_NOT_BEFORE_FILETIME_PROP_ID 126) covers
 #     the purpose anchors only a leaf whose notBefore PRECEDES the date — [der ptr][der len][bound], the
 #     bound in Unix seconds rounded up, so `notBefore >= bound` is exactly "on or after the FILETIME".
 # A denied certificate is skipped while the path is built (a duplicate on another key still serves); a
 # denied leaf fails. Layout: [0] deny-key count [8] keys (16 B each) [16] deny-cert count [24] certs
-# (16 B each) [32] bound count [40] bounds (24 B each). Immutable once installed. CHANGELOG [6.7.12]
-var _TN_POL_LEN = 48;
+# (16 B each) [32] bound count [40] bounds (24 B each) [48] deny-TBS-hash count [56] hashes (48 B
+# each). Immutable once installed. CHANGELOG [6.7.12], [6.7.14]
+var _TN_POL_LEN = 64;
 
-# A policy from its three lists (counts and pointers as in the layout above); 0 on OOM.
+# A policy from its three lists (counts and pointers as in the layout above), with no TBS hashes
+# (_tn_pol_set_tbs384 adds them); 0 on OOM.
 fn _tn_pol_new(nkeys, keys, ncerts, certs, nbounds, bounds): i64 {
     var p = alloc(_TN_POL_LEN);
     if (p == 0) { return 0; }
@@ -3117,7 +3151,16 @@ fn _tn_pol_new(nkeys, keys, ncerts, certs, nbounds, bounds): i64 {
     store64(p + 24, certs);
     store64(p + 32, nbounds);
     store64(p + 40, bounds);
+    store64(p + 48, 0);
+    store64(p + 56, 0);
     return p;
+}
+
+# Give the policy `pol` its deny TBS hashes: `n` SHA-384s, 48 B each, at `hashes`. Returns `pol`.
+fn _tn_pol_set_tbs384(pol, n, hashes): i64 {
+    store64(pol + 48, n);
+    store64(pol + 56, hashes);
+    return pol;
 }
 
 # The MD5 round constants K[0..64) (RFC 1321 §3.4), little-endian, into t[0..256).
@@ -3270,9 +3313,60 @@ fn _tn_spki_md5(der, dlen, out): i64 {
     return 1;
 }
 
-# Whether `pol` distrusts the DER certificate der[0..dlen): 1 when its key's MD5 is a deny key or it
-# is a deny cert, 2 when its key cannot be read while there are deny keys (it cannot be judged, so it
-# is not trusted either), 0 otherwise.
+# The SHA-384 of the tbsCertificate (the whole TLV) of the DER certificate der[0..dlen) into
+# out[0..48) when its signatureAlgorithm is sha384WithRSAEncryption or ecdsa-with-SHA384 — crypt32's
+# signature hash (prop 15) of a SHA-384-signed certificate: 1. 0 when it is signed with any other
+# algorithm (it has no such hash), -1 when the DER does not have that shape. CHANGELOG [6.7.14]
+fn _tn_tbs_sha384(der, dlen, out): i64 {
+    var cp = 0;
+    var cl = 0;
+    if (_tn_der_hdr(der, dlen, 0, &cp, &cl) != 0x30) { return 0 - 1; }      # Certificate
+    var end = cp + cl;
+    var tp = 0;
+    var tl = 0;
+    if (_tn_der_hdr(der, end, cp, &tp, &tl) != 0x30) { return 0 - 1; }     # tbsCertificate
+    var ap = 0;
+    var al = 0;
+    if (_tn_der_hdr(der, end, tp + tl, &ap, &al) != 0x30) { return 0 - 1; }   # signatureAlgorithm
+    var op = 0;
+    var ol = 0;
+    if (_tn_der_hdr(der, ap + al, ap, &op, &ol) != 0x06) { return 0 - 1; }
+    var is384 = 0;
+    if (ol == 9) {                                  # sha384WithRSAEncryption 1.2.840.113549.1.1.12
+        if (memeq(der + op, "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0c", 9) == 1) { is384 = 1; }
+    }
+    if (ol == 8) {                                  # ecdsa-with-SHA384 1.2.840.10045.4.3.3
+        if (memeq(der + op, "\x2a\x86\x48\xce\x3d\x04\x03\x03", 8) == 1) { is384 = 1; }
+    }
+    if (is384 == 0) { return 0; }
+    sha384(der + cp, tp + tl - cp, out);
+    return 1;
+}
+
+# 1 when the SHA-384-signed DER certificate der[0..dlen)'s TBS hash is one of `pol`'s deny TBS
+# hashes, 2 when its shape cannot be read while there are any, else 0 (a certificate signed with
+# another algorithm is not judged by them). Hashes only when the list is non-empty — the Windows
+# system set's — so no other policy pays for it. CHANGELOG [6.7.14]
+fn _tn_pol_tbs_denied(pol, der, dlen): i64 {
+    var nt = load64(pol + 48);
+    if (nt <= 0) { return 0; }
+    var t[48];
+    var r = _tn_tbs_sha384(der, dlen, &t);
+    if (r < 0) { return 2; }
+    if (r == 0) { return 0; }
+    var hs = load64(pol + 56);
+    var i = 0;
+    while (i < nt) {
+        if (memeq(hs + i * 48, &t, 48) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Whether `pol` distrusts the DER certificate der[0..dlen): 1 when its key's MD5 is a deny key, its
+# TBS hash a deny TBS hash, or it is a deny cert; 2 when its key cannot be read while there are deny
+# keys, or its shape while there are deny TBS hashes (it cannot be judged, so it is not trusted
+# either); 0 otherwise.
 fn _tn_pol_der_denied(pol, der, dlen): i64 {
     var nk = load64(pol);
     if (nk > 0) {
@@ -3285,6 +3379,8 @@ fn _tn_pol_der_denied(pol, der, dlen): i64 {
             i = i + 1;
         }
     }
+    var td = _tn_pol_tbs_denied(pol, der, dlen);
+    if (td != 0) { return td; }
     var nc = load64(pol + 16);
     var certs = load64(pol + 24);
     var j = 0;
