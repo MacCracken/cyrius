@@ -73,6 +73,10 @@
 #     why that row reads the wait status through a parent that can tell the two apart.
 #     The distlib mirror's slot never set (`_cbt_sig_tree_set` dropped from `_distlib_mirror_make`), or
 #     the round's entry.cyr untracked -> 1 RED each (the distlib kill row's dist/.dlverify-<pid>).
+#   * (6.7.14) the gate run under `nohup` before the k7hup launcher -> 3 RED (check and build SIGHUP
+#     read $? 0, build's k7out.tmp.<pid> left: the CLI kept the inherited ignore and compiled on);
+#     with it, GREEN under nohup and from a plain shell. k7hup without its `signal_default(1)` ->
+#     1 RED from a plain shell (the launcher row: rc 0, not 129) and 4 under nohup (that row + the 3).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -472,6 +476,94 @@ mkdir -p "$TB"
 K7_INT=yes
 env --default-signal=INT true > /dev/null 2>&1 || K7_INT=no
 K7_SKIPS=0
+# SIGHUP likewise (6.7.14): a gate started with HUP ignored (`nohup sh scripts/check.sh`) hands that
+# ignore to every child, the CLI keeps it (the nohup row below), and the HUP rows' kill never
+# reached a handler — the CLI compiled on and exited 0, three rows RED with no defect behind them.
+# A POSIX sh cannot reset an ignore it inherited at entry, so the HUP rows then run the CLI through
+# k7hup, a launcher compiled here with the tree's cycc: it puts SIGHUP back to SIG_DFL and execs its
+# arguments (same pid, the environment kept). The disposition is SigIgn bit 0 of /proc/self/status
+# (an unreadable one takes the launcher, a no-op at SIG_DFL); a launcher that does not build SKIPs
+# the HUP rows by name. Its own rows below run on every invocation, nohup or not.
+# (issues/2026-10-15-cli-temp-dir-gate-sighup-rows-red-under-nohup.md)
+K7_HUPIGN=$(sed -n 's/^SigIgn:[[:space:]]*//p' /proc/self/status 2>/dev/null || true)
+case "$K7_HUPIGN" in
+    "") K7_HUP=unknown ;;
+    *[13579bdfBDF]) K7_HUP=ignored ;;
+    *) K7_HUP=default ;;
+esac
+cat > "$T/k7hup.cyr" <<'K7HUP'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+# A whole /proc file into a fresh NUL-terminated buffer (into `out`); its length, or -1.
+fn k7_slurp(path, out): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var cap = 1048576;
+    var buf = alloc(cap);
+    if (buf == 0) { sys_close(fd); return 0 - 1; }
+    var n = 0;
+    var r = 1;
+    while (r > 0 && n < cap - 1) {
+        r = sys_read(fd, buf + n, cap - 1 - n);
+        if (r > 0) { n = n + r; }
+    }
+    sys_close(fd);
+    if (r < 0) { return 0 - 1; }
+    store8(buf + n, 0);
+    store64(out, buf);
+    return n;
+}
+# A NUL-joined block as a NULL-terminated pointer array.
+fn k7_split(buf, n): i64 {
+    var c = 0;
+    var i = 0;
+    while (i < n) { if (load8(buf + i) == 0) { c = c + 1; } i = i + 1; }
+    var a = alloc((c + 1) * 8);
+    if (a == 0) { return 0; }
+    var k = 0;
+    var s = 0;
+    i = 0;
+    while (i < n) {
+        if (load8(buf + i) == 0) { store64(a + k * 8, buf + s); k = k + 1; s = i + 1; }
+        i = i + 1;
+    }
+    store64(a + k * 8, 0);
+    return a;
+}
+fn k7_launch(): i64 {
+    alloc_init();
+    var cb = 0;
+    var eb = 0;
+    var cn = k7_slurp("/proc/self/cmdline", &cb);
+    if (cn <= 0) { return 126; }
+    var en = k7_slurp("/proc/self/environ", &eb);
+    if (en < 0) { return 126; }
+    var av = k7_split(cb, cn);
+    var ev = k7_split(eb, en);
+    if (av == 0 || ev == 0) { return 126; }
+    if (load64(av + 8) == 0) { return 126; }
+    if (signal_default(1) != 0) { return 126; }
+    sys_execve(load64(av + 8), av + 8, ev);
+    return 127;
+}
+var r = k7_launch();
+syscall(SYS_EXIT, r);
+K7HUP
+K7_HUPL=""
+if ( cd "$ROOT" && "$ROOT/build/cycc" < "$T/k7hup.cyr" > "$T/k7hup" 2> "$T/k7hup.err" ) && chmod +x "$T/k7hup"; then
+    # ⭐ PREMISE: an ignore set before an exec survives it (what nohup hands the gate's children) —
+    # a shell that SIGHUPs itself lives on. ⭐ The launcher resets it: the same shell under k7hup dies.
+    k7r=0; { ( trap '' HUP; /bin/sh -c 'kill -HUP $$; exit 0' ); } 2>/dev/null || k7r=$?
+    check "SIGHUP ignored before an exec stays ignored after it: sh -c 'kill -HUP \$\$' lives (rc 0, the inherited ignore)" 0 "$k7r"
+    k7r=0; { ( trap '' HUP; "$T/k7hup" /bin/sh -c 'kill -HUP $$; exit 0' ); } 2>/dev/null || k7r=$?
+    check "  …and under the HUP launcher the same shell dies of the signal (rc 129: SIGHUP back at SIG_DFL)" 129 "$k7r"
+    [ "$K7_HUP" = default ] || K7_HUPL="$T/k7hup"
+else
+    echo "  SKIP (named): axis 7 HUP launcher rows — k7hup did not build with the tree's cycc:"
+    sed 's/^/    /' "$T/k7hup.err" | head -5
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
+echo "  (SIGHUP in this shell: $K7_HUP${K7_HUPL:+ — the HUP rows run the CLI through k7hup})"
 # kill_run <tag> <SIG> <verb> [args...] — run the k2 CLI in the background, wait for its compiler,
 # record the live dir's names in $T/k7-<tag>.live (and plant $T/k7-<tag>.plant's name in it when
 # that file exists), deliver SIG to the CLI, wait. Leaves the CLI's pid in $T/p7-<tag>, its exit
@@ -481,6 +573,7 @@ kill_run() {
     rm -f "$T/k2.cc" "$T/p7-$_kt" "$T/k7-$_kt.rc" "$T/k7-$_kt.live" "$T/k7-$_kt.cc"
     _ke=""
     [ "$_ks" = INT ] && _ke="env --default-signal=INT"
+    [ "$_ks" = HUP ] && _ke="$K7_HUPL"
     # (the subshell outlives the CLI it runs, so a signal death is reported to its /dev/null)
     # shellcheck disable=SC2086
     ( _kr=0; cd "$T/proj" && TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_kt" $_ke "$T/k2/cyrius" "$@" > "$T/o7-$_kt" 2>&1 || _kr=$?
@@ -513,6 +606,10 @@ for k7v in check build; do
         case $k7s in TERM) k7n=15 ;; INT) k7n=2 ;; HUP) k7n=1 ;; esac
         if [ "$k7s" = INT ] && [ "$K7_INT" = no ]; then
             echo "  SKIP (named): axis 7 $k7v SIGINT row — env(1) has no --default-signal on this host"
+            K7_SKIPS=$((K7_SKIPS + 1)); continue
+        fi
+        if [ "$k7s" = HUP ] && [ "$K7_HUP" != default ] && [ -z "$K7_HUPL" ]; then
+            echo "  SKIP (named): axis 7 $k7v SIGHUP row — SIGHUP is ignored in this shell (nohup?) or unreadable ($K7_HUP), and the k7hup launcher did not build"
             K7_SKIPS=$((K7_SKIPS + 1)); continue
         fi
         k7t="$k7v$k7s"
