@@ -488,3 +488,79 @@ fn _dce_host_fn(S, coff, fnc): i64 {
     }
     return 0 - 1;
 }
+
+# 6.7.14 — A DEAD FN'S RANGE CAN HOLD A LIVE FN. A generic instance is emitted inline, inside the
+# fn being compiled when it is first needed (`_instantiate_generic_fn`: a jump over it), so a
+# forwarder's instance nests the instance it forwards to — and an inline replay of the forwarder
+# calls the inner one directly, leaving it live while the outer one is dead. Both sweeps filled /
+# removed the dead fn's whole [start, end), the live body inside it with it (x86 SIGILL on the
+# sentinel or SIGSEGV, aarch64 a hang). The sweeps now keep such a fn whole, as they keep a body
+# the decoder cannot size. `_dce_live_starts` builds the live fns' starts, sorted, once per FIXUP
+# after the reachability fixpoint; `_dce_holds_live` asks whether one lies in [dfoff, dfend).
+# CHANGELOG [6.7.14] — issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
+var _dce_ls_base = 0;   # sorted live starts, then as many slots of merge scratch; 0 = no index
+var _dce_ls_n = 0;
+fn _dce_live_starts(S, live, fnc): i64 {
+    _dce_ls_n = 0;
+    _dce_ls_base = alloc(fnc * 16 + 16);
+    if (_dce_ls_base == 0) { return 0; }
+    var fi = 0;
+    while (fi < fnc) {
+        var fo = L64(_fnt_offsets + fi * 8);
+        if (fo >= 0) {
+            if ((load8(live + (fi >> 3)) & (1 << (fi & 7))) != 0) {
+                S64(_dce_ls_base + _dce_ls_n * 8, fo);
+                _dce_ls_n = _dce_ls_n + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+    _dce_ls_sort(_dce_ls_base, _dce_ls_n);
+    return 0;
+}
+# Bottom-up mergesort of n 8-byte values at b, through the n slots after them.
+fn _dce_ls_sort(b, n): i64 {
+    var scr = b + n * 8;
+    var w = 1;
+    while (w < n) {
+        var i = 0;
+        while (i < n) {
+            var mid = i + w;
+            var hi = i + w + w;
+            if (mid > n) { mid = n; }
+            if (hi > n) { hi = n; }
+            var a = i;
+            var c = mid;
+            var o = i;
+            while (o < hi) {
+                var take_a = 0;
+                if (a < mid) {
+                    if (c >= hi) { take_a = 1; }
+                    elif (L64(b + a * 8) <= L64(b + c * 8)) { take_a = 1; }
+                }
+                if (take_a == 1) { S64(scr + o * 8, L64(b + a * 8)); a = a + 1; }
+                else { S64(scr + o * 8, L64(b + c * 8)); c = c + 1; }
+                o = o + 1;
+            }
+            i = i + w + w;
+        }
+        var k = 0;
+        while (k < n) { S64(b + k * 8, L64(scr + k * 8)); k = k + 1; }
+        w = w + w;
+    }
+    return 0;
+}
+# 1 when a live fn starts in [dfoff, dfend) — the dead fn there must be kept whole. Without an
+# index (the alloc failed) every dead fn is kept: never fill what cannot be checked.
+fn _dce_holds_live(dfoff, dfend): i64 {
+    if (_dce_ls_base == 0) { return 1; }
+    var lo = 0;
+    var hi = _dce_ls_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (L64(_dce_ls_base + mid * 8) < dfoff) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo < _dce_ls_n) { if (L64(_dce_ls_base + lo * 8) < dfend) { return 1; } }
+    return 0;
+}

@@ -195,5 +195,53 @@ CYRIUS_IR=3 "$T/stage1" < "$R/src/main.cyr" > "$T/ir3cc" 2> "$T/ir3cc.err" || { 
 grep -q '^wp-compact: [0-9]* bytes reclaimed' "$T/ir3cc.err" || { echo "FAIL dce_eliminates axis6 6d: cycc's CYRIUS_IR=3 build does not compact: $(grep -v '^warning\|^note' "$T/ir3cc.err" | head -3)"; exit 1; }
 if grep -q 'wp-compact declined' "$T/ir3cc.err"; then echo "FAIL dce_eliminates axis6 6d: $(grep 'declined' "$T/ir3cc.err")"; exit 1; fi
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap"
+# ── axis 7 — 6.7.14: a LIVE generic instance nested inside a dead one survives ─────────────
+# Generic instances are emitted inline, inside the fn that first needs them, so `svh$i8` (dead:
+# in_svh_i8 inlines it) CONTAINS `sv$i8` (live: the inlined body calls it). The sweeps filled /
+# removed the dead fn's whole range, the live body with it: x86 exit 132 (the ud2 sentinel; 139
+# before 6.7.11), CYRIUS_WX=0 132, aarch64 a hang under qemu. A dead fn whose range holds a live
+# fn's start is kept whole now (runtime.cyr _dce_holds_live). 7a: the filed g.cyr exits 253 on x86
+# W^X, CYRIUS_WX=0, aarch64 and cx (cx does not sweep — the control). 7b: the corpus file that
+# met it, tests/tcyr/lang/generic_instance_inline_binding.tcyr, 18/18 under CYRIUS_DCE=1 on x86
+# and aarch64. Mutations (6.7.14): `_dce_holds_live` returning 0 -> RED 7a (x86 132); only the
+# aarch64 sweep's guard dropped -> RED 7a (aarch64 124, the hang).
+# issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
+cat > "$T/g.cyr" <<'EOF'
+fn sv<T>(x: T) { var y: T = 253; return y; }
+fn svh<T>(x: T) { return sv<T>(x); }
+fn in_svh_i8() { return svh<i8>(1); }
+var r = in_svh_i8();
+syscall(60, r & 255);
+EOF
+GIB="$R/tests/tcyr/lang/generic_instance_inline_binding.tcyr"
+tcyr18() {   # <leg> <outfile> <rc>
+  [ "$3" = 0 ] && grep -q '^18 passed, 0 failed' "$2" || { echo "FAIL dce_eliminates axis7b ($1): generic_instance_inline_binding.tcyr under CYRIUS_DCE=1 exits $3: $(tail -1 "$2")"; exit 1; }
+}
+for WX in 1 0; do
+  CYRIUS_DCE=1 CYRIUS_WX=$WX "$T/stage1" < "$T/g.cyr" > "$T/g$WX" 2> "$T/g$WX.err" || { echo "FAIL dce_eliminates axis7a: g.cyr did not compile (CYRIUS_WX=$WX)"; exit 1; }
+  grep -q 'unreachable fns' "$T/g$WX.err" || { echo "FAIL dce_eliminates axis7a: g.cyr has no dead fn any more — the row proves nothing: $(cat "$T/g$WX.err")"; exit 1; }
+  chmod +x "$T/g$WX"; got=0; "$T/g$WX" || got=$?
+  [ "$got" = 253 ] || { echo "FAIL dce_eliminates axis7a (x86, CYRIUS_WX=$WX): g.cyr under CYRIUS_DCE=1 exits $got, want 253 — a live instance nested in a dead one was removed"; exit 1; }
+done
+CYRIUS_DCE=1 "$T/stage1" < "$GIB" > "$T/gib" 2>/dev/null || { echo "FAIL dce_eliminates axis7b: the corpus file did not compile under CYRIUS_DCE=1"; exit 1; }
+chmod +x "$T/gib"; got=0; "$T/gib" > "$T/gib.out" 2>&1 || got=$?; tcyr18 x86 "$T/gib.out" "$got"
+"$T/stage1" < "$R/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ] || { echo "FAIL dce_eliminates axis7: cannot build src/main_aarch64.cyr"; exit 1; }
+chmod +x "$T/cc_a64"
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+  CYRIUS_DCE=1 "$T/cc_a64" < "$T/g.cyr" > "$T/ga" 2>/dev/null || { echo "FAIL dce_eliminates axis7a: g.cyr did not compile for aarch64"; exit 1; }
+  chmod +x "$T/ga"; got=0; timeout 20 qemu-aarch64 "$T/ga" || got=$?
+  [ "$got" = 253 ] || { echo "FAIL dce_eliminates axis7a (aarch64): g.cyr under CYRIUS_DCE=1 exits $got, want 253 (124 = the hang)"; exit 1; }
+  CYRIUS_DCE=1 "$T/cc_a64" < "$GIB" > "$T/giba" 2>/dev/null || { echo "FAIL dce_eliminates axis7b: the corpus file did not compile for aarch64"; exit 1; }
+  chmod +x "$T/giba"; got=0; timeout 60 qemu-aarch64 "$T/giba" > "$T/giba.out" 2>&1 || got=$?; tcyr18 aarch64 "$T/giba.out" "$got"
+else
+  echo "  SKIP dce_eliminates axis7 aarch64 legs: qemu-aarch64 not installed"
+fi
+"$T/stage1" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ] && \
+  "$T/stage1" < "$R/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ] || { echo "FAIL dce_eliminates axis7: cannot build src/main_cx.cyr / programs/cxvm.cyr"; exit 1; }
+chmod +x "$T/cc_cx" "$T/cxvm"
+CYRIUS_DCE=1 "$T/cc_cx" < "$T/g.cyr" > "$T/g.cyx" 2>/dev/null || { echo "FAIL dce_eliminates axis7a: g.cyr did not compile for cx"; exit 1; }
+got=0; timeout 20 "$T/cxvm" < "$T/g.cyx" || got=$?
+[ "$got" = 253 ] || { echo "FAIL dce_eliminates axis7a (cx): g.cyr under CYRIUS_DCE=1 exits $got, want 253"; exit 1; }
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx)"
 exit 0

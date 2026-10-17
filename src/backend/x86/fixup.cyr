@@ -652,6 +652,7 @@ fn FIXUP(S): i64 {
         }
     }
     var dce_bytes = 0;
+    _dce_live_starts(S, &live, fnc);   # 6.7.14: for `_dce_holds_live` below (runtime.cyr)
     var dwi = 0;
     while (dwi < fnc) {
         var dfoff = L64(_fnt_offsets + dwi * 8);
@@ -692,6 +693,9 @@ fn FIXUP(S): i64 {
                             if (load8(_codebuf_base + dfend - 1) == 0xC3) { safe = 1; }
                         }
                     }
+                    # 6.7.14: a live fn inside the range (an inline generic instance) keeps the
+                    # whole body, like one the decoder cannot size. runtime.cyr _dce_holds_live
+                    if (safe == 1) { safe = 1 - _dce_holds_live(dfoff, dfend); }
                     if (safe == 1) {
                         # Validation: walk the body with the length decoder
                         # (v4.4.5 — src/backend/x86/decode.cyr). Every byte

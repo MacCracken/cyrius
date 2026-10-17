@@ -481,6 +481,7 @@ fn FIXUP(S): i64 {
     # 4-byte width removes the x86 decoder-validation step.
     var dead_count = 0;
     var dce_bytes = 0;
+    _dce_live_starts(S, &live, fnc);   # 6.7.14: for `_dce_holds_live` below (runtime.cyr)
     var dwi = 0;
     while (dwi < fnc) {
         var dfoff = L64(_fnt_offsets + dwi * 8);
@@ -498,6 +499,9 @@ fn FIXUP(S): i64 {
                     if (safe == 0 && dfend >= 4) {
                         if (load32(_codebuf_base + dfend - 4) == 0xD65F03C0) { safe = 1; }
                     }
+                    # 6.7.14: a live fn inside the range (an inline generic instance) keeps the
+                    # whole body unfilled. runtime.cyr _dce_holds_live
+                    if (safe == 1) { safe = 1 - _dce_holds_live(dfoff, dfend); }
                     if (safe == 1) {
                         dce_bytes = dce_bytes + (dfend - dfoff);
                         if (dce_enabled == 1) {
