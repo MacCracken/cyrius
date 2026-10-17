@@ -11695,14 +11695,17 @@ fn _capture_tparams(S): i64 {
 # argument (`_gen_arg_whole`; `g(h * 2.0)` stays i64, as `g(p + 1)` does). They inferred i64, so
 # `gid(h)` ran the i64 base and its result was an untyped word — `gid(h) * 2.0` multiplied the
 # double's bits. An f32 is not a type argument (nor a return type): it stays i64. CHANGELOG [6.7.9]
-fn _infer_conc_at_cursor(S): i64 {
+# ⛔ 6.7.14 — `ptr` 1: the carrying parameter is `p: *T` (`_ic_arg`), where a pointer binds what it POINTS AT; 0:
+# `x: T`, where no pointer binds (see `_ic_arg`). CHANGELOG [6.7.14]
+fn _infer_conc_at(S, ptr): i64 {
     if (PEEKT(S) == 61) { return _ic_flit(S); }
+    if (PEEKT(S) == 27) { return _ic_addr(S, ptr); }   # 6.7.14: `&G` / `&l`
     if (PEEKT(S) == 2) {
         var _ic_noff = PEEKV(S);
         if (_ic_is_call(S) == 1) {   # 6.7.11: + an explicit generic call `mk1<Pt>(p)`
             var _ic_fi = FINDFN(S, _ic_noff);
             if (_ic_fi >= 0) {
-                var _ic_ret = _ic_call_rs(S, _ic_fi);   # 6.7.9: + a generic's f64 instance
+                var _ic_ret = _ic_call_rs(S, _ic_fi, ptr);   # 6.7.9: + a generic's f64 instance
                 if (_ic_ret != 0) { return _ic_ret; }
             }
         } else {
@@ -11712,15 +11715,51 @@ fn _infer_conc_at_cursor(S): i64 {
                 # 6.6.10: a vector local's SLTYPE is a descriptor sentinel (<= -2048), not a
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
-                if (_is_ptr_param(S, _ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
+                if (GLPTRP(S, _ic_lli) == 1) { return _ic_ptr_slot(_ic_lt, ptr); }   # 6.7.14: a `*S` slot
                 if (_load_lt(S, _ic_lli) == F64_TYID) { return 0 - 9; }   # 6.7.9
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
-            return _infer_conc_global(S, _ic_noff);
+            var _ic_cs = _ic_cap(S, _ic_noff, ptr);   # 6.7.14: a captured `*S`
+            if (_ic_cs > 0) { return _ic_cs; }
+            if (_ic_cs < 0) { return _infer_conc_global(S, _ic_noff, 0); }
+            return _infer_conc_global(S, _ic_noff, ptr);
         }
     }
     return 0 - 8;
+}
+# A typed-pointer slot (a `*S` local, parameter or capture: SLTYPE `0 - sid` behind bit 56 since 6.6.17) binds S
+# through `p: *T` only; through `x: T` it is a pointer, which infers i64. CHANGELOG [6.7.14]
+fn _ic_ptr_slot(lt, ptr): i64 {
+    if (ptr == 1) { if (lt < 0) { return 0 - lt; } }
+    return 0 - 8;
+}
+# A name a capturing closure's body reads as a capture (`_cl_cap_esl`), through `p: *T`: its struct when the
+# enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), -1 for any other capture (read as
+# before), 0 when it is no capture. CHANGELOG [6.7.14]
+fn _ic_cap(S, noff, ptr): i64 {
+    if (ptr == 0) { return 0; }
+    var esl = _cl_cap_esl(S, noff);
+    if (esl < 0) { return 0; }
+    if (_cl_snap_ptrp(esl) == 0) { return 0 - 1; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0 - 1; }
+    if (t <= 0 - 2048) { return 0 - 1; }
+    return 0 - t;
+}
+# `&name` at the cursor through `p: *T`: an inline struct local, a by-value struct parameter or an inline struct
+# global binds its struct (`_gsc_addr_of`, the struct carrier's reader); a pointer's `&p` is a `**`, and a tuple,
+# a dyn and a capture bind nothing. i64 through `x: T`. CHANGELOG [6.7.14]
+fn _ic_addr(S, ptr): i64 {
+    if (ptr == 0) { return 0 - 8; }
+    var i = GTI(S) + 1;
+    if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
+    if (_cl_cap_esl(S, TOKVAL(S, i)) >= 0) { return 0 - 8; }   # a capture's copy: not `&l` / `&G`
+    var s = _gsc_addr_of(S, TOKVAL(S, i));
+    if (s <= 0) { return 0 - 8; }
+    if (_tup_is(S, s) == 1) { return 0 - 8; }
+    if (_dyn_is(S, s) == 1) { return 0 - 8; }
+    return s;
 }
 # 6.6.10 (bite 7 review): a `pp: *Pt` parameter. The parameter loop skips the `*`, so the slot is
 # typed `Pt` like a by-value one and `pp.x` works — but it is a POINTER, and a `var q: *Pt` local
@@ -12111,16 +12150,26 @@ fn _param_float(S, li, pc, flt, pack): i64 {
 # `g(mk1(p))` bound T to `mk1`'s base return, the generic `Box`, and was refused against the real
 # `Box<Pt>`; `g(id(p))` bound i64). Asked of the instance whatever the base records, as `_gsc_call`
 # does: a base parsed below the call has no `: T` return yet (0). A narrow scalar instance keeps i64.
-fn _ic_call_rs(S, fi): i64 {
+# 6.7.14: `ptr` 1 (a `p: *T` carrier, `_infer_conc_at`) — and a `: *S` return binds S (`_ic_rps`).
+fn _ic_call_rs(S, fi, ptr): i64 {
     var r = GFRS(S, fi);
-    if (_MONOMORPH_OK == 0) { return r; }
-    if (GFTP(S, fi) == 0) { return r; }
+    if (_MONOMORPH_OK == 0) { return _ic_rps(S, fi, r, ptr); }
+    if (GFTP(S, fi) == 0) { return _ic_rps(S, fi, r, ptr); }
     if (r < 0) { if (r != 0 - 8) { return r; } }   # a declared scalar / vector return: the instance's too
     var ifi = _gen_call_inst(S, GTI(S));
     if (ifi < 0) { return r; }
+    if (ptr == 1) { if (_ic_rps(S, ifi, 0, 1) > 0) { return _ic_rps(S, ifi, 0, 1); } }
     var ir = GFRS(S, ifi);
     if (ir == 0 - 9) { return ir; }
     if (ir > 0) { return ir; }
+    return r;
+}
+# The struct fn fi's `: *S` return points at (`_fn_rpsid`) when `ptr` is 1, else `r` (fi's own return). CHANGELOG [6.7.14]
+fn _ic_rps(S, fi, r, ptr): i64 {
+    if (ptr == 0) { return r; }
+    if (_fn_rpsid == 0) { return r; }
+    var ps = L64(_fn_rpsid + fi * 8);
+    if (ps > 0) { return ps; }
     return r;
 }
 # The fn the call at token ti (`name(` / `name<..>(`) reaches — a generic's instance (`_pair_gen_inst`,
@@ -12162,10 +12211,11 @@ fn _is_ptr_param(S, li): i64 {
 # 6.6.10: a struct GLOBAL argument binds its struct like a struct local does. GVTYPE alone is
 # ambiguous (a narrow scalar global stores its WIDTH there, 1..7); a struct global is the one
 # with a recorded layout mode (GVPM 1 or 2, 6.6.5). A PEEK: `_findvar_core`, not FINDVAR, whose
-# visibility report belongs to the argument's own parse.
-fn _infer_conc_global(S, noff): i64 {
+# visibility report belongs to the argument's own parse. 6.7.14: through `p: *T` (`ptr` 1) a `*S` global binds S.
+fn _infer_conc_global(S, noff, ptr): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
+    if (ptr == 1) { if (_gv_ptr_sid(S, vi) > 0) { return _gv_ptr_sid(S, vi); } }
     if (GVTYPE(S, vi) == F64_TYID) { return 0 - 9; }   # 6.7.9: an f64 global binds f64
     if (GVPM(S, vi) == 0) { return 0 - 8; }
     var t = GVTYPE(S, vi);
@@ -13015,6 +13065,35 @@ fn _gen_addr_check(S, fi, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — A `p: *T` PARAMETER BINDS WHAT ITS POINTER ARGUMENT POINTS AT; AN `x: T` ONE BINDS NO POINTER (the
+# user's decision D8 (a), 2026-10-16). The argument at token a for fi's carrying parameter k (1-based): through
+# `p: *T` a `*S` local, parameter, capture or global, a field declared `*S` reached through a chain (`w.p`,
+# `wp.p`, `G.p`), a `: *S` call and `&G` / `&l` of a struct bind S — as a struct value already did (6.6.20) and
+# as a `*Box<T>` carrier does (6.7.8). Only a `*S` LOCAL bound, through either shape: 6.6.17 gave it SLTYPE
+# `0 - sid`, which read as a struct argument, so `gs(q)` with `var q: *S` bound S through `x: T` against the
+# guide, while `gsz(&GS)`, `gsz(GP)`, `gsz(w.p)` and a `*S` parameter ran the i64 base (sizeof(T) 8). CHANGELOG [6.7.14]
+fn _ic_arg(S, fi, a, k): i64 {
+    var ptr = _ic_ptr_param(S, fi, k - 1);
+    if (ptr == 1) {
+        if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) {
+                var cs = _gsc_chain(S, a);
+                if (cs > 0) { return cs; }
+            } }
+    }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var sv = GTI(S);
+    STI(S, a);
+    var c = _infer_conc_at(S, ptr);
+    STI(S, sv);
+    return c;
+}
+# 1 = parameter k (0-based) of generic fi is declared `*T` (`_pptr_param`), with `_dps_param`'s cursor put back.
+fn _ic_ptr_param(S, fi, k): i64 {
+    var s0 = _dps_ts; var s1 = _dps_te; var s2 = _dps_va; var s3 = _dps_nm;
+    var r = _pptr_param(S, fi, k);
+    _dps_ts = s0; _dps_te = s1; _dps_va = s2; _dps_nm = s3;
+    return r;
+}
 # Infer the concrete type of type parameter `which` (0|1) for a call to generic fi whose `(` is
 # at token `open`, from the argument in the parameter position that carries it. A generic pass 1
 # never recorded binds positionally, as before. No carrying parameter -> i64.
@@ -13025,11 +13104,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF, 0); }   # 6.7.8
     var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
-    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
-    var sv = GTI(S);
-    STI(S, a);
-    var c = _infer_conc_at_cursor(S);
-    STI(S, sv);
+    var c = _ic_arg(S, fi, a, k);
     if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
     if (c == 0 - 9) { _gi_sc = 1; }   # 6.7.9: an f64 binding calls its instance, as `g<f64>(..)` does
     return c;
@@ -13332,11 +13407,7 @@ fn _mcall_infer(S, fi, open, which, rsid): i64 {
     if (k == 1) { if (rsid > 0) { return rsid; } return 0 - 8; }
     var a = _call_arg_pk(S, fi, open, k - 1, k - 2);
     if (a < 0) { return 0 - 8; }
-    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
-    var sv = GTI(S);
-    STI(S, a);
-    var c = _infer_conc_at_cursor(S);
-    STI(S, sv);
+    var c = _ic_arg(S, fi, a, k);
     if (c == 0 - 9) { _gi_sc = 1; }
     return c;
 }

@@ -6384,8 +6384,10 @@ on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
 every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
-`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
-parameter (a pointer, like a `var q: *Pt` local). An **f64** argument — an `f64`
+`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and through an `x: T` parameter so does
+every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
+field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
+this rule). An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
 generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
 exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
@@ -6416,6 +6418,22 @@ it: a field of that name still wins, so `p.n < k` is a comparison. A bound is th
 `gb<f64>(h)` and `p.bm(h)` were refused naming `i64`, or ran the dead stub). Any other
 argument infers `i64`, or the width a scalar-returning call declares.
 
+**Through a pointer parameter** (6.7.14). A `p: *T` parameter binds `T` to what its
+argument POINTS AT: a `*S` local, parameter (an untyped impl `self` included), closure
+capture or global, a field declared `*S` reached through a chain (`w.p`, `wp.p`,
+`G.p`), a call returning `*S` (a generic one at the instance it reaches: `gsz(gpi(gp))`
+with `fn gpi<T>(x: *T): *T`), and `&G` / `&l` of a struct — as a struct value already
+does (its address is passed, 6.6.20) and as a `*Box<T>` carrier does. With
+`fn gsz<T>(x: *T): i64 { return sizeof(T); }`, `gsz(&gs)`, `gsz(gp)`, `gsz(w.p)` and
+`gsz(mkp())` call `gsz$S` (24 for a 24-byte `S`), exactly as `gsz<S>(&gs)` does, and a
+generic that uses `T` as a struct through the pointer (`return x.a;`) is called at the
+struct instead of being refused as its stub — inferred or forwarded (`fn fw<T>(x: *T) {
+return gsz(x); }`), and on a generic method (`o.pk(gp)`). The user's decision D8 (a),
+2026-10-16: through 6.7.13 only a `*S` LOCAL bound `S` — through `x: *T` and `x: T`
+alike — and every other spelling ran the i64 base (`sizeof(T)` 8, a `var y: T` one
+word, a `: *T` result an untyped pointer). `&p` of a pointer is a `**` and binds
+nothing; any other argument infers as above.
+
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
 type argument — `fn gx<T>(b: Box<T>)`, `fn g2<T>(p: Pair<i64, T>)`: the argument's
@@ -6436,8 +6454,8 @@ WHOLE argument and a whole dereference of such a pointer bind `T` as the plain s
 does (6.7.11): `gx((b))`, a wrapped call returning the instance, `gx(*bp)` and `gx((*bp))` call `gx$Pt`, and
 `gw((w))` / `gw(*wp)` with `w: W1<i32>` call `gw$i32` — they reached the base, refused
 as a different struct type (through 6.7.10 a carrier of 8 bytes or less compiled there and
-read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` keeps
-the rule above. A **generic** call's own result binds `T` as the instance that call
+read `W1<i32>` with `W1<i64>`'s layout). A tuple literal (`gx((b, 3))`) binds nothing. A plain `p: *T` binds by
+the pointer rule above. A **generic** call's own result binds `T` as the instance that call
 reaches (6.7.11): `gx(mk1(p))` with `fn mk1<T>(x: T): Box<T>` calls `gx$Pt`, as
 `gx<Pt>(mk1(p))` does — inferred or explicit (`gx(mk1<Pt>(p))`), nested
 (`gx(mk1(mk1(p)))`), and through a `: T` generic (`gx(id(b))`); before 6.7.11 the call
