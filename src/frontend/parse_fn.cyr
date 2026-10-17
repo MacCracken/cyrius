@@ -2142,8 +2142,9 @@ fn _sarg_pe_vform(S, fi, argc, tail): i64 {
     return _spv_skip(S, ti);
 }
 # The source at the cursor, unwrapped, as `_sar_one` takes it: a local — checked by the class rule in SysV's words
-# (`_simd_arg_typecheck`, reported at its end as the SysV record does) and its address pushed; a vector call —
-# `_sarg_vec_call`'s (its refusal skips the source); 1 = pushed, 0 = no such source (nothing moved).
+# (`_simd_arg_typecheck`, reported at its end as the SysV record does) and its address pushed; (6.7.14, D31 A) a
+# closure's captured vector — checked the same way, the address of its env words pushed (the callee copies them in); a
+# vector call — `_sarg_vec_call`'s (its refusal skips the source); 1 = pushed, 0 = no such source (nothing moved).
 fn _spv_one(S, fi, argc, tail, vf): i64 {
     var c = GTI(S);
     var li = _spv_local(S, c);
@@ -2152,6 +2153,14 @@ fn _spv_one(S, fi, argc, tail, vf): i64 {
         _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), GLTYPE(S, li), vf);
         _sarg_escapes(fi, argc, tail);
         EFLADDR(S, li);
+        EPUSHR(S);
+        return 1;
+    }
+    var t = _spv_cap(S, c);
+    if (t != 0) {   # 6.7.14 (D31 A): a captured vector, checked as the local is; its env words' address
+        STI(S, c + 1);
+        _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), t, vf);
+        _cap_vaddr(S, TOKVAL(S, c));
         EPUSHR(S);
         return 1;
     }
@@ -5807,9 +5816,69 @@ fn _sar_one(S, fi, cls, want, dst): i64 {
         _sar_lcl = 1;
         return li;
     }
-    var r = _sar_vcall(S, fi, cls, want, dst);
+    var r = _sar_cap(S, cls, want, dst);   # 6.7.14 (D31 A): a closure's captured vector
+    if (r == 0 - 2) { r = _sar_vcall(S, fi, cls, want, dst); }
     _sar_lcl = 0;
     return r;
+}
+# ⛔ 6.7.14 — A CLOSURE'S CAPTURED VECTOR INTO A VALUE-FORM PARAMETER IS PASSED, AS THE LOCAL IS (D31, the user's
+# decision, 2026-10-16: A). `|k| lanes(b)` with `b` a captured f64v2 and `fn lanes(x: f64v2)` was refused on every
+# target ("a value-form vector argument to 'lanes' is a local of its type .. - got `b`"), where `lanes(b)` on the local
+# passes: the record took a FINDLOCAL local, and a capture lives in the closure's env. 6.7.13's D32 gave a captured
+# vector the local's rules for a pointer parameter; this is the value-form half. The whole name at the cursor, a
+# captured vector (`_spv_cap`) — checked by the class rule a local of its type meets (`_simd_arg_typecheck`, its words)
+# — has its env words (`&env[woff]`) copied into slot `dst` (-1: anonymous slots of its type) here, before ECALLPOPS,
+# and that slot is what the vector second pass loads (the inline replay: the parameter's own slots). Another class is
+# refused (-1); not a captured vector: -2. Win64 pushes the capture's address (`_spv_one`). CHANGELOG [6.7.14]
+fn _sar_cap(S, cls, want, dst): i64 {
+    var c = GTI(S);
+    var t = _spv_cap(S, c);
+    if (t == 0) { return 0 - 2; }
+    STI(S, c + 1);
+    _simd_arg_typecheck(S, cls, t, want);
+    if (_sar_vok(S, cls, t, want) == 0) { return 0 - 1; }
+    return _cap_vcopy(S, TOKVAL(S, c), t, dst);
+}
+# The vector type (its SLTYPE) of the closure capture a whole argument at token `ti` names (`,` or `)` after it, no
+# local of that name: `_cl_cap_vec`), else 0.
+fn _spv_cap(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var nx = TOKTYP(S, ti + 1);
+    if (nx != 31) { if (nx != 11) { return 0; } }
+    if (FINDLOCAL(S, TOKVAL(S, ti)) >= 0) { return 0; }
+    return _cl_cap_vec(S, TOKVAL(S, ti));
+}
+# rax = the address of the captured vector `noff`'s words in the closure's env (`&env[woff]`).
+fn _cap_vaddr(S, noff): i64 {
+    return _CL_CAP_WORDS_RA(S, _cl_cap_find(_cl_snap_find(S, noff)));
+}
+# The captured vector `noff` (type `t`) copied into slot `dst` (-1: anonymous slots of its type, `_agg_temp_t`) — the
+# slot.
+fn _cap_vcopy(S, noff, t, dst): i64 {
+    _vec_desc(S, t);
+    var n = GVEC_NSLOTS(S);
+    if (dst < 0) { dst = _agg_temp_t(S, n, t); }
+    _cap_vaddr(S, noff);
+    return _sar_copy_ra(S, dst, n);
+}
+# rax = a vector's address: its `n` words copied into the slots of the vector at slot `dst`, the address kept on the
+# stack between words — no frame temp: an `#inline` replay's arguments run before it releases its window (`SFLC` back
+# to its parameters), so a temp taken there would lie past the frame. `_agc_copy_bytes`'s primitives. Returns `dst`.
+fn _sar_copy_ra(S, dst, n): i64 {
+    var i = 0;
+    while (i < n) {
+        EPUSHR(S);
+        EMOVCA(S);
+        if (i > 0) { EADDIMM_X1(S, i * 8); }
+        EFIELD_LOAD_W(S, 8);
+        EPUSHR(S);
+        _agc_addr_x1(S, dst, 0 - 1, i * 8);
+        EPOPR(S);
+        ESTOC(S);
+        EPOPR(S);
+        i = i + 1;
+    }
+    return dst;
 }
 # The whole argument at the cursor when it is a call declared to return a vector (`_svc_rs`), into a value-form
 # parameter of class `cls` / `want` of `fi`: received into slot `dst` (-1: anonymous slots of its type) — that slot; a
@@ -5853,9 +5922,9 @@ fn _vf_cls(S, t): i64 {
     if (_is_simd256(S, t) == 1) { return 2; }
     return 1;
 }
-# The refusal of a value-form vector argument at token `ti` to `fi` that is no local and no call declared to return a
-# vector: once, by name, without `_panic` (the caller skips the argument, so the parse stays in step and one compile
-# reports every such argument). Returns 0.
+# The refusal of a value-form vector argument at token `ti` to `fi` that is no local (6.7.14: or closure capture) and
+# no call declared to return a vector: once, by name, without `_panic` (the caller skips the argument, so the parse
+# stays in step and one compile reports every such argument). Returns 0.
 fn _sar_err(S, ti, fi): i64 {
     if (_panic == 1) { return 0; }
     var sv = GTI(S);
@@ -15726,6 +15795,17 @@ fn _snap_vec_ty(S, ti): i64 {
     if (_is_simd_any(S, lt) == 0) { return 0; }
     return lt;
 }
+# ⛔ 6.7.14 — a Win64 value-form vector parameter given a closure's captured vector (D31) is passed the address of its
+# env words, which the callee copies in its prologue — after every argument: a later argument writing the capture
+# (`two(b, setb(&b, 7))`) reached the callee, where SysV / AAPCS64 / cx copy the env words where the argument stands.
+# The copy's type, the parameter's own vector (the class rule admits only its size), as `_snap_vec_ty` gives a local's;
+# 0 = no such argument at the cursor. CHANGELOG [6.7.14]
+fn _snap_pvf_ty(S, fi, argc): i64 {
+    var c = _pwrap_in(S, GTI(S));
+    if (c < 0) { return 0; }
+    if (_spv_cap(S, c) == 0) { return 0; }
+    return 0 - _pvf_param(S, fi, argc);
+}
 # The local type of the copy argument `argc` of `fi` (the cursor on it) takes where it stands, or
 # 0 when it takes none: the callee does not copy that parameter, or no later argument may write.
 fn _sarg_snap_ty(S, fi, argc): i64 {
@@ -15733,6 +15813,7 @@ fn _sarg_snap_ty(S, fi, argc): i64 {
     if (_pm_copies(fi, argc) == 0) { return 0; }
     var ty = _snap_ps_ty(S, fi, argc);
     if (ty == 0) { ty = _snap_vec_ty(S, GTI(S)); }
+    if (ty == 0) { ty = _snap_pvf_ty(S, fi, argc); }   # 6.7.14 (D31): a capture, Win64 value-form
     if (ty == 0) { return 0; }
     if (_later_args_may_write(S) == 0) { return 0; }
     return ty;

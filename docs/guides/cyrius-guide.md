@@ -3859,7 +3859,10 @@ vector local of its type, or a call declared to return such a vector — by name
 instance, `fncallN(&f, ..)` / `callptr(&f, ..)`, a method: `lanes(mkv(4, 2))`, `f64v2_add(a, mkv(3,
 4))`, `lanes(s.mv())`, in a method's parameter and through an `#inline` fn too, and inside
 parentheses wrapping the whole argument (6.7.14: `lanes((w))`, `lanes((mkv(4, 2)))` were refused
-on x86_64 / aarch64 / cx, `got `(...)``, and passed on Win64). SysV / AAPCS64 /
+on x86_64 / aarch64 / cx, `got `(...)``, and passed on Win64). A closure's captured vector is
+passed as the local is (6.7.14; the user's decision D31, 2026-10-16: A): `|k| lanes(b)` copies the
+capture (Win64: its address, which the callee copies in) — through 6.7.13 it was refused on every
+target (`got `b``); a capture of another class is refused with the local's words. SysV / AAPCS64 /
 cx receive the call into a frame temporary the vector registers are loaded from after the integer
 arguments; Win64 passes the temporary's address (the call's hidden result pointer). A call of a
 vector the local rule refuses (an f64v4 into `x: f64v2`) is refused with the words above (`cannot

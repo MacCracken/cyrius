@@ -143,6 +143,11 @@ fn sp_mrows(): i64 {
     return 0;
 }
 
+# Value-form vector parameters (6.7.14: a capture and a `*V` dereference passed to them, D31 / D32).
+fn sp_vl(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 100 + load64(&x + 8); }
+fn sp_vl4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn sp_vbump(x: f64v2): i64 { store64(&x, 99); return load64(&x); }   # writes its own copy
+
 # ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — a closure's captured vector meets the local's argument rules: into a
 # `*V` of its type it passes the capture's address (both lanes are the captured copy's), and into a pointer of another kind
 # it is refused by name, as the local is (D27; the refusals are tests/gates/codegen/simd_pointer_param.sh CR rows).
@@ -166,6 +171,14 @@ fn sp_crows(): i64 {
     var c6 = |k| sp_wr(b, 77) + sp_lo(b) + k;
     assert_eq(fncall1(c6, 0), 77, "6.7.13 D32: a write through *V reaches the closure's captured copy");
     assert_eq(load64(&b), 11, "6.7.13 D32: ... not the enclosing local (captured by value)");
+    # 6.7.14 (D31 A, the user's decision, 2026-10-16): and into a VALUE-form parameter it passes the vector, as the local
+    # does (it was refused on every target). issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+    var c7 = |k| sp_vl(b) + k;
+    assert_eq(fncall1(c7, 0), 1122, "6.7.14 D31: a captured f64v2 into x: f64v2, both lanes");
+    var c8 = |k| sp_vl4(w) + k;
+    assert_eq(fncall1(c8, 0), 1044, "6.7.14 D31: a captured f64v4 into x: f64v4, lanes 0 and 3");
+    var c9 = |k| sp_vbump(b) + sp_lo(b) + k;
+    assert_eq(fncall1(c9, 0), 110, "6.7.14 D31: the callee's write stays in its copy (the capture keeps 11)");
     return 0;
 }
 

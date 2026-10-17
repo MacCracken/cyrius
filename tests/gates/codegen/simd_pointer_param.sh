@@ -236,8 +236,9 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=81   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
-           # (`sp_mrows`), the captured-vector rows (`sp_crows`, D32), the deref-through rows (`sp_drows`)
+FLOOR=84   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
+           # (`sp_mrows`), the captured-vector rows (`sp_crows`, D32), the deref-through rows (`sp_drows`); 6.7.14: + a
+           # capture into a value-form parameter (`sp_crows`, D31)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
@@ -870,6 +871,79 @@ if [ "$WINE" = 1 ]; then
     pe_same VPY4pe "VPY4 pe: lanesn((v) + 1)" "$D/vpy4.cyr" 1
 fi
 
+# ⛔ 6.7.14 (D31 A, the user's decision, 2026-10-16) — A CLOSURE'S CAPTURED VECTOR INTO A VALUE-FORM PARAMETER IS
+# PASSED, AS THE LOCAL IS: `|k| lanes(b)` (b a captured f64v2, `fn lanes(x: f64v2)`) was refused on every target ("..
+# is a local of its type or a call declared to return it .. - got `b`"). SysV / AAPCS64 / cx copy the env words into a
+# frame temp the vector second pass loads (`_sar_cap`; the inline replay: the parameter's slots); Win64 pushes the
+# capture's address (`_spv_one`). The class rule a local of its type meets decides, in its words: an f32v4 capture into
+# `x: f64v2` passes as an f32v4 local does (the 16-byte class), an f64v2 into `v: f32v4` and an f64v4 into `x: f64v2`
+# are refused. Filed: docs/development/issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+#   VCc1 the filed repro verbatim: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   VCc2 an f64v4 capture into `v: f64v4`, an f32v4 capture into `x: f64v2` (as the local), wrapped `lanes((b))`, an
+#      `#inline` fn's, between integers, a callee writing its copy (the capture keeps 4), a later argument writing the
+#      capture (`two(b, setb(&b, 7))`: copied where the argument stands, on Win64 too): exit 7 on the same legs
+#   VCcY1 / VCcY2 an f64v2 capture into `v: f32v4` ("type mismatch (callee expects f32v4)") and an f64v4 capture into
+#      `x: f64v2` ("must be a 16-byte vector"): one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VCc1 `_sar_cap` answering -2 (no capture arm)            -> RED 22: VCc1 VCc2 x86 / IR=3 / aarch64 / cx (refused,
+#       `got `b``), VCcY1 VCcY2 x86 / aarch64 / cx and pe (the D30 words, not the class ones), T x86 / IR=1 / IR=3 /
+#       DCE / aarch64 / cx (`sp_crows`' D31 rows refused)
+#   M-VCc2 `_spv_one` without the capture arm (Win64)         -> RED 5: VCc1 VCc2 VCcY1 VCcY2 T pe
+#   M-VCc3 `_sarg_snap_ty` without `_snap_pvf_ty`              -> RED 1: VCc2 pe (6: the later argument's write reached
+#       the callee through the capture's address)
+cat > "$D/vcc1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(4, 2);
+    var c = |k| lanes(b) + k;
+    return fncall1(c, 0);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+VCCH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn ln(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn lf(v: f32v4): i64 { if (load32(&v) == 999) { return 0; } return load32(&v) * 10 + load32(&v + 12); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn mix(a, x: f64v2, b): i64 { if (a == 999) { return 0; } return a * 1000 + ln(x) * 10 + b; }
+fn bump(x: f64v2): i64 { store64(&x, 9); return load64(&x); }
+fn setb(p: *f64v2, v): i64 { store64(p, v); return 0; }
+fn two(x: f64v2, k): i64 { if (k == 999) { return 0; } return ln(x) * 10 + k; }'
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' \
+  '    var f: f32v4; store32(&f, 3); store32(&f + 4, 0); store32(&f + 8, 1); store32(&f + 12, 0);' '    var ok = 0;' \
+  '    var c1 = |k| l4(w) + k;' '    if (fncall1(c1, 0) == 5007) { ok = ok + 1; }' \
+  '    var c2 = |k| ln(f) + k;' '    if (fncall1(c2, 0) == 31) { ok = ok + 1; }' \
+  '    var c3 = |k| ln((b)) + k;' '    if (fncall1(c3, 0) == 42) { ok = ok + 1; }' \
+  '    var c4 = |k| li(b) + k;' '    if (fncall1(c4, 0) == 42) { ok = ok + 1; }' \
+  '    var c5 = |k| mix(1, b, 3) + k;' '    if (fncall1(c5, 0) == 1423) { ok = ok + 1; }' \
+  '    var c6 = |k| bump(b) + load64(&b) + k;' '    if (fncall1(c6, 0) == 13) { ok = ok + 1; }' \
+  '    var c7 = |k| two(b, setb(&b, 7)) + k;' '    if (fncall1(c7, 0) == 420) { ok = ok + 1; }' \
+  '    return ok;' '}' 'var rc = main(); syscall(60, rc);' > "$D/vcc2.cyr"
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var c = |k| lf(b) + k;' \
+  '    return fncall1(c, 0);' '}' 'var rc = main(); syscall(60, rc);' > "$D/vccy1.cyr"
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' '    var c = |k| ln(w) + k;' \
+  '    return fncall1(c, 0);' '}' 'var rc = main(); syscall(60, rc);' > "$D/vccy2.cyr"
+echo "VCc. a closure's captured vector into a value-form parameter: passed as the local is (D31 A)"
+exit_rows VCc1 "$D/vcc1.cyr" 42 "the filed repro: |k| lanes(b)"
+exit_rows VCc2 "$D/vcc2.cyr" 7 "seven captured shapes, one each"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VCcY1$lg" "VCcY1 $lg: an f64v2 capture into v: f32v4" "$(cat "$D/vccy1.cyr")" "$lg" "value-form SIMD arg type mismatch (callee expects f32v4)"
+    refused "VCcY2$lg" "VCcY2 $lg: an f64v4 capture into x: f64v2" "$(cat "$D/vccy2.cyr")" "$lg" "value-form SIMD arg must be a 16-byte vector"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VCcY1pe "VCcY1 pe: an f64v2 capture into v: f32v4" "$D/vccy1.cyr" 1
+    pe_same VCcY2pe "VCcY2 pe: an f64v4 capture into x: f64v2" "$D/vccy2.cyr" 1
+fi
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -910,4 +984,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31)"
