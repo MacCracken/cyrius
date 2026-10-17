@@ -130,6 +130,13 @@
 #      and a span of 16 B or more is never NOP-filled), and the 624-file corpus's IR=3 output is identical
 #      with and without them. IW1 / IW2 are the filed repros verbatim, built under CYRIUS_IR=3; tcyr W1-W8
 #      run the shapes on every leg (A3 is the one that was wrong)
+#   IF (6.7.14, issues/2026-10-15-ir3-f64-field-store-through-pointer-faults.md) under CYRIUS_IR=3, a float
+#      literal's `movabs rax, imm64` (EMIT_FLOAT_LIT) recorded no IR node, so LASE kept the local loaded before
+#      it as rax and dropped the reload after it: `var q: *H = &buf; q.f = 2.5;` stored through 2.5's bits
+#      (SIGSEGV where 1 is right) and `g(2.5, a)` passed them as `a` (0 where 7 is right). The literal records
+#      IR_RAW_EMIT, as EF32_FROM / EF32_TO have since 6.7.6 (not LOAD_IMM: const-fold must not read float bits
+#      as an integer). IF1 / IF2 are the filed repros verbatim, built under CYRIUS_IR=3; tcyr V1-V5 run the
+#      shapes on every leg (A3 is the one that was wrong)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -309,6 +316,11 @@
 #       and slice_signed_read Wb (each IR=3: `_arr_sub_load` no longer records its own signed load)
 #   M-IW3 the six EFLLOAD_* / EFLSTORE_*_PAIR records dropped -> RED 0: no row, and no IR=3 output in the 624-file
 #       .tcyr corpus changes (the pairs are not exposed today: see IW above)
+#   (6.7.14, the structs lane, issues/2026-10-15-ir3-f64-field-store-through-pointer-faults.md, 2026-10-17: this gate
+#   run with CYCC= the lane's base compiler, f133fb2f — the fix reverted)
+#   EMIT_FLOAT_LIT without its `_IR_REC0(S, IR_RAW_EMIT)`      -> RED 3: IF1 (139), IF2 (0), A3 (V1 SIGSEGV: exit 139);
+#       and call_ptr_field_store.sh R1's IR=3 leg (139). The default pipeline's output is unchanged by the record (the
+#       635-file .tcyr corpus at IR=0 is byte-identical with and without it)
 #
 #   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
 #      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
@@ -648,6 +660,9 @@ exits_ir3 ev4 5 "EV4: var b: B = mk(x), a 24 B result, under CYRIUS_IR=3 (the fi
 # IW (6.7.14) — the filed repros verbatim, under CYRIUS_IR=3: a signed narrow field read, a field read after a dead store.
 exits_ir3 iw1 37 "IW1: s.a + s.b over i8 fields through *S under CYRIUS_IR=3 (the filed repro: an address, per run)" "# (1) — prints a different wrong value per run under CYRIUS_IR=3; 37 otherwise\nstruct S { a: i8; b: i8; }\nfn h(s: *S): i64 { return s.a + s.b; }\nfn main(): i64 { var x: S; x.a = 30; x.b = 7; return h(&x); }\nsyscall(60, main());\n"
 exits_ir3 iw2 41 "IW2: var u = 0; u = h.name; under CYRIUS_IR=3 (the filed repro: 8)" "# (2) — 8 under CYRIUS_IR=3; 41 otherwise\nstruct HS { name; k; }\nfn main(): i64 { var h: HS; h.name = 40; h.k = 7; var u = 0; u = h.name; return u + 1; }\nsyscall(60, main());\n"
+# IF (6.7.14) — the filed repros verbatim, under CYRIUS_IR=3: a float literal between a local's load and its reload.
+exits_ir3 if1 1 "IF1: var q: *H = &buf; q.f = 2.5; under CYRIUS_IR=3 (the filed repro: SIGSEGV)" "struct H { n; m; f: f64; }\nvar buf[32];\nfn go(): i64 { var q: *H = &buf; q.f = 2.5; return 1; }\nsyscall(60, go());\n"
+exits_ir3 if2 7 "IF2: g(2.5, a) after var a = 7; under CYRIUS_IR=3 (the filed repro: 0)" "fn g(x: f64, y): i64 { return y; } fn go(): i64 { var a = 7; return g(2.5, a); }\nsyscall(60, go());\n"
 
 TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
 # 6.7.13 (issues/archived/2026-10-14-struct-value-codegen-a-rows-no-floor.md): the A rows carry a floor and each leg requires
@@ -655,7 +670,7 @@ TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
 # (A1-A6), NAW every row (A7, PE). Counts are derived: the struct lanes keep adding rows (raise FLOORA with them).
 NA=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/{s=1; next} /^[[:space:]]*#endif/{s=0; next} /^[[:space:]]*#/{next} !s && /assert_eq\(/{n++} END{print n+0}' "$TCA")
 NAW=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCA")
-FLOORA=235
+FLOORA=240
 if [ "$NA" -lt "$FLOORA" ]; then bad "A: only $NA rows in $TCA (floor $FLOORA) — rows were lost"; fi
 TC=$TCA; TN=$NA
 tcyr "A1: the values file (x86_64)" "$CC" ""
@@ -726,4 +741,4 @@ else echo "  SKIP: PE legs FPw1 / FPw2 / FPw3 / FPw4 / B7 / A7 / VDw1-VDw3 / C7 
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV), a field read IR=3 could not see (IW): values on x86_64 / IR / DCE / aarch64 / cx (A, $NA rows; B) and PE (A7, $NAW rows; B7, $NB rows); a discarded vector result (C, $NC rows, PE's VDw)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L), struct results through fncallN / callptr (FP), a local after an EFLADDR under IR=3 (EV), a field read IR=3 could not see (IW), a float literal IR=3 could not see (IF): values on x86_64 / IR / DCE / aarch64 / cx (A, $NA rows; B) and PE (A7, $NAW rows; B7, $NB rows); a discarded vector result (C, $NC rows, PE's VDw)"

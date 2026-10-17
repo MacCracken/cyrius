@@ -67,7 +67,7 @@ assert_eq(s_chain(), 49, "gp().h.b = 9 / gp().h.a = 4: a chain of fields");
 assert_eq(s_generic(), 52, "gpg<H>().n = 5; gpg<H>().m += 2: an explicit generic");
 assert_eq(s_method(), 521, "o.gp().n = 5; o.gpc().m += 2: a method, called once");
 assert_eq(s_narrow(), 44081, "u8 300 stores 44, i32 -2, the fields beside untouched");
-assert_eq(s_float(), 1, "gp().f = 2.5; gp().f += 1.25: an f64 field");   # IR3-PRE: an f64 field store through a *T faults under CYRIUS_IR=3 (staged)
+assert_eq(s_float(), 1, "gp().f = 2.5; gp().f += 1.25: an f64 field");
 assert_eq(s_rhs(), 5, "gp().n = gp().m + 1");
 assert_eq(s_hop(), 7, "gp().p.b = 7: through the result's *I field");
 assert_eq(s_whole(), 12, "gp().h = i: a struct-typed field copied whole");

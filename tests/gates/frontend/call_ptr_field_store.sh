@@ -14,7 +14,7 @@
 # PARSE_FIELD_STORE's body, `_fst_on`). A by-value result keeps the refusal; an untyped `var p = gp();` is unchanged.
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/call_ptr_field_store.tcyr (its row count derived, floor
-# 17) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3 without its IR3-PRE row, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
+# 17) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
 # not hardware), cx (cxvm) and PE (wine, a private prefix); X1-X6 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K3 controls that compile and run on every leg.
 #
@@ -159,14 +159,11 @@ N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
 FLOOR=17
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
-# Under CYRIUS_IR=3 the row marked IR3-PRE is left out: an f64 field store through a `*T` faults there before this fix
-# too (`var q: *H = &buf; q.f = 2.5;`: SIGSEGV with the 6.7.13 lane's base compiler) — a pre-existing IR=3 defect, filed.
-grep -v 'IR3-PRE' "$TC" > "$T/R1i.cyr"
-NI=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$T/R1i.cyr")
+# Every leg runs every row, CYRIUS_IR=3 included: its f64 row (`gp().f = 2.5;`) faulted there until the float literal's
+# movabs was recorded IR-opaque (CHANGELOG [6.7.14]).
 rows=$((rows + 1))
 for leg in $XLEGS $OLEGS; do
     f=R1; n=$N
-    [ "$leg" = "x86_64:CYRIUS_IR=3" ] && { f=R1i; n=$NI; }
     compile "$leg" $f
     if [ "$crc" -ne 0 ] || [ ! -s "$T/$f.$leg" ]; then bad "R1 $TC ($leg): did not build: $(grep '^error' "$T/$f.$leg.err" | head -1 || true)"; continue; fi
     execute "$leg" $f
