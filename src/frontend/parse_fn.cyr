@@ -4130,14 +4130,10 @@ fn _pd_eval(S, fi, row, en): i64 {
     if (_pd_param_ref(S, fi, row, eq, end) == 1) { return 0; }
     var o: i64[3];
     var sv = GTI(S);
-    var pw = _panic;
     STI(S, eq + 1);
     var v = _ce_top_expr(S, eq + 1, &o);
     STI(S, sv);
-    if (load64(&o + 8) != 0) {
-        if (pw == 0) { _panic = 0; }
-        return 0;
-    }
+    if (load64(&o + 8) != 0) { return 0; }   # the latch is `_ce_top_expr`'s (6.7.14)
     if (load64(&o + 16) != end) {
         _pd_say(S, load64(&o + 16), "a parameter default is one constant expression, ending at ',' or ')'");
         return 0;
@@ -9133,9 +9129,21 @@ fn _bs_scalar_self(S, idx, bsi, noff): i64 {
 # CHANGELOG [6.7.2]
 
 # ── small helpers ───────────────────────────────────────────────────────────────────────────────
+# 6.7.14 — a refusal at a token already reported (`_tn_once`) is counted, not printed again. The end
+# of pass 1 runs the const fn bodies its consts call (`_cst_sweep`) and pass 2 checks each definition
+# again (`_ce_check_fn`, and the parser's own refusals): the same token's error was printed twice
+# once pass 2 stopped starting under pass 1's latch. Marked only when it would print. 1 = said.
+fn _ce_said(S): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, _ce_ti) == 1) { return 0; }
+    _had_error = 1;
+    _panic = 1;
+    return 1;
+}
 fn _ce_bad(S, msg, len): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
     STI(S, _ce_ti);
     ERR_MSG(S, msg, len);
@@ -9145,6 +9153,7 @@ fn _ce_bad(S, msg, len): i64 {
 fn _ce_badn(S, msg, noff, tail): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
     STI(S, _ce_ti);
     ERR_IDENT(S, msg, noff, tail, 0 - 1);
@@ -9161,6 +9170,7 @@ fn _ce_expect(S, t): i64 {
     if (TOKTYP(S, _ce_ti) == t) { _ce_ti = _ce_ti + 1; return 1; }
     if (_ce_err == 0) {
         _ce_err = 1;
+        if (_ce_said(S) == 1) { return 0; }   # 6.7.14
         var sv = GTI(S);
         STI(S, _ce_ti);
         ERR_EXPECT(S, t);
@@ -10518,9 +10528,15 @@ fn _cst_kind_peek(S, ci): i64 {
 # the value; `out` receives [0] its kind (0 i64, 1 f64, 2 string, 3 bool), [1] 1 when the evaluator
 # refused it (already reported), [2] the token after it — the caller judges what may end it (a
 # const's `;`; a parameter default's `,` / `)`). CHANGELOG [6.7.2] [6.7.7]
+# 6.7.14 — and the cascade latch: it evaluates with `_panic` clear and puts the caller's value back.
+# The tokens are a declaration's own, walked by `_ce_ti`, never the parser's cursor, so a refusal
+# needs no resync; under the caller's latch every evaluation after the first refused one (the
+# end-of-pass-1 sweep's next const, a default after a bad const) printed nothing. CHANGELOG [6.7.14]
 fn _ce_top_expr(S, ti, out): i64 {
     var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err;
     var sv_skip = _ce_skip; var sv_fb = _ce_fb; var sv_steps = _ce_steps; var sv_as = _ce_asrt;
+    var sv_pn = _panic;
+    _panic = 0;
     _ce_steps = 0;
     _ce_asrt = 0;
     _ce_ti = ti;
@@ -10534,6 +10550,7 @@ fn _ce_top_expr(S, ti, out): i64 {
     store64(out + 16, _ce_ti);
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
     _ce_steps = sv_steps; _ce_asrt = sv_as;
+    _panic = sv_pn;
     return v;
 }
 # Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
@@ -10546,7 +10563,7 @@ fn _cst_eval(S, ci): i64 {
     var bad = load64(&o + 8);
     if (bad == 0) {
         if (TOKTYP(S, load64(&o + 16)) != 5) {
-            _bnd_errm_at(S, load64(&o + 16), "expected ';' after a const's value", 34);
+            _cst_semi_refuse(S, load64(&o + 16));
             bad = 1;
         }
     }
@@ -10564,6 +10581,15 @@ fn _cst_eval(S, ci): i64 {
         SVECP(S, vi, 0);
         if (k == 1) { S64(e + 56, FLIT_ADD(v)); }
     }
+    return 0;
+}
+# A const's value that does not end at its `;`: refused under `_ce_top_expr`'s latch rule (its own
+# tokens, no resync), so the next const's error still prints. CHANGELOG [6.7.14]
+fn _cst_semi_refuse(S, ti): i64 {
+    var pw = _panic;
+    _panic = 0;
+    _bnd_errm_at(S, ti, "expected ';' after a const's value", 34);
+    _panic = pw;
     return 0;
 }
 # GVECP's pending arm: var slot vi is a top-level const not yet evaluated.
@@ -15750,6 +15776,10 @@ fn _tl_pass1(S, objok): i64 {
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
+    # 6.7.14: pass 2 restarts at token 0, in sync — a pass-1 refusal (an enum value, a global array
+    # size) must not hold the cascade latch into it, where the first statement's resync swallowed
+    # the statement after it (its error lost, or a const it declared "undefined"). CHANGELOG [6.7.14]
+    _panic = 0;
     _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
     _cov_pass1(S);    # 6.7.10 (P5B-1): the execution-coverage mode, likewise (parse_cov.cyr)
     _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made

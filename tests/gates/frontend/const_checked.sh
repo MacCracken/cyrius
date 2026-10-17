@@ -37,6 +37,11 @@
 #      `pick(0, 1, 7)` is refused (it bound a phantom parameter named `i64`; the user's decision (a),
 #      2026-10-13); `*Pair<..>`, the generic parameter last, `Vec<Vec<i64>>` (`>>`), `Pair<i64,
 #      Vec<Vec<i64>>>` (`>>>`), a default holding `<`, the default fill and the named form
+#   S  (6.7.14) a refused const does not hold the cascade latch: the filed repro and its table — the
+#      end-of-pass-1 sweep's next const, a default after a bad const, a const after a bad enum value or
+#      global array size, a local const in pass 2 after a pass-1 refusal (it was swallowed, or the
+#      statement after it was, so its name read as a FALSE "undefined variable 'L'") — each prints its
+#      own error once; two consts not ending at `;`; the two controls that always reported both
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -63,6 +68,11 @@
 # name never bound) -> LC1, LC2, LC4, LC5, LC5n RED (the "undefined variable 'k'" line is back);
 # `_cst_pre_at` without its `: T =` arm -> LC3, LC5t RED (each read of K above and below is a second
 # error).
+# 6.7.14 (run 2026-10-16): the slot-open compiler -> S0-S9 RED (one error each where two or three are
+# due; S6 and S8 a false "undefined variable 'L'") and S14 (two identical lines); `_ce_top_expr` without
+# its latch save / restore -> S0-S5, S10 RED (`_pd_eval`'s own `pw` rule is gone); keeping the restore
+# but not clearing -> S3, S4 RED; `_tl_pass1` without its `_panic = 0` -> S8 RED; `_cst_semi_refuse`
+# latching -> S9 RED; `_ce_said` never deduping -> LC4, S12-S14 RED (each token printed twice).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -204,7 +214,33 @@ refusedn lc5t 2 "LC5t: the top-level form, read above and below" 'fn f(): i64 { 
 refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): i64 { const k: i64 = 3; var y = nope; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:45: undefined variable 'nope'"
 exits lc6 3 "LC6: the unannotated local const, unchanged" 'fn f(): i64 { const k = 3; return k; }\nsyscall(60, f());\n'
 exits lc6t 7 "LC6t: the unannotated top-level const read above and below, unchanged" 'fn f(): i64 { return K; }\nconst K = 3;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n'
+# S (6.7.14) — a refused const does not hold the cascade latch: each evaluation prints its own error,
+# and pass 2 starts unlatched (issues/2026-10-09-const-sweep-swallows-later-const-errors.md's table)
+cp "$ROOT/docs/development/issues/repros/2026-10-09-const-sweep-swallows-later-const-errors.cyr" "$T/s0.cyr"
+build s0
+n=$(grep -c '^error' "$T/s0.err")
+if [ "$rc" -eq 0 ]; then bad "S0: the filed repro BUILT"
+elif [ "$n" -ne 3 ] || ! grep -qF "3:11: unknown name 'xx'" "$T/s0.err" || ! grep -qF "4:11: unknown name 'yy'" "$T/s0.err" || ! grep -qF "5:24: undefined variable 'zz'" "$T/s0.err"; then
+    bad "S0: the filed repro: $n error lines (want xx 3:11, yy 4:11, zz 5:24): $(grep '^error' "$T/s0.err" | tr '\n' '|')"
+else ok "S0: the filed repro: xx, yy and zz, once each"; fi
+CU="unknown name"
+refusedn s1 3 "S1: three bad consts" 'const A = xx;\nconst B = yy;\nconst D = ww;\nsyscall(60, 0);\n' "1:11: $CU 'xx'" "2:11: $CU 'yy'" "3:11: $CU 'ww'"
+refusedn s2 2 "S2: two divisions by zero" 'const A = 10 / 0;\nconst B = 1 / 0;\nsyscall(60, 0);\n' "1:17: division by zero" "2:16: division by zero"
+refusedn s3 2 "S3: a bad enum value, then a bad const" 'enum E { Q = yy }\nconst A = xx;\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:11: $CU 'xx'"
+refusedn s4 2 "S4: a bad global array size, then a bad const" 'var g: i64[yy];\nconst A = xx;\nsyscall(60, 0);\n' "1:12: $CU 'yy'" "2:11: $CU 'xx'"
+refusedn s5 2 "S5: a bad const, then a bad default (no 'expects 1 argument' cascade)" 'const A = xx;\nfn g(a = yy): i64 { return a; }\nsyscall(60, g());\n' "1:11: $CU 'xx'" "2:10: $CU 'yy'"
+refusedn s6 2 "S6: a bad const, then a bad local const after a var (no false undefined 'L')" 'const A = xx;\nfn main(): i64 { var q = 1; const L = yy; return L + q; }\nsyscall(60, main());\n' "1:11: $CU 'xx'" "2:39: $CU 'yy'"
+refusedn s7 2 "S7: a bad const, then a bad local const" 'const A = xx;\nfn main(): i64 { const L = yy; return L; }\nsyscall(60, main());\n' "1:11: $CU 'xx'" "2:28: $CU 'yy'"
+refusedn s8 2 "S8: a bad enum value, then a bad local const after a var (no false undefined 'L')" 'enum E { Q = yy }\nfn main(): i64 { var q = 1; const L = ww; return L + q; }\nsyscall(60, main());\n' "1:14: $CU 'yy'" "2:39: $CU 'ww'"
+refusedn s9 2 "S9: two consts that do not end at their ';'" 'const A = 1 2;\nconst B = 3 4;\nsyscall(60, 0);\n' "1:13: expected ';' after a const's value" "2:13: expected ';' after a const's value"
+refusedn s10 2 "S10: (control) two bad defaults" 'fn g(a = yy, b = ww): i64 { return a; }\nsyscall(60, g());\n' "1:10: $CU 'yy'" "1:18: $CU 'ww'"
+refusedn s11 2 "S11: (control) a bad local const in each of two fns" 'fn f(): i64 { const L = yy; return L; }\nfn h(): i64 { const M = ww; return M; }\nsyscall(60, f() + h());\n' "1:25: $CU 'yy'" "2:25: $CU 'ww'"
+# ... and a const fn body that a const runs at the end of pass 1 and pass 2 checks at its definition
+# is reported once per token (`_ce_said`), not once per walk (S12-S14; LC4 above is the annotation's)
+refusedn s12 1 "S12: a global read in a const fn body a const runs" 'var g = 1;\nconst fn h(x) { return g; }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'g' is a variable"
+refusedn s13 1 "S13: a builtin in a const fn body a const runs" 'const fn cf(x) { return load64(x); }\nconst Z = cf(0);\nsyscall(60, Z);\n' "1:25: not a compile-time expression"
+refusedn s14 1 "S14: an ordinary fn's call in a const fn body a const runs (twice before 6.7.14)" 'fn hh(): i64 { return 1; }\nconst fn h(x) { return hh(); }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'hh' is not a \`const fn\`"
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), and a refused const holds no cascade latch (S)"
