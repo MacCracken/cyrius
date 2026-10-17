@@ -29,6 +29,12 @@
 #      name unchecked, past the EOF token, and every later EOF test read beyond the token array: SIGSEGV (139),
 #      nothing on stderr. 6.7.14, issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md — and `var x:`,
 #      whose type name shallow_global stepped over the same way (found in passing, 6.7.14)
+#   X  a statement that starts with a name and a `[` (`zz[1] = 5;` - cybs has no subscript) names an
+#      undefined name, as the read form `var a = zz[1];` does: rc 1, nothing written, the undefined-name
+#      message at its line. A known name — a global array (the filing's zd), a local, a fn, an enum member
+#      — keeps the class message, which lists `x[i]`. Before, every such statement was the class message,
+#      with no `x[i]` in its list. Any other token after the name keeps the class message (L and T: `loop`,
+#      `const`, `do` lex as names). 6.7.14, issues/2026-10-14-cybs-indexed-store-undefined-name-not-named.md
 #   V  ANTI-VACUOUS: a valid program using every neighbour of the refused shapes (`0 - a`, `>>`,
 #      `while`, an if statement, a top-level var, a forward call) compiles and runs (exit 42)
 #
@@ -41,6 +47,11 @@
 # 6.7.14:
 #   shallow_fn's and shallow_global's IDENT test dropped (the 6.7.13 cybs)              -> K RED (rc 139, all four)
 #   only shallow_g_col's type-name test dropped                                          -> K RED (`var x:`, rc 139)
+#   parse_assign_stmt's resolve-first sequence back to `jmp parse_err`                    -> X RED (zi, the top level)
+#   the sequence's enum-member lookup dropped                                            -> X RED (EA named undefined)
+#   the sequence's `[` test dropped (every other token resolves the name too)             -> L T I RED (`loop`,
+#                                                                                         `const`, `do` named undefined)
+#   err_syntax without `x[i]`                                                             -> L T I E K X RED
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_diagnostics_named: cannot cd to $ROOT"; exit 1; }
@@ -56,7 +67,7 @@ chmod +x "$D/cybs" 2>/dev/null || true
 cat bootstrap/asm.cyr | "$D/cybs" > "$D/asm2" 2>/dev/null || true
 cmp -s "$D/asm2" bootstrap/asm && echo "  ok   A: closure — cybs reproduces the seed" || bad "A: closure — cybs no longer reproduces the seed"
 
-SYN='cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while, an if-expression, unary minus, >>>, >>=), at: '
+SYN='cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while, an if-expression, unary minus, x[i], >>>, >>=), at: '
 UND='cybs: undefined variable or function (cybs has no const): '
 # says <row> <file> <what> <expected stderr line>: cybs (run in $D, so an include resolves there) must
 # exit 1, write nothing to stdout, and print exactly that one line
@@ -120,6 +131,22 @@ printf 'fn ' > "$D/kfnsp.cyr"
 says K kfnsp.cyr 'the input `fn ` (a trailing blank)' "${SYN}fn "
 printf 'var x:' > "$D/kvarcol.cyr"
 says K kvarcol.cyr 'the input `var x:`' "${SYN}var x:"
+
+# X — the filing's three programs verbatim (zi, zj, zd), then the known-name and top-level shapes
+printf 'fn main() {\n    var a = 1;\n    zz[1] = 5;\n    return a;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/zi.cyr"
+says X zi.cyr '`zz[1] = 5;` with zz undefined (the filed zi)' "${UND}zz, at:     zz[1] = 5;"
+printf 'fn main() {\n    var a = zz[1];\n    return a;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/zj.cyr"
+says X zj.cyr '`var a = zz[1];` with zz undefined (the filed zj)' "${UND}zz, at:     var a = zz[1];"
+printf 'var zz[16];\nfn main() {\n    var a = 1;\n    zz[1] = 5;\n    return a;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/zd.cyr"
+says X zd.cyr '`zz[1] = 5;` with zz a global array (the filed zd)' "${SYN}    zz[1] = 5;"
+printf 'fn main() {\n    var q = 1;\n    q[1] = 5;\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/zl.cyr"
+says X zl.cyr '`q[1] = 5;` with q a local' "${SYN}    q[1] = 5;"
+printf 'fn g() { return 1; }\nfn main() {\n    g[1] = 5;\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/zf.cyr"
+says X zf.cyr '`g[1] = 5;` with g a fn' "${SYN}    g[1] = 5;"
+printf 'enum E { EA = 1; }\nfn main() {\n    EA[1] = 5;\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$D/ze.cyr"
+says X ze.cyr '`EA[1] = 5;` with EA an enum member' "${SYN}    EA[1] = 5;"
+printf 'var a = 1;\nzz[1] = 5;\nsyscall(60, a);\n' > "$D/zt.cyr"
+says X zt.cyr '`zz[1] = 5;` at the top level, zz undefined' "${UND}zz, at: zz[1] = 5;"
 
 # V — anti-vacuous
 cat > "$D/ok.cyr" <<'EOF'
