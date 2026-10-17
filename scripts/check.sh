@@ -2586,6 +2586,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.14 — a declaration-zone global's pointer annotation is replayed whole: `var P: **i64 = 0;` before the first
+# statement was "expected '=', got identifier 'i64'" (the replay stepped one `*`), a refused `*( .. )` a second error.
+_chk_gate "$ROOT/tests/gates/frontend/zone_pointer_annotation.sh"
 # 6.7.13 (D3 (b)) — `&x.f`, the address of a struct field, is refused by name once (it failed to parse with no
 # word of why: "expected ')', got '.'"), its steps consumed so the parse stays in step; `&E.V`, `&o`, `&o + 8` stay.
 _chk_gate "$ROOT/tests/gates/frontend/address_of_field_refused.sh"

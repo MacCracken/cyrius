@@ -5606,11 +5606,16 @@ fn _gvi_ann(S, slot): i64 {
         STI(S, GTI(S) + 1);   # consume ')'
         return 0 - tsid;
     }
-    var ps = 0;
-    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); ps = 1; }
+    var ps = _gvi_stars(S);
     if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): a slice, refused by name at registration — stepped whole
         _sl_ann_skip(S);
         return 0;
+    }
+    if (ps == 1) {
+        if (PEEKT(S) == 10) {   # `*( .. )`, refused by pass 1 — stepped whole
+            STI(S, _call_close(S, GTI(S)) + 1);
+            return 0;
+        }
     }
     var sid = 0;
     if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
@@ -5626,6 +5631,16 @@ fn _gvi_ann(S, slot): i64 {
         return 0 - GVTYPE(S, slot);
     }
     return 0 - sid;
+}
+# Every leading `*` of the annotation, as pass 1's `_ptr_annot` steps them: 1 = there was one. It read
+# one, so `**i64` left the cursor on `i64` and `*( .. )` inside its parentheses ("expected '='"). CHANGELOG [6.7.14]
+fn _gvi_stars(S): i64 {
+    var ps = 0;
+    while (PEEKT(S) == 8) {
+        STI(S, GTI(S) + 1);
+        ps = 1;
+    }
+    return ps;
 }
 
 # The replay's cursor is on the initializer's first token: the refusal reads (and reports at) the
