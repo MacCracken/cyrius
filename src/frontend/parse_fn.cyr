@@ -15409,6 +15409,19 @@ fn _gtype_sid(S, fi, base): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return r;
 }
+# ⛔ 6.7.14 (D6) — A SIGNATURE'S GENERIC STRUCT CHECKS ITS TYPE ARGUMENTS AT THE DEFINITION (PARSE_FN_DEF pass 2: a
+# parameter `m: Mp<K, V>` / `m: *Mp<K, V>`, a return `: Mp<K, V>`; cursor on the struct's name). `_gtype_sid` keeps the
+# base when an argument does not resolve — not the place to report it, since pass 1 reads it too, before a struct
+# declared further down is known — so `fn gm(m: Mp<K, V>, b)` with K / V declared nowhere compiled as the base `Mp`,
+# and `m: Box<Zork>` took a `Box<i64>`, while `var m: Mp<K, V>;` was refused. Pass 2 now reads the list as a local's
+# annotation reads it, minting nothing (`_targ_chk`; the fn's own type parameters stay names): every refusal once, at
+# its token, whether or not the fn is called (the user's D6 (a), 2026-10-16). CHANGELOG [6.7.14]
+fn _gtype_sid_def(S, fi, base): i64 {
+    if (_MONOMORPH_OK == 1) { if (base > 0) { if (TOKTYP(S, GTI(S) + 1) == 19) { if (GSTP(S, base - 1) != 0) {
+                    _targ_chk(S, GTI(S) + 1);
+                } } } }
+    return _gtype_sid(S, fi, base);
+}
 # ⛔ 6.6.10 (bite 7 review) — AN INSTANCE'S `: T` RETURN, T BOUND TO A STRUCT, returns THAT struct
 # by value, exactly as a `: Pt` fn does (the rough scan and the return type both ask this). It was
 # always the base's i64 — the instance handed back rax, which for an address-passed parameter is
@@ -17558,7 +17571,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     pt_sid = FINDSTRUCT(S, tnoff);
                     # 6.6.10: `r: Box<Pt>` is the instance, sized as one (see _gtype_sid).
                     if (pt_sid > 0) {
-                        var _pgi = _gtype_sid(S, fi, pt_sid);
+                        var _pgi = _gtype_sid_def(S, fi, pt_sid);   # 6.7.14 (D6): its `<..>` checked
                         struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi, _ptrp_now(S));
                         pt_sid = _pgi;
                     }
@@ -17885,7 +17898,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # a `<..>` after it); under --syntax-only it refuses nothing and answers -8.
                 else { _rtc = _bx_ret_or_refuse(S, fi, rt_noff); }   # 6.7.3: `: bool` is an i64, bit 4096
             }
-            if (_rtc > 0) { _rtc = _gtype_sid(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`
+            if (_rtc > 0) { _rtc = _gtype_sid_def(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`; 6.7.14 (D6): checked
             SFRS(S, fi, _rtc);
             if (_rtc > 0) {
                 _cur_fn_ret_sid = _rtc;

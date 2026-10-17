@@ -87,6 +87,16 @@
 #      MUG1 `_parse_one_type_arg` without the `_targ_bad_gen` call -> RED 9: UG0-UG8 (each BUILT); MUG2
 #      `_targ_bad_gen` without its type-parameter arm -> RED 2: UG2 UG3 ("unknown type 'T'"); MUG3
 #      `_targ_bad_gen` reporting without `_tn_once` -> RED 1: UG8 (three lines, one per instance)
+#   SG (6.7.14, the user's D6 (a), 2026-10-16) A SIGNATURE'S GENERIC STRUCT READS ITS TYPE ARGUMENTS AT THE DEFINITION:
+#      `_gtype_sid` kept the base when an argument did not resolve, so `fn gm(m: Mp<K, V>, b)` (K / V declared nowhere)
+#      compiled as the base `Mp`, `m: Box<Zork>` took a `Box<i64>`, while `var m: Mp<K, V>;` was refused. PARSE_FN_DEF's
+#      pass 2 reads a parameter's and a return's list as a local's annotation does, minting nothing (`_gtype_sid_def`
+#      -> `_targ_chk`). SG0 the filed repro verbatim (once, naming 'K'); SG1-SG7 Mp<Nonexist, i64>, *Mp<K, V>, : Mp<K, V>,
+#      m: Box<Zork> called with a Box<i64>, nested and a method's, a generic's own signature with three instances (once),
+#      a fn called above its definition; a control (a generic's own K, V; a struct declared below the fns).
+#      Filed: docs/development/issues/2026-10-09-undeclared-generic-type-arguments-accepted.md
+#      Mutant (2026-10-16, a one-edit scratch copy of the tree, its 2-stage cycc, this gate run from it): MSG1
+#      `_gtype_sid_def` without its `_targ_chk` call -> RED 8: SG0-SG7 (each BUILT, as on the compiler before it)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -474,5 +484,60 @@ syscall(60, (main() - 322168) / 100000);
 EOF
 exits ugk 0 "UG control: g<Vec<i64>>(0) 8, g<Later<i32>> (declared below) 16, h<Pt> forwarding g<Box<T>> 32, Box<Box<Pt>> 32 B, unchanged"
 
+# ── 6.7.14: a signature's generic struct reads its type arguments at the definition (the user's D6 (a)) ─────
+TA="as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+cat > "$T/sg0.cyr" <<'EOF'
+struct Mp<K, V> { k: K; v: V; }
+fn gm(m: Mp<K, V>, b) { return b; }
+syscall(60, 0);
+EOF
+errs sg0 1 "SG0: the filed repro verbatim — refused once, naming 'K' (it compiled, rc 0)" "error:<source>:2:14: unknown type 'K' $TA"
+SGH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Mp<K, V> { k: K; v: V; }'
+sg() { printf '%s\n%s\nsyscall(60, 0);\n' "$SGH" "$2" > "$T/$1.cyr"; }
+sg sg1 'fn gm(m: Mp<Nonexist, i64>, b) { return b; }'
+errs sg1 1 "SG1: a parameter's Mp<Nonexist, i64>" "error:<source>:5:21: unknown type 'Nonexist' $TA"
+sg sg2 'fn gm(m: *Mp<K, V>, b) { return b; }'
+errs sg2 1 "SG2: a parameter's *Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+sg sg3 'fn gm(b): Mp<K, V> { var m: Mp<i64, i64>; return m; }'
+errs sg3 1 "SG3: a return's : Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+sg sg4 'fn gm(m: Box<Zork>): i64 { return m.n; }
+fn f(): i64 { var b: Box<i64>; b.n = 3; return gm(b); }'
+errs sg4 1 "SG4: m: Box<Zork>, called with a Box<i64> (it took it)" "error:<source>:5:18: unknown type 'Zork' $TA"
+sg sg5 'fn ga(m: Box<Box<Zork>>): i64 { return 0; }
+fn gb(m: Mp<Box<Zork>, i64>): i64 { return 0; }
+impl Pt { fn mm(self, m: Box<Zork>): i64 { return 0; } }'
+errs sg5 3 "SG5: nested Box<Box<Zork>>, Mp<Box<Zork>, i64>, a method's Box<Zork> — once each" \
+    "error:<source>:5:22: unknown type 'Zork' $TA" "error:<source>:6:21: unknown type 'Zork' $TA" "error:<source>:7:34: unknown type 'Zork' $TA"
+sg sg6 'fn gm<T>(m: *Box<T>, n: *Mp<T, Zork>): i64 { return sizeof(T); }
+fn f(): i64 { return gm<Pt>(0, 0) + gm<i32>(0, 0) + gm(0, 0); }'
+errs sg6 1 "SG6: a generic's own signature, Zork not its type parameter, three instances — once" "error:<source>:5:36: unknown type 'Zork' $TA"
+sg sg7 'fn f(): i64 { return gm(0); }
+fn gm(m: *Box<Zork>): i64 { return 0; }'
+errs sg7 1 "SG7: a fn called above its definition (pass 1 read the signature first)" "error:<source>:6:19: unknown type 'Zork' $TA"
+cat > "$T/sgk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Mp<K, V> { k: K; v: V; }
+fn gm<K, V>(m: Mp<K, V>, b): i64 { return m.v + b + sizeof(K); }
+fn gk(m: Box<Later>): i64 { return m.v.a + m.n; }
+fn gr(a): Box<Later> { var r: Box<Later>; r.v.a = a; r.n = 1; return r; }
+fn gp(m: *Box<Later>): i64 { return m.n; }
+fn main(): i64 {
+    var m: Mp<Pt, i64>;
+    m.v = 3;
+    var b: Box<Later>;
+    b.v.a = 5; b.n = 7;
+    var r = gr(9);
+    return gm(m, 2) + gk(b) + gp(&b) + r.v.a;
+}
+struct Later { a; }
+syscall(60, main());
+EOF
+exits sgk 49 "SG control: a generic's own fn gm<K, V>(m: Mp<K, V>, b) (21), Box<Later> / *Box<Later> parameters and a : Box<Later> return with Later declared below the fns (12 + 7 + 9)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14)"

@@ -6521,6 +6521,11 @@ A pointer to one is a return type too: `fn mkp<T>(x: T): *Box<T>` returns a `*Bo
 its `Pt` instance (`mkp<Pt>(p).n`, `var q: *Box<Pt> = mkp(p);`, and a `*Box<T>` carrier
 infers from the call: `gp(mkp(p))`) and a `*Box` from its base (6.7.14; through 6.7.13
 the definition was refused, *unknown type 'T' as a type argument*, twice).
+A signature's type arguments are read at the definition as a `var`'s are, whether or not the fn is
+called: `fn gm(m: Mp<K, V>, b)` with `K` / `V` neither types nor the fn's own type parameters is
+*unknown type 'K' as a type argument*, and so are `m: *Mp<K, V>`, `: Mp<K, V>` and `m: Box<Zork>`
+(6.7.14; each compiled as the base struct, and `m: Box<Zork>` took a `Box<i64>`). A generic's own
+`fn gm<K, V>(m: Mp<K, V>)` and a struct declared below the fn are type arguments as before.
 A `: T` return in an instance whose `T` is a struct returns that struct by value,
 as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
 return the struct's address); `Str` keeps its heap-handle return.
