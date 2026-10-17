@@ -5770,7 +5770,11 @@ is_ok(f());              # ✓ a single ARGUMENT receives the tag (above) — an
 
 A store is judged by the call it starts with, so `h.n = f() + 1;` and `P { f() + 1, 3 }` are refused
 too; an argument (`g(f())`) and an operand anywhere else (`f() == 0`, `return f() + 1;`) read the tag,
-by the single-argument rule above (the user's decision, 2026-10-13).
+by the single-argument rule above (the user's decision, 2026-10-13). Parentheses around the whole value
+change nothing (6.7.14, the user's decision of 2026-10-16): `var v = (f() + 1);`, `h.n = ((f() * 2));`
+and `P { (f() + 1), 3 }` are refused as their unwrapped spelling is — through 6.7.13 they kept the tag in
+silence — while `x = (3 + f());` keeps the tag as `x = 3 + f();` does, `x = (f()? + 1);` propagates, and
+`(f() + 1) * 2` is not a wrap around the whole value.
 
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too — and through `?`: a fn whose body propagates a pair with

@@ -1307,10 +1307,52 @@ fn _call_is_propagated(S, ti): i64 {
 # (a generic callee is instantiated there, inline: earlier would move its bytes). CHANGELOG [6.7.7]
 # 6.7.13: the `?` is looked for from the value's first token — a wrap's `(` scans to the `)` that
 # closes it, so `x = (f(7))?;` propagates (from `f` the scan stopped at the inner `)`). CHANGELOG [6.7.13]
+# 6.7.14 (D46): a wrap around the whole value is transparent too — the inside is judged (`_pair_vwrap`).
 fn _refuse_lossy_pair(S): i64 {
-    if (_callee_returns_pair(S) == 0) { return 0; }
-    if (_call_is_propagated(S, GTI(S)) == 1) { return 0; }
+    var vi = _pair_vwrap(S, GTI(S));
+    if (vi < 0) { vi = GTI(S); }
+    if (_callee_returns_pair_at(S, vi) == 0) { return 0; }
+    if (_call_is_propagated(S, vi) == 1) { return 0; }
     return _pair_refuse_in_sync(S);
+}
+# ⛔ 6.7.14 (D46, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE VALUE ARE TRANSPARENT TO
+# THE FIRST-CALL RULE (6.7.7: a store is judged by the call it starts with). `var v = (f(7) + 1);`,
+# `h.a = (f(7) + 1);` and `x = (f(7) * 2);` kept the tag in silence where `var v = f(7) + 1;` is refused
+# "bind both": 6.7.13's D19 A peeled a wrap around the call ALONE (`_pair_unwrap`). The value at token
+# `st`: when q parentheses wrap all of it — the outermost closing right before what ends a value (`;`,
+# `)`, `,` or `}`), no tuple literal — and the inside starts with a call, alone or in parentheses around
+# it alone (`((f(7)) + 1)`), the inside's first token, which the refusal asks about (`?` scanned from
+# there: `(f(7)? + 1)` propagates); else -1: `(3 + f(7))` starts with no call (the operand rule, the
+# tag kept as `3 + f(7)` keeps it), `(f(7) + 1) * 2` is no whole wrap. The call by its shape, as
+# `_pair_unwrap` reads it. Linear: the call's close, the run of `)` after it, one `_call_close` from
+# the innermost whole wrap (the outer ones close in the run after it). Asked at the refusal sites
+# only — never in `_callee_returns_pair_at`, which also feeds `_tpair`. CHANGELOG [6.7.14]
+fn _pair_vwrap(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0 - 1; }
+    var a = st;
+    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    var o = _pair_ret_open(S, a);
+    if (o < 0) { if (_tok_method_open(S, a) == 1) { o = a + 3; } }
+    if (o < 0) { return 0 - 1; }
+    var e = _call_close(S, o) + 1;
+    var m = a - st;
+    var r = 0;
+    while (r < m) {
+        if (TOKTYP(S, e + r) != 11) { break; }
+        r = r + 1;
+    }
+    if (r == m) { return 0 - 1; }   # parentheses around the call alone: D19's (`_pair_unwrap`)
+    return _pair_vwrap_q(S, st, m - r);
+}
+# ... the q outer parentheses at `st` wrap the whole value: the inside's first token, else -1.
+fn _pair_vwrap_q(S, st, q): i64 {
+    var x = _call_close(S, st + q - 1);
+    if (_pair_unwrap_k(S, x + 1, q - 1, st) < 0) { return 0 - 1; }
+    var t = TOKTYP(S, x + q);
+    if (t != 5) { if (t != 11) { if (t != 31) { if (t != 14) { return 0 - 1; } } } }
+    if (_tup_commas(S, st + q - 1) != 0) { return 0 - 1; }   # a tuple literal, no wrap
+    return st + q;
 }
 # The two refusals' report. It is made IN SYNC — the statement parses on to its own end — so the
 # panic latch it sets (silencing what the same statement would add about the same value: a bool
@@ -1346,10 +1388,13 @@ fn _stmt_resync(S, before): i64 {
 # on `GINFN == 1`, so a global `var v = mk();` kept the tag and lost the payload silently (`Ok(42)`
 # exited 0), in the declaration zone (EMIT_GVAR_INITS' `_gvi_expr`) and after the first statement
 # (PARSE_VAR) alike. The fn-body rule and wording, everywhere. CHANGELOG [6.7.6]
+# 6.7.14 (D46): `var v = (f(7) + 1);` is judged by its inside, as `var v = f(7) + 1;` (`_pair_vwrap`).
 fn _refuse_single_pair_bind(S): i64 {
     if (PEEKT(S) != 4) { return 0; }
-    if (_callee_returns_pair_at(S, GTI(S) + 1) == 0) { return 0; }
-    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    var vi = _pair_vwrap(S, GTI(S) + 1);
+    if (vi < 0) { vi = GTI(S) + 1; }
+    if (_callee_returns_pair_at(S, vi) == 0) { return 0; }
+    if (_call_is_propagated(S, vi) == 1) { return 0; }
     return _pair_refuse_in_sync(S);
 }
 

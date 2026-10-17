@@ -1864,7 +1864,83 @@ for leg in $QLEGS; do
         grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
     fi
 done
+# ── axis PV — 6.7.14: PARENTHESES AROUND THE WHOLE VALUE ARE TRANSPARENT TO THE FIRST-CALL RULE (D46) ──────
+# ⛔ The user's decision of 2026-10-16 (D46): a store is judged by the call it starts with (6.7.7), and a redundant
+# outer wrap does not select another rule. `var v = (f(7) + 1);`, `h.a = (f(7) + 1);`, `x = (f(7) * 2);` kept the
+# tag in silence (the filed repro exited 110 on x86_64 / aarch64 / cx / PE) where the unwrapped spelling is refused
+# "bind both": D19 A (axis PW) peeled a wrap around the call ALONE. `_pair_vwrap` peels parentheses around the
+# whole value (closing right before `;` `)` `,` `}`, no tuple literal) and asks about the inside's first token, at
+# the two refusal sites only (`_refuse_lossy_pair`, `_refuse_single_pair_bind`) — every store, both top-level
+# zones, a for step, a struct-literal element, an if-expression branch. `x = (32 + f(7));` keeps the tag (the
+# operand rule, unchanged), `(f(7)? + 1)` propagates (`?` scanned from the inside), `(f(7) + 1) * 2` is no whole
+# wrap. (issues/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) The legs are axis QF's.
+# Mutations (scratch trees, CYCC= the mutant, each row run alone on every leg, run 2026-10-17): the tree before
+# (0e9a612d) -> PV1 PV3-PV11 (each built; PV4's `((f(7)) + 1)` too, which D19 does not peel); `_refuse_lossy_pair`
+# without `_pair_vwrap` -> PV1 PV7-PV11; `_refuse_single_pair_bind` without it -> PV1 PV3-PV6; `_pair_vwrap_q`
+# without its tuple-literal test -> PV13; without its value-end test -> PV14; the q outer parentheses counted
+# as all m (the run of `)` after the call ignored) -> PV4; the tree before -> PV15 accepted (--syntax-only, x86_64).
+cat > "$T/q.cyr" <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+struct P { a; b; }
+fn t1(): i64 { var v = (f(7) + 1); return v; }
+fn t2(): i64 { var h: P; h.a = (f(7) + 1); return h.a; }
+fn t3(): i64 { var x = 0; x = (f(7) * 2); return x; }
+syscall(60, t1() * 100 + t2() * 10 + t3());
+EOF
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisPV1 ($leg): the issue's repro verbatim COMPILED — each wrapped value kept the tag."; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 3 ] || ! grep -q '^error:<source>:4:22: .*bind both' "$T/q.$leg.err" \
+        || ! grep -q '^error:<source>:5:32: .*bind both' "$T/q.$leg.err" || ! grep -q '^error:<source>:6:31: .*bind both' "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisPV1 ($leg): the issue's repro verbatim — want 'bind both' at 4:22, 5:32 and 6:31, got:"
+        grep -E '^error' "$T/q.$leg.err" | head -4 | sed 's/^/    /'; exit 1
+    fi
+done
+PVH='enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { if (x > 5) { return RErr(x); } return ROk(x); }
+struct P { a; b; }'
+printf '%s\nfn t(): i64 { var x = 0; x = (32 + f(7)); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_run "x = (32 + f(7)); keeps the tag, as x = 32 + f(7); does (the operand rule)" axisPV2 33
+printf '%s\nfn t(): i64 { var v = ((f(7) + 1)); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = ((f(7) + 1)); two wraps around the value" axisPV3 "4:21"
+printf '%s\nfn t(): i64 { var v = ((f(7)) + 1); return v; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = ((f(7)) + 1); the inside judged as (f(7)) + 1 is (D19)" axisPV4 "4:21"
+printf '%s\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = (f(7) + 1); in the declaration zone" axisPV5 "4:7"
+printf '%s\nsyscall(1, 1, "", 0);\nvar v = (f(7) + 1);\nsyscall(60, v);\n' "$PVH" > "$T/q.cyr"
+qf_refuse "var v = (f(7) + 1); after the first statement" axisPV6 "5:7"
+printf '%s\nfn t(): i64 { var x = 0; for (var i = 0; i < 1; x = (f(7) + 1)) { i = i + 1; } return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "a classic-for step x = (f(7) + 1)" axisPV7 "4:53"
+printf '%s\nfn t(): i64 { var p = P { (f(7) + 1), 3 }; return p.a; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "P { (f(7) + 1), 3 }, a struct-literal element" axisPV8 "4:27"
+printf '%s\nfn t(): i64 { var x = 0; x += (f(7) * 2); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "x += (f(7) * 2), a compound store" axisPV9 "4:31"
+printf '%s\nstruct Q { v; }\nimpl Q { fn m(self) { return ROk(self.v); } }\nfn t(): i64 { var q: Q; q.v = 4; var w: i64[2]; w[0] = (q.m() + 1); return w[0]; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "w[0] = (q.m() + 1), a method's pair into an element" axisPV10 "6:56"
+printf '%s\nfn t(): i64 { var c = 1; var x = if (c) { (f(7) + 1) } else { 0 }; return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_refuse "an if-expression branch { (f(7) + 1) }" axisPV11 "4:43"
+# `?` inside the wrap consumes the pair: t(3) is (0, 4 + 3 - 3), t(9) propagates (1, 9): 40 + 1009 = 1049 % 256.
+printf '%s\nfn t(y) { var x = 0; x = (f(y)? + 1); var v = ((f(y))? * 1); return ROk(x + v - y); }\nfn u(): i64 { var a, b = t(3); var c, d = t(9); return a * 100 + b * 10 + c * 1000 + d; }\nsyscall(60, u() %% 256);\n' "$PVH" > "$T/q.cyr"
+qf_run "x = (f(y)? + 1); and ((f(y))? * 1) propagate" axisPV12 25
+# A tuple literal is no wrap: its own refusal stands (R9), not "bind both" at its `(`.
+printf '%s\nfn t(): i64 { var x = 0; store64(&x, (f(7), 3)); return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+for leg in $QLEGS; do
+    if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context axisPV13 ($leg): store64(&x, (f(7), 3)) COMPILED"; exit 1; fi
+    if [ "$(grep -c '^error' "$T/q.$leg.err")" -ne 1 ] || ! grep -q '^error:<source>:4:38: a tuple `( .. )` is a value only' "$T/q.$leg.err"; then
+        echo "FAIL stack_enum_lossy_context axisPV13 ($leg): want the tuple literal's own refusal at 4:38, got:"
+        grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+    fi
+done
+# (f(7) + 1) * 2 is no whole wrap — the value is `(..) * 2`, not judged by the call (unchanged): (1 + 1) * 2.
+printf '%s\nfn t(): i64 { var x = (f(7) + 1) * 2; return x; }\nsyscall(60, t());\n' "$PVH" > "$T/q.cyr"
+qf_run "var x = (f(7) + 1) * 2; is no whole wrap (unchanged)" axisPV14 4
+# --syntax-only (cyrius lint's pre-pass) refuses it too, as axisPW10d's wrapped call (the tree before accepted it).
+synonly_refuse axisPV15 "(f(7) + 1);" <<'EOF'
+enum Res: stack { ROk(v); RErr(e); }
+fn f(x) { return ROk(x); }
+fn k(): i64 { var x = 0; x = (f(7) + 1); return x; }
+EOF
 if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14)'
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14) · parentheses around the whole value are transparent to the first-call rule: each wrapped store refused, `(f()? + 1)` propagating, an operand keeping the tag (6.7.14)'
 exit 0
