@@ -1,0 +1,78 @@
+# pe_read_write_failure_errno.tcyr — 6.7.14: a FAILED read or write answers a negative errno on
+# every target, Windows included, and a pipe drained to its end still reads 0.
+#
+# ⛔ THE DEFECT (issues/2026-10-15-pe-read-failure-reads-as-eof.md). EREAD_PE and EWRITE_PE
+# (src/backend/x86/emit.cyr) returned ReadFile's / WriteFile's byte count without testing the
+# BOOL, and both APIs zero that count before they fail — so on Windows a failed read read as 0,
+# END OF FILE, and a failed write as 0 bytes written. `file_read(-999, ...)` was 0 where Linux
+# answers -9, `file_read_r` said Ok(0) for a handle that is not open, and a loop reading to end
+# of file stopped early with a short, complete-looking result. Measured on real cass and under
+# wine: the filed repro exited 100 (Linux 91), and its write twin too.
+#
+# THE FIX. On a FALSE BOOL the reroute calls the shared GetLastError stub, which maps the Win32
+# code to -errno through the one table the open and seek reroutes use (`_pe_w32_errno_site`):
+# ERROR_INVALID_HANDLE (6) is -EBADF (-9). A read whose code IS the end stays 0 —
+# ERROR_BROKEN_PIPE (109: the writer closed) and ERROR_HANDLE_EOF (38) — and the pipe-drain group
+# pins it: `type x | cycc.exe`'s stdin and lib/process_win.cyr's drains end that way, and the
+# shared table alone would make 109 -EPIPE. On Windows the pipe is CreatePipe (0xF004), because
+# sys_pipe has no reroute there. CHANGELOG [6.7.14]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tagged.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("a failed read is -EBADF, not end of file (the filed repro)");
+var buf[16];
+var n = file_read(0 - 999, &buf, 16);        # not a descriptor / handle
+assert_eq(n, 0 - 9, "file_read(-999, buf, 16) is -9 (Windows answered 0, end of file)");
+assert_eq(sys_read(0 - 999, &buf, 16), 0 - 9, "sys_read(-999, buf, 16) is -9");
+var rr_tag, rr = file_read_r(0 - 999, &buf, 16);
+assert_eq(is_err_result(rr_tag), 1, "file_read_r on a bogus fd is Err (Windows said Ok(0))");
+
+test_group("a failed write is -EBADF, not 0 bytes written (the write twin)");
+assert_eq(file_write(0 - 999, "abcd", 4), 0 - 9, "file_write(-999, \"abcd\", 4) is -9 (Windows answered 0)");
+assert_eq(sys_write(0 - 999, "abcd", 4), 0 - 9, "sys_write(-999, \"abcd\", 4) is -9");
+
+#ifndef CYRIUS_TARGET_CX
+test_group("a pipe whose writer closed reads its bytes, then 0 — the end, not an error");
+var rd = 0 - 1;
+var wr = 0 - 1;
+#ifdef CYRIUS_TARGET_WIN
+var ph[16];
+store64(&ph, 0);
+store64(&ph + 8, 0);
+var pr = syscall(0xF004, &ph, &ph + 8, 0, 0);   # CreatePipe(&rd, &wr, NULL, 0)
+assert_eq((pr & 0xFFFFFFFF) != 0, 1, "CreatePipe succeeds");
+rd = load64(&ph);
+wr = load64(&ph + 8);
+#endif
+#ifndef CYRIUS_TARGET_WIN
+var fds[16];
+store64(&fds, 0 - 1);
+store64(&fds + 8, 0 - 1);
+assert_eq(sys_pipe(&fds), 0, "sys_pipe succeeds");
+rd = load32(&fds);
+wr = load32(&fds + 4);
+#endif
+assert_eq(sys_write(wr, "abc", 3), 3, "3 bytes written into the pipe");
+sys_close(wr);
+var pb[16];
+var got = 0;
+var last = 1;
+var reads = 0;
+while (last > 0 && reads < 8) {
+    last = sys_read(rd, &pb + got, 16 - got);
+    if (last > 0) { got = got + last; }
+    reads = reads + 1;
+}
+assert_eq(got, 3, "the drain reads the 3 bytes");
+assert_eq(load8(&pb + 2), 99, "...and they round-trip");
+assert_eq(last, 0, "the read after the writer closed is 0 (ERROR_BROKEN_PIPE on Windows, not -EPIPE)");
+sys_close(rd);
+#endif
+
+var r = assert_summary();

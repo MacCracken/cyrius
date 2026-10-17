@@ -269,6 +269,10 @@ EEXIT(S);
 # 6.7.12 (XLAT-2): the shared syscall-translation stubs the run-time-number sites call, then
 # their placeholders patched — after EEXIT, before FIXUP (which asserts it ran). CHANGELOG [6.7.12]
 EMACHO_SYSX_STUBS(S);
+# 6.7.14: the PE GetLastError -> -errno stubs a failed kernel32 file reroute calls, then their
+# placeholders patched — same placement, same FIXUP assert. A no-op with no such site.
+# CHANGELOG [6.7.14]
+EPE_ERRNO_STUBS(S);
 
 # Fixup + emit (EMITELF dispatches to Mach-O on _TARGET_MACHO==1) + write
 FIXUP(S);

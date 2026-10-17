@@ -193,13 +193,21 @@ enum OFlags {
 # kernel32!WriteFile via the PE IAT at emit time (v5.4.7 reroute).
 # For fd 1/2 the PE backend inserts a GetStdHandle(-11/-12) call
 # first so the WriteFile `hFile` arg is a real Windows handle.
+# Returns the bytes written, or a negative errno when WriteFile fails
+# (the Win32 code mapped by the reroute: -9 a bad handle, -32 a closed
+# pipe, -28 a full disk, -13 no write access; -1 for a code with no
+# POSIX peer). Until 6.7.14 a failed write answered 0. CHANGELOG [6.7.14]
 fn sys_write(fd, buf, count) {
     return syscall(SYS_WRITE, fd, buf, count);
 }
 
 # Read up to `count` bytes from `fd` into `buf`. Rerouted to
 # kernel32!ReadFile by the PE backend. GetStdHandle(-10) is
-# inserted for fd 0 (stdin). Returns bytes read or -1 on error.
+# inserted for fd 0 (stdin). Returns the bytes read — 0 at end of file,
+# which includes a pipe whose writer closed (ERROR_BROKEN_PIPE) — or a
+# negative errno when ReadFile fails (-9 a bad handle, -13 no read
+# access, ...; -1 for a code with no POSIX peer). Until 6.7.14 a failed
+# read answered 0, end of file. CHANGELOG [6.7.14]
 fn sys_read(fd, buf, count) {
     return syscall(SYS_READ, fd, buf, count);
 }
