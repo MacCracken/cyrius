@@ -7020,6 +7020,10 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # A struct-valued call used where there is no frame to hold its result. Refused by name: before
 # 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
 # argument register held). CHANGELOG [6.6.6]
+# `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
+# call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
+# "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
+var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -7028,6 +7032,7 @@ fn _refuse_toplevel_struct_call(S, noff): i64 {
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
     _had_error = 1;
+    _tsc_n = _tsc_n + 1;
     return 0;
 }
 

@@ -1304,7 +1304,8 @@ a named struct: the same widths, sign-extension and `f64` typing. A method appli
 itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3).total();`) and,
 since 6.7.0, to a nested field of it (`mk(3).v.sum()` calls `Pt_sum` with the field's address, as
 `b.v.sum()` does — see *Traits and impl blocks*). At top level there is no frame:
-`var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
+`var G = mk(3).n;` is refused by name — call it inside a fn — and so is `mk(3).n = 5;` there, once (until
+6.7.14 it was also reported as a temporary). A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
 (`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
 `expected ';', got '='` until 6.7.5): the result is a temporary. A call declared `: *Struct` returns
