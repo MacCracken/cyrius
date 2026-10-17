@@ -10,16 +10,18 @@
 # `var R = INT_MIN % -1;` and `var Q = (0 - CF_MAX - 1) / (0 - 1);` died SIGFPE (136) on x86_64 and cx, ran on
 # aarch64. The replay now steps over a baked entry whose store wrote what the slot already holds (_gvk_quiet): the
 # image value is its own and the nearest earlier replayed writer of the slot, if any, is a baked entry of that
-# value. A computed initializer or a constant of another value before it keeps the store, in order.
+# value. A computed initializer, `= 0` or a const- / enum-named constant of another value before it keeps the store,
+# in order; over an earlier nonzero literal (a static init, not replayed) the constant is the value from program start.
 #
 #   S0-S7  the store is gone: each build is BYTE-IDENTICAL to the same program with the literal written out —
 #          S0 the filed repro (`var X = C;`, exit 15), S1 `= C`, S2 `= E.A`, S3 `= A + 1`, S4 narrow `u8` / `i32`,
 #          S5 D11's repro A (folds to zero) against `= 0`, S6 repro B (enum) against its literal; S7 `= 0` emits
 #          nothing at the entry
-#   O1-O12 orderings, by value, on x86_64, aarch64 (qemu, the tree's cross compiler) and cx (the tree's cycc_cx +
+#   O1-O13 orderings, by value, on x86_64, aarch64 (qemu, the tree's cross compiler) and cx (the tree's cycc_cx +
 #          cxvm): a constant / computed redeclaration in either order, two constants, an enum pair, a literal then
 #          a const, a list then a scalar, a same-valued redeclaration, and the program-start rule — a call in an
-#          EARLIER initializer that writes the global keeps its write over `= C` / `= 0` (as it did over `= 5`)
+#          EARLIER initializer that writes the global keeps its write over `= C` / `= 0` (as it did over `= 5`),
+#          and over `= C` redeclaring a literal (O13: `var G = 3; var r = setg(); var G = C;` ends at 9)
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -42,7 +44,7 @@
 # aarch64 and cx (F15, the literal term, still folds); _cf_can's term arm gone -> 21 red: F2, F3, F10-F13, F15 on
 # the three legs (the `* / << >>` arms F1, F4-F9, F14 still fold their factor).
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
-# (every store kept, as 6.6.16 - 6.7.13) -> 23 red: S0-S7, K1, O11 / O12 on all three legs, D1-D3 on x86_64 and cx
+# (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
 # three legs (the earlier computed / other-valued / list writer's value left in the slot).
 set -u
@@ -109,6 +111,7 @@ O9|55|const C = 5;\nvar a = C;\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + a);
 O10|9|fn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 5;\nsyscall(60, G);\n
 O11|9|const C = 5;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
 O12|9|fn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 0;\nsyscall(60, G);\n
+O13|9|const C = 5;\nvar G = 3;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
 D1|5|var R = (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1);\nsyscall(60, R + 5);\n
 D2|8|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar Q = (0 - CF_MAX - 1) / (0 - 1);\nsyscall(60, (Q >> 63) + 7);\n
 D3|3|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar R = (0 - CF_MAX - 1) % (0 - 1);\nsyscall(60, R + 3);\n

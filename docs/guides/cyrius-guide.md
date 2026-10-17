@@ -6852,14 +6852,19 @@ start**, exactly as `var x = 42;` is: the startup code that stored it again is g
 `var X = C;` was `mov eax, 5; movabs rcx, X; mov [rcx], rax`), and the expression is never
 evaluated at run time, so `var R = INT_MIN % -1;` (folding to 0) and `var Q = (0 - E_MAX - 1) /
 (0 - 1);` (through an enum constant) start as 0 and INT_MIN on every target — through 6.7.13 they
-ran the division at startup and died with SIGFPE (exit 136) on x86_64 and cx while aarch64 ran (the
-user's decision D11 (b), 2026-10-16). Two consequences, both what a literal already did: a call in
-an **earlier** initializer that writes the global (`var r = setg();` above `var G = C;` or
-`var G = 0;`, `setg` storing 9) keeps its write — `G` is 9, where the startup store reset it to `C`
-/ 0; and a *redeclared* name's initializers keep their order — a computed initializer, or a
-constant of another value, before a constant still runs first (`var a = f(); var a = C;` ends at
-`C`). A `bool` global keeps its startup store (its value is judged there), and so does an
-initializer naming another file's `private` const (refused there).
+ran the division at startup and trapped on x86_64 and cx (SIGFPE, exit 136; on PE the divide
+exception) while aarch64 ran (the user's decision D11 (b), 2026-10-16). One consequence, what a
+literal already did: a call in an **earlier** initializer that writes the global (`var r = setg();`
+above `var G = C;` or `var G = 0;`, `setg` storing 9) keeps its write — `G` is 9, where the startup
+store reset it to `C` / 0. A *redeclared* name keeps its order when an earlier declaration of it is
+computed, `= 0`, or a const- / enum-named constant of another value: `var a = f(); var a = C;` and
+`var a = D; var b = a; var a = C;` end at `C`, `b` reading `D`. Over an earlier nonzero integer
+literal (`= 3`, or a literal expression such as `= -3` or `= 2 + 1`) the later constant is the
+value from program start, as between two literals: `var a = 3; var b = a; var a = C;` gives
+`b == C`, and an initializer between them that writes `a` keeps its write —
+`var G = 3; var r = setg(); var G = C;` ends at 9. A `bool` global keeps its startup store (its
+value is judged there), and so does an initializer naming another file's `private` const (refused
+there).
 
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
 optionally negated — `var G: f64 = 1.5;`, `var F: f32 = 2.5;`, an untyped `var K = -1.5;` — is

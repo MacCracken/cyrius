@@ -5622,8 +5622,10 @@ fn _gvk_flt(S, sti, vi, ti): i64 {
 # (SIGFPE, 136) while aarch64 ran: a constant initializer is the global's value from program start (the guide's
 # § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (baked, bk 1) is stepped over by the replay: the
 # slot's image value is its value and the nearest earlier replayed writer of the slot, if any, is a baked entry of
-# that value — so a computed initializer or a constant of another value before it keeps the store, in order
-# (`var a = f(); var a = C;` still ends at C; `var a = C; var b = a; var a = D;` still reads C into b). Not dropped:
+# that value — so a computed initializer, `= 0` or a const- / enum-named constant of another value before it keeps
+# the store, in order (`var a = f(); var a = C;` still ends at C; `var a = C; var b = a; var a = D;` still reads C
+# into b). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer: the later constant
+# is the value from program start, as between two literals. Not dropped:
 # a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3), and an
 # initializer naming another file's private const (the replay reports it). cx stores the image value first
 # (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14]
