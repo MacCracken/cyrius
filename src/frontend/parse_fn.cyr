@@ -7377,6 +7377,26 @@ fn _fnc_pe_vec(S, fi, noff): i64 {
     return 1;
 }
 
+# ⛔ 6.7.14 — A REPLAYED BODY'S `return` IS THE CALLEE'S, NEVER THE CALLER'S STRUCT RETURN. An inline
+# candidate (a small generic, `#inline`) is not called but re-parsed inside the CALLER's fn context, so
+# its `return` met the caller's struct-return class: `return GPA;` in `fn gpg<T>(): *T`, replayed in
+# `fn r(): P2`, was refused as "a fn returning the 9-16 byte struct `P2` ... got `GPA`" (a struct the
+# generic never names), and from a 24 B fn "struct-return: identifier is not a local"; a one-call body
+# (`return gsel(sizeof(T));`) the same. The replay runs with the caller's struct class masked — sid and
+# pair 0, the state an i64 caller already replays under — and restored after it. The caller's frame
+# layout (`_cur_fn_ret_stash`) is untouched. The body's own locals keep a nested replay safe. One call
+# in PARSE_FNCALL, as `_cov_body` was (cybs's per-fn reference ceiling). CHANGELOG [6.7.14]
+fn _inl_replay_body(S, fi): i64 {
+    var sid = _cur_fn_ret_sid;
+    var pair = _cur_fn_ret_pair;
+    _cur_fn_ret_sid = 0;
+    _cur_fn_ret_pair = 0;
+    _cov_body(S, fi, 0 - 1);
+    _cur_fn_ret_sid = sid;
+    _cur_fn_ret_pair = pair;
+    return 0;
+}
+
 # PARSE_FNCALL's overload routing on the FIRST argument (cursor on it, just past `(`): the routed
 # callee, or -1 when the call is not routed (the caller then keeps its own `noff`, so a `use`
 # alias keeps its name). Out of PARSE_FNCALL's body, which sits at cybs's per-fn reference
@@ -7669,7 +7689,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var _cfrs = GFRS(S, fi);
                     if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
                     STI(S, GFBS(S, fi));
-                    _cov_body(S, fi, 0 - 1);   # 6.7.10 (P5-B): the replay bumps the callee's counter, then PARSE_PROG
+                    _inl_replay_body(S, fi);   # 6.7.10 (P5-B) the coverage hit, then PARSE_PROG; 6.7.14 the caller's struct class masked
                     _cur_fn_ret_scalar = _rs_saved;
                     SSDEP(S, _sdep_saved);
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too

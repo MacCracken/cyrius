@@ -42,6 +42,8 @@
 #   `_bx_pcmpe_ret` a plain PCMPE again                 -> RED 20: as the tree before it
 #   `_ret_small_cls` without its GIDEP test              -> RED 1: A10 (the replayed `gu<i64>()` body's `return GU;`
 #                                                          refused as the S8 fn's: a false refusal)
+#                                                          (6.7.14, re-measured 2026-10-16: GREEN — the replay runs
+#                                                          with no struct class, `_inl_replay_body`; RR1-RR13 pin it)
 #   `_ret_small_val` without its dyn test               -> no row here: tests/gates/frontend/dyn_checked.sh V4y RED
 #                                                          (`return pass(o);` of a dyn from a `: S1` fn: 2 error lines,
 #                                                          the dyn's own refusal and this one)
@@ -60,6 +62,14 @@
 #                                                          first, D3's second: 2 errors), R23c x4 ("return must be a
 #                                                          bare local identifier ..." alone)
 #   real tree                                           -> GREEN (27 refusal rows — floor 27 — and 13 acceptance rows)
+# 6.7.14 (measured 2026-10-16; RR1-RR13 and the RR builds; a one-edit scratch copy of the tree, its 2-stage mutant):
+#   `_inl_replay_body` without its mask (the caller's  -> RED 21: RR1-RR6 RR11-RR13 (refused by the CALLER's class,
+#   struct class leaks into the replay, as before)        no binary) and the 12 RR builds on aarch64 / cx / PE;
+#                                                          RR7-RR10 green (an 8 B or i64 caller, the uncalled generic);
+#                                                          small_struct_handle_line.sh R12 RED on every leg (the
+#                                                          values file does not build)
+#   real tree                                           -> GREEN (27 refusal rows, 26 acceptance rows — floor 26 —
+#                                                          and 12 builds)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -293,8 +303,121 @@ accept "A12 return (&u); (u: S3) is the struct" "$T"'fn f(): S3 { var u: S3; u.c
 accept "A13 return &p; (p: S8, a by-value parameter)" "$T"'fn f2(p: S8): S8 { return &p; }
 fn f(): S8 { var u: S8; u.v = 23; return f2(u); }'"$E" 23 "$T"'fn f(): S8 { var u: S8; u.v = 23; return u; }'"$E"
 
+echo "=== a replayed body's return inside a struct-returning fn (6.7.14): the callee's, never the caller's class ==="
+# A small generic (or `#inline`) fn is REPLAYED at its call, re-parsed inside the caller; its `return` met the
+# CALLER's struct-return class — `return GPA;` in `fn gpg<T>(): *T`, replayed in a `: P2` fn, was refused as
+# "a fn returning the 9-16 byte struct `P2` ... got `GPA`", and in a `: P3` fn "struct-return: identifier is
+# not a local"; a one-call body (`return gsel(sizeof(T));`) the same. The 8 B class was already exempt
+# (`_ret_small_cls`'s GIDEP test, A10). issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
+GR='struct P2 { x; y; }
+struct P3 { x; y; z; }
+struct B8 { v; }
+var GS16 = B8 { 5 };
+var GPA = 0;
+fn gpg<T>(): *T { return GPA; }
+'
+GRE2='
+fn main(): i64 { GPA = &GS16; var c: P2 = r(); return c.x; }
+syscall(60, main());
+'
+GRE3='
+fn main(): i64 { GPA = &GS16; var c: P3 = r(); return c.x; }
+syscall(60, main());
+'
+GRE1='
+fn main(): i64 { GPA = &GS16; var c: B8 = r(); return c.v; }
+syscall(60, main());
+'
+GRC2="$GR"'fn r(): P2 { var q: *B8 = &GS16; var t: P2; t.x = q.v; return t; }'"$GRE2"
+GRC3="$GR"'fn r(): P3 { var q: *B8 = &GS16; var t: P3; t.x = q.v; return t; }'"$GRE3"
+GRC1="$GR"'fn r(): B8 { var q: *B8 = &GS16; var t: B8; t.v = q.v; return t; }'"$GRE1"
+# The filed repro, verbatim.
+GRR='struct P2 { x; y; }
+struct P3 { x; y; z; }
+struct B8 { v; }
+var GS16 = B8 { 5 };
+var GPA = 0;
+fn gpg<T>(): *T { return GPA; }
+fn r(): P2 { var q: *B8 = gpg<B8>(); var t: P2; t.x = q.v; return t; }
+fn main(): i64 { GPA = &GS16; var c: P2 = r(); return c.x; }
+syscall(60, main());
+'
+accept "RR1 the filed repro: gpg<B8>() in a : P2 fn (16 B)" "$GRR
+" 5 "$GRC2"
+accept "RR2 gpg<P2>() (T the enclosing struct) in a : P2 fn" "$GR"'fn r(): P2 { var q: *B8 = gpg<P2>(); var t: P2; t.x = q.v; return t; }'"$GRE2" 5 "$GRC2"
+accept "RR3 gpg<i32>() (T a scalar) in a : P2 fn" "$GR"'fn r(): P2 { var q: *B8 = gpg<i32>(); var t: P2; t.x = q.v; return t; }'"$GRE2" 5 "$GRC2"
+accept "RR4 gpg<B8>() in a : P3 fn (24 B, retptr)" "$GR"'fn r(): P3 { var q: *B8 = gpg<B8>(); var t: P3; t.x = q.v; return t; }'"$GRE3" 5 "$GRC3"
+accept "RR5 gpg<P2>() in a : P3 fn" "$GR"'fn r(): P3 { var q: *B8 = gpg<P2>(); var t: P3; t.x = q.v; return t; }'"$GRE3" 5 "$GRC3"
+accept "RR6 gpg<i32>() in a : P3 fn" "$GR"'fn r(): P3 { var q: *B8 = gpg<i32>(); var t: P3; t.x = q.v; return t; }'"$GRE3" 5 "$GRC3"
+accept "RR7 control: gpg<B8>() in a : B8 fn (8 B)" "$GR"'fn r(): B8 { var q: *B8 = gpg<B8>(); var t: B8; t.v = q.v; return t; }'"$GRE1" 5 "$GRC1"
+accept "RR8 control: gpg<i32>() in a : B8 fn" "$GR"'fn r(): B8 { var q: *B8 = gpg<i32>(); var t: B8; t.v = q.v; return t; }'"$GRE1" 5 "$GRC1"
+accept "RR9 control: gpg<P2>() in an i64 fn" "$GR"'fn r(): i64 { var q: *B8 = gpg<P2>(); return q.v; }
+fn main(): i64 { GPA = &GS16; return r(); }
+syscall(60, main());
+' 5 "$GR"'fn main(): i64 { GPA = &GS16; return GS16.v; }
+syscall(60, main());
+'
+accept "RR10 control: the generic left uncalled beside a : P2 fn" "$GR"'fn r(): P2 { var t: P2; t.x = 5; return t; }'"$GRE2" 5 "$GRC2"
+GS='struct P2 { x; y; }
+struct P3 { x; y; z; }
+struct B8 { v; }
+fn gsel(n): i64 { return n; }
+fn gz<T>(): i64 { return gsel(sizeof(T)); }
+'
+accept "RR11 a one-call body: return gsel(sizeof(T)); in a : P2 fn" "$GS"'fn r(): P2 { var t: P2; t.x = gz<B8>(); return t; }
+fn main(): i64 { var c: P2 = r(); return c.x; }
+syscall(60, main());
+' 8 "$GS"'fn r(): P2 { var t: P2; t.x = 8; return t; }
+fn main(): i64 { var c: P2 = r(); return c.x; }
+syscall(60, main());
+'
+accept "RR12 ... in a : P3 fn" "$GS"'fn r(): P3 { var t: P3; t.x = gz<P3>(); return t; }
+fn main(): i64 { var c: P3 = r(); return c.x; }
+syscall(60, main());
+' 24 "$GS"'fn r(): P3 { var t: P3; t.x = 24; return t; }
+fn main(): i64 { var c: P3 = r(); return c.x; }
+syscall(60, main());
+'
+# The replay is shared: a non-generic `#inline` fn's `return` was judged by the caller's class too.
+accept "RR13 an #inline fn's return GPA; in a : P2 fn" 'struct P2 { x; y; }
+struct B8 { v; }
+var GS16 = B8 { 5 };
+var GPA = 0;
+#inline
+fn gp(): *B8 { return GPA; }
+fn r(): P2 { var q: *B8 = gp(); var t: P2; t.x = q.v; return t; }
+fn main(): i64 { GPA = &GS16; var c: P2 = r(); return c.x; }
+syscall(60, main());
+' 5 "$GRC2"
+# The filed repro and RR4 / RR11 / RR12 compile on the aarch64, cx and PE compilers too (the runtime legs:
+# tests/tcyr/crossos/generic_ptr_struct_source.tcyr, small_struct_handle_line.sh R12).
+builds4() {  # $1 label  $2 source — compiles, a binary written, on the aarch64, cx and PE compilers
+    printf '%s' "$2" > "$D/b4.cyr"
+    for l4 in aarch64 cx pe; do
+        rc=0
+        case $l4 in
+            aarch64) "$D/cc_a64" < "$D/b4.cyr" > "$D/b4.bin" 2>"$D/b4.err" || rc=$? ;;
+            cx)      "$D/cc_cx" < "$D/b4.cyr" > "$D/b4.bin" 2>"$D/b4.err" || rc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/b4.cyr" > "$D/b4.bin" 2>"$D/b4.err" || rc=$? ;;
+        esac
+        if [ "$rc" -eq 0 ] && [ -s "$D/b4.bin" ]; then printf '  ok(builds): %-46s\n' "$1 ($l4)"; pass=$((pass+1))
+        else printf '  FAIL: %-50s rc=%s: %s\n' "$1 ($l4)" "$rc" "$(grep '^error' "$D/b4.err" | head -1)"; fail=$((fail+1)); fi
+    done
+}
+builds4 "RR1 the filed repro" "$GRR
+"
+builds4 "RR4 gpg<B8>() in a : P3 fn" "$GR"'fn r(): P3 { var q: *B8 = gpg<B8>(); var t: P3; t.x = q.v; return t; }'"$GRE3"
+builds4 "RR11 gsel body in a : P2 fn" "$GS"'fn r(): P2 { var t: P2; t.x = gz<B8>(); return t; }
+fn main(): i64 { var c: P2 = r(); return c.x; }
+syscall(60, main());
+'
+builds4 "RR12 gsel body in a : P3 fn" "$GS"'fn r(): P3 { var t: P3; t.x = gz<P3>(); return t; }
+fn main(): i64 { var c: P3 = r(); return c.x; }
+syscall(60, main());
+'
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 [ "$nrefuse" -ge 27 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 27) — rows were lost"; exit 1; }
-[ "$naccept" -ge 13 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 13) — rows were lost"; exit 1; }
+[ "$naccept" -ge 26 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 26) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

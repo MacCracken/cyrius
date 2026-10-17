@@ -6555,7 +6555,10 @@ and `sizeof(Box<i64>)` and `(Box<i64>, i64)` were `expected ')', got '<'`.
 **Status & limits.** Generic functions and structs are supported over
 i64, `f64` (inferred from a whole f64 argument since 6.7.9), narrow scalars
 (`i32`/`i16`/`i8`), and struct type arguments, inferred or explicit, with any body (a small straight-line body is inlined at its call sites;
-anything else is an ordinary call). At most two type parameters are recorded. A
+anything else is an ordinary call). An inlined body's `return` is its own: inside a fn that returns a
+struct by value it is never judged by that fn's struct (6.7.14; through 6.7.13 `fn gpg<T>(): *T { return
+GPA; }` called in a fn returning a 9-16 or 24 byte struct was refused, naming the enclosing fn's struct;
+an `#inline` fn the same). At most two type parameters are recorded. A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;

@@ -78,7 +78,8 @@
 # refused in other words ("... got `GU16`", "identifier is not a local", "return must be a bare local ..."). PK8 /
 # PK16 / PK24 are the same shapes of the fn's own struct: its struct, a copy (the full matrix, every leg:
 # tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr, small_struct_handle_line.sh R13). RP16 pins that a generic's
-# inline-REPLAYED `return GPT;` is never copied (it is the callee's return; see the row).
+# inline-REPLAYED `return GPT;` is never copied (it is the callee's return; see the row) — and, since 6.7.14, never
+# judged by the caller's class either.
 # Mutations (each a one-change copy of the fixed src built by the fixed compiler; measured 2026-10-14):
 #   the tree before it (the 8 B refusal commit)        -> RED 19: PU3a-c PU8a-c (compiled: the pointer's word),
 #                                                         PU16* PU24* (the old messages), PK8 PK16 PK24
@@ -87,7 +88,11 @@
 #   `_tc_small_sret_divert` without its `: *X` line    -> RED 2: PU3b PU8b (`return gu8();` kept its `jmp`)
 #   `_ret_ptr_src` without its dereference arm         -> RED 3: PU16d PU24d PK24
 #   `_ret_ptr_src` without its GIDEP test               -> RED 1: RP16 (compiled; the binary SIGSEGVs, rc 139)
-#   real tree                                          -> GREEN (64 refusals, 17 acceptances)
+#     (6.7.14, re-measured 2026-10-16: GREEN — the replay now runs with no struct class (`_inl_replay_body`), so
+#     the copy arm is never reached from a replayed `return`; the GIDEP test is a second guard)
+#   (6.7.14) `_inl_replay_body` without its mask        -> RED 1: RP16 (refused by the caller's 9-16 B class, as
+#                                                         through 6.7.13)
+#   real tree                                          -> GREEN (64 refusals, 17 acceptances; 6.7.14: 63 / 18, RP16 accepted)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -346,18 +351,22 @@ refuse "PU24e 24 B: var pu: *U24 = GU24; return (pu);" "$MU \`pu\` (a \`\\*U24\`
 
 
 # A generic's straight-line body is REPLAYED inline at its call, and the replayed `return` is the CALLEE's: the
-# 6.7.11 `*S` copy never runs there (`_ret_ptr_src`'s GIDEP test). The replay still judges it by the caller's
-# 9-16 B class and refuses it, as through 6.7.10 (staged from this lane, 2026-10-14-generic-instance-return-
-# takes-enclosing-fns-struct-return-class.md: when that is fixed this row compiles, exit 55); copied, it was a
-# struct where the call's pointer belongs — SIGSEGV (rc 139).
-refuse "RP16 a generic's inline-replayed return GPT; in a : S16 fn (not copied)" "is returned in two registers, so .return. takes a local of that struct or a call returning it — got .GPT." 'struct S16 { v; w; }
+# 6.7.11 `*S` copy never runs there (copied, it was a struct where the call's pointer belongs — SIGSEGV, rc 139),
+# and since 6.7.14 the caller's 9-16 B class does not judge it either (through 6.7.13 it was refused, "... two
+# registers ... got `GPT`"): the row compiles, and `return p;` copies the struct p points at — 55.
+# issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
+accept "RP16 a generic's replayed return GPT; in a : S16 fn" 'struct S16 { v; w; }
 var G16 = S16 { 4, 5 };
 var GPT: *S16 = 0;
 fn gq<T>(): *S16 { return GPT; }
 fn f(): S16 { GPT = &G16; var p: *S16 = gq<i64>(); p.v = p.v + 1; return p; }
 fn main(): i64 { var r: S16 = f(); return r.v * 10 + r.w; }
 syscall(60, main());
-' one
+' 55 'struct S16 { v; w; }
+fn f(): S16 { var r: S16; r.v = 5; r.w = 5; return r; }
+fn main(): i64 { var r: S16 = f(); return r.v * 10 + r.w; }
+syscall(60, main());
+'
 
 # ... and the struct the `*S` points at, from a global / call / field / dereference (6.7.11; the VALUES at every
 # size, every leg, are tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr).
