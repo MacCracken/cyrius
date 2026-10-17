@@ -19,7 +19,8 @@
 #      (no "compaction declined"), and the eliminated binary still computes the right answer —
 #      the sources recorded PAST the old cap were repaired too, or the calls would land wrong.
 #   2  the same program under CYRIUS_IR=3: wp-compact reclaims the IR passes' NOP bytes (it
-#      declined in silence before), and the binary still computes the right answer.
+#      declined in silence before), and the binary still computes the right answer. 6.7.14: the
+#      note counts the runs (it read the count after wp_compact cleared it: always "(0 runs").
 #   3  CYRIUS_IR=3 on 4,097 switch jump tables (the WPSW cap is 4,096): stderr names the cap
 #      ("wp-compact declined: more than 4096 switch tables") and the binary is still correct.
 #   4  the source-heavy program under CYRIUS_IR=3 CYRIUS_DCE=1: the IR seam compacts, then
@@ -106,6 +107,10 @@ if CYRIUS_IR=3 "$CC" < "$D/many_sources.cyr" > "$D/a2" 2> "$D/a2.err"; then
         bad "axis 2: CYRIUS_IR=3 declined: $(grep 'declined' "$D/a2.err")"
     elif grep -q '^wp-compact: [0-9]* bytes reclaimed' "$D/a2.err"; then
         ok "axis 2: CYRIUS_IR=3 compacted past 49,152 sources ($(grep -o '^wp-compact: [0-9]* bytes reclaimed' "$D/a2.err"))"
+        # 6.7.14: the note printed the run count after wp_compact had cleared it — always "(0 runs".
+        grep -q '^wp-compact: [0-9]* bytes reclaimed ([1-9][0-9]* runs, ' "$D/a2.err" \
+            && ok "axis 2: the note counts the runs it reclaimed" \
+            || bad "axis 2: the note does not count the runs it reclaimed: $(grep '^wp-compact' "$D/a2.err")"
     else
         bad "axis 2: CYRIUS_IR=3 reclaimed nothing and said nothing: $(grep -v '^warning' "$D/a2.err" | head -3)"
     fi
