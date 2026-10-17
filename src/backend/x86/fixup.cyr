@@ -895,9 +895,10 @@ fn FIXUP(S): i64 {
         _wp_data_follows = 0;
         _dce_drift_check(S, _wpd2);
         if (_wpd2 > 0) {
+            # Zeroed, not just realigned: the move leaves the pre-compaction bytes in the 8-byte
+            # pad past the moved code (`_wp_pad_to`, as the data-follows layouts do). CHANGELOG [6.7.14]
             var _cp2 = GCP(S);
-            _cp2 = (_cp2 + 7) & (0 - 8);
-            SCP(S, _cp2);
+            _wp_pad_to(S, _cp2, (_cp2 + 7) & (0 - 8));
             # ⭐ SELF-AUDIT. Compaction that repairs one table wrongly produces a binary that
             # looks fine and faults later, which is how three attempts at this were spent. The
             # length decoder added at v6.5.68 can say whether every surviving function still

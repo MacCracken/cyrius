@@ -116,5 +116,43 @@ chmod +x "$T/a3d"; got=0; "$T/a3d" >/dev/null 2>&1 || got=$?
 "$CC"       < "$R/tests/tcyr/lang/regression.tcyr" > "$T/r_ref" 2>/dev/null || { echo "FAIL dce_eliminates axis4: probe did not compile with build/cycc"; exit 1; }
 cmp -s "$T/r_new" "$T/r_ref" || { echo "FAIL dce_eliminates axis4: a DEFAULT-path build changed. Elimination must be inert without CYRIUS_DCE=1."; exit 1; }
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert"
+# ── axis 5 — 6.7.14: nothing stale in .text's 8-byte pad after the compacted code ─────────
+# wp_compact moves the code down and ends it at the moved length; FIXUP rounded that up to 8
+# without clearing it, so the pad kept pre-compaction bytes (`00 00 c1 58 48 29` after the exit
+# syscall of the filed sy.cyr — a stray instruction past the program's end). The code's last
+# nonzero byte must sit exactly ELIM bytes below the plain build's, and .text must end at the
+# next 8-byte boundary (W^X; CYRIUS_WX=0 pads to 16 for its data and zeroed it since 6.7.11).
+# issues/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md
+_text_ends() {   # $1 = ELF -> "<offset past the last nonzero .text byte> <.text size>"
+  set -- "$1" $(readelf -SW "$1" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == ".text") { print $(i + 3), $(i + 4); exit } }')
+  [ -n "${3:-}" ] || return 0
+  od -An -tx1 -v -j $((0x$2)) -N $((0x$3)) "$1" | tr -s ' ' '\n' | grep -v '^$' \
+    | awk '{ n++; if ($1 != "00") l = n } END { print l + 0, n + 0 }'
+}
+cat > "$T/sy.cyr" <<'EOF'
+fn dead_a(x): i64 { var q = x * 3; return q + 1; }
+fn live_fn(x): i64 { return x + 100; }
+fn main(): i64 { return live_fn(1) - 101; }
+var rc = main();
+syscall(60, rc);
+EOF
+"$T/stage1" < "$T/sy.cyr" > "$T/sy0" 2>/dev/null || { echo "FAIL dce_eliminates axis5: sy.cyr did not compile"; exit 1; }
+set -- $(_text_ends "$T/sy0"); L0=${1:-}
+[ -n "$L0" ] || { echo "FAIL dce_eliminates axis5: no .text section in the plain sy.cyr build"; exit 1; }
+for WX in 1 0; do
+  CYRIUS_DCE=1 CYRIUS_WX=$WX "$T/stage1" < "$T/sy.cyr" > "$T/sy$WX" 2>"$T/sy$WX.err" || { echo "FAIL dce_eliminates axis5: sy.cyr did not compile under CYRIUS_DCE=1 CYRIUS_WX=$WX"; exit 1; }
+  E5=$(grep -a 'bytes of dead code eliminated' "$T/sy$WX.err" | grep -o '[0-9][0-9]*' | head -1)
+  [ "${E5:-0}" -gt 0 ] || { echo "FAIL dce_eliminates axis5 (WX=$WX): sy.cyr no longer compacts: $(cat "$T/sy$WX.err")"; exit 1; }
+  set -- $(_text_ends "$T/sy$WX"); L1=${1:-0}; N1=${2:-0}
+  [ "$L1" = $((L0 - E5)) ] || {
+    echo "FAIL dce_eliminates axis5 (WX=$WX): sy.cyr's compacted code ends at .text+$L1, want $((L0 - E5)) (the plain $L0 - $E5 eliminated):"
+    echo "  the bytes after the last instruction are stale pre-compaction code, not zero"; exit 1; }
+  if [ "$WX" = 1 ]; then
+    [ "$N1" = $(( (L1 + 7) / 8 * 8 )) ] || { echo "FAIL dce_eliminates axis5: .text is $N1 B, want $L1 rounded up to 8"; exit 1; }
+  fi
+done
+chmod +x "$T/sy1"; got=0; "$T/sy1" || got=$?
+[ "$got" = 0 ] || { echo "FAIL dce_eliminates axis5: the compacted sy.cyr exits $got, want 0"; exit 1; }
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero"
 exit 0
