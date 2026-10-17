@@ -1725,7 +1725,10 @@ user's decision D16 (a), 2026-10-15): `fncall1(&mk, 5).b`, `callptr(&mk, 1).dbl(
 `fncall1(&gp, 5).b` through a `*P3` callee, and the statement `fncall1(&mk, 5).total();`. At top level a struct
 result's field is refused by name, as `mk(5).b`'s is, and a callee held in a variable followed by `.name` is refused
 by name (*its callee is a value, not `&f`, so the result is a word*). Through 6.7.12 the `.` was `expected ';',
-got '.'`.
+got '.'`. A statement storing into a field of the result — `fncall1(&gp, 5).b = 40;`, `+= 40` — stores through a
+`*T` callee's result and is refused by name for a by-value one (*cannot assign to a field of a call result: the
+result is a temporary*), whichever spelling: through 6.7.13 the `callptr(&gp, 5).b = 40;` statement was `expected
+';', got '='` (6.7.14).
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the

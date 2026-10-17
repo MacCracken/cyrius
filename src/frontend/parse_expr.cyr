@@ -1126,7 +1126,8 @@ fn _icall_fld_err(S, beg): i64 {
 # The statement form `fncall1(&mk3, 5).tot();` (`_call_field` from `_stmt_call_field`, ti the lowered fncallN
 # name): the call as PARSE_STMT lowers it, its chain run by `_icall_chain`. 1.
 fn _icall_stmt_chain(S, ti): i64 {
-    _fncall_expect = ((L64(S + 0xEC00000 + TOKVAL(S, ti)) >> 48) & 0xFF) - 48;
+    _fncall_expect = 0 - 1;   # 6.7.14: `callptr` (token 137, `_stmt_callptr_field`) is variadic: no arity
+    if (TOKTYP(S, ti) == 2) { _fncall_expect = ((L64(S + 0xEC00000 + TOKVAL(S, ti)) >> 48) & 0xFF) - 48; }
     STI(S, ti + 2);
     PINDIRECT_CALL(S);
     _cfo = 0;
@@ -2992,6 +2993,7 @@ fn _mret_fld_err(S, fi, noff): i64 {
 # named receiver. At top level there is no frame: refused by name. CHANGELOG [6.6.12]
 fn _call_field(S): i64 {
     var ti = GTI(S) - 1;
+    if (TOKTYP(S, ti) == 137) { return _icall_stmt_chain(S, ti); }   # 6.7.14: `callptr(&f, ..).b = v;` (`_stmt_callptr_field`)
     if (_call_dotted(S, ti) == 0) { return 0; }
     if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
@@ -3050,6 +3052,22 @@ fn _stmt_call_field(S): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# ⛔ 6.7.14 — `callptr(&gp, 5).b = 40;` WAS "expected ';', got '='": a `callptr` statement went to PCMPE, which reads
+# `.b` as a value, while `fncall1(&gp, 5).b = 40;` (an IDENT) reaches the call statement's field arms — D8 (a)'s store
+# through a `: *T` result, the refusal of a by-value temporary. The same known callee spelled `callptr` (6.7.13's
+# D16 (a)) takes that route when the call's `)` is followed by `.name`: 1 = the statement is consumed, 0 = not that
+# shape (cursor untouched). Cursor on `callptr`; one call in PARSE_STMT (cybs's per-fn ceiling). CHANGELOG [6.7.14]
+fn _stmt_callptr_field(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var c = _call_close(S, ti + 1);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    STI(S, ti + 1);
+    if (_stmt_call_field(S) == 1) { return 1; }
+    STI(S, ti);
+    return 0;
 }
 # `= e` / `OP= e` on a field of a call's result (`mk(3).n`, `b.mk(4).x`): refused by name, the rest
 # of the statement stepped over — the parse is then in sync, so the panic latch is left as it was

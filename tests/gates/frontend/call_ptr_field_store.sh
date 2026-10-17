@@ -33,6 +33,27 @@
 # (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and a for
 # step's call chain is refused before any `*T` arm runs.)
 #
+# 6.7.14 (the receives lane, unit R2; issues/2026-10-16-callptr-statement-field-store-does-not-parse.md) — THE SAME STORE
+# THROUGH A KNOWN `&f` CALLEE SPELLED `callptr`. A statement starting with an IDENT `fncallN` reaches the call statement's
+# field arms (`_stmt_call_field` -> `_call_field` -> `_icall_stmt_chain`), so `fncall1(&gp, 5).b = 40;` stored through
+# (6.7.13's D16 (a) with D8 (a)); `callptr` is token 137, and PARSE_STMT's 136-137 band sent its statement to PCMPE,
+# which read `.b` as a value and left the `=` over: "expected ';', got '='" (`+= 40` "unexpected '='"; a by-value callee
+# the same, where the fncall1 form is refused by name). PARSE_STMT now makes one call for token 137,
+# `_stmt_callptr_field` (parse_expr.cyr): a call followed by `.name` takes `_stmt_call_field`, whose `_call_field`
+# routes 137 to `_icall_stmt_chain` (no fncallN arity read: `callptr` is variadic). CP1 the filed repro verbatim (40);
+# CP2 `+= 40`; CP3 / CP3c a by-value result refused by name once; CP4 `callptr(&mk3, 5).tot();` (control: worked
+# before); CP5 the callee wrapped; CP6 two arguments; CP7 in a closure; CP8 at top level; CP9 a callee in a variable
+# refused by name (D31); CP10 a read statement (control) — every row on x86_64 / aarch64 / cx / PE.
+# tests/tcyr/crossos/fncall_struct_result.tcyr FC15 / FC16 carry the 40 / 40 rows to the real hosts. (2026-10-17, the
+# same procedure)
+#   c0 PARSE_STMT without its `_stmt_callptr_field` call (= the tree before) -> RED 32: CP1 CP2 CP5-CP8 x4 legs (did not
+#                                                     build: expected ';' / unexpected '='), CP3 CP3c x4 (refused, but as
+#                                                     expected ';' / unexpected '='); CP4 CP9 CP10 and the rows above green
+#   c1 `_call_field` without its token-137 arm     -> RED 32, as c0 (`_call_dotted` wants an IDENT: not that shape, the
+#                                                     cursor restored, the statement back on PCMPE)
+#   c2 `_icall_stmt_chain` reading the fncallN digit for 137 -> RED 44: CP1-CP10 x4 (the arity check: "fncallN
+#                                                     argument count does not match the N in its name")
+#
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -212,8 +233,54 @@ runs K2 6 "the store in a generic body, two instances"
 row K3 'fn go(): i64 { gp().n = fncall0(|| { gp().m = 2; return 3; }); return load64(&buf) * 10 + load64(&buf + 8); }'
 runs K3 32 "a closure in the value storing through its own call"
 
-FLOOR_ROWS=11
+# --- CP (6.7.14): `callptr(&f, ..).field = v;` in statement position, as the fncallN spelling ---
+REPCP=docs/development/issues/repros/2026-10-16-callptr-statement-field-store-does-not-parse.cyr
+[ -f "$REPCP" ] || { echo "FAIL: $G: $REPCP is missing"; exit 1; }
+cp "$REPCP" "$T/CP1.cyr"
+runs CP1 40 "the filed repro verbatim: \`callptr(&gp, 5).b = 40;\` (expected ';', got '=' before)"
+CPH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+struct P3 { a; b; c; }
+var G: P3 = P3 { 0, 0, 0 };
+fn gp(a): *P3 { G.a = a; return &G; }
+fn gp2(a, b): *P3 { G.a = a + b; return &G; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+impl P3 { fn tot(self): i64 { G.c = self.a + self.b + self.c; return G.c; } }'
+cprow() { printf '%s\n%s\n' "$CPH" "$2" > "$T/$1.cyr"; }
+cprow CP2 'fn main(): i64 { callptr(&gp, 5).b += 40; return G.b; }
+syscall(60, main());'
+runs CP2 40 "\`callptr(&gp, 5).b += 40;\` (unexpected '=' before)"
+cprow CP3 'fn main(): i64 { callptr(&mk3, 5).b = 1; return 0; }
+syscall(60, main());'
+refused CP3 "$MT" "\`callptr(&mk3, 5).b = 1;\`, a by-value result, refused by name as the fncall1 form is (expected ';' before)"
+cprow CP3c 'fn main(): i64 { callptr(&mk3, 5).b += 1; return 0; }
+syscall(60, main());'
+refused CP3c "$MT" "\`callptr(&mk3, 5).b += 1;\` (unexpected '=' before)"
+cprow CP4 'fn main(): i64 { callptr(&mk3, 5).tot(); return G.c; }
+syscall(60, main());'
+runs CP4 18 "control: \`callptr(&mk3, 5).tot();\`, a method statement"
+cprow CP5 'fn main(): i64 { callptr((&gp), 5).b = 40; return G.b + G.a; }
+syscall(60, main());'
+runs CP5 45 "\`callptr((&gp), 5).b = 40;\`, the callee wrapped"
+cprow CP6 'fn main(): i64 { callptr(&gp2, 2, 3).c = 9; return G.c * 10 + G.a; }
+syscall(60, main());'
+runs CP6 95 "\`callptr(&gp2, 2, 3).c = 9;\`, two arguments"
+cprow CP7 'fn main(): i64 { var f = |k| { callptr(&gp, k).b = 40; return G.b + G.a; }; return fncall1(f, 2); }
+syscall(60, main());'
+runs CP7 42 "in a closure"
+cprow CP8 'callptr(&gp, 5).b = 40;
+syscall(60, G.b + G.a);'
+runs CP8 45 "at top level"
+cprow CP9 'fn main(): i64 { var fp = &gp; callptr(fp, 5).b = 1; return G.b; }
+syscall(60, main());'
+refused CP9 "cannot take a field of the result of 'callptr': its callee is a value" "a callee in a variable, refused by name (D31)"
+cprow CP10 'fn main(): i64 { callptr(&gp, 5).b; return G.a; }
+syscall(60, main());'
+runs CP10 5 "control: \`callptr(&gp, 5).b;\`, a read statement"
+
+FLOOR_ROWS=22
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
-echo "PASS: $G — a field of a : *T call's result is stored through the pointer; a by-value result stays refused"
+echo "PASS: $G — a field of a : *T call's result is stored through the pointer; a by-value result stays refused; \`callptr(&f, ..).b = v;\` as the fncallN statement (6.7.14)"

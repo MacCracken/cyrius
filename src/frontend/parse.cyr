@@ -5532,6 +5532,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
     # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
     # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
     # error, which the filing recorded as diagnostics-only and was not.
+    if (typ == 137) { if (_stmt_callptr_field(S) == 1) { return 0; } }   # 6.7.14: `callptr(&gp, 5).b = 40;`
     if (typ >= 136) { if (typ <= 137) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
     # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
