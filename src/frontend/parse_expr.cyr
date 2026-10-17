@@ -1098,7 +1098,6 @@ fn _icall_sret(S, cfi, beg): i64 {
 fn _icall_chain(S, cfi, t, beg): i64 {
     if (_mchain_at(S, GTI(S)) == 0) { return 0; }
     if (cfi < 0) { return _icall_fld_err(S, beg); }
-    if (GINFN(S) != 1) { if (_ret_agg_class(S, cfi) == 2) { _mchain_skip(S); return 1; } }   # `_sc_pre` refused it
     _method_chain(S, cfi, _bx_fname(S, cfi), beg, t);
     _cfo = 0;
     return 1;

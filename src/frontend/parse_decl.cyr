@@ -1772,7 +1772,9 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
         return 1;
     }
     if (GINFN(S) != 1) {
-        if (_syntax_only == 0) { _refuse_toplevel_struct_call(S, noff); }
+        # 6.7.14: a result over 16 B was refused by the call's own `_sc_pre` (every caller asks it first: the
+        # method arm, `_dyn_call_in`, `_icall_sret`) — a top-level `b.mk().b` said it twice. CHANGELOG [6.7.14]
+        if (_syntax_only == 0) { if (_ret_agg_class(S, fi) != 2) { _refuse_toplevel_struct_call(S, noff); } }
         _mchain_skip(S);
         return 1;
     }
