@@ -79,8 +79,9 @@
 #      it (not a bare "codebuf overflow" mid-emit), and lib/thread.cyr runs on cxvm through
 #      sync.cyr's cx arm: mutex_* work, thread_create / thread_create_detached fail with 0,
 #      THREADS_CONCURRENT is 0 and the channel ring works single-threaded — and issues NO
-#      SYS_FUTEX: a harness copy of cxvm exits 140 on guest syscall 202 (a Darwin host SIGSYS-
-#      kills cxvm there; Linux answers EFAULT, which is why the plain run cannot see it).
+#      SYS_FUTEX: a harness copy of cxvm exits 140 on guest syscall 202 (until 6.7.14 a Darwin host
+#      SIGSYS-killed cxvm there and Linux answered EFAULT; since 6.7.14's D55 cxvm answers it -38 on
+#      every host — either way the plain run cannot see it).
 #      6.6.12: thread_join on a NONZERO handle (a fake tid) returns -1 at once on cx — no thread
 #      can exist there, so it must neither spin nor issue FUTEX_WAIT (the one futex site 6.6.11
 #      left unguarded).
@@ -145,6 +146,10 @@
 #   aa. lib/ws.cyr's bayan include removed     -> axis 1 FAIL on all 5 strict targets
 #      ('base64_encode') and axis 4 below its floor — the formerly-PENDING modules are held like
 #      any other (ledger entries t / t2 / u above now redden axis 1, not the retired axis 2)
+# MUTATION LEDGER (6.7.14, D55 — the instrumentation now anchors on cxvm's -38 refusal line)
+#   ab. _chan_park's guard removed again (y2) -> axis 7 FAIL through both blocking probes (140, not
+#      124): the inserted `sn == 202` arm still sits ahead of the refusal; the plain cxvm answers
+#      the futex -38 and spins
 # Real tree (with 6.6.9 bites 2, 5 and 12 merged) -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -580,21 +585,23 @@ if [ -x "$D/cxvm" ]; then
         fail "axis 7: lib/thread.cyr does not compile for cx: $(grep -v '^note' "$D/w7/thr.err" | head -3 | tr '\n' ' ')"; x=1
     fi
 fi
-# No SYS_FUTEX from lib/thread.cyr on cx. cxvm passes an unknown guest syscall to the HOST
-# kernel; Linux answers the guest-offset futex with EFAULT (ignored, so the run above stays 255
-# either way) while a Darwin host kills cxvm with SIGSYS. This harness copy of cxvm (in $D only;
-# programs/cxvm.cyr is not changed) exits 140 on guest syscall 202 — Darwin's verdict, on Linux.
-# The real-hardware twin of this hold is the cx thread fixture in scripts/cross-os-selfhost.sh.
-NF_LINE='            else { result = syscall(sn, s2, s3, s4, s5, s6); }'
+# No SYS_FUTEX from lib/thread.cyr on cx. Since 6.7.14 (D55) cxvm answers a guest syscall outside
+# its translated and scalar-only sets -ENOSYS without reaching the host — futex(202) included —
+# so the run above stays 255 either way (until 6.7.14 the futex went to the host: Linux answered
+# the guest-offset futex with EFAULT, a Darwin host killed cxvm with SIGSYS). This harness copy of
+# cxvm (in $D only; programs/cxvm.cyr is not changed) exits 140 on guest syscall 202, inserted just
+# before the -38 refusal (202 is not scalar-only, so it reaches that arm). The real-hardware twin
+# of this hold is the cx thread fixture in scripts/cross-os-selfhost.sh.
+NF_LINE='            else { result = 0 - 38; }'
 if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
     if [ "$(grep -cxF "$NF_LINE" programs/cxvm.cyr)" != 1 ]; then
-        fail "axis 7: programs/cxvm.cyr's pass-through dispatch line moved — update NF_LINE so the no-futex hold still instruments it"; x=1
+        fail "axis 7: programs/cxvm.cyr's -ENOSYS refusal line moved — update NF_LINE so the no-futex hold still instruments it"; x=1
     else
         awk -v L="$NF_LINE" '$0 == L { print "            elif (sn == 202) { syscall(60, 140); }" } { print }' \
             programs/cxvm.cyr > "$D/cxvm_nf.cyr"
         if "$CC" < "$D/cxvm_nf.cyr" > "$D/cxvm_nf" 2> "$D/cxvm_nf.err" && chmod +x "$D/cxvm_nf"; then
             "$D/cxvm_nf" < "$D/w7/thr.cyx" > /dev/null 2>&1; frc=$?
-            [ "$frc" = 255 ] || { fail "axis 7: lib/thread.cyr on cx issued SYS_FUTEX (instrumented cxvm exited $frc, expected 255; 140 = a futex, which SIGSYS-kills cxvm on a Darwin host)"; x=1; }
+            [ "$frc" = 255 ] || { fail "axis 7: lib/thread.cyr on cx issued SYS_FUTEX (instrumented cxvm exited $frc, expected 255; 140 = a futex: cxvm answers it -38 since 6.7.14, a Darwin host SIGSYS-killed cxvm before)"; x=1; }
             # The two WAIT sites: a blocking recv on an empty open channel and a blocking send
             # on a full one. With one guest thread both must SPIN (timeout 124); reaching the
             # futex exits 140 at once.

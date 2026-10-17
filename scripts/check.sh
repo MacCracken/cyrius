@@ -2718,6 +2718,11 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
 # repro, twice when also called, the exact name; three .tcyr pass on cxvm, two pinned at the filed
 # guest-contract limits. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
+# 6.7.14 (D55, the user 2026-10-16: "cxvm answers -38") — cxvm answers a guest syscall it neither
+# translates nor lists as scalar-only -ENOSYS without reaching the host: the filed
+# `cyr_munmap(0x400000, …)` killed cxvm (139) and `fstat(1, 0x600100)` wrote over its globals once the
+# 8 MiB guest overlapped cxvm's link addresses. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_guest_syscall_refusal.sh"
 # 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
 # position is refused by name, uninitialised / value / address / word uses refused (decision 7). The
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's

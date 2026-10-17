@@ -211,10 +211,12 @@ printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_fr
 cat "$CO_TMP"/_co_cx.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cx.cyx
 # 6.6.11 B08 (J5a): the cx THREAD fixture — lib/thread.cyr on each host's native cxvm must exit
 # 255 (one bit per check; the probe is tests/gates/toolchain/stdlib_modules_self_sufficient.sh's
-# axis-7 probe). cxvm passes an unknown guest syscall to the HOST kernel, so a SYS_FUTEX that
-# thread.cyr's `#ifndef CYRIUS_TARGET_CX` guards let through is EFAULT on Linux (invisible) and
-# SIGSYS on Darwin: measured with the guards removed, ecb and ach exit 140. The local gate holds
-# it with an instrumented cxvm; this is the same hold on the hardware. CHANGELOG [6.6.11]
+# axis-7 probe). Until 6.7.14 cxvm passed an unknown guest syscall to the HOST kernel, so a
+# SYS_FUTEX that thread.cyr's `#ifndef CYRIUS_TARGET_CX` guards let through was EFAULT on Linux
+# (invisible) and SIGSYS on Darwin (measured with the guards removed: ecb and ach exit 140); since
+# 6.7.14's D55 cxvm answers it -38 on every host without reaching the kernel. The local gate holds
+# it with an instrumented cxvm; this fixture runs the thread module on each host's own cxvm — and
+# with it the D55 dispatch. CHANGELOG [6.6.11] [6.7.14]
 cat > "$CO_TMP"/_co_cxt.cyr <<'CXT'
 include "lib/thread.cyr";
 var _t7_cell = 0;
@@ -479,7 +481,8 @@ case "$HOST" in
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
     # 6.6.11 B08: the cx thread fixture (see its build above) — this leg had no cxvm at all.
-    # Here, as on ecb, a futex lib/thread.cyr lets through on cx kills cxvm with SIGSYS (140).
+    # Here, as on ecb, a futex lib/thread.cyr let through on cx killed cxvm with SIGSYS (140) until
+    # 6.7.14's D55 (cxvm now answers it -38).
     # 6.6.11 (J6), as on ecb — a CLI child sees the user's environment. `load_environ` opened
     # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
     # execs (cycc, git, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only execvp's
