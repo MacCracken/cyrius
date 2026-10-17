@@ -50,15 +50,18 @@
 #                                        to alloc'd storage, doubling (_wpjs_grow) — it used to set
 #                                        _wpjs_ovf and decline the whole pass. Readers go through
 #                                        _wpjs_base.
-#   0xC0000   wpnr          [196608]      4096 × 24 B (cp, len, cum) NOP runs + 4096 records of
-#                                        merge scratch (_wpnr_add; overflow → _wpnr_ovf, declines;
-#                                        cycc: 2,605 runs; under CYRIUS_IR=3 it saturates on 48 of
-#                                        the 482 tcyr files — the TLS, sandhi and ws programs and
-#                                        the large-source tests, 6.6.20)
-#   0xF0000   wpsw          [65536]       4096 × 16 B (table_cp, nent) switch jump tables
-#                                        (_wpsw_add; overflow → _wpsw_ovf, declines). Ends 0x100000.
-#                                        A decline is NAMED on both paths (_wp_registry_why): the
-#                                        CYRIUS_DCE=1 note and, since 6.6.20, the CYRIUS_IR=3 seam.
+#   0xC0000   wpnr          [196608]      the FIRST 4096 × 24 B (cp, len, cum) NOP runs + 4096 records
+#                                        of merge scratch (_wpnr_add; cycc: 2,605 runs, 6.6.20). Since
+#                                        6.7.14 the 4,097th run moves the registry to alloc'd storage,
+#                                        doubling with its scratch (_wpnr_grow), and a run abutting the
+#                                        last one extends it — it used to set _wpnr_ovf and decline the
+#                                        whole pass (4,097 dead fns; under CYRIUS_IR=3, 59 of the 624
+#                                        tcyr files at 6.7.14's open). Readers go through _wpnr_base.
+#   0xF0000   wpsw          [65536]       the FIRST 4096 × 16 B (table_cp, nent) switch jump tables
+#                                        (_wpsw_add), then alloc'd, doubling (_wpsw_grow, 6.7.14).
+#                                        Ends 0x100000. Readers go through _wpsw_base. A decline (an
+#                                        alloc that failed) is NAMED on both paths (_wp_registry_why):
+#                                        the CYRIUS_DCE=1 note and, since 6.6.20, the CYRIUS_IR=3 seam.
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  (FREED v6.0.47)             was struct_names → relocated to 0x1A6018 [1024], cap 256→1024
@@ -1974,7 +1977,7 @@ if (IR_ENABLED(S) == 1) {
     var _wpwhy = _wp_registry_why();
     # Here the run registry holds the IR passes' NOP runs (LASE, const-fold), not dead code —
     # FIXUP's dead-code pass comes later — so the shared reason's "dead-code runs" is wrong.
-    if (_wpnr_ovf == 1) { _wpwhy = "more than 4096 NOP runs, the repair registry cap"; }
+    if (_wpnr_ovf == 1) { _wpwhy = "the NOP-run registry could not grow (alloc failed)"; }
     if (_wpwhy != 0) {
         PRSTR("wp-compact declined: ");
         PRSTR(_wpwhy);

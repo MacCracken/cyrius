@@ -30,6 +30,10 @@
 # line — `(M bytes NOPed; compaction declined on <target>: <why>)` — so every downstream
 # `grep -v "unreachable fns"` filter still removes it. Old compiler: axes 4 and 5 FAIL (measured:
 # those builds printed only "N bytes NOPed").
+#
+# 6.7.14 — THE CLIFF IS GONE (axes 5 and 9). The run registry grows (util.cyr _wpnr_grow), so 4,097
+# dead fns compact like 4,096 and the unset hint keeps its promise there; a run registry that
+# declines now means an alloc failed. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -173,18 +177,18 @@ declined "axis 4 (--pie)" "$WORK/a4pie.err" "x86_64 ELF (--pie)" "position-indep
 pbuild "$CYCC" "$WORK/p3s.cyr" "$WORK/a4so.err" CYRIUS_DCE=1
 declined "axis 4 (shared;)" "$WORK/a4so.err" "x86_64 ELF (shared;)" "shared object"
 
-# axis 5: the registry cliff, pinned on both sides. 4,096 one-line dead fns compact; 4,097
-# saturate the 4,096-run registry and the whole pass declines — the reason must say exactly that.
+# axis 5: the old registry cliff, both sides. Until 6.7.14 4,096 one-line dead fns compacted and
+# 4,097 saturated the 4,096-run registry, so the whole pass declined. Both compact now, to the same
+# size class, and neither reports a decline.
 for n in 4096 4097; do
     awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "fn d%d(): i64 { return %d; }\n", i, i;
                            print "fn main(): i64 { return 7; }"; print "var e = main();" }' > "$WORK/g$n.cyr"
     pbuild "$CYCC" "$WORK/g$n.cyr" "$WORK/a5_$n.err" CYRIUS_DCE=1
+    grep -q 'dead code eliminated' "$WORK/a5_$n.err" \
+        || fail "axis 5: $n dead fns do not compact: $(cat "$WORK/a5_$n.err")"
+    if grep -q 'compaction declined' "$WORK/a5_$n.err"; then fail "axis 5: $n dead fns report a decline: $(cat "$WORK/a5_$n.err")"; fi
+    [ "$(wc -c < "$WORK/p.out")" -lt 8192 ] || fail "axis 5: $n dead fns compact to $(wc -c < "$WORK/p.out") B, not under 8 KB"
 done
-grep -q 'dead code eliminated' "$WORK/a5_4096.err" \
-    || fail "axis 5: 4096 dead fns no longer compact — the cliff moved; re-measure it: $(cat "$WORK/a5_4096.err")"
-if grep -q 'compaction declined' "$WORK/a5_4096.err"; then fail "axis 5: 4096 dead fns compacted AND reported a decline"; fi
-declined "axis 5 (4097 dead fns)" "$WORK/a5_4097.err" "x86_64 ELF" "more than 4096 dead-code runs"
-if grep -q 'dead code eliminated' "$WORK/a5_4097.err"; then fail "axis 5: 4097 dead fns reported a decline AND an elimination"; fi
 
 # axis 6 (anti-vacuous): the compacting target says it compacted, and reports NO decline
 pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a6.err" CYRIUS_DCE=1
@@ -230,13 +234,13 @@ pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9pie.err" CYRIUS_PIE=1
 hinted "axis 9 (--pie)" "$WORK/a9pie.err" "x86_64 ELF (--pie)"
 pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a9a64.err" CYRIUS_DCE_UNSET=1
 hinted "axis 9 (aarch64 ELF)" "$WORK/a9a64.err" "aarch64 ELF"
-# the eliminating target past the 4,096-run registry: =1 would decline, so unset must not promise
+# past the old 4,096-run registry: =1 compacts there since 6.7.14, so unset keeps the promise
 pbuild "$CYCC" "$WORK/g4097.cyr" "$WORK/a9cap.err" CYRIUS_DCE_UNSET=1
-hinted "axis 9 (4097 dead fns, unset)" "$WORK/a9cap.err" "x86_64 ELF"
-grep -q 'more than 4096 dead-code runs' "$WORK/a9cap.err" || fail "axis 9 (4097 dead fns, unset): the hint does not name the registry cap: $(cat "$WORK/a9cap.err")"
+grep -q '^note: 4097 unreachable fns ([0-9]* bytes .*set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)$' "$WORK/a9cap.err" \
+    || fail "axis 9 (4097 dead fns, unset): the hint does not promise the elimination =1 performs: $(cat "$WORK/a9cap.err")"
 # anti-vacuous: the one target that DOES eliminate keeps the promise, word for word
 pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9elf.err" CYRIUS_DCE_UNSET=1
 grep -q '^note: [0-9]* unreachable fns ([0-9]* bytes .*set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)$' "$WORK/a9elf.err" \
     || fail "axis 9 (static x86 ELF): the eliminating target lost its 'set CYRIUS_DCE=1 to eliminate' hint: $(cat "$WORK/a9elf.err")"
 
-echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared;, aarch64 ELF, arm64 Mach-O and past the 4096-run registry; the unset hint promises elimination only where it happens)"
+echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared;, aarch64 ELF, arm64 Mach-O; 4,097 dead fns compact; the unset hint promises elimination only where it happens)"

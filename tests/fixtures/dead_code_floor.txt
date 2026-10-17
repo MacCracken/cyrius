@@ -78,6 +78,7 @@ _wpjs_add a64 a64m a64n cx
 _wpjs_add_raw a64 a64m a64n cx
 _wpjs_grow a64 a64m a64n cx
 _wpnr_add a64 a64m a64n cx
+_wpnr_grow a64 a64m a64n cx
 ir_apply_lase a64 a64m a64n cx win x86m
 ir_bb_new a64 a64m a64n cx x86m
 ir_bb_set_cond a64 a64m a64n cx x86m

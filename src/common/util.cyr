@@ -604,8 +604,9 @@ var _codebuf_base = 0;
 # Layout, in the 0x60000-0x100000 band freed when v6.5.40 relocated the identifier pool to
 # 0xEC00000 (verified: `S + 0x60000` has zero live users):
 #   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps — the FIRST 49152; then alloc'd (below)
-#   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
-#   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
+#   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch — the
+#                   FIRST 4096; then alloc'd (below)
+#   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables — the FIRST 4096; then alloc'd
 # Measured on a cycc self-compile at 6.6.20 (CYRIUS_IR=3 and CYRIUS_DCE=1 alike): 43,028
 # sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). WPNR is the one
 # that saturates: under CYRIUS_IR=3, 48 of the 482 tcyr files (the TLS, sandhi and ws programs
@@ -616,14 +617,27 @@ var _codebuf_base = 0;
 # source past them declined the whole compaction. The 49,153rd moves the registry to alloc'd
 # storage, doubling (_wpjs_grow); _wpjs_ovf now means only that the alloc failed. Every reader
 # goes through _wpjs_base. CHANGELOG [6.6.20]
+#
+# 6.7.14 — WPNR AND WPSW GROW TOO. Their fixed 4,096 records were a cliff: 4,096 one-line dead fns
+# compacted to 4,456 B and 4,100 left 201,064 B, because one run past the cap set _wpnr_ovf and
+# declined the whole pass (kybernet's agnos-init, 4,180 dead fns: 248,440 -> 1,574,640 B). The
+# 4,097th run moves the registry to alloc'd storage, doubling, with the merge scratch in the upper
+# half (_wpnr_grow), and a run that starts where the last one ended extends it instead of taking
+# a record (contiguous dead fns, most of an unused dependency, cost one run). The switch-table
+# registry follows the same pattern (_wpsw_grow). Both _ovf flags now mean only that the alloc
+# failed. Every reader goes through _wpnr_base / _wpsw_base. CHANGELOG [6.7.14]
 var _wpjs_n = 0;      # disp32 sources recorded
 var _wpjs_ovf = 0;
 var _wpjs_base = 0;   # S + 0x60000 until the first grow, then the alloc'd copy
 var _wpjs_cap = 0;    # 0 until the first record; 49152, then doubling
 var _wpnr_n = 0;      # NOP runs recorded
 var _wpnr_ovf = 0;
+var _wpnr_base = 0;   # S + 0xC0000 until the first grow, then the alloc'd copy
+var _wpnr_cap = 0;    # 0 until the first record; 4096, then doubling (records [cap, 2 cap): scratch)
 var _wpsw_n = 0;      # switch jump tables recorded
 var _wpsw_ovf = 0;
+var _wpsw_base = 0;   # S + 0xF0000 until the first grow, then the alloc'd copy
+var _wpsw_cap = 0;    # 0 until the first record; 4096, then doubling
 var _wp_fn_js0 = 0;   # WPJS watermark at the current fn's start
 var _wp_fn_sw0 = 0;   # WPSW watermark at the current fn's start
 var _wp_deleted = 0;
@@ -674,23 +688,58 @@ fn _wpjs_add(S, cp): i64 {
     if (_wp_recording(S) == 0) { return 0; }
     return _wpjs_add_raw(S, cp);
 }
+# Grow WPNR: the first call claims the fixed region at S+0xC0000 (4,096 records + 4,096 of
+# merge scratch), each later one doubles into alloc'd storage sized for the scratch as well
+# (`_wp_sort_prefix` sorts through records [cap, 2 cap)) and copies the live records. Returns 0
+# only when the alloc fails.
+fn _wpnr_grow(S): i64 {
+    if (_wpnr_base == 0) { _wpnr_base = S + 0xC0000; _wpnr_cap = 4096; return 1; }
+    var nc = _wpnr_cap * 2;
+    var nb = alloc(nc * 48);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpnr_n * 3) { store64(nb + i * 8, load64(_wpnr_base + i * 8)); i = i + 1; }
+    _wpnr_base = nb;
+    _wpnr_cap = nc;
+    return 1;
+}
 fn _wpnr_add(S, cp, ln): i64 {
     if (ln <= 0) { return 0; }
-    if (_wpnr_n < 4096) {
-        S64(S + 0xC0000 + _wpnr_n * 24, cp);
-        S64(S + 0xC0000 + _wpnr_n * 24 + 8, ln);
-        S64(S + 0xC0000 + _wpnr_n * 24 + 16, 0);
-        _wpnr_n = _wpnr_n + 1;
-    } else { _wpnr_ovf = 1; }
+    # A run that starts where the previous one ended extends it: `_wp_sort_prefix` merges
+    # abutting runs anyway, so the compaction is the same, and the registry stays small.
+    if (_wpnr_n > 0) {
+        var pr = _wpnr_base + (_wpnr_n - 1) * 24;
+        if (L64(pr) + L64(pr + 8) == cp) { S64(pr + 8, L64(pr + 8) + ln); return 0; }
+    }
+    if (_wpnr_n >= _wpnr_cap) {
+        if (_wpnr_grow(S) == 0) { _wpnr_ovf = 1; return 0; }
+    }
+    S64(_wpnr_base + _wpnr_n * 24, cp);
+    S64(_wpnr_base + _wpnr_n * 24 + 8, ln);
+    S64(_wpnr_base + _wpnr_n * 24 + 16, 0);
+    _wpnr_n = _wpnr_n + 1;
     return 0;
+}
+# Grow WPSW: the fixed 4,096 records at S+0xF0000 first, then doubling alloc'd copies.
+fn _wpsw_grow(S): i64 {
+    if (_wpsw_base == 0) { _wpsw_base = S + 0xF0000; _wpsw_cap = 4096; return 1; }
+    var nc = _wpsw_cap * 2;
+    var nb = alloc(nc * 16);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpsw_n * 2) { store64(nb + i * 8, load64(_wpsw_base + i * 8)); i = i + 1; }
+    _wpsw_base = nb;
+    _wpsw_cap = nc;
+    return 1;
 }
 fn _wpsw_add(S, table_cp, nent): i64 {
     if (_wp_recording(S) == 0) { return 0; }
-    if (_wpsw_n < 4096) {
-        S64(S + 0xF0000 + _wpsw_n * 16, table_cp);
-        S64(S + 0xF0000 + _wpsw_n * 16 + 8, nent);
-        _wpsw_n = _wpsw_n + 1;
-    } else { _wpsw_ovf = 1; }
+    if (_wpsw_n >= _wpsw_cap) {
+        if (_wpsw_grow(S) == 0) { _wpsw_ovf = 1; return 0; }
+    }
+    S64(_wpsw_base + _wpsw_n * 16, table_cp);
+    S64(_wpsw_base + _wpsw_n * 16 + 8, nent);
+    _wpsw_n = _wpsw_n + 1;
     return 0;
 }
 

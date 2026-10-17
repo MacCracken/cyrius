@@ -18847,8 +18847,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     }
                     var _wsi = _wp_fn_sw0;
                     while (_wsi < _wpsw_n) {
-                        var _wsc = L64(S + 0xF0000 + _wsi * 16);
-                        S64(S + 0xF0000 + _wsi * 16, _wsc - _nop_shift_at(S, _nrn, _wsc));
+                        var _wsc = L64(_wpsw_base + _wsi * 16);
+                        S64(_wpsw_base + _wsi * 16, _wsc - _nop_shift_at(S, _nrn, _wsc));
                         _wsi = _wsi + 1;
                     }
                     # Stage 3c (v6.5.54): repair IR node CPs. THE REASON THE COMPACTOR USED TO

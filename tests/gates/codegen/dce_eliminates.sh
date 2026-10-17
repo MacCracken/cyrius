@@ -154,5 +154,46 @@ done
 chmod +x "$T/sy1"; got=0; "$T/sy1" || got=$?
 [ "$got" = 0 ] || { echo "FAIL dce_eliminates axis5: the compacted sy.cyr exits $got, want 0"; exit 1; }
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero"
+# ── axis 6 — 6.7.14: compaction is not capped at 4,096 dead-code runs ─────────────────────
+# The run registry was a fixed 4,096 records, and one run past it declined the WHOLE pass: 4,096
+# one-line dead fns compacted to 4,456 B, 4,100 left 201,064 B (kybernet's agnos-init, 4,180 dead
+# fns: 248,440 -> 1,574,640 B). It grows now (util.cyr _wpnr_grow) and a run abutting the last one
+# extends it. 6a: contiguous dead fns (one run). 6b: 4,100 dead fns interleaved with 4,100 live
+# ones (4,100 runs, one doubling). 6c: 10,000 dead fns each followed by a top-level statement
+# (10,000 runs that never abut, two doublings). Each row removes EVERY byte it NOP-filled: a grow
+# that loses runs (the merge scratch sized for 4,096) still builds a correct, merely larger binary.
+# 6d: cycc's own CYRIUS_IR=3 build still compacts.
+# Mutations (6.7.14, each built from a scratch edit of src/): no grow -> RED 6b (declined); no
+# grow and no abutting-run merge -> RED 6a; `_wp_shift` on the fixed S+0xC0000 base -> RED 6b
+# (2,121 live bodies corrupted, refused); the merge scratch at a fixed 4,096 -> RED 6b (192 B
+# NOP-filled, not removed); the grow copying two of three words -> RED 6b. A grown table without
+# room for its scratch is NOT seen: the arena past it is unused, so the overrun lands in nothing.
+# issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
+compacts6() {   # <row> <src> <want exit> <max bytes>
+  CYRIUS_DCE=1 "$T/stage1" < "$2" > "$T/a6.bin" 2> "$T/a6.err" || { echo "FAIL dce_eliminates axis6 $1: the build failed: $(head -2 "$T/a6.err")"; exit 1; }
+  if grep -q 'compaction declined' "$T/a6.err"; then echo "FAIL dce_eliminates axis6 $1: $(grep 'declined' "$T/a6.err")"; exit 1; fi
+  grep -q 'bytes of dead code eliminated' "$T/a6.err" || { echo "FAIL dce_eliminates axis6 $1: no elimination: $(cat "$T/a6.err")"; exit 1; }
+  nop=$(grep -o '([0-9]* bytes NOPed' "$T/a6.err" | grep -o '[0-9][0-9]*')
+  eli=$(grep 'bytes of dead code eliminated' "$T/a6.err" | grep -o '[0-9][0-9]*' | head -1)
+  [ "$nop" = "$eli" ] || { echo "FAIL dce_eliminates axis6 $1: $nop bytes NOP-filled, only $eli removed — runs were lost"; exit 1; }
+  sz=$(wc -c < "$T/a6.bin")
+  [ "$sz" -le "$4" ] || { echo "FAIL dce_eliminates axis6 $1: the compacted binary is $sz B, want <= $4"; exit 1; }
+  chmod +x "$T/a6.bin"; got=0; "$T/a6.bin" || got=$?
+  [ "$got" = "$3" ] || { echo "FAIL dce_eliminates axis6 $1: the compacted binary exits $got, want $3"; exit 1; }
+}
+awk 'BEGIN { for (i = 0; i < 4100; i++) printf "fn d%d(): i64 { return %d; }\n", i, i;
+             print "fn main(): i64 { return 7; }"; print "var e = main();" }' > "$T/g6a.cyr"
+compacts6 6a "$T/g6a.cyr" 7 8192
+awk 'BEGIN { for (i = 0; i < 4100; i++) { printf "fn d%d(): i64 { return %d; }\n", i, i; printf "fn l%d(x): i64 { return x + 1; }\n", i }
+             print "fn main(): i64 { var x = 0;"; for (i = 0; i < 4100; i++) printf "  x = l%d(x);\n", i
+             print "  return x & 255; }"; print "var e = main();"; print "syscall(60, e);" }' > "$T/g6b.cyr"
+compacts6 6b "$T/g6b.cyr" 4 400000
+awk 'BEGIN { print "var t = 0;"; for (i = 0; i < 10000; i++) { printf "fn d%d(): i64 { return %d; }\n", i, i; print "t = t + 1;" }
+             print "syscall(60, t & 255);" }' > "$T/g6c.cyr"
+compacts6 6c "$T/g6c.cyr" 16 450000
+CYRIUS_IR=3 "$T/stage1" < "$R/src/main.cyr" > "$T/ir3cc" 2> "$T/ir3cc.err" || { echo "FAIL dce_eliminates axis6 6d: cycc's CYRIUS_IR=3 build failed"; exit 1; }
+grep -q '^wp-compact: [0-9]* bytes reclaimed' "$T/ir3cc.err" || { echo "FAIL dce_eliminates axis6 6d: cycc's CYRIUS_IR=3 build does not compact: $(grep -v '^warning\|^note' "$T/ir3cc.err" | head -3)"; exit 1; }
+if grep -q 'wp-compact declined' "$T/ir3cc.err"; then echo "FAIL dce_eliminates axis6 6d: $(grep 'declined' "$T/ir3cc.err")"; exit 1; fi
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap"
 exit 0

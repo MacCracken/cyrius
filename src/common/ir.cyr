@@ -1555,8 +1555,9 @@ fn _wp_sort_prefix(S): i64 {
     # Bottom-up mergesort, not the per-fn pass's insertion sort. The run table arrives as a
     # concatenation of ascending sweeps (one per fixpoint iteration of const-fold, then one
     # from ir_apply_lase), which is the input that makes insertion sort quadratic exactly
-    # when the second sweep starts. Scratch is the upper half of the WPNR region.
-    var SCR = 4096;
+    # when the second sweep starts. Scratch is the upper half of the WPNR region: records
+    # [cap, 2 cap), which `_wpnr_grow` sizes every table for. CHANGELOG [6.7.14]
+    var SCR = _wpnr_cap;
     var w = 1;
     while (w < n) {
         var i = 0;
@@ -1573,20 +1574,20 @@ fn _wp_sort_prefix(S): i64 {
                 var take_a = 0;
                 if (a < mid) {
                     if (b >= hi) { take_a = 1; }
-                    elif (L64(S + 0xC0000 + a * 24) <= L64(S + 0xC0000 + b * 24)) { take_a = 1; }
+                    elif (L64(_wpnr_base + a * 24) <= L64(_wpnr_base + b * 24)) { take_a = 1; }
                 }
                 var src = b;
                 if (take_a == 1) { src = a; a = a + 1; } else { b = b + 1; }
-                S64(S + 0xC0000 + (SCR + o) * 24, L64(S + 0xC0000 + src * 24));
-                S64(S + 0xC0000 + (SCR + o) * 24 + 8, L64(S + 0xC0000 + src * 24 + 8));
+                S64(_wpnr_base + (SCR + o) * 24, L64(_wpnr_base + src * 24));
+                S64(_wpnr_base + (SCR + o) * 24 + 8, L64(_wpnr_base + src * 24 + 8));
                 o = o + 1;
             }
             i = i + w + w;
         }
         var k = 0;
         while (k < n) {
-            S64(S + 0xC0000 + k * 24, L64(S + 0xC0000 + (SCR + k) * 24));
-            S64(S + 0xC0000 + k * 24 + 8, L64(S + 0xC0000 + (SCR + k) * 24 + 8));
+            S64(_wpnr_base + k * 24, L64(_wpnr_base + (SCR + k) * 24));
+            S64(_wpnr_base + k * 24 + 8, L64(_wpnr_base + (SCR + k) * 24 + 8));
             k = k + 1;
         }
         w = w + w;
@@ -1605,18 +1606,18 @@ fn _wp_sort_prefix(S): i64 {
     var wq = 0;
     var rq = 1;
     while (rq < n) {
-        var pcp = L64(S + 0xC0000 + wq * 24);
-        var plen = L64(S + 0xC0000 + wq * 24 + 8);
-        var ccp = L64(S + 0xC0000 + rq * 24);
-        var clen = L64(S + 0xC0000 + rq * 24 + 8);
+        var pcp = L64(_wpnr_base + wq * 24);
+        var plen = L64(_wpnr_base + wq * 24 + 8);
+        var ccp = L64(_wpnr_base + rq * 24);
+        var clen = L64(_wpnr_base + rq * 24 + 8);
         if (ccp <= pcp + plen) {
             var nend = ccp + clen;
             if (pcp + plen > nend) { nend = pcp + plen; }
-            S64(S + 0xC0000 + wq * 24 + 8, nend - pcp);
+            S64(_wpnr_base + wq * 24 + 8, nend - pcp);
         } else {
             wq = wq + 1;
-            S64(S + 0xC0000 + wq * 24, ccp);
-            S64(S + 0xC0000 + wq * 24 + 8, clen);
+            S64(_wpnr_base + wq * 24, ccp);
+            S64(_wpnr_base + wq * 24 + 8, clen);
         }
         rq = rq + 1;
     }
@@ -1624,8 +1625,8 @@ fn _wp_sort_prefix(S): i64 {
     var cum = 0;
     var k2 = 0;
     while (k2 < n) {
-        S64(S + 0xC0000 + k2 * 24 + 16, cum);
-        cum = cum + L64(S + 0xC0000 + k2 * 24 + 8);
+        S64(_wpnr_base + k2 * 24 + 16, cum);
+        cum = cum + L64(_wpnr_base + k2 * 24 + 8);
         k2 = k2 + 1;
     }
     _wp_deleted = cum;
@@ -1640,12 +1641,12 @@ fn _wp_shift(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) < p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    return L64(S + 0xC0000 + idx * 24 + 16) + L64(S + 0xC0000 + idx * 24 + 8);
+    return L64(_wpnr_base + idx * 24 + 16) + L64(_wpnr_base + idx * 24 + 8);
 }
 
 # Is p strictly INSIDE a deleted run? Such a position has no image after compaction, so a
@@ -1659,13 +1660,13 @@ fn _wp_inside(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) < p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    var c = L64(S + 0xC0000 + idx * 24);
-    var l = L64(S + 0xC0000 + idx * 24 + 8);
+    var c = L64(_wpnr_base + idx * 24);
+    var l = L64(_wpnr_base + idx * 24 + 8);
     if (p > c) { if (p < c + l) { return 1; } }
     return 0;
 }
@@ -1678,12 +1679,12 @@ fn _wp_removed_at(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) <= p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) <= p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    if (p < L64(S + 0xC0000 + idx * 24) + L64(S + 0xC0000 + idx * 24 + 8)) { return 1; }
+    if (p < L64(_wpnr_base + idx * 24) + L64(_wpnr_base + idx * 24 + 8)) { return 1; }
     return 0;
 }
 
@@ -1924,8 +1925,8 @@ fn wp_compact(S): i64 {
     # exercised it yet.
     var si = 0;
     while (si < _wpsw_n) {
-        var tcp = L64(S + 0xF0000 + si * 16);
-        var nent = L64(S + 0xF0000 + si * 16 + 8);
+        var tcp = L64(_wpsw_base + si * 16);
+        var nent = L64(_wpsw_base + si * 16 + 8);
         var new_tcp = tcp - _wp_shift(S, tcp);
         var ei = 0;
         while (ei < nent) {
@@ -1954,14 +1955,14 @@ fn wp_compact(S): i64 {
     }
     # Stage 6 — move the bytes. Last, and identical in shape to the per-fn pass's stage 4.
     var end = GCP(S);
-    var wp = L64(S + 0xC0000);
+    var wp = L64(_wpnr_base);
     var rp = wp;
     var ri = 0;
     while (rp < end) {
         var skip = 0;
         if (ri < _wpnr_n) {
-            if (rp == L64(S + 0xC0000 + ri * 24)) {
-                rp = rp + L64(S + 0xC0000 + ri * 24 + 8);
+            if (rp == L64(_wpnr_base + ri * 24)) {
+                rp = rp + L64(_wpnr_base + ri * 24 + 8);
                 ri = ri + 1;
                 skip = 1;
             }
@@ -1987,8 +1988,8 @@ fn wp_compact(S): i64 {
     }
     var rs = 0;
     while (rs < _wpsw_n) {
-        var sc = L64(S + 0xF0000 + rs * 16);
-        S64(S + 0xF0000 + rs * 16, sc - _wp_shift(S, sc));
+        var sc = L64(_wpsw_base + rs * 16);
+        S64(_wpsw_base + rs * 16, sc - _wp_shift(S, sc));
         rs = rs + 1;
     }
     var _done = _wp_deleted;

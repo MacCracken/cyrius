@@ -21,17 +21,19 @@
 #   2  the same program under CYRIUS_IR=3: wp-compact reclaims the IR passes' NOP bytes (it
 #      declined in silence before), and the binary still computes the right answer. 6.7.14: the
 #      note counts the runs (it read the count after wp_compact cleared it: always "(0 runs").
-#   3  CYRIUS_IR=3 on 4,097 switch jump tables (the WPSW cap is 4,096): stderr names the cap
-#      ("wp-compact declined: more than 4096 switch tables") and the binary is still correct.
+#   3  CYRIUS_IR=3 on 4,097 switch jump tables: past the old 4,096-record WPSW cap the registry
+#      grows (6.7.14, _wpsw_grow), the seam compacts and counts all 4,097, and the binary is still
+#      correct. Each switch fn carries a hot loop local, so the per-fn NOP pass shifts its entries
+#      too — the last ones in the storage the registry grew into. (Until 6.7.14 the seam declined:
+#      "wp-compact declined: more than 4096 switch tables".)
 #   4  the source-heavy program under CYRIUS_IR=3 CYRIUS_DCE=1: the IR seam compacts, then
 #      FIXUP's dead-code pass compacts AGAIN, so the registry must have been rebased to the
 #      first pass's layout (wp_compact's re-entrancy loop) — the binary still exits 180.
-#   5  CYRIUS_IR=3 on 4,200 LASE sites: the NOP-run registry (4,096) saturates and the seam
-#      names it as NOP runs, not "dead-code runs" (at the seam they are the IR passes' runs;
-#      FIXUP's dead-code pass comes later). This is the case 48 of the 482 tcyr files hit
-#      under CYRIUS_IR=3 (the TLS, sandhi and ws programs and the large-source tests). It pins
-#      a CLIFF: when the 4,096-run merge on the roadmap backlog lands, axis 5 compacts
-#      instead — re-measure it then.
+#   5  CYRIUS_IR=3 on 4,200 LASE sites: more than 4,096 NOP runs. Until 6.7.14 the run registry
+#      saturated there and the seam declined ("more than 4096 NOP runs") — the case 48 of the 482
+#      tcyr files hit under CYRIUS_IR=3 at 6.6.20 (the TLS, sandhi and ws programs and the
+#      large-source tests), 59 of 624 at 6.7.14's open, 0 after. The registry grows now (_wpnr_grow): the seam reclaims EVERY byte LASE applied, and
+#      the binary is still correct. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 #   6  6.7.14: the seam's compaction leaves no stale bytes in .text's 8-byte pad (FIXUP rounds the
 #      moved code end up to 8 without writing). Mutation: the slot-open compiler -> RED (`50`
 #      after the exit syscall).
@@ -42,6 +44,10 @@
 # for a fn that leaves NOP runs, so every g fn carries a hot loop local: the fn then leaves
 # NOP runs, and the per-fn pass shifts that fn's registry entries — the last fns' entries
 # sit above index 49,152, in the storage the registry grew into.
+# 6.7.14 mutations (axis 3, the switch-table registry): no grow -> RED (declined, named); the
+# per-fn NOP pass's reader (parse_fn.cyr) on the fixed S+0xF0000 base -> RED (exit 139). Stage 4
+# and the re-entrancy rebase on the fixed base are NOT seen: a table and its targets always move
+# together here, so stage 4 rewrites each entry to its own value (its comment in ir.cyr says so).
 # Mutation-proven: on the pre-fix compiler axes 1 and 2 report "more than 49152 rel32/disp32
 # sources" / no reclaim, and axis 3 finds no decline note; with any one of the three readers
 # put back to the fixed S+0x60000 base, a compacted binary exits 0 or crashes instead of 180.
@@ -121,32 +127,39 @@ else
 fi
 
 # ── axis 3: 4,097 switch jump tables under CYRIUS_IR=3 ──────────────────────────────────
-# Four dense cases reach the x86 table path (parse.cyr: >= 4 cases, density >= 1/3).
+# Four dense cases reach the x86 table path (parse.cyr: >= 4 cases, density >= 1/3); h leaves
+# the IR passes' NOP bytes, so the seam has something to compact.
 awk 'BEGIN {
+    print "fn h(r): i64 {"; print "    r = r + 3 * 4;"; print "    r = r + 3 * 4;"; print "    return r;"; print "}"
     for (f = 0; f < 4097; f++) {
-        printf "fn s%d(x): i64 {\n    switch (x) {\n", f
-        print "        case 0: { return 1; }"
-        print "        case 1: { return 2; }"
-        print "        case 2: { return 3; }"
-        print "        case 3: { return 4; }"
+        printf "fn s%d(x): i64 {\n", f
+        print "    var a = x; var i = 0;"
+        print "    while (i < 2) { a = a + i; i = i + 1; }"
+        print "    switch (x) {"
+        print "        case 0: { return a - 1 + 2; }"
+        print "        case 1: { return a + 1; }"
+        print "        case 2: { return a + 1; }"
+        print "        case 3: { return a + 1; }"
         print "    }"
         print "    return 0;"
         print "}"
     }
-    print "var t = 0;"
+    print "var t = h(0) - 24;"
     for (f = 0; f < 4097; f += 1024) { printf "t = t + s%d(%d);\n", f, f % 4 }
     print "syscall(60, t);"
 }' > "$D/many_switches.cyr"
-# s0(0)=1 + s1024(0)=1 + s2048(0)=1 + s3072(0)=1 + s4096(0)=1 = 5
+# s0(0) = s1024(0) = s2048(0) = s3072(0) = s4096(0) = 2 -> 10
 if CYRIUS_IR=3 "$CC" < "$D/many_switches.cyr" > "$D/a3" 2> "$D/a3.err"; then
     chmod +x "$D/a3"
-    if grep -q 'wp-compact declined: more than 4096 switch tables' "$D/a3.err"; then
-        ok "axis 3: the IR=3 seam names the saturated switch-table registry"
+    if grep -q 'wp-compact declined' "$D/a3.err"; then
+        bad "axis 3: 4,097 switch tables under CYRIUS_IR=3 declined: $(grep 'declined' "$D/a3.err")"
+    elif grep -q '^wp-compact: [0-9]* bytes reclaimed ([0-9]* runs, 4097 switch tables)' "$D/a3.err"; then
+        ok "axis 3: the IR=3 seam compacts past 4,096 switch tables"
     else
-        bad "axis 3: 4,097 switch tables under CYRIUS_IR=3 and no decline note: $(grep -v '^note\|^warning' "$D/a3.err" | head -3)"
+        bad "axis 3: 4,097 switch tables under CYRIUS_IR=3 and no compaction counting them: $(grep -v '^note\|^warning' "$D/a3.err" | head -3)"
     fi
     rc=$(run_exit "$D/a3")
-    [ "$rc" = 5 ] && ok "axis 3: the binary exits 5" || bad "axis 3: the binary exits $rc, expected 5"
+    [ "$rc" = 10 ] && ok "axis 3: the binary exits 10" || bad "axis 3: the binary exits $rc, expected 10"
 else
     bad "axis 3: compile failed: $(head -3 "$D/a3.err")"
 fi
@@ -167,7 +180,7 @@ else
     bad "axis 4: compile failed: $(head -3 "$D/a4.err")"
 fi
 
-# ── axis 5: 4,200 NOP runs under CYRIUS_IR=3 — the run registry saturates, named ─────────
+# ── axis 5: 4,200 NOP runs under CYRIUS_IR=3 — the run registry grows (6.7.14) ────────────
 # `r = r + 3 * 4;` is one LASE site, so one NOP run, each; 512 per fn keeps every fn small.
 awk 'BEGIN {
     n = 4200; per = 512; nf = int((n + per - 1) / per); left = n
@@ -185,10 +198,16 @@ awk 'BEGIN {
 # 4,200 × 12 = 50,400; & 255 = 224
 if CYRIUS_IR=3 "$CC" < "$D/many_runs.cyr" > "$D/a5" 2> "$D/a5.err"; then
     chmod +x "$D/a5"
-    if grep -q 'wp-compact declined: more than 4096 NOP runs' "$D/a5.err"; then
-        ok "axis 5: the IR=3 seam names the saturated NOP-run registry"
+    APP=$(grep -o 'LASE ([0-9]*B applied)' "$D/a5.err" | grep -o '[0-9][0-9]*')
+    set -- $(sed -n 's/^wp-compact: \([0-9][0-9]*\) bytes reclaimed (\([0-9][0-9]*\) runs.*/\1 \2/p' "$D/a5.err")
+    if grep -q 'wp-compact declined' "$D/a5.err"; then
+        bad "axis 5: 4,200 IR NOP runs under CYRIUS_IR=3 declined: $(grep 'declined' "$D/a5.err")"
+    elif [ -z "${2:-}" ] || [ "${2:-0}" -le 4096 ]; then
+        bad "axis 5: the seam did not compact more than 4,096 runs: $(grep -v '^note\|^warning' "$D/a5.err" | head -3)"
+    elif [ "$1" = "${APP:-x}" ]; then
+        ok "axis 5: the IR=3 seam compacts $2 NOP runs, every byte LASE applied ($1)"
     else
-        bad "axis 5: 4,200 IR NOP runs under CYRIUS_IR=3 and no NOP-run decline note: $(grep -v '^note\|^warning' "$D/a5.err" | head -3)"
+        bad "axis 5: LASE applied ${APP:-?} B, the seam reclaimed $1 — runs were lost"
     fi
     rc=$(run_exit "$D/a5")
     [ "$rc" = 224 ] && ok "axis 5: the binary exits 224" || bad "axis 5: the binary exits $rc, expected 224"
@@ -228,4 +247,4 @@ if [ "$fails" -gt 0 ]; then
     echo "FAIL: wp_compact_registry_caps — $fails check(s)"
     exit 1
 fi
-echo "PASS: wp_compact_registry_caps — the source registry grows past 49,152; a saturated registry is named under CYRIUS_IR=3"
+echo "PASS: wp_compact_registry_caps — the source registry grows past 49,152, the run and switch-table registries past 4,096; the seam's pad is zero"
