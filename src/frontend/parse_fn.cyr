@@ -8756,7 +8756,7 @@ fn _bnd_check_struct(S, si, c0, c1): i64 {
 
 # ── the contract, at the definition (pass 1) ────────────────────────────────────────────────
 fn _bnr_add(S, name, slot, isptr): i64 {
-    if (_bnr_tab == 0) { _bnr_tab = alloc(64 * 24); }
+    if (_bnr_tab == 0) { _bnr_tab = alloc(64 * 24); _bnr_cap = 64; }
     var i = 0;
     while (i < _bnr_n) {
         if (STREQ(S, L64(_bnr_tab + i * 24), name) == 1) {
@@ -8766,7 +8766,7 @@ fn _bnr_add(S, name, slot, isptr): i64 {
         }
         i = i + 1;
     }
-    if (_bnr_n >= 64) { return 0; }
+    if (_bnr_n >= _bnr_cap) { _bnr_tab = _tab_grow(_bnr_tab, _bnr_cap * 3); _bnr_cap = _bnr_cap * 2; }   # 6.7.14 (`_gsn_add`)
     S64(_bnr_tab + _bnr_n * 24, name);
     S64(_bnr_tab + _bnr_n * 24 + 8, slot);
     S64(_bnr_tab + _bnr_n * 24 + 16, isptr);
@@ -12126,9 +12126,24 @@ var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar ot
 var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
 var _gm_closed = 0 - 1;
 
+# ⛔ 6.7.14 — THE STUB SCAN'S PER-FN TABLES GROW: `_gsn` (the T-typed names), `_gcr` (the struct
+# carriers) and `_bnr_tab` (the bounded receivers) held 64 entries and dropped the 65th without a word,
+# so every later name, carrier or receiver of that generic was invisible to the scan and its use failed to
+# parse ("no struct type in scope for 'z'", "expected ';', got '.'"). A full table is copied into one
+# twice its size; they are alloc'd, so no heap region moves. CHANGELOG [6.7.14]
+var _gsn_cap = 0;
+var _gcr_cap = 0;
+# The `words` 8-byte words at `tab`, copied into a table of twice as many; the new table.
+fn _tab_grow(tab, words): i64 {
+    var t = alloc(words * 16);
+    _tab_copy(t, tab, words);
+    return t;
+}
 fn _gsn_add(noff): i64 {
-    if (_gsn == 0) { _gsn = alloc(64 * 8); }
-    if (_gsn_n < 64) { store64(_gsn + _gsn_n * 8, noff); _gsn_n = _gsn_n + 1; }
+    if (_gsn == 0) { _gsn = alloc(64 * 8); _gsn_cap = 64; }
+    if (_gsn_n >= _gsn_cap) { _gsn = _tab_grow(_gsn, _gsn_cap); _gsn_cap = _gsn_cap * 2; }
+    store64(_gsn + _gsn_n * 8, noff);
+    _gsn_n = _gsn_n + 1;
     return 0;
 }
 fn _gsn_has(noff): i64 {
@@ -12147,8 +12162,8 @@ fn _gsn_has(noff): i64 {
 var _gcr = 0;
 var _gcr_n = 0;
 fn _gcr_add(noff, gnoff, slot): i64 {
-    if (_gcr == 0) { _gcr = alloc(64 * 24); }
-    if (_gcr_n >= 64) { return 0; }
+    if (_gcr == 0) { _gcr = alloc(64 * 24); _gcr_cap = 64; }
+    if (_gcr_n >= _gcr_cap) { _gcr = _tab_grow(_gcr, _gcr_cap * 3); _gcr_cap = _gcr_cap * 2; }
     store64(_gcr + _gcr_n * 24, noff);
     store64(_gcr + _gcr_n * 24 + 8, gnoff);
     store64(_gcr + _gcr_n * 24 + 16, slot);

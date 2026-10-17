@@ -19,6 +19,10 @@
 #   S  a bounded generic STRUCT: `Box<R>`, a written `Box<i64>` and a bare `Box` (its i64 base) with
 #      no impl are refused; `struct W<T> { b: Box<T>; }` is fine until W's i64 base is used; a
 #      generic fn instantiating `Box<T>` has no i64 instance (refused at `mk(5)`, not at `mk`)
+#   B  (6.7.14) more than 64 bounded receivers in one generic: the receivers' table (`_bnr_tab`) held 64
+#      and dropped the rest, so a later `z.show()` was no bounded site and the i64 base (live: `impl Show
+#      for i64`) refused it — "no struct type in scope for 'z'". B1 a parameter, 65 `var cN: T = v;`, then
+#      `z.show()`: exit 5; B1b 130 (two growths). issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
 #
@@ -30,6 +34,10 @@
 #   quiet mode in `_sfield_gen` -> S4 BUILDS (W's base never learns it holds a Box<i64>).
 # 6.7.11 I8: `_gen_call_inst` resolving the inner call with the cursor left on the outer one -> RED
 #   I8's column (the refusal named `gx`'s column, 12 for 15 in the filed shape).
+# 6.7.14 B1 / B1b: `_bnr_add` dropping the 65th bounded receiver again (a one-edit scratch copy of the
+#   tree, its 2-stage mutant cycc, this gate run from it) -> RED B1 / B1b ("generic 'f' has no i64 (or
+#   other scalar) instance": `z.show()` was no bounded site, so the scan counted it a struct use; with the
+#   T-typed names' table capped too, as at the slot open, it is "no struct type in scope for 'z'").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -132,6 +140,22 @@ mk s5 "$SB
 fn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 1; return b; }" 'var a: Box<Pt> = mk(p); return mk(5).n;'
 refused s5 "generic 'mk' has no i64 instance" "S5: mk(p) is fine; mk(5) would need Box<i64>"
 
+# B — more than 64 bounded receivers (6.7.14). `brgen <name> <n>`: f's parameter v and <n> locals.
+brgen() {
+    _bd='impl Show for i64 { fn show(self): i64 { return self + 1; } }
+fn f<T: Show>(v: T): i64 {'
+    k=1; while [ "$k" -le "$2" ]; do _bd="$_bd
+    var c$k: T = v;"; k=$((k + 1)); done
+    mk "$1" "$_bd
+    var z: T = v;
+    return z.show();
+}" 'return f(p) + f(2) - 40;'
+}
+brgen b1 65
+exits b1 5 "B1: 66 bounded receivers (v + 65 locals), then z.show() — on Pt (42) and on i64 (3)"
+brgen b1b 130
+exits b1b 5 "B1b: 131 bounded receivers (the table grows twice)"
+
 # C — anti-vacuous
 mk c1 'trait Eq2 { fn eq2(self, o: Pt): i64; }
 impl Eq2 for Pt { fn eq2(self, o: Pt): i64 { return self.x - o.x; } }
@@ -146,4 +170,4 @@ printf 'fn id<T>(v: T): i64 { return v + 1; }\nsyscall(60, id(41));\n' > "$T/c2.
 exits c2 42 "C2: a program with no bound"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); well-formed bounded code runs (C)"

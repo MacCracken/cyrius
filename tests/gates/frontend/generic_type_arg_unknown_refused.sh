@@ -54,6 +54,13 @@
 #      a field typed `Box<T>` one hop down (`o.inner.v.y`, out of the scan's reach) builds through the
 #      documented `var t: T = o.inner.v;` (CF6). The runtime rows are generic_struct_inference.tcyr G12.
 #      Filed: docs/development/issues/archived/2026-10-10-generic-base-reads-carrier-field-as-struct.md
+#      CF7-CF8 (6.7.14) the stub scan's tables grow: the struct-carrier table (`_gcr`) and the T-typed
+#      names (`_gsn`) held 64 entries per generic and dropped the 65th without a word, so a later carrier's
+#      `z.v.y` failed "expected ';', got '.'" and a later T-typed local's `z.y` "no struct type in scope
+#      for 'z'". CF7 the filed repro (a parameter, 63 `var cN: Box<T>;`, then `z`): exit 44; CF7b 130
+#      carriers (two growths): 44; CF8 a parameter, 65 `var cN: T = b;`, then `z.y`: 44; CF8b 130: 44.
+#      The bounded receivers' table (`_bnr_tab`) is trait_bounds_checked.sh's B1.
+#      Filed: docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -78,6 +85,9 @@
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
 #   6.7.11: `_gs_use` mode 0 without `_gs_cfield` -> CF1 / CF5 RED (the definition fails), CF2-CF4
 #   RED (refused, but by the parse error, not by name)
+#   6.7.14 (a one-edit scratch copy of the tree each, its 2-stage mutant cycc, this gate run from it):
+#   `_gcr_add` dropping at 64 again -> CF7 / CF7b RED ("expected ';', got '.'"), CF8 green;
+#   `_gsn_add` dropping at 64 again -> CF8 / CF8b RED ("no struct type in scope for 'z'"), CF7 green
 #   (review) `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
 #   `_refuse_toplevel_pair_arg` on FINDFN -> P RED (BUILT)
 # The runtime halves (inference on every path, signature types) are mutation-proven by
@@ -308,5 +318,25 @@ exits cf5 5 "CF5: the definition alone, never called"
 printf 'struct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nstruct Out<T> { inner: Box<T>; k; }\nfn gd<T>(o: Out<T>): i64 { var t: T = o.inner.v; return t.y; }\nfn go(): i64 { var o: Out<Pt>; o.inner.v.x = 1; o.inner.v.y = 6; o.k = 2; return gd(o); }\nsyscall(60, go());\n' > "$T/cf6.cyr"
 exits cf6 6 "CF6: one hop down (o.inner.v), through the documented T-typed local"
 
+# CF7-CF8 (6.7.14): more than 64 carriers / T-typed names in one generic. `cfgen <name> <n> <decl>`:
+# `gy<T>(b: <param>)` with <n> locals `var cN<decl>`, then `var z<decl> = b;`; the body's last line is $CFR.
+cfgen() {
+    { printf 'include "lib/syscalls.cyr"\nstruct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nfn gy<T>(b: %s): i64 {\n' "$CFP"
+      k=1; while [ "$k" -le "$2" ]; do printf '    var c%d%s;\n' "$k" "$3"; k=$((k + 1)); done
+      printf '    var z%s = b;\n    %s\n}\n%s\nsyscall(60, main());\n' "$CFZ" "$CFR" "$CFM"; } > "$T/$1.cyr"
+}
+CFP='Box<T>'; CFZ=': Box<T>'; CFR='return z.v.y;'
+CFM='fn main(): i64 { var b: Box<Pt>; b.v.x = 3; b.v.y = 44; b.n = 1; return gy(b); }'
+cfgen cf7 63 ': Box<T>'
+exits cf7 44 "CF7: the filed repro — a parameter, 63 \`var cN: Box<T>;\` carriers, then \`z.v.y\` (the 65th was dropped)"
+cfgen cf7b 130 ': Box<T>'
+exits cf7b 44 "CF7b: 130 carriers (the table grows twice)"
+CFP='T'; CFZ=': T'; CFR='return z.y;'
+CFM='fn main(): i64 { var p: Pt; p.x = 3; p.y = 44; return gy(p); }'
+cfgen cf8 65 ': T = b'
+exits cf8 44 "CF8: a parameter, 65 \`var cN: T = b;\` T-typed locals, then \`z.y\`"
+cfgen cf8b 130 ': T = b'
+exits cf8b 44 "CF8b: 130 T-typed locals (the table grows twice)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14)"
