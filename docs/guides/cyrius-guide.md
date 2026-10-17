@@ -3195,6 +3195,14 @@ tuple types are the same type exactly when their element lists are equal: `(i64,
 `(i64, i64)` copy into each other, and a copy between any other pair is the struct copy's type
 error. Diagnostics name a tuple by its spelling, `(i64, f64)`.
 
+A tuple parameter takes the tuple's ADDRESS, so an untyped word passed to one — `take(&t)`, a
+variable `u = &t`, a call `mk()` declared `: i64` that returns an address — is that address, as an
+untyped value is a struct parameter's (a tuple has no `*T` spelling, so this is the way to pass one
+by pointer). What can never be an address is refused (6.7.14, the user's decision of 2026-10-16): an
+integer literal, `take(5)`, and a call returning several values, `take(g2(3))` — a fn declared one
+scalar whose `return (a, b)` / `ret2` pass 1 counted too. A one-value call such as `take(one(3))` is
+a word like any other and is passed as the address; it is the caller's to make it one.
+
 **Where the type goes.** A `var` (a local, or a global in either zone), a parameter, a struct
 field, and a fn's multi-value return `: (T1, T2)` / `: (T1, T2, T3)`:
 
@@ -3362,7 +3370,8 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
-| `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `take(5)` into a tuple parameter (an integer literal; 6.7.14) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |

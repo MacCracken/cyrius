@@ -315,6 +315,66 @@ exits() {   # <name> <want> <what> <source>
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
 P='struct P { a; b; }\n'
+# 6.7.14 — ROWS ON EVERY TARGET: `refused4` / `exits4` compile (and run) a row on x86_64, aarch64 (cross; qemu),
+# cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, the private prefix), the cross compilers built from this tree by
+# $CC on first use. A missing tool is a SKIP that names it.
+X4=0
+X4L="x86_64 pe"
+_x4_init() {
+    [ "$X4" -eq 1 ] && return 0
+    X4=1
+    if command -v qemu-aarch64 > /dev/null 2>&1; then
+        if "$CC" < src/main_aarch64.cyr > "$T/x4_a64" 2> /dev/null && [ -s "$T/x4_a64" ]; then chmod +x "$T/x4_a64"; X4L="$X4L aarch64"
+        else bad "the 4-leg rows: src/main_aarch64.cyr did not build"; fi
+    else echo "  SKIP the 4-leg rows' aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+    if "$CC" < src/main_cx.cyr > "$T/x4_cx" 2> /dev/null && [ -s "$T/x4_cx" ] && "$CC" < programs/cxvm.cyr > "$T/x4_vm" 2> /dev/null && [ -s "$T/x4_vm" ]; then
+        chmod +x "$T/x4_cx" "$T/x4_vm"; X4L="$X4L cx"
+    else bad "the 4-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+    X4W=0
+    if command -v wine > /dev/null 2>&1; then X4W=1
+    else echo "  SKIP the 4-leg rows' PE run leg — wine not installed (the PE refusals still run)"; skips=$((skips + 1)); fi
+}
+_x4_cc() {   # <leg> <name>: $T/<name>.<leg> (+ .<leg>.err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$T/x4_a64" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        cx)      timeout 60 "$T/x4_cx" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+    esac
+}
+refused4() {   # <name> <message fragment> <what> <source>: refused once on every leg, no binary
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        n=$(grep -c '^error' "$T/$1.$leg.err")
+        if [ "$rc" -eq 0 ]; then bad "$3 ($leg): BUILT (rc 0)"
+        elif ! grep -qF "$2" "$T/$1.$leg.err"; then bad "$3 ($leg): refused, but not as expected: $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        elif [ "$n" -ne 1 ]; then bad "$3 ($leg): $n error lines (want 1): $(grep '^error' "$T/$1.$leg.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$T/$1.$leg" ]; then bad "$3 ($leg): refused, but a binary was written"
+        else ok "$3 ($leg): refused once"; fi
+    done
+}
+exits4() {   # <name> <want> <what> <source>: compiles and exits <want> on every leg
+    _x4_init
+    printf '%b' "$4" > "$T/$1.cyr"
+    for leg in $X4L; do
+        _x4_cc "$leg" "$1"
+        if [ "$rc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$3 ($leg): rc $rc: $(grep '^error' "$T/$1.$leg.err" | head -1)"; continue; fi
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 10 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/x4_vm" < "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$X4W" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
+        esac
+        if [ "$got" -eq "$2" ]; then ok "$3 ($leg): exit $got"; else bad "$3 ($leg): exit $got, want $2"; fi
+    done
+}
 
 # ── L: the lexer ─────────────────────────────────────────────────────────────────────────────────
 # L1: every range whose upper bound is a digit run — after a number, an IDENT, `)` and `]`. Its second
@@ -524,6 +584,30 @@ refused r17u2 "a multi-value call 'B_mku' $R17" "R17u2: a method \`take(b.mku(3)
 refused r17u3 "a multi-value call 'mk3' is not a tuple argument - bind it first: \`var t: (i64, i64, i64) = mk3(..);\`" "R17u3: a counted 3-value callee into \`(i64, i64, i64)\`" 'fn mk3(a) { return (a, a + 1, a + 2); }\nfn take(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }\nfn f(): i64 { return take(mk3(1)); }\nsyscall(60, f());\n'
 exits r17u4 45 "R17u4: a mixed-arity undeclared callee is not judged (its one-value path hands a tuple's address)" "var G: (i64, i64) = (4, 5);\nfn mkm(a) { if (a == 0) { return (1, 2); } return &G; }\n${TK}fn f(): i64 { return take(mkm(1)); }\nsyscall(60, f());\n"
 refused r17u5 "a multi-value call 'mk' $R17" "R17u5: the declared callee, the same text (control)" "${MK}${TK}fn f(): i64 { return take(mk(3)); }\nsyscall(60, f());\n"
+# R17v (6.7.14, D44, the user's decision of 2026-10-16; issues/2026-10-15-non-tuple-word-into-tuple-parameter-dereferenced.md)
+# — what can never be a tuple's address is refused into a tuple parameter: an integer literal (`_tup_arg_lit`, its own
+# words) and a call returning several values from a fn declared ONE scalar, which pass 1 counted (6.7.13's D23 B
+# shape; `_mv_callee_any`), R17's words — each compiled and the callee read through the value (139 / 139 / 1 / 5 on
+# x86_64 / aarch64 / cx / PE). An untyped word stays the address (R17v9: `take(&t)`, `take(u)`, `take(mk())` run on
+# every leg). `take(one(3))` — a one-value call — is a word like those and still compiles and crashes (the decision:
+# the caller's to make it an address), so it has no row. Every row on all four legs.
+# Mutations (scratch trees, run 2026-10-17, CYCC= the mutant): the tree before (6d54e86c) -> R17v1-R17v8, R17v10,
+# R17v11 BUILD on every leg; `_tup_arg_call` back to `_mv_callee` -> R17v2, R17v3, R17v6; `_tup_arg_mrc` back to
+# `_mv_callee` -> R17v4, R17v5; `_sc_post_small` noting `_mv_callee` only -> R17v4, R17v5; `_try_push_struct_addr_arg`
+# without its `_tup_arg_lit` call -> R17v1, R17v7, R17v8, R17v10, R17v11; `_tup_arg_lit` without its generic skip ->
+# R4c (two error lines: its `g(3, 0)`'s literal reported beside the generic's own tuple-parameter refusal).
+LIT="cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple"
+refused4 r17v1 "2:27: $LIT" "R17v1: the issue's \`take(5)\` verbatim" 'fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(5); }\nsyscall(60, f());\n'
+refused4 r17v2 "3:27: a multi-value call 'g2' $R17" "R17v2: the issue's \`take(g2(3))\`, \`g2\` declared \`: i64\`, verbatim" 'fn g2(a): i64 { return (a, a + 1); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v3 "a multi-value call 'g2' $R17" "R17v3: ... \`g2\`'s values from \`ret2\` (counted since 6.7.14)" 'fn g2(a): i64 { ret2(a, a + 1); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v4 "a multi-value call 'X_g2' is not a tuple argument" "R17v4: a method \`take(x.g2(3))\` declared \`: i64\`" 'struct X { v; }\nimpl X { fn g2(self, a): i64 { return (a, a + 1); } }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var x = X { 0 }; return take(x.g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v5 "a multi-value call 'P_add' is not a tuple argument" "R17v5: an operator \`take(p + q)\`, \`P_add\` declared \`: i64\`" "${P}fn P_add(a: P, b: P): i64 { return (a.a + b.a, a.b + b.b); }\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var p = P { 1, 2 }; var q = P { 3, 4 }; return take(p + q); }\nsyscall(60, f());\n"
+refused4 r17v6 "a multi-value call 'g2' is not a tuple argument - bind it first: \`var t: (f64, f64) = g2(..);\`" "R17v6: a \`: f64\` callee's two values into \`(f64, f64)\`" 'fn g2(x): f64 { return (f64_from(x), f64_from(x + 1)); }\nfn take(t: (f64, f64)): i64 { return f64_to(t.0) * 10 + f64_to(t.1); }\nfn f(): i64 { return take(g2(3)); }\nsyscall(60, f());\n'
+refused4 r17v7 "2:29: $LIT" "R17v7: \`take((5))\`, wrapped" 'fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { var a = take((5)); return a; }\nsyscall(60, f());\n'
+refused4 r17v8 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'take2'" "R17v8: the second argument, \`take2(1, 0x10)\` at top level" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nsyscall(60, take2(1, 0x10));\n'
+exits4 r17v9 34 "R17v9: an untyped word is the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\` (\`mk\`: i64 returning an alloc)" 'include "lib/alloc.cyr"\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; return take(&t) + take(u) + take(mk()) - 68; }\nsyscall(60, f());\n'
+refused4 r17v10 "$LIT" "R17v10: an \`#inline\` callee" '#inline\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(5) + 1; }\nsyscall(60, f());\n'
+refused4 r17v11 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'X.take'" "R17v11: a method's tuple parameter, \`x.take(5)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(5); }\nsyscall(60, f());\n'
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"
@@ -841,66 +925,6 @@ exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) s
 # R16ad (6.7.11) — the triage's capture of a declared \`: (i64, i64)\` fn that returns ONE value: its \`u.1\` was
 # a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
 refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
-# 6.7.14 — ROWS ON EVERY TARGET: `refused4` / `exits4` compile (and run) a row on x86_64, aarch64 (cross; qemu),
-# cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, the private prefix), the cross compilers built from this tree by
-# $CC on first use. A missing tool is a SKIP that names it.
-X4=0
-X4L="x86_64 pe"
-_x4_init() {
-    [ "$X4" -eq 1 ] && return 0
-    X4=1
-    if command -v qemu-aarch64 > /dev/null 2>&1; then
-        if "$CC" < src/main_aarch64.cyr > "$T/x4_a64" 2> /dev/null && [ -s "$T/x4_a64" ]; then chmod +x "$T/x4_a64"; X4L="$X4L aarch64"
-        else bad "the 4-leg rows: src/main_aarch64.cyr did not build"; fi
-    else echo "  SKIP the 4-leg rows' aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
-    if "$CC" < src/main_cx.cyr > "$T/x4_cx" 2> /dev/null && [ -s "$T/x4_cx" ] && "$CC" < programs/cxvm.cyr > "$T/x4_vm" 2> /dev/null && [ -s "$T/x4_vm" ]; then
-        chmod +x "$T/x4_cx" "$T/x4_vm"; X4L="$X4L cx"
-    else bad "the 4-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
-    X4W=0
-    if command -v wine > /dev/null 2>&1; then X4W=1
-    else echo "  SKIP the 4-leg rows' PE run leg — wine not installed (the PE refusals still run)"; skips=$((skips + 1)); fi
-}
-_x4_cc() {   # <leg> <name>: $T/<name>.<leg> (+ .<leg>.err); rc in $rc
-    rc=0
-    case $1 in
-        x86_64)  timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
-        aarch64) timeout 60 "$T/x4_a64" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
-        cx)      timeout 60 "$T/x4_cx" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
-        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
-    esac
-}
-refused4() {   # <name> <message fragment> <what> <source>: refused once on every leg, no binary
-    _x4_init
-    printf '%b' "$4" > "$T/$1.cyr"
-    for leg in $X4L; do
-        _x4_cc "$leg" "$1"
-        n=$(grep -c '^error' "$T/$1.$leg.err")
-        if [ "$rc" -eq 0 ]; then bad "$3 ($leg): BUILT (rc 0)"
-        elif ! grep -qF "$2" "$T/$1.$leg.err"; then bad "$3 ($leg): refused, but not as expected: $(grep '^error' "$T/$1.$leg.err" | head -1)"
-        elif [ "$n" -ne 1 ]; then bad "$3 ($leg): $n error lines (want 1): $(grep '^error' "$T/$1.$leg.err" | head -2 | tr '\n' '|')"
-        elif [ -s "$T/$1.$leg" ]; then bad "$3 ($leg): refused, but a binary was written"
-        else ok "$3 ($leg): refused once"; fi
-    done
-}
-exits4() {   # <name> <want> <what> <source>: compiles and exits <want> on every leg
-    _x4_init
-    printf '%b' "$4" > "$T/$1.cyr"
-    for leg in $X4L; do
-        _x4_cc "$leg" "$1"
-        if [ "$rc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$3 ($leg): rc $rc: $(grep '^error' "$T/$1.$leg.err" | head -1)"; continue; fi
-        chmod +x "$T/$1.$leg"; got=0
-        case $leg in
-            x86_64)  timeout 10 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
-            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
-            cx)      timeout 60 "$T/x4_vm" < "$T/$1.$leg" > /dev/null 2>&1 || got=$? ;;
-            pe)      [ "$X4W" -eq 1 ] || continue
-                     mkdir -p "$WHM"; cp "$T/$1.$leg" "$T/$1.exe"
-                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > /dev/null 2>&1) || got=$? ;;
-        esac
-        if [ "$got" -eq "$2" ]; then ok "$3 ($leg): exit $got"; else bad "$3 ($leg): exit $got, want $2"; fi
-    done
-}
 # R16r2 (6.7.14, D42, the user's decision of 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
 # (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md): a 3-tuple capture of a fn left only
 # through `ret2(..);` / `return ret2(..);` is refused as R16y's `return (a, b);` fn is (`t.2` read the seeded 88 on

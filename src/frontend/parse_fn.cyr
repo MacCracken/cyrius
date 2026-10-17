@@ -1990,6 +1990,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
     # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
     if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
+    if (PEEKT(S) == 1) { _tup_arg_lit(S, fi, argc); }   # 6.7.14 (D44): `take(5)`, refused; pushed as before
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -2480,8 +2481,35 @@ fn _tup_arg_call(S, fi, argc): i64 {
     if (_call_dotted(S, ti) == 1) { return 0; }
     if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
     var cfi = _gen_resolve_call(S, ti);
-    if (_mv_callee(S, cfi) == 0) { return 0; }   # declared or counted (6.7.11 pass 1). CHANGELOG [6.7.13]
+    if (_mv_callee_any(S, cfi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
     return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
+}
+# ⛔ 6.7.14 — AN INTEGER LITERAL IS NO TUPLE (D44, the user's decision, 2026-10-16). `take(5)` pushed 5 as the
+# tuple's address and the callee read through it (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE), where the
+# tuple VARIABLE refuses it ("cannot initialize tuple 't' with a value that is not a tuple"). Refused by name at
+# the literal — a whole argument, inside any parentheses (`_sarg_paren` peels them) — in sync: the caller pushes
+# it as before and `_had_error` withholds the binary. Any other untyped word (`&t`, a name, a one-value call) is
+# still the address, as for a struct parameter: a tuple has no `*T` spelling. CHANGELOG [6.7.14]
+fn _tup_arg_lit(S, fi, argc): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
+    if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
+    PRSTR("cannot pass an integer to tuple parameter ");
+    var pn = _bx_pname(S, fi, argc);
+    if (pn >= 0) {
+        _dyn_pq(S, pn);
+        PRSTR(" ");
+    }
+    _dyn_ps(S, ps);
+    PRSTR(" of ");
+    _dyn_pq(S, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR(" - it takes a tuple");
+    _dyn_eend(S);
+    return 1;
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
 # stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
@@ -2500,7 +2528,7 @@ fn _mrc_note(S, fi, noff, beg): i64 {
 fn _tup_arg_mrc(S, fi, argc, st): i64 {
     if (_mrc_beg != st) { return 0; }
     if (_mrc_end != GTI(S)) { return 0; }
-    if (_mv_callee(S, _mrc_fi) == 0) { return 0; }   # declared or counted. CHANGELOG [6.7.13]
+    if (_mv_callee_any(S, _mrc_fi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
     return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
@@ -2553,6 +2581,20 @@ fn _mv_callee(S, fi): i64 {
     var rs = GFRS(S, fi);
     if (rs == MULTIRET_SID) { return 1; }
     if (rs != 0) { return 0; }
+    if (_fn_ret_arity(S, fi) != 0) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.14 — ... and, for a TUPLE parameter (R17), a fn declared ONE scalar (`: i64`, `: f64`, `: bool`,
+# `: i32` ..) that pass 1 counted returning several values (6.7.13's D23 B keeps it): `take(g2(3))` with
+# `fn g2(a): i64 { return (a, a + 1); }` pushed the first value as the tuple's address (139 / 139 / 1 / 5).
+# Refused as the undeclared callee is (D44, the user's decision, 2026-10-16). `_mv_callee` itself stays
+# keyed on an undeclared return: a named struct's `: P` crossing reads it. CHANGELOG [6.7.14]
+fn _mv_callee_any(S, fi): i64 {
+    if (_mv_callee(S, fi) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) { return 0; }        # a named struct
+    if (rs < 0 - 9) { return 0; }    # a handle (Result / Option / Tagged / cstring) or a vector
     if (_fn_ret_arity(S, fi) != 0) { return 1; }
     return 0;
 }
@@ -6122,7 +6164,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
-    if (_mv_callee(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one
+    if (_mv_callee_any(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one; 6.7.14: a counted `: i64`
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     _sc_beg = beg;
