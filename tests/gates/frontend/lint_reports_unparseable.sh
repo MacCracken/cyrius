@@ -489,6 +489,56 @@ rc=0
 check "ANTI-VACUOUS: the real compiler in the same home lints it (exit 0)" 0 "$rc"
 check "ANTI-VACUOUS: …and reports 0 warnings" 1 "$(grep -c '^0 warnings' "$T/o" || true)"
 
+# ── AXIS 13 (6.7.14) — ⭐ a CHAIN through a `*T` field whose T is declared in a SIBLING file
+# (issues/2026-10-08-syntax-only-chained-field-through-unresolved-pointee.md). `a.f.g` with `f: *Foo` and
+# `Foo` declared in another file: the hop through `f` needs Foo's struct id, finds none and stops, and
+# `--syntax-only` reported the leftover `.g` as a syntax error the file does not have — "expected '=', got
+# '.'" (a store, `OP=`), "expected ';', got '.'" (a read, a method call) — so lint refused valid source.
+# Each form: premise (it compiles once the sibling is in front), then `--syntax-only` exits 0 with no
+# diagnostic, then lint lints it. The store row is the filed repro verbatim. ANTI-VACUOUS: a real syntax
+# error after the chain (`a.f.g = ;`, `a.f.g(1;`) is still reported, and still refuses lint.
+# RED on a5b7554a (the lane before the bite): every `--syntax-only` and LINTED row of so_store, so_opeq,
+# so_read, so_meth, so_deep; the premise and ANTI-VACUOUS rows green. MUTATIONS (run 2026-10-16): `_fst_on`
+# without its --syntax-only chain arm -> so_store, so_opeq RED; `_field_load_on` without it -> so_read,
+# so_meth, so_deep RED; `_synonly_chain_call` not walking `(args)` -> so_meth, so_deep RED.
+echo "axis 13 — a chain through a '*T' field whose T is in a SIBLING file passes --syntax-only and lint:"
+cat > "$T/w/so_store.cyr" <<'EOF'
+struct Bar { f: *Foo; n; }      # Foo is declared in another file of the project
+fn main() {
+    var a: Bar;
+    a.f.g = 1;                  # also: a.f.g += 1;  var v = a.f.g;  a.f.g(1);
+    return 0;
+}
+var r = main();
+EOF
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    a.f.g += 1;\n    return 0;\n}\nvar r = main();\n' > "$T/w/so_opeq.cyr"
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    var v = a.f.g;\n    return v;\n}\nvar r = main();\n' > "$T/w/so_read.cyr"
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    a.f.m(1);\n    return 0;\n}\nvar r = main();\n' > "$T/w/so_meth.cyr"
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    return a.f.m(1) + a.f.g;\n}\nvar r = main();\n' > "$T/w/so_deep.cyr"
+printf 'struct Foo { g; }\nimpl Foo { fn m(self, x) { return x + self.g; } }\n' > "$T/w/so_sib.cyr"
+for f in so_store so_opeq so_read so_meth so_deep; do
+    cat "$T/w/so_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+    check "premise: $f compiles once Foo is in scope" 0 "$j_rc"
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    a.f.g = ;\n    return 0;\n}\nvar r = main();\n' > "$T/w/so_bad1.cyr"
+printf 'struct Bar { f: *Foo; n; }\nfn main() {\n    var a: Bar;\n    a.f.m(1;\n    return 0;\n}\nvar r = main();\n' > "$T/w/so_bad2.cyr"
+for f in so_bad1 so_bad2; do
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "ANTI-VACUOUS: $f, a syntax error after the chain, is refused by --syntax-only" "yes" "$([ "$s_rc" != 0 ] && echo yes || echo no)"
+    check "ANTI-VACUOUS: $f names it at line 4" 1 "$(grep -cE '^error:<source>:4:[0-9]+: (unexpected|expected) ' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+done
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: lint-reports-unparseable — lint tells the truth about parsing AND still lints"

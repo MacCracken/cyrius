@@ -34,6 +34,37 @@ fn _synonly_skip_chain(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — `--syntax-only`, A CHAIN PAST A FIELD WHOSE POINTEE THIS FILE CANNOT SEE: `a.f.g`, `a.f.g(1)`
+# with `f: *Foo` and `Foo` declared in another file. The `*T` hop needs Foo's struct id, finds none and
+# stops, and the leftover `.g` was reported — "expected '=', got '.'" (a store, `OP=`), "expected ';', got
+# '.'" (a read, a method call) — a syntax error the file does not have, so `cyrius lint` refused valid
+# source (the v6.5.19 class). The rest of the chain is walked as `_synonly_skip_chain` walks it, and each
+# `(args)` in it parsed through PCMPE, so a grammar error inside one is still caught. The store's tail is
+# `_synonly_fld_tail`'s. --syntax-only emits nothing: no compiled output changes. CHANGELOG [6.7.14]
+fn _synonly_chain_call(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        _synonly_skip_chain(S);
+        if (PEEKT(S) == 10) { _synonly_args(S); }
+        else { go = 0; }
+    }
+    return 0;
+}
+# `(args)` at the cursor: each argument through PCMPE, the `)` consumed.
+fn _synonly_args(S): i64 {
+    STI(S, GTI(S) + 1);   # consume (
+    if (PEEKT(S) != 11) {
+        var go = 1;
+        while (go == 1) {
+            PCMPE(S);
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            else { go = 0; }
+        }
+    }
+    _expect_step(S, 11);
+    return 0;
+}
+
 # ⛔ 6.6.12 — A TYPED ARRAY RECORDS ITS ELEMENT TYPE. `var a: T[N]` sized N*sizeof(T) since
 # v6.2.1 but kept no record of T, so there was nothing a subscript could scale or load by and
 # the language had no `a[i]` at all (read or write): `store64(&a + i*8, v)` was the only
@@ -2101,6 +2132,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     var hop = _rlf_hop;
     if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
     if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
+    # 6.7.14: --syntax-only, a `.name` / `.m(..)` left past a `*T` field whose T this file does not declare.
+    if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_chain_call(S); } }
     if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
     if (hop < 0) { _fls_note(S, pfl_beg, ft); }   # 6.7.6: passive, emits nothing
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
@@ -2402,6 +2435,8 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
         sid = _hop_sid;
         off = _rlf_off;
     }
+    # 6.7.14: --syntax-only, a `.name` left past a `*T` field whose T this file does not declare.
+    if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_fld_tail(S, term); } }
     var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
     if (PEEKT(S) == 28) { return _fld_sub_store(S, idx, sid, off, hop, term); }   # 6.7.8: `h.p[i] = v`
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
