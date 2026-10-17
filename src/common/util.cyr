@@ -2822,22 +2822,37 @@ fn _sync_skip(S): i64 {
             # MANUFACTURED `unexpected else` on well-formed `lib/fs.cyr` that made
             # `cyrius lint` refuse valid downstream source. Skip past them like any other
             # token and let the enclosing `if` handler own them.
-            elif (t == 32) { go = 0; }                     # fn
-            elif (t == 3) { go = 0; }                      # var
-            elif (t == 15) { go = 0; }                     # if
-            elif (t == 16) { go = 0; }                     # while
-            elif (t == 172) { go = 0; }                    # do (6.7.5)
-            elif (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { go = 0; }   # `loop {` (6.7.5, contextual)
-            elif (t == 55) { go = 0; }                     # for
-            elif (t == 33) { go = 0; }                     # return
-            elif (t == 57) { go = 0; }                     # switch
-            elif (t == 75) { go = 0; }                     # match
-            elif (t == 40) { go = 0; }                     # struct
-            elif (t == 60) { go = 0; }                     # enum
+            elif (_sync_kw(S, t) == 1) { go = 0; }
             else { STI(S, GTI(S) + 1); }
         }
     }
     _panic = 0;
+    return 0;
+}
+# The statement-start keywords `_sync_skip` stops at (token `t` at the cursor): fn, var, if, while,
+# do (6.7.5), `loop {` (6.7.5, contextual), for, return, switch, match, struct, enum.
+fn _sync_kw(S, t): i64 {
+    if (t == 32 || t == 3 || t == 15 || t == 16 || t == 172 || t == 55) { return 1; }
+    if (t == 33 || t == 57 || t == 75 || t == 40 || t == 60) { return 1; }
+    if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 1; }
+    return 0;
+}
+# 1 = the cursor is a recovery point `_sync_skip` stops at: EOF, `}`, `;` or a statement keyword.
+fn _sync_stop_at(S): i64 {
+    var t = PEEKT(S);
+    if (t == 12 || t == 14 || t == 5) { return 1; }
+    return _sync_kw(S, t);
+}
+# ⛔ 6.7.14 — `if (PEEKT(S) != t) { ERR_EXPECT(S, t); } STI(S, GTI(S) + 1);` that never steps a recovery
+# point on a miss. A call's missing `)` stepped its statement's `;`, the statement's own `;` check then
+# stepped the `for` / `while` after it, and the resync stopped at the `var` INSIDE that header: `g(1, 2;`
+# then a `for` printed "expected ')'", "expected '=', got '<'" and "return outside a fn body". Left in
+# place, the `;` ends the statement and the keyword starts the next. 1 = the token was there (stepped).
+# CHANGELOG [6.7.14]
+fn _expect_step(S, t): i64 {
+    if (PEEKT(S) == t) { STI(S, GTI(S) + 1); return 1; }
+    ERR_EXPECT(S, t);
+    if (_sync_stop_at(S) == 0) { STI(S, GTI(S) + 1); }
     return 0;
 }
 
@@ -2862,12 +2877,23 @@ fn _err_head(S): i64 {
     return _err_head_at(S, GTI(S));
 }
 
+# 6.7.14 — a diagnostic's token, clamped to the EOF token. A missing `}` with two blocks open reported
+# the inner block at EOF and stepped past it, so the outer block's "expected '}', got end of file" read
+# the zeroed slot after the last token: `error:0:1:`, no file, no excerpt. `_wd_eof_tick`'s rewind, at
+# the one point every emitter's location goes through. CHANGELOG [6.7.14]
+fn _err_ti(S, ti): i64 {
+    var n = GTCNT(S);
+    if (n > 0) { if (ti >= n) { return n - 1; } }
+    return ti;
+}
+
 # v6.5.19 — the same head for a diagnostic about a token OTHER than the cursor.
 # `_err_head` reads GTI(S), which is correct for a parse error (the cursor IS the
 # problem) and wrong for a warning raised after the parser has already walked past the
 # thing it is describing: the `duplicate fn` warning fires once the fn NAME has been
 # consumed, so it used to point at the `(` rather than at the definition.
 fn _err_head_at(S, ti): i64 {
+    ti = _err_ti(S, ti);
     FM_LOOKUP(S, GTLINE(S, ti));
     syscall(SYS_WRITE, 2, ":", 1);
     PRNUM(_err_col(S, GTOFF(S, ti)));
@@ -2882,7 +2908,7 @@ fn _err_head_at(S, ti): i64 {
 #     <source line>
 #         ^
 fn _err_excerpt(S): i64 {
-    var off = GTOFF(S, GTI(S));
+    var off = GTOFF(S, _err_ti(S, GTI(S)));
     var bl = GBL(S);
     if (off == 0) { return 0; }
     if (off > bl) { return 0; }   # == bl is the EOF token of a source with no final newline (6.6.17)

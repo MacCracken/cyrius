@@ -1670,15 +1670,12 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # diagnostic, keeping the stream in sync. See _syntax_only.
             if (_syntax_only == 1) { sid = 0; }
             else {
-                syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0xEC00000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
-                _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _gv_note_blockscoped(S, noff);
-                _had_error = 1; sid = 0;
+                _undef_var_report(S, noff, "'\n");   # 6.7.14: shared with the factor's (`_ce_name_said`)
+                sid = 0;
             }
         }
         else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
@@ -2350,15 +2347,12 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
             # diagnostic, keeping the stream in sync. See _syntax_only.
             if (_syntax_only == 1) { sid = 0; }
             else {
-                syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0xEC00000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
-                _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _gv_note_blockscoped(S, noff);
-                _had_error = 1; sid = 0;
+                _undef_var_report(S, noff, "'\n");   # 6.7.14: shared with the factor's (`_ce_name_said`)
+                sid = 0;
             }
         }
         else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T

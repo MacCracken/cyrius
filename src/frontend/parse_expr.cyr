@@ -1162,8 +1162,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;
     }
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);                     # consume ')'
+    _expect_step(S, 11);                    # consume ')' (6.7.14: a miss keeps a `;` / keyword)
     # ⛔ v6.5.46 — THE `fncallN` FAMILY WAS EXEMPT FROM THE CALL-ARITY CHECK that ordinary calls
     # have enforced as a hard error since v6.5.1. `fncall3(f, a, b)` and `fncall1(f, a, b, c)`
     # both compiled: the name says how many arguments follow, `cp_argc` counts how many did, and
@@ -1249,8 +1248,7 @@ fn _lower_mulh64(S): i64 {
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); }
     STI(S, GTI(S) + 1);
     PCMPE(S); EPOPC(S); EMULH(S);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     _cfo = 0;
     _icall_untyped(S);
     return 0;
@@ -3285,10 +3283,10 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) {
-            ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
-            _gv_note_blockscoped(S, noff);
-        }
+        if (_syntax_only == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+                ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+                _gv_note_blockscoped(S, noff);
+            } }
         aw = 0;
     } elif (aw == 0) {
         _sub_refuse(S, noff, k, ix, d, pw);
@@ -4410,6 +4408,36 @@ fn _gv_narrow_sx(S, idx, vt, gvsz): i64 {
     return 0;
 }
 
+# The factor's "undefined variable 'x'" (a read, or `&x`, of a name declared nowhere; `tail` closes the
+# quote), at the cursor — unless the const fn being parsed was refused naming x (`_ce_name_said`, 6.7.14).
+# Out of _PARSE_FACTOR_IMPL, a cybs-ceiling fn.
+# `syscall(N, ..)`'s arity warning (`argc` counts N), against the x86 table. Out of _PARSE_FACTOR_IMPL (cybs's
+# ceiling). 6.7.14: not after a refusal in the statement (the latch): an unclosed `syscall(39, 0;` has no
+# argument count, and its warning followed the "expected ')'". CHANGELOG [6.7.14]
+fn _sc_arity_warn(S, sc_num, argc): i64 {
+    if (_panic == 1) { return 0; }
+    if (sc_num < 0) { return 0; }
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    var expect = _SC_ARITY(sc_num);
+    if (expect < 0) { return 0; }
+    var got = argc - 1;
+    if (got == expect) { return 0; }
+    # The cross-arch number-reuse shapes that are not a mismatch: see _sc_arity_skip. CHANGELOG [6.6.12]
+    if (_sc_arity_skip(sc_num, got) == 0) { WARN(S, "syscall arity mismatch", 22); }
+    return 0;
+}
+fn _undef_var_report(S, noff, tail): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(tail);
+    _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
+    _gv_note_blockscoped(S, noff);   # 6.6.6: see there
+    _had_error = 1;
+    return 0;
+}
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -4711,14 +4739,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # token stream stays in sync and no cascade is invented. See _syntax_only
             # (src/common/util.cyr) for why report-and-continue was rejected here.
             if (_syntax_only == 1) { EMOVI(S, 0); return 0; }
-            syscall(SYS_WRITE, 2, "error:", 6);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "' (missing include or enum?)\n", 29);
-            _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
-            _gv_note_blockscoped(S, noff);   # 6.6.6: see there
-            _had_error = 1; EMOVI(S, 0); return 0;
+            _undef_var_report(S, noff, "' (missing include or enum?)\n");
+            EMOVI(S, 0); return 0;
         }
         var vt = GVTYPE(S, idx);
         _gv_load_ps(S, idx, vt);
@@ -4881,12 +4903,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         }
         # Nothing of this name exists in any scope.
         if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
-        syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-        PRSTR(S + 0xEC00000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2);
-        _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
-        _gv_note_blockscoped(S, anoff);   # 6.6.6: see there
-        _had_error = 1; EMOVI(S, 0); return 0;
-        return 0;
+        _undef_var_report(S, anoff, "'\n");
+        EMOVI(S, 0); return 0;
     }
     if (typ == 30) {
         # STRING literal
@@ -4921,8 +4939,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { scgo = 0; }
         }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 11);   # 6.7.14: a miss keeps a `;` / keyword (and see `_sc_arity_warn`)
         # Mach-O ARM target: the aarch64 ESYSXLAT chain translates the
         # BSD SVC whitelist (read, write, open, close, mmap, mprotect,
         # munmap, exit). Non-whitelisted syscalls fall through to svc with
@@ -5824,19 +5841,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # with wrong arity now get the runtime error rather than a
         # compile warning — acceptable tradeoff; the warning was
         # best-effort, not load-bearing.
-        if (sc_num >= 0) { if (_AARCH64_BACKEND == 0) {
-                var expect = _SC_ARITY(sc_num);
-                if (expect >= 0) {
-                    var got = argc - 1;
-                    if (got != expect) {
-                        # The cross-arch number-reuse shapes that are not a mismatch: see
-                        # _sc_arity_skip (out of this fn: the cybs per-fn cap). CHANGELOG [6.6.12]
-                        if (_sc_arity_skip(sc_num, got) == 0) {
-                            WARN(S, "syscall arity mismatch", 22);
-                        }
-                    }
-                }
-            } }
+        _sc_arity_warn(S, sc_num, argc);
         return 0;
     }
     if (typ == 25) {
@@ -5844,7 +5849,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD8(S);
         return 0;
     }
@@ -5853,7 +5858,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD16(S);
         return 0;
     }
@@ -5862,7 +5867,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD32(S);
         return 0;
     }
@@ -5871,7 +5876,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD64(S);
         return 0;
     }
@@ -5883,7 +5888,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE8(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 45) {
@@ -5894,7 +5899,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE16(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 46) {
@@ -5905,7 +5910,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE32(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 47) {
@@ -5916,7 +5921,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE64(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 8) { return _deref_read(S); }   # *expr
@@ -6253,7 +6258,7 @@ fn PF64BIN(S, tok): i64 {
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
     PCMPE(S);
     EMIT_F64_BINOP(S, tok - 62);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     return 0;
 }
 # f64 compare ops
@@ -6269,7 +6274,7 @@ fn PF64CMP(S, tok): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     # v5.11.38 path-A: f64 cmp dispatch lives in <backend>/emit.cyr.
     EF64_CMP(S, tok);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     # v6.4.56 D3 — the result is an i64 BOOLEAN, not a float. Without this the
     # builtin leaked its last operand's F64_TYID, mis-routing an outer
     # `f64_lt(..) == 1` through the f64-compare path.
@@ -6443,7 +6448,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_LOOP(S, 3, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_sqrt(dst, src, n)
@@ -6459,7 +6464,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 0, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_abs(dst, src, n)
@@ -6475,7 +6480,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 1, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_fmadd(dst, a, b, c, n)
@@ -6495,7 +6500,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F64V_FMADD(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_dot(a, b, n) → f64 in rax/x0 (sum of a[i]*b[i])
@@ -6511,7 +6516,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_DOT(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.5 (SIMD Phase 2): f32v_fmadd(dst, a, b, c, n) — dst[i]=a[i]*b[i]+c[i]
@@ -6532,7 +6537,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F32V_FMADD(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.5 (SIMD Phase 2): f32v_dot(a, b, n) → f32 bit pattern in rax (sum of
@@ -6549,7 +6554,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F32V_DOT(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul(dst, a, b, n, w) — packed integer
@@ -6575,7 +6580,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
             if (ivw != 1) { if (ivw != 2) { if (ivw != 4) { if (ivw != 8) { ERR_MSG(S, "iv width must be 1/2/4/8", 24); } } } }
             STI(S, GTI(S) + 1);
             EMIT_IVEC_BINOP(S, ivop, ivw, ivbase);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 0;
         } }
     # v6.4.7 (Phase 3b): iv_dp8(a, b, n) → i32 widening int8 dot in rax (a=u8, b=i8).
@@ -6592,7 +6597,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, dpbase, 2);   # max, never a lowering assignment
         EMIT_IVEC_DP8(S, dpbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.9 (Phase 4 R2): f32v8_fma(dst, a, b, c, n) — 256-bit AVX2 fused multiply-add
@@ -6613,7 +6618,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, fmbase, 4);   # max, never a lowering assignment
         EMIT_F32V8_FMADD(S, fmbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.9 (Phase 4 R2): f32v8_dot(a, b, n) → f32 bit pattern in rax (sum a[i]*b[i]
@@ -6630,7 +6635,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, d8base, 2);   # max, never a lowering assignment
         EMIT_F32V8_DOT(S, d8base);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_scale(dst, a, scalar, n) — dst[i] = a[i] * scalar
@@ -6648,7 +6653,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_SCALE(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_axpy(y, x, alpha, n) — y[i] += alpha * x[i]
@@ -6666,7 +6671,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_AXPY(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # ret2(a, b) — return two values in rax:rdx
@@ -6682,18 +6687,18 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         # rax = b, stack = a → mov rdx, rax; pop rax
         EMOVRDXRAX(S);
         EPOPR(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
         if (r2out == 0) { _mret_land(S); }   # rax:rdx, then the epilogue jump (6.7.7); none outside a fn (6.7.13)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
-    if (ptyp == 99) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ATAN(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 99) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ATAN(S); _expect_step(S, 11); return 0; }
     # rethi() — read rdx from last function call (mov rax, rdx)
     if (ptyp == 98) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         EMOVRA_RDX(S);
         return 0;
     }
@@ -6716,7 +6721,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
         # rax = mask. AND with shifted val.
         EMOVCA(S); EUNSPILL(S); EANDR(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # bitset(val, offset, width, new) → (val & ~(mask << offset)) | ((new & mask) << offset)
@@ -6742,7 +6747,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); EFLSTORE(S, bsb + 2);          # s2 = width
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bsb + 3);          # s3 = new_val
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # mask = (1 << width) - 1
         EFLLOAD(S, bsb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
@@ -6778,7 +6783,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); EFLSTORE(S, bcb + 1);          # s1 = offset
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bcb + 2);          # s2 = width
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # mask = (1 << width) - 1
         EFLLOAD(S, bcb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
@@ -6860,7 +6865,7 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
     PCMPE(S);
     _SIMD_RESERVE(S, vbu, 2);   # max, never a lowering assignment
     EMIT_F64V4_UNARY(S, op, vbu);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     return 1;
 }
 
@@ -6933,42 +6938,42 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
-    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
     # 6.6.13 — f64_le / f64_ge lower through the `<=` / `>=` operator compare (tok 21 / 22),
     # NaN-false on every backend; they were lib/math.cyr calls (lt, then eq). CHANGELOG [6.6.13]
     if (ptyp == 164) { PF64CMP(S, 21); return 1; }
     if (ptyp == 165) { PF64CMP(S, 22); return 1; }
-    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); _expect_step(S, 11); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
     # v6.6.2: f64_sqrt 79 -> 136 (was double-assigned with `object`).
-    if (ptyp == 136) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 136) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
     # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
     # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
     # native fabs via fmov/fabs/fmov (saves 20 B vs the prior
     # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
-    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); _expect_step(S, 11); return 1; }
     # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
-    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
-    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_trunc(x) — roundsd xmm0, xmm0, 3 / frintz (toward zero). 6.6.13, was a lib/math.cyr fn.
-    if (ptyp == 166) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 166) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
-    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
     # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
     # the converted bits in rax (full move/cvt/move sequence lives per-arch).
-    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
+    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   _expect_step(S, 11); return 1; }
+    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); _expect_step(S, 11); return 1; }
+    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); _expect_step(S, 11); return 1; }
     # f64v_add/sub/mul(dst, a, b, n) — SSE2 packed f64 batch operations.
     # v5.10.39 — route through _SIMD_STASH (was bare EFLSTORE pre-fix).
     # The v5.10.35 locname-staleness fix covered f64v_div/sqrt/abs/
@@ -6994,7 +6999,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
             EMIT_F64V_LOOP(S, ptyp - 89, vbase);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.4.3+ (SIMD Phase 1) — f32v_add/sub/mul(dst, a, b, n) — SSE2 packed f32
@@ -7014,7 +7019,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbf, 3);   # max, never a lowering assignment
             EMIT_F32V_LOOP(S, ptyp - 138, vbf);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul(dst, a, b, n) — 256-bit AVX2 packed
@@ -7033,7 +7038,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbf8, 3);   # max, never a lowering assignment
             EMIT_F32V8_LOOP(S, ptyp - 147, vbf8);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.5.24 (ymm widening) — f64v256_add/sub/mul/div(dst, a, b, n): 256-bit AVX2 packed
@@ -7057,7 +7062,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vb256, 3);   # max, never a lowering assignment
             EMIT_F64V4_LOOP(S, ptyp - 154, vb256);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
 
@@ -7082,7 +7087,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
         EMIT_F64V4_FMADD(S, vbf);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 
@@ -7100,7 +7105,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
         EMIT_F64V4_DOT(S, vbd);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 
@@ -7120,7 +7125,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
         EMIT_F64V4_SCALE(S, vbs);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 

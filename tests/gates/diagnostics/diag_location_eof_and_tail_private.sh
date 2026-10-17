@@ -16,6 +16,11 @@
 # `error:` line any row printed to carry a file name. Run through x86 and the tree's aarch64
 # cross compiler (the frontend is shared; this pins that it stays shared).
 # RED on the slot-open compiler (4a37046b, x86): P1, P3, E1, E2, E3, E4 and F; P2 is the control.
+#   E5 / E6 (6.7.14, issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md) — a missing
+#      `}` with two / three blocks open: the inner block's error stepped past the EOF token, and every
+#      outer block's "expected '}', got end of file" read the slot after it — `error:0:1:`, no file, no
+#      excerpt (`_err_head_at` / `_err_excerpt` clamp to the EOF token now). Each of the 2 / 3 errors is
+#      at the EOF token's own place, with its excerpt. RED on 87ef0dd9: E5, E6 and F.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: diag_location_eof_and_tail_private: cannot cd to $ROOT"; exit 1; }
@@ -39,6 +44,8 @@ printf 'fn outer() { var x = 1;' > e2.cyr
 printf 'fn pq(): i64 { return 1; }\nfn outer() { var x = 1;\n' > inc.cyr
 printf 'include "inc.cyr"\n' > e3.cyr
 printf 'include "inc.cyr"\nvar z = 1;\n' > e4.cyr
+printf 'fn main() {\n    var x = 0;\n    if (x == 0) {\n        x = 1;\n' > e5.cyr
+printf 'fn main() {\n    var x = 0;\n    if (x == 0) {\n        while (x < 1) {\n        x = 1;\n' > e6.cyr
 
 # row <label> <compiler> <file> <expected error head, after `error:`> [<excerpt text>]
 row() {
@@ -49,6 +56,18 @@ row() {
   grep -qF "error:$4" e || { bad "$1: no 'error:$4' — got: $(grep -m1 '^error' e)"; return; }
   if [ -n "${5:-}" ]; then grep -qF -- "$5" e || bad "$1: the excerpt does not show '$5'"; fi
 }
+# every <label> <compiler> <file> <n> <head> <excerpt>: exactly n errors, each `error:<head>` with its excerpt
+every() {
+  rows=$((rows + 1))
+  rc=0; "$2" < "$3" > o 2> e || rc=$?
+  cat e >> all.err
+  [ "$rc" -ne 0 ] || { bad "$1: rc 0, expected a refusal"; return; }
+  ne=$(grep -c '^error' e || true)
+  nh=$(grep -cF "error:$5" e || true)
+  nx=$(grep -cF -- "$6" e || true)
+  [ "$ne" -eq "$4" ] && [ "$nh" -eq "$4" ] && [ "$nx" -eq "$4" ] \
+    || bad "$1: $ne error(s), $nh at 'error:$5', $nx excerpt(s) — want $4 each: $(grep '^error' e | tr '\n' ' ')"
+}
 for cc in "$CC" "$D/xa64"; do
   l=$(basename "$cc")
   row "P1 $l" "$cc" p1.cyr "<source>:3:15: 'pv' is private to its file"
@@ -58,12 +77,14 @@ for cc in "$CC" "$D/xa64"; do
   row "E2 $l" "$cc" e2.cyr "<source>:1:24: expected '}', got end of file" "fn outer() { var x = 1;"
   row "E3 $l" "$cc" e3.cyr "inc.cyr:2:24: expected '}', got end of file" "fn outer() { var x = 1;"
   row "E4 $l" "$cc" e4.cyr "<source>:2:11: expected '}', got end of file" "var z = 1;"
+  every "E5 $l" "$cc" e5.cyr 2 "<source>:4:15: expected '}', got end of file" "        x = 1;"
+  every "E6 $l" "$cc" e6.cyr 3 "<source>:5:15: expected '}', got end of file" "        x = 1;"
 done
 # F — anti-vacuous: no error line anywhere above lacks its file
 if grep -E '^error:[0-9]' all.err > /dev/null; then bad "F: an error line has no file name: $(grep -m1 -E '^error:[0-9]' all.err)"; fi
 grep -q '#@file' all.err && bad "F: a preprocessor marker was shown as a source excerpt"
-[ "$rows" -ge 14 ] || bad "only $rows rows ran"
+[ "$rows" -ge 18 ] || bad "only $rows rows ran"
 
 if [ "$fail" -ne 0 ]; then echo "FAIL diag_location_eof_and_tail_private: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS diag_location_eof_and_tail_private: $rows rows — a tail call's private error names its own line (stamped and deferred), and end of file is reported at <file>:line:col just past the last source byte (with or without a final newline, inside an include), x86 + aarch64 cross"
+echo "PASS diag_location_eof_and_tail_private: $rows rows — a tail call's private error names its own line (stamped and deferred), and end of file is reported at <file>:line:col just past the last source byte (with or without a final newline, inside an include; every block a missing \`}\` leaves open, 6.7.14), x86 + aarch64 cross"
 exit 0

@@ -5542,9 +5542,9 @@ fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
         store64(&st + 32, line);
         _pd_named(S, fi, noff, uarg, &tbl, &st);   # 6.7.7 (B6): checked whole, then in parameter order
     } else {
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);                         # consume ')'
-        _CHECK_ARITY(S, line, noff, fi, uarg, 1);   # `uarg` counts `self`, as `_fnt_params` does
+        # 6.7.14: a missing `)` leaves a `;` / `}` / statement keyword in place, and an unclosed list
+        # has no argument count to judge (`g(1;` also said "'g' expects 2 arguments, got 1").
+        if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, line, noff, fi, uarg, 1); }   # `uarg` counts `self`, as `_fnt_params` does
         _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
     }
     var n = load64(&st);
@@ -7634,13 +7634,12 @@ fn PARSE_FNCALL(S, noff): i64 {
                             else { iago = 0; }
                         }
                     }
-                    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                    STI(S, GTI(S) + 1);
                     # v6.2.41 — arity check on the INLINE-replay path. Inline
                     # candidates are small fixed-arity fns (≤2 param slots), so a
                     # 1-param helper called with extra args lands HERE, not on the
                     # normal path — the normal-path check alone would miss it.
-                    _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
+                    # 6.7.14: an unclosed list leaves its `;` (`_expect_step`) and has no count.
+                    if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0); }
                     # Set local count past the param slots
                     SFLC(S, saved_flc + _ptot);
                     # v6.3.37 (A3) — record the transient inline param-slot high-water so
@@ -9153,12 +9152,28 @@ fn _ce_bad(S, msg, len): i64 {
 fn _ce_badn(S, msg, noff, tail): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    _ce_bn = noff;   # 6.7.14: the subject, for `_ce_check_fn` (see `_ce_name_said`)
     if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
     STI(S, _ce_ti);
     ERR_IDENT(S, msg, noff, tail, 0 - 1);
     STI(S, sv);
     return 0;
+}
+# ⛔ 6.7.14 — A CONST FN'S BODY IS ALSO AN ORDINARY FN, COMPILED AFTER ITS DEFINITION CHECK: an unknown
+# name was refused twice, "unknown name 't' in a const context" by the check and "undefined variable 't'"
+# by the run-time compile, one column on (`t = 1;`: "'t' is not a local of this const fn" and the same).
+# The name the check refused (`_ce_badn`'s subject, `_ce_bn`) is kept for that body (`_ce_fn_rname`,
+# scoped by PARSE_FN_DEF), and an undefined-variable report of it there is counted, not printed. Another
+# name stays reported: the check stops at its first refusal, and the run-time compile still names what
+# the check never reached. 1 = this report is that one. CHANGELOG [6.7.14]
+var _ce_bn = 0 - 1;
+var _ce_fn_rname = 0 - 1;
+fn _ce_name_said(S, noff): i64 {
+    if (_ce_fn_rname < 0) { return 0; }
+    if (STREQ(S, _ce_fn_rname, noff) == 0) { return 0; }
+    _had_error = 1;
+    return 1;
 }
 # A runtime fault (division by zero, NaN, overflow of a conversion) — only when executing.
 fn _ce_fault(S, msg, len): i64 {
@@ -10359,6 +10374,13 @@ fn _ce_check_fn(S, fi): i64 {
     }
     if (_ce_tup_param(S, op) == 1) { return 0; }
     var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn; var sv_err = _ce_err;
+    # 6.7.14: the body's own tokens, walked by `_ce_ti` — never the cursor's statement — so no latch in:
+    # a refusal is printed (or was, by the sweep), which the run-time body's stand-down relies on
+    # (`_ce_name_said`). Out, the check's own latch is kept (`_ce_said` counts a repeat "exactly as
+    # ERR_* would"), else the caller's is put back.
+    var pw = _panic;
+    _panic = 0;
+    _ce_bn = 0 - 1;
     _ce_err = 0;
     _ce_fb = _ce_sp;
     _ce_infn = 1;
@@ -10374,6 +10396,8 @@ fn _ce_check_fn(S, fi): i64 {
     }
     _ce_skip = _ce_skip - 1;
     _ce_ret = 0;
+    if (_ce_err == 1) { _ce_fn_rname = _ce_bn; }   # 6.7.14: the run-time body's (`_ce_name_said`)
+    if (_panic == 0) { _panic = pw; }
     _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
     return 0;
 }
@@ -16321,6 +16345,8 @@ fn PARSE_FN_DEF(S): i64 {
     var _lc_sv_n = _lc_n;
     var _lc_sv_f = _lc_floor;
     _lc_floor = _lc_n;
+    var _rn_sv = _ce_fn_rname;   # 6.7.14: a const fn's refused name is its own body's (`_ce_name_said`)
+    _ce_fn_rname = 0 - 1;
     # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
     # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
     # caller, not to firmware", which is true of a RETURN but not of an EXIT —
@@ -16331,6 +16357,7 @@ fn PARSE_FN_DEF(S): i64 {
     var _rf = _PARSE_FN_DEF_IMPL(S);
     _lc_n = _lc_sv_n;
     _lc_floor = _lc_sv_f;
+    _ce_fn_rname = _rn_sv;
     _rd_exit();
     _xd_check(S, 0, "fn body");
     _xdepth = _xd_outer;

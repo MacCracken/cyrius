@@ -758,6 +758,8 @@ do { x = x + 1; } while (x < 10);
 
 # For — all three clauses (init; cond; step) are required and non-empty.
 # Cyrius does not accept `for (;;)` / `for (; c;)` (omitted clauses).
+# The step is an assignment (`i = i + 1`, `i += 1`, `p.n += 1`, `*p = v`); a call
+# (`c.inc()`, `f()`) is refused, with a note — make the call in the body.
 # For an unbounded loop use `loop { … }`, and `while` for a custom-stepped
 # one; the idiomatic counted forms are the `for` above and `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
