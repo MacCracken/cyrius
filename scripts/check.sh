@@ -1712,6 +1712,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
 # (no `cyrius repl` on a binary install), and the x86_64 step carried its own parse. Static.
 _chk_gate "$ROOT/tests/gates/toolchain/release_tarballs_ship_release_scripts.sh"
 
+# 6.7.14 — the aarch64-linux tarball ships every [release] bin, built for aarch64 (the user's D59):
+# release.yml's aarch64 step, run in a scratch checkout, ships each bin but cybs as an AArch64 ELF
+# (it shipped cycc, cyrsign, cyrius-init and the cyriusly script: no `cyrius` CLI on an ARM install).
+_chk_gate "$ROOT/tests/gates/toolchain/aarch64_tarball_ships_release_bins.sh"
+
 # 6.7.14 — scripts/cyrius-watch.sh builds through `cyrius build` (the user's D60): the bare
 # `cat | cycc` it ran failed an entry-relative include, hid the diagnostic, emptied the output on
 # a failed build, and on Apple Silicon wrote an unsigned binary that was killed at launch.

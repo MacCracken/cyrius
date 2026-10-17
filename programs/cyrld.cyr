@@ -1226,8 +1226,10 @@ fn emit_executable(out_path): i64 {
     store64(O + sh + 48,1);
     store64(O + sh + 56,0);
 
-    # Write to disk.
-    var fd = syscall(SYS_OPEN, out_path, 0x241, 0x1ED);  # O_WRONLY|O_CREAT|O_TRUNC, 0755
+    # Write to disk. Through the peer's sys_open, not a raw SYS_OPEN: aarch64 Linux has no open(2)
+    # (its peer declares no SYS_OPEN; sys_open is openat), so cyrld did not compile for the aarch64
+    # tarball's [release] bins. CHANGELOG [6.7.14]
+    var fd = sys_open(out_path, 0x241, 0x1ED);  # O_WRONLY|O_CREAT|O_TRUNC, 0755
     if (fd < 0) {
         emsg("error: cannot open output "); emsg(out_path); emsg("\n");
         return 1;
