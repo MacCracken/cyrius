@@ -784,8 +784,8 @@ do { x = x + 1; } while (x < 10);
 
 # For — all three clauses (init; cond; step) are required and non-empty.
 # Cyrius does not accept `for (;;)` / `for (; c;)` (omitted clauses).
-# The step is an assignment (`i = i + 1`, `i += 1`, `p.n += 1`, `*p = v`); a call
-# (`c.inc()`, `f()`) is refused, with a note — make the call in the body.
+# The step is an assignment (`i = i + 1`, `i += 1`, `p.n += 1`, `*p = v`, `gp().n += 1`);
+# a call (`c.inc()`, `f()`) is refused, with a note — make the call in the body.
 # For an unbounded loop use `loop { … }`, and `while` for a custom-stepped
 # one; the idiomatic counted forms are the `for` above and `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
@@ -1312,8 +1312,9 @@ does not return a struct is refused too, and so is an assignment to a result's f
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`
-does — through 6.7.12 they were refused as a temporary. An untyped `var p = gp();` is still an untyped
-word (`p.n` needs `var p: *H = gp();`).
+does — through 6.7.12 they were refused as a temporary. Each is a classic-`for` step too (`for (..; ..;
+gp().n += 1)`, `o.gp().m = i`; 6.7.14 — it was `expected '=', got '('`), and as a step a by-value result is
+the same one refusal. An untyped `var p = gp();` is still an untyped word (`p.n` needs `var p: *H = gp();`).
 
 ⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
 `expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every

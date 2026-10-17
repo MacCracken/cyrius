@@ -9,6 +9,8 @@
 # a `*T` field hop and into a narrow, f64 or struct-typed field, in a fn, in a closure and at top level
 # (issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md).
 #
+# 6.7.14: each store is a classic-for step too (the st_ rows), in a fn, a closure and at top level.
+#
 # CROSS-HOST: the pointer is parked in a frame temp (a hidden global at top level) and the field store's own body
 # addresses it, on each backend. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
 include "lib/syscalls.cyr"
@@ -51,11 +53,53 @@ fn s_mchain(): i64 { reset(); gp().gi().a = 6; return load64(&ibuf); }
 fn s_closure(): i64 { reset(); var c = |v| { gp().n = v; return 0; }; fncall1(c, 8); return hp().n; }
 fn s_loop(): i64 { reset(); var i = 0; while (i < 4) { gpc().n += i; i = i + 1; } return hp().n * 10 + CNT; }
 
+# 6.7.14 (issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): each store above is
+# a classic-for step too, ending at the step's `)` (every assignment a statement takes is a step) — it was
+# "expected '=', got '('" (a method's: "expected '=', got '.'"). The step runs once per iteration, after the body.
+struct HQ { n; q: *i64; }
+var qbuf[16];
+var qcell[16];
+fn gq(): *HQ { var h: *HQ = &qbuf; h.q = &qcell; return h; }
+fn st_plain(): i64 { reset(); var i = 0; for (i = 0; i < 3; gp().n += 1) { i = i + 1; } return load64(&buf); }
+fn st_assign(): i64 { reset(); var i = 0; for (i = 0; i < 4; gp().n = i) { i = i + 1; } return hp().n; }
+fn st_count(): i64 { reset(); var i = 0; for (i = 0; i < 3; gpc().m += 2) { i = i + 1; } return hp().m * 10 + CNT; }
+fn st_chain(): i64 { reset(); var i = 0; for (i = 0; i < 3; gp().h.b += 3) { i = i + 1; } return hp().h.b; }
+fn st_generic(): i64 { reset(); var i = 0; for (i = 0; i < 2; gpg<H>().n += 5) { i = i + 1; } return load64(&buf); }
+fn st_method(): i64 { reset(); var o: O = O { 1 }; var i = 0; for (i = 0; i < 3; o.gpc().n += 1) { i = i + 1; } return hp().n * 10 + CNT; }
+fn st_mset(): i64 { reset(); var o: O = O { 1 }; var i = 0; for (i = 0; i < 4; o.gp().m = i * 2) { i = i + 1; } return hp().m; }
+fn st_mchain(): i64 { reset(); var i = 0; for (i = 0; i < 2; gp().gi().a += 4) { i = i + 1; } return load64(&ibuf); }
+fn st_narrow(): i64 { reset(); var i = 0; for (i = 0; i < 2; gp().c += 200) { i = i + 1; } return hp().c; }
+fn st_float(): i64 { reset(); var i = 0; for (i = 0; i < 2; gp().f += 1.25) { i = i + 1; } if (hp().f == 2.5) { return 1; } return 0; }
+fn st_sub(): i64 { memset(&qcell, 0, 16); var i = 0; for (i = 0; i < 3; gq().q[1] += 2) { i = i + 1; } return load64(&qcell + 8); }
+fn st_icall(): i64 { reset(); var i = 0; for (i = 0; i < 3; fncall0(&gp).n += 1) { i = i + 1; } return load64(&buf); }
+fn gp2(x): *H { return &buf; }
+fn st_nested(): i64 { reset(); var i = 0; for (i = 0; i < 3; gp2(fncall0(|| { gp().m = 2; return 0; })).n += 1) { i = i + 1; } return hp().n * 10 + hp().m; }
+fn st_inner(): i64 {
+    reset();
+    var i = 0;
+    for (i = 0; i < 2; gp().n = fncall0(|| { var j = 0; for (j = 0; j < 2; gp().m += 1) { j = j + 1; } return 5; })) { i = i + 1; }
+    return hp().n * 10 + hp().m;
+}
+fn st_whole(): i64 { reset(); var v: I = I { 1, 2 }; var k = 0; for (k = 0; k < 2; gp().h = v) { k = k + 1; } return hp().h.a * 10 + hp().h.b; }
+fn st_closure(): i64 {
+    reset();
+    var c = |v| {
+        var i = 0;
+        for (i = 0; i < v; gp().n += 2) { i = i + 1; }
+        return 0;
+    };
+    fncall1(c, 3);
+    return hp().n;
+}
+
 reset();
 gp().n = 77;                 # at top level: the pointer parked in a hidden global
 var top_n = load64(&buf);
 gp().m += 3;
 var top_m = load64(&buf + 8);
+var TI = 0;
+for (TI = 0; TI < 5; gp().m += 2) { TI = TI + 1; }   # 6.7.14: a for step at top level
+var top_step = load64(&buf + 8);
 
 assert_eq(top_n, 77, "gp().n = 77; at top level");
 assert_eq(top_m, 3, "gp().m += 3; at top level");
@@ -74,4 +118,21 @@ assert_eq(s_whole(), 12, "gp().h = i: a struct-typed field copied whole");
 assert_eq(s_mchain(), 6, "gp().gi().a = 6: a method's *I result at the chain's end");
 assert_eq(s_closure(), 8, "gp().n = v inside a closure");
 assert_eq(s_loop(), 64, "gpc().n += i in a loop: 6, one call per iteration");
+assert_eq(top_step, 13, "for (..; ..; gp().m += 2) at top level: 3 + 5 x 2");
+assert_eq(st_plain(), 3, "for step gp().n += 1 (the filed repro's shape)");
+assert_eq(st_assign(), 4, "for step gp().n = i");
+assert_eq(st_count(), 63, "for step gpc().m += 2: one call per step");
+assert_eq(st_chain(), 9, "for step gp().h.b += 3: a chain of fields");
+assert_eq(st_generic(), 10, "for step gpg<H>().n += 5: an explicit generic");
+assert_eq(st_method(), 33, "for step o.gpc().n += 1: a method, one call per step");
+assert_eq(st_mset(), 8, "for step o.gp().m = i * 2");
+assert_eq(st_mchain(), 8, "for step gp().gi().a += 4: a method's *I result at the chain's end");
+assert_eq(st_narrow(), 144, "for step gp().c += 200 on a u8 field: 400 stores 144");
+assert_eq(st_float(), 1, "for step gp().f += 1.25 on an f64 field");
+assert_eq(st_sub(), 6, "for step gq().q[1] += 2: a subscript of the result's *i64 field");
+assert_eq(st_icall(), 3, "for step fncall0(&gp).n += 1: a known callee through fncall0");
+assert_eq(st_closure(), 6, "for step gp().n += 2 inside a closure");
+assert_eq(st_nested(), 32, "for step gp2(fncall0(|| { gp().m = 2; .. })).n += 1: a store inside the step's call");
+assert_eq(st_inner(), 54, "for step gp().n = fncall0(..) whose closure runs its own for step gp().m += 1");
+assert_eq(st_whole(), 12, "for step gp().h = v: a struct-typed field copied whole");
 var r = assert_summary();

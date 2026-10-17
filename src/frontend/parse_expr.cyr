@@ -3805,6 +3805,64 @@ fn _step_call_sub(S, noff): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     return 1;
 }
+# ⛔ 6.7.14 — THE CLASSIC-FOR STEP `gp().n += 1` / `o.gp().n = v` (a field of a call's result, cursor past the first
+# name `noff`) is the statement's assignment, ending at the step's `)`: through a `: *T` result it stores through the
+# pointer (6.7.13's D8 (a), `_cpf_try` armed with `_cpf_step`), a by-value result is the statement's "the result is
+# a temporary", once (the top-level no-frame refusal alone, `_tsc_n`). The step fell to `_for_step_assign` and was
+# "expected '=', got '('" (6.7.5's rule: every assignment a statement takes is a step). Twin of `_stmt_call_field`
+# and `_stmt_method_call`. 1 = the step, stored or refused; 0 = not that shape, cursor untouched (a step with no `=`,
+# `gp().n` or `o.inc()`, keeps "expected '='"). CHANGELOG [6.7.14]
+fn _step_call_field(S, noff): i64 {
+    if (_step_asg_at(S) == 0) { return 0; }
+    var st = GTI(S) - 1;
+    var dot = 0;
+    if (PEEKT(S) == 41) { dot = 1; }
+    elif (_call_dotted(S, st) == 0) { return 0; }
+    var sv = _cpf_st;
+    var svs = _cpf_step;
+    _cpf_st = st;
+    _cpf_step = st;
+    _cpf_done = 0 - 1;
+    var tn = _tsc_n;
+    var r = 1;
+    if (dot == 1) { _mcall_last = 0 - 1; PARSE_FIELD_LOAD(S, noff); }
+    else { r = _call_field(S); }
+    _cpf_st = sv;
+    _cpf_step = svs;
+    if (r == 0) { STI(S, st + 1); return 0; }
+    return _step_cf_tail(S, st, tn, dot);
+}
+# `_step_call_field` after its call chain: the store ended the step, or the rest is refused once.
+fn _step_cf_tail(S, st, tn, dot): i64 {
+    if (_cpf_done == st) { return 1; }   # the store ended the step at its `)`
+    if (_tsc_n != tn) { return 1; }      # the call refused itself (top level): the one error
+    if (dot == 0) { if (PEEKT(S) == 28) { _stmt_call_sub(S); } }   # `mk(4).p[i] = v`, as the statement
+    if (_asg_pair_at(S) == 1) { if (_mcall_last < 0 || dot == 0) { _asg_temp_refused(S); return 1; } }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    return 1;
+}
+# 1 = the step from the cursor to the for's `)` holds an `=` outside parentheses: an assignment (`=` or `OP =`).
+# Inside parentheses anything may stand (an argument's closure, its `{ .. ; }`).
+fn _step_asg_at(S): i64 {
+    var i = GTI(S);
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { d = d + 1; }
+        elif (t == 11) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        }
+        elif (t == 12) { return 0; }
+        elif (d == 0) {
+            if (t == 4) { return 1; }
+            if (t == 13 || t == 5) { return 0; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
 
 # The three factor arms below live out of _PARSE_FACTOR_IMPL, whose body sits at cybs's silent
 # per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work

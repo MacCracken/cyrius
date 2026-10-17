@@ -906,6 +906,7 @@ fn _for_step_replay(S): i64 {
         if (mc == 0) { return PARSE_FIELD_STORE(S, noff, 11); }
     }
     if (_step_call_sub(S, noff) == 1) { return 0; }   # 6.7.8 (C2-4b): `f()[i] += 1`, `o.m()[i] = v`
+    if (_step_call_field(S, noff) == 1) { return 0; }   # 6.7.14: `gp().n += 1`, `o.gp().n = v`
     # 6.7.8: `a[i] OP= v` leaves its terminator to the caller (the statement checks `;`): check the
     # step's `)` — `a[0] += 1 2` built silently. CHANGELOG [6.7.8]
     if (_arr_sub_assign(S, noff) == 1) {

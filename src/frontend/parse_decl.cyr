@@ -2049,17 +2049,23 @@ fn _call_ptr_field(S, ti, fi): i64 {
 # `var p = gp();` is unchanged. CHANGELOG [6.7.13]
 var _cpf_st = 0 - 1;     # the armed statement's first token (-1: none)
 var _cpf_done = 0 - 1;   # the statement whose store `_cpf_try` made (and ended at its `;`)
+var _cpf_step = 0 - 1;   # 6.7.14: the armed classic-for step's first token: its store ends at the for's `)`
 # Receiver `h` (a parked `*T` of struct `psid`, the cursor on its `.`) of the chain beginning at token `beg`, named
 # `noff`: 1 = the armed statement's field store, consumed through its terminator; 0 = not one (nothing consumed).
+# 6.7.14: armed by a for step (`_step_call_field`), the terminator is the step's `)`. `_cpf_step` is left as it is:
+# a statement inside the step's call (`gp2(fncall0(|| { gp().m = 2; .. })).n += 1`) stores first, and the step,
+# still armed, then ends at its `)`. CHANGELOG [6.7.14]
 fn _cpf_try(S, noff, beg, h, psid): i64 {
     if (beg != _cpf_st) { return 0; }
     if (_cpf_asg_at(S, GTI(S)) == 0) { return 0; }
     var st = _cpf_st;
+    var term = 5;
+    if (st == _cpf_step) { term = 11; }
     _cpf_st = 0 - 1;   # the value parses as an expression, never as this statement
     STI(S, GTI(S) + 1);                 # `.`
     var fnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # the field name
-    _fst_on(S, noff, fnoff, h, psid, 5);
+    _fst_on(S, noff, fnoff, h, psid, term);
     _cpf_done = st;
     return 1;
 }

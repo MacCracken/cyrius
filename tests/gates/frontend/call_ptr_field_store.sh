@@ -14,10 +14,11 @@
 # PARSE_FIELD_STORE's body, `_fst_on`). A by-value result keeps the refusal; an untyped `var p = gp();` is unchanged.
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/call_ptr_field_store.tcyr (its row count derived, floor
-# 17) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
+# 34) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
 # not hardware), cx (cxvm) and PE (wine, a private prefix); X1-X6 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; T0-T5 (6.7.14) a top-level by-value call's
-# field assignment refused once, by the no-frame refusal; K1-K3 controls that compile and run on every leg.
+# field assignment refused once, by the no-frame refusal; F0-F6 (6.7.14) the same as a classic-for step (F0 the filed
+# repro, runs; F1-F4 refused once; F5 F6 no assignment, "expected '='"); K1-K3 controls that compile and run on every leg.
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -34,8 +35,12 @@
 #   (6.7.14, 2026-10-17, the same procedure) `_stmt_call_field` without its `_tsc_n` skip -> RED 12: T0-T2 x4
 #                                                     (2 error lines: the no-frame refusal, then "the result is a temporary")
 #   the statement forms of the T0-T2 commit (54da1380: the skip on `=` / `OP=` only, no method arm) -> RED 12: T3-T5 x4
-# (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and a for
-# step's call chain is refused before any `*T` arm runs.)
+#   `_for_step_replay` without its `_step_call_field` arm -> RED 27: R1 x7 ("expected '=', got '('"), F0-F4 x4
+#   `_cpf_try` ending every store at `;` (no `_cpf_step` term) -> RED 11: R1 x7, F0 x4 ("expected ';', got ')'")
+#   `_cpf_try` disarming `_cpf_step` on any store              -> RED 7: R1 x7 (st_nested: the store inside the step's
+#                                                     call disarmed the step, "expected ';', got ')'")
+# (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and since
+# 6.7.14 a for step arms its own too, `_step_call_field`.)
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -160,7 +165,7 @@ runs R0 5 "the filed repro: gp().n = 5; through \`fn gp(): *H\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/call_ptr_field_store.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=17
+FLOOR=34
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 # Every leg runs every row, CYRIUS_IR=3 included: its f64 row (`gp().f = 2.5;`) faulted there until the float literal's
@@ -237,6 +242,39 @@ var o: O = O { 1 };
 o.mk().n += 1;'
 refused T5 "'O_mk' $NS" "top-level \`o.mk().n += 1;\`, one error"
 
+# --- F (6.7.14, issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): a classic-for
+# step is the statement's assignment — through a `: *T` result it stores (F0, the filed repro verbatim; the values
+# file's st_ rows), a by-value result is the statement's refusal, ONCE (it was "expected '=', got '('" — through
+# 6.7.13 also a false "undefined variable 'gp'"); a step with no `=` keeps "expected '='".
+cat > "$T/F0.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+var buf[16];
+fn gp(): *H { return &buf; }
+fn mk(): H { var h: H; h.n = 1; return h; }
+fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n += 1) { i = i + 1; } return load64(&buf); }
+syscall(60, go());
+EOF2
+runs F0 3 "the filed repro: for step gp().n += 1 stores 3"
+row F1 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return i; }'
+refused F1 "$MT" "for step \`mk().n += 1\`, a by-value result, one error"
+row F2 'fn go(): i64 { var o: O = O { 1 }; var i = 0; for (i = 0; i < 3; o.mk().n = 1) { i = i + 1; } return i; }'
+refused F2 "$MT" "for step \`o.mk().n = 1\`, a method returning by value, one error"
+row F3 'fn go(): i64 { return 0; }
+var I = 0;
+for (I = 0; I < 3; mk().n += 1) { I = I + 1; }'
+refused F3 "'mk' $NS" "top-level for step \`mk().n += 1\`: the no-frame refusal, one error"
+row F4 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+var I = 0;
+for (I = 0; I < 3; o.mk().n = 1) { I = I + 1; }'
+refused F4 "'O_mk' $NS" "top-level for step \`o.mk().n = 1\`: the no-frame refusal, one error"
+row F5 'fn f(): i64 { return 0; }
+fn go(): i64 { var i = 0; for (i = 0; i < 3; f()) { i = i + 1; } return i; }'
+refused F5 "expected '=', got '('" "for step \`f()\`, a call, keeps its refusal"
+row F6 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n) { i = i + 1; } return i; }'
+refused F6 "expected '=', got '('" "for step \`gp().n\`, no assignment, keeps its refusal"
+
 # --- K: controls ---
 row K1 'fn go(): i64 { gpb().n = 5; return load64(&buf); }
 fn gpb(): *H { return &buf; }'
@@ -247,7 +285,7 @@ runs K2 6 "the store in a generic body, two instances"
 row K3 'fn go(): i64 { gp().n = fncall0(|| { gp().m = 2; return 3; }); return load64(&buf) * 10 + load64(&buf + 8); }'
 runs K3 32 "a closure in the value storing through its own call"
 
-FLOOR_ROWS=17
+FLOOR_ROWS=24
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
