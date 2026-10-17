@@ -147,12 +147,20 @@ cascade K12 1 "$KS"'    for (i = 0; i < 3; f()) { i = i + 1; }\n    return i;\n}
 grep -q "note: a for step is an assignment" "$E" || { echo "FAIL: K12: the note naming the rule is missing"; kfail=$((kfail + 1)); }
 cascade K13 1 "$KS"'    for (i = 0; i < 3; i) { i = i + 1; }\n    return i;\n}\nvar r = go();\n' "4:25: expected '=', got ')'"
 grep -q "note: a for step" "$E" && { echo "FAIL: K13: a bare-name step got the call note"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K13)"; exit 1; }
+# K14-K16 (6.7.14, found beside the const-field fix) — a `.field` / `.m(..)` on a name declared nowhere is
+#     "undefined variable 't'" once: its `sid == 0` arm added "no struct type in scope for 't'; ...
+#     (missing include?)" for the same base. The next statement still reports its own (K15's `u`).
+#     RED on 90883a62: K14-K16.
+KU='struct P { x; }\nfn main() {\n'
+cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:9: undefined variable 't'"
+cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:9: undefined variable 't'" "4:16: undefined variable 'u'"
+cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:8: undefined variable 't'"
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K13), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), valid emits"
 exit 0

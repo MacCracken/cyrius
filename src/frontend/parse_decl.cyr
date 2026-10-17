@@ -1676,7 +1676,8 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
                 _undef_var_report(S, noff, "'\n");   # 6.7.14: shared with the factor's (`_ce_name_said`)
-                sid = 0;
+                _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
+                return 0;
             }
         }
         else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
@@ -2356,7 +2357,8 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
                 _undef_var_report(S, noff, "'\n");   # 6.7.14: shared with the factor's (`_ce_name_said`)
-                sid = 0;
+                _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
+                return 0;
             }
         }
         else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
