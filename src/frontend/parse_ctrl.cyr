@@ -378,6 +378,7 @@ fn _ie_struct_sid(S, bti): i64 {
     if (TOKTYP(S, a) == 8) {   # 6.7.13: a whole dereference `*p` of a `*S` (`_ie_deref_sid`)
         var ds = _ie_deref_sid(S, a, b);
         if (ds > 0) { return ds; }
+        if (_dvd_whole(S, a, b) == 1) { return 0 - 1; }   # 6.7.14: of a `*V`, a vector value
     }
     if (b == a + 1) {
         if (TOKTYP(S, a) == 2) {

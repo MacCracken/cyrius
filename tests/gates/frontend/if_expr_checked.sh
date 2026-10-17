@@ -31,12 +31,18 @@
 # `_W128_IS` refusal -> V8-V12 BUILD (V13 green).
 # 6.7.13 (D rows; issues/archived/2026-10-14-dereference-as-if-expression-branch.md, the user's D1 (a)): a whole dereference
 # of a `*S` branch is a struct value — refused over 8 B (D1-D6, D8 the filed shape once per branch), mixed struct
-# types refused (D7), a vector dereference left alone (D9), an operator on one an integer (D11), and the runtime
+# types refused (D7), an operator on one an integer (D11), and the runtime
 # half tests/tcyr/crossos/if_expr_struct_deref.tcyr on every leg (D10). Mutations (2026-10-15, CYCC=the mutant;
 # the a64 / cx legs build from the tree's src and stay fixed): `_ie_struct_sid` without its dereference arm -> RED
 # D1-D8 BUILD, D10 does not build x5 (`{ *p } else { s }` refused); `_gz_bty` without kind 7 -> RED D10 x5 (the
 # declaration zone misreads `var G: S3 = if (K) { *GP } else { GQ };`); `_ie_deref_sid` without the
 # whole-dereference test (`_gz_split`) -> RED D11.
+# 6.7.14 (D9, D12-D23; issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md): a whole
+# dereference of a `*V` branch is a vector value, refused as a vector name is (D9 the filed repro, on the aarch64 /
+# cx / PE compilers too); a `*i64` dereference and the pointer words stay integers (D22, D23). Mutation (2026-10-17,
+# CYCC=the lane's compiler before the fix): RED 12 — D9 D12-D21 BUILD (D12 refused once, at its name branch) and D9 pe
+# (the D9 a64 / cx legs build from the tree's src and stay fixed). `_dvd_whole`'s code-pointer test is defensive (a
+# note matches only its own branch's span): no row kills it.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -185,9 +191,36 @@ if [ "$rc" -eq 0 ]; then bad "D8: var v: S = if (k == 1) { *p } else { *q } (16 
 elif [ -s "$T/d08.bin" ]; then bad "D8: refused but still emitted a binary"
 elif [ "$(grep -c "$BIG: struct 'S'" "$T/d08.err")" -ne 2 ]; then bad "D8: want the over-8-bytes refusal once per branch: $(grep '^error' "$T/d08.err" | head -2 | tr '\n' '|')"
 else ok "D8: the filed { *p } else { *q } at 16 B is refused at each branch, no binary"; fi
-# A vector dereference is no struct (its operand types 0): the struct arm leaves `*pv` as before — an integer
-# branch, lane 0's word — and does not take it as a struct value.
-exits d09 42 "D9: { *pa } else { *pb } with *f64v2 operands: untouched by the struct arm (lane 0, as before)" 'include "lib/syscalls.cyr"\ninclude "lib/simd.cyr"\nfn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var b: f64v2 = f64v2_make(5, 6); var pa: *f64v2 = &a; var pb: *f64v2 = &b; var c = 1; var x = if (c == 1) { *pa } else { *pb }; return x; }\nsyscall(60, main());\n'
+# 6.7.14 (issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md) — A VECTOR DEREFERENCE IS A
+# VECTOR VALUE (6.7.13's D34), refused as a vector name branch is (R16): through 6.7.13 `{ *pa } else { *pb }`
+# compiled to lane 0's word (42), no diagnostic. D9 is the filed repro, refused at each branch as `{ a } else { b }`.
+VEC="an if expression branch cannot be a vector, u128 or slice value"
+VH='include "lib/syscalls.cyr"\ninclude "lib/simd.cyr"\n'
+D9SRC="${VH}"'fn main(): i64 {\n    var a: f64v2 = f64v2_make(42, 7);\n    var b: f64v2 = f64v2_make(5, 6);\n    var pa: *f64v2 = &a;\n    var pb: *f64v2 = &b;\n    var c = 1;\n    var x = if (c == 1) { *pa } else { *pb };\n    return x;\n}\nsyscall(60, main());\n'
+refused_twice() {   # <name> <what> <source> — refused once at EACH of two branches, no binary
+    printf '%b' "$3" > "$T/$1.cyr"
+    build "$1"
+    if [ "$rc" -eq 0 ]; then bad "$2: BUILT (rc 0)"
+    elif [ -s "$T/$1.bin" ]; then bad "$2: refused but still emitted a binary"
+    elif [ "$(grep -c '^error' "$T/$1.err")" -ne 2 ] || [ "$(grep -c "$VEC" "$T/$1.err")" -ne 2 ]; then
+        bad "$2: want the vector refusal once per branch: $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$2: refused at each branch, no binary"; fi
+}
+refused_twice d09 "D9: { *pa } else { *pb } with *f64v2 operands (the filed repro; lane 0's 42 through 6.7.13)" "$D9SRC"
+refused_twice d12 "D12: { (*pa) } else { a }, a parenthesised dereference beside the name" "${VH}"'fn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var pa: *f64v2 = &a; var c = 1; var x = if (c == 1) { (*pa) } else { a }; return 0; }\nsyscall(60, main());\n'
+refused d13 "$VEC" "D13: { *gpv() } else { 0 }, a : *f64v2 call" "${VH}"'var GV: f64v2 = 0;\nfn gpv(): *f64v2 { return &GV; }\nfn main(): i64 { var c = 1; var x = if (c == 1) { *gpv() } else { 0 }; return 0; }\nsyscall(60, main());\n'
+refused d14 "$VEC" "D14: { *pa } else { 0 }, an f32v4 operand" "${VH}"'fn main(): i64 { var a: f32v4; var pa: *f32v4 = &a; var c = 1; var x = if (c == 1) { *pa } else { 0 }; return 0; }\nsyscall(60, main());\n'
+refused d15 "$VEC" "D15: { 0 } else { *pa }, an f64v4 operand (32 B)" "${VH}"'fn main(): i64 { var a: f64v4; var pa: *f64v4 = &a; var c = 1; var x = if (c == 1) { 0 } else { *pa }; return 0; }\nsyscall(60, main());\n'
+refused d16 "$VEC" "D16: { *&a } else { 0 }, a dereference of a vector's address-of" "${VH}"'fn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var c = 1; var x = if (c == 1) { *&a } else { 0 }; return 0; }\nsyscall(60, main());\n'
+refused d17 "$VEC" "D17: { *(&a) } else { 0 }" "${VH}"'fn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var c = 1; var x = if (c == 1) { *(&a) } else { 0 }; return 0; }\nsyscall(60, main());\n'
+refused d18 "$VEC" "D18: top level, var G = if (K == 1) { *GP } else { 0 } with GP: *f64v2" "${VH}"'var GA: f64v2 = 0;\nvar GP: *f64v2 = &GA;\nvar K = 1;\nvar G = if (K == 1) { *GP } else { 0 };\nsyscall(60, 0);\n'
+refused d19 "$VEC" "D19: { **ppa } else { 0 } of a **f64v2" "${VH}"'fn f1(): i64 { var a: f64v2 = f64v2_make(42, 7); var pa: *f64v2 = &a; var ppa: **f64v2 = &pa; var c = 1; var x = if (c == 1) { **ppa } else { 0 }; return 0; }\nfn main(): i64 { return f1(); }\nsyscall(60, main());\n'
+refused d20 "$VEC" "D20: { *w.p } else { 0 }, a *f64v2 field" "${VH}"'struct W { k; p: *f64v2; }\nfn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var w = W { 0, &a }; var c = 1; var x = if (c == 1) { *w.p } else { 0 }; return 0; }\nsyscall(60, main());\n'
+refused d21 "$VEC" "D21: { *(pa + 0) } else { 0 }, an *i32v4 operand" "${VH}"'fn main(): i64 { var a: i32v4; var pa: *i32v4 = &a; var c = 1; var x = if (c == 1) { *(pa + 0) } else { 0 }; return 0; }\nsyscall(60, main());\n'
+# Controls: a word dereference is an integer branch; the pointers themselves are words; a vector dereference
+# elsewhere in the fn leaves a later if-expression of integers alone (the note matches only its own branch).
+exits d22 42 "D22: { *pi } else { 0 } of a *i64: an integer branch" "${VH}"'fn main(): i64 { var a = 42; var pi: *i64 = &a; var c = 1; var x = if (c == 1) { *pi } else { 0 }; return x; }\nsyscall(60, main());\n'
+exits d23 6 "D23: { pa } else { &a } (pointer words) and an integer if-expression after a *pa read" "${VH}"'fn main(): i64 { var a: f64v2 = f64v2_make(42, 7); var pa: *f64v2 = &a; var c = 1; var x = if (c == 1) { pa } else { &a }; var y: f64v2 = *pa; var z = if (c == 1) { 5 } else { 3 }; return (x == pa) + z; }\nsyscall(60, main());\n'
 # Not one whole dereference: `*p + 1` is its operator fn's result (an i64 here, 6.7.10 decision 11), so the
 # branch is an integer beside `0`, as before.
 exits d11 16 "D11: { *p + 1 } else { 0 } with S1_add returning i64: an integer branch" 'struct S1 { v; }\nfn S1_add(a: S1, b): i64 { return a.v + b; }\nfn f(c): i64 { var t: S1; t.v = 15; var p: *S1 = &t; var x = if (c) { *p + 1 } else { 0 }; return x; }\nsyscall(60, f(1));\n'
@@ -203,6 +236,21 @@ if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && "$CC" < programs/cxvm.cy
     chmod +x "$T/cc_cx" "$T/cxvm"; legs="$legs cx"
 else bad "D10 cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 if command -v wine > /dev/null 2>&1; then legs="$legs pe"; else echo "  SKIP D10 PE: wine not installed"; fi
+# D9 on the aarch64, cx and PE compilers (the refusal is the shared front end's): refused at each branch, no output.
+printf '%b' "$D9SRC" > "$T/d9x.cyr"
+for xl in a64 cx pe; do
+    rc=0
+    case "$xl" in
+        a64) [ -x "$T/cc_a64" ] || { echo "  SKIP D9 aarch64: no aarch64 compiler"; continue; }
+             "$T/cc_a64" < "$T/d9x.cyr" > "$T/d9x.$xl" 2> "$T/d9x.$xl.err" || rc=$? ;;
+        cx)  [ -x "$T/cc_cx" ] || { bad "D9 cx: no cx compiler"; continue; }
+             "$T/cc_cx" < "$T/d9x.cyr" > "$T/d9x.$xl" 2> "$T/d9x.$xl.err" || rc=$? ;;
+        pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$T/d9x.cyr" > "$T/d9x.$xl" 2> "$T/d9x.$xl.err" || rc=$? ;;
+    esac
+    if [ "$rc" -ne 0 ] && [ ! -s "$T/d9x.$xl" ] && [ "$(grep -c "$VEC" "$T/d9x.$xl.err")" -eq 2 ]; then
+        ok "D9 $xl: the filed repro is refused at each branch"
+    else bad "D9 $xl: rc $rc, $(grep -c "$VEC" "$T/d9x.$xl.err") vector refusals (want 2, no output)"; fi
+done
 for leg in $legs; do
     out="$T/d10.$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')"
     rc=0

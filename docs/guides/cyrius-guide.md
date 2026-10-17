@@ -6465,7 +6465,9 @@ of a `*S` — `{ *p }`, `{ (*p) }`, `{ *gp() }`, `{ *(&t) }` — is a struct val
 destination copying it, and over 8 bytes it is refused as `{ t }` is — branch on the pointer, `if (c)
 { p } else { q }` (the user's decision D1 (a), 2026-10-15). Through 6.7.12 it was an integer: `var v: S
 = if (c) { *p } else { *q };` bound a handle to the word `*p` read (a crash at every size) and `{ *p }
-else { s }` was refused as two kinds. A `u128` comparison
+else { s }` was refused as two kinds. A whole dereference of a `*V` — `{ *pv }`, `{ (*pv) }`, `{ *gpv() }`, `{ *&v }`,
+`{ **ppv }` — is that vector (6.7.13's D34), so it is refused as `{ v }` is (since 6.7.14; through 6.7.13 it compiled
+to lane 0's word, with no diagnostic). A `u128` comparison
 (`{ b == c }`) is an integer, as everywhere. The result is a `bool` when every
 branch is boolean (6.7.3): `var b: bool = if (c) { x > 0 } else { false };`. ⚠ An untyped variable
 holding a float is an integer (ADR-002), so `if (c) { u } else { 2.5 }` with `var u = 1.5;` is a
