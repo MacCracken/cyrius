@@ -1024,6 +1024,38 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
     return out;
 }
 
+# `envp` (a NULL-terminated array, or 0 for none) for a check that reads no pin of its working
+# directory: `CYRIUS_RESOLVED=1` — the CLI's own loop guard, which skips its version redirect
+# (cbt/cyrius.cyr `_try_redirect_to_pinned`) — and `CYRIUS_NO_WARN_PIN_DRIFT=1` (cycc's drift
+# warning, src/frontend/lex.cyr `_check_cyml_pin_drift`), any inherited entry of either name dropped
+# (each reader takes the first). A fresh array. CHANGELOG [6.7.14]
+fn _lsp_envp_unpinned(envp): i64 {
+    var n = 0;
+    if (envp != 0) { while (load64(envp + n * 8) != 0) { n = n + 1; } }
+    var out = alloc((n + 3) * 8);
+    var k = 0;
+    var i = 0;
+    while (i < n) {
+        var e = load64(envp + i * 8);
+        if (_lsp_env_named(e, "CYRIUS_RESOLVED=") == 0 && _lsp_env_named(e, "CYRIUS_NO_WARN_PIN_DRIFT=") == 0) {
+            store64(out + k * 8, e);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    store64(out + k * 8, "CYRIUS_RESOLVED=1");
+    store64(out + k * 8 + 8, "CYRIUS_NO_WARN_PIN_DRIFT=1");
+    store64(out + k * 8 + 16, 0);
+    return out;
+}
+
+# 1 when environment entry `e` begins with `key` (a `NAME=` cstr).
+fn _lsp_env_named(e, key): i64 {
+    var kl = strlen(key);
+    if (strlen(e) < kl) { return 0; }
+    return memeq(e, key, kl);
+}
+
 # 1 when the cstr `hay` contains the cstr `needle`.
 fn _lsp_has(hay, needle): i64 {
     var hl = strlen(hay);
@@ -1039,6 +1071,12 @@ fn _lsp_has(hay, needle): i64 {
 # One `cyrius check --with-deps [--no-redirect] <filepath>` run from `project_root`; its stderr.
 # 6.7.13: `project_root` 0 = a file outside any project — `cyrius check <filepath>` (standalone,
 # as `cyrius check` runs in a loose directory) from THIS server's working directory, no chdir.
+# 6.7.14 (D47 / D54, the user 2026-10-16): that run reads no pin (`_lsp_envp_unpinned`): the
+# server's working directory may be a project pinning a cyrius that is not installed, and its pin
+# error is not the loose file's — the pin belongs to the project that pins it. So the CLI's version
+# redirect is off, and so is cycc's drift warning about that same pin (`cyrius.cyml pins X but cycc
+# is Y`), which the redirect being off would otherwise surface on the loose file instead. The
+# project route keeps both. CHANGELOG [6.7.14]
 fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
     var pipe_fds[16];
     var pr = sys_pipe(&pipe_fds);
@@ -1076,6 +1114,7 @@ fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
         store64(&argv + ai, filepath);
         store64(&argv + ai + 8, 0);
         var envp = _build_envp_from_proc();
+        if (project_root == 0) { envp = _lsp_envp_unpinned(envp); }
         if (envp == 0) {
             var envp_empty[1];
             store64(&envp_empty, 0);
