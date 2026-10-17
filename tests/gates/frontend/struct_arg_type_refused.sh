@@ -178,6 +178,19 @@
 #   `_sarg_struct_other` without its `GFPSID` test     -> RED 1: P17 (2 errors: + this refusal)
 #   real tree                                          -> GREEN (87 refusal rows, 35 acceptance rows)
 #
+# 6.7.14 — EVERY STRUCT VALUE INTO A POINTER OF ANOTHER KIND (issues/2026-10-15-struct-field-call-or-dereference-into-word-
+# pointer-parameter-pushes-first-word.md; D5 (a) and 6.7.13's D31 already state the rule): a struct-typed field, a by-value
+# struct call, a method / operator result, a `*S` / `**S` dereference — wrapped, 8 B, at top level, into a method's,
+# a generic's, a `*u8` / `**i64` parameter, in a closure — "cannot pass 's' to a parameter that is not a pointer to its
+# struct type in a call to 'ri' - a struct value is no address", once (`_sarg_sval_ptr`, parse_fn.cyr); V1 the filed
+# repro verbatim (one error in each fn), V2-V17; VK1 / VK2 an address, a `*Pt`, a `*Pt` field, a `: *Pt` call and
+# method, a `*i64` dereference pass; VK3 a `Str` field compiles.
+# Mutations (2026-10-17, the gate run with each compiler):
+#   the tree before it (the lane at 7c96547f)          -> RED 17: V1-V17 (each compiled)
+#   `_sarg_sval_ptr` without its `_dx_plain` test      -> RED 1: VK3 (the `Str` field refused)
+#   `_sarg_sval_ptr` refusing any argument it parses   -> RED 4: PK1 VK1 VK2 VK3 (a handle, `&s`, a `*Pt` field, a `: *Pt` call
+#                                                         and method, an address, a `*i64` dereference, a scalar field refused)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -823,6 +836,96 @@ syscall(60, go());" \
 # A `Str` is no struct value here (`_dx_plain`): it compiles as before (what its word is, the inline-Str item decides).
 compiles "PK2 a Str local into *i64 / *u8 is not refused" \
     "${T}${WP}fn go(): i64 { alloc_init(); var s = str_from(\"hello\"); return rl(s) + ru(s); } syscall(60, go());"
+
+echo "=== 6.7.14: every struct VALUE into a pointer of another kind — a field, a call, a method / operator result, a dereference ==="
+# issues/2026-10-15-struct-field-call-or-dereference-into-word-pointer-parameter-pushes-first-word.md: D5 (a) refused a struct
+# NAME; a struct-typed field, a by-value struct call, a method or operator result and a `*S` dereference into `p: *i64`
+# still pushed the value's first word as the address — x86_64 139, aarch64 139, cx 253, PE 5. The rule D5 (a) and 6.7.13's
+# D31 (the vector twin, "at every source") state: refused, ONE error each, the value named without the `&` hint.
+MV="to a parameter that is not a pointer to its struct type in a call to"
+WX='struct W { s: Pt; }
+struct WS { s: Pt; s8: P8; p: *Pt; n; }
+struct W2 { s: Pt; }
+var GW2 = W2 { 42, 7 };
+fn mk(): Pt { var r: Pt; r.x = 42; r.y = 7; return r; }
+fn mk8(): P8 { var r: P8; r.x = 42; return r; }
+fn gps(): *Pt { return &GW; }
+fn Pt_add(a: Pt, b: Pt): Pt { var r: Pt; r.x = a.x + b.x; r.y = a.y + b.y; return r; }
+impl Pt { fn me(self: *Pt): *Pt { return self; } }
+'
+# The filed repro, verbatim: one error in each of f1 / f2 / f3 (lines 6, 7, 8), nothing else.
+printf '%s' 'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct W { s: Pt; }
+fn ri(p: *i64): i64 { return load64(p); }
+fn mk(): Pt { var r: Pt; r.x = 42; r.y = 7; return r; }
+fn f1(): i64 { var w: W; w.s.x = 42; return ri(w.s); }
+fn f2(): i64 { return ri(mk()); }
+fn f3(): i64 { var s: Pt; s.x = 42; var pp: *Pt = &s; return ri(*pp); }
+syscall(60, f1());     # f2() / f3() alike
+' > "$D/v.cyr"
+nrefuse=$((nrefuse+1))
+rc=0
+cat "$D/v.cyr" | "$CC" > "$D/v.bin" 2>"$D/v.err" || rc=$?
+vl=$(grep '^error' "$D/v.err" | sed 's/^error:<source>:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+if [ "$rc" != 0 ] && [ ! -s "$D/v.bin" ] && [ "$vl" = "6 7 8 " ] \
+   && grep -q "cannot pass 's' $MV 'ri'" "$D/v.err" && grep -q "cannot pass 'mk' $MV 'ri'" "$D/v.err" \
+   && grep -q "cannot pass '\*pp' $MV 'ri'" "$D/v.err"; then
+    printf '  ok(refused): %-40s\n' "V1 the filed repro, verbatim: f1 / f2 / f3 once each"; pass=$((pass+1))
+else
+    printf '  FAIL: %-46s rc=%s, error lines [%s]: %s\n' "V1 the filed repro, verbatim" "$rc" "$vl" "$(grep '^error' "$D/v.err" | head -1)"
+    fail=$((fail+1))
+fi
+refuse "V2 ri(w.s), a struct-typed field" "cannot pass 's' $MV 'ri' - a struct value is no address" \
+    "${T}${WP}${WX}fn go(): i64 { var w: W; w.s.x = 42; return ri(w.s); } syscall(60, go());"
+refuse "V3 ri(mk()), a by-value struct call" "cannot pass 'mk' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { return ri(mk()); } syscall(60, go());"
+refuse "V4 ri(*pp), a *Pt dereference" "cannot pass '\*pp' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var s: Pt; s.x = 42; var pp: *Pt = &s; return ri(*pp); } syscall(60, go());"
+refuse "V5 ri((w.s)), wrapped" "cannot pass 's' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var w: W; w.s.x = 42; return ri((w.s)); } syscall(60, go());"
+refuse "V6 ri(o.dup()), a method result" "cannot pass 'Pt.dup' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var o: Pt; o.x = 42; return ri(o.dup()); } syscall(60, go());"
+refuse "V7 ri(**pp), a **Pt dereference" "cannot pass '\*\*pp' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var s: Pt; s.x = 42; var p: *Pt = &s; var pp: **Pt = &p; return ri(**pp); } syscall(60, go());"
+refuse "V8 ri(a + b), an operator result" "cannot pass 'Pt_add' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var a: Pt; a.x = 40; var b: Pt; b.x = 2; return ri(a + b); } syscall(60, go());"
+refuse "V9 ri(w.s8), an 8 B field" "cannot pass 's8' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var w: WS; w.s8.x = 42; return ri(w.s8); } syscall(60, go());"
+refuse "V10 ri(mk8()), an 8 B call" "cannot pass 'mk8' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { return ri(mk8()); } syscall(60, go());"
+refuse "V11 ri(*gps()), a : *Pt call dereferenced" "cannot pass '\*gps' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { return ri(*gps()); } syscall(60, go());"
+refuse "V12 ri(GW2.s) at top level" "cannot pass 's' $MV 'ri'" \
+    "${T}${WP}${WX}var r = ri(GW2.s); syscall(60, r);"
+refuse "V13 q.rd(w.s), a method's pointer parameter" "cannot pass 's' $MV 'Q.rd'" \
+    "${T}${WP}${WX}fn go(): i64 { var q: Q; var w: W; w.s.x = 42; return q.rd(w.s); } syscall(60, go());"
+refuse "V14 rg<i64>(w.s), T = i64" "cannot pass 's' $MV 'rg'" \
+    "${T}${WP}${WX}fn go(): i64 { var w: W; w.s.x = 42; return rg<i64>(w.s); } syscall(60, go());"
+refuse "V15 ru(mk()), p: *u8" "cannot pass 'mk' $MV 'ru'" \
+    "${T}${WP}${WX}fn go(): i64 { return ru(mk()); } syscall(60, go());"
+refuse "V16 rpp(w.s), p: **i64" "cannot pass 's' $MV 'rpp'" \
+    "${T}${WP}${WX}fn go(): i64 { var w: W; w.s.x = 42; return rpp(w.s); } syscall(60, go());"
+refuse "V17 ri(mk()) in a closure body" "cannot pass 'mk' $MV 'ri'" \
+    "${T}${WP}${WX}fn go(): i64 { var c = || { return ri(mk()); }; return callptr(c); } syscall(60, go());"
+# Controls: an address is no struct value — `&w + 0`, a `*Pt` local, a `*Pt` field, a `: *Pt` call and method, `&o`
+# into `*i64` (42 each); a dereference of a `*i64`, a scalar field, `pi + 0` (the word, 42 each); a `Str` field into
+# `*u8` compiles (no struct value, `_dx_plain`).
+accept "VK1 &w + 0, a *Pt, a *Pt field, a : *Pt call and method, &o into *i64" \
+    "${T}${WP}${WX}fn go(): i64 { var w: WS; w.s.x = 42; w.p = &GW; var o: Pt; o.x = 42; var ps: *Pt = &o;
+  return ri(&w + 0) + ri(ps) + ri(w.p) + ri(gps()) + ri(o.me()) + ri(&o) - 210; }
+syscall(60, go());" \
+    42 \
+    "${T}fn go(): i64 { return 42; } syscall(60, go());"
+accept "VK2 *ppi (a *i64), a scalar field, pi + 0 into *i64" \
+    "${T}${WP}${WX}fn go(): i64 { var x = 42; var pi: *i64 = &x; var ppi: **i64 = &pi; var w: WS; w.n = &x;
+  return ri(*ppi) + ri(w.n) + ri(pi + 0) - 84; }
+syscall(60, go());" \
+    42 \
+    "${T}fn go(): i64 { return 42; } syscall(60, go());"
+compiles "VK3 a Str field into *u8 is not refused" \
+    "${T}${WP}struct HS { t: Str; }
+fn go(): i64 { alloc_init(); var h: HS; h.t = str_from(\"hi\"); return ru(h.t) * 0; } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

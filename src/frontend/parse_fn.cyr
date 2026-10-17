@@ -2293,6 +2293,58 @@ fn _sarg_struct_other(S, fi, argc): i64 {
     STI(S, sv);
     return 1;
 }
+# ⛔ 6.7.14 — EVERY STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME, not only a name (6.7.13's D5 (a);
+# its vector twin D31 refuses "at every source"). A struct-typed field `ri(w.s)`, a by-value struct call `ri(mk())`, a
+# method or operator result `ri(o.m())`, a dereference `ri(*pp)` / `ri(**ppp)` of a `*S` — inside any parentheses that
+# wrap the whole argument — into `p: *i64` (`*u8`, `**T`, any `*T` recording no struct) pushed the value's first word
+# as the address (139 on x86_64 and aarch64, a cx guest fault, PE 5). The argument at the cursor, not a name (that is
+# `_sarg_struct_other`'s), to parameter `argc` of `fi`, a pointer that is not address-passed and records no struct: it
+# is parsed and pushed as the caller's fallback pushes it (PCMPE + EPUSHR, byte-identical), and refused when it is a
+# plain struct value by the records `_expr_struct_sid` / `_ess_deref` read — a `*T` field, a `: *T` call or method and an
+# address record none (their word is the address), and a `Str` / tuple / dyn is no plain struct. 1 = pushed.
+# CHANGELOG [6.7.14]
+fn _sarg_sval_ptr(S, fi, argc): i64 {
+    if (_sarg_wname(S) >= 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    if (GFPSID(S, fi, argc) > 0) { return 0; }
+    var st = GTI(S);
+    var sid = _expr_struct_sid(S, st);
+    var star = 0;
+    if (sid == 0) {
+        sid = _ess_deref(S, st);
+        if (sid > 0) { star = _sval_stars(S, st); }
+    }
+    if (sid > 0) { if (sid < 2048) { if (_dx_plain(S, sid) == 1) { _sval_kind_err(S, st, star, _ess_nm, fi); } } }
+    EPUSHR(S);
+    return 1;
+}
+# The `*`s a whole dereference argument at `st` opens with, inside the parentheses that wrap it (`**pp` 2).
+fn _sval_stars(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var n = 0;
+    while (TOKTYP(S, a + n) == 8) { n = n + 1; }
+    return n;
+}
+# The refusal at token `ti` of a struct value — `noff` (a field, call or method name), behind `star` `*`s — passed to a
+# pointer of another kind of `fi`: D5 (a)'s words, without the `&` hint a name gets (D31's `_vec_val_err` is its vector
+# twin). No `_panic`: the parse is in step, so one compile reports every such argument. 0.
+fn _sval_kind_err(S, ti, star, noff, fi): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    while (star > 0) { PRSTR("*"); star = star - 1; }
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # a method by its source name: `Pt.dup`
+    PRSTR("' to a parameter that is not a pointer to its struct type in a call to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' - a struct value is no address\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
 # ⛔ 6.7.12 — A VECTOR CALL RESULT INTO A `*V` PARAMETER PASSES A TEMP'S ADDRESS (D27, the user, 2026-10-15: B).
 # `rd(mkv(42, 7))` with `p: *f64v2` pushed the call's value — lane 0 — as the address: 139 on x86_64 and
 # aarch64, a cx guest fault, exit 5 on PE (x86_64 refused it through 6.7.10 by the value-form path's text; the
@@ -2768,7 +2820,9 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
 fn _sarg_byval_small(S, fi, argc): i64 {
     if (_sarg_vec_other(S, fi, argc) == 0) {   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
-        _sarg_struct_other(S, fi, argc);       # 6.7.13 (D5 (a)): ... and a struct value
+        if (_sarg_struct_other(S, fi, argc) == 0) {   # 6.7.13 (D5 (a)): ... and a struct value
+            if (_sarg_sval_ptr(S, fi, argc) == 1) { return 1; }   # 6.7.14: a field, call or dereference too
+        }
     }
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);

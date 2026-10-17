@@ -1912,7 +1912,15 @@ there (6.7.12) and a struct of another type into a `*Q` is (6.7.3). Write `ri(&s
 Through 6.7.12 it compiled and passed s's first field as the address (a fault on every target, or a
 read through whatever that field held). A handle (`var h: Pt = alloc(16);`), a `*Pt` and a `Str`
 hold the address in their word and pass it as before; a `*Pt` parameter still takes `&s` itself
-(6.6.20), and an untyped parameter the word.
+(6.6.20), and an untyped parameter the word. Since 6.7.14 so is every other struct VALUE there, as
+its vector twin is at every source (D31): a struct-typed field `ri(w.s)`, a by-value struct call
+`ri(mk())`, a method or operator result `ri(o.dup())` / `ri(a + b)`, a dereference `ri(*pp)` /
+`ri(**pp)` of a `*Pt` / `**Pt` — wrapped or not — reports `cannot pass 's' to a parameter that is
+not a pointer to its struct type in a call to 'ri' - a struct value is no address` (naming the
+field, the callee, the method as `Pt.dup`, or `*pp`), once. Through 6.7.13 each pushed the value's
+first word as the address (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows). An
+address is no struct value: `ri(&w + 0)`, a `*Pt` field `ri(w.p)`, a `: *Pt` call or method, and
+`ri(*ppi)` of a `**i64` pass as before.
 
 **A pointer into a BY-VALUE struct parameter passes the struct it points at, at every size
 (6.7.10).** `bs1(&s)`, `bs1(sp)` with `sp: *S1`, `bs1(gp())` with `fn gp(): *S1`, `bs1(h.p)` with a
