@@ -1707,6 +1707,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
 # scripts/release-scripts.sh, which fails on a listed entry it cannot find (the user's D4).
 _chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
 
+# 6.7.14 — all four POSIX tarball builders (release.yml's x86_64 and aarch64 Linux steps, both
+# macOS builders) stage [release] scripts through that one helper: the aarch64 step shipped none
+# (no `cyrius repl` on a binary install), and the x86_64 step carried its own parse. Static.
+_chk_gate "$ROOT/tests/gates/toolchain/release_tarballs_ship_release_scripts.sh"
+
 # 6.7.14 — scripts/cyrius-watch.sh builds through `cyrius build` (the user's D60): the bare
 # `cat | cycc` it ran failed an entry-relative include, hid the diagnostic, emptied the output on
 # a failed build, and on Apple Silicon wrote an unsigned binary that was killed at launch.

@@ -99,16 +99,13 @@ jobs:
           STAGE="cyrius-${VER}-x86_64-linux"
           mkdir -p "$STAGE/bin" "$STAGE/lib"
 
-          # Bins + scripts from cyrius.cyml [release] (v5.4.18 unified source).
+          # Every cyrius.cyml [release] scripts entry, through the one helper every POSIX tarball uses: the
+          # CLI shims in scripts/shims/ first, then scripts/, and a listed entry found in neither FAILS the
+          # step (the scripts/-only lookup skipped cyrius-repl.sh silently: 6.7.9). CHANGELOG [6.7.14]
+          sh scripts/release-scripts.sh "$STAGE/bin"
+
+          # Bins from cyrius.cyml [release] (v5.4.18 unified source).
           BINS=$(awk -v k="bins" '
-              /^\[release\]/ { in_r = 1; next }
-              in_r && /^\[/ { exit }
-              in_r && $1 == k {
-                  sub(/^[^=]+= \[/, ""); sub(/\].*$/, "")
-                  gsub(/[",]/, " "); gsub(/ +/, " ")
-                  sub(/^ +/, ""); sub(/ +$/, ""); print; exit
-              }' cyrius.cyml)
-          SCRIPTS=$(awk -v k="scripts" '
               /^\[release\]/ { in_r = 1; next }
               in_r && /^\[/ { exit }
               in_r && $1 == k {
@@ -138,19 +135,6 @@ jobs:
           # step instead of shipping a tarball without it. CHANGELOG [6.7.10]
           cp "build/cycc_cx" "$STAGE/bin/"
           cp bootstrap/asm "$STAGE/bin/"
-          # The CLI shims live in scripts/shims/ (v5.11.69), the user-facing scripts flat in scripts/:
-          # look in shims/ first, as install.sh does, and FAIL on a listed script found in neither —
-          # the scripts/-only lookup skipped cyrius-repl.sh silently. CHANGELOG [6.7.9]
-          for script in $SCRIPTS; do
-            if [ -f "scripts/shims/$script" ]; then
-              cp "scripts/shims/$script" "$STAGE/bin/"
-            elif [ -f "scripts/$script" ]; then
-              cp "scripts/$script" "$STAGE/bin/"
-            else
-              echo "ERROR: cyrius.cyml [release] scripts lists $script, found in neither scripts/shims/ nor scripts/"
-              exit 1
-            fi
-          done
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*
           # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin — bin/cyriusly here is the COMPILED binary, whose
@@ -218,6 +202,11 @@ jobs:
           VER="${GITHUB_REF_NAME}"
           STAGE="cyrius-${VER}-aarch64-linux"
           mkdir -p "$STAGE/bin" "$STAGE/lib"
+
+          # Every cyrius.cyml [release] scripts entry, as every POSIX tarball ships them (6.7.12's D4): this
+          # step shipped none, so a binary install had no cyrius-repl.sh (`cyrius repl`), cyrius-watch.sh or
+          # cyrius-prompt-info. First, so an entry with no file fails before anything compiles. CHANGELOG [6.7.14]
+          sh scripts/release-scripts.sh "$STAGE/bin"
 
           cp build/cycc_aarch64 "$STAGE/bin/cycc"
           # cyrsign (Ed25519 release verifier) built for aarch64 via the cross-
